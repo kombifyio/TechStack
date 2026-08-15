@@ -1,0 +1,272 @@
+{
+  "schema_version": "kombify.tool-manifest/v1",
+  "product": "techstack",
+  "capability": "techstack.inventory.read",
+  "mcp": {
+    "transport": "streamable-http",
+    "endpoint": "/api/v1/mcp",
+    "protocol_version": "2025-11-25"
+  },
+  "tools": [
+    {
+      "name": "list_servers",
+      "title": "List servers",
+      "description": "List the authenticated owner's sanitized server inventory with lifecycle, desired-state, lease, cleanup, health, platform and StackKit projections.",
+      "requiredCapability": "techstack.inventory.read",
+      "operationId": "listInventoryServers",
+      "http": { "method": "GET", "path": "/api/v1/inventory/servers" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "cursor": { "type": "string", "maxLength": 2048 },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": ["observed_at", "freshness", "inventory_revision", "collection_cursor", "page_size", "servers"],
+        "properties": {
+          "observed_at": { "type": "string", "format": "date-time" },
+          "freshness": { "$ref": "#/$defs/freshness" },
+          "inventory_revision": { "type": "integer", "minimum": 0 },
+          "collection_cursor": { "type": "string" },
+          "next_cursor": { "type": "string" },
+          "page_size": { "type": "integer", "minimum": 0, "maximum": 200 },
+          "servers": { "type": "array", "items": { "$ref": "#/$defs/server" } }
+        },
+        "$defs": {
+          "freshness": {
+            "type": "object",
+            "required": ["state", "stale_after_seconds"],
+            "properties": {
+              "state": { "type": "string", "enum": ["fresh", "stale", "unavailable"] },
+              "age_seconds": { "type": "integer", "minimum": 0 },
+              "stale_after_seconds": { "type": "integer", "minimum": 0 },
+              "reason_code": { "type": "string" }
+            }
+          },
+          "server": {
+            "type": "object",
+            "required": ["id", "name", "observed_at", "freshness", "inventory_revision", "addresses", "platform", "stackkit", "lifecycle", "desired", "lease", "cleanup", "connection", "health"],
+            "properties": {
+              "id": { "type": "string" },
+              "stack_id": { "type": "string" },
+              "name": { "type": "string" },
+              "observed_at": { "type": ["string", "null"], "format": "date-time" },
+              "freshness": { "$ref": "#/$defs/freshness" },
+              "inventory_revision": { "type": "integer", "minimum": 0 },
+              "addresses": { "type": "object" },
+              "platform": { "type": "object" },
+              "stackkit": { "type": "object" },
+              "provider": { "type": "string" },
+              "lifecycle": {
+                "type": "object",
+                "required": ["state"],
+                "properties": {
+                  "state": { "type": "string" },
+                  "reason_code": { "type": "string" },
+                  "changed_at": { "type": "string", "format": "date-time" }
+                }
+              },
+              "desired": {
+                "type": "object",
+                "required": ["state"],
+                "properties": { "state": { "type": "string", "enum": ["running", "stopped", "absent", "unknown"] } }
+              },
+              "lease": {
+                "type": "object",
+                "required": ["state"],
+                "properties": { "id": { "type": "string" }, "state": { "type": "string" } }
+              },
+              "cleanup": {
+                "type": "object",
+                "required": ["state", "provider_absence_verified"],
+                "properties": {
+                  "state": { "type": "string", "enum": ["not_requested", "delete_accepted", "absence_pending", "absent", "cleanup_required", "failed", "unverified"] },
+                  "provider_absence_verified": { "type": "boolean" },
+                  "verified_at": { "type": "string", "format": "date-time" }
+                }
+              },
+              "connection": { "type": "object" },
+              "health": { "type": "object" }
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "server_health",
+      "title": "Get server health",
+      "description": "Read current health and connection evidence for one server owned by the authenticated user.",
+      "requiredCapability": "techstack.inventory.read",
+      "operationId": "getInventoryServerHealth",
+      "http": { "method": "GET", "path": "/api/v1/inventory/servers/{serverId}/health" },
+      "inputSchema": {
+        "type": "object",
+        "properties": { "server_id": { "type": "string", "minLength": 1 } },
+        "required": ["server_id"],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": ["server_id", "observed_at", "freshness", "inventory_revision", "connection", "health"],
+        "properties": {
+          "server_id": { "type": "string" },
+          "observed_at": { "type": ["string", "null"], "format": "date-time" },
+          "freshness": { "type": "object" },
+          "inventory_revision": { "type": "integer", "minimum": 0 },
+          "connection": { "type": "object" },
+          "health": { "type": "object" }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "list_services",
+      "title": "List services",
+      "description": "List sanitized service health and access links for the authenticated owner's servers.",
+      "requiredCapability": "techstack.inventory.read",
+      "operationId": "listInventoryServices",
+      "http": { "method": "GET", "path": "/api/v1/inventory/services" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "server_id": { "type": "string", "minLength": 1 },
+          "cursor": { "type": "string", "maxLength": 2048 },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": ["observed_at", "freshness", "inventory_revision", "collection_cursor", "page_size", "services"],
+        "properties": {
+          "observed_at": { "type": "string", "format": "date-time" },
+          "freshness": { "type": "object" },
+          "inventory_revision": { "type": "integer", "minimum": 0 },
+          "collection_cursor": { "type": "string" },
+          "next_cursor": { "type": "string" },
+          "page_size": { "type": "integer", "minimum": 0, "maximum": 200 },
+          "services": { "type": "array", "items": { "type": "object" } }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "server_access_context",
+      "title": "Get server access context",
+      "description": "Read sanitized addresses, channel states and reachable service links for one owned server without credentials or SSH material. Requires inventory operate permission.",
+      "requiredCapability": "techstack.inventory.operate",
+      "operationId": "getInventoryServerAccessContext",
+      "http": { "method": "GET", "path": "/api/v1/inventory/servers/{serverId}/access-context" },
+      "inputSchema": {
+        "type": "object",
+        "properties": { "server_id": { "type": "string", "minLength": 1 } },
+        "required": ["server_id"],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": ["server_id", "observed_at", "freshness", "inventory_revision", "availability", "connection", "addresses", "channels", "service_links"],
+        "properties": {
+          "server_id": { "type": "string" },
+          "observed_at": { "type": ["string", "null"], "format": "date-time" },
+          "freshness": { "type": "object" },
+          "inventory_revision": { "type": "integer", "minimum": 0 },
+          "availability": { "type": "object" },
+          "connection": { "type": "object" },
+          "addresses": { "type": "object" },
+          "channels": { "type": "array", "items": { "type": "object" } },
+          "service_links": { "type": "array", "items": { "type": "object" } }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "get_stack_operations",
+      "title": "Get stack operations",
+      "description": "Read the authenticated owner's exact TechStack operations-dashboard payload, including freshness-qualified rollout readiness, servers, services, monitoring and current job evidence.",
+      "requiredCapability": "techstack.inventory.read",
+      "operationId": "getStackOperations",
+      "http": { "method": "GET", "path": "/api/v1/stacks/{id}/operations" },
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "stack_id": { "type": "string", "minLength": 1, "maxLength": 256 }
+        },
+        "required": ["stack_id"],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": ["stack", "readiness", "nextSteps", "kpis", "servers", "services", "monitoring", "alerts"],
+        "properties": {
+          "stack": { "type": "object" },
+          "readiness": { "$ref": "#/$defs/readiness" },
+          "nextSteps": { "type": "array", "items": { "type": "object" } },
+          "kpis": { "type": "object" },
+          "servers": { "type": "array", "items": { "type": "object" } },
+          "services": { "type": "array", "items": { "type": "object" } },
+          "monitoring": { "type": "object" },
+          "alerts": { "type": "array", "items": { "type": "object" } },
+          "currentJob": { "type": "object" },
+          "runtimeLifecycle": { "type": "object" },
+          "latestFailure": { "type": "object" }
+        },
+        "$defs": {
+          "readiness": {
+            "type": "object",
+            "required": ["status", "can_start", "required_servers", "approved_servers", "connected_servers", "pending_servers", "assigned_servers", "available_servers", "unassigned_servers", "message", "review_required"],
+            "properties": {
+              "status": { "type": "string" },
+              "can_start": { "type": "boolean" },
+              "required_servers": { "type": "integer", "minimum": 0 },
+              "approved_servers": { "type": "integer", "minimum": 0 },
+              "connected_servers": { "type": "integer", "minimum": 0 },
+              "pending_servers": { "type": "integer", "minimum": 0 },
+              "assigned_servers": { "type": "integer", "minimum": 0 },
+              "available_servers": { "type": "integer", "minimum": 0 },
+              "unassigned_servers": { "type": "integer", "minimum": 0 },
+              "message": { "type": "string" },
+              "review_required": { "type": "boolean" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    }
+  ]
+}

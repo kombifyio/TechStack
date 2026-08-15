@@ -1,0 +1,11 @@
+<Project>
+  <PropertyGroup>
+    <!-- Release versions come exclusively from the packager via -p:Version;
+         everything else is a recognizable dev build. -->
+    <Version Condition="'$(Version)' == ''">0.0.0-dev</Version>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Single pin for every project in this directory (kombify-Techstack-o1f). -->
+    <WebView2SdkVersion>1.0.3296.44</WebView2SdkVersion>
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,121 @@
+# CONTRACT.yaml - Technical specification derived from CONTRACT.md
+# This file is auto-synced. Manual edits to 'module' and 'features' sections are preserved.
+
+meta:
+  source_hash: "sha256:d7bbee1ba62e9b5803593fcdc89ba9eda84d10b3dd40cf49b0036715b383d366"
+  last_sync: "2026-02-12T12:00:00Z"
+  tier: complex
+  version: "1.0"
+
+module:
+  name: "runtime-intelligence-layer"
+  type: core
+  path: "./pkg/grpcserver"
+
+features:
+  - id: "grpc-agent-protocol"
+    description: "gRPC agent protocol (Register, Heartbeat, CommandStream, ReportStatus, RunPreChecks)"
+    status: implemented
+    entry_point: "./pkg/grpcserver/server.go"
+    tests: "./pkg/grpcserver/server_test.go"
+
+  - id: "mtls-certs"
+    description: "mTLS certificate management (generation, validation, per-agent certs)"
+    status: implemented
+    entry_point: "./pkg/auth/certs.go"
+    tests: "./pkg/auth/certs_test.go"
+
+  - id: "command-queue"
+    description: "Command queue with backpressure and persistence"
+    status: implemented
+    entry_point: "./pkg/grpcserver/command_store.go"
+    tests: "./pkg/grpcserver/command_store_test.go"
+
+  - id: "command-streaming"
+    description: "Bidirectional command streaming (Core↔Agent)"
+    status: implemented
+    entry_point: "./pkg/grpcserver/server.go"
+    tests: "./pkg/grpcserver/server_test.go"
+
+  - id: "iac-agent-exec"
+    description: "OpenTofu + Terramate agent execution"
+    status: implemented
+    entry_point: "./api/proto/agent.proto"
+    tests: null
+
+  - id: "drift-detection"
+    description: "Drift detection (scheduler + handler + UI)"
+    status: implemented
+    entry_point: "./pkg/jobs/drift_handler.go"
+    tests: "./pkg/jobs/drift_handler_test.go"
+
+  - id: "health-endpoints"
+    description: "Health endpoints (/live, /ready, /startup)"
+    status: implemented
+    entry_point: "./internal/routes/health.go"
+    tests: null
+
+  - id: "auto-restart"
+    description: "Auto-restart failed tunnels/services"
+    status: planned
+    entry_point: null
+    tests: null
+
+  - id: "drift-auto-correction"
+    description: "Drift auto-correction (remediation engine)"
+    status: planned
+    entry_point: null
+    tests: null
+
+  - id: "cert-auto-renewal"
+    description: "Certificate auto-renewal workflow"
+    status: planned
+    entry_point: null
+    tests: null
+
+  - id: "event-bus"
+    description: "Event bus with correlation and notification dispatch"
+    status: planned
+    entry_point: null
+    tests: null
+
+  - id: "rolling-updates"
+    description: "Rolling update orchestration"
+    status: planned
+    entry_point: null
+    tests: null
+
+constraints:
+  must:
+    - "All agent communication uses gRPC over mTLS (TLS 1.3)"
+    - "Every agent has a unique CA-signed certificate with agent ID in CN"
+    - "Commands are persisted to survive Core restarts"
+    - "No silent recovery — all remediation actions logged and visible in UI"
+    - "Auto-remediation is feature-gated (requires explicit user consent)"
+  must_not:
+    - "Execute remediation without a defined rollback path"
+    - "Allow agents without valid mTLS certificates"
+    - "Exceed command queue backpressure limit (1000 pending)"
+
+relationships:
+  depends_on:
+    - "./pkg/core/CONTRACT.yaml"
+    - "./api/proto/agent.proto"
+  consumed_by:
+    - "./internal/routes/"
+    - "./pkg/jobs/"
+    - "./app/"
+
+validation:
+  exports:
+    - "Server"
+    - "AgentManager"
+    - "CommandStore"
+  test_pattern: "*_test.go"
+  custom_script: null
+
+changelog:
+  - date: "2026-02-12"
+    version: "1.0"
+    change: "Initial contract — aligned with ARCHITECTURE_V2.md"
+    author: "system"

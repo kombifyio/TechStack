@@ -1,0 +1,1 @@
+{"action":"verify_rollout","stack_id":"stack-compat","runtime_target":{"host":"server.example","user":"root"}}

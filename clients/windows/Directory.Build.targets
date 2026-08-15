@@ -1,0 +1,11 @@
+<Project>
+  <!-- The WebView2 SDK unconditionally references its WPF assembly, which drags
+       WindowsBase 5.0.0.0 into these WinForms-only projects and trips MSB3277
+       against the net9.0 ref pack's WindowsBase 4.0.0.0 (kombify-Techstack-o1f).
+       Drop the unused WPF flavor before assembly resolution. -->
+  <Target Name="RemoveWebView2WpfReference" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(FileName)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
+</Project>

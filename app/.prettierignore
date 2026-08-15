@@ -1,0 +1,14 @@
+node_modules/
+.svelte-kit/
+build/
+build-static/
+dist/
+test-results/
+test-results-*/
+playwright-report/
+playwright-report-*/
+artifacts/
+
+# generated lockfiles (machine-managed)
+pnpm-lock.yaml
+pnpm-workspace.yaml

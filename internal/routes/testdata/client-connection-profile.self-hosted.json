@@ -1,0 +1,26 @@
+{
+  "version": "1",
+  "deployment_mode": "self_hosted",
+  "base_url": "https://techstack.home.example",
+  "instance_id": "11111111-2222-4333-8444-555555555555",
+  "oidc": {
+    "issuer": "https://id.home.example/oidc",
+    "client_id": "techstack-native-public",
+    "audience": "https://techstack.home.example/api",
+    "scopes": ["openid", "profile", "offline_access"],
+    "flow": "authorization_code_pkce"
+  },
+  "capabilities": [
+    "techstack.runtime.read",
+    "techstack.runtime.write"
+  ],
+  "api_versions": {
+    "techstack": "v1"
+  },
+  "sync": {
+    "offline_read": false,
+    "offline_write": "disabled",
+    "etag": false,
+    "tombstones": false
+  }
+}

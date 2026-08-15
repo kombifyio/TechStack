@@ -1,0 +1,83 @@
+# StackKit Metadata and Mode Configuration
+apiVersion: stackkit/v1
+kind: StackKit
+
+metadata:
+  name: base-kit
+  version: "2.0.0"
+  description: "Single-server homelab with Docker, Dokploy and monitoring"
+  author: "kombify Techstack Team"
+  license: "MIT"
+  tags: ["homelab", "docker", "traefik", "dokploy", "monitoring"]
+  deprecated_aliases:
+    - "homelab-starter"
+    - "homelab-basic"
+
+# Supported operating systems
+supportedOS:
+  - ubuntu-24
+  - ubuntu-22
+  - debian-12
+
+# Resource requirements
+requirements:
+  minimum:
+    cpu: 2
+    memory: 4
+    disk: 50
+  recommended:
+    cpu: 4
+    memory: 8
+    disk: 100
+
+# Supported deployment modes
+modes:
+  simple:
+    description: "Single OpenTofu configuration - best for simple setups"
+    templateDir: "templates/simple"
+    engine: "opentofu"
+    recommended_for:
+      - "Single node deployments"
+      - "Quick setup without drift detection"
+      - "Users new to infrastructure-as-code"
+
+  advanced:
+    description: "Terramate-orchestrated stacks - best for complex setups"
+    templateDir: "templates/advanced"
+    engine: "terramate"
+    requires:
+      - "terramate >= 0.5.0"
+    recommended_for:
+      - "Multi-node deployments"
+      - "Drift detection required"
+      - "Gradual rollouts"
+      - "Day-2 operations"
+    stacks:
+      - name: network
+        order: 1
+        description: "VPN, DNS, firewall configuration"
+      - name: services
+        order: 2
+        after: [network]
+        description: "Core services (Traefik, monitoring)"
+      - name: applications
+        order: 3
+        after: [services]
+        description: "User applications"
+
+# Auto-selection rules (when mode not explicitly set)
+auto_select:
+  advanced_when:
+    - "nodes.count > 3"
+    - "drift_detection.enabled == true"
+    - "remote_access.enabled == true && auto_updates.enabled == true"
+  default: simple
+
+# Feature requirements per mode
+features:
+  drift_detection:
+    requires_mode: advanced
+  parallel_deployment:
+    requires_mode: advanced
+  gradual_rollout:
+    requires_mode: advanced

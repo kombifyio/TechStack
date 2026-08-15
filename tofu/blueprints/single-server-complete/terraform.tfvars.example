@@ -1,0 +1,33 @@
+# Example terraform.tfvars for single-server-complete blueprint
+# Copy this to terraform.tfvars and adjust values
+
+# Stack Configuration
+stack_name = "my-techstack"
+
+# Hetzner Cloud Configuration
+hcloud_token = "your-hetzner-cloud-api-token-here"
+server_type  = "cx22"    # 2 vCPU, 4GB RAM
+location     = "nbg1"    # Nuremberg, Germany
+image        = "ubuntu-24.04"
+
+# Domain Configuration
+domain           = "kombi.local"
+headscale_domain = ""  # Optional: public domain for Headscale
+
+# Admin User Configuration
+admin_username = "kombi"
+admin_ssh_key  = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKeyReplaceMeWithYourRealSSHKey user@host"
+
+# Optional: Set admin password (generate with: mkpasswd --method=SHA-512)
+# admin_password_hash = "$6$rounds=656000$..."
+
+# Services to Enable
+enable_headscale  = true
+enable_pocketbase = true
+enable_dokploy    = true
+
+# Additional Labels (optional)
+labels = {
+  environment = "production"
+  managed_by  = "techstack"
+}

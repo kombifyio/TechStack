@@ -1,0 +1,77 @@
+version: "2"
+run:
+  tests: true
+linters:
+  enable:
+    - errcheck
+    - dupl
+    - goconst
+    - gocyclo
+    - gosec
+    - govet
+    - ineffassign
+    - misspell
+    - staticcheck
+    - unused
+  settings:
+    dupl:
+      threshold: 100
+    errcheck:
+      check-blank: false
+      exclude-functions:
+        - (*database/sql.Tx).Rollback
+        - (*database/sql.DB).Close
+        - (io.Closer).Close
+    goconst:
+      min-len: 3
+      # min-occurrences: 5 filters mid-frequency literals (3-4 uses) where extracting
+      # a constant adds more noise than it removes. Real hot-spots (10+ uses) still
+      # surface as findings.
+      min-occurrences: 5
+    gocyclo:
+      min-complexity: 15
+    gosec:
+      excludes:
+        - G304
+        - G115
+    govet:
+      enable:
+        - shadow
+    misspell:
+      locale: US
+      # "cancelled" (British) is a domain wire value, not a typo: it is the
+      # lease-state string persisted to Postgres, matched in the command_store
+      # cleanup query, and compared against Simulate's "lease_cancelled" error
+      # payloads. Renaming to US "canceled" would break those contracts, so the
+      # word is exempt from the US-locale check.
+      ignore-rules:
+        - cancelled
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+    rules:
+      # Tests legitimately repeat string literals (table-driven test data, fixtures).
+      # goconst/gocyclo noise on _test.go is high-effort/low-value to fix.
+      - path: _test\.go
+        linters:
+          - goconst
+          - gocyclo
+          - dupl
+      # Migrations are historical, immutable schema definitions.
+      - path: internal/migrations/
+        linters:
+          - goconst
+          - gocyclo
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

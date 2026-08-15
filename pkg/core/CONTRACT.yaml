@@ -1,0 +1,91 @@
+# CONTRACT.yaml - Technical specification derived from CONTRACT.md
+
+meta:
+  source_hash: "sha256:7fa36c83bb3bfc9992b431b39baab7c0d48928699fcae0dcbf94ed3ea7fb76a4"
+  last_sync: "2026-04-18T19:55:00Z"
+  tier: core
+  version: "1.0"
+
+module:
+  name: "domain-model"
+  type: core
+  path: "./pkg/core"
+
+features:
+  - id: "unifier-interface"
+    description: "Unifier interface (Analyze, Validate, Unify, Provision, Destroy, Status)"
+    status: implemented
+    entry_point: "./pkg/core/types.go"
+    tests: null
+
+  - id: "intent-spec"
+    description: "IntentSpec type (immutable user intent)"
+    status: implemented
+    entry_point: "./pkg/core/types.go"
+    tests: null
+
+  - id: "requirements-spec"
+    description: "RequirementsSpec type (Phase 2 output)"
+    status: implemented
+    entry_point: "./pkg/core/types.go"
+    tests: null
+
+  - id: "unified-spec"
+    description: "UnifiedSpec type (resolved deployment plan)"
+    status: implemented
+    entry_point: "./pkg/core/types.go"
+    tests: null
+
+  - id: "worker-types"
+    description: "Worker/Node types (ResolvedNode, ServicePlacement)"
+    status: implemented
+    entry_point: "./pkg/core/types.go"
+    tests: null
+
+  - id: "deprecation-cleanup"
+    description: "Remove deprecated types (StackConfig, NodeConfig, ServiceConfig, NetworkConfig)"
+    status: planned
+    entry_point: "./pkg/core/types.go"
+    tests: null
+
+constraints:
+  must:
+    - "All spec types defined here (single source of truth)"
+    - "IntentSpec contains only user intent"
+    - "Types are serializable to JSON and YAML"
+  must_not:
+    - "Import any other pkg/ package (zero internal dependencies)"
+    - "Contain business logic (only types and interfaces)"
+
+relationships:
+  depends_on: []
+  consumed_by:
+    - "./pkg/unifier/CONTRACT.yaml"
+    - "./pkg/grpcserver/CONTRACT.yaml"
+    - "./pkg/placement/"
+    - "./pkg/tofu/"
+    - "./pkg/config/"
+    - "./internal/routes/"
+
+validation:
+  exports:
+    - "Unifier"
+    - "InputSpec"
+    - "IntentSpec"
+    - "KombinationSpec"
+    - "RequirementsSpec"
+    - "UnifiedSpec"
+    - "ResolvedNode"
+    - "ServicePlacement"
+  test_pattern: "*_test.go"
+  custom_script: null
+
+changelog:
+  - date: "2026-04-18"
+    version: "1.0"
+    change: "Hash resync after contract drift preflight"
+    author: "codex"
+  - date: "2026-02-12"
+    version: "1.0"
+    change: "Initial contract — aligned with ARCHITECTURE_V2.md"
+    author: "system"

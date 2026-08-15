@@ -1,0 +1,23 @@
+# syntax=docker/dockerfile:1.7
+
+ARG NODE_IMAGE=node:24-slim
+FROM ${NODE_IMAGE}
+
+WORKDIR /app
+ENV CI=1
+RUN corepack enable && corepack prepare pnpm@11.5.2 --activate
+
+COPY app/package.json app/pnpm-lock.yaml app/pnpm-workspace.yaml app/.npmrc ./
+COPY app/scripts/install-deps.mjs ./scripts/install-deps.mjs
+RUN --mount=type=secret,id=NODE_AUTH_TOKEN,required=false \
+    set -eu; \
+    if [ -s /run/secrets/NODE_AUTH_TOKEN ]; then export NODE_AUTH_TOKEN="$(cat /run/secrets/NODE_AUTH_TOKEN)"; fi; \
+    node scripts/install-deps.mjs --frozen-lockfile
+
+COPY VERSION /VERSION
+COPY Dockerfile /Dockerfile
+COPY cmd/techstack/version.go /cmd/techstack/version.go
+COPY app/ .
+RUN pnpm prepare
+
+CMD ["pnpm", "test:unit"]

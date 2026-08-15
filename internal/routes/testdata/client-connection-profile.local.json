@@ -1,0 +1,25 @@
+{
+  "version": "1",
+  "deployment_mode": "local",
+  "base_url": "http://127.0.0.1:5260",
+  "instance_id": "11111111-2222-4333-8444-555555555555",
+  "oidc": {
+    "issuer": "http://127.0.0.1:5260",
+    "client_id": "techstack-local",
+    "scopes": ["openid", "profile"],
+    "flow": "local_bootstrap"
+  },
+  "capabilities": [
+    "techstack.runtime.read",
+    "techstack.runtime.write"
+  ],
+  "api_versions": {
+    "techstack": "v1"
+  },
+  "sync": {
+    "offline_read": false,
+    "offline_write": "disabled",
+    "etag": false,
+    "tombstones": false
+  }
+}

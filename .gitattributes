@@ -1,0 +1,27 @@
+* text=auto
+*.sh text eol=lf
+Makefile text eol=lf
+.githooks/* text eol=lf
+
+# Frontend files - normalize to LF
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.jsx text eol=lf
+*.mjs text eol=lf
+*.cjs text eol=lf
+*.svelte text eol=lf
+*.css text eol=lf
+*.scss text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+
+# Go files
+*.go text eol=lf
+*.mod text eol=lf
+*.sum text eol=lf
+
+# Proto files
+*.proto text eol=lf

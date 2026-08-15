@@ -1,0 +1,26 @@
+# Homelab Local Blueprint Configuration
+#
+# Copy this file to terraform.tfvars and fill in your values
+
+# Required: Your server's IP address
+server_ip = "192.168.1.100"
+
+# Stack name for identification
+stack_name = "my-homelab"
+
+# SSH configuration
+ssh_user             = "ubuntu"
+ssh_private_key_path = "~/.ssh/id_ed25519"
+
+# Admin user for services
+admin_username = "admin"
+
+# Services to install (set true/false)
+enable_pocketbase = true   # Backend & Auth
+enable_headscale  = true   # VPN Mesh Network
+enable_dokploy    = false  # GitOps PaaS (optional)
+enable_monitoring = false  # OpenTelemetry Collector baseline (optional)
+
+# kombify Techstack Control Plane connection (optional)
+# control_plane_url  = "http://your-control-plane:5260"
+# registration_token = "your-token-here"

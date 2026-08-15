@@ -1,0 +1,41 @@
+name: Open-Core CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
+        with:
+          version: 11.5.2
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - name: Prove self-hosted source closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          go build ./...
+          go build -trimpath -o techstack ./cmd/techstack
+      - name: Build operator UI
+        working-directory: app
+        run: |
+          pnpm install --frozen-lockfile
+          PUBLIC_KOMBIFY_EDITION=selfhost-oss pnpm build
+      - name: Build self-hosted image
+        run: docker build -t techstack:selfhost .

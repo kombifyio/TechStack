@@ -1,0 +1,102 @@
+#requires -Version 7.5
+
+param(
+    [Parameter(Mandatory = $true)][string]$OutputPath,
+    [string]$ReleaseTag = "v0.18.9",
+    [string]$ReleaseVersion = "0.18.9",
+    [string]$LinuxArchiveSHA256 = "debf4c44acc4415c00a08a8d205f205d5d2390f75ad9cdf0dcd229fc725a9d79",
+    [string]$WindowsArchiveSHA256 = "8db1d4253ef8bd128508ce0b28f79c8796fa157d4cd8f5501d76d9177b780ad5",
+    [string]$ReleaseIndexSHA256 = "f6f1a10c2606bff0bff4c418e8c9b9598c212cc4687be6a0951decc3d7836dac"
+)
+
+$ErrorActionPreference = "Stop"
+$tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("techstack-stackkit-bundle-" + [Guid]::NewGuid().ToString("N"))
+$releaseBase = "https://github.com/kombifyio/StackKits/releases/download/$ReleaseTag"
+$linuxName = "stackkits-basement-kit_${ReleaseVersion}_linux_amd64.tar.gz"
+$windowsName = "stackkits-basement-kit_${ReleaseVersion}_windows_amd64.zip"
+$linuxArchive = Join-Path $tempRoot $linuxName
+$windowsArchive = Join-Path $tempRoot $windowsName
+$linuxRelease = Join-Path $tempRoot "linux-release"
+$windowsRelease = Join-Path $tempRoot "windows-release"
+$bundleRoot = Join-Path $tempRoot "bundle"
+$stackKitRoot = Join-Path $bundleRoot ".stackkit"
+
+function Assert-SHA256([string]$Path, [string]$Expected) {
+    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
+    if ($actual -ne $Expected.ToLowerInvariant()) {
+        throw "StackKits release digest mismatch for $(Split-Path -Leaf $Path): $actual"
+    }
+}
+
+try {
+    New-Item -ItemType Directory -Force -Path $tempRoot, $linuxRelease, $windowsRelease, $stackKitRoot | Out-Null
+    Invoke-WebRequest -UseBasicParsing "$releaseBase/$linuxName" -OutFile $linuxArchive
+    Invoke-WebRequest -UseBasicParsing "$releaseBase/$windowsName" -OutFile $windowsArchive
+    Assert-SHA256 $linuxArchive $LinuxArchiveSHA256
+    Assert-SHA256 $windowsArchive $WindowsArchiveSHA256
+    tar --extract --gzip --file $linuxArchive --directory $linuxRelease
+    if ($LASTEXITCODE -ne 0) { throw "Could not extract the pinned Linux StackKits release." }
+    Expand-Archive -LiteralPath $windowsArchive -DestinationPath $windowsRelease
+
+    $linuxBinary = Join-Path $linuxRelease "stackkit"
+    $windowsBinary = Join-Path $windowsRelease "stackkit.exe"
+    if (!(Test-Path -LiteralPath $linuxBinary -PathType Leaf) -or !(Test-Path -LiteralPath $windowsBinary -PathType Leaf)) {
+        throw "Pinned StackKits release is missing its platform executable."
+    }
+    $binaryDir = Join-Path $stackKitRoot "bin"
+    New-Item -ItemType Directory -Force -Path $binaryDir | Out-Null
+    Copy-Item -LiteralPath $linuxBinary -Destination (Join-Path $binaryDir "stackkit")
+
+    foreach ($kit in @("basement-kit", "cloud-kit")) {
+        $templateWork = Join-Path $tempRoot ("template-work-" + $kit)
+        New-Item -ItemType Directory -Force -Path $templateWork | Out-Null
+        Push-Location $templateWork
+        try {
+            & $windowsBinary --no-log init $kit --non-interactive --name techstack-spec-template --owner-source=local --domain template.invalid
+            if ($LASTEXITCODE -ne 0) { throw "StackKits template initialization failed for $kit." }
+        } finally {
+            Pop-Location
+        }
+        $templateDir = Join-Path $stackKitRoot ("spec-templates\" + $kit)
+        New-Item -ItemType Directory -Force -Path $templateDir | Out-Null
+        Copy-Item -LiteralPath (Join-Path $templateWork "stack-spec.yaml") -Destination (Join-Path $templateDir "stack-spec.yaml")
+    }
+
+    $binarySHA256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $binaryDir "stackkit")).Hash.ToLowerInvariant()
+    $pin = [ordered]@{
+        schemaVersion = "techstack.stackkit-release-pin/v2"
+        kit = "cloud-kit"
+        version = $ReleaseTag
+        platform = [ordered]@{ os = "linux"; arch = "amd64" }
+        archiveSha256 = $LinuxArchiveSHA256
+        indexSha256 = $ReleaseIndexSHA256
+        binarySha256 = $binarySHA256
+        binaryPath = "/app/.stackkit/bin/stackkit"
+    }
+    $pin | ConvertTo-Json -Depth 4 -Compress | Set-Content -Encoding UTF8 -LiteralPath (Join-Path $stackKitRoot "stackkits-release-pin.json")
+
+    $resolvedOutput = [IO.Path]::GetFullPath($OutputPath)
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $resolvedOutput) | Out-Null
+    if (Test-Path -LiteralPath $resolvedOutput) { Remove-Item -Force -LiteralPath $resolvedOutput }
+    $gitTar = Join-Path (Split-Path -Parent (Split-Path -Parent (Get-Command git).Source)) "usr\bin\tar.exe"
+    if (!(Test-Path -LiteralPath $gitTar -PathType Leaf)) {
+        throw "Git for Windows tar is required to preserve executable Linux bundle permissions."
+    }
+    $gitTools = Split-Path -Parent $gitTar
+    $cygpath = Join-Path $gitTools "cygpath.exe"
+    $tarOutput = (& $cygpath -u $resolvedOutput).Trim()
+    $tarRoot = (& $cygpath -u $bundleRoot).Trim()
+    $previousPath = $env:PATH
+    try {
+        $env:PATH = "$gitTools;$previousPath"
+        & $gitTar --create --gzip --mode=0755 --file $tarOutput --directory $tarRoot .stackkit
+    } finally {
+        $env:PATH = $previousPath
+    }
+    if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $resolvedOutput -PathType Leaf)) {
+        throw "Could not create the StackKits Linux release bundle."
+    }
+    Write-Host "StackKits Linux bundle: $resolvedOutput"
+} finally {
+    if (Test-Path -LiteralPath $tempRoot) { Remove-Item -Recurse -Force -LiteralPath $tempRoot }
+}

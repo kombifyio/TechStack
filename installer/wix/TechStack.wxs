@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  kombify Techstack Windows client MSI.
+
+  This package is intentionally built from the exact Windows client stage
+  produced by scripts/package-windows-client.ps1. The stage contains the
+  WinForms/WebView2 shell, the embedded Techstack runtime and its portable
+  helper scripts. User state is not inside INSTALLFOLDER; it lives below
+  %LOCALAPPDATA%\kombify and is therefore retained by major upgrades and
+  uninstall.
+
+  The UpgradeCode is permanent. Do not regenerate it for a new release.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:fire="http://wixtoolset.org/schemas/v4/wxs/firewall">
+  <Package
+    Name="kombify Techstack"
+    Manufacturer="kombify"
+    Version="$(var.TechStackVersion)"
+    UpgradeCode="{F85F01B8-7612-47AB-9666-29BEC1BE0E10}"
+    ProductCode="*"
+    Language="1033"
+    Codepage="1252"
+    Scope="perMachine"
+    InstallerVersion="500">
+
+    <SummaryInformation Description="kombify Techstack Windows client" />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+    <MajorUpgrade
+      DowngradeErrorMessage="A newer version of kombify Techstack is already installed."
+      Schedule="afterInstallInitialize" />
+
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="KombifyDir" Name="kombify">
+        <Directory Id="INSTALLFOLDER" Name="techstack">
+          <Component Id="PrivateLANFirewall" Guid="*">
+            <RegistryValue
+              Root="HKLM"
+              Key="Software\kombify\Techstack"
+              Name="PrivateLANFirewall"
+              Type="integer"
+              Value="1"
+              KeyPath="yes" />
+            <fire:FirewallException
+              Id="PrivateLANEnrollmentFirewall"
+              Name="kombify Techstack private LAN enrollment"
+              Description="Allow the explicitly enabled Techstack enrollment listener from the local private subnet."
+              Port="5264"
+              Protocol="tcp"
+              Profile="private"
+              Scope="localSubnet" />
+          </Component>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="StartMenuDir" Name="kombify">
+        <Component Id="StartMenuShortcut" Guid="*">
+          <Shortcut
+            Id="TechStackClientShortcut"
+            Name="kombify Techstack Client"
+            Description="Open kombify Techstack"
+            Target="[INSTALLFOLDER]kombify-techstack-client.exe"
+            WorkingDirectory="INSTALLFOLDER"
+            Icon="TechStackIcon" />
+          <RegistryValue
+            Root="HKLM"
+            Key="Software\kombify\Techstack"
+            Name="StartMenuInstalled"
+            Type="integer"
+            Value="1"
+            KeyPath="yes" />
+          <RemoveFolder Id="RemoveStartMenuDir" Directory="StartMenuDir" On="uninstall" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <Icon Id="TechStackIcon" SourceFile="$(var.StageDir)\Assets\kombify-navy.ico" />
+    <Property Id="ARPPRODUCTICON" Value="TechStackIcon" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/kombifyio/TechStack" />
+
+    <Feature Id="ProductFeature" Title="kombify Techstack" Level="1">
+      <ComponentGroupRef Id="StageFiles" />
+      <ComponentRef Id="StartMenuShortcut" />
+      <ComponentRef Id="PrivateLANFirewall" />
+    </Feature>
+  </Package>
+
+</Wix>

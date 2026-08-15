@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "techstack.selfhost-runtime-contract-lock/v1",
+  "contractRoot": "github.com/kombifyio/techstack/internal/selfhostcontracts",
+  "packages": [
+    "runtimeinventory",
+    "runtimelease",
+    "stackaction"
+  ],
+  "fixtures": [
+    {
+      "path": "internal/runtimecontractcompat/testdata/runtimeinventory.json",
+      "sha256": "a352d3600d3cbe8fd0961a83da7871c9a39ddbe81da74868bd88bfb37a7da693"
+    },
+    {
+      "path": "internal/runtimecontractcompat/testdata/runtimelease.json",
+      "sha256": "d31e2c1688ce0d56950f7a95074b27bfcdd6340cc6d4f9d8b96f9054a5ac69d2"
+    },
+    {
+      "path": "internal/runtimecontractcompat/testdata/stackaction.json",
+      "sha256": "6664b64856a9b416e9a2b1b4bd3a2d25a7acdd610f758069ef1d6e852ce0b684"
+    }
+  ]
+}

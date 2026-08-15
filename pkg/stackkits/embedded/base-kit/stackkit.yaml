@@ -1,0 +1,55 @@
+# Base Homelab StackKit (Embedded Fallback)
+# TD-17-2: Aligned with stackkit/v1 format.
+# For full functionality, use the StackKits repository version.
+
+apiVersion: stackkit/v1
+kind: StackKit
+
+metadata:
+  name: base-kit
+  version: 1.0.0
+  description: Basic homelab infrastructure setup with essential services (embedded fallback)
+  author: kombify Techstack Team
+  license: Apache-2.0
+  tags:
+    - homelab
+    - infrastructure
+    - embedded
+    - fallback
+
+supportedOS:
+  - linux-amd64
+
+requirements:
+  minimum:
+    cpu: 2
+    memory: 4
+    disk: 20
+
+modes:
+  simple:
+    description: Single-node Docker deployment
+    templateDir: templates/simple
+    engine: opentofu
+    requires:
+      - opentofu>=1.6.0
+    recommended_for:
+      - single-server
+  advanced:
+    description: Multi-node Terramate deployment
+    templateDir: templates/advanced
+    engine: terramate
+    requires:
+      - opentofu>=1.6.0
+      - terramate>=0.11
+    recommended_for:
+      - multi-node
+      - docker-swarm
+
+features:
+  reverse_proxy:
+    default: traefik
+  dashboard:
+    default: homepage
+  container_management:
+    default: portainer

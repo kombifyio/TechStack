@@ -1,0 +1,92 @@
+name: Open-Core Release
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          fetch-depth: 0
+      - name: Verify immutable numeric identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          test "$(tr -d '[:space:]' < VERSION)" = "$version"
+      - name: Build exact public image
+        env:
+          IMAGE: ghcr.io/kombifyio/techstack
+        run: |
+          set -euo pipefail
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker build \
+            --build-arg GIT_COMMIT="${GITHUB_SHA}" \
+            --build-arg TECHSTACK_PRODUCT_VERSION="${GITHUB_REF_NAME#v}" \
+            -t "${IMAGE}:${GITHUB_REF_NAME}" \
+            -t "${IMAGE}:sha-${GITHUB_SHA}" .
+          docker push "${IMAGE}:${GITHUB_REF_NAME}"
+          docker push "${IMAGE}:sha-${GITHUB_SHA}"
+      - uses: softprops/action-gh-release@1c993d7c9d1f59966e8fef8aa3404e3e9071d70b
+        with:
+          prerelease: false
+          make_latest: true
+          files: |
+            deploy/selfhosted/docker-compose.yml
+            deploy/selfhosted/.env.example
+
+  windows-client:
+    needs: release
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
+        with:
+          go-version-file: go.mod
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - name: Install public UI dependencies
+        shell: pwsh
+        run: pnpm --dir app install --frozen-lockfile
+      - name: Install WiX and Burn extension
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 4.0.6
+          $env:PATH = "$env:USERPROFILE\.dotnet\tools;$env:PATH"
+          wix extension add WixToolset.Bal.wixext/4.0.6
+          wix extension add WixToolset.Firewall.wixext/4.0.6
+          wix --version
+      - name: Build unsigned Windows setup assets
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          pwsh -NoProfile -File .\scripts\package-windows-client.ps1 -Version $version
+      - uses: softprops/action-gh-release@1c993d7c9d1f59966e8fef8aa3404e3e9071d70b
+        with:
+          prerelease: false
+          make_latest: true
+          files: |
+            dist/windows-client/kombify-Techstack-Setup.exe
+            dist/windows-client/kombify-Techstack-x64.msi
+            dist/windows-client/kombify-techstack-client_*_Windows_x86_64.zip
+            dist/windows-client/kombify-techstack-client_*_Windows_x86_64.zip.sha256
+            dist/windows-client/SHA256SUMS.txt
+            dist/windows-client/UNSIGNED-WINDOWS-RELEASE.txt

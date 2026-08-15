@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "edition": "selfhost-oss",
+  "auth": "local-owner",
+  "billing": false,
+  "fga": false,
+  "hosted_feature_flags": false,
+  "mandatory_telemetry": false
+}

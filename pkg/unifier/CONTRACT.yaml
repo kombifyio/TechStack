@@ -1,0 +1,99 @@
+# CONTRACT.yaml - Technical specification derived from CONTRACT.md
+# This file is auto-synced. Manual edits to 'module' and 'features' sections are preserved.
+
+meta:
+  source_hash: "sha256:d4d6f87d2eb15fde048cbf0d09e977f47fa4a11a4f19c03a1f2860138c104890"
+  last_sync: "2026-04-18T19:55:00Z"
+  tier: complex
+  version: "1.0"
+
+module:
+  name: "unifier-engine"
+  type: core
+  path: "./pkg/unifier"
+
+features:
+  - id: "intentspec-parsing"
+    description: "Phase 1: IntentSpec parsing and pre-validation"
+    status: implemented
+    entry_point: "./pkg/unifier/engine.go"
+    tests: "./pkg/unifier/engine_test.go"
+
+  - id: "requirements-spec"
+    description: "Phase 2: RequirementsSpec generation (StackKit, Add-Ons, workers)"
+    status: implemented
+    entry_point: "./internal/routes/unifier_handlers_pipeline.go"
+    tests: "./internal/routes/unifier_handlers_pipeline_test.go"
+
+  - id: "worker-registry"
+    description: "Phase 3+4: Worker Registry integration and system-info collection"
+    status: implemented
+    entry_point: "./pkg/grpcserver/server.go"
+    tests: "./pkg/grpcserver/server_test.go"
+
+  - id: "unified-spec"
+    description: "Phase 5: UnifiedSpec generation with placement engine"
+    status: in-progress
+    entry_point: "./pkg/placement/"
+    tests: "./pkg/placement/"
+
+  - id: "iac-generation"
+    description: "Phase 6: IaC generation (tfvars.json + HCL templates)"
+    status: implemented
+    entry_point: "./internal/routes/unifier_handlers_iac.go"
+    tests: "./pkg/tofu/runner_test.go"
+
+  - id: "pipeline-api"
+    description: "Pipeline API endpoints (POST /api/v1/unifier/pipeline)"
+    status: implemented
+    entry_point: "./internal/routes/unifier_api.go"
+    tests: "./internal/routes/unifier_api_test.go"
+
+  - id: "spec-persistence"
+    description: "Spec persistence (RequirementsSpec + UnifiedSpec as YAML files)"
+    status: planned
+    entry_point: "./pkg/unifier/"
+    tests: "./pkg/unifier/"
+
+  - id: "cue-addon-merging"
+    description: "Full CUE Add-On merging (target: CUE unification)"
+    status: planned
+    entry_point: "./pkg/unifier/"
+    tests: "./pkg/unifier/"
+
+constraints:
+  must:
+    - "Every spec passes CUE validation before execution"
+    - "IntentSpec is immutable — system never modifies user intent"
+    - "All decisions are traceable (RequirementsSpec, UnifiedSpec persisted)"
+    - "UnifiedSpec format is StackKit-dependent"
+  must_not:
+    - "Contain hardware details in IntentSpec"
+    - "Skip CUE validation for any phase transition"
+    - "Modify StackKit CUE schemas at runtime"
+
+relationships:
+  depends_on:
+    - "./pkg/core/CONTRACT.yaml"
+  consumed_by:
+    - "./internal/routes/"
+    - "./app/"
+
+validation:
+  exports:
+    - "Engine"
+    - "Pipeline"
+    - "ExtendedPipeline"
+    - "Loader"
+  test_pattern: "*_test.go"
+  custom_script: null
+
+changelog:
+  - date: "2026-04-18"
+    version: "1.0"
+    change: "Hash resync after contract drift preflight"
+    author: "codex"
+  - date: "2026-02-12"
+    version: "1.0"
+    change: "Initial contract — aligned with ARCHITECTURE_V2.md"
+    author: "system"

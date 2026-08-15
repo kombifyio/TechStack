@@ -1,0 +1,456 @@
+openapi: 3.1.0
+info:
+  title: kombify-TechStack Internal Runtime Lease API
+  version: 1.0.0
+  description: >-
+    Private servicecall contract for the authoritative RuntimeLease boundary.
+    Cloud may read a tenant-bound lease. TechStack derives the tenant from the
+    signed on_behalf_of org and never accepts a client tenant override. Lease
+    creation and provider execution remain unavailable until the separate
+    TechStack-native provider-control boundary can admit them atomically.
+servers:
+  - url: http://techstack.internal
+    description: Operator-configured private service origin
+tags:
+  - name: RuntimeLease
+  - name: DomainRouting
+security:
+  - servicecallAuth: []
+paths:
+  /api/internal/stacks/domain-attach:
+    post:
+      operationId: ensureInternalStackDomainRouting
+      tags: [DomainRouting]
+      summary: Delegate a Cloud-managed domain to one exact stack runtime
+      description: >-
+        Cloud-only compatibility delegate for the canonical stack-routing
+        application service. The signed token supplies tenant and owner authority;
+        the request must identify the exact stack, server, and managed RuntimeLease.
+        TechStack persists a revisioned routing overlay and never auto-selects a
+        stack/server or creates a provider VM. A 202 result includes the real deploy
+        job selected for the exact active foundation lease; applied remains false
+        until runtime observation proves convergence.
+      security:
+        - cloudServiceBearer: []
+      parameters:
+        - $ref: "#/components/parameters/RoutingIdempotencyKey"
+        - $ref: "#/components/parameters/RoutingIfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InternalDomainAttachRequest"
+      responses:
+        "200":
+          description: Desired routing state persisted without a pending rollout request.
+          headers:
+            ETag:
+              description: Persisted routing revision.
+              schema: { type: string, example: '"2"' }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalDomainAttachSuccess"
+        "202":
+          description: Desired routing state persisted; rollout is honestly pending.
+          headers:
+            ETag:
+              description: Persisted routing revision.
+              schema: { type: string, example: '"2"' }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalDomainAttachSuccess"
+        "400":
+          description: Invalid body, revision header, or mismatched revision inputs.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HTTPErrorEnvelope" }
+        "403":
+          description: Invalid Cloud service identity or wrong stack owner/target.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HTTPErrorEnvelope" }
+        "404":
+          description: Exact stack, server, or lease target was not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HTTPErrorEnvelope" }
+        "409":
+          description: Idempotency-Key was already used for a different request.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HTTPErrorEnvelope" }
+        "412":
+          description: Expected routing revision does not match current state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HTTPErrorEnvelope" }
+        "422":
+          description: Exact IDs, tenant authority, domain, or provenance are invalid.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HTTPErrorEnvelope" }
+        "503":
+          description: Routing persistence or service authentication is unavailable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HTTPErrorEnvelope" }
+
+  /api/internal/stacks/{stack_id}/ingress:
+    get:
+      operationId: getInternalStackIngress
+      tags: [DomainRouting]
+      summary: Resolve ingress for one exact stack/server/lease tuple
+      description: >-
+        Read-only Cloud reconciliation surface. The target tuple is mandatory and
+        is validated against active RuntimeLease authority; TechStack never falls
+        back to the first approved worker or another stack server.
+      security:
+        - cloudServiceBearer: []
+      parameters:
+        - name: stack_id
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+        - name: server_id
+          in: query
+          required: true
+          schema: { type: string, minLength: 1 }
+        - name: lease_id
+          in: query
+          required: true
+          schema: { type: string, minLength: 1 }
+      responses:
+        "200":
+          description: Exact target ingress address is available.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InternalIngressSuccess" }
+        "403":
+          description: Invalid service identity or wrong stack owner.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HTTPErrorEnvelope" }
+        "404":
+          description: Exact target is missing or its IPv4 ingress is still pending (reason_code=ingress_ipv4_pending).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HTTPErrorEnvelope" }
+        "422":
+          description: Exact target query is incomplete or invalid.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HTTPErrorEnvelope" }
+        "503":
+          description: RuntimeLease authority is unavailable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HTTPErrorEnvelope" }
+
+  /api/v1/internal/vm-leases/{lease_id}:
+    get:
+      operationId: getInternalRuntimeLease
+      tags: [RuntimeLease]
+      summary: Read one RuntimeLease from the signed caller tenant
+      description: >-
+        The only product caller is Cloud. Tenant query parameters are rejected;
+        the on_behalf_of org is the only tenant authority.
+      parameters:
+        - $ref: "#/components/parameters/LeaseId"
+      responses:
+        "200":
+          description: Tenant-bound RuntimeLease
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RuntimeLease"
+        "403":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+        "404":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+        "503":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+components:
+  securitySchemes:
+    servicecallAuth:
+      type: apiKey
+      in: header
+      name: X-Kombify-Service-Auth
+      description: >-
+        Short-lived HS256 servicecall JWT. Cloud calls require non-empty
+        on_behalf_of.sub and on_behalf_of.org_id claims.
+    cloudServiceBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >-
+        Short-lived HS256 Cloud service JWT with iss=kombify-cloud,
+        aud=kombify-techstack, stack:domain.attach scope, sub=owner, and
+        org_id=tenant. This is a private compatibility boundary.
+  parameters:
+    LeaseId:
+      name: lease_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    RoutingIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256
+    RoutingIfMatch:
+      name: If-Match
+      in: header
+      required: false
+      description: Optional optimistic-concurrency routing revision, for example `"2"`.
+      schema: { type: string }
+  responses:
+    RuntimeLeaseDenied:
+      description: Request denied before unsafe persistence or access
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/InternalErrorEnvelope"
+  schemas:
+    InternalDomainAttachRequest:
+      type: object
+      required: [stack_id, server_id, lease_id, domain, cf_zone_id, dns_provider, source]
+      additionalProperties: false
+      properties:
+        stack_id:
+          type: string
+          minLength: 1
+        server_id:
+          type: string
+          minLength: 1
+        lease_id:
+          type: string
+          minLength: 1
+          description: Exact managed RuntimeLease; the Cloud delegate never targets an unleased local runtime.
+        domain:
+          type: string
+          minLength: 1
+        cf_zone_id:
+          type: string
+          minLength: 1
+          description: Non-secret Cloudflare zone reference required by this Cloud compatibility delegate.
+        dns_provider:
+          type: string
+          minLength: 1
+        source:
+          type: string
+          minLength: 1
+        external_domain_id: { type: string }
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Body compatibility alias for If-Match; both must agree when supplied.
+        ensure_rollout:
+          type: boolean
+          default: true
+
+    InternalDomainAttachSuccess:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          $ref: "#/components/schemas/InternalDomainAttachResult"
+        meta:
+          $ref: "#/components/schemas/HTTPResponseMeta"
+
+    InternalDomainAttachResult:
+      type: object
+      required: [attachId, status, stack_id, server_id, lease_id, domain, revision, applied, routing]
+      properties:
+        attachId:
+          type: string
+          description: Real exact-target deploy job ID for a 202 response.
+        status: { type: string, enum: [not_requested, pending, completed, failed] }
+        stack_id: { type: string }
+        server_id: { type: string }
+        lease_id: { type: string }
+        domain: { type: string }
+        revision: { type: integer, format: int64, minimum: 1 }
+        applied: { type: boolean }
+        reason_code: { type: string, description: Optional explicit rollout reason code. }
+        routing:
+          $ref: "#/components/schemas/StackRoutingView"
+
+    StackRoutingView:
+      type: object
+      required: [desired, observed, rollout]
+      properties:
+        desired:
+          type: object
+          required: [stack_id, server_id, revision, mode, domain, provenance, rollout_status, created_at, updated_at]
+          properties:
+            stack_id: { type: string }
+            server_id: { type: string }
+            lease_id: { type: string }
+            revision: { type: integer, format: int64, minimum: 1 }
+            mode: { type: string, const: custom-domain }
+            domain: { type: string }
+            provenance:
+              type: object
+              required: [source, dns_provider]
+              properties:
+                source: { type: string }
+                dns_provider: { type: string }
+                zone_id: { type: string }
+                external_domain_id: { type: string }
+            rollout_status: { type: string, enum: [not_requested, pending, completed, failed] }
+            rollout_job_id: { type: string }
+            reason_code: { type: string }
+            created_at: { type: string, format: date-time }
+            updated_at: { type: string, format: date-time }
+        observed:
+          type: object
+          required: [status, applied, applied_revision]
+          properties:
+            status:
+              type: string
+              enum: [unknown, pending, applied, failed]
+              description: Independent DNS, TLS, and runtime convergence state; rollout completion alone remains pending.
+            applied: { type: boolean }
+            applied_revision: { type: integer, format: int64, minimum: 0 }
+        rollout:
+          type: object
+          required: [status]
+          properties:
+            status: { type: string, enum: [not_requested, pending, completed, failed] }
+            job_id: { type: string }
+            reason_code: { type: string }
+        idempotent_replay: { type: boolean }
+
+    InternalIngressSuccess:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          required: [ingress_ip, address, stack_id, server_id, lease_id]
+          properties:
+            ingress_ip: { type: string }
+            address: { type: string }
+            stack_id: { type: string }
+            server_id: { type: string }
+            lease_id: { type: string }
+        meta:
+          $ref: "#/components/schemas/HTTPResponseMeta"
+
+    HTTPResponseMeta:
+      type: object
+      properties:
+        request_id: { type: string }
+        timestamp: { type: string, format: date-time }
+
+    HTTPErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            details: {}
+
+    RuntimeLease:
+      type: object
+      required:
+        - id
+        - subject
+        - resource
+        - desired_state
+        - billing_mode
+        - lifecycle_class
+        - restart_policy
+        - recreate_policy
+        - valid_from
+        - valid_until
+      additionalProperties: false
+      properties:
+        id: { type: string }
+        subject:
+          $ref: "#/components/schemas/RuntimeLeaseSubject"
+        resource:
+          $ref: "#/components/schemas/RuntimeLeaseResource"
+        desired_state:
+          type: string
+          enum: [running, stopped, archived]
+        billing_mode:
+          type: string
+          enum: [subscription]
+        lifecycle_class:
+          type: string
+          enum: [subscription]
+        restart_policy:
+          type: string
+          enum: [none, on_unexpected_stop]
+        recreate_policy:
+          type: string
+          enum: [never, manual, automatic_if_stateless]
+        valid_from: { type: string, format: date-time }
+        valid_until: { type: string, format: date-time }
+        renewed_at: { type: string, format: date-time }
+        cancelled_at: { type: [string, "null"], format: date-time }
+        metadata:
+          type: object
+          additionalProperties: { type: string }
+    RuntimeLeaseSubject:
+      type: object
+      required: [kind, id]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum: [user, org]
+        id: { type: string }
+        org_id: { type: string }
+    RuntimeLeaseResource:
+      type: object
+      required: [provider_id]
+      additionalProperties: false
+      properties:
+        provider_id: { type: string }
+        engine_vm_id: { type: string }
+        simulation_id: { type: string }
+        vm_id: { type: string }
+        region: { type: string }
+    InternalErrorEnvelope:
+      type: object
+      required: [error_code, reason_code, required_features, missing_features, retryable, user_guidance]
+      additionalProperties: true
+      properties:
+        error_code: { type: string }
+        reason_code: { type: string }
+        required_features:
+          type: array
+          items: { type: string }
+        missing_features:
+          type: array
+          items: { type: string }
+        retryable: { type: boolean }
+        user_guidance:
+          $ref: "#/components/schemas/UserGuidance"
+    UserGuidance:
+      type: object
+      required: [title, body, next_steps]
+      additionalProperties: false
+      properties:
+        title: { type: string }
+        body: { type: string }
+        next_steps:
+          type: array
+          minItems: 1
+          items: { type: string }

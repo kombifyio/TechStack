@@ -1,0 +1,192 @@
+# Binaries
+/techstack
+/techstack-dev
+/techstack-dev.exe
+/bin/
+/dist/
+
+# Hygiene / audit working artifacts
+AUDIT-REPORT.md
+.agents/
+.codex-remote-attachments/
+
+# Environment files
+.env
+.env.local
+!.env.example
+
+# Build artifacts
+/site/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+!app/Dockerfile.test
+*.out
+
+# Go
+vendor/
+*.cover
+coverage.out
+*.pprof
+
+# Frontend - App (Dashboard)
+app/node_modules/
+app/.svelte-kit/
+app/build/
+app/build-static/
+app/dist/
+app/.env
+app/.env.local
+internal/frontend/dist/
+# TechStack uses Bun 1.3 text lockfiles (`app/bun.lock`) as canonical.
+app/bun.lockb
+
+# Frontend - Website (Marketing)
+website/node_modules/
+website/.svelte-kit/
+website/build/
+website/dist/
+website/.env
+website/.env.local
+
+# Legacy web folder (renamed to website)
+web/node_modules/
+web/.svelte-kit/
+web/build/
+web/dist/
+web/.env
+web/.env.local
+
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# IDE
+.vscode/*
+# Keep these files tracked for shared config
+!.vscode/mcp.json
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Local MCP secrets
+.kilocode/*.local.json
+.kilocode/*secret*.json
+
+# Environment
+.env
+.env.local
+.env.*.local
+*.local
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+.beads/daemon-error
+
+# Local PocketBase / SQLite data dirs (defensive — *.db already covers contents)
+/pb_data/
+/pb_data_dev/
+/data/
+
+# OpenTofu / Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+.terraform.lock.hcl
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+.tmp.driveupload/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Testing
+coverage/
+reports/
+.nyc_output/
+*_coverage
+artifacts/oss-byos-gate/
+artifacts/runtime-e2e/
+artifacts/provider-lifecycle-gate/
+
+# Playwright
+web/playwright-report/
+web/playwright/.cache/
+web/test-results/
+
+# Playwright artifacts (repo root / dashboard app)
+.playwright-mcp/
+playwright-results.txt
+app/test-results.json
+app/test-results/
+app/test-results-*/
+app/test-results-*
+app/playwright-report/
+app/playwright-report-*/
+app/playwright-report-*
+website/test-results/
+website/playwright-report/
+
+# Build
+.build/
+out/
+# scrub script output (publicization)
+out/stackkits-public.git
+/tmp/stackkits-public
+
+# Backups
+/backups/
+/backups/techstack/
+
+# External MCP tools (cloned for local dev)
+coolify-mcp-enhanced/
+
+# Documentation build
+docs/.vitepress/dist/
+docs/.vitepress/cache/
+site/
+
+# Generated protobuf files
+# Canonical location: pkg/api/agentpb/
+*.pb.go
+!pkg/api/agentpb/*.pb.go
+
+# Prevent duplicate generated files in wrong locations
+/agent.pb.go
+/agent_grpc.pb.go
+/api/proto/*.pb.go
+
+# .NET desktop client build output
+clients/windows/**/bin/
+clients/windows/**/obj/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+.beads-credential-key

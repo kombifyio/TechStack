@@ -1,0 +1,45 @@
+services:
+  techstack:
+    image: ${TECHSTACK_IMAGE:-ghcr.io/kombifyio/techstack}:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "${TECHSTACK_BIND:-127.0.0.1}:${TECHSTACK_PORT:-5260}:5260"
+      - "${TECHSTACK_GRPC_BIND:-127.0.0.1}:${TECHSTACK_GRPC_PORT:-5263}:5263"
+    environment:
+      KOMBIFY_EDITION: selfhost-oss
+      TECHSTACK_AUTH_MODE: local
+      TECHSTACK_DATA_DIR: /data
+      TECHSTACK_V2_SESSION_SECRET: ${TECHSTACK_V2_SESSION_SECRET:?Generate and set TECHSTACK_V2_SESSION_SECRET}
+      DATABASE_URL: postgres://techstack:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/techstack?sslmode=disable
+      TECHSTACK_PUBLIC_ORIGIN: ${TECHSTACK_PUBLIC_ORIGIN:-}
+      TECHSTACK_CORS_ORIGINS: ${TECHSTACK_CORS_ORIGINS:-}
+    volumes:
+      - techstack-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:5260/api/v1/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: techstack
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_DB: techstack
+    volumes:
+      - techstack-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U techstack -d techstack"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  techstack-data:
+  techstack-postgres-data:

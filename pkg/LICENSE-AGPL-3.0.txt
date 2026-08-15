@@ -1,0 +1,6 @@
+This directory is part of the kombifyTechstack server/core and is licensed
+under AGPL-3.0-or-later. See the repository root `/LICENSE-AGPL-3.0.txt`
+for the full license text and `docs/LICENSES.md` for the licensing map.
+
+SPDX-License-Identifier: AGPL-3.0-or-later
+Copyright (c) 2026 Kombiverse Labs

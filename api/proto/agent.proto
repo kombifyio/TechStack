@@ -1,0 +1,600 @@
+// kombify Techstack Agent Protocol
+// gRPC with mTLS for secure, bidirectional agent communication
+
+syntax = "proto3";
+
+package techstack.agent.v1;
+
+option go_package = "github.com/KombiverseLabs/kombifyTechstack/pkg/api/agentpb";
+
+// AgentService handles communication between Core and Agents
+service AgentService {
+  // Register authenticates and registers an agent with the core
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  
+  // Heartbeat maintains connection and reports agent status
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  
+  // CommandStream is a bidirectional stream for real-time commands
+  rpc CommandStream(stream AgentMessage) returns (stream CoreMessage);
+  
+  // ReportStatus sends detailed status updates from agent to core
+  rpc ReportStatus(StatusReport) returns (StatusAck);
+
+  // RunPreChecks executes pre-deployment checks on the agent (H6a)
+  rpc RunPreChecks(PreCheckRequest) returns (PreCheckResponse);
+
+  // PushMetrics receives batched metric samples from agents (Monitoring 2.0)
+  rpc PushMetrics(MetricsBatch) returns (PushAck);
+
+  // --- Runtime Intelligence Layer (RIL) RPCs ---
+
+  // GetSystemInfo returns a full snapshot of the server's state.
+  rpc GetSystemInfo(SystemInfoRequest) returns (SystemInfoResponse);
+
+  // ReportHealEvent reports an autonomous self-heal action taken by the watchdog.
+  rpc ReportHealEvent(HealEventReport) returns (HealEventAck);
+
+  // ReportDetection reports a detected issue that requires user attention.
+  rpc ReportDetection(DetectionReport) returns (DetectionAck);
+
+  // StreamLogs opens a server-side stream of log entries for a given service.
+  rpc StreamLogs(StreamLogsRequest) returns (stream LogEntry);
+
+  // GetUpdateCandidates returns available OS/package/container updates.
+  rpc GetUpdateCandidates(UpdateCandidatesRequest) returns (UpdateCandidatesResponse);
+}
+
+// =============================================================================
+// IaC-First Command Enums (Sprint 3: Infrastructure as Code Operations)
+// =============================================================================
+
+// TofuOperation defines the OpenTofu operations that can be executed
+enum TofuOperation {
+  TOFU_OPERATION_UNSPECIFIED = 0;
+  TOFU_OPERATION_INIT = 1;      // Initialize working directory
+  TOFU_OPERATION_PLAN = 2;      // Create execution plan
+  TOFU_OPERATION_APPLY = 3;     // Apply changes to infrastructure
+  TOFU_OPERATION_DESTROY = 4;   // Destroy managed infrastructure
+  TOFU_OPERATION_OUTPUT = 5;    // Read outputs from state
+}
+
+// TerramateOperation defines Terramate orchestration operations (Day-2)
+enum TerramateOperation {
+  TERRAMATE_OPERATION_UNSPECIFIED = 0;
+  TERRAMATE_OPERATION_RUN = 1;          // Run commands across stacks
+  TERRAMATE_OPERATION_SYNC_DRIFT = 2;   // Synchronize drift detection
+  TERRAMATE_OPERATION_LIST_CHANGED = 3; // List changed stacks
+}
+
+// StackKitOperation is the closed public lifecycle command set that Core may
+// ask an enrolled agent to run. It deliberately carries no arbitrary argv.
+enum StackKitOperation {
+  STACKKIT_OPERATION_UNSPECIFIED = 0;
+  STACKKIT_OPERATION_VALIDATE = 1;
+  STACKKIT_OPERATION_GENERATE = 2;
+  STACKKIT_OPERATION_APPLY = 3;
+  STACKKIT_OPERATION_VERIFY = 4;
+  STACKKIT_OPERATION_UPGRADE = 5;
+  STACKKIT_OPERATION_DRIFT_DETECT = 6;
+  STACKKIT_OPERATION_DRIFT_RECONCILE = 7;
+  STACKKIT_OPERATION_PLAN = 8;
+  STACKKIT_OPERATION_INIT = 9;
+  STACKKIT_OPERATION_SERVICE_START = 10;
+  STACKKIT_OPERATION_SERVICE_STOP = 11;
+  STACKKIT_OPERATION_SERVICE_RESTART = 12;
+  STACKKIT_OPERATION_SERVICE_LOGS = 13;
+}
+
+enum StackKitDriftMode {
+  STACKKIT_DRIFT_MODE_UNSPECIFIED = 0;
+  STACKKIT_DRIFT_MODE_STANDARD = 1;
+  STACKKIT_DRIFT_MODE_ADVANCED = 2;
+}
+
+// RegisterRequest is sent when an agent first connects
+message RegisterRequest {
+  string agent_id = 1;           // Unique agent identifier (derived from cert CN)
+  string hostname = 2;           // Machine hostname
+  string os = 3;                 // Operating system (linux, darwin)
+  string arch = 4;               // Architecture (amd64, arm64)
+  string version = 5;            // Agent binary version
+  repeated string capabilities = 6; // Supported features
+}
+
+message RegisterResponse {
+  bool accepted = 1;
+  string assigned_id = 2;        // Core-assigned agent ID
+  string cluster_secret = 3;     // Shared secret for additional auth
+  AgentConfig config = 4;        // Initial configuration
+}
+
+message AgentConfig {
+  int32 heartbeat_interval_seconds = 1;
+  int32 status_report_interval_seconds = 2;
+  map<string, string> environment = 3;
+  repeated string enabled_features = 4;
+}
+
+// Heartbeat messages
+message HeartbeatRequest {
+  string agent_id = 1;
+  int64 timestamp_unix = 2;
+  ResourceUsage resources = 3;
+}
+
+message HeartbeatResponse {
+  bool acknowledged = 1;
+  int64 server_timestamp_unix = 2;
+  repeated PendingCommand pending_commands = 3;
+}
+
+message ResourceUsage {
+  double cpu_percent = 1;
+  int64 memory_used_bytes = 2;
+  int64 memory_total_bytes = 3;
+  int64 disk_used_bytes = 4;
+  int64 disk_total_bytes = 5;
+}
+
+// Command streaming
+message AgentMessage {
+  string agent_id = 1;
+  oneof payload {
+    CommandResult command_result = 2;
+    LogEntry log_entry = 3;
+    ServiceStatus service_status = 4;
+    TofuResult tofu_result = 5;           // IaC-First: OpenTofu execution result
+    StackKitResult stackkit_result = 6;   // Typed StackKits lifecycle result
+  }
+}
+
+message CoreMessage {
+  string message_id = 1;
+  oneof payload {
+    ExecuteCommand execute = 2;
+    DeployService deploy = 3;
+    ConfigUpdate config_update = 4;
+    ShutdownRequest shutdown = 5;
+    TofuCommand tofu_command = 6;         // IaC-First: OpenTofu operation
+    TerramateCommand terramate_command = 7; // IaC-First: Terramate orchestration (Day-2)
+    StackKitCommand stackkit_command = 8; // Typed StackKits lifecycle operation
+  }
+}
+
+message ExecuteCommand {
+  string command_id = 1;
+  string command = 2;
+  repeated string args = 3;
+  map<string, string> environment = 4;
+  string working_directory = 5;
+  int32 timeout_seconds = 6;
+}
+
+message CommandResult {
+  string command_id = 1;
+  int32 exit_code = 2;
+  string stdout = 3;
+  string stderr = 4;
+  int64 started_at_unix = 5;
+  int64 finished_at_unix = 6;
+}
+
+message DeployService {
+  string service_id = 1;
+  string service_type = 2;      // docker, systemd, binary
+  string image = 3;             // Docker image or binary path
+  map<string, string> environment = 4;
+  repeated string ports = 5;
+  repeated VolumeMount volumes = 6;
+}
+
+message VolumeMount {
+  string source = 1;
+  string destination = 2;
+  bool readonly = 3;
+}
+
+message ConfigUpdate {
+  AgentConfig new_config = 1;
+}
+
+message ShutdownRequest {
+  string reason = 1;
+  bool graceful = 2;
+  int32 timeout_seconds = 3;
+}
+
+message LogEntry {
+  int64 timestamp_unix = 1;
+  string level = 2;             // debug, info, warn, error
+  string message = 3;
+  map<string, string> fields = 4;
+}
+
+message ServiceStatus {
+  string service_id = 1;
+  string state = 2;             // starting, running, stopped, error
+  bool healthy = 3;
+  string health_message = 4;
+  int64 uptime_seconds = 5;
+}
+
+message PendingCommand {
+  string command_id = 1;
+  string type = 2;
+  int32 priority = 3;
+}
+
+// Status reporting
+message StatusReport {
+  string agent_id = 1;
+  int64 timestamp_unix = 2;
+  NodeStatus node = 3;
+  repeated ServiceStatus services = 4;
+  NetworkStatus network = 5;
+}
+
+message NodeStatus {
+  string state = 1;             // healthy, degraded, critical
+  ResourceUsage resources = 2;
+  int64 uptime_seconds = 3;
+  string kernel_version = 4;
+  int32 running_containers = 5;
+}
+
+message NetworkStatus {
+  string public_ip = 1;
+  string private_ip = 2;
+  string tailscale_ip = 3;
+  bool vpn_connected = 4;
+  repeated string open_ports = 5;
+}
+
+message StatusAck {
+  bool received = 1;
+  int64 next_report_in_seconds = 2;
+}
+
+// =============================================================================
+// IaC-First Messages (Sprint 3: OpenTofu & Terramate Agent Commands)
+// =============================================================================
+
+// TofuCommand sends an OpenTofu operation to an agent for execution.
+// The agent executes tofu commands in the specified working directory.
+message TofuCommand {
+  string command_id = 1;              // Unique command identifier for tracking
+  TofuOperation operation = 2;        // Operation to perform (INIT, PLAN, APPLY, etc.)
+  string working_directory = 3;       // Directory containing tofu configuration
+  bytes hcl_content = 4;              // Optional: HCL configuration to deploy (creates main.tf)
+  bytes tfvars_json = 5;              // Optional: Variable values as JSON (creates terraform.tfvars.json)
+  int32 timeout_seconds = 6;          // Maximum execution time (default: 300s)
+  map<string, string> environment = 7; // Additional environment variables for tofu
+  bool auto_approve = 8;              // Skip interactive approval (for apply/destroy)
+  repeated string targets = 9;        // Optional: Specific resources to target (-target flag)
+}
+
+// TofuResult returns the outcome of an OpenTofu operation.
+message TofuResult {
+  string command_id = 1;              // Reference to the TofuCommand.command_id
+  bool success = 2;                   // True if operation completed successfully
+  string stdout = 3;                  // Standard output from tofu command
+  string stderr = 4;                  // Standard error from tofu command
+  map<string, string> outputs = 5;    // Tofu outputs (for OUTPUT operation or after APPLY)
+  int32 resources_changed = 6;        // Number of resources added/changed/destroyed
+  string plan_summary = 7;            // Human-readable plan summary (for PLAN operation)
+  int32 exit_code = 8;                // Process exit code
+  int64 started_at_unix = 9;          // Timestamp when execution started
+  int64 finished_at_unix = 10;        // Timestamp when execution completed
+  string state_hash = 11;             // Hash of the resulting state file (for drift detection)
+}
+
+// TerramateCommand sends a Terramate orchestration operation to an agent (Day-2 feature).
+// Terramate provides stack orchestration and drift detection capabilities.
+message TerramateCommand {
+  string command_id = 1;              // Unique command identifier for tracking
+  TerramateOperation operation = 2;   // Operation to perform (RUN, SYNC_DRIFT, etc.)
+  string working_directory = 3;       // Terramate project root directory
+  repeated string args = 4;           // Additional arguments for the terramate command
+  int32 timeout_seconds = 5;          // Maximum execution time (default: 600s)
+  map<string, string> environment = 6; // Additional environment variables
+  repeated string tags = 7;           // Filter stacks by tags (--tags flag)
+  bool changed_only = 8;              // Only operate on changed stacks (--changed flag)
+}
+
+// TerramateResult returns the outcome of a Terramate operation.
+message TerramateResult {
+  string command_id = 1;              // Reference to the TerramateCommand.command_id
+  bool success = 2;                   // True if operation completed successfully
+  string stdout = 3;                  // Standard output from terramate command
+  string stderr = 4;                  // Standard error from terramate command
+  int32 exit_code = 5;                // Process exit code
+  repeated string changed_stacks = 6; // List of stacks that have changes (for LIST_CHANGED)
+  repeated DriftReport drift_reports = 7; // Drift detection results (for SYNC_DRIFT)
+  int64 started_at_unix = 8;          // Timestamp when execution started
+  int64 finished_at_unix = 9;         // Timestamp when execution completed
+}
+
+// DriftReport contains drift detection information for a single stack.
+message DriftReport {
+  string stack_path = 1;              // Path to the stack
+  bool has_drift = 2;                 // True if drift was detected
+  string drift_summary = 3;           // Human-readable drift summary
+  repeated string drifted_resources = 4; // List of resources with drift
+}
+
+// StackKitReleasePin identifies the exact published artifact that both Core
+// and Agent must already have admitted independently.
+message StackKitReleasePin {
+  string version = 1;
+  string platform_os = 2;
+  string platform_arch = 3;
+  string archive_sha256 = 4;
+  string release_index_sha256 = 5;
+}
+
+// StackKitCommand carries only typed lifecycle inputs. The Agent resolves its
+// local release pin and cache, verifies that they match release, and invokes
+// that exact binary. There is no command string, argv, environment, or shell.
+message StackKitCommand {
+  string command_id = 1;
+  StackKitOperation operation = 2;
+  string working_directory = 3;
+  string spec_path = 4;
+  string output_directory = 5;
+  int32 timeout_seconds = 6;
+  StackKitReleasePin release = 7;
+  bool offline = 8;
+  bool dry_run = 9;
+  string target_release = 10;
+  StackKitDriftMode drift_mode = 11;
+  bool owner_approved = 12;
+  string local_site_ref = 13;
+  string local_node_ref = 14;
+  string local_execution_channel_ref = 15;
+  string stackkit = 16;
+  string stack_name = 17;
+  string domain = 18;
+  string expected_spec_hash = 19;
+  // Bounded provider-free stackkit.inventory/v1 document materialized by
+  // Guard before the fixed lifecycle operation.
+  bytes inventory_json = 20;
+  string service_key = 21;
+  int32 log_tail = 22;
+  string log_cursor = 23;
+  // Canonical ResolvedPlan digest admitted by the control plane. Apply must
+  // compare it under StackKits' node lifecycle/output lock before mutation.
+  string expected_plan_hash = 24;
+}
+
+// StackKitResult transports the normalized stackkit.command-result/v1 JSON
+// envelope and the StackKits rollout-event JSONL records as distinct typed
+// fields. stderr is redacted by the Agent before transport.
+message StackKitResult {
+  string command_id = 1;
+  bool success = 2;
+  int32 exit_code = 3;
+  bytes command_result_json = 4;
+  string command_result_schema_version = 5;
+  repeated bytes events_jsonl = 6;
+  string events_schema_version = 7;
+  string stderr = 8;
+  int64 started_at_unix = 9;
+  int64 finished_at_unix = 10;
+  StackKitReleasePin release = 11;
+}
+
+// =============================================================================
+// Pre-Check Messages (Sprint 2: H6a - Pre-Check Execution on Agents)
+// =============================================================================
+
+// PreCheckRequest is sent from Core to Agent to execute pre-deployment checks.
+message PreCheckRequest {
+  string request_id = 1;                    // Unique request identifier for tracking
+  repeated PreCheckDefinition checks = 2;   // List of checks to execute
+  int32 timeout_seconds = 3;                // Overall timeout for all checks
+}
+
+// PreCheckDefinition describes a single pre-check to run.
+message PreCheckDefinition {
+  string type = 1;                // Check type: "docker_version", "gpu_available", "disk_space", "ram_available", "port_available"
+  string description = 2;         // Human-readable description
+  string min_version = 3;         // Minimum version (e.g., for docker_version)
+  bool blocking = 4;              // If true, failure blocks deployment
+  map<string, string> params = 5; // Check-specific parameters (e.g., {"min_gb": "50"} for disk_space)
+}
+
+// PreCheckResponse contains results from all executed checks.
+message PreCheckResponse {
+  string request_id = 1;                  // Reference to the request
+  repeated PreCheckResult results = 2;    // Results for each check
+  bool all_blocking_passed = 3;           // Convenience: true if all blocking checks passed
+  int64 executed_at_unix = 4;             // Timestamp when checks were executed
+}
+
+// PreCheckResult is the outcome of a single pre-check.
+message PreCheckResult {
+  string type = 1;                  // Reference to PreCheckDefinition.type
+  string status = 2;                // "passed", "failed", "skipped", "warning"
+  string message = 3;               // Human-readable result message
+  map<string, string> details = 4;  // Check-specific details (e.g., {"version": "24.0.7"})
+  string error = 5;                 // Error message if failed
+}
+
+// =============================================================================
+// Monitoring 2.0 Messages (Agent-based metrics collection)
+// =============================================================================
+
+// MetricType classifies the semantic type of a metric sample.
+enum MetricType {
+  METRIC_GAUGE = 0;       // Point-in-time value (e.g., CPU%, memory usage)
+  METRIC_COUNTER = 1;     // Monotonically increasing counter (e.g., bytes sent)
+  METRIC_HISTOGRAM = 2;   // Distribution (e.g., request latencies)
+}
+
+// MetricSample is a single metric data point.
+message MetricSample {
+  string name = 1;                    // Metric name (e.g., "node_cpu_usage_percent")
+  double value = 2;                   // Metric value
+  map<string, string> labels = 3;     // Dimensional labels (e.g., {"core": "0", "mode": "user"})
+  MetricType type = 4;                // Semantic type for storage/query
+  int64 timestamp_unix = 5;           // Unix timestamp in milliseconds
+}
+
+// MetricsBatch contains a batch of metric samples from an agent.
+message MetricsBatch {
+  string agent_id = 1;               // Agent that collected these metrics
+  int64 timestamp_unix = 2;          // Batch creation timestamp (Unix ms)
+  repeated MetricSample samples = 3; // Metric samples in this batch
+}
+
+// PushAck is the response to a PushMetrics call.
+message PushAck {
+  bool accepted = 1;                  // Whether the batch was accepted
+  int32 samples_accepted = 2;        // Number of samples stored
+  string error = 3;                   // Error message if rejected
+}
+
+// =============================================================================
+// Runtime Intelligence Layer (RIL) Messages
+// =============================================================================
+
+// SystemInfoRequest asks the agent for a full system snapshot.
+message SystemInfoRequest {
+  string agent_id = 1;
+}
+
+// SystemInfoResponse is a comprehensive snapshot of the server state.
+message SystemInfoResponse {
+  string agent_id = 1;
+  string hostname = 2;
+  string os_name = 3;
+  string os_version = 4;
+  string kernel_version = 5;
+  string arch = 6;
+  int64 uptime_seconds = 7;
+  ResourceUsage resources = 8;
+  repeated InstalledPackage packages = 9;
+  repeated RunningService services = 10;
+  repeated ContainerInfo containers = 11;
+  repeated string open_ports = 12;
+  int64 collected_at_unix = 13;
+}
+
+// InstalledPackage describes an installed OS or container package.
+message InstalledPackage {
+  string name = 1;
+  string version = 2;
+  string manager = 3;              // apt, yum, apk, snap, docker
+}
+
+// RunningService describes a running systemd unit or similar.
+message RunningService {
+  string name = 1;
+  string status = 2;               // running, stopped, failed, inactive
+  string type = 3;                 // systemd, docker, podman, binary
+  int64 pid = 4;
+  int64 uptime_seconds = 5;
+  int64 memory_bytes = 6;
+  double cpu_percent = 7;
+  int32 restart_count = 8;
+}
+
+// ContainerInfo describes a running Docker/Podman container.
+message ContainerInfo {
+  string id = 1;
+  string name = 2;
+  string image = 3;
+  string status = 4;               // running, paused, stopped, restarting
+  int64 created_at_unix = 5;
+  int64 memory_bytes = 6;
+  double cpu_percent = 7;
+  repeated string ports = 8;
+}
+
+// --- Self-Heal Watchdog Messages ---
+
+// HealEventSeverity classifies the severity of a heal event.
+enum HealEventSeverity {
+  HEAL_SEVERITY_INFO = 0;
+  HEAL_SEVERITY_WARNING = 1;
+  HEAL_SEVERITY_CRITICAL = 2;
+}
+
+// HealEventReport is sent by the watchdog after auto-remediation.
+message HealEventReport {
+  string agent_id = 1;
+  string recipe_name = 2;          // e.g., "service-restart", "disk-cleanup"
+  string trigger_reason = 3;       // Why the recipe triggered
+  bool auto_executed = 4;          // true if auto-exec, false if detection-only
+  bool success = 5;
+  string action_taken = 6;         // Human-readable description of the action
+  string rollback_available = 7;   // Description of rollback option
+  string error_message = 8;        // Error if success=false
+  HealEventSeverity severity = 9;
+  int64 timestamp_unix = 10;
+  map<string, string> metadata = 11;
+}
+
+// HealEventAck acknowledges receipt of a heal event.
+message HealEventAck {
+  bool received = 1;
+  string event_id = 2;             // Core-assigned event ID for audit
+}
+
+// --- Detection Engine Messages ---
+
+// DetectionReport is sent when the agent detects an issue needing user attention.
+message DetectionReport {
+  string agent_id = 1;
+  string engine = 2;               // "update-scanner", "error-matcher", etc.
+  string type = 3;                 // "update", "error_fix", "resource", "drift", "security"
+  string severity = 4;             // "info", "warning", "critical"
+  string title = 5;
+  string description = 6;
+  string suggested_action = 7;
+  bytes evidence_json = 8;         // Raw evidence data
+  int64 timestamp_unix = 9;
+}
+
+// DetectionAck acknowledges a detection report.
+message DetectionAck {
+  bool received = 1;
+  string action_card_id = 2;       // ID of the created ActionCard
+}
+
+// --- Log Streaming Messages ---
+
+// StreamLogsRequest opens a log stream for a specific service.
+message StreamLogsRequest {
+  string agent_id = 1;
+  string service_name = 2;         // Empty = all services
+  string severity_filter = 3;      // Minimum severity: debug, info, warn, error
+  int64 since_unix = 4;            // Only logs after this timestamp
+  int32 tail_lines = 5;            // Number of historical lines (0 = live only)
+}
+
+// --- Update Candidates Messages ---
+
+// UpdateCandidatesRequest asks the agent for available updates.
+message UpdateCandidatesRequest {
+  string agent_id = 1;
+}
+
+// UpdateCandidatesResponse lists available updates.
+message UpdateCandidatesResponse {
+  string agent_id = 1;
+  repeated UpdateCandidate candidates = 2;
+  int64 checked_at_unix = 3;
+}
+
+// UpdateCandidate describes a single available update.
+message UpdateCandidate {
+  string package_name = 1;
+  string current_version = 2;
+  string available_version = 3;
+  string manager = 4;              // apt, yum, docker, snap
+  string severity = 5;             // none, low, medium, high, critical
+  repeated string cve_ids = 6;     // Related CVE identifiers
+  string changelog_url = 7;
+}

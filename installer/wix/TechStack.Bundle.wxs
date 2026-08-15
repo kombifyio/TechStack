@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  User-facing Burn bootstrapper for the kombify Techstack Windows client.
+  The MSI remains the install/upgrade authority; this bundle only provides a
+  friendly setup.exe entry point and chains the exact MSI produced beside it.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal">
+  <Bundle
+    Name="kombify Techstack"
+    Manufacturer="kombify"
+    Version="$(var.TechStackVersion)"
+    UpgradeCode="{E832F922-4AEC-4C41-A7B6-9546279CD913}"
+    IconSourceFile="$(var.StageDir)\Assets\kombify-navy.ico">
+    <BootstrapperApplication>
+      <bal:WixStandardBootstrapperApplication
+        Theme="hyperlinkLicense"
+        LicenseUrl="https://github.com/kombifyio/TechStack/blob/main/LICENSE"
+        SuppressOptionsUI="yes"
+        LaunchTarget="[ProgramFiles6432Folder]kombify\techstack\kombify-techstack-client.exe"
+        LaunchWorkingFolder="[ProgramFiles6432Folder]kombify\techstack" />
+    </BootstrapperApplication>
+    <Chain>
+      <MsiPackage SourceFile="$(var.MsiPath)" />
+    </Chain>
+  </Bundle>
+</Wix>

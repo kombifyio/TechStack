@@ -1,0 +1,25 @@
+allowBuilds:
+  "@sentry/cli": true
+  browser-tabs-lock: false
+  esbuild: true
+  sharp: true
+  workerd: true
+overrides:
+  cookie@<0.7.0: ">=0.7.0"
+  # Force-patch transitive dev-tool vulns (vitest/wrangler/miniflare -> ws/undici).
+  # GHSA-96hv-2xvq-fx4p (ws DoS), GHSA-vmh5-mc38-953g / vxpw-j846-p89q / hm92-r4w5-c3mj (undici).
+  ws@>=8.0.0 <8.21.0: ">=8.21.0"
+  undici@>=7.0.0 <7.28.0: ">=7.28.0"
+  # jsdom@29.1.1 uses undici/lib/handler/wrap-handler.js, which was removed in
+  # undici 8.x, so jsdom's undici must stay on the 7.x line. 7.28.0 (released
+  # since the original 7.27.2 pin) patches the three 2026-07 high advisories
+  # while keeping wrap-handler.js. jsdom is dev-only (not shipped).
+  "jsdom>undici": ">=7.28.0 <8.0.0"
+  # 2026-07-24 high advisories (platform-3nbia): brace-expansion DoS
+  # (GHSA-3jxr-9vmj-r5cp), js-yaml merge-key DoS (GHSA-52cp-r559-cp3m),
+  # sharp <0.35.0.
+  brace-expansion@1: 1.1.18
+  brace-expansion@5: 5.0.9
+  postcss@<=8.5.17: ">=8.5.18"
+  js-yaml@>=4.0.0 <4.3.0: ">=4.3.0"
+  sharp@<0.35.0: ">=0.35.0"

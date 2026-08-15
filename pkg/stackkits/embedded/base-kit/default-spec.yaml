@@ -1,0 +1,52 @@
+# Base Homelab Default Specification
+# This provides sensible defaults for a basic homelab setup.
+# Users can override these values in their kombination.yaml file.
+
+# Stack metadata
+stack:
+  name: my-homelab
+  description: "kombify Techstack managed homelab"
+
+# Network configuration
+network:
+  domain: homelab.local
+  subnet: 10.0.0.0/24
+  gateway: 10.0.0.1
+  dns:
+    - 1.1.1.1
+    - 8.8.8.8
+
+# Services to deploy
+services:
+  traefik:
+    enabled: true
+    version: "3.0"
+    ports:
+      http: 80
+      https: 443
+      dashboard: 8080
+
+  portainer:
+    enabled: true
+    version: "2.19"
+    port: 9443
+
+  homepage:
+    enabled: true
+    version: "latest"
+    port: 3000
+
+# Resource limits
+resources:
+  cpu_limit: "2"
+  memory_limit: "4Gi"
+  storage_limit: "100Gi"
+
+# Observability defaults
+observability:
+  metrics:
+    enabled: true
+    retention: "15d"
+  logging:
+    enabled: true
+    level: info
