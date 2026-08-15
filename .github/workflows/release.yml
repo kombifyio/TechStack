@@ -36,7 +36,7 @@ jobs:
             -t "${IMAGE}:sha-${GITHUB_SHA}" .
           docker push "${IMAGE}:${GITHUB_REF_NAME}"
           docker push "${IMAGE}:sha-${GITHUB_SHA}"
-      - uses: softprops/action-gh-release@1c993d7c9d1f59966e8fef8aa3404e3e9071d70b
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
           prerelease: false
           make_latest: true
@@ -79,7 +79,7 @@ jobs:
         run: |
           $version = $env:GITHUB_REF_NAME.Substring(1)
           pwsh -NoProfile -File .\scripts\package-windows-client.ps1 -Version $version
-      - uses: softprops/action-gh-release@1c993d7c9d1f59966e8fef8aa3404e3e9071d70b
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
           prerelease: false
           make_latest: true

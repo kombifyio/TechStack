@@ -23,7 +23,7 @@ import (
 // rewrites this constant here by exact file path + regex. Keep the declaration
 // on its own line below. Version parsing/normalization helpers live in
 // version.go.
-const defaultProductVersion = "0.7.94"
+const defaultProductVersion = "0.7.95"
 
 func hasAnyAgentMTLSConfig(certFile, keyFile, caFile string) bool {
 	return certFile != "" || keyFile != "" || caFile != ""
