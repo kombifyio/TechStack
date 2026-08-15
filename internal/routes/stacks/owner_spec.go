@@ -1,6 +1,7 @@
 package stacks
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -19,6 +20,7 @@ import (
 
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	tsauth "github.com/kombifyio/techstack/pkg/auth"
+	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
 )
 
@@ -47,9 +49,10 @@ var (
 )
 
 type ownerSpecBootstrapClaims struct {
-	StackID string   `json:"stack_id"`
-	OwnerID string   `json:"owner_id"`
-	Scopes  []string `json:"scopes"`
+	StackID  string   `json:"stack_id"`
+	OwnerID  string   `json:"owner_id"`
+	TenantID string   `json:"tenant_id,omitempty"`
+	Scopes   []string `json:"scopes"`
 	jwt.RegisteredClaims
 }
 
@@ -119,6 +122,10 @@ func (h crudRouteHandlers) ownerSpec(e *httpx.Event) error {
 		return httpx.Unauthorized(e, "Invalid or expired bootstrap token")
 	}
 
+	if claims.TenantID != "" && h.stackStore != nil {
+		return h.ownerSpecFromControlPlane(e, claims, now)
+	}
+
 	stack, err := h.app.FindRecordById("stacks", stackID)
 	if err != nil {
 		h.recordOwnerSpecAudit(stackID, claims.OwnerID, ownerSpecActionDenied, "error", "Owner spec denied: stack not found", map[string]any{
@@ -159,7 +166,11 @@ func (h crudRouteHandlers) ownerSpec(e *httpx.Event) error {
 }
 
 func (h crudRouteHandlers) issueOwnerSpecBootstrapAccess(stackID, ownerID string, now time.Time) (ownerSpecBootstrapAccess, error) {
-	token, expiresAt, err := issueOwnerSpecBootstrapToken(stackID, ownerID, now)
+	return h.issueOwnerSpecBootstrapAccessForTenant(context.Background(), "", stackID, ownerID, now)
+}
+
+func (h crudRouteHandlers) issueOwnerSpecBootstrapAccessForTenant(ctx context.Context, tenantID, stackID, ownerID string, now time.Time) (ownerSpecBootstrapAccess, error) {
+	token, expiresAt, err := issueOwnerSpecBootstrapTokenForTenant(tenantID, stackID, ownerID, now)
 	if err != nil {
 		return ownerSpecBootstrapAccess{}, err
 	}
@@ -167,7 +178,7 @@ func (h crudRouteHandlers) issueOwnerSpecBootstrapAccess(stackID, ownerID string
 	if verifyErr != nil {
 		return ownerSpecBootstrapAccess{}, verifyErr
 	}
-	if storeErr := h.storeOwnerSpecBootstrapToken(claims, expiresAt); storeErr != nil {
+	if storeErr := h.storeOwnerSpecBootstrapToken(ctx, claims, expiresAt); storeErr != nil {
 		return ownerSpecBootstrapAccess{}, storeErr
 	}
 	access := ownerSpecBootstrapAccess{
@@ -183,6 +194,10 @@ func (h crudRouteHandlers) issueOwnerSpecBootstrapAccess(stackID, ownerID string
 }
 
 func issueOwnerSpecBootstrapToken(stackID, ownerID string, now time.Time) (string, time.Time, error) {
+	return issueOwnerSpecBootstrapTokenForTenant("", stackID, ownerID, now)
+}
+
+func issueOwnerSpecBootstrapTokenForTenant(tenantID, stackID, ownerID string, now time.Time) (string, time.Time, error) {
 	stackID = strings.TrimSpace(stackID)
 	ownerID = strings.TrimSpace(ownerID)
 	if stackID == "" || ownerID == "" {
@@ -198,9 +213,10 @@ func issueOwnerSpecBootstrapToken(stackID, ownerID string, now time.Time) (strin
 		return "", time.Time{}, err
 	}
 	claims := ownerSpecBootstrapClaims{
-		StackID: stackID,
-		OwnerID: ownerID,
-		Scopes:  []string{ownerSpecReadScope},
+		StackID:  stackID,
+		OwnerID:  ownerID,
+		TenantID: strings.TrimSpace(tenantID),
+		Scopes:   []string{ownerSpecReadScope},
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    ownerSpecBootstrapTokenIssuer,
 			Subject:   "owner-spec:" + stackID,
@@ -269,7 +285,17 @@ func ownerSpecTokenHash(jti string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (h crudRouteHandlers) storeOwnerSpecBootstrapToken(claims *ownerSpecBootstrapClaims, expiresAt time.Time) error {
+func (h crudRouteHandlers) storeOwnerSpecBootstrapToken(ctx context.Context, claims *ownerSpecBootstrapClaims, expiresAt time.Time) error {
+	if claims != nil && claims.TenantID != "" {
+		store, ok := h.walletStore.(controlplane.OwnerSpecTokenStore)
+		if !ok || store == nil {
+			return fmt.Errorf("native owner spec token store unavailable")
+		}
+		return store.StoreOwnerSpecToken(ctx, controlplane.OwnerSpecToken{
+			TokenHash: ownerSpecTokenHash(claims.ID), TenantID: claims.TenantID,
+			StackID: claims.StackID, OwnerID: claims.OwnerID, ExpiresAt: expiresAt,
+		})
+	}
 	if h.app == nil || claims == nil {
 		return nil
 	}
@@ -287,6 +313,20 @@ func (h crudRouteHandlers) storeOwnerSpecBootstrapToken(claims *ownerSpecBootstr
 }
 
 func (h crudRouteHandlers) consumeOwnerSpecBootstrapToken(claims *ownerSpecBootstrapClaims, now time.Time) error {
+	if claims != nil && claims.TenantID != "" {
+		store, ok := h.walletStore.(controlplane.OwnerSpecTokenStore)
+		if !ok || store == nil {
+			return errOwnerSpecTokenInvalid
+		}
+		err := store.ConsumeOwnerSpecToken(context.Background(), controlplane.OwnerSpecToken{
+			TokenHash: ownerSpecTokenHash(claims.ID), TenantID: claims.TenantID,
+			StackID: claims.StackID, OwnerID: claims.OwnerID,
+		}, now)
+		if errors.Is(err, controlplane.ErrNotFound) {
+			return errOwnerSpecTokenForbidden
+		}
+		return err
+	}
 	if h.app == nil || claims == nil {
 		return errOwnerSpecTokenInvalid
 	}
@@ -337,6 +377,57 @@ func (h crudRouteHandlers) consumeOwnerSpecBootstrapToken(claims *ownerSpecBoots
 		return errOwnerSpecTokenInvalid
 	}
 	return errOwnerSpecTokenForbidden
+}
+
+func (h crudRouteHandlers) ownerSpecFromControlPlane(e *httpx.Event, claims *ownerSpecBootstrapClaims, now time.Time) error {
+	stack, err := h.stackStore.GetStack(e.Request.Context(), claims.TenantID, claims.StackID)
+	if err != nil || stack.OwnerSubjectID != claims.OwnerID {
+		return httpx.Forbidden(e, "Bootstrap token does not match this stack owner")
+	}
+	if consumeErr := h.consumeOwnerSpecBootstrapToken(claims, now); consumeErr != nil {
+		if errors.Is(consumeErr, errOwnerSpecTokenInvalid) {
+			return httpx.Unauthorized(e, "Invalid or expired bootstrap token")
+		}
+		return httpx.Forbidden(e, "Bootstrap token has already been used")
+	}
+	response, responseErr := h.ownerSpecResponseFromControlPlane(e.Request.Context(), stack, claims, now)
+	if responseErr != nil {
+		return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "Owner spec is not available for this stack", nil)
+	}
+	return httpx.Success(e, http.StatusOK, response)
+}
+
+func (h crudRouteHandlers) ownerSpecResponseFromControlPlane(ctx context.Context, stack *controlplane.Stack, claims *ownerSpecBootstrapClaims, now time.Time) (ownerSpecResponse, error) {
+	if stack == nil || claims == nil || h.walletStore == nil {
+		return ownerSpecResponse{}, fmt.Errorf("missing stack, claims, or wallet store")
+	}
+	bootstrap, ok := ownerBootstrapFromRequest(normalizedCreateStackRequest{UserConfig: stack.Config})
+	if !ok || !ownerSourceSeedsPocketID(bootstrap.Source) || bootstrap.Email == "" || bootstrap.Username == "" {
+		return ownerSpecResponse{}, fmt.Errorf("missing local owner bootstrap")
+	}
+	recovery, err := h.walletStore.GetWalletItem(ctx, stack.TenantID, fmt.Sprintf("%s:%s", stack.ID, recoveryWalletServiceID))
+	if err != nil || recovery == nil {
+		return ownerSpecResponse{}, fmt.Errorf("missing recovery wallet entry")
+	}
+	secret := strings.TrimSpace(stringFromAny(recovery.Metadata["secret"]))
+	recoveryHash, decryptErr := tsauth.DecryptIfNeeded(tsauth.GetEncryptor(), secret)
+	if decryptErr != nil || !strings.HasPrefix(strings.TrimSpace(recoveryHash), "$argon2id$") {
+		return ownerSpecResponse{}, fmt.Errorf("recovery hash unavailable")
+	}
+	expiresAt := ""
+	if claims.ExpiresAt != nil {
+		expiresAt = claims.ExpiresAt.Time.UTC().Format(time.RFC3339)
+	} else if !now.IsZero() {
+		expiresAt = now.UTC().Format(time.RFC3339)
+	}
+	return ownerSpecResponse{
+		StackID: stack.ID,
+		Identity: ownerSpecIdentity{
+			Owner:    ownerSpecOwner{Source: ownerSourceLocal, SourceOrigin: ownerSourceOrigin(bootstrap.Source), Email: bootstrap.Email, Username: bootstrap.Username, DisplayName: bootstrap.DisplayName},
+			Recovery: ownerSpecRecovery{PassphraseHash: strings.TrimSpace(recoveryHash), PassphraseHashPresent: true},
+		},
+		Scopes: []string{ownerSpecReadScope}, ExpiresAt: expiresAt,
+	}, nil
 }
 
 func ownerSpecBootstrapTokenSecret() []byte {

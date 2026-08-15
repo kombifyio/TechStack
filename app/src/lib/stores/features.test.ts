@@ -75,7 +75,7 @@ describe("Feature Flag Defaults", () => {
     it("beta features match backend BetaFeatures defaults", () => {
       // From pkg/features/flags.go BetaFeatures
       const backendBetaDefaults: Record<string, boolean> = {
-        native_v2_wizard: false, // DefaultValue: false
+        native_v2_wizard: true, // DefaultValue: true
         cloudflare_tunnel: false, // DefaultValue: false
         self_healing: false, // DefaultValue: false
         ha_stackkit: false, // DefaultValue: false

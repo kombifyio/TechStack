@@ -490,6 +490,21 @@ internal sealed class ClientWindow : Form
             start.Environment["TECHSTACK_V2_DEFAULT_TENANT_ID"] = "default";
 			start.Environment[LocalDeviceTokenEnv] = EnsureLocalDeviceToken();
 			var runtimeDirectory = Path.GetDirectoryName(runtimeExe) ?? AppContext.BaseDirectory;
+			var stackKitsDirectory = Path.Combine(runtimeDirectory, "stackkits");
+			if (Directory.Exists(stackKitsDirectory))
+			{
+				start.Environment["TECHSTACK_STACKKITS_DIR"] = stackKitsDirectory;
+				var stackKitCLI = Path.Combine(stackKitsDirectory, "bin", "stackkit.exe");
+				if (File.Exists(stackKitCLI))
+				{
+					start.Environment["TECHSTACK_STACKKIT_CLI"] = stackKitCLI;
+				}
+				var stackKitSpecTemplates = Path.Combine(stackKitsDirectory, "spec-templates");
+				if (Directory.Exists(stackKitSpecTemplates))
+				{
+					start.Environment["TECHSTACK_STACKKIT_SPEC_TEMPLATES"] = stackKitSpecTemplates;
+				}
+			}
 			start.Environment["TECHSTACK_AGENT_BINARY_LINUX_AMD64"] = Path.Combine(runtimeDirectory, "techstack-linux-amd64");
 			start.Environment["TECHSTACK_STACKKIT_RELEASE_BUNDLE"] = Path.Combine(runtimeDirectory, "stackkit-release-linux-amd64.tar.gz");
 

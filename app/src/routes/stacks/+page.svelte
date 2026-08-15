@@ -1319,7 +1319,9 @@
   }
 
   function addServerHref(): string {
-    return "/stacks/new";
+    return singleDeployment
+      ? `/stacks/${encodeURIComponent(singleDeployment.id)}/servers/new`
+      : "/stacks/new";
   }
 
   function statusLabel(status: string): string {

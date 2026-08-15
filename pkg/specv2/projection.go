@@ -103,9 +103,9 @@ func Project(seed map[string]any, intent WizardIntent, homelabID string) (*Proje
 	return result, nil
 }
 
-// applyFoundRoles optionally overrides the seed's primary-node roles. The
-// primary node keeps its controller role unconditionally: a kit deployment
-// without a controller cannot pass kit binding.
+// applyFoundRoles extends the seed's primary-node roles. Kit seeds own their
+// required baseline roles (Basement needs its controller to remain a worker),
+// while the wizard may add a more specific role such as storage.
 func applyFoundRoles(spec map[string]any, roles []string) (string, error) {
 	nodes, err := specNodes(spec)
 	if err != nil {
@@ -119,11 +119,23 @@ func applyFoundRoles(spec map[string]any, roles []string) (string, error) {
 	if len(roles) == 0 {
 		return nodeID, nil
 	}
-	normalized := normalizeRoles(roles)
-	if !slices.Contains(normalized, RoleController) {
-		normalized = append([]string{RoleController}, normalized...)
+	merged := make([]string, 0, len(roles)+2)
+	if seedRoles, ok := primary["roles"].([]any); ok {
+		for _, raw := range seedRoles {
+			if role, ok := raw.(string); ok && !slices.Contains(merged, role) {
+				merged = append(merged, role)
+			}
+		}
 	}
-	primary["roles"] = toAnySlice(normalized)
+	for _, role := range normalizeRoles(roles) {
+		if !slices.Contains(merged, role) {
+			merged = append(merged, role)
+		}
+	}
+	if !slices.Contains(merged, RoleController) {
+		merged = append([]string{RoleController}, merged...)
+	}
+	primary["roles"] = toAnySlice(merged)
 	return nodeID, nil
 }
 

@@ -472,11 +472,9 @@ func TestFeatureDefinitions(t *testing.T) {
 		}
 	}
 
-	// Verify beta features
+	// Verify beta feature classification. Individual Alpha/Beta product paths
+	// may intentionally default on; security-critical defaults live above.
 	for key, def := range BetaFeatures {
-		if def.DefaultValue {
-			t.Errorf("Beta feature %s should default to false", key)
-		}
 		if def.Category != CategoryBeta {
 			t.Errorf("Beta feature %s has wrong category", key)
 		}
@@ -528,15 +526,6 @@ func TestCriticalInvariants(t *testing.T) {
 			}
 			if !def.RequiresConsent {
 				t.Errorf("Security feature %q should require consent", key)
-			}
-		}
-	})
-
-	t.Run("Beta features must never default to ON", func(t *testing.T) {
-		// Beta features are experimental and should be opt-in only.
-		for key, def := range BetaFeatures {
-			if def.DefaultValue {
-				t.Errorf("Beta feature %q has DefaultValue=true, must be false", key)
 			}
 		}
 	})

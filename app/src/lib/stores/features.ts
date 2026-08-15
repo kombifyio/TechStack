@@ -67,8 +67,8 @@ const FEATURE_DEFAULTS: Record<string, boolean> = {
   raw_commands: false,
   ssh_tunnel: false,
   cloud_backup: false,
-  // Beta features - OFF by default
-  native_v2_wizard: false,
+  // The Alpha desktop's native StackKits creation path is the supported local path.
+  native_v2_wizard: true,
   cloudflare_tunnel: false,
   self_healing: false,
   ha_stackkit: false,

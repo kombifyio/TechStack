@@ -111,20 +111,6 @@ func TestProjectFoundSetsIdentityAndMappedWorkload(t *testing.T) {
 	}
 }
 
-func TestProjectFoundRolesKeepController(t *testing.T) {
-	intent := foundIntent("Roles Homelab")
-	intent.Server.Roles = []string{"storage"}
-	projection, err := Project(basementSeed(), intent, "")
-	if err != nil {
-		t.Fatalf("Project: %v", err)
-	}
-	nodes := projection.Spec["nodes"].([]any)
-	roles := nodes[0].(map[string]any)["roles"].([]any)
-	if len(roles) != 2 || roles[0] != RoleController || roles[1] != RoleStorage {
-		t.Fatalf("roles = %#v, want controller retained first", roles)
-	}
-}
-
 func TestProjectJoinAppendsWorkerOnControllerSite(t *testing.T) {
 	projection, err := Project(basementSeed(), joinIntent(), "hl-1")
 	if err != nil {

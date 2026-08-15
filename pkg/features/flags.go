@@ -109,7 +109,7 @@ var BetaFeatures = map[string]FeatureDefinition{
 	"native_v2_wizard": {
 		Key:             "native_v2_wizard",
 		Name:            "Native v2 Wizard",
-		DefaultValue:    false,
+		DefaultValue:    true,
 		RequiresConsent: false,
 		RequiresAdmin:   false,
 		RiskLevel:       RiskLevelLow,

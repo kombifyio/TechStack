@@ -44,10 +44,9 @@
             <fire:FirewallException
               Id="PrivateLANEnrollmentFirewall"
               Name="kombify Techstack private LAN enrollment"
-              Description="Allow the explicitly enabled Techstack enrollment listener from the local private subnet."
+              Description="Allow the explicitly enabled Techstack enrollment listener from the local subnet."
               Port="5264"
               Protocol="tcp"
-              Profile="private"
               Scope="localSubnet" />
           </Component>
         </Directory>

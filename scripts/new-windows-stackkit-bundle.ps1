@@ -2,6 +2,7 @@
 
 param(
     [Parameter(Mandatory = $true)][string]$OutputPath,
+    [string]$ControllerCatalogOutputPath = "",
     [string]$ReleaseTag = "v0.18.9",
     [string]$ReleaseVersion = "0.18.9",
     [string]$LinuxArchiveSHA256 = "debf4c44acc4415c00a08a8d205f205d5d2390f75ad9cdf0dcd229fc725a9d79",
@@ -43,6 +44,24 @@ try {
     if (!(Test-Path -LiteralPath $linuxBinary -PathType Leaf) -or !(Test-Path -LiteralPath $windowsBinary -PathType Leaf)) {
         throw "Pinned StackKits release is missing its platform executable."
     }
+
+    if (![string]::IsNullOrWhiteSpace($ControllerCatalogOutputPath)) {
+        $resolvedCatalog = [IO.Path]::GetFullPath($ControllerCatalogOutputPath)
+        if (Test-Path -LiteralPath $resolvedCatalog) { Remove-Item -Recurse -Force -LiteralPath $resolvedCatalog }
+        New-Item -ItemType Directory -Force -Path $resolvedCatalog | Out-Null
+        foreach ($catalogEntry in @("base", "basement-kit", "modules", "cue.mod", "addons")) {
+            $catalogSource = Join-Path $windowsRelease $catalogEntry
+            if (!(Test-Path -LiteralPath $catalogSource -PathType Container)) {
+                throw "Pinned StackKits release is missing controller catalog directory $catalogEntry."
+            }
+            Copy-Item -Recurse -Force -LiteralPath $catalogSource -Destination (Join-Path $resolvedCatalog $catalogEntry)
+        }
+        Copy-Item -Force -LiteralPath (Join-Path $windowsRelease "LICENSE") -Destination (Join-Path $resolvedCatalog "LICENSE")
+        $controllerBinaryDir = Join-Path $resolvedCatalog "bin"
+        New-Item -ItemType Directory -Force -Path $controllerBinaryDir | Out-Null
+        Copy-Item -Force -LiteralPath $windowsBinary -Destination (Join-Path $controllerBinaryDir "stackkit.exe")
+    }
+
     $binaryDir = Join-Path $stackKitRoot "bin"
     New-Item -ItemType Directory -Force -Path $binaryDir | Out-Null
     Copy-Item -LiteralPath $linuxBinary -Destination (Join-Path $binaryDir "stackkit")
@@ -60,6 +79,11 @@ try {
         $templateDir = Join-Path $stackKitRoot ("spec-templates\" + $kit)
         New-Item -ItemType Directory -Force -Path $templateDir | Out-Null
         Copy-Item -LiteralPath (Join-Path $templateWork "stack-spec.yaml") -Destination (Join-Path $templateDir "stack-spec.yaml")
+        if (![string]::IsNullOrWhiteSpace($ControllerCatalogOutputPath)) {
+            $controllerTemplateDir = Join-Path $resolvedCatalog ("spec-templates\" + $kit)
+            New-Item -ItemType Directory -Force -Path $controllerTemplateDir | Out-Null
+            Copy-Item -LiteralPath (Join-Path $templateWork "stack-spec.yaml") -Destination (Join-Path $controllerTemplateDir "stack-spec.yaml")
+        }
     }
 
     $binarySHA256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $binaryDir "stackkit")).Hash.ToLowerInvariant()

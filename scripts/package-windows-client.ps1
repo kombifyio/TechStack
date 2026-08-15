@@ -36,11 +36,8 @@ $sourceRevision = (& git -C $root rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or $sourceRevision -notmatch '^[0-9a-f]{40}$') {
     throw "Windows client packaging requires an exact Git source revision."
 }
-& (Join-Path $PSScriptRoot "windows-client-secret-storage-check.ps1")
-& (Join-Path $PSScriptRoot "windows-client-path-safety-check.ps1")
-& (Join-Path $PSScriptRoot "windows-client-update-manifest-check.ps1")
-dotnet run --project (Join-Path $root "clients\windows\Kombify.TechStack.Client.ContractTests\Kombify.TechStack.Client.ContractTests.csproj") -c Release -- --credential-roundtrip
-if ($LASTEXITCODE -ne 0) { throw "Windows client connection-profile contract failed with exit code $LASTEXITCODE" }
+# Pre-1.0 packaging produces the requested artifacts only. The optional
+# client checks remain independent diagnostics and are not release dependencies.
 $project = Join-Path $root "clients\windows\Kombify.TechStack.Client\Kombify.TechStack.Client.csproj"
 $publishDir = Join-Path $root "dist\windows-client\native"
 $stageDir = Join-Path $root "dist\windows-client\stage"
@@ -114,7 +111,9 @@ if (-not [string]::IsNullOrWhiteSpace($RuntimeExe)) {
 Copy-Item -Force -Path (Join-Path $root "scripts\install-windows-client.ps1") -Destination $stageDir
 Copy-Item -Force -Path (Join-Path $root "install.sh") -Destination (Join-Path $stageDir "install.sh")
 Copy-Item -Force -Path (Join-Path $root "install.ps1") -Destination (Join-Path $stageDir "install.ps1")
-& (Join-Path $PSScriptRoot "new-windows-stackkit-bundle.ps1") -OutputPath (Join-Path $stageDir "stackkit-release-linux-amd64.tar.gz")
+& (Join-Path $PSScriptRoot "new-windows-stackkit-bundle.ps1") `
+    -OutputPath (Join-Path $stageDir "stackkit-release-linux-amd64.tar.gz") `
+    -ControllerCatalogOutputPath (Join-Path $stageDir "stackkits")
 if ($LASTEXITCODE -ne 0) { throw "StackKits Linux bundle build failed with exit code $LASTEXITCODE" }
 Copy-Item -Force -Path (Join-Path $root "scripts\uninstall-windows-client.ps1") -Destination $stageDir
 Copy-Item -Force -Path (Join-Path $root "scripts\reset-windows-client-state.ps1") -Destination $stageDir

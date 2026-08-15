@@ -36,6 +36,7 @@ type MemoryStore struct {
 	serverGuardEpochs map[string]struct{}
 	nextServerEventID int64
 	wallet            map[string]WalletItem
+	ownerSpecTokens   map[string]OwnerSpecToken
 	events            map[string]ActivityEvent
 }
 
@@ -61,8 +62,30 @@ func NewMemoryStore() *MemoryStore {
 		serverInventory:   make(map[string][]ServerInventorySnapshot),
 		serverGuardEpochs: make(map[string]struct{}),
 		wallet:            make(map[string]WalletItem),
+		ownerSpecTokens:   make(map[string]OwnerSpecToken),
 		events:            make(map[string]ActivityEvent),
 	}
+}
+
+func (s *MemoryStore) StoreOwnerSpecToken(_ context.Context, token OwnerSpecToken) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if token.TokenHash == "" || token.TenantID == "" || token.StackID == "" || token.OwnerID == "" || token.ExpiresAt.IsZero() {
+		return fmt.Errorf("controlplane: incomplete owner spec token")
+	}
+	s.ownerSpecTokens[token.TokenHash] = token
+	return nil
+}
+
+func (s *MemoryStore) ConsumeOwnerSpecToken(_ context.Context, token OwnerSpecToken, consumedAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	stored, ok := s.ownerSpecTokens[token.TokenHash]
+	if !ok || stored.TenantID != token.TenantID || stored.StackID != token.StackID || stored.OwnerID != token.OwnerID || !consumedAt.Before(stored.ExpiresAt) {
+		return ErrNotFound
+	}
+	delete(s.ownerSpecTokens, token.TokenHash)
+	return nil
 }
 
 func (s *MemoryStore) SetNow(now func() time.Time) {

@@ -434,6 +434,25 @@ type WalletStore interface {
 	DeleteWalletItem(ctx context.Context, tenantID, itemID string) error
 }
 
+// OwnerSpecToken is the short-lived, one-use handoff that lets a freshly
+// enrolled StackKit fetch its local owner bootstrap without depending on the
+// retired PocketBase stack projection.
+type OwnerSpecToken struct {
+	TokenHash string
+	TenantID  string
+	StackID   string
+	OwnerID   string
+	ExpiresAt time.Time
+}
+
+// OwnerSpecTokenStore persists and atomically consumes owner bootstrap tokens.
+// It is deliberately separate from WalletStore: tokens are execution custody,
+// not user-visible wallet entries.
+type OwnerSpecTokenStore interface {
+	StoreOwnerSpecToken(ctx context.Context, token OwnerSpecToken) error
+	ConsumeOwnerSpecToken(ctx context.Context, token OwnerSpecToken, consumedAt time.Time) error
+}
+
 type ActivityEvent struct {
 	ID              string
 	TenantID        string
