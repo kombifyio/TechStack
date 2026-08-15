@@ -488,6 +488,7 @@ internal sealed class ClientWindow : Form
             start.Environment["TECHSTACK_V2_SESSION_SECRET"] = EnsureRuntimeSessionSecret();
             start.Environment["TECHSTACK_V2_SESSION_AUDIENCE"] = "techstack-local";
             start.Environment["TECHSTACK_V2_DEFAULT_TENANT_ID"] = "default";
+            start.Environment["TECHSTACK_ALLOW_UNSIGNED_WORKER_TOKEN"] = "1";
 			start.Environment[LocalDeviceTokenEnv] = EnsureLocalDeviceToken();
 			var runtimeDirectory = Path.GetDirectoryName(runtimeExe) ?? AppContext.BaseDirectory;
 			var stackKitsDirectory = Path.Combine(runtimeDirectory, "stackkits");

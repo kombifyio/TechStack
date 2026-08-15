@@ -171,7 +171,7 @@ func registerCoreRoutes(router *httpx.Router, deps routeDeps, managedLeases jobs
 		Stacks: stores.Stacks,
 		Jobs:   stores.Jobs,
 	})
-	stackKitCommander := stackKitCommanderForDeployment(cfg.DeploymentMode, deps.typedControl, grpcSrv)
+	stackKitCommander := stackKitCommanderForDeployment(cfg.DeploymentMode, cfg.Server.Environment, deps.typedControl, grpcSrv)
 	deps.orch.ConfigureManagedStackKitInventory(managedStackKitInventoryBuilder(deps))
 	deps.orch.ConfigureStackKitCommander(stackKitCommander)
 	var notificationOutbox productnotifications.ProductEventEnqueuer
@@ -243,9 +243,12 @@ func registerCoreRoutes(router *httpx.Router, deps routeDeps, managedLeases jobs
 // stackKitCommanderForDeployment keeps command dispatch on the transport the
 // enrolled runtime actually polls. Hosted managed runtimes use the authenticated
 // HTTPS Guard channel even when the process also exposes a gRPC server for
-// other clients. Self-hosted installations retain their mTLS gRPC preference.
-func stackKitCommanderForDeployment(mode config.DeploymentMode, https jobs.StackKitCommandSender, grpc jobs.StackKitCommandSender) jobs.StackKitCommandSender {
-	if mode.IsSaaS() || grpc == nil {
+// other clients. A local Windows controller also uses HTTPS because its Guard
+// enrollment is exposed through the private-LAN bridge while gRPC deliberately
+// remains loopback-only. Other self-hosted installations retain their mTLS
+// gRPC preference.
+func stackKitCommanderForDeployment(mode config.DeploymentMode, environment string, https jobs.StackKitCommandSender, grpc jobs.StackKitCommandSender) jobs.StackKitCommandSender {
+	if mode.IsSaaS() || strings.EqualFold(strings.TrimSpace(environment), "local") || grpc == nil {
 		return https
 	}
 	return grpc

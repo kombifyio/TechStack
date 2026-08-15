@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/runtimeproduct/runtimeaction"
 	"github.com/kombifyio/go-common/identity"
 	"github.com/kombifyio/go-common/servicecall"
-	"github.com/kombifyio/techstack/internal/runtimeproduct/runtimeaction"
 )
 
 const (
@@ -290,6 +290,14 @@ func compactStrings(values []string) []string {
 func RuntimeActionsFromEnv(base RuntimeActions) (RuntimeActions, RuntimeActionsEnvDiagnostics) {
 	actions := base
 	diagnostics := RuntimeActionsEnvDiagnostics{}
+	if actions.StackKitGenerator == nil {
+		stackKitsDir := strings.TrimSpace(os.Getenv("TECHSTACK_STACKKITS_DIR"))
+		stackKitCLI := strings.TrimSpace(os.Getenv(stackKitCLIEnv))
+		if stackKitsDir != "" && stackKitCLI != "" {
+			actions.StackKitGenerator = NewBundledStackKitCLIGenerator(stackKitsDir)
+			diagnostics.Configured = append(diagnostics.Configured, "Bundled StackKits artifact generator")
+		}
+	}
 	secret := strings.TrimSpace(os.Getenv("SERVICE_AUTH_SECRET"))
 	secretNext := strings.TrimSpace(os.Getenv("SERVICE_AUTH_SECRET_NEXT"))
 	// StackKits fallback chain:

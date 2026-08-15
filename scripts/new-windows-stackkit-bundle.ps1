@@ -3,11 +3,11 @@
 param(
     [Parameter(Mandatory = $true)][string]$OutputPath,
     [string]$ControllerCatalogOutputPath = "",
-    [string]$ReleaseTag = "v0.18.9",
-    [string]$ReleaseVersion = "0.18.9",
-    [string]$LinuxArchiveSHA256 = "debf4c44acc4415c00a08a8d205f205d5d2390f75ad9cdf0dcd229fc725a9d79",
-    [string]$WindowsArchiveSHA256 = "8db1d4253ef8bd128508ce0b28f79c8796fa157d4cd8f5501d76d9177b780ad5",
-    [string]$ReleaseIndexSHA256 = "f6f1a10c2606bff0bff4c418e8c9b9598c212cc4687be6a0951decc3d7836dac"
+    [string]$ReleaseTag = "v0.18.14",
+    [string]$ReleaseVersion = "0.18.14",
+    [string]$LinuxArchiveSHA256 = "9a74d1fb89dc7351298b5bf76467ab5271e5b7bc1a1467b6a490543bf8cb1f8b",
+    [string]$WindowsArchiveSHA256 = "fd51088ce5d3d860be7faa3481e779c851f5cfbf9a7599a17f5909d4cac37bf6",
+    [string]$ReleaseIndexSHA256 = "ad851938a9878adde80988fae744782f3f9092edf7d41ca9e0f4771af084b86a"
 )
 
 $ErrorActionPreference = "Stop"
@@ -89,7 +89,7 @@ try {
     $binarySHA256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $binaryDir "stackkit")).Hash.ToLowerInvariant()
     $pin = [ordered]@{
         schemaVersion = "techstack.stackkit-release-pin/v2"
-        kit = "cloud-kit"
+        kit = "basement-kit"
         version = $ReleaseTag
         platform = [ordered]@{ os = "linux"; arch = "amd64" }
         archiveSha256 = $LinuxArchiveSHA256

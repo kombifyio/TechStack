@@ -303,6 +303,10 @@ func resolveArtifactPin(pin Pin, pinPath string) (Release, error) {
 }
 
 func (pin Pin) validate() error {
+	return pin.validateForPlatform(Platform{OS: runtime.GOOS, Arch: runtime.GOARCH})
+}
+
+func (pin Pin) validateForPlatform(expected Platform) error {
 	if pin.SchemaVersion != PinSchemaVersion && pin.SchemaVersion != legacyPinSchemaVersion {
 		return fmt.Errorf("unsupported StackKits release pin schema %q", pin.SchemaVersion)
 	}
@@ -312,13 +316,13 @@ func (pin Pin) validate() error {
 	if !exactReleasePattern.MatchString(pin.Version) {
 		return fmt.Errorf("StackKits release version %q is not an exact stable, beta, or edge tag", pin.Version)
 	}
-	if pin.Platform.OS != runtime.GOOS || pin.Platform.Arch != runtime.GOARCH {
+	if pin.Platform != expected {
 		return fmt.Errorf(
-			"pinned StackKits platform %s/%s does not match Techstack runtime %s/%s",
+			"pinned StackKits platform %s/%s does not match expected runtime %s/%s",
 			pin.Platform.OS,
 			pin.Platform.Arch,
-			runtime.GOOS,
-			runtime.GOARCH,
+			expected.OS,
+			expected.Arch,
 		)
 	}
 	if !sha256Pattern.MatchString(pin.ArchiveSHA256) {

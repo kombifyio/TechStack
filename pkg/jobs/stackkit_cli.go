@@ -22,6 +22,7 @@ type StackKitCLIGenerator struct {
 	Binary       string
 	StackKitsDir string
 	Timeout      time.Duration
+	canonicalV2  bool
 	release      *stackkitrelease.Release
 }
 
@@ -31,6 +32,16 @@ func NewStackKitCLIGenerator(stackKitsDir string) *StackKitCLIGenerator {
 		StackKitsDir: stackKitsDir,
 		Timeout:      runtimeActionHTTPTimeout,
 	}
+}
+
+// NewBundledStackKitCLIGenerator uses the Windows client's bundled CLI and
+// catalog. Unlike the legacy source-workspace constructor, the bundled CLI is
+// on the canonical v2 line and must execute the same v2 projection as a pinned
+// controller release.
+func NewBundledStackKitCLIGenerator(stackKitsDir string) *StackKitCLIGenerator {
+	generator := NewStackKitCLIGenerator(stackKitsDir)
+	generator.canonicalV2 = true
+	return generator
 }
 
 // NewPinnedStackKitCLIGenerator creates the artifact generator from an exact
@@ -91,7 +102,8 @@ func (g *StackKitCLIGenerator) GenerateStackKitArtifacts(ctx context.Context, re
 	// every mechanism that owns stack-spec.yaml keeps working.
 	executedSpecPath := stackSpecPath
 	derivedCanonicalSpec := false
-	if g.release != nil {
+	canonicalV2 := g.release != nil || g.canonicalV2
+	if canonicalV2 {
 		canonical, canonicalErr := canonicalStackSpecFor(stackSpecPath, stackKit, req.StackName)
 		if canonicalErr != nil {
 			return nil, canonicalErr
@@ -116,7 +128,7 @@ func (g *StackKitCLIGenerator) GenerateStackKitArtifacts(ctx context.Context, re
 		"--spec", filepath.Base(executedSpecPath),
 	}
 	binary := firstNonEmpty(strings.TrimSpace(g.Binary), defaultStackKitCLIBinary)
-	if g.release != nil {
+	if canonicalV2 {
 		validateArgs := append(append([]string(nil), commonArgs...), "validate")
 		validate := exec.CommandContext(runCtx, binary, validateArgs...) // #nosec G204 -- binary is admitted from the pinned release; args are fixed.
 		validate.Dir = workDir
@@ -134,7 +146,7 @@ func (g *StackKitCLIGenerator) GenerateStackKitArtifacts(ctx context.Context, re
 		"generate",
 		"--output", filepath.ToSlash(outputRel),
 	)
-	if g.release == nil {
+	if !canonicalV2 {
 		// Compatibility-only constructor for existing injected/dev fixtures.
 		generateArgs = append(generateArgs, "--force")
 	}
@@ -154,7 +166,7 @@ func (g *StackKitCLIGenerator) GenerateStackKitArtifacts(ctx context.Context, re
 		"stackkit":           stackKit,
 	}
 	resolvedPlanPath := ""
-	if g.release != nil {
+	if canonicalV2 {
 		resolvedPlanPath = filepath.Join(outputDir, ".stackkit", "resolved-plan.json")
 		resolvedPlanInfo, statErr := os.Lstat(resolvedPlanPath)
 		if statErr != nil {
@@ -170,15 +182,20 @@ func (g *StackKitCLIGenerator) GenerateStackKitArtifacts(ctx context.Context, re
 		if identityErr != nil {
 			return nil, identityErr
 		}
-		receipt := g.release.Receipt()
 		metadata["stackkit"] = resolvedKit
 		metadata["resolved_plan_hash"] = planHash
-		metadata["validation_authority"] = "pinned-stackkit-cli"
-		metadata["generation_authority"] = "pinned-stackkit-cli"
-		metadata["release_version"] = receipt.Version
-		metadata["release_archive_sha256"] = receipt.ArchiveSHA256
-		metadata["release_receipt"] = g.release.ReceiptPath()
 		metadata["executed_stack_spec_path"] = executedSpecPath
+		if g.release != nil {
+			receipt := g.release.Receipt()
+			metadata["validation_authority"] = "pinned-stackkit-cli"
+			metadata["generation_authority"] = "pinned-stackkit-cli"
+			metadata["release_version"] = receipt.Version
+			metadata["release_archive_sha256"] = receipt.ArchiveSHA256
+			metadata["release_receipt"] = g.release.ReceiptPath()
+		} else {
+			metadata["validation_authority"] = "bundled-stackkit-cli"
+			metadata["generation_authority"] = "bundled-stackkit-cli"
+		}
 		if derivedCanonicalSpec {
 			metadata["stack_spec_authority"] = "pinned-stackkit-init-template"
 		}

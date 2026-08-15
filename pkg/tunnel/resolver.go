@@ -75,12 +75,13 @@ func DefaultConfig() Config {
 type RegistryURLResolver struct {
 	mu sync.RWMutex
 
-	config        Config
-	tunnel        *CloudflareTunnel
-	currentURL    string
-	currentMode   NetworkMode
-	lastValidated time.Time
-	log           *logger.Logger
+	config         Config
+	tunnel         *CloudflareTunnel
+	localBridgeURL string
+	currentURL     string
+	currentMode    NetworkMode
+	lastValidated  time.Time
+	log            *logger.Logger
 }
 
 // NewRegistryURLResolver creates a new URL resolver with the given configuration.
@@ -107,7 +108,8 @@ func (r *RegistryURLResolver) SetLocalBridgeURL(rawURL string) error {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.currentURL = strings.TrimRight(rawURL, "/")
+	r.localBridgeURL = strings.TrimRight(rawURL, "/")
+	r.currentURL = r.localBridgeURL
 	r.currentMode = NetworkModeLocal
 	r.lastValidated = time.Now()
 	return nil
@@ -116,9 +118,10 @@ func (r *RegistryURLResolver) SetLocalBridgeURL(rawURL string) error {
 func (r *RegistryURLResolver) ClearLocalBridgeURL() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.currentMode != NetworkModeLocal {
+	if r.localBridgeURL == "" {
 		return
 	}
+	r.localBridgeURL = ""
 	r.currentURL = ""
 	r.currentMode = ""
 	r.lastValidated = time.Time{}
@@ -130,6 +133,14 @@ func (r *RegistryURLResolver) ClearLocalBridgeURL() {
 func (r *RegistryURLResolver) GetRegistryURL(ctx context.Context) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	// The explicitly enabled private-LAN bridge is a bound listener, not a
+	// discovered URL. Keep it authoritative until the owner disables it; the
+	// generic five-minute discovery cache must never rewrite :5264 to the
+	// loopback Core's unprotected :5260 endpoint while onboarding is open.
+	if r.localBridgeURL != "" {
+		return r.localBridgeURL, nil
+	}
 
 	// If we have a cached URL that was validated recently, return it
 	if r.currentURL != "" && time.Since(r.lastValidated) < 5*time.Minute {

@@ -283,7 +283,7 @@ func StackKitLifecycleHandler(cfg StackKitLifecycleConfig) JobHandler {
 		}
 		resolveRelease := cfg.releaseResolver
 		if resolveRelease == nil {
-			resolveRelease = configuredPinnedStackKitRelease
+			resolveRelease = configuredTargetStackKitRelease
 		}
 		release, err := resolveRelease()
 		if err != nil {
