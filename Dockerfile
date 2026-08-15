@@ -6,6 +6,7 @@ RUN corepack enable && corepack prepare pnpm@11.5.2 --activate
 COPY app/package.json app/pnpm-lock.yaml app/pnpm-workspace.yaml app/.npmrc ./
 COPY app/scripts/install-deps.mjs ./scripts/install-deps.mjs
 RUN pnpm install --frozen-lockfile
+COPY VERSION /build/VERSION
 COPY app/ .
 ENV PUBLIC_KOMBIFY_EDITION=selfhost-oss
 RUN pnpm build

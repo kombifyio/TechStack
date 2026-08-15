@@ -45,7 +45,6 @@ jobs:
             deploy/selfhosted/.env.example
 
   windows-client:
-    needs: release
     runs-on: windows-2025
     timeout-minutes: 15
     steps:
