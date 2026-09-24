@@ -20,12 +20,23 @@ export interface WizardIntent {
   server: {
     roles?: string[];
     purpose?: string;
-    transport?: "install-command" | "connect-remote" | "kombify-cloud";
+    transport?:
+      "install-command" | "connect-remote" | "kombify-cloud" | "hypervisor";
   };
   kit_assignment: {
     mode: "found" | "join";
     kit_slug?: string;
     kit_deployment_id?: string;
+  };
+  /** Decisions per selected use case (slug -> setting id -> value). */
+  use_case_settings?: Record<string, Record<string, string | boolean>>;
+  access?: {
+    mode: "local" | "remote-private";
+    publications?: { service_id: string; exposure: "public" }[];
+  };
+  household?: {
+    profile: "solo" | "shared";
+    planned_people?: { client_ref: string; name?: string; email?: string }[];
   };
 }
 
@@ -43,6 +54,8 @@ export interface WizardRunRemoteParams {
   auth_method?: string;
   ssh_key_label?: string;
   use_sudo?: boolean;
+  /** Enrollment-only SSH password; never persisted server-side beyond the run. */
+  password?: string;
 }
 
 export interface WizardRunRequest {
@@ -56,10 +69,30 @@ export interface WizardRunRequest {
   owner?: Record<string, unknown>;
   managed?: WizardRunManagedParams;
   remote?: WizardRunRemoteParams;
+  substrate?: WizardRunSubstrateParams;
   services?: string[];
 }
 
+export interface WizardRunSubstrateParams {
+  appliance?: {
+    profile_id: "haos";
+    storage: string;
+    bridge: string;
+    cpu: number;
+    memory_mib: number;
+    disk_gib: number;
+  };
+  server_id: string;
+  profile_id: "ubuntu-24.04";
+  storage: string;
+  bridge: string;
+  cpu: number;
+  memory_mib: number;
+  disk_gib: number;
+}
+
 export interface WizardRunResponse {
+  appliance?: WizardApplianceReceipt;
   run_id: string;
   run_kind: "first-run" | "expansion";
   requested_run_kind?: string;
@@ -67,12 +100,14 @@ export interface WizardRunResponse {
   homelab_id: string;
   kit_assignment_mode: "found" | "join";
   kit_slug?: string;
-  stack_id: string;
+  kit_deployment_id: string;
   server_id?: string;
   node_id: string;
   name?: string;
   job_id?: string;
   pairing_job_id?: string;
+  planned_server_id?: string;
+  existing_server_ids?: string[];
   state: "provisioning" | "awaiting_pairing";
   auto_deploy?: boolean;
   operations_url?: string;
@@ -85,6 +120,17 @@ export interface WizardRunResponse {
   owner_spec_endpoint?: string;
   owner_spec_scopes?: string[];
 }
+
+export interface WizardApplianceReceipt {
+  lease_id: string;
+  server_id: string;
+  operation_id: string;
+}
+
+type WizardRunResponseWire = Omit<WizardRunResponse, "kit_deployment_id"> & {
+  stack_id: string;
+  kit_deployment_id?: string;
+};
 
 export interface ActiveWizardRunJob {
   id: string;
@@ -100,7 +146,7 @@ export interface ActiveWizardRun {
   run_kind: string;
   requested_run_kind?: string;
   homelab_id?: string;
-  stack_id?: string;
+  kit_deployment_id?: string;
   node_id?: string;
   job_id?: string;
   pairing_job_id?: string;
@@ -109,6 +155,27 @@ export interface ActiveWizardRun {
   updated_at?: string;
   result?: Record<string, unknown>;
   job?: ActiveWizardRunJob | null;
+}
+
+type ActiveWizardRunWire = Omit<ActiveWizardRun, "kit_deployment_id"> & {
+  stack_id?: string;
+  kit_deployment_id?: string;
+};
+
+function wizardRunResponseFromWire({
+  stack_id,
+  kit_deployment_id,
+  ...run
+}: WizardRunResponseWire): WizardRunResponse {
+  return { ...run, kit_deployment_id: kit_deployment_id || stack_id };
+}
+
+function activeWizardRunFromWire({
+  stack_id,
+  kit_deployment_id,
+  ...run
+}: ActiveWizardRunWire): ActiveWizardRun {
+  return { ...run, kit_deployment_id: kit_deployment_id || stack_id };
 }
 
 async function apiRequest<T>(
@@ -136,16 +203,19 @@ export async function createWizardRun(
   req: WizardRunRequest,
   idempotencyKey?: string,
 ): Promise<WizardRunResponse> {
-  // The run validates via the pinned CLI and dispatches provisioning with a
-  // 30s server-side budget; the default 10s client abort would orphan
-  // completed runs behind a fake timeout error.
-  return apiRequest<WizardRunResponse>(
+  // The run validates through the pinned CLI: up to two calls with a
+  // 2-minute timeout each, and the server extends its 60s write deadline to
+  // a bounded 5-minute projection budget. The client abort budget must stay
+  // above that server budget so a slow but successful run is not orphaned
+  // behind a fake timeout error (the idempotency key still replays it).
+  const run = await apiRequest<WizardRunResponseWire>(
     "POST",
     "/api/v1/wizard/runs",
     JSON.stringify(req),
     idempotencyKey ? { "X-Idempotency-Key": idempotencyKey } : undefined,
-    60_000,
+    330_000,
   );
+  return wizardRunResponseFromWire(run);
 }
 
 /**
@@ -155,11 +225,11 @@ export async function createWizardRun(
  */
 export async function getActiveWizardRun(): Promise<ActiveWizardRun | null> {
   try {
-    const res = await fetchApi<{ run: ActiveWizardRun | null }>(
+    const res = await fetchApi<{ run: ActiveWizardRunWire | null }>(
       "/api/v1/wizard/runs/active",
       { method: "GET" },
     );
-    return res.data?.run ?? null;
+    return res.data?.run ? activeWizardRunFromWire(res.data.run) : null;
   } catch (error) {
     if (error instanceof ApiRequestError && error.status === 404) {
       return null;

@@ -62,7 +62,7 @@ func ResolveLinuxRuntimeBundle(bundlePath string) (Release, error) {
 				return Release{}, fmt.Errorf("archive directory entry %q must have zero size", header.Name)
 			}
 			continue
-		case tar.TypeReg, tar.TypeRegA:
+		case tar.TypeReg, legacyTarRegularFileType:
 		default:
 			return Release{}, fmt.Errorf("archive entry %q has a forbidden type", header.Name)
 		}

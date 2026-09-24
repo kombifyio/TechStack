@@ -121,44 +121,66 @@ config:
 	}
 }
 
-func TestDeployApplyRoutingOverlayFailsClosedWhenJobRevisionIsStale(t *testing.T) {
+func TestDeployApplyRoutingOverlayDenialsLeaveDerivedAndPersistedStateUntouched(t *testing.T) {
 	t.Parallel()
 
-	store := stackrouting.NewMemoryStore()
-	putJobRoutingState(t, store, stackrouting.DesiredState{
-		TenantID: "tenant-1", OwnerSubjectID: "owner-1", StackID: "stack-1",
-		ServerID: "server-1", LeaseID: "lease-1", Mode: stackrouting.ModeCustomDomain,
-		Domain: "kombified.com", Provenance: stackrouting.Provenance{Source: "cloud", DNSProvider: "manual"},
-	})
-	persister, err := unifier.NewSpecPersisterWithPath(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name         string
+		desiredLease string
+		payload      map[string]interface{}
+	}{
+		{
+			name:         "stale routing revision",
+			desiredLease: "lease-1",
+			payload: map[string]interface{}{
+				tenantIDField: "tenant-1", "owner_id": "owner-1", leaseIDField: "lease-1",
+				routingDispatchKindField: routingDispatchKindExact, routingIdempotencyKeyField: "routing-job-stale",
+				routingRevisionField: int64(2), routingServerIDField: "server-1", routingLeaseIDField: "lease-1",
+			},
+		},
+		{
+			name:         "lease mismatch",
+			desiredLease: "lease-expected",
+			payload: map[string]interface{}{
+				tenantIDField: "tenant-1", "owner_id": "owner-1", leaseIDField: "lease-other",
+			},
+		},
 	}
-	original := []byte("name: derived\nstackkit: cloud-kit\ndomain: kombify.me\n")
-	if _, _, saveErr := persister.SaveStackSpecBytes(original); saveErr != nil {
-		t.Fatal(saveErr)
-	}
-	spec := &core.KombinationSpec{Network: core.NetworkSpec{Domain: "kombify.me"}}
-	job := &Job{TargetID: "stack-1", Payload: map[string]interface{}{
-		tenantIDField: "tenant-1", "owner_id": "owner-1", leaseIDField: "lease-1",
-		routingDispatchKindField:   routingDispatchKindExact,
-		routingIdempotencyKeyField: "routing-job-stale", routingRevisionField: int64(2),
-		routingServerIDField: "server-1", routingLeaseIDField: "lease-1",
-	}}
 
-	path, err := deployApplyRoutingOverlay(context.Background(), &ProvisionConfig{RoutingStore: store}, job, persister, spec)
-	if err == nil || !strings.Contains(err.Error(), "immutable receipt mismatch") {
-		t.Fatalf("error = %v, want immutable receipt mismatch", err)
-	}
-	if path != "" || spec.Network.Domain != "kombify.me" {
-		t.Fatalf("stale job mutated derived state: path=%q spec=%#v", path, spec)
-	}
-	handoff, readErr := os.ReadFile(persister.GetStackSpecPath())
-	if readErr != nil {
-		t.Fatal(readErr)
-	}
-	if !bytes.Equal(handoff, original) {
-		t.Fatalf("stale job mutated handoff:\n%s", handoff)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := stackrouting.NewMemoryStore()
+			putJobRoutingState(t, store, stackrouting.DesiredState{
+				TenantID: "tenant-1", OwnerSubjectID: "owner-1", StackID: "stack-1",
+				ServerID: "server-1", LeaseID: tt.desiredLease, Mode: stackrouting.ModeCustomDomain,
+				Domain: "kombified.com", Provenance: stackrouting.Provenance{Source: "cloud", DNSProvider: "manual"},
+			})
+			persister, err := unifier.NewSpecPersisterWithPath(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			original := []byte("name: derived\nstackkit: cloud-kit\ndomain: kombify.me\n")
+			if _, _, err := persister.SaveStackSpecBytes(original); err != nil {
+				t.Fatal(err)
+			}
+			spec := &core.KombinationSpec{Network: core.NetworkSpec{Domain: "kombify.me"}}
+			job := &Job{TargetID: "stack-1", Payload: tt.payload}
+
+			path, err := deployApplyRoutingOverlay(context.Background(), &ProvisionConfig{RoutingStore: store}, job, persister, spec)
+			if err == nil {
+				t.Fatal("invalid routing authority was accepted")
+			}
+			if path != "" || spec.Network.Domain != "kombify.me" {
+				t.Fatalf("denied overlay mutated derived state: path=%q spec=%#v", path, spec)
+			}
+			handoff, err := os.ReadFile(persister.GetStackSpecPath())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(handoff, original) {
+				t.Fatalf("denied overlay mutated handoff:\n%s", handoff)
+			}
+		})
 	}
 }
 
@@ -257,44 +279,6 @@ func TestCopyRoutingDispatchReceiptPreservesDurableReplayMarkers(t *testing.T) {
 	}, map[string]interface{}{routingRevisionField: int64(6)})
 	if dst[routingDispatchKindField] != routingDispatchKindExact || dst[routingIdempotencyKeyField] != "routing-key" || dst[routingRevisionField] != int64(7) || dst[routingServerIDField] != "server-7" || dst[routingLeaseIDField] != "lease-7" {
 		t.Fatalf("routing receipt = %#v", dst)
-	}
-}
-
-func TestDeployApplyRoutingOverlayFailsClosedOnLeaseMismatch(t *testing.T) {
-	t.Parallel()
-
-	store := stackrouting.NewMemoryStore()
-	putJobRoutingState(t, store, stackrouting.DesiredState{
-		TenantID: "tenant-1", OwnerSubjectID: "owner-1", StackID: "stack-1",
-		ServerID: "server-1", LeaseID: "lease-expected", Mode: stackrouting.ModeCustomDomain,
-		Domain: "kombified.com", Provenance: stackrouting.Provenance{Source: "cloud", DNSProvider: "cloudflare"},
-	})
-	persister, err := unifier.NewSpecPersisterWithPath(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	original := []byte("name: derived\nstackkit: cloud-kit\ndomain: kombify.me\n")
-	if _, _, saveErr := persister.SaveStackSpecBytes(original); saveErr != nil {
-		t.Fatal(saveErr)
-	}
-	spec := &core.KombinationSpec{Network: core.NetworkSpec{Domain: "kombify.me"}}
-	job := &Job{TargetID: "stack-1", Payload: map[string]interface{}{
-		tenantIDField: "tenant-1", "owner_id": "owner-1", leaseIDField: "lease-other",
-	}}
-
-	path, err := deployApplyRoutingOverlay(context.Background(), &ProvisionConfig{RoutingStore: store}, job, persister, spec)
-	if err == nil || !strings.Contains(err.Error(), "routing overlay lease mismatch") {
-		t.Fatalf("error = %v, want lease mismatch", err)
-	}
-	if path != "" || spec.Network.Domain != "kombify.me" {
-		t.Fatalf("mismatched overlay mutated derived state: path=%q spec=%#v", path, spec)
-	}
-	handoff, readErr := os.ReadFile(persister.GetStackSpecPath())
-	if readErr != nil {
-		t.Fatal(readErr)
-	}
-	if !bytes.Equal(handoff, original) {
-		t.Fatalf("mismatched overlay mutated handoff:\n%s", handoff)
 	}
 }
 

@@ -2,24 +2,32 @@ package workflow
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
 
-func TestWorker_SweepTimers_FiresEscalation(t *testing.T) {
+type failingSignalStore struct{ RunStore }
+
+func (failingSignalStore) FindSuspendedBySignal(string) (*Run, error) {
+	return nil, errors.New("transient store failure")
+}
+
+func TestWorker_SweepTimers_ResumesDurableTimerAfterRestart(t *testing.T) {
 	eng := newTestEngine(t)
-	w := NewWorker(eng, WorkerConfig{Batch: 10})
+	started := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+	eng.now = func() time.Time { return started }
 
 	var resumedTimedOut bool
 	gate := StepDef{Name: "await", Run: func(_ context.Context, rc *RunContext) (StepResult, error) {
 		if rc.Signal == nil {
-			// suspend WITHOUT an inline timeout; the test arms the timer manually
-			return StepResult{Suspend: &SuspendDirective{SignalKey: "esc:test"}}, nil
+			return StepResult{Suspend: &SuspendDirective{SignalKey: "esc:test", Timeout: time.Minute, TimerKind: TimerReminder}}, nil
 		}
 		resumedTimedOut = rc.Signal.TimedOut
 		return ok(nil)
 	}}
-	eng.Register(testWF{typ: TypeActionCardRemediation, policy: DefaultRetryPolicy(), steps: []StepDef{gate}})
+	definition := testWF{typ: TypeActionCardRemediation, policy: DefaultRetryPolicy(), steps: []StepDef{gate}}
+	eng.Register(definition)
 
 	run := &Run{Type: TypeActionCardRemediation, OwnerID: "u"}
 	runID, err := eng.StartRun(context.Background(), run)
@@ -30,20 +38,15 @@ func TestWorker_SweepTimers_FiresEscalation(t *testing.T) {
 		t.Fatalf("status = %s, want suspended", got.Status)
 	}
 
-	// Arm a timer that is already due, targeting the awaited signal.
-	if err := eng.store.CreateTimer(&Timer{
-		RunID:     runID,
-		Kind:      TimerEscalation,
-		FireAt:    time.Now().Add(-time.Minute).UTC(),
-		SignalKey: "esc:test",
-	}); err != nil {
-		t.Fatalf("CreateTimer: %v", err)
-	}
-
-	// Sweep: the due timer should resume the run with a timed-out signal.
+	// Reconstruct the engine over the same durable store, as process startup
+	// does, then sweep after the persisted timer is due.
+	restarted := NewEngine(eng.store, NewActivityRunner())
+	restarted.Register(definition)
+	restarted.now = func() time.Time { return started.Add(2 * time.Minute) }
+	w := NewWorker(restarted, WorkerConfig{Batch: 10})
 	w.SweepTimers(context.Background())
 
-	got, _ := eng.store.GetRun(runID)
+	got, _ := restarted.store.GetRun(runID)
 	if got.Status != RunCompleted {
 		t.Fatalf("status after sweep = %s, want completed", got.Status)
 	}
@@ -51,9 +54,27 @@ func TestWorker_SweepTimers_FiresEscalation(t *testing.T) {
 		t.Error("resumed step should have seen Signal.TimedOut = true")
 	}
 	// Timer should be marked fired (no longer due).
-	due, _ := eng.store.ListDueTimers(time.Now().UTC(), 0)
+	due, _ := restarted.store.ListDueTimers(started.Add(2*time.Minute), 0)
 	if len(due) != 0 {
 		t.Errorf("due timers after sweep = %d, want 0", len(due))
+	}
+}
+
+func TestWorker_SweepTimers_RetriesTimerAfterDeliveryFailure(t *testing.T) {
+	store := newFakeStore(t)
+	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+	if err := store.CreateTimer(&Timer{
+		RunID: "run-1", Kind: TimerEscalation, FireAt: now.Add(-time.Minute), SignalKey: "esc:test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	eng := NewEngine(failingSignalStore{RunStore: store}, NewActivityRunner())
+	eng.now = func() time.Time { return now }
+	NewWorker(eng, WorkerConfig{Batch: 10}).SweepTimers(context.Background())
+
+	due, err := store.ListDueTimers(now, 0)
+	if err != nil || len(due) != 1 {
+		t.Fatalf("due timers after delivery failure = %d, err=%v; want one retryable timer", len(due), err)
 	}
 }
 

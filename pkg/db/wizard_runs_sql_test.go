@@ -2,34 +2,10 @@ package db
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/kombifyio/techstack/pkg/controlplane"
 )
-
-func TestWizardRunsMigrationIsTenantScopedWithKeyedLedger(t *testing.T) {
-	content := readDBFile(t, "migrations/045_wizard_runs.sql")
-	for _, required := range []string{
-		"CREATE TABLE IF NOT EXISTS wizard_runs",
-		"REFERENCES techstack_tenants(id) ON DELETE CASCADE",
-		"uq_wizard_runs_idempotency",
-		"WHERE idempotency_key IS NOT NULL",
-		"FOREIGN KEY (tenant_id, homelab_id)",
-		"REFERENCES homelabs (tenant_id, id)",
-		"ON DELETE RESTRICT",
-		"ENABLE ROW LEVEL SECURITY",
-		"FORCE ROW LEVEL SECURITY",
-		"CREATE POLICY tenant_isolation",
-		"CREATE TRIGGER set_wizard_runs_updated_at",
-		"CHECK (run_kind IN ('first-run', 'expansion'))",
-		"CHECK (status IN ('completed', 'failed'))",
-	} {
-		if !strings.Contains(content, required) {
-			t.Fatalf("migration missing %q", required)
-		}
-	}
-}
 
 // TestIntegrationWizardRunLedger exercises the 045 ledger against real
 // PostgreSQL: the partial-unique ON CONFLICT upsert, the tenant/owner scoped

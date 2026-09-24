@@ -7,12 +7,10 @@ import (
 	"github.com/kombifyio/techstack/pkg/autoinstall"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/logger"
-	"github.com/pocketbase/pocketbase/core"
 )
 
 // RegisterAutoInstallRoutes registers auto-install endpoints.
-func RegisterAutoInstallRoutes(r *httpx.Router, app core.App, log *logger.Logger) {
-	_ = app
+func RegisterAutoInstallRoutes(r *httpx.Router, log *logger.Logger) {
 	detector := autoinstall.NewDetector(log)
 
 	r.GET("/api/v1/autoinstall/status", func(re *httpx.Event) error {

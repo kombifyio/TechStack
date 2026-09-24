@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/gocommon/denial"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/middleware"
@@ -16,21 +17,22 @@ import (
 	"github.com/kombifyio/techstack/pkg/ril/actions"
 )
 
-type GovernedActionExecutor interface {
-	Execute(ctx context.Context, request rilaction.Request, executionAdmissionDigest string) (rilaction.Evidence, error)
+type GovernedActionWorkflow interface {
+	Execute(context.Context, actions.BeginExecution) (*actions.GovernedCard, error)
 }
 
 type GovernedActionRouteConfig struct {
 	Authority actions.Authority
-	Executor  GovernedActionExecutor
+	Workflow  GovernedActionWorkflow
+	Policy    InventoryPolicy
 	Now       func() time.Time
 }
 
 type governedActionHandler struct{ config GovernedActionRouteConfig }
 
 func RegisterGovernedActionRoutes(r *httpx.Router, config GovernedActionRouteConfig) {
-	if config.Authority == nil || config.Executor == nil {
-		panic("RegisterGovernedActionRoutes: authority and executor required")
+	if config.Authority == nil || config.Workflow == nil || config.Policy == nil {
+		panic("RegisterGovernedActionRoutes: authority, workflow, and inventory policy required")
 	}
 	if config.Now == nil {
 		config.Now = func() time.Time { return time.Now().UTC() }
@@ -134,28 +136,21 @@ func (h governedActionHandler) execute(e *httpx.Event) error {
 	if err != nil {
 		return writeGovernedActionError(e, err)
 	}
+	cardID := strings.TrimSpace(e.Request.PathValue("cardId"))
+	card, err := h.config.Authority.Get(e.Request.Context(), scope.tenantID, scope.ownerID, cardID)
+	if err != nil {
+		return writeGovernedActionError(e, err)
+	}
+	if err := authorizeInventoryServerOperate(e.Request.Context(), h.config.Policy, scope, card.ServerID); err != nil {
+		return writeGovernedActionError(e, err)
+	}
 	var body executeGovernedActionRequest
 	if decodeErr := decodeGovernedActionJSON(e, &body); decodeErr != nil {
 		return writeGovernedActionError(e, decodeErr)
 	}
-	begin, err := h.config.Authority.Begin(e.Request.Context(), actions.BeginExecution{TenantID: scope.tenantID, OwnerSubjectID: scope.ownerID, CardID: e.Request.PathValue("cardId"), ExecutionID: body.ExecutionID, TraceID: body.TraceID, IdempotencyKey: body.IdempotencyKey, Now: h.config.Now(), ConnectorProjection: connectorProjectionFromEvent(e)})
+	card, err = h.config.Workflow.Execute(e.Request.Context(), actions.BeginExecution{TenantID: scope.tenantID, OwnerSubjectID: scope.ownerID, CardID: cardID, ExecutionID: body.ExecutionID, TraceID: body.TraceID, IdempotencyKey: body.IdempotencyKey, Now: h.config.Now(), ConnectorProjection: connectorProjectionFromEvent(e)})
 	if err != nil {
 		return writeGovernedActionError(e, err)
-	}
-	if begin.Disposition == actions.BeginReplay {
-		return httpx.Success(e, http.StatusOK, begin.Card)
-	}
-	evidence, executionErr := h.config.Executor.Execute(e.Request.Context(), begin.Request, begin.Admission.Digest)
-	if strings.TrimSpace(evidence.ExecutionID) == "" {
-		return writeGovernedActionError(e, executionErr)
-	}
-	errorCode := ""
-	if executionErr != nil {
-		errorCode = "stackkit_execution_failed"
-	}
-	card, completeErr := h.config.Authority.Complete(e.Request.Context(), scope.tenantID, begin.Card.ID, evidence, errorCode, h.config.Now())
-	if completeErr != nil {
-		return writeGovernedActionError(e, completeErr)
 	}
 	return httpx.Success(e, http.StatusOK, card)
 }
@@ -179,7 +174,9 @@ func writeGovernedActionError(e *httpx.Event, err error) error {
 	switch {
 	case errors.Is(err, actions.ErrCardNotFound):
 		return httpx.NotFound(e, "Action card not found")
-	case errors.Is(err, actions.ErrApprovalRequired), errors.Is(err, actions.ErrGrantRequired), errors.Is(err, actions.ErrConnectorBindingRequired), errors.Is(err, actions.ErrConnectorGrantInsufficient), errors.Is(err, actions.ErrExecutionAdmission), errors.Is(err, actions.ErrCardConflict), errors.Is(err, actions.ErrExecutionInProgress):
+	case errors.Is(err, actions.ErrGrantRequired), errors.Is(err, actions.ErrConnectorBindingRequired), errors.Is(err, actions.ErrConnectorGrantInsufficient):
+		return writeGovernedActionEntitlementDenial(e, err)
+	case errors.Is(err, actions.ErrApprovalRequired), errors.Is(err, actions.ErrExecutionAdmission), errors.Is(err, actions.ErrCardConflict), errors.Is(err, actions.ErrExecutionInProgress):
 		return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "Action cannot transition", map[string]any{inventoryReasonCodeField: governedActionReason(err)})
 	case errors.Is(err, errGovernedActionRequest):
 		return httpx.BadRequest(e, "Invalid governed action request", map[string]any{inventoryReasonCodeField: "invalid_request"})
@@ -189,6 +186,48 @@ func writeGovernedActionError(e *httpx.Event, err error) error {
 		}
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Governed action unavailable", map[string]any{inventoryReasonCodeField: "governed_action_unavailable"})
 	}
+}
+
+func writeGovernedActionEntitlementDenial(e *httpx.Event, err error) error {
+	reason := governedActionReason(err)
+	env := denial.Envelope{
+		ErrorCode:        reason,
+		ReasonCode:       reason,
+		Capability:       "techstack.ril.execute",
+		RequiredFeatures: []string{"techstack.ril.execute"},
+		MissingFeatures:  []string{"techstack.ril.grant"},
+		Retryable:        false,
+		UserGuidance: denial.UserGuidance{
+			Title: "This RIL action cannot run yet",
+			Body:  "Techstack stopped before starting the durable workflow because the required execution grant is missing, expired, or insufficient.",
+			NextSteps: []string{
+				"Approve the action card with a live delegated grant.",
+				"Retry only after the grant and connector binding are present.",
+			},
+		},
+	}
+	if errors.Is(err, actions.ErrConnectorBindingRequired) || errors.Is(err, actions.ErrConnectorGrantInsufficient) {
+		env.MissingFeatures = []string{"techstack.ril.connector_binding"}
+		env.UserGuidance.Title = "This RIL action needs a connector binding"
+		env.UserGuidance.Body = "Techstack stopped before starting the durable workflow because the exact connector binding is missing or cannot mutate."
+		env.UserGuidance.NextSteps = []string{
+			"Bind the action card to an active connector grant.",
+			"Retry the execute request through Gateway so the signed connector projection is present.",
+		}
+	}
+	if validateErr := env.Validate(); validateErr != nil {
+		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Governed action unavailable", map[string]any{inventoryReasonCodeField: "governed_action_unavailable"})
+	}
+	raw, marshalErr := json.Marshal(env)
+	if marshalErr != nil {
+		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Governed action unavailable", map[string]any{inventoryReasonCodeField: "governed_action_unavailable"})
+	}
+	var payload map[string]any
+	if unmarshalErr := json.Unmarshal(raw, &payload); unmarshalErr != nil {
+		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Governed action unavailable", map[string]any{inventoryReasonCodeField: "governed_action_unavailable"})
+	}
+	payload["error"] = map[string]any{"code": env.ErrorCode, "message": env.UserGuidance.Body}
+	return e.JSON(http.StatusForbidden, payload)
 }
 
 func governedActionReason(err error) string {

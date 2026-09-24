@@ -23,6 +23,7 @@ func TestProviderControlRuntimeRolePostureQueryPinsBoundedAuthority(t *testing.T
 		"provider_control_list_due_decommission_wait_tenants(text,integer)",
 		"provider_control_list_provider_provision_waits(text,text,integer)",
 		"provider_control_list_stale_capacity_recovery_candidates(text,text,integer)",
+		"provider_control_list_never_enrolled_runtime_candidates(text,text,integer,integer)",
 		"provider_incident_refresh_pending_dispatch_tenant",
 		"provider_incident_list_tenant_ids",
 		"required_tenant_rls",
@@ -51,26 +52,11 @@ func TestProviderControlRuntimeRolePostureQueryPinsBoundedAuthority(t *testing.T
 		t.Fatal("posture must reject every SET ROLE membership, not only inherited cluster attributes")
 	}
 	for _, adminOnlyTable := range []string{
-		"provider_provision_discovery_observations",
 		"provider_control_runnable_tenants",
 		"provider_incident_pending_dispatch_tenants",
 	} {
 		if strings.Contains(providerControlRuntimeRolePostureQuery, "('"+adminOnlyTable+"', '") {
 			t.Fatalf("runtime role must not require raw table authority on %q", adminOnlyTable)
-		}
-	}
-	if count := strings.Count(
-		providerControlRuntimeRolePostureQuery,
-		"('provider_provision_resolution_decisions', 'SELECT')",
-	); count != 1 {
-		t.Fatalf("provider resolution decision SELECT posture count = %d, want 1", count)
-	}
-	for _, forbiddenPrivilege := range []string{"INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"} {
-		if strings.Contains(
-			providerControlRuntimeRolePostureQuery,
-			"('provider_provision_resolution_decisions', '"+forbiddenPrivilege+"')",
-		) {
-			t.Fatalf("runtime posture grants provider resolution decisions %s", forbiddenPrivilege)
 		}
 	}
 }

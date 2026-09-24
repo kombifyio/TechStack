@@ -13,6 +13,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/clientpairing"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/identity"
+	"github.com/kombifyio/techstack/pkg/outcome"
 )
 
 const (
@@ -248,7 +249,7 @@ func issueClientPairingForRouteTest(t *testing.T, router *httpx.Router) clientpa
 
 func assertClientPairingReason(t *testing.T, recorder *httptest.ResponseRecorder, want string) {
 	t.Helper()
-	var envelope clientPairingErrorEnvelope
+	var envelope outcome.Decision
 	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
 		t.Fatal(err)
 	}

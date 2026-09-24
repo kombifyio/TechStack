@@ -14,7 +14,7 @@
  */
 
 import { goto } from "$app/navigation";
-import { browser } from "$app/environment";
+import { browser } from "$app/env";
 import {
   getAuthMode,
   getV2AuthProviders,
@@ -26,28 +26,33 @@ import {
   type V2WhoAmIResponse,
   type DeploymentMode,
   type CloudUser,
-} from "$lib/api/auth";
-import {
-  getPocketBaseCompatStoredUser,
-  clearPocketBaseCompatStoredSession,
-  isPocketBaseAuthCompatEnabled,
-  savePocketBaseCompatStoredSession,
-  type AuthModel,
-} from "$lib/auth/pocketbase-compat";
+} from "#lib/api/auth.js";
 import {
   buildCloudAuthRedirectURL,
   buildV2ProviderLogoutPath,
   currentAuthReturnTo,
   getPostLogoutRedirectPath,
   resolveLoginExperience,
-} from "$lib/auth/login-experience";
-import { clearReprojectionReauthMarker } from "$lib/api/session-reprojection";
+} from "#lib/auth/login-experience.js";
+import { clearReprojectionReauthMarker } from "#lib/api/session-reprojection.js";
 import {
   hasWindowsLocalClientContext,
   windowsLocalClientReturnUrl,
-} from "$lib/client/windows-onboarding";
-import { setStackIdentity } from "$lib/stores/stackIdentity";
-import { clearTechstackSecuritySessionState } from "$lib/logout-cleanup";
+} from "#lib/client/windows-onboarding.js";
+import { setStackIdentity } from "#lib/stores/stackIdentity.js";
+import {
+  clearGatewayAuth,
+  completeGatewayRedirectIfPresent,
+  getGatewayToken,
+  startGatewayLogin,
+} from "#lib/auth/gateway-auth.js";
+import {
+  isSilentAuthFailure,
+  markAutoReloginAttempt,
+  noteGatewayTokenSuccess,
+  shouldAttemptAutoRelogin,
+} from "#lib/auth/session-recovery.js";
+import { clearTechstackSecuritySessionState } from "#lib/logout-cleanup.js";
 
 const CLOUD_PORTAL_SESSION_PROVIDER_ID = "cloud";
 
@@ -66,8 +71,6 @@ export interface AuthState {
   portalUrl: string | null;
   /** Whether local login is allowed in cloud mode */
   allowLocalLogin: boolean;
-  /** Current legacy compatibility user (if any) */
-  pocketbaseUser: AuthModel | null;
   /** Current cloud user claims (if any) */
   cloudUser: CloudUser | null;
   /** Whether user is authenticated */
@@ -99,7 +102,6 @@ class AuthStore {
   v2LoginUrl = $state<string | null>(null);
   portalUrl = $state<string | null>(null);
   allowLocalLogin = $state(true);
-  pocketbaseUser = $state<AuthModel | null>(null);
   cloudUser = $state<CloudUser | null>(null);
   v2SessionActive = $state(false);
   loading = $state(false);
@@ -107,39 +109,23 @@ class AuthStore {
 
   // Derived state
   get isAuthenticated(): boolean {
-    return this.pocketbaseUser !== null || this.cloudUser !== null;
+    return this.v2SessionActive && this.cloudUser !== null;
   }
 
   get isAdmin(): boolean {
-    // Cloud users with admin role are admins
-    if (this.cloudUser?.is_admin) return true;
-    // In self-hosted mode, local PocketBase users are the owner/admin path.
-    if (this.deploymentMode === "self-hosted" && this.pocketbaseUser) {
-      return true;
-    }
-    return false;
+    return Boolean(this.cloudUser?.is_admin);
   }
 
-  get currentUser(): AuthModel | CloudUser | null {
-    return this.cloudUser || this.pocketbaseUser;
+  get currentUser(): CloudUser | null {
+    return this.cloudUser;
   }
 
   get userEmail(): string | null {
-    if (this.cloudUser) return this.cloudUser.email;
-    if (this.pocketbaseUser) return this.pocketbaseUser.email ?? null;
-    return null;
+    return this.cloudUser?.email ?? null;
   }
 
   get userName(): string | null {
-    if (this.cloudUser) return this.cloudUser.name;
-    if (this.pocketbaseUser) {
-      return (
-        (this.pocketbaseUser as { name?: string }).name ||
-        this.pocketbaseUser.email ||
-        null
-      );
-    }
-    return null;
+    return this.cloudUser?.name || this.cloudUser?.email || null;
   }
 
   // ============================================================================
@@ -174,10 +160,20 @@ class AuthStore {
         // 1.5 Detect whether the V2 auth endpoints are available.
         await this.detectV2Auth();
 
-        // 2. Check for an existing legacy compatibility token.
-        this.syncCompatAuth();
+        // SPA gateway login returns to the app origin with code+state. Claim
+        // that transaction before the v2 OIDC handler can steal it.
+        const gatewayReturn = await completeGatewayRedirectIfPresent();
+        if (gatewayReturn) {
+          if (!embedded) {
+            await this.syncV2Session();
+          }
+          await goto(gatewayReturn);
+          return;
+        }
 
-        // 2.5 Check for an existing V2 cookie-backed session.
+        const pendingOidc = this.hasOidcCallbackParams();
+
+        // 2. Check for an existing V2 cookie-backed session.
         // Embedded identity is established by the parent portal exchange. A
         // speculative same-origin whoami before that handoff only produces a
         // misleading 401 and cannot authenticate the iframe.
@@ -187,6 +183,15 @@ class AuthStore {
 
         // 3. Check for hosted OIDC callback params.
         await this.checkPortalRedirect();
+        if (pendingOidc) return;
+
+        // 4. Cookie session is not the gateway API token. Mint it once via
+        // the SPA client so standalone demo/Universal Login users can call
+        // api.kombify.io instead of sitting on a dead error banner.
+        if (!embedded) {
+          const redirected = await this.ensureStandaloneGatewayToken();
+          if (redirected) return;
+        }
 
         if (!this.subscriptionsBound) {
           this.subscriptionsBound = true;
@@ -205,6 +210,24 @@ class AuthStore {
     } finally {
       this.initInFlight = null;
     }
+  }
+
+  /**
+   * Re-check the authoritative cookie-backed browser session.
+   *
+   * Unlike init(), this method does not treat the first page boot as the last
+   * word: callers use it after a 401 so a renewed login is adopted without a
+   * reload and an expired session is not reported as refreshed.
+   */
+  async refreshSession(options: { embedded?: boolean } = {}): Promise<boolean> {
+    if (!browser) return false;
+
+    if (!this.initialized) {
+      await this.init(options);
+      return this.v2SessionActive;
+    }
+
+    return this.syncV2Session();
   }
 
   /**
@@ -260,21 +283,6 @@ class AuthStore {
     }
   }
 
-  /**
-   * Sync with the legacy compatibility auth payload.
-   */
-  private syncCompatAuth(): void {
-    // SaaS never accepts a stale local/PocketBase compatibility session. Such
-    // a cookie makes the UI look authenticated while the gateway cannot mint
-    // the user's Auth0 entitlement envelope, leaving managed VPS disabled.
-    if (this.deploymentMode === "saas" && !this.allowLocalLogin) {
-      clearPocketBaseCompatStoredSession();
-      this.pocketbaseUser = null;
-      return;
-    }
-    this.pocketbaseUser = getPocketBaseCompatStoredUser();
-  }
-
   private async syncV2Session(): Promise<boolean> {
     try {
       const whoami = await getV2WhoAmI();
@@ -301,6 +309,36 @@ class AuthStore {
   }
 
   /** Check for hosted OIDC callback params. */
+  private hasOidcCallbackParams(): boolean {
+    if (!browser) return false;
+    const params = new URLSearchParams(window.location.search);
+    return Boolean(params.get("code") && params.get("state"));
+  }
+
+  /**
+   * Acquire the API-audience token for standalone SaaS. Returns true when a
+   * full-page SPA login navigation started.
+   */
+  private async ensureStandaloneGatewayToken(): Promise<boolean> {
+    if (this.deploymentMode !== "saas" || !this.v2SessionActive) {
+      return false;
+    }
+    try {
+      await getGatewayToken();
+      noteGatewayTokenSuccess();
+      return false;
+    } catch (err) {
+      if (!isSilentAuthFailure(err) || !shouldAttemptAutoRelogin()) {
+        return false;
+      }
+      markAutoReloginAttempt();
+      return startGatewayLogin({
+        interactive: false,
+        returnTo: currentAuthReturnTo(),
+      });
+    }
+  }
+
   private async checkPortalRedirect(): Promise<void> {
     if (!browser) return;
 
@@ -333,14 +371,8 @@ class AuthStore {
     try {
       await loginWithLocalSession(email, password);
       await this.syncV2Session();
-      this.pocketbaseUser = null;
-      return true;
+      return this.v2SessionActive;
     } catch (err) {
-      if (isPocketBaseAuthCompatEnabled()) {
-        console.warn(
-          "[AuthStore] Legacy PocketBase auth compatibility is enabled, but SDK login fallback has been removed; use the Go local session endpoint.",
-        );
-      }
       console.error("[AuthStore] Login error:", err);
       this.error = "Invalid email or password";
       return false;
@@ -355,11 +387,13 @@ class AuthStore {
   initiateCloudLogin(options?: {
     returnTo?: string | null;
     redirect?: (url: string) => void;
+    interactive?: boolean;
   }): string | null {
     const target = this.v2LoginUrl || this.cloudAuthUrl;
     if (target) {
       const redirectURL = buildCloudAuthRedirectURL(target, {
         returnTo: options?.returnTo ?? currentAuthReturnTo(),
+        interactive: options?.interactive,
       });
       (options?.redirect ?? window.location.assign.bind(window.location))(
         redirectURL,
@@ -382,12 +416,6 @@ class AuthStore {
         "Portal sign-in did not establish a verified browser session",
       );
     }
-    if (!data.pb_token) {
-      throw new Error("Portal sign-in did not return a compatibility session");
-    }
-
-    savePocketBaseCompatStoredSession(data.pb_token, data.user);
-    this.syncCompatAuth();
     this.cloudUser = data.cloud_user
       ? portalCloudUserToCloudUser(data.cloud_user)
       : this.cloudUser;
@@ -417,9 +445,9 @@ class AuthStore {
    */
   async clearSession(): Promise<void> {
     await logoutLocalSession();
+    await clearGatewayAuth();
     clearTechstackSecuritySessionState();
     clearReprojectionReauthMarker();
-    this.pocketbaseUser = null;
     this.cloudUser = null;
     this.v2SessionActive = false;
   }
@@ -443,7 +471,10 @@ class AuthStore {
             deploymentMode: this.deploymentMode,
             embedded: false,
           })
-        : "/login";
+        : getPostLogoutRedirectPath({
+            deploymentMode: this.deploymentMode,
+            embedded: false,
+          });
 
       if (browser && shouldUseV2ProviderLogout) {
         (options?.redirect ?? window.location.assign.bind(window.location))(
@@ -489,7 +520,6 @@ class AuthStore {
     this.hostedProviderIDs.clear();
     this.portalUrl = null;
     this.allowLocalLogin = true;
-    this.pocketbaseUser = null;
     this.cloudUser = null;
     this.v2SessionActive = false;
     clearTechstackSecuritySessionState();
@@ -508,7 +538,6 @@ class AuthStore {
       cloudAuthUrl: this.cloudAuthUrl,
       portalUrl: this.portalUrl,
       allowLocalLogin: this.allowLocalLogin,
-      pocketbaseUser: this.pocketbaseUser,
       cloudUser: this.cloudUser,
       isAuthenticated: this.isAuthenticated,
       isAdmin: this.isAdmin,

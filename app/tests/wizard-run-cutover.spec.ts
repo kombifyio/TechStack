@@ -155,15 +155,22 @@ test("flag on: easy wizard submits a wizard run and lands on the progress page",
   await page.getByTestId("hydrated").waitFor({ state: "attached" });
 
   await expect(page.getByTestId("easy-step-1")).toBeVisible();
-  await page.getByTestId("easy-feature-storage").check();
+  await page.getByTestId("easy-feature-storage").click();
   await page.getByTestId("wizard-next").click();
   await expect(page.getByTestId("easy-step-2")).toBeVisible();
+  await page.getByTestId("server-branch-new").click();
+  await page.getByTestId("server-mode-kombify-cloud").click();
+  await page.getByText("Provider & server details", { exact: true }).click();
+  await page.getByTestId("managed-provider-ionos").click();
+  await expect(
+    page.getByTestId("managed-provider-ionos").locator('input[type="radio"]'),
+  ).toBeChecked();
   await page.getByTestId("wizard-next").click();
   await expect(page.getByTestId("easy-step-3")).toBeVisible();
   await page.getByTestId("easy-access-anywhere").click();
   await page.getByTestId("wizard-next").click();
   await expect(page.getByTestId("easy-step-4")).toBeVisible();
-  await page.getByTestId("easy-users-me").check();
+  await page.getByTestId("easy-users-solo").click();
   await page.getByTestId("wizard-next").click();
   await expect(page.getByTestId("easy-step-5")).toBeVisible();
 
@@ -185,7 +192,11 @@ test("flag on: easy wizard submits a wizard run and lands on the progress page",
     kit_slug: "cloud-kit",
   });
   expect(runRequest!.intent?.server?.transport).toBe("kombify-cloud");
-  expect(runRequest!.managed?.provider_id).toBeTruthy();
+  expect(runRequest!.managed).toMatchObject({
+    provider_id: "ionos",
+    ionos_datacenter: "de/fra",
+    provider_region: "de/fra",
+  });
   expect(runRequest!.stack_spec).toBeUndefined();
 
   // Direct handoff to the progress page (plan D6) — no creation=1 detour.

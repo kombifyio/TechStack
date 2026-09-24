@@ -8,9 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/kombifyio/go-common/identity"
+	"github.com/kombifyio/techstack/internal/gocommon/identity"
 	"github.com/kombifyio/techstack/pkg/api"
 )
 
@@ -276,31 +275,9 @@ func TestEventResponseDirectAccessAndPrincipal(t *testing.T) {
 	}
 }
 
-func TestServerGracefulShutdown(t *testing.T) {
-	r := NewRouter()
-	r.GET("/ping", func(e *Event) error { return Success(e, 200, "pong") })
-	srv := NewServer(r, ServerConfig{Addr: "127.0.0.1:0"})
-
-	// Drive ServeHTTP directly to confirm wiring without binding a port.
-	rec := httptest.NewRecorder()
-	srv.HTTPServer().Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ping", nil))
-	if rec.Code != 200 {
-		t.Fatalf("server handler: got %d want 200", rec.Code)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
-		t.Fatalf("shutdown: %v", err)
-	}
-}
-
-// TestBuildMuxOverlappingWildcardRoutesDoNotPanic guards the 405-fallback
-// registration against ServeMux pattern conflicts. Two distinct method-scoped
-// routes can have overlapping wildcard paths whose method-less forms conflict
-// (regression: the kombify.me backups routes panicked the control-plane at
-// startup). BuildMux must not panic, and both routes must still dispatch for
-// their correct methods.
+// TestBuildMuxOverlappingWildcardRoutesDoNotPanic guards the 405 boundary for
+// distinct method-scoped routes with overlapping wildcard paths (regression:
+// the kombify.me backups routes panicked the control-plane at startup).
 func TestBuildMuxOverlappingWildcardRoutesDoNotPanic(t *testing.T) {
 	r := NewRouter()
 	r.POST("/api/v1/backups/{name}/upload-s3", func(e *Event) error {
@@ -332,5 +309,11 @@ func TestBuildMuxOverlappingWildcardRoutesDoNotPanic(t *testing.T) {
 		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), c.want) {
 			t.Fatalf("%s %s: got code=%d body=%q, want 200 containing %q", c.method, c.path, rec.Code, rec.Body.String(), c.want)
 		}
+	}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/api/v1/backups/s3/upload-s3", nil))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("overlapping wildcard wrong method: got %d want 405", rec.Code)
 	}
 }

@@ -4,8 +4,8 @@ import { ManagementStateContractError } from "./api/registry";
 import {
   openServiceUrl,
   requireServiceManagementState,
+  serviceCardActions,
   serviceCardMeta,
-  serviceCardMetrics,
   serviceCardName,
   serviceCardPlacement,
   serviceCardStatus,
@@ -100,25 +100,17 @@ describe("service card adapter", () => {
     expect(serviceTypeLabel(service)).toBe("media server");
     expect(serviceTargetLabel(service)).toBe("Foundation");
     expect(serviceCardMeta(service)).toBe("media server · Foundation · :8080");
-    expect(serviceCardMetrics(service)).toEqual([
-      { label: "Type", value: "media server" },
-      { label: "Server", value: "Foundation" },
-      { label: "Port", value: "8080" },
-    ]);
   });
 
-  it("uses all backend target fallbacks before rendering a service without a server metric", () => {
+  it("uses all backend target fallbacks before rendering a service without a Node metric", () => {
     expect(serviceTargetLabel({ node_name: "Node A" })).toBe("Node A");
-    expect(serviceTargetLabel({ server_name: "Server B" })).toBe("Server B");
+    expect(serviceTargetLabel({ server_name: "Node B" })).toBe("Node B");
     expect(serviceTargetLabel({ target_server_id: "target-1" })).toBe(
       "target-1",
     );
     expect(serviceTargetLabel({ node_id: "node-1" })).toBe("node-1");
     expect(serviceTargetLabel({ server_id: "server-1" })).toBe("server-1");
     expect(serviceTargetLabel({})).toBeUndefined();
-    expect(serviceCardMetrics({ type: "cache" })).toEqual([
-      { label: "Type", value: "cache" },
-    ]);
   });
 
   it("classifies placement from service fields and route-specific hints", () => {
@@ -180,12 +172,14 @@ describe("service card adapter", () => {
   });
 
   it("returns operator-facing status messages for non-happy paths", () => {
+    // Canvas case C: an observed service carries the adoption invitation even
+    // while healthy — discovery without management is a state worth naming.
     expect(
       serviceCardStatusMessage({
         management_state: "observed",
         status: "running",
       }),
-    ).toBeUndefined();
+    ).toBe("Observed only — adopt to manage lifecycle.");
     expect(serviceCardStatusMessage({ status: "archived" })).toBe(
       "Archived source service.",
     );
@@ -226,5 +220,93 @@ describe("service card adapter", () => {
       "_blank",
       "noopener,noreferrer",
     );
+
+    openServiceUrl({ url: "javascript:alert(1)" });
+    openServiceUrl({ url: "/relative-service" });
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("serviceCardActions", () => {
+  const base = {
+    managementState: "managed" as const,
+    onAction: () => {},
+  };
+
+  it("renders a button only for a backend-granted action", () => {
+    const actions = serviceCardActions({
+      ...base,
+      allowedActions: ["logs", "restart", "scale"],
+    });
+    const ids = actions.map((action) => action.id);
+    expect(ids).toContain("logs");
+    expect(ids).toContain("restart");
+    expect(ids).not.toContain("start");
+    expect(ids).not.toContain("scale");
+  });
+
+  it("marks the in-flight action executing, then verifying, and locks sibling mutations honestly", () => {
+    const executing = serviceCardActions({
+      ...base,
+      allowedActions: ["logs", "start", "stop", "restart"],
+      activeAction: "restart",
+    });
+    expect(executing.find((a) => a.id === "restart")?.state).toBe("executing");
+    const stop = executing.find((a) => a.id === "stop");
+    expect(stop?.state).toBe("disabled");
+    expect(stop?.disabledReason).toBeTruthy();
+    // Logs stay available while a mutation runs.
+    expect(executing.find((a) => a.id === "logs")?.state).toBe("ready");
+
+    const verifying = serviceCardActions({
+      ...base,
+      allowedActions: ["restart"],
+      activeAction: "restart",
+      converging: true,
+    });
+    expect(verifying.find((a) => a.id === "restart")?.state).toBe("verifying");
+  });
+
+  it("announces the owner-approval gate on idle mutations", () => {
+    const actions = serviceCardActions({
+      ...base,
+      allowedActions: ["start", "logs"],
+    });
+    expect(actions.find((a) => a.id === "start")?.state).toBe("needs_approval");
+    expect(actions.find((a) => a.id === "logs")?.state).toBe("ready");
+  });
+
+  it("takes the lock slot from the backend grant, not from ownership", () => {
+    const lockable = serviceCardActions({
+      ...base,
+      allowedActions: ["logs", "restart", "freeze"],
+    });
+    // Changing a guardrail is an owner decision like any other mutation.
+    expect(lockable.find((a) => a.id === "freeze")?.state).toBe(
+      "needs_approval",
+    );
+
+    const notLockable = serviceCardActions({ ...base, allowedActions: ["logs"] });
+    expect(notLockable.some((a) => a.id === "freeze")).toBe(false);
+  });
+
+  it("keeps suppressed mutations visible with the lock reason while locked", () => {
+    const actions = serviceCardActions({
+      ...base,
+      // What a locked service really returns: the mutations are gone and the
+      // way out is offered instead.
+      allowedActions: ["logs", "unfreeze"],
+      locked: true,
+      lockedReason: "Locked by marcel · 2h ago",
+    });
+
+    const restart = actions.find((a) => a.id === "restart");
+    expect(restart?.state).toBe("disabled");
+    expect(restart?.disabledReason).toBe("Locked by marcel · 2h ago");
+    // The way out is never disabled, and reads stay open.
+    expect(actions.find((a) => a.id === "unfreeze")?.state).toBe(
+      "needs_approval",
+    );
+    expect(actions.find((a) => a.id === "logs")?.state).toBe("ready");
   });
 });

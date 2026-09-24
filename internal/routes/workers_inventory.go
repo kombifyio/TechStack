@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/portinventory"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
@@ -15,6 +16,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/runtimeidentity"
 	"github.com/kombifyio/techstack/pkg/serviceregistry"
 	"github.com/kombifyio/techstack/pkg/workerauth"
+	"golang.org/x/crypto/ssh"
 )
 
 const (
@@ -37,24 +39,25 @@ const (
 )
 
 type workerInventoryRequest struct {
-	SourceEpoch      string    `json:"source_epoch"`
-	SourceSequence   int64     `json:"source_sequence"`
-	ObservedAt       time.Time `json:"observed_at"`
-	TenantID         string    `json:"tenant_id"`
-	OwnerID          string    `json:"owner_id"`
-	StackID          string    `json:"stack_id"`
-	LeaseID          string    `json:"lease_id"`
-	ServerID         string    `json:"server_id"`
-	RuntimeAgentID   string    `json:"runtime_agent_id"`
-	Hostname         string    `json:"hostname"`
-	OS               string    `json:"os"`
-	Arch             string    `json:"arch"`
-	AgentVersion     string    `json:"agent_version"`
-	StackKit         string    `json:"stackkit"`
-	StackKitVersion  string    `json:"stackkit_version"`
-	StackKitMode     string    `json:"stackkit_mode"`
-	Domain           string    `json:"domain"`
-	ManifestObserved bool      `json:"manifest_observed"`
+	Substrate        json.RawMessage `json:"substrate,omitempty"`
+	SourceEpoch      string          `json:"source_epoch"`
+	SourceSequence   int64           `json:"source_sequence"`
+	ObservedAt       time.Time       `json:"observed_at"`
+	TenantID         string          `json:"tenant_id"`
+	OwnerID          string          `json:"owner_id"`
+	StackID          string          `json:"stack_id"`
+	LeaseID          string          `json:"lease_id"`
+	ServerID         string          `json:"server_id"`
+	RuntimeAgentID   string          `json:"runtime_agent_id"`
+	Hostname         string          `json:"hostname"`
+	OS               string          `json:"os"`
+	Arch             string          `json:"arch"`
+	AgentVersion     string          `json:"agent_version"`
+	StackKit         string          `json:"stackkit"`
+	StackKitVersion  string          `json:"stackkit_version"`
+	StackKitMode     string          `json:"stackkit_mode"`
+	Domain           string          `json:"domain"`
+	ManifestObserved bool            `json:"manifest_observed"`
 	// ManifestServiceCount distinguishes "manifest declares zero services"
 	// (legitimate prune-to-zero) from "probing produced none" (no evidence).
 	ManifestServiceCount int `json:"manifest_service_count"`
@@ -71,25 +74,29 @@ type workerInventoryRequest struct {
 	Channels               []workerInventoryChannel     `json:"channels"`
 	Endpoints              []workerInventoryEndpoint    `json:"endpoints"`
 	RuntimeConvergence     *runtimeconvergence.Snapshot `json:"runtime_convergence,omitempty"`
+	OpenPorts              []string                     `json:"open_ports"`
+	PortsObserved          bool                         `json:"ports_observed"`
 }
 
 type workerInventoryHost struct {
-	Hostname         string  `json:"hostname"`
-	OS               string  `json:"os"`
-	OSVersion        string  `json:"os_version"`
-	Arch             string  `json:"arch"`
-	PublicIP         string  `json:"public_ip"`
-	PrivateIP        string  `json:"private_ip"`
-	LocalIP          string  `json:"local_ip"`
-	CPUCores         int     `json:"cpu_cores"`
-	RAMMB            int     `json:"ram_mb"`
-	DiskGB           int     `json:"disk_gb"`
-	CPUPercent       float64 `json:"cpu_percent"`
-	MemoryUsedBytes  int64   `json:"memory_used_bytes"`
-	MemoryTotalBytes int64   `json:"memory_total_bytes"`
-	DiskUsedBytes    int64   `json:"disk_used_bytes"`
-	DiskTotalBytes   int64   `json:"disk_total_bytes"`
-	UptimeSeconds    float64 `json:"uptime_seconds"`
+	Hostname         string   `json:"hostname"`
+	OS               string   `json:"os"`
+	OSVersion        string   `json:"os_version"`
+	Arch             string   `json:"arch"`
+	PublicIP         string   `json:"public_ip"`
+	PrivateIP        string   `json:"private_ip"`
+	LocalIP          string   `json:"local_ip"`
+	CPUCores         int      `json:"cpu_cores"`
+	RAMMB            int      `json:"ram_mb"`
+	DiskGB           int      `json:"disk_gb"`
+	DockerVersion    string   `json:"docker_version"`
+	CPUPercent       float64  `json:"cpu_percent"`
+	MemoryUsedBytes  int64    `json:"memory_used_bytes"`
+	MemoryTotalBytes int64    `json:"memory_total_bytes"`
+	DiskUsedBytes    int64    `json:"disk_used_bytes"`
+	DiskTotalBytes   int64    `json:"disk_total_bytes"`
+	UptimeSeconds    float64  `json:"uptime_seconds"`
+	SSHHostKeys      []string `json:"ssh_host_keys"`
 }
 
 type workerInventoryService struct {
@@ -101,22 +108,29 @@ type workerInventoryService struct {
 	// Source is the Guard-reported provenance on the closed
 	// pkg/serviceregistry vocabulary. See inventoryServiceSource for why an
 	// absent value stays `stackkits-inventory`.
-	Source       string                    `json:"source"`
-	URL          string                    `json:"url"`
-	OwnerStack   string                    `json:"owner_stack"`
-	TargetServer string                    `json:"target_server"`
-	ContainerID  string                    `json:"container_id"`
-	PlatformID   string                    `json:"platform_id"`
-	PlatformType string                    `json:"platform_type"`
-	Image        string                    `json:"image"`
-	Description  string                    `json:"description"`
-	Instance     string                    `json:"instance"`
-	StackKit     string                    `json:"stackkit_version"`
-	Actions      []string                  `json:"actions"`
-	DesiredState string                    `json:"desired_state"`
-	EvidenceRef  string                    `json:"evidence_ref"`
-	Health       map[string]any            `json:"health"`
-	Endpoints    []workerInventoryEndpoint `json:"endpoints"`
+	Source                 string                    `json:"source"`
+	URL                    string                    `json:"url"`
+	OwnerStack             string                    `json:"owner_stack"`
+	TargetServer           string                    `json:"target_server"`
+	ContainerID            string                    `json:"container_id"`
+	PlatformID             string                    `json:"platform_id"`
+	PlatformType           string                    `json:"platform_type"`
+	Image                  string                    `json:"image"`
+	Description            string                    `json:"description"`
+	Instance               string                    `json:"instance"`
+	StackKit               string                    `json:"stackkit_version"`
+	Actions                []string                  `json:"actions"`
+	DesiredState           string                    `json:"desired_state"`
+	EvidenceRef            string                    `json:"evidence_ref"`
+	Health                 map[string]any            `json:"health"`
+	Endpoints              []workerInventoryEndpoint `json:"endpoints"`
+	ApplicationKey         string                    `json:"application_key"`
+	ApplicationDisplayName string                    `json:"application_display_name"`
+	Role                   string                    `json:"role"`
+	Lifecycle              string                    `json:"lifecycle"`
+	OperationalImpact      string                    `json:"operational_impact"`
+	InternalAddress        string                    `json:"internal_address"`
+	RuntimeIdentity        map[string]string         `json:"runtime_identity"`
 }
 
 type workerInventoryEndpoint struct {
@@ -148,6 +162,12 @@ type runtimeAgentAuthContext struct {
 	Worker         *controlplane.Worker
 }
 
+type committedWorkerInventory struct {
+	worker     *controlplane.Worker
+	observedAt time.Time
+	revision   int64
+}
+
 func (h workerRouteHandlers) inventory(e *httpx.Event) error {
 	id := strings.TrimSpace(e.Request.PathValue("id"))
 	if id == "" {
@@ -176,88 +196,122 @@ func (h workerRouteHandlers) inventory(e *httpx.Event) error {
 	observedAt := position.ObservedAt
 	worker := inventoryWorker(authCtx, req, observedAt)
 	nodeID := firstNonEmpty(runtimeidentity.LeaseServerID(authCtx.LeaseID), authCtx.ServerID, runtimeServerIDForWorker(id))
+	committed, proceed, commitErr := h.commitWorkerInventory(e, authCtx, nodeID, req, worker, observedAt, now)
+	if commitErr != nil || !proceed {
+		return commitErr
+	}
+	if committed.revision == 0 {
+		if compatibilityErr := h.persistInventoryCompatibilityViews(e, *committed.worker, nodeID, req, committed.observedAt); compatibilityErr != nil {
+			return compatibilityErr
+		}
+	}
+	if portsErr := h.recordInventoryPorts(e, authCtx, id, req, position, committed); portsErr != nil {
+		return portsErr
+	}
+	return httpx.Success(e, http.StatusOK, map[string]any{
+		workerFieldServerID:              nodeID,
+		workerInventoryRuntimeAgentIDKey: id,
+		preCheckWorkerIDField:            committed.worker.ID,
+		preCheckStatusField:              committed.worker.Status,
+		registryCollectionServices:       len(req.Services),
+		workerInventoryEndpointsKey:      inventoryEndpointCount(req),
+		workerInventoryLastSeenKey:       committed.observedAt.Format(time.RFC3339Nano),
+	})
+}
+
+func (h workerRouteHandlers) commitWorkerInventory(
+	e *httpx.Event,
+	authCtx runtimeAgentAuthContext,
+	nodeID string,
+	req workerInventoryRequest,
+	worker *controlplane.Worker,
+	observedAt time.Time,
+	now time.Time,
+) (committedWorkerInventory, bool, error) {
 	projection, projectionErr := h.projectServerInventory(e.Request.Context(), *worker, nodeID, authCtx.LeaseID, req, now)
 	if projectionErr != nil {
 		if errors.Is(projectionErr, controlplane.ErrConflict) {
 			// Every distinct admission conflict used to collapse into one opaque
 			// message, so a permanently rejected agent looked identical to a
 			// benign race. The bounded reason names the failing invariant.
-			return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "Guard inventory conflicts with the accepted source position", map[string]any{
+			return committedWorkerInventory{}, false, httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "Guard inventory conflicts with the accepted source position", map[string]any{
 				walletAuditReasonKey: guardInventoryConflictReason(projectionErr),
 			})
 		}
-		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to persist canonical server inventory", nil)
+		return committedWorkerInventory{}, false, httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to persist canonical server inventory", nil)
 	}
-	if projection != nil && (projection.ServerEvent == nil || projection.ServerEvent.Server == nil) {
-		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Canonical Guard inventory result is unavailable", nil)
+	if projection == nil {
+		saved, saveErr := h.saveInventoryWorker(e, *worker)
+		return committedWorkerInventory{worker: saved, observedAt: observedAt}, saveErr == nil, saveErr
 	}
-	if projection != nil && !projection.ServerEvent.Applied && !projection.Replayed {
-		return httpx.Success(e, http.StatusAccepted, map[string]any{
+	if projection.ServerEvent == nil || projection.ServerEvent.Server == nil {
+		return committedWorkerInventory{}, false, httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Canonical Guard inventory result is unavailable", nil)
+	}
+	if !projection.ServerEvent.Applied && !projection.Replayed {
+		return committedWorkerInventory{}, false, httpx.Success(e, http.StatusAccepted, map[string]any{
 			workerFieldServerID: nodeID, "applied": false,
 		})
 	}
-	inventoryRevision := int64(0)
-	if projection != nil {
-		inventoryRevision = projection.ServerEvent.Server.InventoryRevision
-		if projection.ServerEvent.Inventory != nil {
-			inventoryRevision = projection.ServerEvent.Inventory.Revision
-		}
-		if inventoryRevision <= 0 {
-			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Canonical server inventory revision is unavailable", nil)
-		}
+	inventoryRevision := projection.ServerEvent.Server.InventoryRevision
+	if projection.ServerEvent.Inventory != nil {
+		inventoryRevision = projection.ServerEvent.Inventory.Revision
 	}
-	if projection != nil {
-		satelliteStore, ok := h.serverStore.(controlplane.GuardInventorySatelliteStore)
-		if !ok {
-			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Canonical server store does not support fenced inventory satellites", nil)
-		}
-		canonical := projection.ServerEvent.Server
-		if canonical.SourceObservedAt == nil {
-			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Canonical Guard source timestamp is unavailable", nil)
-		}
-		satellite, satelliteErr := satelliteStore.ApplyGuardInventorySatellites(e.Request.Context(), controlplane.GuardInventorySatelliteProjection{
-			TenantID: canonical.TenantID, ServerID: canonical.ID, Generation: canonical.Generation,
-			SourceID: canonical.SourceID, SourceEpoch: canonical.SourceEpoch, SourceSequence: canonical.SourceSequence,
-			SourceObservedAt: *canonical.SourceObservedAt, InventoryRevision: inventoryRevision,
-			Worker: *worker, RILServer: inventoryRILServer(*worker, nodeID, req, *canonical.SourceObservedAt),
-		})
-		if satelliteErr != nil {
-			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to update fenced inventory satellites", nil)
-		}
-		if satellite == nil || !satellite.Applied {
-			return httpx.Success(e, http.StatusAccepted, map[string]any{workerFieldServerID: nodeID, "applied": false})
-		}
-		worker = satellite.Worker
-		observedAt = canonical.SourceObservedAt.UTC()
-	} else {
-		var err error
-		worker, err = h.saveInventoryWorker(e, *worker)
-		if err != nil {
-			return err
-		}
+	if inventoryRevision <= 0 {
+		return committedWorkerInventory{}, false, httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Canonical server inventory revision is unavailable", nil)
 	}
-	if projection == nil {
-		if metricErr := h.writeInventoryMetrics(*worker, req, observedAt); metricErr != nil {
-			return metricErr
-		}
-		if registryErr := h.upsertInventoryRegistry(e, *worker, nodeID, req, inventoryRevision, observedAt); registryErr != nil {
-			return registryErr
-		}
+	satelliteStore, ok := h.serverStore.(controlplane.GuardInventorySatelliteStore)
+	if !ok {
+		return committedWorkerInventory{}, false, httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Canonical server store does not support fenced inventory satellites", nil)
 	}
-	if projection == nil {
-		if rilErr := h.upsertInventoryRIL(e, *worker, nodeID, req, observedAt); rilErr != nil {
-			return rilErr
-		}
+	canonical := projection.ServerEvent.Server
+	if canonical.SourceObservedAt == nil {
+		return committedWorkerInventory{}, false, httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Canonical Guard source timestamp is unavailable", nil)
 	}
-	return httpx.Success(e, http.StatusOK, map[string]any{
-		workerFieldServerID:              nodeID,
-		workerInventoryRuntimeAgentIDKey: id,
-		preCheckWorkerIDField:            worker.ID,
-		preCheckStatusField:              worker.Status,
-		registryCollectionServices:       len(req.Services),
-		workerInventoryEndpointsKey:      inventoryEndpointCount(req),
-		workerInventoryLastSeenKey:       observedAt.Format(time.RFC3339Nano),
+	satellite, satelliteErr := satelliteStore.ApplyGuardInventorySatellites(e.Request.Context(), controlplane.GuardInventorySatelliteProjection{
+		TenantID: canonical.TenantID, ServerID: canonical.ID, Generation: canonical.Generation,
+		SourceID: canonical.SourceID, SourceEpoch: canonical.SourceEpoch, SourceSequence: canonical.SourceSequence,
+		SourceObservedAt: *canonical.SourceObservedAt, InventoryRevision: inventoryRevision,
+		Worker: *worker, RILServer: inventoryRILServer(*worker, nodeID, req, *canonical.SourceObservedAt),
 	})
+	if satelliteErr != nil {
+		return committedWorkerInventory{}, false, httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to update fenced inventory satellites", nil)
+	}
+	if satellite == nil || !satellite.Applied {
+		return committedWorkerInventory{}, false, httpx.Success(e, http.StatusAccepted, map[string]any{workerFieldServerID: nodeID, "applied": false})
+	}
+	return committedWorkerInventory{worker: satellite.Worker, observedAt: canonical.SourceObservedAt.UTC(), revision: inventoryRevision}, true, nil
+}
+
+func (h workerRouteHandlers) persistInventoryCompatibilityViews(e *httpx.Event, worker controlplane.Worker, nodeID string, req workerInventoryRequest, observedAt time.Time) error {
+	if metricErr := h.writeInventoryMetrics(worker, req, observedAt); metricErr != nil {
+		return metricErr
+	}
+	if registryErr := h.upsertInventoryRegistry(e, worker, nodeID, req, 0, observedAt); registryErr != nil {
+		return registryErr
+	}
+	return h.upsertInventoryRIL(e, worker, nodeID, req, observedAt)
+}
+
+func (h workerRouteHandlers) recordInventoryPorts(
+	e *httpx.Event,
+	authCtx runtimeAgentAuthContext,
+	runtimeAgentID string,
+	req workerInventoryRequest,
+	position guardEventPosition,
+	committed committedWorkerInventory,
+) error {
+	if h.portObservations == nil || committed.revision <= 0 {
+		return nil
+	}
+	if err := h.portObservations.RecordGuardPorts(e.Request.Context(), portinventory.GuardObservation{
+		TenantID: authCtx.TenantID, RuntimeAgentID: runtimeAgentID,
+		SourceEpoch: position.Epoch, SourceSequence: position.Sequence,
+		InventoryRevision: committed.revision, ObservedAt: committed.observedAt,
+		ListenersComplete: req.PortsObserved, OpenPorts: append([]string(nil), req.OpenPorts...),
+	}); err != nil {
+		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to persist runtime listener evidence", nil)
+	}
+	return nil
 }
 
 func (req *workerInventoryRequest) normalize(runtimeAgentID string) error {
@@ -283,6 +337,7 @@ func (req *workerInventoryRequest) normalize(runtimeAgentID string) error {
 	req.Host.OS = firstNonEmpty(req.Host.OS, req.OS)
 	req.Host.OSVersion = strings.TrimSpace(req.Host.OSVersion)
 	req.Host.Arch = firstNonEmpty(req.Host.Arch, req.Arch)
+	req.Host.DockerVersion = strings.TrimSpace(req.Host.DockerVersion)
 	for i := range req.Services {
 		req.Services[i].normalize()
 	}
@@ -312,6 +367,13 @@ func (svc *workerInventoryService) normalize() {
 	svc.Description = strings.TrimSpace(svc.Description)
 	svc.Instance = firstNonEmpty(strings.TrimSpace(svc.Instance), "default")
 	svc.StackKit = strings.TrimSpace(svc.StackKit)
+	svc.ApplicationKey = strings.ToLower(strings.TrimSpace(svc.ApplicationKey))
+	svc.ApplicationDisplayName = strings.TrimSpace(svc.ApplicationDisplayName)
+	svc.Role = strings.ToLower(strings.TrimSpace(svc.Role))
+	svc.Lifecycle = strings.ToLower(strings.TrimSpace(svc.Lifecycle))
+	svc.OperationalImpact = strings.ToLower(strings.TrimSpace(svc.OperationalImpact))
+	svc.InternalAddress = boundedInternalServiceAddress(svc.InternalAddress)
+	svc.RuntimeIdentity = boundedStringMap(svc.RuntimeIdentity, 16, 128, 1024)
 	svc.Actions = canonicalServiceActions(svc.Actions)
 	for i := range svc.Endpoints {
 		svc.Endpoints[i].normalize()
@@ -581,6 +643,7 @@ func inventoryWorker(authCtx runtimeAgentAuthContext, req workerInventoryRequest
 		CPUCores:       req.Host.CPUCores,
 		RAMMB:          req.Host.RAMMB,
 		DiskGB:         req.Host.DiskGB,
+		DockerVersion:  req.Host.DockerVersion,
 		Type:           "runtime",
 		OwnerSubjectID: authCtx.OwnerID,
 		Capabilities:   capabilities,
@@ -724,8 +787,8 @@ func buildInventoryRegistryProjection(worker controlplane.Worker, nodeID string,
 		serviceStates = append(serviceStates, inventoryServiceHealthState(svc, runtimehealth.ServerHealthy))
 	}
 	observedHostState := ""
-	for _, state := range serviceStates {
-		if state == runtimehealth.ServiceUnhealthy {
+	for index, state := range serviceStates {
+		if state == runtimehealth.ServiceUnhealthy && inventoryServiceDegradesHost(req.Services[index]) {
 			observedHostState = runtimeHealthDegraded
 			break
 		}
@@ -763,7 +826,7 @@ func buildInventoryRegistryProjection(worker controlplane.Worker, nodeID string,
 		StackID:    worker.StackID,
 		WorkerID:   worker.ID,
 		Name:       firstNonEmpty(req.Hostname, nodeID),
-		Role:       managedRuntimeNodeFoundation,
+		Role:       workerRuntimeRole(worker),
 		Status:     string(serverState),
 		Address:    firstNonEmpty(req.Host.PublicIP, req.Host.PrivateIP, req.Host.LocalIP),
 		Metadata:   nodeMetadata,
@@ -789,6 +852,13 @@ func buildInventoryRegistryProjection(worker controlplane.Worker, nodeID string,
 			workerInventoryHealthKey:         svc.Health,
 			workerInventoryEndpointsKey:      inventoryEndpoints(svc.Endpoints),
 			"evidence_ref":                   svc.EvidenceRef,
+			"application_key":                svc.ApplicationKey,
+			"application_display_name":       svc.ApplicationDisplayName,
+			"role":                           svc.Role,
+			"lifecycle":                      svc.Lifecycle,
+			"operational_impact":             svc.OperationalImpact,
+			"internal_address":               svc.InternalAddress,
+			"runtime_identity":               svc.RuntimeIdentity,
 		}
 		if svc.Image != "" {
 			serviceMetadata["image"] = svc.Image
@@ -902,7 +972,7 @@ func (h workerRouteHandlers) upsertInventoryRIL(e *httpx.Event, worker controlpl
 func inventoryRILServer(worker controlplane.Worker, nodeID string, req workerInventoryRequest, now time.Time) controlplane.RILServer {
 	observedState := ""
 	for _, svc := range req.Services {
-		if inventoryServiceHealthState(svc, runtimehealth.ServerHealthy) == runtimehealth.ServiceUnhealthy {
+		if inventoryServiceHealthState(svc, runtimehealth.ServerHealthy) == runtimehealth.ServiceUnhealthy && inventoryServiceDegradesHost(svc) {
 			observedState = runtimeHealthDegraded
 			break
 		}
@@ -941,6 +1011,13 @@ func inventoryRILServer(worker controlplane.Worker, nodeID string, req workerInv
 	}
 }
 
+// Only a declared, continuously running critical component may turn a
+// reachable host yellow. Optional, one-shot and merely observed rows remain
+// visible service evidence without redefining host reachability.
+func inventoryServiceDegradesHost(svc workerInventoryService) bool {
+	return svc.Lifecycle == "daemon" && svc.OperationalImpact == "critical"
+}
+
 func inventoryServiceHealthState(svc workerInventoryService, serverState runtimehealth.ServerState) runtimehealth.ServiceState {
 	endpointHealths := make([]string, 0, len(svc.Endpoints))
 	for _, endpoint := range svc.Endpoints {
@@ -969,13 +1046,29 @@ func inventoryHostMap(host workerInventoryHost) map[string]any {
 		workerFieldCPU:                   host.CPUCores,
 		workerFieldRAM:                   host.RAMMB,
 		workerFieldDisk:                  host.DiskGB,
+		workerFieldDockerVersion:         host.DockerVersion,
 		workerInventoryCPUPercentKey:     host.CPUPercent,
 		workerInventoryMemoryUsedKey:     host.MemoryUsedBytes,
 		workerInventoryMemoryTotalKey:    host.MemoryTotalBytes,
 		workerInventoryDiskUsedBytesKey:  host.DiskUsedBytes,
 		workerInventoryDiskTotalBytesKey: host.DiskTotalBytes,
 		workerInventoryUptimeSecondsKey:  host.UptimeSeconds,
+		"ssh_host_keys":                  boundedSSHHostKeys(host.SSHHostKeys),
 	}
+}
+
+func boundedSSHHostKeys(values []string) []string {
+	result := make([]string, 0, min(len(values), 4))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || len(value) > 16*1024 || len(result) == 4 {
+			continue
+		}
+		if _, _, _, _, err := ssh.ParseAuthorizedKey([]byte(value)); err == nil {
+			result = append(result, value)
+		}
+	}
+	return result
 }
 
 func inventoryDeploymentMetadata(req workerInventoryRequest) map[string]any {
@@ -1004,7 +1097,7 @@ func inventoryServices(services []workerInventoryService) []map[string]any {
 			"id":                        svc.ID,
 			serviceInventoryIDKey:       svc.ServiceID,
 			"key":                       svc.Key,
-			backupNamePathKey:           svc.Name,
+			routeNameField:              svc.Name,
 			preCheckStatusField:         svc.Status,
 			"source":                    inventoryServiceSource(svc),
 			serviceAccessURLKey:         stringFromAnyMap(access, serviceAccessURLKey),
@@ -1021,9 +1114,36 @@ func inventoryServices(services []workerInventoryService) []map[string]any {
 			"actions":                   svc.Actions,
 			workerInventoryHealthKey:    svc.Health,
 			workerInventoryEndpointsKey: inventoryEndpoints(svc.Endpoints),
+			"application_key":           svc.ApplicationKey,
+			"application_display_name":  svc.ApplicationDisplayName,
+			"role":                      svc.Role,
+			"lifecycle":                 svc.Lifecycle,
+			"operational_impact":        svc.OperationalImpact,
+			"internal_address":          svc.InternalAddress,
+			"runtime_identity":          svc.RuntimeIdentity,
 		})
 	}
 	return out
+}
+
+func boundedInternalServiceAddress(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) > 512 || strings.ContainsAny(value, "\r\n\t@") {
+		return ""
+	}
+	return value
+}
+
+func boundedStringMap(values map[string]string, maxItems, maxKey, maxValue int) map[string]string {
+	result := make(map[string]string, min(len(values), maxItems))
+	for key, value := range values {
+		key, value = strings.TrimSpace(key), strings.TrimSpace(value)
+		if key == "" || value == "" || len(key) > maxKey || len(value) > maxValue || len(result) == maxItems {
+			continue
+		}
+		result[key] = value
+	}
+	return result
 }
 
 func inventoryEndpoints(endpoints []workerInventoryEndpoint) []map[string]any {

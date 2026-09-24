@@ -5,6 +5,8 @@
   Used for single-choice selections in wizards.
 -->
 <script lang="ts">
+  import CardHelpHint from "./CardHelpHint.svelte";
+
   interface Props {
     name: string;
     value: string;
@@ -15,6 +17,7 @@
     helpText?: string;
     helpTip?: string;
     badge?: string;
+    hint?: string;
     disabled?: boolean;
     disabledReason?: string;
     testId?: string;
@@ -31,6 +34,7 @@
     helpText,
     helpTip,
     badge,
+    hint,
     disabled = false,
     disabledReason,
     testId,
@@ -95,9 +99,9 @@
     {/if}
 
     <!-- Title with help button -->
-    <div class="mb-2 flex min-w-0 flex-wrap items-center gap-2 sm:gap-3">
+    <div class="mb-2 flex min-w-0 flex-wrap items-start gap-2 sm:gap-3">
       <h3
-        class="min-w-0 flex-auto text-base font-semibold leading-tight text-foreground sm:text-lg"
+        class="min-w-0 text-base font-semibold leading-tight text-foreground sm:text-lg"
       >
         {title}
       </h3>
@@ -108,28 +112,15 @@
           {badge}
         </span>
       {/if}
-      {#if helpText}
-        <button
-          type="button"
-          onclick={(e) => e.stopPropagation()}
-          class="relative group/tip shrink-0"
+      {#if hint}
+        <span
+          class="max-w-full shrink-0 rounded-full border border-primary/25 bg-primary/10 px-2 py-1 text-[11px] font-medium text-primary"
         >
-          <span
-            class="text-xs text-muted-foreground bg-muted px-2 py-1 rounded-full cursor-help hover:bg-muted/80 transition"
-          >
-            ?
-          </span>
-          <div
-            class="card invisible absolute right-0 top-full z-20 mt-2 w-[min(18rem,calc(100vw-3rem))] rounded-lg p-4 opacity-0 shadow-xl transition-all duration-200 group-hover/tip:visible group-hover/tip:opacity-100"
-          >
-            <p class="text-sm text-foreground">{helpText}</p>
-            {#if helpTip}
-              <p class="mt-3 text-xs text-muted-foreground italic">
-                Tip: {helpTip}
-              </p>
-            {/if}
-          </div>
-        </button>
+          {hint}
+        </span>
+      {/if}
+      {#if helpText}
+        <CardHelpHint {helpText} {helpTip} />
       {/if}
     </div>
 

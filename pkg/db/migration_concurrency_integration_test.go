@@ -57,7 +57,7 @@ func TestIntegrationMigrateSerializesConcurrentStarters(t *testing.T) {
 			t.Fatalf("ping scoped integration PostgreSQL: %v", err)
 		}
 		t.Cleanup(func() { _ = sqlDB.Close() })
-		return &DB{DB: sqlDB, backend: StoreBackendPostgres, dsn: dsn}
+		return &DB{DB: sqlDB, backend: StoreBackendPostgres}
 	}
 
 	starters := []*DB{newScopedDB(t), newScopedDB(t)}

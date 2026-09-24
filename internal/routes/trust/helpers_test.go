@@ -1,28 +1,9 @@
 package trust
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"testing"
 	"time"
-
-	"github.com/kombifyio/techstack/pkg/pairingtoken"
 )
-
-func TestGeneratePairingTokenReturnsSHA256Hash(t *testing.T) {
-	rawToken, tokenHashHex, err := GeneratePairingToken()
-	if err != nil {
-		t.Fatalf("GeneratePairingToken returned error: %v", err)
-	}
-	if rawToken == "" {
-		t.Fatal("expected raw token")
-	}
-
-	hash := sha256.Sum256([]byte(rawToken))
-	if want := hex.EncodeToString(hash[:]); tokenHashHex != want {
-		t.Fatalf("expected token hash %q, got %q", want, tokenHashHex)
-	}
-}
 
 func TestPairingTokenExpiresAtCapsRequestedLifetime(t *testing.T) {
 	now := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
@@ -47,21 +28,3 @@ func TestPairingTokenExpiresAtCapsRequestedLifetime(t *testing.T) {
 }
 
 func intPointer(value int) *int { return &value }
-
-func TestGenerateStorePairingTokenCarriesTenantLocator(t *testing.T) {
-	rawToken, tokenHashHex, err := GenerateStorePairingToken("tenant-1")
-	if err != nil {
-		t.Fatalf("GenerateStorePairingToken returned error: %v", err)
-	}
-	tenantID, parseErr := pairingtoken.TenantID(rawToken)
-	if parseErr != nil || tenantID != "tenant-1" {
-		t.Fatalf("TenantID = %q, %v; want tenant-1", tenantID, parseErr)
-	}
-	want, hashErr := pairingtoken.Hash(rawToken)
-	if hashErr != nil {
-		t.Fatalf("Hash returned error: %v", hashErr)
-	}
-	if tokenHashHex != want {
-		t.Fatalf("expected token hash %q, got %q", want, tokenHashHex)
-	}
-}

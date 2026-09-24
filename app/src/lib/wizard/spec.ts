@@ -50,7 +50,6 @@ export interface StackKitStackSpec {
   };
   nodes: StackKitNodeSpec[];
   paas: "dokploy" | "coolify";
-  useCases: string[];
   addons: string[];
   services: Record<string, StackKitServiceToggle>;
   owner: {
@@ -257,12 +256,11 @@ function operatorCapabilityScore(
   advancedInteractionCount: number,
   explicitAlternativeCount: number,
 ): number {
-  const baseline =
-    config.wizardType === "techie"
-      ? 7
-      : config.owner.source === "cloud"
-        ? 1
-        : 3;
+  // There is one wizard now, so the former "the operator chose the Techie
+  // wizard" baseline of 7 has no input left. Depth is observed instead from
+  // advanced interactions and explicit alternative picks, which already lift
+  // the score below.
+  const baseline = config.owner.source === "cloud" ? 1 : 3;
   const advancedLift = Math.min(2, advancedInteractionCount);
   const alternativeLift = explicitAlternativeCount > 0 ? 1 : 0;
   return clampCapabilityScore(baseline + advancedLift + alternativeLift);
@@ -273,7 +271,7 @@ function operatorCapabilityConfidence(
   advancedInteractionCount: number,
   explicitAlternativeCount: number,
 ): string {
-  const baseline = config.wizardType === "techie" ? 0.7 : 0.55;
+  const baseline = 0.55;
   const confidence = Math.min(
     0.9,
     baseline +
@@ -384,7 +382,7 @@ function buildNode(
  * Build the StackKits stack-spec from the Wizard StackConfig.
  *
  * This is the user-owned spec shape StackKits consume as stack-spec.yaml.
- * Easy and Techie Wizard both converge here before the backend sees the config.
+ * The creation wizard converges here before the backend sees the config.
  */
 export function buildStackKitSpecFromStackConfig(
   config: StackConfig,
@@ -446,7 +444,6 @@ export function buildStackKitSpecFromStackConfig(
     ssh: buildSSH(serverProvisioning),
     nodes: [buildNode(serverProvisioning)],
     paas: buildPAAS(config),
-    useCases,
     addons: buildAddons(config),
     services: buildServices(config),
     owner: {

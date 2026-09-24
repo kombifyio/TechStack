@@ -7,10 +7,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/kombifyio/techstack/internal/stackkitrelease"
+	"github.com/kombifyio/techstack/pkg/kombifyme"
 )
 
 const (
@@ -79,7 +81,7 @@ func (g *StackKitCLIGenerator) GenerateStackKitArtifacts(ctx context.Context, re
 		return nil, fmt.Errorf("output directory %q must be inside work directory %q", outputDir, workDir)
 	}
 
-	stackKit := firstNonEmpty(strings.TrimSpace(req.StackKit), DefaultBaseKitRef)
+	stackKit := firstNonEmpty(strings.TrimSpace(req.StackKit), DefaultBasementKitRef)
 	if g.release == nil {
 		stackKitsDir, err := cleanRequiredDir(g.StackKitsDir, "StackKits source directory")
 		if err != nil {
@@ -128,17 +130,14 @@ func (g *StackKitCLIGenerator) GenerateStackKitArtifacts(ctx context.Context, re
 		"--spec", filepath.Base(executedSpecPath),
 	}
 	binary := firstNonEmpty(strings.TrimSpace(g.Binary), defaultStackKitCLIBinary)
+	var managedAddress managedAddressBinding
 	if canonicalV2 {
-		validateArgs := append(append([]string(nil), commonArgs...), "validate")
-		validate := exec.CommandContext(runCtx, binary, validateArgs...) // #nosec G204 -- binary is admitted from the pinned release; args are fixed.
-		validate.Dir = workDir
-		validate.Env = os.Environ()
-		validateOutput, validateErr := validate.CombinedOutput()
-		if validateErr != nil {
-			if runCtx.Err() != nil {
-				return nil, fmt.Errorf("StackKits CLI validate timed out after %s: %w", timeout, runCtx.Err())
-			}
-			return nil, fmt.Errorf("StackKits CLI validate failed: %w: %s", validateErr, tailText(string(validateOutput), 4000))
+		var prepareErr error
+		executedSpecPath, commonArgs, managedAddress, prepareErr = prepareCanonicalStackKitCLI(
+			runCtx, binary, workDir, executedSpecPath, commonArgs, timeout, req,
+		)
+		if prepareErr != nil {
+			return nil, prepareErr
 		}
 	}
 
@@ -152,7 +151,7 @@ func (g *StackKitCLIGenerator) GenerateStackKitArtifacts(ctx context.Context, re
 	}
 	cmd := exec.CommandContext(runCtx, binary, generateArgs...) // #nosec G204 -- binary is admitted from the pinned release; args are fixed.
 	cmd.Dir = workDir
-	cmd.Env = os.Environ()
+	cmd.Env = firstPartyStackKitProcessEnv()
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		if runCtx.Err() != nil {
@@ -161,54 +160,174 @@ func (g *StackKitCLIGenerator) GenerateStackKitArtifacts(ctx context.Context, re
 		return nil, fmt.Errorf("StackKits CLI generate failed: %w: %s", err, tailText(string(output), 4000))
 	}
 
-	metadata := map[string]string{
-		"artifact_generator": "stackkit-cli",
-		"stackkit":           stackKit,
-	}
-	resolvedPlanPath := ""
-	if canonicalV2 {
-		resolvedPlanPath = filepath.Join(outputDir, ".stackkit", "resolved-plan.json")
-		resolvedPlanInfo, statErr := os.Lstat(resolvedPlanPath)
-		if statErr != nil {
-			return nil, fmt.Errorf("StackKits CLI did not persist its canonical ResolvedPlan: %w", statErr)
-		}
-		if !resolvedPlanInfo.Mode().IsRegular() ||
-			resolvedPlanInfo.Mode()&os.ModeSymlink != 0 ||
-			resolvedPlanInfo.Size() <= 0 ||
-			resolvedPlanInfo.Size() > 32<<20 {
-			return nil, fmt.Errorf("StackKits canonical ResolvedPlan must be a non-empty regular file")
-		}
-		resolvedKit, planHash, identityErr := readStackKitResolvedPlanIdentity(resolvedPlanPath)
-		if identityErr != nil {
-			return nil, identityErr
-		}
-		metadata["stackkit"] = resolvedKit
-		metadata["resolved_plan_hash"] = planHash
-		metadata["executed_stack_spec_path"] = executedSpecPath
-		if g.release != nil {
-			receipt := g.release.Receipt()
-			metadata["validation_authority"] = "pinned-stackkit-cli"
-			metadata["generation_authority"] = "pinned-stackkit-cli"
-			metadata["release_version"] = receipt.Version
-			metadata["release_archive_sha256"] = receipt.ArchiveSHA256
-			metadata["release_receipt"] = g.release.ReceiptPath()
-		} else {
-			metadata["validation_authority"] = "bundled-stackkit-cli"
-			metadata["generation_authority"] = "bundled-stackkit-cli"
-		}
-		if derivedCanonicalSpec {
-			metadata["stack_spec_authority"] = "pinned-stackkit-init-template"
-		}
-	} else {
-		metadata["validation_authority"] = "compatibility-fixture"
-		metadata["generation_authority"] = "compatibility-fixture"
+	metadata, resolvedPlanPath, metadataErr := g.stackKitCLIMetadata(
+		canonicalV2, executedSpecPath, outputDir, stackKit, managedAddress, derivedCanonicalSpec,
+	)
+	if metadataErr != nil {
+		return nil, metadataErr
 	}
 	return &StackKitArtifactGenerateResult{
-		StackSpecPath:    stackSpecPath,
+		StackSpecPath:    executedSpecPath,
 		OutputDir:        outputDir,
 		ResolvedPlanPath: resolvedPlanPath,
 		Metadata:         metadata,
 	}, nil
+}
+
+func (g *StackKitCLIGenerator) stackKitCLIMetadata(
+	canonicalV2 bool,
+	executedSpecPath string,
+	outputDir string,
+	stackKit string,
+	managedAddress managedAddressBinding,
+	derivedCanonicalSpec bool,
+) (map[string]string, string, error) {
+	metadata := map[string]string{
+		"artifact_generator": "stackkit-cli",
+		"stackkit":           stackKit,
+	}
+	if canonicalV2 && strings.HasSuffix(executedSpecPath, "stack-spec.address-bound.v2.json") {
+		metadata[metadataKeyAddressMode] = addressModeKombifyMe
+		metadata[metadataKeyRequestedAddressMode] = addressModeKombifyMe
+		metadata[metadataKeyKombifyMeAddressStatus] = "registered"
+		if managedAddress.Zone != "" {
+			// The bound spec already names the zone as its domain, so the node
+			// initializes it like an own domain and runs no prefix bind.
+			metadata[metadataKeyKombifyMeAddressPrefix] = ""
+			metadata[metadataKeyKombifyMeAddressLayout] = managedAddressLayoutZone
+			metadata[metadataKeyKombifyMeAddressZone] = managedAddress.Zone
+		} else {
+			metadata[metadataKeyKombifyMeAddressPrefix] = managedAddress.Prefix
+		}
+	}
+	if !canonicalV2 {
+		metadata["validation_authority"] = "compatibility-fixture"
+		metadata["generation_authority"] = "compatibility-fixture"
+		return metadata, "", nil
+	}
+	resolvedPlanPath := filepath.Join(outputDir, ".stackkit", "resolved-plan.json")
+	resolvedPlanInfo, statErr := os.Lstat(resolvedPlanPath)
+	if statErr != nil {
+		return nil, "", fmt.Errorf("StackKits CLI did not persist its canonical ResolvedPlan: %w", statErr)
+	}
+	if !resolvedPlanInfo.Mode().IsRegular() ||
+		resolvedPlanInfo.Mode()&os.ModeSymlink != 0 ||
+		resolvedPlanInfo.Size() <= 0 ||
+		resolvedPlanInfo.Size() > 32<<20 {
+		return nil, "", fmt.Errorf("StackKits canonical ResolvedPlan must be a non-empty regular file")
+	}
+	resolvedKit, planHash, identityErr := readStackKitResolvedPlanIdentity(resolvedPlanPath)
+	if identityErr != nil {
+		return nil, "", identityErr
+	}
+	metadata["stackkit"] = resolvedKit
+	metadata["resolved_plan_hash"] = planHash
+	metadata["executed_stack_spec_path"] = executedSpecPath
+	if g.release != nil {
+		receipt := g.release.Receipt()
+		metadata["validation_authority"] = "pinned-stackkit-cli"
+		metadata["generation_authority"] = "pinned-stackkit-cli"
+		metadata["release_version"] = receipt.Version
+		metadata["release_archive_sha256"] = receipt.ArchiveSHA256
+		metadata["release_receipt"] = g.release.ReceiptPath()
+	} else {
+		metadata["validation_authority"] = "bundled-stackkit-cli"
+		metadata["generation_authority"] = "bundled-stackkit-cli"
+	}
+	if derivedCanonicalSpec {
+		metadata["stack_spec_authority"] = "pinned-stackkit-init-template"
+	}
+	return metadata, resolvedPlanPath, nil
+}
+
+func prepareCanonicalStackKitCLI(
+	runCtx context.Context,
+	binary string,
+	workDir string,
+	executedSpecPath string,
+	commonArgs []string,
+	timeout time.Duration,
+	req StackKitArtifactGenerateRequest,
+) (string, []string, managedAddressBinding, error) {
+	validateArgs := append(append([]string(nil), commonArgs...), "validate")
+	validate := exec.CommandContext(runCtx, binary, validateArgs...) // #nosec G204 -- binary is admitted from the pinned release; args are fixed.
+	validate.Dir = workDir
+	validate.Env = firstPartyStackKitProcessEnv()
+	validateOutput, validateErr := validate.CombinedOutput()
+	if validateErr != nil {
+		if runCtx.Err() != nil {
+			return "", nil, managedAddressBinding{}, fmt.Errorf("StackKits CLI validate timed out after %s: %w", timeout, runCtx.Err())
+		}
+		return "", nil, managedAddressBinding{}, fmt.Errorf("StackKits CLI validate failed: %w: %s", validateErr, tailText(string(validateOutput), 4000))
+	}
+
+	// Only public routes need a managed address. The pinned CLI refuses to
+	// plan a StackSpec without any (and exits without a message), which made
+	// every local-access rollout from the Windows client fail here.
+	public, publicErr := stackSpecDeclaresPublicRoutes(executedSpecPath)
+	if publicErr != nil {
+		return "", nil, managedAddressBinding{}, publicErr
+	}
+	if !public {
+		return executedSpecPath, commonArgs, managedAddressBinding{}, nil
+	}
+
+	addressPlanArgs := append(append([]string(nil), commonArgs...), "address", "plan")
+	addressPlanCommand := exec.CommandContext(runCtx, binary, addressPlanArgs...) // #nosec G204 -- binary and fixed command contract come from the pinned release.
+	addressPlanCommand.Dir = workDir
+	addressPlanCommand.Env = firstPartyStackKitProcessEnv()
+	addressPlanOutput, addressPlanErr := addressPlanCommand.CombinedOutput()
+	if addressPlanErr != nil {
+		return "", nil, managedAddressBinding{}, fmt.Errorf("StackKits CLI address plan failed: %w: %s", addressPlanErr, tailText(string(addressPlanOutput), 4000))
+	}
+	var addressPlan stackKitAddressPlan
+	if err := json.Unmarshal(addressPlanOutput, &addressPlan); err != nil {
+		return "", nil, managedAddressBinding{}, fmt.Errorf("decode StackKits address plan: %w", err)
+	}
+	if addressPlan.Provider != addressModeKombifyMe {
+		return executedSpecPath, commonArgs, managedAddressBinding{}, nil
+	}
+	address, identityErr := kombifyme.NewManagedAddress(req.TenantID, req.OwnerID, req.StackID)
+	if identityErr != nil {
+		return "", nil, managedAddressBinding{}, identityErr
+	}
+	binding, bindErr := allocateManagedAddressPlan(runCtx, addressPlan, req.RuntimeTarget, address)
+	if bindErr != nil {
+		return "", nil, managedAddressBinding{}, bindErr
+	}
+	boundSpecPath := filepath.Join(workDir, "stack-spec.address-bound.v2.json")
+	bindFlag := "--prefix"
+	if binding.Zone != "" {
+		bindFlag = "--zone"
+	}
+	bindArgs := append(append([]string(nil), commonArgs...), "address", "bind", bindFlag, binding.Prefix, "--output", filepath.Base(boundSpecPath))
+	bindCommand := exec.CommandContext(runCtx, binary, bindArgs...) // #nosec G204 -- binary and fixed command contract come from the pinned release.
+	bindCommand.Dir = workDir
+	bindCommand.Env = firstPartyStackKitProcessEnv()
+	bindOutput, bindErr := bindCommand.CombinedOutput()
+	if bindErr != nil {
+		return "", nil, managedAddressBinding{}, fmt.Errorf("StackKits CLI address bind failed: %w: %s", bindErr, tailText(string(bindOutput), 4000))
+	}
+	return boundSpecPath, []string{"--no-log", "--chdir", workDir, "--spec", filepath.Base(boundSpecPath)}, binding, nil
+}
+
+// stackSpecDeclaresPublicRoutes reports whether the canonical StackSpec
+// publishes any route, the precondition of `stackkit address plan`.
+func stackSpecDeclaresPublicRoutes(path string) (bool, error) {
+	data, err := os.ReadFile(path) // #nosec G304 -- the executed spec lives in the job's validated work directory.
+	if err != nil {
+		return false, fmt.Errorf("read canonical StackSpec: %w", err)
+	}
+	document, err := decodeStackSpecDocument(data)
+	if err != nil {
+		return false, err
+	}
+	for _, raw := range mapFromInterface(document["routes"]) {
+		if strings.TrimSpace(stringFromInterface(mapFromInterface(raw)["exposure"])) == "public" {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func readStackKitResolvedPlanIdentity(path string) (string, string, error) {
@@ -260,11 +379,30 @@ func cleanRequiredDir(path, label string) (string, error) {
 	return cleaned, nil
 }
 
+// stackKitSharedSchemaDirs names the shared CUE schema package in preference
+// order. StackKits renamed it from `base` to `foundation` (StackKits 300b5e6b);
+// the Windows client's bundled catalog ships only `foundation`, while older
+// source checkouts still carry `base`.
+var stackKitSharedSchemaDirs = []string{"foundation", "base"}
+
 func ensureStackKitCLIWorkspace(workDir, stackKitsDir, stackKit string) error {
-	for _, name := range []string{stackKit, "modules", "base", "cue.mod"} {
+	required := []string{stackKit, "modules"}
+	shared := ""
+	for _, name := range stackKitSharedSchemaDirs {
+		if _, err := os.Stat(filepath.Join(stackKitsDir, name)); err == nil {
+			shared = name
+			break
+		}
+	}
+	if shared == "" {
+		return fmt.Errorf("StackKits workspace source %s missing: no shared schema package (%s)",
+			stackKitsDir, strings.Join(stackKitSharedSchemaDirs, " or "))
+	}
+	required = append(required, shared)
+	for _, name := range append(required, "cue.mod", "addons") {
 		target := filepath.Join(stackKitsDir, name)
 		if _, err := os.Stat(target); err != nil {
-			if name == stackKit || name == "modules" || name == "base" {
+			if slices.Contains(required, name) {
 				return fmt.Errorf("StackKits workspace source %s missing: %w", target, err)
 			}
 			continue
@@ -371,7 +509,25 @@ func copyStackKitWorkspaceFile(src, dst, srcRoot, dstRoot string, mode os.FileMo
 	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 		return err
 	}
-	return os.WriteFile(dst, data, mode)
+	dstRel, err := filepath.Rel(dstRoot, dst)
+	if err != nil {
+		return err
+	}
+	dstFS, err := os.OpenRoot(dstRoot)
+	if err != nil {
+		return err
+	}
+	defer dstFS.Close()
+	out, err := dstFS.OpenFile(dstRel, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode.Perm())
+	if err != nil {
+		return err
+	}
+	_, writeErr := out.Write(data)
+	closeErr := out.Close()
+	if writeErr != nil {
+		return writeErr
+	}
+	return closeErr
 }
 
 func isPathWithinDir(path, dir string) bool {

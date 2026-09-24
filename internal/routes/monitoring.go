@@ -8,10 +8,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/prometheus/prometheus/model/labels"
+	"github.com/prometheus/prometheus/promql"
+	"github.com/prometheus/prometheus/promql/parser"
+
+	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/monitoring"
-	"github.com/pocketbase/pocketbase/core"
 )
 
 const (
@@ -36,7 +40,7 @@ type MonitoringStatusMetadata struct {
 
 // RegisterMonitoringRoutes adds monitoring API endpoints for PromQL queries,
 // label enumeration, and backend diagnostics.
-func RegisterMonitoringRoutes(r *httpx.Router, app core.App, backend monitoring.MetricsQueryBackend, metadata MonitoringStatusMetadata, ingestHealth monitoring.IngestHealthProvider) {
+func RegisterMonitoringRoutes(r *httpx.Router, backend monitoring.MetricsQueryBackend, metadata MonitoringStatusMetadata, ingestHealth monitoring.IngestHealthProvider) {
 	if backend == nil {
 		return
 	}
@@ -100,6 +104,14 @@ func (h monitoringRouteHandlers) instantMetrics(e *httpx.Event) error {
 	if err := h.policy.validateQuery(query); err != nil {
 		return httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeValidation, err.Error(), nil)
 	}
+	tenantID, err := monitoringTenantID(e)
+	if err != nil {
+		return err
+	}
+	query, err = scopeMonitoringQuery(query, tenantID)
+	if err != nil {
+		return httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeValidation, err.Error(), nil)
+	}
 
 	ctx, cancel := h.policy.context(e.Request.Context())
 	defer cancel()
@@ -118,6 +130,14 @@ func (h monitoringRouteHandlers) rangeMetrics(e *httpx.Event) error {
 	if err := h.policy.validateQuery(query); err != nil {
 		return httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeValidation, err.Error(), nil)
 	}
+	tenantID, err := monitoringTenantID(e)
+	if err != nil {
+		return err
+	}
+	query, err = scopeMonitoringQuery(query, tenantID)
+	if err != nil {
+		return httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeValidation, err.Error(), nil)
+	}
 
 	start, end, step := monitoringRange(e.Request.URL.Query(), time.Now())
 	if err := h.policy.validateRange(start, end, step); err != nil {
@@ -133,7 +153,16 @@ func (h monitoringRouteHandlers) rangeMetrics(e *httpx.Event) error {
 }
 
 func (h monitoringRouteHandlers) labelNames(e *httpx.Event) error {
-	return h.stringList(e, h.backend.LabelNames)
+	matcher, err := monitoringTenantMatcher(e)
+	if err != nil {
+		return err
+	}
+	return h.stringList(e, func(ctx context.Context) ([]string, error) {
+		if matcher == nil {
+			return h.backend.LabelNames(ctx)
+		}
+		return h.backend.LabelNames(ctx, matcher)
+	})
 }
 
 func (h monitoringRouteHandlers) labelValues(e *httpx.Event) error {
@@ -144,10 +173,19 @@ func (h monitoringRouteHandlers) labelValues(e *httpx.Event) error {
 	if err := h.policy.validateLabelName(name); err != nil {
 		return httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeValidation, err.Error(), nil)
 	}
+	matcher, err := monitoringTenantMatcher(e)
+	if err != nil {
+		return err
+	}
 
 	ctx, cancel := h.policy.context(e.Request.Context())
 	defer cancel()
-	vals, err := h.backend.LabelValues(ctx, name)
+	var vals []string
+	if matcher == nil {
+		vals, err = h.backend.LabelValues(ctx, name)
+	} else {
+		vals, err = h.backend.LabelValues(ctx, name, matcher)
+	}
 	if err != nil {
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, err.Error(), nil)
 	}
@@ -155,7 +193,59 @@ func (h monitoringRouteHandlers) labelValues(e *httpx.Event) error {
 }
 
 func (h monitoringRouteHandlers) metricNames(e *httpx.Event) error {
-	return h.stringList(e, h.backend.MetricNames)
+	matcher, err := monitoringTenantMatcher(e)
+	if err != nil {
+		return err
+	}
+	return h.stringList(e, func(ctx context.Context) ([]string, error) {
+		if matcher == nil {
+			return h.backend.MetricNames(ctx)
+		}
+		return h.backend.MetricNames(ctx, matcher)
+	})
+}
+
+func monitoringTenantID(e *httpx.Event) (string, error) {
+	ownerID, _, ok := authenticatedUser(e)
+	if !ok {
+		return "", httpx.NewUnauthorizedError("Authentication required", nil)
+	}
+	if !tenantguard.Active() {
+		return "", nil
+	}
+	return tenantguard.TenantScope(requestExplicitTenantID(e), ownerID, "techstack.monitor.metrics.read")
+}
+
+func monitoringTenantMatcher(e *httpx.Event) (*labels.Matcher, error) {
+	tenantID, err := monitoringTenantID(e)
+	if err != nil {
+		return nil, err
+	}
+	if tenantID == "" {
+		return nil, nil
+	}
+	return labels.NewMatcher(labels.MatchEqual, "tenant_id", tenantID)
+}
+
+func scopeMonitoringQuery(query, tenantID string) (string, error) {
+	if tenantID == "" {
+		return query, nil
+	}
+	expr, err := parser.NewParser(parser.Options{}).ParseExpr(query)
+	if err != nil {
+		return "", err
+	}
+	matcher, err := labels.NewMatcher(labels.MatchEqual, "tenant_id", tenantID)
+	if err != nil {
+		return "", err
+	}
+	parser.Inspect(expr, func(node parser.Node, _ []parser.Node) error {
+		if selector, ok := node.(*parser.VectorSelector); ok {
+			selector.LabelMatchers = append(selector.LabelMatchers, matcher)
+		}
+		return nil
+	})
+	return expr.String(), nil
 }
 
 func (h monitoringRouteHandlers) stringList(e *httpx.Event, load func(context.Context) ([]string, error)) error {
@@ -213,6 +303,9 @@ func (p monitoringQueryPolicy) validateLabelName(name string) error {
 }
 
 func (h monitoringRouteHandlers) status(e *httpx.Event) error {
+	if tenantguard.Active() {
+		return monitoringSaaSDiagnosticsDenied("techstack.monitor.status")
+	}
 	stats, err := h.backend.Stats(e.Request.Context())
 	if err != nil {
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, err.Error(), nil)
@@ -221,15 +314,76 @@ func (h monitoringRouteHandlers) status(e *httpx.Event) error {
 }
 
 func (h monitoringRouteHandlers) health(e *httpx.Event) error {
+	if tenantguard.Active() {
+		return monitoringSaaSDiagnosticsDenied("techstack.monitor.health")
+	}
 	payload := buildMonitoringHealthPayload(e.Request.Context(), h.backend, h.metadata, h.ingestHealth)
 	return httpx.Success(e, http.StatusOK, payload)
 }
 
+func monitoringSaaSDiagnosticsDenied(capability string) error {
+	return httpx.NewForbiddenError("Instance monitoring diagnostics are unavailable in hosted mode", map[string]any{
+		"error_code":  "tenant_diagnostics_unavailable",
+		"reason_code": "global_diagnostics_not_tenant_scoped",
+		"capability":  capability,
+		"retryable":   false,
+	})
+}
+
+// monitoringSeries is one labelled series in the structured projection.
+type monitoringSeries struct {
+	Metric map[string]string `json:"metric"`
+	Points []monitoringPoint `json:"points"`
+}
+
+// monitoringPoint is one sample. The timestamp is Unix milliseconds and the
+// value stays a float rather than a string: this projection exists to be
+// plotted, and a chart that has to parse numbers out of text is a chart that
+// silently drops the ones it cannot.
+type monitoringPoint struct {
+	At    int64   `json:"at"`
+	Value float64 `json:"value"`
+}
+
+// monitoringQuerySuccess answers with both projections of the same result.
+//
+// `result` is the Prometheus text form the endpoint has always returned and
+// stays for compatibility. `series` is the structured form: every consumer that
+// draws something reads that instead, because the text form is a Prometheus
+// internal representation rather than a contract we can hold stable.
 func monitoringQuerySuccess(e *httpx.Event, result *monitoring.QueryResult) error {
 	return httpx.Success(e, http.StatusOK, map[string]any{
 		"resultType": string(result.Value.Type()),
 		"result":     result.Value.String(),
+		"series":     monitoringSeriesFrom(result.Value),
 	})
+}
+
+func monitoringSeriesFrom(value parser.Value) []monitoringSeries {
+	series := []monitoringSeries{}
+	switch typed := value.(type) {
+	case promql.Matrix:
+		for _, stream := range typed {
+			entry := monitoringSeries{Metric: stream.Metric.Map(), Points: []monitoringPoint{}}
+			for _, point := range stream.Floats {
+				entry.Points = append(entry.Points, monitoringPoint{At: point.T, Value: point.F})
+			}
+			series = append(series, entry)
+		}
+	case promql.Vector:
+		for _, sample := range typed {
+			series = append(series, monitoringSeries{
+				Metric: sample.Metric.Map(),
+				Points: []monitoringPoint{{At: sample.T, Value: sample.F}},
+			})
+		}
+	case promql.Scalar:
+		series = append(series, monitoringSeries{
+			Metric: map[string]string{},
+			Points: []monitoringPoint{{At: typed.T, Value: typed.V}},
+		})
+	}
+	return series
 }
 
 func monitoringInstantTime(values url.Values, fallback time.Time) time.Time {
@@ -442,7 +596,7 @@ func overallIngestStatus(metadata MonitoringStatusMetadata, lanes ...monitoring.
 
 // RegisterAlertRoutes adds alert-related monitoring endpoints.
 // Separate from RegisterMonitoringRoutes to allow independent alert engine lifecycle.
-func RegisterAlertRoutes(r *httpx.Router, app core.App, engine *monitoring.AlertEngine) {
+func RegisterAlertRoutes(r *httpx.Router, engine *monitoring.AlertEngine) {
 	if engine == nil {
 		return
 	}

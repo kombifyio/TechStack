@@ -11,11 +11,11 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/pocketbase/pocketbase/core"
 
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
+	"github.com/kombifyio/techstack/pkg/specv2"
 )
 
 type persistedStack struct {
@@ -38,9 +38,7 @@ const (
 	maxStackNameLength = 100
 )
 
-// stackPersistContext carries the per-request inputs shared by the store and
-// PocketBase persistence paths, so the record/name helpers stay below the
-// 4-argument threshold instead of threading owner/tenant/request separately.
+// stackPersistContext carries the canonical per-request persistence inputs.
 type stackPersistContext struct {
 	ownerID        string
 	tenantID       string
@@ -83,8 +81,8 @@ func truncateStackName(base, suffix string) string {
 	return base[:keep] + suffix
 }
 
-func (h crudRouteHandlers) persistStack(e *httpx.Event, ownerID string, req normalizedCreateStackRequest) (*persistedStack, error) {
-	return h.persistStackWithRequestHash(e, ownerID, req, createStackRequestHash(req))
+func (h crudRouteHandlers) persistStack(e *httpx.Event, ownerID, tenantID string, req normalizedCreateStackRequest) (*persistedStack, error) {
+	return h.persistStackWithRequestHash(e, ownerID, tenantID, req, createStackRequestHash(req))
 }
 
 // persistStackWithRequestHash lets the wizard-run facade pin the idempotency
@@ -93,22 +91,26 @@ func (h crudRouteHandlers) persistStack(e *httpx.Event, ownerID string, req norm
 // material (e.g. a fresh recovery hash) and after run-kind coercion mutates
 // the options — both make a byte-identical retry hash differently and turn
 // the promised same-key resume into a 409.
-func (h crudRouteHandlers) persistStackWithRequestHash(e *httpx.Event, ownerID string, req normalizedCreateStackRequest, requestHash string) (*persistedStack, error) {
+func (h crudRouteHandlers) persistStackWithRequestHash(e *httpx.Event, ownerID, tenantID string, req normalizedCreateStackRequest, requestHash string) (*persistedStack, error) {
 	idempotencyKey := createStackIdempotencyKey(e)
 	if len(idempotencyKey) > 256 {
 		return nil, httpx.BadRequest(e, "X-Idempotency-Key must not exceed 256 characters", nil)
 	}
 	ctx := stackPersistContext{
-		ownerID: ownerID, tenantID: tenantIDFromRequest(e), req: req,
+		ownerID: ownerID, tenantID: strings.TrimSpace(tenantID), req: req,
 		idempotencyKey: idempotencyKey, requestHash: requestHash,
 	}
-	if h.stackStore != nil && ctx.tenantID != "" {
-		if err := h.ensureCanonicalHomelab(e, &ctx); err != nil {
-			return nil, err
-		}
-		return h.persistStackViaStore(e, ctx)
+	if h.stackStore == nil {
+		return nil, httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+			"Stack create authority is temporarily unavailable", map[string]any{
+				detailsKeyReasonCode: "stack_create_authority_unavailable",
+				detailsKeyRetryable:  true,
+			})
 	}
-	return h.persistStackViaPocketBase(e, ctx)
+	if err := h.ensureCanonicalHomelab(e, &ctx); err != nil {
+		return nil, err
+	}
+	return h.persistStackViaStore(e, ctx)
 }
 
 // ensureCanonicalHomelab resolves the one active homelab for the authenticated
@@ -148,7 +150,7 @@ func internalCreateStackError(e *httpx.Event) error {
 	return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to create stack", nil)
 }
 
-// persistStackViaStore writes to the Postgres control-plane. A duplicate name
+// persistStackViaStore writes to the canonical control-plane. A duplicate name
 // MUST NEVER error (product rule 2026-05-28): auto-resolve by retrying "name",
 // "name-2", ... then a guaranteed-unique fallback.
 func (h crudRouteHandlers) persistStackViaStore(e *httpx.Event, ctx stackPersistContext) (*persistedStack, error) {
@@ -173,14 +175,15 @@ func (h crudRouteHandlers) persistStackViaStore(e *httpx.Event, ctx stackPersist
 			config["creation_request_sha256"] = ctx.requestHash
 		}
 		stack, err := h.stackStore.CreateStack(e.Request.Context(), controlplane.CreateStackRequest{
-			ID:             stackID,
-			TenantID:       ctx.tenantID,
-			OwnerSubjectID: ctx.ownerID,
-			HomelabID:      ctx.req.HomelabID,
-			Name:           name,
-			Mode:           ctx.req.Mode,
-			Status:         "pending",
-			Config:         config,
+			ID:                 stackID,
+			TenantID:           ctx.tenantID,
+			OwnerSubjectID:     ctx.ownerID,
+			HomelabID:          ctx.req.HomelabID,
+			StackKitInstanceID: specv2.StackKitInstanceID(ctx.req.StackSpecV2),
+			Name:               name,
+			Mode:               ctx.req.Mode,
+			Status:             "pending",
+			Config:             config,
 		})
 		if err != nil {
 			return nil, err
@@ -189,6 +192,13 @@ func (h crudRouteHandlers) persistStackViaStore(e *httpx.Event, ctx stackPersist
 	}
 	for attempt := 0; attempt < maxStackNameAutoFixAttempts; attempt++ {
 		ps, err := create(stackNameCandidate(ctx.req.Name, attempt))
+		if errors.Is(err, controlplane.ErrStackKitInstanceConflict) {
+			return nil, httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict,
+				"StackKit instance identity already exists in this homelab", map[string]any{
+					detailsKeyReasonCode: "stackkit_instance_conflict",
+					detailsKeyRetryable:  false,
+				})
+		}
 		if errors.Is(err, controlplane.ErrConflict) {
 			if ctx.idempotencyKey != "" {
 				existing, getErr := h.stackStore.GetStack(e.Request.Context(), ctx.tenantID, stackID)
@@ -254,106 +264,6 @@ func createStackRequestHash(req normalizedCreateStackRequest) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// persistStackViaPocketBase is the PocketBase fallback path. Same rule:
-// auto-resolve duplicates, never error. Proactively pick a free name (common
-// case: the Beta wizard retries the default "techstack"); a unique-index race
-// retries the next candidate, then a guaranteed-unique fallback. Migration 034's
-// UNIQUE INDEX backs this.
-func (h crudRouteHandlers) persistStackViaPocketBase(e *httpx.Event, ctx stackPersistContext) (*persistedStack, error) {
-	stacksCollection, err := h.app.FindCollectionByNameOrId("stacks")
-	if err != nil {
-		return nil, httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Stacks collection not found", nil)
-	}
-	for attempt := 0; attempt < maxStackNameAutoFixAttempts; attempt++ {
-		candidate := stackNameCandidate(ctx.req.Name, attempt)
-		if existing, lookupErr := findOwnerScopedStackByName(h.app, ctx.ownerID, ctx.tenantID, candidate); lookupErr == nil && existing != nil {
-			continue
-		}
-		ps, saveErr := h.saveStackRecord(stacksCollection, ctx, candidate)
-		if saveErr != nil {
-			if isStackNameUniqueSaveError(saveErr) {
-				continue
-			}
-			return nil, internalCreateStackError(e)
-		}
-		return ps, nil
-	}
-	ps, saveErr := h.saveStackRecord(stacksCollection, ctx, uniqueStackNameFallback(ctx.req.Name))
-	if saveErr != nil {
-		return nil, internalCreateStackError(e)
-	}
-	return ps, nil
-}
-
-// saveStackRecord persists a new stacks record under the given name. Field
-// assignment is flat (no nested conditionals) so the auto-rename loops in the
-// callers stay the single locus of retry logic.
-func (h crudRouteHandlers) saveStackRecord(coll *core.Collection, ctx stackPersistContext, name string) (*persistedStack, error) {
-	stack := core.NewRecord(coll)
-	stack.Set("name", name)
-	stack.Set("mode", ctx.req.Mode)
-	stack.Set("status", "pending")
-	stack.Set("owner_id", ctx.ownerID)
-	if ctx.tenantID != "" {
-		stack.Set("tenant_id", ctx.tenantID)
-	}
-	if ctx.req.UserConfig != nil {
-		stack.Set("user_config", redactUserConfigForStorage(ctx.req.UserConfig))
-	}
-	if strings.TrimSpace(ctx.req.UserConfigRaw) != "" {
-		stack.Set("user_config_raw", redactUserConfigRawForStorage(ctx.req.UserConfigRaw))
-	}
-	if strings.TrimSpace(ctx.req.UserConfigFormat) != "" {
-		stack.Set("user_config_format", ctx.req.UserConfigFormat)
-	}
-	applyRuntimeFieldsFromConfig(stack, runtimeConfigFromRequest(ctx.req))
-	if err := h.app.Save(stack); err != nil {
-		return nil, err
-	}
-	return &persistedStack{Id: stack.Id, Name: name}, nil
-}
-
-// isStackNameUniqueSaveError reports whether a Save error is a stack-name
-// unique-constraint violation (SQLite/Postgres), so the auto-rename loop can
-// retry the next candidate instead of surfacing an error to the user.
-func isStackNameUniqueSaveError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	if !strings.Contains(msg, "unique") && !strings.Contains(msg, "duplicate") {
-		return false
-	}
-	return strings.Contains(msg, "name") || strings.Contains(msg, "stack")
-}
-
-// findOwnerScopedStackByName returns the existing stack matching
-// (owner_id, tenant_id, name) or (nil, nil) when none exists. The tenant_id
-// is matched as an empty string in self-hosted mode, mirroring the migration
-// 034 dedupe grouping. Returning the lookup error itself would mask a
-// genuine DB outage as "already exists"; instead we treat any non-"row not
-// found" error as no-match and fall through to the normal Save path, which
-// then surfaces the underlying failure with the right error code.
-func findOwnerScopedStackByName(app core.App, ownerID, tenantID, name string) (*core.Record, error) {
-	trimmedName := strings.TrimSpace(name)
-	if trimmedName == "" {
-		return nil, nil
-	}
-	record, err := app.FindFirstRecordByFilter(
-		"stacks",
-		"owner_id = {:ownerID} && tenant_id = {:tenantID} && name = {:name}",
-		map[string]any{
-			"ownerID":  ownerID,
-			"tenantID": tenantID,
-			"name":     trimmedName,
-		},
-	)
-	if err != nil {
-		return nil, err
-	}
-	return record, nil
-}
-
 func stackConfigFromRequest(req normalizedCreateStackRequest) map[string]any {
 	config := map[string]any{}
 	runtimeConfig := runtimeConfigFromRequest(req)
@@ -361,7 +271,7 @@ func stackConfigFromRequest(req normalizedCreateStackRequest) map[string]any {
 		config["user_config"] = redactUserConfigForStorage(req.UserConfig)
 	}
 	if req.StackSpecV2 != nil {
-		// The projected v2 spec carries techstack:// secretRef HANDLES, never
+		// The projected v2 spec carries release-authored secretRef HANDLES, never
 		// secret values, so it is stored unredacted as the join/rollout
 		// authority (config_json.stack_spec_v2).
 		config[stackConfigKeySpecV2] = req.StackSpecV2

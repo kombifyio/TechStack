@@ -38,9 +38,10 @@ func newAbandonFixtureWithResult(t *testing.T, jobType string, silentFor time.Du
 	}
 	store.SetNow(func() time.Time { return now })
 
-	orch := NewWithApp(missingPocketBaseApp{}, &Config{
+	orch := New(&Config{
 		Workers: 1, StackStore: store, JobStore: store, WorkerStore: store,
 	}, nil)
+
 	t.Cleanup(orch.Stop)
 	return orch, store, AbandonStaleJobRequest{
 		RequestContext: ctx, TenantID: "tenant-1", StackID: "stack-stranded", JobID: "job-stranded",
@@ -125,7 +126,7 @@ func TestAbandonStalePreparedProvisionReleasesOnlyExactDurableStackExecutionClai
 		ID: "job-destroy", Type: jobs.JobTypeDestroy, TargetType: targetTypeStack, TargetID: req.StackID,
 		Payload: map[string]any{"tenant_id": "tenant-1"},
 	}
-	if err := orch.enqueueWithSync(destroy, nil, "tenant-1"); err != nil {
+	if err := orch.enqueueWithSync(destroy, "tenant-1"); err != nil {
 		t.Fatalf("enqueue destroy after abandon: %v", err)
 	}
 	orch.Start()

@@ -20,7 +20,7 @@ type failingServerEnrollmentStore struct {
 func (s *failingServerEnrollmentStore) ApplyServerEnrollment(
 	context.Context,
 	controlplane.ServerEnrollment,
-) (*controlplane.ServerEventResult, error) {
+) (*controlplane.ServerEnrollmentResult, error) {
 	return nil, s.err
 }
 

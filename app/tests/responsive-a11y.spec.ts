@@ -15,12 +15,10 @@ test.describe("Responsive Design - Mobile", () => {
   test("login page should be usable on mobile", async ({ page }) => {
     await page.goto("/login");
 
-    // All form elements should be visible and usable
-    await expect(page.getByLabel("Email")).toBeVisible();
-    await expect(page.getByLabel("Password")).toBeVisible();
     await expect(
-      page.getByRole("button", { name: /sign in/i }).first(),
+      page.getByRole("heading", { name: "kombify Techstack" }),
     ).toBeVisible();
+    await expect(page.getByText("PocketBase")).toHaveCount(0);
 
     // Form should fit on screen (no horizontal scroll)
     const body = page.locator("body");
@@ -57,12 +55,39 @@ test.describe("Responsive Design - Mobile", () => {
 
     await context.close();
   });
+
+  test("authenticated navigation uses the mobile drawer below 48rem", async ({
+    browser,
+    baseURL,
+  }) => {
+    const origin = requireAppBase(baseURL);
+    const context = await browser.newContext({
+      viewport: { width: 375, height: 667 },
+    });
+    await mockLoggedInContext(context, { allowMockAuth: true });
+    const page = await context.newPage();
+
+    await page.goto(`${origin}/stacks`);
+
+    const menu = page.getByRole("button", { name: "Toggle menu" });
+    await expect(menu).toBeVisible();
+    const hiddenRail = await page.locator("aside").boundingBox();
+    expect(hiddenRail).not.toBeNull();
+    expect(hiddenRail!.x + hiddenRail!.width).toBeLessThanOrEqual(1);
+
+    await menu.click();
+    await expect
+      .poll(async () => (await page.locator("aside").boundingBox())?.x)
+      .toBeGreaterThanOrEqual(0);
+
+    await context.close();
+  });
 });
 
 test.describe("Responsive Design - Tablet", () => {
   test.use({ viewport: { width: 768, height: 1024 } }); // iPad
 
-  test("dashboard should show grid layout on tablet", async ({
+  test("dashboard keeps a compact rail instead of an early burger", async ({
     browser,
     baseURL,
   }) => {
@@ -74,10 +99,17 @@ test.describe("Responsive Design - Tablet", () => {
     const page = await context.newPage();
 
     await page.goto(`${origin}/stacks`);
-    await page.waitForTimeout(1000);
+    const menu = page.getByRole("button", { name: "Toggle menu" });
+    await expect(menu).toBeHidden();
 
-    // Sidebar should be visible on tablet
-    await expect(page.locator("aside")).toBeVisible();
+    const rail = page.locator("aside");
+    await expect(rail).toBeVisible();
+    await expect
+      .poll(async () => {
+        const box = await rail.boundingBox();
+        return box !== null && box.x >= 0 && box.width < 100;
+      })
+      .toBe(true);
 
     await context.close();
   });
@@ -85,6 +117,63 @@ test.describe("Responsive Design - Tablet", () => {
 
 test.describe("Responsive Design - Desktop", () => {
   test.use({ viewport: { width: 1920, height: 1080 } }); // Full HD
+
+  test("theme remains reachable from the user menu with the Companion side panel active", async ({
+    browser,
+    baseURL,
+  }) => {
+    const origin = requireAppBase(baseURL);
+    const context = await browser.newContext({
+      viewport: { width: 1280, height: 800 },
+    });
+    await mockLoggedInContext(context, { allowMockAuth: true });
+    const page = await context.newPage();
+
+    await page.goto(`${origin}/stacks`);
+    const companionFrame = page.locator("iframe[data-kombify-companion-frame]");
+    await expect(companionFrame).toBeAttached();
+    await companionFrame.evaluate((frame) => {
+      const source = (frame as HTMLIFrameElement).contentWindow;
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          origin: "https://api.kombify.io",
+          source,
+          data: {
+            type: "kombify:panel-bridge",
+            protocolVersion: 2,
+            revision: 1_000,
+            kind: "layout.change",
+            payload: { layout: "sidepanel" },
+          },
+        }),
+      );
+    });
+    await expect(
+      page.getByRole("button", { name: "Open the Companion" }),
+    ).toBeVisible();
+
+    const themeControl = page.getByRole("button", {
+      name: "Toggle dark/light theme",
+    });
+    await expect(themeControl).toBeHidden();
+
+    await page.locator('[data-onboarding-anchor="user-menu"]').click();
+    const menuThemeControl = page
+      .getByRole("menu")
+      .getByRole("button", { name: "Toggle dark/light theme" });
+    await expect(menuThemeControl).toBeVisible();
+
+    const html = page.locator("html");
+    const appearance = await html.getAttribute("data-appearance");
+    expect(appearance === "dark" || appearance === "light").toBe(true);
+    await menuThemeControl.click();
+    await expect(html).toHaveAttribute(
+      "data-appearance",
+      appearance === "dark" ? "light" : "dark",
+    );
+
+    await context.close();
+  });
 
   test("sidebar navigation works on desktop", async ({ browser, baseURL }) => {
     const origin = requireAppBase(baseURL);
@@ -110,31 +199,29 @@ test.describe("Responsive Design - Desktop", () => {
 test.describe("Accessibility", () => {
   test("login form has proper labels", async ({ page }) => {
     await page.goto("/login");
+    await page.waitForURL(/\/client\/onboarding|\/client\/local|\/login/);
 
-    // Check that inputs have associated labels
-    const emailInput = page.getByLabel("Email");
-    const passwordInput = page.getByLabel("Password");
+    if (page.url().includes("/client/local")) {
+      const emailInput = page.getByLabel("Email");
+      const passwordInput = page.getByLabel("Password");
+      await expect(emailInput).toBeVisible();
+      await expect(passwordInput).toBeVisible();
+      return;
+    }
 
-    await expect(emailInput).toBeVisible();
-    await expect(passwordInput).toBeVisible();
-
-    // Labels should be properly associated
-    const emailId = await emailInput.getAttribute("id");
-    const passwordId = await passwordInput.getAttribute("id");
-
-    expect(emailId).toBe("owner-login-email");
-    expect(passwordId).toBe("owner-login-password");
+    await expect(
+      page.getByRole("heading", { name: "kombify Techstack" }),
+    ).toBeVisible();
+    await expect(page.getByText("PocketBase")).toHaveCount(0);
   });
 
   test("buttons have accessible text", async ({ page }) => {
     await page.goto("/login");
+    await page.waitForURL(/\/client\/onboarding|\/client\/local|\/login/);
 
-    // Sign-in button should have text
-    const signInBtn = page.getByRole("button", { name: /sign in/i }).first();
-    await expect(signInBtn).toBeVisible();
-
-    // Button should not be empty
-    const text = await signInBtn.textContent();
+    const action = page.getByRole("button").first();
+    await expect(action).toBeVisible();
+    const text = await action.textContent();
     expect(text?.trim().length).toBeGreaterThan(0);
   });
 
@@ -176,15 +263,21 @@ test.describe("Accessibility", () => {
 
   test("keyboard navigation works on login form", async ({ page }) => {
     await page.goto("/login");
+    await page.waitForURL(/\/client\/onboarding|\/client\/local|\/login/);
     await page.waitForTimeout(500);
 
-    // Email field should be focusable
-    await page.locator("#owner-login-email").focus();
-    await expect(page.locator("#owner-login-email")).toBeFocused();
+    if (page.url().includes("/client/local")) {
+      const email = page.getByLabel("Email");
+      await email.focus();
+      await expect(email).toBeFocused();
+      await page.keyboard.press("Tab");
+      await expect(page.getByLabel("Password")).toBeFocused();
+      return;
+    }
 
-    // Tab moves focus to password field
-    await page.keyboard.press("Tab");
-    await expect(page.locator("#owner-login-password")).toBeFocused();
+    await expect(
+      page.getByRole("heading", { name: "kombify Techstack" }),
+    ).toBeVisible();
 
     // Tab moves focus to submit button
     await page.keyboard.press("Tab");

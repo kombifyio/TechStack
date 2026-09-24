@@ -143,7 +143,7 @@ func pipelinePreviewStages(result *unifier.PipelineResult) []map[string]any {
 	stages := make([]map[string]any, 0, len(result.Steps))
 	for _, step := range result.Steps {
 		stages = append(stages, map[string]any{
-			backupNamePathKey:   step.Name,
+			routeNameField:      step.Name,
 			preCheckStatusField: step.Status,
 			"duration_ms":       step.Duration.Milliseconds(),
 			routeErrorField:     step.Error,

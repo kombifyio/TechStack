@@ -1,17 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { findServicesWithoutCredentials } from "./integration";
-import { listServiceRegistry } from "$lib/api/registry";
-import { getWalletItems } from "$lib/api/wallet";
+import { listServiceRegistry } from "#lib/api/registry.js";
+import { getWalletItems } from "#lib/api/wallet.js";
 
-vi.mock("$lib/api/registry", () => ({
+vi.mock("#lib/api/registry.js", () => ({
   listServiceRegistry: vi.fn(),
 }));
 
-vi.mock("$lib/api/wallet", () => ({
+vi.mock("#lib/api/wallet.js", () => ({
   createWalletItem: vi.fn(),
   getWalletItems: vi.fn(),
-  getWalletItemsByStack: vi.fn(),
 }));
 
 const mockedListServiceRegistry = vi.mocked(listServiceRegistry);
@@ -25,7 +24,7 @@ describe("wallet integration service discovery", () => {
   it("uses BFF registry and wallet clients instead of collection access", async () => {
     mockedListServiceRegistry.mockResolvedValue({
       catalog: [],
-      stacks: [],
+      kit_deployments: [],
       servers: [],
       services: [
         {
@@ -35,7 +34,7 @@ describe("wallet integration service discovery", () => {
           type: "traefik",
           status: "running",
           management_state: "managed",
-          stack_id: "stack-1",
+          kit_deployment_id: "stack-1",
           stack_name: "Stack",
           server_id: "node-1",
           server_name: "Node",
@@ -48,7 +47,7 @@ describe("wallet integration service discovery", () => {
           type: "headscale",
           status: "running",
           management_state: "managed",
-          stack_id: "stack-1",
+          kit_deployment_id: "stack-1",
           stack_name: "Stack",
           server_id: "node-1",
           server_name: "Node",
@@ -76,6 +75,7 @@ describe("wallet integration service discovery", () => {
       name: "Traefik Dashboard",
       kind: "password",
       service_id: "svc-traefik",
+      kit_deployment_id: "stack-1",
       url: "https://traefik.example.test/dashboard/",
     });
   });

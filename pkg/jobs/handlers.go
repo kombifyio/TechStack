@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,8 +22,8 @@ import (
 
 	"github.com/kombifyio/techstack/internal/portinventory"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/runtimeaction"
+	"github.com/kombifyio/techstack/pkg/secrets"
 	"github.com/kombifyio/techstack/pkg/stackrouting"
-	"github.com/kombifyio/techstack/pkg/tofu"
 	"github.com/kombifyio/techstack/pkg/unifier"
 	"github.com/google/uuid"
 )
@@ -81,6 +82,12 @@ const (
 	// DestroyProjectionReconciledResultField is durable evidence that the
 	// configured projection reconciler retired the exact requested stack.
 	DestroyProjectionReconciledResultField = "destroy_projection_reconciled"
+	// PortTeardownSnapshotResultField contains the server-generated immutable
+	// release batch captured before a destroy enters process-local execution.
+	PortTeardownSnapshotResultField = "port_teardown_snapshot"
+	// PortTeardownReleasedResultField binds completed claim release to the exact
+	// durable snapshot digest consumed after terminal absence proof.
+	PortTeardownReleasedResultField = "port_teardown_released"
 )
 
 // ProvisionConfig holds configuration for provisioning operations.
@@ -105,7 +112,7 @@ type ProvisionConfig struct {
 	ManagedStackKitInventory ManagedStackKitInventoryBuilder
 	// PortInventory is the provider-neutral host-listener authority. It resolves
 	// the current RuntimeServer generation internally; jobs never supply one.
-	PortInventory portinventory.CurrentAuthority
+	PortInventory portinventory.LifecycleAuthority
 	// RuntimeActionTimeout bounds a single StackKits runtime action.
 	// Empty defaults to the production HTTP action budget; tests may lower it.
 	RuntimeActionTimeout time.Duration
@@ -120,6 +127,13 @@ type ProvisionConfig struct {
 	// RoutingStore supplies a revisioned desired-state overlay. Deploy applies
 	// it after loading immutable intent and before deriving rollout artifacts.
 	RoutingStore stackrouting.Store
+	// BackupScheduleProjector records the cadence a managed rollout selected so
+	// the due-stack scanner can find it. Without it the projection stays empty
+	// and no backup is ever due, however correct the rest of the chain is.
+	BackupScheduleProjector BackupScheduleProjector
+	// BackupAgentResolver resolves the enrolled agent that owns a stack's
+	// runtime, at dispatch time rather than at scan time.
+	BackupAgentResolver BackupAgentResolver
 	// AutoDeployAdmission is the canonical control-plane gate used before a
 	// provision job may chain into DeployHandler. The hook must prove the exact
 	// tenant/owner/stack/lease binding and a fresh Guard runtime. A missing hook
@@ -130,6 +144,9 @@ type ProvisionConfig struct {
 	// It is intentionally a narrow callback: the jobs package never selects a
 	// provider, deletes a provider resource, or touches legacy projections.
 	NoWorkspaceDestroyReconciler NoWorkspaceDestroyReconciler
+	// RemoteEnrollment drives the durable connect-remote enrollment job. When
+	// nil, the job type fails closed instead of pretending the SSH lane ran.
+	RemoteEnrollment RemoteEnrollmentExecutor
 }
 
 type ManagedStackKitInventoryRequest struct {
@@ -324,19 +341,33 @@ func int32FromInterface(value interface{}) int32 {
 	case int32:
 		return v
 	case int:
-		return int32(v)
+		return clampInt64ToInt32(int64(v))
 	case int64:
-		return int32(v)
+		return clampInt64ToInt32(v)
 	case float64:
 		return int32(v)
 	case json.Number:
 		n, _ := v.Int64()
-		return int32(n)
+		return clampInt64ToInt32(n)
 	}
 	return 0
 }
 
+func clampInt64ToInt32(value int64) int32 {
+	if value > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	if value < math.MinInt32 {
+		return math.MinInt32
+	}
+	// #nosec G115 -- value is clamped to the signed 32-bit range above.
+	return int32(value)
+}
+
 func runRuntimeAction(ctx context.Context, runner RuntimeActionRunner, req RuntimeActionRequest) (map[string]interface{}, error) {
+	if runner == nil {
+		return nil, fmt.Errorf("runtime action %s is not configured", req.Action)
+	}
 	if withResult, ok := runner.(RuntimeActionResultRunner); ok {
 		return withResult.RunWithResult(ctx, req)
 	}
@@ -352,7 +383,12 @@ func runtimeActionProof(action string, result map[string]interface{}, defaultSta
 		"action": action,
 		"status": firstNonEmpty(resultString(result, "status"), defaultStatus),
 	}
-	for _, key := range []string{"mode", stackIDField, "stack_name", "stackkit", "tenant_id", "owner_id", "tofu_dir", "unified_path", "simulation_id", "deployment_id", "preview_url", "expires_at"} {
+	for _, key := range []string{
+		"mode", stackIDField, "stack_name", "stackkit", "tenant_id", "owner_id", "tofu_dir", "unified_path",
+		"simulation_id", "deployment_id", "preview_url", "expires_at",
+		"stackkit_instance_id", "plan_hash", "snapshot_anchor_id", "backup_operation_id", "retention_mode",
+		"restore_result_id", "restore_operation_id", "verified_at",
+	} {
 		if value := resultString(result, key); value != "" {
 			proof[key] = value
 		}
@@ -365,8 +401,17 @@ func runtimeActionProof(action string, result map[string]interface{}, defaultSta
 	if checks, ok := result["checks"]; ok && checks != nil {
 		proof["checks"] = checks
 	}
+	if apply := sanitizedStackKitApplySummary(result); len(apply) > 0 {
+		proof["apply"] = apply
+	}
+	if outcomes := sanitizedStackKitApplyOutcomes(result); len(outcomes) > 0 {
+		proof["outcomes"] = outcomes
+	}
 	if observation := sanitizedRuntimeObservation(result); len(observation) > 0 {
 		proof["observation"] = observation
+	}
+	if observations := sanitizedRuntimeObservations(result); len(observations) > 0 {
+		proof["observations"] = observations
 	}
 	return proof
 }
@@ -411,75 +456,6 @@ func resultString(result map[string]interface{}, key string) string {
 	}
 }
 
-func hasRequiredStackKitIdentityHandoff(outputs map[string]interface{}) bool {
-	if outputs == nil {
-		return false
-	}
-	identity := resultMap(outputs, "identity")
-	owner := firstResultMap(resultMap(identity, "owner"), resultMap(outputs, "owner"))
-	loginGateway := firstResultMap(
-		resultMap(outputs, "login_gateway"),
-		resultMap(outputs, "loginGateway"),
-		resultMap(outputs, "login"),
-	)
-	recovery := firstResultMap(
-		resultMap(identity, "recovery"),
-		resultMap(outputs, "recovery"),
-		resultMap(outputs, "recovery_bundle"),
-	)
-
-	ownerLogin := firstNonEmpty(
-		resultString(owner, "username"),
-		resultString(owner, "user"),
-		resultString(owner, "login"),
-	)
-	loginURL := firstNonEmpty(
-		resultString(loginGateway, "url"),
-		resultString(loginGateway, "login_url"),
-		resultString(loginGateway, "loginUrl"),
-	)
-	recoveryRef := firstNonEmpty(
-		resultString(recovery, "bundle_ref"),
-		resultString(recovery, "bundleRef"),
-		resultString(recovery, "recovery_bundle_ref"),
-		resultString(recovery, "recoveryBundleRef"),
-		resultString(recovery, "secret_ref"),
-		resultString(recovery, "secretRef"),
-		resultString(recovery, "machine_secret_ref"),
-		resultString(recovery, "machineSecretRef"),
-	)
-	return ownerLogin != "" && loginURL != "" && (recoveryRef != "" || resultBool(recovery, "passphrase_hash_present") || resultBool(recovery, "passphraseHashPresent"))
-}
-
-func firstResultMap(values ...map[string]interface{}) map[string]interface{} {
-	for _, value := range values {
-		if len(value) > 0 {
-			return value
-		}
-	}
-	return nil
-}
-
-func resultMap(result map[string]interface{}, key string) map[string]interface{} {
-	if result == nil {
-		return nil
-	}
-	switch value := result[key].(type) {
-	case map[string]interface{}:
-		return value
-	default:
-		return nil
-	}
-}
-
-func resultBool(result map[string]interface{}, key string) bool {
-	if result == nil {
-		return false
-	}
-	value, _ := result[key].(bool)
-	return value
-}
-
 //nolint:goconst // StackKit output keys are external response wire fields.
 func mergeStackKitOutputs(dst map[string]interface{}, result map[string]interface{}) {
 	if dst == nil || result == nil {
@@ -487,10 +463,13 @@ func mergeStackKitOutputs(dst map[string]interface{}, result map[string]interfac
 	}
 	if nested, ok := result[metadataKeyStackKitOutputs].(map[string]interface{}); ok {
 		for key, value := range nested {
-			if key != "observation" {
+			if key != "apply" && key != "observation" && key != "observations" {
 				dst[key] = value
 			}
 		}
+	}
+	if commandResult, ok := result["command_result"].(map[string]interface{}); ok {
+		mergeStackKitOutputs(dst, commandResult)
 	}
 	if data, ok := result["data"].(map[string]interface{}); ok {
 		mergeStackKitOutputs(dst, data)
@@ -503,9 +482,15 @@ func mergeStackKitOutputs(dst map[string]interface{}, result map[string]interfac
 	if observation := sanitizedRuntimeObservation(result); len(observation) > 0 {
 		dst["observation"] = observation
 	}
+	if observations := sanitizedRuntimeObservations(result); len(observations) > 0 {
+		dst["observations"] = observations
+	}
+	if apply := sanitizedStackKitApplySummary(result); len(apply) > 0 {
+		dst["apply"] = apply
+	}
 }
 
-const runtimeObservationMaxStringLength = 4096
+const stackKitEvidenceMaxStringLength = 4096
 
 // sanitizedRuntimeObservation keeps the versioned, measured StackKits runtime
 // observation across action proof and rollout output persistence. The action
@@ -516,62 +501,119 @@ func sanitizedRuntimeObservation(result map[string]interface{}) map[string]inter
 		return nil
 	}
 	if observation, ok := result["observation"].(map[string]interface{}); ok {
-		return sanitizeRuntimeObservationMap(observation, 0)
+		return sanitizeStackKitEvidenceMap(observation, 0)
 	}
-	if nested, ok := result[metadataKeyStackKitOutputs].(map[string]interface{}); ok {
+	for _, nested := range nestedStackKitEvidenceMaps(result) {
 		if observation := sanitizedRuntimeObservation(nested); len(observation) > 0 {
 			return observation
 		}
 	}
-	if data, ok := result["data"].(map[string]interface{}); ok {
-		return sanitizedRuntimeObservation(data)
+	return nil
+}
+
+func sanitizedRuntimeObservations(result map[string]interface{}) []interface{} {
+	if result == nil {
+		return nil
+	}
+	if observations, ok := result["observations"].([]interface{}); ok {
+		sanitized := make([]interface{}, 0, len(observations))
+		for _, value := range observations {
+			observation, ok := value.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if observation = sanitizeStackKitEvidenceMap(observation, 0); len(observation) > 0 {
+				sanitized = append(sanitized, observation)
+			}
+		}
+		if len(sanitized) > 0 {
+			return sanitized
+		}
+	}
+	for _, nested := range nestedStackKitEvidenceMaps(result) {
+		if observations := sanitizedRuntimeObservations(nested); len(observations) > 0 {
+			return observations
+		}
 	}
 	return nil
 }
 
-func sanitizeRuntimeObservationMap(input map[string]interface{}, depth int) map[string]interface{} {
+func sanitizedStackKitApplyOutcomes(result map[string]interface{}) map[string]interface{} {
+	if outcomes, ok := result["outcomes"].(map[string]interface{}); ok {
+		return sanitizeStackKitEvidenceMap(outcomes, 0)
+	}
+	for _, nested := range nestedStackKitEvidenceMaps(result) {
+		if outcomes := sanitizedStackKitApplyOutcomes(nested); len(outcomes) > 0 {
+			return outcomes
+		}
+	}
+	return nil
+}
+
+func sanitizedStackKitApplySummary(result map[string]interface{}) map[string]interface{} {
+	if result == nil {
+		return nil
+	}
+	if apply, ok := result["apply"].(map[string]interface{}); ok {
+		return sanitizeStackKitEvidenceMap(apply, 0)
+	}
+	for _, nested := range nestedStackKitEvidenceMaps(result) {
+		if apply := sanitizedStackKitApplySummary(nested); len(apply) > 0 {
+			return apply
+		}
+	}
+	return nil
+}
+
+func nestedStackKitEvidenceMaps(result map[string]interface{}) []map[string]interface{} {
+	nested := make([]map[string]interface{}, 0, 3)
+	for _, key := range []string{metadataKeyStackKitOutputs, "command_result", "data"} {
+		if value, ok := result[key].(map[string]interface{}); ok {
+			nested = append(nested, value)
+		}
+	}
+	return nested
+}
+
+func sanitizeStackKitEvidenceMap(input map[string]interface{}, depth int) map[string]interface{} {
 	if len(input) == 0 || depth > 8 {
 		return nil
 	}
 	out := make(map[string]interface{}, len(input))
 	for key, value := range input {
 		key = strings.TrimSpace(key)
-		if key == "" || runtimeObservationSensitiveKey(key) {
+		if key == "" || secrets.SensitiveKey(key) {
 			continue
 		}
-		if sanitized, ok := sanitizeRuntimeObservationValue(value, depth+1); ok {
+		if sanitized, ok := sanitizeStackKitEvidenceValue(value, depth+1); ok {
 			out[key] = sanitized
 		}
 	}
 	return out
 }
 
-func sanitizeRuntimeObservationValue(value interface{}, depth int) (interface{}, bool) {
+func sanitizeStackKitEvidenceValue(value interface{}, depth int) (interface{}, bool) {
 	switch typed := value.(type) {
 	case nil:
 		return nil, false
 	case string:
 		value := strings.TrimSpace(typed)
-		if len(value) > runtimeObservationMaxStringLength {
-			value = value[:runtimeObservationMaxStringLength]
+		if len(value) > stackKitEvidenceMaxStringLength {
+			return nil, false
 		}
-		return value, true
+		return secrets.Redact(value), true
 	case bool, float64, float32, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, json.Number:
 		return typed, true
 	case map[string]interface{}:
-		value := sanitizeRuntimeObservationMap(typed, depth)
+		value := sanitizeStackKitEvidenceMap(typed, depth)
 		return value, len(value) > 0
 	case []interface{}:
-		if depth > 8 {
+		if depth > 8 || len(typed) > 128 {
 			return nil, false
 		}
-		limit := len(typed)
-		if limit > 128 {
-			limit = 128
-		}
-		out := make([]interface{}, 0, limit)
-		for _, item := range typed[:limit] {
-			if sanitized, ok := sanitizeRuntimeObservationValue(item, depth+1); ok {
+		out := make([]interface{}, 0, len(typed))
+		for _, item := range typed {
+			if sanitized, ok := sanitizeStackKitEvidenceValue(item, depth+1); ok {
 				out = append(out, sanitized)
 			}
 		}
@@ -581,27 +623,51 @@ func sanitizeRuntimeObservationValue(value interface{}, depth int) (interface{},
 	}
 }
 
-func runtimeObservationSensitiveKey(key string) bool {
-	key = strings.ToLower(strings.TrimSpace(key))
-	for _, marker := range []string{"token", "secret", "password", "credential", "authorization", "api_key", "private_key"} {
-		if strings.Contains(key, marker) {
-			return true
-		}
-	}
-	return false
-}
-
 // DestroyHandler creates a job handler for destroying stacks.
 func DestroyHandler(cfg *ProvisionConfig) JobHandler {
 	cfg = normalizeProvisionConfig(cfg)
 
 	return func(ctx context.Context, job *Job, q *Queue) error {
+		// Addresses go first: a kombify.me route must never outlive the server
+		// it points at, because a released provider IP can be reassigned and
+		// then pass ACME HTTP-01 for the stack's hostnames.
+		if err := deregisterStackManagedAddresses(ctx, job, q); err != nil {
+			return wrapProvisionCause(StepFinalize, err,
+				"Could not remove this stack's kombify.me addresses. The decommission stays incomplete so no address keeps routing to a released server; retry the destroy.")
+		}
 		if _, err := destroyManagedRuntimeLeases(ctx, cfg, job, q); err != nil {
 			if isJobWaitError(err) {
 				return err
 			}
-			return wrapProvisionError(StepCreateLease, fmt.Sprintf("managed runtime decommission failed: %v", err),
+			return wrapProvisionCause(StepCreateLease, err,
 				"Could not decommission the managed runtime VPS. Provider resources were not marked destroyed.")
+		}
+		managedRuntime, err := managedRuntimeDecommissionRequired(job)
+		if err != nil {
+			return wrapProvisionCause(StepCreateLease, err,
+				"Could not verify whether provider-owned runtime teardown was required. Port claims were retained.")
+		}
+		if managedRuntime {
+			if err := releasePortTeardownSnapshotForJob(ctx, cfg, job); err != nil {
+				return wrapProvisionCause(StepFinalize, fmt.Errorf("port teardown release failed: %w", err),
+					"Provider absence was verified, but port claims were retained because the exact teardown snapshot could not be released.")
+			}
+		} else if cfg.PortInventory != nil {
+			snapshot, err := boundPortTeardownSnapshot(job)
+			if err != nil {
+				return wrapProvisionCause(StepFinalize, fmt.Errorf("local port teardown admission failed: %w", err),
+					"Port claims were retained because the exact teardown snapshot could not be verified.")
+			}
+			if len(snapshot.Generations) > 0 {
+				if err := removeLocalStackKitWorkloads(ctx, cfg, job, snapshot); err != nil {
+					return wrapProvisionCause(StepProvision, fmt.Errorf("typed local StackKits removal failed: %w", err),
+						"Port claims were retained because StackKits did not prove every applied workload absent.")
+				}
+			}
+			if err := releasePortTeardownSnapshot(ctx, cfg, job, snapshot); err != nil {
+				return wrapProvisionCause(StepFinalize, fmt.Errorf("local port teardown release failed: %w", err),
+					"StackKits absence was verified, but port claims were retained because the exact teardown snapshot could not be released.")
+			}
 		}
 
 		// Step 1: Locate work directory
@@ -628,8 +694,8 @@ func DestroyHandler(cfg *ProvisionConfig) JobHandler {
 					if isJobWaitError(err) {
 						return err
 					}
-					return wrapProvisionError(StepFinalize,
-						fmt.Sprintf("no-workspace stack projection reconciliation failed: %v", err),
+					return wrapProvisionCause(StepFinalize,
+						fmt.Errorf("no-workspace stack projection reconciliation failed: %w", err),
 						"Could not retire this stack entry after its no-workspace destroy. No provider resource or legacy record was changed.")
 				}
 				job.mutateResult(func(result map[string]interface{}) {
@@ -642,17 +708,18 @@ func DestroyHandler(cfg *ProvisionConfig) JobHandler {
 
 		q.UpdateProgress(job.ID, 20, "Workspace found")
 
-		// Step 2: Run OpenTofu destroy
 		job.setStep(StepProvision)
-		q.UpdateProgress(job.ID, 40, "Running OpenTofu destroy...")
-
-		runner := &tofu.DefaultRunner{}
-		if err := runner.Destroy(workDir); err != nil {
-			return wrapProvisionError(StepProvision, fmt.Sprintf("tofu destroy failed: %v", err),
-				"Could not destroy infrastructure. Manual cleanup may be required.")
+		q.UpdateProgress(job.ID, 40, "Removing stack with StackKits...")
+		workload := firstNonEmpty(job.TargetName, job.TargetID)
+		_, typedLocalRemoval := job.Snapshot().Result[LocalStackKitRemovalEvidenceResultField]
+		if !typedLocalRemoval {
+			if err := destroyStackKitWorkspace(ctx, workDir, workload); err != nil {
+				return wrapProvisionCause(StepProvision, err,
+					"Could not remove the stack with the pinned StackKits CLI.")
+			}
 		}
 
-		q.UpdateProgress(job.ID, 80, "Infrastructure destroyed")
+		q.UpdateProgress(job.ID, 80, "Stack removed")
 
 		// Step 3: Cleanup workspace (optional - keep state for audit)
 		job.setStep(StepFinalize)
@@ -671,17 +738,142 @@ func DestroyHandler(cfg *ProvisionConfig) JobHandler {
 	}
 }
 
-func destroyManagedRuntimeLeases(ctx context.Context, cfg *ProvisionConfig, job *Job, q *Queue) (*ManagedLeaseDecommissionResult, error) {
-	if job == nil {
-		return nil, fmt.Errorf("%w: destroy job is missing", ErrManagedLeaseDecommissionProofRequired)
+// deregisterStackManagedAddresses removes every managed kombify.me address of
+// the stack being destroyed and records the absence evidence. It resolves the
+// owner exactly as the rollout did when it registered the addresses.
+func deregisterStackManagedAddresses(ctx context.Context, job *Job, q *Queue) error {
+	snapshot := job.Snapshot()
+	tenantID := managedRuntimeTenantIDFromSnapshot(snapshot, nil)
+	ownerID := managedRuntimeOwnerIDFromSnapshot(snapshot, nil)
+	if tenantID == "" || ownerID == "" || strings.TrimSpace(snapshot.TargetID) == "" {
+		// Addresses are only registered for stacks with a complete identity.
+		job.mutateResult(func(result map[string]interface{}) {
+			result[ManagedAddressDeregistrationResultField] = map[string]any{"status": "not_bound"}
+		})
+		return nil
 	}
-	required := job.Type == JobTypeReconcileLease
-	if !required {
-		rawRequired, classified := job.Payload[ManagedRuntimeDecommissionRequiredField]
-		if !classified {
-			return nil, fmt.Errorf("%w: destroy job has no managed-runtime classification", ErrManagedLeaseDecommissionProofRequired)
+	q.UpdateProgress(job.ID, 2, "Removing kombify.me addresses...")
+	evidence, err := DeregisterManagedAddresses(ctx, ManagedAddressDeregistration{
+		TenantID: tenantID,
+		OwnerID:  ownerID,
+		StackID:  snapshot.TargetID,
+	})
+	if err != nil {
+		return err
+	}
+	job.mutateResult(func(result map[string]interface{}) {
+		result[ManagedAddressDeregistrationResultField] = mergeManagedAddressEvidence(
+			result[ManagedAddressDeregistrationResultField], evidence)
+	})
+	return nil
+}
+
+// mergeManagedAddressEvidence keeps what an earlier pass of the same destroy
+// proved released. A destroy waiting on the provider resumes from the top, and
+// each pass repeats the idempotent deregistration, whose later receipts list
+// nothing. Overwriting lost the deleted routes and the install zone release
+// proof (live 2026-09-23: five passes, the recorded last one empty).
+func mergeManagedAddressEvidence(prior any, next map[string]any) map[string]any {
+	previous, ok := prior.(map[string]any)
+	if !ok || previous["status"] != "absent" || next["status"] != "absent" ||
+		previous["owner_ref"] != next["owner_ref"] || previous["stack_ref"] != next["stack_ref"] ||
+		previous["target_origin"] != next["target_origin"] {
+		return next
+	}
+	merged := make(map[string]any, len(next))
+	for key, value := range next {
+		merged[key] = value
+	}
+	for _, key := range []string{"deleted", "origin_records", "zone_records"} {
+		if combined := unionEvidenceItems(previous[key], next[key]); len(combined) > 0 {
+			merged[key] = combined
 		}
-		required = boolFromInterface(rawRequired)
+	}
+	return merged
+}
+
+func unionEvidenceItems(values ...any) []any {
+	out := []any{}
+	seen := map[string]bool{}
+	for _, value := range values {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			continue
+		}
+		var items []any
+		if json.Unmarshal(encoded, &items) != nil {
+			continue
+		}
+		for _, item := range items {
+			identity, _ := json.Marshal(item)
+			if !seen[string(identity)] {
+				seen[string(identity)] = true
+				out = append(out, item)
+			}
+		}
+	}
+	return out
+}
+
+func boundPortTeardownSnapshot(job *Job) (portinventory.TeardownSnapshot, error) {
+	if job == nil {
+		return portinventory.TeardownSnapshot{}, portinventory.ErrTeardownSnapshotMismatch
+	}
+	snapshotValue, ok := job.Snapshot().Result[PortTeardownSnapshotResultField]
+	if !ok {
+		return portinventory.TeardownSnapshot{}, fmt.Errorf("%w: durable teardown snapshot is missing", portinventory.ErrTeardownSnapshotMismatch)
+	}
+	snapshot, err := portinventory.DecodeTeardownSnapshot(snapshotValue)
+	if err != nil {
+		return portinventory.TeardownSnapshot{}, err
+	}
+	if snapshot.TenantID != payloadString(job.Payload, tenantIDField) ||
+		snapshot.OwnerSubjectID != payloadString(job.Payload, "owner_id") ||
+		snapshot.TechstackID != job.TargetID {
+		return portinventory.TeardownSnapshot{}, portinventory.ErrTeardownSnapshotMismatch
+	}
+	return snapshot, nil
+}
+
+func releasePortTeardownSnapshotForJob(ctx context.Context, cfg *ProvisionConfig, job *Job) error {
+	if cfg == nil || cfg.PortInventory == nil {
+		return nil
+	}
+	snapshot, err := boundPortTeardownSnapshot(job)
+	if err != nil {
+		return err
+	}
+	return releasePortTeardownSnapshot(ctx, cfg, job, snapshot)
+}
+
+func releasePortTeardownSnapshot(ctx context.Context, cfg *ProvisionConfig, job *Job, snapshot portinventory.TeardownSnapshot) error {
+	if err := cfg.PortInventory.ReleaseTeardownSnapshot(ctx, snapshot); err != nil {
+		return err
+	}
+	job.mutateResult(func(result map[string]interface{}) {
+		result[PortTeardownReleasedResultField] = snapshot.SnapshotDigest
+	})
+	return nil
+}
+
+func managedRuntimeDecommissionRequired(job *Job) (bool, error) {
+	if job == nil {
+		return false, fmt.Errorf("%w: destroy job is missing", ErrManagedLeaseDecommissionProofRequired)
+	}
+	if job.Type == JobTypeReconcileLease {
+		return true, nil
+	}
+	rawRequired, classified := job.Payload[ManagedRuntimeDecommissionRequiredField]
+	if !classified {
+		return false, fmt.Errorf("%w: destroy job has no managed-runtime classification", ErrManagedLeaseDecommissionProofRequired)
+	}
+	return boolFromInterface(rawRequired), nil
+}
+
+func destroyManagedRuntimeLeases(ctx context.Context, cfg *ProvisionConfig, job *Job, q *Queue) (*ManagedLeaseDecommissionResult, error) {
+	required, err := managedRuntimeDecommissionRequired(job)
+	if err != nil {
+		return nil, err
 	}
 	if !required {
 		return &ManagedLeaseDecommissionResult{}, nil
@@ -737,7 +929,7 @@ func validateManagedLeaseDecommissionProofs(req ManagedLeaseDecommissionRequest,
 	for _, proof := range result.Proofs {
 		terminalDecommission, proofErr := validateManagedLeaseDecommissionProof(
 			req,
-			normalizeManagedLeaseDecommissionProof(proof),
+			proof,
 			leaseIDs,
 			proofLeaseIDs,
 		)
@@ -775,84 +967,66 @@ func validatedManagedLeaseResultIDs(result *ManagedLeaseDecommissionResult) (map
 	return leaseIDs, nil
 }
 
-type normalizedManagedLeaseDecommissionProof struct {
-	stackID          string
-	tenantID         string
-	leaseID          string
-	providerID       string
-	generationID     string
-	generationDigest string
-	receiptRef       string
-	receiptDigest    string
-	observedState    string
-	verifiedAt       time.Time
-}
-
-func normalizeManagedLeaseDecommissionProof(proof ManagedLeaseDecommissionProof) normalizedManagedLeaseDecommissionProof {
-	return normalizedManagedLeaseDecommissionProof{
-		stackID:          strings.TrimSpace(proof.StackID),
-		tenantID:         strings.TrimSpace(proof.TenantID),
-		leaseID:          strings.TrimSpace(proof.LeaseID),
-		providerID:       strings.ToLower(strings.TrimSpace(proof.ProviderID)),
-		generationID:     strings.TrimSpace(proof.ResourceGenerationID),
-		generationDigest: strings.TrimSpace(proof.ResourceGenerationDigest),
-		receiptRef:       strings.TrimSpace(proof.ReceiptRef),
-		receiptDigest:    strings.TrimSpace(proof.ReceiptDigest),
-		observedState:    strings.ToLower(strings.TrimSpace(proof.ObservedState)),
-		verifiedAt:       proof.VerifiedAt,
-	}
-}
-
 func validateManagedLeaseDecommissionProof(
 	req ManagedLeaseDecommissionRequest,
-	proof normalizedManagedLeaseDecommissionProof,
+	proof ManagedLeaseDecommissionProof,
 	leaseIDs map[string]struct{},
 	proofLeaseIDs map[string]struct{},
 ) (bool, error) {
+	proof.StackID = strings.TrimSpace(proof.StackID)
+	proof.TenantID = strings.TrimSpace(proof.TenantID)
+	proof.LeaseID = strings.TrimSpace(proof.LeaseID)
+	proof.ProviderID = strings.ToLower(strings.TrimSpace(proof.ProviderID))
+	proof.ResourceGenerationID = strings.TrimSpace(proof.ResourceGenerationID)
+	proof.ResourceGenerationDigest = strings.TrimSpace(proof.ResourceGenerationDigest)
+	proof.ReceiptRef = strings.TrimSpace(proof.ReceiptRef)
+	proof.ReceiptDigest = strings.TrimSpace(proof.ReceiptDigest)
+	proof.ObservedState = strings.ToLower(strings.TrimSpace(proof.ObservedState))
+
 	if !validManagedLeaseDecommissionProofIdentity(req, proof) {
-		return false, fmt.Errorf("%w: incomplete or mismatched proof for lease %q", ErrManagedLeaseDecommissionProofRequired, proof.leaseID)
+		return false, fmt.Errorf("%w: incomplete or mismatched proof for lease %q", ErrManagedLeaseDecommissionProofRequired, proof.LeaseID)
 	}
-	if requestedLeaseID := strings.TrimSpace(req.LeaseID); requestedLeaseID != "" && proof.leaseID != requestedLeaseID {
-		return false, fmt.Errorf("%w: proof lease %q does not match requested lease %q", ErrManagedLeaseDecommissionProofRequired, proof.leaseID, requestedLeaseID)
+	if requestedLeaseID := strings.TrimSpace(req.LeaseID); requestedLeaseID != "" && proof.LeaseID != requestedLeaseID {
+		return false, fmt.Errorf("%w: proof lease %q does not match requested lease %q", ErrManagedLeaseDecommissionProofRequired, proof.LeaseID, requestedLeaseID)
 	}
-	if _, duplicate := proofLeaseIDs[proof.leaseID]; duplicate {
-		return false, fmt.Errorf("%w: duplicate proof lease_id %q", ErrManagedLeaseDecommissionProofRequired, proof.leaseID)
+	if _, duplicate := proofLeaseIDs[proof.LeaseID]; duplicate {
+		return false, fmt.Errorf("%w: duplicate proof lease_id %q", ErrManagedLeaseDecommissionProofRequired, proof.LeaseID)
 	}
-	proofLeaseIDs[proof.leaseID] = struct{}{}
-	if requestedDigest := strings.TrimSpace(req.ResourceGenerationDigest); requestedDigest != "" && proof.generationDigest != requestedDigest {
+	proofLeaseIDs[proof.LeaseID] = struct{}{}
+	if requestedDigest := strings.TrimSpace(req.ResourceGenerationDigest); requestedDigest != "" && proof.ResourceGenerationDigest != requestedDigest {
 		return false, fmt.Errorf("%w: proof generation digest does not match the claimed generation", ErrManagedLeaseDecommissionProofRequired)
 	}
-	if _, listed := leaseIDs[proof.leaseID]; !listed {
-		return false, fmt.Errorf("%w: proof lease %q is absent from result lease IDs", ErrManagedLeaseDecommissionProofRequired, proof.leaseID)
+	if _, listed := leaseIDs[proof.LeaseID]; !listed {
+		return false, fmt.Errorf("%w: proof lease %q is absent from result lease IDs", ErrManagedLeaseDecommissionProofRequired, proof.LeaseID)
 	}
-	switch proof.observedState {
+	switch proof.ObservedState {
 	case ManagedLeaseDecommissionObservedDecommissioned:
 		return true, nil
 	case ManagedLeaseDecommissionObservedNotFound:
 		return false, nil
 	default:
-		return false, fmt.Errorf("%w: provider state %q is not terminal", ErrManagedLeaseDecommissionProofRequired, proof.observedState)
+		return false, fmt.Errorf("%w: provider state %q is not terminal", ErrManagedLeaseDecommissionProofRequired, proof.ObservedState)
 	}
 }
 
-func validManagedLeaseDecommissionProofIdentity(req ManagedLeaseDecommissionRequest, proof normalizedManagedLeaseDecommissionProof) bool {
-	if proof.stackID == "" || proof.stackID != strings.TrimSpace(req.StackID) {
+func validManagedLeaseDecommissionProofIdentity(req ManagedLeaseDecommissionRequest, proof ManagedLeaseDecommissionProof) bool {
+	if proof.StackID == "" || proof.StackID != strings.TrimSpace(req.StackID) {
 		return false
 	}
-	if proof.tenantID == "" || proof.tenantID != strings.TrimSpace(req.TenantID) {
+	if proof.TenantID == "" || proof.TenantID != strings.TrimSpace(req.TenantID) {
 		return false
 	}
-	if proof.leaseID == "" || proof.providerID == "" {
+	if proof.LeaseID == "" || proof.ProviderID == "" {
 		return false
 	}
-	parsedGeneration, err := uuid.Parse(proof.generationID)
-	if err != nil || parsedGeneration.String() != proof.generationID {
+	parsedGeneration, err := uuid.Parse(proof.ResourceGenerationID)
+	if err != nil || parsedGeneration.String() != proof.ResourceGenerationID {
 		return false
 	}
-	if !validLowerHexDigest(proof.generationDigest) || proof.receiptRef == "" {
+	if !validLowerHexDigest(proof.ResourceGenerationDigest) || proof.ReceiptRef == "" {
 		return false
 	}
-	if !validLowerHexDigest(proof.receiptDigest) || proof.verifiedAt.IsZero() {
+	if !validLowerHexDigest(proof.ReceiptDigest) || proof.VerifiedAt.IsZero() {
 		return false
 	}
 	return true
@@ -885,7 +1059,7 @@ func ReconcileLeaseHandler(cfg *ProvisionConfig) JobHandler {
 			if isJobWaitError(err) {
 				return err
 			}
-			return wrapProvisionError(StepCreateLease, fmt.Sprintf("managed runtime lease reconciliation failed: %v", err),
+			return wrapProvisionCause(StepCreateLease, fmt.Errorf("managed runtime lease reconciliation failed: %w", err),
 				"Could not decommission the managed runtime VPS. Provider resources were not marked destroyed; a retry will re-attempt cleanup.")
 		}
 		if result == nil || result.Decommissioned == 0 {
@@ -907,6 +1081,8 @@ func RegisterDefaultHandlers(q *Queue, cfg *ProvisionConfig) {
 	q.RegisterHandler(JobTypeDeploy, DeployHandler(cfg))
 	q.RegisterHandler(JobTypeDestroy, DestroyHandler(cfg))
 	q.RegisterHandler(JobTypeReconcileLease, ReconcileLeaseHandler(cfg))
+	q.RegisterHandler(JobTypeRemoteEnrollment, RemoteEnrollmentHandler(cfg))
+	q.RegisterHandler(JobTypeBackup, BackupHandler(cfg))
 
 	// Drift detection handlers
 	driftCfg := &DriftCheckConfig{

@@ -1,25 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyPasskeyFirstOwnerLogin,
   applyServerProvisioningMode,
   applyWizardDeploymentLane,
   createDefaultConfig,
   EASY_STEPS,
   normalizeIonosDatacenter,
-  TECHIE_STEPS,
 } from "./types";
 import { ACTIVE_STANDARD_BUNDLE } from "./standardBundle";
 
 describe("easy wizard stage contract", () => {
-  it("uses StandardBundle steps for Easy and Techie surfaces", () => {
+  // The bundle owns the step list; this only holds the two boundaries that
+  // matter and would otherwise regress silently. It deliberately does not
+  // enumerate the steps - that list changes with the product.
+  it("takes its steps from the StandardBundle", () => {
     expect(EASY_STEPS).toEqual(ACTIVE_STANDARD_BUNDLE.wizard.steps.easy);
-    expect(TECHIE_STEPS).toEqual(ACTIVE_STANDARD_BUNDLE.wizard.steps.techie);
-    expect(EASY_STEPS.map((step) => step.key)).toEqual([
-      "goals",
-      "server",
-      "access",
-      "users",
-      "login",
-    ]);
   });
 });
 
@@ -34,12 +29,15 @@ describe("basementkit verified wizard defaults", () => {
     expect(config.serverProvisioning.stackkitFoundation).toBe("basement-kit");
     expect(config.serverProvisioning.nodeRole).toBe("foundation");
     expect(config.owner.bootstrapMode).toBe("custom");
+    expect(config.identity.requiresPasskeys).toBe(true);
+    expect(config.identity.backendCapability).toBe("passkeys");
+    expect(config).not.toHaveProperty("admin");
     expect(config.kit).toBe("basement-kit");
-    expect(config.providerId).toBe("centron");
+    expect(config.providerId).toBe("ionos");
     expect(config.ionosDatacenter).toBe("de/fra");
     expect(config.services.pocketId).toBe(true);
     expect(config.services.traefik).toBe(true);
-    expect(config.services.vaultwarden).toBe(true);
+    expect(config.services.vaultwarden).toBe(false);
     expect(config.services.immich).toBe(false);
     expect(config.services.monitoring).toBe(true);
     expect(config.services.files).toBe(false);
@@ -63,7 +61,7 @@ describe("basementkit verified wizard defaults", () => {
     expect(config.serverMode).toBe("monthly-runtime");
     expect(config.kit).toBe("cloud-kit");
     expect(config.serverProvisioning.stackkitFoundation).toBe("cloud-kit");
-    expect(config.providerId).toBe("centron");
+    expect(config.providerId).toBe("ionos");
     expect(config.runtimeOfferingId).toBe("monthly-runtime-standard");
     expect(config.owner.bootstrapMode).toBe("auto");
     expect(config.owner.source).toBe("cloud");
@@ -76,7 +74,7 @@ describe("basementkit verified wizard defaults", () => {
 
   it("preserves the controlled managed VPS provider when normalizing cloud mode", () => {
     const config = createDefaultConfig();
-    config.providerId = "ionos";
+    config.providerId = "centron";
     config.owner.username = "local-owner";
     config.owner.email = "owner@example.com";
     config.owner.recoveryPassphraseHash =
@@ -86,7 +84,7 @@ describe("basementkit verified wizard defaults", () => {
 
     expect(config.provider).toBe("cloud");
     expect(config.serverMode).toBe("monthly-runtime");
-    expect(config.providerId).toBe("ionos");
+    expect(config.providerId).toBe("centron");
     expect(config.ionosDatacenter).toBe("de/fra");
     expect(config.owner.bootstrapMode).toBe("auto");
     expect(config.owner.source).toBe("cloud");
@@ -106,7 +104,7 @@ describe("basementkit verified wizard defaults", () => {
     expect(config.serverProvisioning.connectionMode).toBe(
       "managed-subscription",
     );
-    expect(config.providerId).toBe("centron");
+    expect(config.providerId).toBe("ionos");
     expect(config.runtimeOfferingId).toBe("monthly-runtime-standard");
     expect(config.owner.bootstrapMode).toBe("auto");
     expect(config.owner.source).toBe("cloud");
@@ -152,6 +150,24 @@ describe("basementkit verified wizard defaults", () => {
     expect(config.serverMode).toBe("user-owned");
     expect(config.serverProvisioning.mode).toBe("connect-remote");
     expect(config.serverProvisioning.connectionMode).toBe("remote-ssh");
+  });
+
+  it("normalizes a legacy Easy Wizard draft onto the passkey-first identity path", () => {
+    const config = createDefaultConfig();
+    (config as typeof config & { admin?: { password: string } }).admin = {
+      password: "legacy-browser-secret",
+    };
+    config.identity.homelabProvider = "pocketbase";
+    config.identity.requiresPasskeys = false;
+    config.identity.backendCapability = "external-identity";
+
+    applyPasskeyFirstOwnerLogin(config);
+
+    expect(config.identity.toolProvider).toBe("pocket-id");
+    expect(config.identity.homelabProvider).toBe("pocket-id");
+    expect(config.identity.requiresPasskeys).toBe(true);
+    expect(config.identity.backendCapability).toBe("passkeys");
+    expect(config).not.toHaveProperty("admin");
   });
 });
 

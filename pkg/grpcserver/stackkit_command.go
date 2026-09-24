@@ -70,9 +70,10 @@ func (s *Server) SendStackKitCommand(
 	if !containsStackKitCapability(connected.Capabilities) {
 		return nil, fmt.Errorf("agent %q does not advertise the typed StackKits capability", agentID)
 	}
-	if command.GetOperation() == agentpb.StackKitOperation_STACKKIT_OPERATION_APPLY &&
-		!containsCapability(connected.Capabilities, stackkitcommand.ExpectedPlanHashCapability) {
-		return nil, fmt.Errorf("agent %q does not advertise %s", agentID, stackkitcommand.ExpectedPlanHashCapability)
+	for _, capability := range stackkitcommand.RequiredAgentCapabilities(command) {
+		if !containsCapability(connected.Capabilities, capability) {
+			return nil, fmt.Errorf("agent %q does not advertise %s", agentID, capability)
+		}
 	}
 	if err := s.enforceCommandClass(connected, commandClassStackKit); err != nil {
 		return nil, err

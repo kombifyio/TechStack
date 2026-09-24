@@ -65,6 +65,10 @@ type RuntimeTarget struct {
 	PrivateKey       string `json:"private_key,omitempty"`
 	ClientPrivateKey string `json:"client_private_key,omitempty"`
 	Password         string `json:"password,omitempty"`
+	// ProviderPrivateKey is the hosted provider-bundle rollout key. It is
+	// tried after the lease key so a stale lease credential cannot hide the
+	// key that was actually injected at provision. It is never serialized.
+	ProviderPrivateKey string `json:"-"`
 }
 type CheckStatus string
 type Check struct {

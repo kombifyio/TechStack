@@ -29,7 +29,13 @@ describe("homelab api", () => {
               created: "2026-07-29T12:00:00Z",
               updated: "2026-07-29T12:00:00Z",
             },
-            kit_deployments: [{ id: "stack-1", name: "basement" }],
+            kit_deployments: [
+              {
+                id: "stack-1",
+                kit_deployment_id: "stack-1",
+                name: "basement",
+              },
+            ],
           },
         }),
         { status: 200, headers: { "content-type": "application/json" } },
@@ -40,6 +46,7 @@ describe("homelab api", () => {
     expect(view?.homelab?.id).toBe("hl-1");
     expect(view?.kit_deployments).toHaveLength(1);
     expect(view?.kit_deployments[0]?.id).toBe("stack-1");
+    expect(view?.kit_deployments[0]?.kit_deployment_id).toBe("stack-1");
     const requestedUrl = String(fetchMock.mock.calls[0]?.[0]);
     expect(requestedUrl).toContain("/api/v1/homelab");
   });

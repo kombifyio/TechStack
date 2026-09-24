@@ -438,25 +438,6 @@ func TestGenerateCSRFToken(t *testing.T) {
 	}
 }
 
-func TestGetCSRFToken(t *testing.T) {
-	expectedToken := "testtoken123456789012345678901234567890123456789012345678901234"
-
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.AddCookie(&http.Cookie{Name: CSRFCookieName, Value: expectedToken})
-
-	token := GetCSRFToken(req)
-	if token != expectedToken {
-		t.Errorf("expected token %s, got %s", expectedToken, token)
-	}
-
-	// Test with no cookie
-	req2 := httptest.NewRequest(http.MethodGet, "/", nil)
-	token2 := GetCSRFToken(req2)
-	if token2 != "" {
-		t.Errorf("expected empty token, got %s", token2)
-	}
-}
-
 func TestCSRFTokenEndpoint(t *testing.T) {
 	handler := CSRFTokenEndpoint(false)
 

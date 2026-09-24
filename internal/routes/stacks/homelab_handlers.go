@@ -14,40 +14,37 @@ import (
 	"github.com/kombifyio/techstack/pkg/httpx"
 )
 
-// getHomelab resolves the caller's homelab umbrella (ADR-0036) together with
-// its kit deployments. On the control-plane lane the deployments list shares
-// ownedStackItems with GET /api/v1/stacks; on the PocketBase-only lane it
-// serves the same records through legacyOwnedStacks (unordered, unlimited)
-// rather than listStacks' filtered query. A missing homelab row with existing
-// deployments is legal (pre-backfill lanes, PocketBase-only self-host) and
-// yields homelab: null.
+// getHomelab resolves the caller's canonical Homelab umbrella (ADR-0036)
+// together with its StackKit deployments. A missing Homelab row with existing
+// deployments is legal during backfill and yields homelab: null.
 func (h crudRouteHandlers) getHomelab(e *httpx.Event) error {
 	ownerID, err := requireStackAuth(e)
 	if err != nil {
 		return err
 	}
-	tenantID := tenantIDFromRequest(e)
-
-	if h.stackStore == nil || tenantID == "" {
-		if guardErr := tenantguard.RequireTenant(tenantID, "techstack.homelab.get"); guardErr != nil {
-			return guardErr
-		}
+	tenantID, tenantErr := tenantguard.TenantScope(tenantIDFromRequest(e), ownerID, "techstack.homelab.read")
+	if tenantErr != nil {
+		return tenantErr
 	}
-
+	if h.stackStore == nil || h.homelabStore == nil {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+			"Homelab authority is temporarily unavailable", map[string]any{
+				detailsKeyReasonCode: "homelab_authority_unavailable",
+				detailsKeyRetryable:  true,
+			})
+	}
 	items, err := h.ownedStackItems(e.Request.Context(), ownerID, tenantID)
 	if err != nil {
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to resolve homelab", nil)
 	}
 
 	var homelabPayload map[string]any
-	if h.homelabStore != nil && tenantID != "" {
-		homelab, hlErr := h.homelabStore.GetHomelabByOwner(e.Request.Context(), tenantID, ownerID)
-		switch {
-		case hlErr == nil:
-			homelabPayload = homelabItem(homelab)
-		case !errors.Is(hlErr, controlplane.ErrNotFound):
-			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to resolve homelab", nil)
-		}
+	homelab, homelabErr := h.homelabStore.GetHomelabByOwner(e.Request.Context(), tenantID, ownerID)
+	switch {
+	case homelabErr == nil:
+		homelabPayload = homelabItem(homelab)
+	case !errors.Is(homelabErr, controlplane.ErrNotFound):
+		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to resolve homelab", nil)
 	}
 
 	if homelabPayload == nil && len(items) == 0 {
@@ -84,14 +81,14 @@ func (h crudRouteHandlers) renameHomelab(e *httpx.Event) error {
 	if authErr != nil {
 		return authErr
 	}
-	tenantID := tenantIDFromRequest(e)
+	tenantID, tenantErr := tenantguard.TenantScope(tenantIDFromRequest(e), ownerID, "techstack.homelab.rename")
 	// A missing tenant and a missing store are different denials: the first is
 	// an identity problem the caller can fix by re-authenticating with an
 	// organization scope, the second is a deployment shape they cannot. Route
 	// them separately so neither is reported as the other - getHomelab uses
 	// the same guard.
-	if guardErr := tenantguard.RequireTenant(tenantID, "techstack.homelab.rename"); guardErr != nil {
-		return guardErr
+	if tenantErr != nil {
+		return tenantErr
 	}
 	if h.homelabStore == nil || tenantID == "" {
 		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
@@ -146,33 +143,17 @@ func (h crudRouteHandlers) renameHomelab(e *httpx.Event) error {
 	return httpx.Success(e, http.StatusOK, map[string]any{"homelab": homelabItem(renamed)})
 }
 
-// ownedStackItems returns the caller's merged kit-deployment projection:
-// control-plane rows for (tenant, owner) plus any legacy PocketBase rows not
-// yet migrated, deduplicated by stack id.
+// ownedStackItems returns canonical control-plane deployments for one owner.
 func (h crudRouteHandlers) ownedStackItems(ctx context.Context, ownerID, tenantID string) ([]map[string]any, error) {
 	result := make([]map[string]any, 0)
-	seen := make(map[string]struct{})
-	if h.stackStore != nil && tenantID != "" {
-		stacks, err := h.stackStore.ListStacksByTenant(ctx, tenantID)
-		if err != nil {
-			return nil, err
-		}
-		for _, stack := range stacks {
-			if stack.OwnerSubjectID == ownerID {
-				seen[stack.ID] = struct{}{}
-				result = append(result, stackListItemFromStore(stack))
-			}
-		}
+	stacks, err := h.stackStore.ListStacksByTenant(ctx, tenantID)
+	if err != nil {
+		return nil, err
 	}
-	legacyStacks, legacyErr := h.legacyOwnedStacks(ownerID, tenantID)
-	if legacyErr != nil {
-		return nil, legacyErr
-	}
-	for _, stack := range legacyStacks {
-		if _, ok := seen[stack.Id]; ok {
-			continue
+	for _, stack := range stacks {
+		if stack.OwnerSubjectID == ownerID {
+			result = append(result, stackListItemFromStore(stack))
 		}
-		result = append(result, stackListItem(stack))
 	}
 	return result, nil
 }

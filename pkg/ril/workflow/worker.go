@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/kombifyio/techstack/pkg/logger"
@@ -56,13 +57,22 @@ func NewWorker(engine *Engine, cfg WorkerConfig) *Worker {
 	}
 }
 
-// Start launches the poll + sweep loops and returns immediately. Both stop when
-// ctx is cancelled.
-func (w *Worker) Start(ctx context.Context) {
-	go w.loop(ctx, w.cfg.PollInterval, w.PollRuns)
-	go w.loop(ctx, w.cfg.TimerInterval, w.SweepTimers)
+// Run drives both worker loops and returns only after both have observed
+// cancellation so runtime owners can join the worker before closing its store.
+func (w *Worker) Run(ctx context.Context) {
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		w.loop(ctx, w.cfg.PollInterval, w.PollRuns)
+	}()
+	go func() {
+		defer wg.Done()
+		w.loop(ctx, w.cfg.TimerInterval, w.SweepTimers)
+	}()
 	w.log.Info("ril_workflow_worker_started",
 		"poll", w.cfg.PollInterval.String(), "timer", w.cfg.TimerInterval.String())
+	wg.Wait()
 }
 
 func (w *Worker) loop(ctx context.Context, interval time.Duration, fn func(context.Context)) {
@@ -111,11 +121,19 @@ func (w *Worker) SweepTimers(ctx context.Context) {
 	}
 	for _, tm := range timers {
 		sig := Signal{Key: tm.SignalKey, TimedOut: true, DeliverAt: w.engine.now()}
+		outcome := TimerOutcomeDelivered
 		if derr := w.engine.Deliver(ctx, sig); derr != nil && !errors.Is(derr, ErrNotFound) {
 			w.log.Warn("ril_workflow_timer_deliver_failed", "run_id", tm.RunID, "signal", tm.SignalKey, "error", derr.Error())
+			w.engine.obs.ObserveTimer(tm.Kind, TimerOutcomeDeliveryFailed)
+			continue
+		} else if errors.Is(derr, ErrNotFound) {
+			outcome = TimerOutcomeAlreadyResolved
 		}
 		if merr := w.store.MarkTimerFired(tm.ID); merr != nil {
 			w.log.Warn("ril_workflow_timer_mark_failed", "timer_id", tm.ID, "error", merr.Error())
+			w.engine.obs.ObserveTimer(tm.Kind, TimerOutcomeMarkFailed)
+			continue
 		}
+		w.engine.obs.ObserveTimer(tm.Kind, outcome)
 	}
 }

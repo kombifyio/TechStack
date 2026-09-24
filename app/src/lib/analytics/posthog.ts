@@ -313,7 +313,12 @@ export function buildTechstackCreationEventProperties(
 }
 
 export function classifyRoute(pathname: string): string {
-  if (pathname === "/" || pathname.startsWith("/stacks")) return "stacks";
+  if (
+    pathname === "/" ||
+    pathname.startsWith("/dashboard") ||
+    pathname.startsWith("/stacks")
+  )
+    return "dashboard";
   if (pathname.startsWith("/monitoring")) return "monitoring";
   if (pathname.startsWith("/services")) return "services";
   if (pathname.startsWith("/wallet")) return "wallet";

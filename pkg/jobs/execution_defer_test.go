@@ -71,41 +71,34 @@ func TestExecutionDeferReportsOnlyAfterTheAlertThreshold(t *testing.T) {
 	}
 }
 
-// Winning the claim ends the streak, so the next block starts from the base
-// interval and cannot inherit a stale alert clock.
-func TestExecutionDeferStreakResetsWhenTheJobProceeds(t *testing.T) {
-	q := NewQueue(1, logger.New("error", ""))
-	start := time.Now().UTC()
-
-	for i := 0; i < 5; i++ {
-		q.noteExecutionDefer("job-1", WaitReasonStackExecution, start)
+// Winning the claim or entering a different wait reason starts a fresh block;
+// neither may inherit a stale backoff or alert clock.
+func TestExecutionDeferStreakRestartsAcrossBoundaries(t *testing.T) {
+	tests := []struct {
+		name          string
+		priorAttempts int
+		clear         bool
+		nextReason    string
+	}{
+		{name: "job proceeds", priorAttempts: 5, clear: true, nextReason: WaitReasonStackExecution},
+		{name: "wait reason changes", priorAttempts: 2, nextReason: WaitReasonExecutionClaim},
 	}
-	q.clearExecutionDefer("job-1")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := NewQueue(1, logger.New("error", ""))
+			start := time.Now().UTC()
+			for attempt := 0; attempt < tt.priorAttempts; attempt++ {
+				q.noteExecutionDefer("job-1", WaitReasonStackExecution, start.Add(time.Duration(attempt)*time.Second))
+			}
+			if tt.clear {
+				q.clearExecutionDefer("job-1")
+			}
 
-	backoff, report := q.noteExecutionDefer("job-1", WaitReasonStackExecution, start.Add(time.Hour))
-	if backoff != ExecutionDeferBaseInterval {
-		t.Fatalf("backoff after reset = %s, want %s", backoff, ExecutionDeferBaseInterval)
-	}
-	if report != nil {
-		t.Fatalf("a fresh streak reported an alert immediately: %#v", report)
-	}
-}
-
-// A different wait reason is a different block. Reporting a busy-stack wait as
-// claim-store unavailability would send an operator to the wrong system.
-func TestExecutionDeferStreakRestartsOnANewWaitReason(t *testing.T) {
-	q := NewQueue(1, logger.New("error", ""))
-	start := time.Now().UTC()
-
-	q.noteExecutionDefer("job-1", WaitReasonStackExecution, start)
-	q.noteExecutionDefer("job-1", WaitReasonStackExecution, start.Add(time.Second))
-
-	backoff, report := q.noteExecutionDefer("job-1", WaitReasonExecutionClaim, start.Add(2*time.Second))
-	if backoff != ExecutionDeferBaseInterval {
-		t.Fatalf("backoff for a new reason = %s, want %s", backoff, ExecutionDeferBaseInterval)
-	}
-	if report != nil {
-		t.Fatalf("a new reason inherited the old streak's alert: %#v", report)
+			backoff, report := q.noteExecutionDefer("job-1", tt.nextReason, start.Add(time.Hour))
+			if backoff != ExecutionDeferBaseInterval || report != nil {
+				t.Fatalf("fresh streak backoff=%s report=%#v", backoff, report)
+			}
+		})
 	}
 }
 

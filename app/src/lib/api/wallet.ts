@@ -1,6 +1,6 @@
 import { fetchApi, post } from "./client";
-import type { PBWalletItem } from "$lib/stores/wallet";
-export type { PBWalletItem } from "$lib/stores/wallet";
+import type { WalletItem } from "#lib/wallet/types.js";
+export type { WalletItem } from "#lib/wallet/types.js";
 
 export type SystemAccountRole = "superuser" | "admin" | "developer";
 
@@ -19,49 +19,71 @@ export type WalletReauthProof = {
   reauth_method_hint?: string;
 };
 
-export interface WalletListResponse {
-  items?: PBWalletItem[];
+interface WalletListResponse {
+  items?: WalletItem[];
 }
 
-export async function getWalletItems(): Promise<PBWalletItem[]> {
-  const res = await fetchApi<WalletListResponse | PBWalletItem[]>(
+type WalletItemWrite = Omit<Partial<WalletItem>, "kit_deployment_id"> & {
+  stack_id?: string;
+};
+
+function walletItemToWire(item: Partial<WalletItem>): WalletItemWrite {
+  const { kit_deployment_id, ...walletItem } = item;
+  return {
+    ...walletItem,
+    stack_id: kit_deployment_id,
+    source_type:
+      walletItem.source_type === "kit_deployment"
+        ? "stack"
+        : walletItem.source_type,
+  };
+}
+
+function walletItemsFromResponse(
+  response: WalletListResponse | WalletItem[],
+): WalletItem[] {
+  return Array.isArray(response) ? response : (response.items ?? []);
+}
+
+export async function getWalletItems(): Promise<WalletItem[]> {
+  const res = await fetchApi<WalletListResponse | WalletItem[]>(
     "/api/v1/wallet",
     { method: "GET", credentials: "include" },
   );
-  return Array.isArray(res.data) ? res.data : (res.data.items ?? []);
+  return walletItemsFromResponse(res.data);
 }
 
-export async function getWalletItemsByStack(
-  stackId: string,
-): Promise<PBWalletItem[]> {
-  const res = await fetchApi<WalletListResponse | PBWalletItem[]>(
-    `/api/v1/wallet?stack_id=${encodeURIComponent(stackId)}`,
+export async function getWalletItemsByKitDeployment(
+  kitDeploymentId: string,
+): Promise<WalletItem[]> {
+  const res = await fetchApi<WalletListResponse | WalletItem[]>(
+    `/api/v1/wallet?stack_id=${encodeURIComponent(kitDeploymentId)}`,
     { method: "GET", credentials: "include" },
   );
-  return Array.isArray(res.data) ? res.data : (res.data.items ?? []);
+  return walletItemsFromResponse(res.data);
 }
 
 export async function createWalletItem(
-  data: Partial<PBWalletItem>,
-): Promise<PBWalletItem> {
-  const res = await fetchApi<PBWalletItem>("/api/v1/wallet", {
+  data: Partial<WalletItem>,
+): Promise<WalletItem> {
+  const res = await fetchApi<WalletItem>("/api/v1/wallet", {
     method: "POST",
     credentials: "include",
-    body: JSON.stringify(data),
+    body: JSON.stringify(walletItemToWire(data)),
   });
   return res.data;
 }
 
 export async function updateWalletItem(
   id: string,
-  data: Partial<PBWalletItem>,
-): Promise<PBWalletItem> {
-  const res = await fetchApi<PBWalletItem>(
+  data: Partial<WalletItem>,
+): Promise<WalletItem> {
+  const res = await fetchApi<WalletItem>(
     `/api/v1/wallet/${encodeURIComponent(id)}`,
     {
       method: "PATCH",
       credentials: "include",
-      body: JSON.stringify(data),
+      body: JSON.stringify(walletItemToWire(data)),
     },
   );
   return res.data;
@@ -78,7 +100,7 @@ export async function deleteWalletItem(id: string): Promise<boolean> {
 export async function rotateWalletItem(
   id: string,
   newSecret: string,
-): Promise<PBWalletItem> {
+): Promise<WalletItem> {
   return updateWalletItem(id, {
     secret: newSecret,
     last_rotated: new Date().toISOString(),
@@ -106,8 +128,8 @@ export async function requestWalletRevealProof(
 export async function revealWalletItem(
   id: string,
   options: WalletRevealOptions = {},
-): Promise<Pick<PBWalletItem, "id" | "secret" | "totp">> {
-  const res = await fetchApi<Pick<PBWalletItem, "id" | "secret" | "totp">>(
+): Promise<Pick<WalletItem, "id" | "secret" | "totp">> {
+  const res = await fetchApi<Pick<WalletItem, "id" | "secret" | "totp">>(
     `/api/v1/wallet/${encodeURIComponent(id)}/reveal`,
     {
       method: "POST",

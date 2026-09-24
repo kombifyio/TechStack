@@ -100,6 +100,19 @@ func Redact(s string) string {
 	return defaultRedactor.Redact(s)
 }
 
+// SensitiveKey reports whether a structured field name denotes reusable
+// credential material. Callers should omit matching fields rather than trying
+// to transform values whose format may be unknown or encrypted.
+func SensitiveKey(key string) bool {
+	key = strings.ToLower(strings.TrimSpace(key))
+	for _, marker := range []string{"token", "secret", "password", "credential", "authorization", "api_key", "private_key"} {
+		if strings.Contains(key, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 var (
 	defaultRedactor *Redactor
 	defaultOnce     sync.Once
@@ -151,6 +164,21 @@ func defaultPatterns() []Pattern {
 			Name:        "slack-token",
 			Regex:       regexp.MustCompile(`\bxox[abprs]-[A-Za-z0-9-]{10,}\b`),
 			Replacement: `xox-[REDACTED]`,
+		},
+		{
+			Name:        "kombify-pairing-token",
+			Regex:       regexp.MustCompile(`\bkpt1\.[A-Za-z0-9_-]{1,340}\.[A-Za-z0-9_-]{43}\b`),
+			Replacement: `kpt1.[REDACTED]`,
+		},
+		{
+			Name:        "kombify-runtime-agent-token",
+			Regex:       regexp.MustCompile(`\btsra\.(?:opaque|[A-Za-z0-9_-]{8,})\.[A-Za-z0-9_-]{43}\b`),
+			Replacement: `tsra.[REDACTED]`,
+		},
+		{
+			Name:        "kombify-legacy-pairing-token",
+			Regex:       regexp.MustCompile(`\bks_[a-fA-F0-9]{64}\b`),
+			Replacement: `ks_[REDACTED]`,
 		},
 		{
 			Name:        "bearer-token",

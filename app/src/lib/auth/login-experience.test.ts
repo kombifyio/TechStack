@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   buildCloudAuthRedirectURL,
+  buildSsoContinuationPath,
   buildV2ProviderLogoutPath,
   formatLoginError,
   getPostLogoutRedirectPath,
   resolveLoginExperience,
   sanitizeAuthReturnTo,
   shouldAutoStartCloudLogin,
+  unauthenticatedEntryPath,
 } from "./login-experience";
 
 describe("resolveLoginExperience", () => {
@@ -94,7 +96,7 @@ describe("resolveLoginExperience", () => {
     ).toBe("/login?manual=1&logged_out=1");
   });
 
-  it("chains SaaS V2 logout through the upstream cloud logout", () => {
+  it("chains SaaS V2 logout through the Auth0 Universal Login logout handoff", () => {
     expect(
       buildV2ProviderLogoutPath({
         deploymentMode: "saas",
@@ -103,7 +105,43 @@ describe("resolveLoginExperience", () => {
     ).toBe("/api/v2/auth/logout?next=%2Fauth%2Fcloud-logout");
   });
 
-  it("keeps self-hosted logout flows on the normal login screen", () => {
+  it("keeps the Windows client on its own entry and the webapp on /login", () => {
+    expect(
+      unauthenticatedEntryPath({
+        deploymentMode: "self-hosted",
+        embedded: false,
+      }),
+    ).toBe("/login");
+    expect(
+      unauthenticatedEntryPath({
+        deploymentMode: "self-hosted",
+        embedded: false,
+        windowsClient: true,
+      }),
+    ).toBe("/client/onboarding?client=windows");
+    expect(
+      unauthenticatedEntryPath({
+        deploymentMode: "self-hosted",
+        embedded: false,
+        windowsLocal: true,
+      }),
+    ).toBe("/client/local?client=windows");
+    expect(
+      unauthenticatedEntryPath({
+        deploymentMode: "saas",
+        embedded: false,
+      }),
+    ).toBe("/login");
+    expect(
+      unauthenticatedEntryPath({
+        deploymentMode: "self-hosted",
+        embedded: true,
+        hostNavigation: true,
+      }),
+    ).toBe("/login?embedded=true&host_navigation=true");
+  });
+
+  it("keeps self-hosted web logout on /login, not the Windows chooser", () => {
     expect(
       getPostLogoutRedirectPath({
         deploymentMode: "self-hosted",
@@ -134,18 +172,56 @@ describe("resolveLoginExperience", () => {
     );
   });
 
+  it("forces Universal Login when the operator asks to sign in again", () => {
+    expect(
+      buildCloudAuthRedirectURL("/api/v2/auth/login", {
+        origin: "https://techstack.kombify.io",
+        returnTo: "/dashboard",
+        interactive: true,
+      }),
+    ).toBe(
+      "https://techstack.kombify.io/api/v2/auth/login?return_to=%2Fdashboard&prompt=login",
+    );
+  });
+
+  it("keeps a same-origin login path when no public origin is available", () => {
+    const redirect = buildCloudAuthRedirectURL("/api/v2/auth/login", {
+      returnTo: "/dashboard",
+    });
+    expect(redirect.startsWith("/api/v2/auth/login")).toBe(true);
+    expect(redirect.includes("localhost")).toBe(false);
+  });
+
   it("rejects unsafe re-auth return targets", () => {
-    expect(sanitizeAuthReturnTo("https://evil.example/path")).toBe("/stacks");
-    expect(sanitizeAuthReturnTo("//evil.example/path")).toBe("/stacks");
-    expect(sanitizeAuthReturnTo("/login?manual=1")).toBe("/stacks");
+    expect(sanitizeAuthReturnTo("https://evil.example/path")).toBe(
+      "/dashboard",
+    );
+    expect(sanitizeAuthReturnTo("//evil.example/path")).toBe("/dashboard");
+    expect(sanitizeAuthReturnTo("/login?manual=1")).toBe("/dashboard");
+  });
+
+  it("preserves an embedded SSO continuation through auth-page cleanup", () => {
+    const continuation = new URL(
+      buildSsoContinuationPath({
+        returnTo: "/services",
+        embedded: true,
+        hostNavigation: true,
+      }),
+      "https://techstack.local",
+    );
+
+    expect(continuation.pathname).toBe("/auth/sso");
+    expect(continuation.searchParams.get("embedded")).toBe("true");
+    expect(continuation.searchParams.get("host_navigation")).toBe("true");
+    expect(continuation.searchParams.get("return_url")).toBe("/services");
   });
 
   it("explains Auth0 callback session minting failures without leaking internals", () => {
     expect(formatLoginError("callback_session_failed")).toBe(
-      "kombify Cloud sign-in completed, but TechStack could not create a browser session. Try again or contact support.",
+      "kombify Cloud sign-in completed, but Techstack could not create a browser session. Try again or contact support.",
     );
     expect(formatLoginError("session_mint_failed")).toBe(
-      "kombify Cloud sign-in completed, but TechStack could not create a browser session. Try again or contact support.",
+      "kombify Cloud sign-in completed, but Techstack could not create a browser session. Try again or contact support.",
     );
   });
 

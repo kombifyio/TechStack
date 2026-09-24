@@ -5,31 +5,24 @@ param(
     [string]$Runtime = "win-x64",
     [string]$Version = "",
     [string]$RuntimeExe = "",
+    [string]$LinuxRuntimeExe = "",
     [string]$OutputDir = "dist\windows-client",
-    [string]$UpdateManifestPrivateKeyPath = "",
-    [string]$UpdateManifestPublicKeyPath = "",
-    [string]$UpdateManifestKeyId = "",
-    [string]$UpdateDownloadUrl = "",
-    [switch]$RequireSignedUpdateManifest,
     [switch]$RequireAuthenticode,
-    [string]$ExpectedAuthenticodeSubjectPattern = ""
+    [string]$ExpectedAuthenticodeSubjectPattern = "",
+    # Spec templates produced by the same pinned StackKits release on Linux.
+    # Passed through to the bundle builder so the Windows CLI never has to
+    # generate them here; see kombify-Techstack-uxss.
+    [string]$SpecTemplatesPath = ""
 )
 
 $ErrorActionPreference = "Stop"
 if ($PSVersionTable.PSVersion.Major -ge 7) {
     $PSNativeCommandUseErrorActionPreference = $true
 }
-$hasManifestInputs = @(
-    $UpdateManifestPrivateKeyPath,
-    $UpdateManifestPublicKeyPath,
-    $UpdateManifestKeyId,
-    $UpdateDownloadUrl
-) | Where-Object { ![string]::IsNullOrWhiteSpace($_) }
-if ($hasManifestInputs.Count -gt 0 -and $hasManifestInputs.Count -ne 4) {
-    throw "Signed update manifest requires private/public key paths, key id, and download URL together."
-}
-if ($RequireSignedUpdateManifest -and $hasManifestInputs.Count -ne 4) {
-    throw "Release packaging requires a signed update manifest, but signing inputs are incomplete."
+$hasRuntimeInputs = @($RuntimeExe, $LinuxRuntimeExe) |
+    Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+if ($hasRuntimeInputs.Count -ne 0 -and $hasRuntimeInputs.Count -ne 2) {
+    throw "Prebuilt Windows and Linux runtimes must be supplied together."
 }
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $sourceRevision = (& git -C $root rev-parse HEAD).Trim()
@@ -42,8 +35,6 @@ $project = Join-Path $root "clients\windows\Kombify.TechStack.Client\Kombify.Tec
 $publishDir = Join-Path $root "dist\windows-client\native"
 $stageDir = Join-Path $root "dist\windows-client\stage"
 $zipDir = Join-Path $root $OutputDir
-$frontendBuildDir = Join-Path $root "app\build-static"
-$frontendEmbedDir = Join-Path $root "internal\frontend\dist"
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
     $versionFile = Join-Path $root "VERSION"
@@ -63,61 +54,35 @@ if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit code $LASTEXIT
 Copy-Item -Recurse -Force -Path (Join-Path $publishDir "*") -Destination $stageDir
 
 $runtimeDestination = Join-Path $stageDir "techstack.exe"
-if (-not [string]::IsNullOrWhiteSpace($RuntimeExe)) {
+$linuxRuntimeDestination = Join-Path $stageDir "techstack-linux-amd64"
+if ($hasRuntimeInputs.Count -eq 2) {
     $runtimeExePath = Resolve-Path $RuntimeExe
+    $linuxRuntimeExePath = Resolve-Path $LinuxRuntimeExe
     Copy-Item -Force -Path $runtimeExePath -Destination $runtimeDestination
+    Copy-Item -Force -Path $linuxRuntimeExePath -Destination $linuxRuntimeDestination
 } else {
-    $env:CGO_ENABLED = "0"
-    $env:GOWORK = "off"
-    if (Test-Path $frontendBuildDir) { Remove-Item -Recurse -Force $frontendBuildDir }
-    if (Test-Path $frontendEmbedDir) { Remove-Item -Recurse -Force $frontendEmbedDir }
-    Push-Location (Join-Path $root "app")
-    try {
-        $env:TECHSTACK_DESKTOP_STATIC = "1"
-        $env:VITE_TECHSTACK_DESKTOP_STATIC = "1"
-        pnpm run build
-        if ($LASTEXITCODE -ne 0) { throw "frontend desktop static build failed with exit code $LASTEXITCODE" }
-    } finally {
-        Pop-Location
-        Remove-Item Env:\TECHSTACK_DESKTOP_STATIC -ErrorAction SilentlyContinue
-        Remove-Item Env:\VITE_TECHSTACK_DESKTOP_STATIC -ErrorAction SilentlyContinue
-    }
-    New-Item -ItemType Directory -Force -Path $frontendEmbedDir | Out-Null
-    Copy-Item -Recurse -Force -Path (Join-Path $frontendBuildDir "*") -Destination $frontendEmbedDir
-    try {
-        go build -buildvcs=false -tags techstack_static_ui -trimpath `
-            -ldflags "-s -w -X main.version=$Version -X main.buildRevision=$sourceRevision" `
-            -o $runtimeDestination ./cmd/techstack
-        if ($LASTEXITCODE -ne 0) { throw "go build failed with exit code $LASTEXITCODE" }
-        $previousGOOS = $env:GOOS
-        $previousGOARCH = $env:GOARCH
-        try {
-            $env:GOOS = "linux"
-            $env:GOARCH = "amd64"
-            go build -buildvcs=false -tags techstack_static_ui -trimpath `
-                -ldflags "-s -w -X main.version=$Version -X main.buildRevision=$sourceRevision" `
-                -o (Join-Path $stageDir "techstack-linux-amd64") ./cmd/techstack
-            if ($LASTEXITCODE -ne 0) { throw "Linux Agent cross-build failed with exit code $LASTEXITCODE" }
-        } finally {
-            $env:GOOS = $previousGOOS
-            $env:GOARCH = $previousGOARCH
-        }
-    } finally {
-        if (Test-Path $frontendEmbedDir) { Remove-Item -Recurse -Force $frontendEmbedDir }
-        if (Test-Path $frontendBuildDir) { Remove-Item -Recurse -Force $frontendBuildDir }
-    }
+    & (Join-Path $PSScriptRoot "build-windows-runtime-pair.ps1") `
+        -Version $Version `
+        -SourceRevision $sourceRevision `
+        -WindowsOutputPath $runtimeDestination `
+        -LinuxOutputPath $linuxRuntimeDestination
 }
 
 Copy-Item -Force -Path (Join-Path $root "scripts\install-windows-client.ps1") -Destination $stageDir
+& (Join-Path $PSScriptRoot "new-windows-postgres-bundle.ps1") -OutputDirectory (Join-Path $stageDir "postgres")
 Copy-Item -Force -Path (Join-Path $root "install.sh") -Destination (Join-Path $stageDir "install.sh")
 Copy-Item -Force -Path (Join-Path $root "install.ps1") -Destination (Join-Path $stageDir "install.ps1")
-& (Join-Path $PSScriptRoot "new-windows-stackkit-bundle.ps1") `
-    -OutputPath (Join-Path $stageDir "stackkit-release-linux-amd64.tar.gz") `
-    -ControllerCatalogOutputPath (Join-Path $stageDir "stackkits")
+$bundleArgs = @{
+    OutputPath                  = (Join-Path $stageDir "stackkit-release-linux-amd64.tar.gz")
+    ControllerCatalogOutputPath = (Join-Path $stageDir "stackkits")
+}
+if (-not [string]::IsNullOrWhiteSpace($SpecTemplatesPath)) {
+    $bundleArgs.SpecTemplatesPath = $SpecTemplatesPath
+}
+& (Join-Path $PSScriptRoot "new-windows-stackkit-bundle.ps1") @bundleArgs
 if ($LASTEXITCODE -ne 0) { throw "StackKits Linux bundle build failed with exit code $LASTEXITCODE" }
 Copy-Item -Force -Path (Join-Path $root "scripts\uninstall-windows-client.ps1") -Destination $stageDir
 Copy-Item -Force -Path (Join-Path $root "scripts\reset-windows-client-state.ps1") -Destination $stageDir
-Copy-Item -Force -Path (Join-Path $root "scripts\test-windows-client-update-manifest.ps1") -Destination $stageDir
 Copy-Item -Force -Path (Join-Path $root "scripts\test-windows-client-authenticode.ps1") -Destination $stageDir
 Copy-Item -Force -Path (Join-Path $root "clients\windows\README.md") -Destination (Join-Path $stageDir "README.md")
 $stageAssetsDir = Join-Path $stageDir "Assets"
@@ -176,19 +141,4 @@ Assets:
 - $(Split-Path -Leaf $zipPath) (portable ZIP)
 "@ | Set-Content -Encoding UTF8 -Path $unsignedMarker
 
-if ($hasManifestInputs.Count -eq 4) {
-    $updateManifestPath = "$zipPath.update.json"
-    & (Join-Path $PSScriptRoot "new-windows-client-update-manifest.ps1") `
-        -PackagePath $zipPath `
-        -Version $Version `
-        -DownloadUrl $UpdateDownloadUrl `
-        -PrivateKeyPath $UpdateManifestPrivateKeyPath `
-        -KeyId $UpdateManifestKeyId `
-        -OutputPath $updateManifestPath
-    & (Join-Path $PSScriptRoot "test-windows-client-update-manifest.ps1") `
-        -ManifestPath $updateManifestPath `
-        -PublicKeyPath $UpdateManifestPublicKeyPath `
-        -PackagePath $zipPath `
-        -ExpectedKeyId $UpdateManifestKeyId
-}
 Write-Host "Windows client package: $zipPath"

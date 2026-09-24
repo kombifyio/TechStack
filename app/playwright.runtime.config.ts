@@ -14,11 +14,6 @@ const baseURL = requireLiveProductURL(
 const outputDir =
   process.env.RUNTIME_E2E_ARTIFACTS_DIR ?? "../artifacts/runtime-e2e";
 const browserChannel = process.env.PLAYWRIGHT_BROWSER_CHANNEL?.trim();
-const skipBundledBrowserInstall = isTruthyEnv(
-  process.env.TECHSTACK_RUNTIME_E2E_SKIP_BROWSER_INSTALL,
-);
-const recordVideo =
-  browserChannel || skipBundledBrowserInstall ? "off" : "retain-on-failure";
 
 function isLoopbackURL(value: string): boolean {
   try {
@@ -41,12 +36,6 @@ function requireLiveProductURL(value: string): string {
   return parsed.toString().replace(/\/+$/g, "");
 }
 
-function isTruthyEnv(value: string | undefined): boolean {
-  return ["1", "true", "yes", "on"].includes(
-    (value ?? "").trim().toLowerCase(),
-  );
-}
-
 export default defineConfig({
   testDir: "./tests/e2e",
   testMatch: "runtime-scenarios.spec.ts",
@@ -64,9 +53,11 @@ export default defineConfig({
   outputDir: `${outputDir}/test-results`,
   use: {
     baseURL,
-    trace: "retain-on-failure",
-    video: recordVideo,
-    screenshot: "only-on-failure",
+    // Managed runtime flows carry short-lived auth and provider responses.
+    // Persist only the scenario's explicitly redacted evidence artifacts.
+    trace: "off",
+    video: "off",
+    screenshot: "off",
     headless: true,
     viewport: { width: 1280, height: 720 },
     deviceScaleFactor: 1,

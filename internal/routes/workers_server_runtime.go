@@ -3,21 +3,27 @@ package routes
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/kombifyio/techstack/internal/substrate"
 	"strings"
 	"time"
 
 	"github.com/kombifyio/techstack/internal/runtimeproduct/vmlease"
 	"github.com/kombifyio/techstack/pkg/controlplane"
+	"github.com/kombifyio/techstack/pkg/nodehandoff"
+	"github.com/kombifyio/techstack/pkg/outcome"
 	"github.com/kombifyio/techstack/pkg/runtimeidentity"
 	"github.com/kombifyio/techstack/pkg/serverregistry"
 	"github.com/kombifyio/techstack/pkg/vmleases"
 )
 
-func (h workerRouteHandlers) projectServerEnrollment(ctx context.Context, worker controlplane.Worker, serverID, leaseID string, now time.Time, source string) error {
-	return h.projectServerEnrollmentWithMetadata(ctx, worker, serverID, leaseID, now, source, nil)
-}
+// guardObservationSkewWindow is the maximum clock skew admitted on a Guard
+// observed_at relative to receipt time. Future skew beyond this is a forged
+// or misconfigured clock; past skew beyond this would otherwise persist as a
+// heartbeat that the registry sweeper immediately treats as stale.
+const guardObservationSkewWindow = 5 * time.Minute
 
 // projectServerEnrollmentWithMetadata is the control-plane half of the
 // application-level Connect flow. Metadata here is declared target context
@@ -35,37 +41,95 @@ func (h workerRouteHandlers) projectServerEnrollmentWithMetadata(
 	if h.serverStore == nil {
 		return nil
 	}
-	runtimeMetadata := mergeAnyMaps(map[string]any{
+	_, err := h.applyServerEnrollment(ctx, serverEnrollmentCommand(worker, serverID, leaseID, now, source, metadata))
+	return err
+}
+
+func (h workerRouteHandlers) enrollRegisteringWorker(
+	ctx context.Context,
+	worker controlplane.Worker,
+	serverID, leaseID string,
+	now time.Time,
+) (*controlplane.Worker, error) {
+	command := serverEnrollmentCommand(worker, serverID, leaseID, now, "pairing-redemption", nil)
+	command.Worker = &worker
+	result, err := h.applyServerEnrollment(ctx, command)
+	if err != nil {
+		return nil, err
+	}
+	if result == nil || result.Worker == nil {
+		return nil, fmt.Errorf("atomic worker enrollment returned no worker")
+	}
+	return result.Worker, nil
+}
+
+func serverEnrollmentCommand(
+	worker controlplane.Worker,
+	serverID, leaseID string,
+	now time.Time,
+	source string,
+	metadata map[string]any,
+) controlplane.ServerEnrollment {
+	runtimeMetadata := mergeAnyMaps(mergeAnyMaps(map[string]any{
 		"runtime_agent_id": worker.ID,
 		"authority":        "guard",
-	}, metadata)
-	_, err := h.applyServerEnrollment(ctx, controlplane.ServerEnrollment{
+	}, managedBootstrapBinding(worker.Capabilities)), metadata)
+	role := workerRuntimeRole(worker)
+	runtimeMetadata[nodehandoff.KeyServerNodeRole] = role
+	return controlplane.ServerEnrollment{
 		Node: controlplane.Node{
 			ID: serverID, TenantID: worker.TenantID, InstanceID: worker.InstanceID, StackID: worker.StackID,
-			WorkerID: worker.ID, Name: firstNonEmpty(worker.Hostname, serverID), Role: "foundation", Status: "pending",
+			WorkerID: worker.ID, Name: firstNonEmpty(worker.Hostname, serverID), Role: role, Status: "pending",
 			Metadata: map[string]any{"authority": "control-plane", "runtime_agent_id": worker.ID},
 		},
 		Event: controlplane.ServerEvent{
 			TenantID: worker.TenantID, ServerID: serverID,
 			Authority: controlplane.ServerEventAuthorityControlPlane,
 			Source:    source, SourceID: "worker-enrollment", ObservedAt: now,
-			Evidence: map[string]any{"runtime_agent_id": worker.ID},
+			Outcome:  awaitingGuardOutcome(worker.Provider),
+			Evidence: mergeAnyMaps(map[string]any{"runtime_agent_id": worker.ID}, managedBootstrapBinding(worker.Capabilities)),
 			Runtime: controlplane.ServerRuntime{
 				ID: serverID, TenantID: worker.TenantID, InstanceID: worker.InstanceID,
 				StackID: worker.StackID, OwnerSubjectID: worker.OwnerSubjectID,
 				WorkerID: worker.ID, NodeID: serverID, LeaseID: leaseID,
 				ProviderRef: worker.Provider, Name: firstNonEmpty(worker.Hostname, serverID),
+				RuntimeTarget:       pairingRuntimeTarget(worker, leaseID, now, source),
 				LifecycleState:      string(serverregistry.LifecycleEnrolling),
 				DesiredState:        string(serverregistry.DesiredRunning),
 				ConnectionState:     string(serverregistry.ConnectionPending),
 				HealthState:         string(serverregistry.HealthUnknown),
 				LifecycleReasonCode: "awaiting_guard_heartbeat",
 				Metadata:            runtimeMetadata,
-			}}})
-	return err
+			}}}
 }
 
-func (h workerRouteHandlers) applyServerEnrollment(ctx context.Context, command controlplane.ServerEnrollment) (*controlplane.ServerEventResult, error) {
+func workerRuntimeRole(worker controlplane.Worker) string {
+	if worker.Type == "substrate" {
+		return "substrate"
+	}
+	if role := nodehandoff.StringFromMap(worker.Capabilities, nodehandoff.KeyServerNodeRole); role != "" {
+		return nodehandoff.NormalizeNodeRole(role)
+	}
+	return "foundation"
+}
+
+func pairingRuntimeTarget(worker controlplane.Worker, leaseID string, observedAt time.Time, source string) serverregistry.RuntimeTarget {
+	if strings.TrimSpace(source) != "pairing-redemption" || strings.TrimSpace(leaseID) != "" ||
+		strings.ToLower(nodehandoff.StringFromMap(worker.Capabilities, nodehandoff.KeyRuntimeEnvironmentClass)) != string(serverregistry.EnvironmentLocal) {
+		return serverregistry.RuntimeTarget{}
+	}
+	observedAt = observedAt.UTC()
+	return serverregistry.RuntimeTarget{
+		EnvironmentClass:  serverregistry.EnvironmentLocal,
+		Offering:          serverregistry.OfferingSelfOwnedDevice,
+		AvailabilityOwner: serverregistry.AvailabilityCustomer,
+		OperationsOwner:   serverregistry.OperationsCustomer,
+		EvidenceRef:       "owner-pairing:" + worker.ID,
+		ObservedAt:        &observedAt,
+	}
+}
+
+func (h workerRouteHandlers) applyServerEnrollment(ctx context.Context, command controlplane.ServerEnrollment) (*controlplane.ServerEnrollmentResult, error) {
 	store, ok := h.serverStore.(controlplane.ServerEnrollmentStore)
 	if !ok {
 		return nil, fmt.Errorf("canonical server store does not support atomic control-plane enrollment")
@@ -127,7 +191,8 @@ func (h workerRouteHandlers) projectServerHeartbeat(ctx context.Context, worker 
 		Source:    source, SourceID: worker.ID, SourceEpoch: position.Epoch,
 		SourceSequence: position.Sequence, ObservedAt: position.ObservedAt,
 		ClearConnectionReason: true, ClearHealthReason: true,
-		Evidence: map[string]any{"runtime_agent_id": worker.ID},
+		ClearOutcome: true, OutcomeResetReason: "guard_heartbeat_accepted",
+		Evidence: mergeAnyMaps(map[string]any{"runtime_agent_id": worker.ID}, managedBootstrapBinding(worker.Capabilities)),
 		Runtime: controlplane.ServerRuntime{
 			ID: serverID, TenantID: worker.TenantID, InstanceID: worker.InstanceID,
 			StackID: worker.StackID, OwnerSubjectID: worker.OwnerSubjectID,
@@ -162,7 +227,7 @@ func (h workerRouteHandlers) projectServerInventory(ctx context.Context, worker 
 	}
 	observedHostState := ""
 	for _, service := range req.Services {
-		if inventoryServiceHealthState(service, "healthy") == "unhealthy" {
+		if inventoryServiceHealthState(service, "healthy") == "unhealthy" && inventoryServiceDegradesHost(service) {
 			observedHostState = runtimeHealthDegraded
 			break
 		}
@@ -174,10 +239,13 @@ func (h workerRouteHandlers) projectServerInventory(ctx context.Context, worker 
 		return nil, positionErr
 	}
 	observedAt := position.ObservedAt
-	// The persisted projection is a pure function of the signed observation.
-	// Read models derive wall-clock staleness from LastHeartbeatAt separately;
-	// receipt-time-dependent state here would make an exact replay diverge.
-	connection, health := serverregistry.DeriveObservedState(observedAt, &observedAt, observedHostState)
+	// Inventory payload, metadata inventory_observed_at, and the event's
+	// ObservedAt stay on the Guard clock so a replay of the same signed
+	// observation is identical. LastHeartbeatAt is the control-plane receipt
+	// time: the sweeper compares that against the server clock, and treating
+	// a lagged Guard clock as the heartbeat makes a live inventory look stale.
+	receiptAt := now.UTC()
+	connection, health := serverregistry.DeriveObservedState(receiptAt, &receiptAt, observedHostState)
 	node, services := buildInventoryRegistryProjection(worker, serverID, req, 0, observedAt)
 	runtimeMetadata := map[string]any{
 		"runtime_agent_id":            worker.ID,
@@ -192,6 +260,20 @@ func (h workerRouteHandlers) projectServerInventory(ctx context.Context, worker 
 		"host":                        inventoryHostMap(req.Host),
 		"endpoints":                   inventoryEndpoints(req.Endpoints),
 	}
+	if worker.Type == "substrate" && len(req.Substrate) > 0 && len(req.Substrate) <= 262144 {
+		var observed substrate.GuardObservation
+		if json.Unmarshal(req.Substrate, &observed) == nil && observed.Validate() == nil {
+			for i := range observed.Inventory.Guests {
+				observed.Inventory.Guests[i].Config = nil
+			}
+			images := map[string]substrate.Image{}
+			for _, profile := range substrate.Profiles() {
+				images[profile.ID] = observed.Images[profile.ID]
+			}
+			observed.Images = images
+			runtimeMetadata["substrate_inventory"] = observed
+		}
+	}
 	if convergence := runtimeConvergenceMetadata(worker); convergence != nil {
 		runtimeMetadata["runtime_convergence"] = convergence
 	}
@@ -205,17 +287,21 @@ func (h workerRouteHandlers) projectServerInventory(ctx context.Context, worker 
 	if convergence := runtimeConvergenceMetadata(worker); convergence != nil {
 		inventoryPayload["runtime_convergence"] = convergence
 	}
+	eventOutcome, clearOutcome, resetReason := inventoryServerOutcome(health, worker.Provider)
 	result, err := h.applyGuardInventoryProjection(ctx, controlplane.GuardInventoryProjection{
-		ServiceSource:    stackKitsInventorySource,
-		ManifestObserved: req.ManifestObserved,
-		Node:             node,
-		Services:         services,
+		ServiceSource:          stackKitsInventorySource,
+		ManifestObserved:       req.ManifestObserved,
+		DiscoveryObserved:      req.DiscoveryObserved,
+		DiscoveredServiceCount: req.DiscoveredServiceCount,
+		Node:                   node,
+		Services:               services,
 		Event: controlplane.ServerEvent{
 			TenantID: worker.TenantID, ServerID: serverID,
 			Authority: controlplane.ServerEventAuthorityGuard,
 			Source:    "guard-inventory", SourceID: worker.ID, SourceEpoch: position.Epoch,
 			SourceSequence: position.Sequence, ObservedAt: observedAt,
 			ClearConnectionReason: true, ClearHealthReason: true,
+			Outcome: eventOutcome, ClearOutcome: clearOutcome, OutcomeResetReason: resetReason,
 			Evidence: map[string]any{"runtime_agent_id": worker.ID},
 			Runtime: controlplane.ServerRuntime{
 				ID: serverID, TenantID: worker.TenantID, InstanceID: worker.InstanceID,
@@ -223,7 +309,7 @@ func (h workerRouteHandlers) projectServerInventory(ctx context.Context, worker 
 				WorkerID: worker.ID, NodeID: serverID, LeaseID: leaseID,
 				ProviderRef: worker.Provider, Name: firstNonEmpty(req.Hostname, worker.Hostname, serverID),
 				ConnectionState: string(connection), HealthState: string(health),
-				LastHeartbeatAt: &observedAt,
+				LastHeartbeatAt: &receiptAt,
 				Channels:        canonicalInventoryChannels(req.Channels, observedAt),
 				Metadata:        mergeAnyMaps(runtimeMetadata, inventoryDeploymentMetadata(req)),
 			},
@@ -242,6 +328,37 @@ func (h workerRouteHandlers) projectServerInventory(ctx context.Context, worker 
 		}
 	}
 	return result, nil
+}
+
+func awaitingGuardOutcome(providerID string) *outcome.Decision {
+	return &outcome.Decision{
+		Status: outcome.StatusPending, ReasonCode: "awaiting_guard_heartbeat",
+		Capability: "techstack.server.connect", ProviderID: strings.TrimSpace(providerID), Retryable: false,
+		UserGuidance: &outcome.Guidance{
+			Title: "Server connection is being verified",
+			Body:  "The server is registered. Techstack is waiting for its authenticated Guard heartbeat.",
+			NextSteps: []outcome.Step{{
+				ID: "keep-server-online", Label: "Keep the server online; this view updates automatically", Kind: "note",
+			}},
+		},
+	}
+}
+
+func inventoryServerOutcome(health serverregistry.HealthState, providerID string) (*outcome.Decision, bool, string) {
+	if health != serverregistry.HealthDegraded {
+		return nil, true, "guard_inventory_healthy"
+	}
+	return &outcome.Decision{
+		Status: outcome.StatusDegraded, ReasonCode: "worker_reported_degraded",
+		Capability: "techstack.server.health", ProviderID: strings.TrimSpace(providerID), Retryable: false,
+		UserGuidance: &outcome.Guidance{
+			Title: "The server is connected, but a service needs attention",
+			Body:  "Guard reported a host-critical service as unhealthy. The last verified inventory remains available for diagnosis.",
+			NextSteps: []outcome.Step{{
+				ID: "inspect-services", Label: "Inspect the unhealthy service and its recent logs", Kind: "handoff",
+			}},
+		},
+	}, false, ""
 }
 
 func (h workerRouteHandlers) applyGuardInventoryProjection(ctx context.Context, projection controlplane.GuardInventoryProjection) (*controlplane.GuardInventoryProjectionResult, error) {
@@ -394,17 +511,23 @@ func (h workerRouteHandlers) promoteObservedEnrollment(ctx context.Context, obse
 	// projection so a legacy projection failure cannot hold a native server in
 	// enrolling after its Guard is already connected and healthy.
 	if serverregistry.LifecycleState(server.LifecycleState) != serverregistry.LifecycleActive {
+		enrollmentEvidence := map[string]any{
+			"guard_server_revision": server.Revision,
+			"guard_source_epoch":    server.SourceEpoch,
+			"guard_source_sequence": server.SourceSequence,
+			"runtime_agent_id":      server.WorkerID,
+		}
+		if server.LastHeartbeatAt != nil && !server.LastHeartbeatAt.IsZero() {
+			enrollmentEvidence["first_heartbeat_at"] = server.LastHeartbeatAt.UTC().Format(time.RFC3339Nano)
+		}
+		enrollmentEvidence = mergeAnyMaps(enrollmentEvidence, managedBootstrapBinding(server.Metadata))
 		if _, err := h.applyServerEvent(ctx, controlplane.ServerEvent{
 			TenantID: server.TenantID, ServerID: server.ID,
 			Authority: controlplane.ServerEventAuthorityControlPlane,
 			Source:    "enrollment-controller", SourceID: "enrollment-controller", ObservedAt: now,
 			ClearLifecycleReason: true,
-			Evidence: map[string]any{
-				"guard_server_revision": server.Revision,
-				"guard_source_epoch":    server.SourceEpoch,
-				"guard_source_sequence": server.SourceSequence,
-			},
-			Runtime: controlplane.ServerRuntime{LifecycleState: string(serverregistry.LifecycleActive)},
+			Evidence:             enrollmentEvidence,
+			Runtime:              controlplane.ServerRuntime{LifecycleState: string(serverregistry.LifecycleActive)},
 		}); err != nil {
 			return err
 		}
@@ -461,8 +584,12 @@ func validateGuardEventPosition(receiptAt time.Time, position guardEventPosition
 		return guardEventPosition{}, fmt.Errorf("%w: Guard source_epoch exceeds 128 bytes", controlplane.ErrConflict)
 	}
 	position.ObservedAt = position.ObservedAt.UTC()
-	if position.ObservedAt.After(receiptAt.UTC().Add(5 * time.Minute)) {
+	receipt := receiptAt.UTC()
+	if position.ObservedAt.After(receipt.Add(guardObservationSkewWindow)) {
 		return guardEventPosition{}, fmt.Errorf("%w: Guard observed_at is too far in the future", controlplane.ErrConflict)
+	}
+	if position.ObservedAt.Before(receipt.Add(-guardObservationSkewWindow)) {
+		return guardEventPosition{}, fmt.Errorf("%w: Guard observed_at is too far in the past", controlplane.ErrConflict)
 	}
 	return position, nil
 }

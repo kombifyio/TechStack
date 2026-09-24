@@ -2,8 +2,6 @@ package controlplane
 
 import (
 	"context"
-	"errors"
-	"strings"
 	"testing"
 	"time"
 )
@@ -82,41 +80,101 @@ func TestGuardInventoryManifestPruneLeavesObservedServicesAlone(t *testing.T) {
 	}
 }
 
-// Both projections of one physical row must agree, and a provenance outside
-// the closed vocabulary is refused rather than folded: this boundary only ever
-// sees values the control plane produced, so an unnameable one is a bug, not
-// untrusted input.
-func TestGuardInventoryServiceSourceResolution(t *testing.T) {
-	for _, test := range []struct {
-		name, legacy, runtime, batch, want, wantErr string
-	}{
-		{name: "unstated inherits the batch default", batch: "stackkits-inventory", want: "stackkits-inventory"},
-		{name: "declared wins over the default", legacy: "observed", runtime: "observed", batch: "stackkits-inventory", want: "observed"},
-		{name: "one-sided declaration is honored", runtime: "observed", batch: "stackkits-inventory", want: "observed"},
-		{name: "disagreement is refused", legacy: "observed", runtime: "stackkits-inventory", batch: "stackkits-inventory", wantErr: "inconsistent source"},
-		{name: "out-of-vocabulary is refused", legacy: "verified-apply-evidence", runtime: "verified-apply-evidence", batch: "stackkits-inventory", wantErr: "unknown service source"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			got, err := guardInventoryServiceSource(
-				Service{ID: "svc-a", Source: test.legacy},
-				ServiceRuntime{ID: "svc-a", Source: test.runtime},
-				test.batch,
-			)
-			if test.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
-					t.Fatalf("error = %v, want one containing %q", err, test.wantErr)
-				}
-				if !errors.Is(err, ErrConflict) {
-					t.Fatalf("error = %v, want ErrConflict", err)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("guardInventoryServiceSource: %v", err)
-			}
-			if got != test.want {
-				t.Fatalf("source = %q, want %q", got, test.want)
-			}
-		})
+// A successful discovery is authoritative for its own observed half, while a
+// refused probe carries no absence evidence. Vanished services retain their
+// history as stopped rows instead of staying optimistically running or being
+// hard-deleted with their transition timeline.
+func TestGuardInventoryDiscoveryEvidenceControlsObservedServiceRetirement(t *testing.T) {
+	t.Run("successful discovery retires a vanished service", func(t *testing.T) {
+		store, now := newGuardInventoryProjectionTestStore(t)
+		seedGuardInventoryTestStack(t, store)
+		first := guardInventoryProjectionTestCommand(now.Add(time.Minute), 1, true, "svc-managed", "svc-old")
+		markGuardInventoryTestServiceObserved(&first, "svc-old")
+		first.DiscoveryObserved, first.DiscoveredServiceCount = true, 1
+		applied, err := store.ApplyGuardInventoryProjection(context.Background(), first)
+		if err != nil {
+			t.Fatalf("first projection: %v", err)
+		}
+
+		second := guardInventoryProjectionTestCommand(now.Add(2*time.Minute), 2, true, "svc-managed", "svc-new")
+		markGuardInventoryTestServiceObserved(&second, "svc-new")
+		second.DiscoveryObserved, second.DiscoveredServiceCount = true, 1
+		second.Event.ExpectedRevision = applied.ServerEvent.Server.Revision
+		result, err := store.ApplyGuardInventoryProjection(context.Background(), second)
+		if err != nil {
+			t.Fatalf("second projection: %v", err)
+		}
+
+		services := guardInventoryTestServicesByID(t, store)
+		retired := services["svc-old"]
+		if retired.ObservedState != "stopped" || retired.HealthState != "unknown" ||
+			retired.Access["mode"] != "unavailable" || retired.Access["reason_code"] != guardServiceDiscoveryAbsentReason {
+			t.Fatalf("retired observed service = %#v", retired)
+		}
+		if revision, ok := inventoryMetadataInt64(retired.Metadata, guardInventoryRevisionKey); !ok || revision != result.ServerEvent.Inventory.Revision {
+			t.Fatalf("retired service revision = %d, %v", revision, ok)
+		}
+	})
+
+	t.Run("refused discovery retains the last measured state", func(t *testing.T) {
+		store, now := newGuardInventoryProjectionTestStore(t)
+		seedGuardInventoryTestStack(t, store)
+		first := guardInventoryProjectionTestCommand(now.Add(time.Minute), 1, true, "svc-managed", "svc-observed")
+		markGuardInventoryTestServiceObserved(&first, "svc-observed")
+		first.DiscoveryObserved, first.DiscoveredServiceCount = true, 1
+		applied, err := store.ApplyGuardInventoryProjection(context.Background(), first)
+		if err != nil {
+			t.Fatalf("first projection: %v", err)
+		}
+
+		refused := guardInventoryProjectionTestCommand(now.Add(2*time.Minute), 2, true, "svc-managed")
+		refused.Event.ExpectedRevision = applied.ServerEvent.Server.Revision
+		result, err := store.ApplyGuardInventoryProjection(context.Background(), refused)
+		if err != nil {
+			t.Fatalf("refused discovery projection: %v", err)
+		}
+
+		retained := guardInventoryTestServicesByID(t, store)["svc-observed"]
+		if retained.ObservedState != "running" || retained.HealthState != "healthy" || retained.Access["mode"] != "direct" {
+			t.Fatalf("retained observed service = %#v", retained)
+		}
+		if revision, ok := inventoryMetadataInt64(retained.Metadata, guardInventoryRevisionKey); !ok || revision != result.ServerEvent.Inventory.Revision {
+			t.Fatalf("retained service revision = %d, %v", revision, ok)
+		}
+	})
+}
+
+func seedGuardInventoryTestStack(t *testing.T, store *MemoryStore) {
+	t.Helper()
+	if _, err := store.CreateStack(context.Background(), CreateStackRequest{
+		ID: "stack-1", TenantID: "tenant-1", InstanceID: "instance-1", OwnerSubjectID: "owner-1", Name: "Stack 1",
+	}); err != nil {
+		t.Fatalf("CreateStack: %v", err)
 	}
+}
+
+func markGuardInventoryTestServiceObserved(command *GuardInventoryProjection, serviceID string) {
+	for index := range command.Services {
+		if command.Services[index].Legacy.ID != serviceID {
+			continue
+		}
+		command.Services[index].Legacy.Source = serviceSourceObserved
+		command.Services[index].Runtime.Source = serviceSourceObserved
+		command.Services[index].Runtime.DesiredState = ""
+	}
+}
+
+func guardInventoryTestServicesByID(t *testing.T, store *MemoryStore) map[string]ServiceRuntime {
+	t.Helper()
+	page, err := store.ListInventoryServices(
+		context.Background(), mustOwnerInventoryScope(t, "tenant-1", "owner-1"), "server-1", InventoryPageRequest{Limit: 20},
+	)
+	if err != nil {
+		t.Fatalf("ListInventoryServices: %v", err)
+	}
+	services := make(map[string]ServiceRuntime, len(page.Services))
+	for _, service := range page.Services {
+		services[service.ID] = service
+	}
+	return services
 }

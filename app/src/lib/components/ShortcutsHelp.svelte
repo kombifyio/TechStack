@@ -5,7 +5,7 @@
    * Displays all available keyboard shortcuts grouped by category.
    * Triggered by pressing ? key.
    */
-  import { SHORTCUTS, type ShortcutDef } from "$lib/stores/shortcuts";
+  import { SHORTCUTS, type ShortcutDef } from "#lib/stores/shortcuts.js";
 
   interface Props {
     show: boolean;
@@ -67,14 +67,15 @@
     role="presentation"
   >
     <div
-      class="bg-gray-900 rounded-xl border border-gray-700 max-w-2xl w-full max-h-[85vh] overflow-hidden flex flex-col"
+      data-kx="plate"
+      class="max-w-2xl w-full max-h-[85vh] overflow-hidden flex flex-col"
       role="dialog"
       aria-modal="true"
       aria-labelledby="shortcuts-title"
     >
       <!-- Header -->
       <div
-        class="flex items-center justify-between p-4 border-b border-gray-700"
+        class="flex items-center justify-between p-4 border-b border-border"
       >
         <div class="flex items-center gap-3">
           <div class="p-2 bg-primary/10 rounded-lg">
@@ -92,13 +93,13 @@
               />
             </svg>
           </div>
-          <h2 id="shortcuts-title" class="text-lg font-semibold text-white">
+          <h2 id="shortcuts-title" class="text-lg font-semibold text-foreground">
             Keyboard Shortcuts
           </h2>
         </div>
         <button
           onclick={onclose}
-          class="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+          class="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
           aria-label="Close"
         >
           <svg
@@ -125,34 +126,34 @@
             {#if shortcuts && shortcuts.length > 0}
               <div>
                 <h3
-                  class="text-sm font-medium text-gray-400 uppercase tracking-wide mb-3"
+                  class="text-sm font-medium text-muted-foreground uppercase tracking-wide mb-3"
                 >
                   {categoryLabels[category]}
                 </h3>
                 <div class="space-y-2">
                   {#each shortcuts as shortcut}
                     <div
-                      class="flex items-center justify-between py-2 px-3 bg-gray-800/50 rounded-lg"
+                      class="flex items-center justify-between py-2 px-3 bg-muted/50 rounded-lg"
                     >
-                      <span class="text-gray-300 text-sm">
+                      <span class="text-foreground text-sm">
                         {shortcut.description}
                       </span>
                       <div class="flex items-center gap-1">
                         {#each shortcut.keys as key, i}
                           {#if i > 0}
-                            <span class="text-gray-600 text-xs mx-1">/</span>
+                            <span class="text-muted-foreground text-xs mx-1">/</span>
                           {/if}
                           {#if shortcut.keys.length === 2 && shortcut.category === "navigation" && i === 0}
                             <!-- Multi-key sequence like g + h -->
                             <kbd
-                              class="px-2 py-1 bg-gray-700 rounded text-xs font-mono text-gray-200 border border-gray-600"
+                              class="px-2 py-1 bg-muted rounded text-xs font-mono text-foreground border border-border"
                             >
                               {key}
                             </kbd>
-                            <span class="text-gray-500 mx-1">then</span>
+                            <span class="text-muted-foreground mx-1">then</span>
                           {:else}
                             <kbd
-                              class="px-2 py-1 bg-gray-700 rounded text-xs font-mono text-gray-200 border border-gray-600"
+                              class="px-2 py-1 bg-muted rounded text-xs font-mono text-foreground border border-border"
                             >
                               {key}
                             </kbd>
@@ -169,17 +170,17 @@
       </div>
 
       <!-- Footer -->
-      <div class="p-4 border-t border-gray-700 bg-gray-800/30">
+      <div class="p-4 border-t border-border bg-muted/30">
         <div class="flex items-center justify-between text-sm">
-          <span class="text-gray-500">
+          <span class="text-muted-foreground">
             Press <kbd
-              class="px-1.5 py-0.5 bg-gray-700 rounded text-xs font-mono text-gray-300 border border-gray-600"
+              class="px-1.5 py-0.5 bg-muted rounded text-xs font-mono text-foreground border border-border"
               >?</kbd
             > anytime to show this help
           </span>
-          <span class="text-gray-500">
+          <span class="text-muted-foreground">
             Press <kbd
-              class="px-1.5 py-0.5 bg-gray-700 rounded text-xs font-mono text-gray-300 border border-gray-600"
+              class="px-1.5 py-0.5 bg-muted rounded text-xs font-mono text-foreground border border-border"
               >Esc</kbd
             > to close
           </span>

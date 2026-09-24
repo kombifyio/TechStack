@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/cloudlogin"
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/httpx"
@@ -21,7 +22,7 @@ type AuthModeResponse struct {
 	Mode            string  `json:"mode"`              // "local" or "cloud"
 	Edition         string  `json:"edition"`           // "selfhost-oss", "preview", "saas-standalone", or "saas-embedded"
 	DeploymentMode  string  `json:"deployment_mode"`   // "self-hosted" or "saas"
-	IsFirstRun      bool    `json:"is_first_run"`      // true when no auth_config record exists
+	IsFirstRun      bool    `json:"is_first_run"`      // true when the canonical local owner store is empty
 	CloudAuthURL    *string `json:"cloud_auth_url"`    // OAuth2 authorization URL for cloud mode
 	PortalURL       *string `json:"portal_url"`        // Portal URL for cloud mode
 	AllowLocalLogin bool    `json:"allow_local_login"` // Whether local login is allowed in cloud mode
@@ -40,14 +41,27 @@ type AuthModeResponse struct {
 //	    "allow_local_login": true
 //	  }
 //	}
-func getAuthMode(app core.App, mode config.DeploymentMode, edition config.Edition) func(e *httpx.Event) error {
+func getAuthMode(app core.App, mode config.DeploymentMode, edition config.Edition, owners LocalOwnerLookup) func(e *httpx.Event) error {
 	return func(e *httpx.Event) error {
-		// Try to find the auth_config record (singleton pattern)
-		record, err := app.FindFirstRecordByFilter(
-			"auth_config",
-			"id != ''", // Match any record (singleton)
-			nil,
-		)
+		var record *core.Record
+		if !mode.IsSaaS() {
+			var err error
+			record, err = loadAuthConfig(app)
+			if err != nil {
+				return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal,
+					"Failed to read auth configuration", nil)
+			}
+		}
+
+		ownerPresent := false
+		if !mode.IsSaaS() {
+			present, err := canonicalOwnerPresent(e.Request.Context(), owners)
+			if err != nil {
+				return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal,
+					"Failed to read local owner store", nil)
+			}
+			ownerPresent = present
+		}
 
 		// Default response for when no config exists
 		response := AuthModeResponse{
@@ -61,9 +75,10 @@ func getAuthMode(app core.App, mode config.DeploymentMode, edition config.Editio
 		}
 		applyPlatformAuthPolicy(&response, mode)
 
-		if err != nil || record == nil {
-			// No config record = first run (unless SaaS, which is pre-configured)
-			response.IsFirstRun = !mode.IsSaaS()
+		if record == nil {
+			// Canonical local owner store is first-run authority. PocketBase
+			// auth_config is only a compatibility marker for mode fields.
+			response.IsFirstRun = !mode.IsSaaS() && !ownerPresent
 
 			// No config record found — self-hosted deployments can still opt into cloud auth via env.
 			if !mode.IsSaaS() && envRequestsCloudAuth() {
@@ -74,7 +89,7 @@ func getAuthMode(app core.App, mode config.DeploymentMode, edition config.Editio
 			applySelfHostedCloudLoginGate(&response, mode)
 
 			if response.Mode == "cloud" {
-				if authURL := resolveCloudAuthorizationURL(nil, e.Request); authURL != nil {
+				if authURL := resolveCloudAuthorizationURL(e.Request); authURL != nil {
 					response.CloudAuthURL = authURL
 				}
 			}
@@ -91,14 +106,9 @@ func getAuthMode(app core.App, mode config.DeploymentMode, edition config.Editio
 		applyPlatformAuthPolicy(&response, mode)
 		applySelfHostedCloudLoginGate(&response, mode)
 
-		// Set portal URL if available
-		if portalURL := record.GetString("portal_url"); portalURL != "" {
-			response.PortalURL = &portalURL
-		}
-
 		// Build cloud auth URL if in cloud mode
 		if response.Mode == "cloud" {
-			if authURL := resolveCloudAuthorizationURL(record, e.Request); authURL != nil {
+			if authURL := resolveCloudAuthorizationURL(e.Request); authURL != nil {
 				response.CloudAuthURL = authURL
 			}
 		}
@@ -152,9 +162,9 @@ func envRequestsCloudAuth() bool {
 	}
 }
 
-func resolveCloudAuthorizationURL(record *core.Record, req *http.Request) *string {
-	cloudIssuer := resolveCloudIssuer(record)
-	cloudClientID := resolveCloudClientID(record)
+func resolveCloudAuthorizationURL(req *http.Request) *string {
+	cloudIssuer := cloudIssuerFromEnv()
+	cloudClientID := cloudClientIDFromEnv()
 	if cloudIssuer == "" || cloudClientID == "" {
 		return nil
 	}
@@ -171,29 +181,15 @@ func buildCloudLoginURL(req *http.Request) string {
 	return fmt.Sprintf("%s%s", redirectOrigin(req), v2CloudLoginPath)
 }
 
-func resolveCloudLogoutURL(record *core.Record, req *http.Request) *string {
-	cloudIssuer := resolveCloudIssuer(record)
-	cloudClientID := resolveCloudClientID(record)
+func resolveCloudLogoutURL(req *http.Request) *string {
+	cloudIssuer := cloudIssuerFromEnv()
+	cloudClientID := cloudClientIDFromEnv()
 	if cloudIssuer == "" || cloudClientID == "" {
 		return nil
 	}
 
 	logoutURL := buildOAuthLogoutURL(cloudIssuer, cloudClientID, req)
 	return &logoutURL
-}
-
-func resolveCloudIssuer(record *core.Record) string {
-	if issuer := normalizeCloudIssuer(firstRecordField(record, "cloud_issuer", "auth0_issuer")); issuer != "" {
-		return issuer
-	}
-	return cloudIssuerFromEnv()
-}
-
-func resolveCloudClientID(record *core.Record) string {
-	if clientID := strings.TrimSpace(firstRecordField(record, "cloud_client_id", "auth0_client_id")); clientID != "" {
-		return clientID
-	}
-	return cloudClientIDFromEnv()
 }
 
 func cloudIssuerFromEnv() string {
@@ -222,38 +218,8 @@ func firstEnv(keys ...string) string {
 	return ""
 }
 
-func firstRecordField(record *core.Record, keys ...string) string {
-	if record == nil {
-		return ""
-	}
-
-	for _, key := range keys {
-		if value := strings.TrimSpace(record.GetString(key)); value != "" {
-			return value
-		}
-	}
-
-	return ""
-}
-
 func normalizeCloudIssuer(raw string) string {
 	return config.NormalizeCloudAuthIssuer(raw)
-}
-
-// buildOAuthAuthorizationURL constructs the OAuth2 authorization URL for cloud auth.
-func buildOAuthAuthorizationURL(issuer, clientID string, req *http.Request) string {
-	// Build the authorization endpoint URL
-	authEndpoint := fmt.Sprintf("%s/authorize", strings.TrimSuffix(issuer, "/"))
-	redirectURI := fmt.Sprintf("%s/api/v1/auth/callback", redirectOrigin(req))
-
-	// Build the full authorization URL with query parameters
-	params := url.Values{}
-	params.Set("client_id", clientID)
-	params.Set("redirect_uri", redirectURI)
-	params.Set("response_type", "code")
-	params.Set("scope", "openid profile email")
-
-	return fmt.Sprintf("%s?%s", authEndpoint, params.Encode())
 }
 
 func buildOAuthLogoutURL(issuer, clientID string, req *http.Request) string {
@@ -269,19 +235,13 @@ func buildOAuthLogoutURL(issuer, clientID string, req *http.Request) string {
 
 func redirectOrigin(req *http.Request) string {
 	if req == nil {
-		if origin := publicOriginFromEnv(); origin != "" {
-			return origin
-		}
-		return "http://localhost"
+		return publicOriginFromEnv()
 	}
 
 	scheme := requestScheme(req)
 	host := requestHost(req)
 	if host == "" {
-		if origin := publicOriginFromEnv(); origin != "" {
-			return origin
-		}
-		return scheme + "://localhost"
+		return publicOriginFromEnv()
 	}
 
 	if isLoopbackHost(host) {
@@ -318,7 +278,10 @@ func requestHost(req *http.Request) string {
 	if req.Host != "" {
 		return req.Host
 	}
-	return req.URL.Host
+	if req.URL != nil {
+		return req.URL.Host
+	}
+	return ""
 }
 
 func firstHeaderValue(value string) string {

@@ -1,5 +1,8 @@
-import type { MonitoringCockpitPayload } from "$lib/api/monitoring";
-import type { StackMetricValue, StackOperationServer } from "$lib/api/stacks";
+import type { MonitoringCockpitPayload } from "#lib/api/monitoring.js";
+import type {
+  StackMetricValue,
+  StackOperationServer,
+} from "#lib/api/stacks.js";
 
 const TERMINAL_OR_UNREACHABLE = new Set([
   "offline",
@@ -161,7 +164,7 @@ function mergeMetric(
   return [previous, true];
 }
 
-function mergeServerTelemetry(
+export function mergeServerTelemetry(
   previous: StackOperationServer,
   next: StackOperationServer,
 ): [StackOperationServer, boolean] {
@@ -229,7 +232,10 @@ export function mergeCockpitSnapshot(
   next: MonitoringCockpitPayload,
   activeServerIDs?: ReadonlySet<string>,
 ): CockpitSnapshotMerge {
-  if (!previous || previous.techstack_id !== next.techstack_id) {
+  const previousScope =
+    previous?.homelab_id || previous?.kit_deployment_id || "";
+  const nextScope = next.homelab_id || next.kit_deployment_id || "";
+  if (!previous || previousScope !== nextScope) {
     return { snapshot: next, retainedTelemetry: false };
   }
   let retainedTelemetry = false;

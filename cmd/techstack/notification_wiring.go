@@ -10,6 +10,7 @@ import (
 	"time"
 
 	productnotifications "github.com/kombifyio/techstack/internal/notifications"
+	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/logger"
 	"github.com/kombifyio/techstack/pkg/monitoring"
 	"github.com/kombifyio/techstack/pkg/ril/signals"
@@ -122,13 +123,17 @@ func firstNotificationLabel(labels map[string]string, keys ...string) string {
 	return ""
 }
 
-func bootProductNotificationOutbox(v2 *v2Boot, log *logger.Logger) *productnotifications.Outbox {
+func bootProductNotificationOutbox(v2 *v2Boot, edition config.Edition, log *logger.Logger) *productnotifications.Outbox {
 	if v2 == nil || v2.db == nil || v2.db.DB == nil {
 		return nil
 	}
 	secret := strings.TrimSpace(os.Getenv("SERVICE_AUTH_SECRET"))
 	if secret == "" {
 		log.Warn("notification_outbox_disabled", "reason", "SERVICE_AUTH_SECRET missing")
+		return nil
+	}
+	if edition == config.EditionSelfHostOSS && strings.TrimSpace(os.Getenv("NOTIFICATIONS_ENGINE_URL")) == "" {
+		log.Warn("notification_outbox_disabled", "reason", "self-hosted engine URL missing")
 		return nil
 	}
 	client := productnotifications.NewEngineFromEnv()

@@ -25,48 +25,10 @@ import (
 	"github.com/kombifyio/techstack/pkg/nodehandoff"
 	"github.com/kombifyio/techstack/pkg/pairingtoken"
 	"github.com/kombifyio/techstack/pkg/runtimeidentity"
+	"github.com/kombifyio/techstack/pkg/serverregistry"
 	"github.com/kombifyio/techstack/pkg/vmleases"
 	"github.com/kombifyio/techstack/pkg/workerauth"
-	"github.com/pocketbase/pocketbase/core"
 )
-
-func TestReadWorkerRegistrationRequestValidatesEarlyBoundaries(t *testing.T) {
-	tests := []struct {
-		name     string
-		body     string
-		wantErr  string
-		wantHost string
-		wantTok  string
-	}{
-		{name: "malformed json", body: `{`, wantErr: "Invalid request body"},
-		{name: "missing token", body: `{"hostname":"worker-1"}`, wantErr: "token is required"},
-		{name: "missing hostname", body: `{"token":"pair"}`, wantErr: "hostname is required"},
-		{name: "trims token and host", body: `{"token":" pair ","hostname":" worker-1 ","os":"linux","arch":"amd64"}`, wantTok: "pair", wantHost: "worker-1"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			event, recorder := workerRouteTestEvent(http.MethodPost, "/api/v1/workers/register", tt.body)
-
-			got, validationErr, ok := readWorkerRegistrationRequest(event)
-			if tt.wantErr != "" {
-				if ok || !strings.Contains(validationErr, tt.wantErr) {
-					t.Fatalf("expected validation error containing %q, got ok=%v error=%q", tt.wantErr, ok, validationErr)
-				}
-				if recorder.Body.Len() != 0 {
-					t.Fatalf("parser wrote response before handler boundary: %s", recorder.Body.String())
-				}
-				return
-			}
-			if !ok {
-				t.Fatalf("unexpected validation error: %s", validationErr)
-			}
-			if got.Token != tt.wantTok || got.Hostname != tt.wantHost {
-				t.Fatalf("unexpected request: %+v", got)
-			}
-		})
-	}
-}
 
 func TestWorkerListRequiresAuthenticationBeforeStoreLookup(t *testing.T) {
 	event, recorder := workerRouteTestEvent(http.MethodGet, "/api/v1/workers", "")
@@ -104,27 +66,19 @@ func TestWorkerListPaginationUsesDeterministicWorkerIDOrder(t *testing.T) {
 		if err := handler.list(event); err != nil {
 			t.Fatalf("list page %d: %v", page, err)
 		}
-		for _, field := range []string{
-			`"managed_runtime_active_lease_ids":[]`,
-			`"managed_runtime_inactive_lease_ids":[]`,
-			`"managed_runtime_lease_generation_digests":[]`,
-			`"managed_runtime_duplicate_lease_ids":[]`,
-			`"managed_runtime_attachment_conflict_lease_ids":[]`,
-		} {
-			if !strings.Contains(recorder.Body.String(), field) {
-				t.Fatalf("page %d missing canonical empty authority array %s: %s", page, field, recorder.Body.String())
-			}
-		}
 		var envelope struct {
 			Data []map[string]any `json:"data"`
 			Meta struct {
-				Total                           int      `json:"total"`
-				Page                            int      `json:"page"`
-				PerPage                         int      `json:"per_page"`
-				ManagedRuntimeInventoryComplete *bool    `json:"managed_runtime_inventory_complete"`
-				WorkerInventorySHA256           string   `json:"worker_inventory_sha256"`
-				ManagedRuntimeActiveLeaseIDs    []string `json:"managed_runtime_active_lease_ids"`
-				ManagedRuntimeInactiveLeaseIDs  []string `json:"managed_runtime_inactive_lease_ids"`
+				Total                                    int                                         `json:"total"`
+				Page                                     int                                         `json:"page"`
+				PerPage                                  int                                         `json:"per_page"`
+				ManagedRuntimeInventoryComplete          *bool                                       `json:"managed_runtime_inventory_complete"`
+				WorkerInventorySHA256                    string                                      `json:"worker_inventory_sha256"`
+				ManagedRuntimeActiveLeaseIDs             []string                                    `json:"managed_runtime_active_lease_ids"`
+				ManagedRuntimeInactiveLeaseIDs           []string                                    `json:"managed_runtime_inactive_lease_ids"`
+				ManagedRuntimeLeaseGenerationDigests     []ksapi.ManagedRuntimeLeaseGenerationDigest `json:"managed_runtime_lease_generation_digests"`
+				ManagedRuntimeDuplicateLeaseIDs          []string                                    `json:"managed_runtime_duplicate_lease_ids"`
+				ManagedRuntimeAttachmentConflictLeaseIDs []string                                    `json:"managed_runtime_attachment_conflict_lease_ids"`
 			} `json:"meta"`
 		}
 		if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
@@ -136,8 +90,10 @@ func TestWorkerListPaginationUsesDeterministicWorkerIDOrder(t *testing.T) {
 		if envelope.Meta.ManagedRuntimeInventoryComplete == nil || !*envelope.Meta.ManagedRuntimeInventoryComplete {
 			t.Fatalf("page %d managed runtime completeness = %#v, want true with an empty authority snapshot", page, envelope.Meta.ManagedRuntimeInventoryComplete)
 		}
-		if len(envelope.Meta.ManagedRuntimeActiveLeaseIDs) != 0 || len(envelope.Meta.ManagedRuntimeInactiveLeaseIDs) != 0 {
-			t.Fatalf("page %d managed runtime authority IDs = active %v inactive %v, want empty", page, envelope.Meta.ManagedRuntimeActiveLeaseIDs, envelope.Meta.ManagedRuntimeInactiveLeaseIDs)
+		if len(envelope.Meta.ManagedRuntimeActiveLeaseIDs) != 0 || len(envelope.Meta.ManagedRuntimeInactiveLeaseIDs) != 0 ||
+			len(envelope.Meta.ManagedRuntimeLeaseGenerationDigests) != 0 || len(envelope.Meta.ManagedRuntimeDuplicateLeaseIDs) != 0 ||
+			len(envelope.Meta.ManagedRuntimeAttachmentConflictLeaseIDs) != 0 {
+			t.Fatalf("page %d managed runtime authority metadata is not empty: %#v", page, envelope.Meta)
 		}
 		if page == 1 {
 			inventorySHA256 = envelope.Meta.WorkerInventorySHA256
@@ -198,6 +154,9 @@ func TestWorkerListProjectsManagedMonthlyRuntimeLeases(t *testing.T) {
 	if row["id"] != "lease:lease-1" || row["source"] != managedRuntimeInventorySource || row["lease_id"] != "lease-1" {
 		t.Fatalf("unexpected worker projection: %#v", row)
 	}
+	if row["kit_deployment_id"] != "stack-1" {
+		t.Fatalf("worker deployment identity = %#v, want stack-1", row["kit_deployment_id"])
+	}
 	if row["approved"] != true || row["assignable"] != true {
 		t.Fatalf("managed projection flags wrong: %#v", row)
 	}
@@ -226,39 +185,26 @@ func (failingManagedRuntimeLeaseLister) ListInventoryByTenant(context.Context, s
 	return nil, errors.New("lease store unavailable")
 }
 
-func TestWorkerListFailsClosedWhenManagedRuntimeAuthorityFails(t *testing.T) {
-	event, recorder := workerRouteTestEvent(http.MethodGet, "/api/v1/workers", "")
-	event.Request = event.Request.WithContext(identity.NewContext(event.Request.Context(), &identity.Identity{UserID: "owner-1", OrgID: "tenant-1"}))
-	handler := workerRouteHandlers{
-		wst:                  controlplane.NewMemoryStore(),
-		managedRuntimeLeases: failingManagedRuntimeLeaseLister{},
-	}
-	if err := handler.list(event); err != nil {
-		t.Fatalf("list returned router error: %v", err)
-	}
-	if recorder.Code != http.StatusInternalServerError {
-		t.Fatalf("status = %d body=%s, want 500", recorder.Code, recorder.Body.String())
-	}
-	if strings.Contains(recorder.Body.String(), "lease store unavailable") {
-		t.Fatalf("worker inventory leaked lease-store details: %s", recorder.Body.String())
-	}
-}
-
-func TestWorkerListFailsClosedOnDuplicateManagedRuntimeAuthorityLease(t *testing.T) {
+func TestWorkerListFailsClosedOnInvalidManagedRuntimeAuthority(t *testing.T) {
 	lease := createStackOperationsTestLease("lease-duplicate", "tenant-1", "owner-1", "stack-1", "enrolled")
-	event, recorder := workerRouteTestEvent(http.MethodGet, "/api/v1/workers", "")
-	event.Request = event.Request.WithContext(identity.NewContext(event.Request.Context(), &identity.Identity{UserID: "owner-1", OrgID: "tenant-1"}))
-	handler := workerRouteHandlers{
-		wst: controlplane.NewMemoryStore(),
-		managedRuntimeLeases: fakeManagedRuntimeLeaseLister{
-			leases: []vmlease.Lease{lease, lease},
-		},
-	}
-	if err := handler.list(event); err != nil {
-		t.Fatalf("list returned router error: %v", err)
-	}
-	if recorder.Code != http.StatusInternalServerError {
-		t.Fatalf("status = %d body=%s, want 500", recorder.Code, recorder.Body.String())
+	for _, tc := range []struct {
+		name         string
+		lister       managedRuntimeLeaseLister
+		privateError string
+	}{
+		{name: "authority read failure", lister: failingManagedRuntimeLeaseLister{}, privateError: "lease store unavailable"},
+		{name: "duplicate authority lease", lister: fakeManagedRuntimeLeaseLister{leases: []vmlease.Lease{lease, lease}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			event, recorder := workerRouteTestEvent(http.MethodGet, "/api/v1/workers", "")
+			event.Request = event.Request.WithContext(identity.NewContext(event.Request.Context(), &identity.Identity{UserID: "owner-1", OrgID: "tenant-1"}))
+			if err := (workerRouteHandlers{wst: controlplane.NewMemoryStore(), managedRuntimeLeases: tc.lister}).list(event); err != nil {
+				t.Fatalf("list returned router error: %v", err)
+			}
+			if recorder.Code != http.StatusInternalServerError || (tc.privateError != "" && strings.Contains(recorder.Body.String(), tc.privateError)) {
+				t.Fatalf("status=%d body=%s, want redacted 500", recorder.Code, recorder.Body.String())
+			}
+		})
 	}
 }
 
@@ -658,7 +604,7 @@ func TestWorkerListReplacesManagedLeaseProjectionWithPersistedInventory(t *testi
 		}); upsertErr != nil {
 			t.Fatalf("seed enrolled worker: %v", upsertErr)
 		}
-		event, recorder := workerRouteTestEvent(http.MethodPost, "/api/v1/workers/"+agentID+"/inventory", `{"source_epoch":"`+agentID+`-epoch","source_sequence":1,"observed_at":"2026-07-21T00:00:00Z","server_id":"`+wantServerID+`","runtime_agent_id":"`+agentID+`","host":{"hostname":"centron-`+agentID+`"}}`)
+		event, recorder := workerRouteTestEvent(http.MethodPost, "/api/v1/workers/"+agentID+"/inventory", `{"source_epoch":"`+agentID+`-epoch","source_sequence":1,"observed_at":"`+time.Now().UTC().Format(time.RFC3339Nano)+`","server_id":"`+wantServerID+`","runtime_agent_id":"`+agentID+`","host":{"hostname":"centron-`+agentID+`"}}`)
 		event.Request.SetPathValue("id", agentID)
 		event.Request.Header.Set("Authorization", "Bearer "+token)
 		if err := handler.inventory(event); err != nil {
@@ -695,37 +641,11 @@ func TestWorkerListReplacesManagedLeaseProjectionWithPersistedInventory(t *testi
 	}
 }
 
-func TestWorkerListDoesNotApproveManagedLeaseWithoutRuntimeTarget(t *testing.T) {
-	lease := createStackOperationsTestLease("lease-1", "owner-1", "owner-1", "stack-1", "enrolled")
-	delete(lease.Metadata, "public_ip")
-	lister := fakeManagedRuntimeLeaseLister{leases: []vmlease.Lease{lease}}
-	event, recorder := workerRouteTestEvent(http.MethodGet, "/api/v1/workers", "")
-	event.Request = event.Request.WithContext(identity.NewContext(event.Request.Context(), &identity.Identity{UserID: "owner-1"}))
-
-	err := (workerRouteHandlers{wst: controlplane.NewMemoryStore(), managedRuntimeLeases: lister}).list(event)
-	if err != nil {
-		t.Fatalf("list returned router error: %v", err)
-	}
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
-	}
-	var envelope struct {
-		Data []map[string]any `json:"data"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if got := len(envelope.Data); got != 1 {
-		t.Fatalf("workers = %d, want projected managed runtime row", got)
-	}
-	row := envelope.Data[0]
-	if row["approved"] != false || row["assignable"] != false || row["ip"] != "" {
-		t.Fatalf("managed projection without runtime target should stay non-assignable and targetless: %#v", row)
-	}
-}
-
-func TestWorkerListKeepsUnenrolledManagedRuntimeLeasesNonAssignable(t *testing.T) {
+func TestWorkerListKeepsNonReadyManagedRuntimesNonAssignable(t *testing.T) {
+	targetless := createStackOperationsTestLease("lease-targetless", "owner-1", "owner-1", "stack-1", "enrolled")
+	delete(targetless.Metadata, "public_ip")
 	lister := fakeManagedRuntimeLeaseLister{leases: []vmlease.Lease{
+		targetless,
 		createStackOperationsTestLease("lease-pending", "owner-1", "owner-1", "stack-1", "pending"),
 		createStackOperationsTestLease("lease-failed", "owner-1", "owner-1", "stack-1", "failed"),
 	}}
@@ -745,13 +665,18 @@ func TestWorkerListKeepsUnenrolledManagedRuntimeLeasesNonAssignable(t *testing.T
 	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if got := len(envelope.Data); got != 2 {
-		t.Fatalf("workers = %d, want pending and failed managed runtime rows", got)
+	if got := len(envelope.Data); got != 3 {
+		t.Fatalf("workers = %d, want all non-ready managed runtime rows", got)
 	}
+	rows := make(map[string]map[string]any, len(envelope.Data))
 	for _, row := range envelope.Data {
+		rows[row["lease_id"].(string)] = row
 		if row["source"] != managedRuntimeInventorySource || row["assignable"] != false || row["approved"] != false {
-			t.Fatalf("unenrolled managed runtime row should be visible but non-assignable: %#v", row)
+			t.Fatalf("non-ready managed runtime row became assignable: %#v", row)
 		}
+	}
+	if row := rows["lease-targetless"]; row == nil || row["ip"] != "" {
+		t.Fatalf("targetless managed runtime row gained an address: %#v", row)
 	}
 }
 
@@ -804,10 +729,10 @@ func TestWorkerRegisterUsesControlPlaneStore(t *testing.T) {
 	event, recorder := workerRouteTestEvent(
 		http.MethodPost,
 		"/api/v1/workers/register",
-		`{"token":"`+rawToken+`","hostname":"node-1","os":"linux","arch":"amd64","cpu_cores":4,"ram_mb":8192,"disk_gb":120,"docker_version":"26.1.0","type":"main","provider":"local","tags":"docker-desktop,local-e2e"}`,
+		`{"token":"`+rawToken+`","hostname":"node-1","os":"linux","arch":"amd64","cpu_cores":4,"ram_mb":8192,"disk_gb":120,"docker_version":"26.1.0","type":"main","provider":"local","tags":"docker-desktop,local-e2e,runtime_environment_class=local"}`,
 	)
 	issuer := &recordingWorkerAgentIdentityIssuer{}
-	registerErr := (workerRouteHandlers{wst: store, agentIdentityIssuer: issuer}).register(event)
+	registerErr := (workerRouteHandlers{wst: store, serverStore: store, agentIdentityIssuer: issuer}).register(event)
 	if registerErr != nil {
 		t.Fatalf("register returned router error: %v", registerErr)
 	}
@@ -865,6 +790,45 @@ func TestWorkerRegisterUsesControlPlaneStore(t *testing.T) {
 	}
 	if token.Status != "used" || token.UsedAt == nil {
 		t.Fatalf("pairing token was not marked used: %#v", token)
+	}
+	server, err := store.GetServerRuntime(t.Context(), "tenant-1", runtimeServerIDForWorker(workerID))
+	if err != nil || server.RuntimeTarget.EnvironmentClass == serverregistry.EnvironmentLocal {
+		t.Fatalf("worker-supplied tags manufactured target evidence: target=%#v error=%v", server.RuntimeTarget, err)
+	}
+}
+
+// Regression: an owner-declared local target used to remain "unknown" after
+// successful pairing even though the registration was connected and healthy.
+func TestWorkerRegisterPersistsExplicitLocalTargetEvidence(t *testing.T) {
+	store := controlplane.NewMemoryStore()
+	rawToken, tokenHash, err := pairingtoken.Generate("tenant-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiresAt := time.Now().Add(time.Hour)
+	if _, err = store.UpsertPairingToken(t.Context(), controlplane.PairingToken{
+		ID: "pair-local", TenantID: "tenant-1", StackID: "stack-local", OwnerSubjectID: "owner-1",
+		TokenHash: tokenHash, Status: "active", ExpiresAt: &expiresAt,
+		Metadata: map[string]any{
+			"server_provisioning_mode":             "install-command",
+			nodehandoff.KeyRuntimeEnvironmentClass: "local",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	event, recorder := workerRouteTestEvent(http.MethodPost, "/api/v1/workers/register", `{"token":"`+rawToken+`","hostname":"local-node","os":"linux","arch":"amd64"}`)
+	if err = (workerRouteHandlers{wst: store, serverStore: store}).register(event); err != nil || recorder.Code != http.StatusOK {
+		t.Fatalf("register error=%v status=%d body=%s", err, recorder.Code, recorder.Body.String())
+	}
+	workerID := workerStoreID("tenant-1", tokenHash, "local-node")
+	server, err := store.GetServerRuntime(t.Context(), "tenant-1", runtimeServerIDForWorker(workerID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if server.RuntimeTarget.EnvironmentClass != serverregistry.EnvironmentLocal ||
+		server.RuntimeTarget.Offering != serverregistry.OfferingSelfOwnedDevice ||
+		server.RuntimeTarget.ObservedAt == nil || server.RuntimeTarget.EvidenceRef == "" {
+		t.Fatalf("local target evidence not persisted: %#v", server.RuntimeTarget)
 	}
 }
 
@@ -938,7 +902,8 @@ func TestUnscopedRuntimeAgentCannotApproveItselfWithHeartbeatOrInventory(t *test
 	}
 	handler := workerRouteHandlers{wst: store}
 
-	heartbeatEvent, heartbeatRecorder := workerRouteTestEvent(http.MethodPost, "/api/v1/workers/"+agentID+"/heartbeat", `{"source_epoch":"epoch-a","source_sequence":1,"observed_at":"2026-07-21T00:00:00Z"}`)
+	observedAt := time.Now().UTC()
+	heartbeatEvent, heartbeatRecorder := workerRouteTestEvent(http.MethodPost, "/api/v1/workers/"+agentID+"/heartbeat", `{"source_epoch":"epoch-a","source_sequence":1,"observed_at":"`+observedAt.Format(time.RFC3339Nano)+`"}`)
 	heartbeatEvent.Request.SetPathValue("id", agentID)
 	heartbeatEvent.Request.Header.Set("Authorization", "Bearer "+token)
 	if err := handler.heartbeat(heartbeatEvent); err != nil {
@@ -948,7 +913,7 @@ func TestUnscopedRuntimeAgentCannotApproveItselfWithHeartbeatOrInventory(t *test
 		t.Fatalf("heartbeat status = %d body=%s", heartbeatRecorder.Code, heartbeatRecorder.Body.String())
 	}
 
-	inventoryEvent, inventoryRecorder := workerRouteTestEvent(http.MethodPost, "/api/v1/workers/"+agentID+"/inventory", `{"source_epoch":"epoch-a","source_sequence":2,"observed_at":"2026-07-21T00:00:01Z","runtime_agent_id":"pending-agent","host":{"hostname":"node-1","os":"linux","arch":"amd64"}}`)
+	inventoryEvent, inventoryRecorder := workerRouteTestEvent(http.MethodPost, "/api/v1/workers/"+agentID+"/inventory", `{"source_epoch":"epoch-a","source_sequence":2,"observed_at":"`+observedAt.Add(time.Second).Format(time.RFC3339Nano)+`","runtime_agent_id":"pending-agent","host":{"hostname":"node-1","os":"linux","arch":"amd64"}}`)
 	inventoryEvent.Request.SetPathValue("id", agentID)
 	inventoryEvent.Request.Header.Set("Authorization", "Bearer "+token)
 	if err := handler.inventory(inventoryEvent); err != nil {
@@ -1002,7 +967,7 @@ func TestRuntimeAgentTokenCannotRecreateDeletedOrRejectedWorker(t *testing.T) {
 			if test.prepare != nil {
 				test.prepare(store)
 			}
-			event, recorder := workerRouteTestEvent(http.MethodPost, "/api/v1/workers/"+agentID+"/heartbeat", `{"source_epoch":"auth-kind-epoch","source_sequence":1,"observed_at":"2026-07-21T00:00:00Z"}`)
+			event, recorder := workerRouteTestEvent(http.MethodPost, "/api/v1/workers/"+agentID+"/heartbeat", `{"source_epoch":"auth-kind-epoch","source_sequence":1,"observed_at":"`+time.Now().UTC().Format(time.RFC3339Nano)+`"}`)
 			event.Request.SetPathValue("id", agentID)
 			event.Request.Header.Set("Authorization", "Bearer "+token)
 			if err := (workerRouteHandlers{wst: store}).heartbeat(event); err != nil {
@@ -1082,7 +1047,7 @@ func TestRuntimeAgentAuthFailsClosedForSignedTokensAndKeepsOpaqueCredentials(t *
 			}); err != nil {
 				t.Fatal(err)
 			}
-			event, recorder := workerRouteTestEvent(http.MethodPost, "/api/v1/workers/"+agentID+"/heartbeat", `{"source_epoch":"auth-kind-epoch","source_sequence":1,"observed_at":"2026-07-21T00:00:00Z"}`)
+			event, recorder := workerRouteTestEvent(http.MethodPost, "/api/v1/workers/"+agentID+"/heartbeat", `{"source_epoch":"auth-kind-epoch","source_sequence":1,"observed_at":"`+time.Now().UTC().Format(time.RFC3339Nano)+`"}`)
 			event.Request.SetPathValue("id", agentID)
 			event.Request.Header.Set("Authorization", "Bearer "+token)
 			event.Request.Header.Set("X-Kombify-Tenant-ID", "tenant-1")
@@ -1162,7 +1127,7 @@ func TestRuntimeAgentAuthRejectsUsedOrExpiredPairingSecretWhenAgentHashExists(t 
 				t.Fatalf("rejected pairing credential mutated worker: worker=%#v err=%v", unchanged, err)
 			}
 
-			agentEvent, agentRecorder := workerRouteTestEvent(http.MethodPost, "/api/v1/workers/"+agentID+"/heartbeat", `{"source_epoch":"pairing-separated-epoch","source_sequence":1,"observed_at":"2026-07-21T00:00:00Z"}`)
+			agentEvent, agentRecorder := workerRouteTestEvent(http.MethodPost, "/api/v1/workers/"+agentID+"/heartbeat", `{"source_epoch":"pairing-separated-epoch","source_sequence":1,"observed_at":"`+time.Now().UTC().Format(time.RFC3339Nano)+`"}`)
 			agentEvent.Request.SetPathValue("id", agentID)
 			agentEvent.Request.Header.Set("Authorization", "Bearer "+agentToken)
 			agentEvent.Request.Header.Set("X-Kombify-Tenant-ID", "tenant-1")
@@ -1251,23 +1216,6 @@ func TestWorkerConnectBindsWizardPlannedServerWithoutForgingGuardState(t *testin
 	}
 }
 
-func TestWorkerConnectLeaseFailsClosedWithoutAuthority(t *testing.T) {
-	t.Setenv("TECHSTACK_WORKER_AGENT_TOKEN_SECRET", "worker-secret")
-	store := controlplane.NewMemoryStore()
-	event, recorder := workerRouteTestEvent(
-		http.MethodPost,
-		"/v1/ril/servers/connect",
-		`{"lease_id":"lease-centron-1","stack_id":"stack-1","hostname":"node-1","connection_mode":"managed"}`,
-	)
-	event.Request = event.Request.WithContext(identity.NewContext(event.Request.Context(), &identity.Identity{UserID: "owner-1", OrgID: "tenant-1"}))
-	if err := (workerRouteHandlers{wst: store}).connectServer(event); err != nil {
-		t.Fatalf("connectServer returned router error: %v", err)
-	}
-	if recorder.Code != http.StatusServiceUnavailable {
-		t.Fatalf("lease-bound connect without authority = %d body=%s, want %d", recorder.Code, recorder.Body.String(), http.StatusServiceUnavailable)
-	}
-}
-
 func TestWorkerConnectLeaseValidatesAuthorityAndUsesCanonicalServerID(t *testing.T) {
 	t.Setenv("TECHSTACK_WORKER_AGENT_TOKEN_SECRET", "worker-secret")
 	store := controlplane.NewMemoryStore()
@@ -1304,73 +1252,57 @@ func TestWorkerConnectLeaseValidatesAuthorityAndUsesCanonicalServerID(t *testing
 	}
 }
 
-func TestWorkerConnectLeaseRejectsInactiveOrCrossStackLease(t *testing.T) {
+func TestWorkerConnectLeaseRejectionsDoNotMintCredentials(t *testing.T) {
 	t.Setenv("TECHSTACK_WORKER_AGENT_TOKEN_SECRET", "worker-secret")
 	const leaseID = "lease-centron-rejected"
+	activeLease := createStackOperationsTestLease(leaseID, "tenant-1", "owner-1", "stack-1", "enrolled")
+	inactiveLease := activeLease
+	now := time.Now().UTC()
+	inactiveLease.CancelledAt = &now
 	for _, test := range []struct {
-		name    string
-		stackID string
-		lease   vmlease.Lease
+		name       string
+		stackID    string
+		lister     managedRuntimeLeaseLister
+		wantStatus int
 	}{
+		{name: "authority unavailable", stackID: "stack-1", wantStatus: http.StatusServiceUnavailable},
 		{
-			name:    "cross stack",
-			lease:   createStackOperationsTestLease(leaseID, "tenant-1", "owner-1", "stack-actual", "enrolled"),
-			stackID: "stack-requested",
+			name: "cross stack", stackID: "stack-requested", wantStatus: http.StatusForbidden,
+			lister: fakeManagedRuntimeLeaseLister{leases: []vmlease.Lease{
+				createStackOperationsTestLease(leaseID, "tenant-1", "owner-1", "stack-actual", "enrolled"),
+			}},
 		},
-		func() struct {
-			name    string
-			stackID string
-			lease   vmlease.Lease
-		} {
-			lease := createStackOperationsTestLease(leaseID, "tenant-1", "owner-1", "stack-1", "enrolled")
-			now := time.Now().UTC()
-			lease.CancelledAt = &now
-			return struct {
-				name    string
-				stackID string
-				lease   vmlease.Lease
-			}{name: "inactive", stackID: "stack-1", lease: lease}
-		}(),
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			event, recorder := workerRouteTestEvent(http.MethodPost, "/v1/ril/servers/connect", `{"lease_id":"`+leaseID+`","stack_id":"`+test.stackID+`","hostname":"node-1"}`)
-			event.Request = event.Request.WithContext(identity.NewContext(event.Request.Context(), &identity.Identity{UserID: "owner-1", OrgID: "tenant-1"}))
-			if err := (workerRouteHandlers{wst: controlplane.NewMemoryStore(), managedRuntimeLeases: fakeManagedRuntimeLeaseLister{leases: []vmlease.Lease{test.lease}}}).connectServer(event); err != nil {
-				t.Fatalf("connectServer returned router error: %v", err)
-			}
-			if recorder.Code != http.StatusForbidden {
-				t.Fatalf("invalid lease connect = %d body=%s, want 403", recorder.Code, recorder.Body.String())
-			}
-		})
-	}
-}
-
-func TestWorkerConnectLeaseRejectsNonNativeExecutionAuthorityWithoutMintingCredential(t *testing.T) {
-	const leaseID = "lease-centron-non-native"
-	lease := createStackOperationsTestLease(leaseID, "tenant-1", "owner-1", "stack-1", "enrolled")
-	for _, test := range []struct {
-		name      string
-		authority vmleases.LeaseExecutionAuthority
-		state     vmleases.LeaseAuthorityState
-	}{
-		{name: "legacy", authority: vmleases.LeaseExecutionAuthorityLegacySimulate, state: vmleases.LeaseAuthorityStateLegacyQuarantined},
-		{name: "unbound", state: vmleases.LeaseAuthorityStateUnbound},
-		{name: "native inactive", authority: vmleases.LeaseExecutionAuthorityTechStackProviderControl, state: vmleases.LeaseAuthorityStateNativeInactive},
+		{name: "inactive", stackID: "stack-1", lister: fakeManagedRuntimeLeaseLister{leases: []vmlease.Lease{inactiveLease}}, wantStatus: http.StatusForbidden},
+		{
+			name: "legacy authority", stackID: "stack-1", wantStatus: http.StatusForbidden,
+			lister: fakeManagedRuntimeLeaseLister{inventory: []vmleases.LeaseInventoryRecord{{
+				Lease: activeLease, ExecutionAuthority: vmleases.LeaseExecutionAuthorityLegacySimulate, AuthorityState: vmleases.LeaseAuthorityStateLegacyQuarantined,
+			}}},
+		},
+		{
+			name: "unbound authority", stackID: "stack-1", wantStatus: http.StatusForbidden,
+			lister: fakeManagedRuntimeLeaseLister{inventory: []vmleases.LeaseInventoryRecord{{Lease: activeLease, AuthorityState: vmleases.LeaseAuthorityStateUnbound}}},
+		},
+		{
+			name: "native inactive authority", stackID: "stack-1", wantStatus: http.StatusForbidden,
+			lister: fakeManagedRuntimeLeaseLister{inventory: []vmleases.LeaseInventoryRecord{{
+				Lease: activeLease, ExecutionAuthority: vmleases.LeaseExecutionAuthorityTechStackProviderControl, AuthorityState: vmleases.LeaseAuthorityStateNativeInactive,
+			}}},
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := controlplane.NewMemoryStore()
-			event, recorder := workerRouteTestEvent(http.MethodPost, "/v1/ril/servers/connect", `{"lease_id":"`+leaseID+`","stack_id":"stack-1","runtime_agent_id":"agent-1","hostname":"node-1"}`)
+			payload := fmt.Sprintf(`{"lease_id":%q,"stack_id":%q,"runtime_agent_id":"agent-1","hostname":"node-1","connection_mode":"managed"}`, leaseID, test.stackID)
+			event, recorder := workerRouteTestEvent(http.MethodPost, "/v1/ril/servers/connect", payload)
 			event.Request = event.Request.WithContext(identity.NewContext(event.Request.Context(), &identity.Identity{UserID: "owner-1", OrgID: "tenant-1"}))
-			record := vmleases.LeaseInventoryRecord{Lease: lease, ExecutionAuthority: test.authority, AuthorityState: test.state}
-			handler := workerRouteHandlers{wst: store, managedRuntimeLeases: fakeManagedRuntimeLeaseLister{inventory: []vmleases.LeaseInventoryRecord{record}}}
-			if err := handler.connectServer(event); err != nil {
+			if err := (workerRouteHandlers{wst: store, managedRuntimeLeases: test.lister}).connectServer(event); err != nil {
 				t.Fatalf("connectServer returned router error: %v", err)
 			}
-			if recorder.Code != http.StatusForbidden {
-				t.Fatalf("status = %d body=%s, want 403", recorder.Code, recorder.Body.String())
+			if recorder.Code != test.wantStatus {
+				t.Fatalf("invalid lease connect = %d body=%s, want %d", recorder.Code, recorder.Body.String(), test.wantStatus)
 			}
 			if workers, err := store.ListWorkersByTenant(t.Context(), "tenant-1"); err != nil || len(workers) != 0 {
-				t.Fatalf("workers = %#v err=%v, non-native connect minted a credential", workers, err)
+				t.Fatalf("workers = %#v err=%v, rejected connect minted a credential", workers, err)
 			}
 		})
 	}
@@ -1416,7 +1348,7 @@ func TestWorkerInventorySignedClaimsRejectCrossStackAndPreserveClaimedPlacement(
 		}
 	}
 
-	validPayload := `{"source_epoch":"epoch-a","source_sequence":1,"observed_at":"2026-07-21T00:00:00Z","tenant_id":"tenant-1","owner_id":"owner-1","stack_id":"stack-claimed","lease_id":"lease-centron-claim","server_id":"` + serverID + `","runtime_agent_id":"agent-claims","host":{"hostname":"node-1"},"services":[{"service_id":"vaultwarden","name":"Vaultwarden","status":"healthy","owner_stack":"stack-other","endpoints":[{"url":"https://vault.example.test/health","health":"ok"}]}]}`
+	validPayload := `{"source_epoch":"epoch-a","source_sequence":1,"observed_at":"` + time.Now().UTC().Format(time.RFC3339Nano) + `","tenant_id":"tenant-1","owner_id":"owner-1","stack_id":"stack-claimed","lease_id":"lease-centron-claim","server_id":"` + serverID + `","runtime_agent_id":"agent-claims","host":{"hostname":"node-1"},"services":[{"service_id":"vaultwarden","name":"Vaultwarden","status":"healthy","owner_stack":"stack-other","endpoints":[{"url":"https://vault.example.test/health","health":"ok"}]}]}`
 	event, recorder := workerRouteTestEvent(http.MethodPost, "/api/v1/workers/"+agentID+"/inventory", validPayload)
 	event.Request.SetPathValue("id", agentID)
 	event.Request.Header.Set("Authorization", "Bearer "+token)
@@ -1483,7 +1415,7 @@ func TestWorkerInventoryIngestsServicesEndpointsAndMetrics(t *testing.T) {
 		"runtime_agent_id":"runtime-1",
 		"hostname":"node-1",
 		"manifest_observed":true,
-		"host":{"hostname":"node-1","os":"linux","arch":"amd64","public_ip":"203.0.113.10","cpu_cores":4,"ram_mb":8192,"disk_gb":120,"cpu_percent":12.5,"memory_used_bytes":1024,"memory_total_bytes":2048,"disk_used_bytes":100,"disk_total_bytes":1000,"uptime_seconds":99},
+		"host":{"hostname":"node-1","os":"linux","arch":"amd64","public_ip":"203.0.113.10","cpu_cores":4,"ram_mb":8192,"disk_gb":120,"docker_version":"27.1.1","cpu_percent":12.5,"memory_used_bytes":1024,"memory_total_bytes":2048,"disk_used_bytes":100,"disk_total_bytes":1000,"uptime_seconds":99},
 		"channels":[{"kind":"https","url":"https://techstack.example/api/v1/workers/runtime-1/inventory","status":"ok"}],
 		"services":[{
 			"service_id":"vaultwarden",
@@ -1511,7 +1443,7 @@ func TestWorkerInventoryIngestsServicesEndpointsAndMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetWorker: %v", err)
 	}
-	if worker.Status != "connected" || worker.CPUCores != 4 || worker.RAMMB != 8192 || worker.DiskGB != 120 {
+	if worker.Status != "connected" || worker.CPUCores != 4 || worker.RAMMB != 8192 || worker.DiskGB != 120 || worker.DockerVersion != "27.1.1" {
 		t.Fatalf("inventory did not update worker health/resources: %#v", worker)
 	}
 	services, err := store.ListServicesByStack(t.Context(), "tenant-1", "stack-1")
@@ -1676,7 +1608,7 @@ func TestWorkerInventoryUsesLeaseStableServerIdentity(t *testing.T) {
 		}); upsertErr != nil {
 			t.Fatalf("seed enrolled worker: %v", upsertErr)
 		}
-		event, recorder := workerRouteTestEvent(http.MethodPost, "/api/v1/workers/"+agentID+"/inventory", `{"source_epoch":"`+agentID+`-epoch","source_sequence":1,"observed_at":"2026-07-21T00:00:00Z","server_id":"`+runtimeidentity.LeaseServerID(leaseID)+`","runtime_agent_id":"`+agentID+`","host":{"hostname":"node-1"}}`)
+		event, recorder := workerRouteTestEvent(http.MethodPost, "/api/v1/workers/"+agentID+"/inventory", `{"source_epoch":"`+agentID+`-epoch","source_sequence":1,"observed_at":"`+time.Now().UTC().Format(time.RFC3339Nano)+`","server_id":"`+runtimeidentity.LeaseServerID(leaseID)+`","runtime_agent_id":"`+agentID+`","host":{"hostname":"node-1"}}`)
 		event.Request.SetPathValue("id", agentID)
 		event.Request.Header.Set("Authorization", "Bearer "+token)
 		if err := handler.inventory(event); err != nil {
@@ -1711,46 +1643,6 @@ type fakeWorkerMetricWriter struct {
 func (f *fakeWorkerMetricWriter) Write(samples []monitoring.MetricSample) error {
 	f.samples = append(f.samples, samples...)
 	return nil
-}
-
-func ensureWorkerRouteTestCollections(t *testing.T, app core.App) {
-	t.Helper()
-	ensureDriftRouteTestCollection(t, app, "pairing_tokens",
-		&core.TextField{Name: "user"},
-		&core.TextField{Name: "name"},
-		&core.TextField{Name: "token_hash"},
-		&core.TextField{Name: "stack_id"},
-		&core.JSONField{Name: "metadata"},
-		&core.BoolField{Name: "used"},
-		&core.DateField{Name: "expires_at"},
-		&core.DateField{Name: "used_at"},
-	)
-	ensureDriftRouteTestCollection(t, app, "workers",
-		&core.TextField{Name: "hostname"},
-		&core.TextField{Name: "ip"},
-		&core.TextField{Name: "os"},
-		&core.TextField{Name: "arch"},
-		&core.TextField{Name: "token_hash"},
-		&core.SelectField{Name: "status", Values: []string{"pending", "approved", "rejected"}},
-		&core.BoolField{Name: "approved"},
-		&core.DateField{Name: "approved_at"},
-		&core.DateField{Name: "last_seen"},
-		&core.NumberField{Name: "cpu_cores"},
-		&core.NumberField{Name: "ram_mb"},
-		&core.NumberField{Name: "disk_gb"},
-		&core.TextField{Name: "gpu"},
-		&core.BoolField{Name: "has_nvme"},
-		&core.BoolField{Name: "has_hw_transcode"},
-		&core.TextField{Name: "docker_version"},
-		&core.SelectField{Name: "type", Values: []string{"main", "worker", "storage"}},
-		&core.TextField{Name: "provider"},
-		&core.TextField{Name: "tags"},
-		&core.TextField{Name: "owner_id"},
-		&core.TextField{Name: "tenant_id"},
-		&core.TextField{Name: "stack_id"},
-		&core.AutodateField{Name: "created", OnCreate: true},
-		&core.AutodateField{Name: "updated", OnCreate: true, OnUpdate: true},
-	)
 }
 
 func TestInstallScriptPSServesPowerShellWorkerBootstrap(t *testing.T) {

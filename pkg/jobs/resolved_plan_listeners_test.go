@@ -28,24 +28,14 @@ func TestParseResolvedPlanListenerSetConsumesOnlyCanonicalRuntimeListeners(t *te
 	}
 }
 
-func TestParseResolvedPlanListenerSetAcceptsMandatoryEmptySet(t *testing.T) {
-	set, err := parseResolvedPlanListenerSet([]byte(resolvedPlanWithListeners(`[]`)))
-	if err != nil {
-		t.Fatalf("parseResolvedPlanListenerSet() error = %v", err)
-	}
-	if set.Listeners == nil || len(set.Listeners) != 0 || set.NodeRef != "" {
-		t.Fatalf("empty listener set = %#v", set)
-	}
-}
-
-func TestParseResolvedPlanListenerSetDoesNotCoupleStackKitIdentityToTechstackIdentity(t *testing.T) {
+func TestParseResolvedPlanListenerSetPreservesEmptyAuthorityAndOwnerIdentity(t *testing.T) {
 	plan := strings.Replace(resolvedPlanWithListeners(`[]`), `"stackId":"stack-a"`, `"stackId":"owner-defined-kit-instance"`, 1)
 	set, err := parseResolvedPlanListenerSet([]byte(plan))
 	if err != nil {
 		t.Fatalf("parseResolvedPlanListenerSet() error = %v", err)
 	}
-	if set.StackKitInstanceID != "owner-defined-kit-instance" {
-		t.Fatalf("StackKitInstanceID = %q", set.StackKitInstanceID)
+	if set.Listeners == nil || len(set.Listeners) != 0 || set.NodeRef != "" || set.StackKitInstanceID != "owner-defined-kit-instance" {
+		t.Fatalf("empty owner-defined listener set = %#v", set)
 	}
 }
 
@@ -74,4 +64,16 @@ const testResolvedPlanHash = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 
 func resolvedPlanWithListeners(listeners string) string {
 	return `{"apiVersion":"stackkit.resolved-plan/v1","kind":"ResolvedPlan","stackId":"stack-a","planHash":"` + testResolvedPlanHash + `","network":{"runtimeListeners":` + listeners + `},"routes":[{"port":1234}],"openPorts":[1234]}`
+}
+
+// Regression: Basement core's LAN DNS listeners carry the contract exposure
+// `lan`, and rollouts of the full Basement core stopped in port admission
+// (journey B2 run 35887448523).
+func TestParseResolvedPlanListenerSetAdmitsLANExposure(t *testing.T) {
+	plan := resolvedPlanWithListeners(`[
+		{"id":"lan-dns-udp","moduleRef":"m","unitRef":"u","instanceRef":"i","nodeRef":"node-a","componentRef":"lan-dns","transport":"udp","bindAddress":"0.0.0.0","port":53,"targetPort":53,"sharing":"exclusive","sourceRouteRefs":[],"exposure":"lan"}
+	]`)
+	if _, err := parseResolvedPlanListenerSet([]byte(plan)); err != nil {
+		t.Fatalf("a lan listener from the StackKits contract was refused: %v", err)
+	}
 }

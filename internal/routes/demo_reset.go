@@ -18,7 +18,6 @@ import (
 	"github.com/kombifyio/techstack/pkg/monthlyruntime"
 	"github.com/kombifyio/techstack/pkg/serverregistry"
 	"github.com/kombifyio/techstack/pkg/vmleases"
-	"github.com/pocketbase/pocketbase/core"
 )
 
 const (
@@ -45,7 +44,6 @@ const (
 )
 
 type demoResetHandlers struct {
-	app        core.App
 	leases     stackLifecycleLeaseService
 	reconciler monthlyruntime.ReconciliationEnqueuer
 	stacks     StackLifecycleStores
@@ -86,7 +84,6 @@ type demoResetResponse struct {
 // fail-closed without env config.
 func RegisterDemoResetRoutes(
 	r *httpx.Router,
-	app core.App,
 	leases stackLifecycleLeaseService,
 	reconciler monthlyruntime.ReconciliationEnqueuer,
 	stores StackLifecycleStores,
@@ -94,7 +91,7 @@ func RegisterDemoResetRoutes(
 	if r == nil {
 		return
 	}
-	h := demoResetHandlers{app: app, leases: leases, reconciler: reconciler, stacks: stores}
+	h := demoResetHandlers{leases: leases, reconciler: reconciler, stacks: stores}
 	r.POST("/api/internal/demo/reset", h.reset)
 }
 

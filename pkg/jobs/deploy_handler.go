@@ -19,8 +19,11 @@ import (
 	"github.com/kombifyio/techstack/internal/stackkitrelease"
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
 	"github.com/kombifyio/techstack/pkg/core"
+	"github.com/kombifyio/techstack/pkg/grpcserver"
+	"github.com/kombifyio/techstack/pkg/identity"
 	"github.com/kombifyio/techstack/pkg/runtimeidentity"
 	"github.com/kombifyio/techstack/pkg/secrets"
+	"github.com/kombifyio/techstack/pkg/stackkitcommand"
 	"github.com/kombifyio/techstack/pkg/unifier"
 	"github.com/kombifyio/techstack/pkg/workerauth"
 	"go.opentelemetry.io/otel"
@@ -80,7 +83,7 @@ func DeployHandler(cfg *ProvisionConfig) JobHandler {
 				return
 			}
 			if reconcileErr := reconcileRoutingRolloutOutcome(ctx, cfg, job, handlerErr); reconcileErr != nil && handlerErr == nil {
-				handlerErr = wrapProvisionError(StepFinalize, fmt.Sprintf("finish routing rollout: %v", reconcileErr),
+				handlerErr = wrapProvisionCause(StepFinalize, fmt.Errorf("finish routing rollout: %w", reconcileErr),
 					"The runtime rollout finished, but its routing result could not be persisted. Retry reconciliation before changing the route.")
 			}
 		}()
@@ -129,10 +132,10 @@ func DeployHandler(cfg *ProvisionConfig) JobHandler {
 						},
 					}
 				})
-				return wrapProvisionError(StepPortAdmission, rolloutErr.Error(),
+				return wrapProvisionCause(StepPortAdmission, rolloutErr,
 					"The selected worker no longer matches the requested RuntimeServer. No port admission or host mutation was started.")
 			}
-			return wrapProvisionError(StepTelemetryHandshake, rolloutErr.Error(), "Managed runtime enrollment could not be securely initialized. Configure the worker agent signing secret and retry before any runtime action.")
+			return wrapProvisionCause(StepTelemetryHandshake, rolloutErr, "Managed runtime enrollment could not be securely initialized. Configure the worker agent signing secret and retry before any runtime action.")
 		}
 		applied, err := rollout.runPortGovernedLifecycle(ctx)
 		if err != nil {
@@ -171,7 +174,7 @@ func deployPrepare(ctx context.Context, cfg *ProvisionConfig, job *Job, q *Queue
 
 	persister, err := newSpecPersister(cfg, job.TargetID)
 	if err != nil {
-		return nil, wrapProvisionError(StepPrepareRollout, fmt.Sprintf("failed to init persister: %v", err),
+		return nil, wrapProvisionCause(StepPrepareRollout, fmt.Errorf("failed to init persister: %w", err),
 			"Could not initialize spec persistence.")
 	}
 
@@ -184,13 +187,13 @@ func deployPrepare(ctx context.Context, cfg *ProvisionConfig, job *Job, q *Queue
 
 	intentBytes, err := persister.LoadIntentBytes()
 	if err != nil {
-		return nil, wrapProvisionError(StepPrepareRollout, fmt.Sprintf("failed to load intent: %v", err),
+		return nil, wrapProvisionCause(StepPrepareRollout, fmt.Errorf("failed to load intent: %w", err),
 			"Could not load persisted configuration.")
 	}
 
 	reqSpec, err := persister.LoadRequirementsSpec()
 	if err != nil {
-		return nil, wrapProvisionError(StepPrepareRollout, fmt.Sprintf("failed to load requirements: %v", err),
+		return nil, wrapProvisionCause(StepPrepareRollout, fmt.Errorf("failed to load requirements: %w", err),
 			"Could not load persisted requirements.")
 	}
 	stackSpecPath := ""
@@ -206,7 +209,7 @@ func deployPrepare(ctx context.Context, cfg *ProvisionConfig, job *Job, q *Queue
 	loader := unifier.NewLoader()
 	kombSpec, err := loader.LoadBytes(intentBytes)
 	if err != nil {
-		return nil, wrapProvisionError(StepGenerateUnified, fmt.Sprintf("failed to parse intent: %v", err),
+		return nil, wrapProvisionCause(StepGenerateUnified, fmt.Errorf("failed to parse intent: %w", err),
 			"kombination.yaml could not be parsed.")
 	}
 	// The StackKits CLI handoff spec lives on the instance's local disk, and
@@ -219,8 +222,12 @@ func deployPrepare(ctx context.Context, cfg *ProvisionConfig, job *Job, q *Queue
 	// The spec is a pure projection of the persisted intent, which this function
 	// has already loaded, so it can simply be rebuilt.
 	if restoreErr := restoreStackSpecFromIntent(persister, intentBytes); restoreErr != nil {
-		return nil, wrapProvisionError(StepPrepareRollout, restoreErr.Error(),
+		return nil, wrapProvisionCause(StepPrepareRollout, restoreErr,
 			"Could not rebuild the StackKits handoff spec from your saved configuration.")
+	}
+	if projectionErr := rematerializeDeployProjection(persister, job); projectionErr != nil {
+		return nil, wrapProvisionCause(StepPrepareRollout, projectionErr,
+			"Could not rebuild the native v2 StackKits projection from the saved stack configuration.")
 	}
 	stackSpecPath, err = deployApplyRoutingOverlay(ctx, cfg, job, persister, kombSpec)
 	if err != nil {
@@ -249,6 +256,27 @@ func deployPrepare(ctx context.Context, cfg *ProvisionConfig, job *Job, q *Queue
 	}, nil
 }
 
+// rematerializeDeployProjection restores the process-local projection from the
+// immutable deploy snapshot. Presence of stack_spec_v2 identifies a native-v2
+// dispatch, so a malformed or empty value must fail closed rather than remove
+// the sibling and silently fall back to a build-time kit template.
+func rematerializeDeployProjection(persister *unifier.SpecPersister, job *Job) error {
+	if persister == nil || job == nil {
+		return nil
+	}
+	if _, nativeV2 := job.Payload[payloadKeyStackSpecV2]; !nativeV2 {
+		return nil
+	}
+	path, err := persistProjectedStackSpec(persister, job.Payload)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("native-v2 deploy snapshot has no %s projection", payloadKeyStackSpecV2)
+	}
+	return nil
+}
+
 // deployResolveManagedTarget resolves the managed VM lease runtime target,
 // hydrates it into the spec + StackKits handoff spec, and returns the (possibly
 // updated) handoff stack-spec path.
@@ -258,20 +286,24 @@ func deployResolveManagedTarget(ctx context.Context, cfg *ProvisionConfig, job *
 		if isJobWaitError(err) {
 			return nil, "", err
 		}
+		if errors.Is(err, ErrManagedRuntimeEnrollmentFailed) {
+			collectManagedRuntimeEnrollmentDiagnostics(ctx, cfg, job, q, kombSpec, nil, "managed_runtime_enrollment_failed", err)
+		}
 		captureJobError(ctx, err, map[string]interface{}{
 			stepField:     StepPrepareRollout,
 			stackIDField:  job.TargetID,
 			leaseIDField:  stringFromMap(job.Result, leaseIDField),
 			tenantIDField: managedRuntimeTenantID(job, kombSpec),
 		})
-		return nil, "", wrapProvisionError(StepPrepareRollout, err.Error(),
+		return nil, "", wrapProvisionCause(StepPrepareRollout, err,
 			"Managed Runtime rollout requires an SSH host or public IP from the VM lease before StackKits can generate and apply the rollout.")
 	}
 	hydrateManagedRuntimeSpec(kombSpec, managedTarget)
 	copyManagedRuntimeTargetToJob(job, managedTarget)
+	collectManagedRuntimeEnrollmentDiagnostics(ctx, cfg, job, q, kombSpec, managedTarget, "managed_runtime_enrollment_succeeded", nil)
 	hydratedStackSpecPath, hydratedStackSpecHash, hydrateErr := hydratePersistedStackSpecTarget(persister, managedTarget)
 	if hydrateErr != nil {
-		return nil, "", wrapProvisionError(StepPrepareRollout, hydrateErr.Error(),
+		return nil, "", wrapProvisionCause(StepPrepareRollout, hydrateErr,
 			"Could not update the StackKits handoff spec with the managed runtime target.")
 	}
 	stackSpecPath := ""
@@ -292,6 +324,60 @@ func deployResolveManagedTarget(ctx context.Context, cfg *ProvisionConfig, job *
 	return managedTarget, stackSpecPath, nil
 }
 
+func collectManagedRuntimeEnrollmentDiagnostics(
+	ctx context.Context,
+	cfg *ProvisionConfig,
+	job *Job,
+	q *Queue,
+	spec *core.KombinationSpec,
+	target *ManagedRuntimeTarget,
+	reason string,
+	enrollmentErr error,
+) {
+	if cfg == nil || job == nil || cfg.RuntimeActions.DiagnosticsCollector == nil {
+		return
+	}
+	snapshot := job.Snapshot()
+	leaseID := firstNonEmpty(stringFromMap(snapshot.Result, leaseIDField), stringFromMap(snapshot.Payload, leaseIDField), metadataString(spec, leaseIDField))
+	tenantID := managedRuntimeTenantIDFromSnapshot(snapshot, spec)
+	provider := firstNonEmpty(stringFromMap(snapshot.Result, providerField), stringFromMap(snapshot.Payload, providerField), metadataString(spec, metadataKeyProviderID))
+	if target == nil {
+		target = cachedManagedRuntimeDiagnosticsTarget(job, snapshot, spec, provider)
+	} else {
+		target = attachManagedProviderCredential(target, provider)
+	}
+	elapsed := time.Duration(0)
+	if startedAt, ok := managedRuntimeEnrollmentWaitStartedAt(snapshot.Result); ok {
+		elapsed = time.Since(startedAt)
+	}
+	rollout := &deployRollout{cfg: cfg, job: job, q: q, managedRuntime: true, targetKind: "cloud"}
+	rollout.collectRuntimeDiagnostics(ctx, nil, RuntimeActionRequest{
+		StackID: job.TargetID, TenantID: tenantID,
+		RuntimeTarget: stackKitsRuntimeActionTargetFromManagedRuntimeTarget(target),
+		TechStackEnrollment: &TechStackEnrollment{
+			TenantID: tenantID, StackID: job.TargetID, LeaseID: leaseID,
+			ServerID: runtimeidentity.LeaseServerID(leaseID), RuntimeAgentID: runtimeidentity.LeaseRuntimeAgentID(tenantID, leaseID),
+		},
+	}, "managed_runtime_enrollment", reason, elapsed, enrollmentErr)
+}
+
+func cachedManagedRuntimeDiagnosticsTarget(job *Job, snapshot JobSnapshot, spec *core.KombinationSpec, provider string) *ManagedRuntimeTarget {
+	var target *ManagedRuntimeTarget
+	job.mu.RLock()
+	target = cloneManagedRuntimeTarget(job.managedRuntimeTarget)
+	job.mu.RUnlock()
+	if target == nil {
+		target = managedRuntimeTargetFromRuntimeMap(snapshot.Result, "job-result")
+	}
+	if target == nil {
+		target = managedRuntimeTargetFromRuntimeMap(snapshot.Payload, "job-payload")
+	}
+	if target == nil && spec != nil {
+		target = ManagedRuntimeTargetFromMetadata(spec.Metadata)
+	}
+	return attachManagedProviderCredential(target, provider)
+}
+
 // deployValidateWorkers parses approved workers from the payload and enforces
 // worker requirements for non-managed stacks.
 func deployValidateWorkers(job *Job, q *Queue, prep *deployPreparation) ([]core.Worker, error) {
@@ -300,7 +386,7 @@ func deployValidateWorkers(job *Job, q *Queue, prep *deployPreparation) ([]core.
 
 	workers, err := parseWorkersFromPayload(job.Payload["workers"])
 	if err != nil {
-		return nil, wrapProvisionError(StepValidateWorkers, fmt.Sprintf("invalid workers payload: %v", err),
+		return nil, wrapProvisionCause(StepValidateWorkers, fmt.Errorf("invalid workers payload: %w", err),
 			"Could not read approved workers for rollout.")
 	}
 
@@ -338,9 +424,9 @@ func deployGenerateArtifacts(ctx context.Context, cfg *ProvisionConfig, job *Job
 
 	unifiedSpec, err := buildReviewableStackSpecProposal(prep.kombSpec)
 	if err != nil {
-		return nil, wrapProvisionError(
+		return nil, wrapProvisionCause(
 			StepGenerateUnified,
-			fmt.Sprintf("failed to prepare StackSpec proposal: %v", err),
+			fmt.Errorf("failed to prepare StackSpec proposal: %w", err),
 			"Could not prepare the reviewed configuration for StackKits.",
 		)
 	}
@@ -350,13 +436,13 @@ func deployGenerateArtifacts(ctx context.Context, cfg *ProvisionConfig, job *Job
 
 	proposalPath, err := prep.persister.SaveUnifiedSpec(unifiedSpec, prep.persister.GetRequirementsSpecPath())
 	if err != nil {
-		return nil, wrapProvisionError(StepPersistUnified, fmt.Sprintf("failed to persist StackSpec proposal: %v", err),
+		return nil, wrapProvisionCause(StepPersistUnified, fmt.Errorf("failed to persist StackSpec proposal: %w", err),
 			"Could not persist the reviewed StackSpec proposal.")
 	}
 
 	tofuDir := prep.persister.GetTofuDir()
 	if err := os.MkdirAll(tofuDir, 0755); err != nil {
-		return nil, wrapProvisionError(StepGenerateIaC, fmt.Sprintf("failed to create tofu dir: %v", err),
+		return nil, wrapProvisionCause(StepGenerateIaC, fmt.Errorf("failed to create tofu dir: %w", err),
 			"Could not prepare workspace directory.")
 	}
 
@@ -370,7 +456,7 @@ func deployGenerateArtifacts(ctx context.Context, cfg *ProvisionConfig, job *Job
 	platformNodes := runtimeActionPlatformNodesFromPayload(job.Payload)
 	if len(platformNodes) > 0 {
 		if hydratedPath, hydratedHash, hydrateErr := hydratePersistedStackSpecPlatformNodes(prep.persister, platformNodes); hydrateErr != nil {
-			return nil, wrapProvisionError(StepGenerateIaC, hydrateErr.Error(),
+			return nil, wrapProvisionCause(StepGenerateIaC, hydrateErr,
 				"Could not update the StackKits handoff spec with supplemental node targets.")
 		} else if hydratedPath != "" {
 			stackSpecPath = hydratedPath
@@ -381,9 +467,10 @@ func deployGenerateArtifacts(ctx context.Context, cfg *ProvisionConfig, job *Job
 		}
 	}
 	artifactMetadata := map[string]string{}
-	artifactResult, err := generateStackKitArtifacts(ctx, cfg, job, unifiedSpec, stackSpecPath, tofuDir)
+	artifactResult, err := generateStackKitArtifacts(ctx, cfg, job, unifiedSpec, stackSpecPath, tofuDir, prep.managedTarget,
+		managedRuntimeTenantID(job, prep.kombSpec), managedRuntimeOwnerID(job, prep.kombSpec))
 	if err != nil {
-		return nil, wrapProvisionError(StepGenerateIaC, fmt.Sprintf("StackKits artifact generation failed: %v", err),
+		return nil, wrapProvisionCause(StepGenerateIaC, fmt.Errorf("StackKits artifact generation failed: %w", err),
 			"Could not generate StackKits rollout artifacts.")
 	}
 	for key, value := range artifactResultMetadata(artifactResult) {
@@ -396,6 +483,9 @@ func deployGenerateArtifacts(ctx context.Context, cfg *ProvisionConfig, job *Job
 	}
 	if artifactResult != nil && strings.TrimSpace(artifactResult.OutputDir) != "" {
 		tofuDir = artifactResult.OutputDir
+	}
+	if artifactResult != nil && strings.TrimSpace(artifactResult.StackSpecPath) != "" {
+		stackSpecPath = artifactResult.StackSpecPath
 	}
 	unifiedPath := strings.TrimSpace(artifactResult.ResolvedPlanPath)
 	if unifiedPath == "" {
@@ -411,8 +501,8 @@ func deployGenerateArtifacts(ctx context.Context, cfg *ProvisionConfig, job *Job
 	}
 	artifactMetadata["stack_spec_proposal_path"] = proposalPath
 	artifactMetadata["resolved_plan_path"] = unifiedPath
-	if restored, restoreErr := restoreLegacyStackKitsRetryLocalArtifacts(cfg != nil && cfg.StackKitCommander != nil, tofuDir); restoreErr != nil {
-		return nil, wrapProvisionError(StepGenerateIaC, fmt.Sprintf("failed to restore StackKits local artifacts: %v", restoreErr),
+	if restored, restoreErr := restoreLegacyStackKitsRetryLocalArtifacts(cfg != nil && stackKitCommanderOwnsFullLifecycle(cfg.StackKitCommander), tofuDir); restoreErr != nil {
+		return nil, wrapProvisionCause(StepGenerateIaC, fmt.Errorf("failed to restore StackKits local artifacts: %w", restoreErr),
 			"Could not prepare required StackKits local file artifacts.")
 	} else if len(restored) > 0 {
 		artifactMetadata["stackkits_local_artifacts_restored"] = strings.Join(restored, ",")
@@ -446,7 +536,9 @@ type deployRollout struct {
 	runtimeMetrics      map[string]string
 	finalRuntimePhase   RuntimePhase
 	portGeneration      *portinventory.GenerationRef
+	portRequirements    []portinventory.Requirement
 	generatedPlanHash   string
+	addressPrefix       string
 	portMutationStarted bool
 	portActivated       bool
 }
@@ -505,6 +597,7 @@ func newDeployRollout(cfg *ProvisionConfig, job *Job, q *Queue, prep *deployPrep
 		unifiedSpec:       art.unifiedSpec,
 		actionReq:         actionReq,
 		generatedPlanHash: strings.TrimSpace(art.metadata["resolved_plan_hash"]),
+		addressPrefix:     strings.TrimSpace(art.metadata[metadataKeyKombifyMeAddressPrefix]),
 		e2eProof:          e2eProof,
 		runtimeProof:      map[string]interface{}{},
 		stackKitOutputs:   map[string]interface{}{},
@@ -656,6 +749,10 @@ func techStackEnrollmentForRollout(job *Job, prep *deployPreparation, tenantID, 
 			"websocket_url":     absoluteTechStackURL(websocketTechStackServerURL(serverURL), controlPath),
 			"grpc_hint":         "mtls-if-http2-network-allows",
 			"ssh_liveness_role": "bootstrap-diagnostics-only",
+			"telemetry": map[string]any{
+				"sentry_configured":  strings.TrimSpace(os.Getenv("SENTRY_DSN")) != "",
+				"posthog_configured": firstNonEmpty(os.Getenv("PUBLIC_POSTHOG_KEY"), os.Getenv("POSTHOG_KEY")) != "",
+			},
 		},
 	}, nil
 }
@@ -790,7 +887,7 @@ func (r *deployRollout) runSimulationGate(ctx context.Context) error {
 	result, err := runRuntimeAction(ctx, r.cfg.RuntimeActions.SimulationGate, r.actionReq)
 	if err != nil {
 		captureJobError(ctx, err, map[string]interface{}{stepField: StepSimulationGate, stackIDField: r.job.TargetID})
-		return wrapProvisionError(StepSimulationGate, fmt.Sprintf("simulation gate failed: %v", err),
+		return wrapProvisionCause(StepSimulationGate, fmt.Errorf("simulation gate failed: %w", err),
 			"Could not validate the rollout against the simulation gate.")
 	}
 	proof := runtimeActionProof(runtimeActionSimulateUpdate, result, "passed")
@@ -815,14 +912,14 @@ func (r *deployRollout) runRollout(ctx context.Context) error {
 	r.job.setStep(StepProvision)
 	if apply {
 		startRuntimeLifecyclePhase(r.job, runtimePhasePrepareApply, "Preparing and applying the StackKit rollout")
-		if r.cfg.StackKitCommander == nil {
+		if !stackKitCommanderOwnsFullLifecycle(r.cfg.StackKitCommander) {
 			if _, legacyHTTP := r.cfg.RuntimeActions.RolloutRunner.(*HTTPRuntimeActionRunner); legacyHTTP {
 				return wrapProvisionError(StepRolloutRunner,
 					"legacy HTTP StackKits rollout cannot bind the admitted ResolvedPlan hash",
 					"Deploy a typed StackKits agent that advertises expected-plan-hash admission before applying this rollout.")
 			}
 		}
-		if r.cfg.StackKitCommander == nil && r.cfg.RuntimeActions.RolloutRunner == nil {
+		if !stackKitCommanderOwnsFullLifecycle(r.cfg.StackKitCommander) && r.cfg.RuntimeActions.RolloutRunner == nil {
 			r.updateJobStepProgress(StepRolloutRunner, 75, "Running StackKits rollout...")
 			return wrapProvisionError(StepRolloutRunner,
 				"StackKits rollout runner is not configured",
@@ -838,12 +935,12 @@ func (r *deployRollout) runRollout(ctx context.Context) error {
 			"target_kind": r.targetKind,
 		})
 		if err := r.markPortMutationStarted(ctx); err != nil {
-			return wrapProvisionError(StepPortAdmission, fmt.Sprintf("runtime listener mutation fence failed: %v", err),
+			return wrapProvisionCause(StepPortAdmission, fmt.Errorf("runtime listener mutation fence failed: %w", err),
 				"Techstack could not bind this rollout to its reserved host listeners. No host mutation was started.")
 		}
 		if err := r.bootstrapManagedRuntimeTarget(ctx); err != nil {
 			captureJobError(ctx, err, map[string]interface{}{stepField: StepStackKitPrepare, stackIDField: r.job.TargetID, "stack_kit": r.unifiedSpec.StackKit})
-			return wrapProvisionError(StepStackKitPrepare, fmt.Sprintf("Managed runtime target bootstrap failed: %v", err),
+			return wrapProvisionCause(StepStackKitPrepare, fmt.Errorf("managed runtime target bootstrap failed: %w", err),
 				"TechStack could not prepare the managed VPS for the StackKits rollout.")
 		}
 		if r.managedRuntime {
@@ -852,14 +949,24 @@ func (r *deployRollout) runRollout(ctx context.Context) error {
 		r.updateJobStepProgress(StepRolloutRunner, 82, "Applying StackKit services on the managed VPS...")
 		var result map[string]interface{}
 		var err error
-		if r.cfg.StackKitCommander != nil {
+		if stackKitCommanderOwnsFullLifecycle(r.cfg.StackKitCommander) {
 			result, err = r.runTypedStackKitApply(ctx)
 		} else {
 			result, err = r.runStackKitsRolloutWithBoundedRetry(ctx)
 		}
 		if err != nil {
+			if result != nil {
+				proof := runtimeActionProof(string(runtimeaction.ActionStackKitRollout), result, "failed")
+				proof["status"] = "failed"
+				if r.runtimeProof == nil {
+					r.runtimeProof = map[string]interface{}{}
+				}
+				r.runtimeProof["rollout"] = proof
+				r.e2eProof["rollout_result"] = "failed"
+				r.persistRuntimeProgress()
+			}
 			captureJobError(ctx, err, map[string]interface{}{stepField: StepRolloutRunner, stackIDField: r.job.TargetID, "stack_kit": r.unifiedSpec.StackKit})
-			return wrapProvisionError(StepRolloutRunner, fmt.Sprintf("StackKits rollout failed: %v", err),
+			return wrapProvisionCause(StepRolloutRunner, fmt.Errorf("StackKits rollout failed: %w", err),
 				"StackKits could not apply the selected StackKit rollout.")
 		}
 		proof := runtimeActionProof(string(runtimeaction.ActionStackKitRollout), result, string(runtimeaction.StatusApplied))
@@ -942,21 +1049,31 @@ func (r *deployRollout) runTypedStackKitApply(ctx context.Context) (map[string]i
 		return nil, err
 	}
 	workingDirectory := defaultStackKitNodeWorkspace
-	stackName, domain, _, err := stackKitInitFacts(canonical.Path)
+	stackName, domain, candidateSpec, err := stackKitInitFacts(canonical.Path)
 	if err != nil {
 		return nil, err
 	}
+	specPath := filepath.Base(canonical.Path)
+	boundSpecPath := ""
+	if r.addressPrefix != "" {
+		boundSpecPath = specPath
+		specPath = "stack-spec.yaml"
+	}
 	baseRequest := StackKitLifecycleRequest{
-		StackID:          r.job.TargetID,
-		TenantID:         r.actionReq.TenantID,
-		OwnerID:          r.actionReq.OwnerID,
-		AgentID:          r.actionReq.TechStackEnrollment.RuntimeAgentID,
-		OwnerApproved:    true,
-		WorkingDirectory: workingDirectory,
-		SpecPath:         filepath.Base(canonical.Path),
-		StackKit:         r.unifiedSpec.StackKit,
-		StackName:        stackName,
-		Domain:           domain,
+		StackID:           r.job.TargetID,
+		TenantID:          r.actionReq.TenantID,
+		OwnerID:           r.actionReq.OwnerID,
+		OwnerEmail:        stackOwnerEmail(r.job, r.actionReq.OwnerID),
+		AgentID:           r.actionReq.TechStackEnrollment.RuntimeAgentID,
+		OwnerApproved:     true,
+		WorkingDirectory:  workingDirectory,
+		SpecPath:          specPath,
+		AddressPrefix:     r.addressPrefix,
+		BoundSpecPath:     boundSpecPath,
+		StackKit:          r.unifiedSpec.StackKit,
+		StackName:         stackName,
+		Domain:            domain,
+		CandidateSpecJSON: candidateSpec,
 		// A fresh managed workspace has no current intent to compare-and-swap.
 		// StackKits creates it atomically without this field and treats an exact
 		// retry as already applied; a differing existing intent still fails
@@ -978,24 +1095,80 @@ func (r *deployRollout) runTypedStackKitApply(ctx context.Context) (map[string]i
 	started := time.Now()
 	result, err := runTypedStackKitApplySequence(ctx, r.cfg.StackKitCommander, r.job.ID, baseRequest, *release)
 	if err != nil {
+		reason := "typed_stackkit_rollout_failed"
 		var operationErr *typedStackKitOperationError
-		if errors.As(err, &operationErr) && operationErr.TimedOut() {
-			reason := "typed_stackkit_" + operationErr.Operation + "_timeout"
+		if errors.As(err, &operationErr) {
+			reason = "typed_stackkit_" + operationErr.Operation + "_failed"
+			if operationErr.TimedOut() {
+				reason = "typed_stackkit_" + operationErr.Operation + "_timeout"
+			}
 			r.job.mutateResult(func(jobResult map[string]interface{}) {
-				jobResult["typed_stackkit_rollout"] = map[string]interface{}{
+				failure := map[string]interface{}{
 					"status":      "failed",
 					"reason_code": reason,
-					"retryable":   true,
 					"operation":   operationErr.Operation,
 					"command_id":  operationErr.CommandID,
 					"release":     release.Receipt().Version,
 					"elapsed_ms":  time.Since(started).Milliseconds(),
 				}
+				if operationErr.TimedOut() {
+					failure["retryable"] = true
+				}
+				if typed := operationErr.Failure; typed.ReasonCode != "" {
+					failure["stackkit_reason_code"] = typed.ReasonCode
+					failure["retryable"] = typed.Retryable || operationErr.TimedOut()
+					if !typed.RetryAfter.IsZero() {
+						failure["retry_after"] = typed.RetryAfter.UTC().Format(time.RFC3339)
+					}
+				}
+				jobResult["typed_stackkit_rollout"] = failure
 			})
-			r.collectRuntimeDiagnostics(ctx, nil, r.actionReq, "stackkit_rollout", reason, time.Since(started), err)
 		}
+		r.collectRuntimeDiagnostics(ctx, nil, r.actionReq, "stackkit_rollout", reason, time.Since(started), err)
 	}
 	return result, err
+}
+
+// StackOwnerEmailPayloadKey carries the stack Owner's signed-in email into a
+// rollout job. StackKits init needs a real Owner email for a fresh node.
+const StackOwnerEmailPayloadKey = "stack_owner_email"
+
+// CaptureStackOwnerEmail records the requesting principal's email only when
+// that principal is the stack Owner. An email from anyone else (support, a
+// system job, another member) is never adopted as the Owner identity.
+func CaptureStackOwnerEmail(ctx context.Context, payload map[string]interface{}, ownerID string) {
+	if ctx == nil || payload == nil || strings.TrimSpace(ownerID) == "" {
+		return
+	}
+	principal := identity.FromContext(ctx)
+	if principal == nil || strings.TrimSpace(principal.UserID) != strings.TrimSpace(ownerID) {
+		return
+	}
+	if email := strings.TrimSpace(principal.Email); stackkitcommand.ValidOwnerEmail(email) {
+		payload[StackOwnerEmailPayloadKey] = email
+	}
+}
+
+// stackOwnerEmail returns the Owner email captured at dispatch, or the email
+// of a provision actor who is the Owner.
+func stackOwnerEmail(job *Job, ownerID string) string {
+	if job == nil || strings.TrimSpace(ownerID) == "" {
+		return ""
+	}
+	job.mu.RLock()
+	captured := strings.TrimSpace(stringFromMap(job.Payload, StackOwnerEmailPayloadKey))
+	actor := jobActorFromPayload(job.Payload)
+	job.mu.RUnlock()
+	if stackkitcommand.ValidOwnerEmail(captured) {
+		return captured
+	}
+	if strings.TrimSpace(actor.UserID) != strings.TrimSpace(ownerID) {
+		return ""
+	}
+	if email := strings.TrimSpace(actor.Email); stackkitcommand.ValidOwnerEmail(email) {
+		return email
+	}
+	return ""
 }
 
 const managedBackupTargetInventoryResultField = "managed_backup_target_inventory"
@@ -1043,8 +1216,55 @@ func (r *deployRollout) buildManagedStackKitInventory(
 	}
 	if required {
 		r.recordManagedBackupTargetInventory("ready", "", false)
+		r.projectBackupSchedule(ctx, resolvedPlan)
 	}
 	return inventory, nil
+}
+
+// projectBackupSchedule records the cadence the plan selected, so the control
+// plane can later tell that this stack is due. It runs only after the inventory
+// bound successfully: projecting a schedule for a stack whose backup target
+// failed to attest would queue runs against a repository that does not exist.
+//
+// A projection failure never fails the deploy. The rollout already succeeded
+// and the backup target is bound; losing the cadence delays backups until the
+// next deploy, while failing here would roll back a healthy deployment over a
+// scheduling record.
+func (r *deployRollout) projectBackupSchedule(ctx context.Context, resolvedPlan []byte) {
+	if r == nil || r.cfg == nil || r.cfg.BackupScheduleProjector == nil || r.job == nil {
+		return
+	}
+	projection, found, err := backupScheduleFromResolvedPlan(resolvedPlan)
+	if err != nil {
+		r.recordBackupScheduleProjection("failed", "backup_schedule_invalid")
+		return
+	}
+	if !found {
+		// A backup target without a schedule is a manual-only repository, not
+		// a defect: nothing is due until someone asks.
+		r.recordBackupScheduleProjection("not_applicable", "no_schedule_selected")
+		return
+	}
+	projection.TenantID = strings.TrimSpace(r.actionReq.TenantID)
+	projection.StackID = strings.TrimSpace(r.job.TargetID)
+	projection.OwnerID = strings.TrimSpace(r.actionReq.OwnerID)
+	projection.StackName = strings.TrimSpace(r.job.TargetName)
+	if err := r.cfg.BackupScheduleProjector(ctx, projection); err != nil {
+		r.recordBackupScheduleProjection("failed", "backup_schedule_not_persisted")
+		return
+	}
+	r.recordBackupScheduleProjection("ready", "")
+}
+
+func (r *deployRollout) recordBackupScheduleProjection(status, reasonCode string) {
+	if r == nil || r.job == nil {
+		return
+	}
+	r.job.mutateResult(func(result map[string]interface{}) {
+		result["managed_backup_schedule"] = map[string]interface{}{
+			"status": status, "reason_code": reasonCode,
+		}
+	})
 }
 
 func managedBackupTargetInventoryRequired(resolvedPlan []byte) (bool, error) {
@@ -1135,73 +1355,144 @@ func runTypedStackKitApplySequenceWithBudget(ctx context.Context, sender StackKi
 	sequenceCtx, cancel := context.WithTimeout(ctx, sequenceBudget)
 	defer cancel()
 	nodePlanHash := ""
-	for _, operation := range []string{StackKitLifecycleInit, StackKitLifecycleGenerate, StackKitLifecyclePlan} {
+	operations := []string{StackKitLifecycleInit}
+	if baseRequest.AddressPrefix != "" {
+		operations = append(operations, StackKitLifecycleAddressBind)
+	}
+	operations = append(operations, StackKitLifecycleGenerate, StackKitLifecyclePlan)
+	for _, operation := range operations {
 		request := baseRequest
 		request.Operation = operation
+		if operation != StackKitLifecycleInit && operation != StackKitLifecycleAddressBind && request.BoundSpecPath != "" {
+			request.SpecPath = request.BoundSpecPath
+		}
 		request, err := NormalizeStackKitLifecycleRequest(request)
 		if err != nil {
 			return nil, err
 		}
-		command, err := stackKitLifecycleCommand(jobID+"-"+operation, request, release)
+		result, _, err := dispatchTypedStackKitOperation(sequenceCtx, sender, jobID, request, release, nil)
 		if err != nil {
 			return nil, err
-		}
-		if err := bindManagedStackKitCommandBudget(sequenceCtx, command, operation); err != nil {
-			return nil, &typedStackKitOperationError{Operation: operation, CommandID: command.CommandId, Err: err}
-		}
-		result, err := sendStackKitCommandBoundedWithGraceForTenant(sequenceCtx, sender, request.TenantID, request.AgentID, command, managedStackKitResultGrace)
-		if err != nil {
-			return nil, &typedStackKitOperationError{Operation: operation, CommandID: command.CommandId, Err: err}
-		}
-		if result == nil {
-			return nil, fmt.Errorf("typed StackKits %s result is missing", operation)
-		}
-		if !result.Success {
-			err := fmt.Errorf("StackKits %s failed with exit code %d: %s", operation, result.ExitCode, strings.TrimSpace(result.Stderr))
-			return nil, &typedStackKitOperationError{Operation: operation, CommandID: command.CommandId, Err: err, AgentTimedOut: stackKitResultTimedOut(result)}
 		}
 		if operation == StackKitLifecyclePlan {
 			// The node-local generation is authoritative for the node-local apply.
 			// Controller generation includes controller-only inventory inputs and
 			// therefore cannot be used as an equality gate for this workspace.
-			var err error
-			nodePlanHash, err = typedStackKitPlanHash(result)
-			if err != nil {
-				return nil, err
+			var planErr error
+			nodePlanHash, planErr = typedStackKitPlanHash(result)
+			if planErr != nil {
+				return nil, planErr
 			}
 		}
 	}
 
 	request := baseRequest
 	request.Operation = StackKitLifecycleApply
+	if request.BoundSpecPath != "" {
+		request.SpecPath = request.BoundSpecPath
+	}
 	request, err := NormalizeStackKitLifecycleRequest(request)
 	if err != nil {
 		return nil, err
 	}
-	command, err := stackKitLifecycleCommand(jobID+"-apply", request, release)
-	if err != nil {
-		return nil, err
-	}
-	command.ExpectedPlanHash = nodePlanHash
-	if err := bindManagedStackKitCommandBudget(sequenceCtx, command, StackKitLifecycleApply); err != nil {
-		return nil, &typedStackKitOperationError{Operation: StackKitLifecycleApply, CommandID: command.CommandId, Err: err}
-	}
-	result, err := sendStackKitCommandBoundedWithGraceForTenant(sequenceCtx, sender, request.TenantID, request.AgentID, command, managedStackKitResultGrace)
-	if err != nil {
-		return nil, &typedStackKitOperationError{Operation: StackKitLifecycleApply, CommandID: command.CommandId, Err: err}
-	}
+	result, _, err := dispatchTypedStackKitOperation(sequenceCtx, sender, jobID, request, release, func(command *agentpb.StackKitCommand) {
+		command.ExpectedPlanHash = nodePlanHash
+	})
 	if result == nil {
+		if err != nil {
+			return nil, err
+		}
 		return nil, fmt.Errorf("typed StackKits apply result is missing")
 	}
-	normalized, err := normalizeStackKitLifecycleResult(request, result)
-	if err != nil {
-		return nil, err
+	normalized, normErr := normalizeStackKitLifecycleResult(request, result)
+	if normErr != nil {
+		if err != nil {
+			return nil, err
+		}
+		return nil, normErr
 	}
-	if !result.Success {
-		err := fmt.Errorf("StackKits apply failed with exit code %d: %s", result.ExitCode, strings.TrimSpace(result.Stderr))
-		return normalized, &typedStackKitOperationError{Operation: StackKitLifecycleApply, CommandID: command.CommandId, Err: err, AgentTimedOut: stackKitResultTimedOut(result)}
+	if err != nil {
+		return normalized, err
 	}
 	return normalized, nil
+}
+
+const typedStackKitRuntimePendingMaxAttempts = 8
+
+var typedStackKitRuntimePendingRetryDelay = 15 * time.Second
+
+func dispatchTypedStackKitOperation(
+	ctx context.Context,
+	sender StackKitCommandSender,
+	jobID string,
+	request StackKitLifecycleRequest,
+	release stackkitrelease.Release,
+	prepare func(*agentpb.StackKitCommand),
+) (*agentpb.StackKitResult, string, error) {
+	var lastID string
+	var lastResult *agentpb.StackKitResult
+	for attempt := 1; attempt <= typedStackKitRuntimePendingMaxAttempts; attempt++ {
+		commandID := jobID + "-" + request.Operation
+		if attempt > 1 {
+			commandID = fmt.Sprintf("%s-%s-%d", jobID, request.Operation, attempt)
+		}
+		lastID = commandID
+		command, err := stackKitLifecycleCommand(commandID, request, release)
+		if err != nil {
+			return nil, commandID, err
+		}
+		if prepare != nil {
+			prepare(command)
+		}
+		if err := bindManagedStackKitCommandBudget(ctx, command, request.Operation); err != nil {
+			return nil, commandID, &typedStackKitOperationError{Operation: request.Operation, CommandID: commandID, Err: err}
+		}
+		result, err := sendStackKitCommandBoundedWithGraceForTenant(ctx, sender, request.TenantID, request.AgentID, command, managedStackKitResultGrace)
+		if err != nil {
+			return nil, commandID, &typedStackKitOperationError{Operation: request.Operation, CommandID: commandID, Err: err}
+		}
+		if result == nil {
+			return nil, commandID, fmt.Errorf("typed StackKits %s result is missing", request.Operation)
+		}
+		if result.Success {
+			return result, commandID, nil
+		}
+		lastResult = result
+		if !stackKitRuntimeConvergencePending(result) || attempt == typedStackKitRuntimePendingMaxAttempts {
+			err := fmt.Errorf("StackKits %s failed with exit code %d: %s", request.Operation, result.ExitCode, strings.TrimSpace(result.Stderr))
+			return result, commandID, &typedStackKitOperationError{
+				Operation: request.Operation, CommandID: commandID, Err: err,
+				AgentTimedOut: stackKitResultTimedOut(result), Failure: typedStackKitFailureFromResult(result),
+			}
+		}
+		if waitErr := waitForTypedStackKitRuntimeRetry(ctx); waitErr != nil {
+			err := fmt.Errorf("StackKits %s failed with exit code %d: %s", request.Operation, result.ExitCode, strings.TrimSpace(result.Stderr))
+			return result, commandID, &typedStackKitOperationError{Operation: request.Operation, CommandID: commandID, Err: err}
+		}
+	}
+	return lastResult, lastID, fmt.Errorf("typed StackKits %s exhausted runtime-convergence retries", request.Operation)
+}
+
+func stackKitRuntimeConvergencePending(result *agentpb.StackKitResult) bool {
+	if result == nil || result.Success {
+		return false
+	}
+	return strings.Contains(strings.ToLower(result.Stderr), "runtime convergence is pending")
+}
+
+func waitForTypedStackKitRuntimeRetry(ctx context.Context) error {
+	delay := typedStackKitRuntimePendingRetryDelay
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func bindManagedStackKitCommandBudget(ctx context.Context, command *agentpb.StackKitCommand, operation string) error {
@@ -1218,7 +1509,7 @@ func bindManagedStackKitCommandBudget(ctx context.Context, command *agentpb.Stac
 			budget = remaining
 		}
 	}
-	seconds := int32(budget / time.Second)
+	seconds := clampInt64ToInt32(int64(budget / time.Second))
 	if seconds < 1 {
 		seconds = 1
 	}
@@ -1231,6 +1522,9 @@ type typedStackKitOperationError struct {
 	CommandID     string
 	Err           error
 	AgentTimedOut bool
+	// Failure is the closed StackKits recovery fact, when the command
+	// reported one.
+	Failure typedStackKitFailure
 }
 
 func (e *typedStackKitOperationError) Error() string {
@@ -1340,14 +1634,29 @@ func (r *deployRollout) runTypedStackKitVerify(ctx context.Context) (map[string]
 	return normalized, nil
 }
 
-func stackKitInitFacts(specPath string) (string, string, string, error) {
-	canonical, err := os.ReadFile(filepath.Clean(specPath))
+func stackKitInitFacts(specPath string) (string, string, []byte, error) {
+	file, err := os.Open(filepath.Clean(specPath))
 	if err != nil {
-		return "", "", "", fmt.Errorf("read canonical StackSpec for init: %w", err)
+		return "", "", nil, fmt.Errorf("open canonical StackSpec for init: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > stackkitcommand.MaxInitCandidateBytes {
+		return "", "", nil, fmt.Errorf("init candidate must be a bounded regular StackSpec")
+	}
+	canonical, err := io.ReadAll(io.LimitReader(file, stackkitcommand.MaxInitCandidateBytes+1))
+	if err != nil || len(canonical) > stackkitcommand.MaxInitCandidateBytes {
+		return "", "", nil, fmt.Errorf("read canonical StackSpec within init candidate limit")
 	}
 	document, err := decodeStackSpecDocument(canonical)
 	if err != nil {
-		return "", "", "", err
+		return "", "", nil, err
+	}
+	if !json.Valid(canonical) {
+		canonical, err = json.Marshal(document)
+		if err != nil {
+			return "", "", nil, fmt.Errorf("encode approved StackSpec for typed init: %w", err)
+		}
 	}
 	metadata := mapFromInterface(document["metadata"])
 	name := strings.TrimSpace(stringFromInterface(metadata["name"]))
@@ -1355,10 +1664,9 @@ func stackKitInitFacts(specPath string) (string, string, string, error) {
 	domainConfig := mapFromInterface(network["domain"])
 	domain := strings.TrimSpace(stringFromInterface(domainConfig["base"]))
 	if name == "" {
-		return "", "", "", fmt.Errorf("canonical StackSpec metadata.name is required for init")
+		return "", "", nil, fmt.Errorf("canonical StackSpec metadata.name is required for init")
 	}
-	digest := sha256.Sum256(canonical)
-	return name, domain, "sha256:" + hex.EncodeToString(digest[:]), nil
+	return name, domain, canonical, nil
 }
 
 func (r *deployRollout) bootstrapManagedRuntimeTarget(ctx context.Context) error {
@@ -1402,7 +1710,7 @@ func (r *deployRollout) runStackKitPrepare(ctx context.Context, target *RuntimeA
 		switch {
 		case release != nil:
 			prepRunner = NewPinnedStackKitCLIPrepRunner(*release)
-		case stackKitCLIWorkspaceReady(r.cfg.StackKitsDir, firstNonEmpty(strings.TrimSpace(r.actionReq.StackKit), DefaultBaseKitRef)):
+		case stackKitCLIWorkspaceReady(r.cfg.StackKitsDir, firstNonEmpty(strings.TrimSpace(r.actionReq.StackKit), DefaultBasementKitRef)):
 			prepRunner = NewStackKitCLIPrepRunner(r.cfg.StackKitsDir)
 		}
 	}
@@ -1439,6 +1747,19 @@ func (r *deployRollout) preBootstrapManagedRuntimeTarget(ctx context.Context, ta
 		result, err = bootstrapper.BootstrapRuntimeTargetWithProgress(ctx, target, r.handleStackKitPrepProgress)
 	} else {
 		result, err = r.cfg.RuntimeActions.TargetBootstrapper.BootstrapRuntimeTarget(ctx, target)
+	}
+	if err != nil && stackKitCommanderOwnsFullLifecycle(r.cfg.StackKitCommander) &&
+		classifyRuntimeTargetBootstrapError(err, "") == RuntimeTargetBootstrapSSHAuth {
+		// Host-security disables ubuntu/root. Guard HTTPS remains the Apply
+		// channel. A live Auth0 Centron retry failed here while Coolify was
+		// already running and the agent was connected.
+		if r.q != nil && r.job != nil {
+			r.q.addLog(r.job, "warn", "SSH bootstrap unavailable after host-security; continuing typed Apply over Guard")
+		}
+		return &RuntimeTargetBootstrapResult{
+			Status:  RuntimeTargetBootstrapReady,
+			Message: "SSH bootstrap skipped because Guard is connected",
+		}, nil
 	}
 	if r.q != nil && r.job != nil && result != nil {
 		r.q.addLog(r.job, "info", fmt.Sprintf("Managed VPS pre-bootstrap %s: %s", firstNonEmpty(result.Status, "completed"), result.Message))
@@ -1741,13 +2062,25 @@ func (r *deployRollout) collectRuntimeDiagnostics(ctx context.Context, runner Ru
 	diagnosticCtx, cancel := context.WithTimeout(ctx, defaultRuntimeDiagnosticsTimeout+5*time.Second)
 	defer cancel()
 
+	snapshot := r.job.Snapshot()
+	leaseID := firstNonEmpty(stringFromMap(snapshot.Result, leaseIDField), stringFromMap(snapshot.Payload, leaseIDField))
+	serverID := runtimeidentity.LeaseServerID(leaseID)
+	runtimeAgentID := runtimeidentity.LeaseRuntimeAgentID(req.TenantID, leaseID)
+	if req.TechStackEnrollment != nil {
+		serverID = firstNonEmpty(req.TechStackEnrollment.ServerID, serverID)
+		runtimeAgentID = firstNonEmpty(req.TechStackEnrollment.RuntimeAgentID, runtimeAgentID)
+	}
 	request := RuntimeDiagnosticsRequest{
 		Action:         action,
 		Reason:         reason,
 		JobID:          r.job.ID,
 		StackID:        r.job.TargetID,
-		LeaseID:        firstNonEmpty(stringFromMap(r.job.Result, leaseIDField), stringFromMap(r.job.Payload, leaseIDField)),
-		Provider:       firstNonEmpty(stringFromMap(r.job.Result, providerField), stringFromMap(r.job.Payload, providerField)),
+		TenantID:       strings.TrimSpace(req.TenantID),
+		LeaseID:        leaseID,
+		OperationID:    firstNonEmpty(stringFromMap(snapshot.Result, "operation_id"), stringFromMap(snapshot.Payload, "operation_id")),
+		ServerID:       serverID,
+		RuntimeAgentID: runtimeAgentID,
+		Provider:       firstNonEmpty(stringFromMap(snapshot.Result, providerField), stringFromMap(snapshot.Payload, providerField)),
 		TargetKind:     r.targetKind,
 		RuntimeTarget:  req.RuntimeTarget,
 		ActionEndpoint: runtimeActionDescriptor(runner),
@@ -1844,7 +2177,6 @@ func isStackKitsCoolifyBootstrapReadinessRace(err error) bool {
 	}
 	return strings.Contains(text, "opentofu_apply_failed") &&
 		(strings.Contains(text, "coolify proxy") ||
-			strings.Contains(text, "stackkit-managed coolify proxy") ||
 			strings.Contains(text, "proxy fallback") ||
 			strings.Contains(text, "docker daemon restarted successfully") ||
 			strings.Contains(text, "checking and updating environment variables") ||
@@ -1873,8 +2205,7 @@ func isStackKitsDockerImagePullTransient(err error) bool {
 		strings.Contains(text, "context canceled") ||
 		strings.Contains(text, "connection reset by peer") ||
 		strings.Contains(text, "temporary failure") ||
-		strings.Contains(text, "unexpected eof") ||
-		strings.Contains(text, "net/http: tls handshake timeout")
+		strings.Contains(text, "unexpected eof")
 }
 
 func isStackKitsLocalFileArtifactMissing(err error) bool {
@@ -1902,8 +2233,7 @@ func isStackKitsPlatformAppReadinessTransient(err error) bool {
 		return true
 	}
 	return strings.Contains(text, "coolify service create") &&
-		(strings.Contains(text, "connect: connection refused") ||
-			strings.Contains(text, "connection refused") ||
+		(strings.Contains(text, "connection refused") ||
 			strings.Contains(text, "127.0.0.1:8000"))
 }
 
@@ -1957,13 +2287,13 @@ func restoreStackKitsRetryLocalArtifacts(tofuDir string) ([]string, error) {
 // runVerify verifies login-protected services. Managed cloud rollouts require a
 // configured verifier returning a verified status.
 func (r *deployRollout) runVerify(ctx context.Context) error {
-	if r.managedRuntime && r.cfg.StackKitCommander == nil && r.cfg.RuntimeActions.RolloutVerifier == nil {
+	if r.managedRuntime && !stackKitCommanderOwnsFullLifecycle(r.cfg.StackKitCommander) && r.cfg.RuntimeActions.RolloutVerifier == nil {
 		r.job.setStep(StepVerifyRollout)
 		return wrapProvisionError(StepVerifyRollout,
 			"managed cloud rollout verifier is not configured",
 			"Managed kombify Cloud rollouts require verified login-protected services before success is shown.")
 	}
-	if r.cfg.StackKitCommander == nil && r.cfg.RuntimeActions.RolloutVerifier == nil {
+	if !stackKitCommanderOwnsFullLifecycle(r.cfg.StackKitCommander) && r.cfg.RuntimeActions.RolloutVerifier == nil {
 		if r.portGeneration != nil {
 			return wrapProvisionError(StepVerifyRollout,
 				"runtime listener activation requires a configured StackKits verifier",
@@ -1977,14 +2307,14 @@ func (r *deployRollout) runVerify(ctx context.Context) error {
 	breadcrumbStep(ctx, StepVerifyRollout, "verifying login-protected services", nil)
 	var result map[string]interface{}
 	var err error
-	if r.cfg.StackKitCommander != nil {
+	if stackKitCommanderOwnsFullLifecycle(r.cfg.StackKitCommander) {
 		result, err = r.runTypedStackKitVerify(ctx)
 	} else {
 		result, err = runRuntimeAction(ctx, r.cfg.RuntimeActions.RolloutVerifier, r.actionReq)
 	}
 	if err != nil {
 		captureJobError(ctx, err, map[string]interface{}{stepField: StepVerifyRollout, stackIDField: r.job.TargetID})
-		return wrapProvisionError(StepVerifyRollout, fmt.Sprintf("rollout verification failed: %v", err),
+		return wrapProvisionCause(StepVerifyRollout, fmt.Errorf("rollout verification failed: %w", err),
 			"Immich/Vaultwarden verification failed or auth protection is not in place.")
 	}
 	proof := runtimeActionProof(string(runtimeaction.ActionVerifyRollout), result, string(runtimeaction.StatusVerified))
@@ -2003,7 +2333,7 @@ func (r *deployRollout) runVerify(ctx context.Context) error {
 	r.e2eProof["monitoring_checks"] = []string{"otlp-health-visible"}
 	r.persistRuntimeProgress()
 	if err := r.activatePortClaims(ctx); err != nil {
-		return wrapProvisionError(StepPortAdmission, fmt.Sprintf("activate verified runtime listeners: %v", err),
+		return wrapProvisionCause(StepPortAdmission, fmt.Errorf("activate verified runtime listeners: %w", err),
 			"The StackKit rollout verified, but Techstack could not activate its exact host-listener generation. The reservation remains fail-closed for reconciliation.")
 	}
 	return nil
@@ -2012,38 +2342,31 @@ func (r *deployRollout) runVerify(ctx context.Context) error {
 // runRestoreDrill runs the backup restore drill. A verified drill promotes the
 // final runtime phase to "verified" and records runtime metrics.
 func (r *deployRollout) runRestoreDrill(ctx context.Context) error {
-	if r.managedRuntime && r.cfg.RuntimeActions.RestoreDrill == nil {
+	if r.managedRuntime && r.cfg.StackKitCommander == nil {
 		r.job.setStep(StepRestoreDrill)
 		return wrapProvisionError(StepRestoreDrill,
-			"managed cloud restore drill is not configured",
+			"managed cloud native restore drill is not configured",
 			"Managed kombify Cloud rollouts require a verified restore drill before success is shown.")
 	}
-	if r.cfg.RuntimeActions.RestoreDrill == nil {
+	// Self-hosted rollouts run the drill only through a configured StackKits
+	// restore-drill action. A typed commander alone serves managed runtimes;
+	// dispatching the unset action crashed the whole local runtime.
+	if !r.managedRuntime && r.cfg.RuntimeActions.RestoreDrill == nil {
 		return nil
 	}
 	r.job.setStep(StepRestoreDrill)
 	r.q.UpdateProgress(r.job.ID, 92, "Running backup restore drill...")
 	breadcrumbStep(ctx, StepRestoreDrill, "running backup restore drill", nil)
-	result, err := r.runRestoreDrillAction(ctx)
+	var result map[string]interface{}
+	var err error
+	if r.managedRuntime {
+		result, err = r.runTypedStackKitRestoreDrill(ctx)
+	} else {
+		result, err = r.runRestoreDrillAction(ctx)
+	}
 	if err != nil {
-		// The native Architecture v2 line retires v1 backup execution and owes
-		// its own contract ("backup execution requires a future native v2
-		// contract"). A retired surface is a platform gap, not a failed drill:
-		// record the honest receipt, keep the runtime phase at deployed (never
-		// verified), and let the rollout finish.
-		if strings.Contains(err.Error(), "legacy_runtime_action_retired") {
-			r.runtimeProof["restore"] = map[string]interface{}{
-				"action":      string(runtimeaction.ActionRestoreDrill),
-				"status":      "not_applicable",
-				"reason_code": "restore_drill_retired_pending_native_v2_contract",
-			}
-			r.e2eProof["restore_result"] = "not_applicable"
-			r.persistRuntimeProgress()
-			r.q.addLog(r.job, "warn", "Restore drill is retired on the native Architecture v2 line; runtime stays deployed (not verified) until the native backup contract lands")
-			return nil
-		}
 		captureJobError(ctx, err, map[string]interface{}{stepField: StepRestoreDrill, stackIDField: r.job.TargetID})
-		return wrapProvisionError(StepRestoreDrill, fmt.Sprintf("restore drill failed: %v", err),
+		return wrapProvisionCause(StepRestoreDrill, fmt.Errorf("restore drill failed: %w", err),
 			"Backup restore verification failed.")
 	}
 	proof := runtimeActionProof(string(runtimeaction.ActionRestoreDrill), result, string(runtimeaction.StatusVerified))
@@ -2063,6 +2386,183 @@ func (r *deployRollout) runRestoreDrill(ctx context.Context) error {
 	}
 	mergeRuntimeMetrics(r.runtimeMetrics, result)
 	return nil
+}
+
+// runTypedStackKitRestoreDrill creates one idempotent snapshot and restores it
+// into StackKits' fixed isolated staging area through the enrolled node's
+// closed command channel. The pinned CLI remains the sole authority for local
+// Owner custody, CUE, generation, Apply, repository, and locally verified
+// restore proof. Techstack admits the Agent's exact-byte attestation; it does
+// not claim independent custody of the local Owner verification key.
+// Live-volume activation is deliberately outside the drill: the native restore
+// result already verifies the staged services without mutating production data.
+func (r *deployRollout) runTypedStackKitRestoreDrill(ctx context.Context) (map[string]interface{}, error) {
+	if r == nil || r.cfg == nil || r.cfg.StackKitCommander == nil || r.actionReq.TechStackEnrollment == nil || r.job == nil || r.unifiedSpec == nil {
+		return nil, fmt.Errorf("typed StackKits restore dispatcher is not configured")
+	}
+	release, err := configuredTargetStackKitRelease()
+	if err != nil {
+		return nil, err
+	}
+	if release == nil {
+		return nil, fmt.Errorf("pinned published StackKits release is not configured")
+	}
+	canonical, err := canonicalStackSpecFor(r.actionReq.StackSpecPath, r.unifiedSpec.StackKit, r.actionReq.StackName)
+	if err != nil {
+		return nil, err
+	}
+	stackName, _, _, err := stackKitInitFacts(canonical.Path)
+	if err != nil {
+		return nil, err
+	}
+	request, err := NormalizeStackKitLifecycleRequest(StackKitLifecycleRequest{
+		StackID:            r.job.TargetID,
+		StackKitInstanceID: stackName,
+		TenantID:           r.actionReq.TenantID,
+		OwnerID:            r.actionReq.OwnerID,
+		AgentID:            r.actionReq.TechStackEnrollment.RuntimeAgentID,
+		Operation:          StackKitLifecyclePlan,
+		WorkingDirectory:   defaultStackKitNodeWorkspace,
+		SpecPath:           filepath.Base(canonical.Path),
+		StackKit:           r.unifiedSpec.StackKit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	planHash, err := planStackKitLifecycleApply(ctx, r.cfg.StackKitCommander, r.job.ID+"-restore", request, *release)
+	if err != nil {
+		return nil, fmt.Errorf("bind native restore drill to node plan: %w", err)
+	}
+	binding, err := localExecutionBindingFor(request.StackKit)
+	if err != nil {
+		return nil, err
+	}
+	buildCommand := func(commandID string, operation agentpb.StackKitOperation) *agentpb.StackKitCommand {
+		return &agentpb.StackKitCommand{
+			CommandId: commandID, Operation: operation,
+			WorkingDirectory: defaultStackKitNodeWorkspace,
+			SpecPath:         request.SpecPath, TimeoutSeconds: int32((15 * time.Minute) / time.Second),
+			Release:      grpcserver.StackKitReleasePinFor(*release),
+			LocalSiteRef: binding.SiteRef, LocalNodeRef: binding.NodeRef,
+			LocalExecutionChannelRef: binding.ExecutionChannelRef,
+			Stackkit:                 request.StackKit, StackName: stackName,
+			StackkitInstanceId: stackName, ExpectedPlanHash: planHash,
+		}
+	}
+
+	// StackKits v0.37.1 cannot abandon a completed staged restore. Reuse one
+	// operation per exact workspace instance and plan instead: StackKits rejects
+	// a changed input under that identity and returns the already verified result
+	// for an exact retry. This bounds staging to one copy for each admitted plan
+	// without overwriting a pending, staged, abandoned, or completed operation.
+	// StackKits requires the owner-bound backup repository to be configured
+	// for the applied plan before its first snapshot ("run stackkit backup
+	// configure first"); Apply does not configure it. Configure is idempotent
+	// for an unchanged owner, authority and policy, so every drill runs it.
+	configureCommand := buildCommand(
+		nativeRestoreDrillOperationID("configure", request.StackKitInstanceID, planHash),
+		agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_CONFIGURE,
+	)
+	if err := stackkitcommand.ValidateCommand(configureCommand); err != nil {
+		return nil, fmt.Errorf("build native restore-drill repository configuration command: %w", err)
+	}
+	configureResult, err := sendStackKitCommandBoundedForTenant(ctx, r.cfg.StackKitCommander, request.TenantID, request.AgentID, configureCommand)
+	if err != nil {
+		return nil, fmt.Errorf("native restore-drill repository configuration dispatch failed: %w", err)
+	}
+	if err := stackkitcommand.ValidateResult(configureResult, configureCommand); err != nil {
+		return nil, fmt.Errorf("admit native restore-drill repository configuration: %w", err)
+	}
+	if err := requireSuccessfulNativeBackupStep("backup configure", configureResult); err != nil {
+		return nil, err
+	}
+	if err := stackkitcommand.ParseBackupConfigurationEvidence(configureCommand, configureResult); err != nil {
+		return nil, fmt.Errorf("admit native restore-drill repository configuration: %w", err)
+	}
+
+	backupOperationID := nativeRestoreDrillOperationID("backup", request.StackKitInstanceID, planHash)
+	restoreOperationID := nativeRestoreDrillOperationID("restore", request.StackKitInstanceID, planHash)
+	backupCommand := buildCommand(backupOperationID, agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RUN)
+	if err := stackkitcommand.ValidateCommand(backupCommand); err != nil {
+		return nil, fmt.Errorf("build native restore-drill snapshot command: %w", err)
+	}
+	backupResult, err := sendStackKitCommandBoundedForTenant(ctx, r.cfg.StackKitCommander, request.TenantID, request.AgentID, backupCommand)
+	if err != nil {
+		return nil, fmt.Errorf("native restore-drill snapshot dispatch failed: %w", err)
+	}
+	if err := stackkitcommand.ValidateResult(backupResult, backupCommand); err != nil {
+		return nil, fmt.Errorf("admit native restore-drill snapshot evidence: %w", err)
+	}
+	if err := requireSuccessfulNativeBackupStep("backup run", backupResult); err != nil {
+		return nil, err
+	}
+	backupEvidence, err := stackkitcommand.ParseBackupRunEvidence(backupCommand, backupResult)
+	if err != nil {
+		return nil, fmt.Errorf("admit native restore-drill snapshot evidence: %w", err)
+	}
+
+	restoreCommand := buildCommand(restoreOperationID, agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE)
+	restoreCommand.OwnerApproved = true
+	restoreCommand.SnapshotAnchorId = backupEvidence.SnapshotAnchorID
+	if err := stackkitcommand.ValidateCommand(restoreCommand); err != nil {
+		return nil, fmt.Errorf("build native staged-restore command: %w", err)
+	}
+	restoreResult, err := sendStackKitCommandBoundedForTenant(ctx, r.cfg.StackKitCommander, request.TenantID, request.AgentID, restoreCommand)
+	if err != nil {
+		return nil, fmt.Errorf("native staged-restore dispatch failed: %w", err)
+	}
+	if err := stackkitcommand.ValidateResult(restoreResult, restoreCommand); err != nil {
+		return nil, fmt.Errorf("admit native staged-restore evidence: %w", err)
+	}
+	if err := requireSuccessfulNativeBackupStep("backup restore", restoreResult); err != nil {
+		return nil, err
+	}
+	restoreEvidence, err := stackkitcommand.ParseBackupRestoreEvidence(restoreCommand, restoreResult)
+	if err != nil {
+		return nil, fmt.Errorf("admit native staged-restore evidence: %w", err)
+	}
+	if restoreEvidence.OwnerRef != backupEvidence.OwnerRef {
+		return nil, fmt.Errorf("native staged-restore evidence changed Owner authority")
+	}
+
+	return map[string]interface{}{
+		"action":               string(runtimeaction.ActionRestoreDrill),
+		"status":               string(runtimeaction.StatusVerified),
+		"mode":                 "native-v2-staged",
+		"retention_mode":       "idempotent-instance-plan-operation",
+		"stackkit_instance_id": request.StackKitInstanceID,
+		"plan_hash":            planHash,
+		"snapshot_anchor_id":   backupEvidence.SnapshotAnchorID,
+		"backup_operation_id":  backupEvidence.OperationID,
+		"restore_result_id":    restoreEvidence.RestoreResultID,
+		"restore_operation_id": restoreEvidence.OperationID,
+		"verified_at":          restoreEvidence.VerifiedAt.UTC().Format(time.RFC3339Nano),
+	}, nil
+}
+
+// requireSuccessfulNativeBackupStep keeps the pinned CLI's own failure: a
+// failed step otherwise surfaced only as missing evidence, which hid the
+// node-side cause of the drill failure.
+func requireSuccessfulNativeBackupStep(step string, result *agentpb.StackKitResult) error {
+	if result != nil && result.Success {
+		return nil
+	}
+	exitCode, stderr := int32(-1), ""
+	if result != nil {
+		exitCode, stderr = result.ExitCode, strings.TrimSpace(result.Stderr)
+	}
+	const maxStderr = 1024
+	if len(stderr) > maxStderr {
+		stderr = stderr[:maxStderr] + "..."
+	}
+	return fmt.Errorf("StackKits %s failed with exit code %d: %s", step, exitCode, stderr)
+}
+
+func nativeRestoreDrillOperationID(kind, stackKitInstanceID, planHash string) string {
+	digest := sha256.Sum256([]byte(strings.Join([]string{
+		strings.TrimSpace(stackKitInstanceID), strings.TrimSpace(planHash), strings.TrimSpace(kind),
+	}, "\x00")))
+	return fmt.Sprintf("techstack-restore-drill-%s-%x", kind, digest[:16])
 }
 
 func (r *deployRollout) runRestoreDrillAction(ctx context.Context) (map[string]interface{}, error) {
@@ -2104,16 +2604,9 @@ func isTransientRestoreReadinessError(err error) bool {
 		strings.Contains(msg, "docker_runtime")
 }
 
-// finalize enforces the identity handoff contract, persists managed runtime
-// lease metadata, and builds the final deploy job result.
+// finalize enforces any explicitly requested identity handoff, persists
+// managed runtime lease metadata, and builds the final deploy job result.
 func (r *deployRollout) finalize(ctx context.Context, prep *deployPreparation, art *deployArtifacts) error {
-	if r.managedRuntime && !hasRequiredStackKitIdentityHandoff(r.stackKitOutputs) {
-		r.job.setStep(StepVerifyRollout)
-		return wrapProvisionError(StepVerifyRollout,
-			"StackKit identity handoff is missing: required stackkit_outputs.identity.owner.username, stackkit_outputs.login_gateway.url, and stackkit_outputs.identity.recovery",
-			"The StackKit rollout did not return owner login, login gateway, and recovery outputs. The UI must not show a successful managed rollout until stackkit_outputs includes those values.")
-	}
-
 	r.job.setStep(StepFinalize)
 	r.q.UpdateProgress(r.job.ID, 95, "Finalizing rollout...")
 	jobSnapshot := r.job.Snapshot()
@@ -2177,6 +2670,7 @@ func (r *deployRollout) finalize(ctx context.Context, prep *deployPreparation, a
 	// freshly provisioned stack, so refuse to mark the deploy "completed".
 	if ownerSpecBootstrapFromPayload(jobSnapshot.Payload) != nil {
 		if missing := missingStackKitIdentityHandoffFields(r.stackKitOutputs); len(missing) > 0 {
+			r.job.setStep(StepVerifyRollout)
 			return wrapProvisionError(
 				StepVerifyRollout,
 				"StackKit did not return the required identity handoff",
@@ -2205,7 +2699,7 @@ func (r *deployRollout) finalize(ctx context.Context, prep *deployPreparation, a
 	return nil
 }
 
-func generateStackKitArtifacts(ctx context.Context, cfg *ProvisionConfig, job *Job, proposal *core.UnifiedSpec, stackSpecPath, outputDir string) (*StackKitArtifactGenerateResult, error) {
+func generateStackKitArtifacts(ctx context.Context, cfg *ProvisionConfig, job *Job, proposal *core.UnifiedSpec, stackSpecPath, outputDir string, runtimeTarget *ManagedRuntimeTarget, tenantID, ownerID string) (*StackKitArtifactGenerateResult, error) {
 	if strings.TrimSpace(stackSpecPath) == "" {
 		return nil, fmt.Errorf("StackKits CLI artifact generation requires persisted %s", unifier.StackSpecFilename)
 	}
@@ -2226,11 +2720,14 @@ func generateStackKitArtifacts(ctx context.Context, cfg *ProvisionConfig, job *J
 	}
 	result, err := generator.GenerateStackKitArtifacts(ctx, StackKitArtifactGenerateRequest{
 		StackID:       job.TargetID,
+		TenantID:      tenantID,
+		OwnerID:       ownerID,
 		StackName:     proposal.Name,
 		StackKit:      proposal.StackKit,
 		WorkDir:       filepath.Dir(stackSpecPath),
 		StackSpecPath: stackSpecPath,
 		OutputDir:     outputDir,
+		RuntimeTarget: cloneManagedRuntimeTarget(runtimeTarget),
 	})
 	if err != nil {
 		return nil, err
@@ -2264,17 +2761,12 @@ func copyDeployArtifactMetadataToResult(result map[string]interface{}, metadata 
 		metadataKeyRequestedAddressMode,
 		metadataKeyKombifyMeAddressStatus,
 		metadataKeyKombifyMeAddressWarn,
+		metadataKeyKombifyMeAddressPrefix,
+		metadataKeyKombifyMeAddressLayout,
+		metadataKeyKombifyMeAddressZone,
 	} {
 		if value := strings.TrimSpace(metadata[key]); value != "" {
 			result[key] = value
 		}
 	}
-}
-
-func runtimeTargetOrNil(target *ManagedRuntimeTarget) *ManagedRuntimeTarget {
-	if target == nil {
-		return nil
-	}
-	copy := *target
-	return &copy
 }

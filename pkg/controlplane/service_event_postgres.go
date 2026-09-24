@@ -17,6 +17,7 @@ const serviceRuntimeColumns = `id, tenant_id, instance_id, stack_id, server_id,
 	target_kind, provider_id, managed_target_ref, provider_receipt_ref, sla_policy_ref,
 	backup_policy_ref, placement_evidence_ref, placement_observed_at,
 	service_key, service_instance, name, desired_state, observed_state, health_state, management_state,
+	mutation_lock_state, mutation_lock_reason_code, mutation_lock_actor, mutation_lock_changed_at,
 	observed_at, stackkit_version, access_json::text, capabilities_json::text,
 	source, metadata_json::text, created_at, updated_at`
 
@@ -53,6 +54,29 @@ func (s *PostgresStore) ApplyServiceEvent(ctx context.Context, event ServiceEven
 		return nil, err
 	}
 	return result, nil
+}
+
+// SetServiceMutationLock asserts or clears the owner guardrail through the
+// aggregate command boundary, so the guardrail is serialized by the same row
+// lock as every other dimension and produces a mutation_lock transition row.
+func (s *PostgresStore) SetServiceMutationLock(
+	ctx context.Context,
+	tenantID, serviceID string,
+	lock ServiceMutationLock,
+	reasonCode string,
+) (*ServiceRuntime, error) {
+	result, err := s.ApplyServiceEvent(ctx, ServiceEvent{
+		TenantID:   tenantID,
+		ServiceID:  serviceID,
+		Authority:  ServiceEventAuthorityControlPlane,
+		Source:     ServiceEventAuthorityControlPlane,
+		ReasonCode: reasonCode,
+		Runtime:    ServiceRuntime{MutationLock: lock},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.Service, nil
 }
 
 // applyServiceEventTx applies one aggregate command inside a caller-owned
@@ -143,6 +167,9 @@ func persistServiceEventHead(
 		head.Runtime.DesiredState, head.Runtime.ObservedState, head.Runtime.HealthState,
 		nullableTime(head.Runtime.ObservedAt), head.Runtime.StackKitVersion, accessJSON,
 		capabilitiesJSON, head.Revision, head.Runtime.ManagementState,
+		string(serviceregistry.CanonicalMutationLockState(string(head.Runtime.MutationLock.State))),
+		head.Runtime.MutationLock.ReasonCode, head.Runtime.MutationLock.Actor,
+		nullableTime(head.Runtime.MutationLock.ChangedAt),
 	}
 	if current == nil || !current.Exists {
 		stored, rowErr := scanServiceAggregateHead(tx.QueryRowContext(ctx, `
@@ -153,13 +180,16 @@ func persistServiceEventHead(
 				service_key,
 				service_instance, name, status, source, url, migration_status, metadata_json,
 				desired_state, observed_state, health_state, observed_at, stackkit_version,
-				access_json, capabilities_json, revision, management_state
+				access_json, capabilities_json, revision, management_state,
+				mutation_lock_state, mutation_lock_reason_code, mutation_lock_actor,
+				mutation_lock_changed_at
 			) VALUES (
 				$1, $2, NULLIF($3, ''), $4, NULLIF($5, ''), NULLIF($6, ''), $7,
 				NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, ''), NULLIF($12, ''),
 				NULLIF($13, ''), $14, $15, $16, $17, $18, $19, NULLIF($20, ''),
 				NULLIF($21, ''), $22::jsonb, $23, $24, $25, $26, NULLIF($27, ''),
-				$28::jsonb, $29::jsonb, $30, $31
+				$28::jsonb, $29::jsonb, $30, $31,
+				$32, NULLIF($33, ''), NULLIF($34, ''), $35
 			)
 			ON CONFLICT (id) DO NOTHING
 			RETURNING `+serviceAggregateColumns,
@@ -184,8 +214,11 @@ func persistServiceEventHead(
 			metadata_json = $22::jsonb, desired_state = $23, observed_state = $24,
 			health_state = $25, observed_at = $26, stackkit_version = NULLIF($27, ''),
 			access_json = $28::jsonb, capabilities_json = $29::jsonb,
-			revision = $30, management_state = $31, updated_at = now()
-		WHERE tenant_id = $2 AND id = $1 AND revision = $32
+			revision = $30, management_state = $31,
+			mutation_lock_state = $32, mutation_lock_reason_code = NULLIF($33, ''),
+			mutation_lock_actor = NULLIF($34, ''), mutation_lock_changed_at = $35,
+			updated_at = now()
+		WHERE tenant_id = $2 AND id = $1 AND revision = $36
 		RETURNING `+serviceAggregateColumns,
 		args...,
 	))
@@ -286,7 +319,9 @@ func scanServiceAggregateHead(row rowScanner) (*serviceAggregateHead, error) {
 	var instanceID, serverID, stackKitVersion sql.NullString
 	var targetKind, providerID, managedTargetRef, providerReceiptRef sql.NullString
 	var slaPolicyRef, backupPolicyRef, placementEvidenceRef sql.NullString
-	var observedAt, placementObservedAt sql.NullTime
+	var observedAt, placementObservedAt, mutationLockChangedAt sql.NullTime
+	var mutationLockReasonCode, mutationLockActor sql.NullString
+	var mutationLockState string
 	var accessJSON, capabilitiesJSON, metadataJSON []byte
 	if err := row.Scan(
 		&head.Runtime.ID, &head.Runtime.TenantID, &instanceID, &head.Runtime.StackID, &serverID,
@@ -295,6 +330,7 @@ func scanServiceAggregateHead(row rowScanner) (*serviceAggregateHead, error) {
 		&head.Runtime.ServiceKey, &head.Runtime.ServiceInstance, &head.Runtime.Name,
 		&head.Runtime.DesiredState, &head.Runtime.ObservedState, &head.Runtime.HealthState,
 		&head.Runtime.ManagementState,
+		&mutationLockState, &mutationLockReasonCode, &mutationLockActor, &mutationLockChangedAt,
 		&observedAt, &stackKitVersion, &accessJSON, &capabilitiesJSON, &head.Runtime.Source,
 		&metadataJSON, &head.Runtime.CreatedAt, &head.Runtime.UpdatedAt,
 		&head.Revision, &head.Status, &head.MigrationStatus, &head.NodeID, &head.URL,
@@ -317,6 +353,14 @@ func scanServiceAggregateHead(row rowScanner) (*serviceAggregateHead, error) {
 	}
 	head.Runtime.Placement = serviceregistry.NormalizePlacement(head.Runtime.ServerID, head.Runtime.Placement)
 	head.Runtime.StackKitVersion = stackKitVersion.String
+	head.Runtime.MutationLock = ServiceMutationLock{
+		State:      serviceregistry.CanonicalMutationLockState(mutationLockState),
+		ReasonCode: mutationLockReasonCode.String,
+		Actor:      mutationLockActor.String,
+	}
+	if mutationLockChangedAt.Valid {
+		head.Runtime.MutationLock.ChangedAt = &mutationLockChangedAt.Time
+	}
 	if observedAt.Valid {
 		head.Runtime.ObservedAt = &observedAt.Time
 	}

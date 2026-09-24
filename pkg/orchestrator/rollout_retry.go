@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/jobs"
@@ -21,7 +22,22 @@ const rolloutRetryJobScanLimit = 50
 var (
 	ErrRolloutRetryInvalid     = errors.New("invalid exact rollout retry")
 	ErrRolloutRetryUnavailable = errors.New("exact rollout retry unavailable")
+	// ErrRolloutRetryNotYet refuses a retry that an external authority already
+	// declared cannot succeed before its retry-after time.
+	ErrRolloutRetryNotYet = errors.New("exact rollout retry is refused before the authority retry-after")
 )
+
+// RolloutRetryNotYetError carries the authority's retry-after time so the
+// route can answer with a structured, retryable denial.
+type RolloutRetryNotYetError struct {
+	RetryAfter time.Time
+}
+
+func (e *RolloutRetryNotYetError) Error() string {
+	return fmt.Sprintf("%v: retry after %s", ErrRolloutRetryNotYet, e.RetryAfter.UTC().Format(time.RFC3339))
+}
+
+func (e *RolloutRetryNotYetError) Unwrap() error { return ErrRolloutRetryNotYet }
 
 const (
 	rolloutRetryKindField        = "rollout_retry_kind"
@@ -66,8 +82,10 @@ func (o *Orchestrator) RetryRollout(req RolloutRetryRequest) (*RolloutRetryResul
 		ctx = o.ctx
 	}
 
-	o.mu.Lock()
-	defer o.mu.Unlock()
+	unlockStack := o.stackLocks.lock(req.StackID)
+	defer unlockStack()
+	o.mu.RLock()
+	defer o.mu.RUnlock()
 	stack, source, opts, serverID, prepareErr := o.prepareRolloutRetry(ctx, req)
 	if prepareErr != nil {
 		return nil, prepareErr
@@ -138,7 +156,6 @@ func (o *Orchestrator) prepareRolloutRetry(
 ) (*orchestratorStack, *controlplane.Job, ProvisionStackOptions, string, error) {
 	opts := ProvisionStackOptions{
 		RequestContext: ctx, TenantID: req.TenantID, OwnerID: req.OwnerID, StackName: req.StackName,
-		requireControlPlane: true,
 	}
 	stack, stackErr := o.findStackForJob(ctx, req.StackID, opts)
 	if stackErr != nil {
@@ -157,6 +174,15 @@ func (o *Orchestrator) prepareRolloutRetry(
 	}
 	if validationErr := validateRolloutRetrySource(*source, req.StackID, req.LeaseID, serverID); validationErr != nil {
 		return nil, nil, opts, "", validationErr
+	}
+	// A rollout the certificate authority rate-limited fails again until the
+	// authority's retry-after; refusing it here spends no rollout or CA order.
+	now := time.Now().UTC()
+	if o.now != nil {
+		now = o.now()
+	}
+	if retryAfter, limited := jobs.JobResultRetryAfter(source.Result); limited && now.Before(retryAfter) {
+		return nil, nil, opts, "", &RolloutRetryNotYetError{RetryAfter: retryAfter}
 	}
 	opts.RequiredLeaseID = req.LeaseID
 	opts.RequiredServerID = serverID
@@ -228,7 +254,6 @@ func validateRolloutRetrySource(source controlplane.Job, stackID, leaseID, serve
 		canonicalEnrollmentJobState(source.State) != string(jobs.JobStateFailed) {
 		return fmt.Errorf("%w: source job is not a failed deploy for this stack", ErrRolloutRetryInvalid)
 	}
-	foundLease := false
 	for _, candidate := range []string{
 		strings.TrimSpace(stringFromAny(source.Result[enrollmentResumeGenericLeaseField])),
 		strings.TrimSpace(stringFromAny(source.Result["runtime_lease_id"])),
@@ -237,14 +262,14 @@ func validateRolloutRetrySource(source controlplane.Job, stackID, leaseID, serve
 		if candidate == "" {
 			continue
 		}
-		foundLease = true
 		if candidate != strings.TrimSpace(leaseID) {
 			return fmt.Errorf("%w: source job is bound to another lease", ErrRolloutRetryInvalid)
 		}
 	}
-	if !foundLease {
-		return fmt.Errorf("%w: source job has no managed runtime lease binding", ErrRolloutRetryInvalid)
-	}
+	// An orphaned generate job can die after resolving the lease and before
+	// persisting lease_id on the result. The request still names the exact
+	// lease, and validateExactRetryTarget checks it is this stack's active
+	// foundation.
 	for _, candidate := range []string{
 		strings.TrimSpace(stringFromAny(source.Result[enrollmentResumeGenericServerField])),
 		strings.TrimSpace(stringFromAny(source.Result["runtime_server_id"])),

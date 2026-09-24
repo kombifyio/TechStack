@@ -23,6 +23,8 @@ export interface NavItem {
   badge?: number | null; // Optional badge count
   children?: NavItem[]; // Sub-navigation items
   external?: boolean; // External URL — render with target="_blank" rel="noopener"
+  /** Coach-mark anchor (data-onboarding-anchor), ONBOARDING-JOURNEY-STANDARD §6 */
+  anchor?: string;
 }
 
 export interface NavGroup {
@@ -33,12 +35,57 @@ export interface NavGroup {
 }
 
 /**
+ * Sub-navigation per section. The flyout on a section's nav item lists these
+ * (and the section's live entries, see nav-items.ts); both shells share them.
+ * Monitoring is one long page, so its children are in-page anchors.
+ */
+const servicesChildren: NavItem[] = [
+  {
+    id: "services-all",
+    href: "/services",
+    labelKey: "nav.allServices",
+    labelFallback: "All services",
+    icon: Boxes,
+  },
+  {
+    id: "services-servers",
+    href: "/services?tab=servers",
+    labelKey: "nav.servers",
+    labelFallback: "Servers",
+    icon: Boxes,
+  },
+];
+const monitoringChildren: NavItem[] = [
+  {
+    id: "monitoring-servers",
+    href: "/monitoring#servers",
+    labelKey: "nav.monitoring.servers",
+    labelFallback: "Servers",
+    icon: Activity,
+  },
+  {
+    id: "monitoring-alerts",
+    href: "/monitoring#alerts",
+    labelKey: "nav.monitoring.alerts",
+    labelFallback: "Alerts",
+    icon: Activity,
+  },
+  {
+    id: "monitoring-history",
+    href: "/monitoring#history",
+    labelKey: "nav.monitoring.history",
+    labelFallback: "History",
+    icon: Activity,
+  },
+];
+
+/**
  * Main navigation items - used in both layouts
  */
 export const mainNavItems: NavItem[] = [
   {
     id: "dashboard",
-    href: "/stacks",
+    href: "/dashboard",
     labelKey: "nav.dashboard",
     labelFallback: "Dashboard",
     icon: Home,
@@ -49,6 +96,8 @@ export const mainNavItems: NavItem[] = [
     labelKey: "nav.services",
     labelFallback: "Services",
     icon: Boxes,
+    children: servicesChildren,
+    anchor: "techstack-services-nav",
   },
   {
     id: "monitoring",
@@ -56,6 +105,7 @@ export const mainNavItems: NavItem[] = [
     labelKey: "nav.monitoring",
     labelFallback: "Monitoring",
     icon: Activity,
+    children: monitoringChildren,
   },
   // Simulation removed in cleanup plan 2026-04-27 phase 3.1.
   // Future simulation tooling lives in the kombify-Sim repository.
@@ -85,7 +135,7 @@ export const sidebarNavGroups: NavGroup[] = [
 export const embeddedNavItems: NavItem[] = [
   {
     id: "embedded-dashboard",
-    href: "/stacks",
+    href: "/dashboard",
     labelKey: "nav.dashboard",
     labelFallback: "Dashboard",
     icon: Home,
@@ -96,6 +146,8 @@ export const embeddedNavItems: NavItem[] = [
     labelKey: "nav.services",
     labelFallback: "Services",
     icon: Boxes,
+    children: servicesChildren,
+    anchor: "techstack-services-nav",
   },
   {
     id: "embedded-monitoring",
@@ -103,6 +155,7 @@ export const embeddedNavItems: NavItem[] = [
     labelKey: "nav.monitoring",
     labelFallback: "Monitoring",
     icon: Activity,
+    children: monitoringChildren,
   },
   {
     id: "embedded-wallet",

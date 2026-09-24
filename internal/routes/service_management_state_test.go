@@ -1,10 +1,6 @@
 package routes
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
-
 	"testing"
 	"time"
 
@@ -117,44 +113,4 @@ func TestServiceRuntimeResponseCarriesTheManagementDimension(t *testing.T) {
 	if response.ManagementState != registryObservedState {
 		t.Fatalf("unset management_state = %q, want a fail-closed observed", response.ManagementState)
 	}
-}
-
-// Regression guard for the actual defect: registry.go used to hold three
-// independent ownership derivations. Only the two documented single-rule
-// helpers may compare against the ownership vocabulary now.
-func TestRegistryRoutesHoldExactlyOneManagementDerivation(t *testing.T) {
-	fileSet := token.NewFileSet()
-	file, err := parser.ParseFile(fileSet, "registry.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse registry.go: %v", err)
-	}
-	allowed := map[string]bool{
-		// The two single-rule ownership reads, one per storage lane.
-		"registryStoreManagementState":  true,
-		"registryRecordManagementState": true,
-		// Consumers of an already-resolved value, not derivations.
-		"registryServiceMoveEligibility": true,
-		"isRegistryManagedRecord":        true,
-		// A write, not a read: the legacy import path stores the marker.
-		"importUnmanagedService": true,
-	}
-	vocabulary := map[string]bool{"registryManagedState": true, "registryObservedState": true}
-	ast.Inspect(file, func(node ast.Node) bool {
-		decl, ok := node.(*ast.FuncDecl)
-		if !ok || decl.Body == nil || allowed[decl.Name.Name] {
-			return true
-		}
-		ast.Inspect(decl.Body, func(inner ast.Node) bool {
-			identifier, ok := inner.(*ast.Ident)
-			// registryObservedState / registryManagedState are the ownership
-			// vocabulary. Reading them outside the single-rule helpers means a
-			// route is deciding ownership for itself again.
-			if ok && vocabulary[identifier.Name] {
-				t.Fatalf("%s recomputes management state at %s; read the persisted column instead",
-					decl.Name.Name, fileSet.Position(identifier.Pos()))
-			}
-			return true
-		})
-		return true
-	})
 }

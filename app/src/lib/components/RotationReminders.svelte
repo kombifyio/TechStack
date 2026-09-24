@@ -1,13 +1,13 @@
 <script lang="ts">
-  import type { PBWalletItem } from "$lib/stores/wallet";
+  import type { WalletItem } from "#lib/wallet/types.js";
   import {
     getRotationInterval,
     shouldRotate,
     getDaysUntilRotation,
-  } from "$lib/wallet/integration";
+  } from "#lib/wallet/integration.js";
 
   interface Props {
-    items: PBWalletItem[];
+    items: WalletItem[];
     onRotate: (item: any) => void;
   }
 
@@ -94,8 +94,8 @@
 </script>
 
 {#if rotationItems.length > 0}
-  <div class="card">
-    <div class="card-content">
+  <div data-kx="plate">
+    <div class="p-6">
       <div class="flex items-center justify-between mb-4">
         <div class="flex items-center gap-3">
           <div
@@ -124,7 +124,10 @@
           <h3 class="text-foreground font-semibold">Rotation Schedule</h3>
         </div>
         {#if needsAttention > 0}
-          <span class="badge badge-destructive"
+          <span
+            data-kx="status"
+            data-status="error"
+            class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
             >{needsAttention} need attention</span
           >
         {/if}
@@ -155,13 +158,15 @@
 
             <div class="flex items-center gap-3 flex-shrink-0">
               <span
-                class="badge {needsRotation
-                  ? 'badge-destructive'
+                data-kx="status"
+                data-status={needsRotation
+                  ? "error"
                   : neverRotated
-                    ? 'badge-warning'
+                    ? "warn"
                     : daysUntil !== null && daysUntil <= 14
-                      ? 'badge-warning'
-                      : 'badge-success'}"
+                      ? "warn"
+                      : "ok"}
+                class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
               >
                 {getStatusBadge(needsRotation, neverRotated, daysUntil)}
               </span>
@@ -169,7 +174,8 @@
               {#if needsRotation || neverRotated}
                 <button
                   onclick={() => onRotate(item)}
-                  class="btn btn-ghost btn-sm text-primary"
+                  data-kx="control"
+                  class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium disabled:pointer-events-none disabled:opacity-50 text-primary"
                 >
                   Rotate Now
                 </button>

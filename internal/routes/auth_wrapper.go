@@ -16,6 +16,7 @@ type LocalSetupProvisioner = auth.LocalSetupProvisioner
 type AuthRouteConfig struct {
 	PortalSession         auth.PortalSession
 	LocalSetupProvisioner LocalSetupProvisioner
+	LocalOwnerStore       auth.LocalOwnerLookup
 }
 
 // RegisterAuthRoutesWithConfig registers auth routes with runtime-only
@@ -24,6 +25,7 @@ func RegisterAuthRoutesWithConfig(r *httpx.Router, app core.App, mode config.Dep
 	auth.RegisterRoutesWithConfig(r, app, mode, edition, auth.RouteConfig{
 		PortalSession:         cfg.PortalSession,
 		LocalSetupProvisioner: cfg.LocalSetupProvisioner,
+		LocalOwnerStore:       cfg.LocalOwnerStore,
 	})
 }
 
@@ -33,6 +35,6 @@ func RegisterAuthRoutesWithConfig(r *httpx.Router, app core.App, mode config.Dep
 // Routes:
 //   - POST /api/internal/sso/exchange - Exchange Edge identity for PB token
 //   - POST /api/internal/feature-flags/apply - Push feature flag overrides
-func RegisterInternalRoutes(r *httpx.Router, app core.App, mode config.DeploymentMode) {
-	auth.RegisterInternalRoutes(r, app, mode)
+func RegisterInternalRoutes(r *httpx.Router, mode config.DeploymentMode) {
+	auth.RegisterInternalRoutes(r, mode)
 }

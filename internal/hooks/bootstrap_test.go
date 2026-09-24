@@ -17,7 +17,7 @@ func TestIsDevEnvironment(t *testing.T) {
 		{"empty - defaults to non-dev", "", "", false},
 		{"development", "development", "", true},
 		{"dev", "dev", "", true},
-		{"local", "local", "", true},
+		{"installed local client is not development", "local", "", false},
 		{"DEVELOPMENT uppercase", "DEVELOPMENT", "", true},
 		{"production", "production", "", false},
 		{"staging", "staging", "", false},
@@ -44,70 +44,6 @@ func TestIsDevEnvironment(t *testing.T) {
 				t.Errorf("isDevEnvironment() = %v, want %v (TECHSTACK_ENV=%q, ENVIRONMENT=%q)", result, tt.expected, tt.techstackEnv, tt.envVar)
 			}
 		})
-	}
-}
-
-// TestGetEnvOrDefault tests the environment variable fallback.
-func TestGetEnvOrDefault(t *testing.T) {
-	tests := []struct {
-		name       string
-		key        string
-		envValue   string
-		defaultVal string
-		expected   string
-	}{
-		{"returns env value when set", "TEST_HOOKS_VAR", "myvalue", "default", "myvalue"},
-		{"returns default when not set", "TEST_HOOKS_UNSET", "", "default", "default"},
-		{"trims whitespace from env", "TEST_HOOKS_SPACE", "  trimmed  ", "default", "trimmed"},
-		{"returns default for whitespace-only", "TEST_HOOKS_WHITESPACE", "   ", "default", "default"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			os.Unsetenv(tt.key)
-
-			if tt.envValue != "" {
-				os.Setenv(tt.key, tt.envValue)
-				defer os.Unsetenv(tt.key)
-			}
-
-			result := getEnvOrDefault(tt.key, tt.defaultVal)
-			if result != tt.expected {
-				t.Errorf("getEnvOrDefault(%q, %q) = %q, want %q", tt.key, tt.defaultVal, result, tt.expected)
-			}
-		})
-	}
-}
-
-func TestDefaultEmails(t *testing.T) {
-	if DefaultSuperuserEmail == "" {
-		t.Error("DefaultSuperuserEmail should not be empty")
-	}
-	if DefaultAdminEmail == "" {
-		t.Error("DefaultAdminEmail should not be empty")
-	}
-	if DefaultDeveloperEmail == "" {
-		t.Error("DefaultDeveloperEmail should not be empty")
-	}
-}
-
-func TestEnvVarNames(t *testing.T) {
-	envVars := []string{
-		EnvSuperuserEmail,
-		EnvSuperuserPassword,
-		EnvAdminEmail,
-		EnvAdminPassword,
-		EnvDeveloperEmail,
-		EnvDeveloperPassword,
-	}
-
-	for _, v := range envVars {
-		if v == "" {
-			t.Errorf("Environment variable constant should not be empty")
-		}
-		if !strings.HasPrefix(v, "TECHSTACK_") {
-			t.Errorf("Environment variable %q should start with TECHSTACK_", v)
-		}
 	}
 }
 

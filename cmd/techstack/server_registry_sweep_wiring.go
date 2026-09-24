@@ -26,7 +26,7 @@ func bootServerRegistrySweeper(boot *v2Boot, monitor *monitoringBoot, log *logge
 	if boot == nil || boot.db == nil || boot.db.DB == nil {
 		return nil
 	}
-	store := controlplane.NewPostgresStore(boot.db.DB)
+	store := controlPlanePostgresStore(boot)
 	sweeper, err := serverregistry.NewSweeper(serverregistry.SweeperConfig{
 		Registry:        store,
 		Outbox:          store,

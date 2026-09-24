@@ -272,13 +272,26 @@ export async function listWorkersViaApi(
 export async function login(page: Page, email?: string, password?: string) {
   const credentials =
     email && password ? { email, password } : requireTechStackTestUser("admin");
-  await page.goto("/login", { waitUntil: "domcontentloaded" });
-  // Wait for PocketBase connection to be established
-  await page.waitForTimeout(1000);
-  await page.locator("#owner-login-email").fill(credentials.email);
-  await page.locator("#owner-login-password").fill(credentials.password);
-  await page.getByRole("button", { name: "Sign in locally" }).click();
-  await page.waitForURL(/\/stacks/, { timeout: 30_000 });
+  await page.goto("/client/local", { waitUntil: "domcontentloaded" });
+  await page.waitForURL(/\/client\/local|\/dashboard/, { timeout: 15_000 });
+  if (page.url().includes("/dashboard")) {
+    return;
+  }
+  const existingEmail = page.getByTestId("windows-local-existing-email");
+  if (await existingEmail.isVisible().catch(() => false)) {
+    await existingEmail.fill(credentials.email);
+    await page
+      .getByTestId("windows-local-existing-password")
+      .fill(credentials.password);
+    await page.getByTestId("windows-local-existing-submit").click();
+  } else {
+    await page.getByTestId("windows-local-admin-email").fill(credentials.email);
+    await page
+      .getByTestId("windows-local-admin-password")
+      .fill(credentials.password);
+    await page.getByTestId("windows-local-setup-submit").click();
+  }
+  await page.waitForURL(/\/dashboard/, { timeout: 30_000 });
 }
 
 /**
@@ -320,19 +333,10 @@ export async function expectLoggedIn(page: Page) {
   await expect(page.locator("aside")).toBeVisible();
 }
 
-function makeFakeJwt(payload: Record<string, unknown>): string {
-  const encode = (obj: Record<string, unknown>) =>
-    Buffer.from(JSON.stringify(obj)).toString("base64url");
-  const header = { alg: "none", typ: "JWT" };
-  return `${encode(header)}.${encode(payload)}.sig`;
-}
-
 /**
- * Seed PocketBase auth state without a real backend.
- *
- * The PocketBase JS SDK considers a JWT "valid" based on its exp claim,
- * without verifying the signature. This is sufficient for UI flows that only
- * gate on `isAuthenticated()` and `currentUser`.
+ * Install the current local V2 auth browser boundary without a real backend.
+ * Callers may register narrower route handlers afterwards to override these
+ * defaults for hosted or first-run behavior.
  */
 export async function mockLoggedInContext(
   context: BrowserContext,
@@ -340,7 +344,7 @@ export async function mockLoggedInContext(
 ) {
   if (!opts.allowMockAuth && process.env.TECHSTACK_ALLOW_MOCK_AUTH !== "1") {
     throw new Error(
-      "mockLoggedInContext uses fake localStorage auth and is not allowed in release happy-path tests. Pass allowMockAuth only for isolated mocked-UI tests.",
+      "mockLoggedInContext uses mocked V2 auth and is not allowed in release happy-path tests. Pass allowMockAuth only for isolated mocked-UI tests.",
     );
   }
 
@@ -348,30 +352,46 @@ export async function mockLoggedInContext(
   const email =
     opts.email || getTechStackTestUser("admin").email || "mock-user@test.local";
 
-  const token = makeFakeJwt({
-    exp: 4102444800, // 2100-01-01
-    id: userId,
+  await context.addInitScript(() => {
+    window.sessionStorage.clear();
+    window.localStorage.removeItem("creatingStackName");
+    window.localStorage.removeItem("creatingStackId");
+    window.localStorage.removeItem("creatingJobId");
+    window.localStorage.removeItem("creatingStackConfig");
+    window.localStorage.removeItem("pocketbase_auth");
   });
-
-  const model = {
-    id: userId,
-    email,
-  };
-
-  await context.addInitScript(
-    ({ token, model }) => {
-      window.sessionStorage.clear();
-      window.localStorage.removeItem("creatingStackName");
-      window.localStorage.removeItem("creatingStackId");
-      window.localStorage.removeItem("creatingJobId");
-      window.localStorage.removeItem("creatingStackConfig");
-      window.localStorage.setItem(
-        "pocketbase_auth",
-        JSON.stringify({ token, model }),
-      );
-    },
-    { token, model },
-  );
+  await context.route("**/api/v1/auth/mode", async (route) => {
+    await route.fulfill({
+      json: {
+        data: {
+          mode: "local",
+          deployment_mode: "self-hosted",
+          is_first_run: false,
+          allow_local_login: true,
+        },
+      },
+    });
+  });
+  await context.route("**/api/v2/auth/providers", async (route) => {
+    await route.fulfill({ json: { providers: [] } });
+  });
+  await context.route("**/api/v2/whoami", async (route) => {
+    await route.fulfill({
+      json: {
+        subject: userId,
+        tenantId: "default",
+        email,
+        provider: "local",
+        role: "owner",
+      },
+    });
+  });
+  await context.route("**/api/v1/csrf**", async (route) => {
+    await route.fulfill({
+      headers: { "X-CSRF-Token": "mock-csrf-token" },
+      json: { token: "mock-csrf-token" },
+    });
+  });
 }
 
 /**
@@ -407,7 +427,6 @@ export async function completeEasyWizard(
       username: string;
       email: string;
       displayName?: string;
-      password: string;
     };
   } = {},
 ) {
@@ -422,7 +441,6 @@ export async function completeEasyWizard(
       username: "admin",
       email: "admin@test.local",
       displayName: "Admin",
-      password: "testpass123",
     },
   } = options;
 
@@ -434,6 +452,13 @@ export async function completeEasyWizard(
   await page.getByTestId("wizard-next").click();
 
   // Step 2: Server provisioning
+  await page
+    .getByTestId(
+      serverProvisioning === "kombify-cloud"
+        ? "server-branch-new"
+        : "server-branch-owned",
+    )
+    .click();
   await page.getByTestId(`server-mode-${serverProvisioning}`).click();
   if (serverProvisioning === "connect-remote") {
     await page.getByTestId("remote-server-host").fill("server.test.local");
@@ -458,9 +483,7 @@ export async function completeEasyWizard(
   await page.locator("#recovery-passphrase").fill(recoveryPassphrase);
   await page.locator("#recovery-passphrase-confirm").fill(recoveryPassphrase);
   await page.locator("#recovery-passphrase-confirm").blur();
-  await page.getByTestId("easy-auth-password").click();
-  await page.locator("#admin-password").fill(admin.password);
-  await page.locator("#admin-password-confirm").fill(admin.password);
+  await page.getByTestId("easy-auth-passkey").waitFor({ state: "visible" });
   await page.getByTestId("wizard-create").click();
 }
 

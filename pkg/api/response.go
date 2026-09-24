@@ -1,11 +1,5 @@
-// Package api provides HTTP handlers and utilities for the kombifyTechstack API
+// Package api defines shared HTTP envelope contracts for kombify Techstack.
 package api
-
-import (
-	"encoding/json"
-	"net/http"
-	"time"
-)
 
 // ErrorCode represents a standardized API error code
 type ErrorCode string
@@ -64,86 +58,4 @@ type ResponseMeta struct {
 	ManagedRuntimeLeaseGenerationDigests     *[]ManagedRuntimeLeaseGenerationDigest `json:"managed_runtime_lease_generation_digests,omitempty"`
 	ManagedRuntimeDuplicateLeaseIDs          *[]string                              `json:"managed_runtime_duplicate_lease_ids,omitempty"`
 	ManagedRuntimeAttachmentConflictLeaseIDs *[]string                              `json:"managed_runtime_attachment_conflict_lease_ids,omitempty"`
-}
-
-// NewResponseMeta returns a ResponseMeta pre-filled with request_id and timestamp.
-// The request_id is extracted from the X-Request-ID header (set by middleware).
-func NewResponseMeta(r *http.Request) *ResponseMeta {
-	return &ResponseMeta{
-		RequestID: r.Header.Get("X-Request-ID"),
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
-	}
-}
-
-// WriteJSON writes a JSON response with the given status code
-func WriteJSON(w http.ResponseWriter, status int, data any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(data)
-}
-
-// WriteSuccess writes a successful JSON response
-func WriteSuccess(w http.ResponseWriter, data any) {
-	WriteJSON(w, http.StatusOK, SuccessResponse{Data: data})
-}
-
-// WriteSuccessWithMeta writes a successful JSON response with metadata
-func WriteSuccessWithMeta(w http.ResponseWriter, data any, meta *ResponseMeta) {
-	WriteJSON(w, http.StatusOK, SuccessResponse{Data: data, Meta: meta})
-}
-
-// WriteError writes an error JSON response
-func WriteError(w http.ResponseWriter, status int, code ErrorCode, message string, details any) {
-	WriteJSON(w, status, ErrorResponse{
-		Error: ErrorDetail{
-			Code:    code,
-			Message: message,
-			Details: details,
-		},
-	})
-}
-
-// Common error response helpers
-
-// NotFound writes a 404 response
-func NotFound(w http.ResponseWriter, resource string) {
-	WriteError(w, http.StatusNotFound, ErrCodeNotFound,
-		resource+" not found", nil)
-}
-
-// BadRequest writes a 400 response
-func BadRequest(w http.ResponseWriter, message string) {
-	WriteError(w, http.StatusBadRequest, ErrCodeBadRequest, message, nil)
-}
-
-// InternalError writes a 500 response
-func InternalError(w http.ResponseWriter, message string) {
-	WriteError(w, http.StatusInternalServerError, ErrCodeInternal, message, nil)
-}
-
-// Unauthorized writes a 401 response
-func Unauthorized(w http.ResponseWriter, message string) {
-	WriteError(w, http.StatusUnauthorized, ErrCodeUnauthorized, message, nil)
-}
-
-// Forbidden writes a 403 response
-func Forbidden(w http.ResponseWriter, message string) {
-	WriteError(w, http.StatusForbidden, ErrCodeForbidden, message, nil)
-}
-
-// ValidationError writes a 400 response for validation errors
-func ValidationError(w http.ResponseWriter, errors map[string]string) {
-	WriteError(w, http.StatusBadRequest, ErrCodeValidation,
-		"Validation failed", errors)
-}
-
-// MethodNotAllowed writes a 405 response
-func MethodNotAllowed(w http.ResponseWriter, method string) {
-	WriteError(w, http.StatusMethodNotAllowed, ErrCodeMethodNotAllowed,
-		"Method "+method+" not allowed", nil)
-}
-
-// DecodeJSON decodes JSON from request body
-func DecodeJSON(r *http.Request, v any) error {
-	return json.NewDecoder(r.Body).Decode(v)
 }

@@ -3,10 +3,10 @@ package auth
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/kombifyio/techstack/pkg/config"
-	"github.com/pocketbase/pocketbase/core"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -72,7 +72,7 @@ func TestResolveCloudAuthorizationURL_UsesEnvFallback(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "https://techstack.kombify.io/api/v1/auth/mode", nil)
 	req.Host = "techstack.kombify.io"
 
-	authURL := resolveCloudAuthorizationURL(nil, req)
+	authURL := resolveCloudAuthorizationURL(req)
 	if assert.NotNil(t, authURL) {
 		assert.Equal(t, "https://techstack.kombify.io/api/v2/auth/login", *authURL)
 	}
@@ -85,26 +85,7 @@ func TestResolveCloudAuthorizationURL_UsesAuth0IssuerFallback(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "https://techstack.kombify.io/api/v1/auth/mode", nil)
 	req.Host = "techstack.kombify.io"
 
-	authURL := resolveCloudAuthorizationURL(nil, req)
-	if assert.NotNil(t, authURL) {
-		assert.Equal(t, "https://techstack.kombify.io/api/v2/auth/login", *authURL)
-	}
-}
-
-func TestResolveCloudAuthorizationURL_UsesLegacyAuth0RecordFields(t *testing.T) {
-	collection := core.NewBaseCollection("auth_config")
-	collection.Fields.Add(
-		&core.TextField{Name: "auth0_issuer"},
-		&core.TextField{Name: "auth0_client_id"},
-	)
-	record := core.NewRecord(collection)
-	record.Set("auth0_issuer", "https://legacy.auth0.example")
-	record.Set("auth0_client_id", "legacy-client-id")
-
-	req := httptest.NewRequest(http.MethodGet, "https://techstack.kombify.io/api/v1/auth/mode", nil)
-	req.Host = "techstack.kombify.io"
-
-	authURL := resolveCloudAuthorizationURL(record, req)
+	authURL := resolveCloudAuthorizationURL(req)
 	if assert.NotNil(t, authURL) {
 		assert.Equal(t, "https://techstack.kombify.io/api/v2/auth/login", *authURL)
 	}
@@ -118,8 +99,8 @@ func TestCloudIssuerFromEnvDefaultsToLoginKombify(t *testing.T) {
 	assert.Equal(t, config.DefaultCloudAuthIssuer, cloudIssuerFromEnv())
 }
 
-func TestCloudIssuerFromEnvMapsLegacyKombifyTenantToCustomDomain(t *testing.T) {
-	t.Setenv("TECHSTACK_AUTH_CLOUD_ISSUER", "https://kombify.eu.auth0.com/")
+func TestCloudIssuerFromEnvUsesCanonicalConfiguredIssuer(t *testing.T) {
+	t.Setenv("TECHSTACK_AUTH_CLOUD_ISSUER", "https://login.kombify.io/")
 	t.Setenv("AUTH0_DOMAIN", "")
 	t.Setenv("AUTH0_ISSUER", "")
 
@@ -158,20 +139,29 @@ func TestBuildOAuthLogoutURL_UsesPublicOriginForLoopbackHosts(t *testing.T) {
 	assert.NotContains(t, logoutURL, "127.0.0.1%3A5262")
 }
 
-func TestBuildRedirectURI_UsesProxiedCallbackPath(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "https://techstack.kombify.io/api/v1/auth/callback?code=test", nil)
-	req.Host = "techstack.kombify.io"
+func TestRedirectOriginDoesNotInventLocalhost(t *testing.T) {
+	t.Setenv("TECHSTACK_PUBLIC_ORIGIN", "")
+	t.Setenv("PUBLIC_ORIGIN", "")
+	t.Setenv("APP_PUBLIC_ORIGIN", "")
+	t.Setenv("APP_URL", "")
 
-	redirectURI := buildRedirectURI(req)
+	if got := redirectOrigin(nil); strings.Contains(strings.ToLower(got), "localhost") {
+		t.Fatalf("redirectOrigin(nil) = %q", got)
+	}
 
-	assert.Equal(t, "https://techstack.kombify.io/api/v1/auth/callback", redirectURI)
-}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = ""
+	req.URL.Host = ""
+	if got := redirectOrigin(req); strings.Contains(strings.ToLower(got), "localhost") {
+		t.Fatalf("redirectOrigin(empty request) = %q", got)
+	}
 
-func TestBuildRedirectURI_PreservesLegacyCallbackPath(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "https://techstack.kombify.io/auth/callback?code=test", nil)
-	req.Host = "techstack.kombify.io"
+	if got := buildCloudLoginURL(nil); strings.Contains(strings.ToLower(got), "localhost") {
+		t.Fatalf("buildCloudLoginURL(nil) = %q", got)
+	}
 
-	redirectURI := buildRedirectURI(req)
-
-	assert.Equal(t, "https://techstack.kombify.io/auth/callback", redirectURI)
+	logoutURL := buildOAuthLogoutURL(config.DefaultCloudAuthIssuer, "test-client-id", nil)
+	if strings.Contains(strings.ToLower(logoutURL), "localhost") {
+		t.Fatalf("buildOAuthLogoutURL(nil) = %q", logoutURL)
+	}
 }

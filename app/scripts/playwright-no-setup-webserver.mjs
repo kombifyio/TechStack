@@ -138,7 +138,7 @@ const handlers = new Map([
               description:
                 "Identity head for StackKit login and owner activation.",
               required: true,
-              foundations: ["base-kit"],
+              foundations: ["basement-kit"],
             },
             {
               id: "vaultwarden",
@@ -146,7 +146,7 @@ const handlers = new Map([
               type: "auth",
               description: "Password vault managed by the StackKit gateway.",
               recommended: true,
-              foundations: ["base-kit"],
+              foundations: ["basement-kit"],
             },
           ],
           stacks: [
@@ -154,7 +154,7 @@ const handlers = new Map([
               id: "stack-1",
               name: "Demo Stack",
               status: "running",
-              stackkit_foundation: "base-kit",
+              stackkit_foundation: "basement-kit",
             },
           ],
           servers: [
@@ -210,8 +210,7 @@ const handlers = new Map([
         },
       }),
   ],
-  // Canonical server read model. The UI reads servers from here now; the
-  // legacy /api/v1/registry/servers projection has no client left.
+  // Canonical server read model. The UI reads Nodes from here.
   [
     handlerKey("GET", "/api/v1/servers"),
     (_req, res) =>

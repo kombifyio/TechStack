@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sanitizeSentryText, scrubSentryEvent } from "./sentry-scrub";
+import { scrubSentryEvent } from "./sentry-scrub";
 
 describe("Sentry event scrubbing", () => {
   it("redacts secrets and private targets from custom context", () => {
@@ -26,12 +26,5 @@ describe("Sentry event scrubbing", () => {
     expect(encoded).not.toContain("supersecret");
     expect(event.request.url).toBe("https://techstack.kombify.io/stacks");
     expect(event.contexts.job.request_id).toBe("req-1");
-  });
-
-  it("retains reason codes while bounding summaries", () => {
-    expect(sanitizeSentryText("reason=server_offline")).toContain(
-      "server_offline",
-    );
-    expect(sanitizeSentryText("x".repeat(3_000))).toHaveLength(2_000);
   });
 });

@@ -39,26 +39,20 @@ func TestStackKitResolver_Resolve_ExplicitCloudKit(t *testing.T) {
 	}
 }
 
-func TestStackKitResolver_Resolve_LegacyBaseKitAliasesToBasement(t *testing.T) {
+func TestStackKitResolver_Resolve_RetiredBaseKitIsInvalid(t *testing.T) {
 	resolver := NewStackKitResolver([]string{"base-kit", StackKitCloud})
 	result := resolver.Resolve(&core.KombinationSpec{Kit: "base-kit"})
 
 	if result == nil {
 		t.Fatal("Resolve returned nil result")
 	}
-	if !result.Valid {
-		t.Fatalf("Resolve() valid = false, warnings: %v", result.Warnings)
-	}
-	if result.StackKit != StackKitBasement {
-		t.Fatalf("StackKit = %q, want %q", result.StackKit, StackKitBasement)
-	}
-	if len(result.Warnings) == 0 {
-		t.Fatal("expected alias warning for legacy base-kit")
+	if result.Valid {
+		t.Fatal("Resolve() valid = true, want retired base-kit to be invalid")
 	}
 }
 
 func TestStackKitResolver_Resolve_RetiredKitIsInvalid(t *testing.T) {
-	resolver := NewStackKitResolver([]string{"base-kit", StackKitCloud, StackKitHA, StackKitModernHomelab})
+	resolver := NewStackKitResolver([]string{StackKitBasement, StackKitCloud, StackKitHA, StackKitModernHomelab})
 	result := resolver.Resolve(&core.KombinationSpec{Kit: StackKitHA})
 
 	if result == nil {
@@ -105,7 +99,7 @@ func TestStackKitResolver_AutoSelect_CloudProviderUsesCloudKit(t *testing.T) {
 }
 
 func TestStackKitResolver_AutoSelect_MixedLocalCloudUsesCloudKit(t *testing.T) {
-	resolver := NewStackKitResolver([]string{"base-kit", StackKitCloud, StackKitHA, StackKitModernHomelab})
+	resolver := NewStackKitResolver([]string{StackKitBasement, StackKitCloud, StackKitHA, StackKitModernHomelab})
 	result := resolver.Resolve(&core.KombinationSpec{
 		Nodes: []core.NodeSpec{
 			{Name: "local1", Type: "main", Provider: "local"},
@@ -122,32 +116,19 @@ func TestStackKitResolver_AutoSelect_MixedLocalCloudUsesCloudKit(t *testing.T) {
 }
 
 func TestStackKitResolver_FiltersAvailableKitsToSupportedProductKits(t *testing.T) {
-	resolver := NewStackKitResolver([]string{"base-kit", StackKitCloud, StackKitHA, "custom-kit"})
+	resolver := NewStackKitResolver([]string{StackKitBasement, StackKitCloud, StackKitHA, "custom-kit"})
 
-	if !resolver.IsKitAvailable(StackKitBasement) {
-		t.Fatalf("%q should be available through legacy base-kit alias", StackKitBasement)
-	}
-	if !resolver.IsKitAvailable(StackKitCloud) {
-		t.Fatalf("%q should be available", StackKitCloud)
-	}
-	if resolver.IsKitAvailable(StackKitHA) {
-		t.Fatalf("%q should not be available in the TechStack product contract", StackKitHA)
-	}
-	if resolver.IsKitAvailable("custom-kit") {
-		t.Fatal("custom-kit should not be available in the TechStack product contract")
-	}
-}
-
-func TestStackKitResolver_AddKitIgnoresUnsupportedKits(t *testing.T) {
-	resolver := NewStackKitResolver([]string{StackKitBasement})
-
-	resolver.AddKit(StackKitHA)
-	resolver.AddKit(StackKitCloud)
-
-	if resolver.IsKitAvailable(StackKitHA) {
-		t.Fatalf("%q should not be added", StackKitHA)
-	}
-	if !resolver.IsKitAvailable(StackKitCloud) {
-		t.Fatalf("%q should be added", StackKitCloud)
+	for _, tc := range []struct {
+		kit   string
+		valid bool
+	}{
+		{StackKitBasement, true},
+		{StackKitCloud, true},
+		{StackKitHA, false},
+		{"custom-kit", false},
+	} {
+		if got := resolver.Resolve(&core.KombinationSpec{Kit: tc.kit}).Valid; got != tc.valid {
+			t.Fatalf("Resolve(%q).Valid = %v, want %v", tc.kit, got, tc.valid)
+		}
 	}
 }

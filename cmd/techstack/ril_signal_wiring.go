@@ -6,13 +6,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/logger"
 	"github.com/kombifyio/techstack/pkg/ril/signals"
 )
 
 const rilSignalGatewayURLEnv = "TECHSTACK_RIL_SIGNAL_GATEWAY_URL"
 
-func bootRILSignalRuntime(v2 *v2Boot, revision string, log *logger.Logger) (*signals.PostgresOutbox, *signals.Worker) {
+func bootRILSignalRuntime(v2 *v2Boot, edition config.Edition, revision string, log *logger.Logger) (*signals.PostgresOutbox, *signals.Worker) {
 	if v2 == nil || v2.db == nil || v2.db.DB == nil {
 		return nil, nil
 	}
@@ -22,9 +23,10 @@ func bootRILSignalRuntime(v2 *v2Boot, revision string, log *logger.Logger) (*sig
 		log.Warn("ril_signal_publisher_disabled", "reason", "SERVICE_AUTH_SECRET missing")
 		return outbox, nil
 	}
-	gatewayURL := strings.TrimSpace(os.Getenv(rilSignalGatewayURLEnv))
+	gatewayURL := resolveRILSignalGatewayURL(edition, os.Getenv(rilSignalGatewayURLEnv))
 	if gatewayURL == "" {
-		gatewayURL = signals.DefaultGatewaySignalURL
+		log.Warn("ril_signal_publisher_disabled", "reason", "self-hosted gateway URL missing")
+		return outbox, nil
 	}
 	publisher, err := signals.NewGatewayPublisher(
 		gatewayURL,
@@ -52,4 +54,14 @@ func bootRILSignalRuntime(v2 *v2Boot, revision string, log *logger.Logger) (*sig
 	}
 	log.Info("ril_signal_publisher_ready", "gateway", gatewayURL)
 	return outbox, worker
+}
+
+func resolveRILSignalGatewayURL(edition config.Edition, configured string) string {
+	if url := strings.TrimSpace(configured); url != "" {
+		return url
+	}
+	if edition == config.EditionSelfHostOSS {
+		return ""
+	}
+	return signals.DefaultGatewaySignalURL
 }

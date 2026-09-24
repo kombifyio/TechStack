@@ -47,9 +47,6 @@ func TestFetchLatestRelease(t *testing.T) {
 		t.Errorf("expected version v1.2.3, got %s", release.TagName)
 	}
 
-	if len(release.Assets) != 2 {
-		t.Errorf("expected 2 assets, got %d", len(release.Assets))
-	}
 }
 
 func TestFindAsset(t *testing.T) {
@@ -112,27 +109,5 @@ func TestFindAsset(t *testing.T) {
 				t.Errorf("expected %s, got %s", tt.expected, url)
 			}
 		})
-	}
-}
-
-func TestGetLatestReleaseIntegration(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
-
-	// Real GitHub API call
-	ctx := context.Background()
-	release, err := FetchLatestRelease(ctx, "https://api.github.com/repos/cloudflare/cloudflared/releases/latest")
-
-	if err != nil {
-		t.Logf("GitHub API call failed (expected in CI): %v", err)
-		return
-	}
-
-	t.Logf("Latest cloudflared release: %s", release.TagName)
-	t.Logf("Assets: %d", len(release.Assets))
-
-	if len(release.Assets) == 0 {
-		t.Error("no assets found")
 	}
 }

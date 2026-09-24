@@ -7,14 +7,43 @@ import {
 } from "./index";
 
 describe("wizard identity service decisions", () => {
+  it("preserves a custom owner when preparing a managed deployment", () => {
+    const config = createDefaultConfig("saas");
+    config.owner.bootstrapMode = "custom";
+    config.owner.source = "local";
+    config.owner.email = "household@example.com";
+    config.owner.displayName = "Our household";
+
+    const payload = buildPayload(config);
+
+    expect(payload.options.owner_bootstrap_mode).toBe("custom");
+    expect(payload.options.owner_source).toBe("local");
+    expect(payload.options.owner_email).toBe("household@example.com");
+    expect(payload.options.owner_display_name).toBe("Our household");
+  });
+
+  it("recomputes optional workloads from the current goals", () => {
+    const config = createDefaultConfig();
+    deriveServicesFromGoals(config);
+    expect(buildPayload(config).options.use_cases).toEqual([]);
+    expect(buildPayload(config).services).not.toContain("vaultwarden");
+    config.goals!.photos = true;
+    deriveServicesFromGoals(config);
+    expect(buildPayload(config).services).toContain("immich-server");
+    config.goals!.photos = false;
+    deriveServicesFromGoals(config);
+    expect(buildPayload(config).services).not.toContain("immich-server");
+    expect(buildPayload(config).services).toContain("pocket-id");
+  });
+
   it("defaults to Pocket ID without enabling PocketBase", () => {
     const config = createDefaultConfig();
 
     expect(config.identity).toEqual({
       toolProvider: "pocket-id",
       homelabProvider: "pocket-id",
-      requiresPasskeys: false,
-      backendCapability: "external-identity",
+      requiresPasskeys: true,
+      backendCapability: "passkeys",
     });
     expect(config.services.pocketId).toBe(true);
     expect(config.services.pocketbase).toBe(false);
@@ -25,12 +54,7 @@ describe("wizard identity service decisions", () => {
 
     expect(payload.provider).toBe("local");
     expect(payload.services).toEqual(
-      expect.arrayContaining([
-        "pocket-id",
-        "traefik",
-        "vaultwarden",
-        "otel-collector",
-      ]),
+      expect.arrayContaining(["pocket-id", "traefik", "otel-collector"]),
     );
     expect(payload.services).not.toContain("monitoring");
     expect(payload.options.server_mode).toBe("user-owned");
@@ -49,7 +73,7 @@ describe("wizard identity service decisions", () => {
     expect(payload.options.billing_mode).toBe("local");
     expect(payload.options.billing_cadence).toBeUndefined();
     expect(payload.options.stackkit_catalog_ref).toBe("basement-kit");
-    expect(payload.options.use_cases).toEqual(["vault"]);
+    expect(payload.options.use_cases).toEqual([]);
     expect(payload.options.verification_status).toBe("pending");
     expect(payload.services).toContain("pocket-id");
     expect(payload.services).not.toContain("pocketbase");
@@ -65,6 +89,8 @@ describe("wizard identity service decisions", () => {
     expect(payload.options.owner_email).toBeUndefined();
     expect(payload.options.owner_username).toBeUndefined();
     expect(payload.options.recovery_passphrase_hash).toBeUndefined();
+    expect(payload.options.requires_passkeys).toBe(true);
+    expect(payload.options.identity_backend_capability).toBe("passkeys");
   });
 
   it("expands the all-use-cases preset into canonical StackKits slugs", () => {
@@ -112,6 +138,7 @@ describe("wizard identity service decisions", () => {
 
   it("sends SaaS managed runtime owner bootstrap without owner or manual recovery fields", () => {
     const config = createDefaultConfig("saas");
+    config.providerId = "centron";
 
     const payload = buildPayload(config);
 

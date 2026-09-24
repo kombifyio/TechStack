@@ -14,7 +14,10 @@ import (
 	"github.com/kombifyio/stackkits/pkg/backupbinding"
 )
 
-const maxResolvedPlanBytes = 32 << 20
+const (
+	maxResolvedPlanBytes = 32 << 20
+	apiVersionField      = "apiVersion"
+)
 
 type CustodyReceipt = backupstore.CustodyEvidence
 
@@ -41,7 +44,7 @@ func BuildInventory(resolvedPlan []byte, custody CustodyReceipt, process Operati
 		"schemaVersion": "stackkit.inventory/v1",
 		"executionChannels": map[string]any{
 			process.ChannelRef: map[string]any{
-				"apiVersion": "stackkit.standard-execution-channel/v1", "kind": "StandardExecutionChannel",
+				apiVersionField: "stackkit.standard-execution-channel/v1", "kind": "StandardExecutionChannel",
 				"channelRef": process.ChannelRef, "siteRef": siteRef, "nodeRef": nodeRef, "operationClass": "standard",
 				"operationsProcess": map[string]any{"executable": process.Executable, "executableSha256": process.ExecutableSHA256},
 			},
@@ -52,25 +55,25 @@ func BuildInventory(resolvedPlan []byte, custody CustodyReceipt, process Operati
 		if custody.ObservedAt.IsZero() || len(custody.BindingEvidence) == 0 || len(custody.TargetEvidence) == 0 || len(custody.AttestationEvidence) == 0 {
 			return nil, errors.New("managed backup custody receipt is incomplete")
 		}
-		bindingRef, err := backupbinding.OpaqueReference("backup-target-binding", custody.BindingEvidence)
-		if err != nil {
-			return nil, err
+		bindingRef, referenceErr := backupbinding.OpaqueReference("backup-target-binding", custody.BindingEvidence)
+		if referenceErr != nil {
+			return nil, referenceErr
 		}
-		targetRef, err := backupbinding.OpaqueReference("backup-target", custody.TargetEvidence)
-		if err != nil {
-			return nil, err
+		targetRef, referenceErr := backupbinding.OpaqueReference("backup-target", custody.TargetEvidence)
+		if referenceErr != nil {
+			return nil, referenceErr
 		}
-		attestationRef, err := backupbinding.OpaqueReference("backup-custody-attestation", custody.AttestationEvidence)
-		if err != nil {
-			return nil, err
+		attestationRef, referenceErr := backupbinding.OpaqueReference("backup-custody-attestation", custody.AttestationEvidence)
+		if referenceErr != nil {
+			return nil, referenceErr
 		}
-		binding, err := backupbinding.Build(backupbinding.Document(requirement), backupbinding.Input{
+		binding, buildErr := backupbinding.Build(backupbinding.Document(requirement), backupbinding.Input{
 			BindingRef: bindingRef, BackupTargetRef: targetRef, CustodyAttestationRef: attestationRef,
 			StackKitsVersion: candidate.StackKitsVersion, CandidateDigest: candidate.Digest,
 			IssuedAt: issuedAt, ValidUntil: issuedAt.Add(candidate.ValidFor),
 		})
-		if err != nil {
-			return nil, fmt.Errorf("build managed backup target binding: %w", err)
+		if buildErr != nil {
+			return nil, fmt.Errorf("build managed backup target binding: %w", buildErr)
 		}
 		inventory["externalBackupTargetBindings"] = map[string]any{
 			siteRef: map[string]any{backupbinding.Capability: binding},
@@ -91,7 +94,7 @@ func validateInventoryAuthority(resolvedPlan []byte, process OperationsProcess, 
 	if err != nil {
 		return nil, "", "", fmt.Errorf("decode managed StackKits ResolvedPlan: %w", err)
 	}
-	if plan["apiVersion"] != "stackkit.resolved-plan/v1" {
+	if plan[apiVersionField] != "stackkit.resolved-plan/v1" {
 		return nil, "", "", errors.New("managed StackKits Inventory requires stackkit.resolved-plan/v1")
 	}
 	requirement, siteRef, nodeRef, err := exactBackupRequirement(plan)
@@ -101,18 +104,32 @@ func validateInventoryAuthority(resolvedPlan []byte, process OperationsProcess, 
 	if requirement == nil {
 		siteRef, nodeRef = process.SiteRef, process.NodeRef
 	}
+	if processErr := validateOperationsProcess(process, siteRef, nodeRef); processErr != nil {
+		return nil, "", "", processErr
+	}
+	if candidateErr := validateCandidate(candidate); candidateErr != nil {
+		return nil, "", "", candidateErr
+	}
+	return requirement, siteRef, nodeRef, nil
+}
+
+func validateOperationsProcess(process OperationsProcess, siteRef, nodeRef string) error {
 	if process.ChannelRef == "" || process.ChannelRef != strings.TrimSpace(process.ChannelRef) ||
 		process.SiteRef == "" || process.SiteRef != strings.TrimSpace(process.SiteRef) ||
 		process.NodeRef == "" || process.NodeRef != strings.TrimSpace(process.NodeRef) ||
 		process.SiteRef != siteRef || process.NodeRef != nodeRef || !path.IsAbs(process.Executable) ||
 		process.Executable != path.Clean(process.Executable) || !validDigest(process.ExecutableSHA256) {
-		return nil, "", "", errors.New("managed StackKits operations process does not exactly match the managed Site/node/channel contract")
+		return errors.New("managed StackKits operations process does not exactly match the managed Site/node/channel contract")
 	}
+	return nil
+}
+
+func validateCandidate(candidate Candidate) error {
 	if candidate.ValidFor <= 0 || candidate.ValidFor > backupbinding.MaxValidity ||
 		strings.TrimSpace(candidate.StackKitsVersion) == "" || !validDigest(candidate.Digest) {
-		return nil, "", "", errors.New("managed StackKits candidate identity or binding validity is invalid")
+		return errors.New("managed StackKits candidate identity or binding validity is invalid")
 	}
-	return requirement, siteRef, nodeRef, nil
+	return nil
 }
 
 func exactBackupRequirement(plan map[string]any) (map[string]any, string, string, error) {
@@ -127,19 +144,19 @@ func exactBackupRequirement(plan map[string]any) (map[string]any, string, string
 	if len(rawSites) == 0 {
 		return nil, "", "", nil
 	}
-	if len(rawSites) != 1 {
+	siteRef, rawCapabilities, ok := singleMapEntry(rawSites)
+	if !ok {
 		return nil, "", "", errors.New("ResolvedPlan must contain exactly one managed Cloud backup target requirement")
 	}
-	var siteRef string
-	var rawCapabilities any
-	for siteRef, rawCapabilities = range rawSites {
-	}
 	capabilities, ok := rawCapabilities.(map[string]any)
-	if !ok || len(capabilities) != 1 {
+	if !ok {
 		return nil, "", "", errors.New("ResolvedPlan backup target requirement is not a closed capability map")
 	}
-	rawRequirement, ok := capabilities[backupbinding.Capability]
+	capability, rawRequirement, ok := singleMapEntry(capabilities)
 	if !ok {
+		return nil, "", "", errors.New("ResolvedPlan backup target requirement is not a closed capability map")
+	}
+	if capability != backupbinding.Capability {
 		return nil, "", "", errors.New("ResolvedPlan does not select offsite-object-backup")
 	}
 	requirement, ok := rawRequirement.(map[string]any)
@@ -155,6 +172,16 @@ func exactBackupRequirement(plan map[string]any) (map[string]any, string, string
 		return nil, "", "", errors.New("managed Cloud backup target node is invalid")
 	}
 	return requirement, siteRef, nodeRef, nil
+}
+
+func singleMapEntry(values map[string]any) (string, any, bool) {
+	if len(values) != 1 {
+		return "", nil, false
+	}
+	for key, value := range values {
+		return key, value, true
+	}
+	return "", nil, false
 }
 
 func decodeObject(data []byte) (map[string]any, error) {

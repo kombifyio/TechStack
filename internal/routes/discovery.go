@@ -13,15 +13,14 @@ import (
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/discovery"
 	"github.com/kombifyio/techstack/pkg/httpx"
-	"github.com/pocketbase/pocketbase/core"
 )
 
 type DiscoveryHandler struct {
 	discovery discovery.Discovery
-	mu        sync.RWMutex
+	allowLAN  bool
+	mu        sync.Mutex
 	scanOwn   map[string]scanEntry
 	deviceOwn map[string]deviceEntry
-	stopCh    chan struct{}
 }
 
 type scanEntry struct {
@@ -34,47 +33,29 @@ type deviceEntry struct {
 	createdAt time.Time
 }
 
-const discoveryCleanupInterval = 1 * time.Hour
-
 const scanMaxAge = 24 * time.Hour
 
 const deviceMaxAge = 7 * 24 * time.Hour
 
 func NewDiscoveryHandler(disc discovery.Discovery) *DiscoveryHandler {
-	h := &DiscoveryHandler{
+	return &DiscoveryHandler{
 		discovery: disc,
+		allowLAN:  true,
 		scanOwn:   make(map[string]scanEntry),
 		deviceOwn: make(map[string]deviceEntry),
-		stopCh:    make(chan struct{}),
-	}
-	go h.cleanupLoop()
-	return h
-}
-
-func (h *DiscoveryHandler) Stop() {
-	close(h.stopCh)
-}
-
-func (h *DiscoveryHandler) cleanupLoop() {
-	ticker := time.NewTicker(discoveryCleanupInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			h.cleanupOldEntries()
-		case <-h.stopCh:
-			return
-		}
 	}
 }
 
-func (h *DiscoveryHandler) cleanupOldEntries() {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+// NewDiscoveryHandlerForLAN makes execution locality explicit at composition.
+// The hosted control plane cannot discover a customer's home network.
+func NewDiscoveryHandlerForLAN(available bool) *DiscoveryHandler {
+	handler := NewDiscoveryHandler(discovery.New())
+	handler.allowLAN = available
+	return handler
+}
 
-	now := time.Now()
-
+// pruneOldEntries removes ownership records while the caller holds h.mu.
+func (h *DiscoveryHandler) pruneOldEntries(now time.Time) {
 	for scanID, entry := range h.scanOwn {
 		if now.Sub(entry.createdAt) > scanMaxAge {
 			delete(h.scanOwn, scanID)
@@ -122,13 +103,19 @@ func requireDiscoveryAdminAccess(e *httpx.Event) (bool, error) {
 func (h *DiscoveryHandler) setScanOwner(scanID, ownerID string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.scanOwn[scanID] = scanEntry{ownerID: ownerID, createdAt: time.Now()}
+	now := time.Now()
+	h.pruneOldEntries(now)
+	h.scanOwn[scanID] = scanEntry{ownerID: ownerID, createdAt: now}
 }
 
 func (h *DiscoveryHandler) isScanOwner(scanID, ownerID string) bool {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	entry, exists := h.scanOwn[scanID]
+	if exists && time.Since(entry.createdAt) > scanMaxAge {
+		delete(h.scanOwn, scanID)
+		return false
+	}
 	return exists && entry.ownerID == ownerID
 }
 
@@ -141,9 +128,13 @@ func (h *DiscoveryHandler) setDeviceOwner(deviceID, ownerID string) {
 }
 
 func (h *DiscoveryHandler) isDeviceOwner(deviceID, ownerID string) bool {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	entry, exists := h.deviceOwn[deviceID]
+	if exists && time.Since(entry.createdAt) > deviceMaxAge {
+		delete(h.deviceOwn, deviceID)
+		return false
+	}
 	return exists && entry.ownerID == ownerID
 }
 
@@ -164,10 +155,11 @@ func (h *DiscoveryHandler) setDevicesOwnerFromResult(result *discovery.ScanResul
 	}
 }
 
-func RegisterDiscoveryRoutes(r *httpx.Router, app core.App, handler *DiscoveryHandler) {
+func RegisterDiscoveryRoutes(r *httpx.Router, handler *DiscoveryHandler) {
 	if handler == nil {
 		handler = NewDiscoveryHandler(discovery.New())
 	}
+	r.GET("/api/v1/discovery/capabilities", handler.capabilities)
 
 	r.GET("/api/v1/discovery/networks", handler.networks)
 	r.POST("/api/v1/discovery/scan", handler.startScan)
@@ -182,9 +174,27 @@ func RegisterDiscoveryRoutes(r *httpx.Router, app core.App, handler *DiscoveryHa
 	r.GET("/api/v1/discovery/stats", handler.stats)
 }
 
+func (h *DiscoveryHandler) capabilities(e *httpx.Event) error {
+	if _, ok, err := authenticatedDiscoveryOwner(e); err != nil || !ok {
+		return err
+	}
+	return httpx.Success(e, http.StatusOK, map[string]any{
+		"lan_executor_available":      h.allowLAN,
+		"proxmox_fingerprinting":      h.allowLAN,
+		"manual_connection_available": true,
+	})
+}
+
+func (h *DiscoveryHandler) requireLAN(e *httpx.Event) error {
+	return httpx.Error(e, http.StatusConflict, "lan_executor_required", "Connect a local Techstack client or an authorized LAN executor to discover this network. Manual hypervisor connection remains available.", nil)
+}
+
 func (h *DiscoveryHandler) networks(e *httpx.Event) error {
 	if _, ok, err := authenticatedDiscoveryOwner(e); err != nil || !ok {
 		return err
+	}
+	if !h.allowLAN {
+		return h.requireLAN(e)
 	}
 	networks, err := h.discovery.GetLocalNetworks()
 	if err != nil {
@@ -197,6 +207,9 @@ func (h *DiscoveryHandler) startScan(e *httpx.Event) error {
 	ownerID, ok, err := authenticatedDiscoveryOwner(e)
 	if err != nil || !ok {
 		return err
+	}
+	if !h.allowLAN {
+		return h.requireLAN(e)
 	}
 	req, err := decodeDiscoveryScanRequest(e.Request.Body)
 	if err != nil {
@@ -259,6 +272,9 @@ func (h *DiscoveryHandler) enrichScan(e *httpx.Event) error {
 	if err != nil || !ok {
 		return err
 	}
+	if !h.allowLAN {
+		return h.requireLAN(e)
+	}
 	scanID := e.Request.PathValue("id")
 	if !h.isScanOwner(scanID, ownerID) {
 		return httpx.NotFound(e, "Scan not found")
@@ -312,6 +328,9 @@ func (h *DiscoveryHandler) probeDevice(e *httpx.Event) error {
 	if err != nil || !ok {
 		return err
 	}
+	if !h.allowLAN {
+		return h.requireLAN(e)
+	}
 	req, err := decodeDiscoveryProbeRequest(e.Request.Body)
 	if err != nil {
 		return httpx.BadRequest(e, "Invalid request body")
@@ -335,6 +354,9 @@ func (h *DiscoveryHandler) testSSH(e *httpx.Event) error {
 	ownerID, isAdmin, ok, err := authenticatedDiscoveryUser(e)
 	if err != nil || !ok {
 		return err
+	}
+	if !h.allowLAN {
+		return h.requireLAN(e)
 	}
 	req, err := decodeDiscoveryTestSSHRequest(e.Request.Body)
 	if err != nil {

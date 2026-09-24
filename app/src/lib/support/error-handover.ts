@@ -132,7 +132,7 @@ export function buildErrorAiHandoverPrompt(
 ): string {
   const context = normalizeErrorAiHandoverContext(input);
   const lines = [
-    "Please help diagnose this kombify TechStack error.",
+    "Please help diagnose this kombify Techstack error.",
     "Use only tenant-scoped data for my current authenticated kombify account. If backend or Sentry context is needed, look it up through the tenant-filtered error-context backend by request ID; do not use or reveal errors from other users.",
     "",
     `Surface: ${context.surface}`,

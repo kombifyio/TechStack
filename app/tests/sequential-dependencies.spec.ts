@@ -16,7 +16,7 @@ test.describe("Sequential Dependency - Settings Surface", () => {
     await page.getByLabel("Email").fill(TEST_CREDENTIALS.email);
     await page.getByLabel("Password").fill(TEST_CREDENTIALS.password);
     await page.getByRole("button", { name: "Sign In" }).click();
-    await page.waitForURL(/\/stacks/, { timeout: 30_000 });
+    await page.waitForURL(/\/dashboard/, { timeout: 30_000 });
   });
 
   test("minimal settings sections remain reachable across navigation", async ({
@@ -27,13 +27,13 @@ test.describe("Sequential Dependency - Settings Surface", () => {
 
     await expect(page.getByRole("heading", { name: "Account" })).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "Stack Identity" }),
+      page.getByRole("heading", { name: "Homelab Identity" }),
     ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Danger Zone" }),
     ).toBeVisible();
 
-    await page.goto("/stacks");
+    await page.goto("/dashboard");
     await page.waitForLoadState("networkidle");
 
     await page.goto("/settings");
@@ -114,7 +114,7 @@ test.describe("Sequential Dependency - Wizard Flow", () => {
     await testPage.getByLabel("Email").fill(TEST_CREDENTIALS.email);
     await testPage.getByLabel("Password").fill(TEST_CREDENTIALS.password);
     await testPage.getByRole("button", { name: "Sign In" }).click();
-    await testPage.waitForURL(/\/stacks/, { timeout: 30_000 });
+    await testPage.waitForURL(/\/dashboard/, { timeout: 30_000 });
 
     // Navigate to wizard
     await testPage.goto(`${origin}/stacks/new`);
@@ -146,7 +146,7 @@ test.describe("Sequential Dependency - Wizard Flow", () => {
       await expect(step3).toBeVisible();
 
       // Select "just me" (affects auth requirements)
-      await testPage.getByTestId("easy-users-me").check();
+      await testPage.getByTestId("easy-users-solo").check();
       await testPage.getByTestId("wizard-next").click();
       await testPage.waitForTimeout(500);
 
@@ -154,14 +154,10 @@ test.describe("Sequential Dependency - Wizard Flow", () => {
       const step4 = testPage.getByTestId("easy-step-4");
       await expect(step4).toBeVisible();
 
-      // Select password auth (required for previous selections)
-      await testPage.getByTestId("easy-auth-password").click();
-
-      // Fill in admin credentials (all fields required due to dependencies)
+      // Pocket ID passkeys are the fixed primary login path.
+      await expect(testPage.getByTestId("easy-auth-passkey")).toBeVisible();
       await testPage.locator("#admin-username").fill("testadmin");
       await testPage.locator("#admin-email").fill("admin@test.com");
-      await testPage.locator("#admin-password").fill("SecurePass123!");
-      await testPage.locator("#admin-password-confirm").fill("SecurePass123!");
 
       // Submit the wizard
       await testPage.getByTestId("wizard-create").click();
@@ -223,7 +219,7 @@ test.describe("Sequential Dependency - Wizard Flow", () => {
     await testPage.getByLabel("Email").fill(TEST_CREDENTIALS.email);
     await testPage.getByLabel("Password").fill(TEST_CREDENTIALS.password);
     await testPage.getByRole("button", { name: "Sign In" }).click();
-    await testPage.waitForURL(/\/stacks/, { timeout: 30_000 });
+    await testPage.waitForURL(/\/dashboard/, { timeout: 30_000 });
 
     await testPage.goto(`${origin}/stacks/new`);
     await testPage.waitForLoadState("networkidle");
@@ -290,7 +286,7 @@ test.describe("Sequential Dependency - Security Settings", () => {
     await page.getByLabel("Email").fill(TEST_CREDENTIALS.email);
     await page.getByLabel("Password").fill(TEST_CREDENTIALS.password);
     await page.getByRole("button", { name: "Sign In" }).click();
-    await page.waitForURL(/\/stacks/, { timeout: 30_000 });
+    await page.waitForURL(/\/dashboard/, { timeout: 30_000 });
   });
 
   test("retired API key settings are not exposed", async ({ page }) => {

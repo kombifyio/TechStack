@@ -1,19 +1,12 @@
 <!--
   EasyWizard Component
-  
-  5-step wizard for easy mode stack creation:
-  1. Goals - What do you want to do?
-  2. Server - Where should the server come from?
-  3. Access - Where do you need access?
-  4. Users - Who will use it?
-  5. Login - How will users authenticate?
-  
-  NOTE: Requirements analysis and Unifier processing happen AFTER the wizard,
-  on the /stacks/creating page. This keeps the wizard focused on user input.
-  
+
+  Five recognizable modules; each operation visits only the ones it can change.
+
   Dispatches 'oncreate' event with StackConfig when user clicks Create.
 -->
 <script lang="ts">
+  import { tick, type Snippet } from "svelte";
   import { Stepper } from "./index";
   import GoalsStep from "./steps/GoalsStep.svelte";
   import ServerStep from "./steps/ServerStep.svelte";
@@ -21,6 +14,7 @@
   import UsersStep from "./steps/UsersStep.svelte";
   import {
     ACTIVE_STANDARD_BUNDLE,
+    isValidSubstrateGuest,
     type StackConfig,
     type AccessModeValue,
     type AudienceConfigKey,
@@ -29,6 +23,7 @@
     type GoalConfigKey,
     type ManagedProviderID,
     type WizardDeploymentLane,
+    applyPasskeyFirstOwnerLogin,
     applyWizardDeploymentLane,
     createDefaultConfig,
     deriveServicesFromGoals,
@@ -37,12 +32,24 @@
     getEasyAudienceQuestions,
     getEasyGoalQuestions,
     getVpnQuestions,
-  } from "$lib/wizard";
-  import { OwnerStepState } from "$lib/wizard/owner-state.svelte";
+    selectedCanonicalUseCasesFromGoals,
+    WizardPreviewController,
+    type WizardPreviewState,
+  } from "#lib/wizard/index.js";
+  import type { WizardRecommendation } from "#lib/api/unifier.js";
+  import { OwnerStepState } from "#lib/wizard/owner-state.svelte.js";
+  import type {
+    HouseholdPersonDraft,
+    HouseholdProfile,
+  } from "#lib/wizard/household-draft.js";
   import LoginStep from "./steps/LoginStep.svelte";
-  import { tr } from "$lib/i18n.svelte";
-  import { authStore } from "$lib/stores/auth.svelte";
-  import { features, getDefaultEnabled } from "$lib/stores/features";
+  import { tr } from "#lib/i18n.svelte.js";
+  import { authStore } from "#lib/stores/auth.svelte.js";
+  import {
+    loadUseCaseCatalog,
+    type UseCaseCatalogView,
+  } from "#lib/api/useCaseCatalog.js";
+  import { features, getDefaultEnabled } from "#lib/stores/features.js";
 
   interface Props {
     oncreate?: (config: StackConfig) => void;
@@ -54,7 +61,10 @@
     showServerServices?: boolean;
     applyDeploymentLaneDefaults?: boolean;
     reuseExistingOwner?: boolean;
+    joinExistingDeployment?: boolean;
     onmanagedproviderselect?: (provider: ManagedProviderID) => void;
+    nodeOptions?: Snippet<[StackConfig]>;
+    nodeAlternative?: Snippet;
   }
 
   let {
@@ -67,15 +77,26 @@
     showServerServices = false,
     applyDeploymentLaneDefaults = true,
     reuseExistingOwner = false,
+    joinExistingDeployment = reuseExistingOwner,
     onmanagedproviderselect,
+    nodeOptions,
+    nodeAlternative,
   }: Props = $props();
 
   // Initialize config with defaults
-  let config = $state<StackConfig>(createDefaultConfig());
+  function initialWizardConfig() {
+    const value = createDefaultConfig();
+    if (value.goals) value.goals.files = true;
+    return value;
+  }
+  let config = $state<StackConfig>(initialWizardConfig());
   let step = $state(1);
-  let advancedOpen = $state(false);
   let deploymentLaneApplied = $state(false);
   let initialConfigApplied = $state(false);
+  let recommendationState = $state<WizardPreviewState>({ phase: "idle" });
+  const recommendationController = new WizardPreviewController((state) => {
+    recommendationState = state;
+  });
   const standardBundle = ACTIVE_STANDARD_BUNDLE;
   const goalQuestions = getEasyGoalQuestions();
   const accessQuestions = getEasyAccessQuestions();
@@ -101,6 +122,26 @@
       .filter(isCanonicalUseCaseGoal),
   );
 
+  const surfaceSteps = EASY_STEPS;
+  const disabledStepReasons = $derived.by(() => {
+    const reasons: Record<number, string> = {};
+    if (joinExistingDeployment) {
+      reasons[3] = tr("wizard.step.inherited");
+      reasons[4] = tr("wizard.step.inherited");
+    }
+    if (reuseExistingOwner) reasons[5] = tr("wizard.step.existingOwner");
+    return reasons;
+  });
+  const activeStepIds = $derived(
+    surfaceSteps
+      .filter((item) => !disabledStepReasons[item.id])
+      .map((item) => item.id),
+  );
+  const lastActiveStep = $derived(activeStepIds.at(-1) ?? 1);
+  const currentStepKey = $derived(
+    surfaceSteps.find((item) => item.id === step)?.key ?? "",
+  );
+
   // Show validation only after interaction so initial rendering stays calm.
   let hasAttemptedNext = $state(false);
 
@@ -109,11 +150,69 @@
   const wizardDeploymentLane = $derived<WizardDeploymentLane>(
     authStore.deploymentMode === "saas" ? "saas" : "self-hosted",
   );
+  const recommendationResult = $derived(
+    recommendationState.phase === "resolved"
+      ? recommendationState.result
+      : recommendationState.phase === "loading" ||
+          recommendationState.phase === "degraded"
+        ? recommendationState.previous
+        : undefined,
+  );
+  const primaryRecommendation = $derived(
+    recommendationResult?.recommendations.find((item) => item.recommended) ??
+      recommendationResult?.recommendations[0],
+  );
 
   $effect(() => {
     if (!initialConfig || initialConfigApplied) return;
     config = cloneConfig(initialConfig) ?? createDefaultConfig();
+    applyPasskeyFirstOwnerLogin(config);
     initialConfigApplied = true;
+  });
+
+  $effect(() => {
+    if (reuseExistingOwner) return;
+    recommendationController.update({
+      smart_home_settings: config.useCaseSettings?.["smart-home"],
+      smart_home_context: {
+        existing:
+          config.useCaseSettings?.["smart-home"]?.["instance-origin"] ===
+          "existing",
+        needs_radio:
+          config.useCaseSettings?.["smart-home"]?.["device-passthrough"] ===
+          true,
+        ...(config.serverProvisioning.mode === "hypervisor" &&
+        config.serverProvisioning.substrate?.advisoryInventory
+          ? {
+              proxmox_available: true,
+              lan_reachable: false,
+              cpu: config.serverProvisioning.substrate.advisoryInventory.cpu,
+              memory_mib:
+                config.serverProvisioning.substrate.advisoryInventory.memoryMiB,
+              disk_gib:
+                config.serverProvisioning.substrate.advisoryInventory.diskGiB,
+            }
+          : {}),
+      },
+      goals: selectedCanonicalUseCasesFromGoals(config.goals),
+      services: [],
+      deployment_lane: wizardDeploymentLane === "saas" ? "saas" : "self-hosted",
+      ...(config.serverProvisioning.mode === "kombify-cloud"
+        ? { provider_id: config.providerId }
+        : {}),
+      surface: "easy",
+    });
+  });
+
+  $effect(() => () => recommendationController.destroy());
+
+  $effect(() => {
+    if (reuseExistingOwner) return;
+    ownerState.setSignedInAccount({
+      email: authStore.userEmail ?? "",
+      displayName: authStore.userName ?? "",
+      emailVerified: authStore.currentUser?.email_verified === true,
+    });
   });
 
   function enforceExistingOwnerReuse() {
@@ -128,7 +227,6 @@
     config.auth.requirePassword = false;
     config.auth.requireMfa = false;
     config.auth.allowPasswordless = false;
-    config.admin.password = "";
   }
 
   $effect(() => {
@@ -143,8 +241,7 @@
         config.owner.recoveryMaterialRef === "" &&
         !config.auth.requirePassword &&
         !config.auth.requireMfa &&
-        !config.auth.allowPasswordless &&
-        config.admin.password === "")
+        !config.auth.allowPasswordless)
     )
       return;
     enforceExistingOwnerReuse();
@@ -199,13 +296,6 @@
   }
 
   // Validation helpers
-  const hasGoals = $derived(
-    Boolean(
-      config.goals?.everything ||
-      availableCanonicalUseCaseGoals.some((goal) => config.goals?.[goal]),
-    ),
-  );
-
   const hasUsers = $derived(
     config.audience.onlyMe ||
       config.audience.familyFriends ||
@@ -216,27 +306,30 @@
   const validationErrors = $derived(() => {
     const errors: string[] = [];
 
-    if (step === 1 && !hasGoals) {
-      errors.push("Please select at least one goal for your server");
-    }
-
     if (
-      step === 2 &&
+      currentStepKey === "server" &&
       config.serverProvisioning.mode === "connect-remote" &&
       !config.serverProvisioning.remote.host.trim()
     ) {
       errors.push("Server host or IP is required for direct connection");
     }
 
-    if (step === 3 && !config.network.accessMode) {
+    if (currentStepKey === "access" && !config.network.accessMode) {
       errors.push("Please select an access mode (Home only or Anywhere)");
     }
+    if (
+      currentStepKey === "access" &&
+      config.serverProvisioning.mode === "kombify-cloud" &&
+      config.network.accessMode === "home"
+    ) {
+      errors.push(tr("wizard.access.home.managedReason"));
+    }
 
-    if (step === 4 && !hasUsers) {
+    if (currentStepKey === "users" && !hasUsers) {
       errors.push("Please select who will use your server");
     }
 
-    if (step === 5) {
+    if (currentStepKey === "login") {
       errors.push(...ownerState.ownerValidationErrors());
     }
 
@@ -245,40 +338,79 @@
 
   // Robustness principle: defaults keep navigation available; validation errors
   // are hints unless a later step needs a concrete host/admin value.
+  let serverSelectionReady = $state(true);
+  let stepContent = $state<HTMLDivElement>();
   const canGoNext = $derived(() => {
-    if (step === 1) return true;
-    if (step === 2) {
+    if (currentStepKey === "server") {
+      if (!serverSelectionReady) return false;
+      if (config.serverProvisioning.mode === "hypervisor") {
+        return isValidSubstrateGuest(config.serverProvisioning.substrate);
+      }
       if (config.serverProvisioning.mode !== "connect-remote") return true;
       return config.serverProvisioning.remote.host.trim().length > 0;
     }
-    if (step === 3) return true;
-    if (step === 4) return true;
-    if (step === 5) return ownerState.adminIsValid();
+    if (currentStepKey === "login") return ownerState.adminIsValid();
+    if (currentStepKey === "users" && !joinExistingDeployment)
+      return !config.network.publicAccess;
+    if (currentStepKey === "access")
+      return !(
+        config.serverProvisioning.mode === "kombify-cloud" &&
+        config.network.accessMode === "home"
+      );
     return true;
   });
 
-  // Deploy ist erlaubt wenn wir den letzten Schritt erreicht haben
-  const canDeploy = $derived(() => step === EASY_STEPS.length);
+  const canDeploy = $derived(
+    () =>
+      step === lastActiveStep &&
+      canGoNext() &&
+      (config.serverProvisioning.mode !== "hypervisor" ||
+        isValidSubstrateGuest(config.serverProvisioning.substrate)),
+  );
 
   // Navigation records attempted progress so guidance appears at the right time.
-  function goNext() {
-    hasAttemptedNext = true;
-    if (step < EASY_STEPS.length && canGoNext()) step++;
+  async function revealStep() {
+    await tick();
+    stepContent?.focus({ preventScroll: true });
+    stepContent?.scrollIntoView({
+      block: "start",
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "instant"
+        : "smooth",
+    });
   }
 
-  function goPrev() {
-    if (step > 1) step--;
+  async function goNext() {
+    hasAttemptedNext = true;
+    const next = activeStepIds.find((id) => id > step);
+    if (next && canGoNext()) {
+      step = next;
+      await revealStep();
+    }
+  }
+
+  async function goPrev() {
+    const previous = activeStepIds.findLast((id) => id < step);
+    if (previous) {
+      step = previous;
+      await revealStep();
+    }
   }
 
   // Derive services from goals
   function deriveServices() {
+    const existingOverlay = config.services.headscale;
     deriveServicesFromGoals(config);
+    // A joined Node inherits access from its Homelab; the hidden first-run
+    // access default must not turn on a new overlay during goal derivation.
+    if (joinExistingDeployment) config.services.headscale = existingOverlay;
   }
 
   // Handle create
   async function handleCreate() {
     hasAttemptedNext = true;
     enforceExistingOwnerReuse();
+    if (!canDeploy()) return;
 
     const recoveryReady = await ownerState.syncRecoveryHash();
     if (!recoveryReady || !ownerState.adminIsValid()) {
@@ -290,7 +422,50 @@
     oncreate?.(config);
   }
 
+  /**
+   * Which products each use case is built from, straight from the StackKits
+   * catalog. Loaded once and best-effort: the Goals step renders immediately
+   * and the component strips appear when the catalog answers. A deployment
+   * without a catalog keeps cards with no strip rather than an empty step.
+   */
+  let useCaseCatalog = $state<Map<string, UseCaseCatalogView>>(new Map());
+  $effect(() => {
+    let cancelled = false;
+    void loadUseCaseCatalog().then((catalog) => {
+      if (!cancelled) useCaseCatalog = catalog;
+    });
+    return () => {
+      cancelled = true;
+    };
+  });
+
+  /*
+   * The Goals step emits raw disclosure observations (§3 rule 5), and nothing
+   * here consumes them yet — deliberately. The only counter Techstack has,
+   * `countAdvancedInteractions` in wizard/spec.ts, is derived from `config`,
+   * and this toggle writes no config on purpose; and §4 retires the frontend
+   * score it feeds. Wiring an observation sink is kombify-Techstack-joei,
+   * not a counter invented here that nothing reads.
+   */
+
   // Goal change handlers
+  /**
+   * A decision about a use case. Stored only when set explicitly; the catalog
+   * keeps the defaults. Writing config directly keeps the same ownership as
+   * setGoal: the wizard owns the config, the step only reports.
+   */
+  function setUseCaseSetting(
+    goal: GoalConfigKey,
+    settingId: string,
+    value: string | boolean,
+  ) {
+    config.useCaseSettings ??= {};
+    config.useCaseSettings[goal] = {
+      ...(config.useCaseSettings[goal] ?? {}),
+      [settingId]: value,
+    };
+  }
+
   function setGoal(goal: GoalConfigKey, value: boolean) {
     if (config.goals) {
       config.goals[goal] = value;
@@ -321,21 +496,42 @@
 
   function setAccessMode(value: AccessModeValue) {
     config.network.accessMode = value;
+    config.network.accessModeSelected = true;
   }
 
   function setAudience(audience: AudienceConfigKey, value: boolean) {
     config.audience[audience] = value;
+    if (audience === "public") config.network.publicAccess = value;
+  }
+
+  function setHouseholdProfile(profile: HouseholdProfile) {
+    config.household = { profile, people: config.household?.people ?? [] };
+    config.audience.onlyMe = profile === "solo";
+    config.audience.familyFriends = profile !== "solo";
+  }
+
+  function setHouseholdPeople(people: HouseholdPersonDraft[]) {
+    config.household = {
+      profile:
+        config.household?.profile ??
+        (config.audience.onlyMe ? "solo" : "shared"),
+      people,
+    };
+  }
+
+  function openRecommendation(_recommendation: WizardRecommendation) {
+    step = 2;
   }
 </script>
 
 <div
-  class="card w-full min-w-0 overflow-hidden p-4 sm:p-6 lg:p-8"
+  class="w-full min-w-0"
   data-testid="easy-wizard"
   data-standard-bundle-id={standardBundle.id}
   data-standard-bundle-version={standardBundle.version}
 >
   <!-- Validation Hints Banner - nur bei Step 4 Auth-Problemen (sanft, informativ) -->
-  {#if (step === 2 || step === 5) && validationErrors().length > 0 && hasAttemptedNext}
+  {#if (currentStepKey === "server" || currentStepKey === "login") && validationErrors().length > 0 && hasAttemptedNext}
     <div class="mb-6 p-4 rounded-lg border border-warning/30 bg-warning/10">
       <div class="flex items-start gap-3">
         <svg
@@ -366,10 +562,12 @@
   {/if}
 
   <Stepper
-    steps={EASY_STEPS}
+    steps={surfaceSteps}
+    {disabledStepReasons}
     currentStep={step}
-    canGoNext={canGoNext()}
-    canDeploy={canDeploy()}
+    canGoNext={!nodeAlternative && canGoNext()}
+    canDeploy={!nodeAlternative && canDeploy()}
+    showDeploy={!nodeAlternative}
     {isDeploying}
     deployLabel={submitLabel}
     deployingLabel={submittingLabel}
@@ -378,44 +576,81 @@
     ondeploy={handleCreate}
   />
 
-  <!-- Step 1: Goals -->
-  {#if step === 1}
-    <GoalsStep
-      {config}
-      primaryGoalQuestions={primaryGoalQuestions}
-      advancedGoalQuestions={advancedGoalQuestions}
-      {advancedOpen}
-      onGoalChange={setGoal}
-    />
-  {/if}
+  <div
+    bind:this={stepContent}
+    tabindex="-1"
+    class="mx-auto w-full min-w-0 scroll-mt-6 outline-none {currentStepKey ===
+      'goals' || currentStepKey === 'server'
+      ? ''
+      : 'max-w-4xl'}"
+  >
+    {#if currentStepKey === "goals"}
+      <GoalsStep
+        bind:config
+        {primaryGoalQuestions}
+        {advancedGoalQuestions}
+        onGoalChange={setGoal}
+        onSettingChange={setUseCaseSetting}
+        {recommendationState}
+        onRecommendationOpen={openRecommendation}
+        {useCaseCatalog}
+      />
+    {/if}
 
-  <!-- Step 2: Server -->
-  {#if step === 2}
-    <ServerStep
-      bind:config
-      showRole={showServerRole}
-      showServices={showServerServices}
-      {onmanagedproviderselect}
-    />
-  {/if}
+    {#if currentStepKey === "server"}
+      <ServerStep
+        bind:config
+        bind:selectionReady={serverSelectionReady}
+        {nodeOptions}
+        {nodeAlternative}
+        showRole={showServerRole}
+        showServices={showServerServices}
+        lockFoundation={joinExistingDeployment}
+        joinSurface={joinExistingDeployment}
+        {onmanagedproviderselect}
+        recommendedStackKit={primaryRecommendation?.stackkit}
+      />
+    {/if}
 
-  <!-- Step 3: Access -->
-  {#if step === 3}
-    <AccessStep
-      {config}
-      {accessQuestions}
-      {vpnQuestions}
-      onAccessModeSelect={setAccessMode}
-    />
-  {/if}
+    {#if currentStepKey === "access" && !joinExistingDeployment}
+      <AccessStep
+        {config}
+        {accessQuestions}
+        {vpnQuestions}
+        onAccessModeSelect={setAccessMode}
+        onDomainBaseChange={(domain) => (config.network.domainBase = domain)}
+      />
+    {/if}
 
-  <!-- Step 4: Users -->
-  {#if step === 4}
-    <UsersStep {config} {audienceQuestions} onAudienceChange={setAudience} />
-  {/if}
+    {#if currentStepKey === "users" && !joinExistingDeployment}
+      <UsersStep
+        {config}
+        {audienceQuestions}
+        onAudienceChange={setAudience}
+        householdProfile={config.household?.profile}
+        peopleDrafts={config.household?.people ?? []}
+        onHouseholdProfileChange={setHouseholdProfile}
+        onPeopleDraftsChange={setHouseholdPeople}
+      />
+    {/if}
 
-  <!-- Step 5: Login -->
-  {#if step === 5}
-    <LoginStep {config} owner={ownerState} lane={wizardDeploymentLane} />
-  {/if}
+    {#if currentStepKey === "login" && !reuseExistingOwner}
+      <LoginStep {config} owner={ownerState} lane={wizardDeploymentLane} />
+    {/if}
+  </div>
+  <Stepper
+    navigationOnly
+    steps={surfaceSteps}
+    {disabledStepReasons}
+    currentStep={step}
+    canGoNext={!nodeAlternative && canGoNext()}
+    canDeploy={!nodeAlternative && canDeploy()}
+    showDeploy={!nodeAlternative}
+    {isDeploying}
+    deployLabel={submitLabel}
+    deployingLabel={submittingLabel}
+    onprev={goPrev}
+    onnext={goNext}
+    ondeploy={handleCreate}
+  />
 </div>

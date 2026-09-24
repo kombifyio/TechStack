@@ -3,9 +3,11 @@
 package routes
 
 import (
+	"time"
+
 	"github.com/kombifyio/techstack/internal/routes/sessionreauth"
 	"github.com/kombifyio/techstack/pkg/httpx"
-	"github.com/pocketbase/pocketbase/core"
+	"github.com/kombifyio/techstack/pkg/ril/workflow"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -17,13 +19,6 @@ const (
 	monthlyRuntimeEnrollmentStatusFailed   = "failed"
 	monthlyRuntimeEnrollmentStatusEnrolled = "enrolled"
 )
-
-var monthlyRuntimeEnrollmentStatuses = []string{
-	monthlyRuntimeEnrollmentStatusPending,
-	monthlyRuntimeEnrollmentStatusRetrying,
-	monthlyRuntimeEnrollmentStatusFailed,
-	monthlyRuntimeEnrollmentStatusEnrolled,
-}
 
 // Metrics holds all custom kombifyTechstack Prometheus metrics.
 type Metrics struct {
@@ -60,6 +55,15 @@ type Metrics struct {
 
 	// Session recovery metrics (reason_code session_reprojection_required)
 	SessionReprojectionsTotal *prometheus.CounterVec
+
+	// Durable RIL workflow metrics. Labels are deliberately bounded to the
+	// closed workflow/step definitions; run, owner, tenant, and signal IDs are
+	// never metric labels.
+	WorkflowRunTransitions  *prometheus.CounterVec
+	WorkflowRunDuration     *prometheus.HistogramVec
+	WorkflowStepTransitions *prometheus.CounterVec
+	WorkflowStepDuration    *prometheus.HistogramVec
+	WorkflowTimers          *prometheus.CounterVec
 
 	// S7: gRPC Queue Backpressure metrics
 	GRPCQueueSize     *prometheus.GaugeVec   // Current queue size by queue name
@@ -229,6 +233,43 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			},
 			[]string{"tenant", "outcome"},
 		),
+		WorkflowRunTransitions: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: "techstack", Subsystem: "ril_workflow", Name: "run_transitions_total",
+				Help: "Durable RIL workflow run transitions by closed workflow type and state.",
+			},
+			[]string{"type", "from", "to"},
+		),
+		WorkflowRunDuration: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Namespace: "techstack", Subsystem: "ril_workflow", Name: "run_duration_seconds",
+				Help:    "Terminal durable RIL workflow run duration in seconds.",
+				Buckets: []float64{0.1, 1, 5, 15, 30, 60, 300, 900, 3600, 21600, 86400},
+			},
+			[]string{"type", "status"},
+		),
+		WorkflowStepTransitions: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: "techstack", Subsystem: "ril_workflow", Name: "step_transitions_total",
+				Help: "Durable RIL workflow step transitions by closed workflow and step definition.",
+			},
+			[]string{"type", "step", "from", "to"},
+		),
+		WorkflowStepDuration: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Namespace: "techstack", Subsystem: "ril_workflow", Name: "step_duration_seconds",
+				Help:    "Terminal durable RIL workflow step attempt duration in seconds.",
+				Buckets: []float64{0.01, 0.1, 0.5, 1, 5, 15, 30, 60, 300, 900},
+			},
+			[]string{"type", "step", "status"},
+		),
+		WorkflowTimers: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: "techstack", Subsystem: "ril_workflow", Name: "timers_total",
+				Help: "Durable RIL workflow timer sweep outcomes by timer kind.",
+			},
+			[]string{"kind", "outcome"},
+		),
 
 		// S7: gRPC Queue Backpressure metrics
 		GRPCQueueSize: prometheus.NewGaugeVec(
@@ -307,6 +348,11 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		m.DBQueriesTotal,
 		m.MonthlyRuntimeEnrollments,
 		m.SessionReprojectionsTotal,
+		m.WorkflowRunTransitions,
+		m.WorkflowRunDuration,
+		m.WorkflowStepTransitions,
+		m.WorkflowStepDuration,
+		m.WorkflowTimers,
 		// S7: gRPC Queue Backpressure metrics
 		m.GRPCQueueSize,
 		m.GRPCQueueCapacity,
@@ -319,71 +365,28 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	return m
 }
 
-// MetricsCollector implements prometheus.Collector to collect dynamic metrics
-// from PocketBase collections (jobs, workers, stacks).
-type MetricsCollector struct {
-	app     core.App
-	metrics *Metrics
-}
-
-// NewMetricsCollector creates a collector that queries PocketBase for live data.
-func NewMetricsCollector(app core.App, metrics *Metrics) *MetricsCollector {
-	return &MetricsCollector{app: app, metrics: metrics}
-}
-
-// Describe implements prometheus.Collector.
-func (c *MetricsCollector) Describe(ch chan<- *prometheus.Desc) {
-	// Metrics are already registered, nothing to describe here
-}
-
-// Collect implements prometheus.Collector and fetches live data from PocketBase.
-// NOTE: Queries are intentionally unscoped (no tenant filtering) because metrics
-// are infrastructure-level, not tenant-level. See RegisterMetricsRoutes for access control.
-func (c *MetricsCollector) Collect(ch chan<- prometheus.Metric) {
-	// Count active jobs
-	if jobs, err := c.app.FindCollectionByNameOrId("jobs"); err == nil {
-		if records, err := c.app.FindRecordsByFilter(jobs.Id, "state = 'running'", "", 0, 0); err == nil {
-			c.metrics.JobsActive.Set(float64(len(records)))
-		}
-		// Count queued jobs
-		if queued, err := c.app.FindRecordsByFilter(jobs.Id, "state = 'pending'", "", 0, 0); err == nil {
-			c.metrics.JobQueueSize.Set(float64(len(queued)))
-		}
-	}
-
-	// Count connected workers using the actual worker collection.
-	if workers, err := c.app.FindCollectionByNameOrId("workers"); err == nil {
-		if records, err := c.app.FindRecordsByFilter(workers.Id, "status = 'approved'", "", 0, 0); err == nil {
-			c.metrics.AgentsConnected.Set(float64(len(records)))
-		}
-	}
-
-	// Count stacks
-	if stacks, err := c.app.FindCollectionByNameOrId("stacks"); err == nil {
-		if allStacks, err := c.app.FindRecordsByFilter(stacks.Id, "", "", 0, 0); err == nil {
-			c.metrics.StacksTotal.Set(float64(len(allStacks)))
-		}
-		if activeStacks, err := c.app.FindRecordsByFilter(stacks.Id, "status = 'provisioning' || status = 'running'", "", 0, 0); err == nil {
-			c.metrics.StacksActive.Set(float64(len(activeStacks)))
-		}
-	}
-
-	if _, err := c.app.FindCollectionByNameOrId("vm_lease_enrollment_outbox"); err == nil {
-		for _, status := range monthlyRuntimeEnrollmentStatuses {
-			records, err := c.app.FindRecordsByFilter(
-				"vm_lease_enrollment_outbox",
-				"status = {:status}",
-				"",
-				0,
-				0,
-				map[string]any{"status": status},
-			)
-			if err == nil {
-				c.metrics.MonthlyRuntimeEnrollments.WithLabelValues(status).Set(float64(len(records)))
-			}
-		}
+// ObserveRunTransition implements workflow.Observer.
+func (m *Metrics) ObserveRunTransition(runType workflow.RunType, from, to workflow.RunStatus, elapsed time.Duration) {
+	m.WorkflowRunTransitions.WithLabelValues(string(runType), string(from), string(to)).Inc()
+	if elapsed > 0 && workflow.IsTerminal(to) {
+		m.WorkflowRunDuration.WithLabelValues(string(runType), string(to)).Observe(elapsed.Seconds())
 	}
 }
+
+// ObserveStepTransition implements workflow.Observer.
+func (m *Metrics) ObserveStepTransition(runType workflow.RunType, step string, from, to workflow.StepStatus, _ int, elapsed time.Duration) {
+	m.WorkflowStepTransitions.WithLabelValues(string(runType), step, string(from), string(to)).Inc()
+	if elapsed > 0 && (to == workflow.StepCompleted || to == workflow.StepFailed) {
+		m.WorkflowStepDuration.WithLabelValues(string(runType), step, string(to)).Observe(elapsed.Seconds())
+	}
+}
+
+// ObserveTimer implements workflow.Observer.
+func (m *Metrics) ObserveTimer(kind workflow.TimerKind, outcome string) {
+	m.WorkflowTimers.WithLabelValues(string(kind), outcome).Inc()
+}
+
+var _ workflow.Observer = (*Metrics)(nil)
 
 // RegisterMetricsRoutes adds the /metrics endpoint for Prometheus scraping.
 // It creates a new registry to avoid polluting the default global registry.
@@ -391,10 +394,8 @@ func (c *MetricsCollector) Collect(ch chan<- prometheus.Metric) {
 // SECURITY: This endpoint returns instance-wide metrics without tenant filtering.
 // In SaaS mode, it MUST be restricted to infrastructure-only access (e.g. Prometheus
 // scraper auth via Edge/reverse proxy signed as an admin identity). It must NOT be
-// exposed to tenant-facing API routes. The MetricsCollector.Collect method
-// intentionally queries all records across tenants to provide accurate operational
-// metrics for monitoring.
-func RegisterMetricsRoutes(r *httpx.Router, app core.App) *Metrics {
+// exposed to tenant-facing API routes.
+func RegisterMetricsRoutes(r *httpx.Router) *Metrics {
 	// Create a new registry (don't use global to avoid conflicts)
 	reg := prometheus.NewRegistry()
 
@@ -404,10 +405,6 @@ func RegisterMetricsRoutes(r *httpx.Router, app core.App) *Metrics {
 
 	// Create and register kombifyTechstack metrics
 	metrics := NewMetrics(reg)
-
-	// Create collector for dynamic data
-	collector := NewMetricsCollector(app, metrics)
-	reg.MustRegister(collector)
 
 	// Feed the session-recovery classifier's tenant-labeled occurrences into
 	// this registry (middleware and response classifier live outside routes).
@@ -426,9 +423,6 @@ func RegisterMetricsRoutes(r *httpx.Router, app core.App) *Metrics {
 			return err
 		}
 
-		// Collect fresh data before serving
-		collector.Collect(nil)
-
 		// Serve metrics
 		handler.ServeHTTP(e.Response, e.Request)
 		return nil
@@ -440,7 +434,6 @@ func RegisterMetricsRoutes(r *httpx.Router, app core.App) *Metrics {
 			return err
 		}
 
-		collector.Collect(nil)
 		handler.ServeHTTP(e.Response, e.Request)
 		return nil
 	})

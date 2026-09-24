@@ -1,15 +1,14 @@
 <script lang="ts">
-  import { authHandler } from "$lib/stores/authHandler.svelte";
-  import { authStore } from "$lib/stores/auth.svelte";
-  import { isSaaSEmbedded } from "$lib/stores/deploymentMode";
-  import { resolveLoginExperience } from "$lib/auth/login-experience";
-  import { refreshEmbeddedCloudSession } from "$lib/auth/embedded-session";
-  import { getPortalOrigin } from "$lib/stores/postMessageBridge";
-  import { tr } from "$lib/i18n.svelte";
+  import { authHandler } from "#lib/stores/authHandler.svelte.js";
+  import { authStore } from "#lib/stores/auth.svelte.js";
+  import { isSaaSEmbedded } from "#lib/stores/deploymentMode.js";
+  import { resolveLoginExperience } from "#lib/auth/login-experience.js";
+  import { resolveUnauthenticatedEntry } from "#lib/auth/unauthenticated-redirect.js";
+  import { refreshEmbeddedCloudSession } from "#lib/auth/embedded-session.js";
+  import { getPortalOrigin } from "#lib/stores/postMessageBridge.js";
+  import { tr } from "#lib/i18n.svelte.js";
+  import Button from "#lib/components/ui/Button.svelte";
 
-  // Form state
-  let email = $state("");
-  let password = $state("");
   let error = $state<string | null>(null);
   let isLoading = $state(false);
   let embeddedRefreshFailed = $state(false);
@@ -19,29 +18,6 @@
       embedded: $isSaaSEmbedded,
     }),
   );
-
-  // Pre-fill email from current user if available
-  $effect(() => {
-    if (authHandler.showReloginModal && authStore.userEmail) {
-      email = authStore.userEmail;
-    }
-  });
-
-  async function handleSubmit(e: Event) {
-    e.preventDefault();
-    error = null;
-    isLoading = true;
-
-    try {
-      const ok = await authStore.loginWithPassword(email, password);
-      if (!ok) throw new Error(authStore.error || "Login failed");
-      await authHandler.onReloginSuccess();
-    } catch (err) {
-      error = err instanceof Error ? err.message : "Login failed";
-    } finally {
-      isLoading = false;
-    }
-  }
 
   function handleCancel() {
     authHandler.onReloginCancel();
@@ -65,7 +41,7 @@
       }
       return;
     }
-    authStore.initiateCloudLogin();
+    authStore.initiateCloudLogin({ interactive: true });
   }
 
   function reopenPortal() {
@@ -86,7 +62,7 @@
     aria-labelledby="relogin-title"
     data-testid="session-renewal-banner"
   >
-    <div class="card border-warning/40 bg-warning/5 shadow-lg">
+    <div class="rounded-xl border border-warning/30 bg-warning/5 shadow-lg">
       <!-- Header -->
       <div class="p-4 border-b border-warning/20 sm:p-5">
         <div class="flex items-center gap-3">
@@ -151,11 +127,12 @@
             {/if}
 
             <div class="flex gap-3 pt-2">
-              <button
+              <Button
                 type="button"
                 onclick={handleCloudRelogin}
                 disabled={isLoading}
-                class="btn btn-primary flex-1"
+                variant="primary"
+                class="flex-1"
               >
                 {#if isLoading}
                   {tr("auth.session.expired.reconnecting")}
@@ -164,103 +141,48 @@
                 {:else}
                   {tr("auth.session.expired.continueAuth0")}
                 {/if}
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
                 onclick={handleCancel}
                 disabled={isLoading}
-                class="btn btn-secondary"
+                variant="secondary"
               >
                 {tr("auth.session.expired.signOut")}
-              </button>
+              </Button>
             </div>
 
             {#if embeddedRefreshFailed}
-              <button
+              <Button
                 type="button"
                 onclick={reopenPortal}
-                class="btn btn-secondary w-full"
+                variant="secondary"
+                class="w-full"
               >
                 {tr("auth.session.expired.reopenPortal")}
-              </button>
+              </Button>
             {/if}
           </div>
         {:else}
-          <form onsubmit={handleSubmit} class="space-y-4">
-            <div>
-              <label
-                for="relogin-email"
-                class="block text-sm font-medium text-foreground mb-1"
-              >
-                E-Mail
-              </label>
-              <input
-                id="relogin-email"
-                type="email"
-                bind:value={email}
-                required
-                class="w-full px-3 py-2 bg-input border border-border rounded-lg text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-                placeholder="admin@example.com"
-              />
-            </div>
-
-            <div>
-              <label
-                for="relogin-password"
-                class="block text-sm font-medium text-foreground mb-1"
-              >
-                Password
-              </label>
-              <input
-                id="relogin-password"
-                type="password"
-                bind:value={password}
-                required
-                class="w-full px-3 py-2 bg-input border border-border rounded-lg text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-                placeholder="••••••••"
-              />
-            </div>
-
-            <div class="flex gap-3 pt-2">
-              <button
-                type="submit"
-                disabled={isLoading}
-                class="btn btn-primary flex-1"
-              >
-                {#if isLoading}
-                  <span class="flex items-center justify-center gap-2">
-                    <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                      <circle
-                        class="opacity-25"
-                        cx="12"
-                        cy="12"
-                        r="10"
-                        stroke="currentColor"
-                        stroke-width="4"
-                        fill="none"
-                      />
-                      <path
-                        class="opacity-75"
-                        fill="currentColor"
-                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                      />
-                    </svg>
-                    Logging in...
-                  </span>
-                {:else}
-                  Log In Again
-                {/if}
-              </button>
-              <button
-                type="button"
-                onclick={handleCancel}
-                disabled={isLoading}
-                class="btn btn-secondary"
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
+          <div class="space-y-4">
+            <p class="text-sm text-muted-foreground">
+              Continue on the local Techstack setup path. This screen does not
+              collect a password.
+            </p>
+            <Button
+              variant="primary"
+              class="w-full"
+              onclick={() => {
+                authHandler.onReloginCancel();
+                window.location.assign(resolveUnauthenticatedEntry());
+              }}
+            >
+              Continue local setup
+            </Button>
+            <Button variant="secondary" class="w-full" onclick={handleCancel}>
+              Cancel
+            </Button>
+          </div>
         {/if}
       </div>
 

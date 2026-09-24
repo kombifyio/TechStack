@@ -3,6 +3,7 @@ package auth
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/kombifyio/techstack/pkg/config"
@@ -16,32 +17,47 @@ func webRedirectRouter() *httpx.Router {
 	return router
 }
 
-func TestCloudLogoutRedirectUsesOnlyTrustedPortalOrigin(t *testing.T) {
-	t.Parallel()
-	for _, test := range []struct {
-		name string
-		host string
-		want string
-	}{
-		{name: "production", host: "techstack.kombify.io", want: "https://kombify.io/auth/signout?global=1"},
-		{name: "development", host: "techstack.kombify.dev", want: "https://kombify.dev/auth/signout?global=1"},
-		{name: "unknown hosted proxy", host: "internal-render.example", want: "https://kombify.io/auth/signout?global=1"},
-	} {
-		test := test
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			router := httpx.NewRouter()
-			router.GET("/auth/cloud-logout", handleCloudLogoutRedirect(config.ModeSaaS))
-			recorder := httptest.NewRecorder()
-			req := httptest.NewRequest(http.MethodGet, "https://"+test.host+"/auth/cloud-logout?next=https://evil.example", nil)
-			router.ServeHTTP(recorder, req)
-			if recorder.Code != http.StatusFound {
-				t.Fatalf("status = %d, want 302", recorder.Code)
-			}
-			if got := recorder.Header().Get("Location"); got != test.want {
-				t.Fatalf("location = %q, want %q", got, test.want)
-			}
-		})
+func TestCloudLogoutRedirectIgnoresUntrustedNextWithoutClient(t *testing.T) {
+	t.Setenv("AUTH0_CLIENT_ID", "")
+	t.Setenv("TECHSTACK_AUTH_CLOUD_CLIENT_ID", "")
+
+	router := httpx.NewRouter()
+	router.GET("/auth/cloud-logout", handleCloudLogoutRedirect(config.ModeSaaS))
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "https://techstack.kombify.io/auth/cloud-logout?next=https://evil.example", nil)
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302", recorder.Code)
+	}
+	if got := recorder.Header().Get("Location"); got != webLoggedOutPath {
+		t.Fatalf("location = %q, want %q", got, webLoggedOutPath)
+	}
+}
+
+func TestCloudLogoutRedirectUsesAuth0UniversalLogin(t *testing.T) {
+	t.Setenv("AUTH0_CLIENT_ID", "test-client-id")
+	t.Setenv("AUTH0_DOMAIN", "https://login.kombify.io")
+	t.Setenv("TECHSTACK_AUTH_CLOUD_CLIENT_ID", "")
+	t.Setenv("TECHSTACK_AUTH_CLOUD_ISSUER", "")
+	t.Setenv("AUTH0_ISSUER", "")
+
+	router := httpx.NewRouter()
+	router.GET("/auth/cloud-logout", handleCloudLogoutRedirect(config.ModeSaaS))
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "https://techstack.kombify.io/auth/cloud-logout?next=https://evil.example", nil)
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302", recorder.Code)
+	}
+	got := recorder.Header().Get("Location")
+	if !strings.Contains(got, "https://login.kombify.io/oidc/logout") {
+		t.Fatalf("location = %q, want Auth0 Universal Login logout", got)
+	}
+	if strings.Contains(got, "evil.example") {
+		t.Fatalf("untrusted next leaked into logout redirect: %q", got)
+	}
+	if !strings.Contains(got, "logged_out") {
+		t.Fatalf("location = %q, want return to Techstack login", got)
 	}
 }
 

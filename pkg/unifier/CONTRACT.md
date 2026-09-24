@@ -10,7 +10,8 @@ The Unifier Engine is the intent-to-infrastructure bridge. It transforms `kombin
 - [x] Phase 2: RequirementsSpec generation (StackKit selection, Add-On detection, worker requirements)
 - [x] Phase 3+4: Worker Registry integration and system-info collection via agents
 - [ ] Phase 5: UnifiedSpec generation with placement engine (filter→score)
-- [x] Phase 6: IaC generation (tfvars.json + HCL templates)
+- [x] Phase 6: IaC generation (tfvars.json + HCL templates) — migration
+  compatibility only; the pinned StackKits CLI owns rendering and lifecycle
 - [x] Pipeline API endpoints (POST /api/v1/unifier/pipeline)
 - [ ] Spec persistence (RequirementsSpec + UnifiedSpec as YAML files)
 - [ ] Full CUE Add-On merging (currently rule-based, target: CUE unification)
@@ -22,7 +23,8 @@ The Unifier Engine is the intent-to-infrastructure bridge. It transforms `kombin
 - MUST: All decisions are traceable (RequirementsSpec, UnifiedSpec persisted)
 - MUST: UnifiedSpec format is StackKit-dependent (each StackKit defines its own CUE schema)
 - MUST NOT: Contain hardware details in IntentSpec (IPs, worker assignments)
-- MUST NOT: Skip CUE validation for any phase transition
+- MUST NOT: Skip the pinned StackKits CLI, which performs the final CUE
+  validation; this package never forks or evaluates the schema itself
 - MUST NOT: Modify StackKit CUE schemas at runtime
 
 ## Success Criteria

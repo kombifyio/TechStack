@@ -16,13 +16,12 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	commonauthflow "github.com/kombifyio/go-common/authflow"
-	commonauthlocal "github.com/kombifyio/go-common/authlocal"
-	commonoidc "github.com/kombifyio/go-common/oidcclient"
+	commonauthflow "github.com/kombifyio/techstack/internal/gocommon/authflow"
+	commonauthlocal "github.com/kombifyio/techstack/internal/gocommon/authlocal"
+	commonoidc "github.com/kombifyio/techstack/internal/gocommon/oidcclient"
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/v2/auth/providers"
 	"github.com/kombifyio/techstack/pkg/v2/auth/session"
-	"github.com/kombifyio/techstack/pkg/v2/authmw"
 )
 
 type serverFakeExchanger struct {
@@ -193,7 +192,7 @@ func TestWhoAmIEndpointWithSessionCookie(t *testing.T) {
 	srv := NewServer(WithSession(mgr))
 	handler := srv.Routes()
 	req := httptest.NewRequest(http.MethodGet, "/api/v2/whoami", nil)
-	req.AddCookie(&http.Cookie{Name: authmw.DefaultSessionCookieName, Value: token})
+	req.AddCookie(&http.Cookie{Name: DefaultSessionCookieName, Value: token})
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if got, want := rec.Code, http.StatusOK; got != want {
@@ -255,7 +254,7 @@ func TestEndToEndAuthFlowThroughServerRoutes(t *testing.T) {
 		DefaultTenantID:   "tenant-default",
 		DefaultReturnTo:   "/stacks",
 		CallbackPath:      config.CanonicalAuthCallbackPath,
-		SessionCookieName: authmw.DefaultSessionCookieName,
+		SessionCookieName: DefaultSessionCookieName,
 		Exchanger: &serverFakeExchanger{result: &commonoidc.CodeExchangeResult{
 			IDToken: signServerTestIDToken(t, key, jwksServer.URL),
 		}},
@@ -323,7 +322,7 @@ func TestEndToEndAuthFlowThroughServerRoutes(t *testing.T) {
 		t.Fatalf("callback cookies: %+v", callbackCookies)
 	}
 	sessionCookie := callbackCookies[0]
-	if sessionCookie.Name != authmw.DefaultSessionCookieName {
+	if sessionCookie.Name != DefaultSessionCookieName {
 		t.Fatalf("session cookie name: got %q", sessionCookie.Name)
 	}
 
@@ -353,7 +352,7 @@ func TestEndToEndAuthFlowThroughServerRoutes(t *testing.T) {
 		t.Fatalf("logout redirect: got %q, want %q", got, want)
 	}
 	logoutCookies := logoutRec.Result().Cookies()
-	if len(logoutCookies) != 1 || logoutCookies[0].Name != authmw.DefaultSessionCookieName || logoutCookies[0].MaxAge != -1 {
+	if len(logoutCookies) != 1 || logoutCookies[0].Name != DefaultSessionCookieName || logoutCookies[0].MaxAge != -1 {
 		t.Fatalf("logout cookies: %+v", logoutCookies)
 	}
 
@@ -390,7 +389,7 @@ func TestEndToEndLocalAuthFlowThroughServerRoutes(t *testing.T) {
 		Sessions:          mgr,
 		DefaultTenantID:   "tenant-default",
 		BootstrapEmail:    "breakglass@techstack.local",
-		SessionCookieName: authmw.DefaultSessionCookieName,
+		SessionCookieName: DefaultSessionCookieName,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -485,7 +484,7 @@ func TestEndToEndLocalAuthFlowThroughServerRoutes(t *testing.T) {
 		t.Fatalf("unexpected claim response: %+v", claimResp)
 	}
 	claimCookies := claimRec.Result().Cookies()
-	if len(claimCookies) != 1 || claimCookies[0].Name != authmw.DefaultSessionCookieName {
+	if len(claimCookies) != 1 || claimCookies[0].Name != DefaultSessionCookieName {
 		t.Fatalf("claim cookies: %+v", claimCookies)
 	}
 	claimedSession := claimCookies[0]
@@ -513,7 +512,7 @@ func TestEndToEndLocalAuthFlowThroughServerRoutes(t *testing.T) {
 		t.Fatalf("logout status: got %d, want %d body=%q", got, want, logoutRec.Body.String())
 	}
 	logoutCookies := logoutRec.Result().Cookies()
-	if len(logoutCookies) != 1 || logoutCookies[0].Name != authmw.DefaultSessionCookieName || logoutCookies[0].MaxAge != -1 {
+	if len(logoutCookies) != 1 || logoutCookies[0].Name != DefaultSessionCookieName || logoutCookies[0].MaxAge != -1 {
 		t.Fatalf("logout cookies: %+v", logoutCookies)
 	}
 
@@ -550,7 +549,7 @@ func TestEndToEndLocalAuthFlowThroughServerRoutes(t *testing.T) {
 		t.Fatalf("unexpected login response: %+v", loginResp)
 	}
 	loginCookies := loginRec.Result().Cookies()
-	if len(loginCookies) != 1 || loginCookies[0].Name != authmw.DefaultSessionCookieName {
+	if len(loginCookies) != 1 || loginCookies[0].Name != DefaultSessionCookieName {
 		t.Fatalf("login cookies: %+v", loginCookies)
 	}
 }

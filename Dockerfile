@@ -5,6 +5,7 @@ WORKDIR /build/app
 RUN corepack enable && corepack prepare pnpm@11.5.2 --activate
 COPY app/package.json app/pnpm-lock.yaml app/pnpm-workspace.yaml app/.npmrc ./
 COPY app/scripts/install-deps.mjs ./scripts/install-deps.mjs
+COPY app/third_party ./third_party
 RUN pnpm install --frozen-lockfile
 COPY VERSION /build/VERSION
 COPY app/ .
@@ -21,7 +22,7 @@ COPY --from=frontend /build/app/build-static ./internal/frontend/dist
 ARG TECHSTACK_PRODUCT_VERSION=""
 ARG GIT_COMMIT=""
 RUN set -eu; \
-    version="${TECHSTACK_PRODUCT_VERSION:-$(cat VERSION)}"; \
+    version="${TECHSTACK_PRODUCT_VERSION:-$(tr -d '[:space:]' < VERSION)}"; \
     printf '%s' "$version" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; \
     revision="${GIT_COMMIT:-dev}"; \
     if [ "$revision" != dev ]; then printf '%s' "$revision" | grep -Eq '^[0-9a-f]{40}$'; fi; \

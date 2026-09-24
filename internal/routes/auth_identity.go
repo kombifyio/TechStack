@@ -1,8 +1,10 @@
 package routes
 
 import (
+	"net/http"
 	"strings"
 
+	"github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/identity"
 )
@@ -59,4 +61,25 @@ func signedEdgeAdmin(e *httpx.Event) bool {
 		return false
 	}
 	return identityHasAdminRole(identity.FromContext(e.Request.Context()))
+}
+
+func requireAdmin(e *httpx.Event) error {
+	ok, err := requireAdminAccess(e)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return httpx.ErrResponseWritten
+	}
+	return nil
+}
+
+func requireAdminAccess(e *httpx.Event) (bool, error) {
+	if e != nil && e.Auth != nil && e.Auth.IsSuperuser() {
+		return true, nil
+	}
+	if signedEdgeAdmin(e) {
+		return true, nil
+	}
+	return false, httpx.Reject(e, http.StatusForbidden, api.ErrCodeForbidden, "Admin access required", nil)
 }

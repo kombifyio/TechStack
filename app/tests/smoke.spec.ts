@@ -30,7 +30,7 @@ test.describe("Smoke Tests", () => {
     await page.goto("/login");
 
     // Logo image should be visible
-    await expect(page.getByAltText("kombify-TechStack Logo")).toBeVisible();
+    await expect(page.getByAltText("kombify-Techstack Logo")).toBeVisible();
     await expect(page.getByLabel("Email")).toBeVisible();
     await expect(page.getByLabel("Password")).toBeVisible();
     await expect(page.getByRole("button", { name: "Sign In" })).toBeVisible();
@@ -46,7 +46,7 @@ test.describe("Smoke Tests", () => {
     await page.getByLabel("Password").fill(TEST_CREDENTIALS.password);
     await page.getByRole("button", { name: "Sign In" }).click();
 
-    await page.waitForURL(/\/stacks/, { timeout: 30_000 });
+    await page.waitForURL(/\/dashboard/, { timeout: 30_000 });
     await expect(page.locator("aside")).toBeVisible();
   });
 
@@ -56,7 +56,7 @@ test.describe("Smoke Tests", () => {
     await page.getByLabel("Email").fill(TEST_CREDENTIALS.email);
     await page.getByLabel("Password").fill(TEST_CREDENTIALS.password);
     await page.getByRole("button", { name: "Sign In" }).click();
-    await page.waitForURL(/\/stacks/, { timeout: 30_000 });
+    await page.waitForURL(/\/dashboard/, { timeout: 30_000 });
 
     // Main content should be visible
     await expect(
@@ -70,7 +70,7 @@ test.describe("Smoke Tests", () => {
     await page.getByLabel("Email").fill(TEST_CREDENTIALS.email);
     await page.getByLabel("Password").fill(TEST_CREDENTIALS.password);
     await page.getByRole("button", { name: "Sign In" }).click();
-    await page.waitForURL(/\/stacks/, { timeout: 30_000 });
+    await page.waitForURL(/\/dashboard/, { timeout: 30_000 });
 
     // Navigate to wallet via top-level sidebar link
     await page.getByRole("link", { name: "Wallet" }).click();
@@ -88,15 +88,15 @@ test.describe("Smoke Tests", () => {
     await page.getByLabel("Email").fill(TEST_CREDENTIALS.email);
     await page.getByLabel("Password").fill(TEST_CREDENTIALS.password);
     await page.getByRole("button", { name: "Sign In" }).click();
-    await page.waitForURL(/\/stacks/, { timeout: 30_000 });
+    await page.waitForURL(/\/dashboard/, { timeout: 30_000 });
 
     // Go to another page
     await page.getByRole("link", { name: "Wallet" }).click();
     await page.waitForURL(/\/wallet/);
 
-    // Click logo (navigates to / which redirects to /stacks when logged in)
+    // Click logo (navigates to / which redirects to /dashboard when logged in)
     await page.locator('a[href="/"] img[alt="kombify-TechStack"]').click();
-    await page.waitForURL(/\/stacks/);
+    await page.waitForURL(/\/dashboard/);
   });
 
   test("7. Settings page loads and has sections", async ({ page }) => {
@@ -105,13 +105,13 @@ test.describe("Smoke Tests", () => {
     await page.getByLabel("Email").fill(TEST_CREDENTIALS.email);
     await page.getByLabel("Password").fill(TEST_CREDENTIALS.password);
     await page.getByRole("button", { name: "Sign In" }).click();
-    await page.waitForURL(/\/stacks/, { timeout: 30_000 });
+    await page.waitForURL(/\/dashboard/, { timeout: 30_000 });
 
     await page.goto("/settings");
 
     await expect(page.getByRole("heading", { name: "Account" })).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "Stack Identity" }),
+      page.getByRole("heading", { name: "Homelab Identity" }),
     ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Danger Zone" }),
@@ -124,7 +124,7 @@ test.describe("Smoke Tests", () => {
     await page.getByLabel("Email").fill(TEST_CREDENTIALS.email);
     await page.getByLabel("Password").fill(TEST_CREDENTIALS.password);
     await page.getByRole("button", { name: "Sign In" }).click();
-    await page.waitForURL(/\/stacks/, { timeout: 30_000 });
+    await page.waitForURL(/\/dashboard/, { timeout: 30_000 });
 
     await page.goto("/settings");
     await page.getByRole("button", { name: /logout|abmelden/i }).click();
@@ -139,7 +139,7 @@ test.describe("Smoke Tests", () => {
     await page.getByLabel("Email").fill(TEST_CREDENTIALS.email);
     await page.getByLabel("Password").fill(TEST_CREDENTIALS.password);
     await page.getByRole("button", { name: "Sign In" }).click();
-    await page.waitForURL(/\/stacks/, { timeout: 30_000 });
+    await page.waitForURL(/\/dashboard/, { timeout: 30_000 });
 
     // name=Test sets stackName to "Test", which is displayed instead of "Creating Stack"
     await page.goto("/stacks/creating?name=Test&job_id=test");
@@ -163,7 +163,7 @@ test.describe("Smoke Tests", () => {
     const url = page.url();
     expect(
       url.includes("/stacks/new") ||
-        url.includes("/stacks") ||
+        url.includes("/dashboard") ||
         url.includes("/login"),
     ).toBeTruthy();
 

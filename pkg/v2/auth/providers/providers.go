@@ -1,6 +1,6 @@
 // Package providers wires identity providers (Pocket ID, Auth0, generic OIDC)
 // into a uniform [Provider] interface that bridges into the shared
-// [github.com/kombifyio/go-common/oidcclient] verifier via
+// [github.com/kombifyio/techstack/internal/gocommon/oidcclient] verifier via
 // [Provider.ToOIDCClient] / [Registry.ToOIDCClientRegistry].
 //
 // Provider configuration lives in Postgres (`identity_providers` table) and is
@@ -15,7 +15,7 @@ import (
 	"strings"
 	"sync"
 
-	commonoidc "github.com/kombifyio/go-common/oidcclient"
+	commonoidc "github.com/kombifyio/techstack/internal/gocommon/oidcclient"
 	"github.com/kombifyio/techstack/pkg/config"
 )
 
@@ -92,7 +92,7 @@ func (p *Provider) AuthCodeURL(redirectURI, state string) string {
 }
 
 // Verify is removed in favor of [Provider.ToOIDCClient] +
-// [github.com/kombifyio/go-common/oidcclient.Provider.Verify].
+// [github.com/kombifyio/techstack/internal/gocommon/oidcclient.Provider.Verify].
 
 // ToOIDCClient converts the TechStack provider into the shared go-common
 // provider shape used by authflow/authlocal.

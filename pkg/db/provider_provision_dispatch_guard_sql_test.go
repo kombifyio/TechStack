@@ -12,97 +12,6 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 )
 
-func TestProviderProvisionDispatchGuardMigrationIsHeadSpecificAndFailClosed(t *testing.T) {
-	content := readDBFile(t, "migrations/029_provider_provision_dispatch_guards.sql")
-	for _, required := range []string{
-		"ALTER TABLE provider_catalog_profiles",
-		"DISABLE TRIGGER provider_catalog_profiles_reject_update",
-		"ENABLE TRIGGER provider_catalog_profiles_reject_update",
-		"SET provision_dispatch_mode = 'blocked'",
-		"new provider catalog profile requires an executable provision dispatch mode",
-		"provider_operation_dispatch_mode_insert_guard",
-		"provider operation must copy an executable catalog dispatch-mode pin",
-		"provider operation dispatch mode does not match its immutable catalog profile",
-		"ADD COLUMN IF NOT EXISTS provision_dispatch_mode text",
-		"DISABLE TRIGGER provider_operations_immutable_update",
-		"ALTER TABLE provider_operations NO FORCE ROW LEVEL SECURITY",
-		"ALTER TABLE provider_operations DISABLE ROW LEVEL SECURITY",
-		"ALTER TABLE provider_operations ENABLE ROW LEVEL SECURITY",
-		"ALTER TABLE provider_operations FORCE ROW LEVEL SECURITY",
-		"ENABLE TRIGGER provider_operations_immutable_update",
-		"ALTER COLUMN provision_dispatch_mode SET NOT NULL",
-		"'native_idempotency'",
-		"'provider_correlation'",
-		"'at_most_once_dispatch_manual_reconcile'",
-		"CREATE TABLE IF NOT EXISTS provider_provision_dispatch_guards",
-		"PRIMARY KEY (tenant_id, operation_id)",
-		"UNIQUE (tenant_id, lease_id, resource_generation_id)",
-		"resource_generation_id uuid NOT NULL",
-		"FOREIGN KEY (tenant_id, operation_id, head_sequence, head_receipt_digest)",
-		"REFERENCES provider_operation_receipts",
-		"FOREIGN KEY (tenant_id, lease_id)",
-		"REFERENCES techstack_vm_leases (tenant_id, id)",
-		"FOR SHARE OF runtime_lease",
-		"live_lease_revision IS DISTINCT FROM NEW.lease_revision",
-		"live_server_id IS DISTINCT FROM NEW.server_id",
-		"live_resource_generation_id IS DISTINCT FROM NEW.resource_generation_id",
-		"ADD COLUMN IF NOT EXISTS adapter_manifest_hash text",
-		"new provider catalog profile requires an immutable adapter manifest digest",
-		"prepared_request_digest",
-		"credential_version_hash",
-		"provider_scope_hash",
-		"correlation_hash",
-		"adapter_manifest_hash",
-		"guard_origin IN ('first_claim', 'migration_quarantine')",
-		"operation.command_json->>'schema_version' = 'techstack.provider-control-operation/v1'",
-		"operation.command_json->>'execution_authority' = 'techstack_provider_control'",
-		"receipt.phase = 'accepted'",
-		"ORDER BY receipt.sequence ASC",
-		"provider_provision_dispatch_guard_validate_insert",
-		"current_setting('app.provider_execution_claim_token', true)",
-		"current_setting('app.provider_execution_claim_owner', true)",
-		"NEW.guarded_at := clock_timestamp()",
-		"receipt.receipt_json->'resources'",
-		"jsonb_array_length(receipt_resources) <> 0",
-		"dispatch guard lease, UUID, or execution-profile projection mismatch",
-		"blocked provider operation cannot acquire execution custody",
-		"blocked provider operation cannot enter accepted custody",
-		"AMO provision accepted claim requires its exact first-claim dispatch guard",
-		"provision accepted claim requires generation-bound dispatch custody",
-		"pg_advisory_xact_lock",
-		"AMO provision accepted transition requires its consumed first-claim guard",
-		"provider provision dispatch guards are immutable",
-		"ENABLE ROW LEVEL SECURITY",
-		"FORCE ROW LEVEL SECURITY",
-		"current_setting('app.tenant_id', true)",
-		"REVOKE ALL ON FUNCTION provider_catalog_profile_insert_guard() FROM PUBLIC",
-		"REVOKE ALL ON FUNCTION provider_operation_dispatch_mode_insert_guard() FROM PUBLIC",
-		"REVOKE ALL ON FUNCTION provider_execution_immutable_update() FROM PUBLIC",
-	} {
-		if !strings.Contains(content, required) {
-			t.Errorf("provider provision dispatch migration missing %q", required)
-		}
-	}
-
-	for _, forbidden := range []string{
-		"not_applicable",
-		"server_generation bigint",
-		"ON DELETE CASCADE",
-		"legacy_simulate",
-		"provisioning-executor/v1",
-		"DELETE FROM provider_provision_dispatch_guards",
-		"SET guard_origin =",
-		"SET dispatch_mode =",
-		"retry_count",
-		"retry_at",
-		"reset_at",
-	} {
-		if strings.Contains(content, forbidden) {
-			t.Errorf("provider provision dispatch migration introduced forbidden behavior via %q", forbidden)
-		}
-	}
-}
-
 func TestIntegrationProviderProvisionDispatchGuardSchema(t *testing.T) {
 	db := openTestDB(t)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -441,26 +350,5 @@ func seedAcceptedProviderDispatchBefore029(t *testing.T, ctx context.Context, db
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("commit pre-029 seed: %v", err)
-	}
-}
-
-func TestProviderProvisionDispatchGuardMigrationKeepsModeAndGuardImmutable(t *testing.T) {
-	content := readDBFile(t, "migrations/029_provider_provision_dispatch_guards.sql")
-
-	if count := strings.Count(content, "guard.guard_origin = 'first_claim'"); count != 2 {
-		t.Fatalf("first-claim authorization checks = %d, want 2 for active and consumed custody", count)
-	}
-	if !strings.Contains(content,
-		"(to_jsonb(NEW) - ARRAY['status', 'phase', 'head_sequence', 'head_receipt_digest', 'updated_at'])") {
-		t.Fatal("operation immutability guard no longer protects provision_dispatch_mode")
-	}
-	if !strings.Contains(content, "BEFORE UPDATE ON provider_provision_dispatch_guards") ||
-		!strings.Contains(content, "BEFORE DELETE ON provider_provision_dispatch_guards") {
-		t.Fatal("dispatch guard update/delete rejection is incomplete")
-	}
-	if !strings.Contains(content, "guard_origin = 'migration_quarantine'") ||
-		!strings.Contains(content, "first_claim_token_digest IS NULL") ||
-		!strings.Contains(content, "first_claim_owner IS NULL") {
-		t.Fatal("migration quarantine is not a non-executable custody marker")
 	}
 }

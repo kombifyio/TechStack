@@ -3,7 +3,7 @@
  *
  * This module was split into focused submodules to keep each concern small and
  * independently testable. It re-exports their public surface so existing
- * `$lib/wizard/tasks` imports keep working unchanged:
+ * `#lib/wizard/tasks.js` imports keep working unchanged:
  *
  *   - ./task-status     Task / TaskGroup model, task definitions, phase status
  *   - ./task-updates    Backend job-progress -> task-list transitions

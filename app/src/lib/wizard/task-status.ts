@@ -71,7 +71,7 @@ export const DEFAULT_TASKS: Omit<Task, "status">[] = [
 export const RUNTIME_TASKS: Omit<Task, "status">[] = [
   {
     id: "create_lease",
-    label: "Requesting managed cloud server",
+    label: "Requesting managed cloud Node",
     labelKey: "tasks.runtime.create_lease",
   },
   {
@@ -164,7 +164,7 @@ export const RUNTIME_TASKS: Omit<Task, "status">[] = [
 export const ADD_SERVER_MANAGED_RUNTIME_TASKS: Omit<Task, "status">[] = [
   {
     id: "create_lease",
-    label: "Requesting managed server",
+    label: "Requesting managed Node",
     labelKey: "tasks.runtime.create_lease",
   },
 ];
@@ -172,7 +172,7 @@ export const ADD_SERVER_MANAGED_RUNTIME_TASKS: Omit<Task, "status">[] = [
 export const ADD_SERVER_REGISTRATION_TASKS: Omit<Task, "status">[] = [
   {
     id: "create_spec",
-    label: "Preparing server registration",
+    label: "Preparing Node registration",
     labelKey: "tasks.create_spec",
   },
 ];
@@ -197,7 +197,7 @@ export const STEP_DETAILS: Record<
     description:
       "Saving your choices to the database so they can be referenced during deployment.",
     detail:
-      "Your stack configuration is stored securely and can be exported or modified later from the dashboard.",
+      "This StackKit deployment configuration is stored securely and can be exported or modified later from the dashboard.",
   },
   find_stackkit: {
     title: "Matching a StackKit",
@@ -239,10 +239,10 @@ export const STEP_DETAILS: Record<
     description:
       "Compiling everything into a final StackKits deployment specification.",
     detail:
-      "The spec contains all configuration needed to deploy your homelab. It can be version-controlled and reproduced on any compatible server.",
+      "The spec contains all configuration needed to deploy your Homelab. It can be version-controlled and reproduced on any compatible Node.",
   },
   create_lease: {
-    title: "Requesting managed server",
+    title: "Requesting managed Node",
     description:
       "Creating or binding the subscription VM lease for this StackKit rollout.",
     detail:
@@ -253,21 +253,21 @@ export const STEP_DETAILS: Record<
     description:
       "Loading the persisted intent and waiting for the managed VPS target to become reachable.",
     detail:
-      "This checks that the persisted stack spec and requirements-spec.yaml still match, then confirms the managed VM lease exposes a runtime SSH host or public IP before StackKits artifact generation starts.",
+      "This checks that the persisted StackKit deployment spec and requirements-spec.yaml still match, then confirms the managed VM lease exposes a runtime SSH host or public IP before StackKits artifact generation starts.",
   },
   runtime_connected: {
     title: "Connecting to runtime",
     description:
       "Confirming that the bound managed VPS can be addressed by the StackKits CLI.",
     detail:
-      "Once this succeeds, the server projection is kept visible in TechStack even if preparation or rollout fails later.",
+      "Once this succeeds, the Node projection is kept visible in Techstack even if preparation or rollout fails later.",
   },
   telemetry_handshake: {
     title: "Starting telemetry handoff",
     description:
       "Preparing the runtime metadata used by monitoring, operations, and the Runtime Intelligence Layer.",
     detail:
-      "TechStack records the managed target and prepares the orchestration handoff before StackKits performs the Cloud Kit rollout.",
+      "Techstack records the managed target and prepares the orchestration handoff before StackKits performs the Cloud Kit rollout.",
   },
   validate_workers: {
     title: "Checking rollout target",
@@ -288,14 +288,14 @@ export const STEP_DETAILS: Record<
     description:
       "Saving unified-spec.yaml so the rollout is reproducible and auditable.",
     detail:
-      "The persisted spec links back to the requirements file and the original stack specification.",
+      "The persisted spec links back to the requirements file and the original StackKit deployment request.",
   },
   generate_iac: {
     title: "Generating StackKit IaC",
     description:
       "Rendering the StackKit infrastructure files needed by the rollout adapter.",
     detail:
-      "TechStack consumes StackKit artifacts here; StackKits remains responsible for applying them.",
+      "Techstack consumes StackKit artifacts here; StackKits remains responsible for applying them.",
   },
   simulate_update: {
     title: "Running simulation gate",
@@ -316,20 +316,20 @@ export const STEP_DETAILS: Record<
     description:
       "Installing or validating the Docker runtime used by the selected services.",
     detail:
-      "If apt or unattended upgrades block package installation, TechStack keeps the bound VM visible and shows the collected diagnostics.",
+      "If apt or unattended upgrades block package installation, Techstack keeps the bound VM visible and shows the collected diagnostics.",
   },
   opentofu_ready: {
     title: "Checking OpenTofu",
     description: "Verifying the infrastructure toolchain needed by StackKits.",
     detail:
-      "OpenTofu readiness is part of the StackKits CLI prep contract, not a separate TechStack-owned bootstrap path.",
+      "OpenTofu readiness is part of the StackKits CLI prep contract, not a separate Techstack-owned bootstrap path.",
   },
   terramate_ready: {
     title: "Checking Terramate",
     description:
       "Checking the Terramate toolchain when the selected StackKit lifecycle needs it.",
     detail:
-      "Terramate readiness belongs to StackKits lifecycle preparation; TechStack does not require it for the initial managed VPS lease.",
+      "Terramate readiness belongs to StackKits lifecycle preparation; Techstack does not require it for the initial managed VPS lease.",
   },
   telemetry_ready: {
     title: "Preparing telemetry",
@@ -357,14 +357,14 @@ export const STEP_DETAILS: Record<
     description:
       "Checking that login-protected services and monitoring signals are available after rollout.",
     detail:
-      "Verification confirms that the deployed stack is usable, not only that files were generated.",
+      "Verification confirms that the StackKit deployment is usable, not only that files were generated.",
   },
   restore_drill: {
     title: "Running restore drill",
     description:
-      "Validating the backup and restore path before the stack is marked verified.",
+      "Validating the backup and restore path before the StackKit deployment is marked verified.",
     detail:
-      "A verified stack must have a tested recovery path for the default services.",
+      "A verified StackKit deployment must have a tested recovery path for the default services.",
   },
 };
 
@@ -389,7 +389,7 @@ export interface TaskGroup {
 export const TASK_GROUPS: TaskGroup[] = [
   {
     id: "configure",
-    label: "Configure your stack",
+    label: "Configure StackKit deployment",
     description: "Validating choices and building the deployment spec",
     taskIds: [
       "validate",

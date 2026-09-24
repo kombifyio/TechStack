@@ -57,6 +57,12 @@ func (h workerRouteHandlers) nextTypedCommand(e *httpx.Event) error {
 	if !ok {
 		return nil
 	}
+	if authCtx.Worker != nil && authCtx.Worker.Type == "substrate" {
+		// This endpoint dispatches StackKit commands only. Hypervisors never
+		// become StackKit execution targets, even with a forged capability list.
+		e.Response.WriteHeader(http.StatusNoContent)
+		return nil
+	}
 	pollCtx, cancel := context.WithTimeout(e.Request.Context(), guardCommandPollTimeout)
 	defer cancel()
 	var command *agentpb.StackKitCommand

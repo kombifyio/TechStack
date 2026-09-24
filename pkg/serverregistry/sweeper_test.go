@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kombifyio/techstack/pkg/controlplane"
+	"github.com/kombifyio/techstack/pkg/outcome"
 	"github.com/kombifyio/techstack/pkg/serverregistry"
 )
 
@@ -143,9 +144,18 @@ func TestSweeperDemotionMatrix(t *testing.T) {
 	if server.LastHeartbeatAt == nil || !server.LastHeartbeatAt.Equal(base) {
 		t.Fatalf("sweeper rewrote LastHeartbeatAt: %#v", server.LastHeartbeatAt)
 	}
+	if server.SourceSequence != 1 || server.SourceEpoch != "epoch-a" ||
+		server.SourceAuthority != serverregistry.AuthorityGuard || server.SourceID != "guard-1" {
+		t.Fatalf("sweeper occupied Guard checkpoint: seq=%d epoch=%s authority=%s source=%s",
+			server.SourceSequence, server.SourceEpoch, server.SourceAuthority, server.SourceID)
+	}
+	if server.LastOutcome == nil || server.LastOutcome.Status != outcome.StatusDegraded ||
+		server.LastOutcome.ReasonCode != serverregistry.ReasonHeartbeatStale {
+		t.Fatalf("stale demotion outcome = %#v", server.LastOutcome)
+	}
 	transitionsAfterStale := sweepTransitionCount(t, store)
-	if transitionsAfterStale != transitionsAfterFresh+2 {
-		t.Fatalf("stale demotion transitions = %d, want %d", transitionsAfterStale, transitionsAfterFresh+2)
+	if transitionsAfterStale <= transitionsAfterFresh {
+		t.Fatalf("stale demotion did not record its state changes: before=%d after=%d", transitionsAfterFresh, transitionsAfterStale)
 	}
 
 	// Same window again: no-op suppressed, no new transitions, no revision.
@@ -183,9 +193,9 @@ func TestSweeperDemotionMatrix(t *testing.T) {
 	}
 }
 
-// TestSweeperGuardRecoveryAfterDemotion documents the sequence trade-off: the
-// sweeper extends the Guard's admission position, so a resumed Guard loses at
-// most the demotion count in heartbeats before promoting back to connected.
+// TestSweeperGuardRecoveryAfterDemotion: demotion is control-plane authority
+// and must not consume the Guard sequence. After stale then offline writes,
+// the Guard's next local sequence (2) promotes the server back to connected.
 func TestSweeperGuardRecoveryAfterDemotion(t *testing.T) {
 	store, sweeper, clock := newSweepFixture(t)
 	ctx := context.Background()
@@ -201,22 +211,20 @@ func TestSweeperGuardRecoveryAfterDemotion(t *testing.T) {
 	if _, err := sweeper.SweepOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
-	// Sweeper consumed sequences 2 (stale) and 3 (offline). The Guard's local
-	// counter resumes at 2: superseded observations are dropped as unapplied
-	// replays, and the first sequence past the sweeper's bumps promotes the
-	// server back to connected.
-	recoveredAt := base.Add(7 * time.Minute)
-	if result := applySweepHeartbeat(t, store, recoveredAt, 2); result.Applied {
-		t.Fatal("superseded guard sequence 2 was applied over the sweeper bump")
-	}
-	if result := applySweepHeartbeat(t, store, recoveredAt.Add(30*time.Second), 3); result.Applied {
-		t.Fatal("superseded guard sequence 3 was applied over the sweeper bump")
-	}
-	promoted := applySweepHeartbeat(t, store, recoveredAt.Add(time.Minute), 4)
-	if !promoted.Applied {
-		t.Fatal("guard sequence 4 was not accepted after sweeper demotions")
-	}
 	server, err := store.GetServerRuntime(ctx, "tenant-1", "server-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if server.SourceSequence != 1 || server.SourceAuthority != serverregistry.AuthorityGuard {
+		t.Fatalf("demotion occupied Guard sequence %d authority=%s", server.SourceSequence, server.SourceAuthority)
+	}
+
+	recoveredAt := base.Add(7 * time.Minute)
+	promoted := applySweepHeartbeat(t, store, recoveredAt, 2)
+	if !promoted.Applied {
+		t.Fatal("guard sequence 2 was not accepted after sweeper demotions")
+	}
+	server, err = store.GetServerRuntime(ctx, "tenant-1", "server-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,6 +256,10 @@ func TestSweeperDemotionIsCASFencedAcrossInstances(t *testing.T) {
 	if !firstDue || !secondDue {
 		t.Fatal("stale server was not due for demotion")
 	}
+	if first.Authority != serverregistry.AuthorityControlPlane || first.Source != serverregistry.SweeperSource ||
+		first.SourceSequence != 0 || first.SourceEpoch != "" {
+		t.Fatalf("demotion occupied Guard admission: %#v", first)
+	}
 	if _, err := store.ApplyServerEvent(ctx, first); err != nil {
 		t.Fatalf("first instance demotion: %v", err)
 	}
@@ -262,7 +274,7 @@ func TestSweeperDemotionIsCASFencedAcrossInstances(t *testing.T) {
 
 // TestSweeperSkipsAggregatesWithoutGuardCheckpoint: rows without a Guard
 // source position (legacy projections, freshly fenced generations) have no
-// admission position to extend and must be left alone.
+// authenticated heartbeat evidence the sweeper is allowed to age out.
 func TestSweeperSkipsAggregatesWithoutGuardCheckpoint(t *testing.T) {
 	now := time.Date(2026, 8, 12, 9, 0, 0, 0, time.UTC)
 	heartbeat := now.Add(-10 * time.Minute)

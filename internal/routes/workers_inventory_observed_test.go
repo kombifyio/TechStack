@@ -1,16 +1,164 @@
 package routes
 
 import (
+	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/portinventory"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/identity"
+	"github.com/kombifyio/techstack/pkg/serverregistry"
 	"github.com/kombifyio/techstack/pkg/serviceregistry"
 )
+
+type recordingPortObservationWriter struct {
+	observation portinventory.GuardObservation
+}
+
+func (writer *recordingPortObservationWriter) RecordGuardPorts(_ context.Context, observation portinventory.GuardObservation) error {
+	writer.observation = observation
+	return nil
+}
+
+func TestWorkerInventoryKeepsServicesVisibleWhenGuardClockLags(t *testing.T) {
+	t.Setenv("TECHSTACK_WORKER_AGENT_TOKEN_SECRET", "worker-secret")
+	store := controlplane.NewMemoryStore()
+	token := enrolledInventoryAgent(t, store)
+	observedAt := time.Now().UTC().Add(-2 * time.Minute)
+	body := strings.Replace(`{
+		"source_epoch":"epoch-lag",
+		"source_sequence":1,
+		"observed_at":"{{observed_at}}",
+		"server_id":"server-1",
+		"runtime_agent_id":"runtime-1",
+		"hostname":"node-1",
+		"discovery_observed":true,
+		"discovered_service_count":1,
+		"host":{"hostname":"node-1","os":"ubuntu","arch":"amd64"},
+		"services":[
+			{"service_id":"docker/vaultwarden","key":"docker/vaultwarden","name":"vaultwarden","status":"running","source":"observed","platform_type":"docker","instance":"default"}
+		]
+	}`, "{{observed_at}}", observedAt.Format(time.RFC3339Nano), 1)
+	postGuardInventory(t, store, token, body)
+
+	server, err := store.GetServerRuntime(t.Context(), "tenant-1", "server-1")
+	if err != nil {
+		t.Fatalf("GetServerRuntime: %v", err)
+	}
+	if server.LastHeartbeatAt == nil || !server.LastHeartbeatAt.After(observedAt.Add(time.Minute)) {
+		t.Fatalf("inventory persisted Guard clock as LastHeartbeatAt: heartbeat=%v observed_at=%v", server.LastHeartbeatAt, observedAt)
+	}
+	if server.ConnectionState != string(serverregistry.ConnectionConnected) {
+		t.Fatalf("lagging Guard inventory connection = %s", server.ConnectionState)
+	}
+
+	sweepAt := server.LastHeartbeatAt.Add(30 * time.Second)
+	store.SetNow(func() time.Time { return sweepAt })
+	sweeper, sweeperErr := serverregistry.NewSweeper(serverregistry.SweeperConfig{
+		Registry: store,
+		Outbox:   store,
+		Now:      func() time.Time { return sweepAt },
+		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if sweeperErr != nil {
+		t.Fatalf("NewSweeper: %v", sweeperErr)
+	}
+	result, sweepErr := sweeper.SweepOnce(t.Context())
+	if sweepErr != nil {
+		t.Fatalf("SweepOnce: %v", sweepErr)
+	}
+	if result.Demotions != 0 {
+		t.Fatalf("receipt-fresh inventory was demoted: %#v", result)
+	}
+
+	h := serviceRuntimeHandlers{store: store, stacks: store, servers: store, now: func() time.Time { return sweepAt }}
+	event, recorder := registryRouteStoreTestEvent(http.MethodGet, "/api/v1/services", "owner-1", "tenant-1", nil)
+	if listErr := h.list(event); listErr != nil {
+		t.Fatalf("list services: %v", listErr)
+	}
+	var envelope struct {
+		Data []serviceRuntimeResponse `json:"data"`
+	}
+	if decodeErr := json.Unmarshal(recorder.Body.Bytes(), &envelope); decodeErr != nil {
+		t.Fatalf("decode services: %v", decodeErr)
+	}
+	if len(envelope.Data) != 1 {
+		t.Fatalf("services = %#v, want the discovered row", envelope.Data)
+	}
+	got := envelope.Data[0]
+	if got.ObservedState != "running" || got.Health.State == monitoringStatusUnknown ||
+		strings.HasPrefix(got.Health.ReasonCode, "server_connection_") {
+		t.Fatalf("lagging Guard inventory was masked: %#v", got)
+	}
+}
+
+func TestWorkerInventoryRejectsObservedAtTooFarInThePast(t *testing.T) {
+	t.Setenv("TECHSTACK_WORKER_AGENT_TOKEN_SECRET", "worker-secret")
+	store := controlplane.NewMemoryStore()
+	token := enrolledInventoryAgent(t, store)
+	observedAt := time.Now().UTC().Add(-guardObservationSkewWindow - time.Second)
+	body := strings.Replace(`{
+		"source_epoch":"epoch-lag",
+		"source_sequence":1,
+		"observed_at":"{{observed_at}}",
+		"server_id":"server-1",
+		"runtime_agent_id":"runtime-1",
+		"hostname":"node-1",
+		"services":[{"service_id":"docker/app","key":"docker/app","status":"running","source":"observed","instance":"default"}]
+	}`, "{{observed_at}}", observedAt.Format(time.RFC3339Nano), 1)
+	handler := workerRouteHandlers{wst: store, registryStore: store, serverStore: store, rilStore: store, metricWriter: &fakeWorkerMetricWriter{}}
+	event, recorder := workerRouteTestEvent(http.MethodPost, "/api/v1/workers/runtime-1/inventory", body)
+	event.Request.SetPathValue("id", "runtime-1")
+	event.Request.Header.Set("Authorization", "Bearer "+token)
+	event.Request.Header.Set("X-Kombify-Tenant-ID", "tenant-1")
+	if err := handler.inventory(event); err != nil {
+		t.Fatalf("inventory returned router error: %v", err)
+	}
+	if recorder.Code == http.StatusOK {
+		t.Fatalf("past-skew inventory was accepted: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestWorkerInventoryBindsPortEvidenceToAuthenticatedGuardPosition(t *testing.T) {
+	t.Setenv("TECHSTACK_WORKER_AGENT_TOKEN_SECRET", "worker-secret")
+	store := controlplane.NewMemoryStore()
+	token := enrolledInventoryAgent(t, store)
+	writer := &recordingPortObservationWriter{}
+	observedAt := time.Now().UTC().Add(-2 * time.Second)
+	body := strings.Replace(`{
+		"source_epoch":"epoch-ports",
+		"source_sequence":7,
+		"observed_at":"{{observed_at}}",
+		"server_id":"attacker-supplied-server",
+		"runtime_agent_id":"runtime-1",
+		"ports_observed":true,
+		"open_ports":["tcp://0.0.0.0:443"],
+		"host":{"hostname":"node-1","os":"linux","arch":"amd64"}
+	}`, "{{observed_at}}", observedAt.Format(time.RFC3339Nano), 1)
+	handler := workerRouteHandlers{
+		wst: store, registryStore: store, serverStore: store, rilStore: store,
+		metricWriter: &fakeWorkerMetricWriter{}, portObservations: writer,
+	}
+	event, recorder := workerRouteTestEvent(http.MethodPost, "/api/v1/workers/runtime-1/inventory", body)
+	event.Request.SetPathValue("id", "runtime-1")
+	event.Request.Header.Set("Authorization", "Bearer "+token)
+	event.Request.Header.Set("X-Kombify-Tenant-ID", "tenant-1")
+	if err := handler.inventory(event); err != nil || recorder.Code != http.StatusOK {
+		t.Fatalf("inventory = status %d body=%s error=%v", recorder.Code, recorder.Body.String(), err)
+	}
+	got := writer.observation
+	if got.TenantID != "tenant-1" || got.RuntimeAgentID != "runtime-1" || got.SourceEpoch != "epoch-ports" ||
+		got.SourceSequence != 7 || got.InventoryRevision < 1 || !got.ListenersComplete ||
+		len(got.OpenPorts) != 1 || got.OpenPorts[0] != "tcp://0.0.0.0:443" {
+		t.Fatalf("authenticated port observation = %#v", got)
+	}
+}
 
 // enrolledInventoryAgent connects one server and returns the agent token its
 // Guard uses to publish inventory.

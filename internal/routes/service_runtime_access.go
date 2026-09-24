@@ -20,6 +20,11 @@ const (
 	serviceAccessProfileRefKey = "access_profile_ref"
 	serviceAccessSourceKey     = "provenance"
 	serviceActionRestart       = "restart"
+	serviceActionStart         = "start"
+	serviceActionStop          = "stop"
+	serviceActionLogs          = "logs"
+	serviceActionFreeze        = "freeze"
+	serviceActionUnfreeze      = "unfreeze"
 	serviceHealthHealthy       = "healthy"
 	serviceHealthReachable     = string(runtimehealth.ServiceReachable)
 	serviceHTTP                = "http"
@@ -35,8 +40,53 @@ const (
 	serviceStackKitManifest    = "stackkit-access-manifest"
 )
 
+// serviceActionVocabulary is the closed request vocabulary of the service
+// action endpoint. Whether a given service accepts a given action is decided
+// against serviceRuntimeAllowedActions, not here.
+var serviceActionVocabulary = map[string]bool{
+	serviceActionStart: true, serviceActionStop: true, serviceActionRestart: true,
+	serviceActionLogs: true, serviceActionFreeze: true, serviceActionUnfreeze: true,
+}
+
+// serviceMutatingActions is the closed set of agent-executed operations the
+// owner guardrail suppresses. `logs` is deliberately absent: reading a locked
+// service is not a mutation.
+var serviceMutatingActions = map[string]bool{
+	serviceActionStart: true, serviceActionStop: true, serviceActionRestart: true,
+}
+
+// serviceRuntimeAllowedActions is exactly what the action endpoint accepts for
+// this service right now, so the advertised set and the enforced set can never
+// drift apart. A locked service keeps its read path and offers the unlock, and
+// the unlock is offered unconditionally so a lock can never become a trap on a
+// service whose placement later stops supporting mutations.
+//
+// The card family renders the suppressed mutations as disabled-with-reason from
+// the separate `mutation_lock` field; their absence here is the API contract,
+// not a UI instruction.
+func serviceRuntimeAllowedActions(capabilities []string, locked bool) []string {
+	actions := canonicalServiceActions(capabilities)
+	if !locked {
+		if len(actions) == 0 {
+			return actions
+		}
+		actions = append(actions, serviceActionFreeze)
+		sort.Strings(actions)
+		return actions
+	}
+	kept := make([]string, 0, len(actions)+1)
+	for _, action := range actions {
+		if !serviceMutatingActions[action] {
+			kept = append(kept, action)
+		}
+	}
+	kept = append(kept, serviceActionUnfreeze)
+	sort.Strings(kept)
+	return kept
+}
+
 func canonicalServiceActions(actions []string) []string {
-	allowed := map[string]bool{"start": true, "stop": true, serviceActionRestart: true, "logs": true}
+	allowed := map[string]bool{serviceActionStart: true, serviceActionStop: true, serviceActionRestart: true, serviceActionLogs: true}
 	seen := map[string]bool{}
 	result := make([]string, 0, len(actions))
 	for _, action := range actions {
@@ -117,7 +167,7 @@ func safeObservedDirectServiceURL(raw string) string {
 		}
 		return parsed.String()
 	}
-	if host == "home.localhost" || strings.HasSuffix(host, ".home.localhost") {
+	if host == "home" || strings.HasSuffix(host, ".home") {
 		return parsed.String()
 	}
 	if privateServiceHost(host) {
@@ -177,7 +227,7 @@ func parseServiceURL(raw string) (*url.URL, bool) {
 
 func privateServiceHost(host string) bool {
 	host = strings.ToLower(strings.TrimSpace(host))
-	if host == "localhost" || strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".internal") {
+	if host == "home" || strings.HasSuffix(host, ".home") || host == "localhost" || strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".internal") {
 		return true
 	}
 	ip := net.ParseIP(host)

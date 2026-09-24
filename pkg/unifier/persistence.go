@@ -40,7 +40,7 @@ const (
 //	├── kombination.yaml          # Original intent (copy, immutable)
 //	├── requirements-spec.yaml    # Phase 2 output
 //	├── unified-spec.yaml         # Phase 4 output
-//	└── tofu/                     # IaC files
+//	└── stack-spec.yaml           # StackKits CLI handoff
 type SpecPersister struct {
 	BaseDir string // Stack directory path
 }
@@ -60,12 +60,6 @@ func NewSpecPersister(stackID string) (*SpecPersister, error) {
 	baseDir := filepath.Join(homeDir, ".techstack", "stacks", stackID)
 	if err := os.MkdirAll(baseDir, 0750); err != nil {
 		return nil, fmt.Errorf("create stack directory: %w", err)
-	}
-
-	// Create tofu subdirectory
-	tofuDir := filepath.Join(baseDir, "tofu")
-	if err := os.MkdirAll(tofuDir, 0750); err != nil {
-		return nil, fmt.Errorf("create tofu directory: %w", err)
 	}
 
 	return &SpecPersister{BaseDir: baseDir}, nil
@@ -119,21 +113,6 @@ func (p *SpecPersister) SaveStackSpecBytes(data []byte) (string, string, error) 
 	}
 
 	return path, ComputeDataHash(data), nil
-}
-
-// SaveIntentFile copies an existing kombination.yaml into the stack directory
-// without changing its bytes.
-func (p *SpecPersister) SaveIntentFile(sourcePath string) (string, string, error) {
-	if sourcePath == "" {
-		return "", "", fmt.Errorf("source path is required")
-	}
-
-	data, err := os.ReadFile(sourcePath)
-	if err != nil {
-		return "", "", fmt.Errorf("read intent file: %w", err)
-	}
-
-	return p.SaveIntentBytes(data)
 }
 
 // LoadIntentBytes loads the persisted kombination.yaml bytes.
@@ -284,11 +263,6 @@ func (p *SpecPersister) UnifiedSpecExists() bool {
 	return err == nil
 }
 
-// GetIntentPath returns the full path to the persisted kombination.yaml copy.
-func (p *SpecPersister) GetIntentPath() string {
-	return filepath.Join(p.BaseDir, IntentSpecFilename)
-}
-
 // GetStackSpecPath returns the full path to the persisted StackKits stack-spec.yaml handoff.
 func (p *SpecPersister) GetStackSpecPath() string {
 	return filepath.Join(p.BaseDir, StackSpecFilename)
@@ -299,12 +273,9 @@ func (p *SpecPersister) GetRequirementsSpecPath() string {
 	return filepath.Join(p.BaseDir, RequirementsSpecFilename)
 }
 
-// GetUnifiedSpecPath returns the full path to the unified spec file.
-func (p *SpecPersister) GetUnifiedSpecPath() string {
-	return filepath.Join(p.BaseDir, UnifiedSpecFilename)
-}
-
-// GetTofuDir returns the path to the tofu directory.
+// GetTofuDir returns the historical workspace path still used as a deploy
+// work-dir name. Callers must create it if they write there; persist no
+// longer materializes an OpenTofu tree.
 func (p *SpecPersister) GetTofuDir() string {
 	return filepath.Join(p.BaseDir, "tofu")
 }

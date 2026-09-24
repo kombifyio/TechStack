@@ -102,6 +102,7 @@ func (s *Scanner) scanPortsResult(ctx context.Context, ip string, ports []int, t
 	for _, port := range ports {
 		select {
 		case <-ctx.Done():
+			wg.Wait()
 			return foundPorts, foundSvcs
 		default:
 		}
@@ -111,13 +112,18 @@ func (s *Scanner) scanPortsResult(ctx context.Context, ip string, ports []int, t
 			defer wg.Done()
 
 			addr := net.JoinHostPort(ip, strconv.Itoa(p))
-			conn, err := net.DialTimeout("tcp", addr, timeout)
+			conn, err := (&net.Dialer{Timeout: timeout}).DialContext(ctx, "tcp", addr)
 			if err != nil {
 				return
 			}
 			conn.Close()
 
 			svc := identifyService(p)
+			if p == 8006 {
+				if candidate, err := FingerprintProxmox(ctx, ip, p, timeout); err == nil {
+					svc = candidate
+				}
+			}
 			mu.Lock()
 			foundPorts = append(foundPorts, p)
 			foundSvcs = append(foundSvcs, svc)

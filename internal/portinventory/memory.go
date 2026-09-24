@@ -36,6 +36,15 @@ type CurrentAuthority interface {
 	ReleaseAfterTeardown(context.Context, GenerationRef) error
 }
 
+// LifecycleAuthority is the single rollout and teardown boundary. A destroy
+// first snapshots the complete exact batch and may release only that batch
+// after separately governed provider or node-local absence evidence exists.
+type LifecycleAuthority interface {
+	CurrentAuthority
+	SnapshotForTeardown(context.Context, TeardownSnapshotRequest) (TeardownSnapshot, error)
+	ReleaseTeardownSnapshot(context.Context, TeardownSnapshot) error
+}
+
 // MemoryAuthority is the executable contract model used by focused rollout
 // tests. PostgreSQL loads and persists the same inventoryState decisions.
 type MemoryAuthority struct {
@@ -75,7 +84,7 @@ func (a *MemoryAuthority) Admit(ctx context.Context, request AdmissionRequest) (
 }
 
 func (a *MemoryAuthority) MarkMutationStarted(ctx context.Context, ref GenerationRef) error {
-	return a.transition(ctx, ref, []ClaimState{ClaimStatePending, ClaimStateMutating}, ClaimStateMutating)
+	return a.transition(ctx, ref, []ClaimState{ClaimStatePending, ClaimStateMutating, ClaimStateUncertain}, ClaimStateMutating)
 }
 
 func (a *MemoryAuthority) Activate(ctx context.Context, ref GenerationRef) error {
@@ -102,7 +111,7 @@ func (a *MemoryAuthority) Activate(ctx context.Context, ref GenerationRef) error
 	generation.State = ClaimStateActive
 	state.generations[key] = generation
 	for otherKey, other := range state.generations {
-		if otherKey != key && other.StackID == ref.StackID && other.State == ClaimStateActive {
+		if otherKey != key && other.StackID == ref.StackID && (other.State == ClaimStateActive || other.State == ClaimStateUncertain) {
 			other.State = ClaimStateReleased
 			state.generations[otherKey] = other
 		}
@@ -362,7 +371,7 @@ func exclusiveReservationReusable(state *inventoryState, reservationID, stackID 
 			continue
 		}
 		found = true
-		if claim.StackID != stackID || generation.State != ClaimStateActive {
+		if claim.StackID != stackID || (generation.State != ClaimStateActive && generation.State != ClaimStateUncertain) {
 			return false
 		}
 	}

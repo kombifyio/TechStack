@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"sort"
 	"strings"
 )
 
@@ -27,7 +29,7 @@ func (a *PostgresAuthority) Admit(ctx context.Context, request AdmissionRequest)
 		return Admission{}, err
 	}
 	var admission Admission
-	err = a.withServerGeneration(ctx, request.ServerRef, true, false, func(tx *sql.Tx) error {
+	err = a.withServerGeneration(ctx, request.ServerRef, request.StackID, true, false, func(tx *sql.Tx) error {
 		var persistErr error
 		admission, persistErr = admitAndPersist(ctx, tx, request)
 		return persistErr
@@ -78,8 +80,9 @@ func (a *PostgresAuthority) EvaluateCurrent(ctx context.Context, request Current
 	return currentAdmissionResult(admissionRequest, generation.State, admission), nil
 }
 
-// AdmitCurrent locks the canonical server head and persists the exact claim
-// generation atomically. No caller-provided generation can enter this path.
+// AdmitCurrent locks the Techstack lifecycle before the canonical server head
+// and persists the exact claim generation atomically. A teardown snapshot uses
+// the same first lock, so an admission is wholly before or after that snapshot.
 func (a *PostgresAuthority) AdmitCurrent(ctx context.Context, request CurrentAdmissionRequest) (CurrentAdmission, error) {
 	request, err := normalizeCurrentAdmission(request)
 	if err != nil {
@@ -93,6 +96,9 @@ func (a *PostgresAuthority) AdmitCurrent(ctx context.Context, request CurrentAdm
 		return CurrentAdmission{}, err
 	}
 	defer tx.Rollback()
+	if err = lockTechstack(ctx, tx, request.TenantID, request.StackID); err != nil {
+		return CurrentAdmission{}, err
+	}
 	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", request.TenantID); err != nil {
 		return CurrentAdmission{}, err
 	}
@@ -125,6 +131,258 @@ func (a *PostgresAuthority) AdmitCurrent(ctx context.Context, request CurrentAdm
 	return currentAdmissionResult(admissionRequest, generationState, admission), nil
 }
 
+// SnapshotForTeardown captures every non-released generation for one exact
+// Owner-owned Techstack deployment. It excludes concurrent admission through
+// the shared lifecycle lock and reads the complete batch in one query, so the
+// durable job receipt can never contain a partial cross-server batch.
+func (a *PostgresAuthority) SnapshotForTeardown(ctx context.Context, request TeardownSnapshotRequest) (TeardownSnapshot, error) {
+	request, err := normalizeTeardownRequest(request)
+	if err != nil {
+		return TeardownSnapshot{}, err
+	}
+	if a == nil || a.db == nil {
+		return TeardownSnapshot{}, fmt.Errorf("%w: database not configured", ErrInvalidRequest)
+	}
+	tx, err := a.db.BeginTx(ctx, nil)
+	if err != nil {
+		return TeardownSnapshot{}, err
+	}
+	defer tx.Rollback()
+	if err = lockTechstack(ctx, tx, request.TenantID, request.TechstackID); err != nil {
+		return TeardownSnapshot{}, err
+	}
+	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", request.TenantID); err != nil {
+		return TeardownSnapshot{}, err
+	}
+	owned, err := ownsTechstack(ctx, tx, request)
+	if err != nil {
+		return TeardownSnapshot{}, err
+	}
+	if !owned {
+		return TeardownSnapshot{}, ErrTeardownSnapshotMismatch
+	}
+	rows, err := tx.QueryContext(ctx, `
+		SELECT generation.server_id, generation.server_generation,
+		       generation.resolved_plan_hash, generation.claim_set_digest,
+		       server.owner_subject_id,
+		       COALESCE((
+		           SELECT jsonb_agg(nodes.node_ref ORDER BY nodes.node_ref)::text
+		           FROM (
+		               SELECT DISTINCT claim.node_ref
+		               FROM server_port_reservation_claims AS claim
+		               WHERE claim.tenant_id = generation.tenant_id
+		                 AND claim.server_id = generation.server_id
+		                 AND claim.server_generation = generation.server_generation
+		                 AND claim.stack_id = generation.stack_id
+		                 AND claim.resolved_plan_hash = generation.resolved_plan_hash
+		           ) AS nodes
+		       ), '[]')
+		FROM server_port_claim_generations AS generation
+		JOIN servers AS server
+		  ON server.tenant_id = generation.tenant_id
+		 AND server.id = generation.server_id
+		WHERE generation.tenant_id = $1
+		  AND generation.stack_id = $2
+		  AND generation.state <> 'released'
+		ORDER BY generation.server_id, generation.server_generation, generation.resolved_plan_hash
+	`, request.TenantID, request.TechstackID)
+	if err != nil {
+		return TeardownSnapshot{}, err
+	}
+	defer rows.Close()
+	generations := make([]TeardownGeneration, 0)
+	for rows.Next() {
+		generation := TeardownGeneration{GenerationRef: GenerationRef{
+			ServerRef: ServerRef{TenantID: request.TenantID}, StackID: request.TechstackID,
+		}}
+		var serverOwner string
+		var nodeRefsJSON string
+		if err := rows.Scan(
+			&generation.ServerID, &generation.ServerGeneration, &generation.ResolvedPlanHash,
+			&generation.ClaimSetDigest, &serverOwner, &nodeRefsJSON,
+		); err != nil {
+			return TeardownSnapshot{}, err
+		}
+		if err := json.Unmarshal([]byte(nodeRefsJSON), &generation.NodeRefs); err != nil {
+			return TeardownSnapshot{}, err
+		}
+		if strings.TrimSpace(serverOwner) != request.OwnerSubjectID {
+			return TeardownSnapshot{}, ErrTeardownSnapshotMismatch
+		}
+		generations = append(generations, generation)
+	}
+	if err := rows.Err(); err != nil {
+		return TeardownSnapshot{}, err
+	}
+	if err := rows.Close(); err != nil {
+		return TeardownSnapshot{}, err
+	}
+	snapshot, err := sealTeardownSnapshot(request, generations)
+	if err != nil {
+		return TeardownSnapshot{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return TeardownSnapshot{}, err
+	}
+	return snapshot, nil
+}
+
+// ReleaseTeardownSnapshot releases an immutable batch atomically. Every row is
+// locked and its claim-set digest is compared before the first update, so a
+// missing or replaced member rolls the complete operation back.
+func (a *PostgresAuthority) ReleaseTeardownSnapshot(ctx context.Context, snapshot TeardownSnapshot) error {
+	if err := ValidateTeardownSnapshot(snapshot); err != nil {
+		return err
+	}
+	if a == nil || a.db == nil {
+		return fmt.Errorf("%w: database not configured", ErrInvalidRequest)
+	}
+	tx, err := a.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = lockTechstack(ctx, tx, snapshot.TenantID, snapshot.TechstackID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", snapshot.TenantID); err != nil {
+		return err
+	}
+	owned, err := ownsTechstack(ctx, tx, TeardownSnapshotRequest{
+		TenantID: snapshot.TenantID, OwnerSubjectID: snapshot.OwnerSubjectID, TechstackID: snapshot.TechstackID,
+	})
+	if err != nil {
+		return err
+	}
+	if !owned {
+		return ErrTeardownSnapshotMismatch
+	}
+	serverRefs := teardownServerRefs(snapshot.Generations)
+	for _, ref := range serverRefs {
+		if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, postgresServerLockKey(ref)); err != nil {
+			return err
+		}
+	}
+	states, err := matchExactTeardownBatch(ctx, tx, snapshot)
+	if err != nil {
+		return err
+	}
+	for index, generation := range snapshot.Generations {
+		if states[index] == ClaimStateReleased {
+			continue
+		}
+		result, updateErr := tx.ExecContext(ctx, `
+			UPDATE server_port_claim_generations
+			SET state = 'released', released_at = COALESCE(released_at, clock_timestamp()),
+			    updated_at = clock_timestamp()
+			WHERE tenant_id = $1 AND server_id = $2 AND server_generation = $3
+			  AND stack_id = $4 AND resolved_plan_hash = $5 AND state = $6
+		`, generation.TenantID, generation.ServerID, generation.ServerGeneration,
+			generation.StackID, generation.ResolvedPlanHash, states[index])
+		if updateErr = requireOneRow(result, updateErr); updateErr != nil {
+			return updateErr
+		}
+	}
+	for _, ref := range serverRefs {
+		if err := releaseUnusedReservations(ctx, tx, ref); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func lockTechstack(ctx context.Context, tx *sql.Tx, tenantID, techstackID string) error {
+	_, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+		stableID("portinventory-techstack-lock", tenantID, techstackID))
+	return err
+}
+
+func ownsTechstack(ctx context.Context, tx *sql.Tx, request TeardownSnapshotRequest) (bool, error) {
+	var marker int
+	err := tx.QueryRowContext(ctx, `
+		SELECT 1 FROM stacks
+		WHERE tenant_id = $1 AND id = $2 AND owner_subject_id = $3
+		FOR UPDATE
+	`, request.TenantID, request.TechstackID, request.OwnerSubjectID).Scan(&marker)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil && marker == 1, err
+}
+
+func matchExactTeardownBatch(ctx context.Context, tx *sql.Tx, snapshot TeardownSnapshot) ([]ClaimState, error) {
+	expected := make(map[string]int, len(snapshot.Generations))
+	for index, generation := range snapshot.Generations {
+		expected[claimGenerationKey(generation.GenerationRef)] = index
+	}
+	states := make([]ClaimState, len(snapshot.Generations))
+	seen := make(map[string]struct{}, len(snapshot.Generations))
+	rows, err := tx.QueryContext(ctx, `
+		SELECT server_id, server_generation, resolved_plan_hash, claim_set_digest, state
+		FROM server_port_claim_generations
+		WHERE tenant_id = $1 AND stack_id = $2
+		ORDER BY server_id, server_generation, resolved_plan_hash
+		FOR UPDATE
+	`, snapshot.TenantID, snapshot.TechstackID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		generation := TeardownGeneration{GenerationRef: GenerationRef{
+			ServerRef: ServerRef{TenantID: snapshot.TenantID}, StackID: snapshot.TechstackID,
+		}}
+		var state ClaimState
+		if err := rows.Scan(&generation.ServerID, &generation.ServerGeneration, &generation.ResolvedPlanHash, &generation.ClaimSetDigest, &state); err != nil {
+			return nil, err
+		}
+		key := claimGenerationKey(generation.GenerationRef)
+		index, included := expected[key]
+		if !included {
+			if state != ClaimStateReleased {
+				return nil, ErrTeardownSnapshotMismatch
+			}
+			continue
+		}
+		if generation.ClaimSetDigest != snapshot.Generations[index].ClaimSetDigest || !validTeardownState(state) {
+			return nil, ErrTeardownSnapshotMismatch
+		}
+		states[index] = state
+		seen[key] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(seen) != len(expected) {
+		return nil, ErrTeardownSnapshotMismatch
+	}
+	return states, nil
+}
+
+func validTeardownState(state ClaimState) bool {
+	return containsState([]ClaimState{
+		ClaimStatePending, ClaimStateMutating, ClaimStateActive, ClaimStateUncertain, ClaimStateReleased,
+	}, state)
+}
+
+func teardownServerRefs(generations []TeardownGeneration) []ServerRef {
+	byKey := make(map[string]ServerRef, len(generations))
+	for _, generation := range generations {
+		key := postgresServerLockKey(generation.ServerRef)
+		byKey[key] = generation.ServerRef
+	}
+	keys := make([]string, 0, len(byKey))
+	for key := range byKey {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	refs := make([]ServerRef, 0, len(keys))
+	for _, key := range keys {
+		refs = append(refs, byKey[key])
+	}
+	return refs
+}
+
 func normalizeCurrentAdmission(request CurrentAdmissionRequest) (CurrentAdmissionRequest, error) {
 	request.TenantID = strings.TrimSpace(request.TenantID)
 	request.ServerID = strings.TrimSpace(request.ServerID)
@@ -140,16 +398,22 @@ func normalizeCurrentAdmission(request CurrentAdmissionRequest) (CurrentAdmissio
 
 func currentServerRef(ctx context.Context, tx *sql.Tx, request CurrentAdmissionRequest, lock bool) (ServerRef, error) {
 	query := `
-		SELECT generation, lifecycle_state
-		FROM servers
-		WHERE tenant_id = $1 AND id = $2 AND stack_id = $3 AND owner_subject_id = $4
+		SELECT server.generation, server.lifecycle_state, stack.status
+		FROM servers AS server
+		JOIN stacks AS stack
+		  ON stack.tenant_id = server.tenant_id
+		 AND stack.id = server.stack_id
+		 AND stack.owner_subject_id = server.owner_subject_id
+		 AND stack.deleted_at IS NULL
+		WHERE server.tenant_id = $1 AND server.id = $2
+		  AND server.stack_id = $3 AND server.owner_subject_id = $4
 	`
 	if lock {
-		query += ` FOR UPDATE`
+		query += ` FOR UPDATE OF server, stack`
 	}
 	var generation int64
-	var lifecycleState string
-	err := tx.QueryRowContext(ctx, query, request.TenantID, request.ServerID, request.StackID, request.OwnerSubjectID).Scan(&generation, &lifecycleState)
+	var lifecycleState, stackStatus string
+	err := tx.QueryRowContext(ctx, query, request.TenantID, request.ServerID, request.StackID, request.OwnerSubjectID).Scan(&generation, &lifecycleState, &stackStatus)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ServerRef{}, &StaleServerGenerationError{ServerID: request.ServerID}
 	}
@@ -157,6 +421,9 @@ func currentServerRef(ctx context.Context, tx *sql.Tx, request CurrentAdmissionR
 		return ServerRef{}, err
 	}
 	if state := strings.TrimSpace(lifecycleState); state == "decommissioning" || state == "decommissioned" {
+		return ServerRef{}, ErrInvalidTransition
+	}
+	if state := strings.ToLower(strings.TrimSpace(stackStatus)); state == "stopping" || state == "stopped" {
 		return ServerRef{}, ErrInvalidTransition
 	}
 	return ServerRef{TenantID: request.TenantID, ServerID: request.ServerID, ServerGeneration: generation}, nil
@@ -236,7 +503,11 @@ func loadInventoryState(ctx context.Context, tx *sql.Tx, ref ServerRef) (*invent
 			return nil, persisted, err
 		}
 		reservation.ServerRef = ref
-		reservation.Port = uint16(port)
+		reservation.Port, err = persistedPort(port)
+		if err != nil {
+			_ = rows.Close()
+			return nil, persisted, err
+		}
 		state.reservations[reservation.ID] = reservation
 		persisted.reservations[reservation.ID] = reservation.State
 	}
@@ -299,7 +570,11 @@ func loadInventoryState(ctx context.Context, tx *sql.Tx, ref ServerRef) (*invent
 			_ = rows.Close()
 			return nil, persisted, err
 		}
-		claim.Requirement.Port = uint16(port)
+		claim.Requirement.Port, err = persistedPort(port)
+		if err != nil {
+			_ = rows.Close()
+			return nil, persisted, err
+		}
 		if err = json.Unmarshal([]byte(sourceRefsJSON), &claim.Requirement.SourceRouteRefs); err != nil {
 			_ = rows.Close()
 			return nil, persisted, err
@@ -311,6 +586,14 @@ func loadInventoryState(ctx context.Context, tx *sql.Tx, ref ServerRef) (*invent
 		return nil, persisted, err
 	}
 	return state, persisted, nil
+}
+
+func persistedPort(value int64) (uint16, error) {
+	if value < 1 || value > math.MaxUint16 {
+		return 0, fmt.Errorf("persisted port %d: %w", value, ErrInvalidRequirement)
+	}
+	// #nosec G115 -- value is restricted to the valid TCP/UDP port range above.
+	return uint16(value), nil
 }
 
 func closeRows(rows *sql.Rows) error {
@@ -396,12 +679,12 @@ func requireOneRow(result sql.Result, err error) error {
 }
 
 func (a *PostgresAuthority) MarkMutationStarted(ctx context.Context, ref GenerationRef) error {
-	return a.transitionGeneration(ctx, ref, []ClaimState{ClaimStatePending, ClaimStateMutating}, ClaimStateMutating, `
+	return a.transitionGeneration(ctx, ref, []ClaimState{ClaimStatePending, ClaimStateMutating, ClaimStateUncertain}, ClaimStateMutating, `
 		UPDATE server_port_claim_generations
 		SET state = 'mutating', mutation_started_at = COALESCE(mutation_started_at, clock_timestamp()),
-		    updated_at = clock_timestamp()
+		    uncertain_at = NULL, updated_at = clock_timestamp()
 		WHERE tenant_id = $1 AND server_id = $2 AND server_generation = $3
-		  AND stack_id = $4 AND resolved_plan_hash = $5 AND state = 'pending'
+		  AND stack_id = $4 AND resolved_plan_hash = $5 AND state IN ('pending', 'uncertain')
 	`)
 }
 
@@ -409,7 +692,7 @@ func (a *PostgresAuthority) Activate(ctx context.Context, ref GenerationRef) err
 	if err := normalizeGenerationRef(&ref); err != nil {
 		return err
 	}
-	return a.withServerGeneration(ctx, ref.ServerRef, true, false, func(tx *sql.Tx) error {
+	return a.withServerGeneration(ctx, ref.ServerRef, "", true, false, func(tx *sql.Tx) error {
 		state, err := loadClaimGenerationState(ctx, tx, ref)
 		if err != nil {
 			return err
@@ -434,7 +717,7 @@ func (a *PostgresAuthority) Activate(ctx context.Context, ref GenerationRef) err
 			SET state = 'released', released_at = COALESCE(released_at, clock_timestamp()),
 			    updated_at = clock_timestamp()
 			WHERE tenant_id = $1 AND server_id = $2 AND server_generation = $3
-			  AND stack_id = $4 AND resolved_plan_hash <> $5 AND state = 'active'
+			  AND stack_id = $4 AND resolved_plan_hash <> $5 AND state IN ('active', 'uncertain')
 		`, ref.TenantID, ref.ServerID, ref.ServerGeneration, ref.StackID, ref.ResolvedPlanHash); err != nil {
 			return err
 		}
@@ -470,7 +753,7 @@ func (a *PostgresAuthority) transitionGeneration(
 	if err := normalizeGenerationRef(&ref); err != nil {
 		return err
 	}
-	return a.withServerGeneration(ctx, ref.ServerRef, true, false, func(tx *sql.Tx) error {
+	return a.withServerGeneration(ctx, ref.ServerRef, "", true, false, func(tx *sql.Tx) error {
 		state, err := loadClaimGenerationState(ctx, tx, ref)
 		if err != nil {
 			return err
@@ -491,7 +774,7 @@ func (a *PostgresAuthority) releaseGeneration(ctx context.Context, ref Generatio
 	if err := normalizeGenerationRef(&ref); err != nil {
 		return err
 	}
-	return a.withServerGeneration(ctx, ref.ServerRef, false, true, func(tx *sql.Tx) error {
+	return a.withServerGeneration(ctx, ref.ServerRef, "", false, true, func(tx *sql.Tx) error {
 		state, err := loadClaimGenerationState(ctx, tx, ref)
 		if err != nil {
 			return err
@@ -562,6 +845,7 @@ func releaseUnusedReservations(ctx context.Context, tx *sql.Tx, ref ServerRef) e
 func (a *PostgresAuthority) withServerGeneration(
 	ctx context.Context,
 	ref ServerRef,
+	techstackID string,
 	requireAllocatable bool,
 	allowHistorical bool,
 	fn func(*sql.Tx) error,
@@ -574,6 +858,11 @@ func (a *PostgresAuthority) withServerGeneration(
 		return err
 	}
 	defer tx.Rollback()
+	if techstackID != "" {
+		if err = lockTechstack(ctx, tx, ref.TenantID, techstackID); err != nil {
+			return err
+		}
+	}
 	if _, err = tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", ref.TenantID); err != nil {
 		return err
 	}
@@ -623,4 +912,4 @@ func postgresCurrentServerLockKey(request CurrentAdmissionRequest) string {
 }
 
 var _ Authority = (*PostgresAuthority)(nil)
-var _ CurrentAuthority = (*PostgresAuthority)(nil)
+var _ LifecycleAuthority = (*PostgresAuthority)(nil)

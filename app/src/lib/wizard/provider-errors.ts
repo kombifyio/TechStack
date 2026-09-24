@@ -25,10 +25,10 @@ export const ERROR_TROUBLESHOOTING: Record<
   },
   network_error: {
     message: "Network error while saving",
-    details: "The kombify TechStack server could not be reached.",
+    details: "The kombify Techstack server could not be reached.",
     steps: [
       "Check your internet connection",
-      "Make sure the kombify TechStack server is running",
+      "Make sure the kombify Techstack server is running",
       "Check that port 5260 is reachable",
       "With Docker, use 'docker ps' to verify that all containers are running",
     ],
@@ -38,10 +38,10 @@ export const ERROR_TROUBLESHOOTING: Record<
     details:
       "A StackKit was selected (e.g. basement-kit or cloud-kit), but the StackKit files are not available on the server.",
     steps: [
-      "With Docker: rebuild the image (ensures pkg/stackkits/ is present in the container)",
+      "With Docker: rebuild the image (ensures the pinned StackKits checkout is present)",
       "Check the server logs: 'docker compose logs techstack'",
-      "If running the binary outside the repo: set TECHSTACK_STACKKITS_DIR to a folder with StackKits",
-      "Verify the StackKit directory exists on the server (e.g. /app/pkg/stackkits/basement-kit or /app/pkg/stackkits/cloud-kit)",
+      "If running the binary outside the repo: set TECHSTACK_STACKKITS_DIR to a published StackKits checkout",
+      "Verify the StackKit directory exists on the server (e.g. /app/stackkits/basement-kit or /app/stackkits/cloud-kit)",
     ],
   },
   stackkit_artifact_generation: {
@@ -61,8 +61,27 @@ export const ERROR_TROUBLESHOOTING: Record<
     steps: [
       "Try selecting fewer services",
       "Switch to a different access mode (Home/Anywhere)",
-      "Check that StackKit files are present in pkg/stackkits/",
+      "Check that StackKit files are present in the configured StackKits checkout",
       "For custom StackKits: validate the CUE syntax",
+    ],
+  },
+  wizard_projection_rejected: {
+    message: "This Node could not be added",
+    details:
+      "The Additional Node intent could not be projected onto the Architecture v2 kit spec.",
+    steps: [
+      "Retry Additional Node. A Foundation role is joined as a worker on an existing kit",
+      "If this is a new homelab, found a kit instead of adding a Node",
+    ],
+  },
+  stackspec_v1_rejected: {
+    message: "This deployment is not Architecture v2",
+    details:
+      "StackKits only accepts an Architecture v2 StackSpec. A v1 document, or v2 fields such as useCases on a v1 document, cannot be validated or joined.",
+    steps: [
+      "Found a new kit for this server instead of joining the existing v1 deployment",
+      "Do not retry Additional Node against a v1 homelab",
+      "If this is a new deployment, retry the Wizard so Techstack can project a stackkit/v2alpha1 spec",
     ],
   },
   stackkit_identity_handoff_missing: {
@@ -94,7 +113,7 @@ export const ERROR_TROUBLESHOOTING: Record<
       "Check that the PocketBase database is running",
       "Verify write permissions for the pb_data/ directory",
       "With Docker: ensure the volume is mounted correctly",
-      "Try restarting the kombify-TechStack server",
+      "Try restarting the kombify-Techstack server",
     ],
   },
   unifier_error: {
@@ -121,7 +140,7 @@ export const ERROR_TROUBLESHOOTING: Record<
   managed_runtime_decommission_failed: {
     message: "This deployment could not be decommissioned",
     details:
-      "The teardown stopped because TechStack could not match the request to an authoritative provider lease. Nothing was force-removed, so provider resources may still exist.",
+      "The teardown stopped because Techstack could not match the request to an authoritative provider lease. Nothing was force-removed, so provider resources may still exist.",
     steps: [
       "Open the latest destroy job for the provider's own error",
       "Check whether the server still exists at Centron or IONOS",
@@ -141,7 +160,7 @@ export const ERROR_TROUBLESHOOTING: Record<
   managed_runtime_bootstrap_failed: {
     message: "Managed Runtime could not be prepared",
     details:
-      "The VM is reachable, but TechStack could not prepare Docker or the bootstrap baseline reliably on the Managed Runtime server.",
+      "The VM is reachable, but Techstack could not prepare Docker or the bootstrap baseline reliably on the Managed Runtime server.",
     steps: [
       "Check the provider portal to see whether the server is still starting or was rebooted",
       "Check cloud-init, Docker status, and SSH reachability on the Managed Runtime server",
@@ -155,7 +174,7 @@ export const ERROR_TROUBLESHOOTING: Record<
     steps: [
       "Check the provider error code in the error details",
       "Wait for rate limits or create/delete throttling to clear before retrying",
-      "Check the lifecycle receipt and automatic cleanup status; do not start another server until definitive absence is confirmed",
+      "Check the lifecycle receipt and automatic cleanup status; do not start another Node until definitive absence is confirmed",
       "If provider support is required, include the error code from the details",
     ],
   },
@@ -445,6 +464,27 @@ export const TROUBLESHOOTING_RULES: TroubleshootingRule[] = [
   },
   {
     any: [
+      "wizard_projection_rejected",
+      "projection rejected",
+      "joining a second controller",
+      "this node could not be added",
+    ],
+    entry: "wizard_projection_rejected",
+  },
+  {
+    any: [
+      "v1.unknown-fields",
+      "migration_blockers",
+      "architecture v2",
+      "stackkit/v2alpha1",
+      "v1 stackspec cannot carry",
+      "join requires an architecture v2",
+      "canonical v2",
+    ],
+    entry: "stackspec_v1_rejected",
+  },
+  {
+    any: [
       "stackkits artifact generation failed",
       "stackkit artifact generation failed",
       "stackkits cli generate failed",
@@ -478,7 +518,7 @@ export const TROUBLESHOOTING_RULES: TroubleshootingRule[] = [
   },
   { any: ["validation", "invalid"], entry: "validation_failed" },
   { any: ["network", "connection", "fetch"], entry: "network_error" },
-  { any: ["stackkit", "kit not found"], entry: "stackkit_not_found" },
+  { any: ["no matching stackkit", "kit not found"], entry: "stackkit_not_found" },
   { any: ["database", "pocketbase"], entry: "database_error" },
   { any: ["unifier", "cue"], entry: "unifier_error" },
   {

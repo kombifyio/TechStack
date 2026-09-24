@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/kombifyio/techstack/pkg/core"
+	"github.com/kombifyio/techstack/pkg/specv2"
 	"github.com/kombifyio/techstack/pkg/unifier"
 	"gopkg.in/yaml.v3"
 )
@@ -130,6 +131,10 @@ func overlayOwnedKey(key string) bool {
 }
 
 func applyMapRoutingOverlay(values map[string]any, state *DesiredState) {
+	if specv2.RequireCanonicalV2(values) == nil {
+		applyCanonicalV2RoutingOverlay(values, state)
+		return
+	}
 	removeStaleMapRouting(values)
 	values["domain"] = state.Domain
 	values["address_mode"] = ModeCustomDomain
@@ -159,6 +164,14 @@ func applyMapRoutingOverlay(values map[string]any, state *DesiredState) {
 		metadata["routing_external_domain_id"] = state.Provenance.ExternalDomainID
 	}
 	values["metadata"] = metadata
+}
+
+func applyCanonicalV2RoutingOverlay(values map[string]any, state *DesiredState) {
+	network := mapFromAny(values["network"])
+	domain := mapFromAny(network["domain"])
+	domain["base"] = state.Domain
+	network["domain"] = domain
+	values["network"] = network
 }
 
 func mapFromAny(value any) map[string]any {

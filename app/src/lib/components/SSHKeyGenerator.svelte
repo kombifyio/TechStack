@@ -5,7 +5,7 @@
     isSSHKeyGenAvailable,
     type SSHKeyAlgorithm,
     type SSHKeyPair,
-  } from "$lib/wallet/sshKeygen";
+  } from "#lib/wallet/sshKeygen.js";
   import Modal from "./Modal.svelte";
 
   interface Props {
@@ -131,7 +131,7 @@
   {#if step === "configure"}
     {#if !cryptoAvailable}
       <div
-        class="mb-6 p-4 rounded-lg bg-red-900/30 border border-red-500/50 text-red-300"
+        class="mb-6 p-4 rounded-xl border border-destructive/30 bg-destructive/5 text-destructive"
       >
         SSH key generation requires HTTPS and a modern browser with Web Crypto
         API support.
@@ -140,7 +140,7 @@
 
     {#if error}
       <div
-        class="mb-4 p-3 rounded-lg bg-red-900/30 border border-red-500/50 text-red-300 text-sm"
+        class="mb-4 p-3 rounded-xl border border-destructive/30 bg-destructive/5 text-destructive text-sm"
       >
         {error}
       </div>
@@ -151,22 +151,22 @@
       <div>
         <label
           for="key-name"
-          class="block text-sm font-medium text-gray-300 mb-2"
+          class="block text-sm font-medium text-foreground mb-2"
         >
-          Key Name <span class="text-red-400">*</span>
+          Key Name <span class="text-destructive">*</span>
         </label>
         <input
           id="key-name"
           type="text"
           bind:value={name}
           placeholder="e.g., Production Server, GitHub Deploy"
-          class="w-full px-4 py-3 bg-gray-900 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:border-primary focus:outline-none"
+          class="w-full px-4 py-3 bg-input border border-border rounded-lg text-foreground placeholder-muted-foreground focus:border-primary focus:outline-none"
         />
       </div>
 
       <!-- Algorithm Selection -->
       <fieldset>
-        <legend class="block text-sm font-medium text-gray-300 mb-3">
+        <legend class="block text-sm font-medium text-foreground mb-3">
           Algorithm
         </legend>
         <div class="space-y-2">
@@ -178,12 +178,12 @@
               class="w-full p-4 rounded-lg border text-left transition-colors disabled:opacity-50 {algorithm ===
               algo.value
                 ? 'bg-primary/10 border-primary/50'
-                : 'bg-gray-800/50 border-gray-700 hover:border-gray-600'}"
+                : 'bg-card border-border hover:border-muted-foreground'}"
             >
               <div class="flex items-center justify-between">
                 <div>
-                  <span class="text-white font-medium">{algo.label}</span>
-                  <p class="text-sm text-gray-400 mt-0.5">
+                  <span class="text-foreground font-medium">{algo.label}</span>
+                  <p class="text-sm text-muted-foreground mt-0.5">
                     {algo.description}
                   </p>
                 </div>
@@ -197,7 +197,7 @@
       </fieldset>
 
       <div
-        class="p-4 rounded-lg bg-blue-900/20 border border-blue-700/50 text-sm text-blue-200"
+        class="p-4 rounded-xl border border-info/30 bg-info/5 text-sm text-info"
       >
         <strong>Tip:</strong> Ed25519 is recommended for most use cases. Use RSA only
         if you need compatibility with older systems.
@@ -207,14 +207,17 @@
     <div class="mt-6 flex justify-end gap-3">
       <button
         onclick={onClose}
-        class="px-4 py-2 text-sm bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
+        data-kx="control"
+        class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
       >
         Cancel
       </button>
       <button
         onclick={handleGenerate}
         disabled={generating || !cryptoAvailable || !name.trim()}
-        class="px-4 py-2 text-sm bg-primary hover:bg-primary/90 disabled:bg-primary/50 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
+        data-kx="control"
+        data-variant="primary"
+        class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
       >
         {#if generating}
           <span class="flex items-center gap-2">
@@ -244,7 +247,7 @@
   {:else if step === "generated" && keyPair}
     {#if error}
       <div
-        class="mb-4 p-3 rounded-lg bg-red-900/30 border border-red-500/50 text-red-300 text-sm"
+        class="mb-4 p-3 rounded-xl border border-destructive/30 bg-destructive/5 text-destructive text-sm"
       >
         {error}
       </div>
@@ -253,7 +256,7 @@
     <div class="space-y-4">
       <!-- Key Info -->
       <div
-        class="p-4 rounded-lg bg-green-900/20 border border-green-700/50 text-green-200"
+        class="p-4 rounded-xl border border-success/30 bg-success/5 text-success"
       >
         <div class="flex items-center gap-2 mb-2">
           <svg
@@ -271,7 +274,7 @@
           </svg>
           <span class="font-medium">Key pair generated successfully</span>
         </div>
-        <div class="text-sm text-green-300/80 space-y-1">
+        <div class="text-sm text-success/80 space-y-1">
           <p><strong>Name:</strong> {name}</p>
           <p>
             <strong>Algorithm:</strong>
@@ -284,11 +287,11 @@
       <!-- Public Key -->
       <div>
         <div class="flex items-center justify-between mb-2">
-          <span class="text-sm font-medium text-gray-300">Public Key</span>
+          <span class="text-sm font-medium text-foreground">Public Key</span>
           <div class="flex gap-2">
             <button
               onclick={() => copyToClipboard(keyPair!.publicKey, false)}
-              class="text-xs text-gray-400 hover:text-white"
+              class="text-xs text-muted-foreground hover:text-foreground"
             >
               {copiedPublic ? "✓ Copied" : "Copy"}
             </button>
@@ -301,11 +304,11 @@
           </div>
         </div>
         <div
-          class="p-3 rounded-lg bg-black/30 border border-gray-800 font-mono text-xs text-gray-300 break-all max-h-24 overflow-y-auto"
+          class="p-3 rounded-lg bg-muted/30 border border-border font-mono text-xs text-foreground break-all max-h-24 overflow-y-auto"
         >
           {keyPair.publicKey}
         </div>
-        <p class="text-xs text-gray-500 mt-1">
+        <p class="text-xs text-muted-foreground mt-1">
           Add this to ~/.ssh/authorized_keys on your servers
         </p>
       </div>
@@ -313,11 +316,11 @@
       <!-- Private Key -->
       <div>
         <div class="flex items-center justify-between mb-2">
-          <span class="text-sm font-medium text-gray-300">Private Key</span>
+          <span class="text-sm font-medium text-foreground">Private Key</span>
           <div class="flex gap-2">
             <button
               onclick={() => copyToClipboard(keyPair!.privateKey, true)}
-              class="text-xs text-gray-400 hover:text-white"
+              class="text-xs text-muted-foreground hover:text-foreground"
             >
               {copiedPrivate ? "✓ Copied" : "Copy"}
             </button>
@@ -330,14 +333,14 @@
           </div>
         </div>
         <div
-          class="p-3 rounded-lg bg-black/30 border border-gray-800 font-mono text-xs text-gray-300 break-all max-h-32 overflow-y-auto"
+          class="p-3 rounded-lg bg-muted/30 border border-border font-mono text-xs text-foreground break-all max-h-32 overflow-y-auto"
         >
           {keyPair.privateKey}
         </div>
       </div>
 
       <div
-        class="p-3 rounded-lg bg-red-900/20 border border-red-700/50 text-sm text-red-200"
+        class="p-3 rounded-xl border border-destructive/30 bg-destructive/5 text-sm text-destructive"
       >
         <strong>Important:</strong> Download and securely store your private key now.
         It cannot be recovered if lost. Never share your private key.
@@ -347,14 +350,17 @@
     <div class="mt-6 flex justify-end gap-3">
       <button
         onclick={onClose}
-        class="px-4 py-2 text-sm bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
+        data-kx="control"
+        class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
       >
         Close
       </button>
       <button
         onclick={handleSaveToWallet}
         disabled={saving}
-        class="px-4 py-2 text-sm bg-primary hover:bg-primary/90 disabled:bg-primary/50 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
+        data-kx="control"
+        data-variant="primary"
+        class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
       >
         {#if saving}
           Saving...

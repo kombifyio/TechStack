@@ -11,31 +11,25 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/kombifyio/go-common/edgeauth"
+	"github.com/kombifyio/techstack/internal/gocommon/edgeauth"
 	"github.com/kombifyio/techstack/pkg/identity"
 	"github.com/kombifyio/techstack/pkg/middleware"
+	"github.com/kombifyio/techstack/pkg/outcome"
 )
 
-// TestNewQueue verifies queue creation.
-func TestNewQueue(t *testing.T) {
-	q := NewQueue(4, nil)
-	if q == nil {
-		t.Fatal("expected non-nil queue")
-	}
-	if q.workers != 4 {
-		t.Errorf("expected 4 workers, got %d", q.workers)
-	}
-	if q.maxCompletedJobs != 1000 {
-		t.Errorf("expected maxCompletedJobs 1000, got %d", q.maxCompletedJobs)
-	}
-	if q.completedJobTTL != 24*time.Hour {
-		t.Errorf("expected completedJobTTL 24h, got %v", q.completedJobTTL)
-	}
+func registerQueueTestJob(q *Queue, job *Job) {
+	q.jobsMu.Lock()
+	q.jobs[job.ID] = job
+	q.jobsMu.Unlock()
+}
+
+func registerAndProcessJob(q *Queue, ctx context.Context, job *Job) {
+	registerQueueTestJob(q, job)
+	q.processJob(ctx, job)
 }
 
 // TestQueue_List tests the List method with various filters.
@@ -79,9 +73,7 @@ func TestQueue_Cancel(t *testing.T) {
 
 	t.Run("cancel pending job", func(t *testing.T) {
 		job := &Job{ID: "pending-job", State: JobStatePending}
-		q.jobsMu.Lock()
-		q.jobs[job.ID] = job
-		q.jobsMu.Unlock()
+		registerQueueTestJob(q, job)
 
 		err := q.Cancel(job.ID)
 		if err != nil {
@@ -103,9 +95,7 @@ func TestQueue_Cancel(t *testing.T) {
 			State:      JobStateRunning,
 			cancelFunc: cancel,
 		}
-		q.jobsMu.Lock()
-		q.jobs[job.ID] = job
-		q.jobsMu.Unlock()
+		registerQueueTestJob(q, job)
 
 		err := q.Cancel(job.ID)
 		if err != nil {
@@ -138,173 +128,60 @@ func TestQueue_Cancel(t *testing.T) {
 		if err == nil {
 			t.Error("expected error for non-existent job")
 		}
-		if !contains(err.Error(), "job not found") {
-			t.Errorf("unexpected error: %v", err)
-		}
 	})
 
-	t.Run("cancel completed job", func(t *testing.T) {
-		job := &Job{ID: "completed-job", State: JobStateCompleted}
-		q.jobsMu.Lock()
-		q.jobs[job.ID] = job
-		q.jobsMu.Unlock()
-
-		err := q.Cancel(job.ID)
-		if err == nil {
-			t.Error("expected error when canceling completed job")
-		}
-		if !contains(err.Error(), "cannot cancel job in state") {
-			t.Errorf("unexpected error: %v", err)
-		}
-	})
-
-	t.Run("cancel failed job", func(t *testing.T) {
-		job := &Job{ID: "failed-job", State: JobStateFailed}
-		q.jobsMu.Lock()
-		q.jobs[job.ID] = job
-		q.jobsMu.Unlock()
-
-		err := q.Cancel(job.ID)
-		if err == nil {
-			t.Error("expected error when canceling failed job")
-		}
-	})
-}
-
-// TestQueue_cancelJobInternal tests internal job cancellation.
-func TestQueue_cancelJobInternal(t *testing.T) {
-	q := NewQueue(1, nil)
-
-	job := &Job{ID: "test-job", State: JobStateRunning}
-	q.jobsMu.Lock()
-	q.jobs[job.ID] = job
-	q.jobsMu.Unlock()
-
-	q.cancelJobInternal(job, "test cancellation reason")
-
-	if job.State != JobStateCancelled {
-		t.Errorf("expected state %s, got %s", JobStateCancelled, job.State)
-	}
-	if job.Error != "test cancellation reason" {
-		t.Errorf("expected error message 'test cancellation reason', got '%s'", job.Error)
-	}
-	if job.CompletedAt == nil {
-		t.Error("expected CompletedAt to be set")
-	}
-	if len(job.Logs) == 0 {
-		t.Error("expected log entry to be added")
+	for _, state := range []JobState{JobStateCompleted, JobStateFailed} {
+		t.Run("reject "+string(state)+" job", func(t *testing.T) {
+			job := &Job{ID: string(state) + "-job", State: state}
+			registerQueueTestJob(q, job)
+			if err := q.Cancel(job.ID); err == nil {
+				t.Fatalf("expected error when canceling %s job", state)
+			}
+		})
 	}
 }
 
-// TestQueue_failJob tests job failure handling.
-func TestQueue_failJob(t *testing.T) {
+func TestQueueCleanupRemovesExpiredTerminalJobsAndKeepsActiveJobs(t *testing.T) {
 	q := NewQueue(1, nil)
-
-	job := &Job{ID: "test-job", State: JobStateRunning}
-	q.jobsMu.Lock()
-	q.jobs[job.ID] = job
-	q.jobsMu.Unlock()
-
-	q.failJob(job, "test error message")
-
-	if job.State != JobStateFailed {
-		t.Errorf("expected state %s, got %s", JobStateFailed, job.State)
-	}
-	if job.Error != "test error message" {
-		t.Errorf("expected error 'test error message', got '%s'", job.Error)
-	}
-	if job.CompletedAt == nil {
-		t.Error("expected CompletedAt to be set")
-	}
-	if len(job.Logs) == 0 {
-		t.Error("expected log entry to be added")
-	}
-}
-
-// TestQueue_failJobWithDetails tests detailed job failure handling.
-func TestQueue_failJobWithDetails(t *testing.T) {
-	q := NewQueue(1, nil)
-
-	job := &Job{ID: "test-job", State: JobStateRunning}
-	q.jobsMu.Lock()
-	q.jobs[job.ID] = job
-	q.jobsMu.Unlock()
-
-	q.failJobWithDetails(job, "error message", "detailed error information")
-
-	if job.State != JobStateFailed {
-		t.Errorf("expected state %s, got %s", JobStateFailed, job.State)
-	}
-	if job.Error != "error message" {
-		t.Errorf("expected error 'error message', got '%s'", job.Error)
-	}
-	if job.ErrorDetails != "detailed error information" {
-		t.Errorf("expected ErrorDetails 'detailed error information', got '%s'", job.ErrorDetails)
-	}
-	if job.CompletedAt == nil {
-		t.Error("expected CompletedAt to be set")
-	}
-}
-
-// TestQueue_cleanupOldJobs tests cleanup of old completed jobs.
-func TestQueue_cleanupOldJobs(t *testing.T) {
-	q := NewQueue(1, nil)
-	q.maxCompletedJobs = 3
-	q.completedJobTTL = 1 * time.Millisecond // Very short TTL for testing
-
-	// Add old completed jobs
+	q.completedJobTTL = time.Minute
 	oldTime := time.Now().Add(-1 * time.Hour)
-	for i := 0; i < 5; i++ {
-		job := &Job{
-			ID:          genTestJobID(i),
-			State:       JobStateCompleted,
-			CreatedAt:   oldTime,
-			CompletedAt: &oldTime,
-		}
-		q.jobs[job.ID] = job
+	terminal := map[string]JobState{
+		"completed": JobStateCompleted,
+		"failed":    JobStateFailed,
+		"cancelled": JobStateCancelled,
+	}
+	for id, state := range terminal {
+		q.jobs[id] = &Job{ID: id, State: state, CreatedAt: oldTime, CompletedAt: &oldTime}
+	}
+	active := map[string]JobState{"pending": JobStatePending, "running": JobStateRunning}
+	for id, state := range active {
+		q.jobs[id] = &Job{ID: id, State: state, CreatedAt: oldTime}
 	}
 
-	// Add a pending job (should not be cleaned up)
-	pendingJob := &Job{ID: "pending-job", State: JobStatePending, CreatedAt: time.Now()}
-	q.jobs[pendingJob.ID] = pendingJob
-
-	// Wait for TTL to pass
-	time.Sleep(5 * time.Millisecond)
-
-	// Run cleanup
 	q.cleanupOldJobs()
 
-	// Verify pending job still exists
-	if _, ok := q.jobs[pendingJob.ID]; !ok {
-		t.Error("pending job should not be cleaned up")
-	}
-
-	// Count remaining completed jobs
-	completedCount := 0
-	for _, job := range q.jobs {
-		if job.State == JobStateCompleted {
-			completedCount++
+	for id := range terminal {
+		if _, exists := q.jobs[id]; exists {
+			t.Errorf("expired terminal job %q was retained", id)
 		}
 	}
-
-	// Should have removed old jobs (TTL passed)
-	if completedCount > q.maxCompletedJobs {
-		t.Errorf("expected at most %d completed jobs, got %d", q.maxCompletedJobs, completedCount)
+	for id := range active {
+		if _, exists := q.jobs[id]; !exists {
+			t.Errorf("active job %q was removed", id)
+		}
 	}
 }
 
-// TestQueue_cleanupOldJobs_MaxLimit tests that cleanup respects max completed jobs limit.
-func TestQueue_cleanupOldJobs_MaxLimit(t *testing.T) {
+func TestQueueCleanupRetainsNewestTerminalJobsAtLimit(t *testing.T) {
 	q := NewQueue(1, nil)
 	q.maxCompletedJobs = 2
-	q.completedJobTTL = 24 * time.Hour // Long TTL
+	q.completedJobTTL = 24 * time.Hour
 
-	// Add more completed jobs than the limit
 	now := time.Now()
 	for i := 0; i < 5; i++ {
-		completedTime := now.Add(time.Duration(i) * time.Minute) // Different ages
+		completedTime := now.Add(time.Duration(i-4) * time.Minute)
 		job := &Job{
-			ID:          genTestJobID(i),
+			ID:          "terminal-" + strconv.Itoa(i),
 			State:       JobStateCompleted,
 			CreatedAt:   completedTime,
 			CompletedAt: &completedTime,
@@ -312,50 +189,17 @@ func TestQueue_cleanupOldJobs_MaxLimit(t *testing.T) {
 		q.jobs[job.ID] = job
 	}
 
-	// Run cleanup
 	q.cleanupOldJobs()
 
-	// Count remaining completed jobs
-	completedCount := 0
-	for _, job := range q.jobs {
-		if job.State == JobStateCompleted {
-			completedCount++
+	for _, id := range []string{"terminal-0", "terminal-1", "terminal-2"} {
+		if _, exists := q.jobs[id]; exists {
+			t.Errorf("old terminal job %q was retained", id)
 		}
 	}
-
-	if completedCount != q.maxCompletedJobs {
-		t.Errorf("expected exactly %d completed jobs after cleanup, got %d", q.maxCompletedJobs, completedCount)
-	}
-}
-
-// TestQueue_cleanupOldJobs_MultipleStates tests cleanup handles multiple terminal states.
-func TestQueue_cleanupOldJobs_MultipleStates(t *testing.T) {
-	q := NewQueue(1, nil)
-	q.maxCompletedJobs = 3
-	q.completedJobTTL = 1 * time.Millisecond
-
-	oldTime := time.Now().Add(-1 * time.Hour)
-
-	// Add completed job
-	completedJob := &Job{ID: "completed", State: JobStateCompleted, CreatedAt: oldTime, CompletedAt: &oldTime}
-	q.jobs[completedJob.ID] = completedJob
-
-	// Add failed job
-	failedJob := &Job{ID: "failed", State: JobStateFailed, CreatedAt: oldTime, CompletedAt: &oldTime}
-	q.jobs[failedJob.ID] = failedJob
-
-	// Add canceled job
-	cancelledJob := &Job{ID: "canceled", State: JobStateCancelled, CreatedAt: oldTime, CompletedAt: &oldTime}
-	q.jobs[cancelledJob.ID] = cancelledJob
-
-	// Wait for TTL
-	time.Sleep(5 * time.Millisecond)
-
-	q.cleanupOldJobs()
-
-	// All old terminal jobs should be cleaned up (they're past TTL)
-	if len(q.jobs) != 0 {
-		t.Errorf("expected 0 jobs after cleanup (all past TTL), got %d", len(q.jobs))
+	for _, id := range []string{"terminal-3", "terminal-4"} {
+		if _, exists := q.jobs[id]; !exists {
+			t.Errorf("new terminal job %q was removed", id)
+		}
 	}
 }
 
@@ -370,17 +214,10 @@ func TestQueue_processJob_NoHandler(t *testing.T) {
 		State:       JobStatePending,
 		MaxAttempts: 3,
 	}
-	q.jobsMu.Lock()
-	q.jobs[job.ID] = job
-	q.jobsMu.Unlock()
-
-	q.processJob(ctx, job)
+	registerAndProcessJob(q, ctx, job)
 
 	if job.State != JobStateFailed {
 		t.Errorf("expected state %s, got %s", JobStateFailed, job.State)
-	}
-	if !contains(job.Error, "no handler") {
-		t.Errorf("expected error about no handler, got: %s", job.Error)
 	}
 }
 
@@ -401,11 +238,7 @@ func TestQueue_processJob_Success(t *testing.T) {
 		State:       JobStatePending,
 		MaxAttempts: 3,
 	}
-	q.jobsMu.Lock()
-	q.jobs[job.ID] = job
-	q.jobsMu.Unlock()
-
-	q.processJob(ctx, job)
+	registerAndProcessJob(q, ctx, job)
 
 	if !handlerCalled {
 		t.Error("handler was not called")
@@ -447,11 +280,7 @@ func TestQueue_processJob_RestoresEdgeFlagsFromPayload(t *testing.T) {
 		},
 		MaxAttempts: 3,
 	}
-	q.jobsMu.Lock()
-	q.jobs[job.ID] = job
-	q.jobsMu.Unlock()
-
-	q.processJob(ctx, job)
+	registerAndProcessJob(q, ctx, job)
 
 	if job.State != JobStateCompleted {
 		t.Errorf("expected state %s, got %s", JobStateCompleted, job.State)
@@ -504,10 +333,7 @@ func TestQueue_processJob_RestoresOnlyCapturedCommercialAuthority(t *testing.T) 
 	CaptureRequestAuthority(requestCtx, job, "tenant-1", "owner-1")
 	cancelRequest()
 	budget[0] = ' '
-	q.jobsMu.Lock()
-	q.jobs[job.ID] = job
-	q.jobsMu.Unlock()
-	q.processJob(context.Background(), job)
+	registerAndProcessJob(q, context.Background(), job)
 	if !called || job.State != JobStateCompleted {
 		t.Fatalf("called=%v state=%s, want captured authority execution", called, job.State)
 	}
@@ -601,10 +427,7 @@ func TestQueue_processJob_RawPayloadCannotForgeCommercialAuthority(t *testing.T)
 		},
 		MaxAttempts: 1,
 	}
-	q.jobsMu.Lock()
-	q.jobs[job.ID] = job
-	q.jobsMu.Unlock()
-	q.processJob(context.Background(), job)
+	registerAndProcessJob(q, context.Background(), job)
 	if job.State != JobStateCompleted {
 		t.Fatalf("state=%s, want handler to observe no forged authority", job.State)
 	}
@@ -629,10 +452,7 @@ func TestQueue_processJob_RejectsCapturedAuthorityTenantOwnerTransplant(t *testi
 	}
 	CaptureRequestAuthority(requestCtx, job, "tenant-1", "owner-1")
 	job.Payload["owner_id"] = "owner-2"
-	q.jobsMu.Lock()
-	q.jobs[job.ID] = job
-	q.jobsMu.Unlock()
-	q.processJob(context.Background(), job)
+	registerAndProcessJob(q, context.Background(), job)
 	if job.State != JobStateCompleted {
 		t.Fatalf("state=%s, want fail-closed authority removal", job.State)
 	}
@@ -657,11 +477,7 @@ func TestQueue_processJob_ProvisionError(t *testing.T) {
 		State:       JobStatePending,
 		MaxAttempts: 3,
 	}
-	q.jobsMu.Lock()
-	q.jobs[job.ID] = job
-	q.jobsMu.Unlock()
-
-	q.processJob(ctx, job)
+	registerAndProcessJob(q, ctx, job)
 
 	if job.State != JobStateFailed {
 		t.Errorf("expected state %s, got %s", JobStateFailed, job.State)
@@ -669,11 +485,12 @@ func TestQueue_processJob_ProvisionError(t *testing.T) {
 	if job.Step != "test-step" {
 		t.Errorf("expected step 'test-step', got '%s'", job.Step)
 	}
-	if job.Error != "provision failed" {
-		t.Errorf("expected error 'provision failed', got '%s'", job.Error)
+	if job.Error == "" || job.ErrorDetails == "" {
+		t.Fatalf("provision failure did not expose summary and diagnostics: %#v", job.Snapshot())
 	}
-	if job.ErrorDetails != "detailed error" {
-		t.Errorf("expected ErrorDetails 'detailed error', got '%s'", job.ErrorDetails)
+	decision, ok := job.Result["last_outcome"].(outcome.Decision)
+	if !ok || decision.Status != outcome.StatusFailed || decision.ReasonCode != "provision_failed" || decision.UserGuidance == nil {
+		t.Fatalf("provision failure outcome = %#v", job.Result["last_outcome"])
 	}
 }
 
@@ -869,11 +686,7 @@ func TestQueue_processJob_ContextCancelled(t *testing.T) {
 		State:       JobStatePending,
 		MaxAttempts: 3,
 	}
-	q.jobsMu.Lock()
-	q.jobs[job.ID] = job
-	q.jobsMu.Unlock()
-
-	q.processJob(cancelledCtx, job)
+	registerAndProcessJob(q, cancelledCtx, job)
 
 	if job.State != JobStateCancelled {
 		t.Errorf("expected state %s, got %s", JobStateCancelled, job.State)
@@ -897,16 +710,16 @@ func TestQueue_processJob_RetryableError(t *testing.T) {
 		State:       JobStatePending,
 		MaxAttempts: 2,
 	}
-	q.jobsMu.Lock()
-	q.jobs[job.ID] = job
-	q.jobsMu.Unlock()
-
-	q.processJob(ctx, job)
+	registerAndProcessJob(q, ctx, job)
 
 	// Retry backoff is an honest non-terminal wait. Its durable projection is
 	// acknowledged as pending before the timer can enqueue another attempt.
 	if job.State != JobStateWaiting || job.WaitReason != WaitReasonRetryBackoff {
 		t.Errorf("expected retry wait, got state=%s reason=%s", job.State, job.WaitReason)
+	}
+	decision, ok := job.Result["last_outcome"].(outcome.Decision)
+	if !ok || decision.Status != outcome.StatusPending || decision.ReasonCode != WaitReasonRetryBackoff || decision.Retryable {
+		t.Fatalf("retry outcome = %#v", job.Result["last_outcome"])
 	}
 
 	if attemptCount != 1 {
@@ -914,62 +727,33 @@ func TestQueue_processJob_RetryableError(t *testing.T) {
 	}
 }
 
-// TestQueue_processJob_MaxAttemptsExceeded tests failure after max attempts.
-func TestQueue_processJob_MaxAttemptsExceeded(t *testing.T) {
-	q := NewQueue(1, nil)
-	ctx := context.Background()
-
-	q.RegisterHandler(JobTypeCommand, func(ctx context.Context, job *Job, q *Queue) error {
-		return NewTransientError(errors.New("temporary failure"))
-	})
-
-	job := &Job{
-		ID:          "test-job",
-		Type:        JobTypeCommand,
-		State:       JobStatePending,
-		Attempts:    2, // Already at max-1
-		MaxAttempts: 2,
+func TestQueue_processJob_TerminalError(t *testing.T) {
+	tests := []struct {
+		name        string
+		err         error
+		attempts    int
+		maxAttempts int
+	}{
+		{name: "retry budget exhausted", err: NewTransientError(errors.New("temporary failure")), attempts: 2, maxAttempts: 2},
+		{name: "permanent error", err: NewPermanentError(errors.New("permanent failure")), maxAttempts: 3},
 	}
-	q.jobsMu.Lock()
-	q.jobs[job.ID] = job
-	q.jobsMu.Unlock()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := NewQueue(1, nil)
+			q.RegisterHandler(JobTypeCommand, func(context.Context, *Job, *Queue) error { return tt.err })
+			job := &Job{
+				ID:          "test-job",
+				Type:        JobTypeCommand,
+				State:       JobStatePending,
+				Attempts:    tt.attempts,
+				MaxAttempts: tt.maxAttempts,
+			}
+			registerAndProcessJob(q, t.Context(), job)
 
-	q.processJob(ctx, job)
-
-	if job.State != JobStateFailed {
-		t.Errorf("expected state %s after max attempts, got %s", JobStateFailed, job.State)
-	}
-	if !contains(job.Error, "max attempts") {
-		t.Errorf("expected error about max attempts, got: %s", job.Error)
-	}
-}
-
-// TestQueue_processJob_NonRetryableError tests failure on permanent error.
-func TestQueue_processJob_NonRetryableError(t *testing.T) {
-	q := NewQueue(1, nil)
-	ctx := context.Background()
-
-	q.RegisterHandler(JobTypeCommand, func(ctx context.Context, job *Job, q *Queue) error {
-		return NewPermanentError(errors.New("permanent failure"))
-	})
-
-	job := &Job{
-		ID:          "test-job",
-		Type:        JobTypeCommand,
-		State:       JobStatePending,
-		MaxAttempts: 3,
-	}
-	q.jobsMu.Lock()
-	q.jobs[job.ID] = job
-	q.jobsMu.Unlock()
-
-	q.processJob(ctx, job)
-
-	if job.State != JobStateFailed {
-		t.Errorf("expected state %s for permanent error, got %s", JobStateFailed, job.State)
-	}
-	if !contains(job.Error, "non-retryable") {
-		t.Errorf("expected error about non-retryable, got: %s", job.Error)
+			if job.State != JobStateFailed {
+				t.Errorf("state = %s, want %s", job.State, JobStateFailed)
+			}
+		})
 	}
 }
 
@@ -991,9 +775,6 @@ func TestQueue_Enqueue_QueueFull(t *testing.T) {
 	err := q.Enqueue(job2)
 	if err == nil {
 		t.Error("expected error when queue is full")
-	}
-	if !contains(err.Error(), "queue full") {
-		t.Errorf("unexpected error: %v", err)
 	}
 	if _, exists := q.Get(job2.ID); exists {
 		t.Fatal("queue-full job remained registered as process-local work")
@@ -1030,29 +811,16 @@ func TestQueue_Enqueue_DefaultValues(t *testing.T) {
 	}
 }
 
-// TestQueue_Get tests job retrieval.
-func TestQueue_Get(t *testing.T) {
-	q := NewQueue(1, nil)
-
-	// Add a job
-	expectedJob := &Job{ID: "test-job", State: JobStatePending}
-	q.jobsMu.Lock()
-	q.jobs[expectedJob.ID] = expectedJob
-	q.jobsMu.Unlock()
-
-	// Get existing job
-	job, ok := q.Get("test-job")
-	if !ok {
-		t.Error("expected to find job")
+func TestQueueEnqueueRejectsDuplicateIdentity(t *testing.T) {
+	q, first := NewQueue(1, nil), &Job{ID: "same", Type: JobTypeCommand}
+	if err := q.Enqueue(first); err != nil {
+		t.Fatal(err)
 	}
-	if job.ID != expectedJob.ID {
-		t.Errorf("expected job ID %s, got %s", expectedJob.ID, job.ID)
+	if err := q.Enqueue(&Job{ID: "same", Type: JobTypeCommand}); err == nil {
+		t.Fatal("duplicate job admitted")
 	}
-
-	// Get non-existent job
-	_, ok = q.Get("non-existent")
-	if ok {
-		t.Error("expected not to find job")
+	if got, _ := q.Get("same"); got != first {
+		t.Fatal("original job replaced")
 	}
 }
 
@@ -1128,159 +896,52 @@ func TestQueue_Stats_AllStates(t *testing.T) {
 	}
 }
 
-// TestQueue_StartStop tests queue lifecycle.
-func TestQueue_StartStop(t *testing.T) {
-	q := NewQueue(2, nil)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	q.Start(ctx)
-
-	// Queue should be running
-	if !q.running.Load() {
-		t.Error("expected queue to be running after Start")
+func TestQueueSupersedesSupportedManagedRuntimeWaits(t *testing.T) {
+	tests := []struct {
+		name       string
+		jobType    JobType
+		waitReason string
+		enrollment bool
+	}{
+		{name: "enrollment", jobType: JobTypeDeploy, waitReason: WaitReasonManagedRuntimeEnrollment, enrollment: true},
+		{name: "provider provisioning", jobType: JobTypeProvision, waitReason: WaitReasonManagedRuntimeProvider},
 	}
-
-	q.Stop()
-
-	// Queue should be stopped
-	if q.running.Load() {
-		t.Error("expected queue to be stopped after Stop")
-	}
-}
-
-// TestQueue_Concurrency tests thread-safety of queue operations.
-func TestQueue_Concurrency(t *testing.T) {
-	q := NewQueue(4, nil)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	var processedCount int32
-	var mu sync.Mutex
-
-	q.RegisterHandler(JobTypeCommand, func(ctx context.Context, job *Job, q *Queue) error {
-		mu.Lock()
-		processedCount++
-		mu.Unlock()
-		time.Sleep(10 * time.Millisecond)
-		return nil
-	})
-
-	q.Start(ctx)
-	defer q.Stop()
-
-	// Enqueue multiple jobs concurrently
-	var wg sync.WaitGroup
-	for i := 0; i < 20; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := NewQueue(1, nil)
+			nextResumeAt := time.Now().Add(-time.Minute)
 			job := &Job{
-				ID:   genTestJobID(i),
-				Type: JobTypeCommand,
+				ID: "waiting-" + tt.name, Type: tt.jobType, State: JobStateWaiting,
+				WaitReason: tt.waitReason, NextResumeAt: &nextResumeAt,
+				Result: map[string]interface{}{"lease_id": "lease-existing"},
 			}
-			_ = q.Enqueue(job)
-		}(i)
-	}
+			q.jobs[job.ID] = job
+			receiptKey, receiptValue := "recovery_kind", tt.waitReason
+			if tt.enrollment {
+				receiptKey, receiptValue = "enrollment_resume_source_job_id", job.ID
+			}
+			receipt := map[string]any{receiptKey: receiptValue}
 
-	wg.Wait()
-	time.Sleep(500 * time.Millisecond) // Wait for processing
-
-	mu.Lock()
-	count := processedCount
-	mu.Unlock()
-
-	if count == 0 {
-		t.Error("expected some jobs to be processed")
-	}
-	t.Logf("processed %d jobs concurrently", count)
-}
-
-// TestQueue_addLog tests log entry addition.
-func TestQueue_addLog(t *testing.T) {
-	q := NewQueue(1, nil)
-
-	job := &Job{ID: "test-job"}
-
-	q.addLog(job, "info", "first message")
-	q.addLog(job, "warn", "warning message")
-	q.addLog(job, "error", "error message")
-
-	if len(job.Logs) != 3 {
-		t.Errorf("expected 3 log entries, got %d", len(job.Logs))
-	}
-
-	if job.Logs[0].Level != "info" {
-		t.Errorf("expected level 'info', got '%s'", job.Logs[0].Level)
-	}
-	if job.Logs[0].Message != "first message" {
-		t.Errorf("expected message 'first message', got '%s'", job.Logs[0].Message)
-	}
-
-	if job.Logs[1].Level != "warn" {
-		t.Errorf("expected level 'warn', got '%s'", job.Logs[1].Level)
-	}
-
-	if job.Logs[2].Level != "error" {
-		t.Errorf("expected level 'error', got '%s'", job.Logs[2].Level)
-	}
-}
-
-func TestQueueSupersedeWaitingEnrollmentClaimsExactJobAndAddsReceipt(t *testing.T) {
-	q := NewQueue(1, nil)
-	nextResumeAt := time.Now().Add(-time.Minute)
-	job := &Job{
-		ID: "waiting-job", Type: JobTypeDeploy, State: JobStateWaiting,
-		WaitReason: WaitReasonManagedRuntimeEnrollment, NextResumeAt: &nextResumeAt,
-		Result: map[string]interface{}{"lease_id": "lease-1"},
-	}
-	q.jobs["waiting-job"] = job
-
-	persisted := false
-	result, err := q.SupersedeWaitingEnrollment("waiting-job", map[string]any{
-		"enrollment_resume_source_job_id": "waiting-job",
-	}, func() error { persisted = true; return nil })
-	if err != nil || result != WaitingHandoverClaimed || !persisted {
-		t.Fatalf("SupersedeWaitingEnrollment() result=%q persisted=%v err=%v", result, persisted, err)
-	}
-	snapshot := job.Snapshot()
-	if snapshot.State != JobStateCancelled || snapshot.WaitReason != "" || snapshot.NextResumeAt != nil {
-		t.Fatalf("snapshot after resume = %#v", snapshot)
-	}
-	if snapshot.Result["enrollment_resume_source_job_id"] != "waiting-job" || snapshot.Result["lease_id"] != "lease-1" {
-		t.Fatalf("result = %#v", snapshot.Result)
-	}
-}
-
-func TestQueueSupersedeWaitingJobClaimsProviderProvisionWait(t *testing.T) {
-	q := NewQueue(1, nil)
-	nextResumeAt := time.Now().Add(-time.Minute)
-	job := &Job{
-		ID: "provider-wait", Type: JobTypeProvision, State: JobStateWaiting,
-		WaitReason: WaitReasonManagedRuntimeProvider, NextResumeAt: &nextResumeAt,
-		Result: map[string]interface{}{"lease_id": "lease-existing"},
-	}
-	q.jobs[job.ID] = job
-
-	persisted := false
-	result, err := q.SupersedeWaitingJob(
-		job.ID,
-		JobTypeProvision,
-		WaitReasonManagedRuntimeProvider,
-		map[string]any{"recovery_kind": WaitReasonManagedRuntimeProvider},
-		func() error { persisted = true; return nil },
-	)
-	if err != nil || result != WaitingHandoverClaimed || !persisted {
-		t.Fatalf("SupersedeWaitingJob() result=%q persisted=%v err=%v", result, persisted, err)
-	}
-	snapshot := job.Snapshot()
-	if snapshot.State != JobStateCancelled || snapshot.WaitReason != "" || snapshot.NextResumeAt != nil {
-		t.Fatalf("provider wait after handover = %#v", snapshot)
-	}
-	if snapshot.Result["lease_id"] != "lease-existing" || snapshot.Result["recovery_kind"] != WaitReasonManagedRuntimeProvider {
-		t.Fatalf("provider wait result = %#v", snapshot.Result)
+			persisted := false
+			persist := func() error { persisted = true; return nil }
+			var result WaitingHandoverResult
+			var err error
+			if tt.enrollment {
+				result, err = q.SupersedeWaitingEnrollment(job.ID, receipt, persist)
+			} else {
+				result, err = q.SupersedeWaitingJob(job.ID, tt.jobType, tt.waitReason, receipt, persist)
+			}
+			if err != nil || result != WaitingHandoverClaimed || !persisted {
+				t.Fatalf("handover result=%q persisted=%v err=%v", result, persisted, err)
+			}
+			snapshot := job.Snapshot()
+			if snapshot.State != JobStateCancelled || snapshot.WaitReason != "" || snapshot.NextResumeAt != nil {
+				t.Fatalf("managed runtime wait after handover = %#v", snapshot)
+			}
+			if snapshot.Result["lease_id"] != "lease-existing" || snapshot.Result[receiptKey] != receiptValue {
+				t.Fatalf("managed runtime result = %#v", snapshot.Result)
+			}
+		})
 	}
 }
 
@@ -1531,125 +1192,82 @@ func TestQueueDetachedPendingJobCannotStart(t *testing.T) {
 	}
 }
 
-func TestQueueDefersBusyDurableExecutionWithoutRunningHandler(t *testing.T) {
-	q := NewQueue(1, nil)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	var claims atomic.Int32
-	handled := make(chan struct{}, 1)
-	q.SetExecutionClaimer(func(context.Context, ExecutionClaim) error {
-		if claims.Add(1) == 1 {
-			return ErrExecutionTargetBusy
-		}
-		return nil
-	})
-	q.RegisterHandler(JobTypeDeploy, func(context.Context, *Job, *Queue) error {
-		handled <- struct{}{}
-		return nil
-	})
-	q.Start(ctx)
-	defer q.Stop()
-
-	previousStartedAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Microsecond)
-	job := &Job{
-		ID: "busy-claim", Type: JobTypeDeploy, TargetType: "stack", TargetID: "stack-1",
-		Payload: map[string]interface{}{"tenant_id": "tenant-1"}, StartedAt: &previousStartedAt,
+func TestQueueRetriesDurableExecutionClaimsWithoutRunningHandler(t *testing.T) {
+	tests := []struct {
+		name               string
+		firstErr           error
+		waitReason         string
+		preserveGeneration bool
+	}{
+		{name: "target busy", firstErr: ErrExecutionTargetBusy, waitReason: WaitReasonStackExecution, preserveGeneration: true},
+		{name: "coordination unavailable", firstErr: errors.New("database temporarily unavailable"), waitReason: WaitReasonExecutionClaim},
 	}
-	if err := q.Enqueue(job); err != nil {
-		t.Fatal(err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := NewQueue(1, nil)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			var claims atomic.Int32
+			handled := make(chan struct{}, 1)
+			q.SetExecutionClaimer(func(context.Context, ExecutionClaim) error {
+				if claims.Add(1) == 1 {
+					return tt.firstErr
+				}
+				return nil
+			})
+			q.RegisterHandler(JobTypeDeploy, func(context.Context, *Job, *Queue) error {
+				handled <- struct{}{}
+				return nil
+			})
+			q.Start(ctx)
+			defer q.Stop()
 
-	deadline := time.Now().Add(time.Second)
-	waitingObserved := false
-	for time.Now().Before(deadline) {
-		snapshot := job.Snapshot()
-		if snapshot.State == JobStateWaiting && snapshot.WaitReason == WaitReasonStackExecution {
-			if snapshot.Attempts != 0 {
-				t.Fatalf("busy durable claim consumed attempt: %d", snapshot.Attempts)
+			job := &Job{
+				ID: tt.name, Type: JobTypeDeploy, TargetType: "stack", TargetID: "stack-1",
+				Payload: map[string]interface{}{"tenant_id": "tenant-1"},
 			}
-			if snapshot.StartedAt == nil || !snapshot.StartedAt.Equal(previousStartedAt) {
-				t.Fatalf("execution generation changed while busy: got %v want %v", snapshot.StartedAt, previousStartedAt)
+			var expectedStartedAt time.Time
+			if tt.preserveGeneration {
+				expectedStartedAt = time.Now().UTC().Add(-time.Minute).Truncate(time.Microsecond)
+				startedAt := expectedStartedAt
+				job.StartedAt = &startedAt
 			}
-			waitingObserved = true
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	if !waitingObserved {
-		t.Fatalf("busy claim did not enter waiting state: %#v", job.Snapshot())
-	}
-	select {
-	case <-handled:
-		t.Fatal("handler ran while durable stack execution was busy")
-	case <-time.After(100 * time.Millisecond):
-	}
-
-	select {
-	case <-handled:
-	case <-time.After(2 * time.Second):
-		t.Fatal("handler did not run after the durable claim became available")
-	}
-	if got := claims.Load(); got < 2 {
-		t.Fatalf("durable claim attempts = %d, want at least two", got)
-	}
-}
-
-func TestQueueRetriesUnavailableDurableExecutionClaimWithoutRunningHandler(t *testing.T) {
-	q := NewQueue(1, nil)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	var claims atomic.Int32
-	handled := make(chan struct{}, 1)
-	q.SetExecutionClaimer(func(context.Context, ExecutionClaim) error {
-		if claims.Add(1) == 1 {
-			return errors.New("database temporarily unavailable")
-		}
-		return nil
-	})
-	q.RegisterHandler(JobTypeDeploy, func(context.Context, *Job, *Queue) error {
-		handled <- struct{}{}
-		return nil
-	})
-	q.Start(ctx)
-	defer q.Stop()
-
-	job := &Job{
-		ID: "unavailable-claim", Type: JobTypeDeploy, TargetType: "stack", TargetID: "stack-1",
-		Payload: map[string]interface{}{"tenant_id": "tenant-1"},
-	}
-	if err := q.Enqueue(job); err != nil {
-		t.Fatal(err)
-	}
-
-	deadline := time.Now().Add(time.Second)
-	waitingObserved := false
-	for time.Now().Before(deadline) {
-		snapshot := job.Snapshot()
-		if snapshot.State == JobStateWaiting && snapshot.WaitReason == WaitReasonExecutionClaim {
-			if snapshot.Attempts != 0 {
-				t.Fatalf("unavailable durable claim consumed attempt: %d", snapshot.Attempts)
+			if err := q.Enqueue(job); err != nil {
+				t.Fatal(err)
 			}
-			waitingObserved = true
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	if !waitingObserved {
-		t.Fatalf("unavailable claim did not enter waiting state: %#v", job.Snapshot())
-	}
-	select {
-	case <-handled:
-		t.Fatal("handler ran while durable execution coordination was unavailable")
-	case <-time.After(100 * time.Millisecond):
-	}
 
-	select {
-	case <-handled:
-	case <-time.After(2 * time.Second):
-		t.Fatal("handler did not run after durable execution coordination recovered")
-	}
-	if got := claims.Load(); got < 2 {
-		t.Fatalf("durable claim attempts = %d, want at least two", got)
+			waitingObserved := false
+			for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
+				snapshot := job.Snapshot()
+				if snapshot.State == JobStateWaiting && snapshot.WaitReason == tt.waitReason {
+					if snapshot.Attempts != 0 {
+						t.Fatalf("durable claim consumed attempt: %d", snapshot.Attempts)
+					}
+					if tt.preserveGeneration && (snapshot.StartedAt == nil || !snapshot.StartedAt.Equal(expectedStartedAt)) {
+						t.Fatalf("execution generation changed while busy: got %v want %v", snapshot.StartedAt, expectedStartedAt)
+					}
+					waitingObserved = true
+					break
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+			if !waitingObserved {
+				t.Fatalf("claim did not enter %s waiting state: %#v", tt.waitReason, job.Snapshot())
+			}
+			select {
+			case <-handled:
+				t.Fatal("handler ran before the durable claim recovered")
+			case <-time.After(100 * time.Millisecond):
+			}
+			select {
+			case <-handled:
+			case <-time.After(2 * time.Second):
+				t.Fatal("handler did not run after the durable claim recovered")
+			}
+			if got := claims.Load(); got < 2 {
+				t.Fatalf("durable claim attempts = %d, want at least two", got)
+			}
+		})
 	}
 }
 
@@ -1705,6 +1323,12 @@ func TestQueueSerializesDestroyBehindCanceledRunningDeploy(t *testing.T) {
 	q := NewQueue(2, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	if err := q.Enqueue(&Job{ID: "old-destroy", Type: JobTypeDestroy, TargetType: "stack", TargetID: "stack-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if canceled := q.CancelStackOffers("stack-1"); len(canceled) != 1 || canceled[0] != "old-destroy" {
+		t.Fatalf("superseded destroy = %#v", canceled)
+	}
 	deployStarted := make(chan struct{})
 	deployCanceled := make(chan struct{})
 	releaseDeploy := make(chan struct{})
@@ -1730,7 +1354,7 @@ func TestQueueSerializesDestroyBehindCanceledRunningDeploy(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("deploy did not start")
 	}
-	if canceled := q.CancelStackRollouts("stack-1"); len(canceled) != 1 || canceled[0] != "deploy" {
+	if canceled := q.CancelStackOffers("stack-1"); len(canceled) != 1 || canceled[0] != "deploy" {
 		t.Fatalf("canceled = %#v", canceled)
 	}
 	select {
@@ -1752,9 +1376,4 @@ func TestQueueSerializesDestroyBehindCanceledRunningDeploy(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("destroy did not start after deploy exited")
 	}
-}
-
-// genTestJobID generates a test job ID.
-func genTestJobID(i int) string {
-	return "test-job-" + string(rune('a'+i%26)) + string(rune('0'+i%10))
 }

@@ -5,8 +5,8 @@
   cleared sessionStorage and other devices.
 -->
 <script lang="ts">
-  import { tr } from "$lib/i18n.svelte";
-  import type { ActiveWizardRun } from "$lib/api/wizardRuns";
+  import { tr } from "#lib/i18n.svelte.js";
+  import type { ActiveWizardRun } from "#lib/api/wizardRuns.js";
   import { Loader2, TriangleAlert, Cable } from "@lucide/svelte";
 
   interface Props {
@@ -44,13 +44,15 @@
     if (!jobRef) {
       // A run without any job reference (e.g. failed before dispatch) cannot
       // resume on the progress page; send the user back into the wizard.
-      return run.result?.kit_assignment_mode === "join" && run.stack_id
-        ? `/stacks/${encodeURIComponent(run.stack_id)}/servers/new`
+      return run.result?.kit_assignment_mode === "join" && run.kit_deployment_id
+        ? `/stacks/${encodeURIComponent(run.kit_deployment_id)}/servers/new`
         : "/stacks/new";
     }
     const params = new URLSearchParams();
     params.set("job_id", jobRef);
-    if (run.stack_id) params.set("stack_id", run.stack_id);
+    if (run.kit_deployment_id) {
+      params.set("stack_id", run.kit_deployment_id);
+    }
     if (run.pairing_job_id && run.pairing_job_id !== jobRef) {
       params.set("pairing_job_id", run.pairing_job_id);
     }
@@ -98,7 +100,9 @@
       {/if}
     </div>
     <a
-      class="btn btn-primary shrink-0"
+      data-kx="control"
+      data-variant="primary"
+      class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50 shrink-0"
       href={resumeHref}
       data-testid="wizard-run-banner-resume"
     >

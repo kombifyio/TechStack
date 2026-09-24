@@ -1,14 +1,14 @@
-import { browser } from "$app/environment";
+import { browser } from "$app/env";
 import {
   getStackIdentitySettings,
   updateStackIdentitySettings,
   type StackIdentitySettingsResponse,
-} from "$lib/api/auth";
+} from "#lib/api/auth.js";
 import { writable } from "svelte/store";
 import {
   normalizeStackIdentity,
   type StackIdentity,
-} from "$lib/components/open-core";
+} from "#lib/components/open-core/index.js";
 export type { StackIdentity };
 
 const STORAGE_KEY = "techstack.stack-identity";

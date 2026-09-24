@@ -311,3 +311,27 @@ func TestEngine_ActivityIdempotencyKey(t *testing.T) {
 		t.Errorf("activity idempotency key = %q, want idem-xyz", gotIdem)
 	}
 }
+
+func TestEngine_StartOrResumeRunAdoptsOnlyTheSameDurableWork(t *testing.T) {
+	eng := newTestEngine(t)
+	calls := 0
+	eng.Register(testWF{typ: TypeActionCardRemediation, policy: DefaultRetryPolicy(), steps: []StepDef{{Name: "execute", Run: func(context.Context, *RunContext) (StepResult, error) {
+		calls++
+		return StepResult{}, nil
+	}}}})
+	run := &Run{RunID: "deterministic-action-run", Type: TypeActionCardRemediation, OwnerID: "owner-1", CardID: "card-1", Input: map[string]any{"idempotency_key": "idem-1"}}
+	if _, err := eng.StartOrResumeRun(t.Context(), run); err != nil {
+		t.Fatal(err)
+	}
+	retry := &Run{RunID: run.RunID, Type: run.Type, OwnerID: run.OwnerID, CardID: run.CardID, Input: map[string]any{"idempotency_key": "idem-1"}}
+	if _, err := eng.StartOrResumeRun(t.Context(), retry); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("durable work executed %d times, want exactly once", calls)
+	}
+	retry.Input["idempotency_key"] = "different"
+	if _, err := eng.StartOrResumeRun(t.Context(), retry); err == nil {
+		t.Fatal("run id was reused for different work")
+	}
+}

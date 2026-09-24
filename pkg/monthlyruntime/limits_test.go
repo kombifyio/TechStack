@@ -3,6 +3,8 @@ package monthlyruntime
 import (
 	"strings"
 	"testing"
+
+	"github.com/kombifyio/techstack/internal/runtimeproduct/vmlease"
 )
 
 func TestManagedRuntimeCapacityReservationDenialDetailsUsesTruthfulCustodyShape(t *testing.T) {
@@ -47,5 +49,33 @@ func TestDecommissionProtectedDetailsShape(t *testing.T) {
 	}
 	if got := details["lease_id"]; got != "lease-main" {
 		t.Fatalf("lease_id = %v, want lease-main", got)
+	}
+}
+
+// TestLeaseVisibleToOwnerRejectsMislabeledOrgSubject pins the visibility
+// boundary that a shared tenant makes load-bearing. Kind alone must not grant
+// visibility: a lease held by another subject stays hidden even when it claims
+// org kind, while a lease genuinely held by the organization stays shared.
+func TestLeaseVisibleToOwnerRejectsMislabeledOrgSubject(t *testing.T) {
+	newLease := func(kind vmlease.SubjectKind, subjectID, orgID string) vmlease.Lease {
+		return vmlease.Lease{Subject: vmlease.Subject{Kind: kind, ID: subjectID, OrgID: orgID}}
+	}
+	for _, tc := range []struct {
+		name  string
+		lease vmlease.Lease
+		want  bool
+	}{
+		{"own user lease", newLease(vmlease.SubjectUser, "owner-1", "tenant-1"), true},
+		{"organization holds the lease", newLease(vmlease.SubjectOrg, "tenant-1", "tenant-1"), true},
+		{"foreign user lease", newLease(vmlease.SubjectUser, "owner-2", "tenant-1"), false},
+		{"foreign subject labeled org", newLease(vmlease.SubjectOrg, "owner-2", "tenant-1"), false},
+		{"foreign tenant", newLease(vmlease.SubjectUser, "owner-1", "tenant-2"), false},
+	} {
+		if got := LeaseVisibleToOwner(tc.lease, "tenant-1", "owner-1"); got != tc.want {
+			t.Fatalf("%s: visible = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+	if LeaseVisibleToOwner(newLease(vmlease.SubjectOrg, "tenant-1", "tenant-1"), "tenant-1", "") {
+		t.Fatal("an unidentified caller must not see tenant inventory")
 	}
 }

@@ -42,10 +42,11 @@ func newReclaimFixture(t *testing.T, jobType string, result map[string]any) (
 	}
 	store.SetNow(func() time.Time { return now })
 
-	orch := NewWithApp(missingPocketBaseApp{}, &Config{
+	orch := New(&Config{
 		Workers: 1, StackStore: store, JobStore: store, WorkerStore: store,
 		Now: func() time.Time { return now },
 	}, nil)
+
 	t.Cleanup(orch.Stop)
 
 	reclaimer, err := NewJobExecutionReclaimer(JobExecutionReclaimConfig{
@@ -375,7 +376,7 @@ func TestReclaimedStackLetsItsDeferredJobStart(t *testing.T) {
 		ID: "job-destroy", Type: jobs.JobTypeDestroy, TargetType: targetTypeStack, TargetID: "stack-stranded",
 		Payload: map[string]any{"tenant_id": "tenant-1"},
 	}
-	if err := orch.enqueueWithSync(destroy, nil, "tenant-1"); err != nil {
+	if err := orch.enqueueWithSync(destroy, "tenant-1"); err != nil {
 		t.Fatalf("enqueue destroy behind the orphan: %v", err)
 	}
 	orch.Start()
@@ -402,7 +403,7 @@ func TestNewJobExecutionReclaimerRequiresItsAuthorities(t *testing.T) {
 	if _, err := NewJobExecutionReclaimer(JobExecutionReclaimConfig{}); err == nil {
 		t.Fatal("reclaimer without an orchestrator was accepted")
 	}
-	orch := NewWithApp(missingPocketBaseApp{}, &Config{Workers: 1}, nil)
+	orch := New(&Config{Workers: 1}, nil)
 	t.Cleanup(orch.Stop)
 	if _, err := NewJobExecutionReclaimer(JobExecutionReclaimConfig{Orchestrator: orch}); err == nil {
 		t.Fatal("reclaimer without a store was accepted")

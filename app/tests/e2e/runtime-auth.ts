@@ -61,7 +61,7 @@ export async function authenticateRuntimeUser(
       "https://login.kombify.io",
   );
   await continuePastAuth0PostLoginPrompts(page);
-  await waitForRuntimeStacks(page);
+  await waitForRuntimeDashboard(page);
   const token = await browserSessionToken(page, options);
   if (!token) {
     throw new Error(
@@ -90,29 +90,34 @@ export async function fetchBrowserWhoAmI(page: Page): Promise<{
   });
 }
 
-// captureGatewayApiSession observes the SPA's first-party Gateway request, so
-// its bearer is minted for the exact public /v1/techstack route rather than a
-// private TechStack session. It never writes the bearer to a log or artifact.
+// captureGatewayApiSession observes an authenticated SPA data-plane request,
+// so its bearer is minted for the public /v1/techstack surface rather than a
+// private TechStack session. Do not couple this to a particular dashboard read:
+// the owner-scoped UI may load stacks, homelab, inventory, or another aggregate.
+// The bearer is never written to a log or artifact.
 export async function captureGatewayApiSession(
   page: Page,
 ): Promise<RuntimeGatewaySession> {
   const requestPromise = page.waitForRequest(
     (request) => {
       const url = new URL(request.url());
+      const authorization = request.headers()["authorization"] ?? "";
       return (
-        request.method() === "GET" && url.pathname === "/v1/techstack/stacks"
+        request.method() === "GET" &&
+        url.pathname.startsWith("/v1/techstack/") &&
+        /^Bearer\s+\S+/i.test(authorization)
       );
     },
     { timeout: 30_000 },
   );
-  await page.goto(`/stacks?gateway_probe=${Date.now()}`, {
+  await page.goto(`/dashboard?gateway_probe=${Date.now()}`, {
     waitUntil: "domcontentloaded",
   });
   const request = await requestPromise;
   const authorization = request.headers()["authorization"] ?? "";
   const token = authorization.replace(/^Bearer\s+/i, "").trim();
   if (!token) {
-    throw new Error("Techstack stacks page omitted its Auth0 Gateway token");
+    throw new Error("Techstack dashboard omitted its Auth0 Gateway token");
   }
   const url = new URL(request.url());
   return { token, apiBase: `${url.origin}/v1/techstack` };
@@ -277,7 +282,7 @@ async function clickAuth0Text(page: Page, pattern: RegExp) {
   }, pattern.source);
 }
 
-async function waitForRuntimeStacks(page: Page) {
+async function waitForRuntimeDashboard(page: Page) {
   const deadline = Date.now() + 120_000;
   let lastWaitError = "";
   while (Date.now() < deadline) {
@@ -287,10 +292,10 @@ async function waitForRuntimeStacks(page: Page) {
         `Runtime Auth0 login failed before TechStack callback: ${formError}. Current location: ${safeLocation(page.url())}`,
       );
     }
-    if (/\/stacks(?:[/?#]|$)/.test(page.url())) return;
+    if (/\/dashboard(?:[/?#]|$)/.test(page.url())) return;
 
     try {
-      await page.waitForURL(/\/stacks/, {
+      await page.waitForURL(/\/dashboard/, {
         timeout: Math.max(1, Math.min(5_000, deadline - Date.now())),
       });
       return;
@@ -300,7 +305,7 @@ async function waitForRuntimeStacks(page: Page) {
     }
   }
   throw new Error(
-    `Runtime Auth0 login did not reach /stacks. Current location: ${safeLocation(page.url())}. ${lastWaitError}`,
+    `Runtime Auth0 login did not reach /dashboard. Current location: ${safeLocation(page.url())}. ${lastWaitError}`,
   );
 }
 

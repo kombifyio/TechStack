@@ -16,7 +16,7 @@ import (
 // after CRLF-to-LF normalization. The runtime image copies that exact artifact;
 // serving any partial, stale, or locally substituted shell fragment fails
 // closed until the contract digest is deliberately updated with the installer.
-const linuxInstallerArtifactSHA256 = "ef9b102c9f2a50605e7caaaff81829b33a61faaf487472f72b9a6487b195d565"
+const linuxInstallerArtifactSHA256 = "9dd0b9b30ac56b02c8caf488b507079713a3c1ef28f9358a014195ca10413aac"
 
 func (h workerRouteHandlers) installScript(e *httpx.Event) error {
 	return serveLinuxInstallScript(e, h.installScriptPaths())

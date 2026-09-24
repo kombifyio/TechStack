@@ -7,8 +7,8 @@ func TestManifestPublishesOnlyReadOnlyInventoryTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	want := []string{"list_servers", "server_health", "list_services", "server_access_context", "get_stack_operations"}
-	wantCapability := []string{"techstack.inventory.read", "techstack.inventory.read", "techstack.inventory.read", "techstack.inventory.operate", "techstack.inventory.read"}
+	want := []string{"list_servers", "server_health", "server_ports", "list_services", "server_access_context", "get_stack_operations"}
+	wantCapability := []string{"techstack.inventory.read", "techstack.inventory.read", "techstack.inventory.read", "techstack.inventory.read", "techstack.inventory.operate", "techstack.inventory.read"}
 	if manifest.Product != "techstack" || manifest.Capability != "techstack.inventory.read" || len(manifest.Tools) != len(want) {
 		t.Fatalf("manifest identity/tools = %#v", manifest)
 	}

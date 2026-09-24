@@ -4,8 +4,8 @@ import "testing"
 
 func TestNormalizeCloudAuthIssuerUsesLoginKombifyCustomDomain(t *testing.T) {
 	for _, raw := range []string{
-		"kombify.eu.auth0.com",
-		"https://kombify.eu.auth0.com/",
+		"login.kombify.io",
+		"https://login.kombify.io/",
 	} {
 		t.Run(raw, func(t *testing.T) {
 			if got := NormalizeCloudAuthIssuer(raw); got != DefaultCloudAuthIssuer {

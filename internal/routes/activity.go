@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
@@ -24,7 +25,10 @@ func RegisterActivityRoutes(r *httpx.Router, store controlplane.ActivityStore) {
 		if err != nil {
 			return err
 		}
-		tenantID := requestTenantID(e, ownerID)
+		tenantID, tenantErr := tenantguard.TenantScope(requestExplicitTenantID(e), ownerID, "techstack.activity.read")
+		if tenantErr != nil {
+			return tenantErr
+		}
 		if tenantID == "" {
 			return httpx.RejectUnauthorized(e, "Authenticated tenant required")
 		}

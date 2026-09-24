@@ -18,8 +18,8 @@ func TestConcurrentKitLoadsDoNotOverlapCompiles(t *testing.T) {
 	if root == "" {
 		t.Skip("set TECHSTACK_STACKKITS_TESTDIR to a StackKits checkout")
 	}
-	if _, err := os.Stat(filepath.Join(root, "base")); err != nil {
-		t.Skipf("no base/ under %s: %v", root, err)
+	if _, err := os.Stat(filepath.Join(root, "foundation")); err != nil {
+		t.Skipf("no foundation/ under %s: %v", root, err)
 	}
 
 	const loaders = 4

@@ -1,21 +1,22 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import Modal from "./Modal.svelte";
+  import Button from "#lib/components/ui/Button.svelte";
   import {
     importKombinationSpec,
     exportKombinationSpec,
     validateKombinationImport,
     type ImportValidationResult,
-  } from "$lib/api/stacks";
+  } from "#lib/api/stacks.js";
 
   interface Props {
     mode: "import" | "export";
-    stackId?: string;
+    kitDeploymentId?: string;
     onClose: () => void;
-    onSuccess?: (result: { stackId: string; jobId: string }) => void;
+    onSuccess?: (result: { kitDeploymentId: string; jobId: string }) => void;
   }
 
-  let { mode, stackId, onClose, onSuccess }: Props = $props();
+  let { mode, kitDeploymentId, onClose, onSuccess }: Props = $props();
 
   // Import state
   let importFile = $state<File | null>(null);
@@ -26,6 +27,7 @@
   let validationResult = $state<ImportValidationResult | null>(null);
   let validating = $state(false);
   let importStep = $state<"upload" | "preview" | "importing">("upload");
+  let fileInput: HTMLInputElement | undefined = $state();
 
   // Export state
   let exporting = $state(false);
@@ -40,7 +42,7 @@
       app: "techstack-ui",
       action,
       mode,
-      stackId,
+      kitDeploymentId,
       exportFormat,
       time: new Date().toISOString(),
       url: typeof window !== "undefined" ? window.location.href : "(no-window)",
@@ -176,7 +178,10 @@
 
       // Call success callback or redirect
       if (onSuccess) {
-        onSuccess({ stackId: result.stack_id, jobId: result.job_id });
+        onSuccess({
+          kitDeploymentId: result.kit_deployment_id,
+          jobId: result.job_id,
+        });
       }
 
       // Redirect to creating page (same as wizard)
@@ -184,7 +189,7 @@
         goto(result.redirect);
       } else {
         goto(
-          `/stacks/creating?job_id=${result.job_id}&stack_id=${result.stack_id}`,
+          `/stacks/creating?job_id=${result.job_id}&stack_id=${result.kit_deployment_id}`,
         );
       }
     } catch (err) {
@@ -198,8 +203,8 @@
 
   // Handle export
   async function handleExport() {
-    if (!stackId) {
-      exportError = "No stack ID available";
+    if (!kitDeploymentId) {
+      exportError = "No StackKit deployment is available to export";
       return;
     }
 
@@ -208,7 +213,10 @@
     exportDiagnostics = null;
 
     try {
-      const result = await exportKombinationSpec(stackId, exportFormat);
+      const result = await exportKombinationSpec(
+        kitDeploymentId,
+        exportFormat,
+      );
 
       // Create download
       const blob = new Blob([result.content], {
@@ -244,7 +252,9 @@
 </script>
 
 <Modal
-  title={mode === "import" ? "Import Stack Spec" : "Export Stack Spec"}
+  title={mode === "import"
+    ? "Import StackKit deployment spec"
+    : "Export StackKit deployment spec"}
   {onClose}
   maxWidth="lg"
 >
@@ -252,22 +262,22 @@
     <!-- IMPORT MODE -->
     {#if importStep === "upload"}
       <div class="space-y-4">
-        <p class="text-gray-400 text-sm">
+        <p class="text-muted-foreground text-sm">
           Import a <code class="text-primary">stack-spec.yaml</code> file to set
-          up your stack. Legacy
+          up a StackKit deployment in your Homelab. Legacy
           <code class="text-primary">kombination.yaml</code> files are still accepted.
         </p>
 
         <!-- Drag & Drop Zone -->
         <div
-          class="border-2 border-dashed border-gray-700 rounded-lg p-8 text-center hover:border-primary/50 transition-colors cursor-pointer"
+          class="border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary/50 transition-colors cursor-pointer"
           ondragover={handleDragOver}
           ondrop={handleDrop}
           role="button"
           tabindex="0"
         >
           <svg
-            class="w-12 h-12 mx-auto text-gray-500 mb-4"
+            class="w-12 h-12 mx-auto text-muted-foreground mb-4"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -279,17 +289,18 @@
               d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
             />
           </svg>
-          <p class="text-gray-400 mb-2">Drag file here or</p>
-          <label class="btn btn-secondary cursor-pointer">
+          <p class="text-muted-foreground mb-2">Drag file here or</p>
+          <Button variant="secondary" onclick={() => fileInput?.click()}>
             Select File
-            <input
-              type="file"
-              accept=".yaml,.yml,.json"
-              class="hidden"
-              onchange={handleFileSelect}
-            />
-          </label>
-          <p class="text-xs text-gray-500 mt-2">
+          </Button>
+          <input
+            bind:this={fileInput}
+            type="file"
+            accept=".yaml,.yml,.json"
+            class="hidden"
+            onchange={handleFileSelect}
+          />
+          <p class="text-xs text-muted-foreground mt-2">
             Supported: .yaml, .yml, .json
           </p>
         </div>
@@ -297,17 +308,17 @@
         <!-- Or paste content -->
         <div class="relative">
           <div class="absolute inset-0 flex items-center">
-            <div class="w-full border-t border-gray-700"></div>
+            <div class="w-full border-t border-border"></div>
           </div>
           <div class="relative flex justify-center text-sm">
-            <span class="px-2 bg-gray-900 text-gray-500">or paste</span>
+            <span class="px-2 bg-card text-muted-foreground">or paste</span>
           </div>
         </div>
 
         <textarea
           bind:value={importContent}
           placeholder="# Paste your stack-spec.yaml here..."
-          class="w-full h-48 px-4 py-3 bg-gray-900 border border-gray-700 rounded-lg text-white font-mono text-sm placeholder-gray-500 focus:border-primary focus:outline-none resize-none"
+          class="w-full h-48 px-4 py-3 bg-input border border-border rounded-lg text-foreground font-mono text-sm placeholder-muted-foreground focus:border-primary focus:outline-none resize-none"
           oninput={() => {
             validationResult = null;
             importError = null;
@@ -315,17 +326,18 @@
         ></textarea>
 
         {#if importContent && !validationResult}
-          <button
+          <Button
             onclick={validateContent}
             disabled={validating}
-            class="btn btn-primary w-full"
+            variant="primary"
+            class="w-full"
           >
             {#if validating}
               <span class="animate-spin mr-2">⟳</span> Validating...
             {:else}
               Validate Configuration
             {/if}
-          </button>
+          </Button>
         {/if}
       </div>
     {:else if importStep === "preview"}
@@ -335,13 +347,13 @@
           <!-- Validation Status -->
           <div
             class="p-4 rounded-lg {validationResult.valid
-              ? 'bg-green-900/30 border border-green-700/50'
-              : 'bg-red-900/30 border border-red-700/50'}"
+              ? 'bg-success/10 border border-success/30'
+              : 'bg-destructive/10 border border-destructive/30'}"
           >
             <div class="flex items-center gap-2 mb-2">
               {#if validationResult.valid}
                 <svg
-                  class="w-5 h-5 text-green-400"
+                  class="w-5 h-5 text-success"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -353,12 +365,12 @@
                     d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
                   />
                 </svg>
-                <span class="text-green-400 font-medium"
+                <span class="text-success font-medium"
                   >Configuration is valid</span
                 >
               {:else}
                 <svg
-                  class="w-5 h-5 text-red-400"
+                  class="w-5 h-5 text-destructive"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -370,24 +382,24 @@
                     d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
                   />
                 </svg>
-                <span class="text-red-400 font-medium"
+                <span class="text-destructive font-medium"
                   >Configuration errors</span
                 >
               {/if}
             </div>
 
             {#if !validationResult.valid && validationResult.errors?.length}
-              <ul class="text-sm text-red-300 space-y-1 mt-2">
+              <ul class="text-sm text-destructive space-y-1 mt-2">
                 {#each validationResult.errors as error}
                   <li>
-                    <code class="text-red-400">{error.path || "root"}</code>: {error.message}
+                    <code class="text-destructive">{error.path || "root"}</code>: {error.message}
                   </li>
                 {/each}
               </ul>
             {/if}
 
             {#if validationResult.warnings?.length}
-              <ul class="text-sm text-yellow-300 space-y-1 mt-2">
+              <ul class="text-sm text-warning space-y-1 mt-2">
                 {#each validationResult.warnings as warning}
                   <li>{warning.message}</li>
                 {/each}
@@ -397,8 +409,8 @@
 
           <!-- Detected Info -->
           {#if validationResult.valid}
-            <div class="bg-gray-800/50 rounded-lg p-4">
-              <p class="text-gray-300 text-sm">
+            <div data-kx="plate" class="p-4">
+              <p class="text-muted-foreground text-sm">
                 All required fields are present. After import, the Unifier
                 process will start and determine the appropriate StackKit for
                 your configuration.
@@ -409,14 +421,15 @@
 
         <!-- Action Buttons -->
         <div class="flex gap-3">
-          <button onclick={resetImport} class="btn btn-secondary flex-1">
+          <Button onclick={resetImport} variant="secondary" class="flex-1">
             Back
-          </button>
+          </Button>
           {#if validationResult?.valid}
-            <button
+            <Button
               onclick={handleImport}
               disabled={importing}
-              class="btn btn-primary flex-1"
+              variant="primary"
+              class="flex-1"
             >
               {#if importing}
                 <span
@@ -426,7 +439,7 @@
               {:else}
                 Import & Start Setup
               {/if}
-            </button>
+            </Button>
           {/if}
         </div>
       </div>
@@ -436,8 +449,8 @@
         <div
           class="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent"
         ></div>
-        <p class="text-gray-300">Importing configuration...</p>
-        <p class="text-gray-500 text-sm mt-2">
+        <p class="text-foreground">Importing configuration...</p>
+        <p class="text-muted-foreground text-sm mt-2">
           You will be redirected to the setup page shortly.
         </p>
       </div>
@@ -446,24 +459,24 @@
     <!-- Error Display -->
     {#if importError}
       <div
-        class="mt-4 p-3 rounded-lg bg-red-900/30 border border-red-500/50 text-red-300 text-sm"
+        class="mt-4 p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-sm"
       >
         <p class="font-medium">{importError}</p>
-        <p class="mt-2 text-xs text-red-200/80">
+        <p class="mt-2 text-xs text-destructive/80">
           Tip: If you see an HTML page instead of JSON, the backend proxy or
           your session/auth may be broken. Please try again.
         </p>
 
         {#if importDiagnostics}
           <div class="mt-3 flex gap-2">
-            <button
-              class="btn btn-secondary"
+            <Button
+              variant="secondary"
               onclick={async () => {
                 if (importDiagnostics) await copyText(importDiagnostics);
               }}
             >
               Copy Diagnostics (for developers)
-            </button>
+            </Button>
           </div>
         {/if}
       </div>
@@ -471,9 +484,9 @@
   {:else}
     <!-- EXPORT MODE -->
     <div class="space-y-4">
-      <p class="text-gray-400 text-sm">
-        Export your current configuration as <code class="text-primary"
-          >stack-spec.yaml</code
+      <p class="text-muted-foreground text-sm">
+        Export this StackKit deployment configuration as <code
+          class="text-primary">stack-spec.yaml</code
         >. You can edit the file and import it again later.
       </p>
 
@@ -488,8 +501,8 @@
             onchange={() => (exportFormat = "yaml")}
             class="text-primary"
           />
-          <span class="text-white">YAML</span>
-          <span class="text-xs text-gray-500">(recommended)</span>
+          <span class="text-foreground">YAML</span>
+          <span class="text-xs text-muted-foreground">(recommended)</span>
         </label>
         <label class="flex items-center gap-2 cursor-pointer">
           <input
@@ -500,16 +513,16 @@
             onchange={() => (exportFormat = "json")}
             class="text-primary"
           />
-          <span class="text-white">JSON</span>
+          <span class="text-foreground">JSON</span>
         </label>
       </div>
 
       <!-- Info Box -->
-      <div class="bg-gray-800/50 rounded-lg p-4 text-sm">
-        <p class="text-gray-300 mb-2">
-          <strong class="text-white">What will be exported?</strong>
+      <div data-kx="plate" class="p-4 text-sm">
+        <p class="text-muted-foreground mb-2">
+          <strong class="text-foreground">What will be exported?</strong>
         </p>
-        <ul class="text-gray-400 space-y-1">
+        <ul class="text-muted-foreground space-y-1">
           <li>• Stack name and configuration</li>
           <li>• Node definitions (without credentials)</li>
           <li>• Service configurations</li>
@@ -519,7 +532,7 @@
       </div>
 
       <div
-        class="p-3 rounded-lg bg-yellow-900/20 border border-yellow-700/50 text-sm text-yellow-200"
+        class="p-3 rounded-lg bg-warning/10 border border-warning/30 text-sm text-warning"
       >
         <strong>Note:</strong> SSH keys and secrets are not exported. These must be
         reconfigured after an import.
@@ -527,37 +540,38 @@
 
       {#if exportError}
         <div
-          class="p-3 rounded-lg bg-red-900/30 border border-red-500/50 text-red-300 text-sm"
+          class="p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-sm"
         >
           <p class="font-medium">{exportError}</p>
-          <p class="mt-2 text-xs text-red-200/80">
+          <p class="mt-2 text-xs text-destructive/80">
             If the problem persists: copy the diagnostics and share them with
             developers.
           </p>
 
           {#if exportDiagnostics}
             <div class="mt-3 flex gap-2">
-              <button
-                class="btn btn-secondary"
+              <Button
+                variant="secondary"
                 onclick={async () => {
                   if (exportDiagnostics) await copyText(exportDiagnostics);
                 }}
               >
                 Copy Diagnostics
-              </button>
+              </Button>
             </div>
           {/if}
         </div>
       {/if}
 
       <div class="flex gap-3">
-        <button onclick={onClose} class="btn btn-secondary flex-1">
+        <Button onclick={onClose} variant="secondary" class="flex-1">
           Cancel
-        </button>
-        <button
+        </Button>
+        <Button
           onclick={handleExport}
           disabled={exporting}
-          class="btn btn-primary flex-1"
+          variant="primary"
+          class="flex-1"
         >
           {#if exporting}
             <span
@@ -567,7 +581,7 @@
           {:else}
             Download
           {/if}
-        </button>
+        </Button>
       </div>
     </div>
   {/if}

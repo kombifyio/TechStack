@@ -1,0 +1,367 @@
+/* ============================================================
+   TECHSTACK BINDINGS — product geometry and product-owned tokens
+   ============================================================
+   The permanent product layer, modeled on CMO's workbench-bindings.css:
+   geometry and product-owned vocabulary only. Colors, materials, radii
+   and shadows come from @kombiverselabs/ui/styles.css (tokens) and
+   @kombiverselabs/design/index.css (material + role recipes) —
+   KOMBIFY-DESIGN-SYSTEM-STANDARD §6: a consumer writes no material
+   values of its own.
+   ============================================================ */
+
+/* ============================================================
+   FORMER COMPAT SURVIVORS (moved 2026-08-19, B6 end state)
+   ============================================================
+   The legacy component vocabulary (card, btn, badge, alert,
+   input, label, glass, stat-card, skeleton, separator) reached
+   zero consumers and was deleted together with the compat
+   stylesheet. What lives on below is functional product CSS,
+   not legacy: base styles, the one remaining progress bar
+   consumer, bits-ui data-attribute styles, animations,
+   scrollbar styling and utility helpers. */
+/* ============================================================
+   SECTION 5: BASE STYLES
+   ============================================================ */
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  *:focus-visible {
+    @apply outline-2 outline-offset-2 outline-ring;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings:
+      "rlig" 1,
+      "calt" 1;
+  }
+
+  /* Typography scale */
+  h1 {
+    @apply text-4xl font-bold tracking-tight;
+  }
+  h2 {
+    @apply text-3xl font-semibold tracking-tight;
+  }
+  h3 {
+    @apply text-2xl font-semibold;
+  }
+  h4 {
+    @apply text-xl font-semibold;
+  }
+  h5 {
+    @apply text-lg font-medium;
+  }
+  h6 {
+    @apply text-base font-medium;
+  }
+}
+
+/* --- Progress --- */
+.progress {
+  @apply relative h-2 w-full overflow-hidden rounded-full bg-secondary;
+}
+
+.progress-bar {
+  @apply h-full bg-primary transition-all duration-300;
+}
+
+/* ============================================================
+   SECTION 7: BITS UI DATA ATTRIBUTE STYLES
+   ============================================================ */
+
+/* Accordion */
+[data-accordion-trigger] {
+  @apply flex flex-1 items-center justify-between py-4 font-medium transition-all;
+  @apply hover:underline;
+}
+
+[data-accordion-trigger][data-state="open"] > svg {
+  transform: rotate(180deg);
+}
+
+[data-accordion-content] {
+  overflow: hidden;
+  transition: height 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+[data-accordion-content][data-state="closed"] {
+  height: 0;
+}
+
+[data-accordion-content][data-state="open"] {
+  height: var(--bits-accordion-content-height);
+}
+
+/* Dialog */
+[data-dialog-overlay] {
+  @apply fixed inset-0 z-50 bg-black/80;
+}
+
+[data-dialog-content] {
+  @apply fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2;
+  @apply w-full max-w-lg rounded-xl bg-card p-6 shadow-lg;
+  @apply border border-border;
+}
+
+/* Select / Combobox */
+[data-select-trigger],
+[data-combobox-trigger] {
+  @apply flex h-10 w-full items-center justify-between rounded-lg border border-input bg-transparent px-3 py-2 text-sm;
+  @apply placeholder:text-muted-foreground;
+  @apply focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2;
+  @apply disabled:cursor-not-allowed disabled:opacity-50;
+}
+
+[data-select-content],
+[data-combobox-content] {
+  @apply relative z-50 min-w-32 overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-md;
+  width: var(--bits-select-anchor-width);
+  min-width: var(--bits-select-anchor-width);
+}
+
+[data-select-item],
+[data-combobox-item] {
+  @apply relative flex w-full cursor-pointer select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm outline-none;
+  @apply focus:bg-accent focus:text-accent-foreground;
+  @apply data-[disabled]:pointer-events-none data-[disabled]:opacity-50;
+}
+
+[data-highlighted] {
+  @apply bg-accent text-accent-foreground;
+}
+
+/* Tooltip */
+[data-tooltip-content] {
+  @apply z-50 overflow-hidden rounded-md border bg-popover px-3 py-1.5 text-sm text-popover-foreground shadow-md;
+}
+
+/* Popover */
+[data-popover-content] {
+  @apply z-50 w-72 rounded-lg border bg-popover p-4 text-popover-foreground shadow-md outline-none;
+}
+
+/* Toggle */
+[data-toggle-root] {
+  @apply inline-flex items-center justify-center rounded-lg text-sm font-medium transition-colors;
+  @apply hover:bg-muted hover:text-muted-foreground;
+  @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2;
+  @apply disabled:pointer-events-none disabled:opacity-50;
+  @apply data-[state=on]:bg-accent data-[state=on]:text-accent-foreground;
+  @apply h-10 px-3;
+}
+
+/* Switch */
+[data-switch-root] {
+  @apply inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors;
+  @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background;
+  @apply disabled:cursor-not-allowed disabled:opacity-50;
+  @apply data-[state=checked]:bg-primary data-[state=unchecked]:bg-input;
+}
+
+[data-switch-thumb] {
+  @apply pointer-events-none block h-5 w-5 rounded-full bg-background shadow-lg ring-0 transition-transform;
+  @apply data-[state=checked]:translate-x-5 data-[state=unchecked]:translate-x-0;
+}
+
+/* Checkbox */
+[data-checkbox-root] {
+  @apply h-4 w-4 shrink-0 rounded-sm border border-primary ring-offset-background;
+  @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2;
+  @apply disabled:cursor-not-allowed disabled:opacity-50;
+  @apply data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground;
+}
+
+/* Radio */
+[data-radio-item] {
+  @apply aspect-square h-4 w-4 rounded-full border border-primary text-primary ring-offset-background;
+  @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2;
+  @apply disabled:cursor-not-allowed disabled:opacity-50;
+}
+
+/* Slider */
+[data-slider-root] {
+  @apply relative flex w-full touch-none select-none items-center;
+}
+
+[data-slider-track] {
+  @apply relative h-2 w-full grow overflow-hidden rounded-full bg-secondary;
+}
+
+[data-slider-range] {
+  @apply absolute h-full bg-primary;
+}
+
+[data-slider-thumb] {
+  @apply block h-5 w-5 rounded-full border-2 border-primary bg-background ring-offset-background transition-colors;
+  @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2;
+  @apply disabled:pointer-events-none disabled:opacity-50;
+}
+
+/* Tabs */
+[data-tabs-list] {
+  @apply inline-flex h-10 items-center justify-center rounded-lg bg-muted p-1 text-muted-foreground;
+}
+
+[data-tabs-trigger] {
+  @apply inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium ring-offset-background transition-all;
+  @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2;
+  @apply disabled:pointer-events-none disabled:opacity-50;
+  @apply data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm;
+}
+
+[data-tabs-content] {
+  @apply mt-2 ring-offset-background;
+  @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2;
+}
+
+/* ============================================================
+   SECTION 8: ANIMATIONS
+   ============================================================ */
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes fadeOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes slideInFromTop {
+  from {
+    transform: translateY(-10px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes slideInFromBottom {
+  from {
+    transform: translateY(10px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    transform: scale(0.95);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes pulse-glow {
+  0%,
+  100% {
+    box-shadow: var(--glow-primary);
+  }
+  50% {
+    box-shadow: 0 0 30px oklch(from var(--primary) l c h / 0.5);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 150ms ease-out;
+}
+
+.animate-fade-out {
+  animation: fadeOut 150ms ease-in;
+}
+
+.animate-slide-in {
+  animation: slideInFromTop 200ms ease-out;
+}
+
+.animate-scale-in {
+  animation: scaleIn 200ms ease-out;
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s infinite;
+}
+
+/* ============================================================
+   SECTION 9: SCROLLBAR STYLING
+   ============================================================ */
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-muted rounded-full;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-primary/30 rounded-full;
+  @apply hover:bg-primary/50;
+}
+
+::-webkit-scrollbar-corner {
+  @apply bg-muted;
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: oklch(from var(--primary) l c h / 0.3) var(--muted);
+}
+
+/* ============================================================
+   SECTION 10: UTILITY CLASSES
+   ============================================================ */
+
+.glow-primary {
+  box-shadow: var(--glow-primary);
+}
+
+/* ============================================================
+   SECTION 11: INTRODUCTION PASS-THROUGH
+   ============================================================
+   The package's introduction dims the page with the spotlight's own ring
+   shadow, so its scrim is already transparent while a target is lit — it
+   blocks pointer events and nothing else. That block is what made "hover a
+   section" a promise the reader could not test: the copy pointed at the rail
+   and the overlay ate the hover.
+
+   Geometry only, and only while a target is lit. The unlit scrim (a centred
+   card with nothing to point at) keeps blocking, which is right for a screen
+   with no target to try.
+   ============================================================ */
+
+.kx-introduction [data-kx~="scrim"][data-lit="true"] {
+  pointer-events: none;
+}
+
+/* Reaching the rail is not enough. The flyout portals to the body at z-index
+   120, so an untouched hover would open under the spotlight's ring shadow and
+   arrive dimmed. Lifting it to the spotlight's own layer clears the dimming
+   while leaving the introduction card (one layer up) on top. */
+body:has(.kx-introduction [data-kx~="scrim"][data-lit="true"])
+  [data-nav-flyout] {
+  z-index: 2147483501;
+}

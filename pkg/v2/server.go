@@ -7,10 +7,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/gocommon/authsession"
 	"github.com/kombifyio/techstack/pkg/db"
 	"github.com/kombifyio/techstack/pkg/v2/auth/session"
-	"github.com/kombifyio/techstack/pkg/v2/authmw"
 )
+
+// DefaultSessionCookieName preserves the established Techstack browser wire.
+// The shared authsession package intentionally defaults to kombify_session.
+const DefaultSessionCookieName = "techstack_session"
 
 // Server is the HTTP surface of the TechStack V2 core. At Phase 1 it serves
 // /api/v2/health and reports the wired DB backend status. Phase 2 adds an
@@ -109,7 +113,7 @@ func (s *Server) MergeAuthHandlers(h AuthHandlers) {
 
 // NewServer constructs a V2 HTTP server skeleton.
 func NewServer(opts ...Option) *Server {
-	s := &Server{startedAt: time.Now().UTC(), cookie: authmw.DefaultSessionCookieName}
+	s := &Server{startedAt: time.Now().UTC(), cookie: DefaultSessionCookieName}
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -127,7 +131,7 @@ func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v2/health", s.handleHealth)
 	if s.sessions != nil {
-		mw := authmw.New(s.sessions, authmw.WithCookieName(s.cookie))
+		mw := authsession.NewMiddleware(s.sessions, authsession.WithCookieName(s.cookie))
 		mux.Handle("GET /api/v2/whoami", mw.Wrap(http.HandlerFunc(s.handleWhoAmI)))
 	}
 	if s.auth.Providers != nil {
@@ -171,7 +175,7 @@ type WhoAmIResponse struct {
 }
 
 func (s *Server) handleWhoAmI(w http.ResponseWriter, r *http.Request) {
-	c, err := authmw.ClaimsFrom(r.Context())
+	c, err := authsession.ClaimsFrom(r.Context())
 	if err != nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return

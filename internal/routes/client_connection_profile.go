@@ -10,7 +10,7 @@ import (
 	"regexp"
 	"strings"
 
-	commonprofile "github.com/kombifyio/go-common/nativeclient/profile"
+	commonprofile "github.com/kombifyio/techstack/internal/gocommon/nativeclient/profile"
 
 	"github.com/kombifyio/techstack/pkg/httpx"
 )

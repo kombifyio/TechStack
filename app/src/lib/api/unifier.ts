@@ -141,6 +141,62 @@ export interface DecisionTrace {
   decisionContextHash?: string;
 }
 
+export type WizardRecommendationStatus =
+  "ready" | "incomplete" | "stale" | "degraded";
+
+export interface WizardRecommendationRequest {
+  smart_home_context?: SmartHomeContext;
+  smart_home_settings?: Record<string, string | boolean>;
+  goals: string[];
+  services: string[];
+  deployment_lane: "saas" | "self-hosted";
+  provider_id?: string;
+  surface: "easy";
+}
+
+export interface WizardRecommendation {
+  id: string;
+  stackkit: string;
+  rank: number;
+  score: number;
+  recommended: boolean;
+  reasons: Array<{ code: string; message: string; source?: string }>;
+  alternatives: string[];
+  deep_link: {
+    step: string;
+    section?: string;
+  };
+}
+
+export interface WizardRecommendationResult {
+  smart_home_recommendation?: SmartHomeRecommendation;
+  status: WizardRecommendationStatus;
+  generated_at: string;
+  decision_context?: DecisionContext;
+  decision_context_hash?: string;
+  catalog_source: string;
+  missing_inputs: string[];
+  stale_inputs: string[];
+  recommendations: WizardRecommendation[];
+}
+
+export interface SmartHomeContext {
+  existing?: boolean;
+  proxmox_available?: boolean;
+  lan_reachable?: boolean;
+  cpu?: number;
+  memory_mib?: number;
+  disk_gib?: number;
+  needs_radio?: boolean;
+}
+export interface SmartHomeRecommendation {
+  operating_form?: "container" | "haos";
+  management_scope: "observed" | "managed";
+  reasons: string[];
+  requirements: string[];
+  capabilities: Record<string, string[]>;
+}
+
 // ============================================================================
 // Pipeline Types
 // ============================================================================
@@ -151,12 +207,7 @@ export interface DecisionTrace {
 export interface PipelineStage {
   name: string;
   status:
-    | "pending"
-    | "running"
-    | "success"
-    | "completed"
-    | "failed"
-    | "skipped";
+    "pending" | "running" | "success" | "completed" | "failed" | "skipped";
   duration_ms?: number;
   error?: string;
 }
@@ -407,6 +458,27 @@ export async function previewPipeline(
 }
 
 /**
+ * Ask the authenticated Techstack recommendation authority to evaluate the
+ * current Wizard answers. The closed request deliberately carries no
+ * StackKit, tenant, subject, or DecisionContext override.
+ */
+export async function recommendWizard(
+  request: WizardRecommendationRequest,
+  signal?: AbortSignal,
+): Promise<WizardRecommendationResult> {
+  const res = await fetchApi<WizardRecommendationResult>(
+    "/api/v1/unifier/recommendations",
+    {
+      method: "POST",
+      body: JSON.stringify(request),
+      signal,
+      timeoutMs: 15_000,
+    },
+  );
+  return res.data;
+}
+
+/**
  * Run the side-effect-free wizard preflight against the preview endpoint.
  * Invalid backend validation or StackKit resolution results block stack
  * creation so the Wizard cannot silently continue with a different rollout
@@ -458,117 +530,4 @@ export async function analyzeRequirements(
   });
 
   return res.data;
-}
-
-// ============================================================================
-// IaC Generation Types (Phase 6)
-// ============================================================================
-
-/**
- * A generated IaC file
- */
-export interface GeneratedFile {
-  name: string;
-  content: string;
-  size: number;
-  language: "hcl" | "json" | "yaml";
-}
-
-/**
- * Result of IaC generation
- */
-export interface IaCGenerationResult {
-  success: boolean;
-  mode: "simple" | "advanced";
-  outputDir?: string;
-  steps: PipelineStage[];
-  warnings?: string[];
-  failedStep?: string;
-  errorMessage?: string;
-  generatedFiles?: GeneratedFile[];
-  unifiedSpec?: unknown;
-}
-
-/**
- * Result of IaC preview (without writing to disk)
- */
-export interface IaCPreviewResult {
-  success: boolean;
-  mode: "simple" | "advanced";
-  steps: PipelineStage[];
-  warnings?: string[];
-  outputDir?: string;
-  files?: GeneratedFile[];
-  stackKit?: string;
-  addons?: string[];
-}
-
-// ============================================================================
-// IaC Generation API Functions (Phase 6)
-// ============================================================================
-
-/**
- * Generate IaC files from a kombination spec.
- * Runs the complete extended pipeline including Phase 6 (IaC generation).
- *
- * @param spec - The kombination spec (YAML string or object)
- * @param mode - Deployment mode: "simple" (OpenTofu only) or "advanced" (Terramate)
- * @returns IaCGenerationResult with generated files and pipeline status
- */
-export async function generateIaC(
-  spec: unknown,
-  mode: "simple" | "advanced" = "simple",
-): Promise<IaCGenerationResult> {
-  const body = typeof spec === "string" ? spec : JSON.stringify(spec);
-  const contentType =
-    typeof spec === "string" ? "application/yaml" : "application/json";
-
-  const response = await fetch(`/api/v1/unifier/iac?mode=${mode}`, {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "Content-Type": contentType,
-    },
-    body,
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || `HTTP ${response.status}`);
-  }
-
-  return response.json();
-}
-
-/**
- * Preview IaC files without writing to disk.
- * Useful for showing users what will be generated before deployment.
- *
- * @param spec - The kombination spec (YAML string or object)
- * @param mode - Deployment mode: "simple" or "advanced"
- * @returns IaCPreviewResult with file content previews
- */
-export async function previewIaC(
-  spec: unknown,
-  mode: "simple" | "advanced" = "simple",
-): Promise<IaCPreviewResult> {
-  const body = typeof spec === "string" ? spec : JSON.stringify(spec);
-  const contentType =
-    typeof spec === "string" ? "application/yaml" : "application/json";
-
-  const response = await fetch(`/api/v1/unifier/iac/preview?mode=${mode}`, {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "Content-Type": contentType,
-    },
-    body,
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || `HTTP ${response.status}`);
-  }
-
-  return response.json();
 }

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	authsession "github.com/kombifyio/go-common/authsession"
-	"github.com/kombifyio/go-common/oidcclient"
+	authsession "github.com/kombifyio/techstack/internal/gocommon/authsession"
+	"github.com/kombifyio/techstack/internal/gocommon/oidcclient"
 
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
@@ -31,7 +31,7 @@ func TestV2CloudTenantResolverPrefersDemoTenant(t *testing.T) {
 	t.Setenv("TECHSTACK_DEMO_USER_IDS", "auth0|demo-user")
 	t.Setenv("TECHSTACK_DEMO_TENANT_ID", "tenant-demo")
 
-	resolver := v2CloudTenantResolver(&stubAuthStore{}, nil, "default")
+	resolver := v2CloudTenantResolver(&stubAuthStore{}, nil)
 	tenantID, err := resolver(context.Background(), &oidcclient.Claims{Subject: "auth0|demo-user"}, "primary", "")
 	if err != nil || tenantID != "tenant-demo" {
 		t.Fatalf("resolver = %q, %v; want tenant-demo", tenantID, err)
@@ -39,7 +39,7 @@ func TestV2CloudTenantResolverPrefersDemoTenant(t *testing.T) {
 }
 
 func TestV2CloudTenantResolverUsesIDTokenOrgClaim(t *testing.T) {
-	resolver := v2CloudTenantResolver(&stubAuthStore{}, nil, "default")
+	resolver := v2CloudTenantResolver(&stubAuthStore{}, nil)
 	claims := &oidcclient.Claims{
 		Subject: "auth0|user-1",
 		Raw:     map[string]any{"org_id": "org_claimed"},
@@ -54,7 +54,7 @@ func TestV2CloudTenantResolverPrefersNamespacedKombifyClaim(t *testing.T) {
 	// The Auth0 post-login action mints https://kombify.io/org_id from
 	// app_metadata; the Cloudflare edge derives x-org-id from the same claim,
 	// so the session must resolve the identical tenant (one-truth rule).
-	resolver := v2CloudTenantResolver(&stubAuthStore{}, nil, "default")
+	resolver := v2CloudTenantResolver(&stubAuthStore{}, nil)
 	claims := &oidcclient.Claims{
 		Subject: "auth0|user-1",
 		Raw: map[string]any{
@@ -74,7 +74,7 @@ func TestV2CloudTenantResolverPrefersOrgMembershipOverDefault(t *testing.T) {
 		{TenantID: "org_acme", UserID: "auth0|user-1", RoleKey: "member", Status: "active"},
 	}}
 	lister := &fakeOrgLister{orgs: []string{"org_should_not_be_used"}}
-	resolver := v2CloudTenantResolver(store, lister, "default")
+	resolver := v2CloudTenantResolver(store, lister)
 	tenantID, err := resolver(context.Background(), &oidcclient.Claims{Subject: "auth0|user-1"}, "primary", "")
 	if err != nil || tenantID != "org_acme" {
 		t.Fatalf("resolver = %q, %v; want org_acme from memberships", tenantID, err)
@@ -86,7 +86,7 @@ func TestV2CloudTenantResolverPrefersOrgMembershipOverDefault(t *testing.T) {
 
 func TestV2CloudTenantResolverFallsBackToManagementAPI(t *testing.T) {
 	lister := &fakeOrgLister{orgs: []string{"org_bravo", "org_alpha"}}
-	resolver := v2CloudTenantResolver(&stubAuthStore{}, lister, "default")
+	resolver := v2CloudTenantResolver(&stubAuthStore{}, lister)
 	tenantID, err := resolver(context.Background(), &oidcclient.Claims{Subject: "auth0|user-1"}, "primary", "")
 	if err != nil || tenantID != "org_alpha" {
 		t.Fatalf("resolver = %q, %v; want deterministic org_alpha", tenantID, err)
@@ -100,7 +100,7 @@ func TestV2CloudTenantResolverKeepsExistingMembershipTenant(t *testing.T) {
 	store := &stubAuthStore{memberships: []controlplane.Membership{
 		{TenantID: "default", UserID: "auth0|user-1", RoleKey: "member", Status: "active"},
 	}}
-	resolver := v2CloudTenantResolver(store, &fakeOrgLister{orgs: []string{"org_unused"}}, "default")
+	resolver := v2CloudTenantResolver(store, &fakeOrgLister{orgs: []string{"org_unused"}})
 	tenantID, err := resolver(context.Background(), &oidcclient.Claims{Subject: "auth0|user-1"}, "primary", "")
 	if err != nil || tenantID != "default" {
 		t.Fatalf("resolver = %q, %v; want existing default membership kept", tenantID, err)
@@ -112,10 +112,19 @@ func TestV2CloudTenantResolverFallsBackToOwnerTenant(t *testing.T) {
 	// succeeds and resolves the deterministic owner tenant — the same tenant
 	// the data-plane fallback yields, so both surfaces agree.
 	lister := &fakeOrgLister{err: errors.New("mgmt down")}
-	resolver := v2CloudTenantResolver(&stubAuthStore{}, lister, "tenant-1")
+	resolver := v2CloudTenantResolver(&stubAuthStore{}, lister)
 	tenantID, err := resolver(context.Background(), &oidcclient.Claims{Subject: "auth0|user-1"}, "primary", "ignored-request-tenant")
 	if err != nil || tenantID != "usr:auth0|user-1" {
 		t.Fatalf("resolver = %q, %v; want owner tenant usr:auth0|user-1", tenantID, err)
+	}
+}
+
+func TestV2CloudTenantResolverRejectsIdentityWithoutSubject(t *testing.T) {
+	resolver := v2CloudTenantResolver(&stubAuthStore{}, nil)
+	for _, claims := range []*oidcclient.Claims{nil, {}} {
+		if tenantID, err := resolver(t.Context(), claims, "primary", ""); err == nil || tenantID != "" {
+			t.Fatalf("resolver = %q, %v; want fail-closed empty tenant", tenantID, err)
+		}
 	}
 }
 
@@ -135,25 +144,31 @@ func TestOwnerTenantIDUsesGatewayNamespaceAndKeepsLegacyReadCompatibility(t *tes
 	}
 }
 
-func TestV2CloudUserUpsertPersistsResolvedOrgTenant(t *testing.T) {
+func TestV2CloudUserUpsertPersistsOnlyResolvedOrgTenant(t *testing.T) {
 	store := &stubAuthStore{}
 	claims := &oidcclient.Claims{
 		Subject: "auth0|user-1",
 		Email:   "user-1@kombify.io",
 	}
-	if err := v2CloudUserUpsert(store, "default")(context.Background(), claims, "org_acme", "primary"); err != nil {
+	if err := v2CloudUserUpsert(store, true)(context.Background(), claims, "org_acme", "primary"); err != nil {
 		t.Fatalf("v2CloudUserUpsert() error = %v", err)
 	}
-	if len(store.tenants) != 2 || store.tenants[0].ID != "org_acme" || store.tenants[1].ID != "default" {
-		t.Fatalf("UpsertTenant calls = %#v, want org_acme then default", store.tenants)
+	sawResolvedTenant := false
+	for _, tenant := range store.tenants {
+		if tenant.ID != "org_acme" || tenant.Kind != "saas" || tenant.ExternalOrgID != "org_acme" {
+			t.Fatalf("unexpected tenant projection = %#v", tenant)
+		}
+		sawResolvedTenant = true
 	}
-	if store.tenants[0].Kind != "saas" || store.tenants[0].ExternalOrgID != "org_acme" {
-		t.Fatalf("org tenant record = %#v, want kind=saas external_org_id=org_acme", store.tenants[0])
+	sawResolvedMembership := false
+	for _, membership := range store.memberships {
+		if membership.TenantID != "org_acme" {
+			t.Fatalf("unexpected cross-tenant membership = %#v", membership)
+		}
+		sawResolvedMembership = true
 	}
-	if len(store.memberships) != 2 ||
-		store.memberships[0].TenantID != "org_acme" ||
-		store.memberships[1].TenantID != "default" {
-		t.Fatalf("memberships = %#v, want org_acme membership plus default rollover membership", store.memberships)
+	if !sawResolvedTenant || !sawResolvedMembership {
+		t.Fatal("resolved tenant and membership must both be materialized")
 	}
 }
 

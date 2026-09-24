@@ -1,14 +1,12 @@
 <script lang="ts">
-  import { authHandler } from "$lib/stores/authHandler.svelte";
-  import { authStore } from "$lib/stores/auth.svelte";
-  import { currentAuthReturnTo } from "$lib/auth/login-experience";
-  import { tr } from "$lib/i18n.svelte";
+  import { authHandler } from "#lib/stores/authHandler.svelte.js";
+  import { authStore } from "#lib/stores/auth.svelte.js";
+  import { startGatewayLogin } from "#lib/auth/gateway-auth.js";
+  import { currentAuthReturnTo } from "#lib/auth/login-experience.js";
+  import { tr } from "#lib/i18n.svelte.js";
+  import Button from "#lib/components/ui/Button.svelte";
 
   interface Props {
-    /** Re-runs the failed loader in place. */
-    onretry: () => void | Promise<void>;
-    /** Disables the retry button while the loader runs. */
-    busy?: boolean;
     /** Post-login return path; defaults to the current location. */
     returnTo?: string;
     /** Message id for the body copy; defaults to the renewal explanation. */
@@ -16,16 +14,22 @@
   }
 
   const {
-    onretry,
-    busy = false,
     returnTo,
     bodyKey = "auth.session.renewal.body",
   }: Props = $props();
 
-  function signInAgain() {
-    authStore.initiateCloudLogin({
-      returnTo: returnTo ?? currentAuthReturnTo(),
+  async function signInAgain() {
+    const target = returnTo ?? currentAuthReturnTo();
+    const started = await startGatewayLogin({
+      interactive: true,
+      returnTo: target,
     });
+    if (!started) {
+      authStore.initiateCloudLogin({
+        returnTo: target,
+        interactive: true,
+      });
+    }
   }
 </script>
 
@@ -40,25 +44,13 @@
       {tr(bodyKey)}
     </p>
     <div class="mt-3 flex flex-wrap gap-2">
-      <button
-        type="button"
-        class="btn btn-primary"
-        data-testid="session-renewal-signin"
+      <Button
+        variant="primary"
+        testId="session-renewal-signin"
         onclick={signInAgain}
       >
         {tr("auth.session.renewal.signIn")}
-      </button>
-      <button
-        type="button"
-        class="btn btn-secondary"
-        data-testid="session-renewal-retry"
-        onclick={() => onretry()}
-        disabled={busy}
-      >
-        {busy
-          ? tr("auth.session.renewal.retrying")
-          : tr("auth.session.renewal.retry")}
-      </button>
+      </Button>
     </div>
   </div>
 {/if}

@@ -20,32 +20,6 @@ var ErrChecksumMismatch = fmt.Errorf("checksum verification failed")
 // ErrNoChecksumFile indicates no checksum file was found for the release.
 var ErrNoChecksumFile = fmt.Errorf("no checksum file found")
 
-// ChecksumVerifier handles SHA256 verification for downloaded files.
-type ChecksumVerifier struct {
-	// ExpectedHash is the expected SHA256 hash in hex format.
-	ExpectedHash string
-	// FileName is the name of the file being verified (for checksum file parsing).
-	FileName string
-}
-
-// VerifyFile verifies a file's SHA256 checksum against the expected value.
-func (v *ChecksumVerifier) VerifyFile(filePath string) error {
-	if v.ExpectedHash == "" {
-		return nil // No verification requested
-	}
-
-	hash, err := computeFileSHA256(filePath)
-	if err != nil {
-		return fmt.Errorf("failed to compute checksum: %w", err)
-	}
-
-	if !strings.EqualFold(hash, v.ExpectedHash) {
-		return fmt.Errorf("%w: expected %s, got %s", ErrChecksumMismatch, v.ExpectedHash, hash)
-	}
-
-	return nil
-}
-
 // computeFileSHA256 computes the SHA256 hash of a file.
 func computeFileSHA256(filePath string) (string, error) {
 	f, err := os.Open(filePath)
@@ -190,13 +164,18 @@ func parseChecksumFile(content, targetFile string) (string, error) {
 	return "", fmt.Errorf("checksum for %s not found in checksum file", targetFile)
 }
 
-// VerifyDownloadedFile is a convenience function that combines download verification.
+// VerifyDownloadedFile verifies a downloaded file against an expected SHA256 hash.
 func VerifyDownloadedFile(filePath, expectedHash string) error {
-	verifier := &ChecksumVerifier{ExpectedHash: expectedHash}
-	return verifier.VerifyFile(filePath)
-}
+	if expectedHash == "" {
+		return nil
+	}
 
-// ComputeSHA256 computes SHA256 of a file and returns hex string.
-func ComputeSHA256(filePath string) (string, error) {
-	return computeFileSHA256(filePath)
+	hash, err := computeFileSHA256(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to compute checksum: %w", err)
+	}
+	if !strings.EqualFold(hash, expectedHash) {
+		return fmt.Errorf("%w: expected %s, got %s", ErrChecksumMismatch, expectedHash, hash)
+	}
+	return nil
 }

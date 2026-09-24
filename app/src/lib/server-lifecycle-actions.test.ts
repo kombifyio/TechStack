@@ -1,65 +1,46 @@
 import { describe, expect, it } from "vitest";
-import type { StackOperationServer } from "$lib/api/stacks";
-import {
-  canRunServerLifecycleActions,
-  serverLifecycleActions,
-} from "./server-lifecycle-actions";
 
-function server(
-  overrides: Partial<StackOperationServer> = {},
-): StackOperationServer {
+import type { CanonicalServer } from "#lib/api/registry.js";
+import { serverLifecycleActions } from "./server-lifecycle-actions";
+
+function server(stackActions?: string[]): CanonicalServer {
   return {
     id: "server-1",
-    hostname: "foundation-1",
-    role: "foundation",
-    status: "connected",
-    assignment: "stack",
-    techstack_id: "techstack-1",
-    agent_id: "agent-1",
-    approved: true,
-    precheck_state: "passed",
-    capabilities: {},
-    health: {
-      state: "healthy",
-      source: "guard",
-      cpu_percent: { status: "ok", value: 10, unit: "%" },
-      memory_percent: { status: "ok", value: 20, unit: "%" },
-      disk_percent: { status: "ok", value: 30, unit: "%" },
-      uptime_seconds: { status: "ok", value: 60, unit: "s" },
-    },
-    stackkit: { state: "observed", sources: ["guard"] },
-    ...overrides,
-  };
+    node_id: "server-1",
+    name: "node-01",
+    lifecycle: { state: "active", desired_state: "running" },
+    connection: { state: "connected", changed_at: "2026-08-27T12:00:00Z" },
+    health: { state: "healthy" },
+    channels: [],
+    inventory_revision: 7,
+    provider: {},
+    mutations_allowed: true,
+    stack_actions: stackActions,
+    created_at: "2026-08-27T12:00:00Z",
+    updated_at: "2026-08-27T12:00:00Z",
+  } as CanonicalServer;
 }
 
-describe("server lifecycle actions", () => {
-  it("offers operational actions on the concrete connected server", () => {
-    expect(canRunServerLifecycleActions(server())).toBe(true);
-    expect(
-      serverLifecycleActions(server()).map((action) => action.operation),
-    ).toEqual(["plan", "verify", "upgrade", "drift_detect"]);
+describe("serverLifecycleActions", () => {
+  it("renders exactly the operations the backend granted, in its order", () => {
+    const actions = serverLifecycleActions(server(["plan", "verify", "apply"]));
+    expect(actions.map((action) => action.operation)).toEqual([
+      "plan",
+      "verify",
+      "apply",
+    ]);
+    expect(actions.find((a) => a.operation === "apply")?.mutates).toBe(true);
   });
 
-  it("offers mutations only for the matching lifecycle state", () => {
-    expect(
-      serverLifecycleActions(
-        server({ stackkit: { state: "planned", sources: ["job"] } }),
-      ).map((action) => action.operation),
-    ).toEqual(["plan", "verify", "apply"]);
-    expect(
-      serverLifecycleActions(
-        server({ stackkit: { state: "drifted", sources: ["drift"] } }),
-      ).map((action) => action.operation),
-    ).toEqual(["plan", "verify", "drift_detect", "drift_reconcile"]);
+  it("offers nothing when the read model carries no grant", () => {
+    // Absent is not "everything allowed": a server whose backend predates the
+    // capability field must not get a mutation button by default.
+    expect(serverLifecycleActions(server())).toEqual([]);
+    expect(serverLifecycleActions(undefined)).toEqual([]);
   });
 
-  it("fails closed for an offline, unapproved, or unassigned target", () => {
-    expect(serverLifecycleActions(server({ status: "offline" }))).toEqual([]);
-    expect(serverLifecycleActions(server({ approved: false }))).toEqual([]);
-    expect(
-      serverLifecycleActions(
-        server({ assignment: "unassigned", techstack_id: undefined }),
-      ),
-    ).toEqual([]);
+  it("drops a granted operation this build cannot present", () => {
+    const actions = serverLifecycleActions(server(["plan", "teleport"]));
+    expect(actions.map((action) => action.operation)).toEqual(["plan"]);
   });
 });

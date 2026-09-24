@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 )
 
@@ -17,6 +18,32 @@ var productionPortalFrameOrigins = []string{
 var devPortalFrameOrigins = []string{
 	"https://kombify.dev",
 	"https://app.kombify.dev",
+}
+
+// cloudPreviewOriginPattern is kombify Cloud's Render pull-request preview
+// host. Previews are the sanctioned pre-merge review surface for Cloud, and a
+// Cloud preview embeds Techstack exactly as production does, so the exact
+// preview origin may frame this app. Only this pattern: a bare *.onrender.com
+// wildcard would admit every Render app.
+var cloudPreviewOriginPattern = regexp.MustCompile(`^https://kombify-cloud-native-pr-[0-9]+\.onrender\.com$`)
+
+// CloudPreviewFrameOrigin returns the sanitized origin of a kombify Cloud
+// Render PR preview when raw (a Referer or Origin header value) is one, and
+// "" for anything else.
+func CloudPreviewFrameOrigin(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	origin := SanitizeOrigin(u.Scheme + "://" + u.Host)
+	if origin == "" || !cloudPreviewOriginPattern.MatchString(origin) {
+		return ""
+	}
+	return origin
 }
 
 var publicOriginEnvKeys = []string{

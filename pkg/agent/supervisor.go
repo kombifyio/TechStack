@@ -221,10 +221,9 @@ func (s *Supervisor) pumpCommands(ctx context.Context) {
 }
 
 // defaultRouter handles the diagnostic command classes (health_check,
-// get_logs) via CommandExecutor. Tofu/terramate over the command stream keep
-// their dedicated dispatch (server-side jobs today); until that path is wired
-// through the agent, such commands get an explicit structured failure instead
-// of vanishing.
+// get_logs) via CommandExecutor. Direct tofu/terramate execute strings are
+// rejected by the executor allowlist; typed StackKits commands use the
+// dedicated executor.
 type defaultRouter struct {
 	exec *CommandExecutor
 }

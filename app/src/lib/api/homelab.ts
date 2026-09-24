@@ -4,7 +4,7 @@
  * shape of GET /api/v1/stacks list items.
  */
 import { ApiRequestError, fetchApi } from "./client";
-import type { Stack } from "./stacks";
+import type { KitDeployment } from "./stacks";
 
 export interface HomelabSummary {
   id: string;
@@ -20,7 +20,7 @@ export interface HomelabSummary {
 export interface HomelabView {
   /** Null when deployments exist but no umbrella row does yet (legacy lanes). */
   homelab: HomelabSummary | null;
-  kit_deployments: Stack[];
+  kit_deployments: KitDeployment[];
 }
 
 /**
@@ -57,7 +57,7 @@ export const GENERATED_HOMELAB_NAME = "homelab";
  * happens, so renaming to exactly "homelab" still counts as chosen. The string
  * compare is only the fallback for lanes that predate the flag - without it,
  * every un-renamed homelab on an older payload would outrank the kombify Cloud
- * Stack Identity in the dashboard title.
+ * Homelab Identity in the dashboard title.
  */
 export function chosenHomelabName(
   homelab: HomelabSummary | null | undefined,

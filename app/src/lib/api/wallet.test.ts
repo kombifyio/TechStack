@@ -3,7 +3,7 @@ import {
   createWalletItem,
   deleteWalletItem,
   getWalletItems,
-  getWalletItemsByStack,
+  getWalletItemsByKitDeployment,
   requestWalletRevealProof,
   revealWalletItem,
   updateWalletItem,
@@ -28,7 +28,15 @@ describe("wallet API client", () => {
       new Response(
         JSON.stringify({
           data: {
-            items: [{ id: "wallet-1", name: "Admin", kind: "password" }],
+            items: [
+              {
+                id: "wallet-1",
+                name: "Admin",
+                kind: "password",
+                kit_deployment_id: "deployment-1",
+                source_type: "kit_deployment",
+              },
+            ],
           },
         }),
         { status: 200, headers: { "content-type": "application/json" } },
@@ -38,10 +46,15 @@ describe("wallet API client", () => {
     const items = await getWalletItems();
 
     expect(requestPath(fetchMock.mock.calls[0][0])).toBe("/api/v1/wallet");
-    expect(items[0]).toMatchObject({ id: "wallet-1", name: "Admin" });
+    expect(items[0]).toMatchObject({
+      id: "wallet-1",
+      name: "Admin",
+      kit_deployment_id: "deployment-1",
+      source_type: "kit_deployment",
+    });
   });
 
-  it("filters wallet entries by stack through the v1 BFF", async () => {
+  it("filters wallet entries by kit deployment through the v1 BFF", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ data: [] }), {
         status: 200,
@@ -49,11 +62,14 @@ describe("wallet API client", () => {
       }),
     );
 
-    await getWalletItemsByStack("stack-1");
+    await getWalletItemsByKitDeployment("deployment-1");
 
-    const called = new URL(String(fetchMock.mock.calls[0][0]));
+    const called = new URL(
+      String(fetchMock.mock.calls[0][0]),
+      "https://techstack.test",
+    );
     expect(called.pathname).toBe("/api/v1/wallet");
-    expect(called.searchParams.get("stack_id")).toBe("stack-1");
+    expect(called.searchParams.get("stack_id")).toBe("deployment-1");
   });
 
   it("writes wallet entries through backend-owned endpoints", async () => {
@@ -77,8 +93,16 @@ describe("wallet API client", () => {
         );
       });
 
-    await createWalletItem({ name: "Admin", kind: "password" });
-    await updateWalletItem("wallet-1", { name: "Admin 2" });
+    await createWalletItem({
+      name: "Admin",
+      kind: "password",
+      kit_deployment_id: "deployment-1",
+      source_type: "kit_deployment",
+    });
+    await updateWalletItem("wallet-1", {
+      name: "Admin 2",
+      kit_deployment_id: "deployment-2",
+    });
     await deleteWalletItem("wallet-1");
 
     expect(fetchMock.mock.calls.map((call) => requestPath(call[0]))).toEqual([
@@ -87,6 +111,13 @@ describe("wallet API client", () => {
       "/api/v1/wallet/wallet-1",
       "/api/v1/wallet/wallet-1",
     ]);
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toMatchObject({
+      stack_id: "deployment-1",
+      source_type: "stack",
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[2][1]?.body))).toMatchObject({
+      stack_id: "deployment-2",
+    });
   });
 
   it("uses existing reveal endpoints through the v1 BFF", async () => {

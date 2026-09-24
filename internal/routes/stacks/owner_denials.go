@@ -120,8 +120,8 @@ func denyOwnerEmailMissing() *ownerBootstrapDenial {
 		Retryable:  true,
 		Guidance: ownerGuidance(
 			"Add an owner email",
-			"A local owner needs an email address; it seeds the Pocket ID owner account of the new stack.",
-			"Enter an owner email in the owner step and retry.",
+			"A local owner needs an email address; it seeds the Pocket ID owner account of the new stack. When you are signed in, that account is the default unless you enter a different address.",
+			"Sign in with kombify Cloud and retry, or enter a different owner email in the owner step.",
 		),
 	}
 }

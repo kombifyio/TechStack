@@ -8,14 +8,14 @@ describe("wallet payload builder", () => {
         name: "Admin",
         kind: "password",
         secret: "secret",
-        stack_id: "stack-1",
+        kit_deployment_id: "deployment-1",
       }),
     ).toMatchObject({
       item_class: "launch",
       access_mode: "open",
       revealable: true,
-      source_type: "stack",
-      source_ref: "stack-1",
+      source_type: "kit_deployment",
+      source_ref: "deployment-1",
     });
   });
 

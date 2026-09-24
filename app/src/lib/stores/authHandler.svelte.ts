@@ -6,25 +6,22 @@
  */
 
 import * as Sentry from "@sentry/sveltekit";
-import {
-  getPocketBaseCompatStoredAuthToken,
-  isPocketBaseAuthCompatEnabled,
-} from "$lib/auth/pocketbase-compat";
-import { authStore } from "$lib/stores/auth.svelte";
+import { authStore } from "#lib/stores/auth.svelte.js";
 import {
   isEmbeddedWindow,
   refreshEmbeddedCloudSession,
-} from "$lib/auth/embedded-session";
-import { currentAuthReturnTo } from "$lib/auth/login-experience";
+} from "#lib/auth/embedded-session.js";
+import { isEdgeDecisionUnverifiableError } from "#lib/api/session-reprojection.js";
+import { currentAuthReturnTo } from "#lib/auth/login-experience.js";
 import {
   classifyAuthFailure,
   clearAutoReloginMarker,
   markAutoReloginAttempt,
   shouldAttemptAutoRelogin,
   type AuthRecoveryOutcome,
-} from "$lib/auth/session-recovery";
+} from "#lib/auth/session-recovery.js";
 
-export type { AuthRecoveryOutcome } from "$lib/auth/session-recovery";
+export type { AuthRecoveryOutcome } from "#lib/auth/session-recovery.js";
 
 export interface HandleUnauthorizedOptions {
   /**
@@ -71,8 +68,8 @@ class AuthHandlerStore {
 
   /**
    * Attempt to refresh the authentication token.
-   * PocketBase SDK handles token refresh automatically if the token is valid.
-   * This method forces a refresh attempt.
+   * Re-check the authoritative cookie-backed session so a completed re-login
+   * is adopted and stale in-memory state cannot report a false success.
    */
   async tryRefreshToken(): Promise<boolean> {
     if (this._isRefreshing) return false;
@@ -80,19 +77,7 @@ class AuthHandlerStore {
     this._isRefreshing = true;
 
     try {
-      if (!isPocketBaseAuthCompatEnabled()) {
-        await authStore.init({ embedded: isEmbeddedWindow() });
-        return authStore.v2SessionActive;
-      }
-
-      // Check if we have a stored compatibility token.
-      if (!getPocketBaseCompatStoredAuthToken()) {
-        console.log("[AuthHandler] No valid auth token to refresh");
-        return false;
-      }
-
-      await authStore.init({ embedded: isEmbeddedWindow() });
-      return authStore.isAuthenticated;
+      return await authStore.refreshSession({ embedded: isEmbeddedWindow() });
     } catch (err) {
       console.warn("[AuthHandler] Token refresh failed:", err);
 
@@ -130,6 +115,17 @@ class AuthHandlerStore {
     cause?: unknown,
     options?: HandleUnauthorizedOptions,
   ): Promise<AuthRecoveryOutcome> {
+    // An origin that cannot verify the gateway's signed decision is not a
+    // session problem: the recovery ladder, the modal and Universal Login all
+    // lead back to the same refusal. Stop before any of them and let the call
+    // site surface the error it already holds.
+    if (isEdgeDecisionUnverifiableError(cause)) {
+      this.captureReloginPrompt("edge_decision_unverifiable", cause, {
+        failure_class: "origin_trust",
+        recovery_rung: "no_recovery_possible",
+      });
+      return "origin_unverifiable";
+    }
     // If we're already prompting the user, don't keep retrying refresh.
     if (this.showReloginModal) {
       this._pendingRetry = retryFn || this._pendingRetry;
@@ -194,7 +190,7 @@ class AuthHandlerStore {
     if (failureClass === "gateway_token" && this.isStandaloneSaaS()) {
       // The cookie session is alive; only the Auth0 gateway token is broken.
       // Never the modal for this class — auto-redirect or inline panel.
-      return this.recoverGatewayToken(cause, options);
+      return await this.recoverGatewayToken(cause, options);
     }
 
     if (withinCooldown) {
@@ -229,10 +225,10 @@ class AuthHandlerStore {
    * automatic re-login round-trip per tab per marker TTL (seamless when the
    * Auth0 SSO session at the custom domain is alive), then the inline panel.
    */
-  private recoverGatewayToken(
+  private async recoverGatewayToken(
     cause: unknown,
     options?: HandleUnauthorizedOptions,
-  ): AuthRecoveryOutcome {
+  ): Promise<AuthRecoveryOutcome> {
     if (options?.allowAutoRedirect === false) {
       this.captureReloginPrompt("gateway_inline_prompt", cause, {
         failure_class: "gateway_token",
@@ -246,6 +242,15 @@ class AuthHandlerStore {
         failure_class: "gateway_token",
         recovery_rung: "auto_redirect",
       });
+      const { startGatewayLogin } = await import("#lib/auth/gateway-auth.js");
+      const spaStarted = await startGatewayLogin({
+        interactive: false,
+        returnTo: currentAuthReturnTo(),
+      });
+      if (spaStarted) {
+        this._autoRedirectStarted = true;
+        return "redirecting";
+      }
       const redirected = authStore.initiateCloudLogin({
         returnTo: currentAuthReturnTo(),
       });
@@ -276,7 +281,7 @@ class AuthHandlerStore {
       v2SessionActive: authStore.v2SessionActive,
     });
     if (failureClass === "gateway_token" && this.isStandaloneSaaS()) {
-      return this.recoverGatewayToken(err, options);
+      return await this.recoverGatewayToken(err, options);
     }
     this.showReloginPrompt(
       retryFn,
@@ -388,10 +393,6 @@ class AuthHandlerStore {
       scope.setTag("deployment_mode", authStore.deploymentMode);
       scope.setTag("v2_session_active", String(authStore.v2SessionActive));
       scope.setTag("embedded", String(isEmbeddedWindow()));
-      scope.setTag(
-        "pocketbase_compat",
-        String(isPocketBaseAuthCompatEnabled()),
-      );
       if (typeof window !== "undefined") {
         scope.setTag("route", window.location.pathname);
       }
@@ -455,7 +456,7 @@ class AuthHandlerStore {
    * Check if an error is a 401 Unauthorized error.
    */
   isAuthError(err: unknown): boolean {
-    // PocketBase ClientResponseError
+    // Typed HTTP clients expose the response status directly.
     if (typeof err === "object" && err !== null && "status" in err) {
       return (err as { status: number }).status === 401;
     }

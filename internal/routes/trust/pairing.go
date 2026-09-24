@@ -8,25 +8,28 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/identity"
 	"github.com/kombifyio/techstack/pkg/nodehandoff"
+	"github.com/kombifyio/techstack/pkg/pairingtoken"
+	"github.com/kombifyio/techstack/pkg/runtimeidentity"
 	"github.com/google/uuid"
-	"github.com/pocketbase/pocketbase/core"
 )
 
-// pairingTokenRequest is the add-server wizard's create-pairing-token body,
-// shared by the legacy PocketBase and control-plane store handlers.
+// pairingTokenRequest is the add-server wizard's create-pairing-token body.
 type pairingTokenRequest struct {
 	Name                    string   `json:"name"`
 	ExpiryMinutes           *int     `json:"expiry_minutes"`
 	StackID                 string   `json:"stack_id"`
 	ServerProvisioningMode  string   `json:"server_provisioning_mode"`
+	EnvironmentClass        string   `json:"environment_class"`
 	NodeRole                string   `json:"node_role"`
 	StackKit                string   `json:"stackkit"`
 	Services                []string `json:"services"`
+	SpecNodeID              string   `json:"spec_node_id"`
 	ServerRemoteHost        string   `json:"server_remote_host"`
 	ServerRemotePort        *int     `json:"server_remote_port"`
 	ServerRemoteUser        string   `json:"server_remote_user"`
@@ -52,15 +55,10 @@ func pairingTokenExpiresAt(now time.Time, requestedMinutes *int) time.Time {
 	return now.Add(time.Duration(minutes) * time.Minute)
 }
 
-func RegisterPairingRoutesWithStores(r *httpx.Router, app core.App, stores RouteStores) { // pocketbase-migration-compat: legacy app bridge while pairing stores are wired
-	r.GET("/api/v1/trust/pairing-tokens", listPairingTokens(app))
-	if stores.Workers != nil {
-		r.POST("/api/v1/trust/pairing-tokens", createPairingTokenFromStore(stores))
-		r.DELETE("/api/v1/trust/pairing-tokens/{id}", deletePairingTokenFromStore(stores.Workers))
-	} else {
-		r.POST("/api/v1/trust/pairing-tokens", createPairingToken(app))
-		r.DELETE("/api/v1/trust/pairing-tokens/{id}", deletePairingToken(app))
-	}
+func RegisterPairingRoutesWithStores(r *httpx.Router, stores RouteStores) {
+	r.GET("/api/v1/trust/pairing-tokens", listPairingTokensFromStore(stores.Workers))
+	r.POST("/api/v1/trust/pairing-tokens", createPairingTokenFromStore(stores))
+	r.DELETE("/api/v1/trust/pairing-tokens/{id}", deletePairingTokenFromStore(stores.Workers))
 }
 
 func requireTrustUserID(e *httpx.Event) (string, error) {
@@ -89,137 +87,36 @@ func trustUserID(e *httpx.Event) (string, bool) {
 // Pairing Tokens (Remote enrollment)
 // ============================================================================
 
-func listPairingTokens(app core.App) func(e *httpx.Event) error {
+func listPairingTokensFromStore(store controlplane.WorkerStore) func(e *httpx.Event) error {
 	return func(e *httpx.Event) error {
 		userID, authErr := requireTrustUserID(e)
 		if authErr != nil {
 			return authErr
 		}
-
-		records, err := app.FindRecordsByFilter(
-			"pairing_tokens",
-			"user = {:userId}",
-			"-created",
-			0, 0,
-			map[string]any{"userId": userID},
-		)
+		tenantID, err := requireTrustTenantID(e, userID, "techstack.trust.pairing-tokens.list")
+		if err != nil {
+			return err
+		}
+		if store == nil {
+			return trustStoreUnavailable(e)
+		}
+		tokens, err := store.ListPairingTokensByOwner(e.Request.Context(), tenantID, userID)
 		if err != nil {
 			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to fetch pairing tokens", nil)
 		}
-
-		out := make([]map[string]any, 0, len(records))
-		for _, r := range records {
+		out := make([]map[string]any, 0, len(tokens))
+		for _, token := range tokens {
 			out = append(out, map[string]any{
-				"id":         r.Id,
-				"name":       r.GetString("name"),
-				"used":       r.GetBool("used"),
-				"expires_at": r.GetDateTime("expires_at"),
-				"used_at":    r.GetDateTime("used_at"),
-				"created":    r.GetDateTime("created"),
+				"id":         token.ID,
+				"name":       token.Name,
+				"used":       token.Status == "used",
+				"expires_at": token.ExpiresAt,
+				"used_at":    token.UsedAt,
+				"created":    token.CreatedAt,
 			})
 		}
 
 		return httpx.Success(e, http.StatusOK, map[string]any{"tokens": out, "count": len(out)})
-	}
-}
-
-func createPairingToken(app core.App) func(e *httpx.Event) error {
-	return func(e *httpx.Event) error {
-		userID, authErr := requireTrustUserID(e)
-		if authErr != nil {
-			return authErr
-		}
-
-		var req pairingTokenRequest
-		if err := e.BindBody(&req); err != nil {
-			return httpx.BadRequest(e, "Invalid request body")
-		}
-
-		var stack *core.Record
-		stackID := strings.TrimSpace(req.StackID)
-		if stackID != "" {
-			var stackErr error
-			stack, stackErr = app.FindRecordById("stacks", stackID)
-			if stackErr != nil {
-				return httpx.NotFound(e, "Stack not found")
-			}
-			if stack.GetString("owner_id") != userID {
-				return httpx.Forbidden(e, "Not your stack")
-			}
-		}
-
-		rawToken, tokenHashHex, err := GeneratePairingToken()
-		if err != nil {
-			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to generate token", nil)
-		}
-
-		collection, err := app.FindCollectionByNameOrId("pairing_tokens")
-		if err != nil {
-			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Collection not found. Please run migrations.", nil)
-		}
-
-		record := core.NewRecord(collection)
-		record.Set("user", userID)
-		record.Set("name", req.Name)
-		record.Set("token_hash", tokenHashHex)
-		record.Set("used", false)
-		if stack != nil {
-			setRecordFieldIfPresent(record, "stack_id", stack.Id)
-		}
-		setRecordFieldIfPresent(record, "metadata", pairingTokenMetadata(req.ServerProvisioningMode, req.NodeRole, req.StackKit, req.Services, req.ServerRemoteHost, req.ServerRemotePort, req.ServerRemoteUser, req.ServerRemoteAuthMethod, req.ServerRemoteSSHKeyLabel, req.ServerRemoteUseSudo))
-
-		expiresAt := pairingTokenExpiresAt(time.Now(), req.ExpiryMinutes)
-		record.Set("expires_at", expiresAt)
-
-		if err := app.Save(record); err != nil {
-			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to save token", nil)
-		}
-
-		response := map[string]any{
-			"id":         record.Id,
-			"token":      rawToken,
-			"expires_at": expiresAt,
-		}
-		if stack != nil {
-			result := map[string]any{
-				"creation_operation":       "add-server",
-				"stack_id":                 stack.Id,
-				"registration_token":       rawToken,
-				"token_expires_at":         expiresAt,
-				"server_provisioning_mode": normalizePairingServerMode(req.ServerProvisioningMode),
-				"server_node_role":         nodehandoff.NormalizeNodeRole(req.NodeRole),
-				"stackkit_foundation":      normalizePairingStackKit(firstNonEmptyPairing(req.StackKit, stack.GetString("stackkit_catalog_ref"), "basement-kit")),
-				"requested_services":       nodehandoff.NormalizeServiceKeys(req.Services),
-			}
-			if strings.TrimSpace(req.ServerRemoteHost) != "" {
-				result["server_remote_host"] = strings.TrimSpace(req.ServerRemoteHost)
-				result["server_remote_host_present"] = true
-			}
-			if req.ServerRemotePort != nil && *req.ServerRemotePort > 0 {
-				result["server_remote_port"] = *req.ServerRemotePort
-			}
-			if strings.TrimSpace(req.ServerRemoteUser) != "" {
-				result["server_remote_user"] = strings.TrimSpace(req.ServerRemoteUser)
-				result["server_remote_user_present"] = true
-			}
-			if strings.TrimSpace(req.ServerRemoteAuthMethod) != "" {
-				result["server_remote_auth_method"] = strings.TrimSpace(req.ServerRemoteAuthMethod)
-			}
-			if strings.TrimSpace(req.ServerRemoteSSHKeyLabel) != "" {
-				result["server_remote_credential_ref"] = strings.TrimSpace(req.ServerRemoteSSHKeyLabel)
-			}
-			if req.ServerRemoteUseSudo {
-				result["server_remote_use_sudo"] = true
-			}
-			jobID, err := createCompletedPairingJob(app, stack, result)
-			if err != nil {
-				return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to create registration job", nil)
-			}
-			response["job_id"] = jobID
-			response["stack_id"] = stack.Id
-		}
-
-		return httpx.Success(e, http.StatusCreated, response)
 	}
 }
 
@@ -229,6 +126,14 @@ func createPairingTokenFromStore(stores RouteStores) func(e *httpx.Event) error 
 		if authErr != nil {
 			return authErr
 		}
+		tenantID, err := requireTrustTenantID(e, userID, "techstack.trust.pairing-tokens.create")
+		if err != nil {
+			return err
+		}
+
+		if stores.Stacks == nil || stores.Workers == nil || stores.Jobs == nil {
+			return trustStoreUnavailable(e)
+		}
 
 		var req pairingTokenRequest
 		if err := e.BindBody(&req); err != nil {
@@ -236,13 +141,9 @@ func createPairingTokenFromStore(stores RouteStores) func(e *httpx.Event) error 
 		}
 
 		ctx := e.Request.Context()
-		tenantID := trustTenantID(e)
 		stackID := strings.TrimSpace(req.StackID)
 		var stack *controlplane.Stack
 		if stackID != "" {
-			if stores.Stacks == nil {
-				return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Stack store not configured", nil)
-			}
 			var err error
 			stack, err = stores.Stacks.GetStack(ctx, tenantID, stackID)
 			if err != nil {
@@ -295,7 +196,7 @@ type MintedStackPairing struct {
 	failureStage string
 }
 
-// FailureMessage maps the failed mint phase onto the legacy HTTP error texts.
+// FailureMessage maps the failed mint phase onto the public HTTP error.
 func (m MintedStackPairing) FailureMessage() string {
 	switch m.failureStage {
 	case "job":
@@ -313,7 +214,37 @@ func (m MintedStackPairing) FailureMessage() string {
 // registration job when the token is stack-scoped. Stack ownership must be
 // verified by the caller before minting.
 func MintStackPairingToken(ctx context.Context, stores RouteStores, tenantID, userID string, stack *controlplane.Stack, req PairingTokenParams) (MintedStackPairing, error) {
-	rawToken, tokenHashHex, err := GenerateStorePairingToken(tenantID)
+	minted, err := MintStackPairingTokenOnly(ctx, stores, tenantID, userID, stack, req)
+	if err != nil {
+		return minted, err
+	}
+	if stack != nil {
+		// The add-server wizard drives BYOS registration off a creation job
+		// (it polls the job and shows the install command from its result).
+		// Post-PocketBase the store path must mint that job too, or the BYOS
+		// lane 500s the wizard ("did not return a creation job").
+		result := storePairingJobResult(req, minted.Token, minted.ExpiresAt)
+		var jobID string
+		var jobErr error
+		if normalizePairingServerMode(req.ServerProvisioningMode) == "connect-remote" {
+			jobID, jobErr = createStoreRemoteEnrollmentJob(ctx, stores.Jobs, stack, result)
+		} else {
+			jobID, jobErr = createStorePairingJob(ctx, stores.Jobs, stack, result)
+		}
+		if jobErr != nil {
+			minted.failureStage = "job"
+			return minted, jobErr
+		}
+		minted.JobID = jobID
+	}
+	return minted, nil
+}
+
+// MintStackPairingTokenOnly mints and persists the pairing capability without
+// creating a registration job. Recovery paths that already own a durable
+// enrollment row use it to re-issue only the one-time token.
+func MintStackPairingTokenOnly(ctx context.Context, stores RouteStores, tenantID, userID string, stack *controlplane.Stack, req PairingTokenParams) (MintedStackPairing, error) {
+	rawToken, tokenHashHex, err := pairingtoken.Generate(tenantID)
 	if err != nil {
 		return MintedStackPairing{failureStage: "generate"}, err
 	}
@@ -332,30 +263,19 @@ func MintStackPairingToken(ctx context.Context, stores RouteStores, tenantID, us
 		TokenHash:      tokenHashHex,
 		Status:         "active",
 		ExpiresAt:      &expiresAt,
-		Metadata:       pairingTokenMetadata(req.ServerProvisioningMode, req.NodeRole, req.StackKit, req.Services, req.ServerRemoteHost, req.ServerRemotePort, req.ServerRemoteUser, req.ServerRemoteAuthMethod, req.ServerRemoteSSHKeyLabel, req.ServerRemoteUseSudo),
+		Metadata: pairingTokenMetadata(
+			stack, req.ServerProvisioningMode, req.EnvironmentClass, req.NodeRole, req.StackKit, req.Services,
+			req.SpecNodeID, req.ServerRemoteHost, req.ServerRemotePort, req.ServerRemoteUser,
+			req.ServerRemoteAuthMethod, req.ServerRemoteSSHKeyLabel, req.ServerRemoteUseSudo,
+		),
 	})
 	if err != nil {
 		return MintedStackPairing{failureStage: "persist"}, err
 	}
-
-	minted := MintedStackPairing{TokenID: token.ID, Token: rawToken, ExpiresAt: expiresAt}
-	if stack != nil {
-		// The add-server wizard drives BYOS registration off a creation job
-		// (it polls the job and shows the install command from its result).
-		// Post-PocketBase the store path must mint that job too, or the BYOS
-		// lane 500s the wizard ("did not return a creation job").
-		jobID, jobErr := createStorePairingJob(ctx, stores.Jobs, stack, storePairingJobResult(req, rawToken, expiresAt))
-		if jobErr != nil {
-			minted.failureStage = "job"
-			return minted, jobErr
-		}
-		minted.JobID = jobID
-	}
-	return minted, nil
+	return MintedStackPairing{TokenID: token.ID, Token: rawToken, ExpiresAt: expiresAt}, nil
 }
 
-// storePairingJobResult mirrors the legacy completed-pairing-job result payload
-// the add-server wizard reads (registration_token + provisioning hints).
+// storePairingJobResult builds the add-server wizard's registration payload.
 func storePairingJobResult(req pairingTokenRequest, rawToken string, expiresAt time.Time) map[string]any {
 	result := map[string]any{
 		"creation_operation":       "add-server",
@@ -365,6 +285,9 @@ func storePairingJobResult(req pairingTokenRequest, rawToken string, expiresAt t
 		"server_node_role":         nodehandoff.NormalizeNodeRole(req.NodeRole),
 		"stackkit_foundation":      normalizePairingStackKit(firstNonEmptyPairing(req.StackKit, "basement-kit")),
 		"requested_services":       nodehandoff.NormalizeServiceKeys(req.Services),
+	}
+	if environmentClass := strings.ToLower(strings.TrimSpace(req.EnvironmentClass)); environmentClass != "" {
+		result["environment_class"] = environmentClass
 	}
 	if host := strings.TrimSpace(req.ServerRemoteHost); host != "" {
 		result["server_remote_host"] = host
@@ -413,16 +336,45 @@ func createStorePairingJob(ctx context.Context, jobs controlplane.JobStore, stac
 	return job.ID, nil
 }
 
+func createStoreRemoteEnrollmentJob(ctx context.Context, jobs controlplane.JobStore, stack *controlplane.Stack, result map[string]any) (string, error) {
+	if jobs == nil || stack == nil {
+		return "", nil
+	}
+	job, err := jobs.UpsertJob(ctx, controlplane.UpsertJobRequest{
+		ID:       uuid.NewString(),
+		TenantID: strings.TrimSpace(stack.TenantID),
+		StackID:  stack.ID,
+		Type:     "remote_enrollment",
+		State:    "pending",
+		Progress: 5,
+		Step:     "remote_ssh_connect",
+		Message:  "Connecting to your Node over SSH…",
+		Result:   result,
+	})
+	if err != nil {
+		return "", err
+	}
+	return job.ID, nil
+}
+
 func deletePairingTokenFromStore(store controlplane.WorkerStore) func(e *httpx.Event) error {
 	return func(e *httpx.Event) error {
-		if _, authErr := requireTrustUserID(e); authErr != nil {
+		userID, authErr := requireTrustUserID(e)
+		if authErr != nil {
 			return authErr
+		}
+		tenantID, err := requireTrustTenantID(e, userID, "techstack.trust.pairing-tokens.delete")
+		if err != nil {
+			return err
+		}
+		if store == nil {
+			return trustStoreUnavailable(e)
 		}
 		id := strings.TrimSpace(e.Request.PathValue("id"))
 		if id == "" {
 			return httpx.BadRequest(e, "Token ID is required")
 		}
-		if err := store.RevokePairingToken(e.Request.Context(), trustTenantID(e), id); err != nil {
+		if err := store.RevokePairingToken(e.Request.Context(), tenantID, userID, id); err != nil {
 			if errors.Is(err, controlplane.ErrNotFound) {
 				return httpx.NotFound(e, "Token not found")
 			}
@@ -432,15 +384,21 @@ func deletePairingTokenFromStore(store controlplane.WorkerStore) func(e *httpx.E
 	}
 }
 
-func trustTenantID(e *httpx.Event) string {
+func requireTrustTenantID(e *httpx.Event, userID, capability string) (string, error) {
+	explicitTenantID := ""
 	if e != nil && e.Request != nil {
 		if id := identity.FromContext(e.Request.Context()); id != nil {
-			if tenantID := strings.TrimSpace(id.OrgID); tenantID != "" {
-				return tenantID
-			}
+			explicitTenantID = id.OrgID
 		}
 	}
-	return "default"
+	return tenantguard.TenantScope(explicitTenantID, userID, capability)
+}
+
+func trustStoreUnavailable(e *httpx.Event) error {
+	return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Pairing token authority is temporarily unavailable", map[string]any{
+		"reason_code": "pairing_token_authority_unavailable",
+		"retryable":   true,
+	})
 }
 
 func storePairingTokenID(tokenHashHex string) string {
@@ -451,40 +409,12 @@ func storePairingTokenID(tokenHashHex string) string {
 	return "pair_" + tokenHashHex
 }
 
-func createCompletedPairingJob(app core.App, stack *core.Record, result map[string]any) (string, error) {
-	collection, err := app.FindCollectionByNameOrId("jobs")
-	if err != nil {
-		return "", err
-	}
-	record := core.NewRecord(collection)
-	setRecordFieldIfPresent(record, "type", "update")
-	setRecordFieldIfPresent(record, "state", "completed")
-	setRecordFieldIfPresent(record, "stack_id", stack.Id)
-	setRecordFieldIfPresent(record, "step", "create_spec")
-	setRecordFieldIfPresent(record, "current_step", "Server registration prepared")
-	setRecordFieldIfPresent(record, trustMessageField, "Server registration prepared")
-	setRecordFieldIfPresent(record, "progress", 100)
-	setRecordFieldIfPresent(record, "result", result)
-	if tenantID := strings.TrimSpace(stack.GetString("tenant_id")); tenantID != "" {
-		setRecordFieldIfPresent(record, "tenant_id", tenantID)
-	}
-	if err := app.Save(record); err != nil {
-		return "", err
-	}
-	return record.Id, nil
-}
-
-func setRecordFieldIfPresent(record *core.Record, field string, value any) {
-	if record == nil || record.Collection().Fields.GetByName(field) == nil {
-		return
-	}
-	record.Set(field, value)
-}
-
 func normalizePairingServerMode(value string) string {
 	switch strings.TrimSpace(value) {
 	case "connect-remote":
 		return "connect-remote"
+	case "hypervisor":
+		return "hypervisor"
 	default:
 		return "install-command"
 	}
@@ -492,7 +422,7 @@ func normalizePairingServerMode(value string) string {
 
 func normalizePairingStackKit(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", "base-kit", "basement", "basementkit":
+	case "", "basement", "basementkit":
 		return "basement-kit"
 	case "cloud", "cloudkit":
 		return "cloud-kit"
@@ -501,12 +431,33 @@ func normalizePairingStackKit(value string) string {
 	}
 }
 
-func pairingTokenMetadata(serverMode, nodeRole, stackKit string, services []string, remoteHost string, remotePort *int, remoteUser, remoteAuthMethod, remoteCredentialRef string, remoteUseSudo bool) map[string]any {
+func pairingTokenMetadata(
+	stack *controlplane.Stack,
+	serverMode, environmentClass, nodeRole, stackKit string,
+	services []string,
+	specNodeID, remoteHost string,
+	remotePort *int,
+	remoteUser, remoteAuthMethod, remoteCredentialRef string,
+	remoteUseSudo bool,
+) map[string]any {
 	metadata := map[string]any{
 		"server_provisioning_mode":       normalizePairingServerMode(serverMode),
 		nodehandoff.KeyServerNodeRole:    nodehandoff.NormalizeNodeRole(nodeRole),
 		"stackkit_foundation":            normalizePairingStackKit(firstNonEmptyPairing(stackKit, "basement-kit")),
 		nodehandoff.KeyRequestedServices: nodehandoff.NormalizeServiceKeys(services),
+	}
+	if nodeID := strings.TrimSpace(specNodeID); nodeID != "" {
+		metadata["spec_node_id"] = nodeID
+		if stack != nil {
+			metadata["planned_server_id"] = runtimeidentity.StackServerID(stack.ID, nodeID)
+		}
+	}
+	if nodeRole == "substrate" {
+		delete(metadata, "stackkit_foundation")
+		metadata[nodehandoff.KeyRequestedServices] = []string{}
+	}
+	if value := strings.ToLower(strings.TrimSpace(environmentClass)); value != "" {
+		metadata[nodehandoff.KeyRuntimeEnvironmentClass] = value
 	}
 	if value := strings.TrimSpace(remoteHost); value != "" {
 		metadata[nodehandoff.KeyServerRemoteHost] = value
@@ -537,26 +488,4 @@ func firstNonEmptyPairing(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func deletePairingToken(app core.App) func(e *httpx.Event) error {
-	return func(e *httpx.Event) error {
-		userID, authErr := requireTrustUserID(e)
-		if authErr != nil {
-			return authErr
-		}
-
-		id := e.Request.PathValue("id")
-		record, err := app.FindRecordById("pairing_tokens", id)
-		if err != nil {
-			return httpx.NotFound(e, "Token not found")
-		}
-		if record.GetString("user") != userID {
-			return httpx.Forbidden(e, "Not your token")
-		}
-		if err := app.Delete(record); err != nil {
-			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to delete token", nil)
-		}
-		return httpx.Success(e, http.StatusOK, map[string]string{trustMessageField: "Token deleted"})
-	}
 }

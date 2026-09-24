@@ -1,133 +1,105 @@
 package orchestrator
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
-	"github.com/pocketbase/pocketbase/core"
-
+	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/jobs"
 )
 
-// ============================================================
-// F5: Drift Detection Methods
-// ============================================================
-
-// TriggerDriftCheck creates and enqueues a drift detection job for a stack.
-func (o *Orchestrator) TriggerDriftCheck(stackID string, triggerType string) (string, error) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-
-	// Find the stack record
-	stack, err := o.app.FindRecordById("stacks", stackID)
-	if err != nil {
-		return "", fmt.Errorf("stack not found: %w", err)
-	}
-
-	// Create job record in PocketBase
-	jobsCollection, err := o.app.FindCollectionByNameOrId("jobs")
-	if err != nil {
-		return "", fmt.Errorf("jobs collection not found: %w", err)
-	}
-
-	jobRecord := core.NewRecord(jobsCollection)
-	jobRecord.Set("type", jobTypeForPersistence("drift_check"))
-	jobRecord.Set("state", persistentStatePending)
-	jobRecord.Set("progress", 0)
-	jobRecord.Set("stack_id", stackID)
-	jobRecord.Set("current_step", "Queued for drift detection")
-	setRecordTenantIDFromStack(jobRecord, stack)
-
-	if err := o.app.Save(jobRecord); err != nil {
-		return "", fmt.Errorf("failed to create job record: %w", err)
-	}
-
-	// Create in-memory job
-	job := &jobs.Job{
-		ID:         jobRecord.Id,
-		Type:       jobs.JobTypeDriftCheck,
-		TargetType: targetTypeStack,
-		TargetID:   stackID,
-		TargetName: stack.GetString("name"),
-		Payload: map[string]interface{}{
-			"trigger_type": triggerType,
-			"tenant_id":    stack.GetString("tenant_id"),
-		},
-		MaxAttempts: 1, // Drift checks should not auto-retry
-	}
-
-	// Enqueue with progress sync
-	if err := o.enqueueWithSync(job, jobRecord, stack.GetString("tenant_id")); err != nil {
-		return "", err
-	}
-
-	// Set up drift result sync
-	o.wg.Add(1)
-	go func() {
-		defer o.wg.Done()
-		o.syncDriftResult(job.ID, stackID, triggerType)
-	}()
-
-	o.log.Info("drift_check_job_enqueued", "job_id", job.ID, "stack_id", stackID, "trigger_type", triggerType)
-
-	return job.ID, nil
+type DriftLifecycleRequest struct {
+	RequestContext context.Context
+	TenantID       string
+	OwnerID        string
+	StackID        string
+	TriggerType    string
 }
 
-// TriggerDriftResolve creates and enqueues a drift resolution job for a stack.
-func (o *Orchestrator) TriggerDriftResolve(stackID string) (string, error) {
+func (o *Orchestrator) TriggerDriftCheck(req DriftLifecycleRequest) (string, error) {
+	return o.triggerDriftJob(req, jobs.JobTypeDriftCheck, "Queued for drift detection")
+}
+
+func (o *Orchestrator) TriggerDriftResolve(req DriftLifecycleRequest) (string, error) {
+	return o.triggerDriftJob(req, jobs.JobTypeDriftResolve, "Queued for drift resolution")
+}
+
+func (o *Orchestrator) triggerDriftJob(req DriftLifecycleRequest, jobType jobs.JobType, step string) (string, error) {
+	if err := requireDriftLifecycleIdentity(req); err != nil {
+		return "", err
+	}
+	if o.jobStore == nil || o.effectiveStackStore() == nil || o.driftStore == nil {
+		return "", fmt.Errorf("canonical drift lifecycle stores are required")
+	}
+	ctx := req.RequestContext
+	if ctx == nil {
+		ctx = o.ctx
+	}
+
 	o.mu.Lock()
 	defer o.mu.Unlock()
-
-	// Find the stack record
-	stack, err := o.app.FindRecordById("stacks", stackID)
+	stack, err := o.findStackForJob(ctx, req.StackID, ProvisionStackOptions{
+		RequestContext: ctx, TenantID: req.TenantID, OwnerID: req.OwnerID,
+	})
 	if err != nil {
 		return "", fmt.Errorf("stack not found: %w", err)
 	}
+	if jobType == jobs.JobTypeDriftResolve && stack.driftStatus != "drifted" {
+		return "", fmt.Errorf("stack is not eligible for drift resolution")
+	}
 
-	// Create job record in PocketBase
-	jobsCollection, err := o.app.FindCollectionByNameOrId("jobs")
+	if jobType == jobs.JobTypeDriftCheck {
+		if err := o.updateCanonicalDriftStatus(ctx, stack, "checking", nil); err != nil {
+			return "", err
+		}
+	}
+	jobID, err := o.createJobRecordForStack(ctx, stack, string(jobType), step)
 	if err != nil {
-		return "", fmt.Errorf("jobs collection not found: %w", err)
+		if jobType == jobs.JobTypeDriftCheck {
+			_ = o.updateCanonicalDriftStatus(ctx, stack, "unknown", nil)
+		}
+		return "", err
 	}
-
-	jobRecord := core.NewRecord(jobsCollection)
-	jobRecord.Set("type", jobTypeForPersistence("drift_resolve"))
-	jobRecord.Set("state", persistentStatePending)
-	jobRecord.Set("progress", 0)
-	jobRecord.Set("stack_id", stackID)
-	jobRecord.Set("current_step", "Queued for drift resolution")
-	setRecordTenantIDFromStack(jobRecord, stack)
-
-	if err := o.app.Save(jobRecord); err != nil {
-		return "", fmt.Errorf("failed to create job record: %w", err)
-	}
-
-	// Create in-memory job
 	job := &jobs.Job{
-		ID:          jobRecord.Id,
-		Type:        jobs.JobTypeDriftResolve,
-		TargetType:  targetTypeStack,
-		TargetID:    stackID,
-		TargetName:  stack.GetString("name"),
+		ID: jobID, Type: jobType, TargetType: targetTypeStack, TargetID: stack.id, TargetName: stack.name,
+		Payload: map[string]interface{}{
+			"trigger_type": firstNonEmptyString(req.TriggerType, "manual"),
+			"tenant_id":    stack.tenantID,
+			"owner_id":     stack.ownerID,
+		},
 		MaxAttempts: 1,
 	}
-
-	// Enqueue with progress sync
-	if err := o.enqueueWithSync(job, jobRecord, stack.GetString("tenant_id")); err != nil {
+	if err := o.enqueueWithSync(job, stack.tenantID); err != nil {
+		if jobType == jobs.JobTypeDriftCheck {
+			_ = o.updateCanonicalDriftStatus(ctx, stack, "unknown", nil)
+		}
 		return "", err
 	}
-
-	o.log.Info("drift_resolve_job_enqueued", "job_id", job.ID, "stack_id", stackID)
-
+	if jobType == jobs.JobTypeDriftCheck {
+		o.wg.Add(1)
+		go func() {
+			defer o.wg.Done()
+			o.syncDriftResult(job.ID, stack.tenantID, stack.ownerID, stack.id, firstNonEmptyString(req.TriggerType, "manual"))
+		}()
+	}
+	o.log.Info("drift_job_enqueued", "job_id", job.ID, "stack_id", stack.id, "job_type", jobType)
 	return job.ID, nil
 }
 
-// syncDriftResult monitors a drift check job and saves the result to drift_results collection.
-func (o *Orchestrator) syncDriftResult(jobID, stackID, triggerType string) {
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
+func requireDriftLifecycleIdentity(req DriftLifecycleRequest) error {
+	if strings.TrimSpace(req.TenantID) == "" || strings.TrimSpace(req.OwnerID) == "" || strings.TrimSpace(req.StackID) == "" {
+		return fmt.Errorf("drift lifecycle requires exact tenant, owner, and stack identity")
+	}
+	return nil
+}
 
+func (o *Orchestrator) syncDriftResult(jobID, tenantID, ownerID, stackID, triggerType string) {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-o.ctx.Done():
@@ -141,155 +113,112 @@ func (o *Orchestrator) syncDriftResult(jobID, stackID, triggerType string) {
 			if snapshot.PersistenceSuppressed {
 				return
 			}
-
-			// Check if job is done
 			if snapshot.State != jobs.JobStateCompleted && snapshot.State != jobs.JobStateFailed && snapshot.State != jobs.JobStateCancelled {
 				continue
 			}
-
-			// Job is done - save drift result
-			o.saveDriftResult(snapshot, stackID, triggerType)
+			o.saveDriftResult(snapshot, tenantID, ownerID, stackID, triggerType)
 			return
 		}
 	}
 }
 
-// saveDriftResult stores the drift detection result in the drift_results collection.
-func (o *Orchestrator) saveDriftResult(job jobs.JobSnapshot, stackID, triggerType string) {
-	// Get drift_results collection
-	collection, err := o.app.FindCollectionByNameOrId("drift_results")
-	if err != nil {
-		o.log.Error("drift_results_collection_not_found", "error", err)
+func (o *Orchestrator) saveDriftResult(job jobs.JobSnapshot, tenantID, ownerID, stackID, triggerType string) {
+	result := driftCheckResultFromSnapshot(job)
+	if result.StackID != "" && result.StackID != stackID {
+		o.log.Error("drift_result_stack_mismatch", "job_id", job.ID, "stack_id", stackID, "result_stack_id", result.StackID)
 		return
 	}
-
-	// Get stack for owner_id
-	stack, err := o.app.FindRecordById("stacks", stackID)
-	if err != nil {
-		o.log.Error("stack_not_found_for_drift_result", "stack_id", stackID, "error", err)
-		return
+	checkedAt := result.CheckedAt.UTC()
+	if checkedAt.IsZero() {
+		checkedAt = o.now()
 	}
-
-	// Create drift result record
-	record := core.NewRecord(collection)
-	record.Set("stack_id", stackID)
-	record.Set("job_id", job.ID)
-	record.Set("owner_id", stack.GetString("owner_id"))
-	record.Set("trigger_type", triggerType)
-	record.Set("checked_at", time.Now())
-	populateDriftResultRecord(record, job)
-
-	// Save drift result
-	if err := o.app.Save(record); err != nil {
+	status := string(result.Status)
+	if status == "" {
+		status = "unknown"
+	}
+	affected := make([]map[string]any, 0, len(result.AffectedResources))
+	if payload, err := json.Marshal(result.AffectedResources); err == nil {
+		_ = json.Unmarshal(payload, &affected)
+	}
+	plan := map[string]any{}
+	if payload, err := json.Marshal(result.PlanSummary); err == nil {
+		_ = json.Unmarshal(payload, &plan)
+	}
+	details := map[string]any{
+		"trigger_type":  firstNonEmptyString(result.TriggerType, triggerType),
+		"checked_at":    checkedAt.Format(time.RFC3339Nano),
+		"duration_ms":   result.DurationMs,
+		"error_message": result.ErrorMessage,
+		"error_details": result.ErrorDetails,
+	}
+	resultID := job.ID + ":drift"
+	saved, err := o.driftStore.CreateDriftResult(o.ctx, controlplane.DriftResult{
+		ID: resultID, TenantID: tenantID, OwnerSubjectID: ownerID, StackID: stackID, JobID: job.ID,
+		Status: status, AffectedResources: affected, PlanSummary: plan, Details: details,
+	})
+	if err != nil {
 		o.log.Error("failed_to_save_drift_result", "stack_id", stackID, "error", err)
 		return
 	}
-
-	// Update stack with drift status and link to result
-	status := record.GetString("status")
-	stack.Set("drift_status", status)
-	stack.Set("drift_checked_at", time.Now())
-	stack.Set("last_drift_result_id", record.Id)
-
-	if err := o.app.Save(stack); err != nil {
+	stack, err := o.effectiveStackStore().GetStack(o.ctx, tenantID, stackID)
+	if err != nil || stack.OwnerSubjectID != ownerID {
+		o.log.Error("stack_not_found_for_drift_result", "stack_id", stackID, "error", err)
+		return
+	}
+	if _, err := o.effectiveStackStore().UpdateStackRuntime(o.ctx, tenantID, stackID, controlplane.RuntimeUpdate{
+		Status: stack.Status, RuntimeSummary: stack.RuntimeSummary, DriftStatus: status, DriftCheckedAt: &checkedAt,
+	}); err != nil {
 		o.log.Error("failed_to_update_stack_drift_status", "stack_id", stackID, "error", err)
 	}
-
-	// Log drift result as activity
-	o.logDriftActivity(stackID, stack.GetString("name"), status, record.Id)
-
-	o.log.Info("drift_result_saved",
-		"stack_id", stackID,
-		"result_id", record.Id,
-		"status", status,
-	)
+	o.appendDriftActivity(tenantID, ownerID, stack, saved)
 }
 
-func populateDriftResultRecord(record *core.Record, job jobs.JobSnapshot) { // pocketbase-migration-compat: legacy drift projection only
+func driftCheckResultFromSnapshot(job jobs.JobSnapshot) jobs.DriftCheckResult {
+	var result jobs.DriftCheckResult
 	if job.Result != nil {
-		status, ok := job.Result["status"].(string)
-		if !ok {
-			status = "unknown"
+		if payload, err := json.Marshal(job.Result["drift_result"]); err == nil {
+			_ = json.Unmarshal(payload, &result)
 		}
-		record.Set("status", status)
-		if durationMs, ok := job.Result["duration_ms"].(int64); ok {
-			record.Set("duration_ms", durationMs)
+		if result.Status == "" {
+			if status, ok := job.Result["status"].(string); ok {
+				result.Status = jobs.DriftStatus(status)
+			}
 		}
-		populateDriftResultDetails(record, decodeDriftResult(job.Result["drift_result"]))
 	}
 	if job.State == jobs.JobStateFailed {
-		record.Set("status", "failed")
-		record.Set("error_message", job.Error)
-		record.Set("error_details", job.ErrorDetails)
+		result.Status = jobs.DriftStatusFailed
+		result.ErrorMessage = firstNonEmptyString(result.ErrorMessage, job.Error)
+		result.ErrorDetails = firstNonEmptyString(result.ErrorDetails, job.ErrorDetails)
 	}
+	return result
 }
 
-func decodeDriftResult(value any) map[string]interface{} {
-	switch typed := value.(type) {
-	case []byte:
-		var result map[string]interface{}
-		_ = json.Unmarshal(typed, &result)
-		return result
-	case string:
-		var result map[string]interface{}
-		_ = json.Unmarshal([]byte(typed), &result)
-		return result
-	case map[string]interface{}:
-		return typed
-	default:
-		return nil
+func (o *Orchestrator) updateCanonicalDriftStatus(ctx context.Context, stack *orchestratorStack, status string, checkedAt *time.Time) error {
+	if stack == nil {
+		return controlplane.ErrNotFound
 	}
-}
-
-func populateDriftResultDetails(record *core.Record, result map[string]interface{}) { // pocketbase-migration-compat: legacy drift projection only
-	if result == nil {
-		return
-	}
-	if affected, ok := result["affected_resources"]; ok {
-		record.Set("affected_resources", affected)
-	}
-	if summary, ok := result["plan_summary"]; ok {
-		record.Set("plan_summary", summary)
-	}
-	if count, ok := result["affected_count"].(float64); ok {
-		record.Set("affected_count", int(count))
-	}
-}
-
-// logDriftActivity creates an activity_log entry for a drift check result.
-func (o *Orchestrator) logDriftActivity(stackID, stackName, status, resultID string) {
-	collection, err := o.app.FindCollectionByNameOrId("activity_log")
-	if err != nil {
-		o.log.Error("activity_log_collection_not_found", "error", err)
-		return
-	}
-
-	var action, details string
-	switch status {
-	case "drifted":
-		action = "drift_detected"
-		details = fmt.Sprintf("Drift detected in stack '%s'", stackName)
-	case "in_sync":
-		action = "drift_clean"
-		details = fmt.Sprintf("Stack '%s' is in sync (no drift)", stackName)
-	default:
-		action = "drift_failed"
-		details = fmt.Sprintf("Drift check failed for stack '%s'", stackName)
-	}
-
-	record := core.NewRecord(collection)
-	record.Set("action", action)
-	record.Set("details", details)
-	record.Set("stack_id", stackID)
-	if stack, err := o.app.FindRecordById("stacks", stackID); err == nil {
-		setRecordTenantIDFromStack(record, stack)
-	}
-	record.Set("metadata", map[string]interface{}{
-		"drift_result_id": resultID,
-		"drift_status":    status,
+	_, err := o.effectiveStackStore().UpdateStackRuntime(ctx, stack.tenantID, stack.id, controlplane.RuntimeUpdate{
+		Status: stack.status, RuntimeSummary: stack.runtimeSummary, DriftStatus: status, DriftCheckedAt: checkedAt,
 	})
+	return err
+}
 
-	if err := o.app.Save(record); err != nil {
-		o.log.Error("failed_to_log_drift_activity", "stack_id", stackID, "error", err)
+func (o *Orchestrator) appendDriftActivity(tenantID, ownerID string, stack *controlplane.Stack, result *controlplane.DriftResult) {
+	if o.activityStore == nil || stack == nil || result == nil {
+		return
+	}
+	action, message := "drift_failed", fmt.Sprintf("Drift check failed for stack '%s'", stack.Name)
+	if result.Status == "drifted" {
+		action, message = "drift_detected", fmt.Sprintf("Drift detected in stack '%s'", stack.Name)
+	} else if result.Status == "in_sync" {
+		action, message = "drift_clean", fmt.Sprintf("Stack '%s' is in sync (no drift)", stack.Name)
+	}
+	_, err := o.activityStore.AppendActivity(o.ctx, controlplane.ActivityEvent{
+		ID: result.ID + ":activity", TenantID: tenantID, InstanceID: stack.InstanceID, StackID: stack.ID,
+		CorrelationID: result.JobID, ActorSubjectID: ownerID, Action: action, Category: "drift",
+		Severity: "info", Message: message, Details: map[string]any{"drift_result_id": result.ID, "drift_status": result.Status},
+	})
+	if err != nil && !errors.Is(err, controlplane.ErrConflict) {
+		o.log.Error("failed_to_log_drift_activity", "stack_id", stack.ID, "error", err)
 	}
 }

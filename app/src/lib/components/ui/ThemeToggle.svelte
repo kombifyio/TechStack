@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { theme } from "$lib/stores/theme";
+  import { theme } from "#lib/stores/theme.js";
   import { onMount } from "svelte";
 
   onMount(() => {
@@ -12,6 +12,8 @@
 </script>
 
 <button
+  type="button"
+  data-kx="control"
   onclick={toggleTheme}
   class="theme-toggle p-2 rounded-lg hover:bg-accent transition-colors"
   title={$theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
@@ -21,7 +23,7 @@
     <!-- Sun icon for dark mode (click to go light) -->
     <svg
       xmlns="http://www.w3.org/2000/svg"
-      class="h-5 w-5 text-yellow-400"
+      class="h-5 w-5 text-warning"
       fill="none"
       viewBox="0 0 24 24"
       stroke="currentColor"

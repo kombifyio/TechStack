@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/substrate"
 	agentpkg "github.com/kombifyio/techstack/pkg/agent"
 	"github.com/kombifyio/techstack/pkg/agent/httpguard"
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
@@ -34,7 +35,7 @@ type currentStackKitCommandRuntime interface {
 
 type runtimePackageConverger interface {
 	EnsureTechstackRuntime(context.Context, agentpkg.TechstackRuntimeConvergenceConfig) (agentpkg.TechstackRuntimeConvergenceResult, error)
-	EnsureRuntime(context.Context, agentpkg.StackKitRuntimeBootstrapConfig) error
+	EnsureRuntimeEvidence(context.Context, agentpkg.StackKitRuntimeBootstrapConfig) (agentpkg.StackKitRuntimeConvergenceResult, error)
 }
 
 type currentStackKitCommandExecutor struct {
@@ -68,6 +69,7 @@ type agentEnrollmentFile struct {
 }
 
 type agentEnrollment struct {
+	GuardRole            string `json:"guard_role"`
 	WorkerID             string `json:"worker_id"`
 	ServerID             string `json:"server_id"`
 	RuntimeAgentID       string `json:"runtime_agent_id"`
@@ -105,6 +107,55 @@ func runHTTPAgentMode(ctx context.Context, cfg *agentModeConfig, log *slog.Logge
 	if err != nil {
 		return err
 	}
+	_, hypervisorErr := os.Stat("/etc/pve/local")
+	if enrollment.GuardRole == "substrate" {
+		if hypervisorErr != nil {
+			return errors.New("substrate enrollment requires a Proxmox host")
+		}
+		// The substrate executor uses only the locally configured API token.
+		// No StackKits executor or package convergence runs on the hypervisor.
+		guardConfig := httpguard.Config{
+			HeartbeatURL: enrollment.HeartbeatURL, InventoryURL: enrollment.InventoryURL,
+			AgentToken: enrollment.AgentToken, RuntimeAgentID: enrollment.RuntimeAgentID,
+			ServerID: enrollment.ServerID, TenantID: enrollment.TenantID,
+			OwnerID: enrollment.OwnerID, StackID: enrollment.StackID,
+			AgentVersion: version, Interval: cfg.heartbeatInterval, Logger: log,
+			Collector: httpguard.NewSystemCollector(httpguard.SystemCollectorConfig{}),
+		}
+		localConfigPath := envDefault("TECHSTACK_SUBSTRATE_CONFIG", "/var/lib/kombify/substrate.json")
+		localConfig, localErr := substrate.LoadConfig(localConfigPath)
+		if localErr == nil {
+			native, nativeErr := substrate.NewClient(localConfig)
+			if nativeErr != nil {
+				return nativeErr
+			}
+			guardConfig.Collector = substrateInventoryCollector{base: guardConfig.Collector, client: native, config: localConfig}
+			guardConfig.WorkerExecutor = substrate.Executor{Client: native, WorkerID: enrollment.RuntimeAgentID, TenantID: enrollment.TenantID}
+			guardConfig.WorkerCommandURL = strings.TrimSuffix(enrollment.CommandURL, "/commands/next") + "/provider/next"
+			guardConfig.WorkerResultURL = strings.TrimSuffix(enrollment.CommandResultURL, "/commands/result") + "/provider/result"
+		} else if !errors.Is(localErr, os.ErrNotExist) {
+			return localErr
+		} else {
+			log.Info("substrate_execution_pending_local_configuration")
+		}
+		client, err := httpguard.New(guardConfig)
+		if err != nil {
+			return err
+		}
+		runCtx, stop := signalContext(ctx)
+		defer stop()
+		return client.Run(runCtx)
+	}
+	if hypervisorErr == nil {
+		return errors.New("Proxmox requires an explicit substrate enrollment")
+	}
+	if err := repairHTTPSGuardSandbox(log); err != nil {
+		if errors.Is(err, errHTTPSGuardSandboxRestarting) {
+			log.Info("https_guard_sandbox_restarting")
+			return nil
+		}
+		log.Warn("https_guard_sandbox_repair_failed", "err", err)
+	}
 	manifestPaths := splitNonEmpty(cfg.accessManifest)
 	collector := httpguard.NewSystemCollector(httpguard.SystemCollectorConfig{
 		AccessManifestFiles: manifestPaths,
@@ -131,6 +182,7 @@ func runHTTPAgentMode(ctx context.Context, cfg *agentModeConfig, log *slog.Logge
 		TenantID:             enrollment.TenantID,
 		AgentPath:            envDefault("TECHSTACK_AGENT_EXECUTABLE_PATH", "/usr/local/bin/techstack"),
 		OperationsPath:       envDefault("TECHSTACK_OPERATIONS_EXECUTABLE_PATH", "/usr/local/libexec/techstack-stackkit-operations"),
+		Version:              version,
 		PrivateLANHTTPOrigin: privateLANHTTPOrigin,
 	}
 	stackKitRuntimeConfig := agentpkg.StackKitRuntimeBootstrapConfig{
@@ -303,18 +355,6 @@ type runtimePackageConvergenceStatus struct {
 	snapshot    runtimeconvergence.Snapshot
 }
 
-func convergeRuntimePackagesOnce(
-	ctx context.Context,
-	stop context.CancelFunc,
-	executor runtimePackageConverger,
-	techstackCfg agentpkg.TechstackRuntimeConvergenceConfig,
-	stackKitCfg agentpkg.StackKitRuntimeBootstrapConfig,
-	log *slog.Logger,
-) (bool, bool) {
-	status := convergeRuntimePackagesOnceStatus(ctx, stop, executor, techstackCfg, stackKitCfg, log)
-	return status.keepRunning, status.converged
-}
-
 func convergeRuntimePackagesOnceStatus(
 	ctx context.Context,
 	stop context.CancelFunc,
@@ -337,7 +377,7 @@ func convergeRuntimePackagesOnceStatus(
 		stop()
 		return runtimePackageConvergenceStatus{snapshot: pending}
 	}
-	stackKitErr := executor.EnsureRuntime(ctx, stackKitCfg)
+	stackKitResult, stackKitErr := executor.EnsureRuntimeEvidence(ctx, stackKitCfg)
 	if stackKitErr != nil {
 		log.Warn("stackkit_runtime_convergence_failed", "error", stackKitErr.Error())
 	}
@@ -351,6 +391,18 @@ func convergeRuntimePackagesOnceStatus(
 				return runtimeconvergence.ComponentFailed
 			}(),
 			ObservedAt: observedAt,
+			Version: func() string {
+				if techstackReady {
+					return result.Version
+				}
+				return ""
+			}(),
+			ArtifactSHA256: func() string {
+				if techstackReady {
+					return result.SHA256
+				}
+				return ""
+			}(),
 			ErrorCode: func() string {
 				if !techstackReady {
 					return runtimeconvergence.TechstackRuntimeUnavailableError
@@ -367,6 +419,18 @@ func convergeRuntimePackagesOnceStatus(
 				return runtimeconvergence.ComponentFailed
 			}(),
 			ObservedAt: observedAt,
+			Version: func() string {
+				if stackKitErr == nil {
+					return stackKitResult.Version
+				}
+				return ""
+			}(),
+			ArtifactSHA256: func() string {
+				if stackKitErr == nil {
+					return stackKitResult.SHA256
+				}
+				return ""
+			}(),
 			ErrorCode: func() string {
 				if stackKitErr != nil {
 					return runtimeconvergence.StackKitsRuntimeUnavailableError
@@ -481,4 +545,34 @@ func firstCLIValue(values ...string) string {
 
 var signalContext = func(ctx context.Context) (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+}
+
+// The existing authenticated inventory channel transports observations only.
+type substrateInventoryCollector struct {
+	base   httpguard.Collector
+	client *substrate.Client
+	config substrate.Config
+}
+
+func (c substrateInventoryCollector) Collect(ctx context.Context) (httpguard.Snapshot, error) {
+	snapshot, err := c.base.Collect(ctx)
+	if err != nil {
+		return snapshot, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	inventory, err := c.client.Inventory(ctx)
+	if err != nil {
+		return snapshot, err
+	}
+	images := map[string]substrate.Image{}
+	for _, profile := range substrate.Profiles() {
+		image, err := substrate.DefaultImage(profile.ID)
+		if err != nil {
+			return snapshot, err
+		}
+		images[profile.ID] = image
+	}
+	snapshot.Substrate, err = json.Marshal(substrate.GuardObservation{Node: c.config.Node, MinGuestID: c.config.MinGuestID, MaxGuestID: c.config.MaxGuestID, Images: images, Inventory: inventory, OwnedGuests: c.client.ObserveOwnedGuests(ctx, inventory)})
+	return snapshot, err
 }

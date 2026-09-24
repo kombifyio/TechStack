@@ -12,10 +12,14 @@ type ControlPlaneStores struct {
 	Stacks     controlplane.StackStore
 	Jobs       controlplane.JobStore
 	Wallet     controlplane.WalletStore
+	Activity   controlplane.ActivityStore
+	Drift      controlplane.DriftResultStore
 	Servers    controlplane.ServerRuntimeStore
 	Routing    stackrouting.Store
 	Homelabs   controlplane.HomelabStore
 	WizardRuns controlplane.WizardRunStore
+	Services   controlplane.ServiceRuntimeStore
+	Onboarding controlplane.OnboardingStateStore
 }
 
 var controlPlaneStores struct {

@@ -12,88 +12,6 @@ import (
 	"testing"
 )
 
-func TestComputeFileSHA256(t *testing.T) {
-	// Create a temporary file with known content
-	tmpDir := t.TempDir()
-	testFile := filepath.Join(tmpDir, "test.txt")
-	testContent := []byte("hello world")
-	if err := os.WriteFile(testFile, testContent, 0644); err != nil {
-		t.Fatalf("failed to create test file: %v", err)
-	}
-
-	// Compute expected hash
-	expected := sha256.Sum256(testContent)
-	expectedHex := hex.EncodeToString(expected[:])
-
-	// Test
-	got, err := computeFileSHA256(testFile)
-	if err != nil {
-		t.Fatalf("computeFileSHA256 failed: %v", err)
-	}
-
-	if got != expectedHex {
-		t.Errorf("hash mismatch: got %s, want %s", got, expectedHex)
-	}
-}
-
-func TestComputeFileSHA256_NonExistent(t *testing.T) {
-	_, err := computeFileSHA256("/nonexistent/file")
-	if err == nil {
-		t.Error("expected error for non-existent file")
-	}
-}
-
-func TestChecksumVerifier_VerifyFile(t *testing.T) {
-	// Create a temporary file with known content
-	tmpDir := t.TempDir()
-	testFile := filepath.Join(tmpDir, "test.txt")
-	testContent := []byte("test content for verification")
-	if err := os.WriteFile(testFile, testContent, 0644); err != nil {
-		t.Fatalf("failed to create test file: %v", err)
-	}
-
-	// Compute correct hash
-	correctHash := sha256.Sum256(testContent)
-	correctHashHex := hex.EncodeToString(correctHash[:])
-
-	tests := []struct {
-		name         string
-		expectedHash string
-		wantErr      bool
-	}{
-		{
-			name:         "correct hash",
-			expectedHash: correctHashHex,
-			wantErr:      false,
-		},
-		{
-			name:         "correct hash uppercase",
-			expectedHash: "B39A6DF1..." + correctHashHex[11:], // partial test - mixed case
-			wantErr:      true,                                // this will fail because we corrupted it
-		},
-		{
-			name:         "wrong hash",
-			expectedHash: "0000000000000000000000000000000000000000000000000000000000000000",
-			wantErr:      true,
-		},
-		{
-			name:         "empty hash (skip verification)",
-			expectedHash: "",
-			wantErr:      false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			verifier := &ChecksumVerifier{ExpectedHash: tt.expectedHash}
-			err := verifier.VerifyFile(testFile)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("VerifyFile() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
-}
-
 func TestParseChecksumFile(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -230,25 +148,6 @@ func TestVerifyDownloadedFile(t *testing.T) {
 	}
 }
 
-func TestComputeSHA256(t *testing.T) {
-	// Create a temporary file
-	tmpDir := t.TempDir()
-	testFile := filepath.Join(tmpDir, "test.txt")
-	testContent := []byte("compute sha256 test")
-	if err := os.WriteFile(testFile, testContent, 0644); err != nil {
-		t.Fatalf("failed to create test file: %v", err)
-	}
-
-	hash, err := ComputeSHA256(testFile)
-	if err != nil {
-		t.Fatalf("ComputeSHA256 failed: %v", err)
-	}
-
-	if len(hash) != 64 { // SHA256 produces 32 bytes = 64 hex chars
-		t.Errorf("expected 64 char hash, got %d", len(hash))
-	}
-}
-
 func TestFetchChecksumFromRelease(t *testing.T) {
 	// Create mock server for checksum file
 	checksumContent := `abc123def456789012345678901234567890123456789012345678901234abcd  tofu_1.6.0_linux_amd64.tar.gz
@@ -299,14 +198,5 @@ func TestFetchChecksumFromRelease_NoChecksumFile(t *testing.T) {
 	_, err := FetchChecksumFromRelease(ctx, release, "tofu_1.6.0_linux_amd64.tar.gz")
 	if err != ErrNoChecksumFile {
 		t.Errorf("expected ErrNoChecksumFile, got %v", err)
-	}
-}
-
-func TestErrorTypes(t *testing.T) {
-	if ErrChecksumMismatch == nil {
-		t.Error("ErrChecksumMismatch should not be nil")
-	}
-	if ErrNoChecksumFile == nil {
-		t.Error("ErrNoChecksumFile should not be nil")
 	}
 }

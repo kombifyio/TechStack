@@ -1,7 +1,6 @@
 package rilaction
 
 import (
-	"context"
 	"testing"
 	"time"
 )
@@ -94,13 +93,3 @@ func TestNewLedgerReservationRequestRejectsStaleOrSubstitutedAuthority(t *testin
 		t.Fatal("missing execution admission digest was accepted")
 	}
 }
-
-type testExecutionLedger struct{}
-
-func (testExecutionLedger) Reserve(context.Context, LedgerReservationRequest) (LedgerReservation, error) {
-	return LedgerReservation{Disposition: LedgerInProgress}, nil
-}
-
-func (testExecutionLedger) Complete(context.Context, LedgerCompletion) error { return nil }
-
-var _ ExecutionLedger = testExecutionLedger{}

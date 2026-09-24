@@ -5,49 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
-
-	"github.com/pocketbase/pocketbase/core"
-	"github.com/pocketbase/pocketbase/tools/types"
 
 	"github.com/kombifyio/techstack/internal/providercatalog"
 	"github.com/kombifyio/techstack/pkg/config"
-	"github.com/kombifyio/techstack/pkg/identity"
 	"github.com/kombifyio/techstack/pkg/monthlyruntime"
 )
 
-const managedRuntimeEntitlementDenied = monthlyruntime.ManagedRuntimeEntitlementDeniedMessage
-
 type managedRuntimeFeatureChecker interface {
 	IsEnabled(ctx context.Context, featureKey string, userID string) (bool, error)
-}
-
-type managedRuntimeEntitlementDecision struct {
-	Denied          bool
-	Message         string
-	ProviderID      string
-	ReasonCode      string
-	RequiredFeature []string
-	MissingFeature  []string
-}
-
-func (d managedRuntimeEntitlementDecision) Details() map[string]any {
-	return monthlyruntime.ManagedRuntimeEntitlementDenialDetails(
-		d.ProviderID,
-		d.ReasonCode,
-		d.RequiredFeature,
-		d.MissingFeature,
-	)
-}
-
-func applyRuntimeFieldsFromConfig(stack *core.Record, config map[string]interface{}) {
-	if stack == nil || config == nil {
-		return
-	}
-	for key, value := range runtimeFieldsFromConfig(config) {
-		stack.Set(key, value)
-	}
 }
 
 func runtimeConfigFromRequest(req normalizedCreateStackRequest) map[string]interface{} {
@@ -90,7 +56,7 @@ func validateDeploymentLane(req normalizedCreateStackRequest, mode config.Deploy
 	}
 	policyConfig := runtimePolicyConfigFromRequest(req)
 	fields := runtimeFieldsFromConfig(policyConfig)
-	if mode.IsSaaS() || allowLocalManagedRuntimeE2E() {
+	if mode.IsSaaS() || monthlyruntime.LocalManagedRuntimeE2EAllowed() {
 		return ""
 	}
 	if hasManagedRuntimeFields(policyConfig, fields) {
@@ -99,69 +65,18 @@ func validateDeploymentLane(req normalizedCreateStackRequest, mode config.Deploy
 	return ""
 }
 
-func validateManagedRuntimeEntitlement(ctx context.Context, req normalizedCreateStackRequest, userID string, checker managedRuntimeFeatureChecker) string {
-	decision := evaluateManagedRuntimeEntitlement(ctx, req, userID, checker)
-	if decision.Denied {
-		return decision.Message
-	}
-	return ""
-}
-
-func evaluateManagedRuntimeEntitlement(ctx context.Context, req normalizedCreateStackRequest, userID string, checker managedRuntimeFeatureChecker) managedRuntimeEntitlementDecision {
+func evaluateManagedRuntimeEntitlement(ctx context.Context, req normalizedCreateStackRequest, userID string, checker managedRuntimeFeatureChecker) monthlyruntime.ManagedRuntimeEntitlementDecision {
 	policyConfig := runtimePolicyConfigFromRequest(req)
 	fields := runtimeFieldsFromConfig(policyConfig)
 	if !hasManagedRuntimeFields(policyConfig, fields) {
-		return managedRuntimeEntitlementDecision{}
+		return monthlyruntime.ManagedRuntimeEntitlementDecision{}
 	}
-	if allowLocalManagedRuntimeE2E() {
-		return managedRuntimeEntitlementDecision{}
-	}
-	if managedRuntimeAdminEntitled(ctx) {
-		return managedRuntimeEntitlementDecision{}
-	}
-	providerID := fieldString(fields, providercatalog.ProviderIDField)
-	requiredFeatures := monthlyruntime.RequiredFeatureKeysForProvider(providerID)
-	if checker == nil {
-		return managedRuntimeEntitlementDecision{
-			Denied:          true,
-			Message:         managedRuntimeEntitlementDenied,
-			ProviderID:      providerID,
-			ReasonCode:      monthlyruntime.EntitlementReasonCheckerUnavailable,
-			RequiredFeature: requiredFeatures,
-		}
-	}
-	for _, featureKey := range requiredFeatures {
-		enabled, err := checker.IsEnabled(ctx, featureKey, userID)
-		if err != nil {
-			return managedRuntimeEntitlementDecision{
-				Denied:          true,
-				Message:         managedRuntimeEntitlementDenied,
-				ProviderID:      providerID,
-				ReasonCode:      monthlyruntime.EntitlementReasonFeatureCheckFailed,
-				RequiredFeature: requiredFeatures,
-				MissingFeature:  []string{featureKey},
-			}
-		}
-		if !enabled {
-			return managedRuntimeEntitlementDecision{
-				Denied:          true,
-				Message:         managedRuntimeEntitlementDenied,
-				ProviderID:      providerID,
-				ReasonCode:      monthlyruntime.EntitlementReasonFeatureDisabled,
-				RequiredFeature: requiredFeatures,
-				MissingFeature:  []string{featureKey},
-			}
-		}
-	}
-	return managedRuntimeEntitlementDecision{}
-}
-
-func managedRuntimeAdminEntitled(ctx context.Context) bool {
-	id := identity.FromContext(ctx)
-	if id == nil || !id.IsAuthenticated() {
-		return false
-	}
-	return id.HasRole("admin") || id.HasRole("super_admin") || id.HasRole("global_admin")
+	return monthlyruntime.EvaluateManagedRuntimeEntitlement(
+		ctx,
+		checker,
+		userID,
+		fieldString(fields, providercatalog.ProviderIDField),
+	)
 }
 
 func hasManagedRuntimeFields(policyConfig map[string]interface{}, fields map[string]any) bool {
@@ -192,21 +107,6 @@ func hasManagedRuntimeFields(policyConfig map[string]interface{}, fields map[str
 	return strings.EqualFold(fieldString(fields, "billing_mode"), "subscription")
 }
 
-func allowLocalManagedRuntimeE2E() bool {
-	return strings.EqualFold(strings.TrimSpace(os.Getenv("TECHSTACK_ENV")), "development") &&
-		truthyRuntimeConfigEnv("TECHSTACK_ALLOW_LOCAL_SIMULATION_GATE") &&
-		truthyRuntimeConfigEnv("TECHSTACK_ALLOW_LOCAL_MANAGED_RUNTIME_E2E")
-}
-
-func truthyRuntimeConfigEnv(name string) bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
-	case "1", "true", "yes", "on":
-		return true
-	default:
-		return false
-	}
-}
-
 func fieldString(fields map[string]any, key string) string {
 	value, ok := fields[key]
 	if !ok || value == nil {
@@ -219,8 +119,6 @@ func normalizeRuntimeStackKitRef(value, defaultKit string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "":
 		return ""
-	case "base-kit":
-		return defaultKit
 	case "basement", "basementkit", "basement-kit":
 		return "basement-kit"
 	case "cloud", "cloudkit", "kombify-cloud-kit", "cloud-kit":
@@ -267,6 +165,13 @@ func runtimeFieldsFromConfig(config map[string]interface{}) map[string]any {
 		serverMode = runtimeModeMonthlyRuntime
 	}
 	switch strings.ToLower(strings.TrimSpace(serverProvisioningMode)) {
+	case "hypervisor":
+		if serverMode == "" {
+			serverMode = runtimeModeUserOwned
+		}
+		if serverConnectionMode == "" {
+			serverConnectionMode = "substrate-guard"
+		}
 	case runtimeProvisioningConnectRemote:
 		if serverMode == "" {
 			serverMode = runtimeModeUserOwned
@@ -410,7 +315,13 @@ func mapFromAny(value interface{}) (map[string]interface{}, bool) {
 			out[key] = item
 		}
 		return out, true
-	case types.JSONRaw:
+	case json.RawMessage:
+		var out map[string]interface{}
+		if err := json.Unmarshal(v, &out); err == nil {
+			return out, true
+		}
+		return nil, false
+	case []byte:
 		var out map[string]interface{}
 		if err := json.Unmarshal(v, &out); err == nil {
 			return out, true

@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AddManagedRuntimeServerRequest } from "$lib/api/stacks";
+import type { AddManagedRuntimeServerRequest } from "#lib/api/stacks.js";
 import {
   canonicalizeManagedRuntimeIntent,
   getOrCreateManagedRuntimeIdempotency,
+  getOrCreateStackActionIdempotency,
   settleManagedRuntimeIdempotency,
+  settleStackActionIdempotency,
 } from "./managed-runtime";
 
 const baseRequest: AddManagedRuntimeServerRequest = {
@@ -197,5 +199,31 @@ describe("managed runtime browser idempotency", () => {
     );
 
     expect(replay.key).toBe(newAttempt.key);
+  });
+
+  it("reuses one provision key until the browser attempt reaches a terminal outcome", () => {
+    const createKey = vi.fn(() => "provision-key-1");
+    const first = getOrCreateStackActionIdempotency(
+      window.sessionStorage,
+      " stack-123 ",
+      "provision",
+      createKey,
+    );
+    const replay = getOrCreateStackActionIdempotency(
+      window.sessionStorage,
+      "stack-123",
+      "provision",
+      createKey,
+    );
+
+    settleStackActionIdempotency(window.sessionStorage, replay, { status: 0 });
+    expect(replay.key).toBe(first.key);
+    expect(createKey).toHaveBeenCalledOnce();
+    expect(window.sessionStorage.length).toBe(1);
+
+    settleStackActionIdempotency(window.sessionStorage, replay, {
+      status: 202,
+    });
+    expect(window.sessionStorage.length).toBe(0);
   });
 });

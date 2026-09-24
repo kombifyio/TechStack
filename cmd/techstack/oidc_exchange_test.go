@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/kombifyio/go-common/oidcclient"
+	"github.com/kombifyio/techstack/internal/gocommon/oidcclient"
 )
 
 func TestRotatingOIDCCodeExchangerRetriesNextSecretAfterInvalidClient(t *testing.T) {

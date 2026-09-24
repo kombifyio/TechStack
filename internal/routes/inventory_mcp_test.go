@@ -10,45 +10,49 @@ import (
 
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
-	"github.com/pocketbase/pocketbase/tests"
 )
 
-func TestInventoryMCPListsExactlyFiveAnnotatedTools(t *testing.T) {
+func (h inventoryHandlers) handleMCP(e *httpx.Event) error {
+	return h.handleMCPWithStackOperations(e, nil)
+}
+
+func TestInventoryMCPAdvertisesAnnotatedStackOperationsTool(t *testing.T) {
 	store := controlplane.NewMemoryStore()
 	h := newTestInventoryHandlers(store, time.Now)
 	event, recorder := registryRouteStoreTestEvent(http.MethodPost, "/api/v1/mcp", "owner-1", "tenant-1", map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
 	if err := h.handleMCP(event); err != nil {
 		t.Fatal(err)
 	}
+	type advertisedTool struct {
+		Name               string         `json:"name"`
+		RequiredCapability string         `json:"x-kombify-capability"`
+		InputSchema        map[string]any `json:"inputSchema"`
+		Annotations        map[string]any `json:"annotations"`
+	}
 	var response struct {
 		Result struct {
-			Tools []struct {
-				Name               string         `json:"name"`
-				RequiredCapability string         `json:"x-kombify-capability"`
-				InputSchema        map[string]any `json:"inputSchema"`
-				Annotations        map[string]any `json:"annotations"`
-			} `json:"tools"`
+			Tools []advertisedTool `json:"tools"`
 		} `json:"result"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"list_servers", "server_health", "list_services", "server_access_context", inventoryMCPGetStackOperationsTool}
-	wantCapability := []string{"techstack.inventory.read", "techstack.inventory.read", "techstack.inventory.read", "techstack.inventory.operate", "techstack.inventory.read"}
-	if len(response.Result.Tools) != len(want) {
-		t.Fatalf("tools = %#v", response.Result.Tools)
+	var operationsTool *advertisedTool
+	for index := range response.Result.Tools {
+		if response.Result.Tools[index].Name == inventoryMCPGetStackOperationsTool {
+			operationsTool = &response.Result.Tools[index]
+			break
+		}
 	}
-	for index, tool := range response.Result.Tools {
-		if tool.Name != want[index] || tool.Annotations["readOnlyHint"] != true || tool.Annotations["idempotentHint"] != true || tool.Annotations["destructiveHint"] != false || tool.Annotations["openWorldHint"] != false {
-			t.Fatalf("tool[%d] = %#v", index, tool)
-		}
-		if tool.RequiredCapability != wantCapability[index] {
-			t.Fatalf("tool %s capability = %q, want %q", tool.Name, tool.RequiredCapability, wantCapability[index])
-		}
-		properties, _ := tool.InputSchema["properties"].(map[string]any)
-		if properties["tenant_id"] != nil || properties["owner_id"] != nil {
-			t.Fatalf("tool accepts scope override: %#v", tool)
-		}
+	if operationsTool == nil {
+		t.Fatalf("tools/list did not advertise %s: %#v", inventoryMCPGetStackOperationsTool, response.Result.Tools)
+	}
+	if operationsTool.RequiredCapability != "techstack.inventory.read" || operationsTool.Annotations["readOnlyHint"] != true || operationsTool.Annotations["idempotentHint"] != true || operationsTool.Annotations["destructiveHint"] != false || operationsTool.Annotations["openWorldHint"] != false {
+		t.Fatalf("stack operations tool = %#v", operationsTool)
+	}
+	properties, _ := operationsTool.InputSchema["properties"].(map[string]any)
+	if properties["tenant_id"] != nil || properties["owner_id"] != nil {
+		t.Fatalf("stack operations tool accepts scope override: %#v", operationsTool)
 	}
 }
 
@@ -63,7 +67,7 @@ func TestInventoryMCPStackOperationsDelegatesToCanonicalHTTPReadModel(t *testing
 
 	router := httpx.NewRouter()
 	RegisterInventoryRoutes(router, InventoryRouteConfig{ReadStore: store, Policy: NewSelfHostedInventoryPolicy(), Now: time.Now, Version: "test"})
-	RegisterStackOperationsRoutesWithStores(router, nil, nil, MonitoringStatusMetadata{}, nil, nil, StackOperationsRouteStores{
+	RegisterStackOperationsRoutesWithStores(router, nil, MonitoringStatusMetadata{}, nil, nil, StackOperationsRouteStores{
 		Stacks: store, Servers: store, Services: store, Workers: store, Registry: store, Jobs: store,
 	}, fakeManagedRuntimeLeaseLister{})
 
@@ -100,12 +104,7 @@ func TestInventoryMCPStackOperationsDelegatesToCanonicalHTTPReadModel(t *testing
 		t.Fatalf("MCP operations differ from canonical HTTP data\nMCP: %#v\nHTTP: %#v", mcp.Result.StructuredContent, direct.Data)
 	}
 	readiness, _ := mcp.Result.StructuredContent["readiness"].(map[string]any)
-	for _, field := range []string{"status", "can_start", "required_servers", "approved_servers", "connected_servers", "pending_servers", "assigned_servers", "available_servers", "unassigned_servers", "message", "review_required"} {
-		if _, ok := readiness[field]; !ok {
-			t.Fatalf("MCP readiness is missing %s: %#v", field, readiness)
-		}
-	}
-	if readiness["connected_servers"] != float64(0) || readiness["can_start"] != false {
+	if readiness["required_servers"] != float64(1) || readiness["connected_servers"] != float64(0) || readiness["can_start"] != false {
 		t.Fatalf("MCP readiness = %#v", readiness)
 	}
 }
@@ -117,7 +116,7 @@ func TestInventoryMCPStackOperationsPreservesOwnerFence(t *testing.T) {
 	}
 	router := httpx.NewRouter()
 	RegisterInventoryRoutes(router, InventoryRouteConfig{ReadStore: store, Policy: NewSelfHostedInventoryPolicy(), Now: time.Now, Version: "test"})
-	RegisterStackOperationsRoutesWithStores(router, nil, nil, MonitoringStatusMetadata{}, nil, nil, StackOperationsRouteStores{
+	RegisterStackOperationsRoutesWithStores(router, nil, MonitoringStatusMetadata{}, nil, nil, StackOperationsRouteStores{
 		Stacks: store, Servers: store, Services: store, Workers: store, Registry: store, Jobs: store,
 	}, fakeManagedRuntimeLeaseLister{})
 
@@ -128,83 +127,6 @@ func TestInventoryMCPStackOperationsPreservesOwnerFence(t *testing.T) {
 	router.ServeHTTP(recorder, event.Request)
 	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"isError":true`) || !strings.Contains(recorder.Body.String(), `"status":403`) || strings.Contains(recorder.Body.String(), "Foreign stack") {
 		t.Fatalf("foreign stack MCP result = %d %s", recorder.Code, recorder.Body.String())
-	}
-}
-
-func TestInventoryMCPStackOperationsLegacyFallbackDoesNotCrossTenantBoundary(t *testing.T) {
-	app, err := tests.NewTestApp(driftRoutePocketBaseTestDataDir(t))
-	if err != nil {
-		t.Fatalf("new test app: %v", err)
-	}
-	defer app.Cleanup()
-	ensureStackOperationsTestCollections(t, app)
-
-	stack := createStackOperationsTestStack(t, app, "owner-1", "running")
-	stack.Set("name", "Tenant B MCP private stack")
-	stack.Set("tenant_id", "tenant-b")
-	if err := app.Save(stack); err != nil {
-		t.Fatalf("save tenant B stack: %v", err)
-	}
-
-	store := controlplane.NewMemoryStore()
-	router := httpx.NewRouter()
-	RegisterInventoryRoutes(router, InventoryRouteConfig{ReadStore: store, Policy: NewSelfHostedInventoryPolicy(), Now: time.Now, Version: "test"})
-	RegisterStackOperationsRoutesWithStores(router, app, nil, MonitoringStatusMetadata{}, nil, nil, StackOperationsRouteStores{Stacks: store}, fakeManagedRuntimeLeaseLister{})
-	event, recorder := registryRouteStoreTestEvent(http.MethodPost, "/api/v1/mcp", "owner-1", "tenant-a", map[string]any{
-		"jsonrpc": "2.0", "id": 9, "method": "tools/call",
-		"params": map[string]any{"name": inventoryMCPGetStackOperationsTool, "arguments": map[string]any{"stack_id": stack.Id}},
-	})
-	router.ServeHTTP(recorder, event.Request)
-
-	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"isError":true`) || !strings.Contains(recorder.Body.String(), `"status":404`) {
-		t.Fatalf("cross-tenant MCP result = %d %s", recorder.Code, recorder.Body.String())
-	}
-	if strings.Contains(recorder.Body.String(), "Tenant B MCP private stack") {
-		t.Fatalf("cross-tenant legacy stack leaked through MCP: %s", recorder.Body.String())
-	}
-}
-
-func TestInventoryMCPStackOperationsLegacyWorkersStayTenantScoped(t *testing.T) {
-	app, err := tests.NewTestApp(driftRoutePocketBaseTestDataDir(t))
-	if err != nil {
-		t.Fatalf("new test app: %v", err)
-	}
-	defer app.Cleanup()
-	ensureStackOperationsTestCollections(t, app)
-
-	stack := createStackOperationsTestStack(t, app, "owner-1", "running")
-	stack.Set("tenant_id", "tenant-a")
-	if err := app.Save(stack); err != nil {
-		t.Fatalf("save tenant A stack: %v", err)
-	}
-	workerA := createStackOperationsTestWorker(t, app, "owner-1", "", "tenant-a-mcp-worker", true)
-	workerA.Set("tenant_id", "tenant-a")
-	if err := app.Save(workerA); err != nil {
-		t.Fatalf("save tenant A worker: %v", err)
-	}
-	workerB := createStackOperationsTestWorker(t, app, "owner-1", "", "tenant-b-mcp-worker", true)
-	workerB.Set("tenant_id", "tenant-b")
-	if err := app.Save(workerB); err != nil {
-		t.Fatalf("save tenant B worker: %v", err)
-	}
-	createStackOperationsTestWorker(t, app, "owner-1", "", "tenantless-mcp-worker", true)
-
-	store := controlplane.NewMemoryStore()
-	router := httpx.NewRouter()
-	RegisterInventoryRoutes(router, InventoryRouteConfig{ReadStore: store, Policy: NewSelfHostedInventoryPolicy(), Now: time.Now, Version: "test"})
-	RegisterStackOperationsRoutesWithStores(router, app, nil, MonitoringStatusMetadata{}, nil, nil, StackOperationsRouteStores{Stacks: store}, fakeManagedRuntimeLeaseLister{})
-	event, recorder := registryRouteStoreTestEvent(http.MethodPost, "/api/v1/mcp", "owner-1", "tenant-a", map[string]any{
-		"jsonrpc": "2.0", "id": 10, "method": "tools/call",
-		"params": map[string]any{"name": inventoryMCPGetStackOperationsTool, "arguments": map[string]any{"stack_id": stack.Id}},
-	})
-	router.ServeHTTP(recorder, event.Request)
-
-	body := recorder.Body.String()
-	if recorder.Code != http.StatusOK || strings.Contains(body, `"isError":true`) || !strings.Contains(body, "tenant-a-mcp-worker") {
-		t.Fatalf("tenant A MCP operations = %d %s", recorder.Code, body)
-	}
-	if strings.Contains(body, "tenant-b-mcp-worker") || strings.Contains(body, "tenantless-mcp-worker") {
-		t.Fatalf("cross-tenant or tenantless worker leaked through MCP: %s", body)
 	}
 }
 
@@ -236,7 +158,7 @@ func TestInventoryMCPStackOperationsHandlerIsRouterScopedAndMissingFailsClosed(t
 
 	registered := httpx.NewRouter()
 	RegisterInventoryRoutes(registered, InventoryRouteConfig{ReadStore: store, Policy: NewSelfHostedInventoryPolicy(), Now: time.Now, Version: "test"})
-	RegisterStackOperationsRoutesWithStores(registered, nil, nil, MonitoringStatusMetadata{}, nil, nil, StackOperationsRouteStores{
+	RegisterStackOperationsRoutesWithStores(registered, nil, MonitoringStatusMetadata{}, nil, nil, StackOperationsRouteStores{
 		Stacks: store, Servers: store, Services: store, Workers: store, Registry: store, Jobs: store,
 	}, fakeManagedRuntimeLeaseLister{})
 

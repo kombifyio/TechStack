@@ -320,37 +320,3 @@ func hasHAIndicators(nodes []core.NodeSpec) bool {
 
 	return mainNodes >= 2
 }
-
-// IsKitAvailable checks if a StackKit is available.
-func (r *StackKitResolver) IsKitAvailable(kit string) bool {
-	return r.availableKits[kit]
-}
-
-// GetAvailableKits returns all available StackKits.
-func (r *StackKitResolver) GetAvailableKits() []string {
-	return r.kitList
-}
-
-// AddKit adds a new StackKit to the available kits.
-func (r *StackKitResolver) AddKit(kit string) {
-	kit = CanonicalStackKitName(kit)
-	if !IsSupportedProductStackKit(kit) {
-		return
-	}
-	if !r.availableKits[kit] {
-		r.availableKits[kit] = true
-		r.kitList = append(r.kitList, kit)
-	}
-}
-
-// RemoveKit removes a StackKit from the available kits.
-func (r *StackKitResolver) RemoveKit(kit string) {
-	delete(r.availableKits, kit)
-	// Remove from list
-	for i, k := range r.kitList {
-		if k == kit {
-			r.kitList = append(r.kitList[:i], r.kitList[i+1:]...)
-			break
-		}
-	}
-}

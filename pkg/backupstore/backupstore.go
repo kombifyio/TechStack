@@ -35,7 +35,52 @@ const (
 
 	permissionGroupItemRead  = "Workers R2 Storage Bucket Item Read"
 	permissionGroupItemWrite = "Workers R2 Storage Bucket Item Write"
+
+	// JurisdictionEU is the jurisdiction managed backup stores are created in.
+	// Customer backup bytes are EU-resident (plan
+	// internal/plans/2026-09-18-storage-and-backup-implementation.md §2.4), and
+	// R2 fixes a bucket's jurisdiction at creation: it cannot be changed
+	// afterwards, only re-created elsewhere and copied.
+	JurisdictionEU = "eu"
+	// JurisdictionDefault addresses buckets created before the EU jurisdiction
+	// was pinned. It exists so those buckets stay reachable for census and
+	// cleanup; it is never the resolved value of an unset configuration.
+	JurisdictionDefault = "default"
+
+	// jurisdictionHeader selects the jurisdiction on R2 REST bucket endpoints
+	// (developers.cloudflare.com/api R2 buckets create/delete).
+	jurisdictionHeader = "cf-r2-jurisdiction"
 )
+
+// normalizeJurisdiction resolves a configured R2 jurisdiction against the
+// values Cloudflare accepts. An unset value resolves to eu, never to default:
+// the failure mode of forgetting to configure a jurisdiction must be
+// EU-resident, not silently outside the EU.
+func normalizeJurisdiction(value string) (string, error) {
+	switch resolved := strings.ToLower(strings.TrimSpace(value)); resolved {
+	case "":
+		return JurisdictionEU, nil
+	case JurisdictionEU, JurisdictionDefault, "us", "fedramp", "fedramp-high":
+		return resolved, nil
+	default:
+		return "", fmt.Errorf("backupstore: unsupported R2 jurisdiction %q", value)
+	}
+}
+
+// S3EndpointFor builds the S3-compatible R2 endpoint for a jurisdiction.
+// Only the default jurisdiction is addressed without a host segment; every
+// other jurisdiction inserts its own
+// (developers.cloudflare.com/r2/reference/data-location).
+func S3EndpointFor(accountID, jurisdiction string) (string, error) {
+	resolved, err := normalizeJurisdiction(jurisdiction)
+	if err != nil {
+		return "", err
+	}
+	if resolved == JurisdictionDefault {
+		return fmt.Sprintf("https://%s.r2.cloudflarestorage.com", accountID), nil
+	}
+	return fmt.Sprintf("https://%s.%s.r2.cloudflarestorage.com", accountID, resolved), nil
+}
 
 // Config carries the Cloudflare control credentials used to provision
 // per-stack stores. These are platform credentials (provider-sourced env),
@@ -48,6 +93,10 @@ type Config struct {
 	BaseURL string
 	// HTTPClient overrides the default client in tests.
 	HTTPClient *http.Client
+	// Jurisdiction is the R2 jurisdiction new buckets are created in and the
+	// one existing buckets are addressed through. Empty resolves to
+	// JurisdictionEU.
+	Jurisdiction string
 }
 
 // FromEnv resolves the provisioning configuration. Callers treat an error as
@@ -58,7 +107,11 @@ func FromEnv() (Config, error) {
 	if accountID == "" || token == "" {
 		return Config{}, fmt.Errorf("backupstore requires CLOUDFLARE_ACCOUNT_ID and TECHSTACK_BACKUPSTORE_CF_API_TOKEN")
 	}
-	return Config{AccountID: accountID, APIToken: token}, nil
+	jurisdiction, err := normalizeJurisdiction(os.Getenv("TECHSTACK_BACKUPSTORE_R2_JURISDICTION"))
+	if err != nil {
+		return Config{}, err
+	}
+	return Config{AccountID: accountID, APIToken: token, Jurisdiction: jurisdiction}, nil
 }
 
 // Store is the provisioning result. SecretAccessKey travels by value only to
@@ -83,6 +136,11 @@ func NewClient(cfg Config) (*Client, error) {
 	if cfg.AccountID == "" || cfg.APIToken == "" {
 		return nil, fmt.Errorf("backupstore client requires account id and api token")
 	}
+	jurisdiction, err := normalizeJurisdiction(cfg.Jurisdiction)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Jurisdiction = jurisdiction
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = defaultBaseURL
 	}
@@ -105,9 +163,16 @@ func BucketName(stackID string) string {
 	return strings.TrimRight(name, "-")
 }
 
-// S3Endpoint returns the account's S3-compatible R2 endpoint.
+// S3Endpoint returns the account's S3-compatible R2 endpoint in the client's
+// jurisdiction. It is persisted per store, so a store provisioned before the
+// EU pin keeps addressing the endpoint it was created against.
 func (c *Client) S3Endpoint() string {
-	return fmt.Sprintf("https://%s.r2.cloudflarestorage.com", c.cfg.AccountID)
+	endpoint, err := S3EndpointFor(c.cfg.AccountID, c.cfg.Jurisdiction)
+	if err != nil {
+		// Unreachable: NewClient normalizes and rejects invalid values.
+		return ""
+	}
+	return endpoint
 }
 
 // Provision ensures the stack's bucket exists and mints a fresh bucket-scoped
@@ -202,6 +267,12 @@ func (c *Client) do(ctx context.Context, method, path string, body any) (*cfEnve
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	// R2 bucket endpoints resolve the bucket inside a jurisdiction; without
+	// this header create lands in the default jurisdiction and delete cannot
+	// see an EU bucket at all. Account-scoped token endpoints do not take it.
+	if strings.Contains(path, "/r2/") {
+		req.Header.Set(jurisdictionHeader, c.cfg.Jurisdiction)
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, 0, err
@@ -291,7 +362,7 @@ func (c *Client) resolvePermissionGroups(ctx context.Context) (readID, writeID s
 func (c *Client) createBucketToken(ctx context.Context, bucket, readID, writeID string) (tokenID, tokenValue string, err error) {
 	// Bucket resource shape per developers.cloudflare.com/r2/api/tokens:
 	// com.cloudflare.edge.r2.bucket.<ACCOUNT_ID>_<JURISDICTION>_<BUCKET>.
-	resource := fmt.Sprintf("com.cloudflare.edge.r2.bucket.%s_default_%s", c.cfg.AccountID, bucket)
+	resource := fmt.Sprintf("com.cloudflare.edge.r2.bucket.%s_%s_%s", c.cfg.AccountID, c.cfg.Jurisdiction, bucket)
 	payload := map[string]any{
 		"name": "techstack-backup-" + bucket,
 		"policies": []map[string]any{{

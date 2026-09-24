@@ -1,7 +1,5 @@
-import type {
-  StackKitLifecycleOperation,
-  StackOperationServer,
-} from "$lib/api/stacks";
+import type { StackKitLifecycleOperation } from "#lib/api/stacks.js";
+import type { CanonicalServer } from "#lib/api/registry.js";
 
 export interface ServerLifecycleAction {
   operation: StackKitLifecycleOperation;
@@ -10,6 +8,12 @@ export interface ServerLifecycleAction {
   mutates: boolean;
 }
 
+/**
+ * Presentation only. Which of these a server currently admits is the backend's
+ * answer (`CanonicalServer.stack_actions`), derived there from lifecycle,
+ * connection, agent binding and the observed kit — this module no longer
+ * guesses it from a status string.
+ */
 const actions: Record<StackKitLifecycleOperation, ServerLifecycleAction> = {
   plan: {
     operation: "plan",
@@ -49,55 +53,16 @@ const actions: Record<StackKitLifecycleOperation, ServerLifecycleAction> = {
   },
 };
 
-const applyStates = new Set(["configured", "planned", "ready_to_apply"]);
-const operationalStates = new Set([
-  "active",
-  "deployed",
-  "healthy",
-  "observed",
-  "ready",
-  "running",
-]);
-const driftStates = new Set(["degraded", "drift_detected", "drifted"]);
-
-function normalized(value: string | undefined): string {
-  return value?.trim().toLowerCase() ?? "";
-}
-
-export function canRunServerLifecycleActions(
-  server: StackOperationServer,
-): boolean {
-  const connected = ["connected", "healthy", "running"].includes(
-    normalized(server.status || server.health?.state),
-  );
-  const assigned =
-    server.assignment === "stack" || Boolean(server.techstack_id?.trim());
-  return Boolean(
-    server.agent_id?.trim() && server.approved && assigned && connected,
-  );
-}
-
 /**
- * The current UI contract for contextual lifecycle actions. Unknown states are
- * intentionally read-only: the backend can add an explicit capability model
- * later without the dashboard guessing that a mutation is safe.
+ * The StackKit operations this server currently admits, in the backend's own
+ * order. A grant this build has no presentation for is dropped rather than
+ * rendered as a nameless button, and a server whose read model predates the
+ * capability field offers nothing — absent is not "everything".
  */
 export function serverLifecycleActions(
-  server: StackOperationServer,
+  server: CanonicalServer | undefined,
 ): ServerLifecycleAction[] {
-  if (!canRunServerLifecycleActions(server)) return [];
-
-  const state = normalized(server.stackkit?.state);
-  const result = [actions.plan];
-
-  if (state) result.push(actions.verify);
-  if (applyStates.has(state)) result.push(actions.apply);
-  if (operationalStates.has(state)) {
-    result.push(actions.upgrade, actions.drift_detect);
-  }
-  if (driftStates.has(state)) {
-    result.push(actions.drift_detect, actions.drift_reconcile);
-  }
-
-  return result;
+  return (server?.stack_actions ?? [])
+    .map((operation) => actions[operation as StackKitLifecycleOperation])
+    .filter((action): action is ServerLifecycleAction => Boolean(action));
 }

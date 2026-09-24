@@ -7,8 +7,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/httpx"
+	"github.com/kombifyio/techstack/pkg/logger"
 	"github.com/kombifyio/techstack/pkg/stackrouting"
 )
 
@@ -22,9 +24,9 @@ type putStackRoutingRequest struct {
 }
 
 func (h crudRouteHandlers) getStackRouting(e *httpx.Event) error {
-	principal, ok := routingPrincipal(e)
-	if !ok {
-		return nil
+	principal, err := routingPrincipal(e, "techstack.stack.routing.read")
+	if err != nil {
+		return err
 	}
 	view, err := h.routingService().Get(e.Request.Context(), principal, strings.TrimSpace(e.Request.PathValue("id")))
 	if err != nil {
@@ -35,9 +37,9 @@ func (h crudRouteHandlers) getStackRouting(e *httpx.Event) error {
 }
 
 func (h crudRouteHandlers) listStackRoutingTargets(e *httpx.Event) error {
-	principal, ok := routingPrincipal(e)
-	if !ok {
-		return nil
+	principal, err := routingPrincipal(e, "techstack.stack.routing.targets.read")
+	if err != nil {
+		return err
 	}
 	targets, err := h.routingService().ListTargets(e.Request.Context(), principal, strings.TrimSpace(e.Request.PathValue("id")))
 	if err != nil {
@@ -48,9 +50,9 @@ func (h crudRouteHandlers) listStackRoutingTargets(e *httpx.Event) error {
 }
 
 func (h crudRouteHandlers) putStackRouting(e *httpx.Event) error {
-	principal, ok := routingPrincipal(e)
-	if !ok {
-		return nil
+	principal, err := routingPrincipal(e, "techstack.stack.routing.update")
+	if err != nil {
+		return err
 	}
 	var req putStackRoutingRequest
 	if err := e.BindBody(&req); err != nil {
@@ -72,6 +74,10 @@ func (h crudRouteHandlers) putStackRouting(e *httpx.Event) error {
 		ExpectedRevision: expectedRevision,
 	})
 	if err != nil {
+		logger.Default().Error("stack_routing_ensure_failed",
+			"stack_id", strings.TrimSpace(e.Request.PathValue("id")),
+			"error", err,
+		)
 		return writeRoutingError(e, err)
 	}
 	writeRoutingHeaders(e, view.Desired.Revision)
@@ -94,19 +100,16 @@ func (h crudRouteHandlers) routingService() stackrouting.Service {
 	return stackrouting.Service{Stacks: h.stackStore, Servers: h.serverStore, Store: h.routingStore, Leases: leases, Dispatcher: dispatcher}
 }
 
-func routingPrincipal(e *httpx.Event) (stackrouting.Principal, bool) {
-	ownerID, authenticated := authenticatedStackUserID(e)
-	if !authenticated {
-		_ = httpx.Unauthorized(e, "")
-		return stackrouting.Principal{}, false
+func routingPrincipal(e *httpx.Event, capability string) (stackrouting.Principal, error) {
+	ownerID, authErr := requireStackAuth(e)
+	if authErr != nil {
+		return stackrouting.Principal{}, authErr
 	}
-	tenantID := tenantIDFromRequest(e)
-	if tenantID == "" {
-		_ = httpx.Error(e, http.StatusUnprocessableEntity, ksapi.ErrCodeValidation,
-			"Tenant identity is required for stack routing", map[string]any{detailsKeyReasonCode: "tenant_unresolved"})
-		return stackrouting.Principal{}, false
+	tenantID, tenantErr := tenantguard.TenantScope(tenantIDFromRequest(e), ownerID, capability)
+	if tenantErr != nil {
+		return stackrouting.Principal{}, tenantErr
 	}
-	return stackrouting.Principal{TenantID: tenantID, OwnerSubjectID: ownerID}, true
+	return stackrouting.Principal{TenantID: tenantID, OwnerSubjectID: ownerID}, nil
 }
 
 func parseRoutingIfMatch(value string) (*int64, error) {

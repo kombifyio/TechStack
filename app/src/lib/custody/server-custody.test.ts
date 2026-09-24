@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { StackOperationServer } from "$lib/api/stacks";
+import type { StackOperationServer } from "#lib/api/stacks.js";
 import { isLegacyOrUnboundCustody } from "./server-custody";
 
 function server(

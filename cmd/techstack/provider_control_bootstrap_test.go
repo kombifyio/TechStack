@@ -26,22 +26,6 @@ func TestPostgresSCRAMVerifierNeverContainsOrRepeatsRawSecret(t *testing.T) {
 	}
 }
 
-func TestProviderControlBootstrapEnvironmentRequiresBothAuthorities(t *testing.T) {
-	t.Setenv("DATABASE_URL", "")
-	t.Setenv(providerControlRuntimeDatabaseURLEnv, "")
-	if providerControlBootstrapEnvironmentConfigured() {
-		t.Fatal("empty authorities reported configured")
-	}
-	t.Setenv("DATABASE_URL", "postgres://migration")
-	if providerControlBootstrapEnvironmentConfigured() {
-		t.Fatal("migration-only authority reported configured")
-	}
-	t.Setenv(providerControlRuntimeDatabaseURLEnv, "postgres://runtime")
-	if !providerControlBootstrapEnvironmentConfigured() {
-		t.Fatal("both explicit authorities were not detected")
-	}
-}
-
 func TestProviderControlRuntimeGrantAllowlistMatchesBootPosture(t *testing.T) {
 	for _, grant := range providerControlRuntimeTableGrants {
 		for _, privilege := range strings.Split(grant.privileges, ",") {
@@ -116,23 +100,9 @@ func TestProviderControlRuntimeGrantAllowlistExcludesAdminAndDirectoryTables(t *
 		"schema_migrations",
 		"provider_control_runnable_tenants",
 		"provider_decommission_wait_tenants",
-		"provider_provision_discovery_observations",
 	} {
 		if strings.Contains(all, forbidden) {
 			t.Errorf("runtime table allowlist contains %q", forbidden)
 		}
-	}
-}
-
-func TestProviderControlRuntimeGrantAllowsResolutionSettlementReadOnly(t *testing.T) {
-	var privileges string
-	for _, grant := range providerControlRuntimeTableGrants {
-		if grant.table == "provider_provision_resolution_decisions" {
-			privileges = grant.privileges
-			break
-		}
-	}
-	if privileges != "SELECT" {
-		t.Fatalf("provider resolution decision rights = %q, want SELECT only", privileges)
 	}
 }

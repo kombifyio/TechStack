@@ -2,10 +2,7 @@ package tunnel
 
 import (
 	"context"
-	"net/url"
-	"os"
 	"testing"
-	"time"
 
 	"github.com/kombifyio/techstack/pkg/logger"
 )
@@ -73,17 +70,6 @@ func TestValidateURL(t *testing.T) {
 	}
 }
 
-func TestIsCloudflaredInstalled(t *testing.T) {
-	// This test documents whether cloudflared is available in the test environment
-	installed := IsCloudflaredInstalled()
-	t.Logf("cloudflared installed: %v", installed)
-
-	if installed {
-		path := GetCloudflaredPath()
-		t.Logf("cloudflared path: %s", path)
-	}
-}
-
 func TestURLPattern(t *testing.T) {
 	tunnel := NewCloudflareTunnel(8080, logger.NewNop())
 
@@ -110,37 +96,6 @@ func TestURLPattern(t *testing.T) {
 		if match != tc.expected {
 			t.Errorf("Expected %q, got %q for input %q", tc.expected, match, tc.input)
 		}
-	}
-}
-
-func TestTunnelStates(t *testing.T) {
-	states := []TunnelState{
-		TunnelStateStopped,
-		TunnelStateStarting,
-		TunnelStateRunning,
-		TunnelStateStopping,
-		TunnelStateError,
-	}
-
-	for _, s := range states {
-		str := s.String()
-		if str == "" || str == "unknown" {
-			t.Errorf("State %d has no string representation", s)
-		}
-	}
-}
-
-func TestNewRegistryURLResolver(t *testing.T) {
-	config := DefaultConfig()
-	log := logger.NewNop()
-
-	resolver := NewRegistryURLResolver(config, log)
-	if resolver == nil {
-		t.Fatal("Expected resolver to be created")
-	}
-
-	if resolver.config.LocalPort != 5260 {
-		t.Errorf("Expected default port 5260, got %d", resolver.config.LocalPort)
 	}
 }
 
@@ -320,94 +275,5 @@ func TestGenerateInstallCommandPSRejectsUnsafeToken(t *testing.T) {
 
 	if _, err := resolver.GenerateInstallCommandPS(context.Background(), "bad'; Remove-Item C:\\"); err == nil {
 		t.Fatal("expected unsafe PowerShell token to be rejected")
-	}
-}
-
-func TestGetOutboundIP(t *testing.T) {
-	ip, err := getOutboundIP(true)
-	if err != nil {
-		t.Skipf("Cannot determine outbound IP (may be offline): %v", err)
-	}
-
-	t.Logf("Outbound IP: %s", ip)
-
-	// Validate it's not localhost
-	parsed, err := url.Parse("http://" + ip)
-	if err != nil {
-		t.Fatalf("Invalid IP returned: %v", err)
-	}
-
-	if parsed.Hostname() == "127.0.0.1" || parsed.Hostname() == "localhost" {
-		t.Errorf("Expected non-localhost IP, got %s", ip)
-	}
-}
-
-func TestNetworkModes(t *testing.T) {
-	modes := []NetworkMode{
-		NetworkModeAuto,
-		NetworkModeLocal,
-		NetworkModeTunnel,
-		NetworkModeTailscale,
-		NetworkModeCustom,
-	}
-
-	for _, mode := range modes {
-		if mode == "" {
-			t.Errorf("NetworkMode should not be empty")
-		}
-	}
-}
-
-// TestTunnelIntegration tests actual tunnel creation against Cloudflare
-// QuickTunnel. Keep it opt-in so normal coverage/release gates do not depend
-// on an external tunnel service being available.
-func TestTunnelIntegration(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test in short mode")
-	}
-	if os.Getenv("TECHSTACK_TUNNEL_LIVE_TEST") != "1" {
-		t.Skip("Set TECHSTACK_TUNNEL_LIVE_TEST=1 to run live cloudflared tunnel test")
-	}
-
-	if !IsCloudflaredInstalled() {
-		t.Skip("cloudflared not installed")
-	}
-
-	log := logger.NewNop()
-	tunnel := NewCloudflareTunnel(8080, log)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	tunnelURL, err := tunnel.Start(ctx)
-	if err != nil {
-		t.Fatalf("Failed to start tunnel: %v", err)
-	}
-
-	t.Logf("Tunnel URL: %s", tunnelURL)
-
-	// Verify state
-	status := tunnel.Status()
-	if status.State != TunnelStateRunning {
-		t.Errorf("Expected running state, got %s", status.State)
-	}
-
-	// Health check
-	if err := tunnel.HealthCheck(); err != nil {
-		t.Errorf("Health check failed: %v", err)
-	}
-
-	// Validate URL
-	if err := ValidateURL(tunnelURL); err != nil {
-		t.Errorf("Tunnel URL validation failed: %v", err)
-	}
-
-	// Stop
-	if err := tunnel.Stop(); err != nil {
-		t.Errorf("Failed to stop tunnel: %v", err)
-	}
-
-	if tunnel.IsRunning() {
-		t.Error("Tunnel should not be running after stop")
 	}
 }

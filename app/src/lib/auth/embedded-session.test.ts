@@ -20,15 +20,15 @@ const bridgeState = vi.hoisted(() => ({
   requestAuthToken: vi.fn(async () => "portal-token"),
 }));
 
-vi.mock("$app/environment", () => ({
+vi.mock("$app/env", () => ({
   browser: true,
 }));
 
-vi.mock("$lib/stores/auth.svelte", () => ({
+vi.mock("#lib/stores/auth.svelte.js", () => ({
   authStore: authState,
 }));
 
-vi.mock("$lib/stores/postMessageBridge", () => bridgeState);
+vi.mock("#lib/stores/postMessageBridge.js", () => bridgeState);
 
 function mockParent(parent: Window | object) {
   Object.defineProperty(window, "parent", {

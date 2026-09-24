@@ -16,12 +16,19 @@ export type AuthRecoveryOutcome =
   | "recovered"
   | "redirecting"
   | "reauth_required"
-  | "modal_shown";
+  | "modal_shown"
+  // The origin refused the gateway decision. No call site treats this as
+  // needing re-auth, which is the point: re-authenticating cannot fix it.
+  | "origin_unverifiable";
 
-export const AUTO_RELOGIN_MARKER_KEY = "techstack:auth:auto_relogin_at";
+export const AUTO_RELOGIN_MARKER_KEY = "techstack:auth:spa_gateway_login_at";
 export const AUTO_RELOGIN_TTL_MS = 10 * 60_000;
+export const GATEWAY_LOGIN_REDIRECTING_CODE = "gateway_login_redirecting";
 
-const GATEWAY_FAILURE_CODES = new Set(["gateway_auth_unavailable"]);
+const GATEWAY_FAILURE_CODES = new Set([
+  "gateway_auth_unavailable",
+  GATEWAY_LOGIN_REDIRECTING_CODE,
+]);
 
 const AUTH0_SILENT_FAILURE_CODES = new Set([
   "login_required",
@@ -53,10 +60,52 @@ export function isGatewayAuthFailure(err: unknown): boolean {
   ) {
     return true;
   }
-  if (err instanceof Error && GATEWAY_FAILURE_CODES.has(err.message.trim())) {
+  const message =
+    err instanceof Error
+      ? err.message.trim()
+      : typeof candidate.message === "string"
+        ? candidate.message.trim()
+        : "";
+  if (GATEWAY_FAILURE_CODES.has(message)) return true;
+  if (AUTH0_SILENT_FAILURE_CODES.has(message)) return true;
+  return false;
+}
+
+export function isSilentAuthFailure(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const candidate = err as { error?: unknown; message?: unknown; code?: unknown };
+  if (
+    typeof candidate.error === "string" &&
+    AUTH0_SILENT_FAILURE_CODES.has(candidate.error)
+  ) {
     return true;
   }
-  return false;
+  if (
+    typeof candidate.code === "string" &&
+    AUTH0_SILENT_FAILURE_CODES.has(candidate.code)
+  ) {
+    return true;
+  }
+  const message =
+    err instanceof Error
+      ? err.message.trim()
+      : typeof candidate.message === "string"
+        ? candidate.message.trim()
+        : "";
+  return AUTH0_SILENT_FAILURE_CODES.has(message);
+}
+
+export function isGatewayLoginRedirecting(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const candidate = err as { code?: unknown; message?: unknown };
+  if (candidate.code === GATEWAY_LOGIN_REDIRECTING_CODE) return true;
+  const message =
+    err instanceof Error
+      ? err.message.trim()
+      : typeof candidate.message === "string"
+        ? candidate.message.trim()
+        : "";
+  return message === GATEWAY_LOGIN_REDIRECTING_CODE;
 }
 
 export function classifyAuthFailure(

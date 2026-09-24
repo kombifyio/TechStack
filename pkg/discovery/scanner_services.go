@@ -13,7 +13,7 @@ func identifyService(port int) DiscoveredService {
 		5260: "techstack",
 		5263: "techstack-grpc",
 		6443: "kubernetes",
-		8006: "proxmox",
+		8006: "https", // A port alone is not a Proxmox fingerprint.
 		8080: "http-alt",
 		9090: "prometheus",
 		9100: "node-exporter",

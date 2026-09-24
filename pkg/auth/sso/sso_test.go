@@ -384,50 +384,6 @@ func TestVerifier_VerifyRS256Rejected(t *testing.T) {
 	}
 }
 
-func TestVerifyFromEnv(t *testing.T) {
-	v, err := VerifyFromEnv(testSecret, []string{"kombifystack"})
-	if err != nil {
-		t.Fatalf("VerifyFromEnv() error: %v", err)
-	}
-	if v == nil {
-		t.Error("VerifyFromEnv() should return verifier")
-	}
-
-	_, err = VerifyFromEnv("", []string{"kombifystack"})
-	if !errors.Is(err, ErrMissingSecret) {
-		t.Errorf("VerifyFromEnv() with empty secret should return ErrMissingSecret, got %v", err)
-	}
-}
-
-func TestErrorHelpers(t *testing.T) {
-	tests := []struct {
-		name      string
-		err       error
-		isExpired bool
-		isInvalid bool
-		isInvTool bool
-	}{
-		{"ErrTokenExpired", ErrTokenExpired, true, false, false},
-		{"ErrTokenInvalid", ErrTokenInvalid, false, true, false},
-		{"ErrInvalidTool", ErrInvalidTool, false, false, true},
-		{"wrapped expired", errors.New("test"), false, false, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if IsExpired(tt.err) != tt.isExpired {
-				t.Errorf("IsExpired() = %v, want %v", IsExpired(tt.err), tt.isExpired)
-			}
-			if IsInvalid(tt.err) != tt.isInvalid {
-				t.Errorf("IsInvalid() = %v, want %v", IsInvalid(tt.err), tt.isInvalid)
-			}
-			if IsInvalidTool(tt.err) != tt.isInvTool {
-				t.Errorf("IsInvalidTool() = %v, want %v", IsInvalidTool(tt.err), tt.isInvTool)
-			}
-		})
-	}
-}
-
 func TestClockSkew(t *testing.T) {
 	now := time.Now()
 

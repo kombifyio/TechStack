@@ -34,16 +34,6 @@ type PreCheckResult struct {
 	Error   string         `json:"error,omitempty"`
 }
 
-// ToCoreResult converts to the core.PreCheckResult type for gRPC transport.
-func (r *PreCheckResult) ToCoreResult() core.PreCheckResult {
-	return core.PreCheckResult{
-		Type:    r.Type,
-		Status:  string(r.Status),
-		Details: r.Details,
-		Error:   r.Error,
-	}
-}
-
 // PreCheckRunner executes pre-check definitions on the agent.
 type PreCheckRunner struct {
 	checks  []core.PreCheckDefinition
@@ -58,17 +48,6 @@ func NewPreCheckRunner(checks []core.PreCheckDefinition) *PreCheckRunner {
 	}
 }
 
-// WithTimeout sets the timeout for each individual check.
-func (r *PreCheckRunner) WithTimeout(timeout time.Duration) *PreCheckRunner {
-	r.timeout = timeout
-	return r
-}
-
-// SetChecks replaces the current checks with new ones.
-func (r *PreCheckRunner) SetChecks(checks []core.PreCheckDefinition) {
-	r.checks = checks
-}
-
 // RunAll executes all registered pre-checks and returns results.
 func (r *PreCheckRunner) RunAll(ctx context.Context) []PreCheckResult {
 	results := make([]PreCheckResult, 0, len(r.checks))
@@ -77,25 +56,6 @@ func (r *PreCheckRunner) RunAll(ctx context.Context) []PreCheckResult {
 		results = append(results, result)
 	}
 	return results
-}
-
-// RunBlocking executes only blocking checks and returns true if all passed.
-func (r *PreCheckRunner) RunBlocking(ctx context.Context) ([]PreCheckResult, bool) {
-	var blockingResults []PreCheckResult
-	allPassed := true
-
-	for _, check := range r.checks {
-		if !check.Blocking {
-			continue
-		}
-		result := r.runCheck(ctx, check)
-		blockingResults = append(blockingResults, result)
-		if result.Status == PreCheckStatusFailed {
-			allPassed = false
-		}
-	}
-
-	return blockingResults, allPassed
 }
 
 // runCheck executes a single pre-check with timeout.

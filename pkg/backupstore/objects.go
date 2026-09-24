@@ -3,6 +3,7 @@ package backupstore
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 
@@ -28,17 +29,53 @@ type S3Purger struct {
 }
 
 // S3PurgerFromEnv builds the purger from the platform R2 admin credentials.
-func S3PurgerFromEnv(accountID string) (*S3Purger, error) {
+// The jurisdiction must match the one the buckets were created in: an
+// EU-jurisdiction bucket is not reachable through the default endpoint, so a
+// purger built against the wrong jurisdiction silently finds nothing to
+// delete and leaves customer objects behind.
+func S3PurgerFromEnv(accountID, jurisdiction string) (*S3Purger, error) {
 	accessKey := strings.TrimSpace(os.Getenv("R2_ACCESS_KEY_ID"))
 	secretKey := strings.TrimSpace(os.Getenv("R2_SECRET_ACCESS_KEY"))
 	if accessKey == "" || secretKey == "" {
 		return nil, fmt.Errorf("backupstore purge requires R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY")
 	}
+	expected, err := S3EndpointFor(accountID, jurisdiction)
+	if err != nil {
+		return nil, err
+	}
 	endpoint := strings.TrimSpace(os.Getenv("R2_ENDPOINT"))
 	if endpoint == "" {
-		endpoint = fmt.Sprintf("https://%s.r2.cloudflarestorage.com", accountID)
+		return NewS3Purger(expected, accessKey, secretKey)
+	}
+	// R2_ENDPOINT is a shared operator override and is currently set to the
+	// default jurisdiction. Letting it win silently would point the purger at
+	// a jurisdiction the buckets are not in, where every list returns empty
+	// and the wipe reports success while leaving customer objects behind.
+	// A mismatch is a configuration error, not a preference.
+	if !sameS3Host(endpoint, expected) {
+		return nil, fmt.Errorf(
+			"backupstore purge: R2_ENDPOINT addresses a different R2 jurisdiction than %q; unset it or align it with the configured jurisdiction",
+			jurisdiction)
 	}
 	return NewS3Purger(endpoint, accessKey, secretKey)
+}
+
+// sameS3Host compares two R2 endpoints by host, so a trailing slash or a
+// scheme difference does not read as a jurisdiction mismatch.
+func sameS3Host(candidate, expected string) bool {
+	parse := func(value string) string {
+		value = strings.TrimSpace(value)
+		if !strings.Contains(value, "://") {
+			value = "https://" + value
+		}
+		parsed, err := url.Parse(value)
+		if err != nil {
+			return ""
+		}
+		return strings.ToLower(parsed.Host)
+	}
+	candidateHost, expectedHost := parse(candidate), parse(expected)
+	return candidateHost != "" && candidateHost == expectedHost
 }
 
 func NewS3Purger(endpoint, accessKey, secretKey string) (*S3Purger, error) {
@@ -75,6 +112,9 @@ func (p *S3Purger) PurgeBucket(ctx context.Context, bucket string) error {
 		}
 		objects := make([]types.ObjectIdentifier, 0, len(page.Contents))
 		for _, object := range page.Contents {
+			if strings.HasPrefix(aws.ToString(object.Key), "home-assistant/migrations/") {
+				return fmt.Errorf("retained Home Assistant migration archives require explicit retention authorization before bucket cleanup")
+			}
 			objects = append(objects, types.ObjectIdentifier{Key: object.Key})
 		}
 		out, err := p.client.DeleteObjects(ctx, &s3.DeleteObjectsInput{

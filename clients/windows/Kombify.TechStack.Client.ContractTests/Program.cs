@@ -1,4 +1,5 @@
 using Kombify.TechStack.Client;
+using Kombify.Client.Shell;
 
 if (args.Contains("--credential-roundtrip", StringComparer.Ordinal))
 {
@@ -47,6 +48,7 @@ const string ValidLocal = """
 
 var tests = new (string Name, Action Execute)[]
 {
+    ("local startup opens the device-session entry without mode selection", AssertLocalStartupEntry),
     ("self-hosted HTTPS profile", () => Parse(ValidSelfHosted, "https://home.example.net/")),
     ("local loopback profile", () => Parse(ValidLocal, "http://127.0.0.1:5260/")),
     ("remote HTTP rejected", () => MustFail(() => ClientConnectionProfileValidator.NormalizeConfiguredEndpoint("http://home.example.net/"))),
@@ -73,6 +75,48 @@ foreach (var test in tests)
     }
 }
 return 0;
+
+static void AssertLocalStartupEntry()
+{
+    var previous = Environment.GetEnvironmentVariable("TECHSTACK_CLIENT_STATE_DIR");
+    var state = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "kombify", $"techstack-client-startup-{Guid.NewGuid():N}");
+    try
+    {
+        Environment.SetEnvironmentVariable("TECHSTACK_CLIENT_STATE_DIR", state);
+        AssertEntry(ClientConfig.Load([]), "http://127.0.0.1:5260/client/local?client=windows");
+
+        Directory.CreateDirectory(state);
+        foreach (var path in new[] { "onboarding", "local" })
+        {
+            File.WriteAllText(ClientConfig.ConfigPath(),
+                $$"""{"mode":"local","localOnboardingUrl":"http://127.0.0.1:5260/client/{{path}}?client=windows"}""");
+            AssertEntry(ClientConfig.Load([]), "http://127.0.0.1:5260/client/local?client=windows");
+        }
+
+        AssertEntry(ClientConfig.Load(["--cloud-ui-url", "https://cloud.example.test/"]),
+            "https://cloud.example.test/");
+        AssertEntry(ClientConfig.Load(["--url", "https://home.example.test/"]),
+            "https://home.example.test/");
+        AssertEntry(ClientConfig.Load(["--local-onboarding-url", "http://127.0.0.1:6270/client/local?client=windows"]),
+            "http://127.0.0.1:6270/client/local?client=windows");
+    }
+    finally
+    {
+        Environment.SetEnvironmentVariable("TECHSTACK_CLIENT_STATE_DIR", previous);
+        if (File.Exists(Path.Combine(state, "client.json"))) File.Delete(Path.Combine(state, "client.json"));
+        if (Directory.Exists(state)) Directory.Delete(state);
+    }
+}
+
+static void AssertEntry(ClientConfig config, string expected)
+{
+    if (!string.Equals(config.InitialUrl(), expected, StringComparison.Ordinal))
+    {
+        throw new InvalidOperationException($"Client opened {config.InitialUrl()} instead of {expected}.");
+    }
+}
 
 static ClientConnectionProfile Parse(string json, string endpoint)
 {

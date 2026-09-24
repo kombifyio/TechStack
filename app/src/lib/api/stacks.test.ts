@@ -3,24 +3,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   addManagedRuntimeServer,
   assignStackWorker,
-  createStack,
   decommissionMonthlyRuntime,
   deployStack,
   exportKombinationSpec,
   forceDecommissionMonthlyRuntime,
-  getStack,
+  getKitDeployment,
   getMonthlyRuntimeOfferings,
   getMonthlyRuntimeOperations,
   getMonthlyRuntimeStatus,
   importKombinationSpec,
   validateKombinationImport,
-  pruneOrphanStacks,
+  applyOrphanCleanup,
+  planOrphanCleanup,
   provisionStack,
   reconnectMonthlyRuntime,
   resolveMonthlyRuntimeCustody,
+  runStackKitLifecycleOperation,
   resumeStackEnrollment,
   retryStackRollout,
-  startMonthlyRuntime,
 } from "./stacks";
 
 describe("stacks api", () => {
@@ -78,6 +78,7 @@ describe("stacks api", () => {
           JSON.stringify({
             data: {
               id: "stack-123",
+              kit_deployment_id: "stack-123",
               name: "Demo Stack",
               provider: "local",
               state: "running",
@@ -93,13 +94,15 @@ describe("stacks api", () => {
       if (url.includes("/api/v1/stacks/stack-123/export")) {
         return new Response(
           JSON.stringify({
-            stack_spec: {
-              name: "configured-stack",
-              stackkit: "basement-kit",
-              services: { homepage: { enabled: true } },
+            data: {
+              stack_spec: {
+                name: "configured-stack",
+                stackkit: "basement-kit",
+                services: { homepage: { enabled: true } },
+              },
+              kit_deployment_id: "stack-123",
+              exported_at: "2026-05-13T00:00:00Z",
             },
-            stack_id: "stack-123",
-            exported_at: "2026-05-13T00:00:00Z",
           }),
           { status: 200, headers: { "content-type": "application/json" } },
         );
@@ -119,7 +122,7 @@ describe("stacks api", () => {
         return new Response(
           JSON.stringify({
             data: {
-              stack_id: "stack-imported",
+              kit_deployment_id: "stack-imported",
               job_id: "job-imported",
               name: "Imported Stack",
               state: "provisioning",
@@ -133,7 +136,7 @@ describe("stacks api", () => {
         return new Response(
           JSON.stringify({
             data: {
-              stack_id: "stack-123",
+              kit_deployment_id: "stack-123",
               worker_id: "worker-1",
               server: {
                 id: "worker-1",
@@ -141,6 +144,7 @@ describe("stacks api", () => {
                 role: "worker",
                 status: "healthy",
                 assignment: "stack",
+                kit_deployment_id: "stack-123",
                 agent_id: "agent-1",
                 approved: true,
                 precheck_state: "passed",
@@ -163,7 +167,7 @@ describe("stacks api", () => {
         return new Response(
           JSON.stringify({
             data: {
-              stack_id: "stack-123",
+              kit_deployment_id: "stack-123",
               job_id: "job-native-1",
               lease_id: "lease-stack-123-worker-abcd1234",
               runtime_server_id: "server-native-1",
@@ -186,9 +190,20 @@ describe("stacks api", () => {
         return new Response(
           JSON.stringify({
             data: {
-              message: "Orphan stacks pruned",
-              pruned_stacks: 2,
-              skipped_active: 1,
+              mode: "dry_run",
+              message: "Control-plane cleanup plan ready",
+              digest: "sha256:cleanup-plan",
+              candidates: [
+                {
+                  resource_type: "stack_projection",
+                  id: "stack-123",
+                  name: "e2e-stack-123",
+                  class: "e2e_test_stack",
+                  reason:
+                    "owned_e2e_projection_without_live_lease_or_recent_worker",
+                },
+              ],
+              applied: { stacks: 0, workers: 0, total: 0 },
             },
           }),
           { status: 200, headers: { "content-type": "application/json" } },
@@ -215,23 +230,29 @@ describe("stacks api", () => {
   });
 
   it("starts rollout through the deploy endpoint, not provision", async () => {
-    const result = await deployStack("stack-123");
+    const result = await deployStack("stack-123", "deploy-attempt-1");
 
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining("/api/v1/stacks/stack-123/deploy"),
       expect.objectContaining({ method: "POST" }),
     );
     expect(String(fetchMock.mock.calls[0][0])).not.toContain("/provision");
+    expect(
+      new Headers(fetchMock.mock.calls[0][1]?.headers).get("Idempotency-Key"),
+    ).toBe("deploy-attempt-1");
     expect(result.job_id).toBe("job-123");
   });
 
   it("restarts provisioning from the persisted Wizard stack", async () => {
-    const result = await provisionStack("stack-123");
+    const result = await provisionStack("stack-123", "provision-attempt-1");
 
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining("/api/v1/stacks/stack-123/provision"),
       expect.objectContaining({ method: "POST" }),
     );
+    expect(
+      new Headers(fetchMock.mock.calls[0][1]?.headers).get("Idempotency-Key"),
+    ).toBe("provision-attempt-1");
     expect(result.job_id).toBe("job-123");
   });
 
@@ -242,7 +263,7 @@ describe("stacks api", () => {
           data: {
             success: true,
             message: "Enrollment rollout recovery accepted",
-            stack_id: "stack-123",
+            kit_deployment_id: "stack-123",
             job_id: "job-enrollment-replacement",
             source_job_id: "job-waiting",
             lease_id: "lease-existing",
@@ -269,6 +290,7 @@ describe("stacks api", () => {
     expect(String(url)).not.toContain("/deploy");
     expect(String(url)).not.toContain("monthly-runtimes");
     expect(result).toMatchObject({
+      kit_deployment_id: "stack-123",
       job_id: "job-enrollment-replacement",
       source_job_id: "job-waiting",
       lease_id: "lease-existing",
@@ -284,7 +306,7 @@ describe("stacks api", () => {
           data: {
             success: true,
             message: "Exact rollout retry accepted",
-            stack_id: "stack-123",
+            kit_deployment_id: "stack-123",
             job_id: "job-rollout-replacement",
             source_job_id: "job-failed",
             lease_id: "lease-existing",
@@ -307,28 +329,21 @@ describe("stacks api", () => {
       source_job_id: "job-failed",
       lease_id: "lease-existing",
     });
-    expect(result.provider_vm_create_requested).toBe(false);
+    expect(result).toMatchObject({
+      kit_deployment_id: "stack-123",
+      provider_vm_create_requested: false,
+    });
   });
 
-  it("sends the wizard idempotency key on stack creation", async () => {
-    await createStack({ name: "Demo", services: [] }, "wizard-attempt-1");
-
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(String(url)).toContain("/api/v1/stacks");
-    expect(init?.method).toBe("POST");
-    expect(new Headers(init?.headers).get("X-Idempotency-Key")).toBe(
-      "wizard-attempt-1",
-    );
-  });
-
-  it("loads one stack through the canonical stack detail endpoint", async () => {
-    const result = await getStack("stack-123");
+  it("loads one StackKit deployment through the compatibility detail endpoint", async () => {
+    const result = await getKitDeployment("stack-123");
 
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining("/api/v1/stacks/stack-123"),
       expect.objectContaining({ method: "GET" }),
     );
     expect(result.id).toBe("stack-123");
+    expect(result.kit_deployment_id).toBe("stack-123");
     expect(result.stackkit_catalog_ref).toBe("cloud-kit");
   });
 
@@ -343,9 +358,8 @@ describe("stacks api", () => {
     expect(result[0].id).toBe("standard");
   });
 
-  it("calls monthly runtime status and action endpoints by lease id", async () => {
+  it("calls monthly runtime status and supported action endpoints by lease id", async () => {
     await getMonthlyRuntimeStatus("lease-123", "org-1");
-    await startMonthlyRuntime("lease-123", "org-1");
     await decommissionMonthlyRuntime("lease-123", "org-1");
     await reconnectMonthlyRuntime("lease-123", "org-1");
 
@@ -354,17 +368,11 @@ describe("stacks api", () => {
     );
     expect(fetchMock.mock.calls[1]).toEqual([
       expect.stringContaining(
-        "/api/v1/monthly-runtimes/lease-123/start?tenant_id=org-1",
-      ),
-      expect.objectContaining({ method: "POST" }),
-    ]);
-    expect(fetchMock.mock.calls[2]).toEqual([
-      expect.stringContaining(
         "/api/v1/monthly-runtimes/lease-123/decommission?tenant_id=org-1",
       ),
       expect.objectContaining({ method: "POST" }),
     ]);
-    expect(fetchMock.mock.calls[3]).toEqual([
+    expect(fetchMock.mock.calls[2]).toEqual([
       expect.stringContaining(
         "/api/v1/monthly-runtimes/lease-123/reconnect?tenant_id=org-1",
       ),
@@ -462,6 +470,7 @@ describe("stacks api", () => {
     );
     expect(result.content).toContain('"stackkit": "basement-kit"');
     expect(result.content).toContain('"homepage"');
+    expect(result.kit_deployment_id).toBe("stack-123");
   });
 
   it("unwraps validation and import envelopes for stack-spec import", async () => {
@@ -470,7 +479,7 @@ describe("stacks api", () => {
 
     expect(validation.valid).toBe(true);
     expect(validation.warnings?.[0].code).toBe("preview");
-    expect(result.stack_id).toBe("stack-imported");
+    expect(result.kit_deployment_id).toBe("stack-imported");
     expect(result.job_id).toBe("job-imported");
   });
 
@@ -485,7 +494,7 @@ describe("stacks api", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            stack_id: "stack-raw",
+            kit_deployment_id: "stack-raw",
             job_id: "job-raw",
             name: "Raw Stack",
             state: "provisioning",
@@ -499,7 +508,7 @@ describe("stacks api", () => {
     const result = await importKombinationSpec("name: raw");
 
     expect(validation.valid).toBe(true);
-    expect(result.stack_id).toBe("stack-raw");
+    expect(result.kit_deployment_id).toBe("stack-raw");
     expect(result.job_id).toBe("job-raw");
   });
 
@@ -513,27 +522,61 @@ describe("stacks api", () => {
       expect.objectContaining({ method: "POST" }),
     );
     expect(result.server.assignment).toBe("stack");
+    expect(result.server.kit_deployment_id).toBe("stack-123");
+    expect(result.kit_deployment_id).toBe("stack-123");
   });
 
-  it("prunes only orphan stacks through the lease-safe endpoint", async () => {
-    const result = await pruneOrphanStacks();
+  it("starts a StackKit lifecycle operation for one kit deployment", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          data: {
+            job_id: "job-lifecycle-1",
+            kit_deployment_id: "stack-123",
+            agent_id: "agent-1",
+            operation: "verify",
+            status: "accepted",
+          },
+        }),
+        { status: 202, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    const result = await runStackKitLifecycleOperation("stack-123", {
+      operation: "verify",
+      agent_id: "agent-1",
+    });
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain(
+      "/api/v1/stacks/stack-123/stackkit/operations",
+    );
+    expect(result).toMatchObject({
+      kit_deployment_id: "stack-123",
+      job_id: "job-lifecycle-1",
+      operation: "verify",
+    });
+  });
+
+  it("reviews exact projection cleanup before mutation", async () => {
+    const result = await planOrphanCleanup();
 
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining("/api/v1/stacks/prune-orphans"),
-      expect.objectContaining({ method: "POST" }),
+      expect.objectContaining({ method: "POST", body: '{"mode":"dry_run"}' }),
     );
-    expect(result.pruned_stacks).toBe(2);
-    expect(result.skipped_active).toBe(1);
+    expect(result.digest).toBe("sha256:cleanup-plan");
+    expect(result.candidates[0]?.id).toBe("stack-123");
   });
 
-  it("targets one legacy dead card without destroying infrastructure", async () => {
-    await pruneOrphanStacks("legacy stack/1");
+  it("applies one targeted plan by its exact digest", async () => {
+    await applyOrphanCleanup("sha256:cleanup-plan", "legacy stack/1");
 
     expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining(
-        "/api/v1/stacks/prune-orphans?stack_id=legacy%20stack%2F1",
-      ),
-      expect.objectContaining({ method: "POST" }),
+      expect.stringContaining("/api/v1/stacks/prune-orphans"),
+      expect.objectContaining({
+        method: "POST",
+        body: '{"mode":"apply","digest":"sha256:cleanup-plan","stack_id":"legacy stack/1"}',
+      }),
     );
   });
 
@@ -581,6 +624,7 @@ describe("stacks api", () => {
     expect(String(managedRuntimeInit.body)).not.toContain(
       "opaque-add-server-key",
     );
+    expect(result.kit_deployment_id).toBe("stack-123");
     expect(result.lease_id).toBe("lease-stack-123-worker-abcd1234");
   });
 });

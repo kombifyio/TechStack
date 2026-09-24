@@ -11,7 +11,8 @@ import (
 	"strings"
 	"time"
 
-	commonedgeauth "github.com/kombifyio/go-common/edgeauth"
+	commonedgeauth "github.com/kombifyio/techstack/internal/gocommon/edgeauth"
+	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/identity"
@@ -36,20 +37,16 @@ func markEdgeAuthenticatedContext(ctx context.Context) context.Context {
 	return context.WithValue(ctx, edgeAuthenticatedContextKey{}, true)
 }
 
-func isEdgeAuthenticatedContext(ctx context.Context) bool {
-	if ctx == nil {
-		return false
-	}
-	edgeAuthenticated, _ := ctx.Value(edgeAuthenticatedContextKey{}).(bool)
-	return edgeAuthenticated
-}
-
 // IsEdgeAuthenticated reports whether the request passed a verified Gateway
 // edge envelope (or the explicitly configured legacy shared-secret hop).
 // Product handlers use this only to decide whether edge-minted projections may
 // be consumed; it grants no entitlement by itself.
 func IsEdgeAuthenticated(ctx context.Context) bool {
-	return isEdgeAuthenticatedContext(ctx)
+	if ctx == nil {
+		return false
+	}
+	edgeAuthenticated, _ := ctx.Value(edgeAuthenticatedContextKey{}).(bool)
+	return edgeAuthenticated
 }
 
 // EdgeIdentityConfig holds configuration for Edge identity extraction.
@@ -80,19 +77,6 @@ type EdgeIdentityConfig struct {
 	// EdgeSignatureWindow is the maximum accepted timestamp skew.
 	// Defaults to 5 minutes.
 	EdgeSignatureWindow time.Duration
-}
-
-// EdgeIdentityMiddleware extracts Edge-injected identity headers
-// (X-User-ID, X-Org-ID, X-User-Email, X-User-Roles, X-User-Plan) and stores them
-// in the request context. Only active when DeploymentMode is "saas".
-//
-// If EdgeIdentityConfig.Secret is set, the middleware verifies that
-// X-Edge-Auth-Secret matches before trusting identity headers.
-// This prevents spoofing when services are reachable directly (bypassing Edge).
-//
-// In self-hosted mode this is a no-op pass-through.
-func EdgeIdentityMiddleware(mode config.DeploymentMode) func(*httpx.Event) error {
-	return EdgeIdentityMiddlewareWithConfig(EdgeIdentityConfig{Mode: mode})
 }
 
 // EdgeIdentityMiddlewareFromConfig binds the Techstack runtime configuration
@@ -142,7 +126,16 @@ const (
 	// signature-construction test helpers.
 	edgeSignatureVersion = "v1"
 	defaultEdgeKeyID     = "primary"
-	defaultEdgeNextKeyID = "next"
+
+	// edgeDecisionUnverifiableReason lets a client tell "this origin cannot
+	// verify the edge's signed decision" apart from "your session ended".
+	// Re-authenticating never changes the former.
+	edgeDecisionUnverifiableReason = "edge_decision_unverifiable"
+
+	// edgeFlagsKeyDivergenceReason is the precise sub-case: the edge presented a
+	// signing key ID this origin holds no secret for.
+	edgeFlagsKeyDivergenceReason = "edge_flags_key_divergence"
+	defaultEdgeNextKeyID         = "next"
 )
 
 // EdgeIdentityMiddlewareWithConfig creates identity middleware with full config.
@@ -195,9 +188,23 @@ func EdgeIdentityMiddlewareWithConfig(cfg EdgeIdentityConfig) func(*httpx.Event)
 				e.Request = e.Request.WithContext(ctx)
 			}
 			if err := attachEdgeFlags(e, cfg); err != nil {
-				slog.Warn("edge flags: signature verification failed", "error", err)
+				// Still a fail-closed 401: a transplanted or tampered decision
+				// envelope is an authorization failure and must stay one.
+				//
+				// But the body now names the class. The identity envelope has
+				// already verified at this point, so the overwhelmingly likely
+				// cause is that the edge and this origin hold different
+				// EDGE_FLAGS trust material — an operator fault no sign-in can
+				// repair. With a bare 401 and no reason code, every client
+				// read it as an expired session and looped through Universal
+				// Login forever (live 2026-09-12 to 2026-09-18: the edge
+				// signed with a dedicated EDGE_FLAGS_SECRET that no origin was
+				// ever given).
+				slog.Error("edge flags: decision envelope unverifiable",
+					"error", err, "reason_code", edgeDecisionUnverifiableReason,
+					"path", e.Request.URL.Path)
 				stripIdentityHeaders(e.Request)
-				http.Error(e.Response, "invalid edge flags", http.StatusUnauthorized)
+				writeEdgeDecisionUnverifiable(e)
 				return nil
 			}
 			stripIdentityHeaders(e.Request)
@@ -304,12 +311,25 @@ func attachEdgeFlags(e *httpx.Event, cfg EdgeIdentityConfig) error {
 	if e == nil || e.Request == nil || !hasAnyEdgeFlagHeader(e.Request) {
 		return nil
 	}
+	keys := edgeFlagVerificationConfig(cfg)
+	// Name a signing key this origin does not hold. That is not a bad
+	// signature — it is the producer having been switched to trust material no
+	// consumer was given, the one failure the staged rollout in
+	// delivery-secret-registry.json exists to prevent ("preload into
+	// independent NEXT verifier slots ... before switching the Gateway
+	// signer"). It ran in the opposite order on 2026-09-12 and stayed
+	// undiagnosed for six days, because every request reported only a generic
+	// signature mismatch. Key IDs are identifiers, never key material, so
+	// naming both sides is safe and makes the cause readable at a glance.
+	if err := assertKnownEdgeFlagsKeyID(e.Request, keys); err != nil {
+		return err
+	}
 	if strings.TrimSpace(e.Request.Header.Get(headerEdgeService)) == techStackDecisionAudience {
-		flags, err := commonedgeauth.VerifyDecisionHeaders(e.Request, commonedgeauth.DecisionVerifyConfig{
-			PrimarySecret:        firstNonEmpty(cfg.EdgeFlagsSecret, os.Getenv("EDGE_FLAGS_SECRET"), cfg.EdgeAuthSecret, os.Getenv("EDGE_AUTH_SECRET")),
-			NextSecret:           firstNonEmpty(cfg.EdgeFlagsNextSecret, os.Getenv("EDGE_FLAGS_SECRET_NEXT"), cfg.EdgeAuthNextSecret, os.Getenv("EDGE_AUTH_SECRET_NEXT")),
-			PrimaryKeyID:         firstNonEmpty(cfg.EdgeFlagsKeyID, os.Getenv("EDGE_FLAGS_KEY_ID"), defaultEdgeKeyID),
-			NextKeyID:            firstNonEmpty(cfg.EdgeFlagsNextKeyID, os.Getenv("EDGE_FLAGS_KEY_ID_NEXT"), defaultEdgeNextKeyID),
+		flags, err := commonedgeauth.VerifyDecisionHeadersWithKeys(e.Request, commonedgeauth.DecisionVerifyConfig{
+			PrimarySecret:        keys.PrimarySecret,
+			NextSecret:           keys.NextSecret,
+			PrimaryKeyID:         keys.PrimaryKeyID,
+			NextKeyID:            keys.NextKeyID,
 			ExpectedAudience:     techStackDecisionAudience,
 			ExpectedPublicPrefix: techStackDecisionPublicPrefix,
 			SignatureWindow:      cfg.EdgeSignatureWindow,
@@ -331,18 +351,34 @@ func attachEdgeFlags(e *httpx.Event, cfg EdgeIdentityConfig) error {
 	// Other services sharing the TechStack origin retain v1 rollout flags.
 	// Those flags have no VerifiedDecisionBinding and therefore cannot become
 	// cost-bearing commercial authority.
-	flags, err := commonedgeauth.VerifyFlagHeaders(e.Request, commonedgeauth.Config{
-		EdgeAuthSecret:     firstNonEmpty(cfg.EdgeFlagsSecret, os.Getenv("EDGE_FLAGS_SECRET"), cfg.EdgeAuthSecret),
-		EdgeAuthNextSecret: firstNonEmpty(cfg.EdgeFlagsNextSecret, os.Getenv("EDGE_FLAGS_SECRET_NEXT"), cfg.EdgeAuthNextSecret),
-		EdgeAuthKeyID:      firstNonEmpty(cfg.EdgeFlagsKeyID, os.Getenv("EDGE_FLAGS_KEY_ID"), defaultEdgeKeyID),
-		EdgeAuthNextKeyID:  firstNonEmpty(cfg.EdgeFlagsNextKeyID, os.Getenv("EDGE_FLAGS_KEY_ID_NEXT"), defaultEdgeNextKeyID),
-		SignatureWindow:    cfg.EdgeSignatureWindow,
-	})
+	flags, err := commonedgeauth.VerifyFlagHeadersWithKeys(e.Request, keys)
 	if err != nil {
 		return err
 	}
 	e.Request = e.Request.WithContext(commonedgeauth.FlagsToContext(e.Request.Context(), flags))
 	return nil
+}
+
+// Resolve the budget key set once, independently from identity authentication.
+// NEXT-only preload keeps the old primary until the producer rotates. Once a
+// dedicated primary is configured, absent budget NEXT stays disabled.
+func edgeFlagVerificationConfig(cfg EdgeIdentityConfig) commonedgeauth.FlagVerifyConfig {
+	keys := commonedgeauth.FlagVerifyConfig{
+		PrimarySecret:   firstNonEmpty(cfg.EdgeFlagsSecret, os.Getenv("EDGE_FLAGS_SECRET")),
+		NextSecret:      firstNonEmpty(cfg.EdgeFlagsNextSecret, os.Getenv("EDGE_FLAGS_SECRET_NEXT")),
+		PrimaryKeyID:    firstNonEmpty(cfg.EdgeFlagsKeyID, os.Getenv("EDGE_FLAGS_KEY_ID"), defaultEdgeKeyID),
+		NextKeyID:       firstNonEmpty(cfg.EdgeFlagsNextKeyID, os.Getenv("EDGE_FLAGS_KEY_ID_NEXT"), defaultEdgeNextKeyID),
+		SignatureWindow: cfg.EdgeSignatureWindow,
+	}
+	if keys.PrimarySecret == "" {
+		keys.PrimarySecret = firstNonEmpty(cfg.EdgeAuthSecret, os.Getenv("EDGE_AUTH_SECRET"))
+		keys.PrimaryKeyID = firstNonEmpty(cfg.EdgeAuthKeyID, os.Getenv("EDGE_AUTH_KEY_ID"), defaultEdgeKeyID)
+		if keys.NextSecret == "" {
+			keys.NextSecret = firstNonEmpty(cfg.EdgeAuthNextSecret, os.Getenv("EDGE_AUTH_SECRET_NEXT"))
+			keys.NextKeyID = firstNonEmpty(cfg.EdgeAuthNextKeyID, os.Getenv("EDGE_AUTH_KEY_ID_NEXT"), defaultEdgeNextKeyID)
+		}
+	}
+	return keys
 }
 
 func hasAnyEdgeFlagHeader(r *http.Request) bool {
@@ -409,4 +445,53 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// writeEdgeDecisionUnverifiable renders the fail-closed denial for a decision
+// envelope this origin cannot verify, in the canonical error envelope clients
+// already parse. It stays 401 — the request carried credentials this origin
+// refuses — while naming a cause that signing in again cannot fix, so clients
+// stop offering re-login as the remedy.
+func writeEdgeDecisionUnverifiable(e *httpx.Event) {
+	_ = httpx.Error(e, http.StatusUnauthorized, ksapi.ErrCodeUnauthorized,
+		"Edge decision could not be verified", map[string]any{
+			"error_code":  edgeDecisionUnverifiableReason,
+			"reason_code": edgeDecisionUnverifiableReason,
+			"retryable":   true,
+			"user_guidance": map[string]any{
+				"title": "Service could not verify this request",
+				"body":  "Techstack could not verify the gateway's signed decision. This is a service-side trust problem; signing in again does not change it.",
+				"next_steps": []string{
+					"Retry in a moment",
+					"If it persists, this needs an operator, not another sign-in",
+				},
+			},
+		})
+}
+
+// assertKnownEdgeFlagsKeyID refuses a decision whose key ID matches nothing
+// this origin is configured with, and reports it in those terms.
+func assertKnownEdgeFlagsKeyID(r *http.Request, keys commonedgeauth.FlagVerifyConfig) error {
+	presented := strings.TrimSpace(r.Header.Get(commonedgeauth.HeaderFlagsKeyID))
+	if presented == "" {
+		return nil
+	}
+	configured := make([]string, 0, 2)
+	if strings.TrimSpace(keys.PrimarySecret) != "" {
+		configured = append(configured, strings.TrimSpace(keys.PrimaryKeyID))
+	}
+	if strings.TrimSpace(keys.NextSecret) != "" {
+		configured = append(configured, strings.TrimSpace(keys.NextKeyID))
+	}
+	for _, id := range configured {
+		if id == presented {
+			return nil
+		}
+	}
+	held := "none"
+	if len(configured) > 0 {
+		held = strings.Join(configured, ",")
+	}
+	return fmt.Errorf("%s: edge signed with key id %q, this origin holds [%s]",
+		edgeFlagsKeyDivergenceReason, presented, held)
 }

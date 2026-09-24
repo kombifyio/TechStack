@@ -1,13 +1,18 @@
 import { describe, expect, it } from "vitest";
 
-import type { StackOperationServer } from "$lib/api/stacks";
+import type { StackOperationServer } from "#lib/api/stacks.js";
+import type { CanonicalServer } from "#lib/api/registry.js";
 import {
+  actionableServerOutcome,
+  canonicalServerAxes,
   formatCapacity,
   formatMetric,
   serverCardKit,
   serverCardMeta,
   serverCardMetrics,
   serverCardStatus,
+  serverCardHostname,
+  canonicalServerCardStatus,
   serverDomains,
   serverOSLabel,
   serverPrimaryAddress,
@@ -41,6 +46,20 @@ function makeServer(
 }
 
 describe("server card adapter", () => {
+  it("prefers the canonical Node name over stale telemetry hostname", () => {
+    expect(
+      serverCardHostname(makeServer({ hostname: "wrong-hostname" }), {
+        id: "server-1",
+        name: "hostinger-prod-1",
+        node_id: "server-1",
+        kit_deployment_id: "stack-1",
+        lifecycle: { state: "active", desired_state: "running" },
+        connection: { state: "connected" },
+        health: { state: "healthy" },
+      } as CanonicalServer),
+    ).toBe("hostinger-prod-1");
+  });
+
   it("formats health metrics to one decimal and reports unverified readings as unknown", () => {
     expect(formatMetric({ status: "ok", value: 1.2345678, unit: "%" })).toBe(
       "1.2%",
@@ -163,7 +182,7 @@ describe("server card adapter", () => {
       { state: "error", expected: "degraded" },
       { state: "failed", expected: "degraded" },
       { state: "offline", expected: "offline" },
-      { state: "stale", expected: "offline" },
+      { state: "stale", expected: "degraded" },
       { state: "pending", expected: "pending" },
       { state: "unknown", expected: "unknown" },
       { state: "", expected: "unknown" },
@@ -173,6 +192,17 @@ describe("server card adapter", () => {
       server.health.state = state;
       expect(serverCardStatus(server)).toBe(expected);
     }
+  });
+
+  it("keeps reachability and host health as separate status dimensions", () => {
+    expect(canonicalServerCardStatus("offline", "healthy")).toBe("offline");
+    expect(canonicalServerCardStatus("revoked", "healthy")).toBe("offline");
+    expect(canonicalServerCardStatus("connected", "unhealthy")).toBe(
+      "degraded",
+    );
+    expect(canonicalServerCardStatus("stale", "healthy")).toBe("degraded");
+    expect(canonicalServerCardStatus("connected", "healthy")).toBe("healthy");
+    expect(canonicalServerCardStatus("connecting", "unknown")).toBe("pending");
   });
 
   it("joins provider, role, OS, and the managed-runtime marker into the meta line", () => {
@@ -223,6 +253,60 @@ describe("server card adapter", () => {
     expect(serverCardKit(makeServer({}))).toEqual({
       name: "not reported",
       detail: "deployment unknown",
+    });
+  });
+
+  it("uses the durable canonical outcome and honors its explicit reset", () => {
+    const telemetry = makeServer({
+      last_outcome: {
+        status: "failed",
+        reasonCode: "stale_projection",
+        retryable: false,
+      },
+    });
+    const canonical = {
+      last_outcome: {
+        status: "degraded",
+        reasonCode: "worker_heartbeat_stale",
+        retryable: true,
+      },
+    } as CanonicalServer;
+
+    expect(actionableServerOutcome(telemetry, canonical)?.reasonCode).toBe(
+      "worker_heartbeat_stale",
+    );
+    canonical.last_outcome = {
+      status: "available",
+      retryable: false,
+    };
+    expect(actionableServerOutcome(telemetry, canonical)).toBeNull();
+  });
+});
+
+describe("canonicalServerAxes", () => {
+  it("passes the three canonical axes through without collapsing them", () => {
+    const axes = canonicalServerAxes({
+      lifecycle: { state: "decommissioning" },
+      connection: { state: "connected" },
+      health: { state: "healthy" },
+    } as never);
+    expect(axes).toEqual({
+      lifecycle: "decommissioning",
+      connection: "connected",
+      health: "healthy",
+    });
+  });
+
+  it("falls back visibly for values outside the contract vocabulary", () => {
+    const axes = canonicalServerAxes({
+      lifecycle: { state: "materializing" },
+      connection: { state: "" },
+      health: { state: "great" },
+    } as never);
+    expect(axes).toEqual({
+      lifecycle: "planned",
+      connection: "pending",
+      health: "unknown",
     });
   });
 });

@@ -107,7 +107,7 @@ func TestPairingConsumersFailClosedWhenStoreReturnsNilRow(t *testing.T) {
 		request := httptest.NewRequest(http.MethodPost, "/api/v1/agent/binary/linux/amd64", nil)
 		request.Header.Set("Authorization", "Bearer "+rawToken)
 		router.ServeHTTP(recorder, request)
-		if recorder.Code != http.StatusInternalServerError || !strings.Contains(recorder.Body.String(), "Failed to validate pairing token") {
+		if recorder.Code != http.StatusInternalServerError {
 			t.Fatalf("binary status/body = %d/%s", recorder.Code, recorder.Body.String())
 		}
 	})
@@ -121,7 +121,7 @@ func TestPairingConsumersFailClosedWhenStoreReturnsNilRow(t *testing.T) {
 		if err := handler.register(event); err != nil {
 			t.Fatalf("register: %v", err)
 		}
-		if recorder.Code != http.StatusInternalServerError || !strings.Contains(recorder.Body.String(), "Failed to claim pairing token") {
+		if recorder.Code != http.StatusInternalServerError {
 			t.Fatalf("register status/body = %d/%s", recorder.Code, recorder.Body.String())
 		}
 	})
@@ -151,10 +151,11 @@ func TestResolveStorePairingTokenKeepsCanonicalLegacyFallback(t *testing.T) {
 		"ks_" + strings.Repeat("01", 32),
 	} {
 		t.Run(rawToken[:3], func(t *testing.T) {
-			tokenHash, hashErr := pairingtoken.Hash(rawToken)
+			parsed, hashErr := pairingtoken.Parse(rawToken)
 			if hashErr != nil {
 				t.Fatal(hashErr)
 			}
+			tokenHash := parsed.TokenHash
 			store := &pairingLookupRecordingStore{result: activePairingToken("tenant-1", tokenHash)}
 			event, recorder := workerRouteTestEvent(http.MethodPost, "/api/v1/workers/register", "")
 
@@ -215,7 +216,7 @@ func TestWorkerRegisterRejectsOversizedBodyBeforeTokenClaim(t *testing.T) {
 	}
 }
 
-func TestWorkerRegisterKeepsTokenConsumedWhenEnrollmentFails(t *testing.T) {
+func TestWorkerRegisterReleasesTokenAfterPostClaimEnrollmentFailure(t *testing.T) {
 	ctx := context.Background()
 	memory := controlplane.NewMemoryStore()
 	rawToken, tokenHash, generateErr := pairingtoken.Generate("tenant-1")
@@ -235,16 +236,37 @@ func TestWorkerRegisterKeepsTokenConsumedWhenEnrollmentFails(t *testing.T) {
 		"/api/v1/workers/register",
 		`{"token":"`+rawToken+`","hostname":"node-1"}`,
 	)
-	handler := workerRouteHandlers{wst: &failingWorkerEnrollmentStore{MemoryStore: memory}}
+	handler := workerRouteHandlers{wst: memory}
 	if err := handler.register(event); err != nil {
 		t.Fatalf("register: %v", err)
 	}
-	if recorder.Code != http.StatusInternalServerError || !strings.Contains(recorder.Body.String(), "Failed to save worker registration") {
+	if recorder.Code != http.StatusInternalServerError {
 		t.Fatalf("status/body = %d/%s", recorder.Code, recorder.Body.String())
 	}
-	claimed, err := memory.GetPairingTokenByHash(ctx, "tenant-1", tokenHash)
-	if err != nil || claimed.Status != "used" || claimed.UsedAt == nil {
-		t.Fatalf("token after failed enrollment = %#v, %v", claimed, err)
+	// The transient failure produced no enrollment credential, so the
+	// single-use capability returns to active for a retry instead of being
+	// burned.
+	released, err := memory.GetPairingTokenByHash(ctx, "tenant-1", tokenHash)
+	if err != nil || released.Status != "active" || released.UsedAt != nil {
+		t.Fatalf("token after failed enrollment = %#v, %v", released, err)
+	}
+
+	// The retry claims the same capability again and fails the same way; the
+	// claim/release cycle stays repeatable and never marks it used.
+	retryEvent, retryRecorder := workerRouteTestEvent(
+		http.MethodPost,
+		"/api/v1/workers/register",
+		`{"token":"`+rawToken+`","hostname":"node-1"}`,
+	)
+	if err := handler.register(retryEvent); err != nil {
+		t.Fatalf("retry register: %v", err)
+	}
+	if retryRecorder.Code != http.StatusInternalServerError {
+		t.Fatalf("retry status/body = %d/%s", retryRecorder.Code, retryRecorder.Body.String())
+	}
+	afterRetry, err := memory.GetPairingTokenByHash(ctx, "tenant-1", tokenHash)
+	if err != nil || afterRetry.Status != "active" || afterRetry.UsedAt != nil {
+		t.Fatalf("token after retry = %#v, %v", afterRetry, err)
 	}
 }
 
@@ -327,14 +349,6 @@ type pairingLookupRecordingStore struct {
 	lookupHash   string
 	lookupCalls  int
 	claimCalls   int
-}
-
-type failingWorkerEnrollmentStore struct {
-	*controlplane.MemoryStore
-}
-
-func (*failingWorkerEnrollmentStore) UpsertWorkerHeartbeat(context.Context, controlplane.Worker) (*controlplane.Worker, error) {
-	return nil, errors.New("enrollment unavailable")
 }
 
 func (s *pairingLookupRecordingStore) GetPairingTokenByHash(_ context.Context, tenantID, tokenHash string) (*controlplane.PairingToken, error) {

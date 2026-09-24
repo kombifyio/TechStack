@@ -91,7 +91,7 @@ import (
 #NodeType: "main" | "worker" | "edge"
 
 // #Provider defines supported infrastructure providers
-// Keep in sync with: pkg/stackkits/base/stackkit.cue, pkg/validator/spec_validator.go
+// Keep in sync with: pkg/validator/spec_validator.go
 // Core providers: local, hetzner, docker, aws, gcp, azure
 // Extended providers: proxmox, digitalocean, managed subscription leases.
 #Provider: "local" | "hetzner" | "docker" | "aws" | "gcp" | "azure" | "proxmox" | "digitalocean" | "digitalocean-managed" | "centron" | "ionos"
@@ -190,7 +190,7 @@ import (
 }
 
 // #ServiceType defines supported service categories
-// Keep in sync with: pkg/stackkits/base/stackkit.cue, pkg/validator/spec_validator.go
+// Keep in sync with: pkg/validator/spec_validator.go
 #ServiceType: 
 	"reverse-proxy" |
 	"service" |

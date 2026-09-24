@@ -9,7 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/kombifyio/go-common/runtimeexecutor"
+	"github.com/kombifyio/techstack/internal/gocommon/runtimeexecutor"
 	"github.com/kombifyio/techstack/internal/managedstackkit"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"

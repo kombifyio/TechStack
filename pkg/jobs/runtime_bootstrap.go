@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/guardbootstrap"
 	"github.com/kombifyio/techstack/pkg/secrets"
 	"golang.org/x/crypto/ssh"
 )
@@ -56,6 +57,10 @@ type SSHRuntimeTargetBootstrapperConfig struct {
 	MaxAttempts       int
 	Now               func() time.Time
 	Dial              sshBootstrapDialFunc
+	// HostKeys pins the first observed host key per target address and
+	// verifies later connections against it. A nil store keeps the legacy
+	// permissive dial for tests and disabled wiring only.
+	HostKeys *RuntimeHostKeyStore
 }
 
 type SSHRuntimeTargetBootstrapper struct {
@@ -67,6 +72,7 @@ type SSHRuntimeTargetBootstrapper struct {
 	maxAttempts       int
 	now               func() time.Time
 	dialSSH           sshBootstrapDialFunc
+	hostKeys          *RuntimeHostKeyStore
 }
 
 type RuntimeTargetBootstrapResult struct {
@@ -142,6 +148,7 @@ func NewSSHRuntimeTargetBootstrapper(cfg SSHRuntimeTargetBootstrapperConfig) *SS
 		maxAttempts:       maxAttempts,
 		now:               now,
 		dialSSH:           dialSSH,
+		hostKeys:          cfg.HostKeys,
 	}
 }
 
@@ -153,12 +160,12 @@ func (b *SSHRuntimeTargetBootstrapper) BootstrapRuntimeTargetWithProgress(ctx co
 	return b.bootstrapRuntimeTarget(ctx, target, progress)
 }
 
-func (b *SSHRuntimeTargetBootstrapper) bootstrapRuntimeTarget(ctx context.Context, target *RuntimeActionTarget, progress func(stackKitCLIProgressEvent)) (*RuntimeTargetBootstrapResult, error) {
+func (b *SSHRuntimeTargetBootstrapper) bootstrapRuntimeTarget(ctx context.Context, requested *RuntimeActionTarget, progress func(stackKitCLIProgressEvent)) (*RuntimeTargetBootstrapResult, error) {
 	if b == nil {
 		return nil, nil
 	}
 	started := b.now()
-	target = normalizeRuntimeActionTarget(target)
+	target := normalizeRuntimeActionTarget(requested)
 	if target == nil {
 		return nil, nil
 	}
@@ -178,8 +185,14 @@ func (b *SSHRuntimeTargetBootstrapper) bootstrapRuntimeTarget(ctx context.Contex
 		// install or first-boot preparation that consumes one phase resumes from
 		// the observed host state instead of exhausting the whole rollout budget.
 		attemptCtx, cancelAttempt := context.WithTimeout(ctx, b.executionTimeout(ctx))
-		client, err := b.dial(attemptCtx, target, authMethods)
+		client, login, err := b.dial(attemptCtx, target, authMethods)
 		if err == nil {
+			// The remaining rollout addresses the node through the login that
+			// actually answered, not the one the record was written with.
+			target.User = login
+			if requested != nil {
+				requested.User = login
+			}
 			output, runErr := b.runCommand(attemptCtx, client, runtimeTargetBootstrapScript(), progress)
 			_ = client.Close()
 			lastOutput = appendBootstrapAttemptOutput(lastOutput, attempts, output)
@@ -302,11 +315,64 @@ func runtimeTargetBootstrapReadyMessage(agentStatus string) string {
 	}
 }
 
-func (b *SSHRuntimeTargetBootstrapper) dial(ctx context.Context, target *RuntimeActionTarget, auth []ssh.AuthMethod) (*ssh.Client, error) {
+// runtimeTargetBootstrapLogins is the ordered set of logins one bootstrap may
+// use on a managed node, all authenticated by the same key.
+//
+// A managed host changes which login answers over its own lifetime: a fresh
+// node only has the provider login, and Cloud host-security disables root as
+// part of the hardening it exists to enforce. Both ends of that transition
+// have to be reachable, so the channel login and the provider logins are
+// candidates in every direction rather than a one-way migration.
+func runtimeTargetBootstrapLogins(configured string) []string {
+	logins := []string{configured}
+	for _, candidate := range []string{guardbootstrap.ExecutionChannelUser, "ubuntu", "root"} {
+		if candidate != configured {
+			logins = append(logins, candidate)
+		}
+	}
+	return logins
+}
+
+// dial returns a session on the first login that authenticates and reports the
+// login it used, so the rest of the rollout addresses the node the same way.
+func (b *SSHRuntimeTargetBootstrapper) dial(ctx context.Context, target *RuntimeActionTarget, auth []ssh.AuthMethod) (*ssh.Client, string, error) {
+	var lastErr error
+	for _, login := range runtimeTargetBootstrapLogins(target.User) {
+		client, err := b.dialAs(ctx, target, login, auth)
+		if err == nil {
+			return client, login, nil
+		}
+		lastErr = err
+		// Only a rejected login is worth another identity. Anything else is a
+		// property of the node or the network and would repeat unchanged.
+		if classifyRuntimeTargetBootstrapError(err, "") != RuntimeTargetBootstrapSSHAuth {
+			return nil, "", err
+		}
+	}
+	return nil, "", lastErr
+}
+
+// bootstrapHostKeyCallback returns the host-key policy for managed target
+// bootstrap: the first contact pins and every later contact must match.
+// Without a pin store the handshake is rejected.
+func (b *SSHRuntimeTargetBootstrapper) bootstrapHostKeyCallback() ssh.HostKeyCallback {
+	if b == nil || b.hostKeys == nil {
+		return rejectUnverifiableRuntimeHostKey()
+	}
+	store := b.hostKeys
+	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		if remote == nil {
+			return runtimeHostKeyUnverifiable(hostname, "no remote address")
+		}
+		return store.VerifyAndPin(remote.String(), key)
+	}
+}
+
+func (b *SSHRuntimeTargetBootstrapper) dialAs(ctx context.Context, target *RuntimeActionTarget, login string, auth []ssh.AuthMethod) (*ssh.Client, error) {
 	config := &ssh.ClientConfig{
-		User:            target.User,
+		User:            login,
 		Auth:            auth,
-		HostKeyCallback: runtimeDiagnosticsHostKeyCallback(),
+		HostKeyCallback: b.bootstrapHostKeyCallback(),
 		Timeout:         minDuration(b.timeout, 10*time.Second),
 	}
 	addr := net.JoinHostPort(target.Host, strconv.Itoa(target.Port))
@@ -318,16 +384,23 @@ func (b *SSHRuntimeTargetBootstrapper) dial(ctx context.Context, target *Runtime
 		if err == nil {
 			return client, nil
 		}
-		lastErr = err
+		// A context expiration from dialOnce is the observation boundary, not
+		// a replacement for the last concrete readiness failure.
+		if ctx.Err() == nil || lastErr == nil {
+			lastErr = err
+		}
 		if !isRuntimeTargetSSHReadinessError(err) {
-			return nil, fmt.Errorf("ssh bootstrap dial %s@%s failed: %w", target.User, addr, err)
+			return nil, fmt.Errorf("ssh bootstrap dial %s@%s failed: %w", login, addr, err)
 		}
 		if waitErr := waitForRuntimeTargetSSHRetry(ctx, b.dialRetryInterval); waitErr != nil {
 			reason := fmt.Sprintf("timeout %s", b.timeout)
 			if ctx.Err() != context.DeadlineExceeded {
 				reason = "context cancellation"
 			}
-			return nil, fmt.Errorf("ssh bootstrap dial %s@%s was not ready before %s after %d attempts: %w", target.User, addr, reason, attempts, lastErr)
+			if errors.Is(lastErr, waitErr) {
+				return nil, fmt.Errorf("ssh bootstrap dial %s@%s was not ready before %s after %d attempts: %w", login, addr, reason, attempts, waitErr)
+			}
+			return nil, fmt.Errorf("ssh bootstrap dial %s@%s was not ready before %s after %d attempts: %w; last dial: %w", login, addr, reason, attempts, waitErr, lastErr)
 		}
 	}
 }
@@ -566,13 +639,135 @@ run_bounded() {
 docker_ready() {
   command -v docker >/dev/null 2>&1 && $SUDO docker info >/dev/null 2>&1
 }
+docker_firewall_ready() {
+  ! command -v iptables >/dev/null 2>&1 ||
+    $SUDO iptables --wait -t filter -S DOCKER-USER >/dev/null 2>&1
+}
+admit_docker_firewall() {
+  docker_firewall_ready && return 0
+  log "phase=docker_firewall status=repair"
+  $SUDO systemctl restart docker >/dev/null 2>&1 || return 1
+  for i in $(seq 1 20); do
+    if docker_ready && docker_firewall_ready; then
+      log "phase=docker_firewall status=repaired"
+      return 0
+    fi
+    sleep 1
+  done
+  log "phase=docker_firewall status=failed"
+  return 1
+}
+ufw_active() {
+  command -v ufw >/dev/null 2>&1 && $SUDO ufw status 2>/dev/null | grep -q '^Status: active'
+}
+nftables_quiet() {
+  ! $SUDO systemctl is-active --quiet nftables && ! $SUDO systemctl is-enabled --quiet nftables
+}
+ufw_nftables_ok() {
+  if ufw_active; then nftables_quiet; else return 0; fi
+}
+# Apt install nftables enables the unit, which flushes the live nft ruleset
+# including Docker's. Disable it on every bootstrap, not only first-boot, and
+# restart Docker so compose Apply can recreate bridge NAT.
+admit_ufw_nftables() {
+  if ! ufw_active; then
+    return 0
+  fi
+  $SUDO ufw allow 22/tcp >/dev/null 2>&1 || true
+  if nftables_quiet; then
+    return 0
+  fi
+  log "phase=nftables status=disable"
+  $SUDO systemctl disable --now nftables >/dev/null 2>&1 || true
+  if command -v docker >/dev/null 2>&1 && $SUDO systemctl is-active --quiet docker; then
+    log "phase=nftables status=docker_restore"
+    $SUDO systemctl restart docker >/dev/null 2>&1 || true
+    for i in $(seq 1 20); do
+      if docker_ready; then
+        break
+      fi
+      sleep 1
+    done
+  fi
+}
+# ProtectSystem=strict makes the whole hierarchy read-only. Cloud host-security
+# Apply writes sshd/apt drop-ins under /etc and StackKits evidence under
+# /opt/stackkit. The pinned compose executor runs docker compose with a
+# replaced environment, so the CLI homes under /root/.docker from passwd.
+# ProtectHome=read-only turns that into EROFS; ProtectKernelTunables=yes
+# does the same for sysctl. Host-security also preserves the execution channel
+# under /home/kombify/.ssh. Probe the required writes in the live Guard namespace.
+guard_namespace_can_write() {
+  pid="$1"
+  path="$2"
+  [ -n "$pid" ] && [ "$pid" != "0" ] || return 1
+  command -v nsenter >/dev/null 2>&1 || return 1
+  $SUDO nsenter -t "$pid" -m -- /bin/sh -c "mkdir -p \"$(dirname "$path")\" && : > \"$path\" && rm -f \"$path\""
+}
+guard_sandbox_ready() {
+  pid="$1"
+  guard_namespace_can_write "$pid" /etc/ssh/sshd_config.d/.kombify-guard-write-probe &&
+    guard_namespace_can_write "$pid" /opt/stackkit/.stackkit/.kombify-guard-write-probe &&
+    guard_namespace_can_write "$pid" /root/.docker/.kombify-guard-write-probe &&
+    guard_namespace_can_write "$pid" /home/kombify/.ssh/.kombify-guard-write-probe
+}
+admit_guard_host_writes() {
+  unit=/etc/systemd/system/techstack-agent.service
+  if ! $SUDO test -f "$unit"; then
+    log "phase=guard_sandbox status=not_applicable"
+    return 0
+  fi
+  $SUDO mkdir -p /root/.docker /opt/stackkit/.stackkit /etc/ssh/sshd_config.d
+  $SUDO mkdir -p -m 0700 /home/kombify/.ssh
+  pid="$($SUDO systemctl show -p MainPID --value techstack-agent.service 2>/dev/null || true)"
+  if guard_sandbox_ready "$pid" && ! $SUDO grep -q '^NoNewPrivileges=yes' "$unit"; then
+    log "phase=guard_sandbox status=ready"
+    return 0
+  fi
+  log "phase=guard_sandbox status=repair pid=$pid"
+  $SUDO sed -i 's/^ProtectSystem=strict$/ProtectSystem=true/' "$unit"
+  $SUDO sed -i 's/^NoNewPrivileges=yes$/NoNewPrivileges=no/' "$unit"
+  $SUDO sed -i 's/^ProtectKernelTunables=yes$/ProtectKernelTunables=no/' "$unit"
+  if ! $SUDO grep -q '^ProtectKernelTunables=' "$unit"; then
+    $SUDO sed -i '/^ProtectSystem=/a ProtectKernelTunables=no' "$unit"
+  fi
+  desired='ReadWritePaths=/app /opt /usr/local/bin /usr/local/libexec /etc /usr /var /run /root/.docker /home/kombify/.ssh'
+  if $SUDO grep -q '^ReadWritePaths=' "$unit"; then
+    $SUDO sed -i "s|^ReadWritePaths=.*|$desired|" "$unit"
+  else
+    $SUDO sed -i "/^ProtectSystem=/a $desired" "$unit"
+  fi
+  desired_ro='ReadOnlyPaths=/etc/techstack -/root/my-homelab'
+  if $SUDO grep -q '^ReadOnlyPaths=' "$unit"; then
+    $SUDO sed -i "s|^ReadOnlyPaths=.*|$desired_ro|" "$unit"
+  fi
+  $SUDO systemctl daemon-reload
+  $SUDO systemctl restart techstack-agent.service
+  for i in $(seq 1 20); do
+    if $SUDO systemctl is-active --quiet techstack-agent.service; then
+      pid="$($SUDO systemctl show -p MainPID --value techstack-agent.service 2>/dev/null || true)"
+      if guard_sandbox_ready "$pid"; then
+        log "phase=guard_sandbox status=repaired"
+        return 0
+      fi
+      log "phase=guard_sandbox status=failed reason=write_probe"
+      return 1
+    fi
+    sleep 1
+  done
+  log "phase=guard_sandbox status=failed"
+  return 1
+}
 converge_enrolled_agent() {
+  admit_ufw_nftables
+  admit_docker_firewall || return 1
+  admit_guard_host_writes || return 1
   enrollment_file="/etc/techstack/agent-enrollment.json"
-  if [ ! -f "$enrollment_file" ]; then
+  if ! $SUDO test -f "$enrollment_file"; then
     log "phase=agent_convergence status=not_applicable reason=enrollment_missing"
     return 0
   fi
-  if [ "$(stat -c '%u:%a' "$enrollment_file" 2>/dev/null || true)" != "0:600" ]; then
+  if [ "$($SUDO stat -c '%u:%a' "$enrollment_file" 2>/dev/null || true)" != "0:600" ]; then
     log "phase=agent_convergence status=failed reason=enrollment_permissions_invalid"
     return 1
   fi
@@ -580,19 +775,19 @@ converge_enrolled_agent() {
     log "phase=agent_convergence status=failed reason=prerequisite_missing"
     return 1
   fi
-  agent_token="$(jq -er '.data.agent_token // .agent_token // empty' "$enrollment_file")" || {
+  agent_token="$($SUDO jq -er '.data.agent_token // .agent_token // empty' "$enrollment_file")" || {
     log "phase=agent_convergence status=failed reason=agent_token_missing"
     return 1
   }
-  runtime_agent_id="$(jq -er '.data.runtime_agent_id // .runtime_agent_id // .data.worker_id // .worker_id // empty' "$enrollment_file")" || {
+  runtime_agent_id="$($SUDO jq -er '.data.runtime_agent_id // .runtime_agent_id // .data.worker_id // .worker_id // empty' "$enrollment_file")" || {
     log "phase=agent_convergence status=failed reason=runtime_agent_id_missing"
     return 1
   }
-  tenant_id="$(jq -er '.data.tenant_id // .tenant_id // .data.channel_bootstrap.tenant_id // .channel_bootstrap.tenant_id // empty' "$enrollment_file")" || {
+  tenant_id="$($SUDO jq -er '.data.tenant_id // .tenant_id // .data.channel_bootstrap.tenant_id // .channel_bootstrap.tenant_id // empty' "$enrollment_file")" || {
     log "phase=agent_convergence status=failed reason=tenant_id_missing"
     return 1
   }
-  heartbeat_url="$(jq -er '.data.heartbeat_url // .heartbeat_url // .data.channel_bootstrap.heartbeat_url // .channel_bootstrap.heartbeat_url // empty' "$enrollment_file")" || {
+  heartbeat_url="$($SUDO jq -er '.data.heartbeat_url // .heartbeat_url // .data.channel_bootstrap.heartbeat_url // .channel_bootstrap.heartbeat_url // empty' "$enrollment_file")" || {
     log "phase=agent_convergence status=failed reason=heartbeat_url_missing"
     return 1
   }
@@ -702,6 +897,93 @@ if [ -f "$host_prep_status" ]; then
         ;;
     esac
   done
+fi
+stackkit_ready() {
+  docker_ready &&
+    docker_firewall_ready &&
+    command -v nft >/dev/null 2>&1 &&
+    $SUDO systemctl is-enabled --quiet fail2ban &&
+    $SUDO systemctl is-enabled --quiet unattended-upgrades &&
+    $SUDO sshd -t >/dev/null 2>&1 &&
+    ufw_nftables_ok &&
+    ` + guardbootstrap.RenderExecutionChannelUserReadyTest("$SUDO") + ` &&
+    [ -f /var/lib/kombify/host-prep/v2.status ] &&
+    grep -qx 'status=ready' /var/lib/kombify/host-prep/v2.status
+}
+if [ -f /var/lib/kombify/host-prep/v2.status ]; then
+  while :; do
+    status=$(sed -n 's/^status=//p' /var/lib/kombify/host-prep/v2.status | tail -n 1)
+    case "$status" in
+      ready)
+        if stackkit_ready; then
+          log "phase=host_prep status=ready profile=v2"
+          break
+        fi
+        log "phase=host_prep status=stale profile=v2"
+        break
+        ;;
+      failed)
+        # First-boot host-prep-v2 can fail on a missing /run/sshd privilege
+        # directory. Treat that as stale so the repair path below can rerun.
+        log "phase=host_prep status=repair profile=v2"
+        $SUDO systemctl status kombify-host-prep-v2.service --no-pager -l 2>&1 || true
+        break
+        ;;
+      *)
+        log "phase=host_prep status=pending profile=v2"
+        sleep 2
+        ;;
+    esac
+  done
+fi
+if ! stackkit_ready; then
+  log "phase=host_prep status=install profile=stackkit-ready-v2"
+  $SUDO mkdir -p /var/lib/kombify/host-prep /etc/ssh/sshd_config.d /run/sshd
+  $SUDO chmod 0755 /run/sshd >/dev/null 2>&1 || true
+  printf 'status=pending\n' | $SUDO tee /var/lib/kombify/host-prep/v2.status >/dev/null
+  if command -v apt-get >/dev/null 2>&1; then
+    log "phase=apt_wait status=begin"
+    for i in $(seq 1 30); do
+      if ! pgrep -x apt >/dev/null 2>&1 && ! pgrep -x apt-get >/dev/null 2>&1 && ! pgrep -x dpkg >/dev/null 2>&1 && ! pgrep -x unattended-upgr >/dev/null 2>&1; then
+        break
+      fi
+      sleep 2
+    done
+    log "phase=apt_wait status=done"
+    run_bounded 180 $SUDO env DEBIAN_FRONTEND=noninteractive apt-get \
+      -o DPkg::Lock::Timeout=120 -o Acquire::Retries=2 \
+      -o Acquire::http::Timeout=25 -o Acquire::https::Timeout=25 update || true
+    run_bounded 240 $SUDO env DEBIAN_FRONTEND=noninteractive apt-get \
+      -o DPkg::Lock::Timeout=120 -o Acquire::Retries=2 \
+      -o Acquire::http::Timeout=25 -o Acquire::https::Timeout=25 \
+      install -y ca-certificates curl docker.io docker-compose-v2 nftables fail2ban unattended-upgrades openssh-server ||
+      run_bounded 240 $SUDO env DEBIAN_FRONTEND=noninteractive apt-get \
+        -o DPkg::Lock::Timeout=120 -o Acquire::Retries=2 \
+        install -y nftables fail2ban unattended-upgrades openssh-server || true
+  fi
+  $SUDO systemctl enable --now docker >/dev/null 2>&1 || true
+  # Install nftables for the nft binary. Do not start that service:
+  # IONOS/Ubuntu cloud-init already owns incoming with ufw (allow 22).
+  # Starting the service flushes that ruleset and can silence 22/443/ICMP.
+  if command -v ufw >/dev/null 2>&1 && $SUDO ufw status 2>/dev/null | grep -q '^Status: active'; then
+    $SUDO ufw allow 22/tcp >/dev/null 2>&1 || true
+    $SUDO systemctl disable --now nftables >/dev/null 2>&1 || true
+  fi
+  $SUDO systemctl enable --now fail2ban >/dev/null 2>&1 || true
+  $SUDO systemctl enable --now unattended-upgrades >/dev/null 2>&1 || true
+  printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\n' | $SUDO tee /etc/ssh/sshd_config.d/zz-kombify-host-prep.conf >/dev/null
+  $SUDO sshd -t >/dev/null 2>&1 || true
+  $SUDO systemctl reload ssh >/dev/null 2>&1 || $SUDO systemctl reload sshd >/dev/null 2>&1 || true
+  log "phase=execution_channel status=ensure user=` + guardbootstrap.ExecutionChannelUser + `"
+` + guardbootstrap.RenderExecutionChannelUserProvisioning("$SUDO") + `
+  if stackkit_ready || { docker_ready && command -v nft >/dev/null 2>&1 && $SUDO systemctl is-enabled --quiet fail2ban && $SUDO systemctl is-enabled --quiet unattended-upgrades; }; then
+    printf 'status=ready\n' | $SUDO tee /var/lib/kombify/host-prep/v2.status >/dev/null
+    log "phase=host_prep status=ready profile=stackkit-ready-v2"
+  else
+    printf 'status=failed\n' | $SUDO tee /var/lib/kombify/host-prep/v2.status >/dev/null
+    log "phase=host_prep status=failed profile=stackkit-ready-v2"
+    exit 1
+  fi
 fi
 if docker_ready; then
   converge_enrolled_agent || exit 1

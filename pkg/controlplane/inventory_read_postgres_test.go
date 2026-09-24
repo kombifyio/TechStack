@@ -19,10 +19,10 @@ func TestPostgresInventoryStackBindsTenantAndOwnerInSQL(t *testing.T) {
 	now := time.Date(2026, 7, 21, 10, 0, 0, 0, time.UTC)
 	mock.ExpectBegin()
 	expectTenantGUC(mock, "tenant-1")
-	mock.ExpectQuery(`(?s)SELECT id, tenant_id, instance_id, owner_subject_id, homelab_id, name, description.*FROM stacks`).
+	mock.ExpectQuery(`(?s)SELECT id, tenant_id, instance_id, owner_subject_id, homelab_id, stackkit_instance_id, name, description.*FROM stacks`).
 		WithArgs("tenant-1", "owner-1", "stack-1", "").
 		WillReturnRows(stackRows().AddRow(
-			"stack-1", "tenant-1", "instance-1", "owner-1", nil, "Stack", "", "easy", "active",
+			"stack-1", "tenant-1", "instance-1", "owner-1", nil, "kit-1", "Stack", "", "easy", "active",
 			`{}`, `[]`, `{}`, "clean", nil, now, now, nil,
 		))
 	mock.ExpectCommit()
@@ -177,6 +177,45 @@ func TestPostgresInventoryExactObjectScopeBindsTenantAndServerInSQL(t *testing.T
 
 	if _, err := NewPostgresStore(db).GetInventoryServer(t.Context(), scope, "server-2"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("exact SQL read error = %v, want not found", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPostgresInventoryListsServiceRuntimePlacement(t *testing.T) {
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Date(2026, 8, 24, 16, 0, 0, 0, time.UTC)
+
+	mock.ExpectBegin()
+	expectTenantGUC(mock, "tenant-1")
+	mock.ExpectQuery(`(?s)SELECT EXISTS.*owner_subject_id = \$2`).
+		WithArgs("tenant-1", "owner-1", "", "").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectQuery(`(?s)WITH inventory_services AS.*SELECT created_at, id`).
+		WithArgs("tenant-1", "owner-1", "", "").
+		WillReturnRows(sqlmock.NewRows([]string{"created_at", "id"}).AddRow(now, "service-1"))
+	mock.ExpectQuery(`(?s)WITH inventory_services AS.*SELECT \*\s+FROM inventory_services`).
+		WithArgs("tenant-1", "owner-1", "", "", now, "service-1", 11).
+		WillReturnRows(serviceRuntimeRows().AddRow(
+			"service-1", "tenant-1", "instance-1", "stack-1", "server-1",
+			"cloud", "centron", "runtime-1", "receipt-1", "sla-1", "backup-1", "evidence-1", now,
+			"coolify", "coolify-1", "Coolify", "running", "running", "healthy", "managed",
+			"unlocked", nil, nil, nil, now, "v0.21.15",
+			`{}`, `[]`, "stackkit", `{}`, now, now,
+		))
+	mock.ExpectCommit()
+
+	page, err := NewPostgresStore(db).ListInventoryServices(t.Context(), mustOwnerInventoryScope(t, "tenant-1", "owner-1"), "", InventoryPageRequest{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Services) != 1 || page.Services[0].Placement.ProviderID != "centron" {
+		t.Fatalf("service placement = %#v", page.Services)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

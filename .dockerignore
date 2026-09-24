@@ -1,0 +1,97 @@
+# ===========================================
+# kombifyTechstack Docker Build Context Ignore
+# ===========================================
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Documentation build outputs (not sources)
+site/
+*.md
+!README.md
+
+# Python virtual environments
+.venv
+venv
+*/.venv
+*/venv
+mkdocs/.venv
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+
+# Node modules (frontend builds its own)
+node_modules
+app/node_modules
+**/node_modules
+.npm
+
+# Test artifacts
+artifacts/
+output/
+.repowise/
+.beads/
+$cover
+test-results/
+playwright-results.txt
+coverage/
+*.test.ts
+*.spec.ts
+
+# Build outputs (we build fresh)
+bin/
+dist/
+build/
+app/build/
+.svelte-kit/
+app/.svelte-kit/
+*.exe
+*.exe~
+
+# Temporary files
+tmp/
+.tmp
+*.log
+*.tmp
+
+# Development configs
+.env.local
+.env.*.local
+*.local.yaml
+
+# PocketBase data (we want fresh state)
+pb_data/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Docker files (avoid recursive issues)
+Dockerfile*
+docker-compose*.yml
+!Dockerfile
+!docker-compose.yml
+
+# Certificates (sensitive)
+data/certs/
+*.pem
+*.crt
+*.key
+
+# Simulation artifacts
+simulator/
+qemu-backend/
+
+# Large binary files
+*.iso
+*.qcow2
+*.vmdk

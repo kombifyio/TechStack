@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	ksapi "github.com/kombifyio/techstack/pkg/api"
+	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/specv2"
 )
@@ -33,10 +35,15 @@ type wizardFeatureChecker interface {
 type WizardRouteConfig struct {
 	Features  wizardFeatureChecker
 	Seeds     specv2.SeedSource
+	Projector specv2.Projector
 	Validator specv2.SpecValidator
 	// ReleaseVersion is informational provenance for the response (the
 	// pinned StackKits release the validator binary came from).
 	ReleaseVersion string
+	// RemoteSSHTester performs outbound SSH reachability checks for the
+	// connect-remote wizard. It is intentionally separate from LAN discovery.
+	RemoteSSHTester wizardRemoteSSHTester
+	Wallet          controlplane.WalletStore
 }
 
 type wizardRouteHandlers struct {
@@ -52,17 +59,27 @@ func RegisterWizardRoutes(r *httpx.Router, cfg WizardRouteConfig) {
 	// effect free; the persisting sibling is POST /api/v1/wizard/runs
 	// (internal/routes/stacks/wizard_runs.go).
 	r.POST("/api/v1/wizard/preview", h.preview)
+	r.POST("/api/v1/wizard/remote/test-ssh", h.testRemoteSSH)
 }
 
 // wizardPreviewRequest is the closed preview contract. base_spec carries the
 // existing kit deployment's spec for join previews until the wizard-run
 // endpoint resolves deployments server-side.
 type wizardPreviewRequest struct {
-	Intent   specv2.WizardIntent `json:"intent"`
-	BaseSpec map[string]any      `json:"base_spec,omitempty"`
+	Intent            specv2.WizardIntent     `json:"intent"`
+	BaseSpec          map[string]any          `json:"base_spec,omitempty"`
+	SmartHomeContext  specv2.SmartHomeContext `json:"smart_home_context,omitempty"`
+	intentAdjustments []specv2.IntentAdjustment
 }
 
+// wizardProjectionWriteBudget bounds the response write for the preview
+// projection. It runs the pinned-CLI validator with a 2-minute timeout
+// (pkg/specv2), which exceeds the server-wide 60s write timeout; the
+// extension keeps a slow but successful projection from being cut off.
+const wizardProjectionWriteBudget = 5 * time.Minute
+
 func (h wizardRouteHandlers) preview(e *httpx.Event) error {
+	_ = httpx.ExtendWriteDeadline(e.Response, wizardProjectionWriteBudget)
 	userID, _, ok := authenticatedUser(e)
 	if !ok {
 		return httpx.Unauthorized(e, "Authentication required")
@@ -89,7 +106,13 @@ func (h wizardRouteHandlers) preview(e *httpx.Event) error {
 		return nil
 	}
 
-	projection, projectErr := specv2.Project(seed, request.Intent, request.Intent.HomelabID)
+	if h.cfg.Projector == nil {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "StackKits goal authoring is not configured", map[string]any{
+			inventoryReasonCodeField:          "wizard_projector_unavailable",
+			managedRuntimeDetailsRetryableKey: true,
+		})
+	}
+	projection, projectErr := h.cfg.Projector.Project(e.Request.Context(), seed, request.Intent, request.Intent.HomelabID)
 	if projectErr != nil {
 		return httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeValidation, projectErr.Error(), map[string]any{
 			inventoryReasonCodeField:          "wizard_projection_rejected",
@@ -114,6 +137,23 @@ func (h wizardRouteHandlers) preview(e *httpx.Event) error {
 		"spec":                  projection.Spec,
 		"unmapped_goals":        projection.UnmappedGoals,
 		"unmapped_purpose":      projection.UnmappedPurpose,
+	}
+	if len(request.intentAdjustments) > 0 {
+		response["intent_adjustments"] = request.intentAdjustments
+		response["effective_intent"] = request.Intent
+	}
+	for _, goal := range request.Intent.Goals {
+		if goal == "smart-home" {
+			context := request.SmartHomeContext
+			if request.Intent.KitAssignment.Mode == specv2.KitAssignmentJoin {
+				workloads, _ := seed["workloads"].(map[string]any)
+				if _, exists := workloads["smart-home"]; exists {
+					context.Existing = true
+				}
+			}
+			response["smart_home_recommendation"] = specv2.RecommendSmartHome(context, request.Intent.UseCaseSettings["smart-home"])
+			break
+		}
 	}
 	if h.cfg.ReleaseVersion != "" {
 		response["release_version"] = h.cfg.ReleaseVersion
@@ -150,6 +190,7 @@ func (h wizardRouteHandlers) decodeWizardPreview(e *httpx.Event) (wizardPreviewR
 		_ = httpx.BadRequest(e, "Invalid wizard preview request: "+decodeErr.Error(), nil)
 		return request, true
 	}
+	request.Intent, request.intentAdjustments = specv2.NormalizeCreationIntent(request.Intent)
 	if intentErr := request.Intent.Validate(); intentErr != nil {
 		_ = httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeValidation, intentErr.Error(), map[string]any{
 			inventoryReasonCodeField:          "wizard_intent_invalid",

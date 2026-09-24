@@ -34,6 +34,7 @@ type JobSnapshot struct {
 	WaitReason            string
 	NextResumeAt          *time.Time
 	PersistenceSuppressed bool
+	ExecutionClaimPending bool
 }
 
 // Snapshot returns a read-only point-in-time copy of all job fields used by
@@ -70,6 +71,7 @@ func (j *Job) Snapshot() JobSnapshot {
 		WaitReason:            j.WaitReason,
 		NextResumeAt:          cloneTimePointer(j.NextResumeAt),
 		PersistenceSuppressed: j.suppressPersistence,
+		ExecutionClaimPending: j.executionClaimPending,
 	}
 }
 
@@ -81,29 +83,30 @@ func (j *Job) DetachedCopy() *Job {
 	}
 	snapshot := j.Snapshot()
 	return &Job{
-		ID:                  snapshot.ID,
-		Type:                snapshot.Type,
-		TargetType:          snapshot.TargetType,
-		TargetID:            snapshot.TargetID,
-		TargetName:          snapshot.TargetName,
-		State:               snapshot.State,
-		Priority:            snapshot.Priority,
-		Payload:             snapshot.Payload,
-		Result:              snapshot.Result,
-		Error:               snapshot.Error,
-		ErrorDetails:        snapshot.ErrorDetails,
-		Step:                snapshot.Step,
-		Message:             snapshot.Message,
-		Progress:            snapshot.Progress,
-		Logs:                snapshot.Logs,
-		Attempts:            snapshot.Attempts,
-		MaxAttempts:         snapshot.MaxAttempts,
-		CreatedAt:           snapshot.CreatedAt,
-		StartedAt:           snapshot.StartedAt,
-		CompletedAt:         snapshot.CompletedAt,
-		WaitReason:          snapshot.WaitReason,
-		NextResumeAt:        snapshot.NextResumeAt,
-		suppressPersistence: snapshot.PersistenceSuppressed,
+		ID:                    snapshot.ID,
+		Type:                  snapshot.Type,
+		TargetType:            snapshot.TargetType,
+		TargetID:              snapshot.TargetID,
+		TargetName:            snapshot.TargetName,
+		State:                 snapshot.State,
+		Priority:              snapshot.Priority,
+		Payload:               snapshot.Payload,
+		Result:                snapshot.Result,
+		Error:                 snapshot.Error,
+		ErrorDetails:          snapshot.ErrorDetails,
+		Step:                  snapshot.Step,
+		Message:               snapshot.Message,
+		Progress:              snapshot.Progress,
+		Logs:                  snapshot.Logs,
+		Attempts:              snapshot.Attempts,
+		MaxAttempts:           snapshot.MaxAttempts,
+		CreatedAt:             snapshot.CreatedAt,
+		StartedAt:             snapshot.StartedAt,
+		CompletedAt:           snapshot.CompletedAt,
+		WaitReason:            snapshot.WaitReason,
+		NextResumeAt:          snapshot.NextResumeAt,
+		suppressPersistence:   snapshot.PersistenceSuppressed,
+		executionClaimPending: snapshot.ExecutionClaimPending,
 	}
 }
 

@@ -151,7 +151,7 @@ func inventoryOptionalStringSet(t *testing.T, raw any) map[string]bool {
 	return result
 }
 
-func TestInventoryContractPublishesFiveMCPMappedReadOperations(t *testing.T) {
+func TestInventoryContractPublishesSixMCPMappedReadOperations(t *testing.T) {
 	var document map[string]any
 	if err := yaml.Unmarshal(Spec, &document); err != nil {
 		t.Fatalf("OpenAPI YAML is invalid: %v", err)
@@ -164,6 +164,7 @@ func TestInventoryContractPublishesFiveMCPMappedReadOperations(t *testing.T) {
 	}{
 		"/api/v1/inventory/servers":                           {"listInventoryServers", "techstack.inventory.read", "list_servers"},
 		"/api/v1/inventory/servers/{serverId}/health":         {"getInventoryServerHealth", "techstack.inventory.read", "server_health"},
+		"/api/v1/inventory/servers/{serverId}/ports":          {"getInventoryServerPorts", "techstack.inventory.read", "server_ports"},
 		"/api/v1/inventory/services":                          {"listInventoryServices", "techstack.inventory.read", "list_services"},
 		"/api/v1/inventory/servers/{serverId}/access-context": {"getInventoryServerAccessContext", "techstack.inventory.operate", "server_access_context"},
 		"/api/v1/stacks/{id}/operations":                      {"getStackOperations", "techstack.inventory.read", "get_stack_operations"},

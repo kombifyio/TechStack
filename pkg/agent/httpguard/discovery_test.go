@@ -15,10 +15,11 @@ import (
 // fakeHostProbes replays recorded probe output so discovery is testable without
 // a Docker daemon or a systemd instance, on every OS the agent builds for.
 type fakeHostProbes struct {
-	docker    string
-	dockerErr error
-	systemctl string
-	calls     []string
+	docker        string
+	dockerVersion string
+	dockerErr     error
+	systemctl     string
+	calls         []string
 }
 
 func (f *fakeHostProbes) run(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -27,6 +28,9 @@ func (f *fakeHostProbes) run(_ context.Context, name string, args ...string) ([]
 	case "docker":
 		if f.dockerErr != nil {
 			return nil, f.dockerErr
+		}
+		if len(args) > 0 && args[0] == "version" {
+			return []byte(f.dockerVersion), nil
 		}
 		return []byte(f.docker), nil
 	case "systemctl":

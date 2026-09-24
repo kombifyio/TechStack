@@ -69,11 +69,11 @@ type enrollmentResumeReplay struct {
 
 // ResumeEnrollment atomically retires an overdue managed-runtime wait and
 // ensures one deterministic exact-target replacement deploy. It accepts the
-// legacy enrollment wait and the preceding provider-provision handover, but it
-// never re-enters the provision handler. The source claim, deterministic job
-// ID, durable worker claim, and per-stack execution barrier prevent a source
-// rollout and its replacement from applying in parallel or creating another
-// provider VM.
+// legacy enrollment wait, the preceding provider-provision handover, and the
+// post-lease canonical Guard wait. It never re-enters the provision handler.
+// The source claim, deterministic job ID, durable worker claim, and per-stack
+// execution barrier prevent a source rollout and its replacement from applying
+// in parallel or creating another provider VM.
 func (o *Orchestrator) ResumeEnrollment(req EnrollmentResumeRequest) (*EnrollmentResumeResult, error) {
 	if !enrollmentResumeAuthoritiesReady(o) {
 		return nil, fmt.Errorf("%w: job and lease authorities are required", ErrEnrollmentResumeUnavailable)
@@ -86,8 +86,10 @@ func (o *Orchestrator) ResumeEnrollment(req EnrollmentResumeRequest) (*Enrollmen
 		ctx = o.ctx
 	}
 
-	o.mu.Lock()
-	defer o.mu.Unlock()
+	unlockStack := o.stackLocks.lock(req.StackID)
+	defer unlockStack()
+	o.mu.RLock()
+	defer o.mu.RUnlock()
 
 	stack, source, opts, serverID, prepareErr := o.prepareEnrollmentResume(ctx, req)
 	if prepareErr != nil {
@@ -155,11 +157,10 @@ func (o *Orchestrator) prepareEnrollmentResume(
 	req EnrollmentResumeRequest,
 ) (*orchestratorStack, *controlplane.Job, ProvisionStackOptions, string, error) {
 	opts := ProvisionStackOptions{
-		RequestContext:      ctx,
-		TenantID:            req.TenantID,
-		OwnerID:             req.OwnerID,
-		StackName:           req.StackName,
-		requireControlPlane: true,
+		RequestContext: ctx,
+		TenantID:       req.TenantID,
+		OwnerID:        req.OwnerID,
+		StackName:      req.StackName,
 	}
 	stack, stackErr := o.findStackForJob(ctx, req.StackID, opts)
 	if stackErr != nil {
@@ -284,6 +285,8 @@ func managedRolloutResumeKind(source controlplane.Job) (string, error) {
 	case jobType == string(jobs.JobTypeDeploy) && reason == jobs.WaitReasonManagedRuntimeEnrollment:
 		return reason, nil
 	case jobType == string(jobs.JobTypeProvision) && reason == jobs.WaitReasonManagedRuntimeProvider:
+		return reason, nil
+	case jobType == string(jobs.JobTypeProvision) && reason == jobs.WaitReasonCanonicalGuardEvidence:
 		return reason, nil
 	default:
 		return "", fmt.Errorf("%w: source job type %q and wait reason %q are not a recoverable managed rollout", ErrEnrollmentResumeInvalid, jobType, reason)

@@ -14,6 +14,10 @@ import (
 	"github.com/kombifyio/techstack/pkg/vmleases"
 )
 
+func (h workerRouteHandlers) projectServerEnrollment(ctx context.Context, worker controlplane.Worker, serverID, leaseID string, now time.Time, source string) error {
+	return h.projectServerEnrollmentWithMetadata(ctx, worker, serverID, leaseID, now, source, nil)
+}
+
 type managedRuntimeEnrollmentRecorder struct {
 	lease       vmlease.Lease
 	patches     []vmleases.PatchRequest
@@ -40,7 +44,7 @@ func (r *managedRuntimeEnrollmentRecorder) Get(context.Context, string, vmlease.
 func TestNativeGuardObservationActivatesWithoutLegacyLeaseProjection(t *testing.T) {
 	store := controlplane.NewMemoryStore()
 	handler := workerRouteHandlers{
-		serverStore:           store,
+		serverStore:          store,
 		managedRuntimeLeases: &managedRuntimeEnrollmentRecorder{getError: vmleases.ErrNotFound},
 	}
 	now := time.Date(2026, 8, 14, 17, 30, 0, 0, time.UTC)
@@ -88,6 +92,10 @@ func TestWorkerEvidenceProjectsCanonicalServerLifecycle(t *testing.T) {
 	worker := controlplane.Worker{
 		ID: "guard-1", TenantID: "tenant-1", StackID: "stack-1",
 		OwnerSubjectID: "owner-1", Hostname: "runtime-1", Provider: "centron",
+		Capabilities: map[string]any{
+			"provider_operation_id": "operation-1",
+			"cloud_init_sha256":     "sha256:" + strings.Repeat("a", 64),
+		},
 	}
 
 	if err := handler.projectServerEnrollment(t.Context(), worker, "server-1", "lease-1", now, "pairing-redemption"); err != nil {
@@ -124,13 +132,32 @@ func TestWorkerEvidenceProjectsCanonicalServerLifecycle(t *testing.T) {
 	if server.Revision != 3 || server.Generation != 1 || server.SourceEpoch == "" || server.SourceSequence <= 0 {
 		t.Fatalf("heartbeat event fencing not recorded correctly: %#v", server)
 	}
+	if server.LastOutcome != nil {
+		t.Fatalf("accepted heartbeat did not clear enrollment guidance: %#v", server.LastOutcome)
+	}
 
 	transitions, err := store.ListServerTransitions(t.Context(), "tenant-1", "server-1", 100)
 	if err != nil {
 		t.Fatalf("list transitions: %v", err)
 	}
-	if len(transitions) != 7 {
-		t.Fatalf("transitions = %d, want initial and heartbeat transitions: %#v", len(transitions), transitions)
+	var activationEvidence map[string]any
+	var pendingOutcome, resetOutcome bool
+	for _, transition := range transitions {
+		if transition.Source == "enrollment-controller" {
+			activationEvidence = transition.Evidence
+		}
+		if transition.Dimension == "outcome" && transition.ToState == "pending" {
+			pendingOutcome = true
+		}
+		if transition.Dimension == "outcome" && transition.ToState == "available" && transition.Evidence["outcome_reset"] == true {
+			resetOutcome = true
+		}
+	}
+	if !pendingOutcome || !resetOutcome {
+		t.Fatalf("enrollment outcome audit is incomplete: %#v", transitions)
+	}
+	if activationEvidence["provider_operation_id"] != "operation-1" || activationEvidence["cloud_init_sha256"] != "sha256:"+strings.Repeat("a", 64) || activationEvidence["first_heartbeat_at"] != heartbeatAt.Format(time.RFC3339Nano) {
+		t.Fatalf("activation evidence = %#v", activationEvidence)
 	}
 }
 
@@ -176,7 +203,12 @@ func TestGuardObservationConvergesManagedLeaseEnrollment(t *testing.T) {
 	}
 }
 
-func TestGuardObservationRetriesLeaseEnrollmentAfterProjectionFailure(t *testing.T) {
+// TestGuardObservationSurvivesLeaseProjectionFailure pins the post-#679
+// contract: the authenticated Guard observation is the enrollment authority,
+// so a failing retired lease projection must neither fail the heartbeat nor
+// leave the server enrolling. The lease repair is retried on the next
+// observation.
+func TestGuardObservationSurvivesLeaseProjectionFailure(t *testing.T) {
 	store := controlplane.NewMemoryStore()
 	leases := &managedRuntimeEnrollmentRecorder{
 		lease: vmlease.Lease{
@@ -194,8 +226,8 @@ func TestGuardObservationRetriesLeaseEnrollmentAfterProjectionFailure(t *testing
 		t.Fatal(err)
 	}
 	position := guardEventPosition{Epoch: "epoch-a", Sequence: 1, ObservedAt: now.Add(time.Minute)}
-	if err := handler.projectServerHeartbeat(t.Context(), worker, "server-1", "lease-1", position.ObservedAt, "guard-heartbeat", position); err == nil {
-		t.Fatal("first heartbeat unexpectedly succeeded despite lease projection failure")
+	if err := handler.projectServerHeartbeat(t.Context(), worker, "server-1", "lease-1", position.ObservedAt, "guard-heartbeat", position); err != nil {
+		t.Fatalf("lease projection failure broke the heartbeat: %v", err)
 	}
 	if err := handler.projectServerHeartbeat(t.Context(), worker, "server-1", "lease-1", position.ObservedAt, "guard-heartbeat", position); err != nil {
 		t.Fatalf("replayed heartbeat did not retry lease enrollment: %v", err)
@@ -392,7 +424,9 @@ func TestWorkerInventoryRevisionsAndDegradesCanonicalServer(t *testing.T) {
 			Hostname: "runtime-1", OS: "ubuntu", OSVersion: "24.04", Arch: "amd64",
 			PublicIP: "203.0.113.10", CPUCores: 4, RAMMB: 8192, DiskGB: 120,
 		},
-		Services:  []workerInventoryService{{ServiceID: "db", Status: "unhealthy"}},
+		Services: []workerInventoryService{{
+			ServiceID: "db", Status: "unhealthy", Lifecycle: "daemon", OperationalImpact: "critical",
+		}},
 		Channels:  []workerInventoryChannel{{Kind: "grpc-mtls", Status: "connected", Provenance: "guard"}, {Kind: "ssh", Status: "available", Provenance: "operator"}},
 		Endpoints: []workerInventoryEndpoint{{URL: "https://base.demo.kombify.me", Visibility: "public", Provenance: "stackkit-access-manifest"}},
 	}
@@ -453,6 +487,60 @@ func TestGuardObservationRequiresExplicitEpochSequenceAndTime(t *testing.T) {
 	}
 	if server.Revision != 1 || server.ConnectionState != string(serverregistry.ConnectionPending) {
 		t.Fatalf("invalid observation mutated aggregate: %#v", server)
+	}
+}
+
+func TestWorkerInventoryPersistsReceiptTimeAsHeartbeat(t *testing.T) {
+	store := controlplane.NewMemoryStore()
+	handler := workerRouteHandlers{serverStore: store}
+	receipt := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	observedAt := receipt.Add(-2 * time.Minute)
+	worker := controlplane.Worker{ID: "guard-1", TenantID: "tenant-1", StackID: "stack-1", OwnerSubjectID: "owner-1"}
+	if err := handler.projectServerEnrollment(t.Context(), worker, "server-1", "", receipt.Add(-time.Minute), "enrollment"); err != nil {
+		t.Fatal(err)
+	}
+	req := workerInventoryRequest{
+		SourceEpoch: "epoch-a", SourceSequence: 1, ObservedAt: observedAt,
+		Hostname: "runtime-1",
+		Services: []workerInventoryService{{ServiceID: "db", Status: "healthy"}},
+	}
+	if _, err := handler.projectServerInventory(t.Context(), worker, "server-1", "", req, receipt); err != nil {
+		t.Fatalf("project inventory: %v", err)
+	}
+	server, err := store.GetServerRuntime(t.Context(), "tenant-1", "server-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if server.LastHeartbeatAt == nil || !server.LastHeartbeatAt.Equal(receipt) {
+		t.Fatalf("LastHeartbeatAt = %v, want receipt %v (Guard observed_at %v)", server.LastHeartbeatAt, receipt, observedAt)
+	}
+	if server.ConnectionState != string(serverregistry.ConnectionConnected) {
+		t.Fatalf("receipt-fresh inventory connection = %s", server.ConnectionState)
+	}
+	if stringFromAnyMap(server.Metadata, "inventory_observed_at") != observedAt.Format(time.RFC3339Nano) {
+		t.Fatalf("Guard observation time was not retained: %#v", server.Metadata)
+	}
+}
+
+func TestGuardObservationRejectsObservedAtTooFarInThePast(t *testing.T) {
+	store := controlplane.NewMemoryStore()
+	handler := workerRouteHandlers{serverStore: store}
+	now := time.Date(2026, 8, 30, 15, 0, 0, 0, time.UTC)
+	worker := controlplane.Worker{ID: "guard-1", TenantID: "tenant-1", StackID: "stack-1", OwnerSubjectID: "owner-1"}
+	if err := handler.projectServerEnrollment(t.Context(), worker, "server-1", "", now, "enrollment"); err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.projectServerHeartbeat(t.Context(), worker, "server-1", "", now, "guard-heartbeat", guardEventPosition{
+		Epoch: "epoch-a", Sequence: 1, ObservedAt: now.Add(-guardObservationSkewWindow - time.Second),
+	}); err == nil {
+		t.Fatal("heartbeat with observed_at beyond past skew was accepted")
+	}
+	server, err := store.GetServerRuntime(t.Context(), "tenant-1", "server-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if server.ConnectionState != string(serverregistry.ConnectionPending) {
+		t.Fatalf("past-skew observation mutated aggregate: %#v", server)
 	}
 }
 

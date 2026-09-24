@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 
-import { TEST_CREDENTIALS } from "./helpers/test-utils";
+import { login } from "./helpers/test-utils";
 /**
  * Settings Page Tests
  *
@@ -9,13 +9,7 @@ import { TEST_CREDENTIALS } from "./helpers/test-utils";
 
 test.describe("Settings Page", () => {
   test.beforeEach(async ({ page }) => {
-    // Login before each test
-    await page.goto("/login", { waitUntil: "domcontentloaded" });
-    await page.waitForTimeout(1000); // Wait for PocketBase connection
-    await page.getByLabel("Email").fill(TEST_CREDENTIALS.email);
-    await page.getByLabel("Password").fill(TEST_CREDENTIALS.password);
-    await page.getByRole("button", { name: "Sign In" }).click();
-    await page.waitForURL(/\/stacks/, { timeout: 30_000 });
+    await login(page);
   });
 
   test("should display settings page sections", async ({ page }) => {
@@ -23,7 +17,7 @@ test.describe("Settings Page", () => {
 
     await expect(page.getByRole("heading", { name: "Account" })).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "Stack Identity" }),
+      page.getByRole("heading", { name: "Homelab Identity" }),
     ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Danger Zone" }),
@@ -33,6 +27,32 @@ test.describe("Settings Page", () => {
     await expect(
       page.getByTestId("settings-reset-stacks-button"),
     ).toBeVisible();
+  });
+
+  test("finish selection stamps data-finish and persists across reload", async ({
+    page,
+  }) => {
+    await page.goto("/settings");
+
+    await expect(page.getByTestId("settings-appearance-card")).toBeVisible();
+    await page
+      .getByTestId("settings-finish")
+      .getByRole("radio", { name: "aurora" })
+      .click();
+
+    // The documented public boundary (KOMBIFY-DESIGN-SYSTEM-STANDARD §4/§6):
+    // the axis lands on <html data-finish> and the device choice persists.
+    await expect(page.locator("html")).toHaveAttribute("data-finish", "aurora");
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.locator("html")).toHaveAttribute("data-finish", "aurora");
+
+    // Following the account again clears the device tier.
+    await page.goto("/settings");
+    await page.getByTestId("settings-finish-follow-account").click();
+    const stored = await page.evaluate(() =>
+      window.localStorage.getItem("techstack-finish"),
+    );
+    expect(stored).toBeNull();
   });
 
   test("should not show retired settings panels", async ({ page }) => {

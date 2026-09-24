@@ -2,8 +2,6 @@
 package stacks
 
 import (
-	"strings"
-
 	"github.com/pocketbase/pocketbase/core"
 
 	productnotifications "github.com/kombifyio/techstack/internal/notifications"
@@ -12,61 +10,6 @@ import (
 	"github.com/kombifyio/techstack/pkg/jobs"
 	"github.com/kombifyio/techstack/pkg/orchestrator"
 )
-
-func legacyJobTypeForPersistence(jobType string) string {
-	switch jobType {
-	case "provision", "destroy", "update", "restart":
-		return jobType
-	case "deploy", "drift_check":
-		return "update"
-	case "drift_resolve":
-		return "restart"
-	default:
-		return "update"
-	}
-}
-
-func legacyJobRecordFields(jobType, stackID, currentStep string) map[string]any {
-	return map[string]any{
-		"type":         legacyJobTypeForPersistence(jobType),
-		"state":        "pending",
-		"progress":     0,
-		"stack_id":     stackID,
-		"current_step": currentStep,
-	}
-}
-
-// createLegacyJob creates a job record without orchestrator execution (legacy mode).
-func createLegacyJob(app core.App, jobType, stackID, currentStep, stackStatus string) (string, error) {
-	jobsCollection, err := app.FindCollectionByNameOrId("jobs")
-	if err != nil {
-		return "", err
-	}
-
-	job := core.NewRecord(jobsCollection)
-	for key, value := range legacyJobRecordFields(jobType, stackID, currentStep) {
-		job.Set(key, value)
-	}
-	if stack, lookupErr := app.FindRecordById("stacks", stackID); lookupErr == nil {
-		if tenantID := strings.TrimSpace(stack.GetString("tenant_id")); tenantID != "" {
-			job.Set("tenant_id", tenantID)
-		}
-	}
-
-	if saveErr := app.Save(job); saveErr != nil {
-		return "", saveErr
-	}
-
-	// Update stack status
-	stack, err := app.FindRecordById("stacks", stackID)
-	if err != nil {
-		return job.Id, nil // Job created but stack update failed - still return job ID
-	}
-	stack.Set("status", stackStatus)
-	app.Save(stack) // Best effort
-
-	return job.Id, nil
-}
 
 func RegisterCRUDRoutesWithModeAndFeatures(r *httpx.Router, app core.App, orch *orchestrator.Orchestrator, mode config.DeploymentMode, featureChecker managedRuntimeFeatureChecker, managedLeases jobs.ManagedLeaseManager, notificationOutbox productnotifications.ProductEventEnqueuer) {
 	if !mode.IsValid() {
@@ -81,7 +24,9 @@ func RegisterCRUDRoutesWithModeAndFeatures(r *httpx.Router, app core.App, orch *
 		homelabStore:       stores.Homelabs,
 		jobStore:           stores.Jobs,
 		walletStore:        stores.Wallet,
+		activityStore:      stores.Activity,
 		serverStore:        stores.Servers,
+		serviceStore:       stores.Services,
 		routingStore:       stores.Routing,
 		runtimeFeatures:    featureChecker,
 		managedLeases:      managedLeases,
@@ -121,7 +66,7 @@ func RegisterCRUDRoutesWithModeAndFeatures(r *httpx.Router, app core.App, orch *
 	r.POST("/api/v1/stacks/{id}/stackkit/operations", h.startStackKitLifecycle)
 
 	// POST /api/v1/stacks/{id}/resume-enrollment - Resume one overdue
-	// waiting_enrollment rollout on its already-created exact managed VM.
+	// provider, Guard, or enrollment wait on its already-created exact managed VM.
 	r.POST("/api/v1/stacks/{id}/resume-enrollment", h.resumeStackEnrollment)
 
 	// POST /api/v1/stacks/{id}/retry-rollout - Retry only the failed rollout

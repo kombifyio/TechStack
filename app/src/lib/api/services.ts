@@ -1,7 +1,18 @@
 import { fetchApi } from "./client";
 import { parseManagementState, type RegistryManagementState } from "./registry";
 
-export type ManagedServiceAction = "start" | "stop" | "restart" | "logs";
+export type ManagedServiceAction =
+  "start" | "stop" | "restart" | "logs" | "freeze" | "unfreeze";
+
+/**
+ * Guardrail actions are applied synchronously by the control plane: no job is
+ * enqueued and no agent is contacted, so they carry no inventory revision and
+ * their response has no job id.
+ */
+export const SERVICE_LOCK_ACTIONS: ReadonlySet<ManagedServiceAction> = new Set([
+  "freeze",
+  "unfreeze",
+]);
 
 /**
  * Canonical service read model (`GET /api/v1/services`,
@@ -30,17 +41,37 @@ export interface CanonicalServicePlacement {
   freshness: CanonicalPlacementFreshness;
 }
 
+export interface CanonicalServiceMutationLock {
+  state: "unlocked" | "locked" | string;
+  reason_code?: string;
+  actor?: string;
+  changed_at?: string;
+}
+
 export interface CanonicalService {
   id: string;
-  techstack_id: string;
+  kit_deployment_id: string;
   server_id?: string;
   target_kind: "server" | "managed_workload" | "unknown" | string;
   placement: CanonicalServicePlacement;
   service_key: string;
   service_instance: string;
   name: string;
+  application_key?: string;
+  application_display_name?: string;
+  role?: string;
+  lifecycle?: string;
+  operational_impact?: string;
+  internal_address?: string;
+  runtime_identity?: Record<string, string>;
   /** Persisted ownership dimension; always present on this route. */
   management_state: RegistryManagementState;
+  /**
+   * The owner guardrail. Orthogonal to the measured dimensions: a locked
+   * service keeps running and keeps reporting it — only `allowed_actions`
+   * narrows. Optional so a backend that predates the field reads as unlocked.
+   */
+  mutation_lock?: CanonicalServiceMutationLock;
   desired_state: string;
   observed_state: string;
   health: CanonicalServiceHealth;
@@ -55,39 +86,127 @@ export interface CanonicalService {
   updated_at: string;
 }
 
+type CanonicalServiceWire = Omit<
+  CanonicalService,
+  "kit_deployment_id" | "management_state"
+> & {
+  kit_deployment_id?: string;
+  management_state: unknown;
+};
+
+function requireKitDeploymentId(
+  kitDeploymentId: string | undefined,
+  context: string,
+): string {
+  const value = kitDeploymentId?.trim();
+  if (!value) throw new Error(`${context}: missing kit deployment identity`);
+  return value;
+}
+
+function normalizeCanonicalService(
+  service: CanonicalServiceWire,
+  context: string,
+): CanonicalService {
+  const { kit_deployment_id, ...result } = service;
+  return {
+    ...result,
+    kit_deployment_id: requireKitDeploymentId(kit_deployment_id, context),
+    management_state: parseManagementState(service.management_state, context),
+  };
+}
+
+export interface ServiceApplicationAccess {
+  kind: "public" | "internal" | "unavailable" | string;
+  address?: string;
+  open_url?: string;
+  reason?: string;
+}
+
+export interface ServiceApplication {
+  application_id: string;
+  kit_deployment_id: string;
+  server_id: string;
+  application_key: string;
+  display_name: string;
+  status: string;
+  access: ServiceApplicationAccess;
+  components: CanonicalService[];
+  observed_at?: string;
+  system: boolean;
+  provenance: Record<string, unknown>;
+}
+
+type ServiceApplicationWire = Omit<
+  ServiceApplication,
+  "kit_deployment_id" | "components"
+> & {
+  kit_deployment_id?: string;
+  components: CanonicalServiceWire[];
+};
+
+function normalizeServiceApplication(
+  application: ServiceApplicationWire,
+  context: string,
+): ServiceApplication {
+  const { kit_deployment_id, components, ...result } = application;
+  return {
+    ...result,
+    kit_deployment_id: requireKitDeploymentId(kit_deployment_id, context),
+    components: components.map((component, index) =>
+      normalizeCanonicalService(component, `${context}.components[${index}]`),
+    ),
+  };
+}
+
+export async function listServiceApplications(
+  kitDeploymentId?: string,
+): Promise<ServiceApplication[]> {
+  const query = kitDeploymentId
+    ? `?kit_deployment_id=${encodeURIComponent(kitDeploymentId)}`
+    : "";
+  const response = await fetchApi<ServiceApplicationWire[]>(
+    `/api/v1/service-applications${query}`,
+  );
+  return (response.data ?? []).map((application, index) =>
+    normalizeServiceApplication(application, `service-applications[${index}]`),
+  );
+}
+
+export async function getServiceApplication(
+  applicationId: string,
+): Promise<ServiceApplication> {
+  const response = await fetchApi<ServiceApplicationWire>(
+    `/api/v1/service-applications/${encodeURIComponent(applicationId)}`,
+  );
+  return normalizeServiceApplication(
+    response.data,
+    `service-applications/${applicationId}`,
+  );
+}
+
 /** List the canonical service aggregates for the caller's tenant. */
 export async function listCanonicalServices(
-  techstackId?: string,
+  kitDeploymentId?: string,
 ): Promise<CanonicalService[]> {
-  const query = techstackId
-    ? `?techstack_id=${encodeURIComponent(techstackId)}`
+  const query = kitDeploymentId
+    ? `?kit_deployment_id=${encodeURIComponent(kitDeploymentId)}`
     : "";
-  const response = await fetchApi<CanonicalService[]>(
+  const response = await fetchApi<CanonicalServiceWire[]>(
     `/api/v1/services${query}`,
   );
-  return (response.data ?? []).map((service, index) => ({
-    ...service,
-    management_state: parseManagementState(
-      service.management_state,
-      `services[${index}]`,
-    ),
-  }));
+  return (response.data ?? []).map((service, index) =>
+    normalizeCanonicalService(service, `services[${index}]`),
+  );
 }
 
 /** Read one canonical service aggregate. */
 export async function getCanonicalService(
   serviceId: string,
 ): Promise<CanonicalService> {
-  const response = await fetchApi<CanonicalService>(
+  const response = await fetchApi<CanonicalServiceWire>(
     `/api/v1/services/${encodeURIComponent(serviceId)}`,
   );
-  return {
-    ...response.data,
-    management_state: parseManagementState(
-      response.data.management_state,
-      `services/${serviceId}`,
-    ),
-  };
+  return normalizeCanonicalService(response.data, `services/${serviceId}`);
 }
 
 export interface ManagedServiceActionResponse {
@@ -140,11 +259,15 @@ export async function runManagedServiceAction(
 ): Promise<ManagedServiceActionResponse> {
   const normalizedLogOptions =
     action === "logs" ? normalizeServiceLogOptions(logOptions) : undefined;
-  const body: Record<string, unknown> = {
-    action,
-    expected_inventory_revision: expectedInventoryRevision,
-    owner_approved: true,
-  };
+  // The lock is not bound to a runtime observation - sending a revision would
+  // claim a guarantee the endpoint does not make, and it rejects one.
+  const body: Record<string, unknown> = SERVICE_LOCK_ACTIONS.has(action)
+    ? { action, owner_approved: true }
+    : {
+        action,
+        expected_inventory_revision: expectedInventoryRevision,
+        owner_approved: true,
+      };
   if (normalizedLogOptions) {
     body.limit = normalizedLogOptions.limit;
     if (normalizedLogOptions.cursor) body.cursor = normalizedLogOptions.cursor;

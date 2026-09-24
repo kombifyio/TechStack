@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -37,10 +36,12 @@ var ErrInvalid = errors.New("invalid runtime convergence")
 
 // Component is one bounded runtime package convergence observation.
 type Component struct {
-	Name       string    `json:"name"`
-	State      string    `json:"state"`
-	ObservedAt time.Time `json:"observed_at"`
-	ErrorCode  string    `json:"error_code,omitempty"`
+	Name           string    `json:"name"`
+	State          string    `json:"state"`
+	ObservedAt     time.Time `json:"observed_at"`
+	Version        string    `json:"version,omitempty"`
+	ArtifactSHA256 string    `json:"artifact_sha256,omitempty"`
+	ErrorCode      string    `json:"error_code,omitempty"`
 }
 
 // Snapshot is the wire and persistence contract for agent runtime
@@ -144,23 +145,13 @@ func Normalize(snapshot Snapshot) (Snapshot, error) {
 	seen := make(map[string]struct{}, len(snapshot.Components))
 	for index := range snapshot.Components {
 		component := &snapshot.Components[index]
-		component.Name = strings.ToLower(strings.TrimSpace(component.Name))
-		component.State = strings.ToLower(strings.TrimSpace(component.State))
-		component.ErrorCode = strings.ToLower(strings.TrimSpace(component.ErrorCode))
-		component.ObservedAt = normalizeTime(component.ObservedAt)
-		if !validName(component.Name) || !validComponentState(component.State) || component.ObservedAt.IsZero() || !validErrorCode(component.ErrorCode) {
+		if err := normalizeComponent(component); err != nil {
 			return Snapshot{}, ErrInvalid
 		}
 		if _, duplicate := seen[component.Name]; duplicate {
 			return Snapshot{}, ErrInvalid
 		}
 		seen[component.Name] = struct{}{}
-		if component.State == ComponentFailed && component.ErrorCode == "" {
-			return Snapshot{}, ErrInvalid
-		}
-		if component.State != ComponentFailed && component.ErrorCode != "" && component.ErrorCode != AgentRestartRequiredError {
-			return Snapshot{}, ErrInvalid
-		}
 	}
 	if snapshot.State == StateReady && snapshot.ErrorCode != "" {
 		return Snapshot{}, ErrInvalid
@@ -170,6 +161,29 @@ func Normalize(snapshot Snapshot) (Snapshot, error) {
 	}
 	sort.Slice(snapshot.Components, func(i, j int) bool { return snapshot.Components[i].Name < snapshot.Components[j].Name })
 	return clone(snapshot), nil
+}
+
+func normalizeComponent(component *Component) error {
+	component.Name = strings.ToLower(strings.TrimSpace(component.Name))
+	component.State = strings.ToLower(strings.TrimSpace(component.State))
+	component.Version = strings.TrimSpace(component.Version)
+	component.ArtifactSHA256 = strings.ToLower(strings.TrimSpace(component.ArtifactSHA256))
+	component.ErrorCode = strings.ToLower(strings.TrimSpace(component.ErrorCode))
+	component.ObservedAt = normalizeTime(component.ObservedAt)
+	if !validName(component.Name) || !validComponentState(component.State) || component.ObservedAt.IsZero() || !validErrorCode(component.ErrorCode) {
+		return ErrInvalid
+	}
+	identityPresent := component.Version != "" || component.ArtifactSHA256 != ""
+	if identityPresent && (component.State != ComponentReady || !validVersion(component.Version) || !validSHA256(component.ArtifactSHA256)) {
+		return ErrInvalid
+	}
+	if component.State == ComponentFailed && component.ErrorCode == "" {
+		return ErrInvalid
+	}
+	if component.State != ComponentFailed && component.ErrorCode != "" && component.ErrorCode != AgentRestartRequiredError {
+		return ErrInvalid
+	}
+	return nil
 }
 
 // Map returns the canonical JSON-compatible representation used by the
@@ -225,6 +239,33 @@ func validErrorCode(value string) bool {
 	}
 }
 
+func validVersion(value string) bool {
+	if value == "" || len(value) > 64 {
+		return false
+	}
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') || character == '.' || character == '-' || character == '+' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func validSHA256(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, character := range value {
+		if (character >= '0' && character <= '9') || (character >= 'a' && character <= 'f') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 func normalizeTime(value time.Time) time.Time {
 	if value.IsZero() {
 		return time.Time{}
@@ -235,13 +276,4 @@ func normalizeTime(value time.Time) time.Time {
 func clone(snapshot Snapshot) Snapshot {
 	snapshot.Components = append([]Component(nil), snapshot.Components...)
 	return snapshot
-}
-
-// ValidateComponent keeps callers honest when they construct component states
-// outside this package.
-func ValidateComponent(component Component) error {
-	if _, err := Normalize(Snapshot{State: StatePending, ObservedAt: component.ObservedAt, Components: []Component{component}}); err != nil {
-		return fmt.Errorf("%w: component", ErrInvalid)
-	}
-	return nil
 }

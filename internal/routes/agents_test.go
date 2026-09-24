@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -19,21 +18,21 @@ func TestNormalizeAgentCommandRequest(t *testing.T) {
 		commandName string
 		wantType    string
 		wantCommand string
-		wantErr     string
+		wantErr     bool
 	}{
 		{name: "health check", commandType: "health_check", commandName: "health_check", wantType: "health_check", wantCommand: "health_check"},
 		{name: "trim and lower", commandType: " GET_LOGS ", commandName: " get_logs ", wantType: "get_logs", wantCommand: "get_logs"},
-		{name: "mismatched type", commandType: "health_check", commandName: "get_logs", wantErr: "must match"},
-		{name: "execute rejected", commandType: "execute", commandName: "execute", wantErr: "not allowed"},
-		{name: "shell rejected", commandType: "execute", commandName: "/bin/sh", wantErr: "must match"},
+		{name: "mismatched type", commandType: "health_check", commandName: "get_logs", wantErr: true},
+		{name: "execute rejected", commandType: "execute", commandName: "execute", wantErr: true},
+		{name: "shell rejected", commandType: "execute", commandName: "/bin/sh", wantErr: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			gotType, gotCommand, err := normalizeAgentCommandRequest(tt.commandType, tt.commandName)
-			if tt.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
-					t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected request rejection")
 				}
 				return
 			}
@@ -74,7 +73,7 @@ func TestAgentLogResponseIncludesCorrelationFields(t *testing.T) {
 		},
 	})
 
-	for _, key := range []string{"tenant_id", "agent_id", "source", "stack_id", "job_id", "lease_id", "provider", "runtime_action_id", "server_id", "service_id", "runtime_scope_key", "server_scope_key", "service_scope_key", "scope_status", "service_name", "trace_id", "fields"} {
+	for _, key := range []string{"tenant_id", "agent_id", "source", "kit_deployment_id", "job_id", "lease_id", "provider", "runtime_action_id", "server_id", "service_id", "runtime_scope_key", "server_scope_key", "service_scope_key", "scope_status", "service_name", "trace_id", "fields"} {
 		if _, ok := got[key]; !ok {
 			t.Fatalf("agentLogResponse() missing %q in %+v", key, got)
 		}

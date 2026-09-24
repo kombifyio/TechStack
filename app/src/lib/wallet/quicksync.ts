@@ -3,14 +3,14 @@
  * Works with 1Password, Bitwarden, LastPass, and other browser extensions
  */
 
-import type { PBWalletItem } from "$lib/stores/wallet";
+import type { WalletItem } from "#lib/wallet/types.js";
 
 /**
  * Triggers browser password manager "Save Password" dialog using an invisible form
  * This works without API keys by leveraging standard HTML autocomplete attributes
  */
 export function triggerPasswordManagerSave(
-  item: PBWalletItem,
+  item: WalletItem,
 ): Promise<boolean> {
   return new Promise((resolve) => {
     let resolved = false;
@@ -99,7 +99,7 @@ export function triggerPasswordManagerSave(
  * Alternative approach: Copy credentials to clipboard in password manager format
  * Useful as a fallback or for password managers that support clipboard import
  */
-export function copyForPasswordManager(item: PBWalletItem): string {
+export function copyForPasswordManager(item: WalletItem): string {
   const lines: string[] = [];
 
   lines.push(`Name: ${item.name}`);

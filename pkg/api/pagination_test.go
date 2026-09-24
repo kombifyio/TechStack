@@ -119,17 +119,3 @@ func TestPaginate(t *testing.T) {
 		})
 	}
 }
-
-func TestNewPaginatedMeta(t *testing.T) {
-	meta := NewPaginatedMeta(100, 2, 10)
-
-	if meta.Total != 100 {
-		t.Errorf("Total = %d, want 100", meta.Total)
-	}
-	if meta.Page != 2 {
-		t.Errorf("Page = %d, want 2", meta.Page)
-	}
-	if meta.PerPage != 10 {
-		t.Errorf("PerPage = %d, want 10", meta.PerPage)
-	}
-}

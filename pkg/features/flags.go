@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kombifyio/go-common/edgeauth"
+	"github.com/kombifyio/techstack/internal/gocommon/edgeauth"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/serverruntime"
 	"github.com/kombifyio/techstack/pkg/logger"
 	"github.com/open-feature/go-sdk/openfeature"
@@ -60,8 +60,8 @@ type FlagState struct {
 	Category        Category  `json:"category"`
 }
 
-// SecurityFeatures defines all security-critical features (Default: OFF - must be explicitly enabled)
-var SecurityFeatures = map[string]FeatureDefinition{
+// securityFeatures defines all security-critical features (Default: OFF - must be explicitly enabled).
+var securityFeatures = map[string]FeatureDefinition{
 	"network_discovery": {
 		Key:             "network_discovery_enabled",
 		Name:            "Network Discovery",
@@ -104,8 +104,8 @@ var SecurityFeatures = map[string]FeatureDefinition{
 	},
 }
 
-// BetaFeatures defines experimental features (Default: OFF - opt-in only)
-var BetaFeatures = map[string]FeatureDefinition{
+// betaFeatures defines experimental features. Each definition owns its default.
+var betaFeatures = map[string]FeatureDefinition{
 	"native_v2_wizard": {
 		Key:             "native_v2_wizard",
 		Name:            "Native v2 Wizard",
@@ -208,8 +208,8 @@ var BetaFeatures = map[string]FeatureDefinition{
 	},
 }
 
-// UXFeatures defines user experience features (Default: ON)
-var UXFeatures = map[string]FeatureDefinition{
+// uxFeatures defines user experience features (Default: ON).
+var uxFeatures = map[string]FeatureDefinition{
 	"onboarding_wizard": {
 		Key:             "onboarding_wizard",
 		Name:            "Onboarding Wizard",
@@ -487,13 +487,13 @@ func NewService(store Store, cfg ServiceConfig) (*Service, error) {
 
 	// Merge all feature definitions
 	definitions := make(map[string]FeatureDefinition)
-	for k, v := range SecurityFeatures {
+	for k, v := range securityFeatures {
 		definitions[k] = v
 	}
-	for k, v := range BetaFeatures {
+	for k, v := range betaFeatures {
 		definitions[k] = v
 	}
-	for k, v := range UXFeatures {
+	for k, v := range uxFeatures {
 		definitions[k] = v
 	}
 
@@ -530,9 +530,9 @@ func NewService(store Store, cfg ServiceConfig) (*Service, error) {
 
 	log.Info("feature flag service initialized",
 		"definitions", len(definitions),
-		"security_features", len(SecurityFeatures),
-		"beta_features", len(BetaFeatures),
-		"ux_features", len(UXFeatures),
+		"security_features", len(securityFeatures),
+		"beta_features", len(betaFeatures),
+		"ux_features", len(uxFeatures),
 		"edge_flags", "enabled",
 	)
 

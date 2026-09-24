@@ -46,7 +46,7 @@ describe("Techstack PostHog analytics", () => {
     const payload = buildCapturePayload({
       apiKey: "phc_test",
       event: "techstack:page_viewed",
-      config: { appVersion: "0.4.13", location: { pathname: "/stacks" } },
+      config: { appVersion: "0.4.13", location: { pathname: "/dashboard" } },
       randomId: () => "fixed",
       now: () => 1000,
     });
@@ -59,7 +59,7 @@ describe("Techstack PostHog analytics", () => {
       const payload = buildCapturePayload({
         apiKey,
         event: "techstack:page_viewed",
-        config: { appVersion: "0.4.13", location: { pathname: "/stacks" } },
+        config: { appVersion: "0.4.13", location: { pathname: "/dashboard" } },
         user: { authSubject: "auth0|techstack-user" },
         randomId: () => "fixed",
         now: () => 1000,
@@ -411,7 +411,7 @@ describe("Techstack PostHog analytics", () => {
     await expect(
       client.capture("techstack:page_viewed", {
         user: { authSubject: "auth0|abc", organizationId: "org_123" },
-        properties: { route_group: "stacks" },
+        properties: { route_group: "dashboard" },
       }),
     ).resolves.toBe(true);
 
@@ -423,12 +423,12 @@ describe("Techstack PostHog analytics", () => {
     expect(body.api_key).toBe("phc_test");
     expect(body.distinct_id).toBe("auth0|abc");
     expect(body.properties.correlation_id).toBe("ph_42_id");
-    expect(body.properties.route_group).toBe("stacks");
+    expect(body.properties.route_group).toBe("dashboard");
     expect(body.properties.$groups).toEqual({ organization: "org_123" });
   });
 
   it("classifies routes and strips query strings from navigation targets", () => {
-    expect(classifyRoute("/stacks/new")).toBe("stacks");
+    expect(classifyRoute("/dashboard")).toBe("dashboard");
     expect(classifyRoute("/monitoring")).toBe("monitoring");
     expect(classifyRoute("/unknown")).toBe("other");
     expect(

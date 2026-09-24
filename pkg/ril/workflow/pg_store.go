@@ -11,11 +11,10 @@ import (
 	"github.com/google/uuid"
 )
 
-// PgStore is a Postgres-backed RunStore (epic kombify-Techstack-a7x.1). It
-// mirrors the semantics of the PocketBase *Store: run_id is the stable key,
-// status changes are validated against the run/step state machines, and the
-// JSON map fields round-trip as jsonb. The workflow tables are global (no tenant
-// RLS) so the worker can poll runnable runs and due timers across all tenants.
+// PgStore is the Postgres-backed RunStore. run_id is the stable key, status
+// changes are validated against the run/step state machines, and JSON map
+// fields round-trip as jsonb. The workflow tables are global (no tenant RLS) so
+// the worker can poll runnable runs and due timers across all tenants.
 //
 // Schema: pkg/db/migrations/008_ril_workflows.sql.
 type PgStore struct {
@@ -45,17 +44,31 @@ func (s *PgStore) CreateRun(run *Run) error {
 		run.RunID = uuid.New().String()
 	}
 	run.Status = RunPending
+	ctx := context.Background()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("create run transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
 	const q = `INSERT INTO ril_workflow_runs
 		(run_id, type, status, current_step, input, context, owner_id, server_id,
 		 card_id, awaiting_signal, error, created, updated)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, now(), now())
 		RETURNING created, updated`
-	if err := s.db.QueryRowContext(context.Background(), q,
+	if err := tx.QueryRowContext(ctx, q,
 		run.RunID, string(run.Type), string(run.Status), run.CurrentStep,
 		marshalJSONMap(run.Input), marshalJSONMap(run.Context),
 		run.OwnerID, run.ServerID, run.CardID, run.AwaitingSignal, run.Error,
 	).Scan(&run.Created, &run.Updated); err != nil {
 		return fmt.Errorf("create run: %w", err)
+	}
+	if err := appendWorkflowAudit(ctx, tx, run.RunID, "ril.workflow.run.created", map[string]any{
+		"type": string(run.Type), "status": string(run.Status), "current_step": run.CurrentStep,
+	}); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("create run commit: %w", err)
 	}
 	run.ID = run.RunID
 	return nil
@@ -75,46 +88,52 @@ func (s *PgStore) GetRun(runID string) (*Run, error) {
 }
 
 func (s *PgStore) UpdateRun(run *Run) error {
-	var current string
-	err := s.db.QueryRowContext(context.Background(),
-		`SELECT status FROM ril_workflow_runs WHERE run_id = $1`, run.RunID).Scan(&current)
+	ctx := context.Background()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("update run transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var currentStatus, currentSignal, currentError string
+	var currentStep int
+	err = tx.QueryRowContext(ctx,
+		`SELECT status, current_step, awaiting_signal, error FROM ril_workflow_runs WHERE run_id = $1 FOR UPDATE`, run.RunID,
+	).Scan(&currentStatus, &currentStep, &currentSignal, &currentError)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("%w: run %s", ErrNotFound, run.RunID)
 	}
 	if err != nil {
 		return fmt.Errorf("update run (load): %w", err)
 	}
-	if RunStatus(current) != run.Status {
-		if verr := ValidateRunTransition(RunStatus(current), run.Status); verr != nil {
+	if RunStatus(currentStatus) != run.Status {
+		if verr := ValidateRunTransition(RunStatus(currentStatus), run.Status); verr != nil {
 			return verr
 		}
 	}
 	const q = `UPDATE ril_workflow_runs
 		SET status = $1, current_step = $2, context = $3, awaiting_signal = $4,
-		    error = $5, updated = now()
-		WHERE run_id = $6
+		    error = $5, started_at = COALESCE(started_at, $6),
+		    finished_at = COALESCE(finished_at, $7), updated = now()
+		WHERE run_id = $8
 		RETURNING updated`
-	if err = s.db.QueryRowContext(context.Background(), q,
+	if err = tx.QueryRowContext(ctx, q,
 		string(run.Status), run.CurrentStep, marshalJSONMap(run.Context),
-		run.AwaitingSignal, run.Error, run.RunID,
+		run.AwaitingSignal, run.Error, run.StartedAt, run.FinishedAt, run.RunID,
 	).Scan(&run.Updated); err != nil {
 		return fmt.Errorf("update run: %w", err)
 	}
-	// started_at / finished_at are write-once: only set when non-nil so an
-	// already-recorded timestamp is never cleared (mirrors the PocketBase store).
-	if run.StartedAt != nil {
-		if _, err = s.db.ExecContext(context.Background(),
-			`UPDATE ril_workflow_runs SET started_at = $1 WHERE run_id = $2`,
-			run.StartedAt.UTC(), run.RunID); err != nil {
-			return fmt.Errorf("update run started_at: %w", err)
+	if currentStatus != string(run.Status) || currentStep != run.CurrentStep ||
+		currentSignal != run.AwaitingSignal || currentError != run.Error {
+		if err := appendWorkflowAudit(ctx, tx, run.RunID, "ril.workflow.run.checkpoint", map[string]any{
+			"from_status": currentStatus, "to_status": string(run.Status),
+			"from_step": currentStep, "to_step": run.CurrentStep,
+			"awaiting_signal": run.AwaitingSignal != "", "has_error": run.Error != "",
+		}); err != nil {
+			return err
 		}
 	}
-	if run.FinishedAt != nil {
-		if _, err = s.db.ExecContext(context.Background(),
-			`UPDATE ril_workflow_runs SET finished_at = $1 WHERE run_id = $2`,
-			run.FinishedAt.UTC(), run.RunID); err != nil {
-			return fmt.Errorf("update run finished_at: %w", err)
-		}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("update run commit: %w", err)
 	}
 	return nil
 }
@@ -155,60 +174,79 @@ func (s *PgStore) CreateStep(step *Step) error {
 	if step.Status == "" {
 		step.Status = StepPending
 	}
+	ctx := context.Background()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("create step transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
 	const q = `INSERT INTO ril_workflow_steps
 		(id, run_id, step_index, name, status, attempt, input, output, error,
 		 idempotency_key, created, updated)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now(), now())`
-	if _, err := s.db.ExecContext(context.Background(), q,
+	if _, err := tx.ExecContext(ctx, q,
 		step.ID, step.RunID, step.StepIndex, step.Name, string(step.Status),
 		step.Attempt, marshalJSONMap(step.Input), marshalJSONMap(step.Output),
 		step.Error, step.IdempotencyKey,
 	); err != nil {
 		return fmt.Errorf("create step: %w", err)
 	}
+	if err := appendWorkflowAudit(ctx, tx, step.RunID, "ril.workflow.step.created", map[string]any{
+		"step_index": step.StepIndex, "name": step.Name, "status": string(step.Status),
+	}); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("create step commit: %w", err)
+	}
 	return nil
 }
 
 func (s *PgStore) UpdateStep(step *Step) error {
-	var current string
-	err := s.db.QueryRowContext(context.Background(),
-		`SELECT status FROM ril_workflow_steps WHERE run_id = $1 AND step_index = $2`,
-		step.RunID, step.StepIndex).Scan(&current)
+	ctx := context.Background()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("update step transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var currentStatus string
+	var currentAttempt int
+	err = tx.QueryRowContext(ctx,
+		`SELECT status, attempt FROM ril_workflow_steps WHERE run_id = $1 AND step_index = $2 FOR UPDATE`,
+		step.RunID, step.StepIndex).Scan(&currentStatus, &currentAttempt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("%w: step %s/%d", ErrNotFound, step.RunID, step.StepIndex)
 	}
 	if err != nil {
 		return fmt.Errorf("update step (load): %w", err)
 	}
-	if StepStatus(current) != step.Status {
-		if verr := ValidateStepTransition(StepStatus(current), step.Status); verr != nil {
+	if StepStatus(currentStatus) != step.Status {
+		if verr := ValidateStepTransition(StepStatus(currentStatus), step.Status); verr != nil {
 			return verr
 		}
 	}
 	const q = `UPDATE ril_workflow_steps
 		SET status = $1, attempt = $2, output = $3, error = $4,
 		    idempotency_key = CASE WHEN $5 <> '' THEN $5 ELSE idempotency_key END,
-		    updated = now()
-		WHERE run_id = $6 AND step_index = $7`
-	if _, err = s.db.ExecContext(context.Background(), q,
+		    started_at = COALESCE(started_at, $6),
+		    finished_at = COALESCE(finished_at, $7), updated = now()
+		WHERE run_id = $8 AND step_index = $9`
+	if _, err = tx.ExecContext(ctx, q,
 		string(step.Status), step.Attempt, marshalJSONMap(step.Output), step.Error,
-		step.IdempotencyKey, step.RunID, step.StepIndex,
+		step.IdempotencyKey, step.StartedAt, step.FinishedAt, step.RunID, step.StepIndex,
 	); err != nil {
 		return fmt.Errorf("update step: %w", err)
 	}
-	if step.StartedAt != nil {
-		if _, err = s.db.ExecContext(context.Background(),
-			`UPDATE ril_workflow_steps SET started_at = $1 WHERE run_id = $2 AND step_index = $3`,
-			step.StartedAt.UTC(), step.RunID, step.StepIndex); err != nil {
-			return fmt.Errorf("update step started_at: %w", err)
+	if currentStatus != string(step.Status) || currentAttempt != step.Attempt {
+		if err := appendWorkflowAudit(ctx, tx, step.RunID, "ril.workflow.step.checkpoint", map[string]any{
+			"step_index": step.StepIndex, "name": step.Name,
+			"from_status": currentStatus, "to_status": string(step.Status), "attempt": step.Attempt,
+		}); err != nil {
+			return err
 		}
 	}
-	if step.FinishedAt != nil {
-		if _, err = s.db.ExecContext(context.Background(),
-			`UPDATE ril_workflow_steps SET finished_at = $1 WHERE run_id = $2 AND step_index = $3`,
-			step.FinishedAt.UTC(), step.RunID, step.StepIndex); err != nil {
-			return fmt.Errorf("update step finished_at: %w", err)
-		}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("update step commit: %w", err)
 	}
 	return nil
 }
@@ -254,14 +292,28 @@ func (s *PgStore) CreateTimer(timer *Timer) error {
 	if timer.ID == "" {
 		timer.ID = uuid.New().String()
 	}
+	ctx := context.Background()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("create timer transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
 	const q = `INSERT INTO ril_workflow_timers
 		(id, run_id, kind, fire_at, fired, signal_key, created)
 		VALUES ($1,$2,$3,$4,$5,$6, now())`
-	if _, err := s.db.ExecContext(context.Background(), q,
+	if _, err := tx.ExecContext(ctx, q,
 		timer.ID, timer.RunID, string(timer.Kind), timer.FireAt.UTC(),
 		timer.Fired, timer.SignalKey,
 	); err != nil {
 		return fmt.Errorf("create timer: %w", err)
+	}
+	if err := appendWorkflowAudit(ctx, tx, timer.RunID, "ril.workflow.timer.created", map[string]any{
+		"timer_id": timer.ID, "kind": string(timer.Kind), "fire_at": timer.FireAt.UTC(),
+	}); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("create timer commit: %w", err)
 	}
 	return nil
 }
@@ -290,17 +342,78 @@ func (s *PgStore) ListDueTimers(now time.Time, limit int) ([]*Timer, error) {
 }
 
 func (s *PgStore) MarkTimerFired(timerID string) error {
-	res, err := s.db.ExecContext(context.Background(),
-		`UPDATE ril_workflow_timers SET fired = true WHERE id = $1`, timerID)
+	ctx := context.Background()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		return fmt.Errorf("mark timer transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var runID, kind string
+	var fired bool
+	if err := tx.QueryRowContext(ctx,
+		`SELECT run_id, kind, fired FROM ril_workflow_timers WHERE id = $1 FOR UPDATE`, timerID,
+	).Scan(&runID, &kind, &fired); errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return fmt.Errorf("mark timer fired (load): %w", err)
+	}
+	if fired {
+		return tx.Commit()
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE ril_workflow_timers SET fired = true WHERE id = $1`, timerID); err != nil {
 		return fmt.Errorf("mark timer fired: %w", err)
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("mark timer fired (rows): %w", err)
+	if err := appendWorkflowAudit(ctx, tx, runID, "ril.workflow.timer.fired", map[string]any{
+		"timer_id": timerID, "kind": kind,
+	}); err != nil {
+		return err
 	}
-	if n == 0 {
-		return ErrNotFound
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("mark timer fired commit: %w", err)
+	}
+	return nil
+}
+
+// ListAudit returns one run's append-only workflow events from the central
+// tenant-scoped audit authority. Callers must first authorize the run itself.
+func (s *PgStore) ListAudit(tenantID, runID string, limit int) ([]AuditEvent, error) {
+	const q = `SELECT id, action, resource_type, resource_id, details_json, created_at
+		FROM audit_events
+		WHERE tenant_id = $1 AND resource_type = 'ril_workflow_run'
+		  AND resource_id = $2 AND action LIKE 'ril.workflow.%'
+		ORDER BY id ASC LIMIT $3`
+	rows, err := s.db.QueryContext(context.Background(), q, tenantID, runID, limitArg(limit))
+	if err != nil {
+		return nil, fmt.Errorf("list workflow audit: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	events := []AuditEvent{}
+	for rows.Next() {
+		var event AuditEvent
+		var details []byte
+		if err := rows.Scan(&event.ID, &event.Action, &event.ResourceType, &event.ResourceID, &details, &event.CreatedAt); err != nil {
+			return nil, fmt.Errorf("list workflow audit scan: %w", err)
+		}
+		event.Details = unmarshalJSONMap(details)
+		events = append(events, event)
+	}
+	return events, rows.Err()
+}
+
+func appendWorkflowAudit(ctx context.Context, tx *sql.Tx, runID, action string, details map[string]any) error {
+	var id int64
+	err := tx.QueryRowContext(ctx, `INSERT INTO audit_events
+		(tenant_id, actor_subject_id, action, resource_type, resource_id, details_json)
+		SELECT COALESCE(NULLIF(input->>'tenant_id',''), NULLIF(owner_id,''), 'system'),
+		       NULLIF(owner_id,''), $2, 'ril_workflow_run', run_id, $3::jsonb
+		FROM ril_workflow_runs WHERE run_id = $1 RETURNING id`,
+		runID, action, marshalJSONMap(details),
+	).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: run %s", ErrNotFound, runID)
+	}
+	if err != nil {
+		return fmt.Errorf("append workflow audit: %w", err)
 	}
 	return nil
 }
@@ -410,8 +523,8 @@ func marshalJSONMap(m map[string]any) string {
 	return string(b)
 }
 
-// unmarshalJSONMap decodes a jsonb column into a map; empty/null/{} yields nil so
-// callers treat it as "no data" (mirrors the PocketBase store's decodeJSONMap).
+// unmarshalJSONMap decodes a jsonb column into a map; empty/null/{} yields nil
+// so callers treat it as "no data".
 func unmarshalJSONMap(b []byte) map[string]any {
 	if len(b) == 0 || string(b) == "null" || string(b) == "{}" {
 		return nil

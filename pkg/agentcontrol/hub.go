@@ -141,13 +141,14 @@ func (h *Hub) pollInMemory(ctx context.Context, agentID string, capabilities []s
 			if entry.dispatched {
 				continue
 			}
-			if entry.command.GetOperation() == agentpb.StackKitOperation_STACKKIT_OPERATION_APPLY &&
-				!containsCapability(capabilities, stackkitcommand.ExpectedPlanHashCapability) {
-				entry.dispatched = true
-				h.mu.Unlock()
-				err := fmt.Errorf("agent %q does not advertise %s", agentID, stackkitcommand.ExpectedPlanHashCapability)
-				entry.outcome <- commandOutcome{err: err}
-				return nil, false, err
+			for _, capability := range stackkitcommand.RequiredAgentCapabilities(entry.command) {
+				if !containsCapability(capabilities, capability) {
+					entry.dispatched = true
+					h.mu.Unlock()
+					err := fmt.Errorf("agent %q does not advertise %s", agentID, capability)
+					entry.outcome <- commandOutcome{err: err}
+					return nil, false, err
+				}
 			}
 			entry.dispatched = true
 			command := proto.Clone(entry.command).(*agentpb.StackKitCommand)
@@ -202,6 +203,10 @@ func (h *Hub) submitResultInMemory(agentID string, result *agentpb.StackKitResul
 		return ErrCommandNotPending
 	}
 	if err := stackkitcommand.ValidateResult(result, target.command); err != nil {
+		select {
+		case target.outcome <- commandOutcome{err: fmt.Errorf("typed StackKits result rejected: %w", err)}:
+		default:
+		}
 		return fmt.Errorf("%w: %v", ErrResultRejected, err)
 	}
 
@@ -242,7 +247,7 @@ func (h *Hub) sendDurable(ctx context.Context, tenantID, agentID string, command
 	result, err := tx.ExecContext(ctx, `
 		WITH cleanup AS (
 			DELETE FROM typed_agent_commands
-			WHERE tenant_id = $2 AND expires_at < now() - interval '1 day'
+			WHERE tenant_id = $2 AND command_family = 'stackkit' AND expires_at < now() - interval '1 day'
 		)
 		INSERT INTO typed_agent_commands (command_id, tenant_id, agent_id, command_json, expires_at)
 		VALUES ($1, $2, $3, $4::jsonb, now() + interval '15 minutes')
@@ -300,7 +305,7 @@ func (h *Hub) pollDurableOnce(ctx context.Context, tenantID, agentID string, cap
 	err = tx.QueryRowContext(ctx, `
 		SELECT command_id, command_json
 		FROM typed_agent_commands
-		WHERE tenant_id = $1 AND agent_id = $2 AND state = 'queued' AND expires_at > now()
+		WHERE tenant_id = $1 AND agent_id = $2 AND command_family = 'stackkit' AND state = 'queued' AND expires_at > now()
 		ORDER BY created_at
 		FOR UPDATE SKIP LOCKED
 		LIMIT 1
@@ -318,12 +323,13 @@ func (h *Hub) pollDurableOnce(ctx context.Context, tenantID, agentID string, cap
 		_ = tx.Rollback()
 		return nil, false, err
 	}
-	if command.GetOperation() == agentpb.StackKitOperation_STACKKIT_OPERATION_APPLY &&
-		!containsCapability(capabilities, stackkitcommand.ExpectedPlanHashCapability) {
-		message := fmt.Sprintf("agent %q does not advertise %s", agentID, stackkitcommand.ExpectedPlanHashCapability)
-		_, _ = tx.ExecContext(ctx, `UPDATE typed_agent_commands SET state = 'failed', error = $2, completed_at = now() WHERE command_id = $1`, commandID, message)
-		_ = tx.Commit()
-		return nil, false, errors.New(message)
+	for _, capability := range stackkitcommand.RequiredAgentCapabilities(command) {
+		if !containsCapability(capabilities, capability) {
+			message := fmt.Sprintf("agent %q does not advertise %s", agentID, capability)
+			_, _ = tx.ExecContext(ctx, `UPDATE typed_agent_commands SET state = 'failed', error = $2, completed_at = now() WHERE command_id = $1`, commandID, message)
+			_ = tx.Commit()
+			return nil, false, errors.New(message)
+		}
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE typed_agent_commands SET state = 'dispatched', dispatched_at = now() WHERE command_id = $1`, commandID); err != nil {
 		_ = tx.Rollback()
@@ -356,7 +362,7 @@ func (h *Hub) submitResultDurable(ctx context.Context, tenantID, agentID string,
 		WHERE tenant_id = $1 AND agent_id = $2 AND command_id = $3
 		FOR UPDATE
 	`, tenantID, agentID, commandID).Scan(&payload, &state)
-	if errors.Is(err, sql.ErrNoRows) || state == "queued" {
+	if errors.Is(err, sql.ErrNoRows) || state != "dispatched" {
 		_ = tx.Rollback()
 		return ErrCommandNotPending
 	}
@@ -370,7 +376,18 @@ func (h *Hub) submitResultDurable(ctx context.Context, tenantID, agentID string,
 		return err
 	}
 	if err := stackkitcommand.ValidateResult(result, command); err != nil {
-		_ = tx.Rollback()
+		message := "typed StackKits result rejected: " + err.Error()
+		if _, updateErr := tx.ExecContext(ctx, `
+			UPDATE typed_agent_commands
+			SET state = 'failed', error = $2, completed_at = now()
+			WHERE command_id = $1 AND state = 'dispatched'
+		`, commandID, message); updateErr != nil {
+			_ = tx.Rollback()
+			return updateErr
+		}
+		if commitErr := tx.Commit(); commitErr != nil {
+			return commitErr
+		}
 		return fmt.Errorf("%w: %v", ErrResultRejected, err)
 	}
 	resultPayload, err := protojson.Marshal(result)

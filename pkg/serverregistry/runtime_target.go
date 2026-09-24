@@ -28,6 +28,7 @@ const (
 	OfferingSelfOwnedDevice Offering = "self_owned_device"
 	OfferingExternalVPS     Offering = "external_vps"
 	OfferingManagedVPS      Offering = "managed_vps"
+	OfferingSubstrateVM     Offering = "substrate_vm"
 
 	AvailabilityCustomer AvailabilityOwner = "customer"
 	AvailabilityProvider AvailabilityOwner = "provider"
@@ -81,23 +82,6 @@ func CloneRuntimeTarget(target RuntimeTarget) RuntimeTarget {
 		target.ObservedAt = &observedAt
 	}
 	return target
-}
-
-// RuntimeTargetEqual compares the normalized durable target shape, including
-// the evidence observation time.
-func RuntimeTargetEqual(left, right RuntimeTarget) bool {
-	left = NormalizeRuntimeTarget(left)
-	right = NormalizeRuntimeTarget(right)
-	if left.EnvironmentClass != right.EnvironmentClass || left.Offering != right.Offering ||
-		left.ProviderID != right.ProviderID || left.ProviderTargetRef != right.ProviderTargetRef ||
-		left.AvailabilityOwner != right.AvailabilityOwner || left.OperationsOwner != right.OperationsOwner ||
-		left.EvidenceRef != right.EvidenceRef {
-		return false
-	}
-	if left.ObservedAt == nil || right.ObservedAt == nil {
-		return left.ObservedAt == right.ObservedAt
-	}
-	return left.ObservedAt.UTC().Equal(right.ObservedAt.UTC())
 }
 
 // RuntimeTargetIntentPresent reports whether a command explicitly carries a
@@ -168,46 +152,64 @@ func ManagedVPSRuntimeTarget(providerID, providerTargetRef, leaseID string, obse
 func ValidateRuntimeTarget(target RuntimeTarget, leaseID string) error {
 	target = NormalizeRuntimeTarget(target)
 	leaseID = strings.TrimSpace(leaseID)
-	knownEvidence := func() bool {
-		return target.EvidenceRef != "" && target.ObservedAt != nil && !target.ObservedAt.IsZero()
-	}
-
 	switch target.EnvironmentClass {
 	case EnvironmentUnknown:
-		if target.Offering != "" || target.ProviderID != "" || target.ProviderTargetRef != "" ||
-			target.AvailabilityOwner != "" || target.OperationsOwner != "" ||
-			target.EvidenceRef != "" || target.ObservedAt != nil {
-			return fmt.Errorf("unknown runtime target cannot carry provider, owner, or evidence fields")
-		}
-		return nil
+		return validateUnknownRuntimeTarget(target)
 	case EnvironmentLocal:
-		if target.Offering != OfferingSelfOwnedDevice || target.ProviderID != "" || target.ProviderTargetRef != "" ||
-			target.AvailabilityOwner != AvailabilityCustomer || target.OperationsOwner != OperationsCustomer || !knownEvidence() {
-			return fmt.Errorf("local runtime target requires self_owned_device, customer ownership, and observed evidence")
+		if target.Offering == OfferingSubstrateVM {
+			if leaseID == "" || target.ProviderID != "proxmox" || target.ProviderTargetRef == "" || target.AvailabilityOwner != AvailabilityCustomer || target.OperationsOwner != OperationsCustomer || target.EvidenceRef != "runtime-lease:"+leaseID || !hasRuntimeTargetEvidence(target) {
+				return fmt.Errorf("substrate VM requires exact native lease custody, guest binding and customer ownership")
+			}
+			return nil
 		}
-		return nil
+		return validateLocalRuntimeTarget(target)
 	case EnvironmentCloud:
-		if !knownEvidence() || target.ProviderID == "" || target.ProviderTargetRef == "" ||
-			target.AvailabilityOwner != AvailabilityProvider {
-			return fmt.Errorf("cloud runtime target requires provider binding, provider availability, and observed evidence")
-		}
-		switch target.Offering {
-		case OfferingExternalVPS:
-			if target.OperationsOwner != OperationsCustomer {
-				return fmt.Errorf("external_vps requires customer operations ownership")
-			}
-			return nil
-		case OfferingManagedVPS:
-			if target.OperationsOwner != OperationsKombify || leaseID == "" {
-				return fmt.Errorf("managed_vps requires Kombify operations ownership and an exact lease")
-			}
-			return nil
-		default:
-			return fmt.Errorf("cloud runtime target has unsupported offering %q", target.Offering)
-		}
+		return validateCloudRuntimeTarget(target, leaseID)
 	default:
 		return fmt.Errorf("unknown runtime environment class %q", target.EnvironmentClass)
 	}
+}
+
+func validateUnknownRuntimeTarget(target RuntimeTarget) error {
+	if target.Offering != "" || target.ProviderID != "" || target.ProviderTargetRef != "" ||
+		target.AvailabilityOwner != "" || target.OperationsOwner != "" ||
+		target.EvidenceRef != "" || target.ObservedAt != nil {
+		return fmt.Errorf("unknown runtime target cannot carry provider, owner, or evidence fields")
+	}
+	return nil
+}
+
+func validateLocalRuntimeTarget(target RuntimeTarget) error {
+	if target.Offering != OfferingSelfOwnedDevice || target.ProviderID != "" || target.ProviderTargetRef != "" ||
+		target.AvailabilityOwner != AvailabilityCustomer || target.OperationsOwner != OperationsCustomer || !hasRuntimeTargetEvidence(target) {
+		return fmt.Errorf("local runtime target requires self_owned_device, customer ownership, and observed evidence")
+	}
+	return nil
+}
+
+func validateCloudRuntimeTarget(target RuntimeTarget, leaseID string) error {
+	if !hasRuntimeTargetEvidence(target) || target.ProviderID == "" || target.ProviderTargetRef == "" ||
+		target.AvailabilityOwner != AvailabilityProvider {
+		return fmt.Errorf("cloud runtime target requires provider binding, provider availability, and observed evidence")
+	}
+	switch target.Offering {
+	case OfferingExternalVPS:
+		if target.OperationsOwner != OperationsCustomer {
+			return fmt.Errorf("external_vps requires customer operations ownership")
+		}
+		return nil
+	case OfferingManagedVPS:
+		if target.OperationsOwner != OperationsKombify || leaseID == "" {
+			return fmt.Errorf("managed_vps requires Kombify operations ownership and an exact lease")
+		}
+		return nil
+	default:
+		return fmt.Errorf("cloud runtime target has unsupported offering %q", target.Offering)
+	}
+}
+
+func hasRuntimeTargetEvidence(target RuntimeTarget) bool {
+	return target.EvidenceRef != "" && target.ObservedAt != nil && !target.ObservedAt.IsZero()
 }
 
 func normalizeRuntimeTargetValue(value string) string {

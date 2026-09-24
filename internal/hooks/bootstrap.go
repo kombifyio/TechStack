@@ -2,10 +2,14 @@
 package hooks
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
 
+	pbmigration "github.com/kombifyio/techstack/internal/pocketbase_migration"
+	"github.com/kombifyio/techstack/internal/systemwallet"
+	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/pocketbase/pocketbase/core"
 )
 
@@ -38,7 +42,7 @@ const (
 // - PocketBase superuser (for admin panel at /_/)
 // - kombifyTechstack admin user (in users collection, role=admin)
 // - kombifyTechstack developer user (in users collection, role=developer)
-func BootstrapUsers(app core.App) error {
+func BootstrapUsers(ctx context.Context, app core.App, walletStore controlplane.WalletStore, tenantID string) error {
 	isDev := isDevEnvironment()
 	shouldBootstrap, err := shouldBootstrapUsers(isDev)
 	if err != nil {
@@ -73,7 +77,7 @@ func BootstrapUsers(app core.App) error {
 	}
 
 	// 5. Store known bootstrap credentials in the Wallet (copyable in UI)
-	if err := ensureSystemCredentialsInWallet(app,
+	if err := ensureSystemCredentialsInWallet(ctx, walletStore, tenantID,
 		isDev,
 		adminID, devID,
 		suEmail, suPassword, suPasswordKnown,
@@ -81,67 +85,6 @@ func BootstrapUsers(app core.App) error {
 		devEmail, devPassword, devPasswordKnown,
 	); err != nil {
 		return fmt.Errorf("store system credentials in wallet: %w", err)
-	}
-
-	return nil
-}
-
-// BootstrapOAuthProviders configures PocketBase OAuth2 providers from environment variables.
-// If TECHSTACK_OAUTH_{PROVIDER}_CLIENT_ID and _CLIENT_SECRET are both set,
-// the provider is enabled on the users collection.
-func BootstrapOAuthProviders(app core.App) error {
-	type providerEnv struct {
-		name   string
-		envID  string
-		envSec string
-	}
-
-	providers := []providerEnv{
-		{"google", "TECHSTACK_OAUTH_GOOGLE_CLIENT_ID", "TECHSTACK_OAUTH_GOOGLE_CLIENT_SECRET"},
-		{"github", "TECHSTACK_OAUTH_GITHUB_CLIENT_ID", "TECHSTACK_OAUTH_GITHUB_CLIENT_SECRET"},
-	}
-
-	var toApply []core.OAuth2ProviderConfig
-	for _, p := range providers {
-		clientID := strings.TrimSpace(os.Getenv(p.envID))
-		clientSecret := strings.TrimSpace(os.Getenv(p.envSec))
-		if clientID != "" && clientSecret != "" {
-			toApply = append(toApply, core.OAuth2ProviderConfig{
-				Name:         p.name,
-				ClientId:     clientID,
-				ClientSecret: clientSecret,
-			})
-		}
-	}
-
-	if len(toApply) == 0 {
-		return nil
-	}
-
-	collection, err := app.FindCollectionByNameOrId("users")
-	if err != nil {
-		return fmt.Errorf("find users collection for OAuth2 config: %w", err)
-	}
-
-	for _, newCfg := range toApply {
-		updated := false
-		for i, existing := range collection.OAuth2.Providers {
-			if existing.Name == newCfg.Name {
-				collection.OAuth2.Providers[i].ClientId = newCfg.ClientId
-				collection.OAuth2.Providers[i].ClientSecret = newCfg.ClientSecret
-				updated = true
-				break
-			}
-		}
-		if !updated {
-			collection.OAuth2.Providers = append(collection.OAuth2.Providers, newCfg)
-		}
-		fmt.Printf("✓ OAuth2 provider configured from env: %s\n", newCfg.Name)
-	}
-
-	collection.OAuth2.Enabled = true
-	if err := app.Save(collection); err != nil {
-		return fmt.Errorf("save OAuth2 config: %w", err)
 	}
 
 	return nil
@@ -301,7 +244,9 @@ func ensureAppUser(app core.App, role string, isDev bool) (string, string, strin
 }
 
 func ensureSystemCredentialsInWallet(
-	app core.App,
+	ctx context.Context,
+	store controlplane.WalletStore,
+	tenantID string,
 	isDev bool,
 	adminID, devID string,
 	suEmail, suPassword string, suKnown bool,
@@ -312,49 +257,29 @@ func ensureSystemCredentialsInWallet(
 		return nil
 	}
 
-	walletCollection, err := app.FindCollectionByNameOrId("wallet")
-	if err != nil {
-		// Wallet collection may not exist in some dev states; don't hard-fail bootstrap.
-		return nil
-	}
-
-	ensure := func(ownerID, serviceID, name, email, password string, known bool) error {
+	ensure := func(ownerID, role, name, email, password string, known bool) error {
 		if strings.TrimSpace(ownerID) == "" || !known {
 			return nil
 		}
-
-		rec, _ := app.FindFirstRecordByFilter(
-			"wallet",
-			"owner_id = {:o} && service_id = {:sid}",
-			map[string]any{"o": ownerID, "sid": serviceID},
-		)
-		if rec == nil {
-			rec = core.NewRecord(walletCollection)
-			rec.Set("owner_id", ownerID)
-			rec.Set("service_id", serviceID)
-		}
-		rec.Set("name", name)
-		rec.Set("kind", "password")
-		rec.Set("username", email)
-		rec.Set("secret", password)
-		rec.Set("notes", "Bootstrap system account (generated/provided by kombifyTechstack)")
-		rec.Set("auto_generated", true)
-		return app.Save(rec)
+		return systemwallet.UpsertCredential(ctx, store, tenantID, ownerID, systemwallet.Credential{
+			Role: role, Name: name, Username: email, Secret: password,
+			Notes: "Bootstrap system account (generated/provided by kombifyTechstack)",
+		})
 	}
 
 	// Admin sees superuser + admin.
-	if err := ensure(adminID, "system:superuser", "PocketBase Superuser", suEmail, suPassword, suKnown); err != nil {
+	if err := ensure(adminID, "superuser", "PocketBase Superuser", suEmail, suPassword, suKnown); err != nil {
 		return err
 	}
-	if err := ensure(adminID, "system:admin", "kombifyTechstack Admin", adminEmail, adminPassword, adminKnown); err != nil {
+	if err := ensure(adminID, "admin", "kombifyTechstack Admin", adminEmail, adminPassword, adminKnown); err != nil {
 		return err
 	}
 
 	// Developer sees superuser + developer.
-	if err := ensure(devID, "system:superuser", "PocketBase Superuser", suEmail, suPassword, suKnown); err != nil {
+	if err := ensure(devID, "superuser", "PocketBase Superuser", suEmail, suPassword, suKnown); err != nil {
 		return err
 	}
-	if err := ensure(devID, "system:developer", "kombifyTechstack Developer", devEmail, devPassword, devKnown); err != nil {
+	if err := ensure(devID, "developer", "kombifyTechstack Developer", devEmail, devPassword, devKnown); err != nil {
 		return err
 	}
 
@@ -364,21 +289,14 @@ func ensureSystemCredentialsInWallet(
 // ensureAuthConfig creates the auth_config singleton record if it doesn't exist.
 // This prevents the first-run wizard from showing when users are auto-bootstrapped.
 func ensureAuthConfig(app core.App) error {
-	existing, _ := app.FindFirstRecordByFilter("auth_config", "id != ''", nil)
+	existing, err := pbmigration.LoadAuthConfig(app)
+	if err != nil {
+		return fmt.Errorf("load auth_config: %w", err)
+	}
 	if existing != nil {
 		return nil
 	}
-
-	collection, err := app.FindCollectionByNameOrId("auth_config")
-	if err != nil {
-		return nil // Collection may not exist yet during early migrations
-	}
-
-	record := core.NewRecord(collection)
-	record.Set("mode", "local")
-	record.Set("allow_local_login", true)
-
-	if err := app.Save(record); err != nil {
+	if _, err := pbmigration.UpsertAuthConfig(app, "local", true); err != nil {
 		return fmt.Errorf("save auth_config: %w", err)
 	}
 
@@ -388,12 +306,16 @@ func ensureAuthConfig(app core.App) error {
 
 // Helper functions
 
+// isDevEnvironment reports a developer loop. TECHSTACK_ENV=local is the
+// installed Windows client's production posture, not development: it must not
+// create accounts with the well-known development passwords. Its operator
+// enters through the device session and the canonical local owner store.
 func isDevEnvironment() bool {
 	env := strings.ToLower(strings.TrimSpace(os.Getenv("TECHSTACK_ENV")))
 	if env == "" {
 		env = strings.ToLower(strings.TrimSpace(os.Getenv("ENVIRONMENT")))
 	}
-	return env == "development" || env == "dev" || env == "local"
+	return env == "development" || env == "dev"
 }
 
 func shouldBootstrapUsers(isDev bool) (bool, error) {

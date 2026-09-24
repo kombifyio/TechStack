@@ -15,6 +15,7 @@ func TestManagementStateForSourceIsTheSingleOwnershipRule(t *testing.T) {
 		{source: "  OBSERVED  ", want: ManagementObserved},
 		{source: SourceStackKitsInventory, want: ManagementManaged},
 		{source: SourceStackKitOutputs, want: ManagementManaged},
+		{source: SourceTechstackRegistry, want: ManagementManaged},
 		{source: SourceLegacyRegistryBackfill, want: ManagementManaged},
 	} {
 		if got := ManagementStateForSource(test.source); got != test.want {
@@ -78,7 +79,7 @@ func TestDesiredStateIsOnlyDefinedForManagedServices(t *testing.T) {
 // `source` is provenance and stays a separate axis from both ownership and the
 // StackKits evidence-provenance vocabulary.
 func TestServiceSourceVocabularyIsClosedAndSeparateFromEvidenceProvenance(t *testing.T) {
-	for _, source := range ServiceSources {
+	for _, source := range []string{SourceObserved, SourceStackKitsInventory, SourceStackKitOutputs, SourceTechstackRegistry, SourceLegacyRegistryBackfill} {
 		if err := ValidateSource(source); err != nil {
 			t.Fatalf("ValidateSource(%q): %v", source, err)
 		}

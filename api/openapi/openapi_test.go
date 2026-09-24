@@ -157,6 +157,38 @@ func TestAddManagedRuntimeServerPublishesCrashSafeIdempotencyContract(t *testing
 	}
 }
 
+func TestJobDetailPublishesStructuredOutcomeContract(t *testing.T) {
+	var document map[string]any
+	if err := yaml.Unmarshal(Spec, &document); err != nil {
+		t.Fatalf("OpenAPI YAML is invalid: %v", err)
+	}
+	components, _ := document["components"].(map[string]any)
+	schemas, _ := components["schemas"].(map[string]any)
+	jobDetail, ok := schemas["JobDetail"].(map[string]any)
+	if !ok {
+		t.Fatalf("JobDetail schema missing: %#v", schemas["JobDetail"])
+	}
+	properties, _ := jobDetail["properties"].(map[string]any)
+	for _, field := range []string{"phase", "failure_class", "reason_code", "retryable", "user_guidance"} {
+		if properties[field] == nil {
+			t.Fatalf("JobDetail structured outcome field %q missing", field)
+		}
+	}
+	guidance, ok := schemas["StructuredUserGuidance"].(map[string]any)
+	if !ok || guidance["additionalProperties"] != false {
+		t.Fatalf("shared guidance schema missing or open: %#v", guidance)
+	}
+	structuredError, ok := schemas["StructuredError"].(map[string]any)
+	if !ok || structuredError["additionalProperties"] != false {
+		t.Fatalf("shared structured error schema missing or open: %#v", structuredError)
+	}
+	errorProperties, _ := structuredError["properties"].(map[string]any)
+	errorGuidance, _ := errorProperties["user_guidance"].(map[string]any)
+	if errorGuidance["$ref"] != "#/components/schemas/StructuredUserGuidance" {
+		t.Fatalf("StructuredError guidance is not shared: %#v", errorGuidance)
+	}
+}
+
 func TestManagedRuntimeAuthorityPreflightPublishesReadOnlyGatewayBudgetContract(t *testing.T) {
 	var document map[string]any
 	if err := yaml.Unmarshal(Spec, &document); err != nil {
@@ -270,7 +302,7 @@ func TestClientPairingContractIsPublishedWithoutReplacingWorkerPairing(t *testin
 	if !ok {
 		t.Fatalf("schemas = %#v", components["schemas"])
 	}
-	for _, schema := range []string{"ClientPairingEnvelope", "ClientPairingRedeemRequest", "ClientPairingRedeemResponse", "ClientErrorEnvelope"} {
+	for _, schema := range []string{"ClientPairingEnvelope", "ClientPairingRedeemRequest", "ClientPairingRedeemResponse", "StructuredError"} {
 		if schemas[schema] == nil {
 			t.Fatalf("OpenAPI schema %q is missing", schema)
 		}

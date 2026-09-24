@@ -16,6 +16,7 @@ import (
 var (
 	ErrNotFound                   = errors.New("controlplane: not found")
 	ErrConflict                   = errors.New("controlplane: conflict")
+	ErrStackKitInstanceConflict   = errors.New("controlplane: stackkit instance identity conflict")
 	ErrInventoryProjectionPending = errors.New("controlplane: inventory projection pending")
 	ErrStackExecutionBusy         = errors.New("controlplane: stack execution busy")
 )
@@ -77,19 +78,22 @@ type Stack struct {
 	// HomelabID links the kit deployment to its homelab umbrella (ADR-0036).
 	// Resolved by every control-plane create boundary; readers still tolerate
 	// empty values while legacy rows are being healed.
-	HomelabID      string
-	Name           string
-	Description    string
-	Mode           string
-	Status         string
-	Config         map[string]any
-	Services       []map[string]any
-	RuntimeSummary map[string]any
-	DriftStatus    string
-	DriftCheckedAt *time.Time
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	DeletedAt      *time.Time
+	HomelabID string
+	// StackKitInstanceID is the StackKits-owned StackSpec/ResolvedPlan stackId.
+	// ID remains the Techstack kit-deployment authority and need not match it.
+	StackKitInstanceID string
+	Name               string
+	Description        string
+	Mode               string
+	Status             string
+	Config             map[string]any
+	Services           []map[string]any
+	RuntimeSummary     map[string]any
+	DriftStatus        string
+	DriftCheckedAt     *time.Time
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	DeletedAt          *time.Time
 }
 
 type CreateStackRequest struct {
@@ -102,13 +106,14 @@ type CreateStackRequest struct {
 	// resolve the owner's canonical homelab before calling the store; empty is
 	// retained only for migration/backfill compatibility at this low-level
 	// contract.
-	HomelabID   string
-	Name        string
-	Description string
-	Mode        string
-	Status      string
-	Config      map[string]any
-	Services    []map[string]any
+	HomelabID          string
+	StackKitInstanceID string
+	Name               string
+	Description        string
+	Mode               string
+	Status             string
+	Config             map[string]any
+	Services           []map[string]any
 }
 
 type StackStore interface {
@@ -118,14 +123,43 @@ type StackStore interface {
 	ListStacksByTenant(ctx context.Context, tenantID string) ([]Stack, error)
 	SoftDeleteStack(ctx context.Context, tenantID, stackID string) error
 	UpdateStackRuntime(ctx context.Context, tenantID, stackID string, runtime RuntimeUpdate) (*Stack, error)
-	// UpdateStackConfig replaces the stored stack spec (config_json). Writers:
-	// the domain-attach handover (sets the spec `domain` before a re-roll) and
-	// the wizard-run join persist (replaces config with the appended-node v2
-	// spec). There is no CAS token; concurrent writers last-write-win.
-	UpdateStackConfig(ctx context.Context, tenantID, stackID string, config map[string]any) (*Stack, error)
+	// CompareAndSwapStackConfig is the single config_json replacement path. It
+	// fences read-project-write flows such as a Wizard join against the exact
+	// stack revision they projected from. A missing or stale revision returns
+	// ErrConflict without changing the stored winner.
+	CompareAndSwapStackConfig(ctx context.Context, command StackConfigCAS) (*Stack, error)
 	// SetStackHomelab links an existing stack to its homelab umbrella. The
 	// wizard-run path uses it to heal legacy stacks created without the link.
 	SetStackHomelab(ctx context.Context, tenantID, stackID, homelabID string) (*Stack, error)
+}
+
+type StackConfigCAS struct {
+	TenantID          string
+	StackID           string
+	ExpectedUpdatedAt time.Time
+	Config            map[string]any
+}
+
+func normalizeStackConfigCAS(command StackConfigCAS) (StackConfigCAS, error) {
+	command.TenantID = strings.TrimSpace(command.TenantID)
+	command.StackID = strings.TrimSpace(command.StackID)
+	if command.TenantID == "" {
+		return StackConfigCAS{}, errors.New("controlplane: tenant id required")
+	}
+	if command.StackID == "" {
+		return StackConfigCAS{}, errors.New("controlplane: stack id required")
+	}
+	if command.ExpectedUpdatedAt.IsZero() {
+		return StackConfigCAS{}, errors.New("controlplane: expected stack revision required")
+	}
+	return command, nil
+}
+
+// ArchivedStackReceiptReader reads one exact tenant-scoped stack even after
+// soft deletion. It is restricted to durable receipt authorization and
+// lifecycle recovery; product inventory must continue to use StackStore.
+type ArchivedStackReceiptReader interface {
+	GetStackIncludingDeleted(ctx context.Context, tenantID, stackID string) (*Stack, error)
 }
 
 type RuntimeUpdate struct {
@@ -133,6 +167,31 @@ type RuntimeUpdate struct {
 	RuntimeSummary map[string]any
 	DriftStatus    string
 	DriftCheckedAt *time.Time
+}
+
+type DriftResult struct {
+	ID                string
+	TenantID          string
+	InstanceID        string
+	StackID           string
+	JobID             string
+	OwnerSubjectID    string
+	StackName         string
+	Status            string
+	AffectedResources []map[string]any
+	PlanSummary       map[string]any
+	Details           map[string]any
+	CreatedAt         time.Time
+}
+
+// DriftResultStore is the tenant and owner-bound authority for drift history.
+// The owner is verified through the canonical stack row on every operation;
+// callers cannot address results by an unscoped result ID.
+type DriftResultStore interface {
+	CreateDriftResult(ctx context.Context, result DriftResult) (*DriftResult, error)
+	GetDriftResult(ctx context.Context, tenantID, ownerSubjectID, resultID string) (*DriftResult, error)
+	ListDriftResults(ctx context.Context, tenantID, ownerSubjectID, stackID string, limit, offset int) ([]DriftResult, int, error)
+	DeleteDriftResult(ctx context.Context, tenantID, ownerSubjectID, resultID string) error
 }
 
 type Job struct {
@@ -150,6 +209,11 @@ type Job struct {
 	ErrorDetails string
 	Logs         []map[string]any
 	Result       map[string]any
+	// Payload is the recovery projection of the handler input, persisted so a
+	// pending job can be re-enqueued after a restart. It is written redacted
+	// (see pkg/orchestrator redactedJobPayloadForRecovery) and is never part of
+	// an API response.
+	Payload      map[string]any
 	ScheduledFor time.Time
 	StartedAt    *time.Time
 	CompletedAt  *time.Time
@@ -172,6 +236,8 @@ type UpsertJobRequest struct {
 	ErrorDetails string
 	Logs         []map[string]any
 	Result       map[string]any
+	// Payload is the redacted recovery projection of the handler input.
+	Payload      map[string]any
 	ScheduledFor time.Time
 }
 
@@ -241,6 +307,10 @@ type JobStore interface {
 	CreateJob(ctx context.Context, req UpsertJobRequest) (*Job, error)
 	UpsertJob(ctx context.Context, req UpsertJobRequest) (*Job, error)
 	SyncJobSnapshot(ctx context.Context, req SyncJobSnapshotRequest) (*Job, error)
+	// CancelPendingStackOperations retires durable rollout and older destroy
+	// offers before a replacement destroy is admitted. Running executions keep
+	// their lease as the cross-replica serialization barrier.
+	CancelPendingStackOperations(ctx context.Context, tenantID, stackID string, cancelledAt time.Time) ([]string, error)
 	ClaimWaitingJobResume(ctx context.Context, req ClaimWaitingJobResumeRequest) (*Job, error)
 	ReclaimStaleManagedDestroyRecovery(ctx context.Context, req ReclaimStaleManagedDestroyRecoveryRequest) (*Job, error)
 	GetJob(ctx context.Context, tenantID, jobID string) (*Job, error)
@@ -257,6 +327,18 @@ type JobStore interface {
 	ListManagedDestroyRecoveryCandidates(ctx context.Context, tenantID, markerKey, markerSchema string, limit int) ([]Job, error)
 	ListJobsByStack(ctx context.Context, tenantID, stackID string, limit int) ([]Job, error)
 	ListPendingJobs(ctx context.Context, tenantID string, limit int) ([]Job, error)
+	// ListPendingJobTenants returns the distinct tenants with at least one due
+	// pending job, ordered by tenant id after the cursor, so a boot re-enqueue
+	// can page a directory without scanning payload rows. The secret-free
+	// directory carries tenant IDs and scheduling only.
+	ListPendingJobTenants(ctx context.Context, afterTenantID string, limit int) ([]string, error)
+	// CompactPendingJobTenant retires the tenant's directory entry once it has
+	// no pending job left. A tenant that still has pending work stays listed.
+	CompactPendingJobTenant(ctx context.Context, tenantID string) error
+	// SetJobPayload replaces the recovery payload of a pending job. It is a
+	// no-op conflict when the job is missing or no longer pending, so a payload
+	// write can never overwrite a running execution's state.
+	SetJobPayload(ctx context.Context, tenantID, jobID string, payload map[string]any) error
 	StartJob(ctx context.Context, tenantID, jobID string, at time.Time) (*Job, error)
 	CompleteJob(ctx context.Context, tenantID, jobID string, result map[string]any, at time.Time) (*Job, error)
 	FailJob(ctx context.Context, tenantID, jobID string, message, details string, at time.Time) (*Job, error)
@@ -315,12 +397,18 @@ type WorkerStore interface {
 	ListWorkersByTenant(ctx context.Context, tenantID string) ([]Worker, error)
 	ApproveWorker(ctx context.Context, tenantID, workerID, ownerSubjectID string, approvedAt time.Time) (*Worker, error)
 	UpsertPairingToken(ctx context.Context, token PairingToken) (*PairingToken, error)
+	ListPairingTokensByOwner(ctx context.Context, tenantID, ownerSubjectID string) ([]PairingToken, error)
 	GetPairingTokenByHash(ctx context.Context, tenantID, tokenHash string) (*PairingToken, error)
 	// ClaimPairingToken atomically transitions one active, unused, unexpired
 	// tenant-scoped token to used and returns the claimed row. Missing or
 	// ineligible tokens return ErrNotFound without revealing their state.
 	ClaimPairingToken(ctx context.Context, tenantID, tokenHash string, claimedAt time.Time) (*PairingToken, error)
-	RevokePairingToken(ctx context.Context, tenantID, tokenID string) error
+	// ReleasePairingTokenClaim returns a claimed token to active after a
+	// post-claim enrollment failure that issued no credential. A completed
+	// redemption is never released; missing or unclaimed rows return
+	// ErrNotFound.
+	ReleasePairingTokenClaim(ctx context.Context, tenantID, tokenHash string) error
+	RevokePairingToken(ctx context.Context, tenantID, ownerSubjectID, tokenID string) error
 }
 
 type Node struct {
@@ -380,6 +468,44 @@ type ServiceRuntimeStore interface {
 	ListServiceRuntimes(ctx context.Context, tenantID, stackID, serverID string) ([]ServiceRuntime, error)
 }
 
+// ServiceEventWriter is the aggregate command boundary. A caller that has to
+// assert user intent - rather than record an observation - takes this narrow
+// interface instead of the projection store, so intent writes stay serialized
+// by the same row lock and keep producing the transition timeline.
+type ServiceEventWriter interface {
+	ApplyServiceEvent(ctx context.Context, event ServiceEvent) (*ServiceEventResult, error)
+}
+
+// ServiceMutationLockStore asserts or clears the owner guardrail of one
+// service. The durable implementation routes through ApplyServiceEvent, so the
+// lock inherits the aggregate row lock and the transition timeline; callers
+// take this narrow contract instead of the whole command boundary because the
+// guardrail is the only intent they own.
+type ServiceMutationLockStore interface {
+	SetServiceMutationLock(
+		ctx context.Context,
+		tenantID, serviceID string,
+		lock ServiceMutationLock,
+		reasonCode string,
+	) (*ServiceRuntime, error)
+}
+
+// ServiceMutationLock is the persisted owner guardrail of one service. An empty
+// State reads as unlocked; ChangedAt is set exactly when the lock is asserted.
+// ReasonCode and Actor exist so a detail surface can say why a service is
+// locked and who locked it without replaying the transition timeline.
+type ServiceMutationLock struct {
+	State      serviceregistry.MutationLockState
+	ReasonCode string
+	Actor      string
+	ChangedAt  *time.Time
+}
+
+// Locked reports whether governed mutations must be refused.
+func (l ServiceMutationLock) Locked() bool {
+	return !serviceregistry.MutationLockAdmitsMutation(l.State)
+}
+
 type ServiceRuntime struct {
 	ID         string
 	TenantID   string
@@ -403,6 +529,11 @@ type ServiceRuntime struct {
 	// ManagementState is the persisted ownership dimension (managed|observed),
 	// written through ApplyServiceEvent exactly like the other dimensions.
 	ManagementState string
+	// MutationLock is the owner-declared guardrail dimension. It is orthogonal
+	// to every measured dimension: a locked service keeps running and keeps
+	// reporting its real observed state. Only a control-plane authority event
+	// may assert or clear it.
+	MutationLock    ServiceMutationLock
 	ObservedAt      *time.Time
 	StackKitVersion string
 	Access          map[string]any
@@ -488,11 +619,21 @@ func normalizeActivityEvent(event ActivityEvent) ActivityEvent {
 		strings.TrimSpace(event.RuntimeScopeKey),
 		strings.TrimSpace(stringValue(event.Details["runtime_scope_key"])),
 	)
+	// The alias chain is the single authority for server scope and is mirrored
+	// by migration 111. Every identity a server is addressed by may appear
+	// here; readers match the key against the server's id, agent id and lease
+	// id. Hostname is deliberately absent: it is a display name, not an
+	// identity, it is not unique and it survives a rename.
 	event.ServerScopeKey = firstNonEmpty(
 		strings.TrimSpace(event.ServerScopeKey),
 		strings.TrimSpace(stringValue(event.Details["server_scope_key"])),
 		strings.TrimSpace(stringValue(event.Details["server_id"])),
 		strings.TrimSpace(stringValue(event.Details["node_id"])),
+		strings.TrimSpace(stringValue(event.Details["worker_id"])),
+		strings.TrimSpace(stringValue(event.Details["agent_id"])),
+		strings.TrimSpace(stringValue(event.Details["agent"])),
+		strings.TrimSpace(stringValue(event.Details["lease_id"])),
+		strings.TrimSpace(stringValue(event.Details["runtime_lease_id"])),
 	)
 	event.ServiceScopeKey = firstNonEmpty(
 		strings.TrimSpace(event.ServiceScopeKey),

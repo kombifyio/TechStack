@@ -12,9 +12,10 @@ describe("monitoring api", () => {
         new Response(
           JSON.stringify({
             data: {
-              stacks: [{ id: "stack-1", name: "Demo" }],
-              techstack_id: "techstack-1",
-              stack: { id: "stack-1", name: "Demo" },
+              homelab_id: "homelab-1",
+              kit_deployment_id: "stack-1",
+              kit_deployment_count: 2,
+              connected_server_count: 2,
               readiness: { status: "ready" },
               nextSteps: [],
               kpis: {
@@ -41,16 +42,18 @@ describe("monitoring api", () => {
     globalThis.fetch = originalFetch;
   });
 
-  it("loads the stack-scoped monitoring cockpit BFF", async () => {
-    const result = await getMonitoringCockpit("techstack-1");
+  it("loads deployment-scoped monitoring through the canonical identity", async () => {
+    const result = await getMonitoringCockpit("stack-1");
 
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining(
-        "/api/v1/monitor/cockpit?techstack_id=techstack-1",
+        "/api/v1/monitor/cockpit?kit_deployment_id=stack-1",
       ),
       expect.objectContaining({ credentials: "include" }),
     );
-    expect(result.techstack_id).toBe("techstack-1");
+    expect(result.homelab_id).toBe("homelab-1");
+    expect(result.kit_deployment_id).toBe("stack-1");
+    expect(result.kit_deployment_count).toBe(2);
     expect(result.kpis.registered_servers).toBe(2);
     expect(result.services[0].target_server_id).toBe("node-1");
     expect(result.jobs[0].id).toBe("job-1");

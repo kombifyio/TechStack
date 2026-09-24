@@ -11,15 +11,17 @@ import (
 const (
 	ErrorCodeAllocationConflict = "port_allocation_conflict"
 	ReasonCodeHostPortReserved  = "host_port_reserved"
+	TeardownSnapshotAPIVersion  = "techstack.port-teardown-snapshot/v2"
 )
 
 var (
-	ErrInvalidRequirement      = errors.New("portinventory: invalid runtime listener requirement")
-	ErrInvalidRequest          = errors.New("portinventory: invalid request")
-	ErrAllocationConflict      = errors.New("portinventory: host port is already reserved")
-	ErrInvalidTransition       = errors.New("portinventory: invalid claim transition")
-	ErrStaleServerGeneration   = errors.New("portinventory: stale server generation")
-	ErrClaimGenerationNotFound = errors.New("portinventory: claim generation not found")
+	ErrInvalidRequirement       = errors.New("portinventory: invalid runtime listener requirement")
+	ErrInvalidRequest           = errors.New("portinventory: invalid request")
+	ErrAllocationConflict       = errors.New("portinventory: host port is already reserved")
+	ErrInvalidTransition        = errors.New("portinventory: invalid claim transition")
+	ErrStaleServerGeneration    = errors.New("portinventory: stale server generation")
+	ErrClaimGenerationNotFound  = errors.New("portinventory: claim generation not found")
+	ErrTeardownSnapshotMismatch = errors.New("portinventory: teardown snapshot does not match durable claims")
 )
 
 // StaleServerGenerationError identifies a request fenced by the canonical
@@ -54,6 +56,7 @@ type Exposure string
 
 const (
 	ExposureLocal         Exposure = "local"
+	ExposureLAN           Exposure = "lan"
 	ExposureRemotePrivate Exposure = "remote-private"
 	ExposurePublic        Exposure = "public"
 )
@@ -165,6 +168,36 @@ type Snapshot struct {
 	Claims           []Claim           `json:"claims"`
 }
 
+// TeardownSnapshotRequest identifies one Owner-authorized Techstack
+// deployment. The authority resolves every non-released port generation; no
+// caller-supplied server or plan identity can narrow the batch.
+type TeardownSnapshotRequest struct {
+	TenantID       string `json:"tenant_id"`
+	OwnerSubjectID string `json:"owner_subject_id"`
+	TechstackID    string `json:"techstack_id"`
+}
+
+// TeardownGeneration binds one exact claim generation to the claim set which
+// was admitted before host mutation. Mutable lifecycle state is deliberately
+// excluded so a pending, active, or uncertain generation keeps one identity.
+type TeardownGeneration struct {
+	GenerationRef
+	ClaimSetDigest string   `json:"claim_set_digest"`
+	NodeRefs       []string `json:"node_refs"`
+}
+
+// TeardownSnapshot is the immutable release batch captured before a destroy
+// job enters process-local execution. Release re-reads every member and
+// compares this digest-bound identity in one transaction.
+type TeardownSnapshot struct {
+	APIVersion     string               `json:"api_version"`
+	TenantID       string               `json:"tenant_id"`
+	OwnerSubjectID string               `json:"owner_subject_id"`
+	TechstackID    string               `json:"techstack_id"`
+	Generations    []TeardownGeneration `json:"generations"`
+	SnapshotDigest string               `json:"snapshot_digest"`
+}
+
 type UserGuidance struct {
 	Title     string   `json:"title"`
 	Body      string   `json:"body"`
@@ -204,7 +237,8 @@ func NormalizeRequirement(input Requirement) (Requirement, error) {
 	if input.Sharing != SharingExclusive && input.Sharing != SharingVirtualHost {
 		return Requirement{}, ErrInvalidRequirement
 	}
-	if input.Exposure != ExposureLocal && input.Exposure != ExposureRemotePrivate && input.Exposure != ExposurePublic {
+	if input.Exposure != ExposureLocal && input.Exposure != ExposureLAN &&
+		input.Exposure != ExposureRemotePrivate && input.Exposure != ExposurePublic {
 		return Requirement{}, ErrInvalidRequirement
 	}
 	if input.Sharing == SharingVirtualHost && input.ListenerGroupRef == "" {

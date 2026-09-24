@@ -1,7 +1,8 @@
-import type { AddManagedRuntimeServerRequest } from "$lib/api/stacks";
+import type { AddManagedRuntimeServerRequest } from "#lib/api/stacks.js";
 
 const RECORD_VERSION = "techstack/add-managed-runtime-browser-key/v1";
 const STORAGE_PREFIX = "creating:add-server:";
+const STACK_ACTION_STORAGE_PREFIX = "techstack:stack-action:v1:";
 
 export interface CanonicalManagedRuntimeIntent {
   stack_id: string;
@@ -21,6 +22,13 @@ export interface ManagedRuntimeIdempotencyAttempt {
 export interface ManagedRuntimeIdempotencyOutcome {
   status: number;
   retryable?: boolean;
+}
+
+export type StackIdempotentAction = "provision" | "deploy" | "recreate";
+
+export interface StackActionIdempotencyAttempt {
+  storageKey: string;
+  key: string;
 }
 
 interface StoredManagedRuntimeIdempotency {
@@ -111,7 +119,6 @@ function canonicalOffering(value: string | undefined): string {
 function canonicalStackKit(value: string | undefined): string {
   const trimmed = (value || "").trim();
   switch (trimmed.toLowerCase()) {
-    case "base-kit":
     case "cloud":
     case "cloudkit":
       return "cloud-kit";
@@ -169,6 +176,13 @@ function serializedIntent(intent: CanonicalManagedRuntimeIntent): string {
   return JSON.stringify(intent);
 }
 
+function stackActionStorageKey(
+  stackId: string,
+  action: StackIdempotentAction,
+): string {
+  return `${STACK_ACTION_STORAGE_PREFIX}${encodeURIComponent(stackId)}:${action}:idempotency`;
+}
+
 function validOpaqueKey(value: unknown): value is string {
   if (typeof value !== "string" || value === "" || value.trim() !== value) {
     return false;
@@ -211,6 +225,31 @@ function browserGeneratedKey(): string {
     );
   }
   return globalThis.crypto.randomUUID();
+}
+
+export function getOrCreateStackActionIdempotency(
+  storage: Storage,
+  stackId: string,
+  action: StackIdempotentAction,
+  createKey: KeyFactory = browserGeneratedKey,
+): StackActionIdempotencyAttempt {
+  const canonicalStackId = stackId.trim();
+  if (!canonicalStackId) {
+    throw new Error("A stack ID is required for an idempotent stack action.");
+  }
+
+  const recordKey = stackActionStorageKey(canonicalStackId, action);
+  const stored = storage.getItem(recordKey);
+  if (validOpaqueKey(stored)) {
+    return { storageKey: recordKey, key: stored };
+  }
+
+  const key = createKey();
+  if (!validOpaqueKey(key)) {
+    throw new Error("Secure browser idempotency key generation failed.");
+  }
+  storage.setItem(recordKey, key);
+  return { storageKey: recordKey, key };
 }
 
 export function getOrCreateManagedRuntimeIdempotency(
@@ -273,4 +312,16 @@ export function settleManagedRuntimeIdempotency(
     return;
   }
   storage.removeItem(recordKey);
+}
+
+export function settleStackActionIdempotency(
+  storage: Storage,
+  attempt: StackActionIdempotencyAttempt,
+  outcome: ManagedRuntimeIdempotencyOutcome,
+): void {
+  if (!isTerminal(outcome)) return;
+
+  if (storage.getItem(attempt.storageKey) === attempt.key) {
+    storage.removeItem(attempt.storageKey);
+  }
 }

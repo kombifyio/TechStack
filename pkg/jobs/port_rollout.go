@@ -78,7 +78,7 @@ func (r *deployRollout) admitRuntimeListeners(ctx context.Context, apply bool) e
 	}
 	document, err := readResolvedPlanForPortAdmission(r.actionReq.UnifiedPath)
 	if err != nil {
-		return wrapProvisionError(StepPortAdmission, err.Error(), "Techstack could not read the canonical compiler plan. No host mutation was started.")
+		return wrapProvisionCause(StepPortAdmission, err, "Techstack could not read the canonical compiler plan. No host mutation was started.")
 	}
 	listenerSet, projectionErr := parseResolvedPlanListenerSet(document)
 	if listenerSet.PlanHash == "" {
@@ -94,12 +94,10 @@ func (r *deployRollout) admitRuntimeListeners(ctx context.Context, apply bool) e
 			"Regenerate the StackKit artifacts before reserving host listeners. No host mutation was started.")
 	}
 	if projectionErr != nil {
-		r.continueWithoutPortProjection(listenerSet, projectionErr)
-		return nil
+		return wrapProvisionCause(StepPortAdmission, projectionErr, "Refresh the pinned StackKits plan. Missing compiler listener authority cannot authorize host mutation.")
 	}
-	if err = listenerSet.requireSingleRuntimeTarget(r.actionReq.PlatformNodes); err != nil {
-		r.continueWithoutPortProjection(listenerSet, err)
-		return nil
+	if err = listenerSet.requirePrimaryRuntimeTarget(r.actionReq.StackKit); err != nil {
+		return wrapProvisionCause(StepPortAdmission, err, "The plan must name the exact target Node before host mutation.")
 	}
 	if r.cfg.PortInventory == nil {
 		if len(listenerSet.Listeners) == 0 {
@@ -113,6 +111,10 @@ func (r *deployRollout) admitRuntimeListeners(ctx context.Context, apply bool) e
 		TenantID: strings.TrimSpace(enrollment.TenantID), ServerID: strings.TrimSpace(enrollment.ServerID),
 		OwnerSubjectID: strings.TrimSpace(enrollment.OwnerID),
 		StackID:        strings.TrimSpace(r.actionReq.StackID), ResolvedPlanHash: listenerSet.PlanHash, Requirements: listenerSet.portRequirements(),
+	}
+	r.portRequirements = append([]portinventory.Requirement(nil), request.Requirements...)
+	if err := r.checkHostBaseline(ctx, portinventory.GenerationRef{ServerRef: portinventory.ServerRef{TenantID: request.TenantID, ServerID: request.ServerID}, StackID: request.StackID}); err != nil {
+		return err
 	}
 	if !apply {
 		_, err = r.cfg.PortInventory.EvaluateCurrent(ctx, request)
@@ -137,22 +139,6 @@ func (r *deployRollout) admitRuntimeListeners(ctx context.Context, apply bool) e
 // use a custom or newer listener shape that this Techstack release cannot
 // project yet. That makes port visibility unavailable; it does not make the
 // user-owned StackKit invalid and must not stop apply.
-func (r *deployRollout) continueWithoutPortProjection(set resolvedPlanListenerSet, projectionErr error) {
-	reason := "runtime listener projection is unavailable"
-	if projectionErr != nil {
-		reason = projectionErr.Error()
-	}
-	r.job.mutateResult(func(result map[string]interface{}) {
-		result["runtime_listener_admission"] = map[string]interface{}{
-			"status":               "unavailable",
-			"reason_code":          "optional_projection_unavailable",
-			"reason":               reason,
-			"stackkit_instance_id": set.StackKitInstanceID,
-			"plan_hash":            set.PlanHash,
-		}
-	})
-	r.q.addLog(r.job, "warn", "Techstack port projection is unavailable; continuing with StackKits-owned apply")
-}
 
 func (set resolvedPlanListenerSet) portRequirements() []portinventory.Requirement {
 	requirements := make([]portinventory.Requirement, 0, len(set.Listeners))
@@ -167,13 +153,20 @@ func (set resolvedPlanListenerSet) portRequirements() []portinventory.Requiremen
 	return requirements
 }
 
-func (set resolvedPlanListenerSet) requireSingleRuntimeTarget(nodes []PlatformNode) error {
+// requirePrimaryRuntimeTarget binds the compiler node to the same central kit
+// binding used by typed Apply. The exact RuntimeServer is already selected by
+// TechStackEnrollment.ServerID; PlatformNodes are supplemental nodes and must
+// not become a second authority for the primary server.
+func (set resolvedPlanListenerSet) requirePrimaryRuntimeTarget(stackKit string) error {
 	if len(set.Listeners) == 0 {
 		return nil
 	}
-	normalized := normalizePlatformNodes(nodes)
-	if len(normalized) != 1 || normalized[0].Name != set.NodeRef {
-		return fmt.Errorf("runtime listener nodeRef %q does not select exactly one rollout node", set.NodeRef)
+	binding, err := localExecutionBindingFor(stackKit)
+	if err != nil {
+		return err
+	}
+	if binding.NodeRef != set.NodeRef {
+		return fmt.Errorf("runtime listener nodeRef %q does not select the admitted primary rollout node %q", set.NodeRef, binding.NodeRef)
 	}
 	return nil
 }
@@ -202,6 +195,9 @@ func readResolvedPlanForPortAdmission(path string) ([]byte, error) {
 func (r *deployRollout) markPortMutationStarted(ctx context.Context) error {
 	if r == nil || r.portGeneration == nil || r.cfg == nil || r.cfg.PortInventory == nil {
 		return nil
+	}
+	if err := r.checkHostBaseline(ctx, *r.portGeneration); err != nil {
+		return err
 	}
 	if err := r.cfg.PortInventory.MarkMutationStarted(ctx, *r.portGeneration); err != nil {
 		return err
@@ -256,8 +252,29 @@ func (r *deployRollout) portAdmissionError(err error) error {
 				"user_guidance": conflict.UserGuidance,
 			}
 		})
-		return wrapProvisionError(StepPortAdmission, conflict.Error(), conflict.UserGuidance.Body)
+		return wrapProvisionCause(StepPortAdmission, conflict, conflict.UserGuidance.Body)
 	}
-	return wrapProvisionError(StepPortAdmission, fmt.Sprintf("runtime listener admission failed: %v", err),
+	return wrapProvisionCause(StepPortAdmission, fmt.Errorf("runtime listener admission failed: %w", err),
 		"Techstack could not reserve the compiler-declared host listeners. No host mutation was started.")
+}
+
+func (r *deployRollout) checkHostBaseline(ctx context.Context, generation portinventory.GenerationRef) error {
+	if len(r.portRequirements) == 0 {
+		return nil
+	}
+	reader, ok := r.cfg.PortInventory.(portinventory.ReadAuthority)
+	if !ok {
+		return wrapProvisionError(StepPortAdmission, "host baseline authority is unavailable", "Refresh the Node inventory before rollout. No host mutation was started.")
+	}
+	inventory, err := reader.ReadCurrent(ctx, portinventory.InventoryRequest{TenantID: generation.TenantID, ServerID: generation.ServerID}, time.Now().UTC())
+	if err != nil {
+		return r.portAdmissionError(err)
+	}
+	if generation.ServerGeneration != 0 && inventory.ServerGeneration != generation.ServerGeneration {
+		return r.portAdmissionError(portinventory.ErrStaleServerGeneration)
+	}
+	r.job.mutateResult(func(result map[string]interface{}) {
+		result["host_baseline"] = map[string]interface{}{"server_id": inventory.ServerID, "server_generation": inventory.ServerGeneration, "inventory_revision": inventory.InventoryRevision, "observed_at": inventory.ObservedAt, "expires_at": inventory.ExpiresAt, "listeners_complete": inventory.ListenersComplete}
+	})
+	return r.portAdmissionError(portinventory.EvaluateHostBaseline(inventory, r.portRequirements, generation.StackID, time.Now().UTC()))
 }

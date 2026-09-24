@@ -41,10 +41,11 @@ func TestResumeEnrollmentDispatchesOneExactReplacementAndReplays(t *testing.T) {
 	}
 	lease := enrollmentResumeTestLease("lease-waiting", "tenant-1", "owner-1", "stack-waiting")
 	seedManagedDeployEligibleServerRuntime(t, store, "tenant-1", "owner-1", "stack-waiting", "lease-waiting", time.Now().UTC())
-	orch := NewWithApp(missingPocketBaseApp{}, &Config{
+	orch := New(&Config{
 		Workers: 1, StackStore: store, JobStore: store, WorkerStore: store,
 		LeaseLister: fakeManagedRuntimeLeaseLister{leases: []vmlease.Lease{lease}},
 	}, nil)
+
 	defer orch.Stop()
 
 	req := EnrollmentResumeRequest{
@@ -109,12 +110,13 @@ func TestResumeEnrollmentDispatchesOneExactReplacementAndReplays(t *testing.T) {
 
 func TestResumeEnrollmentRejectsMissingGuardBeforeHandover(t *testing.T) {
 	store, req := seedEnrollmentResumeTestState(t, persistentStateProvisioning, "stack-no-guard", "job-no-guard", "lease-no-guard")
-	orch := NewWithApp(missingPocketBaseApp{}, &Config{
+	orch := New(&Config{
 		Workers: 1, StackStore: store, JobStore: store, WorkerStore: store,
 		LeaseLister: fakeManagedRuntimeLeaseLister{leases: []vmlease.Lease{
 			enrollmentResumeTestLease(req.LeaseID, req.TenantID, req.OwnerID, req.StackID),
 		}},
 	}, nil)
+
 	defer orch.Stop()
 	bootstrapCalls := 0
 	blockedBootstrapToken := strings.Join([]string{"must", "not", "be", "issued"}, "-")
@@ -146,9 +148,10 @@ func TestResumeEnrollmentRehydratesSameDeterministicReplacementAfterRestart(t *t
 	lister := fakeManagedRuntimeLeaseLister{leases: []vmlease.Lease{
 		enrollmentResumeTestLease(req.LeaseID, req.TenantID, req.OwnerID, req.StackID),
 	}}
-	firstOrch := NewWithApp(missingPocketBaseApp{}, &Config{
+	firstOrch := New(&Config{
 		Workers: 1, StackStore: store, JobStore: store, WorkerStore: store, LeaseLister: lister,
 	}, nil)
+
 	first, err := firstOrch.ResumeEnrollment(req)
 	if err != nil {
 		t.Fatalf("first ResumeEnrollment: %v", err)
@@ -159,9 +162,10 @@ func TestResumeEnrollmentRehydratesSameDeterministicReplacementAfterRestart(t *t
 	firstOrch.cancel()
 	firstOrch.wg.Wait()
 
-	secondOrch := NewWithApp(missingPocketBaseApp{}, &Config{
+	secondOrch := New(&Config{
 		Workers: 1, StackStore: store, JobStore: store, WorkerStore: store, LeaseLister: lister,
 	}, nil)
+
 	defer secondOrch.Stop()
 	second, err := secondOrch.ResumeEnrollment(req)
 	if err != nil {
@@ -181,12 +185,13 @@ func TestResumeEnrollmentRehydratesSameDeterministicReplacementAfterRestart(t *t
 
 func TestResumeEnrollmentRejectsStackThatStartedStopping(t *testing.T) {
 	store, req := seedEnrollmentResumeTestState(t, "stopping", "stack-stopping", "job-stopping", "lease-stopping")
-	orch := NewWithApp(missingPocketBaseApp{}, &Config{
+	orch := New(&Config{
 		Workers: 1, StackStore: store, JobStore: store,
 		LeaseLister: fakeManagedRuntimeLeaseLister{leases: []vmlease.Lease{
 			enrollmentResumeTestLease(req.LeaseID, req.TenantID, req.OwnerID, req.StackID),
 		}},
 	}, nil)
+
 	defer orch.Stop()
 
 	_, err := orch.ResumeEnrollment(req)
@@ -223,12 +228,13 @@ func TestResumeEnrollmentCASDoesNotResurrectConcurrentCancellation(t *testing.T)
 	base, req := seedEnrollmentResumeTestState(t, persistentStateProvisioning, "stack-cas", "job-cas", "lease-cas")
 	seedManagedDeployEligibleServerRuntime(t, base, req.TenantID, req.OwnerID, req.StackID, req.LeaseID, time.Now().UTC())
 	store := &enrollmentResumeClaimRaceStore{MemoryStore: base}
-	orch := NewWithApp(missingPocketBaseApp{}, &Config{
+	orch := New(&Config{
 		Workers: 1, StackStore: store, JobStore: store,
 		LeaseLister: fakeManagedRuntimeLeaseLister{leases: []vmlease.Lease{
 			enrollmentResumeTestLease(req.LeaseID, req.TenantID, req.OwnerID, req.StackID),
 		}},
 	}, nil)
+
 	defer orch.Stop()
 
 	_, err := orch.ResumeEnrollment(req)
@@ -269,13 +275,15 @@ func TestResumeEnrollmentFencesStaleWaitingSnapshotFromAnotherReplica(t *testing
 	lister := fakeManagedRuntimeLeaseLister{leases: []vmlease.Lease{
 		enrollmentResumeTestLease(req.LeaseID, req.TenantID, req.OwnerID, req.StackID),
 	}}
-	replicaA := NewWithApp(missingPocketBaseApp{}, &Config{
+	replicaA := New(&Config{
 		Workers: 1, StackStore: store, JobStore: store, WorkerStore: store, LeaseLister: lister,
 	}, nil)
+
 	defer replicaA.Stop()
-	replicaB := NewWithApp(missingPocketBaseApp{}, &Config{
+	replicaB := New(&Config{
 		Workers: 1, StackStore: store, JobStore: store, WorkerStore: store, LeaseLister: lister,
 	}, nil)
+
 	defer replicaB.Stop()
 
 	result, err := replicaB.ResumeEnrollment(req)
@@ -366,13 +374,15 @@ func TestResumeEnrollmentRefreshesStaleSourceAfterReplicaCreatesReplacement(t *t
 	}}
 	staleStore := newEnrollmentResumeStaleSnapshotStore(base, req.SourceJobID)
 	defer staleStore.release()
-	winner := NewWithApp(missingPocketBaseApp{}, &Config{
+	winner := New(&Config{
 		Workers: 1, StackStore: base, JobStore: base, WorkerStore: base, LeaseLister: lister,
 	}, nil)
+
 	defer winner.Stop()
-	staleReplica := NewWithApp(missingPocketBaseApp{}, &Config{
+	staleReplica := New(&Config{
 		Workers: 1, StackStore: staleStore, JobStore: staleStore, WorkerStore: staleStore, LeaseLister: lister,
 	}, nil)
+
 	defer staleReplica.Stop()
 
 	type outcome struct {
@@ -416,8 +426,8 @@ func TestResumeEnrollmentConcurrentOrchestratorsExecuteOneDeterministicReplaceme
 	lister := fakeManagedRuntimeLeaseLister{leases: []vmlease.Lease{
 		enrollmentResumeTestLease(req.LeaseID, req.TenantID, req.OwnerID, req.StackID),
 	}}
-	one := NewWithApp(missingPocketBaseApp{}, &Config{Workers: 1, StackStore: store, JobStore: store, WorkerStore: store, LeaseLister: lister}, nil)
-	two := NewWithApp(missingPocketBaseApp{}, &Config{Workers: 1, StackStore: store, JobStore: store, WorkerStore: store, LeaseLister: lister}, nil)
+	one := New(&Config{Workers: 1, StackStore: store, JobStore: store, WorkerStore: store, LeaseLister: lister}, nil)
+	two := New(&Config{Workers: 1, StackStore: store, JobStore: store, WorkerStore: store, LeaseLister: lister}, nil)
 	defer one.Stop()
 	defer two.Stop()
 
@@ -509,12 +519,14 @@ func TestResumeEnrollmentRecoversProviderProvisionWaitAcrossReplicasWithoutCreat
 	lease := enrollmentResumeTestLease("lease-provider-wait", "tenant-1", "owner-1", "stack-provider-wait")
 	seedManagedDeployEligibleServerRuntime(t, store, "tenant-1", "owner-1", "stack-provider-wait", "lease-provider-wait", time.Now().UTC())
 	lister := fakeManagedRuntimeLeaseLister{leases: []vmlease.Lease{lease}}
-	replicaA := NewWithApp(missingPocketBaseApp{}, &Config{
+	replicaA := New(&Config{
 		Workers: 1, StackStore: store, JobStore: store, WorkerStore: store, LeaseLister: lister,
 	}, nil)
-	replicaB := NewWithApp(missingPocketBaseApp{}, &Config{
+
+	replicaB := New(&Config{
 		Workers: 1, StackStore: store, JobStore: store, WorkerStore: store, LeaseLister: lister,
 	}, nil)
+
 	defer replicaA.Stop()
 	defer replicaB.Stop()
 
@@ -596,6 +608,96 @@ func TestResumeEnrollmentRecoversProviderProvisionWaitAcrossReplicasWithoutCreat
 	}
 }
 
+// After the lease exists, auto-deploy parks on a fresh Guard heartbeat. If that
+// in-process wait is lost, recovery must start the exact-lease deploy and must
+// not re-enter provision (the only path that can create another provider VM).
+func TestResumeEnrollmentRecoversCanonicalGuardWaitAsDeployWithoutProvision(t *testing.T) {
+	ctx := context.Background()
+	store := controlplane.NewMemoryStore()
+	if _, err := store.CreateStack(ctx, controlplane.CreateStackRequest{
+		ID: "stack-guard-wait", TenantID: "tenant-1", OwnerSubjectID: "owner-1",
+		Name: "Guard wait", Status: persistentStateProvisioning,
+		Config: map[string]any{"runtime_lane": "monthly-runtime", "server_provisioning_mode": "kombify-cloud"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	nextResumeAt := time.Now().UTC().Add(-3 * time.Minute)
+	if _, err := store.UpsertJob(ctx, controlplane.UpsertJobRequest{
+		ID: "job-guard-wait", TenantID: "tenant-1", StackID: "stack-guard-wait",
+		Type: string(jobs.JobTypeProvision), State: persistentStatePending,
+		Progress: 90, Step: "create_spec", Message: "Waiting for a fresh canonical Guard heartbeat",
+		Result: map[string]any{
+			"lease_id":      "lease-guard-wait",
+			"runtime_phase": string(jobs.RuntimePhaseLeaseReady),
+			"job_wait": map[string]any{
+				"state": string(jobs.JobStateWaiting), "reason": jobs.WaitReasonCanonicalGuardEvidence,
+				"next_resume_at": nextResumeAt.Format(time.RFC3339Nano),
+			},
+		},
+		ScheduledFor: nextResumeAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	lease := enrollmentResumeTestLease("lease-guard-wait", "tenant-1", "owner-1", "stack-guard-wait")
+	seedManagedDeployEligibleServerRuntime(t, store, "tenant-1", "owner-1", "stack-guard-wait", "lease-guard-wait", time.Now().UTC())
+	orch := New(&Config{
+		Workers: 1, StackStore: store, JobStore: store, WorkerStore: store,
+		LeaseLister: fakeManagedRuntimeLeaseLister{leases: []vmlease.Lease{lease}},
+	}, nil)
+
+	defer orch.Stop()
+
+	result, err := orch.ResumeEnrollment(EnrollmentResumeRequest{
+		RequestContext: ctx, StackID: "stack-guard-wait", TenantID: "tenant-1", OwnerID: "owner-1",
+		StackName: "Guard wait", SourceJobID: "job-guard-wait", LeaseID: "lease-guard-wait",
+	})
+	if err != nil || result == nil || result.JobID == "" || result.JobID == "job-guard-wait" {
+		t.Fatalf("ResumeEnrollment = %#v err=%v, want a replacement deploy", result, err)
+	}
+
+	stored, listErr := store.ListJobsByStack(ctx, "tenant-1", "stack-guard-wait", 10)
+	if listErr != nil {
+		t.Fatal(listErr)
+	}
+	source := enrollmentResumeStoredJob(t, stored, "job-guard-wait")
+	if canonicalEnrollmentJobState(source.State) != string(jobs.JobStateCancelled) ||
+		source.Result[enrollmentResumeKindField] != jobs.WaitReasonCanonicalGuardEvidence {
+		t.Fatalf("guard source handover = %#v", source)
+	}
+	replacement := enrollmentResumeStoredJob(t, stored, result.JobID)
+	if replacement.Type != string(jobs.JobTypeDeploy) ||
+		replacement.Result[enrollmentResumeKindField] != jobs.WaitReasonCanonicalGuardEvidence ||
+		replacement.Result[enrollmentResumeGenericLeaseField] != "lease-guard-wait" {
+		t.Fatalf("replacement = %#v, want exact deploy bound to the Guard wait lease", replacement)
+	}
+
+	var provisionExecutions atomic.Int32
+	var deployExecutions atomic.Int32
+	handled := make(chan struct{}, 1)
+	orch.Queue().RegisterHandler(jobs.JobTypeProvision, func(context.Context, *jobs.Job, *jobs.Queue) error {
+		provisionExecutions.Add(1)
+		return nil
+	})
+	orch.Queue().RegisterHandler(jobs.JobTypeDeploy, func(context.Context, *jobs.Job, *jobs.Queue) error {
+		if deployExecutions.Add(1) == 1 {
+			handled <- struct{}{}
+		}
+		return nil
+	})
+	orch.Start()
+	select {
+	case <-handled:
+	case <-time.After(time.Second):
+		t.Fatal("guard-wait replacement did not execute")
+	}
+	if got := deployExecutions.Load(); got != 1 {
+		t.Fatalf("deploy executions = %d, want the recovered rollout", got)
+	}
+	if got := provisionExecutions.Load(); got != 0 {
+		t.Fatalf("provision executions = %d, provider create path must remain at zero", got)
+	}
+}
+
 func TestResumeEnrollmentRejectsWaitInsideGraceWithoutDispatch(t *testing.T) {
 	ctx := context.Background()
 	store := controlplane.NewMemoryStore()
@@ -614,12 +716,13 @@ func TestResumeEnrollmentRejectsWaitInsideGraceWithoutDispatch(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	orch := NewWithApp(missingPocketBaseApp{}, &Config{
+	orch := New(&Config{
 		Workers: 1, StackStore: store, JobStore: store,
 		LeaseLister: fakeManagedRuntimeLeaseLister{leases: []vmlease.Lease{
 			enrollmentResumeTestLease("lease-fresh-wait", "tenant-1", "owner-1", "stack-fresh-wait"),
 		}},
 	}, nil)
+
 	defer orch.Stop()
 
 	_, err := orch.ResumeEnrollment(EnrollmentResumeRequest{

@@ -1,8 +1,8 @@
 // Package workflows holds concrete RIL WorkflowDefinitions executed by the
 // pkg/ril/workflow engine. Definitions are declarative, side-effect-free step
-// lists: every external effect goes through a named, idempotency-keyed activity
-// (pkg/ril/activities, wired at startup), so the definitions stay unit-testable
-// with fake activities and the engine can checkpoint/resume by step index.
+// lists: every external effect goes through a named, idempotency-keyed
+// activity registered at startup, so the definitions stay unit-testable with
+// fake activities and the engine can checkpoint/resume by step index.
 package workflows
 
 import (
@@ -55,7 +55,6 @@ func MigrationConfirmSignalKey(runID string) string {
 // -> drain-source -> archive-source, with saga compensation that restores the
 // source and removes the half-migrated target on failure. It is the durable
 // replacement for the fake createServiceMigrationJob.
-// See docs/plans/2026-06-04-service-migration-execution.md.
 type ServiceMigrationWorkflow struct {
 	policy         workflow.RetryPolicy
 	confirmTimeout time.Duration

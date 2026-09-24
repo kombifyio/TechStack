@@ -51,7 +51,6 @@ const (
 // PocketBase serving the embedded mux.
 type Server struct {
 	httpServer      *http.Server
-	router          *Router
 	shutdownTimeout time.Duration
 }
 
@@ -92,34 +91,14 @@ func NewServer(router *Router, cfg ServerConfig) *Server {
 
 	return &Server{
 		httpServer:      srv,
-		router:          router,
 		shutdownTimeout: shutdownTimeout,
 	}
 }
-
-// Router returns the underlying Router.
-func (s *Server) Router() *Router { return s.router }
-
-// HTTPServer exposes the underlying *http.Server for advanced configuration
-// (TLS, BaseContext, ConnState, etc.) before Start.
-func (s *Server) HTTPServer() *http.Server { return s.httpServer }
-
-// Addr returns the configured listen address.
-func (s *Server) Addr() string { return s.httpServer.Addr }
 
 // Start begins serving and blocks until the server stops. It returns nil on a
 // clean shutdown (http.ErrServerClosed) and the underlying error otherwise.
 func (s *Server) Start() error {
 	err := s.httpServer.ListenAndServe()
-	if err == http.ErrServerClosed {
-		return nil
-	}
-	return err
-}
-
-// StartTLS is the TLS variant of Start.
-func (s *Server) StartTLS(certFile, keyFile string) error {
-	err := s.httpServer.ListenAndServeTLS(certFile, keyFile)
 	if err == http.ErrServerClosed {
 		return nil
 	}
@@ -132,9 +111,4 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	shutdownCtx, cancel := context.WithTimeout(ctx, s.shutdownTimeout)
 	defer cancel()
 	return s.httpServer.Shutdown(shutdownCtx)
-}
-
-// Close immediately closes the server without draining. Prefer Shutdown.
-func (s *Server) Close() error {
-	return s.httpServer.Close()
 }

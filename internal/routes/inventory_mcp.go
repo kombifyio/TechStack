@@ -97,10 +97,6 @@ func registerInventoryMCPRoutes(r *httpx.Router, h inventoryHandlers) {
 	r.GET("/v1/mcp/public/techstack", methodNotAllowed)
 }
 
-func (h inventoryHandlers) handleMCP(e *httpx.Event) error {
-	return h.handleMCPWithStackOperations(e, nil)
-}
-
 func (h inventoryHandlers) handleMCPWithStackOperations(e *httpx.Event, stackOperations httpx.HandlerFunc) error {
 	e.Response.Header().Set("MCP-Protocol-Version", inventoryMCPProtocolVersion)
 	if !validMCPOrigin(e.Request) {
@@ -193,6 +189,11 @@ func (h inventoryHandlers) callInventoryTool(ctx context.Context, scope inventor
 			return nil, err
 		}
 		return h.app.serverHealth(ctx, scope, stringArgument(arguments, inventoryServerIDField))
+	case "server_ports":
+		if err := validateMCPArguments(arguments, map[string]bool{inventoryServerIDField: true}, map[string]bool{inventoryServerIDField: true}); err != nil {
+			return nil, err
+		}
+		return h.app.serverPorts(ctx, scope, stringArgument(arguments, inventoryServerIDField))
 	case "list_services":
 		if err := validateMCPArguments(arguments, map[string]bool{inventoryServerIDField: true, inventoryCursorField: true, inventoryLimitField: true}, nil); err != nil {
 			return nil, err

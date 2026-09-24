@@ -190,3 +190,15 @@ clients/windows/**/obj/
 # Beads / Dolt files (added by bd init)
 .dolt/
 .beads-credential-key
+
+# Per-machine tooling state, not repository content: bd installs its git hooks
+# into the working copy, and .claude/settings.json is this checkout's local
+# agent config. Tracking either would push one machine's setup onto everyone.
+.beads/hooks/
+.claude/settings.json
+
+# On-demand reference checkouts; never commit cached dependencies.
+/.kombify/context-cache/
+
+# bd 1.3 workspace-gate lock beside .beads/
+*.gate.lock*

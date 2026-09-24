@@ -71,33 +71,6 @@ func newRC(fake *fakeActivities) *workflow.RunContext {
 	}
 }
 
-func TestServiceMigrationWorkflow_DefinitionShape(t *testing.T) {
-	w := NewServiceMigrationWorkflow()
-	if w.Type() != workflow.TypeServiceMigration {
-		t.Fatalf("Type() = %q, want service_migration", w.Type())
-	}
-	steps := w.Steps()
-	wantNames := []string{"claim", "provision-target", "verify-target", "confirm", "cutover", "drain-source", "archive-source"}
-	if len(steps) != len(wantNames) {
-		t.Fatalf("step count = %d, want %d", len(steps), len(wantNames))
-	}
-	for i, name := range wantNames {
-		if steps[i].Name != name {
-			t.Errorf("step[%d] = %q, want %q", i, steps[i].Name, name)
-		}
-		if steps[i].Run == nil {
-			t.Errorf("step %q has nil Run", name)
-		}
-	}
-	// Steps with externally-visible side effects must be compensatable.
-	compensatable := map[string]bool{"claim": true, "provision-target": true, "cutover": true}
-	for _, s := range steps {
-		if compensatable[s.Name] && s.Compensate == nil {
-			t.Errorf("step %q must have a Compensate", s.Name)
-		}
-	}
-}
-
 func TestServiceMigrationClaim_MarksSourceAndCreatesTarget(t *testing.T) {
 	fake := &fakeActivities{outputs: map[string]map[string]any{
 		ActCreateTargetService: {"target_service_id": "svc-target-1"},
@@ -187,38 +160,59 @@ func TestServiceMigrationConfirm_SuspendResumeRejectTimeout(t *testing.T) {
 	}
 }
 
-func TestServiceMigrationCompensateClaim_DeletesTargetAndRestoresSource(t *testing.T) {
-	fake := &fakeActivities{}
+func TestServiceMigrationCompensatesCompletedEffectsAfterDrainFailure(t *testing.T) {
+	fake := &fakeActivities{
+		outputs: map[string]map[string]any{
+			ActCreateTargetService:  {"target_service_id": "svc-target-1"},
+			ActVerifyServiceHealthy: {"healthy": true},
+		},
+		errs: map[string]error{ActDrainServiceOnNode: errors.New("drain unavailable")},
+	}
+	w := NewServiceMigrationWorkflow()
 	rc := newRC(fake)
-	setContext(rc, ctxTargetServiceID, "svc-target-1")
+	ctx := context.Background()
+	var completed []workflow.StepDef
+	var runErr error
+	for _, step := range w.Steps() {
+		result, err := step.Run(ctx, rc)
+		if result.Suspend != nil {
+			rc.Signal = &workflow.Signal{Key: result.Suspend.SignalKey, Payload: map[string]any{"confirmed": true}}
+			_, err = step.Run(ctx, rc)
+			rc.Signal = nil
+		}
+		if err != nil {
+			runErr = err
+			break
+		}
+		completed = append(completed, step)
+	}
+	if runErr == nil {
+		t.Fatal("drain failure did not stop the migration")
+	}
+	for i := len(completed) - 1; i >= 0; i-- {
+		if completed[i].Compensate == nil {
+			continue
+		}
+		if _, err := completed[i].Compensate(ctx, rc); err != nil {
+			t.Fatalf("compensate completed step %q: %v", completed[i].Name, err)
+		}
+	}
 
-	if _, err := NewServiceMigrationWorkflow().compensateClaim(context.Background(), rc); err != nil {
-		t.Fatalf("compensateClaim: %v", err)
-	}
-	if len(fake.callsTo(ActDeleteService)) != 1 {
-		t.Fatalf("expected target delete, got %+v", fake.names())
-	}
-	restore := fake.callsTo(ActMarkServiceStatus)
-	if len(restore) != 1 || restore[0].input["status"] != "running" || restore[0].input["service_id"] != "svc-source-1" {
-		t.Fatalf("expected source restored to running, got %+v", restore)
-	}
-}
-
-func TestServiceMigrationCompensateCutover_RevertsTraffic(t *testing.T) {
-	fake := &fakeActivities{}
-	rc := newRC(fake)
-	setContext(rc, ctxTargetServiceID, "svc-target-1")
-
-	if _, err := NewServiceMigrationWorkflow().compensateCutover(context.Background(), rc); err != nil {
-		t.Fatalf("compensateCutover: %v", err)
-	}
+	deleted := fake.callsTo(ActDeleteService)
+	removed := fake.callsTo(ActRemoveServiceFromNode)
 	switches := fake.callsTo(ActSwitchServiceTraffic)
-	if len(switches) != 1 {
-		t.Fatalf("expected one traffic revert, got %+v", fake.names())
+	marks := fake.callsTo(ActMarkServiceStatus)
+	if len(deleted) != 1 || deleted[0].input[fieldServiceID] != "svc-target-1" {
+		t.Fatalf("target record was not removed: %+v", deleted)
 	}
-	// Revert flows target -> source (the inverse of cutover).
-	if switches[0].input["from_service_id"] != "svc-target-1" || switches[0].input["to_service_id"] != "svc-source-1" {
-		t.Fatalf("revert direction = %+v, want target->source", switches[0].input)
+	if len(removed) != 1 || removed[0].input[ctxTargetServiceID] != "svc-target-1" || removed[0].input["target_server_id"] != "node-target-1" {
+		t.Fatalf("target workload was not removed: %+v", removed)
+	}
+	if len(switches) != 2 || switches[1].input["from_service_id"] != "svc-target-1" || switches[1].input["to_service_id"] != "svc-source-1" {
+		t.Fatalf("traffic was not restored to the source: %+v", switches)
+	}
+	if len(marks) == 0 || marks[len(marks)-1].input["status"] != "running" || marks[len(marks)-1].input[fieldServiceID] != "svc-source-1" {
+		t.Fatalf("source was not restored to running: %+v", marks)
 	}
 }
 
@@ -231,6 +225,9 @@ func TestServiceMigration_HappyPathDrivesAllSteps(t *testing.T) {
 		ActVerifyServiceHealthy: {"healthy": true},
 	}}
 	w := NewServiceMigrationWorkflow()
+	if w.Type() != workflow.TypeServiceMigration {
+		t.Fatalf("Type() = %q, want service_migration", w.Type())
+	}
 	rc := newRC(fake)
 	ctx := context.Background()
 

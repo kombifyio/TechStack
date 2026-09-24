@@ -119,7 +119,7 @@ export const identityCharacters: readonly IdentityCharacter[] = [
 ];
 
 export const defaultIdentity: StackIdentity = {
-  name: "My Stack",
+  name: "My Homelab",
   characterId: "rocket",
   animationStyle: "identity-float",
   savedAt: null,

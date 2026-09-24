@@ -1,0 +1,707 @@
+{
+  "source": {
+    "tag": "v0.36.2",
+    "version": "0.36.2",
+    "sourceSha": "6cd99d4175a29c75f1fe40e91038d25862190e90",
+    "publicSourceSha": "90872bfd17db527baf0c541b4ee96e30acbe8a20",
+    "releaseUrl": "https://github.com/kombifyio/StackKits/releases/tag/v0.36.2"
+  },
+  "useCases": [
+    {
+      "id": "ai",
+      "components": [
+        {
+          "id": "ollama",
+          "name": "Ollama",
+          "role": "primary",
+          "kind": "application"
+        },
+        {
+          "id": "open-webui",
+          "name": "Open WebUI",
+          "role": "supporting",
+          "kind": "application"
+        }
+      ],
+      "computeTiers": {
+        "high": {
+          "included": true,
+          "functions": ["model-serving", "local-inference", "chat-interface"],
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          },
+          "moduleSlug": "ollama",
+          "notes": [
+            "Same CPU runtime as standard. GPU passthrough is not configured."
+          ]
+        },
+        "low": {
+          "included": false,
+          "reason": "CPU inference needs the explicit standard hardware floor."
+        },
+        "standard": {
+          "included": true,
+          "functions": ["model-serving", "local-inference", "chat-interface"],
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          },
+          "moduleSlug": "ollama",
+          "notes": [
+            "No model is installed automatically. Model weights and context determine additional RAM and disk."
+          ]
+        }
+      },
+      "settings": [
+        {
+          "id": "accelerator",
+          "name": "Accelerator",
+          "kind": "choice",
+          "group": "hardware",
+          "depth": "summary",
+          "help": "Local models run far faster on a GPU.",
+          "options": [
+            {
+              "id": "cpu",
+              "name": "CPU only",
+              "note": "Works everywhere; small models only"
+            },
+            {
+              "id": "nvidia",
+              "name": "NVIDIA GPU",
+              "note": "Needs the NVIDIA container runtime on the Node"
+            },
+            {
+              "id": "amd",
+              "name": "AMD GPU",
+              "note": "ROCm-capable card required"
+            }
+          ],
+          "default": "cpu",
+          "realization": "recorded"
+        },
+        {
+          "id": "model-size",
+          "name": "Model size",
+          "kind": "choice",
+          "group": "features",
+          "depth": "advanced",
+          "help": "Larger models answer better and need more memory.",
+          "options": [
+            {
+              "id": "small",
+              "name": "Small",
+              "note": "Around 4 GB of memory"
+            },
+            {
+              "id": "medium",
+              "name": "Medium",
+              "note": "Around 8 GB of memory"
+            },
+            {
+              "id": "large",
+              "name": "Large",
+              "note": "16 GB of memory or more"
+            }
+          ],
+          "default": "small",
+          "realization": "recorded"
+        }
+      ],
+      "docs": "/guides/stackkits/use-cases/personal-ai"
+    },
+    {
+      "id": "dev",
+      "components": [
+        {
+          "id": "gitea",
+          "name": "Gitea",
+          "role": "primary",
+          "kind": "application"
+        }
+      ],
+      "computeTiers": {
+        "high": {
+          "included": true,
+          "functions": [
+            "source-control",
+            "git-hosting",
+            "developer-collaboration"
+          ],
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          },
+          "moduleSlug": "gitea",
+          "notes": ["Same Git hosting runtime as standard."]
+        },
+        "low": {
+          "included": false,
+          "reason": "The first Git hosting path uses the standard profile."
+        },
+        "standard": {
+          "included": true,
+          "functions": [
+            "source-control",
+            "git-hosting",
+            "developer-collaboration"
+          ],
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          },
+          "moduleSlug": "gitea",
+          "notes": [
+            "Repository growth requires a separate disk budget. No CI runner is included."
+          ]
+        }
+      },
+      "settings": [
+        {
+          "id": "ci-runners",
+          "name": "CI runners",
+          "kind": "toggle",
+          "group": "features",
+          "depth": "summary",
+          "help": "Run build and test pipelines on this Node.",
+          "default": false,
+          "realization": "recorded"
+        }
+      ],
+      "docs": "/guides/stackkits/use-cases/development"
+    },
+    {
+      "id": "files",
+      "components": [
+        {
+          "id": "cloudreve",
+          "name": "Cloudreve",
+          "role": "primary",
+          "kind": "application"
+        },
+        {
+          "id": "nextcloud",
+          "name": "Nextcloud",
+          "role": "alternative",
+          "kind": "application"
+        }
+      ],
+      "computeTiers": {
+        "high": {
+          "included": true,
+          "functions": ["files", "document-storage", "file-sharing"],
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          },
+          "moduleSlug": "cloudreve",
+          "notes": [
+            "A high profile does not add collaboration or DMS. Those need their own admitted workload and lifecycle contracts."
+          ]
+        },
+        "low": {
+          "included": true,
+          "functions": ["files", "document-storage", "file-sharing"],
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          },
+          "moduleSlug": "cloudreve",
+          "notes": [
+            "Lightweight sharing. Nextcloud is not a native workload on any profile."
+          ]
+        },
+        "standard": {
+          "included": true,
+          "functions": ["files", "document-storage", "file-sharing"],
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          },
+          "moduleSlug": "cloudreve",
+          "notes": [
+            "Nextcloud remains planned product intent, not a selectable native alternative."
+          ]
+        }
+      },
+      "settings": [
+        {
+          "id": "library-volume",
+          "name": "Where files are stored",
+          "kind": "choice",
+          "group": "storage",
+          "depth": "advanced",
+          "help": "A dedicated disk keeps your files off the system disk.",
+          "options": [
+            {
+              "id": "kit-storage",
+              "name": "Kit storage",
+              "note": "Shared data volume of this StackKit"
+            },
+            {
+              "id": "dedicated-disk",
+              "name": "Dedicated disk",
+              "note": "An extra disk on the Node, just for files"
+            }
+          ],
+          "default": "kit-storage",
+          "realization": "recorded"
+        }
+      ],
+      "docs": "/guides/stackkits/use-cases/files"
+    },
+    {
+      "id": "game",
+      "components": [
+        {
+          "id": "gameserver",
+          "name": "Game Server Runtime",
+          "role": "primary",
+          "kind": "application"
+        }
+      ],
+      "computeTiers": {
+        "high": {
+          "included": false,
+          "reason": "Post-1.0. Same as standard; dedicated always-on game hosts would be a later high-graph choice."
+        },
+        "low": {
+          "included": false,
+          "reason": "Post-1.0. Game servers are on-demand session load, not a low-graph resident."
+        },
+        "standard": {
+          "included": false,
+          "reason": "Post-1.0. Intended load is on-demand: idle none, burst interactive while a session runs."
+        }
+      },
+      "settings": null,
+      "docs": null
+    },
+    {
+      "id": "mail",
+      "components": [
+        {
+          "id": "stalwart",
+          "name": "Stalwart Mail Server",
+          "role": "primary",
+          "kind": "application"
+        }
+      ],
+      "computeTiers": {
+        "high": {
+          "included": false,
+          "reason": "Post-1.0. Same functions as standard; reputation/filter extras would be high-graph substitutions."
+        },
+        "low": {
+          "included": false,
+          "reason": "Mail is post-1.0. A mail stack is always-on active-resident (SMTP/IMAP) and does not fit low until a lite contract exists."
+        },
+        "standard": {
+          "included": false,
+          "reason": "Post-1.0. Intended load is 24/7 inbound/outbound with interactive bursts when reading mail."
+        }
+      },
+      "settings": [
+        {
+          "id": "mail-domain",
+          "name": "Mail domain",
+          "kind": "text",
+          "group": "access",
+          "depth": "summary",
+          "help": "The domain your addresses end in, e.g. example.com. You need to own it.",
+          "default": "",
+          "placeholder": "example.com",
+          "realization": "recorded"
+        }
+      ],
+      "docs": null
+    },
+    {
+      "id": "media",
+      "components": [
+        {
+          "id": "jellyfin",
+          "name": "Jellyfin",
+          "role": "primary",
+          "kind": "application"
+        }
+      ],
+      "computeTiers": {
+        "high": {
+          "included": true,
+          "functions": ["media-server", "video-stream"],
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          },
+          "moduleSlug": "jellyfin",
+          "notes": [
+            "Same functions as standard until a high-graph media substitution exists."
+          ]
+        },
+        "low": {
+          "included": false,
+          "reason": "Jellyfin library + transcode is not on the Basement low graph. Needs a lite substitution before it can be included."
+        },
+        "standard": {
+          "included": true,
+          "functions": ["media-server", "video-stream"],
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          },
+          "moduleSlug": "jellyfin",
+          "notes": [
+            "Library waits; playback and transcode are the spike. Catalog alternative jellyfin on standard/high."
+          ]
+        }
+      },
+      "settings": [
+        {
+          "id": "hardware-transcoding",
+          "name": "Hardware transcoding",
+          "kind": "choice",
+          "group": "hardware",
+          "depth": "summary",
+          "help": "Use the Node's GPU to convert video for phones and TVs.",
+          "options": [
+            {
+              "id": "auto",
+              "name": "Automatic",
+              "note": "Use a GPU when the Node has one"
+            },
+            {
+              "id": "off",
+              "name": "Off",
+              "note": "Software only; fine for one stream at a time"
+            },
+            {
+              "id": "on",
+              "name": "Always",
+              "note": "Requires a supported GPU"
+            }
+          ],
+          "default": "auto",
+          "realization": "recorded"
+        },
+        {
+          "id": "library-volume",
+          "name": "Where media is stored",
+          "kind": "choice",
+          "group": "storage",
+          "depth": "advanced",
+          "help": "A dedicated disk keeps a large library off the system disk.",
+          "options": [
+            {
+              "id": "kit-storage",
+              "name": "Kit storage",
+              "note": "Shared data volume of this StackKit"
+            },
+            {
+              "id": "dedicated-disk",
+              "name": "Dedicated disk",
+              "note": "An extra disk on the Node, just for media"
+            }
+          ],
+          "default": "kit-storage",
+          "realization": "recorded"
+        }
+      ],
+      "docs": "/guides/stackkits/use-cases/media"
+    },
+    {
+      "id": "photos",
+      "components": [
+        {
+          "id": "immich",
+          "name": "Immich",
+          "role": "primary",
+          "kind": "application"
+        }
+      ],
+      "computeTiers": {
+        "high": {
+          "included": true,
+          "functions": [
+            "photos",
+            "photo-management",
+            "media-backup",
+            "ai-search"
+          ],
+          "load": {
+            "residency": "always-on",
+            "baseline": "active-resident",
+            "burst": "ingest"
+          },
+          "moduleSlug": "immich",
+          "notes": [
+            "Same photo functions as standard until a high-graph substitution exists. Extra headroom is kit high, not extra Immich features."
+          ]
+        },
+        "low": {
+          "included": true,
+          "functions": ["photos", "photo-management", "media-backup"],
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "ingest"
+          },
+          "moduleSlug": "immich-lite",
+          "notes": [
+            "No ML search. Catalog alternative immich-lite on standalone-compose. Kit graph also substitutes stackkits-immich-lite-runtime. Mobile backup is the spike; the library otherwise waits."
+          ]
+        },
+        "standard": {
+          "included": true,
+          "functions": [
+            "photos",
+            "photo-management",
+            "media-backup",
+            "ai-search"
+          ],
+          "load": {
+            "residency": "always-on",
+            "baseline": "active-resident",
+            "burst": "ingest"
+          },
+          "moduleSlug": "immich",
+          "notes": [
+            "ML worker is resident base load. Ingest and interactive search are bursts on top."
+          ]
+        }
+      },
+      "settings": [
+        {
+          "id": "machine-learning",
+          "name": "Smart search and faces",
+          "kind": "toggle",
+          "group": "features",
+          "depth": "summary",
+          "help": "Recognise faces and search photos by what is in them. Needs more memory on the Node.",
+          "default": true,
+          "realization": "recorded"
+        },
+        {
+          "id": "library-volume",
+          "name": "Where photos are stored",
+          "kind": "choice",
+          "group": "storage",
+          "depth": "advanced",
+          "help": "A dedicated disk keeps a growing library off the system disk.",
+          "options": [
+            {
+              "id": "kit-storage",
+              "name": "Kit storage",
+              "note": "Shared data volume of this StackKit"
+            },
+            {
+              "id": "dedicated-disk",
+              "name": "Dedicated disk",
+              "note": "An extra disk on the Node, just for photos"
+            }
+          ],
+          "default": "kit-storage",
+          "realization": "recorded"
+        }
+      ],
+      "docs": "/guides/stackkits/use-cases/photos"
+    },
+    {
+      "id": "smart-home",
+      "components": [
+        {
+          "id": "home-assistant",
+          "name": "Home Assistant",
+          "role": "primary",
+          "kind": "application"
+        }
+      ],
+      "computeTiers": {
+        "high": {
+          "included": true,
+          "functions": [
+            "smart-home-hub",
+            "native-product-mcp",
+            "assist-api",
+            "automation"
+          ],
+          "load": {
+            "residency": "always-on",
+            "baseline": "active-resident",
+            "burst": "interactive"
+          },
+          "moduleSlug": "home-assistant",
+          "notes": [
+            "Same OSS functions as standard. Managed/hybrid profiles are realization, not a kit graph."
+          ]
+        },
+        "low": {
+          "included": true,
+          "functions": ["smart-home-hub", "automation"],
+          "load": {
+            "residency": "always-on",
+            "baseline": "active-resident",
+            "burst": "interactive"
+          },
+          "moduleSlug": "home-assistant",
+          "notes": [
+            "24/7 radio/state loop is the base load. Classic constrained-device resident. Native MCP and extra bridges stay optional."
+          ]
+        },
+        "standard": {
+          "included": true,
+          "functions": [
+            "smart-home-hub",
+            "native-product-mcp",
+            "assist-api",
+            "automation"
+          ],
+          "load": {
+            "residency": "always-on",
+            "baseline": "active-resident",
+            "burst": "interactive"
+          },
+          "moduleSlug": "home-assistant"
+        }
+      },
+      "settings": [
+        {
+          "id": "operating-form",
+          "name": "Home Assistant installation",
+          "kind": "choice",
+          "group": "profile",
+          "depth": "summary",
+          "help": "Choose Container or a dedicated Home Assistant OS appliance. OS requires a separately admitted appliance target.",
+          "options": [
+            {
+              "id": "container",
+              "name": "Container",
+              "note": "Home Assistant Core with operator-managed host services; no Supervisor or Apps."
+            },
+            {
+              "id": "haos",
+              "name": "Home Assistant OS",
+              "note": "Dedicated appliance with Supervisor, Apps and native system maintenance."
+            }
+          ],
+          "default": "container",
+          "realization": "install"
+        },
+        {
+          "id": "instance-origin",
+          "name": "Existing installation",
+          "kind": "choice",
+          "group": "profile",
+          "depth": "summary",
+          "help": "An existing instance is observed without changing accounts, integrations or configuration. Migration is a separate backup-protected operation.",
+          "options": [
+            {
+              "id": "new",
+              "name": "Create new"
+            },
+            {
+              "id": "existing",
+              "name": "Connect existing",
+              "note": "Preserve the original configuration; management requires a separate grant."
+            }
+          ],
+          "default": "new",
+          "realization": "install"
+        },
+        {
+          "id": "device-passthrough",
+          "name": "USB devices",
+          "kind": "toggle",
+          "group": "hardware",
+          "depth": "summary",
+          "help": "Let Home Assistant use a Zigbee, Z-Wave or other USB stick plugged into this Node.",
+          "default": false,
+          "realization": "recorded"
+        },
+        {
+          "id": "network-discovery",
+          "name": "Find devices on your network",
+          "kind": "toggle",
+          "group": "access",
+          "depth": "advanced",
+          "help": "Discover lights, speakers and hubs on the home network automatically.",
+          "default": true,
+          "realization": "recorded"
+        }
+      ],
+      "docs": null
+    },
+    {
+      "id": "vault",
+      "components": [
+        {
+          "id": "vaultwarden",
+          "name": "Vaultwarden",
+          "role": "primary",
+          "kind": "application"
+        }
+      ],
+      "computeTiers": {
+        "high": {
+          "included": true,
+          "functions": ["password-manager", "secure-notes", "totp"],
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          },
+          "moduleSlug": "vaultwarden",
+          "notes": [
+            "No extra vault functions on high until a graph substitution exists."
+          ]
+        },
+        "low": {
+          "included": true,
+          "functions": ["password-manager", "secure-notes", "totp"],
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          },
+          "moduleSlug": "vaultwarden",
+          "notes": [
+            "Always resident for unlock/sync; almost no idle CPU. Fits the low graph."
+          ]
+        },
+        "standard": {
+          "included": true,
+          "functions": ["password-manager", "secure-notes", "totp"],
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          },
+          "moduleSlug": "vaultwarden"
+        }
+      },
+      "settings": [
+        {
+          "id": "open-signups",
+          "name": "Open sign-ups",
+          "kind": "toggle",
+          "group": "access",
+          "depth": "advanced",
+          "help": "Let people create their own vault account. Off means the owner invites them.",
+          "default": false,
+          "realization": "recorded"
+        }
+      ],
+      "docs": "/guides/stackkits/use-cases/passwords"
+    }
+  ]
+}

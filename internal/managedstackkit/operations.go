@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kombifyio/go-common/runtimeexecutor"
+	"github.com/kombifyio/techstack/internal/gocommon/runtimeexecutor"
 	"github.com/kombifyio/techstack/pkg/backupstore"
 	"github.com/kombifyio/stackkits/pkg/backupbinding"
 )
@@ -101,7 +101,7 @@ func NewOperations(custody operationsCustody) (*Operations, error) {
 
 func (o *Operations) Execute(ctx context.Context, input OperationsRequest) (runtimeexecutor.ExecutionOutcome, error) {
 	input.TenantID, input.StackID, input.RuntimeAgentID = strings.TrimSpace(input.TenantID), strings.TrimSpace(input.StackID), strings.TrimSpace(input.RuntimeAgentID)
-	if ctx == nil || o == nil || o.custody == nil || o.attest == nil || o.now == nil || input.TenantID == "" || input.StackID == "" || input.RuntimeAgentID == "" {
+	if invalidOperationsIdentity(ctx, o, input) {
 		return runtimeexecutor.ExecutionOutcome{}, rejectOperation(
 			"managed_stackkit_identity_invalid", false,
 			"Re-enroll the runtime against the exact tenant and stack before retrying.",
@@ -127,7 +127,7 @@ func (o *Operations) Execute(ctx context.Context, input OperationsRequest) (runt
 	if err != nil {
 		return runtimeexecutor.ExecutionOutcome{}, rejectOperation("backup_evidence_unavailable", true, "Re-attest the managed backup target and regenerate the StackKits Inventory.", fmt.Errorf("load managed StackKits backup evidence: %w", err))
 	}
-	if err := validateManagedBindingEvidence(binding, evidence); err != nil {
+	if err = validateManagedBindingEvidence(binding, evidence); err != nil {
 		return runtimeexecutor.ExecutionOutcome{}, rejectOperation("backup_binding_stale", true, "Regenerate the StackKits Inventory from current durable backup custody and retry.", err)
 	}
 	freshInput := evidence
@@ -166,40 +166,70 @@ func (o *Operations) Execute(ctx context.Context, input OperationsRequest) (runt
 	}, nil
 }
 
+func invalidOperationsIdentity(ctx context.Context, operations *Operations, input OperationsRequest) bool {
+	return ctx == nil || operations == nil || operations.custody == nil || operations.attest == nil || operations.now == nil ||
+		input.TenantID == "" || input.StackID == "" || input.RuntimeAgentID == ""
+}
+
 func validateManagedOperationsRequest(stackID string, request runtimeexecutor.ExecutionRequest, now time.Time) (runtimeexecutor.RuntimeTarget, runtimeexecutor.HealthTarget, runtimeexecutor.BackupTargetBinding, error) {
 	emptyTarget, emptyHealth, emptyBinding := runtimeexecutor.RuntimeTarget{}, runtimeexecutor.HealthTarget{}, runtimeexecutor.BackupTargetBinding{}
-	if len(request.RuntimeTargets) != 1 || len(request.HealthTargets) != 1 || len(request.BackupTargetBindings) != 1 || len(request.Artifacts) != 1 || len(request.AccessBindings) != 0 {
+	if !hasManagedOperationShape(request) {
 		return emptyTarget, emptyHealth, emptyBinding, errors.New("managed StackKits backup operation requires exactly one runtime, health, binding, and artifact")
 	}
 	target, health, binding, artifact := request.RuntimeTargets[0], request.HealthTargets[0], request.BackupTargetBindings[0], request.Artifacts[0]
-	if target.OwnerKind != "module" || target.OwnerRef != cloudBackupModuleRef || target.ProviderRef != cloudBackupProviderRef ||
-		target.ModuleRef != cloudBackupModuleRef || target.UnitRef != cloudBackupUnitRef || target.RuntimeKind != "host" ||
-		target.RuntimeDelivery != "stackkit" || target.ExecutionChannelRef != managedOperationsChannel ||
-		!slices.Equal(target.SiteRefs, []string{managedOperationsSite}) || !slices.Equal(target.NodeRefs, []string{managedOperationsNode}) ||
-		len(target.BackupTargetBindingRefs) != 1 || target.BackupTargetBindingRefs[0] != binding.ID {
+	if !managedRuntimeTargetMatches(target, binding) {
 		return emptyTarget, emptyHealth, emptyBinding, errors.New("managed StackKits runtime target escaped the Cloud backup owner contract")
 	}
-	if binding.RuntimeRequirementID != target.RequirementID || binding.StackID != stackID || binding.Kind != "backup-target" ||
-		binding.SiteRef != managedOperationsSite || !slices.Equal(binding.TargetNodeRefs, []string{managedOperationsNode}) ||
-		binding.CapabilityRef != backupbinding.Capability || binding.ContractOwnerRef != cloudBackupProviderRef {
+	if !managedBindingMatches(stackID, target, binding) {
 		return emptyTarget, emptyHealth, emptyBinding, errors.New("managed StackKits backup binding does not match the enrolled stack target")
 	}
-	validUntil, err := time.Parse(time.RFC3339Nano, binding.ValidUntil)
-	if err != nil || now.IsZero() || !now.Before(validUntil) {
+	if !managedBindingValidAt(binding, now) {
 		return emptyTarget, emptyHealth, emptyBinding, errors.New("managed StackKits backup binding is expired or invalid")
 	}
-	if health.RuntimeRequirementID != target.RequirementID || !slices.Equal(health.SiteRefs, target.SiteRefs) || !slices.Equal(health.NodeRefs, target.NodeRefs) {
+	if !managedHealthTargetMatches(target, health) {
 		return emptyTarget, emptyHealth, emptyBinding, errors.New("managed StackKits backup health target does not match the runtime target")
 	}
-	if artifact.ID == "" || len(target.ArtifactRefs) != 1 || target.ArtifactRefs[0] != artifact.ID || artifact.Format != "json" ||
-		artifact.OwnerRef != target.InstanceRef || artifact.ProviderRef != cloudBackupProviderRef || artifact.ModuleRef != cloudBackupModuleRef ||
-		artifact.UnitRef != cloudBackupUnitRef || !slices.Equal(artifact.SiteRefs, target.SiteRefs) || !slices.Equal(artifact.NodeRefs, target.NodeRefs) {
+	if !managedArtifactMatches(target, artifact) {
 		return emptyTarget, emptyHealth, emptyBinding, errors.New("managed StackKits backup artifact does not match the exact runtime target")
 	}
 	if err := validateManagedOperationsArtifact(artifact.Content, stackID, binding); err != nil {
 		return emptyTarget, emptyHealth, emptyBinding, err
 	}
 	return target, health, binding, nil
+}
+
+func hasManagedOperationShape(request runtimeexecutor.ExecutionRequest) bool {
+	return len(request.RuntimeTargets) == 1 && len(request.HealthTargets) == 1 && len(request.BackupTargetBindings) == 1 &&
+		len(request.Artifacts) == 1 && len(request.AccessBindings) == 0
+}
+
+func managedRuntimeTargetMatches(target runtimeexecutor.RuntimeTarget, binding runtimeexecutor.BackupTargetBinding) bool {
+	return target.OwnerKind == "module" && target.OwnerRef == cloudBackupModuleRef && target.ProviderRef == cloudBackupProviderRef &&
+		target.ModuleRef == cloudBackupModuleRef && target.UnitRef == cloudBackupUnitRef && target.RuntimeKind == "host" &&
+		target.RuntimeDelivery == "stackkit" && target.ExecutionChannelRef == managedOperationsChannel &&
+		slices.Equal(target.SiteRefs, []string{managedOperationsSite}) && slices.Equal(target.NodeRefs, []string{managedOperationsNode}) &&
+		len(target.BackupTargetBindingRefs) == 1 && target.BackupTargetBindingRefs[0] == binding.ID
+}
+
+func managedBindingMatches(stackID string, target runtimeexecutor.RuntimeTarget, binding runtimeexecutor.BackupTargetBinding) bool {
+	return binding.RuntimeRequirementID == target.RequirementID && binding.StackID == stackID && binding.Kind == "backup-target" &&
+		binding.SiteRef == managedOperationsSite && slices.Equal(binding.TargetNodeRefs, []string{managedOperationsNode}) &&
+		binding.CapabilityRef == backupbinding.Capability && binding.ContractOwnerRef == cloudBackupProviderRef
+}
+
+func managedBindingValidAt(binding runtimeexecutor.BackupTargetBinding, now time.Time) bool {
+	validUntil, err := time.Parse(time.RFC3339Nano, binding.ValidUntil)
+	return err == nil && !now.IsZero() && now.Before(validUntil)
+}
+
+func managedHealthTargetMatches(target runtimeexecutor.RuntimeTarget, health runtimeexecutor.HealthTarget) bool {
+	return health.RuntimeRequirementID == target.RequirementID && slices.Equal(health.SiteRefs, target.SiteRefs) && slices.Equal(health.NodeRefs, target.NodeRefs)
+}
+
+func managedArtifactMatches(target runtimeexecutor.RuntimeTarget, artifact runtimeexecutor.Artifact) bool {
+	return artifact.ID != "" && len(target.ArtifactRefs) == 1 && target.ArtifactRefs[0] == artifact.ID && artifact.Format == "json" &&
+		artifact.OwnerRef == target.InstanceRef && artifact.ProviderRef == cloudBackupProviderRef && artifact.ModuleRef == cloudBackupModuleRef &&
+		artifact.UnitRef == cloudBackupUnitRef && slices.Equal(artifact.SiteRefs, target.SiteRefs) && slices.Equal(artifact.NodeRefs, target.NodeRefs)
 }
 
 func validateManagedBindingEvidence(binding runtimeexecutor.BackupTargetBinding, evidence backupstore.CustodyEvidence) error {

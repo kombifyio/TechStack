@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <AssemblyName>Kombify.Client.Shell</AssemblyName>
+    <RootNamespace>Kombify.Client.Shell</RootNamespace>
+    <PackageId>Kombify.Client.Shell</PackageId>
+    <Description>Shared strict connection-profile and Windows secret-custody seams for thin Kombify WebView2 clients.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+</Project>

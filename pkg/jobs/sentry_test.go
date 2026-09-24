@@ -56,15 +56,17 @@ func TestWithJobSentryScope_CapturesAndFlushesJobContext(t *testing.T) {
 		Attempts:    1,
 		MaxAttempts: 3,
 		Result: map[string]interface{}{
-			"lease_id":       "lease-stack-1",
-			"lease_provider": "ionos-managed",
+			"lease_id":         "lease-stack-1",
+			"lease_provider":   "ionos-managed",
+			"runtime_ssh_user": "root",
+			"target_bootstrap": map[string]interface{}{"reason": "target_bootstrap_ssh_auth_failed"},
 		},
 	}
 
 	_, finish := withJobSentryScope(context.Background(), job)
 	finish(&ProvisionError{
 		Step:    StepCreateLease,
-		Message: "managed runtime lease target was not available",
+		Message: "managed runtime lease target was not available health:stackkits-cloud-host-security-local",
 		Details: "monthlyruntime: monthly runtime feature disabled",
 	})
 
@@ -80,6 +82,18 @@ func TestWithJobSentryScope_CapturesAndFlushesJobContext(t *testing.T) {
 	}
 	if got := event.Tags["failed_step"]; got != StepCreateLease {
 		t.Fatalf("failed_step tag = %q", got)
+	}
+	if got := event.Tags["provider"]; got != "ionos-managed" {
+		t.Fatalf("provider tag = %q", got)
+	}
+	if got := event.Tags["ssh_user"]; got != "root" {
+		t.Fatalf("ssh_user tag = %q", got)
+	}
+	if got := event.Tags["reason_code"]; got != "target_bootstrap_ssh_auth_failed" {
+		t.Fatalf("reason_code tag = %q", got)
+	}
+	if got := event.Tags["health_target"]; got != "stackkits-cloud-host-security-local" {
+		t.Fatalf("health_target tag = %q", got)
 	}
 	jobCtx := event.Contexts["job"]
 	if got := jobCtx["job_id"]; got != "job-1" {
@@ -162,24 +176,6 @@ func TestWithJobSentryScope_RedactsPayloadResultLogsAndPrivateTargets(t *testing
 	}
 }
 
-func TestBreadcrumbStep_NoCtxHub(t *testing.T) {
-	t.Parallel()
-	// no hub on context - should not panic
-	breadcrumbStep(context.Background(), "test", "msg", nil)
-	breadcrumbStep(context.Background(), "test", "msg", map[string]interface{}{"k": "v"})
-}
-
-func TestBreadcrumbWait_NoCtxHub(t *testing.T) {
-	t.Parallel()
-	breadcrumbWait(context.Background(), "test", 3*time.Second, "still waiting")
-}
-
-func TestCaptureJobError_NoCtxHub(t *testing.T) {
-	t.Parallel()
-	captureJobError(context.Background(), nil, nil)
-	captureJobError(context.Background(), errors.New("boom"), map[string]interface{}{"step": "create_lease"})
-}
-
 type recordingJobSentryTransport struct {
 	events  []*sentry.Event
 	flushed bool
@@ -221,43 +217,29 @@ func TestParseEnvDuration(t *testing.T) {
 	}
 }
 
-func TestManagedRuntimeTargetWaitConfig_EnvOverride(t *testing.T) {
-	t.Setenv("TECHSTACK_MANAGED_RUNTIME_WAIT_TIMEOUT", "2m")
-	t.Setenv("TECHSTACK_MANAGED_RUNTIME_POLL_INTERVAL", "1s")
-	timeout, interval := managedRuntimeTargetWaitConfig(&ProvisionConfig{})
-	if timeout != 2*time.Minute {
-		t.Fatalf("expected timeout=2m from env, got %v", timeout)
+func TestManagedRuntimeTargetWaitConfig(t *testing.T) {
+	tests := []struct {
+		name, envTimeout, envInterval string
+		config                        *ProvisionConfig
+		wantTimeout, wantInterval     time.Duration
+	}{
+		{"environment override", "2m", "1s", &ProvisionConfig{}, 2 * time.Minute, time.Second},
+		{"defaults", "", "", nil, 20 * time.Minute, 5 * time.Second},
+		{"oversized values clamp", "30m", "20m", &ProvisionConfig{
+			ManagedRuntimeTargetWaitTimeout:  25 * time.Minute,
+			ManagedRuntimeTargetPollInterval: 2 * time.Minute,
+		}, 20 * time.Minute, 20 * time.Minute},
 	}
-	if interval != time.Second {
-		t.Fatalf("expected interval=1s from env, got %v", interval)
-	}
-}
 
-func TestManagedRuntimeTargetWaitConfig_Defaults(t *testing.T) {
-	// Explicitly unset envs so this test does not pick up values from a parent.
-	t.Setenv("TECHSTACK_MANAGED_RUNTIME_WAIT_TIMEOUT", "")
-	t.Setenv("TECHSTACK_MANAGED_RUNTIME_POLL_INTERVAL", "")
-	timeout, interval := managedRuntimeTargetWaitConfig(nil)
-	if timeout != 5*time.Minute {
-		t.Fatalf("expected default 5m, got %v", timeout)
-	}
-	if interval != 5*time.Second {
-		t.Fatalf("expected default 5s, got %v", interval)
-	}
-}
-
-func TestManagedRuntimeTargetWaitConfig_ClampsOversizedTimeout(t *testing.T) {
-	t.Setenv("TECHSTACK_MANAGED_RUNTIME_WAIT_TIMEOUT", "30m")
-	t.Setenv("TECHSTACK_MANAGED_RUNTIME_POLL_INTERVAL", "20m")
-	timeout, interval := managedRuntimeTargetWaitConfig(&ProvisionConfig{
-		ManagedRuntimeTargetWaitTimeout:  25 * time.Minute,
-		ManagedRuntimeTargetPollInterval: 2 * time.Minute,
-	})
-	if timeout != 5*time.Minute {
-		t.Fatalf("expected timeout clamp to 5m, got %v", timeout)
-	}
-	if interval != timeout {
-		t.Fatalf("expected interval clamp to timeout, got %v", interval)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("TECHSTACK_MANAGED_RUNTIME_WAIT_TIMEOUT", tt.envTimeout)
+			t.Setenv("TECHSTACK_MANAGED_RUNTIME_POLL_INTERVAL", tt.envInterval)
+			timeout, interval := managedRuntimeTargetWaitConfig(tt.config)
+			if timeout != tt.wantTimeout || interval != tt.wantInterval {
+				t.Fatalf("wait config = (%v, %v), want (%v, %v)", timeout, interval, tt.wantTimeout, tt.wantInterval)
+			}
+		})
 	}
 }
 

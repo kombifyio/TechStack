@@ -16,8 +16,9 @@ import (
 )
 
 const (
-	guardProjectionEnvelopeKey = "_guard_projection"
-	guardProjectionSchema      = "guard-inventory-projection/v1"
+	guardProjectionEnvelopeKey        = "_guard_projection"
+	guardProjectionSchema             = "guard-inventory-projection/v1"
+	guardServiceDiscoveryAbsentReason = "discovery_service_absent"
 
 	guardServiceStateArchived            = "archived"
 	guardServiceStateDeploying           = "deploying"
@@ -38,11 +39,13 @@ type GuardInventoryServiceProjection struct {
 // the aggregate, snapshot, node, service rows, and authoritative prune as one
 // atomic write.
 type GuardInventoryProjection struct {
-	Event            ServerEvent
-	Node             Node
-	Services         []GuardInventoryServiceProjection
-	ManifestObserved bool
-	ServiceSource    string
+	Event                  ServerEvent
+	Node                   Node
+	Services               []GuardInventoryServiceProjection
+	ManifestObserved       bool
+	DiscoveryObserved      bool
+	DiscoveredServiceCount int
+	ServiceSource          string
 }
 
 // GuardInventoryProjectionResult distinguishes an exact idempotent replay
@@ -50,6 +53,11 @@ type GuardInventoryProjection struct {
 type GuardInventoryProjectionResult struct {
 	ServerEvent *ServerEventResult
 	Replayed    bool
+}
+
+type guardInventoryRetainedServices struct {
+	IDs           []string
+	DiscoveredIDs []string
 }
 
 // GuardInventoryProjectionStore is the atomic persistence seam for a complete
@@ -80,9 +88,50 @@ func prepareGuardInventoryProjection(command GuardInventoryProjection) (*prepare
 	return &preparedGuardInventoryProjection{command: normalized, digest: digest}, nil
 }
 
-//nolint:gocyclo // The projection admission intentionally keeps every cross-row binding in one place.
 func normalizeGuardInventoryProjection(command GuardInventoryProjection) (GuardInventoryProjection, error) {
-	event := command.Event
+	if command.DiscoveredServiceCount < 0 {
+		return GuardInventoryProjection{}, fmt.Errorf("%w: Guard discovered service count cannot be negative", ErrConflict)
+	}
+	event, err := normalizeGuardProjectionEvent(command.Event)
+	if err != nil {
+		return GuardInventoryProjection{}, err
+	}
+	node, serviceSource, err := normalizeGuardProjectionNodeAndSource(command.Node, command.ServiceSource)
+	if err != nil {
+		return GuardInventoryProjection{}, err
+	}
+	if err := validateGuardProjectionBindings(event, node); err != nil {
+		return GuardInventoryProjection{}, err
+	}
+	services, err := normalizeGuardProjectionServices(command.Services, event, node, serviceSource)
+	if err != nil {
+		return GuardInventoryProjection{}, err
+	}
+	if err := validateSecretFreeObservation(struct {
+		Node     Node                              `json:"node"`
+		Services []GuardInventoryServiceProjection `json:"services"`
+	}{Node: node, Services: services}, "guard_projection"); err != nil {
+		return GuardInventoryProjection{}, err
+	}
+
+	if err := validateGuardProjectionSnapshotServices(event, services); err != nil {
+		return GuardInventoryProjection{}, err
+	}
+
+	event.Runtime.Metadata["service_projection_expected"] = int64(len(services))
+	node.Metadata["manifest_observed"] = command.ManifestObserved
+	node.Metadata["discovery_observed"] = command.DiscoveryObserved
+	node.Metadata["discovered_service_count"] = int64(command.DiscoveredServiceCount)
+	delete(node.Metadata, "inventory_revision")
+
+	return GuardInventoryProjection{
+		Event: event, Node: node, Services: services,
+		ManifestObserved: command.ManifestObserved, DiscoveryObserved: command.DiscoveryObserved,
+		DiscoveredServiceCount: command.DiscoveredServiceCount, ServiceSource: serviceSource,
+	}, nil
+}
+
+func normalizeGuardProjectionEvent(event ServerEvent) (ServerEvent, error) {
 	event.TenantID = strings.TrimSpace(event.TenantID)
 	event.ServerID = strings.TrimSpace(event.ServerID)
 	event.Authority = strings.TrimSpace(event.Authority)
@@ -93,22 +142,22 @@ func normalizeGuardInventoryProjection(command GuardInventoryProjection) (GuardI
 		event.Source = event.Authority
 	}
 	if event.ObservedAt.IsZero() {
-		return GuardInventoryProjection{}, fmt.Errorf("%w: Guard inventory observed_at is required", ErrConflict)
+		return ServerEvent{}, fmt.Errorf("%w: Guard inventory observed_at is required", ErrConflict)
 	}
 	event.ObservedAt = event.ObservedAt.UTC()
 	if event.Authority != ServerEventAuthorityGuard {
-		return GuardInventoryProjection{}, fmt.Errorf("%w: Guard inventory requires Guard authority", ErrConflict)
+		return ServerEvent{}, fmt.Errorf("%w: Guard inventory requires Guard authority", ErrConflict)
 	}
 	if event.Runtime.LifecycleState != "" || event.Runtime.DesiredState != "" || event.Runtime.DecommissionedAt != nil ||
 		event.Runtime.LifecycleReasonCode != "" || event.Runtime.DesiredReasonCode != "" ||
 		event.ClearLifecycleReason || event.ClearDesiredReason {
-		return GuardInventoryProjection{}, fmt.Errorf("%w: Guard inventory cannot carry lifecycle or desired-state mutations", ErrConflict)
+		return ServerEvent{}, fmt.Errorf("%w: Guard inventory cannot carry lifecycle or desired-state mutations", ErrConflict)
 	}
 	if event.TenantID == "" || event.ServerID == "" || event.SourceID == "" || event.SourceEpoch == "" || event.SourceSequence <= 0 || event.Generation <= 0 {
-		return GuardInventoryProjection{}, fmt.Errorf("%w: Guard inventory identity and source position are required", ErrConflict)
+		return ServerEvent{}, fmt.Errorf("%w: Guard inventory identity and source position are required", ErrConflict)
 	}
 	if event.Inventory == nil {
-		return GuardInventoryProjection{}, fmt.Errorf("%w: Guard inventory snapshot is required", ErrConflict)
+		return ServerEvent{}, fmt.Errorf("%w: Guard inventory snapshot is required", ErrConflict)
 	}
 	event.Inventory = &ServerInventoryEvent{
 		Source:    strings.TrimSpace(event.Inventory.Source),
@@ -120,16 +169,34 @@ func normalizeGuardInventoryProjection(command GuardInventoryProjection) (GuardI
 	var err error
 	event.Evidence, err = canonicalGuardJSONMap(event.Evidence, "guard_projection.event.evidence")
 	if err != nil {
-		return GuardInventoryProjection{}, err
+		return ServerEvent{}, err
 	}
 	event.Inventory.Inventory, err = canonicalGuardJSONMap(event.Inventory.Inventory, "guard_projection.event.inventory")
 	if err != nil {
-		return GuardInventoryProjection{}, err
+		return ServerEvent{}, err
 	}
+	if err := normalizeGuardProjectionInventory(&event); err != nil {
+		return ServerEvent{}, err
+	}
+	event.Runtime = normalizeGuardProjectionRuntime(event.Runtime)
+	event.Runtime.Metadata, err = canonicalGuardJSONMap(event.Runtime.Metadata, "guard_projection.event.runtime.metadata")
+	if err != nil {
+		return ServerEvent{}, err
+	}
+	for index := range event.Runtime.Channels {
+		event.Runtime.Channels[index].Metadata, err = canonicalGuardJSONMap(event.Runtime.Channels[index].Metadata, fmt.Sprintf("guard_projection.event.runtime.channels[%d].metadata", index))
+		if err != nil {
+			return ServerEvent{}, err
+		}
+	}
+	return event, nil
+}
+
+func normalizeGuardProjectionInventory(event *ServerEvent) error {
 	if rawServices, present := event.Inventory.Inventory["services"]; present {
 		observed, ok := rawServices.([]any)
 		if !ok {
-			return GuardInventoryProjection{}, fmt.Errorf("%w: Guard inventory services must be an array", ErrConflict)
+			return fmt.Errorf("%w: Guard inventory services must be an array", ErrConflict)
 		}
 		sort.SliceStable(observed, func(i, j int) bool {
 			left, _ := json.Marshal(observed[i])
@@ -140,60 +207,64 @@ func normalizeGuardInventoryProjection(command GuardInventoryProjection) (GuardI
 	} else {
 		event.Inventory.Inventory["services"] = []any{}
 	}
-	deployment, deploymentErr := guardProjectionDeployment(event.Inventory.Inventory)
-	if deploymentErr != nil {
-		return GuardInventoryProjection{}, deploymentErr
+	deployment, err := guardProjectionDeployment(event.Inventory.Inventory)
+	if err != nil {
+		return err
 	}
 	if _, supplied := deployment[guardProjectionEnvelopeKey]; supplied {
-		return GuardInventoryProjection{}, fmt.Errorf("%w: Guard projection envelope is repository-owned", ErrConflict)
+		return fmt.Errorf("%w: Guard projection envelope is repository-owned", ErrConflict)
 	}
 	event.Inventory.Inventory["deployment"] = deployment
-	event.Runtime = normalizeGuardProjectionRuntime(event.Runtime)
-	event.Runtime.Metadata, err = canonicalGuardJSONMap(event.Runtime.Metadata, "guard_projection.event.runtime.metadata")
-	if err != nil {
-		return GuardInventoryProjection{}, err
-	}
-	for index := range event.Runtime.Channels {
-		event.Runtime.Channels[index].Metadata, err = canonicalGuardJSONMap(event.Runtime.Channels[index].Metadata, fmt.Sprintf("guard_projection.event.runtime.channels[%d].metadata", index))
-		if err != nil {
-			return GuardInventoryProjection{}, err
-		}
-	}
+	return nil
+}
 
-	node := normalizeGuardProjectionNode(command.Node)
-	node.Metadata, err = canonicalGuardJSONMap(node.Metadata, "guard_projection.node.metadata")
+func normalizeGuardProjectionNodeAndSource(rawNode Node, rawServiceSource string) (Node, string, error) {
+	node := normalizeGuardProjectionNode(rawNode)
+	metadata, err := canonicalGuardJSONMap(node.Metadata, "guard_projection.node.metadata")
 	if err != nil {
-		return GuardInventoryProjection{}, err
+		return Node{}, "", err
 	}
-	serviceSource := strings.ToLower(strings.TrimSpace(command.ServiceSource))
+	node.Metadata = metadata
+	serviceSource := strings.ToLower(strings.TrimSpace(rawServiceSource))
 	if serviceSource == "" {
-		return GuardInventoryProjection{}, fmt.Errorf("%w: Guard inventory service source is required", ErrConflict)
+		return Node{}, "", fmt.Errorf("%w: Guard inventory service source is required", ErrConflict)
 	}
+	return node, serviceSource, nil
+}
 
+func validateGuardProjectionBindings(event ServerEvent, node Node) error {
 	if event.Runtime.ID != event.ServerID || event.Runtime.TenantID != event.TenantID ||
 		event.Runtime.StackID == "" || event.Runtime.WorkerID != event.SourceID ||
 		(event.Runtime.NodeID != "" && event.Runtime.NodeID != event.ServerID) {
-		return GuardInventoryProjection{}, fmt.Errorf("%w: Guard event runtime bindings do not match the authenticated source", ErrConflict)
+		return fmt.Errorf("%w: Guard event runtime bindings do not match the authenticated source", ErrConflict)
 	}
 	if node.ID != event.ServerID || node.TenantID != event.TenantID || node.StackID != event.Runtime.StackID ||
 		node.WorkerID != event.SourceID || node.InstanceID != event.Runtime.InstanceID {
-		return GuardInventoryProjection{}, fmt.Errorf("%w: Guard node bindings do not match the server runtime", ErrConflict)
+		return fmt.Errorf("%w: Guard node bindings do not match the server runtime", ErrConflict)
 	}
+	return nil
+}
 
-	services := make([]GuardInventoryServiceProjection, 0, len(command.Services))
-	serviceIDs := make(map[string]struct{}, len(command.Services))
-	serviceIdentities := make(map[string]struct{}, len(command.Services))
-	for index, candidate := range command.Services {
-		projection, projectionErr := normalizeGuardInventoryServiceProjection(candidate, event, node, serviceSource, index)
-		if projectionErr != nil {
-			return GuardInventoryProjection{}, projectionErr
+func normalizeGuardProjectionServices(
+	candidates []GuardInventoryServiceProjection,
+	event ServerEvent,
+	node Node,
+	serviceSource string,
+) ([]GuardInventoryServiceProjection, error) {
+	services := make([]GuardInventoryServiceProjection, 0, len(candidates))
+	serviceIDs := make(map[string]struct{}, len(candidates))
+	serviceIdentities := make(map[string]struct{}, len(candidates))
+	for index, candidate := range candidates {
+		projection, err := normalizeGuardInventoryServiceProjection(candidate, event, node, serviceSource, index)
+		if err != nil {
+			return nil, err
 		}
 		if _, duplicate := serviceIDs[projection.Legacy.ID]; duplicate {
-			return GuardInventoryProjection{}, fmt.Errorf("%w: duplicate Guard inventory service id %q", ErrConflict, projection.Legacy.ID)
+			return nil, fmt.Errorf("%w: duplicate Guard inventory service id %q", ErrConflict, projection.Legacy.ID)
 		}
 		identity := serviceRuntimeIdentity(projection.Runtime.StackID, projection.Runtime.ServerID, projection.Runtime.ServiceKey, projection.Runtime.ServiceInstance)
 		if _, duplicate := serviceIdentities[identity]; duplicate {
-			return GuardInventoryProjection{}, fmt.Errorf("%w: duplicate Guard inventory service identity", ErrConflict)
+			return nil, fmt.Errorf("%w: duplicate Guard inventory service identity", ErrConflict)
 		}
 		serviceIDs[projection.Legacy.ID] = struct{}{}
 		serviceIdentities[identity] = struct{}{}
@@ -206,30 +277,19 @@ func normalizeGuardInventoryProjection(command GuardInventoryProjection) (GuardI
 		return serviceRuntimeIdentity(services[i].Runtime.StackID, services[i].Runtime.ServerID, services[i].Runtime.ServiceKey, services[i].Runtime.ServiceInstance) <
 			serviceRuntimeIdentity(services[j].Runtime.StackID, services[j].Runtime.ServerID, services[j].Runtime.ServiceKey, services[j].Runtime.ServiceInstance)
 	})
-	if err := validateSecretFreeObservation(struct {
-		Node     Node                              `json:"node"`
-		Services []GuardInventoryServiceProjection `json:"services"`
-	}{Node: node, Services: services}, "guard_projection"); err != nil {
-		return GuardInventoryProjection{}, err
-	}
+	return services, nil
+}
 
+func validateGuardProjectionSnapshotServices(event ServerEvent, services []GuardInventoryServiceProjection) error {
 	if rawServices, present := event.Inventory.Inventory["services"]; present {
 		observed, ok := rawServices.([]any)
 		if !ok || len(observed) != len(services) {
-			return GuardInventoryProjection{}, fmt.Errorf("%w: Guard inventory snapshot and service projections differ", ErrConflict)
+			return fmt.Errorf("%w: Guard inventory snapshot and service projections differ", ErrConflict)
 		}
 	} else if len(services) != 0 {
-		return GuardInventoryProjection{}, fmt.Errorf("%w: Guard inventory snapshot omits projected services", ErrConflict)
+		return fmt.Errorf("%w: Guard inventory snapshot omits projected services", ErrConflict)
 	}
-
-	event.Runtime.Metadata["service_projection_expected"] = int64(len(services))
-	node.Metadata["manifest_observed"] = command.ManifestObserved
-	delete(node.Metadata, "inventory_revision")
-
-	return GuardInventoryProjection{
-		Event: event, Node: node, Services: services,
-		ManifestObserved: command.ManifestObserved, ServiceSource: serviceSource,
-	}, nil
+	return nil
 }
 
 func normalizeGuardInventoryServiceProjection(
@@ -451,6 +511,9 @@ func guardInventoryProjectionDigest(command GuardInventoryProjection) (string, e
 	canonical.Event.ExpectedRevision = 0
 	canonical.Event.Runtime.CreatedAt = time.Time{}
 	canonical.Event.Runtime.UpdatedAt = time.Time{}
+	// Receipt-time LastHeartbeatAt is not part of the signed observation.
+	// Including it would make an exact Guard replay diverge from the durable digest.
+	canonical.Event.Runtime.LastHeartbeatAt = nil
 	canonical.Node.CreatedAt = time.Time{}
 	canonical.Node.UpdatedAt = time.Time{}
 	if canonical.Event.Inventory != nil {
@@ -482,13 +545,57 @@ func guardInventoryProjectionDigest(command GuardInventoryProjection) (string, e
 
 func guardInventoryProjectionEnvelope(command GuardInventoryProjection, digest string) map[string]any {
 	return map[string]any{
-		"schema":            guardProjectionSchema,
-		"digest":            digest,
-		"source_epoch":      command.Event.SourceEpoch,
-		"source_sequence":   command.Event.SourceSequence,
-		"generation":        command.Event.Generation,
-		"manifest_observed": command.ManifestObserved,
-		"service_source":    command.ServiceSource,
+		"schema":                   guardProjectionSchema,
+		"digest":                   digest,
+		"source_epoch":             command.Event.SourceEpoch,
+		"source_sequence":          command.Event.SourceSequence,
+		"generation":               command.Event.Generation,
+		"manifest_observed":        command.ManifestObserved,
+		"discovery_observed":       command.DiscoveryObserved,
+		"discovered_service_count": command.DiscoveredServiceCount,
+		"service_source":           command.ServiceSource,
+	}
+}
+
+func guardInventoryServiceIDsBySource(command GuardInventoryProjection, source string) []string {
+	source = strings.ToLower(strings.TrimSpace(source))
+	ids := make([]string, 0, len(command.Services))
+	for _, service := range command.Services {
+		if strings.EqualFold(strings.TrimSpace(service.Runtime.Source), source) {
+			ids = append(ids, service.Legacy.ID)
+		}
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func guardInventoryDiscoveryCanReconcile(command GuardInventoryProjection) bool {
+	return command.DiscoveryObserved && command.DiscoveredServiceCount > 0 &&
+		len(guardInventoryServiceIDsBySource(command, serviceSourceObserved)) > 0
+}
+
+func guardDiscoveredServiceAbsentEvent(command GuardInventoryProjection, serviceID string) ServiceEvent {
+	observedAt := command.Event.ObservedAt.UTC()
+	return ServiceEvent{
+		TenantID: command.Event.TenantID, ServiceID: serviceID,
+		Authority: ServiceEventAuthorityGuard, Source: serviceSourceObserved,
+		ObservedAt: observedAt, NodeID: command.Event.ServerID,
+		Runtime: ServiceRuntime{
+			ServerID: command.Event.ServerID, Source: serviceSourceObserved,
+			ObservedState: string(serviceregistry.ObservedStopped),
+			HealthState:   string(serviceregistry.HealthUnknown),
+			ObservedAt:    &observedAt,
+			Access: map[string]any{
+				legacyServiceAccessModeKey:  legacyServiceRuntimeUnavailable,
+				guardServiceAccessReasonKey: guardServiceDiscoveryAbsentReason,
+			},
+		},
+		ReasonCode: guardServiceDiscoveryAbsentReason,
+		Evidence: map[string]any{
+			"discovery_observed": true,
+			"source_sequence":    command.Event.SourceSequence,
+		},
+		EnforceIdentityBinding: true,
 	}
 }
 

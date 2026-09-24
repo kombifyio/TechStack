@@ -53,6 +53,7 @@ func TestClientBootstrapTelemetryFreeByDefault(t *testing.T) {
 		"TECHSTACK_RELEASE", "RENDER_GIT_COMMIT", "GIT_COMMIT",
 		"PUBLIC_POSTHOG_KEY", "PUBLIC_POSTHOG_HOST", "PUBLIC_POSTHOG_ENVIRONMENT",
 		"PUBLIC_POSTHOG_ENV", "PUBLIC_KOMBIFY_EDITION", "KOMBIFY_EDITION",
+		"PUBLIC_CONTEXT_DEV_LOGOLINK_ID", "CONTEXT_DEV_LOGOLINK_ID",
 	} {
 		t.Setenv(key, "")
 	}
@@ -69,6 +70,9 @@ func TestClientBootstrapTelemetryFreeByDefault(t *testing.T) {
 	}
 	if got := data["kombify_edition"]; got != "" {
 		t.Fatalf("kombify_edition = %v, want empty", got)
+	}
+	if got := data["context_dev_logolink_id"]; got != "" {
+		t.Fatalf("context_dev_logolink_id = %v, want empty", got)
 	}
 
 	sentry := telemetrySection(t, data, "sentry")
@@ -93,6 +97,7 @@ func TestClientBootstrapReflectsRuntimeEnv(t *testing.T) {
 	t.Setenv("PUBLIC_POSTHOG_HOST", "https://e.kombify.io")
 	t.Setenv("PUBLIC_POSTHOG_ENVIRONMENT", "prod")
 	t.Setenv("PUBLIC_KOMBIFY_EDITION", "saas-standalone")
+	t.Setenv("PUBLIC_CONTEXT_DEV_LOGOLINK_ID", "brandLL_test")
 
 	data := fetchClientBootstrap(t)
 	sentry := telemetrySection(t, data, "sentry")
@@ -105,6 +110,9 @@ func TestClientBootstrapReflectsRuntimeEnv(t *testing.T) {
 	}
 	if data["kombify_edition"] != "saas-standalone" {
 		t.Fatalf("kombify_edition = %v", data["kombify_edition"])
+	}
+	if data["context_dev_logolink_id"] != "brandLL_test" {
+		t.Fatalf("context_dev_logolink_id = %v", data["context_dev_logolink_id"])
 	}
 }
 

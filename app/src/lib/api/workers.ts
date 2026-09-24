@@ -20,7 +20,7 @@ export interface Worker {
   ip: string;
   os: string;
   arch: string;
-  stack_id?: string;
+  kit_deployment_id?: string;
   connected_at?: string;
   last_seen?: string;
   status: string;

@@ -62,9 +62,6 @@ type Client struct {
 	// to process-local proxy metrics.
 	resourceProvider func() *agentpb.ResourceUsage
 
-	// lastHeartbeatAt is the wall time of the last acknowledged heartbeat.
-	lastHeartbeatAt time.Time
-
 	// dialOptsOverride replaces the mTLS dial options entirely when set.
 	// Test-only hook (bufconn); never set in production paths.
 	dialOptsOverride []grpc.DialOption
@@ -240,7 +237,7 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 
 	// Establish connection
-	conn, err := grpc.DialContext(ctx, c.coreAddr, opts...)
+	conn, err := grpc.NewClient(c.coreAddr, opts...)
 	if err != nil {
 		return fmt.Errorf("failed to connect to core: %w", err)
 	}
@@ -274,15 +271,16 @@ func (c *Client) Register(ctx context.Context) error {
 	)
 
 	capabilities := []string{
-		string(CommandTypeHealthCheck),
-		string(CommandTypeGetLogs),
-		string(CommandTypeTofu),
-		string(CommandTypeTerramate),
-		string(CommandTypePulumiOperation),
+		commandTypeHealthCheck,
+		commandTypeGetLogs,
 		"status_report",
 	}
 	if c.stackKitExecutor.Available() {
-		capabilities = append(capabilities, StackKitAgentCapability, stackkitcommand.ExpectedPlanHashCapability)
+		capabilities = append(capabilities,
+			StackKitAgentCapability,
+			stackkitcommand.ExpectedPlanHashCapability,
+			stackkitcommand.WorkspaceInstanceCapability,
+		)
 	}
 	req := &agentpb.RegisterRequest{
 		AgentId:      c.agentID,
@@ -329,14 +327,6 @@ func (c *Client) SetResourceProvider(fn func() *agentpb.ResourceUsage) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.resourceProvider = fn
-}
-
-// LastHeartbeatAt returns the wall time of the last acknowledged heartbeat
-// (zero if none succeeded yet).
-func (c *Client) LastHeartbeatAt() time.Time {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.lastHeartbeatAt
 }
 
 // maxConsecutiveHeartbeatFailures aborts the heartbeat loop (and thereby the
@@ -441,10 +431,6 @@ func (c *Client) sendHeartbeat(ctx context.Context) error {
 		return fmt.Errorf("heartbeat request failed: %w", err)
 	}
 
-	c.mu.Lock()
-	c.lastHeartbeatAt = time.Now()
-	c.mu.Unlock()
-
 	if !resp.Acknowledged {
 		c.logger().Warn("heartbeat_not_acknowledged")
 	}
@@ -498,174 +484,8 @@ func (c *Client) HandleCommands(ctx context.Context) error {
 
 	// Handle incoming commands in a separate goroutine
 	errChan := make(chan error, 2)
-
-	// Receive commands from Core
-	go func() {
-		for {
-			msg, err := stream.Recv()
-			if err != nil {
-				if err == io.EOF {
-					errChan <- nil
-					return
-				}
-				errChan <- fmt.Errorf("stream receive error: %w", err)
-				return
-			}
-
-			c.logger().Debug("command_received", "message_id", msg.MessageId)
-
-			// Process based on payload type
-			switch payload := msg.Payload.(type) {
-			case *agentpb.CoreMessage_Execute:
-				commandType := strings.ToLower(strings.TrimSpace(payload.Execute.Command))
-				cmd := Command{
-					ID:          payload.Execute.CommandId,
-					Type:        commandType,
-					Command:     commandType,
-					Args:        payload.Execute.Args,
-					Environment: payload.Execute.Environment,
-					WorkDir:     payload.Execute.WorkingDirectory,
-					Timeout:     time.Duration(payload.Execute.TimeoutSeconds) * time.Second,
-				}
-				select {
-				case c.commands <- cmd:
-					c.logger().Info("command_queued",
-						"command_id", cmd.ID,
-						"command", cmd.Command,
-					)
-				case <-ctx.Done():
-					return
-				}
-
-			case *agentpb.CoreMessage_TofuCommand:
-				cmd := Command{
-					ID:      payload.TofuCommand.CommandId,
-					Type:    string(CommandTypeTofu),
-					Command: payload.TofuCommand.Operation.String(),
-					WorkDir: payload.TofuCommand.WorkingDirectory,
-					Timeout: time.Duration(payload.TofuCommand.TimeoutSeconds) * time.Second,
-				}
-				select {
-				case c.commands <- cmd:
-					c.logger().Info("tofu_command_queued", "command_id", cmd.ID, "operation", cmd.Command)
-				case <-ctx.Done():
-					return
-				}
-
-			case *agentpb.CoreMessage_TerramateCommand:
-				cmd := Command{
-					ID:      payload.TerramateCommand.CommandId,
-					Type:    string(CommandTypeTerramate),
-					Command: payload.TerramateCommand.Operation.String(),
-					WorkDir: payload.TerramateCommand.WorkingDirectory,
-					Timeout: time.Duration(payload.TerramateCommand.TimeoutSeconds) * time.Second,
-				}
-				select {
-				case c.commands <- cmd:
-					c.logger().Info("terramate_command_queued", "command_id", cmd.ID, "operation", cmd.Command)
-				case <-ctx.Done():
-					return
-				}
-
-			case *agentpb.CoreMessage_StackkitCommand:
-				if payload.StackkitCommand == nil {
-					c.logger().Warn("stackkit_command_rejected", "reason", "empty typed command")
-					continue
-				}
-				command := payload.StackkitCommand
-				go func() {
-					result := c.stackKitExecutor.ExecuteStreaming(ctx, command, func(entry *agentpb.LogEntry) {
-						select {
-						case c.stackKitLogs <- entry:
-						case <-ctx.Done():
-						}
-					})
-					select {
-					case c.stackKitResults <- result:
-					case <-ctx.Done():
-					}
-				}()
-
-			case *agentpb.CoreMessage_ConfigUpdate:
-				c.logger().Info("config_update_received")
-				c.mu.Lock()
-				c.config = payload.ConfigUpdate.NewConfig
-				c.mu.Unlock()
-
-			case *agentpb.CoreMessage_Shutdown:
-				c.logger().Warn("shutdown_requested",
-					"reason", payload.Shutdown.Reason,
-					"graceful", payload.Shutdown.Graceful,
-				)
-				errChan <- fmt.Errorf("shutdown requested: %s", payload.Shutdown.Reason)
-				return
-			}
-		}
-	}()
-
-	// Send results back to Core
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				errChan <- ctx.Err()
-				return
-			case result, ok := <-c.results:
-				if !ok {
-					errChan <- nil
-					return
-				}
-
-				msg := &agentpb.AgentMessage{
-					AgentId: agentID,
-					Payload: &agentpb.AgentMessage_CommandResult{
-						CommandResult: &agentpb.CommandResult{
-							CommandId:      result.CommandID,
-							ExitCode:       clampIntToInt32(result.ExitCode),
-							Stdout:         result.Stdout,
-							Stderr:         result.Stderr,
-							StartedAtUnix:  result.StartedAt.Unix(),
-							FinishedAtUnix: result.FinishedAt.Unix(),
-						},
-					},
-				}
-
-				if err := stream.Send(msg); err != nil {
-					c.logger().Error("failed_to_send_result",
-						"command_id", result.CommandID,
-						"error", err.Error(),
-					)
-				} else {
-					c.logger().Debug("result_sent", "command_id", result.CommandID)
-				}
-			case result := <-c.stackKitResults:
-				if result == nil {
-					continue
-				}
-				msg := &agentpb.AgentMessage{
-					AgentId: agentID,
-					Payload: &agentpb.AgentMessage_StackkitResult{
-						StackkitResult: result,
-					},
-				}
-				if err := stream.Send(msg); err != nil {
-					c.logger().Error("failed_to_send_stackkit_result",
-						"command_id", result.CommandId,
-						"error", err.Error(),
-					)
-				} else {
-					c.logger().Debug("stackkit_result_sent", "command_id", result.CommandId)
-				}
-			case entry := <-c.stackKitLogs:
-				if entry == nil {
-					continue
-				}
-				if err := stream.Send(&agentpb.AgentMessage{AgentId: agentID, Payload: &agentpb.AgentMessage_LogEntry{LogEntry: entry}}); err != nil {
-					c.logger().Warn("failed_to_send_stackkit_log", "error", err.Error())
-				}
-			}
-		}
-	}()
+	go c.receiveCommandStream(ctx, stream, errChan)
+	go c.sendCommandStream(ctx, stream, agentID, errChan)
 
 	// Wait for either goroutine to finish
 	err = <-errChan
@@ -673,6 +493,139 @@ func (c *Client) HandleCommands(ctx context.Context) error {
 		c.logger().Error("command_stream_error", "error", err.Error())
 	}
 	return err
+}
+
+func (c *Client) receiveCommandStream(
+	ctx context.Context,
+	stream agentpb.AgentService_CommandStreamClient,
+	errChan chan<- error,
+) {
+	for {
+		msg, err := stream.Recv()
+		if err != nil {
+			if err == io.EOF {
+				errChan <- nil
+				return
+			}
+			errChan <- fmt.Errorf("stream receive error: %w", err)
+			return
+		}
+		c.logger().Debug("command_received", "message_id", msg.MessageId)
+		if c.handleCoreCommandMessage(ctx, msg, errChan) {
+			return
+		}
+	}
+}
+
+func (c *Client) handleCoreCommandMessage(ctx context.Context, msg *agentpb.CoreMessage, errChan chan<- error) bool {
+	switch payload := msg.Payload.(type) {
+	case *agentpb.CoreMessage_Execute:
+		commandType := strings.ToLower(strings.TrimSpace(payload.Execute.Command))
+		cmd := Command{
+			ID: payload.Execute.CommandId, Type: commandType, Command: commandType,
+			Args: payload.Execute.Args, Environment: payload.Execute.Environment,
+			WorkDir: payload.Execute.WorkingDirectory,
+			Timeout: time.Duration(payload.Execute.TimeoutSeconds) * time.Second,
+		}
+		select {
+		case c.commands <- cmd:
+			c.logger().Info("command_queued", "command_id", cmd.ID, "command", cmd.Command)
+			return false
+		case <-ctx.Done():
+			return true
+		}
+	case *agentpb.CoreMessage_TofuCommand:
+		commandID := ""
+		if payload.TofuCommand != nil {
+			commandID = payload.TofuCommand.GetCommandId()
+		}
+		c.rejectRetiredDirectIaC(commandID, "tofu")
+	case *agentpb.CoreMessage_TerramateCommand:
+		commandID := ""
+		if payload.TerramateCommand != nil {
+			commandID = payload.TerramateCommand.GetCommandId()
+		}
+		c.rejectRetiredDirectIaC(commandID, "terramate")
+	case *agentpb.CoreMessage_StackkitCommand:
+		if payload.StackkitCommand == nil {
+			c.logger().Warn("stackkit_command_rejected", "reason", "empty typed command")
+			return false
+		}
+		go c.executeStackKitCommand(ctx, payload.StackkitCommand)
+	case *agentpb.CoreMessage_ConfigUpdate:
+		c.logger().Info("config_update_received")
+		c.mu.Lock()
+		c.config = payload.ConfigUpdate.NewConfig
+		c.mu.Unlock()
+	case *agentpb.CoreMessage_Shutdown:
+		c.logger().Warn("shutdown_requested", "reason", payload.Shutdown.Reason, "graceful", payload.Shutdown.Graceful)
+		errChan <- fmt.Errorf("shutdown requested: %s", payload.Shutdown.Reason)
+		return true
+	}
+	return false
+}
+
+func (c *Client) executeStackKitCommand(ctx context.Context, command *agentpb.StackKitCommand) {
+	result := c.stackKitExecutor.ExecuteStreaming(ctx, command, func(entry *agentpb.LogEntry) {
+		select {
+		case c.stackKitLogs <- entry:
+		case <-ctx.Done():
+		}
+	})
+	select {
+	case c.stackKitResults <- result:
+	case <-ctx.Done():
+	}
+}
+
+func (c *Client) sendCommandStream(
+	ctx context.Context,
+	stream agentpb.AgentService_CommandStreamClient,
+	agentID string,
+	errChan chan<- error,
+) {
+	for {
+		select {
+		case <-ctx.Done():
+			errChan <- ctx.Err()
+			return
+		case result, ok := <-c.results:
+			if !ok {
+				errChan <- nil
+				return
+			}
+			msg := &agentpb.AgentMessage{
+				AgentId: agentID,
+				Payload: &agentpb.AgentMessage_CommandResult{CommandResult: &agentpb.CommandResult{
+					CommandId: result.CommandID, ExitCode: clampIntToInt32(result.ExitCode),
+					Stdout: result.Stdout, Stderr: result.Stderr,
+					StartedAtUnix: result.StartedAt.Unix(), FinishedAtUnix: result.FinishedAt.Unix(),
+				}},
+			}
+			if err := stream.Send(msg); err != nil {
+				c.logger().Error("failed_to_send_result", "command_id", result.CommandID, "error", err.Error())
+			} else {
+				c.logger().Debug("result_sent", "command_id", result.CommandID)
+			}
+		case result := <-c.stackKitResults:
+			if result == nil {
+				continue
+			}
+			msg := &agentpb.AgentMessage{AgentId: agentID, Payload: &agentpb.AgentMessage_StackkitResult{StackkitResult: result}}
+			if err := stream.Send(msg); err != nil {
+				c.logger().Error("failed_to_send_stackkit_result", "command_id", result.CommandId, "error", err.Error())
+			} else {
+				c.logger().Debug("stackkit_result_sent", "command_id", result.CommandId)
+			}
+		case entry := <-c.stackKitLogs:
+			if entry == nil {
+				continue
+			}
+			if err := stream.Send(&agentpb.AgentMessage{AgentId: agentID, Payload: &agentpb.AgentMessage_LogEntry{LogEntry: entry}}); err != nil {
+				c.logger().Warn("failed_to_send_stackkit_log", "error", err.Error())
+			}
+		}
+	}
 }
 
 // Commands returns a channel of commands received from Core.
@@ -685,18 +638,18 @@ func (c *Client) SendResult(result CommandResult) {
 	c.results <- result
 }
 
-// IsConnected returns whether the client is connected to Core.
-func (c *Client) IsConnected() bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.conn != nil
-}
-
-// IsRegistered returns whether the agent has been registered with Core.
-func (c *Client) IsRegistered() bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.registered
+func (c *Client) rejectRetiredDirectIaC(commandID, kind string) {
+	now := time.Now()
+	stderr := fmt.Sprintf("%s commands are retired; use the typed StackKits command path", kind)
+	c.logger().Warn("direct_iac_command_rejected", "command_id", commandID, "kind", kind)
+	c.SendResult(CommandResult{
+		CommandID:  commandID,
+		ExitCode:   1,
+		Stderr:     stderr,
+		StartedAt:  now,
+		FinishedAt: now,
+		Error:      fmt.Errorf("%s", stderr),
+	})
 }
 
 // AgentID returns the current agent ID.

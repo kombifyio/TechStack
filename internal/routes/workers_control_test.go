@@ -14,6 +14,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
+	"github.com/kombifyio/techstack/pkg/stackkitcommand"
 	"github.com/kombifyio/techstack/pkg/workerauth"
 )
 
@@ -38,11 +39,12 @@ func TestTypedHTTPSControlAuthenticatesDispatchesAndCorrelates(t *testing.T) {
 	errDone := make(chan error, 1)
 	digest := strings.Repeat("a", 64)
 	command := &agentpb.StackKitCommand{
-		CommandId:        "command-1",
-		Operation:        agentpb.StackKitOperation_STACKKIT_OPERATION_SERVICE_LOGS,
-		WorkingDirectory: "/srv/stack",
-		ServiceKey:       "base",
-		LogTail:          100,
+		CommandId:          "command-1",
+		Operation:          agentpb.StackKitOperation_STACKKIT_OPERATION_SERVICE_LOGS,
+		WorkingDirectory:   "/srv/stack",
+		StackkitInstanceId: "stackkit-main",
+		ServiceKey:         "base",
+		LogTail:            100,
 		Release: &agentpb.StackKitReleasePin{
 			Version: "v0.16.0", PlatformOs: "linux", PlatformArch: "amd64",
 			ArchiveSha256: digest, ReleaseIndexSha256: digest,
@@ -59,6 +61,7 @@ func TestTypedHTTPSControlAuthenticatesDispatchesAndCorrelates(t *testing.T) {
 
 	poll := performTypedControlRequest(t, router, "/api/v1/workers/runtime-1/commands/next", token, map[string]any{
 		"runtime_agent_id": "runtime-1", "tenant_id": "tenant-1", "owner_id": "owner-1", "stack_id": "stack-1", "server_id": "server-1",
+		"capabilities": []string{stackkitcommand.WorkspaceInstanceCapability},
 	})
 	if poll.Code != http.StatusOK {
 		t.Fatalf("poll status = %d body=%s", poll.Code, poll.Body.String())

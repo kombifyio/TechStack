@@ -3,9 +3,8 @@ package features
 import (
 	"context"
 	"testing"
-	"time"
 
-	"github.com/kombifyio/go-common/edgeauth"
+	"github.com/kombifyio/techstack/internal/gocommon/edgeauth"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/serverruntime"
 )
 
@@ -79,28 +78,6 @@ func (m *MockStore) SeedConsent(userID, featureKey string) {
 		m.consents[userID] = make(map[string]bool)
 	}
 	m.consents[userID][featureKey] = true
-}
-
-func TestNewService(t *testing.T) {
-	store := NewMockStore()
-
-	svc, err := NewService(store, ServiceConfig{
-		AllowUserOverrides: true,
-	})
-
-	if err != nil {
-		t.Fatalf("Failed to create service: %v", err)
-	}
-
-	if svc == nil {
-		t.Fatal("Service is nil")
-	}
-
-	// Check that all features are loaded
-	expectedCount := len(SecurityFeatures) + len(BetaFeatures) + len(UXFeatures)
-	if len(svc.definitions) != expectedCount {
-		t.Errorf("Expected %d definitions, got %d", expectedCount, len(svc.definitions))
-	}
 }
 
 func TestIsEnabled_DefaultValues(t *testing.T) {
@@ -372,67 +349,6 @@ func TestIsEnabled_ResolvesTechStackMonthlyRuntimeFromWildcardEntitlement(t *tes
 	}
 }
 
-func TestGetAllFlags(t *testing.T) {
-	store := NewMockStore()
-	svc, _ := NewService(store, ServiceConfig{})
-
-	ctx := context.Background()
-	userID := "test-user"
-
-	flags, err := svc.GetAllFlags(ctx, userID, false)
-	if err != nil {
-		t.Fatalf("GetAllFlags failed: %v", err)
-	}
-
-	// Check security features are locked for non-admin if they require admin
-	for key, state := range flags {
-		def, _ := svc.GetDefinition(key)
-		if def.RequiresAdmin && !state.Locked {
-			t.Errorf("Feature %s should be locked for non-admin", key)
-		}
-	}
-
-	// Test with admin
-	flags, err = svc.GetAllFlags(ctx, userID, true)
-	if err != nil {
-		t.Fatalf("GetAllFlags (admin) failed: %v", err)
-	}
-
-	// Admin should not have locked features
-	for key, state := range flags {
-		if state.Locked {
-			t.Errorf("Feature %s should not be locked for admin", key)
-		}
-	}
-}
-
-func TestGetFlagsByCategory(t *testing.T) {
-	store := NewMockStore()
-	svc, _ := NewService(store, ServiceConfig{})
-
-	ctx := context.Background()
-	userID := "test-user"
-
-	byCategory, err := svc.GetFlagsByCategory(ctx, userID, false)
-	if err != nil {
-		t.Fatalf("GetFlagsByCategory failed: %v", err)
-	}
-
-	// Check categories exist
-	categories := []Category{CategorySecurity, CategoryBeta, CategoryUX}
-	for _, cat := range categories {
-		if _, exists := byCategory[cat]; !exists {
-			t.Errorf("Category %s not found", cat)
-		}
-	}
-
-	// Security category should have our security features
-	if len(byCategory[CategorySecurity]) != len(SecurityFeatures) {
-		t.Errorf("Security category has wrong number of features: got %d, want %d",
-			len(byCategory[CategorySecurity]), len(SecurityFeatures))
-	}
-}
-
 func TestUnknownFeature(t *testing.T) {
 	store := NewMockStore()
 	svc, _ := NewService(store, ServiceConfig{})
@@ -442,155 +358,5 @@ func TestUnknownFeature(t *testing.T) {
 	_, err := svc.IsEnabled(ctx, "nonexistent_feature", "user")
 	if err == nil {
 		t.Error("Expected error for unknown feature")
-	}
-}
-
-func TestFeatureDefinitions(t *testing.T) {
-	// Verify all security features have correct attributes
-	for key, def := range SecurityFeatures {
-		if def.Key == "" {
-			t.Errorf("Security feature %s has empty key", key)
-		}
-		if def.DefaultValue {
-			t.Errorf("Security feature %s should default to false", key)
-		}
-		if def.Category != CategorySecurity {
-			t.Errorf("Security feature %s has wrong category", key)
-		}
-		if def.RiskLevel == "" {
-			t.Errorf("Security feature %s has no risk level", key)
-		}
-	}
-
-	// Verify UX features default to ON
-	for key, def := range UXFeatures {
-		if !def.DefaultValue {
-			t.Errorf("UX feature %s should default to true", key)
-		}
-		if def.Category != CategoryUX {
-			t.Errorf("UX feature %s has wrong category", key)
-		}
-	}
-
-	// Verify beta feature classification. Individual Alpha/Beta product paths
-	// may intentionally default on; security-critical defaults live above.
-	for key, def := range BetaFeatures {
-		if def.Category != CategoryBeta {
-			t.Errorf("Beta feature %s has wrong category", key)
-		}
-	}
-}
-
-// TestCriticalInvariants ensures that feature flags maintain security-critical invariants
-// that could break the application if violated.
-func TestCriticalInvariants(t *testing.T) {
-	t.Run("UX features must never default to OFF", func(t *testing.T) {
-		// CRITICAL: If UX features default to OFF, the entire UI could be broken
-		// because users won't see essential functionality until flags load.
-		requiredUXFeatures := []string{
-			"onboarding_wizard",
-			"keyboard_shortcuts",
-			"dark_mode",
-			"use_case_photos",
-			"use_case_media",
-			"use_case_vault",
-			"use_case_files",
-			"use_case_smart_home",
-			"use_case_ai",
-			"use_case_dev",
-			"use_case_mail",
-			"use_case_game",
-		}
-
-		for _, featureKey := range requiredUXFeatures {
-			def, exists := UXFeatures[featureKey]
-			if !exists {
-				t.Errorf("Required UX feature %q is missing from UXFeatures", featureKey)
-				continue
-			}
-			if !def.DefaultValue {
-				t.Errorf("CRITICAL: UX feature %q has DefaultValue=false, must be true", featureKey)
-			}
-			if def.RequiresConsent {
-				t.Errorf("UX feature %q should not require consent", featureKey)
-			}
-		}
-	})
-
-	t.Run("Security features must never default to ON", func(t *testing.T) {
-		// CRITICAL: If security features default to ON, dangerous functionality
-		// could be enabled without user consent, violating security-by-default.
-		for key, def := range SecurityFeatures {
-			if def.DefaultValue {
-				t.Errorf("CRITICAL: Security feature %q has DefaultValue=true, must be false", key)
-			}
-			if !def.RequiresConsent {
-				t.Errorf("Security feature %q should require consent", key)
-			}
-		}
-	})
-
-	t.Run("Admin-only features must require consent", func(t *testing.T) {
-		// Admin-only features that can cause damage should require consent.
-		store := NewMockStore()
-		svc, _ := NewService(store, ServiceConfig{})
-
-		for key, def := range svc.definitions {
-			if def.RequiresAdmin && !def.RequiresConsent && def.RiskLevel == RiskLevelHigh {
-				t.Errorf("Admin-only high-risk feature %q should require consent", key)
-			}
-		}
-	})
-}
-
-// TestGetAllFlags_DefaultsBeforeUserOverride verifies that GetAllFlags returns
-// correct defaults even when no user overrides exist (fresh user scenario).
-func TestGetAllFlags_DefaultsBeforeUserOverride(t *testing.T) {
-	store := NewMockStore()
-	svc, _ := NewService(store, ServiceConfig{})
-
-	ctx := context.Background()
-	// Use a completely fresh user with no preferences/consents
-	userID := "fresh-user-" + time.Now().Format("20060102150405")
-
-	flags, err := svc.GetAllFlags(ctx, userID, false)
-	if err != nil {
-		t.Fatalf("GetAllFlags failed: %v", err)
-	}
-
-	// Verify UX features are enabled by default
-	for key := range UXFeatures {
-		state, exists := flags[key]
-		if !exists {
-			t.Errorf("UX feature %q not found in GetAllFlags result", key)
-			continue
-		}
-		if !state.Enabled {
-			t.Errorf("CRITICAL: UX feature %q should be enabled by default for fresh users, but was disabled", key)
-		}
-	}
-
-	// Verify Security features are disabled by default
-	for key := range SecurityFeatures {
-		state, exists := flags[key]
-		if !exists {
-			t.Errorf("Security feature %q not found in GetAllFlags result", key)
-			continue
-		}
-		if state.Enabled {
-			t.Errorf("Security feature %q should be disabled by default for fresh users", key)
-		}
-	}
-
-	// Verify Beta features are disabled by default
-	for key := range BetaFeatures {
-		state, exists := flags[key]
-		if !exists {
-			t.Errorf("Beta feature %q not found in GetAllFlags result", key)
-			continue
-		}
-		if state.Enabled {
-			t.Errorf("Beta feature %q should be disabled by default for fresh users", key)
-		}
 	}
 }

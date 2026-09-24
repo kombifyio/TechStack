@@ -9,8 +9,7 @@
 // Components:
 //   - server.go: Core Server struct and lifecycle methods (New, Start, Stop)
 //   - connection.go: Agent connection management
-//   - command_dispatch.go: Command dispatch to agents
-//   - command_store.go: Persistent command queue (survives restarts)
+//   - command_dispatch.go: Command dispatch to connected Guards
 //   - health.go: Health/heartbeat handling
 //
 // Protocol: gRPC over mTLS (TLS 1.3), defined in api/proto/agent.proto
@@ -30,6 +29,7 @@ import (
 
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
 	"github.com/kombifyio/techstack/pkg/auth"
+	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/logger"
 	"github.com/kombifyio/techstack/pkg/monitoring"
 	collectorlogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
@@ -59,23 +59,12 @@ type Server struct {
 	commandQueueChan chan *AgentCommand // Channel wrapper for backward compatibility
 	resultQueue      chan *CommandResult
 
-	// Sprint 9: Command persistence for restart recovery
-	commandStore *CommandStore
-
-	// IAC-4: Command router for TofuCommand and TerramateCommand handling
-	commandRouter *CommandRouter
-
-	// IAC-4: Tofu command queue with backpressure (S7)
-	tofuCommandQueue     *TofuCommandQueue      // Backpressure-aware tofu queue
-	tofuCommandQueueChan chan *tofuCommandEntry // Channel wrapper for backward compatibility
-
 	// Typed StackKits lifecycle dispatch. This path never enters AgentCommand.
 	stackKitCommandQueue *StackKitCommandQueue
 	stackKitHandler      *StackKitCommandHandler
 
 	// Queue configuration (S7)
-	queueConfig     QueueConfig
-	tofuQueueConfig QueueConfig
+	queueConfig QueueConfig
 
 	// Monitoring 2.0: Embedded TSDB for metric ingestion
 	monitorTSDB         *monitoring.MonitorTSDB
@@ -99,13 +88,8 @@ type Server struct {
 	// cmd/techstack/main.go via NewWithEnrollment.
 	certManager     *auth.CertManager
 	enrollmentStore AgentEnrollmentStore
+	healStore       RILHealStore
 	defaultTenant   string // fallback tenant for standalone / dev mode
-}
-
-// tofuCommandEntry wraps a TofuCommand with routing information.
-type tofuCommandEntry struct {
-	AgentID string
-	Command *agentpb.TofuCommand
 }
 
 // ConnectedAgent represents a connected agent.
@@ -208,29 +192,20 @@ type Config struct {
 	QueueOverflowStrategy string
 	// QueueWarningThreshold is the percentage (0-100) at which warnings are logged (default: 80)
 	QueueWarningThreshold int
-	// TofuQueueMaxSize is the maximum number of tofu commands in queue (default: 100)
-	TofuQueueMaxSize int
 	// RuntimeLogPath is the optional JSONL spool path for redacted runtime logs.
 	RuntimeLogPath string
 	// RuntimeLogMaxEntries is the in-memory query buffer size for runtime logs.
 	RuntimeLogMaxEntries int
 }
 
-// New creates a new gRPC server without command persistence.
-// For production use with restart recovery, use NewWithPersistence instead.
+// New creates the Guard gRPC server. Durable typed commands for the SaaS
+// HTTPS channel live in pkg/agentcontrol; this listener keeps an in-memory
+// queue for connected self-host/dedicated agents.
 func New(cfg Config, log *logger.Logger) (*Server, error) {
-	return newServer(cfg, log, nil)
+	return newServer(cfg, log)
 }
 
-// NewWithPersistence creates a new gRPC server with command persistence.
-// This enables command recovery after server restarts (Sprint 9: F9).
-// The commandStore should be created with NewCommandStore(app) beforehand.
-func NewWithPersistence(cfg Config, log *logger.Logger, commandStore *CommandStore) (*Server, error) {
-	return newServer(cfg, log, commandStore)
-}
-
-// newServer is the internal constructor shared by New and NewWithPersistence.
-func newServer(cfg Config, log *logger.Logger, commandStore *CommandStore) (*Server, error) {
+func newServer(cfg Config, log *logger.Logger) (*Server, error) {
 	var tlsConfig *tls.Config
 
 	// Load TLS config if certificates are provided
@@ -277,32 +252,14 @@ func newServer(cfg Config, log *logger.Logger, commandStore *CommandStore) (*Ser
 		queueCfg.WarningThreshold = 80
 	}
 
-	tofuQueueCfg := QueueConfig{
-		MaxSize:          cfg.TofuQueueMaxSize,
-		OverflowStrategy: OverflowStrategy(cfg.QueueOverflowStrategy),
-		WarningThreshold: cfg.QueueWarningThreshold,
-	}
-	if tofuQueueCfg.MaxSize <= 0 {
-		tofuQueueCfg.MaxSize = 100
-	}
-	if tofuQueueCfg.OverflowStrategy == "" {
-		tofuQueueCfg.OverflowStrategy = OverflowReject
-	}
-	if tofuQueueCfg.WarningThreshold <= 0 || tofuQueueCfg.WarningThreshold > 100 {
-		tofuQueueCfg.WarningThreshold = 80
-	}
-
 	serverLog := log.WithComponent("grpc")
 
-	// Create backpressure-aware queues (S7)
 	cmdQueue := NewCommandQueue(queueCfg, serverLog)
-	tofuQueue := NewTofuCommandQueue(tofuQueueCfg, serverLog)
-	stackKitQueue := NewStackKitCommandQueue(tofuQueueCfg, serverLog)
+	stackKitQueue := NewStackKitCommandQueue(queueCfg, serverLog)
 
 	serverLog.Info("queue_backpressure_initialized",
 		"command_queue_max", queueCfg.MaxSize,
-		"tofu_queue_max", tofuQueueCfg.MaxSize,
-		"stackkit_queue_max", tofuQueueCfg.MaxSize,
+		"stackkit_queue_max", queueCfg.MaxSize,
 		"overflow_strategy", string(queueCfg.OverflowStrategy),
 		"warning_threshold", queueCfg.WarningThreshold,
 	)
@@ -315,13 +272,6 @@ func newServer(cfg Config, log *logger.Logger, commandStore *CommandStore) (*Ser
 		return nil, fmt.Errorf("initialize runtime log store: %w", err)
 	}
 
-	// Sprint 9: Log if command persistence is enabled
-	if commandStore != nil {
-		serverLog.Info("command_persistence_enabled", "feature", "F9")
-	} else {
-		serverLog.Debug("command_persistence_disabled", "note", "Use NewWithPersistence for restart recovery")
-	}
-
 	return &Server{
 		addr:                 cfg.ListenAddr,
 		tlsConfig:            tlsConfig,
@@ -332,13 +282,9 @@ func newServer(cfg Config, log *logger.Logger, commandStore *CommandStore) (*Ser
 		commandQueue:         cmdQueue,
 		commandQueueChan:     make(chan *AgentCommand, queueCfg.MaxSize), // For backward compatibility
 		resultQueue:          make(chan *CommandResult, 1000),
-		commandStore:         commandStore, // Sprint 9: F9 Command Persistence
-		tofuCommandQueue:     tofuQueue,
-		tofuCommandQueueChan: make(chan *tofuCommandEntry, tofuQueueCfg.MaxSize), // For backward compatibility
 		stackKitCommandQueue: stackKitQueue,
 		stackKitHandler:      NewStackKitCommandHandler(),
 		queueConfig:          queueCfg,
-		tofuQueueConfig:      tofuQueueCfg,
 		monitorIngestHealth:  newMonitorIngestHealthTracker(),
 		agentLogs:            make(map[string][]AgentLogEntry),
 		agentLogSubscribers:  make(map[string]map[chan AgentLogEntry]struct{}),
@@ -352,6 +298,18 @@ func newServer(cfg Config, log *logger.Logger, commandStore *CommandStore) (*Ser
 // before Start; not safe for concurrent reconfiguration.
 func (s *Server) SetEnrollmentStore(store AgentEnrollmentStore) {
 	s.enrollmentStore = store
+}
+
+// RILHealStore is the canonical tenant-scoped persistence seam used by the
+// agent self-heal protocol.
+type RILHealStore interface {
+	GetRILServer(ctx context.Context, tenantID, serverID string) (*controlplane.RILServer, error)
+	RecordHealEvent(ctx context.Context, event controlplane.RILHealEvent) (*controlplane.RILHealEvent, error)
+}
+
+// SetRILHealStore wires durable self-heal persistence before the server starts.
+func (s *Server) SetRILHealStore(store RILHealStore) {
+	s.healStore = store
 }
 
 // SetCertManager wires the pkg/auth CertManager so the Register handler
@@ -425,14 +383,6 @@ func (s *Server) Start(ctx context.Context) error {
 
 	if err != nil {
 		return fmt.Errorf("failed to listen: %w", err)
-	}
-
-	// Sprint 9: Recover pending commands from previous session
-	if s.commandStore != nil {
-		if err := s.recoverPendingCommands(); err != nil {
-			s.log.Warn("command_recovery_failed", "error", err)
-			// Non-fatal: continue startup even if recovery fails
-		}
 	}
 
 	s.listener = listener

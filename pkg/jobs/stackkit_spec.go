@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/kombifyio/techstack/pkg/specv2"
 	"github.com/kombifyio/techstack/pkg/unifier"
 	"gopkg.in/yaml.v3"
 )
@@ -17,6 +18,9 @@ const (
 	metadataKeyRequestedAddressMode   = "requested_address_mode"
 	metadataKeyKombifyMeAddressStatus = "kombify_me_address_status"
 	metadataKeyKombifyMeAddressWarn   = "kombify_me_address_warning"
+	metadataKeyKombifyMeAddressPrefix = "kombify_me_address_prefix"
+	metadataKeyKombifyMeAddressLayout = "kombify_me_address_layout"
+	metadataKeyKombifyMeAddressZone   = "kombify_me_address_zone"
 )
 
 func stackKitSpecBytesForPayload(specData interface{}) ([]byte, error) {
@@ -24,24 +28,48 @@ func stackKitSpecBytesForPayload(specData interface{}) ([]byte, error) {
 	if !ok {
 		return nil, nil
 	}
-	if _, ok := dataMap["stackkit"]; !ok {
+	projected := mapFromInterface(dataMap[payloadKeyStackSpecV2])
+	if len(projected) > 0 {
+		if err := specv2.RequireCanonicalV2(projected); err != nil {
+			return nil, fmt.Errorf("payload %s: %w", payloadKeyStackSpecV2, err)
+		}
+		return yaml.Marshal(projected)
+	}
+	if err := specv2.RequireCanonicalV2(dataMap); err == nil {
+		return yaml.Marshal(dataMap)
+	}
+	shaped := withStackKitSpecShape(dataMap)
+	if mixed := specv2.MixedVersionFields(shaped); len(mixed) > 0 {
+		return nil, fmt.Errorf("v1 StackSpec cannot carry Architecture v2 fields %s", strings.Join(mixed, ", "))
+	}
+	if _, ok := shaped["stackkit"]; !ok {
 		return nil, nil
 	}
-	// The wizard-run projection rides in the payload under stack_spec_v2 and
-	// is persisted separately (persistProjectedStackSpec); the v1 StackSpec
-	// decoder refuses unknown v2-only top-level fields, so it must never
-	// enter the handoff.
-	if _, ok := dataMap[payloadKeyStackSpecV2]; ok {
-		next := make(map[string]interface{}, len(dataMap))
-		for key, value := range dataMap {
-			if key == payloadKeyStackSpecV2 {
-				continue
-			}
-			next[key] = value
+	return yaml.Marshal(stackKitSpecWithManagedRuntimeDefaults(shaped))
+}
+
+// provisionSpecFromCanonicalV2 keeps the provision payload's runtime fields
+// for KombinationSpec conversion while taking kit identity from the canonical
+// v2 document. Architecture v2 fields stay off the converter input so they
+// cannot leak into a v1 handoff.
+func provisionSpecFromCanonicalV2(payload, projected map[string]interface{}) map[string]interface{} {
+	next := make(map[string]interface{}, len(payload)+1)
+	for key, value := range payload {
+		if key == payloadKeyStackSpecV2 {
+			continue
 		}
-		dataMap = next
+		next[key] = value
 	}
-	return yaml.Marshal(stackKitSpecWithManagedRuntimeDefaults(dataMap))
+	for _, name := range specv2.MixedVersionFields(next) {
+		delete(next, name)
+	}
+	if strings.TrimSpace(stringFromInterface(next["stackkit"])) == "" {
+		next["stackkit"] = stringFromInterface(mapFromInterface(projected["kit"])["slug"])
+	}
+	if strings.TrimSpace(stringFromInterface(next["name"])) == "" {
+		next["name"] = stringFromInterface(mapFromInterface(projected["metadata"])["name"])
+	}
+	return next
 }
 
 func stackKitSpecWithManagedRuntimeDefaults(spec map[string]interface{}) map[string]interface{} {
@@ -58,19 +86,18 @@ func stackKitSpecWithManagedRuntimeDefaults(spec map[string]interface{}) map[str
 
 func stackKitSpecUsesManagedRuntime(spec map[string]interface{}) bool {
 	metadata := mapFromInterface(spec["metadata"])
-	if strings.EqualFold(strings.TrimSpace(stringFromInterface(metadata[metadataKeyServerProvisionMode])), serverProvisionModeKombifyCloud) ||
-		strings.EqualFold(strings.TrimSpace(stringFromInterface(metadata[metadataKeyServerMode])), serverModeMonthlyRuntime) ||
-		strings.EqualFold(strings.TrimSpace(stringFromInterface(metadata[metadataKeyRuntimeLane])), serverModeMonthlyRuntime) {
+	if rawUsesManagedRuntimeMode(spec) ||
+		rawUsesManagedRuntimeMode(metadata) ||
+		rawUsesManagedRuntimeMode(mapFromInterface(spec["options"])) {
 		return true
 	}
 	for _, raw := range interfaceSlice(spec["nodes"]) {
 		node := mapFromInterface(raw)
-		if provider := normalizeProvider(stringFromInterface(node[providerField])); provider != "" && provider != providerLocal {
+		if rawUsesManagedRuntimeMode(node) {
 			return true
 		}
 	}
-	provider := normalizeProvider(stringFromInterface(spec[providerField]))
-	return provider != "" && provider != providerLocal
+	return false
 }
 
 func hydratePersistedStackSpecTarget(persister *unifier.SpecPersister, target *ManagedRuntimeTarget) (string, string, error) {
@@ -88,6 +115,11 @@ func hydratePersistedStackSpecTarget(persister *unifier.SpecPersister, target *M
 	}
 	if spec == nil {
 		spec = map[string]interface{}{}
+	}
+	if specv2.RequireCanonicalV2(spec) == nil {
+		// Architecture v2 rejects top-level ssh and nodes[].ip. Runtime
+		// target facts stay in Techstack metadata, never on the CLI document.
+		return "", "", nil
 	}
 
 	host := firstNonEmpty(target.Host, target.PublicIP, target.PrivateIP)
@@ -187,6 +219,9 @@ func hydratePersistedStackSpecPlatformNodes(persister *unifier.SpecPersister, pl
 	}
 	if spec == nil {
 		spec = map[string]interface{}{}
+	}
+	if specv2.RequireCanonicalV2(spec) == nil {
+		return "", "", nil
 	}
 
 	nodes := interfaceSlice(spec["nodes"])
@@ -385,7 +420,6 @@ func restoreStackSpecFromIntent(persister *unifier.SpecPersister, intentBytes []
 		return fmt.Errorf("rebuild StackKits handoff spec: %w", err)
 	}
 	if len(specBytes) == 0 {
-		// Not a StackKits stack; the caller's own error path stays authoritative.
 		return nil
 	}
 	if _, _, err := persister.SaveStackSpecBytes(specBytes); err != nil {
@@ -453,6 +487,9 @@ func repairPersistedStackSpec(persister *unifier.SpecPersister) error {
 	var spec map[string]interface{}
 	if err := yaml.Unmarshal(data, &spec); err != nil {
 		return fmt.Errorf("parse StackKits handoff spec: %w", err)
+	}
+	if specv2.RequireCanonicalV2(spec) == nil {
+		return nil
 	}
 	// Captured before any repair so the comparison below is content against
 	// content. Comparing the repaired encoding to the original file bytes would

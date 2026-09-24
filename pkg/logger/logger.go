@@ -7,13 +7,9 @@ import (
 	"log/slog"
 	"os"
 	"strings"
-	"sync"
 )
 
-var (
-	globalLogger *Logger
-	globalMu     sync.RWMutex
-)
+var globalLogger = Default()
 
 // Logger wraps slog.Logger with kombifyTechstack-specific functionality
 type Logger struct {
@@ -52,30 +48,9 @@ func NewNop() *Logger {
 	return &Logger{Logger: slog.New(h)}
 }
 
-// Get returns the global logger instance.
-// If not initialized, returns a default logger.
+// Get returns the package-default logger.
 func Get() *Logger {
-	globalMu.RLock()
-	if globalLogger != nil {
-		defer globalMu.RUnlock()
-		return globalLogger
-	}
-	globalMu.RUnlock()
-
-	// Initialize with default if not set
-	globalMu.Lock()
-	defer globalMu.Unlock()
-	if globalLogger == nil {
-		globalLogger = Default()
-	}
 	return globalLogger
-}
-
-// Set sets the global logger instance.
-func Set(l *Logger) {
-	globalMu.Lock()
-	defer globalMu.Unlock()
-	globalLogger = l
 }
 
 func parseLevel(level string) slog.Level {

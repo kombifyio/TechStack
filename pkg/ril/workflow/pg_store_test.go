@@ -16,9 +16,8 @@ import (
 // pkg/db/tenant_integration_test.go). It applies the idempotent workflow schema
 // (migration 008) and truncates the workflow tables for per-test isolation.
 //
-// These tests cover the *active runtime store* (PgStore is what
-// cmd/techstack/workflow_boot.go wires the engine on); the PocketBase-backed
-// *Store in store.go is dead code retained only for the legacy store tests.
+// These tests cover the active runtime store wired by
+// cmd/techstack/workflow_boot.go.
 func newPgTestStore(t *testing.T) *PgStore {
 	t.Helper()
 	dsn := strings.TrimSpace(os.Getenv("TECHSTACK_TEST_POSTGRES_URL"))
@@ -41,8 +40,19 @@ func newPgTestStore(t *testing.T) *PgStore {
 	if _, execErr := db.Exec(string(schema)); execErr != nil {
 		t.Fatalf("apply workflow schema: %v", execErr)
 	}
+	if _, execErr := db.Exec(`CREATE TABLE IF NOT EXISTS audit_events (
+		id bigserial PRIMARY KEY, tenant_id text NOT NULL, instance_id text,
+		actor_subject_id text, action text NOT NULL, resource_type text NOT NULL,
+		resource_id text, details_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+		ip_address text, user_agent text, created_at timestamptz NOT NULL DEFAULT now()
+	)`); execErr != nil {
+		t.Fatalf("apply audit schema: %v", execErr)
+	}
 	if _, truncErr := db.Exec("TRUNCATE ril_workflow_timers, ril_workflow_steps, ril_workflow_runs CASCADE"); truncErr != nil {
 		t.Fatalf("truncate workflow tables: %v", truncErr)
+	}
+	if _, deleteErr := db.Exec("DELETE FROM audit_events WHERE action LIKE 'ril.workflow.%'"); deleteErr != nil {
+		t.Fatalf("clear workflow audit: %v", deleteErr)
 	}
 	return NewPgStore(db)
 }
@@ -79,6 +89,10 @@ func TestPgStore_RunRoundTrip(t *testing.T) {
 	}
 	if got.Input["plan_steps"] != float64(3) {
 		t.Errorf("input round-trip failed: %+v", got.Input)
+	}
+	audit, err := s.ListAudit("user-1", run.RunID, 0)
+	if err != nil || len(audit) != 1 || audit[0].Action != "ril.workflow.run.created" {
+		t.Fatalf("create audit = %#v err=%v", audit, err)
 	}
 
 	if _, err := s.GetRun("does-not-exist"); err == nil {

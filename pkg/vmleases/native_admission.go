@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -116,12 +117,6 @@ func (s *PostgresStore) AdmitNativeLeaseTx(
 	}, nil
 }
 
-// PrepareNativeAdmissionLease preserves the pre-existing preparation API.
-// New persistence callers should use PostgresStore.CreateNativeAdmission.
-func PrepareNativeAdmissionLease(lease vmlease.Lease, now time.Time, validFor time.Duration) (vmlease.Lease, string, error) {
-	return prepareNativeAdmissionLease(lease, now, validFor)
-}
-
 func prepareNativeAdmissionLease(lease vmlease.Lease, now time.Time, validFor time.Duration) (vmlease.Lease, string, error) {
 	lease = cloneLease(lease)
 	lease.ID = vmlease.LeaseID(strings.TrimSpace(string(lease.ID)))
@@ -131,7 +126,7 @@ func prepareNativeAdmissionLease(lease vmlease.Lease, now time.Time, validFor ti
 	if ResourceGenerationID(lease) != "" {
 		return vmlease.Lease{}, "", ErrResourceGenerationImmutable
 	}
-	if strings.TrimSpace(lease.Resource.EngineVMID) != "" ||
+	if (strings.TrimSpace(lease.Resource.EngineVMID) != "" && !reservedSubstrateGuest(lease)) ||
 		strings.TrimSpace(lease.Resource.SimulationID) != "" ||
 		strings.TrimSpace(lease.Resource.VMID) != "" {
 		return vmlease.Lease{}, "", ErrProviderRefRequired
@@ -161,6 +156,23 @@ func prepareNativeAdmissionLease(lease vmlease.Lease, now time.Time, validFor ti
 		return vmlease.Lease{}, "", err
 	}
 	return lease, generationID, nil
+}
+
+// A customer substrate reserves a guest number before provider submission.
+// This is not imported custody: admission separately verifies the live owner
+// binding, and the transaction creates immutable guest creation evidence.
+func reservedSubstrateGuest(lease vmlease.Lease) bool {
+	if lease.CustodyClass != vmlease.CustodyCustomerSubstrate || lease.Resource.ProviderID != "proxmox" ||
+		lease.BillingMode != vmlease.BillingModeLocal || lease.LifecycleClass != vmlease.LifecycleClassOneTime || lease.RecreatePolicy != vmlease.RecreatePolicyNever {
+		return false
+	}
+	server := lease.Metadata["substrate_server_id"]
+	guest, guestErr := strconv.Atoi(lease.Metadata["substrate_guest_id"])
+	revision, revisionErr := strconv.ParseInt(lease.Metadata["substrate_binding_revision"], 10, 64)
+	return guestErr == nil && revisionErr == nil && revision > 0 && guest >= 100 && guest <= 999999999 &&
+		server != "" && strings.TrimSpace(server) == server && !strings.Contains(server, "/") &&
+		lease.Metadata["substrate_guest_id"] == strconv.Itoa(guest) &&
+		lease.Resource.EngineVMID == server+"/"+strconv.Itoa(guest)
 }
 
 func encodeLease(lease vmlease.Lease) ([]byte, error) {

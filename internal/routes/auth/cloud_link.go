@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/authprojection"
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 
@@ -57,8 +58,9 @@ func handleCloudLinkStart(app core.App) func(e *httpx.Event) error {
 			return err
 		}
 		userID, _ := AuthUserID(e)
+		userID = authprojection.PocketBaseUserID(userID)
 
-		issuer, clientID, _, err := getCloudOIDCConfig(app)
+		issuer, clientID, _, err := getCloudOIDCConfig()
 		if err != nil {
 			return cloudLinkNotConfigured(e)
 		}
@@ -119,7 +121,7 @@ func handleCloudLinkCallback(app core.App) func(e *httpx.Event) error {
 			return cloudLinkComplete(e, "error", "state_expired")
 		}
 
-		issuer, clientID, clientSecret, cfgErr := getCloudOIDCConfig(app)
+		issuer, clientID, clientSecret, cfgErr := getCloudOIDCConfig()
 		if cfgErr != nil {
 			return cloudLinkComplete(e, "error", reasonCloudOIDCNotConfigured)
 		}
@@ -156,6 +158,7 @@ func getCloudLinkStatus(app core.App) func(e *httpx.Event) error {
 			return err
 		}
 		userID, _ := AuthUserID(e)
+		userID = authprojection.PocketBaseUserID(userID)
 		record := findCloudLinkRecord(app, userID)
 		if record == nil {
 			return httpx.Success(e, http.StatusOK, cloudLinkStatusResponse{Linked: false})
@@ -177,6 +180,7 @@ func deleteCloudLink(app core.App) func(e *httpx.Event) error {
 			return err
 		}
 		userID, _ := AuthUserID(e)
+		userID = authprojection.PocketBaseUserID(userID)
 		record := findCloudLinkRecord(app, userID)
 		if record == nil {
 			return httpx.Success(e, http.StatusOK, map[string]any{"removed": false})
@@ -312,9 +316,7 @@ func findCloudLinkRecord(app core.App, userID string) *core.Record {
 }
 
 // upsertCloudLinkForUser links (or relinks) the verified cloud identity to the
-// given local user. Unlike findOrCreateUserFromOIDC it never creates a user:
-// the flow strictly attaches an external identity to the already-authenticated
-// operator.
+// already-authenticated local operator; it never creates an identity user.
 func upsertCloudLinkForUser(app core.App, userID string, userInfo *oidcUserInfo) error {
 	record := findCloudLinkRecord(app, userID)
 	if record == nil {
@@ -325,7 +327,6 @@ func upsertCloudLinkForUser(app core.App, userID string, userInfo *oidcUserInfo)
 		record = core.NewRecord(collection)
 		record.Set("user", userID)
 		record.Set("provider", "cloud")
-		record.Set("is_admin", false)
 	}
 	record.Set("external_id", userInfo.Sub)
 	record.Set("external_email", userInfo.Email)

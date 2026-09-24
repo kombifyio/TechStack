@@ -11,7 +11,8 @@
  */
 
 import { writable, derived } from "svelte/store";
-import { browser } from "$app/environment";
+import { browser } from "$app/env";
+import { hostNavigationRequested } from "#lib/embedded-navigation.js";
 
 export type DeploymentMode = "self-hosted" | "saas-embedded";
 export type DataPlaneMode = "same-origin" | "gateway";
@@ -24,6 +25,8 @@ interface DeploymentConfig {
   mode: DeploymentMode;
   /** API transport authority for data-plane routes. */
   dataPlane: DataPlaneMode;
+  /** True only when the Cloud host explicitly owns embedded navigation. */
+  hostOwnsNavigation: boolean;
   portalUrl?: string; // URL of the parent portal (if embedded)
   instanceName?: string; // Name of this instance
   features: {
@@ -36,7 +39,8 @@ interface DeploymentConfig {
 const defaultConfig: DeploymentConfig = {
   mode: "self-hosted",
   dataPlane: "same-origin",
-  instanceName: "kombify-TechStack",
+  hostOwnsNavigation: false,
+  instanceName: "kombify-Techstack",
   features: {
     showSidebar: true,
     showInlineTabs: false,
@@ -44,17 +48,20 @@ const defaultConfig: DeploymentConfig = {
   },
 };
 
-const saasEmbeddedConfig: DeploymentConfig = {
-  mode: "saas-embedded",
-  dataPlane: "gateway",
-  portalUrl: "/",
-  instanceName: "kombify-TechStack",
-  features: {
-    showSidebar: false,
-    showInlineTabs: true,
-    showFullAppButton: true,
-  },
-};
+function saasEmbeddedConfig(hostOwnsNavigation = false): DeploymentConfig {
+  return {
+    mode: "saas-embedded",
+    dataPlane: "gateway",
+    hostOwnsNavigation,
+    portalUrl: "/",
+    instanceName: "kombify-Techstack",
+    features: {
+      showSidebar: false,
+      showInlineTabs: !hostOwnsNavigation,
+      showFullAppButton: !hostOwnsNavigation,
+    },
+  };
+}
 
 const saasStandaloneConfig: DeploymentConfig = {
   ...defaultConfig,
@@ -113,6 +120,11 @@ function createDeploymentStore() {
       }
 
       let detectedMode: DeploymentMode = "self-hosted";
+      const embeddedSurface = isEmbeddedParam || isInIframe;
+      const hostOwnsNavigation =
+        backendMode === "saas" &&
+        embeddedSurface &&
+        hostNavigationRequested(urlParams);
 
       if (devOverride) {
         detectedMode =
@@ -124,7 +136,7 @@ function createDeploymentStore() {
       }
 
       if (detectedMode === "saas-embedded") {
-        set(saasEmbeddedConfig);
+        set(saasEmbeddedConfig(hostOwnsNavigation));
       } else if (backendMode === "saas") {
         set(saasStandaloneConfig);
       } else {
@@ -139,7 +151,7 @@ function createDeploymentStore() {
       if (browser) {
         localStorage.setItem("techstack-mode", mode);
       }
-      set(mode === "saas-embedded" ? saasEmbeddedConfig : defaultConfig);
+      set(mode === "saas-embedded" ? saasEmbeddedConfig(false) : defaultConfig);
     },
 
     /**
@@ -161,7 +173,9 @@ function createDeploymentStore() {
         if (browser) {
           localStorage.setItem("techstack-mode", newMode);
         }
-        return newMode === "saas-embedded" ? saasEmbeddedConfig : defaultConfig;
+        return newMode === "saas-embedded"
+          ? saasEmbeddedConfig(false)
+          : defaultConfig;
       });
     },
   };
@@ -183,6 +197,11 @@ export const isSaaSEmbedded = derived(
 export const isGatewayDataPlane = derived(
   deploymentMode,
   ($config) => $config.dataPlane === "gateway",
+);
+
+export const isHostNavigationOwned = derived(
+  deploymentMode,
+  ($config) => $config.hostOwnsNavigation,
 );
 
 export const showSidebar = derived(

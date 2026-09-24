@@ -263,7 +263,7 @@ nodes:
   });
 
   test.describe("POST /api/v1/unifier/generate", () => {
-    test("should generate valid tfvars.json", async ({ request }) => {
+    test("rejects direct Unifier IaC generation", async ({ request }) => {
       const response = await request.post(
         `${BASE_URL}/api/v1/unifier/generate`,
         {
@@ -272,45 +272,7 @@ nodes:
         },
       );
 
-      expect(response.ok()).toBeTruthy();
-      const body = await response.json();
-
-      // Check tfvars structure
-      expect(body.stack_name).toBe("e2e-test-stack");
-      expect(body.stack_kit).toBe("homelab-basic");
-
-      // Check nodes in tfvars format
-      expect(body.nodes).toBeDefined();
-      expect(body.nodes.length).toBe(1);
-      expect(body.nodes[0].name).toBe("main-server");
-      expect(body.nodes[0].host).toBe("192.168.1.100");
-      expect(body.nodes[0].ssh_user).toBe("ubuntu");
-      expect(body.nodes[0].ssh_port).toBe(22);
-
-      // Check services in tfvars format
-      expect(body.services).toBeDefined();
-      expect(body.services.length).toBe(1);
-      expect(body.services[0].name).toBe("traefik");
-      expect(body.services[0].type).toBe("reverse-proxy");
-
-      // Check network in tfvars format
-      expect(body.network).toBeDefined();
-      expect(body.network.vpn_type).toBe("none");
-      expect(body.network.domain).toBe("local");
-    });
-
-    test("should reject invalid spec in generate", async ({ request }) => {
-      const invalidSpec = { name: "test" }; // missing required fields
-
-      const response = await request.post(
-        `${BASE_URL}/api/v1/unifier/generate`,
-        {
-          data: invalidSpec,
-          headers: { "Content-Type": "application/json" },
-        },
-      );
-
-      expect(response.status()).toBe(400);
+      expect(response.status()).toBe(410);
     });
   });
 

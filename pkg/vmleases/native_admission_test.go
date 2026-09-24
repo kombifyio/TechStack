@@ -13,26 +13,6 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestPrepareNativeAdmissionLeaseCompatibility(t *testing.T) {
-	now := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
-	input := nativeAdmissionLeaseFixture(now)
-
-	lease, generationID, err := PrepareNativeAdmissionLease(input, now, 0)
-	if err != nil {
-		t.Fatalf("PrepareNativeAdmissionLease() error = %v", err)
-	}
-	parsed, err := uuid.Parse(generationID)
-	if err != nil || parsed == uuid.Nil || parsed.String() != generationID {
-		t.Fatalf("resource generation = %q, want canonical non-nil UUID", generationID)
-	}
-	if got := ResourceGenerationID(lease); got != generationID {
-		t.Fatalf("lease generation = %q, want %q", got, generationID)
-	}
-	if got := ResourceGenerationID(input); got != "" {
-		t.Fatalf("input mutated with generation %q", got)
-	}
-}
-
 func TestPostgresStoreAdmitNativeLeaseTxCreatesAuthorityOwnedLease(t *testing.T) {
 	now := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
 	input := nativeAdmissionLeaseFixture(now)
@@ -108,6 +88,16 @@ func TestPostgresStoreAdmitNativeLeaseTxRejectsCallerCustody(t *testing.T) {
 		{
 			name: "provider handle",
 			edit: func(lease *vmlease.Lease) { lease.Resource.EngineVMID = "provider-vm-1" },
+			want: ErrProviderRefRequired,
+		},
+		{
+			name: "substrate handle outside reserved identity",
+			edit: func(lease *vmlease.Lease) {
+				lease.CustodyClass = vmlease.CustodyCustomerSubstrate
+				lease.Resource = vmlease.ResourceRef{ProviderID: "proxmox", EngineVMID: "pve/8001"}
+				lease.BillingMode, lease.LifecycleClass, lease.RecreatePolicy = vmlease.BillingModeLocal, vmlease.LifecycleClassOneTime, vmlease.RecreatePolicyNever
+				lease.Metadata = map[string]string{"substrate_server_id": "pve", "substrate_guest_id": "8000", "substrate_binding_revision": "1"}
+			},
 			want: ErrProviderRefRequired,
 		},
 	}

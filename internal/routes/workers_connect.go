@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
@@ -73,6 +74,10 @@ func (h workerRouteHandlers) connectServer(e *httpx.Event) error {
 	if authErr != nil || ownerID == "" {
 		return authErr
 	}
+	tenantID, tenantErr := tenantguard.TenantScope(requestExplicitTenantID(e), ownerID, "techstack.workers.connect")
+	if tenantErr != nil {
+		return tenantErr
+	}
 	req, decodeErr := readWorkerConnectRequest(e)
 	if decodeErr != nil {
 		return httpx.BadRequest(e, decodeErr.Error(), nil)
@@ -81,7 +86,6 @@ func (h workerRouteHandlers) connectServer(e *httpx.Event) error {
 	if idempotencyErr != nil {
 		return httpx.BadRequest(e, idempotencyErr.Error(), nil)
 	}
-	tenantID := requestTenantID(e, ownerID)
 	stackID := strings.TrimSpace(req.StackID)
 	leaseID := strings.TrimSpace(req.LeaseID)
 	if leaseID != "" {
@@ -124,7 +128,7 @@ func (h workerRouteHandlers) connectServerApplication(ctx context.Context, comma
 		serverID = runtimeidentity.LeaseServerID(leaseID)
 	}
 	if serverID == "" {
-		serverID = h.plannedServerIDForStack(ctx, tenantID, ownerID, stackID)
+		serverID = h.plannedServerIDForStack(ctx, tenantID, ownerID, stackID, false)
 	}
 	if serverID == "" {
 		serverID = "server_" + stableRouteID(tenantID, ownerID, stackID, req.Hostname)
@@ -453,6 +457,10 @@ func (h workerRouteHandlers) rotateServerCredential(e *httpx.Event) error {
 	if authErr != nil || ownerID == "" {
 		return authErr
 	}
+	tenantID, tenantErr := tenantguard.TenantScope(requestExplicitTenantID(e), ownerID, "techstack.workers.credentials.rotate")
+	if tenantErr != nil {
+		return tenantErr
+	}
 	idempotencyKey, idempotencyErr := requiredWorkerIdempotencyKey(e.Request)
 	if idempotencyErr != nil {
 		return httpx.BadRequest(e, idempotencyErr.Error(), nil)
@@ -464,7 +472,6 @@ func (h workerRouteHandlers) rotateServerCredential(e *httpx.Event) error {
 	if req.ExpectedCredentialGeneration == nil || *req.ExpectedCredentialGeneration < 0 {
 		return httpx.BadRequest(e, "expected_credential_generation must be a non-negative integer", nil)
 	}
-	tenantID := requestTenantID(e, ownerID)
 	serverID := strings.TrimSpace(e.Request.PathValue("id"))
 	server, serverErr := h.serverStore.GetServerRuntime(e.Request.Context(), tenantID, serverID)
 	if errors.Is(serverErr, controlplane.ErrNotFound) {
@@ -574,7 +581,7 @@ func validateServerConnectBinding(server controlplane.ServerRuntime, tenantID, o
 	return nil
 }
 
-func (h workerRouteHandlers) plannedServerIDForStack(ctx context.Context, tenantID, ownerID, stackID string) string {
+func (h workerRouteHandlers) plannedServerIDForStack(ctx context.Context, tenantID, ownerID, stackID string, requireUnboundWorker bool) string {
 	if h.serverStore == nil || strings.TrimSpace(stackID) == "" {
 		return ""
 	}
@@ -583,6 +590,11 @@ func (h workerRouteHandlers) plannedServerIDForStack(ctx context.Context, tenant
 		return ""
 	}
 	for _, server := range servers {
+		// A fresh pairing grants access to an additional machine, not permission
+		// to replace an incumbent worker's identity or runtime credential.
+		if requireUnboundWorker && (strings.TrimSpace(server.WorkerID) != "" || strings.TrimSpace(server.LeaseID) != "") {
+			continue
+		}
 		if server.OwnerSubjectID == ownerID && server.LifecycleState != "decommissioned" {
 			return server.ID
 		}

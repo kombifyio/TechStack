@@ -9,7 +9,6 @@ import (
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/demoguard"
 	"github.com/kombifyio/techstack/pkg/httpx"
-	"github.com/kombifyio/techstack/pkg/identity"
 )
 
 // authorizeDemoAutomation is the single authentication/configuration boundary
@@ -39,22 +38,6 @@ func demoAutomationSecretMatches(provided, current, next string) bool {
 	currentMatch := subtle.ConstantTimeCompare(providedBytes, []byte(current))
 	nextMatch := subtle.ConstantTimeCompare(providedBytes, []byte(next))
 	return (current != "" && currentMatch == 1) || (next != "" && nextMatch == 1)
-}
-
-// demoRestrictedRequest reports whether the authenticated request principal
-// belongs to the shared public demo account (by tenant/org or subject id).
-// Inert when no demo environment is configured.
-func demoRestrictedRequest(e *httpx.Event, ownerID string) bool {
-	tenantID := ""
-	if e != nil && e.Request != nil {
-		if id := identity.FromContext(e.Request.Context()); id != nil {
-			tenantID = id.OrgID
-		}
-	}
-	if tenantID == "" && e != nil && e.Auth != nil {
-		tenantID = e.Auth.GetString("org_id")
-	}
-	return demoguard.IsDemoSubject(tenantID, ownerID)
 }
 
 // demoRestrictedDetails is the structured denial envelope for actions that are

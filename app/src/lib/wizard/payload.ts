@@ -1,7 +1,7 @@
 /**
  * kombify-TechStack Wizard Payload Builder
  *
- * Transforms StackConfig into API-compatible CreateStackRequest
+ * Transforms StackConfig into the Wizard Run request payload
  */
 
 import {
@@ -262,9 +262,5 @@ function toApiIdentityHead(provider: IdentityConfig["homelabProvider"]) {
  */
 export function deriveServicesFromGoals(config: StackConfig): void {
   deriveIdentityServices(config);
-  applyStandardBundleGoalServices(
-    config.services,
-    config.goals,
-    config.network.accessMode,
-  );
+  applyStandardBundleGoalServices(config.services, config.goals);
 }

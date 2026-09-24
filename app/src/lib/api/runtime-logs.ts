@@ -1,4 +1,4 @@
-import { API_BASE, get } from "$lib/api/client";
+import { API_BASE, get } from "#lib/api/client.js";
 
 export interface RuntimeLogEntry {
   id?: string;
@@ -8,7 +8,7 @@ export interface RuntimeLogEntry {
   message: string;
   source?: string;
   agent_id?: string;
-  stack_id?: string;
+  kit_deployment_id?: string;
   job_id?: string;
   server_id?: string;
   service_id?: string;
@@ -28,10 +28,12 @@ function runtimeLogQuery(scope: RuntimeLogScope, limit = 500): string {
   return query.toString();
 }
 
-export function getRuntimeLogs(
+export async function getRuntimeLogs(
   scope: RuntimeLogScope,
 ): Promise<RuntimeLogEntry[]> {
-  return get(`/api/v1/runtime/logs?${runtimeLogQuery(scope)}`);
+  return get<RuntimeLogEntry[]>(
+    `/api/v1/runtime/logs?${runtimeLogQuery(scope)}`,
+  );
 }
 
 export function streamRuntimeLogs(
@@ -52,7 +54,10 @@ export function streamRuntimeLogs(
   const read = (event: Event) => {
     try {
       const parsed = JSON.parse((event as MessageEvent<string>).data);
-      onEntries(Array.isArray(parsed) ? parsed : [parsed]);
+      const entries = (
+        Array.isArray(parsed) ? parsed : [parsed]
+      ) as RuntimeLogEntry[];
+      onEntries(entries);
     } catch {
       onError();
     }

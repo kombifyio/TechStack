@@ -22,6 +22,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/kombifyio/techstack/pkg/config"
 )
 
 const (
@@ -33,8 +35,8 @@ const (
 	maxResponseBytes = 1 << 20
 )
 
-// ErrNotConfigured is returned when SERVICE_AUTH_SECRET is unset, so the engine
-// call cannot be signed. Handlers map it to 503.
+// ErrNotConfigured is returned when signing or the destination is not configured.
+// Handlers map it to 503.
 var ErrNotConfigured = errors.New("notifications engine not configured")
 
 // Engine is a thin, signed HTTP client for the notifications engine.
@@ -44,12 +46,16 @@ type Engine struct {
 	http    *http.Client
 }
 
-// NewEngineFromEnv builds an Engine from NOTIFICATIONS_ENGINE_URL (optional,
-// defaults to the live origin) and SERVICE_AUTH_SECRET (required to sign).
+// NewEngineFromEnv builds an Engine from NOTIFICATIONS_ENGINE_URL and
+// SERVICE_AUTH_SECRET. Hosted editions default to the live origin; self-hosted
+// editions require an explicit destination.
 func NewEngineFromEnv() *Engine {
 	base := strings.TrimSpace(os.Getenv("NOTIFICATIONS_ENGINE_URL"))
 	if base == "" {
-		base = defaultEngineURL
+		mode, err := config.BootDeploymentModeFromEnv()
+		if err == nil && mode.IsSaaS() {
+			base = defaultEngineURL
+		}
 	}
 	base = strings.TrimRight(base, "/")
 	base = strings.TrimSuffix(base, "/v1")
@@ -61,7 +67,7 @@ func NewEngineFromEnv() *Engine {
 }
 
 // Configured reports whether a signing secret is present.
-func (e *Engine) Configured() bool { return e != nil && e.secret != "" }
+func (e *Engine) Configured() bool { return e != nil && e.secret != "" && e.baseURL != "" }
 
 // Result is a passthrough of the engine's HTTP response.
 type Result struct {
@@ -113,6 +119,7 @@ func (e *Engine) do(ctx context.Context, method, path, scope string, body []byte
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-Kombify-Service-Auth", token)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -185,14 +192,29 @@ func (e *Engine) DispatchProduct(ctx context.Context, event ProductEvent) (*Disp
 	if channel == "" {
 		channel = "in_app"
 	}
-	body, err := json.Marshal(map[string]any{
+	dispatch := map[string]any{
 		"organization_id": nullableString(event.OrganizationID),
 		"topic_slug":      event.Topic,
 		"channel":         channel,
 		"recipient":       map[string]string{"auth0_user_id": event.Auth0UserID},
 		"payload":         event.Payload,
 		"idempotency_key": event.IdempotencyKey,
-	})
+	}
+	if sourceApp := strings.TrimSpace(event.SourceApp); sourceApp != "" {
+		dispatch["source_app"] = sourceApp
+		dispatch["event_key"] = strings.TrimSpace(event.EventKey)
+	}
+	for key, value := range map[string]string{
+		"subject_ref": event.SubjectRef,
+		"deep_link":   event.DeepLink,
+		"group_key":   event.GroupKey,
+		"priority":    event.Priority,
+	} {
+		if value = strings.TrimSpace(value); value != "" {
+			dispatch[key] = value
+		}
+	}
+	body, err := json.Marshal(dispatch)
 	if err != nil {
 		return nil, err
 	}

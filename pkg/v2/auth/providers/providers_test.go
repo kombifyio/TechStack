@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	commonoidc "github.com/kombifyio/go-common/oidcclient"
+	commonoidc "github.com/kombifyio/techstack/internal/gocommon/oidcclient"
 )
 
 func TestNewValidatesConfig(t *testing.T) {
@@ -45,8 +45,8 @@ func TestNewDerivesJWKSURL(t *testing.T) {
 	}
 }
 
-func TestNewNormalizesLegacyKombifyAuth0Issuer(t *testing.T) {
-	p, err := New(Config{ID: "primary", Kind: KindAuth0, Issuer: "https://kombify.eu.auth0.com/", ClientID: "techstack"})
+func TestNewUsesCanonicalKombifyAuth0Issuer(t *testing.T) {
+	p, err := New(Config{ID: "primary", Kind: KindAuth0, Issuer: "https://login.kombify.io/", ClientID: "techstack"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -15,7 +15,7 @@ describe("health api", () => {
     globalThis.fetch = originalFetch;
   });
 
-  it("unwraps the PocketBase API envelope for info version", async () => {
+  it("reads product identity from the canonical API envelope", async () => {
     fetchMock.mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -37,28 +37,8 @@ describe("health api", () => {
     });
   });
 
-  it("keeps compatibility with a flat info response", async () => {
+  it("rejects identity-less responses so the UI can use compile fallback", async () => {
     fetchMock.mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          service: "techstack",
-          version: "dev",
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      ),
-    );
-
-    await expect(getInfo()).resolves.toMatchObject({
-      service: "techstack",
-      version: "dev",
-    });
-  });
-
-  it("rejects failed or identity-less responses so the UI can use compile fallback", async () => {
-    fetchMock.mockResolvedValueOnce(new Response("", { status: 503 }));
-    await expect(getInfo()).rejects.toThrow(/HTTP 503/);
-
-    fetchMock.mockResolvedValueOnce(
       new Response(JSON.stringify({ data: { service: "techstack" } }), {
         status: 200,
         headers: { "content-type": "application/json" },

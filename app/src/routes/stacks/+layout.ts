@@ -1,32 +1,28 @@
 import { redirect } from "@sveltejs/kit";
-import { browser } from "$app/environment";
+import { browser } from "$app/env";
 import type { LayoutLoad } from "./$types";
 
 /**
  * Protected route load function.
  * Checks authentication status and redirects to login if not authenticated.
  *
- * Note: Since PocketBase auth is stored client-side (localStorage),
- * we can only check auth in the browser. Server-side requests will
- * pass through and rely on client-side hydration to redirect.
+ * Auth state and embedded-session renewal are client-owned, so prerendered
+ * requests pass through and client hydration performs the redirect.
  */
 export const load: LayoutLoad = async () => {
   if (browser) {
     const { initAuth, isAuthenticated } =
-      await import("$lib/stores/auth.svelte");
+      await import("#lib/stores/auth.svelte.js");
     await initAuth();
     if (!isAuthenticated()) {
       const { refreshEmbeddedCloudSession } =
-        await import("$lib/auth/embedded-session");
+        await import("#lib/auth/embedded-session.js");
       if (await refreshEmbeddedCloudSession()) {
         return {};
       }
-      const { loginRedirectForWindowsLocalClient } =
-        await import("$lib/client/windows-onboarding");
-      throw redirect(
-        302,
-        loginRedirectForWindowsLocalClient(window.localStorage),
-      );
+      const { resolveUnauthenticatedEntry } =
+        await import("#lib/auth/unauthenticated-redirect.js");
+      throw redirect(302, resolveUnauthenticatedEntry());
     }
   }
   return {};

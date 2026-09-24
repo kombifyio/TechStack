@@ -4,7 +4,6 @@ package unifier
 import (
 	"fmt"
 	"maps"
-	"os"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -21,26 +20,6 @@ type Loader struct{}
 // NewLoader creates a new Loader instance.
 func NewLoader() *Loader {
 	return &Loader{}
-}
-
-// LoadFile reads and parses a kombination.yaml file from disk.
-func (l *Loader) LoadFile(path string) (*core.KombinationSpec, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read file %s: %w", path, err)
-	}
-
-	return l.LoadBytes(data)
-}
-
-// LoadInputFile reads and parses a kombination.yaml file from disk into an InputSpec.
-func (l *Loader) LoadInputFile(path string) (*core.InputSpec, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read file %s: %w", path, err)
-	}
-
-	return l.LoadInputBytes(data)
 }
 
 // LoadBytes parses YAML bytes into a KombinationSpec.
@@ -441,29 +420,48 @@ func (l *Loader) preValidateInput(input *core.InputSpec) error {
 	if input == nil {
 		return fmt.Errorf("input cannot be nil")
 	}
+	managed, providerID, err := validateInputProviderMetadata(input.Metadata)
+	if err != nil {
+		return err
+	}
+	if err := validateInputNodeProviders(input.Nodes, managed, providerID); err != nil {
+		return err
+	}
+	nodeNames, err := validateInputNodeNames(input.Nodes)
+	if err != nil {
+		return err
+	}
+	return validateInputServices(input.Services, nodeNames)
+}
+
+func validateInputProviderMetadata(metadata map[string]string) (bool, string, error) {
 	managed := false
 	providerID := ""
-	if input.Metadata != nil {
+	if metadata != nil {
 		for _, key := range []string{"lease_provider", "simulate_provider_id"} {
-			if input.Metadata[key] != "" {
-				return fmt.Errorf("spec.metadata.%s is no longer accepted; use canonical provider_id", key)
+			if metadata[key] != "" {
+				return false, "", fmt.Errorf("spec.metadata.%s is no longer accepted; use canonical provider_id", key)
 			}
 		}
-		providerID = input.Metadata[providercatalog.ProviderIDField]
+		providerID = metadata[providercatalog.ProviderIDField]
 		managed = managed || providerID != "" ||
-			input.Metadata["server_provisioning_mode"] == "kombify-cloud" ||
-			input.Metadata["server_mode"] == "monthly-runtime" ||
-			input.Metadata["server_mode"] == "managed-cloud" ||
-			input.Metadata["runtime_lane"] == "monthly-runtime"
+			metadata["server_provisioning_mode"] == "kombify-cloud" ||
+			metadata["server_mode"] == "monthly-runtime" ||
+			metadata["server_mode"] == "managed-cloud" ||
+			metadata["runtime_lane"] == "monthly-runtime"
 	}
 	if managed {
 		canonical, err := providercatalog.CanonicalProviderID(providerID)
 		if err != nil {
-			return fmt.Errorf("spec.metadata.provider_id: %w", err)
+			return false, "", fmt.Errorf("spec.metadata.provider_id: %w", err)
 		}
 		providerID = canonical
 	}
-	for i, node := range input.Nodes {
+	return managed, providerID, nil
+}
+
+func validateInputNodeProviders(nodes []core.InputNodeSpec, managed bool, providerID string) error {
+	for i, node := range nodes {
 		if node.Provider == nil {
 			continue
 		}
@@ -484,22 +482,26 @@ func (l *Loader) preValidateInput(input *core.InputSpec) error {
 			}
 		}
 	}
+	return nil
+}
 
-	// Check for duplicate node names (only if provided)
+func validateInputNodeNames(nodes []core.InputNodeSpec) (map[string]bool, error) {
 	nodeNames := make(map[string]bool)
-	for _, node := range input.Nodes {
+	for _, node := range nodes {
 		if node.Name == nil || *node.Name == "" {
 			continue
 		}
 		if nodeNames[*node.Name] {
-			return fmt.Errorf("duplicate node name: %s", *node.Name)
+			return nil, fmt.Errorf("duplicate node name: %s", *node.Name)
 		}
 		nodeNames[*node.Name] = true
 	}
+	return nodeNames, nil
+}
 
-	// Check for duplicate service names (only if provided)
+func validateInputServices(services []core.InputServiceSpec, nodeNames map[string]bool) error {
 	serviceNames := make(map[string]bool)
-	for _, svc := range input.Services {
+	for _, svc := range services {
 		if svc.Name == nil || *svc.Name == "" {
 			continue
 		}
@@ -509,8 +511,7 @@ func (l *Loader) preValidateInput(input *core.InputSpec) error {
 		serviceNames[*svc.Name] = true
 	}
 
-	// Validate service node references (only if node is set)
-	for i, svc := range input.Services {
+	for i, svc := range services {
 		if svc.Node == nil || *svc.Node == "" {
 			continue
 		}
@@ -529,85 +530,4 @@ func (l *Loader) ToYAML(spec *core.KombinationSpec) ([]byte, error) {
 		return nil, fmt.Errorf("failed to serialize to YAML: %w", err)
 	}
 	return data, nil
-}
-
-// SaveFile writes a KombinationSpec to a YAML file.
-func (l *Loader) SaveFile(spec *core.KombinationSpec, path string) error {
-	data, err := l.ToYAML(spec)
-	if err != nil {
-		return err
-	}
-
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		return fmt.Errorf("failed to write file %s: %w", path, err)
-	}
-
-	return nil
-}
-
-// LoadIntentFile reads and parses a kombination.yaml file as an IntentSpec.
-// It returns the spec and a SHA256 hash of the file contents for traceability.
-// The IntentSpec is the immutable user intent - it should never be modified.
-func (l *Loader) LoadIntentFile(path string) (*core.IntentSpec, string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to read intent file %s: %w", path, err)
-	}
-
-	return l.LoadIntentBytes(data)
-}
-
-// LoadIntentBytes parses YAML bytes into an IntentSpec with hash.
-func (l *Loader) LoadIntentBytes(data []byte) (*core.IntentSpec, string, error) {
-	var intent core.IntentSpec
-
-	if err := yaml.Unmarshal(data, &intent); err != nil {
-		return nil, "", fmt.Errorf("failed to parse intent YAML: %w", err)
-	}
-
-	// Compute hash for traceability
-	hash := ComputeDataHash(data)
-
-	// Set defaults for API version and kind
-	if intent.APIVersion == "" {
-		intent.APIVersion = unifierAPIVersion
-	}
-	if intent.Kind == "" {
-		intent.Kind = "IntentSpec"
-	}
-
-	// Validate required fields
-	if intent.Name == "" {
-		return nil, "", fmt.Errorf("intent: name is required")
-	}
-
-	return &intent, hash, nil
-}
-
-// ConvertIntentToKombination converts an IntentSpec to a KombinationSpec.
-// This is needed for backward compatibility with the existing pipeline.
-func (l *Loader) ConvertIntentToKombination(intent *core.IntentSpec) *core.KombinationSpec {
-	if intent == nil {
-		return nil
-	}
-
-	spec := &core.KombinationSpec{
-		Name:    intent.Name,
-		Version: intent.Version,
-		Kit:     intent.Kit,
-	}
-
-	// Convert overrides if present
-	if intent.Overrides != nil {
-		if intent.Overrides.Kit != "" {
-			spec.Kit = intent.Overrides.Kit
-		}
-	}
-
-	// Convert network settings
-	if intent.Network != nil {
-		spec.Network.VPN = intent.Network.VPN
-	}
-
-	return spec
 }

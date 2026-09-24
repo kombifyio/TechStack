@@ -1,132 +1,81 @@
 package pocketbase_migration
 
 import (
-	"strings"
 	"testing"
 
+	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 )
 
-func TestEnsureSaaSAuthCollectionsCreatesUserLinks(t *testing.T) {
+func TestEnsureSaaSAuthCollectionsRejectsDuplicateProviderSubject(t *testing.T) {
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Cleanup()
+	if err := EnsureSaaSAuthCollections(app); err != nil {
+		t.Fatal(err)
+	}
+	users, err := app.FindCollectionByNameOrId("users")
+	if err != nil {
+		t.Fatal(err)
+	}
+	links, err := app.FindCollectionByNameOrId("user_links")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, email := range []string{"first@example.test", "second@example.test"} {
+		user := core.NewRecord(users)
+		user.SetEmail(email)
+		user.SetPassword("test-password-123456789")
+		if err := app.Save(user); err != nil {
+			t.Fatal(err)
+		}
+		link := core.NewRecord(links)
+		link.Set("user", user.Id)
+		link.Set("provider", "cloud")
+		link.Set("external_id", "cloud|singular-subject")
+		link.Set("external_email", email)
+		err = app.Save(link)
+		if i == 0 && err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err == nil {
+		t.Fatal("second profile claimed an already linked Cloud subject")
+	}
+}
+
+func TestEnsureAuthConfigCollectionRemovesLegacySecretCustody(t *testing.T) {
 	app, err := tests.NewTestApp()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer app.Cleanup()
 
-	if _, findErr := app.FindCollectionByNameOrId("user_links"); findErr == nil {
-		t.Fatal("test fixture unexpectedly already has user_links collection")
+	collection := core.NewBaseCollection("auth_config")
+	collection.Fields.Add(
+		&core.TextField{Name: "mode", Required: true, Max: 32},
+		&core.TextField{Name: "sso_jwt_secret", Max: 1000},
+	)
+	if err := app.Save(collection); err != nil {
+		t.Fatal(err)
+	}
+	record := core.NewRecord(collection)
+	record.Set("mode", "local")
+	record.Set("sso_jwt_secret", "must-not-survive")
+	if err := app.Save(record); err != nil {
+		t.Fatal(err)
 	}
 
-	if ensureErr := EnsureSaaSAuthCollections(app); ensureErr != nil {
-		t.Fatalf("EnsureSaaSAuthCollections() error = %v", ensureErr)
+	if err := EnsureAuthConfigCollection(app); err != nil {
+		t.Fatal(err)
 	}
-
-	collection, err := app.FindCollectionByNameOrId("user_links")
-	if err != nil {
-		t.Fatalf("find user_links collection: %v", err)
-	}
-
-	for _, field := range []string{
-		"user",
-		"provider",
-		"external_id",
-		"external_email",
-		"external_name",
-		"org_id",
-		"is_admin",
-	} {
-		if collection.Fields.GetByName(field) == nil {
-			t.Fatalf("user_links missing field %q", field)
-		}
-	}
-
-	for _, index := range []string{
-		"idx_user_links_user_provider",
-		"idx_user_links_external_id",
-		"idx_user_links_external_email",
-		"idx_user_links_org_id",
-	} {
-		if !collectionHasIndex(collection.Indexes, index) {
-			t.Fatalf("user_links missing index %q in %v", index, collection.Indexes)
-		}
-	}
-}
-
-func TestEnsureSaaSAuthCollectionsIsIdempotent(t *testing.T) {
-	app, err := tests.NewTestApp()
+	reloaded, err := app.FindRecordById("auth_config", record.Id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer app.Cleanup()
-
-	if ensureErr := EnsureSaaSAuthCollections(app); ensureErr != nil {
-		t.Fatalf("first EnsureSaaSAuthCollections() error = %v", ensureErr)
+	if secret := reloaded.GetString("sso_jwt_secret"); secret != "" {
+		t.Fatal("legacy PocketBase secret survived custody migration")
 	}
-	if ensureErr := EnsureSaaSAuthCollections(app); ensureErr != nil {
-		t.Fatalf("second EnsureSaaSAuthCollections() error = %v", ensureErr)
-	}
-
-	collection, err := app.FindCollectionByNameOrId("user_links")
-	if err != nil {
-		t.Fatalf("find user_links collection: %v", err)
-	}
-
-	if got := countCollectionIndexes(collection.Indexes, "idx_user_links_external_id"); got != 1 {
-		t.Fatalf("idx_user_links_external_id count = %d, want 1 in %v", got, collection.Indexes)
-	}
-	if got := countCollectionIndexes(collection.Indexes, "idx_user_links_org_id"); got != 1 {
-		t.Fatalf("idx_user_links_org_id count = %d, want 1 in %v", got, collection.Indexes)
-	}
-}
-
-func TestEnsureAuthConfigCollectionCreatesFirstRunConfigStore(t *testing.T) {
-	app, err := tests.NewTestApp()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer app.Cleanup()
-
-	if _, findErr := app.FindCollectionByNameOrId("auth_config"); findErr == nil {
-		t.Fatal("test fixture unexpectedly already has auth_config collection")
-	}
-
-	if ensureErr := EnsureAuthConfigCollection(app); ensureErr != nil {
-		t.Fatalf("EnsureAuthConfigCollection() error = %v", ensureErr)
-	}
-
-	collection, err := app.FindCollectionByNameOrId("auth_config")
-	if err != nil {
-		t.Fatalf("find auth_config collection: %v", err)
-	}
-
-	for _, field := range []string{
-		"mode",
-		"allow_local_login",
-		"cloud_auth_url",
-		"portal_url",
-		"cloud_issuer",
-		"cloud_client_id",
-		"cloud_client_secret",
-		"sso_jwt_secret",
-	} {
-		if collection.Fields.GetByName(field) == nil {
-			t.Fatalf("auth_config missing field %q", field)
-		}
-	}
-}
-
-func collectionHasIndex(indexes []string, name string) bool {
-	return countCollectionIndexes(indexes, name) > 0
-}
-
-func countCollectionIndexes(indexes []string, name string) int {
-	count := 0
-	needle := strings.ToLower(name)
-	for _, index := range indexes {
-		if strings.Contains(strings.ToLower(index), needle) {
-			count++
-		}
-	}
-	return count
 }

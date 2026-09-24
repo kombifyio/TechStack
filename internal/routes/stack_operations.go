@@ -20,12 +20,11 @@ import (
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/monitoring"
 	"github.com/kombifyio/techstack/pkg/nodehandoff"
+	"github.com/kombifyio/techstack/pkg/outcome"
 	"github.com/kombifyio/techstack/pkg/runtimehealth"
 	"github.com/kombifyio/techstack/pkg/runtimeidentity"
 	"github.com/kombifyio/techstack/pkg/serverregistry"
 	"github.com/kombifyio/techstack/pkg/vmleases"
-	"github.com/pocketbase/pocketbase/core"
-	"github.com/pocketbase/pocketbase/tools/types"
 	"github.com/prometheus/prometheus/promql"
 )
 
@@ -36,21 +35,22 @@ type StackOperationsRouteStores struct {
 	Workers  controlplane.WorkerStore
 	Registry controlplane.RegistryStore
 	Jobs     controlplane.JobStore
+	Activity controlplane.ActivityStore
 }
 
-func RegisterStackOperationsRoutesWithStores(r *httpx.Router, app core.App, backend monitoring.MetricsQueryBackend, metadata MonitoringStatusMetadata, alerts *monitoring.AlertEngine, ingestHealth monitoring.IngestHealthProvider, stores StackOperationsRouteStores, managedRuntimeLeases ...managedRuntimeLeaseLister) { // pocketbase-migration-compat: legacy app bridge while operations stores are wired
+func RegisterStackOperationsRoutesWithStores(r *httpx.Router, backend monitoring.MetricsQueryBackend, metadata MonitoringStatusMetadata, alerts *monitoring.AlertEngine, ingestHealth monitoring.IngestHealthProvider, stores StackOperationsRouteStores, managedRuntimeLeases ...managedRuntimeLeaseLister) {
 	var leaseLister managedRuntimeLeaseLister
 	if len(managedRuntimeLeases) > 0 {
 		leaseLister = managedRuntimeLeases[0]
 	}
 	h := stackOperationsRouteHandlers{
-		app:                  app,
 		stackStore:           stores.Stacks,
 		serverStore:          stores.Servers,
 		serviceStore:         stores.Services,
 		workerStore:          stores.Workers,
 		registryStore:        stores.Registry,
 		jobStore:             stores.Jobs,
+		activityStore:        stores.Activity,
 		backend:              backend,
 		metadata:             metadata,
 		alerts:               alerts,
@@ -65,13 +65,13 @@ func RegisterStackOperationsRoutesWithStores(r *httpx.Router, app core.App, back
 }
 
 type stackOperationsRouteHandlers struct {
-	app                  core.App
 	stackStore           controlplane.StackStore
 	serverStore          controlplane.ServerRuntimeStore
 	serviceStore         controlplane.ServiceRuntimeStore
 	workerStore          controlplane.WorkerStore
 	registryStore        controlplane.RegistryStore
 	jobStore             controlplane.JobStore
+	activityStore        controlplane.ActivityStore
 	backend              monitoring.MetricsQueryBackend
 	metadata             MonitoringStatusMetadata
 	alerts               *monitoring.AlertEngine
@@ -80,11 +80,15 @@ type stackOperationsRouteHandlers struct {
 }
 
 type stackOperationsPayload struct {
-	Stack            map[string]any             `json:"stack"`
-	Readiness        stackReadiness             `json:"readiness"`
-	NextSteps        []stackNextStep            `json:"nextSteps"`
-	KPIs             stackOperationKPIs         `json:"kpis"`
-	Servers          []stackOperationServer     `json:"servers"`
+	Stack     map[string]any         `json:"stack"`
+	Readiness stackReadiness         `json:"readiness"`
+	NextSteps []stackNextStep        `json:"nextSteps"`
+	KPIs      stackOperationKPIs     `json:"kpis"`
+	Servers   []stackOperationServer `json:"servers"`
+	// RetiredServers are terminal managed generations kept outside current
+	// inventory, KPIs, health, readiness, and services. They remain discoverable
+	// only so their exact released lease can be intentionally recreated.
+	RetiredServers   []stackOperationServer     `json:"retiredServers,omitempty"`
 	Services         []stackOperationService    `json:"services"`
 	Monitoring       stackOperationMonitoring   `json:"monitoring"`
 	Alerts           []stackOperationAlertState `json:"alerts"`
@@ -96,6 +100,12 @@ type stackOperationsPayload struct {
 	// deliberately not servers: a lease whose VM was deleted must never present
 	// as infrastructure.
 	CustodyLeases []stackCustodyLease `json:"custodyLeases,omitempty"`
+}
+
+type operationServerInventory struct {
+	Servers        []stackOperationServer
+	RetiredServers []stackOperationServer
+	CustodyLeases  []stackCustodyLease
 }
 
 // stackCustodyLease is a lease without machine evidence. It stays visible so
@@ -114,17 +124,22 @@ type stackCustodyLease struct {
 }
 
 type monitorCockpitPayload struct {
-	Stacks      []map[string]any           `json:"stacks"`
-	TechstackID string                     `json:"techstack_id"`
-	Stack       map[string]any             `json:"stack"`
-	Readiness   stackReadiness             `json:"readiness"`
-	NextSteps   []stackNextStep            `json:"nextSteps"`
-	KPIs        stackOperationKPIs         `json:"kpis"`
-	Servers     []stackOperationServer     `json:"servers"`
-	Services    []stackOperationService    `json:"services"`
-	Monitoring  stackOperationMonitoring   `json:"monitoring"`
-	Alerts      []stackOperationAlertState `json:"alerts"`
-	Jobs        []monitorCockpitJob        `json:"jobs"`
+	HomelabID          string `json:"homelab_id,omitempty"`
+	KitDeploymentCount int    `json:"kit_deployment_count"`
+	ConnectedServers   int    `json:"connected_server_count"`
+	// KitDeploymentID identifies the requested deployment scope. Stacks and
+	// Stack are deprecated projections emitted only for the legacy scoped query.
+	Stacks          []map[string]any           `json:"stacks,omitempty"`
+	KitDeploymentID string                     `json:"kit_deployment_id,omitempty"`
+	Stack           map[string]any             `json:"stack,omitempty"`
+	Readiness       stackReadiness             `json:"readiness"`
+	NextSteps       []stackNextStep            `json:"nextSteps"`
+	KPIs            stackOperationKPIs         `json:"kpis"`
+	Servers         []stackOperationServer     `json:"servers"`
+	Services        []stackOperationService    `json:"services"`
+	Monitoring      stackOperationMonitoring   `json:"monitoring"`
+	Alerts          []stackOperationAlertState `json:"alerts"`
+	Jobs            []monitorCockpitJob        `json:"jobs"`
 }
 
 type monitorCockpitJob struct {
@@ -183,7 +198,7 @@ type stackOperationServer struct {
 	Role             string                `json:"role"`
 	Status           string                `json:"status"`
 	Assignment       string                `json:"assignment"`
-	TechstackID      string                `json:"techstack_id,omitempty"`
+	KitDeploymentID  string                `json:"kit_deployment_id,omitempty"`
 	AgentID          string                `json:"agent_id"`
 	IP               string                `json:"ip,omitempty"`
 	HostAddresses    []stackServerAddress  `json:"host_addresses,omitempty"`
@@ -205,6 +220,7 @@ type stackOperationServer struct {
 	EnrollmentStatus string                `json:"enrollment_status,omitempty"`
 	Assignable       bool                  `json:"assignable"`
 	Capabilities     map[string]any        `json:"capabilities"`
+	LastOutcome      *outcome.Decision     `json:"last_outcome,omitempty"`
 	Health           stackServerHealth     `json:"health"`
 	heartbeatAt      *time.Time
 	observedAt       time.Time
@@ -262,67 +278,21 @@ type stackServerDetailsPayload struct {
 	Stack      map[string]any           `json:"stack"`
 	Server     stackOperationServer     `json:"server"`
 	Services   []stackOperationService  `json:"services"`
-	Checks     []PreCheckResultResponse `json:"checks"`
+	Checks     []map[string]any         `json:"checks"`
 	Logs       []map[string]any         `json:"logs"`
 	Health     stackServerHealth        `json:"health"`
 	Monitoring stackOperationMonitoring `json:"monitoring"`
 }
 
 func (h stackOperationsRouteHandlers) operations(e *httpx.Event) error {
-	// The durable store is authoritative whenever it is configured. In
-	// particular, an authenticated hosted request can legitimately use its
-	// owner subject as the fallback tenant when no explicit organization claim
-	// is present. Requiring an explicit claim here selected the legacy
-	// projection and hid the durable current job from the Operations view.
-	// ownedControlPlaneStack still authenticates first, scopes the lookup to
-	// requestTenantID, and verifies the stack owner before any projection.
-	if h.stackStore != nil {
-		if err := h.operationsFromStore(e); err == nil || !isHTTPNotFound(err) {
-			return err
-		}
+	if h.stackStore == nil || h.serverStore == nil || h.serviceStore == nil || h.workerStore == nil || h.registryStore == nil || h.jobStore == nil {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+			"Stack operations authority is temporarily unavailable", map[string]any{
+				"reason_code": "stack_operations_authority_unavailable",
+				"retryable":   true,
+			})
 	}
-
-	return h.operationsFromLegacy(e)
-}
-
-func (h stackOperationsRouteHandlers) operationsFromLegacy(e *httpx.Event) error {
-	stack, ownerID, err := h.ownedStack(e)
-	if err != nil {
-		return err
-	}
-	if guardErr := tenantguard.RequireTenant(requestExplicitTenantID(e), "techstack.stacks.operations"); guardErr != nil {
-		return guardErr
-	}
-
-	ctx := e.Request.Context()
-	tenantID := requestTenantID(e, ownerID)
-	servers, err := h.operationServers(ctx, ownerID, tenantID, requestExplicitTenantID(e), stack.Id)
-	if err != nil {
-		return managedRuntimeInventoryUnavailable(e)
-	}
-	services := h.operationServices(stack, servers, tenantID)
-	alerts, unscopedAlerts := h.operationAlerts(stack.Id, servers)
-	latestFailure := latestStackFailureFromLegacyJobs(h.stackJobs(stack.Id))
-	readiness := buildStackReadiness(stack, servers, latestFailure)
-	monitoring := h.monitoringSummary(ctx)
-	monitoring.UnscopedAlerts = unscopedAlerts
-
-	return httpx.Success(e, http.StatusOK, stackOperationsPayload{
-		Stack:         stackListItemFromRecord(stack),
-		Readiness:     readiness,
-		NextSteps:     buildStackNextSteps(stack, readiness),
-		KPIs:          buildStackKPIs(servers, services, alerts),
-		Servers:       servers,
-		Services:      services,
-		Monitoring:    monitoring,
-		Alerts:        alerts,
-		LatestFailure: latestFailure,
-	})
-}
-
-func isHTTPNotFound(err error) bool {
-	var apiErr *httpx.APIError
-	return errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound
+	return h.operationsFromStore(e)
 }
 
 func managedRuntimeInventoryUnavailable(e *httpx.Event) error {
@@ -334,77 +304,14 @@ func managedRuntimeInventoryUnavailable(e *httpx.Event) error {
 }
 
 func (h stackOperationsRouteHandlers) monitorCockpit(e *httpx.Event) error {
-	if h.useControlPlaneStore(e) {
-		return h.monitorCockpitFromStore(e)
+	if h.stackStore == nil || h.serverStore == nil || h.serviceStore == nil || h.workerStore == nil || h.registryStore == nil || h.jobStore == nil {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+			"Monitor cockpit authority is temporarily unavailable", map[string]any{
+				"reason_code": "monitor_cockpit_authority_unavailable",
+				"retryable":   true,
+			})
 	}
-
-	ownerID, err := requireAuth(e)
-	if err != nil {
-		return err
-	}
-	stacks, err := h.ownedStacks(ownerID)
-	if err != nil {
-		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to fetch stacks", nil)
-	}
-	if len(stacks) == 0 {
-		return httpx.Success(e, http.StatusOK, monitorCockpitPayload{
-			Stacks:     []map[string]any{},
-			Servers:    []stackOperationServer{},
-			Services:   []stackOperationService{},
-			Alerts:     []stackOperationAlertState{},
-			Jobs:       []monitorCockpitJob{},
-			Monitoring: h.monitoringSummary(e.Request.Context()),
-		})
-	}
-
-	selectedID := strings.TrimSpace(e.Request.URL.Query().Get("techstack_id"))
-	selected := stacks[0]
-	if selectedID != "" {
-		selected = nil
-		for _, stack := range stacks {
-			if stack.Id == selectedID {
-				selected = stack
-				break
-			}
-		}
-		if selected == nil {
-			return httpx.NotFound(e, "Stack not found")
-		}
-	}
-
-	ctx := e.Request.Context()
-	tenantID := requestTenantID(e, ownerID)
-	servers, err := h.operationServers(ctx, ownerID, tenantID, requestExplicitTenantID(e), selected.Id)
-	if err != nil {
-		return managedRuntimeInventoryUnavailable(e)
-	}
-	services := h.operationServices(selected, servers, tenantID)
-	alerts, unscopedAlerts := h.operationAlerts(selected.Id, servers)
-	// One read feeds both the jobs list and the readiness message, so the two
-	// can never describe different snapshots of the same stack.
-	jobs := h.stackJobs(selected.Id)
-	readiness := buildStackReadiness(selected, servers, latestStackFailureFromLegacyJobs(jobs))
-	monitoring := h.monitoringSummary(ctx)
-	monitoring.UnscopedAlerts = unscopedAlerts
-
-	stackItems := make([]map[string]any, 0, len(stacks))
-	for _, stack := range stacks {
-		stackItems = append(stackItems, stackListItemFromRecord(stack))
-	}
-
-	return httpx.Success(e, http.StatusOK, monitorCockpitPayload{
-		Stacks:      stackItems,
-		TechstackID: selected.Id,
-		Stack:       stackListItemFromRecord(selected),
-		Readiness:   readiness,
-		NextSteps:   buildStackNextSteps(selected, readiness),
-		KPIs:        buildStackKPIs(servers, services, alerts),
-		Servers:     servers,
-		Services:    services,
-		Monitoring:  monitoring,
-		Alerts:      alerts,
-		Jobs:        jobs,
-	})
+	return h.monitorCockpitFromStore(e)
 }
 
 func (h stackOperationsRouteHandlers) operationsFromStore(e *httpx.Event) error {
@@ -414,10 +321,12 @@ func (h stackOperationsRouteHandlers) operationsFromStore(e *httpx.Event) error 
 	}
 
 	ctx := e.Request.Context()
-	servers, custodyLeases, err := h.operationServersFromStore(ctx, ownerID, tenantID, stack.ID)
+	inventory, err := h.operationServerInventoryFromStore(ctx, ownerID, tenantID, stack.ID)
 	if err != nil {
 		return managedRuntimeInventoryUnavailable(e)
 	}
+	servers := inventory.Servers
+	custodyLeases := inventory.CustodyLeases
 	currentJob, runtimeLifecycle := h.latestStackRuntimeLifecycleFromStore(ctx, tenantID, stack.ID)
 	latestFailure := h.latestStackFailureFromStore(ctx, tenantID, stack.ID)
 	latestRecordedFailure := latestFailure
@@ -436,6 +345,7 @@ func (h stackOperationsRouteHandlers) operationsFromStore(e *httpx.Event) error 
 		NextSteps:        buildStackNextStepsFromStore(stack, readiness),
 		KPIs:             buildStackKPIs(servers, services, alerts),
 		Servers:          servers,
+		RetiredServers:   inventory.RetiredServers,
 		Services:         services,
 		Monitoring:       monitoring,
 		Alerts:           alerts,
@@ -451,7 +361,10 @@ func (h stackOperationsRouteHandlers) monitorCockpitFromStore(e *httpx.Event) er
 	if err != nil {
 		return err
 	}
-	tenantID := requestTenantID(e, ownerID)
+	tenantID, tenantErr := tenantguard.TenantScope(requestExplicitTenantID(e), ownerID, "techstack.monitor.cockpit")
+	if tenantErr != nil {
+		return tenantErr
+	}
 	stacks, err := h.ownedControlPlaneStacks(e.Request.Context(), tenantID, ownerID)
 	if err != nil {
 		return httpx.NewInternalServerError("Failed to fetch stacks", nil)
@@ -467,19 +380,19 @@ func (h stackOperationsRouteHandlers) monitorCockpitFromStore(e *httpx.Event) er
 		})
 	}
 
-	selectedID := strings.TrimSpace(e.Request.URL.Query().Get("techstack_id"))
-	selected := &stacks[0]
-	if selectedID != "" {
-		selected = nil
-		for i := range stacks {
-			if stacks[i].ID == selectedID {
-				selected = &stacks[i]
-				break
-			}
+	selectedID := strings.TrimSpace(e.Request.URL.Query().Get("kit_deployment_id"))
+	if selectedID == "" {
+		return h.monitorHomelabCockpitFromStore(e, ownerID, tenantID, stacks)
+	}
+	var selected *controlplane.Stack
+	for i := range stacks {
+		if stacks[i].ID == selectedID {
+			selected = &stacks[i]
+			break
 		}
-		if selected == nil {
-			return httpx.NotFound(e, "Stack not found")
-		}
+	}
+	if selected == nil {
+		return httpx.NotFound(e, "StackKit deployment not found")
 	}
 
 	ctx := e.Request.Context()
@@ -504,70 +417,125 @@ func (h stackOperationsRouteHandlers) monitorCockpitFromStore(e *httpx.Event) er
 	}
 
 	return httpx.Success(e, http.StatusOK, monitorCockpitPayload{
-		Stacks:      stackItems,
-		TechstackID: selected.ID,
-		Stack:       stackListItemFromControlPlane(selected),
-		Readiness:   readiness,
-		NextSteps:   buildStackNextStepsFromStore(selected, readiness),
-		KPIs:        buildStackKPIs(servers, services, alerts),
-		Servers:     servers,
-		Services:    services,
-		Monitoring:  monitoring,
-		Alerts:      alerts,
-		Jobs:        jobs,
+		Stacks:          stackItems,
+		KitDeploymentID: selected.ID,
+		Stack:           stackListItemFromControlPlane(selected),
+		Readiness:       readiness,
+		NextSteps:       buildStackNextStepsFromStore(selected, readiness),
+		KPIs:            buildStackKPIs(servers, services, alerts),
+		Servers:         servers,
+		Services:        services,
+		Monitoring:      monitoring,
+		Alerts:          alerts,
+		Jobs:            jobs,
 	})
 }
 
-func (h stackOperationsRouteHandlers) serverDetails(e *httpx.Event) error {
-	if h.useControlPlaneStore(e) {
-		return h.serverDetailsFromStore(e)
-	}
-
-	stack, ownerID, err := h.ownedStack(e)
-	if err != nil {
-		return err
-	}
-
-	serverID := strings.TrimSpace(e.Request.PathValue("serverId"))
-	if serverID == "" {
-		return httpx.BadRequest(e, "Server ID is required", nil)
-	}
-
+// monitorHomelabCockpitFromStore is the product-facing monitoring read. One
+// owner has one Homelab; the canonical stacks beneath it are StackKit
+// deployments, never selectable Homelabs.
+func (h stackOperationsRouteHandlers) monitorHomelabCockpitFromStore(e *httpx.Event, ownerID, tenantID string, deployments []controlplane.Stack) error {
 	ctx := e.Request.Context()
-	tenantID := requestTenantID(e, ownerID)
-	servers, err := h.operationServers(ctx, ownerID, tenantID, requestExplicitTenantID(e), stack.Id)
-	if err != nil {
-		return managedRuntimeInventoryUnavailable(e)
-	}
-	server, found := findOperationServer(servers, serverID)
-	if !found {
-		return httpx.NotFound(e, "Server not found for stack")
-	}
-	services := servicesForServer(h.operationServices(stack, servers, tenantID), server)
-	checks := []PreCheckResultResponse{}
-	if server.Source != managedRuntimeInventorySource {
-		worker, err := h.app.FindRecordById("workers", serverID)
+	projections := make([]homelabCockpitDeployment, 0, len(deployments))
+	for i := range deployments {
+		deployment := &deployments[i]
+		deploymentServers, _, err := h.operationServersFromStore(ctx, ownerID, tenantID, deployment.ID)
 		if err != nil {
-			return httpx.NotFound(e, "Server not found")
+			return managedRuntimeInventoryUnavailable(e)
 		}
-		if worker.GetString("owner_id") != ownerID {
-			return httpx.Forbidden(e, "Not allowed")
-		}
-		if workerStackID := worker.GetString("stack_id"); workerStackID != "" && workerStackID != stack.Id {
-			return httpx.NotFound(e, "Server not found for stack")
-		}
-		checks = h.serverPreChecks(ownerID, stack.Id, worker.Id)
+		deploymentServices := h.operationServicesFromStore(ctx, tenantID, deployment, deploymentServers)
+		deploymentAlerts, deploymentUnscopedAlerts := h.operationAlerts(deployment.ID, deploymentServers)
+		deploymentJobs, latestFailure := h.stackJobsAndFailureFromStore(ctx, tenantID, deployment.ID)
+		projections = append(projections, homelabCockpitDeployment{
+			HomelabID: strings.TrimSpace(deployment.HomelabID),
+			Readiness: buildStackReadinessFromStore(deployment, deploymentServers, latestFailure),
+			Servers:   deploymentServers, Services: deploymentServices, Alerts: deploymentAlerts,
+			Jobs: deploymentJobs, UnscopedAlerts: deploymentUnscopedAlerts,
+		})
 	}
+	payload, err := h.buildHomelabCockpitPayload(ctx, projections)
+	if err != nil {
+		return httpx.NewInternalServerError(err.Error(), nil)
+	}
+	return httpx.Success(e, http.StatusOK, payload)
+}
 
-	return httpx.Success(e, http.StatusOK, stackServerDetailsPayload{
-		Stack:      stackListItemFromRecord(stack),
-		Server:     server,
-		Services:   services,
-		Checks:     checks,
-		Logs:       h.serverLogs(stack.Id, server),
-		Health:     server.Health,
-		Monitoring: h.monitoringSummary(ctx),
-	})
+// homelabCockpitDeployment is the thin canonical storage-adapter output. All
+// combining rules live in buildHomelabCockpitPayload.
+type homelabCockpitDeployment struct {
+	HomelabID      string
+	Readiness      stackReadiness
+	Servers        []stackOperationServer
+	Services       []stackOperationService
+	Alerts         []stackOperationAlertState
+	Jobs           []monitorCockpitJob
+	UnscopedAlerts int
+}
+
+func (h stackOperationsRouteHandlers) buildHomelabCockpitPayload(ctx context.Context, deployments []homelabCockpitDeployment) (monitorCockpitPayload, error) {
+	readiness := homelabReadiness()
+	servers := make([]stackOperationServer, 0)
+	services := make([]stackOperationService, 0)
+	alerts := make([]stackOperationAlertState, 0)
+	jobs := make([]monitorCockpitJob, 0)
+	homelabID := ""
+	unscopedAlerts := 0
+	for _, deployment := range deployments {
+		if homelabID != "" && deployment.HomelabID != "" && deployment.HomelabID != homelabID {
+			return monitorCockpitPayload{}, fmt.Errorf("owned StackKit deployments span multiple Homelabs")
+		}
+		if homelabID == "" {
+			homelabID = deployment.HomelabID
+		}
+		mergeHomelabReadiness(&readiness, deployment.Readiness)
+		servers = append(servers, deployment.Servers...)
+		services = append(services, deployment.Services...)
+		alerts = append(alerts, deployment.Alerts...)
+		jobs = append(jobs, deployment.Jobs...)
+		unscopedAlerts += deployment.UnscopedAlerts
+	}
+	monitoring := h.monitoringSummary(ctx)
+	monitoring.UnscopedAlerts = unscopedAlerts
+	return monitorCockpitPayload{
+		HomelabID:          homelabID,
+		KitDeploymentCount: len(deployments),
+		ConnectedServers:   readiness.Connected,
+		Readiness:          readiness,
+		NextSteps:          []stackNextStep{},
+		KPIs:               buildStackKPIs(servers, services, alerts),
+		Servers:            servers,
+		Services:           services,
+		Monitoring:         monitoring,
+		Alerts:             alerts,
+		Jobs:               jobs,
+	}, nil
+}
+
+func homelabReadiness() stackReadiness {
+	return stackReadiness{Status: "observed", Message: "Combined readiness across this Homelab's StackKit deployments."}
+}
+
+func mergeHomelabReadiness(total *stackReadiness, deployment stackReadiness) {
+	total.CanStart = total.CanStart || deployment.CanStart
+	total.Required += deployment.Required
+	total.Approved += deployment.Approved
+	total.Connected += deployment.Connected
+	total.Pending += deployment.Pending
+	total.Assigned += deployment.Assigned
+	total.Available += deployment.Available
+	total.Unassigned += deployment.Unassigned
+	total.ReviewRequired = total.ReviewRequired || deployment.ReviewRequired
+}
+
+func (h stackOperationsRouteHandlers) serverDetails(e *httpx.Event) error {
+	if h.stackStore == nil || h.serverStore == nil || h.serviceStore == nil || h.workerStore == nil || h.registryStore == nil || h.jobStore == nil || h.activityStore == nil {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+			"Server details authority is temporarily unavailable", map[string]any{
+				"reason_code": "server_details_authority_unavailable",
+				"retryable":   true,
+			})
+	}
+	return h.serverDetailsFromStore(e)
 }
 
 func (h stackOperationsRouteHandlers) serverDetailsFromStore(e *httpx.Event) error {
@@ -582,16 +550,20 @@ func (h stackOperationsRouteHandlers) serverDetailsFromStore(e *httpx.Event) err
 	}
 
 	ctx := e.Request.Context()
-	servers, _, err := h.operationServersFromStore(ctx, ownerID, tenantID, stack.ID)
+	inventory, err := h.operationServerInventoryFromStore(ctx, ownerID, tenantID, stack.ID)
 	if err != nil {
 		return managedRuntimeInventoryUnavailable(e)
 	}
+	servers := inventory.Servers
 	server, found := findOperationServer(servers, serverID)
+	if !found {
+		server, found = findOperationServer(inventory.RetiredServers, serverID)
+	}
 	if !found {
 		return httpx.NotFound(e, "Server not found for stack")
 	}
 
-	checks := []PreCheckResultResponse{}
+	checks := []map[string]any{}
 	if server.Source == workerRegistryInventorySource && h.workerStore != nil {
 		worker, err := h.workerStore.GetWorker(ctx, tenantID, serverID)
 		if err != nil {
@@ -606,13 +578,9 @@ func (h stackOperationsRouteHandlers) serverDetailsFromStore(e *httpx.Event) err
 		if workerStackID := strings.TrimSpace(worker.StackID); workerStackID != "" && workerStackID != stack.ID {
 			return httpx.NotFound(e, "Server not found for stack")
 		}
-		checks = h.serverPreChecks(ownerID, stack.ID, worker.ID)
 	}
 
-	logs := []map[string]any{}
-	if h.app != nil {
-		logs = h.serverLogs(stack.ID, server)
-	}
+	logs := h.serverLogs(ctx, tenantID, stack.ID, server)
 
 	return httpx.Success(e, http.StatusOK, stackServerDetailsPayload{
 		Stack:      stackListItemFromControlPlane(stack),
@@ -626,56 +594,14 @@ func (h stackOperationsRouteHandlers) serverDetailsFromStore(e *httpx.Event) err
 }
 
 func (h stackOperationsRouteHandlers) assignWorker(e *httpx.Event) error {
-	if h.useControlPlaneStore(e) && h.workerStore != nil {
-		return h.assignWorkerFromStore(e)
+	if h.stackStore == nil || h.serverStore == nil || h.workerStore == nil {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+			"Worker assignment authority is temporarily unavailable", map[string]any{
+				"reason_code": "worker_assignment_authority_unavailable",
+				"retryable":   true,
+			})
 	}
-
-	stack, ownerID, err := h.ownedStack(e)
-	if err != nil {
-		return err
-	}
-
-	workerID := strings.TrimSpace(e.Request.PathValue("workerId"))
-	if workerID == "" {
-		return httpx.BadRequest(e, "Worker ID is required", nil)
-	}
-
-	worker, err := h.app.FindRecordById("workers", workerID)
-	if err != nil {
-		return httpx.NotFound(e, "Worker not found")
-	}
-	if worker.GetString("owner_id") != ownerID {
-		return httpx.Forbidden(e, "Not allowed")
-	}
-	if !worker.GetBool("approved") || !workerAssignmentStatusAllowed(worker.GetString("status")) {
-		return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "Confirm the server registration before assigning it to a stack", map[string]any{
-			"worker_id": worker.Id,
-		})
-	}
-
-	currentStackID := strings.TrimSpace(worker.GetString("stack_id"))
-	if currentStackID != "" && currentStackID != stack.Id {
-		return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "Worker is already assigned to another stack", map[string]any{
-			"worker_id": worker.Id,
-			"stack_id":  currentStackID,
-		})
-	}
-
-	worker.Set("stack_id", stack.Id)
-	if err := h.app.Save(worker); err != nil {
-		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to assign worker", nil)
-	}
-
-	server := h.operationServerFromWorker(e.Request.Context(), stack.Id, worker)
-	return httpx.Success(e, http.StatusOK, map[string]any{
-		"stack_id":  stack.Id,
-		"worker_id": worker.Id,
-		"server":    server,
-	})
-}
-
-func (h stackOperationsRouteHandlers) useControlPlaneStore(e *httpx.Event) bool {
-	return h.stackStore != nil && requestExplicitTenantID(e) != ""
+	return h.assignWorkerFromStore(e)
 }
 
 func (h stackOperationsRouteHandlers) assignWorkerFromStore(e *httpx.Event) error {
@@ -693,7 +619,10 @@ func (h stackOperationsRouteHandlers) assignWorkerFromStore(e *httpx.Event) erro
 	}
 
 	ctx := e.Request.Context()
-	tenantID := requestTenantID(e, ownerID)
+	tenantID, tenantErr := tenantguard.TenantScope(requestExplicitTenantID(e), ownerID, "techstack.workers.assign")
+	if tenantErr != nil {
+		return tenantErr
+	}
 	stack, err := h.stackStore.GetStack(ctx, tenantID, stackID)
 	if err != nil {
 		if errors.Is(err, controlplane.ErrNotFound) {
@@ -756,9 +685,9 @@ func (h stackOperationsRouteHandlers) assignWorkerFromStore(e *httpx.Event) erro
 	}
 	server := h.operationServerFromControlPlaneWorker(ctx, ownerID, stack.ID, updated)
 	return httpx.Success(e, http.StatusOK, map[string]any{
-		"stack_id":  stack.ID,
-		"worker_id": updated.ID,
-		"server":    server,
+		"kit_deployment_id": stack.ID,
+		"worker_id":         updated.ID,
+		"server":            server,
 	})
 }
 
@@ -899,64 +828,6 @@ func validateWorkerRuntimeAssignment(
 	return nil
 }
 
-func (h stackOperationsRouteHandlers) ownedStack(e *httpx.Event) (*core.Record, string, error) {
-	ownerID, authErr := requireAuth(e)
-	if authErr != nil {
-		return nil, "", authErr
-	}
-	stackID := strings.TrimSpace(e.Request.PathValue("id"))
-	if stackID == "" {
-		return nil, "", httpx.NewBadRequestError("Stack ID is required", nil)
-	}
-	stack, err := h.app.FindRecordById("stacks", stackID)
-	if err != nil {
-		return nil, "", httpx.NewNotFoundError("Stack not found", nil)
-	}
-	// An explicit hosted tenant is authoritative even while the operations
-	// read model is falling back to PocketBase during the migration window.
-	// Owner subjects may belong to more than one organization, so owner_id
-	// alone must never make another tenant's legacy stack visible. Tenantless
-	// legacy rows also stay fail-closed until the startup backfill assigns
-	// their durable tenant boundary.
-	if tenantID := requestExplicitTenantID(e); tenantID != "" && strings.TrimSpace(stack.GetString("tenant_id")) != tenantID {
-		return nil, "", httpx.NewNotFoundError("Stack not found", nil)
-	}
-	if stack.GetString("owner_id") != ownerID {
-		return nil, "", httpx.NewForbiddenError("Not your stack", nil)
-	}
-	// A soft-deleted stack must read as gone, exactly like the control-plane
-	// store's "deleted_at IS NULL" filter. Without this the operations endpoint
-	// keeps serving a pruned stack (a ghost that blocks a clean re-create).
-	if !stack.GetDateTime("deleted_at").IsZero() {
-		return nil, "", httpx.NewNotFoundError("Stack not found", nil)
-	}
-	return stack, ownerID, nil
-}
-
-func (h stackOperationsRouteHandlers) ownedStacks(ownerID string) ([]*core.Record, error) {
-	records, err := h.app.FindRecordsByFilter(
-		"stacks",
-		"owner_id = {:ownerId}",
-		"-updated",
-		100,
-		0,
-		map[string]any{"ownerId": ownerID},
-	)
-	if err != nil {
-		return nil, err
-	}
-	// Exclude soft-deleted stacks, matching the control-plane store's
-	// "deleted_at IS NULL" filter. Filtered in Go because PocketBase's
-	// null-datetime filter syntax is inconsistent across field types.
-	live := make([]*core.Record, 0, len(records))
-	for _, r := range records {
-		if r.GetDateTime("deleted_at").IsZero() {
-			live = append(live, r)
-		}
-	}
-	return live, nil
-}
-
 func (h stackOperationsRouteHandlers) ownedControlPlaneStack(e *httpx.Event) (*controlplane.Stack, string, string, error) {
 	ownerID, authErr := requireAuth(e)
 	if authErr != nil {
@@ -966,7 +837,10 @@ func (h stackOperationsRouteHandlers) ownedControlPlaneStack(e *httpx.Event) (*c
 	if stackID == "" {
 		return nil, "", "", httpx.NewBadRequestError("Stack ID is required", nil)
 	}
-	tenantID := requestTenantID(e, ownerID)
+	tenantID, tenantErr := tenantguard.TenantScope(requestExplicitTenantID(e), ownerID, "techstack.stack.operations.read")
+	if tenantErr != nil {
+		return nil, "", "", tenantErr
+	}
 	stack, err := h.stackStore.GetStack(e.Request.Context(), tenantID, stackID)
 	if err != nil {
 		if errors.Is(err, controlplane.ErrNotFound) {
@@ -1010,6 +884,7 @@ func stackListItemFromControlPlane(stack *controlplane.Stack) map[string]any {
 	))
 	return map[string]any{
 		"id":                              stack.ID,
+		"kit_deployment_id":               stack.ID,
 		"name":                            stack.Name,
 		"mode":                            stack.Mode,
 		"status":                          stack.Status,
@@ -1043,49 +918,6 @@ func stackListItemFromControlPlane(stack *controlplane.Stack) map[string]any {
 	}
 }
 
-func (h stackOperationsRouteHandlers) stackJobs(stackID string) []monitorCockpitJob {
-	jobs, err := h.app.FindRecordsByFilter(
-		"jobs",
-		"stack_id = {:stackId}",
-		"-updated",
-		20,
-		0,
-		map[string]any{"stackId": stackID},
-	)
-	if err != nil {
-		return []monitorCockpitJob{}
-	}
-	result := make([]monitorCockpitJob, 0, len(jobs))
-	for _, job := range jobs {
-		state, waitReason, nextResumeAt := apiJobWaitProjection(
-			firstNonEmptyString(job.GetString("state"), "pending"),
-			job.Get("result"),
-		)
-		resumeAvailableAt, resumeAvailable := apiJobResumeAvailability(waitReason, nextResumeAt, time.Now().UTC())
-		result = append(result, monitorCockpitJob{
-			ID:                job.Id,
-			Type:              job.GetString("type"),
-			State:             state,
-			Progress:          job.GetInt("progress"),
-			Step:              job.GetString("step"),
-			Message:           job.GetString("message"),
-			Error:             firstNonEmptyString(job.GetString("error"), job.GetString("error_message")),
-			WaitReason:        waitReason,
-			NextResumeAt:      nextResumeAt,
-			ResumeAvailableAt: resumeAvailableAt,
-			ResumeAvailable:   resumeAvailable,
-			CreatedAt:         job.GetDateTime("created").String(),
-			UpdatedAt:         job.GetDateTime("updated").String(),
-		})
-	}
-	return result
-}
-
-func (h stackOperationsRouteHandlers) stackJobsFromStore(ctx context.Context, tenantID, stackID string) []monitorCockpitJob {
-	jobs, _ := h.stackJobsAndFailureFromStore(ctx, tenantID, stackID)
-	return jobs
-}
-
 // stackJobsAndFailureFromStore reads the stack's recent jobs once and derives
 // both projections callers need from that single snapshot.
 func (h stackOperationsRouteHandlers) stackJobsAndFailureFromStore(
@@ -1114,28 +946,6 @@ func (h stackOperationsRouteHandlers) latestStackFailureFromStore(ctx context.Co
 		return nil
 	}
 	return latestStackFailureFromJobs(jobs)
-}
-
-// latestStackFailureFromLegacyJobs applies the same "current attempt" rule to
-// the PocketBase lane. Without it the legacy readiness message could never name
-// the operation that failed, and a failed teardown would read like a failed
-// rollout - the exact confusion the typed message exists to remove. The legacy
-// records carry no lease or runtime diagnostics, so the projection stays thin.
-func latestStackFailureFromLegacyJobs(jobs []monitorCockpitJob) *stackLatestFailure {
-	if len(jobs) == 0 || !isFailedJobState(jobs[0].State) {
-		return nil
-	}
-	job := jobs[0]
-	return &stackLatestFailure{
-		JobID:     job.ID,
-		Type:      job.Type,
-		State:     job.State,
-		Step:      job.Step,
-		Message:   job.Message,
-		Error:     job.Error,
-		CreatedAt: job.CreatedAt,
-		UpdatedAt: job.UpdatedAt,
-	}
 }
 
 func latestStackFailureFromJobs(jobs []controlplane.Job) *stackLatestFailure {
@@ -1363,172 +1173,67 @@ func appendUniqueString(values []string, value string) []string {
 	return append(values, value)
 }
 
-func stackListItemFromRecord(stack *core.Record) map[string]any {
-	catalogRef := normalizeRegistryStackKitFoundation(stack.GetString("stackkit_catalog_ref"))
-	return map[string]any{
-		"id":                              stack.Id,
-		"name":                            stack.GetString("name"),
-		"mode":                            stack.GetString("mode"),
-		"status":                          stack.GetString("status"),
-		"state":                           stack.GetString("status"),
-		"runtime_phase":                   stack.GetString("runtime_phase"),
-		"server_mode":                     stack.GetString("server_mode"),
-		"runtime_lane":                    stack.GetString("runtime_lane"),
-		"runtime_offering_id":             stack.GetString("runtime_offering_id"),
-		"lease_provider":                  stack.GetString("lease_provider"),
-		"provider_region":                 stack.GetString("provider_region"),
-		"ionos_datacenter":                stack.GetString("ionos_datacenter"),
-		"lease_id":                        stack.GetString("lease_id"),
-		"simulate_provider_id":            stack.GetString("simulate_provider_id"),
-		"simulate_node_lifecycle":         stack.GetString("simulate_node_lifecycle"),
-		"desired_state":                   stack.GetString("desired_state"),
-		"billing_mode":                    stack.GetString("billing_mode"),
-		"billing_cadence":                 stack.GetString("billing_cadence"),
-		"catalog_ref":                     catalogRef,
-		"stackkit_catalog_ref":            catalogRef,
-		"verification_status":             stack.GetString("verification_status"),
-		"server_provisioning_mode":        stack.GetString("server_provisioning_mode"),
-		"server_connection_mode":          stack.GetString("server_connection_mode"),
-		"server_remote_host_present":      stack.GetBool("server_remote_host_present"),
-		"server_remote_user_present":      stack.GetBool("server_remote_user_present"),
-		"server_remote_auth_method":       stack.GetString("server_remote_auth_method"),
-		"server_remote_credential_ref":    stack.GetString("server_remote_credential_ref"),
-		"server_remote_use_sudo":          stack.GetBool("server_remote_use_sudo"),
-		"server_install_command_required": stack.GetBool("server_install_command_required"),
-		"created":                         stack.GetString("created"),
-		"updated":                         stack.GetString("updated"),
-	}
-}
-
-func (h stackOperationsRouteHandlers) operationServers(ctx context.Context, ownerID, tenantID, explicitTenantID, stackID string) ([]stackOperationServer, error) {
-	managedRuntimeItems, err := projectManagedRuntimeLeasesChecked(ctx, h.managedRuntimeLeases, tenantID, ownerID, stackID)
-	if err != nil {
-		return nil, err
-	}
-	servers := []stackOperationServer{}
-	hasStackRegistryNode := false
-	if h.registryStore != nil {
-		nodes, err := h.registryStore.ListNodesByStack(ctx, tenantID, stackID)
-		if err == nil {
-			for _, node := range nodes {
-				servers = append(servers, h.operationServerFromControlPlaneNode(ctx, stackID, node))
-			}
-			hasStackRegistryNode = len(nodes) > 0
-		}
-	}
-	workerFilter := "owner_id = {:ownerId} && (stack_id = {:stackId} || stack_id = '')"
-	workerParams := map[string]any{"ownerId": ownerID, "stackId": stackID}
-	if explicitTenantID = strings.TrimSpace(explicitTenantID); explicitTenantID != "" {
-		// Unassigned workers are not stack children yet. In hosted mode their
-		// tenant binding must therefore be applied explicitly; owner_id alone is
-		// not an isolation boundary for a subject that belongs to multiple orgs.
-		workerFilter = "tenant_id = {:tenantId} && " + workerFilter
-		workerParams["tenantId"] = explicitTenantID
-	}
-	records, err := h.app.FindRecordsByFilter(
-		"workers",
-		workerFilter,
-		"hostname",
-		200,
-		0,
-		workerParams,
-	)
-	if err != nil {
-		return servers, nil
-	}
-
-	for _, record := range records {
-		if hasStackRegistryNode && strings.TrimSpace(record.GetString("stack_id")) == stackID {
-			continue
-		}
-		servers = append(servers, h.operationServerFromWorker(ctx, stackID, record))
-	}
-	if !hasStackRegistryNode {
-		for _, item := range managedRuntimeItems {
-			server := stackServerFromManagedRuntime(item)
-			h.applyManagedRuntimeMetrics(ctx, &server)
-			servers = append(servers, server)
-		}
-	}
-	applyManagedRuntimeAuthorityToServers(servers, managedRuntimeItems)
-	servers = dedupeOperationServers(servers)
-	sort.SliceStable(servers, func(i, j int) bool {
-		if servers[i].Assignment != servers[j].Assignment {
-			return servers[i].Assignment < servers[j].Assignment
-		}
-		return strings.ToLower(servers[i].Hostname) < strings.ToLower(servers[j].Hostname)
-	})
-	return servers, nil
-}
-
 func (h stackOperationsRouteHandlers) operationServersFromStore(ctx context.Context, ownerID, tenantID, stackID string) ([]stackOperationServer, []stackCustodyLease, error) {
+	inventory, err := h.operationServerInventoryFromStore(ctx, ownerID, tenantID, stackID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return inventory.Servers, inventory.CustodyLeases, nil
+}
+
+func (h stackOperationsRouteHandlers) operationServerInventoryFromStore(ctx context.Context, ownerID, tenantID, stackID string) (operationServerInventory, error) {
 	allManagedItems, err := projectManagedRuntimeLeasesChecked(ctx, h.managedRuntimeLeases, tenantID, ownerID, stackID)
 	if err != nil {
-		return nil, nil, err
+		return operationServerInventory{}, err
 	}
-	canonical, err := h.canonicalOperationServers(ctx, ownerID, tenantID, stackID)
+	canonical, terminal, err := h.canonicalOperationServers(ctx, ownerID, tenantID, stackID)
 	if err != nil {
-		return nil, nil, err
+		return operationServerInventory{}, err
 	}
+	terminal = retiredOperationServersWithoutActiveSlot(canonical, terminal)
 	// A lease only becomes a server with positive machine evidence. Everything
 	// else is reported separately so a deleted VM cannot keep presenting as
 	// infrastructure.
 	managedRuntimeItems, custodyLeases := splitManagedRuntimeLeasesByMachineEvidence(allManagedItems, canonical)
-	servers := []stackOperationServer{}
-	hasStackRegistryNode := false
-	if h.registryStore != nil {
-		nodes, err := h.registryStore.ListNodesByStack(ctx, tenantID, stackID)
-		if err == nil {
-			for _, node := range nodes {
-				servers = append(servers, h.operationServerFromControlPlaneNode(ctx, stackID, node))
-			}
-			hasStackRegistryNode = len(nodes) > 0
-		}
-	}
-	if h.workerStore == nil {
-		servers = h.appendManagedRuntimeLeaseProjections(ctx, servers, managedRuntimeItems, !hasStackRegistryNode)
-		return h.finalizeOperationServers(ctx, tenantID, stackID, canonical, servers, managedRuntimeItems), custodyLeases, nil
-	}
-	servers = h.appendLegacyWorkerServers(ctx, servers, ownerID, tenantID, stackID, hasStackRegistryNode)
-	servers = h.appendManagedRuntimeLeaseProjections(ctx, servers, managedRuntimeItems, !hasStackRegistryNode)
-	return h.finalizeOperationServers(ctx, tenantID, stackID, canonical, servers, managedRuntimeItems), custodyLeases, nil
+	servers := h.appendAssignableWorkers(ctx, nil, ownerID, tenantID, stackID)
+	servers = h.appendManagedRuntimeLeaseProjections(ctx, servers, managedRuntimeItems, len(canonical) == 0)
+	return operationServerInventory{
+		Servers:        h.finalizeOperationServers(ctx, tenantID, stackID, canonical, terminal, servers, managedRuntimeItems),
+		RetiredServers: terminal,
+		CustodyLeases:  custodyLeases,
+	}, nil
 }
 
-// appendLegacyWorkerServers adds the legacy control-plane worker rows and
-// re-projects registry-node snapshots from the live worker heartbeat, so a
-// formerly connected node cannot stay green forever after its agent stops.
-func (h stackOperationsRouteHandlers) appendLegacyWorkerServers(
-	ctx context.Context,
-	servers []stackOperationServer,
-	ownerID, tenantID, stackID string,
-	hasStackRegistryNode bool,
-) []stackOperationServer {
+func retiredOperationServersWithoutActiveSlot(active, retired []stackOperationServer) []stackOperationServer {
+	activeSlots := map[string]struct{}{}
+	for _, server := range active {
+		if slot, _ := server.Capabilities["runtime_slot_key"].(string); strings.TrimSpace(slot) != "" {
+			activeSlots[strings.TrimSpace(slot)] = struct{}{}
+		}
+	}
+	visible := make([]stackOperationServer, 0, len(retired))
+	for _, server := range retired {
+		slot, _ := server.Capabilities["runtime_slot_key"].(string)
+		if _, replaced := activeSlots[strings.TrimSpace(slot)]; strings.TrimSpace(slot) != "" && replaced {
+			continue
+		}
+		visible = append(visible, server)
+	}
+	return visible
+}
+
+// appendAssignableWorkers keeps unassigned Guard agents available to the stack
+// assignment action without treating assigned worker rows as server authority.
+func (h stackOperationsRouteHandlers) appendAssignableWorkers(ctx context.Context, servers []stackOperationServer, ownerID, tenantID, stackID string) []stackOperationServer {
 	workers, err := h.workerStore.ListWorkersByTenant(ctx, tenantID)
 	if err != nil {
 		return servers
 	}
-	workersByID := map[string]*controlplane.Worker{}
-	for i := range workers {
-		worker := &workers[i]
-		if worker.OwnerSubjectID != ownerID {
-			continue
+	for index := range workers {
+		worker := &workers[index]
+		if worker.OwnerSubjectID == ownerID && strings.TrimSpace(worker.StackID) == "" {
+			servers = append(servers, h.operationServerFromControlPlaneWorker(ctx, ownerID, stackID, worker))
 		}
-		workerStackID := strings.TrimSpace(worker.StackID)
-		if workerStackID != "" && workerStackID != stackID {
-			continue
-		}
-		workersByID[worker.ID] = worker
-		if hasStackRegistryNode && workerStackID == stackID {
-			continue
-		}
-		servers = append(servers, h.operationServerFromControlPlaneWorker(ctx, ownerID, stackID, worker))
-	}
-	for index := range servers {
-		server := &servers[index]
-		if server.Source != "registry-store" {
-			continue
-		}
-		h.applyRegistryServerHeartbeat(server, workersByID[server.AgentID])
 	}
 	return servers
 }
@@ -1593,11 +1298,45 @@ func isDestroyFailure(jobType string) bool {
 	}
 }
 
+func leaseStillPresent(leaseID string, servers []stackOperationServer, custody []stackCustodyLease) bool {
+	leaseID = strings.TrimSpace(leaseID)
+	if leaseID == "" {
+		return false
+	}
+	for _, server := range servers {
+		if strings.TrimSpace(server.LeaseID) == leaseID {
+			return true
+		}
+	}
+	for _, item := range custody {
+		if strings.TrimSpace(item.LeaseID) == leaseID {
+			return true
+		}
+	}
+	return false
+}
+
 func activeStackFailure(failure *stackLatestFailure, servers []stackOperationServer, custody []stackCustodyLease) *stackLatestFailure {
-	if failure != nil && isDestroyFailure(failure.Type) && len(servers) == 0 && len(custody) == 0 {
+	if failure == nil {
 		return nil
 	}
-	return failure
+	if !isDestroyFailure(failure.Type) {
+		return failure
+	}
+	leaseID := strings.TrimSpace(failure.LeaseID)
+	if leaseID != "" {
+		if leaseStillPresent(leaseID, servers, custody) {
+			return failure
+		}
+		return nil
+	}
+	// Unnamed destroy jobs stay on the operations surface only while cleanup
+	// inventory remains and no current Node is running. A healthy Node plus a
+	// weeks-old destroy record is history, not the default dashboard state.
+	if len(servers) == 0 && len(custody) > 0 {
+		return failure
+	}
+	return nil
 }
 
 // A failed destroy remains useful history, but it is no longer the current
@@ -1620,8 +1359,8 @@ func reconcileResolvedDestroyReadiness(
 	return readiness
 }
 
-func (h stackOperationsRouteHandlers) finalizeOperationServers(ctx context.Context, tenantID, stackID string, canonical, projections []stackOperationServer, managedRuntimeItems []managedRuntimeInventoryItem) []stackOperationServer {
-	servers := mergeCanonicalOperationServers(canonical, projections)
+func (h stackOperationsRouteHandlers) finalizeOperationServers(ctx context.Context, tenantID, stackID string, canonical, terminal, projections []stackOperationServer, managedRuntimeItems []managedRuntimeInventoryItem) []stackOperationServer {
+	servers := mergeCanonicalOperationServers(canonical, terminal, projections)
 	markNonCanonicalOperationServerHealthUnverified(servers)
 	// Execution authority is an immutable lease boundary. Apply it after the
 	// canonical merge so a fresh Guard row cannot make a quarantined lease
@@ -1672,16 +1411,17 @@ func canonicalServerPreCheckState(runtime controlplane.ServerRuntime) string {
 	}
 }
 
-func (h stackOperationsRouteHandlers) canonicalOperationServers(ctx context.Context, ownerID, tenantID, stackID string) ([]stackOperationServer, error) {
+func (h stackOperationsRouteHandlers) canonicalOperationServers(ctx context.Context, ownerID, tenantID, stackID string) ([]stackOperationServer, []stackOperationServer, error) {
 	if h.serverStore == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	runtimes, err := h.serverStore.ListServerRuntimesByTenant(ctx, tenantID, stackID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	observedAt := time.Now().UTC()
 	servers := make([]stackOperationServer, 0, len(runtimes))
+	terminal := make([]stackOperationServer, 0)
 	for _, runtime := range runtimes {
 		if runtime.OwnerSubjectID != ownerID {
 			continue
@@ -1691,6 +1431,7 @@ func (h stackOperationsRouteHandlers) canonicalOperationServers(ctx context.Cont
 		// and its transition history, but must not keep contributing a server
 		// card, KPI, or readiness input after lifecycle completion.
 		if runtime.LifecycleState == string(serverregistry.LifecycleDecommissioned) {
+			terminal = append(terminal, terminalOperationServer(runtime, observedAt))
 			continue
 		}
 		// Persisted canonical state is the truth. The registry sweeper is the
@@ -1711,11 +1452,12 @@ func (h stackOperationsRouteHandlers) canonicalOperationServers(ctx context.Cont
 			dashboardHealth = connection
 		}
 		server := stackOperationServer{
-			ID: runtime.ID, ServerID: runtime.ID, Hostname: firstNonEmptyString(runtime.Name, runtime.ID), Role: "primary",
-			Status: connection, Assignment: "stack", TechstackID: runtime.StackID, AgentID: runtime.WorkerID,
+			ID: runtime.ID, ServerID: runtime.ID, Hostname: firstNonEmptyString(serverRuntimeDisplayName(runtime, serverregistry.NormalizeRuntimeTarget(runtime.RuntimeTarget)), runtime.ID), Role: "primary",
+			Status: connection, Assignment: "stack", KitDeploymentID: runtime.StackID, AgentID: runtime.WorkerID,
 			LastSeen: lastSeen, Approved: runtime.LifecycleState == string(serverregistry.LifecycleActive),
 			PreCheck: canonicalServerPreCheckState(runtime), Source: "canonical-server", LeaseID: runtime.LeaseID,
 			DesiredState: runtime.DesiredState, Assignable: false,
+			LastOutcome: outcome.Clone(runtime.LastOutcome),
 			Capabilities: map[string]any{
 				"lifecycle_state": runtime.LifecycleState, "connection_state": connection,
 				"health_state": health, "reason_code": runtime.ReasonCode,
@@ -1730,18 +1472,73 @@ func (h stackOperationsRouteHandlers) canonicalOperationServers(ctx context.Cont
 			heartbeatAt: heartbeatAt,
 			observedAt:  observedAt,
 		}
+		server.Capabilities = workerOperationCapabilitiesFromMetadata(server.Capabilities, runtime.Metadata)
+		applyManagedRuntimeIdentityCapabilities(server.Capabilities, runtime.Metadata)
 		applyServerInventoryMetadata(&server, runtime.Metadata, "canonical-server")
+		if label := serverregistry.HostingerServerLabel(serverRuntimeDisplayName(runtime, serverregistry.NormalizeRuntimeTarget(runtime.RuntimeTarget))); label != "" {
+			server.Hostname = label
+		}
 		servers = append(servers, server)
 	}
-	return servers, nil
+	return servers, terminal, nil
 }
 
-func mergeCanonicalOperationServers(canonical, legacy []stackOperationServer) []stackOperationServer {
+func terminalOperationServer(runtime controlplane.ServerRuntime, observedAt time.Time) stackOperationServer {
+	role := nodehandoff.NormalizeNodeRole(nodehandoff.StringFromMap(runtime.Metadata, nodehandoff.KeyServerNodeRole))
+	if role == "" {
+		role = nodehandoff.NormalizeNodeRole(nodehandoff.StringFromMap(runtime.Metadata, "node_role"))
+	}
+	if role == "" {
+		role = "worker"
+	}
+	capabilities := map[string]any{
+		"lifecycle_state":  runtime.LifecycleState,
+		"connection_state": runtime.ConnectionState,
+		"health_state":     runtime.HealthState,
+		"reason_code":      runtime.ReasonCode,
+		"provider":         runtime.ProviderRef,
+	}
+	applyManagedRuntimeIdentityCapabilities(capabilities, runtime.Metadata)
+	return stackOperationServer{
+		ID: runtime.ID, ServerID: runtime.ID, Hostname: firstNonEmptyString(runtime.Name, runtime.ID),
+		Role: role, Status: string(serverregistry.LifecycleDecommissioned), Assignment: "stack",
+		KitDeploymentID: runtime.StackID, AgentID: runtime.WorkerID, Approved: false,
+		PreCheck: "not_applicable", Source: "canonical-tombstone", LeaseID: runtime.LeaseID,
+		DesiredState: runtime.DesiredState, Assignable: false, Capabilities: capabilities,
+		LastOutcome: outcome.Clone(runtime.LastOutcome),
+		Health: stackServerHealth{
+			State: "unknown", Source: "canonical-tombstone",
+			CPUPercent: metricUnknown("%"), MemoryPercent: metricUnknown("%"),
+			DiskPercent: metricUnknown("%"), UptimeSeconds: metricUnknown("s"),
+			Notes: []string{"server generation is decommissioned"},
+		},
+		observedAt: observedAt,
+	}
+}
+
+func applyManagedRuntimeIdentityCapabilities(capabilities map[string]any, metadata map[string]any) {
+	for _, key := range []string{"runtime_slot_key", "runtime_slot_id", "runtime_slot_generation", "runtime_offering_id", "stackkit"} {
+		if value := nodehandoff.StringFromMap(metadata, key); value != "" {
+			capabilities[key] = value
+		}
+	}
+}
+
+func mergeCanonicalOperationServers(canonical, terminal, legacy []stackOperationServer) []stackOperationServer {
 	if len(canonical) == 0 {
-		return dedupeOperationServers(legacy)
+		result := make([]stackOperationServer, 0, len(legacy))
+		for _, candidate := range legacy {
+			if !operationServerMatchesAny(candidate, terminal) {
+				result = append(result, candidate)
+			}
+		}
+		return dedupeOperationServers(result)
 	}
 	result := append([]stackOperationServer{}, canonical...)
 	for _, candidate := range legacy {
+		if operationServerMatchesAny(candidate, terminal) {
+			continue
+		}
 		representedAt := -1
 		for index, runtime := range canonical {
 			if sameOperationServerIdentity(candidate, runtime) {
@@ -1756,6 +1553,15 @@ func mergeCanonicalOperationServers(canonical, legacy []stackOperationServer) []
 		mergeOperationServerFallback(&result[representedAt], candidate)
 	}
 	return dedupeOperationServers(result)
+}
+
+func operationServerMatchesAny(candidate stackOperationServer, references []stackOperationServer) bool {
+	for _, reference := range references {
+		if sameOperationServerIdentity(candidate, reference) {
+			return true
+		}
+	}
+	return false
 }
 
 func dedupeOperationServers(servers []stackOperationServer) []stackOperationServer {
@@ -1987,7 +1793,12 @@ func serverEndpointsFromAny(value any, defaults stackServerEndpoint) []stackServ
 				items = append(items, values)
 			}
 		}
-	case types.JSONRaw:
+	case json.RawMessage:
+		var decoded any
+		if err := json.Unmarshal(typed, &decoded); err == nil {
+			return serverEndpointsFromAny(decoded, defaults)
+		}
+	case []byte:
 		var decoded any
 		if err := json.Unmarshal(typed, &decoded); err == nil {
 			return serverEndpointsFromAny(decoded, defaults)
@@ -2348,177 +2159,12 @@ func managedRuntimeLeaseRepresentsServer(server stackOperationServer, item manag
 	return item.RuntimeHost != "" && (server.IP == item.RuntimeHost || stringFromAnyMap(server.Capabilities, "runtime_ssh_host") == item.RuntimeHost)
 }
 
-func (h stackOperationsRouteHandlers) operationServerFromWorker(ctx context.Context, stackID string, worker *core.Record) stackOperationServer {
-	workerStackID := worker.GetString("stack_id")
-	assignment := "unassigned"
-	if workerStackID == stackID {
-		assignment = "stack"
-	}
-	role := strings.TrimSpace(worker.GetString("type"))
-	if role == "" {
-		role = "worker"
-	}
-	lastSeen := worker.GetDateTime("last_seen").String()
-	approvedAt := worker.GetDateTime("approved_at").String()
-	capabilities := workerOperationCapabilitiesFromMetadata(map[string]any{
-		"cpu_cores":        worker.GetFloat("cpu_cores"),
-		"ram_mb":           worker.GetFloat("ram_mb"),
-		"disk_gb":          worker.GetFloat("disk_gb"),
-		"gpu":              worker.GetString("gpu"),
-		"has_nvme":         worker.GetBool("has_nvme"),
-		"has_hw_transcode": worker.GetBool("has_hw_transcode"),
-		"docker_version":   worker.GetString("docker_version"),
-		"provider":         worker.GetString("provider"),
-		"tags":             worker.GetString("tags"),
-		"tenant_id":        worker.GetString("tenant_id"),
-	}, nodehandoff.MetadataFromTags(worker.GetString("tags")))
-
-	return stackOperationServer{
-		ID:           worker.Id,
-		Hostname:     firstNonEmptyString(worker.GetString("hostname"), worker.Id),
-		Role:         role,
-		Status:       workerConnectivityStatus(worker),
-		Assignment:   assignment,
-		TechstackID:  workerStackID,
-		AgentID:      workerAgentID(worker),
-		IP:           worker.GetString("ip"),
-		OS:           worker.GetString("os"),
-		Arch:         worker.GetString("arch"),
-		LastSeen:     lastSeen,
-		Approved:     worker.GetBool("approved"),
-		ApprovedAt:   approvedAt,
-		PreCheck:     h.preCheckState(worker.GetString("owner_id"), stackID, worker.Id),
-		Source:       workerRegistryInventorySource,
-		Assignable:   true,
-		Capabilities: capabilities,
-		Health:       h.serverHealth(ctx, worker),
-	}
-}
-
-func (h stackOperationsRouteHandlers) operationServerFromControlPlaneNode(ctx context.Context, stackID string, node controlplane.Node) stackOperationServer {
-	role := strings.TrimSpace(node.Role)
-	if role == "" {
-		role = managedRuntimeNodeFoundation
-	}
-	name := firstNonEmptyString(node.Name, node.WorkerID, node.ID)
-	address := firstNonEmptyString(
-		node.Address,
-		stringFromAnyMap(node.Metadata, "runtime_public_ip"),
-		stringFromAnyMap(node.Metadata, "runtime_private_ip"),
-		stringFromAnyMap(node.Metadata, "runtime_ssh_host"),
-	)
-	host, _ := mapFromJSONAny(node.Metadata["host"])
-	capabilities := map[string]any{
-		"cpu_cores":          numberFromAnyMaps("cpu_cores", host, node.Metadata),
-		"ram_mb":             numberFromAnyMaps("ram_mb", host, node.Metadata),
-		"disk_gb":            numberFromAnyMaps("disk_gb", host, node.Metadata),
-		"memory_total_bytes": numberFromAnyMaps("memory_total_bytes", host, node.Metadata),
-		"disk_total_bytes":   numberFromAnyMaps("disk_total_bytes", host, node.Metadata),
-		"runtime_ssh_host":   stringFromAnyMap(node.Metadata, "runtime_ssh_host"),
-		"provider":           firstNonEmptyString(stringFromAnyMap(node.Metadata, "provider"), stringFromAnyMap(node.Metadata, "lease_provider")),
-		"source":             firstNonEmptyString(stringFromAnyMap(node.Metadata, "source"), "registry-store"),
-	}
-	server := stackOperationServer{
-		ID:           node.ID,
-		Hostname:     name,
-		Role:         role,
-		Status:       controlPlaneNodeConnectivityStatus(node),
-		Assignment:   "stack",
-		TechstackID:  firstNonEmptyString(node.StackID, stackID),
-		AgentID:      firstNonEmptyString(node.WorkerID, node.ID),
-		IP:           address,
-		OS:           stringFromAnyMap(node.Metadata, "os"),
-		Arch:         stringFromAnyMap(node.Metadata, "arch"),
-		LastSeen:     formatTime(node.UpdatedAt),
-		Approved:     true,
-		ApprovedAt:   formatTime(node.UpdatedAt),
-		PreCheck:     managedRuntimePreCheckManaged,
-		Source:       "registry-store",
-		Assignable:   true,
-		Capabilities: capabilities,
-		Health:       h.controlPlaneNodeHealth(ctx, node),
-	}
-	applyServerInventoryMetadata(&server, node.Metadata, "registry-store")
-	return server
-}
-
-func controlPlaneNodeConnectivityStatus(node controlplane.Node) string {
-	return string(runtimehealth.DeriveServerState(runtimehealth.ServerInput{
-		Now:           time.Now().UTC(),
-		ObservedState: node.Status,
-	}))
-}
-
-func (h stackOperationsRouteHandlers) applyRegistryServerHeartbeat(server *stackOperationServer, worker *controlplane.Worker) {
-	if server == nil {
-		return
-	}
-	var heartbeatAt *time.Time
-	if worker != nil {
-		heartbeatAt = worker.LastSeenAt
-	}
-	state := runtimehealth.DeriveServerState(runtimehealth.ServerInput{
-		Now:           time.Now().UTC(),
-		HeartbeatAt:   heartbeatAt,
-		ObservedState: server.Status,
-	})
-	server.Status = string(state)
-	server.Health.State = string(state)
-	server.Health.Source = "worker-heartbeat"
-	if worker == nil || worker.LastSeenAt == nil || worker.LastSeenAt.IsZero() {
-		server.LastSeen = ""
-		server.Health.UpdatedAt = ""
-		return
-	}
-	server.LastSeen = formatOptionalTime(worker.LastSeenAt)
-	server.Health.UpdatedAt = server.LastSeen
-}
-
-func (h stackOperationsRouteHandlers) controlPlaneNodeHealth(ctx context.Context, node controlplane.Node) stackServerHealth {
-	state := controlPlaneNodeConnectivityStatus(node)
-	updatedAt := formatTime(node.UpdatedAt)
-	host, _ := mapFromJSONAny(node.Metadata["host"])
-	health := stackServerHealth{
-		State:         state,
-		Source:        "registry-store",
-		CPUPercent:    metricFromAnyMaps("%", []string{"runtime_cpu_percent", "cpu_percent"}, host, node.Metadata),
-		MemoryPercent: metricPercentFromInventory(host, node.Metadata, []string{"runtime_memory_percent", "memory_percent"}, "memory_used_bytes", "memory_total_bytes"),
-		DiskPercent:   metricPercentFromInventory(host, node.Metadata, []string{"runtime_disk_percent", "disk_percent"}, "disk_used_bytes", "disk_total_bytes"),
-		UptimeSeconds: metricFromAnyMaps("s", []string{"runtime_uptime_seconds", "uptime_seconds"}, host, node.Metadata),
-		UpdatedAt:     updatedAt,
-	}
-	if h.backend != nil {
-		agentID := promLabelValue(firstNonEmptyString(node.WorkerID, node.ID))
-		source := health.Source
-		metricQueries := map[string]*stackMetricValue{
-			fmt.Sprintf(`avg(node_cpu_usage_percent{agent_id="%s"})`, agentID):    &health.CPUPercent,
-			fmt.Sprintf(`avg(node_memory_usage_percent{agent_id="%s"})`, agentID): &health.MemoryPercent,
-			fmt.Sprintf(`max(node_disk_usage_percent{agent_id="%s"})`, agentID):   &health.DiskPercent,
-			fmt.Sprintf(`max(node_uptime_seconds{agent_id="%s"})`, agentID):       &health.UptimeSeconds,
-		}
-		for query, target := range metricQueries {
-			value, ok := h.queryInstantFloat(ctx, query)
-			if !ok {
-				continue
-			}
-			*target = metricKnown(value, target.Unit)
-			source = "promql"
-		}
-		health.Source = source
-	}
-	if health.CPUPercent.Status != "ok" || health.MemoryPercent.Status != "ok" || health.DiskPercent.Status != "ok" {
-		health.Notes = append(health.Notes, "metrics unknown")
-	}
-	return health
-}
-
 // applyManagedRuntimeMetrics overlays measured telemetry onto a managed-runtime
 // projection server. A managed lease projection carries no telemetry of its own,
 // so without this overlay it always reports "unknown" health behind the honest
 // "provisioned" placeholder. Once the runtime worker reports node_*{agent_id}
 // samples into the TSDB (the same worker-heartbeat path manual nodes use), the
-// real CPU/RAM/disk/uptime replace the placeholders — mirroring
-// controlPlaneNodeHealth so managed and manual nodes read health identically.
+// real CPU/RAM/disk/uptime replace the placeholders.
 func (h stackOperationsRouteHandlers) applyManagedRuntimeMetrics(ctx context.Context, server *stackOperationServer) {
 	if h.backend == nil {
 		return
@@ -2619,24 +2265,24 @@ func (h stackOperationsRouteHandlers) operationServerFromControlPlaneWorker(ctx 
 	}, metadata)
 
 	server := stackOperationServer{
-		ID:           worker.ID,
-		Hostname:     firstNonEmptyString(worker.Hostname, worker.ID),
-		Role:         role,
-		Status:       controlPlaneWorkerConnectivityStatus(worker),
-		Assignment:   assignment,
-		TechstackID:  workerStackID,
-		AgentID:      worker.ID,
-		IP:           worker.IP,
-		OS:           worker.OS,
-		Arch:         worker.Arch,
-		LastSeen:     lastSeen,
-		Approved:     worker.Approved,
-		ApprovedAt:   approvedAt,
-		PreCheck:     h.preCheckState(ownerID, stackID, worker.ID),
-		Source:       workerRegistryInventorySource,
-		Assignable:   true,
-		Capabilities: capabilities,
-		Health:       h.controlPlaneWorkerHealth(ctx, worker),
+		ID:              worker.ID,
+		Hostname:        firstNonEmptyString(worker.Hostname, worker.ID),
+		Role:            role,
+		Status:          controlPlaneWorkerConnectivityStatus(worker),
+		Assignment:      assignment,
+		KitDeploymentID: workerStackID,
+		AgentID:         worker.ID,
+		IP:              worker.IP,
+		OS:              worker.OS,
+		Arch:            worker.Arch,
+		LastSeen:        lastSeen,
+		Approved:        worker.Approved,
+		ApprovedAt:      approvedAt,
+		PreCheck:        registryUnknownStatus,
+		Source:          workerRegistryInventorySource,
+		Assignable:      true,
+		Capabilities:    capabilities,
+		Health:          h.controlPlaneWorkerHealth(ctx, worker),
 	}
 	applyServerInventoryMetadata(&server, metadata, workerRegistryInventorySource)
 	return server
@@ -2745,73 +2391,6 @@ func formatOptionalTime(value *time.Time) string {
 	return value.UTC().Format(time.RFC3339)
 }
 
-func workerAgentID(worker *core.Record) string {
-	if id := strings.TrimSpace(worker.GetString("agent_id")); id != "" {
-		return id
-	}
-	return worker.Id
-}
-
-func workerConnectivityStatus(worker *core.Record) string {
-	if !worker.GetBool("approved") {
-		return "pending"
-	}
-	lastSeen := worker.GetDateTime("last_seen")
-	if lastSeen.IsZero() {
-		return "unknown"
-	}
-	age := time.Since(lastSeen.Time())
-	switch {
-	case age <= 90*time.Second:
-		return "healthy"
-	case age <= 5*time.Minute:
-		return "stale"
-	default:
-		return "offline"
-	}
-}
-
-func (h stackOperationsRouteHandlers) serverHealth(ctx context.Context, worker *core.Record) stackServerHealth {
-	state := workerConnectivityStatus(worker)
-	source := "worker-registry"
-	updatedAt := worker.GetDateTime("last_seen").String()
-
-	health := stackServerHealth{
-		State:         state,
-		Source:        source,
-		CPUPercent:    metricUnknown("%"),
-		MemoryPercent: metricUnknown("%"),
-		DiskPercent:   metricUnknown("%"),
-		UptimeSeconds: metricUnknown("s"),
-		UpdatedAt:     updatedAt,
-	}
-	if h.backend == nil {
-		health.Notes = []string{"metrics unavailable"}
-		return health
-	}
-
-	agentID := promLabelValue(workerAgentID(worker))
-	metricQueries := map[string]*stackMetricValue{
-		fmt.Sprintf(`avg(node_cpu_usage_percent{agent_id="%s"})`, agentID):    &health.CPUPercent,
-		fmt.Sprintf(`avg(node_memory_usage_percent{agent_id="%s"})`, agentID): &health.MemoryPercent,
-		fmt.Sprintf(`max(node_disk_usage_percent{agent_id="%s"})`, agentID):   &health.DiskPercent,
-		fmt.Sprintf(`max(node_uptime_seconds{agent_id="%s"})`, agentID):       &health.UptimeSeconds,
-	}
-	for query, target := range metricQueries {
-		value, ok := h.queryInstantFloat(ctx, query)
-		if !ok {
-			continue
-		}
-		*target = metricKnown(value, target.Unit)
-		source = "promql"
-	}
-	health.Source = source
-	if source != "promql" {
-		health.Notes = []string{"metrics unknown"}
-	}
-	return health
-}
-
 func (h stackOperationsRouteHandlers) queryInstantFloat(parent context.Context, query string) (float64, bool) {
 	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
 	defer cancel()
@@ -2855,15 +2434,6 @@ func metricFromAnyMaps(unit string, keys []string, maps ...map[string]any) stack
 		}
 	}
 	return metricUnknown(unit)
-}
-
-func numberFromAnyMaps(key string, maps ...map[string]any) float64 {
-	for _, values := range maps {
-		if value, ok := float64FromAny(values[key]); ok {
-			return value
-		}
-	}
-	return 0
 }
 
 func float64FromAny(value any) (float64, bool) {
@@ -2912,47 +2482,6 @@ func promLabelValue(value string) string {
 	return strings.ReplaceAll(value, `"`, `\"`)
 }
 
-func (h stackOperationsRouteHandlers) preCheckState(ownerID, stackID, workerID string) string {
-	records, err := h.preCheckRecords(ownerID, stackID, workerID, 20)
-	if err != nil || len(records) == 0 {
-		return "unknown"
-	}
-	status := "passed"
-	for _, record := range records {
-		switch record.GetString(preCheckStatusField) {
-		case "failed":
-			return "failed"
-		case "pending":
-			status = "pending"
-		case "":
-			status = "unknown"
-		}
-	}
-	return status
-}
-
-func (h stackOperationsRouteHandlers) serverPreChecks(ownerID, stackID, workerID string) []PreCheckResultResponse {
-	records, err := h.preCheckRecords(ownerID, stackID, workerID, 50)
-	if err != nil {
-		return nil
-	}
-	return preCheckResultResponses(records)
-}
-
-func (h stackOperationsRouteHandlers) preCheckRecords(ownerID, stackID, workerID string, limit int) ([]*core.Record, error) {
-	if h.app == nil {
-		return nil, nil
-	}
-	return h.app.FindRecordsByFilter(
-		preCheckResultsCollection,
-		"owner_id = {:ownerId} && worker_id = {:workerId} && (stack_id = {:stackId} || stack_id = '')",
-		"-created",
-		limit,
-		0,
-		map[string]any{"ownerId": ownerID, "workerId": workerID, "stackId": stackID},
-	)
-}
-
 func stringListFromAny(value any) []string {
 	switch v := value.(type) {
 	case []string:
@@ -2972,7 +2501,12 @@ func stringListFromAny(value any) []string {
 		}
 		sort.Strings(out)
 		return out
-	case types.JSONRaw:
+	case json.RawMessage:
+		var parsed any
+		if err := json.Unmarshal(v, &parsed); err == nil {
+			return stringListFromAny(parsed)
+		}
+	case []byte:
 		var parsed any
 		if err := json.Unmarshal(v, &parsed); err == nil {
 			return stringListFromAny(parsed)
@@ -2985,8 +2519,6 @@ func mapFromJSONAny(value any) (map[string]any, bool) {
 	switch v := value.(type) {
 	case map[string]any:
 		return v, true
-	case types.JSONRaw:
-		return decodeJSONMap(v)
 	case json.RawMessage:
 		return decodeJSONMap(v)
 	case []byte:

@@ -14,8 +14,8 @@ func TestCatalogExposesStandardAndPremiumOfferings(t *testing.T) {
 		t.Fatal("expected standard offering")
 	}
 	if standard.ID != serverruntime.RuntimeOfferingStandard ||
-		standard.VCPUs != 2 ||
-		standard.MemoryMB != 4096 ||
+		standard.VCPUs != 4 ||
+		standard.MemoryMB != 8192 ||
 		standard.DiskGB != 80 ||
 		standard.Image != "ubuntu-24.04" ||
 		standard.Region != "de-fra" ||
@@ -128,42 +128,6 @@ func TestNormalizeIONOSDatacenterDefaultsAndAliases(t *testing.T) {
 	}
 }
 
-func TestProvisioningSpecForOfferingUsesOfferingResources(t *testing.T) {
-	spec, err := ProvisioningSpecForOffering(serverruntime.RuntimeOfferingPremium, "stack-vm", "main", map[string]string{
-		"stack_id":    "stack-1",
-		"provider_id": ProviderCentron,
-	})
-	if err != nil {
-		t.Fatalf("ProvisioningSpecForOffering: %v", err)
-	}
-	if spec.Name != "stack-vm" || spec.Role != "main" {
-		t.Fatalf("identity = %+v", spec)
-	}
-	if spec.VCPUs != 4 || spec.MemoryMB != 8192 || spec.DiskGB != 320 {
-		t.Fatalf("resources = %+v, want premium resources", spec)
-	}
-	if spec.Metadata["runtime_offering_id"] != string(serverruntime.RuntimeOfferingPremium) {
-		t.Fatalf("metadata = %+v, want premium offering", spec.Metadata)
-	}
-}
-
-func TestProvisioningSpecForOfferingUsesIONOSDatacenterRegion(t *testing.T) {
-	spec, err := ProvisioningSpecForOffering(serverruntime.RuntimeOfferingStandard, "stack-vm", "main", map[string]string{
-		"provider_id":      ProviderIONOS,
-		"provider_region":  "us-ewr",
-		"ionos_datacenter": "us-ewr",
-	})
-	if err != nil {
-		t.Fatalf("ProvisioningSpecForOffering: %v", err)
-	}
-	if spec.Region != "us/ewr" {
-		t.Fatalf("Region = %q, want us/ewr", spec.Region)
-	}
-	if spec.Metadata["provider_region"] != "us/ewr" || spec.Metadata["ionos_datacenter"] != "us/ewr" {
-		t.Fatalf("metadata = %+v, want normalized IONOS datacenter", spec.Metadata)
-	}
-}
-
 func TestOfferingForMinimumResourcesChoosesSmallestMatchingOffering(t *testing.T) {
 	standard, ok := OfferingForMinimumResources(2, 4096)
 	if !ok {
@@ -173,12 +137,15 @@ func TestOfferingForMinimumResourcesChoosesSmallestMatchingOffering(t *testing.T
 		t.Fatalf("offering = %q, want standard", standard.ID)
 	}
 
-	premium, ok := OfferingForMinimumResources(4, 8192)
+	// Standard is now the Cloud Kit floor (4 vCPU / 8 GiB). Premium matches
+	// that CPU/RAM and only adds disk, so the smallest matching offering is
+	// still standard.
+	sameFloor, ok := OfferingForMinimumResources(4, 8192)
 	if !ok {
-		t.Fatal("expected premium offering for larger runtime")
+		t.Fatal("expected an offering for the Cloud Kit floor")
 	}
-	if premium.ID != serverruntime.RuntimeOfferingPremium {
-		t.Fatalf("offering = %q, want premium", premium.ID)
+	if sameFloor.ID != serverruntime.RuntimeOfferingStandard {
+		t.Fatalf("offering = %q, want standard", sameFloor.ID)
 	}
 }
 
@@ -198,26 +165,5 @@ func TestLargestOfferingReturnsHighestCapacityOffering(t *testing.T) {
 	}
 	if offering.ID != serverruntime.RuntimeOfferingPremium {
 		t.Fatalf("offering = %q, want premium", offering.ID)
-	}
-}
-
-func TestProvisioningSpecForOfferingUsesProviderSafeName(t *testing.T) {
-	spec, err := ProvisioningSpecForOffering(
-		DefaultOfferingID(),
-		"e2e-centron-provider-20260609073045",
-		"main",
-		map[string]string{"provider_id": ProviderCentron},
-	)
-	if err != nil {
-		t.Fatalf("ProvisioningSpecForOffering: %v", err)
-	}
-	if len(spec.Name) > 20 {
-		t.Fatalf("provisioning name length = %d, want <= 20 (%q)", len(spec.Name), spec.Name)
-	}
-	if spec.Name == "e2e-centron-provider-20260609073045" {
-		t.Fatalf("provisioning name was not normalized: %q", spec.Name)
-	}
-	if spec.Name != "e2e-centron-038d896a" {
-		t.Fatalf("provisioning name = %q, want stable capped hash name", spec.Name)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/pkg/outcome"
 	"github.com/kombifyio/techstack/pkg/serverregistry"
 )
 
@@ -73,6 +74,22 @@ func prepareServerEvent(current *ServerRuntime, event ServerEvent, now time.Time
 	if len(event.Source) > 128 || len(event.SourceID) > 256 || len(event.SourceEpoch) > 128 {
 		return nil, fmt.Errorf("%w: server event source checkpoint exceeds its bounded length", ErrConflict)
 	}
+	event.OutcomeResetReason = strings.TrimSpace(event.OutcomeResetReason)
+	if event.Outcome != nil && event.ClearOutcome {
+		return nil, fmt.Errorf("%w: server event cannot set and clear an outcome together", ErrConflict)
+	}
+	if event.ClearOutcome && (event.OutcomeResetReason == "" || len(event.OutcomeResetReason) > 128) {
+		return nil, fmt.Errorf("%w: server outcome reset requires a bounded reason", ErrConflict)
+	}
+	if event.Outcome != nil {
+		candidate := *event.Outcome
+		candidate.OccurredAt = event.ObservedAt
+		normalized, err := outcome.Normalize(candidate, event.ObservedAt)
+		if err != nil {
+			return nil, fmt.Errorf("%w: invalid server outcome: %v", ErrConflict, err)
+		}
+		event.Outcome = &normalized
+	}
 
 	if current == nil {
 		if event.ExpectedRevision != 0 {
@@ -91,6 +108,26 @@ func prepareServerEvent(current *ServerRuntime, event ServerEvent, now time.Time
 		return prepareGuardServerEvent(current, event, now, sourceEpochSeen)
 	}
 	return prepareControlPlaneServerEvent(current, event, now)
+}
+
+func normalizeServerRuntimeOutcome(server *ServerRuntime, fallback time.Time) error {
+	if server.LastOutcome == nil {
+		if server.OutcomeChangedAt != nil {
+			return fmt.Errorf("controlplane: server outcome timestamp requires a persisted outcome")
+		}
+		return nil
+	}
+	decision, err := outcome.Normalize(*server.LastOutcome, fallback)
+	if err != nil {
+		return fmt.Errorf("controlplane: invalid server outcome: %w", err)
+	}
+	changedAt := decision.OccurredAt
+	if server.OutcomeChangedAt != nil {
+		changedAt = server.OutcomeChangedAt.UTC()
+	}
+	server.LastOutcome = outcome.Clone(&decision)
+	server.OutcomeChangedAt = &changedAt
+	return nil
 }
 
 //nolint:gocyclo // Guard admission keeps generation, custody, staleness, and observation checks together.
@@ -139,6 +176,7 @@ func prepareGuardServerEvent(current *ServerRuntime, event ServerEvent, now time
 
 	next := baseServerRuntime(current, event, now)
 	applyObservedServerPatch(&next, patch, event)
+	applyServerOutcomePatch(&next, event)
 	next.SourceAuthority = ServerEventAuthorityGuard
 	next.SourceID = event.SourceID
 	next.SourceEpoch = event.SourceEpoch
@@ -185,6 +223,7 @@ func prepareControlPlaneServerEvent(current *ServerRuntime, event ServerEvent, n
 		}
 	}
 	applyControlPlaneServerPatch(&next, patch, event)
+	applyServerOutcomePatch(&next, event)
 	next.Generation = targetGeneration
 	if bindingsChanged {
 		// A new binding generation fences every observation emitted by the old
@@ -230,6 +269,18 @@ func validateServerEventHead(server ServerRuntime) error {
 	}
 	if err := serverregistry.ValidateRuntimeTarget(server.RuntimeTarget, server.LeaseID); err != nil {
 		return fmt.Errorf("%w: %v", ErrConflict, err)
+	}
+	if server.LastOutcome == nil {
+		if server.OutcomeChangedAt != nil {
+			return fmt.Errorf("%w: server outcome timestamp requires a persisted outcome", ErrConflict)
+		}
+	} else {
+		if server.OutcomeChangedAt == nil {
+			return fmt.Errorf("%w: persisted server outcome requires a changed timestamp", ErrConflict)
+		}
+		if err := outcome.Validate(*server.LastOutcome); err != nil {
+			return fmt.Errorf("%w: invalid persisted server outcome: %v", ErrConflict, err)
+		}
 	}
 	for dimension, reason := range map[string]string{
 		"lifecycle": server.LifecycleReasonCode,
@@ -367,6 +418,26 @@ func applyControlPlaneServerPatch(next *ServerRuntime, patch ServerRuntime, even
 	if patch.DecommissionedAt != nil {
 		next.DecommissionedAt = cloneTime(patch.DecommissionedAt)
 	}
+	if registrySweeperDemotionPatch(event, patch) {
+		applyObservedServerPatch(next, ServerRuntime{
+			ConnectionState:      patch.ConnectionState,
+			HealthState:          patch.HealthState,
+			ConnectionReasonCode: patch.ConnectionReasonCode,
+			HealthReasonCode:     patch.HealthReasonCode,
+		}, event)
+	}
+}
+
+func applyServerOutcomePatch(next *ServerRuntime, event ServerEvent) {
+	switch {
+	case event.Outcome != nil:
+		next.LastOutcome = outcome.Clone(event.Outcome)
+		changedAt := event.ObservedAt.UTC()
+		next.OutcomeChangedAt = &changedAt
+	case event.ClearOutcome:
+		next.LastOutcome = nil
+		next.OutcomeChangedAt = nil
+	}
 }
 
 func setDimensionReason(current *string, incoming string, clear bool) bool {
@@ -474,6 +545,39 @@ func serverEventTransitions(previous *ServerRuntime, current ServerRuntime, even
 			ObservedAt: event.ObservedAt, Evidence: transitionEvidence,
 		})
 	}
+	if event.Outcome != nil || (event.ClearOutcome && previous != nil && previous.LastOutcome != nil) {
+		fromState, fromReason := string(outcome.StatusAvailable), ""
+		if previous != nil && previous.LastOutcome != nil {
+			fromState = string(previous.LastOutcome.Status)
+			fromReason = previous.LastOutcome.ReasonCode
+		}
+		toState, toReason := string(outcome.StatusAvailable), event.OutcomeResetReason
+		if current.LastOutcome != nil {
+			toState = string(current.LastOutcome.Status)
+			toReason = current.LastOutcome.ReasonCode
+		}
+		outcomeEvidence := cloneMap(evidence)
+		if event.ClearOutcome {
+			outcomeEvidence["outcome_reset"] = true
+			outcomeEvidence["outcome_reset_reason"] = event.OutcomeResetReason
+		}
+		if current.LastOutcome != nil {
+			outcomeEvidence["error_code"] = current.LastOutcome.ErrorCode
+			outcomeEvidence["capability"] = current.LastOutcome.Capability
+			outcomeEvidence["provider_id"] = current.LastOutcome.ProviderID
+			outcomeEvidence["request_id"] = current.LastOutcome.RequestID
+			outcomeEvidence["retryable"] = current.LastOutcome.Retryable
+		}
+		if fromReason != "" && fromReason != toReason {
+			outcomeEvidence["previous_reason_code"] = fromReason
+		}
+		out = append(out, ServerStateTransition{
+			TenantID: current.TenantID, ServerID: current.ID,
+			Dimension: "outcome", FromState: fromState, ToState: toState,
+			ReasonCode: toReason, Source: event.Source,
+			ObservedAt: event.ObservedAt, Evidence: outcomeEvidence,
+		})
+	}
 	return out
 }
 
@@ -501,11 +605,11 @@ func validateControlPlaneObservationPatch(current *ServerRuntime, patch ServerRu
 	if event.Inventory != nil {
 		return fmt.Errorf("%w: control plane cannot write Guard inventory", ErrConflict)
 	}
-	if patch.ConnectionReasonCode != "" || patch.HealthReasonCode != "" ||
-		event.ClearConnectionReason || event.ClearHealthReason {
-		return fmt.Errorf("%w: control plane cannot mutate Guard connection or health reasons", ErrConflict)
-	}
 	if current == nil {
+		if patch.ConnectionReasonCode != "" || patch.HealthReasonCode != "" ||
+			event.ClearConnectionReason || event.ClearHealthReason {
+			return fmt.Errorf("%w: control plane cannot mutate Guard connection or health reasons", ErrConflict)
+		}
 		if connection := strings.TrimSpace(patch.ConnectionState); connection != "" && connection != string(serverregistry.ConnectionPending) {
 			return fmt.Errorf("%w: initial connection state must be pending until Guard evidence arrives", ErrConflict)
 		}
@@ -517,11 +621,38 @@ func validateControlPlaneObservationPatch(current *ServerRuntime, patch ServerRu
 		}
 		return nil
 	}
+	if registrySweeperDemotionPatch(event, patch) {
+		return nil
+	}
+	if patch.ConnectionReasonCode != "" || patch.HealthReasonCode != "" ||
+		event.ClearConnectionReason || event.ClearHealthReason {
+		return fmt.Errorf("%w: control plane cannot mutate Guard connection or health reasons", ErrConflict)
+	}
 	if strings.TrimSpace(patch.ConnectionState) != "" || strings.TrimSpace(patch.HealthState) != "" ||
 		patch.LastHeartbeatAt != nil || len(patch.Channels) > 0 {
 		return fmt.Errorf("%w: control plane cannot mutate Guard observation state", ErrConflict)
 	}
 	return nil
+}
+
+// registrySweeperDemotionPatch admits the narrow control-plane write that ages
+// Guard connection/health without occupying the Guard source sequence or
+// rewriting LastHeartbeatAt. Binding-change events remain the only path that
+// zeros the Guard checkpoint.
+func registrySweeperDemotionPatch(event ServerEvent, patch ServerRuntime) bool {
+	if strings.TrimSpace(event.Source) != serverregistry.SweeperSource {
+		return false
+	}
+	if event.Inventory != nil || patch.LastHeartbeatAt != nil || len(patch.Channels) > 0 ||
+		event.ClearConnectionReason || event.ClearHealthReason {
+		return false
+	}
+	switch serverregistry.ConnectionState(strings.TrimSpace(patch.ConnectionState)) {
+	case serverregistry.ConnectionStale, serverregistry.ConnectionOffline:
+		return true
+	default:
+		return false
+	}
 }
 
 //nolint:gocyclo // The schema validator enumerates admitted metadata, channel, and inventory fields.

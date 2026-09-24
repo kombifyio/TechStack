@@ -2,11 +2,10 @@ package jobs
 
 import (
 	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/kombifyio/techstack/pkg/unifier"
+	"gopkg.in/yaml.v3"
 )
 
 const managedIntentYAML = `name: demo-ionos
@@ -54,12 +53,12 @@ func TestAMissingHandoffSpecIsRebuiltFromTheIntent(t *testing.T) {
 	}
 }
 
-// An existing spec may already carry a routing overlay or a resolved
-// managed-runtime target that the intent alone does not describe, so it must
-// never be overwritten.
-func TestAnExistingHandoffSpecIsLeftAlone(t *testing.T) {
+// An existing valid spec may already carry routing, service, or resolved
+// managed-runtime details that the intent alone does not describe, so it must
+// keep its exact bytes.
+func TestAnExistingHandoffSpecKeepsItsExactBytes(t *testing.T) {
 	persister := newPersister(t)
-	original := []byte("name: already-here\nstackkit: cloud-kit\n")
+	original := []byte("name: already-here\nstackkit: cloud-kit\nnodes:\n  - name: main\n    ip: 10.0.0.1\nservices:\n  homepage:\n    enabled: true\n")
 	if _, _, err := persister.SaveStackSpecBytes(original); err != nil {
 		t.Fatal(err)
 	}
@@ -72,20 +71,7 @@ func TestAnExistingHandoffSpecIsLeftAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 	if string(data) != string(original) {
-		t.Fatalf("the existing handoff spec was overwritten:\n%s", data)
-	}
-}
-
-// A stack that is not a StackKits stack has no handoff spec to rebuild, and
-// inventing one would be worse than the caller's own error.
-func TestANonStackKitIntentRebuildsNothing(t *testing.T) {
-	persister := newPersister(t)
-
-	if err := restoreStackSpecFromIntent(persister, []byte("name: legacy\nservices: {}\n")); err != nil {
-		t.Fatalf("restoreStackSpecFromIntent: %v", err)
-	}
-	if persister.StackSpecExists() {
-		t.Fatal("a handoff spec was invented for a non-StackKits intent")
+		t.Fatalf("the existing handoff spec was rewritten:\n%s", data)
 	}
 }
 
@@ -99,17 +85,26 @@ func TestUnreadableIntentIsReported(t *testing.T) {
 	}
 }
 
-// Nothing to do without a persister or an intent, and neither may panic.
-func TestRestoreIsANoOpWithoutInputs(t *testing.T) {
-	if err := restoreStackSpecFromIntent(nil, []byte(managedIntentYAML)); err != nil {
-		t.Fatalf("nil persister: %v", err)
+// Missing inputs and non-StackKit intent are valid no-op boundaries: none may
+// invent a persisted handoff or panic.
+func TestRestoreStackSpecNoOpCasesDoNotPersistHandoff(t *testing.T) {
+	tests := []struct {
+		name      string
+		persister *unifier.SpecPersister
+		intent    []byte
+	}{
+		{"nil persister", nil, []byte(managedIntentYAML)},
+		{"empty intent", newPersister(t), nil},
+		{"non-StackKit intent", newPersister(t), []byte("name: legacy\nservices: {}\n")},
 	}
-	persister := newPersister(t)
-	if err := restoreStackSpecFromIntent(persister, nil); err != nil {
-		t.Fatalf("empty intent: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(persister.BaseDir, unifier.StackSpecFilename)); !os.IsNotExist(err) {
-		t.Fatal("an empty intent produced a handoff spec")
+
+	for _, tt := range tests {
+		if err := restoreStackSpecFromIntent(tt.persister, tt.intent); err != nil {
+			t.Fatalf("%s: restoreStackSpecFromIntent: %v", tt.name, err)
+		}
+		if tt.persister != nil && tt.persister.StackSpecExists() {
+			t.Fatalf("%s persisted a handoff spec", tt.name)
+		}
 	}
 }
 
@@ -123,133 +118,90 @@ services:
     enabled: true
 `
 
-// core.InputSpec accepts the kit under either name, but the handoff projection
-// recognised only "stackkit". An intent written with "kit" projected to nothing,
-// no handoff spec was ever persisted, and the rollout failed at artifact
-// generation with no way to recover. Live on 2026-07-27 a cloud-kit stack whose
-// intent carried kit: cloud-kit could not be rolled out at all.
-func TestTheKitAliasStillProducesAHandoffSpec(t *testing.T) {
-	persister := newPersister(t)
+// The persisted handoff normalizes a v2 kit alias fallback while retaining an
+// explicit stackkit as authority when both names are present.
+func TestRestoreStackSpecCanonicalizesKitAuthority(t *testing.T) {
+	tests := []struct {
+		name             string
+		intent           string
+		wantAliasRemoved bool
+	}{
+		{"kit alias fallback", kitAliasIntentYAML, true},
+		{"explicit stackkit wins", "name: demo-ionos\nstackkit: cloud-kit\nkit: basement-kit\nservices: {}\n", false},
+	}
 
-	if err := restoreStackSpecFromIntent(persister, []byte(kitAliasIntentYAML)); err != nil {
-		t.Fatalf("restoreStackSpecFromIntent: %v", err)
-	}
-	if !persister.StackSpecExists() {
-		t.Fatal("an intent using the kit alias produced no handoff spec")
-	}
-	data, err := os.ReadFile(persister.GetStackSpecPath())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), "stackkit: cloud-kit") {
-		t.Fatalf("the handoff spec does not name the kit:\n%s", data)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			persister := newPersister(t)
+			if err := restoreStackSpecFromIntent(persister, []byte(tt.intent)); err != nil {
+				t.Fatalf("restoreStackSpecFromIntent: %v", err)
+			}
+			data, err := os.ReadFile(persister.GetStackSpecPath())
+			if err != nil {
+				t.Fatal(err)
+			}
+			var document map[string]interface{}
+			if err := yaml.Unmarshal(data, &document); err != nil {
+				t.Fatalf("decode persisted handoff spec: %v", err)
+			}
+			if document["stackkit"] != "cloud-kit" || document["name"] != "demo-ionos" {
+				t.Fatalf("persisted handoff identity = %#v", document)
+			}
+			if _, exists := document["kit"]; tt.wantAliasRemoved && exists {
+				t.Fatalf("persisted handoff retained the v2-only kit alias: %#v", document)
+			}
+		})
 	}
 }
 
-// An explicit stackkit is the authority; the alias must not override it.
-func TestAnExplicitStackKitWinsOverTheAlias(t *testing.T) {
-	normalized := withStackKitFromKitAlias(map[string]interface{}{
-		"stackkit": "cloud-kit",
-		"kit":      "basement-kit",
-	})
-	if normalized["stackkit"] != "cloud-kit" {
-		t.Fatalf("stackkit = %v, want the explicit value", normalized["stackkit"])
-	}
-}
-
-// Normalizing must not mutate the caller's map: the intent is persisted state.
-func TestAliasNormalizationDoesNotMutateTheIntent(t *testing.T) {
-	intent := map[string]interface{}{"kit": "cloud-kit"}
-	withStackKitFromKitAlias(intent)
-	if _, exists := intent["stackkit"]; exists {
-		t.Fatal("normalizing mutated the caller's intent map")
-	}
-}
-
-// The alias must be moved, not copied. A v1 StackSpec that also carries the
-// v2-only "kit" field is rejected outright by the StackKits CLI:
-// "v1 StackSpec contains v2-only top-level fields kit; refusing to discard".
-// Live on 2026-07-27 that turned one rollout failure into another, one step
-// further along.
-func TestTheKitAliasIsMovedNotCopied(t *testing.T) {
-	normalized := withStackKitFromKitAlias(map[string]interface{}{
-		"name": "demo",
-		"kit":  "cloud-kit",
-	})
-	if normalized["stackkit"] != "cloud-kit" {
-		t.Fatalf("stackkit = %v, want cloud-kit", normalized["stackkit"])
-	}
-	if _, exists := normalized["kit"]; exists {
-		t.Fatal("the v2-only kit field survived; the StackKits CLI will refuse this spec")
-	}
-	if normalized["name"] != "demo" {
-		t.Fatal("normalizing dropped an unrelated field")
-	}
-}
-
-// The written handoff spec is what the CLI actually reads, so assert on it.
-func TestTheWrittenHandoffSpecCarriesNoKitField(t *testing.T) {
-	persister := newPersister(t)
-	if err := restoreStackSpecFromIntent(persister, []byte(kitAliasIntentYAML)); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(persister.GetStackSpecPath())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(data), "\nkit:") || strings.HasPrefix(string(data), "kit:") {
-		t.Fatalf("the handoff spec still carries a top-level kit field:\n%s", data)
-	}
-}
-
-// An earlier release wrote a spec carrying both kit and stackkit by copying the
-// alias instead of moving it. The StackKits CLI refuses that shape outright, and
-// the bad spec then survived every later rollout because nothing would overwrite
-// it. Live on 2026-07-27 the fix for new specs changed nothing for the stack
-// that already had one.
-func TestAnExistingSpecCarryingTheV2KitFieldIsRepaired(t *testing.T) {
-	persister := newPersister(t)
-	broken := []byte("name: demo\nkit: cloud-kit\nstackkit: cloud-kit\nmode: easy\n")
-	if _, _, err := persister.SaveStackSpecBytes(broken); err != nil {
-		t.Fatal(err)
+// Existing handoffs may carry pre-fix aliases or list-shaped services. The
+// repair must normalize the persisted document the StackKits CLI reads while
+// retaining unrelated operator choices.
+func TestRestoreStackSpecRepairsPersistedHandoffShapes(t *testing.T) {
+	tests := []struct {
+		name            string
+		broken          string
+		wantMode        string
+		wantHomepageMap bool
+	}{
+		{"removes v2 kit alias", "name: demo\nkit: cloud-kit\nstackkit: cloud-kit\nmode: easy\n", "easy", false},
+		{"normalizes list services without kit alias", "name: demo\nstackkit: cloud-kit\nservices:\n  - name: homepage\n    type: homepage\n", "", true},
 	}
 
-	if err := restoreStackSpecFromIntent(persister, []byte(kitAliasIntentYAML)); err != nil {
-		t.Fatalf("restoreStackSpecFromIntent: %v", err)
-	}
-	data, err := os.ReadFile(persister.GetStackSpecPath())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(data), "\nkit:") || strings.HasPrefix(string(data), "kit:") {
-		t.Fatalf("the refused kit field survived:\n%s", data)
-	}
-	if !strings.Contains(string(data), "stackkit: cloud-kit") {
-		t.Fatalf("the repair lost the kit selection:\n%s", data)
-	}
-	if !strings.Contains(string(data), "mode: easy") {
-		t.Fatalf("the repair dropped unrelated persisted fields:\n%s", data)
-	}
-}
-
-// A healthy spec must still be left exactly as it is: it may carry a routing
-// overlay or a resolved managed-runtime target the intent does not describe.
-func TestAHealthySpecIsStillNotRewritten(t *testing.T) {
-	persister := newPersister(t)
-	original := []byte("name: already-here\nstackkit: cloud-kit\nnodes:\n  - name: main\n    ip: 10.0.0.1\n")
-	if _, _, err := persister.SaveStackSpecBytes(original); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := restoreStackSpecFromIntent(persister, []byte(kitAliasIntentYAML)); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(persister.GetStackSpecPath())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != string(original) {
-		t.Fatalf("a healthy spec was rewritten:\n%s", data)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			persister := newPersister(t)
+			if _, _, err := persister.SaveStackSpecBytes([]byte(tt.broken)); err != nil {
+				t.Fatal(err)
+			}
+			if err := restoreStackSpecFromIntent(persister, []byte(kitAliasIntentYAML)); err != nil {
+				t.Fatalf("restoreStackSpecFromIntent: %v", err)
+			}
+			data, err := os.ReadFile(persister.GetStackSpecPath())
+			if err != nil {
+				t.Fatal(err)
+			}
+			var document map[string]interface{}
+			if err := yaml.Unmarshal(data, &document); err != nil {
+				t.Fatalf("decode repaired handoff spec: %v", err)
+			}
+			if document["stackkit"] != "cloud-kit" {
+				t.Fatalf("repaired handoff lost kit selection: %#v", document)
+			}
+			if _, exists := document["kit"]; exists {
+				t.Fatalf("repaired handoff retained v2-only kit alias: %#v", document)
+			}
+			if tt.wantMode != "" && document["mode"] != tt.wantMode {
+				t.Fatalf("repaired handoff lost mode: %#v", document)
+			}
+			if tt.wantHomepageMap {
+				services, ok := document["services"].(map[string]interface{})
+				homepage := mapFromInterface(services["homepage"])
+				if !ok || homepage["type"] != "homepage" {
+					t.Fatalf("repaired services = %#v, want homepage map", document["services"])
+				}
+			}
+		})
 	}
 }
 
@@ -267,61 +219,8 @@ services:
 `
 
 // core.InputServiceSpecs accepts services as a list or a map, but the StackKits
-// v1 StackSpec decoder accepts only a mapping and fails the whole rollout on a
-// sequence. Live on 2026-07-27:
-//
-//	cannot decode v1 StackSpec: yaml: unmarshal errors:
-//	  line 37: cannot unmarshal !!seq into map[string]interface {}
-func TestListShapedServicesBecomeAMap(t *testing.T) {
-	normalized := withStackKitSpecShape(map[string]interface{}{
-		"kit": "cloud-kit",
-		"services": []interface{}{
-			map[string]interface{}{"name": "homepage", "type": "homepage"},
-			map[string]interface{}{"name": "whoami", "enabled": false},
-		},
-	})
-
-	services, ok := normalized["services"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("services = %T, want a map", normalized["services"])
-	}
-	homepage := mapFromInterface(services["homepage"])
-	if homepage["enabled"] != true {
-		t.Fatalf("homepage = %+v, want enabled by its presence in the list", homepage)
-	}
-	if homepage["type"] != "homepage" {
-		t.Fatalf("homepage lost its other fields: %+v", homepage)
-	}
-	// An explicit flag is an owner decision and must survive.
-	if whoami := mapFromInterface(services["whoami"]); whoami["enabled"] != false {
-		t.Fatalf("whoami = %+v, want the stated enabled:false", whoami)
-	}
-	if _, exists := normalized["name"]; exists {
-		t.Fatal("normalizing invented a field")
-	}
-}
-
-// A map-shaped services block is already what the StackSpec wants.
-func TestMapShapedServicesAreLeftAlone(t *testing.T) {
-	original := map[string]interface{}{"homepage": map[string]interface{}{"enabled": true}}
-	normalized := withServicesAsMap(map[string]interface{}{"services": original})
-	if got, ok := normalized["services"].(map[string]interface{}); !ok || len(got) != 1 {
-		t.Fatalf("services = %+v, want the original map", normalized["services"])
-	}
-}
-
-// The persisted intent must never be mutated.
-func TestServiceNormalizationDoesNotMutateTheIntent(t *testing.T) {
-	intent := map[string]interface{}{
-		"services": []interface{}{map[string]interface{}{"name": "homepage"}},
-	}
-	withServicesAsMap(intent)
-	if _, stillAList := intent["services"].([]interface{}); !stillAList {
-		t.Fatal("normalizing rewrote the caller's intent map")
-	}
-}
-
-// End to end on the file the CLI actually reads.
+// v1 decoder accepts only a mapping. Prove the conversion on the persisted file
+// the CLI actually reads, including explicit owner choices and preserved fields.
 func TestTheWrittenHandoffSpecUsesAServicesMap(t *testing.T) {
 	persister := newPersister(t)
 	if err := restoreStackSpecFromIntent(persister, []byte(listServicesIntentYAML)); err != nil {
@@ -331,61 +230,19 @@ func TestTheWrittenHandoffSpecUsesAServicesMap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(data), "- name: homepage") {
-		t.Fatalf("the handoff spec still lists services as a sequence:\n%s", data)
+	var document map[string]interface{}
+	if err := yaml.Unmarshal(data, &document); err != nil {
+		t.Fatalf("decode persisted handoff spec: %v", err)
 	}
-	if !strings.Contains(string(data), "homepage:") {
-		t.Fatalf("the handoff spec lost the service:\n%s", data)
+	services, ok := document["services"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("persisted services = %T, want a map", document["services"])
 	}
-}
-
-// Repairing must not key on one field. Gating on "kit" meant that once the
-// v2-only field was removed the repair returned before looking at anything
-// else, so a spec that was also list-shaped stayed broken. Live on 2026-07-27
-// the rollout kept failing on the identical decode error after the kit repair
-// went out.
-func TestAPersistedSpecWithListServicesIsRepairedEvenWithoutTheKitField(t *testing.T) {
-	persister := newPersister(t)
-	broken := []byte("name: demo\nstackkit: cloud-kit\nservices:\n  - name: homepage\n    type: homepage\n")
-	if _, _, err := persister.SaveStackSpecBytes(broken); err != nil {
-		t.Fatal(err)
+	homepage := mapFromInterface(services["homepage"])
+	if homepage["enabled"] != true || homepage["type"] != "homepage" {
+		t.Fatalf("persisted homepage = %#v", homepage)
 	}
-
-	if err := restoreStackSpecFromIntent(persister, []byte(kitAliasIntentYAML)); err != nil {
-		t.Fatalf("restoreStackSpecFromIntent: %v", err)
-	}
-	data, err := os.ReadFile(persister.GetStackSpecPath())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(data), "- name: homepage") {
-		t.Fatalf("the list-shaped services block survived:\n%s", data)
-	}
-	if !strings.Contains(string(data), "homepage:") {
-		t.Fatalf("the repair lost the service:\n%s", data)
-	}
-	if !strings.Contains(string(data), "stackkit: cloud-kit") {
-		t.Fatalf("the repair lost the kit selection:\n%s", data)
-	}
-}
-
-// A spec that already has an acceptable shape must keep its exact bytes, so
-// nothing churns on every rollout and an overlay is never disturbed.
-func TestAnAcceptableSpecKeepsItsExactBytes(t *testing.T) {
-	persister := newPersister(t)
-	original := []byte("name: already-here\nstackkit: cloud-kit\nservices:\n  homepage:\n    enabled: true\n")
-	if _, _, err := persister.SaveStackSpecBytes(original); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := restoreStackSpecFromIntent(persister, []byte(kitAliasIntentYAML)); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(persister.GetStackSpecPath())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != string(original) {
-		t.Fatalf("an acceptable spec was rewritten:\n%s", data)
+	if whoami := mapFromInterface(services["whoami"]); whoami["enabled"] != false || whoami["type"] != "whoami" {
+		t.Fatalf("persisted whoami = %#v", whoami)
 	}
 }

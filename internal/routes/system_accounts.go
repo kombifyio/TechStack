@@ -8,7 +8,10 @@ import (
 	"os"
 	"strings"
 
+	"github.com/kombifyio/techstack/internal/routes/tenantguard"
+	"github.com/kombifyio/techstack/internal/systemwallet"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
+	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/pocketbase/pocketbase/core"
 )
@@ -20,13 +23,14 @@ const (
 )
 
 // RegisterSystemAccountRoutes exposes system credential reset endpoints.
-func RegisterSystemAccountRoutes(r *httpx.Router, app core.App) {
-	h := systemAccountRouteHandlers{app: app}
+func RegisterSystemAccountRoutes(r *httpx.Router, app core.App, walletStore controlplane.WalletStore) {
+	h := systemAccountRouteHandlers{app: app, walletStore: walletStore}
 	r.POST("/api/v1/system-accounts/{role}/reset", h.reset)
 }
 
 type systemAccountRouteHandlers struct {
-	app core.App
+	app         core.App
+	walletStore controlplane.WalletStore
 }
 
 func (h systemAccountRouteHandlers) reset(e *httpx.Event) error {
@@ -36,6 +40,16 @@ func (h systemAccountRouteHandlers) reset(e *httpx.Event) error {
 	}
 	if e.Auth == nil {
 		return httpx.Forbidden(e, "System account reset requires a local owner session")
+	}
+	tenantID, tenantErr := tenantguard.TenantScope(requestExplicitTenantID(e), ownerID, "techstack.system-accounts.reset")
+	if tenantErr != nil {
+		return tenantErr
+	}
+	if h.walletStore == nil {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Canonical wallet custody is not configured", nil)
+	}
+	if _, err := h.walletStore.ListWalletItems(e.Request.Context(), tenantID, ""); err != nil {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Canonical wallet custody is unavailable", nil)
 	}
 
 	cfg, ok := systemAccountConfigForRole(e.Request.PathValue("role"))
@@ -63,7 +77,10 @@ func (h systemAccountRouteHandlers) reset(e *httpx.Event) error {
 	if err := setAuthPasswordByEmail(h.app, cfg.collection, cfg.email, newPassword); err != nil {
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, err.Error(), nil)
 	}
-	if err := upsertSystemWalletEntry(h.app, ownerID, cfg, newPassword); err != nil {
+	if err := systemwallet.UpsertCredential(e.Request.Context(), h.walletStore, tenantID, ownerID, systemwallet.Credential{
+		Role: cfg.role, Name: cfg.walletName, Username: cfg.email, Secret: newPassword,
+		Notes: "System account recovery credential (issued by kombifyTechstack)",
+	}); err != nil {
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, fmt.Sprintf("store in wallet: %v", err), nil)
 	}
 
@@ -78,7 +95,7 @@ func (h systemAccountRouteHandlers) reset(e *httpx.Event) error {
 		"role":            cfg.role,
 		"email":           cfg.email,
 		"secretStored":    true,
-		"walletServiceId": systemAccountServiceID(cfg.role),
+		"walletServiceId": systemwallet.ServiceID(cfg.role),
 	})
 }
 
@@ -158,43 +175,6 @@ func setAuthPasswordByEmail(app core.App, collectionName, email, password string
 		return fmt.Errorf("save account password: %w", err)
 	}
 	return nil
-}
-
-func upsertSystemWalletEntry(app core.App, ownerID string, cfg systemAccountConfig, password string) error {
-	walletCollection, err := app.FindCollectionByNameOrId("wallet")
-	if err != nil {
-		return fmt.Errorf("wallet collection missing")
-	}
-
-	serviceID := systemAccountServiceID(cfg.role)
-	rec, _ := app.FindFirstRecordByFilter(
-		"wallet",
-		"owner_id = {:o} && service_id = {:sid}",
-		map[string]any{"o": ownerID, "sid": serviceID},
-	)
-	if rec == nil {
-		rec = core.NewRecord(walletCollection)
-		rec.Set("owner_id", ownerID)
-		rec.Set("service_id", serviceID)
-	}
-
-	rec.Set("name", cfg.walletName)
-	rec.Set("kind", "password")
-	rec.Set("username", cfg.email)
-	rec.Set("secret", password)
-	rec.Set("item_class", "recovery")
-	rec.Set("source_type", "system_account")
-	rec.Set("source_ref", serviceID)
-	rec.Set("access_mode", "reveal")
-	rec.Set("revealable", true)
-	rec.Set("notes", "System account recovery credential (issued by kombifyTechstack)")
-	rec.Set("auto_generated", true)
-
-	return app.Save(rec)
-}
-
-func systemAccountServiceID(role string) string {
-	return "system:" + role
 }
 
 func randomPasswordURLSafe(length int) (string, error) {

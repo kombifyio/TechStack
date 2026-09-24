@@ -6,15 +6,22 @@ import (
 	"strings"
 )
 
-// ServerEnrollment binds the control-plane-owned node before the canonical
-// server event may reference it. Guard observations never use this seam.
+// ServerEnrollment binds an optional registering worker and the
+// control-plane-owned node before the canonical server event may reference
+// either. Guard observations never use this seam.
 type ServerEnrollment struct {
-	Event ServerEvent
-	Node  Node
+	Event  ServerEvent
+	Node   Node
+	Worker *Worker
+}
+
+type ServerEnrollmentResult struct {
+	*ServerEventResult
+	Worker *Worker
 }
 
 type ServerEnrollmentStore interface {
-	ApplyServerEnrollment(context.Context, ServerEnrollment) (*ServerEventResult, error)
+	ApplyServerEnrollment(context.Context, ServerEnrollment) (*ServerEnrollmentResult, error)
 }
 
 func prepareServerEnrollment(command ServerEnrollment) (ServerEnrollment, error) {
@@ -38,7 +45,22 @@ func prepareServerEnrollment(command ServerEnrollment) (ServerEnrollment, error)
 		return ServerEnrollment{}, err
 	}
 	node.Metadata = cloneMap(node.Metadata)
-	return ServerEnrollment{Event: event, Node: node}, nil
+	var worker *Worker
+	if command.Worker != nil {
+		preparedWorker := *command.Worker
+		preparedWorker.ID = strings.TrimSpace(preparedWorker.ID)
+		preparedWorker.TenantID = strings.TrimSpace(preparedWorker.TenantID)
+		preparedWorker.InstanceID = strings.TrimSpace(preparedWorker.InstanceID)
+		preparedWorker.StackID = strings.TrimSpace(preparedWorker.StackID)
+		preparedWorker.OwnerSubjectID = strings.TrimSpace(preparedWorker.OwnerSubjectID)
+		if preparedWorker.ID != node.WorkerID || preparedWorker.TenantID != node.TenantID ||
+			preparedWorker.InstanceID != node.InstanceID || preparedWorker.StackID != node.StackID ||
+			preparedWorker.OwnerSubjectID != event.Runtime.OwnerSubjectID {
+			return ServerEnrollment{}, fmt.Errorf("%w: registering worker does not match server enrollment", ErrConflict)
+		}
+		worker = cloneWorker(preparedWorker)
+	}
+	return ServerEnrollment{Event: event, Node: node, Worker: worker}, nil
 }
 
 func validateExistingEnrollmentNode(existing, requested Node) error {

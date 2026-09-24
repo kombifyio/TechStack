@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +23,7 @@ import (
 	"github.com/shirou/gopsutil/v4/disk"
 	"github.com/shirou/gopsutil/v4/host"
 	"github.com/shirou/gopsutil/v4/mem"
+	gopsutilnet "github.com/shirou/gopsutil/v4/net"
 
 	"github.com/kombifyio/techstack/pkg/runtimeconvergence"
 	"github.com/kombifyio/techstack/pkg/serviceregistry"
@@ -43,24 +46,25 @@ type Heartbeat struct {
 // Snapshot is the existing worker inventory wire contract plus optional
 // StackKit identity fields. Older control planes safely ignore the latter.
 type Snapshot struct {
-	SourceEpoch      string    `json:"source_epoch"`
-	SourceSequence   int64     `json:"source_sequence"`
-	ObservedAt       time.Time `json:"observed_at"`
-	TenantID         string    `json:"tenant_id,omitempty"`
-	OwnerID          string    `json:"owner_id,omitempty"`
-	StackID          string    `json:"stack_id,omitempty"`
-	LeaseID          string    `json:"lease_id,omitempty"`
-	ServerID         string    `json:"server_id,omitempty"`
-	RuntimeAgentID   string    `json:"runtime_agent_id"`
-	Hostname         string    `json:"hostname,omitempty"`
-	OS               string    `json:"os,omitempty"`
-	Arch             string    `json:"arch,omitempty"`
-	AgentVersion     string    `json:"agent_version,omitempty"`
-	StackKit         string    `json:"stackkit,omitempty"`
-	StackKitVersion  string    `json:"stackkit_version,omitempty"`
-	StackKitMode     string    `json:"stackkit_mode,omitempty"`
-	Domain           string    `json:"domain,omitempty"`
-	ManifestObserved bool      `json:"manifest_observed"`
+	Substrate        json.RawMessage `json:"substrate,omitempty"`
+	SourceEpoch      string          `json:"source_epoch"`
+	SourceSequence   int64           `json:"source_sequence"`
+	ObservedAt       time.Time       `json:"observed_at"`
+	TenantID         string          `json:"tenant_id,omitempty"`
+	OwnerID          string          `json:"owner_id,omitempty"`
+	StackID          string          `json:"stack_id,omitempty"`
+	LeaseID          string          `json:"lease_id,omitempty"`
+	ServerID         string          `json:"server_id,omitempty"`
+	RuntimeAgentID   string          `json:"runtime_agent_id"`
+	Hostname         string          `json:"hostname,omitempty"`
+	OS               string          `json:"os,omitempty"`
+	Arch             string          `json:"arch,omitempty"`
+	AgentVersion     string          `json:"agent_version,omitempty"`
+	StackKit         string          `json:"stackkit,omitempty"`
+	StackKitVersion  string          `json:"stackkit_version,omitempty"`
+	StackKitMode     string          `json:"stackkit_mode,omitempty"`
+	Domain           string          `json:"domain,omitempty"`
+	ManifestObserved bool            `json:"manifest_observed"`
 	// ManifestServiceCount is the number of services the access manifest
 	// declares, before probing. It lets the control plane distinguish "the
 	// manifest itself declares zero services" (legitimate prune-to-zero) from
@@ -79,25 +83,30 @@ type Snapshot struct {
 	Channels               []Channel                    `json:"channels,omitempty"`
 	Endpoints              []Endpoint                   `json:"endpoints,omitempty"`
 	RuntimeConvergence     *runtimeconvergence.Snapshot `json:"runtime_convergence,omitempty"`
+	OpenPorts              []string                     `json:"open_ports,omitempty"`
+	PortsObserved          bool                         `json:"ports_observed"`
+	runtimeServices        []accessManifestRuntimeService
 }
 
 type Host struct {
-	Hostname         string  `json:"hostname"`
-	OS               string  `json:"os"`
-	OSVersion        string  `json:"os_version,omitempty"`
-	Arch             string  `json:"arch"`
-	PublicIP         string  `json:"public_ip,omitempty"`
-	PrivateIP        string  `json:"private_ip,omitempty"`
-	LocalIP          string  `json:"local_ip,omitempty"`
-	CPUCores         int     `json:"cpu_cores"`
-	RAMMB            int     `json:"ram_mb"`
-	DiskGB           int     `json:"disk_gb"`
-	CPUPercent       float64 `json:"cpu_percent"`
-	MemoryUsedBytes  int64   `json:"memory_used_bytes"`
-	MemoryTotalBytes int64   `json:"memory_total_bytes"`
-	DiskUsedBytes    int64   `json:"disk_used_bytes"`
-	DiskTotalBytes   int64   `json:"disk_total_bytes"`
-	UptimeSeconds    float64 `json:"uptime_seconds"`
+	Hostname         string   `json:"hostname"`
+	OS               string   `json:"os"`
+	OSVersion        string   `json:"os_version,omitempty"`
+	Arch             string   `json:"arch"`
+	PublicIP         string   `json:"public_ip,omitempty"`
+	PrivateIP        string   `json:"private_ip,omitempty"`
+	LocalIP          string   `json:"local_ip,omitempty"`
+	CPUCores         int      `json:"cpu_cores"`
+	RAMMB            int      `json:"ram_mb"`
+	DiskGB           int      `json:"disk_gb"`
+	DockerVersion    string   `json:"docker_version,omitempty"`
+	CPUPercent       float64  `json:"cpu_percent"`
+	MemoryUsedBytes  int64    `json:"memory_used_bytes"`
+	MemoryTotalBytes int64    `json:"memory_total_bytes"`
+	DiskUsedBytes    int64    `json:"disk_used_bytes"`
+	DiskTotalBytes   int64    `json:"disk_total_bytes"`
+	UptimeSeconds    float64  `json:"uptime_seconds"`
+	SSHHostKeys      []string `json:"ssh_host_keys,omitempty"`
 }
 
 type Service struct {
@@ -112,22 +121,29 @@ type Service struct {
 	// on the host without one. An absent value is read as
 	// `stackkits-inventory` by the control plane, which is what every agent
 	// predating unmanaged discovery could ever report.
-	Source          string         `json:"source,omitempty"`
-	URL             string         `json:"url,omitempty"`
-	OwnerStack      string         `json:"owner_stack,omitempty"`
-	TargetServer    string         `json:"target_server,omitempty"`
-	ContainerID     string         `json:"container_id,omitempty"`
-	PlatformID      string         `json:"platform_id,omitempty"`
-	PlatformType    string         `json:"platform_type,omitempty"`
-	Image           string         `json:"image,omitempty"`
-	Description     string         `json:"description,omitempty"`
-	Instance        string         `json:"instance,omitempty"`
-	StackKitVersion string         `json:"stackkit_version,omitempty"`
-	Actions         []string       `json:"actions,omitempty"`
-	DesiredState    string         `json:"desired_state,omitempty"`
-	EvidenceRef     string         `json:"evidence_ref,omitempty"`
-	Health          map[string]any `json:"health,omitempty"`
-	Endpoints       []Endpoint     `json:"endpoints,omitempty"`
+	Source                 string            `json:"source,omitempty"`
+	URL                    string            `json:"url,omitempty"`
+	OwnerStack             string            `json:"owner_stack,omitempty"`
+	TargetServer           string            `json:"target_server,omitempty"`
+	ContainerID            string            `json:"container_id,omitempty"`
+	PlatformID             string            `json:"platform_id,omitempty"`
+	PlatformType           string            `json:"platform_type,omitempty"`
+	Image                  string            `json:"image,omitempty"`
+	Description            string            `json:"description,omitempty"`
+	Instance               string            `json:"instance,omitempty"`
+	StackKitVersion        string            `json:"stackkit_version,omitempty"`
+	Actions                []string          `json:"actions,omitempty"`
+	DesiredState           string            `json:"desired_state,omitempty"`
+	EvidenceRef            string            `json:"evidence_ref,omitempty"`
+	Health                 map[string]any    `json:"health,omitempty"`
+	Endpoints              []Endpoint        `json:"endpoints,omitempty"`
+	ApplicationKey         string            `json:"application_key,omitempty"`
+	ApplicationDisplayName string            `json:"application_display_name,omitempty"`
+	Role                   string            `json:"role,omitempty"`
+	Lifecycle              string            `json:"lifecycle,omitempty"`
+	OperationalImpact      string            `json:"operational_impact,omitempty"`
+	InternalAddress        string            `json:"internal_address,omitempty"`
+	RuntimeIdentity        map[string]string `json:"runtime_identity,omitempty"`
 }
 
 type Endpoint struct {
@@ -169,6 +185,7 @@ type SystemCollector struct {
 	cfg         SystemCollectorConfig
 	probeClient *http.Client
 	discovery   *hostDiscovery
+	connections func(context.Context, string) ([]gopsutilnet.ConnectionStat, error)
 }
 
 func NewSystemCollector(cfg SystemCollectorConfig) *SystemCollector {
@@ -196,7 +213,10 @@ func NewSystemCollector(cfg SystemCollectorConfig) *SystemCollector {
 			},
 		}
 	}
-	return &SystemCollector{cfg: cfg, probeClient: client, discovery: newHostDiscovery(cfg.Discovery)}
+	return &SystemCollector{
+		cfg: cfg, probeClient: client, discovery: newHostDiscovery(cfg.Discovery),
+		connections: gopsutilnet.ConnectionsWithContext,
+	}
 }
 
 func (c *SystemCollector) Collect(ctx context.Context) (Snapshot, error) {
@@ -221,7 +241,51 @@ func (c *SystemCollector) CollectHostSnapshot(ctx context.Context) (Snapshot, er
 		Host:     hostInventory,
 		Services: []Service{},
 	}
+	snapshot.OpenPorts, snapshot.PortsObserved = c.collectOpenPorts(ctx)
 	return snapshot, nil
+}
+
+func (c *SystemCollector) collectOpenPorts(ctx context.Context) ([]string, bool) {
+	if c.connections == nil {
+		return nil, false
+	}
+	connections, err := c.connections(ctx, "inet")
+	if err != nil {
+		return nil, false
+	}
+	seen := make(map[string]struct{})
+	for _, connection := range connections {
+		transport := ""
+		switch connection.Type {
+		case 1: // SOCK_STREAM on the supported agent operating systems.
+			if !strings.EqualFold(connection.Status, "LISTEN") {
+				continue
+			}
+			transport = "tcp"
+		case 2: // Connected UDP sockets are outbound traffic, not listeners.
+			if connection.Raddr.Port != 0 || (connection.Raddr.IP != "" && connection.Raddr.IP != "0.0.0.0" && connection.Raddr.IP != "::") {
+				continue
+			}
+			transport = "udp"
+		default:
+			continue
+		}
+		if connection.Laddr.Port == 0 || connection.Laddr.Port > 65535 {
+			continue
+		}
+		address := strings.TrimSpace(connection.Laddr.IP)
+		if address == "" {
+			address = "0.0.0.0"
+		}
+		listener := transport + "://" + net.JoinHostPort(address, strconv.FormatUint(uint64(connection.Laddr.Port), 10))
+		seen[listener] = struct{}{}
+	}
+	result := make([]string, 0, len(seen))
+	for listener := range seen {
+		result = append(result, listener)
+	}
+	sort.Strings(result)
+	return result, true
 }
 
 // CollectInventory enriches a previously collected host snapshot with the two
@@ -242,9 +306,29 @@ func (c *SystemCollector) CollectInventory(ctx context.Context, snapshot Snapsho
 // appendDiscoveredServices adds the services running on the host that no
 // StackKit declared. A discovered service never displaces a manifest service:
 // the manifest carries a declared contract, discovery only carries evidence.
+
+// discoveredApplicationBucket derives the application grouping for a
+// discovered unit the manifest did not claim. A docker-compose container
+// belongs to its compose project — that is the operator's own application
+// boundary — and everything else stays in the honest System bucket. Without
+// this every observed unit on a host collapsed into one server-wide
+// application named after whichever row happened to be first.
+func discoveredApplicationBucket(service Service) (key string, display string) {
+	if service.RuntimeIdentity["kind"] == "docker_compose_service" {
+		if project := strings.ToLower(strings.TrimSpace(service.RuntimeIdentity["project"])); project != "" {
+			return project, strings.TrimSpace(service.RuntimeIdentity["project"])
+		}
+	}
+	return "system", "System Services"
+}
+
 func (c *SystemCollector) appendDiscoveredServices(ctx context.Context, snapshot Snapshot) Snapshot {
 	outcome := c.discovery.discover(ctx)
 	snapshot.DiscoveryObserved = outcome.Probed
+	snapshot.Host.DockerVersion = outcome.DockerVersion
+	if len(snapshot.runtimeServices) > 0 {
+		return reconcileManifestRuntimeServices(snapshot, outcome.Services)
+	}
 	declared := make(map[string]struct{}, len(snapshot.Services))
 	for _, service := range snapshot.Services {
 		declared[strings.ToLower(strings.TrimSpace(service.Key))] = struct{}{}
@@ -253,10 +337,133 @@ func (c *SystemCollector) appendDiscoveredServices(ctx context.Context, snapshot
 		if _, alreadyDeclared := declared[strings.ToLower(strings.TrimSpace(service.Key))]; alreadyDeclared {
 			continue
 		}
+		if service.ApplicationKey == "" {
+			service.ApplicationKey, service.ApplicationDisplayName = discoveredApplicationBucket(service)
+		}
 		snapshot.Services = append(snapshot.Services, service)
 		snapshot.DiscoveredServiceCount++
 	}
 	return snapshot
+}
+
+// reconcileManifestRuntimeServices joins StackKits' declared runtime identity
+// to measured Docker/systemd rows. Matched discovery rows become components of
+// the declared application and therefore do not reappear as duplicate
+// technical services. Unmatched discovery remains honest System Services.
+func reconcileManifestRuntimeServices(snapshot Snapshot, discovered []Service) Snapshot {
+	existing := make(map[string]int, len(snapshot.Services))
+	for index := range snapshot.Services {
+		existing[strings.ToLower(strings.TrimSpace(snapshot.Services[index].Key))] = index
+	}
+	usedDiscovery := make(map[int]bool, len(discovered))
+	declared := make(map[string]bool, len(snapshot.runtimeServices))
+	for _, fact := range snapshot.runtimeServices {
+		serviceKey := strings.ToLower(strings.TrimSpace(fact.ServiceKey))
+		applicationKey := strings.ToLower(strings.TrimSpace(fact.ApplicationKey))
+		if serviceKey == "" || applicationKey == "" || declared[serviceKey] {
+			continue
+		}
+		declared[serviceKey] = true
+		component := runtimeFactService(fact, snapshot.StackKitVersion)
+		for index := range discovered {
+			if usedDiscovery[index] || !runtimeFactMatches(fact, discovered[index]) {
+				continue
+			}
+			usedDiscovery[index] = true
+			component = mergeRuntimeMeasurement(component, discovered[index])
+			break
+		}
+		if index, ok := existing[serviceKey]; ok {
+			snapshot.Services[index] = mergeDeclaredService(snapshot.Services[index], component)
+			continue
+		}
+		existing[serviceKey] = len(snapshot.Services)
+		snapshot.Services = append(snapshot.Services, component)
+	}
+	for index, service := range discovered {
+		if usedDiscovery[index] {
+			continue
+		}
+		service.ApplicationKey, service.ApplicationDisplayName = discoveredApplicationBucket(service)
+		service.Role = firstNonEmpty(service.Role, "component")
+		service.Lifecycle = firstNonEmpty(service.Lifecycle, "daemon")
+		service.OperationalImpact = "unknown"
+		snapshot.Services = append(snapshot.Services, service)
+		snapshot.DiscoveredServiceCount++
+	}
+	snapshot.Services = boundedUniqueServices(snapshot.Services, discoveryDefaultMax)
+	return snapshot
+}
+
+func runtimeFactService(fact accessManifestRuntimeService, stackKitVersion string) Service {
+	identity := map[string]string{
+		"kind": fact.RuntimeIdentity.Kind, "adapter": fact.RuntimeIdentity.Adapter,
+		"runtime_ref": fact.RuntimeIdentity.RuntimeRef, "project": fact.RuntimeIdentity.Project,
+		"file": fact.RuntimeIdentity.File, "deployment": fact.RuntimeIdentity.Deployment,
+		"service": fact.RuntimeIdentity.Service, "unit": fact.RuntimeIdentity.Unit,
+	}
+	for key, value := range identity {
+		if strings.TrimSpace(value) == "" {
+			delete(identity, key)
+		}
+	}
+	key := strings.ToLower(strings.TrimSpace(fact.ServiceKey))
+	return Service{
+		ID: key, ServiceID: key, Key: key, Name: firstNonEmpty(fact.DisplayName, key),
+		Status: string(serviceregistry.ObservedUnknown), Source: serviceregistry.SourceStackKitsInventory,
+		Instance: "default", StackKitVersion: stackKitVersion,
+		ApplicationKey:         strings.ToLower(strings.TrimSpace(fact.ApplicationKey)),
+		ApplicationDisplayName: firstNonEmpty(fact.ApplicationDisplayName, fact.DisplayName, fact.ApplicationKey),
+		Role:                   strings.TrimSpace(fact.Role), Lifecycle: strings.TrimSpace(fact.Lifecycle),
+		OperationalImpact: strings.TrimSpace(fact.OperationalImpact),
+		InternalAddress:   strings.TrimSpace(fact.InternalAddress), RuntimeIdentity: identity,
+		Health: map[string]any{"source": "stackkit-runtime-identity", "status": "unknown"},
+	}
+}
+
+func mergeRuntimeMeasurement(declared, measured Service) Service {
+	declared.Status, declared.ContainerID = measured.Status, measured.ContainerID
+	declared.PlatformID, declared.PlatformType, declared.Image = measured.PlatformID, measured.PlatformType, measured.Image
+	declared.Health = measured.Health
+	return declared
+}
+
+func mergeDeclaredService(access, runtime Service) Service {
+	if runtime.Status == string(serviceregistry.ObservedUnknown) {
+		runtime.Status, runtime.Health = access.Status, access.Health
+	}
+	runtime.URL, runtime.Endpoints = access.URL, access.Endpoints
+	runtime.Actions, runtime.DesiredState, runtime.EvidenceRef = access.Actions, access.DesiredState, access.EvidenceRef
+	if runtime.ApplicationDisplayName == "" {
+		runtime.ApplicationDisplayName = firstNonEmpty(access.Name, runtime.ApplicationKey)
+	}
+	return runtime
+}
+
+func runtimeFactMatches(fact accessManifestRuntimeService, measured Service) bool {
+	kind := strings.ToLower(strings.TrimSpace(fact.RuntimeIdentity.Kind))
+	switch kind {
+	case "docker_compose_service":
+		return measured.PlatformType == discoveryPlatformDocker &&
+			strings.EqualFold(measured.RuntimeIdentity["kind"], kind) &&
+			strings.EqualFold(measured.RuntimeIdentity["project"], strings.TrimSpace(fact.RuntimeIdentity.Project)) &&
+			strings.EqualFold(measured.RuntimeIdentity["service"], strings.TrimSpace(fact.RuntimeIdentity.Service)) &&
+			runtimeIdentityPathMatches(measured.RuntimeIdentity["file"], fact.RuntimeIdentity.File)
+	case "systemd_unit":
+		return measured.PlatformType == discoveryPlatformSystemd &&
+			strings.EqualFold(measured.PlatformID, strings.TrimSpace(fact.RuntimeIdentity.Unit))
+	default:
+		return false
+	}
+}
+
+func runtimeIdentityPathMatches(observed, declared string) bool {
+	observed = strings.TrimPrefix(filepath.ToSlash(filepath.Clean(strings.TrimSpace(observed))), "./")
+	declared = strings.TrimPrefix(filepath.ToSlash(filepath.Clean(strings.TrimSpace(declared))), "./")
+	if declared == "" {
+		return true
+	}
+	return observed == declared || strings.HasSuffix(observed, "/"+declared)
 }
 
 // collectManifestServices projects the StackKit access manifest, when one is
@@ -273,7 +480,19 @@ func (c *SystemCollector) collectManifestServices(ctx context.Context, snapshot 
 		return Snapshot{}, err
 	}
 	snapshot.ManifestObserved = true
+	applicationNames := make(map[string]string, len(manifest.Services))
+	for _, service := range manifest.Services {
+		applicationNames[strings.ToLower(strings.TrimSpace(firstNonEmpty(service.Key, service.Name)))] = firstNonEmpty(service.DisplayName, service.Name, service.Key)
+	}
+	snapshot.runtimeServices = append([]accessManifestRuntimeService(nil), manifest.RuntimeServices...)
+	for index := range snapshot.runtimeServices {
+		key := strings.ToLower(strings.TrimSpace(snapshot.runtimeServices[index].ApplicationKey))
+		snapshot.runtimeServices[index].ApplicationDisplayName = applicationNames[key]
+	}
 	snapshot.ManifestServiceCount = len(manifest.Services)
+	if len(manifest.RuntimeServices) > 0 {
+		snapshot.ManifestServiceCount = len(manifest.RuntimeServices)
+	}
 	snapshot.StackKit = strings.TrimSpace(manifest.StackKit)
 	snapshot.StackKitVersion = firstNonEmpty(manifest.StackKitVersion, manifest.Version)
 	snapshot.StackKitMode = strings.TrimSpace(manifest.Mode)
@@ -361,7 +580,31 @@ func collectHost(ctx context.Context, configuredPublicIP string) (Host, error) {
 		DiskUsedBytes:    safeInt64(du.Used),
 		DiskTotalBytes:   safeInt64(du.Total),
 		UptimeSeconds:    float64(info.Uptime),
+		SSHHostKeys:      observedSSHHostKeys(),
 	}, nil
+}
+
+func observedSSHHostKeys() []string {
+	result := make([]string, 0, 3)
+	for _, path := range []string{
+		"/etc/ssh/ssh_host_ed25519_key.pub",
+		"/etc/ssh/ssh_host_ecdsa_key.pub",
+		"/etc/ssh/ssh_host_rsa_key.pub",
+	} {
+		data, err := os.ReadFile(path)
+		if err != nil || len(data) > 16*1024 {
+			continue
+		}
+		fields := strings.Fields(string(data))
+		if len(fields) < 2 || len(fields[0]) > 128 || len(fields[1]) > 16*1024 {
+			continue
+		}
+		if !strings.HasPrefix(fields[0], "ssh-") && !strings.HasPrefix(fields[0], "ecdsa-") && !strings.HasPrefix(fields[0], "sk-") {
+			continue
+		}
+		result = append(result, fields[0]+" "+fields[1])
+	}
+	return result
 }
 
 func observedHostIPs() (publicIP, privateIP, localIP string) {
@@ -457,12 +700,14 @@ func routeSelectedIP() net.IP {
 }
 
 type accessManifest struct {
-	StackKit        string                  `json:"stackkit"`
-	StackKitVersion string                  `json:"stackkitVersion"`
-	Version         string                  `json:"version"`
-	Mode            string                  `json:"mode"`
-	Domain          string                  `json:"domain"`
-	Services        []accessManifestService `json:"services"`
+	SchemaVersion   string                         `json:"schemaVersion"`
+	StackKit        string                         `json:"stackkit"`
+	StackKitVersion string                         `json:"stackkitVersion"`
+	Version         string                         `json:"version"`
+	Mode            string                         `json:"mode"`
+	Domain          string                         `json:"domain"`
+	Services        []accessManifestService        `json:"services"`
+	RuntimeServices []accessManifestRuntimeService `json:"runtime_services"`
 }
 
 type accessManifestService struct {
@@ -473,6 +718,29 @@ type accessManifestService struct {
 	DesiredState   string   `json:"desiredState"`
 	AllowedActions []string `json:"allowedActions"`
 	EvidenceRef    string   `json:"evidenceRef"`
+}
+
+type accessManifestRuntimeService struct {
+	ServiceKey             string                        `json:"service_key"`
+	ApplicationKey         string                        `json:"application_key"`
+	DisplayName            string                        `json:"display_name"`
+	Role                   string                        `json:"role"`
+	Lifecycle              string                        `json:"lifecycle"`
+	OperationalImpact      string                        `json:"operational_impact"`
+	RuntimeIdentity        accessManifestRuntimeIdentity `json:"runtime_identity"`
+	InternalAddress        string                        `json:"internal_address"`
+	ApplicationDisplayName string                        `json:"-"`
+}
+
+type accessManifestRuntimeIdentity struct {
+	Kind       string `json:"kind"`
+	Adapter    string `json:"adapter"`
+	RuntimeRef string `json:"runtime_ref"`
+	Project    string `json:"project"`
+	File       string `json:"file"`
+	Deployment string `json:"deployment"`
+	Service    string `json:"service"`
+	Unit       string `json:"unit"`
 }
 
 func readFirstAccessManifest(paths []string) (accessManifest, error) {
@@ -491,6 +759,11 @@ func readFirstAccessManifest(paths []string) (accessManifest, error) {
 		var manifest accessManifest
 		if err := json.Unmarshal(data, &manifest); err != nil {
 			return accessManifest{}, fmt.Errorf("parse access manifest: %w", err)
+		}
+		switch strings.TrimSpace(manifest.SchemaVersion) {
+		case "", "stackkit.access-manifest/v2", "stackkit.access-manifest/v3":
+		default:
+			return accessManifest{}, fmt.Errorf("parse access manifest: unsupported schema version %q", manifest.SchemaVersion)
 		}
 		return manifest, nil
 	}
@@ -570,7 +843,7 @@ func reachableProbeStatus(status int) bool {
 func endpointVisibility(hostname string) string {
 	hostname = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(hostname), "."))
 	ip := net.ParseIP(hostname)
-	if hostname == "localhost" || strings.HasSuffix(hostname, ".localhost") || (ip != nil && (ip.IsLoopback() || ip.IsPrivate())) {
+	if hostname == "home" || strings.HasSuffix(hostname, ".home") || hostname == "localhost" || strings.HasSuffix(hostname, ".localhost") || (ip != nil && (ip.IsLoopback() || ip.IsPrivate())) {
 		return "local"
 	}
 	return "public"

@@ -4,15 +4,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/kombifyio/go-common/httputil"
+	"github.com/kombifyio/techstack/internal/gocommon/httputil"
 
 	"github.com/kombifyio/techstack/pkg/config"
 )
-
-// ApplySecurityHeaders keeps the default shared behavior from kombify-go-common.
-func ApplySecurityHeaders(h http.Header) {
-	httputil.ApplySecurityHeaders(h)
-}
 
 // ApplyRequestSecurityHeaders adds request-aware frame-ancestor handling for SaaS hosts.
 func ApplyRequestSecurityHeaders(h http.Header, r *http.Request, mode config.DeploymentMode) {
@@ -21,12 +16,6 @@ func ApplyRequestSecurityHeaders(h http.Header, r *http.Request, mode config.Dep
 	if origins := inferPortalOrigins(r, mode); len(origins) > 0 {
 		mergeFrameAncestors(h, origins)
 	}
-}
-
-// SecurityHeadersMiddleware preserves the previous default behavior for call sites
-// that do not have request/deployment-mode context.
-func SecurityHeadersMiddleware(next http.Handler) http.Handler {
-	return httputil.SecurityHeadersMiddleware(next)
 }
 
 func inferPortalOrigins(r *http.Request, mode config.DeploymentMode) []string {
@@ -41,8 +30,19 @@ func inferPortalOrigins(r *http.Request, mode config.DeploymentMode) []string {
 	if host == "" {
 		return nil
 	}
-
-	return config.InferredSaaSFrameOrigins(host, mode)
+	origins := config.InferredSaaSFrameOrigins(host, mode)
+	// A kombify Cloud PR preview frames this app from its own onrender.com
+	// origin. The document request for the frame carries that origin as the
+	// Referer (Cloud's strict-origin-when-cross-origin policy keeps the
+	// origin), so the exact preview origin joins the ancestors for this
+	// request only.
+	for _, header := range []string{"Referer", "Origin"} {
+		if preview := config.CloudPreviewFrameOrigin(r.Header.Get(header)); preview != "" {
+			origins = append(origins, preview)
+			break
+		}
+	}
+	return origins
 }
 
 func mergeFrameAncestors(h http.Header, origins []string) {

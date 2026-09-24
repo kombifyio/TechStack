@@ -24,6 +24,7 @@ type fakeCurrentStackKitRuntime struct {
 
 type fakeRuntimePackageConverger struct {
 	techstackResult agentpkg.TechstackRuntimeConvergenceResult
+	stackKitResult  agentpkg.StackKitRuntimeConvergenceResult
 	techstackErr    error
 	stackKitErr     error
 	techstackCalls  int
@@ -35,9 +36,9 @@ func (runtime *fakeRuntimePackageConverger) EnsureTechstackRuntime(context.Conte
 	return runtime.techstackResult, runtime.techstackErr
 }
 
-func (runtime *fakeRuntimePackageConverger) EnsureRuntime(context.Context, agentpkg.StackKitRuntimeBootstrapConfig) error {
+func (runtime *fakeRuntimePackageConverger) EnsureRuntimeEvidence(context.Context, agentpkg.StackKitRuntimeBootstrapConfig) (agentpkg.StackKitRuntimeConvergenceResult, error) {
 	runtime.stackKitCalls++
-	return runtime.stackKitErr
+	return runtime.stackKitResult, runtime.stackKitErr
 }
 
 func (runtime *fakeCurrentStackKitRuntime) EnsureRuntime(context.Context, agentpkg.StackKitRuntimeBootstrapConfig) error {
@@ -88,19 +89,6 @@ func TestCurrentStackKitCommandExecutorWaitsForRuntimeConvergence(t *testing.T) 
 	}
 }
 
-func TestRuntimeConvergenceKeepsGuardAliveWhenPackagesAreUnavailable(t *testing.T) {
-	runtime := &fakeRuntimePackageConverger{techstackErr: errors.New("binary unavailable"), stackKitErr: errors.New("release unavailable")}
-	stopCalls := 0
-	keepRunning, ready := convergeRuntimePackagesOnce(
-		t.Context(), func() { stopCalls++ }, runtime,
-		agentpkg.TechstackRuntimeConvergenceConfig{}, agentpkg.StackKitRuntimeBootstrapConfig{},
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-	)
-	if !keepRunning || ready || stopCalls != 0 || runtime.techstackCalls != 1 || runtime.stackKitCalls != 1 {
-		t.Fatalf("keepRunning=%t ready=%t stop=%d techstack=%d stackkit=%d", keepRunning, ready, stopCalls, runtime.techstackCalls, runtime.stackKitCalls)
-	}
-}
-
 func TestRuntimeConvergencePublishesStableComponentErrors(t *testing.T) {
 	runtime := &fakeRuntimePackageConverger{techstackErr: errors.New("dial tcp 10.0.0.4:443: connection refused"), stackKitErr: errors.New("provider response contained a secret")}
 	status := convergeRuntimePackagesOnceStatus(
@@ -125,27 +113,38 @@ func TestRuntimeConvergencePublishesStableComponentErrors(t *testing.T) {
 }
 
 func TestRuntimeConvergenceEnablesCommandsAfterBothPackagesAreReady(t *testing.T) {
-	runtime := &fakeRuntimePackageConverger{}
-	keepRunning, ready := convergeRuntimePackagesOnce(
+	runtime := &fakeRuntimePackageConverger{
+		techstackResult: agentpkg.TechstackRuntimeConvergenceResult{Version: "0.7.710", SHA256: strings.Repeat("a", 64)},
+		stackKitResult:  agentpkg.StackKitRuntimeConvergenceResult{Version: "v0.21.21", SHA256: strings.Repeat("b", 64)},
+	}
+	status := convergeRuntimePackagesOnceStatus(
 		t.Context(), func() {}, runtime,
 		agentpkg.TechstackRuntimeConvergenceConfig{}, agentpkg.StackKitRuntimeBootstrapConfig{},
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
-	if !keepRunning || !ready || runtime.techstackCalls != 1 || runtime.stackKitCalls != 1 {
-		t.Fatalf("keepRunning=%t ready=%t techstack=%d stackkit=%d", keepRunning, ready, runtime.techstackCalls, runtime.stackKitCalls)
+	if !status.keepRunning || !status.converged || runtime.techstackCalls != 1 || runtime.stackKitCalls != 1 {
+		t.Fatalf("status=%+v techstack=%d stackkit=%d", status, runtime.techstackCalls, runtime.stackKitCalls)
+	}
+	identities := map[string]runtimeconvergence.Component{}
+	for _, component := range status.snapshot.Components {
+		identities[component.Name] = component
+	}
+	if identities[runtimeconvergence.TechstackRuntimeComponent].Version != "0.7.710" || identities[runtimeconvergence.TechstackRuntimeComponent].ArtifactSHA256 != strings.Repeat("a", 64) ||
+		identities[runtimeconvergence.StackKitsRuntimeComponent].Version != "v0.21.21" || identities[runtimeconvergence.StackKitsRuntimeComponent].ArtifactSHA256 != strings.Repeat("b", 64) {
+		t.Fatalf("runtime identities = %#v", identities)
 	}
 }
 
 func TestRuntimeConvergenceStopsOnlyAfterAgentUpdate(t *testing.T) {
 	runtime := &fakeRuntimePackageConverger{techstackResult: agentpkg.TechstackRuntimeConvergenceResult{AgentUpdated: true, SHA256: "abc"}}
 	stopCalls := 0
-	keepRunning, ready := convergeRuntimePackagesOnce(
+	status := convergeRuntimePackagesOnceStatus(
 		t.Context(), func() { stopCalls++ }, runtime,
 		agentpkg.TechstackRuntimeConvergenceConfig{}, agentpkg.StackKitRuntimeBootstrapConfig{},
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
-	if keepRunning || ready || stopCalls != 1 || runtime.techstackCalls != 1 || runtime.stackKitCalls != 0 {
-		t.Fatalf("keepRunning=%t ready=%t stop=%d techstack=%d stackkit=%d", keepRunning, ready, stopCalls, runtime.techstackCalls, runtime.stackKitCalls)
+	if status.keepRunning || status.converged || stopCalls != 1 || runtime.techstackCalls != 1 || runtime.stackKitCalls != 0 {
+		t.Fatalf("status=%+v stop=%d techstack=%d stackkit=%d", status, stopCalls, runtime.techstackCalls, runtime.stackKitCalls)
 	}
 }
 

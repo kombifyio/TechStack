@@ -19,44 +19,40 @@ func TestRuntimeLifecycleKeepsSafeCheckpointAcrossRetry(t *testing.T) {
 		t.Fatalf("current_phase = %q, want %q", got, runtimePhaseReachability)
 	}
 	phases := lifecycle["phases"].([]interface{})
-	first := phases[0].(map[string]interface{})
+	first := phases[runtimeLifecyclePhaseIndex(runtimePhaseServerAllocate)].(map[string]interface{})
 	if got := resultString(first, "status"); got != "completed" {
 		t.Fatalf("completed checkpoint regressed to %q", got)
 	}
 }
 
-func TestFreshRuntimeObservationRequiresVersionAndFreshTimestamp(t *testing.T) {
+func TestFreshRuntimeObservationRequiresSupportedVersionAndFreshTimestamp(t *testing.T) {
 	now := time.Now().UTC()
-	outputs := map[string]interface{}{"observation": map[string]interface{}{
-		"version": "stackkit.runtime-observation/v1", "observed_at": now.Add(-89 * time.Second).Format(time.RFC3339Nano),
-	}}
-	if got := freshRuntimeObservation(outputs, now); len(got) == 0 {
-		t.Fatal("fresh versioned observation was rejected")
+	observation := map[string]interface{}{"observed_at": now.Add(-89 * time.Second).Format(time.RFC3339Nano)}
+	outputs := map[string]interface{}{"observation": observation}
+	for _, version := range []string{"stackkit.runtime-observation/v1", "stackkit.runtime-observation/v2"} {
+		observation["version"] = version
+		if got := freshRuntimeObservation(outputs, now); len(got) == 0 {
+			t.Fatalf("fresh %s observation was rejected", version)
+		}
 	}
-	outputs["observation"].(map[string]interface{})["observed_at"] = now.Add(-91 * time.Second).Format(time.RFC3339Nano)
+	observation["observed_at"] = now.Add(-91 * time.Second).Format(time.RFC3339Nano)
 	if got := freshRuntimeObservation(outputs, now); len(got) != 0 {
 		t.Fatalf("stale observation was accepted: %#v", got)
 	}
-	outputs["observation"].(map[string]interface{})["observed_at"] = now.Format(time.RFC3339Nano)
-	outputs["observation"].(map[string]interface{})["version"] = "unknown/v1"
+	observation["observed_at"] = now.Format(time.RFC3339Nano)
+	observation["version"] = "unknown/v1"
 	if got := freshRuntimeObservation(outputs, now); len(got) != 0 {
 		t.Fatalf("unknown observation version was accepted: %#v", got)
 	}
 }
 
-func TestFreshRuntimeObservationAcceptsV2(t *testing.T) {
-	now := time.Now().UTC()
-	outputs := map[string]interface{}{"observation": map[string]interface{}{
-		"version": "stackkit.runtime-observation/v2", "observed_at": now.Format(time.RFC3339Nano),
-	}}
-	if got := freshRuntimeObservation(outputs, now); len(got) == 0 {
-		t.Fatal("fresh runtime observation v2 was rejected")
-	}
-}
-
-func TestRuntimeLifecyclePersistsCompletedDegradedAsSafeCheckpoint(t *testing.T) {
+func TestRuntimeLifecycleAdvancesSafeCheckpointOnlyOnCompletion(t *testing.T) {
 	job := &Job{Result: map[string]interface{}{}}
+	completeRuntimeLifecyclePhase(job, runtimePhaseGenerate, "generated", nil)
 	completeDegradedRuntimeLifecyclePhase(job, runtimePhasePrepareApply, "core available", map[string]interface{}{"status": "completed_degraded"})
+	startRuntimeLifecyclePhase(job, runtimePhaseVerify, "verifying")
+	failCurrentRuntimeLifecyclePhase(job)
+
 	lifecycle := copyRuntimeLifecycle(job.Result)
 	if got := resultString(lifecycle, "status"); got != runtimeLifecycleCompletedDegraded {
 		t.Fatalf("lifecycle status = %q, want completed_degraded", got)
@@ -64,22 +60,10 @@ func TestRuntimeLifecyclePersistsCompletedDegradedAsSafeCheckpoint(t *testing.T)
 	if got := resultString(lifecycle, "last_safe_checkpoint"); got != runtimePhasePrepareApply {
 		t.Fatalf("last_safe_checkpoint = %q, want %q", got, runtimePhasePrepareApply)
 	}
-}
-
-func TestRuntimeLifecycleFailureKeepsLastSafeCheckpoint(t *testing.T) {
-	job := &Job{Result: map[string]interface{}{}}
-	completeRuntimeLifecyclePhase(job, runtimePhaseGenerate, "generated", nil)
-	startRuntimeLifecyclePhase(job, runtimePhasePrepareApply, "applying")
-	failCurrentRuntimeLifecyclePhase(job)
-
-	lifecycle := copyRuntimeLifecycle(job.Result)
-	if got := resultString(lifecycle, "last_safe_checkpoint"); got != runtimePhaseGenerate {
-		t.Fatalf("last_safe_checkpoint = %q, want %q", got, runtimePhaseGenerate)
-	}
 	phases := lifecycle["phases"].([]interface{})
-	phase := phases[5].(map[string]interface{})
+	phase := phases[runtimeLifecyclePhaseIndex(runtimePhaseVerify)].(map[string]interface{})
 	if got := resultString(phase, "status"); got != "failed" {
-		t.Fatalf("prepare_apply status = %q, want failed", got)
+		t.Fatalf("verify status = %q, want failed", got)
 	}
 }
 
@@ -96,7 +80,7 @@ func TestRuntimeLifecycleDoesNotRewindCurrentPhaseOnLateCompletion(t *testing.T)
 		t.Fatalf("last_safe_checkpoint = %q, want %q", got, runtimePhaseReachability)
 	}
 	phases := lifecycle["phases"].([]interface{})
-	reach := phases[1].(map[string]interface{})
+	reach := phases[runtimeLifecyclePhaseIndex(runtimePhaseReachability)].(map[string]interface{})
 	if got := resultString(reach, "status"); got != "completed" {
 		t.Fatalf("reachability status = %q, want completed", got)
 	}
@@ -117,11 +101,11 @@ func TestRuntimeLifecycleFailureMarksRunningPhaseWhenPointerIsStale(t *testing.T
 		t.Fatalf("current_phase = %q, want %q (failure must land on the running phase)", got, runtimePhasePrepareApply)
 	}
 	phases := lifecycle["phases"].([]interface{})
-	prepare := phases[5].(map[string]interface{})
+	prepare := phases[runtimeLifecyclePhaseIndex(runtimePhasePrepareApply)].(map[string]interface{})
 	if got := resultString(prepare, "status"); got != "failed" {
 		t.Fatalf("prepare_apply status = %q, want failed", got)
 	}
-	reach := phases[1].(map[string]interface{})
+	reach := phases[runtimeLifecyclePhaseIndex(runtimePhaseReachability)].(map[string]interface{})
 	if got := resultString(reach, "status"); got != "completed" {
 		t.Fatalf("reachability status = %q, want completed (completed evidence must not be rewritten)", got)
 	}
@@ -135,7 +119,7 @@ func TestRuntimeLifecycleClonesCallerEvidence(t *testing.T) {
 
 	lifecycle := copyRuntimeLifecycle(job.Snapshot().Result)
 	phases := lifecycle["phases"].([]interface{})
-	phaseEvidence := phases[1].(map[string]interface{})["evidence"].(map[string]interface{})
+	phaseEvidence := phases[runtimeLifecyclePhaseIndex(runtimePhaseReachability)].(map[string]interface{})["evidence"].(map[string]interface{})
 	if got := phaseEvidence["diagnostics"].(map[string]interface{})["status"]; got != "ready" {
 		t.Fatalf("caller evidence remained aliased: got %v", got)
 	}

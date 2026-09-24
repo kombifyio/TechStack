@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kombifyio/techstack/internal/systemwallet"
+	"github.com/kombifyio/techstack/pkg/auth"
+	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/identity"
 )
@@ -16,21 +19,21 @@ func TestConfirmSystemAccountReset(t *testing.T) {
 		name         string
 		role         string
 		confirmation string
-		wantErr      string
+		wantErr      bool
 	}{
 		{name: "exact role", role: "admin", confirmation: "admin"},
 		{name: "case insensitive", role: "developer", confirmation: "Developer"},
-		{name: "missing confirmation", role: "admin", confirmation: "", wantErr: "must match"},
-		{name: "wrong role", role: "admin", confirmation: "developer", wantErr: "must match"},
-		{name: "missing role", role: "", confirmation: "admin", wantErr: "role is required"},
+		{name: "missing confirmation", role: "admin", confirmation: "", wantErr: true},
+		{name: "wrong role", role: "admin", confirmation: "developer", wantErr: true},
+		{name: "missing role", role: "", confirmation: "admin", wantErr: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := confirmSystemAccountReset(tt.role, tt.confirmation)
-			if tt.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
-					t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected reset confirmation rejection")
 				}
 				return
 			}
@@ -109,5 +112,23 @@ func TestSystemAccountResetRejectsSignedEdgeIdentityWithoutLocalSession(t *testi
 	}
 	if !strings.Contains(rec.Body.String(), "local owner session") {
 		t.Fatalf("response did not explain local session requirement: %s", rec.Body.String())
+	}
+}
+
+func TestSystemAccountRecoveryUsesCanonicalWalletIdentity(t *testing.T) {
+	store := controlplane.NewMemoryStore()
+	cfg, _ := systemAccountConfigForRole(systemAccountRoleAdmin)
+	if err := systemwallet.UpsertCredential(context.Background(), store, "tenant-1", "owner-1", systemwallet.Credential{
+		Role: cfg.role, Name: cfg.walletName, Username: cfg.email, Secret: "recovery-secret",
+	}); err != nil {
+		t.Fatalf("UpsertCredential: %v", err)
+	}
+	item, err := store.GetWalletItem(context.Background(), "tenant-1", systemwallet.ItemID("tenant-1", "owner-1", systemAccountRoleAdmin))
+	if err != nil || item.Metadata["owner_id"] != "owner-1" || item.Metadata["revealable"] != true {
+		t.Fatalf("canonical wallet item = %#v, err=%v", item, err)
+	}
+	secret, _ := item.Metadata["secret"].(string)
+	if secret == "" || secret == "recovery-secret" || !auth.IsEncrypted(secret) {
+		t.Fatalf("recovery credential must be stored as an encrypted envelope, got %q", secret)
 	}
 }

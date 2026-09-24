@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
-import type { PBWalletItem } from "$lib/stores/wallet";
+import type { WalletItem } from "#lib/wallet/types.js";
 import { exportToBitwardenJSON, exportToCSV, exportWallet } from "./export";
 
-function walletItem(partial: Partial<PBWalletItem>): PBWalletItem {
+function walletItem(partial: Partial<WalletItem>): WalletItem {
   return {
     id: "id-1",
     collectionId: "wallet",
@@ -12,7 +12,7 @@ function walletItem(partial: Partial<PBWalletItem>): PBWalletItem {
     name: "",
     kind: "password",
     ...partial,
-  } as PBWalletItem;
+  } as WalletItem;
 }
 
 describe("wallet export", () => {

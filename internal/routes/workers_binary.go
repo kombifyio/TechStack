@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -195,7 +196,16 @@ func CurrentAgentBinarySHA256() (string, error) {
 }
 
 func agentBinaryArtifactForPath(path, artifactOS, artifactArch string) (agentBinaryArtifact, error) {
-	file, err := os.Open(path)
+	absolutePath, err := filepath.Abs(path)
+	if err != nil {
+		return agentBinaryArtifact{}, err
+	}
+	canonicalPath, err := filepath.EvalSymlinks(absolutePath)
+	if err != nil {
+		return agentBinaryArtifact{}, err
+	}
+	// #nosec G703 -- the operator-selected artifact path is canonicalized once at process startup.
+	file, err := os.Open(canonicalPath)
 	if err != nil {
 		return agentBinaryArtifact{}, err
 	}
@@ -215,7 +225,7 @@ func agentBinaryArtifactForPath(path, artifactOS, artifactArch string) (agentBin
 	}
 
 	return agentBinaryArtifact{
-		path:    path,
+		path:    canonicalPath,
 		os:      strings.ToLower(strings.TrimSpace(artifactOS)),
 		arch:    normalizeAgentBinaryArch(artifactArch),
 		size:    info.Size(),

@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -33,6 +35,16 @@ func TestStackKitServiceArgsRejectInjectionAndUnapprovedMutation(t *testing.T) {
 	}
 	if _, err := stackKitOperationArgs(&agentpb.StackKitCommand{Operation: agentpb.StackKitOperation_STACKKIT_OPERATION_SERVICE_RESTART, ServiceKey: "auth"}); err == nil || !strings.Contains(err.Error(), "Owner approval") {
 		t.Fatalf("expected Owner approval error, got %v", err)
+	}
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "stack-spec.yaml"), []byte("metadata:\n  stackId: owner-kit\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := requireStackKitWorkspaceInstance(workspace, "stack-spec.yaml", "owner-kit"); err != nil {
+		t.Fatal(err)
+	}
+	if err := requireStackKitWorkspaceInstance(workspace, "stack-spec.yaml", "other-kit"); err == nil {
+		t.Fatal("expected a mismatched StackKit workspace identity to fail")
 	}
 }
 

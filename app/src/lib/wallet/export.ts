@@ -3,7 +3,7 @@
  * Supports encrypted JSON export and import
  */
 
-import type { PBWalletItem, CredentialType } from "$lib/stores/wallet";
+import type { WalletItem, CredentialType } from "#lib/wallet/types.js";
 import { encrypt, decrypt, isCryptoAvailable } from "./crypto";
 
 // Export format version for future compatibility
@@ -41,9 +41,9 @@ function stripTotpFromNotes(notes?: string): string | undefined {
 }
 
 /**
- * Convert PBWalletItem to exportable format (removes PocketBase metadata)
+ * Convert WalletItem to its portable credential fields.
  */
-function toExportable(item: PBWalletItem): ExportableCredential {
+function toExportable(item: WalletItem): ExportableCredential {
   const legacyTotp = extractTotpFromNotes(item.notes);
   return {
     name: item.name,
@@ -62,7 +62,7 @@ function toExportable(item: PBWalletItem): ExportableCredential {
  * Export wallet items to JSON (optionally encrypted)
  */
 export async function exportWallet(
-  items: PBWalletItem[],
+  items: WalletItem[],
   password?: string,
 ): Promise<WalletExport> {
   const exportData = items.map(toExportable);
@@ -145,7 +145,7 @@ export async function importWallet(
 /**
  * Export wallet items to CSV format (KeePass/Generic compatible)
  */
-export function exportToCSV(items: PBWalletItem[]): string {
+export function exportToCSV(items: WalletItem[]): string {
   const headers = [
     "Group",
     "Title",
@@ -173,14 +173,16 @@ export function exportToCSV(items: PBWalletItem[]): string {
     // Format notes as "Key: Value" pairs
     let formattedNotes = notesWithoutTotp;
     if (
-      item.stack_id ||
+      item.kit_deployment_id ||
       item.service_id ||
       item.expires_at ||
       item.last_rotated
     ) {
       const customFields: string[] = [];
       if (notesWithoutTotp) customFields.push(notesWithoutTotp);
-      if (item.stack_id) customFields.push(`Stack ID: ${item.stack_id}`);
+      if (item.kit_deployment_id) {
+        customFields.push(`Kit Deployment ID: ${item.kit_deployment_id}`);
+      }
       if (item.service_id) customFields.push(`Service ID: ${item.service_id}`);
       if (item.expires_at)
         customFields.push(
@@ -210,7 +212,7 @@ export function exportToCSV(items: PBWalletItem[]): string {
 /**
  * Export wallet items to Bitwarden JSON format
  */
-export function exportToBitwardenJSON(items: PBWalletItem[]): string {
+export function exportToBitwardenJSON(items: WalletItem[]): string {
   interface BitwardenItem {
     type: number; // 1 = login, 2 = secure note, 3 = card, 4 = identity
     name: string;

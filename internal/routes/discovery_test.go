@@ -24,7 +24,6 @@ func TestDiscoveryNetworksStopsAfterUnauthenticatedResponse(t *testing.T) {
 	}
 	disc := &fakeDiscovery{}
 	handler := NewDiscoveryHandler(disc)
-	defer handler.Stop()
 
 	if err := handler.networks(event); err != nil && !errors.Is(err, httpx.ErrResponseWritten) {
 		t.Fatalf("networks returned error: %v", err)
@@ -144,7 +143,6 @@ func TestDiscoveryStartScanUsesBackgroundContext(t *testing.T) {
 	event := &httpx.Event{Request: req, Response: rec}
 	disc := &fakeDiscovery{startResult: &discovery.ScanResult{ScanID: "scan-1", Status: discovery.ScanStatusRunning}}
 	handler := NewDiscoveryHandler(disc)
-	defer handler.Stop()
 
 	if err := handler.startScan(event); err != nil {
 		t.Fatalf("startScan returned error: %v", err)
@@ -167,7 +165,6 @@ func TestDiscoveryDevicesFailClosedUntilOwned(t *testing.T) {
 	device := &discovery.DiscoveredDevice{DeviceID: "device-1", IP: "192.168.1.10"}
 	disc := &fakeDiscovery{devices: map[string]*discovery.DiscoveredDevice{device.DeviceID: device}}
 	handler := NewDiscoveryHandler(disc)
-	defer handler.Stop()
 
 	listEvent, listRecorder := discoveryRouteTestEvent(http.MethodGet, "/api/v1/discovery/devices", "", "owner-1", nil, "")
 	if err := handler.listDevices(listEvent); err != nil {
@@ -202,7 +199,6 @@ func TestDiscoveryScanStatusAssignsCompletedDevicesToScanOwner(t *testing.T) {
 		Devices: []discovery.DiscoveredDevice{device},
 	}}
 	handler := NewDiscoveryHandler(disc)
-	defer handler.Stop()
 	handler.setScanOwner("scan-1", "owner-1")
 
 	event, recorder := discoveryRouteTestEvent(http.MethodGet, "/api/v1/discovery/scan/scan-1", "scan-1", "owner-1", nil, "")
@@ -221,7 +217,6 @@ func TestDiscoveryProbeRequiresOwnedDeviceOrAdmin(t *testing.T) {
 	device := &discovery.DiscoveredDevice{DeviceID: "device-1", IP: "192.168.1.10"}
 	disc := &fakeDiscovery{devices: map[string]*discovery.DiscoveredDevice{device.DeviceID: device}}
 	handler := NewDiscoveryHandler(disc)
-	defer handler.Stop()
 
 	unownedEvent, unownedRecorder := discoveryRouteTestEvent(http.MethodPost, "/api/v1/discovery/probe", "", "owner-1", nil, `{"ip":"192.168.1.10","ssh_user":"root"}`)
 	if err := handler.probeDevice(unownedEvent); err != nil {
@@ -256,7 +251,6 @@ func TestDiscoveryTestSSHRequiresOwnedDeviceOrAdmin(t *testing.T) {
 	device := &discovery.DiscoveredDevice{DeviceID: "device-1", IP: "192.168.1.10"}
 	disc := &fakeDiscovery{devices: map[string]*discovery.DiscoveredDevice{device.DeviceID: device}}
 	handler := NewDiscoveryHandler(disc)
-	defer handler.Stop()
 
 	unownedEvent, unownedRecorder := discoveryRouteTestEvent(http.MethodPost, "/api/v1/discovery/test-ssh", "", "owner-1", nil, `{"ip":"192.168.1.10","user":"root"}`)
 	if err := handler.testSSH(unownedEvent); err != nil {
@@ -282,7 +276,6 @@ func TestDiscoveryTestSSHRequiresOwnedDeviceOrAdmin(t *testing.T) {
 func TestDiscoveryCacheAndStatsRequireAdmin(t *testing.T) {
 	disc := &fakeDiscovery{}
 	handler := NewDiscoveryHandler(disc)
-	defer handler.Stop()
 
 	cacheEvent, cacheRecorder := discoveryRouteTestEvent(http.MethodDelete, "/api/v1/discovery/cache", "", "owner-1", nil, "")
 	if err := handler.clearCache(cacheEvent); err != nil && !errors.Is(err, httpx.ErrResponseWritten) {

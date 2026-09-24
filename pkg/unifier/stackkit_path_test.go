@@ -18,11 +18,22 @@ func TestDefaultStackKitsDirPrefersExternalEnv(t *testing.T) {
 	}
 }
 
+func TestDefaultStackKitsDirRequiresExplicitConfig(t *testing.T) {
+	t.Setenv("TECHSTACK_STACKKITS_DIR", "")
+	t.Setenv("STACKKITS_REPO", "")
+	t.Setenv("STACKKITS_PATH", "")
+	t.Chdir(t.TempDir())
+
+	if got := DefaultStackKitsDir(); got != "" {
+		t.Fatalf("DefaultStackKitsDir() = %q, want empty without explicit config", got)
+	}
+}
+
 func TestCanonicalStackKitName(t *testing.T) {
 	tests := map[string]string{
-		"base-kit":     StackKitBasement,
 		"basement-kit": StackKitBasement,
 		"basement":     StackKitBasement,
+		"base-kit":     "base-kit",
 		"cloud-kit":    StackKitCloud,
 		"cloud":        StackKitCloud,
 	}

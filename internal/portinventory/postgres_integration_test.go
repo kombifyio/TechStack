@@ -107,6 +107,121 @@ func TestPostgresAuthoritySerializesConflictingAdmissionsAndEnforcesTenantScope(
 	})
 }
 
+func TestPostgresAuthorityReleasesOnlyAnExactTeardownSnapshot(t *testing.T) {
+	database, _, _, _ := openPortInventoryIntegrationDatabase(t)
+	assertExactTeardownSnapshotLifecycle(t, database)
+}
+
+func TestPostgresAuthorityProjectsMonotoneGuardListenerDrift(t *testing.T) {
+	database, _, _, _ := openPortInventoryIntegrationDatabase(t)
+	authority := NewPostgresAuthority(database)
+	request := postgresIntegrationAdmission("tenant-a", "server-a", 3, "stack-a", "plan-ports", "*")
+	if _, err := authority.Admit(t.Context(), request); err != nil {
+		t.Fatalf("Admit: %v", err)
+	}
+	now := time.Now().UTC()
+	first := GuardObservation{
+		TenantID: "tenant-a", RuntimeAgentID: "runtime-a", SourceEpoch: "epoch-a",
+		SourceSequence: 4, InventoryRevision: 4, ObservedAt: now,
+		ListenersComplete: true, OpenPorts: []string{"tcp://0.0.0.0:443", "tcp://127.0.0.1:8080"},
+	}
+	if err := authority.RecordGuardPorts(t.Context(), first); err != nil {
+		t.Fatalf("RecordGuardPorts(first): %v", err)
+	}
+	if err := authority.RecordGuardPorts(t.Context(), GuardObservation{
+		TenantID: "tenant-a", RuntimeAgentID: "runtime-a", SourceEpoch: "epoch-a",
+		SourceSequence: 3, InventoryRevision: 3, ObservedAt: now.Add(-time.Second),
+		ListenersComplete: true, OpenPorts: []string{"tcp://0.0.0.0:22"},
+	}); err != nil {
+		t.Fatalf("RecordGuardPorts(replay): %v", err)
+	}
+	inventory, err := authority.ReadCurrent(t.Context(), InventoryRequest{
+		TenantID: "tenant-a", ServerID: "server-a", OwnerSubjectID: "owner-a",
+	}, now.Add(time.Second))
+	if err != nil {
+		t.Fatalf("ReadCurrent: %v", err)
+	}
+	if len(inventory.Allocations) != 2 || inventory.Allocations[0].Port != 443 ||
+		inventory.Allocations[0].DriftState != DriftConsistent || !inventory.Allocations[0].Desired ||
+		inventory.Allocations[1].Port != 8080 || inventory.Allocations[1].DriftState != DriftUnexpected ||
+		inventory.InventoryRevision != 4 {
+		t.Fatalf("projected inventory = %#v", inventory)
+	}
+	if _, err := authority.ReadCurrent(t.Context(), InventoryRequest{
+		TenantID: "tenant-a", ServerID: "server-a", OwnerSubjectID: "owner-b",
+	}, now); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("foreign owner ReadCurrent error = %v, want not found", err)
+	}
+	stale, err := authority.ReadCurrent(t.Context(), InventoryRequest{
+		TenantID: "tenant-a", ServerID: "server-a", OwnerSubjectID: "owner-a",
+	}, now.Add(portObservationTTL+time.Second))
+	if err != nil {
+		t.Fatalf("ReadCurrent(stale): %v", err)
+	}
+	if stale.Allocations[0].ObservedState != EvidenceStale || stale.Allocations[0].DriftState != DriftUnknown ||
+		stale.Allocations[1].ObservedState != EvidenceStale || stale.Allocations[1].DriftState != DriftUnknown {
+		t.Fatalf("stale listener evidence asserted current drift: %#v", stale.Allocations)
+	}
+}
+
+func assertExactTeardownSnapshotLifecycle(t *testing.T, database *sql.DB) {
+	t.Helper()
+	authority := NewPostgresAuthority(database)
+	for _, request := range []AdmissionRequest{
+		postgresIntegrationAdmission("tenant-a", "server-a", 3, "stack-a", "plan-a", "127.0.0.1"),
+		postgresIntegrationAdmission("tenant-a", "server-c", 5, "stack-a", "plan-b", "127.0.0.2"),
+	} {
+		if _, err := authority.Admit(t.Context(), request); err != nil {
+			t.Fatalf("Admit(%s): %v", request.ServerID, err)
+		}
+	}
+	request := TeardownSnapshotRequest{TenantID: "tenant-a", OwnerSubjectID: "owner-a", TechstackID: "stack-a"}
+	if _, err := authority.SnapshotForTeardown(t.Context(), TeardownSnapshotRequest{
+		TenantID: "tenant-a", OwnerSubjectID: "owner-b", TechstackID: "stack-a",
+	}); !errors.Is(err, ErrTeardownSnapshotMismatch) {
+		t.Fatalf("foreign Owner snapshot error = %v, want ErrTeardownSnapshotMismatch", err)
+	}
+	snapshot, err := authority.SnapshotForTeardown(t.Context(), request)
+	if err != nil || len(snapshot.Generations) != 2 {
+		t.Fatalf("SnapshotForTeardown = %+v, err %v", snapshot, err)
+	}
+	partial, err := sealTeardownSnapshot(request, snapshot.Generations[:1])
+	if err != nil {
+		t.Fatalf("seal partial snapshot: %v", err)
+	}
+	if err := authority.ReleaseTeardownSnapshot(t.Context(), partial); !errors.Is(err, ErrTeardownSnapshotMismatch) {
+		t.Fatalf("partial release error = %v, want ErrTeardownSnapshotMismatch", err)
+	}
+	tampered := snapshot
+	tampered.Generations = append([]TeardownGeneration(nil), snapshot.Generations...)
+	tampered.Generations[0].ClaimSetDigest = "sha256:" + strings.Repeat("f", 64)
+	if err := authority.ReleaseTeardownSnapshot(t.Context(), tampered); !errors.Is(err, ErrTeardownSnapshotMismatch) {
+		t.Fatalf("tampered release error = %v, want ErrTeardownSnapshotMismatch", err)
+	}
+	assertPortInventoryStateCount(t, database, "server_port_claim_generations", "released", 0)
+	late := postgresIntegrationAdmission("tenant-a", "server-a", 3, "stack-a", "plan-c", "127.0.0.1")
+	late.Requirements[0].Port = 8443
+	if _, err := authority.Admit(t.Context(), late); err != nil {
+		t.Fatalf("late Admit: %v", err)
+	}
+	if err := authority.ReleaseTeardownSnapshot(t.Context(), snapshot); !errors.Is(err, ErrTeardownSnapshotMismatch) {
+		t.Fatalf("stale release error = %v, want ErrTeardownSnapshotMismatch", err)
+	}
+	assertPortInventoryStateCount(t, database, "server_port_claim_generations", "released", 0)
+	snapshot, err = authority.SnapshotForTeardown(t.Context(), request)
+	if err != nil || len(snapshot.Generations) != 3 {
+		t.Fatalf("refreshed SnapshotForTeardown = %+v, err %v", snapshot, err)
+	}
+	if err := authority.ReleaseTeardownSnapshot(t.Context(), snapshot); err != nil {
+		t.Fatalf("ReleaseTeardownSnapshot: %v", err)
+	}
+	if err := authority.ReleaseTeardownSnapshot(t.Context(), snapshot); err != nil {
+		t.Fatalf("ReleaseTeardownSnapshot(replay): %v", err)
+	}
+	assertPortInventoryStateCount(t, database, "server_port_claim_generations", "released", 3)
+	assertPortInventoryStateCount(t, database, "server_port_reservations", "released", 3)
+}
+
 func openPortInventoryIntegrationDatabase(t *testing.T) (*sql.DB, *sql.DB, *pgx.ConnConfig, string) {
 	t.Helper()
 	dsn := strings.TrimSpace(os.Getenv("TECHSTACK_TEST_POSTGRES_URL"))
@@ -164,32 +279,59 @@ func applyPortInventoryIntegrationSchema(t *testing.T, database *sql.DB) {
 			kind text NOT NULL,
 			status text NOT NULL
 		);
+		CREATE TABLE stacks (
+			id text PRIMARY KEY,
+			tenant_id text NOT NULL REFERENCES techstack_tenants(id) ON DELETE CASCADE,
+			owner_subject_id text,
+			status text NOT NULL DEFAULT 'running',
+			deleted_at timestamptz
+		);
 		CREATE TABLE servers (
 			id text PRIMARY KEY,
 			tenant_id text NOT NULL REFERENCES techstack_tenants(id) ON DELETE CASCADE,
+			stack_id text REFERENCES stacks(id) ON DELETE SET NULL,
+			owner_subject_id text NOT NULL,
 			generation bigint NOT NULL,
-			lifecycle_state text NOT NULL
+			lifecycle_state text NOT NULL,
+			worker_id text
 		);
 	`); err != nil {
 		t.Fatalf("create port inventory prerequisite schema: %v", err)
 	}
-	migrationPath := filepath.Join("..", "..", "pkg", "db", "migrations", "064_server_port_inventory.sql")
-	migration, err := os.ReadFile(migrationPath)
-	if err != nil {
-		t.Fatalf("read port inventory migration: %v", err)
-	}
-	if _, err := database.ExecContext(t.Context(), string(migration)); err != nil {
-		t.Fatalf("apply port inventory migration: %v", err)
+	for _, name := range []string{"064_server_port_inventory.sql", "065_align_server_port_exposure_contract.sql"} {
+		migrationPath := filepath.Join("..", "..", "pkg", "db", "migrations", name)
+		migration, err := os.ReadFile(migrationPath)
+		if err != nil {
+			t.Fatalf("read port inventory migration %s: %v", name, err)
+		}
+		if _, err := database.ExecContext(t.Context(), string(migration)); err != nil {
+			t.Fatalf("apply port inventory migration %s: %v", name, err)
+		}
 	}
 	if _, err := database.ExecContext(t.Context(), `
 		INSERT INTO techstack_tenants (id, display_name, kind, status) VALUES
 			('tenant-a', 'Tenant A', 'saas', 'active'),
 			('tenant-b', 'Tenant B', 'saas', 'active');
-		INSERT INTO servers (id, tenant_id, generation, lifecycle_state) VALUES
-			('server-a', 'tenant-a', 3, 'active'),
-			('server-b', 'tenant-b', 7, 'active');
+		INSERT INTO stacks (id, tenant_id, owner_subject_id) VALUES
+			('stack-a', 'tenant-a', 'owner-a'),
+			('stack-b', 'tenant-b', 'owner-b');
+		INSERT INTO servers (id, tenant_id, stack_id, owner_subject_id, generation, lifecycle_state, worker_id) VALUES
+			('server-a', 'tenant-a', 'stack-a', 'owner-a', 3, 'active', 'runtime-a'),
+			('server-b', 'tenant-b', 'stack-b', 'owner-b', 7, 'active', 'runtime-b'),
+			('server-c', 'tenant-a', 'stack-a', 'owner-a', 5, 'active', 'runtime-c');
 	`); err != nil {
 		t.Fatalf("seed port inventory integration schema: %v", err)
+	}
+}
+
+func assertPortInventoryStateCount(t *testing.T, database *sql.DB, table, state string, want int) {
+	t.Helper()
+	var got int
+	if err := database.QueryRowContext(t.Context(), "SELECT count(*) FROM "+table+" WHERE state = $1", state).Scan(&got); err != nil {
+		t.Fatalf("count %s state %s: %v", table, state, err)
+	}
+	if got != want {
+		t.Fatalf("%s state %s count = %d, want %d", table, state, got, want)
 	}
 }
 

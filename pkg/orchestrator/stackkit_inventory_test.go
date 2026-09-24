@@ -8,6 +8,13 @@ import (
 	"github.com/kombifyio/techstack/pkg/jobs"
 )
 
+func (o *Orchestrator) syncStackKitRuntimeInventoryFromJob(tenantID string, job *jobs.Job) error {
+	if job == nil {
+		return nil
+	}
+	return o.syncStackKitRuntimeInventoryFromJobSnapshot(tenantID, job.Snapshot())
+}
+
 func TestSyncStackKitRuntimeInventoryStoreUpsertsNodeAndServices(t *testing.T) {
 	store := controlplane.NewMemoryStore()
 	req := stackKitRegistrySyncRequest{
@@ -89,12 +96,19 @@ func TestSyncStackKitRuntimeInventoryStoreUpsertsNodeWithoutServices(t *testing.
 	}
 }
 
-func TestSyncStackKitRuntimeInventoryFromJobUpsertsStoreWithoutPocketBaseStack(t *testing.T) {
+func TestSyncStackKitRuntimeInventoryFromJobUpsertsCanonicalStore(t *testing.T) {
 	store := controlplane.NewMemoryStore()
-	orch := NewWithApp(missingPocketBaseApp{}, &Config{
+	if _, err := store.CreateStack(context.Background(), controlplane.CreateStackRequest{
+		ID: "stack-1", TenantID: "tenant-1", InstanceID: "instance-1", Name: "Managed Stack",
+	}); err != nil {
+		t.Fatalf("CreateStack: %v", err)
+	}
+	orch := New(&Config{
 		Workers:       1,
+		StackStore:    store,
 		RegistryStore: store,
 	}, nil)
+
 	defer orch.Stop()
 
 	job := &jobs.Job{
@@ -123,24 +137,25 @@ func TestSyncStackKitRuntimeInventoryFromJobUpsertsStoreWithoutPocketBaseStack(t
 	if err != nil {
 		t.Fatalf("ListNodesByStack: %v", err)
 	}
-	if len(nodes) != 1 || nodes[0].Address != "203.0.113.20" {
+	if len(nodes) != 1 || nodes[0].Address != "203.0.113.20" || nodes[0].InstanceID != "instance-1" {
 		t.Fatalf("unexpected nodes: %#v", nodes)
 	}
 	services, err := store.ListServicesByStack(context.Background(), "tenant-1", "stack-1")
 	if err != nil {
 		t.Fatalf("ListServicesByStack: %v", err)
 	}
-	if len(services) != 1 || services[0].ServiceKey != "vaultwarden" || services[0].URL != "https://vault.example.test" {
+	if len(services) != 1 || services[0].ServiceKey != "vaultwarden" || services[0].URL != "https://vault.example.test" || services[0].InstanceID != "instance-1" {
 		t.Fatalf("unexpected services: %#v", services)
 	}
 }
 
 func TestSyncStackKitRuntimeInventoryFromJobReadsServiceLinksMap(t *testing.T) {
 	store := controlplane.NewMemoryStore()
-	orch := NewWithApp(missingPocketBaseApp{}, &Config{
+	orch := New(&Config{
 		Workers:       1,
 		RegistryStore: store,
 	}, nil)
+
 	defer orch.Stop()
 
 	job := &jobs.Job{
@@ -174,6 +189,9 @@ func TestSyncStackKitRuntimeInventoryFromJobReadsServiceLinksMap(t *testing.T) {
 	if len(nodes) != 1 {
 		t.Fatalf("nodes = %#v, want one", nodes)
 	}
+	if nodes[0].InstanceID != "" {
+		t.Fatalf("registry-only compatibility instance = %q, want empty", nodes[0].InstanceID)
+	}
 	services, err := store.ListServicesByStack(context.Background(), "tenant-1", "stack-1")
 	if err != nil {
 		t.Fatalf("ListServicesByStack: %v", err)
@@ -198,10 +216,11 @@ func TestSyncStackKitRuntimeInventoryFromJobReadsServiceLinksMap(t *testing.T) {
 
 func TestSyncStackKitRuntimeInventoryFromJobWritesPlatformNodes(t *testing.T) {
 	store := controlplane.NewMemoryStore()
-	orch := NewWithApp(missingPocketBaseApp{}, &Config{
+	orch := New(&Config{
 		Workers:       1,
 		RegistryStore: store,
 	}, nil)
+
 	defer orch.Stop()
 
 	job := &jobs.Job{

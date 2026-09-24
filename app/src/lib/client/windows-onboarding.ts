@@ -1,7 +1,9 @@
 export const cloudDeviceLoginUrl = "https://kombify.io/device";
 export const cloudUiLoginUrl =
   "https://techstack.kombify.io/login?manual=1&client=windows";
+export const selfHostedLocalOwnerUrl = "/client/local";
 export const windowsLocalClientReturnUrl = "/client/local?client=windows";
+export const selfHostedOnboardingUrl = "/client/onboarding?client=windows";
 export const windowsClientContextStorageKey = "techstack.windowsClientContext";
 export const windowsLocalClientContextValue = "local";
 
@@ -45,9 +47,24 @@ export function hasWindowsLocalClientContext(storage: Storage): boolean {
 
 export function loginRedirectForWindowsLocalClient(
   storage: Storage,
-  fallback = "/login",
+  fallback = selfHostedOnboardingUrl,
 ): string {
   return hasWindowsLocalClientContext(storage)
     ? windowsLocalClientReturnUrl
     : fallback;
+}
+
+export function selfHostedLoginHref(
+  options: {
+    storage?: Storage | null;
+    windowsClient?: boolean;
+  } = {},
+): string {
+  if (options.windowsClient) {
+    return windowsLocalClientReturnUrl;
+  }
+  if (options.storage && hasWindowsLocalClientContext(options.storage)) {
+    return windowsLocalClientReturnUrl;
+  }
+  return selfHostedLocalOwnerUrl;
 }

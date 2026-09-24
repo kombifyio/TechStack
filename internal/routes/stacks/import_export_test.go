@@ -1,56 +1,87 @@
 package stacks
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 
-	"github.com/pocketbase/pocketbase/core"
+	"github.com/kombifyio/techstack/pkg/controlplane"
+	"github.com/kombifyio/techstack/pkg/httpx"
 
 	"github.com/kombifyio/techstack/pkg/config"
 )
 
-func TestBuildStackSpecExport_PreservesStackKitsShape(t *testing.T) {
-	app := newOwnerSpecTestApp(t)
-	defer app.Cleanup()
-
-	collection, err := app.FindCollectionByNameOrId("stacks")
-	if err != nil {
-		t.Fatalf("find stacks collection: %v", err)
-	}
-	record := core.NewRecord(collection)
-	record.Set("name", "Configured Stack")
-	record.Set("user_config", map[string]any{
-		"name":     "configured-stack",
-		"stackkit": "basement-kit",
-		"mode":     "simple",
-		"runtime":  "docker",
-		"nodes": []any{
-			map[string]any{"name": "main", "role": "standalone", "ip": "192.168.1.100"},
+// Regression: native wizard deployments live in the control-plane store, so
+// the export boundary must return their validated v2 projection instead of
+// looking only in the retired PocketBase projection and answering 404.
+func TestExportStackReadsNativeV2ControlPlaneAuthority(t *testing.T) {
+	store := controlplane.NewMemoryStore()
+	if _, err := store.CreateStack(context.Background(), controlplane.CreateStackRequest{
+		ID: "deployment-1", TenantID: "auth0|user-1", OwnerSubjectID: "auth0|user-1", Name: "My Homelab",
+		Config: map[string]any{
+			"user_config": map[string]any{"stackkit": "cloud-kit", "services": []any{}},
+			stackConfigKeySpecV2: map[string]any{
+				"apiVersion": "stackkit/v2alpha1", "kind": "StackSpec",
+				"metadata":  map[string]any{"name": "my-homelab", "stackId": "my-homelab"},
+				"workloads": map[string]any{"photos": map[string]any{"alternative": "immich"}},
+			},
 		},
-		"services": map[string]any{
-			"homepage": map[string]any{"enabled": true},
-		},
-	})
-	if saveErr := app.Save(record); saveErr != nil {
-		t.Fatalf("save stack: %v", saveErr)
-	}
-	saved, err := app.FindRecordById("stacks", record.Id)
-	if err != nil {
-		t.Fatalf("find saved stack: %v", err)
+	}); err != nil {
+		t.Fatalf("CreateStack: %v", err)
 	}
 
-	got := buildStackSpecExport(saved)
-	if got["stackkit"] != "basement-kit" {
-		t.Fatalf("expected stackkit to be preserved, got %v", got)
+	event, recorder := stackStoreRequestEvent("auth0|user-1", "")
+	event.Request.Method = http.MethodGet
+	event.Request.SetPathValue("id", "deployment-1")
+	h := importExportRouteHandlers{create: crudRouteHandlers{stackStore: store}}
+	if err := h.exportStack(event); err != nil {
+		t.Fatalf("exportStack: %v", err)
 	}
-	if got["version"] != nil {
-		t.Fatalf("did not expect legacy version injection for stack-spec export, got %v", got["version"])
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
 	}
-	if got["metadata"] != nil {
-		t.Fatalf("did not expect TechStack metadata injection for stack-spec export, got %v", got["metadata"])
+
+	var response struct {
+		Data struct {
+			KitDeploymentID string         `json:"kit_deployment_id"`
+			StackSpec       map[string]any `json:"stack_spec"`
+		} `json:"data"`
 	}
-	if services, ok := got["services"].(map[string]any); !ok || services["homepage"] == nil {
-		t.Fatalf("expected StackKits services map to be preserved, got %v", got["services"])
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode export: %v", err)
+	}
+	workloads, _ := response.Data.StackSpec["workloads"].(map[string]any)
+	if response.Data.KitDeploymentID != "deployment-1" || response.Data.StackSpec["apiVersion"] != "stackkit/v2alpha1" || workloads["photos"] == nil {
+		t.Fatalf("exported stack_spec = %#v, want persisted v2 workloads", response.Data.StackSpec)
+	}
+}
+
+func TestExportStackFailsClosedWithoutCanonicalStore(t *testing.T) {
+	event, recorder := stackStoreRequestEvent("owner-1", "owner-1")
+	_ = (importExportRouteHandlers{}).exportStack(event)
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", recorder.Code)
+	}
+}
+
+func TestValidateImportStopsAfterEmptyBodyRejection(t *testing.T) {
+	event, recorder := stackStoreRequestEvent("owner-1", "")
+	event.Request.URL.Path = "/api/v1/stacks/import/validate"
+	err := (importExportRouteHandlers{}).validateImport(event)
+	if !errors.Is(err, httpx.ErrResponseWritten) || recorder.Code != http.StatusBadRequest {
+		t.Fatalf("err=%v status=%d body=%s, want terminal 400", err, recorder.Code, recorder.Body.String())
+	}
+	decoder := json.NewDecoder(recorder.Body)
+	var envelope map[string]any
+	if err := decoder.Decode(&envelope); err != nil {
+		t.Fatalf("decode rejection: %v", err)
+	}
+	if err := decoder.Decode(&map[string]any{}); !errors.Is(err, io.EOF) {
+		t.Fatalf("second response appended after rejection: %v", err)
 	}
 }
 

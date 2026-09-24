@@ -4,7 +4,9 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/kombifyio/techstack/internal/gocommon/authlocal"
 	"github.com/pocketbase/pocketbase/core"
 
 	"github.com/kombifyio/techstack/pkg/controlplane"
@@ -54,6 +56,66 @@ func TestResolveCreateOwnerBootstrap_CloudLinkedDerivesIdentityFromLink(t *testi
 	}
 	if !strings.HasPrefix(bootstrap.RecoveryPassphraseHash, "$argon2id$") {
 		t.Fatalf("expected generated argon2id recovery hash, got %q", bootstrap.RecoveryPassphraseHash)
+	}
+}
+
+func TestResolveCreateOwnerBootstrap_AutomaticCloudUsesVerifiedCurrentProfile(t *testing.T) {
+	req := normalizedCreateStackRequest{
+		Name:       "Profile Owner",
+		Mode:       "easy",
+		UserConfig: map[string]interface{}{"name": "profile-owner"},
+		Options: map[string]interface{}{
+			"owner_bootstrap_mode": ownerBootstrapModeAuto,
+			"owner_source":         ownerSourceCloud,
+		},
+	}
+	resolved, denial := resolveCreateOwnerBootstrap(req, ownerBootstrapContext{
+		CurrentProfile: &cloudLinkIdentity{
+			ExternalID:    "auth0|current-owner",
+			Email:         "Current.Owner@example.com",
+			EmailVerified: true,
+			DisplayName:   "Current Owner",
+		},
+	})
+	if denial != nil {
+		t.Fatalf("resolveCreateOwnerBootstrap() denial = %q, want none", denial.Message)
+	}
+	bootstrap, ok := ownerBootstrapFromRequest(resolved)
+	if !ok {
+		t.Fatal("expected resolved owner bootstrap")
+	}
+	if bootstrap.Source != ownerSourceCloud ||
+		bootstrap.Email != "Current.Owner@example.com" ||
+		bootstrap.Username != "current-owner" ||
+		bootstrap.DisplayName != "Current Owner" {
+		t.Fatalf("unexpected resolved bootstrap: %+v", bootstrap)
+	}
+	if !strings.HasPrefix(bootstrap.RecoveryPassphraseHash, "$argon2id$") {
+		t.Fatal("expected server-generated recovery material")
+	}
+	jobSpec := createStackJobSpec(resolved)
+	identitySpec, _ := jobSpec["identity"].(map[string]interface{})
+	ownerSpec, _ := identitySpec["owner"].(map[string]interface{})
+	if ownerSpec["source"] != ownerSourceLocal || ownerSpec["source_origin"] != ownerSourceCloud {
+		t.Fatalf("unexpected StackKits owner provenance: %+v", ownerSpec)
+	}
+}
+
+func TestResolveCreateOwnerBootstrap_AutomaticCloudRejectsUnverifiedProfile(t *testing.T) {
+	req := normalizedCreateStackRequest{
+		Name:       "Profile Owner",
+		Mode:       "easy",
+		UserConfig: map[string]interface{}{"name": "profile-owner"},
+		Options: map[string]interface{}{
+			"owner_bootstrap_mode": ownerBootstrapModeAuto,
+			"owner_source":         ownerSourceCloud,
+		},
+	}
+	_, denial := resolveCreateOwnerBootstrap(req, ownerBootstrapContext{
+		CurrentProfile: &cloudLinkIdentity{Email: "unverified@example.com"},
+	})
+	if denial == nil || denial.ReasonCode != reasonCloudProfileEmailMissing {
+		t.Fatalf("resolveCreateOwnerBootstrap() denial = %+v, want verified profile denial", denial)
 	}
 }
 
@@ -151,20 +213,6 @@ func TestOwnerBootstrapDenial_DetailsShape(t *testing.T) {
 	}
 }
 
-func TestStackHasOwnerBootstrapForProvision_CloudLinked(t *testing.T) {
-	spec := map[string]interface{}{
-		"owner": map[string]interface{}{
-			"bootstrapMode": ownerBootstrapModeCustom,
-			"source":        ownerSourceCloudLinked,
-			"email":         "linked.owner@example.com",
-			"username":      "linked-owner",
-		},
-	}
-	if !stackHasOwnerBootstrapForProvision(nil, spec) {
-		t.Fatal("cloud-linked owner bootstrap must count as a Pocket ID seeding bootstrap")
-	}
-}
-
 func TestCloudLinkForOwner_ReadsUserLinks(t *testing.T) {
 	app := newOwnerSpecTestApp(t)
 	defer app.Cleanup()
@@ -182,7 +230,7 @@ func TestCloudLinkForOwner_ReadsUserLinks(t *testing.T) {
 		t.Fatalf("find user_links collection: %v", err)
 	}
 	record := core.NewRecord(collection)
-	record.Set("user", "operator-1")
+	record.Set("user", authlocal.BreakGlassRecordID)
 	record.Set("provider", "cloud")
 	record.Set("external_id", "auth0|cloud-subject")
 	record.Set("external_email", "linked.owner@example.com")
@@ -192,9 +240,9 @@ func TestCloudLinkForOwner_ReadsUserLinks(t *testing.T) {
 		t.Fatalf("save user_links record: %v", err)
 	}
 
-	link := cloudLinkForOwner(app, "operator-1")
+	link := cloudLinkForOwner(app, "breakglass:"+authlocal.BreakGlassRecordID)
 	if link == nil {
-		t.Fatal("expected cloud link for operator-1")
+		t.Fatal("expected cloud link for canonical local owner")
 	}
 	if link.Email != "linked.owner@example.com" || !link.EmailVerified || link.DisplayName != "Linked Owner" {
 		t.Fatalf("unexpected cloud link: %+v", link)
@@ -205,12 +253,11 @@ func TestCloudLinkForOwner_ReadsUserLinks(t *testing.T) {
 }
 
 func TestOwnerSpecBootstrapAccessForStoreDeploy_IssuesTokenForSeededOwner(t *testing.T) {
-	app := newOwnerSpecTestApp(t)
-	defer app.Cleanup()
-
-	h := crudRouteHandlers{app: app}
+	store := controlplane.NewMemoryStore()
+	h := crudRouteHandlers{walletStore: store}
 	stack := &controlplane.Stack{
 		ID:             "store-stack-1",
+		TenantID:       "tenant-store-1",
 		OwnerSubjectID: "auth0|store-owner",
 		Config: map[string]any{
 			"owner": map[string]any{
@@ -222,7 +269,7 @@ func TestOwnerSpecBootstrapAccessForStoreDeploy_IssuesTokenForSeededOwner(t *tes
 		},
 	}
 
-	access, err := h.ownerSpecBootstrapAccessForStoreDeploy(stack)
+	access, err := h.ownerSpecBootstrapAccessForStoreDeploy(t.Context(), stack)
 	if err != nil {
 		t.Fatalf("ownerSpecBootstrapAccessForStoreDeploy() error = %v", err)
 	}
@@ -230,35 +277,36 @@ func TestOwnerSpecBootstrapAccessForStoreDeploy_IssuesTokenForSeededOwner(t *tes
 		t.Fatalf("expected complete owner-spec access, got %+v", access)
 	}
 
-	tokenRecord, findErr := app.FindFirstRecordByFilter(
-		"owner_spec_tokens",
-		"stack_id = {:stackID}",
-		map[string]any{"stackID": stack.ID},
-	)
-	if findErr != nil || tokenRecord == nil {
-		t.Fatalf("expected persisted owner_spec_tokens record: %v", findErr)
+	claims, err := verifyOwnerSpecBootstrapToken(access.Token, stack.ID, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("verifyOwnerSpecBootstrapToken() error = %v", err)
 	}
-	if tokenRecord.GetString("owner_id") != stack.OwnerSubjectID {
-		t.Fatalf("token owner_id = %q, want %q", tokenRecord.GetString("owner_id"), stack.OwnerSubjectID)
+	if claims.TenantID != stack.TenantID {
+		t.Fatalf("token tenant_id = %q, want stored tenant %q", claims.TenantID, stack.TenantID)
 	}
 }
 
-func TestOwnerSpecBootstrapAccessForStoreDeploy_NoSeedNoToken(t *testing.T) {
-	h := crudRouteHandlers{}
-	access, err := h.ownerSpecBootstrapAccessForStoreDeploy(&controlplane.Stack{
+func TestOwnerSpecBootstrapAccessForStoreDeploy_AutomaticCloudSeedsOwner(t *testing.T) {
+	store := controlplane.NewMemoryStore()
+	h := crudRouteHandlers{walletStore: store}
+	access, err := h.ownerSpecBootstrapAccessForStoreDeploy(t.Context(), &controlplane.Stack{
 		ID:             "store-stack-2",
+		TenantID:       "tenant-store-2",
 		OwnerSubjectID: "auth0|store-owner",
 		Config: map[string]any{
 			"owner": map[string]any{
 				"bootstrapMode": ownerBootstrapModeAuto,
 				"source":        ownerSourceCloud,
+				"email":         "owner@example.com",
+				"username":      "owner",
 			},
+			"recovery": map[string]any{"passphrase_hash": testRecoveryPassphraseHash},
 		},
 	})
 	if err != nil {
 		t.Fatalf("ownerSpecBootstrapAccessForStoreDeploy() error = %v", err)
 	}
-	if access.complete() {
-		t.Fatalf("SaaS auto-cloud owner must not mint owner-spec access, got %+v", access)
+	if !access.complete() {
+		t.Fatalf("SaaS auto-cloud owner must mint owner-spec access, got %+v", access)
 	}
 }

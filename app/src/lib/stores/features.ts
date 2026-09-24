@@ -11,8 +11,8 @@ import {
   type FeaturesResponse,
   type FeatureCategory,
   type RiskLevel,
-} from "$lib/api/features";
-import { ApiRequestError } from "$lib/api/client";
+} from "#lib/api/features.js";
+import { ApiRequestError } from "#lib/api/client.js";
 
 // Distinguishes a transient/auth verification failure (retryable, self-heals)
 // from a genuine not-entitled state. auth=401/403, network=no response, server=5xx.

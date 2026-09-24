@@ -5,44 +5,25 @@ import (
 	"testing"
 )
 
-func TestStackKitSpecBytesKeepsProviderlessLocalSpecSimple(t *testing.T) {
-	spec := map[string]interface{}{
+func TestStackKitSpecBytesRefusesV1DocumentWithUseCases(t *testing.T) {
+	_, err := stackKitSpecBytesForPayload(map[string]interface{}{
 		"name":     "local-stack",
 		"stackkit": "basement-kit",
+		"useCases": []interface{}{"photos"},
 		"mode":     "simple",
-		"runtime":  "docker",
-		"nodes": []interface{}{
-			map[string]interface{}{
-				"name": "main",
-				"role": "standalone",
-			},
-		},
-	}
-
-	data, err := stackKitSpecBytesForPayload(spec)
-	if err != nil {
-		t.Fatalf("stackKitSpecBytesForPayload: %v", err)
-	}
-	text := string(data)
-	if !strings.Contains(text, "mode: simple") {
-		t.Fatalf("stack spec =\n%s\nwant mode: simple", text)
-	}
-	if spec["mode"] != "simple" {
-		t.Fatalf("source spec mode mutated to %q", spec["mode"])
+	})
+	if err == nil {
+		t.Fatal("mixed v1+useCases payload must not become the CLI handoff")
 	}
 }
 
 func TestStackKitSpecBytesSetsBootstrappedModeForManagedRuntime(t *testing.T) {
 	spec := map[string]interface{}{
-		"name":     "managed-stack",
-		"stackkit": "cloud-kit",
-		"mode":     "simple",
-		"runtime":  "docker",
-		"metadata": map[string]interface{}{
-			metadataKeyServerProvisionMode: serverProvisionModeKombifyCloud,
-			metadataKeyServerMode:          serverModeMonthlyRuntime,
-			metadataKeyRuntimeLane:         serverModeMonthlyRuntime,
-		},
+		"name":        "managed-stack",
+		"stackkit":    "cloud-kit",
+		"mode":        "simple",
+		"runtime":     "docker",
+		"provider_id": "centron",
 	}
 
 	data, err := stackKitSpecBytesForPayload(spec)

@@ -34,7 +34,7 @@ func (s *PostgresStore) GetInventoryStack(ctx context.Context, scope InventoryRe
 		return nil, ErrInvalidInventoryReadScope
 	}
 	return queryOneTenantRow(ctx, s, scope.tenantID, `
-		SELECT id, tenant_id, instance_id, owner_subject_id, homelab_id, name, description,
+		SELECT id, tenant_id, instance_id, owner_subject_id, homelab_id, stackkit_instance_id, name, description,
 			mode, status, config_json::text, services_json::text,
 			runtime_summary_json::text, drift_status, drift_checked_at,
 			created_at, updated_at, deleted_at
@@ -151,14 +151,8 @@ func (s *PostgresStore) CountInventoryServers(ctx context.Context, scope Invento
 
 const inventoryServiceReadCTE = `
 	WITH inventory_services AS (
-		SELECT measured.id, measured.tenant_id, measured.instance_id, measured.stack_id,
-			measured.server_id, measured.service_key, measured.service_instance, measured.name,
-			measured.desired_state, measured.observed_state, measured.health_state,
-			measured.management_state,
-			measured.observed_at, measured.stackkit_version, measured.access_json::text,
-			measured.capabilities_json::text, measured.source, measured.metadata_json::text,
-			measured.created_at, measured.updated_at
-		FROM services measured
+		SELECT measured.*
+		FROM (SELECT ` + serviceRuntimeColumns + ` FROM services) measured
 		JOIN servers owned_server
 			ON owned_server.tenant_id = measured.tenant_id AND owned_server.id = measured.server_id
 			AND ($2 = '' OR owned_server.owner_subject_id = $2)
@@ -171,8 +165,8 @@ const inventoryServiceReadCTE = `
 			AND ($3 = '' OR measured.server_id = $3)
 			AND (NULLIF(btrim(owned_server.stack_id), '') IS NULL OR owned_server.stack_id = measured.stack_id)
 			AND (owned_server.inventory_revision = 0 OR (
-				COALESCE(measured.metadata_json->>'inventory_revision', '') ~ '^[0-9]+$'
-				AND (measured.metadata_json->>'inventory_revision')::bigint = owned_server.inventory_revision
+				COALESCE((measured.metadata_json::jsonb)->>'inventory_revision', '') ~ '^[0-9]+$'
+				AND ((measured.metadata_json::jsonb)->>'inventory_revision')::bigint = owned_server.inventory_revision
 			))
 	)
 `
@@ -256,10 +250,7 @@ func listInventoryServicesSnapshot(ctx context.Context, tx *sql.Tx, scope Invent
 		}
 	}
 	query := inventoryServiceReadCTE + `
-			SELECT id, tenant_id, instance_id, stack_id, server_id, service_key,
-				service_instance, name, desired_state, observed_state, health_state,
-				management_state, observed_at, stackkit_version, access_json, capabilities_json,
-				source, metadata_json, created_at, updated_at
+			SELECT *
 			FROM inventory_services
 			WHERE (created_at, id) <= ($5, $6)`
 	args := append(baseArgs, result.Watermark.CreatedAt, result.Watermark.ID)

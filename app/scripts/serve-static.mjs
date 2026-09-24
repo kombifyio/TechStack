@@ -62,8 +62,8 @@ const contentTypes = new Map([
 
 function isBackendPath(pathname) {
   if (pathname.startsWith("/api/") || pathname === "/api") return true;
-  // Go-owned root redirects (web convergence). Exact paths only — other
-  // /auth/* routes (oidc-complete, sso, cloud-link-complete) are SPA pages.
+  // Go-owned root redirects (web convergence). Exact paths only;
+  // /auth/sso and /auth/cloud-link-complete remain frontend routes.
   if (pathname === "/docs" || pathname.startsWith("/docs/")) return true;
   return [
     "/auth/callback",

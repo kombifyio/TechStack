@@ -2,8 +2,11 @@ package stacks
 
 import (
 	"errors"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/httpx"
@@ -40,7 +43,7 @@ func (h crudRouteHandlers) retryStackRollout(e *httpx.Event) error {
 		RequestContext: e.Request.Context(), StackID: stack.ID, TenantID: stack.TenantID,
 		OwnerID: stack.OwnerSubjectID, StackName: stack.Name, SourceJobID: req.SourceJobID,
 		LeaseID:                 req.LeaseID,
-		IssueOwnerSpecBootstrap: h.recoveryOwnerSpecIssuer(stack, &ownerSpecAccess),
+		IssueOwnerSpecBootstrap: h.recoveryOwnerSpecIssuer(e.Request.Context(), stack, &ownerSpecAccess),
 	})
 	if retryErr != nil {
 		return writeRolloutRetryError(e, retryErr)
@@ -52,6 +55,20 @@ func (h crudRouteHandlers) retryStackRollout(e *httpx.Event) error {
 }
 
 func writeRolloutRetryError(e *httpx.Event, err error) error {
+	var notYet *orchestrator.RolloutRetryNotYetError
+	if errors.As(err, &notYet) {
+		retryAfter := notYet.RetryAfter.UTC()
+		seconds := int64(math.Ceil(time.Until(retryAfter).Seconds()))
+		if seconds < 1 {
+			seconds = 1
+		}
+		e.Response.Header().Set("Retry-After", strconv.FormatInt(seconds, 10))
+		return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "The certificate authority refuses this address until its retry-after time", map[string]any{
+			detailsKeyReasonCode: "rollout_retry_before_retry_after",
+			"retryable":          true,
+			"retry_after":        retryAfter.Format(time.RFC3339),
+		})
+	}
 	switch {
 	case errors.Is(err, orchestrator.ErrDeployRuntimeEvidenceUnavailable):
 		return rolloutRetryUnavailable(e, "Canonical Guard runtime evidence is temporarily unavailable")

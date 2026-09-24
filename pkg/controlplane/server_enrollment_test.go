@@ -39,7 +39,7 @@ func TestMemoryStoreApplyServerEnrollmentBindsNodeAtomicallyAndPreservesExisting
 	}
 }
 
-func TestPostgresStoreApplyServerEnrollmentRollsBackNodeWhenServerInsertFails(t *testing.T) {
+func TestPostgresStoreApplyServerEnrollmentRollsBackWorkerAndNodeWhenServerInsertFails(t *testing.T) {
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
 	if err != nil {
 		t.Fatal(err)
@@ -48,6 +48,15 @@ func TestPostgresStoreApplyServerEnrollmentRollsBackNodeWhenServerInsertFails(t 
 	now := time.Date(2026, 7, 22, 12, 30, 0, 0, time.UTC)
 	mock.ExpectBegin()
 	expectTenantGUC(mock, "tenant-1")
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO workers")).
+		WithArgs(
+			"guard-1", "tenant-1", "instance-1", "stack-1", "runtime-1", "", "", "", "", "pending",
+			false, nil, now, 0, 0, 0, "", false, false, "", "", "", sqlmock.AnyArg(), "owner-1", sqlmock.AnyArg(), sqlmock.AnyArg(),
+		).
+		WillReturnRows(workerRows().AddRow(
+			"guard-1", "tenant-1", "instance-1", "stack-1", "runtime-1", "", "", "", "", "pending",
+			false, nil, now, 0, 0, 0, "", false, false, "", "", "", `{}`, "owner-1", `{}`, `{}`, now, now,
+		))
 	expectServerEventDatabaseTime(mock, now)
 	mock.ExpectQuery(`(?s)SELECT id, tenant_id.*FROM nodes WHERE id = \$1 FOR UPDATE`).
 		WithArgs("server-1").WillReturnRows(sqlmock.NewRows([]string{"id"}))
@@ -56,11 +65,17 @@ func TestPostgresStoreApplyServerEnrollmentRollsBackNodeWhenServerInsertFails(t 
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`(?s)SELECT .* FROM servers.*FOR UPDATE`).
 		WithArgs("tenant-1", "server-1").WillReturnRows(serverEventRuntimeRows())
-	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO servers (")).WillReturnError(errors.New("server insert failed"))
+	serverFailure := errors.New("server insert failed")
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO servers (")).WillReturnError(serverFailure)
 	mock.ExpectRollback()
 
-	_, err = NewPostgresStore(db).ApplyServerEnrollment(context.Background(), serverEnrollmentTestCommand(now))
-	if err == nil || err.Error() != "server insert failed" {
+	command := serverEnrollmentTestCommand(now)
+	command.Worker = &Worker{
+		ID: "guard-1", TenantID: "tenant-1", InstanceID: "instance-1", StackID: "stack-1",
+		Hostname: "runtime-1", Status: "pending", OwnerSubjectID: "owner-1", LastSeenAt: &now,
+	}
+	_, err = NewPostgresStore(db).ApplyServerEnrollment(context.Background(), command)
+	if !errors.Is(err, serverFailure) {
 		t.Fatalf("error = %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -84,13 +99,14 @@ func TestPostgresStoreEnrollmentPersistsAnUnassignedNodeAsNullStack(t *testing.T
 	expectServerEventDatabaseTime(mock, now)
 	mock.ExpectQuery(`(?s)SELECT id, tenant_id.*FROM nodes WHERE id = \$1 FOR UPDATE`).
 		WithArgs("server-1").WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	nodeInsertErr := errors.New("stop after node insert contract")
 	mock.ExpectExec(`(?s)INSERT INTO nodes .*VALUES \(\$1, \$2, NULLIF\(\$3, ''\), NULLIF\(\$4, ''\), NULLIF\(\$5, ''\)`).
 		WithArgs("server-1", "tenant-1", "instance-1", "", "guard-1", "runtime-1", "foundation", "", sqlmock.AnyArg()).
-		WillReturnError(errors.New("stop after node insert contract"))
+		WillReturnError(nodeInsertErr)
 	mock.ExpectRollback()
 
 	_, err = NewPostgresStore(db).ApplyServerEnrollment(context.Background(), command)
-	if err == nil || err.Error() != "stop after node insert contract" {
+	if !errors.Is(err, nodeInsertErr) {
 		t.Fatalf("error = %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {

@@ -1,5 +1,9 @@
 import { test, expect } from "@playwright/test";
-import { TEST_CREDENTIALS, requireApiBase } from "./helpers/test-utils";
+import {
+  authenticateViaApi,
+  TEST_CREDENTIALS,
+  requireApiBase,
+} from "./helpers/test-utils";
 
 /**
  * Services Page Tests
@@ -66,24 +70,29 @@ test.describe("Services Page", () => {
 
 test.describe("Services API", () => {
   const API_BASE = requireApiBase();
+  let authToken = "";
+
+  test.beforeAll(async () => {
+    authToken = (await authenticateViaApi(API_BASE)).token;
+  });
+
+  const authHeaders = () => ({ Authorization: `Bearer ${authToken}` });
 
   test("GET /api/v1/services returns the canonical service read model", async ({
     request,
   }) => {
-    const response = await request.get(`${API_BASE}/api/v1/services`);
+    const response = await request.get(`${API_BASE}/api/v1/services`, {
+      headers: authHeaders(),
+    });
 
-    // API should respond when authenticated; unauthenticated local setups may reject.
-    expect([200, 401, 403]).toContain(response.status());
-
-    if (response.ok()) {
-      const json = await response.json();
-      expect(Array.isArray(json.data)).toBe(true);
-      // management_state is a REQUIRED field of this contract. The client
-      // refuses to render a service without it rather than degrading it to
-      // "not managed", so a dropped field has to fail here first.
-      for (const service of json.data) {
-        expect(["managed", "observed"]).toContain(service.management_state);
-      }
+    expect(response.status()).toBe(200);
+    const json = await response.json();
+    expect(Array.isArray(json.data)).toBe(true);
+    // management_state is a REQUIRED field of this contract. The client
+    // refuses to render a service without it rather than degrading it to
+    // "not managed", so a dropped field has to fail here first.
+    for (const service of json.data) {
+      expect(["managed", "observed"]).toContain(service.management_state);
     }
   });
 
@@ -93,17 +102,16 @@ test.describe("Services API", () => {
     // The registry BFF is not retired in this wave: it is the only source of
     // the catalog and the migration availability flags. Its service rows carry
     // the same required management_state as the canonical route.
-    const response = await request.get(`${API_BASE}/api/v1/registry/services`);
+    const response = await request.get(`${API_BASE}/api/v1/registry/services`, {
+      headers: authHeaders(),
+    });
 
-    expect([200, 401, 403]).toContain(response.status());
-
-    if (response.ok()) {
-      const json = await response.json();
-      expect(json.data.catalog).toBeDefined();
-      expect(json.data.services).toBeDefined();
-      for (const service of json.data.services) {
-        expect(["managed", "observed"]).toContain(service.management_state);
-      }
+    expect(response.status()).toBe(200);
+    const json = await response.json();
+    expect(json.data.catalog).toBeDefined();
+    expect(json.data.services).toBeDefined();
+    for (const service of json.data.services) {
+      expect(["managed", "observed"]).toContain(service.management_state);
     }
   });
 });

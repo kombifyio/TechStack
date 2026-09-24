@@ -23,12 +23,13 @@ func TestRetryStackRolloutRouteUsesExactFailedJobAndNeverRequestsVM(t *testing.T
 		t.Fatal(err)
 	}
 	app := newOwnerSpecTestApp(t)
-	orch := orchestrator.NewWithApp(app, &orchestrator.Config{
+	orch := orchestrator.New(&orchestrator.Config{
 		Workers: 1, StackStore: store, JobStore: store, WorkerStore: store,
 		LeaseLister: routingTestLeaseLister{leases: []vmlease.Lease{
 			routingTestManagedLease("lease-existing", "tenant-1", "auth0|user-1", "stack-waiting"),
 		}},
 	}, nil)
+
 	defer orch.Stop()
 	h := crudRouteHandlers{app: app, orch: orch, stackStore: store, jobStore: store}
 
@@ -66,6 +67,47 @@ func TestRetryStackRolloutRouteUsesExactFailedJobAndNeverRequestsVM(t *testing.T
 	secondData := enrollmentResumeResponseData(t, secondRec)
 	if secondData["job_id"] != jobID || secondData["idempotent_replay"] != true {
 		t.Fatalf("replay = %#v", secondData)
+	}
+}
+
+// A rollout the certificate authority rate-limited cannot succeed before the
+// authority's retry-after; retrying it only spends another CA order. The retry
+// must be refused before any job is created, with the time the owner can act.
+func TestRetryStackRolloutRefusesRetryBeforeCertificateAuthorityRetryAfter(t *testing.T) {
+	ctx := context.Background()
+	store := controlplane.NewMemoryStore()
+	seedStack(t, store, "stack-waiting", "tenant-1", "auth0|user-1", "error")
+	retryAfter := time.Now().UTC().Add(2 * time.Hour).Truncate(time.Second)
+	if _, err := store.CreateJob(ctx, controlplane.UpsertJobRequest{
+		ID: "job-failed", TenantID: "tenant-1", StackID: "stack-waiting", Type: "deploy", State: "failed",
+		Error: "StackKits rollout failed", Result: map[string]any{
+			"lease_id": "lease-existing", "reason_code": "stackkit_acme_rate_limited", "retryable": true,
+			"retry_after": retryAfter.Format(time.RFC3339),
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	orch := orchestrator.New(&orchestrator.Config{
+		Workers: 1, StackStore: store, JobStore: store, WorkerStore: store,
+		LeaseLister: routingTestLeaseLister{leases: []vmlease.Lease{
+			routingTestManagedLease("lease-existing", "tenant-1", "auth0|user-1", "stack-waiting"),
+		}},
+	}, nil)
+	defer orch.Stop()
+	seedRecoveryGuardRuntime(t, store, "tenant-1", "auth0|user-1", "stack-waiting", "lease-existing", time.Now().UTC())
+	h := crudRouteHandlers{app: newOwnerSpecTestApp(t), orch: orch, stackStore: store, jobStore: store}
+
+	e, rec := enrollmentResumeEvent("auth0|user-1", `{"source_job_id":"job-failed","lease_id":"lease-existing"}`)
+	e.Request.URL.Path = "/api/v1/stacks/stack-waiting/retry-rollout"
+	if err := h.retryStackRollout(e); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusConflict || rec.Header().Get("Retry-After") == "" ||
+		!strings.Contains(rec.Body.String(), "rollout_retry_before_retry_after") || !strings.Contains(rec.Body.String(), retryAfter.Format(time.RFC3339)) {
+		t.Fatalf("status=%d retry-after=%q body=%s", rec.Code, rec.Header().Get("Retry-After"), rec.Body.String())
+	}
+	if stored, err := store.ListJobsByStack(ctx, "tenant-1", "stack-waiting", 10); err != nil || len(stored) != 1 {
+		t.Fatalf("refused retry created jobs = %#v err=%v", stored, err)
 	}
 }
 

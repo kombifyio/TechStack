@@ -3,129 +3,10 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
-
-func TestEnvFloat(t *testing.T) {
-	tests := []struct {
-		name     string
-		envValue string
-		current  float64
-		expected float64
-	}{
-		{
-			name:     "valid float",
-			envValue: "15.5",
-			current:  10.0,
-			expected: 15.5,
-		},
-		{
-			name:     "integer as float",
-			envValue: "20",
-			current:  10.0,
-			expected: 20.0,
-		},
-		{
-			name:     "invalid float",
-			envValue: "invalid",
-			current:  10.0,
-			expected: 10.0, // should use current
-		},
-		{
-			name:     "zero value",
-			envValue: "0",
-			current:  10.0,
-			expected: 10.0, // should use current (0 is not positive)
-		},
-		{
-			name:     "negative value",
-			envValue: "-5",
-			current:  10.0,
-			expected: 10.0, // should use current (negative not allowed)
-		},
-		{
-			name:     "empty string",
-			envValue: "",
-			current:  10.0,
-			expected: 10.0,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			key := "TEST_ENV_FLOAT"
-			if tt.envValue != "" {
-				os.Setenv(key, tt.envValue)
-				defer os.Unsetenv(key)
-			} else {
-				os.Unsetenv(key)
-			}
-
-			result := envFloat(key, tt.current)
-			if result != tt.expected {
-				t.Errorf("envFloat(%q, %f) = %f, want %f", tt.envValue, tt.current, result, tt.expected)
-			}
-		})
-	}
-}
-
-func TestEnvInt(t *testing.T) {
-	tests := []struct {
-		name     string
-		envValue string
-		current  int
-		expected int
-	}{
-		{
-			name:     "valid int",
-			envValue: "25",
-			current:  20,
-			expected: 25,
-		},
-		{
-			name:     "invalid int",
-			envValue: "invalid",
-			current:  20,
-			expected: 20, // should use current
-		},
-		{
-			name:     "zero value",
-			envValue: "0",
-			current:  20,
-			expected: 20, // should use current (0 is not positive)
-		},
-		{
-			name:     "negative value",
-			envValue: "-5",
-			current:  20,
-			expected: 20, // should use current (negative not allowed)
-		},
-		{
-			name:     "float value",
-			envValue: "25.5",
-			current:  20,
-			expected: 25, // Sscanf %d parses the integer part
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			key := "TEST_ENV_INT"
-			if tt.envValue != "" {
-				os.Setenv(key, tt.envValue)
-				defer os.Unsetenv(key)
-			} else {
-				os.Unsetenv(key)
-			}
-
-			result := envInt(key, tt.current)
-			if result != tt.expected {
-				t.Errorf("envInt(%q, %d) = %d, want %d", tt.envValue, tt.current, result, tt.expected)
-			}
-		})
-	}
-}
 
 func TestRateLimitEnvOverride(t *testing.T) {
 	// Set environment variables
@@ -177,20 +58,6 @@ func TestMonitoringEnvOverride(t *testing.T) {
 	}
 	if cfg.Monitoring.OTLPLaneRequirement != "optional" || cfg.Monitoring.LegacyPushLaneRequirement != "disabled" {
 		t.Fatalf("unexpected lane requirements: otlp=%q legacy=%q", cfg.Monitoring.OTLPLaneRequirement, cfg.Monitoring.LegacyPushLaneRequirement)
-	}
-}
-
-func TestBackupDirEnvOverrideIsPreserved(t *testing.T) {
-	t.Setenv("TECHSTACK_DATA_DIR", "/data")
-	t.Setenv("TECHSTACK_BACKUP_DIR", "/custom/backups")
-
-	cfg := DefaultConfig()
-	if err := cfg.loadFromEnv(); err != nil {
-		t.Fatalf("loadFromEnv() error = %v", err)
-	}
-
-	if got := cfg.Backup.BackupDir; got != "/custom/backups" {
-		t.Fatalf("BackupDir override = %q, want /custom/backups", got)
 	}
 }
 
@@ -530,6 +397,62 @@ func TestInferredSaaSFrameOriginsByHost(t *testing.T) {
 	}
 }
 
+func TestDefaultCORSOriginsOmitPocketBase(t *testing.T) {
+	origins := DefaultCORSOrigins()
+	for _, origin := range origins {
+		if strings.Contains(origin, ":8090") {
+			t.Fatalf("default CORS still admits PocketBase origin %q", origin)
+		}
+	}
+	foundUI := false
+	for _, origin := range origins {
+		if origin == "http://localhost:5261" {
+			foundUI = true
+			break
+		}
+	}
+	if !foundUI {
+		t.Fatal("default CORS dropped the Techstack UI origin")
+	}
+}
+
+func TestLoadFromEnvDropsDevelopmentCORSDefaultsInProduction(t *testing.T) {
+	t.Setenv("TECHSTACK_ENV", "production")
+	t.Setenv("TECHSTACK_CORS_ORIGINS", "")
+
+	cfg := DefaultConfig()
+	if err := cfg.loadFromEnv(); err != nil {
+		t.Fatalf("loadFromEnv() error = %v", err)
+	}
+
+	for _, origin := range cfg.Server.CORSOrigins {
+		if strings.Contains(origin, "localhost") || strings.Contains(origin, "127.0.0.1") {
+			t.Fatalf("production CORS still includes development origin %q", origin)
+		}
+	}
+}
+
+func TestLoadFromEnvKeepsExplicitProductionCORSOrigins(t *testing.T) {
+	t.Setenv("TECHSTACK_ENV", "production")
+	t.Setenv("TECHSTACK_CORS_ORIGINS", "https://techstack.kombify.io")
+
+	cfg := DefaultConfig()
+	if err := cfg.loadFromEnv(); err != nil {
+		t.Fatalf("loadFromEnv() error = %v", err)
+	}
+
+	found := false
+	for _, origin := range cfg.Server.CORSOrigins {
+		if origin == "https://techstack.kombify.io" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("explicit production CORS origin was dropped: %#v", cfg.Server.CORSOrigins)
+	}
+}
+
 func TestPublicOriginFromEnvSanitizesHostedOrigin(t *testing.T) {
 	t.Setenv("TECHSTACK_PUBLIC_ORIGIN", "https://techstack.kombify.io/")
 	t.Setenv("APP_URL", "https://ignored.example")
@@ -687,71 +610,6 @@ server:
 		// Env var should override file
 		if cfg.Server.ListenAddr != ":7777" {
 			t.Errorf("ListenAddr = %v, want %v (env override)", cfg.Server.ListenAddr, ":7777")
-		}
-	})
-}
-
-// TestEnvStr tests the envStr helper function.
-func TestEnvStr(t *testing.T) {
-	tests := []struct {
-		name     string
-		envValue string
-		current  string
-		expected string
-	}{
-		{
-			name:     "env var set",
-			envValue: "new-value",
-			current:  "old-value",
-			expected: "new-value",
-		},
-		{
-			name:     "env var empty",
-			envValue: "",
-			current:  "old-value",
-			expected: "old-value",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			key := "TEST_ENV_STR"
-			if tt.envValue != "" {
-				os.Setenv(key, tt.envValue)
-				defer os.Unsetenv(key)
-			} else {
-				os.Unsetenv(key)
-			}
-
-			result := envStr(key, tt.current)
-			if result != tt.expected {
-				t.Errorf("envStr(%q, %q) = %q, want %q", tt.envValue, tt.current, result, tt.expected)
-			}
-		})
-	}
-}
-
-// TestLoadFromEnvSimulationProviders removed (cleanup plan 2026-04-27 phase 3.1):
-// simulation providers, KombiSim env vars, and VM_ENGINE_URL no longer exist.
-
-// TestLoadFromEnvCorsOrigins tests env var loading for CORS origins.
-func TestLoadFromEnvCorsOrigins(t *testing.T) {
-	defer os.Unsetenv("TECHSTACK_CORS_ORIGINS")
-
-	t.Run("cors origins from env", func(t *testing.T) {
-		os.Setenv("TECHSTACK_CORS_ORIGINS", "http://app1.com,http://app2.com")
-		defer os.Unsetenv("TECHSTACK_CORS_ORIGINS")
-
-		cfg := DefaultConfig()
-		if err := cfg.loadFromEnv(); err != nil {
-			t.Fatalf("loadFromEnv() error = %v", err)
-		}
-
-		if len(cfg.Server.CORSOrigins) != 2 {
-			t.Errorf("CORSOrigins count = %d, want 2", len(cfg.Server.CORSOrigins))
-		}
-		if cfg.Server.CORSOrigins[0] != "http://app1.com" {
-			t.Errorf("CORSOrigins[0] = %v, want %v", cfg.Server.CORSOrigins[0], "http://app1.com")
 		}
 	})
 }

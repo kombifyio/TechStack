@@ -8,12 +8,14 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/gocommon/identity"
+	"github.com/kombifyio/techstack/internal/gocommon/servicecall"
+	"github.com/kombifyio/techstack/internal/selfhostcontracts/stackaction"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/runtimeaction"
-	"github.com/kombifyio/go-common/identity"
-	"github.com/kombifyio/go-common/servicecall"
 )
 
 const (
@@ -31,8 +33,13 @@ const (
 	defaultStackKitsRolloutPath = runtimeaction.ArchitectureV2PathStackKitRollout
 	defaultStackKitsVerifyPath  = runtimeaction.ArchitectureV2PathStackKitVerify
 	defaultRestoreDrillPath     = runtimeaction.PathRestoreDrill
-	runtimeActionServiceName    = "techstack"
-	runtimeActionHTTPTimeout    = 14*time.Minute + 30*time.Second
+	// Backup actions come from the generated StackAction contract rather than
+	// the local runtimeaction vocabulary: StackKits owns that authority and
+	// kombify-runtime-contracts-go/stackaction is generated from it.
+	defaultBackupRunPath     = stackaction.PathBackupRun
+	defaultBackupStatusPath  = stackaction.PathBackupStatus
+	runtimeActionServiceName = "techstack"
+	runtimeActionHTTPTimeout = 14*time.Minute + 30*time.Second
 )
 
 type HTTPRuntimeActionRunnerConfig struct {
@@ -43,6 +50,17 @@ type HTTPRuntimeActionRunnerConfig struct {
 	ServiceAuthSecret string
 	ServiceAuthNext   string
 	HTTPClient        *http.Client
+}
+
+// RuntimeActionResponseError preserves bounded non-2xx response diagnostics for callers.
+type RuntimeActionResponseError struct {
+	Action     string
+	StatusCode int
+	Body       string
+}
+
+func (e *RuntimeActionResponseError) Error() string {
+	return fmt.Sprintf("runtime action %s returned %d: %s", e.Action, e.StatusCode, e.Body)
 }
 
 type HTTPRuntimeActionRunner struct {
@@ -161,7 +179,11 @@ func (r *HTTPRuntimeActionRunner) RunWithResult(ctx context.Context, req Runtime
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("runtime action %s returned %d: %s", r.action, resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, &RuntimeActionResponseError{
+			Action:     r.action,
+			StatusCode: resp.StatusCode,
+			Body:       strings.TrimSpace(string(body)),
+		}
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
@@ -290,6 +312,12 @@ func compactStrings(values []string) []string {
 func RuntimeActionsFromEnv(base RuntimeActions) (RuntimeActions, RuntimeActionsEnvDiagnostics) {
 	actions := base
 	diagnostics := RuntimeActionsEnvDiagnostics{}
+	hostKeys := NewRuntimeHostKeyStore(runtimeHostKeyStorePath())
+	if loadErr := hostKeys.Load(); loadErr != nil {
+		// The store keeps the error and refuses every verification: a
+		// corrupt pin file must never degrade to trust-on-first-use.
+		diagnostics.Warnings = append(diagnostics.Warnings, loadErr.Error())
+	}
 	if actions.StackKitGenerator == nil {
 		stackKitsDir := strings.TrimSpace(os.Getenv("TECHSTACK_STACKKITS_DIR"))
 		stackKitCLI := strings.TrimSpace(os.Getenv(stackKitCLIEnv))
@@ -364,15 +392,25 @@ func RuntimeActionsFromEnv(base RuntimeActions) (RuntimeActions, RuntimeActionsE
 	}
 
 	if actions.DiagnosticsCollector == nil && !truthyRuntimeActionEnv("TECHSTACK_RUNTIME_DIAGNOSTICS_DISABLED") {
-		actions.DiagnosticsCollector = NewSSHRuntimeDiagnosticsCollector(SSHRuntimeDiagnosticsCollectorConfig{})
+		actions.DiagnosticsCollector = NewSSHRuntimeDiagnosticsCollector(SSHRuntimeDiagnosticsCollectorConfig{HostKeys: hostKeys})
 		diagnostics.Configured = append(diagnostics.Configured, "SSH runtime diagnostics collector")
 	}
 	if actions.TargetBootstrapper == nil && !truthyRuntimeActionEnv("TECHSTACK_RUNTIME_TARGET_BOOTSTRAP_DISABLED") {
-		actions.TargetBootstrapper = NewSSHRuntimeTargetBootstrapper(SSHRuntimeTargetBootstrapperConfig{})
+		actions.TargetBootstrapper = NewSSHRuntimeTargetBootstrapper(SSHRuntimeTargetBootstrapperConfig{HostKeys: hostKeys})
 		diagnostics.Configured = append(diagnostics.Configured, "SSH runtime target bootstrapper")
 	}
 
 	return actions, diagnostics
+}
+
+// runtimeHostKeyStorePath keeps the managed-target pins in the control-plane
+// data directory so they survive restarts and deploys.
+func runtimeHostKeyStorePath() string {
+	dataDir := strings.TrimSpace(os.Getenv("TECHSTACK_DATA_DIR"))
+	if dataDir == "" {
+		dataDir = "data"
+	}
+	return filepath.Join(dataDir, "runtime-host-keys.json")
 }
 
 func truthyRuntimeActionEnv(name string) bool {
@@ -410,6 +448,22 @@ func configureStackKitsRuntimeActions(actions RuntimeActions, baseURL, secret, s
 			diagnostics.Configured = append(diagnostics.Configured, "StackKits restore drill")
 		}
 	}
+	if actions.BackupRunner == nil {
+		if runner, err := newStackKitsRuntimeAction(baseURL, string(stackaction.ActionBackupRun), firstNonEmpty(firstRuntimeActionEnv("TECHSTACK_STACKKITS_BACKUP_RUN_PATH"), defaultBackupRunPath), secret, secretNext); err != nil {
+			diagnostics.Warnings = append(diagnostics.Warnings, fmt.Sprintf("StackKits backup runner disabled: %v", err))
+		} else {
+			actions.BackupRunner = runner
+			diagnostics.Configured = append(diagnostics.Configured, "StackKits backup runner")
+		}
+	}
+	if actions.BackupStatus == nil {
+		if runner, err := newStackKitsRuntimeAction(baseURL, string(stackaction.ActionBackupStatus), firstNonEmpty(firstRuntimeActionEnv("TECHSTACK_STACKKITS_BACKUP_STATUS_PATH"), defaultBackupStatusPath), secret, secretNext); err != nil {
+			diagnostics.Warnings = append(diagnostics.Warnings, fmt.Sprintf("StackKits backup status disabled: %v", err))
+		} else {
+			actions.BackupStatus = runner
+			diagnostics.Configured = append(diagnostics.Configured, "StackKits backup status")
+		}
+	}
 	return actions
 }
 
@@ -425,7 +479,8 @@ func newStackKitsRuntimeAction(baseURL, action, path, secret, secretNext string)
 }
 
 func needsStackKitsRuntimeActions(actions RuntimeActions) bool {
-	return actions.RolloutRunner == nil || actions.RolloutVerifier == nil || actions.RestoreDrill == nil
+	return actions.RolloutRunner == nil || actions.RolloutVerifier == nil || actions.RestoreDrill == nil ||
+		actions.BackupRunner == nil || actions.BackupStatus == nil
 }
 
 func normalizeRuntimeActionBaseURL(raw string) (string, error) {

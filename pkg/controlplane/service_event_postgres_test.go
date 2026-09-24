@@ -22,7 +22,8 @@ func serviceEventStoredRow(observedAt time.Time, revision int64, observed, healt
 	return serviceAggregateRows().AddRow(
 		"service-1", "tenant-1", nil, "stack-1", "server-1", "server",
 		nil, nil, nil, nil, nil, nil, nil, "vaultwarden", "default",
-		"Vaultwarden", "running", observed, health, "managed", observedAt, "cloud-kit@1.0.0",
+		"Vaultwarden", "running", observed, health, "managed",
+		"unlocked", nil, nil, nil, observedAt, "cloud-kit@1.0.0",
 		`{"mode":"direct","url":"https://vault.example.test"}`, `["restart"]`,
 		"stackkits-inventory", `{"container_id":"container-1"}`, observedAt, observedAt,
 		revision, status, "", "server-1", "https://vault.example.test",

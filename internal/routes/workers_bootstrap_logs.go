@@ -10,6 +10,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/grpcserver"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/runtimeidentity"
+	"github.com/kombifyio/techstack/pkg/secrets"
 )
 
 const maxBootstrapLogPayload int64 = 16 << 10
@@ -43,11 +44,19 @@ func (h workerRouteHandlers) ingestBootstrapLog(e *httpx.Event) error {
 	}
 	phase := strings.TrimSpace(e.Request.Header.Get("X-Kombify-Log-Phase"))
 	level := strings.TrimSpace(e.Request.Header.Get("X-Kombify-Log-Level"))
+	operationID, cloudInitSHA256 := managedBootstrapBindingStrings(token.Metadata)
+	fields := map[string]string{"phase": phase, "pairing_state": "pre-enrollment"}
+	if operationID != "" {
+		fields["provider_operation_id"] = operationID
+	}
+	if cloudInitSHA256 != "" {
+		fields["cloud_init_sha256"] = cloudInitSHA256
+	}
 	entry := h.runtimeLogs.AppendRuntimeLog(grpcserver.AgentLogEntry{
 		Timestamp: time.Now().UTC(), TenantID: token.TenantID, AgentID: agentID,
-		Source: "installer", Level: level, Message: message, StackID: token.StackID,
-		LeaseID: leaseID, ServerID: serverID, RuntimeTargetID: agentID,
-		Fields: map[string]string{"phase": phase, "pairing_state": "pre-enrollment"},
+		Source: "installer", Level: level, Message: secrets.Redact(message), StackID: token.StackID,
+		LeaseID: leaseID, ServerID: serverID, RuntimeActionID: operationID, RuntimeTargetID: agentID,
+		Fields: fields,
 	})
 	e.Response.Header().Set("Cache-Control", "no-store")
 	return e.JSON(http.StatusAccepted, map[string]any{"data": map[string]any{"id": entry.ID}})

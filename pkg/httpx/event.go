@@ -1,29 +1,6 @@
-// Package httpx provides a PocketBase-free HTTP request/response foundation
-// for the kombify-TechStack control plane.
-//
-// It is a deliberate drop-in replacement for PocketBase's router primitives
-// (github.com/pocketbase/pocketbase/core.RequestEvent and the underlying
-// tools/router.Event + tools/router.Router). The goal is that existing leaf
-// route handler bodies barely change when migrated off PocketBase:
-//
-//	// before (PocketBase)
-//	func (h handler) get(e *core.RequestEvent) error {
-//	    id := e.Request.PathValue("id")
-//	    return api.PBSuccess(e, 200, data)
-//	}
-//
-//	// after (httpx)
-//	func (h handler) get(e *httpx.Event) error {
-//	    id := e.Request.PathValue("id")
-//	    return httpx.Success(e, 200, data)
-//	}
-//
-// The Event method set mirrors the subset of core.RequestEvent that the
-// TechStack routes actually use. See pkg/httpx/doc.go-style notes inline.
-//
-// Routing is backed by the standard library net/http.ServeMux with Go 1.22+
-// method+path pattern matching (e.g. "GET /api/v1/agents/{id}"), so
-// e.Request.PathValue("id") works exactly as it does under PocketBase.
+// Package httpx provides the HTTP request, response, and routing foundation for
+// the Techstack control plane. Routing uses net/http.ServeMux method-and-path
+// patterns, and response helpers emit the shared pkg/api envelope contract.
 package httpx
 
 import (

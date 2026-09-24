@@ -7,25 +7,11 @@ import (
 	"github.com/kombifyio/techstack/pkg/api"
 )
 
-// This file mirrors pkg/api/pocketbase.go (the PBSuccess/PBError family) but
-// takes *httpx.Event instead of *core.RequestEvent. The emitted wire format is
-// byte-identical: it reuses api.SuccessResponse / api.ErrorResponse /
-// api.ResponseMeta / api.ErrorCode so migrated routes produce the exact same
-// JSON envelopes. These are the single envelope sink for httpx routes.
-//
-// Naming maps 1:1 onto the PB helpers so migration is a mechanical rename:
-//
-//	api.PBSuccess(e, ...)         -> httpx.Success(e, ...)
-//	api.PBSuccessWithMeta(e, ...) -> httpx.SuccessWithMeta(e, ...)
-//	api.PBError(e, ...)           -> httpx.Error(e, ...)
-//	api.PBBadRequest(e, ...)      -> httpx.BadRequest(e, ...)
-//	api.PBUnauthorized(e, ...)    -> httpx.Unauthorized(e, ...)
-//	api.PBForbidden(e, ...)       -> httpx.Forbidden(e, ...)
-//	api.PBNotFound(e, ...)        -> httpx.NotFound(e, ...)
-//	api.PBMethodNotAllowed(e, ...)-> httpx.MethodNotAllowed(e, ...)
+// These helpers are the single envelope sink for httpx routes. They reuse the
+// shared api response types so every route emits the same JSON contract.
 
 // Success writes a standardized success envelope and injects request_id +
-// timestamp into meta. Mirrors api.PBSuccess.
+// timestamp into meta.
 func Success(e *Event, status int, data any) error {
 	meta := &api.ResponseMeta{
 		RequestID: e.Request.Header.Get("X-Request-ID"),
@@ -35,7 +21,7 @@ func Success(e *Event, status int, data any) error {
 }
 
 // SuccessWithMeta writes a standardized success envelope, merging request_id +
-// timestamp into the provided meta. Mirrors api.PBSuccessWithMeta.
+// timestamp into the provided meta.
 func SuccessWithMeta(e *Event, status int, data any, meta *api.ResponseMeta) error {
 	if meta == nil {
 		meta = &api.ResponseMeta{}
@@ -45,7 +31,7 @@ func SuccessWithMeta(e *Event, status int, data any, meta *api.ResponseMeta) err
 	return e.JSON(status, api.SuccessResponse{Data: data, Meta: meta})
 }
 
-// Error writes a standardized error envelope. Mirrors api.PBError.
+// Error writes a standardized error envelope.
 func Error(e *Event, status int, code api.ErrorCode, message string, details any) error {
 	if status >= 500 {
 		captureInternalServerError(e, message, map[string]any{
@@ -102,7 +88,7 @@ func RejectForbidden(e *Event, message string) error {
 	return Reject(e, 403, api.ErrCodeForbidden, message, nil)
 }
 
-// BadRequest writes a 400 envelope. Mirrors api.PBBadRequest.
+// BadRequest writes a 400 envelope.
 func BadRequest(e *Event, message string, details ...any) error {
 	if len(details) > 0 {
 		return Error(e, 400, api.ErrCodeBadRequest, message, details[0])
@@ -110,7 +96,7 @@ func BadRequest(e *Event, message string, details ...any) error {
 	return Error(e, 400, api.ErrCodeBadRequest, message, nil)
 }
 
-// Unauthorized writes a 401 envelope. Mirrors api.PBUnauthorized.
+// Unauthorized writes a 401 envelope.
 func Unauthorized(e *Event, message string) error {
 	if message == "" {
 		message = "Authentication required"
@@ -118,7 +104,7 @@ func Unauthorized(e *Event, message string) error {
 	return Error(e, 401, api.ErrCodeUnauthorized, message, nil)
 }
 
-// Forbidden writes a 403 envelope. Mirrors api.PBForbidden.
+// Forbidden writes a 403 envelope.
 func Forbidden(e *Event, message string) error {
 	if message == "" {
 		message = "Forbidden"
@@ -126,7 +112,7 @@ func Forbidden(e *Event, message string) error {
 	return Error(e, 403, api.ErrCodeForbidden, message, nil)
 }
 
-// NotFound writes a 404 envelope. Mirrors api.PBNotFound.
+// NotFound writes a 404 envelope.
 func NotFound(e *Event, message string) error {
 	if message == "" {
 		message = "Not found"
@@ -134,7 +120,7 @@ func NotFound(e *Event, message string) error {
 	return Error(e, 404, api.ErrCodeNotFound, message, nil)
 }
 
-// MethodNotAllowed writes a 405 envelope. Mirrors api.PBMethodNotAllowed.
+// MethodNotAllowed writes a 405 envelope.
 func MethodNotAllowed(e *Event, method string) error {
 	return Error(e, 405, api.ErrCodeMethodNotAllowed, "Method "+method+" not allowed", nil)
 }

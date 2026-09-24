@@ -39,12 +39,38 @@ func (f fakeValidator) ValidateSpec(context.Context, map[string]any) error {
 	return f.err
 }
 
+type fakeWizardGoalAuthor struct{}
+
+func (fakeWizardGoalAuthor) AuthorGoals(_ context.Context, _, _, _, _ string, goals []string) (specv2.GoalAuthoring, error) {
+	workloads := map[string]any{}
+	var unmapped []string
+	for _, goal := range goals {
+		if goal != "photos" {
+			unmapped = append(unmapped, goal)
+			continue
+		}
+		workloads[goal] = map[string]any{
+			"alternative": "immich",
+			"placement": map[string]any{
+				"siteRefs": []any{"home"}, "nodeRefs": []any{}, "requiresRoles": []any{},
+			},
+			"secretRefs": map[string]any{"database-password": "secret://workloads/photos/database-password"},
+		}
+	}
+	return specv2.GoalAuthoring{Workloads: workloads, UnmappedGoals: unmapped}, nil
+}
+
+func fakeWizardProjector() specv2.Projector {
+	return specv2.NewReleaseProjector(fakeWizardGoalAuthor{})
+}
+
 func wizardTestSeed() map[string]any {
 	return map[string]any{
 		"apiVersion": "stackkit/v2alpha1",
 		"kind":       "StackSpec",
 		"kit":        map[string]any{"slug": "basement-kit"},
 		"metadata":   map[string]any{"name": "seed"},
+		"network":    map[string]any{"domain": map[string]any{"base": "template.invalid"}},
 		"sites": []any{
 			map[string]any{"id": "home", "kind": "home"},
 		},
@@ -129,6 +155,7 @@ func TestWizardPreviewFoundProjectsAndValidates(t *testing.T) {
 	h := wizardPreviewHandlers(WizardRouteConfig{
 		Features:       fakeWizardFeatures{enabled: true},
 		Seeds:          fakeSeedSource{seed: wizardTestSeed()},
+		Projector:      fakeWizardProjector(),
 		Validator:      fakeValidator{},
 		ReleaseVersion: "v0.9.0",
 	})
@@ -153,6 +180,9 @@ func TestWizardPreviewFoundProjectsAndValidates(t *testing.T) {
 		t.Fatalf("release_version = %v", data["release_version"])
 	}
 	spec := data["spec"].(map[string]any)
+	if domain := spec["network"].(map[string]any)["domain"].(map[string]any)["base"]; domain != "home" {
+		t.Fatalf("automatic local deployment domain = %v, want home", domain)
+	}
 	if spec["metadata"].(map[string]any)["name"] != "my-homelab" {
 		t.Fatalf("projected metadata = %#v, want contract-id name my-homelab", spec["metadata"])
 	}
@@ -166,6 +196,7 @@ func TestWizardPreviewReturnsStructuredInvalidResult(t *testing.T) {
 	h := wizardPreviewHandlers(WizardRouteConfig{
 		Features:  fakeWizardFeatures{enabled: true},
 		Seeds:     fakeSeedSource{seed: wizardTestSeed()},
+		Projector: fakeWizardProjector(),
 		Validator: fakeValidator{err: errors.New("CUE #KitSpecBinding rejected definition/spec")},
 	})
 	event, rec := registryRouteStoreTestEvent(http.MethodPost, "/api/v1/wizard/preview", "auth0|user-1", "tenant-1", wizardPreviewBody(specv2.KitAssignmentFound))
@@ -191,8 +222,9 @@ func TestWizardPreviewReturnsStructuredInvalidResult(t *testing.T) {
 
 func TestWizardPreviewFailsClosedWithoutValidator(t *testing.T) {
 	h := wizardPreviewHandlers(WizardRouteConfig{
-		Features: fakeWizardFeatures{enabled: true},
-		Seeds:    fakeSeedSource{seed: wizardTestSeed()},
+		Features:  fakeWizardFeatures{enabled: true},
+		Seeds:     fakeSeedSource{seed: wizardTestSeed()},
+		Projector: fakeWizardProjector(),
 	})
 	event, rec := registryRouteStoreTestEvent(http.MethodPost, "/api/v1/wizard/preview", "auth0|user-1", "tenant-1", wizardPreviewBody(specv2.KitAssignmentFound))
 	if err := h.preview(event); err != nil {
@@ -206,6 +238,7 @@ func TestWizardPreviewFailsClosedWithoutValidator(t *testing.T) {
 func TestWizardPreviewJoinRequiresBaseSpec(t *testing.T) {
 	h := wizardPreviewHandlers(WizardRouteConfig{
 		Features:  fakeWizardFeatures{enabled: true},
+		Projector: fakeWizardProjector(),
 		Validator: fakeValidator{},
 	})
 	event, rec := registryRouteStoreTestEvent(http.MethodPost, "/api/v1/wizard/preview", "auth0|user-1", "tenant-1", wizardPreviewBody(specv2.KitAssignmentJoin))
@@ -222,6 +255,7 @@ func TestWizardPreviewJoinAppendsNodeToBaseSpec(t *testing.T) {
 	body["base_spec"] = wizardTestSeed()
 	h := wizardPreviewHandlers(WizardRouteConfig{
 		Features:  fakeWizardFeatures{enabled: true},
+		Projector: fakeWizardProjector(),
 		Validator: fakeValidator{},
 	})
 	event, rec := registryRouteStoreTestEvent(http.MethodPost, "/api/v1/wizard/preview", "auth0|user-1", "tenant-1", body)
@@ -239,22 +273,5 @@ func TestWizardPreviewJoinAppendsNodeToBaseSpec(t *testing.T) {
 	}
 	if envelope.Data["node_id"] != "worker-1" {
 		t.Fatalf("node_id = %v, want worker-1", envelope.Data["node_id"])
-	}
-}
-
-func TestWizardPreviewRejectsInvalidIntent(t *testing.T) {
-	body := wizardPreviewBody(specv2.KitAssignmentFound)
-	body["intent"].(map[string]any)["kit_assignment"].(map[string]any)["kit_slug"] = "ha-kit"
-	h := wizardPreviewHandlers(WizardRouteConfig{
-		Features:  fakeWizardFeatures{enabled: true},
-		Seeds:     fakeSeedSource{seed: wizardTestSeed()},
-		Validator: fakeValidator{},
-	})
-	event, rec := registryRouteStoreTestEvent(http.MethodPost, "/api/v1/wizard/preview", "auth0|user-1", "tenant-1", body)
-	if err := h.preview(event); err != nil {
-		t.Fatalf("preview: %v", err)
-	}
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400 (body %s)", rec.Code, rec.Body.String())
 	}
 }

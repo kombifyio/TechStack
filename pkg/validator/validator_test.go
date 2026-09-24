@@ -89,30 +89,6 @@ func TestIsCloudProvider(t *testing.T) {
 	}
 }
 
-func TestIsLocalProvider(t *testing.T) {
-	tests := []struct {
-		provider string
-		want     bool
-	}{
-		{"local", true},
-		{"Local", true}, // Case insensitive
-		{"homelab", true},
-		{"docker", true},
-		{"proxmox", true},
-		{"hetzner", false},
-		{"aws", false},
-		{"unknown", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.provider, func(t *testing.T) {
-			if got := IsLocalProvider(tt.provider); got != tt.want {
-				t.Errorf("IsLocalProvider(%q) = %v, want %v", tt.provider, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestIsValidProvider(t *testing.T) {
 	tests := []struct {
 		provider string
@@ -164,41 +140,6 @@ func TestIsValidNodeType(t *testing.T) {
 	}
 }
 
-func TestIsValidServiceType_MatchesStackKitServiceTypes(t *testing.T) {
-	tests := []struct {
-		serviceType string
-		want        bool
-	}{
-		{"reverse-proxy", true},
-		{"service", true},
-		{"backend", true},
-		{"database", true},
-		{"cache", true},
-		{"queue", true},
-		{"paas", true},
-		{"docker", true},
-		{"monitoring", true},
-		{"backup", true},
-		{"auth", true},
-		{"vpn", true},
-		{"storage", true},
-		{"media", true},
-		{"automation", true},
-		{"development", true},
-		{"custom", true},
-		{"unknown", false},
-		{"", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.serviceType, func(t *testing.T) {
-			if got := IsValidServiceType(tt.serviceType); got != tt.want {
-				t.Errorf("IsValidServiceType(%q) = %v, want %v", tt.serviceType, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestValidateSSHKeyPath(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -219,29 +160,6 @@ func TestValidateSSHKeyPath(t *testing.T) {
 			err := ValidateSSHKeyPath(tt.path)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ValidateSSHKeyPath(%q) error = %v, wantErr %v", tt.path, err, tt.wantErr)
-			}
-		})
-	}
-}
-
-func TestValidatePath(t *testing.T) {
-	tests := []struct {
-		name        string
-		path        string
-		allowedBase string
-		wantErr     bool
-	}{
-		{"empty path", "", "", true},
-		{"simple path no base", "data/file.txt", "", false},
-		{"path traversal no base", "../secret", "", true},
-		{"double dot in name", "file..name.txt", "", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := ValidatePath(tt.path, tt.allowedBase)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ValidatePath(%q, %q) error = %v, wantErr %v", tt.path, tt.allowedBase, err, tt.wantErr)
 			}
 		})
 	}

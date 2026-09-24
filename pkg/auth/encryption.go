@@ -151,7 +151,9 @@ func IsEncrypted(value string) bool {
 }
 
 // EncryptIfNeeded encrypts a value only if it's not already encrypted.
-// Returns the original value unchanged if encryptor is nil.
+// It fails closed with ErrNoEncryptionKey when a non-empty plaintext value is
+// supplied without a configured encryptor; it never returns plaintext for a
+// secret-bearing write.
 func EncryptIfNeeded(e *SecretEncryptor, value string) (string, error) {
 	if value == "" {
 		return "", nil
@@ -160,7 +162,7 @@ func EncryptIfNeeded(e *SecretEncryptor, value string) (string, error) {
 		return value, nil // Already encrypted
 	}
 	if e == nil {
-		return value, nil // No encryption available, return as-is
+		return "", ErrNoEncryptionKey
 	}
 	return e.Encrypt(value)
 }

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/pkg/outcome"
 	"github.com/kombifyio/techstack/pkg/runtimehealth"
 )
 
@@ -95,15 +96,14 @@ type SweeperConfig struct {
 }
 
 // Sweeper persists honest observed state: it demotes server connection/health
-// through ApplyServerEvent (Guard authority, fenced by the aggregate's
-// CAS/epoch admission) whenever the persisted heartbeat ages past the
+// through ApplyServerEvent (control-plane authority, fenced by the aggregate's
+// compare-and-swap revision) whenever the persisted heartbeat ages past the
 // pkg/runtimehealth freshness windows, and it bounds server_registry_outbox.
 //
 // Multi-instance safety needs no extra locking: every demotion carries the
-// observed aggregate revision (compare-and-swap) plus the current Guard source
-// epoch at the next sequence, so concurrent sweepers and late Guard events are
-// arbitrated by the existing admission rules; losers surface as benign
-// conflicts or unapplied replays.
+// observed aggregate revision. The Guard source epoch and sequence stay on
+// the last accepted observation so a live Guard's next heartbeat is not
+// fenced; losers surface as benign CAS conflicts.
 type Sweeper struct {
 	registry          SweepStore
 	outbox            OutboxMaintenanceStore
@@ -154,6 +154,9 @@ func NewSweeper(cfg SweeperConfig) (*Sweeper, error) {
 	}
 	if cfg.IsBenignConflict == nil {
 		cfg.IsBenignConflict = func(error) bool { return false }
+	}
+	if cfg.RecordOutboxStats == nil {
+		cfg.RecordOutboxStats = func(OutboxStats) {}
 	}
 	return &Sweeper{
 		registry:          cfg.Registry,
@@ -290,7 +293,7 @@ func (s *Sweeper) maintainOutbox(ctx context.Context, result *SweepResult) error
 			return err
 		}
 		s.reportError(fmt.Errorf("serverregistry: outbox stats: %w", err))
-	} else if s.recordOutboxStats != nil {
+	} else {
 		s.recordOutboxStats(stats)
 	}
 
@@ -365,9 +368,9 @@ func DemotionCommand(now time.Time, server Aggregate) (Command, bool) {
 	if server.LastHeartbeatAt == nil || server.LastHeartbeatAt.IsZero() {
 		return Command{}, false
 	}
-	// Only Guard-checkpointed rows can be demoted through Guard authority.
-	// Rows without a source epoch (legacy projections, freshly fenced
-	// generations) have no admission position to extend.
+	// Only Guard-checkpointed rows carry authenticated heartbeat evidence the
+	// sweeper is allowed to age out. Legacy projections and freshly fenced
+	// generations have no Guard observation to demote.
 	if strings.TrimSpace(server.WorkerID) == "" ||
 		strings.TrimSpace(server.SourceEpoch) == "" ||
 		server.SourceAuthority != AuthorityGuard ||
@@ -407,15 +410,24 @@ func DemotionCommand(now time.Time, server Aggregate) (Command, bool) {
 		ServerID:         server.ID,
 		ExpectedRevision: server.Revision,
 		Generation:       server.Generation,
-		Authority:        AuthorityGuard,
+		Authority:        AuthorityControlPlane,
 		Source:           SweeperSource,
-		// The demotion extends the current Guard admission position: same
-		// source and epoch, next sequence. A resumed Guard re-takes ownership
-		// with its next accepted heartbeat (or a fresh epoch after restart).
-		SourceID:       server.WorkerID,
-		SourceEpoch:    server.SourceEpoch,
-		SourceSequence: server.SourceSequence + 1,
-		ObservedAt:     now,
+		// Control-plane demotion leaves the Guard checkpoint untouched. A
+		// binding-change event would zero SourceEpoch/SourceSequence; this
+		// write must not look like one, or the next Guard heartbeat is fenced.
+		SourceID:   SweeperSource,
+		ObservedAt: now,
+		Outcome: &outcome.Decision{
+			Status: outcome.StatusDegraded, ReasonCode: reason,
+			Capability: "techstack.server.connect", ProviderID: strings.TrimSpace(server.ProviderRef), Retryable: true,
+			UserGuidance: &outcome.Guidance{
+				Title: "The server connection needs attention",
+				Body:  "Techstack has not received a recent authenticated Guard heartbeat. The last verified inventory is retained while the connection recovers.",
+				NextSteps: []outcome.Step{{
+					ID: "check-guard", Label: "Check that the server and Guard service are online", Kind: "connect",
+				}},
+			},
+		},
 		Runtime: Aggregate{
 			ConnectionState:      string(connection),
 			HealthState:          string(health),

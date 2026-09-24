@@ -1,5 +1,5 @@
 import { redirect } from "@sveltejs/kit";
-import { browser } from "$app/environment";
+import { browser } from "$app/env";
 import type { LayoutLoad } from "./$types";
 
 /**
@@ -9,15 +9,12 @@ import type { LayoutLoad } from "./$types";
 export const load: LayoutLoad = async () => {
   if (browser) {
     const { initAuth, isAuthenticated } =
-      await import("$lib/stores/auth.svelte");
+      await import("#lib/stores/auth.svelte.js");
     await initAuth();
     if (!isAuthenticated()) {
-      const { loginRedirectForWindowsLocalClient } =
-        await import("$lib/client/windows-onboarding");
-      throw redirect(
-        302,
-        loginRedirectForWindowsLocalClient(window.localStorage),
-      );
+      const { resolveUnauthenticatedEntry } =
+        await import("#lib/auth/unauthenticated-redirect.js");
+      throw redirect(302, resolveUnauthenticatedEntry());
     }
   }
   return {};

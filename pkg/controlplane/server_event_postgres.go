@@ -30,7 +30,7 @@ func (s *PostgresStore) ApplyServerEvent(ctx context.Context, event ServerEvent)
 			return fmt.Errorf("controlplane: read server event database time: %w", err)
 		}
 		var applyErr error
-		result, applyErr = applyServerEventTx(ctx, tx, event, databaseNow.UTC())
+		result, applyErr = applyServerEventTx(ctx, tx, event, databaseNow.UTC(), s.serverEventProjector)
 		return applyErr
 	})
 	if err != nil {
@@ -67,7 +67,7 @@ func (s *PostgresStore) ApplyServerEventTx(
 	if err := tx.QueryRowContext(ctx, "SELECT clock_timestamp()").Scan(&databaseNow); err != nil {
 		return nil, fmt.Errorf("controlplane: read server event database time: %w", err)
 	}
-	return applyServerEventTx(ctx, tx, event, databaseNow.UTC())
+	return applyServerEventTx(ctx, tx, event, databaseNow.UTC(), s.serverEventProjector)
 }
 
 func applyServerEventTx(
@@ -75,6 +75,7 @@ func applyServerEventTx(
 	tx *sql.Tx,
 	event ServerEvent,
 	now time.Time,
+	projector ServerEventProjector,
 ) (*ServerEventResult, error) {
 	tenantID := strings.TrimSpace(event.TenantID)
 	serverID := strings.TrimSpace(event.ServerID)
@@ -130,9 +131,15 @@ func applyServerEventTx(
 	if outboxErr != nil {
 		return nil, outboxErr
 	}
-	return &ServerEventResult{
+	result := &ServerEventResult{
 		Server: persisted, Transitions: transitions, Inventory: inventory, Outbox: outbox, Applied: true,
-	}, nil
+	}
+	if projector != nil {
+		if err := projector.ProjectServerEvent(ctx, tx, result); err != nil {
+			return nil, fmt.Errorf("controlplane: project server event: %w", err)
+		}
+	}
+	return result, nil
 }
 
 func serverGuardEpochSeenTx(ctx context.Context, tx *sql.Tx, current *ServerRuntime, event ServerEvent) (bool, error) {
@@ -208,6 +215,10 @@ func persistServerEventHead(ctx context.Context, tx *sql.Tx, current *ServerRunt
 	if err != nil {
 		return nil, err
 	}
+	lastOutcomeJSON, outcomeChangedAt, err := marshalServerOutcome(&server)
+	if err != nil {
+		return nil, err
+	}
 	args := []any{
 		server.ID, server.TenantID, server.InstanceID, server.StackID, server.OwnerSubjectID,
 		server.WorkerID, server.NodeID, server.LeaseID, server.ProviderRef,
@@ -219,7 +230,7 @@ func persistServerEventHead(ctx context.Context, tx *sql.Tx, current *ServerRunt
 		server.HealthState, server.ReasonCode, server.ConnectionChangedAt, nullableTime(server.LastHeartbeatAt),
 		server.InventoryRevision, server.Revision, server.Generation, server.SourceAuthority,
 		server.SourceID, server.SourceEpoch, server.SourceSequence, nullableTime(server.SourceObservedAt),
-		channelsJSON, metadataJSON, nullableTime(server.DecommissionedAt),
+		channelsJSON, metadataJSON, lastOutcomeJSON, outcomeChangedAt, nullableTime(server.DecommissionedAt),
 		server.LifecycleReasonCode, server.DesiredReasonCode, server.ConnectionReasonCode,
 		server.HealthReasonCode, server.LifecycleChangedAt, server.DesiredChangedAt,
 		server.HealthChangedAt,
@@ -233,7 +244,8 @@ func persistServerEventHead(ctx context.Context, tx *sql.Tx, current *ServerRunt
 				name, lifecycle_state, desired_state, connection_state, health_state,
 				reason_code, connection_changed_at, last_heartbeat_at, inventory_revision,
 				revision, generation, source_authority, source_id, source_epoch, source_sequence,
-				source_observed_at, channels_json, metadata_json, decommissioned_at,
+				source_observed_at, channels_json, metadata_json,
+				last_outcome_json, outcome_changed_at, decommissioned_at,
 				lifecycle_reason_code, desired_reason_code, connection_reason_code, health_reason_code,
 				lifecycle_changed_at, desired_changed_at, health_changed_at
 			) VALUES (
@@ -242,8 +254,8 @@ func persistServerEventHead(ctx context.Context, tx *sql.Tx, current *ServerRunt
 				NULLIF($14, ''), NULLIF($15, ''), NULLIF($16, ''), $17,
 				$18, $19, $20, $21, $22, NULLIF($23, ''), $24, $25,
 				$26, $27, $28, NULLIF($29, ''), NULLIF($30, ''), NULLIF($31, ''),
-				$32, $33, $34::jsonb, $35::jsonb, $36, NULLIF($37, ''), NULLIF($38, ''),
-				NULLIF($39, ''), NULLIF($40, ''), $41, $42, $43
+				$32, $33, $34::jsonb, $35::jsonb, $36::jsonb, $37, $38, NULLIF($39, ''), NULLIF($40, ''),
+				NULLIF($41, ''), NULLIF($42, ''), $43, $44, $45
 			)
 			ON CONFLICT (id) DO NOTHING
 			RETURNING `+serverRuntimeColumns,
@@ -269,12 +281,13 @@ func persistServerEventHead(ctx context.Context, tx *sql.Tx, current *ServerRunt
 			inventory_revision = $26, revision = $27, generation = $28,
 			source_authority = NULLIF($29, ''), source_id = NULLIF($30, ''),
 			source_epoch = NULLIF($31, ''), source_sequence = $32, source_observed_at = $33,
-			channels_json = $34::jsonb, metadata_json = $35::jsonb, decommissioned_at = $36,
-			lifecycle_reason_code = NULLIF($37, ''), desired_reason_code = NULLIF($38, ''),
-			connection_reason_code = NULLIF($39, ''), health_reason_code = NULLIF($40, ''),
-			lifecycle_changed_at = $41, desired_changed_at = $42, health_changed_at = $43,
+			channels_json = $34::jsonb, metadata_json = $35::jsonb,
+			last_outcome_json = $36::jsonb, outcome_changed_at = $37, decommissioned_at = $38,
+			lifecycle_reason_code = NULLIF($39, ''), desired_reason_code = NULLIF($40, ''),
+			connection_reason_code = NULLIF($41, ''), health_reason_code = NULLIF($42, ''),
+			lifecycle_changed_at = $43, desired_changed_at = $44, health_changed_at = $45,
 			updated_at = now()
-		WHERE tenant_id = $2 AND id = $1 AND revision = $44
+		WHERE tenant_id = $2 AND id = $1 AND revision = $46
 		RETURNING `+serverRuntimeColumns,
 		args...,
 	))

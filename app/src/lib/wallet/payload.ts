@@ -1,16 +1,16 @@
-import type { PBWalletItem, WalletEntryArea } from "$lib/stores/wallet";
+import type { WalletItem, WalletEntryArea } from "#lib/wallet/types.js";
 
 type WalletEntryPayloadOptions = {
   sourceType?: string;
   sourceRef?: string;
 };
 
-function walletEntryHasSensitiveValue(data: Partial<PBWalletItem>): boolean {
+function walletEntryHasSensitiveValue(data: Partial<WalletItem>): boolean {
   return Boolean(data.secret?.trim() || data.totp?.trim());
 }
 
 function inferWalletSourceMetadata(
-  data: Partial<PBWalletItem>,
+  data: Partial<WalletItem>,
   options?: WalletEntryPayloadOptions,
 ): { sourceType: string; sourceRef?: string } {
   if (data.source_type?.trim()) {
@@ -21,7 +21,7 @@ function inferWalletSourceMetadata(
   }
 
   const serviceID = data.service_id?.trim();
-  const stackID = data.stack_id?.trim();
+  const kitDeploymentID = data.kit_deployment_id?.trim();
 
   if (options?.sourceType?.trim()) {
     return {
@@ -39,11 +39,13 @@ function inferWalletSourceMetadata(
     return { sourceType: "service", sourceRef: serviceID };
   }
 
-  if (stackID) {
+  if (kitDeploymentID) {
     return {
-      sourceType: "stack",
+      sourceType: "kit_deployment",
       sourceRef:
-        data.source_ref?.trim() || options?.sourceRef?.trim() || stackID,
+        data.source_ref?.trim() ||
+        options?.sourceRef?.trim() ||
+        kitDeploymentID,
     };
   }
 
@@ -56,9 +58,9 @@ function inferWalletSourceMetadata(
 
 export function buildWalletEntryPayload(
   area: WalletEntryArea,
-  data: Partial<PBWalletItem>,
+  data: Partial<WalletItem>,
   options?: WalletEntryPayloadOptions,
-): Partial<PBWalletItem> {
+): Partial<WalletItem> {
   const hasSensitiveValue = walletEntryHasSensitiveValue(data);
   const source = inferWalletSourceMetadata(data, options);
 

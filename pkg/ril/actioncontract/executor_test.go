@@ -1,7 +1,6 @@
 package rilaction
 
 import (
-	"context"
 	"reflect"
 	"testing"
 	"time"
@@ -84,17 +83,4 @@ func TestExecutorIdentityIsClosedAndInterfaceIsProviderFree(t *testing.T) {
 			t.Fatalf("invalid executor identity accepted: %#v", candidate)
 		}
 	}
-	var _ Executor = executorContractProbe{identity: identity}
-}
-
-type executorContractProbe struct {
-	identity ExecutorIdentity
-}
-
-func (e executorContractProbe) Identity() ExecutorIdentity {
-	return e.identity
-}
-
-func (executorContractProbe) Execute(context.Context, ExecutorInvocation) (Evidence, error) {
-	return Evidence{}, nil
 }

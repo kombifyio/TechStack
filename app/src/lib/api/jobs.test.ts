@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getJob, getJobs, getLatestStackProvisionJob, listJobs } from "./jobs";
+import {
+  getJob,
+  getJobs,
+  getLatestKitDeploymentProvisionJob,
+  listJobs,
+} from "./jobs";
 
 function requestPath(input: unknown): string {
   const raw = input instanceof Request ? input.url : String(input);
@@ -25,10 +30,22 @@ describe("jobs API client", () => {
             type: "provision",
             state: "running",
             progress: 40,
+            phase: "provider_admission",
             step: "unify_services",
             current_step: "Identifying services",
             message: "Resolving services",
-            result: { stack_id: "stack-123" },
+            result: {
+              stack_id: "stack-123",
+              phase: "legacy_phase",
+              failure_class: "provider_unreachable",
+              reason_code: "provider_api_timeout",
+              retryable: true,
+              user_guidance: {
+                title: "Try again",
+                body: "The provider did not answer in time.",
+                next_steps: ["Retry the rollout."],
+              },
+            },
             created: "2026-05-18T10:00:00Z",
             updated: "2026-05-18T10:01:00Z",
           },
@@ -49,6 +66,13 @@ describe("jobs API client", () => {
     expect(job).toMatchObject({
       id: "job-123",
       state: "running",
+      phase: "provider_admission",
+      failure_class: "provider_unreachable",
+      reason_code: "provider_api_timeout",
+      retryable: true,
+      user_guidance: {
+        body: "The provider did not answer in time.",
+      },
       step: "unify_services",
       result: { stack_id: "stack-123" },
     });
@@ -151,11 +175,14 @@ describe("jobs API client", () => {
     const result = await listJobs({
       page: 2,
       perPage: 10,
-      stackId: "stack-1",
+      kitDeploymentId: "stack-1",
       type: "provision",
       search: "install",
     });
-    const calledURL = new URL(String(fetchMock.mock.calls[0][0]));
+    const calledURL = new URL(
+      String(fetchMock.mock.calls[0][0]),
+      "https://techstack.test",
+    );
 
     expect(calledURL.pathname).toBe("/api/v1/jobs");
     expect(calledURL.searchParams.get("page")).toBe("2");
@@ -166,7 +193,7 @@ describe("jobs API client", () => {
     expect(result.totalItems).toBe(11);
     expect(result.items[0]).toMatchObject({
       id: "job-1",
-      stack_id: "stack-1",
+      kit_deployment_id: "stack-1",
       state: "pending",
     });
   });
@@ -202,17 +229,23 @@ describe("jobs API client", () => {
       ),
     );
 
-    const latest = await getLatestStackProvisionJob("stack-1");
+    const latest = await getLatestKitDeploymentProvisionJob("stack-1");
     const list = await getJobs();
 
     expect(latest?.id).toBe("job-latest");
     expect(list[0].id).toBe("job-latest");
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(
-      new URL(String(fetchMock.mock.calls[0][0])).searchParams.get("type"),
+      new URL(
+        String(fetchMock.mock.calls[0][0]),
+        "https://techstack.test",
+      ).searchParams.get("type"),
     ).toBe("provision");
     expect(
-      new URL(String(fetchMock.mock.calls[1][0])).searchParams.get("limit"),
+      new URL(
+        String(fetchMock.mock.calls[1][0]),
+        "https://techstack.test",
+      ).searchParams.get("limit"),
     ).toBe("50");
   });
 });

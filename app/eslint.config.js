@@ -23,6 +23,9 @@ export default ts.config(
         parser: ts.parser,
       },
     },
+    rules: {
+      "no-alert": "error",
+    },
   },
   {
     // Svelte 5 runes files (.svelte.ts) need special handling

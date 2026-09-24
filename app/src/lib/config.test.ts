@@ -1,13 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { appDeployLabel, appVersion, productIdentityLabel } from "./config";
+import { productIdentityLabel } from "./config";
 
 describe("config", () => {
-  describe("appVersion", () => {
-    it("is a non-empty release identifier", () => {
-      expect(appVersion.trim().length).toBeGreaterThan(0);
-    });
-  });
-
   describe("productIdentityLabel", () => {
     it("renders one shared version and short-revision label", () => {
       expect(
@@ -25,8 +19,5 @@ describe("config", () => {
       expect(productIdentityLabel("", "abc1234")).toBe("");
     });
 
-    it("uses the same formatter for the compile-time fallback", () => {
-      expect(appDeployLabel).toBe(productIdentityLabel(appVersion, ""));
-    });
   });
 });

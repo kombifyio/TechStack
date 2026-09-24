@@ -1,6 +1,8 @@
 <script lang="ts">
-  import type { GuidanceStep } from "$lib/support/server-outcome";
-  import { cn } from "$lib/utils";
+  import { goto } from "$app/navigation";
+  import type { GuidanceStep } from "#lib/support/server-outcome.js";
+  import { cn } from "#lib/utils.js";
+  import Button from "#lib/components/ui/Button.svelte";
 
   interface Props {
     steps: GuidanceStep[];
@@ -42,22 +44,28 @@
   >
     {#each actions as action (action.id)}
       {#if isLink(action)}
-        <a
-          href={action.href}
-          class="btn btn-sm btn-secondary"
-          rel={action.kind === "external" ? "noopener noreferrer" : undefined}
-          target={action.kind === "external" ? "_blank" : undefined}
+        <Button
+          variant="secondary"
+          size="sm"
+          onclick={() => {
+            if (!action.href) return;
+            if (action.kind === "external") {
+              window.open(action.href, "_blank", "noopener,noreferrer");
+              return;
+            }
+            void goto(action.href);
+          }}
         >
           {action.label}
-        </a>
+        </Button>
       {:else}
-        <button
-          type="button"
-          class="btn btn-sm btn-secondary"
+        <Button
+          variant="secondary"
+          size="sm"
           onclick={() => onAction?.(action)}
         >
           {action.label}
-        </button>
+        </Button>
       {/if}
     {/each}
   </div>

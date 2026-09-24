@@ -9,7 +9,7 @@ test.describe("i18n - Route Stability", () => {
     await page.getByLabel("Email").fill(TEST_CREDENTIALS.email);
     await page.getByLabel("Password").fill(TEST_CREDENTIALS.password);
     await page.getByRole("button", { name: "Sign In" }).click();
-    await page.waitForURL(/\/stacks/, { timeout: 30_000 });
+    await page.waitForURL(/\/dashboard/, { timeout: 30_000 });
   });
 
   test("navigation labels render without missing-key output", async ({
@@ -30,7 +30,7 @@ test.describe("i18n - Route Stability", () => {
     await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Account" })).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "Stack Identity" }),
+      page.getByRole("heading", { name: "Homelab Identity" }),
     ).toBeVisible();
   });
 

@@ -9,7 +9,6 @@ import (
 
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/runtimehealth"
-	"github.com/pocketbase/pocketbase/core" // pocketbase-migration-compat: moved legacy projection only
 )
 
 type stackOperationService struct {
@@ -469,104 +468,6 @@ func sliceOfMapsFromAny(value any) []map[string]any {
 		return out
 	default:
 		return []map[string]any{}
-	}
-}
-
-func (h stackOperationsRouteHandlers) operationServices(stack *core.Record, servers []stackOperationServer, tenantID string) []stackOperationService { // pocketbase-migration-compat: moved legacy projection only
-	if h.registryStore != nil {
-		tenantID = firstNonEmptyString(tenantID, stack.GetString("tenant_id"))
-		services, ok := h.operationServicesFromRegistry(context.Background(), tenantID, stack.Id, servers)
-		if ok {
-			sortServicesByDisplayName(services)
-			return dedupeServices(services)
-		}
-	}
-	nodeNames := map[string]string{}
-	nodeServerIDs := map[string]string{}
-	if nodes, err := h.app.FindRecordsByFilter("nodes", "stack_id = {:stackId}", "name", 200, 0, map[string]any{"stackId": stack.Id}); err == nil { // pocketbase-migration-compat: moved legacy projection only
-		for _, node := range nodes {
-			name := firstNonEmptyString(node.GetString("hostname"), node.GetString("name"), node.Id)
-			nodeNames[node.Id] = name
-			nodeServerIDs[node.Id] = matchingServerID(name, servers)
-		}
-	}
-
-	services := []stackOperationService{}
-	for nodeID, nodeName := range nodeNames {
-		records, err := h.app.FindRecordsByFilter("services", "node_id = {:nodeId}", "name", 100, 0, map[string]any{"nodeId": nodeID}) // pocketbase-migration-compat: moved legacy projection only
-		if err != nil {
-			continue
-		}
-		for _, record := range records {
-			services = append(services, serviceFromRecord(record, nodeName, nodeServerIDs[nodeID]))
-		}
-	}
-	if len(services) == 0 {
-		services = operationServicesFromStackKitOutputs(
-			h.stackKitOutputsFromLatestDeployRecord(stack.Id),
-			servers,
-		)
-	}
-	sortServicesByDisplayName(services)
-	return dedupeServices(services)
-}
-
-func sortServicesByDisplayName(services []stackOperationService) {
-	sort.SliceStable(services, func(i, j int) bool {
-		return strings.ToLower(services[i].DisplayName) < strings.ToLower(services[j].DisplayName)
-	})
-}
-
-func (h stackOperationsRouteHandlers) stackKitOutputsFromLatestDeployRecord(stackID string) map[string]any {
-	if h.app == nil {
-		return nil
-	}
-	records, err := h.app.FindRecordsByFilter( // pocketbase-migration-compat: moved legacy projection only
-		"jobs",
-		"stack_id = {:stackId} && type = 'deploy' && state = 'completed'",
-		"-updated",
-		20,
-		0,
-		map[string]any{"stackId": stackID},
-	)
-	if err != nil {
-		return nil
-	}
-	for _, record := range records {
-		result, ok := mapFromJSONAny(record.Get("result"))
-		if !ok {
-			continue
-		}
-		if outputs, ok := mapFromJSONAny(result["stackkit_outputs"]); ok {
-			return outputs
-		}
-		if outputs, ok := mapFromJSONAny(result["stackkitOutputs"]); ok {
-			return outputs
-		}
-		if outputs, ok := mapFromJSONAny(result["outputs"]); ok {
-			return outputs
-		}
-	}
-	return nil
-}
-
-func serviceFromRecord(record *core.Record, targetServer, targetServerID string) stackOperationService { // pocketbase-migration-compat: moved legacy projection only
-	name := normalizeServiceKey(record.GetString("name"))
-	display := firstNonEmptyString(record.GetString("display_name"), canonicalServiceDisplayName(name), record.GetString("name"))
-	status := strings.TrimSpace(record.GetString("status"))
-	if status == "" {
-		status = registryUnknownStatus
-	}
-	return stackOperationService{
-		ID:             record.Id,
-		Name:           name,
-		DisplayName:    display,
-		Type:           firstNonEmptyString(record.GetString("type"), canonicalServiceType(name)),
-		Status:         status,
-		URL:            record.GetString("url"),
-		Port:           record.GetInt("port"),
-		TargetServer:   targetServer,
-		TargetServerID: targetServerID,
 	}
 }
 

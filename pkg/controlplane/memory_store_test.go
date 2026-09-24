@@ -64,16 +64,17 @@ func TestMemoryStoreStacksAreTenantScopedAndConflictOnActiveName(t *testing.T) {
 	store.SetNow(func() time.Time { return now })
 
 	stack, err := store.CreateStack(ctx, CreateStackRequest{
-		ID:             "stack-1",
-		TenantID:       "tenant-a",
-		OwnerSubjectID: "user-1",
-		Name:           "TechStack",
-		Config:         map[string]any{"mode": "easy"},
+		ID:                 "stack-1",
+		TenantID:           "tenant-a",
+		OwnerSubjectID:     "user-1",
+		StackKitInstanceID: "owner-kit",
+		Name:               "TechStack",
+		Config:             map[string]any{"mode": "easy"},
 	})
 	if err != nil {
 		t.Fatalf("CreateStack() error = %v", err)
 	}
-	if stack.Status != "draft" || stack.Mode != "easy" {
+	if stack.Status != "draft" || stack.Mode != "easy" || stack.StackKitInstanceID != "owner-kit" {
 		t.Fatalf("stack defaults = status %q mode %q", stack.Status, stack.Mode)
 	}
 
@@ -101,6 +102,59 @@ func TestMemoryStoreStacksAreTenantScopedAndConflictOnActiveName(t *testing.T) {
 	}
 	if len(tenantA) != 1 || tenantA[0].ID != "stack-1" {
 		t.Fatalf("tenant-a stacks = %#v, want only stack-1", tenantA)
+	}
+}
+
+func TestMemoryStoreStackConfigCASPreservesConcurrentWinner(t *testing.T) {
+	store := NewMemoryStore()
+	fixedNow := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
+	store.SetNow(func() time.Time { return fixedNow })
+	stack, err := store.CreateStack(t.Context(), CreateStackRequest{
+		ID: "stack-1", TenantID: "tenant-1", OwnerSubjectID: "owner-1", Name: "One",
+		Config: map[string]any{"writer": "initial"},
+	})
+	if err != nil {
+		t.Fatalf("CreateStack: %v", err)
+	}
+	winner, err := store.CompareAndSwapStackConfig(t.Context(), StackConfigCAS{
+		TenantID: "tenant-1", StackID: "stack-1", ExpectedUpdatedAt: stack.UpdatedAt,
+		Config: map[string]any{"writer": "winner"},
+	})
+	if err != nil || !winner.UpdatedAt.After(stack.UpdatedAt) {
+		t.Fatalf("winning CAS did not advance the revision: stack=%#v err=%v", winner, err)
+	}
+	_, err = store.CompareAndSwapStackConfig(t.Context(), StackConfigCAS{
+		TenantID: "tenant-1", StackID: "stack-1",
+		ExpectedUpdatedAt: stack.UpdatedAt,
+		Config:            map[string]any{"writer": "stale"},
+	})
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale CompareAndSwapStackConfig error = %v, want ErrConflict", err)
+	}
+	persisted, err := store.GetStack(t.Context(), "tenant-1", "stack-1")
+	if err != nil || persisted.Config["writer"] != "winner" {
+		t.Fatalf("concurrent winner was overwritten: stack=%#v err=%v", persisted, err)
+	}
+}
+
+func TestMemoryStoreScopesStackKitInstanceIdentityToHomelab(t *testing.T) {
+	store := NewMemoryStore()
+	ctx := context.Background()
+	first := CreateStackRequest{ID: "stack-1", TenantID: "tenant-a", HomelabID: "home-a", StackKitInstanceID: "kit-1", Name: "One"}
+	if _, err := store.CreateStack(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateStack(ctx, CreateStackRequest{ID: "stack-2", TenantID: "tenant-a", HomelabID: "home-a", StackKitInstanceID: "kit-1", Name: "Two"}); !errors.Is(err, ErrStackKitInstanceConflict) {
+		t.Fatalf("same-homelab identity error = %v, want ErrStackKitInstanceConflict", err)
+	}
+	if _, err := store.CreateStack(ctx, CreateStackRequest{ID: "stack-3", TenantID: "tenant-a", HomelabID: "home-b", StackKitInstanceID: "kit-1", Name: "Three"}); err != nil {
+		t.Fatalf("cross-homelab identity reuse: %v", err)
+	}
+	if _, err := store.CreateStack(ctx, CreateStackRequest{ID: "stack-4", TenantID: "tenant-a", StackKitInstanceID: "kit-1", Name: "Four"}); err != nil {
+		t.Fatalf("unlinked identity: %v", err)
+	}
+	if _, err := store.SetStackHomelab(ctx, "tenant-a", "stack-4", "home-a"); !errors.Is(err, ErrStackKitInstanceConflict) {
+		t.Fatalf("link into occupied homelab error = %v, want ErrStackKitInstanceConflict", err)
 	}
 }
 
@@ -613,5 +667,66 @@ func TestMemoryStoreListActivityFiltersAndSortsBeforeLimit(t *testing.T) {
 		if got[0].ID != "activity-z" || got[1].ID != "activity-a" {
 			t.Fatalf("ListActivity(limit=%d) starts with %q, %q; want deterministic tie order", limit, got[0].ID, got[1].ID)
 		}
+	}
+}
+
+func TestMemoryStorePendingJobRecoveryPayloadAndTenantDirectory(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore()
+	now := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
+	store.SetNow(func() time.Time { return now })
+
+	create := func(jobID, tenantID, stackID, state string, payload map[string]any) {
+		t.Helper()
+		if _, err := store.CreateJob(ctx, UpsertJobRequest{
+			ID: jobID, TenantID: tenantID, StackID: stackID, Type: "provision",
+			State: state, Step: "queued", Message: "queued", Payload: payload,
+		}); err != nil {
+			t.Fatalf("CreateJob %s: %v", jobID, err)
+		}
+	}
+	create("job-b", "tenant-b", "stack-b", "pending", map[string]any{"spec": "b"})
+	create("job-a", "tenant-a", "stack-a", "pending", map[string]any{"spec": "a"})
+	create("job-done", "tenant-c", "stack-c", "completed", map[string]any{"spec": "c"})
+
+	page, err := store.ListPendingJobTenants(ctx, "", 1)
+	if err != nil {
+		t.Fatalf("ListPendingJobTenants: %v", err)
+	}
+	if len(page) != 1 || page[0] != "tenant-a" {
+		t.Fatalf("first page = %v, want [tenant-a]", page)
+	}
+	next, err := store.ListPendingJobTenants(ctx, page[0], 10)
+	if err != nil {
+		t.Fatalf("ListPendingJobTenants page 2: %v", err)
+	}
+	if len(next) != 1 || next[0] != "tenant-b" {
+		t.Fatalf("second page = %v, want [tenant-b] (completed tenant must not appear)", next)
+	}
+
+	pendingRows, err := store.ListPendingJobs(ctx, "tenant-a", 10)
+	if err != nil || len(pendingRows) != 1 {
+		t.Fatalf("ListPendingJobs = %d rows, %v", len(pendingRows), err)
+	}
+	if pendingRows[0].Payload["spec"] != "a" {
+		t.Fatalf("pending payload = %#v, want the recovery projection", pendingRows[0].Payload)
+	}
+
+	if err := store.SetJobPayload(ctx, "tenant-a", "job-a", map[string]any{"spec": "a2"}); err != nil {
+		t.Fatalf("SetJobPayload: %v", err)
+	}
+	updated, err := store.GetJob(ctx, "tenant-a", "job-a")
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if updated.Payload["spec"] != "a2" {
+		t.Fatalf("updated payload = %#v", updated.Payload)
+	}
+
+	if _, err := store.StartJob(ctx, "tenant-a", "job-a", now); err != nil {
+		t.Fatalf("StartJob: %v", err)
+	}
+	if err := store.SetJobPayload(ctx, "tenant-a", "job-a", map[string]any{"spec": "late"}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("SetJobPayload on a running job = %v, want ErrConflict", err)
 	}
 }

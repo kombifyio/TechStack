@@ -4,14 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/kombifyio/techstack/pkg/controlplane"
+	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/jobs"
 	"github.com/kombifyio/techstack/pkg/runtimehealth"
+	"github.com/kombifyio/techstack/pkg/runtimeidentity"
 	"github.com/kombifyio/techstack/pkg/serverregistry"
 )
 
@@ -19,6 +23,112 @@ type recordingServiceActionOrchestrator struct {
 	requests []jobs.StackKitLifecycleRequest
 	store    controlplane.JobStore
 	enqueued map[string]bool
+}
+
+func TestObservedDiscoveryGroupsByComposeProjectNotByServer(t *testing.T) {
+	store := controlplane.NewMemoryStore()
+	ctx := t.Context()
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	if _, err := store.CreateStack(ctx, controlplane.CreateStackRequest{ID: "stack-1", TenantID: "tenant-1", OwnerSubjectID: "owner-1", Name: "Demo"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpsertServerRuntime(ctx, controlplane.ServerRuntime{ID: "server-1", TenantID: "tenant-1", StackID: "stack-1", OwnerSubjectID: "owner-1", ConnectionState: "connected", HealthState: "healthy"}); err != nil {
+		t.Fatal(err)
+	}
+	// Two compose containers of one project plus a bare systemd unit, all
+	// observed with no application_key — the pre-fix state of every guard
+	// discovery on a manifest-less host.
+	for _, component := range []controlplane.ServiceRuntime{
+		{ID: "svc-api", TenantID: "tenant-1", StackID: "stack-1", ServerID: "server-1", ServiceKey: "librechat-k4es-api-1", Name: "librechat-k4es-api-1", ManagementState: "observed", ObservedState: "running", HealthState: "healthy", ObservedAt: &now, Metadata: map[string]any{"runtime_identity": map[string]any{"kind": "docker_compose_service", "project": "librechat-k4es", "service": "api"}}},
+		{ID: "svc-db", TenantID: "tenant-1", StackID: "stack-1", ServerID: "server-1", ServiceKey: "librechat-k4es-mongodb-1", Name: "librechat-k4es-mongodb-1", ManagementState: "observed", ObservedState: "running", HealthState: "healthy", ObservedAt: &now, Metadata: map[string]any{"runtime_identity": map[string]any{"kind": "docker_compose_service", "project": "librechat-k4es", "service": "mongodb"}}},
+		{ID: "svc-cups", TenantID: "tenant-1", StackID: "stack-1", ServerID: "server-1", ServiceKey: "snap.cups.cupsd.service", Name: "snap.cups.cupsd.service", ManagementState: "observed", ObservedState: "running", HealthState: "healthy", ObservedAt: &now, Metadata: map[string]any{"runtime_identity": map[string]any{"kind": "systemd_unit", "unit": "snap.cups.cupsd.service"}}},
+	} {
+		if _, err := store.UpsertServiceRuntime(ctx, component); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := serviceRuntimeHandlers{store: store, stacks: store, servers: store, now: func() time.Time { return now }}
+	event, _ := registryRouteStoreTestEvent(http.MethodGet, "/api/v1/service-applications?kit_deployment_id=stack-1", "owner-1", "tenant-1", nil)
+	applications, err := h.applicationReadModel(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byKey := map[string]serviceApplicationResponse{}
+	for _, application := range applications {
+		byKey[application.ApplicationKey] = application
+	}
+	compose, hasCompose := byKey["librechat-k4es"]
+	if !hasCompose || len(compose.Components) != 2 || compose.System {
+		t.Fatalf("compose project must group its own components only: %#v", applications)
+	}
+	system, hasSystem := byKey["system"]
+	if !hasSystem || len(system.Components) != 1 || !system.System {
+		t.Fatalf("bare units must land in the System bucket: %#v", applications)
+	}
+	if system.DisplayName != "System Services" {
+		t.Fatalf("the System bucket must not inherit a member name, got %q", system.DisplayName)
+	}
+	if compose.ID == system.ID {
+		t.Fatalf("distinct applications collapsed into one id: %#v", applications)
+	}
+}
+
+func TestServiceApplicationReadModelGroupsComponentsAndKeepsOpenTargetSafe(t *testing.T) {
+	store := controlplane.NewMemoryStore()
+	ctx := t.Context()
+	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
+	if _, err := store.CreateStack(ctx, controlplane.CreateStackRequest{ID: "stack-1", TenantID: "tenant-1", OwnerSubjectID: "owner-1", Name: "Demo"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpsertServerRuntime(ctx, controlplane.ServerRuntime{ID: "server-1", TenantID: "tenant-1", StackID: "stack-1", OwnerSubjectID: "owner-1", ConnectionState: "connected", HealthState: "healthy"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, component := range []controlplane.ServiceRuntime{
+		{ID: "service-app", TenantID: "tenant-1", StackID: "stack-1", ServerID: "server-1", ServiceKey: "coolify", Name: "stackkit-cloud-core-coolify-1", ManagementState: "managed", ObservedState: "running", HealthState: "healthy", ObservedAt: &now, Access: map[string]any{serviceAccessModeKey: serviceAccessDirect, serviceAccessURLKey: "https://coolify.demo.kombify.me", serviceAccessObservedKey: true, serviceAccessSourceKey: serviceStackKitManifest}, Metadata: map[string]any{"application_key": "coolify", "application_display_name": "Coolify", "lifecycle": "daemon", "operational_impact": "critical"}},
+		{ID: "service-db", TenantID: "tenant-1", StackID: "stack-1", ServerID: "server-1", ServiceKey: "coolify-postgres", Name: "Coolify PostgreSQL", ManagementState: "managed", ObservedState: "running", HealthState: "healthy", ObservedAt: &now, Metadata: map[string]any{"application_key": "coolify", "application_display_name": "Coolify", "internal_address": "postgres:5432", "lifecycle": "daemon", "operational_impact": "supporting"}},
+	} {
+		if _, err := store.UpsertServiceRuntime(ctx, component); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := serviceRuntimeHandlers{store: store, stacks: store, servers: store, now: func() time.Time { return now }}
+	event, _ := registryRouteStoreTestEvent(http.MethodGet, "/api/v1/service-applications?kit_deployment_id=stack-1", "owner-1", "tenant-1", nil)
+	applications, err := h.applicationReadModel(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(applications) != 1 || len(applications[0].Components) != 2 || applications[0].DisplayName != "Coolify" {
+		t.Fatalf("application grouping = %#v", applications)
+	}
+	if applications[0].ID != runtimeidentity.ApplicationID("stack-1", "server-1", "coolify") || applications[0].Access.OpenURL != "https://coolify.demo.kombify.me" {
+		t.Fatalf("application identity/access = %#v", applications[0])
+	}
+	if applications[0].KitDeploymentID != "stack-1" {
+		t.Fatalf("application deployment identity = %#v", applications[0])
+	}
+	if leaked := preferApplicationAccess(serviceApplicationAccess{Kind: serviceAccessUnavailable}, map[string]any{serviceAccessModeKey: serviceAccessDirect, serviceAccessURLKey: "javascript:alert(1)"}, "db:5432"); leaked.OpenURL != "" || leaked.Address != "db:5432" {
+		t.Fatalf("unsafe open target survived: %#v", leaked)
+	}
+}
+
+func TestServiceApplicationListStopsAfterUnauthenticatedRejection(t *testing.T) {
+	store := controlplane.NewMemoryStore()
+	h := serviceRuntimeHandlers{store: store, stacks: store, servers: store, now: time.Now}
+	event, recorder := registryRouteStoreTestEvent(http.MethodGet, "/api/v1/service-applications", "", "", nil)
+	if err := h.listApplications(event); !errors.Is(err, httpx.ErrResponseWritten) {
+		t.Fatalf("listApplications() error = %v", err)
+	}
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d", recorder.Code)
+	}
+	decoder := json.NewDecoder(recorder.Body)
+	var envelope map[string]any
+	if err := decoder.Decode(&envelope); err != nil {
+		t.Fatal(err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		t.Fatalf("response contains data after the rejection envelope: %v", err)
+	}
 }
 
 func (o *recordingServiceActionOrchestrator) EnqueueStackKitLifecycle(ctx context.Context, request jobs.StackKitLifecycleRequest) (string, error) {
@@ -55,13 +165,13 @@ func TestServiceRuntimeActionDerivesAuthorityAndReplaysIdempotently(t *testing.T
 	store := controlplane.NewMemoryStore()
 	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
 	observedAt := now.Add(-10 * time.Second)
-	if _, err := store.CreateStack(t.Context(), controlplane.CreateStackRequest{ID: "stack-1", TenantID: "tenant-1", OwnerSubjectID: "owner-1", Name: "Stack", Config: map[string]any{"stackkit": "cloud-kit"}}); err != nil {
+	if _, err := store.CreateStack(t.Context(), controlplane.CreateStackRequest{ID: "stack-1", TenantID: "tenant-1", OwnerSubjectID: "owner-1", StackKitInstanceID: "family-main", Name: "Stack", Config: map[string]any{"stackkit": "family-lab"}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.UpsertServerRuntime(t.Context(), controlplane.ServerRuntime{ID: "server-1", TenantID: "tenant-1", StackID: "stack-1", OwnerSubjectID: "owner-1", WorkerID: "agent-1", InventoryRevision: 7, ConnectionState: string(serverregistry.ConnectionConnected), LastHeartbeatAt: &observedAt}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.UpsertServiceRuntime(t.Context(), controlplane.ServiceRuntime{ID: "service-1", TenantID: "tenant-1", StackID: "stack-1", ServerID: "server-1", ServiceKey: "coolify", StackKitVersion: "cloud-kit@v0.15.9", ObservedAt: &observedAt, Capabilities: []string{"restart"}, Metadata: map[string]any{"inventory_revision": int64(7)}}); err != nil {
+	if _, err := store.UpsertServiceRuntime(t.Context(), controlplane.ServiceRuntime{ID: "service-1", TenantID: "tenant-1", StackID: "stack-1", ServerID: "server-1", ServiceKey: "auth", StackKitVersion: "family-lab@v0.1.0", ObservedAt: &observedAt, Capabilities: []string{"stop"}, Metadata: map[string]any{"inventory_revision": int64(7)}}); err != nil {
 		t.Fatal(err)
 	}
 	orch := &recordingServiceActionOrchestrator{store: store}
@@ -69,9 +179,9 @@ func TestServiceRuntimeActionDerivesAuthorityAndReplaysIdempotently(t *testing.T
 		// Reconstruct the handler to prove replay survives a process-local
 		// handler restart and is owned by the durable job receipt.
 		h := serviceRuntimeHandlers{store: store, stacks: store, servers: store, jobs: store, now: func() time.Time { return now }, orch: orch}
-		event, recorder := registryRouteStoreTestEvent(http.MethodPost, "/api/v1/registry/services/service-1/actions", "owner-1", "tenant-1", map[string]any{"action": "restart", "expected_inventory_revision": 7, "owner_approved": true})
+		event, recorder := registryRouteStoreTestEvent(http.MethodPost, "/api/v1/registry/services/service-1/actions", "owner-1", "tenant-1", map[string]any{"action": "stop", "expected_inventory_revision": 7, "owner_approved": true})
 		event.Request.SetPathValue("serviceId", "service-1")
-		event.Request.Header.Set("Idempotency-Key", "restart-1")
+		event.Request.Header.Set("Idempotency-Key", "stop-1")
 		if err := h.action(event); err != nil {
 			t.Fatal(err)
 		}
@@ -83,13 +193,13 @@ func TestServiceRuntimeActionDerivesAuthorityAndReplaysIdempotently(t *testing.T
 		t.Fatalf("dispatch count=%d want 1", len(orch.requests))
 	}
 	request := orch.requests[0]
-	if request.StackID != "stack-1" || request.AgentID != "agent-1" || request.ServiceKey != "coolify" || request.StackKit != "cloud-kit" || request.Operation != jobs.StackKitLifecycleServiceRestart {
+	if request.StackID != "stack-1" || request.StackKitInstanceID != "family-main" || request.AgentID != "agent-1" || request.ServiceKey != "auth" || request.StackKit != "family-lab" || request.Operation != jobs.StackKitLifecycleServiceStop {
 		t.Fatalf("derived request=%#v", request)
 	}
 	conflicting := serviceRuntimeHandlers{store: store, stacks: store, servers: store, jobs: store, now: func() time.Time { return now }, orch: orch}
-	event, recorder := registryRouteStoreTestEvent(http.MethodPost, "/api/v1/registry/services/service-1/actions", "owner-1", "tenant-1", map[string]any{"action": "restart", "expected_inventory_revision": 7, "owner_approved": true})
+	event, recorder := registryRouteStoreTestEvent(http.MethodPost, "/api/v1/registry/services/service-1/actions", "owner-1", "tenant-1", map[string]any{"action": "stop", "expected_inventory_revision": 7, "owner_approved": true})
 	event.Request.SetPathValue("serviceId", "service-1")
-	event.Request.Header.Set("Idempotency-Key", "restart-2")
+	event.Request.Header.Set("Idempotency-Key", "stop-2")
 	if err := conflicting.action(event); err != nil || recorder.Code != http.StatusConflict || len(orch.requests) != 1 {
 		t.Fatalf("competing action status=%d requests=%d err=%v", recorder.Code, len(orch.requests), err)
 	}
@@ -97,9 +207,9 @@ func TestServiceRuntimeActionDerivesAuthorityAndReplaysIdempotently(t *testing.T
 	// receipt must rebuild exactly that job instead of leaving it stranded.
 	recoveredOrch := &recordingServiceActionOrchestrator{store: store}
 	recovered := serviceRuntimeHandlers{store: store, stacks: store, servers: store, jobs: store, now: func() time.Time { return now }, orch: recoveredOrch}
-	event, recorder = registryRouteStoreTestEvent(http.MethodPost, "/api/v1/registry/services/service-1/actions", "owner-1", "tenant-1", map[string]any{"action": "restart", "expected_inventory_revision": 7, "owner_approved": true})
+	event, recorder = registryRouteStoreTestEvent(http.MethodPost, "/api/v1/registry/services/service-1/actions", "owner-1", "tenant-1", map[string]any{"action": "stop", "expected_inventory_revision": 7, "owner_approved": true})
 	event.Request.SetPathValue("serviceId", "service-1")
-	event.Request.Header.Set("Idempotency-Key", "restart-1")
+	event.Request.Header.Set("Idempotency-Key", "stop-1")
 	if err := recovered.action(event); err != nil || recorder.Code != http.StatusAccepted || len(recoveredOrch.requests) != 1 {
 		t.Fatalf("pending crash recovery status=%d requests=%d err=%v", recorder.Code, len(recoveredOrch.requests), err)
 	}
@@ -186,7 +296,7 @@ func TestServiceRuntimeRoutesReturnPersistedStateAndOwnerScope(t *testing.T) {
 	}
 
 	h := serviceRuntimeHandlers{store: store, stacks: store, servers: store, now: func() time.Time { return now }}
-	event, recorder := registryRouteStoreTestEvent(http.MethodGet, "/api/v1/services", "owner-1", "tenant-1", nil)
+	event, recorder := registryRouteStoreTestEvent(http.MethodGet, "/api/v1/services?kit_deployment_id=stack-owner", "owner-1", "tenant-1", nil)
 	if err := h.list(event); err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -199,13 +309,11 @@ func TestServiceRuntimeRoutesReturnPersistedStateAndOwnerScope(t *testing.T) {
 	if len(envelope.Data) != 1 || envelope.Data[0].ID != "service-owner" {
 		t.Fatalf("owner scope leaked services: %#v", envelope.Data)
 	}
-	if envelope.Data[0].TechstackID != "stack-owner" {
-		t.Fatalf("techstack_id = %q, want stack-owner", envelope.Data[0].TechstackID)
+	if envelope.Data[0].KitDeploymentID != "stack-owner" {
+		t.Fatalf("kit_deployment_id = %q, want stack-owner", envelope.Data[0].KitDeploymentID)
 	}
-	if strings.Contains(recorder.Body.String(), `"stack_id"`) {
-		t.Fatalf("canonical service response exposed ambiguous stack_id: %s", recorder.Body.String())
-	}
-	if envelope.Data[0].Health.State != serviceHealthHealthy || stringFromAnyMap(envelope.Data[0].Access, serviceAccessModeKey) != serviceAccessRelay || len(envelope.Data[0].AllowedActions) != 1 {
+	if envelope.Data[0].Health.State != serviceHealthHealthy || stringFromAnyMap(envelope.Data[0].Access, serviceAccessModeKey) != serviceAccessRelay ||
+		!slices.Equal(envelope.Data[0].AllowedActions, []string{serviceActionFreeze, serviceActionRestart}) {
 		t.Fatalf("fresh service projection = %#v", envelope.Data[0])
 	}
 
@@ -255,7 +363,8 @@ func TestServiceRuntimeAccessGatesOnPersistedServerConnection(t *testing.T) {
 		ID: "server-stale", ConnectionState: string(serverregistry.ConnectionStale),
 		LastHeartbeatAt: &staleHeartbeat,
 	}
-	got := (serviceRuntimeHandlers{now: func() time.Time { return now }}).response(service, &server)
+	projector := serviceRuntimeHandlers{now: func() time.Time { return now }}
+	got := projector.response(service, &server)
 	if got.Health.ReasonCode != "server_connection_stale" || stringFromAnyMap(got.Access, serviceAccessModeKey) != serviceAccessUnavailable {
 		t.Fatalf("direct access survived persisted stale server: %#v", got)
 	}
@@ -264,7 +373,7 @@ func TestServiceRuntimeAccessGatesOnPersistedServerConnection(t *testing.T) {
 	// stored dimensions even when the raw heartbeat evidence has aged: the
 	// sweeper, not the read path, owns that demotion.
 	server.ConnectionState = string(serverregistry.ConnectionConnected)
-	got = (serviceRuntimeHandlers{now: func() time.Time { return now }}).response(service, &server)
+	got = projector.response(service, &server)
 	if got.Health.ReasonCode != "" || got.ObservedState != registryStatusRunning {
 		t.Fatalf("read path recomputed heartbeat freshness: %#v", got)
 	}
@@ -337,10 +446,10 @@ func TestSanitizedServiceAccessPreservesOnlyTrustedObservedDirectEndpoints(t *te
 		{
 			name: "Guard observed home endpoint",
 			access: map[string]any{
-				serviceAccessModeKey: serviceAccessDirect, serviceAccessURLKey: "http://auth.home.localhost",
+				serviceAccessModeKey: serviceAccessDirect, serviceAccessURLKey: "https://auth.home",
 				serviceAccessObservedKey: true, serviceAccessSourceKey: serviceStackKitManifest,
 			},
-			wantURL: "http://auth.home.localhost",
+			wantURL: "https://auth.home",
 		},
 		{
 			name: "Guard observed HTTPS relay domain",
@@ -353,7 +462,7 @@ func TestSanitizedServiceAccessPreservesOnlyTrustedObservedDirectEndpoints(t *te
 		{
 			name: "unmarked home endpoint",
 			access: map[string]any{
-				serviceAccessModeKey: serviceAccessDirect, serviceAccessURLKey: "http://auth.home.localhost",
+				serviceAccessModeKey: serviceAccessDirect, serviceAccessURLKey: "https://auth.home",
 			},
 		},
 		{

@@ -3,6 +3,8 @@ package serverregistry
 import (
 	"context"
 	"time"
+
+	"github.com/kombifyio/techstack/pkg/outcome"
 )
 
 const (
@@ -67,6 +69,8 @@ type Aggregate struct {
 	SourceObservedAt     *time.Time
 	Channels             []Channel
 	Metadata             map[string]any
+	LastOutcome          *outcome.Decision
+	OutcomeChangedAt     *time.Time
 	DecommissionedAt     *time.Time
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
@@ -145,6 +149,9 @@ type Command struct {
 	ClearDesiredReason    bool
 	ClearConnectionReason bool
 	ClearHealthReason     bool
+	Outcome               *outcome.Decision
+	ClearOutcome          bool
+	OutcomeResetReason    string
 	Evidence              map[string]any
 	Inventory             *InventoryObservation
 }

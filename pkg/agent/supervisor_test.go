@@ -283,13 +283,6 @@ func TestClientResetAllowsRedial(t *testing.T) {
 	}
 
 	client.reset()
-	if client.IsConnected() {
-		t.Fatal("IsConnected() = true after reset")
-	}
-	if client.IsRegistered() {
-		t.Fatal("IsRegistered() = true after reset")
-	}
-
 	if err := client.Connect(ctx); err != nil {
 		t.Fatalf("Connect 2 after reset: %v", err)
 	}

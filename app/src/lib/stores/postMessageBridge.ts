@@ -9,6 +9,9 @@
  *   { type: 'refresh' }
  *   { type: 'theme', value: 'dark' | 'light' }
  *     with optional systemCardShape: 'square' | 'app'
+ *     with optional finish: 'kombify'|'liquid'|'frost'|'expressive'|'aurora'
+ *     (since 2026-08-19 — the §4 host design context; unknown/absent values
+ *     are ignored so older portals stay compatible)
  *   { type: 'identity', value: { name, characterId, animationStyle } }
  *   { type: 'auth-token', token: '<sso-jwt>' }
  *   { type: 'auth-error', error: '...' }
@@ -17,7 +20,7 @@
  *   { type: 'ai-handover-ack', correlation_id: '...', status: 'accepted' | 'session-ready' | 'failed', ... }
  *
  * Outbound messages (app → portal):
- *   { type: 'ready', tool: 'kombifystack' }
+ *   { type: 'ready', tool: 'kombifystack', chrome: { overlayControls, companion } }
  *   { type: 'navigate', path: '/some/portal/path' }
  *   { type: 'resize', height: number }
  *   { type: 'auth-request', tool: 'kombifystack' }
@@ -25,12 +28,22 @@
  *   { type: 'ai-handover', tool: 'kombifystack', ... }
  */
 
-import { browser } from "$app/environment";
+import { browser } from "$app/env";
 import { goto } from "$app/navigation";
 import { theme } from "./theme";
 import { setStackIdentity, type StackIdentity } from "./stackIdentity";
+import {
+  hostNavigationRequested,
+  isSafeInternalPath,
+  withHostNavigation,
+} from "#lib/embedded-navigation.js";
 
 const TOOL_ID = "kombifystack";
+/** Same payload as `@kombify/embed` `PORTAL_CHROME_HOST_SHELL`. */
+const PORTAL_EMBED_CHROME = {
+  overlayControls: "host",
+  companion: "host",
+} as const;
 const GATEWAY_AUDIENCE = "https://api.kombify.io";
 const AUTH_REQUEST_TIMEOUT_MS = 10_000;
 const GATEWAY_TOKEN_REQUEST_TIMEOUT_MS = 10_000;
@@ -46,7 +59,12 @@ const MIN_AUTH_REQUEST_INTERVAL_MS = 6_500;
 // only once after the portal's documented rate-limit floor, while retaining a
 // finite overall wait so an unavailable parent cannot create a retry loop.
 const AUTH_REQUEST_RETRY_DELAY_MS = MIN_AUTH_REQUEST_INTERVAL_MS;
-const DEFAULT_PORTAL_ORIGINS = ["https://kombify.io", "https://kombify.dev"];
+const DEFAULT_PORTAL_ORIGINS = [
+  "https://app.kombify.io",
+  "https://dashboard.kombify.io",
+  "https://kombify.io",
+  "https://kombify.dev",
+];
 
 interface PortalMessage {
   type: string;
@@ -139,7 +157,7 @@ export function initBridge(portalOrigin?: string): void {
   window.addEventListener("message", handleMessage);
 
   // Notify parent that the app is ready
-  sendToPortal({ type: "ready", tool: TOOL_ID });
+  sendToPortal({ type: "ready", tool: TOOL_ID, chrome: PORTAL_EMBED_CHROME });
 
   // Auto-resize: observe document height changes and notify parent
   startResizeObserver();
@@ -340,12 +358,11 @@ function handleMessage(event: MessageEvent): void {
 
   switch (data.type) {
     case "navigate":
-      if (
-        typeof data.path === "string" &&
-        data.path.startsWith("/") &&
-        !data.path.includes("://")
-      ) {
-        goto(data.path);
+      if (typeof data.path === "string" && isSafeInternalPath(data.path)) {
+        const path = hostNavigationRequested(new URL(window.location.href))
+          ? withHostNavigation(data.path)
+          : data.path;
+        goto(path);
       }
       break;
 
@@ -360,6 +377,11 @@ function handleMessage(event: MessageEvent): void {
       if (data.systemCardShape === "square" || data.systemCardShape === "app") {
         theme.setSystemCardShape(data.systemCardShape);
       }
+      // Optional since 2026-08-19: the portal may push the finish axis
+      // (KOMBIFY-DESIGN-SYSTEM-STANDARD §4 host design context — the top
+      // tier, this embedding only). Absent or unknown values are ignored,
+      // so older portals keep working unchanged.
+      theme.setHostFinish(data.finish);
       break;
 
     case "identity":
@@ -434,6 +456,7 @@ function handleAiHandoverAcknowledgement(data: PortalMessage): void {
 
   const duplicate =
     data.duplicate === true ? ({ duplicate: true } as const) : {};
+
   if (data.status === "accepted") {
     notifyAiHandoverListeners(pending, { status: "accepted", ...duplicate });
     return;
@@ -495,7 +518,7 @@ function trackAiHandover(
       status: "failed",
       error: {
         code: "handover_timeout",
-        message: "Kombify AI did not confirm the support session in time.",
+        message: "kombify AI did not confirm the support session in time.",
         retryable: true,
       },
     });
@@ -577,6 +600,7 @@ function stableStringify(value: unknown): string {
 function isStackIdentity(value: unknown): value is StackIdentity {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Record<string, unknown>;
+
   return (
     typeof candidate.name === "string" &&
     typeof candidate.characterId === "string" &&

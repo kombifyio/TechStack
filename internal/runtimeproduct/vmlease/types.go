@@ -26,6 +26,12 @@ const (
 
 type BillingMode string
 
+// CustodyClass describes who owns the infrastructure. It is a Techstack
+// product projection and deliberately stays outside neutral runtime contracts.
+type CustodyClass string
+
+const CustodyCustomerSubstrate CustodyClass = "customer_substrate"
+
 const (
 	BillingModeTokenMetered BillingMode = "token_metered"
 	BillingModeSubscription BillingMode = "subscription"
@@ -93,6 +99,7 @@ type Lease struct {
 	Resource       ResourceRef       `json:"resource"`
 	DesiredState   DesiredState      `json:"desired_state"`
 	BillingMode    BillingMode       `json:"billing_mode"`
+	CustodyClass   CustodyClass      `json:"custody_class,omitempty"`
 	LifecycleClass LifecycleClass    `json:"lifecycle_class"`
 	RestartPolicy  RestartPolicy     `json:"restart_policy"`
 	RecreatePolicy RecreatePolicy    `json:"recreate_policy"`
@@ -114,7 +121,11 @@ func (l Lease) Validate(now time.Time) error {
 	if l.DesiredState != DesiredStateRunning && l.DesiredState != DesiredStateStopped && l.DesiredState != DesiredStateArchived {
 		return ErrInvalidLease
 	}
-	if l.BillingMode != BillingModeSubscription || l.LifecycleClass != LifecycleClassSubscription {
+	if l.CustodyClass == CustodyCustomerSubstrate {
+		if l.Resource.ProviderID != "proxmox" || l.BillingMode != BillingModeLocal || l.LifecycleClass != LifecycleClassOneTime || l.RecreatePolicy != RecreatePolicyNever {
+			return ErrUnsupportedLease
+		}
+	} else if l.CustodyClass != "" || l.BillingMode != BillingModeSubscription || l.LifecycleClass != LifecycleClassSubscription {
 		return ErrUnsupportedLease
 	}
 	if l.RestartPolicy != RestartPolicyNone && l.RestartPolicy != RestartPolicyOnUnexpectedStop {

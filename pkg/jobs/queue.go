@@ -13,6 +13,7 @@ import (
 
 	"github.com/kombifyio/techstack/pkg/logger"
 	"github.com/kombifyio/techstack/pkg/providererrors"
+	"github.com/google/uuid"
 )
 
 // JobType defines the type of job.
@@ -33,7 +34,21 @@ const (
 	// enqueued after a forced decommission of an unreachable runtime so the VM is
 	// freed out-of-band and does not keep billing.
 	JobTypeReconcileLease JobType = "reconcile_lease"
+	// JobTypeBackup runs one managed backup for a stack. It is cost-bearing
+	// and storage-bearing, so the entitlement and quota gates resolve before
+	// the job is enqueued, never inside the handler after the fact.
+	JobTypeBackup JobType = "backup"
+	// JobTypeRemoteEnrollment drives the connect-remote SSH enrollment lane for
+	// one durable enrollment row created by the pairing mint. The SSH work is
+	// delegated to a configured executor; the queue owns durability and retries.
+	JobTypeRemoteEnrollment JobType = "remote_enrollment"
 )
+
+// NewID returns the single collision-resistant identity shape for queued and
+// durable jobs that do not have a deterministic idempotency identity.
+func NewID() string {
+	return "job-" + uuid.NewString()
+}
 
 var ErrExecutionTargetBusy = errors.New("job execution target is busy")
 var ErrExecutionSnapshotFenced = errors.New("job execution snapshot is fenced by durable state")
@@ -97,9 +112,10 @@ type Job struct {
 	NextResumeAt *time.Time             `json:"next_resume_at,omitempty"`
 	// In-process only. Job payload/result stay redacted; managed runtime
 	// credentials are resolved again after restart or across process boundaries.
-	managedRuntimeTarget *ManagedRuntimeTarget     `json:"-"`
-	requestAuthority     *requestAuthoritySnapshot `json:"-"`
-	suppressPersistence  bool                      `json:"-"`
+	managedRuntimeTarget  *ManagedRuntimeTarget     `json:"-"`
+	requestAuthority      *requestAuthoritySnapshot `json:"-"`
+	suppressPersistence   bool                      `json:"-"`
+	executionClaimPending bool                      `json:"-"`
 	// H5: Per-job cancellation support
 	cancelFunc            context.CancelFunc `json:"-"` // Not serialized
 	cancellationRequested bool               `json:"-"`
@@ -234,6 +250,17 @@ func (q *Queue) getHandler(jobType JobType) (JobHandler, bool) {
 	defer q.handlersMu.RUnlock()
 	handler, ok := q.handlers[jobType]
 	return handler, ok
+}
+
+// HasHandler reports whether a handler is registered for the job type. A boot
+// re-enqueue must never submit a durable row the process cannot execute: the
+// worker would terminalize it as an unknown job type.
+func (q *Queue) HasHandler(jobType JobType) bool {
+	if q == nil {
+		return false
+	}
+	_, ok := q.getHandler(jobType)
+	return ok
 }
 
 // Start starts the job queue workers.
@@ -531,6 +558,7 @@ func (q *Queue) beginJobExecution(ctx context.Context, job *Job) (*jobExecutionA
 		return nil, false
 	}
 
+	claimer := q.executionClaimer()
 	job.mu.Lock()
 	if job.suppressPersistence || (job.State != JobStatePending && job.State != JobStateWaiting) {
 		job.mu.Unlock()
@@ -551,6 +579,7 @@ func (q *Queue) beginJobExecution(ctx context.Context, job *Job) (*jobExecutionA
 	job.NextResumeAt = nil
 	job.StartedAt = &now
 	job.Attempts++
+	job.executionClaimPending = claimer != nil
 	attempt.attempts = job.Attempts
 	attempt.maxAttempts = job.MaxAttempts
 	claim := ExecutionClaim{
@@ -559,7 +588,7 @@ func (q *Queue) beginJobExecution(ctx context.Context, job *Job) (*jobExecutionA
 	}
 	job.mu.Unlock()
 
-	if claimer := q.executionClaimer(); claimer != nil {
+	if claimer != nil {
 		if claim.TenantID == "" {
 			q.handleExecutionClaimError(ctx, job, attempt, fmt.Errorf("%w: missing tenant identity", ErrExecutionClaimFenced))
 			return nil, false
@@ -571,6 +600,9 @@ func (q *Queue) beginJobExecution(ctx context.Context, job *Job) (*jobExecutionA
 			q.handleExecutionClaimError(ctx, job, attempt, claimErr)
 			return nil, false
 		}
+		job.mu.Lock()
+		job.executionClaimPending = false
+		job.mu.Unlock()
 	}
 	if requested, reason := q.jobCancellation(job, jobCtx); requested {
 		attempt.cleanup()
@@ -586,6 +618,7 @@ func (q *Queue) beginJobExecution(ctx context.Context, job *Job) (*jobExecutionA
 
 func (q *Queue) handleExecutionClaimError(ctx context.Context, job *Job, attempt *jobExecutionAttempt, claimErr error) {
 	job.mu.Lock()
+	job.executionClaimPending = false
 	requested := job.cancellationRequested || attempt.ctx.Err() != nil
 	reason := job.cancellationReason
 	if requested {
@@ -622,6 +655,7 @@ func (q *Queue) handleExecutionClaimError(ctx context.Context, job *Job, attempt
 }
 
 func (q *Queue) restoreUnclaimedExecutionLocked(job *Job, attempt *jobExecutionAttempt) {
+	job.executionClaimPending = false
 	job.State = attempt.previousState
 	job.StartedAt = cloneTimePointer(attempt.previousStartedAt)
 	job.WaitReason = attempt.previousWaitReason
@@ -662,6 +696,13 @@ func (q *Queue) finishJobExecution(ctx, jobCtx context.Context, job *Job, handle
 
 func (q *Queue) handleJobExecutionError(ctx context.Context, job *Job, err error) {
 	if waitErr, waiting := asJobWaitError(err); waiting {
+		waitReason := strings.TrimSpace(waitErr.Reason)
+		if waitReason == "" {
+			waitReason = "waiting_dependency"
+		}
+		q.recordJobOutcome(job, jobPendingOutcome(job, waitReason, map[string]any{
+			"wait_reason": waitReason,
+		}))
 		q.waitJob(ctx, job, waitErr)
 		return
 	}
@@ -671,6 +712,7 @@ func (q *Queue) handleJobExecutionError(ctx context.Context, job *Job, err error
 			job.Step = provisionErr.Step
 		}
 		job.mu.Unlock()
+		q.recordJobOutcome(job, provisionFailureOutcome(job, provisionErr))
 		q.failJobWithDetails(job, provisionErr.Message, provisionErr.Details)
 		return
 	}
@@ -682,6 +724,9 @@ func (q *Queue) handleJobExecutionError(ctx context.Context, job *Job, err error
 	job.mu.RUnlock()
 	q.log.Warn("job_error", "id", job.ID, "error", err, "category", category.String(), "retryable", retryable)
 	if retryable && currentAttempts < maxAttempts {
+		q.recordJobOutcome(job, jobPendingOutcome(job, WaitReasonRetryBackoff, map[string]any{
+			"error_category": category.String(), "attempt": currentAttempts,
+		}))
 		q.deferJobRetry(ctx, job, err, category, currentAttempts)
 		return
 	}
@@ -689,6 +734,9 @@ func (q *Queue) handleJobExecutionError(ctx context.Context, job *Job, err error
 	if !retryable {
 		reason = fmt.Sprintf("non-retryable error (%s): %s", category.String(), err)
 	}
+	q.recordJobOutcome(job, jobFailedOutcome(job, "job_"+category.String(), false, map[string]any{
+		"error_category": category.String(), "attempts": currentAttempts,
+	}))
 	q.failJob(job, reason)
 }
 
@@ -726,6 +774,9 @@ func (q *Queue) completeJob(job *Job) {
 	job.cancelFunc = nil
 	startedAt := cloneTimePointer(job.StartedAt)
 	job.mu.Unlock()
+	if !jobCompletionOutcomeIsActionable(job) {
+		q.recordJobOutcome(job, jobAvailableOutcome(job))
+	}
 	q.addLog(job, "info", "Job completed successfully")
 	if startedAt != nil {
 		q.log.Info("job_completed", "id", job.ID, "duration", completed.Sub(*startedAt))
@@ -1179,7 +1230,7 @@ func (q *Queue) addLog(job *Job, level, message string) {
 // Enqueue adds a new job to the queue.
 func (q *Queue) Enqueue(job *Job) error {
 	if job.ID == "" {
-		job.ID = fmt.Sprintf("job-%d", time.Now().UnixNano())
+		job.ID = NewID()
 	}
 	if job.MaxAttempts == 0 {
 		job.MaxAttempts = 3
@@ -1191,6 +1242,10 @@ func (q *Queue) Enqueue(job *Job) error {
 	job.Progress = 0
 
 	q.jobsMu.Lock()
+	if existing, exists := q.jobs[job.ID]; exists && !existing.Snapshot().PersistenceSuppressed {
+		q.jobsMu.Unlock()
+		return fmt.Errorf("job already enqueued: %s", job.ID)
+	}
 	q.jobs[job.ID] = job
 	q.jobsMu.Unlock()
 
@@ -1222,11 +1277,10 @@ func (q *Queue) Get(id string) (*Job, bool) {
 	return job, ok
 }
 
-// CancelStackRollouts atomically cancels process-local provision/deploy jobs
-// for one stack before a destroy rollout is admitted. In particular this
-// removes scheduled enrollment resumptions so teardown cannot race a delayed
-// deploy wakeup.
-func (q *Queue) CancelStackRollouts(stackID string) []string {
+// CancelStackOffers atomically cancels process-local rollout work and older
+// pending destroy offers before a replacement destroy is admitted. Running
+// destroy handlers keep their execution claim as the serialization barrier.
+func (q *Queue) CancelStackOffers(stackID string) []string {
 	stackID = strings.TrimSpace(stackID)
 	if stackID == "" {
 		return nil
@@ -1235,9 +1289,11 @@ func (q *Queue) CancelStackRollouts(stackID string) []string {
 	candidates := make([]*Job, 0)
 	for _, job := range q.jobs {
 		job.mu.RLock()
-		matches := strings.TrimSpace(job.TargetID) == stackID &&
-			(job.Type == JobTypeProvision || job.Type == JobTypeDeploy) &&
+		rollout := (job.Type == JobTypeProvision || job.Type == JobTypeDeploy) &&
 			(job.State == JobStatePending || job.State == JobStateWaiting || job.State == JobStateRunning)
+		destroyOffer := job.Type == JobTypeDestroy &&
+			(job.State == JobStatePending || job.State == JobStateWaiting)
+		matches := strings.TrimSpace(job.TargetID) == stackID && (rollout || destroyOffer)
 		job.mu.RUnlock()
 		if matches {
 			candidates = append(candidates, job)

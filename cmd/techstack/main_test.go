@@ -13,10 +13,10 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	commonauthlocal "github.com/kombifyio/go-common/authlocal"
-	"github.com/kombifyio/go-common/authsession"
-	commonedgeauth "github.com/kombifyio/go-common/edgeauth"
-	"github.com/kombifyio/go-common/oidcclient"
+	commonauthlocal "github.com/kombifyio/techstack/internal/gocommon/authlocal"
+	"github.com/kombifyio/techstack/internal/gocommon/authsession"
+	commonedgeauth "github.com/kombifyio/techstack/internal/gocommon/edgeauth"
+	"github.com/kombifyio/techstack/internal/gocommon/oidcclient"
 	"github.com/kombifyio/techstack/internal/routes/sessionreauth"
 	"github.com/kombifyio/techstack/pkg/auth/sessionpolicy"
 	"github.com/kombifyio/techstack/pkg/config"
@@ -61,22 +61,6 @@ func TestApplyDefaultServeHTTPAddsDefaultForServe(t *testing.T) {
 
 	if !slices.Equal(got, want) {
 		t.Fatalf("applyDefaultServeHTTP() = %#v, want %#v", got, want)
-	}
-}
-
-func TestProviderControlBootstrapRequestedOnlyForExactCommand(t *testing.T) {
-	if !providerControlBootstrapRequested([]string{"techstack", "provider-control-bootstrap"}) {
-		t.Fatal("exact provider-control bootstrap command was not detected")
-	}
-	for _, args := range [][]string{
-		nil,
-		{"techstack"},
-		{"techstack", "serve"},
-		{"techstack", "provider-control-bootstrap-extra"},
-	} {
-		if providerControlBootstrapRequested(args) {
-			t.Fatalf("providerControlBootstrapRequested(%q) = true", args)
-		}
 	}
 }
 
@@ -150,6 +134,42 @@ func TestGlobalMiddlewareRateLimitsSignedEdgeUsersSeparately(t *testing.T) {
 		if got, want := rec.Code, http.StatusNoContent; got != want {
 			t.Fatalf("user %s status = %d body=%q, want %d", userID, got, rec.Body.String(), want)
 		}
+	}
+}
+
+func TestGlobalMiddlewareKeepsDashboardReadsOutOfMutationBudget(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.DeploymentMode = config.ModeSaaS
+	cfg.EdgeAuthSecret = "edge-secret"
+	cfg.Server.RateLimitRPS = 1
+	cfg.Server.RateLimitBurst = 1
+
+	router := httpx.NewRouter()
+	bindGlobalMiddleware(router, routeDeps{startup: &startupContext{cfg: cfg}})
+	router.GET("/api/v1/probe", func(e *httpx.Event) error { return e.NoContent(http.StatusNoContent) })
+	router.POST("/api/v1/probe", func(e *httpx.Event) error { return e.NoContent(http.StatusNoContent) })
+	handler := router.BuildMux()
+	request := func(method string) int {
+		req := httptest.NewRequest(method, "/api/v1/probe", nil)
+		req.RemoteAddr = "10.0.0.1:443"
+		req.Header.Set("X-Edge-Auth-Secret", "edge-secret")
+		req.Header.Set("X-User-ID", "auth0|cloud-user-1")
+		req.Header.Set("X-Org-ID", "tenant-1")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	for i := 0; i < 32; i++ {
+		if got := request(http.MethodGet); got != http.StatusNoContent {
+			t.Fatalf("dashboard read %d status = %d, want %d", i+1, got, http.StatusNoContent)
+		}
+	}
+	if got := request(http.MethodPost); got != http.StatusNoContent {
+		t.Fatalf("first mutation status = %d, want %d", got, http.StatusNoContent)
+	}
+	if got := request(http.MethodPost); got != http.StatusTooManyRequests {
+		t.Fatalf("mutation beyond burst status = %d, want %d", got, http.StatusTooManyRequests)
 	}
 }
 
@@ -278,6 +298,37 @@ func TestLocalDeviceSessionIssuesDeviceAdminCookieWithoutOwner(t *testing.T) {
 	}
 }
 
+func TestLocalDeviceSessionRestoresConfiguredOwnerCookie(t *testing.T) {
+	deviceToken := strings.Repeat("a", 64)
+	t.Setenv(localDeviceTokenEnv, deviceToken)
+	handler, manager := localDeviceSessionTestHandler(t, &commonauthlocal.Record{
+		Email:   "demo@techstack.local",
+		Claimed: true,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, localDeviceSessionPath, nil)
+	req.RemoteAddr = "127.0.0.1:52100"
+	req.Header.Set(localDeviceSessionHeader, deviceToken)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if got, want := rec.Code, http.StatusOK; got != want {
+		t.Fatalf("status = %d body=%q, want %d", got, rec.Body.String(), want)
+	}
+	cookies := rec.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Name != "techstack_session" || !cookies[0].HttpOnly {
+		t.Fatalf("cookies = %+v, want one HttpOnly techstack_session", cookies)
+	}
+	claims, err := manager.Verify(cookies[0].Value)
+	if err != nil {
+		t.Fatalf("verify session: %v", err)
+	}
+	if claims.Email != "demo@techstack.local" || claims.Provider != commonauthlocal.DefaultProviderID || claims.Role != "admin" || claims.Subject != "breakglass:"+commonauthlocal.BreakGlassRecordID {
+		t.Fatalf("claims = %+v", claims)
+	}
+}
+
 func TestLocalDeviceSessionRejectsInvalidToken(t *testing.T) {
 	t.Setenv(localDeviceTokenEnv, strings.Repeat("a", 64))
 	handler, _ := localDeviceSessionTestHandler(t, &commonauthlocal.Record{
@@ -317,7 +368,7 @@ func TestLocalDeviceSessionRequiresLoopback(t *testing.T) {
 	}
 }
 
-func TestLocalDeviceSessionDoesNotDependOnClaimedOwner(t *testing.T) {
+func TestLocalDeviceSessionAllowsUnclaimedOwnerSetup(t *testing.T) {
 	deviceToken := strings.Repeat("a", 64)
 	t.Setenv(localDeviceTokenEnv, deviceToken)
 	handler, _ := localDeviceSessionTestHandler(t, &commonauthlocal.Record{
@@ -783,11 +834,14 @@ func TestV2SessionIdentityMiddlewareAcceptsSessionCookie(t *testing.T) {
 		t.Fatal(err)
 	}
 	token, err := mgr.Issue(authsession.Claims{
-		Subject:  "auth0|runtime-user",
-		TenantID: "tenant-1",
-		OrgID:    "org-1",
-		Email:    "runtime@example.com",
-		Role:     "admin,user",
+		Subject:         "auth0|runtime-user",
+		TenantID:        "tenant-1",
+		OrgID:           "org-1",
+		Email:           "runtime@example.com",
+		Role:            "admin,user",
+		ReauthPurpose:   "kombify.cloud.server-terminal.v1",
+		ReauthResource:  "server-1",
+		AuthenticatedAt: time.Now().Unix(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -818,6 +872,10 @@ func TestV2SessionIdentityMiddlewareAcceptsSessionCookie(t *testing.T) {
 	}
 	if !id.HasRole("admin") || !id.HasRole("user") {
 		t.Fatalf("identity roles = %#v, want admin and user", id.Roles)
+	}
+	sessionClaims, err := authsession.ClaimsFrom(event.Request.Context())
+	if err != nil || sessionClaims.ReauthPurpose != "kombify.cloud.server-terminal.v1" || sessionClaims.ReauthResource != "server-1" {
+		t.Fatalf("bound session claims were not preserved: %+v err=%v", sessionClaims, err)
 	}
 }
 
@@ -885,7 +943,7 @@ func TestV2CloudUserUpsertPersistsToControlPlaneAuthStore(t *testing.T) {
 			"https://kombify.io/entitlements": []interface{}{"techstack.managed.runtime.cloudkit", "techstack.managed.runtime.ionos"},
 		},
 	}
-	if err := v2CloudUserUpsert(store, "tenant-1")(context.Background(), claims, "tenant-1", "primary"); err != nil {
+	if err := v2CloudUserUpsert(store, true)(context.Background(), claims, "tenant-1", "primary"); err != nil {
 		t.Fatalf("v2CloudUserUpsert() error = %v", err)
 	}
 
@@ -923,7 +981,7 @@ func TestV2CloudUserUpsertDefaultsMembershipRoleToMember(t *testing.T) {
 		Email:   "runtime-user@kombify.io",
 		Name:    "Runtime User",
 	}
-	if err := v2CloudUserUpsert(store, "tenant-1")(context.Background(), claims, "tenant-1", "primary"); err != nil {
+	if err := v2CloudUserUpsert(store, true)(context.Background(), claims, "tenant-1", "primary"); err != nil {
 		t.Fatalf("v2CloudUserUpsert() error = %v", err)
 	}
 	if len(store.memberships) != 1 || store.memberships[0].RoleKey != "member" {
@@ -980,8 +1038,43 @@ func TestV2SessionIdentityMiddlewareHydratesDemoTenantMembership(t *testing.T) {
 		t.Fatalf("v2SessionIdentityMiddleware() error = %v", err)
 	}
 	id := identity.FromContext(event.Request.Context())
-	if id == nil || id.OrgID != "tenant-demo" {
-		t.Fatalf("identity = %+v, want demo tenant", id)
+	if id == nil || id.OrgID != "tenant-demo" || id.UserID != "tenant-demo" {
+		t.Fatalf("identity = %+v, want the configured demo principal projected onto the legacy demo owner", id)
+	}
+}
+
+func TestV2SessionIdentityMiddlewareProjectsDemoOwnerForEdgeIdentity(t *testing.T) {
+	t.Setenv("TECHSTACK_DEMO_USER_IDS", "oauth2|kombify-demo|kombify-public-demo-v1")
+	t.Setenv("TECHSTACK_DEMO_TENANT_ID", "auth0|legacy-demo-owner")
+
+	mgr, err := authsession.NewManager(authsession.Config{
+		Issuer:   "techstack",
+		Audience: "techstack-runtime-e2e",
+		Secret:   []byte("0123456789abcdef0123456789abcdef"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/homelab", nil)
+	req = req.WithContext(identity.NewContext(req.Context(), &identity.Identity{
+		UserID: "oauth2|kombify-demo|kombify-public-demo-v1",
+		OrgID:  "auth0|legacy-demo-owner",
+		Email:  "demo@kombified.com",
+	}))
+	event := &httpx.Event{Request: req, Response: httptest.NewRecorder()}
+	store := &stubAuthStore{membership: &controlplane.Membership{
+		TenantID: "auth0|legacy-demo-owner",
+		UserID:   "oauth2|kombify-demo|kombify-public-demo-v1",
+		RoleKey:  "member",
+		Status:   "active",
+	}}
+
+	if err := v2SessionIdentityMiddleware(&v2Boot{session: mgr, authStore: store})(event); err != nil {
+		t.Fatalf("v2SessionIdentityMiddleware() error = %v", err)
+	}
+	id := identity.FromContext(event.Request.Context())
+	if id == nil || id.OrgID != "auth0|legacy-demo-owner" || id.UserID != "auth0|legacy-demo-owner" {
+		t.Fatalf("identity = %+v, want Edge-authorized demo principal projected onto the legacy demo owner", id)
 	}
 }
 
@@ -1033,9 +1126,14 @@ func TestV2SessionIdentityMiddlewareHydratesMembershipRole(t *testing.T) {
 	if !ok || !flags.Flags["techstack.managed.runtime.cloudkit"] || !flags.Flags["techstack.managed.runtime.ionos"] {
 		t.Fatalf("edge flags = %#v, want CloudKit and IONOS entitlements from membership", flags)
 	}
-	entitlements, ok := middleware.SignedEntitlementsFromContext(event.Request.Context())
+	// Membership grants are claim-derived: they must be readable through the
+	// membership bucket and must never masquerade as Edge-signed grants.
+	if _, signed := middleware.SignedEntitlementsFromContext(event.Request.Context()); signed {
+		t.Fatal("membership fallback must not populate the Edge-signed entitlement set")
+	}
+	entitlements, ok := middleware.MembershipEntitlementsFromContext(event.Request.Context())
 	if !ok || !entitlements.Has("techstack.managed.runtime.cloudkit") || !entitlements.Has("techstack.managed.runtime.ionos") {
-		t.Fatalf("authorization entitlements = %#v, want CloudKit and IONOS grants from the server-owned membership", entitlements.Values())
+		t.Fatalf("membership entitlements = %#v, want CloudKit and IONOS grants from the server-owned membership", entitlements.Values())
 	}
 }
 
@@ -1051,14 +1149,14 @@ func TestV2SessionIdentityMiddlewareHydratesExistingEdgeIdentity(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/stacks", nil)
 	ctx := middleware.WithSignedEntitlements(req.Context(), "edge.only")
 	req = req.WithContext(identity.NewContext(ctx, &identity.Identity{
-		UserID: "google-oauth2|109651582266724371152",
-		OrgID:  "marcel-personal",
-		Email:  "mako.181092@googlemail.com",
+		UserID: "google-oauth2|edge-session-user",
+		OrgID:  "edge-personal-tenant",
+		Email:  "edge-user@example.test",
 	}))
 	event := &httpx.Event{Request: req, Response: httptest.NewRecorder()}
 	store := &stubAuthStore{membership: &controlplane.Membership{
 		TenantID: "default",
-		UserID:   "google-oauth2|109651582266724371152",
+		UserID:   "google-oauth2|edge-session-user",
 		RoleKey:  "global_admin",
 		Status:   "active",
 		Metadata: map[string]any{"entitlements": []string{"techstack.managed.runtime.cloudkit"}},
@@ -1068,16 +1166,16 @@ func TestV2SessionIdentityMiddlewareHydratesExistingEdgeIdentity(t *testing.T) {
 		t.Fatalf("v2SessionIdentityMiddleware() error = %v", err)
 	}
 	id := identity.FromContext(event.Request.Context())
-	if got, want := id.UserID, "google-oauth2|109651582266724371152"; got != want {
+	if got, want := id.UserID, "google-oauth2|edge-session-user"; got != want {
 		t.Fatalf("identity.UserID = %q, want existing edge identity %q", got, want)
 	}
 	if !id.HasRole("global_admin") {
 		t.Fatalf("identity roles = %#v, want global_admin from default membership fallback", id.Roles)
 	}
-	if len(store.tenants) != 1 || store.tenants[0].ID != "marcel-personal" || store.tenants[0].Kind != "saas" {
-		t.Fatalf("projected tenants = %#v, want signed edge tenant marcel-personal", store.tenants)
+	if len(store.tenants) != 1 || store.tenants[0].ID != "edge-personal-tenant" || store.tenants[0].Kind != "saas" {
+		t.Fatalf("projected tenants = %#v, want signed edge tenant edge-personal-tenant", store.tenants)
 	}
-	if len(store.memberships) != 1 || store.memberships[0].TenantID != "marcel-personal" || store.memberships[0].UserID != id.UserID {
+	if len(store.memberships) != 1 || store.memberships[0].TenantID != "edge-personal-tenant" || store.memberships[0].UserID != id.UserID {
 		t.Fatalf("projected memberships = %#v, want org-scoped copy of fallback membership", store.memberships)
 	}
 	if got := store.memberships[0].Metadata["entitlements"]; !reflect.DeepEqual(got, []string{"techstack.managed.runtime.cloudkit"}) {

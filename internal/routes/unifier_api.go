@@ -2,11 +2,13 @@
 package routes
 
 import (
+	"context"
+	"fmt"
 	"io"
 	"strings"
+	"time"
 
-	pbcore "github.com/pocketbase/pocketbase/core"
-
+	"github.com/kombifyio/techstack/pkg/controlplane"
 	kscore "github.com/kombifyio/techstack/pkg/core"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/unifier"
@@ -28,35 +30,28 @@ func readRequestBodyLimited(r io.Reader, limitBytes int64) ([]byte, bool, error)
 
 // UnifierAPI holds the Unifier engine and pipeline instances.
 type UnifierAPI struct {
-	engine           *unifier.Engine
-	pipeline         *unifier.Pipeline
-	extendedPipeline *unifier.ExtendedPipeline
-	loader           *unifier.Loader
-	app              pbcore.App
-	iacOutputDir     string
+	engine          *unifier.Engine
+	pipeline        *unifier.Pipeline
+	loader          *unifier.Loader
+	recommendations *unifier.WizardRecommendationAuthority
+	workers         controlplane.WorkerStore
 }
 
 // NewUnifierAPI creates a new UnifierAPI instance with full pipeline support.
-func NewUnifierAPI(app pbcore.App) (*UnifierAPI, error) {
+func NewUnifierAPI(workers controlplane.WorkerStore) (*UnifierAPI, error) {
 	engine, err := unifier.New()
 	if err != nil {
 		return nil, err
 	}
 
 	pipeline := unifier.NewPipeline(engine)
-	iacOutputDir := "data/stacks"
-	extPipeline := unifier.NewExtendedPipeline(engine, iacOutputDir)
-	if stackkitsDir := unifier.DefaultStackKitsDir(); stackkitsDir != "" {
-		extPipeline = extPipeline.WithStackKitDir(stackkitsDir)
-	}
 
 	return &UnifierAPI{
-		engine:           engine,
-		pipeline:         pipeline,
-		extendedPipeline: extPipeline,
-		loader:           unifier.NewLoader(),
-		app:              app,
-		iacOutputDir:     iacOutputDir,
+		engine:          engine,
+		pipeline:        pipeline,
+		loader:          unifier.NewLoader(),
+		recommendations: unifier.NewWizardRecommendationAuthority(engine),
+		workers:         workers,
 	}, nil
 }
 
@@ -67,97 +62,133 @@ func requireUnifierAuth(e *httpx.Event) (string, error) {
 	return "", httpx.RejectUnauthorized(e, "Authentication required")
 }
 
-func parseWorkerTags(tagStr string) map[string]string {
-	tags := make(map[string]string)
-	if tagStr == "" {
-		return tags
+// fetchWorkers loads the exact owner's workers from the canonical tenant store.
+func (api *UnifierAPI) fetchWorkers(ctx context.Context, tenantID, ownerID string) ([]kscore.Worker, error) {
+	if api.workers == nil {
+		return nil, fmt.Errorf("unifier: worker store is not configured")
 	}
-
-	for _, part := range strings.Split(tagStr, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		kv := strings.SplitN(part, "=", 2)
-		if len(kv) != 2 {
-			continue
-		}
-		tags[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
-	}
-
-	return tags
-}
-
-// fetchWorkersFromDB loads registered workers from the database.
-func (api *UnifierAPI) fetchWorkersFromDB(ownerID string) ([]kscore.Worker, error) {
-	records, err := api.app.FindRecordsByFilter(
-		"workers",
-		"owner_id = {:ownerId}",
-		"-created",
-		0, 0,
-		map[string]any{"ownerId": ownerID},
-	)
+	records, err := api.workers.ListWorkersByTenant(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
 
 	workers := make([]kscore.Worker, 0, len(records))
-	for _, r := range records {
-		tags := parseWorkerTags(r.GetString("tags"))
-		if ip := strings.TrimSpace(r.GetString("ip")); ip != "" {
-			tags["ip"] = ip
+	for _, record := range records {
+		if strings.TrimSpace(record.OwnerSubjectID) != strings.TrimSpace(ownerID) {
+			continue
 		}
-
-		worker := kscore.Worker{
-			ID:       r.Id,
-			Name:     r.GetString("hostname"),
-			Type:     r.GetString("type"),
-			Provider: r.GetString("provider"),
-			Status:   r.GetString("status"),
-			Capabilities: kscore.WorkerCapabilities{
-				CPU:            r.GetInt("cpu_cores"),
-				RAM:            r.GetInt("ram_mb"),
-				Disk:           r.GetInt("disk_gb"),
-				Arch:           r.GetString("arch"),
-				OS:             r.GetString("os"),
-				DockerVersion:  r.GetString("docker_version"),
-				HasNVMe:        r.GetBool("has_nvme"),
-				HasHWTranscode: r.GetBool("has_hw_transcode"),
-			},
-			Tags: tags,
-		}
-
-		if gpu := strings.TrimSpace(r.GetString("gpu")); gpu != "" {
-			worker.Capabilities.GPU = &kscore.GPUInfo{Model: gpu}
-		}
-
-		if worker.Type == "" {
-			worker.Type = "worker"
-		}
-		if worker.Provider == "" {
-			worker.Provider = "local"
-		}
-		workers = append(workers, worker)
+		workers = append(workers, unifierWorkerFromRecord(record))
 	}
 
 	return workers, nil
 }
 
+func unifierWorkerFromRecord(record controlplane.Worker) kscore.Worker {
+	tags := unifierWorkerTags(record.Tags)
+	if ip := strings.TrimSpace(record.IP); ip != "" {
+		tags["ip"] = ip
+	}
+	worker := kscore.Worker{
+		ID:       record.ID,
+		Name:     record.Hostname,
+		Type:     record.Type,
+		Provider: record.Provider,
+		Status:   record.Status,
+		Capabilities: kscore.WorkerCapabilities{
+			CPU:            record.CPUCores,
+			RAM:            record.RAMMB,
+			Disk:           record.DiskGB,
+			Arch:           record.Arch,
+			OS:             record.OS,
+			DockerVersion:  record.DockerVersion,
+			HasNVMe:        record.HasNVME,
+			HasHWTranscode: record.HasHWTranscode,
+		},
+		Tags: tags,
+	}
+	if gpu := strings.TrimSpace(record.GPU); gpu != "" {
+		worker.Capabilities.GPU = &kscore.GPUInfo{Model: gpu}
+	}
+	if worker.Type == "" {
+		worker.Type = "worker"
+	}
+	if worker.Provider == "" {
+		worker.Provider = "local"
+	}
+	return worker
+}
+
+const wizardRecommendationInventoryTTL = 10 * time.Minute
+
+// fetchRecommendationInventory reads the same tenant worker registry as the
+// ordinary Unifier path, then applies the authenticated owner filter before
+// exposing any inventory to the recommendation authority.
+func (api *UnifierAPI) fetchRecommendationInventory(ctx context.Context, tenantID, ownerID string) (unifier.WizardRecommendationInventory, error) {
+	inventory := unifier.WizardRecommendationInventory{
+		State:      "unavailable",
+		Source:     "worker-registry",
+		SnapshotID: "worker-registry",
+	}
+	if api.workers == nil {
+		return inventory, fmt.Errorf("unifier: worker store is not configured")
+	}
+	records, err := api.workers.ListWorkersByTenant(ctx, tenantID)
+	if err != nil {
+		return inventory, err
+	}
+	inventory.Workers = make([]kscore.Worker, 0, len(records))
+	inventory.State = "fresh"
+	stale := false
+	var latest time.Time
+	now := time.Now().UTC()
+	for _, record := range records {
+		if strings.TrimSpace(record.OwnerSubjectID) != strings.TrimSpace(ownerID) {
+			continue
+		}
+		inventory.Workers = append(inventory.Workers, unifierWorkerFromRecord(record))
+		if record.LastSeenAt == nil || now.Sub(record.LastSeenAt.UTC()) > wizardRecommendationInventoryTTL {
+			stale = true
+		}
+		if record.LastSeenAt != nil && record.LastSeenAt.After(latest) {
+			latest = record.LastSeenAt.UTC()
+		}
+	}
+	if stale {
+		inventory.State = "stale"
+		inventory.StaleInputs = []string{"worker_inventory"}
+	}
+	inventory.ObservedAt = latest
+	return inventory, nil
+}
+
+func unifierWorkerTags(values map[string]any) map[string]string {
+	tags := make(map[string]string, len(values))
+	for key, value := range values {
+		if text, ok := value.(string); ok && strings.TrimSpace(key) != "" {
+			tags[strings.TrimSpace(key)] = strings.TrimSpace(text)
+		}
+	}
+	return tags
+}
+
 // RegisterUnifierRoutes adds the /api/v1/unifier/* endpoints.
-func RegisterUnifierRoutes(r *httpx.Router, app pbcore.App) error {
-	api, err := NewUnifierAPI(app)
+func RegisterUnifierRoutes(r *httpx.Router, workers controlplane.WorkerStore) error {
+	api, err := NewUnifierAPI(workers)
 	if err != nil {
 		return err
 	}
 
 	r.POST("/api/v1/unifier/validate", func(e *httpx.Event) error { return api.handleValidate(e) })
 	r.POST("/api/v1/unifier/unify", func(e *httpx.Event) error { return api.handleUnify(e) })
+	r.POST("/api/v1/unifier/recommendations", func(e *httpx.Event) error { return api.handleRecommendations(e) })
 	r.POST("/api/v1/unifier/pipeline", func(e *httpx.Event) error { return api.handlePipeline(e) })
 	r.POST("/api/v1/unifier/pipeline/validate", func(e *httpx.Event) error { return api.handlePipeline(e) })
 	r.POST("/api/v1/unifier/pipeline/preview", func(e *httpx.Event) error { return api.handlePipelinePreview(e) })
 	r.POST("/api/v1/unifier/generate", func(e *httpx.Event) error { return api.handleGenerate(e) })
 
 	r.GET("/api/v1/stackkits", func(e *httpx.Event) error { return api.handleListStackKits(e) })
+	// Registered before the {name} pattern so the literal path wins.
+	r.GET("/api/v1/stackkits/use-cases", func(e *httpx.Event) error { return api.handleUseCaseCatalog(e) })
 	r.GET("/api/v1/stackkits/{name}", func(e *httpx.Event) error { return api.handleGetStackKit(e) })
 
 	r.GET("/api/v1/addons", func(e *httpx.Event) error { return api.handleListAddons(e) })

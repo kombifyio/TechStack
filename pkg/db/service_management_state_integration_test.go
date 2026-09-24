@@ -9,7 +9,10 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-const serviceManagementTenant = "integration-service-management-tenant"
+const (
+	serviceManagementTenant         = "integration-service-management-tenant"
+	serviceManagementStateMigration = "migrations/074_service_management_state.sql"
+)
 
 // seedLegacyServiceRow inserts a row the way it existed BEFORE migration 074:
 // no management_state, a free-text source, and the legacy status/type markers

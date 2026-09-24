@@ -12,6 +12,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/clientpairing"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/identity"
+	"github.com/kombifyio/techstack/pkg/outcome"
 )
 
 const (
@@ -51,19 +52,6 @@ type clientPairingAuthHandoff struct {
 	Audience string   `json:"audience,omitempty"`
 	Scopes   []string `json:"scopes"`
 	Flow     string   `json:"flow"`
-}
-
-type clientPairingErrorEnvelope struct {
-	ErrorCode    string                     `json:"error_code"`
-	ReasonCode   string                     `json:"reason_code"`
-	Retryable    bool                       `json:"retryable"`
-	UserGuidance clientPairingErrorGuidance `json:"user_guidance"`
-}
-
-type clientPairingErrorGuidance struct {
-	Title     string   `json:"title"`
-	Body      string   `json:"body"`
-	NextSteps []string `json:"next_steps"`
 }
 
 // RegisterClientPairingRoutes publishes the client-pairing capability. It is
@@ -286,17 +274,28 @@ func writeClientPairingUnavailable(w http.ResponseWriter, mode string) error {
 }
 
 func writeClientPairingError(w http.ResponseWriter, status int, errorCode, reasonCode string, retryable bool, title, body, nextStep string) error {
+	outcomeStatus := outcome.StatusBlocked
+	if status >= http.StatusInternalServerError {
+		outcomeStatus = outcome.StatusFailed
+	}
+	stepKind := "handoff"
+	if retryable {
+		stepKind = "retry"
+	}
+	decision, err := outcome.Normalize(outcome.Decision{
+		Status: outcomeStatus, ErrorCode: errorCode, ReasonCode: reasonCode,
+		Capability: "techstack.client.pairing", Retryable: retryable,
+		UserGuidance: &outcome.Guidance{
+			Title: title, Body: body,
+			NextSteps: []outcome.Step{{ID: "pairing-next-step", Label: nextStep, Kind: stepKind}},
+		},
+		SupportContext: map[string]any{"http_status": status},
+	}, time.Now().UTC())
+	if err != nil {
+		return err
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
-	return json.NewEncoder(w).Encode(clientPairingErrorEnvelope{
-		ErrorCode:  errorCode,
-		ReasonCode: reasonCode,
-		Retryable:  retryable,
-		UserGuidance: clientPairingErrorGuidance{
-			Title:     title,
-			Body:      body,
-			NextSteps: []string{nextStep},
-		},
-	})
+	return json.NewEncoder(w).Encode(decision)
 }

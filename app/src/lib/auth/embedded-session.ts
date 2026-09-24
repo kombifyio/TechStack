@@ -1,11 +1,11 @@
-import { browser } from "$app/environment";
-import { resolveLoginExperience } from "$lib/auth/login-experience";
-import { authStore } from "$lib/stores/auth.svelte";
-import { initBridge, requestAuthToken } from "$lib/stores/postMessageBridge";
+import { browser } from "$app/env";
+import { resolveLoginExperience } from "#lib/auth/login-experience.js";
+import { authStore } from "#lib/stores/auth.svelte.js";
+import { initBridge, requestAuthToken } from "#lib/stores/postMessageBridge.js";
 import {
   getGatewayToken,
   isGatewayAuthConfigured,
-} from "$lib/auth/gateway-auth";
+} from "#lib/auth/gateway-auth.js";
 
 let refreshInFlight: Promise<boolean> | null = null;
 let lastExchangedPortalToken: string | null = null;

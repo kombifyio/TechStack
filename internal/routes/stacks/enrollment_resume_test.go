@@ -40,12 +40,13 @@ func TestResumeStackEnrollmentRouteUsesRealExactRecoveryService(t *testing.T) {
 		t.Fatal(err)
 	}
 	app := newOwnerSpecTestApp(t)
-	orch := orchestrator.NewWithApp(app, &orchestrator.Config{
+	orch := orchestrator.New(&orchestrator.Config{
 		Workers: 1, StackStore: store, JobStore: store, WorkerStore: store,
 		LeaseLister: routingTestLeaseLister{leases: []vmlease.Lease{
 			routingTestManagedLease("lease-waiting", "tenant-1", "auth0|user-1", "stack-waiting"),
 		}},
 	}, nil)
+
 	defer orch.Stop()
 	h := crudRouteHandlers{app: app, orch: orch, stackStore: store, jobStore: store}
 

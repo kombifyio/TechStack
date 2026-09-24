@@ -168,8 +168,6 @@ func normalizeCreateStackKitRef(value, defaultKit string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "":
 		return ""
-	case "base-kit":
-		return defaultKit
 	case "basement", "basementkit", "basement-kit":
 		return "basement-kit"
 	case "cloud", "cloudkit", "kombify-cloud-kit", "cloud-kit":

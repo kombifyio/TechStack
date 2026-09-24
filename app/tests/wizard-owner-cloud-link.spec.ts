@@ -83,11 +83,12 @@ async function walkToStep5(page: Page) {
     .waitFor({ state: "attached", timeout: 10000 });
   await page.getByTestId("easy-feature-storage").check();
   await page.getByTestId("wizard-next").click();
+  await page.getByTestId("server-branch-owned").click();
   await page.getByTestId("server-mode-install-command").click();
   await page.getByTestId("wizard-next").click();
   await page.getByTestId("easy-access-home").click();
   await page.getByTestId("wizard-next").click();
-  await page.getByTestId("easy-users-me").check();
+  await page.getByTestId("easy-users-solo").check();
   await page.getByTestId("wizard-next").click();
 }
 

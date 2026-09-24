@@ -27,6 +27,15 @@ WITH required_table_capability(table_name, privilege) AS (
         ('provider_catalog_profiles', 'SELECT'),
         ('provider_credential_handles', 'SELECT'),
         ('provider_credential_handles', 'INSERT'),
+        ('substrate_bindings', 'SELECT'),
+        ('substrate_guest_leases', 'SELECT'),
+        ('substrate_guest_leases', 'INSERT'),
+		('home_assistant_owner_bindings', 'SELECT'),
+		('home_assistant_owner_bindings', 'INSERT'),
+		('home_assistant_owner_bindings', 'UPDATE'),
+        ('typed_agent_commands', 'SELECT'),
+        ('typed_agent_commands', 'INSERT'),
+        ('typed_agent_commands', 'UPDATE'),
         ('servers', 'SELECT'),
         ('servers', 'INSERT'),
         ('servers', 'UPDATE'),
@@ -74,7 +83,10 @@ WITH required_table_capability(table_name, privilege) AS (
         ('provider_operation_execution_claims', 'UPDATE'),
         ('provider_provision_dispatch_guards', 'SELECT'),
         ('provider_provision_dispatch_guards', 'INSERT'),
+		('provider_provision_discovery_observations', 'SELECT'),
+		('provider_provision_discovery_observations', 'INSERT'),
         ('provider_provision_resolution_decisions', 'SELECT'),
+		('provider_provision_resolution_decisions', 'INSERT'),
         ('server_provider_resource_bindings', 'SELECT'),
         ('server_provider_resource_bindings', 'INSERT'),
         ('provider_operation_resource_free_terminalizations', 'SELECT'),
@@ -94,6 +106,10 @@ required_sequence(sequence_name) AS (
 required_tenant_rls(table_name) AS (
     VALUES
         ('provider_credential_handles'),
+        ('substrate_bindings'),
+        ('substrate_guest_leases'),
+		('home_assistant_owner_bindings'),
+        ('typed_agent_commands'),
         ('servers'),
         ('server_state_transitions'),
         ('server_registry_outbox'),
@@ -114,6 +130,7 @@ required_tenant_rls(table_name) AS (
         ('provider_operation_evidence'),
         ('provider_operation_execution_claims'),
         ('provider_provision_dispatch_guards'),
+		('provider_provision_discovery_observations'),
         ('provider_provision_resolution_decisions'),
         ('server_provider_resource_bindings'),
         ('provider_operation_resource_free_terminalizations'),
@@ -123,9 +140,14 @@ required_tenant_rls(table_name) AS (
 security_definer_boundary(function_name, runtime_executable) AS (
     VALUES
         ('provider_execution_immutable_update', false),
+        ('substrate_execution_claim_guard', false),
+        ('substrate_guest_custody_valid', true),
+        ('substrate_lock_binding', true),
         ('provider_provision_dispatch_guard_validate_insert', false),
         ('provider_provision_discovery_active_claim_guard', false),
+		('provider_provision_discovery_validate_insert', false),
         ('provider_provision_resolution_active_claim_guard', false),
+		('provider_provision_resolution_validate_insert', false),
         ('provider_execution_claim_current_head', false),
         ('provider_execution_claim_credential_guard', false),
         ('provider_operation_runtime_generation_guard', false),
@@ -143,6 +165,7 @@ security_definer_boundary(function_name, runtime_executable) AS (
 		('provider_control_list_due_decommission_wait_tenants', true),
 		('provider_control_list_provider_provision_waits', true),
 		('provider_control_list_stale_capacity_recovery_candidates', true),
+		('provider_control_list_never_enrolled_runtime_candidates', true),
         ('provider_incident_refresh_pending_dispatch_tenant', false),
         ('provider_incident_list_tenant_ids', false),
         ('provider_control_runtime_authority', true)
@@ -310,6 +333,16 @@ SELECT
         OR NOT pg_catalog.has_function_privilege(
             runtime_role.oid,
             pg_catalog.to_regprocedure(
+                pg_catalog.format(
+                    '%I.provider_control_list_never_enrolled_runtime_candidates(text,text,integer,integer)',
+                    active_schema.nspname
+                )
+            ),
+            'EXECUTE'
+        )
+        OR NOT pg_catalog.has_function_privilege(
+            runtime_role.oid,
+            pg_catalog.to_regprocedure(
                 pg_catalog.format('%I.provider_control_runtime_authority()', active_schema.nspname)
             ),
             'EXECUTE'
@@ -396,6 +429,12 @@ SELECT
               AND NOT acl.is_grantable
               AND object.oid IN (
                    pg_catalog.to_regprocedure(
+                       pg_catalog.format('%I.substrate_guest_custody_valid(text,text,text,text)', active_schema.nspname)
+                   ),
+                   pg_catalog.to_regprocedure(
+                       pg_catalog.format('%I.substrate_lock_binding(text,text,bigint)', active_schema.nspname)
+                   ),
+                   pg_catalog.to_regprocedure(
                        pg_catalog.format(
                            '%I.managed_runtime_capacity_policy_digest(text,text,text,text,text,integer,text)',
                            active_schema.nspname
@@ -426,6 +465,12 @@ SELECT
                        )
                    ),
                    pg_catalog.to_regprocedure(
+                       pg_catalog.format(
+                           '%I.provider_control_list_never_enrolled_runtime_candidates(text,text,integer,integer)',
+                           active_schema.nspname
+                       )
+                   ),
+                   pg_catalog.to_regprocedure(
                        pg_catalog.format('%I.provider_control_runtime_authority()', active_schema.nspname)
                    )
               )
@@ -444,8 +489,7 @@ SELECT
     ) AS missing_tenant_rls_fence,
     (
         (
-			SELECT COUNT(*) <> 24
-				OR COUNT(boundary_function.oid) <> 24
+			SELECT COUNT(*) <> COUNT(boundary_function.oid)
                 OR COALESCE(pg_catalog.bool_or(
                     boundary_function.oid IS NOT NULL
                     AND (
@@ -494,12 +538,15 @@ SELECT
                   'EXECUTE'
               )
                AND unexpected_function.proname NOT IN (
+				   'substrate_guest_custody_valid',
+                   'substrate_lock_binding',
                    'provider_control_lock_runtime_lease_projection',
                    'provider_control_count_unsettled_generation_dispatch_guards',
                    'provider_control_list_runnable_tenants',
 				   'provider_control_list_due_decommission_wait_tenants',
 				   'provider_control_list_provider_provision_waits',
                    'provider_control_list_stale_capacity_recovery_candidates',
+                   'provider_control_list_never_enrolled_runtime_candidates',
                   'provider_control_runtime_authority'
               )
         )
@@ -635,26 +682,40 @@ func verifyProviderControlRuntimeRolePosture(ctx context.Context, runtimeDatabas
 	if err != nil {
 		return fmt.Errorf("verify provider-control migration role identity: %w", err)
 	}
-	if posture.identity.roleName != providerControlRuntimeRoleName {
+	if identityErr := validateProviderControlRuntimeDatabaseIdentity(posture.identity, migrationIdentity); identityErr != nil {
+		return identityErr
+	}
+	if pinErr := verifyProviderControlExpectedDatabaseIdentity(migrationIdentity); pinErr != nil {
+		return pinErr
+	}
+	return validateProviderControlRuntimeAuthority(posture, migrationIdentity)
+}
+
+func validateProviderControlRuntimeDatabaseIdentity(runtimeIdentity, migrationIdentity providerControlDatabaseIdentity) error {
+	if runtimeIdentity.roleName != providerControlRuntimeRoleName {
 		return fmt.Errorf("verify provider-control runtime role posture: runtime role must be %q", providerControlRuntimeRoleName)
 	}
-	if posture.identity.sessionRoleOID != posture.identity.roleOID ||
-		posture.identity.sessionRoleName != posture.identity.roleName {
+	if runtimeIdentity.sessionRoleOID != runtimeIdentity.roleOID ||
+		runtimeIdentity.sessionRoleName != runtimeIdentity.roleName {
 		return fmt.Errorf("verify provider-control runtime role posture: authenticated session role must equal the canonical runtime role")
 	}
 	if migrationIdentity.sessionRoleOID != migrationIdentity.roleOID ||
 		migrationIdentity.sessionRoleName != migrationIdentity.roleName {
 		return fmt.Errorf("verify provider-control migration role identity: authenticated session role must equal the migration role")
 	}
-	if posture.identity.systemIdentifier == "" || posture.identity.systemIdentifier != migrationIdentity.systemIdentifier {
+	if runtimeIdentity.systemIdentifier == "" || runtimeIdentity.systemIdentifier != migrationIdentity.systemIdentifier {
 		return fmt.Errorf("verify provider-control runtime role posture: runtime and migration pools must address the same physical PostgreSQL cluster")
 	}
-	if posture.identity.databaseOID != migrationIdentity.databaseOID || posture.identity.databaseName != migrationIdentity.databaseName {
+	if runtimeIdentity.databaseOID != migrationIdentity.databaseOID || runtimeIdentity.databaseName != migrationIdentity.databaseName {
 		return fmt.Errorf("verify provider-control runtime role posture: runtime and migration pools must address the same database")
 	}
-	if posture.identity.schemaOID != migrationIdentity.schemaOID || posture.identity.schemaName != migrationIdentity.schemaName {
+	if runtimeIdentity.schemaOID != migrationIdentity.schemaOID || runtimeIdentity.schemaName != migrationIdentity.schemaName {
 		return fmt.Errorf("verify provider-control runtime role posture: runtime and migration pools must use the same trusted current schema")
 	}
+	return nil
+}
+
+func verifyProviderControlExpectedDatabaseIdentity(migrationIdentity providerControlDatabaseIdentity) error {
 	// Extend the same-cluster binding with the operator-pinned expected
 	// identity: both pools have just proved they address one physical
 	// database, so anchoring the migration identity to the
@@ -667,6 +728,10 @@ func verifyProviderControlRuntimeRolePosture(ctx context.Context, runtimeDatabas
 			return fmt.Errorf("verify provider-control database identity: %w", err)
 		}
 	}
+	return nil
+}
+
+func validateProviderControlRuntimeAuthority(posture providerControlRuntimeRolePosture, migrationIdentity providerControlDatabaseIdentity) error {
 	if posture.identity.roleOID == migrationIdentity.roleOID {
 		return fmt.Errorf("verify provider-control runtime role posture: runtime and migration role OIDs must differ")
 	}

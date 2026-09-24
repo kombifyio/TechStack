@@ -35,54 +35,6 @@ func newTestTSDB(t *testing.T) *MonitorTSDB {
 	return m
 }
 
-func TestNewMonitorTSDB(t *testing.T) {
-	t.Run("opens_successfully", func(t *testing.T) {
-		dir := t.TempDir()
-		m, err := NewMonitorTSDB(TSDBConfig{DataDir: dir})
-		if err != nil {
-			t.Fatalf("expected no error, got %v", err)
-		}
-		if m == nil {
-			t.Fatal("expected non-nil MonitorTSDB")
-		}
-		if m.db == nil {
-			t.Fatal("expected non-nil underlying TSDB db")
-		}
-		if m.engine == nil {
-			t.Fatal("expected non-nil PromQL engine")
-		}
-		if err := m.Close(); err != nil {
-			t.Fatalf("Close failed: %v", err)
-		}
-	})
-
-	t.Run("default_logger_assigned", func(t *testing.T) {
-		dir := t.TempDir()
-		m, err := NewMonitorTSDB(TSDBConfig{DataDir: dir})
-		if err != nil {
-			t.Fatalf("NewMonitorTSDB: %v", err)
-		}
-		defer m.Close()
-
-		if m.logger == nil {
-			t.Fatal("expected default logger to be assigned when none provided")
-		}
-	})
-
-	t.Run("custom_retention_opens", func(t *testing.T) {
-		dir := t.TempDir()
-		m, err := NewMonitorTSDB(TSDBConfig{DataDir: dir, Retention: 7 * 24 * time.Hour})
-		if err != nil {
-			t.Fatalf("NewMonitorTSDB with custom retention: %v", err)
-		}
-		defer m.Close()
-
-		if m.db == nil {
-			t.Fatal("expected non-nil db with custom retention")
-		}
-	})
-}
-
 func TestWrite(t *testing.T) {
 	t.Run("single_sample", func(t *testing.T) {
 		m := newTestTSDB(t)

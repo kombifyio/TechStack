@@ -10,9 +10,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pocketbase/dbx"
-	"github.com/pocketbase/pocketbase/core"
-
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/jobs"
 )
@@ -65,59 +62,13 @@ type stackKitNodeProjection struct {
 	Metadata  map[string]any
 }
 
-func (o *Orchestrator) syncStackKitRuntimeInventory(stack *core.Record, job *jobs.Job) error {
-	if job == nil {
-		return nil
-	}
-	return o.syncStackKitRuntimeInventorySnapshot(stack, job.Snapshot())
-}
-
-func (o *Orchestrator) syncStackKitRuntimeInventorySnapshot(stack *core.Record, job jobs.JobSnapshot) error { // pocketbase-migration-compat: legacy stack projection only
-	if stack == nil || job.Result == nil {
-		return nil
-	}
-	outputs := stackKitOutputsFromJobResult(job.Result)
-	services := stackKitServiceProjections(outputs)
-
-	target := runtimeTargetFromJobSnapshot(stack, job)
-	if len(outputs) == 0 && !stackKitRuntimeTargetPresent(target) {
-		return nil
-	}
-	if o.registry != nil {
-		return syncStackKitRuntimeInventoryStore(o.ctx, o.registry, stackKitRegistrySyncRequest{
-			TenantID:   stack.GetString("tenant_id"),
-			InstanceID: stack.GetString("instance_id"),
-			StackID:    stack.Id,
-			StackName:  stack.GetString("name"),
-			Target:     target,
-			Nodes:      stackKitNodeProjectionsFromJobResult(job.Result, outputs, stack.GetString("name"), target),
-			Resources:  runtimeResourcesFromJobResult(job.Result),
-			Metrics:    runtimeMetricsFromJobResult(job.Result),
-			Services:   services,
-		})
-	}
-	node, err := o.upsertStackKitNode(stack, target)
-	if err != nil {
-		return err
-	}
-	for _, service := range services {
-		if err := o.upsertStackKitService(stack, node.Id, service); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (o *Orchestrator) syncStackKitRuntimeInventoryFromJob(tenantID string, job *jobs.Job) error {
-	if job == nil {
-		return nil
-	}
-	return o.syncStackKitRuntimeInventoryFromJobSnapshot(tenantID, job.Snapshot())
-}
-
 func (o *Orchestrator) syncStackKitRuntimeInventoryFromJobSnapshot(tenantID string, job jobs.JobSnapshot) error {
 	if o.registry == nil || job.Result == nil || strings.TrimSpace(tenantID) == "" {
 		return nil
+	}
+	instanceID, err := o.techstackInstanceIDForInventory(tenantID, job.TargetID)
+	if err != nil {
+		return err
 	}
 	outputs := stackKitOutputsFromJobResult(job.Result)
 	services := stackKitServiceProjections(outputs)
@@ -126,15 +77,33 @@ func (o *Orchestrator) syncStackKitRuntimeInventoryFromJobSnapshot(tenantID stri
 		return nil
 	}
 	return syncStackKitRuntimeInventoryStore(o.ctx, o.registry, stackKitRegistrySyncRequest{
-		TenantID:  tenantID,
-		StackID:   job.TargetID,
-		StackName: firstNonEmptyString(job.TargetName, stringFromAny(job.Result["stack_name"]), job.TargetID),
-		Target:    target,
-		Nodes:     stackKitNodeProjectionsFromJobResult(job.Result, outputs, firstNonEmptyString(job.TargetName, stringFromAny(job.Result["stack_name"]), job.TargetID), target),
-		Resources: runtimeResourcesFromJobResult(job.Result),
-		Metrics:   runtimeMetricsFromJobResult(job.Result),
-		Services:  services,
+		TenantID:   tenantID,
+		InstanceID: instanceID,
+		StackID:    job.TargetID,
+		StackName:  firstNonEmptyString(job.TargetName, stringFromAny(job.Result["stack_name"]), job.TargetID),
+		Target:     target,
+		Nodes:      stackKitNodeProjectionsFromJobResult(job.Result, outputs, firstNonEmptyString(job.TargetName, stringFromAny(job.Result["stack_name"]), job.TargetID), target),
+		Resources:  runtimeResourcesFromJobResult(job.Result),
+		Metrics:    runtimeMetricsFromJobResult(job.Result),
+		Services:   services,
 	})
+}
+
+func (o *Orchestrator) techstackInstanceIDForInventory(tenantID, stackID string) (string, error) {
+	tenantID = strings.TrimSpace(tenantID)
+	stackID = strings.TrimSpace(stackID)
+	if tenantID == "" || stackID == "" {
+		return "", nil
+	}
+	store := o.effectiveStackStore()
+	if store == nil {
+		return "", nil
+	}
+	stack, err := store.GetStack(o.ctx, tenantID, stackID)
+	if err != nil {
+		return "", fmt.Errorf("load Techstack instance identity for inventory: %w", err)
+	}
+	return strings.TrimSpace(stack.InstanceID), nil
 }
 
 type stackKitRegistrySyncRequest struct {
@@ -645,149 +614,6 @@ func serviceProjectionFromMap(defaultName string, item map[string]interface{}) s
 	}
 }
 
-func (o *Orchestrator) upsertStackKitNode(stack *core.Record, target stackKitRuntimeTarget) (*core.Record, error) {
-	stackID := stack.Id
-	nodeName := firstNonEmptyString(stack.GetString("name"), stackID)
-	node, err := o.findFirstByFilter(
-		"nodes",
-		"stack_id = {:stackId} && name = {:name}",
-		map[string]any{"stackId": stackID, "name": nodeName},
-	)
-	if err != nil {
-		return nil, err
-	}
-	if node == nil {
-		collection, err := o.app.FindCollectionByNameOrId("nodes")
-		if err != nil {
-			return nil, err
-		}
-		node = core.NewRecord(collection)
-		node.Set(stackKitNodeStackIDField, stackID)
-		node.Set(stackKitNodeNameField, nodeName)
-	}
-
-	node.Set(stackKitNodeHostField, nodeName)
-	node.Set(stackKitNodeRoleField, "main")
-	node.Set(stackKitNodeStatusField, "online")
-	if ip := firstNonEmptyString(target.PublicIP, target.PrivateIP); ip != "" {
-		node.Set(stackKitNodeIPField, ip)
-	}
-	node.Set(stackKitNodeMetaField, map[string]any{
-		"source":                stackKitOutputKey,
-		"runtime_ssh_host":      target.Hostname,
-		stackKitRuntimePublicIP: target.PublicIP,
-		"runtime_private_ip":    target.PrivateIP,
-	})
-	setRecordTenantIDFromStack(node, stack)
-	if err := o.app.Save(node); err != nil {
-		return nil, err
-	}
-	return node, nil
-}
-
-func (o *Orchestrator) upsertStackKitService(stack *core.Record, nodeID string, service stackKitServiceProjection) error {
-	record, err := o.findFirstByFilter(
-		"services",
-		"node_id = {:nodeId} && name = {:name}",
-		map[string]any{"nodeId": nodeID, "name": service.Name},
-	)
-	if err != nil {
-		return err
-	}
-	if record == nil {
-		collection, err := o.app.FindCollectionByNameOrId("services")
-		if err != nil {
-			return err
-		}
-		record = core.NewRecord(collection)
-		record.Set(stackKitServiceNodeField, nodeID)
-		record.Set(stackKitServiceNameField, service.Name)
-	}
-	record.Set("display_name", firstNonEmptyString(service.DisplayName, canonicalStackKitServiceDisplayName(service.Name)))
-	record.Set(stackKitServiceTypeField, firstNonEmptyString(service.Type, canonicalStackKitServiceType(service.Name)))
-	record.Set(stackKitServiceStateField, firstNonEmptyString(service.Status, "running"))
-	if service.Port > 0 {
-		record.Set(stackKitServicePortField, service.Port)
-	}
-	if strings.TrimSpace(service.URL) != "" {
-		record.Set(stackKitServiceURLField, strings.TrimSpace(service.URL))
-	}
-	setRecordTenantIDFromStack(record, stack)
-	return o.app.Save(record)
-}
-
-func (o *Orchestrator) findFirstByFilter(collection, filter string, params map[string]any) (*core.Record, error) {
-	records, err := o.app.FindRecordsByFilter(collection, filter, "", 1, 0, dbx.Params(params))
-	if err != nil {
-		return nil, err
-	}
-	if len(records) == 0 {
-		return nil, nil
-	}
-	return records[0], nil
-}
-
-func runtimeTargetFromJob(stack *core.Record, job *jobs.Job) stackKitRuntimeTarget {
-	if job == nil {
-		return stackKitRuntimeTarget{}
-	}
-	return runtimeTargetFromJobSnapshot(stack, job.Snapshot())
-}
-
-func runtimeTargetFromJobSnapshot(stack *core.Record, job jobs.JobSnapshot) stackKitRuntimeTarget { // pocketbase-migration-compat: legacy stack projection only
-	target := stackKitRuntimeTarget{}
-	target.Hostname = firstNonEmptyString(
-		stringFromAny(job.Result["runtime_ssh_host"]),
-		stringFromAny(job.Result["runtime_host"]),
-		stringFromAny(job.Result["host"]),
-	)
-	target.PublicIP = firstNonEmptyString(
-		stringFromAny(job.Result[stackKitRuntimePublicIP]),
-		stringFromAny(job.Result["node_public_ip"]),
-		stringFromAny(job.Result["public_ip"]),
-	)
-	target.PrivateIP = firstNonEmptyString(
-		stringFromAny(job.Result["runtime_private_ip"]),
-		stringFromAny(job.Result["node_private_ip"]),
-		stringFromAny(job.Result["private_ip"]),
-	)
-	if target.Hostname == "" || target.PublicIP == "" {
-		if nested, ok := mapValue(job.Result["runtime_target"]); ok {
-			target.Hostname = firstNonEmptyString(target.Hostname, stringFromAny(nested["host"]))
-			target.PublicIP = firstNonEmptyString(target.PublicIP, stringFromAny(nested["public_ip"]), stringFromAny(nested["publicIP"]))
-			target.PrivateIP = firstNonEmptyString(target.PrivateIP, stringFromAny(nested["private_ip"]), stringFromAny(nested["privateIP"]))
-		}
-	}
-	if target.Hostname == "" || target.PublicIP == "" {
-		if worker := firstWorkerFromPayload(job.Payload["workers"]); len(worker) > 0 {
-			target.Hostname = firstNonEmptyString(target.Hostname, stringFromAny(worker["hostname"]), stringFromAny(worker["name"]), stringFromAny(worker["id"]))
-			target.PublicIP = firstNonEmptyString(target.PublicIP, stringFromAny(worker["ip"]), stringFromAny(worker["ip_address"]), stringFromAny(worker["public_ip"]))
-		}
-	}
-	if target.Hostname == "" && stack != nil {
-		target.Hostname = firstNonEmptyString(stack.GetString("name"), stack.Id)
-	}
-	return target
-}
-
-func firstWorkerFromPayload(raw interface{}) map[string]interface{} {
-	switch workers := raw.(type) {
-	case []interface{}:
-		if len(workers) == 0 {
-			return nil
-		}
-		worker, _ := mapValue(workers[0])
-		return worker
-	case []map[string]interface{}:
-		if len(workers) == 0 {
-			return nil
-		}
-		return workers[0]
-	default:
-		return nil
-	}
-}
-
 func mapValue(raw interface{}) (map[string]interface{}, bool) {
 	switch value := raw.(type) {
 	case map[string]interface{}:
@@ -867,8 +693,6 @@ func stringFromAny(value interface{}) string {
 	case string:
 		return strings.TrimSpace(v)
 	case fmt.Stringer:
-		return strings.TrimSpace(v.String())
-	case json.Number:
 		return strings.TrimSpace(v.String())
 	default:
 		return ""

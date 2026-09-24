@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/kombifyio/techstack/pkg/specv2"
 	"github.com/kombifyio/techstack/pkg/unifier"
 	"gopkg.in/yaml.v3"
 )
@@ -17,7 +18,7 @@ const (
 	// image authored at build time, one directory per kit.
 	stackKitSpecTemplateEnv = "TECHSTACK_STACKKIT_SPEC_TEMPLATES"
 
-	// canonicalStackSpecAPIVersion is the only shape the pinned CLI executes.
+	// canonicalStackSpecAPIVersion identifies the legacy canonical contract.
 	canonicalStackSpecAPIVersion = "stackkit/v2alpha1"
 
 	// canonicalStackSpecFilename is derived state. It is written next to the
@@ -87,7 +88,7 @@ func canonicalStackSpecFor(stackSpecPath, stackKit, stackName string) (canonical
 	if err != nil {
 		return canonicalStackSpec{}, err
 	}
-	if strings.TrimSpace(stringFromInterface(handoff["apiVersion"])) == canonicalStackSpecAPIVersion {
+	if specv2.RequireCanonicalV2(handoff) == nil {
 		outputRoot, rootErr := stackSpecOutputRoot(handoff)
 		if rootErr != nil {
 			return canonicalStackSpec{}, rootErr
@@ -98,6 +99,10 @@ func canonicalStackSpecFor(stackSpecPath, stackKit, stackName string) (canonical
 		return canonicalStackSpec{}, projErr
 	} else if ok {
 		return canonical, nil
+	}
+	apiVersion := strings.TrimSpace(stringFromInterface(handoff["apiVersion"]))
+	if apiVersion == canonicalStackSpecAPIVersion || apiVersion == specv2.NativeSpecAPIVersion {
+		return canonicalStackSpec{}, fmt.Errorf("canonical StackSpec %s is not executable Architecture v2: %w", stackSpecPath, specv2.RequireCanonicalV2(handoff))
 	}
 
 	kit := strings.TrimSpace(stackKit)
@@ -136,6 +141,8 @@ func canonicalStackSpecFor(stackSpecPath, stackKit, stackName string) (canonical
 
 	// The canonical document is deterministic JSON, and the CLI reads it as
 	// YAML. Encoding it as JSON keeps the bytes closest to what init wrote.
+	applyFirstPartyTelemetryToStackSpec(template)
+
 	outputRoot, err := stackSpecOutputRoot(template)
 	if err != nil {
 		return canonicalStackSpec{}, err
@@ -173,8 +180,8 @@ func canonicalFromProjected(stackSpecPath string, handoff map[string]interface{}
 	if err != nil {
 		return canonicalStackSpec{}, false, fmt.Errorf("projected StackSpec: %w", err)
 	}
-	if got := strings.TrimSpace(stringFromInterface(projected["apiVersion"])); got != canonicalStackSpecAPIVersion {
-		return canonicalStackSpec{}, false, fmt.Errorf("projected StackSpec has apiVersion %q, want %q", got, canonicalStackSpecAPIVersion)
+	if err := specv2.RequireCanonicalV2(projected); err != nil {
+		return canonicalStackSpec{}, false, fmt.Errorf("projected StackSpec: %w", err)
 	}
 	// Best effort: the wizard handoff usually resolves no domain of its own;
 	// the projection then keeps the domain it was validated with.
@@ -187,6 +194,8 @@ func canonicalFromProjected(stackSpecPath string, handoff map[string]interface{}
 			projected["network"] = network
 		}
 	}
+	applyFirstPartyTelemetryToStackSpec(projected)
+
 	outputRoot, err := stackSpecOutputRoot(projected)
 	if err != nil {
 		return canonicalStackSpec{}, false, err
@@ -222,8 +231,8 @@ func persistProjectedStackSpec(persister *unifier.SpecPersister, specData interf
 		}
 		return "", nil
 	}
-	if got := strings.TrimSpace(stringFromInterface(projected["apiVersion"])); got != canonicalStackSpecAPIVersion {
-		return "", fmt.Errorf("payload %s has apiVersion %q, want %q", payloadKeyStackSpecV2, got, canonicalStackSpecAPIVersion)
+	if err := specv2.RequireCanonicalV2(projected); err != nil {
+		return "", fmt.Errorf("payload %s: %w", payloadKeyStackSpecV2, err)
 	}
 	next, err := json.Marshal(projected)
 	if err != nil {
@@ -329,8 +338,8 @@ func readStackKitSpecTemplate(kit string) (map[string]interface{}, error) {
 	if err != nil {
 		return nil, fmt.Errorf("canonical %s StackSpec template: %w", kit, err)
 	}
-	if got := strings.TrimSpace(stringFromInterface(template["apiVersion"])); got != canonicalStackSpecAPIVersion {
-		return nil, fmt.Errorf("canonical %s StackSpec template has apiVersion %q, want %q", kit, got, canonicalStackSpecAPIVersion)
+	if err := specv2.RequireCanonicalV2(template); err != nil {
+		return nil, fmt.Errorf("canonical %s StackSpec template: %w", kit, err)
 	}
 	if got := strings.TrimSpace(stringFromInterface(mapFromInterface(template["kit"])["slug"])); got != kit {
 		return nil, fmt.Errorf("canonical StackSpec template under %s declares kit %q", kit, got)

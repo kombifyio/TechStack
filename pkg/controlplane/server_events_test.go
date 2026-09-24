@@ -6,6 +6,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/kombifyio/techstack/pkg/outcome"
+	"github.com/kombifyio/techstack/pkg/serverregistry"
 )
 
 func TestMemoryStoreApplyServerEventCommitsHeadTransitionsAndInventory(t *testing.T) {
@@ -52,6 +55,72 @@ func TestMemoryStoreApplyServerEventCommitsHeadTransitionsAndInventory(t *testin
 	}
 	if _, leaked := observed.Outbox.Payload["metadata"]; leaked {
 		t.Fatalf("outbox leaked aggregate metadata: %#v", observed.Outbox.Payload)
+	}
+}
+
+func TestServerOutcomePersistsOnlyForAcceptedEventsAndResetIsAudited(t *testing.T) {
+	store := NewMemoryStore()
+	now := time.Date(2026, 8, 26, 8, 0, 0, 0, time.UTC)
+	store.SetNow(func() time.Time { return now })
+	pending := outcome.Decision{
+		Status: outcome.StatusPending, ReasonCode: "awaiting_guard_heartbeat", Capability: "techstack.server.connect", Retryable: true,
+		UserGuidance: &outcome.Guidance{Title: "Connection pending", Body: "The Guard has not connected yet.", NextSteps: []outcome.Step{{ID: "wait", Label: "Keep this page open while the Guard connects.", Kind: "note"}}},
+	}
+	created, err := store.ApplyServerEvent(t.Context(), ServerEvent{
+		TenantID: "tenant-1", ServerID: "server-1", Generation: 1,
+		Authority: ServerEventAuthorityControlPlane, Source: "pairing", SourceID: "pairing-controller", ObservedAt: now,
+		Runtime: ServerRuntime{OwnerSubjectID: "owner-1", WorkerID: "guard-1", Name: "runtime-1",
+			LifecycleState: "enrolling", DesiredState: "running", ConnectionState: "pending", HealthState: "unknown"},
+		Outcome: &pending,
+	})
+	if err != nil || created.Server.LastOutcome == nil || created.Server.LastOutcome.Status != outcome.StatusPending {
+		t.Fatalf("persist pending outcome: result=%#v err=%v", created, err)
+	}
+
+	degradedAt := now.Add(time.Minute)
+	degraded := outcome.Decision{
+		Status: outcome.StatusDegraded, ReasonCode: "worker_reported_degraded", Capability: "techstack.server.health", Retryable: true,
+		UserGuidance: &outcome.Guidance{Title: "Server needs attention", Body: "The Guard reported a degraded host.", NextSteps: []outcome.Step{{ID: "inspect", Label: "Open server diagnostics.", Kind: "link"}}},
+	}
+	accepted, err := store.ApplyServerEvent(t.Context(), ServerEvent{
+		TenantID: "tenant-1", ServerID: "server-1", ExpectedRevision: created.Server.Revision, Generation: 1,
+		Authority: ServerEventAuthorityGuard, Source: "guard-inventory", SourceID: "guard-1",
+		SourceEpoch: "epoch-a", SourceSequence: 2, ObservedAt: degradedAt,
+		Runtime: ServerRuntime{ConnectionState: "connected", HealthState: "degraded", LastHeartbeatAt: &degradedAt},
+		Outcome: &degraded,
+	})
+	if err != nil || accepted.Server.LastOutcome == nil || accepted.Server.LastOutcome.ReasonCode != "worker_reported_degraded" {
+		t.Fatalf("persist accepted Guard outcome: result=%#v err=%v", accepted, err)
+	}
+
+	stale := degraded
+	stale.Status, stale.ReasonCode = outcome.StatusFailed, "stale_failure"
+	ignored, err := store.ApplyServerEvent(t.Context(), ServerEvent{
+		TenantID: "tenant-1", ServerID: "server-1", ExpectedRevision: accepted.Server.Revision, Generation: 1,
+		Authority: ServerEventAuthorityGuard, Source: "guard-inventory", SourceID: "guard-1",
+		SourceEpoch: "epoch-a", SourceSequence: 1, ObservedAt: degradedAt.Add(-time.Second),
+		Runtime: ServerRuntime{ConnectionState: "offline", HealthState: "unknown"}, Outcome: &stale,
+	})
+	if err != nil || ignored.Applied || ignored.Server.LastOutcome == nil || ignored.Server.LastOutcome.ReasonCode != "worker_reported_degraded" {
+		t.Fatalf("stale outcome changed the aggregate: result=%#v err=%v", ignored, err)
+	}
+
+	resetAt := degradedAt.Add(time.Minute)
+	reset, err := store.ApplyServerEvent(t.Context(), ServerEvent{
+		TenantID: "tenant-1", ServerID: "server-1", ExpectedRevision: accepted.Server.Revision, Generation: 1,
+		Authority: ServerEventAuthorityControlPlane, Source: "drift-controller", SourceID: "drift-controller", ObservedAt: resetAt,
+		ClearOutcome: true, OutcomeResetReason: "drift_resolved",
+	})
+	resetAudited := false
+	if reset != nil {
+		for _, transition := range reset.Transitions {
+			if transition.Dimension == "outcome" && transition.ToState == string(outcome.StatusAvailable) {
+				resetAudited = true
+			}
+		}
+	}
+	if err != nil || reset == nil || reset.Server.LastOutcome != nil || !resetAudited {
+		t.Fatalf("reset outcome audit: result=%#v err=%v", reset, err)
 	}
 }
 
@@ -578,6 +647,53 @@ func TestMemoryStoreServerEventCASAllowsOneConcurrentWinner(t *testing.T) {
 	}
 	if successes != 1 || conflicts != 1 {
 		t.Fatalf("CAS outcomes successes=%d conflicts=%d", successes, conflicts)
+	}
+}
+
+func TestRegistrySweeperDemotionLeavesGuardCheckpoint(t *testing.T) {
+	store := NewMemoryStore()
+	now := time.Date(2026, 8, 30, 9, 0, 0, 0, time.UTC)
+	store.SetNow(func() time.Time { return now })
+	enrolled := applyTestEnrollment(t, store, now, "active")
+	heartbeatAt := now.Add(time.Minute)
+	store.SetNow(func() time.Time { return heartbeatAt })
+	guarded := applyTestGuard(t, store, enrolled.Server.Revision, 1, "epoch-a", 1, heartbeatAt)
+
+	staleAt := heartbeatAt.Add(2 * time.Minute)
+	store.SetNow(func() time.Time { return staleAt })
+	command, due := serverregistry.DemotionCommand(staleAt, *guarded.Server)
+	if !due {
+		t.Fatal("stale Guard heartbeat was not due for demotion")
+	}
+	demoted, err := store.ApplyServerEvent(context.Background(), command)
+	if err != nil || demoted == nil || !demoted.Applied {
+		t.Fatalf("sweeper demotion: result=%#v err=%v", demoted, err)
+	}
+	if demoted.Server.ConnectionState != string(serverregistry.ConnectionStale) {
+		t.Fatalf("demotion connection = %s", demoted.Server.ConnectionState)
+	}
+	if demoted.Server.SourceSequence != 1 || demoted.Server.SourceEpoch != "epoch-a" ||
+		demoted.Server.SourceAuthority != ServerEventAuthorityGuard || demoted.Server.SourceID != "guard-1" {
+		t.Fatalf("demotion occupied Guard checkpoint: %#v", demoted.Server)
+	}
+	if demoted.Server.LastHeartbeatAt == nil || !demoted.Server.LastHeartbeatAt.Equal(heartbeatAt) {
+		t.Fatalf("demotion rewrote LastHeartbeatAt: %#v", demoted.Server.LastHeartbeatAt)
+	}
+
+	_, err = store.ApplyServerEvent(context.Background(), ServerEvent{
+		TenantID: "tenant-1", ServerID: "server-1", ExpectedRevision: demoted.Server.Revision, Generation: 1,
+		Authority: ServerEventAuthorityControlPlane, Source: "drift-controller", SourceID: "drift-controller",
+		ObservedAt: staleAt, Runtime: ServerRuntime{ConnectionState: string(serverregistry.ConnectionOffline)},
+	})
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("non-sweeper control-plane observation error = %v, want conflict", err)
+	}
+
+	recoveredAt := staleAt.Add(time.Minute)
+	store.SetNow(func() time.Time { return recoveredAt })
+	recovered := applyTestGuard(t, store, demoted.Server.Revision, 1, "epoch-a", 2, recoveredAt)
+	if !recovered.Applied || recovered.Server.ConnectionState != string(serverregistry.ConnectionConnected) {
+		t.Fatalf("Guard sequence 2 did not recover after demotion: %#v", recovered)
 	}
 }
 

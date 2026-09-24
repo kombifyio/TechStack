@@ -51,6 +51,26 @@ func TestTrackerPublishesWholeSnapshotsAtomically(t *testing.T) {
 	}
 }
 
+func TestConvergenceSnapshotCarriesOnlyBoundedReadyArtifactIdentity(t *testing.T) {
+	now := time.Date(2026, 8, 25, 5, 30, 0, 0, time.UTC)
+	ready := Aggregate(now, Component{
+		Name: TechstackRuntimeComponent, State: ComponentReady, ObservedAt: now,
+		Version: "0.7.710", ArtifactSHA256: "ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+	})
+	normalized, err := Normalize(ready)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if normalized.Components[0].ArtifactSHA256 != "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789" {
+		t.Fatalf("artifact identity = %#v", normalized.Components[0])
+	}
+	ready.Components[0].State = ComponentFailed
+	ready.Components[0].ErrorCode = TechstackRuntimeUnavailableError
+	if _, err := Normalize(ready); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("failed component retained artifact identity: %v", err)
+	}
+}
+
 func componentState(snapshot Snapshot, name string) string {
 	for _, component := range snapshot.Components {
 		if component.Name == name {

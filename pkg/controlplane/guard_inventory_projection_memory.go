@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -34,12 +35,13 @@ func (s *MemoryStore) ApplyGuardInventoryProjection(_ context.Context, command G
 	if err := s.validateGuardInventoryProjectionBindingsLocked(prepared.command); err != nil {
 		return nil, err
 	}
-	retained := map[string]struct{}{}
-	if prepared.command.ManifestObserved {
-		retained = s.guardInventoryRetainedServiceIDsLocked(prepared.command)
+	retained := s.guardInventoryRetainedServicesLocked(prepared.command)
+	discoveredAbsences, err := s.prepareGuardDiscoveredServiceAbsencesLocked(prepared.command, retained.DiscoveredIDs, s.now())
+	if err != nil {
+		return nil, err
 	}
 	observation := guardInventoryServerObservationEventWithExpectedServices(
-		prepared.command.Event, int64(len(prepared.command.Services)+len(retained)),
+		prepared.command.Event, int64(len(prepared.command.Services)+len(retained.IDs)),
 	)
 
 	result, err := s.applyServerEventLocked(observation)
@@ -60,7 +62,7 @@ func (s *MemoryStore) ApplyGuardInventoryProjection(_ context.Context, command G
 		revision = result.Inventory.Revision
 	}
 	projection := guardInventoryProjectionAtRevision(prepared, revision)
-	s.persistGuardInventoryProjectionLocked(projection, s.now())
+	s.persistGuardInventoryProjectionLocked(projection, retained.DiscoveredIDs, discoveredAbsences, s.now())
 	result.Server.Metadata = cloneGuardCanonicalMap(result.Server.Metadata)
 	if result.Inventory != nil {
 		result.Inventory.Inventory = cloneGuardCanonicalMap(result.Inventory.Inventory)
@@ -142,7 +144,12 @@ func (s *MemoryStore) validateGuardInventoryProjectionBindingsLocked(command Gua
 	return nil
 }
 
-func (s *MemoryStore) persistGuardInventoryProjectionLocked(command GuardInventoryProjection, now time.Time) {
+func (s *MemoryStore) persistGuardInventoryProjectionLocked(
+	command GuardInventoryProjection,
+	retainedDiscoveredIDs []string,
+	discoveredAbsences map[string]serviceAggregateHead,
+	now time.Time,
+) {
 	node := command.Node
 	if existing, ok := s.nodes[node.ID]; ok {
 		node.CreatedAt = existing.CreatedAt
@@ -160,20 +167,24 @@ func (s *MemoryStore) persistGuardInventoryProjectionLocked(command GuardInvento
 	node.Metadata = cloneGuardCanonicalMap(node.Metadata)
 	s.nodes[node.ID] = node
 
-	observed := make(map[string]struct{}, len(command.Services))
+	managed := make(map[string]struct{}, len(command.Services))
 	for _, projection := range command.Services {
-		observed[projection.Legacy.ID] = struct{}{}
+		if strings.EqualFold(projection.Runtime.Source, command.ServiceSource) {
+			managed[projection.Legacy.ID] = struct{}{}
+		}
 		s.persistGuardInventoryServiceLocked(projection, now)
 	}
 	if command.ManifestObserved {
 		// Absence of service evidence is not evidence of absence: only a
 		// manifest with at least one observed service may prune stale rows.
-		if len(observed) > 0 {
-			s.pruneGuardInventoryServicesLocked(command, observed, now)
+		if len(managed) > 0 {
+			s.pruneGuardInventoryServicesLocked(command, managed, now)
 		} else {
 			s.markGuardInventoryServicesUnavailableLocked(command, now)
 		}
 	}
+	s.persistGuardDiscoveredServiceAbsencesLocked(command, discoveredAbsences, now)
+	s.stampGuardInventoryServicesRevisionLocked(command, retainedDiscoveredIDs)
 }
 
 // guardInventoryRevisionKey stamps retained rows with the accepted inventory
@@ -277,29 +288,116 @@ func (s *MemoryStore) persistGuardInventoryServiceLocked(projection GuardInvento
 	s.serviceRuntime[runtime.ID] = runtime
 }
 
-func (s *MemoryStore) guardInventoryRetainedServiceIDsLocked(command GuardInventoryProjection) map[string]struct{} {
-	observed := make(map[string]struct{}, len(command.Services))
+func (s *MemoryStore) guardInventoryRetainedServicesLocked(command GuardInventoryProjection) guardInventoryRetainedServices {
+	managed := make(map[string]struct{}, len(command.Services))
+	discovered := make(map[string]struct{}, len(command.Services))
 	for _, projection := range command.Services {
-		observed[projection.Legacy.ID] = struct{}{}
+		switch {
+		case strings.EqualFold(projection.Runtime.Source, serviceSourceObserved):
+			discovered[projection.Legacy.ID] = struct{}{}
+		case strings.EqualFold(projection.Runtime.Source, command.ServiceSource):
+			managed[projection.Legacy.ID] = struct{}{}
+		}
 	}
-	retained := make(map[string]struct{})
+	retained := guardInventoryRetainedServices{}
 	for serviceID, service := range s.svcs {
 		if service.TenantID != command.Event.TenantID || service.StackID != command.Event.Runtime.StackID ||
-			service.NodeID != command.Event.ServerID || !strings.EqualFold(strings.TrimSpace(service.Source), command.ServiceSource) {
+			service.NodeID != command.Event.ServerID {
 			continue
 		}
-		if _, present := observed[serviceID]; present {
+		source := strings.ToLower(strings.TrimSpace(service.Source))
+		if source == serviceSourceObserved {
+			if _, present := discovered[serviceID]; !present {
+				retained.IDs = append(retained.IDs, serviceID)
+				retained.DiscoveredIDs = append(retained.DiscoveredIDs, serviceID)
+			}
 			continue
 		}
-		// With observed services, only control-state rows survive the prune.
-		// With zero observed services, no prune runs (absence of evidence is
-		// not evidence of absence) and every existing row is retained.
-		if len(observed) > 0 && guardServiceRetainedControlState(service) == "" {
+		if !command.ManifestObserved || !strings.EqualFold(source, command.ServiceSource) {
 			continue
 		}
-		retained[serviceID] = struct{}{}
+		if _, present := managed[serviceID]; present {
+			continue
+		}
+		// With managed observations, only control-state rows survive the
+		// prune. With zero managed observations, every row is retained and
+		// made unavailable because the manifest provided no service evidence.
+		if len(managed) > 0 && guardServiceRetainedControlState(service) == "" {
+			continue
+		}
+		retained.IDs = append(retained.IDs, serviceID)
 	}
+	sort.Strings(retained.IDs)
+	sort.Strings(retained.DiscoveredIDs)
 	return retained
+}
+
+func (s *MemoryStore) prepareGuardDiscoveredServiceAbsencesLocked(
+	command GuardInventoryProjection,
+	serviceIDs []string,
+	now time.Time,
+) (map[string]serviceAggregateHead, error) {
+	prepared := make(map[string]serviceAggregateHead)
+	if !guardInventoryDiscoveryCanReconcile(command) {
+		return prepared, nil
+	}
+	for _, serviceID := range serviceIDs {
+		legacy, legacyExists := s.svcs[serviceID]
+		runtime, runtimeExists := s.serviceRuntime[serviceID]
+		if !legacyExists || !runtimeExists {
+			return nil, fmt.Errorf("%w: discovered service projection is incomplete", ErrConflict)
+		}
+		current := serviceAggregateHead{
+			Runtime: runtime, Status: legacy.Status, MigrationStatus: legacy.MigrationStatus,
+			NodeID: legacy.NodeID, URL: legacy.URL, Exists: true,
+		}
+		event, err := prepareServiceEvent(&current, guardDiscoveredServiceAbsentEvent(command, serviceID), now)
+		if err != nil {
+			return nil, err
+		}
+		prepared[serviceID] = event.head
+	}
+	return prepared, nil
+}
+
+func (s *MemoryStore) persistGuardDiscoveredServiceAbsencesLocked(
+	command GuardInventoryProjection,
+	prepared map[string]serviceAggregateHead,
+	now time.Time,
+) {
+	revision, _ := inventoryMetadataInt64(command.Node.Metadata, guardInventoryRevisionKey)
+	for serviceID, head := range prepared {
+		legacy := s.svcs[serviceID]
+		legacy.Status = head.Status
+		legacy.MigrationStatus = head.MigrationStatus
+		legacy.NodeID = head.NodeID
+		legacy.URL = head.URL
+		legacy.Source = head.Runtime.Source
+		legacy.ManagementState = head.Runtime.ManagementState
+		legacy.Metadata = mergeMaps(legacy.Metadata, map[string]any{guardInventoryRevisionKey: revision})
+		legacy.UpdatedAt = now
+		s.svcs[serviceID] = legacy
+
+		runtime := head.Runtime
+		runtime.Metadata = mergeMaps(runtime.Metadata, map[string]any{guardInventoryRevisionKey: revision})
+		s.serviceRuntime[serviceID] = runtime
+	}
+}
+
+func (s *MemoryStore) stampGuardInventoryServicesRevisionLocked(command GuardInventoryProjection, serviceIDs []string) {
+	revision, _ := inventoryMetadataInt64(command.Node.Metadata, guardInventoryRevisionKey)
+	for _, serviceID := range serviceIDs {
+		legacy, exists := s.svcs[serviceID]
+		if !exists {
+			continue
+		}
+		legacy.Metadata = mergeMaps(legacy.Metadata, map[string]any{guardInventoryRevisionKey: revision})
+		s.svcs[serviceID] = legacy
+		if runtime, ok := s.serviceRuntime[serviceID]; ok {
+			runtime.Metadata = mergeMaps(runtime.Metadata, map[string]any{guardInventoryRevisionKey: revision})
+			s.serviceRuntime[serviceID] = runtime
+		}
+	}
 }
 
 func (s *MemoryStore) pruneGuardInventoryServicesLocked(command GuardInventoryProjection, observed map[string]struct{}, now time.Time) {

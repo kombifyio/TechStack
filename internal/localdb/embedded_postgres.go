@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ const (
 	EnvEmbeddedPostgresStartTimeoutSecs = "TECHSTACK_EMBEDDED_POSTGRES_START_TIMEOUT_SECONDS"
 	EnvEmbeddedPostgresRepositoryURL    = "TECHSTACK_EMBEDDED_POSTGRES_BINARY_REPOSITORY_URL"
 	EnvEmbeddedPostgresBinariesPath     = "TECHSTACK_EMBEDDED_POSTGRES_BINARIES_PATH"
+	EnvEmbeddedPostgresBundleDir        = "TECHSTACK_EMBEDDED_POSTGRES_BUNDLE_DIR"
 )
 
 const (
@@ -52,17 +54,38 @@ func StartEmbeddedPostgres(dataDir string) (*EmbeddedPostgres, error) {
 	if baseDir == "" {
 		baseDir = filepath.Join(dataDir, "postgres")
 	}
+	cacheDir := filepath.Join(baseDir, "cache")
+	if bundleDir := strings.TrimSpace(os.Getenv(EnvEmbeddedPostgresBundleDir)); bundleDir != "" {
+		if runtime.GOOS != "windows" || runtime.GOARCH != "amd64" {
+			return nil, fmt.Errorf("bundled PostgreSQL requires Windows amd64")
+		}
+		if strings.TrimSpace(os.Getenv(EnvEmbeddedPostgresBinariesPath)) != "" {
+			return nil, fmt.Errorf("bundled PostgreSQL cannot use an external binaries path")
+		}
+		var err error
+		cacheDir, err = filepath.Abs(bundleDir)
+		if err != nil {
+			return nil, fmt.Errorf("resolve bundled PostgreSQL directory: %w", err)
+		}
+		archive := filepath.Join(cacheDir, fmt.Sprintf("embedded-postgres-binaries-windows-amd64-%s.txz", embeddedpostgres.V16))
+		info, err := os.Stat(archive)
+		if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
+			return nil, fmt.Errorf("required PostgreSQL bundle is missing or invalid at %s; repair the Windows installation", archive)
+		}
+	}
 
 	port, err := embeddedPostgresPort()
 	if err != nil {
 		return nil, err
 	}
 
+	// #nosec G703 -- baseDir is an explicit local-operator storage setting.
 	if err := os.MkdirAll(baseDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create embedded postgres dir: %w", err)
 	}
 
 	logPath := filepath.Join(baseDir, "postgres.log")
+	// #nosec G703 -- logPath is fixed beneath the operator-selected embedded database directory.
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("open embedded postgres log: %w", err)
@@ -74,7 +97,7 @@ func StartEmbeddedPostgres(dataDir string) (*EmbeddedPostgres, error) {
 		Password(embeddedPassword).
 		Database(embeddedDatabase).
 		Port(port).
-		CachePath(filepath.Join(baseDir, "cache")).
+		CachePath(cacheDir).
 		RuntimePath(filepath.Join(baseDir, "runtime")).
 		DataPath(filepath.Join(baseDir, "data")).
 		StartTimeout(embeddedPostgresStartTimeout()).

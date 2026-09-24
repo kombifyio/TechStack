@@ -14,17 +14,12 @@
 import {
   createErrorAiHandoverContext,
   type ErrorAiHandoverContext,
-} from "$lib/support/error-handover";
-import { getTroubleshootingForError } from "$lib/wizard/provider-errors";
-import type { StackLatestFailure } from "$lib/api/stacks";
+} from "#lib/support/error-handover.js";
+import { getTroubleshootingForError } from "#lib/wizard/provider-errors.js";
+import type { StackLatestFailure } from "#lib/api/stacks.js";
 
 export type ServerOutcomeStatus =
-  | "available"
-  | "disabled"
-  | "blocked"
-  | "pending"
-  | "degraded"
-  | "failed";
+  "available" | "disabled" | "blocked" | "pending" | "degraded" | "failed";
 
 export type GuidanceStepKind =
   | "note"
@@ -61,6 +56,7 @@ export interface ServerOutcome {
   userGuidance?: UserGuidance;
   remediation?: string;
   providerDiagnostics?: Record<string, unknown>;
+  supportContext?: Record<string, unknown>;
   occurredAt?: string;
   requestId?: string;
 }
@@ -203,6 +199,9 @@ export function normalizeServerOutcome(raw: unknown): ServerOutcome | null {
       asRecord(
         record["provider_diagnostics"] ?? record["providerDiagnostics"],
       ) ?? undefined,
+    supportContext:
+      asRecord(record["support_context"] ?? record["supportContext"]) ??
+      undefined,
     occurredAt: readString(record, "occurred_at", "occurredAt"),
     requestId: readString(record, "request_id", "requestId"),
   };
@@ -236,7 +235,7 @@ export function resolveGuidance(outcome: ServerOutcome): UserGuidance {
 
 /**
  * Bridge a ServerOutcome into the existing AI-handover context so the
- * "Ask Kombify AI" button keeps working unchanged.
+ * "Ask kombify AI" button keeps working unchanged.
  */
 export function toAiHandoverContext(
   outcome: ServerOutcome,
@@ -287,11 +286,23 @@ export function toAiHandoverContext(
 export type RetryDispatch =
   | { kind: "rollout"; sourceJobId: string; leaseId: string }
   | { kind: "provision" }
-  | { kind: "deploy" };
+  | { kind: "deploy" }
+  | { kind: "remote_enrollment" };
+
+export type LatestFailureOutcomeContext = {
+  serverProvisioningMode?: string;
+  connectedServers?: number;
+};
+
+export type RetryDispatchSource = Pick<
+  StackLatestFailure,
+  "job_id" | "type" | "lease_id"
+> & { retryable?: boolean };
 
 export function retryDispatchFor(
-  failure: StackLatestFailure,
+  failure: RetryDispatchSource,
 ): RetryDispatch | null {
+  if (failure.retryable === false) return null;
   const type = (failure.type ?? "").trim().toLowerCase();
   const leaseId = failure.lease_id?.trim();
   if (type === "deploy") {
@@ -300,7 +311,28 @@ export function retryDispatchFor(
       : { kind: "deploy" };
   }
   if (type === "provision" && !leaseId) return { kind: "provision" };
+  if (type === "remote_enrollment") return { kind: "remote_enrollment" };
   return null;
+}
+
+function retryStepLabel(
+  failure: StackLatestFailure,
+  context?: LatestFailureOutcomeContext,
+): string {
+  const type = (failure.type ?? "").trim().toLowerCase();
+  if (type === "remote_enrollment") {
+    return "SSH-Verbindung erneut versuchen";
+  }
+  const connectRemoteStackKitReady =
+    context?.serverProvisioningMode === "connect-remote" &&
+    (context.connectedServers ?? 0) > 0 &&
+    (type === "provision" || type === "deploy");
+  if (connectRemoteStackKitReady) {
+    return type === "deploy"
+      ? "StackKit auf verbundenem Node fortsetzen"
+      : "StackKit-Vorbereitung auf verbundenem Node fortsetzen";
+  }
+  return "Rollout erneut starten";
 }
 
 export function failureIsRetryable(failure: StackLatestFailure): boolean {
@@ -309,6 +341,7 @@ export function failureIsRetryable(failure: StackLatestFailure): boolean {
 
 export function outcomeFromLatestFailure(
   failure: StackLatestFailure,
+  context?: LatestFailureOutcomeContext,
 ): ServerOutcome {
   const combined = [failure.reason, failure.message, failure.error]
     .filter((part): part is string => typeof part === "string" && part !== "")
@@ -329,7 +362,7 @@ export function outcomeFromLatestFailure(
   if (retryable) {
     nextSteps.push({
       id: "failure-retry",
-      label: "Rollout erneut starten",
+      label: retryStepLabel(failure, context),
       kind: "retry",
     });
   }

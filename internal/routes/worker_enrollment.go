@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/grpcserver"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/privatechannel"
@@ -15,6 +16,7 @@ import (
 )
 
 type workerEnrollmentContext struct {
+	GuardRole            string
 	WorkerID             string
 	ServerID             string
 	RuntimeAgentID       string
@@ -54,6 +56,7 @@ func (h workerRouteHandlers) workerEnrollmentResponse(e *httpx.Event, ctx worker
 	commandResultPath := "/api/v1/workers/" + ctx.RuntimeAgentID + "/commands/result"
 	stackKitReleasePath := "/api/v1/agent/stackkit-release/linux/amd64"
 	resp := map[string]any{
+		"guard_role":            ctx.GuardRole,
 		"worker_id":             ctx.WorkerID,
 		"server_id":             ctx.ServerID,
 		"runtime_agent_id":      ctx.RuntimeAgentID,
@@ -175,6 +178,18 @@ func runtimeServerIDForWorker(workerID string) string {
 		return ""
 	}
 	return "server_" + stableRouteID(workerID)
+}
+
+func plannedServerIDFromPairingToken(token controlplane.PairingToken) string {
+	if token.Metadata != nil {
+		if plannedID := strings.TrimSpace(stringFromAny(token.Metadata["planned_server_id"])); plannedID != "" {
+			return plannedID
+		}
+		if nodeID := strings.TrimSpace(stringFromAny(token.Metadata["spec_node_id"])); nodeID != "" {
+			return runtimeidentity.StackServerID(token.StackID, nodeID)
+		}
+	}
+	return ""
 }
 
 func runtimeLeaseIDFromMetadata(metadata map[string]any) string {

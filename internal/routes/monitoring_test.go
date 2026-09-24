@@ -10,7 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/prometheus/model/labels"
+
+	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	"github.com/kombifyio/techstack/pkg/httpx"
+	"github.com/kombifyio/techstack/pkg/identity"
 	"github.com/kombifyio/techstack/pkg/monitoring"
 )
 
@@ -136,21 +140,6 @@ func TestBuildMonitoringHealthPayload_DefaultsToUnavailable(t *testing.T) {
 	}
 }
 
-func TestBuildMonitoringHealthPayload_MapsStaleLaneToDegradedIngest(t *testing.T) {
-	payload := buildMonitoringHealthPayload(context.Background(), staticHealthBackend{}, MonitoringStatusMetadata{}, staticIngestHealthProvider{snapshot: monitoring.IngestHealthSnapshot{
-		OTLP:       monitoring.IngestLaneHealth{Status: "stale"},
-		LegacyPush: monitoring.IngestLaneHealth{Status: "ok"},
-	}})
-
-	if got := payload["ingestStatus"]; got != "degraded" {
-		t.Fatalf("expected stale lane to degrade overall ingest, got %v", got)
-	}
-	otlp := payload["otlp"].(monitoring.IngestLaneHealth)
-	if otlp.Status != "stale" {
-		t.Fatalf("expected lane-level stale status to remain visible, got %s", otlp.Status)
-	}
-}
-
 func TestBuildMonitoringHealthPayload_AgesRequiredLaneButIgnoresOptionalIdle(t *testing.T) {
 	now := time.Date(2026, time.August, 13, 12, 0, 0, 0, time.UTC)
 	old := now.Add(-91 * time.Second)
@@ -188,26 +177,6 @@ func TestBuildMonitoringHealthPayload_OptionalIdleDoesNotDegradeRequiredHealthyL
 
 	if got := payload["ingestStatus"]; got != "ok" {
 		t.Fatalf("expected optional idle lane not to degrade required healthy lane, got %v", got)
-	}
-}
-
-func TestEvaluateMonitoringHealthCallsStatsOnce(t *testing.T) {
-	backend := &countingHealthBackend{}
-	health := evaluateMonitoringHealth(context.Background(), backend, MonitoringStatusMetadata{}, nil)
-
-	if backend.calls != 1 {
-		t.Fatalf("expected one query backend Stats call, got %d", backend.calls)
-	}
-	if health.queryStatus != "ok" {
-		t.Fatalf("expected reachable query backend, got %s", health.queryStatus)
-	}
-}
-
-func TestBuildMonitoringStatusPayload_NormalizesCollectorMode(t *testing.T) {
-	payload := buildMonitoringStatusPayload(&monitoring.TSDBStats{}, MonitoringStatusMetadata{CollectorMode: "unexpected"})
-
-	if got := payload["collectorMode"]; got != "direct" {
-		t.Fatalf("expected invalid collectorMode to normalize to direct, got %v", got)
 	}
 }
 
@@ -311,6 +280,110 @@ func TestMonitoringInstantMetricsRejectsMissingQueryBeforeBackend(t *testing.T) 
 	}
 }
 
+func TestMonitoringMetricAPIsScopeEveryReadToSignedTenant(t *testing.T) {
+	tenantguard.Configure(true)
+	t.Cleanup(func() { tenantguard.Configure(false) })
+	backend, err := monitoring.NewMonitorTSDB(monitoring.TSDBConfig{DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("open monitoring TSDB: %v", err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+	now := time.Now().UTC()
+	if err := backend.Write([]monitoring.MetricSample{
+		{Name: "cpu_usage", Value: 1, Timestamp: now.Add(-30 * time.Second), Labels: map[string]string{"tenant_id": "tenant-1", "hostname": "tenant-a-host", "job": "guard", "instance": "same", "tenant_a_label": "present"}},
+		{Name: "cpu_usage", Value: 2, Timestamp: now.Add(-30 * time.Second), Labels: map[string]string{"tenant_id": "tenant-2", "hostname": "tenant-b-secret-host", "job": "guard", "instance": "same", "tenant_b_secret_label": "secret"}},
+		{Name: "cpu_usage", Value: 3, Timestamp: now.Add(-30 * time.Second), Labels: map[string]string{"hostname": "unlabeled-secret-host", "job": "guard", "instance": "same", "unlabeled_secret_label": "secret"}},
+		{Name: "target_info", Value: 1, Timestamp: now.Add(-30 * time.Second), Labels: map[string]string{"tenant_id": "tenant-1", "job": "guard", "instance": "same", "region": "tenant-a-region"}},
+		{Name: "target_info", Value: 1, Timestamp: now.Add(-30 * time.Second), Labels: map[string]string{"tenant_id": "tenant-2", "job": "guard", "instance": "same", "region": "tenant-b-secret-region"}},
+		{Name: "target_info", Value: 1, Timestamp: now.Add(-30 * time.Second), Labels: map[string]string{"job": "guard", "instance": "same", "region": "unlabeled-secret-region"}},
+		{Name: "tenant_a_only_metric", Value: 1, Timestamp: now.Add(-30 * time.Second), Labels: map[string]string{"tenant_id": "tenant-1"}},
+		{Name: "tenant_b_secret_metric", Value: 1, Timestamp: now.Add(-30 * time.Second), Labels: map[string]string{"tenant_id": "tenant-2"}},
+		{Name: "unlabeled_secret_metric", Value: 1, Timestamp: now.Add(-30 * time.Second)},
+	}); err != nil {
+		t.Fatalf("seed monitoring TSDB: %v", err)
+	}
+	handler := monitoringRouteHandlers{backend: backend, policy: defaultMonitoringQueryPolicy()}
+
+	cases := []struct {
+		name      string
+		target    string
+		handle    func(*httpx.Event) error
+		visible   []string
+		invisible []string
+	}{
+		{name: "instant", target: `/api/v1/monitor/metrics/instant?q=cpu_usage&tenant_id=tenant-2`, handle: handler.instantMetrics, visible: []string{"tenant-a-host"}, invisible: []string{"tenant-b-secret", "unlabeled-secret"}},
+		{name: "range", target: `/api/v1/monitor/metrics/query?q=cpu_usage`, handle: handler.rangeMetrics, visible: []string{"tenant-a-host"}, invisible: []string{"tenant-b-secret", "unlabeled-secret"}},
+		{name: "label names", target: `/api/v1/monitor/metrics/labels`, handle: handler.labelNames, visible: []string{"tenant_a_label"}, invisible: []string{"tenant_b_secret_label", "unlabeled_secret_label"}},
+		{name: "label values", target: `/api/v1/monitor/metrics/values?name=hostname`, handle: handler.labelValues, visible: []string{"tenant-a-host"}, invisible: []string{"tenant-b-secret-host", "unlabeled-secret-host"}},
+		{name: "metric names", target: `/api/v1/monitor/metrics/names`, handle: handler.metricNames, visible: []string{"tenant_a_only_metric"}, invisible: []string{"tenant_b_secret_metric", "unlabeled_secret_metric"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			event, recorder := monitoringRouteTestEvent(http.MethodGet, tc.target)
+			event.Request.Header.Set("X-Tenant-ID", "tenant-2")
+			event.Request = event.Request.WithContext(identity.NewContext(event.Request.Context(), &identity.Identity{
+				UserID: "auth0|owner-1",
+				OrgID:  "tenant-1",
+			}))
+			if err := tc.handle(event); err != nil {
+				t.Fatalf("handler returned error: %v", err)
+			}
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+			}
+			body := recorder.Body.String()
+			for _, value := range tc.visible {
+				if !strings.Contains(body, value) {
+					t.Fatalf("response omits owned value %q: %s", value, body)
+				}
+			}
+			for _, value := range tc.invisible {
+				if strings.Contains(body, value) {
+					t.Fatalf("response exposed foreign or unattributed value %q: %s", value, body)
+				}
+			}
+		})
+	}
+
+	infoEvent, infoRecorder := monitoringRouteTestEvent(http.MethodGet, `/api/v1/monitor/metrics/instant?q=info(cpu_usage)`)
+	infoEvent.Request = infoEvent.Request.WithContext(identity.NewContext(infoEvent.Request.Context(), &identity.Identity{UserID: "auth0|owner-1", OrgID: "tenant-1"}))
+	if err := handler.instantMetrics(infoEvent); err != nil || infoRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("experimental implicit info lookup = status %d err %v, want 400", infoRecorder.Code, err)
+	}
+
+	event, _ := monitoringRouteTestEvent(http.MethodGet, `/api/v1/monitor/metrics/instant?q=cpu_usage&tenant_id=tenant-1`)
+	event.Request.Header.Set("X-Tenant-ID", "tenant-1")
+	event.Request = event.Request.WithContext(identity.NewContext(event.Request.Context(), &identity.Identity{UserID: "auth0|owner-1"}))
+	err = handler.instantMetrics(event)
+	var apiErr *httpx.APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusForbidden {
+		t.Fatalf("tenant-less SaaS metric read error = %v, want 403", err)
+	}
+
+	statsCalls, ingestCalls := 0, 0
+	diagnosticHandler := monitoringRouteHandlers{
+		backend:      staticHealthBackend{statsCalls: &statsCalls},
+		ingestHealth: staticIngestHealthProvider{calls: &ingestCalls},
+	}
+	for _, diagnostic := range []struct {
+		target string
+		handle func(*httpx.Event) error
+	}{
+		{target: "/api/v1/monitor/status", handle: diagnosticHandler.status},
+		{target: "/api/v1/monitor/health", handle: diagnosticHandler.health},
+	} {
+		event, _ := monitoringRouteTestEvent(http.MethodGet, diagnostic.target)
+		event.Request = event.Request.WithContext(identity.NewContext(event.Request.Context(), &identity.Identity{UserID: "auth0|owner-1", OrgID: "tenant-1"}))
+		err = diagnostic.handle(event)
+		if !errors.As(err, &apiErr) || apiErr.Status != http.StatusForbidden {
+			t.Fatalf("hosted diagnostic %s error = %v, want 403", diagnostic.target, err)
+		}
+	}
+	if statsCalls != 0 || ingestCalls != 0 {
+		t.Fatalf("hosted diagnostics invoked global backend: stats=%d ingest=%d", statsCalls, ingestCalls)
+	}
+}
+
 func monitoringRouteTestEvent(method, target string) (*httpx.Event, *httptest.ResponseRecorder) {
 	req := httptest.NewRequest(method, target, nil)
 	rec := httptest.NewRecorder()
@@ -318,17 +391,8 @@ func monitoringRouteTestEvent(method, target string) (*httpx.Event, *httptest.Re
 }
 
 type staticHealthBackend struct {
-	statsErr error
-}
-
-type countingHealthBackend struct {
-	staticHealthBackend
-	calls int
-}
-
-func (b *countingHealthBackend) Stats(context.Context) (*monitoring.TSDBStats, error) {
-	b.calls++
-	return &monitoring.TSDBStats{}, nil
+	statsErr   error
+	statsCalls *int
 }
 
 func (s staticHealthBackend) InstantQuery(context.Context, string, time.Time) (*monitoring.QueryResult, error) {
@@ -339,19 +403,22 @@ func (s staticHealthBackend) RangeQuery(context.Context, string, time.Time, time
 	return nil, nil
 }
 
-func (s staticHealthBackend) LabelNames(context.Context) ([]string, error) {
+func (s staticHealthBackend) LabelNames(context.Context, ...*labels.Matcher) ([]string, error) {
 	return nil, nil
 }
 
-func (s staticHealthBackend) LabelValues(context.Context, string) ([]string, error) {
+func (s staticHealthBackend) LabelValues(context.Context, string, ...*labels.Matcher) ([]string, error) {
 	return nil, nil
 }
 
-func (s staticHealthBackend) MetricNames(context.Context) ([]string, error) {
+func (s staticHealthBackend) MetricNames(context.Context, ...*labels.Matcher) ([]string, error) {
 	return nil, nil
 }
 
 func (s staticHealthBackend) Stats(context.Context) (*monitoring.TSDBStats, error) {
+	if s.statsCalls != nil {
+		(*s.statsCalls)++
+	}
 	if s.statsErr != nil {
 		return nil, s.statsErr
 	}
@@ -360,8 +427,12 @@ func (s staticHealthBackend) Stats(context.Context) (*monitoring.TSDBStats, erro
 
 type staticIngestHealthProvider struct {
 	snapshot monitoring.IngestHealthSnapshot
+	calls    *int
 }
 
 func (s staticIngestHealthProvider) MonitoringIngestHealth() monitoring.IngestHealthSnapshot {
+	if s.calls != nil {
+		(*s.calls)++
+	}
 	return s.snapshot
 }

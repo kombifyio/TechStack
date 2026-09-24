@@ -1,4 +1,4 @@
-import type { StackOperationServer } from "$lib/api/stacks";
+import type { StackOperationServer } from "#lib/api/stacks.js";
 
 const providerControlAuthority = "techstack_provider_control";
 

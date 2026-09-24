@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/grpcserver"
 	"github.com/kombifyio/techstack/pkg/httpx"
-	"github.com/pocketbase/pocketbase/core"
 )
 
 // AgentResponse represents an agent in the API response.
@@ -41,7 +41,7 @@ type ResourceResponse struct {
 
 // RegisterAgentRoutes adds agent API endpoints.
 // These endpoints provide access to connected gRPC agents.
-func RegisterAgentRoutes(r *httpx.Router, app core.App, grpcServer *grpcserver.Server) {
+func RegisterAgentRoutes(r *httpx.Router, grpcServer *grpcserver.Server) {
 	handler := agentRouteHandler{grpcServer: grpcServer}
 	r.GET("/api/v1/agents", handler.listAgents)
 	r.GET("/api/v1/agents/{id}", handler.getAgent)
@@ -233,7 +233,11 @@ func (h agentRouteHandler) getRuntimeLogs(e *httpx.Event) error {
 	if err != nil {
 		return err
 	}
-	query := runtimeLogQueryFromRequest(e.Request, requestTenantID(e, ownerID))
+	tenantID, tenantErr := tenantguard.TenantScope(requestExplicitTenantID(e), ownerID, "techstack.runtime-logs.read")
+	if tenantErr != nil {
+		return tenantErr
+	}
+	query := runtimeLogQueryFromRequest(e.Request, tenantID)
 	if h.grpcServer == nil {
 		return httpx.Success(e, http.StatusOK, agentLogsResponse(nil))
 	}
@@ -245,6 +249,10 @@ func (h agentRouteHandler) streamRuntimeLogs(e *httpx.Event) error {
 	ownerID, authErr := requireAuth(e)
 	if authErr != nil {
 		return authErr
+	}
+	tenantID, tenantErr := tenantguard.TenantScope(requestExplicitTenantID(e), ownerID, "techstack.runtime-logs.stream")
+	if tenantErr != nil {
+		return tenantErr
 	}
 	server, err := h.requireGRPCServer(e)
 	if err != nil {
@@ -261,7 +269,7 @@ func (h agentRouteHandler) streamRuntimeLogs(e *httpx.Event) error {
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "SSE not supported", nil)
 	}
 
-	query := runtimeLogQueryFromRequest(e.Request, requestTenantID(e, ownerID))
+	query := runtimeLogQueryFromRequest(e.Request, tenantID)
 	history := server.GetRuntimeLogs(query)
 	if sendErr := sendSSEEvent(e.Response, "history", agentLogsResponse(history)); sendErr != nil {
 		return nil
@@ -338,7 +346,7 @@ func agentLogResponse(entry grpcserver.AgentLogEntry) map[string]any {
 	put("tenant_id", entry.TenantID)
 	put("agent_id", entry.AgentID)
 	put("source", entry.Source)
-	put("stack_id", entry.StackID)
+	put("kit_deployment_id", entry.StackID)
 	put("job_id", entry.JobID)
 	put("lease_id", entry.LeaseID)
 	put("provider", entry.Provider)

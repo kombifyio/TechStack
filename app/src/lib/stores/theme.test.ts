@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { get } from "svelte/store";
 
 // The default mock is `browser: false`, which short-circuits getInitialTheme.
-vi.mock("$app/environment", () => ({
+vi.mock("$app/env", () => ({
   browser: true,
 }));
 
@@ -44,7 +44,7 @@ describe("theme store", () => {
   });
 
   it("adopts the portal theme from ?theme= so the embed does not flash", async () => {
-    // Kombify Cloud puts its own theme on the iframe src. Its `theme`
+    // kombify Cloud puts its own theme on the iframe src. Its `theme`
     // postMessage can only land after our bridge announces "ready", which is
     // too late for the first paint.
     window.history.replaceState({}, "", "/?embedded=true&theme=light");

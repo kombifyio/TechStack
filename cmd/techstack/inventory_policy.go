@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	commonfga "github.com/kombifyio/go-common/fga"
+	commonfga "github.com/kombifyio/techstack/internal/gocommon/fga"
 
 	"github.com/kombifyio/techstack/internal/routes"
 	"github.com/kombifyio/techstack/pkg/config"

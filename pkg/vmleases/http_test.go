@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kombifyio/go-common/servicecall"
+	"github.com/kombifyio/techstack/internal/gocommon/servicecall"
 )
 
 const testServicecallFixture = "auth-secret"

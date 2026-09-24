@@ -1,24 +1,24 @@
 <script lang="ts">
   import type {
     CredentialType,
-    PBWalletItem,
+    WalletItem,
     WalletEntryArea,
-  } from "$lib/stores/wallet";
-  import { parseApiError } from "$lib/api/errors";
-  import { buildWalletEntryPayload } from "$lib/wallet/payload";
+  } from "#lib/wallet/types.js";
+  import { parseApiError } from "#lib/api/errors.js";
+  import { buildWalletEntryPayload } from "#lib/wallet/payload.js";
 
   // Props
   interface Props {
-    credential?: Partial<PBWalletItem>;
+    credential?: Partial<WalletItem>;
     mode?: WalletEntryArea;
-    onSave: (data: Partial<PBWalletItem>) => Promise<void>;
+    onSave: (data: Partial<WalletItem>) => Promise<void>;
     onCancel: () => void;
     saving?: boolean;
   }
 
   let { credential, mode, onSave, onCancel, saving = false }: Props = $props();
 
-  function inferWalletArea(item?: Partial<PBWalletItem>): WalletEntryArea {
+  function inferWalletArea(item?: Partial<WalletItem>): WalletEntryArea {
     if (item?.item_class === "launch" || item?.access_mode === "open") {
       return "tools";
     }
@@ -246,7 +246,7 @@
           expires_at: expiresAt || undefined,
           source_type: credential?.source_type,
           source_ref: credential?.source_ref,
-          stack_id: credential?.stack_id,
+          kit_deployment_id: credential?.kit_deployment_id,
           service_id: credential?.service_id,
         }),
       );
@@ -271,7 +271,7 @@
 <form onsubmit={handleSubmit} class="space-y-6">
   {#if error}
     <div
-      class="p-4 rounded-lg bg-red-900/30 border border-red-500/50 text-red-300"
+      class="p-4 rounded-xl border border-destructive/30 bg-destructive/5 text-destructive"
     >
       {error}
     </div>
@@ -279,8 +279,8 @@
 
   <!-- Wallet Area -->
   <div>
-    <span class="block text-sm font-medium text-gray-300 mb-2">
-      Wallet Area <span class="text-red-400">*</span>
+    <span class="block text-sm font-medium text-foreground mb-2">
+      Wallet Area <span class="text-destructive">*</span>
     </span>
     <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
       {#each walletAreas as area}
@@ -290,7 +290,7 @@
           class="p-3 rounded-lg border text-left transition-colors {walletArea ===
           area.value
             ? 'bg-primary/10 border-primary/50 text-primary'
-            : 'bg-gray-900 border-gray-700 text-gray-400 hover:border-gray-600'}"
+            : 'bg-card border-border text-muted-foreground hover:border-muted-foreground'}"
         >
           <div class="text-sm font-medium">{area.label}</div>
           <div class="text-xs mt-1 text-current/80">{area.description}</div>
@@ -301,15 +301,15 @@
 
   <!-- Name -->
   <div>
-    <label for="name" class="block text-sm font-medium text-gray-300 mb-2">
-      Name <span class="text-red-400">*</span>
+    <label for="name" class="block text-sm font-medium text-foreground mb-2">
+      Name <span class="text-destructive">*</span>
     </label>
     <input
       id="name"
       type="text"
       bind:value={name}
       placeholder={getNamePlaceholder()}
-      class="w-full px-4 py-3 bg-gray-900 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:border-primary focus:outline-none"
+      class="w-full px-4 py-3 bg-input border border-border rounded-lg text-foreground placeholder-muted-foreground focus:border-primary focus:outline-none"
     />
   </div>
 
@@ -317,9 +317,9 @@
   <div>
     <span
       id="credential-type-label"
-      class="block text-sm font-medium text-gray-300 mb-2"
+      class="block text-sm font-medium text-foreground mb-2"
     >
-      Credential Type <span class="text-red-400">*</span>
+      Credential Type <span class="text-destructive">*</span>
     </span>
     <div
       class="grid grid-cols-2 md:grid-cols-3 gap-2"
@@ -333,9 +333,9 @@
           class="p-3 rounded-lg border text-left transition-colors {kind ===
           type.value
             ? 'bg-primary/10 border-primary/50 text-primary'
-            : 'bg-gray-900 border-gray-700 text-gray-400 hover:border-gray-600'}"
+            : 'bg-card border-border text-muted-foreground hover:border-muted-foreground'}"
         >
-          <span class="text-xs font-mono mr-2 px-1.5 py-0.5 rounded bg-gray-800"
+          <span class="text-xs font-mono mr-2 px-1.5 py-0.5 rounded bg-muted"
             >{type.abbr}</span
           >
           <span class="text-sm">{type.label}</span>
@@ -349,7 +349,7 @@
     <div>
       <label
         for="username"
-        class="block text-sm font-medium text-gray-300 mb-2"
+        class="block text-sm font-medium text-foreground mb-2"
       >
         {getUsernameLabel()}
       </label>
@@ -358,19 +358,19 @@
         type="text"
         bind:value={username}
         placeholder={getUsernamePlaceholder()}
-        class="w-full px-4 py-3 bg-gray-900 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:border-primary focus:outline-none"
+        class="w-full px-4 py-3 bg-input border border-border rounded-lg text-foreground placeholder-muted-foreground focus:border-primary focus:outline-none"
       />
     </div>
   {/if}
 
   <!-- Secret -->
   <div>
-    <label for="secret" class="block text-sm font-medium text-gray-300 mb-2">
+    <label for="secret" class="block text-sm font-medium text-foreground mb-2">
       {getSecretLabel()}
       {#if isSecretRequired()}
-        <span class="text-red-400">*</span>
+        <span class="text-destructive">*</span>
       {:else}
-        <span class="text-gray-500">(optional)</span>
+        <span class="text-muted-foreground">(optional)</span>
       {/if}
     </label>
     {#if isMultilineSecret()}
@@ -379,7 +379,7 @@
         bind:value={secret}
         rows="6"
         placeholder={getSecretPlaceholder()}
-        class="w-full px-4 py-3 bg-gray-900 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:border-primary focus:outline-none font-mono text-sm"
+        class="w-full px-4 py-3 bg-input border border-border rounded-lg text-foreground placeholder-muted-foreground focus:border-primary focus:outline-none font-mono text-sm"
       ></textarea>
     {:else}
       <input
@@ -387,7 +387,7 @@
         type="password"
         bind:value={secret}
         placeholder={getSecretPlaceholder()}
-        class="w-full px-4 py-3 bg-gray-900 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:border-primary focus:outline-none font-mono"
+        class="w-full px-4 py-3 bg-input border border-border rounded-lg text-foreground placeholder-muted-foreground focus:border-primary focus:outline-none font-mono"
       />
     {/if}
   </div>
@@ -395,27 +395,27 @@
   <!-- TOTP (optional) -->
   {#if kind === "password"}
     <div>
-      <label for="totp" class="block text-sm font-medium text-gray-300 mb-2">
-        TOTP <span class="text-gray-500">(optional)</span>
+      <label for="totp" class="block text-sm font-medium text-foreground mb-2">
+        TOTP <span class="text-muted-foreground">(optional)</span>
       </label>
       <input
         id="totp"
         type="text"
         bind:value={totp}
         placeholder="otpauth://totp/... or base32 secret"
-        class="w-full px-4 py-3 bg-gray-900 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:border-primary focus:outline-none font-mono"
+        class="w-full px-4 py-3 bg-input border border-border rounded-lg text-foreground placeholder-muted-foreground focus:border-primary focus:outline-none font-mono"
       />
     </div>
   {/if}
 
   <!-- URL (optional) -->
   <div>
-    <label for="url" class="block text-sm font-medium text-gray-300 mb-2">
+    <label for="url" class="block text-sm font-medium text-foreground mb-2">
       {getUrlLabel()}
       {#if isUrlRequired()}
-        <span class="text-red-400">*</span>
+        <span class="text-destructive">*</span>
       {:else}
-        <span class="text-gray-500">(optional)</span>
+        <span class="text-muted-foreground">(optional)</span>
       {/if}
     </label>
     <input
@@ -423,51 +423,54 @@
       type="url"
       bind:value={url}
       placeholder={getUrlPlaceholder()}
-      class="w-full px-4 py-3 bg-gray-900 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:border-primary focus:outline-none"
+      class="w-full px-4 py-3 bg-input border border-border rounded-lg text-foreground placeholder-muted-foreground focus:border-primary focus:outline-none"
     />
   </div>
 
   <!-- Expiry (optional) -->
   <div>
-    <label for="expires" class="block text-sm font-medium text-gray-300 mb-2">
-      Expiry Date <span class="text-gray-500">(optional)</span>
+    <label for="expires" class="block text-sm font-medium text-foreground mb-2">
+      Expiry Date <span class="text-muted-foreground">(optional)</span>
     </label>
     <input
       id="expires"
       type="date"
       bind:value={expiresAt}
-      class="w-full px-4 py-3 bg-gray-900 border border-gray-700 rounded-lg text-white focus:border-primary focus:outline-none"
+      class="w-full px-4 py-3 bg-input border border-border rounded-lg text-foreground focus:border-primary focus:outline-none"
     />
   </div>
 
   <!-- Notes (optional) -->
   <div>
-    <label for="notes" class="block text-sm font-medium text-gray-300 mb-2">
-      Notes <span class="text-gray-500">(optional)</span>
+    <label for="notes" class="block text-sm font-medium text-foreground mb-2">
+      Notes <span class="text-muted-foreground">(optional)</span>
     </label>
     <textarea
       id="notes"
       bind:value={notes}
       rows="3"
       placeholder={getNotesPlaceholder()}
-      class="w-full px-4 py-3 bg-gray-900 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:border-primary focus:outline-none"
+      class="w-full px-4 py-3 bg-input border border-border rounded-lg text-foreground placeholder-muted-foreground focus:border-primary focus:outline-none"
     ></textarea>
   </div>
 
   <!-- Actions -->
-  <div class="flex justify-end gap-3 pt-4 border-t border-gray-700">
+  <div class="flex justify-end gap-3 pt-4 border-t border-border">
     <button
       type="button"
       onclick={onCancel}
       disabled={saving}
-      class="px-4 py-2 text-sm bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 text-white rounded-lg transition-colors"
+      data-kx="control"
+      class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
     >
       Cancel
     </button>
     <button
       type="submit"
       disabled={saving}
-      class="px-4 py-2 text-sm bg-primary hover:bg-primary/90 disabled:bg-primary/50 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
+      data-kx="control"
+      data-variant="primary"
+      class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
     >
       {#if saving}
         <span class="flex items-center gap-2">

@@ -1,4 +1,4 @@
-import type { StackOperationServer } from "$lib/api/stacks";
+import type { StackOperationServer } from "#lib/api/stacks.js";
 
 export function isManagedRuntimeServer(
   server: Pick<StackOperationServer, "source" | "lease_id">,

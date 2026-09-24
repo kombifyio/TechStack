@@ -41,7 +41,6 @@ type Config struct {
 	Database            DatabaseConfig        `yaml:"database"`
 	Logging             LoggingConfig         `yaml:"logging"`
 	Monitoring          MonitoringConfig      `yaml:"monitoring"`
-	Backup              BackupConfig          `yaml:"backup"`
 	Drift               DriftConfig           `yaml:"drift"`
 	StackKitsDir        string                `yaml:"stackkits_dir"` // Path to StackKits directory (TECHSTACK_STACKKITS_DIR)
 }
@@ -71,13 +70,17 @@ type ServerConfig struct {
 	Environment    string   `yaml:"environment"`      // development, staging, production, local
 	RateLimitRPS   float64  `yaml:"rate_limit_rps"`   // requests per second (default: 10)
 	RateLimitBurst int      `yaml:"rate_limit_burst"` // max burst size (default: 20)
-	DataDir        string   `yaml:"data_dir"`         // Path to data directory (default: pb_data)
+	// Replicas is the number of control-plane replicas sharing the configured
+	// rate budget. The in-process limiter is per replica, so each replica
+	// enforces budget/replicas to keep the aggregate near the configured
+	// total. Set TECHSTACK_REPLICAS when scaling out.
+	Replicas int  `yaml:"replicas"`
+	DataDir  string `yaml:"data_dir"` // Path to data directory (default: pb_data)
 
 	// gRPC Queue Backpressure Settings (S7)
 	GRPCQueueMaxSize          int    `yaml:"grpc_queue_max_size"`          // Max commands in queue (default: 1000)
 	GRPCQueueOverflowStrategy string `yaml:"grpc_queue_overflow_strategy"` // "reject" or "drop-oldest" (default: reject)
 	GRPCQueueWarningThreshold int    `yaml:"grpc_queue_warning_threshold"` // Percentage for warning logs (default: 80)
-	GRPCTofuQueueMaxSize      int    `yaml:"grpc_tofu_queue_max_size"`     // Max tofu commands in queue (default: 100)
 	RuntimeLogPath            string `yaml:"runtime_log_path"`             // JSONL runtime log spool path (TECHSTACK_RUNTIME_LOG_PATH)
 	RuntimeLogMaxEntries      int    `yaml:"runtime_log_max_entries"`      // In-memory runtime log query buffer (default: 5000)
 }
@@ -123,35 +126,20 @@ func (c MonitoringConfig) IngestFreshnessTTLDuration() time.Duration {
 	return 90 * time.Second
 }
 
-// BackupConfig holds backup and S3 settings
-type BackupConfig struct {
-	// Backup scheduling
-	Enabled   bool   `yaml:"enabled"`   // Enable automated backups (TECHSTACK_BACKUP_ENABLED)
-	Interval  string `yaml:"interval"`  // Backup interval e.g. "24h", "12h", "1h" (TECHSTACK_BACKUP_INTERVAL)
-	Retention int    `yaml:"retention"` // Number of backups to keep (TECHSTACK_BACKUP_RETENTION)
-	BackupDir string `yaml:"backup_dir"`
-
-	// S3 configuration
-	S3Enabled   bool   `yaml:"s3_enabled"`    // Enable S3 upload (TECHSTACK_S3_ENABLED)
-	S3Bucket    string `yaml:"s3_bucket"`     // S3 bucket name (TECHSTACK_S3_BUCKET)
-	S3Endpoint  string `yaml:"s3_endpoint"`   // S3/MinIO endpoint (TECHSTACK_S3_ENDPOINT)
-	S3AccessKey string `yaml:"s3_access_key"` // S3 access key (TECHSTACK_S3_ACCESS_KEY)
-	S3SecretKey string `yaml:"s3_secret_key"` // S3 secret key (TECHSTACK_S3_SECRET_KEY)
-	S3Region    string `yaml:"s3_region"`     // S3 region (TECHSTACK_S3_REGION)
-	S3Prefix    string `yaml:"s3_prefix"`     // S3 key prefix for backups (TECHSTACK_S3_PREFIX)
-}
-
-// DefaultCORSOrigins returns secure default CORS origins for development.
+// defaultCORSOrigins contains the secure default CORS origins for development.
 // In production, these should be explicitly configured via TECHSTACK_CORS_ORIGINS.
-var DefaultCORSOrigins = []string{
+var defaultCORSOrigins = []string{
 	"http://localhost:5173", // SvelteKit dev server
 	"http://localhost:5261", // kombifyTechstack UI (docker-compose/local)
-	"http://localhost:8090", // PocketBase default
 	"http://localhost:5260", // kombifyTechstack API
 	"http://127.0.0.1:5173",
 	"http://127.0.0.1:5261",
-	"http://127.0.0.1:8090",
 	"http://127.0.0.1:5260",
+}
+
+// DefaultCORSOrigins returns an independent snapshot of the development defaults.
+func DefaultCORSOrigins() []string {
+	return append([]string(nil), defaultCORSOrigins...)
 }
 
 // DefaultConfig returns a configuration with sensible defaults
@@ -164,16 +152,16 @@ func DefaultConfig() *Config {
 		Server: ServerConfig{
 			ListenAddr:     ":5260",
 			GRPCAddr:       ":5263",
-			CORSOrigins:    DefaultCORSOrigins,
+			CORSOrigins:    DefaultCORSOrigins(),
 			Environment:    "development",
 			RateLimitRPS:   10, // 10 requests per second
 			RateLimitBurst: 20, // burst of 20 requests
+			Replicas:       1,  // in-process rate budgets are divided across this many replicas
 			DataDir:        "pb_data",
 			// gRPC Queue Backpressure defaults (S7)
 			GRPCQueueMaxSize:          1000,     // 1000 commands max
 			GRPCQueueOverflowStrategy: "reject", // reject new commands when full
 			GRPCQueueWarningThreshold: 80,       // warn at 80% capacity
-			GRPCTofuQueueMaxSize:      100,      // 100 tofu commands max
 			RuntimeLogMaxEntries:      5000,     // bounded local runtime log query buffer
 		},
 		Database: DatabaseConfig{
@@ -190,15 +178,6 @@ func DefaultConfig() *Config {
 			IngestFreshnessTTL:        "90s",
 			OTLPLaneRequirement:       "required",
 			LegacyPushLaneRequirement: "optional",
-		},
-		Backup: BackupConfig{
-			Enabled:   false,
-			Interval:  "24h",
-			Retention: 7,
-			BackupDir: "./backups",
-			S3Enabled: false,
-			S3Region:  "us-east-1",
-			S3Prefix:  "techstack-backups/",
 		},
 		Drift: DriftConfig{
 			Enabled:   false,
@@ -226,6 +205,7 @@ func Load(configPath string) (*Config, error) {
 			"/etc/techstack/config.yaml",
 			filepath.Join(os.Getenv("HOME"), ".techstack", "config.yaml"),
 		} {
+			// #nosec G703 -- candidates are application-owned defaults, including the operator's home config.
 			if _, err := os.Stat(path); err == nil {
 				if err := cfg.loadFromFile(path); err != nil {
 					return nil, fmt.Errorf("failed to load config file %s: %w", path, err)
@@ -244,6 +224,7 @@ func Load(configPath string) (*Config, error) {
 }
 
 func (c *Config) loadFromFile(path string) error {
+	// #nosec G703 -- configPath is an explicit operator-selected local configuration file.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -315,17 +296,22 @@ func (c *Config) loadFromEnv() error {
 	c.Server.Environment = envStr("TECHSTACK_ENV", c.Server.Environment)
 	if v := os.Getenv("TECHSTACK_CORS_ORIGINS"); v != "" {
 		c.Server.CORSOrigins = SplitOriginList(v)
+	} else if c.IsProduction() {
+		c.Server.CORSOrigins = nil
 	}
 
 	// Rate limiting settings
 	c.Server.RateLimitRPS = envFloat("TECHSTACK_RATE_LIMIT_RPS", c.Server.RateLimitRPS)
 	c.Server.RateLimitBurst = envInt("TECHSTACK_RATE_LIMIT_BURST", c.Server.RateLimitBurst)
+	c.Server.Replicas = envInt("TECHSTACK_REPLICAS", c.Server.Replicas)
+	if c.Server.Replicas < 1 {
+		c.Server.Replicas = 1
+	}
 
 	// gRPC Queue Backpressure settings (S7)
 	c.Server.GRPCQueueMaxSize = envInt("TECHSTACK_GRPC_QUEUE_MAX_SIZE", c.Server.GRPCQueueMaxSize)
 	c.Server.GRPCQueueOverflowStrategy = envStr("TECHSTACK_GRPC_QUEUE_OVERFLOW_STRATEGY", c.Server.GRPCQueueOverflowStrategy)
 	c.Server.GRPCQueueWarningThreshold = envInt("TECHSTACK_GRPC_QUEUE_WARNING_THRESHOLD", c.Server.GRPCQueueWarningThreshold)
-	c.Server.GRPCTofuQueueMaxSize = envInt("TECHSTACK_GRPC_TOFU_QUEUE_MAX_SIZE", c.Server.GRPCTofuQueueMaxSize)
 	c.Server.RuntimeLogMaxEntries = envInt("TECHSTACK_RUNTIME_LOG_MAX_ENTRIES", c.Server.RuntimeLogMaxEntries)
 
 	// Database settings
@@ -346,35 +332,12 @@ func (c *Config) loadFromEnv() error {
 
 	// Simulation removed (cleanup plan 2026-04-27 phase 3.1).
 
-	// Backup settings
-	if envBool("TECHSTACK_BACKUP_ENABLED") {
-		c.Backup.Enabled = true
-	}
-	c.Backup.Interval = envStr("TECHSTACK_BACKUP_INTERVAL", c.Backup.Interval)
-	c.Backup.Retention = envInt("TECHSTACK_BACKUP_RETENTION", c.Backup.Retention)
-	c.Backup.BackupDir = envStr("TECHSTACK_BACKUP_DIR", c.Backup.BackupDir)
-
-	// S3 settings
-	if envBool("TECHSTACK_S3_ENABLED") {
-		c.Backup.S3Enabled = true
-	}
-	c.Backup.S3Bucket = envStr("TECHSTACK_S3_BUCKET", c.Backup.S3Bucket)
-	c.Backup.S3Endpoint = envStr("TECHSTACK_S3_ENDPOINT", c.Backup.S3Endpoint)
-	c.Backup.S3AccessKey = envStr("TECHSTACK_S3_ACCESS_KEY", c.Backup.S3AccessKey)
-	c.Backup.S3SecretKey = envStr("TECHSTACK_S3_SECRET_KEY", c.Backup.S3SecretKey)
-	c.Backup.S3Region = envStr("TECHSTACK_S3_REGION", c.Backup.S3Region)
-	c.Backup.S3Prefix = envStr("TECHSTACK_S3_PREFIX", c.Backup.S3Prefix)
-
 	// Server data directory
 	c.Server.DataDir = envStr("TECHSTACK_DATA_DIR", c.Server.DataDir)
 	c.Server.RuntimeLogPath = envStr("TECHSTACK_RUNTIME_LOG_PATH", c.Server.RuntimeLogPath)
 	if c.Server.RuntimeLogPath == "" {
 		c.Server.RuntimeLogPath = filepath.Join(c.Server.DataDir, "runtime-logs.jsonl")
 	}
-	if c.Backup.BackupDir == "" || c.Backup.BackupDir == "./backups" {
-		c.Backup.BackupDir = filepath.Join(c.Server.DataDir, "backups")
-	}
-
 	// StackKits directory
 	c.StackKitsDir = envStr("TECHSTACK_STACKKITS_DIR", c.StackKitsDir)
 
@@ -583,14 +546,4 @@ func requireLoopbackListen(name, addr string) error {
 		return fmt.Errorf("TECHSTACK_ENV=local requires a loopback %s, got %q", name, addr)
 	}
 	return nil
-}
-
-// BackupIntervalDuration returns the backup interval as a time.Duration.
-// Defaults to 24h if the interval cannot be parsed.
-func (c *BackupConfig) BackupIntervalDuration() time.Duration {
-	d, err := time.ParseDuration(c.Interval)
-	if err != nil {
-		return 24 * time.Hour
-	}
-	return d
 }

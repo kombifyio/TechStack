@@ -49,7 +49,8 @@ export interface DeploymentRequirements {
 export function calculateRequirements(config: {
   provider?: string;
   serverProvisioning?: {
-    mode?: "kombify-cloud" | "connect-remote" | "install-command";
+    mode?:
+      "kombify-cloud" | "connect-remote" | "install-command" | "hypervisor";
   };
   network?: { accessMode?: string };
   goals?: Partial<
@@ -74,6 +75,23 @@ export function calculateRequirements(config: {
   const details: string[] = [];
 
   const serverProvisioningMode = config.serverProvisioning?.mode;
+
+  if (serverProvisioningMode === "hypervisor") {
+    return {
+      minCloudServers: 0,
+      minLocalServers: 1,
+      minTotalServers: 1,
+      description: "Ubuntu guest on your Proxmox hypervisor",
+      details: [
+        "Techstack prepares the VM, then continues the standard StackKits installation.",
+        ...(config.goals?.["smart-home"]
+          ? [
+              "Home Assistant OS can run in a separate appliance VM on the same hypervisor.",
+            ]
+          : []),
+      ],
+    };
+  }
 
   if (serverProvisioningMode === "kombify-cloud") {
     minCloudServers = 1;
@@ -216,7 +234,7 @@ export function generateInstallCommands(
       platform: "linux",
       command: `curl -fsSL ${baseUrl}/install.sh | KOMBI_SERVER="${baseUrl}" KOMBI_TOKEN="${registrationToken}" TECHSTACK_AS_SERVICE=1 bash`,
       description:
-        "Linux (recommended) — installs the persistent outbound Guard through the Core/API URL (/install.sh). If running on another host/VM, replace localhost with the reachable IP/domain of your kombify-TechStack server.",
+        "Linux (recommended) — installs the persistent outbound Guard through the Core/API URL (/install.sh). If running on another host/VM, replace localhost with the reachable IP/domain of your kombify-Techstack server.",
     },
     {
       platform: "docker",

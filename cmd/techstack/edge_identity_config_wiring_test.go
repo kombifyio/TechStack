@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kombifyio/go-common/authsession"
-	commonedgeauth "github.com/kombifyio/go-common/edgeauth"
+	"github.com/kombifyio/techstack/internal/gocommon/authsession"
+	commonedgeauth "github.com/kombifyio/techstack/internal/gocommon/edgeauth"
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/identity"
@@ -55,7 +55,7 @@ func TestSignedEdgeDemoFirstLoginBootstrapsEmptyAuthProjection(t *testing.T) {
 	})
 	router.GET("/api/v1/stacks", func(e *httpx.Event) error {
 		id := identity.FromContext(e.Request.Context())
-		if id == nil || id.UserID != demoUser || id.OrgID != demoTenant {
+		if id == nil || id.UserID != demoTenant || id.OrgID != demoTenant {
 			http.Error(e.Response, "demo edge identity missing", http.StatusUnauthorized)
 			return nil
 		}

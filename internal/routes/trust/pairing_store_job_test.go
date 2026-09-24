@@ -1,11 +1,17 @@
 package trust
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/kombifyio/techstack/pkg/controlplane"
+	"github.com/kombifyio/techstack/pkg/httpx"
+	"github.com/kombifyio/techstack/pkg/identity"
 )
 
 // TestCreateStorePairingJobReturnsCreationJob covers the BYOS add-server fix:
@@ -119,6 +125,35 @@ func TestMintStackPairingTokenMintsTokenAndJob(t *testing.T) {
 
 // TestMintStackPairingTokenStackLessSkipsJob keeps the stack-less mint shape
 // of the trust endpoint intact: token only, no registration job.
+func TestMintStackPairingTokenConnectRemoteCreatesRemoteEnrollmentJob(t *testing.T) {
+	store := controlplane.NewMemoryStore()
+	ctx := context.Background()
+	stack, err := store.CreateStack(ctx, controlplane.CreateStackRequest{
+		ID: "stack-remote", TenantID: "tenant-mint", OwnerSubjectID: "owner-mint", Name: "Remote Stack",
+	})
+	if err != nil {
+		t.Fatalf("seed stack: %v", err)
+	}
+	stores := RouteStores{Stacks: store, Workers: store, Jobs: store}
+	minted, err := MintStackPairingToken(ctx, stores, "tenant-mint", "owner-mint", stack, PairingTokenParams{
+		Name:                   "Remote Node",
+		StackID:                stack.ID,
+		ServerProvisioningMode: "connect-remote",
+		ServerRemoteHost:       "node.example.test",
+		ServerRemoteUser:       "root",
+	})
+	if err != nil {
+		t.Fatalf("MintStackPairingToken: %v", err)
+	}
+	job, err := store.GetJob(ctx, "tenant-mint", minted.JobID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if job.Type != "remote_enrollment" || job.State != "pending" {
+		t.Fatalf("unexpected connect-remote job: type=%q state=%q", job.Type, job.State)
+	}
+}
+
 func TestMintStackPairingTokenStackLessSkipsJob(t *testing.T) {
 	store := controlplane.NewMemoryStore()
 	stores := RouteStores{Workers: store, Jobs: store}
@@ -130,4 +165,65 @@ func TestMintStackPairingTokenStackLessSkipsJob(t *testing.T) {
 	if minted.Token == "" || minted.JobID != "" {
 		t.Fatalf("stack-less mint must yield a token and no job: %#v", minted)
 	}
+}
+
+func TestListPairingTokensIsTenantAndOwnerScoped(t *testing.T) {
+	store := controlplane.NewMemoryStore()
+	ctx := context.Background()
+	for _, token := range []controlplane.PairingToken{
+		{ID: "visible", TenantID: "tenant-1", OwnerSubjectID: "owner-1", TokenHash: "hash-1", Status: "active"},
+		{ID: "other-owner", TenantID: "tenant-1", OwnerSubjectID: "owner-2", TokenHash: "hash-2", Status: "active"},
+		{ID: "other-tenant", TenantID: "tenant-2", OwnerSubjectID: "owner-1", TokenHash: "hash-3", Status: "active"},
+	} {
+		if _, err := store.UpsertPairingToken(ctx, token); err != nil {
+			t.Fatalf("seed token: %v", err)
+		}
+	}
+
+	event, recorder := pairingRouteTestEvent(http.MethodGet, "/api/v1/trust/pairing-tokens", "owner-1", "tenant-1", nil)
+	if err := listPairingTokensFromStore(store)(event); err != nil {
+		t.Fatalf("list pairing tokens: %v", err)
+	}
+	var response struct {
+		Data struct {
+			Tokens []struct {
+				ID string `json:"id"`
+			} `json:"tokens"`
+			Count int `json:"count"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Data.Count != 1 || len(response.Data.Tokens) != 1 || response.Data.Tokens[0].ID != "visible" {
+		t.Fatalf("list crossed tenant or owner boundary: %#v", response.Data)
+	}
+}
+
+func TestDeletePairingTokenCannotCrossOwnerBoundary(t *testing.T) {
+	store := controlplane.NewMemoryStore()
+	if _, err := store.UpsertPairingToken(context.Background(), controlplane.PairingToken{
+		ID: "token-1", TenantID: "tenant-1", OwnerSubjectID: "owner-1", TokenHash: "hash-1", Status: "active",
+	}); err != nil {
+		t.Fatalf("seed token: %v", err)
+	}
+	event, recorder := pairingRouteTestEvent(http.MethodDelete, "/api/v1/trust/pairing-tokens/token-1", "owner-2", "tenant-1", nil)
+	event.Request.SetPathValue("id", "token-1")
+	if err := deletePairingTokenFromStore(store)(event); err != nil {
+		t.Fatalf("delete pairing token: %v", err)
+	}
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("cross-owner delete status = %d, want %d", recorder.Code, http.StatusNotFound)
+	}
+	token, err := store.GetPairingTokenByHash(context.Background(), "tenant-1", "hash-1")
+	if err != nil || token.Status != "active" {
+		t.Fatalf("cross-owner delete changed token: token=%#v err=%v", token, err)
+	}
+}
+
+func pairingRouteTestEvent(method, target, ownerID, tenantID string, body []byte) (*httpx.Event, *httptest.ResponseRecorder) {
+	req := httptest.NewRequest(method, target, bytes.NewReader(body))
+	req = req.WithContext(identity.NewContext(req.Context(), &identity.Identity{UserID: ownerID, OrgID: tenantID}))
+	recorder := httptest.NewRecorder()
+	return &httpx.Event{Request: req, Response: recorder}, recorder
 }

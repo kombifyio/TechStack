@@ -8,19 +8,19 @@
    * This component should be included once in the root layout.
    */
   import { goto } from "$app/navigation";
-  import { page } from "$app/stores";
+  import { page } from '$app/state';
   import {
     shortcutsStore,
     shortcutsEnabled,
     pendingKey,
     showShortcutsHelp,
-  } from "$lib/stores/shortcuts";
-  import { authStore } from "$lib/stores/auth.svelte";
+  } from "#lib/stores/shortcuts.js";
+  import { authStore } from "#lib/stores/auth.svelte.js";
   import ShortcutsHelp from "./ShortcutsHelp.svelte";
 
   // Navigation routes for g+key sequences
   const NAVIGATION_ROUTES: Record<string, string> = {
-    h: "/stacks", // Home/Dashboard -> Stacks is the main view
+    h: "/dashboard", // Home opens the owner's singular Homelab dashboard.
     s: "/services",
     m: "/monitoring",
     w: "/wallet",
@@ -66,7 +66,7 @@
     const key = e.key.toLowerCase();
 
     // Handle help modal toggle
-    if (e.key === "?" || (e.shiftKey && key === "/")) {
+    if (e.key === "?" || e.shiftKey && key === "/") {
       e.preventDefault();
       shortcutsStore.toggleHelp();
       return;
@@ -189,20 +189,21 @@
   }
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
+<svelte:window onkeydown={handleKeydown}></svelte:window>
 
 <!-- Pending key indicator -->
 {#if $pendingKey}
   <div
-    class="fixed bottom-4 right-4 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-50"
+    data-kx="plate"
+    class="fixed bottom-4 right-4 px-3 py-2 shadow-lg z-50"
   >
-    <span class="text-gray-400 text-sm">Waiting for key: </span>
+    <span class="text-muted-foreground text-sm">Waiting for key: </span>
     <kbd
-      class="px-2 py-1 bg-gray-700 rounded text-sm font-mono text-primary border border-gray-600"
+      class="px-2 py-1 bg-muted rounded text-sm font-mono text-primary border border-border"
     >
       {$pendingKey}
     </kbd>
-    <span class="text-gray-500 text-sm ml-2">+ ?</span>
+    <span class="text-muted-foreground text-sm ml-2">+ ?</span>
   </div>
 {/if}
 

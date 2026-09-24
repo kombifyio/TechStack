@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { execFile } from "node:child_process";
+import type { MonthlyRuntimeCleanupReadback } from "../../src/lib/api/stacks";
 import {
   chmod,
   mkdir,
@@ -9,8 +10,17 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { runManagedDay2Evidence } from "./managed-day2-evidence";
 import path from "node:path";
 import { promisify } from "node:util";
+import {
+  createJobObservation,
+  managedRuntimeObservationBudgets,
+} from "./runtime-job-observation";
+import {
+  sanitizeSensitiveText,
+  scrubSensitiveValue,
+} from "../../src/lib/security/sensitive-data";
 import {
   approveWorkerViaApi,
   createPairingTokenViaApi,
@@ -54,11 +64,9 @@ const SESSION_COOKIE_NAME =
 const USER_OWNED_RUNTIME_STACKKIT = "basement-kit";
 const MANAGED_RUNTIME_STACKKIT = "cloud-kit";
 const SSH_USER_KNOWN_HOSTS = process.platform === "win32" ? "NUL" : "/dev/null";
-const MANAGED_RUNTIME_PROVISION_TIMEOUT_MS = boundedPositiveInteger(
-  process.env.TECHSTACK_RUNTIME_E2E_MANAGED_PROVISION_TIMEOUT_MS,
-  570_000,
-  840_000,
-);
+const MANAGED_RUNTIME_BUDGETS = managedRuntimeObservationBudgets(process.env);
+const MANAGED_RUNTIME_PROVISION_TIMEOUT_MS =
+  MANAGED_RUNTIME_BUDGETS.preparationMs;
 const MANAGED_RUNTIME_RECOVERY_STACK_ID = String(
   process.env.TECHSTACK_RUNTIME_E2E_RECOVERY_STACK_ID ?? "",
 ).trim();
@@ -163,41 +171,6 @@ interface RuntimeJobListPayload {
 
 interface RuntimeRegistryServicePayload {
   services?: RuntimeStackOperationService[];
-}
-
-/**
- * Canonical server read model element (`GET /api/v1/servers`). The cleanup
- * readback asserts against this route since the Wave 2 cutover — the legacy
- * `/api/v1/registry/servers` projection is no longer the owner-visible source.
- * `lease_id` lives under `provider` on the canonical shape.
- */
-interface RuntimeCanonicalServer {
-  id?: string;
-  stack_id?: string;
-  provider?: { lease_id?: string; ref?: string };
-}
-
-interface ManagedRuntimeCleanupReadback {
-  stack: {
-    status: "hidden" | "archived";
-    record?: Record<string, unknown>;
-  };
-  worker_projection: {
-    status: "absent";
-  };
-  server_projection: {
-    status: "absent";
-  };
-  lease_and_provider_boundary: {
-    status: "not_exposed_by_current_owner_read_apis";
-    reason: string;
-    minimum_missing_read_only_api: {
-      method: "GET";
-      path: "/api/v1/monthly-runtimes/{id}/cleanup-readback";
-      owner_bound: true;
-      required_fields: string[];
-    };
-  };
 }
 
 type ProvisionedDropletResource = Awaited<ReturnType<typeof provisionDroplet>>;
@@ -552,6 +525,7 @@ async function createRuntimeStack(
 async function createManagedRuntimeStackViaWizard(
   page: Page,
   providerId: "centron" | "ionos",
+  onCreated: (stack: { stack_id: string; lease_id?: string }) => void,
 ): Promise<{
   stack: { stack_id: string; job_id?: string };
   stackName: string;
@@ -565,12 +539,16 @@ async function createManagedRuntimeStackViaWizard(
   await page.getByTestId("easy-feature-storage").click();
   await page.getByTestId("wizard-next").click();
   await expect(page.getByTestId("easy-step-2")).toBeVisible();
+  await page.getByTestId("server-branch-new").click();
   await page.getByTestId("server-mode-kombify-cloud").click();
   await expect(page.getByTestId("managed-provider-selector")).toBeVisible();
+  await page.getByText("Provider & server details", { exact: true }).click();
   await page.getByTestId(`managed-provider-${providerId}`).click();
   await expect(
-    page.getByTestId(`managed-provider-${providerId}`),
-  ).toHaveAttribute("aria-pressed", "true");
+    page
+      .getByTestId(`managed-provider-${providerId}`)
+      .locator('input[type="radio"]'),
+  ).toBeChecked();
   await attachScreenshot(
     page,
     `runtime-kombify-cloud-${providerId}-wizard.png`,
@@ -578,10 +556,10 @@ async function createManagedRuntimeStackViaWizard(
 
   await page.getByTestId("wizard-next").click();
   await expect(page.getByTestId("easy-step-3")).toBeVisible();
-  await page.getByTestId("easy-access-home").click();
+  await page.getByTestId("easy-access-anywhere").click();
   await page.getByTestId("wizard-next").click();
   await expect(page.getByTestId("easy-step-4")).toBeVisible();
-  await page.getByTestId("easy-users-me").click();
+  await page.getByTestId("easy-users-solo").click();
   await page.getByTestId("wizard-next").click();
   await expect(page.getByTestId("easy-step-5")).toBeVisible();
   await expect(page.getByTestId("wizard-create")).toBeVisible();
@@ -591,8 +569,8 @@ async function createManagedRuntimeStackViaWizard(
       const url = new URL(response.url());
       return (
         response.request().method() === "POST" &&
-        (url.pathname === "/v1/techstack/stacks" ||
-          url.pathname === "/api/v1/stacks")
+        (url.pathname === "/v1/techstack/wizard/runs" ||
+          url.pathname === "/api/v1/wizard/runs")
       );
     },
     { timeout: CREATE_STACK_REQUEST_TIMEOUT_MS },
@@ -608,8 +586,20 @@ async function createManagedRuntimeStackViaWizard(
     );
   }
 
+  const data = responseJson.data ?? responseJson;
+  const stackId = String(data.stack_id ?? "").trim();
+  if (!stackId) {
+    throw new Error("Managed Wizard create response omitted stack_id");
+  }
+  // Custody must survive any subsequent contract or artifact failure. The
+  // caller already captured its owner-bound Gateway session before creating.
+  onCreated({
+    stack_id: stackId,
+    lease_id: String(data.lease_id ?? "").trim() || undefined,
+  });
+
   const requestUrl = new URL(request.url());
-  if (requestUrl.pathname !== "/v1/techstack/stacks") {
+  if (requestUrl.pathname !== "/v1/techstack/wizard/runs") {
     throw new Error(
       `Managed Wizard create bypassed the signed Gateway path: ${requestUrl.origin}${requestUrl.pathname}`,
     );
@@ -623,24 +613,23 @@ async function createManagedRuntimeStackViaWizard(
   }
 
   const requestBody = request.postDataJSON() as Record<string, any>;
-  const metadata = requestBody?.stack_spec?.metadata ?? {};
+  const intent = requestBody?.intent ?? {};
+  const managed = requestBody?.managed ?? {};
   if (
-    metadata.server_provisioning_mode !== "kombify-cloud" ||
-    metadata.runtime_lane !== "monthly-runtime" ||
-    metadata.provider_id !== providerId
+    intent.schema !== "techstack.wizard-intent/v1" ||
+    intent.run_kind !== "first-run" ||
+    intent.server?.transport !== "kombify-cloud" ||
+    intent.kit_assignment?.mode !== "found" ||
+    managed.provider_id !== providerId ||
+    managed.runtime_offering_id !== "monthly-runtime-standard"
   ) {
     throw new Error(
       `Managed Wizard payload did not bind provider ${providerId}: ${JSON.stringify(redactObject(requestBody))}`,
     );
   }
 
-  const data = responseJson.data ?? responseJson;
-  const stackId = String(data.stack_id ?? "").trim();
-  if (!stackId) {
-    throw new Error("Managed Wizard create response omitted stack_id");
-  }
   const stackName = String(
-    data.name ?? requestBody.stack_spec?.name ?? requestBody.name ?? stackId,
+    data.name ?? requestBody.intent?.name ?? stackId,
   ).trim();
   const gatewayBase = `${requestUrl.origin}/v1/techstack`;
   await attachJson(`kombify-cloud-${providerId}-wizard-create.json`, {
@@ -758,52 +747,116 @@ async function waitForJobTerminal(
   jobId: string,
   timeoutMs = 600_000,
   apiBase = API_BASE,
+  managedObservation?: {
+    onJob: (job: Record<string, unknown>) => void;
+  },
 ) {
-  const deadline = Date.now() + timeoutMs;
+  const observation = createJobObservation(
+    timeoutMs,
+    managedObservation ? MANAGED_RUNTIME_BUDGETS.rolloutMs : undefined,
+  );
   let last: Record<string, unknown> | undefined;
   let lastProgressSignature = "";
   let lastProgressLoggedAt = 0;
-  while (Date.now() < deadline) {
-    last = await getJob(token, jobId, apiBase);
-    const state = String(last.state ?? "");
-    const progressSignature = [
-      state,
-      last.current_step,
-      last.message,
-      last.error,
-      last.error_message,
-    ]
-      .map((value) => String(value ?? ""))
-      .join("|");
-    if (
-      progressSignature !== lastProgressSignature ||
-      Date.now() - lastProgressLoggedAt > 30_000
-    ) {
-      logRuntimeE2E("provision job progress", {
-        job_id: jobId,
+  let phase = "preparation";
+  try {
+    while (observation.remaining() > 0) {
+      last = await getJob(
+        token,
+        jobId,
+        apiBase,
+        observation.snapshot().deadline_ms,
+      );
+      const observed = observation.observe(last);
+      managedObservation?.onJob(last);
+      if (managedObservation && observed.phase !== phase) {
+        phase = observed.phase;
+        managedObservationPhase(
+          "rollout",
+          MANAGED_RUNTIME_BUDGETS.rolloutMs + 30_000,
+        );
+      }
+      const state = String(last.state ?? "");
+      const progressSignature = [
         state,
-        current_step: last.current_step,
-        message: last.message,
-        error: last.error,
-        error_message: last.error_message,
-      });
-      lastProgressSignature = progressSignature;
-      lastProgressLoggedAt = Date.now();
+        last.current_step ?? last.step,
+        last.message,
+        last.error,
+        last.error_message,
+      ]
+        .map((value) => String(value ?? ""))
+        .join("|");
+      if (
+        progressSignature !== lastProgressSignature ||
+        Date.now() - lastProgressLoggedAt > 30_000
+      ) {
+        logRuntimeE2E("provision job progress", {
+          job_id: jobId,
+          state,
+          current_step: last.current_step ?? last.step,
+          phase: observed.phase,
+          deadline: new Date(observed.deadline_ms).toISOString(),
+          message: last.message,
+          error: last.error,
+          error_message: last.error_message,
+        });
+        lastProgressSignature = progressSignature;
+        lastProgressLoggedAt = Date.now();
+      }
+      if (observed.terminal_observed && !observed.expired) return last;
+      await delay(Math.min(3_000, observation.remaining()));
     }
-    if (["completed", "failed", "canceled"].includes(state)) return last;
-    await delay(3_000);
+    throw new Error(
+      `Timed out waiting for job ${jobId} (${observation.snapshot().phase} observation); ${runtimeJobFailureSummary(last ?? {}).slice(0, 2400)}`,
+    );
+  } finally {
+    let finalReadError: string | undefined;
+    // One bounded read closes the poll/deadline race for custody evidence.
+    // Expiry stays latched: a late terminal snapshot never turns timeout into PASS.
+    if (managedObservation && observation.snapshot().expired) {
+      try {
+        const finalJob = await getJob(
+          token,
+          jobId,
+          apiBase,
+          Date.now() + 15_000,
+        );
+        observation.observe(finalJob);
+        managedObservation.onJob(finalJob);
+      } catch (error) {
+        finalReadError = redactText(String(error)).slice(0, 2400);
+      }
+    }
+    const observed = observation.snapshot();
+    await attachJson(
+      `job-${jobId}-observation.json`,
+      redactObject({
+        job_id: jobId,
+        phase: observed.phase,
+        deadline: new Date(observed.deadline_ms).toISOString(),
+        expired: observed.expired,
+        terminal_observed: observed.terminal_observed,
+        last_job: observed.last_job,
+        final_read_error: finalReadError,
+      }),
+    );
   }
-  throw new Error(
-    `Timed out waiting for job ${jobId}; last=${JSON.stringify(last)}`,
-  );
 }
 
-async function getJob(token: string, jobId: string, apiBase = API_BASE) {
+async function getJob(
+  token: string,
+  jobId: string,
+  apiBase = API_BASE,
+  deadline = Date.now() + 120_000,
+) {
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const response = await fetch(
       runtimeApiUrl(apiBase, `/api/v1/jobs/${encodeURIComponent(jobId)}`),
       {
         headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(
+          Math.max(1, Math.min(30_000, deadline - Date.now())),
+        ),
       },
     );
     const text = await response.text();
@@ -815,8 +868,15 @@ async function getJob(token: string, jobId: string, apiBase = API_BASE) {
       const retryAfterSeconds = Number(response.headers.get("retry-after"));
       await delay(
         Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
-          ? Math.min(retryAfterSeconds * 1_000, 30_000)
-          : 5_000 * (attempt + 1),
+          ? Math.max(
+              0,
+              Math.min(
+                retryAfterSeconds * 1_000,
+                30_000,
+                deadline - Date.now(),
+              ),
+            )
+          : Math.max(0, Math.min(5_000 * (attempt + 1), deadline - Date.now())),
       );
       continue;
     }
@@ -831,9 +891,13 @@ async function fetchRuntimeApi<T>(
   token: string,
   path: string,
   apiBase = API_BASE,
+  deadline = Date.now() + 30_000,
 ): Promise<T> {
   const response = await fetch(runtimeApiUrl(apiBase, path), {
     headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(
+      Math.max(1, Math.min(30_000, deadline - Date.now())),
+    ),
   });
   const text = await response.text();
   const json = text ? JSON.parse(text) : {};
@@ -845,113 +909,41 @@ async function fetchRuntimeApi<T>(
   return (json.data ?? json) as T;
 }
 
-function cleanupTargetMatches(
-  record: { stack_id?: string; stackId?: string; lease_id?: string },
-  stackId: string,
-  leaseId: string,
-) {
-  return (
-    String(record.stack_id ?? record.stackId ?? "").trim() === stackId ||
-    String(record.lease_id ?? "").trim() === leaseId
-  );
-}
-
-function terminalStackReadback(
-  stack: Record<string, unknown> | undefined,
-): ManagedRuntimeCleanupReadback["stack"] | undefined {
-  if (!stack) return { status: "hidden" };
-  const state = String(stack.status ?? stack.state ?? stack.lifecycle ?? "")
-    .trim()
-    .toLowerCase();
-  if (["archived", "deleted", "destroyed"].includes(state)) {
-    return { status: "archived", record: stack };
-  }
-  return undefined;
-}
-
-// The cleanup E2E intentionally reads only owner-scoped product projections.
-// It does not invoke a provider status endpoint or infer provider absence from
-// a missing local projection. A future read-only cleanup receipt may close the
-// explicit boundary returned below, but must stay owner-bound and redacted.
+// Read the owner-bound native receipt. Terminal server aggregates remain for
+// audit, so their presence is not a cleanup failure or a substitute for proof.
 async function waitForManagedRuntimeCleanupReadback(args: {
   token: string;
   apiBase: string;
   stackId: string;
   leaseId: string;
   timeoutMs?: number;
-}): Promise<ManagedRuntimeCleanupReadback> {
+}): Promise<MonthlyRuntimeCleanupReadback> {
   const deadline = Date.now() + (args.timeoutMs ?? 120_000);
-  let last: Record<string, unknown> = {};
+  let last: MonthlyRuntimeCleanupReadback | undefined;
   while (Date.now() < deadline) {
-    const [stacks, workers, canonicalServers] = await Promise.all([
-      getStackList(args.token, args.apiBase),
-      fetchRuntimeApi<RuntimeWorkerRecord[]>(
-        args.token,
-        "/api/v1/workers",
-        args.apiBase,
-      ),
-      fetchRuntimeApi<RuntimeCanonicalServer[]>(
-        args.token,
-        "/api/v1/servers",
-        args.apiBase,
-      ),
-    ]);
-    const stack = stacks.find(
-      (candidate) => String(candidate.id ?? "").trim() === args.stackId,
+    last = await fetchRuntimeApi<MonthlyRuntimeCleanupReadback>(
+      args.token,
+      `/api/v1/monthly-runtimes/${encodeURIComponent(args.leaseId)}/cleanup-readback`,
+      args.apiBase,
+      deadline,
     );
-    const terminalStack = terminalStackReadback(stack);
-    const matchingWorkers = workers.filter((worker) =>
-      cleanupTargetMatches(worker, args.stackId, args.leaseId),
-    );
-    const matchingServers = (canonicalServers ?? []).filter((server) =>
-      cleanupTargetMatches(
-        { stack_id: server.stack_id, lease_id: server.provider?.lease_id },
-        args.stackId,
-        args.leaseId,
-      ),
-    );
-    last = {
-      stack: stack ?? null,
-      matching_workers: matchingWorkers,
-      matching_servers: matchingServers,
-    };
     if (
-      terminalStack &&
-      matchingWorkers.length === 0 &&
-      matchingServers.length === 0
+      last?.lease_id === args.leaseId &&
+      last.lease?.desired_terminal &&
+      last.lease.observed_terminal &&
+      last.server?.bound &&
+      last.server.terminal &&
+      last.provider_operation?.found &&
+      last.provider_operation.terminal &&
+      last.provider_operation.absence_evidence_ref?.trim() &&
+      last.provider_operation.capacity_released
     ) {
-      return {
-        stack: terminalStack,
-        worker_projection: { status: "absent" },
-        server_projection: { status: "absent" },
-        lease_and_provider_boundary: {
-          status: "not_exposed_by_current_owner_read_apis",
-          reason:
-            "The current owner-scoped stack, worker, and server projections prove their own terminal visibility only. They do not expose a passive lease terminal receipt, provider absence evidence, or capacity-release fact.",
-          minimum_missing_read_only_api: {
-            method: "GET",
-            path: "/api/v1/monthly-runtimes/{id}/cleanup-readback",
-            owner_bound: true,
-            required_fields: [
-              "lease_id",
-              "desired_state",
-              "cancelled_at",
-              "server.id",
-              "server.lifecycle",
-              "server.desired_state",
-              "provider_absence.verified_at",
-              "provider_absence.receipt_ref",
-              "capacity_release.released_at",
-              "capacity_release.evidence_ref",
-            ],
-          },
-        },
-      };
+      return last;
     }
     await delay(2_000);
   }
   throw new Error(
-    `Timed out waiting for owner-visible managed cleanup stack=${args.stackId} lease=${args.leaseId}; last=${JSON.stringify(redactObject(last))}`,
+    `Timed out waiting for native managed cleanup stack=${args.stackId} lease=${args.leaseId}; last=${JSON.stringify(redactObject(last))}`,
   );
 }
 
@@ -1262,11 +1254,18 @@ async function waitForProvisionJob(
   stack: { stack_id: string; job_id?: string },
   timeoutMs = 600_000,
   apiBase = API_BASE,
+  onJob?: (job: Record<string, unknown>) => void,
 ) {
   if (!stack.job_id) {
     throw new Error(`${scenario} stack creation did not return a job_id`);
   }
-  const job = await waitForJobTerminal(token, stack.job_id, timeoutMs, apiBase);
+  const job = await waitForJobTerminal(
+    token,
+    stack.job_id,
+    timeoutMs,
+    apiBase,
+    onJob ? { onJob } : undefined,
+  );
   await attachJson(`${scenario}-provision-job.json`, redactObject(job));
   if (job.state !== "completed") {
     throw new Error(
@@ -1278,7 +1277,7 @@ async function waitForProvisionJob(
 
 function runtimeJobFailureSummary(job: Record<string, unknown>) {
   const fields = [
-    ["current_step", job.current_step],
+    ["current_step", job.current_step ?? job.step],
     ["message", job.message],
     ["error", job.error],
     ["error_message", job.error_message],
@@ -1448,66 +1447,67 @@ async function validateMonitoringUi(
 
   await page.goto("/monitoring", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("monitoring-page")).toBeVisible();
+
+  // The start page is the availability surface: current state per node, then
+  // the history derived from the transition timeline. It deliberately depends
+  // on no metrics backend, so it must render even when the TSDB is empty.
+  await expect(page.getByTestId("monitoring-section-right-now")).toBeVisible();
+  await expect(page.getByTestId("monitoring-node-summary").first()).toBeVisible(
+    {
+      timeout: 60_000,
+    },
+  );
+  // All three axes are read together and never collapsed.
   await expect(
-    page.getByTestId("monitoring-metric-running-services"),
-  ).toBeVisible();
-  await expect(page.getByTestId("monitoring-metric-active-jobs")).toBeVisible();
-  await expect(page.getByTestId("monitoring-metric-queued-jobs")).toBeVisible();
+    page
+      .getByTestId("monitoring-node-summary")
+      .first()
+      .getByTestId("monitoring-node-axis"),
+  ).toHaveCount(3);
   await expect(
-    page.getByTestId("monitoring-metric-connected-agents"),
+    page.getByTestId("monitoring-section-availability"),
   ).toBeVisible();
-  await expect(page.getByTestId("monitoring-metric-otlp-status")).toBeVisible();
+  await expect(page.getByTestId("monitoring-availability-ratio")).toBeVisible();
+  await expect(page.getByTestId("monitoring-section-ribbons")).toBeVisible();
+  await expect(page.getByTestId("monitoring-section-episodes")).toBeVisible();
+
+  // The metrics pipeline proof moved to the per-server detail, where the
+  // panels are driven by the same range-query endpoint the OTLP baseline used
+  // to report on. Asserting the rendered panels proves the query path
+  // end-to-end rather than a summary string about it.
+  // Navigate from the inventory card rather than a ribbon row: the ribbon
+  // comes from the availability projection, which legitimately omits a node
+  // with no recorded transition in the window.
+  const firstNode = page.getByTestId("monitoring-node-summary").first();
+  await expect(firstNode).toBeVisible({ timeout: 60_000 });
+  await firstNode.click();
+  await expect(page.getByTestId("server-monitoring-page")).toBeVisible({
+    timeout: 60_000,
+  });
+  await expect(page.getByTestId("server-monitoring-axis")).toHaveCount(3);
   await expect(
-    page.getByTestId("monitoring-section-otlp-baseline"),
+    page.getByTestId("server-monitoring-panel").first(),
   ).toBeVisible();
-  await expect(page.getByTestId("monitoring-otlp-status")).toBeVisible();
-  await expect(page.getByTestId("monitoring-query-backend")).toBeVisible();
-  await expect(page.getByTestId("monitoring-ingest-status")).toBeVisible();
-  await expect(page.getByTestId("monitoring-alert-rules")).toBeVisible();
-  await expect(page.getByTestId("monitoring-query-proof")).toBeVisible();
-  await expect(page.getByTestId("monitoring-range-proof")).toBeVisible();
-  await expect(page.getByTestId("monitoring-query-backend")).toContainText(
-    String(health.queryBackend ?? ""),
-  );
-  await expect(page.getByTestId("monitoring-query-backend")).toContainText(
-    String(health.queryBackendStatus ?? ""),
-  );
-  await expect(page.getByTestId("monitoring-ingest-status")).toContainText(
-    String(health.ingestBackend ?? ""),
-  );
-  await expect(page.getByTestId("monitoring-ingest-status")).toContainText(
-    String(health.ingestStatus ?? ""),
-  );
-  const otlpStatus =
-    typeof health.otlp === "object" && health.otlp
-      ? String((health.otlp as Record<string, unknown>).status ?? "")
-      : "";
-  if (otlpStatus) {
-    await expect(page.getByTestId("monitoring-otlp-status")).toContainText(
-      otlpStatus,
-    );
+  // A node whose window carries no recorded transition legitimately has no
+  // ratio; the page must then say so rather than render neither.
+  await expect(page.getByTestId("server-monitoring-history")).toBeVisible();
+  // Every alert rule the API reports is in scope for at least one node, so the
+  // detail page must render the same population the API returned.
+  if (alertRules.length > 0) {
+    await expect(page.getByTestId("server-monitoring-alerts")).toBeVisible();
   }
-  await expect(page.getByTestId("monitoring-alert-rules")).toContainText(
-    `${alertRules.length} rules`,
-  );
-  await expect(page.getByTestId("monitoring-query-proof")).toContainText(
-    "vector:non-empty",
-  );
-  await expect(page.getByTestId("monitoring-range-proof")).toContainText(
-    "matrix:non-empty",
-  );
-  await expect(
-    page.getByTestId("monitoring-section-recent-jobs"),
-  ).toBeVisible();
-  await expect(page.getByTestId("monitoring-section-services")).toBeVisible();
-  await expect(
-    page.getByTestId("monitoring-section-recent-jobs"),
-  ).toContainText(/provision|deploy/i, { timeout: 60_000 });
+  await attachScreenshot(page, `runtime-${scenario}-server-monitoring.png`);
+  await page.goto("/monitoring", { waitUntil: "domcontentloaded" });
 
   if ((opts.minConnectedAgents ?? 0) > 0) {
     await expect
       .poll(
-        () => numericMetricValue(page, "monitoring-metric-connected-agents"),
+        () =>
+          page
+            .locator(
+              '[data-testid="monitoring-node-summary"][data-connection="connected"]',
+            )
+            .count(),
         {
           message:
             "fresh canonical Guard connections must be reflected in the monitoring UI",
@@ -1623,9 +1623,12 @@ async function validateManagedRuntimePostSetupUi(args: {
     args.page.getByTestId("monthly-runtime-action-ssh"),
   ).toBeEnabled();
   await attachScreenshot(args.page, "runtime-kombify-cloud-management.png");
-  await args.page.goto(`/services?stack_id=${args.stackId}`, {
-    waitUntil: "domcontentloaded",
-  });
+  await args.page.goto(
+    `/services?kit_deployment_id=${encodeURIComponent(args.stackId)}`,
+    {
+      waitUntil: "domcontentloaded",
+    },
+  );
   await expect(args.page.getByTestId("services-page")).toBeVisible({
     timeout: 60_000,
   });
@@ -1660,6 +1663,7 @@ async function destroyRuntimeStackViaApi(
     {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(15_000),
     },
   );
   if (response.status === 404) return;
@@ -1931,21 +1935,35 @@ function isLoopbackURL(value: string) {
 }
 
 function redactObject(value: unknown) {
-  return JSON.parse(redactText(JSON.stringify(value)));
+  return scrubSensitiveValue(value);
 }
 
 function redactText(value: string) {
-  return value
-    .replace(/KOMBI_TOKEN=('[^']*'|"[^"]*"|\S+)/g, "KOMBI_TOKEN=[redacted]")
-    .replace(/Bearer\s+[A-Za-z0-9._-]+/g, "Bearer [redacted]")
-    .replace(/"password"\s*:\s*"[^"]*"/g, '"password":"[redacted]"')
-    .replace(/"private_key"\s*:\s*"[^"]*"/g, '"private_key":"[redacted]"');
+  return sanitizeSensitiveText(value);
 }
 
 function logRuntimeE2E(message: string, details: Record<string, unknown>) {
   console.log(
     `[runtime-e2e] ${message}: ${redactText(JSON.stringify(details))}`,
   );
+}
+
+// Playwright measures test timeouts from the test start. Each transition sets
+// an absolute deadline for the current bounded phase; afterEach owns a fresh
+// cleanup window even when the test itself times out.
+const managedPhaseOrigins = new WeakMap<object, number>();
+function managedObservationPhase(phase: string, budgetMs: number) {
+  const info = test.info();
+  const now = performance.now();
+  const origin = managedPhaseOrigins.get(info) ?? now;
+  managedPhaseOrigins.set(info, origin);
+  const elapsed = now - origin;
+  test.setTimeout(elapsed + budgetMs);
+  logRuntimeE2E("phase started", {
+    phase,
+    budget_ms: budgetMs,
+    deadline: new Date(Date.now() + budgetMs).toISOString(),
+  });
 }
 
 function assertNoProviderSecrets(record: unknown) {
@@ -2031,7 +2049,7 @@ test.describe.serial("Runtime E2E scenarios", () => {
       lease_id: string;
       destroy_job_id?: string;
       destroy_job_state?: string;
-      owner_projection_readback: ManagedRuntimeCleanupReadback;
+      native_cleanup_readback: MonthlyRuntimeCleanupReadback;
     }> = [];
     for (const stack of selected) {
       const stackId = String(stack.id ?? "").trim();
@@ -2048,19 +2066,18 @@ test.describe.serial("Runtime E2E scenarios", () => {
         stackId,
         api.apiBase,
       );
-      const ownerProjectionReadback =
-        await waitForManagedRuntimeCleanupReadback({
-          token: api.token,
-          apiBase: api.apiBase,
-          stackId,
-          leaseId,
-        });
+      const cleanupReadback = await waitForManagedRuntimeCleanupReadback({
+        token: api.token,
+        apiBase: api.apiBase,
+        stackId,
+        leaseId,
+      });
       terminalReadbacks.push({
         stack_id: stackId,
         lease_id: leaseId,
         destroy_job_id: String(cleanupJob?.id ?? "") || undefined,
         destroy_job_state: String(cleanupJob?.state ?? "") || undefined,
-        owner_projection_readback: ownerProjectionReadback,
+        native_cleanup_readback: cleanupReadback,
       });
     }
     logRuntimeE2E("managed capacity cleanup batch completed", {
@@ -2079,7 +2096,7 @@ test.describe.serial("Runtime E2E scenarios", () => {
         0,
         candidates.length - selected.length,
       ),
-      terminal_owner_projection_readbacks: terminalReadbacks,
+      native_cleanup_readbacks: terminalReadbacks,
     });
   });
 
@@ -2273,147 +2290,194 @@ test.describe.serial("Runtime E2E scenarios", () => {
   });
 
   for (const leaseProvider of selectedMonthlyRuntimeLeaseProviders()) {
-    test(`kombify-cloud creates a monthly runtime lease via ${leaseProvider.id} and exposes runtime actions`, async ({
-      page,
-    }) => {
-      await authenticateRuntimeUser("cloud", page, RUNTIME_AUTH_OPTIONS);
+    test.describe(`managed ${leaseProvider.id}`, () => {
+      let managedApi: RuntimeGatewaySession | undefined;
+      let stackId = "";
+      let stackName = "";
+      let leaseId = "";
+      test.afterEach(async () => {
+        test.setTimeout(MANAGED_RUNTIME_BUDGETS.cleanupMs);
+        logRuntimeE2E("phase started", {
+          phase: "cleanup",
+          budget_ms: MANAGED_RUNTIME_BUDGETS.cleanupMs,
+          stack_id: stackId,
+          lease_id: leaseId,
+        });
 
-      if (MANAGED_RUNTIME_RECOVERY_STACK_ID) {
-        const requiredConfirmation = `destroy-managed-stack:${MANAGED_RUNTIME_RECOVERY_STACK_ID}`;
-        if (MANAGED_RUNTIME_RECOVERY_CONFIRM !== requiredConfirmation) {
-          throw new Error(
-            `Managed runtime recovery requires TECHSTACK_RUNTIME_E2E_RECOVERY_CONFIRM=${requiredConfirmation}`,
+        if (stackId && managedApi) {
+          const cleanupJob = await destroyRuntimeStackViaApi(
+            managedApi.token,
+            stackId,
+            managedApi.apiBase,
           );
-        }
-        const recoveryApi = await captureGatewayApiSession(page);
-        const recoveryStack = (
-          await getStackList(recoveryApi.token, recoveryApi.apiBase)
-        ).find(
-          (stack) =>
-            String(stack.id ?? "").trim() === MANAGED_RUNTIME_RECOVERY_STACK_ID,
-        );
-        if (!recoveryStack) {
-          await attachJson("kombify-cloud-recovery-cleanup.json", {
+          const cleanupReadback = leaseId
+            ? await waitForManagedRuntimeCleanupReadback({
+                token: managedApi.token,
+                apiBase: managedApi.apiBase,
+                stackId,
+                leaseId,
+              })
+            : undefined;
+          await attachJson("kombify-cloud-cleanup.json", {
             provider_id: leaseProvider.id,
-            stack_id: MANAGED_RUNTIME_RECOVERY_STACK_ID,
-            recovery_status: "already_hidden_or_not_owner_visible",
-            cleanup_claim: "not_made_without_the_original_lease_identity",
+            stack_id: stackId,
+            stack_name: stackName,
+            lease_id: leaseId,
+            destroy_job_id: cleanupJob?.id,
+            destroy_job_state: cleanupJob?.state,
+            native_cleanup_readback: cleanupReadback,
+            cleanup_proof_status: cleanupReadback
+              ? "native_cleanup_verified"
+              : "lease_identity_unavailable_after_failed_setup",
           });
-          return;
         }
-        const recoveryProviderId = String(
-          recoveryStack.provider_id ?? recoveryStack.lease_provider ?? "",
-        )
-          .trim()
-          .toLowerCase();
-        if (!recoveryProviderId) {
-          throw new Error(
-            `Managed runtime recovery target ${MANAGED_RUNTIME_RECOVERY_STACK_ID} has no owner-visible provider id; refusing an unbound cleanup claim`,
+      });
+      test(`kombify-cloud creates a monthly runtime lease via ${leaseProvider.id} and exposes runtime actions`, async ({
+        page,
+      }) => {
+        managedObservationPhase("setup", MANAGED_RUNTIME_BUDGETS.setupMs);
+        await authenticateRuntimeUser("cloud", page, RUNTIME_AUTH_OPTIONS);
+
+        if (MANAGED_RUNTIME_RECOVERY_STACK_ID) {
+          managedObservationPhase(
+            "recovery cleanup",
+            MANAGED_RUNTIME_BUDGETS.cleanupMs,
           );
-        }
-        if (recoveryProviderId !== leaseProvider.id) {
-          const requestedProvider = (
-            process.env.TECHSTACK_RUNTIME_E2E_PROVIDER_ID ?? "all"
-          ).trim();
-          if (requestedProvider !== "all") {
+          const requiredConfirmation = `destroy-managed-stack:${MANAGED_RUNTIME_RECOVERY_STACK_ID}`;
+          if (MANAGED_RUNTIME_RECOVERY_CONFIRM !== requiredConfirmation) {
             throw new Error(
-              `Managed runtime recovery target ${MANAGED_RUNTIME_RECOVERY_STACK_ID} belongs to ${recoveryProviderId}, not requested provider ${leaseProvider.id}`,
+              `Managed runtime recovery requires TECHSTACK_RUNTIME_E2E_RECOVERY_CONFIRM=${requiredConfirmation}`,
             );
           }
-          await attachJson("kombify-cloud-recovery-cleanup.json", {
-            provider_id: leaseProvider.id,
-            stack_id: MANAGED_RUNTIME_RECOVERY_STACK_ID,
-            recovery_status: "skipped_provider_mismatch",
-            recovery_target_provider_id: recoveryProviderId,
-          });
-          return;
-        }
-        const recoveryOperations =
-          await fetchRuntimeApi<RuntimeStackOperationsPayload>(
-            recoveryApi.token,
-            `/api/v1/stacks/${encodeURIComponent(MANAGED_RUNTIME_RECOVERY_STACK_ID)}/operations`,
-            recoveryApi.apiBase,
-          );
-        const recoveryJobs = await fetchRuntimeApi<RuntimeJobListPayload>(
-          recoveryApi.token,
-          `/api/v1/jobs?stack_id=${encodeURIComponent(MANAGED_RUNTIME_RECOVERY_STACK_ID)}&per_page=100`,
-          recoveryApi.apiBase,
-        );
-        const recoveryLeaseId = exactManagedRecoveryLeaseId(
-          recoveryStack,
-          recoveryOperations,
-        );
-        if (!recoveryLeaseId) {
-          throw new Error(
-            `Managed runtime recovery target ${MANAGED_RUNTIME_RECOVERY_STACK_ID} has no single owner-visible foundation lease; refusing an unbound or ambiguous cleanup claim`,
-          );
-        }
-        const abandonedJob = await abandonExactStaleManagedRuntimeJob(
-          recoveryApi.token,
-          recoveryApi.apiBase,
-          MANAGED_RUNTIME_RECOVERY_STACK_ID,
-          recoveryJobs,
-        );
-        const existingDestroy = (recoveryJobs.items ?? []).find((job) => {
-          const type = String(job.type ?? "")
-            .trim()
-            .toLowerCase();
-          const state = String(job.state ?? "")
-            .trim()
-            .toLowerCase();
-          return (
-            type === "destroy" &&
-            ["pending", "running", "waiting"].includes(state)
-          );
-        });
-        const cleanupJob = existingDestroy?.id
-          ? await waitForJobTerminal(
-              recoveryApi.token,
-              existingDestroy.id,
-              300_000,
-              recoveryApi.apiBase,
-            )
-          : await destroyRuntimeStackViaApi(
-              recoveryApi.token,
+          const recoveryApi = await captureGatewayApiSession(page);
+          const recoveryStack = (
+            await getStackList(recoveryApi.token, recoveryApi.apiBase)
+          ).find(
+            (stack) =>
+              String(stack.id ?? "").trim() ===
               MANAGED_RUNTIME_RECOVERY_STACK_ID,
+          );
+          if (!recoveryStack) {
+            await attachJson("kombify-cloud-recovery-cleanup.json", {
+              provider_id: leaseProvider.id,
+              stack_id: MANAGED_RUNTIME_RECOVERY_STACK_ID,
+              recovery_status: "already_hidden_or_not_owner_visible",
+              cleanup_claim: "not_made_without_the_original_lease_identity",
+            });
+            return;
+          }
+          const recoveryProviderId = String(
+            recoveryStack.provider_id ?? recoveryStack.lease_provider ?? "",
+          )
+            .trim()
+            .toLowerCase();
+          if (!recoveryProviderId) {
+            throw new Error(
+              `Managed runtime recovery target ${MANAGED_RUNTIME_RECOVERY_STACK_ID} has no owner-visible provider id; refusing an unbound cleanup claim`,
+            );
+          }
+          if (recoveryProviderId !== leaseProvider.id) {
+            const requestedProvider = (
+              process.env.TECHSTACK_RUNTIME_E2E_PROVIDER_ID ?? "all"
+            ).trim();
+            if (requestedProvider !== "all") {
+              throw new Error(
+                `Managed runtime recovery target ${MANAGED_RUNTIME_RECOVERY_STACK_ID} belongs to ${recoveryProviderId}, not requested provider ${leaseProvider.id}`,
+              );
+            }
+            await attachJson("kombify-cloud-recovery-cleanup.json", {
+              provider_id: leaseProvider.id,
+              stack_id: MANAGED_RUNTIME_RECOVERY_STACK_ID,
+              recovery_status: "skipped_provider_mismatch",
+              recovery_target_provider_id: recoveryProviderId,
+            });
+            return;
+          }
+          const recoveryOperations =
+            await fetchRuntimeApi<RuntimeStackOperationsPayload>(
+              recoveryApi.token,
+              `/api/v1/stacks/${encodeURIComponent(MANAGED_RUNTIME_RECOVERY_STACK_ID)}/operations`,
               recoveryApi.apiBase,
             );
-        if (cleanupJob?.state !== "completed") {
-          throw new Error(
-            `Managed runtime recovery destroy ended with ${String(cleanupJob?.state)}: ${runtimeJobFailureSummary(cleanupJob ?? {})}`,
+          const recoveryJobs = await fetchRuntimeApi<RuntimeJobListPayload>(
+            recoveryApi.token,
+            `/api/v1/jobs?stack_id=${encodeURIComponent(MANAGED_RUNTIME_RECOVERY_STACK_ID)}&per_page=100`,
+            recoveryApi.apiBase,
           );
-        }
-        const ownerProjectionReadback =
-          await waitForManagedRuntimeCleanupReadback({
+          const recoveryLeaseId = exactManagedRecoveryLeaseId(
+            recoveryStack,
+            recoveryOperations,
+          );
+          if (!recoveryLeaseId) {
+            throw new Error(
+              `Managed runtime recovery target ${MANAGED_RUNTIME_RECOVERY_STACK_ID} has no single owner-visible foundation lease; refusing an unbound or ambiguous cleanup claim`,
+            );
+          }
+          const abandonedJob = await abandonExactStaleManagedRuntimeJob(
+            recoveryApi.token,
+            recoveryApi.apiBase,
+            MANAGED_RUNTIME_RECOVERY_STACK_ID,
+            recoveryJobs,
+          );
+          const existingDestroy = (recoveryJobs.items ?? []).find((job) => {
+            const type = String(job.type ?? "")
+              .trim()
+              .toLowerCase();
+            const state = String(job.state ?? "")
+              .trim()
+              .toLowerCase();
+            return (
+              type === "destroy" &&
+              ["pending", "running", "waiting"].includes(state)
+            );
+          });
+          const cleanupJob = existingDestroy?.id
+            ? await waitForJobTerminal(
+                recoveryApi.token,
+                existingDestroy.id,
+                300_000,
+                recoveryApi.apiBase,
+              )
+            : await destroyRuntimeStackViaApi(
+                recoveryApi.token,
+                MANAGED_RUNTIME_RECOVERY_STACK_ID,
+                recoveryApi.apiBase,
+              );
+          if (cleanupJob?.state !== "completed") {
+            throw new Error(
+              `Managed runtime recovery destroy ended with ${String(cleanupJob?.state)}: ${runtimeJobFailureSummary(cleanupJob ?? {})}`,
+            );
+          }
+          const cleanupReadback = await waitForManagedRuntimeCleanupReadback({
             token: recoveryApi.token,
             apiBase: recoveryApi.apiBase,
             stackId: MANAGED_RUNTIME_RECOVERY_STACK_ID,
             leaseId: recoveryLeaseId,
           });
-        await attachJson("kombify-cloud-recovery-cleanup.json", {
-          provider_id: leaseProvider.id,
-          stack_id: MANAGED_RUNTIME_RECOVERY_STACK_ID,
-          lease_id: recoveryLeaseId,
-          abandoned_job: abandonedJob,
-          destroy_job_id: cleanupJob?.id,
-          destroy_job_state: cleanupJob?.state,
-          exact_stack_confirmation: true,
-          terminal_owner_projection_readback: ownerProjectionReadback,
-        });
-        return;
-      }
+          await attachJson("kombify-cloud-recovery-cleanup.json", {
+            provider_id: leaseProvider.id,
+            stack_id: MANAGED_RUNTIME_RECOVERY_STACK_ID,
+            lease_id: recoveryLeaseId,
+            abandoned_job: abandonedJob,
+            destroy_job_id: cleanupJob?.id,
+            destroy_job_state: cleanupJob?.state,
+            exact_stack_confirmation: true,
+            native_cleanup_readback: cleanupReadback,
+          });
+          return;
+        }
 
-      let managedApi: RuntimeGatewaySession | undefined;
-      let stackId = "";
-      let stackName = "";
-      let leaseId = "";
-      try {
+        managedApi = await captureGatewayApiSession(page);
         logRuntimeE2E("creating managed lease stack through visible Wizard", {
           provider_id: leaseProvider.id,
         });
         const wizardCreate = await createManagedRuntimeStackViaWizard(
           page,
           leaseProvider.id,
+          (created) => {
+            stackId = created.stack_id;
+            leaseId = created.lease_id ?? "";
+          },
         );
         const stack = wizardCreate.stack;
         managedApi = wizardCreate.api;
@@ -2430,12 +2494,53 @@ test.describe.serial("Runtime E2E scenarios", () => {
           stack_id: stack.stack_id,
           job_id: stack.job_id,
         });
+        managedObservationPhase(
+          "preparation",
+          MANAGED_RUNTIME_BUDGETS.preparationMs + 30_000,
+        );
+        let provisionFailure: unknown;
         const job = await waitForProvisionJob(
           managedApi.token,
           "kombify-cloud",
           stack,
           MANAGED_RUNTIME_PROVISION_TIMEOUT_MS,
           managedApi.apiBase,
+          (observed) => {
+            const result = observed.result as
+              Record<string, unknown> | undefined;
+            const observedLease = String(result?.lease_id ?? "").trim();
+            if (observedLease) {
+              if (leaseId && leaseId !== observedLease)
+                throw new Error("Managed job changed its lease identity");
+              leaseId = observedLease;
+            }
+          },
+        ).catch((error: unknown) => {
+          provisionFailure = error;
+          return undefined;
+        });
+        // Day-2 runs once the provision job is terminal, before the remaining
+        // validations: an enrolled node proves stop, start, reconnect and the
+        // SSH grant whatever the rollout outcome, and every later check then
+        // also proves the node and its services survived the power cycle.
+        const enrolledLease = leaseId
+          ? await waitForManagedDay2Enrollment(managedApi, leaseId)
+          : undefined;
+        let day2Recorded = false;
+        if (enrolledLease?.enrollment_status === "enrolled") {
+          managedObservationPhase("day2", MANAGED_DAY2_BUDGET_MS);
+          await attachJson(
+            "kombify-cloud-day2.json",
+            await managedDay2Evidence(managedApi, leaseId, stack.stack_id),
+          );
+          day2Recorded = true;
+        }
+        if (provisionFailure !== undefined || !job) {
+          throw provisionFailure ?? new Error("Managed provision job ended without a result");
+        }
+        managedObservationPhase(
+          "verification",
+          MANAGED_RUNTIME_BUDGETS.verificationMs,
         );
         const managed = await waitForStack(
           managedApi.token,
@@ -2445,11 +2550,15 @@ test.describe.serial("Runtime E2E scenarios", () => {
           MANAGED_RUNTIME_PROVISION_TIMEOUT_MS,
           managedApi.apiBase,
         );
+        if (leaseId) {
+          expect(managed.lease_id).toBe(leaseId);
+        } else {
+          leaseId = String(managed.lease_id);
+        }
         expect(managed.server_provisioning_mode).toBe("kombify-cloud");
         expect(managed.runtime_lane).toBe("monthly-runtime");
         expect(managed.runtime_offering_id).toBe("monthly-runtime-standard");
         expect(managed.provider_id).toBe(leaseProvider.id);
-        leaseId = String(managed.lease_id);
         const status = await monthlyRuntimeRequest(
           managedApi.token,
           leaseId,
@@ -2457,6 +2566,17 @@ test.describe.serial("Runtime E2E scenarios", () => {
           managedApi.apiBase,
         );
         expect(status.enrollment_status).toBe("enrolled");
+        if (!day2Recorded) {
+          managedObservationPhase("day2", MANAGED_DAY2_BUDGET_MS);
+          await attachJson(
+            "kombify-cloud-day2.json",
+            await managedDay2Evidence(managedApi, leaseId, stack.stack_id),
+          );
+          managedObservationPhase(
+            "verification",
+            MANAGED_RUNTIME_BUDGETS.verificationMs,
+          );
+        }
         const ssh = await monthlyRuntimeRequest(
           managedApi.token,
           leaseId,
@@ -2507,40 +2627,64 @@ test.describe.serial("Runtime E2E scenarios", () => {
             "bounded redacted service logs",
             "stack dashboard",
             "monitoring dashboard",
+            "managed Day-2 stop, start, reconnect and SSH grant",
           ],
         });
-      } finally {
-        if (stackId && managedApi) {
-          const cleanupJob = await destroyRuntimeStackViaApi(
-            managedApi.token,
-            stackId,
-            managedApi.apiBase,
-          );
-          const ownerProjectionReadback = leaseId
-            ? await waitForManagedRuntimeCleanupReadback({
-                token: managedApi.token,
-                apiBase: managedApi.apiBase,
-                stackId,
-                leaseId,
-              })
-            : undefined;
-          await attachJson("kombify-cloud-cleanup.json", {
-            provider_id: leaseProvider.id,
-            stack_id: stackId,
-            stack_name: stackName,
-            lease_id: leaseId,
-            destroy_job_id: cleanupJob?.id,
-            destroy_job_state: cleanupJob?.state,
-            terminal_owner_projection_readback: ownerProjectionReadback,
-            cleanup_proof_status: ownerProjectionReadback
-              ? "owner_projections_verified"
-              : "lease_identity_unavailable_after_failed_setup",
-          });
-        }
-      }
+      });
     });
   }
 });
+
+// Guard may still be completing its session when a rollout fails early, so
+// the Day-2 gate observes enrollment for a bounded window and always logs
+// why it proceeds or skips.
+async function waitForManagedDay2Enrollment(
+  api: RuntimeGatewaySession,
+  leaseId: string,
+  timeoutMs = 180_000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  let last: Record<string, any> | undefined;
+  let lastError = "";
+  while (Date.now() < deadline) {
+    try {
+      last = await monthlyRuntimeRequest(api.token, leaseId, "", api.apiBase);
+      lastError = "";
+      if (last?.enrollment_status === "enrolled") break;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+    await delay(15_000);
+  }
+  logRuntimeE2E("managed Day-2 enrollment probe", {
+    lease_id: leaseId,
+    enrollment_status: last?.enrollment_status,
+    observed_state: last?.observed_state,
+    lease_state: last?.lease_state,
+    desired_state: last?.desired_state,
+    status_state: last?.status?.state,
+    error: lastError.slice(0, 300),
+  });
+  return last;
+}
+
+// Stop and start each wait up to 12 minutes for provider convergence; the
+// reconnect and SSH steps are bounded by the product's own timeouts.
+const MANAGED_DAY2_BUDGET_MS = 1_800_000;
+
+async function managedDay2Evidence(
+  api: RuntimeGatewaySession,
+  leaseId: string,
+  stackId: string,
+) {
+  return runManagedDay2Evidence({
+    token: api.token,
+    apiUrl: (apiPath) => runtimeApiUrl(api.apiBase, apiPath),
+    leaseId,
+    stackId,
+    log: logRuntimeE2E,
+  });
+}
 
 async function monthlyRuntimeRequest(
   token: string,

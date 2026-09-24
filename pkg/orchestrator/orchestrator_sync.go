@@ -2,14 +2,11 @@ package orchestrator
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
-
-	"github.com/pocketbase/pocketbase/core"
 
 	"github.com/kombifyio/techstack/internal/walletsync"
 	"github.com/kombifyio/techstack/pkg/controlplane"
@@ -17,7 +14,7 @@ import (
 )
 
 // enqueueWithSync enqueues a job and sets up progress synchronization.
-func (o *Orchestrator) enqueueWithSync(job *jobs.Job, record *core.Record, tenantID string) error {
+func (o *Orchestrator) enqueueWithSync(job *jobs.Job, tenantID string) error {
 	tenantID = strings.TrimSpace(tenantID)
 	if err := job.BindTenantID(tenantID); err != nil {
 		return fmt.Errorf("bind durable job tenant: %w", err)
@@ -30,17 +27,13 @@ func (o *Orchestrator) enqueueWithSync(job *jobs.Job, record *core.Record, tenan
 		return err
 	}
 
-	recordID := ""
-	if record != nil {
-		recordID = record.Id
-	}
 	jobID := job.Snapshot().ID
 
 	// Start progress sync goroutine with proper tracking
 	o.wg.Add(1)
 	go func() {
 		defer o.wg.Done()
-		o.syncJobProgress(jobID, recordID, strings.TrimSpace(tenantID))
+		o.syncJobProgress(jobID, strings.TrimSpace(tenantID))
 	}()
 
 	return nil
@@ -54,18 +47,25 @@ func (o *Orchestrator) ensureDurablePendingJob(job *jobs.Job, tenantID string) e
 	if snapshot.ID == "" || strings.TrimSpace(snapshot.TargetID) == "" || strings.TrimSpace(string(snapshot.Type)) == "" {
 		return fmt.Errorf("durable job identity requires id, stack, and type")
 	}
+	recoveryPayload := redactedJobPayloadForRecovery(snapshot.Payload)
 	if existing, err := o.jobStore.GetJob(o.ctx, tenantID, snapshot.ID); err == nil {
-		return validateDurablePendingJob(existing, snapshot)
+		if validateErr := validateDurablePendingJob(existing, snapshot); validateErr != nil {
+			return validateErr
+		}
+		return o.persistJobRecoveryPayload(o.ctx, tenantID, snapshot.ID, recoveryPayload)
 	} else if !errors.Is(err, controlplane.ErrNotFound) {
 		return fmt.Errorf("load durable pending job: %w", err)
 	}
+	// Establish the stack projection once before creating a missing durable job.
+	// Existing durable jobs already passed that authority boundary, so progress
+	// heartbeats never need a second stack-read transaction every 500ms.
 	o.ensureControlPlaneStackForJob(o.ctx, snapshot, tenantID)
 	request := controlplane.UpsertJobRequest{
 		ID: snapshot.ID, TenantID: tenantID, StackID: snapshot.TargetID, Type: string(snapshot.Type),
 		State: persistentStatePending, Priority: snapshot.Priority, Progress: snapshot.Progress,
 		Step: snapshot.Step, Message: snapshot.Message, Error: snapshot.Error, ErrorDetails: snapshot.ErrorDetails,
 		Logs: controlPlaneJobLogs(snapshot.Logs), Result: projectedLegacyJobResult(snapshot),
-		ScheduledFor: time.Now().UTC(),
+		Payload: recoveryPayload, ScheduledFor: time.Now().UTC(),
 	}
 	if _, err := o.jobStore.CreateJob(o.ctx, request); err == nil {
 		return nil
@@ -76,7 +76,23 @@ func (o *Orchestrator) ensureDurablePendingJob(job *jobs.Job, tenantID string) e
 	if err != nil {
 		return fmt.Errorf("load existing durable job: %w", err)
 	}
-	return validateDurablePendingJob(existing, snapshot)
+	if validateErr := validateDurablePendingJob(existing, snapshot); validateErr != nil {
+		return validateErr
+	}
+	return o.persistJobRecoveryPayload(o.ctx, tenantID, snapshot.ID, recoveryPayload)
+}
+
+// persistJobRecoveryPayload writes the redacted handler input to an already
+// pending durable row so a restart can re-enqueue it. A conflict (missing or
+// non-pending row) is not an error: the execution claim owns the row then.
+func (o *Orchestrator) persistJobRecoveryPayload(ctx context.Context, tenantID, jobID string, payload map[string]any) error {
+	if len(payload) == 0 {
+		return nil
+	}
+	if err := o.jobStore.SetJobPayload(ctx, tenantID, jobID, payload); err != nil && !errors.Is(err, controlplane.ErrConflict) {
+		return fmt.Errorf("persist job recovery payload: %w", err)
+	}
+	return nil
 }
 
 func validateDurablePendingJob(existing *controlplane.Job, snapshot jobs.JobSnapshot) error {
@@ -90,10 +106,19 @@ func validateDurablePendingJob(existing *controlplane.Job, snapshot jobs.JobSnap
 	return nil
 }
 
-// syncJobProgress periodically syncs job progress to PocketBase.
-func (o *Orchestrator) syncJobProgress(jobID, recordID, tenantID string) {
-	ticker := time.NewTicker(500 * time.Millisecond)
+const (
+	jobProgressSyncInterval     = 500 * time.Millisecond
+	unchangedJobHeartbeatPeriod = time.Second
+)
+
+// syncJobProgress periodically syncs job progress to the canonical job store.
+func (o *Orchestrator) syncJobProgress(jobID, tenantID string) {
+	ticker := time.NewTicker(jobProgressSyncInterval)
 	defer ticker.Stop()
+	var lastPersisted jobs.JobSnapshot
+	var lastPersistedAt time.Time
+	hasPersisted := false
+	terminalProjectionApplied := false
 
 	for {
 		select {
@@ -117,13 +142,24 @@ func (o *Orchestrator) syncJobProgress(jobID, recordID, tenantID string) {
 				o.log.Info("job_sync_detached_from_local_runtime", "job_id", snapshot.ID)
 				return
 			}
-
-			if recordID != "" {
-				o.syncPocketBaseJobSnapshot(snapshot, recordID)
+			// Local state becomes running just before the durable compare-and-set.
+			// Do not let the periodic projector race that in-flight claim and
+			// mistake its expected pending row for ownership by another process.
+			if snapshot.ExecutionClaimPending {
+				continue
 			}
+
 			controlPlaneSynced := true
 			if tenantID != "" && o.jobStore != nil {
-				if err := o.syncControlPlaneJobSnapshot(snapshot, tenantID); errors.Is(err, controlplane.ErrConflict) {
+				// Keep the 500ms observation cadence so state changes still land
+				// promptly, but do not rewrite the same JSON payload and logs on
+				// every observation. The one-second floor still renews a live job
+				// three times within the managed-decommission stale-running grace.
+				unchanged := hasPersisted && reflect.DeepEqual(lastPersisted, snapshot)
+				if unchanged && time.Since(lastPersistedAt) < unchangedJobHeartbeatPeriod {
+					continue
+				}
+				if err := o.persistControlPlaneJobSnapshotContext(o.ctx, snapshot, tenantID); errors.Is(err, controlplane.ErrConflict) {
 					if current, ok := o.queue.Get(jobID); ok && jobSnapshotFenceAdvanced(snapshot, current.Snapshot()) {
 						o.log.Debug("stale_job_snapshot_fenced_retrying_current_state", "job_id", snapshot.ID, "tenant_id", tenantID)
 						continue
@@ -155,13 +191,25 @@ func (o *Orchestrator) syncJobProgress(jobID, recordID, tenantID string) {
 					return
 				} else if err != nil {
 					controlPlaneSynced = false
+				} else {
+					lastPersisted = snapshot
+					lastPersistedAt = time.Now()
+					hasPersisted = true
 				}
 			}
 
-			// Check if job is done
+			// Check if job is done. The canonical status projection is applied once;
+			// an idempotent terminal observer can then retry independently until its
+			// own durable handoff succeeds.
 			if controlPlaneSynced && (snapshot.State == jobs.JobStateCompleted || snapshot.State == jobs.JobStateFailed || snapshot.State == jobs.JobStateCancelled) {
-				// Final update to stack status
-				o.updateStackStatusSnapshot(snapshot)
+				if !terminalProjectionApplied {
+					o.updateStackStatusSnapshot(snapshot)
+					terminalProjectionApplied = true
+				}
+				if err := o.observeTerminalJob(o.ctx, snapshot); err != nil {
+					o.log.Warn("terminal_job_observer_failed", "job_id", snapshot.ID, "tenant_id", tenantID, "error", err)
+					continue
+				}
 				return
 			}
 		}
@@ -176,51 +224,6 @@ func jobSnapshotFenceAdvanced(observed, current jobs.JobSnapshot) bool {
 		return observed.StartedAt != nil || current.StartedAt != nil
 	}
 	return !observed.StartedAt.Equal(*current.StartedAt)
-}
-
-func (o *Orchestrator) syncPocketBaseJob(job *jobs.Job, recordID string) {
-	if job == nil {
-		return
-	}
-	o.syncPocketBaseJobSnapshot(job.Snapshot(), recordID)
-}
-
-func (o *Orchestrator) syncPocketBaseJobSnapshot(job jobs.JobSnapshot, recordID string) {
-	record, err := o.app.FindRecordById("jobs", recordID)
-	if err != nil {
-		o.log.Error("job_record_not_found", "record_id", recordID, "error", err)
-		return
-	}
-
-	record.Set("state", projectedLegacyJobState(job))
-	record.Set("progress", job.Progress)
-	if job.Step != "" {
-		record.Set("step", job.Step)
-	}
-	if len(job.Logs) > 0 {
-		lastLog := job.Logs[len(job.Logs)-1]
-		record.Set("current_step", lastLog.Message)
-		record.Set("message", lastLog.Message)
-	}
-	if job.Message != "" {
-		record.Set("message", job.Message)
-	}
-	if job.State == jobs.JobStateWaiting {
-		record.Set("error", "")
-		record.Set("error_details", "")
-	}
-	if job.Error != "" {
-		record.Set("error", job.Error)
-	}
-	if job.ErrorDetails != "" {
-		record.Set("error_details", job.ErrorDetails)
-	}
-	if result := projectedLegacyJobResult(job); result != nil {
-		record.Set("result", result)
-	}
-	if err := o.app.Save(record); err != nil {
-		o.log.Error("failed_to_sync_job", "job_id", job.ID, "error", err)
-	}
 }
 
 // terminalFlushTimeout bounds the shutdown write. Stop() already waits on the
@@ -258,6 +261,10 @@ func (o *Orchestrator) flushTerminalJobStateAfterShutdown(jobID, tenantID string
 			"state", string(snapshot.State), "step", snapshot.Step, "error", err)
 		return
 	}
+	if err := o.observeTerminalJob(ctx, snapshot); err != nil {
+		o.log.Error("terminal_job_observer_failed_on_shutdown",
+			"job_id", snapshot.ID, "tenant_id", tenantID, "error", err)
+	}
 	o.log.Warn("terminal_job_state_persisted_on_shutdown",
 		"job_id", snapshot.ID, "tenant_id", tenantID, "state", string(snapshot.State), "step", snapshot.Step)
 }
@@ -269,13 +276,6 @@ func terminalJobSnapshot(snapshot jobs.JobSnapshot) bool {
 	default:
 		return false
 	}
-}
-
-func (o *Orchestrator) syncControlPlaneJob(job *jobs.Job, tenantID string) {
-	if job == nil {
-		return
-	}
-	_ = o.syncControlPlaneJobSnapshot(job.Snapshot(), tenantID)
 }
 
 func (o *Orchestrator) syncControlPlaneJobSnapshot(job jobs.JobSnapshot, tenantID string) error {
@@ -299,6 +299,10 @@ func (o *Orchestrator) syncControlPlaneJobSnapshotContext(ctx context.Context, j
 		ctx = o.ctx
 	}
 	o.ensureControlPlaneStackForJob(ctx, job, tenantID)
+	return o.persistControlPlaneJobSnapshotContext(ctx, job, tenantID)
+}
+
+func (o *Orchestrator) persistControlPlaneJobSnapshotContext(ctx context.Context, job jobs.JobSnapshot, tenantID string) error {
 	message := job.Message
 	if message == "" && len(job.Logs) > 0 {
 		message = job.Logs[len(job.Logs)-1].Message
@@ -453,19 +457,11 @@ func controlPlaneJobLogs(logs []jobs.LogEntry) []map[string]any {
 	return out
 }
 
-// updateStackStatus updates the stack status based on job completion.
-func (o *Orchestrator) updateStackStatus(job *jobs.Job) {
-	if job == nil {
-		return
-	}
-	o.updateStackStatusSnapshot(job.Snapshot())
-}
-
 func (o *Orchestrator) updateStackStatusSnapshot(job jobs.JobSnapshot) {
 	if noWorkspaceDestroyProjectionReconciled(job) {
 		// The handler has already archived this exact control-plane projection
 		// through the durable reconciliation callback. Do not revive its state
-		// or touch a legacy PocketBase row while handling the terminal snapshot.
+		// while handling the terminal snapshot.
 		return
 	}
 	newStatus := stackStatusForJob(job)
@@ -473,16 +469,28 @@ func (o *Orchestrator) updateStackStatusSnapshot(job jobs.JobSnapshot) {
 		return
 	}
 
-	stack, stackErr := o.updateLegacyStackStatus(job, newStatus)
+	tenantID := firstNonEmptyJobString(job, stackTenantIDField)
+	if tenantID == "" || o.effectiveStackStore() == nil {
+		o.log.Error("canonical_stack_status_projection_unavailable", "stack_id", job.TargetID, "job_id", job.ID)
+		return
+	}
 	o.updateControlPlaneStackStatus(job, newStatus)
 	if job.State != jobs.JobStateCompleted || job.Result == nil {
 		return
 	}
-	if syncErr := o.syncStackKitRuntimeInventoryFromJobSnapshot(firstNonEmptyJobString(job, "tenant_id"), job); syncErr != nil {
+	if syncErr := o.syncStackKitRuntimeInventoryFromJobSnapshot(tenantID, job); syncErr != nil {
 		o.log.Warn("stackkit_inventory_projection_failed", "stack_id", job.TargetID, "error", syncErr)
 	}
-	if stackErr == nil {
-		o.syncCompletedLegacyStack(stack, job)
+	if o.walletStore != nil {
+		count, syncErr := walletsync.SyncStackKitOutputsToStore(o.ctx, o.walletStore, walletsync.SyncRequest{
+			TenantID: tenantID, OwnerID: firstNonEmptyJobString(job, stackOwnerIDField),
+			StackID: job.TargetID, StackName: job.TargetName, Result: job.Result,
+		})
+		if syncErr != nil {
+			o.log.Warn("stackkit_wallet_sync_failed", "stack_id", job.TargetID, "error", syncErr)
+		} else if count > 0 {
+			o.log.Info("stackkit_wallet_sync_completed", "stack_id", job.TargetID, "items", count)
+		}
 	}
 }
 
@@ -491,44 +499,6 @@ func noWorkspaceDestroyProjectionReconciled(job jobs.JobSnapshot) bool {
 		job.State == jobs.JobStateCompleted &&
 		strings.EqualFold(strings.TrimSpace(stringResult(job.Result[jobs.DestroyWorkspaceStateResultField])), jobs.DestroyWorkspaceStateAbsent) &&
 		boolResult(job.Result[jobs.DestroyProjectionReconciledResultField])
-}
-
-func (o *Orchestrator) updateLegacyStackStatus(job jobs.JobSnapshot, newStatus string) (*core.Record, error) { // pocketbase-migration-compat: legacy stack projection only
-	stack, err := o.app.FindRecordById("stacks", job.TargetID)
-	if err != nil {
-		o.log.Error("stack_not_found_for_update", "stack_id", job.TargetID, "error", err)
-		return nil, err
-	}
-	if job.Result != nil {
-		copyRuntimeResultFieldsToStack(stack, job.Result)
-	}
-	stack.Set("status", newStatus)
-	if saveErr := o.app.Save(stack); saveErr != nil { // pocketbase-migration-compat: legacy stack projection only
-		o.log.Error("failed_to_update_stack_status", "stack_id", job.TargetID, "error", saveErr)
-	}
-	return stack, nil
-}
-
-func (o *Orchestrator) syncCompletedLegacyStack(stack *core.Record, job jobs.JobSnapshot) { // pocketbase-migration-compat: legacy stack projection only
-	if err := o.syncStackKitRuntimeInventorySnapshot(stack, job); err != nil {
-		o.log.Warn("stackkit_inventory_projection_failed", "stack_id", job.TargetID, "error", err)
-	}
-	if err := o.ensureWorkerPairingToken(stack, job.Result); err != nil {
-		o.log.Warn("worker_pairing_token_persist_failed", "stack_id", job.TargetID, "error", err)
-	}
-	req := walletsync.SyncRequest{
-		TenantID:  stack.GetString("tenant_id"),
-		OwnerID:   stack.GetString("owner_id"),
-		StackID:   job.TargetID,
-		StackName: stack.GetString("name"),
-		Result:    job.Result,
-	}
-	count, err := o.syncStackKitWalletOutputs(req)
-	if err != nil {
-		o.log.Warn("stackkit_wallet_sync_failed", "stack_id", job.TargetID, "error", err)
-	} else if count > 0 {
-		o.log.Info("stackkit_wallet_sync_completed", "stack_id", job.TargetID, "items", count)
-	}
 }
 
 func stackStatusForJob(job jobs.JobSnapshot) string {
@@ -561,48 +531,9 @@ func completedStackStatusForJobType(jobType jobs.JobType) string {
 	}
 }
 
-type stackResultFieldSetter interface {
-	Set(string, any)
-}
-
-func copyRuntimeResultFieldsToStack(stack stackResultFieldSetter, result map[string]interface{}) {
-	for resultKey, fieldName := range stackRuntimeResultFieldMap() {
-		if value, ok := result[resultKey]; ok {
-			stack.Set(fieldName, value)
-		}
-	}
-}
-
-func stackRuntimeResultFieldMap() map[string]string {
-	return map[string]string{
-		"runtime_phase":                "runtime_phase",
-		"server_mode":                  "server_mode",
-		runtimeFieldLane:               runtimeFieldLane,
-		"runtime_offering_id":          "runtime_offering_id",
-		runtimeFieldLeaseProvider:      runtimeFieldLeaseProvider,
-		runtimeFieldProviderRegion:     runtimeFieldProviderRegion,
-		runtimeFieldIONOSDatacenter:    runtimeFieldIONOSDatacenter,
-		"lease_id":                     "lease_id",
-		runtimeFieldSimProviderID:      runtimeFieldSimProviderID,
-		"simulate_node_lifecycle":      "simulate_node_lifecycle",
-		"desired_state":                "desired_state",
-		"billing_mode":                 "billing_mode",
-		"billing_cadence":              "billing_cadence",
-		runtimeFieldStackKitRef:        runtimeFieldStackKitRef,
-		"verification_status":          "verification_status",
-		runtimeFieldProvisionMode:      runtimeFieldProvisionMode,
-		runtimeFieldConnectionMode:     runtimeFieldConnectionMode,
-		"server_remote_host_present":   "server_remote_host_present",
-		"server_remote_user_present":   "server_remote_user_present",
-		"server_remote_auth_method":    "server_remote_auth_method",
-		"server_remote_credential_ref": "server_remote_credential_ref",
-		"server_remote_use_sudo":       "server_remote_use_sudo",
-		runtimeFieldInstallCommand:     runtimeFieldInstallCommand,
-	}
-}
-
 func (o *Orchestrator) updateControlPlaneStackStatus(job jobs.JobSnapshot, newStatus string) {
-	if o.stackStore == nil {
+	store := o.effectiveStackStore()
+	if store == nil {
 		return
 	}
 	tenantID := firstNonEmptyJobString(job, "tenant_id")
@@ -613,7 +544,7 @@ func (o *Orchestrator) updateControlPlaneStackStatus(job jobs.JobSnapshot, newSt
 	for key, value := range job.Result {
 		runtimeSummary[key] = value
 	}
-	if _, err := o.stackStore.UpdateStackRuntime(o.ctx, tenantID, job.TargetID, controlplane.RuntimeUpdate{
+	if _, err := store.UpdateStackRuntime(o.ctx, tenantID, job.TargetID, controlplane.RuntimeUpdate{
 		Status:         newStatus,
 		RuntimeSummary: runtimeSummary,
 	}); err != nil {
@@ -633,78 +564,6 @@ func firstNonEmptyJobString(job jobs.JobSnapshot, key string) string {
 		}
 	}
 	return ""
-}
-
-func (o *Orchestrator) syncStackKitWalletOutputs(req walletsync.SyncRequest) (int, error) {
-	if o.walletStore != nil {
-		return walletsync.SyncStackKitOutputsToStore(o.ctx, o.walletStore, req)
-	}
-	return walletsync.SyncStackKitOutputs(o.app, req)
-}
-
-func (o *Orchestrator) ensureWorkerPairingToken(stack *core.Record, result map[string]interface{}) error {
-	if stack == nil || !requiresWorkerPairingToken(result) {
-		return nil
-	}
-	token := strings.TrimSpace(stringResult(result["registration_token"]))
-	ownerID := strings.TrimSpace(stack.GetString("owner_id"))
-	if token == "" || ownerID == "" {
-		return nil
-	}
-
-	hash := sha256.Sum256([]byte(token))
-	tokenHash := hex.EncodeToString(hash[:])
-	existing, err := o.app.FindRecordsByFilter(
-		"pairing_tokens",
-		"token_hash = {:h}",
-		"",
-		1,
-		0,
-		map[string]any{"h": tokenHash},
-	)
-	if err == nil && len(existing) > 0 {
-		if existing[0].GetString("stack_id") == "" {
-			existing[0].Set("stack_id", stack.Id)
-			_ = o.app.Save(existing[0])
-		}
-		return nil
-	}
-
-	collection, err := o.app.FindCollectionByNameOrId("pairing_tokens")
-	if err != nil {
-		return err
-	}
-	record := core.NewRecord(collection)
-	stackName := strings.TrimSpace(stack.GetString("name"))
-	if stackName == "" {
-		stackName = stack.Id
-	}
-	record.Set("user", ownerID)
-	record.Set("name", stackName+" worker enrollment")
-	record.Set("stack_id", stack.Id)
-	record.Set("token_hash", tokenHash)
-	record.Set("used", false)
-	record.Set("expires_at", time.Now().Add(2*time.Hour))
-	return o.app.Save(record)
-}
-
-func requiresWorkerPairingToken(result map[string]interface{}) bool {
-	if result == nil {
-		return false
-	}
-	if boolResult(result[runtimeFieldInstallCommand]) {
-		return true
-	}
-	switch strings.ToLower(strings.TrimSpace(stringResult(result[runtimeFieldConnectionMode]))) {
-	case "agent-oneliner":
-		return true
-	}
-	switch strings.ToLower(strings.TrimSpace(stringResult(result[runtimeFieldProvisionMode]))) {
-	case "install-command":
-		return true
-	default:
-		return false
-	}
 }
 
 func stringResult(value interface{}) string {

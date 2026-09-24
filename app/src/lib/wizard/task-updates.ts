@@ -8,6 +8,7 @@
  */
 
 import type { Task } from "./task-status";
+import type { JobUserGuidance } from "../api/jobs";
 import {
   DEFAULT_TASKS,
   RUNTIME_TASKS,
@@ -24,6 +25,7 @@ import {
  * `state`); both step fields are tolerated so the UI can read either shape.
  */
 export interface JobProgress {
+  phase?: string;
   step?: string;
   progress?: number;
   status?: string;
@@ -47,13 +49,17 @@ function resolveJobTaskContext(
   tasks: Task[],
   job: JobProgress,
 ): JobTaskContext {
+  const structuredPhaseId = resolveKnownTaskId(job.phase, tasks);
   const explicitStepId =
+    structuredPhaseId ??
     resolveKnownTaskId(job.step, tasks) ??
     resolveKnownTaskId(job.current_step, tasks);
   const messageStepId = resolveKnownTaskId(job.message, tasks);
-  const currentStepId = shouldPreferMessageStep(messageStepId, explicitStepId)
-    ? messageStepId
-    : explicitStepId || messageStepId;
+  const currentStepId =
+    structuredPhaseId ??
+    (shouldPreferMessageStep(messageStepId, explicitStepId)
+      ? messageStepId
+      : explicitStepId || messageStepId);
   const jobStatus = job.status || job.state || "pending";
   const currentMessage = resolveJobMessage(job, tasks);
   const currentStepIndex = currentStepId
@@ -435,6 +441,7 @@ export function updateTasksWithError(
     error?: string;
     error_details?: string;
     state?: string;
+    user_guidance?: JobUserGuidance;
   },
 ): Task[] {
   const currentStepId =
@@ -446,7 +453,10 @@ export function updateTasksWithError(
   // Intelligent troubleshooting + the most useful detail string for the error.
   const errorMessage = job.error || "An unexpected error occurred";
   const troubleshootingInfo = getTroubleshootingForError(errorMessage);
-  const details = resolveErrorDetails(job, troubleshootingInfo, errorMessage);
+  const guidance = normalizeJobGuidance(job.user_guidance);
+  const details = guidance?.body
+    ? combineGuidanceWithBackendDetails(guidance.body, job.error_details)
+    : resolveErrorDetails(job, troubleshootingInfo, errorMessage);
 
   return tasks.map((task, index) => {
     if (failedIndex >= 0 && index < failedIndex) {
@@ -456,13 +466,47 @@ export function updateTasksWithError(
       return {
         ...task,
         status: "failed" as const,
-        errorMessage: troubleshootingInfo.message,
+        errorMessage: guidance?.title || troubleshootingInfo.message,
         errorDetails: details,
-        troubleshooting: troubleshootingInfo.steps,
+        troubleshooting:
+          guidance && guidance.nextSteps.length > 0
+            ? guidance.nextSteps
+            : troubleshootingInfo.steps,
       };
     }
     return { ...task, status: "pending" as const };
   });
+}
+
+function normalizeJobGuidance(guidance?: JobUserGuidance): {
+  title: string;
+  body: string;
+  nextSteps: string[];
+} | null {
+  if (!guidance) return null;
+  const title = guidance.title?.trim() ?? "";
+  const body = guidance.body?.trim() ?? "";
+  const nextSteps = Array.isArray(guidance.next_steps)
+    ? guidance.next_steps
+        .map((step) => {
+          if (typeof step === "string") return step.trim();
+          return typeof step?.label === "string" ? step.label.trim() : "";
+        })
+        .filter(Boolean)
+    : [];
+  return title || body || nextSteps.length > 0
+    ? { title, body, nextSteps }
+    : null;
+}
+
+function combineGuidanceWithBackendDetails(
+  guidanceBody: string,
+  backendDetails?: string,
+): string {
+  const details = backendDetails?.trim() ?? "";
+  return details && details !== guidanceBody
+    ? `${guidanceBody}\n\n${details}`
+    : guidanceBody;
 }
 
 // isManagedRuntimeTroubleshooting reports whether a resolved troubleshooting

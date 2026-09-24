@@ -34,10 +34,11 @@ var (
 // SSOTokenPayload represents the parsed claims from an SSO JWT token.
 // This matches the payload structure created by kombify Cloud Portal.
 type SSOTokenPayload struct {
-	Sub           string         `json:"sub"`   // User ID from kombify Cloud
-	Email         string         `json:"email"` // User email
-	Name          string         `json:"name"`  // User display name
-	Tool          string         `json:"tool"`  // Tool ID (e.g., "kombifystack")
+	Sub           string         `json:"sub"`                 // User ID from kombify Cloud
+	TenantID      string         `json:"tenant_id,omitempty"` // Canonical isolation tenant from kombify Cloud
+	Email         string         `json:"email"`               // User email
+	Name          string         `json:"name"`                // User display name
+	Tool          string         `json:"tool"`                // Tool ID (e.g., "kombifystack")
 	StackIdentity *StackIdentity `json:"stackIdentity,omitempty"`
 	IssuedAt      int64          `json:"iat"`                   // Issued at timestamp (Unix seconds)
 	ExpiresAt     int64          `json:"exp"`                   // Expiration timestamp (Unix seconds)
@@ -73,6 +74,7 @@ type Verifier struct {
 // ssoCustomClaims extends jwt.RegisteredClaims with our custom fields
 type ssoCustomClaims struct {
 	jwt.RegisteredClaims
+	TenantID      string         `json:"tenant_id,omitempty"`
 	Email         string         `json:"email"`
 	Name          string         `json:"name"`
 	Tool          string         `json:"tool"`
@@ -149,6 +151,7 @@ func (v *Verifier) Verify(tokenString string) (*SSOTokenPayload, error) {
 	// Build the payload
 	payload := &SSOTokenPayload{
 		Sub:           claims.Subject,
+		TenantID:      claims.TenantID,
 		Email:         claims.Email,
 		Name:          claims.Name,
 		Tool:          claims.Tool,
@@ -210,28 +213,4 @@ func (v *Verifier) mapError(err error) error {
 	default:
 		return fmt.Errorf("%w: %v", ErrTokenInvalid, err)
 	}
-}
-
-// VerifyFromEnv creates a Verifier using the SSO_JWT_SECRET environment variable.
-// This is a convenience function for common use cases.
-func VerifyFromEnv(secret string, allowedTools []string) (*Verifier, error) {
-	return NewVerifier(Config{
-		Secret:       secret,
-		AllowedTools: allowedTools,
-	})
-}
-
-// IsExpired checks if the error indicates an expired token.
-func IsExpired(err error) bool {
-	return errors.Is(err, ErrTokenExpired)
-}
-
-// IsInvalid checks if the error indicates an invalid token.
-func IsInvalid(err error) bool {
-	return errors.Is(err, ErrTokenInvalid)
-}
-
-// IsInvalidTool checks if the error indicates an invalid tool claim.
-func IsInvalidTool(err error) bool {
-	return errors.Is(err, ErrInvalidTool)
 }

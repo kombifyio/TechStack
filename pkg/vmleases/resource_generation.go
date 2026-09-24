@@ -158,10 +158,6 @@ func ensureDecommissionClaimUnchanged(existing, updated vmlease.Lease) error {
 	return nil
 }
 
-func hasDecommissionClaim(lease vmlease.Lease) bool {
-	return strings.TrimSpace(lease.Metadata[MetadataKeyDecommissionClaimDigest]) != ""
-}
-
 func cloneLease(lease vmlease.Lease) vmlease.Lease {
 	cloned := lease
 	cloned.Metadata = maps.Clone(lease.Metadata)

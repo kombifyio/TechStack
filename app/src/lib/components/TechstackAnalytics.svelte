@@ -1,8 +1,8 @@
 <script lang="ts">
   import { afterNavigate } from "$app/navigation";
   import * as Sentry from "@sentry/sveltekit";
-  import { getClientBootstrap } from "$lib/client/bootstrap";
-  import { appVersion } from "$lib/config";
+  import { getClientBootstrap } from "#lib/client/bootstrap.js";
+  import { appVersion } from "#lib/config.js";
   import {
     classifyRoute,
     createPostHogClient,
@@ -10,13 +10,14 @@
     sanitizeNavigationTarget,
     toTechstackAnalyticsUser,
     type AnalyticsUser,
-  } from "$lib/analytics/posthog";
-  import { authStore } from "$lib/stores/auth.svelte";
+  } from "#lib/analytics/posthog.js";
+  import { authStore } from "#lib/stores/auth.svelte.js";
 
   let lastIdentityKey = $state("");
   let lastRouteKey = $state("");
 
-  afterNavigate(({ to }) => {
+  afterNavigate(({ to, shallow }) => {
+    if (shallow) return;
     if (!to?.url) return;
     captureRoute(to.url);
   });
@@ -142,4 +143,4 @@
   }
 </script>
 
-<svelte:window onclick={handleClick} />
+<svelte:window onclick={handleClick}></svelte:window>

@@ -83,7 +83,4 @@ func TestRetainedWorkflowStatePrefersTheTerminalValue(t *testing.T) {
 	if got := RetainedWorkflowState("", "pending_verification"); got != "pending_verification" {
 		t.Fatalf("retained = %q, want pending_verification", got)
 	}
-	if !IsControlPlaneWorkflowState("deploying") || IsControlPlaneWorkflowState("running") {
-		t.Fatal("control-plane workflow detection is wrong")
-	}
 }

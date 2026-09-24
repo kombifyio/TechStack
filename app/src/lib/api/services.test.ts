@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  getServiceApplication,
   getManagedServiceLogs,
   listCanonicalServices,
   runManagedServiceAction,
@@ -23,22 +24,58 @@ describe("managed service API client", () => {
     vi.unstubAllGlobals();
   });
 
-  it("scopes the central canonical service read by Techstack", async () => {
+  it("scopes and normalizes the central service read by kit deployment", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ data: [] }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: "service-1",
+              kit_deployment_id: "techstack-1",
+              management_state: "managed",
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
     );
 
-    await listCanonicalServices("techstack-1");
+    const result = await listCanonicalServices("techstack-1");
 
     expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining(
-        "/api/v1/services?techstack_id=techstack-1",
-      ),
+      expect.stringContaining("/api/v1/services?kit_deployment_id=techstack-1"),
       expect.objectContaining({ credentials: "include" }),
     );
+    expect(result[0].kit_deployment_id).toBe("techstack-1");
+  });
+
+  it("keeps one deployment identity across an application and its components", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: {
+            application_id: "application-1",
+            kit_deployment_id: "techstack-1",
+            components: [
+              {
+                id: "service-1",
+                kit_deployment_id: "techstack-1",
+                management_state: "managed",
+              },
+            ],
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    const result = await getServiceApplication("application-1");
+
+    expect(result.kit_deployment_id).toBe("techstack-1");
+    expect(result.components[0].kit_deployment_id).toBe("techstack-1");
   });
 
   it("queues a service action with the inventory revision and idempotency key", async () => {

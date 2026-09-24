@@ -19,7 +19,7 @@ test.beforeAll(async () => {
     res.writeHead(200, {
       "Content-Type": "text/html; charset=utf-8",
       "Content-Security-Policy":
-        "default-src 'self'; script-src 'unsafe-inline'; frame-src http: https:",
+        "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-src http: https:",
     });
     res.end(`<!doctype html>
 <html>
@@ -32,6 +32,14 @@ test.beforeAll(async () => {
         window.portalMessages.push({ origin: event.origin, data: event.data });
         if (event.data && event.data.type === "auth-request") {
           event.source.postMessage({ type: "auth-token", token: "portal-token-e2e" }, event.origin);
+        }
+        if (event.data && event.data.type === "gateway-token-request") {
+          event.source.postMessage({
+            type: "gateway-token",
+            token: "gateway-token-e2e",
+            audience: "https://api.kombify.io",
+            expiresAt: Date.now() + 60000
+          }, event.origin);
         }
       });
     </script>
@@ -108,25 +116,40 @@ test.describe("Embedded SaaS create flow", () => {
     await app.getByTestId("easy-feature-storage").click();
     await app.getByTestId("wizard-next").click();
     await expect(app.getByTestId("easy-step-2")).toBeVisible();
+    await app.getByTestId("server-branch-new").click();
+    await app.getByTestId("server-mode-kombify-cloud").click();
+    await expect(app.getByTestId("managed-provider-selector")).toBeVisible();
+    await app.getByText("Provider & server details", { exact: true }).click();
+    await app.getByTestId("managed-provider-centron").click();
+    await expect(
+      app
+        .getByTestId("managed-provider-centron")
+        .locator('input[type="radio"]'),
+    ).toBeChecked();
     await app.getByTestId("wizard-next").click();
     await expect(app.getByTestId("easy-step-3")).toBeVisible();
-    await app.getByTestId("easy-access-home").click();
+    await app.getByTestId("easy-access-anywhere").click();
     await app.getByTestId("wizard-next").click();
     await expect(app.getByTestId("easy-step-4")).toBeVisible();
-    await app.getByTestId("easy-users-me").click();
+    await app.getByTestId("easy-users-solo").click();
     await app.getByTestId("wizard-next").click();
     await expect(app.getByTestId("easy-step-5")).toBeVisible();
     await expect(app.getByTestId("wizard-create")).toBeVisible();
 
-    const createResponse = page.waitForResponse(
-      (response) =>
-        response.url().includes("/api/v1/stacks") &&
-        response.request().method() === "POST",
-    );
+    const createResponse = page.waitForResponse((response) => {
+      const pathname = new URL(response.url()).pathname;
+      return (
+        response.request().method() === "POST" &&
+        (pathname === "/api/v1/wizard/runs" ||
+          pathname === "/v1/techstack/wizard/runs")
+      );
+    });
     await app.getByTestId("wizard-create").click();
     await expect(createResponse).resolves.toBeTruthy();
 
-    await appFrame.waitForURL(/\/stacks\?.*stack_id=/, { timeout: 15_000 });
+    await appFrame.waitForURL(/\/stacks\/creating\?.*stack_id=/, {
+      timeout: 15_000,
+    });
     await expect(app.getByText("Session Expired")).toHaveCount(0);
     await expect(app.getByText("Continue with Auth0")).toHaveCount(0);
 
@@ -136,27 +159,25 @@ test.describe("Embedded SaaS create flow", () => {
     );
     expect(portalVerify?.body).toMatchObject({ token: "portal-token-e2e" });
 
-    const createStack = apiCalls.find(
-      (call) => call.method === "POST" && call.path === "/api/v1/stacks",
+    const createRun = apiCalls.find(
+      (call) => call.method === "POST" && call.path === "/api/v1/wizard/runs",
     );
-    expect(createStack?.headers.authorization).toMatch(/^Bearer /);
-    expect(createStack?.headers["x-idempotency-key"]).toBeTruthy();
-    expect(createStack?.body).toMatchObject({
-      mode: "easy",
-      provider: "cloud",
+    expect(createRun?.headers.authorization).toBeUndefined();
+    expect(createRun?.headers.cookie).toContain(
+      "techstack_session=embedded-session-e2e",
+    );
+    expect(createRun?.headers["x-csrf-token"]).toBe("csrf-token-e2e");
+    expect(createRun?.headers["x-idempotency-key"]).toBeTruthy();
+    expect(createRun?.body).toMatchObject({
+      intent: {
+        schema: "techstack.wizard-intent/v1",
+        run_kind: "first-run",
+        server: { transport: "kombify-cloud" },
+        kit_assignment: { mode: "found" },
+      },
       services: expect.any(Array),
-      stack_spec: expect.objectContaining({
-        metadata: expect.objectContaining({
-          server_provisioning_mode: "kombify-cloud",
-          runtime_lane: "monthly-runtime",
-          provider_id: "centron",
-        }),
-      }),
-      options: expect.objectContaining({
-        server_provisioning_mode: "kombify-cloud",
-        runtime_lane: "monthly-runtime",
+      managed: expect.objectContaining({
         provider_id: "centron",
-        billing_mode: "subscription",
       }),
     });
 
@@ -165,7 +186,7 @@ test.describe("Embedded SaaS create flow", () => {
       { label: /services/i, path: "/services" },
       { label: /monitoring/i, path: "/monitoring" },
       { label: /wallet/i, path: "/wallet" },
-      { label: /dashboard/i, path: "/stacks" },
+      { label: /dashboard/i, path: "/dashboard" },
     ]) {
       await embeddedNav.getByRole("link", { name: destination.label }).click();
       await appFrame.waitForURL(
@@ -199,7 +220,11 @@ async function installEmbeddedSaaSApi(
   await page.route("**/*", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
-    const path = url.pathname;
+    const path =
+      url.origin === "https://api.kombify.io" &&
+      url.pathname.startsWith("/v1/techstack/")
+        ? `/api/v1/${url.pathname.slice("/v1/techstack/".length)}`
+        : url.pathname;
     const method = request.method();
 
     if (url.hostname.includes("auth0.com") || path === "/api/v2/auth/login") {
@@ -211,6 +236,15 @@ async function installEmbeddedSaaSApi(
           error: "Auth0 iframe navigation is forbidden in embedded mode",
         }),
       });
+      return;
+    }
+
+    if (
+      url.origin === "https://api.kombify.io" &&
+      (url.pathname === "/v1/ai/models" ||
+        url.pathname === "/v1/agents/harnesses")
+    ) {
+      await json(route, { data: [] });
       return;
     }
 
@@ -228,6 +262,21 @@ async function installEmbeddedSaaSApi(
     });
 
     switch (`${method} ${path}`) {
+      case "GET /api/v1/client/bootstrap":
+        await json(route, {
+          data: {
+            edition: "saas",
+            deployment_mode: "saas",
+            kombify_edition: "cloud",
+            version: "e2e",
+            public_origin: "",
+            telemetry: {
+              sentry: { dsn: "", environment: "", release: "" },
+              posthog: { key: "", host: "", environment: "" },
+            },
+          },
+        });
+        return;
       case "GET /api/v1/auth/mode":
         await json(route, {
           data: {
@@ -253,7 +302,28 @@ async function installEmbeddedSaaSApi(
         });
         return;
       case "GET /api/v1/features":
-        await json(route, { data: { security: [], beta: [], ux: [] } });
+        await json(route, {
+          data: {
+            security: [],
+            beta: [
+              "native_v2_wizard",
+              "monthly_runtime",
+              "monthly_runtime_cloudkit",
+              "monthly_runtime_centron",
+            ].map((key) => ({
+              key,
+              name: key,
+              enabled: true,
+              locked: false,
+              requires_consent: false,
+              has_consent: false,
+              risk_level: "high",
+              description: "",
+              category: "beta",
+            })),
+            ux: [],
+          },
+        });
         return;
       case "GET /api/v1/auth/stack-identity":
         await json(route, { data: { editable: true } });
@@ -273,7 +343,22 @@ async function installEmbeddedSaaSApi(
         });
         return;
       case "GET /api/v2/whoami":
-        await json(route, { error: "missing session token" }, 401);
+        if (
+          !request
+            .headers()
+            .cookie?.includes("techstack_session=embedded-session-e2e")
+        ) {
+          await json(route, { error: "missing session token" }, 401);
+          return;
+        }
+        await json(route, {
+          subject: "auth0|user-e2e",
+          tenantId: "tenant-e2e",
+          orgId: "org-e2e",
+          email: "portal-user@example.test",
+          provider: "cloud",
+          role: "owner",
+        });
         return;
       case "GET /api/v1/csrf":
         await json(route, { token: "csrf-token-e2e" }, 200, {
@@ -281,47 +366,41 @@ async function installEmbeddedSaaSApi(
         });
         return;
       case "POST /api/v1/auth/portal-verify":
-        await json(route, {
-          data: {
-            pb_token: makeFakeJwt({
-              id: "user-e2e",
-              exp: 4102444800,
-            }),
-            user: {
-              id: "user-e2e",
-              email: "portal-user@example.test",
-              name: "Portal User",
-            },
-            cloud_user: {
-              sub: "auth0|user-e2e",
-              email: "portal-user@example.test",
-              name: "Portal User",
-              is_admin: true,
-            },
-          },
-        });
-        return;
-      case "POST /api/v1/unifier/pipeline/preview":
-        await json(route, {
-          data: {
-            valid: true,
-            resolved_stackkit: "basement-kit",
-            detected_addons: [],
-            stages: [],
-            warnings: [],
-          },
-        });
-        return;
-      case "POST /api/v1/stacks":
         await json(
           route,
           {
             data: {
+              cloud_user: {
+                sub: "auth0|user-e2e",
+                email: "portal-user@example.test",
+                name: "Portal User",
+                is_admin: true,
+              },
+            },
+          },
+          200,
+          {
+            "Set-Cookie":
+              "techstack_session=embedded-session-e2e; Path=/; HttpOnly; SameSite=Lax",
+          },
+        );
+        return;
+      case "POST /api/v1/wizard/runs":
+        await json(
+          route,
+          {
+            data: {
+              run_id: "run-e2e",
+              run_kind: "first-run",
+              homelab_id: "homelab-e2e",
+              kit_assignment_mode: "found",
+              kit_slug: "cloud-kit",
               stack_id: "stack-e2e",
+              server_id: "server-e2e",
+              node_id: "node-e2e",
               job_id: "job-e2e",
-              name: "kombify-stack",
-              state: "creating",
-              message: "Stack creation initiated",
+              name: "homelab",
+              state: "provisioning",
             },
           },
           202,
@@ -381,12 +460,6 @@ async function json(
     headers,
     body: JSON.stringify(body),
   });
-}
-
-function makeFakeJwt(payload: Record<string, unknown>): string {
-  const encode = (obj: Record<string, unknown>) =>
-    Buffer.from(JSON.stringify(obj)).toString("base64url");
-  return `${encode({ alg: "none", typ: "JWT" })}.${encode(payload)}.sig`;
 }
 
 function escapeHtml(value: string): string {

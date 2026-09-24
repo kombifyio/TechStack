@@ -5,12 +5,12 @@ const { listFeaturesMock } = vi.hoisted(() => ({
   listFeaturesMock: vi.fn(),
 }));
 
-vi.mock("$lib/api/features", () => ({
+vi.mock("#lib/api/features.js", () => ({
   listFeatures: listFeaturesMock,
 }));
 
 import { features } from "./features";
-import { ApiRequestError } from "$lib/api/client";
+import { ApiRequestError } from "#lib/api/client.js";
 
 const EMPTY_FEATURES = { security: [], beta: [], ux: [] };
 

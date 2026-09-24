@@ -19,24 +19,59 @@ func (s *PostgresStore) Reserve(ctx context.Context, request rilaction.LedgerRes
 	if s == nil || s.db == nil {
 		return rilaction.LedgerReservation{}, fmt.Errorf("controlplane: database not configured")
 	}
+	requestedAt, validUntil, err := validateRILActionReservationRequest(request)
+	if err != nil {
+		return rilaction.LedgerReservation{}, err
+	}
+	return s.reserveRILActionExecution(ctx, request, requestedAt, validUntil, "reservation-"+uuid.NewString())
+}
+
+func validateRILActionReservationRequest(request rilaction.LedgerReservationRequest) (time.Time, time.Time, error) {
 	if strings.TrimSpace(request.TenantID) == "" || strings.TrimSpace(request.IdempotencyKey) == "" ||
 		strings.TrimSpace(request.ExecutionID) == "" || strings.TrimSpace(request.RequestDigest) == "" ||
 		strings.TrimSpace(request.AdmissionDigest) == "" || strings.TrimSpace(request.AuditCorrelationID) == "" {
-		return rilaction.LedgerReservation{}, fmt.Errorf("controlplane: complete RIL action reservation identity required")
+		return time.Time{}, time.Time{}, fmt.Errorf("controlplane: complete RIL action reservation identity required")
 	}
 	requestedAt, err := parseCanonicalLedgerTime(request.RequestedAt)
 	if err != nil {
-		return rilaction.LedgerReservation{}, fmt.Errorf("controlplane: canonical UTC requested_at required")
+		return time.Time{}, time.Time{}, fmt.Errorf("controlplane: canonical UTC requested_at required")
 	}
 	validUntil, err := parseCanonicalLedgerTime(request.ValidUntil)
 	if err != nil || !requestedAt.Before(validUntil) {
-		return rilaction.LedgerReservation{}, fmt.Errorf("controlplane: valid RIL action reservation window required")
+		return time.Time{}, time.Time{}, fmt.Errorf("controlplane: valid RIL action reservation window required")
 	}
-	token := "reservation-" + uuid.NewString()
+	return requestedAt, validUntil, nil
+}
+
+func (s *PostgresStore) reserveRILActionExecution(
+	ctx context.Context,
+	request rilaction.LedgerReservationRequest,
+	requestedAt time.Time,
+	validUntil time.Time,
+	token string,
+) (rilaction.LedgerReservation, error) {
 	var result rilaction.LedgerReservation
-	err = s.withTenant(ctx, request.TenantID, func(tx *sql.Tx) error {
-		var insertedToken string
-		err := tx.QueryRowContext(ctx, `
+	err := s.withTenant(ctx, request.TenantID, func(tx *sql.Tx) error {
+		var reserveErr error
+		result, reserveErr = reserveRILActionExecutionTx(ctx, tx, request, requestedAt, validUntil, token)
+		return reserveErr
+	})
+	if err != nil {
+		return rilaction.LedgerReservation{}, err
+	}
+	return result, nil
+}
+
+func reserveRILActionExecutionTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	request rilaction.LedgerReservationRequest,
+	requestedAt time.Time,
+	validUntil time.Time,
+	token string,
+) (rilaction.LedgerReservation, error) {
+	var insertedToken string
+	err := tx.QueryRowContext(ctx, `
 			INSERT INTO ril_action_execution_ledger (
 				tenant_id, idempotency_key, execution_id, request_digest,
 				execution_admission_digest, audit_correlation_id,
@@ -47,23 +82,22 @@ func (s *PostgresStore) Reserve(ctx context.Context, request rilaction.LedgerRes
 			ON CONFLICT (tenant_id, idempotency_key) DO NOTHING
 			RETURNING reservation_token
 		`, request.TenantID, request.IdempotencyKey, request.ExecutionID,
-			request.RequestDigest, request.AdmissionDigest, request.AuditCorrelationID,
-			requestedAt, validUntil, token).Scan(&insertedToken)
-		if err == nil {
-			if err := appendRILExecutionLeaseAudit(ctx, tx, request, insertedToken, "acquired", 0); err != nil {
-				return err
-			}
-			result = rilaction.LedgerReservation{Disposition: rilaction.LedgerAcquired, ReservationToken: insertedToken}
-			return nil
+		request.RequestDigest, request.AdmissionDigest, request.AuditCorrelationID,
+		requestedAt, validUntil, token).Scan(&insertedToken)
+	if err == nil {
+		if err := appendRILExecutionLeaseAudit(ctx, tx, request, insertedToken, "acquired", 0); err != nil {
+			return rilaction.LedgerReservation{}, err
 		}
-		if err != sql.ErrNoRows {
-			return err
-		}
+		return rilaction.LedgerReservation{Disposition: rilaction.LedgerAcquired, ReservationToken: insertedToken}, nil
+	}
+	if err != sql.ErrNoRows {
+		return rilaction.LedgerReservation{}, err
+	}
 
-		var executionID, requestDigest, admissionDigest, status, evidenceJSON, persistedCorrelation string
-		var persistedValidUntil time.Time
-		var takeoverCount int64
-		scanErr := tx.QueryRowContext(ctx, `
+	var executionID, requestDigest, admissionDigest, status, evidenceJSON, persistedCorrelation string
+	var persistedValidUntil time.Time
+	var takeoverCount int64
+	scanErr := tx.QueryRowContext(ctx, `
 			SELECT execution_id, request_digest, COALESCE(execution_admission_digest, ''),
 			       status, COALESCE(evidence_json::text, ''), valid_until,
 			       COALESCE(audit_correlation_id, ''), takeover_count
@@ -71,32 +105,31 @@ func (s *PostgresStore) Reserve(ctx context.Context, request rilaction.LedgerRes
 			WHERE tenant_id = $1 AND idempotency_key = $2
 			FOR UPDATE
 		`, request.TenantID, request.IdempotencyKey).Scan(
-			&executionID, &requestDigest, &admissionDigest, &status, &evidenceJSON,
-			&persistedValidUntil, &persistedCorrelation, &takeoverCount,
-		)
-		if scanErr == sql.ErrNoRows {
-			return fmt.Errorf("controlplane: RIL action reservation window expired or unavailable")
+		&executionID, &requestDigest, &admissionDigest, &status, &evidenceJSON,
+		&persistedValidUntil, &persistedCorrelation, &takeoverCount,
+	)
+	if scanErr == sql.ErrNoRows {
+		return rilaction.LedgerReservation{}, fmt.Errorf("controlplane: RIL action reservation window expired or unavailable")
+	}
+	if scanErr != nil {
+		return rilaction.LedgerReservation{}, scanErr
+	}
+	if executionID != request.ExecutionID || requestDigest != request.RequestDigest || admissionDigest != request.AdmissionDigest ||
+		(persistedCorrelation != "" && persistedCorrelation != request.AuditCorrelationID) {
+		return rilaction.LedgerReservation{Disposition: rilaction.LedgerConflict}, nil
+	}
+	if status == "in-progress" {
+		var databaseNow time.Time
+		if err := tx.QueryRowContext(ctx, `SELECT clock_timestamp()`).Scan(&databaseNow); err != nil {
+			return rilaction.LedgerReservation{}, err
 		}
-		if scanErr != nil {
-			return scanErr
-		}
-		if executionID != request.ExecutionID || requestDigest != request.RequestDigest || admissionDigest != request.AdmissionDigest ||
-			(persistedCorrelation != "" && persistedCorrelation != request.AuditCorrelationID) {
-			result = rilaction.LedgerReservation{Disposition: rilaction.LedgerConflict}
-			return nil
-		}
-		if status == "in-progress" {
-			var databaseNow time.Time
-			if err := tx.QueryRowContext(ctx, `SELECT clock_timestamp()`).Scan(&databaseNow); err != nil {
-				return err
+		if !persistedValidUntil.After(databaseNow) {
+			if !validUntil.After(databaseNow) {
+				return rilaction.LedgerReservation{}, fmt.Errorf("controlplane: takeover window already expired")
 			}
-			if !persistedValidUntil.After(databaseNow) {
-				if !validUntil.After(databaseNow) {
-					return fmt.Errorf("controlplane: takeover window already expired")
-				}
-				var acquiredToken string
-				var acquiredCount int64
-				if err := tx.QueryRowContext(ctx, `
+			var acquiredToken string
+			var acquiredCount int64
+			if err := tx.QueryRowContext(ctx, `
 					UPDATE ril_action_execution_ledger
 					SET reservation_token = $3, requested_at = $4, valid_until = $5,
 					    audit_correlation_id = $6, takeover_count = takeover_count + 1,
@@ -105,32 +138,24 @@ func (s *PostgresStore) Reserve(ctx context.Context, request rilaction.LedgerRes
 					  AND status = 'in-progress' AND valid_until <= $7
 					RETURNING reservation_token, takeover_count
 				`, request.TenantID, request.IdempotencyKey, token, requestedAt, validUntil,
-					request.AuditCorrelationID, databaseNow).Scan(&acquiredToken, &acquiredCount); err != nil {
-					return err
-				}
-				if err := appendRILExecutionLeaseAudit(ctx, tx, request, acquiredToken, "taken-over", acquiredCount); err != nil {
-					return err
-				}
-				result = rilaction.LedgerReservation{Disposition: rilaction.LedgerAcquired, ReservationToken: acquiredToken}
-				return nil
+				request.AuditCorrelationID, databaseNow).Scan(&acquiredToken, &acquiredCount); err != nil {
+				return rilaction.LedgerReservation{}, err
 			}
-			result = rilaction.LedgerReservation{Disposition: rilaction.LedgerInProgress}
-			return nil
+			if err := appendRILExecutionLeaseAudit(ctx, tx, request, acquiredToken, "taken-over", acquiredCount); err != nil {
+				return rilaction.LedgerReservation{}, err
+			}
+			return rilaction.LedgerReservation{Disposition: rilaction.LedgerAcquired, ReservationToken: acquiredToken}, nil
 		}
-		if status != "completed" || evidenceJSON == "" {
-			return fmt.Errorf("controlplane: invalid persisted RIL action ledger state")
-		}
-		evidence, err := decodePersistedRILActionEvidence(evidenceJSON)
-		if err != nil {
-			return fmt.Errorf("controlplane: decode persisted RIL action evidence: %w", err)
-		}
-		result = rilaction.LedgerReservation{Disposition: rilaction.LedgerReplay, Evidence: evidence}
-		return nil
-	})
-	if err != nil {
-		return rilaction.LedgerReservation{}, err
+		return rilaction.LedgerReservation{Disposition: rilaction.LedgerInProgress}, nil
 	}
-	return result, nil
+	if status != "completed" || evidenceJSON == "" {
+		return rilaction.LedgerReservation{}, fmt.Errorf("controlplane: invalid persisted RIL action ledger state")
+	}
+	evidence, err := decodePersistedRILActionEvidence(evidenceJSON)
+	if err != nil {
+		return rilaction.LedgerReservation{}, fmt.Errorf("controlplane: decode persisted RIL action evidence: %w", err)
+	}
+	return rilaction.LedgerReservation{Disposition: rilaction.LedgerReplay, Evidence: evidence}, nil
 }
 
 func parseCanonicalLedgerTime(value string) (time.Time, error) {

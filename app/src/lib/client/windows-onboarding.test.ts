@@ -7,6 +7,9 @@ import {
   hasWindowsLocalClientContext,
   loginRedirectForWindowsLocalClient,
   localSetupReady,
+  selfHostedLoginHref,
+  selfHostedLocalOwnerUrl,
+  selfHostedOnboardingUrl,
   normalizeServerUrl,
   rememberWindowsLocalClientContext,
   windowsLocalClientReturnUrl,
@@ -72,5 +75,15 @@ describe("windows client onboarding helpers", () => {
     expect(loginRedirectForWindowsLocalClient(storage)).toBe(
       windowsLocalClientReturnUrl,
     );
+    expect(selfHostedLoginHref({ storage })).toBe(windowsLocalClientReturnUrl);
+  });
+
+  it("sends a new self-hosted browser session to the local owner", () => {
+    expect(selfHostedLoginHref()).toBe(selfHostedLocalOwnerUrl);
+    expect(selfHostedLocalOwnerUrl).toBe("/client/local");
+    expect(selfHostedLoginHref({ windowsClient: true })).toBe(
+      windowsLocalClientReturnUrl,
+    );
+    expect(selfHostedOnboardingUrl).toBe("/client/onboarding?client=windows");
   });
 });

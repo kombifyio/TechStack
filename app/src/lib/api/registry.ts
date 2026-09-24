@@ -1,4 +1,8 @@
 import { fetchApi } from "./client";
+import {
+  normalizeServerOutcome,
+  type ServerOutcome,
+} from "#lib/support/server-outcome.js";
 
 /**
  * Canonical server read model (`GET /api/v1/servers`, `GET /api/v1/servers/{id}`).
@@ -29,11 +33,7 @@ export type CanonicalConnectionState =
   | string;
 
 export type CanonicalHealthState =
-  | "unknown"
-  | "healthy"
-  | "degraded"
-  | "unhealthy"
-  | string;
+  "unknown" | "healthy" | "degraded" | "unhealthy" | string;
 
 export interface CanonicalServerChannel {
   type: string;
@@ -80,8 +80,10 @@ export interface CanonicalRuntimeTargetEvidence {
 }
 
 export interface CanonicalServer {
+  node_role?: string;
   id: string;
-  techstack_id?: string;
+  node_id: string;
+  kit_deployment_id?: string;
   name: string;
   worker_id?: string;
   lifecycle: CanonicalServerLifecycle;
@@ -97,17 +99,36 @@ export interface CanonicalServer {
   availability_owner?: "customer" | "provider" | string;
   operations_owner?: "customer" | "kombify" | string;
   target_evidence?: CanonicalRuntimeTargetEvidence;
+  last_outcome?: ServerOutcome;
   mutations_allowed: boolean;
+  /**
+   * Node-scoped capability contract: exactly what this server's own state
+   * admits right now, each id backed by an endpoint that exists. Absent on a
+   * backend that predates the capability field — treat that as "no grant"
+   * rather than as "everything allowed".
+   */
+  allowed_actions?: string[];
+  /** StackKit-deployment scope, kept separate from the node scope. */
+  stack_actions?: string[];
   created_at: string;
   updated_at: string;
 }
 
+type CanonicalServerWire = Omit<CanonicalServer, "last_outcome"> & {
+  last_outcome?: unknown;
+};
+
+function normalizeCanonicalServer(
+  server: CanonicalServerWire,
+): CanonicalServer {
+  return {
+    ...server,
+    last_outcome: normalizeServerOutcome(server.last_outcome) ?? undefined,
+  };
+}
+
 export type LegacyServerStateName =
-  | "provisioned"
-  | "healthy"
-  | "degraded"
-  | "stale"
-  | "offline";
+  "provisioned" | "healthy" | "degraded" | "stale" | "offline";
 
 /**
  * Client mirror of `pkg/serverregistry.LegacyServerState`.
@@ -227,13 +248,18 @@ export function parseManagementState(
   return match;
 }
 
-function withCheckedManagementState<T extends { management_state: unknown }>(
-  service: T,
+type RegistryServiceWire = Omit<RegistryService, "management_state"> & {
+  management_state: unknown;
+};
+
+function normalizeRegistryService(
+  service: RegistryServiceWire,
   context: string,
-): T & { management_state: RegistryManagementState } {
+): RegistryService {
+  const { management_state, ...rest } = service;
   return {
-    ...service,
-    management_state: parseManagementState(service.management_state, context),
+    ...rest,
+    management_state: parseManagementState(management_state, context),
   };
 }
 
@@ -247,7 +273,7 @@ export interface RegistryCatalogService {
   foundations: string[];
 }
 
-export interface RegistryStack {
+export interface RegistryKitDeployment {
   id: string;
   name: string;
   status: string;
@@ -265,7 +291,7 @@ export interface RegistryStack {
 
 export interface RegistryServer {
   id: string;
-  stack_id: string;
+  kit_deployment_id: string;
   name: string;
   hostname?: string;
   role: string;
@@ -273,19 +299,9 @@ export interface RegistryServer {
   worker_id?: string;
   lease_id?: string;
   status?:
-    | "provisioned"
-    | "healthy"
-    | "degraded"
-    | "stale"
-    | "offline"
-    | string;
+    "provisioned" | "healthy" | "degraded" | "stale" | "offline" | string;
   health_state?:
-    | "provisioned"
-    | "healthy"
-    | "degraded"
-    | "stale"
-    | "offline"
-    | string;
+    "provisioned" | "healthy" | "degraded" | "stale" | "offline" | string;
   last_seen?: string;
   rollout_ready: boolean;
 }
@@ -299,19 +315,14 @@ export interface RegistryService {
   type: string;
   status: RegistryServiceStatus;
   health_state?:
-    | "starting"
-    | "healthy"
-    | "reachable"
-    | "unhealthy"
-    | "unknown"
-    | string;
+    "starting" | "healthy" | "reachable" | "unhealthy" | "unknown" | string;
   observed_at?: string;
   management_state: RegistryManagementState;
   migration_status?: string;
   placement_scope?: "stack";
   move_allowed?: boolean;
   move_blocked_reason?: string;
-  stack_id: string;
+  kit_deployment_id: string;
   stack_name: string;
   server_id: string;
   server_name: string;
@@ -321,7 +332,7 @@ export interface RegistryService {
 
 export interface ServiceRegistryPayload {
   catalog: RegistryCatalogService[];
-  stacks: RegistryStack[];
+  kit_deployments: RegistryKitDeployment[];
   servers: RegistryServer[];
   services: RegistryService[];
   migration_available?: boolean;
@@ -329,7 +340,7 @@ export interface ServiceRegistryPayload {
 }
 
 export interface RegistryServiceMutationRequest {
-  stack_id: string;
+  kit_deployment_id: string;
   server_id: string;
   service_id?: string;
   name?: string;
@@ -339,15 +350,28 @@ export interface RegistryServiceMutationRequest {
   url?: string;
 }
 
-/** List the canonical server aggregates for the caller's tenant. */
+type ServiceRegistryWirePayload = Omit<ServiceRegistryPayload, "services"> & {
+  services: RegistryServiceWire[];
+};
+
+function registryServiceMutationWire(
+  request: RegistryServiceMutationRequest,
+): Omit<RegistryServiceMutationRequest, "kit_deployment_id"> & {
+  stack_id: string;
+} {
+  const { kit_deployment_id, ...rest } = request;
+  return { stack_id: kit_deployment_id, ...rest };
+}
+
+/** List canonical Nodes, optionally scoped to one StackKit deployment. */
 export async function listCanonicalServers(
-  techstackId?: string,
+  kitDeploymentId?: string,
 ): Promise<CanonicalServer[]> {
-  const query = techstackId
-    ? `?techstack_id=${encodeURIComponent(techstackId)}`
+  const query = kitDeploymentId
+    ? `?kit_deployment_id=${encodeURIComponent(kitDeploymentId)}`
     : "";
-  const res = await fetchApi<CanonicalServer[]>(`/api/v1/servers${query}`);
-  return res.data ?? [];
+  const res = await fetchApi<CanonicalServerWire[]>(`/api/v1/servers${query}`);
+  return (res.data ?? []).map(normalizeCanonicalServer);
 }
 
 /** Current dashboard inventory excludes terminal aggregates but keeps their direct audit route. */
@@ -359,20 +383,44 @@ export function isCurrentCanonicalServer(server: CanonicalServer): boolean {
 export async function getCanonicalServer(
   serverId: string,
 ): Promise<CanonicalServer> {
-  const res = await fetchApi<CanonicalServer>(
+  const res = await fetchApi<CanonicalServerWire>(
     `/api/v1/servers/${encodeURIComponent(serverId)}`,
+  );
+  return normalizeCanonicalServer(res.data);
+}
+
+export interface SelfOwnedServerDetachReceipt {
+  server_id: string;
+  agent_id: string;
+  revision: number;
+  generation: number;
+  detached_at: string;
+  replay: boolean;
+}
+
+/** Revoke one exact BYO Agent and retain its terminal canonical server receipt. */
+export async function detachSelfOwnedServer(
+  serverId: string,
+): Promise<SelfOwnedServerDetachReceipt> {
+  const res = await fetchApi<SelfOwnedServerDetachReceipt>(
+    `/api/v1/servers/${encodeURIComponent(serverId)}/detach`,
+    {
+      method: "POST",
+      body: JSON.stringify({ confirm_server_id: serverId }),
+    },
   );
   return res.data;
 }
 
 export async function listServiceRegistry(): Promise<ServiceRegistryPayload> {
-  const res = await fetchApi<ServiceRegistryPayload>(
+  const res = await fetchApi<ServiceRegistryWirePayload>(
     "/api/v1/registry/services",
   );
+  const { services, ...payload } = res.data;
   return {
-    ...res.data,
-    services: (res.data.services ?? []).map((service, index) =>
-      withCheckedManagementState(service, `services[${index}]`),
+    ...payload,
+    services: (services ?? []).map((service, index) =>
+      normalizeRegistryService(service, `services[${index}]`),
     ),
   };
 }
@@ -380,27 +428,27 @@ export async function listServiceRegistry(): Promise<ServiceRegistryPayload> {
 export async function attachCatalogService(
   request: RegistryServiceMutationRequest,
 ): Promise<RegistryService> {
-  const res = await fetchApi<{ service: RegistryService }>(
+  const res = await fetchApi<{ service: RegistryServiceWire }>(
     "/api/v1/registry/services/attach",
     {
       method: "POST",
-      body: JSON.stringify(request),
+      body: JSON.stringify(registryServiceMutationWire(request)),
     },
   );
-  return withCheckedManagementState(res.data.service, "attach.service");
+  return normalizeRegistryService(res.data.service, "attach.service");
 }
 
 export async function importObservedService(
   request: RegistryServiceMutationRequest,
 ): Promise<RegistryService> {
-  const res = await fetchApi<{ service: RegistryService }>(
+  const res = await fetchApi<{ service: RegistryServiceWire }>(
     "/api/v1/registry/services/import",
     {
       method: "POST",
-      body: JSON.stringify(request),
+      body: JSON.stringify(registryServiceMutationWire(request)),
     },
   );
-  return withCheckedManagementState(res.data.service, "import.service");
+  return normalizeRegistryService(res.data.service, "import.service");
 }
 
 export async function migrateRegistryService(
@@ -413,8 +461,8 @@ export async function migrateRegistryService(
 }> {
   const res = await fetchApi<{
     job_id?: string;
-    source_service: RegistryService;
-    target_service: RegistryService;
+    source_service: RegistryServiceWire;
+    target_service: RegistryServiceWire;
   }>("/api/v1/registry/services/migrate", {
     method: "POST",
     body: JSON.stringify({
@@ -424,11 +472,11 @@ export async function migrateRegistryService(
   });
   return {
     ...res.data,
-    source_service: withCheckedManagementState(
+    source_service: normalizeRegistryService(
       res.data.source_service,
       "migrate.source_service",
     ),
-    target_service: withCheckedManagementState(
+    target_service: normalizeRegistryService(
       res.data.target_service,
       "migrate.target_service",
     ),
@@ -439,17 +487,17 @@ export async function verifyRegistryService(
   serviceId: string,
 ): Promise<{ service: RegistryService; archived_service?: RegistryService }> {
   const res = await fetchApi<{
-    service: RegistryService;
-    archived_service?: RegistryService;
+    service: RegistryServiceWire;
+    archived_service?: RegistryServiceWire;
   }>("/api/v1/registry/services/verify", {
     method: "POST",
     body: JSON.stringify({ service_id: serviceId }),
   });
   return {
     ...res.data,
-    service: withCheckedManagementState(res.data.service, "verify.service"),
+    service: normalizeRegistryService(res.data.service, "verify.service"),
     archived_service: res.data.archived_service
-      ? withCheckedManagementState(
+      ? normalizeRegistryService(
           res.data.archived_service,
           "verify.archived_service",
         )

@@ -10,15 +10,20 @@ The beyond-IaC operational layer that manages infrastructure after provisioning.
 - [x] mTLS certificate management (generation, validation, per-agent certs)
 - [x] Command queue with backpressure (max 1000 pending) and persistence
 - [x] Bidirectional command streaming (Core↔Agent)
-- [x] OpenTofu + Terramate agent execution (TofuCommand, TerramateCommand)
-- [x] Drift detection (scheduler + handler + UI: badge, diff, modal)
+- [x] OpenTofu + Terramate command wire (TofuCommand, TerramateCommand) —
+  compatibility only; direct tofu/terramate dispatch is retired and execution
+  authority is not owned here (ADR-015 superseded, see docs/ARCHITECTURE.md)
+- [x] Drift detection (scheduler + handler; the operator UI was removed
+  2026-08-19)
 - [x] Health endpoints (/live, /ready, /startup)
 - [x] Server inventory (RIL: ril_servers collection, inventory store, REST API)
 - [x] RIL proto extensions (GetSystemInfo, ReportHealEvent, ReportDetection, StreamLogs, GetUpdateCandidates)
 - [x] Action-Card CRUD (ril_action_cards collection, approve/dismiss lifecycle)
 - [x] Self-Heal audit log (ril_heal_events collection, recipe registry)
 - [x] Self-Heal Watchdog (agent-side: 5 curated recipes with auto-exec)
-- [x] Detection Engines (update-scanner, error-matcher, resource-monitor, security-scanner, drift-detector)
+- [ ] Detection Engines (update-scanner, error-matcher, resource-monitor,
+  security-scanner, drift-detector) — a first `pkg/ril/detection` draft was
+  never wired and was removed 2026-08-19
 - [x] Action-Card lifecycle state machine (pending→approved→executing→completed/failed, retry path)
 - [x] NL Server Access API (Phase 3: command dispatch, services, containers, logs, metrics, config, updates, diff, search)
 - [x] ConnectedAgent extended with Services + Containers for live agent state
@@ -53,10 +58,9 @@ The beyond-IaC operational layer that manages infrastructure after provisioning.
 
 ## Notes
 
-- Architecture reference: docs/architecture/ARCHITECTURE_V2.md (Section 4)
-- RIL expansion plan: docs/plans/2026-05-27-ril-expansion-v2.md
+- RIL public-beta contract: docs/RIL_HARNESS_PUBLIC_BETA.md
+- Durable orchestration decision: docs/ADR/0030-ril-orchestration-engine.md
 - Proto definition: api/proto/agent.proto
 - Implementation: pkg/grpcserver/, pkg/jobs/drift_handler.go, pkg/auth/certs.go
-- RIL packages: pkg/ril/inventory/, pkg/ril/actions/, pkg/ril/detection/, internal/routes/ril_*.go
+- RIL packages: pkg/ril/actions/, internal/routes/ril_*.go
 - Watchdog: pkg/agent/watchdog/ (5 recipes: service-restart, tunnel-reconnect, cert-rotate, disk-cleanup, oom-recovery)
-- Migrations: internal/migrations/036_add_ril_servers.go, 037_add_ril_commands.go

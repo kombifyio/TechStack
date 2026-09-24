@@ -1,21 +1,21 @@
 <script lang="ts">
   import { Sparkles } from "@lucide/svelte";
   import { onDestroy, onMount } from "svelte";
-  import { cn } from "$lib/utils";
+  import { cn } from "#lib/utils.js";
   import {
     AI_HANDOVER_SCHEMA,
     SUPPORT_AGENT_ID,
     buildErrorAiHandoverPrompt,
     normalizeErrorAiHandoverContext,
     type ErrorAiHandoverContext,
-  } from "$lib/support/error-handover";
+  } from "#lib/support/error-handover.js";
   import {
     aiErrorHandoverAvailable,
     cancelAiErrorHandoverUpdates,
     requestAiErrorHandover,
     type AiErrorHandoverRequest,
     type AiErrorHandoverUpdate,
-  } from "$lib/stores/postMessageBridge";
+  } from "#lib/stores/postMessageBridge.js";
 
   interface Props {
     context?: ErrorAiHandoverContext | null;
@@ -94,30 +94,30 @@
         handoverState === "accepted" ||
         handoverState === "ready"}
       aria-busy={handoverState === "connecting" || handoverState === "accepted"}
-      class="inline-flex min-h-9 items-center gap-2 rounded-md border border-red-400/45 bg-red-500/10 px-3 py-1.5 text-sm font-medium text-red-50 transition-colors hover:bg-red-500/20 focus:outline-none focus:ring-2 focus:ring-red-300/60 disabled:cursor-not-allowed disabled:opacity-60"
+      class="inline-flex min-h-9 items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-1.5 text-sm font-medium text-destructive transition-colors hover:bg-destructive/20 focus:outline-none focus:ring-2 focus:ring-destructive/50 disabled:cursor-not-allowed disabled:opacity-60"
       data-testid="ask-kombify-ai-error"
     >
       <Sparkles class="h-4 w-4 shrink-0" aria-hidden="true" />
-      <span>Ask Kombify AI about this</span>
+      <span>Ask kombify AI about this</span>
     </button>
     {#if handoverState === "connecting"}
-      <span class="text-xs text-red-200/80" role="status" aria-live="polite">
-        Connecting to Kombify AI...
+      <span class="text-xs text-destructive/80" role="status" aria-live="polite">
+        Connecting to kombify AI...
       </span>
     {:else if handoverState === "accepted"}
-      <span class="text-xs text-red-200/80" role="status" aria-live="polite">
+      <span class="text-xs text-destructive/80" role="status" aria-live="polite">
         Preparing support session...
       </span>
     {:else if handoverState === "ready"}
-      <span class="text-xs text-red-200/80" role="status" aria-live="polite">
+      <span class="text-xs text-destructive/80" role="status" aria-live="polite">
         Support panel opened.
       </span>
     {:else if handoverState === "failed"}
-      <span class="text-xs text-red-200/80" role="alert">
-        Kombify AI could not open: {handoverFailure}
+      <span class="text-xs text-destructive/80" role="alert">
+        kombify AI could not open: {handoverFailure}
       </span>
     {:else if handoverState === "standalone"}
-      <span class="text-xs text-red-200/80">
+      <span class="text-xs text-destructive/80">
         AI handover is available in kombify Cloud.
       </span>
     {/if}

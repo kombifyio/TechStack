@@ -31,7 +31,7 @@ Get-ChildItem -Path $sourceDir -File | Where-Object { $_.Name -ne "install-windo
     Copy-Item -Force -Path $_.FullName -Destination (Join-Path $InstallDir $_.Name)
 }
 
-foreach ($dir in @("Assets", "runtimes")) {
+foreach ($dir in @("Assets", "runtimes", "postgres")) {
     $source = Join-Path $sourceDir $dir
     if (Test-Path $source) { Copy-Item -Recurse -Force -Path $source -Destination $InstallDir }
 }

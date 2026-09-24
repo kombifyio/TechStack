@@ -40,6 +40,14 @@ WORKER_REGISTERED="0"
 ENROLLMENT_RESPONSE=""
 EXISTING_RUNTIME_ENROLLMENT="0"
 BOOTSTRAP_PHASE="initializing"
+SUBSTRATE_HOST=0
+if [ -d /etc/pve/local ] && [ "$(uname -s)" = Linux ]; then
+    SUBSTRATE_HOST=1
+fi
+# Proxmox's root shell need not have sudo installed.
+if [ "$(id -u)" = 0 ] && ! command -v sudo >/dev/null 2>&1; then
+    sudo() { "$@"; }
+fi
 
 bootstrap_log() {
     _level=$1
@@ -259,7 +267,11 @@ worker_register_if_env_set() {
     TMP_BODY="${REGISTER_TMP_DIR}/response"
     TMP_ERR="${REGISTER_TMP_DIR}/curl-error"
     TMP_PAYLOAD="${REGISTER_TMP_DIR}/request"
-    printf '%s' "{\"token\":\"$TOK_ESC\",\"hostname\":\"$H_ESC\",\"os\":\"$OS_ESC\",\"arch\":\"$ARCH_ESC\"}" > "$TMP_PAYLOAD"
+    SUBSTRATE_FIELDS=""
+    if [ "$SUBSTRATE_HOST" = 1 ]; then
+        SUBSTRATE_FIELDS=',"type":"substrate","provider":"proxmox"'
+    fi
+    printf '%s' "{\"token\":\"$TOK_ESC\",\"hostname\":\"$H_ESC\",\"os\":\"$OS_ESC\",\"arch\":\"$ARCH_ESC\"$SUBSTRATE_FIELDS}" > "$TMP_PAYLOAD"
     : > "$TMP_BODY"
     : > "$TMP_ERR"
     chmod 0600 "$TMP_BODY" "$TMP_ERR" "$TMP_PAYLOAD"
@@ -816,11 +828,14 @@ ExecStart=${BINARY_PATH} agent --transport=https --enrollment-file=/etc/techstac
 Restart=always
 RestartSec=15
 TimeoutStopSec=20
-NoNewPrivileges=yes
+NoNewPrivileges=no
 PrivateTmp=yes
-ProtectSystem=strict
+# No ProtectSystem: StackKits installs host packages under /usr, and for the
+# same path systemd lets ProtectSystem's read-only /usr win over
+# ReadWritePaths=/usr, so every such install failed with EROFS.
+ProtectSystem=no
 ProtectHome=read-only
-ProtectKernelTunables=yes
+ProtectKernelTunables=no
 ProtectKernelModules=yes
 ProtectControlGroups=yes
 ReadOnlyPaths=/etc/techstack -/root/my-homelab
@@ -832,7 +847,7 @@ ReadOnlyPaths=/etc/techstack -/root/my-homelab
 # StackKits Standard Mode is the owner-approved host authority: its pinned
 # executors install packages and converge /etc while keeping the enrollment
 # itself read-only through the more-specific ReadOnlyPaths entry above.
-ReadWritePaths=/app /opt /srv /mnt /media ${INSTALL_DIR%/} ${OPERATIONS_DIR} /etc /usr /var
+ReadWritePaths=/app /opt /srv /mnt /media ${INSTALL_DIR%/} ${OPERATIONS_DIR} /etc /usr /var /run /root/.docker -/home/kombify/.ssh
 Environment=TECHSTACK_ACCESS_MANIFEST=/opt/stackkit/.stackkit/access.json,/root/my-homelab/.stackkit/access.json
 Environment=TECHSTACK_STACKKIT_RELEASE_PIN=/app/.stackkit/stackkits-release-pin.json
 Environment=TECHSTACK_STACKKIT_RELEASE_CACHE=/app/.stackkit/releases
@@ -844,7 +859,7 @@ WantedBy=multi-user.target
 EOF
 
     sudo install -d -m 0750 /etc/techstack
-    sudo install -d -m 0755 /app /opt/stackkit
+    sudo install -d -m 0755 /app /opt/stackkit /root/.docker
     sudo install -m 0600 "$ENROLLMENT_TMP" /etc/techstack/agent-enrollment.json
     sudo install -m 0644 "$UNIT_TMP" /etc/systemd/system/techstack-agent.service
     rm -f "$ENROLLMENT_TMP" "$UNIT_TMP"
@@ -882,11 +897,14 @@ ExecStart=${BINARY_PATH} agent --transport=https --enrollment-file=/etc/techstac
 Restart=always
 RestartSec=15
 TimeoutStopSec=20
-NoNewPrivileges=yes
+NoNewPrivileges=no
 PrivateTmp=yes
-ProtectSystem=strict
+# No ProtectSystem: StackKits installs host packages under /usr, and for the
+# same path systemd lets ProtectSystem's read-only /usr win over
+# ReadWritePaths=/usr, so every such install failed with EROFS.
+ProtectSystem=no
 ProtectHome=read-only
-ProtectKernelTunables=yes
+ProtectKernelTunables=no
 ProtectKernelModules=yes
 ProtectControlGroups=yes
 ReadOnlyPaths=/etc/techstack -/root/my-homelab
@@ -898,7 +916,7 @@ ReadOnlyPaths=/etc/techstack -/root/my-homelab
 # StackKits Standard Mode is the owner-approved host authority: its pinned
 # executors install packages and converge /etc while keeping the enrollment
 # itself read-only through the more-specific ReadOnlyPaths entry above.
-ReadWritePaths=/app /opt /srv /mnt /media ${INSTALL_DIR%/} ${OPERATIONS_DIR} /etc /usr /var
+ReadWritePaths=/app /opt /srv /mnt /media ${INSTALL_DIR%/} ${OPERATIONS_DIR} /etc /usr /var /run /root/.docker -/home/kombify/.ssh
 Environment=TECHSTACK_ACCESS_MANIFEST=/opt/stackkit/.stackkit/access.json,/root/my-homelab/.stackkit/access.json
 Environment=TECHSTACK_STACKKIT_RELEASE_PIN=/app/.stackkit/stackkits-release-pin.json
 Environment=TECHSTACK_STACKKIT_RELEASE_CACHE=/app/.stackkit/releases
@@ -910,7 +928,7 @@ WantedBy=multi-user.target
 EOF
 
     sudo install -d -m 0750 /etc/techstack
-    sudo install -d -m 0755 /app /opt/stackkit
+    sudo install -d -m 0755 /app /opt/stackkit /root/.docker
     sudo install -m 0600 "$ENROLLMENT_TMP" /etc/techstack/agent-enrollment.json
     sudo install -m 0644 "$UNIT_TMP" /etc/systemd/system/techstack-agent.service
     rm -f "$ENROLLMENT_TMP" "$UNIT_TMP"
@@ -963,14 +981,18 @@ main() {
     fi
     verify_installation
     bootstrap_phase stackkits-runtime "Installing the pinned StackKits operations runtime."
-    install_stackkit_operations_process
+    if [ "$SUBSTRATE_HOST" != 1 ]; then
+        install_stackkit_operations_process
+    fi
 
     # Redeem the one-use token only after the binary is present and verified.
     bootstrap_phase enrollment "Guard binaries are installed; redeeming the managed server enrollment."
     worker_register_if_env_set
 
     bootstrap_phase stackkits-host "Preparing the managed server for the StackKits rollout."
-    ensure_stackkit_container_runtime
+    if [ "$SUBSTRATE_HOST" != 1 ]; then
+        ensure_stackkit_container_runtime
+    fi
 
     # Install service if requested
     if [ "$AS_SERVICE" = "1" ]; then

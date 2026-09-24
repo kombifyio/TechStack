@@ -8,36 +8,22 @@ import (
 )
 
 const (
-	StackKitLegacyBaseSlug = "base-kit"
-	StackKitBasement       = "basement-kit"
-	StackKitBase           = StackKitBasement // Deprecated symbol: product-facing rollouts use basement-kit.
-	StackKitCloud          = "cloud-kit"
-	StackKitModernHomelab  = "modern-homelab"
-	StackKitHA             = "ha-kit"
-	StackKitDevHomelab     = "dev-homelab"
+	StackKitBasement      = "basement-kit"
+	StackKitCloud         = "cloud-kit"
+	StackKitModernHomelab = "modern-homelab"
+	StackKitHA            = "ha-kit"
+	StackKitDevHomelab    = "dev-homelab"
 )
 
-// DefaultStackKitsDir resolves the external StackKits checkout used for HCL
-// generation. It intentionally does not return TechStack's in-repo pkg/stackkits
-// content; TechStack consumes StackKits artifacts, it does not author them.
+// DefaultStackKitsDir resolves an explicitly configured StackKits checkout.
+// Production sets TECHSTACK_STACKKITS_DIR to the pinned published tree.
+// A sibling workspace checkout is not implicit authority.
 func DefaultStackKitsDir() string {
 	for _, key := range []string{"TECHSTACK_STACKKITS_DIR", "STACKKITS_REPO", "STACKKITS_PATH"} {
 		if dir := existingDir(os.Getenv(key)); dir != "" {
 			return dir
 		}
 	}
-
-	for _, candidate := range []string{
-		filepath.Join("..", "kombify-StackKits"),
-		filepath.Join("..", "StackKits"),
-		filepath.Join("..", "..", "kombify-StackKits"),
-		filepath.Join("..", "..", "StackKits"),
-	} {
-		if dir := existingDir(candidate); dir != "" {
-			return dir
-		}
-	}
-
 	return ""
 }
 
@@ -56,7 +42,7 @@ func IsSupportedProductStackKit(name string) bool {
 
 func CanonicalStackKitName(name string) string {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "", StackKitBasement, StackKitLegacyBaseSlug, "basement", "basementkit", "homelab-starter", "homelab-basic", "base-homelab", "minimal-arm":
+	case "", StackKitBasement, "basement", "basementkit", "homelab-starter", "homelab-basic", "base-homelab", "minimal-arm":
 		return StackKitBasement
 	case StackKitCloud, "cloud", "cloudkit", "kombify-cloud-kit":
 		return StackKitCloud

@@ -23,5 +23,5 @@ func RegisterRoutesWithModeAndFeatures(r *httpx.Router, app core.App, orch *orch
 
 	// Register spec access routes for persisted specs
 	// Handles: GET /api/v1/stacks/{id}/requirements, GET /api/v1/stacks/{id}/unified, etc.
-	RegisterSpecRoutes(r, app)
+	RegisterSpecRoutes(r)
 }

@@ -101,16 +101,23 @@ func TestRenderIONOSUbuntuDockerHostPrepIsExplicitAndVersioned(t *testing.T) {
 	}
 	rendered := string(document)
 	for _, want := range []string{
-		"/usr/local/lib/kombify/host-prep-v1",
-		"/var/lib/kombify/host-prep/v1.status",
+		"/usr/local/lib/kombify/host-prep-v2",
+		"/var/lib/kombify/host-prep/v2.status",
 		"status=pending",
 		"flock -n 9",
 		"set -euo pipefail",
 		"apt-get install -y",
 		"timeout 40 apt-get",
 		"timeout 90 apt-get install",
+		"nftables fail2ban unattended-upgrades openssh-server",
 		"systemctl enable --now docker",
+		"systemctl enable --now fail2ban",
+		"systemctl enable --now unattended-upgrades",
+		"PasswordAuthentication no",
+		"/run/sshd",
 		"status=ready",
+		"kombify",
+		"/home/kombify/.ssh/authorized_keys",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("IONOS host-prep cloud-init is missing %q:\n%s", want, rendered)
@@ -122,6 +129,15 @@ func TestRenderIONOSUbuntuDockerHostPrepIsExplicitAndVersioned(t *testing.T) {
 	if strings.Contains(rendered, "DPkg::Lock::Timeout=120") || strings.Contains(rendered, "seq 1 90") {
 		t.Fatal("host preparation exceeds the bounded bootstrap observation contract")
 	}
+	if strings.Contains(rendered, "systemctl enable --now nftables") {
+		t.Fatal("host-prep must not start nftables.service on a ufw-owned Ubuntu host")
+	}
+	if !strings.Contains(rendered, "systemctl disable --now nftables") {
+		t.Fatal("host-prep must disable nftables.service after apt enables it")
+	}
+	if !strings.Contains(rendered, "systemctl is-enabled --quiet nftables") {
+		t.Fatal("host-prep ready must fail while nftables.service stays enabled on a ufw-owned host")
+	}
 	// The provider-neutral default must not silently make every managed image
 	// an Ubuntu/Docker image.
 	baseline, err := RenderCloudInit(CloudInitInput{
@@ -130,8 +146,101 @@ func TestRenderIONOSUbuntuDockerHostPrepIsExplicitAndVersioned(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render baseline: %v", err)
 	}
-	if strings.Contains(string(baseline), "/usr/local/lib/kombify/host-prep-v1") {
-		t.Fatalf("default cloud-init unexpectedly includes IONOS host prep:\n%s", baseline)
+	if strings.Contains(string(baseline), "/usr/local/lib/kombify/host-prep-v2") {
+		t.Fatalf("default cloud-init unexpectedly includes StackKit-ready host prep:\n%s", baseline)
+	}
+}
+
+func TestStackKitReadyHostPrepCreatesSSHPrivilegeDirBeforeConfigCheck(t *testing.T) {
+	document, err := RenderCloudInit(CloudInitInput{
+		ServerURL:       "https://techstack.kombify.io",
+		PairingToken:    testToken(t, "tenant-demo", "op_1"),
+		HostPrepProfile: HostPrepProfileStackKitReadyUbuntu2404V1,
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	rendered := string(document)
+	mkdirAt := strings.Index(rendered, "mkdir -p /etc/ssh/sshd_config.d /run/sshd")
+	useraddAt := strings.Index(rendered, "useradd --create-home --shell /bin/bash "+ExecutionChannelUser)
+	sshdTestAt := strings.LastIndex(rendered, "sshd -t")
+	if mkdirAt < 0 || useraddAt < 0 || sshdTestAt < 0 {
+		t.Fatalf("host-prep is missing the SSH privilege dir, execution channel, or sshd -t:\n%s", rendered)
+	}
+	if !(mkdirAt < useraddAt && useraddAt < sshdTestAt) {
+		t.Fatalf("first-boot must create /run/sshd and the kombify login before sshd -t; order mkdir=%d useradd=%d sshd-t=%d", mkdirAt, useraddAt, sshdTestAt)
+	}
+}
+
+func TestExecutionChannelUserProvisioningKeepsANonRootLogin(t *testing.T) {
+	got := RenderExecutionChannelUserProvisioning("")
+	if !strings.Contains(got, ExecutionChannelUser) || !strings.Contains(got, "authorized_keys") {
+		t.Fatalf("provisioning does not establish the execution-channel login:\n%s", got)
+	}
+	if strings.Contains(got, "PermitRootLogin yes") {
+		t.Fatal("provisioning must not re-enable root SSH")
+	}
+	ready := RenderExecutionChannelUserReadyTest("")
+	if !strings.Contains(ready, ExecutionChannelUser) || !strings.Contains(ready, "authorized_keys") {
+		t.Fatalf("ready test does not observe the execution-channel login:\n%s", ready)
+	}
+}
+
+// Cloud host-security disables root SSH. A host preparation that reports ready
+// without leaving a non-root login behind hands back a node the control plane
+// can no longer reach, so the channel is part of readiness rather than a later
+// convenience.
+func TestStackKitReadyHostPrepKeepsANonRootExecutionChannel(t *testing.T) {
+	document, err := RenderCloudInit(CloudInitInput{
+		ServerURL: "https://techstack.kombify.io", PairingToken: testToken(t, "tenant-demo", "op_1"),
+		HostPrepProfile: HostPrepProfileStackKitReadyUbuntu2404V1,
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	rendered := string(document)
+	if ExecutionChannelUser == "root" {
+		t.Fatal("the execution channel must not be the login host-security disables")
+	}
+	for _, want := range []string{
+		"useradd --create-home --shell /bin/bash " + ExecutionChannelUser,
+		"/root/.ssh/authorized_keys /home/" + ExecutionChannelUser + "/.ssh/authorized_keys",
+		"visudo -cqf " + executionChannelSudoersPath,
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("host prep does not establish the execution channel (%q):\n%s", want, rendered)
+		}
+	}
+	// An unvalidated privilege grant must not survive the render.
+	grant := strings.Index(rendered, "tee "+executionChannelSudoersPath)
+	validation := strings.Index(rendered, "visudo -cqf "+executionChannelSudoersPath)
+	if grant < 0 || validation < grant {
+		t.Fatalf("the sudoers grant is not validated after it is written:\n%s", rendered)
+	}
+	readyTest := RenderExecutionChannelUserReadyTest("")
+	if !strings.Contains(rendered, readyTest) {
+		t.Fatalf("readiness does not prove the execution channel (%q):\n%s", readyTest, rendered)
+	}
+}
+
+func TestRenderStackKitReadyProfileMatchesIONOSHostPrep(t *testing.T) {
+	token := testToken(t, "tenant-demo", "op_1")
+	ionos, err := RenderCloudInit(CloudInitInput{
+		ServerURL: "https://techstack.kombify.io", PairingToken: token,
+		HostPrepProfile: HostPrepProfileIONOSUbuntu2404DockerV1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	centron, err := RenderCloudInit(CloudInitInput{
+		ServerURL: "https://techstack.kombify.io", PairingToken: token,
+		HostPrepProfile: HostPrepProfileStackKitReadyUbuntu2404V1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(ionos, centron) {
+		t.Fatal("IONOS and Centron StackKit-ready host-prep documents must be identical")
 	}
 }
 

@@ -19,27 +19,20 @@ export type ProbeStatus = "pending" | "probing" | "done" | "failed" | "skipped";
  * Scan status indicates the current state of a discovery scan.
  */
 export type ScanStatus =
-  | "pending"
-  | "running"
-  | "completed"
-  | "failed"
-  | "canceled";
+  "pending" | "running" | "completed" | "failed" | "canceled";
 
 /**
  * Device role represents suggested roles for discovered devices.
  */
 export type DeviceRole =
-  | "main"
-  | "worker"
-  | "storage"
-  | "utility"
-  | "gateway"
-  | "unknown";
+  "main" | "worker" | "storage" | "utility" | "gateway" | "unknown";
 
 /**
  * Discovered service represents a detected network service.
  */
 export interface DiscoveredService {
+  fingerprint_verified?: boolean;
+  certificate_sha256?: string;
   name: string;
   port: number;
   version?: string;

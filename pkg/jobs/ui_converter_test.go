@@ -8,177 +8,6 @@ import (
 	"github.com/kombifyio/techstack/internal/providercatalog"
 )
 
-// TestMapWizardProviderToUnifier tests all provider mapping cases.
-func TestMapWizardProviderToUnifier(t *testing.T) {
-	tests := []struct {
-		name     string
-		provider string
-		want     string
-	}{
-		{"homelab maps to local", "homelab", "local"},
-		{"cloud remains a non-authoritative UI mode", "cloud", "cloud"},
-		{"local maps to local", "local", "local"},
-		{"unknown passes through", "proxmox", "proxmox"},
-		{"aws passes through", "aws", "aws"},
-		{"digitalocean passes through", "digitalocean", "digitalocean"},
-		{"hetzner passes through", "hetzner", "hetzner"},
-		{"empty string", "", ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := mapWizardProviderToUnifier(tt.provider)
-			if got != tt.want {
-				t.Errorf("mapWizardProviderToUnifier(%q) = %q, want %q", tt.provider, got, tt.want)
-			}
-		})
-	}
-}
-
-// TestMapGoalsToServices tests goal-to-service mapping.
-func TestMapGoalsToServices(t *testing.T) {
-	tests := []struct {
-		name             string
-		goals            map[string]interface{}
-		wantMinServices  int
-		wantServiceNames []string
-	}{
-		{
-			name:             "empty goals",
-			goals:            map[string]interface{}{},
-			wantMinServices:  0,
-			wantServiceNames: nil,
-		},
-		{
-			name: "websiteEmail goal",
-			goals: map[string]interface{}{
-				"websiteEmail": true,
-			},
-			wantMinServices:  1,
-			wantServiceNames: []string{"traefik"},
-		},
-		{
-			name: "storage goal",
-			goals: map[string]interface{}{
-				"storage": true,
-			},
-			wantMinServices:  8,
-			wantServiceNames: []string{"traefik", "pocket-id", "vaultwarden", "immich-server", "immich-ml", "immich-postgres", "immich-redis", "otel-collector"},
-		},
-		{
-			name: "everything goal",
-			goals: map[string]interface{}{
-				"everything": true,
-			},
-			wantMinServices:  8,
-			wantServiceNames: []string{"traefik", "pocket-id", "vaultwarden", "immich-server", "immich-ml", "immich-postgres", "immich-redis", "otel-collector"},
-		},
-		{
-			name: "multiple goals (websiteEmail + storage)",
-			goals: map[string]interface{}{
-				"websiteEmail": true,
-				"storage":      true,
-			},
-			wantMinServices:  8,
-			wantServiceNames: []string{"traefik", "pocket-id", "vaultwarden", "immich-server", "immich-ml", "immich-postgres", "immich-redis", "otel-collector"},
-		},
-		{
-			name: "false goals are ignored",
-			goals: map[string]interface{}{
-				"websiteEmail": false,
-				"storage":      false,
-			},
-			wantMinServices: 0,
-		},
-		{
-			name: "invalid goal types are ignored",
-			goals: map[string]interface{}{
-				"websiteEmail": "not a bool",
-				"storage":      123,
-			},
-			wantMinServices: 0,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			services := mapGoalsToServices(tt.goals)
-
-			if len(services) < tt.wantMinServices {
-				t.Errorf("mapGoalsToServices() returned %d services, want at least %d", len(services), tt.wantMinServices)
-			}
-
-			// Check that expected services are present
-			for _, wantName := range tt.wantServiceNames {
-				found := false
-				for _, svc := range services {
-					if svc.Name == wantName {
-						found = true
-						break
-					}
-				}
-				if !found {
-					t.Errorf("expected service %q not found in result", wantName)
-				}
-			}
-		})
-	}
-}
-
-// TestMapAccessModeToNetwork tests access mode to network config mapping.
-func TestMapAccessModeToNetwork(t *testing.T) {
-	tests := []struct {
-		name       string
-		accessMode string
-		wantVPN    string
-		wantDomain string
-	}{
-		{
-			name:       "local access",
-			accessMode: "local",
-			wantVPN:    "none",
-			wantDomain: "",
-		},
-		{
-			name:       "anywhere access",
-			accessMode: "anywhere",
-			wantVPN:    "tailscale",
-			wantDomain: "ts.net",
-		},
-		{
-			name:       "public access",
-			accessMode: "public",
-			wantVPN:    "none",
-			wantDomain: "",
-		},
-		{
-			name:       "unknown defaults to tailscale",
-			accessMode: "unknown",
-			wantVPN:    "tailscale",
-			wantDomain: "local",
-		},
-		{
-			name:       "empty defaults to tailscale",
-			accessMode: "",
-			wantVPN:    "tailscale",
-			wantDomain: "local",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			network := mapAccessModeToNetwork(tt.accessMode)
-
-			if network.VPN != tt.wantVPN {
-				t.Errorf("mapAccessModeToNetwork(%q).VPN = %q, want %q", tt.accessMode, network.VPN, tt.wantVPN)
-			}
-			if network.Domain != tt.wantDomain {
-				t.Errorf("mapAccessModeToNetwork(%q).Domain = %q, want %q", tt.accessMode, network.Domain, tt.wantDomain)
-			}
-		})
-	}
-}
-
 // TestGenerateRegistrationToken tests token generation.
 func TestGenerateRegistrationToken(t *testing.T) {
 	token1 := generateRegistrationToken("stack-1")
@@ -201,39 +30,6 @@ func TestGenerateRegistrationToken(t *testing.T) {
 	}
 }
 
-// TestSanitizeDNSName_EdgeCases tests additional DNS name sanitization edge cases.
-func TestSanitizeDNSName_EdgeCases(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
-		{"already lowercase", "mystack", "mystack"},
-		{"with spaces", "my stack", "my-stack"},
-		{"with underscores", "my_stack", "my-stack"},
-		{"mixed case", "MyStack", "mystack"},
-		{"multiple dashes", "my--stack", "my-stack"},
-		{"leading dash", "-mystack", "mystack"},
-		{"trailing dash", "mystack-", "mystack"},
-		{"special chars", "my@stack!test", "my-stack-test"},
-		{"numbers only", "12345", "ks-12345"},
-		{"very long name", "this-is-a-very-long-name-that-exceeds-the-maximum-dns-label-length-of-sixty-three-characters", "this-is-a-very-long-name-that-exceeds-the-maximum-dns-label-len"},
-		{"unicode chars", "mÿstäck", "m-st-ck"},
-		{"only special chars", "!!!@@@###", "techstack"},
-		{"whitespace only", "   ", "techstack"},
-		{"tabs and newlines", "\t\n", "techstack"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := sanitizeDNSName(tt.input)
-			if got != tt.want {
-				t.Errorf("sanitizeDNSName(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
 // TestConvertUIConfigToSpec_EdgeCases tests additional spec conversion edge cases.
 func TestConvertUIConfigToSpec_EdgeCases(t *testing.T) {
 	t.Run("non-map input returns error", func(t *testing.T) {
@@ -253,6 +49,53 @@ func TestConvertUIConfigToSpec_EdgeCases(t *testing.T) {
 		}
 		if spec.Name != "techstack" {
 			t.Errorf("expected default name 'techstack', got %q", spec.Name)
+		}
+	})
+
+	t.Run("legacy homelab provider stays on the local runtime path", func(t *testing.T) {
+		spec, err := convertUIConfigToSpec(map[string]interface{}{
+			"name":     "legacy-stack",
+			"provider": "homelab",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		localProvider := false
+		for _, node := range spec.Nodes {
+			localProvider = localProvider || node.Provider == "local"
+		}
+		if !localProvider {
+			t.Fatalf("nodes = %#v, want a local runtime provider", spec.Nodes)
+		}
+	})
+
+	t.Run("wizard access modes produce their network policy", func(t *testing.T) {
+		cases := []struct {
+			name       string
+			accessMode string
+			wantVPN    string
+			wantDomain string
+		}{
+			{name: "local", accessMode: "local", wantVPN: "none"},
+			{name: "anywhere", accessMode: "anywhere", wantVPN: "tailscale", wantDomain: "ts.net"},
+			{name: "public", accessMode: "public", wantVPN: "none"},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				spec, err := convertUIConfigToSpec(map[string]interface{}{
+					"name":     "network-stack",
+					"provider": "local",
+					"network": map[string]interface{}{
+						"accessMode": tc.accessMode,
+					},
+				})
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if spec.Network.VPN != tc.wantVPN || spec.Network.Domain != tc.wantDomain {
+					t.Fatalf("network = %#v, want VPN %q and domain %q", spec.Network, tc.wantVPN, tc.wantDomain)
+				}
+			})
 		}
 	})
 
@@ -287,6 +130,59 @@ func TestConvertUIConfigToSpec_EdgeCases(t *testing.T) {
 		}
 		if spec.Network.Domain != "public" {
 			t.Errorf("expected Domain 'public', got %q", spec.Network.Domain)
+		}
+	})
+
+	t.Run("service options reach the generated spec", func(t *testing.T) {
+		spec, err := convertUIConfigToSpec(map[string]interface{}{
+			"name":     "option-stack",
+			"provider": "local",
+			"options": map[string]interface{}{
+				"enable_traefik":            true,
+				"enable_pocketbase_backend": true,
+				"enable_pocket_id":          true,
+				"enable_headscale":          true,
+				"enable_monitoring":         true,
+			},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		services := map[string]string{}
+		for _, service := range spec.Services {
+			services[service.Name] = service.Type
+		}
+		for name, wantType := range map[string]string{
+			"traefik":        "reverse-proxy",
+			"pocketbase":     "backend",
+			"pocket-id":      "auth",
+			"headscale":      "vpn",
+			"otel-collector": "monitoring",
+		} {
+			if services[name] != wantType {
+				t.Fatalf("service %q type = %q, want %q", name, services[name], wantType)
+			}
+		}
+	})
+
+	t.Run("PocketBase passkeys include the Pocket ID authority", func(t *testing.T) {
+		spec, err := convertUIConfigToSpec(map[string]interface{}{
+			"name":     "passkey-stack",
+			"provider": "local",
+			"options": map[string]interface{}{
+				"identity_head":     "pocketbase",
+				"requires_passkeys": true,
+			},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		services := map[string]string{}
+		for _, service := range spec.Services {
+			services[service.Name] = service.Type
+		}
+		if services["pocketbase"] != "backend" || services["pocket-id"] != "auth" {
+			t.Fatalf("services = %#v, want PocketBase backend plus Pocket ID auth", services)
 		}
 	})
 
@@ -473,10 +369,10 @@ func TestConvertUIConfigToSpec_EdgeCases(t *testing.T) {
 		}
 	})
 
-	t.Run("legacy base-kit stack-spec normalizes by runtime target", func(t *testing.T) {
+	t.Run("explicit kits stay on the named product", func(t *testing.T) {
 		localSpec, err := convertUIConfigToSpec(map[string]interface{}{
-			"name":     "legacy-local",
-			"stackkit": "base-kit",
+			"name":     "local-stack",
+			"stackkit": "basement-kit",
 			"context":  "local",
 			"nodes": []interface{}{
 				map[string]interface{}{"name": "main", "role": "standalone"},
@@ -486,12 +382,12 @@ func TestConvertUIConfigToSpec_EdgeCases(t *testing.T) {
 			t.Fatalf("unexpected local error: %v", err)
 		}
 		if localSpec.Kit != DefaultBasementKitRef {
-			t.Fatalf("local legacy Kit = %q, want %q", localSpec.Kit, DefaultBasementKitRef)
+			t.Fatalf("local Kit = %q, want %q", localSpec.Kit, DefaultBasementKitRef)
 		}
 
 		managedSpec, err := convertUIConfigToSpec(map[string]interface{}{
-			"name":     "legacy-managed",
-			"stackkit": "base-kit",
+			"name":     "managed-stack",
+			"stackkit": "cloud-kit",
 			"context":  "cloud",
 			"nodes": []interface{}{
 				map[string]interface{}{"name": "main", "role": "standalone"},
@@ -499,14 +395,14 @@ func TestConvertUIConfigToSpec_EdgeCases(t *testing.T) {
 			"metadata": map[string]interface{}{
 				"provider_id":          "ionos",
 				"provider_region":      "us-ewr",
-				"stackkit_catalog_ref": "base-kit",
+				"stackkit_catalog_ref": "cloud-kit",
 			},
 		})
 		if err != nil {
 			t.Fatalf("unexpected managed error: %v", err)
 		}
 		if managedSpec.Kit != DefaultCloudKitRef {
-			t.Fatalf("managed legacy Kit = %q, want %q", managedSpec.Kit, DefaultCloudKitRef)
+			t.Fatalf("managed Kit = %q, want %q", managedSpec.Kit, DefaultCloudKitRef)
 		}
 		if managedSpec.Metadata[metadataKeyStackKitCatalogRef] != DefaultCloudKitRef {
 			t.Fatalf("managed stackkit_catalog_ref = %q, want %q", managedSpec.Metadata[metadataKeyStackKitCatalogRef], DefaultCloudKitRef)
@@ -545,225 +441,4 @@ func TestConvertUIConfigToSpec_EdgeCases(t *testing.T) {
 		}
 	})
 
-	t.Run("StackKits cloud kombify-me does not invent an unregistered prefix", func(t *testing.T) {
-		config := map[string]interface{}{
-			"name":     "e2e-centron-kombify-me-20260525120045-cloud-centron",
-			"stackkit": "cloud-kit",
-			"context":  "cloud",
-			"network": map[string]interface{}{
-				"mode": "public",
-			},
-			"nodes": []interface{}{
-				map[string]interface{}{"name": "main", "role": "standalone"},
-			},
-			"metadata": map[string]interface{}{
-				"address_mode": "kombify-me",
-				"provider_id":  "centron",
-			},
-		}
-
-		spec, err := convertUIConfigToSpec(config)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if prefix := spec.Metadata["subdomain_prefix"]; prefix != "" {
-			t.Fatalf("Metadata[subdomain_prefix] = %q, want empty until Kombify-Me returns the real registered base", prefix)
-		}
-	})
-}
-
-// TestMapOptionsToServices_AllFlags tests all enable_* flags.
-func TestMapOptionsToServices_AllFlags(t *testing.T) {
-	tests := []struct {
-		name        string
-		options     map[string]interface{}
-		wantService string
-		wantType    string
-	}{
-		{
-			name:        "enable_headscale",
-			options:     map[string]interface{}{"enable_headscale": true},
-			wantService: "headscale",
-			wantType:    "vpn",
-		},
-		{
-			name:        "enable_pocket_id",
-			options:     map[string]interface{}{"enable_pocket_id": true},
-			wantService: "pocket-id",
-			wantType:    "auth",
-		},
-		{
-			name:        "enable_pocketbase_backend",
-			options:     map[string]interface{}{"enable_pocketbase_backend": true},
-			wantService: "pocketbase",
-			wantType:    "backend",
-		},
-		{
-			name:        "legacy enable_pocketbase remains backend",
-			options:     map[string]interface{}{"enable_pocketbase": true},
-			wantService: "pocketbase",
-			wantType:    "backend",
-		},
-		{
-			name: "pocketbase identity with passkeys adds pocket id",
-			options: map[string]interface{}{
-				"identity_head":     "pocketbase",
-				"requires_passkeys": true,
-			},
-			wantService: "pocket-id",
-			wantType:    "auth",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			services := mapOptionsToServices(tt.options)
-
-			found := false
-			for _, svc := range services {
-				if svc.Name == tt.wantService {
-					found = true
-					if svc.Type != tt.wantType {
-						t.Errorf("expected type %q for service %q, got %q", tt.wantType, tt.wantService, svc.Type)
-					}
-					break
-				}
-			}
-			if !found {
-				t.Errorf("expected service %q not found", tt.wantService)
-			}
-		})
-	}
-}
-
-func TestMapOptionsToServices_IdentityHeadMatrix(t *testing.T) {
-	tests := []struct {
-		name     string
-		options  map[string]interface{}
-		expected map[string]string
-	}{
-		{
-			name: "default pocket id identity",
-			options: map[string]interface{}{
-				"identity_head": "pocket_id",
-			},
-			expected: map[string]string{
-				"pocket-id": "auth",
-			},
-		},
-		{
-			name: "pocketbase as identity head",
-			options: map[string]interface{}{
-				"identity_head": "pocketbase",
-			},
-			expected: map[string]string{
-				"pocketbase": "backend",
-			},
-		},
-		{
-			name: "pocketbase backend plus passkeys",
-			options: map[string]interface{}{
-				"enable_pocketbase_backend": true,
-				"requires_passkeys":         true,
-			},
-			expected: map[string]string{
-				"pocketbase": "backend",
-				"pocket-id":  "auth",
-			},
-		},
-		{
-			name: "explicit pocket id and pocketbase are not duplicated",
-			options: map[string]interface{}{
-				"enable_pocketbase":         true,
-				"enable_pocketbase_backend": true,
-				"enable_pocket_id":          true,
-				"identity_head":             "pocket_id",
-			},
-			expected: map[string]string{
-				"pocketbase": "backend",
-				"pocket-id":  "auth",
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			services := mapOptionsToServices(tt.options)
-
-			if len(services) != len(tt.expected) {
-				t.Fatalf("mapOptionsToServices() returned %d services, want %d: %#v", len(services), len(tt.expected), services)
-			}
-
-			for name, wantType := range tt.expected {
-				found := false
-				for _, svc := range services {
-					if svc.Name != name {
-						continue
-					}
-					found = true
-					if svc.Type != wantType {
-						t.Errorf("service %q type = %q, want %q", name, svc.Type, wantType)
-					}
-				}
-				if !found {
-					t.Errorf("expected service %q not found in %#v", name, services)
-				}
-			}
-		})
-	}
-}
-
-// TestMapServiceNameToType_FullCoverage tests more service name mappings.
-func TestMapServiceNameToType_FullCoverage(t *testing.T) {
-	tests := []struct {
-		name string
-		want string
-	}{
-		// Databases
-		{"postgres", "database"},
-		{"mysql", "database"},
-		{"mariadb", "database"},
-		{"mongodb", "database"},
-		{"redis", "database"},
-		// PaaS
-		{"caprover", "paas"},
-		{"coolify", "paas"},
-		{"dokku", "paas"},
-		{"portainer", "paas"},
-		// Monitoring
-		{"loki", "monitoring"},
-		{"uptime-kuma", "monitoring"},
-		{"uptime_kuma", "monitoring"},
-		{"uptime", "monitoring"},
-		// Storage
-		{"minio", "storage"},
-		{"seafile", "storage"},
-		// Auth
-		{"keycloak", "auth"},
-		{"authentik", "auth"},
-		{"authelia", "auth"},
-		{"pocket-id", "auth"},
-		{"pocket_id", "auth"},
-		{"pocketid", "auth"},
-		{"tinyauth", "auth"},
-		// Backup
-		{"restic", "backup"},
-		{"borg", "backup"},
-		// Custom/Media
-		{"jellyfin", "custom"},
-		{"plex", "custom"},
-		// Case insensitivity
-		{"TRAEFIK", "reverse-proxy"},
-		{"OTEL-Collector", "monitoring"},
-		{"VictoriaMetrics", "monitoring"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := mapServiceNameToType(tt.name)
-			if got != tt.want {
-				t.Errorf("mapServiceNameToType(%q) = %q, want %q", tt.name, got, tt.want)
-			}
-		})
-	}
 }

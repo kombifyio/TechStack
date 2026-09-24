@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/guardbootstrap"
 	"github.com/kombifyio/techstack/internal/providercatalog"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/serverruntime"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/vmlease"
@@ -43,6 +44,7 @@ const (
 	EntitlementReasonCheckerUnavailable    = "feature_checker_unavailable"
 	EntitlementReasonFeatureDisabled       = "required_feature_disabled"
 	EntitlementReasonFeatureCheckFailed    = "feature_check_failed"
+	EntitlementReasonProviderUnsupported   = "managed_provider_unsupported"
 )
 
 var (
@@ -50,7 +52,7 @@ var (
 	ErrFeatureDisabled                  = errors.New("monthlyruntime: monthly runtime feature disabled")
 	ErrInvalidLease                     = errors.New("monthlyruntime: lease is not a monthly runtime lease")
 	ErrEnrollmentPending                = errors.New("monthlyruntime: lease is not enrolled")
-	ErrRuntimeClient                    = errors.New("monthlyruntime: simulate runtime client not configured")
+	ErrRuntimeClient                    = errors.New("monthlyruntime: managed runtime client not configured")
 	ErrExecutionAuthorityInactive       = errors.New("monthlyruntime: lease is not active under TechStack provider control")
 	ErrCustodyResolutionConfirmation    = errors.New("monthlyruntime: custody resolution requires explicit provider-cleanup confirmation")
 	ErrCustodyResolutionProviderManaged = errors.New("monthlyruntime: provider-managed custody must be decommissioned through provider control")
@@ -104,6 +106,12 @@ type RuntimeClient interface {
 	RuntimeAction(ctx context.Context, req serverruntime.LeaseRuntimeActionRequest) (*serverruntime.LeaseRuntimeActionResponse, error)
 }
 
+type canonicalRuntimeActionAuthority interface {
+	RuntimeClient
+	validateRuntimeAction(serverruntime.RuntimeAction) error
+	enrollmentAuthoritative() bool
+}
+
 type OperationRecorder interface {
 	RecordOperation(ctx context.Context, event vmleases.OperationEvent) error
 }
@@ -136,6 +144,19 @@ type Service struct {
 	// decommission. When nil, force decommission is refused (see
 	// ErrReconciliationUnavailable) so a canceled lease never leaks a VM.
 	Reconcile ReconciliationEnqueuer
+	// Power executes start/stop as a generation-bound provider-control
+	// reconcile. When nil, start and stop fail closed before any mutation.
+	Power PowerController
+	// SSHAccess applies the generation-bound owner SSH grant over the
+	// execution channel. When nil, SSH enable/disable fail closed.
+	SSHAccess SSHAccessController
+	// Reconnector restarts Guard over the execution channel when the
+	// aggregate cannot prove a connection. When nil, reconnect only probes.
+	Reconnector AgentReconnector
+	// Addresses removes the managed kombify.me addresses that route to a
+	// runtime before its provider teardown is admitted. When nil (self-hosted
+	// without the platform identity) no managed addresses exist to remove.
+	Addresses AddressDeregistrar
 }
 
 func RequiredFeatureKeysForProvider(providerID string) []string {
@@ -152,32 +173,28 @@ func RequiredFeatureKeysForProvider(providerID string) []string {
 }
 
 func ManagedRuntimeEntitlementDenialDetails(providerID, reasonCode string, requiredFeatures, missingFeatures []string) map[string]any {
-	providerID = strings.ToLower(strings.TrimSpace(providerID))
-	if providerID == "" {
-		providerID = ProviderCentron
+	if reasonCode == EntitlementReasonProviderUnsupported {
+		providerID = strings.TrimSpace(providerID)
+	} else {
+		providerID = managedRuntimeProviderID(providerID)
 	}
 	requiredFeatures = compactStringSlice(requiredFeatures)
 	missingFeatures = compactStringSlice(missingFeatures)
-	if len(requiredFeatures) == 0 {
+	if len(requiredFeatures) == 0 && reasonCode != EntitlementReasonProviderUnsupported {
 		requiredFeatures = RequiredFeatureKeysForProvider(providerID)
 	}
-	if len(missingFeatures) == 0 && reasonCode != EntitlementReasonCheckerUnavailable {
+	if len(missingFeatures) == 0 && reasonCode != EntitlementReasonCheckerUnavailable && reasonCode != EntitlementReasonProviderUnsupported {
 		missingFeatures = requiredFeatures
 	}
 	if strings.TrimSpace(reasonCode) == "" {
 		reasonCode = EntitlementReasonFeatureDisabled
 	}
-	return map[string]any{
-		"phase":             "managed_runtime_entitlement",
-		"phase_label":       "Managed runtime availability",
-		"error_code":        ManagedRuntimeEntitlementErrorCode,
-		"reason_code":       reasonCode,
-		"capability":        ManagedRuntimeCapability,
-		"provider_id":       providerID,
-		"required_features": requiredFeatures,
-		"missing_features":  missingFeatures,
-		"retryable":         false,
-		"user_guidance": map[string]any{
+	return structuredFailureDetails(failureEnvelope{
+		phase: "managed_runtime_entitlement", phaseLabel: "Managed runtime availability",
+		errorCode: ManagedRuntimeEntitlementErrorCode, reasonCode: reasonCode,
+		capability: ManagedRuntimeCapability, providerID: providerID,
+		requiredFeatures: requiredFeatures, missingFeatures: missingFeatures,
+		guidance: map[string]any{
 			"title": "Managed server is not active for this account",
 			"body":  "This account is not currently entitled to provision kombify-managed monthly runtime servers for this provider.",
 			"next_steps": []string{
@@ -185,12 +202,9 @@ func ManagedRuntimeEntitlementDenialDetails(providerID, reasonCode string, requi
 				"Ask a workspace admin or kombify support to enable the monthly runtime and provider entitlement.",
 			},
 		},
+	}, map[string]any{
 		"remediation": "Use a user-owned server connection, or enable the required monthly runtime entitlement and provider feature for this account.",
-		"support_context": map[string]any{
-			"feature_source": "Stripe/FGA/Flagship entitlement chain",
-			"cost_bearing":   true,
-		},
-	}
+	})
 }
 
 func compactStringSlice(values []string) []string {
@@ -254,9 +268,15 @@ type RuntimeResponse struct {
 	LeaseState        string                          `json:"lease_state,omitempty"`
 	LeaseReason       string                          `json:"lease_reason,omitempty"`
 	EnrollmentStatus  string                          `json:"enrollment_status,omitempty"`
-	SSHEnabled        bool                            `json:"ssh_enabled,omitempty"`
+	SSHEnabled        bool                            `json:"ssh_enabled"`
 	Status            *serverruntime.NodeStatus       `json:"status,omitempty"`
 	SSH               *serverruntime.SSHInfo          `json:"ssh,omitempty"`
+	// Power is the ledger view of the latest start/stop of this generation.
+	Power *PowerOperation `json:"power,omitempty"`
+	// SSHAccess is the node-verified outcome of an SSH enable/disable.
+	SSHAccess *SSHAccessResult `json:"ssh_access,omitempty"`
+	// Reconnect reports what a reconnect did to recover the Guard session.
+	Reconnect *ReconnectOutcome `json:"reconnect,omitempty"`
 }
 
 func (s *Service) Offerings() []Offering {
@@ -372,6 +392,9 @@ func (s *Service) Action(ctx context.Context, req ActionRequest) (*RuntimeRespon
 	if err != nil {
 		return nil, err
 	}
+	if resp, handled, day2Err := s.day2Action(ctx, req, prepared); handled {
+		return resp, day2Err
+	}
 	if resp, handled, replayErr := s.confirmedDecommissionReplayShortCircuit(ctx, req, prepared); handled {
 		return resp, replayErr
 	}
@@ -381,7 +404,11 @@ func (s *Service) Action(ctx context.Context, req ActionRequest) (*RuntimeRespon
 	if resp, handled, shortCircuitErr := s.persistedSSHInfoShortCircuit(ctx, req, prepared); handled {
 		return resp, shortCircuitErr
 	}
-	return s.executeRuntimeAction(ctx, req, prepared)
+	resp, err := s.executeRuntimeAction(ctx, req, prepared)
+	if err == nil && req.Action == serverruntime.RuntimeActionStatus {
+		s.attachLatestPower(ctx, prepared.tenantID, resp)
+	}
+	return resp, err
 }
 
 type preparedRuntimeAction struct {
@@ -405,6 +432,11 @@ func (s *Service) prepareAction(ctx context.Context, req ActionRequest) (*prepar
 	}
 	if err = s.ensureActionFeatures(ctx, req, *lease); err != nil {
 		return nil, err
+	}
+	if !s.day2ActionConfigured(req.Action) {
+		if err = validateRuntimeActionSupport(s.Runtime, req.Action); err != nil {
+			return nil, err
+		}
 	}
 	lease, confirmedDigest, claimPreexisting, err := s.prepareDecommissionGeneration(ctx, tenantID, lease, req)
 	if err != nil {
@@ -451,6 +483,17 @@ func actionRunsWithoutRuntimeClient(req ActionRequest) bool {
 	return req.Action == serverruntime.RuntimeActionDecommission && req.Force
 }
 
+func validateRuntimeActionSupport(client RuntimeClient, action serverruntime.RuntimeAction) error {
+	if action == serverruntime.RuntimeActionDecommission || action == serverruntime.RuntimeActionSSHInfo {
+		return nil
+	}
+	authority, ok := client.(canonicalRuntimeActionAuthority)
+	if !ok {
+		return nil
+	}
+	return authority.validateRuntimeAction(action)
+}
+
 func (s *Service) loadAuthorizedActionLease(ctx context.Context, req ActionRequest) (string, *vmlease.Lease, serverruntime.RuntimeOfferingID, error) {
 	tenantID := strings.TrimSpace(req.TenantID)
 	if tenantID == "" {
@@ -468,10 +511,16 @@ func (s *Service) loadAuthorizedActionLease(ctx context.Context, req ActionReque
 	if !canAccessLease(*lease, strings.TrimSpace(req.UserID), tenantID) {
 		return "", nil, "", ErrForbidden
 	}
-	if !record.NativeActive() && !nativeInactiveDecommissionContinuation(*record, req) {
+	if !record.NativeActive() &&
+		!nativeInactiveDecommissionContinuation(*record, req) &&
+		!ownerProviderControlDecommission(*record, req) {
 		return "", nil, "", ErrExecutionAuthorityInactive
 	}
-	offeringID, err := validateMonthlyRuntimeLease(*lease, req.Action)
+	requireEnrollment := true
+	if authority, ok := s.Runtime.(canonicalRuntimeActionAuthority); ok && authority.enrollmentAuthoritative() && record.NativeActive() {
+		requireEnrollment = false
+	}
+	offeringID, err := validateMonthlyRuntimeLease(*lease, req.Action, requireEnrollment)
 	if err != nil {
 		return "", nil, "", err
 	}
@@ -488,6 +537,11 @@ func nativeInactiveDecommissionContinuation(record vmleases.LeaseInventoryRecord
 		req.Internal &&
 		req.ReconcileClaimedDecommission &&
 		strings.TrimSpace(req.ExpectedResourceGenerationDigest) != ""
+}
+
+func ownerProviderControlDecommission(record vmleases.LeaseInventoryRecord, req ActionRequest) bool {
+	return record.ExecutionAuthority == vmleases.LeaseExecutionAuthorityTechStackProviderControl &&
+		req.Action == serverruntime.RuntimeActionDecommission
 }
 
 func (s *Service) validateForceReconciliation(req ActionRequest) error {
@@ -605,6 +659,7 @@ func (s *Service) persistedSSHInfoShortCircuit(ctx context.Context, req ActionRe
 	if resp == nil {
 		return nil, false, nil
 	}
+	resp.SSHEnabled = s.ownerSSHAccessEnabled(ctx, prepared.tenantID, string(prepared.lease.ID))
 	actor := strings.TrimSpace(req.UserID)
 	logRuntimeAction(prepared.tenantID, req.LeaseID, actor, req.Action, resp, nil)
 	if err := s.recordRuntimeAction(ctx, prepared.tenantID, req.LeaseID, actor, req.Action, nil); err != nil {
@@ -670,7 +725,15 @@ func (s *Service) finishRuntimeAction(ctx context.Context, tenantID string, req 
 			return nil, err
 		}
 	}
-	if metadata := runtimeActionMetadata(resp, req.Action); len(metadata) > 0 {
+	metadata := runtimeActionMetadata(resp, req.Action)
+	canonical := s.canonicalEnrollment()
+	if canonical {
+		// After native cutover the database rejects any change to legacy
+		// executor/enrollment metadata; enrollment is read from the canonical
+		// server aggregate instead of being written back onto the lease.
+		dropLegacyEnrollmentMetadata(metadata)
+	}
+	if len(metadata) > 0 {
 		lease, err = s.Leases.Patch(ctx, tenantID, req.LeaseID, vmleases.PatchRequest{
 			Metadata:                         metadata,
 			ExpectedResourceGenerationDigest: confirmedDecommissionDigest,
@@ -679,7 +742,27 @@ func (s *Service) finishRuntimeAction(ctx context.Context, tenantID string, req 
 			return nil, err
 		}
 	}
-	return publicRuntimeResponse(resp, *lease), nil
+	out := publicRuntimeResponse(resp, *lease)
+	if canonical && req.Action == serverruntime.RuntimeActionStatus && reconnectProvesEnrollment(resp) {
+		out.EnrollmentStatus = enrollmentStatusEnrolled
+	}
+	return out, nil
+}
+
+// canonicalEnrollment reports whether enrollment is owned by the native
+// server aggregate rather than lease metadata.
+func (s *Service) canonicalEnrollment() bool {
+	authority, ok := s.Runtime.(canonicalRuntimeActionAuthority)
+	return ok && authority.enrollmentAuthoritative()
+}
+
+func dropLegacyEnrollmentMetadata(metadata map[string]string) {
+	for key := range metadata {
+		if strings.HasPrefix(key, "runtime_enrollment_") || strings.HasPrefix(key, "executor_") ||
+			key == "runtime_execution_authority_provenance" {
+			delete(metadata, key)
+		}
+	}
 }
 
 func runtimeActionTimeoutFor(action serverruntime.RuntimeAction) time.Duration {
@@ -813,7 +896,7 @@ func logRuntimeAction(tenantID string, leaseID vmlease.LeaseID, actor string, ac
 	slog.Info("monthly_runtime_action_completed", args...)
 }
 
-func validateMonthlyRuntimeLease(lease vmlease.Lease, action serverruntime.RuntimeAction) (serverruntime.RuntimeOfferingID, error) {
+func validateMonthlyRuntimeLease(lease vmlease.Lease, action serverruntime.RuntimeAction, requireEnrollment bool) (serverruntime.RuntimeOfferingID, error) {
 	if !IsMonthlyRuntimeMetadata(lease.Metadata) {
 		return "", ErrInvalidLease
 	}
@@ -836,7 +919,7 @@ func validateMonthlyRuntimeLease(lease vmlease.Lease, action serverruntime.Runti
 	if action == serverruntime.RuntimeActionDecommission {
 		return offeringID, nil
 	}
-	if strings.TrimSpace(lease.Metadata["runtime_enrollment_status"]) != enrollmentStatusEnrolled {
+	if requireEnrollment && strings.TrimSpace(lease.Metadata["runtime_enrollment_status"]) != enrollmentStatusEnrolled {
 		return "", ErrEnrollmentPending
 	}
 	return offeringID, nil
@@ -981,6 +1064,9 @@ func runtimeActionMetadata(resp *serverruntime.LeaseRuntimeActionResponse, actio
 	put("runtime_last_action", string(action))
 	put("runtime_observed_state", resp.ObservedState)
 	put("runtime_lease_state", resp.LeaseState)
+	if action == serverruntime.RuntimeActionStatus && reconnectProvesEnrollment(resp) {
+		put("runtime_enrollment_status", enrollmentStatusEnrolled)
+	}
 	if resp.Status != nil {
 		put("runtime_status_updated_at", resp.Status.UpdatedAt)
 		put("runtime_public_ip", resp.Status.PublicIP)
@@ -1005,6 +1091,7 @@ func runtimeActionMetadata(resp *serverruntime.LeaseRuntimeActionResponse, actio
 		put("runtime_private_ip", privateIP)
 		put("node_private_ip", privateIP)
 		put("runtime_ssh_user", resp.SSH.User)
+		put("runtime_ssh_host_key", resp.SSH.HostKey)
 		if resp.SSH.Port > 0 {
 			put("runtime_ssh_port", strconv.Itoa(resp.SSH.Port))
 		}
@@ -1104,7 +1191,7 @@ func persistedSSHInfoResponse(tenantID string, lease vmlease.Lease, offeringID s
 		return nil
 	}
 	port := runtimeSSHPort(lease.Metadata["runtime_ssh_port"])
-	user := firstNonEmpty(lease.Metadata["runtime_ssh_user"], "root")
+	user := firstNonEmpty(lease.Metadata["runtime_ssh_user"], guardbootstrap.ExecutionChannelUser)
 	publicIP := firstNonEmpty(lease.Metadata["runtime_public_ip"], lease.Metadata["node_public_ip"], lease.Metadata["public_ip"], host)
 	privateIP := firstNonEmpty(lease.Metadata["runtime_private_ip"], lease.Metadata["node_private_ip"])
 	state := firstNonEmpty(lease.Metadata["runtime_observed_state"], string(lease.DesiredState), "unknown")
@@ -1133,6 +1220,7 @@ func persistedSSHInfoResponse(tenantID string, lease vmlease.Lease, offeringID s
 			NodePublicIP:  publicIP,
 			NodePrivateIP: privateIP,
 			Command:       fmt.Sprintf("ssh -p %d %s@%s", port, user, host),
+			HostKey:       strings.TrimSpace(lease.Metadata["runtime_ssh_host_key"]),
 		},
 		Metadata: cloneMetadata(lease.Metadata),
 	}

@@ -4,8 +4,10 @@ import (
 	"net/http"
 	"sort"
 
+	"github.com/kombifyio/techstack/internal/stackkitrelease"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/httpx"
+	"github.com/kombifyio/techstack/pkg/specv2"
 	"github.com/kombifyio/techstack/pkg/unifier"
 )
 
@@ -107,5 +109,71 @@ func (api *UnifierAPI) handleDetectAddons(e *httpx.Event) error {
 		"addons":       result.Addons,
 		"skippedCount": result.SkippedCount,
 		"totalChecked": result.TotalChecked,
+	})
+}
+
+// handleUseCaseCatalog serves the StackKits use-case catalog. The Unifier and
+// Wizard consume the image-published catalog when TECHSTACK_STACKKIT_USE_CASE_CATALOG
+// is set, otherwise the catalog generated from the pinned StackKits module.
+// They never load CUE from a STACKKITS_REPO checkout.
+func (api *UnifierAPI) handleUseCaseCatalog(e *httpx.Event) error {
+	if _, err := requireUnifierAuth(e); err != nil {
+		return err
+	}
+	catalog, err := stackkitrelease.ResolveUseCaseCatalog()
+	if err != nil {
+		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal,
+			"StackKits use-case catalog could not be read", err.Error())
+	}
+	// Deliverability comes from the same compatibility manifest that
+	// AuthorGoals gates on, so the card cannot promise something the
+	// authoring path will drop. Five of the ten catalogued use cases have no
+	// standalone-compose delivery in the pinned release; the wizard offered
+	// them with nothing said, and a selected undeliverable goal is stored as
+	// an unmapped goal and activated later by design - so this reports the
+	// fact rather than removing the choice.
+	deliverable, deliverabilityKnown, deliverErr := specv2.DeliverableGoals()
+	if deliverErr != nil {
+		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal,
+			"StackKits delivery compatibility could not be read", deliverErr.Error())
+	}
+
+	useCases := make([]map[string]any, 0, len(catalog.UseCases))
+	for _, useCase := range catalog.UseCases {
+		entry := map[string]any{
+			"id":          useCase.ID,
+			"title":       useCase.Title,
+			"description": useCase.Description,
+			"components":  useCase.Components,
+		}
+		if useCase.Components == nil {
+			entry["components"] = []stackkitrelease.UseCaseComponent{}
+		}
+		// StackKits' own per-tier verdict with its own reason. This is what the
+		// large card's advanced drawer shows at the technical depth level; the
+		// compact card never sees it.
+		if len(useCase.ComputeTiers) > 0 {
+			entry["compute_tiers"] = useCase.ComputeTiers
+		}
+		// What an operator decides about this use case, and where to read
+		// more. Both come from the catalog and differ per use case - this is
+		// what lets the cards stop showing the same three facts for all ten.
+		if settings := useCase.ConfigurationSettings(); len(settings) > 0 {
+			entry["settings"] = settings
+		}
+		if useCase.Docs != "" {
+			entry["docs"] = useCase.Docs
+		}
+		if deliverabilityKnown {
+			_, ok := deliverable[useCase.ID]
+			entry["deliverable"] = ok
+		}
+		useCases = append(useCases, entry)
+	}
+	return httpx.Success(e, http.StatusOK, map[string]any{
+		"configured":           true,
+		"deliverability_known": deliverabilityKnown,
+		"release":              catalog.Release,
+		"use_cases":            useCases,
 	})
 }

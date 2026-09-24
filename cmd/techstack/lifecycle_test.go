@@ -14,15 +14,23 @@ import (
 )
 
 func TestRuntimeShutdownSequenceKeepsProviderPoolUntilEveryMutationProducerDrains(t *testing.T) {
-	order := make([]string, 0, 5)
+	order := make([]string, 0, 6)
 	providerLifecycle := startProviderControlLifecycle(context.Background(), func(ctx context.Context) {
 		<-ctx.Done()
 		order = append(order, "provider-worker-joined")
 	})
+	background := newBackgroundRuntimeLifecycle(context.Background())
+	background.run(func(ctx context.Context) {
+		<-ctx.Done()
+		order = append(order, "background-worker-joined")
+	})
 
 	runRuntimeShutdownSequence(
 		providerLifecycle,
-		func() { order = append(order, "orchestrator-drained") },
+		func() {
+			order = append(order, "orchestrator-drained")
+			background.stopAndWait()
+		},
 		func() { order = append(order, "provider-database-closed") },
 		func() { order = append(order, "remaining-runtime-stopped") },
 		func() { order = append(order, "control-plane-database-closed") },
@@ -31,6 +39,7 @@ func TestRuntimeShutdownSequenceKeepsProviderPoolUntilEveryMutationProducerDrain
 	want := []string{
 		"provider-worker-joined",
 		"orchestrator-drained",
+		"background-worker-joined",
 		"provider-database-closed",
 		"remaining-runtime-stopped",
 		"control-plane-database-closed",
@@ -67,7 +76,7 @@ func TestStopRuntimeLifecycleWaitsForProviderControlBeforeDatabaseClose(t *testi
 	handles := &shutdownHandles{providerControl: providerLifecycle}
 	providerDatabase := &db.DB{DB: providerSQL}
 	v2State := &v2Boot{db: &db.DB{DB: controlPlaneSQL}}
-	orch := orchestrator.New(nil, &orchestrator.Config{Workers: 0}, nil)
+	orch := orchestrator.New(&orchestrator.Config{Workers: 0}, nil)
 
 	stopped := make(chan struct{})
 	go func() {

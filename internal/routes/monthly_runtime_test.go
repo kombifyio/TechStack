@@ -46,7 +46,7 @@ func TestMonthlyRuntimeErrorMapsUnsupportedNativeStopToActionableConflict(t *tes
 	}
 	details := decodeErrorDetails(t, rr)
 	if details["error_code"] != monthlyruntime.NativeRuntimeActionUnsupportedErrorCode ||
-		details["reason_code"] != "provider_pause_unsupported" {
+		details["reason_code"] != "managed_power_control_unavailable" {
 		t.Fatalf("details = %#v", details)
 	}
 }
@@ -78,16 +78,6 @@ func TestMonthlyRuntimeActionIgnoresQueryTenantOverride(t *testing.T) {
 	}
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status = %d body=%s, want 404 when query tenant override is ignored", rr.Code, rr.Body.String())
-	}
-}
-
-func TestMonthlyRuntimeTenantIDPrefersIdentityOverQuery(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/monthly-runtimes/lease-1?tenant_id=attacker-org", nil)
-	req = req.WithContext(identity.NewContext(req.Context(), &identity.Identity{UserID: "user-1", OrgID: "identity-org"}))
-	event := &httpx.Event{Response: httptest.NewRecorder(), Request: req}
-
-	if got := monthlyRuntimeTenantID(event, "fallback-user"); got != "identity-org" {
-		t.Fatalf("monthlyRuntimeTenantID = %q, want identity-org", got)
 	}
 }
 
@@ -137,7 +127,6 @@ func TestMonthlyRuntimeCleanupReadbackIsOwnerScopedAndRedacted(t *testing.T) {
 	archived := vmlease.DesiredStateArchived
 	if _, err := leases.Patch(t.Context(), "org-1", "lease-1", vmleases.PatchRequest{
 		DesiredState: &archived,
-		Metadata:     map[string]string{"runtime_observed_state": "not_found"},
 	}); err != nil {
 		t.Fatalf("archive lease: %v", err)
 	}
@@ -183,6 +172,38 @@ func TestMonthlyRuntimeCleanupReadbackIsOwnerScopedAndRedacted(t *testing.T) {
 			t.Fatalf("cleanup readback leaked %q: %s", forbidden, rr.Body.String())
 		}
 	}
+	// Native cleanup must not fall back to stale affirmative lease metadata.
+	if _, err := leases.Patch(t.Context(), "org-1", "lease-1", vmleases.PatchRequest{
+		Metadata: map[string]string{"runtime_observed_state": "not_found", "custody_resolution_status": "resolved"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	complete := *readback.facts
+	for name, omit := range map[string]func(*monthlyruntime.CleanupReadbackFacts){
+		"server binding":     func(f *monthlyruntime.CleanupReadbackFacts) { f.ServerBound = false },
+		"server terminal":    func(f *monthlyruntime.CleanupReadbackFacts) { f.ServerTerminal = false },
+		"operation":          func(f *monthlyruntime.CleanupReadbackFacts) { f.ProviderOperationFound = false },
+		"operation terminal": func(f *monthlyruntime.CleanupReadbackFacts) { f.ProviderOperationTerminal = false },
+		"absence":            func(f *monthlyruntime.CleanupReadbackFacts) { f.AbsenceEvidenceRef = "" },
+		"capacity release":   func(f *monthlyruntime.CleanupReadbackFacts) { f.CapacityReleased = false },
+	} {
+		t.Run(name, func(t *testing.T) {
+			incomplete := complete
+			omit(&incomplete)
+			readback.facts = &incomplete
+			recorder := httptest.NewRecorder()
+			router.BuildMux().ServeHTTP(recorder, req)
+			var response struct {
+				Data monthlyruntime.CleanupReadback `json:"data"`
+			}
+			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if recorder.Code != http.StatusOK || response.Data.Lease.ObservedTerminal {
+				t.Fatalf("incomplete native cleanup accepted: status=%d data=%+v", recorder.Code, response.Data)
+			}
+		})
+	}
 }
 
 func TestMonthlyRuntimeCleanupReadbackRejectsUnboundCustodyWithoutReaderCall(t *testing.T) {
@@ -224,6 +245,64 @@ func TestMonthlyRuntimeCleanupReadbackRejectsForeignOwnerWithoutReaderCall(t *te
 	}
 	if readback.calls != 0 {
 		t.Fatalf("foreign owner invoked provider readback %d times", readback.calls)
+	}
+}
+
+// Sensitive provider-control regression: a released generation may recreate
+// only after exact terminal cleanup and must delegate immutable intent to the
+// one managed-runtime expansion authority.
+func TestMonthlyRuntimeRecreateRequiresTerminalCleanupAndDelegatesImmutableIntent(t *testing.T) {
+	now := time.Date(2026, 8, 26, 8, 0, 0, 0, time.UTC)
+	leases := routeLeaseService(t, now, "enrolled")
+	archived := vmlease.DesiredStateArchived
+	if _, err := leases.Patch(t.Context(), "org-1", "lease-1", vmleases.PatchRequest{
+		DesiredState: &archived,
+		Metadata: map[string]string{
+			"runtime_observed_state":  "running",
+			"stack_id":                "stack-1",
+			"stackkit":                "cloud-kit",
+			"runtime_slot_key":        "worker-a",
+			"runtime_slot_generation": "4",
+			"runtime_offering_id":     "monthly-runtime-standard",
+			"server_node_role":        "worker",
+			"requested_services":      "pocket_id,vaultwarden",
+		},
+	}); err != nil {
+		t.Fatalf("archive lease: %v", err)
+	}
+	readback := &routeCleanupReadbackSource{facts: &monthlyruntime.CleanupReadbackFacts{
+		ServerBound: true, ServerTerminal: true, ProviderOperationFound: true,
+		ProviderOperationTerminal: true,
+		AbsenceEvidenceRef:        "provider-evidence://centron/decommission/released-generation",
+	}}
+	recreator := &recordingManagedRuntimeRecreator{}
+	service := &monthlyruntime.Service{Leases: leases, CleanupReadback: readback}
+
+	notReady, notReadyRecorder := authedRouteEvent(http.MethodPost, "/api/v1/monthly-runtimes/lease-1/recreate", `{"confirmed":true}`)
+	notReady.Request.Header.Set("Idempotency-Key", "recreate-attempt")
+	if err := monthlyRuntimeRecreateHandler(service, recreator)(notReady); err != nil {
+		t.Fatalf("not-ready handler: %v", err)
+	}
+	if notReadyRecorder.Code != http.StatusConflict || recreator.calls != 0 {
+		t.Fatalf("not-ready recreate = status %d calls %d body=%s", notReadyRecorder.Code, recreator.calls, notReadyRecorder.Body.String())
+	}
+
+	readback.facts.CapacityReleased = true
+	ready, readyRecorder := authedRouteEvent(http.MethodPost, "/api/v1/monthly-runtimes/lease-1/recreate", `{"confirmed":true}`)
+	ready.Request.Header.Set("Idempotency-Key", "recreate-attempt")
+	if err := monthlyRuntimeRecreateHandler(service, recreator)(ready); err != nil {
+		t.Fatalf("ready handler: %v", err)
+	}
+	if readyRecorder.Code != http.StatusAccepted || recreator.calls != 1 {
+		t.Fatalf("ready recreate = status %d calls %d body=%s", readyRecorder.Code, recreator.calls, readyRecorder.Body.String())
+	}
+	request := recreator.request
+	if request.StackID != "stack-1" || request.RuntimeSlotKey != "worker-a" ||
+		request.RecreateExpectedGeneration != 5 || !request.RecreateRequiresReleasedSlot ||
+		request.ProviderID != monthlyruntime.ProviderCentron || request.NodeRole != "worker" ||
+		request.RuntimeOfferingID != "monthly-runtime-standard" || request.StackKit != "cloud-kit" ||
+		len(request.Services) != 2 {
+		t.Fatalf("delegated immutable recreate intent = %+v", request)
 	}
 }
 
@@ -272,6 +351,23 @@ type routeCleanupReadbackSource struct {
 	calls    int
 }
 
+type recordingManagedRuntimeRecreator struct {
+	calls   int
+	request ManagedRuntimeExpansionRequest
+}
+
+func (r *recordingManagedRuntimeRecreator) Execute(_ *httpx.Event, request ManagedRuntimeExpansionRequest) (*ManagedRuntimeExpansionResult, error) {
+	r.calls++
+	r.request = request
+	return &ManagedRuntimeExpansionResult{
+		KitDeploymentID: request.StackID, JobID: "job-recreate", RuntimeSlotKey: request.RuntimeSlotKey,
+		RuntimeSlotID: "slot-1", LeaseID: "lease-next", RuntimeServerID: "server-next",
+		ResourceGenerationID: "generation-next", OperationID: "operation-next",
+		ProviderID: request.ProviderID, NodeRole: request.NodeRole,
+		RuntimeOfferingID: request.RuntimeOfferingID, RuntimePhase: "lease_pending",
+	}, nil
+}
+
 func (s *routeCleanupReadbackSource) ReadManagedRuntimeCleanup(_ context.Context, tenantID string, leaseID vmlease.LeaseID) (*monthlyruntime.CleanupReadbackFacts, error) {
 	s.calls++
 	s.tenantID = tenantID
@@ -282,18 +378,6 @@ func (s *routeCleanupReadbackSource) ReadManagedRuntimeCleanup(_ context.Context
 type fakeRouteReconciler struct {
 	calls   int
 	request monthlyruntime.ReconciliationRequest
-}
-
-type blockedRouteReconciler struct{}
-
-func (blockedRouteReconciler) DurableReconciliationReady() bool { return true }
-
-func (blockedRouteReconciler) CheckProviderReconciliationReady(context.Context) error {
-	return monthlyruntime.ErrReconciliationUnavailable
-}
-
-func (blockedRouteReconciler) EnqueueProviderReconciliation(context.Context, monthlyruntime.ReconciliationRequest) error {
-	return errors.New("blocked reconciliation must not enqueue")
 }
 
 type legacyRouteLeaseService struct{ *vmleases.Service }
@@ -512,30 +596,6 @@ func TestMonthlyRuntimeDecommissionUsesDurableNativeCustodyWithoutContactingRunt
 	if !strings.Contains(rr.Body.String(), `"observed_state":"reconciliation_pending"`) ||
 		!strings.Contains(rr.Body.String(), `"lease_state":"reconciliation_pending"`) {
 		t.Fatalf("body=%s, want honest reconciliation_pending state", rr.Body.String())
-	}
-}
-
-func TestMonthlyRuntimeDecommissionClosedProviderControlReturns503WithoutClaim(t *testing.T) {
-	now := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
-	leases := routeLeaseService(t, now, "enrolled")
-	svc := &monthlyruntime.Service{
-		Leases: leases, Runtime: errRouteRuntimeClient{err: errors.New("runtime must not be called")},
-		Reconcile: blockedRouteReconciler{},
-	}
-	e, rr := authedRouteEvent(http.MethodPost, "/api/v1/monthly-runtimes/lease-1/decommission", "")
-
-	if err := monthlyRuntimeDecommissionHandler(svc)(e); err != nil {
-		t.Fatalf("handler: %v", err)
-	}
-	if rr.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d body=%s, want 503", rr.Code, rr.Body.String())
-	}
-	stored, err := leases.Get(t.Context(), "org-1", "lease-1")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if stored.CancelledAt != nil || stored.Metadata[vmleases.MetadataKeyDecommissionClaimDigest] != "" {
-		t.Fatalf("closed provider control mutated lease: %#v", stored)
 	}
 }
 

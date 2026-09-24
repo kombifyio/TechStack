@@ -16,7 +16,7 @@ func TestPostgresAuthorityRejectsStaleServerGeneration(t *testing.T) {
 	t.Cleanup(func() { _ = database.Close() })
 
 	request := postgresAdmissionRequest("stack-a", "plan-a")
-	expectServerFence(mock, request.ServerRef, int64(4), "active")
+	expectServerFence(mock, request.ServerRef, int64(4), "active", request.StackID)
 	mock.ExpectRollback()
 
 	_, err = NewPostgresAuthority(database).Admit(t.Context(), request)
@@ -40,7 +40,7 @@ func TestPostgresAuthorityAtomicallyAdmitsClaimGeneration(t *testing.T) {
 	t.Cleanup(func() { _ = database.Close() })
 
 	request := postgresAdmissionRequest("stack-a", "plan-a")
-	expectServerFence(mock, request.ServerRef, int64(3), "active")
+	expectServerFence(mock, request.ServerRef, int64(3), "active", request.StackID)
 	expectEmptyInventory(mock, request.ServerRef)
 	mock.ExpectExec("INSERT INTO server_port_claim_generations").
 		WithArgs("tenant-a", "server-a", int64(3), "stack-a", "plan-a", admissionDigest(mustNormalizeAdmission(t, request))).
@@ -77,7 +77,7 @@ func TestPostgresAuthorityAtomicallyAdmitsEmptyClaimGeneration(t *testing.T) {
 
 	request := postgresAdmissionRequest("stack-a", "plan-empty")
 	request.Requirements = nil
-	expectServerFence(mock, request.ServerRef, int64(3), "active")
+	expectServerFence(mock, request.ServerRef, int64(3), "active", request.StackID)
 	expectEmptyInventory(mock, request.ServerRef)
 	mock.ExpectExec("INSERT INTO server_port_claim_generations").
 		WithArgs("tenant-a", "server-a", int64(3), "stack-a", "plan-empty", admissionDigest(mustNormalizeAdmission(t, request))).
@@ -106,8 +106,8 @@ func TestPostgresAuthorityEvaluateCurrentIsReadOnlyAndResolvesCanonicalGeneratio
 	request := postgresCurrentAdmissionRequest("stack-a", "plan-a")
 	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('app.tenant_id', $1, true)")).WithArgs("tenant-a").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectQuery("SELECT generation, lifecycle_state[[:space:]]+FROM servers[[:space:]]+WHERE tenant_id = \\$1 AND id = \\$2 AND stack_id = \\$3 AND owner_subject_id = \\$4").
-		WithArgs("tenant-a", "server-a", "stack-a", "owner-a").WillReturnRows(sqlmock.NewRows([]string{"generation", "lifecycle_state"}).AddRow(int64(9), "active"))
+	mock.ExpectQuery("SELECT server.generation, server.lifecycle_state, stack.status[[:space:]]+FROM servers AS server").
+		WithArgs("tenant-a", "server-a", "stack-a", "owner-a").WillReturnRows(sqlmock.NewRows([]string{"generation", "lifecycle_state", "status"}).AddRow(int64(9), "active", "running"))
 	expectEmptyInventory(mock, ServerRef{TenantID: "tenant-a", ServerID: "server-a", ServerGeneration: 9})
 	mock.ExpectRollback()
 
@@ -132,10 +132,11 @@ func TestPostgresAuthorityAdmitCurrentResolvesAndPersistsCanonicalGenerationAtom
 
 	request := postgresCurrentAdmissionRequest("stack-a", "plan-a")
 	mock.ExpectBegin()
+	mock.ExpectExec("SELECT pg_advisory_xact_lock").WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('app.tenant_id', $1, true)")).WithArgs("tenant-a").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("SELECT pg_advisory_xact_lock").WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectQuery("SELECT generation, lifecycle_state[[:space:]]+FROM servers[[:space:]]+WHERE tenant_id = \\$1 AND id = \\$2 AND stack_id = \\$3 AND owner_subject_id = \\$4[[:space:]]+FOR UPDATE").
-		WithArgs("tenant-a", "server-a", "stack-a", "owner-a").WillReturnRows(sqlmock.NewRows([]string{"generation", "lifecycle_state"}).AddRow(int64(9), "active"))
+	mock.ExpectQuery("SELECT server.generation, server.lifecycle_state, stack.status[[:space:]]+FROM servers AS server").
+		WithArgs("tenant-a", "server-a", "stack-a", "owner-a").WillReturnRows(sqlmock.NewRows([]string{"generation", "lifecycle_state", "status"}).AddRow(int64(9), "active", "running"))
 	serverRef := ServerRef{TenantID: "tenant-a", ServerID: "server-a", ServerGeneration: 9}
 	expectEmptyInventory(mock, serverRef)
 	normalized := mustNormalizeAdmission(t, AdmissionRequest{ServerRef: serverRef, StackID: request.StackID, ResolvedPlanHash: request.ResolvedPlanHash, Requirements: request.Requirements})
@@ -165,6 +166,34 @@ func TestPostgresAuthorityAdmitCurrentResolvesAndPersistsCanonicalGenerationAtom
 	}
 }
 
+func TestPostgresAuthorityAdmitCurrentRejectsStoppingTechstack(t *testing.T) {
+	assertAdmitCurrentRejectsTechstackStatus(t, "stopping")
+}
+
+func assertAdmitCurrentRejectsTechstackStatus(t *testing.T, status string) {
+	t.Helper()
+	database, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	request := postgresCurrentAdmissionRequest("stack-a", "plan-a")
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT pg_advisory_xact_lock").WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('app.tenant_id', $1, true)")).WithArgs("tenant-a").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("SELECT pg_advisory_xact_lock").WithArgs(sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("SELECT server.generation, server.lifecycle_state, stack.status[[:space:]]+FROM servers AS server").
+		WithArgs("tenant-a", "server-a", "stack-a", "owner-a").
+		WillReturnRows(sqlmock.NewRows([]string{"generation", "lifecycle_state", "status"}).AddRow(int64(9), "active", status))
+	mock.ExpectRollback()
+	if _, err := NewPostgresAuthority(database).AdmitCurrent(t.Context(), request); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("AdmitCurrent(%s) error = %v, want ErrInvalidTransition", status, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPostgresAuthorityFailsClosedOnWildcardOverlap(t *testing.T) {
 	database, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
 	if err != nil {
@@ -174,7 +203,7 @@ func TestPostgresAuthorityFailsClosedOnWildcardOverlap(t *testing.T) {
 
 	request := postgresAdmissionRequest("stack-a", "plan-a")
 	request.Requirements[0].BindAddress = "127.0.0.1"
-	expectServerFence(mock, request.ServerRef, int64(3), "active")
+	expectServerFence(mock, request.ServerRef, int64(3), "active", request.StackID)
 	mock.ExpectQuery("SELECT id, transport, bind_address, port, sharing, listener_group_ref, state[[:space:]]+FROM server_port_reservations").
 		WithArgs("tenant-a", "server-a", int64(3)).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "transport", "bind_address", "port", "sharing", "listener_group_ref", "state"}).
@@ -204,7 +233,7 @@ func TestPostgresAuthorityFailsClosedOnWildcardOverlap(t *testing.T) {
 	}
 }
 
-func TestPostgresAuthorityMarksExactGenerationMutationStarted(t *testing.T) {
+func TestPostgresAuthorityResumesExactUncertainGeneration(t *testing.T) {
 	database, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
 	if err != nil {
 		t.Fatalf("sqlmock.New: %v", err)
@@ -218,8 +247,8 @@ func TestPostgresAuthorityMarksExactGenerationMutationStarted(t *testing.T) {
 	expectServerFence(mock, ref.ServerRef, int64(3), "active")
 	mock.ExpectQuery("SELECT state[[:space:]]+FROM server_port_claim_generations").
 		WithArgs("tenant-a", "server-a", int64(3), "stack-a", "plan-a").
-		WillReturnRows(sqlmock.NewRows([]string{"state"}).AddRow("pending"))
-	mock.ExpectExec("UPDATE server_port_claim_generations[[:space:]]+SET state = 'mutating'").
+		WillReturnRows(sqlmock.NewRows([]string{"state"}).AddRow("uncertain"))
+	mock.ExpectExec("UPDATE server_port_claim_generations[[:space:]]+SET state = 'mutating'.*uncertain_at = NULL").
 		WithArgs("tenant-a", "server-a", int64(3), "stack-a", "plan-a").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
@@ -368,8 +397,12 @@ func postgresCurrentAdmissionRequest(stackID, planHash string) CurrentAdmissionR
 	}
 }
 
-func expectServerFence(mock sqlmock.Sqlmock, ref ServerRef, actualGeneration int64, lifecycleState string) {
+func expectServerFence(mock sqlmock.Sqlmock, ref ServerRef, actualGeneration int64, lifecycleState string, techstackID ...string) {
 	mock.ExpectBegin()
+	if len(techstackID) == 1 {
+		mock.ExpectExec("SELECT pg_advisory_xact_lock").
+			WithArgs(stableID("portinventory-techstack-lock", ref.TenantID, techstackID[0])).WillReturnResult(sqlmock.NewResult(0, 1))
+	}
 	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('app.tenant_id', $1, true)")).
 		WithArgs(ref.TenantID).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("SELECT pg_advisory_xact_lock").
