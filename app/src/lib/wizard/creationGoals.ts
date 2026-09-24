@@ -11,9 +11,11 @@ export type CreationVariant = "discover" | "focus";
 
 /** Intent presentation only. Never use this to decide deployment eligibility.
  * Runtime facts come from the released catalog; the preview has its own snapshot.
- * Target choices: StackKits docs/use-case-expansion at e29d4561.
- * Owner correction, 2026-09-19: Documents/Files together; Paperless is an add-on.
- * Remote belongs to Dev. An additional twelfth main intent is still unresolved.
+ * Target choices: StackKits docs/use-case-expansion/portfolio.md (eleven main
+ * use cases). Owner correction, 2026-09-19: Documents/Files together; Paperless
+ * is an add-on. Remote belongs to Dev. A twelfth main intent is still unresolved.
+ * Owner decision, 2026-09-24: Game and Mail are active; Dev and AI still need
+ * their target planning, so they stay Coming soon with Network and Automation.
  */
 export const CREATION_PORTFOLIO = [
   "photos",
@@ -29,6 +31,13 @@ export const CREATION_PORTFOLIO = [
   "ai",
 ] as const;
 export type CreationGoalId = (typeof CREATION_PORTFOLIO)[number];
+
+const COMING_SOON: readonly CreationGoalId[] = [
+  "network",
+  "automation",
+  "ai",
+  "dev",
+];
 
 export interface CreationGoal {
   id: CreationGoalId;
@@ -98,7 +107,7 @@ export function creationGoals(
     question: questions.find((entry) => entry.configKey === id),
     catalog: catalog.get(id),
     availability:
-      ["network", "automation", "ai"].includes(id) ||
+      COMING_SOON.includes(id) ||
       !questions.some((question) => question.configKey === id)
         ? "coming-soon"
         : "available",

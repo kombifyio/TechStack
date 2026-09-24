@@ -11,6 +11,7 @@
     Network,
     Workflow,
     Bot,
+    CodeXml,
   } from "@lucide/svelte";
   import { UseCaseCardCompact } from "@kombiverselabs/ui/usecase";
   import { KfDetailSheet } from "@kombiverselabs/ui/card";
@@ -508,7 +509,9 @@
             ? Network
             : card.id === "automation"
               ? Workflow
-              : Bot}
+              : card.id === "dev"
+                ? CodeXml
+                : Bot}
           planLabel={tr("wizard.preview.comingSoon")}
           unavailableReason={tr("wizard.preview.comingSoonHint")}
           selectable={false}

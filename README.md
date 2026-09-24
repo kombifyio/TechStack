@@ -26,6 +26,8 @@ confirmation.
 ```bash
 cd deploy/selfhosted
 cp .env.example .env
+# When building from a source checkout, set IMAGE_TAG to a published vX.Y.Z tag.
+# The .env.example attached to a GitHub Release already contains that tag.
 # Generate one value each for TECHSTACK_V2_SESSION_SECRET and POSTGRES_PASSWORD:
 openssl rand -hex 32
 docker compose up -d

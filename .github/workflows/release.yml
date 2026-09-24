@@ -138,6 +138,15 @@ jobs:
         with:
           name: windows-client
           path: dist/windows-client
+      - name: Bind the Compose example to this immutable release
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          test "$(tr -d '[:space:]' < VERSION)" = "${RELEASE_TAG#v}"
+          sed -i "s/^IMAGE_TAG=$/IMAGE_TAG=${RELEASE_TAG}/" deploy/selfhosted/.env.example
+          grep -Fx "IMAGE_TAG=${RELEASE_TAG}" deploy/selfhosted/.env.example
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
           prerelease: false
