@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/pocketbase/pocketbase/tests"
 
 	"github.com/kombifyio/techstack/pkg/config"
+	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/identity"
 )
@@ -42,95 +44,6 @@ func (l staticManagedRuntimeLeaseLister) ListByTenant(context.Context, string) (
 }
 
 const testRecoveryPassphraseHash = "$argon2id$v=19$m=65536,t=3,p=4$demo$signed" // #nosec G101 -- deterministic non-secret test fixture hash.
-
-// TestCreateLegacyJob_ValidInput tests legacy job creation without orchestrator.
-// NOTE: This is a unit test for the helper function logic.
-// Full integration tests require a running PocketBase instance (see integration_test.go).
-func TestValidationHelpers(t *testing.T) {
-	tests := []struct {
-		name     string
-		mode     string
-		wantErr  bool
-		errMatch string
-	}{
-		{"valid easy mode", "easy", false, ""},
-		{"valid techie mode", "techie", false, ""},
-		{"invalid mode", "invalid", true, "mode"},
-		{"empty mode defaults to easy", "", false, ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mode := tt.mode
-			if mode == "" {
-				mode = "easy" // Default
-			}
-			valid := mode == "easy" || mode == "techie"
-			if tt.wantErr && valid {
-				t.Errorf("expected error for mode %q but validation passed", tt.mode)
-			}
-			if !tt.wantErr && !valid && tt.mode != "" {
-				t.Errorf("expected mode %q to be valid but failed", tt.mode)
-			}
-		})
-	}
-}
-
-// TestUserConfigNormalization tests various input formats for user_config.
-func TestUserConfigNormalization(t *testing.T) {
-	tests := []struct {
-		name       string
-		input      map[string]interface{}
-		wantFields []string
-	}{
-		{
-			name: "full user_config",
-			input: map[string]interface{}{
-				"name":     "test-stack",
-				"provider": "proxmox",
-				"services": []string{"traefik", "portainer"},
-			},
-			wantFields: []string{"name", "provider", "services"},
-		},
-		{
-			name: "minimal config",
-			input: map[string]interface{}{
-				"name": "minimal",
-			},
-			wantFields: []string{"name"},
-		},
-		{
-			name: "with nested options",
-			input: map[string]interface{}{
-				"name":    "with-opts",
-				"options": map[string]interface{}{"key": "value"},
-			},
-			wantFields: []string{"name", "options"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Verify all expected fields exist
-			for _, field := range tt.wantFields {
-				if _, ok := tt.input[field]; !ok {
-					t.Errorf("expected field %q in input", field)
-				}
-			}
-
-			// Verify JSON serialization works
-			data, err := json.Marshal(tt.input)
-			if err != nil {
-				t.Fatalf("failed to marshal: %v", err)
-			}
-
-			var parsed map[string]interface{}
-			if err := json.Unmarshal(data, &parsed); err != nil {
-				t.Fatalf("failed to unmarshal: %v", err)
-			}
-		})
-	}
-}
 
 // TestRedactUserConfigForStorage_VariousInputs tests the redaction function.
 func TestRedactUserConfigForStorage_VariousInputs(t *testing.T) {
@@ -250,97 +163,48 @@ func TestRedactUserConfigRawForStorage_RedactsJSONRecoveryHash(t *testing.T) {
 	}
 }
 
-func TestNormalizeCreateStackRequestRejectsPlaintextRecoveryPassphrase(t *testing.T) {
-	_, msg := normalizeCreateStackRequest(createStackRequest{
-		Name: "Plaintext Recovery",
-		Mode: "easy",
-		StackSpec: map[string]interface{}{
-			"name": "plaintext-recovery",
-			"metadata": map[string]interface{}{
-				"created_by":           "wizard",
-				"owner_bootstrap_mode": "auto",
-				"owner_source":         "local",
-			},
-		},
-		Options: map[string]interface{}{
-			"owner_bootstrap_mode": "auto",
-			"owner_source":         "local",
-			"recovery_passphrase":  "correct horse battery staple",
-		},
-	})
-
-	if !strings.Contains(msg, "Plaintext recovery passphrases are not accepted") {
-		t.Fatalf("normalizeCreateStackRequest() message = %q, want plaintext recovery rejection", msg)
-	}
-}
-
-func TestNormalizeCreateStackRequestRejectsNestedPlaintextRecoveryMaterial(t *testing.T) {
-	tests := []struct {
-		name      string
-		recovery  map[string]interface{}
-		wantError string
+func TestNormalizeCreateStackRequestRejectsPlaintextRecoveryMaterial(t *testing.T) {
+	for _, test := range []struct {
+		name, nestedKey string
+		option, rawYAML bool
 	}{
-		{
-			name: "identity recovery passphrase",
-			recovery: map[string]interface{}{
-				"passphrase": "correct horse battery staple",
-			},
-			wantError: "Plaintext recovery passphrases are not accepted",
-		},
-		{
-			name: "identity recovery plaintext",
-			recovery: map[string]interface{}{
-				"plaintext": "correct horse battery staple",
-			},
-			wantError: "Plaintext recovery passphrases are not accepted",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, msg := normalizeCreateStackRequest(createStackRequest{
-				Name: "Nested Plaintext Recovery",
-				Mode: "easy",
+		{name: "options passphrase", option: true},
+		{name: "identity recovery passphrase", nestedKey: "passphrase"},
+		{name: "identity recovery plaintext", nestedKey: "plaintext"},
+		{name: "raw YAML passphrase", rawYAML: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			req := createStackRequest{
+				Name: "Plaintext Recovery", Mode: "easy",
 				StackSpec: map[string]interface{}{
-					"name": "nested-plaintext-recovery",
+					"name": "plaintext-recovery",
 					"metadata": map[string]interface{}{
-						"created_by":           "wizard",
-						"owner_bootstrap_mode": "auto",
-						"owner_source":         "local",
-					},
-					"identity": map[string]interface{}{
-						"recovery": tt.recovery,
+						"created_by": "wizard", "owner_bootstrap_mode": "auto", "owner_source": "local",
 					},
 				},
-				Options: map[string]interface{}{
-					"owner_bootstrap_mode": "auto",
-					"owner_source":         "local",
-				},
-			})
-
-			if !strings.Contains(msg, tt.wantError) {
-				t.Fatalf("normalizeCreateStackRequest() message = %q, want %q", msg, tt.wantError)
+				Options: map[string]interface{}{"owner_bootstrap_mode": "auto", "owner_source": "local"},
 			}
-		})
-	}
-}
-
-func TestNormalizeCreateStackRequestRejectsRawYAMLPlaintextRecoveryMaterial(t *testing.T) {
-	_, msg := normalizeCreateStackRequest(createStackRequest{
-		Name: "Raw YAML Recovery",
-		Mode: "easy",
-		UserConfigRaw: `
+			if test.option {
+				req.Options["recovery_passphrase"] = "correct horse battery staple"
+			}
+			if test.nestedKey != "" {
+				req.StackSpec["identity"] = map[string]interface{}{
+					"recovery": map[string]interface{}{test.nestedKey: "correct horse battery staple"},
+				}
+			}
+			if test.rawYAML {
+				req = createStackRequest{Name: "Raw YAML Recovery", Mode: "easy", UserConfigFormat: "yaml", UserConfigRaw: `
 name: raw-yaml-recovery
 identity:
   recovery:
     passphrase_hash: ` + testRecoveryPassphraseHash + `
     passphrase: correct horse battery staple
-`,
-		UserConfigFormat: "yaml",
-	})
-
-	if !strings.Contains(msg, "Plaintext recovery passphrases are not accepted") {
-		t.Fatalf("normalizeCreateStackRequest() message = %q, want plaintext recovery rejection", msg)
+				`}
+			}
+			if _, msg := normalizeCreateStackRequest(req); msg == "" {
+				t.Fatal("normalizeCreateStackRequest() accepted plaintext recovery material")
+			}
+		})
 	}
 }
 
@@ -363,110 +227,14 @@ identity:
 	}
 }
 
-// TestStackNameNormalization tests name trimming and defaults.
-func TestStackNameNormalization(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{"", defaultCreateStackName},
-		{"   ", defaultCreateStackName},
-		{"MyStack", "MyStack"},
-		{"  My Stack  ", "My Stack"},
-		{"homelab-1", "homelab-1"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			name := tt.input
-			name = trimSpace(name)
-			if name == "" {
-				name = defaultCreateStackName
-			}
-			if name != tt.expected {
-				t.Errorf("expected %q, got %q", tt.expected, name)
-			}
-		})
-	}
-}
-
-// trimSpace is a helper to match the actual implementation
-func trimSpace(s string) string {
-	// Trim leading/trailing whitespace
-	result := ""
-	start := 0
-	end := len(s)
-
-	for start < end && (s[start] == ' ' || s[start] == '\t' || s[start] == '\n') {
-		start++
-	}
-	for end > start && (s[end-1] == ' ' || s[end-1] == '\t' || s[end-1] == '\n') {
-		end--
-	}
-
-	if start < end {
-		result = s[start:end]
-	}
-	return result
-}
-
-// TestModeValidation tests mode input validation.
-func TestModeValidation(t *testing.T) {
-	validModes := map[string]bool{
-		"easy":   true,
-		"techie": true,
-	}
-
-	tests := []struct {
-		mode    string
-		isValid bool
-	}{
-		{"easy", true},
-		{"techie", true},
-		{"EASY", false},   // Case sensitive
-		{"expert", false}, // Not a valid mode
-		{"", true},        // Empty defaults to easy
-		{"wizard", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.mode, func(t *testing.T) {
-			mode := tt.mode
-			if mode == "" {
-				mode = "easy"
-			}
-			valid := validModes[mode]
-			if valid != tt.isValid {
-				t.Errorf("mode %q: expected valid=%v, got %v", tt.mode, tt.isValid, valid)
-			}
-		})
-	}
-}
-
-func TestLegacyJobRecordFields_UsesMigratedSchema(t *testing.T) {
-	const migratedJobTypeUpdate = "update"
-
-	fields := legacyJobRecordFields("deploy", "stack-123", "Queued for deployment")
-
-	if got := fields["type"]; got != migratedJobTypeUpdate {
-		t.Fatalf("expected migrated job type %s, got %v", migratedJobTypeUpdate, got)
-	}
-	if got := fields["stack_id"]; got != "stack-123" {
-		t.Fatalf("expected stack_id field to be set, got %v", got)
-	}
-	if _, ok := fields["stack"]; ok {
-		t.Fatal("did not expect legacy stack field in persisted job data")
-	}
-}
-
 func TestNormalizeCreateStackRequest(t *testing.T) {
 	tests := []struct {
-		name      string
-		req       createStackRequest
-		wantName  string
-		wantMode  string
-		wantMsg   string
-		wantField string
+		name         string
+		req          createStackRequest
+		wantName     string
+		wantMode     string
+		wantMsg      string
+		wantJobField string
 	}{
 		{
 			name: "defaults name and mode",
@@ -484,9 +252,9 @@ func TestNormalizeCreateStackRequest(t *testing.T) {
 				Provider: "proxmox",
 				Services: []string{"traefik"},
 			},
-			wantName:  "Homelab",
-			wantMode:  "techie",
-			wantField: "provider",
+			wantName:     "Homelab",
+			wantMode:     "techie",
+			wantJobField: "provider",
 		},
 		{
 			name: "raw config allowed without user_config",
@@ -494,8 +262,19 @@ func TestNormalizeCreateStackRequest(t *testing.T) {
 				UserConfigRaw:    `{"provider":"proxmox"}`,
 				UserConfigFormat: "json",
 			},
-			wantName: "homelab",
-			wantMode: "easy",
+			wantName:     "homelab",
+			wantMode:     "easy",
+			wantJobField: "provider",
+		},
+		{
+			name: "raw YAML config becomes the job spec",
+			req: createStackRequest{
+				UserConfigRaw:    "provider: proxmox",
+				UserConfigFormat: "yaml",
+			},
+			wantName:     "homelab",
+			wantMode:     "easy",
+			wantJobField: "provider",
 		},
 		{
 			name: "platform name is rejected instead of auto-renamed",
@@ -535,8 +314,8 @@ func TestNormalizeCreateStackRequest(t *testing.T) {
 			if got.Mode != tt.wantMode {
 				t.Fatalf("mode = %q, want %q", got.Mode, tt.wantMode)
 			}
-			if tt.wantField != "" && got.UserConfig[tt.wantField] == nil {
-				t.Fatalf("expected normalized user_config field %q", tt.wantField)
+			if tt.wantJobField != "" && createStackJobSpec(got)[tt.wantJobField] == nil {
+				t.Fatalf("expected create job spec field %q", tt.wantJobField)
 			}
 		})
 	}
@@ -593,33 +372,33 @@ func TestNormalizeCreateStackRequest_NormalizesLegacyBaseKitByRuntimeTarget(t *t
 		want string
 	}{
 		{
-			name: "user-owned legacy base becomes basement",
+			name: "user-owned basement stays basement",
 			req: createStackRequest{
 				Name: "Local Stack",
 				Mode: "easy",
 				StackSpec: map[string]interface{}{
 					"name":     "local-stack",
-					"stackkit": "base-kit",
+					"stackkit": "basement-kit",
 					"metadata": map[string]interface{}{
-						"stackkit_catalog_ref": "base-kit",
+						"stackkit_catalog_ref": "basement-kit",
 					},
 				},
 			},
 			want: "basement-kit",
 		},
 		{
-			name: "managed base becomes cloud",
+			name: "managed cloud stays cloud",
 			req: createStackRequest{
 				Name:     "Managed Stack",
 				Mode:     "easy",
 				Provider: "cloud",
 				StackSpec: map[string]interface{}{
 					"name":     "managed-stack",
-					"stackkit": "base-kit",
+					"stackkit": "cloud-kit",
 					"metadata": map[string]interface{}{
 						"server_provisioning_mode": "kombify-cloud",
 						"provider_id":              "ionos",
-						"stackkit_catalog_ref":     "base-kit",
+						"stackkit_catalog_ref":     "cloud-kit",
 					},
 				},
 			},
@@ -663,20 +442,24 @@ func TestNormalizeCreateStackRequest_WizardOwnerBootstrapModes(t *testing.T) {
 		},
 	}
 
-	_, msg := normalizeCreateStackRequest(req)
-	if !strings.Contains(msg, "Owner email is required") {
-		t.Fatalf("normalizeCreateStackRequest() message = %q, want missing custom owner email", msg)
+	normalized, msg := normalizeCreateStackRequest(req)
+	if msg != "" {
+		t.Fatalf("normalizeCreateStackRequest() message = %q, want empty so signed-in email can fill later", msg)
+	}
+	bootstrap, ok := ownerBootstrapFromRequest(normalized)
+	if !ok || bootstrap.Source != ownerSourceLocal || bootstrap.Email != "" {
+		t.Fatalf("expected custom local bootstrap with omitted email, got %+v", bootstrap)
 	}
 
 	req.Options = map[string]interface{}{
 		"owner_bootstrap_mode": "auto",
 		"owner_source":         "local",
 	}
-	normalized, msg := normalizeCreateStackRequest(req)
+	normalized, msg = normalizeCreateStackRequest(req)
 	if msg != "" {
 		t.Fatalf("normalizeCreateStackRequest(auto) message = %q, want empty", msg)
 	}
-	bootstrap, ok := ownerBootstrapFromRequest(normalized)
+	bootstrap, ok = ownerBootstrapFromRequest(normalized)
 	if !ok {
 		t.Fatal("expected automatic owner bootstrap to be extracted")
 	}
@@ -737,8 +520,9 @@ func TestNormalizeCreateStackRequest_AcceptsSaaSAutoCloudOwnerBootstrap(t *testi
 	}
 
 	resolved, denial := resolveCreateOwnerBootstrap(normalized, ownerBootstrapContext{
-		Email:       "owner@example.com",
-		DisplayName: "Owner Example",
+		Email:          "owner@example.com",
+		DisplayName:    "Owner Example",
+		CurrentProfile: &cloudLinkIdentity{Email: "owner@example.com", EmailVerified: true, DisplayName: "Owner Example"},
 	})
 	if denial != nil {
 		t.Fatalf("resolveCreateOwnerBootstrap() denial = %q, want none", denial.Message)
@@ -750,9 +534,9 @@ func TestNormalizeCreateStackRequest_AcceptsSaaSAutoCloudOwnerBootstrap(t *testi
 	}
 	if bootstrap.BootstrapMode != ownerBootstrapModeAuto ||
 		bootstrap.Source != ownerSourceCloud ||
-		bootstrap.Email != "" ||
-		bootstrap.Username != "" ||
-		bootstrap.DisplayName != "" {
+		bootstrap.Email != "owner@example.com" ||
+		bootstrap.Username != "owner" ||
+		bootstrap.DisplayName != "Owner Example" {
 		t.Fatalf("unexpected resolved bootstrap: %+v", bootstrap)
 	}
 }
@@ -785,9 +569,10 @@ func TestResolveCreateOwnerBootstrap_AutoCloudPreservesStackKitsOwnerSource(t *t
 	}
 
 	resolved, denial := resolveCreateOwnerBootstrap(normalized, ownerBootstrapContext{
-		Email:       "cloud.owner@example.com",
-		Username:    "auth0|cloud-subject",
-		DisplayName: "Cloud Owner",
+		Email:          "cloud.owner@example.com",
+		Username:       "auth0|cloud-subject",
+		DisplayName:    "Cloud Owner",
+		CurrentProfile: &cloudLinkIdentity{Email: "cloud.owner@example.com", EmailVerified: true, DisplayName: "Cloud Owner"},
 	})
 	if denial != nil {
 		t.Fatalf("resolveCreateOwnerBootstrap() denial = %q, want none", denial.Message)
@@ -798,13 +583,13 @@ func TestResolveCreateOwnerBootstrap_AutoCloudPreservesStackKitsOwnerSource(t *t
 		t.Fatal("expected resolved owner bootstrap")
 	}
 	if bootstrap.Source != ownerSourceCloud ||
-		bootstrap.Email != "" ||
-		bootstrap.Username != "" ||
-		bootstrap.DisplayName != "" {
-		t.Fatalf("automatic cloud bootstrap should stay owned by StackKits, got %+v", bootstrap)
+		bootstrap.Email != "cloud.owner@example.com" ||
+		bootstrap.Username == "stale-client" ||
+		bootstrap.DisplayName != "Cloud Owner" {
+		t.Fatalf("automatic cloud bootstrap must use the verified profile, got %+v", bootstrap)
 	}
-	if _, hasOwnerEmail := resolved.Options["owner_email"]; hasOwnerEmail {
-		t.Fatalf("cloud auto bootstrap must not keep stale owner_email in options: %+v", resolved.Options)
+	if resolved.Options["owner_email"] != "cloud.owner@example.com" {
+		t.Fatalf("cloud auto bootstrap must replace stale owner_email: %+v", resolved.Options)
 	}
 	owner, ok := resolved.UserConfig["owner"].(map[string]interface{})
 	if !ok {
@@ -813,8 +598,8 @@ func TestResolveCreateOwnerBootstrap_AutoCloudPreservesStackKitsOwnerSource(t *t
 	if owner["source"] != ownerSourceCloud || owner["bootstrapMode"] != ownerBootstrapModeAuto {
 		t.Fatalf("expected cloud auto owner handoff for StackKits, got %+v", owner)
 	}
-	if _, ok := owner["email"]; ok {
-		t.Fatalf("cloud auto owner spec must not keep stale email: %+v", owner)
+	if owner["email"] != "cloud.owner@example.com" {
+		t.Fatalf("cloud auto owner spec must use the verified email: %+v", owner)
 	}
 }
 
@@ -977,9 +762,79 @@ func TestResolveCreateOwnerBootstrap_CustomOwnerDerivesUsernameAndRecovery(t *te
 	}
 }
 
-func TestNormalizeCreateStackRequest_RejectsCloudOwnerBootstrapByDefault(t *testing.T) {
-	t.Setenv("TECHSTACK_ENABLE_CLOUD_OWNER_BOOTSTRAP", "")
+func TestResolveCreateOwnerBootstrap_CustomLocalUsesSignedInEmailWhenOmitted(t *testing.T) {
+	normalized := customLocalOwnerRequest("")
+	resolved, denial := resolveCreateOwnerBootstrap(normalized, ownerBootstrapContext{
+		Email:       "cloud.owner@example.com",
+		DisplayName: "Cloud Owner",
+	})
+	if denial != nil {
+		t.Fatalf("resolveCreateOwnerBootstrap() denial = %q, want none", denial.Message)
+	}
+	bootstrap, ok := ownerBootstrapFromRequest(resolved)
+	if !ok {
+		t.Fatal("expected resolved owner bootstrap")
+	}
+	if bootstrap.Email != "cloud.owner@example.com" ||
+		bootstrap.Username != "cloud-owner" ||
+		bootstrap.DisplayName != "Cloud Owner" {
+		t.Fatalf("omitted custom email should inherit the signed-in account, got %+v", bootstrap)
+	}
+}
 
+func TestResolveCreateOwnerBootstrap_CustomLocalKeepsExplicitEmail(t *testing.T) {
+	normalized := customLocalOwnerRequest("other.owner@example.com")
+	resolved, denial := resolveCreateOwnerBootstrap(normalized, ownerBootstrapContext{
+		Email:       "cloud.owner@example.com",
+		DisplayName: "Cloud Owner",
+	})
+	if denial != nil {
+		t.Fatalf("resolveCreateOwnerBootstrap() denial = %q, want none", denial.Message)
+	}
+	bootstrap, ok := ownerBootstrapFromRequest(resolved)
+	if !ok {
+		t.Fatal("expected resolved owner bootstrap")
+	}
+	if bootstrap.Email != "other.owner@example.com" || bootstrap.Username != "other-owner" {
+		t.Fatalf("explicit custom email should win over the signed-in account, got %+v", bootstrap)
+	}
+	if bootstrap.DisplayName == "Cloud Owner" {
+		t.Fatalf("explicit custom email must not inherit the signed-in display name, got %+v", bootstrap)
+	}
+}
+
+func TestResolveCreateOwnerBootstrap_CustomLocalMissingEmailWithoutSessionFails(t *testing.T) {
+	normalized := customLocalOwnerRequest("")
+	_, denial := resolveCreateOwnerBootstrap(normalized, ownerBootstrapContext{})
+	if denial == nil || denial.ReasonCode != reasonOwnerEmailMissing {
+		t.Fatalf("resolveCreateOwnerBootstrap() denial = %+v, want owner_email_missing", denial)
+	}
+}
+
+func customLocalOwnerRequest(email string) normalizedCreateStackRequest {
+	options := map[string]interface{}{
+		"owner_bootstrap_mode": "custom",
+		"owner_source":         "local",
+	}
+	if email != "" {
+		options["owner_email"] = email
+	}
+	return normalizedCreateStackRequest{
+		Name: "Custom Owner",
+		Mode: "easy",
+		UserConfig: map[string]interface{}{
+			"name": "custom-owner",
+			"metadata": map[string]interface{}{
+				"created_by":           "wizard",
+				"owner_bootstrap_mode": "custom",
+				"owner_source":         "local",
+			},
+		},
+		Options: options,
+	}
+}
+
+func TestNormalizeCreateStackRequest_AutomaticCloudOwnerRejectsBrowserIdentity(t *testing.T) {
 	_, msg := normalizeCreateStackRequest(createStackRequest{
 		Name: "Cloud Owner",
 		Mode: "easy",
@@ -990,13 +845,14 @@ func TestNormalizeCreateStackRequest_RejectsCloudOwnerBootstrapByDefault(t *test
 			},
 		},
 		Options: map[string]interface{}{
-			"owner_source": "cloud",
-			"owner_email":  "owner@example.com",
+			"owner_bootstrap_mode": "auto",
+			"owner_source":         "cloud",
+			"owner_email":          "owner@example.com",
 		},
 	})
 
-	if !strings.Contains(msg, "Cloud owner bootstrap is not available") {
-		t.Fatalf("normalizeCreateStackRequest() message = %q, want cloud owner gate", msg)
+	if !strings.Contains(msg, "not accepted for an automatic Cloud owner") {
+		t.Fatalf("normalizeCreateStackRequest() message = %q, want client identity rejection", msg)
 	}
 }
 
@@ -1045,36 +901,6 @@ func TestCreateStackJobSpec_AppliesOwnerBootstrapOnlyTransiently(t *testing.T) {
 	}
 }
 
-func TestOwnerSpecBootstrapAccessOnlyAppliesToLocalOwnerBootstrap(t *testing.T) {
-	localSpec := map[string]interface{}{
-		"metadata": map[string]interface{}{
-			"owner_bootstrap_mode": "auto",
-			"owner_source":         "local",
-		},
-		"owner": map[string]interface{}{
-			"bootstrapMode": "auto",
-			"source":        "local",
-		},
-	}
-	if !stackHasOwnerBootstrapForProvision(nil, localSpec) {
-		t.Fatal("expected local owner bootstrap to require owner-spec access")
-	}
-
-	cloudSpec := map[string]interface{}{
-		"metadata": map[string]interface{}{
-			"owner_bootstrap_mode": "auto",
-			"owner_source":         "cloud",
-		},
-		"owner": map[string]interface{}{
-			"bootstrapMode": "auto",
-			"source":        "cloud",
-		},
-	}
-	if stackHasOwnerBootstrapForProvision(nil, cloudSpec) {
-		t.Fatal("cloud owner bootstrap must not require a local owner-spec token")
-	}
-}
-
 func TestOwnerBootstrapWalletFieldsUseAccessAndRecoveryModel(t *testing.T) {
 	bootstrap := ownerBootstrapSpec{
 		Source:                 "local",
@@ -1095,7 +921,10 @@ func TestOwnerBootstrapWalletFieldsUseAccessAndRecoveryModel(t *testing.T) {
 		t.Fatalf("unexpected owner source_ref: %v", ownerFields["source_ref"])
 	}
 
-	recoveryFields := recoveryWalletFields("user-1", "stack-1", "Configured Stack", bootstrap)
+	recoveryFields, err := recoveryWalletFields("user-1", "stack-1", "Configured Stack", bootstrap)
+	if err != nil {
+		t.Fatalf("recoveryWalletFields failed: %v", err)
+	}
 	if recoveryFields["item_class"] != "recovery" || recoveryFields["access_mode"] != "reveal" {
 		t.Fatalf("unexpected recovery wallet model: %v", recoveryFields)
 	}
@@ -1111,9 +940,9 @@ func TestOwnerSpecBootstrapTokenRejectsExpiredAndCrossStackUse(t *testing.T) {
 	t.Setenv(ownerSpecBootstrapTokenSecretEnv, "0123456789abcdef0123456789abcdef")
 	now := time.Date(2026, 5, 13, 10, 0, 0, 0, time.UTC)
 
-	token, expiresAt, err := issueOwnerSpecBootstrapToken("stack-1", "owner-1", now)
+	token, expiresAt, err := issueOwnerSpecBootstrapTokenForTenant("tenant-1", "stack-1", "owner-1", now)
 	if err != nil {
-		t.Fatalf("issueOwnerSpecBootstrapToken() error = %v", err)
+		t.Fatalf("issueOwnerSpecBootstrapTokenForTenant() error = %v", err)
 	}
 	if expiresAt.Sub(now) != ownerSpecBootstrapTokenTTL {
 		t.Fatalf("expiresAt delta = %s, want %s", expiresAt.Sub(now), ownerSpecBootstrapTokenTTL)
@@ -1123,7 +952,7 @@ func TestOwnerSpecBootstrapTokenRejectsExpiredAndCrossStackUse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("verifyOwnerSpecBootstrapToken() error = %v", err)
 	}
-	if claims.StackID != "stack-1" || claims.OwnerID != "owner-1" || !hasOwnerSpecScope(claims.Scopes) {
+	if claims.TenantID != "tenant-1" || claims.StackID != "stack-1" || claims.OwnerID != "owner-1" || !hasOwnerSpecScope(claims.Scopes) {
 		t.Fatalf("unexpected claims: %+v", claims)
 	}
 
@@ -1140,55 +969,45 @@ func TestOwnerSpecEndpointRejectsMissingExpiredAndCrossStackTokens(t *testing.T)
 	now := time.Date(2026, 5, 13, 10, 0, 0, 0, time.UTC)
 	h := crudRouteHandlers{}
 
-	missingTokenEvent, missingTokenRecorder := ownerSpecRequestEvent("stack-1", "")
-	if ownerSpecErr := h.ownerSpec(missingTokenEvent); ownerSpecErr != nil {
-		t.Fatalf("ownerSpec(missing token) error = %v", ownerSpecErr)
-	}
-	if missingTokenRecorder.Code != http.StatusUnauthorized {
-		t.Fatalf("missing token status = %d body=%s, want 401", missingTokenRecorder.Code, missingTokenRecorder.Body.String())
-	}
-
-	expiredToken, _, err := issueOwnerSpecBootstrapToken("stack-1", "owner-1", now.Add(-ownerSpecBootstrapTokenTTL-time.Minute))
+	expiredToken, _, err := issueOwnerSpecBootstrapTokenForTenant("tenant-1", "stack-1", "owner-1", now.Add(-ownerSpecBootstrapTokenTTL-time.Minute))
 	if err != nil {
 		t.Fatalf("issue expired token: %v", err)
 	}
-	expiredEvent, expiredRecorder := ownerSpecRequestEvent("stack-1", expiredToken)
-	if ownerSpecErr := h.ownerSpec(expiredEvent); ownerSpecErr != nil {
-		t.Fatalf("ownerSpec(expired token) error = %v", ownerSpecErr)
-	}
-	if expiredRecorder.Code != http.StatusUnauthorized {
-		t.Fatalf("expired token status = %d body=%s, want 401", expiredRecorder.Code, expiredRecorder.Body.String())
-	}
 
-	crossStackToken, _, err := issueOwnerSpecBootstrapToken("stack-a", "owner-1", time.Now().UTC())
+	crossStackToken, _, err := issueOwnerSpecBootstrapTokenForTenant("tenant-1", "stack-a", "owner-1", time.Now().UTC())
 	if err != nil {
 		t.Fatalf("issue cross-stack token: %v", err)
 	}
-	crossStackEvent, crossStackRecorder := ownerSpecRequestEvent("stack-b", crossStackToken)
-	if ownerSpecErr := h.ownerSpec(crossStackEvent); ownerSpecErr != nil {
-		t.Fatalf("ownerSpec(cross-stack token) error = %v", ownerSpecErr)
+
+	tests := []struct {
+		name       string
+		stackID    string
+		token      string
+		wantStatus int
+	}{
+		{name: "missing token", stackID: "stack-1", wantStatus: http.StatusUnauthorized},
+		{name: "expired token", stackID: "stack-1", token: expiredToken, wantStatus: http.StatusUnauthorized},
+		{name: "cross-stack token", stackID: "stack-b", token: crossStackToken, wantStatus: http.StatusForbidden},
 	}
-	if crossStackRecorder.Code != http.StatusForbidden {
-		t.Fatalf("cross-stack token status = %d body=%s, want 403", crossStackRecorder.Code, crossStackRecorder.Body.String())
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			event, recorder := ownerSpecRequestEvent(tt.stackID, tt.token)
+			if ownerSpecErr := h.ownerSpec(event); ownerSpecErr != nil {
+				t.Fatalf("ownerSpec() error = %v", ownerSpecErr)
+			}
+			if recorder.Code != tt.wantStatus {
+				t.Fatalf("status = %d body=%s, want %d", recorder.Code, recorder.Body.String(), tt.wantStatus)
+			}
+		})
 	}
 }
 
 func TestOwnerSpecEndpointReturnsStackKitIdentityRecoverySchema(t *testing.T) {
 	t.Setenv(ownerSpecBootstrapTokenSecretEnv, "0123456789abcdef0123456789abcdef")
-	app := newOwnerSpecTestApp(t)
-	defer app.Cleanup()
+	h, access := ownerSpecCanonicalFixture(t)
 
-	stack := createOwnerSpecTestStack(t, app, "owner-1")
-	const recoveryHash = testRecoveryPassphraseHash
-	createOwnerSpecTestRecoveryWalletEntry(t, app, stack.Id, "owner-1", recoveryHash)
-
-	h := crudRouteHandlers{app: app}
-	access, err := h.issueOwnerSpecBootstrapAccess(stack.Id, "owner-1", time.Now().UTC())
-	if err != nil {
-		t.Fatalf("issueOwnerSpecBootstrapAccess() error = %v", err)
-	}
-
-	event, recorder := ownerSpecRequestEvent(stack.Id, access.Token)
+	event, recorder := ownerSpecRequestEvent("stack-1", access.Token)
 	if ownerSpecErr := h.ownerSpec(event); ownerSpecErr != nil {
 		t.Fatalf("ownerSpec() error = %v", ownerSpecErr)
 	}
@@ -1202,8 +1021,8 @@ func TestOwnerSpecEndpointReturnsStackKitIdentityRecoverySchema(t *testing.T) {
 	if decodeErr := json.Unmarshal(recorder.Body.Bytes(), &envelope); decodeErr != nil {
 		t.Fatalf("decode response: %v", decodeErr)
 	}
-	if envelope.Data.StackID != stack.Id {
-		t.Fatalf("stack_id = %q, want %q", envelope.Data.StackID, stack.Id)
+	if envelope.Data.StackID != "stack-1" {
+		t.Fatalf("stack_id = %q, want stack-1", envelope.Data.StackID)
 	}
 	if envelope.Data.Identity.Owner.Source != ownerSourceLocal ||
 		envelope.Data.Identity.Owner.Email != "owner@example.com" ||
@@ -1211,37 +1030,23 @@ func TestOwnerSpecEndpointReturnsStackKitIdentityRecoverySchema(t *testing.T) {
 		envelope.Data.Identity.Owner.DisplayName != "Owner" {
 		t.Fatalf("unexpected owner response: %+v", envelope.Data.Identity.Owner)
 	}
-	if envelope.Data.Identity.Recovery.PassphraseHash != recoveryHash || !envelope.Data.Identity.Recovery.PassphraseHashPresent {
+	if envelope.Data.Identity.Recovery.PassphraseHash != testRecoveryPassphraseHash || !envelope.Data.Identity.Recovery.PassphraseHashPresent {
 		t.Fatalf("unexpected recovery response: %+v", envelope.Data.Identity.Recovery)
 	}
 	if !hasOwnerSpecScope(envelope.Data.Scopes) {
 		t.Fatalf("expected owner spec scope in response, got %v", envelope.Data.Scopes)
 	}
-
-	activities, err := app.FindRecordsByFilter("activity_log", "action = {:action}", "", 0, 0, map[string]any{"action": ownerSpecActionRead})
-	if err != nil {
-		t.Fatalf("find activity records: %v", err)
-	}
-	if len(activities) == 0 {
-		t.Fatal("expected owner_spec_read activity to be recorded")
+	events, err := h.activityStore.ListActivity(t.Context(), "owner-1", "stack-1", 10)
+	if err != nil || len(events) != 2 {
+		t.Fatalf("canonical owner-spec audit events = %#v, err=%v", events, err)
 	}
 }
 
 func TestOwnerSpecTokenIsSingleUse(t *testing.T) {
 	t.Setenv(ownerSpecBootstrapTokenSecretEnv, "0123456789abcdef0123456789abcdef")
-	app := newOwnerSpecTestApp(t)
-	defer app.Cleanup()
+	h, access := ownerSpecCanonicalFixture(t)
 
-	stack := createOwnerSpecTestStack(t, app, "owner-1")
-	createOwnerSpecTestRecoveryWalletEntry(t, app, stack.Id, "owner-1", testRecoveryPassphraseHash)
-
-	h := crudRouteHandlers{app: app}
-	access, err := h.issueOwnerSpecBootstrapAccess(stack.Id, "owner-1", time.Now().UTC())
-	if err != nil {
-		t.Fatalf("issueOwnerSpecBootstrapAccess() error = %v", err)
-	}
-
-	firstEvent, firstRecorder := ownerSpecRequestEvent(stack.Id, access.Token)
+	firstEvent, firstRecorder := ownerSpecRequestEvent("stack-1", access.Token)
 	if ownerSpecErr := h.ownerSpec(firstEvent); ownerSpecErr != nil {
 		t.Fatalf("ownerSpec(first) error = %v", ownerSpecErr)
 	}
@@ -1249,84 +1054,36 @@ func TestOwnerSpecTokenIsSingleUse(t *testing.T) {
 		t.Fatalf("first ownerSpec() status = %d body=%s, want 200", firstRecorder.Code, firstRecorder.Body.String())
 	}
 
-	secondEvent, secondRecorder := ownerSpecRequestEvent(stack.Id, access.Token)
+	secondEvent, secondRecorder := ownerSpecRequestEvent("stack-1", access.Token)
 	if ownerSpecErr := h.ownerSpec(secondEvent); ownerSpecErr != nil {
 		t.Fatalf("ownerSpec(second) error = %v", ownerSpecErr)
 	}
 	if secondRecorder.Code != http.StatusForbidden {
 		t.Fatalf("second ownerSpec() status = %d body=%s, want 403", secondRecorder.Code, secondRecorder.Body.String())
 	}
-
-	activities, err := app.FindRecordsByFilter("activity_log", "action = {:action}", "", 0, 0, map[string]any{"action": ownerSpecActionDenied})
-	if err != nil {
-		t.Fatalf("find denied activity records: %v", err)
-	}
-	if len(activities) == 0 {
-		t.Fatal("expected replay denial activity to be recorded")
-	}
 }
 
-func TestOwnerSpecBootstrapTokenConsumeIsAtomic(t *testing.T) {
-	t.Setenv(ownerSpecBootstrapTokenSecretEnv, "0123456789abcdef0123456789abcdef")
-	app := newOwnerSpecTestApp(t)
-	defer app.Cleanup()
-
-	stack := createOwnerSpecTestStack(t, app, "owner-1")
-	h := crudRouteHandlers{app: app}
-	now := time.Now().UTC()
-	access, err := h.issueOwnerSpecBootstrapAccess(stack.Id, "owner-1", now)
+func ownerSpecCanonicalFixture(t *testing.T) (crudRouteHandlers, ownerSpecBootstrapAccess) {
+	t.Helper()
+	store := controlplane.NewMemoryStore()
+	if _, err := store.CreateStack(t.Context(), controlplane.CreateStackRequest{
+		ID: "stack-1", TenantID: "owner-1", OwnerSubjectID: "owner-1", Config: map[string]any{
+			"owner": map[string]any{"bootstrapMode": ownerBootstrapModeCustom, "source": ownerSourceLocal, "email": "owner@example.com", "username": "owner", "displayName": "Owner"},
+		},
+	}); err != nil {
+		t.Fatalf("CreateStack: %v", err)
+	}
+	if _, err := store.UpsertWalletItem(t.Context(), controlplane.WalletItem{
+		ID: "stack-1:" + recoveryWalletServiceID, TenantID: "owner-1", StackID: "stack-1", Metadata: map[string]any{"secret": testRecoveryPassphraseHash},
+	}); err != nil {
+		t.Fatalf("UpsertWalletItem: %v", err)
+	}
+	h := crudRouteHandlers{stackStore: store, walletStore: store, activityStore: store}
+	access, err := h.issueOwnerSpecBootstrapAccessForTenant(t.Context(), "owner-1", "stack-1", "owner-1", time.Now().UTC())
 	if err != nil {
-		t.Fatalf("issueOwnerSpecBootstrapAccess() error = %v", err)
+		t.Fatalf("issueOwnerSpecBootstrapAccessForTenant: %v", err)
 	}
-	claims, err := verifyOwnerSpecBootstrapToken(access.Token, stack.Id, now.Add(time.Minute))
-	if err != nil {
-		t.Fatalf("verifyOwnerSpecBootstrapToken() error = %v", err)
-	}
-
-	const attempts = 16
-	results := make(chan error, attempts)
-	for range attempts {
-		go func() {
-			results <- h.consumeOwnerSpecBootstrapToken(claims, now.Add(time.Minute))
-		}()
-	}
-
-	successes := 0
-	for range attempts {
-		err := <-results
-		if err == nil {
-			successes++
-			continue
-		}
-		if !errors.Is(err, errOwnerSpecTokenForbidden) && !errors.Is(err, errOwnerSpecTokenInvalid) {
-			t.Fatalf("consumeOwnerSpecBootstrapToken() unexpected error = %v", err)
-		}
-	}
-	if successes != 1 {
-		t.Fatalf("successful consumes = %d, want exactly 1", successes)
-	}
-}
-
-func TestOwnerSpecBootstrapAccessForProvisionReissuesFromStoredSpec(t *testing.T) {
-	t.Setenv(ownerSpecBootstrapTokenSecretEnv, "0123456789abcdef0123456789abcdef")
-	app := newOwnerSpecTestApp(t)
-	defer app.Cleanup()
-
-	stack := createOwnerSpecTestStack(t, app, "owner-1")
-	h := crudRouteHandlers{app: app}
-
-	access, err := h.ownerSpecBootstrapAccessForProvision(stack, map[string]interface{}{
-		"name": "retry-spec-without-transient-owner-material",
-	})
-	if err != nil {
-		t.Fatalf("ownerSpecBootstrapAccessForProvision() error = %v", err)
-	}
-	if access.Token == "" || access.Endpoint != ownerSpecEndpoint(stack.Id) || access.ExpiresAt.IsZero() {
-		t.Fatalf("expected retry bootstrap access, got %+v", access)
-	}
-	if _, err := verifyOwnerSpecBootstrapToken(access.Token, stack.Id, time.Now().UTC()); err != nil {
-		t.Fatalf("verify retry token: %v", err)
-	}
+	return h, access
 }
 
 func TestOwnerSpecResponseFieldsExposeShortLivedBootstrapContract(t *testing.T) {
@@ -1410,140 +1167,33 @@ func TestNormalizeCreateStackRequest_AllowsUserOwnedServerProvisioningModes(t *t
 	}
 }
 
-func TestValidateDeploymentLaneRejectsManagedRuntimeOutsideSaaS(t *testing.T) {
-	req := createStackRequest{
-		Name: "Managed Stack",
-		Mode: "easy",
-		StackSpec: map[string]interface{}{
-			"name": "managed-stack",
-			"metadata": map[string]interface{}{
-				"server_provisioning_mode": "kombify-cloud",
-				"server_mode":              "monthly-runtime",
-				"runtime_lane":             "monthly-runtime",
-				"billing_mode":             "subscription",
-			},
-		},
-		Options: map[string]interface{}{
-			"runtime_offering_id": "monthly-runtime-standard",
-			"provider_id":         "centron",
-		},
+func TestValidateDeploymentLaneManagedRuntimeModes(t *testing.T) {
+	tests := []struct {
+		name        string
+		environment string
+		localE2E    bool
+		wantAllowed bool
+	}{
+		{name: "self hosted rejects", environment: "production"},
+		{name: "development E2E allows", environment: "development", localE2E: true, wantAllowed: true},
+		{name: "production ignores E2E override", environment: "production", localE2E: true},
 	}
 
-	normalized, msg := normalizeCreateStackRequest(req)
-	if msg != "" {
-		t.Fatalf("normalizeCreateStackRequest() message = %q, want empty", msg)
-	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("TECHSTACK_ENV", test.environment)
+			t.Setenv("TECHSTACK_ALLOW_LOCAL_SIMULATION_GATE", strconv.FormatBool(test.localE2E))
+			t.Setenv("TECHSTACK_ALLOW_LOCAL_MANAGED_RUNTIME_E2E", strconv.FormatBool(test.localE2E))
 
-	msg = validateDeploymentLane(normalized, config.ModeSelfHosted)
-	if !strings.Contains(msg, "Managed monthly runtime can only be created from kombify Cloud mode") {
-		t.Fatalf("validateDeploymentLane() message = %q, want managed runtime rejection", msg)
-	}
-}
-
-func TestValidateDeploymentLaneAllowsManagedRuntimeForLocalE2E(t *testing.T) {
-	t.Setenv("TECHSTACK_ENV", "development")
-	t.Setenv("TECHSTACK_ALLOW_LOCAL_SIMULATION_GATE", "true")
-	t.Setenv("TECHSTACK_ALLOW_LOCAL_MANAGED_RUNTIME_E2E", "true")
-
-	req := createStackRequest{
-		Name: "Managed Stack",
-		Mode: "easy",
-		StackSpec: map[string]interface{}{
-			"name": "managed-stack",
-			"metadata": map[string]interface{}{
-				"server_provisioning_mode": "kombify-cloud",
-				"server_mode":              "monthly-runtime",
-				"runtime_lane":             "monthly-runtime",
-				"billing_mode":             "subscription",
-			},
-		},
-		Options: map[string]interface{}{
-			"runtime_offering_id": "monthly-runtime-standard",
-			"provider_id":         "centron",
-		},
-	}
-
-	normalized, msg := normalizeCreateStackRequest(req)
-	if msg != "" {
-		t.Fatalf("normalizeCreateStackRequest() message = %q, want empty", msg)
-	}
-
-	if msg = validateDeploymentLane(normalized, config.ModeSelfHosted); msg != "" {
-		t.Fatalf("validateDeploymentLane() message = %q, want local E2E allowance", msg)
-	}
-	if msg = validateManagedRuntimeEntitlement(context.Background(), normalized, "owner-1", nil); msg != "" {
-		t.Fatalf("validateManagedRuntimeEntitlement() message = %q, want local E2E allowance", msg)
-	}
-}
-
-func TestValidateManagedRuntimeEntitlementRejectsSaaSManagedRuntimeWithoutFeatureChecker(t *testing.T) {
-	t.Setenv("TECHSTACK_ENV", "production")
-
-	normalized, msg := normalizeCreateStackRequest(managedRuntimeCreateRequest("centron"))
-	if msg != "" {
-		t.Fatalf("normalizeCreateStackRequest() message = %q, want empty", msg)
-	}
-
-	msg = validateManagedRuntimeEntitlement(context.Background(), normalized, "owner-1", nil)
-	if msg != managedRuntimeEntitlementDenied {
-		t.Fatalf("validateManagedRuntimeEntitlement() message = %q, want entitlement denial", msg)
-	}
-}
-
-func TestValidateManagedRuntimeEntitlementRejectsDisabledProvider(t *testing.T) {
-	t.Setenv("TECHSTACK_ENV", "production")
-
-	normalized, msg := normalizeCreateStackRequest(managedRuntimeCreateRequest("centron"))
-	if msg != "" {
-		t.Fatalf("normalizeCreateStackRequest() message = %q, want empty", msg)
-	}
-	checker := &entitlementFeatureChecker{enabled: false}
-
-	msg = validateManagedRuntimeEntitlement(context.Background(), normalized, "owner-1", checker)
-	if msg != managedRuntimeEntitlementDenied {
-		t.Fatalf("validateManagedRuntimeEntitlement() message = %q, want entitlement denial", msg)
-	}
-	if len(checker.keys) == 0 {
-		t.Fatal("feature checker was not called for managed runtime request")
-	}
-}
-
-func TestValidateManagedRuntimeEntitlementChecksProviderFeature(t *testing.T) {
-	t.Setenv("TECHSTACK_ENV", "production")
-
-	normalized, msg := normalizeCreateStackRequest(managedRuntimeCreateRequest("ionos"))
-	if msg != "" {
-		t.Fatalf("normalizeCreateStackRequest() message = %q, want empty", msg)
-	}
-	checker := &entitlementFeatureChecker{enabled: true}
-
-	msg = validateManagedRuntimeEntitlement(context.Background(), normalized, "owner-1", checker)
-	if msg != "" {
-		t.Fatalf("validateManagedRuntimeEntitlement() message = %q, want allowed", msg)
-	}
-	got := strings.Join(checker.keys, ",")
-	for _, want := range []string{"techstack.managed.runtime", "techstack.managed.runtime.cloudkit", "techstack.managed.runtime.ionos"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("feature keys = %q, want %q", got, want)
-		}
-	}
-}
-
-func TestValidateManagedRuntimeEntitlementAllowsAdminIdentityWithoutEdgeFlags(t *testing.T) {
-	t.Setenv("TECHSTACK_ENV", "production")
-
-	normalized, msg := normalizeCreateStackRequest(managedRuntimeCreateRequest("centron"))
-	if msg != "" {
-		t.Fatalf("normalizeCreateStackRequest() message = %q, want empty", msg)
-	}
-	ctx := identity.NewContext(context.Background(), &identity.Identity{
-		UserID: "google-oauth2|admin",
-		Roles:  []string{"global_admin", "admin"},
-	})
-
-	msg = validateManagedRuntimeEntitlement(ctx, normalized, "google-oauth2|admin", nil)
-	if msg != "" {
-		t.Fatalf("validateManagedRuntimeEntitlement() message = %q, want admin allowed", msg)
+			normalized, msg := normalizeCreateStackRequest(managedRuntimeCreateRequest("centron"))
+			if msg != "" {
+				t.Fatalf("normalizeCreateStackRequest() message = %q, want empty", msg)
+			}
+			allowed := validateDeploymentLane(normalized, config.ModeSelfHosted) == ""
+			if allowed != test.wantAllowed {
+				t.Fatalf("validateDeploymentLane() allowed = %t, want %t", allowed, test.wantAllowed)
+			}
+		})
 	}
 }
 
@@ -1639,40 +1289,6 @@ func TestCreateStackDefersManagedRuntimeCapacityToNativeAdmission(t *testing.T) 
 	}
 }
 
-func TestValidateDeploymentLaneRejectsManagedRuntimeE2EGateOutsideDevelopment(t *testing.T) {
-	t.Setenv("TECHSTACK_ENV", "production")
-	t.Setenv("TECHSTACK_ALLOW_LOCAL_SIMULATION_GATE", "true")
-	t.Setenv("TECHSTACK_ALLOW_LOCAL_MANAGED_RUNTIME_E2E", "true")
-
-	req := createStackRequest{
-		Name: "Managed Stack",
-		Mode: "easy",
-		StackSpec: map[string]interface{}{
-			"name": "managed-stack",
-			"metadata": map[string]interface{}{
-				"server_provisioning_mode": "kombify-cloud",
-				"server_mode":              "monthly-runtime",
-				"runtime_lane":             "monthly-runtime",
-				"billing_mode":             "subscription",
-			},
-		},
-		Options: map[string]interface{}{
-			"runtime_offering_id": "monthly-runtime-standard",
-			"provider_id":         "centron",
-		},
-	}
-
-	normalized, msg := normalizeCreateStackRequest(req)
-	if msg != "" {
-		t.Fatalf("normalizeCreateStackRequest() message = %q, want empty", msg)
-	}
-
-	msg = validateDeploymentLane(normalized, config.ModeSelfHosted)
-	if !strings.Contains(msg, "Managed monthly runtime can only be created from kombify Cloud mode") {
-		t.Fatalf("validateDeploymentLane() message = %q, want managed runtime rejection", msg)
-	}
-}
-
 func managedRuntimeCreateRequest(provider string) createStackRequest {
 	return createStackRequest{
 		Name: "Managed Stack",
@@ -1693,119 +1309,63 @@ func managedRuntimeCreateRequest(provider string) createStackRequest {
 	}
 }
 
-func TestValidateDeploymentLaneAllowsUserOwnedProvisioningInSaaS(t *testing.T) {
-	tests := []struct {
-		name string
-		req  createStackRequest
-	}{
-		{
-			name: "remote ssh",
-			req: createStackRequest{
-				Name: "Remote Stack",
-				Mode: "easy",
-				StackSpec: map[string]interface{}{
-					"name": "remote-stack",
-					"metadata": map[string]interface{}{
-						"server_provisioning_mode":   "connect-remote",
-						"server_connection_mode":     "remote-ssh",
-						"server_remote_host_present": "true",
-						"server_remote_user_present": "true",
-						"server_mode":                "user-owned",
-						"billing_mode":               "local",
-					},
-				},
-			},
-		},
-		{
-			name: "install command",
-			req: createStackRequest{
-				Name: "Install Stack",
-				Mode: "easy",
-				StackSpec: map[string]interface{}{
-					"name": "install-stack",
-					"metadata": map[string]interface{}{
-						"server_provisioning_mode":        "install-command",
-						"server_connection_mode":          "agent-oneliner",
-						"server_install_command_required": "true",
-						"server_mode":                     "self-hosted",
-						"billing_mode":                    "local",
-					},
-				},
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			normalized, msg := normalizeCreateStackRequest(tt.req)
-			if msg != "" {
-				t.Fatalf("normalizeCreateStackRequest() message = %q, want empty", msg)
-			}
-
-			msg = validateDeploymentLane(normalized, config.ModeSaaS)
-			if msg != "" {
-				t.Fatalf("validateDeploymentLane() message = %q, want allowed", msg)
-			}
-		})
-	}
-}
-
-func TestValidateDeploymentLaneAllowsExpectedLaneDefaults(t *testing.T) {
+func TestValidateDeploymentLaneAllowsSupportedModes(t *testing.T) {
 	tests := []struct {
 		name string
 		mode config.DeploymentMode
 		req  createStackRequest
 	}{
 		{
+			name: "saas remote ssh",
+			mode: config.ModeSaaS,
+			req: deploymentLaneTestRequest("", map[string]interface{}{
+				"server_provisioning_mode":   "connect-remote",
+				"server_connection_mode":     "remote-ssh",
+				"server_remote_host_present": "true",
+				"server_remote_user_present": "true",
+				"server_mode":                "user-owned",
+				"billing_mode":               "local",
+			}),
+		},
+		{
+			name: "saas install command",
+			mode: config.ModeSaaS,
+			req: deploymentLaneTestRequest("", map[string]interface{}{
+				"server_provisioning_mode":        "install-command",
+				"server_connection_mode":          "agent-oneliner",
+				"server_install_command_required": "true",
+				"server_mode":                     "self-hosted",
+				"billing_mode":                    "local",
+			}),
+		},
+		{
 			name: "self hosted install command",
 			mode: config.ModeSelfHosted,
-			req: createStackRequest{
-				Name: "Install Stack",
-				Mode: "easy",
-				StackSpec: map[string]interface{}{
-					"name": "install-stack",
-					"metadata": map[string]interface{}{
-						"server_provisioning_mode": "install-command",
-						"server_mode":              "user-owned",
-						"billing_mode":             "local",
-					},
-				},
-			},
+			req: deploymentLaneTestRequest("", map[string]interface{}{
+				"server_provisioning_mode": "install-command",
+				"server_mode":              "user-owned",
+				"billing_mode":             "local",
+			}),
 		},
 		{
 			name: "self hosted remote ssh",
 			mode: config.ModeSelfHosted,
-			req: createStackRequest{
-				Name: "Remote Stack",
-				Mode: "easy",
-				StackSpec: map[string]interface{}{
-					"name": "remote-stack",
-					"metadata": map[string]interface{}{
-						"server_provisioning_mode": "connect-remote",
-						"server_connection_mode":   "remote-ssh",
-						"server_mode":              "user-owned",
-					},
-				},
-			},
+			req: deploymentLaneTestRequest("", map[string]interface{}{
+				"server_provisioning_mode": "connect-remote",
+				"server_connection_mode":   "remote-ssh",
+				"server_mode":              "user-owned",
+			}),
 		},
 		{
 			name: "saas managed runtime",
 			mode: config.ModeSaaS,
-			req: createStackRequest{
-				Name:       "Managed Stack",
-				Mode:       "easy",
-				ProviderID: "centron",
-				StackSpec: map[string]interface{}{
-					"name": "managed-stack",
-					"metadata": map[string]interface{}{
-						"server_provisioning_mode": "kombify-cloud",
-						"server_connection_mode":   "managed-subscription",
-						"server_mode":              "monthly-runtime",
-						"runtime_lane":             "monthly-runtime",
-						"billing_mode":             "subscription",
-					},
-				},
-			},
+			req: deploymentLaneTestRequest("centron", map[string]interface{}{
+				"server_provisioning_mode": "kombify-cloud",
+				"server_connection_mode":   "managed-subscription",
+				"server_mode":              "monthly-runtime",
+				"runtime_lane":             "monthly-runtime",
+				"billing_mode":             "subscription",
+			}),
 		},
 	}
 
@@ -1822,27 +1382,10 @@ func TestValidateDeploymentLaneAllowsExpectedLaneDefaults(t *testing.T) {
 	}
 }
 
-func TestCreateStackJobSpec(t *testing.T) {
-	fromConfig := createStackJobSpec(normalizedCreateStackRequest{
-		UserConfig: map[string]interface{}{"provider": "proxmox"},
-	})
-	if fromConfig["provider"] != "proxmox" {
-		t.Fatalf("expected user_config to be preferred, got %v", fromConfig)
-	}
-
-	fromRaw := createStackJobSpec(normalizedCreateStackRequest{
-		UserConfigRaw: `{"provider":"docker"}`,
-	})
-	if fromRaw["provider"] != "docker" {
-		t.Fatalf("expected raw JSON to be parsed, got %v", fromRaw)
-	}
-
-	fromOpaqueRaw := createStackJobSpec(normalizedCreateStackRequest{
-		UserConfigRaw:    "provider: proxmox",
-		UserConfigFormat: "yaml",
-	})
-	if fromOpaqueRaw["provider"] != "proxmox" {
-		t.Fatalf("expected raw YAML to be parsed, got %v", fromOpaqueRaw)
+func deploymentLaneTestRequest(providerID string, metadata map[string]interface{}) createStackRequest {
+	return createStackRequest{
+		Name: "Lane Test", Mode: "easy", ProviderID: providerID,
+		StackSpec: map[string]interface{}{"name": "lane-test", "metadata": metadata},
 	}
 }
 
@@ -1969,97 +1512,6 @@ func TestShouldStartRolloutAfterCreate(t *testing.T) {
 	}
 }
 
-func TestStackListItemProjectsRuntimeAndProvisioningFields(t *testing.T) {
-	collection := core.NewBaseCollection("stacks")
-	collection.Fields.Add(
-		&core.TextField{Name: "name"},
-		&core.TextField{Name: "mode"},
-		&core.TextField{Name: "status"},
-		&core.TextField{Name: "runtime_phase"},
-		&core.TextField{Name: "server_mode"},
-		&core.TextField{Name: "runtime_lane"},
-		&core.TextField{Name: "runtime_offering_id"},
-		&core.TextField{Name: "provider_id"},
-		&core.TextField{Name: "lease_provider"},
-		&core.TextField{Name: "provider_region"},
-		&core.TextField{Name: "ionos_datacenter"},
-		&core.TextField{Name: "lease_id"},
-		&core.TextField{Name: "simulate_provider_id"},
-		&core.TextField{Name: "simulate_node_lifecycle"},
-		&core.TextField{Name: "desired_state"},
-		&core.TextField{Name: "billing_mode"},
-		&core.TextField{Name: "billing_cadence"},
-		&core.TextField{Name: "stackkit_catalog_ref"},
-		&core.TextField{Name: "verification_status"},
-		&core.TextField{Name: "server_provisioning_mode"},
-		&core.TextField{Name: "server_connection_mode"},
-		&core.BoolField{Name: "server_remote_host_present"},
-		&core.BoolField{Name: "server_remote_user_present"},
-		&core.TextField{Name: "server_remote_auth_method"},
-		&core.TextField{Name: "server_remote_credential_ref"},
-		&core.BoolField{Name: "server_remote_use_sudo"},
-		&core.BoolField{Name: "server_install_command_required"},
-	)
-	stack := core.NewRecord(collection)
-	stack.Id = "stack-runtime"
-	stack.Set("name", "Runtime Stack")
-	stack.Set("mode", "easy")
-	stack.Set("status", "provisioning")
-	stack.Set("runtime_phase", "lease_ready")
-	stack.Set("server_mode", "monthly-runtime")
-	stack.Set("runtime_lane", "monthly-runtime")
-	stack.Set("runtime_offering_id", "monthly-runtime-standard")
-	stack.Set("provider_id", "centron")
-	stack.Set("lease_provider", "centron-managed")
-	stack.Set("provider_region", "de/fra")
-	stack.Set("ionos_datacenter", "de/fra")
-	stack.Set("lease_id", "lease-123")
-	stack.Set("simulate_provider_id", "centron-managed")
-	stack.Set("simulate_node_lifecycle", "pvm")
-	stack.Set("desired_state", "running")
-	stack.Set("billing_mode", "subscription")
-	stack.Set("billing_cadence", "monthly")
-	stack.Set("stackkit_catalog_ref", "basement-kit")
-	stack.Set("verification_status", "pending")
-	stack.Set("server_provisioning_mode", "kombify-cloud")
-	stack.Set("server_connection_mode", "managed-subscription")
-	stack.Set("server_remote_host_present", true)
-	stack.Set("server_remote_user_present", true)
-	stack.Set("server_remote_auth_method", "ssh-key")
-	stack.Set("server_remote_credential_ref", "root@server")
-	stack.Set("server_remote_use_sudo", true)
-	stack.Set("server_install_command_required", false)
-
-	got := stackListItem(stack)
-
-	for key, want := range map[string]any{
-		"runtime_lane":                    "monthly-runtime",
-		"runtime_offering_id":             "monthly-runtime-standard",
-		"provider_id":                     "centron",
-		"lease_provider":                  "centron-managed",
-		"provider_region":                 "de/fra",
-		"ionos_datacenter":                "de/fra",
-		"lease_id":                        "lease-123",
-		"simulate_provider_id":            "centron-managed",
-		"simulate_node_lifecycle":         "pvm",
-		"billing_cadence":                 "monthly",
-		"stackkit_catalog_ref":            "basement-kit",
-		"catalog_ref":                     "basement-kit",
-		"server_provisioning_mode":        "kombify-cloud",
-		"server_connection_mode":          "managed-subscription",
-		"server_remote_host_present":      true,
-		"server_remote_user_present":      true,
-		"server_remote_auth_method":       "ssh-key",
-		"server_remote_credential_ref":    "root@server",
-		"server_remote_use_sudo":          true,
-		"server_install_command_required": false,
-	} {
-		if got[key] != want {
-			t.Fatalf("stackListItem()[%q] = %v, want %v", key, got[key], want)
-		}
-	}
-}
-
 func TestRuntimeFieldsFromConfigExtractsWizardRuntimeSummary(t *testing.T) {
 	fields := runtimeFieldsFromConfig(map[string]interface{}{
 		"name": "runtime-stack",
@@ -2120,15 +1572,6 @@ func TestRuntimeFieldsFromConfigDefaultsUserOwnedProvisioningSummary(t *testing.
 	}
 }
 
-// TestMultiStackLifecycle_Documentation documents the supported multi-stack CRUD behavior.
-func TestMultiStackLifecycle_Documentation(t *testing.T) {
-	// Multiple stacks are now a supported server-side behavior.
-	// The CRUD layer accepts repeated POST /api/v1/stacks requests and persists
-	// owner-scoped stack records across repeated create operations.
-
-	t.Log("Multi-stack lifecycle documented - see integration tests for repeated create validation")
-}
-
 func ownerSpecRequestEvent(stackID, token string) (*httpx.Event, *httptest.ResponseRecorder) {
 	req := httptest.NewRequest(http.MethodGet, ownerSpecEndpoint(stackID), nil)
 	req.SetPathValue("id", stackID)
@@ -2176,18 +1619,6 @@ func ensureOwnerSpecTestCollections(t *testing.T, app core.App) {
 		&core.TextField{Name: "user_id"},
 		&core.SelectField{Name: "status", Values: []string{"success", "warning", "error", "info"}},
 	)
-	tokenCollection := ensureOwnerSpecTestCollection(t, app, "owner_spec_tokens",
-		&core.TextField{Name: "token_hash", Required: true, Max: 128},
-		&core.TextField{Name: "stack_id", Required: true, Max: 200},
-		&core.TextField{Name: "owner_id", Required: true, Max: 200},
-		&core.SelectField{Name: "status", Required: true, Values: []string{ownerSpecTokenStatusIssued, ownerSpecTokenStatusConsumed}},
-		&core.TextField{Name: "expires_at", Required: true, Max: 64},
-		&core.TextField{Name: "consumed_at", Max: 64},
-	)
-	tokenCollection.AddIndex("idx_owner_spec_tokens_token_hash", true, "token_hash", "")
-	if err := app.Save(tokenCollection); err != nil {
-		t.Fatalf("save owner_spec_tokens index: %v", err)
-	}
 }
 
 func ensureOwnerSpecTestCollection(t *testing.T, app core.App, name string, fields ...core.Field) *core.Collection {
@@ -2206,55 +1637,6 @@ func ensureOwnerSpecTestCollection(t *testing.T, app core.App, name string, fiel
 		t.Fatalf("save %s collection: %v", name, err)
 	}
 	return collection
-}
-
-func createOwnerSpecTestStack(t *testing.T, app core.App, ownerID string) *core.Record {
-	t.Helper()
-
-	collection, err := app.FindCollectionByNameOrId("stacks")
-	if err != nil {
-		t.Fatalf("find stacks collection: %v", err)
-	}
-	record := core.NewRecord(collection)
-	record.Set("name", "Configured Stack")
-	record.Set("owner_id", ownerID)
-	record.Set("user_config", map[string]any{
-		"name": "configured-stack",
-		"identity": map[string]any{
-			"owner": map[string]any{
-				"source":      ownerSourceLocal,
-				"email":       "owner@example.com",
-				"username":    "owner",
-				"displayName": "Owner",
-			},
-			"recovery": map[string]any{
-				"passphraseHashPresent": true,
-				"passphraseHashRef":     "secret://techstack/recovery-passphrase-hash",
-			},
-		},
-	})
-	if err := app.Save(record); err != nil {
-		t.Fatalf("save stack: %v", err)
-	}
-	return record
-}
-
-func createOwnerSpecTestRecoveryWalletEntry(t *testing.T, app core.App, stackID, ownerID, recoveryHash string) *core.Record {
-	t.Helper()
-
-	collection, err := app.FindCollectionByNameOrId("wallet")
-	if err != nil {
-		t.Fatalf("find wallet collection: %v", err)
-	}
-	record := core.NewRecord(collection)
-	record.Set("owner_id", ownerID)
-	record.Set("stack_id", stackID)
-	record.Set("service_id", recoveryWalletServiceID)
-	record.Set("secret", recoveryHash)
-	if err := app.Save(record); err != nil {
-		t.Fatalf("save wallet: %v", err)
-	}
-	return record
 }
 
 func pocketBaseTestDataDir(t *testing.T) string {

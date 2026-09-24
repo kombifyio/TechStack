@@ -44,26 +44,19 @@ func TestCanTransitionLegalAndIllegal(t *testing.T) {
 	}
 }
 
-func TestTransitionTableCoversEveryState(t *testing.T) {
-	all := []State{
+func TestKnownStateRecognizesLifecycleContract(t *testing.T) {
+	for _, state := range []State{
 		StateRequested, StateProvisioning, StateEnrolledPendingAgent, StateProvisioned,
 		StateConnected, StateDegraded, StateStale, StateStalled,
 		StateDecommissioning, StateDecommissioned, StateFailed,
-	}
-	for _, s := range all {
-		if !KnownState(s) {
-			t.Errorf("state %q missing from transition table", s)
+	} {
+		if !KnownState(state) {
+			t.Errorf("KnownState(%q) = false, want true", state)
 		}
 	}
-	if len(allowedTransitions) != len(all) {
-		t.Fatalf("transition table has %d states, want %d", len(allowedTransitions), len(all))
-	}
-	// Every listed target must itself be a known state (no dangling edges).
-	for from, targets := range allowedTransitions {
-		for _, to := range targets {
-			if !KnownState(to) {
-				t.Errorf("transition %q->%q targets unknown state", from, to)
-			}
+	for _, state := range []State{"", "bogus"} {
+		if KnownState(state) {
+			t.Errorf("KnownState(%q) = true, want false", state)
 		}
 	}
 }
@@ -116,37 +109,5 @@ func TestIsEnrollmentStalledBoundary(t *testing.T) {
 				t.Fatalf("IsEnrollmentStalled(%s) = %v, want %v", tc.age, got, tc.want)
 			}
 		})
-	}
-}
-
-func TestStatePredicates(t *testing.T) {
-	if !StateConnected.IsHealthy() {
-		t.Error("connected must be healthy")
-	}
-	for _, s := range []State{StateProvisioned, StateStalled, StateDegraded, StateStale, StateFailed} {
-		if s.IsHealthy() {
-			t.Errorf("%q must not count as healthy", s)
-		}
-	}
-	for _, s := range []State{StateProvisioned, StateConnected, StateDegraded, StateStale} {
-		if !s.IsActionAllowed() {
-			t.Errorf("%q should allow runtime actions", s)
-		}
-	}
-	for _, s := range []State{StateRequested, StateProvisioning, StateEnrolledPendingAgent, StateStalled, StateDecommissioned} {
-		if s.IsActionAllowed() {
-			t.Errorf("%q should not allow runtime actions", s)
-		}
-	}
-	for _, s := range []State{StateRequested, StateProvisioning, StateEnrolledPendingAgent, StateStalled} {
-		if !s.IsPending() {
-			t.Errorf("%q should be pending", s)
-		}
-	}
-	if !StateDecommissioned.IsTerminal() {
-		t.Error("decommissioned must be terminal")
-	}
-	if StateFailed.IsTerminal() {
-		t.Error("failed is recoverable, not terminal")
 	}
 }

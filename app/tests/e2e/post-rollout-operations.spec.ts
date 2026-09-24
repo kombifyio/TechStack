@@ -137,13 +137,13 @@ function serverRecord(
     os: "Ubuntu",
     os_version: "24.04.2 LTS",
     arch: "amd64",
-    domains: ["base.home.localhost", "auth.home.localhost"],
+    domains: ["base.home", "auth.home"],
     service_endpoints: [
       {
         service_key: "base",
         name: "Base",
-        url: "http://base.home.localhost",
-        domain: "base.home.localhost",
+        url: "https://base.home",
+        domain: "base.home",
         visibility: "private",
         health: connected ? "healthy" : "unknown",
         provenance: "StackKit access manifest",
@@ -170,8 +170,11 @@ function serverRecord(
       cpu_cores: 8,
       ram_mb: 8192,
       disk_gb: 256,
+      agent_version: "0.7.200",
       docker_version: "26.1.0",
       provider: "local",
+      service_discovery_observed: false,
+      stackkit_manifest_observed: true,
     },
     health: {
       state: connected ? "healthy" : "unknown",
@@ -399,6 +402,22 @@ async function mockPostRolloutApi(
       return;
     }
     await fulfillJson(route, apiEnvelope([stackRecord({ monthlyRuntime })]));
+  });
+
+  await page.route("**/api/v1/homelab", async (route) => {
+    await fulfillJson(
+      route,
+      apiEnvelope({
+        homelab: {
+          id: "homelab-owner-1",
+          name: "Owner Homelab",
+          intent: {},
+          created: "2026-05-18T09:00:00Z",
+          updated: "2026-05-18T09:00:00Z",
+        },
+        kit_deployments: [stackRecord({ monthlyRuntime })],
+      }),
+    );
   });
 
   await page.route(`**/api/v1/stacks/${stackId}/operations`, async (route) => {
@@ -732,7 +751,7 @@ test.describe("Post-rollout operations review", () => {
     await page.goto(`/stacks?stack_id=${stackId}`);
 
     await expect(page.getByTestId("custody-leases")).toContainText(
-      "2 leases without a server",
+      "2 leases without a Node",
     );
     await expect(page.getByTestId("decommission-custody-lease")).toBeVisible();
     await expect(page.getByTestId("resolve-custody-lease")).toBeVisible();
@@ -889,30 +908,50 @@ test.describe("Post-rollout operations review", () => {
   }) => {
     await mockPostRolloutApi(page, { includeServices: false });
 
-    await page.goto(`/stacks?stack=${stackId}&phase=review`);
+    await page.goto(`/dashboard?stack=${stackId}&phase=review`);
     await expect(page.getByTestId("stack-operations-dashboard")).toBeVisible();
     await expect(page.getByTestId("dashboard-services-summary")).toBeVisible();
-    await expect(
-      page.getByText("No runtime services reported", { exact: true }),
-    ).toBeVisible();
+    const reason = page.getByTestId("services-empty-reason");
+    await expect(reason).toContainText("StackKit manifest source");
+    await expect(reason).toContainText(
+      "Service discovery has not been observed",
+    );
+    await expect(reason).toContainText("0.7.200");
     await expect(page.getByText("Pocket ID")).toHaveCount(0);
   });
 
-  test("settings cleanup prunes orphans and never calls the destructive reset", async ({
+  test("settings cleanup reviews and applies an exact projection plan without reset", async ({
     page,
   }) => {
     await mockPostRolloutApi(page, { monthlyRuntime: true });
 
-    let pruneCalled = false;
+    const cleanupModes: string[] = [];
     let resetCalled = false;
     await page.route("**/api/v1/stacks/prune-orphans", async (route) => {
-      pruneCalled = true;
+      const request = route.request().postDataJSON() as {
+        mode: "dry_run" | "apply";
+      };
+      cleanupModes.push(request.mode);
       await fulfillJson(
         route,
         apiEnvelope({
-          message: "Orphan stacks pruned",
-          pruned_stacks: 1,
-          skipped_active: 0,
+          mode: request.mode,
+          message: "Control-plane cleanup plan ready",
+          digest: "sha256:settings-plan",
+          candidates: [
+            {
+              resource_type: "stack_projection",
+              id: stackId,
+              name: "e2e-settings-cleanup",
+              class: "e2e_test_stack",
+              reason:
+                "owned_e2e_projection_without_live_lease_or_recent_worker",
+            },
+          ],
+          applied:
+            request.mode === "apply"
+              ? { stacks: 1, workers: 0, total: 1 }
+              : { stacks: 0, workers: 0, total: 0 },
         }),
       );
     });
@@ -939,12 +978,15 @@ test.describe("Post-rollout operations review", () => {
     const modal = page.getByTestId("settings-prune-orphans-modal");
     await expect(modal).toBeVisible();
     // Safe-prune wording, not a destructive-reset dialog.
-    await expect(modal).toContainText("Clean up orphaned");
+    await expect(modal).toContainText("Review verified test residue");
     await expect(modal).toContainText("remain unchanged");
+    await expect(page.getByTestId("settings-prune-orphans-plan")).toContainText(
+      "e2e-settings-cleanup",
+    );
 
     await page.getByTestId("settings-prune-orphans-confirm").click();
 
-    await expect.poll(() => pruneCalled).toBe(true);
+    await expect.poll(() => cleanupModes).toEqual(["dry_run", "apply"]);
     expect(resetCalled).toBe(false);
   });
 
@@ -953,7 +995,7 @@ test.describe("Post-rollout operations review", () => {
   }) => {
     await mockPostRolloutApi(page, { monthlyRuntime: true });
 
-    let pruneCalled = false;
+    let pruneApplied = false;
     let destroyCalled = false;
     let reloadedAfterPrune = false;
     // Later registrations take precedence: serve a legacy-labeled row until
@@ -963,7 +1005,7 @@ test.describe("Post-rollout operations review", () => {
         await route.fallback();
         return;
       }
-      if (pruneCalled) {
+      if (pruneApplied) {
         reloadedAfterPrune = true;
         await fulfillJson(route, apiEnvelope([]));
         return;
@@ -983,22 +1025,36 @@ test.describe("Post-rollout operations review", () => {
         500,
       );
     });
-    await page.route(
-      `**/api/v1/stacks/prune-orphans?stack_id=${stackId}`,
-      async (route) => {
-        pruneCalled = true;
-        await fulfillJson(
-          route,
-          apiEnvelope({
-            message: "Orphan stacks pruned",
-            pruned_stacks: 0,
-            pruned_legacy: 1,
-            skipped_active: 0,
-            skipped_other_owner: 0,
-          }),
-        );
-      },
-    );
+    await page.route("**/api/v1/stacks/prune-orphans", async (route) => {
+      const request = route.request().postDataJSON() as {
+        mode: "dry_run" | "apply";
+        stack_id: string;
+      };
+      expect(request.stack_id).toBe(stackId);
+      pruneApplied ||= request.mode === "apply";
+      await fulfillJson(
+        route,
+        apiEnvelope({
+          mode: request.mode,
+          message: "Control-plane cleanup plan ready",
+          digest: "sha256:legacy-plan",
+          candidates: [
+            {
+              resource_type: "stack_projection",
+              id: stackId,
+              name: "e2e-legacy-stack",
+              class: "e2e_test_stack",
+              reason:
+                "owned_e2e_projection_without_live_lease_or_recent_worker",
+            },
+          ],
+          applied:
+            request.mode === "apply"
+              ? { stacks: 1, workers: 0, total: 1 }
+              : { stacks: 0, workers: 0, total: 0 },
+        }),
+      );
+    });
 
     await page.goto("/settings");
 
@@ -1023,7 +1079,7 @@ test.describe("Post-rollout operations review", () => {
 
     // A legacy row carries no runtime: the targeted orphan prune retires it,
     // the decommissioning destroy endpoint must never be called.
-    await expect.poll(() => pruneCalled).toBe(true);
+    await expect.poll(() => pruneApplied).toBe(true);
     expect(destroyCalled).toBe(false);
     await expect.poll(() => reloadedAfterPrune).toBe(true);
     await expect(modal).toHaveCount(0);
@@ -1348,54 +1404,66 @@ test.describe("Post-rollout operations review", () => {
     page,
   }) => {
     await mockPostRolloutApi(page);
-    let cockpitUnavailable = false;
-    await page.route("**/api/v1/monitor/cockpit**", async (route) => {
-      if (cockpitUnavailable) {
+    let inventoryUnavailable = false;
+    await page.route("**/api/v1/servers**", async (route) => {
+      if (inventoryUnavailable) {
         await fulfillJson(
           route,
           {
             error: {
               code: "monitoring_unavailable",
-              message: "current cockpit evidence unavailable",
+              message: "canonical server inventory unavailable",
             },
           },
           503,
         );
         return;
       }
-      const snapshot = operationsPayload(true, true, { connected: true });
       await fulfillJson(
         route,
-        apiEnvelope({
-          stacks: [snapshot.stack],
-          selected_stack_id: stackId,
-          stack: snapshot.stack,
-          readiness: snapshot.readiness,
-          nextSteps: snapshot.nextSteps,
-          kpis: snapshot.kpis,
-          servers: snapshot.servers,
-          services: snapshot.services,
-          monitoring: snapshot.monitoring,
-          alerts: snapshot.alerts,
-          jobs: [],
-        }),
+        apiEnvelope([
+          {
+            id: "srv-retained-1",
+            node_id: "srv-retained-1",
+            name: "retained-node",
+            worker_id: "agent-retained-1",
+            inventory_revision: 4,
+            provider: {},
+            lifecycle: { state: "active", desired_state: "running" },
+            connection: {
+              state: "connected",
+              changed_at: "2026-08-27T09:00:00Z",
+            },
+            health: { state: "healthy" },
+            channels: [],
+            mutations_allowed: true,
+            created_at: "2026-07-01T09:00:00Z",
+            updated_at: "2026-08-27T09:00:00Z",
+          },
+        ]),
       );
     });
 
     await page.goto(`/monitoring?stack_id=${stackId}`);
     await expect(
-      page.getByTestId("monitoring-connected-agent-count"),
-    ).toHaveText("1");
+      page.locator(
+        '[data-testid="monitoring-node-summary"][data-connection="connected"]',
+      ),
+    ).toHaveCount(1);
 
-    cockpitUnavailable = true;
+    inventoryUnavailable = true;
     await page.getByRole("button", { name: "Refresh" }).click();
 
+    // The last verified fleet stays on screen and says it is stale. Replacing
+    // it with an error would hide state we still know.
     await expect(
-      page.getByTestId("monitoring-connected-agent-count"),
-    ).toHaveText("1");
-    await expect(
-      page.getByTestId("monitoring-connected-agents-stale"),
-    ).toContainText("Last verified count retained");
+      page.locator(
+        '[data-testid="monitoring-node-summary"][data-connection="connected"]',
+      ),
+    ).toHaveCount(1);
+    await expect(page.getByTestId("monitoring-inventory-stale")).toContainText(
+      "Last verified count retained",
+    );
   });
 
   test("assigns an available server before Review + Start", async ({
@@ -1473,7 +1541,7 @@ test.describe("Post-rollout operations review", () => {
     await expect(page.getByTestId("review-start-button")).toBeVisible();
     await expect(page.getByTestId("review-start-button")).toBeEnabled();
     await expect(page.getByTestId("stackkit-rollout-guidance")).toContainText(
-      "Your server is connected. Continue with the StackKit rollout.",
+      "Your Node is connected. Continue with the StackKit rollout.",
     );
 
     await page.getByTestId("review-start-button").click();
@@ -1556,15 +1624,15 @@ test.describe("Post-rollout operations review", () => {
       "10.0.0.10",
     );
     await expect(page.getByTestId("server-domains")).toContainText(
-      "base.home.localhost",
+      "base.home",
     );
 
     const endpoint = page
       .getByTestId("server-service-endpoints")
-      .getByRole("link", { name: "http://base.home.localhost" });
+      .getByRole("link", { name: "https://base.home" });
     await expect(endpoint).toHaveAttribute(
       "href",
-      "http://base.home.localhost",
+      "https://base.home",
     );
     await expect(page.getByTestId("server-service-endpoints")).toContainText(
       "healthy",
@@ -1609,6 +1677,122 @@ test.describe("Post-rollout operations review", () => {
       page.getByTestId("server-decommission-confirm-button"),
     ).toBeVisible();
     await expect(page.getByText("Force decommission")).toHaveCount(0);
+  });
+
+  test("unlocks confirmed recreate only after terminal cleanup and opens Creation", async ({
+    page,
+  }) => {
+    await mockPostRolloutApi(page, { monthlyRuntime: true });
+    let cleanupReady = false;
+    let recreateRequest: { confirmed?: boolean; idempotencyKey?: string } = {};
+
+    await page.route(
+      `**/api/v1/stacks/${stackId}/operations`,
+      async (route) => {
+        const payload = operationsPayload(false, false, {
+          monthlyRuntime: true,
+        });
+        const projected = serverRecord(true, {
+          managedRuntimeProjection: true,
+        });
+        const retired = {
+          ...projected,
+          capabilities: {
+            ...projected.capabilities,
+            lifecycle_state: "decommissioned",
+            runtime_slot_key: "foundation",
+            runtime_slot_id: "foundation-1",
+            runtime_slot_generation: "4",
+            runtime_offering_id: "centron-basic",
+            stackkit: "basement-kit",
+          },
+        };
+        await fulfillJson(
+          route,
+          apiEnvelope({
+            ...payload,
+            servers: [],
+            retiredServers: [retired],
+          }),
+        );
+      },
+    );
+    await page.route(
+      "**/api/v1/monthly-runtimes/lease-stack-ops/cleanup-readback",
+      async (route) => {
+        await fulfillJson(
+          route,
+          apiEnvelope({
+            lease_id: "lease-stack-ops",
+            lease: {
+              desired_terminal: true,
+              observed_terminal: cleanupReady,
+            },
+            server: { bound: true, terminal: cleanupReady },
+            provider_operation: {
+              found: true,
+              terminal: cleanupReady,
+              absence_evidence_ref: cleanupReady
+                ? "provider-evidence://absence/lease-stack-ops"
+                : "",
+              capacity_released: cleanupReady,
+            },
+          }),
+        );
+      },
+    );
+    await page.route(
+      "**/api/v1/monthly-runtimes/lease-stack-ops/recreate",
+      async (route) => {
+        recreateRequest = {
+          ...route.request().postDataJSON(),
+          idempotencyKey: route.request().headers()["idempotency-key"],
+        };
+        await fulfillJson(
+          route,
+          apiEnvelope({
+            stack_id: stackId,
+            job_id: "job-recreate-generation-5",
+            lease_id: "lease-recreated-generation-5",
+            runtime_server_id: "server-recreated-generation-5",
+            runtime_slot_key: "foundation",
+            runtime_slot_id: "foundation-1",
+            resource_generation_id: "55555555-5555-4555-8555-555555555555",
+            operation_id: "operation-recreate-generation-5",
+            provider_id: "centron",
+            node_role: "foundation",
+            runtime_offering_id: "centron-basic",
+            enrollment_status: "pending",
+            runtime_phase: "lease_pending",
+            idempotent_replay: false,
+            message: "Managed runtime generation accepted",
+          }),
+          202,
+        );
+      },
+    );
+
+    await page.goto(`/stacks/${stackId}`);
+
+    const recreatePanel = page.getByTestId("managed-runtime-recreate-panel");
+    const recreateButton = page.getByTestId("managed-runtime-recreate-button");
+    await expect(recreatePanel).toContainText("Cleanup is still in progress");
+    await expect(recreateButton).toBeDisabled();
+
+    cleanupReady = true;
+    await page.getByTestId("managed-runtime-recreate-refresh").click();
+    await expect(recreateButton).toBeEnabled();
+    await recreateButton.click();
+
+    const confirmation = page.getByRole("dialog");
+    await expect(confirmation).toContainText("provisions and bills a new");
+    await confirmation.getByRole("button", { name: "Recreate server" }).click();
+
+    await expect(page).toHaveURL(/\/stacks\/creating/);
+    await expect(page).toHaveURL(new RegExp(`stack_id=${stackId}`));
+    await expect(page).toHaveURL(/job_id=job-recreate-generation-5/);
+    expect(recreateRequest.confirmed).toBe(true);
+    expect(recreateRequest.idempotencyKey).toBeTruthy();
   });
 
   test("runs lifecycle actions from the concrete server settings without a target picker", async ({

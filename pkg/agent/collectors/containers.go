@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 )
 
 // ContainerCollector gathers Docker container metrics via the Docker Engine API.
@@ -18,7 +18,7 @@ func NewContainerCollector(interval time.Duration) (*ContainerCollector, error) 
 	if interval <= 0 {
 		interval = 15 * time.Second
 	}
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := client.New(client.FromEnv)
 	if err != nil {
 		return nil, err
 	}
@@ -32,15 +32,16 @@ func (c *ContainerCollector) Collect(ctx context.Context) ([]Sample, error) {
 	now := time.Now()
 	var samples []Sample
 
-	containers, err := c.cli.ContainerList(ctx, container.ListOptions{All: true})
+	list, err := c.cli.ContainerList(ctx, client.ContainerListOptions{All: true})
 	if err != nil {
 		return nil, err
 	}
+	containers := list.Items
 
 	// Container count by state
 	stateCounts := map[string]int{}
 	for _, ctr := range containers {
-		stateCounts[ctr.State]++
+		stateCounts[string(ctr.State)]++
 	}
 	for state, count := range stateCounts {
 		samples = append(samples, Sample{
@@ -54,6 +55,7 @@ func (c *ContainerCollector) Collect(ctx context.Context) ([]Sample, error) {
 
 	// Per-container info + stats
 	for _, ctr := range containers {
+		state := string(ctr.State)
 		name := ""
 		if len(ctr.Names) > 0 {
 			name = ctr.Names[0]
@@ -65,12 +67,12 @@ func (c *ContainerCollector) Collect(ctx context.Context) ([]Sample, error) {
 			"container_id":   ctr.ID[:12],
 			"container_name": name,
 			"image":          ctr.Image,
-			"state":          ctr.State,
+			"state":          state,
 		}
 
 		// Info metric (always emitted, value=1 for running, 0 otherwise)
 		running := float64(0)
-		if ctr.State == "running" {
+		if state == "running" {
 			running = 1
 		}
 		samples = append(samples, Sample{
@@ -82,11 +84,13 @@ func (c *ContainerCollector) Collect(ctx context.Context) ([]Sample, error) {
 		})
 
 		// Only fetch stats for running containers
-		if ctr.State != "running" {
+		if state != "running" {
 			continue
 		}
 
-		stats, err := c.cli.ContainerStatsOneShot(ctx, ctr.ID)
+		stats, err := c.cli.ContainerStats(ctx, ctr.ID, client.ContainerStatsOptions{
+			Stream: false,
+		})
 		if err != nil {
 			continue
 		}

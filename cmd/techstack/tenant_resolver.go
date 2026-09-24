@@ -2,11 +2,12 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 
-	commonauthflow "github.com/kombifyio/go-common/authflow"
-	"github.com/kombifyio/go-common/oidcclient"
+	commonauthflow "github.com/kombifyio/techstack/internal/gocommon/authflow"
+	"github.com/kombifyio/techstack/internal/gocommon/oidcclient"
 
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/demoguard"
@@ -22,9 +23,6 @@ const orgTenantPrefix = "org_"
 // kombify-Gateway for identities without an organization claim.
 const personalTenantPrefix = "usr:"
 
-// sharedDefaultTenantID is the legacy shared fallback tenant.
-const sharedDefaultTenantID = "default"
-
 // kombifyClaimNamespace prefixes the custom claims minted by the Auth0
 // post-login action (kombify-add-roles-to-token); the Cloudflare edge derives
 // x-org-id from the same claims.
@@ -37,17 +35,17 @@ const kombifyClaimNamespace = "https://kombify.io/"
 // existing active membership -> Auth0 Management API organizations ->
 // owner tenant (the subject itself). The final rung mirrors the data-plane
 // owner-as-tenant behavior so a user without any provisioned org resolves the
-// SAME tenant through the browser session as through the gateway. The
-// resolver never fails the login. Installed only in SaaS mode.
-func v2CloudTenantResolver(store controlplane.AuthStore, orgs organizationLister, defaultTenant string) commonauthflow.TenantResolver {
-	_ = strings.TrimSpace(defaultTenant) // legacy tenants surface via memberships, not as a blanket fallback
+// SAME tenant through the browser session as through the gateway. Malformed
+// identities fail closed instead of entering a shared fixture tenant. Installed
+// only in SaaS mode.
+func v2CloudTenantResolver(store controlplane.AuthStore, orgs organizationLister) commonauthflow.TenantResolver {
 	return func(ctx context.Context, claims *oidcclient.Claims, _ string, _ string) (string, error) {
 		if claims == nil {
-			return sharedDefaultTenantID, nil
+			return "", fmt.Errorf("cloud identity claims are required")
 		}
 		subject := strings.TrimSpace(claims.Subject)
 		if subject == "" {
-			return sharedDefaultTenantID, nil
+			return "", fmt.Errorf("cloud identity subject is required")
 		}
 		if demoguard.IsDemoUser(subject) {
 			if tenantID := demoguard.DemoTenantID(); tenantID != "" {

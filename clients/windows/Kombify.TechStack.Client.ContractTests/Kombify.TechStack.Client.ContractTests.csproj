@@ -6,5 +6,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Kombify.TechStack.Client\Kombify.TechStack.Client.csproj" />
+    <ProjectReference Include="..\Kombify.Client.Shell\Kombify.Client.Shell.csproj" />
   </ItemGroup>
 </Project>

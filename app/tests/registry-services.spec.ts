@@ -1,4 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
+import { mockLoggedInContext } from "./helpers/test-utils";
 
 const registryPayload = {
   data: {
@@ -89,14 +90,14 @@ function canonicalServicesPayload() {
 }
 
 /**
- * Canonical server read model (`GET /api/v1/servers`). The Add Server and
- * pairing flows read servers from here since the Wave 2 UI cutover; the legacy
- * `/api/v1/registry/servers` projection has no client left.
+ * Canonical Node read model (`GET /api/v1/servers`). The Add Node and pairing
+ * flows read Nodes from this route since the Wave 2 UI cutover.
  */
 function canonicalServer(overrides: Record<string, unknown> = {}) {
   return {
     id: "node-1",
-    stack_id: "stack-1",
+    node_id: "node-1",
+    kit_deployment_id: "stack-1",
     name: "foundation-1",
     worker_id: "agent-1",
     lifecycle: { state: "active", desired_state: "running" },
@@ -147,29 +148,7 @@ async function expectServicesSurfaceReady(page: Page) {
 test.describe("Service Registry", () => {
   test.beforeEach(async ({ page }) => {
     page.on("pageerror", (error) => console.error("browser page error", error));
-    await page.addInitScript(() => {
-      const header = btoa(JSON.stringify({ alg: "none", typ: "JWT" }))
-        .replaceAll("+", "-")
-        .replaceAll("/", "_")
-        .replaceAll("=", "");
-      const payload = btoa(
-        JSON.stringify({ exp: 1893456000, id: "owner-1", type: "authRecord" }),
-      )
-        .replaceAll("+", "-")
-        .replaceAll("/", "_")
-        .replaceAll("=", "");
-      window.localStorage.setItem(
-        "pocketbase_auth",
-        JSON.stringify({
-          token: `${header}.${payload}.signature`,
-          model: {
-            id: "owner-1",
-            email: "owner@example.com",
-            collectionName: "users",
-          },
-        }),
-      );
-    });
+    await mockLoggedInContext(page.context(), { allowMockAuth: true });
     await page.route("**/api/v1/auth/mode", async (route) => {
       await route.fulfill({
         json: {
@@ -518,7 +497,7 @@ test.describe("Service Registry", () => {
     await expect(page.getByTestId("registry-service-card")).toHaveCount(0);
   });
 
-  test("rolls out a catalog service to a selected server", async ({ page }) => {
+  test("rolls out a catalog service to a selected Node", async ({ page }) => {
     await page.goto("/services");
 
     await expectServicesSurfaceReady(page);
@@ -535,70 +514,45 @@ test.describe("Service Registry", () => {
     await expect(page.getByTestId("registry-service-card")).toHaveCount(0);
   });
 
-  test("Add Server connect-remote exposes the pairing command and waits for a real Guard projection", async ({
+  test("Add Node shows applicable wizard steps and waits for a real Guard heartbeat", async ({
     page,
   }) => {
-    const heartbeatAt = new Date("2026-07-22T08:00:00Z");
-    await page.clock.install({ time: heartbeatAt });
-    let guardProjected = false;
-    let registryUnavailable = false;
-    await page.unroute("**/api/v1/servers");
-    await page.route("**/api/v1/servers", async (route) => {
-      if (registryUnavailable) {
-        await route.fulfill({
-          status: 503,
-          json: {
-            error: {
-              code: "registry_unavailable",
-              message: "canonical server projection unavailable",
-            },
-          },
-        });
-        return;
-      }
-      await route.fulfill({
-        json: {
-          data: [
-            canonicalServer(),
-            ...(guardProjected
-              ? [
-                  // A real Guard heartbeat the sweeper persisted: connected +
-                  // healthy + active. The page must not claim a connection
-                  // from anything weaker than this.
-                  canonicalServer({
-                    id: "node-worker-2",
-                    name: "worker-2",
-                    worker_id: "guard-worker-2",
-                    connection: {
-                      state: "connected",
-                      changed_at: heartbeatAt.toISOString(),
-                      last_heartbeat_at: heartbeatAt.toISOString(),
-                      staleness_seconds: 0,
-                    },
-                    health: {
-                      state: "healthy",
-                      observed_at: heartbeatAt.toISOString(),
-                    },
-                  }),
-                ]
-              : []),
-          ],
-        },
-      });
-    });
-    await page.unroute("**/trust/pairing-tokens");
-    await page.route("**/trust/pairing-tokens", async (route) => {
-      const body = route.request().postDataJSON();
-      expect(body.server_provisioning_mode).toBe("connect-remote");
-      expect(body.server_remote_host).toBe("worker-2.local");
+    await page.route("**/api/v1/client/bootstrap", async (route) => {
       await route.fulfill({
         json: {
           data: {
-            id: "pairing-token-connect-remote",
-            token: "pair-token-connect-remote",
-            expires_at: "2099-07-18T12:30:00Z",
-            job_id: "job-add-server-connect-remote",
+            edition: "community",
+            deployment_mode: "self-hosted",
+            kombify_edition: "local",
+            version: "e2e",
+            public_origin: "",
+            telemetry: {
+              sentry: { dsn: "", environment: "", release: "" },
+              posthog: { key: "", host: "", environment: "" },
+            },
+          },
+        },
+      });
+    });
+    let wizardRunRequest: unknown;
+    let enrollmentPolls = 0;
+    await page.unroute("**/api/v1/servers");
+    await page.route("**/api/v1/servers**", async (route) => {
+      await route.fulfill({ json: { data: [canonicalServer()] } });
+    });
+    await page.route("**/api/v1/wizard/runs", async (route) => {
+      wizardRunRequest = route.request().postDataJSON();
+      await route.fulfill({
+        json: {
+          data: {
+            run_id: "wizard-run-connect-remote",
+            run_kind: "expansion",
+            homelab_id: "homelab-1",
+            kit_assignment_mode: "join",
             stack_id: "stack-1",
+            node_id: "node-worker-2",
+            pairing_job_id: "job-add-server-connect-remote",
+            state: "awaiting_pairing",
           },
         },
       });
@@ -607,20 +561,23 @@ test.describe("Service Registry", () => {
     await page.route(
       "**/api/v1/jobs/job-add-server-connect-remote",
       async (route) => {
+        enrollmentPolls += 1;
+        const enrolled = enrollmentPolls > 2;
         await route.fulfill({
           json: {
             data: {
               id: "job-add-server-connect-remote",
-              type: "update",
-              state: "completed",
-              progress: 100,
-              step: "create_spec",
-              message: "Server registration prepared",
+              type: "remote_enrollment",
+              state: enrolled ? "completed" : "pending",
+              progress: enrolled ? 100 : 35,
+              step: enrolled ? "remote_ssh_enrolled" : "remote_ssh_install",
+              message: enrolled
+                ? "Guard enrolled over SSH"
+                : "Installing and enrolling the Guard over SSH…",
               stack_id: "stack-1",
               result: {
                 creation_operation: "add-server",
                 stack_id: "stack-1",
-                registration_token: "pair-token-connect-remote",
                 token_expires_at: "2099-07-18T12:30:00Z",
                 server_provisioning_mode: "connect-remote",
                 server_remote_host: "worker-2.local",
@@ -633,92 +590,123 @@ test.describe("Service Registry", () => {
 
     await page.goto("/stacks/stack-1/servers/new");
 
-    await expect(
-      page.getByRole("heading", { name: "Add Server" }),
-    ).toBeVisible();
-    await page.getByTestId("wizard-next").click();
+    await expect(page.getByRole("heading", { name: "Add Node" })).toBeVisible();
+
+    // Add Node opens on use cases now. Nothing is pre-selected — an
+    // Additional Node must not import a use case the operator never picked —
+    // and the step is skippable, because adding capacity alone is a reason to
+    // add a Node.
+    await expect(page.getByTestId("easy-step-1")).toBeVisible();
+    await expect(page.getByTestId("creation-goals")).toContainText(
+      /0\s+use cases selected/,
+    );
+    await page.getByTestId("wizard-stepper").getByTestId("wizard-next").click();
+
     await expect(page.getByTestId("easy-step-2")).toBeVisible();
+    await expect(page.getByTestId("node-inherits-homelab")).toBeVisible();
+    await expect(page.getByTestId("wizard-step-3")).toHaveAttribute(
+      "data-state",
+      "inactive",
+    );
+    await expect(page.getByTestId("wizard-step-4")).toHaveAttribute(
+      "data-state",
+      "inactive",
+    );
+    await expect(page.getByTestId("wizard-step-5")).toHaveAttribute(
+      "data-state",
+      "inactive",
+    );
+    await expect(
+      page.getByTestId("wizard-stepper").getByTestId("wizard-create"),
+    ).toBeVisible();
+    await page.getByTestId("server-branch-owned").click();
     await expect(page.getByTestId("server-mode-install-command")).toBeVisible();
     await expect(page.getByTestId("server-mode-connect-remote")).toBeVisible();
-    await expect(page.getByTestId("server-mode-kombify-cloud")).toBeVisible();
+    await page.getByRole("button", { name: "Advanced Settings" }).click();
+    await page
+      .getByRole("button", { name: "New StackKit / main Node" })
+      .click();
+    await expect(page.getByTestId("wizard-step-3")).toHaveAttribute(
+      "data-state",
+      "upcoming",
+    );
+    await expect(page.getByTestId("wizard-step-4")).toHaveAttribute(
+      "data-state",
+      "upcoming",
+    );
+    await expect(page.getByTestId("wizard-step-5")).toHaveAttribute(
+      "data-state",
+      "inactive",
+    );
+    await page.getByTestId("wizard-stepper").getByTestId("wizard-next").click();
+    await expect(page.getByTestId("easy-step-3")).toBeVisible();
+    await page.getByTestId("wizard-stepper").getByTestId("wizard-next").click();
+    await expect(page.getByTestId("easy-step-4")).toBeVisible();
+    await page.getByTestId("wizard-stepper").getByTestId("wizard-back").click();
+    await page.getByTestId("wizard-stepper").getByTestId("wizard-back").click();
+    await expect(page.getByTestId("easy-step-2")).toBeVisible();
+    await page.getByRole("button", { name: "Advanced Settings" }).click();
+    await page
+      .getByRole("button", { name: "Worker or storage for this StackKit" })
+      .click();
     await expect(
       page.getByTestId("stackkit-foundation-selector"),
     ).toBeVisible();
+    // One kit deployment has one control plane, so a join never offers
+    // Foundation. The surface points at the path that does work instead.
+    await expect(page.getByTestId("server-role-foundation")).toHaveCount(0);
+    await expect(
+      page.getByTestId("server-role-found-deployment-link"),
+    ).toHaveAttribute("href", "/stacks/new");
     await expect(page.getByTestId("server-role-worker")).toHaveAttribute(
       "aria-pressed",
       "true",
     );
 
-    await page.getByTestId("server-mode-kombify-cloud").click();
-    await expect(page.getByTestId("managed-provider-selector")).toBeVisible();
-    await expect(page.getByTestId("add-server-review")).toHaveCount(0);
-
-    await page.getByTestId("server-mode-connect-remote").click();
+    await page
+      .getByTestId("server-mode-connect-remote")
+      .click({ position: { x: 20, y: 20 } });
     await page.getByTestId("remote-server-host").fill("worker-2.local");
     await expect(page.getByTestId("remote-server-config")).toContainText(
-      "Server host or IP",
+      "Node host or IP",
     );
-
-    await page.getByTestId("service-registry-option-vaultwarden").click();
-
-    await page.getByTestId("wizard-next").click();
-    await page.getByTestId("wizard-next").click();
-    await page.getByTestId("wizard-next").click();
+    await page.getByText("Password", { exact: true }).click();
+    await expect(page.getByTestId("remote-server-password")).toBeVisible();
+    await expect(page.getByTestId("remote-server-key-label")).not.toBeVisible();
     await expect(
-      page.getByTestId("owner-bootstrap-skipped-summary"),
+      page.getByTestId("remote-server-test-connection"),
     ).toBeVisible();
-    await page.getByTestId("wizard-create").click();
-
-    await expect(page).toHaveURL(/\/stacks\/creating\?.*operation=add-server/);
-    await expect(
-      page.getByRole("heading", { name: "Run the pairing command" }),
-    ).toBeVisible();
-    await expect(page.getByTestId("guard-pairing-status")).toContainText(
-      "Not connected yet",
-    );
-    const pairingCommand = page.getByTestId("server-registration-command");
-    await expect(pairingCommand).toContainText(
-      'KOMBI_TOKEN="pair-token-connect-remote"',
-    );
-    await expect(pairingCommand).toContainText("TECHSTACK_AS_SERVICE=1");
-    await expect(page.getByTestId("guard-connected-summary")).toHaveCount(0);
 
     await page
-      .context()
-      .grantPermissions(["clipboard-read", "clipboard-write"]);
-    await page.getByTestId("copy-pairing-command").click();
-    await expect(page.getByTestId("copy-pairing-command")).toContainText(
-      "Pairing command copied",
-    );
-    const clipboard = await page.evaluate(() => navigator.clipboard.readText());
-    expect(clipboard).toContain('KOMBI_TOKEN="pair-token-connect-remote"');
+      .getByTestId("wizard-stepper")
+      .getByTestId("wizard-create")
+      .click();
 
-    guardProjected = true;
-    await page.clock.fastForward(3_000);
-    await expect(
-      page.getByRole("heading", { name: "Server connected", level: 2 }),
-    ).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByTestId("guard-connected-summary")).toContainText(
-      "worker-2",
-    );
-    await expect(page.getByTestId("guard-connected-summary")).toContainText(
-      "Guard heartbeat verified",
-    );
-
-    registryUnavailable = true;
-    await page.clock.setFixedTime(new Date("2026-07-22T08:02:00Z"));
-    await page.clock.fastForward(3_000);
-    await expect(page.getByTestId("guard-connected-summary")).toHaveCount(0, {
-      timeout: 10_000,
+    await expect(page).toHaveURL(/\/stacks\/creating\?.*operation=add-server/);
+    await expect.poll(() => wizardRunRequest).toBeDefined();
+    expect(wizardRunRequest).toMatchObject({
+      intent: {
+        run_kind: "expansion",
+        kit_assignment: {
+          mode: "join",
+          kit_deployment_id: "stack-1",
+        },
+        server: { transport: "connect-remote" },
+      },
+      remote: { host: "worker-2.local" },
     });
+    await expect(page.getByTestId("remote-ssh-enrollment-card")).toBeVisible();
     await expect(
-      page.getByText("The server projection could not be checked.", {
-        exact: false,
-      }),
+      page.getByRole("heading", { name: "Waiting for Guard heartbeat…" }),
     ).toBeVisible();
+    await expect(page.getByTestId("server-registration-command")).toHaveCount(
+      0,
+    );
+    await expect(page.getByTestId("copy-pairing-command")).toHaveCount(0);
+    await expect(page.getByTestId("guard-connected-summary")).toHaveCount(0);
   });
 
-  test("Add Server preserves a submitted local registration for a managed stack", async ({
+  test("Add Node preserves a submitted local registration for a managed stack", async ({
     page,
   }) => {
     const pageErrors: string[] = [];
@@ -786,13 +774,11 @@ test.describe("Service Registry", () => {
     );
 
     await page.goto("/stacks/stack-1/servers/new");
+    // Add Node opens on use cases; this run adds capacity only, so it skips.
     await page.getByTestId("wizard-next").click();
+    await expect(page.getByTestId("easy-step-2")).toBeVisible();
+    await page.getByTestId("server-branch-owned").click();
     await page.getByTestId("server-mode-install-command").click();
-    await page.getByTestId("foundation-basement-kit").click();
-    await page.getByTestId("server-role-foundation").click();
-    await page.getByTestId("wizard-next").click();
-    await page.getByTestId("wizard-next").click();
-    await page.getByTestId("wizard-next").click();
     await page.getByTestId("wizard-create").click();
 
     await expect(page).toHaveURL(/\/stacks\/creating\?.*operation=add-server/);
@@ -802,7 +788,7 @@ test.describe("Service Registry", () => {
     expect(pageErrors.join("\n")).not.toContain("effect_update_depth_exceeded");
   });
 
-  test("Add Server reads the stack from the canonical stack detail route", async ({
+  test("Add Node reads the stack from the canonical stack detail route", async ({
     page,
   }) => {
     // No server aggregates at all: the page must still resolve the stack from
@@ -836,11 +822,13 @@ test.describe("Service Registry", () => {
 
     await page.goto("/stacks/stack-1/servers/new");
 
-    await expect(
-      page.getByRole("heading", { name: "Add Server" }),
-    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Add Node" })).toBeVisible();
     await expect(page.getByText("Stack not found.")).toHaveCount(0);
-    await expect(page.getByTestId("wizard-next")).toBeVisible();
+    await page.getByTestId("wizard-next").click();
+    await expect(page.getByTestId("easy-step-2")).toBeVisible();
+    await page.getByTestId("server-branch-owned").click();
+    await page.getByTestId("server-mode-install-command").click();
+    await expect(page.getByTestId("wizard-create")).toBeVisible();
   });
 
   test("keeps placement visible but disables hollow runtime migration", async ({

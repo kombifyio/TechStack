@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/kombifyio/techstack/internal/gocommon/authlocal"
 	"github.com/kombifyio/techstack/internal/pocketbase_migration"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tools/security"
 )
 
 // setupRequest is the JSON body for the first-run setup wizard.
@@ -28,22 +30,37 @@ type LocalOwnerSetup struct {
 }
 
 // LocalSetupProvisioner wires the local first-run payload into the current
-// local auth authority. Production uses the V2 authlocal store; nil preserves
-// the legacy PocketBase compatibility behavior for narrow tests.
+// local auth authority. Production uses the V2 authlocal store; nil means the
+// canonical local login authority is unavailable and setup must fail closed.
 type LocalSetupProvisioner func(context.Context, LocalOwnerSetup) error
 
 // handleSetup handles the first-run setup wizard.
 // POST /api/v1/auth/setup — public, one-shot.
-// Blocked in SaaS mode (platform pre-configures) and when auth_config already exists.
-func handleSetup(app core.App, deployMode config.DeploymentMode, provisionLocal LocalSetupProvisioner) func(e *httpx.Event) error {
+// Blocked in SaaS mode, when the canonical local owner already exists, and
+// when the leftover auth_config marker already exists.
+func handleSetup(app core.App, deployMode config.DeploymentMode, provisionLocal LocalSetupProvisioner, owners LocalOwnerLookup) func(e *httpx.Event) error {
 	return func(e *httpx.Event) error {
 		if deployMode.IsSaaS() {
 			return httpx.Error(e, http.StatusForbidden, ksapi.ErrCodeForbidden,
 				"Setup is managed by the platform in SaaS mode", nil)
 		}
 
-		// Check if setup already completed (auth_config record exists)
-		existing, _ := app.FindFirstRecordByFilter("auth_config", "id != ''", nil)
+		ownerPresent, err := canonicalOwnerPresent(e.Request.Context(), owners)
+		if err != nil {
+			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal,
+				"Failed to read local owner store", nil)
+		}
+		if ownerPresent {
+			return httpx.Error(e, http.StatusForbidden, ksapi.ErrCodeForbidden,
+				"Setup already completed", nil)
+		}
+
+		// Check if setup already completed (auth_config record exists).
+		existing, err := loadAuthConfig(app)
+		if err != nil {
+			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal,
+				"Failed to read auth configuration", nil)
+		}
 		if existing != nil {
 			return httpx.Error(e, http.StatusForbidden, ksapi.ErrCodeForbidden,
 				"Setup already completed", nil)
@@ -76,30 +93,37 @@ func setupLocal(app core.App, e *httpx.Event, req setupRequest, provisionLocal L
 		return httpx.BadRequest(e, "password must be at least 8 characters")
 	}
 
-	if provisionLocal != nil {
-		if err := provisionLocal(e.Request.Context(), LocalOwnerSetup{
-			Name:     req.Name,
-			Email:    req.Email,
-			Password: req.Password,
-		}); err != nil {
-			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal,
-				"Failed to configure local login: "+err.Error(), nil)
-		}
+	if provisionLocal == nil {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeInternal,
+			"Local login authority is unavailable", nil)
 	}
-
-	// Create the admin user in PocketBase's users collection
-	usersCollection, err := app.FindCollectionByNameOrId("users")
-	if err != nil {
+	if err := provisionLocal(e.Request.Context(), LocalOwnerSetup{
+		Name:     req.Name,
+		Email:    req.Email,
+		Password: req.Password,
+	}); err != nil {
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal,
-			"Failed to find users collection", nil)
+			"Failed to configure local login: "+err.Error(), nil)
 	}
 
-	user := core.NewRecord(usersCollection)
+	// Create the deterministic PocketBase profile projection used by the
+	// remaining Cloud-Link and Stack Identity compatibility surfaces. It is
+	// not a login authority; local authentication remains in authlocal above.
+	user, err := app.FindRecordById("users", authlocal.BreakGlassRecordID)
+	if err != nil {
+		usersCollection, findErr := app.FindCollectionByNameOrId("users")
+		if findErr != nil {
+			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal,
+				"Failed to find users collection", nil)
+		}
+		user = core.NewRecord(usersCollection)
+		user.Id = authlocal.BreakGlassRecordID
+	}
 	user.Set("email", req.Email)
 	user.Set("name", req.Name)
 	user.Set("verified", true)
 	user.Set("role", "admin")
-	user.SetPassword(req.Password)
+	user.SetPassword(security.RandomString(32))
 
 	if err := app.Save(user); err != nil {
 		return httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeValidation,
@@ -135,18 +159,6 @@ func setupCloud(app core.App, e *httpx.Event) error {
 
 // createAuthConfig creates the singleton auth_config record.
 func createAuthConfig(app core.App, mode string, allowLocal bool) error {
-	if err := pocketbase_migration.EnsureAuthConfigCollection(app); err != nil {
-		return err
-	}
-
-	collection, err := app.FindCollectionByNameOrId("auth_config")
-	if err != nil {
-		return err
-	}
-
-	record := core.NewRecord(collection)
-	record.Set("mode", mode)
-	record.Set("allow_local_login", allowLocal)
-
-	return app.Save(record)
+	_, err := pocketbase_migration.UpsertAuthConfig(app, mode, allowLocal)
+	return err
 }

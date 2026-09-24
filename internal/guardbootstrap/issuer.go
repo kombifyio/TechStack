@@ -21,6 +21,15 @@ import (
 // invalidate in-flight node enrolments derived from the other.
 const EnvEnrollmentSeed = "TECHSTACK_GUARD_ENROLLMENT_SEED"
 
+const (
+	// MetadataOperationID and MetadataCloudInitSHA256 are the secret-free
+	// correlation fields carried by the one-use pairing capability. They let
+	// pre-enrollment logs and the first authenticated Guard observation point
+	// back to the exact provider operation without retaining raw userData.
+	MetadataOperationID     = "operation_id"
+	MetadataCloudInitSHA256 = "cloud_init_sha256"
+)
+
 // enrolmentWindow bounds how long a provisioned node may take to redeem its
 // capability. It is generous because a first boot can be delayed by image
 // pulls and provider queues, but it is finite: a provisioning attempt that was
@@ -145,7 +154,12 @@ func (i *EnrollmentIssuer) RecordCapability(ctx context.Context, request Enrollm
 	if err != nil {
 		return err
 	}
-	return i.recordCapability(ctx, request, tokenHash)
+	payload, err := i.RenderPayload(request)
+	if err != nil {
+		return err
+	}
+	payloadDigest := sha256.Sum256(payload)
+	return i.recordCapability(ctx, request, tokenHash, "sha256:"+hex.EncodeToString(payloadDigest[:]))
 }
 
 // derive is the single definition of this attempt's capability, so the payload
@@ -168,12 +182,13 @@ func (i *EnrollmentIssuer) derive(request EnrollmentRequest) (rawToken, tokenHas
 }
 
 func (i *EnrollmentIssuer) recordCapability(
-	ctx context.Context, request EnrollmentRequest, tokenHash string,
+	ctx context.Context, request EnrollmentRequest, tokenHash, cloudInitSHA256 string,
 ) error {
 	metadata, err := json.Marshal(map[string]string{
-		"lease_id":     strings.TrimSpace(request.LeaseID),
-		"operation_id": strings.TrimSpace(request.OperationID),
-		"source":       "managed-provision-cloud-init",
+		"lease_id":              strings.TrimSpace(request.LeaseID),
+		MetadataOperationID:     strings.TrimSpace(request.OperationID),
+		MetadataCloudInitSHA256: strings.TrimSpace(cloudInitSHA256),
+		"source":                "managed-provision-cloud-init",
 	})
 	if err != nil {
 		return fmt.Errorf("guardbootstrap: encode capability metadata: %w", err)

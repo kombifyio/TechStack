@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kombifyio/go-common/oidcclient"
+	"github.com/kombifyio/techstack/internal/gocommon/oidcclient"
 )
 
 const (

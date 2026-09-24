@@ -2,11 +2,11 @@
 package schema
 
 // #Provider defines supported infrastructure providers (duplicate for standalone loading)
-// Keep in sync with: kombination.cue, pkg/stackkits/base/stackkit.cue, pkg/validator/spec_validator.go
+// Keep in sync with: kombination.cue, pkg/validator/spec_validator.go
 #Provider: "local" | "hetzner" | "docker" | "aws" | "gcp" | "azure" | "proxmox" | "digitalocean" | "digitalocean-managed" | "centron" | "ionos"
 
 // #ServiceType defines supported service categories (duplicate for standalone loading)
-// Keep in sync with: kombination.cue, pkg/stackkits/base/stackkit.cue
+// Keep in sync with: kombination.cue
 #ServiceType: 
 	"reverse-proxy" |
 	"service" |

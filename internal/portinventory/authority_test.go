@@ -76,11 +76,12 @@ func TestAuthorityAllowsExactSuccessorClaimForSameStack(t *testing.T) {
 	}
 }
 
-func TestAuthorityDoesNotReuseExclusiveReservationFromUncertainGeneration(t *testing.T) {
+func TestAuthorityReconcilesSameStackSuccessorAfterUncertainMutation(t *testing.T) {
 	authority := NewMemoryAuthority()
 	requirement := Requirement{ID: "https", Transport: TransportTCP, BindAddress: "*", Port: 443, Sharing: SharingExclusive, Exposure: ExposurePublic}
 	firstReq := admissionRequest("stack-a", "plan-a", requirement)
-	if _, err := authority.Admit(context.Background(), firstReq); err != nil {
+	first, err := authority.Admit(context.Background(), firstReq)
+	if err != nil {
 		t.Fatalf("Admit(first) error = %v", err)
 	}
 	firstRef := GenerationRef{ServerRef: firstReq.ServerRef, StackID: firstReq.StackID, ResolvedPlanHash: firstReq.ResolvedPlanHash}
@@ -91,8 +92,20 @@ func TestAuthorityDoesNotReuseExclusiveReservationFromUncertainGeneration(t *tes
 		t.Fatalf("MarkUncertain(first) error = %v", err)
 	}
 	requirement.ID = "https-successor"
-	if _, err := authority.Admit(context.Background(), admissionRequest("stack-a", "plan-b", requirement)); !errors.Is(err, ErrAllocationConflict) {
-		t.Fatalf("Admit(successor over uncertain) error = %v, want ErrAllocationConflict", err)
+	secondReq := admissionRequest("stack-a", "plan-b", requirement)
+	second, err := authority.Admit(context.Background(), secondReq)
+	if err != nil || second.Claims[0].ReservationID != first.Claims[0].ReservationID {
+		t.Fatalf("Admit(successor over uncertain) = %#v, %v", second, err)
+	}
+	secondRef := GenerationRef{ServerRef: secondReq.ServerRef, StackID: secondReq.StackID, ResolvedPlanHash: secondReq.ResolvedPlanHash}
+	if err := authority.MarkMutationStarted(context.Background(), secondRef); err != nil {
+		t.Fatal(err)
+	}
+	if err := authority.Activate(context.Background(), secondRef); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot := authority.Snapshot(secondReq.ServerRef); len(snapshot.Claims) != 1 || snapshot.Claims[0].State != ClaimStateActive {
+		t.Fatalf("successor snapshot = %#v", snapshot)
 	}
 }
 

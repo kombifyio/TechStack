@@ -12,15 +12,17 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"gopkg.in/yaml.v3"
 
+	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/config"
+	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/orchestrator"
-	"github.com/kombifyio/techstack/pkg/unifier"
 )
 
 const (
-	importExportStackIDKey          = "stack_id"
+	importExportKitDeploymentIDKey  = "kit_deployment_id"
+	importExportLegacyStackIDKey    = "stack_id"
 	importValidationErrorCodeKey    = "code"
 	importValidationErrorPathKey    = "path"
 	importValidationErrorMessageKey = "message"
@@ -42,6 +44,7 @@ func RegisterImportExportRoutesWithModeAndFeatures(r *httpx.Router, app core.App
 			homelabStore:    stores.Homelabs,
 			jobStore:        stores.Jobs,
 			walletStore:     stores.Wallet,
+			activityStore:   stores.Activity,
 			serverStore:     stores.Servers,
 		},
 	}
@@ -64,47 +67,47 @@ type importExportRouteHandlers struct {
 	create crudRouteHandlers
 }
 
+type stackExport struct {
+	ID        string
+	UpdatedAt string
+	Spec      map[string]interface{}
+}
+
 func (h importExportRouteHandlers) exportStack(e *httpx.Event) error {
-	stackId := e.Request.PathValue("id")
-
-	ownerID, authErr := requireStackAuth(e)
-	if authErr != nil {
-		return authErr
+	if h.create.stackStore == nil {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+			"Stack export authority is temporarily unavailable", map[string]any{
+				detailsKeyReasonCode: "stack_export_authority_unavailable",
+				detailsKeyRetryable:  true,
+			})
 	}
-
-	stack, err := h.app.FindRecordById("stacks", stackId)
+	stack, err := h.create.findOwnedStoreStack(e, e.Request.PathValue("id"))
 	if err != nil {
-		return httpx.NotFound(e, "Stack not found")
+		return err
 	}
-	if stack.GetString("owner_id") != ownerID {
-		return httpx.Forbidden(e, "Not your stack")
-	}
-
-	exportData := buildStackSpecExport(stack)
-	acceptHeader := e.Request.Header.Get("Accept")
-	if acceptHeader == "application/yaml" || acceptHeader == "text/yaml" {
-		return h.exportStackYAML(e, stackId, exportData)
-	}
-
-	return httpx.Success(e, http.StatusOK, map[string]any{
-		"stack_spec":           exportData,
-		"kombination":          exportData, // legacy response alias for older UI/API clients
-		"format":               "json",
-		importExportStackIDKey: stackId,
-		"exported_at":          stack.GetDateTime("updated").String(),
+	return h.writeStackExport(e, stackExport{
+		ID: stack.ID, UpdatedAt: formatAPITime(stack.UpdatedAt),
+		Spec: buildStoreStackSpecExport(stack),
 	})
 }
 
-func (h importExportRouteHandlers) exportStackYAML(e *httpx.Event, stackId string, exportData map[string]interface{}) error {
-	if persister, pErr := unifier.NewSpecPersister(stackId); pErr == nil && persister.IntentExists() {
-		if data, lErr := persister.LoadIntentBytes(); lErr == nil {
-			e.Response.Header().Set("Content-Type", "application/yaml")
-			e.Response.Header().Set("Content-Disposition", "attachment; filename=\"stack-spec.yaml\"")
-			return e.Blob(http.StatusOK, "application/yaml", data)
-		}
+func (h importExportRouteHandlers) writeStackExport(e *httpx.Event, export stackExport) error {
+	acceptHeader := e.Request.Header.Get("Accept")
+	if acceptHeader == "application/yaml" || acceptHeader == "text/yaml" {
+		return h.exportStackYAML(e, export)
 	}
 
-	yamlBytes, err := marshalToYAML(exportData)
+	return httpx.Success(e, http.StatusOK, map[string]any{
+		"stack_spec":                   export.Spec,
+		"kombination":                  export.Spec, // legacy response alias for older UI/API clients
+		"format":                       "json",
+		importExportKitDeploymentIDKey: export.ID,
+		"exported_at":                  export.UpdatedAt,
+	})
+}
+
+func (h importExportRouteHandlers) exportStackYAML(e *httpx.Event, export stackExport) error {
+	yamlBytes, err := marshalToYAML(export.Spec)
 	if err != nil {
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to generate YAML", nil)
 	}
@@ -117,6 +120,10 @@ func (h importExportRouteHandlers) importStack(e *httpx.Event) error {
 	ownerID, authErr := requireStackAuth(e)
 	if authErr != nil {
 		return authErr
+	}
+	tenantID, tenantErr := tenantguard.TenantScope(tenantIDFromRequest(e), ownerID, "techstack.stacks.import")
+	if tenantErr != nil {
+		return tenantErr
 	}
 
 	body, bodyErr := readNonEmptyImportBody(e)
@@ -142,7 +149,7 @@ func (h importExportRouteHandlers) importStack(e *httpx.Event) error {
 	if denial != nil {
 		return denial.write(e)
 	}
-	return h.create.createNormalizedStack(e, ownerID, normalized)
+	return h.create.createNormalizedStack(e, ownerID, tenantID, normalized)
 }
 
 func (h importExportRouteHandlers) validateImport(e *httpx.Event) error {
@@ -167,10 +174,10 @@ func (h importExportRouteHandlers) validateImport(e *httpx.Event) error {
 func readNonEmptyImportBody(e *httpx.Event) ([]byte, error) {
 	body, err := io.ReadAll(e.Request.Body)
 	if err != nil {
-		return nil, httpx.BadRequest(e, "Failed to read request body")
+		return nil, httpx.Reject(e, http.StatusBadRequest, ksapi.ErrCodeBadRequest, "Failed to read request body", nil)
 	}
 	if len(body) == 0 {
-		return nil, httpx.BadRequest(e, "Empty request body")
+		return nil, httpx.Reject(e, http.StatusBadRequest, ksapi.ErrCodeBadRequest, "Empty request body", nil)
 	}
 	return body, nil
 }
@@ -237,48 +244,51 @@ func importCreateStackRequestFromBody(body []byte, contentType string) (createSt
 	return req, ""
 }
 
-// buildStackSpecExport creates the external stack specification structure from a stack record.
-func buildStackSpecExport(stack *core.Record) map[string]interface{} {
-	export := make(map[string]interface{})
-
-	// Start with user_config if available (this is the original input)
-	if userConfig := stack.Get("user_config"); userConfig != nil {
-		if configMap, ok := mapFromAny(userConfig); ok {
-			for k, v := range configMap {
-				export[k] = v
-			}
-		}
+// buildStoreStackSpecExport exports the durable control-plane authority. A
+// native-v2 wizard run owns an already CLI-validated StackSpec under
+// config_json.stack_spec_v2, so exporting the legacy user_config sibling would
+// silently discard its nodes, workloads, placement, and StackKits identity.
+func buildStoreStackSpecExport(stack *controlplane.Stack) map[string]interface{} {
+	if stack == nil {
+		return map[string]interface{}{}
+	}
+	if spec, ok := stackSpecMapFromValue(stack.Config[stackConfigKeySpecV2]); ok {
+		return cloneMapForMutation(spec)
 	}
 
-	// Ensure name is set
+	export := map[string]interface{}{}
+	if userConfig, ok := stackSpecMapFromValue(stack.Config["user_config"]); ok {
+		export = cloneMapForMutation(userConfig)
+	}
+	return finalizeStackSpecExport(export, stack.Name, stack.ID)
+}
+
+func finalizeStackSpecExport(export map[string]interface{}, name, techstackID string) map[string]interface{} {
 	if _, hasName := export["name"]; !hasName {
-		export["name"] = stack.GetString("name")
+		export["name"] = name
 	}
-
 	// Legacy TechStack KombinationSpec exports still carry version. StackKits
-	// stack-spec.yaml does not require it, so do not inject it into canonical
-	// stack_spec exports.
+	// StackSpec does not, so preserve that canonical document byte-shape.
 	if _, hasVersion := export["version"]; !hasVersion && !isStackKitsStackSpec(export) {
 		export["version"] = "1.0"
 	}
-
 	if isStackKitsStackSpec(export) {
 		return export
 	}
-
-	// Add metadata about the export for legacy KombinationSpec payloads.
 	if _, hasMeta := export["metadata"]; !hasMeta {
 		export["metadata"] = make(map[string]interface{})
 	}
 	if meta, ok := export["metadata"].(map[string]interface{}); ok {
 		meta["exported_from"] = "techstack"
-		meta[importExportStackIDKey] = stack.Id
+		meta[importExportLegacyStackIDKey] = techstackID
 	}
-
 	return export
 }
 
 func isStackKitsStackSpec(spec map[string]interface{}) bool {
+	if apiVersion, _ := spec["apiVersion"].(string); strings.HasPrefix(strings.TrimSpace(apiVersion), "stackkit/") {
+		return true
+	}
 	if stackkit, ok := spec["stackkit"].(string); ok && strings.TrimSpace(stackkit) != "" {
 		return true
 	}

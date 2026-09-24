@@ -109,7 +109,7 @@ func TestProvisionStackWithOptionsRejectsHistoricalAliasBeforeJobOrStatusWrite(t
 	}); err != nil {
 		t.Fatalf("CreateStack: %v", err)
 	}
-	orch := NewWithApp(missingPocketBaseApp{}, &Config{Workers: 1, StackStore: store, JobStore: store}, nil)
+	orch := New(&Config{Workers: 1, StackStore: store, JobStore: store}, nil)
 	defer orch.Stop()
 
 	_, err := orch.ProvisionStackWithOptions("stack-historical", nil, ProvisionStackOptions{

@@ -33,6 +33,7 @@ const (
 type TechstackRuntimeConvergenceConfig struct {
 	URL, AgentToken, RuntimeAgentID, TenantID string
 	AgentPath, OperationsPath                 string
+	Version                                   string
 	HTTPClient                                *http.Client
 	PrivateLANHTTPOrigin                      string
 }
@@ -40,6 +41,7 @@ type TechstackRuntimeConvergenceConfig struct {
 type TechstackRuntimeConvergenceResult struct {
 	AgentUpdated      bool
 	OperationsUpdated bool
+	Version           string
 	SHA256            string
 }
 
@@ -47,7 +49,7 @@ type TechstackRuntimeConvergenceResult struct {
 // executables to the exact binary served by the authenticated control plane.
 // The caller must restart the Agent when AgentUpdated is true.
 func (executor *StackKitExecutor) EnsureTechstackRuntime(ctx context.Context, cfg TechstackRuntimeConvergenceConfig) (TechstackRuntimeConvergenceResult, error) {
-	var result TechstackRuntimeConvergenceResult
+	result := TechstackRuntimeConvergenceResult{Version: strings.TrimSpace(cfg.Version)}
 	if executor == nil {
 		return result, fmt.Errorf("StackKits executor is required")
 	}
@@ -55,12 +57,12 @@ func (executor *StackKitExecutor) EnsureTechstackRuntime(ctx context.Context, cf
 	defer executor.mu.Unlock()
 	for label, path := range map[string]string{"agent": cfg.AgentPath, "operations": cfg.OperationsPath} {
 		if !filepath.IsAbs(filepath.Clean(path)) {
-			return result, fmt.Errorf("Techstack %s executable path must be absolute", label)
+			return result, fmt.Errorf("techstack %s executable path must be absolute", label)
 		}
 	}
 	parsedURL, err := url.Parse(strings.TrimSpace(cfg.URL))
 	if err != nil || parsedURL.Hostname() == "" || (parsedURL.Scheme != "https" && !(parsedURL.Scheme == "http" && isLoopbackHost(parsedURL.Hostname())) && !privatechannel.MatchesLANOrigin(cfg.URL, cfg.PrivateLANHTTPOrigin)) {
-		return result, fmt.Errorf("Techstack runtime URL must use HTTPS or loopback HTTP")
+		return result, fmt.Errorf("techstack runtime URL must use HTTPS or loopback HTTP")
 	}
 	localDigest, localErr := digestRuntimeExecutable(cfg.AgentPath)
 	client := cfg.HTTPClient
@@ -143,7 +145,7 @@ func fetchRuntimeArtifact(
 		} else if slice.digest != expected {
 			// The control plane was redeployed mid-download. Restarting is the
 			// only correct answer: the slices no longer describe one artifact.
-			return abort(fmt.Errorf("Techstack runtime changed while downloading"))
+			return abort(fmt.Errorf("techstack runtime changed while downloading"))
 		}
 		if _, writeErr := stage.Write(slice.body); writeErr != nil {
 			return abort(writeErr)
@@ -151,7 +153,7 @@ func fetchRuntimeArtifact(
 		hash.Write(slice.body)
 		offset += int64(len(slice.body))
 		if offset > maxTechstackRuntimeBinaryBytes {
-			return abort(fmt.Errorf("Techstack runtime exceeds size limit"))
+			return abort(fmt.Errorf("techstack runtime exceeds size limit"))
 		}
 		total = slice.total
 		if total <= 0 || offset >= total {
@@ -159,10 +161,10 @@ func fetchRuntimeArtifact(
 		}
 	}
 	if total > 0 && offset != total {
-		return abort(fmt.Errorf("Techstack runtime is incomplete: %d of %d bytes", offset, total))
+		return abort(fmt.Errorf("techstack runtime is incomplete: %d of %d bytes", offset, total))
 	}
 	if hex.EncodeToString(hash.Sum(nil)) != expected {
-		return abort(fmt.Errorf("Techstack runtime checksum mismatch"))
+		return abort(fmt.Errorf("techstack runtime checksum mismatch"))
 	}
 	if err := stage.Chmod(0755); err != nil {
 		return abort(err)
@@ -236,16 +238,16 @@ func requestRuntimeArtifactSlice(
 		return runtimeArtifactSlice{notModified: true}, nil
 	}
 	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusPartialContent {
-		return runtimeArtifactSlice{}, fmt.Errorf("Techstack runtime download returned HTTP %d", response.StatusCode)
+		return runtimeArtifactSlice{}, fmt.Errorf("techstack runtime download returned HTTP %d", response.StatusCode)
 	}
 	digest := strings.ToLower(strings.TrimSpace(response.Header.Get("X-Kombify-Artifact-SHA256")))
 	if len(digest) != sha256.Size*2 {
-		return runtimeArtifactSlice{}, fmt.Errorf("Techstack runtime checksum is missing")
+		return runtimeArtifactSlice{}, fmt.Errorf("techstack runtime checksum is missing")
 	}
 	// A control plane that ignores Range restarts at byte 0; accepting its body
 	// at a non-zero offset would splice the artifact together wrongly.
 	if response.StatusCode == http.StatusOK && offset != 0 {
-		return runtimeArtifactSlice{}, fmt.Errorf("Techstack runtime does not support resuming at %d bytes", offset)
+		return runtimeArtifactSlice{}, fmt.Errorf("techstack runtime does not support resuming at %d bytes", offset)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxTechstackRuntimeBinaryBytes+1))
@@ -253,7 +255,7 @@ func requestRuntimeArtifactSlice(
 		return runtimeArtifactSlice{}, err
 	}
 	if len(body) == 0 {
-		return runtimeArtifactSlice{}, fmt.Errorf("Techstack runtime slice at %d bytes is empty", offset)
+		return runtimeArtifactSlice{}, fmt.Errorf("techstack runtime slice at %d bytes is empty", offset)
 	}
 	slice := runtimeArtifactSlice{body: body, digest: digest}
 	if response.StatusCode == http.StatusPartialContent {
@@ -272,11 +274,11 @@ func requestRuntimeArtifactSlice(
 func totalFromContentRange(header string) (int64, error) {
 	_, sizePart, found := strings.Cut(strings.TrimSpace(header), "/")
 	if !found {
-		return 0, fmt.Errorf("Techstack runtime range header %q has no artifact size", header)
+		return 0, fmt.Errorf("techstack runtime range header %q has no artifact size", header)
 	}
 	total, err := strconv.ParseInt(strings.TrimSpace(sizePart), 10, 64)
 	if err != nil || total <= 0 {
-		return 0, fmt.Errorf("Techstack runtime range header %q has no usable artifact size", header)
+		return 0, fmt.Errorf("techstack runtime range header %q has no usable artifact size", header)
 	}
 	return total, nil
 }
@@ -293,10 +295,10 @@ func downloadRuntimeExecutable(source io.Reader, targetPath, expected string) (s
 	hash := sha256.New()
 	written, copyErr := io.Copy(io.MultiWriter(stage, hash), io.LimitReader(source, maxTechstackRuntimeBinaryBytes+1))
 	if copyErr == nil && written > maxTechstackRuntimeBinaryBytes {
-		copyErr = fmt.Errorf("Techstack runtime exceeds size limit")
+		copyErr = fmt.Errorf("techstack runtime exceeds size limit")
 	}
 	if copyErr == nil && hex.EncodeToString(hash.Sum(nil)) != expected {
-		copyErr = fmt.Errorf("Techstack runtime checksum mismatch")
+		copyErr = fmt.Errorf("techstack runtime checksum mismatch")
 	}
 	if copyErr == nil {
 		copyErr = stage.Chmod(0755)
@@ -341,7 +343,7 @@ func digestRuntimeExecutable(path string) (string, error) {
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maxTechstackRuntimeBinaryBytes {
-		return "", fmt.Errorf("Techstack runtime executable is not a bounded regular file")
+		return "", fmt.Errorf("techstack runtime executable is not a bounded regular file")
 	}
 	hash := sha256.New()
 	if _, err := io.Copy(hash, file); err != nil {

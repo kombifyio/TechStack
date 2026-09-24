@@ -6,13 +6,13 @@
 // re-exports the upstream surface so existing TechStack import paths
 // (`pkg/cloudlogin`) keep working without behavioral change.
 //
-// New code SHOULD import `github.com/kombifyio/go-common/cloudlogin`
+// New code SHOULD import `github.com/kombifyio/techstack/internal/gocommon/cloudlogin`
 // directly. This shim will be removed once all call sites have been
 // migrated; track the cleanup in Beads.
 package cloudlogin
 
 import (
-	goCloudlogin "github.com/kombifyio/go-common/cloudlogin"
+	goCloudlogin "github.com/kombifyio/techstack/internal/gocommon/cloudlogin"
 
 	"github.com/kombifyio/techstack/pkg/config"
 )

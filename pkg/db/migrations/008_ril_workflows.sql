@@ -1,9 +1,8 @@
 -- 008_ril_workflows.sql
 --
 -- RIL durable workflow engine persistence (epic kombify-Techstack-a7x.1).
--- Postgres successor to the in-test PocketBase collections (ril_workflow_*),
--- mirroring the field set the engine's RunStore reads/writes (see
--- pkg/ril/workflow/store.go + store_test.go).
+-- Schema for the engine's active RunStore contract (see
+-- pkg/ril/workflow/runstore.go and pg_store.go).
 --
 -- Global tables (no tenant RLS): the worker polls runnable runs and due timers
 -- across all tenants; per-tenant scoping lives in the run's owner_id/input.

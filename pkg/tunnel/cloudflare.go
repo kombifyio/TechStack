@@ -109,15 +109,6 @@ func IsCloudflaredInstalled() bool {
 	return err == nil
 }
 
-// GetCloudflaredPath returns the path to cloudflared binary or empty string if not found.
-func GetCloudflaredPath() string {
-	path, err := exec.LookPath(cloudflaredBinary())
-	if err != nil {
-		return ""
-	}
-	return path
-}
-
 // cloudflaredBinary returns the platform-specific binary name.
 func cloudflaredBinary() string {
 	if runtime.GOOS == "windows" {

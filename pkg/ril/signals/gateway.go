@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kombifyio/go-common/servicecall"
+	"github.com/kombifyio/techstack/internal/gocommon/servicecall"
 )
 
 const DefaultGatewaySignalURL = "https://api.kombify.io/v1/agents/ril-ops/signals"

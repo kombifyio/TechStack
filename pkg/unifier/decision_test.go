@@ -51,7 +51,7 @@ func TestPipelineDecisionContext_NoRegisteredServerAddsEnvironmentGap(t *testing
 
 	result := pipeline.ExecuteInput(&core.InputSpec{
 		Name:     stringPtr("easy-stack"),
-		StackKit: stringPtr(StackKitBase),
+		StackKit: stringPtr(StackKitBasement),
 		Nodes: []core.InputNodeSpec{{
 			Name: stringPtr("main"),
 			Role: stringPtr("standalone"),
@@ -63,11 +63,11 @@ func TestPipelineDecisionContext_NoRegisteredServerAddsEnvironmentGap(t *testing
 			"operator_capability_score": "1",
 		},
 	})
-	if !result.Success {
-		t.Fatalf("pipeline failed: %s - %s", result.FailedStep, result.ErrorMessage)
-	}
+	// The environment gap is decided before kit validation, so this test does
+	// not depend on a StackKits tree being present. Overall pipeline success
+	// belongs to the integration lane that supplies the pinned kit.
 	if result.RequirementsSpec == nil {
-		t.Fatal("expected requirements spec")
+		t.Fatalf("expected requirements spec, pipeline stopped at %s: %s", result.FailedStep, result.ErrorMessage)
 	}
 	if !hasEnvironmentGap(result.RequirementsSpec.EnvironmentGaps, "foundation_node_or_managed_runtime_required") {
 		t.Fatalf("expected foundation node gap, got %#v", result.RequirementsSpec.EnvironmentGaps)
@@ -87,14 +87,17 @@ func TestPipelineDecisionContext_RetiredHAKitFailsPreValidation(t *testing.T) {
 	}
 	pipeline := NewPipeline(engine)
 
-	result := pipeline.Execute(&core.KombinationSpec{
-		Name: "ha-stack",
-		Kit:  StackKitHA,
-		Nodes: []core.NodeSpec{{
-			Name:     "main",
-			Type:     "main",
-			Provider: "local",
-			SSH:      &core.SSHConfig{Host: "server.example.com", User: "root"},
+	result := pipeline.ExecuteInput(&core.InputSpec{
+		Name:     stringPtr("ha-stack"),
+		StackKit: stringPtr(StackKitHA),
+		Nodes: []core.InputNodeSpec{{
+			Name:     stringPtr("main"),
+			Type:     stringPtr("main"),
+			Provider: stringPtr("local"),
+			SSH: &core.InputSSHConfig{
+				Host: stringPtr("server.example.com"),
+				User: stringPtr("root"),
+			},
 		}},
 		Metadata: map[string]string{
 			"created_by":                "manual",

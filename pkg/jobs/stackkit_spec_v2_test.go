@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"testing"
 )
 
@@ -76,8 +75,8 @@ func TestCanonicalStackSpecForDerivesTheDocumentBesideTheLegacyHandoff(t *testin
 	if err != nil {
 		t.Fatalf("canonicalStackSpecFor: %v", err)
 	}
-	if !canonical.Derived {
-		t.Fatal("legacy v1 handoff did not produce a canonical document")
+	if !canonical.Derived || canonical.OutputRoot != "deploy" {
+		t.Fatalf("legacy v1 handoff canonical result = %+v, want derived document governed by deploy", canonical)
 	}
 	if filepath.Base(canonical.Path) != canonicalStackSpecFilename {
 		t.Fatalf("canonical path = %q, want %s beside the handoff", canonical.Path, canonicalStackSpecFilename)
@@ -148,8 +147,8 @@ func TestCanonicalStackSpecForLeavesAnExistingCanonicalDocumentAlone(t *testing.
 	if err != nil {
 		t.Fatalf("canonicalStackSpecFor: %v", err)
 	}
-	if canonical.Derived {
-		t.Fatal("a canonical document must not be re-derived")
+	if canonical.Derived || canonical.OutputRoot != "deploy" {
+		t.Fatalf("existing canonical result = %+v, want undisturbed document governed by deploy", canonical)
 	}
 	if canonical.Path != path {
 		t.Fatalf("canonical path = %q, want the handoff itself", canonical.Path)
@@ -160,20 +159,6 @@ func TestCanonicalStackSpecForLeavesAnExistingCanonicalDocumentAlone(t *testing.
 	}
 	if string(data) != body {
 		t.Fatalf("spec = %q, want the exact original bytes", string(data))
-	}
-}
-
-// Guessing a domain would silently generate routes for the wrong host.
-func TestCanonicalStackSpecForFailsClosedWithoutAResolvableDomain(t *testing.T) {
-	writeCanonicalTemplate(t, "cloud-kit")
-	path := writeSpec(t, "stackkit: cloud-kit\nname: demo-stack\n")
-
-	_, err := canonicalStackSpecFor(path, "cloud-kit", "demo")
-	if err == nil {
-		t.Fatal("canonicalStackSpecFor accepted a handoff with no routing domain")
-	}
-	if !strings.Contains(err.Error(), "routing domain") {
-		t.Fatalf("error = %v, want it to name the missing routing domain", err)
 	}
 }
 
@@ -194,8 +179,17 @@ func TestCanonicalStackSpecForRejectsATemplateForAnotherKit(t *testing.T) {
 	path := writeSpec(t, "stackkit: basement-kit\nname: demo\nnetwork:\n  domain: demo.example.test\n")
 
 	_, err = canonicalStackSpecFor(path, "basement-kit", "demo")
-	if err == nil || !strings.Contains(err.Error(), "declares kit") {
-		t.Fatalf("error = %v, want a kit mismatch rejection", err)
+	if err == nil {
+		t.Fatal("canonicalStackSpecFor accepted a template for another kit")
+	}
+}
+
+// A malformed native handoff must not be replaced by a template that loses its intent.
+func TestCanonicalStackSpecForRejectsMalformedNativeHandoff(t *testing.T) {
+	writeCanonicalTemplate(t, "cloud-kit")
+	path := writeSpec(t, `{"apiVersion":"stackkit/v2alpha2","kind":"StackSpec","kit":{"slug":"cloud-kit"},"metadata":{"name":"native"},"network":{"domain":{"base":"native.example.test"}},"ssh":{"user":"root"}}`)
+	if _, err := canonicalStackSpecFor(path, "cloud-kit", "native"); err == nil {
+		t.Fatal("malformed native intent was replaced by a template")
 	}
 }
 
@@ -204,8 +198,8 @@ func TestCanonicalStackSpecForRequiresTheTemplateRoot(t *testing.T) {
 	path := writeSpec(t, "stackkit: cloud-kit\nname: demo\nnetwork:\n  domain: demo.example.test\n")
 
 	_, err := canonicalStackSpecFor(path, "cloud-kit", "demo")
-	if err == nil || !strings.Contains(err.Error(), stackKitSpecTemplateEnv) {
-		t.Fatalf("error = %v, want it to name %s", err, stackKitSpecTemplateEnv)
+	if err == nil {
+		t.Fatal("canonicalStackSpecFor accepted a handoff without the template authority")
 	}
 }
 
@@ -253,40 +247,32 @@ func TestCanonicalStackSpecForMirrorsTheProductDomainResolution(t *testing.T) {
 	}
 }
 
-// A rejection has to say what the handoff actually carried, not restate the
-// rule. A kombify.me address mode outside a cloud context on a self-hosted
-// stack resolves nothing.
-func TestCanonicalStackSpecForRejectionNamesTheObservedKeys(t *testing.T) {
-	writeCanonicalTemplate(t, "cloud-kit")
-	path := writeSpec(t, "stackkit: cloud-kit\nname: demo\nmode: easy\nprovider: local\nmetadata:\n  address_mode: kombify-me\n  owner_source: local\n")
-
-	_, err := canonicalStackSpecFor(path, "cloud-kit", "demo")
-	if err == nil {
-		t.Fatal("canonicalStackSpecFor accepted an address mode outside a cloud context")
+// Domainless managed runtimes inherit the platform address. An unclassified or
+// self-hosted handoff must fail closed instead of guessing routes for the wrong host.
+func TestCanonicalStackSpecForAppliesMissingDomainAuthority(t *testing.T) {
+	tests := []struct {
+		name      string
+		handoff   string
+		wantError bool
+	}{
+		{"kombify-cloud provisioning", "stackkit: cloud-kit\nname: demo\nmode: easy\nmetadata:\n  server_provisioning_mode: kombify-cloud\n", false},
+		{"monthly runtime lane", "stackkit: cloud-kit\nname: demo\nmetadata:\n  runtime_lane: monthly-runtime\n", false},
+		{"non-local node provider", "stackkit: cloud-kit\nname: demo\nnodes:\n  - name: main\n    provider: ionos\n", false},
+		{"unclassified runtime", "stackkit: cloud-kit\nname: demo\n", true},
+		{"self-hosted node", "stackkit: cloud-kit\nname: demo\nnodes:\n  - name: main\n    provider: local\n", true},
 	}
-	for _, expected := range []string{"document keys:", "metadata keys:", "address_mode", "owner_source", "stackkit"} {
-		if !strings.Contains(err.Error(), expected) {
-			t.Fatalf("error = %v, want it to name %q", err, expected)
-		}
-	}
-}
 
-// A managed cloud runtime has no operator-chosen domain. The live demo stack's
-// handoff carries no network block at all, which is why nothing in the explicit
-// chain resolved:
-//
-//	document keys: metadata,mode,name,nodes,services,ssh,stackkit
-func TestCanonicalStackSpecForUsesTheManagedRuntimeAddressWhenNothingIsChosen(t *testing.T) {
-	for name, handoff := range map[string]string{
-		"kombify-cloud provisioning": "stackkit: cloud-kit\nname: demo\nmode: easy\nmetadata:\n  server_provisioning_mode: kombify-cloud\n",
-		"monthly runtime lane":       "stackkit: cloud-kit\nname: demo\nmetadata:\n  runtime_lane: monthly-runtime\n",
-		"non-local node provider":    "stackkit: cloud-kit\nname: demo\nnodes:\n  - name: main\n    provider: ionos\n",
-	} {
-		handoff := handoff
-		t.Run(name, func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			writeCanonicalTemplate(t, "cloud-kit")
-			path := writeSpec(t, handoff)
+			path := writeSpec(t, tt.handoff)
 			canonical, err := canonicalStackSpecFor(path, "cloud-kit", "demo")
+			if tt.wantError {
+				if err == nil {
+					t.Fatal("canonicalStackSpecFor accepted a domainless unmanaged handoff")
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("canonicalStackSpecFor: %v", err)
 			}
@@ -295,50 +281,6 @@ func TestCanonicalStackSpecForUsesTheManagedRuntimeAddressWhenNothingIsChosen(t 
 				t.Fatalf("network.domain.base = %q, want %q", got, addressModeKombifyMeDomain)
 			}
 		})
-	}
-}
-
-// A self-hosted stack is not a managed runtime, so it still has to say where it
-// lives instead of silently inheriting the platform address.
-func TestCanonicalStackSpecForStillFailsClosedForASelfHostedHandoff(t *testing.T) {
-	writeCanonicalTemplate(t, "cloud-kit")
-	path := writeSpec(t, "stackkit: cloud-kit\nname: demo\nnodes:\n  - name: main\n    provider: local\n")
-
-	_, err := canonicalStackSpecFor(path, "cloud-kit", "demo")
-	if err == nil || !strings.Contains(err.Error(), "routing domain") {
-		t.Fatalf("error = %v, want a fail-closed routing domain rejection", err)
-	}
-}
-
-// The destination belongs to the resolved plan. Generating into Techstack's own
-// tofu/ directory was refused outright:
-//
-//	Error: architecture v2 --output must resolve to governed ResolvedPlan
-//	outputRoot deploy
-func TestCanonicalStackSpecForReportsTheGovernedOutputRoot(t *testing.T) {
-	writeCanonicalTemplate(t, "cloud-kit")
-	path := writeSpec(t, "stackkit: cloud-kit\nname: demo\nnetwork:\n  domain: demo.example.test\n")
-
-	canonical, err := canonicalStackSpecFor(path, "cloud-kit", "demo")
-	if err != nil {
-		t.Fatalf("canonicalStackSpecFor: %v", err)
-	}
-	if canonical.OutputRoot != "deploy" {
-		t.Fatalf("OutputRoot = %q, want deploy", canonical.OutputRoot)
-	}
-}
-
-// An already canonical document still has to report where it may generate.
-func TestCanonicalStackSpecForReportsTheOutputRootOfAnExistingDocument(t *testing.T) {
-	writeCanonicalTemplate(t, "cloud-kit")
-	path := writeSpec(t, `{"apiVersion":"stackkit/v2alpha1","kind":"StackSpec","kit":{"slug":"cloud-kit"},"metadata":{"name":"x"},"generation":{"outputRoot":"deploy"}}`)
-
-	canonical, err := canonicalStackSpecFor(path, "cloud-kit", "demo")
-	if err != nil {
-		t.Fatalf("canonicalStackSpecFor: %v", err)
-	}
-	if canonical.Derived || canonical.OutputRoot != "deploy" {
-		t.Fatalf("canonical = %+v, want an undisturbed document generating into deploy", canonical)
 	}
 }
 

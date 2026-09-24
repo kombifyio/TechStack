@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   attachCatalogService,
+  detachSelfOwnedServer,
   getCanonicalServer,
   importObservedService,
   isCurrentCanonicalServer,
@@ -21,7 +22,8 @@ function canonicalServer(
 ): CanonicalServer {
   return {
     id: "server-1",
-    techstack_id: "techstack-1",
+    node_id: "server-1",
+    kit_deployment_id: "techstack-1",
     name: "node-a",
     worker_id: "agent-1",
     lifecycle: { state: "active", desired_state: "running" },
@@ -62,8 +64,8 @@ describe("registry api", () => {
           JSON.stringify({
             data: {
               catalog: [{ id: "pocket_id", display_name: "Pocket ID" }],
-              stacks: [{ id: "stack-1", name: "Demo" }],
-              servers: [{ id: "node-1", stack_id: "stack-1" }],
+              kit_deployments: [{ id: "stack-1", name: "Demo" }],
+              servers: [{ id: "node-1", kit_deployment_id: "stack-1" }],
               services: [
                 {
                   id: "svc-1",
@@ -71,6 +73,7 @@ describe("registry api", () => {
                   display_name: "Custom Dashboard",
                   application_key: "custom_dashboard",
                   application_name: "Custom Dashboard",
+                  kit_deployment_id: "stack-1",
                   status: "observed",
                   management_state: "observed",
                   placement_scope: "stack",
@@ -93,8 +96,11 @@ describe("registry api", () => {
       expect.objectContaining({ credentials: "include" }),
     );
     expect(result.catalog[0].id).toBe("pocket_id");
+    expect(result.kit_deployments[0].id).toBe("stack-1");
+    expect(result.servers[0].kit_deployment_id).toBe("stack-1");
     expect(result.services[0].management_state).toBe("observed");
     expect(result.services[0].application_name).toBe("Custom Dashboard");
+    expect(result.services[0].kit_deployment_id).toBe("stack-1");
     expect(result.services[0].move_allowed).toBe(false);
   });
 
@@ -108,6 +114,7 @@ describe("registry api", () => {
                 id: "svc-1",
                 name: "vaultwarden",
                 display_name: "Vaultwarden",
+                kit_deployment_id: "stack-1",
                 status: "pending",
                 management_state: "managed",
               },
@@ -119,7 +126,7 @@ describe("registry api", () => {
     );
 
     const result = await attachCatalogService({
-      stack_id: "stack-1",
+      kit_deployment_id: "stack-1",
       server_id: "node-1",
       service_id: "vaultwarden",
     });
@@ -136,6 +143,7 @@ describe("registry api", () => {
       }),
     );
     expect(result.management_state).toBe("managed");
+    expect(result.kit_deployment_id).toBe("stack-1");
   });
 
   it("posts unmanaged imports as observed service registration", async () => {
@@ -148,6 +156,7 @@ describe("registry api", () => {
                 id: "svc-2",
                 name: "custom_dashboard",
                 display_name: "Custom Dashboard",
+                kit_deployment_id: "stack-1",
                 status: "observed",
                 management_state: "observed",
               },
@@ -159,7 +168,7 @@ describe("registry api", () => {
     );
 
     const result = await importObservedService({
-      stack_id: "stack-1",
+      kit_deployment_id: "stack-1",
       server_id: "node-1",
       name: "custom-dashboard",
       port: 8088,
@@ -190,11 +199,13 @@ describe("registry api", () => {
               source_service: {
                 id: "svc-1",
                 status: "migrating",
+                kit_deployment_id: "stack-1",
                 management_state: "managed",
               },
               target_service: {
                 id: "svc-new",
                 status: "pending_verification",
+                kit_deployment_id: "stack-1",
                 management_state: "managed",
               },
             },
@@ -230,11 +241,13 @@ describe("registry api", () => {
               service: {
                 id: "svc-new",
                 status: "running",
+                kit_deployment_id: "stack-1",
                 management_state: "managed",
               },
               archived_service: {
                 id: "svc-1",
                 status: "archived",
+                kit_deployment_id: "stack-1",
                 management_state: "managed",
               },
             },
@@ -281,9 +294,25 @@ describe("registry api", () => {
   });
 
   it("reads servers from the canonical route, not the registry projection", async () => {
+    const server = {
+      ...canonicalServer(),
+      kit_deployment_id: "techstack-1",
+      last_outcome: {
+        status: "pending",
+        reason_code: "awaiting_guard_heartbeat",
+        retryable: false,
+        user_guidance: {
+          title: "Connection pending",
+          body: "Techstack is waiting for Guard.",
+          next_steps: [
+            { id: "wait", label: "Keep the server online", kind: "note" },
+          ],
+        },
+      },
+    };
     fetchMock.mockImplementation(() =>
       Promise.resolve(
-        new Response(JSON.stringify({ data: [canonicalServer()] }), {
+        new Response(JSON.stringify({ data: [server] }), {
           status: 200,
           headers: { "content-type": "application/json" },
         }),
@@ -301,9 +330,15 @@ describe("registry api", () => {
       "2026-08-12T10:00:00Z",
     );
     expect(servers[0].worker_id).toBe("agent-1");
+    expect(servers[0].kit_deployment_id).toBe("techstack-1");
+    expect(servers[0].last_outcome).toMatchObject({
+      status: "pending",
+      reasonCode: "awaiting_guard_heartbeat",
+      userGuidance: { title: "Connection pending" },
+    });
   });
 
-  it("scopes the canonical server list by Techstack and reads one server by id", async () => {
+  it("scopes the canonical server list by kit deployment and reads one server by id", async () => {
     fetchMock.mockImplementation(() =>
       Promise.resolve(
         new Response(JSON.stringify({ data: canonicalServer() }), {
@@ -328,7 +363,7 @@ describe("registry api", () => {
     );
     await listCanonicalServers("techstack-1");
     expect(fetchMock.mock.calls[1][0]).toContain(
-      "/api/v1/servers?techstack_id=techstack-1",
+      "/api/v1/servers?kit_deployment_id=techstack-1",
     );
   });
 
@@ -345,6 +380,32 @@ describe("registry api", () => {
         }),
       ),
     ).toBe(false);
+  });
+
+  it("binds BYO detach to the exact encoded server identity", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: {
+            server_id: "server 1/a",
+            agent_id: "agent-1",
+            revision: 3,
+            generation: 1,
+            detached_at: "2026-08-22T12:00:00Z",
+            replay: false,
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    await detachSelfOwnedServer("server 1/a");
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/api/v1/servers/server%201%2Fa/detach"),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ confirm_server_id: "server 1/a" }),
+      }),
+    );
   });
 
   // Pins the client mirror of pkg/serverregistry/legacy_projection.go against
@@ -396,7 +457,7 @@ describe("registry api", () => {
           JSON.stringify({
             data: {
               catalog: [],
-              stacks: [],
+              kit_deployments: [],
               servers: [],
               // Field dropped by the API. Silently rendering this as
               // "not managed" would strip every managed-only control.
@@ -422,7 +483,7 @@ describe("registry api", () => {
           JSON.stringify({
             data: {
               catalog: [],
-              stacks: [],
+              kit_deployments: [],
               servers: [],
               services: [
                 {
@@ -449,7 +510,7 @@ describe("registry api", () => {
           JSON.stringify({
             data: {
               catalog: [],
-              stacks: [],
+              kit_deployments: [],
               servers: [],
               services: [
                 { id: "svc-1", name: "a", management_state: " Managed " },

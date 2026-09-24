@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/promql/parser"
 )
@@ -388,8 +389,11 @@ func TestAlertEngine_BackendParity(t *testing.T) {
 	}
 }
 
-func TestHTTPPromQLBackend_LabelNamesAreSortedCompatible(t *testing.T) {
+func TestHTTPPromQLBackend_LabelNamesPreserveTenantMatcher(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("match[]"); got != `{tenant_id="tenant-1"}` {
+			t.Fatalf("match[] = %q, want tenant selector", got)
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": "success", "data": []string{"host", "__name__", "ingest_protocol"}})
 	}))
 	defer server.Close()
@@ -399,7 +403,7 @@ func TestHTTPPromQLBackend_LabelNamesAreSortedCompatible(t *testing.T) {
 		t.Fatalf("NewHTTPPromQLBackend failed: %v", err)
 	}
 
-	names, err := backend.LabelNames(context.Background())
+	names, err := backend.LabelNames(context.Background(), labels.MustNewMatcher(labels.MatchEqual, "tenant_id", "tenant-1"))
 	if err != nil {
 		t.Fatalf("LabelNames failed: %v", err)
 	}

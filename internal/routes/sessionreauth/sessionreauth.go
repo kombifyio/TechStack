@@ -16,7 +16,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/kombifyio/go-common/authsession"
+	"github.com/kombifyio/techstack/internal/gocommon/authsession"
 	"github.com/getsentry/sentry-go"
 
 	"github.com/kombifyio/techstack/pkg/api"

@@ -37,12 +37,6 @@ features:
     entry_point: "./pkg/placement/"
     tests: "./pkg/placement/"
 
-  - id: "iac-generation"
-    description: "Phase 6: IaC generation (tfvars.json + HCL templates)"
-    status: implemented
-    entry_point: "./internal/routes/unifier_handlers_iac.go"
-    tests: "./pkg/tofu/runner_test.go"
-
   - id: "pipeline-api"
     description: "Pipeline API endpoints (POST /api/v1/unifier/pipeline)"
     status: implemented
@@ -83,7 +77,6 @@ validation:
   exports:
     - "Engine"
     - "Pipeline"
-    - "ExtendedPipeline"
     - "Loader"
   test_pattern: "*_test.go"
   custom_script: null

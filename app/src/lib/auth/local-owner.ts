@@ -1,4 +1,4 @@
-import { fetchApi } from "$lib/api/client";
+import { fetchApi } from "#lib/api/client.js";
 
 interface CreateLocalOwnerAccountInput {
   email: string;

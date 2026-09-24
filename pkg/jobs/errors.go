@@ -191,11 +191,6 @@ func (p *RetryPolicy) CalculateDelay(attempt int) time.Duration {
 	return delay
 }
 
-// ShouldRetry returns whether the job should be retried.
-func (p *RetryPolicy) ShouldRetry(attempt int) bool {
-	return attempt < p.MaxAttempts
-}
-
 // JobError wraps an error with additional context for job processing.
 type JobError struct {
 	Original  error
@@ -345,24 +340,22 @@ func IsRetryable(err error) bool {
 	return category == ErrorCategoryTransient || category == ErrorCategoryResource
 }
 
-// WrapError wraps an error with job context and classification.
-func WrapError(err error, context map[string]interface{}) *JobError {
-	category := ClassifyError(err)
-	jobErr := NewJobError(err, category)
-	jobErr.Context = context
-	return jobErr
-}
-
 // ProvisionError wraps errors with step and detail information for frontend display.
 type ProvisionError struct {
 	Step    string
 	Message string
 	Details string
+	Cause   error
 }
 
 // Error implements the error interface.
 func (e *ProvisionError) Error() string {
 	return e.Message
+}
+
+// Unwrap preserves typed operational causes across the frontend-facing error.
+func (e *ProvisionError) Unwrap() error {
+	return e.Cause
 }
 
 // wrapProvisionError creates a ProvisionError with step context.
@@ -371,5 +364,17 @@ func wrapProvisionError(step, message, details string) error {
 		Step:    step,
 		Message: message,
 		Details: details,
+	}
+}
+
+func wrapProvisionCause(step string, cause error, details string) error {
+	if cause == nil {
+		return wrapProvisionError(step, "provision failed", details)
+	}
+	return &ProvisionError{
+		Step:    step,
+		Message: cause.Error(),
+		Details: details,
+		Cause:   cause,
 	}
 }

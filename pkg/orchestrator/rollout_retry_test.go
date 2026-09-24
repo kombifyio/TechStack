@@ -28,12 +28,13 @@ func TestRetryRolloutDispatchesOneDeterministicExactDeploy(t *testing.T) {
 		t.Fatal(err)
 	}
 	seedManagedDeployEligibleServerRuntime(t, store, "tenant-1", "owner-1", "stack-failed", "lease-failed", time.Now().UTC())
-	orch := NewWithApp(missingPocketBaseApp{}, &Config{
+	orch := New(&Config{
 		Workers: 1, StackStore: store, JobStore: store, WorkerStore: store,
 		LeaseLister: fakeManagedRuntimeLeaseLister{leases: []vmlease.Lease{
 			enrollmentResumeTestLease("lease-failed", "tenant-1", "owner-1", "stack-failed"),
 		}},
 	}, nil)
+
 	defer orch.Stop()
 	req := RolloutRetryRequest{
 		RequestContext: ctx, StackID: "stack-failed", TenantID: "tenant-1", OwnerID: "owner-1",

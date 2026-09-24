@@ -39,8 +39,7 @@ const (
 	StateDecommissioning State = "decommissioning"
 	// StateDecommissioned is the terminal torn-down state.
 	StateDecommissioned State = "decommissioned"
-	// StateFailed is a failure state that carries a reason_code (see
-	// ManagedRuntimeProvisionFailureDetails / rollout guidance).
+	// StateFailed is a recoverable failure state projected with rollout guidance.
 	StateFailed State = "failed"
 )
 
@@ -67,23 +66,6 @@ const EnrollmentStalledThreshold = 15 * time.Minute
 // began. Stalled detection measures age from it, NOT from lease RenewedAt (which
 // resets on every patch and would hide a genuinely stuck enrollment).
 const EnrollmentStartedAtKey = "enrollment_started_at"
-
-// StampEnrollmentStart records EnrollmentStartedAtKey at lease creation if it is
-// not already set, so the projection can measure how long a runtime has been
-// pending. It never overwrites an existing stamp — age is measured from first
-// creation, across retries.
-func StampEnrollmentStart(metadata map[string]string, now time.Time) {
-	if metadata == nil {
-		return
-	}
-	if strings.TrimSpace(metadata[EnrollmentStartedAtKey]) != "" {
-		return
-	}
-	metadata[EnrollmentStartedAtKey] = now.UTC().Format(time.RFC3339)
-}
-
-// String returns the wire representation of the state.
-func (s State) String() string { return string(s) }
 
 // allowedTransitions is the lifecycle transition table. A transition that is
 // not listed here is illegal and is rejected by CanTransition / Transition.
@@ -189,40 +171,4 @@ func DeriveState(in DeriveInputs) State {
 		}
 		return StateProvisioning
 	}
-}
-
-// IsPending reports whether the node is still coming up (pre-provisioned) and
-// therefore eligible to become Stalled on age.
-func (s State) IsPending() bool {
-	switch s {
-	case StateRequested, StateProvisioning, StateEnrolledPendingAgent, StateStalled:
-		return true
-	default:
-		return false
-	}
-}
-
-// IsActionAllowed reports whether runtime actions (start / stop / ssh) are
-// allowed in this state — i.e. the node has completed enrollment. Decommission
-// is handled separately and is allowed from any non-terminal state.
-func (s State) IsActionAllowed() bool {
-	switch s {
-	case StateProvisioned, StateConnected, StateDegraded, StateStale:
-		return true
-	default:
-		return false
-	}
-}
-
-// IsHealthy reports whether the node should count toward healthy KPIs. Only a
-// fully connected node (enrolled + reachable + live telemetry) is healthy;
-// stalled / degraded / provisioned-without-telemetry must not inflate KPIs.
-func (s State) IsHealthy() bool {
-	return s == StateConnected
-}
-
-// IsTerminal reports whether the node has reached an end state from which no
-// further lifecycle progress is expected.
-func (s State) IsTerminal() bool {
-	return s == StateDecommissioned
 }

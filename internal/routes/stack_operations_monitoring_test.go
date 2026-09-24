@@ -2,11 +2,12 @@ package routes
 
 import (
 	"context"
-	"errors"
+	"fmt"
+	"strings"
 	"testing"
+	"time"
 
-	"github.com/kombifyio/techstack/pkg/monitoring"
-	"github.com/pocketbase/pocketbase/core"
+	"github.com/kombifyio/techstack/pkg/controlplane"
 )
 
 func TestBuildStackKPIsCountsOnlyOperationalResources(t *testing.T) {
@@ -61,212 +62,85 @@ func TestAlertBelongsToStackUsesFirstRecognizedScope(t *testing.T) {
 	}
 }
 
-func TestStackScopedAlertsClonesMatchingLabels(t *testing.T) {
-	labels := map[string]string{"agent_id": "agent-a"}
-	alerts, unscoped := stackScopedAlertsFromStates([]monitoring.AlertState{{
-		Rule: monitoring.AlertRule{
-			Name:     "HighCPU",
-			Severity: "critical",
-			Message:  "high CPU",
-			Labels:   labels,
-		},
-		Value: 95,
-	}}, "stack-1", []stackOperationServer{{AgentID: "agent-a", Assignment: "stack"}})
+// Regression for kombify-Techstack-xjo.1: server details fetched the newest 20
+// entries for the whole stack and only then filtered by server, so activity
+// from busy sibling servers hid the selected server's own older records.
+func TestServerLogsReturnNewestEntriesForTheSelectedServerOnly(t *testing.T) {
+	store := controlplane.NewMemoryStore()
+	ctx := t.Context()
+	base := time.Now().UTC().Truncate(time.Millisecond)
 
-	if len(alerts) != 1 || unscoped != 0 {
-		t.Fatalf("alerts = %d, unscoped = %d, want 1 and 0", len(alerts), unscoped)
+	// The selected server's own entries are the oldest in the stack.
+	for i := range serverLogLimit {
+		appendTestActivity(t, store, ctx, fmt.Sprintf("own-%02d", i), "stack-1",
+			map[string]any{"server_id": "server-a"}, base.Add(time.Duration(i)*time.Second))
 	}
-	labels["agent_id"] = "changed"
-	if alerts[0].Labels["agent_id"] != "agent-a" {
-		t.Fatalf("alert labels were not cloned: %#v", alerts[0].Labels)
-	}
-	if alerts[0].Name != "HighCPU" || alerts[0].Severity != "critical" || alerts[0].Message != "high CPU" || alerts[0].Value != 95 || alerts[0].Status != "firing" {
-		t.Fatalf("unexpected alert projection: %#v", alerts[0])
-	}
-}
-
-func TestOperationAlertsWithoutEngine(t *testing.T) {
-	alerts, unscoped := (stackOperationsRouteHandlers{}).operationAlerts("stack-1", nil)
-	if alerts != nil || unscoped != 0 {
-		t.Fatalf("operationAlerts() = (%#v, %d), want (nil, 0)", alerts, unscoped)
-	}
-}
-
-func TestMonitoringSummaryKeepsQueryAndIngestStatesIndependent(t *testing.T) {
-	backendError := errors.New("stats failed")
-	tests := []struct {
-		name             string
-		backend          monitoring.MetricsQueryBackend
-		metadata         MonitoringStatusMetadata
-		ingestHealth     monitoring.IngestHealthProvider
-		wantStatus       string
-		wantQueryStatus  string
-		wantIngestStatus string
-		wantProof        string
-		wantRangeProof   string
-		wantOTLPStatus   string
-		wantSeries       uint64
-		wantMessage      string
-	}{
-		{
-			name:             "query and ingest unavailable",
-			metadata:         MonitoringStatusMetadata{IngestBackend: "unavailable", CompatibilityMode: "query-only"},
-			wantStatus:       "unknown",
-			wantQueryStatus:  "unknown",
-			wantIngestStatus: "unavailable",
-			wantProof:        "vector:pending",
-			wantRangeProof:   "matrix:pending",
-			wantOTLPStatus:   "unavailable",
-			wantMessage:      "metrics unavailable",
-		},
-		{
-			name:             "query error preserves healthy ingest",
-			backend:          stackOperationsMonitoringBackend{err: backendError},
-			ingestHealth:     staticIngestHealthProvider{snapshot: monitoring.IngestHealthSnapshot{OTLP: monitoring.IngestLaneHealth{Status: "ok"}, LegacyPush: monitoring.IngestLaneHealth{Status: "ok"}}},
-			wantStatus:       "degraded",
-			wantQueryStatus:  "error",
-			wantIngestStatus: "ok",
-			wantProof:        "vector:pending",
-			wantRangeProof:   "matrix:pending",
-			wantOTLPStatus:   "ok",
-			wantMessage:      backendError.Error(),
-		},
-		{
-			name:             "reachable query leaves ingest unavailable",
-			backend:          stackOperationsMonitoringBackend{},
-			metadata:         MonitoringStatusMetadata{IngestBackend: "unavailable", CompatibilityMode: "query-only"},
-			wantStatus:       "ok",
-			wantQueryStatus:  "ok",
-			wantIngestStatus: "unavailable",
-			wantProof:        "vector:pending",
-			wantRangeProof:   "matrix:pending",
-			wantOTLPStatus:   "unavailable",
-			wantMessage:      "metrics backend reachable",
-		},
-		{
-			name:             "reachable query leaves degraded ingest degraded",
-			backend:          stackOperationsMonitoringBackend{stats: &monitoring.TSDBStats{}},
-			ingestHealth:     staticIngestHealthProvider{snapshot: monitoring.IngestHealthSnapshot{OTLP: monitoring.IngestLaneHealth{Status: "degraded"}, LegacyPush: monitoring.IngestLaneHealth{Status: "ok"}}},
-			wantStatus:       "ok",
-			wantQueryStatus:  "ok",
-			wantIngestStatus: "degraded",
-			wantProof:        "vector:pending",
-			wantRangeProof:   "matrix:pending",
-			wantOTLPStatus:   "degraded",
-			wantMessage:      "metrics backend reachable",
-		},
-		{
-			name:             "reachable query treats stale OTLP as degraded ingest",
-			backend:          stackOperationsMonitoringBackend{stats: &monitoring.TSDBStats{}},
-			ingestHealth:     staticIngestHealthProvider{snapshot: monitoring.IngestHealthSnapshot{OTLP: monitoring.IngestLaneHealth{Status: "stale"}, LegacyPush: monitoring.IngestLaneHealth{Status: "ok"}}},
-			wantStatus:       "ok",
-			wantQueryStatus:  "ok",
-			wantIngestStatus: "degraded",
-			wantProof:        "vector:pending",
-			wantRangeProof:   "matrix:pending",
-			wantOTLPStatus:   "stale",
-			wantMessage:      "metrics backend reachable",
-		},
-		{
-			name:             "reachable query with required idle ingest",
-			backend:          stackOperationsMonitoringBackend{},
-			wantStatus:       "ok",
-			wantQueryStatus:  "ok",
-			wantIngestStatus: "degraded",
-			wantProof:        "vector:pending",
-			wantRangeProof:   "matrix:pending",
-			wantOTLPStatus:   "idle",
-			wantMessage:      "metrics backend reachable",
-		},
-		{
-			name:             "reachable query with healthy ingest and series",
-			backend:          stackOperationsMonitoringBackend{stats: &monitoring.TSDBStats{NumSeries: 7}},
-			ingestHealth:     staticIngestHealthProvider{snapshot: monitoring.IngestHealthSnapshot{OTLP: monitoring.IngestLaneHealth{Status: "ok"}, LegacyPush: monitoring.IngestLaneHealth{Status: "ok"}}},
-			wantStatus:       "ok",
-			wantQueryStatus:  "ok",
-			wantIngestStatus: "ok",
-			wantProof:        "vector:non-empty",
-			wantRangeProof:   "matrix:non-empty",
-			wantOTLPStatus:   "ok",
-			wantSeries:       7,
-			wantMessage:      "metrics backend reachable",
-		},
+	// Twice the page size of newer noise from a sibling server.
+	for i := range serverLogLimit * 2 {
+		appendTestActivity(t, store, ctx, fmt.Sprintf("sibling-%02d", i), "stack-1",
+			map[string]any{"server_id": "server-b"}, base.Add(time.Duration(1000+i)*time.Second))
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			alerts := monitoring.NewAlertEngine(nil, nil, []monitoring.AlertRule{{Name: "HighCPU"}, {Name: "DiskFull"}}, monitoring.AlertEngineConfig{})
-			h := stackOperationsRouteHandlers{backend: test.backend, metadata: test.metadata, alerts: alerts, ingestHealth: test.ingestHealth}
+	handlers := stackOperationsRouteHandlers{activityStore: store}
+	logs := handlers.serverLogs(ctx, "tenant-1", "stack-1",
+		stackOperationServer{ID: "server-a", Hostname: "node-a"})
 
-			got := h.monitoringSummary(context.Background())
-			if got.Status != test.wantStatus || got.QueryBackendStatus != test.wantQueryStatus || got.IngestStatus != test.wantIngestStatus {
-				t.Fatalf("unexpected backend state: %#v", got)
-			}
-			if got.QueryProof != test.wantProof || got.RangeProof != test.wantRangeProof || got.OTLPStatus != test.wantOTLPStatus || got.SeriesCount != test.wantSeries || got.Message != test.wantMessage {
-				t.Fatalf("unexpected monitoring proof: %#v", got)
-			}
-			wantIngestBackend := defaultMonitoringStatusValue(test.metadata.IngestBackend, "embedded-tsdb")
-			wantCompatibilityMode := defaultMonitoringStatusValue(test.metadata.CompatibilityMode, "dual-ingest")
-			if got.QueryBackend != "embedded-tsdb" || got.IngestBackend != wantIngestBackend || got.CollectorMode != "direct" || got.CompatibilityMode != wantCompatibilityMode {
-				t.Fatalf("unexpected monitoring defaults: %#v", got)
-			}
-			if got.AlertRuleCount != 2 {
-				t.Fatalf("alert rule count = %d, want 2", got.AlertRuleCount)
-			}
-		})
+	if len(logs) != serverLogLimit {
+		t.Fatalf("serverLogs returned %d entries, want %d", len(logs), serverLogLimit)
+	}
+	previous := ""
+	for _, entry := range logs {
+		id, _ := entry["id"].(string)
+		if !strings.HasPrefix(id, "own-") {
+			t.Fatalf("serverLogs leaked an entry from another server: %q", id)
+		}
+		if previous != "" && id >= previous {
+			t.Fatalf("serverLogs returned %q after %q, want newest first", id, previous)
+		}
+		previous = id
 	}
 }
 
-func TestActivityLogMatchesServerUsesMetadataPrecedence(t *testing.T) {
-	worker := stackOperationServer{ID: "server-a", AgentID: "agent-a", Hostname: "node-a"}
-	managed := stackOperationServer{
-		ID:       "lease:lease-a",
-		AgentID:  "agent-managed",
-		Hostname: "managed-a",
-		Source:   managedRuntimeInventorySource,
-		LeaseID:  "lease-a",
-	}
+// A managed runtime server carries a synthetic lease:<id> server id, so its
+// lease id is a separate identity the scope key may hold.
+func TestServerLogsMatchAgentAndLeaseIdentities(t *testing.T) {
+	store := controlplane.NewMemoryStore()
+	ctx := t.Context()
+	base := time.Now().UTC().Truncate(time.Millisecond)
 
-	tests := []struct {
-		name     string
-		metadata any
-		server   stackOperationServer
-		want     bool
-	}{
-		{name: "missing metadata", server: worker},
-		{name: "worker match", metadata: map[string]any{"worker_id": "server-a"}, server: worker, want: true},
-		{name: "server alias match", metadata: map[string]any{"server_id": "server-a"}, server: worker, want: true},
-		{name: "node alias match", metadata: map[string]any{"node_id": "server-a"}, server: worker, want: true},
-		{name: "worker mismatch wins over matching agent", metadata: map[string]any{"worker_id": "other", "agent_id": "agent-a"}, server: worker},
-		{name: "agent match", metadata: map[string]any{"agent_id": "agent-a"}, server: worker, want: true},
-		{name: "agent alias match", metadata: map[string]any{"agent": "agent-a"}, server: worker, want: true},
-		{name: "host match", metadata: map[string]any{"host": "node-a"}, server: worker, want: true},
-		{name: "hostname ignores case", metadata: map[string]any{"hostname": "NODE-A"}, server: worker, want: true},
-		{name: "unknown metadata", metadata: map[string]any{"service": "api"}, server: worker},
-		{name: "managed lease match wins over worker mismatch", metadata: map[string]any{"lease_id": "lease-a", "worker_id": "other"}, server: managed, want: true},
-		{name: "managed runtime lease alias match", metadata: map[string]any{"runtime_lease_id": "lease-a"}, server: managed, want: true},
-		{name: "managed lease mismatch can fall through", metadata: map[string]any{"lease_id": "other", "agent_id": "agent-managed"}, server: managed, want: true},
-	}
+	appendTestActivity(t, store, ctx, "by-agent", "stack-1",
+		map[string]any{"agent_id": "agent-a"}, base)
+	appendTestActivity(t, store, ctx, "by-lease", "stack-1",
+		map[string]any{"lease_id": "lease-a"}, base.Add(time.Second))
+	appendTestActivity(t, store, ctx, "other-server", "stack-1",
+		map[string]any{"server_id": "server-z"}, base.Add(2*time.Second))
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			record := core.NewRecord(core.NewBaseCollection("activity_log"))
-			if test.metadata != nil {
-				record.Set("metadata", test.metadata)
-			}
-			if got := activityLogMatchesServer(record, test.server); got != test.want {
-				t.Fatalf("activityLogMatchesServer() = %t, want %t", got, test.want)
-			}
-		})
+	handlers := stackOperationsRouteHandlers{activityStore: store}
+	logs := handlers.serverLogs(ctx, "tenant-1", "stack-1", stackOperationServer{
+		ID: "lease:lease-a", AgentID: "agent-a", LeaseID: "lease-a",
+		Source: managedRuntimeInventorySource,
+	})
+
+	got := make(map[string]bool, len(logs))
+	for _, entry := range logs {
+		id, _ := entry["id"].(string)
+		got[id] = true
+	}
+	if !got["by-agent"] || !got["by-lease"] {
+		t.Fatalf("serverLogs dropped an identity alias: %v", got)
+	}
+	if got["other-server"] {
+		t.Fatalf("serverLogs leaked another server's activity: %v", got)
 	}
 }
 
-type stackOperationsMonitoringBackend struct {
-	staticHealthBackend
-	stats *monitoring.TSDBStats
-	err   error
-}
-
-func (b stackOperationsMonitoringBackend) Stats(context.Context) (*monitoring.TSDBStats, error) {
-	return b.stats, b.err
+func appendTestActivity(t *testing.T, store *controlplane.MemoryStore, ctx context.Context,
+	id, stackID string, details map[string]any, at time.Time) {
+	t.Helper()
+	if _, err := store.AppendActivity(ctx, controlplane.ActivityEvent{
+		ID: id, TenantID: "tenant-1", StackID: stackID, Action: "update",
+		Details: details, CreatedAt: at,
+	}); err != nil {
+		t.Fatalf("append activity %s: %v", id, err)
+	}
 }

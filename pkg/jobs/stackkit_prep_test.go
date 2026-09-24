@@ -14,11 +14,10 @@ func TestParseStackKitCLIProgressRedactsSecrets(t *testing.T) {
 		"human output",
 	}, "\n"))
 
-	events := parseStackKitCLIProgress(output)
-	if len(events) != 1 {
-		t.Fatalf("events = %d, want 1", len(events))
+	event, ok := parseStackKitCLIProgressLine(strings.Split(string(output), "\n")[0])
+	if !ok {
+		t.Fatal("progress event was not parsed")
 	}
-	event := events[0]
 	if event.Phase != "apt_wait" || event.FailureClass != "apt_lock_timeout" {
 		t.Fatalf("event = %+v", event)
 	}
@@ -32,15 +31,12 @@ func TestParseStackKitCLIProgressRedactsSecrets(t *testing.T) {
 }
 
 func TestParseStackKitCLIProgressKeepsLegacyFailureClass(t *testing.T) {
-	events := parseStackKitCLIProgress([]byte(`{"phase":"docker","status":"failed","failureClass":"docker_install_failed"}`))
-	if len(events) != 1 {
-		t.Fatalf("events = %d, want 1", len(events))
+	event, ok := parseStackKitCLIProgressLine(`{"phase":"docker","status":"failed","failureClass":"docker_install_failed"}`)
+	if !ok || event.FailureClass != "docker_install_failed" {
+		t.Fatalf("failure class = %q", event.FailureClass)
 	}
-	if events[0].FailureClass != "docker_install_failed" {
-		t.Fatalf("failure class = %q", events[0].FailureClass)
-	}
-	if events[0].FailureClassLegacy != "" {
-		t.Fatalf("legacy failure class should be normalized away: %+v", events[0])
+	if event.FailureClassLegacy != "" {
+		t.Fatalf("legacy failure class should be normalized away: %+v", event)
 	}
 }
 
@@ -68,60 +64,49 @@ func TestStackKitPrepareArgsMatchPinnedCLI(t *testing.T) {
 	}
 }
 
-func TestStackKitPrepTechStackEnvInjectsEnrollment(t *testing.T) {
-	env := stackKitPrepTechStackEnv(RuntimeActionRequest{
-		TechStackEnrollment: &TechStackEnrollment{
-			TenantID:       "tenant-1",
-			OwnerID:        "owner-1",
-			StackID:        "stack-1",
-			ServerURL:      "https://techstack.example",
-			ServerID:       "server-1",
-			RuntimeAgentID: "runtime-1",
-			AgentToken:     "runtime-token",
-			HeartbeatURL:   "https://techstack.example/api/v1/workers/runtime-1/heartbeat",
-			InventoryURL:   "https://techstack.example/api/v1/workers/runtime-1/inventory",
-			ChannelBootstrap: map[string]any{
-				"websocket_url": "wss://techstack.example/api/v1/workers/runtime-1/control/ws",
+func TestStackKitPrepTechStackEnvCarriesEnrollmentForPrepareValidation(t *testing.T) {
+	tests := []struct {
+		name       string
+		enrollment *TechStackEnrollment
+		want       []string
+	}{
+		{
+			name: "complete enrollment",
+			enrollment: &TechStackEnrollment{
+				TenantID: "tenant-1", OwnerID: "owner-1", StackID: "stack-1",
+				ServerURL: "https://techstack.example", ServerID: "server-1", RuntimeAgentID: "runtime-1",
+				AgentToken:       "runtime-token",
+				HeartbeatURL:     "https://techstack.example/api/v1/workers/runtime-1/heartbeat",
+				InventoryURL:     "https://techstack.example/api/v1/workers/runtime-1/inventory",
+				ChannelBootstrap: map[string]any{"websocket_url": "wss://techstack.example/api/v1/workers/runtime-1/control/ws"},
+			},
+			want: []string{
+				"TECHSTACK_MANAGED=true", "TECHSTACK_SERVER_URL=https://techstack.example", "TECHSTACK_SERVER_ID=server-1",
+				"TECHSTACK_RUNTIME_AGENT_ID=runtime-1", "TECHSTACK_AGENT_TOKEN=runtime-token",
+				"TECHSTACK_HEARTBEAT_URL=https://techstack.example/api/v1/workers/runtime-1/heartbeat",
+				"TECHSTACK_INVENTORY_URL=https://techstack.example/api/v1/workers/runtime-1/inventory",
+				"TECHSTACK_TENANT_ID=tenant-1", "TECHSTACK_OWNER_ID=owner-1", "TECHSTACK_STACK_ID=stack-1",
+				"TECHSTACK_CHANNEL_BOOTSTRAP=",
 			},
 		},
-	})
-	joined := strings.Join(env, "\n")
-	for _, want := range []string{
-		"TECHSTACK_MANAGED=true",
-		"TECHSTACK_SERVER_URL=https://techstack.example",
-		"TECHSTACK_SERVER_ID=server-1",
-		"TECHSTACK_RUNTIME_AGENT_ID=runtime-1",
-		"TECHSTACK_AGENT_TOKEN=runtime-token",
-		"TECHSTACK_HEARTBEAT_URL=https://techstack.example/api/v1/workers/runtime-1/heartbeat",
-		"TECHSTACK_INVENTORY_URL=https://techstack.example/api/v1/workers/runtime-1/inventory",
-		"TECHSTACK_TENANT_ID=tenant-1",
-		"TECHSTACK_OWNER_ID=owner-1",
-		"TECHSTACK_STACK_ID=stack-1",
-		"TECHSTACK_CHANNEL_BOOTSTRAP=",
-	} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("env missing %q in:\n%s", want, joined)
-		}
-	}
-}
-
-func TestStackKitPrepTechStackEnvPreservesPartialEnrollmentForPrepareValidation(t *testing.T) {
-	env := stackKitPrepTechStackEnv(RuntimeActionRequest{
-		TechStackEnrollment: &TechStackEnrollment{
-			ServerURL: "https://techstack.example",
-			ServerID:  "server-1",
+		{
+			name:       "partial enrollment",
+			enrollment: &TechStackEnrollment{ServerURL: "https://techstack.example", ServerID: "server-1"},
+			want: []string{
+				"TECHSTACK_MANAGED=true", "TECHSTACK_SERVER_URL=https://techstack.example",
+				"TECHSTACK_SERVER_ID=server-1", "TECHSTACK_RUNTIME_AGENT_ID=",
+			},
 		},
-	})
-	joined := strings.Join(env, "\n")
-	for _, want := range []string{
-		"TECHSTACK_MANAGED=true",
-		"TECHSTACK_SERVER_URL=https://techstack.example",
-		"TECHSTACK_SERVER_ID=server-1",
-		"TECHSTACK_RUNTIME_AGENT_ID=",
-	} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("env missing %q in:\n%s", want, joined)
-		}
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			joined := strings.Join(stackKitPrepTechStackEnv(RuntimeActionRequest{TechStackEnrollment: tt.enrollment}), "\n")
+			for _, want := range tt.want {
+				if !strings.Contains(joined, want) {
+					t.Fatalf("env missing %q in:\n%s", want, joined)
+				}
+			}
+		})
 	}
 }
 

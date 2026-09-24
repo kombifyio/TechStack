@@ -71,8 +71,6 @@ describe("local session auth API", () => {
       new Response(
         JSON.stringify({
           data: {
-            pb_token: "pb-token",
-            user: { id: "user-1", email: "user@example.com", name: "User" },
             cloud_user: {
               sub: "auth0|user",
               email: "user@example.com",
@@ -92,7 +90,7 @@ describe("local session auth API", () => {
     const { verifyPortalToken } = await import("./auth");
     const result = await verifyPortalToken("portal-token");
 
-    expect(result.pb_token).toBe("pb-token");
+    expect(result.cloud_user.sub).toBe("auth0|user");
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(requestPath(fetchMock.mock.calls[0][0])).toBe("/api/v1/csrf");
     expect(requestPath(fetchMock.mock.calls[1][0])).toBe(
@@ -100,6 +98,51 @@ describe("local session auth API", () => {
     );
     const verifyHeaders = new Headers(fetchMock.mock.calls[1][1]?.headers);
     expect(verifyHeaders.get("x-csrf-token")).toBe("csrf-token-456");
+  });
+
+  it("tells the portal exchange which page embeds the app so the session can be cross-site", async () => {
+    const fetchMock = vi.fn();
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ token: "csrf-token-789" }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+          "x-csrf-token": "csrf-token-789",
+        },
+      }),
+    );
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          success: true,
+          data: {
+            cloud_user: {
+              sub: "auth0|user",
+              email: "user@example.com",
+              name: "User",
+              is_admin: false,
+            },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("window", {
+      location: {
+        origin: "https://techstack.test",
+        ancestorOrigins: ["https://kombify-cloud-native-pr-434.onrender.com"],
+      },
+    });
+
+    const { verifyPortalToken } = await import("./auth");
+    await verifyPortalToken("portal-token");
+
+    const body = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
+    expect(body).toEqual({
+      token: "portal-token",
+      portal_origin: "https://kombify-cloud-native-pr-434.onrender.com",
+    });
   });
 
   it("accepts portal session confirmation only from a 200 V2 whoami response", async () => {

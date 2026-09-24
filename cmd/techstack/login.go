@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kombifyio/go-common/nativeclient/interactiveauth"
-	"github.com/kombifyio/go-common/oidcclient"
-	"github.com/kombifyio/go-common/toolauth"
+	"github.com/kombifyio/techstack/internal/gocommon/nativeclient/interactiveauth"
+	"github.com/kombifyio/techstack/internal/gocommon/oidcclient"
+	"github.com/kombifyio/techstack/internal/gocommon/toolauth"
 
 	"github.com/kombifyio/techstack/pkg/config"
 )

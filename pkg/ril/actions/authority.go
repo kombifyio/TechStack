@@ -114,6 +114,7 @@ type Authority interface {
 	Deny(context.Context, string, string, string, string, time.Time) (*GovernedCard, error)
 	Begin(context.Context, BeginExecution) (BeginResult, error)
 	Complete(context.Context, string, string, rilaction.Evidence, string, time.Time) (*GovernedCard, error)
+	Fail(context.Context, string, string, string, string, time.Time) (*GovernedCard, error)
 }
 
 type PostgresAuthority struct{ db *sql.DB }
@@ -272,29 +273,27 @@ func (s *PostgresAuthority) Begin(ctx context.Context, input BeginExecution) (Be
 			return nil
 		}
 		if card.Status == "executing" || card.Status == "verifying" {
-			if card.IdempotencyKey == input.IdempotencyKey {
-				return ErrExecutionInProgress
+			if card.IdempotencyKey == input.IdempotencyKey && card.ExecutionID == input.ExecutionID && card.TraceID == input.TraceID {
+				var requestJSON string
+				if err := tx.QueryRowContext(ctx, `SELECT COALESCE(execution_request_json::text, '') FROM ril_action_cards WHERE tenant_id=$1 AND owner_subject_id=$2 AND id=$3`, input.TenantID, input.OwnerSubjectID, input.CardID).Scan(&requestJSON); err != nil {
+					return err
+				}
+				var request rilaction.Request
+				if requestJSON == "" || json.Unmarshal([]byte(requestJSON), &request) != nil || card.ExecutionAdmission == nil {
+					return ErrCardConflict
+				}
+				out = BeginResult{Disposition: BeginAcquired, Card: card, Request: request, Admission: *card.ExecutionAdmission}
+				return nil
 			}
 			return ErrCardConflict
 		}
 		if card.Status != string(StatusApproved) || card.Approval == nil {
 			return ErrApprovalRequired
 		}
-		if card.Template.Grant == nil {
-			return ErrGrantRequired
-		}
-		if err := validateConnectorBinding(card, input); err != nil {
+		if err := RefuseUnentitledStart(card, input); err != nil {
 			return err
 		}
-		validUntil := input.Now.Add(rilaction.MaxRequestValidity)
-		if grantUntil, parseErr := time.Parse(time.RFC3339Nano, card.Template.Grant.ValidUntil); parseErr != nil || !input.Now.Before(grantUntil) {
-			return ErrGrantRequired
-		} else if grantUntil.Before(validUntil) {
-			validUntil = grantUntil
-		}
-		if card.Approval.ValidUntil.Before(validUntil) {
-			validUntil = card.Approval.ValidUntil
-		}
+		validUntil := grantValidUntil(card, input.Now)
 		request := rilaction.Request{APIVersion: rilaction.APIVersionV1Alpha1, ActionCardID: card.ID, ExecutionID: input.ExecutionID, TraceID: input.TraceID, TenantID: input.TenantID, StackID: card.Template.StackID, Primitive: card.Template.Primitive, ResolvedPlanHash: card.Template.ResolvedPlanHash, Approval: rilaction.ApprovalBinding{ReceiptRef: card.Approval.ReceiptRef, ReceiptHash: card.Approval.ReceiptHash, Decision: string(StatusApproved), Class: card.Approval.Class, ApprovedAt: card.Approval.ApprovedAt.Format(time.RFC3339Nano), ValidUntil: card.Approval.ValidUntil.Format(time.RFC3339Nano)}, Grant: *card.Template.Grant, Target: card.Template.Target, Inputs: card.Template.Inputs, EvidenceSinkRef: card.Template.EvidenceSinkRef, IssuedAt: input.Now.Format(time.RFC3339Nano), ValidUntil: validUntil.Format(time.RFC3339Nano), Nonce: "nonce-" + uuid.NewString(), IdempotencyKey: input.IdempotencyKey}
 		admission, admittedRequest, admissionErr := admitExecutionTx(ctx, tx, card, request, input.Now)
 		if admissionErr != nil {
@@ -342,6 +341,18 @@ func (s *PostgresAuthority) Complete(ctx context.Context, tenantID, cardID strin
 		} else if err != nil {
 			return err
 		}
+		if from == "completed" || from == "failed" {
+			card, scanErr := scanGovernedCard(tx.QueryRowContext(ctx, `SELECT `+governedCardColumns+` FROM ril_action_cards WHERE tenant_id=$1 AND id=$2`, tenantID, cardID))
+			if scanErr != nil {
+				return scanErr
+			}
+			persisted, _ := json.Marshal(card.Evidence)
+			if card.ExecutionID != evidence.ExecutionID || string(persisted) != string(data) || card.ErrorCode != errorCode {
+				return ErrCardConflict
+			}
+			out = card
+			return nil
+		}
 		card, scanErr := scanGovernedCard(tx.QueryRowContext(ctx, `UPDATE ril_action_cards SET status=$3,evidence_json=$4::jsonb,error_code=NULLIF($5,''),completed_at=$6,updated_at=now() WHERE tenant_id=$1 AND id=$2 AND status IN ('executing','verifying') AND execution_id=$7 RETURNING `+governedCardColumns, tenantID, cardID, status, data, errorCode, now, evidence.ExecutionID))
 		if errors.Is(scanErr, sql.ErrNoRows) {
 			return ErrCardConflict
@@ -353,6 +364,57 @@ func (s *PostgresAuthority) Complete(ctx context.Context, tenantID, cardID strin
 			TenantID: tenantID, CardID: cardID, FromStatus: from, ToStatus: status,
 			CorrelationID: newAuditCorrelation(evidence.TraceID), ActorSubjectID: ownerID,
 			ExecutionID: evidence.ExecutionID, TraceID: evidence.TraceID, OccurredAt: now,
+		}); err != nil {
+			return err
+		}
+		out = card
+		return nil
+	})
+	return out, err
+}
+
+// Fail terminalizes an admitted execution when no contract-valid public
+// evidence exists (for example, transport failure before StackKits can return
+// a result). It is idempotent for the same execution identity and records only
+// a bounded public error code; raw transport or provider details never enter
+// the action card.
+func (s *PostgresAuthority) Fail(ctx context.Context, tenantID, cardID, executionID, errorCode string, now time.Time) (*GovernedCard, error) {
+	errorCode = strings.TrimSpace(errorCode)
+	switch errorCode {
+	case "execution_unavailable", "stackkit_execution_failed", "workflow_execution_unavailable":
+	default:
+		errorCode = "execution_unavailable"
+	}
+	var out *GovernedCard
+	err := s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		var from, ownerID, persistedExecutionID, persistedErrorCode string
+		if err := tx.QueryRowContext(ctx, `SELECT status, owner_subject_id, COALESCE(execution_id,''), COALESCE(error_code,'') FROM ril_action_cards WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, tenantID, cardID).Scan(&from, &ownerID, &persistedExecutionID, &persistedErrorCode); errors.Is(err, sql.ErrNoRows) {
+			return ErrCardConflict
+		} else if err != nil {
+			return err
+		}
+		if from == "failed" {
+			if persistedExecutionID != executionID || persistedErrorCode != errorCode {
+				return ErrCardConflict
+			}
+			card, scanErr := scanGovernedCard(tx.QueryRowContext(ctx, `SELECT `+governedCardColumns+` FROM ril_action_cards WHERE tenant_id=$1 AND id=$2`, tenantID, cardID))
+			if scanErr != nil {
+				return scanErr
+			}
+			out = card
+			return nil
+		}
+		card, scanErr := scanGovernedCard(tx.QueryRowContext(ctx, `UPDATE ril_action_cards SET status='failed',error_code=$4,completed_at=$5,updated_at=now() WHERE tenant_id=$1 AND id=$2 AND status IN ('executing','verifying') AND execution_id=$3 RETURNING `+governedCardColumns, tenantID, cardID, executionID, errorCode, now))
+		if errors.Is(scanErr, sql.ErrNoRows) {
+			return ErrCardConflict
+		}
+		if scanErr != nil {
+			return scanErr
+		}
+		if err := appendActionTransitionAudit(ctx, tx, actionTransitionAudit{
+			TenantID: tenantID, CardID: cardID, FromStatus: from, ToStatus: "failed",
+			CorrelationID: newAuditCorrelation(card.TraceID), ActorSubjectID: ownerID,
+			ExecutionID: executionID, TraceID: card.TraceID, OccurredAt: now,
 		}); err != nil {
 			return err
 		}

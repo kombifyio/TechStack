@@ -45,3 +45,28 @@ func TestRequireStackAuthRejectsMissingIdentity(t *testing.T) {
 		t.Fatalf("requireStackAuth status = %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
 }
+
+func TestJobStatsRequiresAuthentication(t *testing.T) {
+	rec := httptest.NewRecorder()
+	e := &httpx.Event{
+		Request:  httptest.NewRequest(http.MethodGet, "/api/v1/jobs/stats", nil),
+		Response: rec,
+	}
+
+	if err := (crudRouteHandlers{}).jobStats(e); err == nil {
+		t.Fatal("jobStats returned nil after rejecting an unauthenticated request")
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("jobStats status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+
+	authedRequest := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/stats", nil)
+	authedRequest = authedRequest.WithContext(identity.NewContext(authedRequest.Context(), &identity.Identity{UserID: "owner-1"}))
+	authedRecorder := httptest.NewRecorder()
+	if err := (crudRouteHandlers{}).jobStats(&httpx.Event{Request: authedRequest, Response: authedRecorder}); err != nil {
+		t.Fatalf("authenticated jobStats: %v", err)
+	}
+	if authedRecorder.Code != http.StatusOK {
+		t.Fatalf("authenticated jobStats status = %d, want %d", authedRecorder.Code, http.StatusOK)
+	}
+}

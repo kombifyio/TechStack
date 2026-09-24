@@ -64,11 +64,11 @@ func NewAddonDetector() *AddonDetector {
 // registerDefaultAddons registers all built-in add-on conditions.
 func (d *AddonDetector) registerDefaultAddons() {
 	// cloud-integration: Activated when any cloud provider is used
-	d.RegisterAddonFull(&AddonDefinition{
+	d.registerAddon(&AddonDefinition{
 		Name:        "cloud-integration",
 		DisplayName: "Cloud Integration",
 		Description: "VPN overlay network, cloud security policies, and external DNS",
-		CUEFile:     "pkg/stackkits/addons/cloud-integration.cue",
+		CUEFile:     "addons/cloud-integration.cue",
 		Priority:    100,
 		Condition: func(spec *core.KombinationSpec) bool {
 			for _, node := range spec.Nodes {
@@ -81,11 +81,11 @@ func (d *AddonDetector) registerDefaultAddons() {
 	})
 
 	// arm-support: Activated when ARM architecture nodes are present
-	d.RegisterAddonFull(&AddonDefinition{
+	d.registerAddon(&AddonDefinition{
 		Name:        "arm-support",
 		DisplayName: "ARM Support",
 		Description: "ARM64-compatible images and ARM-specific resource limits",
-		CUEFile:     "pkg/stackkits/addons/arm-support.cue",
+		CUEFile:     "addons/arm-support.cue",
 		Priority:    90,
 		Condition: func(spec *core.KombinationSpec) bool {
 			for _, node := range spec.Nodes {
@@ -98,11 +98,11 @@ func (d *AddonDetector) registerDefaultAddons() {
 	})
 
 	// low-memory: Activated when nodes have < 4GB RAM
-	d.RegisterAddonFull(&AddonDefinition{
+	d.registerAddon(&AddonDefinition{
 		Name:        "low-memory",
 		DisplayName: "Low Memory Mode",
 		Description: "Excludes heavy services, optimized resource limits",
-		CUEFile:     "pkg/stackkits/addons/low-memory.cue",
+		CUEFile:     "addons/low-memory.cue",
 		Priority:    80,
 		Condition: func(spec *core.KombinationSpec) bool {
 			for _, node := range spec.Nodes {
@@ -115,11 +115,11 @@ func (d *AddonDetector) registerDefaultAddons() {
 	})
 
 	// high-availability: Activated when 3+ nodes with HA config
-	d.RegisterAddonFull(&AddonDefinition{
+	d.registerAddon(&AddonDefinition{
 		Name:        "high-availability",
 		DisplayName: "High Availability",
 		Description: "Service replicas, leader election, failover configuration",
-		CUEFile:     "pkg/stackkits/addons/high-availability.cue",
+		CUEFile:     "addons/high-availability.cue",
 		Priority:    95,
 		Condition: func(spec *core.KombinationSpec) bool {
 			if len(spec.Nodes) < 3 {
@@ -143,11 +143,11 @@ func (d *AddonDetector) registerDefaultAddons() {
 	})
 
 	// gpu-workloads: Activated when GPU nodes are present
-	d.RegisterAddonFull(&AddonDefinition{
+	d.registerAddon(&AddonDefinition{
 		Name:        "gpu-workloads",
 		DisplayName: "GPU Workloads",
 		Description: "NVIDIA container runtime, GPU scheduling",
-		CUEFile:     "pkg/stackkits/addons/gpu-workloads.cue",
+		CUEFile:     "addons/gpu-workloads.cue",
 		Priority:    85,
 		Condition: func(spec *core.KombinationSpec) bool {
 			for _, node := range spec.Nodes {
@@ -160,11 +160,11 @@ func (d *AddonDetector) registerDefaultAddons() {
 	})
 
 	// vpn-overlay: Activated when VPN is configured
-	d.RegisterAddonFull(&AddonDefinition{
+	d.registerAddon(&AddonDefinition{
 		Name:        "vpn-overlay",
 		DisplayName: "VPN Overlay",
 		Description: "VPN mesh network configuration",
-		CUEFile:     "pkg/stackkits/addons/vpn-overlay.cue",
+		CUEFile:     "addons/vpn-overlay.cue",
 		Priority:    70,
 		Condition: func(spec *core.KombinationSpec) bool {
 			return spec.Network.VPN != "" && spec.Network.VPN != "none"
@@ -172,11 +172,11 @@ func (d *AddonDetector) registerDefaultAddons() {
 	})
 
 	// multi-node: Activated when more than one node is present
-	d.RegisterAddonFull(&AddonDefinition{
+	d.registerAddon(&AddonDefinition{
 		Name:        "multi-node",
 		DisplayName: "Multi-Node",
 		Description: "Multi-node deployment patterns and service distribution",
-		CUEFile:     "pkg/stackkits/addons/multi-node.cue",
+		CUEFile:     "addons/multi-node.cue",
 		Priority:    50,
 		Condition: func(spec *core.KombinationSpec) bool {
 			return len(spec.Nodes) > 1
@@ -217,16 +217,6 @@ func (d *AddonDetector) Detect(spec *core.KombinationSpec) *DetectionResult {
 
 	result.Addons = matched
 	return result
-}
-
-// DetectNames returns just the names of applicable add-ons.
-func (d *AddonDetector) DetectNames(spec *core.KombinationSpec) []string {
-	result := d.Detect(spec)
-	names := make([]string, len(result.Addons))
-	for i, addon := range result.Addons {
-		names[i] = addon.Name
-	}
-	return names
 }
 
 // getReasonForAddon returns a human-readable reason for why an addon was activated.
@@ -292,62 +282,11 @@ func (d *AddonDetector) getReasonForAddon(name string, spec *core.KombinationSpe
 	}
 }
 
-// RegisterAddon adds a custom add-on condition (simple version).
-func (d *AddonDetector) RegisterAddon(name string, condition AddonCondition) {
-	d.RegisterAddonFull(&AddonDefinition{
-		Name:        name,
-		DisplayName: name,
-		Description: "Custom add-on",
-		CUEFile:     "pkg/stackkits/addons/" + name + ".cue",
-		Priority:    0,
-		Condition:   condition,
-	})
-}
-
-// RegisterAddonFull adds a custom add-on with full definition.
-func (d *AddonDetector) RegisterAddonFull(def *AddonDefinition) {
+func (d *AddonDetector) registerAddon(def *AddonDefinition) {
 	if _, exists := d.registry[def.Name]; !exists {
 		d.order = append(d.order, def.Name)
 	}
 	d.registry[def.Name] = def
-}
-
-// UnregisterAddon removes an add-on from the registry.
-func (d *AddonDetector) UnregisterAddon(name string) {
-	delete(d.registry, name)
-	// Remove from order
-	for i, n := range d.order {
-		if n == name {
-			d.order = append(d.order[:i], d.order[i+1:]...)
-			break
-		}
-	}
-}
-
-// GetRegisteredAddons returns all registered add-on names.
-func (d *AddonDetector) GetRegisteredAddons() []string {
-	return d.order
-}
-
-// GetAddonDefinition returns the full definition of an add-on.
-func (d *AddonDetector) GetAddonDefinition(name string) *AddonDefinition {
-	return d.registry[name]
-}
-
-// ListAddons returns all registered add-on definitions in priority order.
-func (d *AddonDetector) ListAddons() []AddonInfo {
-	var addons []AddonInfo
-	for _, name := range d.order {
-		def := d.registry[name]
-		addons = append(addons, AddonInfo{
-			Name:        def.Name,
-			DisplayName: def.DisplayName,
-			Description: def.Description,
-			CUEFile:     def.CUEFile,
-			Priority:    def.Priority,
-		})
-	}
-	return addons
 }
 
 // Helper functions for safe tag access

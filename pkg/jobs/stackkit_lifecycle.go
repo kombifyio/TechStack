@@ -11,6 +11,8 @@ import (
 	"github.com/kombifyio/techstack/internal/stackkitrelease"
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
 	"github.com/kombifyio/techstack/pkg/grpcserver"
+	"github.com/kombifyio/techstack/pkg/stackkitcommand"
+	"github.com/kombifyio/stackkits/pkg/workloadremoval"
 )
 
 const (
@@ -26,6 +28,8 @@ const (
 	StackKitLifecycleServiceStop    = "service_stop"
 	StackKitLifecycleServiceRestart = "service_restart"
 	StackKitLifecycleServiceLogs    = "service_logs"
+	StackKitLifecycleRemove         = "remove"
+	StackKitLifecycleAddressBind    = "address_bind"
 
 	defaultStackKitNodeWorkspace = "/opt/stackkit"
 	stackKitReadCommandTimeout   = 5 * time.Minute
@@ -48,7 +52,7 @@ const (
 
 func managedStackKitOperationTimeout(operation string) time.Duration {
 	switch operation {
-	case StackKitLifecycleInit, StackKitLifecycleGenerate,
+	case StackKitLifecycleInit, StackKitLifecycleAddressBind, StackKitLifecycleGenerate,
 		StackKitLifecyclePlan, StackKitLifecycleApply:
 		// The sequence context is the single lifecycle deadline. Artificial
 		// per-command caps made a healthy first-run init fail while it populated
@@ -62,23 +66,29 @@ func managedStackKitOperationTimeout(operation string) time.Duration {
 // StackKitLifecycleRequest is the closed operator-facing lifecycle input.
 // It deliberately has no argv, environment, binary path, or shell command.
 type StackKitLifecycleRequest struct {
-	StackID          string
-	TenantID         string
-	OwnerID          string
-	AgentID          string
-	Operation        string
-	TargetRelease    string
-	DryRun           bool
-	Offline          bool
-	OwnerApproved    bool
-	WorkingDirectory string
+	StackID            string
+	StackKitInstanceID string
+	TenantID           string
+	OwnerID            string
+	AgentID            string
+	NodeID             string
+	Operation          string
+	TargetRelease      string
+	DryRun             bool
+	Offline            bool
+	OwnerApproved      bool
+	WorkingDirectory   string
 	// SpecPath is a relative canonical StackSpec path inside WorkingDirectory.
 	// Operator lifecycle calls default to stack-spec.yaml; deploy binds this to
 	// the v2 document already materialized by the pinned generator.
-	SpecPath         string
-	StackName        string
-	Domain           string
-	ExpectedSpecHash string
+	SpecPath          string
+	StackName         string
+	Domain            string
+	ExpectedSpecHash  string
+	CandidateSpecJSON []byte
+	// OwnerEmail is the stack Owner's signed-in account email, sent with init
+	// only. StackKits requires it for a fresh local Owner (the PocketID owner).
+	OwnerEmail string
 	// StackKit selects the local execution binding. Apply refuses to guess it:
 	// "Apply never infers that a planned target is this machine: the owner
 	// names the exact Site, node, and channel this process owns, and anything
@@ -93,6 +103,9 @@ type StackKitLifecycleRequest struct {
 	// idempotency material. The raw HTTP key is never persisted.
 	DurableJobID        string
 	ServiceActionDigest string
+	WorkloadRef         string
+	AddressPrefix       string
+	BoundSpecPath       string
 }
 
 // localExecutionBinding is the Site/node/channel triple one kit's owner runs.
@@ -133,6 +146,20 @@ type StackKitCommandSender interface {
 	SendStackKitCommand(context.Context, string, *agentpb.StackKitCommand) (*agentpb.StackKitResult, error)
 }
 
+// stackKitRestoreOnlyCommander lets a least-privilege sender declare that it
+// owns only the native backup recovery sequence, including its binding plan.
+// Ordinary production commanders omit this marker and continue to own the
+// full typed lifecycle.
+type stackKitRestoreOnlyCommander interface {
+	StackKitCommandSender
+	StackKitRestoreOnly() bool
+}
+
+func stackKitCommanderOwnsFullLifecycle(sender StackKitCommandSender) bool {
+	scoped, ok := sender.(stackKitRestoreOnlyCommander)
+	return sender != nil && (!ok || !scoped.StackKitRestoreOnly())
+}
+
 type tenantStackKitCommandSender interface {
 	SendStackKitCommandForTenant(context.Context, string, string, *agentpb.StackKitCommand) (*agentpb.StackKitResult, error)
 }
@@ -143,10 +170,32 @@ type StackKitLifecycleConfig struct {
 }
 
 func NormalizeStackKitLifecycleRequest(req StackKitLifecycleRequest) (StackKitLifecycleRequest, error) {
+	req = normalizeStackKitLifecycleFields(req)
+	if req.WorkingDirectory == "" {
+		req.WorkingDirectory = defaultStackKitNodeWorkspace
+	}
+	if req.SpecPath == "" {
+		req.SpecPath = "stack-spec.yaml"
+	}
+	if req.StackID == "" || req.TenantID == "" || req.OwnerID == "" || req.AgentID == "" {
+		return req, fmt.Errorf("stack, tenant, Owner, and agent are required")
+	}
+	if err := validateStackKitLifecycleOperation(&req); err != nil {
+		return req, err
+	}
+	if err := validateDurableStackKitServiceAction(req); err != nil {
+		return req, err
+	}
+	return req, nil
+}
+
+func normalizeStackKitLifecycleFields(req StackKitLifecycleRequest) StackKitLifecycleRequest {
 	req.StackID = strings.TrimSpace(req.StackID)
+	req.StackKitInstanceID = strings.TrimSpace(req.StackKitInstanceID)
 	req.TenantID = strings.TrimSpace(req.TenantID)
 	req.OwnerID = strings.TrimSpace(req.OwnerID)
 	req.AgentID = strings.TrimSpace(req.AgentID)
+	req.NodeID = strings.TrimSpace(req.NodeID)
 	req.Operation = strings.ToLower(strings.TrimSpace(req.Operation))
 	req.TargetRelease = strings.TrimSpace(req.TargetRelease)
 	req.WorkingDirectory = strings.TrimSpace(req.WorkingDirectory)
@@ -159,58 +208,76 @@ func NormalizeStackKitLifecycleRequest(req StackKitLifecycleRequest) (StackKitLi
 	req.ServiceID = strings.TrimSpace(req.ServiceID)
 	req.DurableJobID = strings.TrimSpace(req.DurableJobID)
 	req.ServiceActionDigest = strings.TrimSpace(req.ServiceActionDigest)
-	if req.WorkingDirectory == "" {
-		req.WorkingDirectory = defaultStackKitNodeWorkspace
-	}
-	if req.SpecPath == "" {
-		req.SpecPath = "stack-spec.yaml"
-	}
-	if req.StackID == "" || req.TenantID == "" || req.OwnerID == "" || req.AgentID == "" {
-		return req, fmt.Errorf("stack, tenant, Owner, and agent are required")
-	}
+	req.WorkloadRef = strings.TrimSpace(req.WorkloadRef)
+	req.AddressPrefix = strings.TrimSpace(req.AddressPrefix)
+	req.BoundSpecPath = strings.TrimSpace(req.BoundSpecPath)
+	return req
+}
+
+func validateStackKitLifecycleOperation(req *StackKitLifecycleRequest) error {
 	switch req.Operation {
 	case StackKitLifecycleGenerate, StackKitLifecyclePlan, StackKitLifecycleVerify, StackKitLifecycleDriftDetect:
+	case StackKitLifecycleAddressBind:
+		if req.AddressPrefix == "" || req.BoundSpecPath == "" {
+			return fmt.Errorf("address bind requires prefix and bound StackSpec path")
+		}
 	case StackKitLifecycleInit, StackKitLifecycleApply, StackKitLifecycleDriftReconcile:
 		if req.Operation == StackKitLifecycleInit && (req.StackKit == "" || req.StackName == "") {
-			return req, fmt.Errorf("init requires StackKit and stack name")
+			return fmt.Errorf("init requires StackKit and stack name")
+		}
+		if req.Operation == StackKitLifecycleInit {
+			return stackkitcommand.ValidateInitCandidate(req.CandidateSpecJSON, req.StackKit, req.StackName)
 		}
 	case StackKitLifecycleUpgrade:
 		if !req.DryRun && !req.OwnerApproved {
-			return req, fmt.Errorf("upgrade requires explicit Owner approval")
+			return fmt.Errorf("upgrade requires explicit Owner approval")
 		}
 	case StackKitLifecycleServiceStart, StackKitLifecycleServiceStop, StackKitLifecycleServiceRestart:
 		if !req.OwnerApproved {
-			return req, fmt.Errorf("%s requires explicit Owner approval", req.Operation)
+			return fmt.Errorf("%s requires explicit Owner approval", req.Operation)
 		}
 		if req.ServiceKey == "" {
-			return req, fmt.Errorf("%s requires service key", req.Operation)
+			return fmt.Errorf("%s requires service key", req.Operation)
 		}
 	case StackKitLifecycleServiceLogs:
 		if req.ServiceKey == "" {
-			return req, fmt.Errorf("service_logs requires service key")
+			return fmt.Errorf("service_logs requires service key")
 		}
 		if req.LogTail == 0 {
 			req.LogTail = 100
 		}
 		if req.LogTail < 1 || req.LogTail > 200 {
-			return req, fmt.Errorf("service_logs tail must be between 1 and 200")
+			return fmt.Errorf("service_logs tail must be between 1 and 200")
+		}
+	case StackKitLifecycleRemove:
+		if !req.OwnerApproved {
+			return fmt.Errorf("remove requires explicit Owner approval")
+		}
+		if req.WorkloadRef == "" || req.WorkloadRef != strings.ToLower(req.WorkloadRef) {
+			return fmt.Errorf("remove requires one canonical workload ref")
 		}
 	default:
-		return req, fmt.Errorf("unsupported StackKit lifecycle operation %q", req.Operation)
+		return fmt.Errorf("unsupported StackKit lifecycle operation %q", req.Operation)
 	}
+	return nil
+}
+
+func validateDurableStackKitServiceAction(req StackKitLifecycleRequest) error {
 	if req.DurableJobID != "" || req.ServiceActionDigest != "" || req.ServiceID != "" {
 		if req.DurableJobID == "" || req.ServiceActionDigest == "" || req.ServiceID == "" || len(req.ServiceActionDigest) != sha256.Size*2 {
-			return req, fmt.Errorf("durable service action requires job ID, service ID, and SHA-256 request digest")
+			return fmt.Errorf("durable service action requires job ID, service ID, and SHA-256 request digest")
 		}
 	}
-	return req, nil
+	return nil
 }
 
 func StackKitLifecyclePayload(req StackKitLifecycleRequest) map[string]interface{} {
 	return map[string]interface{}{
+		"stackkit_instance_id":  req.StackKitInstanceID,
 		"tenant_id":             req.TenantID,
 		"owner_id":              req.OwnerID,
 		"agent_id":              req.AgentID,
+		"node_id":               req.NodeID,
 		"operation":             req.Operation,
 		"target_release":        req.TargetRelease,
 		"dry_run":               req.DryRun,
@@ -219,15 +286,18 @@ func StackKitLifecyclePayload(req StackKitLifecycleRequest) map[string]interface
 		"working_directory":     req.WorkingDirectory,
 		"spec_path":             req.SpecPath,
 		"stackkit":              req.StackKit,
+		"stackkit_id":           req.StackKit,
 		"stack_name":            req.StackName,
 		"domain":                req.Domain,
 		"expected_spec_hash":    req.ExpectedSpecHash,
+		"candidate_spec_json":   string(req.CandidateSpecJSON),
 		"service_key":           req.ServiceKey,
 		"log_tail":              req.LogTail,
 		"log_cursor":            req.LogCursor,
 		"service_id":            req.ServiceID,
 		"durable_job_id":        req.DurableJobID,
 		"service_action_digest": req.ServiceActionDigest,
+		"workload_ref":          req.WorkloadRef,
 	}
 }
 
@@ -245,13 +315,15 @@ func StackKitServiceActionReceipt(req StackKitLifecycleRequest) map[string]inter
 		return nil
 	}
 	return map[string]interface{}{
-		"schema_version": "techstack.service-action-receipt/v1",
-		"request_digest": req.ServiceActionDigest,
-		"service_id":     req.ServiceID,
-		"service_key":    req.ServiceKey,
-		"action":         strings.TrimPrefix(req.Operation, "service_"),
-		"log_tail":       req.LogTail,
-		"log_cursor":     req.LogCursor,
+		"schema_version":       "techstack.service-action-receipt/v1",
+		"techstack_id":         req.StackID,
+		"stackkit_instance_id": req.StackKitInstanceID,
+		"request_digest":       req.ServiceActionDigest,
+		"service_id":           req.ServiceID,
+		"service_key":          req.ServiceKey,
+		"action":               strings.TrimPrefix(req.Operation, "service_"),
+		"log_tail":             req.LogTail,
+		"log_cursor":           req.LogCursor,
 	}
 }
 
@@ -261,6 +333,12 @@ func MatchesStackKitServiceActionReceipt(result map[string]any, req StackKitLife
 		return false
 	}
 	want := StackKitServiceActionReceipt(req)
+	if actual := strings.TrimSpace(stringFromInterface(receipt["techstack_id"])); actual != "" && actual != req.StackID {
+		return false
+	}
+	if actual := strings.TrimSpace(stringFromInterface(receipt["stackkit_instance_id"])); actual != "" && actual != req.StackKitInstanceID {
+		return false
+	}
 	return stringFromInterface(receipt["schema_version"]) == stringFromInterface(want["schema_version"]) &&
 		stringFromInterface(receipt["request_digest"]) == req.ServiceActionDigest &&
 		stringFromInterface(receipt["service_id"]) == req.ServiceID &&
@@ -392,9 +470,11 @@ func stackKitLifecycleRequestFromJob(job *Job) (StackKitLifecycleRequest, error)
 	}
 	req := StackKitLifecycleRequest{
 		StackID:             job.TargetID,
+		StackKitInstanceID:  stringFromInterface(job.Payload["stackkit_instance_id"]),
 		TenantID:            stringFromInterface(job.Payload["tenant_id"]),
 		OwnerID:             stringFromInterface(job.Payload["owner_id"]),
 		AgentID:             stringFromInterface(job.Payload["agent_id"]),
+		NodeID:              stringFromInterface(job.Payload["node_id"]),
 		Operation:           stringFromInterface(job.Payload["operation"]),
 		TargetRelease:       stringFromInterface(job.Payload["target_release"]),
 		DryRun:              boolFromInterface(job.Payload["dry_run"]),
@@ -405,12 +485,14 @@ func stackKitLifecycleRequestFromJob(job *Job) (StackKitLifecycleRequest, error)
 		StackName:           stringFromInterface(job.Payload["stack_name"]),
 		Domain:              stringFromInterface(job.Payload["domain"]),
 		ExpectedSpecHash:    stringFromInterface(job.Payload["expected_spec_hash"]),
+		CandidateSpecJSON:   []byte(stringFromInterface(job.Payload["candidate_spec_json"])),
 		ServiceKey:          stringFromInterface(job.Payload["service_key"]),
 		LogTail:             int32FromInterface(job.Payload["log_tail"]),
 		LogCursor:           stringFromInterface(job.Payload["log_cursor"]),
 		ServiceID:           stringFromInterface(job.Payload["service_id"]),
 		DurableJobID:        stringFromInterface(job.Payload["durable_job_id"]),
 		ServiceActionDigest: stringFromInterface(job.Payload["service_action_digest"]),
+		WorkloadRef:         stringFromInterface(job.Payload["workload_ref"]),
 		StackKit: firstNonEmpty(
 			stringFromInterface(job.Payload["stackkit"]),
 			stringFromInterface(job.Payload["stackkit_catalog_ref"]),
@@ -448,13 +530,25 @@ func stackKitLifecycleCommand(commandID string, req StackKitLifecycleRequest, re
 		StackName:                req.StackName,
 		Domain:                   req.Domain,
 		ExpectedSpecHash:         req.ExpectedSpecHash,
-		InventoryJson:            append([]byte(nil), req.InventoryJSON...),
 		ServiceKey:               req.ServiceKey,
 		LogTail:                  req.LogTail,
 		LogCursor:                req.LogCursor,
+		StackkitInstanceId:       req.StackKitInstanceID,
+		WorkloadRef:              req.WorkloadRef,
+		AddressPrefix:            req.AddressPrefix,
+		BoundSpecPath:            req.BoundSpecPath,
 	}
 	if operation == agentpb.StackKitOperation_STACKKIT_OPERATION_DRIFT_RECONCILE {
 		command.DriftMode = agentpb.StackKitDriftMode_STACKKIT_DRIFT_MODE_STANDARD
+	}
+	if operation == agentpb.StackKitOperation_STACKKIT_OPERATION_INIT {
+		command.CandidateSpecJson = append([]byte(nil), req.CandidateSpecJSON...)
+		command.OwnerEmail = strings.TrimSpace(req.OwnerEmail)
+	} else {
+		// Init admits desired intent without Inventory. Deliver observed facts
+		// with the following operation, keeping the two bounded documents out
+		// of the same transport frame.
+		command.InventoryJson = append([]byte(nil), req.InventoryJSON...)
 	}
 	return command, nil
 }
@@ -485,6 +579,10 @@ func stackKitLifecycleAgentOperation(operation string) (agentpb.StackKitOperatio
 		return agentpb.StackKitOperation_STACKKIT_OPERATION_SERVICE_RESTART, nil
 	case StackKitLifecycleServiceLogs:
 		return agentpb.StackKitOperation_STACKKIT_OPERATION_SERVICE_LOGS, nil
+	case StackKitLifecycleRemove:
+		return agentpb.StackKitOperation_STACKKIT_OPERATION_REMOVE, nil
+	case StackKitLifecycleAddressBind:
+		return agentpb.StackKitOperation_STACKKIT_OPERATION_ADDRESS_BIND, nil
 	default:
 		return agentpb.StackKitOperation_STACKKIT_OPERATION_UNSPECIFIED, fmt.Errorf("unsupported StackKits lifecycle operation %q", operation)
 	}
@@ -494,19 +592,12 @@ func stackKitLifecycleTimeout(operation agentpb.StackKitOperation) int32 {
 	switch operation {
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_APPLY,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_UPGRADE,
-		agentpb.StackKitOperation_STACKKIT_OPERATION_DRIFT_RECONCILE:
+		agentpb.StackKitOperation_STACKKIT_OPERATION_DRIFT_RECONCILE,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_REMOVE:
 		return int32(stackKitWriteCommandTimeout / time.Second)
 	default:
 		return int32(stackKitReadCommandTimeout / time.Second)
 	}
-}
-
-func sendStackKitCommandBounded(ctx context.Context, sender StackKitCommandSender, agentID string, command *agentpb.StackKitCommand) (*agentpb.StackKitResult, error) {
-	return sendStackKitCommandBoundedWithGraceForTenant(ctx, sender, "", agentID, command, stackKitCommandResultGrace)
-}
-
-func sendStackKitCommandBoundedWithGrace(ctx context.Context, sender StackKitCommandSender, agentID string, command *agentpb.StackKitCommand, resultGrace time.Duration) (*agentpb.StackKitResult, error) {
-	return sendStackKitCommandBoundedWithGraceForTenant(ctx, sender, "", agentID, command, resultGrace)
 }
 
 func sendStackKitCommandBoundedForTenant(ctx context.Context, sender StackKitCommandSender, tenantID, agentID string, command *agentpb.StackKitCommand) (*agentpb.StackKitResult, error) {
@@ -550,15 +641,17 @@ func normalizeStackKitLifecycleResult(req StackKitLifecycleRequest, result *agen
 	}
 	status := stackKitLifecycleCommandDataStatus(commandResult)
 	normalized := map[string]interface{}{
-		"schema_version": "techstack.stackkit-lifecycle-result/v1",
-		"operation":      req.Operation,
-		"agent_id":       req.AgentID,
-		"success":        result.Success,
-		"exit_code":      result.ExitCode,
-		"status":         status,
-		"command_result": commandResult,
-		"events":         events,
-		"stderr":         result.Stderr,
+		"schema_version":       "techstack.stackkit-lifecycle-result/v1",
+		"techstack_id":         req.StackID,
+		"stackkit_instance_id": req.StackKitInstanceID,
+		"operation":            req.Operation,
+		"agent_id":             req.AgentID,
+		"success":              result.Success,
+		"exit_code":            result.ExitCode,
+		"status":               status,
+		"command_result":       commandResult,
+		"events":               events,
+		"stderr":               result.Stderr,
 		"release": map[string]interface{}{
 			"version":              result.Release.GetVersion(),
 			"platform_os":          result.Release.GetPlatformOs(),
@@ -580,7 +673,33 @@ func normalizeStackKitLifecycleResult(req StackKitLifecycleRequest, result *agen
 			normalized["service_logs"] = page
 		}
 	}
+	if req.Operation == StackKitLifecycleRemove && result.Success {
+		data, _ := commandResult["data"].(map[string]interface{})
+		raw := []byte(strings.TrimSpace(stringFromInterface(data["output"])))
+		evidence, err := workloadremoval.ParseEvidence(raw)
+		if err != nil {
+			return nil, fmt.Errorf("validate StackKits workload-removal evidence: %w", err)
+		}
+		if evidence.Authority.WorkloadRef != req.WorkloadRef {
+			return nil, fmt.Errorf("StackKits workload-removal evidence does not match dispatched workload authority")
+		}
+		var persisted map[string]interface{}
+		if err := json.Unmarshal(raw, &persisted); err != nil {
+			return nil, fmt.Errorf("persist StackKits workload-removal evidence: %w", err)
+		}
+		normalized["removal_evidence"] = persisted
+	}
 	return normalized, nil
+}
+
+func IsStackKitServiceLifecycleOperation(operation string) bool {
+	switch strings.ToLower(strings.TrimSpace(operation)) {
+	case StackKitLifecycleServiceStart, StackKitLifecycleServiceStop,
+		StackKitLifecycleServiceRestart, StackKitLifecycleServiceLogs:
+		return true
+	default:
+		return false
+	}
 }
 
 func stackKitLifecycleCommandDataStatus(commandResult map[string]interface{}) string {

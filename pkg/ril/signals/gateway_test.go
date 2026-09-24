@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/kombifyio/go-common/servicecall"
+	"github.com/kombifyio/techstack/internal/gocommon/servicecall"
 )
 
 func TestGatewayPublisherBindsServiceAndEndUserIdentity(t *testing.T) {

@@ -2,7 +2,6 @@ package routes
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"math"
@@ -11,29 +10,25 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
-	"github.com/kombifyio/techstack/pkg/identity"
 	"github.com/kombifyio/techstack/pkg/runtimehealth"
 	"github.com/kombifyio/techstack/pkg/runtimeidentity"
 	"github.com/kombifyio/techstack/pkg/serverregistry"
 	"github.com/kombifyio/techstack/pkg/serviceregistry"
-	"github.com/pocketbase/pocketbase/core"
 )
 
 const (
-	registryCollectionNodes    = "nodes"
 	registryCollectionServices = "services"
 	registryCollectionStacks   = "stacks"
 
 	registryResponseServersKey = "servers"
-	registryResponseStacksKey  = "stacks"
 
 	registryBaseKit                    = "basement-kit"
 	registryCloudKit                   = "cloud-kit"
 	registryFoundationRole             = "foundation"
-	registryNodeIDParam                = "nodeId"
 	registryServicePocketID            = "pocket_id"
 	registryServiceTypeAuth            = "auth"
 	registryServiceTraefik             = "traefik"
@@ -41,7 +36,6 @@ const (
 	registryServiceVault               = "vaultwarden"
 	registryServiceImmich              = "immich"
 	registryServiceFiles               = "files"
-	registryStackIDParam               = "stackId"
 	registryUnknownStatus              = "unknown"
 	registryObservedState              = "observed"
 	registryManagedState               = "managed"
@@ -66,47 +60,49 @@ const (
 var stackKitOutputManagementState = string(serviceregistry.ManagementStateForSource(stackKitOutputKey))
 
 type RegistryRouteStores struct {
-	Stacks   controlplane.StackStore
-	Workers  controlplane.WorkerStore
-	Registry controlplane.RegistryStore
-	Jobs     controlplane.JobStore
-	// Servers is the canonical serverregistry read model. When it is wired the
-	// legacy /api/v1/registry/* server projection sources identity, lifecycle,
-	// connection, health, and last-heartbeat from it instead of composing them
-	// from `nodes` + `workers`.
+	// AllowLocalHomeAssistant permits network probes from a self-hosted executor.
+	// Hosted instances need a separately authorized LAN executor instead.
+	AllowLocalHomeAssistant bool
+	Stacks                  controlplane.StackStore
+	Workers                 controlplane.WorkerStore
+	Registry                controlplane.RegistryStore
+	Jobs                    controlplane.JobStore
+	// Servers is the canonical serverregistry read model. The Registry Services
+	// BFF sources Node lifecycle, connection, health, and last-heartbeat from it
+	// instead of composing runtime state from `nodes` + `workers`.
 	Servers controlplane.ServerRuntimeStore
 }
 
-func RegisterRegistryRoutesWithStores(r *httpx.Router, app core.App, stores RegistryRouteStores) { // pocketbase-migration-compat: legacy app bridge while registry stores are wired
+func RegisterRegistryRoutesWithStores(r *httpx.Router, stores RegistryRouteStores) {
 	h := registryRouteHandlers{
-		app:           app,
-		stackStore:    stores.Stacks,
-		workerStore:   stores.Workers,
-		registryStore: stores.Registry,
-		jobStore:      stores.Jobs,
-		serverStore:   stores.Servers,
+		stackStore:              stores.Stacks,
+		workerStore:             stores.Workers,
+		registryStore:           stores.Registry,
+		jobStore:                stores.Jobs,
+		serverStore:             stores.Servers,
+		allowLocalHomeAssistant: stores.AllowLocalHomeAssistant,
 	}
-	r.GET("/api/v1/registry/servers", h.servers)
 	r.GET("/api/v1/registry/services", h.services)
 	r.POST("/api/v1/registry/services/attach", h.attachService)
 	r.POST("/api/v1/registry/services/import", h.importUnmanagedService)
+	r.POST("/api/v1/registry/services/home-assistant/import", h.importHomeAssistant)
 	r.POST("/api/v1/registry/services/migrate", h.migrateService)
 	r.POST("/api/v1/registry/services/verify", h.verifyService)
 	r.DELETE("/api/v1/registry/services/{id}", h.deleteService)
 }
 
 type registryRouteHandlers struct {
-	app           core.App // pocketbase-migration-compat: legacy fallback bridge
-	stackStore    controlplane.StackStore
-	workerStore   controlplane.WorkerStore
-	registryStore controlplane.RegistryStore
-	jobStore      controlplane.JobStore
-	serverStore   controlplane.ServerRuntimeStore
+	allowLocalHomeAssistant bool
+	stackStore              controlplane.StackStore
+	workerStore             controlplane.WorkerStore
+	registryStore           controlplane.RegistryStore
+	jobStore                controlplane.JobStore
+	serverStore             controlplane.ServerRuntimeStore
 }
 
 type registryPayload struct {
 	Catalog                    []registryCatalogService `json:"catalog"`
-	Stacks                     []registryStack          `json:"stacks"`
+	Stacks                     []registryStack          `json:"kit_deployments"`
 	Servers                    []registryServer         `json:"servers"`
 	Services                   []registryService        `json:"services"`
 	MigrationAvailable         bool                     `json:"migration_available"`
@@ -128,18 +124,18 @@ type registryStack struct {
 }
 
 type registryServer struct {
-	ID           string `json:"id"`
-	StackID      string `json:"stack_id"`
-	Name         string `json:"name"`
-	Hostname     string `json:"hostname"`
-	Role         string `json:"role"`
-	RoleLabel    string `json:"role_label"`
-	WorkerID     string `json:"worker_id,omitempty"`
-	LeaseID      string `json:"lease_id,omitempty"`
-	Status       string `json:"status,omitempty"`
-	HealthState  string `json:"health_state,omitempty"`
-	LastSeen     string `json:"last_seen,omitempty"`
-	RolloutReady bool   `json:"rollout_ready"`
+	ID              string `json:"id"`
+	KitDeploymentID string `json:"kit_deployment_id"`
+	Name            string `json:"name"`
+	Hostname        string `json:"hostname"`
+	Role            string `json:"role"`
+	RoleLabel       string `json:"role_label"`
+	WorkerID        string `json:"worker_id,omitempty"`
+	LeaseID         string `json:"lease_id,omitempty"`
+	Status          string `json:"status,omitempty"`
+	HealthState     string `json:"health_state,omitempty"`
+	LastSeen        string `json:"last_seen,omitempty"`
+	RolloutReady    bool   `json:"rollout_ready"`
 }
 
 type registryService struct {
@@ -157,7 +153,7 @@ type registryService struct {
 	PlacementScope    string `json:"placement_scope"`
 	MoveAllowed       bool   `json:"move_allowed"`
 	MoveBlockedReason string `json:"move_blocked_reason,omitempty"`
-	StackID           string `json:"stack_id"`
+	KitDeploymentID   string `json:"kit_deployment_id"`
 	StackName         string `json:"stack_name"`
 	ServerID          string `json:"server_id"`
 	ServerName        string `json:"server_name"`
@@ -186,17 +182,6 @@ type registryServiceRequest struct {
 	URL         string `json:"url"`
 }
 
-func (h registryRouteHandlers) servers(e *httpx.Event) error {
-	payload, err := h.registryPayload(e)
-	if err != nil {
-		return err
-	}
-	return httpx.Success(e, http.StatusOK, map[string]any{
-		registryResponseStacksKey:  payload.Stacks,
-		registryResponseServersKey: payload.Servers,
-	})
-}
-
 func (h registryRouteHandlers) services(e *httpx.Event) error {
 	payload, err := h.registryPayload(e)
 	if err != nil {
@@ -220,25 +205,27 @@ func (h registryRouteHandlers) attachService(e *httpx.Event) error {
 		return httpx.BadRequest(e, "Unknown catalog service", map[string]any{"service_id": req.ServiceID})
 	}
 
-	stack, node, ok, err := h.ownedRegistryNode(e, ownerID, req.StackID, req.ServerID)
+	tenantID, err := h.requireRegistryMutationTenant(e, ownerID, "techstack.registry.services.attach")
+	if err != nil {
+		return err
+	}
+	stack, node, ok, err := h.ownedRegistryNode(e, tenantID, ownerID, req.StackID, req.ServerID)
 	if err != nil || !ok {
 		return err
 	}
-
-	record, err := h.upsertService(node.Id, normalizeServiceKey(catalogService.ID))
+	serviceKey := normalizeServiceKey(catalogService.ID)
+	service, err := h.registryStore.UpsertService(e.Request.Context(), controlplane.Service{
+		ID: runtimeidentity.ServiceID(stack.ID, node.ID, serviceKey, "default"), TenantID: tenantID,
+		InstanceID: stack.InstanceID, StackID: stack.ID, NodeID: node.ID, ServiceKey: serviceKey,
+		Name: serviceKey, Status: preCheckStatusPending, Source: serviceregistry.SourceTechstackRegistry,
+		Metadata: map[string]any{"display_name": catalogService.DisplayName, "type": catalogService.Type},
+	})
 	if err != nil {
-		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Services collection not found. Please run migrations.", nil)
-	}
-	record.Set("display_name", catalogService.DisplayName)
-	record.Set(featureResponseTypeKey, catalogService.Type)
-	record.Set(preCheckStatusField, preCheckStatusPending)
-	setRegistryRecordTenantID(record, stack)
-	if err := h.app.Save(record); err != nil {
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to attach service", nil)
 	}
 
 	return httpx.Success(e, http.StatusOK, map[string]any{
-		"service": serviceRegistryRecord(record, stack, node),
+		"service": serviceRegistryRecordFromStore(*service, *stack, *node),
 	})
 }
 
@@ -257,31 +244,33 @@ func (h registryRouteHandlers) importUnmanagedService(e *httpx.Event) error {
 		return httpx.BadRequest(e, "Service name is required", nil)
 	}
 
-	stack, node, ok, err := h.ownedRegistryNode(e, ownerID, req.StackID, req.ServerID)
+	tenantID, err := h.requireRegistryMutationTenant(e, ownerID, "techstack.registry.services.import")
+	if err != nil {
+		return err
+	}
+	stack, node, ok, err := h.ownedRegistryNode(e, tenantID, ownerID, req.StackID, req.ServerID)
 	if err != nil || !ok {
 		return err
 	}
-
-	record, err := h.upsertService(node.Id, name)
-	if err != nil {
-		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Services collection not found. Please run migrations.", nil)
+	metadata := map[string]any{
+		"display_name": firstNonEmptyString(req.DisplayName, canonicalServiceDisplayName(name), name),
+		"type":         firstNonEmptyString(req.Type, registryCustomService),
 	}
-	record.Set("display_name", firstNonEmptyString(req.DisplayName, canonicalServiceDisplayName(name), name))
-	record.Set(featureResponseTypeKey, firstNonEmptyString(req.Type, registryCustomService))
-	record.Set(preCheckStatusField, registryObservedState)
 	if req.Port > 0 {
-		record.Set("port", req.Port)
+		metadata["port"] = req.Port
 	}
-	if req.URL != "" {
-		record.Set("url", strings.TrimSpace(req.URL))
-	}
-	setRegistryRecordTenantID(record, stack)
-	if err := h.app.Save(record); err != nil {
+	service, err := h.registryStore.UpsertService(e.Request.Context(), controlplane.Service{
+		ID: runtimeidentity.ServiceID(stack.ID, node.ID, name, "default"), TenantID: tenantID,
+		InstanceID: stack.InstanceID, StackID: stack.ID, NodeID: node.ID, ServiceKey: name,
+		Name: name, Status: registryObservedState, Source: serviceregistry.SourceObserved,
+		URL: strings.TrimSpace(req.URL), Metadata: metadata,
+	})
+	if err != nil {
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to import unmanaged service", nil)
 	}
 
 	return httpx.Success(e, http.StatusOK, map[string]any{
-		"service": serviceRegistryRecord(record, stack, node),
+		"service": serviceRegistryRecordFromStore(*service, *stack, *node),
 	})
 }
 
@@ -290,89 +279,22 @@ func (h registryRouteHandlers) registryPayload(e *httpx.Event) (registryPayload,
 	if err != nil {
 		return registryPayload{}, err
 	}
-	if h.stackStore != nil && h.registryStore != nil {
-		payload, storeErr := h.registryPayloadFromStore(e, ownerID)
-		if storeErr != nil {
-			return registryPayload{}, storeErr
-		}
-		return h.appendLegacyRegistryPayload(ownerID, payload)
-	}
-
-	payload := registryPayload{
-		Catalog:                    registryServiceCatalog(),
-		Stacks:                     []registryStack{},
-		Servers:                    []registryServer{},
-		Services:                   []registryService{},
-		MigrationAvailable:         false,
-		MigrationUnavailableReason: registryMigrationUnavailableReason,
-	}
-	return h.appendLegacyRegistryPayload(ownerID, payload)
-}
-
-func (h registryRouteHandlers) appendLegacyRegistryPayload(ownerID string, payload registryPayload) (registryPayload, error) {
-	if h.app == nil {
-		sortRegistryPayload(&payload)
-		return payload, nil
-	}
-	if _, err := h.app.FindCollectionByNameOrId(registryCollectionStacks); errors.Is(err, sql.ErrNoRows) {
-		sortRegistryPayload(&payload)
-		return payload, nil
-	} else if err != nil {
-		return registryPayload{}, httpx.NewInternalServerError("Failed to fetch stacks", nil)
-	}
-	seenStacks := make(map[string]struct{}, len(payload.Stacks))
-	for _, stack := range payload.Stacks {
-		seenStacks[stack.ID] = struct{}{}
-	}
-	stacks, err := h.app.FindRecordsByFilter(
-		registryCollectionStacks,
-		"owner_id = {:ownerId}",
-		backupNamePathKey,
-		200,
-		0,
-		map[string]any{preCheckOwnerIDParam: ownerID},
-	)
+	tenantID, err := requireRegistryRouteTenant(e, ownerID, "techstack.registry.read")
 	if err != nil {
-		return registryPayload{}, httpx.NewInternalServerError("Failed to fetch stacks", nil)
+		return registryPayload{}, err
 	}
-	for _, stack := range stacks {
-		if _, ok := seenStacks[stack.Id]; ok {
-			continue
-		}
-		payload.Stacks = append(payload.Stacks, stackRegistryRecord(stack))
-		nodes := h.stackNodes(stack.Id)
-		for _, node := range nodes {
-			payload.Servers = append(payload.Servers, serverRegistryRecord(node))
-			for _, service := range h.nodeServices(node.Id) {
-				payload.Services = append(payload.Services, serviceRegistryRecord(service, stack, node))
-			}
-		}
+	if h.stackStore == nil || h.registryStore == nil {
+		return registryPayload{}, httpx.NewInternalServerError("Canonical registry stores are unavailable", nil)
 	}
-	sortRegistryPayload(&payload)
-	return payload, nil
+	return h.registryPayloadFromStore(e, tenantID, ownerID)
 }
 
-func sortRegistryPayload(payload *registryPayload) {
-	if payload == nil {
-		return
-	}
-	sort.SliceStable(payload.Servers, func(i, j int) bool {
-		if payload.Servers[i].StackID != payload.Servers[j].StackID {
-			return payload.Servers[i].StackID < payload.Servers[j].StackID
-		}
-		return strings.ToLower(payload.Servers[i].Name) < strings.ToLower(payload.Servers[j].Name)
-	})
-	sort.SliceStable(payload.Services, func(i, j int) bool {
-		if payload.Services[i].StackName != payload.Services[j].StackName {
-			return strings.ToLower(payload.Services[i].StackName) < strings.ToLower(payload.Services[j].StackName)
-		}
-		return strings.ToLower(payload.Services[i].DisplayName) < strings.ToLower(payload.Services[j].DisplayName)
-	})
+func requireRegistryRouteTenant(e *httpx.Event, ownerID, capability string) (string, error) {
+	return tenantguard.TenantScope(requestExplicitTenantID(e), ownerID, capability)
 }
 
 //nolint:gocyclo // Aggregates services, workers, runtime metrics, and stack ownership into one registry BFF payload.
-func (h registryRouteHandlers) registryPayloadFromStore(e *httpx.Event, ownerID string) (registryPayload, error) {
-	tenantID := requestTenantID(e, ownerID)
+func (h registryRouteHandlers) registryPayloadFromStore(e *httpx.Event, tenantID, ownerID string) (registryPayload, error) {
 	stacks, err := h.stackStore.ListStacksByTenant(e.Request.Context(), tenantID)
 	if err != nil {
 		return registryPayload{}, httpx.NewInternalServerError("Failed to fetch stacks", nil)
@@ -443,8 +365,8 @@ func (h registryRouteHandlers) registryPayloadFromStore(e *httpx.Event, ownerID 
 	}
 
 	sort.SliceStable(payload.Servers, func(i, j int) bool {
-		if payload.Servers[i].StackID != payload.Servers[j].StackID {
-			return payload.Servers[i].StackID < payload.Servers[j].StackID
+		if payload.Servers[i].KitDeploymentID != payload.Servers[j].KitDeploymentID {
+			return payload.Servers[i].KitDeploymentID < payload.Servers[j].KitDeploymentID
 		}
 		return strings.ToLower(payload.Servers[i].Name) < strings.ToLower(payload.Servers[j].Name)
 	})
@@ -457,7 +379,7 @@ func (h registryRouteHandlers) registryPayloadFromStore(e *httpx.Event, ownerID 
 	return payload, nil
 }
 
-func (h registryRouteHandlers) ownedRegistryNode(e *httpx.Event, ownerID, stackID, nodeID string) (*core.Record, *core.Record, bool, error) {
+func (h registryRouteHandlers) ownedRegistryNode(e *httpx.Event, tenantID, ownerID, stackID, nodeID string) (*controlplane.Stack, *controlplane.Node, bool, error) {
 	stackID = strings.TrimSpace(stackID)
 	nodeID = strings.TrimSpace(nodeID)
 	if stackID == "" {
@@ -466,82 +388,27 @@ func (h registryRouteHandlers) ownedRegistryNode(e *httpx.Event, ownerID, stackI
 	if nodeID == "" {
 		return nil, nil, false, httpx.BadRequest(e, "Server ID is required", nil)
 	}
-
-	stack, err := h.app.FindRecordById("stacks", stackID)
-	if err != nil {
+	stack, err := h.stackStore.GetStack(e.Request.Context(), tenantID, stackID)
+	if errors.Is(err, controlplane.ErrNotFound) {
 		return nil, nil, false, httpx.NotFound(e, "Stack not found")
 	}
-	if stack.GetString("owner_id") != ownerID {
+	if err != nil {
+		return nil, nil, false, httpx.NewInternalServerError("Failed to fetch stack", nil)
+	}
+	if stack.OwnerSubjectID != ownerID {
 		return nil, nil, false, httpx.Forbidden(e, "Not your stack")
 	}
-
-	node, err := h.app.FindRecordById("nodes", nodeID)
-	if err != nil {
+	node, err := h.registryStore.GetNode(e.Request.Context(), tenantID, nodeID)
+	if errors.Is(err, controlplane.ErrNotFound) {
 		return nil, nil, false, httpx.NotFound(e, "Server not found")
 	}
-	if node.GetString(preCheckStackIDField) != stack.Id {
+	if err != nil {
+		return nil, nil, false, httpx.NewInternalServerError("Failed to fetch server", nil)
+	}
+	if node.StackID != stack.ID {
 		return nil, nil, false, httpx.NotFound(e, "Server not found for stack")
 	}
 	return stack, node, true, nil
-}
-
-func (h registryRouteHandlers) upsertService(nodeID, name string) (*core.Record, error) {
-	record, _ := h.app.FindFirstRecordByFilter(
-		registryCollectionServices,
-		"node_id = {:nodeId} && name = {:name}",
-		map[string]any{registryNodeIDParam: nodeID, backupNamePathKey: name},
-	)
-	if record != nil {
-		return record, nil
-	}
-
-	collection, err := h.app.FindCollectionByNameOrId(registryCollectionServices)
-	if err != nil {
-		return nil, err
-	}
-	record = core.NewRecord(collection)
-	record.Set("node_id", nodeID)
-	record.Set(backupNamePathKey, name)
-	return record, nil
-}
-
-func (h registryRouteHandlers) stackNodes(stackID string) []*core.Record {
-	nodes, err := h.app.FindRecordsByFilter(
-		registryCollectionNodes,
-		"stack_id = {:stackId}",
-		backupNamePathKey,
-		200,
-		0,
-		map[string]any{registryStackIDParam: stackID},
-	)
-	if err != nil {
-		return nil
-	}
-	return nodes
-}
-
-func (h registryRouteHandlers) nodeServices(nodeID string) []*core.Record {
-	services, err := h.app.FindRecordsByFilter(
-		registryCollectionServices,
-		"node_id = {:nodeId}",
-		backupNamePathKey,
-		200,
-		0,
-		map[string]any{registryNodeIDParam: nodeID},
-	)
-	if err != nil {
-		return nil
-	}
-	return services
-}
-
-func setRegistryRecordTenantID(record, stack *core.Record) {
-	if record == nil || stack == nil {
-		return
-	}
-	if tenantID := strings.TrimSpace(stack.GetString("tenant_id")); tenantID != "" {
-		record.Set("tenant_id", tenantID)
-	}
 }
 
 func readRegistryServiceRequest(e *httpx.Event) (registryServiceRequest, error) {
@@ -557,23 +424,6 @@ func readRegistryServiceRequest(e *httpx.Event) (registryServiceRequest, error) 
 	req.Type = normalizeServiceKey(req.Type)
 	req.URL = strings.TrimSpace(req.URL)
 	return req, nil
-}
-
-func stackRegistryRecord(stack *core.Record) registryStack {
-	foundation := normalizeRegistryStackKitFoundation(firstNonEmptyString(stack.GetString("stackkit_catalog_ref"), registryBaseKit))
-	return registryStack{
-		ID:                     stack.Id,
-		Name:                   firstNonEmptyString(stack.GetString(backupNamePathKey), stack.Id),
-		Status:                 firstNonEmptyString(stack.GetString(preCheckStatusField), registryUnknownStatus),
-		StackKitFoundation:     foundation,
-		ServerMode:             stack.GetString("server_mode"),
-		RuntimeLane:            stack.GetString("runtime_lane"),
-		RuntimeOfferingID:      stack.GetString("runtime_offering_id"),
-		LeaseProvider:          stack.GetString("lease_provider"),
-		ProviderRegion:         stack.GetString("provider_region"),
-		IONOSDatacenter:        stack.GetString("ionos_datacenter"),
-		ServerProvisioningMode: stack.GetString("server_provisioning_mode"),
-	}
 }
 
 func stackRegistryRecordFromStore(stack controlplane.Stack) registryStack {
@@ -600,29 +450,12 @@ func stackRegistryRecordFromStore(stack controlplane.Stack) registryStack {
 
 func normalizeRegistryStackKitFoundation(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", "base-kit", "basement", "basementkit":
+	case "", "basement", "basementkit":
 		return registryBaseKit
 	case "cloud", "cloudkit", "kombify-cloud-kit":
 		return registryCloudKit
 	default:
 		return strings.TrimSpace(value)
-	}
-}
-
-func serverRegistryRecord(node *core.Record) registryServer {
-	role := strings.TrimSpace(node.GetString("role"))
-	if role == "" {
-		role = registryFoundationRole
-	}
-	return registryServer{
-		ID:           node.Id,
-		StackID:      node.GetString(preCheckStackIDField),
-		Name:         firstNonEmptyString(node.GetString(workerFieldHostname), node.GetString(backupNamePathKey), node.Id),
-		Hostname:     node.GetString(workerFieldHostname),
-		Role:         role,
-		RoleLabel:    registryRoleLabel(role),
-		WorkerID:     node.GetString("worker_id"),
-		RolloutReady: true,
 	}
 }
 
@@ -717,18 +550,18 @@ func matchCanonicalServerForNode(runtimes []controlplane.ServerRuntime, consumed
 	return controlplane.ServerRuntime{}, false
 }
 
-// registryServerFromCanonical maps the canonical aggregate onto the unchanged
-// legacy JSON contract. Documented mapping (canonical -> legacy):
+// registryServerFromCanonical maps the canonical aggregate onto the Registry
+// Services BFF Node projection. Documented mapping (canonical -> projection):
 //
 //	id            <- Aggregate.ID                (same value as /api/v1/servers `id`)
-//	stack_id      <- Aggregate.StackID
+//	kit_deployment_id <- Aggregate.StackID
 //	name          <- Aggregate.Name
 //	worker_id     <- Aggregate.WorkerID
 //	lease_id      <- Aggregate.LeaseID
 //	last_seen     <- Aggregate.LastHeartbeatAt   (RFC3339Nano, same instant as
 //	                                              connection.last_heartbeat_at)
 //	status        <- serverregistry.LegacyServerState(connection, health)
-//	health_state  <- same value as status; the legacy shape carries the single
+//	health_state  <- same value as status; the BFF shape carries the single
 //	                 collapsed state twice and clients read both
 //	rollout_ready <- serverregistry.LegacyRolloutReady(lifecycle, connection, health)
 //
@@ -745,18 +578,18 @@ func registryServerFromCanonical(runtime controlplane.ServerRuntime, node contro
 	name := firstNonEmptyString(runtime.Name, node.Name, runtime.WorkerID, runtime.ID)
 	state := serverregistry.LegacyServerState(runtime.ConnectionState, runtime.HealthState)
 	return registryServer{
-		ID:           runtime.ID,
-		StackID:      firstNonEmptyString(runtime.StackID, node.StackID),
-		Name:         name,
-		Hostname:     firstNonEmptyString(node.Name, name),
-		Role:         role,
-		RoleLabel:    registryRoleLabel(role),
-		WorkerID:     firstNonEmptyString(runtime.WorkerID, node.WorkerID),
-		LeaseID:      firstNonEmptyString(runtime.LeaseID, stringFromAnyMap(node.Metadata, runtimeLeaseIDKey)),
-		Status:       string(state),
-		HealthState:  string(state),
-		LastSeen:     formatOptionalTime(runtime.LastHeartbeatAt),
-		RolloutReady: serverregistry.LegacyRolloutReady(runtime.LifecycleState, runtime.ConnectionState, runtime.HealthState),
+		ID:              runtime.ID,
+		KitDeploymentID: firstNonEmptyString(runtime.StackID, node.StackID),
+		Name:            name,
+		Hostname:        firstNonEmptyString(node.Name, name),
+		Role:            role,
+		RoleLabel:       registryRoleLabel(role),
+		WorkerID:        firstNonEmptyString(runtime.WorkerID, node.WorkerID),
+		LeaseID:         firstNonEmptyString(runtime.LeaseID, stringFromAnyMap(node.Metadata, runtimeLeaseIDKey)),
+		Status:          string(state),
+		HealthState:     string(state),
+		LastSeen:        formatOptionalTime(runtime.LastHeartbeatAt),
+		RolloutReady:    serverregistry.LegacyRolloutReady(runtime.LifecycleState, runtime.ConnectionState, runtime.HealthState),
 	}
 }
 
@@ -768,9 +601,8 @@ func registryServerFromCanonical(runtime controlplane.ServerRuntime, node contro
 // time. `nodes` and `workers` are read-only satellites now — they contribute
 // identity and shape (hostname, role), never a runtime verdict. A row without
 // an aggregate projects as `provisioned` and is never rollout-ready, so the
-// legacy list can still show that the server exists without claiming a health
-// state nothing persisted. The row itself is untouched; reverting this commit
-// restores the old projection.
+// Registry Services can still show that the server exists without claiming a
+// health state nothing persisted. The row itself is untouched.
 func serverRegistryRecordFromStoreWithHealth(node controlplane.Node, worker controlplane.Worker, _ time.Time) registryServer {
 	role := strings.TrimSpace(node.Role)
 	if role == "" {
@@ -779,18 +611,18 @@ func serverRegistryRecordFromStoreWithHealth(node controlplane.Node, worker cont
 	name := firstNonEmptyString(node.Name, node.WorkerID, node.ID)
 	state := serverregistry.LegacySatelliteState()
 	return registryServer{
-		ID:           node.ID,
-		StackID:      node.StackID,
-		Name:         name,
-		Hostname:     name,
-		Role:         role,
-		RoleLabel:    registryRoleLabel(role),
-		WorkerID:     node.WorkerID,
-		LeaseID:      firstNonEmptyString(stringFromAnyMap(node.Metadata, "lease_id"), stringFromAnyMap(worker.Capabilities, "lease_id")),
-		Status:       string(state),
-		HealthState:  string(state),
-		LastSeen:     formatOptionalTime(worker.LastSeenAt),
-		RolloutReady: state == runtimehealth.ServerHealthy,
+		ID:              node.ID,
+		KitDeploymentID: node.StackID,
+		Name:            name,
+		Hostname:        name,
+		Role:            role,
+		RoleLabel:       registryRoleLabel(role),
+		WorkerID:        node.WorkerID,
+		LeaseID:         firstNonEmptyString(stringFromAnyMap(node.Metadata, "lease_id"), stringFromAnyMap(worker.Capabilities, "lease_id")),
+		Status:          string(state),
+		HealthState:     string(state),
+		LastSeen:        formatOptionalTime(worker.LastSeenAt),
+		RolloutReady:    state == runtimehealth.ServerHealthy,
 	}
 }
 
@@ -806,48 +638,18 @@ func serverRegistryRecordFromWorkerStore(worker controlplane.Worker) registrySer
 	name := firstNonEmptyString(worker.Hostname, worker.ID)
 	state := serverregistry.LegacySatelliteState()
 	return registryServer{
-		ID:           worker.ID,
-		StackID:      worker.StackID,
-		Name:         name,
-		Hostname:     name,
-		Role:         role,
-		RoleLabel:    registryRoleLabel(role),
-		WorkerID:     worker.ID,
-		LeaseID:      stringFromAnyMap(worker.Capabilities, "lease_id"),
-		Status:       string(state),
-		HealthState:  string(state),
-		LastSeen:     formatOptionalTime(worker.LastSeenAt),
-		RolloutReady: worker.Approved && state == runtimehealth.ServerHealthy,
-	}
-}
-
-func serviceRegistryRecord(service, stack, node *core.Record) registryService {
-	name := normalizeServiceKey(service.GetString(backupNamePathKey))
-	status := firstNonEmptyString(service.GetString(preCheckStatusField), registryUnknownStatus)
-	managementState := registryRecordManagementState(service)
-	displayName := firstNonEmptyString(service.GetString("display_name"), canonicalServiceDisplayName(name), name)
-	moveAllowed, moveBlockedReason := registryServiceMoveEligibility(status, managementState)
-	return registryService{
-		ID:              service.Id,
+		ID:              worker.ID,
+		KitDeploymentID: worker.StackID,
 		Name:            name,
-		DisplayName:     displayName,
-		ApplicationKey:  name,
-		ApplicationName: displayName,
-		Type:            firstNonEmptyString(service.GetString(featureResponseTypeKey), canonicalServiceType(name)),
-		Status:          status,
-		ManagementState: managementState,
-		// Runtime health/status is not migration evidence. Only the dedicated
-		// field may opt a service into the migration presentation.
-		MigrationStatus:   strings.TrimSpace(service.GetString("migration_status")),
-		PlacementScope:    registryPlacementScopeStack,
-		MoveAllowed:       moveAllowed,
-		MoveBlockedReason: moveBlockedReason,
-		StackID:           stack.Id,
-		StackName:         firstNonEmptyString(stack.GetString(backupNamePathKey), stack.Id),
-		ServerID:          node.Id,
-		ServerName:        firstNonEmptyString(node.GetString(workerFieldHostname), node.GetString(backupNamePathKey), node.Id),
-		Port:              service.GetInt("port"),
-		URL:               service.GetString("url"),
+		Hostname:        name,
+		Role:            role,
+		RoleLabel:       registryRoleLabel(role),
+		WorkerID:        worker.ID,
+		LeaseID:         stringFromAnyMap(worker.Capabilities, "lease_id"),
+		Status:          string(state),
+		HealthState:     string(state),
+		LastSeen:        formatOptionalTime(worker.LastSeenAt),
+		RolloutReady:    worker.Approved && state == runtimehealth.ServerHealthy,
 	}
 }
 
@@ -893,7 +695,7 @@ func serviceRegistryRecordFromStoreWithHealth(service controlplane.Service, stac
 		PlacementScope:    registryPlacementScopeStack,
 		MoveAllowed:       moveAllowed,
 		MoveBlockedReason: moveBlockedReason,
-		StackID:           stack.ID,
+		KitDeploymentID:   stack.ID,
 		StackName:         firstNonEmptyString(stack.Name, stack.ID),
 		ServerID:          firstNonEmptyString(node.ID, service.NodeID),
 		ServerName:        nodeName,
@@ -965,7 +767,7 @@ func registryServicesFromStackKitOutputs(outputs map[string]any, stack controlpl
 			PlacementScope:    registryPlacementScopeStack,
 			MoveAllowed:       moveAllowed,
 			MoveBlockedReason: moveBlockedReason,
-			StackID:           stack.ID,
+			KitDeploymentID:   stack.ID,
 			StackName:         firstNonEmptyString(stack.Name, stack.ID),
 			ServerID:          server.ID,
 			ServerName:        firstNonEmptyString(server.Name, server.Hostname),
@@ -1089,102 +891,21 @@ func (h registryRouteHandlers) migrateService(e *httpx.Event) error {
 	if req.ServiceID == "" || req.TargetServerID == "" {
 		return httpx.BadRequest(e, "Service ID and target Server ID are required", nil)
 	}
+	tenantID, err := h.requireRegistryMutationTenant(e, ownerID, "techstack.registry.services.migrate")
+	if err != nil {
+		return err
+	}
 	// Fail closed until this route is backed by a durable runtime workflow.
 	// The retired metadata-only implementation copied a row and completed a job
 	// without deploying, probing, cutting over, or draining a workload.
 	if !registryMigrationRuntimeAvailable() {
 		return registryMigrationUnavailable(e)
 	}
-
-	if tenantID, ok := h.registryTenantID(e); ok {
-		handled, err := h.migrateServiceFromStore(e, tenantID, ownerID, req.ServiceID, req.TargetServerID)
-		if handled || err != nil {
-			return err
-		}
-	}
-
-	// Find original service
-	serviceRecord, err := h.app.FindRecordById(registryCollectionServices, req.ServiceID)
-	if err != nil {
+	handled, err := h.migrateServiceFromStore(e, tenantID, ownerID, req.ServiceID, req.TargetServerID)
+	if !handled && err == nil {
 		return httpx.NotFound(e, "Service not found")
 	}
-
-	// Get node and stack to check ownership
-	nodeID := serviceRecord.GetString("node_id")
-	nodeRecord, err := h.app.FindRecordById(registryCollectionNodes, nodeID)
-	if err != nil {
-		return httpx.NotFound(e, "Source server not found")
-	}
-	stackID := nodeRecord.GetString(preCheckStackIDField)
-	stackRecord, err := h.app.FindRecordById(registryCollectionStacks, stackID)
-	if err != nil {
-		return httpx.NotFound(e, "Stack not found")
-	}
-	if stackRecord.GetString("owner_id") != ownerID {
-		return httpx.Forbidden(e, "Not your stack")
-	}
-
-	// Find target server and check ownership
-	targetNodeRecord, err := h.app.FindRecordById(registryCollectionNodes, req.TargetServerID)
-	if err != nil {
-		return httpx.NotFound(e, "Target server not found")
-	}
-	if targetNodeRecord.GetString(preCheckStackIDField) != stackID {
-		return httpx.BadRequest(e, "Target server must belong to the same stack", nil)
-	}
-	if targetNodeRecord.Id == nodeRecord.Id {
-		return httpx.BadRequest(e, "Target server must be different from the source server", nil)
-	}
-
-	moveAllowed, moveBlockedReason := registryRecordMoveEligibility(serviceRecord)
-	if !moveAllowed {
-		return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "Application cannot be moved", map[string]any{
-			"service_id": req.ServiceID,
-			"status":     serviceRecord.GetString(preCheckStatusField),
-			"reason":     moveBlockedReason,
-		})
-	}
-
-	if duplicate := h.activeServiceOnNode(req.TargetServerID, serviceRecord.GetString(backupNamePathKey)); duplicate != nil {
-		return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "Target server already has an active service with this name", map[string]any{
-			"service_id":        req.ServiceID,
-			"target_server_id":  req.TargetServerID,
-			"target_service_id": duplicate.Id,
-		})
-	}
-
-	serviceRecord.Set(preCheckStatusField, registryStatusMigrating)
-	if err := h.app.Save(serviceRecord); err != nil {
-		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to update source service status", nil)
-	}
-
-	collection, err := h.app.FindCollectionByNameOrId(registryCollectionServices)
-	if err != nil {
-		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Services collection error", nil)
-	}
-	targetServiceRecord := core.NewRecord(collection)
-	targetServiceRecord.Set("node_id", req.TargetServerID)
-	targetServiceRecord.Set(backupNamePathKey, serviceRecord.GetString(backupNamePathKey))
-	targetServiceRecord.Set("display_name", serviceRecord.GetString("display_name"))
-	targetServiceRecord.Set(featureResponseTypeKey, serviceRecord.GetString(featureResponseTypeKey))
-	targetServiceRecord.Set(preCheckStatusField, registryStatusPendingVerification)
-	targetServiceRecord.Set("port", serviceRecord.GetInt("port"))
-	targetServiceRecord.Set("url", serviceRecord.GetString("url"))
-	setRegistryRecordTenantID(targetServiceRecord, stackRecord)
-
-	if err := h.app.Save(targetServiceRecord); err != nil {
-		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to create target service", nil)
-	}
-	jobID, err := h.createServiceMigrationJob(stackRecord, serviceRecord, targetServiceRecord)
-	if err != nil {
-		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to create migration job", nil)
-	}
-
-	return httpx.Success(e, http.StatusOK, map[string]any{
-		"job_id":         jobID,
-		"source_service": serviceRegistryRecord(serviceRecord, stackRecord, nodeRecord),
-		"target_service": serviceRegistryRecord(targetServiceRecord, stackRecord, targetNodeRecord),
-	})
+	return err
 }
 
 func (h registryRouteHandlers) verifyService(e *httpx.Event) error {
@@ -1202,89 +923,21 @@ func (h registryRouteHandlers) verifyService(e *httpx.Event) error {
 	if req.ServiceID == "" {
 		return httpx.BadRequest(e, "Service ID is required", nil)
 	}
+	tenantID, err := h.requireRegistryMutationTenant(e, ownerID, "techstack.registry.services.verify")
+	if err != nil {
+		return err
+	}
 	// Manual confirmation must never manufacture a healthy target. A future
 	// executor will replace this guard only after current target inventory and
 	// health evidence have been verified.
 	if !registryMigrationRuntimeAvailable() {
 		return registryMigrationUnavailable(e)
 	}
-
-	if tenantID, ok := h.registryTenantID(e); ok {
-		handled, err := h.verifyServiceFromStore(e, tenantID, ownerID, req.ServiceID)
-		if handled || err != nil {
-			return err
-		}
-	}
-
-	// Find service record
-	serviceRecord, err := h.app.FindRecordById(registryCollectionServices, req.ServiceID)
-	if err != nil {
+	handled, err := h.verifyServiceFromStore(e, tenantID, ownerID, req.ServiceID)
+	if !handled && err == nil {
 		return httpx.NotFound(e, "Service not found")
 	}
-
-	// Verify ownership
-	nodeID := serviceRecord.GetString("node_id")
-	nodeRecord, err := h.app.FindRecordById(registryCollectionNodes, nodeID)
-	if err != nil {
-		return httpx.NotFound(e, "Server not found")
-	}
-	stackID := nodeRecord.GetString(preCheckStackIDField)
-	stackRecord, err := h.app.FindRecordById(registryCollectionStacks, stackID)
-	if err != nil {
-		return httpx.NotFound(e, "Stack not found")
-	}
-	if stackRecord.GetString("owner_id") != ownerID {
-		return httpx.Forbidden(e, "Not your stack")
-	}
-
-	if serviceRecord.GetString(preCheckStatusField) != registryStatusPendingVerification {
-		return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "Only applications pending verification can be finished", map[string]any{
-			"service_id": req.ServiceID,
-			"status":     serviceRecord.GetString(preCheckStatusField),
-		})
-	}
-
-	serviceRecord.Set(preCheckStatusField, "running")
-	serviceRecord.Set("migration_status", "")
-	if err := h.app.Save(serviceRecord); err != nil {
-		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to update service status", nil)
-	}
-
-	// Find old service with same name in same stack on other nodes, set to archived
-	serviceName := serviceRecord.GetString(backupNamePathKey)
-	nodes := h.stackNodes(stackID)
-	var archivedService *core.Record
-	var archivedNode *core.Record
-
-	for _, n := range nodes {
-		if n.Id == nodeID {
-			continue
-		}
-		oldService, _ := h.app.FindFirstRecordByFilter(
-			registryCollectionServices,
-			"node_id = {:nodeId} && name = {:name} && status = {:status}",
-			map[string]any{"nodeId": n.Id, backupNamePathKey: serviceName, "status": registryStatusMigrating},
-		)
-		if oldService != nil {
-			oldService.Set(preCheckStatusField, registryStatusArchived)
-			if err := h.app.Save(oldService); err != nil {
-				h.app.Logger().Warn("failed to archive superseded service record", "error", err)
-			}
-			archivedService = oldService
-			archivedNode = n
-			break
-		}
-	}
-
-	var archivedServiceData any
-	if archivedService != nil {
-		archivedServiceData = serviceRegistryRecord(archivedService, stackRecord, archivedNode)
-	}
-
-	return httpx.Success(e, http.StatusOK, map[string]any{
-		"service":          serviceRegistryRecord(serviceRecord, stackRecord, nodeRecord),
-		"archived_service": archivedServiceData,
-	})
+	return err
 }
 
 func (h registryRouteHandlers) deleteService(e *httpx.Event) error {
@@ -1296,66 +949,26 @@ func (h registryRouteHandlers) deleteService(e *httpx.Event) error {
 	if serviceID == "" {
 		return httpx.BadRequest(e, "Service ID is required", nil)
 	}
-
-	if tenantID, ok := h.registryTenantID(e); ok {
-		handled, err := h.deleteServiceFromStore(e, tenantID, ownerID, serviceID)
-		if handled || err != nil {
-			return err
-		}
-	}
-
-	// Find service record
-	serviceRecord, err := h.app.FindRecordById(registryCollectionServices, serviceID)
+	tenantID, err := h.requireRegistryMutationTenant(e, ownerID, "techstack.registry.services.delete")
 	if err != nil {
+		return err
+	}
+	handled, err := h.deleteServiceFromStore(e, tenantID, ownerID, serviceID)
+	if !handled && err == nil {
 		return httpx.NotFound(e, "Service not found")
 	}
-
-	// Verify ownership
-	nodeID := serviceRecord.GetString("node_id")
-	nodeRecord, err := h.app.FindRecordById(registryCollectionNodes, nodeID)
-	if err != nil {
-		return httpx.NotFound(e, "Server not found")
-	}
-	stackID := nodeRecord.GetString(preCheckStackIDField)
-	stackRecord, err := h.app.FindRecordById(registryCollectionStacks, stackID)
-	if err != nil {
-		return httpx.NotFound(e, "Stack not found")
-	}
-	if stackRecord.GetString("owner_id") != ownerID {
-		return httpx.Forbidden(e, "Not your stack")
-	}
-
-	if serviceRecord.GetString(preCheckStatusField) != registryStatusArchived {
-		return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "Only archived application copies can be deleted from the Registry", map[string]any{
-			"service_id": serviceID,
-			"status":     serviceRecord.GetString(preCheckStatusField),
-		})
-	}
-
-	if err := h.app.Delete(serviceRecord); err != nil {
-		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to delete service", nil)
-	}
-
-	return httpx.Success(e, http.StatusOK, map[string]any{
-		"message": "Service successfully deleted",
-		"id":      serviceID,
-	})
+	return err
 }
 
-func (h registryRouteHandlers) registryTenantID(e *httpx.Event) (string, bool) {
-	if h.registryStore == nil || h.stackStore == nil || e == nil || e.Request == nil {
-		return "", false
+func (h registryRouteHandlers) requireRegistryMutationTenant(e *httpx.Event, ownerID, capability string) (string, error) {
+	tenantID, err := requireRegistryRouteTenant(e, ownerID, capability)
+	if err != nil {
+		return "", err
 	}
-	id := identity.FromContext(e.Request.Context())
-	if id != nil && strings.TrimSpace(id.OrgID) != "" {
-		return strings.TrimSpace(id.OrgID), true
+	if h.registryStore == nil || h.stackStore == nil {
+		return "", httpx.NewInternalServerError("Canonical registry stores are unavailable", nil)
 	}
-	if e.Auth != nil {
-		if tenantID := strings.TrimSpace(e.Auth.GetString("org_id")); tenantID != "" {
-			return tenantID, true
-		}
-	}
-	return "", false
+	return tenantID, nil
 }
 
 func (h registryRouteHandlers) migrateServiceFromStore(e *httpx.Event, tenantID, ownerID, serviceID, targetServerID string) (bool, error) {
@@ -1519,9 +1132,6 @@ func (h registryRouteHandlers) verifyServiceFromStore(e *httpx.Event, tenantID, 
 			candidate.MigrationStatus = registryStatusArchived
 			saved, saveErr := h.registryStore.UpsertService(ctx, candidate)
 			if saveErr != nil {
-				if h.app != nil {
-					h.app.Logger().Warn("failed to archive superseded store service record", "error", saveErr)
-				}
 				continue
 			}
 			archivedService = saved
@@ -1732,36 +1342,6 @@ func cloneRegistryMetadata(in map[string]any) map[string]any {
 	return out
 }
 
-// registryRecordManagementState is the ONE ownership read of the PocketBase
-// compatibility bridge. That collection predates `services.source` and has no
-// persisted management column, so it projects its two legacy markers through
-// the same canonical rule the aggregate write boundary and the 074 backfill
-// use. Store-backed routes read the persisted column instead.
-func registryRecordManagementState(service *core.Record) string { // pocketbase-migration-compat: legacy registry record fallback
-	if service == nil {
-		return registryObservedState
-	}
-	return string(serviceregistry.ManagementStateForLegacyRecord(
-		"",
-		firstNonEmptyString(service.GetString(preCheckStatusField), registryUnknownStatus),
-		service.GetString(featureResponseTypeKey),
-	))
-}
-
-func isRegistryManagedRecord(service *core.Record) bool {
-	return service != nil && registryRecordManagementState(service) == registryManagedState
-}
-
-func registryRecordMoveEligibility(service *core.Record) (bool, string) { // pocketbase-migration-compat: legacy registry record fallback
-	if !isRegistryManagedRecord(service) {
-		return false, "Observed unmanaged applications must be adopted before they can be moved."
-	}
-	return registryServiceMoveEligibility(
-		firstNonEmptyString(service.GetString(preCheckStatusField), registryUnknownStatus),
-		registryRecordManagementState(service),
-	)
-}
-
 func registryServiceMoveEligibility(status, managementState string) (bool, string) {
 	// The Registry currently has no runtime migration executor. Keeping every
 	// service immovable prevents the UI and direct API clients from presenting a
@@ -1802,51 +1382,4 @@ func registryMigrationUnavailable(e *httpx.Event) error {
 // transition.
 func registryMigrationRuntimeAvailable() bool {
 	return false
-}
-
-func (h registryRouteHandlers) activeServiceOnNode(nodeID, serviceName string) *core.Record {
-	serviceName = normalizeServiceKey(serviceName)
-	if serviceName == "" {
-		return nil
-	}
-	services := h.nodeServices(nodeID)
-	for _, service := range services {
-		if normalizeServiceKey(service.GetString(backupNamePathKey)) != serviceName {
-			continue
-		}
-		if service.GetString(preCheckStatusField) == registryStatusArchived {
-			continue
-		}
-		return service
-	}
-	return nil
-}
-
-func (h registryRouteHandlers) createServiceMigrationJob(stack, source, target *core.Record) (string, error) {
-	jobsCollection, err := h.app.FindCollectionByNameOrId("jobs")
-	if err != nil {
-		return "", err
-	}
-	job := core.NewRecord(jobsCollection)
-	job.Set("type", "update")
-	job.Set("state", "completed")
-	job.Set("progress", 100)
-	job.Set("step", "service-migration")
-	job.Set("current_step", "service-migration")
-	job.Set("message", "Service migration handoff recorded; verify the target service when the runtime is healthy.")
-	job.Set("stack_id", stack.Id)
-	setRegistryRecordTenantID(job, stack)
-	job.Set("result", map[string]any{
-		"application_key":   source.GetString(backupNamePathKey),
-		"kind":              "service_migration",
-		"source_service_id": source.Id,
-		"source_server_id":  source.GetString("node_id"),
-		"target_service_id": target.Id,
-		"target_server_id":  target.GetString("node_id"),
-		"service_name":      source.GetString(backupNamePathKey),
-	})
-	if err := h.app.Save(job); err != nil {
-		return "", err
-	}
-	return job.Id, nil
 }

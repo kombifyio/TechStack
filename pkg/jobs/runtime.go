@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/guardbootstrap"
 	"github.com/kombifyio/techstack/internal/providercatalog"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/runtimeaction"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/serverruntime"
@@ -25,7 +26,6 @@ const (
 	DefaultMonthlyRuntimeProvider = providercatalog.ProviderCentron
 	DefaultManagedLeaseProvider   = DefaultMonthlyRuntimeProvider
 	DefaultBasementKitRef         = "basement-kit"
-	DefaultBaseKitRef             = DefaultBasementKitRef // Deprecated symbol: external rollouts use basement-kit.
 	DefaultCloudKitRef            = "cloud-kit"
 
 	providerLocal = "local"
@@ -263,17 +263,22 @@ type ManagedRuntimeTargetRequest struct {
 }
 
 type ManagedRuntimeTarget struct {
-	Host                string
-	PublicIP            string
-	PrivateIP           string
-	SSHUser             string
-	SSHPort             int
-	SSHKeyPath          string
-	SSHPrivateKey       string
-	SSHClientPrivateKey string
-	SSHPassword         string
-	DockerHost          string
-	Source              string
+	Host                  string
+	PublicIP              string
+	PrivateIP             string
+	SSHUser               string
+	SSHPort               int
+	SSHKeyPath            string
+	SSHPrivateKey         string
+	SSHClientPrivateKey   string
+	SSHPassword           string
+	SSHProviderPrivateKey string
+	// SSHHostKey is provider/runtime custody evidence, never a key discovered
+	// opportunistically by a browser session. Interactive access fails closed
+	// when this value is absent.
+	SSHHostKey string
+	DockerHost string
+	Source     string
 }
 
 type ManagedRuntimeTargetResolver interface {
@@ -281,7 +286,11 @@ type ManagedRuntimeTargetResolver interface {
 }
 
 type StackKitArtifactGenerateRequest struct {
-	StackID       string
+	StackID string
+	// TenantID and OwnerID bind the stack's managed kombify.me addresses to
+	// their owner; the free-text StackName is display-only.
+	TenantID      string
+	OwnerID       string
 	StackName     string
 	StackKit      string
 	WorkDir       string
@@ -328,7 +337,7 @@ func NewStaticManagedRuntimeTargetResolverFromEnv() *StaticManagedRuntimeTargetR
 		Host:      host,
 		PublicIP:  firstNonEmpty(os.Getenv("TECHSTACK_DEV_MONTHLY_RUNTIME_TARGET_PUBLIC_IP"), host),
 		PrivateIP: os.Getenv("TECHSTACK_DEV_MONTHLY_RUNTIME_TARGET_PRIVATE_IP"),
-		SSHUser:   firstNonEmpty(os.Getenv("TECHSTACK_DEV_MONTHLY_RUNTIME_TARGET_SSH_USER"), "root"),
+		SSHUser:   firstNonEmpty(os.Getenv("TECHSTACK_DEV_MONTHLY_RUNTIME_TARGET_SSH_USER"), guardbootstrap.ExecutionChannelUser),
 		SSHPort:   firstPositiveInt(port, 22),
 		DockerHost: strings.TrimSpace(firstNonEmpty(
 			os.Getenv("TECHSTACK_DEV_MONTHLY_RUNTIME_TARGET_DOCKER_HOST"),
@@ -416,7 +425,11 @@ type RuntimeDiagnosticsRequest struct {
 	Reason         string
 	JobID          string
 	StackID        string
+	TenantID       string
 	LeaseID        string
+	OperationID    string
+	ServerID       string
+	RuntimeAgentID string
 	Provider       string
 	TargetKind     string
 	RuntimeTarget  *RuntimeActionTarget
@@ -425,10 +438,22 @@ type RuntimeDiagnosticsRequest struct {
 	Err            error
 }
 
+type RuntimeDiagnosticsBinding struct {
+	JobID          string
+	StackID        string
+	TenantID       string
+	LeaseID        string
+	OperationID    string
+	ServerID       string
+	RuntimeAgentID string
+	Provider       string
+}
+
 type RuntimeDiagnosticsBundle struct {
 	Status      string
 	Reason      string
 	Action      string
+	Binding     RuntimeDiagnosticsBinding
 	Target      map[string]interface{}
 	Endpoint    map[string]interface{}
 	Commands    []RuntimeDiagnosticsCommand
@@ -470,279 +495,19 @@ type RuntimeActions struct {
 	RolloutRunner         RuntimeActionRunner
 	RolloutVerifier       RuntimeActionRunner
 	RestoreDrill          RuntimeActionRunner
-	DiagnosticsCollector  RuntimeDiagnosticsCollector
-}
-
-type VMLeaseAuthority interface {
-	CreateOrUpdate(ctx context.Context, req vmleases.CreateRequest) (*vmlease.Lease, error)
-}
-
-type vmLeasePatcher interface {
-	Patch(ctx context.Context, tenantID string, id vmlease.LeaseID, req vmleases.PatchRequest) (*vmlease.Lease, error)
-}
-
-type vmLeaseGetter interface {
-	Get(ctx context.Context, tenantID string, id vmlease.LeaseID) (*vmlease.Lease, error)
-}
-
-type vmLeaseTenantLister interface {
-	ListByTenant(ctx context.Context, tenantID string) ([]vmlease.Lease, error)
-}
-
-type vmLeaseDecommissionAuthority interface {
-	vmLeaseGetter
-	vmLeasePatcher
-	vmLeaseTenantLister
+	// BackupRunner dispatches one backup_run to the node. It is separate from
+	// RestoreDrill because a drill proves a repository can be restored while a
+	// run is the cost-bearing action the entitlement gate guards.
+	BackupRunner RuntimeActionRunner
+	// BackupStatus reads the node's view of the repository. It never admits or
+	// denies: the billing meter is the control-plane object-store sum, and the
+	// node reports the customer-facing protected-data figure only.
+	BackupStatus         RuntimeActionRunner
+	DiagnosticsCollector RuntimeDiagnosticsCollector
 }
 
 type ManagedLeaseMetadataUpdater interface {
 	UpdateLeaseMetadata(ctx context.Context, tenantID, leaseID string, metadata map[string]string) error
-}
-
-type VMLeaseManagerAdapter struct {
-	Authority VMLeaseAuthority
-	Runtime   monthlyruntime.RuntimeClient
-	Now       func() time.Time
-	ValidFor  time.Duration
-}
-
-func NewVMLeaseManagerAdapter(authority VMLeaseAuthority) *VMLeaseManagerAdapter {
-	return &VMLeaseManagerAdapter{Authority: authority}
-}
-
-func (a *VMLeaseManagerAdapter) CreateOrBindLease(ctx context.Context, req ManagedLeaseRequest) (*ManagedLeaseResult, error) {
-	if a.Authority == nil {
-		return nil, vmleases.ErrEnrollmentRequired
-	}
-	now := time.Now().UTC()
-	if a.Now != nil {
-		now = a.Now().UTC()
-	}
-	validFor := a.ValidFor
-	if validFor <= 0 {
-		validFor = 30 * 24 * time.Hour
-	}
-
-	if err := providercatalog.ValidateNoLegacyProviderFields(
-		req.Metadata[metadataKeyLeaseProvider],
-		req.Metadata[metadataKeySimulateProviderID],
-	); err != nil {
-		return nil, fmt.Errorf("jobs: managed lease provider identity: %w", err)
-	}
-	provider, err := providercatalog.ResolveCanonicalProviderID(
-		req.Provider,
-		req.Metadata[metadataKeyProviderID],
-	)
-	if err != nil {
-		return nil, fmt.Errorf("jobs: managed lease provider identity: %w", err)
-	}
-	stackID := strings.TrimSpace(req.StackID)
-	stackName := strings.TrimSpace(req.StackName)
-	if stackName == "" {
-		stackName = stackID
-	}
-	ownerID := firstNonEmpty(req.OwnerID, "system")
-	tenantID := firstNonEmpty(req.TenantID, ownerID, "self-hosted")
-	stackKit := firstNonEmpty(req.StackKit, DefaultCloudKitRef)
-
-	metadata := map[string]string{
-		metadataKeyStackID:            stackID,
-		"stack_name":                  stackName,
-		"stackkit":                    stackKit,
-		metadataKeyServerMode:         serverModeMonthlyRuntime,
-		metadataKeyRuntimeLane:        serverModeMonthlyRuntime,
-		metadataKeyProviderID:         provider,
-		metadataKeySimulateLifecycle:  simulateLifecyclePVM,
-		metadataKeyBillingCadence:     billingCadenceMonthly,
-		metadataKeyVerificationStatus: verificationStatusPending,
-		metadataKeyStackKitCatalogRef: stackKit,
-		metadataKeyScenarioID:         strings.Join([]string{stackID, provider}, ":"),
-	}
-	for k, v := range req.Metadata {
-		if strings.TrimSpace(k) != "" {
-			metadata[k] = v
-		}
-	}
-	metadata, err = normalizeMonthlyRuntimeMetadata(metadata, provider)
-	if err != nil {
-		return nil, err
-	}
-	monthlyruntime.StampEnrollmentStart(metadata, now)
-	region := monthlyruntime.ProviderRegionFromMetadata(provider, metadata, defaultLeaseRegion)
-
-	leaseID := vmlease.LeaseID(firstNonEmpty(metadata["lease_id"], "lease-"+sanitizeLeaseID(stackID)))
-	lease := vmlease.Lease{
-		ID:             leaseID,
-		Subject:        vmlease.Subject{Kind: vmlease.SubjectUser, ID: ownerID, OrgID: tenantID},
-		Resource:       vmlease.ResourceRef{ProviderID: provider, Region: region},
-		DesiredState:   vmlease.DesiredStateRunning,
-		BillingMode:    vmlease.BillingModeSubscription,
-		LifecycleClass: vmlease.LifecycleClassSubscription,
-		RestartPolicy:  vmlease.RestartPolicyOnUnexpectedStop,
-		RecreatePolicy: vmlease.RecreatePolicyManual,
-		ValidFrom:      now.Add(-time.Minute),
-		ValidUntil:     now.Add(validFor),
-		RenewedAt:      now,
-		Metadata:       metadata,
-	}
-
-	created, err := a.Authority.CreateOrUpdate(ctx, vmleases.CreateRequest{
-		Lease:          lease,
-		IdempotencyKey: strings.Join([]string{tenantID, stackID, stackRoleMain}, ":"),
-	})
-	if err != nil {
-		return nil, err
-	}
-	return &ManagedLeaseResult{
-		LeaseID:      string(created.ID),
-		Provider:     created.Resource.ProviderID,
-		DesiredState: string(created.DesiredState),
-		BillingMode:  string(created.BillingMode),
-		Phase:        RuntimePhaseLeaseReady,
-		Target:       ManagedRuntimeTargetFromMetadata(created.Metadata),
-	}, nil
-}
-
-func (a *VMLeaseManagerAdapter) UpdateLeaseMetadata(ctx context.Context, tenantID, leaseID string, metadata map[string]string) error {
-	if a == nil || a.Authority == nil {
-		return vmleases.ErrEnrollmentRequired
-	}
-	patcher, ok := a.Authority.(vmLeasePatcher)
-	if !ok {
-		return nil
-	}
-	tenantID = strings.TrimSpace(tenantID)
-	leaseID = strings.TrimSpace(leaseID)
-	if tenantID == "" || leaseID == "" || len(metadata) == 0 {
-		return nil
-	}
-	_, err := patcher.Patch(ctx, tenantID, vmlease.LeaseID(leaseID), vmleases.PatchRequest{Metadata: metadata})
-	return err
-}
-
-func (a *VMLeaseManagerAdapter) DecommissionManagedLeases(ctx context.Context, req ManagedLeaseDecommissionRequest) (*ManagedLeaseDecommissionResult, error) {
-	result := &ManagedLeaseDecommissionResult{}
-	if a == nil || a.Authority == nil {
-		return result, vmleases.ErrEnrollmentRequired
-	}
-	authority, ok := a.Authority.(vmLeaseDecommissionAuthority)
-	if !ok {
-		return result, vmleases.ErrEnrollmentRequired
-	}
-	tenantID := strings.TrimSpace(req.TenantID)
-	if tenantID == "" {
-		return result, vmleases.ErrTenantRequired
-	}
-	ownerID := strings.TrimSpace(req.OwnerID)
-	if ownerID == "" {
-		return result, monthlyruntime.ErrForbidden
-	}
-	candidates, err := managedLeaseDecommissionCandidates(ctx, authority, req)
-	if err != nil {
-		return result, err
-	}
-	if len(candidates) == 0 {
-		return result, nil
-	}
-	if a.Runtime == nil {
-		return result, monthlyruntime.ErrRuntimeClient
-	}
-	svc := &monthlyruntime.Service{Leases: authority, Runtime: a.Runtime}
-	seen := map[vmlease.LeaseID]bool{}
-	expectedDigest := strings.TrimSpace(req.ResourceGenerationDigest)
-	for _, lease := range candidates {
-		if seen[lease.ID] {
-			continue
-		}
-		seen[lease.ID] = true
-		if !monthlyruntime.IsMonthlyRuntimeMetadata(lease.Metadata) {
-			result.Skipped++
-			continue
-		}
-		reconcileClaimed := expectedDigest != ""
-		if lease.CancelledAt != nil && !reconcileClaimed {
-			result.Skipped++
-			continue
-		}
-		if reconcileClaimed {
-			currentDigest, digestErr := vmleases.ResourceGenerationDigest(tenantID, lease)
-			if digestErr != nil {
-				return result, digestErr
-			}
-			if currentDigest != expectedDigest || strings.TrimSpace(lease.Metadata[vmleases.MetadataKeyDecommissionClaimDigest]) != expectedDigest {
-				return result, vmleases.ErrResourceGenerationSuperseded
-			}
-		}
-		if !managedLeaseVisibleToOwner(lease, tenantID, ownerID) {
-			if strings.TrimSpace(req.LeaseID) == "" {
-				result.Skipped++
-				continue
-			}
-			return result, monthlyruntime.ErrForbidden
-		}
-		if _, err := svc.Action(ctx, monthlyruntime.ActionRequest{
-			TenantID:                         tenantID,
-			UserID:                           ownerID,
-			LeaseID:                          lease.ID,
-			Action:                           serverruntime.RuntimeActionDecommission,
-			Internal:                         reconcileClaimed,
-			ExpectedResourceGenerationDigest: expectedDigest,
-			ReconcileClaimedDecommission:     reconcileClaimed,
-		}); err != nil {
-			return result, err
-		}
-		result.Decommissioned++
-		result.LeaseIDs = append(result.LeaseIDs, string(lease.ID))
-	}
-	return result, nil
-}
-
-func managedLeaseDecommissionCandidates(ctx context.Context, authority vmLeaseDecommissionAuthority, req ManagedLeaseDecommissionRequest) ([]vmlease.Lease, error) {
-	tenantID := strings.TrimSpace(req.TenantID)
-	stackID := strings.TrimSpace(req.StackID)
-	out := []vmlease.Lease{}
-	add := func(lease vmlease.Lease) {
-		out = append(out, lease)
-	}
-	if leaseID := strings.TrimSpace(req.LeaseID); leaseID != "" {
-		lease, err := authority.Get(ctx, tenantID, vmlease.LeaseID(leaseID))
-		if errors.Is(err, vmleases.ErrNotFound) {
-			return out, nil
-		}
-		if err != nil {
-			return nil, err
-		}
-		add(*lease)
-		// An explicit lease id is the complete destructive allowlist. Never
-		// widen it by enumerating other leases attached to the same stack.
-		return out, nil
-	}
-	if stackID == "" {
-		return out, nil
-	}
-	leases, err := authority.ListByTenant(ctx, tenantID)
-	if err != nil {
-		return nil, err
-	}
-	for _, lease := range leases {
-		if strings.TrimSpace(lease.Metadata[metadataKeyStackID]) == stackID {
-			add(lease)
-		}
-	}
-	return out, nil
-}
-
-func managedLeaseVisibleToOwner(lease vmlease.Lease, tenantID, ownerID string) bool {
-	if strings.TrimSpace(lease.Subject.OrgID) != strings.TrimSpace(tenantID) {
-		return false
-	}
-	if strings.TrimSpace(ownerID) == "" {
-		return false
-	}
-	if strings.TrimSpace(lease.Subject.ID) == strings.TrimSpace(ownerID) {
-		return true
-	}
-	return lease.Subject.Kind == vmlease.SubjectOrg
 }
 
 type MonthlyRuntimeTargetResolver struct {
@@ -789,50 +554,89 @@ func (r *MonthlyRuntimeTargetResolver) ResolveManagedRuntimeTarget(ctx context.C
 	if leaseID == "" {
 		return nil, fmt.Errorf("lease_id is required to resolve managed runtime target")
 	}
-	var metadataFallback *ManagedRuntimeTarget
-	if target, pendingErr := r.leaseMetadataTargetOrPending(ctx, tenantID, leaseID); target != nil || pendingErr != nil {
-		if target == nil {
-			if canonical, canonicalErr := r.canonicalServerTarget(ctx, tenantID, leaseID); canonical != nil || canonicalErr != nil {
-				if canonicalErr != nil {
-					return nil, canonicalErr
-				}
-				canonical = attachManagedProviderCredential(canonical, req.Provider)
-				if managedRuntimeTargetHasRuntimeActionCredential(canonical) {
-					return canonical, nil
-				}
-				metadataFallback = canonical
-			} else {
-				return nil, pendingErr
-			}
-		} else {
-			target = attachManagedProviderCredential(target, req.Provider)
-			if managedRuntimeTargetHasRuntimeActionCredential(target) {
-				return target, nil
-			}
-			metadataFallback = target
-		}
-	} else if canonical, canonicalErr := r.canonicalServerTarget(ctx, tenantID, leaseID); canonical != nil || canonicalErr != nil {
-		if canonicalErr != nil {
-			return nil, canonicalErr
-		}
-		canonical = attachManagedProviderCredential(canonical, req.Provider)
-		if managedRuntimeTargetHasRuntimeActionCredential(canonical) {
-			return canonical, nil
-		}
-		metadataFallback = canonical
+	ready, metadataFallback, err := r.resolvePersistedManagedRuntimeTarget(ctx, tenantID, leaseID, req.Provider)
+	if err != nil || ready != nil {
+		return ready, err
 	}
-	if err := r.primeManagedRuntimeAddress(ctx, tenantID, strings.TrimSpace(req.OwnerID), leaseID); err == nil {
-		if target, pendingErr := r.leaseMetadataTargetOrPending(ctx, tenantID, leaseID); target != nil || pendingErr != nil {
-			if target == nil {
-				return nil, pendingErr
-			}
-			target = attachManagedProviderCredential(target, req.Provider)
-			if managedRuntimeTargetHasRuntimeActionCredential(target) {
-				return target, nil
-			}
-			metadataFallback = target
-		}
+	ready, metadataFallback, err = r.resolvePrimedManagedRuntimeTarget(
+		ctx, tenantID, strings.TrimSpace(req.OwnerID), leaseID, req.Provider, metadataFallback,
+	)
+	if err != nil || ready != nil {
+		return ready, err
 	}
+	return r.resolveManagedRuntimeSSHInfo(ctx, tenantID, leaseID, req, metadataFallback)
+}
+
+func (r *MonthlyRuntimeTargetResolver) resolvePersistedManagedRuntimeTarget(
+	ctx context.Context,
+	tenantID, leaseID string,
+	provider string,
+) (*ManagedRuntimeTarget, *ManagedRuntimeTarget, error) {
+	metadata, pendingErr := r.leaseMetadataTargetOrPending(ctx, tenantID, leaseID)
+	if metadata != nil {
+		candidate, ready := r.prepareManagedRuntimeTargetCandidate(ctx, tenantID, leaseID, metadata, provider)
+		if ready {
+			return candidate, nil, nil
+		}
+		return nil, candidate, nil
+	}
+	canonical, err := r.canonicalServerTarget(ctx, tenantID, leaseID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if canonical != nil {
+		candidate, ready := r.prepareManagedRuntimeTargetCandidate(ctx, tenantID, leaseID, canonical, provider)
+		if ready {
+			return candidate, nil, nil
+		}
+		return nil, candidate, nil
+	}
+	if pendingErr != nil {
+		return nil, nil, pendingErr
+	}
+	return nil, nil, nil
+}
+
+func (r *MonthlyRuntimeTargetResolver) resolvePrimedManagedRuntimeTarget(
+	ctx context.Context,
+	tenantID, ownerID, leaseID string,
+	provider string,
+	fallback *ManagedRuntimeTarget,
+) (*ManagedRuntimeTarget, *ManagedRuntimeTarget, error) {
+	if err := r.primeManagedRuntimeAddress(ctx, tenantID, ownerID, leaseID); err != nil {
+		return nil, fallback, nil
+	}
+	target, pendingErr := r.leaseMetadataTargetOrPending(ctx, tenantID, leaseID)
+	if target == nil && pendingErr == nil {
+		return nil, fallback, nil
+	}
+	if target == nil {
+		return nil, nil, pendingErr
+	}
+	candidate, ready := r.prepareManagedRuntimeTargetCandidate(ctx, tenantID, leaseID, target, provider)
+	if ready {
+		return candidate, nil, nil
+	}
+	return nil, candidate, nil
+}
+
+func (r *MonthlyRuntimeTargetResolver) prepareManagedRuntimeTargetCandidate(
+	ctx context.Context,
+	tenantID, leaseID string,
+	target *ManagedRuntimeTarget,
+	provider string,
+) (*ManagedRuntimeTarget, bool) {
+	target = attachManagedProviderCredential(target, provider)
+	target = r.overlayObservedPublicIP(ctx, tenantID, leaseID, target)
+	return target, managedRuntimeTargetHasRuntimeActionCredential(target)
+}
+
+func (r *MonthlyRuntimeTargetResolver) resolveManagedRuntimeSSHInfo(
+	ctx context.Context,
+	tenantID, leaseID string,
+	req ManagedRuntimeTargetRequest,
+	metadataFallback *ManagedRuntimeTarget,
+) (*ManagedRuntimeTarget, error) {
 	resp, err := r.Service.Action(ctx, monthlyruntime.ActionRequest{
 		TenantID: tenantID,
 		UserID:   strings.TrimSpace(req.OwnerID),
@@ -860,8 +664,8 @@ func (r *MonthlyRuntimeTargetResolver) ResolveManagedRuntimeTarget(ctx context.C
 	target := ManagedRuntimeTargetFromRuntimeResponse(resp)
 	if target != nil {
 		target.Source = firstNonEmpty(target.Source, "monthly-runtime")
-		target = attachManagedProviderCredential(target, req.Provider)
-		if !managedRuntimeTargetHasRuntimeActionCredential(target) {
+		target, ready := r.prepareManagedRuntimeTargetCandidate(ctx, tenantID, leaseID, target, req.Provider)
+		if !ready {
 			return nil, managedRuntimeTargetCredentialUnavailableError(leaseID, target)
 		}
 		return target, nil
@@ -897,6 +701,46 @@ func (r *MonthlyRuntimeTargetResolver) canonicalServerTarget(ctx context.Context
 	}
 	target.Source = "canonical-server"
 	return target, nil
+}
+
+func (r *MonthlyRuntimeTargetResolver) overlayObservedPublicIP(ctx context.Context, tenantID, leaseID string, target *ManagedRuntimeTarget) *ManagedRuntimeTarget {
+	return applyObservedPublicIP(target, r.observedGuardPublicIP(ctx, tenantID, leaseID))
+}
+
+func (r *MonthlyRuntimeTargetResolver) observedGuardPublicIP(ctx context.Context, tenantID, leaseID string) string {
+	if r == nil || r.Servers == nil {
+		return ""
+	}
+	server, err := r.Servers.GetServerRuntime(ctx, tenantID, runtimeidentity.LeaseServerID(leaseID))
+	if err != nil || server == nil {
+		return ""
+	}
+	return observedPublicIPFromServerMetadata(server.Metadata)
+}
+
+func observedPublicIPFromServerMetadata(metadata map[string]any) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+	host := mapFromInterface(metadata["host"])
+	return firstNonEmpty(stringFromMap(host, "public_ip"), stringFromMap(metadata, "public_ip"))
+}
+
+func applyObservedPublicIP(target *ManagedRuntimeTarget, observedIP string) *ManagedRuntimeTarget {
+	target = cloneManagedRuntimeTarget(target)
+	observedIP = strings.TrimSpace(observedIP)
+	if target == nil || observedIP == "" {
+		return target
+	}
+	if target.Host == observedIP && (target.PublicIP == "" || target.PublicIP == observedIP) {
+		return target
+	}
+	target.Host = observedIP
+	target.PublicIP = observedIP
+	if !strings.Contains(target.Source, "guard-inventory") {
+		target.Source = firstNonEmpty(target.Source, "lease-metadata") + "+guard-inventory"
+	}
+	return normalizeManagedRuntimeTarget(target)
 }
 
 func (r *MonthlyRuntimeTargetResolver) primeManagedRuntimeAddress(ctx context.Context, tenantID, ownerID, leaseID string) error {
@@ -986,12 +830,23 @@ var managedProviderCredentialResolver = func(string, time.Time) (string, error) 
 
 func attachManagedProviderCredential(target *ManagedRuntimeTarget, provider string) *ManagedRuntimeTarget {
 	target = cloneManagedRuntimeTarget(target)
-	if target == nil || target.SSHPrivateKey != "" {
-		return target
+	if target == nil {
+		return nil
 	}
 	privateKey, err := managedProviderCredentialResolver(strings.TrimSpace(provider), time.Now().UTC())
-	if err == nil {
+	if err != nil {
+		return normalizeManagedRuntimeTarget(target)
+	}
+	privateKey = strings.TrimSpace(privateKey)
+	if privateKey == "" {
+		return normalizeManagedRuntimeTarget(target)
+	}
+	if target.SSHPrivateKey == "" {
 		target.SSHPrivateKey = privateKey
+		return normalizeManagedRuntimeTarget(target)
+	}
+	if target.SSHPrivateKey != privateKey {
+		target.SSHProviderPrivateKey = privateKey
 	}
 	return normalizeManagedRuntimeTarget(target)
 }
@@ -1106,6 +961,7 @@ func ManagedRuntimeTargetFromMetadata(metadata map[string]string) *ManagedRuntim
 			parseMetadataInt(metadata, metadataKeyRuntimeSSHPort),
 			parseMetadataInt(metadata, "ssh_port"),
 		),
+		SSHHostKey: firstNonEmpty(metadata["runtime_ssh_host_key"], metadata["ssh_host_key"]),
 		DockerHost: firstNonEmpty(metadata["runtime_docker_host"], metadata["docker_host"]),
 		Source:     "lease-metadata",
 	}
@@ -1130,6 +986,7 @@ func ManagedRuntimeTargetFromRuntimeResponse(resp *monthlyruntime.RuntimeRespons
 		target.SSHPrivateKey = strings.TrimSpace(resp.SSH.PrivateKey)
 		target.SSHClientPrivateKey = strings.TrimSpace(resp.SSH.ClientPrivateKey)
 		target.SSHPassword = strings.TrimSpace(resp.SSH.Password)
+		target.SSHHostKey = strings.TrimSpace(resp.SSH.HostKey)
 	}
 	if resp.Status != nil {
 		target.PublicIP = firstNonEmpty(target.PublicIP, resp.Status.PublicIP)
@@ -1154,6 +1011,8 @@ func normalizeManagedRuntimeTarget(target *ManagedRuntimeTarget) *ManagedRuntime
 	target.SSHPrivateKey = strings.TrimSpace(target.SSHPrivateKey)
 	target.SSHClientPrivateKey = strings.TrimSpace(target.SSHClientPrivateKey)
 	target.SSHPassword = strings.TrimSpace(target.SSHPassword)
+	target.SSHProviderPrivateKey = strings.TrimSpace(target.SSHProviderPrivateKey)
+	target.SSHHostKey = strings.TrimSpace(target.SSHHostKey)
 	target.DockerHost = strings.TrimSpace(target.DockerHost)
 	target.Source = strings.TrimSpace(target.Source)
 	if target.Host == "" {
@@ -1165,10 +1024,23 @@ func normalizeManagedRuntimeTarget(target *ManagedRuntimeTarget) *ManagedRuntime
 	if target.SSHPort <= 0 {
 		target.SSHPort = 22
 	}
+	target.SSHUser = managedCloudExecutionSSHUser(target.SSHUser)
 	if target.Host == "" {
 		return nil
 	}
 	return target
+}
+
+// managedCloudExecutionSSHUser fills an empty login with the Cloud
+// execution-channel account. An explicit root login is left in place so the
+// first bootstrap attempt can still use it on a host that has not yet been
+// hardened; later attempts continue as kombify and ubuntu.
+func managedCloudExecutionSSHUser(user string) string {
+	user = strings.TrimSpace(user)
+	if user == "" {
+		return guardbootstrap.ExecutionChannelUser
+	}
+	return user
 }
 
 func runtimeActionTargetFromManagedRuntimeTarget(target *ManagedRuntimeTarget) *RuntimeActionTarget {
@@ -1181,16 +1053,17 @@ func runtimeActionTargetFromManagedRuntimeTarget(target *ManagedRuntimeTarget) *
 		keyPath = ""
 	}
 	return normalizeRuntimeActionTarget(&RuntimeActionTarget{
-		Host:             target.Host,
-		PublicIP:         target.PublicIP,
-		PrivateIP:        target.PrivateIP,
-		User:             target.SSHUser,
-		Port:             target.SSHPort,
-		KeyPath:          keyPath,
-		PrivateKey:       target.SSHPrivateKey,
-		ClientPrivateKey: target.SSHClientPrivateKey,
-		Password:         target.SSHPassword,
-		DockerHost:       target.DockerHost,
+		Host:               target.Host,
+		PublicIP:           target.PublicIP,
+		PrivateIP:          target.PrivateIP,
+		User:               target.SSHUser,
+		Port:               target.SSHPort,
+		KeyPath:            keyPath,
+		PrivateKey:         target.SSHPrivateKey,
+		ClientPrivateKey:   target.SSHClientPrivateKey,
+		Password:           target.SSHPassword,
+		ProviderPrivateKey: target.SSHProviderPrivateKey,
+		DockerHost:         target.DockerHost,
 	})
 }
 
@@ -1221,6 +1094,7 @@ func normalizeRuntimeActionTarget(target *RuntimeActionTarget) *RuntimeActionTar
 	normalized.PrivateKey = strings.TrimSpace(normalized.PrivateKey)
 	normalized.ClientPrivateKey = strings.TrimSpace(normalized.ClientPrivateKey)
 	normalized.Password = strings.TrimSpace(normalized.Password)
+	normalized.ProviderPrivateKey = strings.TrimSpace(normalized.ProviderPrivateKey)
 	if normalized.Host == "" {
 		normalized.Host = firstNonEmpty(normalized.PublicIP, normalized.PrivateIP)
 	}
@@ -1244,17 +1118,17 @@ func managedRuntimeTargetHasRuntimeActionCredential(target *ManagedRuntimeTarget
 	// KeyPath is intentionally excluded: provider key paths are local to the
 	// VM authority/Simulate container and cannot be dereferenced by TechStack or
 	// the StackKits runtime action service in production.
-	return target != nil && firstNonEmpty(target.DockerHost, target.SSHClientPrivateKey, target.SSHPrivateKey, target.SSHPassword) != ""
+	return target != nil && firstNonEmpty(target.DockerHost, target.SSHClientPrivateKey, target.SSHPrivateKey, target.SSHProviderPrivateKey, target.SSHPassword) != ""
 }
 
 func managedRuntimeTargetHasSSHCredential(target *ManagedRuntimeTarget) bool {
 	target = normalizeManagedRuntimeTarget(target)
-	return target != nil && firstNonEmpty(target.SSHClientPrivateKey, target.SSHPrivateKey, target.SSHPassword) != ""
+	return target != nil && firstNonEmpty(target.SSHClientPrivateKey, target.SSHPrivateKey, target.SSHProviderPrivateKey, target.SSHPassword) != ""
 }
 
 func runtimeActionTargetHasSSHCredential(target *RuntimeActionTarget) bool {
 	target = normalizeRuntimeActionTarget(target)
-	return target != nil && firstNonEmpty(target.ClientPrivateKey, target.PrivateKey, target.Password, target.KeyPath) != ""
+	return target != nil && firstNonEmpty(target.ClientPrivateKey, target.PrivateKey, target.ProviderPrivateKey, target.Password, target.KeyPath) != ""
 }
 
 func managedRuntimeTargetCredentialUnavailableError(leaseID string, target *ManagedRuntimeTarget) error {
@@ -1385,21 +1259,4 @@ func firstNonEmpty(values ...string) string {
 
 func normalizeProvider(provider string) string {
 	return strings.ToLower(strings.TrimSpace(provider))
-}
-
-func sanitizeLeaseID(id string) string {
-	id = strings.ToLower(strings.TrimSpace(id))
-	var b strings.Builder
-	for _, r := range id {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
-			b.WriteRune(r)
-		} else {
-			b.WriteByte('-')
-		}
-	}
-	out := strings.Trim(b.String(), "-")
-	if out == "" {
-		return "stack"
-	}
-	return out
 }

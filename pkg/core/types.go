@@ -590,6 +590,71 @@ type DecisionReason struct {
 	Source  string `json:"source,omitempty" yaml:"source,omitempty"`
 }
 
+// WizardRecommendationRequest is the closed public input for a Wizard
+// recommendation evaluation. Tenant, owner, kit, and decision context are
+// deliberately absent: the route derives those from the authenticated
+// request and the canonical registry.
+type WizardRecommendationRequest struct {
+	Goals          []string `json:"goals"`
+	Services       []string `json:"services"`
+	DeploymentLane string   `json:"deployment_lane"`
+	ProviderID     string   `json:"provider_id,omitempty"`
+	Surface        string   `json:"surface"`
+}
+
+// WizardRecommendationStatus is the explicit state of a recommendation
+// evaluation. A non-ready state is still a useful response: it tells the
+// caller which evidence or input must change before acting on the result.
+type WizardRecommendationStatus string
+
+const (
+	WizardRecommendationReady      WizardRecommendationStatus = "ready"
+	WizardRecommendationIncomplete WizardRecommendationStatus = "incomplete"
+	WizardRecommendationStale      WizardRecommendationStatus = "stale"
+	WizardRecommendationDegraded   WizardRecommendationStatus = "degraded"
+)
+
+// WizardRecommendationReason explains one ranked recommendation without
+// exposing implementation-only resolver details.
+type WizardRecommendationReason struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Source  string `json:"source,omitempty"`
+}
+
+// WizardRecommendationDeepLink identifies the Wizard destination that can
+// explain or apply the recommendation.
+type WizardRecommendationDeepLink struct {
+	Step    string `json:"step"`
+	Section string `json:"section,omitempty"`
+}
+
+// WizardRecommendation is one ranked StackKit choice.
+type WizardRecommendation struct {
+	ID           string                       `json:"id"`
+	StackKit     string                       `json:"stackkit"`
+	Rank         int                          `json:"rank"`
+	Score        float64                      `json:"score"`
+	Recommended  bool                         `json:"recommended"`
+	Reasons      []WizardRecommendationReason `json:"reasons"`
+	Alternatives []string                     `json:"alternatives"`
+	DeepLink     WizardRecommendationDeepLink `json:"deep_link"`
+}
+
+// WizardRecommendationResponse is the stable response boundary consumed by
+// both Wizard depths. DecisionContext is always server-constructed and its
+// hash binds the recommendation to the evidence used for evaluation.
+type WizardRecommendationResponse struct {
+	Status              WizardRecommendationStatus `json:"status"`
+	GeneratedAt         time.Time                  `json:"generated_at"`
+	DecisionContext     *DecisionContext           `json:"decision_context"`
+	DecisionContextHash string                     `json:"decision_context_hash"`
+	CatalogSource       string                     `json:"catalog_source"`
+	MissingInputs       []string                   `json:"missing_inputs"`
+	StaleInputs         []string                   `json:"stale_inputs"`
+	Recommendations     []WizardRecommendation     `json:"recommendations"`
+}
+
 // EnvironmentGap is a missing or misaligned environment capability.
 type EnvironmentGap struct {
 	Code     string `json:"code" yaml:"code"`

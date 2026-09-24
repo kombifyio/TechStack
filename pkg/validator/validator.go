@@ -1,6 +1,5 @@
 // Package validator provides shared validation utilities for kombifyTechstack.
-// This package centralizes validation logic that was previously duplicated
-// across pkg/unifier and pkg/tofu.
+// This package centralizes validation logic shared by Unifier preflight.
 package validator
 
 import (
@@ -12,11 +11,11 @@ import (
 )
 
 // DNS name validation regex - RFC 1123 compliant
-var DNSNameRegex = regexp.MustCompile(`^[a-z][a-z0-9-]{0,61}[a-z0-9]$|^[a-z]$`)
+var dnsNameRegex = regexp.MustCompile(`^[a-z][a-z0-9-]{0,61}[a-z0-9]$|^[a-z]$`)
 
-// StackKitNameRegex validates stackkit names (lowercase, alphanumeric with hyphens).
+// stackKitNameRegex validates stackkit names (lowercase, alphanumeric with hyphens).
 // Must start with a letter, may contain digits/hyphens, must not end with a hyphen.
-var StackKitNameRegex = regexp.MustCompile(`^[a-z](?:[a-z0-9-]*[a-z0-9])?$`)
+var stackKitNameRegex = regexp.MustCompile(`^[a-z](?:[a-z0-9-]*[a-z0-9])?$`)
 
 const (
 	providerHetzner      = "hetzner"
@@ -26,9 +25,9 @@ const (
 	providerDigitalOcean = "digitalocean"
 )
 
-// KnownCloudProviders is the set of supported cloud providers
-// Keep in sync with: pkg/unifier/schema/kombination.cue, pkg/stackkits/base/stackkit.cue
-var KnownCloudProviders = map[string]bool{
+// knownCloudProviders is the set of supported cloud providers.
+// Keep in sync with: pkg/unifier/schema/kombination.cue
+var knownCloudProviders = map[string]bool{
 	providerHetzner:        true,
 	"aws":                  true,
 	"gcp":                  true,
@@ -41,8 +40,8 @@ var KnownCloudProviders = map[string]bool{
 	"ionos":                true,
 }
 
-// KnownLocalProviders is the set of local/on-premise providers
-var KnownLocalProviders = map[string]bool{
+// knownLocalProviders is the set of local/on-premise providers.
+var knownLocalProviders = map[string]bool{
 	providerLocal:   true,
 	"homelab":       true,
 	providerDocker:  true,
@@ -50,9 +49,9 @@ var KnownLocalProviders = map[string]bool{
 	"esxi":          true,
 }
 
-// KnownNodeTypes is the set of supported node roles.
+// knownNodeTypes is the set of supported node roles.
 // Keep in sync with: pkg/unifier/schema/kombination.cue
-var KnownNodeTypes = map[string]bool{
+var knownNodeTypes = map[string]bool{
 	"main":   true,
 	"worker": true,
 	"edge":   true,
@@ -60,11 +59,11 @@ var KnownNodeTypes = map[string]bool{
 
 // SupportedProviders returns all supported provider names in stable order.
 func SupportedProviders() []string {
-	providers := make([]string, 0, len(KnownCloudProviders)+len(KnownLocalProviders))
-	for p := range KnownCloudProviders {
+	providers := make([]string, 0, len(knownCloudProviders)+len(knownLocalProviders))
+	for p := range knownCloudProviders {
 		providers = append(providers, p)
 	}
-	for p := range KnownLocalProviders {
+	for p := range knownLocalProviders {
 		providers = append(providers, p)
 	}
 	sort.Strings(providers)
@@ -78,8 +77,8 @@ func SupportedProvidersString() string {
 
 // SupportedNodeTypes returns all supported node types in stable order.
 func SupportedNodeTypes() []string {
-	types := make([]string, 0, len(KnownNodeTypes))
-	for t := range KnownNodeTypes {
+	types := make([]string, 0, len(knownNodeTypes))
+	for t := range knownNodeTypes {
 		types = append(types, t)
 	}
 	sort.Strings(types)
@@ -99,7 +98,7 @@ func ValidateDNSName(name string) error {
 	if len(name) > 63 {
 		return fmt.Errorf("DNS name %q exceeds 63 character limit", name)
 	}
-	if !DNSNameRegex.MatchString(name) {
+	if !dnsNameRegex.MatchString(name) {
 		return fmt.Errorf("invalid DNS name %q: must start with a letter, contain only lowercase letters, numbers, and hyphens, and end with a letter or number", name)
 	}
 	return nil
@@ -126,7 +125,7 @@ func ValidateStackKitName(name string) error {
 	}
 
 	// Check format
-	if !StackKitNameRegex.MatchString(name) {
+	if !stackKitNameRegex.MatchString(name) {
 		return fmt.Errorf("invalid stackkit name %q: must start with a letter, contain only lowercase letters, numbers, and hyphens", name)
 	}
 
@@ -135,58 +134,18 @@ func ValidateStackKitName(name string) error {
 
 // IsCloudProvider checks if a provider is a known cloud provider.
 func IsCloudProvider(provider string) bool {
-	return KnownCloudProviders[strings.ToLower(provider)]
-}
-
-// IsLocalProvider checks if a provider is a known local provider.
-func IsLocalProvider(provider string) bool {
-	return KnownLocalProviders[strings.ToLower(provider)]
+	return knownCloudProviders[strings.ToLower(provider)]
 }
 
 // IsValidProvider checks if a provider is any known provider (cloud or local).
 func IsValidProvider(provider string) bool {
 	p := strings.ToLower(provider)
-	return KnownCloudProviders[p] || KnownLocalProviders[p]
+	return knownCloudProviders[p] || knownLocalProviders[p]
 }
 
 // IsValidNodeType checks if a node type is supported.
 func IsValidNodeType(nodeType string) bool {
-	return KnownNodeTypes[strings.ToLower(nodeType)]
-}
-
-// ValidatePath checks if a path is safe (no traversal, absolute within boundaries).
-func ValidatePath(path string, allowedBase string) error {
-	if path == "" {
-		return fmt.Errorf("path cannot be empty")
-	}
-
-	// Check for path traversal
-	if strings.Contains(path, "..") {
-		return fmt.Errorf("path %q contains traversal sequences", path)
-	}
-
-	// If an allowed base is specified, ensure the path stays within it
-	if allowedBase != "" {
-		absPath, err := filepath.Abs(path)
-		if err != nil {
-			return fmt.Errorf("cannot resolve path %q: %w", path, err)
-		}
-		absBase, err := filepath.Abs(allowedBase)
-		if err != nil {
-			return fmt.Errorf("cannot resolve base path %q: %w", allowedBase, err)
-		}
-
-		// Ensure the resolved path is within the allowed base
-		rel, err := filepath.Rel(absBase, absPath)
-		if err != nil {
-			return fmt.Errorf("path %q is not within allowed base %q", path, allowedBase)
-		}
-		if strings.HasPrefix(rel, "..") {
-			return fmt.Errorf("path %q escapes allowed base %q", path, allowedBase)
-		}
-	}
-
-	return nil
+	return knownNodeTypes[strings.ToLower(nodeType)]
 }
 
 // ValidateSSHKeyPath validates an SSH key path for security.
@@ -224,55 +183,19 @@ type ServiceType string
 const (
 	ServiceTypeWeb        ServiceType = "web"
 	ServiceTypeAPI        ServiceType = "api"
-	ServiceTypeService    ServiceType = "service"
-	ServiceTypeBackend    ServiceType = "backend"
 	ServiceTypeDatabase   ServiceType = "database"
 	ServiceTypeCache      ServiceType = "cache"
 	ServiceTypeQueue      ServiceType = "queue"
-	ServiceTypePaaS       ServiceType = "paas"
 	ServiceTypeStorage    ServiceType = "storage"
 	ServiceTypeMonitor    ServiceType = "monitor"
 	ServiceTypeMonitoring ServiceType = "monitoring"
 	ServiceTypeIngress    ServiceType = "ingress"
 	ServiceTypeProxy      ServiceType = "reverse-proxy"
-	ServiceTypeDocker     ServiceType = "docker"
-	ServiceTypeBackup     ServiceType = "backup"
-	ServiceTypeAuth       ServiceType = "auth"
-	ServiceTypeVPN        ServiceType = "vpn"
-	ServiceTypeMedia      ServiceType = "media"
-	ServiceTypeAutomation ServiceType = "automation"
-	ServiceTypeDev        ServiceType = "development"
-	ServiceTypeCustom     ServiceType = "custom"
 )
 
-// ValidServiceTypes is the set of valid service types
-var ValidServiceTypes = map[ServiceType]bool{
-	ServiceTypeWeb:        true,
-	ServiceTypeAPI:        true,
-	ServiceTypeService:    true,
-	ServiceTypeBackend:    true,
-	ServiceTypeDatabase:   true,
-	ServiceTypeCache:      true,
-	ServiceTypeQueue:      true,
-	ServiceTypePaaS:       true,
-	ServiceTypeStorage:    true,
-	ServiceTypeMonitor:    true,
-	ServiceTypeMonitoring: true,
-	ServiceTypeIngress:    true,
-	ServiceTypeProxy:      true,
-	ServiceTypeDocker:     true,
-	ServiceTypeBackup:     true,
-	ServiceTypeAuth:       true,
-	ServiceTypeVPN:        true,
-	ServiceTypeMedia:      true,
-	ServiceTypeAutomation: true,
-	ServiceTypeDev:        true,
-	ServiceTypeCustom:     true,
-}
-
-// DefaultServiceImages maps service types to their default Docker images.
+// defaultServiceImages maps service types to their default Docker images.
 // This centralizes image resolution for the Unifier Engine.
-var DefaultServiceImages = map[ServiceType]string{
+var defaultServiceImages = map[ServiceType]string{
 	ServiceTypeProxy:      "traefik:v3.0",
 	ServiceTypeDatabase:   "postgres:16-alpine",
 	ServiceTypeCache:      "redis:7-alpine",
@@ -285,8 +208,8 @@ var DefaultServiceImages = map[ServiceType]string{
 	ServiceTypeAPI:        "traefik:v3.0",
 }
 
-// DefaultServicePorts maps service types to their default ports.
-var DefaultServicePorts = map[ServiceType]int{
+// defaultServicePorts maps service types to their default ports.
+var defaultServicePorts = map[ServiceType]int{
 	ServiceTypeProxy:      80,
 	ServiceTypeDatabase:   5432,
 	ServiceTypeCache:      6379,
@@ -302,16 +225,11 @@ var DefaultServicePorts = map[ServiceType]int{
 // GetDefaultImage returns the default Docker image for a service type.
 // Returns empty string if no default is defined.
 func GetDefaultImage(svcType string) string {
-	return DefaultServiceImages[ServiceType(strings.ToLower(svcType))]
+	return defaultServiceImages[ServiceType(strings.ToLower(svcType))]
 }
 
 // GetDefaultPort returns the default port for a service type.
 // Returns 0 if no default is defined.
 func GetDefaultPort(svcType string) int {
-	return DefaultServicePorts[ServiceType(strings.ToLower(svcType))]
-}
-
-// IsValidServiceType checks if a service type is valid.
-func IsValidServiceType(svcType string) bool {
-	return ValidServiceTypes[ServiceType(strings.ToLower(svcType))]
+	return defaultServicePorts[ServiceType(strings.ToLower(svcType))]
 }

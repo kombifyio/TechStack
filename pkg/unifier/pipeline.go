@@ -2,20 +2,12 @@
 package unifier
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/kombifyio/techstack/pkg/core"
 )
-
-// WorkerRegistry provides access to registered workers.
-// This interface allows the Pipeline to fetch workers without depending on PocketBase directly.
-type WorkerRegistry interface {
-	// ListApprovedWorkers returns all workers that are approved and ready for service placement.
-	ListApprovedWorkers(ctx context.Context) ([]core.Worker, error)
-}
 
 // Pipeline orchestrates the complete Unifier Pipeline.
 //
@@ -35,12 +27,10 @@ type WorkerRegistry interface {
 // IMPORTANT: The pipeline does NOT mutate the input spec.
 // All modifications are made on a copy.
 type Pipeline struct {
-	preValidator   *PreValidator
-	resolver       *StackKitResolver
-	addonDetector  *AddonDetector
-	engine         *Engine
-	workerRegistry WorkerRegistry // Optional: nil means no workers available
-	persister      *SpecPersister // Optional: nil disables persistence
+	preValidator  *PreValidator
+	resolver      *StackKitResolver
+	addonDetector *AddonDetector
+	engine        *Engine
 }
 
 // PipelineStep represents a single step in the pipeline.
@@ -51,6 +41,8 @@ type PipelineStep struct {
 	Error     string        `json:"error,omitempty"`
 	StartedAt time.Time     `json:"startedAt,omitempty"`
 }
+
+const failureStatus = "failed"
 
 // PipelineResult contains the complete result of pipeline execution.
 type PipelineResult struct {
@@ -80,11 +72,6 @@ type PipelineResult struct {
 
 	// Warnings collected during execution
 	Warnings []string `json:"warnings,omitempty"`
-
-	// Persistence paths (populated when persister is configured)
-	IntentPath       string `json:"intentPath,omitempty"`
-	RequirementsPath string `json:"requirementsPath,omitempty"`
-	UnifiedPath      string `json:"unifiedPath,omitempty"`
 }
 
 type pipelineRunOptions struct {
@@ -94,7 +81,6 @@ type pipelineRunOptions struct {
 }
 
 // NewPipeline creates a new Unifier Pipeline with an existing engine.
-// Use WithWorkerRegistry to enable worker-based service placement.
 func NewPipeline(engine *Engine) *Pipeline {
 	if engine == nil {
 		return nil
@@ -111,55 +97,21 @@ func NewPipeline(engine *Engine) *Pipeline {
 	addonDetector := NewAddonDetector()
 
 	return &Pipeline{
-		preValidator:   preValidator,
-		resolver:       resolver,
-		addonDetector:  addonDetector,
-		engine:         engine,
-		workerRegistry: nil, // No workers by default
-		persister:      nil, // No persistence by default
+		preValidator:  preValidator,
+		resolver:      resolver,
+		addonDetector: addonDetector,
+		engine:        engine,
 	}
 }
 
-// WithWorkerRegistry sets the worker registry for service placement.
-// This enables the Pipeline to fetch approved workers from the database.
-func (p *Pipeline) WithWorkerRegistry(registry WorkerRegistry) *Pipeline {
-	p.workerRegistry = registry
-	return p
-}
-
-// WithPersister sets the spec persister for saving specs to disk.
-// When configured, the pipeline saves specs after each phase:
-//   - persist-requirements: After unification, saves requirements-spec.yaml
-//   - persist-unified: After resolution, saves unified-spec.yaml
-//
-// Immutable kombination.yaml bytes are persisted by SaveIntentBytes before
-// normalization so byte-for-byte user intent is preserved.
-func (p *Pipeline) WithPersister(persister *SpecPersister) *Pipeline {
-	p.persister = persister
-	return p
-}
-
-// Execute runs the complete pipeline on a spec.
-// This method does NOT mutate the input spec.
-func (p *Pipeline) Execute(spec *core.KombinationSpec) *PipelineResult {
-	return p.ExecuteWithContext(context.Background(), spec)
-}
-
-// ExecuteWithContext runs the complete pipeline with a context for cancellation.
-func (p *Pipeline) ExecuteWithContext(ctx context.Context, spec *core.KombinationSpec) *PipelineResult {
-	return p.ExecuteWithDecisionContext(ctx, spec, nil)
-}
-
-// ExecuteWithDecisionContext runs the complete pipeline with optional
-// environment/operator decision-plane inputs.
-func (p *Pipeline) ExecuteWithDecisionContext(ctx context.Context, spec *core.KombinationSpec, decisionContext *core.DecisionContext) *PipelineResult {
-	return p.executeWithDecisionContext(ctx, spec, decisionContext, pipelineRunOptions{
+func (p *Pipeline) executeSpecWithDecisionContext(spec *core.KombinationSpec, decisionContext *core.DecisionContext) *PipelineResult {
+	return p.executeWithDecisionContext(spec, decisionContext, pipelineRunOptions{
 		runEngine:        true,
 		strictResolution: true,
 	})
 }
 
-func (p *Pipeline) executeWithDecisionContext(ctx context.Context, spec *core.KombinationSpec, providedDecisionContext *core.DecisionContext, options pipelineRunOptions) *PipelineResult {
+func (p *Pipeline) executeWithDecisionContext(spec *core.KombinationSpec, providedDecisionContext *core.DecisionContext, options pipelineRunOptions) *PipelineResult {
 	startTime := time.Now()
 	result := &PipelineResult{
 		Steps:    make([]PipelineStep, 0, 8),
@@ -168,7 +120,6 @@ func (p *Pipeline) executeWithDecisionContext(ctx context.Context, spec *core.Ko
 
 	exec := &pipelineExecution{
 		pipeline:                p,
-		ctx:                     ctx,
 		workingSpec:             p.copySpec(spec),
 		result:                  result,
 		providedDecisionContext: providedDecisionContext,
@@ -207,13 +158,6 @@ func (p *Pipeline) executeWithDecisionContext(ctx context.Context, spec *core.Ko
 		return result
 	}
 
-	if p.persister != nil && result.RequirementsSpec != nil {
-		exec.runWarningStep("persist-requirements", "Failed to persist requirements spec: ", exec.persistRequirements)
-	}
-	if p.persister != nil && result.UnifiedSpec != nil {
-		exec.runWarningStep("persist-unified", "Failed to persist unified spec: ", exec.persistUnified)
-	}
-
 	result.Success = true
 	result.TotalTime = time.Since(startTime)
 	return result
@@ -221,7 +165,6 @@ func (p *Pipeline) executeWithDecisionContext(ctx context.Context, spec *core.Ko
 
 type pipelineExecution struct {
 	pipeline                *Pipeline
-	ctx                     context.Context
 	workingSpec             *core.KombinationSpec
 	result                  *PipelineResult
 	providedDecisionContext *core.DecisionContext
@@ -232,7 +175,7 @@ type pipelineExecution struct {
 func (e *pipelineExecution) runRequiredStep(name string, fn func() error) bool {
 	step := e.pipeline.runStep(name, fn)
 	e.result.Steps = append(e.result.Steps, step)
-	if step.Status != precheckStatusFailed {
+	if step.Status != failureStatus {
 		return false
 	}
 	e.result.Success = false
@@ -240,14 +183,6 @@ func (e *pipelineExecution) runRequiredStep(name string, fn func() error) bool {
 	e.result.ErrorMessage = step.Error
 	e.result.TotalTime = time.Since(e.startTime)
 	return true
-}
-
-func (e *pipelineExecution) runWarningStep(name, warningPrefix string, fn func() error) {
-	step := e.pipeline.runStep(name, fn)
-	e.result.Steps = append(e.result.Steps, step)
-	if step.Status == precheckStatusFailed {
-		e.result.Warnings = append(e.result.Warnings, warningPrefix+step.Error)
-	}
 }
 
 func (e *pipelineExecution) preValidate() error {
@@ -336,11 +271,7 @@ func (e *pipelineExecution) skipEngine() {
 }
 
 func (e *pipelineExecution) runUnifierEngine() error {
-	workers, err := e.approvedWorkers()
-	if err != nil {
-		return err
-	}
-	unifiedSpec, err := e.pipeline.engine.Unify(e.workingSpec, workers)
+	unifiedSpec, err := e.pipeline.engine.Unify(e.workingSpec, []core.Worker{})
 	if err != nil {
 		return fmt.Errorf("unification error: %w", err)
 	}
@@ -353,18 +284,6 @@ func (e *pipelineExecution) runUnifierEngine() error {
 	return nil
 }
 
-func (e *pipelineExecution) approvedWorkers() ([]core.Worker, error) {
-	if e.pipeline.workerRegistry == nil {
-		return []core.Worker{}, nil
-	}
-	workers, err := e.pipeline.workerRegistry.ListApprovedWorkers(e.ctx)
-	if err != nil {
-		e.result.Warnings = append(e.result.Warnings, fmt.Sprintf("Could not load workers from registry: %v - using node affinity only", err))
-		return []core.Worker{}, nil
-	}
-	return workers, nil
-}
-
 func (e *pipelineExecution) applyDetectedAddons(unifiedSpec *core.UnifiedSpec) {
 	if e.result.DetectionResult == nil || len(e.result.DetectionResult.Addons) == 0 {
 		return
@@ -375,24 +294,6 @@ func (e *pipelineExecution) applyDetectedAddons(unifiedSpec *core.UnifiedSpec) {
 	for i, addon := range e.result.DetectionResult.Addons {
 		unifiedSpec.Metadata[fmt.Sprintf("addon_%d", i)] = addon.Name
 	}
-}
-
-func (e *pipelineExecution) persistRequirements() error {
-	path, err := e.pipeline.persister.SaveRequirementsSpec(e.result.RequirementsSpec, e.result.IntentPath)
-	if err != nil {
-		return fmt.Errorf("persist requirements spec: %w", err)
-	}
-	e.result.RequirementsPath = path
-	return nil
-}
-
-func (e *pipelineExecution) persistUnified() error {
-	path, err := e.pipeline.persister.SaveUnifiedSpec(e.result.UnifiedSpec, e.result.RequirementsPath)
-	if err != nil {
-		return fmt.Errorf("persist unified spec: %w", err)
-	}
-	e.result.UnifiedPath = path
-	return nil
 }
 
 // ExecuteInput runs the pipeline starting from raw/partial user input.
@@ -409,21 +310,21 @@ func (p *Pipeline) ExecuteInput(input *core.InputSpec) *PipelineResult {
 // decision-plane context supplied outside the user-owned intent file.
 func (p *Pipeline) ExecuteInputWithDecisionContext(input *core.InputSpec, decisionContext *core.DecisionContext) *PipelineResult {
 	spec := NormalizeInputSpec(input)
-	// Execute() handles nil and will surface validation errors.
+	// The spec pipeline handles nil and will surface validation errors.
 	if spec == nil {
-		return p.ExecuteWithDecisionContext(context.Background(), nil, decisionContext)
+		return p.executeSpecWithDecisionContext(nil, decisionContext)
 	}
 
 	// If nodes aren't available yet, run validate-only steps and mark engine skipped.
 	if len(spec.Nodes) == 0 {
-		return p.executeWithDecisionContext(context.Background(), spec, decisionContext, pipelineRunOptions{
+		return p.executeWithDecisionContext(spec, decisionContext, pipelineRunOptions{
 			runEngine:            false,
 			includeSkippedEngine: true,
 			strictResolution:     true,
 		})
 	}
 
-	return p.ExecuteWithDecisionContext(context.Background(), spec, decisionContext)
+	return p.executeSpecWithDecisionContext(spec, decisionContext)
 }
 
 func applyPipelineDecisionArtifacts(result *PipelineResult, spec *core.KombinationSpec) {
@@ -483,7 +384,7 @@ func (p *Pipeline) runStep(name string, fn func() error) PipelineStep {
 	step.Duration = time.Since(step.StartedAt)
 
 	if err != nil {
-		step.Status = precheckStatusFailed
+		step.Status = failureStatus
 		step.Error = err.Error()
 	} else {
 		step.Status = "success"
@@ -578,42 +479,12 @@ func (p *Pipeline) copyService(svc core.ServiceSpec) core.ServiceSpec {
 	return copied
 }
 
-// ValidateOnly runs the side-effect-free validation and decision-plane steps.
-// Useful for live validation in the UI wizard.
-// This method does NOT mutate the input spec.
-func (p *Pipeline) ValidateOnly(spec *core.KombinationSpec) *PipelineResult {
-	return p.executeWithDecisionContext(context.Background(), spec, nil, pipelineRunOptions{
-		runEngine:        false,
-		strictResolution: false,
-	})
-}
-
 // PreValidate runs only Step 1.
 func (p *Pipeline) PreValidate(spec *core.KombinationSpec) (*core.ValidationResult, error) {
 	return p.preValidator.ValidateSchema(spec)
 }
 
-// ResolveStackKit runs only Step 2.
-func (p *Pipeline) ResolveStackKit(spec *core.KombinationSpec) *ResolveResult {
-	return p.resolver.Resolve(spec)
-}
-
 // DetectAddons runs only Step 2b.
 func (p *Pipeline) DetectAddons(spec *core.KombinationSpec) *DetectionResult {
 	return p.addonDetector.Detect(spec)
-}
-
-// GetResolver returns the StackKit resolver for direct access.
-func (p *Pipeline) GetResolver() *StackKitResolver {
-	return p.resolver
-}
-
-// GetAddonDetector returns the add-on detector for direct access.
-func (p *Pipeline) GetAddonDetector() *AddonDetector {
-	return p.addonDetector
-}
-
-// GetPreValidator returns the pre-validator for direct access.
-func (p *Pipeline) GetPreValidator() *PreValidator {
-	return p.preValidator
 }

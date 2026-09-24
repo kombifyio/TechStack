@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"os"
 	"regexp"
 	"strings"
 
@@ -14,7 +13,6 @@ import (
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/identity"
-	"github.com/pocketbase/pocketbase/core"
 )
 
 const (
@@ -35,11 +33,10 @@ var ownerUsernameUnsafeChars = regexp.MustCompile(`[^a-z0-9_-]+`)
 
 // ownerSourceSeedsPocketID reports whether the owner source materializes a
 // Pocket ID owner seed on the stack (owner fields present at rollout). Plain
-// local owners and owners derived from a verified kombify Cloud link both
-// travel the local seeding path; only the SaaS auto "cloud" lane defers owner
-// materialization to the platform.
+// local owners, verified current Cloud profiles and owners derived from a
+// verified kombify Cloud link all travel the local seeding path.
 func ownerSourceSeedsPocketID(source string) bool {
-	return source == ownerSourceLocal || source == ownerSourceCloudLinked
+	return source == ownerSourceLocal || source == ownerSourceCloud || source == ownerSourceCloudLinked
 }
 
 type ownerBootstrapSpec struct {
@@ -64,6 +61,10 @@ func validateCreateOwnerBootstrap(req normalizedCreateStackRequest) string {
 		if msg := validateOwnerBootstrapSource(bootstrap.Source); msg != "" {
 			return msg
 		}
+		if bootstrap.Source == ownerSourceCloud &&
+			(bootstrap.Email != "" || bootstrap.Username != "" || bootstrap.DisplayName != "" || bootstrap.RecoveryPassphraseHash != "") {
+			return "Owner identity and recovery fields are not accepted for an automatic Cloud owner; they derive from the authenticated profile"
+		}
 		if bootstrap.RecoveryPassphraseHash != "" && !strings.HasPrefix(bootstrap.RecoveryPassphraseHash, "$argon2id$") {
 			return "Recovery passphrase hash must use argon2id"
 		}
@@ -75,9 +76,8 @@ func validateCreateOwnerBootstrap(req normalizedCreateStackRequest) string {
 
 	switch bootstrap.Source {
 	case ownerSourceLocal:
-		if bootstrap.Email == "" {
-			return "Owner email is required for custom owner bootstrap"
-		}
+		// An omitted email is filled from the signed-in operator during
+		// resolve; only a missing session identity denies the create.
 		if bootstrap.RecoveryPassphraseHash != "" && !strings.HasPrefix(bootstrap.RecoveryPassphraseHash, "$argon2id$") {
 			return "Recovery passphrase hash must use argon2id"
 		}
@@ -92,9 +92,7 @@ func validateCreateOwnerBootstrap(req normalizedCreateStackRequest) string {
 			return "Recovery passphrase hash must use argon2id"
 		}
 	case ownerSourceCloud:
-		if !cloudOwnerBootstrapEnabled() {
-			return "Cloud owner bootstrap is not available in this release. Use local owner bootstrap."
-		}
+		return "Cloud owner source is only supported with automatic bootstrap"
 	default:
 		return "Owner source must be 'local', 'cloud', or 'cloud-linked'"
 	}
@@ -231,6 +229,9 @@ type ownerBootstrapContext struct {
 	Email       string
 	Username    string
 	DisplayName string
+	// CurrentProfile is the server-side verified profile represented by the
+	// authenticated SaaS session. It is never populated from request JSON.
+	CurrentProfile *cloudLinkIdentity
 	// CloudLink carries the server-side verified kombify Cloud profile link for
 	// the authenticated operator. It is only populated when the request selects
 	// the cloud-linked owner source; nil means no usable link exists.
@@ -271,12 +272,14 @@ func resolveCreateOwnerBootstrap(req normalizedCreateStackRequest, ctx ownerBoot
 			return req, denyOwnerSourceInvalid(msg)
 		}
 		if bootstrap.Source == ownerSourceCloud {
-			bootstrap.Email = ""
-			bootstrap.Username = ""
-			bootstrap.DisplayName = ""
-			bootstrap.RecoveryPassphraseHash = ""
-			applyResolvedOwnerBootstrap(&req, bootstrap)
-			return req, nil
+			profile := ctx.CurrentProfile
+			if profile == nil || !profile.EmailVerified || strings.TrimSpace(profile.Email) == "" {
+				return req, denyCloudProfileEmailMissing()
+			}
+			bootstrap.Email = strings.TrimSpace(profile.Email)
+			bootstrap.Username = usernameFromEmail(bootstrap.Email)
+			bootstrap.DisplayName = firstNonEmpty(strings.TrimSpace(profile.DisplayName), bootstrap.Email)
+			break
 		}
 		email := strings.TrimSpace(ctx.Email)
 		if email == "" {
@@ -306,8 +309,9 @@ func resolveCreateOwnerBootstrap(req normalizedCreateStackRequest, ctx ownerBoot
 }
 
 // resolveCustomOwnerIdentity fills the owner identity for custom bootstrap
-// mode. Local owners bring their own email; cloud-linked owners derive every
-// identity field from the server-side verified kombify Cloud link.
+// mode. Local owners may omit identity to inherit the signed-in kombify Cloud
+// (or Techstack) account; an explicit email still wins. Cloud-linked owners
+// derive every identity field from the server-side verified Cloud link.
 func resolveCustomOwnerIdentity(bootstrap *ownerBootstrapSpec, ctx ownerBootstrapContext) (bool, *ownerBootstrapDenial) {
 	if bootstrap.Source == ownerSourceCloudLinked {
 		link := ctx.CloudLink
@@ -322,10 +326,22 @@ func resolveCustomOwnerIdentity(bootstrap *ownerBootstrapSpec, ctx ownerBootstra
 		bootstrap.DisplayName = firstNonEmpty(strings.TrimSpace(link.DisplayName), bootstrap.Email)
 		return true, nil
 	}
+	usedSignedInAccount := false
+	if bootstrap.Email == "" {
+		bootstrap.Email = strings.TrimSpace(ctx.Email)
+		usedSignedInAccount = bootstrap.Email != ""
+	}
 	if bootstrap.Email == "" {
 		return false, denyOwnerEmailMissing()
 	}
 	bootstrap.Username = firstNonEmpty(bootstrap.Username, usernameFromEmail(bootstrap.Email))
+	if usedSignedInAccount {
+		bootstrap.DisplayName = firstNonEmpty(
+			bootstrap.DisplayName,
+			strings.TrimSpace(ctx.DisplayName),
+			bootstrap.Email,
+		)
+	}
 	return true, nil
 }
 
@@ -416,12 +432,12 @@ func generateRecoveryPassphraseHash() (string, error) {
 	return tsauth.HashPassword(base64.RawURLEncoding.EncodeToString(buf))
 }
 
-// transientOwnerSource maps the persisted owner source onto the StackKit wire
-// contract: cloud-linked owners seed Pocket ID exactly like local owners, so
-// the wire keeps source="local" and carries the provenance in source_origin.
+// transientOwnerSource maps Cloud-derived owner sources onto the StackKit wire
+// contract: they seed Pocket ID exactly like local owners, so the wire keeps
+// source="local" and carries the provenance in source_origin.
 // This avoids a StackKits owner-bootstrap schema change.
 func transientOwnerSource(source string) string {
-	if source == ownerSourceCloudLinked {
+	if source == ownerSourceCloudLinked || source == ownerSourceCloud {
 		return ownerSourceLocal
 	}
 	return source
@@ -430,19 +446,10 @@ func transientOwnerSource(source string) string {
 // ownerSourceOrigin returns the additive provenance marker for owner sources
 // that are wire-mapped onto "local"; empty for sources that map to themselves.
 func ownerSourceOrigin(source string) string {
-	if source == ownerSourceCloudLinked {
-		return ownerSourceCloudLinked
+	if source == ownerSourceCloudLinked || source == ownerSourceCloud {
+		return source
 	}
 	return ""
-}
-
-func cloudOwnerBootstrapEnabled() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("TECHSTACK_ENABLE_CLOUD_OWNER_BOOTSTRAP"))) {
-	case "1", "true", "yes", "on":
-		return true
-	default:
-		return false
-	}
 }
 
 func applyOwnerBootstrapToTransientSpec(spec map[string]interface{}, bootstrap ownerBootstrapSpec) {
@@ -509,20 +516,17 @@ func (h crudRouteHandlers) applyOwnerBootstrap(ctx context.Context, tenantID, ow
 	if !ownerSourceSeedsPocketID(bootstrap.Source) {
 		return nil
 	}
-	if h.walletStore != nil {
-		if err := h.upsertOwnerAccessWalletStoreEntry(ctx, tenantID, ownerID, stackID, stackName, bootstrap); err != nil {
-			return err
-		}
-		return h.upsertRecoveryWalletStoreEntry(ctx, tenantID, ownerID, stackID, stackName, bootstrap)
+	if h.walletStore == nil {
+		return fmt.Errorf("canonical owner bootstrap wallet store unavailable")
 	}
-	if h.app == nil {
-		return nil
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		return fmt.Errorf("tenant id is required for owner bootstrap")
 	}
-
-	if err := h.upsertOwnerAccessWalletEntry(ownerID, stackID, stackName, bootstrap); err != nil {
+	if err := h.upsertOwnerAccessWalletStoreEntry(ctx, tenantID, ownerID, stackID, stackName, bootstrap); err != nil {
 		return err
 	}
-	return h.upsertRecoveryWalletEntry(ownerID, stackID, stackName, bootstrap)
+	return h.upsertRecoveryWalletStoreEntry(ctx, tenantID, ownerID, stackID, stackName, bootstrap)
 }
 
 func (h crudRouteHandlers) upsertOwnerAccessWalletStoreEntry(ctx context.Context, tenantID, ownerID, stackID, stackName string, bootstrap ownerBootstrapSpec) error {
@@ -531,13 +535,16 @@ func (h crudRouteHandlers) upsertOwnerAccessWalletStoreEntry(ctx context.Context
 }
 
 func (h crudRouteHandlers) upsertRecoveryWalletStoreEntry(ctx context.Context, tenantID, ownerID, stackID, stackName string, bootstrap ownerBootstrapSpec) error {
-	fields := recoveryWalletFields(ownerID, stackID, stackName, bootstrap)
+	fields, err := recoveryWalletFields(ownerID, stackID, stackName, bootstrap)
+	if err != nil {
+		return err
+	}
 	return h.upsertWalletStoreEntry(ctx, tenantID, stackID, recoveryWalletServiceID, fields)
 }
 
 func (h crudRouteHandlers) upsertWalletStoreEntry(ctx context.Context, tenantID, stackID, serviceID string, fields map[string]any) error {
 	if h.walletStore == nil {
-		return nil
+		return fmt.Errorf("canonical owner bootstrap wallet store unavailable")
 	}
 	item := controlplane.WalletItem{
 		ID:          fmt.Sprintf("%s:%s", stackID, serviceID),
@@ -553,47 +560,6 @@ func (h crudRouteHandlers) upsertWalletStoreEntry(ctx context.Context, tenantID,
 		return err
 	}
 	return nil
-}
-
-func (h crudRouteHandlers) upsertOwnerAccessWalletEntry(ownerID, stackID, stackName string, bootstrap ownerBootstrapSpec) error {
-	fields := ownerAccessWalletFields(ownerID, stackID, stackName, bootstrap)
-	_, err := h.upsertWalletEntry(ownerID, stackID, ownerWalletServiceID, fields)
-	return err
-}
-
-func (h crudRouteHandlers) upsertRecoveryWalletEntry(ownerID, stackID, stackName string, bootstrap ownerBootstrapSpec) error {
-	fields := recoveryWalletFields(ownerID, stackID, stackName, bootstrap)
-	_, err := h.upsertWalletEntry(ownerID, stackID, recoveryWalletServiceID, fields)
-	return err
-}
-
-func (h crudRouteHandlers) upsertWalletEntry(ownerID, stackID, serviceID string, fields map[string]any) (*core.Record, error) {
-	walletCollection, err := h.app.FindCollectionByNameOrId("wallet")
-	if err != nil {
-		return nil, fmt.Errorf("wallet collection missing: %w", err)
-	}
-
-	rec, _ := h.app.FindFirstRecordByFilter(
-		"wallet",
-		"owner_id = {:ownerID} && stack_id = {:stackID} && service_id = {:serviceID}",
-		map[string]any{
-			"ownerID":   ownerID,
-			"stackID":   stackID,
-			"serviceID": serviceID,
-		},
-	)
-	if rec == nil {
-		rec = core.NewRecord(walletCollection)
-	}
-
-	for key, value := range fields {
-		rec.Set(key, value)
-	}
-
-	if err := h.app.Save(rec); err != nil {
-		return nil, err
-	}
-	return rec, nil
 }
 
 //nolint:goconst // Wallet field names intentionally mirror PocketBase schema keys.
@@ -622,7 +588,11 @@ func ownerAccessWalletFields(ownerID, stackID, stackName string, bootstrap owner
 }
 
 //nolint:goconst // Wallet field names intentionally mirror PocketBase schema keys.
-func recoveryWalletFields(ownerID, stackID, stackName string, bootstrap ownerBootstrapSpec) map[string]any {
+func recoveryWalletFields(ownerID, stackID, stackName string, bootstrap ownerBootstrapSpec) (map[string]any, error) {
+	secret, err := encryptWalletSecret(bootstrap.RecoveryPassphraseHash)
+	if err != nil {
+		return nil, err
+	}
 	return map[string]any{
 		"owner_id":       ownerID,
 		"stack_id":       stackID,
@@ -630,7 +600,7 @@ func recoveryWalletFields(ownerID, stackID, stackName string, bootstrap ownerBoo
 		"name":           "Stack recovery passphrase",
 		"kind":           "other",
 		"username":       firstNonEmpty(bootstrap.Email, bootstrap.Username),
-		"secret":         encryptWalletSecretIfPossible(bootstrap.RecoveryPassphraseHash),
+		"secret":         secret,
 		"item_class":     "recovery",
 		"source_type":    "stackkit",
 		"source_ref":     "stackkit:" + stackID + ":recovery-passphrase-hash",
@@ -638,17 +608,17 @@ func recoveryWalletFields(ownerID, stackID, stackName string, bootstrap ownerBoo
 		"revealable":     true,
 		"auto_generated": true,
 		"notes":          fmt.Sprintf("Recovery passphrase hash for %s. TechStack never stores the plaintext passphrase.", stackName),
-	}
+	}, nil
 }
 
-func encryptWalletSecretIfPossible(secret string) string {
+func encryptWalletSecret(secret string) (string, error) {
 	secret = strings.TrimSpace(secret)
 	if secret == "" {
-		return ""
+		return "", nil
 	}
 	encrypted, err := tsauth.EncryptIfNeeded(tsauth.GetEncryptor(), secret)
 	if err != nil {
-		return secret
+		return "", fmt.Errorf("encrypt wallet secret: %w", err)
 	}
-	return encrypted
+	return encrypted, nil
 }

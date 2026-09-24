@@ -4,6 +4,7 @@ package grpcserver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -20,7 +21,9 @@ var diagnosticCommandTypes = map[string]struct{}{
 	diagnosticCommandGetLogs:     {},
 }
 
-const diagnosticCommandHealthCheck, diagnosticCommandGetLogs, commandClassTofu = "health_check", "get_logs", "tofu"
+const diagnosticCommandHealthCheck, diagnosticCommandGetLogs = "health_check", "get_logs"
+
+var errDirectIaCRetired = errors.New("direct tofu/terramate commands are retired; use the typed StackKits command path")
 
 // CommandStream implements agentpb.AgentServiceServer.CommandStream
 func (s *Server) CommandStream(stream grpc.BidiStreamingServer[agentpb.AgentMessage, agentpb.CoreMessage]) error {
@@ -55,6 +58,9 @@ func (s *Server) CommandStream(stream grpc.BidiStreamingServer[agentpb.AgentMess
 			case <-done:
 				return
 			case <-ticker.C:
+				if !s.agentConnected(agentID) {
+					return
+				}
 				stackKitEntry, found := s.stackKitCommandQueue.DequeueWithFilter(func(entry *stackKitCommandEntry) bool {
 					return entry.AgentID == agentID
 				})
@@ -81,32 +87,7 @@ func (s *Server) CommandStream(stream grpc.BidiStreamingServer[agentpb.AgentMess
 					continue
 				}
 
-				// S7: Check TofuCommand queue (priority over legacy commands)
-				tofuEntry, found := s.tofuCommandQueue.DequeueWithFilter(func(e *tofuCommandEntry) bool {
-					return e.AgentID == agentID
-				})
-				if found {
-					// Send TofuCommand to agent
-					coreMsg := &agentpb.CoreMessage{
-						MessageId: tofuEntry.Command.CommandId,
-						Payload: &agentpb.CoreMessage_TofuCommand{
-							TofuCommand: tofuEntry.Command,
-						},
-					}
-
-					if err := stream.Send(coreMsg); err != nil {
-						s.log.Error("send_tofu_command_error", "error", err, "agent_id", agentID)
-						// Re-queue the command if send failed
-						if qErr := s.tofuCommandQueue.Enqueue(tofuEntry); qErr != nil {
-							s.log.Error("tofu_requeue_failed", "error", qErr.Error(), "cmd_id", tofuEntry.Command.CommandId)
-						}
-						return
-					}
-					s.log.Info("tofu_command_sent", "cmd_id", tofuEntry.Command.CommandId, "agent_id", agentID, "operation", tofuEntry.Command.Operation.String())
-					continue
-				}
-
-				// S7: Check legacy command queue
+				// S7: Check diagnostic command queue
 				cmd, found := s.commandQueue.DequeueWithFilter(func(c *AgentCommand) bool {
 					return c.AgentID == agentID
 				})
@@ -175,26 +156,12 @@ func (s *Server) CommandStream(stream grpc.BidiStreamingServer[agentpb.AgentMess
 				}
 			}
 
-		// IAC-4: Handle TofuResult messages
 		case *agentpb.AgentMessage_TofuResult:
 			if payload.TofuResult != nil {
-				s.log.Info("tofu_result_received",
+				s.log.Warn("retired_tofu_result_ignored",
 					"cmd_id", payload.TofuResult.CommandId,
 					"agent_id", agentID,
-					"success", payload.TofuResult.Success,
-					"exit_code", payload.TofuResult.ExitCode,
 				)
-
-				// Route to command router if available
-				if s.commandRouter != nil {
-					if err := s.commandRouter.HandleTofuResult(payload.TofuResult, agentID); err != nil {
-						s.log.Warn("failed_to_handle_tofu_result",
-							"error", err.Error(),
-							"cmd_id", payload.TofuResult.CommandId,
-							"agent_id", agentID,
-						)
-					}
-				}
 			}
 
 		case *agentpb.AgentMessage_StackkitResult:
@@ -257,6 +224,13 @@ func (s *Server) CommandStream(stream grpc.BidiStreamingServer[agentpb.AgentMess
 			s.UpdateHeartbeat(agentID, nil)
 		}
 	}
+}
+
+func (s *Server) agentConnected(agentID string) bool {
+	s.agentsMu.RLock()
+	agent, ok := s.agents[agentID]
+	s.agentsMu.RUnlock()
+	return ok && agent.Status != agentStatusDisconnected
 }
 
 // SendCommand queues a command for an agent with backpressure handling (S7).
@@ -359,123 +333,20 @@ func (s *Server) Results() <-chan *CommandResult {
 	return s.resultQueue
 }
 
-// =============================================================================
-// IAC-4: Tofu/Terramate Command Integration
-// =============================================================================
-
-// InitCommandRouter initializes the command router for IaC operations.
-// This should be called after server creation to enable TofuCommand handling.
-func (s *Server) InitCommandRouter() {
-	s.commandRouter = NewCommandRouter(s, s.log)
-	s.log.Info("command_router_initialized", "note", "IaC-4 command routing enabled")
-}
-
-// GetCommandRouter returns the command router for external access.
-func (s *Server) GetCommandRouter() *CommandRouter {
-	return s.commandRouter
-}
-
-// SendTofuCommand queues a TofuCommand for delivery to the specified agent with backpressure handling (S7).
-// This is the low-level method; prefer using CommandRouter.SendTofuCommand for
-// full command lifecycle management including result handling.
+// SendTofuCommand rejects direct OpenTofu dispatch. Guard executes StackKits
+// lifecycle commands; Advanced rendering belongs to the pinned CLI.
 func (s *Server) SendTofuCommand(agentID string, cmd *agentpb.TofuCommand) error {
-	if cmd == nil {
-		return fmt.Errorf("command is nil")
-	}
-	if cmd.CommandId == "" {
-		return fmt.Errorf("command_id is required")
-	}
-	if agentID == "" {
-		return fmt.Errorf("agent_id is required")
-	}
-
-	// Check if agent is connected
-	s.agentsMu.RLock()
-	agent, ok := s.agents[agentID]
-	s.agentsMu.RUnlock()
-
-	if !ok {
-		return fmt.Errorf("agent not connected: %s", agentID)
-	}
-	if agent.Status == agentStatusDisconnected {
-		return fmt.Errorf("agent is disconnected: %s", agentID)
-	}
-
-	// Phase 7.1: tofu commands are subject to the same per-agent allowlist.
-	if err := s.enforceCommandClass(agent, commandClassTofu); err != nil {
-		return err
-	}
-
-	// Queue the command using backpressure-aware queue (S7)
-	entry := &tofuCommandEntry{
-		AgentID: agentID,
-		Command: cmd,
-	}
-
-	if err := s.tofuCommandQueue.Enqueue(entry); err != nil {
-		if IsQueueFullError(err) {
-			s.log.Warn("tofu_command_queue_full",
-				"agent_id", agentID,
-				"command_id", cmd.CommandId,
-				"queue_size", s.tofuCommandQueue.Size(),
-				"max_size", s.tofuQueueConfig.MaxSize,
-			)
-		}
-		return fmt.Errorf("tofu command queue full: %w", err)
-	}
-
-	s.log.Info("tofu_command_queued",
-		"command_id", cmd.CommandId,
-		"agent_id", agentID,
-		"operation", cmd.Operation.String(),
-		"queue_size", s.tofuCommandQueue.Size(),
-	)
-	return nil
+	_ = agentID
+	_ = cmd
+	return errDirectIaCRetired
 }
 
-// SendTerramateCommand queues a TerramateCommand for delivery to the specified agent.
-// Note: Terramate is a Day-2 feature; this is a placeholder implementation.
+// SendTerramateCommand rejects direct Terramate dispatch. Day-2 Advanced Mode
+// is issued as a capability and executed by the pinned StackKits CLI.
 func (s *Server) SendTerramateCommand(agentID string, cmd *agentpb.TerramateCommand) error {
-	s.log.Warn("terramate_command_not_implemented",
-		"command_id", cmd.CommandId,
-		"agent_id", agentID,
-		"note", "Terramate integration is a Day-2 feature",
-	)
-	return fmt.Errorf("terramate commands not yet implemented (Day-2 feature)")
-}
-
-// =============================================================================
-// S7: Queue Statistics and Metrics
-// =============================================================================
-
-// GetQueueStats returns statistics for all command queues.
-// This is useful for monitoring and metrics collection.
-func (s *Server) GetQueueStats() map[string]QueueStats {
-	stats := make(map[string]QueueStats)
-	stats["command"] = s.commandQueue.Stats()
-	stats[commandClassTofu] = s.tofuCommandQueue.Stats()
-	stats[commandClassStackKit] = s.stackKitCommandQueue.Stats()
-	return stats
-}
-
-// GetCommandQueueStats returns statistics for the command queue.
-func (s *Server) GetCommandQueueStats() QueueStats {
-	return s.commandQueue.Stats()
-}
-
-// GetTofuQueueStats returns statistics for the tofu command queue.
-func (s *Server) GetTofuQueueStats() QueueStats {
-	return s.tofuCommandQueue.Stats()
-}
-
-// IsCommandQueueHealthy returns true if the command queue is below warning threshold.
-func (s *Server) IsCommandQueueHealthy() bool {
-	return !s.commandQueue.IsAboveThreshold()
-}
-
-// IsTofuQueueHealthy returns true if the tofu queue is below warning threshold.
-func (s *Server) IsTofuQueueHealthy() bool {
-	return !s.tofuCommandQueue.IsAboveThreshold()
+	_ = agentID
+	_ = cmd
+	return errDirectIaCRetired
 }
 
 // RunPreChecks implements agentpb.AgentServiceServer.RunPreChecks (H6a: Pre-Check Execution)
@@ -507,162 +378,11 @@ func (s *Server) RunPreChecks(ctx context.Context, req *agentpb.PreCheckRequest)
 	return response, nil
 }
 
-// =============================================================================
-// Sprint 9: Command Persistence (F9)
-// =============================================================================
-
-// recoverPendingCommands recovers commands that were pending before server restart.
-func (s *Server) recoverPendingCommands() error {
-	if s.commandStore == nil {
-		return nil
-	}
-
-	commands, err := s.commandStore.RecoverAllPending()
-	if err != nil {
-		return fmt.Errorf("failed to recover pending commands: %w", err)
-	}
-
-	if len(commands) == 0 {
-		s.log.Info("command_recovery_complete", "recovered", 0)
-		return nil
-	}
-
-	// Re-queue recovered commands
-	recovered := 0
-	for _, cmd := range commands {
-		if err := s.validateRecoveredCommand(cmd); err != nil {
-			s.log.Warn("command_recovery_rejected",
-				"command_id", commandIDForLog(cmd),
-				"agent_id", agentIDForLog(cmd),
-				"error", err.Error(),
-			)
-			continue
-		}
-		if err := s.commandQueue.Enqueue(cmd); err != nil {
-			s.log.Warn("command_recovery_enqueue_failed",
-				"command_id", cmd.ID,
-				"agent_id", cmd.AgentID,
-				"error", err.Error(),
-			)
-			continue
-		}
-		recovered++
-	}
-
-	s.log.Info("command_recovery_complete",
-		"recovered", recovered,
-		"total", len(commands),
-	)
-
-	return nil
-}
-
-func (s *Server) validateRecoveredCommand(cmd *AgentCommand) error {
-	if err := s.validateBasicCommandFields(cmd); err != nil {
-		return err
-	}
-	if _, ok := diagnosticCommandTypes[cmd.Type]; !ok {
-		return fmt.Errorf("agent command type %q is not allowed on the diagnostic command queue", cmd.Type)
-	}
-	if cmd.Command != cmd.Type {
-		return fmt.Errorf("agent diagnostic command %q must match type %q", cmd.Command, cmd.Type)
-	}
-	if s.enrollmentStore == nil {
-		return nil
-	}
-
-	s.agentsMu.RLock()
-	agent, ok := s.agents[cmd.AgentID]
-	s.agentsMu.RUnlock()
-	if !ok {
-		return fmt.Errorf("agent %q is not connected for identity-bound recovery", cmd.AgentID)
-	}
-	if agent.Status == agentStatusDisconnected {
-		return fmt.Errorf("agent %q is disconnected for identity-bound recovery", cmd.AgentID)
-	}
-	return s.enforceCommandClass(agent, cmd.Type)
-}
-
-func (s *Server) validateBasicCommandFields(cmd *AgentCommand) error {
-	if cmd == nil {
-		return fmt.Errorf("command is nil")
-	}
-	cmd.ID = strings.TrimSpace(cmd.ID)
-	cmd.AgentID = strings.TrimSpace(cmd.AgentID)
-	cmd.Type = strings.ToLower(strings.TrimSpace(cmd.Type))
-	if cmd.Command == "" {
-		cmd.Command = cmd.Type
-	}
-	if cmd.ID == "" {
-		return fmt.Errorf("command ID is required")
-	}
-	if cmd.AgentID == "" {
-		return fmt.Errorf("agent ID is required")
-	}
-	if cmd.Type == "" {
-		return fmt.Errorf("command type is required")
-	}
-	return nil
-}
-
-func commandIDForLog(cmd *AgentCommand) string {
-	if cmd == nil {
-		return ""
-	}
-	return cmd.ID
-}
-
-func agentIDForLog(cmd *AgentCommand) string {
-	if cmd == nil {
-		return ""
-	}
-	return cmd.AgentID
-}
-
-// SendCommandWithPersistence sends a command to an agent with database persistence.
-// This enables restart recovery and provides a full audit trail.
-// Use this method in production; use SendCommand for testing without persistence.
+// SendCommandWithPersistence queues a diagnostic Guard command on the live
+// gRPC connection. Durable typed commands belong on pkg/agentcontrol; this
+// path does not persist to PocketBase. ownerID is accepted for call-site
+// compatibility and is not stored here.
 func (s *Server) SendCommandWithPersistence(cmd *AgentCommand, ownerID string) error {
-	if err := s.validateCommandForQueue(cmd); err != nil {
-		return err
-	}
-
-	// Persist command before queueing (Sprint 9: F9)
-	if s.commandStore != nil {
-		if _, err := s.commandStore.PersistCommand(cmd, ownerID); err != nil {
-			s.log.Error("command_persist_failed",
-				"command_id", cmd.ID,
-				"agent_id", cmd.AgentID,
-				"error", err.Error(),
-			)
-			// Non-fatal: still try to send the command
-		}
-	}
-
-	if err := s.enqueueCommand(cmd); err != nil {
-		// Update status to failed if persisted
-		if s.commandStore != nil {
-			_ = s.commandStore.UpdateStatus(cmd.ID, "queue_rejected")
-		}
-		return err
-	}
-
-	// Update status to queued
-	if s.commandStore != nil {
-		_ = s.commandStore.UpdateStatus(cmd.ID, "queued")
-	}
-
-	s.log.Debug("command_queued",
-		"command_id", cmd.ID,
-		"agent_id", cmd.AgentID,
-		"type", cmd.Type,
-	)
-
-	return nil
-}
-
-// CommandStore returns the command store for external use (e.g., by routes).
-// Returns nil if persistence is not enabled.
-func (s *Server) CommandStore() *CommandStore {
-	return s.commandStore
+	_ = ownerID
+	return s.SendCommand(cmd)
 }

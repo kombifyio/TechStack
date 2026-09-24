@@ -1,18 +1,17 @@
 /**
- * kombify-TechStack API - Stacks Module
+ * kombify-TechStack API - StackKit deployment compatibility module
  *
- * Stack management API functions including CRUD operations
- * and StackKits stack-spec import/export functionality.
+ * The backend still exposes the legacy `/stacks` routes. Canonical consumers
+ * use StackKit deployment names here; legacy names remain aliases at this one
+ * boundary until the route contract can be retired.
  */
 
 import { ApiRequestError, fetchApi, parseApiErrorResponse } from "./client";
-import { getPocketBaseCompatStoredAuthToken } from "$lib/auth/pocketbase-compat";
-import { clearCreatingSessionState } from "$lib/logout-cleanup";
-
-function getOptionalAuthHeaders(): HeadersInit {
-  const token = getPocketBaseCompatStoredAuthToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
+import { clearCreatingSessionState } from "#lib/logout-cleanup.js";
+import {
+  normalizeServerOutcome,
+  type ServerOutcome,
+} from "#lib/support/server-outcome.js";
 
 function looksLikeHtml(body: string): boolean {
   const t = body.trimStart().toLowerCase();
@@ -95,7 +94,6 @@ async function postYamlSpec<T>(
     credentials: "include",
     headers: {
       "Content-Type": "application/yaml",
-      ...getOptionalAuthHeaders(),
     },
     body: content,
   });
@@ -115,16 +113,28 @@ async function postYamlSpec<T>(
 }
 
 // ============================================================================
-// Stack Types
+// StackKit deployment types
 // ============================================================================
 
-export interface Stack {
+export interface KitDeployment {
   id: string;
+  /** Canonical Techstack identity for this StackKit rollout. */
+  kit_deployment_id: string;
+  /** Owner-scoped Homelab umbrella containing this rollout. */
+  homelab_id?: string;
+  /** StackKits catalog identity selected for this rollout. */
+  stackkit_id?: string;
+  /** StackKits-owned StackSpec/ResolvedPlan stackId, when already bound. */
+  stackkit_instance_id?: string;
   name: string;
   provider: string;
   state: string;
   status?: string;
   services: string[];
+  /** Desired application workloads projected from the validated StackSpec v2. */
+  desired_workloads?: Array<{ id: string; alternative?: string }>;
+  /** Authority used for desired_workloads; absent on legacy deployments. */
+  workload_selection_source?: string;
   server_ip?: string;
   runtime_phase?: string;
   server_mode?: string;
@@ -160,92 +170,6 @@ export interface Stack {
   updated_at: string;
 }
 
-export interface CreateStackOptions {
-  vpn?: string | null;
-  cloudflare_zero_trust?: boolean;
-  public_access?: boolean;
-  identity_head?: "pocket_id" | "pocketbase" | "generic_oidc";
-  enable_pocket_id?: boolean;
-  enable_pocketbase_backend?: boolean;
-  enable_pocketbase?: boolean;
-  enable_headscale?: boolean;
-  enable_monitoring?: boolean;
-  enable_traefik?: boolean;
-  identity?: {
-    toolProvider?: string;
-    homelabProvider?: string;
-    requiresPasskeys?: boolean;
-    backendCapability?: string;
-  };
-  identity_provider?: string;
-  tool_identity_provider?: string;
-  homelab_identity_provider?: string;
-  requires_passkeys?: boolean;
-  identity_backend_capability?: string;
-  auto_updates?: boolean;
-  backups?: boolean;
-  multi_user?: boolean;
-  server_provisioning_mode?:
-    | "kombify-cloud"
-    | "connect-remote"
-    | "install-command";
-  server_connection_mode?:
-    | "managed-subscription"
-    | "remote-ssh"
-    | "agent-oneliner";
-  server_remote_host?: string;
-  server_remote_port?: number;
-  server_remote_user?: string;
-  server_remote_auth_method?: "ssh-key" | "password";
-  server_remote_ssh_key_label?: string;
-  server_remote_use_sudo?: boolean;
-  server_install_command_required?: boolean;
-  server_mode?: string;
-  runtime_lane?: string;
-  runtime_offering_id?: string;
-  provider_id?: string;
-  ionos_datacenter?: string;
-  provider_region?: string;
-  simulate_node_lifecycle?: string;
-  desired_state?: string;
-  billing_mode?: string;
-  billing_cadence?: string;
-  stackkit_catalog_ref?: string;
-  verification_status?: string;
-  use_cases?: string[];
-}
-
-export interface CreateStackRequest {
-  name: string;
-  mode?: "easy" | "techie";
-  provider?: string;
-  server_ip?: string;
-  ssh_user?: string;
-  services: string[];
-  ssh_key_path?: string;
-  ssh_key_content?: string; // User can paste private key directly
-  stack_spec?: Record<string, unknown>;
-  user_config?: Record<string, unknown>;
-  user_config_format?: "json" | "yaml";
-  options?: CreateStackOptions;
-}
-
-export interface CreateStackResponse {
-  stack_id: string;
-  job_id: string;
-  name: string;
-  state: string;
-  message: string;
-  server_id?: string;
-  operations_url?: string;
-  idempotent_replay?: boolean;
-  registration_token?: string;
-  bootstrap_token?: string;
-  bootstrap_token_expires_at?: string;
-  owner_spec_endpoint?: string;
-  owner_spec_scopes?: string[];
-}
-
 export interface StackJobAcceptedResponse {
   success: boolean;
   message: string;
@@ -253,12 +177,7 @@ export interface StackJobAcceptedResponse {
 }
 
 export type StackKitLifecycleOperation =
-  | "plan"
-  | "apply"
-  | "verify"
-  | "upgrade"
-  | "drift_detect"
-  | "drift_reconcile";
+  "plan" | "apply" | "verify" | "upgrade" | "drift_detect" | "drift_reconcile";
 
 export interface StackKitLifecycleRequest {
   operation: StackKitLifecycleOperation;
@@ -269,7 +188,7 @@ export interface StackKitLifecycleRequest {
 
 export interface StackKitLifecycleAcceptedResponse {
   job_id: string;
-  stack_id: string;
+  kit_deployment_id: string;
   agent_id: string;
   operation: StackKitLifecycleOperation;
   status: string;
@@ -281,8 +200,26 @@ export interface ResumeStackEnrollmentRequest {
   lease_id: string;
 }
 
-export interface ResumeStackEnrollmentResponse extends StackJobAcceptedResponse {
-  stack_id: string;
+export interface ResumeRemoteEnrollmentRequest {
+  pairing_job_id?: string;
+  password?: string;
+}
+
+export interface ResumeRemoteEnrollmentResponse {
+  success?: boolean;
+  message?: string;
+  kit_deployment_id?: string;
+  pairing_job_id?: string;
+  planned_server_id?: string;
+  server_remote_host?: string;
+  server_remote_user?: string;
+  server_remote_port?: number;
+  server_remote_auth_method?: string;
+  server_remote_credential_ref?: string;
+}
+
+export interface StackRolloutContinuationResponse extends StackJobAcceptedResponse {
+  kit_deployment_id: string;
   source_job_id: string;
   lease_id: string;
   server_id: string;
@@ -299,25 +236,24 @@ export interface RetryStackRolloutRequest {
   lease_id: string;
 }
 
-export interface RetryStackRolloutResponse extends StackJobAcceptedResponse {
-  stack_id: string;
-  source_job_id: string;
-  lease_id: string;
-  server_id: string;
-  idempotent_replay: boolean;
-  provider_vm_create_requested: false;
-  bootstrap_token?: string;
-  bootstrap_token_expires_at?: string;
-  owner_spec_endpoint?: string;
-  owner_spec_scopes?: string[];
+export interface StackPruneCandidate {
+  resource_type: "stack_projection" | "worker_projection";
+  id: string;
+  name: string;
+  class: string;
+  reason: string;
 }
 
 export interface StackPruneResponse {
+  mode: "dry_run" | "apply";
   message: string;
-  pruned_stacks: number;
-  pruned_legacy?: number;
-  skipped_active: number;
-  skipped_other_owner?: number;
+  digest: string;
+  candidates: StackPruneCandidate[];
+  applied: {
+    stacks: number;
+    workers: number;
+    total: number;
+  };
   warnings?: string[];
 }
 
@@ -354,6 +290,27 @@ export interface MonthlyRuntimeStatus {
     port?: number;
     user?: string;
     enabled?: boolean;
+  } | null;
+  /** Ledger view of the latest start/stop of this resource generation. */
+  power?: {
+    operation_id: string;
+    desired_power_state: "running" | "stopped";
+    status: "pending" | "succeeded" | "failed";
+    phase: string;
+    reason_code?: string;
+    retryable?: boolean;
+  } | null;
+  /** Node-verified outcome of an SSH enable/disable. */
+  ssh_access?: {
+    enabled: boolean;
+    owner_keys_installed: number;
+    owner_keys_removed: number;
+    owner_keys_present: number;
+  } | null;
+  /** What a reconnect did to recover the Guard session. */
+  reconnect?: {
+    agent_restarted: boolean;
+    connection_state?: string;
   } | null;
 }
 
@@ -425,7 +382,7 @@ export interface StackOperationServer {
   role: string;
   status: string;
   assignment: "stack" | "unassigned" | string;
-  techstack_id?: string;
+  kit_deployment_id?: string;
   agent_id: string;
   ip?: string;
   host_addresses?: StackServerAddress[];
@@ -446,6 +403,7 @@ export interface StackOperationServer {
   desired_state?: string;
   enrollment_status?: string;
   assignable?: boolean;
+  last_outcome?: ServerOutcome;
   capabilities: {
     cpu_cores?: number;
     ram_mb?: number;
@@ -461,6 +419,13 @@ export interface StackOperationServer {
     stackkit_manifest_observed?: boolean;
     service_discovery_observed?: boolean;
     provider?: string;
+    lifecycle_state?: string;
+    connection_state?: string;
+    health_state?: string;
+    runtime_slot_key?: string;
+    runtime_slot_id?: string;
+    runtime_slot_generation?: string;
+    stackkit?: string;
     tags?: string;
     tenant_id?: string;
     runtime_lane?: string;
@@ -481,6 +446,39 @@ export interface StackOperationServer {
   };
   health: StackServerHealth;
 }
+
+export type StackOperationServerWire = Omit<
+  StackOperationServer,
+  "last_outcome"
+> & {
+  last_outcome?: unknown;
+};
+
+export function normalizeStackOperationServer(
+  server: StackOperationServerWire,
+): StackOperationServer {
+  return {
+    ...server,
+    last_outcome: normalizeServerOutcome(server.last_outcome) ?? undefined,
+  };
+}
+
+type StackOperationsPayloadWire = Omit<
+  StackOperationsPayload,
+  "stack" | "servers" | "retiredServers"
+> & {
+  stack: KitDeployment;
+  servers: StackOperationServerWire[];
+  retiredServers?: StackOperationServerWire[];
+};
+
+type StackServerDetailsPayloadWire = Omit<
+  StackServerDetailsPayload,
+  "stack" | "server"
+> & {
+  stack: KitDeployment;
+  server: StackOperationServerWire;
+};
 
 export interface StackOperationService {
   id?: string;
@@ -609,11 +607,13 @@ export interface StackOperationsJob {
 }
 
 export interface StackOperationsPayload {
-  stack: Stack & { status?: string; state?: string };
+  stack: KitDeployment & { status?: string; state?: string };
   readiness: StackReadiness;
   nextSteps: StackNextStep[];
   kpis: StackOperationKPIs;
   servers: StackOperationServer[];
+  /** Terminal managed generations excluded from current inventory and KPIs. */
+  retiredServers?: StackOperationServer[];
   services: StackOperationService[];
   monitoring: StackOperationMonitoring;
   alerts: StackOperationAlert[];
@@ -641,27 +641,29 @@ export interface StackCustodyLease {
 }
 
 export interface StackServerDetailsPayload {
-  stack: Stack & { status?: string; state?: string };
+  stack: KitDeployment & { status?: string; state?: string };
   server: StackOperationServer;
   services: StackOperationService[];
-  checks: Array<{
-    id: string;
-    worker_id: string;
-    stack_id?: string;
-    check_type: string;
-    description?: string;
-    blocking: boolean;
-    status: string;
-    message?: string;
-    details?: Record<string, unknown>;
-    error?: string;
-    executed_at?: string;
-    duration_ms?: number;
-    request_id?: string;
-  }>;
+  checks: StackServerCheck[];
   logs: Array<Record<string, unknown>>;
   health: StackServerHealth;
   monitoring: StackOperationMonitoring;
+}
+
+export interface StackServerCheck {
+  id: string;
+  worker_id: string;
+  kit_deployment_id?: string;
+  check_type: string;
+  description?: string;
+  blocking: boolean;
+  status: string;
+  message?: string;
+  details?: Record<string, unknown>;
+  error?: string;
+  executed_at?: string;
+  duration_ms?: number;
+  request_id?: string;
 }
 
 // ============================================================================
@@ -692,7 +694,7 @@ export interface ImportValidationResult {
  * Result of a successful import
  */
 export interface ImportResult {
-  stack_id: string;
+  kit_deployment_id: string;
   job_id: string;
   name: string;
   state: string;
@@ -702,10 +704,15 @@ export interface ImportResult {
 }
 
 export interface AssignStackWorkerResponse {
-  stack_id: string;
+  kit_deployment_id: string;
   worker_id: string;
   server: StackOperationServer;
 }
+
+type AssignStackWorkerResponseWire = Omit<
+  AssignStackWorkerResponse,
+  "server"
+> & { server: StackOperationServerWire };
 
 export interface AddManagedRuntimeServerRequest {
   /** Stable logical server slot. Reusing it resumes the same intent. */
@@ -720,7 +727,7 @@ export interface AddManagedRuntimeServerRequest {
 }
 
 export interface AddManagedRuntimeServerResponse {
-  stack_id: string;
+  kit_deployment_id: string;
   job_id?: string;
   runtime_slot_key: string;
   runtime_slot_id: string;
@@ -740,56 +747,61 @@ export interface AddManagedRuntimeServerResponse {
   warnings?: string[];
 }
 
+export interface MonthlyRuntimeCleanupReadback {
+  lease_id: string;
+  lease: {
+    desired_terminal: boolean;
+    observed_terminal: boolean;
+  };
+  server: {
+    bound: boolean;
+    terminal: boolean;
+  };
+  provider_operation: {
+    found: boolean;
+    terminal: boolean;
+    absence_evidence_ref?: string;
+    capacity_released: boolean;
+  };
+}
+
 /**
  * Result of export
  */
 export interface ExportResult {
   content: string;
   format: "yaml" | "json";
-  stack_id: string;
+  kit_deployment_id: string;
   exported_at: string;
 }
 
 // ============================================================================
-// Stack API Functions
+// Legacy `/stacks` route compatibility functions
 // ============================================================================
 
-export async function listStacks(): Promise<Stack[]> {
-  return apiRequest<Stack[]>("GET", "/api/v1/stacks");
+export async function listKitDeployments(): Promise<KitDeployment[]> {
+  return apiRequest<KitDeployment[]>("GET", "/api/v1/stacks");
 }
 
-export async function getStack(stackId: string): Promise<Stack> {
-  return apiRequest<Stack>(
+export async function getKitDeployment(
+  kitDeploymentId: string,
+): Promise<KitDeployment> {
+  return apiRequest<KitDeployment>(
     "GET",
-    `/api/v1/stacks/${encodeURIComponent(stackId)}`,
+    `/api/v1/stacks/${encodeURIComponent(kitDeploymentId)}`,
   );
 }
 
-export async function createStack(
-  req: CreateStackRequest,
-  idempotencyKey?: string,
-): Promise<CreateStackResponse> {
-  return apiRequest<CreateStackResponse>(
-    "POST",
-    "/api/v1/stacks",
-    JSON.stringify(req),
-    undefined,
-    idempotencyKey ? { "X-Idempotency-Key": idempotencyKey } : undefined,
-  );
-}
-
-// pruneOrphanStacks removes only orphan entries (no live lease, no worker). It
-// never decommissions a lease or stops a server, so it is the safe target for
-// the generic "clean up old entries" button. It makes no lease/provider calls,
-// so it uses a shorter timeout.
-export async function pruneOrphanStacks(
+async function requestOrphanCleanup(
+  mode: "dry_run" | "apply",
+  digest?: string,
   stackId?: string,
 ): Promise<StackPruneResponse> {
-  const query = stackId ? `?stack_id=${encodeURIComponent(stackId)}` : "";
   const res = await fetchApi<StackPruneResponse>(
-    `/api/v1/stacks/prune-orphans${query}`,
+    "/api/v1/stacks/prune-orphans",
     {
       method: "POST",
+      body: JSON.stringify({ mode, digest, stack_id: stackId }),
       timeoutMs: 30_000,
     },
   );
@@ -797,34 +809,69 @@ export async function pruneOrphanStacks(
   return res.data;
 }
 
+// Cleanup is a reviewed two-phase projection operation. Neither phase calls a
+// provider lifecycle; apply is accepted only for the exact current plan.
+export function planOrphanCleanup(
+  stackId?: string,
+): Promise<StackPruneResponse> {
+  return requestOrphanCleanup("dry_run", undefined, stackId);
+}
+
+export function applyOrphanCleanup(
+  digest: string,
+  stackId?: string,
+): Promise<StackPruneResponse> {
+  return requestOrphanCleanup("apply", digest, stackId);
+}
+
 export async function deployStack(
   stackId: string,
+  idempotencyKey?: string,
 ): Promise<StackJobAcceptedResponse> {
   const encoded = encodeURIComponent(stackId);
   return apiRequest<StackJobAcceptedResponse>(
     "POST",
     `/api/v1/stacks/${encoded}/deploy`,
+    undefined,
+    undefined,
+    idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
   );
 }
 
 export async function provisionStack(
   stackId: string,
+  idempotencyKey?: string,
 ): Promise<StackJobAcceptedResponse> {
   const encoded = encodeURIComponent(stackId);
   return apiRequest<StackJobAcceptedResponse>(
     "POST",
     `/api/v1/stacks/${encoded}/provision`,
+    undefined,
+    undefined,
+    idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
   );
 }
 
 export async function resumeStackEnrollment(
   stackId: string,
   req: ResumeStackEnrollmentRequest,
-): Promise<ResumeStackEnrollmentResponse> {
+): Promise<StackRolloutContinuationResponse> {
   const encoded = encodeURIComponent(stackId);
-  return apiRequest<ResumeStackEnrollmentResponse>(
+  return apiRequest<StackRolloutContinuationResponse>(
     "POST",
     `/api/v1/stacks/${encoded}/resume-enrollment`,
+    JSON.stringify(req),
+  );
+}
+
+export async function resumeRemoteEnrollment(
+  stackId: string,
+  req: ResumeRemoteEnrollmentRequest = {},
+): Promise<ResumeRemoteEnrollmentResponse> {
+  const encoded = encodeURIComponent(stackId);
+  return apiRequest<ResumeRemoteEnrollmentResponse>(
+    "POST",
+    `/api/v1/stacks/${encoded}/resume-remote-enrollment`,
     JSON.stringify(req),
   );
 }
@@ -832,9 +879,9 @@ export async function resumeStackEnrollment(
 export async function retryStackRollout(
   stackId: string,
   req: RetryStackRolloutRequest,
-): Promise<RetryStackRolloutResponse> {
+): Promise<StackRolloutContinuationResponse> {
   const encoded = encodeURIComponent(stackId);
-  return apiRequest<RetryStackRolloutResponse>(
+  return apiRequest<StackRolloutContinuationResponse>(
     "POST",
     `/api/v1/stacks/${encoded}/retry-rollout`,
     JSON.stringify(req),
@@ -857,10 +904,15 @@ export async function getStackOperations(
   stackId: string,
 ): Promise<StackOperationsPayload> {
   const encoded = encodeURIComponent(stackId);
-  return apiRequest<StackOperationsPayload>(
+  const payload = await apiRequest<StackOperationsPayloadWire>(
     "GET",
     `/api/v1/stacks/${encoded}/operations`,
   );
+  return {
+    ...payload,
+    servers: payload.servers.map(normalizeStackOperationServer),
+    retiredServers: payload.retiredServers?.map(normalizeStackOperationServer),
+  };
 }
 
 export async function runStackKitLifecycleOperation(
@@ -878,24 +930,33 @@ export async function getStackServerDetails(
   stackId: string,
   serverId: string,
 ): Promise<StackServerDetailsPayload> {
-  return apiRequest<StackServerDetailsPayload>(
+  const payload = await apiRequest<StackServerDetailsPayloadWire>(
     "GET",
     `/api/v1/stacks/${encodeURIComponent(stackId)}/servers/${encodeURIComponent(
       serverId,
     )}`,
   );
+  return {
+    ...payload,
+    server: normalizeStackOperationServer(payload.server),
+  };
 }
 
 export async function assignStackWorker(
   stackId: string,
   workerId: string,
 ): Promise<AssignStackWorkerResponse> {
-  return apiRequest<AssignStackWorkerResponse>(
+  const payload = await apiRequest<AssignStackWorkerResponseWire>(
     "POST",
     `/api/v1/stacks/${encodeURIComponent(stackId)}/workers/${encodeURIComponent(
       workerId,
     )}/assign`,
   );
+  const { server, ...result } = payload;
+  return {
+    ...result,
+    server: normalizeStackOperationServer(server),
+  };
 }
 
 export async function addManagedRuntimeServer(
@@ -931,7 +992,7 @@ function monthlyRuntimePath(
 
 /**
  * Status-returning monthly-runtime endpoints (status / start / stop /
- * enable-ssh / disable-ssh / decommission / ssh-info). They share a single
+ * enable-ssh / disable-ssh / decommission / reconnect / ssh-info). They share a single
  * `(leaseId, tenantId?)` signature and a {@link MonthlyRuntimeStatus} payload,
  * so the public functions below are generated from this table rather than
  * hand-duplicated. Each entry pins the exact HTTP method + path suffix.
@@ -1010,6 +1071,30 @@ export async function resolveMonthlyRuntimeCustody(
   );
 }
 
+export async function getMonthlyRuntimeCleanupReadback(
+  leaseId: string,
+  tenantId?: string,
+): Promise<MonthlyRuntimeCleanupReadback> {
+  return apiRequest<MonthlyRuntimeCleanupReadback>(
+    "GET",
+    monthlyRuntimePath(leaseId, "/cleanup-readback", tenantId),
+  );
+}
+
+export async function recreateMonthlyRuntime(
+  leaseId: string,
+  idempotencyKey: string,
+  tenantId?: string,
+): Promise<AddManagedRuntimeServerResponse> {
+  return apiRequest<AddManagedRuntimeServerResponse>(
+    "POST",
+    monthlyRuntimePath(leaseId, "/recreate", tenantId),
+    JSON.stringify({ confirmed: true }),
+    undefined,
+    { "Idempotency-Key": idempotencyKey },
+  );
+}
+
 export async function getMonthlyRuntimeOfferings(): Promise<
   MonthlyRuntimeOffering[]
 > {
@@ -1061,24 +1146,23 @@ export async function importKombinationSpec(
 
 /**
  * Export a stack configuration as stack-spec.yaml.
- * @param stackId - The stack ID to export
+ * @param kitDeploymentId - The kit deployment ID to export
  * @param format - The desired format (yaml or json)
  */
 export async function exportKombinationSpec(
-  stackId: string,
+  kitDeploymentId: string,
   format: "yaml" | "json" = "yaml",
 ): Promise<ExportResult> {
   const acceptHeader =
     format === "yaml" ? "application/yaml" : "application/json";
 
   const response = await fetch(
-    `/api/v1/stacks/${encodeURIComponent(stackId)}/export`,
+    `/api/v1/stacks/${encodeURIComponent(kitDeploymentId)}/export`,
     {
       method: "GET",
       credentials: "include",
       headers: {
         Accept: acceptHeader,
-        ...getOptionalAuthHeaders(),
       },
     },
   );
@@ -1097,7 +1181,7 @@ export async function exportKombinationSpec(
     return {
       content,
       format: "yaml",
-      stack_id: stackId,
+      kit_deployment_id: kitDeploymentId,
       exported_at: new Date().toISOString(),
     };
   }
@@ -1106,12 +1190,17 @@ export async function exportKombinationSpec(
   const text = await response.text();
   assertNotHtmlResponse(response, text, "Export", "GET");
 
-  const data = JSON.parse(text);
+  const data = unwrapApiEnvelope<{
+    stack_spec?: Record<string, unknown>;
+    kombination?: Record<string, unknown>;
+    kit_deployment_id: string;
+    exported_at?: string;
+  }>(JSON.parse(text));
   const exportedSpec = data.stack_spec ?? data.kombination;
   return {
     content: JSON.stringify(exportedSpec, null, 2),
     format: "json",
-    stack_id: data.stack_id || stackId,
+    kit_deployment_id: data.kit_deployment_id,
     exported_at: data.exported_at || new Date().toISOString(),
   };
 }

@@ -1,4 +1,5 @@
-// Package db provides the dormant SQL store scaffold for kombifyTechstack.
+// Package db provides Techstack's PostgreSQL control-plane connection,
+// migrations, and tenant-scoped transaction primitives.
 package db
 
 import (
@@ -10,7 +11,6 @@ import (
 	"fmt"
 	"os"
 	"path"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -23,7 +23,7 @@ var migrationsFS embed.FS
 const (
 	// EnvDatabaseURL is the PostgreSQL connection URL used when the SQL store is enabled.
 	EnvDatabaseURL = "DATABASE_URL"
-	// EnvStoreBackend selects the authoritative store backend for future wiring.
+	// EnvStoreBackend selects the configured store backend.
 	EnvStoreBackend = "TECHSTACK_STORE_BACKEND"
 
 	// PostgresDriverName is the database/sql driver name registered by pgx stdlib.
@@ -38,12 +38,11 @@ const (
 type StoreBackend string
 
 const (
-	// StoreBackendPocketBase keeps the current self-hosted runtime on PocketBase.
+	// StoreBackendPocketBase is retained as a legacy compatibility marker.
+	// Production startup requires Postgres and fails closed on this selection.
 	StoreBackendPocketBase StoreBackend = "pocketbase"
-	// StoreBackendPostgres enables the PostgreSQL/sqlc scaffold.
+	// StoreBackendPostgres selects the active PostgreSQL control-plane store.
 	StoreBackendPostgres StoreBackend = "postgres"
-	// StoreBackendSQLite is retained only as a future migration source marker.
-	StoreBackendSQLite StoreBackend = "sqlite"
 )
 
 // ErrSQLStoreDisabled is returned when callers try to open a non-SQL backend.
@@ -53,8 +52,6 @@ var ErrSQLStoreDisabled = errors.New("sql store disabled")
 type DB struct {
 	*sql.DB
 	backend StoreBackend
-	dsn     string
-	path    string
 }
 
 // Config holds database configuration.
@@ -62,18 +59,18 @@ type Config struct {
 	Backend         StoreBackend
 	DSN             string
 	DriverName      string
-	Path            string // Legacy SQLite path retained for later migration tooling.
 	MaxOpenConns    int
 	MaxIdleConns    int
 	ConnMaxLifetime time.Duration
 	ConnMaxIdleTime time.Duration
 }
 
-// DefaultConfig returns safe defaults without enabling the dormant SQL store.
-func DefaultConfig(dataDir string) Config {
+// DefaultConfig returns conservative connection defaults. ConfigFromEnv
+// selects Postgres when DATABASE_URL is present; production startup rejects
+// the legacy compatibility backend.
+func DefaultConfig() Config {
 	return Config{
 		Backend:         StoreBackendPocketBase,
-		Path:            filepath.Join(dataDir, "techstack.db"),
 		MaxOpenConns:    10,
 		MaxIdleConns:    5,
 		ConnMaxLifetime: 30 * time.Minute,
@@ -82,8 +79,8 @@ func DefaultConfig(dataDir string) Config {
 }
 
 // ConfigFromEnv builds database configuration from environment variables.
-func ConfigFromEnv(dataDir string) (Config, error) {
-	cfg := DefaultConfig(dataDir)
+func ConfigFromEnv() (Config, error) {
+	cfg := DefaultConfig()
 	databaseURL := strings.TrimSpace(os.Getenv(EnvDatabaseURL))
 	backend := StoreBackend(strings.ToLower(strings.TrimSpace(os.Getenv(EnvStoreBackend))))
 	if backend == "" {
@@ -106,20 +103,9 @@ func ConfigFromEnv(dataDir string) (Config, error) {
 		cfg.DSN = databaseURL
 		cfg.DriverName = PostgresDriverName
 		return cfg, nil
-	case StoreBackendSQLite:
-		// TODO(storage-migration): wire read-only legacy SQLite migration support
-		// when PostgreSQL becomes the active store.
-		cfg.DriverName = "sqlite"
-		cfg.DSN = cfg.Path
-		return cfg, nil
 	default:
 		return Config{}, fmt.Errorf("unsupported %s value %q", EnvStoreBackend, backend)
 	}
-}
-
-// SQLEnabled reports whether the selected backend is intended to use database/sql.
-func (cfg Config) SQLEnabled() bool {
-	return cfg.Backend == StoreBackendPostgres || cfg.Backend == StoreBackendSQLite
 }
 
 // Open creates a PostgreSQL database handle when the SQL store is explicitly enabled.
@@ -162,8 +148,6 @@ func Open(cfg Config) (*DB, error) {
 	return &DB{
 		DB:      db,
 		backend: cfg.Backend,
-		dsn:     cfg.DSN,
-		path:    cfg.Path,
 	}, nil
 }
 
@@ -423,16 +407,6 @@ func verifyRequiredControlPlaneTables(ctx context.Context, querier migrationTabl
 // Backend returns the selected store backend.
 func (db *DB) Backend() StoreBackend {
 	return db.backend
-}
-
-// DSN returns the configured SQL data source name. Do not log this value.
-func (db *DB) DSN() string {
-	return db.dsn
-}
-
-// Path returns the legacy database file path retained for migration tooling.
-func (db *DB) Path() string {
-	return db.path
 }
 
 // WithTx executes a function within a transaction.

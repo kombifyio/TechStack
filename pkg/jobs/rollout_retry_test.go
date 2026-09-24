@@ -84,58 +84,33 @@ func TestTypedStackKitsRolloutDoesNotInjectLegacyArtifacts(t *testing.T) {
 	}
 }
 
-func TestStackKitsLocalFileArtifactMissingClassification(t *testing.T) {
-	err := errors.New(`opentofu_apply_failed: Unable to create container: Error response from daemon: invalid mount config for type "bind": bind source path does not exist: /data/stacks/6316/tofu/.homepage-services.yaml`)
-	if !isStackKitsRolloutRetryable(err) {
-		t.Fatalf("expected missing StackKits local_file artifact to be retryable")
+func TestStackKitsRolloutRetryableClassification(t *testing.T) {
+	tests := []struct {
+		name      string
+		err       error
+		retryable bool
+	}{
+		{"missing StackKits local artifact", errors.New(`opentofu_apply_failed: Unable to create container: Error response from daemon: invalid mount config for type "bind": bind source path does not exist: /data/stacks/6316/tofu/.homepage-services.yaml`), true},
+		{"unrelated missing bind source", errors.New(`opentofu_apply_failed: Unable to create container: invalid mount config for type "bind": bind source path does not exist: /etc/passwd`), false},
+		{"platform app connection refused", errors.New(`runtime action stackkit_rollout returned 502: {"error":{"error_code":"platform_apps_deploy_failed","details":{"error":"deploy platform system app \"stackkit-hub\": coolify service create \"stackkit-hub\": platform API request POST /api/v1/services failed: Post \"http://127.0.0.1:8000/api/v1/services\": dial tcp 127.0.0.1:8000: connect: connection refused"}}}`), true},
+		{"platform API readiness timeout", errors.New(`runtime action stackkit_rollout returned 502: {"error":{"error_code":"platform_apps_deploy_failed","details":{"error":"wait for platform API readiness: coolify API did not become ready after 2m0s: platform API GET /api/v1/health returned status 503"}}}`), true},
+		{"invalid platform API token", errors.New(`platform_apps_deploy_failed: deploy platform system app "stackkit-hub": invalid api token`), false},
+		{"image copy EOF", errors.New(`runtime action stackkit_rollout returned 502: {"error":{"error_code":"opentofu_apply_failed","details":{"stderr":"unable to read Docker Image into resource: unable to find or pull image ghcr.io/steveiliop56/tinyauth:v5.0.7: failed to copy: failed to send write: EOF"}}}`), true},
+		{"image TLS handshake timeout", errors.New(`opentofu_apply_failed: unable to read Docker Image into resource: unable to find or pull image ghcr.io/pocket-id/pocket-id:v2.7.0: net/http: TLS handshake timeout`), true},
+		{"image connection reset", errors.New(`opentofu_apply_failed: unable to pull image ghcr.io/gethomepage/homepage:latest: connection reset by peer`), true},
+		{"image pull context canceled", errors.New(`opentofu_apply_failed: unable to pull image ghcr.io/pocket-id/pocket-id:v2.7.0: error pulling image ghcr.io/pocket-id/pocket-id:v2.7.0: Error response from daemon: rpc error: code = Canceled desc = grpc: the client connection is closing: context canceled`), true},
+		{"no error", nil, false},
+		{"docker daemon unavailable", errors.New("opentofu_apply_failed: docker daemon unavailable"), false},
+		{"image manifest unknown", errors.New("opentofu_apply_failed: unable to find or pull image ghcr.io/gethomepage/homepage:missing-tag: manifest unknown"), false},
+		{"invalid registry credentials", errors.New("opentofu_apply_failed: invalid registry credentials"), false},
 	}
 
-	notRetryable := errors.New(`opentofu_apply_failed: Unable to create container: invalid mount config for type "bind": bind source path does not exist: /etc/passwd`)
-	if isStackKitsRolloutRetryable(notRetryable) {
-		t.Fatalf("did not expect unrelated missing bind source to be retryable")
-	}
-}
-
-func TestStackKitsPlatformAppReadinessTransientClassification(t *testing.T) {
-	err := errors.New(`runtime action stackkit_rollout returned 502: {"error":{"error_code":"platform_apps_deploy_failed","details":{"error":"deploy platform system app \"stackkit-hub\": coolify service create \"stackkit-hub\": platform API request POST /api/v1/services failed: Post \"http://127.0.0.1:8000/api/v1/services\": dial tcp 127.0.0.1:8000: connect: connection refused"}}}`)
-	if !isStackKitsRolloutRetryable(err) {
-		t.Fatalf("expected Coolify platform app readiness failure to be retryable")
-	}
-
-	readinessErr := errors.New(`runtime action stackkit_rollout returned 502: {"error":{"error_code":"platform_apps_deploy_failed","details":{"error":"wait for platform API readiness: coolify API did not become ready after 2m0s: platform API GET /api/v1/health returned status 503"}}}`)
-	if !isStackKitsRolloutRetryable(readinessErr) {
-		t.Fatalf("expected Coolify platform API readiness timeout to be retryable")
-	}
-
-	notRetryable := errors.New(`platform_apps_deploy_failed: deploy platform system app "stackkit-hub": invalid api token`)
-	if isStackKitsRolloutRetryable(notRetryable) {
-		t.Fatalf("did not expect non-readiness platform app failure to be retryable")
-	}
-}
-
-func TestStackKitsDockerImagePullTransientClassification(t *testing.T) {
-	retryable := []error{
-		errors.New(`runtime action stackkit_rollout returned 502: {"error":{"error_code":"opentofu_apply_failed","details":{"stderr":"unable to read Docker Image into resource: unable to find or pull image ghcr.io/steveiliop56/tinyauth:v5.0.7: failed to copy: failed to send write: EOF"}}}`),
-		errors.New(`opentofu_apply_failed: unable to read Docker Image into resource: unable to find or pull image ghcr.io/pocket-id/pocket-id:v2.7.0: net/http: TLS handshake timeout`),
-		errors.New(`opentofu_apply_failed: unable to pull image ghcr.io/gethomepage/homepage:latest: connection reset by peer`),
-		errors.New(`opentofu_apply_failed: unable to pull image ghcr.io/pocket-id/pocket-id:v2.7.0: error pulling image ghcr.io/pocket-id/pocket-id:v2.7.0: Error response from daemon: rpc error: code = Canceled desc = grpc: the client connection is closing: context canceled`),
-	}
-	for _, err := range retryable {
-		if !isStackKitsRolloutRetryable(err) {
-			t.Fatalf("expected retryable StackKits image pull transient for %q", err.Error())
-		}
-	}
-
-	notRetryable := []error{
-		nil,
-		errors.New("opentofu_apply_failed: docker daemon unavailable"),
-		errors.New("opentofu_apply_failed: unable to find or pull image ghcr.io/gethomepage/homepage:missing-tag: manifest unknown"),
-		errors.New("opentofu_apply_failed: invalid registry credentials"),
-	}
-	for _, err := range notRetryable {
-		if isStackKitsRolloutRetryable(err) {
-			t.Fatalf("did not expect retryable StackKits image pull transient for %v", err)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isStackKitsRolloutRetryable(tt.err); got != tt.retryable {
+				t.Fatalf("isStackKitsRolloutRetryable(%v) = %t, want %t", tt.err, got, tt.retryable)
+			}
+		})
 	}
 }
 

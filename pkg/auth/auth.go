@@ -4,14 +4,11 @@ package auth
 
 import (
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
-	"encoding/hex"
 	"fmt"
 	"math"
 	"strings"
-	"time"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -94,107 +91,3 @@ func splitLast(s string, sep byte) []string {
 	}
 	return []string{s}
 }
-
-// ============================================================================
-// API Key Generation
-// ============================================================================
-
-const (
-	apiKeyPrefix    = "ks_" // kombifyTechstack API key prefix
-	apiKeyLen       = 32    // Random bytes for key
-	apiKeyPrefixLen = 8     // Visible prefix for identification
-)
-
-// APIKey represents a generated API key with its components.
-type APIKey struct {
-	// Key is the full key to give to the user (only shown once)
-	Key string
-	// Prefix is the first 8 chars for identification (ks_abc123)
-	Prefix string
-	// Hash is SHA-256 hash to store in database
-	Hash string
-}
-
-// GenerateAPIKey creates a new API key.
-func GenerateAPIKey() (*APIKey, error) {
-	// Generate random bytes
-	keyBytes := make([]byte, apiKeyLen)
-	if _, err := rand.Read(keyBytes); err != nil {
-		return nil, fmt.Errorf("failed to generate key: %w", err)
-	}
-
-	// Create the full key
-	keyStr := base64.RawURLEncoding.EncodeToString(keyBytes)
-	fullKey := apiKeyPrefix + keyStr
-
-	// Create visible prefix (first 8 chars after ks_)
-	prefix := fullKey[:len(apiKeyPrefix)+apiKeyPrefixLen]
-
-	// Hash the full key for storage
-	hashBytes := sha256.Sum256([]byte(fullKey))
-	hash := hex.EncodeToString(hashBytes[:])
-
-	return &APIKey{
-		Key:    fullKey,
-		Prefix: prefix,
-		Hash:   hash,
-	}, nil
-}
-
-// VerifyAPIKey checks if the provided key matches the stored hash.
-func VerifyAPIKey(key, storedHash string) bool {
-	hashBytes := sha256.Sum256([]byte(key))
-	computedHash := hex.EncodeToString(hashBytes[:])
-	return subtle.ConstantTimeCompare([]byte(computedHash), []byte(storedHash)) == 1
-}
-
-// GetAPIKeyPrefix extracts the prefix from a full API key.
-func GetAPIKeyPrefix(key string) string {
-	if len(key) < len(apiKeyPrefix)+apiKeyPrefixLen {
-		return ""
-	}
-	return key[:len(apiKeyPrefix)+apiKeyPrefixLen]
-}
-
-// ============================================================================
-// Session Tokens
-// ============================================================================
-
-const sessionTokenLen = 32
-
-// GenerateSessionToken creates a cryptographically secure session token.
-func GenerateSessionToken() (token string, hash string, err error) {
-	tokenBytes := make([]byte, sessionTokenLen)
-	if _, err := rand.Read(tokenBytes); err != nil {
-		return "", "", fmt.Errorf("failed to generate token: %w", err)
-	}
-
-	token = base64.RawURLEncoding.EncodeToString(tokenBytes)
-	hashBytes := sha256.Sum256([]byte(token))
-	hash = hex.EncodeToString(hashBytes[:])
-
-	return token, hash, nil
-}
-
-// HashSessionToken creates a SHA-256 hash of a session token.
-func HashSessionToken(token string) string {
-	hashBytes := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(hashBytes[:])
-}
-
-// ============================================================================
-// JWT Claims (for stateless auth when needed)
-// ============================================================================
-
-// Claims represents JWT token claims.
-type Claims struct {
-	UserID    string    `json:"sub"`
-	Email     string    `json:"email"`
-	Role      string    `json:"role"`
-	IssuedAt  time.Time `json:"iat"`
-	ExpiresAt time.Time `json:"exp"`
-}
-
-// Note: JWT signing/verification should use a proper library like golang-jwt/jwt
-// This is just the claims structure. Implementation requires:
-// go get github.com/golang-jwt/jwt/v5

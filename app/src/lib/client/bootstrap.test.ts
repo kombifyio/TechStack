@@ -17,6 +17,7 @@ const samplePayload = {
     kombify_edition: "saas-standalone",
     version: "0.6.13",
     public_origin: "https://techstack.kombify.io",
+    context_dev_logolink_id: "brandLL_test",
     telemetry: {
       sentry: {
         dsn: "https://public@sentry.example/1",
@@ -49,6 +50,7 @@ describe("parseClientBootstrap", () => {
     expect(parsed.edition).toBe("saas-standalone");
     expect(parsed.deploymentMode).toBe("saas");
     expect(parsed.kombifyEdition).toBe("saas-standalone");
+    expect(parsed.contextDevLogolinkId).toBe("brandLL_test");
     expect(parsed.telemetry.sentry.dsn).toBe("https://public@sentry.example/1");
     expect(parsed.telemetry.posthog.key).toBe("phc_test");
     expect(parsed.telemetry.posthog.host).toBe("https://e.kombify.io");

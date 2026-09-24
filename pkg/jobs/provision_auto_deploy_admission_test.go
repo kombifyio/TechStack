@@ -7,18 +7,16 @@ import (
 	"time"
 )
 
-func TestProvisionMaybeAutoDeployFailsClosedBeforePayloadMutationWithoutAdmission(t *testing.T) {
-	job := &Job{
-		ID:       "auto-deploy-no-admission",
-		Type:     JobTypeProvision,
-		TargetID: "stack-1",
-		Payload: map[string]interface{}{
-			"auto_deploy": true,
-			"tenant_id":   "tenant-1",
-			"owner_id":    "owner-1",
-		},
-		Result: map[string]interface{}{"lease_id": "lease-1"},
+func autoDeployAdmissionTestJob(id string) *Job {
+	return &Job{
+		ID: id, Type: JobTypeProvision, TargetID: "stack-1",
+		Payload: map[string]interface{}{"auto_deploy": true, "tenant_id": "tenant-1", "owner_id": "owner-1"},
+		Result:  map[string]interface{}{"lease_id": "lease-1"},
 	}
+}
+
+func TestProvisionMaybeAutoDeployFailsClosedBeforePayloadMutationWithoutAdmission(t *testing.T) {
+	job := autoDeployAdmissionTestJob("auto-deploy-no-admission")
 	queue := &Queue{jobs: map[string]*Job{job.ID: job}}
 
 	handled, err := provisionMaybeAutoDeploy(context.Background(), &ProvisionConfig{}, job, queue)
@@ -38,17 +36,7 @@ func TestProvisionMaybeAutoDeployFailsClosedBeforePayloadMutationWithoutAdmissio
 }
 
 func TestProvisionMaybeAutoDeployWaitsBeforePayloadMutationForGuardEvidence(t *testing.T) {
-	job := &Job{
-		ID:       "auto-deploy-waiting-guard",
-		Type:     JobTypeProvision,
-		TargetID: "stack-1",
-		Payload: map[string]interface{}{
-			"auto_deploy": true,
-			"tenant_id":   "tenant-1",
-			"owner_id":    "owner-1",
-		},
-		Result: map[string]interface{}{"lease_id": "lease-1"},
-	}
+	job := autoDeployAdmissionTestJob("auto-deploy-waiting-guard")
 	queue := &Queue{jobs: map[string]*Job{job.ID: job}}
 	wantCause := errors.New("no fresh canonical Guard runtime")
 	cfg := &ProvisionConfig{
@@ -91,62 +79,34 @@ func TestProvisionMaybeAutoDeployWaitsBeforePayloadMutationForGuardEvidence(t *t
 }
 
 func TestProvisionMaybeAutoDeployGuardWaitTimesOutFailClosed(t *testing.T) {
-	job := &Job{
-		ID:       "auto-deploy-guard-timeout",
-		Type:     JobTypeProvision,
-		TargetID: "stack-1",
-		Payload: map[string]interface{}{
-			"auto_deploy":                     true,
-			"tenant_id":                       "tenant-1",
-			"owner_id":                        "owner-1",
-			autoDeployGuardWaitStartedAtField: time.Now().UTC().Add(-time.Second).Format(time.RFC3339Nano),
-		},
-		Result: map[string]interface{}{"lease_id": "lease-1"},
-	}
-	queue := &Queue{jobs: map[string]*Job{job.ID: job}}
-	cfg := &ProvisionConfig{
-		ManagedRuntimeTargetWaitTimeout: time.Millisecond,
-		AutoDeployAdmission: func(context.Context, AutoDeployAdmissionRequest) error {
-			return errors.New("still unavailable")
-		},
+	starts := map[string]func(*Job, string){
+		"durable result": func(job *Job, startedAt string) { job.Result[autoDeployGuardWaitStartedAtField] = startedAt },
+		"legacy payload": func(job *Job, startedAt string) { job.Payload[autoDeployGuardWaitStartedAtField] = startedAt },
 	}
 
-	handled, err := provisionMaybeAutoDeploy(context.Background(), cfg, job, queue)
-	if !handled || !errors.Is(err, ErrAutoDeployAdmissionTimeout) {
-		t.Fatalf("handled=%v error=%v, want fail-closed timeout", handled, err)
-	}
-	snapshot := job.Snapshot()
-	if snapshot.Type != JobTypeProvision {
-		t.Fatalf("job type = %q, want provision after timeout", snapshot.Type)
-	}
-	if _, exists := snapshot.Payload["apply"]; exists {
-		t.Fatal("deploy payload was prepared after admission timeout")
-	}
-}
+	for name, seedStart := range starts {
+		t.Run(name, func(t *testing.T) {
+			job := autoDeployAdmissionTestJob("auto-deploy-guard-timeout")
+			seedStart(job, time.Now().UTC().Add(-time.Second).Format(time.RFC3339Nano))
+			queue := &Queue{jobs: map[string]*Job{job.ID: job}}
+			cfg := &ProvisionConfig{
+				ManagedRuntimeTargetWaitTimeout: time.Millisecond,
+				AutoDeployAdmission: func(context.Context, AutoDeployAdmissionRequest) error {
+					return errors.New("still unavailable")
+				},
+			}
 
-func TestProvisionMaybeAutoDeployGuardWaitReadsLegacyPayloadStart(t *testing.T) {
-	job := &Job{
-		ID:       "auto-deploy-guard-legacy-timeout",
-		Type:     JobTypeProvision,
-		TargetID: "stack-1",
-		Payload: map[string]interface{}{
-			"auto_deploy":                     true,
-			"tenant_id":                       "tenant-1",
-			"owner_id":                        "owner-1",
-			autoDeployGuardWaitStartedAtField: time.Now().UTC().Add(-time.Second).Format(time.RFC3339Nano),
-		},
-		Result: map[string]interface{}{"lease_id": "lease-1"},
-	}
-	queue := &Queue{jobs: map[string]*Job{job.ID: job}}
-	cfg := &ProvisionConfig{
-		ManagedRuntimeTargetWaitTimeout: time.Millisecond,
-		AutoDeployAdmission: func(context.Context, AutoDeployAdmissionRequest) error {
-			return errors.New("still unavailable")
-		},
-	}
-
-	handled, err := provisionMaybeAutoDeploy(context.Background(), cfg, job, queue)
-	if !handled || !errors.Is(err, ErrAutoDeployAdmissionTimeout) {
-		t.Fatalf("handled=%v error=%v, want legacy payload start to retain fail-closed timeout", handled, err)
+			handled, err := provisionMaybeAutoDeploy(context.Background(), cfg, job, queue)
+			if !handled || !errors.Is(err, ErrAutoDeployAdmissionTimeout) {
+				t.Fatalf("handled=%v error=%v, want fail-closed timeout", handled, err)
+			}
+			snapshot := job.Snapshot()
+			if snapshot.Type != JobTypeProvision {
+				t.Fatalf("job type = %q, want provision after timeout", snapshot.Type)
+			}
+			if _, exists := snapshot.Payload["apply"]; exists {
+				t.Fatal("deploy payload was prepared after admission timeout")
+			}
+		})
 	}
 }

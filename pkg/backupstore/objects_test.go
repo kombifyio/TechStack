@@ -67,6 +67,16 @@ func TestPurgeBucketPaginatesAndDeletesAll(t *testing.T) {
 	}
 }
 
+func TestPurgeRetainsOriginalHomeAssistantArchive(t *testing.T) {
+	fake := &fakeS3{pages: [][]string{{"home-assistant/migrations/original.tar"}}}
+	if err := (&S3Purger{client: fake}).PurgeBucket(context.Background(), "skbk-home"); err == nil {
+		t.Fatal("retained original must block automatic cleanup")
+	}
+	if len(fake.deleteCalls) != 0 {
+		t.Fatal("original archive was submitted for deletion")
+	}
+}
+
 func TestPurgeBucketSurfacesQuietModePerKeyErrors(t *testing.T) {
 	fake := &fakeS3{
 		pages: [][]string{{"a", "b"}},

@@ -33,103 +33,137 @@ func (s *PostgresStore) ApplyGuardInventoryProjection(
 	if err != nil {
 		return nil, err
 	}
-	tenantID := prepared.command.Event.TenantID
-	var result *GuardInventoryProjectionResult
-	err = s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
-		var databaseNow time.Time
-		if queryErr := tx.QueryRowContext(ctx, "SELECT clock_timestamp()").Scan(&databaseNow); queryErr != nil {
-			return fmt.Errorf("controlplane: read Guard inventory database time: %w", queryErr)
-		}
-		current, currentErr := scanServerRuntime(tx.QueryRowContext(ctx, `
-			SELECT `+serverRuntimeColumns+` FROM servers
-			WHERE tenant_id = $1 AND id = $2
-			FOR UPDATE
-		`, tenantID, prepared.command.Event.ServerID))
-		if errors.Is(currentErr, sql.ErrNoRows) {
-			return fmt.Errorf("%w: Guard inventory requires a canonical server", ErrConflict)
-		}
-		if currentErr != nil {
-			return currentErr
-		}
-		if bindingErr := validateGuardInventoryCanonicalServer(*current, prepared.command); bindingErr != nil {
-			return bindingErr
-		}
-		retainedServiceIDs := []string{}
-		if prepared.command.ManifestObserved && !guardInventoryProjectionFenced(*current, prepared.command.Event) {
-			retainedServiceIDs, err = listGuardInventoryRetainedServiceIDsTx(ctx, tx, prepared.command)
-			if err != nil {
-				return err
-			}
-		}
-		observation := guardInventoryServerObservationEventWithExpectedServices(
-			prepared.command.Event, int64(len(prepared.command.Services)+len(retainedServiceIDs)),
-		)
-		serverEvent, applyErr := applyServerEventTx(
-			ctx, tx, observation, databaseNow.UTC(),
-		)
-		if applyErr != nil {
-			return applyErr
-		}
-		result = &GuardInventoryProjectionResult{ServerEvent: serverEvent}
-		if serverEvent == nil || serverEvent.Server == nil {
-			return fmt.Errorf("%w: Guard inventory aggregate result is missing", ErrConflict)
-		}
-		if !serverEvent.Applied {
-			snapshot, replayed, replayErr := guardInventoryReplayTx(ctx, tx, prepared, *serverEvent.Server)
-			if replayed {
-				serverEvent.Inventory = snapshot
-			}
-			result.Replayed = replayed
-			return replayErr
-		}
-		if serverEvent.Inventory == nil || serverEvent.Inventory.Revision <= 0 ||
-			serverEvent.Server.InventoryRevision != serverEvent.Inventory.Revision {
-			return fmt.Errorf("%w: accepted Guard inventory revision is unavailable", ErrConflict)
-		}
-
-		projection := guardInventoryProjectionAtRevision(prepared, serverEvent.Inventory.Revision)
-		if nodeErr := upsertGuardInventoryNodeTx(ctx, tx, projection.Node); nodeErr != nil {
-			return nodeErr
-		}
-		observedServiceIDs := make([]string, 0, len(projection.Services))
-		for _, service := range projection.Services {
-			// Provenance is per row: normalizeGuardInventoryServiceProjection has
-			// already resolved and validated it, defaulting to the batch source.
-			if serviceErr := upsertGuardInventoryServiceTx(
-				ctx, tx, service, service.Runtime.Source, databaseNow.UTC(),
-			); serviceErr != nil {
-				return serviceErr
-			}
-			observedServiceIDs = append(observedServiceIDs, service.Legacy.ID)
-		}
-		if projection.ManifestObserved {
-			// Absence of service evidence is not evidence of absence: a manifest
-			// that exists but reports no services (e.g. written by a failed or
-			// partial apply) must not delete observed history. Only a manifest
-			// with at least one observed service may prune stale rows.
-			if len(observedServiceIDs) > 0 {
-				if pruneErr := pruneGuardInventoryServicesTx(
-					ctx, tx, tenantID, projection.Event.Runtime.StackID,
-					projection.Event.ServerID, projection.ServiceSource, observedServiceIDs,
-					serverEvent.Inventory.Revision,
-				); pruneErr != nil {
-					return pruneErr
-				}
-			} else if markErr := markGuardInventoryServicesUnavailableTx(
-				ctx, tx, tenantID, projection.Event.Runtime.StackID,
-				projection.Event.ServerID, projection.ServiceSource,
-				serverEvent.Inventory.Revision,
-			); markErr != nil {
-				return markErr
-			}
-		}
-		return nil
-	})
+	result, err := s.applyGuardInventoryProjection(ctx, prepared)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return nil, ErrConflict
 		}
 		return nil, err
+	}
+	return result, nil
+}
+
+func (s *PostgresStore) applyGuardInventoryProjection(
+	ctx context.Context,
+	prepared *preparedGuardInventoryProjection,
+) (*GuardInventoryProjectionResult, error) {
+	tenantID := prepared.command.Event.TenantID
+	var result *GuardInventoryProjectionResult
+	err := s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		var applyErr error
+		result, applyErr = applyGuardInventoryProjectionTx(ctx, tx, prepared, tenantID, s.serverEventProjector)
+		return applyErr
+	})
+	return result, err
+}
+
+func applyGuardInventoryProjectionTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	prepared *preparedGuardInventoryProjection,
+	tenantID string,
+	projector ServerEventProjector,
+) (*GuardInventoryProjectionResult, error) {
+	var databaseNow time.Time
+	if err := tx.QueryRowContext(ctx, "SELECT clock_timestamp()").Scan(&databaseNow); err != nil {
+		return nil, fmt.Errorf("controlplane: read Guard inventory database time: %w", err)
+	}
+	current, err := scanServerRuntime(tx.QueryRowContext(ctx, `
+			SELECT `+serverRuntimeColumns+` FROM servers
+			WHERE tenant_id = $1 AND id = $2
+			FOR UPDATE
+		`, tenantID, prepared.command.Event.ServerID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("%w: Guard inventory requires a canonical server", ErrConflict)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := validateGuardInventoryCanonicalServer(*current, prepared.command); err != nil {
+		return nil, err
+	}
+	retainedServices := guardInventoryRetainedServices{}
+	if !guardInventoryProjectionFenced(*current, prepared.command.Event) {
+		retainedServices, err = listGuardInventoryRetainedServicesTx(ctx, tx, prepared.command)
+		if err != nil {
+			return nil, err
+		}
+	}
+	observation := guardInventoryServerObservationEventWithExpectedServices(
+		prepared.command.Event, int64(len(prepared.command.Services)+len(retainedServices.IDs)),
+	)
+	serverEvent, err := applyServerEventTx(ctx, tx, observation, databaseNow.UTC(), projector)
+	if err != nil {
+		return nil, err
+	}
+	result := &GuardInventoryProjectionResult{ServerEvent: serverEvent}
+	if serverEvent == nil || serverEvent.Server == nil {
+		return nil, fmt.Errorf("%w: Guard inventory aggregate result is missing", ErrConflict)
+	}
+	if !serverEvent.Applied {
+		snapshot, replayed, replayErr := guardInventoryReplayTx(ctx, tx, prepared, *serverEvent.Server)
+		if replayed {
+			serverEvent.Inventory = snapshot
+		}
+		result.Replayed = replayed
+		return result, replayErr
+	}
+	if serverEvent.Inventory == nil || serverEvent.Inventory.Revision <= 0 ||
+		serverEvent.Server.InventoryRevision != serverEvent.Inventory.Revision {
+		return nil, fmt.Errorf("%w: accepted Guard inventory revision is unavailable", ErrConflict)
+	}
+
+	projection := guardInventoryProjectionAtRevision(prepared, serverEvent.Inventory.Revision)
+	if err := upsertGuardInventoryNodeTx(ctx, tx, projection.Node); err != nil {
+		return nil, err
+	}
+	for _, service := range projection.Services {
+		// Provenance is per row: normalizeGuardInventoryServiceProjection has
+		// already resolved and validated it, defaulting to the batch source.
+		if err := upsertGuardInventoryServiceTx(
+			ctx, tx, service, service.Runtime.Source, databaseNow.UTC(),
+		); err != nil {
+			return nil, err
+		}
+	}
+	managedServiceIDs := guardInventoryServiceIDsBySource(projection, projection.ServiceSource)
+	if projection.ManifestObserved {
+		// Absence of service evidence is not evidence of absence: a manifest
+		// that exists but reports no services (e.g. written by a failed or
+		// partial apply) must not delete observed history. Only a manifest
+		// with at least one observed service may prune stale rows.
+		if len(managedServiceIDs) > 0 {
+			if err := pruneGuardInventoryServicesTx(
+				ctx, tx, tenantID, projection.Event.Runtime.StackID,
+				projection.Event.ServerID, projection.ServiceSource, managedServiceIDs,
+				serverEvent.Inventory.Revision,
+			); err != nil {
+				return nil, err
+			}
+		} else if err := markGuardInventoryServicesUnavailableTx(
+			ctx, tx, tenantID, projection.Event.Runtime.StackID,
+			projection.Event.ServerID, projection.ServiceSource,
+			serverEvent.Inventory.Revision,
+		); err != nil {
+			return nil, err
+		}
+	}
+	if len(retainedServices.DiscoveredIDs) > 0 {
+		if guardInventoryDiscoveryCanReconcile(projection) {
+			if err := markGuardDiscoveredServicesAbsentTx(
+				ctx, tx, projection, retainedServices.DiscoveredIDs,
+				serverEvent.Inventory.Revision, databaseNow.UTC(),
+			); err != nil {
+				return nil, err
+			}
+		}
+		if err := stampGuardInventoryServicesRevisionTx(
+			ctx, tx, tenantID, projection.Event.Runtime.StackID,
+			projection.Event.ServerID, serviceSourceObserved, retainedServices.DiscoveredIDs,
+			serverEvent.Inventory.Revision,
+		); err != nil {
+			return nil, err
+		}
 	}
 	return result, nil
 }
@@ -252,56 +286,115 @@ func guardInventoryServiceEvent(
 	}
 }
 
-func listGuardInventoryRetainedServiceIDsTx(
+func listGuardInventoryRetainedServicesTx(
 	ctx context.Context,
 	tx *sql.Tx,
 	command GuardInventoryProjection,
-) ([]string, error) {
-	observed := make([]string, 0, len(command.Services))
-	for _, service := range command.Services {
-		observed = append(observed, service.Legacy.ID)
-	}
-	sort.Strings(observed)
-	observedJSON, err := json.Marshal(observed)
+) (guardInventoryRetainedServices, error) {
+	managed := guardInventoryServiceIDsBySource(command, command.ServiceSource)
+	discovered := guardInventoryServiceIDsBySource(command, serviceSourceObserved)
+	managedJSON, err := json.Marshal(managed)
 	if err != nil {
-		return nil, err
+		return guardInventoryRetainedServices{}, err
 	}
-	// With observed services, only control-state rows survive the prune. With
-	// zero observed services, no prune runs at all (absence of evidence is not
-	// evidence of absence) and every existing row is retained.
-	controlStateFilter := `
-			AND (
-				lower(btrim(COALESCE(migration_status, ''))) IN ('migrating', 'deploying', 'pending_verification', 'archived') OR
-				lower(btrim(status)) IN ('migrating', 'deploying', 'pending_verification', 'archived')
-			)`
-	if len(command.Services) == 0 {
-		controlStateFilter = ""
+	discoveredJSON, err := json.Marshal(discovered)
+	if err != nil {
+		return guardInventoryRetainedServices{}, err
 	}
 	rows, err := tx.QueryContext(ctx, `
-		SELECT id FROM services
+		SELECT id, lower(btrim(source)) FROM services
 		WHERE tenant_id = $1 AND stack_id = $2
 			AND (server_id = $3 OR (server_id IS NULL AND node_id = $3))
-			AND lower(btrim(source)) = lower(btrim($4))`+controlStateFilter+`
-			AND NOT EXISTS (
-				SELECT 1 FROM jsonb_array_elements_text($5::jsonb) AS observed(service_id)
-				WHERE observed.service_id = services.id
+			AND (
+				(
+					$6::boolean
+					AND lower(btrim(source)) = lower(btrim($4))
+					AND NOT EXISTS (
+						SELECT 1 FROM jsonb_array_elements_text($5::jsonb) AS managed(service_id)
+						WHERE managed.service_id = services.id
+					)
+					AND (
+						NOT $7::boolean OR
+						lower(btrim(COALESCE(migration_status, ''))) IN ('migrating', 'deploying', 'pending_verification', 'archived') OR
+						lower(btrim(status)) IN ('migrating', 'deploying', 'pending_verification', 'archived')
+					)
+				) OR (
+					lower(btrim(source)) = lower(btrim($8))
+					AND NOT EXISTS (
+						SELECT 1 FROM jsonb_array_elements_text($9::jsonb) AS discovered(service_id)
+						WHERE discovered.service_id = services.id
+					)
+				)
 			)
 		ORDER BY id
 		FOR UPDATE
-	`, command.Event.TenantID, command.Event.Runtime.StackID, command.Event.ServerID, command.ServiceSource, observedJSON)
+	`, command.Event.TenantID, command.Event.Runtime.StackID, command.Event.ServerID,
+		command.ServiceSource, managedJSON, command.ManifestObserved, len(managed) > 0,
+		serviceSourceObserved, discoveredJSON)
 	if err != nil {
-		return nil, err
+		return guardInventoryRetainedServices{}, err
 	}
 	defer rows.Close()
-	ids := []string{}
+	retained := guardInventoryRetainedServices{}
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
+		var id, source string
+		if err := rows.Scan(&id, &source); err != nil {
+			return guardInventoryRetainedServices{}, err
 		}
-		ids = append(ids, id)
+		retained.IDs = append(retained.IDs, id)
+		if strings.EqualFold(source, serviceSourceObserved) {
+			retained.DiscoveredIDs = append(retained.DiscoveredIDs, id)
+		}
 	}
-	return ids, rows.Err()
+	return retained, rows.Err()
+}
+
+func markGuardDiscoveredServicesAbsentTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	command GuardInventoryProjection,
+	serviceIDs []string,
+	inventoryRevision int64,
+	now time.Time,
+) error {
+	for _, serviceID := range serviceIDs {
+		event := guardDiscoveredServiceAbsentEvent(command, serviceID)
+		event.Evidence[guardInventoryRevisionKey] = inventoryRevision
+		if _, err := applyServiceEventTx(ctx, tx, event, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func stampGuardInventoryServicesRevisionTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	tenantID, stackID, serverID, serviceSource string,
+	serviceIDs []string,
+	inventoryRevision int64,
+) error {
+	if len(serviceIDs) == 0 {
+		return nil
+	}
+	ids := append([]string(nil), serviceIDs...)
+	sort.Strings(ids)
+	idsJSON, err := json.Marshal(ids)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
+		UPDATE services SET
+			metadata_json = COALESCE(metadata_json, '{}'::jsonb) || jsonb_build_object('inventory_revision', $6::bigint)
+		WHERE tenant_id = $1 AND stack_id = $2
+			AND (server_id = $3 OR (server_id IS NULL AND node_id = $3))
+			AND lower(btrim(source)) = lower(btrim($4))
+			AND EXISTS (
+				SELECT 1 FROM jsonb_array_elements_text($5::jsonb) AS retained(service_id)
+				WHERE retained.service_id = services.id
+			)
+	`, tenantID, stackID, serverID, serviceSource, idsJSON, inventoryRevision)
+	return err
 }
 
 func pruneGuardInventoryServicesTx(

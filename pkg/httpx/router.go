@@ -151,19 +151,11 @@ func (r *Router) SetMethodNotAllowed(h HandlerFunc) { r.methodNotAllowed = h }
 // route's inherited group middleware plus its route-scoped middleware are
 // composed into the per-request chain consumed by Event.Next().
 //
-// A catch-all "/" pattern is registered for paths with no matching route so the
-// standardized 404/405 envelopes are emitted instead of the bare net/http text
-// responses.
+// A single outer catch-all translates ServeMux route misses into the
+// standardized 404/405 envelopes without registering competing wildcard
+// fallbacks.
 func (r *Router) BuildMux() *http.ServeMux {
-	mux := http.NewServeMux()
-
-	// Track which paths carry method-specific routes, and which exact
-	// (method,path)/method-less patterns are registered, so we can synthesize
-	// per-path 405 handlers and a global 404 catch-all without clobbering real
-	// routes.
-	methodScopedPaths := make(map[string]bool) // path -> has >=1 method-specific route
-	anyMethodPaths := make(map[string]bool)    // path -> has a method-less (Any) route
-	rootRegistered := false
+	routes := http.NewServeMux()
 
 	for _, rt := range r.routes {
 		rt := rt
@@ -171,57 +163,57 @@ func (r *Router) BuildMux() *http.ServeMux {
 		pattern := rt.path
 		if rt.method != "" {
 			pattern = rt.method + " " + rt.path
-			methodScopedPaths[rt.path] = true
-		} else {
-			anyMethodPaths[rt.path] = true
-		}
-		if rt.path == "/" {
-			rootRegistered = true
 		}
 
 		chain := rt.middlewares
 		handler := rt.handler
 
-		mux.HandleFunc(pattern, func(w http.ResponseWriter, req *http.Request) {
+		routes.HandleFunc(pattern, func(w http.ResponseWriter, req *http.Request) {
 			r.dispatch(w, req, chain, handler)
 		})
 	}
 
-	// For every path that only has method-specific routes, register a
-	// method-less handler on that exact path so a request with an unmatched
-	// method resolves here (ServeMux prefers the more specific "METHOD /path"
-	// for matched methods) and yields a standardized 405 envelope instead of
-	// falling through to the 404 catch-all. Verified against net/http ServeMux
-	// precedence. Router-level middleware still runs.
-	for path := range methodScopedPaths {
-		if anyMethodPaths[path] {
-			continue // an Any route already handles all methods on this path
+	// Let the inner ServeMux determine whether an empty match is a 404 or 405,
+	// then render that result through the router-level handlers. Keeping the
+	// catch-all outside the route mux preserves ServeMux's method detection even
+	// when wildcard route shapes overlap.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+		handler, pattern := routes.Handler(req)
+		if pattern != "" {
+			routes.ServeHTTP(w, req)
+			return
 		}
-		// The method-less 405 fallback registers a bare-path pattern. Two
-		// distinct method-scoped routes can have overlapping wildcard paths
-		// (e.g. "/backups/{name}/upload-s3" and "/backups/s3/{name}") whose
-		// method-less forms conflict in net/http ServeMux and would panic at
-		// registration. The method-scoped patterns themselves never conflict
-		// (different methods), so it is safe to skip a conflicting 405-fallback:
-		// the path keeps its real handlers and only loses the 405-vs-404 nicety
-		// for unmatched methods, falling through to the standardized 404.
-		func(path string) {
-			defer func() { _ = recover() }()
-			mux.HandleFunc(path, func(w http.ResponseWriter, req *http.Request) {
-				r.dispatch(w, req, r.middlewares, r.methodNotAllowed)
-			})
-		}(path)
-	}
 
-	// Global catch-all so unmatched paths get the standardized 404 envelope and
-	// the router-level middleware still runs.
-	if !rootRegistered {
-		mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+		probe := &statusProbe{header: make(http.Header)}
+		handler.ServeHTTP(probe, req)
+		switch probe.status {
+		case http.StatusMethodNotAllowed:
+			r.dispatch(w, req, r.middlewares, r.methodNotAllowed)
+		case http.StatusNotFound:
 			r.dispatch(w, req, r.middlewares, r.notFound)
-		})
-	}
+		default:
+			routes.ServeHTTP(w, req)
+		}
+	})
 
 	return mux
+}
+
+type statusProbe struct {
+	header http.Header
+	status int
+}
+
+func (p *statusProbe) Header() http.Header { return p.header }
+
+func (p *statusProbe) WriteHeader(status int) { p.status = status }
+
+func (p *statusProbe) Write(body []byte) (int, error) {
+	if p.status == 0 {
+		p.status = http.StatusOK
+	}
+	return len(body), nil
 }
 
 // dispatch builds the Event, composes the middleware chain in front of the leaf

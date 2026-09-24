@@ -1,38 +1,54 @@
 package routes
 
 import (
+	"database/sql"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/portinventory"
+	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
+	"github.com/kombifyio/techstack/pkg/outcome"
 	"github.com/kombifyio/techstack/pkg/serverregistry"
 )
 
 type ServerRuntimeRouteConfig struct {
-	Store controlplane.ServerRuntimeStore
-	Now   func() time.Time
+	Store           controlplane.ServerRuntimeStore
+	PortInventory   portinventory.ReadAuthority
+	Detacher        controlplane.SelfOwnedServerDetacher
+	Policy          InventoryPolicy
+	AgentDisconnect func(string) error
+	Now             func() time.Time
 }
 
 type serverRuntimeHandlers struct {
-	store controlplane.ServerRuntimeStore
-	now   func() time.Time
+	store           controlplane.ServerRuntimeStore
+	ports           portinventory.ReadAuthority
+	detacher        controlplane.SelfOwnedServerDetacher
+	policy          InventoryPolicy
+	agentDisconnect func(string) error
+	now             func() time.Time
 }
 
 type serverRuntimeResponse struct {
-	ID          string `json:"id"`
-	TechstackID string `json:"techstack_id,omitempty"`
-	Name        string `json:"name"`
+	ID              string `json:"id"`
+	NodeID          string `json:"node_id"`
+	KitDeploymentID string `json:"kit_deployment_id,omitempty"`
+	Name            string `json:"name"`
 	// WorkerID is the bound Guard agent identity. It is additive on this
 	// response and exists because the canonical read model is now the UI's only
 	// server source (kombify-Techstack-nzy1.7): the pairing flow has to be able
 	// to tell "a Guard agent is bound to this aggregate" apart from "a server
-	// row exists", and the legacy /api/v1/registry/servers projection it used
-	// to read that from is being retired.
+	// row exists" without consulting a secondary Registry projection.
 	WorkerID          string                       `json:"worker_id,omitempty"`
+	NodeRole          string                       `json:"node_role,omitempty"`
 	Lifecycle         serverRuntimeLifecycle       `json:"lifecycle"`
 	Connection        serverRuntimeConnection      `json:"connection"`
 	Health            serverRuntimeHealth          `json:"health"`
@@ -49,9 +65,17 @@ type serverRuntimeResponse struct {
 	AvailabilityOwner string                      `json:"availability_owner,omitempty"`
 	OperationsOwner   string                      `json:"operations_owner,omitempty"`
 	TargetEvidence    serverRuntimeTargetEvidence `json:"target_evidence"`
+	LastOutcome       *outcome.Decision           `json:"last_outcome,omitempty"`
 	MutationsAllowed  bool                        `json:"mutations_allowed"`
-	CreatedAt         time.Time                   `json:"created_at"`
-	UpdatedAt         time.Time                   `json:"updated_at"`
+	// AllowedActions is the node-scoped capability contract: exactly the
+	// operations this server's own state admits, each backed by an endpoint that
+	// exists. StackActions is the separate StackKit-deployment scope. They are
+	// never merged - a node operation and a kit operation have different blast
+	// radius, different authority and different failure modes.
+	AllowedActions []string  `json:"allowed_actions"`
+	StackActions   []string  `json:"stack_actions"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 type serverRuntimeLifecycle struct {
@@ -98,30 +122,151 @@ func RegisterServerRuntimeRoutes(r *httpx.Router, cfg ServerRuntimeRouteConfig) 
 	if cfg.Now == nil {
 		cfg.Now = func() time.Time { return time.Now().UTC() }
 	}
-	h := serverRuntimeHandlers{store: cfg.Store, now: cfg.Now}
+	if cfg.Detacher != nil && cfg.Policy == nil {
+		panic("RegisterServerRuntimeRoutes: inventory policy required for server detach")
+	}
+	h := serverRuntimeHandlers{
+		store: cfg.Store, ports: cfg.PortInventory, detacher: cfg.Detacher, policy: cfg.Policy,
+		agentDisconnect: cfg.AgentDisconnect, now: cfg.Now,
+	}
 	r.GET("/api/v1/servers", h.list)
 	r.GET("/api/v1/servers/{serverId}", h.get)
+	r.GET("/api/v1/servers/{serverId}/ports", h.portInventory)
 	r.GET("/api/v1/servers/{serverId}/transitions", h.transitions)
+	if cfg.Detacher != nil {
+		r.POST("/api/v1/servers/{serverId}/detach", h.detach)
+	}
 }
 
-func (h serverRuntimeHandlers) list(e *httpx.Event) error {
-	ownerID, isAdmin, ok := authenticatedUser(e)
+type selfOwnedServerDetachBody struct {
+	ConfirmServerID string `json:"confirm_server_id"`
+}
+
+func (h serverRuntimeHandlers) detach(e *httpx.Event) error {
+	ownerID, _, ok := authenticatedUser(e)
 	if !ok {
 		return httpx.Unauthorized(e, "Authentication required")
 	}
-	tenantID := requestTenantID(e, ownerID)
-	rows, err := h.store.ListServerRuntimesByTenant(e.Request.Context(), tenantID, strings.TrimSpace(e.Request.URL.Query().Get("techstack_id")))
+	tenantID, tenantErr := tenantguard.TenantScope(requestExplicitTenantID(e), ownerID, "techstack.servers.detach")
+	if tenantErr != nil {
+		return tenantErr
+	}
+	serverID := strings.TrimSpace(e.Request.PathValue("serverId"))
+	if serverID == "" {
+		return httpx.BadRequest(e, "Server ID is required", nil)
+	}
+	if err := authorizeInventoryServerOperate(e.Request.Context(), h.policy, inventoryScope{tenantID: tenantID, ownerID: ownerID}, serverID); err != nil {
+		return writeInventoryHTTPError(e, err)
+	}
+	var body selfOwnedServerDetachBody
+	decoder := json.NewDecoder(io.LimitReader(e.Request.Body, 4096))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return httpx.BadRequest(e, "Exact server detach confirmation is required", nil)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return httpx.BadRequest(e, "Server detach request must contain one JSON object", nil)
+	}
+	receipt, err := h.detacher.DetachSelfOwnedServer(e.Request.Context(), controlplane.SelfOwnedServerDetachRequest{
+		TenantID: tenantID, OwnerSubjectID: ownerID,
+		ServerID: serverID, ConfirmServerID: body.ConfirmServerID,
+	})
+	switch {
+	case errors.Is(err, controlplane.ErrNotFound):
+		return httpx.NotFound(e, "Server not found")
+	case errors.Is(err, controlplane.ErrServerDetachConfirmation):
+		return httpx.BadRequest(e, "Exact server detach confirmation is required", nil)
+	case errors.Is(err, controlplane.ErrServerDetachUnsupported):
+		return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "Only customer-operated BYO servers can be detached", nil)
+	case errors.Is(err, controlplane.ErrServerAgentCustody):
+		return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "The exact server Agent enrollment is unavailable", nil)
+	case err != nil:
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Server detach is unavailable", nil)
+	default:
+		if h.agentDisconnect != nil {
+			_ = h.agentDisconnect(receipt.AgentID)
+		}
+		return httpx.Success(e, http.StatusOK, receipt)
+	}
+}
+
+// list returns the caller's own servers. The store read is tenant-scoped, and a
+// tenant can hold several unrelated owners, so the owner filter below is the
+// isolation boundary and applies to every caller. An operator role does not
+// widen it here: the customer inventory surface has no admin mode, and
+// cross-owner inspection belongs to an explicit operator surface with its own
+// audit trail.
+func (h serverRuntimeHandlers) list(e *httpx.Event) error {
+	ownerID, _, ok := authenticatedUser(e)
+	if !ok {
+		return httpx.Unauthorized(e, "Authentication required")
+	}
+	tenantID, tenantErr := tenantguard.TenantScope(requestExplicitTenantID(e), ownerID, "techstack.servers.list")
+	if tenantErr != nil {
+		return tenantErr
+	}
+	kitDeploymentID := strings.TrimSpace(e.Request.URL.Query().Get("kit_deployment_id"))
+	rows, err := h.store.ListServerRuntimesByTenant(e.Request.Context(), tenantID, kitDeploymentID)
 	if err != nil {
 		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Server inventory is unavailable", nil)
 	}
 	items := make([]serverRuntimeResponse, 0, len(rows))
 	for _, row := range rows {
-		if (!isAdmin && row.OwnerSubjectID != ownerID) || serverRuntimeIsTerminalTombstone(row) {
+		if !serverRuntimeOwnedBy(row, ownerID) || serverRuntimeHiddenFromCurrentInventory(row) {
 			continue
 		}
 		items = append(items, h.response(row))
 	}
+	qualifyServerRuntimeDisplayNames(items)
+	sort.SliceStable(items, func(i, j int) bool {
+		return serverRuntimeDisplayPriority(items[i]) < serverRuntimeDisplayPriority(items[j])
+	})
 	return httpx.Success(e, http.StatusOK, items)
+}
+
+func qualifyServerRuntimeDisplayNames(items []serverRuntimeResponse) {
+	names := make([]string, len(items))
+	qualifiers := make([]string, len(items))
+	for i, item := range items {
+		names[i] = item.Name
+		qualifiers[i] = serverregistry.DisplayQualifier(item.ProviderID, item.Offering, item.ID)
+	}
+	for i, name := range qualifyCollidingServerNames(names, qualifiers) {
+		items[i].Name = name
+	}
+}
+
+func serverRuntimeDisplayPriority(server serverRuntimeResponse) int {
+	lifecycle := strings.ToLower(strings.TrimSpace(server.Lifecycle.State))
+	connection := strings.ToLower(strings.TrimSpace(server.Connection.State))
+	health := strings.ToLower(strings.TrimSpace(server.Health.State))
+	switch {
+	case lifecycle == string(serverregistry.LifecycleActive) && connection == string(serverregistry.ConnectionConnected) && health == string(serverregistry.HealthHealthy):
+		return 0
+	case lifecycle == string(serverregistry.LifecycleActive) && connection == string(serverregistry.ConnectionConnected):
+		return 1
+	case lifecycle == string(serverregistry.LifecycleActive):
+		return 2
+	case lifecycle == string(serverregistry.LifecycleEnrolling) || lifecycle == string(serverregistry.LifecycleProvisioning) || lifecycle == string(serverregistry.LifecyclePlanned):
+		return 3
+	case lifecycle == string(serverregistry.LifecycleFailed):
+		return 4
+	case lifecycle == string(serverregistry.LifecycleDecommissioning):
+		return 5
+	default:
+		return 6
+	}
+}
+
+// serverRuntimeOwnedBy is the single owner predicate for this surface. It is
+// fail-closed: a row without a recorded owner belongs to nobody and is never
+// served, so an unbackfilled row cannot become tenant-wide readable.
+func serverRuntimeOwnedBy(server controlplane.ServerRuntime, ownerID string) bool {
+	ownerID = strings.TrimSpace(ownerID)
+	if ownerID == "" {
+		return false
+	}
+	return strings.TrimSpace(server.OwnerSubjectID) == ownerID
 }
 
 func serverRuntimeIsTerminalTombstone(server controlplane.ServerRuntime) bool {
@@ -129,16 +274,42 @@ func serverRuntimeIsTerminalTombstone(server controlplane.ServerRuntime) bool {
 		strings.EqualFold(strings.TrimSpace(server.DesiredState), "absent")
 }
 
+func serverRuntimeHiddenFromCurrentInventory(server controlplane.ServerRuntime) bool {
+	return serverRuntimeIsTerminalTombstone(server) ||
+		strings.EqualFold(strings.TrimSpace(server.LifecycleState), string(serverregistry.LifecycleDecommissioned))
+}
+
 func (h serverRuntimeHandlers) get(e *httpx.Event) error {
-	server, err := h.ownedServer(e)
+	server, err := h.ownedServer(e, "techstack.servers.read")
 	if err != nil || server == nil {
 		return err
 	}
 	return httpx.Success(e, http.StatusOK, h.response(*server))
 }
 
+func (h serverRuntimeHandlers) portInventory(e *httpx.Event) error {
+	server, err := h.ownedServer(e, "techstack.servers.read")
+	if err != nil || server == nil {
+		return err
+	}
+	if h.ports == nil {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Port inventory is unavailable", nil)
+	}
+	result, err := h.ports.ReadCurrent(e.Request.Context(), portinventory.InventoryRequest{
+		TenantID: server.TenantID, ServerID: server.ID, OwnerSubjectID: server.OwnerSubjectID,
+	}, h.now().UTC())
+	if errors.Is(err, sql.ErrNoRows) {
+		return httpx.NotFound(e, "Server not found")
+	}
+	if err != nil {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Port inventory is unavailable", nil)
+	}
+	e.Response.Header().Set("Cache-Control", "private, no-store")
+	return httpx.Success(e, http.StatusOK, result)
+}
+
 func (h serverRuntimeHandlers) transitions(e *httpx.Event) error {
-	server, err := h.ownedServer(e)
+	server, err := h.ownedServer(e, "techstack.servers.transitions")
 	if err != nil || server == nil {
 		return err
 	}
@@ -149,8 +320,8 @@ func (h serverRuntimeHandlers) transitions(e *httpx.Event) error {
 	return httpx.Success(e, http.StatusOK, rows)
 }
 
-func (h serverRuntimeHandlers) ownedServer(e *httpx.Event) (*controlplane.ServerRuntime, error) {
-	ownerID, isAdmin, ok := authenticatedUser(e)
+func (h serverRuntimeHandlers) ownedServer(e *httpx.Event, capability string) (*controlplane.ServerRuntime, error) {
+	ownerID, _, ok := authenticatedUser(e)
 	if !ok {
 		return nil, httpx.Unauthorized(e, "Authentication required")
 	}
@@ -158,7 +329,10 @@ func (h serverRuntimeHandlers) ownedServer(e *httpx.Event) (*controlplane.Server
 	if serverID == "" {
 		return nil, httpx.BadRequest(e, "Server ID is required", nil)
 	}
-	tenantID := requestTenantID(e, ownerID)
+	tenantID, tenantErr := tenantguard.TenantScope(requestExplicitTenantID(e), ownerID, capability)
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	server, err := h.store.GetServerRuntime(e.Request.Context(), tenantID, serverID)
 	if errors.Is(err, controlplane.ErrNotFound) {
 		return nil, httpx.NotFound(e, "Server not found")
@@ -166,7 +340,7 @@ func (h serverRuntimeHandlers) ownedServer(e *httpx.Event) (*controlplane.Server
 	if err != nil {
 		return nil, httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Server inventory is unavailable", nil)
 	}
-	if !isAdmin && server.OwnerSubjectID != ownerID {
+	if !serverRuntimeOwnedBy(*server, ownerID) {
 		return nil, httpx.NotFound(e, "Server not found")
 	}
 	return server, nil
@@ -201,7 +375,9 @@ func (h serverRuntimeHandlers) response(server controlplane.ServerRuntime) serve
 		targetFreshness = serverRuntimeTargetFreshness{State: "recorded", AgeSeconds: &seconds}
 	}
 	return serverRuntimeResponse{
-		ID: server.ID, TechstackID: server.StackID, Name: server.Name, WorkerID: server.WorkerID,
+		ID: server.ID, NodeID: server.ID, KitDeploymentID: server.StackID,
+		Name: serverRuntimeDisplayName(server, target), WorkerID: server.WorkerID,
+		NodeRole:   stringFromAnyMap(server.Metadata, "server_node_role"),
 		Lifecycle:  serverRuntimeLifecycle{State: server.LifecycleState, DesiredState: server.DesiredState, EndedAt: server.DecommissionedAt},
 		Connection: serverRuntimeConnection{State: connection, ReasonCode: server.ReasonCode, ChangedAt: server.ConnectionChangedAt, LastHeartbeatAt: server.LastHeartbeatAt, StalenessSeconds: staleness},
 		Health:     serverRuntimeHealth{State: health, ObservedAt: server.LastHeartbeatAt},
@@ -213,7 +389,10 @@ func (h serverRuntimeHandlers) response(server controlplane.ServerRuntime) serve
 		TargetEvidence: serverRuntimeTargetEvidence{
 			Ref: target.EvidenceRef, ObservedAt: target.ObservedAt, Freshness: targetFreshness,
 		},
+		LastOutcome:      outcome.Clone(server.LastOutcome),
 		MutationsAllowed: serverregistry.MutationsAllowed(connection) && server.LifecycleState == string(serverregistry.LifecycleActive),
+		AllowedActions:   serverNodeActions(server, h.detacher != nil),
+		StackActions:     serverStackActions(server),
 		CreatedAt:        server.CreatedAt, UpdatedAt: server.UpdatedAt,
 	}
 }

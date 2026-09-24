@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -16,7 +15,6 @@ import (
 	cueerrors "cuelang.org/go/cue/errors"
 	"cuelang.org/go/cue/parser"
 
-	stackkitcatalog "github.com/kombifyio/techstack/pkg/stackkits"
 	"github.com/kombifyio/techstack/pkg/validator"
 )
 
@@ -27,14 +25,14 @@ func validateStackKitName(name string) error {
 
 // StackKitLoader handles loading and caching of StackKit CUE schemas.
 type StackKitLoader struct {
-	ctx        *cue.Context
-	baseKit    cue.Value
-	baseSource string // Raw CUE source for base kit (for concatenation with specific kits)
-	kits       map[string]cue.Value
-	kitsDir    string // External stackkits directory (optional)
-	mu         sync.RWMutex
-	baseLoaded bool
-	lastError  error // Last error for debugging
+	ctx              *cue.Context
+	foundation       cue.Value
+	foundationSource string // Raw CUE source for the shared foundation
+	kits             map[string]cue.Value
+	kitsDir          string // External stackkits directory (optional)
+	mu               sync.RWMutex
+	foundationLoaded bool
+	lastError        error // Last error for debugging
 }
 
 // StackKitInfo contains metadata about a loaded StackKit.
@@ -66,9 +64,8 @@ type StackKitModeInfo struct {
 }
 
 // NewStackKitLoader creates a new StackKitLoader.
-// It attempts to find the stackkits directory relative to the working directory.
-// An optional stackKitsDir parameter can be passed from config; if empty, the
-// TECHSTACK_STACKKITS_DIR environment variable is checked as a fallback.
+// It loads shared CUE only from an explicit directory, TECHSTACK_STACKKITS_DIR,
+// or another configured StackKits checkout.
 func NewStackKitLoader(stackKitsDir ...string) (*StackKitLoader, error) {
 	ctx := cuecontext.New()
 
@@ -86,31 +83,17 @@ func NewStackKitLoader(stackKitsDir ...string) (*StackKitLoader, error) {
 		}
 	}
 
-	// Second priority: external StackKits checkout resolution.
+	// Second priority: configured or discovered external StackKits checkout.
 	if loader.kitsDir == "" {
 		if dir, err := secureExistingDir(DefaultStackKitsDir()); err == nil {
 			loader.kitsDir = dir
 		}
 	}
 
-	// Last resort: discover the legacy in-repo fallback based on source location.
-	if loader.kitsDir == "" {
-		if _, file, _, ok := runtime.Caller(0); ok {
-			unifierDir := filepath.Dir(file)
-			candidate := filepath.Clean(filepath.Join(unifierDir, "..", "stackkits"))
-			if dir, err := secureExistingDir(candidate); err == nil {
-				loader.kitsDir = dir
-			}
-		}
-	}
-
-	// Try to load base kit from known locations
-	if err := loader.tryLoadBaseKit(); err != nil {
-		// Base kit loading failed, but loader is still usable
-		// with reduced functionality
-		loader.baseLoaded = false
+	if err := loader.tryLoadFoundation(); err != nil {
+		loader.foundationLoaded = false
 	} else {
-		loader.baseLoaded = true
+		loader.foundationLoaded = true
 	}
 
 	return loader, nil
@@ -121,11 +104,7 @@ func resolveKitDirName(name string) string {
 }
 
 func resolveKitDirNames(name string) []string {
-	dirName := resolveKitDirName(name)
-	if dirName == StackKitBasement {
-		return []string{StackKitBasement, StackKitLegacyBaseSlug}
-	}
-	return []string{dirName}
+	return []string{resolveKitDirName(name)}
 }
 
 // NewStackKitLoaderWithDir creates a loader with a specific stackkits directory.
@@ -142,16 +121,15 @@ func NewStackKitLoaderWithDir(externalDir string) (*StackKitLoader, error) {
 		kitsDir: kitsDir,
 	}
 
-	// Try to load base kit from the provided directory.
-	baseDir, err := existingDirUnderRoot(kitsDir, "base")
+	foundationDir, err := resolveFoundationDir(kitsDir)
 	if err != nil {
 		loader.lastError = err
 		return loader, nil
 	}
-	kit, err := loader.loadBaseKitFromDir(baseDir)
+	kit, err := loader.loadFoundationFromDir(foundationDir)
 	if err == nil {
-		loader.baseKit = kit
-		loader.baseLoaded = true
+		loader.foundation = kit
+		loader.foundationLoaded = true
 	} else {
 		loader.lastError = err
 	}
@@ -159,46 +137,39 @@ func NewStackKitLoaderWithDir(externalDir string) (*StackKitLoader, error) {
 	return loader, nil
 }
 
-// tryLoadBaseKit attempts to find and load the base stackkit from common locations.
-func (l *StackKitLoader) tryLoadBaseKit() error {
-	// Locations to check for base stackkit
-	locations := []string{
-		"pkg/stackkits/base",
-		"../pkg/stackkits/base",
-		"../../pkg/stackkits/base",
-	}
-
-	// Also check if kitsDir is set
-	if l.kitsDir != "" {
-		if baseDir, err := existingDirUnderRoot(l.kitsDir, "base"); err == nil {
-			locations = append([]string{baseDir}, locations...)
-		} else {
-			l.lastError = err
-		}
-	}
-
-	for _, loc := range locations {
-		if kit, err := l.loadBaseKitFromDir(loc); err == nil {
-			l.baseKit = kit
-			return nil
-		}
-	}
-
-	return fmt.Errorf("base stackkit not found in any known location")
+func resolveFoundationDir(root string) (string, error) {
+	return existingDirUnderRoot(root, "foundation")
 }
 
-// loadBaseKitFromDir loads the base CUE files from a directory.
-// This is separate from loadKitFromDir because base files don't need
-// to be unified with another base - they ARE the base.
-// All files are concatenated and compiled together to resolve cross-references.
-func (l *StackKitLoader) loadBaseKitFromDir(dir string) (cue.Value, error) {
+// tryLoadFoundation loads shared foundation CUE from the configured StackKits
+// checkout only.
+func (l *StackKitLoader) tryLoadFoundation() error {
+	if l.kitsDir == "" {
+		return fmt.Errorf("shared StackKits foundation not found: no StackKits checkout configured")
+	}
+	dir, err := resolveFoundationDir(l.kitsDir)
+	if err != nil {
+		l.lastError = err
+		return err
+	}
+	kit, err := l.loadFoundationFromDir(dir)
+	if err != nil {
+		l.lastError = err
+		return err
+	}
+	l.foundation = kit
+	return nil
+}
+
+// loadFoundationFromDir loads the shared foundation CUE files from a directory.
+func (l *StackKitLoader) loadFoundationFromDir(dir string) (cue.Value, error) {
 	dir, err := secureExistingContentDir(dir)
 	if err != nil {
 		return cue.Value{}, err
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return cue.Value{}, fmt.Errorf("failed to read base directory %s: %w", dir, err)
+		return cue.Value{}, fmt.Errorf("failed to read foundation directory %s: %w", dir, err)
 	}
 
 	// Collect all CUE content from all files
@@ -214,14 +185,14 @@ func (l *StackKitLoader) loadBaseKitFromDir(dir string) (cue.Value, error) {
 
 		content, err := readRegularFileUnderRoot(dir, entry.Name())
 		if err != nil {
-			return cue.Value{}, fmt.Errorf("failed to read base file %s: %w", entry.Name(), err)
+			return cue.Value{}, fmt.Errorf("failed to read foundation file %s: %w", entry.Name(), err)
 		}
 
 		// Extract imports and content separately
 		imports, body, dropped := extractImportsAndBody(content)
 		if unresolvable := unresolvableDroppedImports(dropped); len(unresolvable) > 0 {
 			return cue.Value{}, fmt.Errorf(
-				"base file %s imports %s, which this loader cannot inline; "+
+				"foundation file %s imports %s, which this loader cannot inline; "+
 					"add it to cueStdLibPackages or stop importing it",
 				entry.Name(), strings.Join(unresolvable, ", "))
 		}
@@ -241,22 +212,19 @@ func (l *StackKitLoader) loadBaseKitFromDir(dir string) (cue.Value, error) {
 	writeImportBlock(&finalContent, seenImports)
 	finalContent.WriteString(allContent.String())
 
-	// Store the source for later concatenation with specific kits
-	l.baseSource = finalContent.String()
+	l.foundationSource = finalContent.String()
 
-	// The base is deliberately NOT evaluated here. Every kit load concatenates
-	// this same source with the kit and compiles the pair, so evaluating it
-	// standalone produces a second copy of the whole base schema graph that
-	// nothing reads -- and a cue.Context retains everything compiled in it, so
-	// that copy lives as long as the loader. Measured on the real checkout it
-	// cost ~190MB and pushed the generate phase peak from 398MB to 591MB, which
-	// is what put the rollout into the OOM killer on a 512Mi instance.
+	// The foundation is deliberately NOT evaluated here. Every kit load
+	// concatenates this same source with the kit and compiles the pair, so
+	// evaluating it standalone produces a second copy of the whole schema
+	// graph that nothing reads -- and a cue.Context retains everything
+	// compiled in it. Measured on the real checkout it cost ~190MB and
+	// pushed the generate phase peak from 398MB to 591MB.
 	//
-	// Syntax is still checked eagerly, because a broken base should fail at load
-	// time rather than inside the first rollout. Parsing is cheap and, unlike
-	// compilation, keeps nothing in the context.
-	if _, parseErr := parser.ParseFile("base/combined.cue", l.baseSource); parseErr != nil {
-		return cue.Value{}, fmt.Errorf("failed to parse base schemas: %s", cueerrors.Details(parseErr, nil))
+	// Syntax is still checked eagerly, because a broken foundation should
+	// fail at load time rather than inside the first rollout.
+	if _, parseErr := parser.ParseFile("foundation/combined.cue", l.foundationSource); parseErr != nil {
+		return cue.Value{}, fmt.Errorf("failed to parse foundation schemas: %s", cueerrors.Details(parseErr, nil))
 	}
 	v := cue.Value{}
 
@@ -380,7 +348,7 @@ var inlinedKitModulePrefixes = []string{
 	"github.com/kombifyio/stackkits/",
 	"github.com/kombihq/stackkits/",
 	"github.com/kombifyio/stackkits/",
-	"base/",
+	"foundation/",
 }
 
 // unresolvableDroppedImports returns the dropped imports that are neither CUE
@@ -507,7 +475,7 @@ func (l *StackKitLoader) loadKitFromDir(dir string) (cue.Value, error) {
 			return cue.Value{}, fmt.Errorf("failed to read kit file %s: %w", entry.Name(), err)
 		}
 
-		// Extract imports and content, replacing base.# references
+		// Extract imports and content, replacing foundation/base prefixes.
 		imports, body, dropped := extractImportsAndBody(content)
 		if unresolvable := unresolvableDroppedImports(dropped); len(unresolvable) > 0 {
 			return cue.Value{}, fmt.Errorf(
@@ -518,7 +486,7 @@ func (l *StackKitLoader) loadKitFromDir(dir string) (cue.Value, error) {
 		for _, imp := range imports {
 			seenImports[imp] = true
 		}
-		// Replace base.#Type with #Type since we're combining with base source
+		body = strings.ReplaceAll(body, "foundation.#", "#")
 		body = strings.ReplaceAll(body, "base.#", "#")
 		kitContent.WriteString(body)
 		kitContent.WriteString("\n")
@@ -528,9 +496,9 @@ func (l *StackKitLoader) loadKitFromDir(dir string) (cue.Value, error) {
 		return cue.Value{}, fmt.Errorf("no .cue files found in %s", dir)
 	}
 
-	// l.baseSource was already validated when it was built, so any dropped
+	// l.foundationSource was already validated when it was built, so any dropped
 	// import here would be one this loader itself emitted.
-	baseImports, baseBody, _ := extractImportsAndBody([]byte(l.baseSource))
+	baseImports, baseBody, _ := extractImportsAndBody([]byte(l.foundationSource))
 	mergedImports := make(map[string]bool, len(baseImports)+len(seenImports))
 	for _, imp := range baseImports {
 		mergedImports[imp] = true
@@ -556,8 +524,7 @@ func (l *StackKitLoader) loadKitFromDir(dir string) (cue.Value, error) {
 		if os.Getenv("TECHSTACK_CUE_DUMP") == "1" {
 			repoRoot := ""
 			if l.kitsDir != "" {
-				// l.kitsDir typically points to <repo>/pkg/stackkits
-				repoRoot = filepath.Dir(filepath.Dir(l.kitsDir))
+				repoRoot = filepath.Dir(l.kitsDir)
 			} else if wd, wdErr := os.Getwd(); wdErr == nil {
 				repoRoot = wd
 			}
@@ -648,8 +615,8 @@ func (l *StackKitLoader) GetKitInfo(name string) (*StackKitInfo, error) {
 		if len(fileMeta.Features) > 0 {
 			info.Features = append([]string(nil), fileMeta.Features...)
 		}
-		if len(fileMeta.Requires.OSSupported) > 0 {
-			info.SupportedOS = append([]string(nil), fileMeta.Requires.OSSupported...)
+		if len(fileMeta.SupportedOS) > 0 {
+			info.SupportedOS = append([]string(nil), fileMeta.SupportedOS...)
 		}
 		info.Modes = convertStackKitModes(fileMeta)
 	}
@@ -658,16 +625,11 @@ func (l *StackKitLoader) GetKitInfo(name string) (*StackKitInfo, error) {
 	if info.Name == "" {
 		info.Name = canonicalName
 	}
-	if info.DisplayName == "" || legacyBaseKitDisplayName(info.DisplayName) {
+	if info.DisplayName == "" {
 		info.DisplayName = productStackKitDisplayName(info.Name)
 	}
 
 	return info, nil
-}
-
-func legacyBaseKitDisplayName(name string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(name))
-	return normalized == "base kit" || normalized == StackKitLegacyBaseSlug
 }
 
 func productStackKitDisplayName(name string) string {
@@ -681,13 +643,13 @@ func productStackKitDisplayName(name string) string {
 	}
 }
 
-func (l *StackKitLoader) readStackKitYAMLMetadata(name string) (*stackkitcatalog.StackKitMeta, error) {
+func (l *StackKitLoader) readStackKitYAMLMetadata(name string) (*stackKitYAMLMeta, error) {
 	content, err := l.readStackKitFile(name, "stackkit.yaml")
 	if err != nil {
 		return nil, err
 	}
 
-	meta, err := stackkitcatalog.ParseStackKitMetaYAML(content)
+	meta, err := parseStackKitMetaYAML(content)
 	if err != nil {
 		return nil, err
 	}
@@ -699,13 +661,7 @@ func (l *StackKitLoader) effectiveKitsDir() string {
 	if l.kitsDir != "" {
 		return l.kitsDir
 	}
-	if dir := DefaultStackKitsDir(); dir != "" {
-		return dir
-	}
-	if _, file, _, ok := runtime.Caller(0); ok {
-		return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "stackkits"))
-	}
-	return filepath.Clean(filepath.Join("pkg", "stackkits"))
+	return DefaultStackKitsDir()
 }
 
 func (l *StackKitLoader) readStackKitServiceCatalog(name string) (struct {
@@ -871,7 +827,7 @@ func cueStringList(v cue.Value) []string {
 	return items
 }
 
-func convertStackKitModes(meta *stackkitcatalog.StackKitMeta) map[string]StackKitModeInfo {
+func convertStackKitModes(meta *stackKitYAMLMeta) map[string]StackKitModeInfo {
 	modes := make(map[string]StackKitModeInfo)
 	if meta == nil {
 		return modes
@@ -933,15 +889,11 @@ func (l *StackKitLoader) ListAvailableKits() []string {
 	return DefaultKnownStackKits()
 }
 
-// GetBaseKit returns the base StackKit schema, evaluating it on first use.
-//
-// The base is not evaluated at load time any more (see loadBaseKitFromDir), so
-// the cost is paid here, once, and only by callers that actually want the base
-// value rather than by every rollout.
-func (l *StackKitLoader) GetBaseKit() cue.Value {
+// GetFoundation returns the shared foundation schema, evaluating it on first use.
+func (l *StackKitLoader) GetFoundation() cue.Value {
 	l.mu.RLock()
-	if l.baseKit.Exists() || l.baseSource == "" {
-		value := l.baseKit
+	if l.foundation.Exists() || l.foundationSource == "" {
+		value := l.foundation
 		l.mu.RUnlock()
 		return value
 	}
@@ -949,17 +901,17 @@ func (l *StackKitLoader) GetBaseKit() cue.Value {
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.baseKit.Exists() {
-		return l.baseKit
+	if l.foundation.Exists() {
+		return l.foundation
 	}
 	compileBudget.Lock()
-	value := l.ctx.CompileBytes([]byte(l.baseSource), cue.Filename("base/combined.cue"))
+	value := l.ctx.CompileBytes([]byte(l.foundationSource), cue.Filename("foundation/combined.cue"))
 	compileBudget.Unlock()
 	if value.Err() != nil {
 		return cue.Value{}
 	}
-	l.baseKit = value
-	return l.baseKit
+	l.foundation = value
+	return l.foundation
 }
 
 // ValidateAgainstKit validates a spec against a specific StackKit.

@@ -4,7 +4,7 @@ import (
 	"context"
 )
 
-func (s *MemoryStore) ApplyServerEnrollment(_ context.Context, command ServerEnrollment) (*ServerEventResult, error) {
+func (s *MemoryStore) ApplyServerEnrollment(_ context.Context, command ServerEnrollment) (*ServerEnrollmentResult, error) {
 	prepared, err := prepareServerEnrollment(command)
 	if err != nil {
 		return nil, err
@@ -29,7 +29,11 @@ func (s *MemoryStore) ApplyServerEnrollment(_ context.Context, command ServerEnr
 		node.Metadata = cloneMap(node.Metadata)
 		s.nodes[node.ID] = node
 	}
-	return result, nil
+	var worker *Worker
+	if prepared.Worker != nil {
+		worker = s.upsertWorkerHeartbeatLocked(*prepared.Worker)
+	}
+	return &ServerEnrollmentResult{ServerEventResult: result, Worker: worker}, nil
 }
 
 var _ ServerEnrollmentStore = (*MemoryStore)(nil)

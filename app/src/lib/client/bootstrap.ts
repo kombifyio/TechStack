@@ -30,6 +30,8 @@ export interface ClientBootstrap {
   kombifyEdition: string;
   version: string;
   publicOrigin: string;
+  /** Public context.dev Logo Link client id. Empty disables brand logos. */
+  contextDevLogolinkId: string;
   telemetry: {
     sentry: SentryBootstrap;
     posthog: PostHogBootstrap;
@@ -45,6 +47,7 @@ export function emptyClientBootstrap(): ClientBootstrap {
     kombifyEdition: "",
     version: "",
     publicOrigin: "",
+    contextDevLogolinkId: "",
     telemetry: {
       sentry: { dsn: "", environment: "", release: "" },
       posthog: { key: "", host: "", environment: "" },
@@ -80,6 +83,7 @@ export function parseClientBootstrap(body: unknown): ClientBootstrap {
     kombifyEdition: asString(data.kombify_edition),
     version: asString(data.version),
     publicOrigin: asString(data.public_origin),
+    contextDevLogolinkId: asString(data.context_dev_logolink_id),
     telemetry: {
       sentry: {
         dsn: asString(sentry.dsn),

@@ -122,7 +122,7 @@ func uiSpecNetwork(dataMap map[string]interface{}) core.NetworkSpec {
 func uiSpecKit(dataMap map[string]interface{}) string {
 	kit := ""
 	if _, fromWizard := dataMap["wizardType"]; fromWizard || dataMap[providerField] != nil || dataMap["goals"] != nil {
-		kit = DefaultBaseKitRef
+		kit = DefaultBasementKitRef
 	}
 	if isManagedRuntimeUIConfig(dataMap) {
 		kit = DefaultCloudKitRef
@@ -130,15 +130,15 @@ func uiSpecKit(dataMap map[string]interface{}) string {
 	if explicitKit, ok := dataMap["kit"].(string); ok {
 		kit = normalizeUIStackKitRef(explicitKit, kit)
 	}
-	return normalizeUIStackKitRef(kit, DefaultBaseKitRef)
+	return normalizeUIStackKitRef(kit, DefaultBasementKitRef)
 }
 
 func normalizeUIStackKitRef(value, defaultKit string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", "base-kit":
+	case "":
 		return defaultKit
 	case "basement", "basementkit":
-		return DefaultBaseKitRef
+		return DefaultBasementKitRef
 	case "cloud", "cloudkit", "kombify-cloud-kit":
 		return DefaultCloudKitRef
 	default:
@@ -190,17 +190,30 @@ func uiSpecMetadata(dataMap map[string]interface{}, provider string, kit string)
 }
 
 func defaultUIMetadata(kit string, provider string) map[string]string {
-	return map[string]string{
-		metadataKeyServerMode:         serverModeFromProvider(provider),
-		metadataKeyRuntimeLane:        runtimeLaneFromProvider(provider),
-		metadataKeyProviderID:         providerIDFromProvider(provider),
-		metadataKeySimulateLifecycle:  simulateLifecycleFromProvider(provider),
-		metadataKeyDesiredState:       desiredStateRunning,
-		metadataKeyBillingMode:        billingModeSubscription,
-		metadataKeyBillingCadence:     billingCadenceFromProvider(provider),
-		metadataKeyStackKitCatalogRef: firstNonEmpty(kit, DefaultBaseKitRef),
-		metadataKeyVerificationStatus: verificationStatusPending,
+	metadata := providerRuntimeMetadata(provider)
+	metadata[metadataKeyDesiredState] = desiredStateRunning
+	metadata[metadataKeyBillingMode] = billingModeSubscription
+	metadata[metadataKeyStackKitCatalogRef] = firstNonEmpty(kit, DefaultBasementKitRef)
+	metadata[metadataKeyVerificationStatus] = verificationStatusPending
+	return metadata
+}
+
+func providerRuntimeMetadata(provider string) map[string]string {
+	metadata := map[string]string{
+		metadataKeyServerMode:        serverModeUserOwned,
+		metadataKeyRuntimeLane:       "",
+		metadataKeyProviderID:        "",
+		metadataKeySimulateLifecycle: "",
+		metadataKeyBillingCadence:    "",
 	}
+	if canonicalProvider, err := providercatalog.CanonicalProviderID(provider); err == nil {
+		metadata[metadataKeyServerMode] = serverModeMonthlyRuntime
+		metadata[metadataKeyRuntimeLane] = serverModeMonthlyRuntime
+		metadata[metadataKeyProviderID] = canonicalProvider
+		metadata[metadataKeySimulateLifecycle] = simulateLifecyclePVM
+		metadata[metadataKeyBillingCadence] = billingCadenceMonthly
+	}
+	return metadata
 }
 
 func applyUIMetadataOverrides(metadata map[string]string, options map[string]interface{}) {
@@ -227,10 +240,10 @@ func applyUIMetadataOverrides(metadata map[string]string, options map[string]int
 }
 
 func convertStackKitConfigToSpec(dataMap map[string]interface{}) (*core.KombinationSpec, error) {
-	rawKit := firstNonEmpty(stringFromMap(dataMap, "kit"), stringFromMap(dataMap, "stackkit"), DefaultBaseKitRef)
+	rawKit := firstNonEmpty(stringFromMap(dataMap, "kit"), stringFromMap(dataMap, "stackkit"), DefaultBasementKitRef)
 	spec := &core.KombinationSpec{
 		Name:     sanitizeDNSName(stringFromMap(dataMap, "name")),
-		Kit:      normalizeUIStackKitRef(rawKit, DefaultBaseKitRef),
+		Kit:      normalizeUIStackKitRef(rawKit, DefaultBasementKitRef),
 		Metadata: stringMapFromAny(dataMap["metadata"]),
 	}
 	if spec.Metadata == nil {
@@ -846,7 +859,7 @@ func defaultBaseKitVerifiedServices() []core.ServiceSpec {
 
 func isDefaultSingleEnvironmentKit(kit string) bool {
 	switch strings.TrimSpace(kit) {
-	case DefaultBaseKitRef, DefaultCloudKitRef:
+	case DefaultBasementKitRef, DefaultCloudKitRef:
 		return true
 	default:
 		return false
@@ -869,34 +882,6 @@ func mergeServices(groups ...[]core.ServiceSpec) []core.ServiceSpec {
 		}
 	}
 	return out
-}
-
-func serverModeFromProvider(provider string) string {
-	if providercatalog.IsCanonicalProviderID(provider) {
-		return serverModeMonthlyRuntime
-	}
-	return serverModeUserOwned
-}
-
-func runtimeLaneFromProvider(provider string) string {
-	if providercatalog.IsCanonicalProviderID(provider) {
-		return serverModeMonthlyRuntime
-	}
-	return ""
-}
-
-func simulateLifecycleFromProvider(provider string) string {
-	if providercatalog.IsCanonicalProviderID(provider) {
-		return simulateLifecyclePVM
-	}
-	return ""
-}
-
-func billingCadenceFromProvider(provider string) string {
-	if providercatalog.IsCanonicalProviderID(provider) {
-		return billingCadenceMonthly
-	}
-	return ""
 }
 
 func providerIDFromProvider(provider string) string {

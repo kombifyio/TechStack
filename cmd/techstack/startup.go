@@ -17,29 +17,30 @@ import (
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 
-	commonauthflow "github.com/kombifyio/go-common/authflow"
-	commonedgeauth "github.com/kombifyio/go-common/edgeauth"
-	commonobservability "github.com/kombifyio/go-common/observability"
-	"github.com/kombifyio/go-common/oidcclient"
-	commonrole "github.com/kombifyio/go-common/role"
+	commonauthflow "github.com/kombifyio/techstack/internal/gocommon/authflow"
+	"github.com/kombifyio/techstack/internal/gocommon/authsession"
+	commonedgeauth "github.com/kombifyio/techstack/internal/gocommon/edgeauth"
+	commonobservability "github.com/kombifyio/techstack/internal/gocommon/observability"
+	"github.com/kombifyio/techstack/internal/gocommon/oidcclient"
+	commonrole "github.com/kombifyio/techstack/internal/gocommon/role"
 
 	"github.com/kombifyio/techstack/internal/frontend"
 	"github.com/kombifyio/techstack/internal/hooks"
 	"github.com/kombifyio/techstack/internal/notifications"
 	pbmigration "github.com/kombifyio/techstack/internal/pocketbase_migration"
+	"github.com/kombifyio/techstack/internal/portinventory"
 	"github.com/kombifyio/techstack/internal/routes"
 	"github.com/kombifyio/techstack/internal/routes/sessionreauth"
 	"github.com/kombifyio/techstack/internal/routes/tenantguard"
+	"github.com/kombifyio/techstack/internal/systemwallet"
 	"github.com/kombifyio/techstack/pkg/agentcontrol"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/auth"
 	"github.com/kombifyio/techstack/pkg/auth/sessionpolicy"
-	"github.com/kombifyio/techstack/pkg/backup"
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/db"
 	"github.com/kombifyio/techstack/pkg/demoguard"
-	"github.com/kombifyio/techstack/pkg/drift"
 	"github.com/kombifyio/techstack/pkg/enrollment"
 	"github.com/kombifyio/techstack/pkg/features"
 	"github.com/kombifyio/techstack/pkg/grpcserver"
@@ -54,7 +55,6 @@ import (
 	"github.com/kombifyio/techstack/pkg/orchestrator"
 	"github.com/kombifyio/techstack/pkg/ril/workflow"
 	"github.com/kombifyio/techstack/pkg/telemetry"
-	"github.com/kombifyio/techstack/pkg/tenant"
 	"github.com/kombifyio/techstack/pkg/tunnel"
 	v2 "github.com/kombifyio/techstack/pkg/v2"
 	"github.com/kombifyio/techstack/pkg/v2/auth/providers"
@@ -70,14 +70,15 @@ type startupContext struct {
 }
 
 type v2Boot struct {
-	db            *db.DB
-	server        *v2.Server
-	session       *session.Manager
-	registry      *providers.Registry
-	authStore     controlplane.AuthStore
-	cookieName    string
-	defaultTenant string
-	saasMode      bool
+	db                   *db.DB
+	server               *v2.Server
+	session              *session.Manager
+	registry             *providers.Registry
+	authStore            controlplane.AuthStore
+	serverEventProjector controlplane.ServerEventProjector
+	cookieName           string
+	defaultTenant        string
+	saasMode             bool
 }
 
 type grpcBoot struct {
@@ -114,17 +115,17 @@ type routeDeps struct {
 	providerResolution      any
 	providerActions         jobs.RuntimeActions
 	typedControl            *agentcontrol.Hub
+	portInventory           *portinventory.PostgresAuthority
 }
 
 type runtimeRouteState struct {
-	leaseSvc       *vmleases.Service
-	runtimeActions jobs.RuntimeActions
+	leaseSvc                *vmleases.Service
+	runtimeActions          jobs.RuntimeActions
+	managedRuntimeExpansion *routes.ManagedRuntimeExpansion
 }
 
 type shutdownHandles struct {
-	backupScheduler *backup.Scheduler
-	driftScheduler  *drift.Scheduler
-	monitorCancel   context.CancelFunc
+	background      *backgroundRuntimeLifecycle
 	providerControl *providerControlLifecycle
 }
 
@@ -165,6 +166,21 @@ func runTechstack(ctx context.Context) error {
 	// (kombify Guard) instead of the control plane.
 	if isAgentMode(os.Args) {
 		return runAgentMode(ctx, os.Args[2:])
+	}
+
+	// Device mode: `techstack device probe|prepare` is the operator-side
+	// executor for a machine that is not enrolled yet. It talks to the machine
+	// over SSH and to nothing else, so it runs before any control plane exists.
+	if isDeviceMode(os.Args) {
+		return runDeviceMode(ctx, os.Args[2:])
+	}
+	if len(os.Args) > 1 && os.Args[1] == "substrate" {
+		return runSubstrateMode(ctx, os.Args[2:])
+	}
+	// Client update mode: the Windows shell stages signed updates through the
+	// installed runtime binary without starting a control plane.
+	if isClientUpdateMode(os.Args) {
+		return runClientUpdateMode(ctx, os.Args[2:])
 	}
 
 	// Native cloud auth mode: `techstack login` / `techstack logout` run the
@@ -222,13 +238,10 @@ func runTechstack(ctx context.Context) error {
 		return fmt.Errorf("bootstrap control-plane tenant: %w", tenantErr)
 	}
 
-	// Bootstrap the PocketBase data layer (no HTTP serving). During the
-	// coexistence window the orchestrator, RIL stores, auth records, and
-	// collection hooks still read/write the embedded PB store; httpx owns the
-	// HTTP shell. Bootstrap initializes the embedded data layer. PocketBase
-	// collection migrations (internal/migrations) have been retired — the
-	// control-plane schema is owned by pkg/db/migrations/*.sql, applied above
-	// during bootV2 -> openV2DB -> db.Migrate.
+	// Bootstrap the bounded PocketBase auth-compatibility store (no HTTP
+	// serving). Control-plane state, including wallet custody, is Postgres-owned;
+	// PocketBase remains only for the local auth records and OAuth configuration
+	// that have not yet moved behind the canonical auth boundary.
 	if err := app.Bootstrap(); err != nil {
 		return fmt.Errorf("bootstrap pocketbase data layer: %w", err)
 	}
@@ -239,9 +252,14 @@ func runTechstack(ctx context.Context) error {
 	orchCfg.JobStore = controlStores.Jobs
 	orchCfg.WorkerStore = workerControlPlaneStore(v2Boot)
 	orchCfg.WalletStore = walletControlPlaneStore(v2Boot)
+	orchCfg.DriftStore = controlStores.Drift
+	orchCfg.ActivityStore = controlStores.Activity
 	orchCfg.RegistryStore = registryControlPlaneStore(v2Boot)
 	orchCfg.RoutingStore = controlStores.Routing
-	orch := orchestrator.New(app, orchCfg, log)
+	portInventory := portinventory.NewPostgresAuthority(v2Boot.db.DB)
+	orchCfg.PortInventory = portInventory
+	orchCfg.BackupScheduleProjector = backupScheduleProjector(v2Boot, log)
+	orch := orchestrator.New(orchCfg, log)
 	typedControl := agentcontrol.NewHub(v2Boot.db.DB)
 	tunnelResolver := bootTunnelResolver(log)
 	grpcState, err := bootAgentGRPC(startup.cfg, v2Boot, log)
@@ -249,8 +267,13 @@ func runTechstack(ctx context.Context) error {
 		log.Error("agent_mtls_config_invalid", "error", err)
 		return err
 	}
-	notificationOutbox := bootProductNotificationOutbox(v2Boot, log)
-	rilSignalOutbox, rilSignalWorker := bootRILSignalRuntime(v2Boot, buildRevision, log)
+	notificationOutbox := bootProductNotificationOutbox(v2Boot, startup.cfg.Edition, log)
+	if notificationOutbox != nil {
+		v2Boot.serverEventProjector = nodeLifecycleNotificationProjector{outbox: notificationOutbox}
+		orch.AddTerminalJobObserver(stackKitLifecycleNotifier{outbox: notificationOutbox})
+		orch.AddTerminalJobObserver(destroyJobFailureNotifier{outbox: notificationOutbox})
+	}
+	rilSignalOutbox, rilSignalWorker := bootRILSignalRuntime(v2Boot, startup.cfg.Edition, buildRevision, log)
 	monitorState := bootMonitoring(startup.cfg, grpcState.server, log, notificationOutbox, rilSignalOutbox)
 	workflowEngine := bootWorkflowEngine(v2Boot, log)
 	providerState, err := composeHostedProviderRuntime(
@@ -291,6 +314,7 @@ func runTechstack(ctx context.Context) error {
 		providerResolution:      providerState.resolution,
 		providerActions:         providerState.actions,
 		typedControl:            typedControl,
+		portInventory:           portInventory,
 	}
 
 	router, err := buildRouter(deps)
@@ -306,22 +330,24 @@ func runTechstack(ctx context.Context) error {
 		}
 	}
 
-	// Register PB collection bootstrap + business hooks against the bootstrapped
-	// data layer (coexistence). These previously ran inside OnServe.
-	registerPocketBaseBootstrap(app)
-	if err := registerBusinessHooks(app, startup.cfg, log); err != nil {
+	// Validate canonical wallet custody before generating any bootstrap secret,
+	// then create the remaining bounded PocketBase auth-compatibility records.
+	if err := systemwallet.ValidateCustody(startup.cfg.DeploymentMode, log); err != nil {
+		log.Error("wallet_custody_invalid", "error", err)
 		return err
 	}
-	if err := runTenantBackfillCheck(app, startup.cfg, log); err != nil {
+	if err := registerPocketBaseBootstrap(ctx, app, walletControlPlaneStore(v2Boot), v2Boot.defaultTenant); err != nil {
 		return err
 	}
 
 	registrySweeper := bootServerRegistrySweeper(v2Boot, monitorState, log)
+	platformProjector := bootPlatformServerProjector(v2Boot, log)
 	jobReclaimer := bootJobExecutionReclaimer(v2Boot, orch, monitorState, log)
 	if observer := jobExecutionDeferObserver(monitorState); observer != nil {
 		orch.Queue().SetExecutionDeferObserver(observer)
 	}
-	handles := startRuntimeLifecycle(ctx, app, startup.cfg, orch, grpcState, monitorState, workflowEngine, rilSignalWorker, providerState.runner, registrySweeper, jobReclaimer, log)
+	backupScanner := composeBackupScanner(v2Boot, deps.featureSvc, orch, log)
+	handles := startRuntimeLifecycle(ctx, startup.cfg, orch, grpcState, monitorState, workflowEngine, rilSignalWorker, providerState.runner, registrySweeper, platformProjector, jobReclaimer, backupScanner, log)
 
 	addr := startup.cfg.Server.ListenAddr
 	if addr == "" {
@@ -498,7 +524,7 @@ func bootV2(ctx context.Context, app core.App, cfg *config.Config, log *logger.L
 }
 
 func openV2DB(ctx context.Context, cfg *config.Config, log *logger.Logger) *db.DB {
-	dbCfg, err := db.ConfigFromEnv(cfg.Server.DataDir)
+	dbCfg, err := db.ConfigFromEnv()
 	if err != nil {
 		log.Error("v2_db_config_invalid", "error", err)
 		return nil
@@ -593,7 +619,7 @@ func configureV2Auth(ctx context.Context, cfg *config.Config, log *logger.Logger
 		if mgmt := newAuth0MgmtClientFromEnv(); mgmt != nil {
 			orgLister = mgmt
 		}
-		tenantResolver = v2CloudTenantResolver(authStore, orgLister, boot.defaultTenant)
+		tenantResolver = v2CloudTenantResolver(authStore, orgLister)
 	}
 	authFlow, err := commonauthflow.NewService(commonauthflow.Config{
 		Providers:           sharedRegistry,
@@ -601,13 +627,13 @@ func configureV2Auth(ctx context.Context, cfg *config.Config, log *logger.Logger
 		StateSecret:         []byte(secret),
 		DefaultProviderID:   defaultProviderID,
 		DefaultTenantID:     boot.defaultTenant,
-		DefaultReturnTo:     "/stacks",
+		DefaultReturnTo:     "/dashboard",
 		LoginErrorPath:      "/login",
 		CallbackPath:        config.CanonicalAuthCallbackPath,
 		SessionCookieName:   boot.cookieName,
 		SessionCookieSecure: cfg.IsProduction(),
 		TenantResolver:      tenantResolver,
-		UserUpsert:          v2CloudUserUpsert(authStore, boot.defaultTenant),
+		UserUpsert:          v2CloudUserUpsert(authStore, boot.saasMode),
 		Exchanger:           newRotatingOIDCCodeExchanger(nil, v2FirstEnv(techstackAuthCloudClientSecretNext)),
 	})
 	if err != nil {
@@ -616,9 +642,11 @@ func configureV2Auth(ctx context.Context, cfg *config.Config, log *logger.Logger
 	}
 	*options = append(*options, v2.WithAuthHandlers(v2.AuthHandlers{
 		Providers: authFlow.ProvidersHandler(),
-		Login:     v2AuthPublicOriginHandler(authFlow.LoginHandler(), config.PublicOriginFromEnv()),
-		Callback:  v2AuthPublicOriginHandler(authFlow.CallbackHandler(), config.PublicOriginFromEnv()),
-		Logout:    authFlow.LogoutHandler(),
+		Login: v2AuthForceLoginPrompt(
+			v2AuthPublicOriginHandler(authFlow.LoginHandler(), config.PublicOriginFromEnv()),
+		),
+		Callback: v2AuthPublicOriginHandler(authFlow.CallbackHandler(), config.PublicOriginFromEnv()),
+		Logout:   authFlow.LogoutHandler(),
 	}))
 	log.Info("v2_auth_enabled", "providers", registry.Len(), "source", source, "default_provider", defaultProviderID, "default_tenant", boot.defaultTenant)
 }
@@ -787,7 +815,6 @@ func bootAgentGRPC(cfg *config.Config, boot *v2Boot, log *logger.Logger) (*grpcB
 		QueueMaxSize:          cfg.Server.GRPCQueueMaxSize,
 		QueueOverflowStrategy: cfg.Server.GRPCQueueOverflowStrategy,
 		QueueWarningThreshold: cfg.Server.GRPCQueueWarningThreshold,
-		TofuQueueMaxSize:      cfg.Server.GRPCTofuQueueMaxSize,
 		RuntimeLogPath:        cfg.Server.RuntimeLogPath,
 		RuntimeLogMaxEntries:  cfg.Server.RuntimeLogMaxEntries,
 	}, log)
@@ -858,9 +885,10 @@ func buildRouter(deps routeDeps) (*httpx.Router, error) {
 	if err != nil {
 		return nil, err
 	}
-	registerCoreRoutes(router, deps, state.runtimeActions.LeaseManager)
-	registerRuntimeInventoryRoutes(router, deps, state, inventoryPolicy)
-	registerRILRoutes(router, deps)
+	metrics := registerCoreRoutes(router, deps, state.runtimeActions.LeaseManager)
+	deps.workflowEngine.SetObserver(metrics)
+	state.managedRuntimeExpansion = registerRuntimeInventoryRoutes(router, deps, state, inventoryPolicy)
+	registerRILRoutes(router, deps, inventoryPolicy)
 	registerNetworkRoutes(router, deps)
 	registerFeatureRoutes(router, deps, state)
 	registerV2Routes(router, deps)
@@ -950,6 +978,7 @@ func v2SessionIdentityMiddleware(boot *v2Boot) func(*httpx.Event) error {
 				logger.Default().Error("tenant_identity_projection_failed", "error", projectionErr, "tenant_id", id.OrgID)
 				return sessionreauth.Denial(e, id.OrgID, projectionErr)
 			}
+			projectLegacyDemoOwner(id)
 			ctx := identity.NewContext(e.Request.Context(), id)
 			ctx = contextWithMembershipAuthorization(ctx, membership)
 			e.Request = e.Request.WithContext(ctx)
@@ -974,11 +1003,31 @@ func v2SessionIdentityMiddleware(boot *v2Boot) func(*httpx.Event) error {
 			return sessionreauth.Denial(e, id.OrgID, err)
 		}
 		hydrateIdentityTenantFromMembership(id, membership)
+		projectLegacyDemoOwner(id)
 		ctx := identity.NewContext(e.Request.Context(), id)
+		ctx = authsession.WithClaims(ctx, claims)
 		ctx = contextWithMembershipAuthorization(ctx, membership)
 		e.Request = e.Request.WithContext(ctx)
 		return e.Next()
 	}
+}
+
+// projectLegacyDemoOwner is the single compatibility boundary between the
+// current Universal Login demo principal and the original public-demo data
+// owner. The demo tenant predates the dedicated Auth0 demo connection, so its
+// homelab rows are intentionally owned by the stable demo tenant id while the
+// authenticated principal is now oauth2|kombify-demo|.... Authentication,
+// membership projection, and Edge/FGA authorization all complete against the
+// real principal before this adapter changes only the owner id consumed by the
+// Techstack inventory and lifecycle routes.
+//
+// Remove this adapter only through a complete owner-subject data migration;
+// never add endpoint-specific aliases or a second read path.
+func projectLegacyDemoOwner(id *identity.Identity) {
+	if id == nil || !demoguard.IsDemoTenant(id.OrgID) || !demoguard.IsDemoUser(id.UserID) {
+		return
+	}
+	id.UserID = demoguard.DemoTenantID()
 }
 
 // resolveIdentityTenantProjection is the shared middleware seam that turns a
@@ -1312,21 +1361,16 @@ func v2SessionTenantID(claims *session.Claims) string {
 // replacing the retired PocketBase users/user_links collections. The OIDC
 // subject is the canonical user id; the membership carries the provider link
 // (provider_key=cloud, subject_id=<oidc subject>). Auth is now a single
-// Postgres-backed authority. The membership lands under the tenant resolved by
-// the login-time TenantResolver; when that differs from the shared default
-// tenant, the default membership is also kept for the session-cookie rollover
-// window (legacy lookups still chain through it).
-func v2CloudUserUpsert(authStore controlplane.AuthStore, defaultTenant string) commonauthflow.UserUpsert {
+// Postgres-backed authority. The membership lands only under the tenant
+// resolved by the login-time TenantResolver; cloud identities never gain a
+// second membership in a shared fallback tenant.
+func v2CloudUserUpsert(authStore controlplane.AuthStore, saasMode bool) commonauthflow.UserUpsert {
 	if authStore == nil {
 		return nil
 	}
-	fallbackTenant := strings.TrimSpace(defaultTenant)
-	if fallbackTenant == "" {
-		fallbackTenant = sharedDefaultTenantID
-	}
 	return func(ctx context.Context, claims *oidcclient.Claims, resolvedTenant string, _ string) error {
 		if claims == nil {
-			return nil
+			return fmt.Errorf("cloud user claims are required")
 		}
 		subject := strings.TrimSpace(claims.Subject)
 		if subject == "" {
@@ -1338,13 +1382,11 @@ func v2CloudUserUpsert(authStore controlplane.AuthStore, defaultTenant string) c
 		}
 		tenantID := strings.TrimSpace(resolvedTenant)
 		if tenantID == "" {
-			tenantID = fallbackTenant
+			return fmt.Errorf("resolved cloud tenant is required")
 		}
 		const activeStatus = "active"
 		tenantRecord := controlplane.Tenant{ID: tenantID}
-		if tenantID != fallbackTenant {
-			// Mirror ensureIdentityTenantProjection so a login never downgrades
-			// an org/owner tenant to self_hosted defaults on the conflict path.
+		if saasMode {
 			tenantRecord = controlplane.Tenant{
 				ID: tenantID, DisplayName: tenantID, Kind: "saas", Status: activeStatus,
 			}
@@ -1380,22 +1422,6 @@ func v2CloudUserUpsert(authStore controlplane.AuthStore, defaultTenant string) c
 		}); err != nil {
 			return fmt.Errorf("upsert cloud membership: %w", err)
 		}
-		if tenantID != fallbackTenant {
-			if _, err := authStore.UpsertTenant(ctx, controlplane.Tenant{ID: fallbackTenant}); err != nil {
-				return fmt.Errorf("upsert default tenant: %w", err)
-			}
-			if _, err := authStore.UpsertMembership(ctx, controlplane.Membership{
-				ID:          fallbackTenant + ":" + subject,
-				TenantID:    fallbackTenant,
-				UserID:      subject,
-				RoleKey:     roleKey,
-				ProviderKey: "cloud",
-				SubjectID:   subject,
-				Metadata:    membershipMetadata,
-			}); err != nil {
-				return fmt.Errorf("upsert default cloud membership: %w", err)
-			}
-		}
 		return nil
 	}
 }
@@ -1424,8 +1450,12 @@ func contextWithMembershipAuthorization(ctx context.Context, membership *control
 			ctx = commonedgeauth.FlagsToContext(ctx, commonedgeauth.FlagSet{Flags: flags})
 		}
 	}
-	if _, ok := middleware.SignedEntitlementsFromContext(ctx); !ok {
-		ctx = middleware.WithSignedEntitlements(ctx, entitlements...)
+	// Membership grants are claim-derived, not Edge-signed: they go into their
+	// own bucket so provider-mutating consumers (capacity policy, job authority
+	// snapshots) keep failing closed without a verified v2 envelope, while
+	// Inventory reads may accept the fallback explicitly.
+	if _, ok := middleware.MembershipEntitlementsFromContext(ctx); !ok {
+		ctx = middleware.WithMembershipEntitlements(ctx, entitlements...)
 	}
 	return ctx
 }
@@ -1529,7 +1559,7 @@ func bindCORS(router *httpx.Router, cfg *config.Config) {
 	// local is prod-hard for CORS: only explicitly configured origins, no
 	// dev-default merge.
 	if !cfg.IsProduction() && !cfg.IsLocal() {
-		corsOrigins = mergeCORSOrigins(config.DefaultCORSOrigins, corsOrigins)
+		corsOrigins = mergeCORSOrigins(config.DefaultCORSOrigins(), corsOrigins)
 	}
 	router.BindFunc(httpx.CORS(httpx.CORSConfig{
 		AllowOrigins:     corsOrigins,
@@ -1590,7 +1620,18 @@ func hasWildcardOrigin(origins []string) bool {
 }
 
 func bindRateLimiter(router *httpx.Router, cfg *config.Config) {
-	rateLimiter := middleware.NewRateLimiter(cfg.Server.RateLimitRPS, cfg.Server.RateLimitBurst)
+	// Each replica runs its own token bucket; divide the configured aggregate
+	// budget so scaling out does not multiply the effective allowance.
+	replicas := 1
+	if cfg != nil && cfg.Server.Replicas > 1 {
+		replicas = cfg.Server.Replicas
+	}
+	mutationRate, mutationBurst := middleware.ReplicaBudget(cfg.Server.RateLimitRPS, cfg.Server.RateLimitBurst, replicas)
+	mutationLimiter := middleware.NewRateLimiter(mutationRate, mutationBurst)
+	readRate := max(cfg.Server.RateLimitRPS*4, 40)
+	readBurst := max(cfg.Server.RateLimitBurst*4, 80)
+	readRate, readBurst = middleware.ReplicaBudget(readRate, readBurst, replicas)
+	readLimiter := middleware.NewRateLimiter(readRate, readBurst)
 	portalRate := cfg.Server.RateLimitRPS
 	if portalRate < 2 {
 		portalRate = 2
@@ -1599,6 +1640,7 @@ func bindRateLimiter(router *httpx.Router, cfg *config.Config) {
 	if portalBurst < 8 {
 		portalBurst = 8
 	}
+	portalRate, portalBurst = middleware.ReplicaBudget(portalRate, portalBurst, replicas)
 	portalExchangeLimiter := middleware.NewRateLimiter(portalRate, portalBurst)
 	router.BindFunc(func(e *httpx.Event) error {
 		if portalExchangeRequest(e.Request) {
@@ -1611,7 +1653,14 @@ func bindRateLimiter(router *httpx.Router, cfg *config.Config) {
 		if rateLimitBypassEligible(e.Request) {
 			return e.Next()
 		}
-		if !rateLimiter.Allow(middleware.RequestRateLimitKey(e.Request)) {
+		limiter := mutationLimiter
+		if e.Request.Method == http.MethodGet || e.Request.Method == http.MethodHead {
+			// Dashboard projections intentionally fan out across owner-scoped stacks,
+			// servers, services, and operations. Keep those reads rate-limited, but do
+			// not let a valid page refresh consume the stricter mutation budget.
+			limiter = readLimiter
+		}
+		if !limiter.Allow(middleware.RequestRateLimitKey(e.Request)) {
 			e.Response.Header().Set("Retry-After", "1")
 			return httpx.Error(e, 429, ksapi.ErrCodeRateLimited, "Too many requests. Please slow down and try again.", nil)
 		}
@@ -1663,67 +1712,17 @@ func printStartup(addr string, deps routeDeps) {
 	fmt.Printf("   Trust:          http://%s/api/v1/trust/\n", addr)
 	fmt.Printf("   Agents:         http://%s/api/v1/agents\n", addr)
 	fmt.Printf("   System Accts:   http://%s/api/v1/system-accounts/{role}/reset\n", addr)
-	fmt.Printf("   Backups:        http://%s/api/v1/backups\n", addr)
 	fmt.Printf("   Features:       http://%s/api/v1/features\n", addr)
 	fmt.Printf("   Monitoring:     http://%s/api/v1/monitor/\n", addr)
 	fmt.Printf("   Tunnel:         http://%s/api/v1/tunnel/\n", addr)
 }
 
-func registerPocketBaseBootstrap(app *pocketbase.PocketBase) {
+func registerPocketBaseBootstrap(ctx context.Context, app *pocketbase.PocketBase, walletStore controlplane.WalletStore, tenantID string) error {
 	if err := pbmigration.EnsureSaaSAuthCollections(app); err != nil {
 		fmt.Printf("⚠️  SaaS auth collection bootstrap warning: %v\n", err)
 	}
-	if err := hooks.BootstrapUsers(app); err != nil {
-		fmt.Printf("⚠️  User bootstrap warning: %v\n", err)
+	if err := hooks.BootstrapUsers(ctx, app, walletStore, tenantID); err != nil {
+		return fmt.Errorf("bootstrap auth users and canonical recovery credentials: %w", err)
 	}
-	if err := hooks.BootstrapOAuthProviders(app); err != nil {
-		fmt.Printf("⚠️  OAuth2 provider bootstrap warning: %v\n", err)
-	}
-}
-
-func registerBusinessHooks(app *pocketbase.PocketBase, cfg *config.Config, log *logger.Logger) error {
-	tenantEnforcer := tenant.NewEnforcer(cfg.DeploymentMode)
-	hooks.RegisterStackHooks(app, tenantEnforcer)
-	if err := hooks.RegisterWalletHooks(app, log, cfg.DeploymentMode); err != nil {
-		log.Error("wallet_hooks_failed", "error", err)
-		return err
-	}
-	hooks.RegisterWorkerHooks(app, tenantEnforcer)
-	return nil
-}
-
-// runTenantBackfillCheck performs the SaaS tenant-id backfill repair and
-// consistency check once at startup against the bootstrapped data layer. It is
-// the direct-call replacement for the previously OnServe-bound check.
-func runTenantBackfillCheck(app *pocketbase.PocketBase, cfg *config.Config, log *logger.Logger) error {
-	if !cfg.DeploymentMode.IsSaaS() {
-		return nil
-	}
-	repair, repairErr := tenant.BackfillStackScopedTenantIDs(app, cfg.DeploymentMode)
-	if repairErr != nil {
-		log.Error("tenant_backfill_repair_failed", "error", repairErr)
-		return repairErr
-	}
-	if repair != nil && (repair.TotalUpdated() > 0 || repair.TotalSkipped() > 0) {
-		log.Info("tenant_backfill_repair_completed",
-			"updated", repair.Updated,
-			"skipped", repair.Skipped,
-		)
-	}
-
-	report, err := tenant.CheckBackfill(app, cfg.DeploymentMode)
-	if err != nil {
-		issues := []string(nil)
-		if report != nil {
-			issues = report.FatalIssueSummaries()
-		}
-		log.Error("tenant_backfill_check_failed", "issues", issues, "error", err)
-		return err
-	}
-	if report != nil && len(report.Issues) > 0 {
-		log.Warn("tenant_backfill_check_warn", "issues", report.IssueSummaries())
-		return nil
-	}
-	log.Info("tenant_backfill_check_passed", "collections", len(report.Checked))
 	return nil
 }

@@ -2,10 +2,10 @@
 --
 -- Row-Level-Security policies for tenant-scoped tables.
 --
--- Authority: docs/plans/2026-05-01-techstack-v2-implementation-plan.md §5
--- Tenancy & Isolation Model. Every tenant-scoped table gets RLS enabled with a
--- single policy that compares `tenant_id` to the GUC `app.tenant_id`, which
--- the V2 runtime sets per request via `pkg/db.WithTenant`.
+-- Authority: docs/ADR/0038-dedicated-runtime-database.md and the workspace
+-- kombify-Core/standards/DATA-ARCHITECTURE.md registry. Every tenant-scoped
+-- table gets RLS enabled with one policy comparing `tenant_id` to the GUC
+-- `app.tenant_id`, which the runtime sets per request via `pkg/db.WithTenant`.
 --
 -- Notes:
 -- * `current_setting('app.tenant_id', true)` returns NULL when the GUC is not

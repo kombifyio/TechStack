@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -40,10 +41,9 @@ func (h wizardRunHandlers) runWizardFound(e *httpx.Event, run *wizardRunState) e
 	if handled {
 		return nil
 	}
-	// Top-level stackkit makes the provision payload take the StackKits
-	// handoff shape: the v1 stack-spec.yaml is persisted for the rollout and
-	// the recorded intent carries the actual kit (options alone are ignored
-	// by the intent's kit resolution).
+	// Top-level stackkit keeps the provision payload on the StackKits
+	// handoff shape. The Architecture v2 projection in StackSpecV2 is the
+	// document the pinned CLI executes.
 	normalized.UserConfig["stackkit"] = run.request.Intent.KitAssignment.KitSlug
 	if homelabHandled := h.ensureWizardHomelab(e, run, run.request.Intent.Name); homelabHandled {
 		return nil
@@ -54,7 +54,7 @@ func (h wizardRunHandlers) runWizardFound(e *httpx.Event, run *wizardRunState) e
 	// The wire-request hash keeps a byte-identical retry replayable: the
 	// normalized request is mutated by owner-bootstrap resolution (fresh
 	// generated recovery material) and would never hash stably.
-	stack, err := h.crud.persistStackWithRequestHash(e, run.ownerID, normalized, run.requestHash)
+	stack, err := h.crud.persistStackWithRequestHash(e, run.ownerID, run.tenantID, normalized, run.requestHash)
 	if err != nil || stack == nil {
 		return err
 	}
@@ -65,29 +65,29 @@ func (h wizardRunHandlers) runWizardFound(e *httpx.Event, run *wizardRunState) e
 		// that race (documented in the bead).
 		normalized.Name = stack.Name
 	}
-	serverID, preparedLease, admissionHandled, admissionErr := h.crud.admitManagedCreate(e, run.ownerID, stack, normalized)
+	serverID, preparedLease, admissionHandled, admissionErr := h.crud.admitManagedCreate(e, run.ownerID, run.tenantID, stack, normalized)
 	if admissionHandled || admissionErr != nil {
 		h.crud.markStackProvisionStartFailed(e.Request.Context(), stack.Id, run.tenantID)
 		h.recordWizardRunFailure(e.Request.Context(), run, controlplane.WizardRun{StackID: stack.Id}, "managed_admission_failed")
 		return admissionErr
 	}
 	var serverErr error
-	if serverID == "" {
-		serverID, serverErr = h.crud.persistCreateServerIntent(e, run.ownerID, stack, normalized)
+	if serverID == "" && wizardRunTransport(run.request) != specv2.TransportHypervisor {
+		serverID, serverErr = h.crud.persistCreateServerIntent(e, run.ownerID, run.tenantID, stack, normalized)
 	}
 	if serverErr != nil {
 		h.crud.markStackProvisionStartFailed(e.Request.Context(), stack.Id, run.tenantID)
 		h.recordWizardRunFailure(e.Request.Context(), run, controlplane.WizardRun{StackID: stack.Id}, "server_intent_failed")
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal,
 			"Failed to persist server intent", map[string]any{
-				creationStackIDField: stack.Id, creationOperationsURLField: operationsURL(stack.Id),
+				creationStackIDField: stack.Id, creationOperationsURLField: homelabDashboardURL(),
 			})
 	}
-	if bootstrapErr := h.crud.applyCreateOwnerBootstrap(e, run.ownerID, stack, normalized); bootstrapErr != nil {
+	if bootstrapErr := h.crud.applyCreateOwnerBootstrap(e, run.ownerID, run.tenantID, stack, normalized); bootstrapErr != nil {
 		h.recordWizardRunFailure(e.Request.Context(), run, controlplane.WizardRun{StackID: stack.Id}, "owner_bootstrap_failed")
 		return bootstrapErr
 	}
-	ownerSpecAccess, accessErr := h.crud.issueCreateOwnerSpecAccess(e, stack, run.ownerID, normalized)
+	ownerSpecAccess, accessErr := h.crud.issueCreateOwnerSpecAccess(e, stack, run.ownerID, run.tenantID, normalized)
 	if accessErr != nil {
 		h.recordWizardRunFailure(e.Request.Context(), run, controlplane.WizardRun{StackID: stack.Id}, "owner_spec_access_failed")
 		return accessErr
@@ -95,9 +95,12 @@ func (h wizardRunHandlers) runWizardFound(e *httpx.Event, run *wizardRunState) e
 
 	jobSpec := createStackJobSpec(normalized)
 	jobSpec[stackConfigKeySpecV2] = projection.Spec
-	jobID, autoDeploy, handled := h.dispatchWizardProvision(e, run, stack, jobSpec, ownerSpecAccess, preparedLease)
-	if handled {
-		return nil
+	jobID, autoDeploy := "", false
+	if wizardRunTransport(run.request) != specv2.TransportHypervisor {
+		jobID, autoDeploy, handled = h.dispatchWizardProvision(e, run, stack, jobSpec, ownerSpecAccess, preparedLease)
+		if handled {
+			return nil
+		}
 	}
 	return h.finishWizardFound(e, run, wizardFoundOutcome{
 		stack:           stack,
@@ -159,7 +162,22 @@ type wizardFoundOutcome struct {
 // persists the homelab intent, records the ledger entry, and writes the 202.
 func (h wizardRunHandlers) finishWizardFound(e *httpx.Event, run *wizardRunState, outcome wizardFoundOutcome) error {
 	pairingJobID := ""
+	operationID := ""
+	var appliance *jobs.CustomerGuestBinding
 	if wizardRunTransport(run.request) != specv2.TransportKombifyCloud {
+		if wizardRunTransport(run.request) == specv2.TransportConnectRemote {
+			if err := h.persistWizardRemoteConnectionBinding(e.Request.Context(), run, outcome.stack.Id); err != nil {
+				h.recordWizardRunFailure(e.Request.Context(), run, controlplane.WizardRun{
+					StackID: outcome.stack.Id, NodeID: outcome.projection.NodeID, JobID: outcome.jobID,
+				}, "remote_connection_persist_failed")
+				return httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeValidation,
+					"Could not persist the remote SSH connection", wizardRunDetails(
+						"wizard_remote_connection_persist_failed", true,
+						"Connection not saved",
+						err.Error(),
+					))
+			}
+		}
 		minted, pairingHandled := h.mintWizardPairing(e, run, &controlplane.Stack{ID: outcome.stack.Id, TenantID: run.tenantID}, outcome.stack.Name, outcome.projection)
 		if pairingHandled {
 			h.recordWizardRunFailure(e.Request.Context(), run, controlplane.WizardRun{
@@ -168,9 +186,22 @@ func (h wizardRunHandlers) finishWizardFound(e *httpx.Event, run *wizardRunState
 			return nil
 		}
 		pairingJobID = minted.JobID
+		if wizardRunTransport(run.request) == specv2.TransportConnectRemote {
+			h.startWizardRemoteEnrollment(e, run, outcome.stack.Id, minted, outcome.serverID)
+		}
+		if wizardRunTransport(run.request) == specv2.TransportHypervisor {
+			guest, failed := h.provisionWizardGuest(e, run, outcome.projection, outcome.stack.Id, minted, outcome.ownerSpecAccess)
+			if failed {
+				return nil
+			}
+			outcome.jobID = guest.JobID
+			outcome.serverID = guest.ServerID
+			operationID = guest.OperationID
+			appliance = guest.Appliance
+		}
 	}
 
-	h.persistWizardHomelabIntent(e.Request.Context(), run, outcome.projection)
+	h.persistWizardHomelabIntent(e.Request.Context(), run, outcome.stack.Id, outcome.projection)
 
 	data := map[string]any{
 		"run_kind":                 run.effectiveKind,
@@ -186,10 +217,21 @@ func (h wizardRunHandlers) finishWizardFound(e *httpx.Event, run *wizardRunState
 		creationJobIDField:         outcome.jobID,
 		wizardRunStateField:        wizardRunStateProvisioning,
 		"auto_deploy":              outcome.autoDeploy,
-		creationOperationsURLField: operationsURL(outcome.stack.Id),
+		creationOperationsURLField: homelabDashboardURL(),
 	}
 	if pairingJobID != "" {
 		data["pairing_job_id"] = pairingJobID
+	}
+	if wizardRunTransport(run.request) == specv2.TransportConnectRemote {
+		if plannedID := strings.TrimSpace(outcome.serverID); plannedID != "" {
+			data[wizardRunPlannedServerID] = plannedID
+		}
+	}
+	if operationID != "" {
+		data["operation_id"] = operationID
+	}
+	if appliance != nil {
+		data["appliance"] = appliance
 	}
 	if outcome.stack.IdempotentReplay {
 		data["idempotent_replay"] = true
@@ -230,20 +272,35 @@ func (h wizardRunHandlers) projectFoundSpec(e *httpx.Event, run *wizardRunState)
 			))
 		return nil, true
 	}
-	return h.projectAndValidate(e, seed, run.request.Intent, run.homelabID)
+	projection, handled := h.projectAndValidate(e, seed, run.request.Intent, run.homelabID)
+	if !handled {
+		run.captureGoalActivations(projection)
+	}
+	return projection, handled
 }
 
 // projectAndValidate runs the shared projection + pinned-CLI validation gate
 // for both lanes.
 func (h wizardRunHandlers) projectAndValidate(e *httpx.Event, seed map[string]any, intent specv2.WizardIntent, homelabID string) (*specv2.Projection, bool) {
-	projection, projErr := specv2.Project(seed, intent, homelabID)
-	if projErr != nil {
-		_ = httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeValidation,
-			"Wizard projection rejected: "+projErr.Error(), wizardRunDetails(
-				"wizard_projection_rejected", false,
-				"Projection rejected",
-				"The wizard intent cannot be projected onto the kit spec.",
+	if h.cfg.Projector == nil {
+		_ = httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+			"StackKits goal authoring is not configured", wizardRunDetails(
+				"wizard_projector_unavailable", true,
+				"Projector unavailable",
+				"The pinned StackKits goal author is not admitted on this server; wizard runs fail closed without it.",
 			))
+		return nil, true
+	}
+	projection, projErr := h.cfg.Projector.Project(e.Request.Context(), seed, intent, homelabID)
+	if projErr != nil {
+		details := wizardRunDetails(
+			"wizard_projection_rejected", false,
+			"This Node could not be added",
+			"The wizard intent cannot be projected onto the kit spec.",
+		)
+		details["projection_error"] = projErr.Error()
+		_ = httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeValidation,
+			"Wizard projection rejected: "+projErr.Error(), details)
 		return nil, true
 	}
 	if h.cfg.Validator == nil {
@@ -256,6 +313,9 @@ func (h wizardRunHandlers) projectAndValidate(e *httpx.Event, seed map[string]an
 		return nil, true
 	}
 	if validateErr := h.cfg.Validator.ValidateSpec(e.Request.Context(), projection.Spec); validateErr != nil {
+		if recovered := h.recoverGoalValidation(e.Request.Context(), seed, intent, homelabID, validateErr); recovered != nil {
+			return recovered, false
+		}
 		details := wizardRunDetails(
 			"wizard_spec_rejected", false,
 			"Spec rejected by StackKits",
@@ -267,6 +327,28 @@ func (h wizardRunHandlers) projectAndValidate(e *httpx.Event, seed map[string]an
 		return nil, true
 	}
 	return projection, false
+}
+
+// recoverGoalValidation keeps a wizard run going when selected goals (or the
+// stored homelab backlog folded into them) fail `stackkit validate`. The kit
+// or Node still persists; those goals stay honest UnmappedGoals instead of
+// blocking the creation screen. A seed or Node that still fails without
+// goals remains fail-closed.
+func (h wizardRunHandlers) recoverGoalValidation(ctx context.Context, seed map[string]any, intent specv2.WizardIntent, homelabID string, validateErr error) *specv2.Projection {
+	if validateErr == nil || len(intent.Goals) == 0 {
+		return nil
+	}
+	stripped := intent
+	stripped.Goals = nil
+	nodeOnly, projErr := h.cfg.Projector.Project(ctx, seed, stripped, homelabID)
+	if projErr != nil {
+		return nil
+	}
+	if err := h.cfg.Validator.ValidateSpec(ctx, nodeOnly.Spec); err != nil {
+		return nil
+	}
+	nodeOnly.UnmappedGoals = mergeWizardGoals(nodeOnly.UnmappedGoals, intent.Goals)
+	return nodeOnly
 }
 
 // normalizeFoundRequest synthesizes the create-stack request from the wizard
@@ -381,6 +463,7 @@ func (h wizardRunHandlers) dispatchWizardProvision(e *httpx.Event, run *wizardRu
 	}
 	if h.crud.orch == nil {
 		jobID, err := h.crud.createQueuedJob(e, queuedJobParams{
+			tenantID:    run.tenantID,
 			jobType:     wizardRunProvisionJobType,
 			stackID:     stack.Id,
 			currentStep: wizardRunQueuedNoOrchStep,
@@ -460,7 +543,9 @@ func (h wizardRunHandlers) mintWizardPairing(e *httpx.Event, run *wizardRunState
 	params := trust.PairingTokenParams{
 		Name:                   strings.TrimSpace(stackName + " " + projection.NodeID),
 		StackID:                stack.ID,
+		SpecNodeID:             projection.NodeID,
 		ServerProvisioningMode: wizardRunTransport(run.request),
+		EnvironmentClass:       run.request.Intent.Server.EnvironmentClass,
 		NodeRole:               nodeRole,
 		StackKit:               wizardRunKitSlug(run.request, projection),
 		Services:               run.request.Services,
@@ -481,7 +566,7 @@ func (h wizardRunHandlers) mintWizardPairing(e *httpx.Event, run *wizardRunState
 			"The run's persisted state is kept. Retry with the same Idempotency-Key to mint a fresh registration token.",
 		)
 		details[creationStackIDField] = stack.ID
-		details[creationOperationsURLField] = operationsURL(stack.ID)
+		details[creationOperationsURLField] = homelabDashboardURL()
 		_ = httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal,
 			"Failed to prepare server registration", details)
 		return minted, true
@@ -503,27 +588,44 @@ func wizardRunKitSlug(request wizardRunRequest, projection *specv2.Projection) s
 	return ""
 }
 
-// runWizardJoin appends the run's server to an existing native-v2 kit
-// deployment: load + owner-check the stack, project onto its stored spec,
-// CLI-validate, persist via UpdateStackConfig, then mint pairing. A same-key
-// retry whose earlier attempt already persisted its node reuses that node
-// instead of appending a phantom sibling.
+// runWizardJoin appends the run's server to an existing kit deployment: load +
+// owner-check the stack, snapshot the server baseline, take the stored
+// Architecture v2 spec or materialize the kit seed when the stored document
+// is missing or not canonical, project, CLI-validate, and persist through
+// one stack-config CAS. User-owned Nodes then mint pairing;
+// managed Nodes dispatch through the canonical managed-runtime authority. A
+// same-key retry whose earlier attempt already persisted its node reuses that
+// node instead of appending a phantom sibling.
 func (h wizardRunHandlers) runWizardJoin(e *httpx.Event, run *wizardRunState) error {
 	stack, findErr := h.crud.findOwnedStoreStack(e, run.request.Intent.KitAssignment.KitDeploymentID)
 	if findErr != nil {
 		return findErr
 	}
-	if handled := h.rejectWizardJoinLane(e, run, stack); handled {
+	managedJoin := wizardRunTransport(run.request) == specv2.TransportKombifyCloud
+	if managedJoin && h.cfg.ManagedExpansion == nil {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+			"Managed runtime expansion is unavailable", wizardRunDetails(
+				"wizard_managed_expansion_unavailable", true,
+				"Managed expansion unavailable",
+				"Retry when the native managed-runtime authority is available; no Node was added.",
+			))
+	}
+	if managedJoin && (run.request.Managed == nil || strings.TrimSpace(run.request.Managed.ProviderID) == "") {
+		return httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeValidation,
+			"Managed provider selection is required", wizardRunDetails(
+				"wizard_managed_provider_required", false,
+				"Select a managed provider",
+				"Choose Centron or IONOS before adding this managed Node.",
+			))
+	}
+	baseline, handled := h.captureWizardJoinServerBaseline(e, run, stack.ID)
+	if handled {
 		return nil
 	}
-	base, ok := stack.Config[stackConfigKeySpecV2].(map[string]any)
-	if !ok || len(base) == 0 {
-		return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict,
-			"This kit deployment has no native v2 spec to join", wizardRunDetails(
-				"wizard_join_requires_native_v2", false,
-				"Deployment predates the v2 wizard",
-				"This deployment was created before the native v2 wizard. Found a new kit deployment for the server instead; migrating existing deployments arrives in a later phase.",
-			))
+	run.existingServerIDs = baseline
+	base, migrated, handled := h.resolveWizardJoinBase(e, run, stack)
+	if handled {
+		return nil
 	}
 
 	projection, persisted, handled := h.resolveJoinProjection(e, run, stack, base)
@@ -539,16 +641,73 @@ func (h wizardRunHandlers) runWizardJoin(e *httpx.Event, run *wizardRunState) er
 			newConfig[key] = value
 		}
 		newConfig[stackConfigKeySpecV2] = projection.Spec
-		if _, updateErr := h.crud.stackStore.UpdateStackConfig(e.Request.Context(), run.tenantID, stack.ID, newConfig); updateErr != nil {
+		if migrated {
+			newConfig[stackConfigKeySpecV1State] = stackConfigSpecV1Archived
+		}
+		_, updateErr := h.crud.stackStore.CompareAndSwapStackConfig(e.Request.Context(), controlplane.StackConfigCAS{
+			TenantID: run.tenantID, StackID: stack.ID,
+			ExpectedUpdatedAt: stack.UpdatedAt, Config: newConfig,
+		})
+		if errors.Is(updateErr, controlplane.ErrConflict) {
+			return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict,
+				"The StackKit deployment changed while this Node was being added", wizardRunDetails(
+					"wizard_join_config_changed", true,
+					"Deployment changed",
+					"Reload the deployment and retry adding the Node; no pairing token was created.",
+				))
+		}
+		if updateErr != nil {
 			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal,
 				"Failed to persist the joined node", nil)
 		}
 	}
+	// Persist goal reconciliation before pairing. A pairing failure records a
+	// resumable run after the projected spec already became authoritative; the
+	// goal state and its idempotent outbox event must cross that same boundary.
+	h.persistWizardHomelabIntent(e.Request.Context(), run, stack.ID, projection)
 	if stack.HomelabID == "" {
 		// Heal the homelab link on legacy stacks; the composite FK guards
 		// cross-tenant writes, so a failure here is logged, not fatal.
 		if _, linkErr := h.crud.stackStore.SetStackHomelab(e.Request.Context(), run.tenantID, stack.ID, run.homelab.ID); linkErr != nil {
 			logger.Default().Warn("wizard_join_homelab_link_failed", "error", linkErr, "stack_id", stack.ID)
+		}
+	}
+	if managedJoin {
+		return h.runWizardManagedJoin(e, run, stack, projection, persisted)
+	}
+
+	plannedServerID, err := h.crud.persistJoinServerIntent(
+		e.Request.Context(),
+		run.ownerID,
+		run.tenantID,
+		stack,
+		projection,
+		wizardRunTransport(run.request),
+		wizardJoinRemoteHost(run, stack),
+	)
+	if err != nil {
+		h.recordWizardRunFailure(e.Request.Context(), run, controlplane.WizardRun{
+			StackID: stack.ID, NodeID: projection.NodeID,
+		}, "join_server_intent_failed")
+		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal,
+			"Failed to reserve the joined Node in inventory", wizardRunDetails(
+				"wizard_join_server_intent_failed", true,
+				"Node inventory unavailable",
+				"Retry with the same Idempotency-Key; no pairing token was created.",
+			))
+	}
+
+	if wizardRunTransport(run.request) == specv2.TransportConnectRemote {
+		if err := h.persistWizardRemoteConnectionBinding(e.Request.Context(), run, stack.ID); err != nil {
+			h.recordWizardRunFailure(e.Request.Context(), run, controlplane.WizardRun{
+				StackID: stack.ID, NodeID: projection.NodeID,
+			}, "remote_connection_persist_failed")
+			return httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeValidation,
+				"Could not persist the remote SSH connection", wizardRunDetails(
+					"wizard_remote_connection_persist_failed", true,
+					"Connection not saved",
+					err.Error(),
+				))
 		}
 	}
 
@@ -559,8 +718,17 @@ func (h wizardRunHandlers) runWizardJoin(e *httpx.Event, run *wizardRunState) er
 		}, "pairing_mint_failed")
 		return nil
 	}
-	h.persistWizardHomelabIntent(e.Request.Context(), run, projection)
-
+	if wizardRunTransport(run.request) == specv2.TransportConnectRemote {
+		h.startWizardRemoteEnrollment(e, run, stack.ID, minted, plannedServerID)
+	}
+	var guest *WizardGuestProvisionResult
+	if wizardRunTransport(run.request) == specv2.TransportHypervisor {
+		var failed bool
+		guest, failed = h.provisionWizardGuest(e, run, projection, stack.ID, minted, ownerSpecBootstrapAccess{})
+		if failed {
+			return nil
+		}
+	}
 	data := map[string]any{
 		"run_kind":                 run.effectiveKind,
 		"requested_run_kind":       run.request.Intent.RunKind,
@@ -573,7 +741,22 @@ func (h wizardRunHandlers) runWizardJoin(e *httpx.Event, run *wizardRunState) er
 		creationNameField:          stack.Name,
 		wizardRunStateField:        wizardRunStateAwaitingPairing,
 		"pairing_job_id":           minted.JobID,
-		creationOperationsURLField: operationsURL(stack.ID),
+		wizardRunExistingServerIDs: append([]string(nil), run.existingServerIDs...),
+		creationOperationsURLField: homelabDashboardURL(),
+	}
+	if plannedServerID = strings.TrimSpace(plannedServerID); plannedServerID != "" {
+		data[wizardRunPlannedServerID] = plannedServerID
+	}
+	guestJobID := ""
+	if guest != nil {
+		guestJobID = guest.JobID
+		data[creationJobIDField] = guest.JobID
+		data["server_id"] = guest.ServerID
+		data["operation_id"] = guest.OperationID
+		if guest.Appliance != nil {
+			data["appliance"] = guest.Appliance
+		}
+		data[wizardRunStateField] = wizardRunStateProvisioning
 	}
 	if persisted {
 		data["idempotent_replay"] = true
@@ -581,7 +764,7 @@ func (h wizardRunHandlers) runWizardJoin(e *httpx.Event, run *wizardRunState) er
 	addWizardProjectionFields(data, projection, h.cfg.ReleaseVersion)
 
 	h.recordWizardRun(e.Request.Context(), run, controlplane.WizardRun{
-		StackID: stack.ID, NodeID: projection.NodeID, PairingJobID: minted.JobID,
+		StackID: stack.ID, NodeID: projection.NodeID, PairingJobID: minted.JobID, JobID: guestJobID,
 	}, data)
 
 	response := map[string]any{"run_id": run.runID}
@@ -591,6 +774,218 @@ func (h wizardRunHandlers) runWizardJoin(e *httpx.Event, run *wizardRunState) er
 	return httpx.Success(e, http.StatusAccepted, response)
 }
 
+// resolveWizardJoinBase returns the stored native-v2 spec when it is
+// canonical. Otherwise it materializes the kit's Architecture v2 seed so
+// Additional Node can proceed without sending a v1 document (or v2 fields
+// such as useCases on v1) through the StackKits migrate adapter.
+func (h wizardRunHandlers) resolveWizardJoinBase(e *httpx.Event, run *wizardRunState, stack *controlplane.Stack) (map[string]any, bool, bool) {
+	if base, ok := stack.Config[stackConfigKeySpecV2].(map[string]any); ok && len(base) > 0 {
+		if err := specv2.RequireCanonicalV2(base); err == nil {
+			return base, false, false
+		}
+	}
+	return h.seedWizardJoinBase(e, run, stack)
+}
+
+func (h wizardRunHandlers) seedWizardJoinBase(e *httpx.Event, run *wizardRunState, stack *controlplane.Stack) (map[string]any, bool, bool) {
+	stored, _ := stack.Config[stackConfigKeySpecV2].(map[string]any)
+	legacy := stackSpecMapFromValueOrEmpty(stack.Config["user_config"])
+	targetKit := wizardLegacyMigrationTarget(run.request.Intent.KitAssignment.KitSlug, stack.Config, stored)
+	if targetKit == "" {
+		targetKit = wizardLegacyMigrationTarget(run.request.Intent.KitAssignment.KitSlug, stack.Config, legacy)
+	}
+	if targetKit == "" {
+		targetKit = specv2.KitSlugBasement
+	}
+	if h.cfg.Seeds == nil {
+		_ = httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+			"Kit seed templates are not configured", wizardRunDetails(
+				"wizard_seed_templates_unavailable", true,
+				"Server missing seed templates",
+				"The server has no TECHSTACK_STACKKIT_SPEC_TEMPLATES configured; wizard runs cannot project a kit spec.",
+			))
+		return nil, false, true
+	}
+	seed, seedErr := h.cfg.Seeds.Seed(targetKit)
+	if seedErr != nil {
+		_ = httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+			"Kit seed unavailable", wizardRunDetails(
+				"wizard_seed_unavailable", true,
+				"Kit seed unavailable",
+				"The requested kit's seed template could not be read: "+seedErr.Error(),
+			))
+		return nil, false, true
+	}
+	base := cloneMapForMutation(seed)
+	if specv2.RequireCanonicalV2(base) != nil {
+		writeWizardJoinRequiresV2(e, targetKit)
+		return nil, false, true
+	}
+	metadata := map[string]any{}
+	if existing, ok := base["metadata"].(map[string]any); ok {
+		metadata = cloneMapForMutation(existing)
+	}
+	if name := strings.TrimSpace(stack.Name); name != "" {
+		metadata["name"] = name
+	}
+	base["metadata"] = metadata
+	return base, true, false
+}
+
+func stackSpecMapFromValueOrEmpty(value any) map[string]any {
+	if spec, ok := stackSpecMapFromValue(value); ok {
+		return spec
+	}
+	return map[string]any{}
+}
+
+func wizardLegacyMigrationTarget(explicit string, config, legacy map[string]any) string {
+	for _, candidate := range []string{
+		explicit,
+		fieldString(config, "stackkit_catalog_ref"),
+		fieldString(legacy, "stackkit"),
+		fieldString(legacy, "kit"),
+	} {
+		candidate = normalizeRuntimeStackKitRef(candidate, "")
+		if specv2.IsKnownKitSlug(candidate) {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func writeWizardJoinRequiresV2(e *httpx.Event, targetKit string) {
+	details := wizardRunDetails(
+		"wizard_join_requires_v2", false,
+		"This homelab is not Architecture v2",
+		"Add-server only joins a native Architecture v2 kit deployment. Found a new kit for this server instead of migrating a v1 stack-spec.",
+	)
+	if targetKit != "" {
+		details["target_kit"] = targetKit
+	}
+	_ = httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict,
+		"Join requires an Architecture v2 StackSpec", details)
+}
+
+func (h wizardRunHandlers) runWizardManagedJoin(e *httpx.Event, run *wizardRunState, stack *controlplane.Stack, projection *specv2.Projection, persisted bool) error {
+	managed := run.request.Managed
+	result, expansionErr := h.cfg.ManagedExpansion.Execute(e, WizardManagedRuntimeExpansionRequest{
+		StackID:           stack.ID,
+		IdempotencyKey:    run.key,
+		RuntimeSlotKey:    projection.NodeID,
+		NodeRole:          wizardManagedNodeRole(run.request),
+		RuntimeOfferingID: managed.RuntimeOfferingID,
+		ProviderID:        managed.ProviderID,
+		ProviderRegion:    managed.ProviderRegion,
+		IONOSDatacenter:   managed.IONOSDatacenter,
+		StackKit:          wizardRunKitSlug(run.request, projection),
+		Services:          append([]string(nil), run.request.Services...),
+	})
+	if expansionErr != nil || result == nil || strings.TrimSpace(result.JobID) == "" {
+		h.recordWizardRunFailure(e.Request.Context(), run, controlplane.WizardRun{
+			StackID: stack.ID, NodeID: projection.NodeID,
+		}, "managed_expansion_failed")
+		if expansionErr != nil {
+			return expansionErr
+		}
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+			"Managed runtime expansion returned no durable job", wizardRunDetails(
+				"wizard_managed_expansion_unavailable", true,
+				"Managed expansion unavailable",
+				"Retry with the same Idempotency-Key; the persisted Node projection will be reused.",
+			))
+	}
+
+	data := map[string]any{
+		"run_kind":                 run.effectiveKind,
+		"requested_run_kind":       run.request.Intent.RunKind,
+		"coerced":                  run.coerced(),
+		"homelab_id":               run.homelab.ID,
+		"kit_assignment_mode":      wizardRunKindJoin,
+		"kit_slug":                 wizardRunKitSlug(run.request, projection),
+		creationStackIDField:       stack.ID,
+		"node_id":                  projection.NodeID,
+		creationNameField:          stack.Name,
+		wizardRunStateField:        wizardRunStateProvisioning,
+		creationJobIDField:         result.JobID,
+		"runtime_slot_key":         result.RuntimeSlotKey,
+		"runtime_slot_id":          result.RuntimeSlotID,
+		"lease_id":                 result.LeaseID,
+		"runtime_server_id":        result.RuntimeServerID,
+		"resource_generation_id":   result.ResourceGenerationID,
+		"operation_id":             result.OperationID,
+		"provider_id":              result.ProviderID,
+		"provider_region":          result.ProviderRegion,
+		"ionos_datacenter":         result.IONOSDatacenter,
+		"runtime_offering_id":      result.RuntimeOfferingID,
+		"enrollment_status":        result.EnrollmentStatus,
+		"runtime_phase":            result.RuntimePhase,
+		creationMessageField:       result.Message,
+		wizardRunExistingServerIDs: append([]string(nil), run.existingServerIDs...),
+		creationOperationsURLField: homelabDashboardURL(),
+	}
+	if persisted || result.IdempotentReplay {
+		data["idempotent_replay"] = true
+	}
+	if len(result.Warnings) > 0 {
+		data["warnings"] = append([]string(nil), result.Warnings...)
+	}
+	addWizardProjectionFields(data, projection, h.cfg.ReleaseVersion)
+
+	h.recordWizardRun(e.Request.Context(), run, controlplane.WizardRun{
+		StackID: stack.ID, NodeID: projection.NodeID, JobID: result.JobID,
+	}, data)
+
+	response := map[string]any{"run_id": run.runID}
+	for key, value := range data {
+		response[key] = value
+	}
+	return httpx.Success(e, http.StatusAccepted, response)
+}
+
+func wizardManagedNodeRole(request wizardRunRequest) string {
+	for _, role := range request.Intent.Server.Roles {
+		if role = strings.TrimSpace(role); role != "" {
+			return role
+		}
+	}
+	return "worker"
+}
+
+// captureWizardJoinServerBaseline snapshots the canonical runtime identities
+// before the join can mutate stack config or mint pairing. A missing baseline
+// must fail closed: otherwise a resumed UI could accept an already connected
+// server as evidence for the new Node.
+func (h wizardRunHandlers) captureWizardJoinServerBaseline(e *httpx.Event, run *wizardRunState, stackID string) ([]string, bool) {
+	if h.crud.serverStore == nil {
+		_ = httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+			"Canonical server inventory is unavailable", wizardRunDetails(
+				"wizard_join_server_baseline_unavailable", true,
+				"Server inventory unavailable",
+				"Retry when the canonical server inventory is available; no Node was added.",
+			))
+		return nil, true
+	}
+	servers, err := h.crud.serverStore.ListServerRuntimesByTenant(e.Request.Context(), run.tenantID, stackID)
+	if err != nil {
+		_ = httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+			"Failed to read the canonical server inventory", wizardRunDetails(
+				"wizard_join_server_baseline_unavailable", true,
+				"Server inventory unavailable",
+				"Retry when the canonical server inventory is available; no Node was added.",
+			))
+		return nil, true
+	}
+	ids := make([]string, 0, len(servers))
+	for _, server := range servers {
+		if id := strings.TrimSpace(server.ID); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	return ids, false
+}
+
 // resolveJoinProjection returns the join's projection. When an earlier failed
 // attempt with this key already appended and persisted its node (recorded in
 // the ledger), the stored spec is reused as-is (persisted == true) so the
@@ -598,7 +993,10 @@ func (h wizardRunHandlers) runWizardJoin(e *httpx.Event, run *wizardRunState) er
 // sibling; otherwise the node is projected and CLI-validated normally.
 func (h wizardRunHandlers) resolveJoinProjection(e *httpx.Event, run *wizardRunState, stack *controlplane.Stack, base map[string]any) (*specv2.Projection, bool, bool) {
 	if prior := run.priorFailed; prior != nil && prior.StackID == stack.ID && prior.NodeID != "" && specHasNode(base, prior.NodeID) {
-		return &specv2.Projection{Spec: base, NodeID: prior.NodeID}, true, false
+		return &specv2.Projection{
+			Spec: base, NodeID: prior.NodeID,
+			UnmappedGoals: append([]string(nil), run.priorUnmappedGoals...),
+		}, true, false
 	}
 	intent := run.request.Intent
 	if metadata, ok := base["metadata"].(map[string]any); ok {
@@ -609,6 +1007,9 @@ func (h wizardRunHandlers) resolveJoinProjection(e *httpx.Event, run *wizardRunS
 		}
 	}
 	projection, handled := h.projectAndValidate(e, base, intent, run.homelabID)
+	if !handled {
+		run.captureGoalActivations(projection)
+	}
 	return projection, false, handled
 }
 
@@ -625,28 +1026,12 @@ func specHasNode(spec map[string]any, nodeID string) bool {
 	return false
 }
 
-// rejectWizardJoinLane fails closed on join lanes the facade does not carry
-// yet: managed-runtime deployments keep their dedicated expansion engine
-// (POST /api/v1/stacks/{id}/managed-runtimes) with its receipt chain.
-func (h wizardRunHandlers) rejectWizardJoinLane(e *httpx.Event, run *wizardRunState, stack *controlplane.Stack) bool {
-	fields := runtimeFieldsFromConfig(stack.Config)
-	if hasManagedRuntimeFields(stack.Config, fields) || wizardRunTransport(run.request) == specv2.TransportKombifyCloud {
-		_ = httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict,
-			"Managed-runtime deployments are expanded through the managed-runtimes endpoint", wizardRunDetails(
-				"wizard_join_managed_deferred", false,
-				"Use the managed expansion lane",
-				"Adding a managed server to this deployment runs through POST /api/v1/stacks/{id}/managed-runtimes; the wizard-run facade will absorb that lane in a later phase.",
-			))
-		return true
-	}
-	return false
-}
-
-// persistWizardHomelabIntent merges this run's goal intent into the homelab's
-// intent_json (D6b: unmapped goals stay honest intent, never spec). Best
+// persistWizardHomelabIntent merges this run's goal, access and household
+// intent into the homelab's intent_json (D6b: unmapped goals stay honest
+// intent, never spec). Best
 // effort: the run's persisted side effects stay authoritative even if the
 // intent write fails.
-func (h wizardRunHandlers) persistWizardHomelabIntent(ctx context.Context, run *wizardRunState, projection *specv2.Projection) {
+func (h wizardRunHandlers) persistWizardHomelabIntent(ctx context.Context, run *wizardRunState, stackID string, projection *specv2.Projection) {
 	intentDoc := map[string]any{}
 	for key, value := range run.homelab.Intent {
 		intentDoc[key] = value
@@ -658,18 +1043,50 @@ func (h wizardRunHandlers) persistWizardHomelabIntent(ctx context.Context, run *
 	if len(run.request.Intent.Goals) > 0 {
 		wizard["goals"] = run.request.Intent.Goals
 	}
+	// Decisions ride beside the goals they belong to, merged per use case so a
+	// later run that mentions one use case does not erase the others' choices.
+	if len(run.request.Intent.UseCaseSettings) > 0 {
+		stored, _ := wizard["use_case_settings"].(map[string]any)
+		if stored == nil {
+			stored = map[string]any{}
+		}
+		for slug, values := range run.request.Intent.UseCaseSettings {
+			merged, _ := stored[slug].(map[string]any)
+			if merged == nil {
+				merged = map[string]any{}
+			}
+			for id, value := range values {
+				merged[id] = value
+			}
+			stored[slug] = merged
+		}
+		wizard["use_case_settings"] = stored
+	}
+	if run.request.Intent.Access.Mode != "" || len(run.request.Intent.Access.Publications) > 0 {
+		wizard["access"] = run.request.Intent.Access
+	}
+	if run.request.Intent.Household.Profile != "" || len(run.request.Intent.Household.PlannedPeople) > 0 {
+		wizard["household"] = run.request.Intent.Household
+	}
 	if len(projection.UnmappedGoals) > 0 {
 		wizard["unmapped_goals"] = projection.UnmappedGoals
+	} else {
+		delete(wizard, "unmapped_goals")
 	}
 	if projection.UnmappedPurpose != "" {
 		wizard["unmapped_purpose"] = projection.UnmappedPurpose
 	}
 	wizard["last_run_id"] = run.runID
 	wizard["last_run_kind"] = run.effectiveKind
+	wizard["last_goal_projection_release"] = strings.TrimSpace(h.cfg.ReleaseVersion)
 	intentDoc["wizard"] = wizard
-	if _, err := h.crud.homelabStore.UpdateHomelabIntent(ctx, run.tenantID, run.homelab.ID, intentDoc); err != nil {
+	updated, err := h.crud.homelabStore.UpdateHomelabIntent(ctx, run.tenantID, run.homelab.ID, intentDoc)
+	if err != nil {
 		logger.Default().Warn("wizard_homelab_intent_update_failed", "error", err, "homelab_id", run.homelab.ID)
+		return
 	}
+	run.homelab = updated
+	h.enqueueWizardGoalActivationNotifications(ctx, run, stackID)
 }
 
 // recordWizardRun writes the completed ledger entry. Ledger failures are
@@ -687,6 +1104,12 @@ func (h wizardRunHandlers) recordWizardRunFailure(ctx context.Context, run *wiza
 }
 
 func (h wizardRunHandlers) writeWizardRunLedger(ctx context.Context, run *wizardRunState, outcome controlplane.WizardRun, status, reason string, result map[string]any) {
+	addWizardResumeContext(result, run.request, run.effectiveKind)
+	if len(run.intentAdjustments) > 0 {
+		result["intent_adjustments"] = append([]specv2.IntentAdjustment(nil), run.intentAdjustments...)
+		result["effective_intent"] = run.request.Intent
+	}
+	ledgerRequest := wizardRunRequestWithIntent(run.request, run.requestedIntent)
 	entry := controlplane.WizardRun{
 		ID:               run.runID,
 		TenantID:         run.tenantID,
@@ -702,11 +1125,69 @@ func (h wizardRunHandlers) writeWizardRunLedger(ctx context.Context, run *wizard
 		PairingJobID:     outcome.PairingJobID,
 		Status:           status,
 		ErrorReason:      reason,
-		Intent:           wizardRunIntentDocument(run.request),
+		Intent:           wizardRunIntentDocument(ledgerRequest),
 		Result:           result,
 	}
 	if _, err := h.wizardRuns.UpsertWizardRun(ctx, entry); err != nil {
 		logger.Default().Warn("wizard_run_ledger_write_failed", "error", err, "run_id", run.runID)
+	}
+}
+
+// addWizardResumeContext keeps the owner-scoped run ledger authoritative for
+// browser resume without persisting credentials or the raw owner options. The
+// creating page needs only display and routing facts; pairing tokens remain in
+// their short-lived job result.
+func addWizardResumeContext(result map[string]any, request wizardRunRequest, runKind string) {
+	resume := map[string]any{}
+	if transport := strings.TrimSpace(request.Intent.Server.Transport); transport != "" {
+		resume["server_provisioning_mode"] = transport
+	}
+	if request.Remote != nil {
+		if host := strings.TrimSpace(request.Remote.Host); host != "" {
+			resume["remote_server_host"] = host
+			resume["expected_device_name"] = host
+		}
+		if user := strings.TrimSpace(request.Remote.User); user != "" {
+			resume["remote_server_user"] = user
+		}
+		if request.Remote.Port != nil {
+			resume["remote_server_port"] = *request.Remote.Port
+		}
+		if method := strings.TrimSpace(request.Remote.AuthMethod); method != "" {
+			resume["remote_server_auth_method"] = method
+		}
+		if ref := strings.TrimSpace(request.Remote.SSHKeyLabel); ref != "" {
+			resume["remote_server_credential_ref"] = ref
+		}
+	}
+	if _, ok := resume["expected_device_name"]; !ok {
+		for _, role := range request.Intent.Server.Roles {
+			if role = strings.TrimSpace(role); role != "" {
+				resume["expected_device_name"] = strings.TrimSpace(request.Intent.Name) + "-" + role
+				break
+			}
+		}
+	}
+
+	bootstrapMode := strings.TrimSpace(stringFromAny(request.Owner["owner_bootstrap_mode"]))
+	ownerSource := strings.TrimSpace(stringFromAny(request.Owner["owner_source"]))
+	if runKind == specv2.RunKindFirstRun && bootstrapMode != "" && bootstrapMode != ownerBootstrapModeNone &&
+		(ownerSource == ownerSourceLocal || ownerSource == ownerSourceCloudLinked) {
+		resume["owner_seed_expected"] = true
+		summary := map[string]any{"source": ownerSource}
+		for option, field := range map[string]string{
+			"owner_email":        "email",
+			"owner_username":     "username",
+			"owner_display_name": "display_name",
+		} {
+			if value := strings.TrimSpace(stringFromAny(request.Owner[option])); value != "" {
+				summary[field] = value
+			}
+		}
+		resume["owner_seed_summary"] = summary
+	}
+	if len(resume) > 0 {
+		result["resume_context"] = resume
 	}
 }
 

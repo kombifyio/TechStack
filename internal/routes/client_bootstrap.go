@@ -31,12 +31,13 @@ type clientBootstrapTelemetry struct {
 
 // clientBootstrapResponse is the public runtime config served to the SPA.
 type clientBootstrapResponse struct {
-	Edition        string                   `json:"edition"`
-	DeploymentMode string                   `json:"deployment_mode"`
-	KombifyEdition string                   `json:"kombify_edition"`
-	Version        string                   `json:"version"`
-	PublicOrigin   string                   `json:"public_origin"`
-	Telemetry      clientBootstrapTelemetry `json:"telemetry"`
+	Edition              string                   `json:"edition"`
+	DeploymentMode       string                   `json:"deployment_mode"`
+	KombifyEdition       string                   `json:"kombify_edition"`
+	Version              string                   `json:"version"`
+	PublicOrigin         string                   `json:"public_origin"`
+	ContextDevLogolinkID string                   `json:"context_dev_logolink_id"`
+	Telemetry            clientBootstrapTelemetry `json:"telemetry"`
 }
 
 // RegisterClientBootstrapRoutes adds GET /api/v1/client/bootstrap, the single
@@ -54,11 +55,12 @@ func RegisterClientBootstrapRoutes(r *httpx.Router, version string, edition conf
 		normalizedEdition, normalizedMode := normalizeRuntimeIdentity(edition, mode)
 		e.Response.Header().Set("Cache-Control", "public, max-age=300")
 		return httpx.Success(e, http.StatusOK, clientBootstrapResponse{
-			Edition:        string(normalizedEdition),
-			DeploymentMode: string(normalizedMode),
-			KombifyEdition: firstNonEmptyEnv("PUBLIC_KOMBIFY_EDITION", "KOMBIFY_EDITION"),
-			Version:        version,
-			PublicOrigin:   config.PublicOriginFromEnv(),
+			Edition:              string(normalizedEdition),
+			DeploymentMode:       string(normalizedMode),
+			KombifyEdition:       firstNonEmptyEnv("PUBLIC_KOMBIFY_EDITION", "KOMBIFY_EDITION"),
+			Version:              version,
+			PublicOrigin:         config.PublicOriginFromEnv(),
+			ContextDevLogolinkID: firstNonEmptyEnv("PUBLIC_CONTEXT_DEV_LOGOLINK_ID", "CONTEXT_DEV_LOGOLINK_ID"),
 			Telemetry: clientBootstrapTelemetry{
 				Sentry: clientBootstrapSentry{
 					DSN:         firstNonEmptyEnv("PUBLIC_SENTRY_DSN", "SENTRY_DSN_FRONTEND"),

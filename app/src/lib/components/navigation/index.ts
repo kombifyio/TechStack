@@ -4,3 +4,4 @@
  */
 export { default as SidebarNav } from "./SidebarNav.svelte";
 export { default as InlineTabNav } from "./InlineTabNav.svelte";
+export { default as UserMenu } from "./UserMenu.svelte";

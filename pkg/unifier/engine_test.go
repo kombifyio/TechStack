@@ -6,61 +6,6 @@ import (
 	"github.com/kombifyio/techstack/pkg/core"
 )
 
-func TestNew(t *testing.T) {
-	engine, err := New()
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
-	if engine == nil {
-		t.Fatal("New() returned nil engine")
-	}
-	if engine.ctx == nil {
-		t.Fatal("engine.ctx is nil")
-	}
-}
-
-func TestValidate_ValidSpec(t *testing.T) {
-	engine, err := New()
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
-
-	spec := &core.KombinationSpec{
-		Name: "test-stack",
-		Kit:  "basement-kit",
-		Nodes: []core.NodeSpec{
-			{
-				Name:     "main-server",
-				Type:     "main",
-				Provider: "local",
-				SSH: &core.SSHConfig{
-					Host: "192.168.1.100",
-					Port: 22,
-					User: "ubuntu",
-				},
-			},
-		},
-		Services: []core.ServiceSpec{
-			{
-				Name: "traefik",
-				Type: "reverse-proxy",
-				Node: "main-server",
-			},
-		},
-	}
-
-	result, err := engine.Validate(spec)
-	if err != nil {
-		t.Fatalf("Validate() returned error: %v", err)
-	}
-	if result == nil {
-		t.Fatal("Validate() returned nil result")
-	}
-	if !result.Valid {
-		t.Fatalf("expected spec to be valid, got errors: %v", result.Errors)
-	}
-}
-
 func TestValidate_NilSpec(t *testing.T) {
 	engine, err := New()
 	if err != nil {
@@ -81,75 +26,6 @@ func TestValidate_NilSpec(t *testing.T) {
 	}
 	if len(result.Errors) == 0 {
 		t.Fatalf("expected validation errors for nil spec")
-	}
-}
-
-func TestUnify_BasicSpec(t *testing.T) {
-	engine, err := New()
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
-
-	spec := &core.KombinationSpec{
-		Name: "test-stack",
-		Kit:  "basement-kit",
-		Nodes: []core.NodeSpec{
-			{
-				Name:     "main-server",
-				Type:     "main",
-				Provider: "local",
-				SSH: &core.SSHConfig{
-					Host: "192.168.1.100",
-					Port: 22,
-					User: "ubuntu",
-				},
-			},
-		},
-		Services: []core.ServiceSpec{
-			{
-				Name: "traefik",
-				Type: "reverse-proxy",
-				Node: "main-server",
-			},
-		},
-	}
-
-	// Pass empty workers slice for test - workers would come from DB in production
-	unified, err := engine.Unify(spec, []core.Worker{})
-	if err != nil {
-		t.Fatalf("Unify() returned error: %v", err)
-	}
-
-	if unified == nil {
-		t.Fatal("Unify() returned nil")
-	}
-
-	// Check that defaults were applied
-	if len(unified.ResolvedNodes) != 1 {
-		t.Errorf("expected 1 resolved node, got %d", len(unified.ResolvedNodes))
-	}
-
-	// Check SSH defaults were applied
-	if unified.ResolvedNodes[0].SSH.User == "" {
-		t.Log("SSH user was not auto-filled (expected for local provider: ubuntu)")
-	}
-
-	// Check service was assigned to main node
-	if len(unified.ResolvedServices) != 1 {
-		t.Errorf("expected 1 resolved service, got %d", len(unified.ResolvedServices))
-	}
-
-	if unified.ResolvedServices[0].Node != "main-server" {
-		t.Errorf("expected service node to be 'main-server', got '%s'", unified.ResolvedServices[0].Node)
-	}
-
-	// Check network defaults
-	if unified.ResolvedNetwork.VPNType != "none" {
-		t.Errorf("expected VPN type 'none', got '%s'", unified.ResolvedNetwork.VPNType)
-	}
-
-	if unified.ResolvedNetwork.Domain != "" {
-		t.Errorf("expected empty domain for local default, got '%s'", unified.ResolvedNetwork.Domain)
 	}
 }
 

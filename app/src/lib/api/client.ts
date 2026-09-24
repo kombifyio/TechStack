@@ -6,15 +6,17 @@
  */
 
 import { get as readStore } from "svelte/store";
-import { getClientBootstrap } from "$lib/client/bootstrap";
-import { getPocketBaseCompatStoredAuthToken } from "$lib/auth/pocketbase-compat";
-import { deploymentMode } from "$lib/stores/deploymentMode";
-import { getGatewayToken } from "$lib/auth/gateway-auth";
-import { noteGatewayTokenSuccess } from "$lib/auth/session-recovery";
+import { getClientBootstrap } from "#lib/client/bootstrap.js";
+import { deploymentMode } from "#lib/stores/deploymentMode.js";
+import { getGatewayToken } from "#lib/auth/gateway-auth.js";
+import {
+  isGatewayLoginRedirecting,
+  noteGatewayTokenSuccess,
+} from "#lib/auth/session-recovery.js";
 import {
   isSessionReprojectionError,
   recoverFromSessionReprojection,
-} from "$lib/api/session-reprojection";
+} from "#lib/api/session-reprojection.js";
 
 // IMPORTANT:
 // - In the browser we prefer relative URLs so the deployment can decide routing
@@ -43,9 +45,8 @@ function stripTrailingSlash(url: string): string {
  * API base URL resolution.
  *
  * We keep same-origin by default (API_BASE="") to support reverse proxies.
- * For local dev where the UI runs on a different port than the backend,
- * provide `VITE_API_URL` (recommended). If missing, we fall back to
- * heuristics (localhost:5261 by default).
+ * For local Vite where the UI runs on a different port than the backend,
+ * rewrite that current origin to the backend port, or set `VITE_API_URL`.
  */
 export const API_BASE = (() => {
   if (ENV_API_BASE) {
@@ -112,14 +113,12 @@ export const API_BASE = (() => {
     return ""; // same-origin
   }
 
-  // SSR: try environment first; otherwise fall back to a sensible default.
+  // SSR: only an explicit env origin is an absolute API base. Otherwise stay
+  // same-origin so a missing TECHSTACK_API_URL cannot mint localhost.
   const env = typeof process !== "undefined" && process.env ? process.env : {};
   const runtimeBase = env.TECHSTACK_API_URL || "";
   if (runtimeBase) return stripTrailingSlash(runtimeBase);
-
-  const hostname = typeof env.HOSTNAME === "string" ? env.HOSTNAME : "";
-  const looksLikeDocker = hostname.length >= 8;
-  return looksLikeDocker ? "http://techstack:5261" : "http://localhost:5261";
+  return "";
 })();
 
 // Cloudflare gateway base for the embedded data plane, e.g.
@@ -197,7 +196,7 @@ async function getParentBridgeGatewayToken(): Promise<string> {
   }
 
   const { initBridge, requestGatewayToken } =
-    await import("$lib/stores/postMessageBridge");
+    await import("#lib/stores/postMessageBridge.js");
   initBridge();
   const token = await requestGatewayToken();
   if (!token) {
@@ -206,9 +205,14 @@ async function getParentBridgeGatewayToken(): Promise<string> {
   return token;
 }
 
-function mustStaySameOrigin(endpoint: string, _method?: string): boolean {
+function mustStaySameOrigin(endpoint: string, method?: string): boolean {
   const path = endpoint.split(/[?#]/, 1)[0] || endpoint;
+  const reauthBoundServerMutation =
+    (method || "GET").toUpperCase() === "POST" &&
+    (/^\/api\/v1\/servers\/[^/]+\/terminal-sessions$/.test(path) ||
+      /^\/api\/v1\/servers\/[^/]+\/access\/authorized-key$/.test(path));
   return (
+    reauthBoundServerMutation ||
     path === "/api/v1/csrf" ||
     path === "/api/v1/info" ||
     path === "/api/v1/health" ||
@@ -438,6 +442,57 @@ export interface ApiRequestOptions extends RequestInit {
    * session-reprojection recovery so the interceptor never loops.
    */
   sessionReprojectionReplay?: boolean;
+  /** Internal: set on the single automatic replay of an idempotent 429. */
+  rateLimitReplay?: boolean;
+}
+
+const DEFAULT_READ_RETRY_AFTER_MS = 1_000;
+const MAX_READ_RETRY_AFTER_MS = 60_000;
+const readRateLimitUntilByOrigin = new Map<string, number>();
+
+function rateLimitOrigin(url: string): string {
+  try {
+    return new URL(url, "http://localhost").origin;
+  } catch {
+    return url;
+  }
+}
+
+function retryAfterDelayMs(value: string | null): number {
+  const seconds = Number(value);
+  if (value !== null && Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(seconds * 1_000, MAX_READ_RETRY_AFTER_MS);
+  }
+  if (value) {
+    const at = Date.parse(value);
+    if (Number.isFinite(at)) {
+      return Math.min(Math.max(0, at - Date.now()), MAX_READ_RETRY_AFTER_MS);
+    }
+  }
+  return DEFAULT_READ_RETRY_AFTER_MS;
+}
+
+async function waitForReadRateLimitCooldown(url: string): Promise<void> {
+  const origin = rateLimitOrigin(url);
+  const waitMs = (readRateLimitUntilByOrigin.get(origin) ?? 0) - Date.now();
+  if (waitMs <= 0) {
+    readRateLimitUntilByOrigin.delete(origin);
+    return;
+  }
+  await new Promise((resolve) => setTimeout(resolve, waitMs));
+}
+
+async function waitForReadRateLimit(
+  url: string,
+  response: Response,
+): Promise<void> {
+  const waitMs = retryAfterDelayMs(response.headers.get("retry-after"));
+  const origin = rateLimitOrigin(url);
+  readRateLimitUntilByOrigin.set(
+    origin,
+    Math.max(readRateLimitUntilByOrigin.get(origin) ?? 0, Date.now() + waitMs),
+  );
+  await waitForReadRateLimitCooldown(url);
 }
 
 export async function fetchApi<T>(
@@ -447,6 +502,7 @@ export async function fetchApi<T>(
   const {
     timeoutMs = 10_000,
     sessionReprojectionReplay = false,
+    rateLimitReplay = false,
     ...fetchOptions
   } = options;
 
@@ -467,6 +523,9 @@ export async function fetchApi<T>(
       gatewayToken = await getGatewayToken();
       noteGatewayTokenSuccess();
     } catch (err) {
+      if (isGatewayLoginRedirecting(err)) {
+        throw err;
+      }
       try {
         gatewayToken = await getParentBridgeGatewayToken();
       } catch (bridgeErr) {
@@ -492,14 +551,9 @@ export async function fetchApi<T>(
   }
 
   const url = gatewayUrl ? gatewayUrl : sameOriginUrl;
-  const authHeader: Record<string, string> = {};
-  if (gatewayUrl) {
-    authHeader.Authorization = `Bearer ${gatewayToken}`;
-  } else if (typeof window !== "undefined") {
-    // Legacy compatibility token while same-origin auth migrates to Go sessions.
-    const token = getPocketBaseCompatStoredAuthToken();
-    if (token) authHeader.Authorization = `Bearer ${token}`;
-  }
+  const authHeader: Record<string, string> = gatewayUrl
+    ? { Authorization: `Bearer ${gatewayToken}` }
+    : {};
 
   const headers = new Headers(fetchOptions.headers);
   headers.set(
@@ -518,6 +572,10 @@ export async function fetchApi<T>(
     !hasBearerAuth
   ) {
     headers.set(CSRF_HEADER_NAME, await getCSRFToken(url));
+  }
+
+  if (method === "GET" || method === "HEAD") {
+    await waitForReadRateLimitCooldown(url);
   }
 
   // Avoid requests hanging forever (e.g. network/DNS issues). Keep this short
@@ -569,6 +627,14 @@ export async function fetchApi<T>(
           sessionReprojectionReplay: true,
         });
       }
+    }
+    if (
+      response.status === 429 &&
+      !rateLimitReplay &&
+      (method === "GET" || method === "HEAD")
+    ) {
+      await waitForReadRateLimit(url, response);
+      return fetchApi<T>(endpoint, { ...options, rateLimitReplay: true });
     }
     throw error;
   }

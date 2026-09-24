@@ -3,7 +3,6 @@ import {
   buildInputSpecFromStackConfig,
   buildStackKitSpecFromStackConfig,
 } from "./spec";
-import { ACTIVE_STANDARD_BUNDLE } from "./standardBundle";
 import { applyServerProvisioningMode, createDefaultConfig } from "./types";
 
 describe("wizard StackKit spec", () => {
@@ -20,7 +19,6 @@ describe("wizard StackKit spec", () => {
       subdomainPrefix?: string;
       compute: { tier: string };
       paas: string;
-      useCases: string[];
       nodes: Array<{ name: string; role: string; provider?: string }>;
       services: Record<string, { enabled: boolean }>;
       owner: { bootstrapMode: string; source: string };
@@ -42,7 +40,7 @@ describe("wizard StackKit spec", () => {
     expect(spec.adminEmail).toBe("admin@stack.home");
     expect(spec.compute.tier).toBe("standard");
     expect(spec.paas).toBe("dokploy");
-    expect(spec.useCases).toEqual(["vault"]);
+    expect(spec.metadata.use_cases).toBe("");
     expect(spec.nodes).toEqual([{ name: "main", role: "standalone" }]);
     expect(spec.network.mode).toBe("hybrid");
     expect(spec.vpn).toEqual({ enabled: true, type: "headscale" });
@@ -53,7 +51,7 @@ describe("wizard StackKit spec", () => {
       whoami: { enabled: true },
       tinyauth: { enabled: true },
       pocketid: { enabled: true },
-      vaultwarden: { enabled: true },
+      vaultwarden: { enabled: false },
       immich: { enabled: false },
     });
     expect(spec.metadata.spec_format).toBe("stack-spec");
@@ -75,22 +73,11 @@ describe("wizard StackKit spec", () => {
     expect(spec).not.toHaveProperty("kit");
   });
 
-  it("builds StackKit service toggles from the active StandardBundle", () => {
+  it("omits the VPN overlay for home-only access", () => {
     const config = createDefaultConfig();
-    const spec = buildStackKitSpecFromStackConfig(config) as {
-      services: Record<string, { enabled: boolean }>;
-    };
+    config.network.accessMode = "home";
 
-    for (const service of ACTIVE_STANDARD_BUNDLE.stackSpec.coreServices) {
-      expect(spec.services[service]).toEqual({ enabled: true });
-    }
-    for (const service of ACTIVE_STANDARD_BUNDLE.services) {
-      for (const toggle of service.stackSpecServices) {
-        expect(spec.services[toggle]).toEqual({
-          enabled: config.services[service.key],
-        });
-      }
-    }
+    expect(buildStackKitSpecFromStackConfig(config).vpn).toBeUndefined();
   });
 
   it("keeps the legacy buildInputSpec export as the canonical StackKit spec", () => {
@@ -112,7 +99,7 @@ describe("wizard StackKit spec", () => {
 
     expect(spec.stackkit).toBe("basement-kit");
     expect(spec.services.pocketid.enabled).toBe(true);
-    expect(spec.services.vaultwarden.enabled).toBe(true);
+    expect(spec.services.vaultwarden.enabled).toBe(false);
     expect(spec.services.immich.enabled).toBe(false);
     expect(spec.metadata.server_mode).toBe("user-owned");
     expect(spec.metadata.server_provisioning_mode).toBe("install-command");
@@ -120,7 +107,7 @@ describe("wizard StackKit spec", () => {
     expect(spec.metadata.server_install_command_required).toBe("true");
     expect(spec.metadata.server_registry_module).toBe("server-registry");
     expect(spec.metadata.service_registry_module).toBe("service-registry");
-    expect(spec.metadata.use_cases).toBe("vault");
+    expect(spec.metadata.use_cases).toBe("");
     expect(spec.metadata.stackkit_foundation).toBe("basement-kit");
     expect(spec.metadata.foundation_node_label).toBe("Foundation Node");
     expect(spec.metadata.server_node_role).toBe("foundation");
@@ -165,30 +152,36 @@ describe("wizard StackKit spec", () => {
     expect(spec.metadata.server_node_role_wire).toBe("worker");
   });
 
-  it("raises capability metadata for Techie Wizard and explicit alternatives", () => {
-    const config = createDefaultConfig();
-    config.wizardType = "techie";
-    config.serverProvisioning.stackkitFoundation = "cloud-kit";
-    config.serverProvisioning.nodeRole = "worker";
-    config.advanced.backupsEnabled = false;
+  // The Techie Wizard used to be the strongest capability signal. With one
+  // wizard left, depth is observed from what the operator actually did:
+  // advanced interactions and explicit alternative picks. Asserted as a lift
+  // over the untouched baseline rather than as a fixed score, because the
+  // scale is tuned deliberately.
+  it("raises capability metadata for advanced interactions and explicit alternatives", () => {
+    const readScore = (config: ReturnType<typeof createDefaultConfig>) =>
+      Number(
+        (
+          buildStackKitSpecFromStackConfig(config) as {
+            metadata: Record<string, string>;
+          }
+        ).metadata.operator_capability_score,
+      );
 
-    const spec = buildStackKitSpecFromStackConfig(config) as {
+    const baseline = createDefaultConfig();
+    const engaged = createDefaultConfig();
+    engaged.serverProvisioning.stackkitFoundation = "cloud-kit";
+    engaged.serverProvisioning.nodeRole = "worker";
+    engaged.advanced.backupsEnabled = false;
+
+    expect(readScore(engaged)).toBeGreaterThan(readScore(baseline));
+
+    const spec = buildStackKitSpecFromStackConfig(engaged) as {
       metadata: Record<string, string>;
     };
-
-    expect(spec.metadata.decision_channel).toBe("wizard:techie");
-    expect(spec.metadata.operator_capability_score).toBe("9");
-    expect(spec.metadata.operator_capability_band).toBe("expert");
-    expect(spec.metadata.operator_capability_evidence).toContain(
-      "wizard:techie",
-    );
     expect(spec.metadata.operator_capability_evidence).toContain("advanced:1");
     expect(spec.metadata.operator_capability_evidence).toContain(
       "alternatives:2",
     );
-    expect(spec.metadata.advanced_interaction_count).toBe("1");
-    expect(spec.metadata.explicit_alternative_count).toBe("2");
-    expect(spec.metadata.advanced_settings_touched).toBe("true");
   });
 
   it("describes direct remote server provisioning without provider internals", () => {

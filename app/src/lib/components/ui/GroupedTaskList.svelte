@@ -7,8 +7,8 @@
    * past 8 instantly-completed Unifier steps.
    */
   import { fade, slide } from "svelte/transition";
-  import type { Task } from "$lib/wizard";
-  import { computeGroupStatuses, type GroupStatus } from "$lib/wizard";
+  import type { Task } from "#lib/wizard/index.js";
+  import { computeGroupStatuses, type GroupStatus } from "#lib/wizard/index.js";
 
   interface Props {
     tasks: Task[];
@@ -37,11 +37,11 @@
   function badgeClass(status: Task["status"]): string {
     switch (status) {
       case "completed":
-        return "bg-green-500/10 text-green-500";
+        return "bg-success/10 text-success";
       case "running":
         return "bg-primary/10 text-primary";
       case "failed":
-        return "bg-red-500/10 text-red-500";
+        return "bg-destructive/10 text-destructive";
       default:
         return "bg-muted text-muted-foreground";
     }
@@ -63,11 +63,11 @@
   function subIconClass(status: Task["status"]): string {
     switch (status) {
       case "completed":
-        return "text-green-500";
+        return "text-success";
       case "running":
         return "text-primary";
       case "failed":
-        return "text-red-500";
+        return "text-destructive";
       default:
         return "text-muted-foreground/60";
     }
@@ -92,7 +92,7 @@
     {@const open = isExpanded(gs)}
     {@const borderClass =
       gs.status === "failed"
-        ? "border-red-500/40"
+        ? "border-destructive/40"
         : gs.status === "running"
           ? "border-primary/60"
           : gs.status === "completed"
@@ -126,9 +126,9 @@
           'running'
             ? 'bg-primary/10 animate-pulse'
             : gs.status === 'failed'
-              ? 'bg-red-500/10'
+              ? 'bg-destructive/10'
               : gs.status === 'completed'
-                ? 'bg-green-500/10'
+                ? 'bg-success/10'
                 : 'bg-muted'} {subIconClass(gs.status)}"
         >
           {#if gs.status === "running"}
@@ -169,7 +169,7 @@
               {gs.runningTask.message || gs.runningTask.label}
             </p>
           {:else if gs.status === "failed" && gs.failedTask?.errorMessage}
-            <p class="text-xs text-red-400 truncate">
+            <p class="text-xs text-destructive truncate">
               {gs.failedTask.errorMessage}
             </p>
           {:else}

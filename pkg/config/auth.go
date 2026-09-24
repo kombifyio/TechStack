@@ -15,12 +15,11 @@ const (
 	// flow should generate for hosted kombify Cloud login.
 	CanonicalAuthCallbackPath = "/api/v2/auth/callback"
 
-	legacyKombifyAuth0Host = "kombify.eu.auth0.com"
 )
 
-// NormalizeCloudAuthIssuer returns a stable issuer URL for cloud login config.
-// The old Auth0 tenant host is intentionally folded into the custom domain so
-// stale env vars do not send browsers back through the non-canonical tenant URL.
+// NormalizeCloudAuthIssuer returns a stable issuer URL. Kombify-hosted
+// deployments pin the canonical value through their environment contract;
+// standalone deployments may use their own OIDC issuer.
 func NormalizeCloudAuthIssuer(raw string) string {
 	value := strings.TrimSpace(raw)
 	if value == "" {
@@ -29,16 +28,11 @@ func NormalizeCloudAuthIssuer(raw string) string {
 	if !strings.HasPrefix(value, "https://") && !strings.HasPrefix(value, "http://") {
 		value = "https://" + value
 	}
-
 	parsed, err := url.Parse(value)
 	if err == nil && parsed.Host != "" {
-		if strings.EqualFold(parsed.Host, legacyKombifyAuth0Host) {
-			return DefaultCloudAuthIssuer
-		}
 		parsed.RawQuery = ""
 		parsed.Fragment = ""
 		return strings.TrimSuffix(parsed.String(), "/")
 	}
-
 	return strings.TrimSuffix(value, "/")
 }

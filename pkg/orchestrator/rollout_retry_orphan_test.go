@@ -32,12 +32,13 @@ func newOrphanedRolloutFixture(t *testing.T, stackStatus string) (*Orchestrator,
 		t.Fatal(err)
 	}
 	seedManagedDeployEligibleServerRuntime(t, store, "tenant-1", "owner-1", "stack-orphaned", "lease-orphaned", time.Now().UTC())
-	orch := NewWithApp(missingPocketBaseApp{}, &Config{
+	orch := New(&Config{
 		Workers: 1, StackStore: store, JobStore: store, WorkerStore: store,
 		LeaseLister: fakeManagedRuntimeLeaseLister{leases: []vmlease.Lease{
 			enrollmentResumeTestLease("lease-orphaned", "tenant-1", "owner-1", "stack-orphaned"),
 		}},
 	}, nil)
+
 	t.Cleanup(orch.Stop)
 	return orch, store, RolloutRetryRequest{
 		RequestContext: ctx, StackID: "stack-orphaned", TenantID: "tenant-1", OwnerID: "owner-1",
@@ -49,6 +50,23 @@ func newOrphanedRolloutFixture(t *testing.T, stackStatus string) (*Orchestrator,
 // left the stack pinned at "provisioning". Gating the retry on that projection
 // made the documented recovery path unreachable for exactly the failures it
 // exists to recover. The terminal source job plus no in-flight work is enough.
+func TestRetryRolloutRecoversOrphanedJobWithoutPersistedLeaseBinding(t *testing.T) {
+	orch, store, req := newOrphanedRolloutFixture(t, "error")
+	if _, err := store.UpsertJob(req.RequestContext, controlplane.UpsertJobRequest{
+		ID: req.SourceJobID, TenantID: req.TenantID, StackID: req.StackID, Type: "deploy", State: "failed",
+		Step: "generate_iac", Error: "orphaned by process restart", Result: map[string]any{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	result, retryErr := orch.RetryRollout(req)
+	if retryErr != nil {
+		t.Fatalf("RetryRollout without persisted lease binding: %v", retryErr)
+	}
+	if result == nil || result.LeaseID != req.LeaseID {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
 func TestRetryRolloutRecoversStackLeftInProvisioningByAnOrphanedJob(t *testing.T) {
 	orch, _, req := newOrphanedRolloutFixture(t, "provisioning")
 

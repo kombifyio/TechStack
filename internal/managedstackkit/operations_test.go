@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kombifyio/go-common/runtimeexecutor"
+	"github.com/kombifyio/techstack/internal/gocommon/runtimeexecutor"
 	"github.com/kombifyio/techstack/pkg/backupstore"
 	"github.com/kombifyio/stackkits/pkg/backupbinding"
 )

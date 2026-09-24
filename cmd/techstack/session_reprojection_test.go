@@ -14,7 +14,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/kombifyio/go-common/authsession"
+	"github.com/kombifyio/techstack/internal/gocommon/authsession"
 	"github.com/kombifyio/techstack/internal/routes/sessionreauth"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"

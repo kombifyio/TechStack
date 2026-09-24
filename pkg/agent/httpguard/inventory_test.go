@@ -8,7 +8,27 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	gopsutilnet "github.com/shirou/gopsutil/v4/net"
 )
+
+func TestSystemCollectorReportsOnlyBoundRuntimeListeners(t *testing.T) {
+	collector := NewSystemCollector(SystemCollectorConfig{})
+	collector.connections = func(context.Context, string) ([]gopsutilnet.ConnectionStat, error) {
+		return []gopsutilnet.ConnectionStat{
+			{Type: 1, Status: "LISTEN", Laddr: gopsutilnet.Addr{IP: "0.0.0.0", Port: 443}},
+			{Type: 1, Status: "ESTABLISHED", Laddr: gopsutilnet.Addr{IP: "10.0.0.2", Port: 443}},
+			{Type: 2, Laddr: gopsutilnet.Addr{IP: "::1", Port: 5353}},
+			{Type: 2, Laddr: gopsutilnet.Addr{IP: "10.0.0.2", Port: 49152}, Raddr: gopsutilnet.Addr{IP: "1.1.1.1", Port: 53}},
+			{Type: 1, Status: "listen", Laddr: gopsutilnet.Addr{IP: "0.0.0.0", Port: 443}},
+		}, nil
+	}
+
+	ports, complete := collector.collectOpenPorts(t.Context())
+	if !complete || len(ports) != 2 || ports[0] != "tcp://0.0.0.0:443" || ports[1] != "udp://[::1]:5353" {
+		t.Fatalf("collectOpenPorts() = %#v complete=%t", ports, complete)
+	}
+}
 
 func TestSystemCollectorReportsAuthGatewayAsReachableNotHealthy(t *testing.T) {
 	probe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -20,7 +40,7 @@ func TestSystemCollectorReportsAuthGatewayAsReachableNotHealthy(t *testing.T) {
 		"stackkit":"basement-kit",
 		"stackkitVersion":"1.2.3",
 		"mode":"standalone",
-		"domain":"home.localhost",
+		"domain":"home",
 		"services":[{"key":"auth","name":"tinyauth","displayName":"TinyAuth","url":"` + probe.URL + `","desiredState":"running","allowedActions":["start","restart","logs"],"evidenceRef":"stackkit-evidence://service-control/sha256:abc"}]
 	}`
 	if err := os.WriteFile(path, []byte(manifest), 0o600); err != nil {
@@ -57,7 +77,7 @@ func TestSystemCollectorReportsAuthGatewayAsReachableNotHealthy(t *testing.T) {
 	if _, hasHealthyVerdict := service.Health["healthy"]; hasHealthyVerdict || service.Health["auth_or_redirect_required"] != true {
 		t.Fatalf("auth gateway was projected as healthy: %#v", service.Health)
 	}
-	if len(service.Endpoints) != 1 || service.Endpoints[0].Provenance != "stackkit-access-manifest" {
+	if len(service.Endpoints) != 1 || service.Endpoints[0].Provenance != "stackkit-access-manifest" || service.Endpoints[0].Visibility != "local" {
 		t.Fatalf("endpoints = %#v", service.Endpoints)
 	}
 }
@@ -93,7 +113,8 @@ func TestSystemCollectorDiscoversUnmanagedServicesWithoutAManifest(t *testing.T)
 		Discovery: DiscoveryConfig{
 			SystemdUnitDir: []string{t.TempDir()},
 			run: (&fakeHostProbes{
-				docker: `{"ID":"c0ffee","Names":"vaultwarden","Image":"vaultwarden/server","State":"running","Status":"Up 3 days (healthy)"}`,
+				docker:        `{"ID":"c0ffee","Names":"vaultwarden","Image":"vaultwarden/server","State":"running","Status":"Up 3 days (healthy)"}`,
+				dockerVersion: "27.1.1",
 			}).run,
 		},
 	})
@@ -106,6 +127,9 @@ func TestSystemCollectorDiscoversUnmanagedServicesWithoutAManifest(t *testing.T)
 	}
 	if !snapshot.DiscoveryObserved || snapshot.DiscoveredServiceCount != 1 {
 		t.Fatalf("discovery evidence not reported: %#v", snapshot)
+	}
+	if snapshot.Host.DockerVersion != "27.1.1" {
+		t.Fatalf("Docker runtime observation = %q, want 27.1.1", snapshot.Host.DockerVersion)
 	}
 	if len(snapshot.Services) != 1 {
 		t.Fatalf("services = %#v, want the discovered container", snapshot.Services)
@@ -165,6 +189,41 @@ func TestManifestServicesOutrankDiscoveredServicesOnTheSameKey(t *testing.T) {
 	}
 	if snapshot.Services[0].Source != "stackkits-inventory" || snapshot.Services[0].DesiredState != "running" {
 		t.Fatalf("manifest service lost its contract: %#v", snapshot.Services[0])
+	}
+}
+
+func TestAccessManifestV3BindsMeasuredRuntimeComponentWithoutDuplicateDiscovery(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "access.json")
+	manifest := `{
+		"schemaVersion":"stackkit.access-manifest/v3",
+		"stackkit":"cloud-kit",
+		"services":[{"key":"coolify","displayName":"Coolify"}],
+		"runtime_services":[{
+			"service_key":"coolify","application_key":"coolify","display_name":"Coolify",
+			"role":"application","lifecycle":"daemon","operational_impact":"critical",
+			"runtime_identity":{"kind":"docker_compose_service","project":"stackkit-cloud-core","file":".stackkit/runtime/cloud-core/compose.yaml","service":"coolify"},
+			"internal_address":"http://coolify:8000"
+		}]
+	}`
+	if err := os.WriteFile(path, []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	collector := NewSystemCollector(SystemCollectorConfig{
+		AccessManifestFiles: []string{path},
+		Discovery: DiscoveryConfig{SystemdUnitDir: []string{t.TempDir()}, run: (&fakeHostProbes{
+			docker: `{"ID":"c0ffee","Names":"stackkit-cloud-core-coolify-1","State":"running","Status":"Up 2 hours (healthy)","Labels":"com.docker.compose.project=stackkit-cloud-core,com.docker.compose.service=coolify,com.docker.compose.project.config_files=/opt/kombify/.stackkit/runtime/cloud-core/compose.yaml"}`,
+		}).run},
+	})
+	snapshot, err := collector.CollectInventory(t.Context(), Snapshot{Services: []Service{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Services) != 1 {
+		t.Fatalf("v3 runtime binding produced duplicate rows: %#v", snapshot.Services)
+	}
+	service := snapshot.Services[0]
+	if service.ApplicationKey != "coolify" || service.ApplicationDisplayName != "Coolify" || service.Status != "running" || service.OperationalImpact != "critical" {
+		t.Fatalf("v3 runtime projection = %#v", service)
 	}
 }
 

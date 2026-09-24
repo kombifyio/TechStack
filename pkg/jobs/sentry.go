@@ -24,12 +24,16 @@ const (
 	serverIDField      = "server_id"
 	serviceIDField     = "service_id"
 	stackKitField      = "stack_kit"
+	sshUserField       = "ssh_user"
+	healthTargetField  = "health_target"
 )
 
 var (
-	sentryURLPattern   = regexp.MustCompile(`(?i)\bhttps?://[^\s"'<>]+`)
-	sentryEmailPattern = regexp.MustCompile(`(?i)\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b`)
-	sentryIPv4Pattern  = regexp.MustCompile(`\b\d{1,3}(?:\.\d{1,3}){3}\b`)
+	sentryURLPattern          = regexp.MustCompile(`(?i)\bhttps?://[^\s"'<>]+`)
+	sentryEmailPattern        = regexp.MustCompile(`(?i)\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b`)
+	sentryIPv4Pattern         = regexp.MustCompile(`\b\d{1,3}(?:\.\d{1,3}){3}\b`)
+	sentrySSHUserPattern      = regexp.MustCompile(`(?i)\bdial ([A-Za-z0-9._-]+)@`)
+	sentryHealthTargetPattern = regexp.MustCompile(`(?i)\bhealth:([A-Za-z0-9._:-]+)`)
 )
 
 // withJobSentryScope clones a Sentry hub for the duration of one job execution,
@@ -80,6 +84,7 @@ func withJobSentryScope(ctx context.Context, job *Job) (context.Context, func(er
 			hub.WithScope(func(scope *sentry.Scope) {
 				scope.SetContext("job", jobSentryContext(job))
 				applyJobCorrelationTags(scope, job)
+				applyErrorDerivedCorrelation(scope, err)
 				if pe, ok := err.(*ProvisionError); ok {
 					scope.SetTag("failed_step", pe.Step)
 					applyProviderErrorScope(scope, providererrors.ClassifyMessage(pe.Message+"\n"+pe.Details))
@@ -155,12 +160,16 @@ func captureJobError(ctx context.Context, err error, extra map[string]interface{
 		if len(extra) > 0 {
 			safeExtra := safeJobCorrelationContext(extra)
 			scope.SetContext("job", sentry.Context(safeExtra))
-			for _, key := range []string{stepField, leaseIDField, stackIDField, tenantIDField, providerField, reasonField} {
+			for _, key := range []string{
+				stepField, leaseIDField, stackIDField, tenantIDField, providerField, reasonField,
+				serverIDField, "reason_code", sshUserField, healthTargetField, stackKitField,
+			} {
 				if value, ok := safeExtra[key]; ok && value != nil {
 					scope.SetTag(key, fmt.Sprintf("%v", value))
 				}
 			}
 		}
+		applyErrorDerivedCorrelation(scope, err)
 		applyProviderErrorScope(scope, providererrors.Classify(err))
 		hub.CaptureException(errors.New(safeSentryText(err.Error())))
 	})
@@ -244,7 +253,7 @@ func jobCorrelationContextSnapshot(job JobSnapshot) map[string]interface{} {
 	for _, key := range []string{
 		stackIDField, serverIDField, serviceIDField, leaseIDField, tenantIDField,
 		providerField, reasonField, "reason_code", "runtime_action_id", "request_id",
-		"runtime_phase", "verification_status",
+		"runtime_phase", "verification_status", sshUserField, healthTargetField,
 	} {
 		if _, exists := values[key]; exists {
 			continue
@@ -253,6 +262,28 @@ func jobCorrelationContextSnapshot(job JobSnapshot) map[string]interface{} {
 			values[key] = safeSentryText(value)
 		}
 	}
+	putCorrelationAlias(values, providerField,
+		stringFromMap(job.Result, "lease_provider"),
+		stringFromMap(job.Payload, "lease_provider"),
+		stringFromMap(job.Result, "provider_id"),
+		stringFromMap(job.Payload, "provider_id"),
+	)
+	putCorrelationAlias(values, sshUserField,
+		stringFromMap(job.Result, metadataKeyRuntimeSSHUser),
+		stringFromMap(job.Payload, metadataKeyRuntimeSSHUser),
+	)
+	bootstrap := mapFromInterface(job.Result["target_bootstrap"])
+	putCorrelationAlias(values, "reason_code",
+		stringFromMap(job.Result, "target_bootstrap_reason"),
+		stringFromMap(bootstrap, "reason"),
+	)
+	putCorrelationAlias(values, healthTargetField,
+		stringFromMap(bootstrap, healthTargetField),
+		extractHealthTarget(job.Error),
+		extractHealthTarget(job.ErrorDetails),
+		extractHealthTarget(job.Message),
+	)
+	putCorrelationAlias(values, sshUserField, extractSSHUser(job.Error), extractSSHUser(job.ErrorDetails), extractSSHUser(job.Message))
 	for key, value := range values {
 		if strings.TrimSpace(fmt.Sprintf("%v", value)) == "" {
 			delete(values, key)
@@ -270,7 +301,7 @@ func safeJobCorrelationContext(input map[string]interface{}) map[string]interfac
 		leaseIDField: true, tenantIDField: true, providerField: true, reasonField: true,
 		"reason_code": true, "runtime_action_id": true, "request_id": true,
 		"runtime_phase": true, "verification_status": true, stackKitField: true,
-		"waited_ms": true, "waited_pretty": true,
+		"waited_ms": true, "waited_pretty": true, sshUserField: true, healthTargetField: true,
 	}
 	result := map[string]interface{}{}
 	for key, value := range input {
@@ -298,6 +329,50 @@ func safeSentryText(value string) string {
 		value = value[:maxSentryTextBytes] + "... [truncated]"
 	}
 	return value
+}
+
+func applyErrorDerivedCorrelation(scope *sentry.Scope, err error) {
+	if scope == nil || err == nil {
+		return
+	}
+	text := err.Error()
+	if pe, ok := err.(*ProvisionError); ok {
+		text = strings.TrimSpace(pe.Message + "\n" + pe.Details)
+	}
+	if user := extractSSHUser(text); user != "" {
+		scope.SetTag(sshUserField, user)
+	}
+	if target := extractHealthTarget(text); target != "" {
+		scope.SetTag(healthTargetField, target)
+	}
+}
+
+func putCorrelationAlias(values map[string]interface{}, key string, candidates ...string) {
+	if values == nil || strings.TrimSpace(key) == "" {
+		return
+	}
+	if existing, ok := values[key]; ok && strings.TrimSpace(fmt.Sprintf("%v", existing)) != "" {
+		return
+	}
+	if value := firstNonEmpty(candidates...); value != "" {
+		values[key] = safeSentryText(value)
+	}
+}
+
+func extractSSHUser(text string) string {
+	match := sentrySSHUserPattern.FindStringSubmatch(text)
+	if len(match) != 2 {
+		return ""
+	}
+	return safeSentryText(match[1])
+}
+
+func extractHealthTarget(text string) string {
+	match := sentryHealthTargetPattern.FindStringSubmatch(text)
+	if len(match) != 2 {
+		return ""
+	}
+	return safeSentryText(match[1])
 }
 
 func applyProviderErrorScope(scope *sentry.Scope, info providererrors.Info) {

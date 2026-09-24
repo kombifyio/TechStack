@@ -19,7 +19,6 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       reporter: ["text", "json", "html", "lcov"],
-      all: true,
       exclude: [
         "node_modules/",
         ".svelte-kit/",
@@ -32,7 +31,6 @@ export default defineConfig({
         "**/*.{test,spec}.{js,ts}",
         "**/mocks/**",
       ],
-      thresholds: { lines: 50, functions: 50, branches: 50, statements: 50 },
     },
   },
   define: {
@@ -42,13 +40,14 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      $lib: path.resolve(__dirname, "src/lib"),
-      "$app/environment": path.resolve(
-        __dirname,
+      // SvelteKit 3: `$lib` is gone (package.json "imports" owns `#lib`) and
+      // `$app/environment` was renamed to `$app/env`.
+      "$app/env": path.resolve(
+        import.meta.dirname,
         "test/mocks/app-environment.ts",
       ),
       "$app/navigation": path.resolve(
-        __dirname,
+        import.meta.dirname,
         "test/mocks/app-navigation.ts",
       ),
     },

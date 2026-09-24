@@ -8,24 +8,6 @@ import (
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
 )
 
-func TestLifecycleApplyPlansAndBindsTheExactReturnedHash(t *testing.T) {
-	sender := &recordingStackKitCommandSender{}
-	req := StackKitLifecycleRequest{
-		StackID: "stack-1", TenantID: "tenant-1", OwnerID: "owner-1", AgentID: "agent-1",
-		Operation: StackKitLifecycleApply, OwnerApproved: true, StackKit: "cloud-kit",
-	}
-	planHash, err := planStackKitLifecycleApply(context.Background(), sender, "job-1", req, stackkitrelease.Release{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if planHash != testResolvedPlanHash {
-		t.Fatalf("plan hash = %q, want %q", planHash, testResolvedPlanHash)
-	}
-	if len(sender.commands) != 1 || sender.commands[0].Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_PLAN {
-		t.Fatalf("commands = %#v, want one typed PLAN", sender.commands)
-	}
-}
-
 func TestLifecycleApplyHandlerDispatchesPlanThenHashBoundApply(t *testing.T) {
 	sender := &recordingStackKitCommandSender{applyStatus: "applied"}
 	release := &stackkitrelease.Release{}

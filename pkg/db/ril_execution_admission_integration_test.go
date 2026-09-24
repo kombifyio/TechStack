@@ -1,6 +1,7 @@
 package db
 
 import (
+	"database/sql"
 	"errors"
 	"strings"
 	"testing"
@@ -112,9 +113,11 @@ func TestIntegrationRILExecutionAdmissionCommitsCurrentHeadsAtomically(t *testin
 		t.Fatalf("approve governed card: %v", err)
 	}
 
-	if _, err := database.ExecContext(t.Context(), `UPDATE servers SET connection_state='offline' WHERE tenant_id=$1 AND id=$2`, tenantID, serverID); err != nil {
-		t.Fatalf("make current server non-runnable: %v", err)
-	}
+	withTenantWrite(t, database, tenantID, func(tx *sql.Tx) {
+		if _, err := tx.ExecContext(t.Context(), `UPDATE servers SET connection_state=$3 WHERE tenant_id=$1 AND id=$2`, tenantID, serverID, "offline"); err != nil {
+			t.Fatalf("set server connection state offline: %v", err)
+		}
+	})
 	beginInput := actions.BeginExecution{
 		TenantID: tenantID, OwnerSubjectID: ownerID, CardID: cardID,
 		ExecutionID: "execution-" + suffix, TraceID: "trace-" + suffix,
@@ -132,9 +135,11 @@ func TestIntegrationRILExecutionAdmissionCommitsCurrentHeadsAtomically(t *testin
 		t.Fatalf("rejected admission mutated card: status=%q digest=%v", status, admissionDigest)
 	}
 
-	if _, err := database.ExecContext(t.Context(), `UPDATE servers SET connection_state='connected' WHERE tenant_id=$1 AND id=$2`, tenantID, serverID); err != nil {
-		t.Fatalf("restore runnable current server: %v", err)
-	}
+	withTenantWrite(t, database, tenantID, func(tx *sql.Tx) {
+		if _, err := tx.ExecContext(t.Context(), `UPDATE servers SET connection_state=$3 WHERE tenant_id=$1 AND id=$2`, tenantID, serverID, "connected"); err != nil {
+			t.Fatalf("set server connection state connected: %v", err)
+		}
+	})
 	begin, err := authority.Begin(t.Context(), beginInput)
 	if err != nil {
 		t.Fatalf("admit exact current inventory and lease heads: %v", err)
@@ -232,4 +237,25 @@ func TestIntegrationRILExecutionAdmissionCommitsCurrentHeadsAtomically(t *testin
 
 func integrationDigest(character string) string {
 	return "sha256:" + strings.Repeat(character, 64)
+}
+
+// withTenantWrite carries the tenant scope every production write carries.
+// The servers trigger from migration 093 refreshes the stale capacity recovery
+// directory and rejects any mutation whose app.tenant_id does not match the
+// row, so an unscoped write here would not exercise the real write path.
+// Mirrors withNativeAdmissionTenantWrite in internal/providercontrol.
+func withTenantWrite(t *testing.T, database *DB, tenantID string, fn func(*sql.Tx)) {
+	t.Helper()
+	tx, err := database.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatalf("begin tenant write: %v", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(t.Context(), `SELECT set_config('app.tenant_id', $1, true)`, tenantID); err != nil {
+		t.Fatalf("scope tenant write: %v", err)
+	}
+	fn(tx)
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit tenant write: %v", err)
+	}
 }

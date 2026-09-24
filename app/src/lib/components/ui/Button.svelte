@@ -1,77 +1,65 @@
 <script lang="ts">
+  /**
+   * Product Button adapter over @kombiverselabs/ui/primitives.
+   * Stamps data-testid onto the real <button> so Playwright enable/click
+   * checks keep working. Theme and recipes stay in the design package.
+   */
+  import { Button as PackageButton } from "@kombiverselabs/ui/primitives";
   import type { Snippet } from "svelte";
-  import { cn } from "$lib/utils";
 
   interface Props {
-    variant?:
-      | "primary"
-      | "secondary"
-      | "outline"
-      | "ghost"
-      | "destructive"
-      | "success";
-    size?: "sm" | "md" | "lg" | "icon";
-    disabled?: boolean;
-    loading?: boolean;
-    class?: string;
-    type?: "button" | "submit" | "reset";
-    onclick?: (e: MouseEvent) => void;
     children: Snippet;
+    type?: "button" | "submit" | "reset";
+    variant?: "primary" | "secondary" | "ghost" | "destructive" | "outline";
+    size?: "sm" | "md" | "lg";
+    disabled?: boolean;
+    ariaLabel?: string;
+    onclick?: (event: MouseEvent) => void;
+    class?: string;
+    testId?: string;
+    /**
+     * Coach-mark anchor (ONBOARDING-JOURNEY-STANDARD §6). Stamped onto the
+     * real <button> like testId, because the coach-mark measures the element
+     * it points at and the wrapping span has no box of its own.
+     */
+    anchor?: string;
   }
 
   let {
-    variant = "primary",
-    size = "md",
-    disabled = false,
-    loading = false,
-    class: className = "",
-    type = "button",
-    onclick,
     children,
+    variant = "secondary",
+    testId,
+    anchor,
+    class: className = "",
+    ...rest
   }: Props = $props();
 
-  const variantClasses = {
-    primary: "btn-primary",
-    secondary: "btn-secondary",
-    outline: "btn-outline",
-    ghost: "btn-ghost",
-    destructive: "btn-destructive",
-    success: "btn-success",
-    // Legacy alias
-    danger: "btn-destructive",
-  };
+  const packageVariant = $derived(
+    variant === "outline" ? "secondary" : variant,
+  );
 
-  const sizeClasses = {
-    sm: "btn-sm",
-    md: "",
-    lg: "btn-lg",
-    icon: "btn-icon",
-  };
+  let host: HTMLElement | undefined = $state();
+
+  $effect(() => {
+    const button = host?.querySelector("button");
+    if (!button) {
+      return;
+    }
+    if (testId) {
+      button.setAttribute("data-testid", testId);
+    } else {
+      button.removeAttribute("data-testid");
+    }
+    if (anchor) {
+      button.setAttribute("data-onboarding-anchor", anchor);
+    } else {
+      button.removeAttribute("data-onboarding-anchor");
+    }
+  });
 </script>
 
-<button
-  {type}
-  {disabled}
-  {onclick}
-  class={cn("btn", variantClasses[variant], sizeClasses[size], className)}
->
-  {#if loading}
-    <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24">
-      <circle
-        class="opacity-25"
-        cx="12"
-        cy="12"
-        r="10"
-        stroke="currentColor"
-        stroke-width="4"
-        fill="none"
-      />
-      <path
-        class="opacity-75"
-        fill="currentColor"
-        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-      />
-    </svg>
-  {/if}
-  {@render children()}
-</button>
+<span bind:this={host} class="contents">
+  <PackageButton variant={packageVariant} class={className} {...rest}>
+    {@render children()}
+  </PackageButton>
+</span>

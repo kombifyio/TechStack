@@ -78,12 +78,12 @@ func (e *Engine) selectStackKit(spec *core.KombinationSpec) string {
 		if IsSupportedProductStackKit(spec.Kit) {
 			return CanonicalStackKitName(spec.Kit)
 		}
-		return StackKitBase
+		return StackKitBasement
 	}
 
 	result := NewStackKitResolver(DefaultKnownStackKits()).Resolve(spec)
 	if result == nil || result.StackKit == "" {
-		return StackKitBase
+		return StackKitBasement
 	}
 	return result.StackKit
 }

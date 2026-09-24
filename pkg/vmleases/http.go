@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/kombifyio/go-common/servicecall"
+	"github.com/kombifyio/techstack/internal/gocommon/servicecall"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/vmlease"
 )
 

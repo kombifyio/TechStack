@@ -165,37 +165,35 @@ func TestAttachDomainAcceptsCurrentAndNextControlPlaneSecretsDuringRotation(t *t
 	}
 }
 
-func TestAttachDomainRejectsMissingToken(t *testing.T) {
+func TestAttachDomainRejectsInvalidCloudServiceAuthority(t *testing.T) {
 	t.Setenv("STACK_CONTROL_PLANE_SECRET", testServiceSecret)
-	store := controlplane.NewMemoryStore()
-	e, rec := attachDomainEvent(`{"domain":"acme.dev"}`, "")
-	_ = crudRouteHandlers{stackStore: store, jobStore: store}.attachDomainToStack(e)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+	tests := []struct {
+		name       string
+		signed     bool
+		org        string
+		scopes     []string
+		expiresIn  time.Duration
+		wantStatus int
+	}{
+		{name: "missing token", wantStatus: http.StatusForbidden},
+		{name: "wrong scope", signed: true, org: "tenant-1", scopes: []string{"some:other.scope"}, expiresIn: 2 * time.Minute, wantStatus: http.StatusForbidden},
+		{name: "missing tenant", signed: true, scopes: []string{stackDomainAttachScope}, expiresIn: 2 * time.Minute, wantStatus: http.StatusUnprocessableEntity},
+		{name: "expired token", signed: true, org: "tenant-1", scopes: []string{stackDomainAttachScope}, expiresIn: -time.Minute, wantStatus: http.StatusForbidden},
 	}
-}
 
-func TestAttachDomainRejectsWrongScope(t *testing.T) {
-	t.Setenv("STACK_CONTROL_PLANE_SECRET", testServiceSecret)
-	store := controlplane.NewMemoryStore()
-	token := signCloudServiceToken(t, testServiceSecret, "auth0|user-1", "tenant-1",
-		[]string{"some:other.scope"}, time.Now().Add(2*time.Minute))
-	e, rec := attachDomainEvent(`{"domain":"acme.dev"}`, token)
-	_ = crudRouteHandlers{stackStore: store, jobStore: store}.attachDomainToStack(e)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
-	}
-}
-
-func TestAttachDomainRequiresTenant(t *testing.T) {
-	t.Setenv("STACK_CONTROL_PLANE_SECRET", testServiceSecret)
-	store := controlplane.NewMemoryStore()
-	token := signCloudServiceToken(t, testServiceSecret, "auth0|user-1", "",
-		[]string{stackDomainAttachScope}, time.Now().Add(2*time.Minute))
-	e, rec := attachDomainEvent(`{"domain":"acme.dev"}`, token)
-	_ = crudRouteHandlers{stackStore: store, jobStore: store}.attachDomainToStack(e)
-	if rec.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnprocessableEntity)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			token := ""
+			if tt.signed {
+				token = signCloudServiceToken(t, testServiceSecret, "auth0|user-1", tt.org, tt.scopes, time.Now().Add(tt.expiresIn))
+			}
+			store := controlplane.NewMemoryStore()
+			e, rec := attachDomainEvent(`{"domain":"acme.dev"}`, token)
+			_ = crudRouteHandlers{stackStore: store, jobStore: store}.attachDomainToStack(e)
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", rec.Code, tt.wantStatus)
+			}
+		})
 	}
 }
 
@@ -395,17 +393,5 @@ func TestStackIngressRejectsMissingToken(t *testing.T) {
 	_ = crudRouteHandlers{stackStore: store}.stackIngress(e)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", rec.Code)
-	}
-}
-
-func TestAttachDomainRejectsExpiredToken(t *testing.T) {
-	t.Setenv("STACK_CONTROL_PLANE_SECRET", testServiceSecret)
-	store := controlplane.NewMemoryStore()
-	token := signCloudServiceToken(t, testServiceSecret, "auth0|user-1", "tenant-1",
-		[]string{stackDomainAttachScope}, time.Now().Add(-time.Minute))
-	e, rec := attachDomainEvent(`{"domain":"acme.dev"}`, token)
-	_ = crudRouteHandlers{stackStore: store, jobStore: store}.attachDomainToStack(e)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
 	}
 }

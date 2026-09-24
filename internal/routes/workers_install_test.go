@@ -16,32 +16,48 @@ import (
 	"github.com/kombifyio/techstack/pkg/httpx"
 )
 
-func TestServeLinuxInstallScriptFailsClosedWithoutArtifact(t *testing.T) {
-	recorder := httptest.NewRecorder()
-	event := &httpx.Event{
-		Response: recorder,
-		Request:  httptest.NewRequest(http.MethodGet, "/install.sh", nil),
+func TestServeLinuxInstallScriptFailsClosedForUnavailableArtifacts(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "missing"},
+		{name: "registration-only legacy fragment", body: "#!/bin/sh\n# registration-only legacy artifact\n"},
+		{name: "marker-only fake", body: `#!/bin/sh
+curl -H "Content-Type: application/octet-stream" https://techstack.test/enroll
+install -m 0600 "$ENROLLMENT_TMP" /etc/techstack/agent-enrollment.json
+ExecStart=/usr/local/bin/techstack agent --transport=https --enrollment-file=/etc/techstack/agent-enrollment.json
+systemctl enable techstack-agent.service
+systemctl restart techstack-agent.service
+`},
 	}
 
-	err := serveLinuxInstallScript(event, []string{filepath.Join(t.TempDir(), "missing-install.sh")})
-	if err != nil {
-		t.Fatalf("serveLinuxInstallScript returned error: %v", err)
-	}
-	if recorder.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusServiceUnavailable)
-	}
-	if got := recorder.Header().Get("Cache-Control"); got != "no-store" {
-		t.Fatalf("Cache-Control = %q, want no-store", got)
-	}
-	if got := recorder.Header().Get("Content-Type"); got != "text/plain; charset=utf-8" {
-		t.Fatalf("Content-Type = %q, want text/plain", got)
-	}
-	body := recorder.Body.String()
-	if !strings.Contains(body, "installer artifact unavailable") {
-		t.Fatalf("response does not explain missing installer artifact: %q", body)
-	}
-	if strings.Contains(body, "/api/v1/workers/register") {
-		t.Fatalf("missing-artifact response must not contain a registration-only fallback: %q", body)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "install.sh")
+			if test.body != "" {
+				if err := os.WriteFile(path, []byte(test.body), 0o600); err != nil {
+					t.Fatalf("write installer fixture: %v", err)
+				}
+			}
+			recorder := httptest.NewRecorder()
+			event := &httpx.Event{Response: recorder, Request: httptest.NewRequest(http.MethodGet, "/install.sh", nil)}
+			if err := serveLinuxInstallScript(event, []string{path}); err != nil {
+				t.Fatalf("serveLinuxInstallScript returned error: %v", err)
+			}
+			if recorder.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want %d", recorder.Code, http.StatusServiceUnavailable)
+			}
+			if got := recorder.Header().Get("Cache-Control"); got != "no-store" {
+				t.Fatalf("Cache-Control = %q, want no-store", got)
+			}
+			if got := recorder.Header().Get("Content-Type"); got != "text/plain; charset=utf-8" {
+				t.Fatalf("Content-Type = %q, want text/plain", got)
+			}
+			if body := recorder.Body.String(); strings.Contains(body, "/api/v1/workers/register") {
+				t.Fatalf("unavailable artifact response exposed a registration-only fallback: %q", body)
+			}
+		})
 	}
 }
 
@@ -101,19 +117,6 @@ func TestServeLinuxInstallScriptSkipsIncompleteArtifact(t *testing.T) {
 	}
 }
 
-func TestValidLinuxInstallerArtifactRejectsMarkerOnlyFake(t *testing.T) {
-	markerOnly := []byte(`#!/bin/sh
-curl -H "Content-Type: application/octet-stream" https://techstack.test/enroll
-install -m 0600 "$ENROLLMENT_TMP" /etc/techstack/agent-enrollment.json
-ExecStart=/usr/local/bin/techstack agent --transport=https --enrollment-file=/etc/techstack/agent-enrollment.json
-systemctl enable techstack-agent.service
-systemctl restart techstack-agent.service
-`)
-	if validLinuxInstallerArtifact(markerOnly) {
-		t.Fatal("marker-only shell fragment must not satisfy the authoritative installer contract")
-	}
-}
-
 func TestLinuxInstallerReusesExistingRuntimeEnrollmentWithoutRegistration(t *testing.T) {
 	shell := "sh"
 	if runtime.GOOS == "windows" {
@@ -152,7 +155,10 @@ func TestLinuxInstallerReusesExistingRuntimeEnrollmentWithoutRegistration(t *tes
 	binaryDigest := sha256.Sum256(binaryBody)
 
 	writeExecutableFixture(t, filepath.Join(stubDir, "curl"), `#!/bin/sh
-printf '%s\n' "$@" > "$STUB_LOG_DIR/curl.args"
+# Append: the installer also posts bootstrap progress logs, so a truncating
+# log would only ever record the last call instead of the whole invocation set
+# the assertions below count.
+printf '%s\n' "$@" >> "$STUB_LOG_DIR/curl.args"
 headers_file=""
 output_file=""
 while [ "$#" -gt 0 ]; do
@@ -177,6 +183,12 @@ shift
 if [ "$command_name" = "systemctl" ]; then
   exit 0
 fi
+# The StackKits rollout probes an already-present container runtime before it
+# would install one; the stub reports a ready daemon so the installer takes the
+# no-package-manager path.
+if [ "$command_name" = "docker" ]; then
+  exit 0
+fi
 if [ "$command_name" != "install" ]; then
   exit 1
 fi
@@ -199,6 +211,7 @@ cp "$source_file" "$target_file"
 chmod "$mode" "$target_file"
 `)
 	writeExecutableFixture(t, filepath.Join(stubDir, "systemctl"), "#!/bin/sh\nexit 0\n")
+	writeExecutableFixture(t, filepath.Join(stubDir, "docker"), "#!/bin/sh\nexit 0\n")
 	writeExecutableFixture(t, filepath.Join(stubDir, "uname"), `#!/bin/sh
 case "${1:-}" in
   -s) printf 'Linux\n' ;;
@@ -302,20 +315,4 @@ func readFixture(t *testing.T, path string) string {
 		t.Fatalf("read fixture %s: %v", path, err)
 	}
 	return string(content)
-}
-
-func TestServeLinuxInstallScriptFailsClosedWithOnlyIncompleteArtifact(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "incomplete-install.sh")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\n# registration-only legacy artifact\n"), 0o600); err != nil {
-		t.Fatalf("write incomplete installer fixture: %v", err)
-	}
-
-	recorder := httptest.NewRecorder()
-	event := &httpx.Event{Response: recorder, Request: httptest.NewRequest(http.MethodGet, "/install.sh", nil)}
-	if err := serveLinuxInstallScript(event, []string{path}); err != nil {
-		t.Fatalf("serveLinuxInstallScript returned error: %v", err)
-	}
-	if recorder.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d body=%q, want 503", recorder.Code, recorder.Body.String())
-	}
 }

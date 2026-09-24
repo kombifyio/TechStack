@@ -2,6 +2,7 @@ package routes
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net"
 	"net/http"
@@ -13,7 +14,7 @@ import (
 
 	"github.com/kombifyio/techstack/internal/selfhostcontracts/runtimeinventory"
 	"github.com/kombifyio/techstack/api/toolmanifest"
-	"github.com/kombifyio/techstack/internal/routes/sessionreauth"
+	"github.com/kombifyio/techstack/internal/portinventory"
 	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/controlplane"
@@ -35,19 +36,30 @@ const (
 )
 
 type InventoryRouteConfig struct {
-	ReadStore controlplane.InventoryReadStore
-	Policy    InventoryPolicy
-	Now       func() time.Time
-	Version   string
+	ReadStore     controlplane.InventoryReadStore
+	PortInventory portinventory.ReadAuthority
+	Policy        InventoryPolicy
+	Now           func() time.Time
+	Version       string
+	// ServiceAuthSecret enables the private Cloud servicecall summary route;
+	// empty keeps that route fail-closed (503).
+	ServiceAuthSecret string
+	ServiceAuthNext   string
+	// Stored authorization resolved only after verifying the Cloud OBO signature.
+	RuntimeSummaryContext func(context.Context, string, string) (context.Context, error)
 }
 
 type inventoryHandlers struct {
-	app     *inventoryApplication
-	version string
+	app                   *inventoryApplication
+	version               string
+	serviceAuthSecret     string
+	serviceAuthNext       string
+	runtimeSummaryContext func(context.Context, string, string) (context.Context, error)
 }
 
 type inventoryApplication struct {
 	read   controlplane.InventoryReadStore
+	ports  portinventory.ReadAuthority
 	policy InventoryPolicy
 	now    func() time.Time
 }
@@ -58,17 +70,11 @@ type inventoryScope struct {
 }
 
 type inventoryError struct {
-	status     int
-	reasonCode string
-	message    string
-	cause      error
-	// sessionTenantDenied marks an authorization denial of the SESSION tenant
-	// itself (collection-scope check, no resource id) as opposed to a
-	// resource-level denial. The HTTP surface maps it to the retryable
-	// session_reprojection_required signal; the MCP surface keeps the plain
-	// 403 (machine callers re-mint tokens, not browser sessions).
-	sessionTenantDenied bool
-	sessionTenantID     string
+	status          int
+	reasonCode      string
+	message         string
+	cause           error
+	sessionTenantID string
 }
 
 func (e *inventoryError) Error() string {
@@ -156,7 +162,13 @@ func RegisterInventoryRoutes(r *httpx.Router, cfg InventoryRouteConfig) {
 	if cfg.Policy == nil {
 		cfg.Policy = denyInventoryPolicy{}
 	}
-	h := inventoryHandlers{app: &inventoryApplication{read: cfg.ReadStore, policy: cfg.Policy, now: cfg.Now}, version: cfg.Version}
+	h := inventoryHandlers{
+		app:                   &inventoryApplication{read: cfg.ReadStore, ports: cfg.PortInventory, policy: cfg.Policy, now: cfg.Now},
+		version:               cfg.Version,
+		serviceAuthSecret:     strings.TrimSpace(cfg.ServiceAuthSecret),
+		serviceAuthNext:       strings.TrimSpace(cfg.ServiceAuthNext),
+		runtimeSummaryContext: cfg.RuntimeSummaryContext,
+	}
 	r.GET("/api/v1/inventory/servers", h.httpListServers)
 	// Public RIL is a compatibility view over the canonical inventory read
 	// model. It must never enrich observations from live transport state.
@@ -164,9 +176,13 @@ func RegisterInventoryRoutes(r *httpx.Router, cfg InventoryRouteConfig) {
 	r.GET("/api/v1/servers/summary", h.httpServerSummary)
 	r.GET("/v1/ril/servers/summary", h.httpServerSummary)
 	r.GET("/api/v1/inventory/servers/{serverId}/health", h.httpServerHealth)
+	r.GET("/api/v1/inventory/servers/{serverId}/ports", h.httpServerPorts)
 	r.GET("/api/v1/inventory/services", h.httpListServices)
 	r.GET("/api/v1/inventory/servers/{serverId}/access-context", h.httpServerAccessContext)
 	r.GET("/api/v1/tool-manifest.json", serveToolManifest)
+	// Private Cloud servicecall read for the dashboard Overview (servers +
+	// services of the on_behalf_of owner); see inventory_internal_summary.go.
+	r.GET("/api/v1/internal/runtime/summary", h.httpInternalRuntimeSummary)
 	registerInventoryMCPRoutes(r, h)
 }
 
@@ -230,6 +246,22 @@ func (h inventoryHandlers) httpServerHealth(e *httpx.Event) error {
 	return httpx.Success(e, http.StatusOK, result)
 }
 
+func (h inventoryHandlers) httpServerPorts(e *httpx.Event) error {
+	if err := rejectInventoryScopeOverrides(e, nil); err != nil {
+		return writeInventoryHTTPError(e, err)
+	}
+	scope, err := inventoryScopeFromEvent(e)
+	if err != nil {
+		return writeInventoryHTTPError(e, err)
+	}
+	result, err := h.app.serverPorts(e.Request.Context(), scope, e.Request.PathValue("serverId"))
+	if err != nil {
+		return writeInventoryHTTPError(e, err)
+	}
+	e.Response.Header().Set("Cache-Control", "private, no-store")
+	return httpx.Success(e, http.StatusOK, result)
+}
+
 func (h inventoryHandlers) httpListServices(e *httpx.Event) error {
 	if err := rejectInventoryScopeOverrides(e, map[string]bool{inventoryServerIDField: true, inventoryCursorField: true, inventoryLimitField: true}); err != nil {
 		return writeInventoryHTTPError(e, err)
@@ -269,16 +301,21 @@ func inventoryScopeFromEvent(e *httpx.Event) (inventoryScope, error) {
 	if !ok {
 		return inventoryScope{}, &inventoryError{status: http.StatusUnauthorized, reasonCode: "authentication_required", message: "Authentication required"}
 	}
-	tenantID := requestTenantID(e, ownerID)
-	if tenantguard.Active() {
-		// SaaS: the owner-as-tenant fallback would silently scope the read to
-		// an empty tenant (two-truths bug); only an explicit org scope counts.
-		tenantID = requestExplicitTenantID(e)
-	}
-	if strings.TrimSpace(tenantID) == "" {
+	tenantID, tenantErr := tenantguard.TenantScope(requestExplicitTenantID(e), ownerID, "techstack.inventory.read")
+	if tenantErr != nil || strings.TrimSpace(tenantID) == "" {
 		return inventoryScope{}, &inventoryError{status: http.StatusForbidden, reasonCode: "tenant_context_missing", message: "Tenant context required"}
 	}
 	return inventoryScope{tenantID: strings.TrimSpace(tenantID), ownerID: strings.TrimSpace(ownerID)}, nil
+}
+
+// authorizeInventoryServerOperate is the shared fail-closed operate gate for
+// server-scoped mutations that sit outside the inventory read API.
+func authorizeInventoryServerOperate(ctx context.Context, policy InventoryPolicy, scope inventoryScope, serverID string) error {
+	if policy == nil {
+		return &inventoryError{status: http.StatusServiceUnavailable, reasonCode: "inventory_policy_unavailable", message: "Inventory policy unavailable"}
+	}
+	_, err := (&inventoryApplication{policy: policy}).authorize(ctx, scope, InventoryActionOperate, controlplane.InventoryReadTargetServer, serverID)
+	return err
 }
 
 func rejectInventoryScopeOverrides(e *httpx.Event, allowed map[string]bool) error {
@@ -311,12 +348,6 @@ func writeInventoryHTTPError(e *httpx.Event, err error) error {
 	if inventoryErr.reasonCode == "tenant_context_missing" {
 		// Full FEATURE-ENTITLEMENT-UX envelope; keeps reason_code stable.
 		return tenantguard.Denial("techstack.inventory.read")
-	}
-	if inventoryErr.sessionTenantDenied {
-		// The session tenant itself was denied (e.g. bound to a since-removed
-		// tenant): answer with the retryable re-auth signal instead of a
-		// dead-end 403 so the client's central interceptor re-enters SSO.
-		return sessionreauth.Denial(e, inventoryErr.sessionTenantID, inventoryErr.cause)
 	}
 	details := map[string]any{inventoryReasonCodeField: inventoryErr.reasonCode}
 	switch inventoryErr.status {
@@ -401,6 +432,30 @@ func (a *inventoryApplication) serverHealth(ctx context.Context, scope inventory
 	}
 	projected := a.projectServer(*server, nil, a.now().UTC())
 	return inventoryServerHealth{ServerID: projected.ID, ObservedAt: projected.ObservedAt, Freshness: projected.Freshness, InventoryRevision: projected.InventoryRevision, Connection: projected.Connection, Health: projected.Health}, nil
+}
+
+func (a *inventoryApplication) serverPorts(ctx context.Context, scope inventoryScope, serverID string) (portinventory.Inventory, error) {
+	if a.ports == nil {
+		return portinventory.Inventory{}, &inventoryError{status: http.StatusServiceUnavailable, reasonCode: "port_inventory_unavailable", message: "Port inventory is unavailable"}
+	}
+	readScope, err := a.authorize(ctx, scope, InventoryActionRead, "server", serverID)
+	if err != nil {
+		return portinventory.Inventory{}, err
+	}
+	server, err := a.authorizedServer(ctx, readScope, serverID)
+	if err != nil {
+		return portinventory.Inventory{}, err
+	}
+	result, err := a.ports.ReadCurrent(ctx, portinventory.InventoryRequest{
+		TenantID: scope.tenantID, ServerID: serverID, OwnerSubjectID: server.OwnerSubjectID,
+	}, a.now())
+	if errors.Is(err, sql.ErrNoRows) {
+		return portinventory.Inventory{}, inventoryNotFound("server_not_found", "Server not found")
+	}
+	if err != nil {
+		return portinventory.Inventory{}, inventoryStoreError(err)
+	}
+	return result, nil
 }
 
 func (a *inventoryApplication) listServices(ctx context.Context, scope inventoryScope, serverID string, options inventoryPageOptions) (inventoryServiceList, error) {
@@ -537,17 +592,23 @@ func (a *inventoryApplication) authorize(ctx context.Context, scope inventorySco
 	if err == nil && principalScopeMatches && decision.ReadScope.AuthorizesTarget(resourceType, resourceID) {
 		return decision.ReadScope, nil
 	}
+	// A decision that does not cover the session's own principal is the
+	// malformed/forged-decision guard and must stay fail-closed below, not be
+	// softened into a recoverable session condition.
 	if err == nil {
 		err = errInventoryPolicyUnavailable
 	}
 	if errors.Is(err, ErrInventoryAccessDenied) {
+		// The principal simply holds no grant. This used to be reported as a
+		// dead session whenever the read carried no resource id, which cleared
+		// the session cookie and told the user to sign in again — a loop that
+		// cannot terminate, because signing in never creates an authorization
+		// grant (live 2026-09-18: a fresh login was ended by its own first
+		// request). A missing grant is a plain denial.
 		return controlplane.InventoryReadScope{}, &inventoryError{
 			status: http.StatusForbidden, reasonCode: "inventory_access_denied", message: "Inventory access denied",
-			// No resource id means the check denied the session tenant's own
-			// collection scope - the recovery class, not a resource denial.
-			sessionTenantDenied: resourceID == "",
-			sessionTenantID:     scope.tenantID,
-			cause:               err,
+			sessionTenantID: scope.tenantID,
+			cause:           err,
 		}
 	}
 	return controlplane.InventoryReadScope{}, &inventoryError{status: http.StatusServiceUnavailable, reasonCode: "inventory_policy_unavailable", message: "Inventory policy unavailable", cause: err}
@@ -681,7 +742,8 @@ func inventoryMetadataTime(metadata map[string]any, key string) *time.Time {
 }
 
 func (a *inventoryApplication) projectService(service controlplane.ServiceRuntime, server *controlplane.ServerRuntime, now time.Time) inventoryService {
-	base := (serviceRuntimeHandlers{now: func() time.Time { return now }}).response(service, server)
+	projector := serviceRuntimeHandlers{now: func() time.Time { return now }}
+	base := projector.response(service, server)
 	freshness := inventoryFreshnessAt(now, service.ObservedAt)
 	if strings.HasPrefix(base.Health.ReasonCode, "server_connection_") {
 		freshness.State, freshness.ReasonCode = inventoryUnavailable, safeReasonToken(base.Health.ReasonCode)

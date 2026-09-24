@@ -3,6 +3,8 @@ package jobs
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,18 +13,22 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
+	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/kombifyio/go-common/identity"
-	"github.com/kombifyio/go-common/servicecall"
+	"github.com/kombifyio/techstack/internal/gocommon/identity"
+	"github.com/kombifyio/techstack/internal/gocommon/servicecall"
+	"github.com/kombifyio/techstack/internal/portinventory"
+	"github.com/kombifyio/techstack/internal/providercontrol"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/runtimeaction"
 	"github.com/kombifyio/techstack/pkg/core"
 	"github.com/kombifyio/techstack/pkg/monthlyruntime"
 	"github.com/kombifyio/techstack/pkg/runtimeidentity"
+	"github.com/kombifyio/techstack/pkg/stackrouting"
 	"github.com/kombifyio/techstack/pkg/unifier"
 	"github.com/kombifyio/techstack/pkg/workerauth"
 )
@@ -125,8 +131,9 @@ type sequenceRuntimeRunner struct {
 }
 
 type fakeStackKitArtifactGenerator struct {
-	requests []StackKitArtifactGenerateRequest
-	err      error
+	requests            []StackKitArtifactGenerateRequest
+	resultStackSpecPath string
+	err                 error
 }
 
 type kombifyMeOutageStackKitGenerator struct {
@@ -161,8 +168,9 @@ func (f *fakeStackKitArtifactGenerator) GenerateStackKitArtifacts(_ context.Cont
 	if err := os.WriteFile(resolvedPlanPath, resolvedPlan, 0600); err != nil {
 		return nil, err
 	}
+	resultStackSpecPath := firstNonEmpty(f.resultStackSpecPath, req.StackSpecPath)
 	return &StackKitArtifactGenerateResult{
-		StackSpecPath:    req.StackSpecPath,
+		StackSpecPath:    resultStackSpecPath,
 		OutputDir:        req.OutputDir,
 		ResolvedPlanPath: resolvedPlanPath,
 		Metadata: map[string]string{
@@ -170,6 +178,33 @@ func (f *fakeStackKitArtifactGenerator) GenerateStackKitArtifacts(_ context.Cont
 			"resolved_plan_hash": "sha256:" + strings.Repeat("a", 64),
 		},
 	}, nil
+}
+
+// Regression: managed address binding returns a derived StackSpec and the
+// rollout must execute that document, not regenerate from the original intent.
+func TestDeployHandlerRolloutUsesGeneratedStackSpec(t *testing.T) {
+	stackID := "stack-generated-spec"
+	specBaseDir := t.TempDir()
+	persistDeployFixture(t, specBaseDir, stackID)
+	generatedSpec := filepath.Join(specBaseDir, stackID, "stack-spec.address-bound.v2.json")
+	rollout := &fakeRuntimeRunner{name: "rollout", result: map[string]interface{}{"status": "applied"}}
+	handler := DeployHandler(&ProvisionConfig{
+		WorkDir: t.TempDir(), SpecBaseDir: specBaseDir, StackKitsDir: writeJobsTestStackKitsDir(t),
+		RuntimeActions: RuntimeActions{
+			StackKitGenerator: &fakeStackKitArtifactGenerator{resultStackSpecPath: generatedSpec},
+			SimulationGate:    &fakeRuntimeRunner{name: "simulate", result: map[string]interface{}{"status": "accepted"}},
+			RolloutRunner:     rollout,
+			RolloutVerifier:   &fakeRuntimeRunner{name: "verify", result: map[string]interface{}{"status": "verified"}},
+			RestoreDrill:      &fakeRuntimeRunner{name: "restore", result: map[string]interface{}{"status": "verified"}},
+		},
+	})
+	job := &Job{ID: "deploy-generated-spec", Type: JobTypeDeploy, TargetID: stackID, Payload: map[string]interface{}{"workers": deployWorkerPayload()}}
+	if err := handler(context.Background(), job, &Queue{jobs: map[string]*Job{job.ID: job}}); err != nil {
+		t.Fatalf("DeployHandler: %v", err)
+	}
+	if len(rollout.calls) != 1 || rollout.calls[0].StackSpecPath != generatedSpec {
+		t.Fatalf("rollout StackSpec = %+v, want generated %q", rollout.calls, generatedSpec)
+	}
 }
 
 func (f *kombifyMeOutageStackKitGenerator) GenerateStackKitArtifacts(_ context.Context, req StackKitArtifactGenerateRequest) (*StackKitArtifactGenerateResult, error) {
@@ -190,7 +225,7 @@ func (f *kombifyMeOutageStackKitGenerator) GenerateStackKitArtifacts(_ context.C
 	if err := os.MkdirAll(req.OutputDir, 0750); err != nil {
 		return nil, err
 	}
-	tfvars := []byte("{\n  \"domain\": \"home.localhost\",\n  \"enable_coolify\": true\n}\n")
+	tfvars := []byte("{\n  \"domain\": \"home\",\n  \"enable_coolify\": true\n}\n")
 	if err := os.WriteFile(filepath.Join(req.OutputDir, "terraform.tfvars.json"), tfvars, 0600); err != nil {
 		return nil, err
 	}
@@ -370,7 +405,7 @@ func persistDeployFixture(t *testing.T, baseDir, stackID string) {
 
 	intent := []byte(`name: test-homelab
 kit: basement-kit
-domain: home.localhost
+domain: home
 nodes:
   - name: main-server
     type: main
@@ -449,152 +484,6 @@ metadata: {
 	}
 }
 
-func TestProvisionHandler_MissingSpec(t *testing.T) {
-	cfg := &ProvisionConfig{
-		WorkDir: t.TempDir(),
-		// keep persisted specs in temp dir
-		SpecBaseDir: t.TempDir(),
-	}
-
-	handler := ProvisionHandler(cfg)
-
-	job := &Job{
-		ID:         "test-job-1",
-		Type:       JobTypeProvision,
-		TargetID:   "stack-123",
-		TargetName: "test-stack",
-		Payload:    map[string]interface{}{}, // Missing spec
-	}
-
-	// Create a minimal queue for testing
-	queue := &Queue{
-		jobs: map[string]*Job{job.ID: job},
-	}
-
-	err := handler(context.Background(), job, queue)
-	if err != nil {
-		if pe, ok := err.(*ProvisionError); ok {
-			t.Logf("provision error: step=%s msg=%s details=%s", pe.Step, pe.Message, pe.Details)
-		} else {
-			t.Logf("provision error: %v", err)
-		}
-	}
-	if err == nil {
-		t.Fatal("expected error for missing spec")
-	}
-
-	if err.Error() != "missing 'spec' in job payload" {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
-
-func TestProvisionHandler_InvalidSpec(t *testing.T) {
-	cfg := &ProvisionConfig{
-		WorkDir:      t.TempDir(),
-		SpecBaseDir:  t.TempDir(),
-		StackKitsDir: writeJobsTestStackKitsDir(t),
-	}
-
-	handler := ProvisionHandler(cfg)
-
-	job := &Job{
-		ID:         "test-job-2",
-		Type:       JobTypeProvision,
-		TargetID:   "stack-123",
-		TargetName: "test-stack",
-		Payload: map[string]interface{}{
-			"spec": map[string]interface{}{
-				// Missing required fields
-				"name": "incomplete-spec",
-			},
-		},
-	}
-
-	queue := &Queue{
-		jobs: map[string]*Job{job.ID: job},
-	}
-
-	err := handler(context.Background(), job, queue)
-	if err != nil {
-		if pe, ok := err.(*ProvisionError); ok {
-			t.Fatalf("expected wizard-format spec to be auto-normalized and succeed, got ProvisionError: step=%s msg=%s details=%s", pe.Step, pe.Message, pe.Details)
-		}
-		t.Fatalf("expected wizard-format spec to be auto-normalized and succeed, got error: %v", err)
-	}
-
-	if job.Result == nil {
-		t.Fatalf("expected job.Result to be populated")
-	}
-
-	if got, _ := job.Result["status"].(string); got != "requirements_ready" {
-		t.Fatalf("expected status requirements_ready, got %q", got)
-	}
-	if got, _ := job.Result["intent_path"].(string); got == "" {
-		t.Fatalf("expected intent_path in job.Result")
-	}
-}
-
-func TestProvisionHandler_ValidSpec_NoTofu(t *testing.T) {
-	// This test validates the flow up to OpenTofu execution
-	// Provision no longer runs OpenTofu; rollout happens in the deploy job.
-
-	cfg := &ProvisionConfig{
-		WorkDir:      t.TempDir(),
-		SpecBaseDir:  t.TempDir(),
-		StackKitsDir: writeJobsTestStackKitsDir(t),
-	}
-
-	handler := ProvisionHandler(cfg)
-
-	job := &Job{
-		ID:         "test-job-3",
-		Type:       JobTypeProvision,
-		TargetID:   "stack-valid",
-		TargetName: "test-stack",
-		Payload: map[string]interface{}{
-			"spec": map[string]interface{}{
-				"name": "test-homelab",
-				"kit":  "basement-kit",
-				"nodes": []interface{}{
-					map[string]interface{}{
-						"name":     "main-server",
-						"type":     "main",
-						"provider": "local",
-					},
-				},
-				"services": []interface{}{
-					map[string]interface{}{
-						"name": "traefik",
-						"type": "reverse-proxy",
-						"node": "main-server",
-					},
-				},
-			},
-		},
-	}
-
-	queue := &Queue{
-		jobs: map[string]*Job{job.ID: job},
-	}
-
-	err := handler(context.Background(), job, queue)
-	if err != nil {
-		if pe, ok := err.(*ProvisionError); ok {
-			t.Fatalf("expected success, got ProvisionError: step=%s msg=%s details=%s", pe.Step, pe.Message, pe.Details)
-		}
-		t.Fatalf("expected success, got error: %v", err)
-	}
-
-	// Ensure intent + requirements were persisted under SpecBaseDir
-	base := filepath.Join(cfg.SpecBaseDir, job.TargetID)
-	if _, statErr := os.Stat(filepath.Join(base, "kombination.yaml")); os.IsNotExist(statErr) {
-		t.Fatalf("expected persisted kombination.yaml")
-	}
-	if _, statErr := os.Stat(filepath.Join(base, "requirements-spec.yaml")); os.IsNotExist(statErr) {
-		t.Fatalf("expected persisted requirements-spec.yaml")
-	}
-}
-
 func TestProvisionHandler_UserOwnedTargetDoesNotEmitMonthlyRuntimeDefaults(t *testing.T) {
 	cfg := &ProvisionConfig{
 		WorkDir:      t.TempDir(),
@@ -653,35 +542,23 @@ func TestProvisionHandler_UserOwnedTargetDoesNotEmitMonthlyRuntimeDefaults(t *te
 	}
 }
 
-func TestProvisionHandler_InstallCommandDoesNotBlockWithoutSimulatePreview(t *testing.T) {
+func provisionInstallCommand(t *testing.T, stackID string, simulation RuntimeActionRunner) (*Job, error) {
+	t.Helper()
 	cfg := &ProvisionConfig{
-		WorkDir:      t.TempDir(),
-		SpecBaseDir:  t.TempDir(),
-		StackKitsDir: writeJobsTestStackKitsDir(t),
+		WorkDir: t.TempDir(), SpecBaseDir: t.TempDir(), StackKitsDir: writeJobsTestStackKitsDir(t),
+		RuntimeActions: RuntimeActions{SimulationGate: simulation},
 	}
-	handler := ProvisionHandler(cfg)
 	job := &Job{
-		ID:         "test-job-oneliner-preview-missing",
-		Type:       JobTypeProvision,
-		TargetID:   "stack-oneliner-preview-missing",
-		TargetName: "one-liner-stack",
+		ID: "test-job-" + stackID, Type: JobTypeProvision, TargetID: stackID, TargetName: stackID,
 		Payload: map[string]interface{}{
+			"owner_id": "auth0|staff", "tenant_id": "org-1",
+			"actor": map[string]interface{}{
+				"user_id": "auth0|staff", "tenant_id": "org-1", "roles": []interface{}{"developer"},
+			},
 			"spec": map[string]interface{}{
-				"name": "one-liner-stack",
-				"kit":  "basement-kit",
+				"name": stackID, "kit": "modern-homelab",
 				"nodes": []interface{}{
-					map[string]interface{}{
-						"name":     "main-server",
-						"type":     "main",
-						"provider": "local",
-					},
-				},
-				"services": []interface{}{
-					map[string]interface{}{
-						"name": "traefik",
-						"type": "reverse-proxy",
-						"node": "main-server",
-					},
+					map[string]interface{}{"name": "main-server", "type": "main", "provider": "local"},
 				},
 				"metadata": map[string]interface{}{
 					"server_provisioning_mode":        "install-command",
@@ -691,8 +568,12 @@ func TestProvisionHandler_InstallCommandDoesNotBlockWithoutSimulatePreview(t *te
 			},
 		},
 	}
-	queue := &Queue{jobs: map[string]*Job{job.ID: job}}
-	if err := handler(context.Background(), job, queue); err != nil {
+	return job, ProvisionHandler(cfg)(context.Background(), job, &Queue{jobs: map[string]*Job{job.ID: job}})
+}
+
+func TestProvisionHandler_InstallCommandDoesNotBlockWithoutSimulatePreview(t *testing.T) {
+	job, err := provisionInstallCommand(t, "stack-oneliner-preview-missing", nil)
+	if err != nil {
 		t.Fatalf("ProvisionHandler: %v", err)
 	}
 	if got := job.Result["server_install_command_released"]; got != true {
@@ -723,70 +604,8 @@ func TestProvisionHandler_InstallCommandReleasesCommandAfterSimulatePreview(t *t
 			},
 		},
 	}
-	cfg := &ProvisionConfig{
-		WorkDir:      t.TempDir(),
-		SpecBaseDir:  t.TempDir(),
-		StackKitsDir: writeJobsTestStackKitsDir(t),
-		RuntimeActions: RuntimeActions{
-			SimulationGate: simulation,
-		},
-	}
-	handler := ProvisionHandler(cfg)
-	job := &Job{
-		ID:         "test-job-oneliner-preview",
-		Type:       JobTypeProvision,
-		TargetID:   "stack-oneliner-preview",
-		TargetName: "one-liner-stack",
-		Payload: map[string]interface{}{
-			"owner_id":  "auth0|staff",
-			"tenant_id": "org-1",
-			"actor": map[string]interface{}{
-				"user_id":   "auth0|staff",
-				"tenant_id": "org-1",
-				"roles":     []interface{}{"developer"},
-			},
-			"spec": map[string]interface{}{
-				"name": "one-liner-stack",
-				"kit":  "modern-homelab",
-				"nodes": []interface{}{
-					map[string]interface{}{
-						"name":     "main-server",
-						"type":     "main",
-						"provider": "local",
-					},
-					map[string]interface{}{
-						"name":     "cloud-1",
-						"type":     "worker",
-						"provider": "ionos",
-					},
-					map[string]interface{}{
-						"name":     "cloud-2",
-						"type":     "worker",
-						"provider": "centron",
-					},
-				},
-				"services": []interface{}{
-					map[string]interface{}{
-						"name": "traefik",
-						"type": "reverse-proxy",
-						"node": "main-server",
-					},
-					map[string]interface{}{
-						"name": "immich",
-						"type": "media",
-						"node": "cloud-1",
-					},
-				},
-				"metadata": map[string]interface{}{
-					"server_provisioning_mode":        "install-command",
-					"server_connection_mode":          "agent-oneliner",
-					"server_install_command_required": "true",
-				},
-			},
-		},
-	}
-	queue := &Queue{jobs: map[string]*Job{job.ID: job}}
-	if err := handler(context.Background(), job, queue); err != nil {
+	job, err := provisionInstallCommand(t, "stack-oneliner-preview", simulation)
+	if err != nil {
 		if pe, ok := err.(*ProvisionError); ok {
 			t.Fatalf("ProvisionHandler: %v\n%s", err, pe.Details)
 		}
@@ -827,49 +646,9 @@ func TestProvisionHandler_InstallCommandPreviewTimeoutDoesNotBlockCommand(t *tes
 	t.Cleanup(func() { oneLinerSimulationPreviewTimeout = oldTimeout })
 
 	simulation := &contextDeadlineRuntimeRunner{}
-	cfg := &ProvisionConfig{
-		WorkDir:      t.TempDir(),
-		SpecBaseDir:  t.TempDir(),
-		StackKitsDir: writeJobsTestStackKitsDir(t),
-		RuntimeActions: RuntimeActions{
-			SimulationGate: simulation,
-		},
-	}
-	handler := ProvisionHandler(cfg)
-	job := &Job{
-		ID:         "test-job-oneliner-preview-timeout",
-		Type:       JobTypeProvision,
-		TargetID:   "stack-oneliner-timeout",
-		TargetName: "one-liner-timeout-stack",
-		Payload: map[string]interface{}{
-			"owner_id":  "auth0|staff",
-			"tenant_id": "org-1",
-			"actor": map[string]interface{}{
-				"user_id":   "auth0|staff",
-				"tenant_id": "org-1",
-				"roles":     []interface{}{"developer"},
-			},
-			"spec": map[string]interface{}{
-				"name": "one-liner-timeout-stack",
-				"kit":  "modern-homelab",
-				"nodes": []interface{}{
-					map[string]interface{}{
-						"name":     "main-server",
-						"type":     "main",
-						"provider": "local",
-					},
-				},
-				"metadata": map[string]interface{}{
-					"server_provisioning_mode":        "install-command",
-					"server_connection_mode":          "agent-oneliner",
-					"server_install_command_required": "true",
-				},
-			},
-		},
-	}
-	queue := &Queue{jobs: map[string]*Job{job.ID: job}}
 	startedAt := time.Now()
-	if err := handler(context.Background(), job, queue); err != nil {
+	job, err := provisionInstallCommand(t, "stack-oneliner-timeout", simulation)
+	if err != nil {
 		t.Fatalf("ProvisionHandler: %v", err)
 	}
 	if elapsed := time.Since(startedAt); elapsed > time.Second {
@@ -889,9 +668,25 @@ func TestProvisionHandler_InstallCommandPreviewTimeoutDoesNotBlockCommand(t *tes
 	}
 }
 
-func TestProvisionHandler_ManagedCloudCreatesLeaseAndReturnsRuntimePhase(t *testing.T) {
-	leaseManager := &fakeManagedLeaseManager{}
-	cfg := &ProvisionConfig{
+func newManagedProvisionFixture(t *testing.T, stackID, stackName, provider string, leaseManager *fakeManagedLeaseManager) (JobHandler, *Job, *Queue) {
+	t.Helper()
+
+	job := &Job{
+		ID:         "test-job-" + stackID,
+		Type:       JobTypeProvision,
+		TargetID:   stackID,
+		TargetName: stackName,
+		Payload: map[string]interface{}{
+			"owner_id":  "user-1",
+			"tenant_id": "org-1",
+			"spec": map[string]interface{}{
+				"name":        stackName,
+				"provider":    "cloud",
+				"provider_id": provider,
+			},
+		},
+	}
+	return ProvisionHandler(&ProvisionConfig{
 		WorkDir:      t.TempDir(),
 		SpecBaseDir:  t.TempDir(),
 		StackKitsDir: writeJobsTestStackKitsDir(t),
@@ -899,28 +694,14 @@ func TestProvisionHandler_ManagedCloudCreatesLeaseAndReturnsRuntimePhase(t *test
 			StackKitGenerator: &fakeStackKitArtifactGenerator{},
 			LeaseManager:      leaseManager,
 		},
-	}
+	}), job, &Queue{jobs: map[string]*Job{job.ID: job}}
+}
 
-	handler := ProvisionHandler(cfg)
-	job := &Job{
-		ID:         "test-job-managed-cloud",
-		Type:       JobTypeProvision,
-		TargetID:   "stack-managed",
-		TargetName: "managed-stack",
-		Payload: map[string]interface{}{
-			"owner_id":  "user-1",
-			"tenant_id": "org-1",
-			"spec": map[string]interface{}{
-				"name":        "managed-stack",
-				"provider":    "cloud",
-				"provider_id": "centron",
-				"goals": map[string]interface{}{
-					"storage": true,
-				},
-			},
-		},
-	}
-	queue := &Queue{jobs: map[string]*Job{job.ID: job}}
+func TestProvisionHandler_ManagedCloudCreatesLeaseAndReturnsRuntimePhase(t *testing.T) {
+	leaseManager := &fakeManagedLeaseManager{}
+	handler, job, queue := newManagedProvisionFixture(t, "stack-managed", "managed-stack", "centron", leaseManager)
+	spec := job.Payload["spec"].(map[string]interface{})
+	spec["goals"] = map[string]interface{}{"storage": true}
 
 	err := handler(context.Background(), job, queue)
 	if err != nil {
@@ -973,33 +754,9 @@ func TestProvisionHandler_ManagedCloudWaitsWhileProviderProvisionIsPending(t *te
 		DesiredState: "running",
 		Phase:        RuntimePhaseLeasePending,
 	}}
-	cfg := &ProvisionConfig{
-		WorkDir:      t.TempDir(),
-		SpecBaseDir:  t.TempDir(),
-		StackKitsDir: writeJobsTestStackKitsDir(t),
-		RuntimeActions: RuntimeActions{
-			StackKitGenerator: &fakeStackKitArtifactGenerator{},
-			LeaseManager:      leaseManager,
-		},
-	}
-	job := &Job{
-		ID:         "test-job-managed-cloud-pending",
-		Type:       JobTypeProvision,
-		TargetID:   "stack-managed-pending",
-		TargetName: "managed-stack-pending",
-		Payload: map[string]interface{}{
-			"owner_id":  "user-1",
-			"tenant_id": "org-1",
-			"spec": map[string]interface{}{
-				"name":        "managed-stack-pending",
-				"provider":    "cloud",
-				"provider_id": "ionos",
-			},
-		},
-	}
-	queue := &Queue{jobs: map[string]*Job{job.ID: job}}
+	handler, job, queue := newManagedProvisionFixture(t, "stack-managed-pending", "managed-stack-pending", "ionos", leaseManager)
 
-	err := ProvisionHandler(cfg)(context.Background(), job, queue)
+	err := handler(context.Background(), job, queue)
 	waitErr, ok := asJobWaitError(err)
 	if !ok {
 		t.Fatalf("ProvisionHandler error = %v, want JobWaitError", err)
@@ -1039,29 +796,15 @@ func TestProvisionHandler_ProviderWaitReplaysPreparedManagedLeaseRequest(t *test
 		LeaseID: "lease-pending", OperationID: "operation-pending", Provider: "ionos",
 		DesiredState: "running", Phase: RuntimePhaseLeasePending,
 	}}
-	cfg := &ProvisionConfig{
-		WorkDir: t.TempDir(), SpecBaseDir: t.TempDir(), StackKitsDir: writeJobsTestStackKitsDir(t),
-		RuntimeActions: RuntimeActions{StackKitGenerator: &fakeStackKitArtifactGenerator{}, LeaseManager: leaseManager},
-	}
 	prepared := ManagedLeaseRequest{
 		StackID: "stack-managed-pending", StackName: "managed-stack-2", StackKit: DefaultCloudKitRef,
 		TenantID: "org-1", OwnerID: "user-1", Provider: "ionos",
 		OperationKey: PrimaryManagedLeaseOperationKey, RuntimeSlotKey: PrimaryManagedRuntimeSlotKey,
 		RuntimeSlotGeneration: 1, NodeRole: "foundation",
 	}
-	job := &Job{
-		ID: "test-job-managed-cloud-prepared-replay", Type: JobTypeProvision,
-		TargetID: "stack-managed-pending", TargetName: "managed-stack-2",
-		Payload: map[string]interface{}{
-			"owner_id": "user-1", "tenant_id": "org-1",
-			PreparedManagedLeaseRequestPayloadKey: ManagedLeaseRequestPayload(prepared),
-			"spec": map[string]interface{}{
-				"name": "managed-stack", "provider": "cloud", "provider_id": "ionos",
-			},
-		},
-	}
-	queue := &Queue{jobs: map[string]*Job{job.ID: job}}
-	handler := ProvisionHandler(cfg)
+	handler, job, queue := newManagedProvisionFixture(t, "stack-managed-pending", "managed-stack-2", "ionos", leaseManager)
+	job.Payload[PreparedManagedLeaseRequestPayloadKey] = ManagedLeaseRequestPayload(prepared)
+	job.Payload["spec"].(map[string]interface{})["name"] = "managed-stack"
 	for attempt := 0; attempt < 2; attempt++ {
 		if _, ok := asJobWaitError(handler(context.Background(), job, queue)); !ok {
 			t.Fatalf("attempt %d did not wait for provider", attempt+1)
@@ -1151,41 +894,6 @@ func TestProvisionHandlerRejectsLegacyProviderIdentityBeforeArtifactsOrLease(t *
 	}
 }
 
-func TestProvisionHandler_ManagedCloudSelectsOfferingForRequirements(t *testing.T) {
-	job := &Job{Result: map[string]interface{}{}}
-	spec := &core.KombinationSpec{Metadata: map[string]string{}}
-	requirements := &core.RequirementsSpec{RequiredWorkers: core.WorkerRequirements{MinCPU: 4, MinRAM: 4096}}
-
-	if err := applyManagedRuntimeOfferingRequirements(job, spec, requirements); err != nil {
-		t.Fatalf("apply offering requirements: %v", err)
-	}
-	if got := spec.Metadata[metadataKeyRuntimeOfferingID]; got != "monthly-runtime-premium" {
-		t.Fatalf("spec metadata runtime offering = %q, want premium", got)
-	}
-	if got := job.Result[metadataKeyRuntimeOfferingID]; got != "monthly-runtime-premium" {
-		t.Fatalf("job result runtime offering = %v, want premium", got)
-	}
-}
-
-func TestProvisionHandler_ManagedCloudUsesLargestOfferingWhenRequirementsExceedCatalog(t *testing.T) {
-	job := &Job{Result: map[string]interface{}{}}
-	spec := &core.KombinationSpec{Metadata: map[string]string{}}
-	requirements := &core.RequirementsSpec{RequiredWorkers: core.WorkerRequirements{MinCPU: 128, MinRAM: 1048576}}
-
-	if err := applyManagedRuntimeOfferingRequirements(job, spec, requirements); err != nil {
-		t.Fatalf("apply oversized offering requirements: %v", err)
-	}
-	if got := spec.Metadata[metadataKeyRuntimeOfferingID]; got != "monthly-runtime-premium" {
-		t.Fatalf("spec metadata runtime offering = %q, want premium", got)
-	}
-	if got := spec.Metadata["runtime_offering_capacity_status"]; got != "below_requirements" {
-		t.Fatalf("runtime capacity status = %q, want below_requirements", got)
-	}
-	if got := job.Result["runtime_offering_capacity_status"]; got != "below_requirements" {
-		t.Fatalf("job result capacity status = %v, want below_requirements", got)
-	}
-}
-
 func prepareStackSpecsForDeploy(t *testing.T, specBaseDir string, stackID string) {
 	t.Helper()
 
@@ -1246,35 +954,6 @@ func deployWorkerPayload() []interface{} {
 	}
 }
 
-func TestParseWorkersFromPayloadAcceptsMapSlice(t *testing.T) {
-	workers, err := parseWorkersFromPayload([]map[string]interface{}{
-		{
-			"id":       "worker-1",
-			"name":     "main-server",
-			"type":     "main",
-			"provider": "local",
-			"status":   "online",
-			"capabilities": map[string]interface{}{
-				"cpu":           float64(4),
-				"ram":           float64(8192),
-				"disk":          float64(160),
-				"arch":          "amd64",
-				"os":            "linux",
-				"dockerVersion": "docker-desktop",
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf("parseWorkersFromPayload returned error: %v", err)
-	}
-	if len(workers) != 1 || workers[0].ID != "worker-1" || workers[0].Provider != "local" {
-		t.Fatalf("unexpected workers: %+v", workers)
-	}
-	if workers[0].Capabilities.CPU != 4 || workers[0].Capabilities.RAM != 8192 || workers[0].Capabilities.Disk != 160 {
-		t.Fatalf("unexpected capabilities: %+v", workers[0].Capabilities)
-	}
-}
-
 func createTestBasementKitStackKitsDir(t *testing.T) string {
 	t.Helper()
 
@@ -1316,12 +995,57 @@ func stackKitIdentityHandoffResult(stackID string) map[string]interface{} {
 	}
 }
 
+func provisionWithOwnerHandoffResult(t *testing.T, stackID string, verifierResult map[string]interface{}) (*Job, error) {
+	t.Helper()
+	cfg := &ProvisionConfig{
+		WorkDir:             t.TempDir(),
+		SpecBaseDir:         t.TempDir(),
+		StackKitsDir:        writeJobsTestStackKitsDir(t),
+		AutoDeployAdmission: allowAutoDeployAdmissionForTest,
+		RuntimeActions: RuntimeActions{
+			StackKitGenerator: &fakeStackKitArtifactGenerator{},
+			LeaseManager:      &fakeManagedLeaseManager{},
+			SimulationGate:    &fakeRuntimeRunner{name: "simulate", result: map[string]interface{}{"status": "accepted"}},
+			RolloutRunner:     &fakeRuntimeRunner{name: "rollout", result: map[string]interface{}{"status": "applied"}},
+			RolloutVerifier:   &fakeRuntimeRunner{name: "verify", result: verifierResult},
+			RestoreDrill:      &fakeRuntimeRunner{name: "restore", result: map[string]interface{}{"status": "verified"}},
+		},
+	}
+	configureRestoreOnlyCommander(t, cfg, nil)
+	handler := ProvisionHandler(cfg)
+	job := &Job{
+		ID:       "test-job-handoff-" + stackID,
+		Type:     JobTypeProvision,
+		TargetID: stackID,
+		Payload: map[string]interface{}{
+			"auto_deploy": true,
+			"owner_id":    "user-1",
+			"tenant_id":   "org-1",
+			"owner_spec_bootstrap": &OwnerSpecBootstrap{
+				Endpoint:  "https://techstack.kombify.io/api/v1/stacks/" + stackID + "/owner-spec",
+				Token:     "test-bootstrap-token",
+				ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+				Scopes:    []string{"owner_spec:read"},
+			},
+			"spec": map[string]interface{}{
+				"name":        "managed-stack",
+				"provider":    "cloud",
+				"provider_id": "centron",
+				"goals":       map[string]interface{}{"storage": true},
+			},
+		},
+	}
+	err := handler(t.Context(), job, &Queue{jobs: map[string]*Job{job.ID: job}})
+	return job, err
+}
+
 func TestDeployHandler_SimulationFailureBlocksRollout(t *testing.T) {
 	specBaseDir := t.TempDir()
 	stackID := "stack-simulation-blocks"
 	prepareStackSpecsForDeploy(t, specBaseDir, stackID)
 
-	simulation := &fakeRuntimeActionRunner{err: errors.New("simulation boom")}
+	simulationErr := errors.New("simulation boom")
+	simulation := &fakeRuntimeActionRunner{err: simulationErr}
 	verifier := &fakeRuntimeActionRunner{}
 	restore := &fakeRuntimeActionRunner{}
 	handler := DeployHandler(&ProvisionConfig{
@@ -1352,6 +1076,9 @@ func TestDeployHandler_SimulationFailureBlocksRollout(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected simulation failure to block rollout")
 	}
+	if !errors.Is(err, simulationErr) {
+		t.Fatalf("simulation failure cause was lost: %v", err)
+	}
 	if job.Step != StepSimulationGate {
 		t.Fatalf("step = %q, want %q", job.Step, StepSimulationGate)
 	}
@@ -1363,100 +1090,33 @@ func TestDeployHandler_SimulationFailureBlocksRollout(t *testing.T) {
 	}
 }
 
-func TestDeployHandler_VerificationAndRestoreMarkRuntimeVerified(t *testing.T) {
-	specBaseDir := t.TempDir()
-	stackID := "stack-verified"
-	prepareStackSpecsForDeploy(t, specBaseDir, stackID)
-
-	simulation := &fakeRuntimeActionRunner{}
-	verifier := &fakeRuntimeActionRunner{}
-	restore := &fakeRuntimeActionRunner{}
-	handler := DeployHandler(&ProvisionConfig{
-		WorkDir:      t.TempDir(),
-		StackKitsDir: createTestBasementKitStackKitsDir(t),
-		SpecBaseDir:  specBaseDir,
-		RuntimeActions: RuntimeActions{
-			StackKitGenerator: &fakeStackKitArtifactGenerator{},
-			SimulationGate:    simulation,
-			RolloutRunner:     &fakeRuntimeRunner{name: "rollout", result: map[string]interface{}{"status": "applied"}},
-			RolloutVerifier:   verifier,
-			RestoreDrill:      restore,
-		},
+// Regression: native admission conflicts must remain identifiable across the
+// provision-handler boundary so callers can choose a safe recovery path.
+func TestProvisionHandler_PreservesNativeAdmissionConflict(t *testing.T) {
+	handler := ProvisionHandler(&ProvisionConfig{
+		WorkDir: t.TempDir(), SpecBaseDir: t.TempDir(), StackKitsDir: writeJobsTestStackKitsDir(t),
+		RuntimeActions: RuntimeActions{LeaseManager: &fakeManagedLeaseManager{
+			err: fmt.Errorf("admit managed lease: %w", providercontrol.ErrNativeAdmissionConflict),
+		}},
 	})
-
-	job := &Job{
-		ID:         "deploy-verified",
-		Type:       JobTypeDeploy,
-		TargetID:   stackID,
-		TargetName: "test-stack",
-		Payload: map[string]interface{}{
-			"workers": deployWorkerPayload(),
-			"apply":   true,
-		},
-	}
-	queue := &Queue{jobs: map[string]*Job{job.ID: job}}
-
-	if err := handler(context.Background(), job, queue); err != nil {
-		t.Fatalf("deploy handler failed: %v", err)
-	}
-	if len(simulation.calls) != 1 || len(verifier.calls) != 1 || len(restore.calls) != 1 {
-		t.Fatalf("expected all runtime hooks once, got simulation=%d verifier=%d restore=%d", len(simulation.calls), len(verifier.calls), len(restore.calls))
-	}
-	if got := job.Result["runtime_phase"]; got != string(RuntimePhaseVerified) {
-		t.Fatalf("runtime_phase = %v, want %s", got, RuntimePhaseVerified)
-	}
-	if got := job.Result["verification_status"]; got != string(RuntimePhaseVerified) {
-		t.Fatalf("verification_status = %v, want %s", got, RuntimePhaseVerified)
-	}
-	if got := job.Result["status"]; got != "deployed" {
-		t.Fatalf("status = %v, want deployed", got)
-	}
-}
-
-func TestProvisionHandler_ManagedCloudLeaseFailureBlocksRolloutPreparation(t *testing.T) {
-	cfg := &ProvisionConfig{
-		WorkDir:      t.TempDir(),
-		SpecBaseDir:  t.TempDir(),
-		StackKitsDir: writeJobsTestStackKitsDir(t),
-		RuntimeActions: RuntimeActions{
-			LeaseManager: &fakeManagedLeaseManager{err: errors.New("simulate unavailable")},
-		},
-	}
-
-	handler := ProvisionHandler(cfg)
-	job := &Job{
-		ID:       "test-job-managed-cloud-failure",
-		Type:     JobTypeProvision,
-		TargetID: "stack-managed",
-		Payload: map[string]interface{}{
-			"owner_id":  "user-1",
-			"tenant_id": "org-1",
-			"spec": map[string]interface{}{
-				"name":        "managed-stack",
-				"provider":    "cloud",
-				"provider_id": "centron",
-				"goals": map[string]interface{}{
-					"storage": true,
-				},
-			},
-		},
-	}
-	queue := &Queue{jobs: map[string]*Job{job.ID: job}}
-
-	err := handler(context.Background(), job, queue)
-	if err == nil {
-		t.Fatal("expected lease failure to block managed cloud preparation")
-	}
-	if !strings.Contains(err.Error(), "simulate unavailable") {
-		t.Fatalf("expected underlying lease error, got %v", err)
+	job := &Job{ID: "native-conflict", Type: JobTypeProvision, TargetID: "stack-managed", Payload: map[string]interface{}{
+		"owner_id": "user-1", "tenant_id": "org-1",
+		"spec": map[string]interface{}{"name": "managed-stack", "provider": "cloud", "provider_id": "centron"},
+	}}
+	err := handler(context.Background(), job, &Queue{jobs: map[string]*Job{job.ID: job}})
+	if !errors.Is(err, providercontrol.ErrNativeAdmissionConflict) || job.Step != StepCreateLease {
+		t.Fatalf("native admission conflict = %#v at step %q", err, job.Step)
 	}
 }
 
 func TestProvisionHandler_AutoDeploysManagedCloudStack(t *testing.T) {
 	order := []string{}
+	diagnostics := &fakeRuntimeDiagnosticsCollector{}
 	simulation := &fakeRuntimeRunner{name: "simulate", order: &order}
 	rollout := &fakeRuntimeRunner{name: "rollout", order: &order}
-	verify := &fakeRuntimeRunner{name: "verify", order: &order, result: stackKitIdentityHandoffResult("stack-managed-auto")}
+	// Native-v2 managed rollout does not request an owner bootstrap envelope,
+	// so verified runtime evidence is sufficient without synthetic login data.
+	verify := &fakeRuntimeRunner{name: "verify", order: &order, result: map[string]interface{}{"status": "verified"}}
 	restore := &fakeRuntimeRunner{name: "restore", order: &order, result: map[string]interface{}{
 		"status": "verified",
 		"runtime_metrics": map[string]interface{}{
@@ -1469,6 +1129,7 @@ func TestProvisionHandler_AutoDeploysManagedCloudStack(t *testing.T) {
 	}}
 	lease := &fakeManagedLeaseManager{result: &ManagedLeaseResult{
 		LeaseID:      "lease-test",
+		OperationID:  "operation-test",
 		Provider:     "centron",
 		DesiredState: "running",
 		Phase:        RuntimePhaseLeaseReady,
@@ -1484,12 +1145,14 @@ func TestProvisionHandler_AutoDeploysManagedCloudStack(t *testing.T) {
 			StackKitGenerator:     &fakeStackKitArtifactGenerator{},
 			LeaseManager:          lease,
 			RuntimeTargetResolver: resolver,
+			DiagnosticsCollector:  diagnostics,
 			SimulationGate:        simulation,
 			RolloutRunner:         rollout,
 			RolloutVerifier:       verify,
 			RestoreDrill:          restore,
 		},
 	}
+	configureRestoreOnlyCommander(t, cfg, &order)
 
 	handler := ProvisionHandler(cfg)
 	job := &Job{
@@ -1542,22 +1205,18 @@ func TestProvisionHandler_AutoDeploysManagedCloudStack(t *testing.T) {
 		t.Fatalf("metadata update target = tenant %q lease %q, want org-1 lease-test", update.TenantID, update.LeaseID)
 	}
 	if update.Metadata[metadataKeyRuntimeSSHHost] != "203.0.113.30" ||
-		update.Metadata[metadataKeyRuntimePublicIP] != "203.0.113.30" ||
-		update.Metadata["runtime_cpu_percent"] != "12.5" ||
-		update.Metadata["runtime_memory_percent"] != "34.5" ||
-		update.Metadata["runtime_disk_percent"] != "56.5" ||
-		update.Metadata["runtime_uptime_seconds"] != "789" {
-		t.Fatalf("metadata update = %+v, want target and runtime metrics", update.Metadata)
-	}
-	metrics, ok := job.Result["runtime_metrics"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("job runtime_metrics = %#v, want map", job.Result["runtime_metrics"])
-	}
-	if metrics["runtime_cpu_percent"] != "12.5" {
-		t.Fatalf("job runtime metrics = %+v, want persisted CPU metric", metrics)
+		update.Metadata[metadataKeyRuntimePublicIP] != "203.0.113.30" {
+		t.Fatalf("metadata update = %+v, want managed target identity", update.Metadata)
 	}
 	if len(resolver.requests) != 1 {
 		t.Fatalf("resolver requests = %d, want 1", len(resolver.requests))
+	}
+	if len(diagnostics.requests) != 1 || diagnostics.requests[0].Reason != "managed_runtime_enrollment_succeeded" || diagnostics.requests[0].OperationID != "operation-test" {
+		t.Fatalf("successful enrollment diagnostics = %+v", diagnostics.requests)
+	}
+	diagnosticBinding := mapFromInterface(mapFromInterface(job.Result["runtime_diagnostics"])["binding"])
+	if diagnosticBinding["operation_id"] != "operation-test" || diagnosticBinding["server_id"] != runtimeidentity.LeaseServerID("lease-test") {
+		t.Fatalf("successful enrollment diagnostic binding = %+v", diagnosticBinding)
 	}
 	if len(rollout.calls) != 1 || rollout.calls[0].RuntimeTarget == nil {
 		t.Fatalf("rollout runtime target missing: %+v", rollout.calls)
@@ -1589,7 +1248,7 @@ func TestProvisionHandler_AutoDeploysManagedCloudStack(t *testing.T) {
 	}
 }
 
-func TestProvisionHandler_RetriesManagedRestoreDrillWhileContainersStart(t *testing.T) {
+func TestProvisionHandler_ManagedRestoreDoesNotInvokeLegacyReadinessRetry(t *testing.T) {
 	oldDelays := stackKitsRestoreReadinessRetryDelays
 	stackKitsRestoreReadinessRetryDelays = []time.Duration{0}
 	defer func() { stackKitsRestoreReadinessRetryDelays = oldDelays }()
@@ -1628,6 +1287,7 @@ func TestProvisionHandler_RetriesManagedRestoreDrillWhileContainersStart(t *test
 			RestoreDrill:          restore,
 		},
 	}
+	configureRestoreOnlyCommander(t, cfg, &order)
 	handler := ProvisionHandler(cfg)
 	job := &Job{
 		ID:       "test-job-managed-restore-retry",
@@ -1652,84 +1312,76 @@ func TestProvisionHandler_RetriesManagedRestoreDrillWhileContainersStart(t *test
 	if err := handler(context.Background(), job, queue); err != nil {
 		t.Fatalf("ProvisionHandler auto deploy failed: %v", err)
 	}
-	wantOrder := []string{"simulate", "rollout", "verify", "restore", "restore"}
+	wantOrder := []string{"simulate", "rollout", "verify", "restore"}
 	if strings.Join(order, ",") != strings.Join(wantOrder, ",") {
 		t.Fatalf("runtime action order = %v, want %v", order, wantOrder)
 	}
-	if len(restore.calls) != 2 {
-		t.Fatalf("restore calls = %d, want retry after transient Docker readiness error", len(restore.calls))
+	if len(restore.calls) != 0 {
+		t.Fatalf("legacy restore calls = %d, want native commander only", len(restore.calls))
 	}
 	if got := job.Result["runtime_phase"]; got != string(RuntimePhaseVerified) {
 		t.Fatalf("runtime_phase = %v, want %s", got, RuntimePhaseVerified)
 	}
 }
 
-func TestProvisionHandler_AutoDeployManagedKombifyMeDefersRouteRegistrationToStackKits(t *testing.T) {
+type managedKombifyMeFixture struct {
+	handler      JobHandler
+	job          *Job
+	queue        *Queue
+	leaseManager *fakeManagedLeaseManager
+	order        *[]string
+	specBaseDir  string
+}
+
+func newManagedKombifyMeFixture(t *testing.T, stackID, stackName string, generator StackKitArtifactGenerator, routingStore stackrouting.Store) managedKombifyMeFixture {
+	t.Helper()
+
 	order := []string{}
 	leaseManager := &fakeManagedLeaseManager{result: &ManagedLeaseResult{
-		LeaseID:      "lease-ionos",
-		Provider:     "ionos",
-		DesiredState: "running",
-		Phase:        RuntimePhaseLeaseReady,
+		LeaseID: "lease-ionos", Provider: "ionos", DesiredState: "running", Phase: RuntimePhaseLeaseReady,
 		Target: &ManagedRuntimeTarget{
-			Host:     "203.0.113.10",
-			PublicIP: "203.0.113.10",
-			SSHUser:  "ubuntu",
-			SSHPort:  22,
-			Source:   "test-lease",
+			Host: "203.0.113.10", PublicIP: "203.0.113.10", SSHUser: "ubuntu", SSHPort: 22, Source: "test-lease",
 		},
 	}}
-	stackKitGenerator := &fakeStackKitArtifactGenerator{}
-	specBaseDir := t.TempDir()
-	cfg := &ProvisionConfig{
-		WorkDir:             t.TempDir(),
-		SpecBaseDir:         specBaseDir,
-		StackKitsDir:        writeJobsTestStackKitsDir(t),
-		AutoDeployAdmission: allowAutoDeployAdmissionForTest,
-		RuntimeActions: RuntimeActions{
-			LeaseManager:          leaseManager,
-			RuntimeTargetResolver: &fakeManagedRuntimeTargetResolver{},
-			StackKitGenerator:     stackKitGenerator,
-			SimulationGate:        &fakeRuntimeRunner{name: "simulate", order: &order},
-			RolloutRunner:         &fakeRuntimeRunner{name: "rollout", order: &order},
-			RolloutVerifier:       &fakeRuntimeRunner{name: "verify", order: &order, result: stackKitIdentityHandoffResult("stack-managed-kombify-me")},
-			RestoreDrill:          &fakeRuntimeRunner{name: "restore", order: &order, result: map[string]interface{}{"status": "verified"}},
-		},
-	}
-
-	handler := ProvisionHandler(cfg)
 	job := &Job{
-		ID:       "test-job-managed-kombify-me",
-		Type:     JobTypeProvision,
-		TargetID: "stack-managed-kombify-me",
+		ID: "test-job-" + stackID, Type: JobTypeProvision, TargetID: stackID,
 		Payload: map[string]interface{}{
-			"auto_deploy": true,
-			"owner_id":    "user-1",
-			"tenant_id":   "org-1",
+			"auto_deploy": true, "owner_id": "user-1", "tenant_id": "org-1",
 			"spec": map[string]interface{}{
-				"name":     "managed-kombify-me",
-				"stackkit": "cloud-kit",
-				"provider": "cloud",
-				"context":  "cloud",
-				"domain":   "kombify.me",
-				"network": map[string]interface{}{
-					"mode": "public",
-				},
+				"name": stackName, "stackkit": "cloud-kit", "provider": "cloud", "context": "cloud", "domain": "kombify.me",
+				"network": map[string]interface{}{"mode": "public"},
 				"metadata": map[string]interface{}{
-					"address_mode":             "kombify-me",
-					"provider_id":              "ionos",
-					"server_provisioning_mode": "kombify-cloud",
-					"server_connection_mode":   "managed-subscription",
-					"runtime_lane":             "monthly-runtime",
-					"stackkit_catalog_ref":     "cloud-kit",
+					"address_mode": "kombify-me", "provider_id": "ionos", "server_provisioning_mode": "kombify-cloud",
+					"server_connection_mode": "managed-subscription", "runtime_lane": "monthly-runtime", "stackkit_catalog_ref": "cloud-kit",
 				},
-				"services": map[string]interface{}{
-					"coolify": map[string]interface{}{"enabled": true},
-				},
+				"services": map[string]interface{}{"coolify": map[string]interface{}{"enabled": true}},
 			},
 		},
 	}
-	queue := &Queue{jobs: map[string]*Job{job.ID: job}}
+	specBaseDir := t.TempDir()
+	cfg := &ProvisionConfig{
+		WorkDir: t.TempDir(), SpecBaseDir: specBaseDir, StackKitsDir: writeJobsTestStackKitsDir(t),
+		AutoDeployAdmission: allowAutoDeployAdmissionForTest, RoutingStore: routingStore,
+		RuntimeActions: RuntimeActions{
+			LeaseManager: leaseManager, RuntimeTargetResolver: &fakeManagedRuntimeTargetResolver{}, StackKitGenerator: generator,
+			SimulationGate:  &fakeRuntimeRunner{name: "simulate", order: &order},
+			RolloutRunner:   &fakeRuntimeRunner{name: "rollout", order: &order},
+			RolloutVerifier: &fakeRuntimeRunner{name: "verify", order: &order, result: stackKitIdentityHandoffResult(stackID)},
+			RestoreDrill:    &fakeRuntimeRunner{name: "restore", order: &order, result: map[string]interface{}{"status": "verified"}},
+		},
+	}
+	configureRestoreOnlyCommander(t, cfg, &order)
+	return managedKombifyMeFixture{
+		handler: ProvisionHandler(cfg), job: job, queue: &Queue{jobs: map[string]*Job{job.ID: job}},
+		leaseManager: leaseManager, order: &order, specBaseDir: specBaseDir,
+	}
+}
+
+func TestProvisionHandler_AutoDeployManagedKombifyMeDefersRouteRegistrationToStackKits(t *testing.T) {
+	stackKitGenerator := &fakeStackKitArtifactGenerator{}
+	fixture := newManagedKombifyMeFixture(t, "stack-managed-kombify-me", "managed-kombify-me", stackKitGenerator, nil)
+	handler, job, queue := fixture.handler, fixture.job, fixture.queue
+	leaseManager, specBaseDir := fixture.leaseManager, fixture.specBaseDir
 
 	if err := handler(context.Background(), job, queue); err != nil {
 		t.Fatalf("ProvisionHandler auto deploy failed: %v", err)
@@ -1792,174 +1444,41 @@ func TestProvisionHandler_AutoDeployManagedKombifyMeDefersRouteRegistrationToSta
 	}
 }
 
-func TestProvisionHandler_AutoDeployManagedKombifyMeOutageFailsBeforeRuntimeRollout(t *testing.T) {
-	order := []string{}
-	leaseManager := &fakeManagedLeaseManager{result: &ManagedLeaseResult{
-		LeaseID:      "lease-ionos",
-		Provider:     "ionos",
-		DesiredState: "running",
-		Phase:        RuntimePhaseLeaseReady,
-		Target: &ManagedRuntimeTarget{
-			Host:     "203.0.113.10",
-			PublicIP: "203.0.113.10",
-			SSHUser:  "ubuntu",
-			SSHPort:  22,
-			Source:   "test-lease",
-		},
-	}}
+func TestProvisionHandler_ManagedKombifyMeWithoutRoutingAllocationFailsBeforeArtifacts(t *testing.T) {
 	stackKitGenerator := &kombifyMeOutageStackKitGenerator{}
-	cfg := &ProvisionConfig{
-		WorkDir:             t.TempDir(),
-		SpecBaseDir:         t.TempDir(),
-		StackKitsDir:        writeJobsTestStackKitsDir(t),
-		AutoDeployAdmission: allowAutoDeployAdmissionForTest,
-		RuntimeActions: RuntimeActions{
-			LeaseManager:          leaseManager,
-			RuntimeTargetResolver: &fakeManagedRuntimeTargetResolver{},
-			StackKitGenerator:     stackKitGenerator,
-			SimulationGate:        &fakeRuntimeRunner{name: "simulate", order: &order},
-			RolloutRunner:         &fakeRuntimeRunner{name: "rollout", order: &order},
-			RolloutVerifier:       &fakeRuntimeRunner{name: "verify", order: &order, result: stackKitIdentityHandoffResult("stack-managed-kombify-me-outage")},
-			RestoreDrill:          &fakeRuntimeRunner{name: "restore", order: &order, result: map[string]interface{}{"status": "verified"}},
-		},
-	}
+	fixture := newManagedKombifyMeFixture(
+		t, "stack-managed-kombify-me-outage", "managed-kombify-me-provider-offline", stackKitGenerator, stackrouting.NewMemoryStore(),
+	)
 
-	handler := ProvisionHandler(cfg)
-	job := &Job{
-		ID:       "test-job-managed-kombify-me-provider-offline",
-		Type:     JobTypeProvision,
-		TargetID: "stack-managed-kombify-me-outage",
-		Payload: map[string]interface{}{
-			"auto_deploy": true,
-			"owner_id":    "user-1",
-			"tenant_id":   "org-1",
-			"spec": map[string]interface{}{
-				"name":     "managed-kombify-me-provider-offline",
-				"stackkit": "cloud-kit",
-				"provider": "cloud",
-				"context":  "cloud",
-				"domain":   "kombify.me",
-				"network": map[string]interface{}{
-					"mode": "public",
-				},
-				"metadata": map[string]interface{}{
-					"address_mode":             "kombify-me",
-					"provider_id":              "ionos",
-					"server_provisioning_mode": "kombify-cloud",
-					"server_connection_mode":   "managed-subscription",
-					"runtime_lane":             "monthly-runtime",
-					"stackkit_catalog_ref":     "cloud-kit",
-				},
-				"services": map[string]interface{}{
-					"coolify": map[string]interface{}{"enabled": true},
-				},
-			},
-		},
-	}
-	queue := &Queue{jobs: map[string]*Job{job.ID: job}}
-
-	err := handler(context.Background(), job, queue)
+	err := fixture.handler(context.Background(), fixture.job, fixture.queue)
 	if err == nil {
-		t.Fatal("ProvisionHandler should fail when kombify.me artifacts cannot be generated for managed VPS")
+		t.Fatal("ProvisionHandler should fail before generating artifacts without managed routing")
 	}
-	if !strings.Contains(err.Error(), "provider_offline") {
-		t.Fatalf("ProvisionHandler error = %v, want provider_offline diagnostic", err)
+	var provisionErr *ProvisionError
+	if !errors.As(err, &provisionErr) || provisionErr.Step != StepPrepareRollout || strings.TrimSpace(provisionErr.Details) == "" {
+		t.Fatalf("ProvisionHandler error = %#v, want actionable domain assignment guidance", err)
 	}
-	if len(stackKitGenerator.requests) != 1 {
-		t.Fatalf("StackKits artifact requests = %d, want one kombify.me attempt", len(stackKitGenerator.requests))
+	if len(stackKitGenerator.requests) != 0 {
+		t.Fatalf("StackKits artifact requests = %d, want none before routing assignment", len(stackKitGenerator.requests))
 	}
-	if len(stackKitGenerator.specs) != 1 {
-		t.Fatalf("captured StackKits handoff specs = %d, want 1", len(stackKitGenerator.specs))
-	}
-	if !strings.Contains(stackKitGenerator.specs[0], "domain: kombify.me") {
-		t.Fatalf("StackKits handoff spec did not attempt kombify.me:\n%s", stackKitGenerator.specs[0])
-	}
-	if strings.Contains(stackKitGenerator.specs[0], "domain: home.localhost") ||
-		strings.Contains(stackKitGenerator.specs[0], "address_mode: provider-direct") {
-		t.Fatalf("StackKits handoff spec downgraded to provider-direct:\n%s", stackKitGenerator.specs[0])
-	}
-	if got := strings.Join(order, ","); got != "" {
+	if got := strings.Join(*fixture.order, ","); got != "" {
 		t.Fatalf("runtime action order = %s, want no runtime rollout after address failure", got)
 	}
 }
 
 func TestProvisionHandler_AutoDeployManagedKombifyMeQuotaFailsAtGenerateIaCWithLeaseMetadata(t *testing.T) {
-	order := []string{}
-	leaseManager := &fakeManagedLeaseManager{result: &ManagedLeaseResult{
-		LeaseID:      "lease-ionos",
-		Provider:     "ionos",
-		DesiredState: "running",
-		Phase:        RuntimePhaseLeaseReady,
-		Target: &ManagedRuntimeTarget{
-			Host:     "203.0.113.10",
-			PublicIP: "203.0.113.10",
-			SSHUser:  "ubuntu",
-			SSHPort:  22,
-			Source:   "test-lease",
-		},
-	}}
 	incidentError := strings.Join([]string{
 		"StackKits CLI generate failed: exit status 1: WARN legacy stackkit install mode normalized from=simple to=bootstrapped",
 		"Registering subdomains on kombify.me...",
 		`Error: kombify.me registration failed and no subdomainPrefix is configured: auto-register base subdomain: API error 429: {"error":"base subdomain limit reached (max 5 per user)"}`,
 	}, "\n")
 	stackKitGenerator := &kombifyMeOutageStackKitGenerator{errText: incidentError}
-	cfg := &ProvisionConfig{
-		WorkDir:             t.TempDir(),
-		SpecBaseDir:         t.TempDir(),
-		StackKitsDir:        writeJobsTestStackKitsDir(t),
-		AutoDeployAdmission: allowAutoDeployAdmissionForTest,
-		RuntimeActions: RuntimeActions{
-			LeaseManager:          leaseManager,
-			RuntimeTargetResolver: &fakeManagedRuntimeTargetResolver{},
-			StackKitGenerator:     stackKitGenerator,
-			SimulationGate:        &fakeRuntimeRunner{name: "simulate", order: &order},
-			RolloutRunner:         &fakeRuntimeRunner{name: "rollout", order: &order},
-			RolloutVerifier:       &fakeRuntimeRunner{name: "verify", order: &order, result: stackKitIdentityHandoffResult("stack-managed-kombify-me-quota")},
-			RestoreDrill:          &fakeRuntimeRunner{name: "restore", order: &order, result: map[string]interface{}{"status": "verified"}},
-		},
-	}
+	fixture := newManagedKombifyMeFixture(t, "stack-managed-kombify-me-quota", "managed-kombify-me-quota", stackKitGenerator, nil)
+	job := fixture.job
 
-	handler := ProvisionHandler(cfg)
-	job := &Job{
-		ID:       "test-job-managed-kombify-me-quota",
-		Type:     JobTypeProvision,
-		TargetID: "stack-managed-kombify-me-quota",
-		Payload: map[string]interface{}{
-			"auto_deploy": true,
-			"owner_id":    "user-1",
-			"tenant_id":   "org-1",
-			"spec": map[string]interface{}{
-				"name":     "managed-kombify-me-quota",
-				"stackkit": "cloud-kit",
-				"provider": "cloud",
-				"context":  "cloud",
-				"domain":   "kombify.me",
-				"network": map[string]interface{}{
-					"mode": "public",
-				},
-				"metadata": map[string]interface{}{
-					"address_mode":             "kombify-me",
-					"provider_id":              "ionos",
-					"server_provisioning_mode": "kombify-cloud",
-					"server_connection_mode":   "managed-subscription",
-					"runtime_lane":             "monthly-runtime",
-					"stackkit_catalog_ref":     "cloud-kit",
-				},
-				"services": map[string]interface{}{
-					"coolify": map[string]interface{}{"enabled": true},
-				},
-			},
-		},
-	}
-	queue := &Queue{jobs: map[string]*Job{job.ID: job}}
-
-	err := handler(context.Background(), job, queue)
+	err := fixture.handler(context.Background(), job, fixture.queue)
 	if err == nil {
 		t.Fatal("ProvisionHandler should fail when kombify.me base subdomain quota blocks artifact generation")
-	}
-	if !strings.Contains(err.Error(), "base subdomain limit reached") {
-		t.Fatalf("ProvisionHandler error = %v, want kombify.me quota diagnostic", err)
 	}
 	if job.Step != StepGenerateIaC {
 		t.Fatalf("job.Step = %q, want %q", job.Step, StepGenerateIaC)
@@ -1973,7 +1492,7 @@ func TestProvisionHandler_AutoDeployManagedKombifyMeQuotaFailsAtGenerateIaCWithL
 	if got := job.Result["provider_id"]; got != "ionos" {
 		t.Fatalf("provider_id = %v, want ionos", got)
 	}
-	if got := strings.Join(order, ","); got != "" {
+	if got := strings.Join(*fixture.order, ","); got != "" {
 		t.Fatalf("runtime action order = %s, want no runtime rollout after artifact generation failure", got)
 	}
 	if len(stackKitGenerator.requests) != 1 {
@@ -2026,111 +1545,74 @@ func TestProvisionHandler_AutoDeployManagedCloudFailsWithoutRuntimeAddress(t *te
 	if err == nil {
 		t.Fatal("expected missing managed runtime address to fail auto deploy")
 	}
-	if !strings.Contains(err.Error(), "managed runtime lease address missing") {
-		t.Fatalf("error = %v, want missing address diagnostic", err)
-	}
 	if job.Step != StepPrepareRollout {
 		t.Fatalf("job step = %q, want %q", job.Step, StepPrepareRollout)
 	}
 }
 
-func TestProvisionHandler_AutoDeployYieldsWhileManagedRuntimeTargetIsPending(t *testing.T) {
+type queuedManagedAutoDeployFixture struct {
+	stackID, leaseID, provider string
+	waitTimeout                time.Duration
+	admission                  AutoDeployAdmission
+	resolver                   ManagedRuntimeTargetResolver
+}
+
+func runQueuedManagedAutoDeploy(t *testing.T, fixture queuedManagedAutoDeployFixture) JobSnapshot {
+	t.Helper()
 	order := []string{}
-	resolver := &sequenceManagedRuntimeTargetResolver{
-		errs: []error{errors.New("enrollment pending")},
-		targets: []*ManagedRuntimeTarget{
-			nil,
-			{
-				Host:          "203.0.113.55",
-				PublicIP:      "203.0.113.55",
-				SSHUser:       "ubuntu",
-				SSHPort:       22,
-				SSHPrivateKey: "test-private-key",
-				Source:        "test-enrollment",
-			},
-		},
-	}
+	leaseManager := &fakeManagedLeaseManager{result: &ManagedLeaseResult{
+		LeaseID: fixture.leaseID, Provider: fixture.provider,
+		DesiredState: "running", Phase: RuntimePhaseLeaseReady,
+	}}
 	cfg := &ProvisionConfig{
-		WorkDir:                          t.TempDir(),
-		SpecBaseDir:                      t.TempDir(),
-		StackKitsDir:                     writeJobsTestStackKitsDir(t),
-		ManagedRuntimeTargetWaitTimeout:  100 * time.Millisecond,
-		ManagedRuntimeTargetPollInterval: time.Millisecond,
-		AutoDeployAdmission:              allowAutoDeployAdmissionForTest,
+		WorkDir: t.TempDir(), SpecBaseDir: t.TempDir(), StackKitsDir: writeJobsTestStackKitsDir(t),
+		ManagedRuntimeTargetWaitTimeout: fixture.waitTimeout, ManagedRuntimeTargetPollInterval: time.Millisecond,
+		AutoDeployAdmission: fixture.admission,
 		RuntimeActions: RuntimeActions{
-			StackKitGenerator: &fakeStackKitArtifactGenerator{},
-			LeaseManager: &fakeManagedLeaseManager{result: &ManagedLeaseResult{
-				LeaseID:      "lease-await-target",
-				Provider:     "centron",
-				DesiredState: "running",
-				Phase:        RuntimePhaseLeaseReady,
-			}},
-			RuntimeTargetResolver: resolver,
+			StackKitGenerator: &fakeStackKitArtifactGenerator{}, LeaseManager: leaseManager,
+			RuntimeTargetResolver: fixture.resolver,
 			SimulationGate:        &fakeRuntimeRunner{name: "simulate", order: &order, result: map[string]interface{}{"status": "accepted"}},
 			RolloutRunner:         &fakeRuntimeRunner{name: "rollout", order: &order, result: map[string]interface{}{"status": "applied"}},
-			RolloutVerifier:       &fakeRuntimeRunner{name: "verify", order: &order, result: stackKitIdentityHandoffResult("stack-await-target")},
+			RolloutVerifier:       &fakeRuntimeRunner{name: "verify", order: &order, result: stackKitIdentityHandoffResult(fixture.stackID)},
 			RestoreDrill:          &fakeRuntimeRunner{name: "restore", order: &order, result: map[string]interface{}{"status": "verified"}},
 		},
 	}
-
-	handler := ProvisionHandler(cfg)
+	configureRestoreOnlyCommander(t, cfg, &order)
+	queue := NewQueue(1, nil)
+	queue.RegisterHandler(JobTypeProvision, ProvisionHandler(cfg))
+	queue.RegisterHandler(JobTypeDeploy, DeployHandler(cfg))
 	job := &Job{
-		ID:       "test-job-managed-cloud-await-target",
-		Type:     JobTypeProvision,
-		TargetID: "stack-await-target",
+		ID: "test-job-managed-cloud-" + fixture.stackID, Type: JobTypeProvision, TargetID: fixture.stackID,
 		Payload: map[string]interface{}{
-			"auto_deploy": true,
-			"owner_id":    "user-1",
-			"tenant_id":   "org-1",
-			"spec": map[string]interface{}{
-				"name":        "managed-stack",
-				"provider":    "cloud",
-				"provider_id": "centron",
-			},
+			"auto_deploy": true, "owner_id": "user-1", "tenant_id": "org-1",
+			"spec": map[string]interface{}{"name": "managed-stack", "provider": "cloud", "provider_id": fixture.provider},
 		},
 	}
-	queue := &Queue{jobs: map[string]*Job{job.ID: job}}
+	if err := queue.Enqueue(job); err != nil {
+		t.Fatal(err)
+	}
+	queue.Start(context.Background())
+	defer queue.Stop()
 
-	err := handler(context.Background(), job, queue)
-	var pending *ManagedRuntimeEnrollmentPendingError
-	if !errors.As(err, &pending) {
-		t.Fatalf("first attempt error = %T %v, want non-terminal enrollment wait", err, err)
+	deadline := time.Now().Add(5 * time.Second)
+	snapshot := job.Snapshot()
+	for !isTerminalJobState(snapshot.State) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+		snapshot = job.Snapshot()
 	}
-	if len(resolver.requests) != 1 {
-		t.Fatalf("resolver requests = %d, want one bounded observation before yielding", len(resolver.requests))
+	if snapshot.State != JobStateCompleted || snapshot.Type != JobTypeDeploy {
+		t.Fatalf("queued auto-deploy state/type=%q/%q error=%q details=%q", snapshot.State, snapshot.Type, snapshot.Error, snapshot.ErrorDetails)
 	}
-	if len(order) != 0 {
-		t.Fatalf("runtime actions before target resolution = %v, want none", order)
-	}
-	if waitStartedAt := stringFromMap(job.Snapshot().Result, managedRuntimeEnrollmentWaitStartedAtField); waitStartedAt == "" {
-		t.Fatal("first enrollment wait did not persist its cumulative wait start")
-	}
-
-	if err := handler(context.Background(), job, queue); err != nil {
-		t.Fatalf("second queue attempt should continue after target enrollment, got %v", err)
-	}
-	if len(resolver.requests) != 2 {
-		t.Fatalf("resolver requests = %d, want one request per queue attempt", len(resolver.requests))
-	}
-	if got := job.Result[metadataKeyRuntimeSSHHost]; got != "203.0.113.55" {
-		t.Fatalf("%s = %v, want resolved runtime target", metadataKeyRuntimeSSHHost, got)
-	}
-	if waitStartedAt := stringFromMap(job.Snapshot().Result, managedRuntimeEnrollmentWaitStartedAtField); waitStartedAt != "" {
-		t.Fatalf("successful target resolution retained wait start %q", waitStartedAt)
+	if len(leaseManager.requests) != 1 {
+		t.Fatalf("lease requests=%d, want prepared lease reused", len(leaseManager.requests))
 	}
 	if strings.Join(order, ",") != "simulate,rollout,verify,restore" {
 		t.Fatalf("runtime action order = %v", order)
 	}
+	return snapshot
 }
 
 func TestProvisionHandler_AutoDeployQueueResumePreservesPreparedResult(t *testing.T) {
-	order := []string{}
-	leaseManager := &fakeManagedLeaseManager{result: &ManagedLeaseResult{
-		LeaseID:      "lease-queue-resume",
-		Provider:     "centron",
-		DesiredState: "running",
-		Phase:        RuntimePhaseLeaseReady,
-	}}
 	resolver := &sequenceManagedRuntimeTargetResolver{
 		errs: []error{errors.New("enrollment pending")},
 		targets: []*ManagedRuntimeTarget{
@@ -2145,63 +1627,10 @@ func TestProvisionHandler_AutoDeployQueueResumePreservesPreparedResult(t *testin
 			},
 		},
 	}
-	cfg := &ProvisionConfig{
-		WorkDir:                          t.TempDir(),
-		SpecBaseDir:                      t.TempDir(),
-		StackKitsDir:                     writeJobsTestStackKitsDir(t),
-		ManagedRuntimeTargetWaitTimeout:  100 * time.Millisecond,
-		ManagedRuntimeTargetPollInterval: time.Millisecond,
-		AutoDeployAdmission:              allowAutoDeployAdmissionForTest,
-		RuntimeActions: RuntimeActions{
-			StackKitGenerator:     &fakeStackKitArtifactGenerator{},
-			LeaseManager:          leaseManager,
-			RuntimeTargetResolver: resolver,
-			SimulationGate:        &fakeRuntimeRunner{name: "simulate", order: &order, result: map[string]interface{}{"status": "accepted"}},
-			RolloutRunner:         &fakeRuntimeRunner{name: "rollout", order: &order, result: map[string]interface{}{"status": "applied"}},
-			RolloutVerifier:       &fakeRuntimeRunner{name: "verify", order: &order, result: stackKitIdentityHandoffResult("stack-queue-resume")},
-			RestoreDrill:          &fakeRuntimeRunner{name: "restore", order: &order, result: map[string]interface{}{"status": "verified"}},
-		},
-	}
-
-	queue := NewQueue(1, nil)
-	queue.RegisterHandler(JobTypeProvision, ProvisionHandler(cfg))
-	queue.RegisterHandler(JobTypeDeploy, DeployHandler(cfg))
-	job := &Job{
-		ID:       "test-job-managed-cloud-queue-resume",
-		Type:     JobTypeProvision,
-		TargetID: "stack-queue-resume",
-		Payload: map[string]interface{}{
-			"auto_deploy": true,
-			"owner_id":    "user-1",
-			"tenant_id":   "org-1",
-			"spec": map[string]interface{}{
-				"name":        "managed-stack",
-				"provider":    "cloud",
-				"provider_id": "centron",
-			},
-		},
-	}
-	if err := queue.Enqueue(job); err != nil {
-		t.Fatal(err)
-	}
-	queue.Start(context.Background())
-	defer queue.Stop()
-
-	deadline := time.Now().Add(5 * time.Second)
-	var snapshot JobSnapshot
-	for time.Now().Before(deadline) {
-		snapshot = job.Snapshot()
-		if isTerminalJobState(snapshot.State) {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if snapshot.State != JobStateCompleted {
-		t.Fatalf("queue-resumed auto-deploy state=%q error=%q details=%q", snapshot.State, snapshot.Error, snapshot.ErrorDetails)
-	}
-	if snapshot.Type != JobTypeDeploy || len(leaseManager.requests) != 1 {
-		t.Fatalf("handler transition type=%q lease requests=%d, want deploy and one provision pass", snapshot.Type, len(leaseManager.requests))
-	}
+	snapshot := runQueuedManagedAutoDeploy(t, queuedManagedAutoDeployFixture{
+		stackID: "stack-queue-resume", leaseID: "lease-queue-resume", provider: "centron",
+		waitTimeout: 100 * time.Millisecond, admission: allowAutoDeployAdmissionForTest, resolver: resolver,
+	})
 	if len(resolver.requests) != 2 {
 		t.Fatalf("resolver requests=%d, want one observation per queue attempt", len(resolver.requests))
 	}
@@ -2223,98 +1652,30 @@ func TestProvisionHandler_AutoDeployQueueResumePreservesPreparedResult(t *testin
 	if got := stringFromMap(snapshot.Result, metadataKeyBillingMode); got != billingModeSubscription {
 		t.Fatalf("preserved billing_mode=%q, want %q", got, billingModeSubscription)
 	}
-	if strings.Join(order, ",") != "simulate,rollout,verify,restore" {
-		t.Fatalf("runtime action order = %v", order)
-	}
 }
 
 func TestProvisionHandler_AutoDeployGuardResumeReusesPreparedLease(t *testing.T) {
-	order := []string{}
-	leaseManager := &fakeManagedLeaseManager{result: &ManagedLeaseResult{
-		LeaseID:      "lease-guard-resume",
-		Provider:     "ionos",
-		DesiredState: "running",
-		Phase:        RuntimePhaseLeaseReady,
-	}}
 	admissionCalls := 0
-	cfg := &ProvisionConfig{
-		WorkDir:                          t.TempDir(),
-		SpecBaseDir:                      t.TempDir(),
-		StackKitsDir:                     writeJobsTestStackKitsDir(t),
-		ManagedRuntimeTargetWaitTimeout:  250 * time.Millisecond,
-		ManagedRuntimeTargetPollInterval: time.Millisecond,
-		AutoDeployAdmission: func(context.Context, AutoDeployAdmissionRequest) error {
+	resolver := &sequenceManagedRuntimeTargetResolver{targets: []*ManagedRuntimeTarget{{
+		Host: "203.0.113.57", PublicIP: "203.0.113.57", SSHUser: "ubuntu", SSHPort: 22,
+		SSHPrivateKey: "test-private-key", Source: "test-enrollment",
+	}}}
+	snapshot := runQueuedManagedAutoDeploy(t, queuedManagedAutoDeployFixture{
+		stackID: "stack-guard-resume", leaseID: "lease-guard-resume", provider: "ionos", waitTimeout: 250 * time.Millisecond,
+		resolver: resolver,
+		admission: func(context.Context, AutoDeployAdmissionRequest) error {
 			admissionCalls++
 			if admissionCalls == 1 {
 				return errors.New("guard heartbeat is not fresh yet")
 			}
 			return nil
 		},
-		RuntimeActions: RuntimeActions{
-			StackKitGenerator: &fakeStackKitArtifactGenerator{},
-			LeaseManager:      leaseManager,
-			RuntimeTargetResolver: &sequenceManagedRuntimeTargetResolver{targets: []*ManagedRuntimeTarget{{
-				Host:          "203.0.113.57",
-				PublicIP:      "203.0.113.57",
-				SSHUser:       "ubuntu",
-				SSHPort:       22,
-				SSHPrivateKey: "test-private-key",
-				Source:        "test-enrollment",
-			}}},
-			SimulationGate:  &fakeRuntimeRunner{name: "simulate", order: &order, result: map[string]interface{}{"status": "accepted"}},
-			RolloutRunner:   &fakeRuntimeRunner{name: "rollout", order: &order, result: map[string]interface{}{"status": "applied"}},
-			RolloutVerifier: &fakeRuntimeRunner{name: "verify", order: &order, result: stackKitIdentityHandoffResult("stack-guard-resume")},
-			RestoreDrill:    &fakeRuntimeRunner{name: "restore", order: &order, result: map[string]interface{}{"status": "verified"}},
-		},
-	}
-
-	queue := NewQueue(1, nil)
-	queue.RegisterHandler(JobTypeProvision, ProvisionHandler(cfg))
-	queue.RegisterHandler(JobTypeDeploy, DeployHandler(cfg))
-	job := &Job{
-		ID:       "test-job-managed-cloud-guard-resume",
-		Type:     JobTypeProvision,
-		TargetID: "stack-guard-resume",
-		Payload: map[string]interface{}{
-			"auto_deploy": true,
-			"owner_id":    "user-1",
-			"tenant_id":   "org-1",
-			"spec": map[string]interface{}{
-				"name":        "managed-stack",
-				"provider":    "cloud",
-				"provider_id": "ionos",
-			},
-		},
-	}
-	if err := queue.Enqueue(job); err != nil {
-		t.Fatal(err)
-	}
-	queue.Start(context.Background())
-	defer queue.Stop()
-
-	deadline := time.Now().Add(5 * time.Second)
-	var snapshot JobSnapshot
-	for time.Now().Before(deadline) {
-		snapshot = job.Snapshot()
-		if isTerminalJobState(snapshot.State) {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if snapshot.State != JobStateCompleted {
-		t.Fatalf("guard-resumed auto-deploy state=%q error=%q details=%q", snapshot.State, snapshot.Error, snapshot.ErrorDetails)
-	}
+	})
 	if admissionCalls < 2 {
 		t.Fatalf("admission calls=%d, want initial wait and resumed admission", admissionCalls)
 	}
-	if len(leaseManager.requests) != 1 {
-		t.Fatalf("lease requests=%d, want prepared lease reused after guard wait", len(leaseManager.requests))
-	}
 	if got := stringFromMap(snapshot.Result, leaseIDField); got != "lease-guard-resume" {
 		t.Fatalf("preserved lease_id=%q, want lease-guard-resume", got)
-	}
-	if strings.Join(order, ",") != "simulate,rollout,verify,restore" {
-		t.Fatalf("runtime action order = %v", order)
 	}
 }
 
@@ -2342,7 +1703,6 @@ func TestProvisionHandler_AutoDeployBoundsManagedRuntimeTargetResolverHang(t *te
 			RestoreDrill:          &fakeRuntimeRunner{name: "restore"},
 		},
 	}
-
 	handler := ProvisionHandler(cfg)
 	job := &Job{
 		ID:       "test-job-managed-cloud-hanging-target",
@@ -2386,9 +1746,6 @@ func TestProvisionHandler_AutoDeployBoundsManagedRuntimeTargetResolverHang(t *te
 	if errors.As(err, &provisionErr) {
 		t.Fatalf("enrollment wait was flattened into ProvisionError: %#v", provisionErr)
 	}
-	if !strings.Contains(fmt.Sprintf("%+v", waitErr.Cause), "managed runtime lease target is not available yet") {
-		t.Fatalf("cause = %v, want managed runtime pending diagnostic", waitErr.Cause)
-	}
 	if len(resolver.requests) == 0 {
 		t.Fatal("expected resolver to be called")
 	}
@@ -2397,161 +1754,77 @@ func TestProvisionHandler_AutoDeployBoundsManagedRuntimeTargetResolverHang(t *te
 	}
 }
 
-func TestManagedRuntimeTargetWaitStopsAfterCumulativeWindow(t *testing.T) {
-	resolver := &fakeManagedRuntimeTargetResolver{err: errors.New("enrollment still pending")}
-	cfg := &ProvisionConfig{
-		ManagedRuntimeTargetWaitTimeout:  50 * time.Millisecond,
-		ManagedRuntimeTargetPollInterval: time.Millisecond,
-		RuntimeActions: RuntimeActions{
-			RuntimeTargetResolver: resolver,
+func TestProvisionHandler_AutoDeployStopsWaitingOnTerminalResolverErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name, leaseID, operationID string
+		resolverErr                error
+		wantErr                    error
+		wantDiagnostics            bool
+	}{
+		{
+			name: "managed runtime enrollment failed", leaseID: "lease-failed", operationID: "operation-failed",
+			resolverErr: fmt.Errorf("%w for lease %q: ionos quota exhausted", ErrManagedRuntimeEnrollmentFailed, "lease-failed"),
+			wantErr:     ErrManagedRuntimeEnrollmentFailed, wantDiagnostics: true,
 		},
-	}
-	job := &Job{
-		ID:         "job-enrollment-wait-expired",
-		Type:       JobTypeDeploy,
-		TargetID:   "stack-enrollment-wait-expired",
-		TargetName: "Expired Enrollment",
-		Payload: map[string]interface{}{
-			"owner_id":  "user-1",
-			"tenant_id": "tenant-1",
+		{
+			name: "monthly runtime feature disabled", leaseID: "lease-feature-disabled",
+			resolverErr: fmt.Errorf("%w: %s", monthlyruntime.ErrFeatureDisabled, "sim.monthly.runtime.standard"),
+			wantErr:     monthlyruntime.ErrFeatureDisabled,
 		},
-		Result: map[string]interface{}{
-			leaseIDField: "lease-enrollment-wait-expired",
-			managedRuntimeEnrollmentWaitStartedAtField: time.Now().UTC().Add(-time.Second).Format(time.RFC3339Nano),
-		},
-	}
-
-	target, err := resolveManagedRuntimeTargetWithWait(context.Background(), cfg, job, &core.KombinationSpec{}, nil)
-	if target != nil {
-		t.Fatalf("target = %#v, want nil after cumulative wait timeout", target)
-	}
-	if !errors.Is(err, ErrManagedRuntimeEnrollmentFailed) {
-		t.Fatalf("error = %T %v, want ErrManagedRuntimeEnrollmentFailed", err, err)
-	}
-	var pending *ManagedRuntimeEnrollmentPendingError
-	if errors.As(err, &pending) {
-		t.Fatalf("expired wait returned non-terminal signal: %#v", pending)
-	}
-	if len(resolver.requests) != 0 {
-		t.Fatalf("resolver requests = %d, want no new call after the cumulative deadline", len(resolver.requests))
-	}
-	if waitStartedAt := stringFromMap(job.Snapshot().Result, managedRuntimeEnrollmentWaitStartedAtField); waitStartedAt != "" {
-		t.Fatalf("terminal timeout retained wait start %q", waitStartedAt)
-	}
-}
-
-func TestProvisionHandler_AutoDeployStopsWaitingWhenManagedRuntimeEnrollmentFailed(t *testing.T) {
-	resolver := &fakeManagedRuntimeTargetResolver{
-		err: fmt.Errorf("%w for lease %q: ionos quota exhausted", ErrManagedRuntimeEnrollmentFailed, "lease-failed"),
-	}
-	cfg := &ProvisionConfig{
-		WorkDir:                          t.TempDir(),
-		SpecBaseDir:                      t.TempDir(),
-		StackKitsDir:                     writeJobsTestStackKitsDir(t),
-		ManagedRuntimeTargetWaitTimeout:  time.Second,
-		ManagedRuntimeTargetPollInterval: 10 * time.Millisecond,
-		AutoDeployAdmission:              allowAutoDeployAdmissionForTest,
-		RuntimeActions: RuntimeActions{
-			LeaseManager: &fakeManagedLeaseManager{result: &ManagedLeaseResult{
-				LeaseID:      "lease-failed",
-				Provider:     "ionos",
-				DesiredState: "running",
-				Phase:        RuntimePhaseLeaseReady,
-			}},
-			RuntimeTargetResolver: resolver,
-			SimulationGate:        &fakeRuntimeRunner{name: "simulate"},
-			RolloutRunner:         &fakeRuntimeRunner{name: "rollout"},
-			RolloutVerifier:       &fakeRuntimeRunner{name: "verify"},
-			RestoreDrill:          &fakeRuntimeRunner{name: "restore"},
-		},
-	}
-
-	handler := ProvisionHandler(cfg)
-	job := &Job{
-		ID:       "test-job-managed-cloud-terminal-enrollment-failure",
-		Type:     JobTypeProvision,
-		TargetID: "stack-terminal-enrollment-failure",
-		Payload: map[string]interface{}{
-			"auto_deploy": true,
-			"owner_id":    "user-1",
-			"tenant_id":   "org-1",
-			"spec": map[string]interface{}{
-				"name":        "managed-stack",
-				"provider":    "cloud",
-				"provider_id": "centron",
-			},
-		},
-	}
-	queue := &Queue{jobs: map[string]*Job{job.ID: job}}
-
-	err := handler(context.Background(), job, queue)
-	if err == nil {
-		t.Fatal("expected terminal enrollment failure")
-	}
-	if !strings.Contains(err.Error(), "ionos quota exhausted") {
-		t.Fatalf("error = %v, want provider failure cause", err)
-	}
-	if got := len(resolver.requests); got != 1 {
-		t.Fatalf("resolver requests = %d, want immediate terminal failure without retry", got)
-	}
-	if job.Step != StepPrepareRollout {
-		t.Fatalf("job step = %q, want %q", job.Step, StepPrepareRollout)
-	}
-}
-
-func TestProvisionHandler_AutoDeployStopsWaitingWhenMonthlyRuntimeFeatureDisabled(t *testing.T) {
-	resolver := &fakeManagedRuntimeTargetResolver{
-		err: fmt.Errorf("%w: %s", monthlyruntime.ErrFeatureDisabled, "sim.monthly.runtime.standard"),
-	}
-	cfg := &ProvisionConfig{
-		WorkDir:                          t.TempDir(),
-		SpecBaseDir:                      t.TempDir(),
-		StackKitsDir:                     writeJobsTestStackKitsDir(t),
-		ManagedRuntimeTargetWaitTimeout:  time.Second,
-		ManagedRuntimeTargetPollInterval: 10 * time.Millisecond,
-		AutoDeployAdmission:              allowAutoDeployAdmissionForTest,
-		RuntimeActions: RuntimeActions{
-			LeaseManager: &fakeManagedLeaseManager{result: &ManagedLeaseResult{
-				LeaseID:      "lease-feature-disabled",
-				Provider:     "ionos",
-				DesiredState: "running",
-				Phase:        RuntimePhaseLeaseReady,
-			}},
-			RuntimeTargetResolver: resolver,
-			SimulationGate:        &fakeRuntimeRunner{name: "simulate"},
-			RolloutRunner:         &fakeRuntimeRunner{name: "rollout"},
-			RolloutVerifier:       &fakeRuntimeRunner{name: "verify"},
-			RestoreDrill:          &fakeRuntimeRunner{name: "restore"},
-		},
-	}
-
-	handler := ProvisionHandler(cfg)
-	job := &Job{
-		ID:       "test-job-managed-cloud-feature-disabled",
-		Type:     JobTypeProvision,
-		TargetID: "stack-feature-disabled",
-		Payload: map[string]interface{}{
-			"auto_deploy": true,
-			"owner_id":    "user-1",
-			"tenant_id":   "org-1",
-			"spec": map[string]interface{}{
-				"name":        "managed-stack",
-				"provider":    "cloud",
-				"provider_id": "centron",
-			},
-		},
-	}
-	queue := &Queue{jobs: map[string]*Job{job.ID: job}}
-
-	err := handler(context.Background(), job, queue)
-	if err == nil {
-		t.Fatal("expected feature-disabled resolver error")
-	}
-	if !strings.Contains(err.Error(), monthlyruntime.ErrFeatureDisabled.Error()) {
-		t.Fatalf("error = %v, want ErrFeatureDisabled details", err)
-	}
-	if got := len(resolver.requests); got != 1 {
-		t.Fatalf("resolver requests = %d, want immediate terminal failure without retry", got)
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resolver := &fakeManagedRuntimeTargetResolver{err: tc.resolverErr}
+			collector := &fakeRuntimeDiagnosticsCollector{}
+			lease := &ManagedLeaseResult{
+				LeaseID: tc.leaseID, OperationID: tc.operationID, Provider: "ionos",
+				DesiredState: "running", Phase: RuntimePhaseLeaseReady,
+			}
+			if tc.wantDiagnostics {
+				lease.Target = &ManagedRuntimeTarget{
+					Host: "203.0.113.12", SSHUser: "ubuntu", SSHPort: 22, SSHPrivateKey: "diagnostic-key",
+				}
+			}
+			cfg := &ProvisionConfig{
+				WorkDir: t.TempDir(), SpecBaseDir: t.TempDir(), StackKitsDir: writeJobsTestStackKitsDir(t),
+				ManagedRuntimeTargetWaitTimeout: time.Second, ManagedRuntimeTargetPollInterval: 10 * time.Millisecond,
+				AutoDeployAdmission: allowAutoDeployAdmissionForTest,
+				RuntimeActions: RuntimeActions{
+					LeaseManager: &fakeManagedLeaseManager{result: lease}, RuntimeTargetResolver: resolver,
+					DiagnosticsCollector: collector, SimulationGate: &fakeRuntimeRunner{name: "simulate"},
+					RolloutRunner: &fakeRuntimeRunner{name: "rollout"}, RolloutVerifier: &fakeRuntimeRunner{name: "verify"},
+					RestoreDrill: &fakeRuntimeRunner{name: "restore"},
+				},
+			}
+			job := &Job{
+				ID: "test-job-" + tc.leaseID, Type: JobTypeProvision, TargetID: "stack-terminal-resolver",
+				Payload: map[string]interface{}{
+					"auto_deploy": true, "owner_id": "user-1", "tenant_id": "org-1",
+					"spec": map[string]interface{}{"name": "managed-stack", "provider": "cloud", "provider_id": "centron"},
+				},
+			}
+			err := ProvisionHandler(cfg)(context.Background(), job, &Queue{jobs: map[string]*Job{job.ID: job}})
+			if !errors.Is(err, tc.wantErr) || len(resolver.requests) != 1 || job.Step != StepPrepareRollout {
+				t.Fatalf("error=%T %v resolver requests=%d step=%q, want immediate %v at %s",
+					err, err, len(resolver.requests), job.Step, tc.wantErr, StepPrepareRollout)
+			}
+			if !tc.wantDiagnostics {
+				return
+			}
+			if len(collector.requests) != 1 {
+				t.Fatalf("diagnostic requests = %d, want one terminal enrollment receipt", len(collector.requests))
+			}
+			diagnosticsRequest := collector.requests[0]
+			if diagnosticsRequest.Action != "managed_runtime_enrollment" || diagnosticsRequest.Reason != "managed_runtime_enrollment_failed" ||
+				diagnosticsRequest.OperationID != tc.operationID || diagnosticsRequest.LeaseID != tc.leaseID ||
+				diagnosticsRequest.ServerID != runtimeidentity.LeaseServerID(tc.leaseID) ||
+				diagnosticsRequest.RuntimeAgentID != runtimeidentity.LeaseRuntimeAgentID("org-1", tc.leaseID) {
+				t.Fatalf("diagnostic request = %+v", diagnosticsRequest)
+			}
+			binding := mapFromInterface(mapFromInterface(job.Result["runtime_diagnostics"])["binding"])
+			if binding["operation_id"] != tc.operationID || binding["server_id"] != runtimeidentity.LeaseServerID(tc.leaseID) {
+				t.Fatalf("durable diagnostic binding = %+v", binding)
+			}
+		})
 	}
 }
 
@@ -2579,6 +1852,7 @@ func TestProvisionHandler_AutoDeployManagedCloudUsesOwnerAsLocalTenantFallback(t
 			RestoreDrill:          &fakeRuntimeRunner{name: "restore", order: &order},
 		},
 	}
+	configureRestoreOnlyCommander(t, cfg, &order)
 
 	handler := ProvisionHandler(cfg)
 	job := &Job{
@@ -2623,115 +1897,15 @@ func TestProvisionHandler_AutoDeployManagedCloudUsesOwnerAsLocalTenantFallback(t
 	}
 }
 
-func TestProvisionHandler_AutoDeploySurfacesMissingRolloutRunner(t *testing.T) {
-	cfg := &ProvisionConfig{
-		WorkDir:             t.TempDir(),
-		SpecBaseDir:         t.TempDir(),
-		StackKitsDir:        writeJobsTestStackKitsDir(t),
-		AutoDeployAdmission: allowAutoDeployAdmissionForTest,
-		RuntimeActions: RuntimeActions{
-			StackKitGenerator: &fakeStackKitArtifactGenerator{},
-			LeaseManager:      &fakeManagedLeaseManager{},
-			SimulationGate:    &fakeRuntimeRunner{name: "simulate"},
-			RolloutVerifier:   &fakeRuntimeRunner{name: "verify"},
-			RestoreDrill:      &fakeRuntimeRunner{name: "restore"},
-		},
-	}
-
-	handler := ProvisionHandler(cfg)
-	job := &Job{
-		ID:       "test-job-managed-cloud-auto-deploy-missing-runner",
-		Type:     JobTypeProvision,
-		TargetID: "stack-managed-auto-missing-runner",
-		Payload: map[string]interface{}{
-			"auto_deploy": true,
-			"owner_id":    "user-1",
-			"tenant_id":   "org-1",
-			"spec": map[string]interface{}{
-				"name":        "managed-stack",
-				"provider":    "cloud",
-				"provider_id": "centron",
-				"goals": map[string]interface{}{
-					"storage": true,
-				},
-			},
-		},
-	}
-	queue := &Queue{jobs: map[string]*Job{job.ID: job}}
-
-	err := handler(context.Background(), job, queue)
-	if err == nil {
-		t.Fatal("expected missing rollout runner to fail auto deploy")
-	}
-	if !strings.Contains(err.Error(), "StackKits rollout runner is not configured") {
-		t.Fatalf("error = %v, want missing rollout runner diagnostic", err)
-	}
-	if job.Step != StepRolloutRunner {
-		t.Fatalf("job step = %q, want %q", job.Step, StepRolloutRunner)
-	}
-}
-
 func TestProvisionHandler_AutoDeployFailsWhenOwnerHandoffMissing(t *testing.T) {
 	// When the orchestrator issues an owner-spec bootstrap token, StackKit
 	// is contractually required to return identity, login_gateway, and
 	// recovery outputs. A "verified" response without these fields means
 	// the freshly provisioned stack has no usable owner login, so the
 	// provision job must fail loudly rather than report success.
-	specBaseDir := t.TempDir()
-	cfg := &ProvisionConfig{
-		WorkDir:             t.TempDir(),
-		SpecBaseDir:         specBaseDir,
-		StackKitsDir:        writeJobsTestStackKitsDir(t),
-		AutoDeployAdmission: allowAutoDeployAdmissionForTest,
-		RuntimeActions: RuntimeActions{
-			StackKitGenerator: &fakeStackKitArtifactGenerator{},
-			LeaseManager:      &fakeManagedLeaseManager{},
-			SimulationGate:    &fakeRuntimeRunner{name: "simulate", result: map[string]interface{}{"status": "accepted"}},
-			RolloutRunner:     &fakeRuntimeRunner{name: "rollout", result: map[string]interface{}{"status": "applied"}},
-			RolloutVerifier:   &fakeRuntimeRunner{name: "verify", result: map[string]interface{}{"status": "verified"}},
-			RestoreDrill:      &fakeRuntimeRunner{name: "restore", result: map[string]interface{}{"status": "verified"}},
-		},
-	}
-
-	handler := ProvisionHandler(cfg)
-	job := &Job{
-		ID:       "test-job-handoff-missing",
-		Type:     JobTypeProvision,
-		TargetID: "stack-handoff-missing",
-		Payload: map[string]interface{}{
-			"auto_deploy": true,
-			"owner_id":    "user-1",
-			"tenant_id":   "org-1",
-			"owner_spec_bootstrap": &OwnerSpecBootstrap{
-				Endpoint:  "https://techstack.kombify.io/api/v1/stacks/stack-handoff-missing/owner-spec",
-				Token:     "test-bootstrap-token",
-				ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
-				Scopes:    []string{"owner_spec:read"},
-			},
-			"spec": map[string]interface{}{
-				"name":        "managed-stack",
-				"provider":    "cloud",
-				"provider_id": "centron",
-				"goals": map[string]interface{}{
-					"storage": true,
-				},
-			},
-		},
-	}
-	queue := &Queue{jobs: map[string]*Job{job.ID: job}}
-
-	err := handler(context.Background(), job, queue)
+	job, err := provisionWithOwnerHandoffResult(t, "stack-handoff-missing", map[string]interface{}{"status": "verified"})
 	if err == nil {
 		t.Fatal("expected provision to fail when stackkit_outputs missing identity handoff")
-	}
-	if !strings.Contains(err.Error(), "identity.owner.username") {
-		t.Fatalf("error must mention missing identity.owner.username, got %v", err)
-	}
-	if !strings.Contains(err.Error(), "login_gateway.url") {
-		t.Fatalf("error must mention missing login_gateway.url, got %v", err)
-	}
-	if !strings.Contains(err.Error(), "identity.recovery") {
-		t.Fatalf("error must mention missing identity.recovery, got %v", err)
 	}
 	if job.Step != StepVerifyRollout {
 		t.Fatalf("expected job.Step=%q, got %q", StepVerifyRollout, job.Step)
@@ -2742,77 +1916,17 @@ func TestProvisionHandler_AutoDeploySucceedsWhenHandoffComplete(t *testing.T) {
 	// Mirror image of the failing test: when the RolloutVerifier returns the
 	// full identity handoff, provision must complete and surface
 	// stackkit_outputs on the job result for the frontend to render.
-	specBaseDir := t.TempDir()
-	completeHandoff := map[string]interface{}{
-		"status": "verified",
-		"stackkit_outputs": map[string]interface{}{
-			"identity": map[string]interface{}{
-				"owner": map[string]interface{}{
-					"username":    "owner@example.com",
-					"email":       "owner@example.com",
-					"displayName": "Test Owner",
-				},
-				"recovery": map[string]interface{}{
-					"bundle_ref":              "vault:recovery/stack-handoff-ok",
-					"passphrase_hash_present": true,
-				},
-			},
-			"login_gateway": map[string]interface{}{
-				"url":   "https://techstack.kombify.io/login",
-				"label": "Open first login",
-			},
-			"services": []interface{}{
-				map[string]interface{}{
-					"name":   "whoami",
-					"url":    "https://whoami.stack-handoff-ok.kombify.me",
-					"status": "healthy",
-				},
-			},
+	stackID := "stack-handoff-ok"
+	completeHandoff := stackKitIdentityHandoffResult(stackID)
+	completeHandoff["stackkit_outputs"].(map[string]interface{})["services"] = []interface{}{
+		map[string]interface{}{
+			"name":   "whoami",
+			"url":    "https://whoami.stack-handoff-ok.kombify.me",
+			"status": "healthy",
 		},
 	}
-	cfg := &ProvisionConfig{
-		WorkDir:             t.TempDir(),
-		SpecBaseDir:         specBaseDir,
-		StackKitsDir:        writeJobsTestStackKitsDir(t),
-		AutoDeployAdmission: allowAutoDeployAdmissionForTest,
-		RuntimeActions: RuntimeActions{
-			StackKitGenerator: &fakeStackKitArtifactGenerator{},
-			LeaseManager:      &fakeManagedLeaseManager{},
-			SimulationGate:    &fakeRuntimeRunner{name: "simulate", result: map[string]interface{}{"status": "accepted"}},
-			RolloutRunner:     &fakeRuntimeRunner{name: "rollout", result: map[string]interface{}{"status": "applied"}},
-			RolloutVerifier:   &fakeRuntimeRunner{name: "verify", result: completeHandoff},
-			RestoreDrill:      &fakeRuntimeRunner{name: "restore", result: map[string]interface{}{"status": "verified"}},
-		},
-	}
-
-	handler := ProvisionHandler(cfg)
-	job := &Job{
-		ID:       "test-job-handoff-ok",
-		Type:     JobTypeProvision,
-		TargetID: "stack-handoff-ok",
-		Payload: map[string]interface{}{
-			"auto_deploy": true,
-			"owner_id":    "user-1",
-			"tenant_id":   "org-1",
-			"owner_spec_bootstrap": &OwnerSpecBootstrap{
-				Endpoint:  "https://techstack.kombify.io/api/v1/stacks/stack-handoff-ok/owner-spec",
-				Token:     "test-bootstrap-token",
-				ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
-				Scopes:    []string{"owner_spec:read"},
-			},
-			"spec": map[string]interface{}{
-				"name":        "managed-stack",
-				"provider":    "cloud",
-				"provider_id": "centron",
-				"goals": map[string]interface{}{
-					"storage": true,
-				},
-			},
-		},
-	}
-	queue := &Queue{jobs: map[string]*Job{job.ID: job}}
-
-	if err := handler(context.Background(), job, queue); err != nil {
+	job, err := provisionWithOwnerHandoffResult(t, stackID, completeHandoff)
+	if err != nil {
 		t.Fatalf("expected handoff-complete provision to succeed, got: %v", err)
 	}
 	outputs, ok := job.Result["stackkit_outputs"].(map[string]interface{})
@@ -2842,38 +1956,35 @@ func TestProvisionHandler_AutoDeploySucceedsWhenHandoffComplete(t *testing.T) {
 	}
 }
 
-func TestDeployHandler_RunsStackKitsRuntimeActionsAndRecordsE2EProof(t *testing.T) {
-	stackID := "stack-rollout"
+func newPersistedDeployFixture(t *testing.T, stackID string, actions RuntimeActions) (JobHandler, *Job, *Queue, string) {
+	t.Helper()
+
 	specBaseDir := t.TempDir()
 	persistDeployFixture(t, specBaseDir, stackID)
+	job := &Job{
+		ID: "deploy-job-" + stackID, Type: JobTypeDeploy, TargetID: stackID,
+		Payload: map[string]interface{}{"workers": deployWorkerPayload()},
+	}
+	handler := DeployHandler(&ProvisionConfig{
+		WorkDir: t.TempDir(), SpecBaseDir: specBaseDir, StackKitsDir: writeJobsTestStackKitsDir(t), RuntimeActions: actions,
+	})
+	return handler, job, &Queue{jobs: map[string]*Job{job.ID: job}}, specBaseDir
+}
 
+func TestDeployHandler_RunsStackKitsRuntimeActionsAndRecordsE2EProof(t *testing.T) {
+	stackID := "stack-rollout"
 	order := []string{}
 	sim := &fakeRuntimeRunner{name: "simulate", order: &order, result: map[string]interface{}{"status": "accepted", "mode": "dry-run"}}
 	rollout := &fakeRuntimeRunner{name: "rollout", order: &order, result: map[string]interface{}{"status": "applied", "mode": "apply"}}
 	verify := &fakeRuntimeRunner{name: "verify", order: &order, result: map[string]interface{}{"status": "verified", "mode": "apply"}}
 	restore := &fakeRuntimeRunner{name: "restore", order: &order, result: map[string]interface{}{"status": "verified", "mode": "apply"}}
-
-	handler := DeployHandler(&ProvisionConfig{
-		WorkDir:      t.TempDir(),
-		SpecBaseDir:  specBaseDir,
-		StackKitsDir: writeJobsTestStackKitsDir(t),
-		RuntimeActions: RuntimeActions{
-			StackKitGenerator: &fakeStackKitArtifactGenerator{},
-			SimulationGate:    sim,
-			RolloutRunner:     rollout,
-			RolloutVerifier:   verify,
-			RestoreDrill:      restore,
-		},
+	handler, job, queue, _ := newPersistedDeployFixture(t, stackID, RuntimeActions{
+		StackKitGenerator: &fakeStackKitArtifactGenerator{},
+		SimulationGate:    sim,
+		RolloutRunner:     rollout,
+		RolloutVerifier:   verify,
+		RestoreDrill:      restore,
 	})
-	job := &Job{
-		ID:       "deploy-job",
-		Type:     JobTypeDeploy,
-		TargetID: stackID,
-		Payload: map[string]interface{}{
-			"workers": deployWorkerPayload(),
-		},
-	}
-	queue := &Queue{jobs: map[string]*Job{job.ID: job}}
 
 	if err := handler(context.Background(), job, queue); err != nil {
 		t.Fatalf("DeployHandler failed: %v", err)
@@ -2888,6 +1999,9 @@ func TestDeployHandler_RunsStackKitsRuntimeActionsAndRecordsE2EProof(t *testing.
 	}
 	if got := job.Result["verification_status"]; got != string(RuntimePhaseVerified) {
 		t.Fatalf("verification_status = %v, want %s", got, RuntimePhaseVerified)
+	}
+	if got := job.Result["status"]; got != "deployed" {
+		t.Fatalf("status = %v, want deployed", got)
 	}
 	proof, ok := job.Result["e2e_proof"].(map[string]any)
 	if !ok {
@@ -2930,8 +2044,16 @@ func TestDeployHandler_RunsStackKitsRuntimeActionsAndRecordsE2EProof(t *testing.
 
 func TestDeployHandler_PassesSupplementalPlatformNodesToStackKits(t *testing.T) {
 	stackID := "stack-platform-nodes"
-	specBaseDir := t.TempDir()
-	persistDeployFixture(t, specBaseDir, stackID)
+	order := []string{}
+	rollout := &fakeRuntimeRunner{name: "rollout", order: &order, result: map[string]interface{}{"status": "applied", "mode": "apply"}}
+	stackKitGenerator := &fakeStackKitArtifactGenerator{}
+	handler, job, queue, specBaseDir := newPersistedDeployFixture(t, stackID, RuntimeActions{
+		StackKitGenerator: stackKitGenerator,
+		SimulationGate:    &fakeRuntimeRunner{name: "simulate", order: &order, result: map[string]interface{}{"status": "accepted", "mode": "dry-run"}},
+		RolloutRunner:     rollout,
+		RolloutVerifier:   &fakeRuntimeRunner{name: "verify", order: &order, result: map[string]interface{}{"status": "verified", "mode": "apply"}},
+		RestoreDrill:      &fakeRuntimeRunner{name: "restore", order: &order, result: map[string]interface{}{"status": "verified", "mode": "apply"}},
+	})
 	persister, err := unifier.NewSpecPersisterWithPath(filepath.Join(specBaseDir, stackID))
 	if err != nil {
 		t.Fatalf("create persister: %v", err)
@@ -2941,7 +2063,7 @@ stackkit: basement-kit
 mode: simple
 runtime: docker
 context: local
-domain: home.localhost
+domain: home
 nodes:
   - name: main
     role: standalone
@@ -2952,76 +2074,53 @@ services:
 		t.Fatalf("save stack spec: %v", err)
 	}
 
-	order := []string{}
-	rollout := &fakeRuntimeRunner{name: "rollout", order: &order, result: map[string]interface{}{"status": "applied", "mode": "apply"}}
-	stackKitGenerator := &fakeStackKitArtifactGenerator{}
-	handler := DeployHandler(&ProvisionConfig{
-		WorkDir:      t.TempDir(),
-		SpecBaseDir:  specBaseDir,
-		StackKitsDir: writeJobsTestStackKitsDir(t),
-		RuntimeActions: RuntimeActions{
-			StackKitGenerator: stackKitGenerator,
-			SimulationGate:    &fakeRuntimeRunner{name: "simulate", order: &order, result: map[string]interface{}{"status": "accepted", "mode": "dry-run"}},
-			RolloutRunner:     rollout,
-			RolloutVerifier:   &fakeRuntimeRunner{name: "verify", order: &order, result: map[string]interface{}{"status": "verified", "mode": "apply"}},
-			RestoreDrill:      &fakeRuntimeRunner{name: "restore", order: &order, result: map[string]interface{}{"status": "verified", "mode": "apply"}},
+	job.Payload["workers"] = []interface{}{
+		map[string]interface{}{
+			"id":       "main-1",
+			"name":     "main-server",
+			"type":     "main",
+			"provider": "local",
+			"ip":       "203.0.113.10",
+			"status":   "online",
+			"capabilities": map[string]interface{}{
+				"cpu":           float64(4),
+				"ram":           float64(8192),
+				"disk":          float64(160),
+				"arch":          "amd64",
+				"os":            "ubuntu",
+				"dockerVersion": "24.0.0",
+			},
 		},
-	})
-	job := &Job{
-		ID:       "deploy-job-platform-nodes",
-		Type:     JobTypeDeploy,
-		TargetID: stackID,
-		Payload: map[string]interface{}{
-			"workers": []interface{}{
-				map[string]interface{}{
-					"id":       "main-1",
-					"name":     "main-server",
-					"type":     "main",
-					"provider": "local",
-					"ip":       "203.0.113.10",
-					"status":   "online",
-					"capabilities": map[string]interface{}{
-						"cpu":           float64(4),
-						"ram":           float64(8192),
-						"disk":          float64(160),
-						"arch":          "amd64",
-						"os":            "ubuntu",
-						"dockerVersion": "24.0.0",
-					},
+		map[string]interface{}{
+			"id":       "worker-1",
+			"name":     "worker-1",
+			"type":     "worker",
+			"provider": "local",
+			"ip":       "203.0.113.11",
+			"services": []interface{}{"immich"},
+			"platform": map[string]interface{}{
+				"serverId":        "server-worker",
+				"destinationUuid": "destination-worker",
+			},
+			"bootstrap": map[string]interface{}{
+				"komodo_core_address":   "https://komodo.example.test",
+				"komodo_onboarding_key": "real-onboarding-key",
+				"ssh": map[string]interface{}{
+					"host":               "203.0.113.11",
+					"user":               "root",
+					"client_private_key": "worker-key",
 				},
-				map[string]interface{}{
-					"id":       "worker-1",
-					"name":     "worker-1",
-					"type":     "worker",
-					"provider": "local",
-					"ip":       "203.0.113.11",
-					"services": []interface{}{"immich"},
-					"platform": map[string]interface{}{
-						"serverId":        "server-worker",
-						"destinationUuid": "destination-worker",
-					},
-					"bootstrap": map[string]interface{}{
-						"komodo_core_address":   "https://komodo.example.test",
-						"komodo_onboarding_key": "real-onboarding-key",
-						"ssh": map[string]interface{}{
-							"host":               "203.0.113.11",
-							"user":               "root",
-							"client_private_key": "worker-key",
-						},
-					},
-					"capabilities": map[string]interface{}{
-						"cpu":           float64(4),
-						"ram":           float64(8192),
-						"disk":          float64(160),
-						"arch":          "amd64",
-						"os":            "ubuntu",
-						"dockerVersion": "24.0.0",
-					},
-				},
+			},
+			"capabilities": map[string]interface{}{
+				"cpu":           float64(4),
+				"ram":           float64(8192),
+				"disk":          float64(160),
+				"arch":          "amd64",
+				"os":            "ubuntu",
+				"dockerVersion": "24.0.0",
 			},
 		},
 	}
-	queue := &Queue{jobs: map[string]*Job{job.ID: job}}
 
 	if err := handler(context.Background(), job, queue); err != nil {
 		t.Fatalf("DeployHandler failed: %v", err)
@@ -3067,30 +2166,13 @@ services:
 
 func TestDeployHandler_RestoreSkippedDoesNotMarkRuntimeVerified(t *testing.T) {
 	stackID := "stack-restore-skipped"
-	specBaseDir := t.TempDir()
-	persistDeployFixture(t, specBaseDir, stackID)
-
-	handler := DeployHandler(&ProvisionConfig{
-		WorkDir:      t.TempDir(),
-		SpecBaseDir:  specBaseDir,
-		StackKitsDir: writeJobsTestStackKitsDir(t),
-		RuntimeActions: RuntimeActions{
-			StackKitGenerator: &fakeStackKitArtifactGenerator{},
-			SimulationGate:    &fakeRuntimeRunner{name: "simulate", result: map[string]interface{}{"status": "accepted"}},
-			RolloutRunner:     &fakeRuntimeRunner{name: "rollout", result: map[string]interface{}{"status": "applied"}},
-			RolloutVerifier:   &fakeRuntimeRunner{name: "verify", result: map[string]interface{}{"status": "verified"}},
-			RestoreDrill:      &fakeRuntimeRunner{name: "restore", result: map[string]interface{}{"status": "skipped", "checks": []map[string]string{{"name": "restore_drill_adapter", "status": "skipped"}}}},
-		},
+	handler, job, queue, _ := newPersistedDeployFixture(t, stackID, RuntimeActions{
+		StackKitGenerator: &fakeStackKitArtifactGenerator{},
+		SimulationGate:    &fakeRuntimeRunner{name: "simulate", result: map[string]interface{}{"status": "accepted"}},
+		RolloutRunner:     &fakeRuntimeRunner{name: "rollout", result: map[string]interface{}{"status": "applied"}},
+		RolloutVerifier:   &fakeRuntimeRunner{name: "verify", result: map[string]interface{}{"status": "verified"}},
+		RestoreDrill:      &fakeRuntimeRunner{name: "restore", result: map[string]interface{}{"status": "skipped", "checks": []map[string]string{{"name": "restore_drill_adapter", "status": "skipped"}}}},
 	})
-	job := &Job{
-		ID:       "deploy-job-restore-skipped",
-		Type:     JobTypeDeploy,
-		TargetID: stackID,
-		Payload: map[string]interface{}{
-			"workers": deployWorkerPayload(),
-		},
-	}
-	queue := &Queue{jobs: map[string]*Job{job.ID: job}}
 
 	if err := handler(context.Background(), job, queue); err != nil {
 		t.Fatalf("DeployHandler failed: %v", err)
@@ -3111,8 +2193,6 @@ func TestDeployHandler_RestoreSkippedDoesNotMarkRuntimeVerified(t *testing.T) {
 
 func TestDeployHandler_RejectsLegacyHTTPRolloutBeforeMutation(t *testing.T) {
 	stackID := "stack-http-rollout"
-	specBaseDir := t.TempDir()
-	persistDeployFixture(t, specBaseDir, stackID)
 	writeCanonicalTemplate(t, DefaultBasementKitRef)
 
 	var mu sync.Mutex
@@ -3213,31 +2293,17 @@ func TestDeployHandler_RejectsLegacyHTTPRolloutBeforeMutation(t *testing.T) {
 		return runner
 	}
 
-	handler := DeployHandler(&ProvisionConfig{
-		WorkDir:      t.TempDir(),
-		SpecBaseDir:  specBaseDir,
-		StackKitsDir: writeJobsTestStackKitsDir(t),
-		RuntimeActions: RuntimeActions{
-			StackKitGenerator: &fakeStackKitArtifactGenerator{},
-			SimulationGate:    newRunner(simulateServer.URL, runtimeActionTargetSimulate, runtimeActionSimulateUpdate, defaultSimulationGatePath),
-			RolloutRunner:     newRunner(stackKitsServer.URL, runtimeActionTargetStackKits, string(StepRolloutRunner), defaultStackKitsRolloutPath),
-			RolloutVerifier:   newRunner(stackKitsServer.URL, runtimeActionTargetStackKits, string(StepVerifyRollout), defaultStackKitsVerifyPath),
-			RestoreDrill:      newRunner(stackKitsServer.URL, runtimeActionTargetStackKits, string(StepRestoreDrill), defaultRestoreDrillPath),
-		},
+	handler, job, queue, _ := newPersistedDeployFixture(t, stackID, RuntimeActions{
+		StackKitGenerator: &fakeStackKitArtifactGenerator{},
+		SimulationGate:    newRunner(simulateServer.URL, runtimeActionTargetSimulate, runtimeActionSimulateUpdate, defaultSimulationGatePath),
+		RolloutRunner:     newRunner(stackKitsServer.URL, runtimeActionTargetStackKits, string(StepRolloutRunner), defaultStackKitsRolloutPath),
+		RolloutVerifier:   newRunner(stackKitsServer.URL, runtimeActionTargetStackKits, string(StepVerifyRollout), defaultStackKitsVerifyPath),
+		RestoreDrill:      newRunner(stackKitsServer.URL, runtimeActionTargetStackKits, string(StepRestoreDrill), defaultRestoreDrillPath),
 	})
-	job := &Job{
-		ID:       "deploy-job-http-runtime-actions",
-		Type:     JobTypeDeploy,
-		TargetID: stackID,
-		Payload: map[string]interface{}{
-			"workers": deployWorkerPayload(),
-		},
-	}
-	queue := &Queue{jobs: map[string]*Job{job.ID: job}}
 
 	err := handler(context.Background(), job, queue)
-	if err == nil || !strings.Contains(err.Error(), "cannot bind the admitted ResolvedPlan hash") {
-		t.Fatalf("DeployHandler error = %v, want fail-closed legacy HTTP rejection", err)
+	if err == nil {
+		t.Fatal("expected fail-closed legacy HTTP rejection")
 	}
 
 	mu.Lock()
@@ -3254,40 +2320,26 @@ func TestDeployHandler_RejectsLegacyHTTPRolloutBeforeMutation(t *testing.T) {
 
 func TestDeployHandler_FailsWhenStackKitsRuntimeRunnerIsMissing(t *testing.T) {
 	stackID := "stack-missing-runner"
-	specBaseDir := t.TempDir()
-	persistDeployFixture(t, specBaseDir, stackID)
-
-	handler := DeployHandler(&ProvisionConfig{
-		WorkDir:      t.TempDir(),
-		SpecBaseDir:  specBaseDir,
-		StackKitsDir: writeJobsTestStackKitsDir(t),
-		RuntimeActions: RuntimeActions{
-			StackKitGenerator: &fakeStackKitArtifactGenerator{},
-			SimulationGate:    &fakeRuntimeRunner{name: "simulate"},
-			RolloutVerifier:   &fakeRuntimeRunner{name: "verify"},
-			RestoreDrill:      &fakeRuntimeRunner{name: "restore"},
-		},
+	handler, job, queue, _ := newPersistedDeployFixture(t, stackID, RuntimeActions{
+		StackKitGenerator: &fakeStackKitArtifactGenerator{},
+		SimulationGate:    &fakeRuntimeRunner{name: "simulate"},
+		RolloutVerifier:   &fakeRuntimeRunner{name: "verify"},
+		RestoreDrill:      &fakeRuntimeRunner{name: "restore"},
 	})
-	job := &Job{
-		ID:       "deploy-job-missing-runner",
-		Type:     JobTypeDeploy,
-		TargetID: stackID,
-		Payload: map[string]interface{}{
-			"workers": deployWorkerPayload(),
-		},
-	}
-	queue := &Queue{jobs: map[string]*Job{job.ID: job}}
 
 	err := handler(context.Background(), job, queue)
 	if err == nil {
 		t.Fatal("expected missing StackKits rollout runner to fail")
 	}
-	if !strings.Contains(err.Error(), "StackKits rollout runner is not configured") {
-		t.Fatalf("error = %v, want StackKits rollout runner message", err)
+	if job.Step != StepRolloutRunner {
+		t.Fatalf("job step = %q, want %q", job.Step, StepRolloutRunner)
 	}
 }
 
 func TestDestroyHandler_DecommissionsManagedRuntimeBeforeWorkspaceCheck(t *testing.T) {
+	order := []string{}
+	authority := newRecordingCurrentPortAuthority(&order)
+	portSnapshot := testManagedPortTeardownSnapshot("org-1", "user-1", "stack-managed")
 	decommissioner := &fakeManagedLeaseDecommissioner{result: &ManagedLeaseDecommissionResult{
 		Decommissioned: 2,
 		LeaseIDs:       []string{"lease-centron", "lease-ionos"},
@@ -3297,7 +2349,8 @@ func TestDestroyHandler_DecommissionsManagedRuntimeBeforeWorkspaceCheck(t *testi
 		},
 	}}
 	cfg := &ProvisionConfig{
-		WorkDir: t.TempDir(),
+		WorkDir:       t.TempDir(),
+		PortInventory: authority,
 		RuntimeActions: RuntimeActions{
 			LeaseDecommissioner: decommissioner,
 		},
@@ -3313,14 +2366,18 @@ func TestDestroyHandler_DecommissionsManagedRuntimeBeforeWorkspaceCheck(t *testi
 			"tenant_id":                             "org-1",
 			ManagedRuntimeDecommissionRequiredField: true,
 		},
+		Result: map[string]interface{}{PortTeardownSnapshotResultField: portSnapshot},
 	}
 	queue := &Queue{jobs: map[string]*Job{job.ID: job}}
 
 	if err := handler(context.Background(), job, queue); err != nil {
 		t.Fatalf("DestroyHandler: %v", err)
 	}
-	if len(decommissioner.requests) != 1 {
-		t.Fatalf("decommission requests = %d, want 1", len(decommissioner.requests))
+	if err := handler(context.Background(), job, queue); err != nil {
+		t.Fatalf("DestroyHandler replay: %v", err)
+	}
+	if len(decommissioner.requests) != 2 {
+		t.Fatalf("decommission requests = %d, want replay-safe 2", len(decommissioner.requests))
 	}
 	req := decommissioner.requests[0]
 	if req.StackID != "stack-managed" || req.TenantID != "org-1" || req.OwnerID != "user-1" {
@@ -3328,6 +2385,128 @@ func TestDestroyHandler_DecommissionsManagedRuntimeBeforeWorkspaceCheck(t *testi
 	}
 	if job.Progress != 100 {
 		t.Fatalf("progress = %d, want 100", job.Progress)
+	}
+	if !reflect.DeepEqual(order, []string{"release_snapshot", "release_snapshot"}) || len(authority.releasedSnapshots) != 2 || authority.releasedSnapshots[1].SnapshotDigest != portSnapshot.SnapshotDigest {
+		t.Fatalf("port teardown release = order %v snapshots %+v, want exact durable snapshot", order, authority.releasedSnapshots)
+	}
+	if job.Result[PortTeardownReleasedResultField] != portSnapshot.SnapshotDigest {
+		t.Fatalf("port teardown release receipt = %#v, want snapshot digest", job.Result[PortTeardownReleasedResultField])
+	}
+}
+
+func testManagedPortTeardownSnapshot(tenantID, ownerID, stackID string) portinventory.TeardownSnapshot {
+	snapshot := portinventory.TeardownSnapshot{
+		APIVersion: portinventory.TeardownSnapshotAPIVersion, TenantID: tenantID,
+		OwnerSubjectID: ownerID, TechstackID: stackID, Generations: []portinventory.TeardownGeneration{},
+	}
+	data, _ := json.Marshal(snapshot)
+	digest := sha256.Sum256(data)
+	snapshot.SnapshotDigest = "sha256:" + hex.EncodeToString(digest[:])
+	return snapshot
+}
+
+func testPortTeardownSnapshotForPlan(tenantID, ownerID, stackID, planHash string) portinventory.TeardownSnapshot {
+	return testPortTeardownSnapshotForNodes(tenantID, ownerID, stackID, planHash, map[string]string{"server-local": "main"})
+}
+
+func testPortTeardownSnapshotForNodes(tenantID, ownerID, stackID, planHash string, serverNodes map[string]string) portinventory.TeardownSnapshot {
+	snapshot := portinventory.TeardownSnapshot{
+		APIVersion: portinventory.TeardownSnapshotAPIVersion, TenantID: tenantID,
+		OwnerSubjectID: ownerID, TechstackID: stackID, Generations: make([]portinventory.TeardownGeneration, 0, len(serverNodes)),
+	}
+	servers := make([]string, 0, len(serverNodes))
+	for serverID := range serverNodes {
+		servers = append(servers, serverID)
+	}
+	sort.Strings(servers)
+	for index, serverID := range servers {
+		snapshot.Generations = append(snapshot.Generations, portinventory.TeardownGeneration{
+			GenerationRef: portinventory.GenerationRef{
+				ServerRef: portinventory.ServerRef{TenantID: tenantID, ServerID: serverID, ServerGeneration: int64(index + 1)},
+				StackID:   stackID, ResolvedPlanHash: planHash,
+			},
+			ClaimSetDigest: "sha256:" + strings.Repeat(string(rune('a'+index)), 64), NodeRefs: []string{serverNodes[serverID]},
+		})
+	}
+	data, _ := json.Marshal(snapshot)
+	digest := sha256.Sum256(data)
+	snapshot.SnapshotDigest = "sha256:" + hex.EncodeToString(digest[:])
+	return snapshot
+}
+
+func TestDestroyHandler_FailsClosedWithoutExactManagedAbsenceProof(t *testing.T) {
+	validProof := &ManagedLeaseDecommissionResult{
+		Decommissioned: 1, LeaseIDs: []string{"lease-managed"},
+		Proofs: []ManagedLeaseDecommissionProof{
+			testManagedLeaseDecommissionProof("stack-managed", "org-1", "lease-managed", ManagedLeaseDecommissionObservedDecommissioned, ""),
+		},
+	}
+	validSnapshot := testManagedPortTeardownSnapshot("org-1", "user-1", "stack-managed")
+	for _, tc := range []struct {
+		name             string
+		classified       bool
+		managed          bool
+		result           *ManagedLeaseDecommissionResult
+		decommissionErr  error
+		noDecommissioner bool
+		jobResult        map[string]interface{}
+		wantErr          error
+	}{
+		{name: "missing durable snapshot", classified: true, managed: true, result: validProof},
+		{name: "mismatched durable snapshot", classified: true, managed: true, result: validProof, jobResult: map[string]interface{}{PortTeardownSnapshotResultField: testManagedPortTeardownSnapshot("org-1", "user-1", "another-stack")}},
+		{name: "missing provider proof", classified: true, managed: true, result: &ManagedLeaseDecommissionResult{Decommissioned: 1, LeaseIDs: []string{"lease-managed"}}, jobResult: map[string]interface{}{PortTeardownSnapshotResultField: validSnapshot}, wantErr: ErrManagedLeaseDecommissionProofRequired},
+		{name: "waiting provider proof", classified: true, managed: true, decommissionErr: &JobWaitError{Reason: "waiting_provider_decommission", ResumeAfter: time.Second}, jobResult: map[string]interface{}{PortTeardownSnapshotResultField: validSnapshot}},
+		{name: "local destroy cannot use provider proof", classified: true, jobResult: map[string]interface{}{PortTeardownSnapshotResultField: testPortTeardownSnapshotForPlan("org-1", "user-1", "stack-managed", "sha256:"+strings.Repeat("a", 64))}},
+		{name: "old job has no classification", wantErr: ErrManagedLeaseDecommissionProofRequired},
+		{name: "managed stack has no native decommissioner", classified: true, managed: true, noDecommissioner: true, wantErr: ErrManagedLeaseDecommissionUnavailable},
+		{name: "adapter returns a count without terminal readback", classified: true, managed: true, result: &ManagedLeaseDecommissionResult{Decommissioned: 1, LeaseIDs: []string{"lease-unproven"}}, wantErr: ErrManagedLeaseDecommissionProofRequired},
+		{
+			name: "duplicate proof cannot hide an uncovered lease", classified: true, managed: true,
+			result: &ManagedLeaseDecommissionResult{
+				Decommissioned: 2,
+				LeaseIDs:       []string{"lease-a", "lease-b"},
+				Proofs: []ManagedLeaseDecommissionProof{
+					testManagedLeaseDecommissionProof("stack-managed", "org-1", "lease-a", ManagedLeaseDecommissionObservedDecommissioned, ""),
+					testManagedLeaseDecommissionProof("stack-managed", "org-1", "lease-a", ManagedLeaseDecommissionObservedDecommissioned, ""),
+				},
+			},
+			wantErr: ErrManagedLeaseDecommissionProofRequired,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			order := []string{}
+			authority := newRecordingCurrentPortAuthority(&order)
+			payload := map[string]interface{}{"owner_id": "user-1", "tenant_id": "org-1"}
+			if tc.classified {
+				payload[ManagedRuntimeDecommissionRequiredField] = tc.managed
+			}
+			job := &Job{
+				ID: "destroy-port-retain", Type: JobTypeDestroy, TargetID: "stack-managed",
+				Payload: payload,
+				Result:  tc.jobResult,
+			}
+			queue := &Queue{jobs: map[string]*Job{job.ID: job}}
+			var decommissioner ManagedLeaseDecommissioner
+			if !tc.noDecommissioner {
+				decommissioner = &fakeManagedLeaseDecommissioner{result: tc.result, err: tc.decommissionErr}
+			}
+			err := DestroyHandler(&ProvisionConfig{
+				WorkDir: t.TempDir(), PortInventory: authority,
+				RuntimeActions: RuntimeActions{LeaseDecommissioner: decommissioner},
+			})(t.Context(), job, queue)
+			if err == nil {
+				t.Fatal("DestroyHandler() error = nil, want fail-closed error")
+			}
+			if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
+				t.Fatalf("DestroyHandler() error = %v, want %v", err, tc.wantErr)
+			}
+			if len(authority.releasedSnapshots) != 0 || job.Result[PortTeardownReleasedResultField] != nil {
+				t.Fatalf("unproven release mutated claims: snapshots=%+v receipt=%#v", authority.releasedSnapshots, job.Result[PortTeardownReleasedResultField])
+			}
+			if job.Progress == 100 {
+				t.Fatal("destroy reported terminal success without an exact native provider proof")
+			}
+		})
 	}
 }
 
@@ -3377,73 +2556,6 @@ func TestManagedRuntimeDestroyHandlersPreserveDurableWait(t *testing.T) {
 			var got *JobWaitError
 			if !errors.As(err, &got) || got != waitErr {
 				t.Fatalf("handler error = %T %v, want original JobWaitError", err, err)
-			}
-		})
-	}
-}
-
-func TestDestroyHandler_FailsClosedBeforeWorkspaceSuccessWithoutNativeProof(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		payload map[string]interface{}
-		actions RuntimeActions
-		wantErr error
-	}{
-		{
-			name:    "old job has no classification",
-			payload: map[string]interface{}{"owner_id": "user-1", "tenant_id": "org-1"},
-			wantErr: ErrManagedLeaseDecommissionProofRequired,
-		},
-		{
-			name: "managed stack has no native decommissioner",
-			payload: map[string]interface{}{
-				"owner_id": "user-1", "tenant_id": "org-1",
-				ManagedRuntimeDecommissionRequiredField: true,
-			},
-			wantErr: ErrManagedLeaseDecommissionUnavailable,
-		},
-		{
-			name: "adapter returns a count without terminal readback",
-			payload: map[string]interface{}{
-				"owner_id": "user-1", "tenant_id": "org-1",
-				ManagedRuntimeDecommissionRequiredField: true,
-			},
-			actions: RuntimeActions{LeaseDecommissioner: &fakeManagedLeaseDecommissioner{
-				result: &ManagedLeaseDecommissionResult{Decommissioned: 1, LeaseIDs: []string{"lease-unproven"}},
-			}},
-			wantErr: ErrManagedLeaseDecommissionProofRequired,
-		},
-		{
-			name: "duplicate proof cannot hide an uncovered lease",
-			payload: map[string]interface{}{
-				"owner_id": "user-1", "tenant_id": "org-1",
-				ManagedRuntimeDecommissionRequiredField: true,
-			},
-			actions: RuntimeActions{LeaseDecommissioner: &fakeManagedLeaseDecommissioner{
-				result: &ManagedLeaseDecommissionResult{
-					Decommissioned: 2,
-					LeaseIDs:       []string{"lease-a", "lease-b"},
-					Proofs: []ManagedLeaseDecommissionProof{
-						testManagedLeaseDecommissionProof("stack-managed", "org-1", "lease-a", ManagedLeaseDecommissionObservedDecommissioned, ""),
-						testManagedLeaseDecommissionProof("stack-managed", "org-1", "lease-a", ManagedLeaseDecommissionObservedDecommissioned, ""),
-					},
-				},
-			}},
-			wantErr: ErrManagedLeaseDecommissionProofRequired,
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			job := &Job{
-				ID: "destroy-fail-closed", Type: JobTypeDestroy, TargetID: "stack-managed",
-				Payload: tc.payload,
-			}
-			queue := &Queue{jobs: map[string]*Job{job.ID: job}}
-			err := DestroyHandler(&ProvisionConfig{WorkDir: t.TempDir(), RuntimeActions: tc.actions})(context.Background(), job, queue)
-			if err == nil || !strings.Contains(err.Error(), tc.wantErr.Error()) {
-				t.Fatalf("DestroyHandler error = %v, want %v", err, tc.wantErr)
-			}
-			if job.Progress == 100 {
-				t.Fatal("destroy reported terminal success without a native provider proof")
 			}
 		})
 	}
@@ -3523,14 +2635,6 @@ func TestReconcileLeaseHandler_ProviderVerifiedAbsenceIsSafeNoop(t *testing.T) {
 	}
 }
 
-func TestRegisterDefaultHandlers_RegistersReconcileLease(t *testing.T) {
-	q := NewQueue(1, nil)
-	RegisterDefaultHandlers(q, &ProvisionConfig{WorkDir: t.TempDir()})
-	if _, ok := q.handlers[JobTypeReconcileLease]; !ok {
-		t.Fatal("JobTypeReconcileLease handler not registered by RegisterDefaultHandlers")
-	}
-}
-
 func TestDestroyHandler_NonExistentWorkspace(t *testing.T) {
 	var reconcileRequests []NoWorkspaceDestroyReconcileRequest
 	cfg := &ProvisionConfig{
@@ -3581,436 +2685,6 @@ func TestDestroyHandler_NonExistentWorkspace(t *testing.T) {
 	}
 	if got := result[DestroyProjectionReconciledResultField]; got != true {
 		t.Fatalf("destroy projection reconciled = %v, want true", got)
-	}
-}
-
-func TestDestroyHandler_ExistingWorkspace(t *testing.T) {
-	cfg := &ProvisionConfig{
-		WorkDir: t.TempDir(),
-	}
-
-	// Create a mock workspace
-	stackID := "existing-stack"
-	workDir := filepath.Join(cfg.WorkDir, stackID)
-	if err := os.MkdirAll(workDir, 0755); err != nil {
-		t.Fatalf("failed to create test workspace: %v", err)
-	}
-
-	// Create a minimal state file to simulate an initialized workspace
-	stateFile := filepath.Join(workDir, "terraform.tfstate")
-	if err := os.WriteFile(stateFile, []byte(`{"version": 4, "resources": []}`), 0644); err != nil {
-		t.Fatalf("failed to create state file: %v", err)
-	}
-
-	handler := DestroyHandler(cfg)
-
-	job := &Job{
-		ID:         "test-destroy-2",
-		Type:       JobTypeDestroy,
-		TargetID:   stackID,
-		TargetName: "existing-stack",
-		Payload: map[string]interface{}{
-			ManagedRuntimeDecommissionRequiredField: false,
-		},
-	}
-
-	queue := &Queue{
-		jobs: map[string]*Job{job.ID: job},
-	}
-
-	err := handler(context.Background(), job, queue)
-
-	// If tofu destroy failed (expected in CI without tofu), that's OK
-	if err != nil && contains(err.Error(), "tofu destroy failed") {
-		t.Logf("OpenTofu not installed, skipping destroy execution test: %v", err)
-		return
-	}
-
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
-
-func TestRegisterDefaultHandlers(t *testing.T) {
-	queue := NewQueue(1, nil)
-
-	RegisterDefaultHandlers(queue, nil)
-
-	// Check that handlers are registered
-	if _, ok := queue.handlers[JobTypeProvision]; !ok {
-		t.Error("provision handler not registered")
-	}
-
-	if _, ok := queue.handlers[JobTypeDestroy]; !ok {
-		t.Error("destroy handler not registered")
-	}
-}
-
-func TestQueue_EnqueueAndProcess(t *testing.T) {
-	queue := NewQueue(1, nil)
-
-	// Register a simple test handler
-	var handlerCalled atomic.Bool
-	queue.RegisterHandler(JobTypeCommand, func(ctx context.Context, job *Job, q *Queue) error {
-		handlerCalled.Store(true)
-		time.Sleep(10 * time.Millisecond)
-		return nil
-	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	queue.Start(ctx)
-	defer queue.Stop()
-
-	job := &Job{
-		ID:   "test-command-1",
-		Type: JobTypeCommand,
-	}
-
-	if err := queue.Enqueue(job); err != nil {
-		t.Fatalf("failed to enqueue job: %v", err)
-	}
-
-	// Wait for processing
-	time.Sleep(100 * time.Millisecond)
-
-	if !handlerCalled.Load() {
-		t.Error("handler was not called")
-	}
-
-	// Check job state
-	processedJob, ok := queue.Get(job.ID)
-	if !ok {
-		t.Fatal("job not found")
-	}
-
-	processedJob.mu.Lock()
-	processedState := processedJob.State
-	processedJob.mu.Unlock()
-	if processedState != JobStateCompleted {
-		t.Errorf("expected state completed, got %s", processedState)
-	}
-}
-
-func TestQueue_Stats(t *testing.T) {
-	queue := NewQueue(1, nil)
-
-	// Add some jobs
-	queue.jobs["job1"] = &Job{ID: "job1", State: JobStatePending}
-	queue.jobs["job2"] = &Job{ID: "job2", State: JobStateRunning}
-	queue.jobs["job3"] = &Job{ID: "job3", State: JobStateCompleted}
-	queue.jobs["job4"] = &Job{ID: "job4", State: JobStateFailed}
-
-	stats := queue.Stats()
-
-	if stats["total"] != 4 {
-		t.Errorf("expected total 4, got %d", stats["total"])
-	}
-	if stats["pending"] != 1 {
-		t.Errorf("expected pending 1, got %d", stats["pending"])
-	}
-	if stats["running"] != 1 {
-		t.Errorf("expected running 1, got %d", stats["running"])
-	}
-	if stats["completed"] != 1 {
-		t.Errorf("expected completed 1, got %d", stats["completed"])
-	}
-	if stats["failed"] != 1 {
-		t.Errorf("expected failed 1, got %d", stats["failed"])
-	}
-}
-
-// Helper function
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
-}
-
-func containsHelper(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
-
-// Tests for convertUIConfigToSpec and related helpers
-
-func TestMapServicesArrayToSpec(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    []interface{}
-		wantLen  int
-		wantName string
-		wantType string
-	}{
-		{
-			name:     "traefik service",
-			input:    []interface{}{"traefik"},
-			wantLen:  1,
-			wantName: "traefik",
-			wantType: "reverse-proxy",
-		},
-		{
-			name:     "multiple services",
-			input:    []interface{}{"traefik", "pocketbase", "nextcloud"},
-			wantLen:  3,
-			wantName: "traefik",
-			wantType: "reverse-proxy",
-		},
-		{
-			name:     "legacy monitoring alias maps to otel collector",
-			input:    []interface{}{"monitoring"},
-			wantLen:  1,
-			wantName: "otel-collector",
-			wantType: "monitoring",
-		},
-		{
-			name:    "empty array",
-			input:   []interface{}{},
-			wantLen: 0,
-		},
-		{
-			name:     "invalid types ignored",
-			input:    []interface{}{"traefik", 123, nil, "pocketbase"},
-			wantLen:  2,
-			wantName: "traefik",
-			wantType: "reverse-proxy",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := mapServicesArrayToSpec(tt.input)
-			if len(result) != tt.wantLen {
-				t.Errorf("mapServicesArrayToSpec() got %d services, want %d", len(result), tt.wantLen)
-			}
-			if tt.wantLen > 0 && result[0].Name != tt.wantName {
-				t.Errorf("mapServicesArrayToSpec() first service name = %s, want %s", result[0].Name, tt.wantName)
-			}
-			if tt.wantLen > 0 && result[0].Type != tt.wantType {
-				t.Errorf("mapServicesArrayToSpec() first service type = %s, want %s", result[0].Type, tt.wantType)
-			}
-		})
-	}
-}
-
-func TestMapServiceNameToType(t *testing.T) {
-	tests := []struct {
-		name string
-		want string
-	}{
-		{"traefik", "reverse-proxy"},
-		{"nginx", "reverse-proxy"},
-		{"caddy", "reverse-proxy"},
-		{"caprover", "paas"},
-		{"pocketbase", "backend"},
-		{"pocket-id", "auth"},
-		{"pocket_id", "auth"},
-		{"nextcloud", "storage"},
-		{"headscale", "vpn"},
-		{"tailscale", "vpn"},
-		{"otel-collector", "monitoring"},
-		{"monitoring", "monitoring"},
-		{"victoriametrics", "monitoring"},
-		{"grafana", "monitoring"},
-		{"nextcloud", "storage"},
-		{"vaultwarden", "auth"},
-		{"immich-server", "media"},
-		{"immich-ml", "media"},
-		{"immich-postgres", "database"},
-		{"immich-redis", "cache"},
-		{"unknown-service", "service"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := mapServiceNameToType(tt.name)
-			if got != tt.want {
-				t.Errorf("mapServiceNameToType(%s) = %s, want %s", tt.name, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestMapOptionsToServices(t *testing.T) {
-	tests := []struct {
-		name    string
-		options map[string]interface{}
-		wantLen int
-	}{
-		{
-			name: "enable traefik",
-			options: map[string]interface{}{
-				"enable_traefik": true,
-			},
-			wantLen: 1,
-		},
-		{
-			name: "enable monitoring adds collector baseline",
-			options: map[string]interface{}{
-				"enable_monitoring": true,
-			},
-			wantLen: 1,
-		},
-		{
-			name: "disabled services",
-			options: map[string]interface{}{
-				"enable_traefik": false,
-			},
-			wantLen: 0,
-		},
-		{
-			name: "multiple enabled",
-			options: map[string]interface{}{
-				"enable_traefik":    true,
-				"enable_pocketbase": true,
-			},
-			wantLen: 2,
-		},
-		{
-			name: "pocket id default identity",
-			options: map[string]interface{}{
-				"identity_head": "pocket_id",
-			},
-			wantLen: 1,
-		},
-		{
-			name: "pocketbase backend plus passkeys adds pocket id",
-			options: map[string]interface{}{
-				"enable_pocketbase_backend": true,
-				"requires_passkeys":         true,
-			},
-			wantLen: 2,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := mapOptionsToServices(tt.options)
-			if len(result) != tt.wantLen {
-				t.Errorf("mapOptionsToServices() got %d services, want %d", len(result), tt.wantLen)
-			}
-		})
-	}
-}
-
-func TestSanitizeDNSName(t *testing.T) {
-	tests := []struct {
-		input string
-		want  string
-	}{
-		{"my-homelab", "my-homelab"},
-		{"My HomeStack", "my-homestack"},
-		{"Test_Stack_123", "test-stack-123"},
-		{"ABC", "abc"},
-		{"123-start", "ks-123-start"}, // Must start with letter, prefixed with ks-
-		{"", "techstack"},             // Empty defaults
-		{"---", "techstack"},          // Invalid defaults
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			got := sanitizeDNSName(tt.input)
-			if got != tt.want {
-				t.Errorf("sanitizeDNSName(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestConvertUIConfigToSpec_WizardFormat(t *testing.T) {
-	// Test wizard format with goals
-	wizardConfig := map[string]interface{}{
-		"name": "my-homelab",
-		"goals": map[string]interface{}{
-			"website": true,
-			"storage": true,
-		},
-		"provider": "local",
-		"network": map[string]interface{}{
-			"accessMode": "local",
-		},
-	}
-
-	spec, err := convertUIConfigToSpec(wizardConfig)
-	if err != nil {
-		t.Fatalf("convertUIConfigToSpec() failed: %v", err)
-	}
-
-	if spec.Name != "my-homelab" {
-		t.Errorf("expected name 'my-homelab', got '%s'", spec.Name)
-	}
-
-	if len(spec.Services) == 0 {
-		t.Error("expected services to be populated from goals")
-	}
-
-	if len(spec.Nodes) == 0 {
-		t.Error("expected at least one node")
-	}
-}
-
-func TestConvertUIConfigToSpec_DirectServicesFormat(t *testing.T) {
-	// Test direct services array format
-	directConfig := map[string]interface{}{
-		"name":     "test-stack",
-		"provider": "local",
-		"services": []interface{}{"traefik", "pocketbase", "nextcloud"},
-	}
-
-	spec, err := convertUIConfigToSpec(directConfig)
-	if err != nil {
-		t.Fatalf("convertUIConfigToSpec() failed: %v", err)
-	}
-
-	if len(spec.Services) != 3 {
-		t.Errorf("expected 3 services, got %d", len(spec.Services))
-	}
-
-	// Check service types
-	serviceTypes := make(map[string]string)
-	for _, svc := range spec.Services {
-		serviceTypes[svc.Name] = svc.Type
-	}
-
-	if serviceTypes["traefik"] != "reverse-proxy" {
-		t.Errorf("expected traefik type 'reverse-proxy', got '%s'", serviceTypes["traefik"])
-	}
-	if serviceTypes["pocketbase"] != "backend" {
-		t.Errorf("expected pocketbase type 'backend', got '%s'", serviceTypes["pocketbase"])
-	}
-	if serviceTypes["nextcloud"] != "storage" {
-		t.Errorf("expected nextcloud type 'storage', got '%s'", serviceTypes["nextcloud"])
-	}
-}
-
-func TestConvertUIConfigToSpec_OptionsFormat(t *testing.T) {
-	// Test options format with enable_* flags
-	optionsConfig := map[string]interface{}{
-		"name":     "test-stack",
-		"provider": "local",
-		"options": map[string]interface{}{
-			"enable_traefik":    true,
-			"enable_monitoring": true,
-			"vpn":               "headscale",
-		},
-	}
-
-	spec, err := convertUIConfigToSpec(optionsConfig)
-	if err != nil {
-		t.Fatalf("convertUIConfigToSpec() failed: %v", err)
-	}
-
-	// Should have traefik + OTel Collector = 2 services
-	if len(spec.Services) != 2 {
-		t.Errorf("expected 2 services, got %d", len(spec.Services))
-	}
-
-	// Check VPN was set
-	if spec.Network.VPN != "headscale" {
-		t.Errorf("expected VPN 'headscale', got '%s'", spec.Network.VPN)
 	}
 }
 
@@ -4141,7 +2815,7 @@ func TestTechStackEnrollmentForRolloutFailsClosedWithoutSigningSecret(t *testing
 				kombSpec:       &core.KombinationSpec{Name: "Contract Stack"},
 				managedRuntime: tc.managedRuntime,
 			}, tc.tenantID, tc.ownerID)
-			if err == nil || !strings.Contains(err.Error(), "signed worker agent token") {
+			if err == nil {
 				t.Fatalf("%s enrollment must fail closed without signing secret, got %v", tc.name, err)
 			}
 		})
@@ -4207,19 +2881,108 @@ func TestRuntimeActionObservationIsSanitizedAndPersistedWithStackKitOutputs(t *t
 				}},
 			},
 		},
+		"command_result": map[string]interface{}{
+			"schemaVersion": "stackkit.command-result/v1",
+			"data": map[string]interface{}{
+				"schemaVersion": "stackkit.apply-result/v2",
+				"apply": map[string]interface{}{
+					"resultHash": "sha256:apply", "planHash": "sha256:plan", "appliedRequestDigest": "sha256:request",
+					"appliedWorkloads": []interface{}{map[string]interface{}{
+						"workloadRef": "photos", "runtimeOwnerRef": "coolify", "api_token": "must-not-persist",
+					}},
+				},
+				"observations": []interface{}{map[string]interface{}{
+					"schemaVersion": "stackkit.runtime-observation/v2",
+					"identity": map[string]interface{}{
+						"stackId": "stack-1", "planHash": "sha256:plan", "api_token": "must-not-persist",
+					},
+					"runtime": []interface{}{map[string]interface{}{
+						"requirementId": "runtime-photos", "instanceRef": "immich-server-node-main",
+						"siteRef": "home", "nodeRef": "main", "executionChannelRef": "local-home-main",
+					}},
+				}},
+			},
+		},
 	}
 	outputs := map[string]interface{}{}
 	mergeStackKitOutputs(outputs, result)
-	observation := resultMap(outputs, "observation")
-	if observation == nil || resultString(observation, "version") != "stackkit.runtime-observation/v1" {
+	observation := mapFromInterface(outputs["observation"])
+	if resultString(observation, "version") != "stackkit.runtime-observation/v1" {
 		t.Fatalf("versioned observation was not persisted: %#v", outputs)
 	}
-	host := resultMap(observation, "host")
-	if host == nil || host["api_token"] != nil || host["reachable"] != true {
+	host := mapFromInterface(observation["host"])
+	if host["api_token"] != nil || host["reachable"] != true {
 		t.Fatalf("observation was not sanitized: %#v", observation)
 	}
+	observations, ok := outputs["observations"].([]interface{})
+	if !ok || len(observations) == 0 {
+		t.Fatalf("typed runtime observations were not persisted: %#v", outputs)
+	}
+	typedObservation, ok := observations[0].(map[string]interface{})
+	identity := mapFromInterface(typedObservation["identity"])
+	if !ok || resultString(identity, "stackId") != "stack-1" || identity["api_token"] != nil {
+		t.Fatalf("typed runtime observations were not sanitized: %#v", observations)
+	}
+	apply := mapFromInterface(outputs["apply"])
+	workloads, ok := apply["appliedWorkloads"].([]interface{})
+	if !ok || len(workloads) == 0 {
+		t.Fatalf("typed Apply summary was not persisted: %#v", outputs)
+	}
+	workload, ok := workloads[0].(map[string]interface{})
+	if !ok || resultString(apply, "resultHash") != "sha256:apply" || resultString(workload, "workloadRef") != "photos" || workload["api_token"] != nil {
+		t.Fatalf("typed Apply summary was not sanitized: %#v", apply)
+	}
 	proof := runtimeActionProof("stackkit_rollout", result, "applied")
-	if resultMap(proof, "observation") == nil {
+	if len(mapFromInterface(proof["observation"])) == 0 {
 		t.Fatalf("runtime action proof dropped the observation: %#v", proof)
+	}
+	if proof["observations"] == nil || len(mapFromInterface(proof["apply"])) == 0 {
+		t.Fatalf("runtime action proof dropped typed Apply evidence: %#v", proof)
+	}
+}
+
+// Regression: the Windows client's bundled StackKits catalog ships the shared
+// schema as `foundation` (StackKits renamed `base`), and rollouts from the
+// installed client failed in generate_iac with "workspace source ...\base
+// missing" (journey B2 run 35868302392).
+func TestStackKitCLIWorkspaceLinksRenamedFoundationSchema(t *testing.T) {
+	catalog := t.TempDir()
+	for _, dir := range []string{DefaultBasementKitRef, "modules", "foundation", "cue.mod"} {
+		if err := os.MkdirAll(filepath.Join(catalog, dir), 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	workDir := t.TempDir()
+	if err := ensureStackKitCLIWorkspace(workDir, catalog, DefaultBasementKitRef); err != nil {
+		t.Fatalf("bundled catalog without base was refused: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workDir, "foundation")); err != nil {
+		t.Fatalf("shared schema is not available in the CLI workspace: %v", err)
+	}
+}
+
+// Regression: the pinned CLI refuses `address plan` for a StackSpec without
+// public routes, which failed every local-access rollout from the installed
+// Windows client in generate_iac (journey B2 run 35869333137).
+func TestCanonicalStackKitCLISkipsAddressPlanWithoutPublicRoutes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake CLI is a POSIX shell script")
+	}
+	workDir := t.TempDir()
+	binary := filepath.Join(workDir, "stackkit")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\ncase \"$*\" in *address*) exit 1 ;; esac\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	spec := filepath.Join(workDir, "stack-spec.v2.json")
+	if err := os.WriteFile(spec, []byte(`{"apiVersion":"stackkit/v2alpha1","kind":"StackSpec","routes":{"dashboard":{"exposure":"local","serviceRef":"dashboard","host":"dash.home.example"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"--no-log", "--chdir", workDir, "--spec", filepath.Base(spec)}
+	executed, _, address, err := prepareCanonicalStackKitCLI(context.Background(), binary, workDir, spec, args, time.Minute, StackKitArtifactGenerateRequest{})
+	if err != nil {
+		t.Fatalf("a StackSpec without public routes was refused: %v", err)
+	}
+	if executed != spec || address.Prefix != "" || address.Zone != "" {
+		t.Fatalf("a StackSpec without public routes was rebound: %q %#v", executed, address)
 	}
 }

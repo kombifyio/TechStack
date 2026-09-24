@@ -51,7 +51,7 @@ export function frozenManifestReady(appRoot = defaultAppRoot, run = spawnSync) {
     "--ignore-scripts",
   ]);
   const result = run(invocation.command, invocation.args, {
-    cwd: resolve(appRoot, ".."),
+    cwd: appRoot,
     stdio: "ignore",
     env: process.env,
   });

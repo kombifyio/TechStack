@@ -2,6 +2,10 @@
 
 Native Windows shell for kombify TechStack.
 
+The reusable profile-validation and Windows secret-custody boundary lives in
+`Kombify.Client.Shell`; Techstack-specific runtime supervision, routes,
+branding and UI remain in `Kombify.TechStack.Client`.
+
 - `kombify-techstack-client.exe` is the WinForms/WebView2 desktop app.
 - `techstack.exe` remains the runtime/CLI binary.
 - The client reads `%LOCALAPPDATA%\kombify\techstack-client\client.json`.
@@ -9,17 +13,27 @@ Native Windows shell for kombify TechStack.
 - Cloud access and refresh tokens are stored only as per-user Generic
   Credentials in Windows Credential Manager. `cloud-session.json` contains
   non-secret connection metadata and credential target names only.
-- The local runtime session-signing secret and local device-session token also
-  live in Windows Credential Manager; neither is written into the runtime data
-  directory.
+- The local runtime session-signing secret, the local device-session token
+  and the runtime encryption key (`TECHSTACK_ENCRYPTION_KEY`, 32 bytes, used
+  for Wallet, backup and StackKit custody) also live in Windows Credential
+  Manager; none is written into the runtime data directory. A present but
+  malformed encryption key stops the start instead of being replaced, because
+  a new key could not read the retained encrypted data.
 - `mode=local` starts the bundled `techstack.exe` when the local runtime is
   not already reachable, then opens `/client/local?client=windows`. That route
-  uses the real TechStack first-run auth setup/login APIs and redirects an
-  existing local session into the operator UI.
+  uses the device session bootstrapped by the shell and opens the operator UI
+  directly, without a mode picker, account creation or interactive login.
+  Existing configurations pointing at the former default mode picker migrate
+  to this local entry. Explicit Cloud and server configurations are preserved.
 - Local mode runs the real Postgres-backed control plane against an embedded
   PostgreSQL 16 child process (`TECHSTACK_EMBEDDED_POSTGRES=1`,
-  `internal/localdb/embedded_postgres.go`); data lives under the runtime data
-  directory (`postgres\data`). There is no separate desktop data backend.
+  `internal/localdb/embedded_postgres.go`). The installer carries the pinned
+  PostgreSQL archive in `postgres\`; the shell sets
+  `TECHSTACK_EMBEDDED_POSTGRES_BUNDLE_DIR` to this directory. Startup extracts
+  it into the user runtime directory without downloading binaries or writing
+  to the installation directory. A missing bundle requires an installation
+  repair. Data remains in the user runtime directory (`postgres\data`).
+  There is no separate desktop data backend.
 - `mode=cloud` opens the TechStack Cloud web UI in WebView2; the separate
   device-code URL remains available for Cloud tool-token authorization.
 - `mode=server` first loads `/.well-known/kombify-client`, rejects unknown
@@ -86,36 +100,67 @@ state and installation without an override.
 
 Installed local smoke:
 
+The focused PostgreSQL artifact probe is `mise run test:windows:postgres:offline`.
+It prepares the pinned archive, then starts the production local store with a
+fresh data directory and an unavailable download endpoint, checks SQL state
+across restart, and verifies that a missing bundle cannot trigger a download.
+This probe does not establish full installed-client or backup/restore acceptance.
+
 ```powershell
-pnpm --dir app install --frozen-lockfile
-pnpm --dir app exec playwright install chromium
+node app/scripts/install-deps.mjs --frozen-lockfile
 .\scripts\windows-client-installed-smoke.ps1
 ```
 
-The smoke packages the client, installs it locally, starts the installed EXE,
-creates the first local owner, opens Wallet and the Creation Wizard, restarts
-the installed client, and verifies the local device-token session.
+The smoke packages the client, installs it (`-Installer portable`, the
+default, into isolated user directories; `-Installer setup` through the shipped
+`kombify-Techstack-Setup.exe` into its product location) and starts the
+installed EXE. `-BlockOutbound` (elevated, disposable hosts only) blocks all
+non-loopback traffic of the client, runtime and WebView2 for the whole run. It verifies the runtime version, full source revision
+and PostgreSQL backend, then attaches to the actual installed WebView through
+a temporary loopback debugging port (`LocalPort + 10`). The native shell must
+open the dashboard using its own device session, without test-injected cookies
+or manual account setup. With external browser requests blocked, the smoke
+reloads the dashboard and opens Wallet and the Creation Wizard, then repeats
+after a restart and checks that the local operator identity and an encrypted
+Wallet item written on first start are unchanged. In setup mode it then runs
+the shipped uninstaller and checks that the binaries are gone while the local
+PostgreSQL data and the device credential remain. `-DiagnosticsDir` receives
+the runtime and PostgreSQL logs before the isolated state is discarded.
 
-Signed update contract (PowerShell 7.5+):
+`-SkipPackage` reuses the existing stage; `-ExpectedRevision` and `-Version`
+bind it to the artifact being exercised (both otherwise resolve from `HEAD`).
+`-SpecTemplatesPath` passes same-release CI templates to the existing packager.
+Provider lifecycle, signed updates and backup/restore remain separate evidence.
+The local debugging setting exists only in the smoke process environment and
+is restored during cleanup. See the [official WebView2 integration](https://playwright.dev/docs/webview2).
 
-```powershell
-pwsh -File .\scripts\package-windows-client.ps1 `
-  -Version "0.1.0" `
-  -RequireSignedUpdateManifest `
-  -UpdateManifestPrivateKeyPath $env:WINDOWS_UPDATE_PRIVATE_KEY_FILE `
-  -UpdateManifestPublicKeyPath $env:WINDOWS_UPDATE_PUBLIC_KEY_FILE `
-  -UpdateManifestKeyId $env:WINDOWS_UPDATE_KEY_ID `
-  -UpdateDownloadUrl "https://releases.kombify.io/windows/kombify-techstack-client_0.1.0_Windows_x86_64.zip"
-```
+Signed updates (NATIVE-CLIENT-PLATFORM-STANDARD section 7):
 
-The manifest signature binds version, channel, HTTPS package URL, SHA-256,
-size, timestamp and key id. `test-windows-client-update-manifest.ps1` verifies
-the selected public key and package bytes; the local contract gate includes a
-tamper-rejection test. This is a producer/verifier contract only. The client
-does not yet consume update manifests, enforce version monotonicity, download
-an update, or perform an update handoff.
+- The shipped installation (Setup.exe/MSI under `%ProgramFiles%\kombify\techstack`)
+  checks its channel after the UI is up by running
+  `techstack.exe client-update`. The runtime binary embeds the Ed25519
+  update key `kombify-desktop-update-2026-v1`, accepts only a manifest signed
+  with it (`client-update-manifest.v1`), refuses downgrades and channels below
+  `updateMinSupportedVersion`, and stages the installer below
+  `<state>\updates\<version>` only after its size and SHA-256 match.
+- At the next start, before the runtime starts, the client re-verifies the
+  staged installer, snapshots the runtime data, keeps a copy of the installed
+  version's installer from the Burn package cache, and runs the new
+  Setup.exe (`/passive`, one elevation prompt). The new version then starts
+  on the retained data. If its runtime does not become healthy, the client
+  uninstalls it, reinstalls the previous version, and restores the snapshot
+  before that runtime starts.
+- `client.json` sets `updateManifestUrl` (default: the public
+  `kombifyio/TechStack` latest release asset
+  `kombify-techstack-windows-update.json`), `updateChannel` (`stable`) and
+  `autoUpdate` (`false` opts out). The trusted key cannot be configured.
+  Portable installations never update themselves. An unreachable channel
+  never delays a start.
+- The release publisher signs manifests with
+  `node scripts/new-client-update-manifest.mjs` (Ed25519; the private key is
+  read from a file or an environment variable and never printed).
 
-`-RequireAuthenticode` is likewise a verifier, not a signing step. It remains
+`-RequireAuthenticode` is a verifier, not a signing step. It remains
 available for a future signed lane, but it is not required by the current
 unsigned alpha release workflow.
 

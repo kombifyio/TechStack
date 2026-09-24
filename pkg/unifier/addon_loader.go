@@ -44,29 +44,16 @@ func NewAddonSchemaLoader() *AddonSchemaLoader {
 	}
 }
 
-// LoadEmbedded loads all add-on schemas from the default stackkits/addons directory.
-// This looks for addons relative to the working directory or in common locations.
+// LoadEmbedded loads add-on schemas from the configured StackKits checkout.
 func (l *AddonSchemaLoader) LoadEmbedded() error {
-	// Try common paths
-	paths := []string{}
 	if stackkitsDir := DefaultStackKitsDir(); stackkitsDir != "" {
-		paths = append(paths, filepath.Join(stackkitsDir, "addons"))
-	}
-	paths = append(paths,
-		"addons",
-		"pkg/stackkits/addons",
-		"./pkg/stackkits/addons",
-		"../stackkits/addons",
-		"../../pkg/stackkits/addons",
-	)
-
-	for _, path := range paths {
+		path := filepath.Join(stackkitsDir, "addons")
 		if info, err := os.Stat(path); err == nil && info.IsDir() {
 			return l.LoadFromPath(path)
 		}
 	}
 
-	l.logger.Warn("Could not find embedded addons directory")
+	l.logger.Warn("Could not find addons directory on the configured StackKits checkout")
 	l.loaded = true
 	return nil
 }
@@ -182,19 +169,6 @@ func (l *AddonSchemaLoader) Get(name string) (cue.Value, bool) {
 	return val, ok
 }
 
-// GetAll returns all loaded add-on schemas.
-func (l *AddonSchemaLoader) GetAll() map[string]cue.Value {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-
-	// Return a copy
-	result := make(map[string]cue.Value, len(l.schemas))
-	for k, v := range l.schemas {
-		result[k] = v
-	}
-	return result
-}
-
 // GetLoadedAddon returns a LoadedAddon with extracted metadata.
 func (l *AddonSchemaLoader) GetLoadedAddon(name string) (*LoadedAddon, error) {
 	val, ok := l.Get(name)
@@ -275,47 +249,4 @@ func (l *AddonSchemaLoader) ListNames() []string {
 		names = append(names, name)
 	}
 	return names
-}
-
-// MergeAddons merges multiple add-on schemas into a single CUE value.
-// This is used to combine detected add-ons with the base StackKit schema.
-func (l *AddonSchemaLoader) MergeAddons(addonNames []string) (cue.Value, error) {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-
-	if len(addonNames) == 0 {
-		return cue.Value{}, nil
-	}
-
-	// Start with the first addon
-	firstName := addonNames[0]
-	result, ok := l.schemas[firstName]
-	if !ok {
-		return cue.Value{}, fmt.Errorf("add-on not found: %s", firstName)
-	}
-
-	// Merge remaining addons
-	for i := 1; i < len(addonNames); i++ {
-		name := addonNames[i]
-		addon, ok := l.schemas[name]
-		if !ok {
-			l.logger.Warn("Add-on not found, skipping", "name", name)
-			continue
-		}
-
-		// Unify schemas
-		result = result.Unify(addon)
-		if result.Err() != nil {
-			return cue.Value{}, fmt.Errorf("conflict merging add-on %s: %w", name, result.Err())
-		}
-	}
-
-	return result, nil
-}
-
-// Count returns the number of loaded schemas.
-func (l *AddonSchemaLoader) Count() int {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-	return len(l.schemas)
 }

@@ -58,3 +58,9 @@ func configuredTargetStackKitRelease() (*stackkitrelease.Release, error) {
 func ConfiguredPinnedStackKitRelease() (*stackkitrelease.Release, error) {
 	return configuredPinnedStackKitRelease()
 }
+
+// ConfiguredTargetStackKitRelease resolves the exact release admitted on a
+// managed Linux agent, including the bundled Windows-client runtime pin.
+func ConfiguredTargetStackKitRelease() (*stackkitrelease.Release, error) {
+	return configuredTargetStackKitRelease()
+}

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/kombifyio/techstack/internal/authprojection"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/auth/sso"
 	"github.com/kombifyio/techstack/pkg/config"
@@ -29,13 +30,16 @@ func getStackIdentity(app core.App, deployMode config.DeploymentMode) func(e *ht
 			return err
 		}
 
-		// e.Auth is the edge/Auth0 principal, which does not carry the persisted
-		// stack_identity. Load the local user record by the authenticated id to
-		// read it (mirrors updateStackIdentity). A missing record yields a nil
-		// identity rather than an error.
+		// e.Auth is the canonical principal and does not carry the persisted
+		// compatibility profile. Resolve deterministic local profiles and linked
+		// Cloud profiles through the shared projection adapter.
 		var stored *sso.StackIdentity
 		if userID, ok := AuthUserID(e); ok {
-			if user, err := app.FindRecordById("users", userID); err == nil {
+			user, err := authprojection.FindPocketBaseUser(app, userID)
+			if err != nil {
+				return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to load user profile", nil)
+			}
+			if user != nil {
 				stored = getStoredStackIdentity(user)
 			}
 		}
@@ -72,8 +76,8 @@ func updateStackIdentity(app core.App, deployMode config.DeploymentMode) func(e 
 			return httpx.BadRequest(e, "name, characterId and animationStyle are required")
 		}
 
-		user, err := app.FindRecordById("users", userID)
-		if err != nil {
+		user, err := authprojection.FindPocketBaseUser(app, userID)
+		if err != nil || user == nil {
 			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to load user profile", nil)
 		}
 

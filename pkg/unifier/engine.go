@@ -12,7 +12,6 @@ import (
 	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/cuecontext"
 	"github.com/kombifyio/techstack/pkg/logger"
-	"github.com/kombifyio/techstack/pkg/tofu"
 )
 
 //go:embed schema/*.cue
@@ -24,8 +23,7 @@ type Engine struct {
 	schema    cue.Value
 	kitLoader *StackKitLoader
 	logger    *slog.Logger
-	runner    tofu.ExtendedRunner // OpenTofu runner for provisioning
-	dataDir   string              // Base directory for stack data (default: "data/stacks")
+	dataDir   string // Base directory for stack data (default: "data/stacks")
 	mu        sync.RWMutex
 }
 
@@ -51,31 +49,6 @@ func New() (*Engine, error) {
 		schema:    schemaValue,
 		kitLoader: kitLoader,
 		logger:    logger.Default().Logger,
-		runner:    &tofu.DefaultRunner{},
-		dataDir:   "data/stacks",
-	}, nil
-}
-
-// NewWithStackKitDir creates an Engine with a custom StackKit directory.
-func NewWithStackKitDir(stackKitDir string) (*Engine, error) {
-	ctx := cuecontext.New()
-
-	schemaValue, err := loadEmbeddedSchemas(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load CUE schemas: %w", err)
-	}
-
-	kitLoader, err := NewStackKitLoaderWithDir(stackKitDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize StackKit loader: %w", err)
-	}
-
-	return &Engine{
-		ctx:       ctx,
-		schema:    schemaValue,
-		kitLoader: kitLoader,
-		logger:    logger.Default().Logger,
-		runner:    &tofu.DefaultRunner{},
 		dataDir:   "data/stacks",
 	}, nil
 }

@@ -378,18 +378,49 @@ paths:
   # STACKS - LIFECYCLE
   # ============================================================
   /api/v1/stacks:
+    get:
+      operationId: listKitDeployments
+      tags: [Stacks]
+      summary: List the owner's StackKit deployments
+      description: |
+        Returns every StackKit deployment beneath the authenticated owner's
+        singleton B2C Homelab. `kit_deployment_id`, `homelab_id`, and
+        `stackkit_id` are the product identities; legacy identifiers remain
+        compatibility aliases on this route while consumers migrate.
+      responses:
+        "200":
+          description: Owner-scoped StackKit deployment list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/StackKitDeploymentSummary"
+                  meta:
+                    $ref: "#/components/schemas/ResponseMeta"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
     post:
       operationId: createStack
       tags: [Stacks]
-      summary: Create stack and start provisioning
+      summary: Create a StackKit deployment in the owner's Homelab
       description: |
-        Creates a new stack from the canonical StackKits stack-spec payload
-        supplied as `stack_spec`. Multiple stacks and homelabs can belong to
-        one TechStack instance; clients must not assume the former
-        single-homelab framing. Legacy `user_config`/kombination payloads are
-        still accepted for compatibility. Wizard clients should send a stable
-        `X-Idempotency-Key`; retries with the same key and payload return the
-        original stack, planned server, and provisioning job.
+        Creates an internal StackKit deployment under the authenticated B2C
+        owner's singleton Homelab from the canonical StackKits stack-spec
+        payload supplied as `stack_spec`. The legacy `/stacks` route and
+        `stack_id` response field identify that deployment; they do not create
+        or select a second Homelab product. One TechStack instance can serve
+        many owners, each with their own Homelab. Legacy
+        `user_config`/kombination payloads remain accepted at this compatibility
+        boundary. Wizard clients should send a stable `X-Idempotency-Key`;
+        retries with the same key and payload return the original deployment,
+        planned server, and provisioning job.
       parameters:
         - name: X-Idempotency-Key
           in: header
@@ -406,7 +437,7 @@ paths:
               $ref: "#/components/schemas/CreateStackRequest"
       responses:
         "202":
-          description: Stack creation accepted
+          description: StackKit deployment accepted
           content:
             application/json:
               schema:
@@ -416,17 +447,56 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
         "409":
-          description: Stack conflict
+          description: StackKit deployment conflict
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/stacks/prune-orphans:
+    post:
+      operationId: reviewOrApplyOrphanProjectionCleanup
+      tags: [Stacks]
+      summary: Review or apply owner-scoped test-residue cleanup
+      description: |
+        Two-phase cleanup for control-plane projections only. A `dry_run`
+        returns the exact authenticated-owner E2E/runtime-cloud candidates and
+        a stable revision-bound digest. `apply` recomputes the plan and accepts
+        only that exact digest. This route never decommissions a lease, calls a
+        provider, destroys infrastructure, or enqueues lifecycle work.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrphanProjectionCleanupRequest"
+      responses:
+        "200":
+          description: Reviewed plan or applied projection cleanup
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/OrphanProjectionCleanupResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
   /api/v1/stacks/{id}/owner-spec:
     get:
       operationId: getStackOwnerSpec
       tags: [Stacks]
-      summary: Fetch StackKit owner bootstrap spec
+      summary: Fetch the owner bootstrap spec for a StackKit deployment
       description: |
         StackKit admin-bootstrap endpoint for fetching local owner fields and
         the recovery passphrase hash. This route accepts only the short-lived
@@ -448,7 +518,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: Owner spec material is not available for this stack
+          description: Owner spec material is not available for this StackKit deployment
           content:
             application/json:
               schema:
@@ -458,9 +528,20 @@ paths:
     post:
       operationId: provisionStack
       tags: [Stacks]
-      summary: Start provisioning existing stack
+      summary: Start provisioning an existing StackKit deployment
       parameters:
         - $ref: "#/components/parameters/stackId"
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: >-
+            Stable 8-256 character visible-ASCII retry key. Exact replays
+            return the original provision job; reuse for changed intent fails
+            with 409. The raw key is never persisted.
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 256
       requestBody:
         required: false
         content:
@@ -481,14 +562,29 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: Idempotency-Key was already bound to different provision intent
+        "422":
+          description: Idempotency-Key is malformed
 
   /api/v1/stacks/{id}/deploy:
     post:
       operationId: deployStack
       tags: [Stacks]
-      summary: Full rollout (unify + IaC + tofu apply)
+      summary: Roll out one StackKit deployment (unify + IaC + tofu apply)
       parameters:
         - $ref: "#/components/parameters/stackId"
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: >-
+            Stable 8-256 character visible-ASCII retry key. Exact replays
+            return the original deploy job; conflicting reuse fails with 409.
+            The raw key is never persisted.
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 256
       responses:
         "202":
           description: Deploy accepted
@@ -502,17 +598,21 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: Idempotency-Key conflicts with an existing deploy receipt
+        "422":
+          description: Idempotency-Key is malformed
 
   /api/v1/stacks/{id}/operations:
     get:
       operationId: getStackOperations
       tags: [Stacks, Inventory]
-      summary: Get the post-configuration operations read model for one owned stack
+      summary: Get the post-configuration operations read model for one owned StackKit deployment
       description: >-
         Returns the exact owner- and tenant-scoped read model used by the
-        TechStack operations dashboard. approved_servers records operator
-        approval; connected_servers is stricter and counts only assigned,
-        approved servers with freshness-qualified canonical Guard heartbeat,
+        TechStack operations dashboard. `approved_servers` records operator
+        approval; `connected_servers` is stricter and counts only assigned,
+        approved Nodes with freshness-qualified canonical Guard heartbeat,
         connection, and health evidence. The operation is read-only and never
         starts rollout, provisioning, or provider work.
       x-kombify-mcp:
@@ -523,7 +623,7 @@ paths:
         - $ref: "#/components/parameters/stackId"
       responses:
         "200":
-          description: Current stack operations and rollout-readiness evidence
+          description: Current StackKit deployment operations and rollout-readiness evidence
           content:
             application/json:
               schema:
@@ -547,8 +647,8 @@ paths:
         Hosted requests must carry the Gateway's v2-signed managed-runtime,
         Cloud Kit, provider entitlement, and `cloud.runtime.credits`
         `managed_servers` decision bound to this exact request. A successful
-        response never reserves capacity, creates a stack, queue job, lease,
-        runtime server, or provider operation; the real Add-Server request
+        response never reserves capacity or creates a StackKit deployment, queue
+        job, lease, Node projection, or provider operation; the real Add-Server request
         repeats every mutable admission check atomically.
       parameters:
         - name: provider_id
@@ -578,11 +678,11 @@ paths:
     post:
       operationId: addManagedRuntimeServer
       tags: [Stacks, Jobs]
-      summary: Add one managed runtime server through native provider control
+      summary: Add one managed Node through native provider control
       description: |
         Creates or resumes one deterministic Add-Server job for the exact
-        owned stack. The standard `Idempotency-Key` is mandatory. Replaying
-        the same key with the same canonical request returns the original
+        owned StackKit deployment. The standard `Idempotency-Key` is mandatory.
+        Replaying the same key with the same canonical request returns the original
         job, lease, runtime-server, resource-generation, and provider-operation
         correlations; reusing it with different intent fails with 409.
 
@@ -649,17 +749,19 @@ paths:
     post:
       operationId: resumeStackEnrollment
       tags: [Stacks, Jobs]
-      summary: Resume one overdue enrollment wait on its exact existing VM
+      summary: Resume one overdue managed Node wait on its exact existing VM
       description: |
-        Authenticated, idempotent recovery for a persisted `waiting_enrollment`
-        job whose `next_resume_at` has been overdue beyond the bounded grace
-        period. The server validates the owned stack, source job, wait reason,
-        exact lease, active foundation role, and canonical server as one
-        operation. It atomically retires the exact source wait, creates or
-        rehydrates one deterministic replacement deploy bound to the same lease
-        and server, and replays that job on later calls. Before handler entry,
-        queue workers atomically acquire a durable tenant/stack execution claim;
-        this serializes different jobs for the same stack across Techstack
+        Authenticated, idempotent recovery for a persisted `waiting_enrollment`,
+        `waiting_provider_provision`, or `waiting_canonical_guard` job whose
+        `next_resume_at` has been overdue beyond the bounded grace period. The
+        server validates the owned StackKit deployment, source job, wait reason,
+        exact lease, active foundation role, and canonical Node as one operation. It
+        atomically retires the exact source wait, creates or rehydrates one
+        deterministic replacement deploy bound to the same lease and Node,
+        and replays that job on later calls. Before handler entry,
+        queue workers atomically acquire the durable `tenant/stack` compatibility
+        execution claim; this serializes different jobs for the same StackKit
+        deployment across Techstack
         replicas. The claim remains durable `running` until the handler exits,
         including during cancellation. This endpoint never invokes provider VM
         creation or selects a newer VM. A replacement found durable `running`
@@ -700,15 +802,15 @@ paths:
     post:
       operationId: retryStackRollout
       tags: [Stacks, Jobs]
-      summary: Retry one failed rollout on its exact existing managed VM
+      summary: Retry one failed StackKit deployment rollout on its exact existing managed VM
       description: |
         Validates the owned failed deploy, its exact active foundation lease,
-        and canonical server in one server-side operation. The deterministic
+        and canonical Node in one server-side operation. The deterministic
         durable replacement bypasses provider VM creation, wins a durable
-        tenant/stack execution claim before handler entry, and is replayed on
-        repeated calls to this operation. The claim serializes different jobs
-        for the same stack across replicas and remains fail-closed as `running`
-        after a process crash until operator reconciliation.
+        `tenant/stack` compatibility execution claim before handler entry, and is
+        replayed on repeated calls to this operation. The claim serializes different
+        jobs for the same StackKit deployment across replicas and remains
+        fail-closed as `running` after a process crash until operator reconciliation.
       parameters:
         - $ref: "#/components/parameters/stackId"
       requestBody:
@@ -743,9 +845,9 @@ paths:
     get:
       operationId: getStackRouting
       tags: [Stacks]
-      summary: Read the desired and observed routing state for one stack
+      summary: Read desired and observed routing state for one StackKit deployment
       description: >-
-        Returns the tenant- and owner-bound routing overlay for the exact stack.
+        Returns the tenant- and owner-bound routing overlay for the exact StackKit deployment.
         Desired state and observed/applied state are reported separately so clients
         never infer a successful DNS, TLS, or StackKit rollout from persistence alone.
       parameters:
@@ -772,14 +874,14 @@ paths:
     put:
       operationId: ensureStackRouting
       tags: [Stacks]
-      summary: Ensure the desired routing overlay for one exact stack and server
+      summary: Ensure the desired routing overlay for one exact StackKit deployment and Node
       description: >-
         Atomically persists an idempotent, revisioned routing overlay without
         mutating the user's immutable intent. server_id is always exact and
         mandatory. lease_id is mandatory for managed runtimes and omitted for a
         local/Basement runtime which has no lease. For a managed target, a true
         ensure_rollout request dispatches the existing deploy pipeline only after
-        proving that its selected active foundation lease and canonical server equal
+        proving that its selected active foundation lease and canonical Node equal
         this exact target. The API never reports the resulting job as already applied.
         The overlay is consumed only while deriving StackKits artifacts and this path
         never creates or selects a replacement VM.
@@ -848,12 +950,13 @@ paths:
     get:
       operationId: listStackRoutingTargets
       tags: [Stacks]
-      summary: List explicit primary routing targets for one stack
+      summary: List explicit primary routing targets for one StackKit deployment
       description: >-
         Read-only discovery backed by active RuntimeLease authority. Returns every
         owner-visible foundation/control-plane target and never selects one, creates
-        a ServerRuntime projection, or mutates the stack. Callers must send the
-        complete server_id and lease_id tuple to a routing mutation.
+        a canonical Node (`ServerRuntime`) projection, or mutates the StackKit
+        deployment. Callers must send the complete server_id and lease_id tuple
+        to a routing mutation.
       parameters:
         - $ref: "#/components/parameters/stackId"
       responses:
@@ -876,12 +979,12 @@ paths:
     post:
       operationId: destroyStack
       tags: [Stacks]
-      summary: Destroy infrastructure
+      summary: Decommission one StackKit deployment and its infrastructure
       parameters:
         - $ref: "#/components/parameters/stackId"
       responses:
         "202":
-          description: Destroy accepted
+          description: StackKit deployment decommission accepted
           content:
             application/json:
               schema:
@@ -1041,8 +1144,8 @@ paths:
     post:
       operationId: importStack
       tags: [Stacks - Import/Export]
-      summary: Import stack-spec.yaml and create stack
-      description: Imports YAML or JSON into a stack without assuming a single-homelab instance.
+      summary: Import stack-spec.yaml as a StackKit deployment
+      description: Imports YAML or JSON as a deployment under the authenticated owner's Homelab.
       requestBody:
         required: true
         content:
@@ -1062,7 +1165,7 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
         "409":
-          description: Stack already exists
+          description: StackKit deployment already exists
 
   /api/v1/stacks/import/validate:
     post:
@@ -1423,8 +1526,8 @@ paths:
           schema:
             type: string
           examples:
-            base:
-              value: base-kit
+            basement:
+              value: basement-kit
             modern:
               value: modern-homelab
             ha:
@@ -1582,6 +1685,68 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /api/v1/inventory/servers/{serverId}/ports:
+    get:
+      operationId: getInventoryServerPorts
+      tags: [Inventory]
+      summary: Get desired, reserved, observed, and exposed listeners for one owned server
+      description: >-
+        Projects compiler-declared listener claims and generation-fenced
+        reservations beside monotone Guard runtime evidence. Missing or stale
+        observations remain explicit and never become optimistic availability.
+      x-kombify-mcp:
+        toolName: server_ports
+        requiredCapability: techstack.inventory.read
+        annotations: { readOnlyHint: true, idempotentHint: true, destructiveHint: false, openWorldHint: false }
+      parameters:
+        - $ref: "#/components/parameters/serverId"
+      responses:
+        "200":
+          description: Owner-scoped port allocation inventory
+          headers:
+            Cache-Control:
+              schema: { type: string, example: "private, no-store" }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/ServerPortInventory" }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /api/v1/servers/{serverId}/ports:
+    get:
+      operationId: getServerRuntimePorts
+      tags: [Servers, Inventory]
+      summary: Get the authenticated owner's port inventory for one canonical server
+      description: >-
+        Server-detail UI projection over the same central port authority as the
+        Inventory/MCP surface, authorized through the canonical owner-scoped
+        server read boundary.
+      parameters:
+        - $ref: "#/components/parameters/serverId"
+      responses:
+        "200":
+          description: Owner-scoped port allocation inventory
+          headers:
+            Cache-Control:
+              schema: { type: string, example: "private, no-store" }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/ServerPortInventory" }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /api/v1/inventory/services:
     get:
       operationId: listInventoryServices
@@ -1658,9 +1823,12 @@ paths:
     get:
       operationId: listServerRuntimes
       tags: [Servers]
-      summary: List canonical server runtime state
+      summary: List canonical Node runtime state
+      description: |
+        Returns owner-scoped Nodes with canonical `node_id` and
+        `kit_deployment_id` identities.
       parameters:
-        - name: stack_id
+        - name: kit_deployment_id
           in: query
           schema:
             type: string
@@ -1717,6 +1885,43 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SuccessEnvelope"
+
+  /api/v1/servers/{serverId}/detach:
+    post:
+      operationId: detachSelfOwnedServer
+      tags: [Servers]
+      summary: Revoke and detach one exact customer-operated BYO server
+      description: Retains the terminal canonical server receipt and performs no provider API call.
+      parameters:
+        - $ref: "#/components/parameters/serverId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SelfOwnedServerDetachRequest"
+      responses:
+        "200":
+          description: Terminal BYO detach receipt
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: "#/components/schemas/SelfOwnedServerDetachReceipt"
+                  meta:
+                    $ref: "#/components/schemas/ResponseMeta"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   # ============================================================
   # SERVICE RUNTIME REGISTRY
@@ -2743,6 +2948,24 @@ paths:
       operationId: createPairingToken
       tags: [Trust]
       summary: Create pairing token for worker registration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                stack_id:
+                  type: string
+                server_provisioning_mode:
+                  type: string
+                  enum: [install-command, connect-remote]
+                environment_class:
+                  type: string
+                  enum: [local, cloud]
+                  description: Explicit owner placement declaration; omit when unknown.
       responses:
         "200":
           description: Created token
@@ -2777,25 +3000,25 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ClientErrorEnvelope"
+                $ref: "#/components/schemas/StructuredError"
         "403":
           description: Administrator or tenant binding required
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ClientErrorEnvelope"
+                $ref: "#/components/schemas/StructuredError"
         "409":
           description: Local single-owner mode cannot create a team pairing
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ClientErrorEnvelope"
+                $ref: "#/components/schemas/StructuredError"
         "503":
           description: Pairing authority is not safely configured
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ClientErrorEnvelope"
+                $ref: "#/components/schemas/StructuredError"
 
   /api/v1/client-pairing/redeem:
     post:
@@ -2826,25 +3049,25 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ClientErrorEnvelope"
+                $ref: "#/components/schemas/StructuredError"
         "409":
           description: Binding mismatch, replay, or unsupported local authority
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ClientErrorEnvelope"
+                $ref: "#/components/schemas/StructuredError"
         "410":
           description: Pairing code expired
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ClientErrorEnvelope"
+                $ref: "#/components/schemas/StructuredError"
         "503":
           description: Atomic redemption is temporarily unavailable
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ClientErrorEnvelope"
+                $ref: "#/components/schemas/StructuredError"
   /api/v1/trust/pairing-tokens/{id}:
     delete:
       operationId: deletePairingToken
@@ -2948,16 +3171,19 @@ paths:
     get:
       operationId: listTunnelSubdomains
       tags: [Tunnel]
-      summary: List kombify.me subdomains for diagnostics; registration is StackKits-owned
+      summary: List the caller's own kombify.me subdomains for diagnostics; registration is StackKits-owned
+      description: Requires an authenticated caller. With the shared platform identity the list is scoped to the caller's owner binding.
       responses:
         "200":
           description: Subdomain list
+        "401":
+          description: Authentication required
 
   /api/v1/tunnel/subdomains/{baseId}/services:
     get:
       operationId: listTunnelSubdomainServices
       tags: [Tunnel]
-      summary: List services under a kombify.me base subdomain
+      summary: List services under one of the caller's own kombify.me base subdomains
       parameters:
         - name: baseId
           in: path
@@ -2967,6 +3193,10 @@ paths:
       responses:
         "200":
           description: Service list
+        "401":
+          description: Authentication required
+        "404":
+          description: Base subdomain not found for this caller
 
   # ============================================================
   # MONITORING
@@ -3068,6 +3298,43 @@ paths:
       responses:
         "200":
           description: Monitoring health diagnostics
+
+  /api/v1/monitor/availability:
+    get:
+      operationId: getAvailabilityReport
+      tags: [Metrics]
+      summary: Availability, downtime episodes and daily state, derived from the transition timeline
+      description: >-
+        A projection over the append-only server transition timeline rather
+        than a sampler: every episode is bounded by two recorded transitions
+        and carries the reason codes they were written with. The response
+        publishes its own accounting vocabulary, so a reader can see which
+        connection states were counted as downtime without reading the source.
+      parameters:
+        - name: window
+          in: query
+          required: false
+          schema: { type: string, enum: [24h, 7d, 30d, 90d], default: "30d" }
+          description: Closed set; an unbounded window would be a denial-of-service knob.
+        - name: server_id
+          in: query
+          required: false
+          schema: { type: string }
+          description: Scope the report to one server, for the server detail page.
+      responses:
+        "200":
+          description: Availability report for the window
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/AvailabilityReport" }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /api/v1/monitor/alerts:
     get:
@@ -3830,69 +4097,116 @@ paths:
     post:
       operationId: startMonthlyRuntime
       tags: [Monthly Runtime]
-      summary: Start a monthly runtime lease
+      summary: Start a stopped managed server of the same generation
+      description: >
+        Admits one generation-bound provider-control reconcile toward running.
+        The provider power-on runs once under an at-most-once claim; a repeated
+        request while it converges replays the same operation. Requires the
+        managed runtime entitlement before any provider call.
       parameters:
         - $ref: "#/components/parameters/monthlyRuntimeLeaseId"
       responses:
         "200":
-          description: Runtime action result
+          description: The power reconcile converged; power.status is succeeded.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/MonthlyRuntimeEnvelope"
-        "503":
-          description: Simulate runtime client is unavailable
+        "202":
+          description: The power reconcile is durable and still converging.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MonthlyRuntimeEnvelope"
+        "403":
+          description: Entitlement denial with error_code, reason_code, missing features and user_guidance.
+        "409":
+          description: >
+            A different power transition is still converging
+            (managed_power_transition_in_progress) or the runtime does not
+            admit an in-place power change (managed_power_not_admitted).
 
   /api/v1/monthly-runtimes/{lease_id}/stop:
     post:
       operationId: stopMonthlyRuntime
       tags: [Monthly Runtime]
-      summary: Stop a monthly runtime lease
+      summary: Stop a managed server without destroying it
+      description: >
+        Admits one generation-bound provider-control reconcile toward stopped.
+        centron uses its graceful guest shutdown action; IONOS shuts the guest
+        down over the execution channel because the IONOS provider stop
+        releases the bound DHCP IPv4. The server keeps its disk, address,
+        lease, capacity reservation and monthly billing.
       parameters:
         - $ref: "#/components/parameters/monthlyRuntimeLeaseId"
       responses:
         "200":
-          description: Runtime action result
+          description: The power reconcile converged; power.status is succeeded.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/MonthlyRuntimeEnvelope"
-        "503":
-          description: Simulate runtime client is unavailable
+        "202":
+          description: The power reconcile is durable and still converging.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MonthlyRuntimeEnvelope"
+        "403":
+          description: Entitlement denial with error_code, reason_code, missing features and user_guidance.
+        "409":
+          description: A power transition is converging or the runtime does not admit a pause.
 
   /api/v1/monthly-runtimes/{lease_id}/enable-ssh:
     post:
       operationId: enableMonthlyRuntimeSSH
       tags: [Monthly Runtime]
-      summary: Enable SSH for a monthly runtime lease
+      summary: Enable owner SSH access for this generation
+      description: >
+        Re-enables the generation-bound owner SSH grant over the pinned
+        execution channel and reinstalls the keys the owner authorized for this
+        generation. New keys are authorized only through the re-authenticated
+        server access route.
       parameters:
         - $ref: "#/components/parameters/monthlyRuntimeLeaseId"
       responses:
         "200":
-          description: Runtime action result
+          description: Node-verified grant change; see ssh_access.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/MonthlyRuntimeEnvelope"
+        "403":
+          description: Entitlement or demo-account denial.
+        "409":
+          description: The runtime is stopped (managed_runtime_stopped).
         "503":
-          description: Simulate runtime client is unavailable
+          description: The execution channel could not reach the node; no node change was made.
 
   /api/v1/monthly-runtimes/{lease_id}/disable-ssh:
     post:
       operationId: disableMonthlyRuntimeSSH
       tags: [Monthly Runtime]
-      summary: Disable SSH for a monthly runtime lease
+      summary: Disable owner SSH access for this generation
+      description: >
+        Removes every owner-authorized key from the node while keeping
+        Kombify's execution-channel key, and records the disabled grant so new
+        owner keys are refused until SSH is enabled again.
       parameters:
         - $ref: "#/components/parameters/monthlyRuntimeLeaseId"
       responses:
         "200":
-          description: Runtime action result
+          description: Node-verified grant change; see ssh_access.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/MonthlyRuntimeEnvelope"
+        "403":
+          description: Entitlement denial.
+        "409":
+          description: The runtime is stopped (managed_runtime_stopped).
         "503":
-          description: Simulate runtime client is unavailable
+          description: The execution channel could not reach the node; no node change was made.
 
   /api/v1/monthly-runtimes/{lease_id}/decommission:
     post:
@@ -4006,11 +4320,14 @@ paths:
     post:
       operationId: reconnectMonthlyRuntime
       tags: [Monthly Runtime]
-      summary: Re-run enrollment for a stalled monthly runtime lease
+      summary: Recover the Guard session of a managed runtime
       description: >
-        Idempotently re-probes the runtime and converges a stalled enrollment
-        back toward enrolled. Surfaced as the recovery action when a runtime is
-        reported stalled (error_code=runtime_enrollment_stalled).
+        Probes the canonical aggregate; when it cannot prove a Guard
+        connection, restarts Guard over the pinned execution channel for an
+        entitled owner of a running server and re-observes the connection
+        within a bounded window, then converges enrollment to enrolled. A
+        stopped runtime is refused (managed_runtime_stopped). No provider
+        resource is touched.
       parameters:
         - $ref: "#/components/parameters/monthlyRuntimeLeaseId"
       responses:
@@ -4100,6 +4417,60 @@ paths:
           description: Lease is not under Techstack provider-control custody
         "503":
           description: Provider-control readback authority is unavailable
+
+  /api/v1/monthly-runtimes/{lease_id}/recreate:
+    post:
+      operationId: recreateMonthlyRuntime
+      tags: [Monthly Runtime, Stacks, Jobs]
+      summary: Recreate one fully released managed server generation
+      description: >
+        Explicitly provisions generation N+1 for the same provider-neutral
+        runtime slot after generation N has terminal lease and canonical server
+        state, terminal provider operation state, opaque provider-native absence
+        evidence, and exact capacity release. The immutable provider, region,
+        offering, role, StackKit, and service intent is recovered from the old
+        owner-scoped lease; clients cannot replace it. The endpoint delegates to
+        the same managed-runtime expansion authority as Add Node, so enrollment,
+        Guard evidence, endpoints, and StackKit rollout proceed through the full
+        Creation flow. A standard Idempotency-Key is mandatory and safely
+        replays the accepted generation.
+      parameters:
+        - $ref: "#/components/parameters/monthlyRuntimeLeaseId"
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Opaque, retry-stable key for this confirmed recreate attempt.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MonthlyRuntimeRecreateRequest"
+      responses:
+        "202":
+          description: New managed-runtime generation accepted through the central Creation lifecycle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AddManagedRuntimeServerEnvelope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Cleanup is incomplete, immutable intent is unavailable, or the slot generation changed.
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   # ============================================================
   # INTERNAL APIs (SaaS mode only, legacy trust-header compatibility)
@@ -4333,6 +4704,96 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
 
   schemas:
+    OrphanProjectionCleanupRequest:
+      type: object
+      required: [mode]
+      additionalProperties: false
+      properties:
+        mode:
+          type: string
+          enum: [dry_run, apply]
+        digest:
+          type: string
+          pattern: '^sha256:[a-f0-9]{64}$'
+          description: Required for apply; copied unchanged from the reviewed dry-run.
+        stack_id:
+          type: string
+          description: Optional exact deployment scope used by E2E cleanup.
+
+    OrphanProjectionCleanupCandidate:
+      type: object
+      required: [resource_type, id, name, class, reason]
+      properties:
+        resource_type:
+          type: string
+          enum: [stack_projection, worker_projection]
+        id: { type: string }
+        name: { type: string }
+        class:
+          type: string
+          enum: [e2e_test_stack, runtime_cloud_test_stack, e2e_test_worker, runtime_cloud_test_worker]
+        reason: { type: string }
+
+    OrphanProjectionCleanupResponse:
+      type: object
+      required: [mode, message, digest, candidates, applied]
+      properties:
+        mode:
+          type: string
+          enum: [dry_run, apply]
+        message: { type: string }
+        digest:
+          type: string
+          pattern: '^sha256:[a-f0-9]{64}$'
+        candidates:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrphanProjectionCleanupCandidate"
+        applied:
+          type: object
+          required: [stacks, workers, total]
+          properties:
+            stacks: { type: integer, minimum: 0 }
+            workers: { type: integer, minimum: 0 }
+            total: { type: integer, minimum: 0 }
+        warnings:
+          type: array
+          items: { type: string }
+
+    StackKitDeploymentSummary:
+      type: object
+      description: |
+        One StackKit rollout beneath an owner-scoped Homelab. Additional
+        runtime projections may be present; the identity fields below are the
+        stable product boundary.
+      required: [id, kit_deployment_id, homelab_id, stackkit_id, name, mode, status]
+      properties:
+        id:
+          type: string
+          description: Legacy compatibility alias for kit_deployment_id.
+        kit_deployment_id:
+          type: string
+        homelab_id:
+          type: string
+        stackkit_id:
+          type: string
+        stackkit_instance_id:
+          type: string
+          description: StackKits StackSpec/ResolvedPlan compatibility identity.
+        name:
+          type: string
+        mode:
+          type: string
+        status:
+          type: string
+        created:
+          type: string
+          format: date-time
+        updated:
+          type: string
+          format: date-time
+      additionalProperties: true
+
     InventoryFreshness:
       type: object
       required: [state, stale_after_seconds]
@@ -4465,6 +4926,47 @@ components:
         inventory_revision: { type: integer, format: int64, minimum: 0 }
         connection: { $ref: "#/components/schemas/InventoryObservedState" }
         health: { $ref: "#/components/schemas/InventoryObservedState" }
+
+    ServerPortAllocation:
+      type: object
+      required: [id, transport, bind_address, port, exposure, observed_state, exposed_state, drift_state, desired]
+      properties:
+        id: { type: string }
+        stack_id: { type: string }
+        resolved_plan_hash: { type: string }
+        node_ref: { type: string }
+        transport: { type: string, enum: [tcp, udp] }
+        bind_address: { type: string }
+        port: { type: integer, minimum: 1, maximum: 65535 }
+        sharing: { type: string, enum: [exclusive, virtual-host] }
+        listener_group_ref: { type: string }
+        exposure: { type: string, enum: [local, remote-private, public] }
+        source_route_refs: { type: array, items: { type: string } }
+        reservation_state: { type: string, enum: [reserved, released] }
+        claim_state: { type: string, enum: [pending, mutating, active, uncertain, released] }
+        observed_state: { type: string, enum: [unknown, present, missing, stale] }
+        exposed_state: { type: string, enum: [unknown, present, missing, stale] }
+        drift_state: { type: string, enum: [consistent, missing, unexpected, unknown] }
+        desired: { type: boolean }
+
+    ServerPortInventory:
+      type: object
+      required: [server_id, server_generation, inventory_revision, listeners_complete, exposures_complete, allocations]
+      properties:
+        server_id: { type: string }
+        server_generation: { type: integer, format: int64, minimum: 1 }
+        observed_at:
+          oneOf:
+            - { type: string, format: date-time }
+            - { type: "null" }
+        expires_at:
+          oneOf:
+            - { type: string, format: date-time }
+            - { type: "null" }
+        inventory_revision: { type: integer, format: int64, minimum: 0 }
+        listeners_complete: { type: boolean }
+        exposures_complete: { type: boolean }
+        allocations: { type: array, items: { $ref: "#/components/schemas/ServerPortAllocation" } }
 
     InventoryServiceLink:
       type: object
@@ -4688,6 +5190,10 @@ components:
             running_services: { type: integer, minimum: 0 }
             active_alerts: { type: integer, minimum: 0 }
         servers: { type: array, items: { $ref: "#/components/schemas/StackOperationsServer" } }
+        retiredServers:
+          type: array
+          description: Terminal managed generations excluded from current inventory, KPIs, readiness, health, and services; retained only for confirmed Recreate discovery.
+          items: { $ref: "#/components/schemas/StackOperationsServer" }
         services: { type: array, items: { $ref: "#/components/schemas/StackOperationsService" } }
         monitoring: { type: object, additionalProperties: true }
         alerts: { type: array, items: { type: object, additionalProperties: true } }
@@ -4727,11 +5233,16 @@ components:
 
     ServerRuntime:
       type: object
-      required: [id, name, lifecycle, connection, health, channels, inventory_revision, provider, mutations_allowed, created_at, updated_at]
+      required: [id, node_id, name, lifecycle, connection, health, channels, inventory_revision, provider, mutations_allowed, allowed_actions, stack_actions, created_at, updated_at]
       properties:
         id:
           type: string
-        stack_id:
+          description: Compatibility alias for node_id.
+        node_id:
+          type: string
+        kit_deployment_id:
+          type: string
+        worker_id:
           type: string
         name:
           type: string
@@ -4744,7 +5255,7 @@ components:
               enum: [planned, provisioning, enrolling, active, failed, decommissioning, decommissioned]
             desired_state:
               type: string
-              enum: [active, decommissioned]
+              enum: [running, stopped, absent]
             ended_at:
               type: string
               format: date-time
@@ -4792,8 +5303,68 @@ components:
               type: string
             ref:
               type: string
+        environment_class:
+          type: string
+          enum: [local, cloud, unknown]
+        offering:
+          type: string
+          enum: [self_owned_device, external_vps, managed_vps]
+        provider_id:
+          type: string
+        provider_target_ref:
+          type: string
+        availability_owner:
+          type: string
+          enum: [customer, provider]
+        operations_owner:
+          type: string
+          enum: [customer, kombify]
+        target_evidence:
+          type: object
+          required: [freshness]
+          properties:
+            ref:
+              type: string
+            observed_at:
+              type: string
+              format: date-time
+            freshness:
+              type: object
+              required: [state]
+              properties:
+                state:
+                  type: string
+                  enum: [recorded, unknown]
+                age_seconds:
+                  type: integer
+                  format: int64
+                  minimum: 0
         mutations_allowed:
           type: boolean
+          description: Coarse legacy gate. `allowed_actions` is the precise contract.
+        allowed_actions:
+          type: array
+          uniqueItems: true
+          description: >-
+            Node-scoped operations this server's own state admits. Each id maps
+            to exactly one endpoint that exists; an unknown lifecycle advertises
+            nothing rather than guessing that a mutation is safe. The
+            lease-scoped ids target `provider.lease_id`. There is deliberately
+            no node `logs` id - no such endpoint exists.
+          items:
+            type: string
+            enum: [connect, terminal, reconnect, rotate_credentials, ssh_enable, ssh_disable, detach, decommission, resolve_custody]
+        stack_actions:
+          type: array
+          uniqueItems: true
+          description: >-
+            StackKit-deployment operations, all routed to
+            POST /api/v1/stacks/{id}/stackkit/operations. Kept separate from
+            `allowed_actions`: a node operation and a kit operation have
+            different blast radius and different authority.
+          items:
+            type: string
+            enum: [plan, apply, verify, upgrade, drift_detect, drift_reconcile]
         created_at:
           type: string
           format: date-time
@@ -4801,9 +5372,42 @@ components:
           type: string
           format: date-time
 
+    SelfOwnedServerDetachRequest:
+      type: object
+      additionalProperties: false
+      required: [confirm_server_id]
+      properties:
+        confirm_server_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Must exactly equal the serverId path parameter.
+
+    SelfOwnedServerDetachReceipt:
+      type: object
+      required: [server_id, agent_id, revision, generation, detached_at, replay]
+      properties:
+        server_id:
+          type: string
+        agent_id:
+          type: string
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+        generation:
+          type: integer
+          format: int64
+          minimum: 1
+        detached_at:
+          type: string
+          format: date-time
+        replay:
+          type: boolean
+
     ServiceRuntime:
       type: object
-      required: [id, stack_id, server_id, service_key, service_instance, name, desired_state, observed_state, health, access, allowed_actions, source, provenance, created_at, updated_at]
+      required: [id, stack_id, server_id, service_key, service_instance, name, desired_state, observed_state, health, access, allowed_actions, mutation_lock, source, provenance, created_at, updated_at]
       properties:
         id:
           type: string
@@ -4842,9 +5446,15 @@ components:
         allowed_actions:
           type: array
           uniqueItems: true
+          description: >-
+            Exactly what the action endpoint accepts for this service right now.
+            A locked service advertises only its read path plus `unfreeze`; the
+            suppressed mutations are explained by `mutation_lock`.
           items:
             type: string
-            enum: [start, stop, restart, logs]
+            enum: [start, stop, restart, logs, freeze, unfreeze]
+        mutation_lock:
+          $ref: "#/components/schemas/ServiceMutationLock"
         inventory_revision:
           type: integer
           format: int64
@@ -4865,6 +5475,16 @@ components:
           format: date-time
 
     ServiceActionRequest:
+      description: >-
+        Either an agent-executed runtime action bound to a fresh inventory
+        revision, or an owner lock action executed entirely in the control
+        plane. The lock is not bound to an inventory observation: an owner must
+        be able to freeze a service whose agent is unreachable.
+      oneOf:
+        - $ref: "#/components/schemas/ServiceRuntimeActionRequest"
+        - $ref: "#/components/schemas/ServiceLockActionRequest"
+
+    ServiceRuntimeActionRequest:
       type: object
       additionalProperties: false
       required: [action, expected_inventory_revision, owner_approved]
@@ -4889,14 +5509,143 @@ components:
           maxLength: 2048
           description: Logs only; opaque StackKits cursor from the prior page.
 
+    ServiceLockActionRequest:
+      type: object
+      additionalProperties: false
+      required: [action, owner_approved]
+      description: >-
+        Asserts or clears the owner mutation lock. Applied synchronously by the
+        control plane, so the response carries no job id and reports status
+        `completed`. Repeating the same lock state is a no-op.
+      properties:
+        action:
+          type: string
+          enum: [freeze, unfreeze]
+        owner_approved:
+          type: boolean
+          description: Required true; changing a guardrail is an owner decision.
+
     ServiceActionResponse:
       type: object
       required: [job_id, service_id, action, status]
       properties:
-        job_id: { type: string }
+        job_id:
+          type: string
+          description: >-
+            Durable job of an agent-executed action. Empty for freeze and
+            unfreeze, which the control plane applies without a job.
         service_id: { type: string }
-        action: { type: string, enum: [start, stop, restart, logs] }
+        action: { type: string, enum: [start, stop, restart, logs, freeze, unfreeze] }
         status: { type: string, enum: [queued, running, completed, failed, cancelled, canceled] }
+
+    AvailabilityReport:
+      type: object
+      required: [window, start, end, uptime_ratio, observed_seconds, down_seconds, servers, accounting]
+      properties:
+        window: { type: string, enum: [24h, 7d, 30d, 90d] }
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time }
+        uptime_ratio:
+          type: [number, "null"]
+          description: >-
+            up / (up + down) over observed time only. Null when the window
+            contains no observed time - "no evidence" and "zero percent" are
+            different statements.
+        observed_seconds: { type: integer, format: int64 }
+        down_seconds: { type: integer, format: int64 }
+        mttr_seconds:
+          type: [integer, "null"]
+          format: int64
+          description: Mean duration of episodes that ended. An ongoing outage never shortens it.
+        closed_episodes: { type: integer }
+        by_cause:
+          type: array
+          items: { $ref: "#/components/schemas/AvailabilityCause" }
+        servers:
+          type: array
+          items: { $ref: "#/components/schemas/AvailabilityServer" }
+        accounting: { $ref: "#/components/schemas/AvailabilityAccounting" }
+
+    AvailabilityAccounting:
+      type: object
+      required: [up, down, unobserved]
+      description: >-
+        How each connection state was counted. `stale` is downtime: the agent
+        stopped reporting, so service cannot be confirmed, and the conservative
+        reading is the honest one for an availability figure. `pending` and
+        `connecting` leave the denominator entirely - a node that never
+        connected is not having an outage.
+      properties:
+        up: { type: array, items: { type: string } }
+        down: { type: array, items: { type: string } }
+        unobserved: { type: array, items: { type: string } }
+
+    AvailabilityCause:
+      type: object
+      required: [reason_code, seconds, episodes]
+      properties:
+        reason_code:
+          type: string
+          description: The reason the opening transition recorded, or `unrecorded`.
+        seconds: { type: integer, format: int64 }
+        episodes: { type: integer }
+
+    AvailabilityServer:
+      type: object
+      required: [server_id, uptime_ratio, observed_seconds, down_seconds, episodes, days]
+      properties:
+        server_id: { type: string }
+        name: { type: string }
+        uptime_ratio: { type: [number, "null"] }
+        observed_seconds: { type: integer, format: int64 }
+        down_seconds: { type: integer, format: int64 }
+        episodes:
+          type: array
+          items: { $ref: "#/components/schemas/AvailabilityEpisode" }
+        days:
+          type: array
+          items:
+            type: object
+            required: [day, state]
+            properties:
+              day: { type: string, format: date }
+              state:
+                type: string
+                description: Worst state observed that UTC day; empty means no observation.
+
+    AvailabilityEpisode:
+      type: object
+      required: [server_id, started_at, seconds, ongoing, state]
+      properties:
+        server_id: { type: string }
+        server_name: { type: string }
+        started_at: { type: string, format: date-time }
+        ended_at:
+          type: string
+          format: date-time
+          description: Absent while the outage is ongoing; never backfilled from the window edge.
+        seconds: { type: integer, format: int64 }
+        ongoing: { type: boolean }
+        state: { type: string, description: Worst connection state the episode reached. }
+        trigger_reason: { type: string }
+        trigger_source: { type: string }
+        recovery_reason: { type: string }
+        recovery_source: { type: string }
+        evidence_ref: { type: string }
+
+    ServiceMutationLock:
+      type: object
+      required: [state]
+      description: >-
+        Owner guardrail of one service. Orthogonal to the measured dimensions: a
+        locked service keeps running and keeps reporting its real observed
+        state; only `allowed_actions` narrows. `reason_code` and `actor` are
+        populated only while locked.
+      properties:
+        state: { type: string, enum: [unlocked, locked] }
+        reason_code: { type: string, maxLength: 128 }
+        actor: { type: string, maxLength: 256 }
+        changed_at: { type: string, format: date-time }
 
     ServiceLogEntry:
       type: object
@@ -5023,7 +5772,29 @@ components:
               type: string
               enum: [authorization_code_pkce, device_authorization]
 
-    ClientErrorEnvelope:
+    StructuredUserGuidance:
+      type: object
+      additionalProperties: false
+      required: [title, body, next_steps]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 160
+        body:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        next_steps:
+          type: array
+          minItems: 1
+          maxItems: 8
+          items:
+            type: string
+            minLength: 1
+            maxLength: 500
+
+    StructuredError:
       type: object
       additionalProperties: false
       required: [error_code, reason_code, retryable, user_guidance]
@@ -5037,26 +5808,7 @@ components:
         retryable:
           type: boolean
         user_guidance:
-          type: object
-          additionalProperties: false
-          required: [title, body, next_steps]
-          properties:
-            title:
-              type: string
-              minLength: 1
-              maxLength: 160
-            body:
-              type: string
-              minLength: 1
-              maxLength: 2000
-            next_steps:
-              type: array
-              minItems: 1
-              maxItems: 8
-              items:
-                type: string
-                minLength: 1
-                maxLength: 500
+          $ref: "#/components/schemas/StructuredUserGuidance"
 
     SuccessEnvelope:
       type: object
@@ -5410,7 +6162,7 @@ components:
         exposed as service access. A local direct link is trusted only when
         target_type=direct, provenance=stackkit-access-manifest, health is
         healthy, reachable, or ok, and the sanitized URL is an accepted
-        home.localhost or non-private HTTP(S) address. Raw private-IP service
+        the enrolled .home zone or non-private HTTP(S) address. Raw private-IP service
         URLs remain unavailable. Tunnel links additionally require an observed
         route_id and an accepted Kombify relay URL.
       properties:
@@ -5585,6 +6337,16 @@ components:
               type: boolean
               description: An exact generation-bound capacity-release fact exists.
 
+    MonthlyRuntimeRecreateRequest:
+      type: object
+      additionalProperties: false
+      required: [confirmed]
+      properties:
+        confirmed:
+          type: boolean
+          enum: [true]
+          description: Explicit acknowledgement that Recreate provisions and bills a new managed server generation.
+
     MonthlyRuntimeActionResponse:
       type: object
       properties:
@@ -5614,6 +6376,77 @@ components:
         ssh:
           type: object
           additionalProperties: true
+        power:
+          $ref: "#/components/schemas/MonthlyRuntimePowerOperation"
+        ssh_access:
+          $ref: "#/components/schemas/MonthlyRuntimeSSHAccess"
+        reconnect:
+          type: object
+          description: What a reconnect did to recover the Guard session.
+          properties:
+            agent_restarted:
+              type: boolean
+            connection_state:
+              type: string
+            observed_at:
+              type: string
+              format: date-time
+
+    MonthlyRuntimePowerOperation:
+      type: object
+      description: >
+        Redacted ledger view of one generation-bound power reconcile. Stop and
+        start keep the same resource generation, provider graph, bound IPv4,
+        lease, capacity reservation and monthly billing; decommission is the
+        only destroy. A pending status is accepted, not converged.
+      properties:
+        operation_id:
+          type: string
+        desired_power_state:
+          type: string
+          enum: [running, stopped]
+        status:
+          type: string
+          enum: [pending, succeeded, failed]
+        phase:
+          type: string
+        reason_code:
+          type: string
+        retryable:
+          type: boolean
+        replay:
+          type: boolean
+        resource_generation_id:
+          type: string
+        receipt_sequence:
+          type: integer
+        receipt_digest:
+          type: string
+        requested_at:
+          type: string
+          format: date-time
+
+    MonthlyRuntimeSSHAccess:
+      type: object
+      description: >
+        Node-verified outcome of the generation-bound owner SSH grant. Disable
+        removes every owner-authorized key while keeping Kombify's execution
+        channel; enable reinstalls the keys the owner authorized for this
+        generation through the re-authenticated authorize-key route.
+      properties:
+        enabled:
+          type: boolean
+        resource_generation_id:
+          type: string
+        owner_keys_installed:
+          type: integer
+        owner_keys_removed:
+          type: integer
+        owner_keys_present:
+          type: integer
+        changed_at:
+          type: string
+          format: date-time
 
     MonthlyRuntimeOperation:
       type: object
@@ -6040,7 +6873,7 @@ components:
           description: Wizard mode
         stack_spec:
           type: object
-          description: Canonical StackKits stack-spec.yaml shape generated by Easy or Techie Wizard. When present, this is the source of truth for provisioning and is stored as the stack user_config for compatibility.
+          description: Canonical StackKits stack-spec.yaml shape generated by the creation wizard. When present, this is the source of truth for provisioning and is stored as the stack user_config for compatibility.
         user_config:
           type: object
           description: Legacy structured configuration, including older kombination-style payloads. New wizard clients should send stack_spec.
@@ -6210,6 +7043,20 @@ components:
           type: integer
           minimum: 0
           maximum: 100
+        phase:
+          type: string
+          description: Stable lifecycle phase reported by the job authority.
+        failure_class:
+          type: string
+          description: Stable machine-readable failure classification when the job failed.
+        reason_code:
+          type: string
+          description: Stable outcome reason for support and client recovery policy.
+        retryable:
+          type: boolean
+          description: Explicit server decision; false forbids automatic retry.
+        user_guidance:
+          $ref: "#/components/schemas/StructuredUserGuidance"
         step:
           type: string
         current_step:

@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -130,13 +131,22 @@ func TestEncryptIfNeeded(t *testing.T) {
 		t.Error("Already encrypted value should not be re-encrypted")
 	}
 
-	// Nil encryptor should return value as-is
+	// Nil encryptor fails closed and never returns plaintext
 	result3, err := EncryptIfNeeded(nil, "plaintext")
-	if err != nil {
-		t.Fatalf("EncryptIfNeeded with nil encryptor failed: %v", err)
+	if !errors.Is(err, ErrNoEncryptionKey) {
+		t.Fatalf("EncryptIfNeeded with nil encryptor = (%q, %v), want ErrNoEncryptionKey", result3, err)
 	}
-	if result3 != "plaintext" {
-		t.Error("Nil encryptor should return value unchanged")
+	if result3 != "" {
+		t.Errorf("Nil encryptor returned a value %q, want empty", result3)
+	}
+
+	// An already encrypted value passes through even without an encryptor.
+	encryptedOnly, err := EncryptIfNeeded(nil, EncryptedPrefix+"ciphertext")
+	if err != nil {
+		t.Fatalf("EncryptIfNeeded(already encrypted) failed: %v", err)
+	}
+	if encryptedOnly != EncryptedPrefix+"ciphertext" {
+		t.Errorf("Already encrypted value changed: %q", encryptedOnly)
 	}
 }
 

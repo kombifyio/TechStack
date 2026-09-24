@@ -17,6 +17,7 @@ import (
 const (
 	maxArchiveFiles          = 20_000
 	maxArchiveExtractedBytes = int64(1 << 30)
+	legacyTarRegularFileType = byte(0) // NUL is the legacy regular-file type flag.
 )
 
 func digestArchiveExecutable(
@@ -153,7 +154,7 @@ func digestTarExecutable(reader *tar.Reader, platform Platform) (fileDigest, err
 				return fileDigest{}, fmt.Errorf("archive directory entry %q must have zero size", header.Name)
 			}
 			continue
-		case tar.TypeReg, tar.TypeRegA:
+		case tar.TypeReg, legacyTarRegularFileType:
 		default:
 			return fileDigest{}, fmt.Errorf("archive entry %q has a forbidden type", header.Name)
 		}

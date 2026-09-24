@@ -2,60 +2,24 @@
 package stacks
 
 import (
+	"sort"
 	"strings"
 	"time"
-
-	"github.com/pocketbase/pocketbase/core"
 
 	"github.com/kombifyio/techstack/pkg/controlplane"
 )
 
-func stackListItem(stack *core.Record) map[string]any {
-	catalogRef := normalizeStackListKitRef(stack.GetString("stackkit_catalog_ref"))
-	return map[string]any{
-		"id":                              stack.Id,
-		"name":                            stack.GetString("name"),
-		"mode":                            stack.GetString("mode"),
-		"status":                          stack.GetString("status"),
-		"runtime_phase":                   stack.GetString("runtime_phase"),
-		"server_mode":                     stack.GetString("server_mode"),
-		"runtime_lane":                    stack.GetString("runtime_lane"),
-		"runtime_offering_id":             stack.GetString("runtime_offering_id"),
-		"provider_id":                     stack.GetString("provider_id"),
-		"lease_provider":                  stack.GetString("lease_provider"),
-		"provider_region":                 stack.GetString("provider_region"),
-		"ionos_datacenter":                stack.GetString("ionos_datacenter"),
-		"lease_id":                        stack.GetString("lease_id"),
-		"simulate_provider_id":            stack.GetString("simulate_provider_id"),
-		"simulate_node_lifecycle":         stack.GetString("simulate_node_lifecycle"),
-		"desired_state":                   stack.GetString("desired_state"),
-		"billing_mode":                    stack.GetString("billing_mode"),
-		"billing_cadence":                 stack.GetString("billing_cadence"),
-		"catalog_ref":                     catalogRef,
-		"stackkit_catalog_ref":            catalogRef,
-		"verification_status":             stack.GetString("verification_status"),
-		"server_provisioning_mode":        stack.GetString("server_provisioning_mode"),
-		"server_connection_mode":          stack.GetString("server_connection_mode"),
-		"server_remote_host_present":      stack.GetBool("server_remote_host_present"),
-		"server_remote_user_present":      stack.GetBool("server_remote_user_present"),
-		"server_remote_auth_method":       stack.GetString("server_remote_auth_method"),
-		"server_remote_credential_ref":    stack.GetString("server_remote_credential_ref"),
-		"server_remote_use_sudo":          stack.GetBool("server_remote_use_sudo"),
-		"server_install_command_required": stack.GetBool("server_install_command_required"),
-		// Rows still served from the retired PocketBase store are labeled so the
-		// dashboard can mark them and destroy/prune can treat them legacy-aware.
-		"legacy":      true,
-		"demo_anchor": false,
-		"created":     stack.GetString("created"),
-		"updated":     stack.GetString("updated"),
-	}
-}
-
 //nolint:goconst // Response keys intentionally mirror the stacks API schema.
 func stackListItemFromStore(stack controlplane.Stack) map[string]any {
 	catalogRef := normalizeStackListKitRef(stringFromMaps("stackkit_catalog_ref", stack.RuntimeSummary, stack.Config))
+	desiredWorkloads, workloadSelectionSource := desiredWorkloadSelection(stack.Config)
+	e2eScenario := stackSpecMetadataString(stack.Config, "e2e_scenario")
 	return map[string]any{
 		"id":                              stack.ID,
+		"kit_deployment_id":               stack.ID,
+		"homelab_id":                      stack.HomelabID,
+		"stackkit_id":                     catalogRef,
+		"stackkit_instance_id":            stack.StackKitInstanceID,
 		"name":                            stack.Name,
 		"mode":                            stack.Mode,
 		"status":                          stack.Status,
@@ -75,6 +39,9 @@ func stackListItemFromStore(stack controlplane.Stack) map[string]any {
 		"billing_cadence":                 stringFromMaps("billing_cadence", stack.RuntimeSummary, stack.Config),
 		"catalog_ref":                     catalogRef,
 		"stackkit_catalog_ref":            catalogRef,
+		"desired_workloads":               desiredWorkloads,
+		"workload_selection_source":       workloadSelectionSource,
+		"e2e_scenario":                    e2eScenario,
 		"verification_status":             stringFromMaps("verification_status", stack.RuntimeSummary, stack.Config),
 		"server_provisioning_mode":        stringFromMaps("server_provisioning_mode", stack.RuntimeSummary, stack.Config),
 		"server_connection_mode":          stringFromMaps("server_connection_mode", stack.RuntimeSummary, stack.Config),
@@ -91,9 +58,51 @@ func stackListItemFromStore(stack controlplane.Stack) map[string]any {
 	}
 }
 
+func stackSpecMetadataString(config map[string]any, key string) string {
+	spec, ok := stackSpecMapFromValue(config[stackConfigKeySpecV2])
+	if !ok {
+		return ""
+	}
+	metadata, ok := stackSpecMapFromValue(spec["metadata"])
+	if !ok {
+		return ""
+	}
+	value, _ := metadata[key].(string)
+	return strings.TrimSpace(value)
+}
+
+// desiredWorkloadSelection is a read projection of the canonical StackSpec v2
+// authority. It deliberately does not copy this state into services_json:
+// runtime-service evidence and desired workloads have different semantics,
+// and the validated spec must remain the only desired-state authority.
+func desiredWorkloadSelection(config map[string]any) ([]map[string]any, string) {
+	spec, ok := stackSpecMapFromValue(config[stackConfigKeySpecV2])
+	if !ok {
+		return nil, ""
+	}
+	workloads, _ := stackSpecMapFromValue(spec["workloads"])
+	ids := make([]string, 0, len(workloads))
+	for id := range workloads {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	selection := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
+		item := map[string]any{"id": id}
+		if workload, ok := stackSpecMapFromValue(workloads[id]); ok {
+			if alternative, _ := workload["alternative"].(string); strings.TrimSpace(alternative) != "" {
+				item["alternative"] = strings.TrimSpace(alternative)
+			}
+		}
+		selection = append(selection, item)
+	}
+	return selection, stackConfigKeySpecV2
+}
+
 func normalizeStackListKitRef(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", "base-kit", "basement", "basementkit":
+	case "", "basement", "basementkit":
 		return "basement-kit"
 	case "cloud", "cloudkit", "kombify-cloud-kit":
 		return "cloud-kit"

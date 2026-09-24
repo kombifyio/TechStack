@@ -60,6 +60,9 @@ type DiscoveredService struct {
 	Port    int    `json:"port"`              // Port number
 	Version string `json:"version,omitempty"` // Detected version if available
 	Banner  string `json:"banner,omitempty"`  // Raw banner if captured
+	// FingerprintVerified proves the public service shape, not TLS trust or rights.
+	FingerprintVerified bool   `json:"fingerprint_verified,omitempty"`
+	CertificateSHA256   string `json:"certificate_sha256,omitempty"`
 }
 
 // SystemInfo contains hardware and OS information from deep discovery.

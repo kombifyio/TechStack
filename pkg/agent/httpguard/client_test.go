@@ -1,6 +1,7 @@
 package httpguard
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
 	"github.com/kombifyio/techstack/pkg/runtimeconvergence"
+	"github.com/kombifyio/techstack/pkg/stackkitcommand"
 )
 
 type staticCollector struct {
@@ -167,6 +169,8 @@ func TestClientPublishesAuthenticatedHeartbeatAndInventory(t *testing.T) {
 }
 
 func TestClientPollsExecutesAndReturnsTypedCommand(t *testing.T) {
+	candidate := []byte(`{"metadata":{"name":"cloud-stack"},"kit":{"slug":"cloud-kit"}}`)
+	candidate = append(candidate, bytes.Repeat([]byte(" "), stackkitcommand.MaxInitCandidateBytes-len(candidate))...)
 	var mu sync.Mutex
 	pollCount := 0
 	resultDone := make(chan *agentpb.StackKitResult, 1)
@@ -186,7 +190,7 @@ func TestClientPollsExecutesAndReturnsTypedCommand(t *testing.T) {
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"data":{"command":{"command_id":"command-1","operation":2}}}`))
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"command": &agentpb.StackKitCommand{CommandId: "command-1", Operation: agentpb.StackKitOperation_STACKKIT_OPERATION_INIT, CandidateSpecJson: candidate}}})
 		case "/commands/result":
 			var request controlRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -221,6 +225,9 @@ func TestClientPollsExecutesAndReturnsTypedCommand(t *testing.T) {
 	case command := <-executed:
 		if command.GetCommandId() != "command-1" {
 			t.Fatalf("command = %#v", command)
+		}
+		if !bytes.Equal(command.CandidateSpecJson, candidate) {
+			t.Fatal("HTTPS poll truncated approved init intent")
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("typed command was not executed")

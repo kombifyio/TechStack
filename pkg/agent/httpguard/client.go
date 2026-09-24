@@ -32,7 +32,10 @@ const (
 	defaultRequestTimeout = 15 * time.Second
 	defaultRetryAttempts  = 3
 	maxResponseBody       = 64 << 10
-	emptyCommandPollDelay = time.Second
+	// A poll returns one typed command. Its candidate (or Inventory on later
+	// operations) is base64 JSON, plus bounded envelope/identity metadata.
+	maxCommandResponseBody = 4*((stackkitcommand.MaxInitCandidateBytes+2)/3) + maxResponseBody
+	emptyCommandPollDelay  = time.Second
 )
 
 // Collector returns a fresh, observed inventory snapshot. Implementations must
@@ -79,6 +82,9 @@ type Config struct {
 	HTTPClient       *http.Client
 	Collector        Collector
 	CommandExecutor  CommandExecutor
+	WorkerExecutor   WorkerExecutor
+	WorkerCommandURL string
+	WorkerResultURL  string
 	// RuntimeConvergence supplies the provider-neutral package convergence
 	// state. The callback is read atomically by the caller-owned tracker and is
 	// intentionally separate from service inventory collection.
@@ -123,6 +129,17 @@ type controlResponse struct {
 // HTTP is accepted only for loopback development targets so bearer credentials
 // cannot be sent over a remote clear-text channel.
 func New(cfg Config) (*Client, error) {
+	if cfg.WorkerExecutor != nil {
+		if cfg.CommandExecutor != nil {
+			return nil, errors.New("a substrate Guard cannot execute StackKit commands")
+		}
+		if err := validateEndpointURL(cfg.WorkerCommandURL, cfg.PrivateLANHTTPOrigin); err != nil {
+			return nil, err
+		}
+		if err := validateEndpointURL(cfg.WorkerResultURL, cfg.PrivateLANHTTPOrigin); err != nil {
+			return nil, err
+		}
+	}
 	cfg.HeartbeatURL = strings.TrimSpace(cfg.HeartbeatURL)
 	cfg.InventoryURL = strings.TrimSpace(cfg.InventoryURL)
 	cfg.CommandURL = strings.TrimSpace(cfg.CommandURL)
@@ -205,6 +222,9 @@ func New(cfg Config) (*Client, error) {
 // cancellation. Transport failures use capped jittered backoff; each HTTP call
 // also has a small bounded retry budget.
 func (c *Client) Run(ctx context.Context) error {
+	if c.cfg.WorkerExecutor != nil {
+		go c.runWorkerLoop(ctx)
+	}
 	if c.cfg.CommandURL != "" {
 		go c.runControlLoop(ctx)
 	}
@@ -282,12 +302,16 @@ func (c *Client) controlIdentity() controlRequest {
 	return controlRequest{
 		RuntimeAgentID: c.cfg.RuntimeAgentID, TenantID: c.cfg.TenantID, OwnerID: c.cfg.OwnerID,
 		StackID: c.cfg.StackID, LeaseID: c.cfg.LeaseID, ServerID: c.cfg.ServerID,
-		Capabilities: []string{"stackkit", stackkitcommand.ExpectedPlanHashCapability},
+		Capabilities: []string{
+			"stackkit",
+			stackkitcommand.ExpectedPlanHashCapability,
+			stackkitcommand.WorkspaceInstanceCapability,
+		},
 	}
 }
 
 func (c *Client) pollTypedCommand(ctx context.Context) (*agentpb.StackKitCommand, error) {
-	status, body, err := c.postJSONResponse(ctx, c.cfg.CommandURL, c.controlIdentity())
+	status, body, err := c.postJSONResponseLimit(ctx, c.cfg.CommandURL, c.controlIdentity(), maxCommandResponseBody)
 	if err != nil {
 		return nil, err
 	}
@@ -337,6 +361,10 @@ func (c *Client) submitRuntimeLog(ctx context.Context, entry *agentpb.LogEntry) 
 }
 
 func (c *Client) postJSONResponse(ctx context.Context, endpoint string, payload any) (int, []byte, error) {
+	return c.postJSONResponseLimit(ctx, endpoint, payload, maxResponseBody)
+}
+
+func (c *Client) postJSONResponseLimit(ctx context.Context, endpoint string, payload any, limit int64) (int, []byte, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return 0, nil, err
@@ -356,7 +384,10 @@ func (c *Client) postJSONResponse(ctx context.Context, endpoint string, payload 
 		return 0, nil, err
 	}
 	defer response.Body.Close()
-	responseBody, readErr := io.ReadAll(io.LimitReader(response.Body, maxResponseBody))
+	responseBody, readErr := io.ReadAll(io.LimitReader(response.Body, limit+1))
+	if int64(len(responseBody)) > limit {
+		return response.StatusCode, nil, fmt.Errorf("guard response exceeds %d bytes", limit)
+	}
 	return response.StatusCode, responseBody, readErr
 }
 

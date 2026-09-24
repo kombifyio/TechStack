@@ -6,7 +6,7 @@
 // re-exports the upstream types so existing TechStack import paths
 // (`pkg/v2/auth/session`) keep working without behavioral change.
 //
-// New code SHOULD import `github.com/kombifyio/go-common/authsession`
+// New code SHOULD import `github.com/kombifyio/techstack/internal/gocommon/authsession`
 // directly. This shim will be removed once all call sites have been
 // migrated; track the cleanup in Beads.
 package session
@@ -14,7 +14,7 @@ package session
 import (
 	"strings"
 
-	"github.com/kombifyio/go-common/authsession"
+	"github.com/kombifyio/techstack/internal/gocommon/authsession"
 )
 
 // DefaultIssuer preserves the historic TechStack issuer value ("techstack")

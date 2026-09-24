@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kombifyio/go-common/authlocal"
+	"github.com/kombifyio/techstack/internal/gocommon/authlocal"
 
 	"github.com/kombifyio/techstack/pkg/controlplane"
 )

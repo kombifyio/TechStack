@@ -23,14 +23,37 @@ import * as Sentry from "@sentry/sveltekit";
 
 export const SESSION_REPROJECTION_REASON_CODE = "session_reprojection_required";
 
+/**
+ * The origin could not verify the gateway's signed decision envelope — a
+ * trust-material or configuration fault between edge and origin. It arrives as
+ * a 401 because the request is refused, but it says nothing about the caller's
+ * session, and no sign-in repairs it. Treating it as an expired session sent
+ * users through Universal Login in a loop that could not terminate
+ * (live 2026-09-12 to 2026-09-18).
+ */
+export const EDGE_DECISION_UNVERIFIABLE_REASON_CODE = "edge_decision_unverifiable";
+
+/** True when a 401 is the origin refusing the edge's decision, not the session. */
+export function isEdgeDecisionUnverifiableError(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const candidate = err as { status?: unknown; code?: unknown; details?: unknown };
+  if (candidate.status !== 401) return false;
+  if (candidate.code === EDGE_DECISION_UNVERIFIABLE_REASON_CODE) return true;
+  const details = candidate.details;
+  if (typeof details !== "object" || details === null) return false;
+  const coded = details as { reason_code?: unknown; error_code?: unknown };
+  return (
+    coded.reason_code === EDGE_DECISION_UNVERIFIABLE_REASON_CODE ||
+    coded.error_code === EDGE_DECISION_UNVERIFIABLE_REASON_CODE
+  );
+}
+
 export const REPROJECTION_REAUTH_MARKER_KEY =
   "techstack:auth:session_reprojection_at";
 export const REPROJECTION_REAUTH_TTL_MS = 5 * 60_000;
 
 export type SessionReprojectionOutcome =
-  | "retry"
-  | "redirecting"
-  | "reauth_required";
+  "retry" | "redirecting" | "reauth_required";
 
 export interface SessionReprojectionDeps {
   isEmbedded: () => boolean;
@@ -109,15 +132,15 @@ function defaultDeps(): SessionReprojectionDeps {
     isEmbedded: () => typeof window !== "undefined" && window.parent !== window,
     refreshEmbeddedSession: async (options) => {
       const { refreshEmbeddedCloudSession } =
-        await import("$lib/auth/embedded-session");
+        await import("#lib/auth/embedded-session.js");
       return refreshEmbeddedCloudSession(options);
     },
     redirectToSSO: async () => {
       const [{ authStore }, { currentAuthReturnTo }, { authHandler }] =
         await Promise.all([
-          import("$lib/stores/auth.svelte"),
-          import("$lib/auth/login-experience"),
-          import("$lib/stores/authHandler.svelte"),
+          import("#lib/stores/auth.svelte.js"),
+          import("#lib/auth/login-experience.js"),
+          import("#lib/stores/authHandler.svelte.js"),
         ]);
       await authStore.init({ embedded: false });
       const redirected =
@@ -131,7 +154,7 @@ function defaultDeps(): SessionReprojectionDeps {
       return redirected;
     },
     promptRenewSession: async (cause: unknown) => {
-      const { authHandler } = await import("$lib/stores/authHandler.svelte");
+      const { authHandler } = await import("#lib/stores/authHandler.svelte.js");
       authHandler.promptSessionRenewal(cause);
     },
   };

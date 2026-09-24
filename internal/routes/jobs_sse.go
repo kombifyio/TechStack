@@ -13,12 +13,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
-	"github.com/kombifyio/techstack/pkg/identity"
 	"github.com/kombifyio/techstack/pkg/jobs"
-	"github.com/pocketbase/pocketbase/core"
+	"github.com/kombifyio/techstack/pkg/secrets"
 )
 
 // JobProgress represents a job progress update sent via SSE.
@@ -37,8 +37,16 @@ type JobProgress struct {
 	ErrorDetails      string `json:"error_details,omitempty"`
 }
 
+type JobRouteStores struct {
+	Stacks controlplane.StackStore
+	Jobs   controlplane.JobStore
+}
+
 // RegisterJobsSSERoutes adds the SSE endpoint for job progress streaming.
-func RegisterJobsSSERoutes(r *httpx.Router, app core.App) {
+func RegisterJobsSSERoutes(r *httpx.Router, stores JobRouteStores) {
+	if stores.Jobs == nil || stores.Stacks == nil {
+		panic("RegisterJobsSSERoutes: canonical stack and job stores are required")
+	}
 	// GET /api/v1/jobs - List jobs owned by the authenticated user.
 	r.GET("/api/v1/jobs", func(e *httpx.Event) error {
 		ownerID, authErr := requireAuth(e)
@@ -46,17 +54,11 @@ func RegisterJobsSSERoutes(r *httpx.Router, app core.App) {
 			return authErr
 		}
 
-		query := parseJobListQuery(e.Request)
-		stores := currentJobRouteStores()
-		if tenantID := tenantIDFromJobRequest(e); stores.Jobs != nil && stores.Stacks != nil && tenantID != "" {
-			payload, err := listOwnedJobsFromStore(e, stores, tenantID, ownerID, query)
-			if err != nil {
-				return err
-			}
-			return httpx.Success(e, http.StatusOK, payload)
+		tenantID, err := requireJobRouteTenant(e, ownerID, "techstack.jobs.list")
+		if err != nil {
+			return err
 		}
-
-		payload, err := listOwnedJobs(e, app, ownerID, query)
+		payload, err := listOwnedJobsFromStore(e, stores, tenantID, ownerID, parseJobListQuery(e.Request))
 		if err != nil {
 			return err
 		}
@@ -71,44 +73,15 @@ func RegisterJobsSSERoutes(r *httpx.Router, app core.App) {
 		}
 
 		jobID := e.Request.PathValue("id")
-		if details, handled, err := configuredStoreJobDetails(e, ownerID, jobID); handled {
-			if err != nil {
-				return err
-			}
-			return httpx.Success(e, http.StatusOK, details)
+		tenantID, err := requireJobRouteTenant(e, ownerID, "techstack.jobs.read")
+		if err != nil {
+			return err
 		}
-
-		job, stack, err := findJobAndAuthorize(e, app, jobID, ownerID)
+		job, err := findJobAndAuthorizeFromStore(e, stores, tenantID, jobID, ownerID)
 		if err != nil || job == nil {
 			return err
 		}
-		_ = stack
-
-		return httpx.Success(e, http.StatusOK, jobRecordDetails(job))
-	})
-
-	// GET /api/collections/jobs/records/{id} keeps the legacy PocketBase record
-	// polling URL alive while jobs are persisted in the control-plane store.
-	r.GET("/api/collections/jobs/records/{id}", func(e *httpx.Event) error {
-		ownerID, authErr := requireAuth(e)
-		if authErr != nil {
-			return authErr
-		}
-
-		jobID := e.Request.PathValue("id")
-		if details, handled, err := configuredStoreJobDetails(e, ownerID, jobID); handled {
-			if err != nil {
-				return err
-			}
-			return writeLegacyJobRecord(e, details)
-		}
-
-		job, stack, err := findJobAndAuthorize(e, app, jobID, ownerID)
-		if err != nil || job == nil {
-			return err
-		}
-		_ = stack
-		return writeLegacyJobRecord(e, jobRecordDetails(job))
+		return httpx.Success(e, http.StatusOK, jobDetailsFromStore(*job))
 	})
 
 	// GET /api/v1/jobs/{id}/stream - Stream job progress updates via SSE
@@ -119,97 +92,11 @@ func RegisterJobsSSERoutes(r *httpx.Router, app core.App) {
 		}
 
 		jobID := e.Request.PathValue("id")
-		stores := currentJobRouteStores()
-		if tenantID := tenantIDFromJobRequest(e); stores.Jobs != nil && stores.Stacks != nil && tenantID != "" {
-			return streamJobFromStore(e, stores, tenantID, jobID, ownerID)
-		}
-
-		job, stack, err := findJobAndAuthorize(e, app, jobID, ownerID)
-		if err != nil || job == nil {
+		tenantID, err := requireJobRouteTenant(e, ownerID, "techstack.jobs.stream")
+		if err != nil {
 			return err
 		}
-		_ = stack // stack is already validated; retained to make intent explicit
-
-		// Set SSE headers
-		// Note: CORS is handled globally by the CORS middleware in main.go
-		// Do NOT set Access-Control-Allow-Origin here to avoid conflicts
-		e.Response.Header().Set("Content-Type", "text/event-stream")
-		e.Response.Header().Set("Cache-Control", "no-cache")
-		e.Response.Header().Set("Connection", "keep-alive")
-		e.Response.WriteHeader(http.StatusOK)
-
-		// Get the flusher
-		flusher, ok := e.Response.(http.Flusher)
-		if !ok {
-			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "SSE not supported", nil)
-		}
-
-		// Send initial state
-		progress := jobProgressFromRecord(job)
-
-		if err := sendSSEEvent(e.Response, "progress", progress); err != nil {
-			return nil
-		}
-		flusher.Flush()
-
-		// Check if job is already done
-		if isTerminalState(progress.State) {
-			sendSSEEvent(e.Response, "done", progress)
-			flusher.Flush()
-			return nil
-		}
-
-		// Poll for updates (PocketBase doesn't have native SSE subscription for records)
-		ticker := time.NewTicker(500 * time.Millisecond)
-		defer ticker.Stop()
-
-		timeout := time.After(10 * time.Minute) // Max 10 minute connection
-
-		for {
-			select {
-			case <-e.Request.Context().Done():
-				// Client disconnected
-				return nil
-
-			case <-timeout:
-				sendSSEEvent(e.Response, "timeout", map[string]string{
-					"message": "Connection timeout after 10 minutes",
-				})
-				flusher.Flush()
-				return nil
-
-			case <-ticker.C:
-				// Fetch latest job state
-				job, stack, err := findJobAndAuthorize(e, app, jobID, ownerID)
-				if err != nil || job == nil {
-					sendSSEEvent(e.Response, "error", map[string]string{
-						"message": "Unauthorized or job not found",
-					})
-					flusher.Flush()
-					return nil
-				}
-				_ = stack
-
-				current := jobProgressFromRecord(job)
-
-				// Only send update if something changed
-				if legacyJobProgressChanged(progress, current) {
-					progress = current
-
-					if err := sendSSEEvent(e.Response, "progress", progress); err != nil {
-						return nil // Client disconnected
-					}
-					flusher.Flush()
-				}
-
-				// Check if job is done
-				if isTerminalState(current.State) {
-					sendSSEEvent(e.Response, "done", progress)
-					flusher.Flush()
-					return nil
-				}
-			}
-		}
+		return streamJobFromStore(e, stores, tenantID, jobID, ownerID)
 	})
 
 	// GET /api/v1/jobs/{id}/logs - Get job logs
@@ -220,20 +107,15 @@ func RegisterJobsSSERoutes(r *httpx.Router, app core.App) {
 		}
 
 		jobID := e.Request.PathValue("id")
-		if details, handled, err := configuredStoreJobDetails(e, ownerID, jobID); handled {
-			if err != nil {
-				return err
-			}
-			return httpx.Success(e, http.StatusOK, details)
+		tenantID, err := requireJobRouteTenant(e, ownerID, "techstack.jobs.logs.read")
+		if err != nil {
+			return err
 		}
-
-		job, stack, err := findJobAndAuthorize(e, app, jobID, ownerID)
+		job, err := findJobAndAuthorizeFromStore(e, stores, tenantID, jobID, ownerID)
 		if err != nil || job == nil {
 			return err
 		}
-		_ = stack
-
-		return httpx.Success(e, http.StatusOK, jobRecordDetails(job))
+		return httpx.Success(e, http.StatusOK, jobDetailsFromStore(*job))
 	})
 }
 
@@ -254,69 +136,14 @@ type jobListPayload struct {
 	TotalPages int              `json:"total_pages"`
 }
 
-func tenantIDFromJobRequest(e *httpx.Event) string {
-	if e == nil || e.Request == nil {
-		return ""
-	}
-	id := identity.FromContext(e.Request.Context())
-	if id == nil {
-		return ""
-	}
-	return strings.TrimSpace(id.OrgID)
-}
-
-func jobRecordDetails(job *core.Record) map[string]any {
-	// Defense in depth: findJobAndAuthorize writes a 404 response and returns
-	// (nil, nil, nil) when the job is missing; callers must also nil-check
-	// the record but a panic here would still take down the request handler
-	// (and Sentry recorded one such crash from a smoke-test poll on a bogus
-	// job_id - see KOMBIFY-TECHSTACK-3).
-	if job == nil {
-		return nil
-	}
-	message := job.GetString("message")
-	if message == "" {
-		message = job.GetString("current_step")
-	}
-	result := job.Get("result")
-	state, waitReason, nextResumeAt := apiJobWaitProjection(job.GetString("state"), result)
-	resumeAvailableAt, resumeAvailable := apiJobResumeAvailability(waitReason, nextResumeAt, time.Now().UTC())
-	details := map[string]any{
-		"id":            job.Id,
-		"type":          job.GetString("type"),
-		"state":         state,
-		"progress":      job.GetFloat("progress"),
-		"step":          job.GetString("step"),
-		"current_step":  job.GetString("current_step"),
-		"message":       message,
-		"error":         job.GetString("error"),
-		"error_details": job.GetString("error_details"),
-		"error_message": job.GetString("error_message"),
-		"stack_id":      job.GetString("stack_id"),
-		"result":        result,
-		"logs":          job.Get("logs"),
-		"created":       job.GetDateTime("created"),
-		"updated":       job.GetDateTime("updated"),
-		"created_at":    job.GetDateTime("created"),
-		"updated_at":    job.GetDateTime("updated"),
-	}
-	if waitReason != "" {
-		details["wait_reason"] = waitReason
-	}
-	if nextResumeAt != "" {
-		details["next_resume_at"] = nextResumeAt
-	}
-	if resumeAvailableAt != "" {
-		details["resume_available_at"] = resumeAvailableAt
-		details["resume_available"] = resumeAvailable
-	}
-	return details
+func requireJobRouteTenant(e *httpx.Event, ownerID, capability string) (string, error) {
+	return tenantguard.TenantScope(requestExplicitTenantID(e), ownerID, capability)
 }
 
 func jobDetailsFromStore(job controlplane.Job) map[string]any {
-	message := job.Message
+	message := secrets.Redact(job.Message)
 	if message == "" {
-		message = job.Step
+		message = secrets.Redact(job.Step)
 	}
 	state, waitReason, nextResumeAt := apiJobWaitProjection(job.State, job.Result)
 	resumeAvailableAt, resumeAvailable := apiJobResumeAvailability(waitReason, nextResumeAt, time.Now().UTC())
@@ -328,12 +155,12 @@ func jobDetailsFromStore(job controlplane.Job) map[string]any {
 		"step":          job.Step,
 		"current_step":  job.Step,
 		"message":       message,
-		"error":         job.Error,
-		"error_details": job.ErrorDetails,
-		"error_message": job.Error,
+		"error":         secrets.Redact(job.Error),
+		"error_details": secrets.Redact(job.ErrorDetails),
+		"error_message": secrets.Redact(job.Error),
 		"stack_id":      job.StackID,
-		"result":        job.Result,
-		"logs":          job.Logs,
+		"result":        publicJobMap(job.Result, 0),
+		"logs":          publicJobLogs(job.Logs),
 		"created":       job.CreatedAt,
 		"updated":       job.UpdatedAt,
 		"created_at":    job.CreatedAt,
@@ -350,6 +177,75 @@ func jobDetailsFromStore(job controlplane.Job) map[string]any {
 		details["resume_available"] = resumeAvailable
 	}
 	return details
+}
+
+const publicJobMaxDepth = 12
+
+func publicJobLogs(logs []map[string]any) []map[string]any {
+	if logs == nil {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(logs))
+	for _, entry := range logs {
+		out = append(out, publicJobMap(entry, 0))
+	}
+	return out
+}
+
+func publicJobMap(input map[string]any, depth int) map[string]any {
+	if input == nil || depth > publicJobMaxDepth {
+		return nil
+	}
+	out := make(map[string]any, len(input))
+	for key, value := range input {
+		if secrets.SensitiveKey(key) {
+			continue
+		}
+		if sanitized, ok := publicJobValue(value, depth+1); ok {
+			out[key] = sanitized
+		}
+	}
+	return out
+}
+
+func publicJobValue(value any, depth int) (any, bool) {
+	if depth > publicJobMaxDepth {
+		return nil, false
+	}
+	switch typed := value.(type) {
+	case string:
+		return secrets.Redact(typed), true
+	case json.RawMessage:
+		var decoded any
+		if err := json.Unmarshal(typed, &decoded); err == nil {
+			return publicJobValue(decoded, depth+1)
+		}
+		return secrets.Redact(string(typed)), true
+	case []byte:
+		var decoded any
+		if err := json.Unmarshal(typed, &decoded); err == nil {
+			return publicJobValue(decoded, depth+1)
+		}
+		return secrets.Redact(string(typed)), true
+	case map[string]any:
+		return publicJobMap(typed, depth), true
+	case []map[string]any:
+		out := make([]map[string]any, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, publicJobMap(item, depth+1))
+		}
+		return out, true
+	case []any:
+		out := make([]any, 0, len(typed))
+		for _, item := range typed {
+			if sanitized, ok := publicJobValue(item, depth+1); ok {
+				out = append(out, sanitized)
+			}
+		}
+		return out, true
+	default:
+		return value, true
+	}
 }
 
 func apiJobWaitProjection(storedState string, result any) (state, reason, nextResumeAt string) {
@@ -428,45 +324,6 @@ func jobWaitString(wait map[string]interface{}, key string) string {
 	return strings.TrimSpace(value)
 }
 
-func configuredStoreJobDetails(e *httpx.Event, ownerID, jobID string) (map[string]any, bool, error) {
-	stores := currentJobRouteStores()
-	tenantID := tenantIDFromJobRequest(e)
-	if stores.Jobs == nil || stores.Stacks == nil || tenantID == "" {
-		return nil, false, nil
-	}
-	job, err := stores.Jobs.GetJob(e.Request.Context(), tenantID, jobID)
-	if errors.Is(err, controlplane.ErrNotFound) {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, true, httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to fetch job", nil)
-	}
-	if strings.TrimSpace(job.StackID) == "" {
-		return nil, true, httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Job missing stack_id", nil)
-	}
-	stack, err := stackForJobAuthorization(e.Request.Context(), stores.Stacks, tenantID, job.StackID)
-	if errors.Is(err, controlplane.ErrNotFound) {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, true, httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to fetch stack", nil)
-	}
-	if stack.OwnerSubjectID != ownerID {
-		return nil, true, httpx.Forbidden(e, "Not allowed")
-	}
-	return jobDetailsFromStore(*job), true, nil
-}
-
-func writeLegacyJobRecord(e *httpx.Event, details map[string]any) error {
-	if details == nil {
-		return httpx.NotFound(e, "Job not found")
-	}
-	e.Response.Header().Set("Content-Type", "application/json; charset=utf-8")
-	e.Response.Header().Set("Cache-Control", "no-store")
-	e.Response.WriteHeader(http.StatusOK)
-	return json.NewEncoder(e.Response).Encode(details)
-}
-
 func parseJobListQuery(r *http.Request) jobListQuery {
 	values := r.URL.Query()
 	page := parseBoundedPositiveInt(values.Get("page"), 1, 10_000, 1)
@@ -496,24 +353,6 @@ func parseBoundedPositiveInt(raw string, min, max, fallback int) int {
 		return max
 	}
 	return value
-}
-
-func listOwnedJobs(e *httpx.Event, app core.App, ownerID string, query jobListQuery) (jobListPayload, error) {
-	ownedStackIDs, err := ownerStackIDs(app, ownerID)
-	if err != nil {
-		return jobListPayload{}, httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to fetch stacks", nil)
-	}
-	if query.StackID != "" && !ownedStackIDs[query.StackID] {
-		return jobListPayload{}, httpx.Forbidden(e, "Not allowed")
-	}
-
-	records, err := app.FindRecordsByFilter("jobs", "", "-created", 1000, 0)
-	if err != nil {
-		return jobListPayload{}, httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to fetch jobs", nil)
-	}
-
-	filtered := filterJobRecords(records, ownedStackIDs, query)
-	return jobListResponse(filtered, query), nil
 }
 
 func listOwnedJobsFromStore(e *httpx.Event, stores JobRouteStores, tenantID, ownerID string, query jobListQuery) (jobListPayload, error) {
@@ -566,63 +405,6 @@ func listOwnedJobsFromStore(e *httpx.Event, stores JobRouteStores, tenantID, own
 	return jobListResponseFromStore(filtered, query), nil
 }
 
-func ownerStackIDs(app core.App, ownerID string) (map[string]bool, error) {
-	stacks, err := app.FindRecordsByFilter(
-		"stacks",
-		"owner_id = {:ownerId}",
-		"",
-		500,
-		0,
-		map[string]any{"ownerId": ownerID},
-	)
-	if err != nil {
-		return nil, err
-	}
-	ids := make(map[string]bool, len(stacks))
-	for _, stack := range stacks {
-		ids[stack.Id] = true
-	}
-	return ids, nil
-}
-
-func filterJobRecords(records []*core.Record, ownedStackIDs map[string]bool, query jobListQuery) []*core.Record {
-	filtered := make([]*core.Record, 0, len(records))
-	for _, job := range records {
-		stackID := job.GetString("stack_id")
-		if !ownedStackIDs[stackID] {
-			continue
-		}
-		if query.StackID != "" && stackID != query.StackID {
-			continue
-		}
-		projectedState, _, _ := apiJobWaitProjection(job.GetString("state"), job.Get("result"))
-		if query.State != "" && projectedState != query.State {
-			continue
-		}
-		if query.Type != "" && job.GetString("type") != query.Type {
-			continue
-		}
-		if query.Search != "" && !jobMatchesSearch(job, query.Search) {
-			continue
-		}
-		filtered = append(filtered, job)
-	}
-	return filtered
-}
-
-func jobMatchesSearch(job *core.Record, search string) bool {
-	haystack := strings.ToLower(strings.Join([]string{
-		job.GetString("type"),
-		job.GetString("state"),
-		job.GetString("step"),
-		job.GetString("current_step"),
-		job.GetString("message"),
-		job.GetString("error"),
-		job.GetString("error_message"),
-	}, " "))
-	return strings.Contains(haystack, search)
-}
-
 func jobMatchesSearchFromStore(job controlplane.Job, search string) bool {
 	haystack := strings.ToLower(strings.Join([]string{
 		job.Type,
@@ -632,34 +414,6 @@ func jobMatchesSearchFromStore(job controlplane.Job, search string) bool {
 		job.Error,
 	}, " "))
 	return strings.Contains(haystack, search)
-}
-
-func jobListResponse(records []*core.Record, query jobListQuery) jobListPayload {
-	totalItems := len(records)
-	totalPages := 0
-	if totalItems > 0 {
-		totalPages = (totalItems + query.PerPage - 1) / query.PerPage
-	}
-	start := (query.Page - 1) * query.PerPage
-	if start > totalItems {
-		start = totalItems
-	}
-	end := start + query.PerPage
-	if end > totalItems {
-		end = totalItems
-	}
-
-	items := make([]map[string]any, 0, end-start)
-	for _, job := range records[start:end] {
-		items = append(items, jobRecordDetails(job))
-	}
-	return jobListPayload{
-		Items:      items,
-		Page:       query.Page,
-		PerPage:    query.PerPage,
-		TotalItems: totalItems,
-		TotalPages: totalPages,
-	}
 }
 
 func jobListResponseFromStore(jobs []controlplane.Job, query jobListQuery) jobListPayload {
@@ -690,28 +444,6 @@ func jobListResponseFromStore(jobs []controlplane.Job, query jobListQuery) jobLi
 	}
 }
 
-func findJobAndAuthorize(e *httpx.Event, app core.App, jobID, userID string) (*core.Record, *core.Record, error) {
-	job, err := app.FindRecordById("jobs", jobID)
-	if err != nil {
-		return nil, nil, httpx.NotFound(e, "Job not found")
-	}
-
-	stackID := job.GetString("stack_id")
-	if stackID == "" {
-		return nil, nil, httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Job missing stack_id", nil)
-	}
-
-	stack, err := app.FindRecordById("stacks", stackID)
-	if err != nil {
-		return nil, nil, httpx.NotFound(e, "Stack not found")
-	}
-	if stack.GetString("owner_id") != userID {
-		return nil, nil, httpx.Forbidden(e, "Not allowed")
-	}
-
-	return job, stack, nil
-}
-
 func findJobAndAuthorizeFromStore(e *httpx.Event, stores JobRouteStores, tenantID, jobID, userID string) (*controlplane.Job, error) {
 	job, err := stores.Jobs.GetJob(e.Request.Context(), tenantID, jobID)
 	if errors.Is(err, controlplane.ErrNotFound) {
@@ -736,23 +468,29 @@ func findJobAndAuthorizeFromStore(e *httpx.Event, stores JobRouteStores, tenantI
 	return job, nil
 }
 
-type archivedStackReceiptReader interface {
-	GetStackIncludingDeleted(context.Context, string, string) (*controlplane.Stack, error)
-}
-
 func stackForJobAuthorization(ctx context.Context, stacks controlplane.StackStore, tenantID, stackID string) (*controlplane.Stack, error) {
 	stack, err := stacks.GetStack(ctx, tenantID, stackID)
 	if !errors.Is(err, controlplane.ErrNotFound) {
 		return stack, err
 	}
-	reader, ok := stacks.(archivedStackReceiptReader)
+	reader, ok := stacks.(controlplane.ArchivedStackReceiptReader)
 	if !ok {
 		return nil, err
 	}
 	return reader.GetStackIncludingDeleted(ctx, tenantID, stackID)
 }
 
+// streamJobWriteBudget bounds the write deadline extension for one SSE
+// progress stream; the handler closes the stream after 10 minutes regardless.
+const jobStreamWriteBudget = 2 * time.Minute
+
+// jobStreamKeepaliveInterval is the idle-cadence for SSE keepalive comments.
+const jobStreamKeepaliveInterval = 25 * time.Second
+
 func streamJobFromStore(e *httpx.Event, stores JobRouteStores, tenantID, jobID, ownerID string) error {
+	// The event stream lives up to its own 10-minute budget, well past the
+	// server-wide write timeout, so every write extends the deadline first.
+	_ = httpx.ExtendWriteDeadline(e.Response, jobStreamWriteBudget)
 	job, err := findJobAndAuthorizeFromStore(e, stores, tenantID, jobID, ownerID)
 	if err != nil || job == nil {
 		return err
@@ -784,6 +522,7 @@ func streamJobFromStore(e *httpx.Event, stores JobRouteStores, tenantID, jobID, 
 	defer ticker.Stop()
 
 	timeout := time.After(10 * time.Minute)
+	lastKeepalive := time.Now()
 
 	for {
 		select {
@@ -796,6 +535,19 @@ func streamJobFromStore(e *httpx.Event, stores JobRouteStores, tenantID, jobID, 
 			flusher.Flush()
 			return nil
 		case <-ticker.C:
+			// The server-wide write timeout is far shorter than this stream's
+			// budget; keep the deadline ahead of every write so a slow-
+			// changing job does not silently lose its stream.
+			_ = httpx.ExtendWriteDeadline(e.Response, jobStreamWriteBudget)
+			// A periodic comment keeps intermediaries from closing an idle
+			// stream between real progress events.
+			if time.Since(lastKeepalive) >= jobStreamKeepaliveInterval {
+				if _, err := e.Response.Write([]byte(": keepalive\n\n")); err != nil {
+					return nil
+				}
+				flusher.Flush()
+				lastKeepalive = time.Now()
+			}
 			job, err := findJobAndAuthorizeFromStore(e, stores, tenantID, jobID, ownerID)
 			if err != nil || job == nil {
 				sendSSEEvent(e.Response, "error", map[string]string{
@@ -805,7 +557,7 @@ func streamJobFromStore(e *httpx.Event, stores JobRouteStores, tenantID, jobID, 
 				return nil
 			}
 			current := jobProgressFromStore(*job)
-			if legacyJobProgressChanged(progress, current) {
+			if jobProgressChanged(progress, current) {
 				progress = current
 				if err := sendSSEEvent(e.Response, "progress", current); err != nil {
 					return nil
@@ -834,36 +586,13 @@ func jobProgressFromStore(job controlplane.Job) JobProgress {
 		Progress:          job.Progress,
 		Step:              job.Step,
 		CurrentStep:       job.Step,
-		Message:           job.Message,
-		Error:             job.Error,
-		ErrorDetails:      job.ErrorDetails,
+		Message:           secrets.Redact(job.Message),
+		Error:             secrets.Redact(job.Error),
+		ErrorDetails:      secrets.Redact(job.ErrorDetails),
 	}
 }
 
-func jobProgressFromRecord(job *core.Record) JobProgress { // pocketbase-migration-compat: legacy SSE projection only
-	state, waitReason, nextResumeAt := apiJobWaitProjection(job.GetString("state"), job.Get("result"))
-	resumeAvailableAt, resumeAvailable := apiJobResumeAvailability(waitReason, nextResumeAt, time.Now().UTC())
-	message := job.GetString("message")
-	if message == "" {
-		message = job.GetString("current_step")
-	}
-	return JobProgress{
-		ID:                job.Id,
-		State:             state,
-		WaitReason:        waitReason,
-		NextResumeAt:      nextResumeAt,
-		ResumeAvailableAt: resumeAvailableAt,
-		ResumeAvailable:   resumeAvailable,
-		Progress:          int(job.GetFloat("progress")),
-		Step:              job.GetString("step"),
-		CurrentStep:       job.GetString("current_step"),
-		Message:           message,
-		Error:             job.GetString("error"),
-		ErrorDetails:      job.GetString("error_details"),
-	}
-}
-
-func legacyJobProgressChanged(previous, current JobProgress) bool {
+func jobProgressChanged(previous, current JobProgress) bool {
 	return current.Progress != previous.Progress ||
 		current.State != previous.State ||
 		current.WaitReason != previous.WaitReason ||

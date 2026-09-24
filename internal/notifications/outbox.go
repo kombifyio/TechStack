@@ -21,6 +21,8 @@ var ErrRecipientRequired = errors.New("notifications: auth0 recipient required")
 
 const deliveryChannelPayloadKey = "_delivery_channel"
 
+const activityEnvelopePayloadKey = "_activity_envelope"
+
 type ProductEvent struct {
 	Topic          string
 	Channel        string
@@ -28,12 +30,25 @@ type ProductEvent struct {
 	OrganizationID string
 	Payload        map[string]any
 	IdempotencyKey string
+	SourceApp      string
+	EventKey       string
+	SubjectRef     string
+	DeepLink       string
+	GroupKey       string
+	Priority       string
 }
 
 // ProductEventEnqueuer is the durable product-notification boundary used by
 // route packages that need to record an event without owning delivery.
 type ProductEventEnqueuer interface {
 	Enqueue(context.Context, ProductEvent) error
+}
+
+// ProductEventTxEnqueuer records an event inside a caller-owned transaction.
+// It is used when the product fact and its notification intent must commit as
+// one durable transition.
+type ProductEventTxEnqueuer interface {
+	EnqueueTx(context.Context, *sql.Tx, ProductEvent) error
 }
 
 type dispatchClient interface {
@@ -73,6 +88,23 @@ func (o *Outbox) Enqueue(ctx context.Context, event ProductEvent) error {
 	if o == nil || o.db == nil {
 		return fmt.Errorf("notifications: outbox database not configured")
 	}
+	return enqueueProductEvent(ctx, o.db, event)
+}
+
+// EnqueueTx persists through the same validation and idempotency boundary as
+// Enqueue without committing or rolling back the caller-owned transaction.
+func (o *Outbox) EnqueueTx(ctx context.Context, tx *sql.Tx, event ProductEvent) error {
+	if o == nil || tx == nil {
+		return fmt.Errorf("notifications: outbox transaction not configured")
+	}
+	return enqueueProductEvent(ctx, tx, event)
+}
+
+type productEventExecutor interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func enqueueProductEvent(ctx context.Context, executor productEventExecutor, event ProductEvent) error {
 	event.Auth0UserID = strings.TrimSpace(event.Auth0UserID)
 	event.OrganizationID = strings.TrimSpace(event.OrganizationID)
 	event.IdempotencyKey = strings.TrimSpace(event.IdempotencyKey)
@@ -82,6 +114,11 @@ func (o *Outbox) Enqueue(ctx context.Context, event ProductEvent) error {
 	if event.Topic == "" || event.IdempotencyKey == "" {
 		return fmt.Errorf("notifications: topic and idempotency key required")
 	}
+	event.SourceApp = strings.TrimSpace(event.SourceApp)
+	event.EventKey = strings.TrimSpace(event.EventKey)
+	if event.SourceApp != "" && event.EventKey == "" {
+		return fmt.Errorf("notifications: source app requires event key")
+	}
 	persistedPayload := make(map[string]any, len(event.Payload)+1)
 	for key, value := range event.Payload {
 		persistedPayload[key] = value
@@ -89,11 +126,21 @@ func (o *Outbox) Enqueue(ctx context.Context, event ProductEvent) error {
 	if channel := strings.TrimSpace(event.Channel); channel != "" && channel != "in_app" {
 		persistedPayload[deliveryChannelPayloadKey] = channel
 	}
+	if event.SourceApp != "" {
+		persistedPayload[activityEnvelopePayloadKey] = map[string]any{
+			"source_app":  event.SourceApp,
+			"event_key":   event.EventKey,
+			"subject_ref": strings.TrimSpace(event.SubjectRef),
+			"deep_link":   strings.TrimSpace(event.DeepLink),
+			"group_key":   strings.TrimSpace(event.GroupKey),
+			"priority":    strings.TrimSpace(event.Priority),
+		}
+	}
 	payload, err := json.Marshal(persistedPayload)
 	if err != nil {
 		return fmt.Errorf("notifications: marshal outbox payload: %w", err)
 	}
-	_, err = o.db.ExecContext(ctx, `
+	_, err = executor.ExecContext(ctx, `
 		INSERT INTO techstack_notification_outbox (
 			idempotency_key, tenant_id, auth0_user_id, topic_slug, payload_json
 		) VALUES ($1, NULLIF($2, ''), $3, $4, $5::jsonb)
@@ -221,7 +268,9 @@ func (o *Outbox) processOne(ctx context.Context) error {
 	}
 
 	item.Attempts++
-	terminal := item.Attempts >= outboxMaxAttempts || isTerminalDispatchError(dispatchErr)
+	var engineError *DispatchError
+	terminal := item.Attempts >= outboxMaxAttempts ||
+		(errors.As(dispatchErr, &engineError) && !engineError.Retryable)
 	status := "retrying"
 	next := now.Add(retryDelay(item.Attempts))
 	if terminal {
@@ -262,6 +311,15 @@ func (o *Outbox) claim(ctx context.Context, now time.Time) (*outboxItem, error) 
 		item.Channel = strings.TrimSpace(channel)
 		delete(item.Payload, deliveryChannelPayloadKey)
 	}
+	if envelope, ok := item.Payload[activityEnvelopePayloadKey].(map[string]any); ok {
+		item.SourceApp = activityEnvelopeString(envelope, "source_app")
+		item.EventKey = activityEnvelopeString(envelope, "event_key")
+		item.SubjectRef = activityEnvelopeString(envelope, "subject_ref")
+		item.DeepLink = activityEnvelopeString(envelope, "deep_link")
+		item.GroupKey = activityEnvelopeString(envelope, "group_key")
+		item.Priority = activityEnvelopeString(envelope, "priority")
+		delete(item.Payload, activityEnvelopePayloadKey)
+	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE techstack_notification_outbox SET next_attempt_at=$2, updated_at=$1
 		WHERE idempotency_key=$3
@@ -274,9 +332,9 @@ func (o *Outbox) claim(ctx context.Context, now time.Time) (*outboxItem, error) 
 	return &item, nil
 }
 
-func isTerminalDispatchError(err error) bool {
-	var dispatchErr *DispatchError
-	return errors.As(err, &dispatchErr) && !dispatchErr.Retryable
+func activityEnvelopeString(envelope map[string]any, key string) string {
+	value, _ := envelope[key].(string)
+	return strings.TrimSpace(value)
 }
 
 func retryDelay(attempt int) time.Duration {

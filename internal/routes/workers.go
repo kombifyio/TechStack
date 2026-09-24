@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/portinventory"
 	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/serverruntime"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/vmlease"
@@ -22,6 +23,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/grpcserver"
 	"github.com/kombifyio/techstack/pkg/httpx"
+	"github.com/kombifyio/techstack/pkg/logger"
 	"github.com/kombifyio/techstack/pkg/monitoring"
 	"github.com/kombifyio/techstack/pkg/nodehandoff"
 	"github.com/kombifyio/techstack/pkg/pairingtoken"
@@ -51,6 +53,7 @@ type WorkerRouteConfig struct {
 	TypedControl         WorkerTypedControl
 	StackKitOperations   WorkerStackKitOperations
 	RuntimeLogs          WorkerRuntimeLogWriter
+	PortObservations     portinventory.ObservationWriter
 }
 
 // WorkerAgentIdentityIssuer is the fail-closed bridge from one claimed
@@ -94,6 +97,7 @@ func RegisterWorkerRoutesWithStore(r *httpx.Router, cfg WorkerRouteConfig) {
 		typedControl:         cfg.TypedControl,
 		stackKitOperations:   cfg.StackKitOperations,
 		runtimeLogs:          cfg.RuntimeLogs,
+		portObservations:     cfg.PortObservations,
 		credentialStore:      credentialStore,
 		enrollmentStore:      enrollmentStore,
 		credentialSecret:     workerauth.SecretFromEnv(),
@@ -107,6 +111,9 @@ func RegisterWorkerRoutesWithStore(r *httpx.Router, cfg WorkerRouteConfig) {
 	r.POST("/api/v1/workers/{id}/inventory", h.inventory)
 	r.POST("/api/v1/workers/{id}/commands/next", h.nextTypedCommand)
 	r.POST("/api/v1/workers/{id}/commands/result", h.submitTypedCommandResult)
+	r.POST("/api/v1/workers/{id}/provider/next", h.nextProviderCommand)
+	r.POST("/api/v1/workers/{id}/provider/result", h.submitProviderCommandResult)
+	r.POST("/api/v1/workers/{id}/provider/bootstrap", h.providerBootstrap)
 	r.POST("/api/v1/workers/{id}/stackkit/operations", h.executeStackKitOperations)
 	r.POST("/api/v1/workers/{id}/runtime/logs", h.ingestRuntimeLog)
 	r.POST("/api/v1/workers/bootstrap/logs", h.ingestBootstrapLog)
@@ -128,6 +135,7 @@ type workerRouteHandlers struct {
 	typedControl            WorkerTypedControl
 	stackKitOperations      WorkerStackKitOperations
 	runtimeLogs             WorkerRuntimeLogWriter
+	portObservations        portinventory.ObservationWriter
 	credentialStore         controlplane.WorkerCredentialStore
 	enrollmentStore         controlplane.WorkerEnrollmentStore
 	credentialSecret        []byte
@@ -234,6 +242,7 @@ func (h workerRouteHandlers) listFromStore(e *httpx.Event, ownerID string) error
 	if err != nil {
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to attest worker inventory", nil)
 	}
+	canonicalizeWorkerInventoryResponse(response)
 	total := len(response)
 	start := pagination.Offset
 	if start > len(response) {
@@ -253,6 +262,16 @@ func (h workerRouteHandlers) listFromStore(e *httpx.Event, ownerID string) error
 	meta.ManagedRuntimeDuplicateLeaseIDs = &duplicateManagedLeaseIDs
 	meta.ManagedRuntimeAttachmentConflictLeaseIDs = &attachmentConflictLeaseIDs
 	return httpx.SuccessWithMeta(e, http.StatusOK, response[start:end], meta)
+}
+
+func canonicalizeWorkerInventoryResponse(workers []map[string]any) {
+	for _, worker := range workers {
+		kitDeploymentID := strings.TrimSpace(stringFromAny(worker["stack_id"]))
+		delete(worker, "stack_id")
+		if kitDeploymentID != "" {
+			worker["kit_deployment_id"] = kitDeploymentID
+		}
+	}
 }
 
 func managedRuntimeLeaseAuthorityIDs(records []vmleases.LeaseInventoryRecord) (active, inactive, duplicate []string) {
@@ -620,10 +639,38 @@ func (h workerRouteHandlers) register(e *httpx.Event) error {
 
 func (h workerRouteHandlers) registerWithStore(e *httpx.Event, req workerRegistrationRequest) error {
 	now := time.Now().UTC()
+	// Check the declared machine class before consuming the owner's capability.
+	resolved, _, resolveErr := h.resolveStorePairingToken(e, req.Token)
+	if resolveErr != nil || resolved == nil {
+		return resolveErr
+	}
+	isSubstrate := nodehandoff.StringFromMap(resolved.Metadata, nodehandoff.KeyServerNodeRole) == "substrate"
+	if isSubstrate != (req.Type == "substrate") || (isSubstrate && (req.Provider != "proxmox" || req.OS != "linux" || runtimeLeaseIDFromMetadata(resolved.Metadata) != "")) {
+		return httpx.BadRequest(e, "The machine class does not match the approved Node connection", nil)
+	}
 	token, tokenHash, tokErr := h.claimStorePairingToken(e, req.Token, now)
 	if tokErr != nil || token == nil {
 		return tokErr
 	}
+
+	// The pairing capability is single-use, but a failure that never issued an
+	// enrollment credential must not burn it: a transient persistence or CA
+	// failure releases the claim so the owner can retry the same token.
+	enrollmentIssued := false
+	defer func() {
+		if enrollmentIssued || token == nil {
+			return
+		}
+		releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if releaseErr := h.wst.ReleasePairingTokenClaim(releaseCtx, token.TenantID, tokenHash); releaseErr != nil {
+			logger.Default().Warn("worker_pairing_token_release_failed",
+				"error", releaseErr,
+				"tenant_id", token.TenantID,
+				"stack_id", token.StackID,
+			)
+		}
+	}()
 
 	leaseID := runtimeLeaseIDFromMetadata(token.Metadata)
 	workerID := workerStoreID(token.TenantID, tokenHash, req.Hostname)
@@ -634,51 +681,54 @@ func (h workerRouteHandlers) registerWithStore(e *httpx.Event, req workerRegistr
 		return ownerErr
 	}
 	serverID := firstNonEmpty(runtimeidentity.LeaseServerID(leaseID), runtimeServerIDForWorker(workerID))
-	if leaseID == "" {
+	if leaseID == "" && !isSubstrate {
 		serverID = firstNonEmpty(
-			h.plannedServerIDForStack(e.Request.Context(), token.TenantID, token.OwnerSubjectID, token.StackID),
+			plannedServerIDFromPairingToken(*token),
+			h.plannedServerIDForStack(e.Request.Context(), token.TenantID, token.OwnerSubjectID, token.StackID, true),
 			serverID,
 		)
+		workerID = h.existingPairingWorkerID(e.Request.Context(), *token, serverID, workerID)
 	}
 	agentToken, agentTokenErr := h.issueRuntimeAgentToken()
 	if agentTokenErr != nil || strings.TrimSpace(agentToken) == "" {
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to create runtime agent credential", nil)
 	}
 
-	worker, err := h.wst.UpsertWorkerHeartbeat(e.Request.Context(), buildStoreWorker(*token, req, storeWorkerContext{
+	worker, err := h.enrollRegisteringWorker(e.Request.Context(), buildStoreWorker(*token, req, storeWorkerContext{
 		workerID:  workerID,
 		serverID:  serverID,
 		tokenHash: tokenHash,
 		agentHash: workerauth.SHA256Hex(agentToken),
 		clientIP:  getClientIP(e),
 		now:       now,
-	}))
+	}), serverID, leaseID, now)
 	if err != nil {
-		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to save worker registration", nil)
-	}
-	if err := h.projectServerEnrollment(e.Request.Context(), *worker, serverID, leaseID, now, "pairing-redemption"); err != nil {
-		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to persist server enrollment", nil)
+		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to persist worker enrollment", nil)
 	}
 	var issuedIdentity *grpcserver.IssuedIdentity
 	if h.agentIdentityIssuer != nil {
+		commandClasses := []string{"health_check", "get_logs", "stackkit"}
+		if isSubstrate {
+			commandClasses = []string{"health_check", "get_logs"}
+		}
 		issuedIdentity, err = h.agentIdentityIssuer.IssueAgentIdentity(e.Request.Context(), grpcserver.IssueRequest{
-			TenantID: worker.TenantID,
-			AgentID:  worker.ID,
-			AllowedCommandClasses: []string{
-				"health_check",
-				"get_logs",
-				"stackkit",
-			},
-			EnrolledBy: "pairing-redemption",
+			TenantID:              worker.TenantID,
+			AgentID:               worker.ID,
+			AllowedCommandClasses: commandClasses,
+			EnrolledBy:            "pairing-redemption",
 		})
 		if err != nil {
 			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to issue runtime agent identity", nil)
 		}
 	}
 	accepted := worker.Approved && worker.Status == "approved"
+	// The worker row and its agent identity are persisted: the redemption is
+	// complete and the single-use claim must never be released from here on.
+	enrollmentIssued = true
 	e.Response.Header().Set("Cache-Control", "no-store")
 	return httpx.Success(e, http.StatusOK, h.workerEnrollmentResponse(e, workerEnrollmentContext{
 		WorkerID:       worker.ID,
+		GuardRole:      worker.Type,
 		ServerID:       serverID,
 		RuntimeAgentID: worker.ID,
 		TenantID:       worker.TenantID,
@@ -689,6 +739,22 @@ func (h workerRouteHandlers) registerWithStore(e *httpx.Event, req workerRegistr
 		AgentToken:     agentToken,
 		GRPCIdentity:   issuedIdentity,
 	}))
+}
+
+// existingPairingWorkerID keeps a repeated owner-approved pairing bound to the
+// worker identity already attached to the planned server. Pairing-token hashes
+// are intentionally one-use and therefore cannot be the identity authority for
+// re-enrollment; tenant, owner, stack and server bindings remain fail-closed.
+func (h workerRouteHandlers) existingPairingWorkerID(ctx context.Context, token controlplane.PairingToken, serverID, fallback string) string {
+	if h.serverStore == nil || strings.TrimSpace(serverID) == "" {
+		return fallback
+	}
+	server, err := h.serverStore.GetServerRuntime(ctx, token.TenantID, serverID)
+	if err != nil || server == nil || strings.TrimSpace(server.WorkerID) == "" ||
+		server.TenantID != token.TenantID || server.OwnerSubjectID != token.OwnerSubjectID || server.StackID != token.StackID {
+		return fallback
+	}
+	return strings.TrimSpace(server.WorkerID)
 }
 
 // resolveStorePairingToken resolves the pairing capability within the tenant
@@ -840,6 +906,18 @@ func buildStoreWorker(token controlplane.PairingToken, req workerRegistrationReq
 
 func workerRegistrationMetadata(tokenMetadata map[string]any, rawTags string) map[string]any {
 	metadata := nodehandoff.MergeMetadata(tokenMetadata, nodehandoff.MetadataFromTags(rawTags))
+	// A hypervisor role is an owner-approved enrollment class, never a free-form tag.
+	if nodehandoff.StringFromMap(metadata, nodehandoff.KeyServerNodeRole) == "substrate" && nodehandoff.StringFromMap(tokenMetadata, nodehandoff.KeyServerNodeRole) != "substrate" {
+		metadata[nodehandoff.KeyServerNodeRole] = nodehandoff.NormalizeNodeRole(nodehandoff.StringFromMap(tokenMetadata, nodehandoff.KeyServerNodeRole))
+	}
+	// Hosting classification is owner-declared when the pairing token is minted;
+	// an unauthenticated worker registration must never manufacture that evidence
+	// through its free-form tags.
+	if environmentClass := nodehandoff.StringFromMap(tokenMetadata, nodehandoff.KeyRuntimeEnvironmentClass); environmentClass != "" {
+		metadata[nodehandoff.KeyRuntimeEnvironmentClass] = environmentClass
+	} else {
+		delete(metadata, nodehandoff.KeyRuntimeEnvironmentClass)
+	}
 	if len(metadata) == 0 {
 		return nil
 	}
@@ -854,6 +932,12 @@ func workerRegistrationMetadata(tokenMetadata map[string]any, rawTags string) ma
 
 func workerRegistrationCapabilities(metadata map[string]any) map[string]any {
 	out := map[string]any{}
+	for key, value := range managedBootstrapBinding(metadata) {
+		out[key] = value
+	}
+	if environmentClass := strings.ToLower(nodehandoff.StringFromMap(metadata, nodehandoff.KeyRuntimeEnvironmentClass)); environmentClass != "" {
+		out[nodehandoff.KeyRuntimeEnvironmentClass] = environmentClass
+	}
 	if role := nodehandoff.StringFromMap(metadata, nodehandoff.KeyServerNodeRole); role != "" {
 		out[nodehandoff.KeyServerNodeRole] = nodehandoff.NormalizeNodeRole(role)
 		out["node_role"] = nodehandoff.NormalizeNodeRole(role)
@@ -924,7 +1008,7 @@ func readWorkerRegistrationRequest(e *httpx.Event) (workerRegistrationRequest, s
 	req.OS = strings.TrimSpace(req.OS)
 	req.Arch = strings.TrimSpace(req.Arch)
 	req.DockerVersion = strings.TrimSpace(req.DockerVersion)
-	req.Type = strings.TrimSpace(req.Type)
+	req.Type = strings.ToLower(strings.TrimSpace(req.Type))
 	req.Provider = strings.TrimSpace(req.Provider)
 	req.Tags = strings.TrimSpace(req.Tags)
 	req.GPU = strings.TrimSpace(req.GPU)

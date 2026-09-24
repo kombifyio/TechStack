@@ -3,7 +3,7 @@
     features,
     getDefaultEnabled,
     type FeatureFlag,
-  } from "$lib/stores/features";
+  } from "#lib/stores/features.js";
   import type { Snippet } from "svelte";
 
   interface Props {
@@ -61,11 +61,11 @@
   function getRiskBadgeColor(): string {
     switch (riskLevel) {
       case "high":
-        return "bg-red-500/20 text-red-400 border-red-500/30";
+        return "bg-destructive/10 text-destructive border-destructive/30";
       case "medium":
-        return "bg-yellow-500/20 text-yellow-400 border-yellow-500/30";
+        return "bg-warning/10 text-warning border-warning/30";
       default:
-        return "bg-green-500/20 text-green-400 border-green-500/30";
+        return "bg-success/10 text-success border-success/30";
     }
   }
 </script>
@@ -98,7 +98,7 @@
       <div class="flex items-center gap-2">
         {#if isLocked}
           <svg
-            class="w-4 h-4 text-yellow-400"
+            class="w-4 h-4 text-warning"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -126,7 +126,7 @@
           </svg>
         {:else}
           <svg
-            class="w-4 h-4 text-gray-400"
+            class="w-4 h-4 text-muted-foreground"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"

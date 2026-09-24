@@ -62,7 +62,7 @@ func BuildDecisionTrace(spec *core.KombinationSpec, ctx *core.DecisionContext, r
 		stackKit = spec.Kit
 	}
 	if stackKit == "" {
-		stackKit = StackKitBase
+		stackKit = StackKitBasement
 	}
 
 	trace := &core.DecisionTrace{
@@ -77,8 +77,44 @@ func BuildDecisionTrace(spec *core.KombinationSpec, ctx *core.DecisionContext, r
 	trace.StackKitProfile = resolveStackKitProfile(spec, ctx, trace)
 	trace.BlockingGaps = blockingEnvironmentGaps(evaluateEnvironmentGaps(spec, ctx, stackKit))
 	trace.Guidance = buildGuidance(ctx)
+	applyUseCaseComputeTierDecision(spec, trace)
 	trace.Reasons = buildDecisionReasons(spec, ctx, resolve, trace)
 	return trace
+}
+
+func applyUseCaseComputeTierDecision(spec *core.KombinationSpec, trace *core.DecisionTrace) {
+	if trace == nil {
+		return
+	}
+	var names []string
+	if spec != nil {
+		for _, svc := range spec.Services {
+			names = append(names, svc.Name, svc.Type)
+		}
+	}
+	metadata := map[string]string{}
+	if spec != nil {
+		metadata = spec.Metadata
+	}
+	selected := selectedUseCaseRefs(metadata, names)
+	fits := loadUseCaseFits()
+	for _, id := range OmittedOnTier(selected, fits, trace.ComputeTier) {
+		trace.BlockingGaps = append(trace.BlockingGaps, core.EnvironmentGap{
+			Code:     "use_case_omitted_on_compute_tier",
+			Message:  "use case " + id + " is not included on computeTier " + trace.ComputeTier,
+			Severity: "error",
+			Blocking: true,
+			Source:   "stackkits-use-case-compute-tiers",
+		})
+	}
+	if n := CountAlwaysOnActive(selected, fits, trace.ComputeTier); n > 0 {
+		trace.Guidance = append(trace.Guidance, core.DecisionGuidance{
+			Code:    "always_on_active_resident",
+			Level:   "info",
+			Message: "selected use cases include always-on active-resident base load",
+			Surface: "wizard",
+		})
+	}
 }
 
 func ApplyDecisionArtifacts(req *core.RequirementsSpec, spec *core.KombinationSpec, ctx *core.DecisionContext, trace *core.DecisionTrace) {
@@ -411,7 +447,7 @@ func eligibleComputeNodeCount(inventory *core.EnvironmentInventory) int {
 	count := 0
 	for _, node := range inventory.ComputeNodes {
 		switch node.Status {
-		case "pending-registration", "missing", "offline", precheckStatusFailed:
+		case "pending-registration", "missing", "offline", failureStatus:
 			continue
 		default:
 			count++
@@ -486,7 +522,7 @@ func buildDecisionReasons(spec *core.KombinationSpec, ctx *core.DecisionContext,
 		})
 	}
 	if trace != nil && trace.ComputeTier == resolverMemoryLow {
-		reasons = append(reasons, core.DecisionReason{Code: "low_compute_profile", Message: "Low compute or Pi context selected constrained defaults.", Source: "environment-inventory"})
+		reasons = append(reasons, core.DecisionReason{Code: "low_compute_profile", Message: "Unifier proposes install.computeTier low; hardware.profile remains a separate device class.", Source: "stackkits-compute-tier"})
 	}
 	if spec != nil && metadataValue(spec, "owner_source", "") == decisionOwnerCloud {
 		reasons = append(reasons, core.DecisionReason{Code: "cloud_owner_asset", Message: "kombify Cloud identity asset is available for automatic owner bootstrap.", Source: "environment-inventory"})
@@ -500,7 +536,7 @@ func resolveStackKitProfile(spec *core.KombinationSpec, ctx *core.DecisionContex
 		case isHAStackKit(trace.SelectedStackKit):
 			return "ha"
 		case trace.ComputeTier == resolverMemoryLow:
-			return "constrained-pi"
+			return "compute-tier-low"
 		case trace.Foundation != "" && strings.Contains(trace.Foundation, "managed"):
 			return "managed-cloud"
 		}
@@ -528,58 +564,32 @@ func resolveDeploymentMode(spec *core.KombinationSpec, stackKit string) string {
 	if isHAStackKit(stackKit) {
 		return "advanced"
 	}
-	return iacModeSimple
+	return "simple"
 }
 
 func resolveComputeTier(spec *core.KombinationSpec, ctx *core.DecisionContext) string {
 	if tier := metadataValue(spec, "compute_tier", ""); tier != "" {
 		return tier
 	}
-	if isPiOrLowResource(spec, ctx) {
+	if installTier := metadataValue(spec, "install.computeTier", ""); installTier != "" {
+		return installTier
+	}
+	if environmentRAMBelowLowFloor(ctx) {
 		return resolverMemoryLow
 	}
-	return iacDefaultComputeTier
+	return "standard"
 }
 
-func isPiOrLowResource(spec *core.KombinationSpec, ctx *core.DecisionContext) bool {
-	if metadataValue(spec, "context", "") == "pi" {
-		return true
-	}
-	if environmentHasPiOrLowResource(ctx) {
-		return true
-	}
-	if spec != nil {
-		for _, node := range spec.Nodes {
-			if hasResolverARMIndicator(node.Tags) || hasResolverLowMemoryIndicator(node.Tags) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func environmentHasPiOrLowResource(ctx *core.DecisionContext) bool {
+func environmentRAMBelowLowFloor(ctx *core.DecisionContext) bool {
 	if ctx == nil || ctx.Environment == nil {
 		return false
 	}
-	for _, signal := range ctx.Environment.NetworkSignals {
-		if signal.Key == "context" && signal.Value == "pi" {
-			return true
-		}
-	}
 	for _, node := range ctx.Environment.ComputeNodes {
-		if environmentComputeNodeIsPiOrLowResource(node) {
+		if node.RAMMB > 0 && node.RAMMB < 2048 {
 			return true
 		}
 	}
 	return false
-}
-
-func environmentComputeNodeIsPiOrLowResource(node core.EnvironmentComputeNode) bool {
-	if node.Arch == resolverArchARM64 || node.Tags["type"] == resolverTypeRPI || node.Tags["device"] == resolverDeviceRPI {
-		return true
-	}
-	return node.RAMMB > 0 && node.RAMMB < 4096
 }
 
 func isHAStackKit(stackKit string) bool {

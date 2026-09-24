@@ -8,17 +8,23 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kombifyio/go-common/identity"
+	"github.com/kombifyio/techstack/internal/gocommon/identity"
 	"github.com/kombifyio/techstack/internal/providercatalog"
+	"github.com/kombifyio/techstack/internal/providercontrol"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/runtimeaction"
 	"github.com/kombifyio/techstack/pkg/core"
 	"github.com/kombifyio/techstack/pkg/monthlyruntime"
+	"github.com/kombifyio/techstack/pkg/specv2"
 	"github.com/kombifyio/techstack/pkg/unifier"
 )
 
 var oneLinerSimulationPreviewTimeout = 5 * time.Second
 
 const autoDeployGuardWaitStartedAtField = "auto_deploy_guard_wait_started_at"
+
+// ProvisionIdempotencyReceiptResultField preserves the durable retry receipt
+// across provision result updates without persisting the caller's raw key.
+const ProvisionIdempotencyReceiptResultField = "provision_idempotency"
 
 // ProvisionHandler creates a job handler for preparing StackKits rollouts.
 // It structurally parses the incoming proposal, persists Techstack's internal
@@ -45,14 +51,18 @@ func ProvisionHandler(cfg *ProvisionConfig) JobHandler {
 		}()
 		preparedLeaseRequest, err := preparedManagedLeaseRequest(job)
 		if err != nil {
-			return wrapProvisionError(StepValidate, err.Error(), "The admitted managed server request could not be restored.")
+			return wrapProvisionCause(StepValidate, err, "The admitted managed server request could not be restored.")
+		}
+		customerGuest, err := customerGuestCheckpoint(job)
+		if err != nil {
+			return wrapProvisionCause(StepValidate, err, "The admitted customer guest could not be restored.")
 		}
 		specData, spec, err := provisionValidateSpec(job, q)
 		if err != nil {
 			return err
 		}
 		if err := validateFreshManagedProviderSpec(mapFromInterface(specData), spec); err != nil {
-			return wrapProvisionError(StepValidate, err.Error(),
+			return wrapProvisionCause(StepValidate, err,
 				"Select a supported managed provider again. Fresh requests require provider_id centron or ionos; composite provider aliases are not executable.")
 		}
 
@@ -75,6 +85,9 @@ func ProvisionHandler(cfg *ProvisionConfig) JobHandler {
 
 		previousResult := cloneJobResult(job.Snapshot().Result)
 		result := buildProvisionResult(job, spec, persisted, serverMode, providerID, runtimePhase)
+		if receipt, ok := previousResult[ProvisionIdempotencyReceiptResultField]; ok {
+			result[ProvisionIdempotencyReceiptResultField] = receipt
+		}
 		applyProvisionRequirements(result, requirementsSpec)
 		if preparedLeaseRequest != nil {
 			// The control-plane job projection persists Result, not the in-memory
@@ -85,11 +98,23 @@ func ProvisionHandler(cfg *ProvisionConfig) JobHandler {
 		}
 		preparedManagedLease := restorePreparedManagedLeaseCheckpoint(result, previousResult, job, providerID)
 		job.replaceResult(result)
+		if customerGuest != nil {
+			job.mutateResult(func(result map[string]interface{}) {
+				result[CustomerGuestResultKey] = customerGuest
+				result[leaseIDField] = customerGuest.LeaseID
+				result["runtime_server_id"] = customerGuest.ServerID
+				result["operation_id"] = customerGuest.OperationID
+				result["auto_deploy"] = true
+				if started, ok := previousResult[autoDeployGuardWaitStartedAtField]; ok {
+					result[autoDeployGuardWaitStartedAtField] = started
+				}
+			})
+		}
 
 		if isManagedCloudSpec(spec) && !isInstallCommandSpec(spec) {
 			startRuntimeLifecyclePhase(job, runtimePhaseServerAllocate, "Allocating or binding the managed server")
 			if !preparedManagedLease {
-				if err := provisionCreateManagedLease(ctx, cfg, job, q, spec, requirementsSpec, providerID, runtimePhase, preparedLeaseRequest); err != nil {
+				if err := provisionCreateManagedLease(ctx, cfg, job, q, spec, providerID, runtimePhase, preparedLeaseRequest); err != nil {
 					return err
 				}
 			}
@@ -356,7 +381,7 @@ func provisionValidateSpec(job *Job, q *Queue) (any, *core.KombinationSpec, erro
 	// Convert spec from UI format to KombinationSpec
 	specJSON, err := json.Marshal(specData)
 	if err != nil {
-		return nil, nil, wrapProvisionError(StepValidate, fmt.Sprintf("failed to marshal spec: %v", err),
+		return nil, nil, wrapProvisionCause(StepValidate, fmt.Errorf("failed to marshal spec: %w", err),
 			"The configuration format is invalid. This is likely a bug in the UI.")
 	}
 
@@ -368,10 +393,25 @@ func provisionValidateSpec(job *Job, q *Queue) (any, *core.KombinationSpec, erro
 	}
 
 	var spec *core.KombinationSpec
-	if dataMap["stackkit"] != nil {
+	if projected := mapFromInterface(dataMap[payloadKeyStackSpecV2]); len(projected) > 0 {
+		if canonErr := specv2.RequireCanonicalV2(projected); canonErr != nil {
+			return nil, nil, wrapProvisionCause(StepValidate, canonErr,
+				"The configuration is not an Architecture v2 StackSpec. Found a new kit instead of sending a v1 or mixed document to StackKits.")
+		}
+		parsed, parseErr := convertUIConfigToSpec(provisionSpecFromCanonicalV2(dataMap, projected))
+		if parseErr != nil {
+			return nil, nil, wrapProvisionCause(StepValidate, fmt.Errorf("failed to parse Architecture v2 StackSpec: %w", parseErr),
+				"Could not parse the Architecture v2 stack-spec. Please check your wizard selections and try again.")
+		}
+		spec = parsed
+	} else if dataMap["stackkit"] != nil {
+		if mixed := specv2.MixedVersionFields(dataMap); len(mixed) > 0 {
+			return nil, nil, wrapProvisionError(StepValidate, fmt.Sprintf("v1 StackSpec cannot carry Architecture v2 fields %s", strings.Join(mixed, ", ")),
+				"The configuration mixed Architecture v2 fields onto a v1 stack-spec. Found a new Architecture v2 kit instead of sending the mixed document to StackKits.")
+		}
 		parsed, parseErr := convertUIConfigToSpec(specData)
 		if parseErr != nil {
-			return nil, nil, wrapProvisionError(StepValidate, fmt.Sprintf("failed to parse StackKits spec: %v", parseErr),
+			return nil, nil, wrapProvisionCause(StepValidate, fmt.Errorf("failed to parse StackKits spec: %w", parseErr),
 				"Could not parse the StackKits stack-spec. Please check your wizard selections and try again.")
 		}
 		spec = parsed
@@ -379,7 +419,7 @@ func provisionValidateSpec(job *Job, q *Queue) (any, *core.KombinationSpec, erro
 		// Full spec format
 		var parsed core.KombinationSpec
 		if err := json.Unmarshal(specJSON, &parsed); err != nil {
-			return nil, nil, wrapProvisionError(StepValidate, fmt.Sprintf("failed to parse spec JSON: %v", err),
+			return nil, nil, wrapProvisionCause(StepValidate, fmt.Errorf("failed to parse spec JSON: %w", err),
 				"The configuration format is invalid. This is likely a bug in the UI.")
 		}
 		spec = &parsed
@@ -387,7 +427,7 @@ func provisionValidateSpec(job *Job, q *Queue) (any, *core.KombinationSpec, erro
 		// Wizard UI format -> map to spec with defaults
 		parsed, parseErr := convertUIConfigToSpec(specData)
 		if parseErr != nil {
-			return nil, nil, wrapProvisionError(StepValidate, fmt.Sprintf("failed to parse spec: %v", parseErr),
+			return nil, nil, wrapProvisionCause(StepValidate, fmt.Errorf("failed to parse spec: %w", parseErr),
 				"Could not parse the configuration. Please check your wizard selections and try again.")
 		}
 		spec = parsed
@@ -416,9 +456,9 @@ func provisionResolveStackKit(_ *ProvisionConfig, job *Job, q *Queue, spec *core
 
 	requirementsSpec, err := buildReviewableRequirements(spec)
 	if err != nil {
-		return nil, wrapProvisionError(
+		return nil, wrapProvisionCause(
 			StepFindStackKit,
-			fmt.Sprintf("failed to prepare StackSpec proposal: %v", err),
+			fmt.Errorf("failed to prepare StackSpec proposal: %w", err),
 			"Could not prepare the configuration proposal for review.",
 		)
 	}
@@ -447,13 +487,13 @@ func provisionPersistArtifacts(cfg *ProvisionConfig, job *Job, q *Queue, spec *c
 
 	persister, err := newSpecPersister(cfg, job.TargetID)
 	if err != nil {
-		return nil, wrapProvisionError(StepCreateSpec, fmt.Sprintf("failed to init persister: %v", err),
+		return nil, wrapProvisionCause(StepCreateSpec, fmt.Errorf("failed to init persister: %w", err),
 			"Could not initialize spec persistence.")
 	}
 
 	stackSpecBytes, stackSpecBytesErr := stackKitSpecBytesForPayload(specData)
 	if stackSpecBytesErr != nil {
-		return nil, wrapProvisionError(StepCreateSpec, fmt.Sprintf("failed to serialize StackKits spec: %v", stackSpecBytesErr),
+		return nil, wrapProvisionCause(StepCreateSpec, fmt.Errorf("failed to serialize StackKits spec: %w", stackSpecBytesErr),
 			"Could not serialize the StackKits stack-spec for the rollout handoff.")
 	}
 
@@ -465,7 +505,7 @@ func provisionPersistArtifacts(cfg *ProvisionConfig, job *Job, q *Queue, spec *c
 		loader := unifier.NewLoader()
 		yamlBytes, yErr := loader.ToYAML(spec)
 		if yErr != nil {
-			return nil, wrapProvisionError(StepCreateSpec, fmt.Sprintf("failed to serialize intent: %v", yErr),
+			return nil, wrapProvisionCause(StepCreateSpec, fmt.Errorf("failed to serialize intent: %w", yErr),
 				"Could not serialize your configuration for persistence.")
 		}
 		intentBytes = yamlBytes
@@ -473,7 +513,7 @@ func provisionPersistArtifacts(cfg *ProvisionConfig, job *Job, q *Queue, spec *c
 
 	intentPath, intentHash, err := persister.SaveIntentBytes(intentBytes)
 	if err != nil {
-		return nil, wrapProvisionError(StepCreateSpec, fmt.Sprintf("failed to persist intent: %v", err),
+		return nil, wrapProvisionCause(StepCreateSpec, fmt.Errorf("failed to persist intent: %w", err),
 			"Could not persist your configuration.")
 	}
 
@@ -482,7 +522,7 @@ func provisionPersistArtifacts(cfg *ProvisionConfig, job *Job, q *Queue, spec *c
 	if len(stackSpecBytes) > 0 {
 		stackSpecPath, stackSpecHash, err = persister.SaveStackSpecBytes(stackSpecBytes)
 		if err != nil {
-			return nil, wrapProvisionError(StepCreateSpec, fmt.Sprintf("failed to persist StackKits spec: %v", err),
+			return nil, wrapProvisionCause(StepCreateSpec, fmt.Errorf("failed to persist StackKits spec: %w", err),
 				"Could not persist the StackKits stack-spec handoff.")
 		}
 	}
@@ -491,7 +531,7 @@ func provisionPersistArtifacts(cfg *ProvisionConfig, job *Job, q *Queue, spec *c
 	// handoff; artifact generation executes them instead of a template-derived
 	// canonical document.
 	if _, projErr := persistProjectedStackSpec(persister, specData); projErr != nil {
-		return nil, wrapProvisionError(StepCreateSpec, fmt.Sprintf("failed to persist projected StackSpec: %v", projErr),
+		return nil, wrapProvisionCause(StepCreateSpec, fmt.Errorf("failed to persist projected StackSpec: %w", projErr),
 			"Could not persist the projected Architecture v2 spec.")
 	}
 
@@ -500,7 +540,7 @@ func provisionPersistArtifacts(cfg *ProvisionConfig, job *Job, q *Queue, spec *c
 	if requirementsSpec != nil {
 		p, saveErr := persister.SaveRequirementsSpec(requirementsSpec, intentPath)
 		if saveErr != nil {
-			return nil, wrapProvisionError(StepCreateSpec, fmt.Sprintf("failed to persist requirements: %v", saveErr),
+			return nil, wrapProvisionCause(StepCreateSpec, fmt.Errorf("failed to persist requirements: %w", saveErr),
 				"Could not persist derived requirements.")
 		}
 		reqPath = p
@@ -545,12 +585,13 @@ func buildProvisionResult(job *Job, spec *core.KombinationSpec, persisted *provi
 		result["auto_deploy"] = true
 	}
 	if serverMode == serverModeMonthlyRuntime {
-		result[metadataKeyRuntimeLane] = runtimeLaneFromProvider(providerID)
+		providerMetadata := providerRuntimeMetadata(providerID)
+		result[metadataKeyRuntimeLane] = providerMetadata[metadataKeyRuntimeLane]
 		result[metadataKeyRuntimeOfferingID] = firstNonEmpty(spec.Metadata[metadataKeyRuntimeOfferingID], defaultRuntimeOfferingID)
 		result[metadataKeyProviderID] = providerID
-		result[metadataKeySimulateLifecycle] = simulateLifecycleFromProvider(providerID)
+		result[metadataKeySimulateLifecycle] = providerMetadata[metadataKeySimulateLifecycle]
 		result[metadataKeyBillingMode] = billingModeSubscription
-		result[metadataKeyBillingCadence] = billingCadenceFromProvider(providerID)
+		result[metadataKeyBillingCadence] = providerMetadata[metadataKeyBillingCadence]
 		result[metadataKeyScenarioID] = firstNonEmpty(spec.Metadata[metadataKeyScenarioID], job.TargetID+":"+providerID)
 		result[metadataKeyServerProvisionMode] = firstNonEmpty(serverProvisioningMode, serverProvisionModeKombifyCloud)
 		result[metadataKeyServerConnectionMode] = firstNonEmpty(serverConnectionMode, serverConnectionManagedSub)
@@ -627,7 +668,7 @@ func applyProvisionRequirements(result map[string]interface{}, requirementsSpec 
 
 // provisionCreateManagedLease creates or binds the managed VM lease for managed
 // cloud stacks and copies the resulting runtime target onto the job result.
-func provisionCreateManagedLease(ctx context.Context, cfg *ProvisionConfig, job *Job, q *Queue, spec *core.KombinationSpec, requirementsSpec *core.RequirementsSpec, providerID string, runtimePhase RuntimePhase, prepared *ManagedLeaseRequest) error {
+func provisionCreateManagedLease(ctx context.Context, cfg *ProvisionConfig, job *Job, q *Queue, spec *core.KombinationSpec, providerID string, runtimePhase RuntimePhase, prepared *ManagedLeaseRequest) error {
 	job.setStep(StepCreateLease)
 	q.UpdateProgress(job.ID, 82, "Creating managed VM lease...")
 	breadcrumbStep(ctx, StepCreateLease, "creating managed VM lease", map[string]interface{}{
@@ -641,18 +682,15 @@ func provisionCreateManagedLease(ctx context.Context, cfg *ProvisionConfig, job 
 	}
 	canonicalProviderID, err := providercatalog.ResolveCanonicalProviderID(providerID, spec.Metadata[metadataKeyProviderID])
 	if err != nil {
-		return wrapProvisionError(StepCreateLease, fmt.Sprintf("invalid managed provider identity: %v", err),
+		return wrapProvisionCause(StepCreateLease, fmt.Errorf("invalid managed provider identity: %w", err),
 			"Select provider_id centron or ionos before creating a managed server.")
 	}
 	if err := providercatalog.ValidateNoLegacyProviderFields(
 		spec.Metadata[metadataKeyLeaseProvider],
 		spec.Metadata[metadataKeySimulateProviderID],
 	); err != nil {
-		return wrapProvisionError(StepCreateLease, fmt.Sprintf("invalid managed provider identity: %v", err),
+		return wrapProvisionCause(StepCreateLease, fmt.Errorf("invalid managed provider identity: %w", err),
 			"Remove legacy provider fields and select a canonical provider_id.")
-	}
-	if err := applyManagedRuntimeOfferingRequirements(job, spec, requirementsSpec); err != nil {
-		return err
 	}
 	leaseOwnerID := managedRuntimeOwnerID(job, spec)
 	leaseTenantID := managedRuntimeTenantID(job, spec)
@@ -678,13 +716,12 @@ func provisionCreateManagedLease(ctx context.Context, cfg *ProvisionConfig, job 
 			tenantIDField: leaseTenantID,
 			"owner_id":    leaseOwnerID,
 		})
-		return wrapProvisionError(StepCreateLease, leaseErr.Error(),
-			"Could not create or bind the managed cloud VM lease.")
+		return wrapProvisionCause(StepCreateLease, leaseErr, managedLeaseFailureDetails(leaseErr))
 	}
 	if leaseResult != nil {
 		leaseMetadata, normalizeErr := monthlyruntime.NormalizeFreshMetadata(spec.Metadata, monthlyruntime.OfferingIDFromMetadata(spec.Metadata))
 		if normalizeErr != nil {
-			return wrapProvisionError(StepCreateLease, normalizeErr.Error(), "Managed provider metadata is not canonical.")
+			return wrapProvisionCause(StepCreateLease, normalizeErr, "Managed provider metadata is not canonical.")
 		}
 		runtimePhase = leaseResult.Phase
 		if runtimePhase == "" {
@@ -719,6 +756,13 @@ func provisionCreateManagedLease(ctx context.Context, cfg *ProvisionConfig, job 
 		copyManagedRuntimeTargetToJob(job, leaseResult.Target)
 	}
 	return nil
+}
+
+func managedLeaseFailureDetails(err error) string {
+	if errors.Is(err, providercontrol.ErrNativeAdmissionConflict) {
+		return "This managed server slot is already bound to a different admitted request. Retrying this job cannot change that binding. Open the existing server in the Homelab and decommission it before adding a replacement; contact kombify support if no server is visible."
+	}
+	return "Could not create or bind the managed cloud VM lease."
 }
 
 // PrimaryManagedLeaseRequestFromUIConfig builds the exact native admission
@@ -757,41 +801,6 @@ func primaryManagedLeaseRequest(
 		RuntimeSlotKey: PrimaryManagedRuntimeSlotKey, RuntimeSlotGeneration: 1,
 		NodeRole: "foundation", Services: requestedServices, Metadata: spec.Metadata,
 	}
-}
-
-func applyManagedRuntimeOfferingRequirements(job *Job, spec *core.KombinationSpec, requirementsSpec *core.RequirementsSpec) error {
-	if spec == nil || requirementsSpec == nil {
-		return nil
-	}
-	required := requirementsSpec.RequiredWorkers
-	if required.MinCPU <= 0 && required.MinRAM <= 0 {
-		return nil
-	}
-	capacityStatus := "satisfies_requirements"
-	selected, ok := monthlyruntime.OfferingForMinimumResources(required.MinCPU, required.MinRAM)
-	if !ok {
-		selected, ok = monthlyruntime.LargestOffering()
-		if !ok {
-			return wrapProvisionError(StepCreateLease,
-				fmt.Sprintf("no managed runtime offering available for requirements: minCPU=%d minRAM=%dMB", required.MinCPU, required.MinRAM),
-				"Die Managed-VM kann nicht bereitgestellt werden, weil kein monatliches Runtime-Angebot im aktuellen Katalog verfuegbar ist.")
-		}
-		capacityStatus = "below_requirements"
-	}
-	if spec.Metadata == nil {
-		spec.Metadata = map[string]string{}
-	}
-	spec.Metadata[metadataKeyRuntimeOfferingID] = string(selected.ID)
-	spec.Metadata["runtime_offering_capacity_status"] = capacityStatus
-	spec.Metadata["runtime_required_min_cpu"] = fmt.Sprintf("%d", required.MinCPU)
-	spec.Metadata["runtime_required_min_ram_mb"] = fmt.Sprintf("%d", required.MinRAM)
-	job.mutateResult(func(result map[string]interface{}) {
-		result[metadataKeyRuntimeOfferingID] = string(selected.ID)
-		result["runtime_offering_capacity_status"] = capacityStatus
-		result["runtime_required_min_cpu"] = required.MinCPU
-		result["runtime_required_min_ram_mb"] = required.MinRAM
-	})
-	return nil
 }
 
 // provisionMaybeAutoDeploy chains into DeployHandler only after the canonical

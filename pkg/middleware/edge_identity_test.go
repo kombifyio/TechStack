@@ -1,9 +1,12 @@
 package middleware
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -11,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	commonedgeauth "github.com/kombifyio/go-common/edgeauth"
-	"github.com/kombifyio/go-common/identity"
+	commonedgeauth "github.com/kombifyio/techstack/internal/gocommon/edgeauth"
+	"github.com/kombifyio/techstack/internal/gocommon/identity"
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/httpx"
 )
@@ -118,11 +121,8 @@ func TestEdgeIdentityMiddleware_EdgeAuth_TrustsHeaders(t *testing.T) {
 	if id.Email != "user@example.com" {
 		t.Errorf("expected Email=user@example.com, got %q", id.Email)
 	}
-	if !isEdgeAuthenticatedContext(e.Request.Context()) {
-		t.Fatal("expected edge-authenticated request context")
-	}
 	if !IsEdgeAuthenticated(e.Request.Context()) {
-		t.Fatal("expected exported edge-authenticated request marker")
+		t.Fatal("expected edge-authenticated request context")
 	}
 
 	// Plan should be in context.
@@ -200,6 +200,72 @@ func TestEdgeIdentityMiddleware_EdgeAuth_AttachesDedicatedSecretSignedFlags(t *t
 	}
 	if !flags.Bool("sim.monthly.runtime.standard", false) {
 		t.Fatal("expected monthly runtime flag to be true")
+	}
+}
+
+func TestEdgeIdentityMiddleware_BudgetRotationKeepsIdentityKeysSeparate(t *testing.T) {
+	t.Setenv("EDGE_AUTH_SECRET_NEXT", "identity-next")
+	t.Setenv("EDGE_AUTH_KEY_ID_NEXT", "next")
+	t.Setenv("EDGE_FLAGS_SECRET", "")
+	t.Setenv("EDGE_FLAGS_SECRET_NEXT", "")
+	t.Setenv("EDGE_FLAGS_KEY_ID", "")
+	t.Setenv("EDGE_FLAGS_KEY_ID_NEXT", "")
+	for _, tc := range []struct {
+		name, primary, next, signer, keyID string
+		valid                              bool
+	}{
+		{"dedicated-primary", testEdgeFlagsSecret, "", testEdgeFlagsSecret, "primary", true},
+		{"ambient-identity-next-denied", testEdgeFlagsSecret, "", "identity-next", "next", false},
+		{"preload-accepts-old-primary", "", "budget-next", testEdgeAuthSecret, "primary", true},
+		{"preload-accepts-new-budget-key", "", "budget-next", "budget-next", "next", true},
+		{"preload-denies-identity-next-as-budget", "", "budget-next", "identity-next", "next", false},
+		{"dedicated-rotation", testEdgeFlagsSecret, "budget-next", "budget-next", "next", true},
+	} {
+		for _, version := range []string{"v1", "v2"} {
+			t.Run(version+"/"+tc.name, func(t *testing.T) {
+				cfg := EdgeIdentityConfig{Mode: config.ModeSaaS, EdgeAuthSecret: testEdgeAuthSecret,
+					EdgeFlagsSecret: tc.primary, EdgeFlagsNextSecret: tc.next}
+				e := newTestEvent(http.MethodPost, "/api/v1/stacks")
+				e.Request.Header.Set(headerEdgeAuth, edgeAuthValueJWT)
+				e.Request.Header.Set(commonedgeauth.HeaderUserID, "auth0|budget-owner")
+				e.Request.Header.Set(commonedgeauth.HeaderOrgID, "budget-tenant")
+				e.Request.Header.Set(commonedgeauth.HeaderRequestID, "budget-rotation-request")
+				flags := map[string]bool{"techstack.managed.runtime": true}
+				if version == "v2" {
+					e.Request.Header.Set(headerEdgeService, techStackDecisionAudience)
+					e.Request.Header.Set(headerPublicPrefix, techStackDecisionPublicPrefix)
+					attachSignedTechStackDecision(t, e, testEdgeAuthSecret, tc.signer, tc.keyID, flags, nil)
+				} else {
+					signEdgeRequest(t, e, testEdgeAuthSecret)
+					headers, err := commonedgeauth.SignFlagHeaders(tc.signer, tc.keyID, flags, nil, time.Now())
+					if err != nil {
+						t.Fatal(err)
+					}
+					copyHeaders(e.Request.Header, headers)
+				}
+				err := EdgeIdentityMiddlewareWithConfig(cfg)(e)
+				if err != nil {
+					t.Fatal(err)
+				}
+				wantStatus := http.StatusUnauthorized
+				if tc.valid {
+					wantStatus = http.StatusOK
+				}
+				if status := e.Response.(*httptest.ResponseRecorder).Code; status != wantStatus {
+					t.Fatalf("status=%d want=%d", status, wantStatus)
+				}
+				if tc.valid {
+					got, ok := commonedgeauth.FlagsFromContext(e.Request.Context())
+					if !ok || !got.Bool("techstack.managed.runtime", false) {
+						t.Fatal("verified flag missing")
+					}
+					_, bound := got.VerifiedDecisionBinding()
+					if bound != (version == "v2") {
+						t.Fatal("wrong decision provenance")
+					}
+				}
+			})
+		}
 	}
 }
 
@@ -302,6 +368,109 @@ func TestEdgeIdentityMiddleware_EdgeAuth_AttachesRequestBoundTechStackDecision(t
 		if got := e.Request.Header.Get(header); got != "" {
 			t.Fatalf("raw decision header %s was not stripped: %q", header, got)
 		}
+	}
+}
+
+func TestEdgeIdentityMiddleware_NamesTheDivergedSigningKey(t *testing.T) {
+	// The production failure: the edge was switched to a dedicated flags key
+	// no origin had been given. A generic signature mismatch hid that for six
+	// days. The denial must name the key the edge used and the keys this
+	// origin holds, so one log line is enough to see what diverged.
+	mw := EdgeIdentityMiddlewareWithConfig(EdgeIdentityConfig{
+		Mode:           config.ModeSaaS,
+		EdgeAuthSecret: testEdgeAuthSecret,
+	})
+	e := newTestEvent(http.MethodGet, "/api/v1/servers")
+	e.Request.Header.Set(headerEdgeAuth, edgeAuthValueJWT)
+	e.Request.Header.Set(headerEdgeService, techStackDecisionAudience)
+	e.Request.Header.Set(headerPublicPrefix, techStackDecisionPublicPrefix)
+	e.Request.Header.Set(commonedgeauth.HeaderUserID, "auth0|owner-1")
+	e.Request.Header.Set(commonedgeauth.HeaderOrgID, "tenant-1")
+	e.Request.Header.Set(commonedgeauth.HeaderRequestID, "request-diverged-key")
+	signEdgeRequestV2(t, e, testEdgeAuthSecret)
+	signed, err := commonedgeauth.SignFlagHeaders("a-key-this-origin-never-received",
+		"budget-20260912", map[string]bool{"techstack.managed.runtime": true}, nil, time.Now())
+	if err != nil {
+		t.Fatalf("SignFlagHeaders: %v", err)
+	}
+	copyHeaders(e.Request.Header, signed)
+
+	var logged bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
+	defer slog.SetDefault(previous)
+
+	if err := mw(e); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if code := e.Response.(*httptest.ResponseRecorder).Code; code != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want the request refused", code)
+	}
+	out := logged.String()
+	for _, want := range []string{
+		edgeFlagsKeyDivergenceReason,
+		"budget-20260912", // what the edge signed with
+		"primary",         // what this origin holds
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("log does not name %q, so the divergence is still invisible: %s", want, out)
+		}
+	}
+}
+
+func TestEdgeIdentityMiddleware_DecisionDenialNamesAnOperatorFault(t *testing.T) {
+	// An origin that cannot verify the edge's decision envelope must say which
+	// kind of failure it is. Without a reason code the bare 401 was read as an
+	// expired session, and clients looped through Universal Login against a
+	// cause no sign-in can repair (live 2026-09-12 to 2026-09-18: the edge
+	// signed with a dedicated EDGE_FLAGS_SECRET no origin was given).
+	mw := EdgeIdentityMiddlewareWithConfig(EdgeIdentityConfig{
+		Mode:            config.ModeSaaS,
+		EdgeAuthSecret:  testEdgeAuthSecret,
+		EdgeFlagsSecret: testEdgeFlagsSecret,
+	})
+	e := newTestEvent(http.MethodGet, "/api/v1/servers")
+	e.Request.Header.Set(headerEdgeAuth, edgeAuthValueJWT)
+	e.Request.Header.Set(headerEdgeService, techStackDecisionAudience)
+	e.Request.Header.Set(headerPublicPrefix, techStackDecisionPublicPrefix)
+	e.Request.Header.Set(commonedgeauth.HeaderUserID, "auth0|owner-1")
+	e.Request.Header.Set(commonedgeauth.HeaderOrgID, "tenant-1")
+	e.Request.Header.Set(commonedgeauth.HeaderRequestID, "request-diverged")
+	signEdgeRequestV2(t, e, testEdgeAuthSecret)
+	// A decision signed with trust material this origin does not hold — the
+	// exact shape of the production divergence.
+	diverged, err := commonedgeauth.SignFlagHeaders("a-different-flags-secret", "primary",
+		map[string]bool{"techstack.managed.runtime": true}, nil, time.Now())
+	if err != nil {
+		t.Fatalf("SignFlagHeaders: %v", err)
+	}
+	copyHeaders(e.Request.Header, diverged)
+
+	if err := mw(e); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	rec := e.Response.(*httptest.ResponseRecorder)
+	// Fail-closed stays fail-closed.
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want the request refused", rec.Code)
+	}
+	// The canonical envelope: clients read error.details (api/client.ts), which
+	// is where the session-reprojection code is read from too.
+	var body struct {
+		Error struct {
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("denial body is not JSON (%v): %s", err, rec.Body.String())
+	}
+	details := body.Error.Details
+	if details["reason_code"] != edgeDecisionUnverifiableReason {
+		t.Fatalf("reason_code=%v, want %q so clients stop offering re-login",
+			details["reason_code"], edgeDecisionUnverifiableReason)
+	}
+	if details["retryable"] != true {
+		t.Fatalf("retryable=%v, want true: the caller did nothing wrong", details["retryable"])
 	}
 }
 
@@ -650,13 +819,8 @@ func TestEdgeIdentityMiddleware_EdgeSecretFallback(t *testing.T) {
 	}
 }
 
-// TestUserPlanFromContext verifies the helper returns empty string on nil
-// context and the stored value otherwise.
+// TestUserPlanFromContext verifies the helper returns the stored plan.
 func TestUserPlanFromContext(t *testing.T) {
-	if got := UserPlanFromContext(nil); got != "" {
-		t.Errorf("expected empty string for nil ctx, got %q", got)
-	}
-
 	e := newTestEvent("GET", "/")
 	e.Request.Header.Set(headerEdgeAuth, edgeAuthValueJWT)
 	e.Request.Header.Set("X-User-ID", "u1")

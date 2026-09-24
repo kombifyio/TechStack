@@ -2,8 +2,8 @@
   import type {
     ServicesConfig,
     StandardBundleServiceKey,
-  } from "$lib/wizard";
-  import { getTechieServiceQuestions } from "$lib/wizard";
+  } from "#lib/wizard/index.js";
+  import { getTechieServiceQuestions } from "#lib/wizard/index.js";
 
   interface Props {
     services: ServicesConfig;

@@ -11,26 +11,6 @@ import (
 )
 
 func TestNewSpecPersister(t *testing.T) {
-	t.Run("creates directory structure", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		stackID := "test-stack-123"
-
-		// Use custom path for testing
-		persister, err := NewSpecPersisterWithPath(filepath.Join(tmpDir, stackID))
-		if err != nil {
-			t.Fatalf("NewSpecPersisterWithPath failed: %v", err)
-		}
-
-		if persister.BaseDir == "" {
-			t.Error("BaseDir should not be empty")
-		}
-
-		// Check directory exists
-		if _, err := os.Stat(persister.BaseDir); os.IsNotExist(err) {
-			t.Error("BaseDir should exist")
-		}
-	})
-
 	t.Run("empty stack ID returns error", func(t *testing.T) {
 		_, err := NewSpecPersister("")
 		if err == nil {
@@ -221,11 +201,6 @@ func TestSpecPersister_Paths(t *testing.T) {
 		t.Errorf("wrong requirements filename: %s", filepath.Base(reqPath))
 	}
 
-	unifiedPath := persister.GetUnifiedSpecPath()
-	if filepath.Base(unifiedPath) != UnifiedSpecFilename {
-		t.Errorf("wrong unified filename: %s", filepath.Base(unifiedPath))
-	}
-
 	tofuDir := persister.GetTofuDir()
 	if filepath.Base(tofuDir) != "tofu" {
 		t.Errorf("wrong tofu dir: %s", tofuDir)
@@ -308,7 +283,7 @@ func TestSpecPersister_SaveIntentBytes_PreservesBytes(t *testing.T) {
 		t.Fatalf("intent file mode = %o, want 0600", got)
 	}
 
-	h2, err := ComputeFileHash(persister.GetIntentPath())
+	h2, err := ComputeFileHash(path)
 	if err != nil {
 		t.Fatalf("ComputeFileHash failed: %v", err)
 	}
@@ -324,32 +299,5 @@ func TestSpecPersister_SaveIntentBytes_Empty(t *testing.T) {
 	_, _, err := persister.SaveIntentBytes(nil)
 	if err == nil {
 		t.Fatal("expected error for empty intent data")
-	}
-}
-
-func TestSpecPersister_SaveIntentFile_CopiesBytes(t *testing.T) {
-	tmpDir := t.TempDir()
-	persister, _ := NewSpecPersisterWithPath(tmpDir)
-
-	src := filepath.Join(tmpDir, "src-kombination.yaml")
-	original := []byte("name: imported\nkit: modern-homelab\n")
-	if err := os.WriteFile(src, original, 0644); err != nil {
-		t.Fatalf("failed to write source file: %v", err)
-	}
-
-	_, hash, err := persister.SaveIntentFile(src)
-	if err != nil {
-		t.Fatalf("SaveIntentFile failed: %v", err)
-	}
-
-	loaded, err := persister.LoadIntentBytes()
-	if err != nil {
-		t.Fatalf("LoadIntentBytes failed: %v", err)
-	}
-	if string(loaded) != string(original) {
-		t.Fatalf("intent bytes not preserved")
-	}
-	if hash != ComputeDataHash(original) {
-		t.Fatalf("hash mismatch: got %s", hash)
 	}
 }

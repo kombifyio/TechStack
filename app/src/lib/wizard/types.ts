@@ -2,14 +2,13 @@
  * kombify-TechStack Wizard Types
  *
  * Central type definitions for the wizard system.
- * Both EasyWizard and TechieWizard produce a StackConfig as output.
+ * The creation wizard produces a StackConfig as output.
  */
 
 import {
   ACTIVE_STANDARD_BUNDLE,
   CANONICAL_USE_CASE_GOALS,
   CLOUD_STACKKIT_REF,
-  LEGACY_BASE_STACKKIT_REF,
   USER_OWNED_STACKKIT_REF,
   cloneDefaultServerProvisioning,
   cloneStandardBundleDefaults,
@@ -19,6 +18,7 @@ import {
   type ServerProvisioningModeValue,
   type StackKitFoundationValue,
 } from "./standardBundle";
+import type { HouseholdDraft } from "./household-draft";
 
 /**
  * Authentication method configuration
@@ -53,16 +53,11 @@ export interface OwnerConfig {
 }
 
 /**
- * Admin auth configuration for initial setup
- */
-export interface AdminConfig {
-  password: string;
-}
-
-/**
  * Network and access configuration
  */
 export interface NetworkConfig {
+  domainBase?: string;
+  accessModeSelected?: boolean;
   accessMode: "home" | "anywhere";
   vpn: "headscale" | "wireguard" | "none";
   enableCloudflare: boolean;
@@ -93,16 +88,13 @@ export type ServerMode =
   | "self-hosted";
 export type ManagedProviderID = "centron" | "ionos";
 export type RuntimeOfferingID =
-  | "monthly-runtime-standard"
-  | "monthly-runtime-premium";
+  "monthly-runtime-standard" | "monthly-runtime-premium";
 export type IonosDatacenter = IonosDatacenterValue;
 export type StackKitFoundation = StackKitFoundationValue;
 export type RegistryNodeRole = RegistryNodeRoleValue;
 export type ServerProvisioningMode = ServerProvisioningModeValue;
 export type ServerConnectionMode =
-  | "managed-subscription"
-  | "remote-ssh"
-  | "agent-oneliner";
+  "managed-subscription" | "remote-ssh" | "agent-oneliner" | "substrate-guard";
 export type RemoteServerAuthMethod = "ssh-key" | "password";
 
 export function normalizeIonosDatacenter(
@@ -135,21 +127,17 @@ export function normalizeIonosDatacenter(
 
 interface ApplyServerProvisioningModeOptions {
   preserveExplicitProductKit?: boolean;
+  preserveOwnerChoice?: boolean;
 }
 
 function applyManagedRuntimeStackKitDefault(config: StackConfig): void {
   if (
     !config.serverProvisioning.stackkitFoundation ||
-    config.serverProvisioning.stackkitFoundation === USER_OWNED_STACKKIT_REF ||
-    config.serverProvisioning.stackkitFoundation === LEGACY_BASE_STACKKIT_REF
+    config.serverProvisioning.stackkitFoundation === USER_OWNED_STACKKIT_REF
   ) {
     config.serverProvisioning.stackkitFoundation = CLOUD_STACKKIT_REF;
   }
-  if (
-    !config.kit ||
-    config.kit === USER_OWNED_STACKKIT_REF ||
-    config.kit === LEGACY_BASE_STACKKIT_REF
-  ) {
+  if (!config.kit || config.kit === USER_OWNED_STACKKIT_REF) {
     config.kit = CLOUD_STACKKIT_REF;
   }
 }
@@ -161,16 +149,13 @@ function applyUserOwnedStackKitDefault(
   if (
     !config.serverProvisioning.stackkitFoundation ||
     (!options.preserveExplicitProductKit &&
-      config.serverProvisioning.stackkitFoundation === CLOUD_STACKKIT_REF) ||
-    config.serverProvisioning.stackkitFoundation === LEGACY_BASE_STACKKIT_REF
+      config.serverProvisioning.stackkitFoundation === CLOUD_STACKKIT_REF)
   ) {
     config.serverProvisioning.stackkitFoundation = USER_OWNED_STACKKIT_REF;
   }
   if (
     !config.kit ||
-    (!options.preserveExplicitProductKit &&
-      config.kit === CLOUD_STACKKIT_REF) ||
-    config.kit === LEGACY_BASE_STACKKIT_REF
+    (!options.preserveExplicitProductKit && config.kit === CLOUD_STACKKIT_REF)
   ) {
     config.kit = USER_OWNED_STACKKIT_REF;
   }
@@ -182,6 +167,7 @@ export interface RemoteServerConfig {
   sshUser: string;
   authMethod: RemoteServerAuthMethod;
   sshKeyLabel: string;
+  sshPassword: string;
   useSudo: boolean;
 }
 
@@ -191,6 +177,50 @@ export interface ServerProvisioningConfig {
   stackkitFoundation: StackKitFoundation;
   nodeRole: RegistryNodeRole;
   remote: RemoteServerConfig;
+  substrate?: SubstrateGuestConfig;
+}
+
+/** Placement stays in Techstack; it never enters a StackKits ResolvedPlan. */
+export interface SubstrateGuestConfig {
+  advisoryInventory?: {
+    cpu: number;
+    memoryMiB: number;
+    diskGiB: number;
+    hasBridge: boolean;
+  };
+  appliance?: {
+    profileId: "haos";
+    storage: string;
+    bridge: string;
+    cpu: number;
+    memoryMiB: number;
+    diskGiB: number;
+  };
+  serverId: string;
+  profileId: "ubuntu-24.04";
+  storage: string;
+  bridge: string;
+  cpu: number;
+  memoryMiB: number;
+  diskGiB: number;
+}
+
+export function isValidSubstrateGuest(
+  guest: SubstrateGuestConfig | undefined,
+): boolean {
+  return Boolean(
+    guest &&
+    guest.serverId.trim() &&
+    guest.storage.trim() &&
+    guest.bridge.trim() &&
+    guest.profileId === "ubuntu-24.04" &&
+    Number.isInteger(guest.cpu) &&
+    guest.cpu >= 2 &&
+    Number.isInteger(guest.memoryMiB) &&
+    guest.memoryMiB >= 2048 &&
+    Number.isInteger(guest.diskGiB) &&
+    guest.diskGiB >= 32,
+  );
 }
 
 export function isManagedServerMode(mode: ServerMode): boolean {
@@ -203,9 +233,7 @@ export function isManagedServerMode(mode: ServerMode): boolean {
 export type IdentityProvider = "pocket-id" | "pocketbase";
 
 export type IdentityBackendCapability =
-  | "external-identity"
-  | "pocketbase"
-  | "passkeys";
+  "external-identity" | "pocketbase" | "passkeys";
 
 export interface IdentityConfig {
   toolProvider: IdentityProvider;
@@ -260,7 +288,7 @@ export interface StackConfig {
   // Basic info
   name: string;
   provider: "local" | "cloud";
-  wizardType: "easy" | "techie";
+  wizardType: "easy";
   kit: StackKitFoundation;
   serverMode: ServerMode;
   runtimeOfferingId: RuntimeOfferingID;
@@ -271,6 +299,13 @@ export interface StackConfig {
 
   // Goals (easy mode) or direct service selection (techie mode)
   goals?: GoalsConfig;
+  /**
+   * The operator's decisions per selected use case, keyed by use-case slug
+   * then setting id, holding only what was set explicitly. Defaults live in
+   * the StackKits catalog and are never copied here, so a later release with
+   * a different default does not carry a stale copy.
+   */
+  useCaseSettings?: Record<string, Record<string, string | boolean>>;
   services: ServicesConfig;
 
   // Access & Network
@@ -278,13 +313,12 @@ export interface StackConfig {
 
   // Users & Audience
   audience: AudienceConfig;
+  household?: HouseholdDraft;
 
   // Authentication
   identity: IdentityConfig;
   auth: AuthConfig;
   owner: OwnerConfig;
-  admin: AdminConfig;
-
   // Advanced options
   advanced: AdvancedConfig;
 
@@ -334,26 +368,33 @@ export const EASY_STEPS: WizardStep[] = [
 ];
 
 /**
- * Techie wizard steps
- * NOTE: Requirements are shown AFTER stack creation on the /stacks/creating page,
- * not as part of the wizard. The Unifier runs post-wizard.
- */
-export const TECHIE_STEPS: WizardStep[] = [
-  ...ACTIVE_STANDARD_BUNDLE.wizard.steps.techie,
-];
-
-/**
  * Default stack configuration
  */
 export function createDefaultConfig(
   lane: WizardDeploymentLane = "self-hosted",
 ): StackConfig {
   const config = cloneStandardBundleDefaults() as StackConfig;
+  config.household = { profile: "solo", people: [] };
   return applyWizardDeploymentLane(config, lane);
 }
 
 export function createDefaultServerProvisioningConfig(): ServerProvisioningConfig {
   return cloneDefaultServerProvisioning() as ServerProvisioningConfig;
+}
+
+// Easy Wizard owns one passkey-first login path. Legacy drafts may still carry
+// the former opt-out default, so normalize them through this central helper
+// before rendering or submitting instead of letting the UI overstate intent.
+export function applyPasskeyFirstOwnerLogin(config: StackConfig): void {
+  delete (config as StackConfig & { admin?: unknown }).admin;
+  if (config.owner.bootstrapMode === "none") return;
+  config.identity.toolProvider = "pocket-id";
+  config.identity.homelabProvider = "pocket-id";
+  config.identity.requiresPasskeys = true;
+  config.identity.backendCapability = "passkeys";
+  config.auth.requirePassword = false;
+  config.auth.requireMfa = false;
+  config.auth.allowPasswordless = false;
 }
 
 export function applyServerProvisioningMode(
@@ -368,7 +409,27 @@ export function applyServerProvisioningMode(
     config.kit || USER_OWNED_STACKKIT_REF;
   config.serverProvisioning.nodeRole ||= "foundation";
   config.serverProvisioning.mode = mode;
+  if (!config.network.accessModeSelected && !options.preserveOwnerChoice) {
+    config.network.accessMode = mode === "kombify-cloud" ? "anywhere" : "home";
+  }
   switch (mode) {
+    case "hypervisor":
+      applyUserOwnedStackKitDefault(config, options);
+      config.provider = "local";
+      config.serverMode = "user-owned";
+      config.serverProvisioning.connectionMode = "substrate-guard";
+      config.serverProvisioning.substrate ??= {
+        serverId: "",
+        profileId: "ubuntu-24.04",
+        storage: "",
+        bridge: "",
+        cpu: 2,
+        memoryMiB: 4096,
+        diskGiB: 64,
+      };
+      if (!options.preserveOwnerChoice)
+        resetAutoCloudOwnerForUserOwnedMode(config);
+      break;
     case "kombify-cloud":
       applyManagedRuntimeStackKitDefault(config);
       config.provider = "cloud";
@@ -378,35 +439,39 @@ export function applyServerProvisioningMode(
       if (!config.runtimeOfferingId) {
         config.runtimeOfferingId = "monthly-runtime-standard";
       }
-      config.owner.bootstrapMode = "auto";
-      config.owner.source = "cloud";
-      config.owner.username = "";
-      config.owner.email = "";
-      config.owner.displayName = "";
-      config.owner.recoveryPassphraseHash = "";
-      config.owner.recoveryMaterialRef ||=
-        "techstack://recovery/stacks/homelab";
-      config.identity.toolProvider = "pocket-id";
-      config.identity.homelabProvider = "pocket-id";
-      config.identity.requiresPasskeys = true;
-      config.identity.backendCapability = "passkeys";
-      config.auth.requirePassword = false;
-      config.auth.requireMfa = false;
-      config.auth.allowPasswordless = false;
+      if (!options.preserveOwnerChoice) {
+        config.owner.bootstrapMode = "auto";
+        config.owner.source = "cloud";
+        config.owner.username = "";
+        config.owner.email = "";
+        config.owner.displayName = "";
+        config.owner.recoveryPassphraseHash = "";
+        config.owner.recoveryMaterialRef ||=
+          "techstack://recovery/stacks/homelab";
+        config.identity.toolProvider = "pocket-id";
+        config.identity.homelabProvider = "pocket-id";
+        config.identity.requiresPasskeys = true;
+        config.identity.backendCapability = "passkeys";
+        config.auth.requirePassword = false;
+        config.auth.requireMfa = false;
+        config.auth.allowPasswordless = false;
+      }
       break;
     case "connect-remote":
       applyUserOwnedStackKitDefault(config, options);
       config.provider = "local";
       config.serverMode = "user-owned";
       config.serverProvisioning.connectionMode = "remote-ssh";
-      resetAutoCloudOwnerForUserOwnedMode(config);
+      if (!options.preserveOwnerChoice)
+        resetAutoCloudOwnerForUserOwnedMode(config);
       break;
     case "install-command":
       applyUserOwnedStackKitDefault(config, options);
       config.provider = "local";
       config.serverMode = "user-owned";
       config.serverProvisioning.connectionMode = "agent-oneliner";
-      resetAutoCloudOwnerForUserOwnedMode(config);
+      if (!options.preserveOwnerChoice)
+        resetAutoCloudOwnerForUserOwnedMode(config);
       break;
   }
 }
@@ -464,6 +529,7 @@ export function normalizeServerProvisioningConfig(
   config.serverProvisioning.nodeRole ||= "foundation";
   applyServerProvisioningMode(config, config.serverProvisioning.mode, {
     preserveExplicitProductKit: true,
+    preserveOwnerChoice: true,
   });
   return config.serverProvisioning;
 }

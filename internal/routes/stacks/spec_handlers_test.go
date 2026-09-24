@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/kombifyio/techstack/pkg/controlplane"
 	kscore "github.com/kombifyio/techstack/pkg/core"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/identity"
@@ -50,11 +51,22 @@ func TestSpecRouteContextRejectsMissingAuth(t *testing.T) {
 	}
 }
 
+func TestSpecRouteContextFailsClosedWithoutCanonicalStore(t *testing.T) {
+	e, rec := specRouteTestEvent(http.MethodGet, "/api/v1/stacks/stack-a/intent", "stack-a", "owner-a")
+	_, _, _ = (specRouteHandlers{}).routeContext(e)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+}
+
 func TestSpecRouteContextRejectsForeignOwner(t *testing.T) {
-	app := newOwnerSpecTestApp(t)
-	stack := createOwnerSpecTestStack(t, app, "owner-a")
-	e, rec := specRouteTestEvent(http.MethodGet, "/api/v1/stacks/"+stack.Id+"/intent", stack.Id, "owner-b")
-	handler := specRouteHandlers{app: app}
+	store := controlplane.NewMemoryStore()
+	stack, err := store.CreateStack(t.Context(), controlplane.CreateStackRequest{ID: "stack-a", TenantID: "owner-b", OwnerSubjectID: "owner-a"})
+	if err != nil {
+		t.Fatalf("CreateStack: %v", err)
+	}
+	e, rec := specRouteTestEvent(http.MethodGet, "/api/v1/stacks/"+stack.ID+"/intent", stack.ID, "owner-b")
+	handler := specRouteHandlers{stackStore: store}
 
 	routeCtx, ok, err := handler.routeContext(e)
 	if err != nil {

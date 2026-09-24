@@ -21,8 +21,6 @@ import (
 const (
 	webLoggedOutPath         = "/login?manual=1&logged_out=1"
 	defaultSessionCookieName = "techstack_session"
-	productionCloudOrigin    = "https://kombify.io"
-	cloudLogoutPath          = "/auth/signout?global=1"
 )
 
 // handleWebAuthCallbackRedirect redirects the browser-facing /auth/callback
@@ -62,22 +60,20 @@ func handleWebAuthLogoutRedirect(sessionCookieName string, mode config.Deploymen
 	}
 }
 
-// handleCloudLogoutRedirect hands SaaS logout to the authoritative kombify
-// Cloud sign-out entry. That entry clears client state and the independent
-// Cloud broker/session before completing the upstream IdP logout. The destination is derived only
-// from the trusted deployment host; request query parameters are never used as
-// redirect authority.
+// handleCloudLogoutRedirect hands SaaS logout to Auth0 Universal Login
+// (`/oidc/logout`). Standalone Techstack sessions are minted by that IdP, not
+// by the Cloud portal confirmation page; sending operators there left the
+// Auth0 SSO cookie alive and silently signed them back in. Request query
+// parameters are never used as redirect authority.
 func handleCloudLogoutRedirect(mode config.DeploymentMode) func(e *httpx.Event) error {
 	return func(e *httpx.Event) error {
 		if !mode.IsSaaS() {
 			return e.Redirect(http.StatusFound, webLoggedOutPath)
 		}
-
-		origin := productionCloudOrigin
-		if origins := config.InferredSaaSFrameOrigins(e.Request.Host, mode); len(origins) > 0 {
-			origin = origins[0]
+		if logoutURL := resolveCloudLogoutURL(e.Request); logoutURL != nil {
+			return e.Redirect(http.StatusFound, *logoutURL)
 		}
-		return e.Redirect(http.StatusFound, origin+cloudLogoutPath)
+		return e.Redirect(http.StatusFound, webLoggedOutPath)
 	}
 }
 

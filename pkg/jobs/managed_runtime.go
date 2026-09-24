@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/guardbootstrap"
 	"github.com/kombifyio/techstack/internal/providercatalog"
 	"github.com/kombifyio/techstack/pkg/core"
 	"github.com/kombifyio/techstack/pkg/monthlyruntime"
@@ -51,6 +52,9 @@ func copyManagedRuntimeTargetToJob(job *Job, target *ManagedRuntimeTarget) {
 		runtimeTarget["docker_host"] = target.DockerHost
 	}
 	job.Result["runtime_target"] = runtimeTarget
+	if leaseID := firstNonEmpty(stringFromMap(job.Result, leaseIDField), stringFromMap(job.Payload, leaseIDField)); leaseID != "" {
+		job.Result[leaseIDField] = leaseID
+	}
 	if job.Payload != nil {
 		job.Payload[metadataKeyRuntimeSSHHost] = target.Host
 		job.Payload[metadataKeyRuntimePublicIP] = target.PublicIP
@@ -232,6 +236,9 @@ func mergeManagedRuntimeTarget(primary, fallback *ManagedRuntimeTarget) *Managed
 	if primary.SSHPassword == "" {
 		primary.SSHPassword = fallback.SSHPassword
 	}
+	if primary.SSHProviderPrivateKey == "" {
+		primary.SSHProviderPrivateKey = fallback.SSHProviderPrivateKey
+	}
 	if primary.DockerHost == "" {
 		primary.DockerHost = fallback.DockerHost
 	}
@@ -405,6 +412,11 @@ func resolveManagedRuntimeTargetWithWaitClock(ctx context.Context, cfg *Provisio
 	}
 	attemptTimeout := managedRuntimeEnrollmentBoundedDelay(managedRuntimeTargetResolveAttemptTimeout(timeout, interval), remaining)
 	resumeAfter := managedRuntimeEnrollmentBoundedDelay(managedRuntimeEnrollmentResumeDelay(interval), remaining)
+	if leaseID != "" {
+		job.mutateResult(func(result map[string]interface{}) {
+			result[leaseIDField] = leaseID
+		})
+	}
 	if q != nil {
 		if leaseID != "" {
 			q.UpdateProgress(job.ID, 10, fmt.Sprintf("Waiting for managed VM lease %s enrollment...", leaseID))
@@ -565,12 +577,13 @@ func managedRuntimeTargetResolveAttemptTimeout(timeout, _ time.Duration) time.Du
 }
 
 func managedRuntimeTargetWaitConfig(cfg *ProvisionConfig) (time.Duration, time.Duration) {
-	// Provider-backed monthly runtimes should expose an SSH target within a few
-	// minutes of VM allocation. 5 minutes is the hard cap: anything longer
-	// indicates a provider-side stall or a bug on our side, not normal startup.
+	// Provider-backed monthly runtimes must cover first-boot Guard enrollment,
+	// not just SSH allocation. Centron Ubuntu cloud-init plus apt/docker/Guard
+	// routinely exceeds five minutes; a 5m fuse marked a live E2E Centron
+	// lease enrolling with 22 open as a non-retryable admission timeout.
 	// Override with TECHSTACK_MANAGED_RUNTIME_WAIT_TIMEOUT / _POLL_INTERVAL
 	// for shorter environment-specific fuses.
-	maxTimeout := 5 * time.Minute
+	maxTimeout := 20 * time.Minute
 	timeout := maxTimeout
 	interval := 5 * time.Second
 	if cfg != nil {
@@ -649,7 +662,7 @@ func hydrateManagedRuntimeSpec(spec *core.KombinationSpec, target *ManagedRuntim
 		node.SSH = &core.SSHConfig{}
 	}
 	node.SSH.Host = target.Host
-	node.SSH.User = firstNonEmpty(target.SSHUser, node.SSH.User, "root")
+	node.SSH.User = firstNonEmpty(target.SSHUser, node.SSH.User, guardbootstrap.ExecutionChannelUser)
 	node.SSH.Port = firstPositiveInt(target.SSHPort, node.SSH.Port, 22)
 	if spec.Metadata == nil {
 		spec.Metadata = map[string]string{}
@@ -665,55 +678,7 @@ func hydrateManagedRuntimeSpec(spec *core.KombinationSpec, target *ManagedRuntim
 	}
 }
 
-func hydrateManagedRuntimeUnifiedSpec(unified *core.UnifiedSpec, target *ManagedRuntimeTarget) {
-	target = normalizeManagedRuntimeTarget(target)
-	if unified == nil || target == nil {
-		return
-	}
-	providerID := metadataString(&unified.KombinationSpec, metadataKeyProviderID)
-	if len(unified.ResolvedNodes) == 0 {
-		unified.ResolvedNodes = []core.ResolvedNode{{
-			NodeSpec: core.NodeSpec{
-				Name:     stackRoleMain,
-				Type:     stackRoleMain,
-				Provider: providerID,
-				SSH: &core.SSHConfig{
-					Host: target.Host,
-					User: firstNonEmpty(target.SSHUser, "root"),
-					Port: target.SSHPort,
-				},
-			},
-		}}
-	}
-	index := managedRuntimeResolvedNodeIndex(unified.ResolvedNodes)
-	node := &unified.ResolvedNodes[index]
-	if node.SSH == nil {
-		node.SSH = &core.SSHConfig{}
-	}
-	node.SSH.Host = target.Host
-	node.SSH.User = firstNonEmpty(target.SSHUser, node.SSH.User, "root")
-	node.SSH.Port = firstPositiveInt(target.SSHPort, node.SSH.Port, 22)
-	node.PublicIP = firstNonEmpty(target.PublicIP, node.PublicIP, target.Host)
-	node.PrivateIP = firstNonEmpty(target.PrivateIP, node.PrivateIP)
-	if node.Tags == nil {
-		node.Tags = map[string]string{}
-	}
-	node.Tags["runtime_target_source"] = firstNonEmpty(target.Source, "managed-runtime")
-	if len(unified.Nodes) > index {
-		unified.Nodes[index] = node.NodeSpec
-	}
-}
-
 func managedRuntimeNodeIndex(nodes []core.NodeSpec) int {
-	for i, node := range nodes {
-		if strings.EqualFold(strings.TrimSpace(node.Type), stackRoleMain) || normalizeProvider(node.Provider) != providerLocal {
-			return i
-		}
-	}
-	return 0
-}
-
-func managedRuntimeResolvedNodeIndex(nodes []core.ResolvedNode) int {
 	for i, node := range nodes {
 		if strings.EqualFold(strings.TrimSpace(node.Type), stackRoleMain) || normalizeProvider(node.Provider) != providerLocal {
 			return i

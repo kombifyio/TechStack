@@ -1,6 +1,7 @@
 package stacks
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -22,6 +23,7 @@ type resumeStackEnrollmentRequest struct {
 
 const (
 	recoveryResponseSuccessKey          = "success"
+	recoveryResponseKitDeploymentIDKey  = "kit_deployment_id"
 	recoveryResponseSourceJobIDKey      = "source_job_id"
 	recoveryResponseIdempotentReplayKey = "idempotent_replay"
 	recoveryResponseProviderVMCreateKey = "provider_vm_create_requested"
@@ -66,7 +68,7 @@ func (h crudRouteHandlers) resumeStackEnrollment(e *httpx.Event) error {
 		StackName:               stack.Name,
 		SourceJobID:             req.JobID,
 		LeaseID:                 req.LeaseID,
-		IssueOwnerSpecBootstrap: h.recoveryOwnerSpecIssuer(stack, &ownerSpecAccess),
+		IssueOwnerSpecBootstrap: h.recoveryOwnerSpecIssuer(e.Request.Context(), stack, &ownerSpecAccess),
 	})
 	if resumeErr != nil {
 		return writeEnrollmentResumeError(e, resumeErr)
@@ -99,11 +101,12 @@ func (h crudRouteHandlers) requireRecoveryStack(
 }
 
 func (h crudRouteHandlers) recoveryOwnerSpecIssuer(
+	ctx context.Context,
 	stack *controlplane.Stack,
 	ownerSpecAccess *ownerSpecBootstrapAccess,
 ) func() (*jobs.OwnerSpecBootstrap, error) {
 	return func() (*jobs.OwnerSpecBootstrap, error) {
-		access, err := h.ownerSpecBootstrapAccessForStoreDeploy(stack)
+		access, err := h.ownerSpecBootstrapAccessForStoreDeploy(ctx, stack)
 		if err != nil {
 			return nil, err
 		}
@@ -116,7 +119,7 @@ func writeRecoveryAccepted(e *httpx.Event, response recoveryAcceptedResponse, ac
 	return httpx.Success(e, http.StatusAccepted, addOwnerSpecResponseFields(map[string]any{
 		recoveryResponseSuccessKey:          true,
 		specResponseMessageKey:              response.Message,
-		specResponseStackIDKey:              response.StackID,
+		recoveryResponseKitDeploymentIDKey:  response.StackID,
 		creationJobIDField:                  response.JobID,
 		recoveryResponseSourceJobIDKey:      response.SourceJobID,
 		routingLeaseIDKey:                   response.LeaseID,

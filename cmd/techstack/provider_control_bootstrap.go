@@ -9,7 +9,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/kombifyio/techstack/pkg/db"
@@ -34,6 +33,10 @@ var providerControlRuntimeTableGrants = []providerControlTableGrant{
 	{table: "provider_catalog_versions", privileges: "SELECT"},
 	{table: "provider_catalog_profiles", privileges: "SELECT"},
 	{table: "provider_credential_handles", privileges: "SELECT,INSERT"},
+	{table: "substrate_bindings", privileges: "SELECT"},
+	{table: "substrate_guest_leases", privileges: "SELECT,INSERT"},
+	{table: "home_assistant_owner_bindings", privileges: "SELECT,INSERT,UPDATE"},
+	{table: "typed_agent_commands", privileges: "SELECT,INSERT,UPDATE"},
 	{table: "servers", privileges: "SELECT,INSERT,UPDATE"},
 	{table: "server_state_transitions", privileges: "SELECT,INSERT"},
 	{table: "server_registry_outbox", privileges: "SELECT,INSERT"},
@@ -56,7 +59,11 @@ var providerControlRuntimeTableGrants = []providerControlTableGrant{
 	{table: "provider_absence_observations", privileges: "SELECT,INSERT"},
 	{table: "provider_operation_execution_claims", privileges: "SELECT,INSERT,UPDATE"},
 	{table: "provider_provision_dispatch_guards", privileges: "SELECT,INSERT"},
-	{table: "provider_provision_resolution_decisions", privileges: "SELECT"},
+	// Provision resolution is append-only operator custody. Recovery records the
+	// certified provider read and its decision through the runtime pool, then
+	// reads both back to settle the exact generation. No UPDATE, no DELETE.
+	{table: "provider_provision_discovery_observations", privileges: "SELECT,INSERT"},
+	{table: "provider_provision_resolution_decisions", privileges: "SELECT,INSERT"},
 	{table: "server_provider_resource_bindings", privileges: "SELECT,INSERT"},
 	{table: "provider_operation_resource_free_terminalizations", privileges: "SELECT,INSERT"},
 	// Managed provisioning records the node's Guard enrolment capability on the
@@ -78,6 +85,8 @@ var providerControlRuntimeSequences = []string{
 }
 
 var providerControlRuntimeFunctions = []string{
+	"substrate_guest_custody_valid(text,text,text,text)",
+	"substrate_lock_binding(text,text,bigint)",
 	"managed_runtime_capacity_policy_digest(text,text,text,text,text,integer,text)",
 	"provider_control_lock_runtime_lease_projection(text)",
 	"provider_control_count_unsettled_generation_dispatch_guards(text,uuid)",
@@ -85,6 +94,7 @@ var providerControlRuntimeFunctions = []string{
 	"provider_control_list_due_decommission_wait_tenants(text,integer)",
 	"provider_control_list_provider_provision_waits(text,text,integer)",
 	"provider_control_list_stale_capacity_recovery_candidates(text,text,integer)",
+	"provider_control_list_never_enrolled_runtime_candidates(text,text,integer,integer)",
 	"provider_control_runtime_authority()",
 }
 
@@ -94,7 +104,7 @@ var providerControlRuntimeFunctions = []string{
 // through the same posture gate used by normal startup. It never prints a DSN,
 // username password, or connection payload.
 func runProviderControlRuntimeBootstrap(ctx context.Context) error {
-	migrationConfig, err := db.ConfigFromEnv("")
+	migrationConfig, err := db.ConfigFromEnv()
 	if err != nil {
 		return fmt.Errorf("provider-control runtime bootstrap migration database: %w", err)
 	}
@@ -301,111 +311,12 @@ func installProviderControlRuntimeGrants(ctx context.Context, database *sql.DB, 
 		return fmt.Errorf("provider-control runtime bootstrap bound grant lock: %w", err)
 	}
 
+	statements, statementErr := providerControlRuntimeBaseGrantStatementsTx(ctx, tx, databaseName, schemaName, roleName)
+	if statementErr != nil {
+		return statementErr
+	}
 	quotedRole := pgx.Identifier{roleName}.Sanitize()
-	quotedDatabase := pgx.Identifier{databaseName}.Sanitize()
 	quotedSchema := pgx.Identifier{schemaName}.Sanitize()
-	statements := []string{
-		"REVOKE CREATE, TEMPORARY ON DATABASE " + quotedDatabase + " FROM PUBLIC",
-		"REVOKE ALL ON DATABASE " + quotedDatabase + " FROM " + quotedRole,
-		"GRANT CONNECT ON DATABASE " + quotedDatabase + " TO " + quotedRole,
-	}
-	rows, err := tx.QueryContext(ctx, `
-		SELECT nspname
-		FROM pg_catalog.pg_namespace
-		WHERE nspname <> 'information_schema'
-		  AND nspname NOT LIKE 'pg_%'
-		ORDER BY nspname
-	`)
-	if err != nil {
-		return fmt.Errorf("provider-control runtime bootstrap list application schemas: %w", err)
-	}
-	var applicationSchemas []string
-	for rows.Next() {
-		var applicationSchema string
-		if err := rows.Scan(&applicationSchema); err != nil {
-			_ = rows.Close()
-			return fmt.Errorf("provider-control runtime bootstrap scan application schema: %w", err)
-		}
-		applicationSchemas = append(applicationSchemas, applicationSchema)
-	}
-	if err := rows.Close(); err != nil {
-		return fmt.Errorf("provider-control runtime bootstrap close schema rows: %w", err)
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("provider-control runtime bootstrap iterate schemas: %w", err)
-	}
-	for _, applicationSchema := range applicationSchemas {
-		quotedApplicationSchema := pgx.Identifier{applicationSchema}.Sanitize()
-		statements = append(statements,
-			"REVOKE CREATE ON SCHEMA "+quotedApplicationSchema+" FROM PUBLIC",
-			"REVOKE ALL ON SCHEMA "+quotedApplicationSchema+" FROM "+quotedRole,
-			"REVOKE ALL ON ALL TABLES IN SCHEMA "+quotedApplicationSchema+" FROM PUBLIC",
-			"REVOKE ALL ON ALL TABLES IN SCHEMA "+quotedApplicationSchema+" FROM "+quotedRole,
-			"REVOKE ALL ON ALL SEQUENCES IN SCHEMA "+quotedApplicationSchema+" FROM PUBLIC",
-			"REVOKE ALL ON ALL SEQUENCES IN SCHEMA "+quotedApplicationSchema+" FROM "+quotedRole,
-			"REVOKE ALL ON ALL FUNCTIONS IN SCHEMA "+quotedApplicationSchema+" FROM "+quotedRole,
-			"REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA "+quotedApplicationSchema+" FROM PUBLIC",
-		)
-	}
-	columnRows, err := tx.QueryContext(ctx, `
-		SELECT
-			acl.privilege_type,
-			namespace.nspname,
-			object.relname,
-			attribute.attname,
-			acl.grantee = 0 AS granted_to_public
-		FROM pg_catalog.pg_attribute AS attribute
-		JOIN pg_catalog.pg_class AS object ON object.oid = attribute.attrelid
-		JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = object.relnamespace
-		CROSS JOIN LATERAL pg_catalog.aclexplode(attribute.attacl) AS acl
-		WHERE attribute.attnum > 0
-		  AND NOT attribute.attisdropped
-		  AND namespace.nspname <> 'information_schema'
-		  AND namespace.nspname NOT LIKE 'pg_%'
-		  AND (
-			acl.grantee = 0
-			OR acl.grantee = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = $1)
-		  )
-		ORDER BY namespace.nspname, object.relname, attribute.attnum, acl.privilege_type
-	`, roleName)
-	if err != nil {
-		return fmt.Errorf("provider-control runtime bootstrap list excess column grants: %w", err)
-	}
-	for columnRows.Next() {
-		var privilege, columnSchema, tableName, columnName string
-		var grantedToPublic bool
-		if err := columnRows.Scan(
-			&privilege,
-			&columnSchema,
-			&tableName,
-			&columnName,
-			&grantedToPublic,
-		); err != nil {
-			_ = columnRows.Close()
-			return fmt.Errorf("provider-control runtime bootstrap scan excess column grant: %w", err)
-		}
-		switch privilege {
-		case "SELECT", "INSERT", "UPDATE", "REFERENCES":
-		default:
-			_ = columnRows.Close()
-			return fmt.Errorf("provider-control runtime bootstrap found unsupported column privilege %q", privilege)
-		}
-		grantee := quotedRole
-		if grantedToPublic {
-			grantee = "PUBLIC"
-		}
-		statements = append(statements,
-			"REVOKE "+privilege+" ("+pgx.Identifier{columnName}.Sanitize()+") ON TABLE "+
-				pgx.Identifier{columnSchema, tableName}.Sanitize()+" FROM "+grantee,
-		)
-	}
-	if err := columnRows.Close(); err != nil {
-		return fmt.Errorf("provider-control runtime bootstrap close column grant rows: %w", err)
-	}
-	if err := columnRows.Err(); err != nil {
-		return fmt.Errorf("provider-control runtime bootstrap iterate column grants: %w", err)
-	}
-	statements = append(statements, "GRANT USAGE ON SCHEMA "+quotedSchema+" TO "+quotedRole)
 	for _, statement := range statements {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("provider-control runtime bootstrap reconcile base grants: %w", err)
@@ -437,11 +348,131 @@ func installProviderControlRuntimeGrants(ctx context.Context, database *sql.DB, 
 	return nil
 }
 
-func providerControlBootstrapRequested(args []string) bool {
-	return len(args) > 1 && strings.TrimSpace(args[1]) == "provider-control-bootstrap"
+func providerControlRuntimeBaseGrantStatementsTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	databaseName string,
+	schemaName string,
+	roleName string,
+) ([]string, error) {
+	quotedRole := pgx.Identifier{roleName}.Sanitize()
+	quotedDatabase := pgx.Identifier{databaseName}.Sanitize()
+	statements := []string{
+		"REVOKE CREATE, TEMPORARY ON DATABASE " + quotedDatabase + " FROM PUBLIC",
+		"REVOKE ALL ON DATABASE " + quotedDatabase + " FROM " + quotedRole,
+		"GRANT CONNECT ON DATABASE " + quotedDatabase + " TO " + quotedRole,
+	}
+	applicationStatements, applicationErr := providerControlApplicationSchemaRevocationsTx(ctx, tx, quotedRole)
+	if applicationErr != nil {
+		return nil, applicationErr
+	}
+	statements = append(statements, applicationStatements...)
+	columnStatements, columnErr := providerControlColumnGrantRevocationsTx(ctx, tx, roleName, quotedRole)
+	if columnErr != nil {
+		return nil, columnErr
+	}
+	statements = append(statements, columnStatements...)
+	return append(statements, "GRANT USAGE ON SCHEMA "+pgx.Identifier{schemaName}.Sanitize()+" TO "+quotedRole), nil
 }
 
-func providerControlBootstrapEnvironmentConfigured() bool {
-	return strings.TrimSpace(os.Getenv(db.EnvDatabaseURL)) != "" &&
-		strings.TrimSpace(os.Getenv(providerControlRuntimeDatabaseURLEnv)) != ""
+func providerControlApplicationSchemaRevocationsTx(ctx context.Context, tx *sql.Tx, quotedRole string) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT nspname
+		FROM pg_catalog.pg_namespace
+		WHERE nspname <> 'information_schema'
+		  AND nspname NOT LIKE 'pg_%'
+		ORDER BY nspname
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("provider-control runtime bootstrap list application schemas: %w", err)
+	}
+	var statements []string
+	for rows.Next() {
+		var applicationSchema string
+		if err := rows.Scan(&applicationSchema); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("provider-control runtime bootstrap scan application schema: %w", err)
+		}
+		quotedApplicationSchema := pgx.Identifier{applicationSchema}.Sanitize()
+		statements = append(statements,
+			"REVOKE CREATE ON SCHEMA "+quotedApplicationSchema+" FROM PUBLIC",
+			"REVOKE ALL ON SCHEMA "+quotedApplicationSchema+" FROM "+quotedRole,
+			"REVOKE ALL ON ALL TABLES IN SCHEMA "+quotedApplicationSchema+" FROM PUBLIC",
+			"REVOKE ALL ON ALL TABLES IN SCHEMA "+quotedApplicationSchema+" FROM "+quotedRole,
+			"REVOKE ALL ON ALL SEQUENCES IN SCHEMA "+quotedApplicationSchema+" FROM PUBLIC",
+			"REVOKE ALL ON ALL SEQUENCES IN SCHEMA "+quotedApplicationSchema+" FROM "+quotedRole,
+			"REVOKE ALL ON ALL FUNCTIONS IN SCHEMA "+quotedApplicationSchema+" FROM "+quotedRole,
+			"REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA "+quotedApplicationSchema+" FROM PUBLIC",
+		)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("provider-control runtime bootstrap close schema rows: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("provider-control runtime bootstrap iterate schemas: %w", err)
+	}
+	return statements, nil
+}
+
+func providerControlColumnGrantRevocationsTx(ctx context.Context, tx *sql.Tx, roleName, quotedRole string) ([]string, error) {
+	columnRows, err := tx.QueryContext(ctx, `
+		SELECT
+			acl.privilege_type,
+			namespace.nspname,
+			object.relname,
+			attribute.attname,
+			acl.grantee = 0 AS granted_to_public
+		FROM pg_catalog.pg_attribute AS attribute
+		JOIN pg_catalog.pg_class AS object ON object.oid = attribute.attrelid
+		JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = object.relnamespace
+		CROSS JOIN LATERAL pg_catalog.aclexplode(attribute.attacl) AS acl
+		WHERE attribute.attnum > 0
+		  AND NOT attribute.attisdropped
+		  AND namespace.nspname <> 'information_schema'
+		  AND namespace.nspname NOT LIKE 'pg_%'
+		  AND (
+			acl.grantee = 0
+			OR acl.grantee = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = $1)
+		  )
+		ORDER BY namespace.nspname, object.relname, attribute.attnum, acl.privilege_type
+	`, roleName)
+	if err != nil {
+		return nil, fmt.Errorf("provider-control runtime bootstrap list excess column grants: %w", err)
+	}
+	var statements []string
+	for columnRows.Next() {
+		var privilege, columnSchema, tableName, columnName string
+		var grantedToPublic bool
+		if err := columnRows.Scan(
+			&privilege,
+			&columnSchema,
+			&tableName,
+			&columnName,
+			&grantedToPublic,
+		); err != nil {
+			_ = columnRows.Close()
+			return nil, fmt.Errorf("provider-control runtime bootstrap scan excess column grant: %w", err)
+		}
+		switch privilege {
+		case "SELECT", "INSERT", "UPDATE", "REFERENCES":
+		default:
+			_ = columnRows.Close()
+			return nil, fmt.Errorf("provider-control runtime bootstrap found unsupported column privilege %q", privilege)
+		}
+		grantee := quotedRole
+		if grantedToPublic {
+			grantee = "PUBLIC"
+		}
+		statements = append(statements,
+			"REVOKE "+privilege+" ("+pgx.Identifier{columnName}.Sanitize()+") ON TABLE "+
+				pgx.Identifier{columnSchema, tableName}.Sanitize()+" FROM "+grantee,
+		)
+	}
+	if err := columnRows.Close(); err != nil {
+		return nil, fmt.Errorf("provider-control runtime bootstrap close column grant rows: %w", err)
+	}
+	if err := columnRows.Err(); err != nil {
+		return nil, fmt.Errorf("provider-control runtime bootstrap iterate column grants: %w", err)
+	}
+	return statements, nil
 }

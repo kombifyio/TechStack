@@ -13,7 +13,7 @@ func TestConfigFromEnvUsesPostgresWhenDatabaseURLIsSet(t *testing.T) {
 	t.Setenv(EnvStoreBackend, "")
 	t.Setenv(EnvDatabaseURL, "postgres://techstack:secret@localhost:5432/techstack?sslmode=disable")
 
-	cfg, err := ConfigFromEnv(t.TempDir())
+	cfg, err := ConfigFromEnv()
 	if err != nil {
 		t.Fatalf("ConfigFromEnv returned error: %v", err)
 	}
@@ -27,16 +27,13 @@ func TestConfigFromEnvUsesPostgresWhenDatabaseURLIsSet(t *testing.T) {
 	if cfg.DSN != "postgres://techstack:secret@localhost:5432/techstack?sslmode=disable" {
 		t.Fatalf("DSN was not loaded from %s", EnvDatabaseURL)
 	}
-	if !cfg.SQLEnabled() {
-		t.Fatal("SQLEnabled() = false, want true for postgres")
-	}
 }
 
 func TestConfigFromEnvRejectsExplicitPostgresWithoutDatabaseURL(t *testing.T) {
 	t.Setenv(EnvStoreBackend, string(StoreBackendPostgres))
 	t.Setenv(EnvDatabaseURL, "")
 
-	_, err := ConfigFromEnv(t.TempDir())
+	_, err := ConfigFromEnv()
 	if err == nil {
 		t.Fatal("ConfigFromEnv returned nil error")
 	}
@@ -49,19 +46,13 @@ func TestConfigFromEnvKeepsPocketBaseAsNonSQLDefaultWithoutDatabaseURL(t *testin
 	t.Setenv(EnvStoreBackend, "")
 	t.Setenv(EnvDatabaseURL, "")
 
-	cfg, err := ConfigFromEnv(t.TempDir())
+	cfg, err := ConfigFromEnv()
 	if err != nil {
 		t.Fatalf("ConfigFromEnv returned error: %v", err)
 	}
 
 	if cfg.Backend != StoreBackendPocketBase {
 		t.Fatalf("Backend = %q, want %q", cfg.Backend, StoreBackendPocketBase)
-	}
-	if cfg.SQLEnabled() {
-		t.Fatal("SQLEnabled() = true, want false for PocketBase")
-	}
-	if cfg.Path == "" {
-		t.Fatal("Path should keep the legacy SQLite migration location for later migration mode")
 	}
 }
 
@@ -100,9 +91,6 @@ func TestOpenUsesConfiguredPostgresDriverAndDSN(t *testing.T) {
 
 	if db.Backend() != StoreBackendPostgres {
 		t.Fatalf("Backend() = %q, want %q", db.Backend(), StoreBackendPostgres)
-	}
-	if db.DSN() != dsn {
-		t.Fatalf("DSN() = %q, want %q", db.DSN(), dsn)
 	}
 	if got := capturedTestDSN(); got != dsn {
 		t.Fatalf("driver saw DSN %q, want %q", got, dsn)

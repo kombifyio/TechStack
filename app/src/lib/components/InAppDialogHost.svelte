@@ -1,23 +1,16 @@
 <script lang="ts">
   import Modal from "./Modal.svelte";
+  import Button from "#lib/components/ui/Button.svelte";
   import {
     cancelInAppDialog,
     inAppDialog,
     settleInAppDialog,
-  } from "$lib/dialogs/in-app-dialog";
+  } from "#lib/dialogs/in-app-dialog.js";
 
-  let inputValue = $state("");
+  let inputValue = $derived($inAppDialog?.initialValue ?? "");
 
-  $effect(() => {
-    inputValue = $inAppDialog?.initialValue ?? "";
-  });
-
-  const confirmClasses = $derived(
-    $inAppDialog?.tone === "danger"
-      ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
-      : $inAppDialog?.tone === "warning"
-        ? "bg-amber-600 text-white hover:bg-amber-500"
-        : "bg-primary text-primary-foreground hover:bg-primary/90",
+  const confirmVariant = $derived(
+    $inAppDialog?.tone === "danger" ? "destructive" : "primary",
   );
 </script>
 
@@ -34,7 +27,7 @@
           {$inAppDialog.inputLabel}
         </span>
         <input
-          class="input w-full"
+          class="flex h-10 w-full rounded-lg border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
           type={$inAppDialog.inputType ?? "text"}
           bind:value={inputValue}
           autocomplete={$inAppDialog.inputType === "password"
@@ -46,17 +39,12 @@
 
     {#snippet footer()}
       {#if $inAppDialog.kind !== "notice"}
-        <button
-          type="button"
-          class="btn btn-outline"
-          onclick={cancelInAppDialog}
-        >
+        <Button variant="secondary" onclick={cancelInAppDialog}>
           {$inAppDialog.cancelText ?? "Cancel"}
-        </button>
+        </Button>
       {/if}
-      <button
-        type="button"
-        class="btn {confirmClasses}"
+      <Button
+        variant={confirmVariant}
         onclick={() =>
           settleInAppDialog(
             $inAppDialog?.kind === "prompt" ? inputValue : undefined,
@@ -64,7 +52,7 @@
         disabled={$inAppDialog.kind === "prompt" && !inputValue.trim()}
       >
         {$inAppDialog.confirmText}
-      </button>
+      </Button>
     {/snippet}
   </Modal>
 {/if}

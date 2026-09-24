@@ -12,28 +12,27 @@ import (
 type RouteConfig struct {
 	PortalSession         PortalSession
 	LocalSetupProvisioner LocalSetupProvisioner
+	LocalOwnerStore       LocalOwnerLookup
 }
 
 // RegisterRoutesWithConfig registers all auth-related API routes with optional
 // runtime dependencies.
 func RegisterRoutesWithConfig(r *httpx.Router, app core.App, mode config.DeploymentMode, edition config.Edition, cfg RouteConfig) {
 	// Auth mode detection - returns current auth mode and related config
-	r.GET("/api/v1/auth/mode", getAuthMode(app, mode, edition))
+	r.GET("/api/v1/auth/mode", getAuthMode(app, mode, edition, cfg.LocalOwnerStore))
 
 	// First-run setup wizard (public, one-shot, blocked after completion)
-	r.POST("/api/v1/auth/setup", handleSetup(app, mode, cfg.LocalSetupProvisioner))
+	r.POST("/api/v1/auth/setup", handleSetup(app, mode, cfg.LocalSetupProvisioner, cfg.LocalOwnerStore))
 
 	// Stack identity persistence and retrieval
 	r.GET("/api/v1/auth/stack-identity", getStackIdentity(app, mode))
 	r.PUT("/api/v1/auth/stack-identity", updateStackIdentity(app, mode))
 
-	// OIDC callback/logout for hosted kombify Cloud login (legacy v1 flow)
-	r.GET("/api/v1/auth/callback", handleOIDCCallbackFull(app))
+	// Provider logout for hosted kombify Cloud login.
 	r.GET("/api/v1/auth/logout", handleOIDCLogout(app))
 
 	// Browser-facing root paths, formerly owned by the Node SSR layer. They
-	// redirect into the v2 auth handlers (see web_redirects.go); the legacy v1
-	// flow stays reachable via its canonical /api/v1/auth/* paths above.
+	// redirect into the v2 auth handlers (see web_redirects.go).
 	r.GET("/auth/callback", handleWebAuthCallbackRedirect())
 	r.GET("/auth/logout", handleWebAuthLogoutRedirect(cfg.PortalSession.CookieName, mode))
 	r.GET("/auth/cloud-logout", handleCloudLogoutRedirect(mode))

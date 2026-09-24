@@ -27,8 +27,8 @@ const noWorkspaceDestroyReconcileRetryAfter = 2 * time.Second
 // requested by a destroy job after the handler proved there is no local
 // workspace. It reads the current tenant-scoped lease inventory immediately
 // before archive so a delayed provider allocation cannot be hidden by an old
-// no-lease classification. It deliberately never invokes provider control nor
-// reads or writes PocketBase's legacy projection.
+// no-lease classification. It deliberately never invokes provider control or
+// writes a secondary projection.
 func (o *Orchestrator) reconcileNoWorkspaceDestroy(ctx context.Context, request jobs.NoWorkspaceDestroyReconcileRequest) error {
 	stackID := strings.TrimSpace(request.StackID)
 	tenantID := strings.TrimSpace(request.TenantID)
@@ -36,11 +36,15 @@ func (o *Orchestrator) reconcileNoWorkspaceDestroy(ctx context.Context, request 
 	if stackID == "" || tenantID == "" || ownerID == "" {
 		return fmt.Errorf("exact stack, tenant, and owner are required for no-workspace destroy reconciliation")
 	}
-	if o == nil || o.stackStore == nil {
+	if o == nil {
+		return waitForNoWorkspaceDestroyReconciliation(errors.New("control-plane stack authority is unavailable"))
+	}
+	store := o.effectiveStackStore()
+	if store == nil {
 		return waitForNoWorkspaceDestroyReconciliation(errors.New("control-plane stack authority is unavailable"))
 	}
 
-	stack, err := o.stackStore.GetStack(ctx, tenantID, stackID)
+	stack, err := store.GetStack(ctx, tenantID, stackID)
 	if errors.Is(err, controlplane.ErrNotFound) {
 		// The target was already archived by the same prior destroy. Treat that
 		// as a completed, idempotent reconciliation rather than recreating it.
@@ -70,7 +74,7 @@ func (o *Orchestrator) reconcileNoWorkspaceDestroy(ctx context.Context, request 
 		}
 	}
 
-	if err := o.stackStore.SoftDeleteStack(ctx, tenantID, stackID); err != nil && !errors.Is(err, controlplane.ErrNotFound) {
+	if err := store.SoftDeleteStack(ctx, tenantID, stackID); err != nil && !errors.Is(err, controlplane.ErrNotFound) {
 		return waitForNoWorkspaceDestroyReconciliation(fmt.Errorf("archive exact stack projection: %w", err))
 	}
 	return nil

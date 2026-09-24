@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func (s *PostgresStore) ApplyServerEnrollment(ctx context.Context, command ServerEnrollment) (*ServerEventResult, error) {
+func (s *PostgresStore) ApplyServerEnrollment(ctx context.Context, command ServerEnrollment) (*ServerEnrollmentResult, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("controlplane: database not configured")
 	}
@@ -17,8 +17,15 @@ func (s *PostgresStore) ApplyServerEnrollment(ctx context.Context, command Serve
 	if err != nil {
 		return nil, err
 	}
-	var result *ServerEventResult
+	var result ServerEnrollmentResult
 	err = s.withTenant(ctx, prepared.Event.TenantID, func(tx *sql.Tx) error {
+		if prepared.Worker != nil {
+			worker, workerErr := upsertWorkerHeartbeatTx(ctx, tx, *prepared.Worker)
+			if workerErr != nil {
+				return workerErr
+			}
+			result.Worker = worker
+		}
 		var databaseNow time.Time
 		if err := tx.QueryRowContext(ctx, "SELECT clock_timestamp()").Scan(&databaseNow); err != nil {
 			return err
@@ -27,7 +34,7 @@ func (s *PostgresStore) ApplyServerEnrollment(ctx context.Context, command Serve
 			return err
 		}
 		var applyErr error
-		result, applyErr = applyServerEventTx(ctx, tx, prepared.Event, databaseNow.UTC())
+		result.ServerEventResult, applyErr = applyServerEventTx(ctx, tx, prepared.Event, databaseNow.UTC(), s.serverEventProjector)
 		return applyErr
 	})
 	if err != nil {
@@ -36,7 +43,7 @@ func (s *PostgresStore) ApplyServerEnrollment(ctx context.Context, command Serve
 		}
 		return nil, err
 	}
-	return result, nil
+	return &result, nil
 }
 
 func ensureEnrollmentNodeTx(ctx context.Context, tx *sql.Tx, node Node) error {

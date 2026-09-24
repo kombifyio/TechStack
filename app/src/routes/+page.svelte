@@ -3,7 +3,7 @@
   // This page shows a loading state while the redirect happens
 </script>
 
-<div class="min-h-full flex items-center justify-center bg-[var(--color-void)]">
+<div class="min-h-full flex items-center justify-center">
   <div class="text-center">
     <div class="text-6xl mb-4 text-primary">
       <svg
@@ -23,7 +23,9 @@
     <p class="mb-4 text-sm text-muted-foreground">
       Redirecting into your homelab...
     </p>
-    <p class="text-gray-500 mb-6">Redirecting...</p>
-    <a href="/login" class="text-primary hover:underline">Go to Login</a>
+    <p class="text-muted-foreground mb-6">Redirecting...</p>
+    <a href="/login" class="text-primary hover:underline"
+      >Continue setup</a
+    >
   </div>
 </div>

@@ -6,15 +6,17 @@
  */
 
 import { fetchApi } from "./client";
-import type {
-  Stack,
-  StackNextStep,
-  StackOperationAlert,
-  StackOperationKPIs,
-  StackOperationMonitoring,
-  StackOperationServer,
-  StackOperationService,
-  StackReadiness,
+import {
+  normalizeStackOperationServer,
+  type KitDeployment,
+  type StackNextStep,
+  type StackOperationAlert,
+  type StackOperationKPIs,
+  type StackOperationMonitoring,
+  type StackOperationServer,
+  type StackOperationServerWire,
+  type StackOperationService,
+  type StackReadiness,
 } from "./stacks";
 
 // ============================================================================
@@ -61,9 +63,84 @@ export interface MonitorHealth {
   legacyPush?: IngestLaneHealth;
 }
 
+export interface PromQLPoint {
+  /** Unix milliseconds. */
+  at: number;
+  value: number;
+}
+
+export interface PromQLSeries {
+  metric: Record<string, string>;
+  points: PromQLPoint[];
+}
+
 export interface PromQLResult {
   resultType: string;
+  /**
+   * Prometheus text form. Kept for compatibility only — it is an internal
+   * representation, not a contract. Anything that draws reads `series`.
+   */
   result: string;
+  series?: PromQLSeries[];
+}
+
+/** The windows the availability projection offers. It is a closed set. */
+export type AvailabilityWindow = "24h" | "7d" | "30d" | "90d";
+
+export interface AvailabilityEpisode {
+  server_id: string;
+  server_name?: string;
+  started_at: string;
+  /** Absent while ongoing; never backfilled from the window edge. */
+  ended_at?: string;
+  seconds: number;
+  ongoing: boolean;
+  /** Worst connection state the episode reached. */
+  state: string;
+  trigger_reason?: string;
+  trigger_source?: string;
+  recovery_reason?: string;
+  recovery_source?: string;
+  evidence_ref?: string;
+}
+
+export interface AvailabilityDay {
+  day: string;
+  /** Worst state observed that UTC day; empty means no observation. */
+  state: string;
+}
+
+export interface AvailabilityServer {
+  server_id: string;
+  name?: string;
+  /** Null when the window carries no observed time — not the same as zero. */
+  uptime_ratio: number | null;
+  observed_seconds: number;
+  down_seconds: number;
+  episodes: AvailabilityEpisode[];
+  days: AvailabilityDay[];
+}
+
+export interface AvailabilityCause {
+  reason_code: string;
+  seconds: number;
+  episodes: number;
+}
+
+export interface AvailabilityReport {
+  window: AvailabilityWindow;
+  start: string;
+  end: string;
+  uptime_ratio: number | null;
+  observed_seconds: number;
+  down_seconds: number;
+  /** Mean recovery time over closed episodes only. */
+  mttr_seconds: number | null;
+  closed_episodes: number;
+  by_cause: AvailabilityCause[];
+  servers: AvailabilityServer[];
+  /** How each connection state was counted, published with the numbers. */
+  accounting: { up: string[]; down: string[]; unobserved: string[] };
 }
 
 export interface AlertState {
@@ -101,9 +178,13 @@ export interface MonitoringCockpitJob {
 }
 
 export interface MonitoringCockpitPayload {
-  stacks: Array<Stack & { status?: string; state?: string }>;
-  techstack_id: string;
-  stack?: Stack & { status?: string; state?: string };
+  homelab_id?: string;
+  kit_deployment_id?: string;
+  kit_deployment_count: number;
+  connected_server_count: number;
+  /** Deprecated deployment-scoped compatibility fields. */
+  stacks?: Array<KitDeployment & { status?: string; state?: string }>;
+  stack?: KitDeployment & { status?: string; state?: string };
   readiness?: StackReadiness;
   nextSteps: StackNextStep[];
   kpis: StackOperationKPIs;
@@ -113,6 +194,15 @@ export interface MonitoringCockpitPayload {
   alerts: StackOperationAlert[];
   jobs: MonitoringCockpitJob[];
 }
+
+type MonitoringCockpitPayloadWire = Omit<
+  MonitoringCockpitPayload,
+  "stacks" | "stack" | "servers"
+> & {
+  stacks?: KitDeployment[];
+  stack?: KitDeployment;
+  servers: StackOperationServerWire[];
+};
 
 // ============================================================================
 // API Functions
@@ -130,17 +220,24 @@ export async function getMonitorHealth(): Promise<MonitorHealth> {
   return res.data;
 }
 
-/** Get the stack-scoped Homelab monitoring cockpit. */
+/**
+ * Get the owner-scoped Homelab monitoring cockpit. Passing a deployment ID is
+ * retained only for older deployment-scoped consumers during migration.
+ */
 export async function getMonitoringCockpit(
-  techstackId?: string,
+  kitDeploymentId?: string,
 ): Promise<MonitoringCockpitPayload> {
   const params = new URLSearchParams();
-  if (techstackId) params.set("techstack_id", techstackId);
+  if (kitDeploymentId) params.set("kit_deployment_id", kitDeploymentId);
   const suffix = params.toString() ? `?${params.toString()}` : "";
-  const res = await fetchApi<MonitoringCockpitPayload>(
+  const res = await fetchApi<MonitoringCockpitPayloadWire>(
     `/api/v1/monitor/cockpit${suffix}`,
   );
-  return res.data;
+  const { servers, ...payload } = res.data;
+  return {
+    ...payload,
+    servers: servers.map(normalizeStackOperationServer),
+  };
 }
 
 /** Execute an instant PromQL query */
@@ -203,4 +300,23 @@ export async function getActiveAlerts(): Promise<AlertState[]> {
 export async function getAlertRules(): Promise<AlertState[]> {
   const res = await fetchApi<AlertState[]>("/api/v1/monitor/alerts/rules");
   return res.data ?? [];
+}
+
+/**
+ * Availability, downtime episodes and daily state over a window.
+ *
+ * The report is a projection over the recorded transition timeline, so an
+ * episode is evidence rather than a sample. Pass `serverId` for the per-server
+ * detail; omit it for the fleet.
+ */
+export async function getAvailabilityReport(
+  window: AvailabilityWindow = "30d",
+  serverId?: string,
+): Promise<AvailabilityReport> {
+  const params = new URLSearchParams({ window });
+  if (serverId) params.set("server_id", serverId);
+  const res = await fetchApi<AvailabilityReport>(
+    `/api/v1/monitor/availability?${params}`,
+  );
+  return res.data;
 }

@@ -224,20 +224,9 @@ async function mockCreateStackAndJob(
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(jobBody),
+      body: JSON.stringify({ data: jobBody }),
     });
   });
-
-  await context.route(
-    `**/api/collections/jobs/records/${opts.jobId}**`,
-    async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify(jobBody),
-      });
-    },
-  );
 
   return {
     getSubmittedPayload: () => submittedPayload,
@@ -280,7 +269,6 @@ test.describe("Wizard StackKit identity handoff", () => {
         username: "owner-admin",
         email: "owner@example.com",
         displayName: "Owner Admin",
-        password: "testpass123",
       },
       recoveryPassphrase: "correct horse battery stackkit 12!",
     });
@@ -343,24 +331,6 @@ test.describe("Wizard StackKit identity handoff", () => {
     await context.close();
   });
 
-  test("techie wizard identity path is selectable", async ({
-    browser,
-    baseURL,
-  }) => {
-    const { context, origin, page } = await newMockedPage(browser, baseURL, {
-      jobId: "job_identity_techie",
-      withStackKitOutputs: true,
-    });
-
-    await page.goto(`${origin}/stacks/new`);
-    await page.getByTestId("hydrated").waitFor({ state: "attached" });
-    await expect(page.getByTestId("tab-techie")).toBeEnabled();
-    await page.getByTestId("tab-techie").click();
-    await expect(page.getByTestId("easy-wizard")).toHaveCount(0);
-    await expect(page.getByTestId("techie-wizard")).toBeVisible();
-
-    await context.close();
-  });
 
   test("completed rollout explains missing StackKit identity handoff", async ({
     browser,
@@ -377,7 +347,6 @@ test.describe("Wizard StackKit identity handoff", () => {
         username: "owner-admin",
         email: "owner@example.com",
         displayName: "Owner Admin",
-        password: "testpass123",
       },
       recoveryPassphrase: "correct horse battery stackkit 12!",
     });

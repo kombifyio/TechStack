@@ -7,16 +7,17 @@
 -->
 <script lang="ts">
   import { onMount } from "svelte";
-  import type { StackConfig } from "$lib/wizard";
-  import type { OwnerStepState } from "$lib/wizard/owner-state.svelte";
-  import { tr } from "$lib/i18n.svelte";
+  import type { StackConfig } from "#lib/wizard/index.js";
+  import type { OwnerStepState } from "#lib/wizard/owner-state.svelte.js";
+  import { tr } from "#lib/i18n.svelte.js";
 
   interface Props {
     config: StackConfig;
     owner: OwnerStepState;
+    flat?: boolean;
   }
 
-  let { config, owner }: Props = $props();
+  let { config, owner, flat = false }: Props = $props();
 
   const selected = $derived(config.owner.source === "cloud-linked");
   let fallbackUrl = $state<string | null>(null);
@@ -50,28 +51,31 @@
 </script>
 
 <div
-  class="card p-4 text-left transition-all {selected
+  data-kx={flat ? undefined : "plate"}
+  class="text-left {flat ? '' : 'p-4'} {!flat && selected
     ? 'border-primary bg-primary/5 ring-1 ring-primary/20'
     : ''} {owner.cloudLinkState === 'unavailable' ? 'opacity-60' : ''}"
   data-testid="owner-source-cloud-linked"
 >
-  <button
-    type="button"
-    class="w-full text-left"
-    aria-pressed={selected}
-    disabled={owner.cloudLinkState === "unavailable"}
-    onclick={selectCard}
-    data-testid="owner-source-cloud-linked-select"
-  >
-    <p class="text-foreground font-semibold">
-      {tr("wizard.login.owner.cloudLink.title")}
-    </p>
-    <p class="text-sm text-muted-foreground mt-1">
-      {tr("wizard.login.owner.cloudLink.description")}
-    </p>
-  </button>
+  {#if !flat}<button
+      type="button"
+      class="w-full text-left"
+      aria-pressed={selected}
+      disabled={owner.cloudLinkState === "unavailable"}
+      onclick={selectCard}
+      data-testid="owner-source-cloud-linked-select"
+    >
+      <p class="text-foreground font-semibold">
+        {tr("wizard.login.owner.cloudLink.title")}
+      </p>
+      <p class="text-sm text-muted-foreground mt-1">
+        {tr("wizard.login.owner.cloudLink.description")}
+      </p>
+    </button>{/if}
 
-  <div class="mt-4 pt-4 border-t border-border space-y-3">
+  <div
+    class={flat ? "space-y-3" : "mt-4 pt-4 border-t border-border space-y-3"}
+  >
     {#if owner.cloudLink.linked}
       <div class="space-y-1" data-testid="cloud-link-status">
         <p class="text-sm text-foreground">
@@ -99,7 +103,8 @@
         {#if owner.cloudLinkReady && !selected}
           <button
             type="button"
-            class="btn btn-secondary btn-sm"
+            data-kx="control"
+            class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
             onclick={() => owner.selectOwnerSource("cloud-linked")}
             data-testid="cloud-link-use"
           >
@@ -108,7 +113,8 @@
         {/if}
         <button
           type="button"
-          class="btn btn-ghost btn-sm text-muted-foreground"
+          data-kx="control"
+          class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium disabled:pointer-events-none disabled:opacity-50 text-muted-foreground"
           onclick={() => owner.disconnectCloudLink()}
           data-testid="cloud-link-unlink"
         >
@@ -116,19 +122,24 @@
         </button>
       </div>
     {:else if owner.cloudLinkState === "unavailable"}
-      <p class="text-sm text-muted-foreground" data-testid="cloud-link-unavailable">
+      <p
+        class="text-sm text-muted-foreground"
+        data-testid="cloud-link-unavailable"
+      >
         {owner.cloudLinkGuidance ??
           tr("wizard.login.owner.cloudLink.unavailable")}
       </p>
     {:else}
       <button
         type="button"
-        class="btn btn-secondary btn-sm"
+        data-kx="control"
+        class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
         onclick={connect}
         disabled={owner.cloudLinkState === "starting"}
         data-testid="cloud-link-connect"
       >
-        {owner.cloudLinkState === "starting" || owner.cloudLinkState === "waiting"
+        {owner.cloudLinkState === "starting" ||
+        owner.cloudLinkState === "waiting"
           ? tr("wizard.login.owner.cloudLink.connecting")
           : tr("wizard.login.owner.cloudLink.connect")}
       </button>
@@ -145,9 +156,8 @@
             target="_blank"
             rel="noopener"
             class="underline"
-            data-testid="cloud-link-fallback">{tr(
-              "wizard.login.owner.cloudLink.openInTab",
-            )}</a
+            data-testid="cloud-link-fallback"
+            >{tr("wizard.login.owner.cloudLink.openInTab")}</a
           >
         </p>
       {/if}

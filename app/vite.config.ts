@@ -1,6 +1,9 @@
 import { sveltekit } from "@sveltejs/kit/vite";
+import adapterStatic from "@sveltejs/adapter-static";
+import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
 import { sentrySvelteKit } from "@sentry/sveltekit";
 import tailwindcss from "@tailwindcss/vite";
+import { mdsvex } from "mdsvex";
 import { readFileSync } from "node:fs";
 import { defineConfig } from "vite";
 
@@ -60,8 +63,8 @@ const devBackendProxy = {
   "/api": devBackendTarget,
   "/install.sh": devBackendTarget,
   "/install.ps1": devBackendTarget,
-  // Go-owned root redirects (web convergence). Exact paths only — other
-  // /auth/* routes (oidc-complete, sso, cloud-link-complete) are SPA pages.
+  // Go-owned root redirects (web convergence). Exact paths only;
+  // /auth/sso and /auth/cloud-link-complete remain frontend routes.
   "/auth/callback": devBackendTarget,
   "/auth/logout": devBackendTarget,
   "/docs": devBackendTarget,
@@ -91,7 +94,30 @@ export default async () =>
           console.warn(`[Sentry] Source map upload skipped: ${error.message}`);
         },
       })),
-      sveltekit(),
+      // SvelteKit 3 folds the former svelte.config.js into these plugin
+      // options (the file is no longer supported).
+      sveltekit({
+        extensions: [".svelte", ".md"],
+
+        preprocess: [
+          vitePreprocess(),
+          mdsvex({
+            extensions: [".md"],
+          }),
+        ],
+
+        // Single build for every deployment (ADR-033 OQ2 web convergence): a
+        // static SPA in build-static, embedded into the Go binary via
+        // internal/frontend/dist (-tags techstack_static_ui) and served by Go.
+        // The legacy TECHSTACK_DESKTOP_STATIC toggle is accepted but ignored —
+        // the static build is no longer desktop-only.
+        adapter: adapterStatic({
+          pages: "build-static",
+          assets: "build-static",
+          fallback: "index.html",
+          strict: false,
+        }),
+      }),
     ],
     define: {
       __APP_VERSION__: JSON.stringify(appVersion),

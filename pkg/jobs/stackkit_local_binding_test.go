@@ -1,62 +1,36 @@
 package jobs
 
 import (
+	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/kombifyio/techstack/internal/stackkitrelease"
+	"github.com/kombifyio/techstack/pkg/api/agentpb"
+	"google.golang.org/protobuf/proto"
 )
 
-// Techstack sent the basement Site/node/channel for every kit, so a cloud-kit
-// rollout named a binding its own resolved plan does not contain. The plan for
-// cloud-kit resolves sites ["cloud"] and nodes ["cloud-main"], and StackKits
-// refuses to guess: "Apply never infers that a planned target is this machine:
-// the owner names the exact Site, node, and channel this process owns, and
-// anything else stays unadmitted" (cmd/stackkit/commands/apply.go:71).
-func TestLocalExecutionBindingFollowsTheKit(t *testing.T) {
+// The typed command must carry each kit's own Site/node/channel rather than a
+// basement default that the resolved plan cannot admit.
+func TestStackKitLifecycleCommandCarriesTheKitBinding(t *testing.T) {
 	for kit, want := range map[string]localExecutionBinding{
 		"basement-kit": {SiteRef: "home", NodeRef: "main", ExecutionChannelRef: "local-home-main"},
 		"cloud-kit":    {SiteRef: "cloud", NodeRef: "cloud-main", ExecutionChannelRef: "host-channel-cloud-main"},
 	} {
 		kit, want := kit, want
 		t.Run(kit, func(t *testing.T) {
-			got, err := localExecutionBindingFor(kit)
+			command, err := stackKitLifecycleCommand("cmd-1", StackKitLifecycleRequest{
+				StackID: "stack-1", AgentID: "agent-1", Operation: "apply", StackKit: kit,
+			}, stackkitrelease.Release{})
 			if err != nil {
-				t.Fatalf("localExecutionBindingFor(%q): %v", kit, err)
+				t.Fatalf("stackKitLifecycleCommand: %v", err)
 			}
+			got := localExecutionBinding{SiteRef: command.LocalSiteRef, NodeRef: command.LocalNodeRef, ExecutionChannelRef: command.LocalExecutionChannelRef}
 			if got != want {
-				t.Fatalf("binding = %+v, want %+v", got, want)
+				t.Fatalf("command binding = %+v, want %+v", got, want)
 			}
 		})
-	}
-}
-
-// Inheriting the basement binding for an unrecognised kit is exactly the defect
-// this replaced, so an unknown kit must fail closed rather than default.
-func TestLocalExecutionBindingFailsClosedForAnUnknownKit(t *testing.T) {
-	for _, kit := range []string{"", "modern-homelab", "not-a-kit"} {
-		if _, err := localExecutionBindingFor(kit); err == nil {
-			t.Fatalf("localExecutionBindingFor(%q) succeeded, want a refusal", kit)
-		}
-	}
-}
-
-// The command the agent receives must carry the kit's binding, not a default.
-func TestStackKitLifecycleCommandCarriesTheKitBinding(t *testing.T) {
-	command, err := stackKitLifecycleCommand("cmd-1", StackKitLifecycleRequest{
-		StackID:   "stack-1",
-		AgentID:   "agent-1",
-		Operation: "apply",
-		StackKit:  "cloud-kit",
-	}, stackkitrelease.Release{})
-	if err != nil {
-		t.Fatalf("stackKitLifecycleCommand: %v", err)
-	}
-	if command.LocalSiteRef != "cloud" ||
-		command.LocalNodeRef != "cloud-main" ||
-		command.LocalExecutionChannelRef != "host-channel-cloud-main" {
-		t.Fatalf("binding = %q/%q/%q, want the cloud-kit triple",
-			command.LocalSiteRef, command.LocalNodeRef, command.LocalExecutionChannelRef)
 	}
 }
 
@@ -95,18 +69,19 @@ func TestStackKitLifecycleCommandCarriesExplicitCanonicalSpecPath(t *testing.T) 
 
 func TestStackKitLifecycleInitCarriesExactCustodyInputs(t *testing.T) {
 	request, err := NormalizeStackKitLifecycleRequest(StackKitLifecycleRequest{
-		StackID:          "stack-1",
-		TenantID:         "tenant-1",
-		OwnerID:          "owner-1",
-		AgentID:          "agent-1",
-		Operation:        StackKitLifecycleInit,
-		OwnerApproved:    true,
-		WorkingDirectory: "/data/stacks/stack-1",
-		SpecPath:         "stack-spec.v2.json",
-		StackKit:         "basement-kit",
-		StackName:        "home-stack",
-		Domain:           "home.localhost",
-		ExpectedSpecHash: "sha256:" + strings.Repeat("a", 64),
+		StackID:           "stack-1",
+		TenantID:          "tenant-1",
+		OwnerID:           "owner-1",
+		AgentID:           "agent-1",
+		Operation:         StackKitLifecycleInit,
+		OwnerApproved:     true,
+		WorkingDirectory:  "/data/stacks/stack-1",
+		SpecPath:          "stack-spec.v2.json",
+		StackKit:          "basement-kit",
+		StackName:         "home-stack",
+		Domain:            "home",
+		ExpectedSpecHash:  "sha256:" + strings.Repeat("a", 64),
+		CandidateSpecJSON: []byte(`{"metadata":{"name":"home-stack"},"kit":{"slug":"basement-kit"}}`),
 	})
 	if err != nil {
 		t.Fatalf("NormalizeStackKitLifecycleRequest: %v", err)
@@ -116,7 +91,7 @@ func TestStackKitLifecycleInitCarriesExactCustodyInputs(t *testing.T) {
 		t.Fatalf("stackKitLifecycleCommand: %v", err)
 	}
 	if command.Operation.String() != "STACKKIT_OPERATION_INIT" || command.Stackkit != "basement-kit" ||
-		command.StackName != "home-stack" || command.Domain != "home.localhost" ||
+		command.StackName != "home-stack" || command.Domain != "home" ||
 		command.ExpectedSpecHash != request.ExpectedSpecHash || !command.OwnerApproved {
 		t.Fatalf("init command = %+v, want exact approved custody inputs", command)
 	}
@@ -125,26 +100,51 @@ func TestStackKitLifecycleInitCarriesExactCustodyInputs(t *testing.T) {
 func TestStackKitLifecyclePayloadRoundTripsInitAuthority(t *testing.T) {
 	req := StackKitLifecycleRequest{
 		StackID: "stack-1", TenantID: "tenant-1", OwnerID: "owner-1", AgentID: "agent-1",
+		NodeID:    "node-1",
 		Operation: StackKitLifecycleInit, OwnerApproved: true, StackKit: "cloud-kit",
 		StackName: "fresh-cloud", ExpectedSpecHash: "sha256:" + strings.Repeat("a", 64),
+		CandidateSpecJSON: []byte(`{"apiVersion":"stackkit/v2alpha2","metadata":{"name":"fresh-cloud"},"kit":{"slug":"cloud-kit"},"workloads":{"cloud-core":{"alternative":"standalone"}},"modules":{"stackkits-cloud-core-runtime":{"computeProfile":"standard"}}}`),
 	}
 	job := &Job{TargetID: req.StackID, Payload: StackKitLifecyclePayload(req)}
+	payload, err := json.Marshal(job.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(payload, &job.Payload); err != nil {
+		t.Fatal(err)
+	}
 	got, err := stackKitLifecycleRequestFromJob(job)
 	if err != nil {
 		t.Fatalf("stackKitLifecycleRequestFromJob() error = %v", err)
 	}
-	if got.StackKit != req.StackKit || got.StackName != req.StackName || got.ExpectedSpecHash != req.ExpectedSpecHash {
+	if got.StackKit != req.StackKit || got.NodeID != req.NodeID || got.StackName != req.StackName || got.ExpectedSpecHash != req.ExpectedSpecHash {
 		t.Fatalf("rehydrated init authority = %#v, want kit/name/hash from request", got)
+	}
+	command, err := stackKitLifecycleCommand("cmd-init", got, stackkitrelease.Release{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire, err := proto.Marshal(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var received agentpb.StackKitCommand
+	if err := proto.Unmarshal(wire, &received); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(received.CandidateSpecJson, req.CandidateSpecJSON) {
+		t.Fatal("durable payload or agent transport changed approved intent")
 	}
 }
 
-func TestStackKitLifecycleCommandRefusesAnUnnamedKit(t *testing.T) {
-	_, err := stackKitLifecycleCommand("cmd-1", StackKitLifecycleRequest{
-		StackID:   "stack-1",
-		AgentID:   "agent-1",
-		Operation: "apply",
-	}, stackkitrelease.Release{})
-	if err == nil || !strings.Contains(err.Error(), "local execution binding") {
-		t.Fatalf("error = %v, want a refusal naming the missing binding", err)
+// Inheriting the basement binding for an unrecognised kit is exactly the defect
+// this replaced, so the typed command must fail closed rather than default.
+func TestStackKitLifecycleCommandFailsClosedForUnknownKits(t *testing.T) {
+	for _, kit := range []string{"", "modern-homelab", "not-a-kit"} {
+		if _, err := stackKitLifecycleCommand("cmd-1", StackKitLifecycleRequest{
+			StackID: "stack-1", AgentID: "agent-1", Operation: "apply", StackKit: kit,
+		}, stackkitrelease.Release{}); err == nil {
+			t.Fatalf("stackKitLifecycleCommand accepted unknown kit %q", kit)
+		}
 	}
 }

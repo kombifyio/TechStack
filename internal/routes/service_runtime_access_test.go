@@ -40,14 +40,6 @@ func TestDeriveInventoryServiceAccessRequiresRegisteredRelayContract(t *testing.
 			mode: serviceAccessDirect,
 		},
 		{
-			name: "Guard-probed home.localhost endpoint is local direct access",
-			svc: workerInventoryService{Endpoints: []workerInventoryEndpoint{{
-				URL: "http://base.home.localhost", Visibility: "local", TargetType: serviceAccessDirect,
-				Provenance: serviceStackKitManifest, Health: "reachable",
-			}}},
-			mode: serviceAccessDirect,
-		},
-		{
 			name: "unhealthy Guard endpoint is unavailable",
 			svc: workerInventoryService{Endpoints: []workerInventoryEndpoint{{
 				URL: "https://base.demo.kombify.me", Visibility: "public", TargetType: serviceAccessDirect,
@@ -134,7 +126,7 @@ func TestInventoryProjectsAuthGatewayAsReachableLinkWithoutClaimingHealthy(t *te
 		ServiceID: "auth", Name: "TinyAuth", Status: "reachable",
 		Health: map[string]any{"source": "http-probe", "status": "reachable", "auth_or_redirect_required": true},
 		Endpoints: []workerInventoryEndpoint{{
-			URL: "http://auth.home.localhost", Visibility: "local", TargetType: serviceAccessDirect,
+			URL: "https://auth.home", Visibility: "local", TargetType: serviceAccessDirect,
 			Provenance: serviceStackKitManifest, Health: "reachable",
 		}},
 	}
@@ -157,7 +149,7 @@ func TestInventoryProjectsAuthGatewayAsReachableLinkWithoutClaimingHealthy(t *te
 	if runtime.ObservedState != string(serviceregistry.ObservedRunning) {
 		t.Fatalf("auth gateway observed state = %q, want running", runtime.ObservedState)
 	}
-	if stringFromAnyMap(runtime.Access, serviceAccessModeKey) != serviceAccessDirect || stringFromAnyMap(runtime.Access, serviceAccessURLKey) != "http://auth.home.localhost" {
+	if stringFromAnyMap(runtime.Access, serviceAccessModeKey) != serviceAccessDirect || stringFromAnyMap(runtime.Access, serviceAccessURLKey) != "https://auth.home" {
 		t.Fatalf("auth gateway access = %#v, want observed direct link", runtime.Access)
 	}
 }

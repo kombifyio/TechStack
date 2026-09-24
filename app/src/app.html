@@ -1,8 +1,65 @@
 <!doctype html>
-<html lang="en">
+<!-- The product theme class sits on the DOCUMENT ROOT, not (only) on body:
+     the finish materials are defined on :root[data-appearance][data-finish]
+     and substitute var(--primary) AT THE ROOT, so a body-scoped theme left
+     every color-mix()-derived material (expressive surfaces, ambient washes,
+     glass tints) on the base palette's green instead of Techstack navy.
+     CMO stamps the theme on <html> for the same reason. -->
+<html
+  lang="en"
+  class="dark theme-techstack"
+  data-appearance="dark"
+  data-finish="kombify"
+>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script>
+      // Pre-paint design-axis init (KOMBIFY-DESIGN-SYSTEM-STANDARD §6).
+      //
+      // Both the class AND data-appearance, and the pair has to stay in sync:
+      // `.dark` drives Tailwind v4 and this app's .theme-* blocks,
+      // data-appearance drives the generated material layer. Setting only the
+      // class leaves every --glass-* variable undefined, so plate and
+      // menu-plate render with no material at all.
+      //
+      // The precedence mirrors src/lib/stores/theme.ts exactly — an embed
+      // host's ?theme= wins over the device's localStorage choice — because
+      // that store re-applies the same decision on mount. This pass only moves
+      // it before first paint.
+      try {
+        var params = new URLSearchParams(window.location.search);
+        var embed = params.get("theme");
+        var stored =
+          embed === "dark" || embed === "light"
+            ? embed
+            : localStorage.getItem("techstack-theme");
+        var dark =
+          stored === "system"
+            ? matchMedia("(prefers-color-scheme: dark)").matches
+            : stored === "light"
+              ? false
+              : true;
+        document.documentElement.classList.toggle("dark", dark);
+        document.documentElement.classList.toggle("light", !dark);
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+        document.documentElement.dataset.appearance = dark ? "dark" : "light";
+        // The finish axis, same precedence: embed host ?finish= beats the
+        // device's stored choice. The list is pinned to the design contract's
+        // FINISHES by theme.test.ts — a pre-paint script cannot import it.
+        var finishes = ["kombify", "liquid", "frost", "expressive", "aurora"];
+        var embedFinish = params.get("finish");
+        var finish =
+          finishes.indexOf(embedFinish) >= 0
+            ? embedFinish
+            : localStorage.getItem("techstack-finish");
+        if (finishes.indexOf(finish) >= 0) {
+          document.documentElement.dataset.finish = finish;
+        }
+      } catch (e) {
+        /* localStorage unavailable: keep the dark-first default above. */
+      }
+    </script>
     %sveltekit.head%
   </head>
   <body class="theme-techstack" data-sveltekit-preload-data="hover">

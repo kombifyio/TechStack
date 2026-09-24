@@ -39,10 +39,10 @@
     warning: "text-warning",
     info: "text-muted-foreground",
   };
-  const badgeClasses: Record<NonNullable<Props["tone"]>, string> = {
-    error: "badge badge-destructive",
-    warning: "badge badge-warning",
-    info: "badge badge-secondary",
+  const badgeStatus: Record<NonNullable<Props["tone"]>, string> = {
+    error: "error",
+    warning: "warn",
+    info: "off",
   };
 </script>
 
@@ -64,7 +64,12 @@
       {summary}
     </span>
     {#if badge}
-      <span class="shrink-0 {badgeClasses[tone]}">{badge}</span>
+      <span
+        data-kx="status"
+        data-status={badgeStatus[tone]}
+        class="inline-flex shrink-0 items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
+        >{badge}</span
+      >
     {/if}
     <ChevronDown
       class="h-4 w-4 shrink-0 text-muted-foreground transition-transform {open

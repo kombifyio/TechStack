@@ -8,13 +8,13 @@ import (
 
 // LegacyServerState projects the canonical orthogonal connection and health
 // dimensions back into the single-valued legacy runtime vocabulary that the
-// pre-aggregate read routes (/api/v1/registry/servers, /api/v1/monitor/cockpit)
-// still publish as `status` / `health_state`.
+// Registry Services BFF and monitoring cockpit still publish as `status` /
+// `health_state`.
 //
 // It is the exact inverse of DeriveObservedState: for every heartbeat input,
 // LegacyServerState(DeriveObservedState(...)) equals
 // runtimehealth.DeriveServerState(...) for the same input. That property is
-// what lets the legacy routes read persisted canonical state instead of
+// what lets the collapsed projections read persisted canonical state instead of
 // recomputing freshness at read time, without changing their wire contract.
 //
 // Mapping (canonical -> legacy), including the two states the legacy
@@ -31,8 +31,8 @@ import (
 //	                                              projection)
 //	pending / connecting / ""   -> provisioned
 //
-// This helper exists only to keep the legacy projections truthful until the
-// Wave 2 UI cutover retires them; it is not a new read model.
+// This helper keeps the remaining collapsed projections truthful; it is not a
+// new read model.
 func LegacyServerState(connection, health string) runtimehealth.ServerState {
 	switch ConnectionState(strings.ToLower(strings.TrimSpace(connection))) {
 	case ConnectionConnected:
@@ -72,7 +72,7 @@ func LegacySatelliteState() runtimehealth.ServerState {
 	return runtimehealth.ServerProvisioned
 }
 
-// LegacyRolloutReady reports whether the legacy read routes may advertise a
+// LegacyRolloutReady reports whether a collapsed projection may advertise a
 // server as rollout-ready. It deliberately stays stricter than
 // MutationsAllowed, which also permits mutations on a degraded connection:
 // the legacy `rollout_ready` flag has always meant "healthy", and widening it

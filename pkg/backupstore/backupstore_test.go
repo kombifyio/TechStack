@@ -44,20 +44,21 @@ func writeCF(w http.ResponseWriter, success bool, result any, errs ...map[string
 }
 
 func TestBucketName(t *testing.T) {
-	cases := map[string]string{
-		"024385d7-722c-4b1d-92fe-ebc7b7a54d82": "skbk-024385d7-722c-4b1d-92fe-ebc7b7a54d82",
-		"Stack_ID With Junk!":                  "skbk-stack-id-with-junk-",
+	cases := []struct {
+		stackID string
+		want    string
+	}{
+		{stackID: "024385d7-722c-4b1d-92fe-ebc7b7a54d82", want: "skbk-024385d7-722c-4b1d-92fe-ebc7b7a54d82"},
+		{stackID: "Stack_ID With Junk!", want: "skbk-stack-id-with-junk"},
 	}
-	for input, wantPrefix := range cases {
-		got := BucketName(input)
-		if !strings.HasPrefix(got, "skbk-") || len(got) > 63 || strings.HasSuffix(got, "-") && input == "024385d7-722c-4b1d-92fe-ebc7b7a54d82" {
-			t.Fatalf("BucketName(%q) = %q", input, got)
+	for _, tc := range cases {
+		if got := BucketName(tc.stackID); got != tc.want {
+			t.Fatalf("BucketName(%q) = %q, want %q", tc.stackID, got, tc.want)
 		}
-		_ = wantPrefix
 	}
 	long := strings.Repeat("a", 100)
-	if got := BucketName(long); len(got) > 63 {
-		t.Fatalf("long name not clamped: %d", len(got))
+	if got := BucketName(long); len(got) > 63 || strings.HasSuffix(got, "-") {
+		t.Fatalf("long name violates R2 constraints: %q", got)
 	}
 }
 
@@ -113,20 +114,133 @@ func TestProvisionHappyPath(t *testing.T) {
 	if store.SecretAccessKey != hex.EncodeToString(wantSecret[:]) {
 		t.Fatalf("secret derivation wrong: %s", store.SecretAccessKey)
 	}
-	if store.Endpoint != "https://acct123.r2.cloudflarestorage.com" {
+	if store.Endpoint != "https://acct123.eu.r2.cloudflarestorage.com" {
 		t.Fatalf("endpoint = %s", store.Endpoint)
 	}
 
-	// The token policy must be scoped to exactly the stack bucket.
+	// The token policy must be scoped to exactly the stack bucket, in the
+	// same jurisdiction the bucket was created in.
 	policies := tokenPayload["policies"].([]any)
 	policy := policies[0].(map[string]any)
 	resources := policy["resources"].(map[string]any)
-	if _, ok := resources["com.cloudflare.edge.r2.bucket.acct123_default_skbk-stack-1"]; !ok {
+	if _, ok := resources["com.cloudflare.edge.r2.bucket.acct123_eu_skbk-stack-1"]; !ok {
 		t.Fatalf("token not bucket-scoped: %v", resources)
 	}
 	groups := policy["permission_groups"].([]any)
 	if len(groups) != 2 {
 		t.Fatalf("expected read+write permission groups: %v", groups)
+	}
+}
+
+// TestJurisdictionReachesAllThreeDerivations pins the three places a
+// jurisdiction has to appear together. R2 fixes a bucket's jurisdiction at
+// creation, so a mismatch between them is not a degraded state that can be
+// repaired in place: the bucket is in the wrong place permanently, and the
+// token or the endpoint cannot address it.
+func TestJurisdictionReachesAllThreeDerivations(t *testing.T) {
+	var bucketJurisdiction string
+	var tokenPayload map[string]any
+	client, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/accounts/acct123/r2/buckets":
+			bucketJurisdiction = r.Header.Get("cf-r2-jurisdiction")
+			writeCF(w, true, map[string]any{"name": "skbk-stack-1"})
+		case r.Method == http.MethodGet && r.URL.Path == "/accounts/acct123/tokens/permission_groups":
+			writeCF(w, true, []map[string]any{
+				{"id": "pg-read", "name": "Workers R2 Storage Bucket Item Read"},
+				{"id": "pg-write", "name": "Workers R2 Storage Bucket Item Write"},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/accounts/acct123/tokens":
+			if r.Header.Get("cf-r2-jurisdiction") != "" {
+				t.Fatalf("account token endpoint must not carry the R2 jurisdiction header")
+			}
+			if err := json.NewDecoder(r.Body).Decode(&tokenPayload); err != nil {
+				t.Fatal(err)
+			}
+			writeCF(w, true, map[string]any{"id": "token-id-1", "value": "token-value-1"})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	})
+
+	store, err := client.Provision(context.Background(), "stack-1")
+	if err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+
+	// 1. The bucket is created in the EU jurisdiction.
+	if bucketJurisdiction != JurisdictionEU {
+		t.Fatalf("bucket created with jurisdiction %q, want %q", bucketJurisdiction, JurisdictionEU)
+	}
+	// 2. The persisted endpoint addresses that jurisdiction.
+	if store.Endpoint != "https://acct123.eu.r2.cloudflarestorage.com" {
+		t.Fatalf("endpoint = %q", store.Endpoint)
+	}
+	// 3. The bucket-scoped token names the same jurisdiction.
+	resources := tokenPayload["policies"].([]any)[0].(map[string]any)["resources"].(map[string]any)
+	if _, ok := resources["com.cloudflare.edge.r2.bucket.acct123_eu_skbk-stack-1"]; !ok {
+		t.Fatalf("token resource does not name the eu jurisdiction: %v", resources)
+	}
+}
+
+// TestDeleteBucketCarriesJurisdiction covers the other half: an EU bucket is
+// invisible to a delete issued without the header, so the wipe path would
+// report success while leaving the bucket and its objects behind.
+func TestDeleteBucketCarriesJurisdiction(t *testing.T) {
+	var seen string
+	client, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/accounts/acct123/r2/buckets/") {
+			seen = r.Header.Get("cf-r2-jurisdiction")
+			writeCF(w, true, nil)
+			return
+		}
+		writeCF(w, true, nil)
+	})
+
+	if err := client.Wipe(context.Background(), "stack-1", "", nil); err != nil {
+		t.Fatalf("Wipe: %v", err)
+	}
+	if seen != JurisdictionEU {
+		t.Fatalf("delete bucket jurisdiction = %q, want %q", seen, JurisdictionEU)
+	}
+}
+
+// TestUnsetJurisdictionResolvesToEU pins the safety direction of the default.
+// Forgetting to configure a jurisdiction must place backups inside the EU,
+// never outside it.
+func TestUnsetJurisdictionResolvesToEU(t *testing.T) {
+	t.Setenv("CLOUDFLARE_ACCOUNT_ID", "acct123")
+	t.Setenv("TECHSTACK_BACKUPSTORE_CF_API_TOKEN", "platform-token")
+	t.Setenv("TECHSTACK_BACKUPSTORE_R2_JURISDICTION", "")
+
+	cfg, err := FromEnv()
+	if err != nil {
+		t.Fatalf("FromEnv: %v", err)
+	}
+	if cfg.Jurisdiction != JurisdictionEU {
+		t.Fatalf("unset jurisdiction resolved to %q, want %q", cfg.Jurisdiction, JurisdictionEU)
+	}
+
+	endpoint, err := S3EndpointFor("acct123", "")
+	if err != nil {
+		t.Fatalf("S3EndpointFor: %v", err)
+	}
+	if endpoint != "https://acct123.eu.r2.cloudflarestorage.com" {
+		t.Fatalf("endpoint for unset jurisdiction = %q", endpoint)
+	}
+
+	// The legacy jurisdiction stays addressable so pre-pin buckets can still
+	// be found and cleaned up, but only when it is asked for explicitly.
+	legacy, err := S3EndpointFor("acct123", JurisdictionDefault)
+	if err != nil {
+		t.Fatalf("S3EndpointFor(default): %v", err)
+	}
+	if legacy != "https://acct123.r2.cloudflarestorage.com" {
+		t.Fatalf("legacy endpoint = %q", legacy)
+	}
+
+	if _, err := S3EndpointFor("acct123", "atlantis"); err == nil {
+		t.Fatal("an unsupported jurisdiction must be rejected, not silently accepted")
 	}
 }
 

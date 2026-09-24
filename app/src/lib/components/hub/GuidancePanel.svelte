@@ -1,14 +1,14 @@
 <script lang="ts">
-  import ErrorCallout from "$lib/components/ui/ErrorCallout.svelte";
-  import GuidedNextSteps from "$lib/components/hub/GuidedNextSteps.svelte";
+  import ErrorCallout from "#lib/components/ui/ErrorCallout.svelte";
+  import GuidedNextSteps from "#lib/components/hub/GuidedNextSteps.svelte";
   import {
     resolveGuidance,
     toAiHandoverContext,
     type ServerOutcome,
     type ServerOutcomeStatus,
     type GuidanceStep,
-  } from "$lib/support/server-outcome";
-  import { cn } from "$lib/utils";
+  } from "#lib/support/server-outcome.js";
+  import { cn } from "#lib/utils.js";
 
   interface Props {
     outcome: ServerOutcome;
@@ -53,9 +53,11 @@
   const aiHandoverContext = $derived(
     toAiHandoverContext(outcome, { surface, resourceId, resourceName, route }),
   );
-  // Never offer retry for a non-retryable outcome (FEATURE-ENTITLEMENT-UX §3).
+  // Never offer retry for a non-retryable outcome or without an exact host
+  // action (FEATURE-ENTITLEMENT-UX §3). A visible no-op retry is worse than no
+  // retry because it falsely claims the surface owns recovery.
   const steps = $derived(
-    outcome.retryable
+    outcome.retryable && onRetry
       ? guidance.nextSteps
       : guidance.nextSteps.filter((step) => step.kind !== "retry"),
   );

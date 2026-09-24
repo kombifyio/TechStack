@@ -4,17 +4,32 @@
   import {
     ServiceCard,
     ServiceCardCompact,
+    type ServiceCardAction,
     type ServiceCardActions,
     type ServiceMetric,
     type ServicePlacement,
     type ServiceStatusKind,
-  } from "$lib/components/open-core";
+  } from "@kombiverselabs/ui/service";
+  import BrandLogoIcon from "#lib/components/BrandLogoIcon.svelte";
+  import BrandLogoScope from "#lib/components/BrandLogoScope.svelte";
 
   export interface ServiceListItem extends ServiceCardActions {
     id: string;
     name: string;
     meta: string;
+    /**
+     * Capability-driven card actions (backend allowed_actions). Takes
+     * precedence over the deprecated per-callback fields when present.
+     */
+    actions?: ServiceCardAction[];
+    /** Desired lifecycle state — renders the drift chip/dot with observedState. */
+    desiredState?: string;
+    /** Observed lifecycle state — renders the drift chip/dot with desiredState. */
+    observedState?: string;
     description?: string;
+    address?: string;
+    addressUnavailableReason?: string;
+    detailsHref?: string;
     placement: ServicePlacement;
     status: ServiceStatusKind;
     statusLabel?: string;
@@ -23,13 +38,16 @@
     metrics?: ServiceMetric[];
     /** Stable key for the real runtime target, not necessarily a server. */
     runtimeTargetId: string;
+    /* Row facts consumed by the detail sheet — the card no longer renders
+     * them (the fact wall moved off the card, 2026-08-30). */
+    freshnessLabel?: string;
+    sourceLabel?: string;
+    workflowLabel?: string;
     /** Human label supplied by the authoritative read model when available. */
     targetLabel?: string;
     targetKind?: "server" | "managed_workload" | "unknown" | string;
-    workflowLabel?: string;
-    freshnessLabel?: string;
-    sourceLabel?: string;
-    details?: string;
+    /** Vendor domain for context.dev Logo Link; empty keeps the generic glyph. */
+    logoDomain?: string;
     /** Attention services use the detailed standard card in adaptive lists. */
     attention?: boolean;
   }
@@ -71,73 +89,73 @@
   );
 </script>
 
-{#snippet serviceFacts(item: ServiceListItem)}
-  <div class="space-y-3">
-    <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-      {#if item.details}<span>{item.details}</span>{/if}
-      {#if item.workflowLabel}<span>Operation: {item.workflowLabel}</span>{/if}
-      {#if item.freshnessLabel}<span>Freshness: {item.freshnessLabel}</span
-        >{/if}
-      {#if item.sourceLabel}<span>Source: {item.sourceLabel}</span>{/if}
-      <span>
-        Runtime target: {item.targetLabel || item.runtimeTargetId}
-      </span>
-    </div>
-    {#if children}
-      {@render children(item)}
-    {/if}
-  </div>
-{/snippet}
-
 {#snippet detailedCard(item: ServiceListItem)}
-  <div data-testid={cardTestId} data-service-id={item.id}>
-    <ServiceCard
-      name={item.name}
-      description={item.description || item.meta}
-      placement={item.placement}
-      status={item.status}
-      statusLabel={item.statusLabel}
-      statusMessage={item.statusMessage}
-      managementLabel={item.managementLabel}
-      metrics={item.metrics}
-      onOpen={item.onOpen}
-      onLogs={item.onLogs}
-      onEdit={item.onEdit}
-      onFreeze={item.onFreeze}
-      onUnfreeze={item.onUnfreeze}
-      onUpdate={item.onUpdate}
-      onRestart={item.onRestart}
-      onInfo={item.onInfo}
-    >
-      {#snippet footer()}
-        {@render serviceFacts(item)}
-      {/snippet}
-    </ServiceCard>
-  </div>
+  {@const cardProps = {
+    name: item.name,
+    description: item.description || item.meta,
+    address: item.address,
+    addressUnavailableReason: item.addressUnavailableReason,
+    detailsHref: item.detailsHref,
+    icon: BrandLogoIcon,
+    placement: item.placement,
+    status: item.status,
+    statusLabel: item.statusLabel,
+    statusMessage: item.statusMessage,
+    managementLabel: item.managementLabel,
+    metrics: item.metrics,
+    actions: item.actions,
+    desiredState: item.desiredState,
+    observedState: item.observedState,
+    onOpen: item.onOpen,
+    onLogs: item.onLogs,
+    onEdit: item.onEdit,
+    onFreeze: item.onFreeze,
+    onUnfreeze: item.onUnfreeze,
+    onUpdate: item.onUpdate,
+    onRestart: item.onRestart,
+    onInfo: item.onInfo,
+  }}
+  <BrandLogoScope domain={item.logoDomain || ""}>
+    <div data-testid={cardTestId} data-service-id={item.id}>
+      {#if children}
+        <ServiceCard {...cardProps}>
+          {#snippet footer()}
+            {@render children(item)}
+          {/snippet}
+        </ServiceCard>
+      {:else}
+        <ServiceCard {...cardProps} />
+      {/if}
+    </div>
+  </BrandLogoScope>
 {/snippet}
 
 {#snippet compactCard(item: ServiceListItem)}
-  <div data-testid={cardTestId} data-service-id={item.id}>
-    <ServiceCardCompact
-      name={item.name}
-      meta={item.meta}
-      placement={item.placement}
-      status={item.status}
-      statusLabel={item.statusLabel}
-      managementLabel={item.managementLabel}
-      showGrip={false}
-      onOpen={item.onOpen}
-      onLogs={item.onLogs}
-      onRestart={item.onRestart}
-    />
-  </div>
+  <BrandLogoScope domain={item.logoDomain || ""}>
+    <div data-testid={cardTestId} data-service-id={item.id}>
+      <ServiceCardCompact
+        name={item.name}
+        meta={item.meta}
+        icon={BrandLogoIcon}
+        placement={item.placement}
+        status={item.status}
+        statusLabel={item.statusLabel}
+        managementLabel={item.managementLabel}
+        actions={item.actions}
+        desiredState={item.desiredState}
+        observedState={item.observedState}
+        showGrip={false}
+        onOpen={item.onOpen}
+        onLogs={item.onLogs}
+        onRestart={item.onRestart}
+      />
+    </div>
+  </BrandLogoScope>
 {/snippet}
 
-<section
-  class="rounded-lg border border-border bg-card p-4"
-  data-testid={testId}
-  aria-label={title}
->
+<!-- Boxless section (operator direction 2026-08-19): heading and service
+     tiles directly on the page ground — no wrapper container card. -->
+<section data-testid={testId} aria-label={title}>
   <div class="mb-4 flex items-center justify-between gap-3">
     <div>
       <h2 class="font-semibold text-foreground">{title}</h2>
@@ -157,8 +175,9 @@
   {:else}
     <div class="space-y-4">
       {#each groups as group (group.id)}
+        <!-- Groups separate with a hairline, not a nested box. -->
         <section
-          class="rounded-lg border border-border/80 bg-background/35 p-3"
+          class="border-t border-border/40 pt-4 first:border-t-0 first:pt-0"
           data-testid="runtime-service-group"
           data-runtime-target-id={group.id}
         >
@@ -191,21 +210,27 @@
             )}
             {@const normalItems = group.items.filter((item) => !item.attention)}
             {#if attentionItems.length > 0}
-              <div class="mb-3 grid gap-3 md:grid-cols-2">
+              <div class="mb-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {#each attentionItems as item (item.id)}
                   {@render detailedCard(item)}
                 {/each}
               </div>
             {/if}
             {#if normalItems.length > 0}
-              <div class="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+              <div
+                class="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4"
+              >
                 {#each normalItems as item (item.id)}
                   {@render compactCard(item)}
                 {/each}
               </div>
             {/if}
           {:else}
-            <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            <!-- Up to four tiles side by side on wide screens; the tiles stay
+                 compact instead of stretching (operator direction 2026-08-19). -->
+            <div
+              class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4"
+            >
               {#each group.items as item (item.id)}
                 {@render detailedCard(item)}
               {/each}

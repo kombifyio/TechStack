@@ -10,13 +10,13 @@
     readExportFile,
     type WalletExport,
     type ExportableCredential,
-  } from "$lib/wallet/export";
-  import { isCryptoAvailable } from "$lib/wallet/crypto";
-  import type { PBWalletItem } from "$lib/stores/wallet";
+  } from "#lib/wallet/export.js";
+  import { isCryptoAvailable } from "#lib/wallet/crypto.js";
+  import type { WalletItem } from "#lib/wallet/types.js";
   import Modal from "./Modal.svelte";
 
   interface Props {
-    items: PBWalletItem[];
+    items: WalletItem[];
     onImport: (credentials: ExportableCredential[]) => Promise<void>;
     onClose: () => void;
   }
@@ -178,7 +178,8 @@
     <div class="space-y-4">
       <button
         onclick={() => (mode = "export")}
-        class="w-full p-4 rounded-lg border border-gray-700 bg-gray-800/50 hover:border-primary/50 hover:bg-primary/10 transition-colors text-left"
+        data-kx="plate"
+        class="w-full p-4 text-left transition-colors hover:border-primary/50 hover:bg-primary/10"
       >
         <div class="flex items-center gap-3">
           <svg
@@ -195,8 +196,8 @@
             />
           </svg>
           <div>
-            <h3 class="text-white font-medium">Export Wallet</h3>
-            <p class="text-sm text-gray-400">
+            <h3 class="text-foreground font-medium">Export Wallet</h3>
+            <p class="text-sm text-muted-foreground">
               Download {items.length} credential{items.length !== 1 ? "s" : ""} as
               encrypted JSON
             </p>
@@ -206,7 +207,8 @@
 
       <button
         onclick={() => (mode = "import")}
-        class="w-full p-4 rounded-lg border border-gray-700 bg-gray-800/50 hover:border-primary/50 hover:bg-primary/10 transition-colors text-left"
+        data-kx="plate"
+        class="w-full p-4 text-left transition-colors hover:border-primary/50 hover:bg-primary/10"
       >
         <div class="flex items-center gap-3">
           <svg
@@ -223,8 +225,8 @@
             />
           </svg>
           <div>
-            <h3 class="text-white font-medium">Import Wallet</h3>
-            <p class="text-sm text-gray-400">
+            <h3 class="text-foreground font-medium">Import Wallet</h3>
+            <p class="text-sm text-muted-foreground">
               Restore credentials from a backup file
             </p>
           </div>
@@ -235,7 +237,8 @@
     <div class="mt-6 flex justify-end">
       <button
         onclick={onClose}
-        class="px-4 py-2 text-sm bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
+        data-kx="control"
+        class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
       >
         Cancel
       </button>
@@ -244,47 +247,48 @@
     <div class="flex items-center gap-3 mb-6">
       <button
         onclick={() => (mode = "select")}
-        class="text-gray-400 hover:text-white"
+        class="text-muted-foreground hover:text-foreground"
       >
         ←
       </button>
-      <h2 class="text-xl font-semibold text-white">Export Credentials</h2>
+      <h2 class="text-xl font-semibold text-foreground">Export Credentials</h2>
     </div>
 
     {#if exportError}
       <div
-        class="mb-4 p-3 rounded-lg bg-red-900/30 border border-red-500/50 text-red-300 text-sm"
+        class="mb-4 p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-sm"
       >
         {exportError}
       </div>
     {/if}
 
     <div class="space-y-4">
-      <div class="p-4 rounded-lg bg-gray-800/50 border border-gray-700 text-sm">
-        <p class="text-gray-300">
-          <strong class="text-white">{items.length}</strong>
+      <div data-kx="plate" class="p-4 text-sm">
+        <p class="text-muted-foreground">
+          <strong class="text-foreground">{items.length}</strong>
           credential{items.length !== 1 ? "s" : ""} will be exported.
         </p>
       </div>
 
       <!-- Export Format Selection -->
       <div>
-        <div class="block text-sm font-medium text-gray-300 mb-3">
+        <div class="block text-sm font-medium text-foreground mb-3">
           Export Format
         </div>
         <div class="space-y-2">
           <label
-            class="flex items-start gap-3 p-3 rounded-lg border border-gray-700 bg-gray-800/30 hover:border-primary/50 cursor-pointer transition-colors"
+            data-kx="plate"
+            class="flex items-start gap-3 p-3 cursor-pointer transition-colors hover:border-primary/50"
           >
             <input
               type="radio"
               bind:group={exportFormat}
               value="json"
-              class="mt-1 w-4 h-4 border-gray-600 bg-gray-800 text-primary focus:ring-primary"
+              class="mt-1 w-4 h-4 border-border bg-input text-primary focus:ring-primary"
             />
             <div class="flex-1">
-              <span class="text-white font-medium">kombify-TechStack JSON</span>
-              <p class="text-xs text-gray-400 mt-0.5">
+              <span class="text-foreground font-medium">kombify-Techstack JSON</span>
+              <p class="text-xs text-muted-foreground mt-0.5">
                 Native format with encryption support. Best for backup and
                 restore.
               </p>
@@ -292,17 +296,18 @@
           </label>
 
           <label
-            class="flex items-start gap-3 p-3 rounded-lg border border-gray-700 bg-gray-800/30 hover:border-primary/50 cursor-pointer transition-colors"
+            data-kx="plate"
+            class="flex items-start gap-3 p-3 cursor-pointer transition-colors hover:border-primary/50"
           >
             <input
               type="radio"
               bind:group={exportFormat}
               value="csv"
-              class="mt-1 w-4 h-4 border-gray-600 bg-gray-800 text-primary focus:ring-primary"
+              class="mt-1 w-4 h-4 border-border bg-input text-primary focus:ring-primary"
             />
             <div class="flex-1">
-              <span class="text-white font-medium">Universal CSV</span>
-              <p class="text-xs text-gray-400 mt-0.5">
+              <span class="text-foreground font-medium">Universal CSV</span>
+              <p class="text-xs text-muted-foreground mt-0.5">
                 Compatible with KeePass, LastPass, and generic password
                 managers.
               </p>
@@ -310,17 +315,18 @@
           </label>
 
           <label
-            class="flex items-start gap-3 p-3 rounded-lg border border-gray-700 bg-gray-800/30 hover:border-primary/50 cursor-pointer transition-colors"
+            data-kx="plate"
+            class="flex items-start gap-3 p-3 cursor-pointer transition-colors hover:border-primary/50"
           >
             <input
               type="radio"
               bind:group={exportFormat}
               value="bitwarden"
-              class="mt-1 w-4 h-4 border-gray-600 bg-gray-800 text-primary focus:ring-primary"
+              class="mt-1 w-4 h-4 border-border bg-input text-primary focus:ring-primary"
             />
             <div class="flex-1">
-              <span class="text-white font-medium">Bitwarden JSON</span>
-              <p class="text-xs text-gray-400 mt-0.5">
+              <span class="text-foreground font-medium">Bitwarden JSON</span>
+              <p class="text-xs text-muted-foreground mt-0.5">
                 Import directly into Bitwarden or compatible vaults.
               </p>
             </div>
@@ -335,12 +341,12 @@
               type="checkbox"
               bind:checked={exportEncrypted}
               disabled={!cryptoAvailable}
-              class="w-5 h-5 rounded border-gray-600 bg-gray-800 text-primary focus:ring-primary"
+              class="w-5 h-5 rounded border-border bg-input text-primary focus:ring-primary"
             />
             <div>
-              <span class="text-white">Encrypt export</span>
+              <span class="text-foreground">Encrypt export</span>
               {#if !cryptoAvailable}
-                <p class="text-xs text-yellow-400">
+                <p class="text-xs text-warning">
                   Encryption not available (requires HTTPS)
                 </p>
               {/if}
@@ -352,37 +358,37 @@
           <div>
             <label
               for="export-password"
-              class="block text-sm font-medium text-gray-300 mb-2"
+              class="block text-sm font-medium text-foreground mb-2"
             >
-              Encryption Password <span class="text-red-400">*</span>
+              Encryption Password <span class="text-destructive">*</span>
             </label>
             <input
               id="export-password"
               type="password"
               bind:value={exportPassword}
               placeholder="Min. 8 characters"
-              class="w-full px-4 py-3 bg-gray-900 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:border-primary focus:outline-none"
+              class="w-full px-4 py-3 bg-input border border-border rounded-lg text-foreground placeholder-muted-foreground focus:border-primary focus:outline-none"
             />
           </div>
 
           <div>
             <label
               for="export-confirm"
-              class="block text-sm font-medium text-gray-300 mb-2"
+              class="block text-sm font-medium text-foreground mb-2"
             >
-              Confirm Password <span class="text-red-400">*</span>
+              Confirm Password <span class="text-destructive">*</span>
             </label>
             <input
               id="export-confirm"
               type="password"
               bind:value={exportConfirmPassword}
               placeholder="Re-enter password"
-              class="w-full px-4 py-3 bg-gray-900 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:border-primary focus:outline-none"
+              class="w-full px-4 py-3 bg-input border border-border rounded-lg text-foreground placeholder-muted-foreground focus:border-primary focus:outline-none"
             />
           </div>
 
           <div
-            class="p-3 rounded-lg bg-yellow-900/20 border border-yellow-700/50 text-sm text-yellow-200"
+            class="p-3 rounded-lg bg-warning/10 border border-warning/30 text-sm text-warning"
           >
             <strong>Important:</strong> Keep this password safe! Without it, you won't
             be able to restore your credentials.
@@ -392,7 +398,7 @@
 
       {#if exportFormat !== "json"}
         <div
-          class="p-3 rounded-lg bg-blue-900/20 border border-blue-700/50 text-sm text-blue-200"
+          class="p-3 rounded-lg bg-info/10 border border-info/30 text-sm text-info"
         >
           <strong>Note:</strong>
           {exportFormat === "csv" ? "CSV" : "Bitwarden JSON"} exports are not encrypted.
@@ -400,7 +406,7 @@
         </div>
       {:else if !exportEncrypted}
         <div
-          class="p-3 rounded-lg bg-red-900/20 border border-red-700/50 text-sm text-red-200"
+          class="p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-sm text-destructive"
         >
           <strong>Warning:</strong> Exporting without encryption will save all secrets
           in plain text. Only use this for testing.
@@ -411,14 +417,17 @@
     <div class="mt-6 flex justify-end gap-3">
       <button
         onclick={() => (mode = "select")}
-        class="px-4 py-2 text-sm bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
+        data-kx="control"
+        class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
       >
         Back
       </button>
       <button
         onclick={handleExport}
         disabled={exporting || items.length === 0}
-        class="px-4 py-2 text-sm bg-primary hover:bg-primary/90 disabled:bg-primary/50 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
+        data-kx="control"
+        data-variant="primary"
+        class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
       >
         {#if exporting}
           Exporting...
@@ -434,16 +443,16 @@
           mode = "select";
           resetImport();
         }}
-        class="text-gray-400 hover:text-white"
+        class="text-muted-foreground hover:text-foreground"
       >
         ←
       </button>
-      <h2 class="text-xl font-semibold text-white">Import Credentials</h2>
+      <h2 class="text-xl font-semibold text-foreground">Import Credentials</h2>
     </div>
 
     {#if importError}
       <div
-        class="mb-4 p-3 rounded-lg bg-red-900/30 border border-red-500/50 text-red-300 text-sm"
+        class="mb-4 p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-sm"
       >
         {importError}
       </div>
@@ -452,7 +461,7 @@
     {#if importStep === "upload"}
       <div class="space-y-4">
         <div
-          class="border-2 border-dashed border-gray-600 rounded-lg p-8 text-center hover:border-gray-500 transition-colors"
+          class="border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-muted-foreground transition-colors"
         >
           <input
             type="file"
@@ -463,7 +472,7 @@
           />
           <label for="import-file" class="cursor-pointer">
             <svg
-              class="w-12 h-12 mx-auto mb-3 text-gray-500"
+              class="w-12 h-12 mx-auto mb-3 text-muted-foreground"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -475,9 +484,9 @@
                 d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
               />
             </svg>
-            <p class="text-white mb-1">Click to select file</p>
-            <p class="text-sm text-gray-400">
-              kombify-TechStack wallet export (.json)
+            <p class="text-foreground mb-1">Click to select file</p>
+            <p class="text-sm text-muted-foreground">
+              kombify-Techstack wallet export (.json)
             </p>
           </label>
         </div>
@@ -485,13 +494,13 @@
     {:else if importStep === "password"}
       <div class="space-y-4">
         <div
-          class="p-4 rounded-lg bg-gray-800/50 border border-gray-700 text-sm"
+          data-kx="plate" class="p-4 text-sm"
         >
-          <p class="text-gray-300">
+          <p class="text-muted-foreground">
             This export is encrypted. Enter the password to decrypt.
           </p>
           {#if importPreview}
-            <p class="text-gray-500 mt-1 text-xs">
+            <p class="text-muted-foreground mt-1 text-xs">
               Exported: {new Date(importPreview.exportedAt).toLocaleString()}
               • {importPreview.itemCount} items
             </p>
@@ -501,29 +510,32 @@
         <div>
           <label
             for="import-password"
-            class="block text-sm font-medium text-gray-300 mb-2"
+            class="block text-sm font-medium text-foreground mb-2"
           >
-            Decryption Password <span class="text-red-400">*</span>
+            Decryption Password <span class="text-destructive">*</span>
           </label>
           <input
             id="import-password"
             type="password"
             bind:value={importPassword}
             placeholder="Enter export password"
-            class="w-full px-4 py-3 bg-gray-900 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:border-primary focus:outline-none"
+            class="w-full px-4 py-3 bg-input border border-border rounded-lg text-foreground placeholder-muted-foreground focus:border-primary focus:outline-none"
           />
         </div>
 
         <div class="flex gap-3">
           <button
             onclick={resetImport}
-            class="px-4 py-2 text-sm bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
+            data-kx="control"
+        class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
           >
             Choose Different File
           </button>
           <button
             onclick={handleDecrypt}
-            class="px-4 py-2 text-sm bg-primary hover:bg-primary/90 text-white font-medium rounded-lg transition-colors"
+            data-kx="control"
+            data-variant="primary"
+            class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
           >
             Decrypt
           </button>
@@ -532,9 +544,9 @@
     {:else if importStep === "preview"}
       <div class="space-y-4">
         <div
-          class="p-4 rounded-lg bg-gray-800/50 border border-gray-700 text-sm"
+          data-kx="plate" class="p-4 text-sm"
         >
-          <p class="text-white font-medium mb-2">
+          <p class="text-foreground font-medium mb-2">
             Ready to import {importItems.length} credential{importItems.length !==
             1
               ? "s"
@@ -542,10 +554,8 @@
           </p>
           <div class="max-h-48 overflow-y-auto space-y-1">
             {#each importItems as item}
-              <div class="flex items-center gap-2 text-gray-300">
-                <span
-                  class="text-xs font-mono px-1.5 py-0.5 rounded bg-gray-800"
-                >
+              <div class="flex items-center gap-2 text-foreground">
+                <span data-kx="tag" class="text-xs font-mono px-1.5 py-0.5">
                   {item.kind === "password"
                     ? "PW"
                     : item.kind === "api_key"
@@ -559,14 +569,14 @@
                             : "?"}
                 </span>
                 <span class="truncate">{item.name}</span>
-                <span class="text-gray-500 text-xs">({item.kind})</span>
+                <span class="text-muted-foreground text-xs">({item.kind})</span>
               </div>
             {/each}
           </div>
         </div>
 
         <div
-          class="p-3 rounded-lg bg-yellow-900/20 border border-yellow-700/50 text-sm text-yellow-200"
+          class="p-3 rounded-lg bg-warning/10 border border-warning/30 text-sm text-warning"
         >
           <strong>Note:</strong> Imported credentials will be added as new entries.
           Duplicates are not automatically merged.
@@ -580,7 +590,8 @@
           mode = "select";
           resetImport();
         }}
-        class="px-4 py-2 text-sm bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
+        data-kx="control"
+        class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
       >
         {importStep === "upload" ? "Back" : "Cancel"}
       </button>
@@ -588,7 +599,9 @@
         <button
           onclick={handleImport}
           disabled={importing || importItems.length === 0}
-          class="px-4 py-2 text-sm bg-primary hover:bg-primary/90 disabled:bg-primary/50 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
+          data-kx="control"
+        data-variant="primary"
+        class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
         >
           {#if importing}
             Importing...

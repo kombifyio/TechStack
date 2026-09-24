@@ -16,9 +16,9 @@ import {
  * Users -> Login) and the post-create handoff to the operations dashboard (the old
  * single-page "Worker Registrierung" modal no longer exists). The old test IDs
  * (easy-next, easy-create, easy-users-onlyme, easy-login-password, easy-admin-*)
- * were renamed; this version uses wizard-next / wizard-create / easy-users-me /
- * easy-auth-password and the #admin-* credential inputs, and adds the required
- * /api/v1/unifier/pipeline/preview mock.
+ * were renamed; this version uses wizard-next / wizard-create / easy-users-solo,
+ * verifies the passkey-first handoff, and adds the required pipeline preview
+ * mock.
  */
 
 async function mockPipelinePreview(page: Page, apiBase: string) {
@@ -39,8 +39,8 @@ async function mockPipelinePreview(page: Page, apiBase: string) {
   );
 }
 
-// Walks the 5-step easy wizard on defaults (vault goal + install-command server
-// + onlyMe audience are on by default) and submits with password auth.
+// Walks the 5-step easy wizard through the owned-device one-liner path and
+// submits with Pocket ID passkeys.
 async function advanceWizardAndCreate(page: Page) {
   await page.getByTestId("hydrated").waitFor({ state: "attached" });
 
@@ -48,6 +48,8 @@ async function advanceWizardAndCreate(page: Page) {
   await page.getByTestId("wizard-next").click(); // Goals -> Server
 
   await expect(page.getByTestId("easy-step-2")).toBeVisible();
+  await page.getByTestId("server-branch-owned").click();
+  await page.getByTestId("server-mode-install-command").click();
   await page.getByTestId("wizard-next").click(); // Server -> Access
 
   await expect(page.getByTestId("easy-step-3")).toBeVisible();
@@ -57,10 +59,8 @@ async function advanceWizardAndCreate(page: Page) {
   await page.getByTestId("wizard-next").click(); // Users -> Login
 
   await expect(page.getByTestId("easy-step-5")).toBeVisible();
-  await page.getByTestId("easy-auth-password").click();
+  await expect(page.getByTestId("easy-auth-passkey")).toBeVisible();
   await page.locator("#admin-email").fill("admin@test.local");
-  await page.locator("#admin-password").fill("testpass123");
-  await page.locator("#admin-password-confirm").fill("testpass123");
   await page.getByTestId("wizard-create").click();
 }
 
@@ -119,7 +119,7 @@ test.describe("Stack Creation Progress", () => {
     await page.goto(`${origin}/stacks/new`);
     await advanceWizardAndCreate(page);
 
-    await page.waitForURL("**/stacks?**", { timeout: 15000 });
+    await page.waitForURL("**/dashboard?**", { timeout: 15000 });
     await expect(page).toHaveURL(/\/stacks\?.*stack_id=test-stack-123/);
   });
 

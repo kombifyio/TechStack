@@ -1,23 +1,20 @@
 // Package orchestrator provides the central orchestration layer for kombifyTechstack.
-// It connects the job queue with PocketBase and manages the provisioning lifecycle.
 package orchestrator
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/gocommon/identity"
+	"github.com/kombifyio/techstack/internal/portinventory"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/serverruntime"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/vmlease"
-	"github.com/pocketbase/pocketbase"
-	"github.com/pocketbase/pocketbase/core"
-
-	"github.com/kombifyio/go-common/identity"
-	"github.com/kombifyio/techstack/internal/portinventory"
-	"github.com/kombifyio/techstack/internal/providercatalog"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/jobs"
 	"github.com/kombifyio/techstack/pkg/logger"
@@ -29,9 +26,6 @@ import (
 	"github.com/kombifyio/techstack/pkg/stackrouting"
 	"github.com/kombifyio/techstack/pkg/vmleases"
 )
-
-// ErrBlockingPreChecksFailed is returned when blocking pre-checks have not passed.
-var ErrBlockingPreChecksFailed = errors.New("blocking pre-checks have not passed")
 
 // ErrNoAssignedWorkers is retained as the public compatibility sentinel for a
 // deploy without any current canonical Guard runtime target. Approval or a
@@ -59,8 +53,6 @@ const (
 	persistentJobTypeProvision  = "provision"
 	persistentJobTypeDeploy     = "deploy"
 	persistentJobTypeDestroy    = "destroy"
-	persistentJobTypeUpdate     = "update"
-	persistentJobTypeRestart    = "restart"
 	persistentStatePending      = "pending"
 	persistentStateRunning      = "running"
 	persistentStateProvisioning = "provisioning"
@@ -95,9 +87,8 @@ const (
 	targetTypeStack             = "stack"
 )
 
-// Orchestrator coordinates job execution with PocketBase state.
+// Orchestrator coordinates job execution with canonical control-plane state.
 type Orchestrator struct {
-	app                      PocketBaseApp // Interface for PocketBase operations (enables mocking)
 	queue                    *jobs.Queue
 	log                      *logger.Logger
 	cfg                      Config
@@ -105,34 +96,92 @@ type Orchestrator struct {
 	jobStore                 controlplane.JobStore
 	workerStore              controlplane.WorkerStore
 	walletStore              controlplane.WalletStore
+	driftStore               controlplane.DriftResultStore
+	activityStore            controlplane.ActivityStore
 	registry                 controlplane.RegistryStore
 	leaseLister              ManagedRuntimeLeaseLister
 	routingStore             stackrouting.Store
 	stackKitCommander        jobs.StackKitCommandSender
 	managedStackKitInventory jobs.ManagedStackKitInventoryBuilder
+	terminalJobObservers     []TerminalJobObserver
 	now                      func() time.Time
-	mu                       sync.RWMutex
-	durableResumeMu          sync.Mutex
-	ctx                      context.Context
-	cancel                   context.CancelFunc
-	wg                       sync.WaitGroup // Track active goroutines for graceful shutdown
+	// mu guards configuration mutation. Lifecycle dispatch takes the read
+	// side for its duration so unrelated stacks dispatch concurrently while a
+	// late Configure* call still waits for every in-flight dispatch.
+	mu              sync.RWMutex
+	stackLocks      stackLockTable
+	durableResumeMu sync.Mutex
+	ctx             context.Context
+	cancel          context.CancelFunc
+	wg              sync.WaitGroup // Track active goroutines for graceful shutdown
+}
+
+// stackLockTable serializes lifecycle dispatch per stack without serializing
+// unrelated stacks. The durable per-stack execution claim in the job store
+// remains the cross-replica barrier; this table only keeps same-process
+// dispatches from racing into that claim.
+type stackLockTable struct {
+	mu    sync.Mutex
+	locks map[string]*stackLockEntry
+}
+
+type stackLockEntry struct {
+	mu   sync.Mutex
+	refs int
+}
+
+// lock acquires the per-stack lock and returns its release function. An empty
+// key falls back to a shared lock so a malformed request cannot bypass
+// serialization.
+func (t *stackLockTable) lock(key string) func() {
+	key = strings.TrimSpace(key)
+	t.mu.Lock()
+	if t.locks == nil {
+		t.locks = map[string]*stackLockEntry{}
+	}
+	entry, ok := t.locks[key]
+	if !ok {
+		entry = &stackLockEntry{}
+		t.locks[key] = entry
+	}
+	entry.refs++
+	t.mu.Unlock()
+
+	entry.mu.Lock()
+	return func() {
+		entry.mu.Unlock()
+		t.mu.Lock()
+		entry.refs--
+		if entry.refs <= 0 {
+			delete(t.locks, key)
+		}
+		t.mu.Unlock()
+	}
 }
 
 // Config holds orchestrator configuration.
 type Config struct {
-	Workers                  int
-	WorkDir                  string
-	RuntimeActions           jobs.RuntimeActions
+	Workers        int
+	WorkDir        string
+	RuntimeActions jobs.RuntimeActions
+	// BackupScheduleProjector records the cadence a managed rollout selected.
+	// Without it the schedule projection stays empty and no backup is ever due.
+	BackupScheduleProjector  jobs.BackupScheduleProjector
 	StackStore               controlplane.StackStore
 	JobStore                 controlplane.JobStore
 	WorkerStore              controlplane.WorkerStore
 	WalletStore              controlplane.WalletStore
+	DriftStore               controlplane.DriftResultStore
+	ActivityStore            controlplane.ActivityStore
 	RegistryStore            controlplane.RegistryStore
 	LeaseLister              ManagedRuntimeLeaseLister
 	RoutingStore             stackrouting.Store
 	StackKitCommander        jobs.StackKitCommandSender
 	ManagedStackKitInventory jobs.ManagedStackKitInventoryBuilder
-	PortInventory            portinventory.CurrentAuthority
+	PortInventory            portinventory.LifecycleAuthority
+	// RemoteEnrollment drives the durable connect-remote enrollment job. It is
+	// late-bound by ConfigureRemoteEnrollment once route custody is wired.
+	RemoteEnrollment jobs.RemoteEnrollmentExecutor
 	// Now is an optional clock used only by durable recovery admission. Queue
 	// execution retains wall-clock timestamps; injecting this clock lets the
 	// stale-heartbeat fence be deterministically verified without sleeping.
@@ -146,11 +195,13 @@ type ManagedRuntimeLeaseLister interface {
 type ProvisionStackOptions struct {
 	AutoDeploy            bool
 	OwnerSpecBootstrap    *jobs.OwnerSpecBootstrap
+	IdempotencyKey        string
 	RequestContext        context.Context
 	TenantID              string
 	OwnerID               string
 	StackName             string
 	PreparedManagedLease  *jobs.ManagedLeaseRequest
+	CustomerGuest         *jobs.CustomerGuestBinding
 	RequiredLeaseID       string
 	RequiredServerID      string
 	RoutingRevision       int64
@@ -163,39 +214,18 @@ type ProvisionStackOptions struct {
 	rolloutRetryJobID     string
 	rolloutRetryKey       string
 	rolloutRetryNewID     string
-	requireControlPlane   bool
 }
 
 type orchestratorStack struct {
-	id       string
-	name     string
-	status   string
-	ownerID  string
-	tenantID string
-	config   map[string]any
-	record   *core.Record
-}
-
-func jobTypeForPersistence(jobType string) string {
-	switch jobType {
-	case persistentJobTypeProvision, persistentJobTypeDestroy, persistentJobTypeUpdate, persistentJobTypeRestart:
-		return jobType
-	case persistentJobTypeDeploy, "drift_check":
-		return persistentJobTypeUpdate
-	case "drift_resolve":
-		return persistentJobTypeRestart
-	default:
-		return persistentJobTypeUpdate
-	}
-}
-
-func setRecordTenantIDFromStack(record *core.Record, stack *core.Record) {
-	if record == nil || stack == nil {
-		return
-	}
-	if tenantID := strings.TrimSpace(stack.GetString(stackTenantIDField)); tenantID != "" {
-		record.Set(stackTenantIDField, tenantID)
-	}
+	id                 string
+	stackKitInstanceID string
+	name               string
+	status             string
+	driftStatus        string
+	ownerID            string
+	tenantID           string
+	config             map[string]any
+	runtimeSummary     map[string]any
 }
 
 func (o *Orchestrator) effectiveStackStore() controlplane.StackStore {
@@ -208,87 +238,36 @@ func (o *Orchestrator) effectiveStackStore() controlplane.StackStore {
 	return nil
 }
 
-func stackRecordControlPlaneConfig(record *core.Record) map[string]any {
-	config := map[string]any{}
-	if record == nil {
-		return config
-	}
-	if userConfig := record.Get("user_config"); userConfig != nil {
-		config["user_config"] = userConfig
-		if fields, ok := userConfig.(map[string]any); ok {
-			for _, key := range []string{
-				runtimeFieldLane,
-				runtimeFieldProvisionMode,
-				runtimeFieldConnectionMode,
-				runtimeFieldStackKitRef,
-				providercatalog.ProviderIDField,
-				runtimeFieldLeaseProvider,
-				runtimeFieldProviderRegion,
-				runtimeFieldIONOSDatacenter,
-				runtimeFieldSimProviderID,
-			} {
-				if value, exists := fields[key]; exists {
-					config[key] = value
-				}
-			}
-		}
-	}
-	if raw := strings.TrimSpace(record.GetString("user_config_raw")); raw != "" {
-		config["user_config_raw"] = raw
-	}
-	if format := strings.TrimSpace(record.GetString("user_config_format")); format != "" {
-		config["user_config_format"] = format
-	}
-	for _, key := range []string{providercatalog.ProviderIDField, runtimeFieldLeaseProvider, runtimeFieldSimProviderID} {
-		if value := record.GetString(key); value != "" {
-			config[key] = value
-		}
-	}
-	return config
-}
-
-func (o *Orchestrator) ensureControlPlaneStackForRecord(ctx context.Context, stack *orchestratorStack) {
-	if stack == nil || stack.record == nil || strings.TrimSpace(stack.tenantID) == "" {
-		return
-	}
-	store := o.effectiveStackStore()
-	if store == nil {
-		return
-	}
-	if _, err := store.GetStack(ctx, stack.tenantID, stack.id); err == nil {
-		return
-	}
-	_, err := store.CreateStack(ctx, controlplane.CreateStackRequest{
-		ID:             stack.id,
-		TenantID:       stack.tenantID,
-		OwnerSubjectID: stack.ownerID,
-		Name:           stack.name,
-		Mode:           firstNonEmptyString(stack.record.GetString("mode"), stackModeEasy),
-		Status:         firstNonEmptyString(stack.status, persistentStatePending),
-		Config:         stackRecordControlPlaneConfig(stack.record),
-	})
-	if err != nil && !errors.Is(err, controlplane.ErrConflict) {
-		o.log.Error("failed_to_project_stack_for_controlplane_job", "stack_id", stack.id, stackTenantIDField, stack.tenantID, "error", err)
-	}
-}
-
 // DefaultConfig returns a sensible default configuration.
 func DefaultConfig() *Config {
 	return &Config{
-		Workers: 4,
+		Workers: workerCountFromEnvironment(),
 		WorkDir: "data/provision",
 	}
 }
 
-// New creates a new Orchestrator instance with a real PocketBase app.
-// For testing, use NewWithApp with a mock PocketBaseApp.
-func New(app *pocketbase.PocketBase, cfg *Config, log *logger.Logger) *Orchestrator {
-	return NewWithApp(app, cfg, log)
+// workerCountFromEnvironment keeps the historical four workers as the default
+// and lets a deployment size its in-process job pool without a code change.
+// The bound stays finite: an unbounded pool would multiply provider and
+// control-plane pressure per replica.
+func workerCountFromEnvironment() int {
+	const (
+		defaultWorkers = 4
+		maxWorkers     = 64
+	)
+	raw := strings.TrimSpace(os.Getenv("TECHSTACK_JOB_WORKERS"))
+	if raw == "" {
+		return defaultWorkers
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed <= 0 || parsed > maxWorkers {
+		return defaultWorkers
+	}
+	return parsed
 }
 
-// NewWithApp creates a new Orchestrator with a custom PocketBaseApp implementation.
-// This constructor is intended for testing with mock implementations.
-func NewWithApp(app PocketBaseApp, cfg *Config, log *logger.Logger) *Orchestrator {
+// New creates an Orchestrator backed by the canonical stores in Config.
+func New(cfg *Config, log *logger.Logger) *Orchestrator {
 	if cfg == nil {
 		cfg = DefaultConfig()
 	}
@@ -299,7 +278,6 @@ func NewWithApp(app PocketBaseApp, cfg *Config, log *logger.Logger) *Orchestrato
 	ctx, cancel := context.WithCancel(context.Background())
 
 	o := &Orchestrator{
-		app:                      app,
 		queue:                    jobs.NewQueue(cfg.Workers, log),
 		log:                      log.WithComponent("orchestrator"),
 		cfg:                      *cfg,
@@ -307,6 +285,8 @@ func NewWithApp(app PocketBaseApp, cfg *Config, log *logger.Logger) *Orchestrato
 		jobStore:                 cfg.JobStore,
 		workerStore:              cfg.WorkerStore,
 		walletStore:              cfg.WalletStore,
+		driftStore:               cfg.DriftStore,
+		activityStore:            cfg.ActivityStore,
 		registry:                 cfg.RegistryStore,
 		leaseLister:              cfg.LeaseLister,
 		routingStore:             cfg.RoutingStore,
@@ -345,7 +325,10 @@ func (o *Orchestrator) provisionConfig(actions jobs.RuntimeActions) *jobs.Provis
 		PortInventory:                o.cfg.PortInventory,
 		RoutingStore:                 o.routingStore,
 		AutoDeployAdmission:          o.admitProvisionAutoDeploy,
+		BackupScheduleProjector:      o.cfg.BackupScheduleProjector,
+		BackupAgentResolver:          o.resolveBackupAgent,
 		NoWorkspaceDestroyReconciler: o.reconcileNoWorkspaceDestroy,
+		RemoteEnrollment:             o.cfg.RemoteEnrollment,
 	}
 }
 
@@ -375,6 +358,29 @@ func (o *Orchestrator) ConfigureRuntimeActions(actions jobs.RuntimeActions) {
 	jobs.RegisterDefaultHandlers(o.queue, o.provisionConfig(actions))
 }
 
+// ConfigureRemoteEnrollment late-binds the connect-remote enrollment executor
+// once route custody (wallet, pairing store, origin) is wired, and re-registers
+// the default handlers so the durable remote_enrollment type becomes runnable.
+func (o *Orchestrator) ConfigureRemoteEnrollment(executor jobs.RemoteEnrollmentExecutor) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	o.cfg.RemoteEnrollment = executor
+	jobs.RegisterDefaultHandlers(o.queue, o.provisionConfig(o.cfg.RuntimeActions))
+}
+
+// EnqueuePreparedJob admits an already-persisted pending job into this
+// process's queue. The durable row must exist in pending state; the queue's
+// execution claim stays the single authority for running it.
+func (o *Orchestrator) EnqueuePreparedJob(job *jobs.Job, tenantID string) error {
+	if o == nil || o.queue == nil || job == nil {
+		return fmt.Errorf("orchestrator is not configured for prepared jobs")
+	}
+	unlockStack := o.stackLocks.lock(job.TargetID)
+	defer unlockStack()
+	return o.enqueueWithSync(job, tenantID)
+}
+
 // admitProvisionAutoDeploy is the read-only control-plane fence for the one
 // remaining provision-to-deploy handoff. It reuses the same native lease and
 // canonical Guard predicates as explicit and recovery deploys.
@@ -387,11 +393,10 @@ func (o *Orchestrator) admitProvisionAutoDeploy(ctx context.Context, req jobs.Au
 		return fmt.Errorf("%w: exact stack, tenant, owner, and lease are required", ErrDeployRuntimeEvidenceUnavailable)
 	}
 	stack, err := o.findControlPlaneStackForJob(ctx, stackID, ProvisionStackOptions{
-		TenantID:            tenantID,
-		OwnerID:             ownerID,
-		RequiredLeaseID:     leaseID,
-		RequiredServerID:    runtimeidentity.LeaseServerID(leaseID),
-		requireControlPlane: true,
+		TenantID:         tenantID,
+		OwnerID:          ownerID,
+		RequiredLeaseID:  leaseID,
+		RequiredServerID: runtimeidentity.LeaseServerID(leaseID),
 	})
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrDeployRuntimeEvidenceUnavailable, err)
@@ -451,65 +456,15 @@ func (o *Orchestrator) Queue() *jobs.Queue {
 	return o.queue
 }
 
-// CheckBlockingPreChecks verifies that all blocking pre-checks have passed for all workers in the stack.
-// Returns nil if all blocking checks passed, or an error describing which checks failed.
-func (o *Orchestrator) CheckBlockingPreChecks(stackID string) error {
-	// Query precheck_results for this stack where check_type contains "blocking"
-	// and status is not "passed"
-	records, err := o.app.FindRecordsByFilter(
-		"precheck_results",
-		"stack_id = {:stackID} && check_type ~ 'blocking' && status != 'passed'",
-		"-executed_at",
-		100,
-		0,
-		map[string]interface{}{"stackID": stackID},
-	)
-	if err != nil {
-		// If collection doesn't exist yet, treat as no pre-checks configured
-		o.log.Warn("precheck_query_failed", "stack_id", stackID, "error", err)
-		return nil
-	}
-
-	if len(records) == 0 {
-		// All blocking checks passed (or none exist)
-		return nil
-	}
-
-	// Build error message with details about failed checks
-	var failedChecks []string
-	for _, r := range records {
-		workerID := r.GetString("worker_id")
-		checkType := r.GetString("check_type")
-		status := r.GetString("status")
-		message := r.GetString("message")
-		failedChecks = append(failedChecks, fmt.Sprintf("worker=%s type=%s status=%s msg=%s", workerID, checkType, status, message))
-	}
-
-	o.log.Warn("blocking_prechecks_failed",
-		"stack_id", stackID,
-		"failed_count", len(failedChecks),
-		"checks", failedChecks,
-	)
-
-	return fmt.Errorf("%w: %d blocking check(s) not passed", ErrBlockingPreChecksFailed, len(failedChecks))
-}
-
 func (o *Orchestrator) findStackForJob(ctx context.Context, stackID string, opts ProvisionStackOptions) (*orchestratorStack, error) {
-	if opts.requireControlPlane {
-		return o.findControlPlaneStackForJob(ctx, stackID, opts)
+	stack, err := o.findControlPlaneStackForJob(ctx, stackID, opts)
+	if err != nil {
+		return nil, err
 	}
-	if stack, err := o.app.FindRecordById("stacks", stackID); err == nil {
-		return &orchestratorStack{
-			id:       stack.Id,
-			name:     stack.GetString(stackKitNodeNameField),
-			status:   stack.GetString("status"),
-			ownerID:  stack.GetString(stackOwnerIDField),
-			tenantID: stack.GetString(stackTenantIDField),
-			config:   stackRecordControlPlaneConfig(stack),
-			record:   stack,
-		}, nil
+	if stack.tenantID != strings.TrimSpace(opts.TenantID) || stack.ownerID != strings.TrimSpace(opts.OwnerID) {
+		return nil, controlplane.ErrNotFound
 	}
-	return o.findControlPlaneStackForJob(ctx, stackID, opts)
+	return stack, nil
 }
 
 func (o *Orchestrator) findControlPlaneStackForJob(ctx context.Context, stackID string, opts ProvisionStackOptions) (*orchestratorStack, error) {
@@ -522,99 +477,92 @@ func (o *Orchestrator) findControlPlaneStackForJob(ctx context.Context, stackID 
 	if err != nil {
 		return nil, fmt.Errorf("stack not found: %w", err)
 	}
+	return controlPlaneOrchestratorStack(stack, opts), nil
+}
+
+func (o *Orchestrator) findArchivedControlPlaneStackForRecovery(ctx context.Context, stackID string, opts ProvisionStackOptions) (*orchestratorStack, error) {
+	tenantID := strings.TrimSpace(opts.TenantID)
+	reader, ok := o.effectiveStackStore().(controlplane.ArchivedStackReceiptReader)
+	if tenantID == "" || !ok {
+		return nil, fmt.Errorf("stack recovery receipt not found")
+	}
+	stack, err := reader.GetStackIncludingDeleted(ctx, tenantID, stackID)
+	if err != nil {
+		return nil, fmt.Errorf("stack recovery receipt not found: %w", err)
+	}
+	return controlPlaneOrchestratorStack(stack, opts), nil
+}
+
+func controlPlaneOrchestratorStack(stack *controlplane.Stack, opts ProvisionStackOptions) *orchestratorStack {
 	return &orchestratorStack{
-		id:       stack.ID,
-		name:     firstNonEmptyString(opts.StackName, stack.Name),
-		status:   stack.Status,
-		ownerID:  stack.OwnerSubjectID,
-		tenantID: stack.TenantID,
-		config:   stack.Config,
-	}, nil
+		id:                 stack.ID,
+		stackKitInstanceID: stack.StackKitInstanceID,
+		name:               firstNonEmptyString(opts.StackName, stack.Name),
+		status:             stack.Status,
+		driftStatus:        stack.DriftStatus,
+		ownerID:            stack.OwnerSubjectID,
+		tenantID:           stack.TenantID,
+		config:             stack.Config,
+		runtimeSummary:     stack.RuntimeSummary,
+	}
 }
 
-func (o *Orchestrator) createJobRecordForStack(ctx context.Context, stack *orchestratorStack, jobType, currentStep string) (string, *core.Record, error) {
-	jobID := ""
-	var jobRecord *core.Record
-	if stack.record != nil {
-		if jobsCollection, findErr := o.app.FindCollectionByNameOrId("jobs"); findErr == nil {
-			jobRecord = core.NewRecord(jobsCollection)
-			jobRecord.Set("type", jobTypeForPersistence(jobType))
-			jobRecord.Set("state", persistentStatePending)
-			jobRecord.Set("progress", 0)
-			jobRecord.Set("stack_id", stack.id)
-			jobRecord.Set("current_step", currentStep)
-			setRecordTenantIDFromStack(jobRecord, stack.record)
-			if err := o.app.Save(jobRecord); err != nil {
-				return "", nil, fmt.Errorf("failed to create job record: %w", err)
-			}
-			jobID = jobRecord.Id
-		} else if o.jobStore == nil || stack.tenantID == "" {
-			return "", nil, fmt.Errorf("jobs collection not found: %w", findErr)
-		}
+func (o *Orchestrator) createJobRecordForStack(ctx context.Context, stack *orchestratorStack, jobType, currentStep string) (string, error) {
+	if o.jobStore == nil || stack == nil || strings.TrimSpace(stack.tenantID) == "" {
+		return "", fmt.Errorf("durable job store is required")
 	}
-	if o.jobStore != nil && strings.TrimSpace(stack.tenantID) != "" {
-		o.ensureControlPlaneStackForRecord(ctx, stack)
-		if jobID == "" {
-			jobID = fmt.Sprintf("job-%d", time.Now().UnixNano())
-		}
-		if _, err := o.jobStore.UpsertJob(ctx, controlplane.UpsertJobRequest{
-			ID:       jobID,
-			TenantID: stack.tenantID,
-			StackID:  stack.id,
-			Type:     jobType,
-			State:    persistentStatePending,
-			Progress: 0,
-			Step:     currentStep,
-			Message:  currentStep,
-		}); err != nil {
-			return "", nil, fmt.Errorf("failed to create control-plane job record: %w", err)
-		}
-	}
-	if jobID == "" {
-		return "", nil, fmt.Errorf("failed to create job record")
-	}
-	return jobID, jobRecord, nil
-}
-
-// persistManagedProviderDecommissionRecoveryMarker writes the only durable
-// recovery identity before the destroy job can enter the process-local queue.
-// A later queue snapshot may change job_wait for a busy or unavailable claim,
-// but this server-generated marker remains bound to the exact tenant and stack
-// and is never taken from client payload or historical result diagnostics.
-func (o *Orchestrator) persistManagedProviderDecommissionRecoveryMarker(
-	ctx context.Context,
-	stack *orchestratorStack,
-	jobID string,
-) error {
-	if o == nil || o.jobStore == nil || stack == nil {
-		return fmt.Errorf("managed provider decommission recovery requires a durable job store")
-	}
-	if strings.TrimSpace(stack.tenantID) == "" || strings.TrimSpace(stack.id) == "" || strings.TrimSpace(jobID) == "" {
-		return fmt.Errorf("managed provider decommission recovery requires exact tenant, stack, and job identity")
-	}
-	_, err := o.jobStore.UpsertJob(ctx, controlplane.UpsertJobRequest{
+	jobID := jobs.NewID()
+	if _, err := o.jobStore.UpsertJob(ctx, controlplane.UpsertJobRequest{
 		ID:       jobID,
 		TenantID: stack.tenantID,
 		StackID:  stack.id,
-		Type:     persistentJobTypeDestroy,
+		Type:     jobType,
 		State:    persistentStatePending,
 		Progress: 0,
-		Step:     "Queued for destruction",
-		Message:  "Queued for destruction",
-		Result: map[string]any{
-			managedDecommissionRecoveryMarkerKey: managedProviderDecommissionRecoveryMarker(stack.tenantID, stack.id),
-		},
+		Step:     currentStep,
+		Message:  currentStep,
+	}); err != nil {
+		return "", fmt.Errorf("failed to create control-plane job record: %w", err)
+	}
+	return jobID, nil
+}
+
+// persistDestroyAdmissionReceipt writes every server-generated destroy
+// authority before the job can enter the process-local queue. A later queue
+// snapshot may change job_wait, but the exact provider-recovery marker and
+// port-release batch remain durable result evidence rather than client input.
+func (o *Orchestrator) persistDestroyAdmissionReceipt(
+	ctx context.Context,
+	stack *orchestratorStack,
+	jobID string,
+	result map[string]any,
+) error {
+	if o == nil || o.jobStore == nil || stack == nil {
+		return fmt.Errorf("destroy admission receipt requires a durable job store")
+	}
+	if strings.TrimSpace(stack.tenantID) == "" || strings.TrimSpace(stack.id) == "" || strings.TrimSpace(jobID) == "" {
+		return fmt.Errorf("destroy admission receipt requires exact tenant, stack, and job identity")
+	}
+	_, err := o.jobStore.UpsertJob(ctx, controlplane.UpsertJobRequest{
+		ID:           jobID,
+		TenantID:     stack.tenantID,
+		StackID:      stack.id,
+		Type:         persistentJobTypeDestroy,
+		State:        persistentStatePending,
+		Progress:     0,
+		Step:         "Queued for destruction",
+		Message:      "Queued for destruction",
+		Result:       result,
 		ScheduledFor: time.Now().UTC(),
 	})
 	if err != nil {
-		return fmt.Errorf("persist managed provider decommission recovery marker: %w", err)
+		return fmt.Errorf("persist destroy admission receipt: %w", err)
 	}
 	return nil
 }
 
 // persistDeployDispatchReceipt makes an exact-target dispatch durable before
-// the process-local queue can execute it. PocketBase remains a legacy UI
-// projection and receives the same result through the normal job synchronizer.
+// the process-local queue can execute it.
 func (o *Orchestrator) persistDeployDispatchReceipt(ctx context.Context, stack *orchestratorStack, jobID string, result map[string]any, opts ProvisionStackOptions) error {
 	if len(result) == 0 {
 		return nil
@@ -687,32 +635,34 @@ func (o *Orchestrator) persistDeterministicDispatchReceipt(
 }
 
 func (o *Orchestrator) updateStackStatusForJob(ctx context.Context, stack *orchestratorStack, status string) {
-	if stack == nil || status == "" {
-		return
-	}
-	if stack.record != nil {
-		stack.record.Set("status", status)
-		if err := o.app.Save(stack.record); err != nil {
-			o.log.Error("failed_to_update_stack_status", "stack_id", stack.id, "error", err)
-		}
-	}
-	if o.stackStore != nil && strings.TrimSpace(stack.tenantID) != "" {
-		if _, err := o.stackStore.UpdateStackRuntime(ctx, stack.tenantID, stack.id, controlplane.RuntimeUpdate{
-			Status: status,
-		}); err != nil {
-			o.log.Error("failed_to_update_controlplane_stack_status", "stack_id", stack.id, stackTenantIDField, stack.tenantID, "error", err)
-		}
+	if err := o.persistStackStatusForJob(ctx, stack, status); err != nil {
+		o.log.Error("failed_to_update_stack_status", "stack_id", stack.id, "error", err)
 	}
 }
 
-// ProvisionStack creates and enqueues a provisioning job for a stack.
-func (o *Orchestrator) ProvisionStack(stackID string, spec map[string]interface{}) (string, error) {
-	return o.ProvisionStackWithOptions(stackID, spec, ProvisionStackOptions{})
+func (o *Orchestrator) persistStackStatusForJob(ctx context.Context, stack *orchestratorStack, status string) error {
+	if stack == nil || status == "" {
+		return nil
+	}
+	store := o.effectiveStackStore()
+	if store == nil || strings.TrimSpace(stack.tenantID) == "" {
+		return fmt.Errorf("canonical stack store is required")
+	}
+	if _, err := store.UpdateStackRuntime(ctx, stack.tenantID, stack.id, controlplane.RuntimeUpdate{
+		Status: status,
+	}); err != nil {
+		return fmt.Errorf("persist control-plane stack status: %w", err)
+	}
+	stack.status = status
+	return nil
 }
 
 // ProvisionStackWithOptions creates and enqueues a provisioning job with flow
 // controls for wizard-owned paths such as managed runtime auto-rollout.
 func (o *Orchestrator) ProvisionStackWithOptions(stackID string, spec map[string]interface{}, opts ProvisionStackOptions) (string, error) {
+	if err := requireStackLifecycleIdentity(opts); err != nil {
+		return "", err
+	}
 	ctx := opts.RequestContext
 	if ctx == nil {
 		ctx = o.ctx
@@ -729,31 +679,65 @@ func (o *Orchestrator) ProvisionStackWithOptions(stackID string, spec map[string
 		delete(spec, jobs.PreparedManagedLeaseRequestPayloadKey)
 	}
 
-	o.mu.Lock()
-	defer o.mu.Unlock()
+	unlockStack := o.stackLocks.lock(stackID)
+	defer unlockStack()
+	o.mu.RLock()
+	defer o.mu.RUnlock()
 
 	stack, stackErr := o.findStackForJob(ctx, stackID, opts)
 	if stackErr != nil {
 		return "", fmt.Errorf("stack not found: %w", stackErr)
 	}
 
-	// H6c: Check blocking pre-checks before provisioning
-	if preCheckErr := o.CheckBlockingPreChecks(stackID); preCheckErr != nil {
-		return "", preCheckErr
-	}
 	canonicalSpec, providerErr := canonicalizeProvisionProviderIdentity(spec, stack.config)
 	if providerErr != nil {
 		return "", fmt.Errorf("invalid provider selection: %w", providerErr)
 	}
 	spec = canonicalSpec
+	idempotency, idempotencyErr := newProvisionIdempotency(stack, spec, opts.IdempotencyKey)
+	if opts.CustomerGuest != nil {
+		if err := o.requireCustomerGuestLease(ctx, stack, *opts.CustomerGuest); err != nil {
+			return "", err
+		}
+		idempotency, idempotencyErr = newStackLifecycleIdempotency(stack, map[string]any{"spec": spec, jobs.CustomerGuestResultKey: *opts.CustomerGuest}, opts.IdempotencyKey, provisionIdempotencySchema, "provision", persistentJobTypeProvision, jobs.ProvisionIdempotencyReceiptResultField, "Queued for provisioning", ErrProvisionIdempotencyConflict)
+		if idempotency != nil {
+			idempotency.initialResult = map[string]any{jobs.CustomerGuestResultKey: *opts.CustomerGuest, "operation_id": opts.CustomerGuest.OperationID, "lease_id": opts.CustomerGuest.LeaseID, "auto_deploy": true}
+		}
+	}
+	if idempotencyErr != nil {
+		return "", idempotencyErr
+	}
+	if replayID, replay, replayErr := o.findStackLifecycleIdempotencyReplay(ctx, stack, idempotency); replayErr != nil || replay {
+		return replayID, replayErr
+	}
 
 	// Validate stack status
 	status := stack.status
-	if status == persistentStateRunning || status == persistentStateProvisioning {
+	if (status == persistentStateRunning || status == persistentStateProvisioning) && opts.CustomerGuest == nil {
 		return "", fmt.Errorf("stack is already %s", status)
 	}
+	if opts.CustomerGuest != nil {
+		if idempotency == nil {
+			return "", fmt.Errorf("customer guest rollout requires durable idempotency")
+		}
+		if err := o.requireNoActiveCustomerGuestRollout(ctx, stack); err != nil {
+			return "", err
+		}
+	}
 
-	jobID, jobRecord, createErr := o.createJobRecordForStack(ctx, stack, persistentJobTypeProvision, "Queued for provisioning")
+	var jobID string
+	var createErr error
+	receipt := map[string]any(nil)
+	if idempotency != nil {
+		var replay bool
+		jobID, replay, createErr = o.createStackLifecycleIdempotencyJob(ctx, stack, idempotency)
+		if createErr == nil && replay {
+			return jobID, nil
+		}
+		receipt = map[string]any{jobs.ProvisionIdempotencyReceiptResultField: idempotency.receipt}
+	} else {
+		jobID, createErr = o.createJobRecordForStack(ctx, stack, persistentJobTypeProvision, "Queued for provisioning")
+	}
 	if createErr != nil {
 		return "", createErr
 	}
@@ -774,10 +758,21 @@ func (o *Orchestrator) ProvisionStackWithOptions(stackID string, spec map[string
 			"auto_deploy":          opts.AutoDeploy,
 			"owner_spec_bootstrap": opts.OwnerSpecBootstrap,
 		},
+		Result:      receipt,
 		MaxAttempts: 3,
 	}
 	if preparedManagedLeaseRequest != nil {
 		job.Payload[jobs.PreparedManagedLeaseRequestPayloadKey] = preparedManagedLeaseRequest
+	}
+	if opts.CustomerGuest != nil {
+		job.Payload[jobs.CustomerGuestResultKey] = opts.CustomerGuest
+		if job.Result == nil {
+			job.Result = map[string]interface{}{}
+		}
+		job.Result[jobs.CustomerGuestResultKey] = opts.CustomerGuest
+		job.Result["operation_id"] = opts.CustomerGuest.OperationID
+		job.Result["lease_id"] = opts.CustomerGuest.LeaseID
+		job.Result["auto_deploy"] = opts.AutoDeploy
 	}
 	if id := identity.FromContext(ctx); id != nil {
 		job.Payload["actor"] = jobs.ActorPayloadFromIdentity(id)
@@ -787,14 +782,12 @@ func (o *Orchestrator) ProvisionStackWithOptions(stackID string, spec map[string
 
 	// If we have a stored raw user config (imported YAML), pass it through so
 	// the provision job can persist it byte-exact as kombination.yaml.
-	if stack.record != nil {
-		if raw := stack.record.GetString("user_config_raw"); raw != "" {
-			job.Payload["intent_raw"] = raw
-		}
+	if raw := strings.TrimSpace(stringFromAny(stack.config["user_config_raw"])); raw != "" {
+		job.Payload["intent_raw"] = raw
 	}
 
 	// Enqueue with progress sync
-	if enqueueErr := o.enqueueWithSync(job, jobRecord, stack.tenantID); enqueueErr != nil {
+	if enqueueErr := o.enqueueWithSync(job, stack.tenantID); enqueueErr != nil {
 		return "", enqueueErr
 	}
 
@@ -803,19 +796,18 @@ func (o *Orchestrator) ProvisionStackWithOptions(stackID string, spec map[string
 	return job.ID, nil
 }
 
-// DeployStack creates and enqueues a deploy job for a stack.
-// This is the "Rollout" phase: it generates unified-spec.yaml, IaC, and runs OpenTofu.
-func (o *Orchestrator) DeployStack(stackID string) (string, error) {
-	return o.DeployStackWithOptions(stackID, ProvisionStackOptions{})
-}
-
 // DeployStackWithOptions creates and enqueues a deploy job with explicit
 // request identity context for Postgres-backed control-plane stacks.
 func (o *Orchestrator) DeployStackWithOptions(stackID string, opts ProvisionStackOptions) (string, error) {
+	if err := requireStackLifecycleIdentity(opts); err != nil {
+		return "", err
+	}
 	ctx := o.deployRequestContext(opts)
 
-	o.mu.Lock()
-	defer o.mu.Unlock()
+	unlockStack := o.stackLocks.lock(stackID)
+	defer unlockStack()
+	o.mu.RLock()
+	defer o.mu.RUnlock()
 	return o.deployStackWithOptionsLocked(ctx, stackID, opts)
 }
 
@@ -824,15 +816,17 @@ func (o *Orchestrator) deployStackWithOptionsLocked(ctx context.Context, stackID
 	if stackErr != nil {
 		return "", fmt.Errorf("stack not found: %w", stackErr)
 	}
+	idempotency, idempotencyErr := newDeployIdempotency(stack, opts.IdempotencyKey)
+	if idempotencyErr != nil {
+		return "", idempotencyErr
+	}
+	if replayID, replay, replayErr := o.findStackLifecycleIdempotencyReplay(ctx, stack, idempotency); replayErr != nil || replay {
+		return replayID, replayErr
+	}
 	if replayID, found, replayErr := o.findRoutingDispatchReplay(ctx, stack, opts); replayErr != nil {
 		return "", replayErr
 	} else if found {
 		return replayID, nil
-	}
-
-	// H6c: Check blocking pre-checks before deployment
-	if preCheckErr := o.CheckBlockingPreChecks(stackID); preCheckErr != nil {
-		return "", preCheckErr
 	}
 
 	if statusErr := validateDeployStackStatus(stack.status, opts); statusErr != nil {
@@ -843,8 +837,15 @@ func (o *Orchestrator) deployStackWithOptionsLocked(ctx context.Context, stackID
 	if payloadErr != nil {
 		return "", payloadErr
 	}
+	jobs.CaptureStackOwnerEmail(ctx, payload, stack.ownerID)
 
 	dispatchResult := deployDispatchResult(opts)
+	if idempotency != nil {
+		if dispatchResult == nil {
+			dispatchResult = map[string]any{}
+		}
+		dispatchResult[idempotency.resultField] = idempotency.receipt
+	}
 	if isDeterministicExactRecovery(opts) {
 		jobID := deterministicRecoveryJobID(opts)
 		if receiptErr := o.persistDeployDispatchReceipt(ctx, stack, jobID, dispatchResult, opts); receiptErr != nil {
@@ -854,14 +855,24 @@ func (o *Orchestrator) deployStackWithOptionsLocked(ctx context.Context, stackID
 		job := buildDeployQueueJob(stackID, stack, payload, dispatchResult, jobID)
 		jobs.CopyEdgeFlagsFromContext(ctx, job.Payload)
 		jobs.CaptureRequestAuthority(ctx, job, stack.tenantID, stack.ownerID)
-		if enqueueErr := o.enqueueWithSync(job, nil, stack.tenantID); enqueueErr != nil {
+		if enqueueErr := o.enqueueWithSync(job, stack.tenantID); enqueueErr != nil {
 			return "", enqueueErr
 		}
 		o.log.Info("deploy_job_enqueued", "job_id", job.ID, "stack_id", stackID)
 		return job.ID, nil
 	}
 
-	jobID, jobRecord, createErr := o.createJobRecordForStack(ctx, stack, persistentJobTypeDeploy, "Queued for deployment")
+	var jobID string
+	var createErr error
+	if idempotency != nil {
+		var replay bool
+		jobID, replay, createErr = o.createStackLifecycleIdempotencyJob(ctx, stack, idempotency)
+		if createErr == nil && replay {
+			return jobID, nil
+		}
+	} else {
+		jobID, createErr = o.createJobRecordForStack(ctx, stack, persistentJobTypeDeploy, "Queued for deployment")
+	}
 	if createErr != nil {
 		return "", createErr
 	}
@@ -874,7 +885,7 @@ func (o *Orchestrator) deployStackWithOptionsLocked(ctx context.Context, stackID
 	jobs.CopyEdgeFlagsFromContext(ctx, job.Payload)
 	jobs.CaptureRequestAuthority(ctx, job, stack.tenantID, stack.ownerID)
 
-	if enqueueErr := o.enqueueWithSync(job, jobRecord, stack.tenantID); enqueueErr != nil {
+	if enqueueErr := o.enqueueWithSync(job, stack.tenantID); enqueueErr != nil {
 		return "", enqueueErr
 	}
 
@@ -935,6 +946,14 @@ func (o *Orchestrator) deployJobPayload(
 		return nil, ErrNoAssignedWorkers
 	}
 	if managedRuntimeOK {
+		allowedServerBindings, err := o.activeManagedRuntimeDeployServerBindings(ctx, stack, managedPayload, opts)
+		if err != nil {
+			return nil, err
+		}
+		if leaseID, ok := allowedServerBindings[managedRuntime.ID]; !ok || leaseID != managedRuntime.LeaseID {
+			return nil, ErrManagedRuntimeLeaseNotNativeActive
+		}
+		approvedWorkers = deployWorkersForLeaseServerBindings(approvedWorkers, runtimes, allowedServerBindings)
 		// Bind the command channel to the same canonical lease/server aggregate
 		// that admitted the rollout. Falling back to approvedWorkers[0] here can
 		// dispatch typed StackKits commands to a different node than the managed
@@ -943,6 +962,74 @@ func (o *Orchestrator) deployJobPayload(
 		managedPayload["runtime_agent_id"] = managedRuntime.WorkerID
 	}
 	return buildDeployJobPayload(stack, approvedWorkers, managedPayload, opts), nil
+}
+
+// activeManagedRuntimeDeployServerBindings returns the canonical server/lease
+// set owned by the current native-active lease inventory. A normal rollout
+// admits the selected foundation plus active supplemental nodes; exact
+// reconciliation admits only its required pair. Duplicate foundations, stale
+// leases, and foreign stack or owner projections are excluded.
+func (o *Orchestrator) activeManagedRuntimeDeployServerBindings(
+	ctx context.Context,
+	stack *orchestratorStack,
+	managedPayload map[string]interface{},
+	opts ProvisionStackOptions,
+) (map[string]string, error) {
+	if !managedRuntimeLeaseLookupReady(o, stack) {
+		return nil, ErrManagedRuntimeLeaseNotNativeActive
+	}
+	records, err := o.leaseLister.ListInventoryByTenant(ctx, stack.tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrManagedRuntimeLeaseNotNativeActive, err)
+	}
+	selectedLeaseID := strings.TrimSpace(stringFromAny(managedPayload[runtimeFieldLeaseID]))
+	exactServerID := strings.TrimSpace(opts.RequiredServerID)
+	allowed := map[string]string{}
+	for _, record := range records {
+		lease := record.Lease
+		leaseID := strings.TrimSpace(string(lease.ID))
+		if !record.NativeActive() || !managedRuntimeLeaseMatchesStack(lease, stack) {
+			continue
+		}
+		serverID := runtimeidentity.LeaseServerID(leaseID)
+		if serverID == "" {
+			continue
+		}
+		if exactServerID != "" {
+			if leaseID == selectedLeaseID && serverID == exactServerID {
+				allowed[serverID] = leaseID
+			}
+			continue
+		}
+		if isFoundationRoleLease(lease) && leaseID != selectedLeaseID {
+			continue
+		}
+		allowed[serverID] = leaseID
+	}
+	return allowed, nil
+}
+
+func deployWorkersForLeaseServerBindings(
+	workers []map[string]any,
+	runtimes []controlplane.ServerRuntime,
+	allowed map[string]string,
+) []map[string]any {
+	selected := make([]map[string]any, 0, len(workers))
+	for _, worker := range workers {
+		serverID := strings.TrimSpace(stringFromAny(worker["server_id"]))
+		leaseID, ok := allowed[serverID]
+		if !ok {
+			continue
+		}
+		workerID := strings.TrimSpace(stringFromAny(worker["id"]))
+		for _, runtime := range runtimes {
+			if runtime.ID == serverID && runtime.WorkerID == workerID && runtime.LeaseID == leaseID {
+				selected = append(selected, worker)
+				break
+			}
+		}
+	}
+	return selected
 }
 
 // approvedDeployWorkers loads explicitly assigned workers from the mandatory
@@ -1085,6 +1172,15 @@ func buildDeployJobPayload(stack *orchestratorStack, approvedWorkers []map[strin
 		stackOwnerIDField:  stack.ownerID,
 		stackTenantIDField: stack.tenantID,
 	}
+	if stackKitID := firstNonEmptyString(stackStringValue(stack, runtimeFieldStackKitRef), stackStringValue(stack, "stackkit")); stackKitID != "" {
+		payload["stackkit_id"] = stackKitID
+	}
+	for _, worker := range approvedWorkers {
+		if nodeID := firstNonEmptyString(stringFromAny(worker["node_id"]), stringFromAny(worker["server_id"])); nodeID != "" {
+			payload["node_id"] = nodeID
+			break
+		}
+	}
 	if opts.OwnerSpecBootstrap != nil {
 		// The deploy handler enforces the StackKit identity handoff whenever a
 		// bootstrap token rides in the payload, so this is what arms the
@@ -1094,8 +1190,25 @@ func buildDeployJobPayload(stack *orchestratorStack, approvedWorkers []map[strin
 	for key, value := range managedPayload {
 		payload[key] = value
 	}
+	if stringFromAny(payload["stackkit_id"]) == "" {
+		if stackKitID := stringFromAny(managedPayload[runtimeFieldStackKitRef]); stackKitID != "" {
+			payload["stackkit_id"] = stackKitID
+		}
+	}
+	if stringFromAny(payload["node_id"]) == "" {
+		if nodeID := firstNonEmptyString(stringFromAny(managedPayload["node_id"]), stringFromAny(managedPayload["server_id"])); nodeID != "" {
+			payload["node_id"] = nodeID
+		}
+	}
 	for key, value := range deployDispatchResult(opts) {
 		payload[key] = value
+	}
+	// config_json is the durable authority for a native-v2 Wizard projection.
+	// Snapshot the exact value already loaded with the stack so a resumed bare
+	// deploy can re-materialize its ephemeral disk sibling without another
+	// repository or an unfenced second read.
+	if projection, ok := stack.config["stack_spec_v2"]; ok {
+		payload["stack_spec_v2"] = projection
 	}
 	return payload
 }
@@ -1142,10 +1255,10 @@ func (o *Orchestrator) exactManagedRuntimeLeaseForStack(ctx context.Context, sta
 			continue
 		}
 		if !record.NativeActive() ||
-			!monthlyruntime.IsMonthlyRuntimeMetadata(lease.Metadata) ||
+			(!monthlyruntime.IsMonthlyRuntimeMetadata(lease.Metadata) && !customerUbuntuLease(lease)) ||
 			!managedRuntimeLeaseVisibleToStackOwner(lease, stack) ||
 			strings.TrimSpace(lease.Metadata["stack_id"]) != strings.TrimSpace(stack.id) ||
-			!isFoundationRoleLease(lease) {
+			(!isFoundationRoleLease(lease) && !customerUbuntuLease(lease)) {
 			return nil, fmt.Errorf("%w: requested lease is not a native-active foundation target for this stack", stackrouting.ErrInvalid)
 		}
 		copy := lease
@@ -1363,9 +1476,6 @@ func stackStringValue(stack *orchestratorStack, key string) string {
 	if stack == nil || strings.TrimSpace(key) == "" {
 		return ""
 	}
-	if stack.record != nil {
-		return stack.record.GetString(key)
-	}
 	return stringFromAny(stack.config[key])
 }
 
@@ -1502,6 +1612,7 @@ func deployWorkerPayloadFromControlPlane(worker controlplane.Worker, runtime con
 	payload := map[string]any{
 		"id":                  worker.ID,
 		"server_id":           runtime.ID,
+		"node_id":             firstNonEmptyString(runtime.NodeID, runtime.ID),
 		stackKitNodeNameField: worker.Hostname,
 		"type":                worker.Type,
 		"provider":            worker.Provider,
@@ -1569,21 +1680,21 @@ func applyDeployWorkerHandoff(payload map[string]any, metadata map[string]any) m
 	return payload
 }
 
-// DestroyStack creates and enqueues a destroy job for a stack.
-func (o *Orchestrator) DestroyStack(stackID string) (string, error) {
-	return o.DestroyStackWithOptions(stackID, ProvisionStackOptions{})
-}
-
 // DestroyStackWithOptions creates and enqueues a destroy job with explicit
 // request identity context for Postgres-backed control-plane stacks.
 func (o *Orchestrator) DestroyStackWithOptions(stackID string, opts ProvisionStackOptions) (string, error) {
+	if err := requireStackLifecycleIdentity(opts); err != nil {
+		return "", err
+	}
 	ctx := opts.RequestContext
 	if ctx == nil {
 		ctx = o.ctx
 	}
 
-	o.mu.Lock()
-	defer o.mu.Unlock()
+	unlockStack := o.stackLocks.lock(stackID)
+	defer unlockStack()
+	o.mu.RLock()
+	defer o.mu.RUnlock()
 
 	stack, err := o.findStackForJob(ctx, stackID, opts)
 	if err != nil {
@@ -1594,19 +1705,66 @@ func (o *Orchestrator) DestroyStackWithOptions(stackID string, opts ProvisionSta
 		return "", fmt.Errorf("classify managed runtime before destroy: %w", err)
 	}
 
-	jobID, jobRecord, err := o.createJobRecordForStack(ctx, stack, "destroy", "Queued for destruction")
+	destroyResult := map[string]any{}
+	if managedRuntimeDecommissionRequired {
+		destroyResult[managedDecommissionRecoveryMarkerKey] = managedProviderDecommissionRecoveryMarker(stack.tenantID, stack.id)
+	}
+	// Cancel process-local work first, then retire every durable pending offer
+	// for this exact tenant/stack. Running work deliberately keeps its execution
+	// lease: that claim remains the cross-replica barrier until its handler exits
+	// or the orphan reclaimer terminalizes it.
+	for _, canceledJobID := range o.queue.CancelStackOffers(stackID) {
+		o.log.Info("stack_offer_canceled_for_destroy", "job_id", canceledJobID, "stack_id", stackID)
+	}
+	if o.jobStore != nil {
+		cancelled, cancelErr := o.jobStore.CancelPendingStackOperations(ctx, stack.tenantID, stack.id, time.Now().UTC())
+		if cancelErr != nil {
+			return "", fmt.Errorf("cancel pending stack operations before destroy: %w", cancelErr)
+		}
+		for _, cancelledJobID := range cancelled {
+			o.log.Info("durable_stack_offer_canceled_for_destroy", "job_id", cancelledJobID, "stack_id", stackID)
+		}
+	}
+	if o.cfg.PortInventory != nil {
+		snapshot, snapshotErr := o.cfg.PortInventory.SnapshotForTeardown(ctx, portinventory.TeardownSnapshotRequest{
+			TenantID: stack.tenantID, OwnerSubjectID: stack.ownerID, TechstackID: stack.id,
+		})
+		if snapshotErr == nil {
+			snapshotErr = portinventory.ValidateTeardownSnapshot(snapshot)
+		}
+		if snapshotErr != nil {
+			return "", fmt.Errorf("snapshot port claims before destroy: %w", snapshotErr)
+		}
+		destroyResult[jobs.PortTeardownSnapshotResultField] = snapshot
+		if !managedRuntimeDecommissionRequired && len(snapshot.Generations) > 0 {
+			if o.cfg.StackKitCommander == nil {
+				return "", fmt.Errorf("snapshot port claims before local destroy: typed StackKits dispatcher is not configured")
+			}
+			bindings, bindingErr := o.localStackKitTeardownNodeBindings(ctx, stack)
+			if bindingErr != nil {
+				return "", fmt.Errorf("bind local StackKits teardown nodes: %w", bindingErr)
+			}
+			authority, authorityErr := jobs.BuildLocalStackKitTeardownAuthority(
+				stack.id, stack.stackKitInstanceID, stack.tenantID, stack.ownerID, stack.runtimeSummary, snapshot, bindings,
+			)
+			if authorityErr != nil {
+				return "", fmt.Errorf("bind local StackKits teardown authority: %w", authorityErr)
+			}
+			destroyResult[jobs.LocalStackKitTeardownAuthorityResultField] = authority
+		}
+	}
+	jobID, err := o.createJobRecordForStack(ctx, stack, "destroy", "Queued for destruction")
 	if err != nil {
 		return "", err
 	}
-	if managedRuntimeDecommissionRequired {
-		if err := o.persistManagedProviderDecommissionRecoveryMarker(ctx, stack, jobID); err != nil {
+	if len(destroyResult) > 0 {
+		if err := o.persistDestroyAdmissionReceipt(ctx, stack, jobID, destroyResult); err != nil {
 			return "", err
 		}
 	}
-	for _, canceledJobID := range o.queue.CancelStackRollouts(stackID) {
-		o.log.Info("stack_rollout_canceled_for_destroy", "job_id", canceledJobID, "stack_id", stackID)
+	if err := o.persistStackStatusForJob(ctx, stack, "stopping"); err != nil {
+		return "", fmt.Errorf("fence stack before destroy queue admission: %w", err)
 	}
-	o.updateStackStatusForJob(ctx, stack, "stopping")
 
 	// Create in-memory job
 	job := &jobs.Job{
@@ -1622,20 +1780,28 @@ func (o *Orchestrator) DestroyStackWithOptions(stackID string, opts ProvisionSta
 		},
 		MaxAttempts: 3,
 	}
-	if managedRuntimeDecommissionRequired {
-		job.Result = map[string]interface{}{
-			managedDecommissionRecoveryMarkerKey: managedProviderDecommissionRecoveryMarker(stack.tenantID, stack.id),
-		}
+	if len(destroyResult) > 0 {
+		job.Result = destroyResult
 	}
 	jobs.CopyEdgeFlagsFromContext(ctx, job.Payload)
 
-	if err := o.enqueueWithSync(job, jobRecord, stack.tenantID); err != nil {
+	if err := o.enqueueWithSync(job, stack.tenantID); err != nil {
 		return "", err
 	}
 
 	o.log.Info("destroy_job_enqueued", "job_id", job.ID, "stack_id", stackID)
 
 	return job.ID, nil
+}
+
+func requireStackLifecycleIdentity(opts ProvisionStackOptions) error {
+	if strings.TrimSpace(opts.TenantID) == "" {
+		return fmt.Errorf("stack lifecycle tenant id is required")
+	}
+	if strings.TrimSpace(opts.OwnerID) == "" {
+		return fmt.Errorf("stack lifecycle owner id is required")
+	}
+	return nil
 }
 
 func (o *Orchestrator) managedRuntimeDecommissionRequired(ctx context.Context, stack *orchestratorStack) (bool, error) {
@@ -1670,7 +1836,9 @@ func (o *Orchestrator) managedRuntimeDecommissionRequired(ctx context.Context, s
 			continue
 		}
 		_, managedProvider := serverruntime.MonthlyRuntimeProfileForProvider(strings.ToLower(strings.TrimSpace(lease.Resource.ProviderID)))
-		if monthlyruntime.IsMonthlyRuntimeMetadata(lease.Metadata) || managedProvider {
+		customerSubstrate := record.ExecutionAuthority == vmleases.LeaseExecutionAuthorityTechStackProviderControl &&
+			lease.CustodyClass == vmlease.CustodyCustomerSubstrate
+		if monthlyruntime.IsMonthlyRuntimeMetadata(lease.Metadata) || managedProvider || customerSubstrate {
 			// Cancellation, archived desired state, and a missing local workspace do
 			// not prove that the provider resource is gone. Historical/quarantined
 			// rows therefore still require native terminal decommission read-back.

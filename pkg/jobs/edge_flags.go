@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/kombifyio/go-common/edgeauth"
+	"github.com/kombifyio/techstack/internal/gocommon/edgeauth"
 	"github.com/kombifyio/techstack/pkg/identity"
 	"github.com/kombifyio/techstack/pkg/middleware"
 )

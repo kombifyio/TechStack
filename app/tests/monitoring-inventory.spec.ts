@@ -1,8 +1,8 @@
 import { test, expect, type BrowserContext } from "@playwright/test";
 import { mockLoggedInContext, requireAppBase } from "./helpers/test-utils";
 
-// The canonical, secret-free server inventory is an observation surface: it
-// lives on /monitoring, not on the dashboard (which shows the servers the
+// The canonical, secret-free Node inventory is an observation surface: it
+// lives on /monitoring, not on the dashboard (which shows the Nodes the
 // operator acts on). Its read is separately authorized (signed entitlement +
 // FGA), so an unavailable projection must be reported in place instead of
 // breaking the page.
@@ -33,6 +33,7 @@ const inventoryServer = {
   lifecycle: { state: "active", desired_state: "running" },
   channels: [],
   mutations_allowed: true,
+  allowed_actions: [],
   created_at: "2026-07-30T08:00:00Z",
   updated_at: "2026-07-30T09:00:00Z",
 };
@@ -40,6 +41,7 @@ const inventoryServer = {
 const canonicalService = {
   id: "svc-canonical-1",
   techstack_id: "techstack-1",
+  kit_deployment_id: "kit-1",
   server_id: inventoryServer.id,
   target_kind: "server",
   placement: {
@@ -61,22 +63,6 @@ const canonicalService = {
   provenance: {},
   created_at: "2026-07-30T08:00:00Z",
   updated_at: "2026-07-30T09:00:00Z",
-};
-
-const cockpitServer = {
-  id: inventoryServer.id,
-  agent_id: "agent-canonical-1",
-  hostname: inventoryServer.name,
-  role: "foundation",
-  source: "agent",
-  ip: "85.215.38.99",
-  health: {
-    state: "healthy",
-    cpu_percent: { value: 12, unit: "%", status: "ok" },
-    memory_percent: { value: 38, unit: "%", status: "ok" },
-    disk_percent: { value: 41, unit: "%", status: "ok" },
-  },
-  capabilities: { provider: "Hostinger VPS" },
 };
 
 async function mockMonitoringBase(context: BrowserContext) {
@@ -108,34 +94,6 @@ async function mockMonitoringBase(context: BrowserContext) {
       }),
     });
   });
-  await context.route("**/api/v1/monitor/cockpit**", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        data: {
-          techstack_id: "techstack-1",
-          stacks: [{ id: "techstack-1", name: "Demo Homelab" }],
-          servers: [cockpitServer],
-          services: [
-            {
-              id: canonicalService.id,
-              name: canonicalService.name,
-              type: canonicalService.service_key,
-              status: "healthy",
-              target_server_id: inventoryServer.id,
-              target_server: inventoryServer.name,
-            },
-          ],
-          jobs: [],
-          alerts: [],
-          kpis: {},
-          readiness: { connected_servers: 0 },
-          monitoring: { status: "ok", collectorMode: "otlp" },
-        },
-      }),
-    });
-  });
   await context.route("**/api/v1/services**", async (route) => {
     await route.fulfill({
       status: 200,
@@ -145,7 +103,7 @@ async function mockMonitoringBase(context: BrowserContext) {
   });
 }
 
-test("monitoring joins canonical inventory and telemetry into one server list", async ({
+test("monitoring renders the canonical inventory with its three axes", async ({
   browser,
   baseURL,
 }) => {
@@ -153,9 +111,7 @@ test("monitoring joins canonical inventory and telemetry into one server list", 
   const context = await browser.newContext();
   await mockLoggedInContext(context, { allowMockAuth: true });
   await mockMonitoringBase(context);
-  const inventoryURLs: string[] = [];
   await context.route("**/api/v1/servers**", async (route) => {
-    inventoryURLs.push(route.request().url());
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -167,36 +123,88 @@ test("monitoring joins canonical inventory and telemetry into one server list", 
   page.on("pageerror", (error) => console.error("browser page error", error));
   await page.goto(`${origin}/monitoring`);
 
-  const list = page.getByTestId("inventory-server-list");
-  await expect(list).toBeVisible();
-  const card = page.getByTestId("inventory-server-card");
+  const card = page.getByTestId("monitoring-node-summary");
   await expect(card).toHaveCount(1);
-  await expect(card.locator("article.kf-card")).toHaveCount(1);
   // The canonical id must stay addressable: the runtime smoke proves REST/DOM
   // parity through exactly this attribute.
   await expect(card).toHaveAttribute("data-server-id", inventoryServer.id);
   await expect(card).toContainText("homelab-foundation");
-  await expect(card).toContainText("85.215.38.99");
-  await expect(card).toContainText("cloud");
-  await expect(card).toContainText("external vps");
-  await expect(page.getByTestId("inventory-unavailable")).toHaveCount(0);
-  // The matching telemetry row enriches this card rather than becoming a
-  // second server card.
-  await expect(card).toHaveCount(1);
-  const serviceCard = page.getByTestId("monitoring-service-card");
-  await expect(serviceCard).toHaveCount(1);
-  await expect(serviceCard.locator("article.kf-card, [role='article'].kf-compact")).toHaveCount(1);
-  expect(inventoryURLs.length).toBeGreaterThan(0);
-  for (const requestURL of inventoryURLs) {
-    const inventoryQuery = new URL(requestURL).searchParams;
-    expect(inventoryQuery.get("techstack_id")).toBe("techstack-1");
-    expect(inventoryQuery.has("stack_id")).toBe(false);
-  }
+  // Lifecycle, connection and health are read together and never collapsed.
+  await expect(card.getByTestId("monitoring-node-axis")).toHaveCount(3);
+  await expect(card.locator('[data-axis="Conn"]')).toContainText(/connected/i);
+  await expect(card.locator('[data-axis="Health"]')).toContainText(/healthy/i);
+  await expect(card.locator('[data-axis="Life"]')).toContainText(/active/i);
+  await expect(card.getByTestId("monitoring-node-service-count")).toContainText(
+    /1 service/,
+  );
+  await expect(
+    page.getByTestId("monitoring-inventory-unavailable"),
+  ).toHaveCount(0);
 
   await context.close();
 });
 
-test("monitoring keeps telemetry visible when canonical inventory is unavailable", async ({
+test("monitoring can detach a customer-operated leftover from the current fleet", async ({
+  browser,
+  baseURL,
+}) => {
+  const origin = requireAppBase(baseURL);
+  const context = await browser.newContext();
+  await mockLoggedInContext(context, { allowMockAuth: true });
+  await mockMonitoringBase(context);
+
+  const leftover = {
+    ...inventoryServer,
+    id: "srv-leftover-1",
+    name: "homelab-8",
+    allowed_actions: ["detach"],
+  };
+  let remaining = [leftover];
+  await context.route("**/api/v1/servers**", async (route) => {
+    const request = route.request();
+    if (request.method() === "POST" && request.url().includes("/detach")) {
+      remaining = [];
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          data: {
+            server_id: leftover.id,
+            agent_id: leftover.worker_id,
+            revision: 4,
+            generation: 1,
+            detached_at: "2026-09-07T18:00:00Z",
+            replay: false,
+          },
+        }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ data: remaining }),
+    });
+  });
+
+  const page = await context.newPage();
+  await page.goto(`${origin}/monitoring`);
+
+  const card = page.getByTestId("monitoring-node-summary");
+  await expect(card).toHaveCount(1);
+  await expect(card).toContainText("homelab-8");
+  await page.getByTestId("monitoring-node-detach").click();
+  await expect(page.getByTestId("monitoring-detach-confirmation")).toBeVisible();
+  await page.getByTestId("monitoring-detach-confirm").click();
+  await expect(page.getByTestId("monitoring-node-summary")).toHaveCount(0);
+  await expect(page.getByTestId("monitoring-section-right-now")).toContainText(
+    "No nodes have reported yet",
+  );
+
+  await context.close();
+});
+
+test("monitoring reports an unavailable inventory instead of an invented Node", async ({
   browser,
   baseURL,
 }) => {
@@ -222,22 +230,18 @@ test("monitoring keeps telemetry visible when canonical inventory is unavailable
   page.on("pageerror", (error) => console.error("browser page error", error));
   await page.goto(`${origin}/monitoring`);
 
-  // A denied projection is a note on the inventory card, never a page error.
-  await expect(page.getByTestId("inventory-unavailable")).toBeVisible();
-  await expect(page.getByTestId("inventory-server-card")).toHaveCount(1);
-  await expect(page.getByTestId("inventory-server-card")).toHaveAttribute(
-    "data-server-id",
-    inventoryServer.id,
-  );
-  // Never render a false zero beside live server telemetry.
-  await expect(page.getByTestId("inventory-server-list")).not.toContainText(
-    "0 servers",
-  );
+  // A denied projection is a note in place, never a page error and never a
+  // Node reconstructed from some other source.
+  await expect(
+    page.getByTestId("monitoring-inventory-unavailable"),
+  ).toBeVisible();
+  await expect(page.getByTestId("monitoring-node-summary")).toHaveCount(0);
+  await expect(page.getByTestId("monitoring-page")).toBeVisible();
 
   await context.close();
 });
 
-test("monitoring does not turn a successful empty inventory into a telemetry server", async ({
+test("monitoring does not turn a successful empty inventory into an error", async ({
   browser,
   baseURL,
 }) => {
@@ -256,10 +260,13 @@ test("monitoring does not turn a successful empty inventory into a telemetry ser
   const page = await context.newPage();
   await page.goto(`${origin}/monitoring`);
 
-  await expect(page.getByTestId("inventory-unavailable")).toHaveCount(0);
-  await expect(page.getByTestId("inventory-server-card")).toHaveCount(0);
-  await expect(page.getByTestId("inventory-server-list")).toContainText(
-    "No servers recorded yet",
+  // "Nothing enrolled" and "we could not read it" are different answers.
+  await expect(
+    page.getByTestId("monitoring-inventory-unavailable"),
+  ).toHaveCount(0);
+  await expect(page.getByTestId("monitoring-node-summary")).toHaveCount(0);
+  await expect(page.getByTestId("monitoring-section-right-now")).toContainText(
+    "No nodes have reported yet",
   );
 
   await context.close();

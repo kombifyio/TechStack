@@ -15,10 +15,7 @@ export type AuthMode = "local" | "cloud";
 export type DeploymentMode = "self-hosted" | "saas";
 
 export type DeploymentEdition =
-  | "selfhost-oss"
-  | "preview"
-  | "saas-standalone"
-  | "saas-embedded";
+  "selfhost-oss" | "preview" | "saas-standalone" | "saas-embedded";
 
 export interface AuthModeResponse {
   mode: AuthMode;
@@ -66,16 +63,10 @@ export interface LocalSessionLoginResponse {
   provider: string;
 }
 
-import type { StackIdentity } from "$lib/components/open-core";
+import type { StackIdentity } from "#lib/components/open-core/index.js";
 export type { StackIdentity };
 
 export interface PortalVerifyResponse {
-  pb_token: string;
-  user: {
-    id: string;
-    email: string;
-    name: string;
-  };
   cloud_user: {
     sub: string;
     email: string;
@@ -124,16 +115,41 @@ export async function completeOIDCCallback(
 }
 
 /**
+ * The origin of the page embedding this app, or undefined when it runs
+ * top-level. The portal exchange sends it: the production portal is same-site
+ * with this app, but a kombify Cloud Render PR preview frames it cross-site,
+ * and the server issues cross-site browser cookies for that sanctioned origin
+ * only when it knows the embedding origin.
+ */
+export function embeddingPortalOrigin(): string | undefined {
+  if (typeof window === "undefined") return undefined;
+  const ancestors = window.location?.ancestorOrigins;
+  const ancestor = ancestors && ancestors.length > 0 ? ancestors[0] : "";
+  if (ancestor && ancestor !== "null") return ancestor;
+  if (typeof document === "undefined" || !document.referrer) return undefined;
+  try {
+    const origin = new URL(document.referrer).origin;
+    return origin === window.location.origin ? undefined : origin;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Verify a portal session token for SSO
  */
 export async function verifyPortalToken(
   portalToken: string,
 ): Promise<PortalVerifyResponse> {
+  const portalOrigin = embeddingPortalOrigin();
   const res = await fetchApi<PortalVerifyResponse>(
     "/api/v1/auth/portal-verify",
     {
       method: "POST",
-      body: JSON.stringify({ token: portalToken }),
+      body: JSON.stringify({
+        token: portalToken,
+        ...(portalOrigin ? { portal_origin: portalOrigin } : {}),
+      }),
     },
   );
   return res.data;

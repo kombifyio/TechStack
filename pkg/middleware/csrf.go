@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/kombifyio/techstack/pkg/httpx"
 )
@@ -170,7 +169,7 @@ func (c *CSRFMiddleware) shouldIgnore(path string) bool {
 }
 
 func (c *CSRFMiddleware) shouldBypassNonCookieAuth(r *http.Request) bool {
-	if isEdgeAuthenticatedContext(r.Context()) {
+	if IsEdgeAuthenticated(r.Context()) {
 		return true
 	}
 	if strings.HasPrefix(strings.TrimSpace(r.Header.Get("Authorization")), "Bearer ") {
@@ -212,6 +211,30 @@ func (c *CSRFMiddleware) ensureToken(w http.ResponseWriter, r *http.Request) err
 	})
 
 	// Also set in response header for immediate use
+	w.Header().Set(CSRFHeaderName, token)
+	return nil
+}
+
+// IssueCrossSiteCSRFCookie writes a fresh CSRF token cookie with
+// SameSite=None; Secure. The middleware and CSRFTokenEndpoint keep an existing
+// well-formed cookie, so a session that was established for a sanctioned
+// cross-site portal embed carries this cookie on its later requests and the
+// double-submit check works there as it does same-site. Secure is not optional:
+// browsers reject SameSite=None cookies without it.
+func IssueCrossSiteCSRFCookie(w http.ResponseWriter) error {
+	token, err := generateCSRFToken()
+	if err != nil {
+		return err
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     CSRFCookieName,
+		Value:    token,
+		Path:     "/",
+		MaxAge:   43200,
+		HttpOnly: false,
+		Secure:   true,
+		SameSite: http.SameSiteNoneMode,
+	})
 	w.Header().Set(CSRFHeaderName, token)
 	return nil
 }
@@ -258,30 +281,6 @@ func generateCSRFToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// GetCSRFToken extracts the current CSRF token from a request's cookies.
-// This is useful for handlers that need to include the token in rendered HTML.
-func GetCSRFToken(r *http.Request) string {
-	cookie, err := r.Cookie(CSRFCookieName)
-	if err != nil {
-		return ""
-	}
-	return cookie.Value
-}
-
-// SetCSRFCookie is a helper to manually set a CSRF cookie with a specific token.
-// Useful for testing or special initialization scenarios.
-func SetCSRFCookie(w http.ResponseWriter, token string, secure bool) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     CSRFCookieName,
-		Value:    token,
-		Path:     "/",
-		MaxAge:   43200,
-		HttpOnly: false,
-		Secure:   secure,
-		SameSite: http.SameSiteStrictMode,
-	})
-}
-
 // CSRFTokenEndpoint returns an HTTP handler that generates and returns a CSRF token.
 // This can be used as a dedicated endpoint for SPAs to obtain a token before mutations.
 func CSRFTokenEndpoint(secure bool) http.HandlerFunc {
@@ -318,27 +317,4 @@ func CSRFTokenEndpoint(secure bool) http.HandlerFunc {
 			"token": token,
 		})
 	}
-}
-
-// TokenRefreshMiddleware is a middleware that refreshes the CSRF token cookie
-// on every request to extend its lifetime. Use this if you want tokens to stay
-// valid as long as the user is active.
-func (c *CSRFMiddleware) TokenRefreshMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cookie, err := r.Cookie(CSRFCookieName)
-		if err == nil && len(cookie.Value) == csrfTokenLength*2 {
-			// Refresh the cookie with the same token
-			http.SetCookie(w, &http.Cookie{
-				Name:     CSRFCookieName,
-				Value:    cookie.Value,
-				Path:     c.cookiePath,
-				MaxAge:   c.maxAge,
-				HttpOnly: false,
-				Secure:   c.secure,
-				SameSite: http.SameSiteStrictMode,
-				Expires:  time.Now().Add(time.Duration(c.maxAge) * time.Second),
-			})
-		}
-		next.ServeHTTP(w, r)
-	})
 }

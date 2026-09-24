@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { MonitoringCockpitPayload } from "$lib/api/monitoring";
-import type { StackOperationServer } from "$lib/api/stacks";
+import type { MonitoringCockpitPayload } from "#lib/api/monitoring.js";
+import type { StackOperationServer } from "#lib/api/stacks.js";
 import {
   applyCockpitRefreshError,
   beginCockpitRefresh,
@@ -43,8 +43,11 @@ function cockpit(
   overrides: Partial<MonitoringCockpitPayload> = {},
 ): MonitoringCockpitPayload {
   return {
+    homelab_id: "homelab-1",
+    kit_deployment_count: 1,
+    connected_server_count: 1,
     stacks: [],
-    techstack_id: "stack-1",
+    kit_deployment_id: "stack-1",
     nextSteps: [],
     kpis: {
       registered_servers: 1,

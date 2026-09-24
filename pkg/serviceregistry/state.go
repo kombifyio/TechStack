@@ -30,6 +30,16 @@ type HealthState string
 //	           desired state is not applicable and drift is undefined.
 type ManagementState string
 
+// MutationLockState is the owner-declared guardrail dimension. It is
+// independent of every measured dimension on purpose: a locked service keeps
+// running and keeps reporting its real observed state and health. The lock only
+// answers whether the control plane may mutate the service.
+//
+//	unlocked - governed mutations are admissible.
+//	locked   - every mutating operation is refused fail-closed, including the
+//	           stack-scoped apply and drift_reconcile paths. Reads stay allowed.
+type MutationLockState string
+
 const (
 	DesiredRunning DesiredState = "running"
 	DesiredStopped DesiredState = "stopped"
@@ -48,6 +58,9 @@ const (
 
 	ManagementManaged  ManagementState = "managed"
 	ManagementObserved ManagementState = "observed"
+
+	MutationUnlocked MutationLockState = "unlocked"
+	MutationLocked   MutationLockState = "locked"
 )
 
 // Inventory source vocabulary. `source` is the provenance axis: which pipeline
@@ -64,6 +77,9 @@ const (
 	SourceStackKitsInventory = "stackkits-inventory"
 	// SourceStackKitOutputs is the StackKits apply/job output projection.
 	SourceStackKitOutputs = "stackkit_outputs"
+	// SourceTechstackRegistry is a user-declared service target created through
+	// Techstack's registry API before StackKits has reported runtime evidence.
+	SourceTechstackRegistry = "techstack-registry"
 	// SourceLegacyRegistryBackfill is the bounded read-through projection of
 	// pre-aggregate registry rows.
 	SourceLegacyRegistryBackfill = "legacy-registry-backfill"
@@ -77,26 +93,13 @@ const LegacyCustomServiceType = "custom"
 // target state for a service that has no declared contract.
 const ReasonDesiredStateNotApplicable = "desired_state_not_applicable_for_observed_service"
 
-// ServiceSources is the closed `services.source` vocabulary, mirrored by the
-// services_source_check database constraint.
-var ServiceSources = []string{
-	SourceObserved, SourceStackKitsInventory, SourceStackKitOutputs, SourceLegacyRegistryBackfill,
-}
-
 var managementStates = map[ManagementState]bool{
 	ManagementManaged: true, ManagementObserved: true,
 }
 
-var serviceSources = map[string]bool{
-	SourceObserved: true, SourceStackKitsInventory: true,
-	SourceStackKitOutputs: true, SourceLegacyRegistryBackfill: true,
+var mutationLockStates = map[MutationLockState]bool{
+	MutationUnlocked: true, MutationLocked: true,
 }
-
-// ControlPlaneWorkflowStates are the legacy services.status values that
-// describe a control-plane workflow rather than a measured observation. They
-// are not part of the observed vocabulary and always win over the derived
-// status projection.
-var ControlPlaneWorkflowStates = []string{"migrating", "deploying", "pending_verification", WorkflowArchived}
 
 // WorkflowArchived is the terminal control-plane workflow state.
 const WorkflowArchived = "archived"
@@ -153,7 +156,7 @@ func ValidateManagementState(value string) error {
 
 // ValidateSource rejects values outside the closed inventory-source vocabulary.
 func ValidateSource(value string) error {
-	if !serviceSources[normalize(value)] {
+	if !isServiceSource(normalize(value)) {
 		return fmt.Errorf("unknown service source %q", strings.TrimSpace(value))
 	}
 	return nil
@@ -163,10 +166,19 @@ func ValidateSource(value string) error {
 // unrecognized or absent provenance is `observed`: it proves nothing about a
 // declared contract, so it must not claim one.
 func CanonicalSource(value string) string {
-	if normalized := normalize(value); serviceSources[normalized] {
+	if normalized := normalize(value); isServiceSource(normalized) {
 		return normalized
 	}
 	return SourceObserved
+}
+
+func isServiceSource(value string) bool {
+	switch value {
+	case SourceObserved, SourceStackKitsInventory, SourceStackKitOutputs, SourceTechstackRegistry, SourceLegacyRegistryBackfill:
+		return true
+	default:
+		return false
+	}
 }
 
 // ManagementStateForSource is THE rule that decides ownership for a service
@@ -174,8 +186,8 @@ func CanonicalSource(value string) string {
 // no reader recomputes it.
 //
 // Only the `observed` provenance means "discovered, no declared target". Every
-// other source in the vocabulary is produced by a StackKits/PaaS rollout
-// pipeline of ours, so the kit contract supplies the target.
+// other source in the vocabulary is produced by a declared control-plane or
+// StackKits/PaaS pipeline of ours, so a target contract exists.
 func ManagementStateForSource(source string) ManagementState {
 	if normalize(source) == string(ManagementObserved) {
 		return ManagementObserved
@@ -208,6 +220,24 @@ func CanonicalManagementState(value string) ManagementState {
 		return state
 	}
 	return ManagementObserved
+}
+
+// CanonicalMutationLockState projects a stored or supplied lock value onto the
+// closed vocabulary. An unknown value reads as unlocked, because a guardrail we
+// cannot interpret must never silently block an owner's operations; the write
+// boundary rejects unknown values before they can be stored.
+func CanonicalMutationLockState(value string) MutationLockState {
+	state := MutationLockState(normalize(value))
+	if mutationLockStates[state] {
+		return state
+	}
+	return MutationUnlocked
+}
+
+// MutationLockAdmitsMutation reports whether a governed mutating operation may
+// proceed against a service in this lock state.
+func MutationLockAdmitsMutation(state MutationLockState) bool {
+	return CanonicalMutationLockState(string(state)) != MutationLocked
 }
 
 // DesiredStateApplicable reports whether a declared target state has any
@@ -289,25 +319,26 @@ func RetainedWorkflowState(values ...string) string {
 	held := ""
 	for _, value := range values {
 		normalized := normalize(value)
-		for _, workflow := range ControlPlaneWorkflowStates {
-			if normalized != workflow {
-				continue
-			}
-			if normalized == WorkflowArchived {
-				return normalized
-			}
-			if held == "" {
-				held = normalized
-			}
+		if !isControlPlaneWorkflowState(normalized) {
+			continue
+		}
+		if normalized == WorkflowArchived {
+			return normalized
+		}
+		if held == "" {
+			held = normalized
 		}
 	}
 	return held
 }
 
-// IsControlPlaneWorkflowState reports whether any value describes a
-// control-plane workflow state.
-func IsControlPlaneWorkflowState(values ...string) bool {
-	return RetainedWorkflowState(values...) != ""
+func isControlPlaneWorkflowState(value string) bool {
+	switch value {
+	case "migrating", "deploying", "pending_verification", WorkflowArchived:
+		return true
+	default:
+		return false
+	}
 }
 
 func normalize(value string) string {

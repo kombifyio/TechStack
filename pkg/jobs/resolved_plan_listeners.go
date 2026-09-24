@@ -78,7 +78,7 @@ func parseResolvedPlanListenerSet(document []byte) (resolvedPlanListenerSet, err
 	}
 	identity := resolvedPlanListenerSet{StackKitInstanceID: envelope.StackID, PlanHash: envelope.PlanHash}
 	if envelope.APIVersion != resolvedPlanAPIVersionV1 || envelope.Kind != "ResolvedPlan" {
-		return identity, errors.New("Techstack does not project this canonical ResolvedPlan contract version")
+		return identity, errors.New("techstack does not project this canonical ResolvedPlan contract version")
 	}
 	if len(envelope.Network) == 0 || bytes.Equal(bytes.TrimSpace(envelope.Network), []byte("null")) {
 		return identity, errors.New("canonical ResolvedPlan has no network.runtimeListeners authority")
@@ -160,8 +160,11 @@ func normalizeResolvedPlanRuntimeListener(listener *resolvedPlanRuntimeListener)
 		(listener.Sharing == "virtual-host" && listener.ListenerGroupRef == "") {
 		return errors.New("listenerGroupRef does not match sharing")
 	}
-	if listener.Exposure != "local" && listener.Exposure != "remote-private" && listener.Exposure != "public" {
-		return errors.New("exposure must be local, remote-private, or public")
+	// #ServiceExposureV2 in the StackKits contract.
+	switch listener.Exposure {
+	case "local", "lan", "remote-private", "public":
+	default:
+		return errors.New("exposure must be local, lan, remote-private, or public")
 	}
 	if listener.SourceRouteRefs == nil {
 		return errors.New("sourceRouteRefs is required")

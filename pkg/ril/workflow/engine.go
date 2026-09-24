@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"time"
 
@@ -25,6 +26,7 @@ type Engine struct {
 	acts  *ActivityRunner
 	defs  map[RunType]WorkflowDefinition
 	log   *logger.Logger
+	obs   Observer
 
 	// now and sleep are injectable for deterministic tests.
 	now            func() time.Time
@@ -64,14 +66,30 @@ func NewEngine(store RunStore, acts *ActivityRunner) *Engine {
 		acts:  acts,
 		defs:  make(map[RunType]WorkflowDefinition),
 		log:   logger.Get().WithComponent("ril.workflow.engine"),
+		obs:   noopObserver{},
 		now:   func() time.Time { return time.Now().UTC() },
 		sleep: time.Sleep,
 	}
 }
 
+// SetObserver binds the process-local metrics sink. Durable per-run evidence
+// remains in the store's append-only audit surface.
+func (e *Engine) SetObserver(observer Observer) {
+	if observer == nil {
+		e.obs = noopObserver{}
+		return
+	}
+	e.obs = observer
+}
+
 // Register adds a workflow definition. Call at wiring time before Advance.
 func (e *Engine) Register(def WorkflowDefinition) {
 	e.defs[def.Type()] = def
+}
+
+// RegisterActivity binds one named side-effect adapter before the worker starts.
+func (e *Engine) RegisterActivity(name string, fn ActivityFunc) {
+	e.acts.Register(name, fn)
 }
 
 // SetBackgroundTask installs one bounded, best-effort task that runs before
@@ -93,6 +111,63 @@ func (e *Engine) StartRun(ctx context.Context, run *Run) (string, error) {
 	return run.RunID, e.Advance(ctx, run.RunID)
 }
 
+// StartOrResumeRun creates a deterministically identified run or resumes the
+// matching persisted run. This closes the HTTP retry/process-restart window
+// without allowing a caller to reuse a run id for different work.
+func (e *Engine) StartOrResumeRun(ctx context.Context, run *Run) (string, error) {
+	if run == nil || run.RunID == "" {
+		return "", fmt.Errorf("workflow: deterministic run_id required")
+	}
+	if _, ok := e.defs[run.Type]; !ok {
+		return "", fmt.Errorf("workflow: no definition registered for type %q", run.Type)
+	}
+	existing, err := e.store.GetRun(run.RunID)
+	if err == nil {
+		if !sameRunIdentity(existing, run) {
+			return "", fmt.Errorf("workflow: run %s identity conflict", run.RunID)
+		}
+		return existing.RunID, e.Advance(ctx, existing.RunID)
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return "", err
+	}
+	if err := e.store.CreateRun(run); err != nil {
+		// A concurrent retry may have won the insert. Adopt it only when every
+		// stable identity field and the complete input match.
+		existing, getErr := e.store.GetRun(run.RunID)
+		if getErr != nil || !sameRunIdentity(existing, run) {
+			return "", err
+		}
+		return existing.RunID, e.Advance(ctx, existing.RunID)
+	}
+	return run.RunID, e.Advance(ctx, run.RunID)
+}
+
+// GetRun returns the durable current state for a run.
+func (e *Engine) GetRun(runID string) (*Run, error) { return e.store.GetRun(runID) }
+
+// ListSteps returns the durable checkpoints for one run.
+func (e *Engine) ListSteps(runID string) ([]*Step, error) { return e.store.ListSteps(runID) }
+
+// ListAudit returns the append-only, tenant-scoped lifecycle record for one
+// run. The active Postgres store implements this optional read surface.
+func (e *Engine) ListAudit(tenantID, runID string, limit int) ([]AuditEvent, error) {
+	reader, ok := e.store.(interface {
+		ListAudit(string, string, int) ([]AuditEvent, error)
+	})
+	if !ok {
+		return nil, errors.New("workflow: audit store not configured")
+	}
+	return reader.ListAudit(tenantID, runID, limit)
+}
+
+func sameRunIdentity(left, right *Run) bool {
+	return left != nil && right != nil && left.RunID == right.RunID &&
+		left.Type == right.Type && left.OwnerID == right.OwnerID &&
+		left.ServerID == right.ServerID && left.CardID == right.CardID &&
+		reflect.DeepEqual(left.Input, right.Input)
+}
+
 // Deliver routes an external signal (approval, agent-result, timer fire) to the
 // suspended run awaiting it, then resumes the run. Returns ErrNotFound (wrapped)
 // if no run is awaiting the signal — a benign race (already resumed).
@@ -112,10 +187,12 @@ func (e *Engine) Deliver(ctx context.Context, sig Signal) error {
 	}
 	run.Context[signalContextKey] = sig
 	run.AwaitingSignal = ""
+	from := run.Status
 	run.Status = RunRunning
 	if err := e.store.UpdateRun(run); err != nil {
 		return err
 	}
+	e.observeRun(run, from)
 	e.log.Info("ril_workflow_signal_delivered", "run_id", run.RunID, "signal", sig.Key, "timed_out", sig.TimedOut)
 	return e.advance(ctx, run.RunID)
 }
@@ -153,11 +230,13 @@ func (e *Engine) advance(ctx context.Context, runID string) error {
 
 	if run.Status == RunPending {
 		now := e.now()
+		from := run.Status
 		run.Status = RunRunning
 		run.StartedAt = &now
 		if err := e.store.UpdateRun(run); err != nil {
 			return err
 		}
+		e.observeRun(run, from)
 	}
 
 	for run.CurrentStep < len(steps) {
@@ -179,7 +258,7 @@ func (e *Engine) advance(ctx context.Context, runID string) error {
 		rc := &RunContext{Run: run, Activities: e.acts, Signal: pending}
 		pending = nil // a signal is consumed by the first step that runs
 
-		res, runErr := e.runStepWithRetry(ctx, step, sd, policy, rc)
+		res, runErr := e.runStepWithRetry(ctx, run.Type, step, sd, policy, rc)
 		if runErr != nil {
 			return e.failWithCompensation(ctx, run, steps, runErr)
 		}
@@ -196,6 +275,7 @@ func (e *Engine) advance(ctx context.Context, runID string) error {
 		if err := e.store.UpdateStep(step); err != nil {
 			return err
 		}
+		e.observeStep(run.Type, step, StepRunning)
 		run.CurrentStep++
 		if err := e.store.UpdateRun(run); err != nil {
 			return err
@@ -203,11 +283,13 @@ func (e *Engine) advance(ctx context.Context, runID string) error {
 	}
 
 	now := e.now()
+	from := run.Status
 	run.Status = RunCompleted
 	run.FinishedAt = &now
 	if err := e.store.UpdateRun(run); err != nil {
 		return err
 	}
+	e.observeRun(run, from)
 	e.log.Info("ril_workflow_run_completed", "run_id", run.RunID, "type", string(run.Type))
 	return nil
 }
@@ -216,16 +298,18 @@ func (e *Engine) advance(ctx context.Context, runID string) error {
 // with exponential backoff. A returned StepResult with a non-nil Suspend (or a
 // successful result) ends the loop immediately — suspend/resume does NOT consume
 // the retry budget; only failures increment Attempt.
-func (e *Engine) runStepWithRetry(ctx context.Context, step *Step, sd StepDef, policy RetryPolicy, rc *RunContext) (StepResult, error) {
+func (e *Engine) runStepWithRetry(ctx context.Context, runType RunType, step *Step, sd StepDef, policy RetryPolicy, rc *RunContext) (StepResult, error) {
 	for {
 		now := e.now()
 		step.StartedAt = &now
 		// Pending->Running (first run) or Failed->Running (retry). On resume the
 		// step is already Running; UpdateStep treats same-status as a no-op.
+		from := step.Status
 		step.Status = StepRunning
 		if err := e.store.UpdateStep(step); err != nil {
 			return StepResult{}, err
 		}
+		e.observeStep(runType, step, from)
 
 		res, err := safeRunStep(ctx, sd.Run, rc)
 		if err == nil {
@@ -234,10 +318,12 @@ func (e *Engine) runStepWithRetry(ctx context.Context, step *Step, sd StepDef, p
 
 		step.Attempt++
 		step.Error = err.Error()
+		from = step.Status
 		step.Status = StepFailed
 		if uerr := e.store.UpdateStep(step); uerr != nil {
 			return StepResult{}, uerr
 		}
+		e.observeStep(runType, step, from)
 		e.log.Warn("ril_workflow_step_failed", "run_id", step.RunID, "step", step.Name, "attempt", step.Attempt, "error", err.Error())
 
 		if !policy.ShouldRetry(step.Attempt) {
@@ -251,11 +337,13 @@ func (e *Engine) runStepWithRetry(ctx context.Context, step *Step, sd StepDef, p
 // suspend transitions the run to suspended awaiting a signal, optionally arming
 // a durable timer that will deliver the same signal (timed-out) on expiry.
 func (e *Engine) suspend(run *Run, d *SuspendDirective) error {
+	from := run.Status
 	run.Status = RunSuspended
 	run.AwaitingSignal = d.SignalKey
 	if err := e.store.UpdateRun(run); err != nil {
 		return err
 	}
+	e.observeRun(run, from)
 	if d.Timeout > 0 {
 		kind := d.TimerKind
 		if kind == "" {
@@ -278,11 +366,13 @@ func (e *Engine) suspend(run *Run, d *SuspendDirective) error {
 // in reverse order) then marks the run failed. Compensation is best-effort:
 // a compensation error is logged but does not abort the remaining rollbacks.
 func (e *Engine) failWithCompensation(ctx context.Context, run *Run, stepDefs []StepDef, cause error) error {
+	from := run.Status
 	run.Status = RunCompensating
 	run.Error = cause.Error()
 	if err := e.store.UpdateRun(run); err != nil {
 		return err
 	}
+	e.observeRun(run, from)
 	e.log.Warn("ril_workflow_compensating", "run_id", run.RunID, "cause", cause.Error())
 
 	steps, err := e.store.ListSteps(run.RunID)
@@ -306,20 +396,51 @@ func (e *Engine) failWithCompensation(ctx context.Context, run *Run, stepDefs []
 			e.log.Error("ril_workflow_compensation_failed", "run_id", run.RunID, "step", st.Name, "error", cerr.Error())
 			continue
 		}
+		stepFrom := st.Status
 		st.Status = StepCompensated
 		if uerr := e.store.UpdateStep(st); uerr != nil {
 			e.log.Error("ril_workflow_compensation_persist_failed", "run_id", run.RunID, "step", st.Name, "error", uerr.Error())
+			continue
 		}
+		e.observeStep(run.Type, st, stepFrom)
 	}
 
 	now := e.now()
+	from = run.Status
 	run.Status = RunFailed
 	run.FinishedAt = &now
 	if err := e.store.UpdateRun(run); err != nil {
 		return err
 	}
+	e.observeRun(run, from)
 	e.log.Warn("ril_workflow_run_failed", "run_id", run.RunID, "error", cause.Error())
 	return nil
+}
+
+func (e *Engine) observeRun(run *Run, from RunStatus) {
+	if run == nil || from == run.Status {
+		return
+	}
+	var elapsed time.Duration
+	if run.StartedAt != nil && run.FinishedAt != nil {
+		elapsed = run.FinishedAt.Sub(*run.StartedAt)
+	}
+	e.obs.ObserveRunTransition(run.Type, from, run.Status, elapsed)
+}
+
+func (e *Engine) observeStep(runType RunType, step *Step, from StepStatus) {
+	if step == nil || from == step.Status {
+		return
+	}
+	var elapsed time.Duration
+	if step.StartedAt != nil {
+		end := e.now()
+		if step.FinishedAt != nil {
+			end = *step.FinishedAt
+		}
+		elapsed = end.Sub(*step.StartedAt)
+	}
+	e.obs.ObserveStepTransition(runType, step.Name, from, step.Status, step.Attempt, elapsed)
 }
 
 // getOrCreateStep returns the step row for run.CurrentStep, creating a pending

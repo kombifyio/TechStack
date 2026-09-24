@@ -60,10 +60,33 @@ async function loginAsAdmin(
     return;
   }
 
-  // Prefer the local-owner form when the deployment exposes it (self-hosted).
+  if (page.url().includes("/login")) {
+    const localOwner = page.getByRole("button", {
+      name: "Continue as local owner",
+    });
+    if (await localOwner.isVisible().catch(() => false)) {
+      await localOwner.click();
+    }
+  }
+  await page.waitForURL(
+    /\/client\/onboarding|\/client\/local|\/stacks|\/login/,
+    { timeout: 15_000 },
+  );
+
+  const existingEmail = page.getByTestId("windows-local-existing-email");
   const localOwnerForm = page.getByRole("button", {
     name: "Sign in locally",
   });
+  if (await existingEmail.isVisible().catch(() => false)) {
+    await existingEmail.fill(TEST_CREDENTIALS.email);
+    await page
+      .getByTestId("windows-local-existing-password")
+      .fill(TEST_CREDENTIALS.password);
+    await page.getByTestId("windows-local-existing-submit").click();
+    await page.waitForURL(/\/stacks/, { timeout: 30_000 });
+    await expect(page.locator("aside").first()).toBeVisible();
+    return;
+  }
   if (await localOwnerForm.isVisible().catch(() => false)) {
     await page.getByLabel("Email").fill(TEST_CREDENTIALS.email);
     await page
@@ -218,7 +241,7 @@ test.describe.serial("Release Smoke (Render deploy gate)", () => {
     await page.waitForTimeout(1000);
 
     await expect(
-      page.getByRole("heading", { name: "kombify TechStack" }),
+      page.getByRole("heading", { name: "kombify Techstack" }),
     ).toBeVisible();
 
     const methods = await fetchAuthMethods(request);
@@ -294,7 +317,7 @@ test.describe.serial("Authenticated Release Smoke", () => {
     const sidebar = page.locator("aside").first();
     await expect(sidebar).toBeVisible();
     await expect(
-      sidebar.getByRole("link", { name: "kombify TechStack" }),
+      sidebar.getByRole("link", { name: "kombify Techstack" }),
     ).toBeVisible();
     await expect(sidebar.getByText("Dashboard")).toBeVisible();
     await expect(sidebar.getByText("Services")).toBeVisible();
@@ -339,7 +362,7 @@ test.describe.serial("Authenticated Release Smoke", () => {
         `login unavailable: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
-    await page.goto("/stacks");
+    await page.goto("/dashboard");
     await waitForPageLoad(page);
 
     const dashboard = page.getByTestId("stacks-dashboard");

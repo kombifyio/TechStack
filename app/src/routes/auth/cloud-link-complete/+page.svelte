@@ -11,8 +11,8 @@
    */
 
   import { onMount } from "svelte";
-  import { browser } from "$app/environment";
-  import { cloudLinkReasonMessage } from "$lib/wizard/owner-state.svelte";
+  import { browser } from '$app/env';
+  import { cloudLinkReasonMessage } from "#lib/wizard/owner-state.svelte.js";
 
   let status = $state<"ok" | "error" | "unknown">("unknown");
   let reason = $state<string | null>(null);
@@ -41,7 +41,7 @@
 </script>
 
 <svelte:head>
-  <title>kombify Cloud Link - kombify-TechStack</title>
+  <title>kombify Cloud Link - kombify-Techstack</title>
 </svelte:head>
 
 <div class="min-h-screen bg-background flex items-center justify-center">
@@ -62,7 +62,7 @@
               stroke-linejoin="round"
               stroke-width="2"
               d="M5 13l4 4L19 7"
-            />
+            ></path>
           </svg>
         </div>
       </div>
@@ -90,7 +90,7 @@
               stroke-linejoin="round"
               stroke-width="2"
               d="M6 18L18 6M6 6l12 12"
-            />
+            ></path>
           </svg>
         </div>
       </div>

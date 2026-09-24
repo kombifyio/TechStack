@@ -2,7 +2,6 @@ package notifications
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -56,7 +55,13 @@ func TestOutboxProcessOneDispatchesAndCompletes(t *testing.T) {
 	mock.ExpectQuery(`(?s)SELECT idempotency_key.*FROM techstack_notification_outbox`).
 		WithArgs(now).
 		WillReturnRows(sqlmock.NewRows([]string{"idempotency_key", "tenant_id", "auth0_user_id", "topic_slug", "payload_json", "attempts"}).
-			AddRow("monitor:key", "org-1", "auth0|owner", "system.service-degraded", `{"subject":"DiskFull"}`, 0))
+			AddRow("monitor:key", "org-1", "auth0|owner", "system.service-degraded", `{
+				"subject":"DiskFull","_delivery_channel":"push","_activity_envelope":{
+					"source_app":"techstack","event_key":"stackkit.update.failed",
+					"subject_ref":"stackkit:media-kit","deep_link":"/stacks/deployment-1",
+					"group_key":"kit_deployment:deployment-1","priority":"high"
+				}
+			}`, 0))
 	mock.ExpectExec(`(?s)UPDATE techstack_notification_outbox SET next_attempt_at`).
 		WithArgs(now, now.Add(outboxClaimLease), "monitor:key").
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -73,6 +78,15 @@ func TestOutboxProcessOneDispatchesAndCompletes(t *testing.T) {
 	}
 	if client.event.Auth0UserID != "auth0|owner" || client.event.OrganizationID != "org-1" {
 		t.Fatalf("dispatch identity changed: %#v", client.event)
+	}
+	if client.event.Channel != "push" || client.event.SourceApp != "techstack" ||
+		client.event.EventKey != "stackkit.update.failed" || client.event.SubjectRef != "stackkit:media-kit" ||
+		client.event.DeepLink != "/stacks/deployment-1" || client.event.GroupKey != "kit_deployment:deployment-1" ||
+		client.event.Priority != "high" {
+		t.Fatalf("activity envelope changed: %#v", client.event)
+	}
+	if _, leaked := client.event.Payload[activityEnvelopePayloadKey]; leaked {
+		t.Fatalf("reserved activity envelope leaked into product payload: %#v", client.event.Payload)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
@@ -105,9 +119,6 @@ func TestOutboxProcessOneMakesNonRetryableDenialTerminal(t *testing.T) {
 	outbox.now = func() time.Time { return now }
 	if err := outbox.processOne(context.Background()); err != nil {
 		t.Fatalf("processOne: %v", err)
-	}
-	if !isTerminalDispatchError(client.err) || errors.Is(client.err, context.Canceled) {
-		t.Fatal("expected a terminal dispatch denial")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

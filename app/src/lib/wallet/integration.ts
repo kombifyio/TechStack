@@ -3,16 +3,14 @@
  * Handles auto-population and service discovery for credentials
  */
 
+import { getWalletItems, createWalletItem } from "#lib/api/wallet.js";
 import {
-  getWalletItems,
-  getWalletItemsByStack,
-  createWalletItem,
-} from "$lib/api/wallet";
-import { listServiceRegistry, type RegistryService } from "$lib/api/registry";
-import type { PBService } from "$lib/stores/services";
-import type { PBStack } from "$lib/stores/stacks";
-import type { CredentialType } from "$lib/stores/wallet";
-import { buildWalletEntryPayload } from "$lib/wallet/payload";
+  listServiceRegistry,
+  type RegistryService,
+} from "#lib/api/registry.js";
+import type { KitDeployment } from "#lib/api/stacks.js";
+import type { CredentialType } from "#lib/wallet/types.js";
+import { buildWalletEntryPayload } from "#lib/wallet/payload.js";
 
 export interface DiscoveredCredential {
   name: string;
@@ -21,8 +19,16 @@ export interface DiscoveredCredential {
   url?: string;
   notes?: string;
   service_id?: string;
-  stack_id?: string;
+  kit_deployment_id?: string;
   auto_generated: boolean;
+}
+
+export interface CredentialService {
+  id: string;
+  name: string;
+  display_name?: string;
+  type: string;
+  url?: string;
 }
 
 export interface ServiceCredentialTemplate {
@@ -93,8 +99,8 @@ const SERVICE_TEMPLATES: ServiceCredentialTemplate[] = [
  * Discover credentials that should be added for a service
  */
 export function discoverServiceCredentials(
-  service: PBService,
-  stack?: PBStack,
+  service: CredentialService,
+  deployment?: Pick<KitDeployment, "id">,
 ): DiscoveredCredential[] {
   const template = SERVICE_TEMPLATES.find(
     (t) => t.serviceType === service.type,
@@ -108,7 +114,7 @@ export function discoverServiceCredentials(
     url: cred.urlPattern?.replace("{url}", service.url || ""),
     notes: cred.notes,
     service_id: service.id,
-    stack_id: stack?.id,
+    kit_deployment_id: deployment?.id,
     auto_generated: false, // User needs to fill in the secret
   }));
 }
@@ -118,7 +124,7 @@ export function discoverServiceCredentials(
  */
 export async function findServicesWithoutCredentials(): Promise<
   Array<{
-    service: PBService;
+    service: CredentialService;
     missingCredentials: DiscoveredCredential[];
   }>
 > {
@@ -132,15 +138,20 @@ export async function findServicesWithoutCredentials(): Promise<
   );
 
   const results: Array<{
-    service: PBService;
+    service: CredentialService;
     missingCredentials: DiscoveredCredential[];
   }> = [];
 
   for (const registryService of services) {
-    const service = registryServiceToPBService(registryService);
+    const service = registryServiceToCredentialService(registryService);
     if (serviceIdsWithCredentials.has(service.id)) continue;
 
-    const discovered = discoverServiceCredentials(service);
+    const discovered = discoverServiceCredentials(
+      service,
+      registryService.kit_deployment_id
+        ? { id: registryService.kit_deployment_id }
+        : undefined,
+    );
     if (discovered.length > 0) {
       results.push({
         service,
@@ -152,48 +163,16 @@ export async function findServicesWithoutCredentials(): Promise<
   return results;
 }
 
-function registryServiceToPBService(service: RegistryService): PBService {
+function registryServiceToCredentialService(
+  service: RegistryService,
+): CredentialService {
   return {
     id: service.id || service.name,
     name: service.name,
     display_name: service.display_name,
-    type: service.type as PBService["type"],
-    port: service.port,
+    type: service.type,
     url: service.url,
-    status: service.status as PBService["status"],
-    node_id: service.server_id,
-  } as PBService;
-}
-
-/**
- * Create placeholder credentials for a stack after provisioning
- */
-export async function createStackCredentials(
-  stackId: string,
-  stackName: string,
-): Promise<void> {
-  // Create SSH key placeholder
-  await createWalletItem(
-    buildWalletEntryPayload("recovery", {
-      name: `${stackName} SSH Key`,
-      kind: "ssh_key",
-      notes: `Auto-generated SSH key for stack "${stackName}". Generate or add your key here.`,
-      stack_id: stackId,
-      auto_generated: true,
-    }),
-  );
-
-  // Create root password placeholder
-  await createWalletItem(
-    buildWalletEntryPayload("recovery", {
-      name: `${stackName} Root Password`,
-      kind: "password",
-      username: "root",
-      notes: `Root password for nodes in stack "${stackName}".`,
-      stack_id: stackId,
-      auto_generated: true,
-    }),
-  );
+  };
 }
 
 /**
@@ -210,7 +189,7 @@ export async function addServiceCredentials(
       url: discovered.url,
       notes: discovered.notes,
       service_id: discovered.service_id,
-      stack_id: discovered.stack_id,
+      kit_deployment_id: discovered.kit_deployment_id,
       auto_generated: discovered.auto_generated,
     }),
   );

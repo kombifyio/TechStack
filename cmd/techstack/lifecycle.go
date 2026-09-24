@@ -3,13 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"sync"
 
-	"github.com/pocketbase/pocketbase"
-
-	"github.com/kombifyio/techstack/pkg/backup"
+	"github.com/kombifyio/techstack/internal/backupjobs"
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/db"
-	"github.com/kombifyio/techstack/pkg/drift"
 	"github.com/kombifyio/techstack/pkg/logger"
 	"github.com/kombifyio/techstack/pkg/monitoring"
 	"github.com/kombifyio/techstack/pkg/orchestrator"
@@ -22,6 +20,36 @@ import (
 type providerControlLifecycle struct {
 	cancel context.CancelFunc
 	done   <-chan struct{}
+}
+
+type backgroundRuntimeLifecycle struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+}
+
+func newBackgroundRuntimeLifecycle(parent context.Context) *backgroundRuntimeLifecycle {
+	ctx, cancel := context.WithCancel(parent)
+	return &backgroundRuntimeLifecycle{ctx: ctx, cancel: cancel}
+}
+
+func (lifecycle *backgroundRuntimeLifecycle) run(run func(context.Context)) {
+	if lifecycle == nil || run == nil {
+		return
+	}
+	lifecycle.wg.Add(1)
+	go func() {
+		defer lifecycle.wg.Done()
+		run(lifecycle.ctx)
+	}()
+}
+
+func (lifecycle *backgroundRuntimeLifecycle) stopAndWait() {
+	if lifecycle == nil {
+		return
+	}
+	lifecycle.cancel()
+	lifecycle.wg.Wait()
 }
 
 // providerRuntimeRunner keeps the lifecycle boundary provider-neutral. The
@@ -54,12 +82,11 @@ func (lifecycle *providerControlLifecycle) stopAndWait() {
 }
 
 // startRuntimeLifecycle starts the background runtime components (agent gRPC
-// server, job orchestrator, backup/drift schedulers, monitoring) and returns
+// server, job orchestrator, drift scheduler, monitoring) and returns
 // the handles needed to stop them. It is the direct-call replacement for the
 // previously OnServe-bound lifecycle binders.
 func startRuntimeLifecycle(
 	ctx context.Context,
-	app *pocketbase.PocketBase,
 	cfg *config.Config,
 	orch *orchestrator.Orchestrator,
 	grpcState *grpcBoot,
@@ -68,73 +95,83 @@ func startRuntimeLifecycle(
 	rilSignalWorker *signals.Worker,
 	providerRuntime providerRuntimeRunner,
 	registrySweeper *serverregistry.Sweeper,
+	platformProjector *serverregistry.PlatformProjector,
 	jobReclaimer *orchestrator.JobExecutionReclaimer,
+	backupScanner *backupjobs.Scanner,
 	log *logger.Logger,
 ) *shutdownHandles {
-	handles := &shutdownHandles{}
+	background := newBackgroundRuntimeLifecycle(ctx)
+	handles := &shutdownHandles{background: background}
 
 	if grpcState.server != nil {
-		go func() {
+		background.run(func(ctx context.Context) {
 			// Use the runtime lifecycle context (not context.Background) so the
 			// gRPC server's ctx-cancellation watcher triggers GracefulStop on
 			// shutdown (see grpcserver.Server.Start). Resolves gosec G118.
 			if err := grpcState.server.Start(ctx); err != nil {
 				fmt.Printf("⚠️  gRPC server error: %v\n", err)
 			}
-		}()
+		})
 		fmt.Printf("   gRPC:           %s (agent connections)\n", grpcState.addr)
 	}
 
 	orch.Start()
 	fmt.Println("   Jobs:           Orchestrator started with 4 workers")
 
+	if backupScanner != nil {
+		// Bound to the runtime lifecycle context so a shutdown stops the pass
+		// instead of leaving a loop enqueueing against a closing queue.
+		background.run(backupScanner.Run)
+		fmt.Println("   Backups:        Due-stack scanner started")
+	}
+
+	// A crash between the durable job insert and the queue enqueue stranded
+	// the run until the user retried. Re-admit recent pending jobs whose
+	// recovery payload survived redaction; the per-stack execution claim keeps
+	// this safe across replicas.
+	if requeued, requeueErr := orch.RequeuePendingJobs(ctx); requeueErr != nil {
+		log.Warn("pending_jobs_requeue_failed", "error", requeueErr, "requeued", requeued)
+	}
+
 	if jobReclaimer != nil {
 		// The first pass is the startup reconciliation: a job row still
 		// 'running' behind an expired execution lease belongs to a boot that is
 		// over, and it holds its stack's execution claim until it is
 		// terminalized. The loop stops when ctx is canceled on shutdown.
-		go jobReclaimer.Run(ctx)
+		background.run(jobReclaimer.Run)
 		fmt.Println("   Job reclaim:    orphaned execution reconciliation started")
 	}
 
-	if cfg.Backup.Enabled {
-		startBackupScheduler(app, cfg, handles)
-	} else {
-		fmt.Println("   Backups:        Scheduler disabled (set TECHSTACK_BACKUP_ENABLED=true to enable)")
-	}
-
 	if cfg.Drift.Enabled {
-		schedulerCfg := drift.NewSchedulerConfigFromConfig(cfg)
-		handles.driftScheduler = drift.NewScheduler(app, orch, schedulerCfg)
-		handles.driftScheduler.Start()
-		fmt.Printf("   Drift:          Scheduler started (interval: %s, retention: %d)\n", cfg.Drift.Interval, cfg.Drift.Retention)
+		fmt.Println("   Drift:          Scheduler unavailable until canonical tenant enumeration is configured")
 	} else {
 		fmt.Println("   Drift:          Scheduler disabled (set TECHSTACK_DRIFT_ENABLED=true to enable)")
 	}
 
-	handles.monitorCancel = startMonitoringRuntime(ctx, monitorState, log)
+	startMonitoringRuntime(background, monitorState, log)
 
 	if workflowEngine != nil {
-		// The worker's poll + timer-sweep loops stop when ctx is canceled on
-		// shutdown, so no explicit stop handle is needed.
-		workflow.NewWorker(workflowEngine, workflow.DefaultWorkerConfig()).Start(ctx)
+		background.run(workflow.NewWorker(workflowEngine, workflow.DefaultWorkerConfig()).Run)
 		fmt.Println("   Workflows:      RIL engine + worker started (Postgres-backed)")
 	}
 
 	if rilSignalWorker != nil {
-		go rilSignalWorker.Run(ctx)
+		background.run(rilSignalWorker.Run)
 		fmt.Println("   RIL signals:    durable Gateway publisher started")
 	}
 
 	if registrySweeper != nil {
-		// The sweeper's loop stops when ctx is canceled on shutdown, so no
-		// explicit stop handle is needed.
-		go registrySweeper.Run(ctx)
+		background.run(registrySweeper.Run)
 		fmt.Println("   Registry sweep: observation demotion + outbox retention started")
 	}
 
+	if platformProjector != nil {
+		background.run(platformProjector.Run)
+		fmt.Println("   Platform list: server inventory projected into kombify-db")
+	}
+
 	if providerRuntime != nil {
-		handles.providerControl = startProviderControlLifecycle(ctx, providerRuntime.Run)
+		handles.providerControl = startProviderControlLifecycle(background.ctx, providerRuntime.Run)
 		fmt.Println("   ProviderControl: native reconciler composed (mutations activation-gated)")
 	}
 
@@ -155,24 +192,18 @@ func stopRuntimeLifecycle(
 ) {
 	runRuntimeShutdownSequence(
 		handles.providerControl,
-		orch.Stop,
+		func() {
+			orch.Stop()
+			handles.background.stopAndWait()
+		},
 		func() {
 			if providerDatabase != nil {
 				_ = providerDatabase.Close()
 			}
 		},
 		func() {
-			if handles.monitorCancel != nil {
-				handles.monitorCancel()
-			}
 			if monitorState.tsdb != nil {
 				_ = monitorState.tsdb.Close()
-			}
-			if handles.driftScheduler != nil {
-				handles.driftScheduler.Stop()
-			}
-			if handles.backupScheduler != nil {
-				handles.backupScheduler.Stop()
 			}
 			if tunnelResolver != nil {
 				_ = tunnelResolver.Stop()
@@ -215,40 +246,21 @@ func runRuntimeShutdownSequence(
 	}
 }
 
-func startBackupScheduler(app *pocketbase.PocketBase, cfg *config.Config, handles *shutdownHandles) {
-	schedulerCfg := backup.NewSchedulerConfigFromConfig(cfg)
-	scheduler, err := backup.NewScheduler(app, schedulerCfg)
-	if err != nil {
-		fmt.Printf("⚠️  Backup scheduler creation failed: %v\n", err)
+func startMonitoringRuntime(background *backgroundRuntimeLifecycle, state *monitoringBoot, log *logger.Logger) {
+	if state.tsdb == nil && state.remote == nil {
 		return
 	}
-	handles.backupScheduler = scheduler
-	scheduler.Start()
-	s3Status := "disabled"
-	if schedulerCfg.S3Enabled {
-		s3Status = "enabled"
-	}
-	fmt.Printf("   Backups:        Scheduler started (interval: %s, retention: %d, S3: %s)\n",
-		cfg.Backup.Interval, cfg.Backup.Retention, s3Status)
-}
-
-func startMonitoringRuntime(parent context.Context, state *monitoringBoot, log *logger.Logger) context.CancelFunc {
-	if state.tsdb == nil && state.remote == nil {
-		return nil
-	}
-	monCtx, cancel := context.WithCancel(parent)
 	if state.tsdb != nil {
 		retSvc := monitoring.NewRetentionService(state.tsdb, monitoring.RetentionConfig{Logger: log.Logger})
-		go retSvc.Run(monCtx)
+		background.run(retSvc.Run)
 	}
 	if state.alertEngine != nil {
-		go state.alertEngine.Run(monCtx)
+		background.run(state.alertEngine.Run)
 	}
 	if state.notifyOutbox != nil {
-		go state.notifyOutbox.Run(monCtx)
+		background.run(state.notifyOutbox.Run)
 	}
 	printMonitoringStartup(state)
-	return cancel
 }
 
 func printMonitoringStartup(state *monitoringBoot) {

@@ -24,15 +24,15 @@ type ConnectorBindingExpectation struct {
 // consumed at execution. The HTTP adapter accepts it only on a verified edge
 // hop; the authority independently binds every field to the persisted card.
 type ConnectorBindingProjection struct {
-	GrantID      string
-	BindingID    string
-	BindingHash  string
-	ConnectorID  string
-	BindingScope string
-	ResourceID   string
-	ServerID     string
-	Scopes       []string
-	Status       string
+	GrantID      string   `json:"grant_id"`
+	BindingID    string   `json:"binding_id"`
+	BindingHash  string   `json:"binding_hash"`
+	ConnectorID  string   `json:"connector_id"`
+	BindingScope string   `json:"binding_scope"`
+	ResourceID   string   `json:"resource_id"`
+	ServerID     string   `json:"server_id"`
+	Scopes       []string `json:"scopes"`
+	Status       string   `json:"status"`
 }
 
 func validateConnectorBindingExpectation(expected *ConnectorBindingExpectation) error {

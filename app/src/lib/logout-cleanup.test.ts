@@ -2,20 +2,15 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("$app/environment", () => ({
+vi.mock("$app/env", () => ({
   browser: true,
 }));
 
-vi.mock("$lib/auth/pocketbase-compat", () => ({
-  clearPocketBaseCompatStoredSession: vi.fn(),
-}));
-
-vi.mock("$lib/stores/stackIdentity", () => ({
+vi.mock("#lib/stores/stackIdentity.js", () => ({
   clearStackIdentity: vi.fn(),
 }));
 
-import { clearPocketBaseCompatStoredSession } from "$lib/auth/pocketbase-compat";
-import { clearStackIdentity } from "$lib/stores/stackIdentity";
+import { clearStackIdentity } from "#lib/stores/stackIdentity.js";
 import {
   clearCreatingSessionState,
   clearCreatingSessionStateForStack,
@@ -37,15 +32,23 @@ describe("clearTechstackSecuritySessionState", () => {
     window.sessionStorage.setItem("creatingJobId", "job_123");
     window.sessionStorage.setItem("creatingStackId", "stack_123");
     window.sessionStorage.setItem("creating:job_123:config", "{}");
+    window.sessionStorage.setItem(
+      "techstack-cache:stacks:homelab",
+      '{"value":{},"storedAt":1}',
+    );
     window.sessionStorage.setItem("unrelated-session-pref", "keep");
 
     clearTechstackSecuritySessionState();
 
-    expect(clearPocketBaseCompatStoredSession).toHaveBeenCalled();
     expect(clearStackIdentity).toHaveBeenCalled();
     expect(window.sessionStorage.getItem("creatingJobId")).toBeNull();
     expect(window.sessionStorage.getItem("creatingStackId")).toBeNull();
     expect(window.sessionStorage.getItem("creating:job_123:config")).toBeNull();
+    // Cached inventory is tenant data: it must not survive into the next
+    // sign-in on this tab.
+    expect(
+      window.sessionStorage.getItem("techstack-cache:stacks:homelab"),
+    ).toBeNull();
     expect(window.sessionStorage.getItem("unrelated-session-pref")).toBe(
       "keep",
     );
@@ -70,7 +73,6 @@ describe("clearTechstackSecuritySessionState", () => {
     expect(window.sessionStorage.getItem("unrelated-session-pref")).toBe(
       "keep",
     );
-    expect(clearPocketBaseCompatStoredSession).not.toHaveBeenCalled();
     expect(clearStackIdentity).not.toHaveBeenCalled();
   });
 

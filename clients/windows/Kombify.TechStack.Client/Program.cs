@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
+using Kombify.Client.Shell;
 
 namespace Kombify.TechStack.Client;
 
@@ -16,15 +17,21 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        var config = ClientConfig.Load(args);
+        // A verified staged update is applied before anything else starts.
+        if (ClientUpdater.TryApplyStagedUpdate(config))
+        {
+            return;
+        }
         ApplicationConfiguration.Initialize();
-        Application.Run(new ClientWindow(ClientConfig.Load(args)));
+        Application.Run(new ClientWindow(config));
     }
 }
 
 internal sealed record ClientConfig
 {
-    private const string LegacyLocalOnboardingUrl = "http://127.0.0.1:5260/client/local?client=windows";
-    private const string DefaultLocalOnboardingUrl = "http://127.0.0.1:5260/client/onboarding?client=windows";
+    private const string LegacyLocalOnboardingUrl = "http://127.0.0.1:5260/client/onboarding?client=windows";
+    private const string DefaultLocalOnboardingUrl = "http://127.0.0.1:5260/client/local?client=windows";
 
     public string Mode { get; init; } = "local";
     public string CloudUrl { get; init; } = "https://kombify.io/device";
@@ -42,6 +49,14 @@ internal sealed record ClientConfig
     public string RuntimeDataDir { get; init; } = Path.Combine(StateDirectory(), "runtime");
     public int RuntimeStartupTimeoutSeconds { get; init; } = 120;
     public bool AutoStartRuntime { get; init; } = true;
+    // Signed update channel (NATIVE-CLIENT-PLATFORM-STANDARD section 7). The
+    // manifest location may change; the trusted signing key is embedded in
+    // techstack.exe and cannot be configured. AutoUpdate=false opts out.
+    public string UpdateManifestUrl { get; init; } =
+        "https://github.com/kombifyio/TechStack/releases/latest/download/kombify-techstack-windows-update.json";
+    public string UpdateChannel { get; init; } = "stable";
+    public string UpdateMinSupportedVersion { get; init; } = "";
+    public bool AutoUpdate { get; init; } = true;
 
     public static ClientConfig Load(string[] args)
     {
@@ -293,6 +308,7 @@ internal sealed class ClientWindow : Form
     private const string LocalDeviceTokenHeader = "X-TechStack-Device-Token";
     private const string LocalRuntimeSessionCredentialTarget = "kombify/techstack/local/runtime-session-secret";
     private const string LocalDeviceCredentialTarget = "kombify/techstack/local/device-session-token";
+    private const string LocalRuntimeEncryptionKeyCredentialTarget = "kombify/techstack/local/runtime-encryption-key";
 
     private readonly ClientConfig _config;
     private readonly WebView2 _webView = new() { Dock = DockStyle.Fill };
@@ -339,12 +355,23 @@ internal sealed class ClientWindow : Form
             if (IsLocalMode())
             {
                 NavigateHtml(RenderLocalRuntimeStarting(_config.LocalOrigin()));
-                if (!await EnsureLocalRuntimeAsync())
+                var runtimeReady = await EnsureLocalRuntimeAsync();
+                if (ClientUpdater.CompletePendingUpdate(_config, runtimeReady, StopStartedLocalRuntime))
+                {
+                    Close();
+                    return;
+                }
+                if (!runtimeReady)
                 {
                     return;
                 }
 
                 await BootstrapLocalDeviceSessionAsync();
+            }
+            else if (ClientUpdater.CompletePendingUpdate(_config, true, () => { }))
+            {
+                Close();
+                return;
             }
 
             if (IsServerMode())
@@ -358,6 +385,7 @@ internal sealed class ClientWindow : Form
             }
 
             _webView.CoreWebView2.Navigate(_boundServerProfile?.BaseUrl ?? _config.InitialUrl());
+            _ = ClientUpdater.CheckAndStageAsync(_config, ResolveRuntimeExecutablePath());
         }
         catch (Exception ex)
         {
@@ -484,8 +512,12 @@ internal sealed class ClientWindow : Form
             start.Environment["TECHSTACK_ENV"] = "local";
             start.Environment["KOMBIFY_EDITION"] = "selfhost-oss";
             start.Environment["TECHSTACK_EMBEDDED_POSTGRES"] = "1";
+            start.Environment["TECHSTACK_EMBEDDED_POSTGRES_BUNDLE_DIR"] =
+                Path.Combine(Path.GetDirectoryName(runtimeExe) ?? AppContext.BaseDirectory, "postgres");
             start.Environment["TECHSTACK_EMBEDDED_POSTGRES_START_TIMEOUT_SECONDS"] = "120";
             start.Environment["TECHSTACK_V2_SESSION_SECRET"] = EnsureRuntimeSessionSecret();
+            // Wallet, backup and StackKit custody fail closed without this key.
+            start.Environment["TECHSTACK_ENCRYPTION_KEY"] = EnsureRuntimeEncryptionKey();
             start.Environment["TECHSTACK_V2_SESSION_AUDIENCE"] = "techstack-local";
             start.Environment["TECHSTACK_V2_DEFAULT_TENANT_ID"] = "default";
             start.Environment["TECHSTACK_ALLOW_UNSIGNED_WORKER_TOKEN"] = "1";
@@ -504,6 +536,11 @@ internal sealed class ClientWindow : Form
 				if (Directory.Exists(stackKitSpecTemplates))
 				{
 					start.Environment["TECHSTACK_STACKKIT_SPEC_TEMPLATES"] = stackKitSpecTemplates;
+				}
+				var stackKitCompatibilityManifest = Path.Combine(stackKitsDirectory, "stackkits-compatibility-v1.json");
+				if (File.Exists(stackKitCompatibilityManifest))
+				{
+					start.Environment["TECHSTACK_STACKKIT_COMPATIBILITY_MANIFEST"] = stackKitCompatibilityManifest;
 				}
 			}
 			start.Environment["TECHSTACK_AGENT_BINARY_LINUX_AMD64"] = Path.Combine(runtimeDirectory, "techstack-linux-amd64");
@@ -637,6 +674,29 @@ internal sealed class ClientWindow : Form
     private string EnsureLocalDeviceToken()
     {
         return EnsureLocalCredential(ClientConfig.CredentialTarget(LocalDeviceCredentialTarget));
+    }
+
+    // The runtime uses the key's 32 bytes directly for AES-256-GCM, so it is 24
+    // random bytes in unpadded base64url. It encrypts retained local data: a
+    // present but malformed key is never replaced, because a new key would make
+    // every stored secret unreadable.
+    private static string EnsureRuntimeEncryptionKey()
+    {
+        var target = ClientConfig.CredentialTarget(LocalRuntimeEncryptionKeyCredentialTarget);
+        var existing = WindowsCredentialStore.Read(target)?.Trim();
+        if (!string.IsNullOrEmpty(existing))
+        {
+            if (existing.Length == 32 && existing.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_'))
+            {
+                return existing;
+            }
+            throw new InvalidOperationException(
+                "The local encryption key in Windows Credential Manager is invalid. Restore it or reset the local state.");
+        }
+
+        var key = Convert.ToBase64String(RandomNumberGenerator.GetBytes(24)).Replace('+', '-').Replace('/', '_');
+        WindowsCredentialStore.Write(target, Environment.UserName, key);
+        return key;
     }
 
     private string ReadLocalDeviceToken()
@@ -1211,7 +1271,7 @@ pre{max-height:220px;overflow:auto;background:#06142d;color:#f5f7fb;padding:14px
         return $"""<p class="copy small">Runtime log: <span class="path">{Html(logPath)}</span></p>{pre}""";
     }
 
-    private static void AppendRuntimeLog(string path, string? line)
+    internal static void AppendRuntimeLog(string path, string? line)
     {
         if (string.IsNullOrWhiteSpace(line))
         {

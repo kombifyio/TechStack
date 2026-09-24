@@ -12,10 +12,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 
 	productnotifications "github.com/kombifyio/techstack/internal/notifications"
+	"github.com/kombifyio/techstack/internal/providercontrol"
 	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/config"
@@ -49,7 +49,9 @@ type crudRouteHandlers struct {
 	homelabStore       controlplane.HomelabStore
 	jobStore           controlplane.JobStore
 	walletStore        controlplane.WalletStore
+	activityStore      controlplane.ActivityStore
 	serverStore        controlplane.ServerRuntimeStore
+	serviceStore       controlplane.ServiceRuntimeStore
 	routingStore       stackrouting.Store
 	routingLeases      stackrouting.ManagedLeaseLister
 	routingDispatch    stackrouting.RolloutDispatcher
@@ -92,6 +94,7 @@ type normalizedCreateStackRequest struct {
 // to the orchestrator/legacy start paths, keeping those functions below the
 // 4-argument threshold instead of threading id/name/spec/access separately.
 type createStackDispatch struct {
+	tenantID        string
 	stackID         string
 	serverID        string
 	name            string
@@ -103,6 +106,7 @@ type createStackDispatch struct {
 // queuedJobParams bundles the persistence inputs for createQueuedJob so the
 // queue-creation call site stays below the 4-argument threshold.
 type queuedJobParams struct {
+	tenantID    string
 	jobType     string
 	stackID     string
 	currentStep string
@@ -114,32 +118,18 @@ func (h crudRouteHandlers) listStacks(e *httpx.Event) error {
 	if err != nil {
 		return err
 	}
-
-	tenantID := tenantIDFromRequest(e)
-	if h.stackStore != nil && tenantID != "" {
-		return h.listStacksFromStore(e, ownerID, tenantID)
+	tenantID, tenantErr := tenantguard.TenantScope(tenantIDFromRequest(e), ownerID, "techstack.stacks.list")
+	if tenantErr != nil {
+		return tenantErr
 	}
-	if guardErr := tenantguard.RequireTenant(tenantID, "techstack.stacks.list"); guardErr != nil {
-		return guardErr
+	if h.stackStore == nil {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+			"Stack authority is temporarily unavailable", map[string]any{
+				"reason_code": "stack_authority_unavailable",
+				"retryable":   true,
+			})
 	}
-
-	stacks, err := h.app.FindRecordsByFilter(
-		"stacks",
-		"owner_id = {:ownerId}",
-		"-created",
-		100,
-		0,
-		map[string]any{"ownerId": ownerID},
-	)
-	if err != nil {
-		return httpx.Success(e, http.StatusOK, []any{})
-	}
-
-	result := make([]map[string]any, 0, len(stacks))
-	for _, stack := range stacks {
-		result = append(result, stackListItem(stack))
-	}
-	return httpx.Success(e, http.StatusOK, result)
+	return h.listStacksFromStore(e, ownerID, tenantID)
 }
 
 // listStacksFromStore serves the control-plane (Postgres) list path, filtered to
@@ -153,71 +143,42 @@ func (h crudRouteHandlers) listStacksFromStore(e *httpx.Event, ownerID, tenantID
 }
 
 func (h crudRouteHandlers) getStack(e *httpx.Event) error {
-	stackID := e.Request.PathValue("id")
-	if h.useControlPlaneStore(e) {
-		ownerID, authErr := requireStackAuth(e)
-		if authErr != nil {
-			return authErr
-		}
-		tenantID := tenantIDFromRequest(e)
-		stack, err := h.stackStore.GetStack(e.Request.Context(), tenantID, strings.TrimSpace(stackID))
-		if err == nil {
-			if stack.OwnerSubjectID != ownerID {
-				return httpx.NewForbiddenError("Not your stack", nil)
-			}
-			return httpx.Success(e, http.StatusOK, stackListItemFromStore(*stack))
-		}
-		if !errors.Is(err, controlplane.ErrNotFound) {
-			return httpx.NewInternalServerError("Failed to fetch stack", nil)
-		}
-		if legacy, legacyErr := h.findOwnedStack(e, stackID); legacyErr == nil {
-			return httpx.Success(e, http.StatusOK, stackListItem(legacy))
-		}
-		return httpx.NewNotFoundError("Stack not found", nil)
-	}
-
-	if _, authErr := requireStackAuth(e); authErr != nil {
+	ownerID, authErr := requireStackAuth(e)
+	if authErr != nil {
 		return authErr
 	}
-	if err := tenantguard.RequireTenant(tenantIDFromRequest(e), "techstack.stacks.get"); err != nil {
-		return err
+	tenantID, tenantErr := tenantguard.TenantScope(tenantIDFromRequest(e), ownerID, "techstack.stacks.read")
+	if tenantErr != nil {
+		return tenantErr
 	}
-	stack, err := h.findOwnedStack(e, stackID)
+	if h.stackStore == nil {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+			"Stack authority is temporarily unavailable", map[string]any{
+				"reason_code": "stack_authority_unavailable",
+				"retryable":   true,
+			})
+	}
+	stack, err := h.stackStore.GetStack(e.Request.Context(), tenantID, strings.TrimSpace(e.Request.PathValue("id")))
+	if errors.Is(err, controlplane.ErrNotFound) {
+		return httpx.NewNotFoundError("Stack not found", nil)
+	}
 	if err != nil {
-		return err
+		return httpx.NewInternalServerError("Failed to fetch stack", nil)
 	}
-	return httpx.Success(e, http.StatusOK, stackListItem(stack))
-}
-
-func (h crudRouteHandlers) legacyOwnedStacks(ownerID, tenantID string) ([]*core.Record, error) {
-	if h.app == nil {
-		return nil, nil
+	if stack.OwnerSubjectID != ownerID {
+		return httpx.NewForbiddenError("Not your stack", nil)
 	}
-	if _, err := h.app.FindCollectionByNameOrId("stacks"); err != nil {
-		return nil, nil
-	}
-	stacks, err := h.app.FindAllRecords("stacks", dbx.HashExp{"owner_id": ownerID})
-	if err != nil {
-		return nil, err
-	}
-	result := make([]*core.Record, 0, len(stacks))
-	for _, stack := range stacks {
-		if !stack.GetDateTime("deleted_at").IsZero() {
-			continue
-		}
-		stackTenantID := strings.TrimSpace(stack.GetString("tenant_id"))
-		if tenantID != "" && stackTenantID != "" && stackTenantID != tenantID {
-			continue
-		}
-		result = append(result, stack)
-	}
-	return result, nil
+	return httpx.Success(e, http.StatusOK, stackListItemFromStore(*stack))
 }
 
 func (h crudRouteHandlers) createStack(e *httpx.Event) error {
 	ownerID, authErr := requireStackAuth(e)
 	if authErr != nil {
 		return authErr
+	}
+	tenantID, tenantErr := tenantguard.TenantScope(tenantIDFromRequest(e), ownerID, "techstack.stacks.create")
+	if tenantErr != nil {
+		return tenantErr
 	}
 
 	req, decodeErr := decodeCreateStackRequest(e.Request.Body)
@@ -238,16 +199,19 @@ func (h crudRouteHandlers) createStack(e *httpx.Event) error {
 	if denial != nil {
 		return denial.write(e)
 	}
-	return h.createNormalizedStack(e, ownerID, normalized)
+	return h.createNormalizedStack(e, ownerID, tenantID, normalized)
 }
 
 // ownerBootstrapContextForCreate builds the resolve context for the create
-// flow, attaching the operator's verified kombify Cloud link only when the
-// request selects the cloud-linked owner source.
+// flow, attaching only the server-side profile authority selected by the
+// request. Neither source accepts identity fields from request JSON.
 func (h crudRouteHandlers) ownerBootstrapContextForCreate(e *httpx.Event, ownerID string, normalized normalizedCreateStackRequest) ownerBootstrapContext {
 	ctx := ownerBootstrapContextFromRequest(e)
 	if requestsCloudLinkedOwner(normalized) {
 		ctx.CloudLink = cloudLinkForOwner(h.app, ownerID)
+	}
+	if requestsAutomaticCloudOwner(normalized) {
+		ctx.CurrentProfile = verifiedCurrentCloudProfile(h.app, ownerID)
 	}
 	return ctx
 }
@@ -263,7 +227,7 @@ func (h crudRouteHandlers) rejectUnauthorizedManagedRuntime(e *httpx.Event, owne
 // persist -> apply owner bootstrap -> issue owner-spec access -> dispatch. Each
 // phase is a helper so this function stays a single, readable happy path and the
 // per-phase conditional nesting lives where it belongs.
-func (h crudRouteHandlers) createNormalizedStack(e *httpx.Event, ownerID string, normalized normalizedCreateStackRequest) error {
+func (h crudRouteHandlers) createNormalizedStack(e *httpx.Event, ownerID, tenantID string, normalized normalizedCreateStackRequest) error {
 	canonicalConfig, providerErr := canonicalizeFreshProvisionSpec(runtimePolicyConfigFromRequest(normalized))
 	if providerErr != nil {
 		return httpx.BadRequest(e, "Invalid provider selection: "+providerErr.Error(), nil)
@@ -278,7 +242,7 @@ func (h crudRouteHandlers) createNormalizedStack(e *httpx.Event, ownerID string,
 				"reason_code": "idempotency_key_invalid", "retryable": false,
 			})
 	}
-	stack, err := h.persistStack(e, ownerID, normalized)
+	stack, err := h.persistStack(e, ownerID, tenantID, normalized)
 	if err != nil {
 		return err
 	}
@@ -290,35 +254,36 @@ func (h crudRouteHandlers) createNormalizedStack(e *httpx.Event, ownerID string,
 	if stack.Name != "" {
 		normalized.Name = stack.Name
 	}
-	serverID, preparedLease, admissionHandled, admissionErr := h.admitManagedCreate(e, ownerID, stack, normalized)
+	serverID, preparedLease, admissionHandled, admissionErr := h.admitManagedCreate(e, ownerID, tenantID, stack, normalized)
 	if admissionHandled || admissionErr != nil {
-		h.markStackProvisionStartFailed(e.Request.Context(), stack.Id, tenantIDFromRequest(e))
+		h.markStackProvisionStartFailed(e.Request.Context(), stack.Id, tenantID)
 		return admissionErr
 	}
 	var serverErr error
 	if serverID == "" {
-		serverID, serverErr = h.persistCreateServerIntent(e, ownerID, stack, normalized)
+		serverID, serverErr = h.persistCreateServerIntent(e, ownerID, tenantID, stack, normalized)
 	}
 	if serverErr != nil {
-		h.markStackProvisionStartFailed(e.Request.Context(), stack.Id, tenantIDFromRequest(e))
-		logger.Default().Error("create_server_intent_failed", "error", serverErr, "stack_id", stack.Id, "tenant_id", tenantIDFromRequest(e))
+		h.markStackProvisionStartFailed(e.Request.Context(), stack.Id, tenantID)
+		logger.Default().Error("create_server_intent_failed", "error", serverErr, "stack_id", stack.Id, "tenant_id", tenantID)
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to persist server intent", map[string]any{
-			creationStackIDField: stack.Id, creationOperationsURLField: operationsURL(stack.Id),
+			creationStackIDField: stack.Id, creationOperationsURLField: homelabDashboardURL(),
 		})
 	}
 	if stack.IdempotentReplay {
-		if handled, replayErr := h.replayCreateJob(e, stack, serverID); handled || replayErr != nil {
+		if handled, replayErr := h.replayCreateJob(e, tenantID, stack, serverID); handled || replayErr != nil {
 			return replayErr
 		}
 	}
-	if bootstrapErr := h.applyCreateOwnerBootstrap(e, ownerID, stack, normalized); bootstrapErr != nil {
+	if bootstrapErr := h.applyCreateOwnerBootstrap(e, ownerID, tenantID, stack, normalized); bootstrapErr != nil {
 		return bootstrapErr
 	}
-	ownerSpecAccess, accessErr := h.issueCreateOwnerSpecAccess(e, stack, ownerID, normalized)
+	ownerSpecAccess, accessErr := h.issueCreateOwnerSpecAccess(e, stack, ownerID, tenantID, normalized)
 	if accessErr != nil {
 		return accessErr
 	}
 	return h.dispatchCreateStack(e, createStackDispatch{
+		tenantID:        tenantID,
 		stackID:         stack.Id,
 		serverID:        serverID,
 		name:            normalized.Name,
@@ -328,7 +293,7 @@ func (h crudRouteHandlers) createNormalizedStack(e *httpx.Event, ownerID string,
 	})
 }
 
-func (h crudRouteHandlers) admitManagedCreate(e *httpx.Event, ownerID string, stack *persistedStack, normalized normalizedCreateStackRequest) (string, *jobs.ManagedLeaseRequest, bool, error) {
+func (h crudRouteHandlers) admitManagedCreate(e *httpx.Event, ownerID, tenantID string, stack *persistedStack, normalized normalizedCreateStackRequest) (string, *jobs.ManagedLeaseRequest, bool, error) {
 	policyConfig := runtimePolicyConfigFromRequest(normalized)
 	if !hasManagedRuntimeFields(policyConfig, runtimeFieldsFromConfig(policyConfig)) {
 		return "", nil, false, nil
@@ -337,7 +302,7 @@ func (h crudRouteHandlers) admitManagedCreate(e *httpx.Event, ownerID string, st
 		return "", nil, true, managedCreateUnavailable(e, stack.Id, "native_admission_unavailable", true, "Native managed runtime admission is not configured")
 	}
 	request, err := jobs.PrimaryManagedLeaseRequestFromUIConfig(
-		createStackJobSpec(normalized), stack.Id, stack.Name, tenantIDFromRequest(e), ownerID,
+		createStackJobSpec(normalized), stack.Id, stack.Name, tenantID, ownerID,
 	)
 	if err != nil {
 		return "", nil, true, httpx.BadRequest(e, "Invalid managed runtime specification: "+err.Error(), nil)
@@ -371,10 +336,80 @@ func (h crudRouteHandlers) admitManagedCreate(e *httpx.Event, ownerID string, st
 }
 
 func (h crudRouteHandlers) writeManagedCreateAdmissionError(e *httpx.Event, stackID string, request jobs.ManagedLeaseRequest, err error, phase string) error {
-	_ = request
-	_ = err
-	return managedCreateUnavailable(e, stackID, "provider_control_not_available_in_open_core", false,
-		"Managed provider creation is not part of the Open-Core runtime")
+	details := map[string]any{creationStackIDField: stackID, "admission_phase": phase}
+	var capacity *providercontrol.ManagedRuntimeCapacityExceededError
+	if errors.As(err, &capacity) {
+		details["reason_code"] = "managed_runtime_capacity_exceeded"
+		details["retryable"] = false
+		h.enqueueManagedRuntimeCapacityNotification(e.Request.Context(), stackID, request, capacity)
+		return httpx.Error(e, http.StatusForbidden, ksapi.ErrCodeForbidden, "This account already holds the maximum number of managed server slots", details)
+	}
+	var createBlocked providercontrol.ProviderCreateBlockedError
+	if errors.As(err, &createBlocked) {
+		details["reason_code"] = createBlocked.ReasonCode
+		details["retryable"] = false
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "New managed servers are temporarily paused for this provider", details)
+	}
+	switch {
+	case errors.Is(err, providercontrol.ErrMutationActivationBlocked):
+		details["reason_code"] = "provider_control_not_activated"
+		details["retryable"] = false
+	case errors.Is(err, providercontrol.ErrManagedRuntimeUnclassifiedCustody):
+		details["reason_code"] = "provider_custody_reconciliation_required"
+		details["retryable"] = false
+	case errors.Is(err, providercontrol.ErrNativeAdmissionConflict):
+		details["reason_code"] = "native_admission_conflict"
+		details["retryable"] = false
+		return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "Native managed runtime admission conflicts with the persisted operation", details)
+	default:
+		details["reason_code"] = "native_admission_outcome_unconfirmed"
+		details["retryable"] = true
+	}
+	return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Managed server admission was not accepted", details)
+}
+
+func (h crudRouteHandlers) enqueueManagedRuntimeCapacityNotification(
+	ctx context.Context,
+	stackID string,
+	request jobs.ManagedLeaseRequest,
+	capacity *providercontrol.ManagedRuntimeCapacityExceededError,
+) {
+	if h.notificationOutbox == nil || capacity == nil {
+		return
+	}
+	provider := strings.ToLower(strings.TrimSpace(request.Provider))
+	tenantID := strings.TrimSpace(request.TenantID)
+	ownerID := strings.TrimSpace(request.OwnerID)
+	if provider == "" || tenantID == "" || ownerID == "" {
+		return
+	}
+	occurredAt := time.Now().UTC()
+	key := fmt.Sprintf("techstack-managed-runtime-capacity:%s:%s:%s:%s", tenantID, provider, stackID, request.OperationKey)
+	payload := map[string]any{
+		"subject":     "Managed runtime capacity exhausted",
+		"body":        "New managed servers cannot be deployed because the provider capacity is full.",
+		"severity":    "critical",
+		"reason_code": "managed_runtime_capacity_exceeded",
+		"provider":    provider,
+		"tenant_id":   tenantID,
+		"held":        capacity.Held,
+		"limit":       capacity.Limit,
+		"occurred_at": occurredAt.Format(time.RFC3339Nano),
+		"source_app":  managedRuntimeCapacitySource,
+		"event_key":   "managed_runtime.capacity_exceeded",
+		"link_url":    "/dashboard",
+	}
+	for _, channel := range []string{"in_app", "email"} {
+		err := h.notificationOutbox.Enqueue(ctx, productnotifications.ProductEvent{
+			Topic: managedRuntimeCapacityTopic, Channel: channel,
+			Auth0UserID: ownerID, OrganizationID: tenantID,
+			IdempotencyKey: key + ":" + channel, Payload: payload,
+		})
+		if err != nil {
+			logger.Get().Warn("managed_runtime_capacity_notification_enqueue_failed",
+				"tenant_id", tenantID, "provider", provider, "channel", channel, "error", err)
+		}
+	}
 }
 
 func managedCreateUnavailable(e *httpx.Event, stackID, reasonCode string, retryable bool, message string) error {
@@ -386,14 +421,13 @@ func managedCreateUnavailable(e *httpx.Event, stackID, reasonCode string, retrya
 // applyCreateOwnerBootstrap applies the owner bootstrap side effects when the
 // normalized request carries one; it returns nil (no-op) otherwise. Encapsulating
 // the request lookup plus the apply call keeps createNormalizedStack flat.
-func (h crudRouteHandlers) applyCreateOwnerBootstrap(e *httpx.Event, ownerID string, stack *persistedStack, normalized normalizedCreateStackRequest) error {
+func (h crudRouteHandlers) applyCreateOwnerBootstrap(e *httpx.Event, ownerID, tenantID string, stack *persistedStack, normalized normalizedCreateStackRequest) error {
 	bootstrap, ok := ownerBootstrapFromRequest(normalized)
 	if !ok {
 		return nil
 	}
-	tenantID := firstNonEmpty(tenantIDFromRequest(e), ownerID)
 	if err := h.applyOwnerBootstrap(e.Request.Context(), tenantID, ownerID, stack.Id, normalized.Name, bootstrap); err != nil {
-		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to apply owner bootstrap", nil)
+		return httpx.Reject(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to apply owner bootstrap", nil)
 	}
 	return nil
 }
@@ -402,89 +436,75 @@ func (h crudRouteHandlers) applyCreateOwnerBootstrap(e *httpx.Event, ownerID str
 // stack when the request carries an owner bootstrap; it returns the zero value
 // (no access) otherwise. A token-issue failure is surfaced as the same internal
 // error the inline create flow returned.
-func (h crudRouteHandlers) issueCreateOwnerSpecAccess(e *httpx.Event, stack *persistedStack, ownerID string, normalized normalizedCreateStackRequest) (ownerSpecBootstrapAccess, error) {
+func (h crudRouteHandlers) issueCreateOwnerSpecAccess(e *httpx.Event, stack *persistedStack, ownerID, tenantID string, normalized normalizedCreateStackRequest) (ownerSpecBootstrapAccess, error) {
 	bootstrap, ok := ownerBootstrapFromRequest(normalized)
 	if !ok || !ownerSourceSeedsPocketID(bootstrap.Source) {
 		return ownerSpecBootstrapAccess{}, nil
 	}
-	access, tokenErr := h.issueOwnerSpecBootstrapAccess(stack.Id, ownerID, time.Now().UTC())
+	access, tokenErr := h.issueOwnerSpecBootstrapAccessForTenant(e.Request.Context(), tenantID, stack.Id, ownerID, time.Now().UTC())
 	if tokenErr != nil {
-		return ownerSpecBootstrapAccess{}, httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to issue owner bootstrap token", nil)
+		return ownerSpecBootstrapAccess{}, httpx.Reject(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to issue owner bootstrap token", nil)
 	}
 	return access, nil
 }
 
 // dispatchCreateStack starts the provision job via the orchestrator when one is
-// wired, falling back to the legacy queued-job path otherwise.
+// wired, otherwise persisting a canonical queued job.
 func (h crudRouteHandlers) dispatchCreateStack(e *httpx.Event, dispatch createStackDispatch) error {
 	if h.orch != nil {
 		return h.startCreateStackWithOrchestrator(e, dispatch)
 	}
-	return h.startCreateStackLegacy(e, dispatch)
+	return h.startCreateStackQueued(e, dispatch)
 }
 
 func (h crudRouteHandlers) provisionStack(e *httpx.Event) error {
-	stackID := e.Request.PathValue("id")
-	if h.useControlPlaneStore(e) {
-		stack, findErr := h.findOwnedStoreStack(e, stackID)
-		if findErr != nil {
-			return findErr
-		}
-		if activeErr := h.rejectActiveStoreStackDeploy(e, stack); activeErr != nil {
-			return activeErr
-		}
-		spec, msg := stackSpecFromRequestOrStore(e.Request.Body, stack)
-		if msg != "" {
-			return httpx.BadRequest(e, msg)
-		}
-		spec, providerErr := canonicalizeFreshProvisionSpec(spec)
-		if providerErr != nil {
-			return httpx.BadRequest(e, "Invalid provider selection: "+providerErr.Error(), nil)
-		}
-
-		ownerSpecAccess, ownerSpecErr := h.ownerSpecBootstrapAccessForStoreDeploy(stack)
-		if ownerSpecErr != nil {
-			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to issue owner bootstrap token", nil)
-		}
-
-		if h.orch != nil {
-			jobID, provisionErr := h.orch.ProvisionStackWithOptions(stackID, spec, orchestrator.ProvisionStackOptions{
-				RequestContext:     e.Request.Context(),
-				TenantID:           stack.TenantID,
-				OwnerID:            stack.OwnerSubjectID,
-				StackName:          stack.Name,
-				OwnerSpecBootstrap: ownerSpecRuntimeBootstrap(ownerSpecAccess),
+	if h.stackStore == nil || h.jobStore == nil {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+			"Stack provision authority is temporarily unavailable", map[string]any{
+				"reason_code": "stack_provision_authority_unavailable",
+				"retryable":   true,
 			})
-			if provisionErr != nil {
-				h.markStackProvisionStartFailed(e.Request.Context(), stackID, stack.TenantID)
-				return httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeBadRequest, "Failed to start provisioning", map[string]any{
-					"reason": provisionErr.Error(),
-				})
-			}
-			return jobAccepted(e, "Provisioning started", jobID)
-		}
-
-		jobID, err := h.createQueuedJob(e, queuedJobParams{
-			jobType:     "provision",
-			stackID:     stackID,
-			currentStep: "Queued (no orchestrator available)",
-			stackStatus: "provisioning",
-		})
-		if err != nil {
-			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to create job", nil)
-		}
-		return jobAccepted(e, "Provisioning job created (orchestrator not connected)", jobID)
 	}
-
-	stack, findErr := h.findOwnedStack(e, stackID)
+	stackID := e.Request.PathValue("id")
+	stack, findErr := h.findOwnedStoreStack(e, stackID)
 	if findErr != nil {
 		return findErr
 	}
-	if activeErr := rejectActiveStack(e, stack); activeErr != nil {
-		return activeErr
+	idempotencyKey, idempotencyErr := readStackLifecycleIdempotencyKey(e.Request)
+	if idempotencyErr != nil {
+		return httpx.Error(e, http.StatusUnprocessableEntity, ksapi.ErrCodeValidation,
+			"Exactly one valid Idempotency-Key header is required when provision retries are keyed", map[string]any{
+				"reason_code": "idempotency_key_invalid", "retryable": false,
+			})
 	}
-
-	spec, msg := stackSpecFromRequestOrRecord(e.Request.Body, stack)
+	if idempotencyKey == "" {
+		if activeErr := h.rejectActiveStoreStackDeploy(e, stack); activeErr != nil {
+			return activeErr
+		}
+	} else {
+		replayJobID, replayIDErr := orchestrator.ProvisionIdempotencyJobID(stack.TenantID, stack.OwnerSubjectID, stack.ID, idempotencyKey)
+		if replayIDErr != nil {
+			return httpx.Error(e, http.StatusUnprocessableEntity, ksapi.ErrCodeValidation,
+				"Invalid Idempotency-Key header", map[string]any{"reason_code": "idempotency_key_invalid", "retryable": false})
+		}
+		if _, replayErr := h.jobStore.GetJob(e.Request.Context(), stack.TenantID, replayJobID); errors.Is(replayErr, controlplane.ErrNotFound) {
+			if activeErr := h.rejectActiveStoreStackDeploy(e, stack); activeErr != nil {
+				return activeErr
+			}
+		} else if replayErr != nil {
+			return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+				"Provision retry state is temporarily unavailable", map[string]any{
+					"reason_code": "provision_idempotency_unavailable", "retryable": true,
+				})
+		}
+	}
+	if idempotencyKey != "" && h.orch == nil {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+			"Keyed provision retries require the durable orchestrator", map[string]any{
+				"reason_code": "provision_idempotency_unavailable", "retryable": true,
+			})
+	}
+	spec, msg := stackSpecFromRequestOrStore(e.Request.Body, stack)
 	if msg != "" {
 		return httpx.BadRequest(e, msg)
 	}
@@ -493,16 +513,28 @@ func (h crudRouteHandlers) provisionStack(e *httpx.Event) error {
 		return httpx.BadRequest(e, "Invalid provider selection: "+providerErr.Error(), nil)
 	}
 
-	ownerSpecAccess, ownerSpecErr := h.ownerSpecBootstrapAccessForProvision(stack, spec)
+	ownerSpecAccess, ownerSpecErr := h.ownerSpecBootstrapAccessForStoreDeploy(e.Request.Context(), stack)
 	if ownerSpecErr != nil {
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to issue owner bootstrap token", nil)
 	}
 
 	if h.orch != nil {
 		jobID, provisionErr := h.orch.ProvisionStackWithOptions(stackID, spec, orchestrator.ProvisionStackOptions{
+			RequestContext:     e.Request.Context(),
+			TenantID:           stack.TenantID,
+			OwnerID:            stack.OwnerSubjectID,
+			StackName:          stack.Name,
+			IdempotencyKey:     idempotencyKey,
 			OwnerSpecBootstrap: ownerSpecRuntimeBootstrap(ownerSpecAccess),
 		})
 		if provisionErr != nil {
+			if errors.Is(provisionErr, orchestrator.ErrProvisionIdempotencyConflict) {
+				return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict,
+					"Idempotency-Key was already used for a different provision request", map[string]any{
+						"reason_code": "idempotency_conflict", "retryable": false,
+					})
+			}
+			h.markStackProvisionStartFailed(e.Request.Context(), stackID, stack.TenantID)
 			return httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeBadRequest, "Failed to start provisioning", map[string]any{
 				"reason": provisionErr.Error(),
 			})
@@ -511,6 +543,7 @@ func (h crudRouteHandlers) provisionStack(e *httpx.Event) error {
 	}
 
 	jobID, err := h.createQueuedJob(e, queuedJobParams{
+		tenantID:    stack.TenantID,
 		jobType:     "provision",
 		stackID:     stackID,
 		currentStep: "Queued (no orchestrator available)",
@@ -522,61 +555,83 @@ func (h crudRouteHandlers) provisionStack(e *httpx.Event) error {
 	return jobAccepted(e, "Provisioning job created (orchestrator not connected)", jobID)
 }
 
-func (h crudRouteHandlers) deployStack(e *httpx.Event) error {
-	stackID := e.Request.PathValue("id")
-	if h.useControlPlaneStore(e) {
-		stack, findErr := h.findOwnedStoreStack(e, stackID)
-		if findErr != nil {
-			return findErr
-		}
-		if activeErr := rejectActiveStoreStack(e, stack); activeErr != nil {
-			return activeErr
-		}
-		if h.orch == nil {
-			return deployOrchestratorUnavailable(e, stackID)
-		}
-
-		// The create-time owner-spec bootstrap token (15 min TTL) is long
-		// expired by the time a user-owned stack reaches "Review + Start", so
-		// every rollout mints fresh access. Without it StackKit cannot fetch
-		// the owner seed and the deploy would finish without a login handoff.
-		ownerSpecAccess, ownerSpecErr := h.ownerSpecBootstrapAccessForStoreDeploy(stack)
-		if ownerSpecErr != nil {
-			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to issue owner bootstrap token", nil)
-		}
-
-		jobID, deployErr := h.orch.DeployStackWithOptions(stackID, orchestrator.ProvisionStackOptions{
-			RequestContext:     e.Request.Context(),
-			TenantID:           stack.TenantID,
-			OwnerID:            stack.OwnerSubjectID,
-			StackName:          stack.Name,
-			OwnerSpecBootstrap: ownerSpecRuntimeBootstrap(ownerSpecAccess),
-		})
-		if deployErr != nil {
-			return h.deployStartError(e, stackID, deployErr)
-		}
-		return deployAccepted(e, jobID, ownerSpecAccess)
+func readStackLifecycleIdempotencyKey(request *http.Request) (string, error) {
+	if request == nil {
+		return "", nil
 	}
+	values := request.Header.Values("Idempotency-Key")
+	if len(values) == 0 {
+		return "", nil
+	}
+	if len(values) != 1 {
+		return "", fmt.Errorf("multiple Idempotency-Key values")
+	}
+	return orchestrator.ValidateProvisionIdempotencyKey(values[0])
+}
 
-	stack, findErr := h.findOwnedStack(e, stackID)
+func (h crudRouteHandlers) deployStack(e *httpx.Event) error {
+	if h.stackStore == nil {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+			"Stack deploy authority is temporarily unavailable", map[string]any{
+				"reason_code": "stack_deploy_authority_unavailable",
+				"retryable":   true,
+			})
+	}
+	stackID := e.Request.PathValue("id")
+	stack, findErr := h.findOwnedStoreStack(e, stackID)
 	if findErr != nil {
 		return findErr
 	}
-	if activeErr := rejectActiveStack(e, stack); activeErr != nil {
-		return activeErr
+	idempotencyKey, idempotencyErr := readStackLifecycleIdempotencyKey(e.Request)
+	if idempotencyErr != nil {
+		return httpx.Error(e, http.StatusUnprocessableEntity, ksapi.ErrCodeValidation,
+			"Exactly one valid Idempotency-Key header is required when deploy retries are keyed", map[string]any{
+				"reason_code": "idempotency_key_invalid", "retryable": false,
+			})
+	}
+	if idempotencyKey == "" {
+		if activeErr := rejectActiveStoreStack(e, stack); activeErr != nil {
+			return activeErr
+		}
+	} else if h.jobStore == nil {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+			"Deploy retry state is temporarily unavailable", map[string]any{
+				"reason_code": "deploy_idempotency_unavailable", "retryable": true,
+			})
+	} else {
+		replayJobID, replayIDErr := orchestrator.DeployIdempotencyJobID(stack.TenantID, stack.OwnerSubjectID, stack.ID, idempotencyKey)
+		if replayIDErr != nil {
+			return httpx.Error(e, http.StatusUnprocessableEntity, ksapi.ErrCodeValidation,
+				"Invalid Idempotency-Key header", map[string]any{"reason_code": "idempotency_key_invalid", "retryable": false})
+		}
+		if _, replayErr := h.jobStore.GetJob(e.Request.Context(), stack.TenantID, replayJobID); errors.Is(replayErr, controlplane.ErrNotFound) {
+			if activeErr := rejectActiveStoreStack(e, stack); activeErr != nil {
+				return activeErr
+			}
+		} else if replayErr != nil {
+			return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+				"Deploy retry state is temporarily unavailable", map[string]any{
+					"reason_code": "deploy_idempotency_unavailable", "retryable": true,
+				})
+		}
 	}
 	if h.orch == nil {
 		return deployOrchestratorUnavailable(e, stackID)
 	}
 
-	// Same fresh owner-spec access as the store path; the stored stack spec
-	// carries the seeded owner bootstrap for self-hosted rollouts.
-	ownerSpecAccess, ownerSpecErr := h.ownerSpecBootstrapAccessForProvision(stack, nil)
+	// The create-time owner-spec bootstrap token (15 min TTL) is long expired by
+	// "Review + Start", so every rollout mints fresh canonical access.
+	ownerSpecAccess, ownerSpecErr := h.ownerSpecBootstrapAccessForStoreDeploy(e.Request.Context(), stack)
 	if ownerSpecErr != nil {
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to issue owner bootstrap token", nil)
 	}
 
 	jobID, deployErr := h.orch.DeployStackWithOptions(stackID, orchestrator.ProvisionStackOptions{
+		RequestContext:     e.Request.Context(),
+		TenantID:           stack.TenantID,
+		OwnerID:            stack.OwnerSubjectID,
+		StackName:          stack.Name,
+		IdempotencyKey:     idempotencyKey,
 		OwnerSpecBootstrap: ownerSpecRuntimeBootstrap(ownerSpecAccess),
 	})
 	if deployErr != nil {
@@ -596,6 +651,12 @@ func deployOrchestratorUnavailable(e *httpx.Event, stackID string) error {
 // deployStartError maps orchestrator deploy-start failures onto the existing
 // response contract shared by both deploy paths.
 func (h crudRouteHandlers) deployStartError(e *httpx.Event, stackID string, deployErr error) error {
+	if errors.Is(deployErr, orchestrator.ErrDeployIdempotencyConflict) {
+		return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict,
+			"Idempotency-Key was already used for a different deploy request", map[string]any{
+				"reason_code": "idempotency_conflict", "retryable": false,
+			})
+	}
 	if errors.Is(deployErr, orchestrator.ErrDeployRuntimeEvidenceUnavailable) {
 		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Canonical Guard runtime evidence is temporarily unavailable", map[string]any{
 			"stack_id":    stackID,
@@ -624,69 +685,38 @@ func deployAccepted(e *httpx.Event, jobID string, access ownerSpecBootstrapAcces
 }
 
 func (h crudRouteHandlers) destroyStack(e *httpx.Event) error {
-	stackID := e.Request.PathValue("id")
-	if h.useControlPlaneStore(e) {
-		stack, err := h.findOwnedStoreStack(e, stackID)
-		if err == nil {
-			// Only the explicitly marked public-demo anchor is protected. Failed
-			// visitor stacks in the same tenant remain removable.
-			if demoProtectedStoreStackRequest(e, stack) {
-				return httpx.Error(e, http.StatusForbidden, ksapi.ErrCodeForbidden,
-					"The protected kombify demo anchor cannot be destroyed", demoRestrictedStackDetails("stack_destroy"))
-			}
-			if h.orch != nil {
-				jobID, destroyErr := h.orch.DestroyStackWithOptions(stackID, orchestrator.ProvisionStackOptions{
-					RequestContext: e.Request.Context(),
-					TenantID:       stack.TenantID,
-					OwnerID:        stack.OwnerSubjectID,
-					StackName:      stack.Name,
-				})
-				if destroyErr != nil {
-					return httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeBadRequest, "Failed to start destruction", map[string]any{
-						"reason": destroyErr.Error(),
-					})
-				}
-				return jobAccepted(e, "Destroy started", jobID)
-			}
-
-			jobID, err := h.createQueuedJob(e, queuedJobParams{
-				jobType:     "destroy",
-				stackID:     stackID,
-				currentStep: "Queued (no orchestrator available)",
-				stackStatus: "stopping",
+	if h.stackStore == nil || h.jobStore == nil {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+			"Stack destroy authority is temporarily unavailable", map[string]any{
+				"reason_code": "stack_destroy_authority_unavailable",
+				"retryable":   true,
 			})
-			if err != nil {
-				return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to create job", nil)
-			}
-			return jobAccepted(e, "Destroy job created (orchestrator not connected)", jobID)
-		}
-		var apiErr *httpx.APIError
-		if !errors.As(err, &apiErr) || apiErr.Status != http.StatusNotFound {
-			return err
-		}
 	}
-
-	legacyStack, err := h.findOwnedStack(e, stackID)
+	stackID := e.Request.PathValue("id")
+	stack, err := h.findOwnedStoreStack(e, stackID)
 	if err != nil {
 		return err
 	}
-	if demoProtectedLegacyStackRequest(e, legacyStack) {
+	if demoProtectedStoreStackRequest(e, stack) {
 		return httpx.Error(e, http.StatusForbidden, ksapi.ErrCodeForbidden,
 			"The protected kombify demo anchor cannot be destroyed", demoRestrictedStackDetails("stack_destroy"))
 	}
-
 	if h.orch != nil {
-		jobID, destroyErr := h.orch.DestroyStack(stackID)
+		jobID, destroyErr := h.orch.DestroyStackWithOptions(stackID, orchestrator.ProvisionStackOptions{
+			RequestContext: e.Request.Context(),
+			TenantID:       stack.TenantID,
+			OwnerID:        stack.OwnerSubjectID,
+			StackName:      stack.Name,
+		})
 		if destroyErr != nil {
 			return httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeBadRequest, "Failed to start destruction", map[string]any{
 				"reason": destroyErr.Error(),
 			})
 		}
-		h.markLegacyStackDeleted(legacyStack)
 		return jobAccepted(e, "Destroy started", jobID)
 	}
-
 	jobID, err := h.createQueuedJob(e, queuedJobParams{
+		tenantID:    stack.TenantID,
 		jobType:     "destroy",
 		stackID:     stackID,
 		currentStep: "Queued (no orchestrator available)",
@@ -695,23 +725,13 @@ func (h crudRouteHandlers) destroyStack(e *httpx.Event) error {
 	if err != nil {
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to create job", nil)
 	}
-	h.markLegacyStackDeleted(legacyStack)
 	return jobAccepted(e, "Destroy job created (orchestrator not connected)", jobID)
 }
 
-// markLegacyStackDeleted stamps deleted_at on a legacy PocketBase stack record
-// once its destroy job is dispatched, so the dashboard row disappears
-// immediately instead of lingering as a dead card. Best-effort: the destroy job
-// remains the runtime source of truth.
-func (h crudRouteHandlers) markLegacyStackDeleted(stack *core.Record) {
-	if stack == nil || h.app == nil || stack.Collection().Fields.GetByName("deleted_at") == nil {
-		return
-	}
-	stack.Set("deleted_at", time.Now().UTC())
-	_ = h.app.Save(stack) // pocketbase-migration-compat: legacy dead-card removal during PB retirement
-}
-
 func (h crudRouteHandlers) jobStats(e *httpx.Event) error {
+	if _, err := requireStackAuth(e); err != nil {
+		return err
+	}
 	if h.orch == nil {
 		return httpx.Success(e, http.StatusOK, map[string]any{
 			"available": false,
@@ -738,43 +758,18 @@ func tenantIDFromRequest(e *httpx.Event) string {
 	return ""
 }
 
-func (h crudRouteHandlers) useControlPlaneStore(e *httpx.Event) bool {
-	return h.stackStore != nil && tenantIDFromRequest(e) != ""
-}
-
-func (h crudRouteHandlers) findOwnedStack(e *httpx.Event, stackID string) (*core.Record, error) {
-	ownerID, authErr := requireStackAuth(e)
-	if authErr != nil {
-		return nil, authErr
-	}
-	if strings.TrimSpace(stackID) == "" {
-		return nil, httpx.NewBadRequestError("Stack ID is required", nil)
-	}
-	stack, err := h.app.FindRecordById("stacks", stackID)
-	if err != nil {
-		return nil, httpx.NewNotFoundError("Stack not found", nil)
-	}
-	if stack.GetString("owner_id") != ownerID {
-		return nil, httpx.NewForbiddenError("Not your stack", nil)
-	}
-	if !stack.GetDateTime("deleted_at").IsZero() {
-		return nil, httpx.NewNotFoundError("Stack not found", nil)
-	}
-	return stack, nil
-}
-
 func (h crudRouteHandlers) findOwnedStoreStack(e *httpx.Event, stackID string) (*controlplane.Stack, error) {
 	ownerID, authErr := requireStackAuth(e)
 	if authErr != nil {
 		return nil, authErr
 	}
+	tenantID, tenantErr := tenantguard.TenantScope(tenantIDFromRequest(e), ownerID, "techstack.stacks.read")
+	if tenantErr != nil {
+		return nil, tenantErr
+	}
 	stackID = strings.TrimSpace(stackID)
 	if stackID == "" {
 		return nil, httpx.NewBadRequestError("Stack ID is required", nil)
-	}
-	tenantID := tenantIDFromRequest(e)
-	if tenantID == "" {
-		return nil, httpx.NewNotFoundError("Stack not found", nil)
 	}
 	stack, err := h.stackStore.GetStack(e.Request.Context(), tenantID, stackID)
 	if err != nil {
@@ -797,22 +792,23 @@ func (h crudRouteHandlers) startCreateStackWithOrchestrator(e *httpx.Event, disp
 	autoDeploy := shouldStartRolloutAfterCreate(dispatch.spec)
 	startCtx, cancel := context.WithTimeout(e.Request.Context(), 30*time.Second)
 	defer cancel()
+	tenantID := strings.TrimSpace(dispatch.tenantID)
 	jobID, err := h.orch.ProvisionStackWithOptions(dispatch.stackID, dispatch.spec, orchestrator.ProvisionStackOptions{
 		AutoDeploy:           autoDeploy,
 		OwnerSpecBootstrap:   ownerSpecRuntimeBootstrap(dispatch.ownerSpecAccess),
 		RequestContext:       startCtx,
 		OwnerID:              ownerID,
 		StackName:            dispatch.name,
-		TenantID:             tenantIDFromRequest(e),
+		TenantID:             tenantID,
 		PreparedManagedLease: dispatch.preparedLease,
 	})
 	if err != nil {
 		if createStackIdempotencyKey(e) != "" {
-			if handled, replayErr := h.replayCreateJob(e, &persistedStack{Id: dispatch.stackID, Name: dispatch.name, IdempotentReplay: true}, dispatch.serverID); handled || replayErr != nil {
+			if handled, replayErr := h.replayCreateJob(e, tenantID, &persistedStack{Id: dispatch.stackID, Name: dispatch.name, IdempotentReplay: true}, dispatch.serverID); handled || replayErr != nil {
 				return replayErr
 			}
 		}
-		h.markStackProvisionStartFailed(e.Request.Context(), dispatch.stackID, tenantIDFromRequest(e))
+		h.markStackProvisionStartFailed(e.Request.Context(), dispatch.stackID, tenantID)
 		return httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeBadRequest, "Failed to start provisioning", map[string]any{
 			"reason": err.Error(),
 		})
@@ -822,28 +818,22 @@ func (h crudRouteHandlers) startCreateStackWithOrchestrator(e *httpx.Event, disp
 		message = "Stack created; managed runtime preparation started. Rollout waits for fresh Guard verification."
 	}
 	return httpx.Success(e, http.StatusAccepted, addOwnerSpecResponseFields(map[string]any{
-		"stack_id":       dispatch.stackID,
-		"server_id":      dispatch.serverID,
-		"job_id":         jobID,
-		"name":           dispatch.name,
-		"state":          "provisioning",
-		"message":        message,
-		"auto_deploy":    autoDeploy,
-		"operations_url": operationsURL(dispatch.stackID),
+		"kit_deployment_id": dispatch.stackID,
+		"server_id":         dispatch.serverID,
+		"job_id":            jobID,
+		"name":              dispatch.name,
+		"state":             "provisioning",
+		"message":           message,
+		"auto_deploy":       autoDeploy,
+		"operations_url":    homelabDashboardURL(),
 	}, dispatch.ownerSpecAccess))
 }
 
 func (h crudRouteHandlers) markStackProvisionStartFailed(ctx context.Context, stackID, tenantID string) {
 	if h.stackStore != nil && strings.TrimSpace(tenantID) != "" {
-		if _, err := h.stackStore.UpdateStackRuntime(ctx, tenantID, stackID, controlplane.RuntimeUpdate{
+		_, _ = h.stackStore.UpdateStackRuntime(ctx, tenantID, stackID, controlplane.RuntimeUpdate{
 			Status: "failed",
-		}); err == nil {
-			return
-		}
-	}
-	if stack, err := h.app.FindRecordById("stacks", stackID); err == nil { // pocketbase-migration-compat: legacy status fallback when store update is unavailable
-		stack.Set("status", "failed")
-		_ = h.app.Save(stack) // pocketbase-migration-compat: legacy status fallback when store update is unavailable
+		})
 	}
 }
 
@@ -873,21 +863,9 @@ func ownerSpecRuntimeBootstrap(access ownerSpecBootstrapAccess) *jobs.OwnerSpecB
 	}
 }
 
-func (h crudRouteHandlers) ownerSpecBootstrapAccessForProvision(stack *core.Record, spec map[string]interface{}) (ownerSpecBootstrapAccess, error) {
-	if stack == nil || !stackHasOwnerBootstrapForProvision(stack, spec) {
-		return ownerSpecBootstrapAccess{}, nil
-	}
-	ownerID := strings.TrimSpace(stack.GetString("owner_id"))
-	if ownerID == "" {
-		return ownerSpecBootstrapAccess{}, fmt.Errorf("stack owner id is required for owner spec bootstrap")
-	}
-	return h.issueOwnerSpecBootstrapAccess(stack.Id, ownerID, time.Now().UTC())
-}
-
 // ownerSpecBootstrapAccessForStoreDeploy mints owner-spec bootstrap access for
-// a control-plane (Postgres) stack whose stored config carries a seeded owner
-// bootstrap. It returns the zero value when the stack has no owner seed.
-func (h crudRouteHandlers) ownerSpecBootstrapAccessForStoreDeploy(stack *controlplane.Stack) (ownerSpecBootstrapAccess, error) {
+// a canonical control-plane stack whose config carries a seeded owner bootstrap.
+func (h crudRouteHandlers) ownerSpecBootstrapAccessForStoreDeploy(ctx context.Context, stack *controlplane.Stack) (ownerSpecBootstrapAccess, error) {
 	if stack == nil {
 		return ownerSpecBootstrapAccess{}, nil
 	}
@@ -899,23 +877,23 @@ func (h crudRouteHandlers) ownerSpecBootstrapAccessForStoreDeploy(stack *control
 	if ownerID == "" {
 		return ownerSpecBootstrapAccess{}, fmt.Errorf("stack owner id is required for owner spec bootstrap")
 	}
-	return h.issueOwnerSpecBootstrapAccess(stack.ID, ownerID, time.Now().UTC())
+	tenantID := strings.TrimSpace(stack.TenantID)
+	if tenantID == "" {
+		return ownerSpecBootstrapAccess{}, fmt.Errorf("stack tenant id is required for owner spec bootstrap")
+	}
+	return h.issueOwnerSpecBootstrapAccessForTenant(ctx, tenantID, stack.ID, ownerID, time.Now().UTC())
 }
 
-func stackHasOwnerBootstrapForProvision(stack *core.Record, spec map[string]interface{}) bool {
-	if bootstrap, ok := ownerBootstrapFromRequest(normalizedCreateStackRequest{UserConfig: spec}); ok {
-		return ownerSourceSeedsPocketID(bootstrap.Source)
+func (h crudRouteHandlers) startCreateStackQueued(e *httpx.Event, dispatch createStackDispatch) error {
+	if h.jobStore == nil {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+			"Stack job authority is temporarily unavailable", map[string]any{
+				detailsKeyReasonCode: "stack_job_authority_unavailable",
+				detailsKeyRetryable:  true,
+			})
 	}
-	storedSpec, msg := stackSpecFromRecord(stack)
-	if msg != "" {
-		return false
-	}
-	bootstrap, ok := ownerBootstrapFromRequest(normalizedCreateStackRequest{UserConfig: storedSpec})
-	return ok && ownerSourceSeedsPocketID(bootstrap.Source)
-}
-
-func (h crudRouteHandlers) startCreateStackLegacy(e *httpx.Event, dispatch createStackDispatch) error {
 	jobID, err := h.createQueuedJob(e, queuedJobParams{
+		tenantID:    dispatch.tenantID,
 		jobType:     "provision",
 		stackID:     dispatch.stackID,
 		currentStep: "Queued (no orchestrator available)",
@@ -925,23 +903,23 @@ func (h crudRouteHandlers) startCreateStackLegacy(e *httpx.Event, dispatch creat
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to create job", nil)
 	}
 	return httpx.Success(e, http.StatusAccepted, addOwnerSpecResponseFields(map[string]any{
-		"stack_id":       dispatch.stackID,
-		"server_id":      dispatch.serverID,
-		"job_id":         jobID,
-		"name":           dispatch.name,
-		"state":          "provisioning",
-		"message":        "Stack created; job queued (orchestrator not connected)",
-		"operations_url": operationsURL(dispatch.stackID),
+		"kit_deployment_id": dispatch.stackID,
+		"server_id":         dispatch.serverID,
+		"job_id":            jobID,
+		"name":              dispatch.name,
+		"state":             "provisioning",
+		"message":           "Stack created; job queued (orchestrator not connected)",
+		"operations_url":    homelabDashboardURL(),
 	}, dispatch.ownerSpecAccess))
 }
 
 func (h crudRouteHandlers) createQueuedJob(e *httpx.Event, params queuedJobParams) (string, error) {
 	if h.jobStore == nil {
-		return createLegacyJob(h.app, params.jobType, params.stackID, params.currentStep, params.stackStatus)
+		return "", fmt.Errorf("canonical job store is required")
 	}
-	tenantID := tenantIDFromRequest(e)
+	tenantID := strings.TrimSpace(params.tenantID)
 	if tenantID == "" {
-		return createLegacyJob(h.app, params.jobType, params.stackID, params.currentStep, params.stackStatus)
+		return "", fmt.Errorf("tenant context is required")
 	}
 	job, err := h.jobStore.UpsertJob(e.Request.Context(), controlplane.UpsertJobRequest{
 		ID:       uuid.NewString(),
@@ -962,14 +940,6 @@ func (h crudRouteHandlers) createQueuedJob(e *httpx.Event, params queuedJobParam
 	}
 	return job.ID, nil
 }
-func stackSpecFromRequestOrRecord(body io.Reader, stack *core.Record) (map[string]interface{}, string) {
-	spec, msg := stackSpecFromRequest(body)
-	if msg != "" || spec != nil {
-		return spec, msg
-	}
-	return stackSpecFromRecord(stack)
-}
-
 func stackSpecFromRequestOrStore(body io.Reader, stack *controlplane.Stack) (map[string]interface{}, string) {
 	spec, msg := stackSpecFromRequest(body)
 	if msg != "" || spec != nil {
@@ -1033,37 +1003,6 @@ func stackSpecMapFromValue(value any) (map[string]interface{}, bool) {
 		return nil, false
 	}
 	return spec, true
-}
-
-func stackSpecFromRecord(stack *core.Record) (map[string]interface{}, string) {
-	configVal := stack.Get("user_config")
-	if configVal == nil {
-		configVal = stack.Get("config")
-	}
-	if configVal == nil {
-		return nil, "No spec provided and no user_config/config stored in stack"
-	}
-	if configMap, ok := configVal.(map[string]interface{}); ok {
-		return configMap, ""
-	}
-
-	configBytes, err := json.Marshal(configVal)
-	if err != nil {
-		return nil, "Failed to read config"
-	}
-	var spec map[string]interface{}
-	if err := json.Unmarshal(configBytes, &spec); err != nil {
-		return nil, "Invalid config stored in stack"
-	}
-	return spec, ""
-}
-
-func rejectActiveStack(e *httpx.Event, stack *core.Record) error {
-	status := stack.GetString("status")
-	if status == "running" || status == "provisioning" {
-		return httpx.BadRequest(e, "Stack is already running or provisioning")
-	}
-	return nil
 }
 
 func rejectActiveStoreStack(e *httpx.Event, stack *controlplane.Stack) error {

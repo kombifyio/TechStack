@@ -7,51 +7,11 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"time"
-
-	_ "github.com/jackc/pgx/v5/stdlib"
-)
-
-const (
-	controlPlaneDriverName = "pgx"
-	controlPlaneQueryTTL   = 5 * time.Second
 )
 
 var providerCatalogIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,127}$`)
 
-var (
-	ErrProviderControlPlaneUnavailable = errors.New("vmleases: provider control plane unavailable")
-	ErrNoTechStackLeasingProviders     = errors.New("vmleases: no active techstack_leasing providers configured")
-)
-
-func ResolveTechStackLeasingProviderSet(ctx context.Context, databaseURL string) (map[string]bool, string, error) {
-	databaseURL = strings.TrimSpace(databaseURL)
-	if databaseURL == "" {
-		return nil, "", ErrProviderControlPlaneUnavailable
-	}
-
-	db, err := sql.Open(controlPlaneDriverName, databaseURL)
-	if err != nil {
-		return nil, "", fmt.Errorf("open provider control plane db: %w", err)
-	}
-	defer db.Close()
-
-	db.SetMaxOpenConns(2)
-	db.SetMaxIdleConns(1)
-	db.SetConnMaxLifetime(time.Minute)
-
-	queryCtx, cancel := context.WithTimeout(ctx, controlPlaneQueryTTL)
-	defer cancel()
-
-	providers, err := LoadTechStackLeasingProviderSet(queryCtx, db)
-	if err != nil {
-		return nil, "", err
-	}
-	if len(providers) == 0 {
-		return nil, "", ErrNoTechStackLeasingProviders
-	}
-	return providers, "provider_catalog", nil
-}
+var ErrProviderControlPlaneUnavailable = errors.New("vmleases: provider control plane unavailable")
 
 func LoadTechStackLeasingProviderSet(ctx context.Context, db *sql.DB) (map[string]bool, error) {
 	if db == nil {

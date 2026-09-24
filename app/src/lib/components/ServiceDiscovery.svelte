@@ -2,9 +2,9 @@
   import {
     findServicesWithoutCredentials,
     addServiceCredentials,
+    type CredentialService,
     type DiscoveredCredential,
-  } from "$lib/wallet/integration";
-  import type { PBService } from "$lib/stores/services";
+  } from "#lib/wallet/integration.js";
   import Modal from "./Modal.svelte";
 
   interface Props {
@@ -15,7 +15,7 @@
   let { onCredentialsAdded, onClose }: Props = $props();
 
   type DiscoveryItem = {
-    service: PBService;
+    service: CredentialService;
     missingCredentials: DiscoveredCredential[];
   };
 
@@ -131,13 +131,13 @@
 </script>
 
 <Modal title="Service Credential Discovery" {onClose} maxWidth="2xl">
-  <p class="text-gray-400 text-sm mb-6">
+  <p class="text-muted-foreground text-sm mb-6">
     We found services that could benefit from credential entries in your wallet.
   </p>
 
   {#if error}
     <div
-      class="mb-4 p-3 rounded-lg bg-red-900/30 border border-red-500/50 text-red-300 text-sm"
+      class="mb-4 p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-sm"
     >
       {error}
     </div>
@@ -146,13 +146,13 @@
   {#if loading}
     <div class="space-y-4">
       {#each Array(3) as _}
-        <div class="card animate-pulse h-20"></div>
+        <div data-kx="plate" class="animate-pulse h-20"></div>
       {/each}
     </div>
   {:else if discoveries.length === 0}
     <div class="text-center py-8">
       <svg
-        class="w-12 h-12 mx-auto mb-4 text-green-400"
+        class="w-12 h-12 mx-auto mb-4 text-success"
         fill="none"
         stroke="currentColor"
         viewBox="0 0 24 24"
@@ -164,8 +164,8 @@
           d="M5 13l4 4L19 7"
         />
       </svg>
-      <p class="text-gray-300 mb-2">All services covered!</p>
-      <p class="text-gray-500 text-sm">
+      <p class="text-foreground mb-2">All services covered!</p>
+      <p class="text-muted-foreground text-sm">
         No services found that need wallet entries.
       </p>
     </div>
@@ -177,24 +177,23 @@
       >
         {selectedCredentials.size > 0 ? "Deselect All" : "Select All"}
       </button>
-      <span class="text-sm text-gray-500">
+      <span class="text-sm text-muted-foreground">
         {selectedCredentials.size} selected
       </span>
     </div>
 
     <div class="space-y-4 mb-6">
       {#each discoveries as discovery}
-        <div class="rounded-lg border border-gray-700 bg-gray-800/50 p-4">
+        <div data-kx="plate" class="p-4">
           <div class="flex items-center gap-3 mb-3">
-            <span
-              class="text-xs font-mono px-2 py-1 rounded bg-gray-700 text-primary"
+            <span data-kx="tag" class="text-xs font-mono px-2 py-1 text-primary"
               >{getServiceIcon(discovery.service.type)}</span
             >
             <div>
-              <h3 class="text-white font-medium">
+              <h3 class="text-foreground font-medium">
                 {discovery.service.display_name || discovery.service.name}
               </h3>
-              <p class="text-xs text-gray-500">
+              <p class="text-xs text-muted-foreground">
                 {discovery.service.type} • {discovery.service.url || "No URL"}
               </p>
             </div>
@@ -209,22 +208,21 @@
                   key,
                 )
                   ? 'bg-primary/10 border-primary/50'
-                  : 'bg-gray-900/50 border-gray-700 hover:border-gray-600'}"
+                  : 'bg-background/50 border-border hover:border-muted-foreground'}"
               >
                 <input
                   type="checkbox"
                   checked={selectedCredentials.has(key)}
-                  class="w-4 h-4 rounded border-gray-600 bg-gray-800 text-primary"
+                  class="w-4 h-4 rounded border-border bg-input text-primary"
                   onclick={(e) => e.stopPropagation()}
                   onchange={() => toggleCredential(discovery.service.id, i)}
                 />
-                <span
-                  class="text-xs font-mono px-1.5 py-0.5 rounded bg-gray-700"
+                <span data-kx="tag" class="text-xs font-mono px-1.5 py-0.5"
                   >{getCredentialTypeIcon(cred.kind)}</span
                 >
                 <div class="flex-1 text-left">
-                  <p class="text-white text-sm">{cred.name}</p>
-                  <p class="text-xs text-gray-500">
+                  <p class="text-foreground text-sm">{cred.name}</p>
+                  <p class="text-xs text-muted-foreground">
                     {cred.kind.replace("_", " ")}
                     {#if cred.username}• {cred.username}{/if}
                   </p>
@@ -237,7 +235,7 @@
     </div>
 
     <div
-      class="p-3 rounded-lg bg-blue-900/20 border border-blue-700/50 text-sm text-blue-200 mb-6"
+      class="p-3 rounded-lg bg-info/10 border border-info/30 text-sm text-info mb-6"
     >
       <strong>Note:</strong> Credential placeholders will be created. You'll need
       to fill in the actual secrets manually.
@@ -247,7 +245,8 @@
   <div class="flex justify-end gap-3">
     <button
       onclick={onClose}
-      class="px-4 py-2 text-sm bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
+      data-kx="control"
+      class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
     >
       Cancel
     </button>
@@ -255,7 +254,9 @@
       <button
         onclick={handleAddSelected}
         disabled={adding || selectedCredentials.size === 0}
-        class="px-4 py-2 text-sm bg-primary hover:bg-primary/90 disabled:bg-primary/50 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
+        data-kx="control"
+        data-variant="primary"
+        class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
       >
         {#if adding}
           Adding...

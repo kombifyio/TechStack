@@ -1,6 +1,6 @@
-// Package kombifyme provides read/delete access to the kombify.me registry for
-// TechStack diagnostics and legacy cleanup. StackKits own registration and
-// service exposure.
+// Package kombifyme transports authenticated kombify.me registry operations.
+// StackKits owns the secret-free address plan and concrete route binding;
+// Techstack supplies managed-runtime and account custody at this boundary.
 package kombifyme
 
 import (
@@ -224,7 +224,11 @@ func joinURL(base, path string) string {
 	if err != nil {
 		return strings.TrimRight(base, "/") + "/" + strings.TrimLeft(path, "/")
 	}
-	relative := &url.URL{Path: strings.TrimLeft(path, "/")}
+	trimmed := strings.TrimLeft(path, "/")
+	relative := &url.URL{Path: trimmed}
+	if pathPart, query, found := strings.Cut(trimmed, "?"); found {
+		relative = &url.URL{Path: pathPart, RawQuery: query}
+	}
 	return parsed.ResolveReference(relative).String()
 }
 

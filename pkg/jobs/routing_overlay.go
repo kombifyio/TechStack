@@ -43,12 +43,12 @@ func deployApplyRoutingOverlay(ctx context.Context, cfg *ProvisionConfig, job *J
 		return "", bindingErr
 	}
 	if applyErr := stackrouting.ApplyToKombination(spec, state); applyErr != nil {
-		return "", wrapProvisionError(StepPrepareRollout, applyErr.Error(),
+		return "", wrapProvisionCause(StepPrepareRollout, applyErr,
 			"The desired custom-domain overlay is invalid; no rollout artifacts were generated.")
 	}
 	path, hash, persistErr := stackrouting.ApplyToPersistedStackSpec(persister, state)
 	if persistErr != nil {
-		return "", wrapProvisionError(StepPrepareRollout, persistErr.Error(),
+		return "", wrapProvisionCause(StepPrepareRollout, persistErr,
 			"The StackKits routing handoff could not be derived from desired state.")
 	}
 	recordDeployRoutingEvidence(job, state, path, hash)
@@ -64,10 +64,15 @@ func loadDeployRoutingState(ctx context.Context, cfg *ProvisionConfig, job *Job,
 	}
 	state, err := cfg.RoutingStore.Get(ctx, tenantID, job.TargetID)
 	if errors.Is(err, stackrouting.ErrNotFound) {
+		if requiresManagedRoutingAllocation(spec) {
+			return nil, wrapProvisionError(StepPrepareRollout,
+				"managed kombify.me rollout has no desired routing allocation",
+				"This managed server has no assigned Kombify domain. Open its domain settings, assign or refresh the domain, then retry the rollout.")
+		}
 		return nil, nil
 	}
 	if err != nil {
-		return nil, wrapProvisionError(StepPrepareRollout, fmt.Sprintf("load routing overlay: %v", err),
+		return nil, wrapProvisionCause(StepPrepareRollout, fmt.Errorf("load routing overlay: %w", err),
 			"The desired routing state could not be loaded; rollout was stopped before generating artifacts.")
 	}
 	if state.StackID != job.TargetID || state.OwnerSubjectID != ownerID || state.ServerID == "" {
@@ -77,9 +82,17 @@ func loadDeployRoutingState(ctx context.Context, cfg *ProvisionConfig, job *Job,
 	return state, nil
 }
 
+func requiresManagedRoutingAllocation(spec *core.KombinationSpec) bool {
+	if spec == nil || !isManagedCloudSpec(spec) {
+		return false
+	}
+	domain := firstNonEmpty(spec.Network.Domain, metadataString(spec, "domain"))
+	return strings.EqualFold(strings.TrimSpace(domain), "kombify.me")
+}
+
 func validateDeployRoutingBinding(job *Job, spec *core.KombinationSpec, state *stackrouting.DesiredState) error {
 	if binding, exact, bindingErr := routingBindingFromJob(job); bindingErr != nil {
-		return wrapProvisionError(StepPrepareRollout, bindingErr.Error(),
+		return wrapProvisionCause(StepPrepareRollout, bindingErr,
 			"The routing rollout job is missing its immutable revision or exact target receipt; no artifacts were generated.")
 	} else if exact && (state.Revision != binding.revision || state.ServerID != binding.serverID || state.LeaseID != binding.leaseID) {
 		return wrapProvisionError(StepPrepareRollout, "routing overlay immutable receipt mismatch",

@@ -19,19 +19,59 @@ import (
 	"golang.org/x/text/secure/precis"
 )
 
-func TestIntegrationProviderControlRuntimeBootstrapIsIdempotentAndLeastPrivilege(t *testing.T) {
+// Explicit external opt-in still uses a private database. This fixture mutates
+// cluster roles, so callers must serialize it against other PostgreSQL tests.
+func providerControlBootstrapTestDSN(t *testing.T) string {
+	t.Helper()
+	if dsn := strings.TrimSpace(os.Getenv("TECHSTACK_PROVIDERCONTROL_TEST_POSTGRES_URL")); dsn != "" {
+		cfg, err := pgx.ParseConfig(dsn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		admin := stdlib.OpenDB(*cfg)
+		name := fmt.Sprintf("substrate_bootstrap_%d", time.Now().UnixNano())
+		quoted := pgx.Identifier{name}.Sanitize()
+		if _, err := admin.ExecContext(t.Context(), "CREATE DATABASE "+quoted); err != nil {
+			admin.Close()
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			defer admin.Close()
+			if _, err := admin.ExecContext(context.Background(), "DROP DATABASE "+quoted+" WITH (FORCE)"); err != nil {
+				t.Error(err)
+			}
+			for _, role := range []string{providerControlRuntimeRoleName, "techstack_provider_control_migration_test"} {
+				quotedRole := pgx.Identifier{role}.Sanitize()
+				_, _ = admin.ExecContext(context.Background(), "REVOKE EXECUTE ON FUNCTION pg_catalog.pg_control_system() FROM "+quotedRole)
+				if _, err := admin.ExecContext(context.Background(), "DROP ROLE IF EXISTS "+quotedRole); err != nil {
+					t.Error(err)
+				}
+			}
+		})
+		u, err := url.Parse(dsn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		u.Path = "/" + name
+		return u.String()
+	}
 	if strings.TrimSpace(os.Getenv("TECHSTACK_PROVIDERCONTROL_EMBEDDED_POSTGRES")) != "1" {
-		t.Skip("TECHSTACK_PROVIDERCONTROL_EMBEDDED_POSTGRES=1 is required")
+		t.Skip("a dedicated provider-control test PostgreSQL instance is required")
 	}
 	baseDir := t.TempDir()
 	t.Setenv(localdb.EnvEmbeddedPostgresDir, filepath.Join(baseDir, "postgres"))
 	embedded, err := localdb.StartEmbeddedPostgres(baseDir)
 	if err != nil {
-		t.Fatalf("start embedded PostgreSQL: %v", err)
+		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = embedded.Stop() })
+	return embedded.DSN()
+}
 
-	adminConfig, err := pgx.ParseConfig(embedded.DSN())
+func TestIntegrationProviderControlRuntimeBootstrapIsIdempotentAndLeastPrivilege(t *testing.T) {
+	dsn := providerControlBootstrapTestDSN(t)
+
+	adminConfig, err := pgx.ParseConfig(dsn)
 	if err != nil {
 		t.Fatalf("parse embedded PostgreSQL DSN: %v", err)
 	}
@@ -65,7 +105,7 @@ func TestIntegrationProviderControlRuntimeBootstrapIsIdempotentAndLeastPrivilege
 		"GRANT EXECUTE ON FUNCTION pg_catalog.pg_control_system() TO "+quotedMigrationRole); err != nil {
 		t.Fatalf("grant read-only physical cluster identity: %v", err)
 	}
-	migrationURL, err := url.Parse(embedded.DSN())
+	migrationURL, err := url.Parse(dsn)
 	if err != nil {
 		t.Fatalf("parse migration URL: %v", err)
 	}
@@ -77,7 +117,7 @@ func TestIntegrationProviderControlRuntimeBootstrapIsIdempotentAndLeastPrivilege
 	if err != nil {
 		t.Fatalf("parse migration PostgreSQL DSN: %v", err)
 	}
-	runtimeURL, err := url.Parse(embedded.DSN())
+	runtimeURL, err := url.Parse(dsn)
 	if err != nil {
 		t.Fatalf("parse runtime URL: %v", err)
 	}

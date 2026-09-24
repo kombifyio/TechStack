@@ -10,7 +10,6 @@ import (
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/runtimehealth"
 	"github.com/kombifyio/techstack/pkg/serverregistry"
-	"github.com/pocketbase/pocketbase/core"
 )
 
 type stackReadiness struct {
@@ -61,15 +60,6 @@ type stackServerReadinessCounts struct {
 	assigned   int
 	available  int
 	unassigned int
-}
-
-func buildStackReadiness(stack *core.Record, servers []stackOperationServer, failure *stackLatestFailure) stackReadiness {
-	return buildStackReadinessFromInput(stackReadinessInput{
-		status:         stack.GetString("status"),
-		required:       requiredServersForStack(stack),
-		managedRuntime: isManagedRuntimeStack(stack),
-		failedJobType:  failedJobTypeOf(failure),
-	}, servers)
 }
 
 func buildStackReadinessFromStore(stack *controlplane.Stack, servers []stackOperationServer, failure *stackLatestFailure) stackReadiness {
@@ -225,18 +215,6 @@ func stackOperationServerConnectedAt(server stackOperationServer, now time.Time)
 	return health == serverregistry.HealthHealthy || health == serverregistry.HealthDegraded
 }
 
-func requiredServersForStack(stack *core.Record) int {
-	configs := make([]map[string]any, 0, 2)
-	for _, field := range []string{"user_config", "config"} {
-		config, ok := mapFromJSONAny(stack.Get(field))
-		if !ok {
-			continue
-		}
-		configs = append(configs, config)
-	}
-	return requiredServersFromConfigs(configs...)
-}
-
 func requiredServersForStoreStack(stack *controlplane.Stack) int {
 	if stack == nil {
 		return 1
@@ -276,17 +254,6 @@ func numericInt(value any) (int, bool) {
 	default:
 		return 0, false
 	}
-}
-
-func buildStackNextSteps(stack *core.Record, readiness stackReadiness) []stackNextStep {
-	return buildStackNextStepsFromInput(stackNextStepsInput{
-		status:             stack.GetString("status"),
-		managedRuntime:     isManagedRuntimeStack(stack),
-		runtimePhase:       stack.GetString("runtime_phase"),
-		verificationStatus: stack.GetString("verification_status"),
-		leaseID:            stack.GetString("lease_id"),
-		stateAvailable:     true,
-	}, readiness)
 }
 
 func buildStackNextStepsFromStore(stack *controlplane.Stack, readiness stackReadiness) []stackNextStep {
@@ -366,18 +333,6 @@ func buildStackNextStepsFromInput(input stackNextStepsInput, readiness stackRead
 			Status:      stepStatus(input.status == "running" && !readiness.CanStart, false),
 		},
 	}
-}
-
-func isManagedRuntimeStack(stack *core.Record) bool {
-	if stack == nil {
-		return false
-	}
-	return isManagedRuntimeState(
-		stack.GetString("server_provisioning_mode"),
-		stack.GetString("server_mode"),
-		stack.GetString("runtime_lane"),
-		stack.GetString("lease_id"),
-	)
 }
 
 func isManagedRuntimeStoreStack(stack *controlplane.Stack) bool {

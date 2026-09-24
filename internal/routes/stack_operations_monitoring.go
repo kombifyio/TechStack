@@ -3,11 +3,13 @@ package routes
 
 import (
 	"context"
-	"fmt"
+	"slices"
+	"sort"
 	"strings"
+	"time"
 
+	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/monitoring"
-	"github.com/pocketbase/pocketbase/core"
 )
 
 type stackOperationKPIs struct {
@@ -195,74 +197,72 @@ func (h stackOperationsRouteHandlers) monitoringSummary(ctx context.Context) sta
 	return summary
 }
 
-func (h stackOperationsRouteHandlers) serverLogs(stackID string, server stackOperationServer) []map[string]any {
-	records, err := h.app.FindRecordsByFilter(
-		"activity_log",
-		"stack_id = {:stackId}",
-		"-created",
-		20,
-		0,
-		map[string]any{"stackId": stackID},
-	)
-	if err != nil {
-		return nil
-	}
-	logs := make([]map[string]any, 0, len(records))
-	for _, record := range records {
-		if !activityLogMatchesServer(record, server) {
-			continue
+// serverLogLimit is the number of newest activity entries the server details
+// view returns for the selected server.
+const serverLogLimit = 20
+
+func (h stackOperationsRouteHandlers) serverLogs(ctx context.Context, tenantID, stackID string, server stackOperationServer) []map[string]any {
+	limit := serverLogLimit
+	seen := make(map[string]struct{})
+	events := make([]controlplane.ActivityEvent, 0, limit)
+	for _, scopeKey := range serverActivityScopeKeys(server) {
+		scoped, err := h.activityStore.ListActivityScoped(ctx, tenantID, controlplane.ActivityFilter{
+			StackID:        stackID,
+			ServerScopeKey: scopeKey,
+			Limit:          limit,
+		})
+		if err != nil {
+			return nil
 		}
+		for _, event := range scoped {
+			if _, duplicate := seen[event.ID]; duplicate {
+				continue
+			}
+			seen[event.ID] = struct{}{}
+			events = append(events, event)
+		}
+	}
+	// Each scoped read already returns its own newest `limit` rows, so the
+	// newest `limit` of their union is the newest `limit` overall.
+	sort.Slice(events, func(i, j int) bool {
+		if !events[i].CreatedAt.Equal(events[j].CreatedAt) {
+			return events[i].CreatedAt.After(events[j].CreatedAt)
+		}
+		return events[i].ID > events[j].ID
+	})
+	if len(events) > limit {
+		events = events[:limit]
+	}
+
+	logs := make([]map[string]any, 0, len(events))
+	for _, event := range events {
 		logs = append(logs, map[string]any{
-			"id":       record.Id,
-			"action":   record.GetString("action"),
-			"details":  record.GetString("details"),
-			"status":   record.GetString("status"),
-			"created":  record.GetDateTime("created").String(),
-			"metadata": record.Get("metadata"),
+			"id":       event.ID,
+			"action":   event.Action,
+			"details":  event.Message,
+			"status":   event.Severity,
+			"created":  event.CreatedAt.UTC().Format(time.RFC3339Nano),
+			"metadata": event.Details,
 		})
 	}
 	return logs
 }
 
-func activityLogMatchesServer(record *core.Record, server stackOperationServer) bool {
-	metadata, ok := mapFromJSONAny(record.Get("metadata"))
-	if !ok || len(metadata) == 0 {
-		return false
-	}
-	if server.Source == managedRuntimeInventorySource && activityLogMatchesManagedRuntime(metadata, server) {
-		return true
-	}
-	for _, key := range []string{"worker_id", "server_id", "node_id"} {
-		if value := activityLogMetadataValue(metadata, key); value != "" {
-			return value == server.ID
+// serverActivityScopeKeys lists every identity this server is addressed by.
+// A managed runtime server has a synthetic `lease:<id>` server id, so its
+// lease id is a distinct identity rather than a duplicate of the first.
+// Hostname is not an identity: it is not unique and survives a rename.
+func serverActivityScopeKeys(server stackOperationServer) []string {
+	keys := make([]string, 0, 3)
+	for _, candidate := range []string{server.ID, server.AgentID, server.LeaseID} {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
 		}
-	}
-	for _, key := range []string{"agent_id", "agent"} {
-		if value := activityLogMetadataValue(metadata, key); value != "" {
-			return value == server.AgentID
+		if slices.Contains(keys, candidate) {
+			continue
 		}
+		keys = append(keys, candidate)
 	}
-	for _, key := range []string{"host", "hostname"} {
-		if value := activityLogMetadataValue(metadata, key); value != "" {
-			return strings.EqualFold(value, server.Hostname)
-		}
-	}
-	return false
-}
-
-func activityLogMatchesManagedRuntime(metadata map[string]any, server stackOperationServer) bool {
-	for _, key := range []string{"lease_id", "runtime_lease_id"} {
-		if value := activityLogMetadataValue(metadata, key); value != "" {
-			return value == server.LeaseID
-		}
-	}
-	return false
-}
-
-func activityLogMetadataValue(metadata map[string]any, key string) string {
-	value, ok := metadata[key]
-	if !ok || value == nil {
-		return ""
-	}
-	return strings.TrimSpace(fmt.Sprint(value))
+	return keys
 }

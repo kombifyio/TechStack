@@ -8,13 +8,14 @@ import (
 	"time"
 
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
+	"github.com/kombifyio/techstack/pkg/stackkitcommand"
 )
 
 func (s *Server) appendStackKitResultLogs(agentID string, result *agentpb.StackKitResult) {
 	if s == nil || result == nil {
 		return
 	}
-	jobID := stackKitJobID(result.CommandId)
+	jobID := stackkitcommand.JobID(result.CommandId)
 	for _, raw := range result.EventsJsonl {
 		var event map[string]any
 		if json.Unmarshal(raw, &event) != nil {
@@ -63,14 +64,6 @@ func (s *Server) appendStackKitResultLogs(agentID string, result *agentpb.StackK
 		JobID:     jobID,
 		Fields:    map[string]string{"command_id": result.CommandId, "exit_code": strconv.Itoa(int(result.ExitCode)), "status": status},
 	})
-}
-
-func stackKitJobID(commandID string) string {
-	value := strings.TrimSpace(commandID)
-	for _, suffix := range []string{"-plan", "-verify"} {
-		value = strings.TrimSuffix(value, suffix)
-	}
-	return value
 }
 
 func stackKitEventTime(event map[string]any, result *agentpb.StackKitResult) time.Time {

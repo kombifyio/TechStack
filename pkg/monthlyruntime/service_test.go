@@ -11,7 +11,9 @@ import (
 
 	"github.com/kombifyio/techstack/internal/runtimeproduct/serverruntime"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/vmlease"
+	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/identity"
+	"github.com/kombifyio/techstack/pkg/runtimeidentity"
 	"github.com/kombifyio/techstack/pkg/vmleases"
 )
 
@@ -150,10 +152,16 @@ func nativeInventoryRecord(lease *vmlease.Lease, err error) (*vmleases.LeaseInve
 	if err != nil {
 		return nil, err
 	}
+	// Mirror the production custody predicate: only a running lease is
+	// under active provider control.
+	state := vmleases.LeaseAuthorityStateNativeInactive
+	if lease.DesiredState == vmlease.DesiredStateRunning {
+		state = vmleases.LeaseAuthorityStateNativeActive
+	}
 	return &vmleases.LeaseInventoryRecord{
 		Lease:              *lease,
 		ExecutionAuthority: vmleases.LeaseExecutionAuthorityTechStackProviderControl,
-		AuthorityState:     vmleases.LeaseAuthorityStateNativeActive,
+		AuthorityState:     state,
 	}, nil
 }
 
@@ -236,10 +244,7 @@ func testMonthlyLease(now time.Time, status string) vmlease.Lease {
 
 func TestServiceStopPatchesLeaseAndCallsSimulateRuntime(t *testing.T) {
 	now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
-	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{Now: func() time.Time { return now }, SnapshotSecret: []byte("secret")})
-	if _, err := leases.CreateOrUpdate(context.Background(), vmleases.CreateRequest{Lease: testMonthlyLease(now, enrollmentStatusEnrolled)}); err != nil {
-		t.Fatalf("CreateOrUpdate: %v", err)
-	}
+	leases := newLeaseServiceWith(t, now, enrollmentStatusEnrolled)
 	runtime := &fakeRuntimeClient{onAction: func(serverruntime.LeaseRuntimeActionRequest) error {
 		stored, err := leases.Get(context.Background(), "org-1", "lease-1")
 		if err != nil {
@@ -292,10 +297,7 @@ func TestServiceStopPatchesLeaseAndCallsSimulateRuntime(t *testing.T) {
 
 func TestServiceActionPersistsRuntimeTargetMetadata(t *testing.T) {
 	now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
-	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{Now: func() time.Time { return now }, SnapshotSecret: []byte("secret")})
-	if _, err := leases.CreateOrUpdate(context.Background(), vmleases.CreateRequest{Lease: testMonthlyLease(now, enrollmentStatusEnrolled)}); err != nil {
-		t.Fatalf("CreateOrUpdate: %v", err)
-	}
+	leases := newLeaseServiceWith(t, now, enrollmentStatusEnrolled)
 	runtime := &fakeRuntimeClient{response: &serverruntime.LeaseRuntimeActionResponse{
 		ObservedState: "running",
 		LeaseState:    "valid",
@@ -339,10 +341,7 @@ func TestServiceActionPersistsRuntimeTargetMetadata(t *testing.T) {
 
 func TestServiceActionPersistsEncryptedRuntimeCredentialsOnly(t *testing.T) {
 	now := time.Date(2026, 7, 8, 9, 30, 0, 0, time.UTC)
-	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{Now: func() time.Time { return now }, SnapshotSecret: []byte("secret")})
-	if _, err := leases.CreateOrUpdate(context.Background(), vmleases.CreateRequest{Lease: testMonthlyLease(now, enrollmentStatusEnrolled)}); err != nil {
-		t.Fatalf("CreateOrUpdate: %v", err)
-	}
+	leases := newLeaseServiceWith(t, now, enrollmentStatusEnrolled)
 	previousEncryptRuntimeCredential := encryptRuntimeCredential
 	encryptRuntimeCredential = func(value string) (string, bool) {
 		return "enc:v1:test-" + value, true
@@ -418,11 +417,7 @@ func TestServiceSSHInfoUsesPersistedLeaseTargetWithoutRuntimeCall(t *testing.T) 
 	if _, err := leases.CreateOrUpdate(context.Background(), vmleases.CreateRequest{Lease: lease}); err != nil {
 		t.Fatalf("CreateOrUpdate: %v", err)
 	}
-	runtime := &fakeRuntimeClient{onAction: func(serverruntime.LeaseRuntimeActionRequest) error {
-		t.Fatal("persisted SSH target should satisfy access without calling runtime")
-		return nil
-	}}
-	svc := &Service{Leases: nativeLeaseService(leases), Runtime: runtime, Features: fakeFeatureChecker{enabled: true}}
+	svc := &Service{Leases: nativeLeaseService(leases), Features: fakeFeatureChecker{enabled: true}}
 
 	resp, err := svc.Action(context.Background(), ActionRequest{
 		TenantID: "org-1",
@@ -438,9 +433,6 @@ func TestServiceSSHInfoUsesPersistedLeaseTargetWithoutRuntimeCall(t *testing.T) 
 	}
 	if resp.Status == nil || resp.Status.PublicIP != "203.0.113.55" || resp.Status.PrivateIP != "10.0.0.55" {
 		t.Fatalf("Status response = %+v", resp.Status)
-	}
-	if len(runtime.requests) != 0 {
-		t.Fatalf("runtime requests = %+v, want none", runtime.requests)
 	}
 	journal := store.OperationJournal()
 	if len(journal) != 1 || journal[0].Status != vmleases.OperationStatusSSHInfoRequested || journal[0].Actor != "user-1" {
@@ -581,110 +573,90 @@ func TestServiceDecommissionRetryUsesConfirmedJournalWithoutSecondProviderCall(t
 	}
 }
 
-func TestServiceDecommissionJournalReadFailureStopsBeforeProviderCall(t *testing.T) {
-	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
-	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{Now: func() time.Time { return now }, SnapshotSecret: []byte("secret")})
-	if _, err := leases.CreateOrUpdate(t.Context(), vmleases.CreateRequest{Lease: testMonthlyLease(now, enrollmentStatusEnrolled)}); err != nil {
-		t.Fatalf("CreateOrUpdate: %v", err)
-	}
+func TestServiceDecommissionPreflightFailuresStopBeforeProviderCall(t *testing.T) {
 	readErr := errors.New("operation journal read failed")
-	authority := &failingConfirmedDecommissionReader{Service: leases, err: readErr}
-	runtime := &fakeRuntimeClient{}
-	svc := &Service{Leases: authority, Runtime: runtime, Features: fakeFeatureChecker{enabled: true}}
-
-	_, err := svc.Action(t.Context(), ActionRequest{
-		TenantID: "org-1",
-		UserID:   "user-1",
-		LeaseID:  "lease-1",
-		Action:   serverruntime.RuntimeActionDecommission,
-	})
-	if !errors.Is(err, readErr) {
-		t.Fatalf("Action error = %v, want journal read error", err)
-	}
-	if len(runtime.requests) != 0 {
-		t.Fatalf("runtime requests = %+v, journal read failure must stop before provider call", runtime.requests)
-	}
-}
-
-func TestServiceDecommissionReplayWithoutExactReaderStopsBeforeProviderCall(t *testing.T) {
-	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
-	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{Now: func() time.Time { return now }, SnapshotSecret: []byte("secret")})
-	created, err := leases.CreateOrUpdate(t.Context(), vmleases.CreateRequest{Lease: testMonthlyLease(now, enrollmentStatusEnrolled)})
-	if err != nil {
-		t.Fatalf("CreateOrUpdate: %v", err)
-	}
-	digest, err := vmleases.ResourceGenerationDigest("org-1", *created)
-	if err != nil {
-		t.Fatalf("ResourceGenerationDigest: %v", err)
-	}
-	if _, err = leases.Patch(t.Context(), "org-1", created.ID, vmleases.PatchRequest{
-		ExpectedResourceGenerationDigest: digest,
-		ClaimDecommission:                true,
-	}); err != nil {
-		t.Fatalf("seed generation claim: %v", err)
-	}
-	authority := &operationRecordingLeaseAuthority{
-		LeaseAuthority: leases,
-		record: func(vmleases.OperationEvent) error {
-			t.Fatal("replay without exact reader attempted to record a provider result")
-			return nil
+	for _, test := range []struct {
+		name    string
+		setup   func(*testing.T, time.Time) (LeaseAuthority, *vmleases.Service)
+		wantErr error
+	}{
+		{
+			name: "journal read failure",
+			setup: func(t *testing.T, now time.Time) (LeaseAuthority, *vmleases.Service) {
+				leases := newLeaseServiceWith(t, now, enrollmentStatusEnrolled)
+				return &failingConfirmedDecommissionReader{Service: leases, err: readErr}, leases
+			},
+			wantErr: readErr,
 		},
-	}
-	runtime := &fakeRuntimeClient{}
-	svc := &Service{Leases: authority, Runtime: runtime, Features: fakeFeatureChecker{enabled: true}}
+		{
+			name: "claimed replay without exact reader",
+			setup: func(t *testing.T, now time.Time) (LeaseAuthority, *vmleases.Service) {
+				leases := newLeaseServiceWith(t, now, enrollmentStatusEnrolled)
+				created, err := leases.Get(t.Context(), "org-1", "lease-1")
+				if err != nil {
+					t.Fatalf("Get: %v", err)
+				}
+				digest, err := vmleases.ResourceGenerationDigest("org-1", *created)
+				if err != nil {
+					t.Fatalf("ResourceGenerationDigest: %v", err)
+				}
+				if _, err = leases.Patch(t.Context(), "org-1", created.ID, vmleases.PatchRequest{
+					ExpectedResourceGenerationDigest: digest, ClaimDecommission: true,
+				}); err != nil {
+					t.Fatalf("seed generation claim: %v", err)
+				}
+				return &operationRecordingLeaseAuthority{
+					LeaseAuthority: leases,
+					record: func(vmleases.OperationEvent) error {
+						t.Fatal("preflight failure attempted to record a provider result")
+						return nil
+					},
+				}, leases
+			},
+			wantErr: ErrDecommissionJournalUnavailable,
+		},
+		{
+			name: "legacy lease without generation",
+			setup: func(t *testing.T, now time.Time) (LeaseAuthority, *vmleases.Service) {
+				store := vmleases.NewMemoryStore()
+				if _, err := store.Upsert(t.Context(), testMonthlyLease(now, enrollmentStatusEnrolled), "legacy-lease"); err != nil {
+					t.Fatalf("seed legacy lease: %v", err)
+				}
+				leases := vmleases.NewService(store, vmleases.ServiceConfig{Now: func() time.Time { return now }, SnapshotSecret: []byte("secret")})
+				return nativeLeaseService(leases), leases
+			},
+			wantErr: ErrDecommissionGenerationUnavailable,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+			authority, leases := test.setup(t, now)
+			runtime := &fakeRuntimeClient{}
+			svc := &Service{Leases: authority, Runtime: runtime, Features: fakeFeatureChecker{enabled: true}}
 
-	_, err = svc.Action(t.Context(), ActionRequest{
-		TenantID: "org-1",
-		UserID:   "user-1",
-		LeaseID:  created.ID,
-		Action:   serverruntime.RuntimeActionDecommission,
-	})
-	if !errors.Is(err, ErrDecommissionJournalUnavailable) {
-		t.Fatalf("Action error = %v, want ErrDecommissionJournalUnavailable", err)
-	}
-	if len(runtime.requests) != 0 {
-		t.Fatalf("runtime requests = %+v, replay without exact reader must fail closed", runtime.requests)
-	}
-}
-
-func TestServiceDecommissionWithoutGenerationFailsBeforeProviderCall(t *testing.T) {
-	now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
-	store := vmleases.NewMemoryStore()
-	legacy := testMonthlyLease(now, enrollmentStatusEnrolled)
-	if _, err := store.Upsert(t.Context(), legacy, "legacy-lease"); err != nil {
-		t.Fatalf("seed legacy lease: %v", err)
-	}
-	leases := vmleases.NewService(store, vmleases.ServiceConfig{Now: func() time.Time { return now }, SnapshotSecret: []byte("secret")})
-	runtime := &fakeRuntimeClient{}
-	svc := &Service{Leases: nativeLeaseService(leases), Runtime: runtime, Features: fakeFeatureChecker{enabled: true}}
-
-	_, err := svc.Action(t.Context(), ActionRequest{
-		TenantID: "org-1",
-		UserID:   "user-1",
-		LeaseID:  "lease-1",
-		Action:   serverruntime.RuntimeActionDecommission,
-	})
-	if !errors.Is(err, ErrDecommissionGenerationUnavailable) {
-		t.Fatalf("Action error = %v, want ErrDecommissionGenerationUnavailable", err)
-	}
-	if len(runtime.requests) != 0 {
-		t.Fatalf("runtime requests = %+v, missing generation must fail before provider call", runtime.requests)
-	}
-	stored, getErr := leases.Get(t.Context(), "org-1", "lease-1")
-	if getErr != nil {
-		t.Fatalf("Get: %v", getErr)
-	}
-	if stored.CancelledAt != nil {
-		t.Fatalf("legacy lease was canceled: %+v", stored)
+			_, err := svc.Action(t.Context(), ActionRequest{
+				TenantID: "org-1", UserID: "user-1", LeaseID: "lease-1", Action: serverruntime.RuntimeActionDecommission,
+			})
+			if !errors.Is(err, test.wantErr) {
+				t.Fatalf("Action error = %v, want %v", err, test.wantErr)
+			}
+			if len(runtime.requests) != 0 {
+				t.Fatalf("runtime requests = %+v, preflight failure reached provider", runtime.requests)
+			}
+			stored, getErr := leases.Get(t.Context(), "org-1", "lease-1")
+			if getErr != nil {
+				t.Fatalf("Get: %v", getErr)
+			}
+			if stored.CancelledAt != nil {
+				t.Fatalf("preflight failure cancelled lease: %+v", stored)
+			}
+		})
 	}
 }
 
 func TestServiceDecommissionJournalFailureDoesNotCancelLease(t *testing.T) {
 	now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
-	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{Now: func() time.Time { return now }, SnapshotSecret: []byte("secret")})
-	if _, err := leases.CreateOrUpdate(context.Background(), vmleases.CreateRequest{Lease: testMonthlyLease(now, enrollmentStatusEnrolled)}); err != nil {
-		t.Fatalf("CreateOrUpdate: %v", err)
-	}
+	leases := newLeaseServiceWith(t, now, enrollmentStatusEnrolled)
 	journalErr := errors.New("operation journal unavailable")
 	var recorded vmleases.OperationEvent
 	authority := &operationRecordingLeaseAuthority{
@@ -734,91 +706,48 @@ func TestServiceDecommissionJournalFailureDoesNotCancelLease(t *testing.T) {
 	}
 }
 
-func TestServiceDecommissionWithoutJournalDoesNotCancelLease(t *testing.T) {
+func TestServiceDecommissionWithoutJournalCapabilityDoesNotCancelLease(t *testing.T) {
 	now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
-	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{Now: func() time.Time { return now }, SnapshotSecret: []byte("secret")})
-	if _, err := leases.CreateOrUpdate(context.Background(), vmleases.CreateRequest{Lease: testMonthlyLease(now, enrollmentStatusEnrolled)}); err != nil {
-		t.Fatalf("CreateOrUpdate: %v", err)
-	}
-	runtime := &fakeRuntimeClient{}
-	svc := &Service{
-		Leases:   &leaseAuthorityWithoutJournal{LeaseAuthority: leases},
-		Runtime:  runtime,
-		Features: fakeFeatureChecker{enabled: true},
-	}
+	for _, test := range []struct {
+		name             string
+		wrapLeaseService bool
+	}{
+		{name: "authority omits journal contract", wrapLeaseService: true},
+		{name: "underlying store omits journal contract"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var store vmleases.Store = vmleases.NewMemoryStore()
+			if !test.wrapLeaseService {
+				store = &storeWithoutOperationJournal{Store: store}
+			}
+			leases := vmleases.NewService(store, vmleases.ServiceConfig{Now: func() time.Time { return now }, SnapshotSecret: []byte("secret")})
+			var authority LeaseAuthority = nativeLeaseService(leases)
+			if test.wrapLeaseService {
+				authority = &leaseAuthorityWithoutJournal{LeaseAuthority: leases}
+			}
+			if _, err := leases.CreateOrUpdate(t.Context(), vmleases.CreateRequest{Lease: testMonthlyLease(now, enrollmentStatusEnrolled)}); err != nil {
+				t.Fatalf("CreateOrUpdate: %v", err)
+			}
+			runtime := &fakeRuntimeClient{}
+			svc := &Service{Leases: authority, Runtime: runtime, Features: fakeFeatureChecker{enabled: true}}
 
-	_, err := svc.Action(context.Background(), ActionRequest{
-		TenantID: "org-1",
-		UserID:   "user-1",
-		LeaseID:  "lease-1",
-		Action:   serverruntime.RuntimeActionDecommission,
-	})
-	if !errors.Is(err, ErrDecommissionJournalUnavailable) {
-		t.Fatalf("Action error = %v, want ErrDecommissionJournalUnavailable", err)
-	}
-	stored, err := leases.Get(context.Background(), "org-1", "lease-1")
-	if err != nil {
-		t.Fatalf("stored lease: %v", err)
-	}
-	if stored.CancelledAt != nil {
-		t.Fatalf("missing journal must not cancel lease: %+v", stored)
-	}
-}
-
-func TestServiceDecommissionWithNonJournalStoreDoesNotCancelLease(t *testing.T) {
-	now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
-	store := &storeWithoutOperationJournal{Store: vmleases.NewMemoryStore()}
-	leases := vmleases.NewService(store, vmleases.ServiceConfig{Now: func() time.Time { return now }, SnapshotSecret: []byte("secret")})
-	if _, err := leases.CreateOrUpdate(context.Background(), vmleases.CreateRequest{Lease: testMonthlyLease(now, enrollmentStatusEnrolled)}); err != nil {
-		t.Fatalf("CreateOrUpdate: %v", err)
-	}
-	runtime := &fakeRuntimeClient{}
-	svc := &Service{Leases: nativeLeaseService(leases), Runtime: runtime, Features: fakeFeatureChecker{enabled: true}}
-
-	_, err := svc.Action(context.Background(), ActionRequest{
-		TenantID: "org-1",
-		UserID:   "user-1",
-		LeaseID:  "lease-1",
-		Action:   serverruntime.RuntimeActionDecommission,
-	})
-	if !errors.Is(err, ErrDecommissionJournalUnavailable) {
-		t.Fatalf("Action error = %v, want ErrDecommissionJournalUnavailable", err)
-	}
-	if len(runtime.requests) != 1 || runtime.requests[0].Action != serverruntime.RuntimeActionDecommission {
-		t.Fatalf("runtime requests = %+v, want one successful provider decommission", runtime.requests)
-	}
-	stored, err := leases.Get(context.Background(), "org-1", "lease-1")
-	if err != nil {
-		t.Fatalf("stored lease: %v", err)
-	}
-	if stored.CancelledAt != nil {
-		t.Fatalf("non-journal store must not cancel lease: %+v", stored)
-	}
-}
-
-func TestServiceDecommissionIgnoresDisabledFeatureGate(t *testing.T) {
-	now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
-	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{Now: func() time.Time { return now }, SnapshotSecret: []byte("secret")})
-	if _, err := leases.CreateOrUpdate(context.Background(), vmleases.CreateRequest{Lease: testMonthlyLease(now, enrollmentStatusEnrolled)}); err != nil {
-		t.Fatalf("CreateOrUpdate: %v", err)
-	}
-	runtime := &fakeRuntimeClient{}
-	svc := &Service{Leases: nativeLeaseService(leases), Runtime: runtime, Features: fakeFeatureChecker{enabled: false}}
-
-	resp, err := svc.Action(context.Background(), ActionRequest{
-		TenantID: "org-1",
-		UserID:   "user-1",
-		LeaseID:  "lease-1",
-		Action:   serverruntime.RuntimeActionDecommission,
-	})
-	if err != nil {
-		t.Fatalf("Action: %v", err)
-	}
-	if resp.Action != serverruntime.RuntimeActionDecommission {
-		t.Fatalf("response action = %q, want decommission", resp.Action)
-	}
-	if len(runtime.requests) != 1 || runtime.requests[0].Action != serverruntime.RuntimeActionDecommission {
-		t.Fatalf("runtime requests = %+v", runtime.requests)
+			_, err := svc.Action(t.Context(), ActionRequest{
+				TenantID: "org-1", UserID: "user-1", LeaseID: "lease-1", Action: serverruntime.RuntimeActionDecommission,
+			})
+			if !errors.Is(err, ErrDecommissionJournalUnavailable) {
+				t.Fatalf("Action error = %v, want ErrDecommissionJournalUnavailable", err)
+			}
+			if len(runtime.requests) != 1 || runtime.requests[0].Action != serverruntime.RuntimeActionDecommission {
+				t.Fatalf("runtime requests = %+v, want one confirmed decommission", runtime.requests)
+			}
+			stored, err := leases.Get(t.Context(), "org-1", "lease-1")
+			if err != nil {
+				t.Fatalf("stored lease: %v", err)
+			}
+			if stored.CancelledAt != nil || stored.DesiredState != vmlease.DesiredStateRunning {
+				t.Fatalf("missing journal capability changed lease: %+v", stored)
+			}
+		})
 	}
 }
 
@@ -859,99 +788,46 @@ func TestServiceDecommissionAlreadyCancelledLeaseIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestServiceDecommissionDoesNotTrustLeaseCancelledErrorText(t *testing.T) {
-	now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
-	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{Now: func() time.Time { return now }, SnapshotSecret: []byte("secret")})
-	if _, err := leases.CreateOrUpdate(context.Background(), vmleases.CreateRequest{Lease: testMonthlyLease(now, enrollmentStatusEnrolled)}); err != nil {
-		t.Fatalf("CreateOrUpdate: %v", err)
-	}
-	svc := &Service{
-		Leases:   nativeLeaseService(leases),
-		Runtime:  &fakeRuntimeClient{err: errors.New(`simulate runtime decommission returned 400: {"error":{"message":"lease_cancelled"}}`)},
-		Features: fakeFeatureChecker{enabled: true},
-	}
-
-	_, err := svc.Action(context.Background(), ActionRequest{
-		TenantID: "org-1",
-		UserID:   "user-1",
-		LeaseID:  "lease-1",
-		Action:   serverruntime.RuntimeActionDecommission,
-	})
-	if err == nil {
-		t.Fatal("Action error = nil, rejected runtime response must fail closed")
-	}
-	stored, err := leases.Get(context.Background(), "org-1", "lease-1")
-	if err != nil {
-		t.Fatalf("stored lease: %v", err)
-	}
-	if stored.CancelledAt != nil {
-		t.Fatalf("stored lease = %+v, rejected runtime response must not cancel it", stored)
-	}
-}
-
-func TestServiceDecommissionDoesNotTrustProviderNodeNotFoundErrorText(t *testing.T) {
+func TestServiceDecommissionRuntimeErrorsNeverBecomeProviderProof(t *testing.T) {
 	oldDelays := decommissionRuntimeRetryDelays
 	decommissionRuntimeRetryDelays = []time.Duration{0}
 	defer func() { decommissionRuntimeRetryDelays = oldDelays }()
 
 	now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
-	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{Now: func() time.Time { return now }, SnapshotSecret: []byte("secret")})
-	if _, err := leases.CreateOrUpdate(context.Background(), vmleases.CreateRequest{Lease: testMonthlyLease(now, enrollmentStatusEnrolled)}); err != nil {
-		t.Fatalf("CreateOrUpdate: %v", err)
-	}
-	svc := &Service{
-		Leases:   nativeLeaseService(leases),
-		Runtime:  &fakeRuntimeClient{err: errors.New(`simulate runtime decommission returned 502: {"error":{"code":502,"message":"destroy ionos-managed node: node not found: cafde37b/e9677a15"}}`)},
-		Features: fakeFeatureChecker{enabled: true},
-	}
+	for _, test := range []struct {
+		name string
+		err  error
+	}{
+		{name: "lease cancelled text", err: errors.New(`simulate runtime decommission returned 400: {"error":{"message":"lease_cancelled"}}`)},
+		{name: "provider node not found text", err: errors.New(`simulate runtime decommission returned 502: {"error":{"code":502,"message":"destroy ionos-managed node: node not found: cafde37b/e9677a15"}}`)},
+		{name: "missing legacy record text", err: errors.New("legacy managed runtime record not found")},
+		{name: "generic runtime failure", err: errors.New("simulate decommission failed")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := vmleases.NewMemoryStore()
+			leases := vmleases.NewService(store, vmleases.ServiceConfig{Now: func() time.Time { return now }, SnapshotSecret: []byte("secret")})
+			if _, err := leases.CreateOrUpdate(t.Context(), vmleases.CreateRequest{Lease: testMonthlyLease(now, enrollmentStatusEnrolled)}); err != nil {
+				t.Fatalf("CreateOrUpdate: %v", err)
+			}
+			svc := &Service{Leases: nativeLeaseService(leases), Runtime: &fakeRuntimeClient{err: test.err}, Features: fakeFeatureChecker{enabled: true}}
 
-	_, err := svc.Action(context.Background(), ActionRequest{
-		TenantID: "org-1",
-		UserID:   "user-1",
-		LeaseID:  "lease-1",
-		Action:   serverruntime.RuntimeActionDecommission,
-	})
-	if err == nil {
-		t.Fatal("Action error = nil, provider 502 must fail closed")
-	}
-	stored, err := leases.Get(context.Background(), "org-1", "lease-1")
-	if err != nil {
-		t.Fatalf("stored lease: %v", err)
-	}
-	if stored.CancelledAt != nil {
-		t.Fatalf("stored lease = %+v, provider 502 must not cancel it", stored)
-	}
-}
-
-func TestServiceDecommissionDoesNotTreatMissingLegacyRecordAsProviderProof(t *testing.T) {
-	// A missing legacy control row proves nothing about the provider VM. Canceling the
-	// TechStack lease here could hide a still-billing server.
-	now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
-	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{Now: func() time.Time { return now }, SnapshotSecret: []byte("secret")})
-	if _, err := leases.CreateOrUpdate(context.Background(), vmleases.CreateRequest{Lease: testMonthlyLease(now, enrollmentStatusEnrolled)}); err != nil {
-		t.Fatalf("CreateOrUpdate: %v", err)
-	}
-	svc := &Service{
-		Leases:   nativeLeaseService(leases),
-		Runtime:  &fakeRuntimeClient{err: errors.New("legacy managed runtime record not found")},
-		Features: fakeFeatureChecker{enabled: true},
-	}
-
-	_, err := svc.Action(context.Background(), ActionRequest{
-		TenantID: "org-1",
-		UserID:   "user-1",
-		LeaseID:  "lease-1",
-		Action:   serverruntime.RuntimeActionDecommission,
-	})
-	if err == nil {
-		t.Fatal("Action error = nil, missing legacy row must fail closed")
-	}
-	stored, err := leases.Get(context.Background(), "org-1", "lease-1")
-	if err != nil {
-		t.Fatalf("stored lease: %v", err)
-	}
-	if stored.CancelledAt != nil {
-		t.Fatalf("stored lease = %+v, missing legacy row must not cancel it", stored)
+			if _, err := svc.Action(t.Context(), ActionRequest{
+				TenantID: "org-1", UserID: "user-1", LeaseID: "lease-1", Action: serverruntime.RuntimeActionDecommission,
+			}); err == nil {
+				t.Fatal("Action error = nil, runtime failure must fail closed")
+			}
+			stored, err := leases.Get(t.Context(), "org-1", "lease-1")
+			if err != nil {
+				t.Fatalf("stored lease: %v", err)
+			}
+			if stored.CancelledAt != nil || stored.DesiredState != vmlease.DesiredStateRunning {
+				t.Fatalf("runtime failure changed lease: %+v", stored)
+			}
+			journal := store.OperationJournal()
+			if len(journal) != 1 || journal[0].EventType != vmleases.OperationEventRuntimeAction || journal[0].Status != vmleases.OperationStatusFailed {
+				t.Fatalf("journal = %+v, runtime failure must not create provider proof", journal)
+			}
+		})
 	}
 }
 
@@ -961,10 +837,7 @@ func TestServiceDecommissionRetriesTransientRuntimeFailure(t *testing.T) {
 	defer func() { decommissionRuntimeRetryDelays = oldDelays }()
 
 	now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
-	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{Now: func() time.Time { return now }, SnapshotSecret: []byte("secret")})
-	if _, err := leases.CreateOrUpdate(context.Background(), vmleases.CreateRequest{Lease: testMonthlyLease(now, enrollmentStatusEnrolled)}); err != nil {
-		t.Fatalf("CreateOrUpdate: %v", err)
-	}
+	leases := newLeaseServiceWith(t, now, enrollmentStatusEnrolled)
 	runtime := &sequenceRuntimeClient{errs: []error{
 		errors.New(`simulate runtime decommission returned 502: upstream returned HTML error page`),
 		nil,
@@ -995,74 +868,41 @@ func TestServiceDecommissionRetriesTransientRuntimeFailure(t *testing.T) {
 	}
 }
 
-func TestServiceDecommissionDoesNotCancelLeaseWhenRuntimeFails(t *testing.T) {
-	now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
-	store := vmleases.NewMemoryStore()
-	leases := vmleases.NewService(store, vmleases.ServiceConfig{Now: func() time.Time { return now }, SnapshotSecret: []byte("secret")})
-	if _, err := leases.CreateOrUpdate(context.Background(), vmleases.CreateRequest{Lease: testMonthlyLease(now, enrollmentStatusEnrolled)}); err != nil {
-		t.Fatalf("CreateOrUpdate: %v", err)
-	}
-	svc := &Service{
-		Leases:   nativeLeaseService(leases),
-		Runtime:  &fakeRuntimeClient{err: errors.New("simulate decommission failed")},
-		Features: fakeFeatureChecker{enabled: true},
-	}
+func TestServiceDecommissionBypassesRecoveryGates(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		enrollment     string
+		featureEnabled bool
+	}{
+		{name: "disabled feature", enrollment: enrollmentStatusEnrolled},
+		{name: "pending enrollment", enrollment: EnrollmentStatusPending, featureEnabled: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
+			leases := newLeaseServiceWith(t, now, test.enrollment)
+			runtime := &fakeRuntimeClient{}
+			svc := &Service{Leases: nativeLeaseService(leases), Runtime: runtime, Features: fakeFeatureChecker{enabled: test.featureEnabled}}
 
-	_, err := svc.Action(context.Background(), ActionRequest{
-		TenantID: "org-1",
-		UserID:   "user-1",
-		LeaseID:  "lease-1",
-		Action:   serverruntime.RuntimeActionDecommission,
-	})
-	if err == nil {
-		t.Fatal("Action error = nil, want simulate failure")
-	}
-	stored, err := leases.Get(context.Background(), "org-1", "lease-1")
-	if err != nil {
-		t.Fatalf("stored lease: %v", err)
-	}
-	if stored.CancelledAt != nil {
-		t.Fatalf("failed decommission should not pre-cancel lease: %+v", stored)
-	}
-	if stored.DesiredState != vmlease.DesiredStateRunning {
-		t.Fatalf("DesiredState = %q, want running", stored.DesiredState)
-	}
-	journal := store.OperationJournal()
-	if len(journal) != 1 || journal[0].EventType != vmleases.OperationEventRuntimeAction || journal[0].Status != vmleases.OperationStatusFailed {
-		t.Fatalf("journal = %+v, failed runtime call must not create decommission proof", journal)
-	}
-}
-
-func TestServiceDecommissionAllowsPendingEnrollment(t *testing.T) {
-	now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
-	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{Now: func() time.Time { return now }, SnapshotSecret: []byte("secret")})
-	if _, err := leases.CreateOrUpdate(context.Background(), vmleases.CreateRequest{Lease: testMonthlyLease(now, "pending")}); err != nil {
-		t.Fatalf("CreateOrUpdate: %v", err)
-	}
-	runtime := &fakeRuntimeClient{}
-	svc := &Service{Leases: nativeLeaseService(leases), Runtime: runtime, Features: fakeFeatureChecker{enabled: true}}
-
-	resp, err := svc.Action(context.Background(), ActionRequest{
-		TenantID: "org-1",
-		UserID:   "user-1",
-		LeaseID:  "lease-1",
-		Action:   serverruntime.RuntimeActionDecommission,
-	})
-	if err != nil {
-		t.Fatalf("Action: %v", err)
-	}
-	if resp.EnrollmentStatus != "pending" {
-		t.Fatalf("EnrollmentStatus = %q, want pending", resp.EnrollmentStatus)
-	}
-	stored, err := leases.Get(context.Background(), "org-1", "lease-1")
-	if err != nil {
-		t.Fatalf("stored lease: %v", err)
-	}
-	if stored.CancelledAt == nil || stored.DesiredState != vmlease.DesiredStateStopped {
-		t.Fatalf("pending lease after decommission = %+v", stored)
-	}
-	if len(runtime.requests) != 1 || runtime.requests[0].Action != serverruntime.RuntimeActionDecommission {
-		t.Fatalf("runtime requests = %+v", runtime.requests)
+			resp, err := svc.Action(t.Context(), ActionRequest{
+				TenantID: "org-1", UserID: "user-1", LeaseID: "lease-1", Action: serverruntime.RuntimeActionDecommission,
+			})
+			if err != nil {
+				t.Fatalf("Action: %v", err)
+			}
+			if resp.Action != serverruntime.RuntimeActionDecommission || resp.EnrollmentStatus != test.enrollment {
+				t.Fatalf("response = %+v, want decommission with enrollment %q", resp, test.enrollment)
+			}
+			if len(runtime.requests) != 1 || runtime.requests[0].Action != serverruntime.RuntimeActionDecommission {
+				t.Fatalf("runtime requests = %+v, want one decommission", runtime.requests)
+			}
+			stored, err := leases.Get(t.Context(), "org-1", "lease-1")
+			if err != nil {
+				t.Fatalf("stored lease: %v", err)
+			}
+			if stored.CancelledAt == nil || stored.DesiredState != vmlease.DesiredStateStopped {
+				t.Fatalf("lease after decommission = %+v, want cancelled/stopped", stored)
+			}
+		})
 	}
 }
 
@@ -1101,7 +941,7 @@ func TestServiceRuntimeFailureRecordsFailedOperation(t *testing.T) {
 	if _, err := leases.CreateOrUpdate(context.Background(), vmleases.CreateRequest{Lease: testMonthlyLease(now, enrollmentStatusEnrolled)}); err != nil {
 		t.Fatalf("CreateOrUpdate: %v", err)
 	}
-	svc := &Service{Leases: nativeLeaseService(leases), Runtime: &fakeRuntimeClient{err: errors.New("simulate provider refused ssh")}, Features: fakeFeatureChecker{enabled: true}}
+	svc := &Service{Leases: nativeLeaseService(leases), Runtime: &fakeRuntimeClient{err: errors.New("managed runtime refused ssh")}, Features: fakeFeatureChecker{enabled: true}}
 
 	_, err := svc.Action(context.Background(), ActionRequest{
 		TenantID: "org-1",
@@ -1116,7 +956,7 @@ func TestServiceRuntimeFailureRecordsFailedOperation(t *testing.T) {
 	if len(journal) != 1 {
 		t.Fatalf("journal entries = %d, want 1", len(journal))
 	}
-	if got := journal[0]; got.Status != vmleases.OperationStatusFailed || !strings.Contains(got.Error, "simulate provider refused ssh") {
+	if got := journal[0]; got.Status != vmleases.OperationStatusFailed || !strings.Contains(got.Error, "managed runtime refused ssh") {
 		t.Fatalf("failure journal event = %+v", got)
 	}
 }
@@ -1183,10 +1023,7 @@ func TestServiceOperationsReturnsVisibleLeaseJournalNewestFirst(t *testing.T) {
 
 func TestServiceOperationsRejectsWrongUser(t *testing.T) {
 	now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
-	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{Now: func() time.Time { return now }, SnapshotSecret: []byte("secret")})
-	if _, err := leases.CreateOrUpdate(context.Background(), vmleases.CreateRequest{Lease: testMonthlyLease(now, enrollmentStatusEnrolled)}); err != nil {
-		t.Fatalf("CreateOrUpdate: %v", err)
-	}
+	leases := newLeaseServiceWith(t, now, enrollmentStatusEnrolled)
 	svc := &Service{Leases: nativeLeaseService(leases)}
 
 	_, err := svc.Operations(context.Background(), OperationsRequest{
@@ -1215,37 +1052,67 @@ func TestServiceOfferingsExposePublicCatalog(t *testing.T) {
 	}
 }
 
-func TestServiceActionRejectsNonNativeExecutionAuthorityBeforeRuntimeCall(t *testing.T) {
+func TestServiceActionAdmissionFailuresStopBeforeRuntime(t *testing.T) {
 	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
 	for _, test := range []struct {
-		name      string
-		authority vmleases.LeaseExecutionAuthority
-		state     vmleases.LeaseAuthorityState
+		name             string
+		authority        vmleases.LeaseExecutionAuthority
+		state            vmleases.LeaseAuthorityState
+		withoutInventory bool
+		tenantID         string
+		wantErr          error
 	}{
-		{name: "unbound", state: vmleases.LeaseAuthorityStateUnbound},
-		{name: "legacy quarantined", authority: vmleases.LeaseExecutionAuthorityLegacySimulate, state: vmleases.LeaseAuthorityStateLegacyQuarantined},
-		{name: "native inactive", authority: vmleases.LeaseExecutionAuthorityTechStackProviderControl, state: vmleases.LeaseAuthorityStateNativeInactive},
+		{name: "unbound", state: vmleases.LeaseAuthorityStateUnbound, wantErr: ErrExecutionAuthorityInactive},
+		{name: "legacy quarantined", authority: vmleases.LeaseExecutionAuthorityLegacySimulate, state: vmleases.LeaseAuthorityStateLegacyQuarantined, wantErr: ErrExecutionAuthorityInactive},
+		{name: "native inactive", authority: vmleases.LeaseExecutionAuthorityTechStackProviderControl, state: vmleases.LeaseAuthorityStateNativeInactive, wantErr: ErrExecutionAuthorityInactive},
+		{name: "inventory unavailable", withoutInventory: true, wantErr: vmleases.ErrLeaseInventoryUnavailable},
+		{name: "wrong tenant", tenantID: "org-2", wantErr: vmleases.ErrNotFound},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{Now: func() time.Time { return now }})
-			if _, err := leases.CreateOrUpdate(t.Context(), vmleases.CreateRequest{Lease: testMonthlyLease(now, enrollmentStatusEnrolled)}); err != nil {
-				t.Fatalf("CreateOrUpdate: %v", err)
+			leases := newLeaseServiceWith(t, now, enrollmentStatusEnrolled)
+			var authority LeaseAuthority = nativeLeaseService(leases)
+			if test.withoutInventory {
+				authority = &leaseAuthorityWithoutInventory{LeaseAuthority: leases}
+			} else if test.state != "" {
+				authority = &inventoryStateLeaseService{Service: leases, authority: test.authority, state: test.state}
+			}
+			tenantID := test.tenantID
+			if tenantID == "" {
+				tenantID = "org-1"
 			}
 			runtime := &fakeRuntimeClient{}
-			svc := &Service{
-				Leases:  &inventoryStateLeaseService{Service: leases, authority: test.authority, state: test.state},
-				Runtime: runtime,
-			}
+			svc := &Service{Leases: authority, Runtime: runtime, Features: fakeFeatureChecker{enabled: true}}
 			_, err := svc.Action(t.Context(), ActionRequest{
-				TenantID: "org-1", UserID: "user-1", LeaseID: "lease-1", Action: serverruntime.RuntimeActionStatus,
+				TenantID: tenantID, UserID: "user-1", LeaseID: "lease-1", Action: serverruntime.RuntimeActionStatus,
 			})
-			if !errors.Is(err, ErrExecutionAuthorityInactive) {
-				t.Fatalf("Action error = %v, want ErrExecutionAuthorityInactive", err)
+			if !errors.Is(err, test.wantErr) {
+				t.Fatalf("Action error = %v, want %v", err, test.wantErr)
 			}
 			if len(runtime.requests) != 0 {
-				t.Fatalf("runtime requests = %+v, non-native authority reached runtime", runtime.requests)
+				t.Fatalf("runtime requests = %+v, rejected admission reached runtime", runtime.requests)
 			}
 		})
+	}
+}
+
+func assertCustodyResolved(t *testing.T, svc *Service, leases *vmleases.Service) {
+	t.Helper()
+
+	response, err := svc.ResolveCustody(t.Context(), CustodyResolutionRequest{
+		TenantID: "org-1", UserID: "user-1", LeaseID: "lease-1", ProviderCleanupConfirmed: true,
+	})
+	if err != nil {
+		t.Fatalf("ResolveCustody: %v", err)
+	}
+	if response.LeaseState != "resolved" || response.ObservedState != "custody_resolved" {
+		t.Fatalf("response = %+v", response)
+	}
+	stored, err := leases.Get(t.Context(), "org-1", "lease-1")
+	if err != nil {
+		t.Fatalf("Get resolved lease: %v", err)
+	}
+	if stored.CancelledAt == nil || stored.DesiredState != vmlease.DesiredStateArchived || stored.Metadata["custody_resolution_status"] != "resolved" {
+		t.Fatalf("resolved lease = %+v", stored)
 	}
 }
 
@@ -1273,22 +1140,7 @@ func TestServiceResolveCustodyArchivesOnlyConfirmedNonProviderLease(t *testing.T
 		t.Fatal("unconfirmed resolution mutated lease")
 	}
 
-	response, err := svc.ResolveCustody(t.Context(), CustodyResolutionRequest{
-		TenantID: "org-1", UserID: "user-1", LeaseID: "lease-1", ProviderCleanupConfirmed: true,
-	})
-	if err != nil {
-		t.Fatalf("ResolveCustody: %v", err)
-	}
-	if response.LeaseState != "resolved" || response.ObservedState != "custody_resolved" {
-		t.Fatalf("response = %+v", response)
-	}
-	stored, err := leases.Get(t.Context(), "org-1", "lease-1")
-	if err != nil {
-		t.Fatalf("Get resolved lease: %v", err)
-	}
-	if stored.CancelledAt == nil || stored.DesiredState != vmlease.DesiredStateArchived || stored.Metadata["custody_resolution_status"] != "resolved" {
-		t.Fatalf("resolved lease = %+v", stored)
-	}
+	assertCustodyResolved(t, svc, leases)
 	if _, err = svc.ResolveCustody(t.Context(), CustodyResolutionRequest{
 		TenantID: "org-1", UserID: "user-1", LeaseID: "lease-1", ProviderCleanupConfirmed: true,
 	}); err != nil {
@@ -1315,22 +1167,7 @@ func TestServiceResolveCustodyArchivesPreGenerationLegacyRecord(t *testing.T) {
 		t.Fatalf("pre-generation fixture unexpectedly has resource_generation_id %q", generation)
 	}
 
-	response, err := svc.ResolveCustody(t.Context(), CustodyResolutionRequest{
-		TenantID: "org-1", UserID: "user-1", LeaseID: "lease-1", ProviderCleanupConfirmed: true,
-	})
-	if err != nil {
-		t.Fatalf("ResolveCustody pre-generation legacy record: %v", err)
-	}
-	if response.LeaseState != "resolved" || response.ObservedState != "custody_resolved" {
-		t.Fatalf("response = %+v", response)
-	}
-	stored, err := leases.Get(t.Context(), "org-1", "lease-1")
-	if err != nil {
-		t.Fatalf("Get resolved lease: %v", err)
-	}
-	if stored.CancelledAt == nil || stored.DesiredState != vmlease.DesiredStateArchived || stored.Metadata["custody_resolution_status"] != "resolved" {
-		t.Fatalf("resolved legacy lease = %+v", stored)
-	}
+	assertCustodyResolved(t, svc, leases)
 }
 
 func TestServiceResolveCustodyDoesNotRelaxGenerationGuardForNonLegacyState(t *testing.T) {
@@ -1378,23 +1215,6 @@ func TestServiceResolveCustodyRejectsProviderManagedLease(t *testing.T) {
 	}
 	if stored.CancelledAt != nil {
 		t.Fatal("provider-managed resolution mutated lease")
-	}
-}
-
-func TestServiceActionFailsClosedWithoutAuthorityAwareInventory(t *testing.T) {
-	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
-	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{Now: func() time.Time { return now }})
-	if _, err := leases.CreateOrUpdate(t.Context(), vmleases.CreateRequest{Lease: testMonthlyLease(now, enrollmentStatusEnrolled)}); err != nil {
-		t.Fatalf("CreateOrUpdate: %v", err)
-	}
-	runtime := &fakeRuntimeClient{}
-	svc := &Service{Leases: &leaseAuthorityWithoutInventory{LeaseAuthority: leases}, Runtime: runtime}
-	_, err := svc.Action(t.Context(), ActionRequest{TenantID: "org-1", UserID: "user-1", LeaseID: "lease-1", Action: serverruntime.RuntimeActionStatus})
-	if !errors.Is(err, vmleases.ErrLeaseInventoryUnavailable) {
-		t.Fatalf("Action error = %v, want ErrLeaseInventoryUnavailable", err)
-	}
-	if len(runtime.requests) != 0 {
-		t.Fatalf("runtime requests = %+v, missing inventory reached runtime", runtime.requests)
 	}
 }
 
@@ -1447,6 +1267,53 @@ func TestServiceAllowsExactNativeInactiveDecommissionContinuation(t *testing.T) 
 	}
 }
 
+func TestServiceAllowsOwnerDecommissionOnNativeInactiveProviderControl(t *testing.T) {
+	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{Now: func() time.Time { return now }})
+	created, err := leases.CreateOrUpdate(t.Context(), vmleases.CreateRequest{Lease: testMonthlyLease(now, enrollmentStatusEnrolled)})
+	if err != nil {
+		t.Fatalf("CreateOrUpdate: %v", err)
+	}
+	digest, err := vmleases.ResourceGenerationDigest("org-1", *created)
+	if err != nil {
+		t.Fatalf("ResourceGenerationDigest: %v", err)
+	}
+	if _, err = leases.Patch(t.Context(), "org-1", created.ID, vmleases.PatchRequest{
+		ExpectedResourceGenerationDigest: digest,
+		ClaimDecommission:                true,
+		Cancel:                           true,
+	}); err != nil {
+		t.Fatalf("cancel claimed lease: %v", err)
+	}
+	runtime := &fakeRuntimeClient{onAction: func(serverruntime.LeaseRuntimeActionRequest) error {
+		t.Fatal("cancelled owner decommission should not call runtime")
+		return nil
+	}}
+	svc := &Service{
+		Leases: &inventoryStateLeaseService{
+			Service:   leases,
+			authority: vmleases.LeaseExecutionAuthorityTechStackProviderControl,
+			state:     vmleases.LeaseAuthorityStateNativeInactive,
+		},
+		Runtime: runtime,
+	}
+	resp, err := svc.Action(t.Context(), ActionRequest{
+		TenantID: "org-1",
+		UserID:   "user-1",
+		LeaseID:  created.ID,
+		Action:   serverruntime.RuntimeActionDecommission,
+	})
+	if err != nil {
+		t.Fatalf("owner native-inactive decommission: %v", err)
+	}
+	if resp.Action != serverruntime.RuntimeActionDecommission || resp.LeaseState != leaseStateCancelled {
+		t.Fatalf("response = %+v, want cancelled decommission", resp)
+	}
+	if len(runtime.requests) != 0 {
+		t.Fatalf("runtime requests = %+v, want none", runtime.requests)
+	}
+}
+
 func TestServiceBlocksNonEnrolledLease(t *testing.T) {
 	now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
 	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{Now: func() time.Time { return now }, SnapshotSecret: []byte("secret")})
@@ -1471,70 +1338,114 @@ func TestServiceBlocksNonEnrolledLease(t *testing.T) {
 	}
 }
 
-func TestServiceBlocksWrongTenant(t *testing.T) {
-	now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
-	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{Now: func() time.Time { return now }, SnapshotSecret: []byte("secret")})
-	if _, err := leases.CreateOrUpdate(context.Background(), vmleases.CreateRequest{Lease: testMonthlyLease(now, enrollmentStatusEnrolled)}); err != nil {
-		t.Fatalf("CreateOrUpdate: %v", err)
-	}
-	runtime := &fakeRuntimeClient{}
-	svc := &Service{Leases: nativeLeaseService(leases), Runtime: runtime, Features: fakeFeatureChecker{enabled: true}}
-
-	_, err := svc.Action(context.Background(), ActionRequest{TenantID: "org-2", UserID: "user-1", LeaseID: "lease-1", Action: serverruntime.RuntimeActionStatus})
-	if !errors.Is(err, vmleases.ErrNotFound) {
-		t.Fatalf("Action error = %v, want ErrNotFound", err)
-	}
-	if len(runtime.requests) != 0 {
-		t.Fatalf("runtime requests = %d, want none", len(runtime.requests))
-	}
-}
-
-func TestServiceReportsMissingRuntimeClient(t *testing.T) {
-	svc := &Service{Leases: vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{SnapshotSecret: []byte("secret")})}
-
-	_, err := svc.Action(context.Background(), ActionRequest{TenantID: "org-1", UserID: "user-1", LeaseID: "lease-1", Action: serverruntime.RuntimeActionStatus})
-	if !errors.Is(err, ErrRuntimeClient) {
-		t.Fatalf("Action error = %v, want ErrRuntimeClient", err)
-	}
-}
-
-func TestServiceBlocksDisabledMonthlyRuntimeFeature(t *testing.T) {
-	now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
-	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{Now: func() time.Time { return now }, SnapshotSecret: []byte("secret")})
-	if _, err := leases.CreateOrUpdate(context.Background(), vmleases.CreateRequest{Lease: testMonthlyLease(now, enrollmentStatusEnrolled)}); err != nil {
-		t.Fatalf("CreateOrUpdate: %v", err)
-	}
-	svc := &Service{Leases: nativeLeaseService(leases), Runtime: &fakeRuntimeClient{}, Features: fakeFeatureChecker{enabled: false}}
-
-	_, err := svc.Action(context.Background(), ActionRequest{TenantID: "org-1", UserID: "user-1", LeaseID: "lease-1", Action: serverruntime.RuntimeActionStatus})
-	if !errors.Is(err, ErrFeatureDisabled) {
-		t.Fatalf("Action error = %v, want ErrFeatureDisabled", err)
-	}
-	if !strings.Contains(err.Error(), FeatureTechStackManagedRuntime) {
-		t.Fatalf("Action error = %v, want disabled feature key", err)
-	}
-}
-
-// TestServiceInternalActionSkipsDisabledFeature pins the background/control-plane
-// path: an already-authorized internal call (e.g. rollout target resolution) must
-// succeed even when the per-request feature checker reports disabled, because that
-// re-check cannot see SaaS edge entitlement headers outside an HTTP request.
-func TestServiceInternalActionSkipsDisabledFeature(t *testing.T) {
-	now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
-	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{Now: func() time.Time { return now }, SnapshotSecret: []byte("secret")})
-	if _, err := leases.CreateOrUpdate(context.Background(), vmleases.CreateRequest{Lease: testMonthlyLease(now, enrollmentStatusEnrolled)}); err != nil {
-		t.Fatalf("CreateOrUpdate: %v", err)
-	}
-	svc := &Service{Leases: nativeLeaseService(leases), Runtime: &fakeRuntimeClient{}, Features: fakeFeatureChecker{enabled: false}}
-
-	if _, err := svc.Action(context.Background(), ActionRequest{
-		TenantID: "org-1",
-		UserID:   "user-1",
-		LeaseID:  "lease-1",
-		Action:   serverruntime.RuntimeActionSSHInfo,
-		Internal: true,
+// Native status reports enrollment from the canonical aggregate and never
+// rewrites legacy enrollment metadata, which the production database rejects
+// after native cutover (reproduced live: every enrolled status answered 502).
+func TestServiceNativeStatusReportsCanonicalEnrollmentWithoutLegacyWrite(t *testing.T) {
+	now := time.Now().UTC()
+	leases := newLeaseServiceWith(t, now, EnrollmentStatusPending)
+	servers := controlplane.NewMemoryStore()
+	if _, err := servers.UpsertServerRuntime(t.Context(), controlplane.ServerRuntime{
+		ID: runtimeidentity.LeaseServerID("lease-1"), TenantID: "org-1", OwnerSubjectID: "user-1", LeaseID: "lease-1",
+		ProviderRef: "centron", LifecycleState: "active", DesiredState: "running",
+		ConnectionState: "connected", HealthState: "healthy", LastHeartbeatAt: &now, UpdatedAt: now,
 	}); err != nil {
-		t.Fatalf("internal Action error = %v, want nil despite disabled features", err)
+		t.Fatal(err)
+	}
+	svc := &Service{
+		Leases: nativeLeaseService(leases), Runtime: &NativeRuntimeClient{Servers: servers},
+		Features: fakeFeatureChecker{enabled: true},
+	}
+	resp, err := svc.Action(t.Context(), ActionRequest{
+		TenantID: "org-1", UserID: "user-1", LeaseID: "lease-1", Action: serverruntime.RuntimeActionStatus,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := leases.Get(t.Context(), "org-1", "lease-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.ObservedState != "running" || resp.EnrollmentStatus != EnrollmentStatusEnrolled ||
+		stored.Metadata["runtime_enrollment_status"] != EnrollmentStatusPending {
+		t.Fatalf("response=%+v stored enrollment=%q, want canonical enrollment without a legacy metadata write", resp, stored.Metadata["runtime_enrollment_status"])
+	}
+}
+
+func TestServiceRejectsUnsupportedNativeActionBeforeDesiredStateMutation(t *testing.T) {
+	now := time.Now().UTC()
+	leases := newLeaseServiceWith(t, now, EnrollmentStatusEnrolled)
+	svc := &Service{
+		Leases: nativeLeaseService(leases), Runtime: &NativeRuntimeClient{Servers: controlplane.NewMemoryStore()},
+		Features: fakeFeatureChecker{enabled: true},
+	}
+	_, err := svc.Action(t.Context(), ActionRequest{
+		TenantID: "org-1", UserID: "user-1", LeaseID: "lease-1", Action: serverruntime.RuntimeActionStop,
+	})
+	if !errors.Is(err, ErrNativeRuntimeActionUnsupported) {
+		t.Fatalf("Action error = %v, want native capability rejection", err)
+	}
+	stored, err := leases.Get(t.Context(), "org-1", "lease-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.DesiredState != vmlease.DesiredStateRunning {
+		t.Fatalf("DesiredState = %q, want no mutation before unsupported provider action", stored.DesiredState)
+	}
+}
+
+func TestServiceActionsThatUseRuntimeClientRejectMissingClient(t *testing.T) {
+	svc := &Service{Leases: vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{SnapshotSecret: []byte("secret")})}
+	for name, request := range map[string]ActionRequest{
+		"decommission without durable provider control": {Action: serverruntime.RuntimeActionDecommission},
+		"start":        {Action: serverruntime.RuntimeActionStart},
+		"stop":         {Action: serverruntime.RuntimeActionStop},
+		"status":       {Action: serverruntime.RuntimeActionStatus},
+		"forced start": {Action: serverruntime.RuntimeActionStart, Force: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			request.TenantID = "org-1"
+			request.UserID = "user-1"
+			request.LeaseID = "lease-1"
+			if _, err := svc.Action(t.Context(), request); !errors.Is(err, ErrRuntimeClient) {
+				t.Fatalf("Action error = %v, want ErrRuntimeClient", err)
+			}
+		})
+	}
+}
+
+func TestServiceRejectsMissingLeaseAuthorityBeforeRuntimeDependency(t *testing.T) {
+	_, err := (&Service{}).Action(t.Context(), ActionRequest{Action: serverruntime.RuntimeActionDecommission, Force: true})
+	if !errors.Is(err, vmleases.ErrEnrollmentRequired) {
+		t.Fatalf("Action error = %v, want ErrEnrollmentRequired", err)
+	}
+}
+
+func TestServiceDisabledFeatureAuthorization(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		action   serverruntime.RuntimeAction
+		internal bool
+		wantErr  error
+	}{
+		{name: "external status blocked", action: serverruntime.RuntimeActionStatus, wantErr: ErrFeatureDisabled},
+		{name: "authorized internal SSH info allowed", action: serverruntime.RuntimeActionSSHInfo, internal: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
+			leases := newLeaseServiceWith(t, now, enrollmentStatusEnrolled)
+			svc := &Service{Leases: nativeLeaseService(leases), Runtime: &fakeRuntimeClient{}, Features: fakeFeatureChecker{enabled: false}}
+
+			_, err := svc.Action(t.Context(), ActionRequest{
+				TenantID: "org-1", UserID: "user-1", LeaseID: "lease-1", Action: test.action, Internal: test.internal,
+			})
+			if !errors.Is(err, test.wantErr) {
+				t.Fatalf("Action error = %v, want %v", err, test.wantErr)
+			}
+			if test.wantErr != nil && !strings.Contains(err.Error(), FeatureTechStackManagedRuntime) {
+				t.Fatalf("Action error = %v, want disabled feature key", err)
+			}
+		})
 	}
 }
 
@@ -1595,110 +1506,62 @@ func TestManagedRuntimeEntitlementDenialDetailsAreActionable(t *testing.T) {
 	}
 }
 
-func TestActionNeverRebindsLegacyLeaseWhenRuntimeVMIsMissing(t *testing.T) {
-	now := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
-	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{Now: func() time.Time { return now }, SnapshotSecret: []byte("secret")})
-	lease := testMonthlyLease(now, enrollmentStatusEnrolled)
-	lease.Metadata["runtime_ssh_host"] = "203.0.113.99"
-	lease.Metadata["node_public_ip"] = "203.0.113.99"
-	lease.Metadata["runtime_ssh_user"] = "root"
-	if _, err := leases.CreateOrUpdate(context.Background(), vmleases.CreateRequest{Lease: lease}); err != nil {
-		t.Fatalf("CreateOrUpdate: %v", err)
-	}
-	runtime := &fakeRuntimeClient{err: errors.New("legacy managed runtime record not found")}
-	svc := &Service{Leases: nativeLeaseService(leases), Runtime: runtime}
+func TestActionRuntimeFailuresPreserveLeaseProjection(t *testing.T) {
+	legacyMissingErr := errors.New("legacy managed runtime record not found")
+	for _, test := range []struct {
+		name         string
+		action       serverruntime.RuntimeAction
+		runtimeErr   error
+		metadata     map[string]string
+		rejectVMGone bool
+	}{
+		{
+			name: "legacy SSH inventory missing", action: serverruntime.RuntimeActionSSHInfo, runtimeErr: legacyMissingErr,
+			metadata: map[string]string{"runtime_ssh_host": "203.0.113.99", "node_public_ip": "203.0.113.99", "runtime_ssh_user": "root"},
+		},
+		{name: "legacy decommission inventory missing", action: serverruntime.RuntimeActionDecommission, runtimeErr: legacyMissingErr},
+		{
+			name: "transient provider node missing", action: serverruntime.RuntimeActionStatus, rejectVMGone: true,
+			runtimeErr: errors.New(`simulate runtime status returned 502: {"error":{"code":502,"message":"status centron-managed node: node not found: 44078"}}`),
+			metadata:   map[string]string{"runtime_ssh_host": "203.0.113.77"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			now := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+			leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{Now: func() time.Time { return now }, SnapshotSecret: []byte("secret")})
+			lease := testMonthlyLease(now, enrollmentStatusEnrolled)
+			for key, value := range test.metadata {
+				lease.Metadata[key] = value
+			}
+			if _, err := leases.CreateOrUpdate(t.Context(), vmleases.CreateRequest{Lease: lease}); err != nil {
+				t.Fatalf("CreateOrUpdate: %v", err)
+			}
+			svc := &Service{Leases: nativeLeaseService(leases), Runtime: &fakeRuntimeClient{err: test.runtimeErr}}
 
-	_, err := svc.Action(context.Background(), ActionRequest{
-		TenantID: "org-1",
-		UserID:   "user-1",
-		LeaseID:  "lease-1",
-		Action:   serverruntime.RuntimeActionSSHInfo,
-		Internal: true,
-	})
-	if err == nil {
-		t.Fatal("Action error = nil, missing runtime must fail closed")
-	}
-
-	stored, getErr := leases.Get(context.Background(), "org-1", "lease-1")
-	if getErr != nil {
-		t.Fatalf("Get: %v", getErr)
-	}
-	if got := stored.Metadata["runtime_enrollment_status"]; got != enrollmentStatusEnrolled {
-		t.Fatalf("runtime_enrollment_status = %q, legacy inventory must remain quarantined", got)
-	}
-	for _, key := range []string{"runtime_ssh_host", "node_public_ip"} {
-		if _, present := stored.Metadata[key]; !present {
-			t.Fatalf("historical metadata %q was mutated by failed legacy action", key)
-		}
-	}
-}
-
-func TestActionDecommissionFailsClosedWhenLegacyRuntimeVMIsMissing(t *testing.T) {
-	now := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
-	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{Now: func() time.Time { return now }, SnapshotSecret: []byte("secret")})
-	if _, err := leases.CreateOrUpdate(context.Background(), vmleases.CreateRequest{Lease: testMonthlyLease(now, enrollmentStatusEnrolled)}); err != nil {
-		t.Fatalf("CreateOrUpdate: %v", err)
-	}
-	runtime := &fakeRuntimeClient{err: errors.New("legacy managed runtime record not found")}
-	svc := &Service{Leases: nativeLeaseService(leases), Runtime: runtime}
-
-	_, err := svc.Action(context.Background(), ActionRequest{
-		TenantID: "org-1",
-		UserID:   "user-1",
-		LeaseID:  "lease-1",
-		Action:   serverruntime.RuntimeActionDecommission,
-		Internal: true,
-	})
-	if err == nil {
-		t.Fatal("Action error = nil, missing legacy row must not prove provider deletion")
-	}
-	stored, getErr := leases.Get(context.Background(), "org-1", "lease-1")
-	if getErr != nil {
-		t.Fatalf("Get: %v", getErr)
-	}
-	if got := stored.Metadata["runtime_enrollment_status"]; got != enrollmentStatusEnrolled {
-		t.Fatalf("runtime_enrollment_status = %q, decommission must not run the VM-gone enrollment reset", got)
-	}
-	if stored.CancelledAt != nil {
-		t.Fatalf("stored lease = %+v, missing legacy row must not cancel it", stored)
-	}
-}
-
-func TestActionDoesNotMarkLeaseGoneOnTransientProviderNodeNotFound(t *testing.T) {
-	// Live regression 2026-07-08: twenty seconds after a fresh enrollment the
-	// runtime status action returned 502 "node not found: 44078" (provider API
-	// eventual consistency). That transient must NOT reset the enrollment.
-	now := time.Date(2026, 7, 8, 13, 16, 0, 0, time.UTC)
-	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{Now: func() time.Time { return now }, SnapshotSecret: []byte("secret")})
-	lease := testMonthlyLease(now, enrollmentStatusEnrolled)
-	lease.Metadata["runtime_ssh_host"] = "203.0.113.77"
-	if _, err := leases.CreateOrUpdate(context.Background(), vmleases.CreateRequest{Lease: lease}); err != nil {
-		t.Fatalf("CreateOrUpdate: %v", err)
-	}
-	runtime := &fakeRuntimeClient{err: errors.New(`simulate runtime status returned 502: {"error":{"code":502,"message":"status centron-managed node: node not found: 44078"}}`)}
-	svc := &Service{Leases: nativeLeaseService(leases), Runtime: runtime}
-
-	_, err := svc.Action(context.Background(), ActionRequest{
-		TenantID: "org-1",
-		UserID:   "user-1",
-		LeaseID:  "lease-1",
-		Action:   serverruntime.RuntimeActionStatus,
-		Internal: true,
-	})
-	if err == nil {
-		t.Fatal("Action must still surface the transient error")
-	}
-	if errors.Is(err, ErrRuntimeVMGone) {
-		t.Fatalf("Action error = %v, transient 502 must not be classified as VM gone", err)
-	}
-	stored, getErr := leases.Get(context.Background(), "org-1", "lease-1")
-	if getErr != nil {
-		t.Fatalf("Get: %v", getErr)
-	}
-	if got := stored.Metadata["runtime_enrollment_status"]; got != enrollmentStatusEnrolled {
-		t.Fatalf("runtime_enrollment_status = %q, transient error must not reset the enrollment", got)
-	}
-	if got := stored.Metadata["runtime_ssh_host"]; got != "203.0.113.77" {
-		t.Fatalf("runtime_ssh_host = %q, transient error must not clear the address", got)
+			_, err := svc.Action(t.Context(), ActionRequest{
+				TenantID: "org-1", UserID: "user-1", LeaseID: "lease-1", Action: test.action, Internal: true,
+			})
+			if err == nil {
+				t.Fatal("Action error = nil, want runtime failure")
+			}
+			if test.rejectVMGone && errors.Is(err, ErrRuntimeVMGone) {
+				t.Fatalf("Action error = %v, transient provider lookup must not be classified as VM gone", err)
+			}
+			stored, getErr := leases.Get(t.Context(), "org-1", "lease-1")
+			if getErr != nil {
+				t.Fatalf("Get: %v", getErr)
+			}
+			if got := stored.Metadata["runtime_enrollment_status"]; got != enrollmentStatusEnrolled {
+				t.Fatalf("runtime_enrollment_status = %q, want enrolled projection preserved", got)
+			}
+			if stored.CancelledAt != nil {
+				t.Fatalf("failed action cancelled lease: %+v", stored)
+			}
+			for key, want := range test.metadata {
+				if got := stored.Metadata[key]; got != want {
+					t.Fatalf("metadata[%q] = %q, want %q preserved", key, got, want)
+				}
+			}
+		})
 	}
 }

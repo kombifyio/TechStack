@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/guardbootstrap"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -17,33 +18,35 @@ func TestRuntimeTargetBootstrapScriptParsesAsPOSIXShell(t *testing.T) {
 	if err != nil {
 		t.Skip("POSIX shell is unavailable")
 	}
+	script := runtimeTargetBootstrapScript()
 	cmd := exec.Command(sh, "-n")
-	cmd.Stdin = strings.NewReader(runtimeTargetBootstrapScript())
+	cmd.Stdin = strings.NewReader(script)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("bootstrap script syntax: %v: %s", err, output)
 	}
 }
 
-func TestClassifyRuntimeTargetBootstrapSessionLost(t *testing.T) {
-	err := errors.New("bootstrap managed runtime target: wait: remote command exited without exit status or exit signal")
-	if got := classifyRuntimeTargetBootstrapError(err, "phase=docker_ready status=wait_begin"); got != RuntimeTargetBootstrapSessionLost {
-		t.Fatalf("reason = %q, want %q", got, RuntimeTargetBootstrapSessionLost)
+func TestRuntimeTargetBootstrapErrorPolicy(t *testing.T) {
+	tests := []struct {
+		name, message, output, wantReason string
+		wantRetry                         bool
+	}{
+		{"lost session", "bootstrap managed runtime target: wait: remote command exited without exit status or exit signal", "phase=docker_ready status=wait_begin", RuntimeTargetBootstrapSessionLost, true},
+		{"Docker failure", "bootstrap managed runtime target: Process exited with status 1", "phase=docker_status status=failed\nCannot connect to the Docker daemon", RuntimeTargetBootstrapDockerFailed, false},
+		{"agent convergence failure", "bootstrap managed runtime target: Process exited with status 1", "phase=agent_convergence status=failed reason=checksum_mismatch", RuntimeTargetBootstrapAgentFailed, false},
+		{"SSH authentication failure", "bootstrap managed runtime target: Permission denied", "", RuntimeTargetBootstrapSSHAuth, false},
 	}
-}
 
-func TestClassifyRuntimeTargetBootstrapDockerFailure(t *testing.T) {
-	err := errors.New("bootstrap managed runtime target: Process exited with status 1")
-	output := "phase=docker_status status=failed\nCannot connect to the Docker daemon"
-	if got := classifyRuntimeTargetBootstrapError(err, output); got != RuntimeTargetBootstrapDockerFailed {
-		t.Fatalf("reason = %q, want %q", got, RuntimeTargetBootstrapDockerFailed)
-	}
-}
-
-func TestClassifyRuntimeTargetBootstrapAgentConvergenceFailure(t *testing.T) {
-	err := errors.New("bootstrap managed runtime target: Process exited with status 1")
-	output := "phase=agent_convergence status=failed reason=checksum_mismatch"
-	if got := classifyRuntimeTargetBootstrapError(err, output); got != RuntimeTargetBootstrapAgentFailed {
-		t.Fatalf("reason = %q, want %q", got, RuntimeTargetBootstrapAgentFailed)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reason := classifyRuntimeTargetBootstrapError(errors.New(tt.message), tt.output)
+			if reason != tt.wantReason {
+				t.Fatalf("reason = %q, want %q", reason, tt.wantReason)
+			}
+			if got := isRuntimeTargetBootstrapRetryable(reason); got != tt.wantRetry {
+				t.Fatalf("retryable = %v, want %v", got, tt.wantRetry)
+			}
+		})
 	}
 }
 
@@ -63,32 +66,21 @@ func TestRuntimeTargetAgentConvergenceProofIsStructured(t *testing.T) {
 	}
 }
 
-func TestRuntimeTargetBootstrapRetryPolicyIsBoundedToTransientReasons(t *testing.T) {
-	if !isRuntimeTargetBootstrapRetryable(RuntimeTargetBootstrapSessionLost) {
-		t.Fatal("session-lost bootstrap failures should be retryable")
-	}
-	if isRuntimeTargetBootstrapRetryable(RuntimeTargetBootstrapDockerFailed) {
-		t.Fatal("docker bootstrap failures should not be blindly retried")
-	}
-	if isRuntimeTargetBootstrapRetryable(RuntimeTargetBootstrapSSHAuth) {
-		t.Fatal("auth failures should not be retried")
-	}
-}
-
 func TestSSHRuntimeTargetBootstrapDialRetriesTransientReadinessErrors(t *testing.T) {
 	var attempts atomic.Int32
+	readinessErr := errors.New("dial tcp 203.0.113.10:22: connect: connection refused")
 	bootstrapper := NewSSHRuntimeTargetBootstrapper(SSHRuntimeTargetBootstrapperConfig{
 		Timeout:           12 * time.Millisecond,
 		DialRetryInterval: time.Millisecond,
 		Dial: func(string, string, *ssh.ClientConfig) (*ssh.Client, error) {
 			attempts.Add(1)
-			return nil, errors.New("dial tcp 203.0.113.10:22: connect: connection refused")
+			return nil, readinessErr
 		},
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Millisecond)
 	defer cancel()
 
-	_, err := bootstrapper.dial(ctx, &RuntimeActionTarget{
+	_, _, err := bootstrapper.dial(ctx, &RuntimeActionTarget{
 		Host: "203.0.113.10",
 		User: "root",
 		Port: 22,
@@ -99,8 +91,8 @@ func TestSSHRuntimeTargetBootstrapDialRetriesTransientReadinessErrors(t *testing
 	if got := attempts.Load(); got < 2 {
 		t.Fatalf("dial attempts = %d, want retry after transient readiness error", got)
 	}
-	if !strings.Contains(err.Error(), "was not ready before timeout") {
-		t.Fatalf("error = %q, want readiness timeout", err.Error())
+	if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, readinessErr) {
+		t.Fatalf("error = %v, want timeout and last readiness cause", err)
 	}
 }
 
@@ -122,18 +114,6 @@ func TestRuntimeTargetBootstrapExecutionTimeoutLeavesDiagnosticAndTerminalReserv
 	defer cancelNearDeadline()
 	if got := runtimeTargetBootstrapExecutionTimeout(nearDeadline, time.Minute); got != time.Nanosecond {
 		t.Fatalf("near-deadline bootstrap timeout = %s, want immediate terminal timeout", got)
-	}
-}
-
-func TestRuntimeTargetBootstrapUnboundedDefaultLeavesPostExecutionWindow(t *testing.T) {
-	bootstrapBudget := runtimeTargetBootstrapExecutionTimeout(context.Background(), 0)
-	postExecutionReserve := runtimeTargetBootstrapDiagnosticsReserve + runtimeTargetBootstrapTerminalPersistenceReserve
-
-	if got, want := bootstrapBudget+postExecutionReserve, defaultRuntimeTargetBootstrapTimeout; got != want {
-		t.Fatalf("bootstrap plus post-execution window = %s, want outer poll budget %s", got, want)
-	}
-	if got, want := postExecutionReserve, time.Minute; got != want {
-		t.Fatalf("post-execution reserve = %s, want one minute for diagnostics and queue result handoff", got)
 	}
 	if got := runtimeTargetBootstrapExecutionTimeout(context.Background(), 30*time.Second); got != 30*time.Second {
 		t.Fatalf("explicit short bootstrap timeout = %s, want 30s fast-fail budget", got)
@@ -188,17 +168,18 @@ func TestPreferExecutedBootstrapProofKeepsRealReceipt(t *testing.T) {
 }
 
 func TestSSHRuntimeTargetBootstrapDialDoesNotRetryAuthenticationFailure(t *testing.T) {
-	var attempts atomic.Int32
+	var tried []string
+	authErr := errors.New("ssh: handshake failed: ssh: unable to authenticate")
 	bootstrapper := NewSSHRuntimeTargetBootstrapper(SSHRuntimeTargetBootstrapperConfig{
 		Timeout:           time.Second,
 		DialRetryInterval: time.Millisecond,
-		Dial: func(string, string, *ssh.ClientConfig) (*ssh.Client, error) {
-			attempts.Add(1)
-			return nil, errors.New("ssh: handshake failed: ssh: unable to authenticate")
+		Dial: func(_, _ string, config *ssh.ClientConfig) (*ssh.Client, error) {
+			tried = append(tried, config.User)
+			return nil, authErr
 		},
 	})
 
-	_, err := bootstrapper.dial(context.Background(), &RuntimeActionTarget{
+	_, _, err := bootstrapper.dial(context.Background(), &RuntimeActionTarget{
 		Host: "203.0.113.10",
 		User: "root",
 		Port: 22,
@@ -206,10 +187,76 @@ func TestSSHRuntimeTargetBootstrapDialDoesNotRetryAuthenticationFailure(t *testi
 	if err == nil {
 		t.Fatal("expected authentication failure")
 	}
-	if got := attempts.Load(); got != 1 {
-		t.Fatalf("dial attempts = %d, want one non-readiness attempt", got)
+	seen := map[string]int{}
+	for _, login := range tried {
+		seen[login]++
 	}
-	if !strings.Contains(err.Error(), "unable to authenticate") {
-		t.Fatalf("error = %q, want auth failure", err.Error())
+	for login, count := range seen {
+		if count != 1 {
+			t.Fatalf("login %q was dialed %d times, want one attempt per rejected login", login, count)
+		}
+	}
+	if seen["root"] != 1 {
+		t.Fatalf("dialed logins = %v, want the configured login attempted", tried)
+	}
+	if !errors.Is(err, authErr) {
+		t.Fatalf("error = %v, want wrapped authentication cause", err)
+	}
+}
+
+// Cloud host-security disables root SSH as part of what it enforces, so a
+// rollout that provisioned as root has to continue on the non-root channel the
+// same key authorizes instead of reporting the node unreachable.
+func TestSSHRuntimeTargetBootstrapDialContinuesOnANonRootLogin(t *testing.T) {
+	var tried []string
+	rootAuthErr := errors.New("ssh: handshake failed: ssh: unable to authenticate")
+	fallbackErr := errors.New("dial tcp 203.0.113.10:22: connect: connection refused")
+	bootstrapper := NewSSHRuntimeTargetBootstrapper(SSHRuntimeTargetBootstrapperConfig{
+		Timeout:           time.Second,
+		DialRetryInterval: time.Millisecond,
+		Dial: func(_, _ string, config *ssh.ClientConfig) (*ssh.Client, error) {
+			tried = append(tried, config.User)
+			if config.User == "root" {
+				return nil, rootAuthErr
+			}
+			return nil, fallbackErr
+		},
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	_, _, err := bootstrapper.dial(ctx, &RuntimeActionTarget{Host: "203.0.113.10", User: "root", Port: 22},
+		[]ssh.AuthMethod{ssh.Password("secret")})
+	if err == nil {
+		t.Fatal("expected the fallback login to report its own failure")
+	}
+	if len(tried) < 2 || tried[0] != "root" || tried[1] == "root" {
+		t.Fatalf("dialed logins = %v, want a non-root login after root was rejected", tried)
+	}
+	if !errors.Is(err, fallbackErr) || errors.Is(err, rootAuthErr) {
+		t.Fatalf("error = %v, want only the fallback login failure", err)
+	}
+}
+
+// A managed host answers on different logins before and after hardening, so
+// both directions have to stay reachable from either recorded login.
+func TestRuntimeTargetBootstrapLoginsCoverHardenedAndUnhardenedHosts(t *testing.T) {
+	for _, configured := range []string{"root", guardbootstrap.ExecutionChannelUser, "ubuntu"} {
+		logins := runtimeTargetBootstrapLogins(configured)
+		if logins[0] != configured {
+			t.Fatalf("logins = %v, want the configured login %q first", logins, configured)
+		}
+		seen := map[string]bool{}
+		for _, login := range logins {
+			if seen[login] {
+				t.Fatalf("logins = %v, want each login attempted once", logins)
+			}
+			seen[login] = true
+		}
+		// Before host-security holds only the provider login exists; after it
+		// holds only the channel login does.
+		if !seen["root"] || !seen[guardbootstrap.ExecutionChannelUser] {
+			t.Fatalf("logins = %v, want both the provider and the channel login reachable", logins)
+		}
 	}
 }

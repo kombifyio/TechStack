@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/kombifyio/go-common/edgeauth"
+	"github.com/kombifyio/techstack/internal/gocommon/edgeauth"
 )
 
 const (

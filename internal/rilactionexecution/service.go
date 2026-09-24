@@ -97,7 +97,11 @@ func (s *Service) Execute(ctx context.Context, request rilaction.Request, execut
 	if err != nil {
 		return rilaction.Evidence{}, fmt.Errorf("construct RIL action completion: %w", err)
 	}
-	if err := s.ledger.Complete(ctx, completion); err != nil {
+	// The remote action has already finished. Preserve its validated result even
+	// if the caller disconnects, without extending dispatch authority or retries.
+	completionCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := s.ledger.Complete(completionCtx, completion); err != nil {
 		return rilaction.Evidence{}, fmt.Errorf("commit RIL action completion: %w", err)
 	}
 	if dispatchErr != nil {

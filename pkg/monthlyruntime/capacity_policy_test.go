@@ -13,13 +13,20 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kombifyio/go-common/edgeauth"
+	"github.com/kombifyio/techstack/internal/gocommon/edgeauth"
 )
 
-func TestManagedRuntimeCapacityPolicyRequiresConstructionFixedAuthority(t *testing.T) {
-	resolver, err := NewManagedRuntimeCapacityPolicy(CapacityAuthority("caller-selected"), nil)
-	if !errors.Is(err, ErrCapacityPolicyInvalidConfiguration) || resolver != nil {
-		t.Fatalf("resolver=%#v error=%v, want fail-closed invalid authority", resolver, err)
+func TestManagedRuntimeCapacityPolicyRejectsInvalidConstruction(t *testing.T) {
+	for name, authority := range map[string]CapacityAuthority{
+		"caller-selected authority":             CapacityAuthority("caller-selected"),
+		"signed authority without entitlements": CapacityAuthoritySignedEdge,
+	} {
+		t.Run(name, func(t *testing.T) {
+			resolver, err := NewManagedRuntimeCapacityPolicy(authority, nil)
+			if !errors.Is(err, ErrCapacityPolicyInvalidConfiguration) || resolver != nil {
+				t.Fatalf("resolver=%#v error=%v, want fail-closed invalid configuration", resolver, err)
+			}
+		})
 	}
 }
 
@@ -86,64 +93,54 @@ func TestSignedManagedRuntimeCapacityPolicyResolvesOnlyExplicitUnlimitedMode(t *
 	}
 }
 
-func TestSignedManagedRuntimeCapacityPolicyRejectsMissingVerifiedDecision(t *testing.T) {
-	resolver := newCapacityPolicyForTest(t, CapacityAuthoritySignedEdge)
-	_, err := resolver.ResolveCapacity(t.Context(), CapacityPolicyRequest{
-		TenantID: "tenant-1", OwnerSubjectID: "owner-1", ProviderID: ProviderIONOS,
-	})
-	if !errors.Is(err, ErrCapacityPolicyAuthorityUnavailable) {
-		t.Fatalf("error=%v, want missing verified authority", err)
-	}
-}
-
-func TestSignedManagedRuntimeCapacityPolicyRejectsApplicationConstructedBudget(t *testing.T) {
-	resolver := newCapacityPolicyForTest(t, CapacityAuthoritySignedEdge)
-	ctx := edgeauth.FlagsToContext(t.Context(), edgeauth.FlagSet{
-		Budgets: map[string]json.RawMessage{
-			CapacityBudgetCloudRuntimeCredits: json.RawMessage(`{"managed_servers":{"mode":"unlimited"}}`),
+func TestSignedManagedRuntimeCapacityPolicyRejectsUnverifiedOrMismatchedDecision(t *testing.T) {
+	validRequest := CapacityPolicyRequest{TenantID: "tenant-1", OwnerSubjectID: "owner-1", ProviderID: ProviderIONOS}
+	validBudget := json.RawMessage(`{"managed_servers":{"mode":"limited","limit":3}}`)
+	for _, test := range []struct {
+		name           string
+		contextFactory func(*testing.T) context.Context
+		request        CapacityPolicyRequest
+	}{
+		{name: "missing verified decision", contextFactory: func(t *testing.T) context.Context { return t.Context() }},
+		{
+			name: "application-constructed budget",
+			contextFactory: func(t *testing.T) context.Context {
+				return edgeauth.FlagsToContext(t.Context(), edgeauth.FlagSet{Budgets: map[string]json.RawMessage{
+					CapacityBudgetCloudRuntimeCredits: json.RawMessage(`{"managed_servers":{"mode":"unlimited"}}`),
+				}})
+			},
 		},
-	})
-	_, err := resolver.ResolveCapacity(ctx, CapacityPolicyRequest{
-		TenantID: "tenant-1", OwnerSubjectID: "owner-1", ProviderID: ProviderIONOS,
-	})
-	if !errors.Is(err, ErrCapacityPolicyAuthorityUnavailable) {
-		t.Fatalf("error=%v, want application-constructed budget rejected", err)
-	}
-}
-
-func TestSignedManagedRuntimeCapacityPolicyRejectsDecisionOwnerOrTenantTransplant(t *testing.T) {
-	resolver := newCapacityPolicyForTest(t, CapacityAuthoritySignedEdge)
-	ctx := signedCapacityContext(t, ProviderIONOS, json.RawMessage(`{"managed_servers":{"mode":"limited","limit":3}}`))
-	for _, request := range []CapacityPolicyRequest{
-		{TenantID: "tenant-other", OwnerSubjectID: "owner-1", ProviderID: ProviderIONOS},
-		{TenantID: "tenant-1", OwnerSubjectID: "owner-other", ProviderID: ProviderIONOS},
+		{name: "tenant transplant", request: CapacityPolicyRequest{TenantID: "tenant-other", OwnerSubjectID: "owner-1", ProviderID: ProviderIONOS}},
+		{name: "owner transplant", request: CapacityPolicyRequest{TenantID: "tenant-1", OwnerSubjectID: "owner-other", ProviderID: ProviderIONOS}},
+		{
+			name: "mutated verified decision",
+			contextFactory: func(t *testing.T) context.Context {
+				ctx := signedCapacityContext(t, ProviderIONOS, validBudget)
+				decisions, ok := edgeauth.FlagsFromContext(ctx)
+				if !ok {
+					t.Fatal("verified decision missing from test context")
+				}
+				decisions.Budgets[CapacityBudgetCloudRuntimeCredits] = json.RawMessage(`{"managed_servers":{"mode":"unlimited"}}`)
+				return edgeauth.FlagsToContext(t.Context(), decisions)
+			},
+		},
 	} {
-		if _, err := resolver.ResolveCapacity(ctx, request); !errors.Is(err, ErrCapacityPolicyAuthorityUnavailable) {
-			t.Fatalf("request=%#v error=%v, want decision binding transplant rejected", request, err)
-		}
-	}
-}
-
-func TestSignedManagedRuntimeCapacityPolicyRejectsMutatedVerifiedDecision(t *testing.T) {
-	resolver := newCapacityPolicyForTest(t, CapacityAuthoritySignedEdge)
-	ctx := signedCapacityContext(t, ProviderIONOS, json.RawMessage(`{"managed_servers":{"mode":"limited","limit":3}}`))
-	decisions, ok := edgeauth.FlagsFromContext(ctx)
-	if !ok {
-		t.Fatal("verified decision missing from test context")
-	}
-	decisions.Budgets[CapacityBudgetCloudRuntimeCredits] = json.RawMessage(`{"managed_servers":{"mode":"unlimited"}}`)
-	ctx = edgeauth.FlagsToContext(t.Context(), decisions)
-	if _, err := resolver.ResolveCapacity(ctx, CapacityPolicyRequest{
-		TenantID: "tenant-1", OwnerSubjectID: "owner-1", ProviderID: ProviderIONOS,
-	}); !errors.Is(err, ErrCapacityPolicyAuthorityUnavailable) {
-		t.Fatalf("error=%v, want mutated verified decision rejected", err)
-	}
-}
-
-func TestSignedManagedRuntimeCapacityPolicyRejectsMissingEntitlementResolver(t *testing.T) {
-	resolver, err := NewManagedRuntimeCapacityPolicy(CapacityAuthoritySignedEdge, nil)
-	if !errors.Is(err, ErrCapacityPolicyInvalidConfiguration) || resolver != nil {
-		t.Fatalf("resolver=%#v error=%v, want missing commercial authority rejected", resolver, err)
+		t.Run(test.name, func(t *testing.T) {
+			var ctx context.Context
+			if test.contextFactory != nil {
+				ctx = test.contextFactory(t)
+			} else {
+				ctx = signedCapacityContext(t, ProviderIONOS, validBudget)
+			}
+			request := test.request
+			if request.TenantID == "" {
+				request = validRequest
+			}
+			resolver := newCapacityPolicyForTest(t, CapacityAuthoritySignedEdge)
+			if _, err := resolver.ResolveCapacity(ctx, request); !errors.Is(err, ErrCapacityPolicyAuthorityUnavailable) {
+				t.Fatalf("ResolveCapacity error = %v, want ErrCapacityPolicyAuthorityUnavailable", err)
+			}
+		})
 	}
 }
 

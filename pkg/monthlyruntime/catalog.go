@@ -3,12 +3,10 @@ package monthlyruntime
 
 import (
 	"fmt"
-	"hash/fnv"
 	"strings"
 
 	"github.com/kombifyio/techstack/internal/providercatalog"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/serverruntime"
-	"github.com/kombifyio/techstack/internal/runtimeproduct/vmlease"
 )
 
 const (
@@ -50,10 +48,13 @@ func Catalog() []Offering {
 			Name:           "Monthly Runtime Standard",
 			BillingCadence: serverruntime.BillingCadenceMonthly,
 			Image:          "ubuntu-24.04",
-			VCPUs:          2,
-			MemoryMB:       4096,
-			DiskGB:         80,
-			Region:         "de-fra",
+			// Cloud Kit (Coolify, hub, PocketID, TinyAuth, host-security)
+			// needs at least 4 vCPU / 8 GiB. Demo and kombify-operated
+			// managed VPS must not go below this floor.
+			VCPUs:    4,
+			MemoryMB: 8192,
+			DiskGB:   80,
+			Region:   "de-fra",
 		},
 		{
 			ID:             serverruntime.RuntimeOfferingPremium,
@@ -77,6 +78,21 @@ func OfferingByID(id serverruntime.RuntimeOfferingID) (Offering, bool) {
 	return Offering{}, false
 }
 
+// ResolveOffering requires an explicit catalog product for cost-bearing
+// provider work. Provider custody defaults are not an order and must never be
+// used as a silent replacement for a missing or unknown offering.
+func ResolveOffering(id string) (Offering, error) {
+	trimmed := strings.TrimSpace(id)
+	if trimmed == "" {
+		return Offering{}, fmt.Errorf("monthlyruntime: runtime offering is required")
+	}
+	offering, ok := OfferingByID(serverruntime.RuntimeOfferingID(trimmed))
+	if !ok {
+		return Offering{}, fmt.Errorf("monthlyruntime: unsupported runtime offering %q", trimmed)
+	}
+	return offering, nil
+}
+
 func OfferingForMinimumResources(minVCPUs, minMemoryMB int) (Offering, bool) {
 	var selected Offering
 	for _, offering := range Catalog() {
@@ -98,7 +114,8 @@ func LargestOffering() (Offering, bool) {
 	var selected Offering
 	for _, offering := range Catalog() {
 		if selected.ID == "" || offering.VCPUs > selected.VCPUs ||
-			(offering.VCPUs == selected.VCPUs && offering.MemoryMB > selected.MemoryMB) {
+			(offering.VCPUs == selected.VCPUs && offering.MemoryMB > selected.MemoryMB) ||
+			(offering.VCPUs == selected.VCPUs && offering.MemoryMB == selected.MemoryMB && offering.DiskGB > selected.DiskGB) {
 			selected = offering
 		}
 	}
@@ -200,24 +217,6 @@ func NormalizeIONOSDatacenter(value string) string {
 	}
 }
 
-func ProviderRegionFromMetadata(provider string, metadata map[string]string, fallback string) string {
-	provider = strings.TrimSpace(provider)
-	if provider == "" && metadata != nil {
-		provider = ProviderFromMetadata(metadata)
-	}
-	if provider == ProviderIONOS {
-		return NormalizeIONOSDatacenter(firstNonEmptyString(
-			metadata[MetadataKeyIONOSDatacenter],
-			metadata[MetadataKeyProviderRegion],
-			fallback,
-		))
-	}
-	if strings.TrimSpace(fallback) != "" {
-		return strings.TrimSpace(fallback)
-	}
-	return DefaultIONOSDatacenter
-}
-
 func ProviderFromMetadata(metadata map[string]string) string {
 	if metadata == nil {
 		return ProviderCentron
@@ -228,47 +227,6 @@ func ProviderFromMetadata(metadata map[string]string) string {
 	return ProviderCentron
 }
 
-// HistoricalProviderLabelFromMetadata returns an opaque display/error label.
-// It must not be used for adapter selection, lease creation, or any mutation.
-func HistoricalProviderLabelFromMetadata(metadata map[string]string) string {
-	if metadata == nil {
-		return ""
-	}
-	for _, key := range []string{MetadataKeyProviderID, MetadataKeyLeaseProvider, MetadataKeySimulateProviderID} {
-		if value := strings.TrimSpace(metadata[key]); value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-func ProvisioningSpecForOffering(offeringID serverruntime.RuntimeOfferingID, name, role string, metadata map[string]string) (vmlease.ProvisioningSpec, error) {
-	offering, ok := OfferingByID(offeringID)
-	if !ok {
-		return vmlease.ProvisioningSpec{}, fmt.Errorf("monthlyruntime: unsupported offering %q", offeringID)
-	}
-	normalized, err := NormalizeFreshMetadata(metadata, offeringID)
-	if err != nil {
-		return vmlease.ProvisioningSpec{}, err
-	}
-	provisioningName := providerSafeProvisioningName(name)
-	region := ProviderRegionFromMetadata(
-		normalized[MetadataKeyProviderID],
-		normalized,
-		offering.Region,
-	)
-	return vmlease.ProvisioningSpec{
-		Name:     provisioningName,
-		Role:     strings.TrimSpace(role),
-		Image:    offering.Image,
-		VCPUs:    offering.VCPUs,
-		MemoryMB: offering.MemoryMB,
-		DiskGB:   offering.DiskGB,
-		Region:   region,
-		Metadata: normalized,
-	}, nil
-}
-
 func firstNonEmptyString(values ...string) string {
 	for _, value := range values {
 		if trimmed := strings.TrimSpace(value); trimmed != "" {
@@ -276,44 +234,6 @@ func firstNonEmptyString(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func providerSafeProvisioningName(name string) string {
-	const maxProviderNameLen = 20
-	normalized := strings.ToLower(strings.TrimSpace(name))
-	var b strings.Builder
-	lastDash := false
-	for _, r := range normalized {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
-			b.WriteRune(r)
-			lastDash = false
-		case r == '-' || r == '_' || r == '.' || r == ' ':
-			if b.Len() > 0 && !lastDash {
-				b.WriteByte('-')
-				lastDash = true
-			}
-		}
-	}
-	safe := strings.Trim(b.String(), "-")
-	if safe == "" {
-		safe = "techstack-runtime"
-	}
-	if len(safe) <= maxProviderNameLen {
-		return safe
-	}
-	hash := fnv.New32a()
-	_, _ = hash.Write([]byte(safe))
-	suffix := fmt.Sprintf("-%08x", hash.Sum32())
-	prefixLen := maxProviderNameLen - len(suffix)
-	prefix := strings.TrimRight(safe[:prefixLen], "-")
-	if prefix == "" {
-		prefix = "ts"
-	}
-	if len(prefix)+len(suffix) > maxProviderNameLen {
-		prefix = prefix[:maxProviderNameLen-len(suffix)]
-	}
-	return prefix + suffix
 }
 
 func IsMonthlyRuntimeMetadata(metadata map[string]string) bool {

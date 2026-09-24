@@ -136,6 +136,41 @@
       }
     },
     {
+      "name": "server_ports",
+      "title": "Get server ports",
+      "description": "Read desired, reserved, observed, exposed and drift-qualified port evidence for one server owned by the authenticated user.",
+      "requiredCapability": "techstack.inventory.read",
+      "operationId": "getInventoryServerPorts",
+      "http": { "method": "GET", "path": "/api/v1/inventory/servers/{serverId}/ports" },
+      "inputSchema": {
+        "type": "object",
+        "properties": { "server_id": { "type": "string", "minLength": 1 } },
+        "required": ["server_id"],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": ["server_id", "server_generation", "inventory_revision", "listeners_complete", "exposures_complete", "allocations"],
+        "properties": {
+          "server_id": { "type": "string" },
+          "server_generation": { "type": "integer", "minimum": 0 },
+          "observed_at": { "type": ["string", "null"], "format": "date-time" },
+          "expires_at": { "type": ["string", "null"], "format": "date-time" },
+          "inventory_revision": { "type": "integer", "minimum": 0 },
+          "listeners_complete": { "type": "boolean" },
+          "exposures_complete": { "type": "boolean" },
+          "allocations": { "type": "array", "items": { "type": "object" } }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
       "name": "list_services",
       "title": "List services",
       "description": "List sanitized service health and access links for the authenticated owner's servers.",

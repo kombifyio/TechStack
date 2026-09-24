@@ -1,6 +1,6 @@
 import * as Sentry from "@sentry/sveltekit";
-import { loadClientBootstrap } from "$lib/client/bootstrap";
-import { scrubSentryEvent } from "$lib/observability/sentry-scrub";
+import { loadClientBootstrap } from "#lib/client/bootstrap.js";
+import { scrubSentryEvent } from "#lib/observability/sentry-scrub.js";
 
 declare const __SENTRY_RELEASE__: string | undefined;
 

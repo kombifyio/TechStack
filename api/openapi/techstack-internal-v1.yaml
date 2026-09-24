@@ -14,6 +14,7 @@ servers:
 tags:
   - name: RuntimeLease
   - name: DomainRouting
+  - name: RuntimeSummary
 security:
   - servicecallAuth: []
 paths:
@@ -172,6 +173,33 @@ paths:
           $ref: "#/components/responses/RuntimeLeaseDenied"
         "503":
           $ref: "#/components/responses/RuntimeLeaseDenied"
+  /api/v1/internal/runtime/summary:
+    get:
+      operationId: getInternalRuntimeSummary
+      tags: [RuntimeSummary]
+      summary: Read the signed caller owner's servers and services in one round trip
+      description: >-
+        Private Cloud dashboard read model. Owner and tenant come only from the
+        signed on_behalf_of identity; any query string or body is rejected. The
+        payload is a projection of the public inventory read model
+        (`InventoryServerList` and `InventoryServiceList` in techstack-v1.yaml)
+        under the same inventory authorization policy, capped at 50 items each.
+      responses:
+        "200":
+          description: Owner-scoped runtime summary
+          headers:
+            Cache-Control:
+              schema: { type: string, enum: ["private, no-cache"] }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RuntimeSummary"
+        "401":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+        "403":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+        "503":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
 components:
   securitySchemes:
     servicecallAuth:
@@ -220,6 +248,18 @@ components:
           schema:
             $ref: "#/components/schemas/InternalErrorEnvelope"
   schemas:
+    RuntimeSummary:
+      type: object
+      required: [version, generated_at, servers, services]
+      properties:
+        version: { type: string, enum: ["1"] }
+        generated_at: { type: string, format: date-time }
+        servers:
+          type: object
+          description: InventoryServerList projection (see techstack-v1.yaml).
+        services:
+          type: object
+          description: InventoryServiceList projection with management_state (see techstack-v1.yaml).
     InternalDomainAttachRequest:
       type: object
       required: [stack_id, server_id, lease_id, domain, cf_zone_id, dns_provider, source]

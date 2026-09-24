@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
@@ -25,17 +26,62 @@ type stackKitLifecycleRequest struct {
 }
 
 type stackKitLifecycleResponse struct {
-	JobID     string `json:"job_id"`
-	StackID   string `json:"stack_id"`
-	AgentID   string `json:"agent_id"`
-	Operation string `json:"operation"`
-	Status    string `json:"status"`
+	JobID           string `json:"job_id"`
+	KitDeploymentID string `json:"kit_deployment_id"`
+	AgentID         string `json:"agent_id"`
+	Operation       string `json:"operation"`
+	Status          string `json:"status"`
+}
+
+// stackLockGuardedOperations are the stack-scoped operations that would write
+// to a service the owner has locked. A stack apply that silently overrode a
+// service lock would make the lock a lie, so the whole operation is refused and
+// the offending services are named. Read-only operations (plan, verify,
+// drift_detect) stay available: an owner has to be able to inspect a stack that
+// carries a lock.
+var stackLockGuardedOperations = map[string]bool{
+	jobs.StackKitLifecycleApply:          true,
+	jobs.StackKitLifecycleDriftReconcile: true,
+	jobs.StackKitLifecycleUpgrade:        true,
+}
+
+// lockedStackServices returns the ids of the stack's locked services for an
+// operation that would mutate them. It fails closed: if the service projection
+// cannot be read, the operation is refused rather than run past an unknown
+// guardrail.
+func (h crudRouteHandlers) lockedStackServices(
+	e *httpx.Event,
+	tenantID, stackID, operation string,
+) ([]string, error) {
+	if !stackLockGuardedOperations[operation] {
+		return nil, nil
+	}
+	if h.serviceStore == nil {
+		return nil, httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+			"Service lock state is unavailable", nil)
+	}
+	services, err := h.serviceStore.ListServiceRuntimes(e.Request.Context(), tenantID, stackID, "")
+	if err != nil {
+		return nil, httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+			"Failed to read service lock state", nil)
+	}
+	locked := make([]string, 0, len(services))
+	for i := range services {
+		if services[i].MutationLock.Locked() {
+			locked = append(locked, services[i].ID)
+		}
+	}
+	return locked, nil
 }
 
 func (h crudRouteHandlers) startStackKitLifecycle(e *httpx.Event) error {
 	ownerID, err := requireStackAuth(e)
 	if err != nil {
 		return err
+	}
+	tenantID, tenantErr := tenantguard.TenantScope(tenantIDFromRequest(e), ownerID, "techstack.stackkit.lifecycle")
+	if tenantErr != nil {
+		return tenantErr
 	}
 	if h.orch == nil {
 		return httpx.Error(
@@ -47,9 +93,8 @@ func (h crudRouteHandlers) startStackKitLifecycle(e *httpx.Event) error {
 		)
 	}
 	stackID := strings.TrimSpace(e.Request.PathValue("id"))
-	tenantID := tenantIDFromRequest(e)
-	if stackID == "" || tenantID == "" {
-		return httpx.BadRequest(e, "Stack and tenant are required")
+	if stackID == "" {
+		return httpx.BadRequest(e, "Stack is required")
 	}
 	var request stackKitLifecycleRequest
 	if err := decodeStrictJSONBody(e.Request.Body, &request); err != nil {
@@ -69,6 +114,14 @@ func (h crudRouteHandlers) startStackKitLifecycle(e *httpx.Event) error {
 	})
 	if err != nil {
 		return httpx.BadRequest(e, err.Error())
+	}
+	if locked, lockErr := h.lockedStackServices(e, tenantID, stackID, normalized.Operation); lockErr != nil {
+		return lockErr
+	} else if len(locked) > 0 {
+		return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict,
+			"Stack contains locked services", map[string]interface{}{
+				"reason": "service_locked", "locked_service_ids": locked,
+			})
 	}
 	jobID, err := h.orch.EnqueueStackKitLifecycle(e.Request.Context(), normalized)
 	if err != nil {
@@ -93,10 +146,10 @@ func (h crudRouteHandlers) startStackKitLifecycle(e *httpx.Event) error {
 		)
 	}
 	return httpx.Success(e, http.StatusAccepted, stackKitLifecycleResponse{
-		JobID:     jobID,
-		StackID:   stackID,
-		AgentID:   normalized.AgentID,
-		Operation: normalized.Operation,
-		Status:    "queued",
+		JobID:           jobID,
+		KitDeploymentID: stackID,
+		AgentID:         normalized.AgentID,
+		Operation:       normalized.Operation,
+		Status:          "queued",
 	})
 }

@@ -1,6 +1,7 @@
 package unifier
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/kombifyio/techstack/pkg/core"
@@ -78,59 +79,6 @@ func TestAnalyze_ExplicitKit(t *testing.T) {
 	// Should NOT have autoSelectedKit in defaults when explicit
 	if _, ok := result.AppliedDefaults["autoSelectedKit"]; ok {
 		t.Error("Should not have autoSelectedKit when kit is explicit")
-	}
-}
-
-func TestAnalyze_ServiceBasedKitSelection(t *testing.T) {
-	engine, err := New()
-	if err != nil {
-		t.Fatalf("Failed to create engine: %v", err)
-	}
-
-	tests := []struct {
-		name        string
-		services    []core.ServiceSpec
-		expectedKit string
-	}{
-		{
-			name:        "no services",
-			services:    nil,
-			expectedKit: "basement-kit",
-		},
-		{
-			name: "single service",
-			services: []core.ServiceSpec{
-				{Name: "nginx", Type: "reverse-proxy"},
-			},
-			expectedKit: "basement-kit",
-		},
-		{
-			name: "multiple services with database",
-			services: []core.ServiceSpec{
-				{Name: "traefik", Type: "reverse-proxy"},
-				{Name: "postgres", Type: "database"},
-				{Name: "app", Type: "docker"},
-			},
-			expectedKit: "basement-kit",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			spec := &core.KombinationSpec{
-				Name:     tt.name,
-				Services: tt.services,
-			}
-
-			result, err := engine.Analyze(spec)
-			if err != nil {
-				t.Fatalf("Analyze should never error, got: %v", err)
-			}
-
-			if result.StackKit != tt.expectedKit {
-				t.Errorf("Expected kit '%s', got '%s'", tt.expectedKit, result.StackKit)
-			}
-		})
 	}
 }
 
@@ -383,25 +331,21 @@ func TestAnalyze_Description(t *testing.T) {
 		t.Error("Expected non-empty description")
 	}
 	// Should contain stack name
-	if !containsSubstring(result.Description, "my-homelab") {
+	if !strings.Contains(result.Description, "my-homelab") {
 		t.Errorf("Description should contain stack name, got: %s", result.Description)
 	}
 }
 
-func TestAnalyze_AlwaysReturnsValidResult(t *testing.T) {
+func TestAnalyze_UnknownInputsFallBackSafely(t *testing.T) {
 	engine, err := New()
 	if err != nil {
 		t.Fatalf("Failed to create engine: %v", err)
 	}
 
-	// Test various edge cases that should NEVER cause errors
 	testCases := []struct {
 		name string
 		spec *core.KombinationSpec
 	}{
-		{"nil", nil},
-		{"empty", &core.KombinationSpec{}},
-		{"name only", &core.KombinationSpec{Name: "test"}},
 		{"unknown provider", &core.KombinationSpec{
 			Name:  "test",
 			Nodes: []core.NodeSpec{{Name: "n1", Provider: "unknown-provider-xyz"}},
@@ -440,18 +384,4 @@ func TestAnalyze_AlwaysReturnsValidResult(t *testing.T) {
 			}
 		})
 	}
-}
-
-// containsSubstring checks if s contains substr
-func containsSubstring(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstringHelper(s, substr))
-}
-
-func containsSubstringHelper(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

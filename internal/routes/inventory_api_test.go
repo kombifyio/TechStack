@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -9,39 +10,83 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/portinventory"
 	"github.com/kombifyio/techstack/internal/routes/sessionreauth"
 	"github.com/kombifyio/techstack/pkg/controlplane"
-	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/runtimehealth"
 )
+
+type recordingPortInventoryReader struct {
+	request portinventory.InventoryRequest
+	result  portinventory.Inventory
+}
+
+func (reader *recordingPortInventoryReader) ReadCurrent(_ context.Context, request portinventory.InventoryRequest, _ time.Time) (portinventory.Inventory, error) {
+	reader.request = request
+	return reader.result, nil
+}
+
+func TestInventoryPortReadModelIsOwnerScopedAndNeverCached(t *testing.T) {
+	store := controlplane.NewMemoryStore()
+	if _, err := store.CreateStack(t.Context(), controlplane.CreateStackRequest{
+		ID: "stack-1", TenantID: "tenant-1", OwnerSubjectID: "owner-1", Name: "Stack",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpsertServerRuntime(t.Context(), controlplane.ServerRuntime{
+		ID: "server-1", TenantID: "tenant-1", StackID: "stack-1", OwnerSubjectID: "owner-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reader := &recordingPortInventoryReader{result: portinventory.Inventory{
+		ServerID: "server-1", ServerGeneration: 2, Allocations: []portinventory.Allocation{},
+	}}
+	h := inventoryHandlers{app: &inventoryApplication{
+		read: store, ports: reader, policy: NewSelfHostedInventoryPolicy(), now: time.Now,
+	}, version: "test"}
+	event, recorder := registryRouteStoreTestEvent(http.MethodGet, "/api/v1/inventory/servers/server-1/ports", "owner-1", "tenant-1", nil)
+	event.Request.SetPathValue("serverId", "server-1")
+	if err := h.httpServerPorts(event); err != nil {
+		t.Fatal(err)
+	}
+	if recorder.Code != http.StatusOK || recorder.Header().Get("Cache-Control") != "private, no-store" {
+		t.Fatalf("port inventory status/cache = %d %q: %s", recorder.Code, recorder.Header().Get("Cache-Control"), recorder.Body.String())
+	}
+	if reader.request.TenantID != "tenant-1" || reader.request.ServerID != "server-1" || reader.request.OwnerSubjectID != "owner-1" {
+		t.Fatalf("owner-scoped port request = %#v", reader.request)
+	}
+}
 
 // The classification split for authorization denials (kombify-Techstack-nzy1.14):
 // a denial of the SESSION tenant's own collection scope maps to the retryable
 // 401 session_reprojection_required signal, while a genuine resource-level
 // denial keeps its fail-closed 403 inventory_access_denied semantics.
-func TestInventorySessionTenantDenialMapsToSessionReprojectionSignal(t *testing.T) {
+func TestInventoryCollectionDenialKeepsTheSessionAlive(t *testing.T) {
+	// A collection read the principal holds no grant for is a plain denial.
+	// It used to be answered with the session-reprojection signal, which
+	// cleared the session cookie and told the user to sign in again — and
+	// signing in never creates an authorization grant, so a fresh login was
+	// ended by its own first request and the loop could not terminate
+	// (observed live 2026-09-18).
 	sessionreauth.Configure("techstack_session", false)
 	store := controlplane.NewMemoryStore()
 	h := inventoryHandlers{app: &inventoryApplication{read: store, policy: denyInventoryPolicy{}, now: time.Now}, version: "test"}
 
 	event, recorder := registryRouteStoreTestEvent(http.MethodGet, "/api/v1/inventory/servers", "owner-1", "tenant-1", nil)
-	err := h.httpListServers(event)
-	var apiErr *httpx.APIError
-	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusUnauthorized {
-		t.Fatalf("collection denial = %v, want 401 session_reprojection_required", err)
+	if err := h.httpListServers(event); err != nil {
+		t.Fatalf("collection denial handler error = %v, want rendered 403 envelope", err)
 	}
-	details, ok := apiErr.Details.(map[string]any)
-	if !ok || details["reason_code"] != sessionreauth.ReasonCode || details["retryable"] != true {
-		t.Fatalf("collection denial details = %#v, want reason_code=%q retryable=true", apiErr.Details, sessionreauth.ReasonCode)
+	if recorder.Code != http.StatusForbidden || !strings.Contains(recorder.Body.String(), "inventory_access_denied") {
+		t.Fatalf("collection denial = %d %s, want fail-closed 403 inventory_access_denied", recorder.Code, recorder.Body.String())
 	}
-	cookieCleared := false
+	if strings.Contains(recorder.Body.String(), sessionreauth.ReasonCode) {
+		t.Fatalf("a missing grant must not be reported as a session problem: %s", recorder.Body.String())
+	}
+	// The safety property: a valid session survives an authorization denial.
 	for _, cookie := range recorder.Result().Cookies() {
-		if cookie.Name == "techstack_session" && cookie.Value == "" && cookie.MaxAge == -1 {
-			cookieCleared = true
+		if cookie.Name == "techstack_session" {
+			t.Fatalf("session cookie mutated on collection denial: %+v", cookie)
 		}
-	}
-	if !cookieCleared {
-		t.Fatalf("session cookie not cleared on session-tenant denial: %v", recorder.Result().Cookies())
 	}
 }
 

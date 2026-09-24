@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/promql/parser"
@@ -125,8 +126,8 @@ func (b *HTTPPromQLBackend) RangeQuery(ctx context.Context, query string, start,
 	return b.query(ctx, "/api/v1/query_range", params)
 }
 
-func (b *HTTPPromQLBackend) LabelNames(ctx context.Context) ([]string, error) {
-	data, err := b.request(ctx, "/api/v1/labels", nil)
+func (b *HTTPPromQLBackend) LabelNames(ctx context.Context, matchers ...*labels.Matcher) ([]string, error) {
+	data, err := b.request(ctx, "/api/v1/labels", promLabelMatcherParams(matchers))
 	if err != nil {
 		return nil, err
 	}
@@ -137,11 +138,11 @@ func (b *HTTPPromQLBackend) LabelNames(ctx context.Context) ([]string, error) {
 	return names, nil
 }
 
-func (b *HTTPPromQLBackend) LabelValues(ctx context.Context, name string) ([]string, error) {
+func (b *HTTPPromQLBackend) LabelValues(ctx context.Context, name string, matchers ...*labels.Matcher) ([]string, error) {
 	if strings.TrimSpace(name) == "" {
 		return nil, fmt.Errorf("label name is required")
 	}
-	data, err := b.request(ctx, path.Join("/api/v1/label", url.PathEscape(name), "values"), nil)
+	data, err := b.request(ctx, path.Join("/api/v1/label", url.PathEscape(name), "values"), promLabelMatcherParams(matchers))
 	if err != nil {
 		return nil, err
 	}
@@ -152,8 +153,24 @@ func (b *HTTPPromQLBackend) LabelValues(ctx context.Context, name string) ([]str
 	return values, nil
 }
 
-func (b *HTTPPromQLBackend) MetricNames(ctx context.Context) ([]string, error) {
-	return b.LabelValues(ctx, labels.MetricName)
+func (b *HTTPPromQLBackend) MetricNames(ctx context.Context, matchers ...*labels.Matcher) ([]string, error) {
+	return b.LabelValues(ctx, model.MetricNameLabel, matchers...)
+}
+
+func promLabelMatcherParams(matchers []*labels.Matcher) url.Values {
+	if len(matchers) == 0 {
+		return nil
+	}
+	parts := make([]string, 0, len(matchers))
+	for _, matcher := range matchers {
+		if matcher != nil {
+			parts = append(parts, matcher.String())
+		}
+	}
+	if len(parts) == 0 {
+		return nil
+	}
+	return url.Values{"match[]": {"{" + strings.Join(parts, ",") + "}"}}
 }
 
 func (b *HTTPPromQLBackend) Stats(ctx context.Context) (*TSDBStats, error) {

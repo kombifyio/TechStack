@@ -4,7 +4,7 @@
 package identity
 
 import (
-	common "github.com/kombifyio/go-common/identity"
+	common "github.com/kombifyio/techstack/internal/gocommon/identity"
 )
 
 // Type aliases so existing imports continue to work.

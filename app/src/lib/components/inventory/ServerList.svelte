@@ -1,17 +1,26 @@
 <script lang="ts">
   import {
     ServerCard,
+    type ServerCardAction,
     type ServerKitInfo,
     type ServerFact,
     type ServerMetric,
     type ServerNoteTone,
+    type ServerStackAction,
+    type ServerStatusAxes,
     type ServerStatusKind,
-  } from "$lib/components/open-core";
+  } from "@kombiverselabs/ui/server";
 
   export interface ServerListItem {
     id: string;
     hostname: string;
     meta: string;
+    /**
+     * The three orthogonal status axes (canonical inventory). When present
+     * the card renders the StatusCluster; `status` stays the collapsed
+     * fallback for telemetry-only rows.
+     */
+    axes?: ServerStatusAxes;
     status: ServerStatusKind;
     statusLabel?: string;
     metrics?: ServerMetric[];
@@ -23,6 +32,15 @@
     note?: string;
     noteTone?: ServerNoteTone;
     detailsHref?: string;
+    /**
+     * Capability-driven node actions, mapped one-to-one from the backend
+     * `allowed_actions` grant. Absent means the read model granted nothing.
+     */
+    nodeActions?: ServerCardAction[];
+    /** StackKit-scoped actions from the separate `stack_actions` grant. */
+    stackActions?: ServerStackAction[];
+    /** One-line kit status shown inside the fenced StackKit group. */
+    kitStatusLine?: string;
   }
 
   interface Props {
@@ -39,7 +57,7 @@
 
   let {
     items,
-    title = "Servers",
+    title = "Nodes",
     subtitle,
     unavailable = false,
     unavailableMessage = "The canonical inventory is unavailable. Showing only telemetry that is currently authorized.",
@@ -50,11 +68,10 @@
   }: Props = $props();
 </script>
 
-<section
-  class="rounded-lg border border-border bg-card p-5"
-  data-testid={testId}
-  aria-label={title}
->
+<!-- Boxless section (operator direction 2026-08-19): a heading and the
+     Node cards directly on the page ground — no wrapper container card.
+     The cards themselves are the only surfaces. -->
+<section data-testid={testId} aria-label={title}>
   <div class="mb-4 flex items-start justify-between gap-3">
     <div>
       <h2 class="text-xl font-semibold text-foreground">{title}</h2>
@@ -65,10 +82,10 @@
     <span class="shrink-0 text-sm text-muted-foreground">
       {#if unavailable}
         {items.length > 0
-          ? `${items.length} telemetry server${items.length === 1 ? "" : "s"}`
+          ? `${items.length} telemetry Node${items.length === 1 ? "" : "s"}`
           : "Inventory unavailable"}
       {:else}
-        {items.length} server{items.length === 1 ? "" : "s"}
+        {items.length} Node{items.length === 1 ? "" : "s"}
       {/if}
     </span>
   </div>
@@ -96,6 +113,7 @@
           <ServerCard
             hostname={item.hostname}
             meta={item.meta}
+            axes={item.axes}
             status={item.status}
             statusLabel={item.statusLabel}
             metrics={item.metrics}
@@ -107,6 +125,9 @@
             note={item.note}
             noteTone={item.noteTone}
             detailsHref={item.detailsHref}
+            nodeActions={item.nodeActions}
+            stackActions={item.stackActions}
+            kitStatusLine={item.kitStatusLine}
           />
         </div>
       {/each}

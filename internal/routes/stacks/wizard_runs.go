@@ -16,6 +16,7 @@ package stacks
 import (
 	"bytes"
 	"context"
+	"fmt"
 	// #nosec G501 -- md5 derives the deterministic homelab id matching
 	// migration 044's backfill scheme ('hl-' || md5(md5(tenant)||md5(owner)));
 	// it is an identity projection, not cryptography.
@@ -27,12 +28,15 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/pocketbase/pocketbase/core"
 
 	productnotifications "github.com/kombifyio/techstack/internal/notifications"
+	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	"github.com/kombifyio/techstack/internal/routes/trust"
+	"github.com/kombifyio/techstack/internal/stackkitrelease"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/controlplane"
@@ -47,6 +51,11 @@ const (
 	// Architecture v2 stack spec — the join/rollout authority for native-v2
 	// stacks. pkg/jobs mirrors this literal (payload contract).
 	stackConfigKeySpecV2 = "stack_spec_v2"
+	// stackConfigKeySpecV1State demotes the frozen user_config sibling after
+	// a governed migrate-on-write. The v1 document stays available as audit
+	// evidence, but stack_spec_v2 is the only join/rollout authority.
+	stackConfigKeySpecV1State = "stack_spec_v1_state"
+	stackConfigSpecV1Archived = "archived"
 
 	// wizardRunFeatureKey gates the facade behind the same beta flag as the
 	// preview endpoint (pkg/features/flags.go).
@@ -72,21 +81,80 @@ const (
 	wizardRunStateField           = "state"
 	wizardRunStateProvisioning    = "provisioning"
 	wizardRunStateAwaitingPairing = "awaiting_pairing"
+	wizardRunExistingServerIDs    = "existing_server_ids"
+	wizardRunPlannedServerID      = "planned_server_id"
 )
 
-// WizardRunRouteConfig wires the wizard-run facade. Seeds/Validator mirror the
-// preview endpoint's dependencies; Trust carries the pairing mint stores.
+// WizardRunRouteConfig wires the wizard-run facade. Seeds, Projector,
+// Validator, and Migrator are release-bound dependencies; Trust carries the
+// pairing mint stores.
 type WizardRunRouteConfig struct {
 	App                core.App
 	Orch               *orchestrator.Orchestrator
 	DeploymentMode     config.DeploymentMode
 	Features           managedRuntimeFeatureChecker
 	Seeds              specv2.SeedSource
+	Projector          specv2.Projector
 	Validator          specv2.SpecValidator
+	Migrator           specv2.SpecMigrator
 	ReleaseVersion     string
 	Trust              trust.RouteStores
 	ManagedLeases      jobs.ManagedLeaseManager
+	ManagedExpansion   WizardManagedRuntimeExpansion
+	GuestProvisioner   WizardGuestProvisioner
 	NotificationOutbox productnotifications.ProductEventEnqueuer
+	Wallet             controlplane.WalletStore
+	IdentityRuntime    WizardIdentityRuntime
+}
+
+// WizardManagedRuntimeExpansion is the narrow adapter boundary from the
+// wizard facade to the canonical managed-runtime authority. The implementation
+// lives in package routes; keeping this contract here avoids a package cycle
+// without duplicating provider control, admission, or receipt logic.
+type WizardManagedRuntimeExpansion interface {
+	Execute(*httpx.Event, WizardManagedRuntimeExpansionRequest) (*WizardManagedRuntimeExpansionResult, error)
+}
+
+type WizardManagedRuntimeExpansionFunc func(*httpx.Event, WizardManagedRuntimeExpansionRequest) (*WizardManagedRuntimeExpansionResult, error)
+
+func (execute WizardManagedRuntimeExpansionFunc) Execute(e *httpx.Event, request WizardManagedRuntimeExpansionRequest) (*WizardManagedRuntimeExpansionResult, error) {
+	return execute(e, request)
+}
+
+type WizardManagedRuntimeExpansionRequest struct {
+	StackID           string
+	IdempotencyKey    string
+	RuntimeSlotKey    string
+	NodeRole          string
+	RuntimeOfferingID string
+	ProviderID        string
+	ProviderRegion    string
+	IONOSDatacenter   string
+	StackKit          string
+	Services          []string
+}
+
+// WizardManagedRuntimeExpansionResult is the secret-free correlation receipt
+// copied from the canonical authority into the durable wizard-run ledger.
+type WizardManagedRuntimeExpansionResult struct {
+	StackID              string
+	JobID                string
+	RuntimeSlotKey       string
+	RuntimeSlotID        string
+	LeaseID              string
+	RuntimeServerID      string
+	ResourceGenerationID string
+	OperationID          string
+	ProviderID           string
+	ProviderRegion       string
+	IONOSDatacenter      string
+	NodeRole             string
+	RuntimeOfferingID    string
+	EnrollmentStatus     string
+	RuntimePhase         string
+	IdempotentReplay     bool
+	Message              string
+	Warnings             []string
 }
 
 type wizardRunHandlers struct {
@@ -99,11 +167,31 @@ type wizardRunHandlers struct {
 // Postgres-first: without control-plane stores it fails closed (503), the
 // PocketBase legacy lane is deliberately not supported here.
 func RegisterWizardRunRoutes(r *httpx.Router, cfg WizardRunRouteConfig) {
+	h := newWizardRunHandlers(cfg)
+	r.POST("/api/v1/wizard/runs", h.createWizardRun)
+	// GET /api/v1/wizard/runs/active - the owner's latest run with a live job
+	// snapshot; the dashboard banner and the creating page's resume use it.
+	r.GET("/api/v1/wizard/runs/active", h.getActiveWizardRun)
+	// POST /api/v1/stacks/{id}/resume-remote-enrollment - Retry connect-remote
+	// Guard enrollment on the persisted SSH connection without rerunning StackKit.
+	r.POST("/api/v1/stacks/{id}/resume-remote-enrollment", h.resumeRemoteEnrollment)
+	r.GET("/api/v1/stacks/{id}/identity", h.getStackIdentity)
+	r.POST("/api/v1/stacks/{id}/identity/owner-activation", h.issueOwnerActivation)
+	r.POST("/api/v1/stacks/{id}/identity/household-invitations", h.createHouseholdInvitation)
+}
+
+// newWizardRunHandlers builds the wizard handlers from the route config. The
+// durable remote-enrollment executor uses the same construction so the queue
+// handler and the HTTP routes share one wallet/pairing custody path.
+func newWizardRunHandlers(cfg WizardRunRouteConfig) wizardRunHandlers {
 	if !cfg.DeploymentMode.IsValid() {
 		cfg.DeploymentMode = config.ModeSelfHosted
 	}
+	if cfg.IdentityRuntime == nil && cfg.Orch != nil {
+		cfg.IdentityRuntime = orchestratorWizardIdentityRuntime{orch: cfg.Orch}
+	}
 	stores := currentControlPlaneStores()
-	h := wizardRunHandlers{
+	return wizardRunHandlers{
 		crud: crudRouteHandlers{
 			app:                cfg.App,
 			orch:               cfg.Orch,
@@ -112,6 +200,7 @@ func RegisterWizardRunRoutes(r *httpx.Router, cfg WizardRunRouteConfig) {
 			homelabStore:       stores.Homelabs,
 			jobStore:           stores.Jobs,
 			walletStore:        stores.Wallet,
+			activityStore:      stores.Activity,
 			serverStore:        stores.Servers,
 			routingStore:       stores.Routing,
 			runtimeFeatures:    cfg.Features,
@@ -121,10 +210,6 @@ func RegisterWizardRunRoutes(r *httpx.Router, cfg WizardRunRouteConfig) {
 		wizardRuns: stores.WizardRuns,
 		cfg:        cfg,
 	}
-	r.POST("/api/v1/wizard/runs", h.createWizardRun)
-	// GET /api/v1/wizard/runs/active - the owner's latest run with a live job
-	// snapshot; the dashboard banner and the creating page's resume use it.
-	r.GET("/api/v1/wizard/runs/active", h.getActiveWizardRun)
 }
 
 // wizardRunRequest is the closed wire contract of one wizard run. Everything
@@ -136,10 +221,11 @@ type wizardRunRequest struct {
 	// Owner passes owner-bootstrap options through to the create core
 	// (owner_source, owner_email, recovery material refs). Ignored on
 	// expansion runs — the owner already exists.
-	Owner    map[string]any          `json:"owner,omitempty"`
-	Managed  *wizardRunManagedParams `json:"managed,omitempty"`
-	Remote   *wizardRunRemoteParams  `json:"remote,omitempty"`
-	Services []string                `json:"services,omitempty"`
+	Owner     map[string]any          `json:"owner,omitempty"`
+	Managed   *wizardRunManagedParams `json:"managed,omitempty"`
+	Remote    *wizardRunRemoteParams  `json:"remote,omitempty"`
+	Substrate *WizardSubstrateParams  `json:"substrate,omitempty"`
+	Services  []string                `json:"services,omitempty"`
 }
 
 type wizardRunManagedParams struct {
@@ -156,15 +242,31 @@ type wizardRunRemoteParams struct {
 	AuthMethod  string `json:"auth_method,omitempty"`
 	SSHKeyLabel string `json:"ssh_key_label,omitempty"`
 	UseSudo     bool   `json:"use_sudo,omitempty"`
+	// Password is accepted for the enrollment request window and is persisted
+	// in the wallet under server_remote_credential_ref; it never enters the
+	// wizard ledger or stack configuration as plaintext.
+	Password string `json:"password,omitempty"`
 }
 
+// wizardRunProjectionWriteBudget bounds the response write for the persisting
+// wizard run. Projection and validation run up to two pinned-CLI calls with a
+// 2-minute timeout each (pkg/specv2), which exceeds the server-wide 60s write
+// timeout; without this bounded extension a slow but successful run is
+// disconnected after the side effects already began. The client abort budget
+// (app/src/lib/api/wizardRuns.ts) must stay above this value.
+const wizardRunProjectionWriteBudget = 5 * time.Minute
+
 func (h wizardRunHandlers) createWizardRun(e *httpx.Event) error {
+	_ = httpx.ExtendWriteDeadline(e.Response, wizardRunProjectionWriteBudget)
 	ownerID, authErr := requireStackAuth(e)
 	if authErr != nil {
 		return authErr
 	}
-	tenantID := tenantIDFromRequest(e)
-	if h.crud.stackStore == nil || h.crud.homelabStore == nil || h.wizardRuns == nil || tenantID == "" {
+	tenantID, tenantErr := tenantguard.TenantScope(tenantIDFromRequest(e), ownerID, "techstack.wizard.runs.create")
+	if tenantErr != nil {
+		return tenantErr
+	}
+	if h.crud.stackStore == nil || h.crud.homelabStore == nil || h.wizardRuns == nil {
 		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
 			"Wizard runs require the Postgres control plane", wizardRunDetails(
 				"wizard_runs_require_control_plane", false,
@@ -185,7 +287,7 @@ func (h wizardRunHandlers) createWizardRun(e *httpx.Event) error {
 				},
 			})
 	}
-	request, ok := h.decodeWizardRun(e)
+	request, requestedIntent, intentAdjustments, ok := h.decodeWizardRun(e)
 	if !ok {
 		return nil
 	}
@@ -200,13 +302,18 @@ func (h wizardRunHandlers) createWizardRun(e *httpx.Event) error {
 			))
 	}
 
+	if wizardRunTransport(request) == specv2.TransportHypervisor && key == "" {
+		return httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeValidation, "Hypervisor provisioning requires an Idempotency-Key", nil)
+	}
 	run := wizardRunState{
-		runID:       uuid.NewString(),
-		tenantID:    tenantID,
-		ownerID:     ownerID,
-		request:     request,
-		requestHash: wizardRunRequestHash(request),
-		key:         key,
+		runID:             uuid.NewString(),
+		tenantID:          tenantID,
+		ownerID:           ownerID,
+		request:           request,
+		requestedIntent:   requestedIntent,
+		intentAdjustments: intentAdjustments,
+		requestHash:       wizardRunRequestHash(wizardRunRequestWithIntent(request, requestedIntent)),
+		key:               key,
 	}
 	if handled := h.replayWizardRunFromLedger(e, &run); handled {
 		return nil
@@ -232,8 +339,11 @@ func (h wizardRunHandlers) getActiveWizardRun(e *httpx.Event) error {
 	if authErr != nil {
 		return authErr
 	}
-	tenantID := tenantIDFromRequest(e)
-	if h.crud.stackStore == nil || h.wizardRuns == nil || tenantID == "" {
+	tenantID, tenantErr := tenantguard.TenantScope(tenantIDFromRequest(e), ownerID, "techstack.wizard.runs.read")
+	if tenantErr != nil {
+		return tenantErr
+	}
+	if h.crud.stackStore == nil || h.wizardRuns == nil {
 		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
 			"Wizard runs require the Postgres control plane", wizardRunDetails(
 				"wizard_runs_require_control_plane", false,
@@ -292,17 +402,24 @@ func (h wizardRunHandlers) wizardRunJobSnapshot(ctx context.Context, tenantID, j
 
 // wizardRunState threads the per-run facts through the flow helpers.
 type wizardRunState struct {
-	runID       string
-	tenantID    string
-	ownerID     string
-	request     wizardRunRequest
-	requestHash string
-	key         string
+	runID             string
+	tenantID          string
+	ownerID           string
+	request           wizardRunRequest
+	requestedIntent   specv2.WizardIntent
+	intentAdjustments []specv2.IntentAdjustment
+	requestHash       string
+	key               string
 	// homelabID is deterministic and computed up front; the homelab ROW is
 	// created lazily (ensureWizardHomelab) only once the run passes
 	// validation, so a rejected run leaves no state behind.
 	homelabID string
 	homelab   *controlplane.Homelab
+	// priorUnmappedGoals is the durable backlog from the owner's homelab.
+	// activatedGoals is the subset the pinned release projected successfully
+	// during this run, used for one idempotent owner notification per goal.
+	priorUnmappedGoals []string
+	activatedGoals     []string
 	// resumeStack is the deterministic keyed stack when this request is a
 	// same-key retry of a run that already persisted its stack row; resume
 	// runs skip coercion and free-name resolution so they converge on the
@@ -311,6 +428,10 @@ type wizardRunState struct {
 	// priorFailed is the ledger entry of an earlier failed attempt with this
 	// key; the join lane uses its NodeID to avoid appending a second node.
 	priorFailed *controlplane.WizardRun
+	// existingServerIDs is the canonical pre-join runtime baseline. Keeping it
+	// in the durable result lets another tab or device distinguish the newly
+	// paired server from an already healthy server on the same deployment.
+	existingServerIDs []string
 	// effectiveKind is the run kind after coercion; requested kind stays in
 	// request.Intent.RunKind.
 	effectiveKind string
@@ -322,7 +443,7 @@ func (run *wizardRunState) coerced() bool {
 
 // decodeWizardRun reads and validates the closed request contract. It returns
 // ok == false after writing the error response.
-func (h wizardRunHandlers) decodeWizardRun(e *httpx.Event) (wizardRunRequest, bool) {
+func (h wizardRunHandlers) decodeWizardRun(e *httpx.Event) (wizardRunRequest, specv2.WizardIntent, []specv2.IntentAdjustment, bool) {
 	var request wizardRunRequest
 	body, readErr := io.ReadAll(io.LimitReader(e.Request.Body, maxWizardRunBodyBytes+1))
 	if readErr != nil || len(body) == 0 || len(body) > maxWizardRunBodyBytes {
@@ -332,7 +453,7 @@ func (h wizardRunHandlers) decodeWizardRun(e *httpx.Event) (wizardRunRequest, bo
 				"Request not understood",
 				"Send the wizard run as a JSON body of at most 2 MiB.",
 			))
-		return request, false
+		return request, specv2.WizardIntent{}, nil, false
 	}
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
@@ -343,8 +464,11 @@ func (h wizardRunHandlers) decodeWizardRun(e *httpx.Event) (wizardRunRequest, bo
 				"Request not understood",
 				"The wizard run payload does not match the closed request contract.",
 			))
-		return request, false
+		return request, specv2.WizardIntent{}, nil, false
 	}
+	requestedIntent := request.Intent
+	normalizedIntent, intentAdjustments := specv2.NormalizeCreationIntent(request.Intent)
+	request.Intent = normalizedIntent
 	if validateErr := request.Intent.Validate(); validateErr != nil {
 		_ = httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeValidation,
 			"Invalid wizard intent: "+validateErr.Error(), wizardRunDetails(
@@ -352,9 +476,17 @@ func (h wizardRunHandlers) decodeWizardRun(e *httpx.Event) (wizardRunRequest, bo
 				"Intent rejected",
 				"The wizard intent failed the closed contract validation.",
 			))
-		return request, false
+		return request, requestedIntent, intentAdjustments, false
 	}
-	return request, true
+	if !h.validateWizardGuestRequest(e, request) {
+		return request, requestedIntent, intentAdjustments, false
+	}
+	return request, requestedIntent, intentAdjustments, true
+}
+
+func wizardRunRequestWithIntent(request wizardRunRequest, intent specv2.WizardIntent) wizardRunRequest {
+	request.Intent = intent
+	return request
 }
 
 func (h wizardRunHandlers) wizardRunEnabled(ctx context.Context, userID string) bool {
@@ -388,16 +520,16 @@ func (h wizardRunHandlers) replayWizardRunFromLedger(e *httpx.Event, run *wizard
 		return true
 	}
 	if stored.Status != "completed" {
+		if wizardRunTransport(run.request) == specv2.TransportHypervisor && stored.RequestSHA256 != run.requestHash {
+			_ = httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "Idempotency-Key already identifies a different guest request", nil)
+			return true
+		}
 		run.priorFailed = stored
 		return false
 	}
 	if stored.RequestSHA256 != run.requestHash {
 		_ = httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict,
-			"Idempotency-Key was already used for a different wizard run", wizardRunDetails(
-				"wizard_idempotency_conflict", false,
-				"Use a fresh Idempotency-Key",
-				"This key already completed a wizard run with a different payload.",
-			))
+			"Idempotency-Key was already used for a different wizard run", wizardRunConflictDetails(stored))
 		return true
 	}
 	response := map[string]any{}
@@ -435,6 +567,16 @@ func (h wizardRunHandlers) prepareWizardRun(e *httpx.Event, run *wizardRunState)
 		}
 	}
 
+	if err := validateUseCaseSettingsAgainstCatalog(run.request.Intent); err != nil {
+		_ = httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeValidation,
+			"Wizard use-case settings rejected", wizardRunDetails(
+				"wizard_use_case_setting_rejected", false,
+				"Change the setting",
+				err.Error(),
+			))
+		return true
+	}
+
 	run.effectiveKind = run.request.Intent.RunKind
 	if run.request.Intent.KitAssignment.Mode == wizardRunKindJoin {
 		// Joining an existing deployment is by definition an expansion.
@@ -454,8 +596,49 @@ func (h wizardRunHandlers) prepareWizardRun(e *httpx.Event, run *wizardRunState)
 	if run.effectiveKind == specv2.RunKindExpansion {
 		// The owner already exists; expansion runs never re-bootstrap it.
 		run.request.Owner = nil
+		if err := h.loadStoredWizardGoals(ctx, run); err != nil {
+			_ = httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+				"Stored Wizard goals could not be reconciled", wizardRunDetails(
+					"wizard_goal_reconciliation_unavailable", true,
+					"Try again",
+					"The owner's stored Wizard goals could not be read; no projection was attempted.",
+				))
+			return true
+		}
 	}
 	return false
+}
+
+// validateUseCaseSettingsAgainstCatalog closes the settings contract: every
+// use case must be one the resolved catalog knows, every setting one its
+// configuration projection declares, and every value one the declaration
+// accepts. The resolver is shared with the catalog API, so a client can submit
+// exactly the choices that API advertised from either the image catalog or the
+// embedded pin.
+func validateUseCaseSettingsAgainstCatalog(intent specv2.WizardIntent) error {
+	if len(intent.UseCaseSettings) == 0 {
+		return nil
+	}
+	catalog, err := stackkitrelease.ResolveUseCaseCatalog()
+	if err != nil {
+		return fmt.Errorf("the StackKits use-case catalog could not be read: %w", err)
+	}
+	for slug, values := range intent.UseCaseSettings {
+		useCase, ok := catalog.FindUseCase(slug)
+		if !ok {
+			return fmt.Errorf("use case %q is not in the catalog", slug)
+		}
+		for id, value := range values {
+			setting, ok := useCase.FindSetting(id)
+			if !ok {
+				return fmt.Errorf("use case %q declares no setting %q", slug, id)
+			}
+			if !setting.AcceptsSettingValue(value) {
+				return fmt.Errorf("use case %q setting %q does not accept the given value", slug, id)
+			}
+		}
+	}
+	return nil
 }
 
 // ensureWizardHomelab founds (or loads) the owner's homelab row. Called only
@@ -531,4 +714,30 @@ func wizardRunDetails(reasonCode string, retryable bool, title, body string) map
 			wizardRunGuidanceBody:  body,
 		},
 	}
+}
+
+func wizardRunConflictDetails(stored *controlplane.WizardRun) map[string]any {
+	details := wizardRunDetails(
+		"wizard_idempotency_conflict",
+		true,
+		"Resume the completed attempt or start fresh",
+		"This browser session reused an attempt key from a different submission. Resume the earlier registration or start a fresh attempt with a new key.",
+	)
+	if stored == nil {
+		return details
+	}
+	details["completed_run_id"] = stored.ID
+	if stored.StackID != "" {
+		details[creationStackIDField] = stored.StackID
+	}
+	if stored.NodeID != "" {
+		details["node_id"] = stored.NodeID
+	}
+	if stored.JobID != "" {
+		details[creationJobIDField] = stored.JobID
+	}
+	if stored.PairingJobID != "" {
+		details["pairing_job_id"] = stored.PairingJobID
+	}
+	return details
 }

@@ -79,7 +79,7 @@ func (r *StackKitCLIPrepRunner) PrepareStackKitRuntimeTarget(ctx context.Context
 	if _, err := os.Stat(stackSpecPath); err != nil {
 		return nil, fmt.Errorf("StackKits CLI prepare stack spec missing: %w", err)
 	}
-	stackKit := firstNonEmpty(strings.TrimSpace(req.StackKit), DefaultBaseKitRef)
+	stackKit := firstNonEmpty(strings.TrimSpace(req.StackKit), DefaultBasementKitRef)
 	// prepare executes the same pinned CLI as generate, so it needs the same
 	// canonical document. Handing it the persisted v1 handoff failed the
 	// rollout one step after generate finally passed:
@@ -87,13 +87,11 @@ func (r *StackKitCLIPrepRunner) PrepareStackKitRuntimeTarget(ctx context.Context
 	//	Managed runtime target bootstrap failed: StackKits CLI prepare failed:
 	//	Error: architecturev2 migration_required: StackSpec v1 is readable only
 	//	through the migration adapter and cannot enter prepare
-	executedSpecPath := stackSpecPath
 	if r.release != nil {
-		canonical, canonicalErr := canonicalStackSpecFor(stackSpecPath, stackKit, req.StackName)
+		_, canonicalErr := canonicalStackSpecFor(stackSpecPath, stackKit, req.StackName)
 		if canonicalErr != nil {
 			return nil, canonicalErr
 		}
-		executedSpecPath = canonical.Path
 		// The v2 line has no host preparation to run. docs/CLI.md calls prepare
 		// "an optional host-conformance step" and the CLI refuses it outright
 		// for a canonical document:
@@ -112,14 +110,12 @@ func (r *StackKitCLIPrepRunner) PrepareStackKitRuntimeTarget(ctx context.Context
 			Message:    "StackKits has no governed host preparation for a canonical v2 StackSpec; host conformance is external to the CLI",
 		}, nil
 	}
-	if r.release == nil {
-		stackKitsDir, err := cleanRequiredDir(r.StackKitsDir, "StackKits source directory")
-		if err != nil {
-			return nil, err
-		}
-		if err := ensureStackKitCLIWorkspace(workDir, stackKitsDir, stackKit); err != nil {
-			return nil, err
-		}
+	stackKitsDir, err := cleanRequiredDir(r.StackKitsDir, "StackKits source directory")
+	if err != nil {
+		return nil, err
+	}
+	if err := ensureStackKitCLIWorkspace(workDir, stackKitsDir, stackKit); err != nil {
+		return nil, err
 	}
 
 	timeout := r.Timeout
@@ -135,7 +131,7 @@ func (r *StackKitCLIPrepRunner) PrepareStackKitRuntimeTarget(ctx context.Context
 	}
 	defer sshFiles.cleanup()
 
-	args := stackKitPrepareArgs(workDir, filepath.Base(executedSpecPath), target, sshFiles.keyPath)
+	args := stackKitPrepareArgs(workDir, filepath.Base(stackSpecPath), target, sshFiles.keyPath)
 
 	started := time.Now()
 	binary := firstNonEmpty(strings.TrimSpace(r.Binary), defaultStackKitCLIBinary)
@@ -210,7 +206,7 @@ func stackKitPrepTechStackEnv(req RuntimeActionRequest) []string {
 	if bootstrap := stackKitPrepChannelBootstrapJSON(enrollment); bootstrap != "" {
 		env = append(env, "TECHSTACK_CHANNEL_BOOTSTRAP="+bootstrap)
 	}
-	return env
+	return append(env, firstPartyTelemetryEnvOverrides()...)
 }
 
 func stackKitPrepChannelBootstrapJSON(enrollment *TechStackEnrollment) string {
@@ -361,22 +357,6 @@ func scanStackKitPrepKnownHost(ctx context.Context, target *RuntimeActionTarget)
 		return "", fmt.Errorf("ssh-keyscan failed for %s:%d: %w: %s", host, port, err, secrets.Redact(tailText(string(output), 1200)))
 	}
 	return string(output), nil
-}
-
-func parseStackKitCLIProgress(output []byte) []stackKitCLIProgressEvent {
-	events := []stackKitCLIProgressEvent{}
-	scanner := bufio.NewScanner(strings.NewReader(string(output)))
-	for scanner.Scan() {
-		event, ok := parseStackKitCLIProgressLine(scanner.Text())
-		if !ok {
-			continue
-		}
-		if len(events) >= defaultStackKitPrepProgressLimit {
-			events = events[1:]
-		}
-		events = append(events, event)
-	}
-	return events
 }
 
 func parseStackKitCLIProgressLine(line string) (stackKitCLIProgressEvent, bool) {

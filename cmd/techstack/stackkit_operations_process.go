@@ -16,7 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kombifyio/go-common/runtimeexecutor"
+	"github.com/kombifyio/techstack/internal/gocommon/denial"
+	"github.com/kombifyio/techstack/internal/gocommon/runtimeexecutor"
 )
 
 const (
@@ -130,25 +131,65 @@ func executeStackKitOperationsProcess(ctx context.Context, input io.Reader, outp
 }
 
 func stackKitOperationsHTTPError(status int, payload []byte) error {
-	var envelope struct {
-		Error struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-			Details struct {
-				ReasonCode   string `json:"reason_code"`
-				Retryable    bool   `json:"retryable"`
-				UserGuidance string `json:"user_guidance"`
-			} `json:"details"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal(payload, &envelope); err == nil && envelope.Error.Code != "" {
+	if env, err := denial.Parse(payload); err == nil {
 		return fmt.Errorf(
 			"StackKits operations endpoint returned HTTP %d: code=%s reason=%s retryable=%t guidance=%s",
-			status, envelope.Error.Code, envelope.Error.Details.ReasonCode,
-			envelope.Error.Details.Retryable, envelope.Error.Details.UserGuidance,
+			status, env.ErrorCode, env.ReasonCode, env.Retryable, env.UserGuidance.Title,
 		)
 	}
-	return fmt.Errorf("StackKits operations endpoint returned HTTP %d with an invalid error envelope", status)
+	var envelope struct {
+		Error struct {
+			Code    string          `json:"code"`
+			Message string          `json:"message"`
+			Details json.RawMessage `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(payload, &envelope); err != nil || envelope.Error.Code == "" {
+		return fmt.Errorf("StackKits operations endpoint returned HTTP %d with an invalid error envelope", status)
+	}
+	reason, retryable, guidance, ok := stackKitOperationsDenialDetails(envelope.Error.Details)
+	if !ok {
+		return fmt.Errorf("StackKits operations endpoint returned HTTP %d with an invalid error envelope", status)
+	}
+	return fmt.Errorf(
+		"StackKits operations endpoint returned HTTP %d: code=%s reason=%s retryable=%t guidance=%s",
+		status, envelope.Error.Code, reason, retryable, guidance,
+	)
+}
+
+func stackKitOperationsDenialDetails(raw json.RawMessage) (reason string, retryable bool, guidance string, ok bool) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return "", false, "", false
+	}
+	var details struct {
+		ReasonCode   string          `json:"reason_code"`
+		Retryable    bool            `json:"retryable"`
+		UserGuidance json.RawMessage `json:"user_guidance"`
+	}
+	if err := json.Unmarshal(trimmed, &details); err != nil {
+		return "", false, "", false
+	}
+	guidance, ok = stackKitOperationsGuidanceTitle(details.UserGuidance)
+	if !ok {
+		return "", false, "", false
+	}
+	return details.ReasonCode, details.Retryable, guidance, true
+}
+
+func stackKitOperationsGuidanceTitle(raw json.RawMessage) (string, bool) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return "", false
+	}
+	var guidance denial.UserGuidance
+	if err := json.Unmarshal(trimmed, &guidance); err != nil {
+		return "", false
+	}
+	if strings.TrimSpace(guidance.Title) == "" || strings.TrimSpace(guidance.Body) == "" || len(guidance.NextSteps) == 0 {
+		return "", false
+	}
+	return guidance.Title, true
 }
 
 func decodeStackKitOperationsRequest(payload []byte) (stackKitOperationsRequestEnvelope, error) {
@@ -162,7 +203,7 @@ func decodeStackKitOperationsRequest(payload []byte) (stackKitOperationsRequestE
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		return request, errors.New("StackKits operations request contains trailing JSON")
 	}
-	if request.SchemaVersion != stackKitOperationsRequestSchema || request.ChannelRef != stackKitOperationsChannelRef {
+	if request.SchemaVersion != stackKitOperationsRequestSchema || request.ChannelRef == "" {
 		return request, errors.New("StackKits operations request is not bound to the managed Cloud channel")
 	}
 	return request, nil
@@ -174,7 +215,15 @@ func validateStackKitOperationsBinding(envelope stackKitOperationsRequestEnvelop
 		return errors.New("StackKits operations enrollment is incomplete")
 	}
 	request := envelope.Request
-	if len(request.RuntimeTargets) != 1 || len(request.BackupTargetBindings) != 1 {
+	if len(request.RuntimeTargets) == 1 {
+		target := request.RuntimeTargets[0]
+		if target.ProviderRef == "stackkits-home-assistant-appliance" && target.RuntimeKind == "external" && target.RuntimeDelivery == "external-control-plane" && target.RuntimeEngine == "api" && target.ExecutionChannelRef == envelope.ChannelRef && len(request.BackupTargetBindings) == 0 && len(request.AccessBindings) == 0 {
+			// Backend authorization binds this sealed target to the authenticated
+			// tenant, stack and runtime agent. The shim cannot select an endpoint.
+			return request.Validate()
+		}
+	}
+	if envelope.ChannelRef != stackKitOperationsChannelRef || len(request.RuntimeTargets) != 1 || len(request.BackupTargetBindings) != 1 {
 		return errors.New("StackKits operations request must carry one exact runtime and backup target binding")
 	}
 	target := request.RuntimeTargets[0]

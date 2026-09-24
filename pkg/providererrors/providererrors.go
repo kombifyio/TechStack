@@ -114,10 +114,6 @@ func ClassifyMessage(message string) Info {
 	return info
 }
 
-func IsTerminal(err error) bool {
-	return Classify(err).Terminal
-}
-
 func providerSummary(message string) string {
 	if nested := nestedProviderMessage(message); nested != "" {
 		message = nested

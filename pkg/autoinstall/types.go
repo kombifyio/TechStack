@@ -5,7 +5,6 @@ package autoinstall
 
 import (
 	"context"
-	"fmt"
 	"runtime"
 )
 
@@ -114,16 +113,4 @@ func cloudflaredBinary() string {
 		return "cloudflared.exe"
 	}
 	return "cloudflared"
-}
-
-// IsInstalled checks if a dependency is available in PATH.
-func IsInstalled(dep Dependency) bool {
-	// TODO: Implement in detector_common.go
-	return false
-}
-
-// GetInstalledVersion returns the installed version of a dependency.
-func GetInstalledVersion(dep Dependency) (string, error) {
-	// TODO: Implement in detector_common.go
-	return "", fmt.Errorf("not implemented")
 }

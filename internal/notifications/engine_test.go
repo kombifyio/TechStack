@@ -71,6 +71,19 @@ func TestSignToken_NotConfigured(t *testing.T) {
 	}
 }
 
+func TestSelfHostedNotificationsRequireExplicitEngine(t *testing.T) {
+	t.Setenv("KOMBIFY_EDITION", "selfhost-oss")
+	t.Setenv("SERVICE_AUTH_SECRET", testSecret)
+	t.Setenv("NOTIFICATIONS_ENGINE_URL", "")
+	e := NewEngineFromEnv()
+	if e.Configured() {
+		t.Fatal("self-hosted notifications selected a hosted engine without operator configuration")
+	}
+	if _, err := e.Feed(context.Background(), "local-user", 20); err != ErrNotConfigured {
+		t.Fatalf("unconfigured self-hosted notifications tried to dispatch: %v", err)
+	}
+}
+
 func TestFeed_SignsAndForwardsRecipient(t *testing.T) {
 	var gotAuth, gotPath, gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -143,5 +156,44 @@ func TestMutations_UseWriteScopeAndPaths(t *testing.T) {
 				t.Fatalf("mutation must use write scope, got %q", gotScope)
 			}
 		})
+	}
+}
+
+func TestDispatchProductPreservesActivityEnvelope(t *testing.T) {
+	var got map[string]any
+	var gotServiceAuth string
+	decodeResult := make(chan error, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotServiceAuth = r.Header.Get("X-Kombify-Service-Auth")
+		decodeResult <- json.NewDecoder(r.Body).Decode(&got)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"dispatch_id":"dispatch-1","feed_item_id":"feed-1"}`))
+	}))
+	defer srv.Close()
+
+	event := ProductEvent{
+		Topic: "jobs.completed", Channel: "push", Auth0UserID: "auth0|owner", OrganizationID: "tenant-1",
+		IdempotencyKey: "stackkit:job-1:push", Payload: map[string]any{"subject": "StackKit installed"},
+		SourceApp: "techstack", EventKey: "stackkit.install.completed", SubjectRef: "stackkit:media-kit",
+		DeepLink: "/stacks/deployment-1", GroupKey: "kit_deployment:deployment-1", Priority: "normal",
+	}
+	if _, err := newTestEngine(srv.URL).DispatchProduct(context.Background(), event); err != nil {
+		t.Fatalf("DispatchProduct: %v", err)
+	}
+	if err := <-decodeResult; err != nil {
+		t.Fatalf("decode request: %v", err)
+	}
+	claims := verifyToken(t, "Bearer "+gotServiceAuth)
+	if claims["scope"] != "notifications:dispatch" {
+		t.Fatalf("dispatch scope = %v", claims["scope"])
+	}
+	for key, want := range map[string]any{
+		"source_app": "techstack", "event_key": "stackkit.install.completed",
+		"subject_ref": "stackkit:media-kit", "deep_link": "/stacks/deployment-1",
+		"group_key": "kit_deployment:deployment-1", "priority": "normal",
+	} {
+		if got[key] != want {
+			t.Fatalf("%s = %v, want %v; request=%#v", key, got[key], want, got)
+		}
 	}
 }

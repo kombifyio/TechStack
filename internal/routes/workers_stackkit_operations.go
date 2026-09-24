@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/kombifyio/go-common/runtimeexecutor"
+	"github.com/kombifyio/techstack/internal/gocommon/runtimeexecutor"
 	"github.com/kombifyio/techstack/internal/managedstackkit"
 	"github.com/kombifyio/techstack/pkg/httpx"
 )
@@ -54,7 +54,7 @@ func (h workerRouteHandlers) executeStackKitOperations(e *httpx.Event) error {
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		return httpx.BadRequest(e, "Invalid StackKits operations request", nil)
 	}
-	if envelope.SchemaVersion != stackKitOperationsRequestSchema || envelope.ChannelRef != stackKitOperationsChannelRef {
+	if envelope.SchemaVersion != stackKitOperationsRequestSchema || !validStackKitOperationChannel(envelope.ChannelRef, envelope.Request) {
 		return httpx.BadRequest(e, "StackKits operations request is not bound to the managed Cloud channel", nil)
 	}
 	authCtx, authenticated := h.authenticateRuntimeAgent(e, id, workerInventoryRequest{
@@ -72,7 +72,20 @@ func (h workerRouteHandlers) executeStackKitOperations(e *httpx.Event) error {
 	}
 	return e.JSON(http.StatusOK, workerStackKitOperationsResponse{
 		SchemaVersion: stackKitOperationsResponseSchema,
-		ChannelRef:    stackKitOperationsChannelRef,
+		ChannelRef:    envelope.ChannelRef,
 		Outcome:       outcome,
 	})
+}
+
+func validStackKitOperationChannel(channel string, request runtimeexecutor.ExecutionRequest) bool {
+	if channel == stackKitOperationsChannelRef {
+		return true
+	}
+	if channel == "" || len(request.RuntimeTargets) != 1 {
+		return false
+	}
+	target := request.RuntimeTargets[0]
+	// This recognizes the closed protocol only. The operations dispatcher must
+	// still match the authenticated agent and exact locally enrolled target.
+	return target.ExecutionChannelRef == channel && target.ProviderRef == "stackkits-home-assistant-appliance" && target.RuntimeKind == "external" && target.RuntimeDelivery == "external-control-plane" && target.RuntimeEngine == "api"
 }

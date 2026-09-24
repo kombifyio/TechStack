@@ -64,10 +64,6 @@ test.describe.serial("Runtime Auth0 smoke", () => {
       expect(auth.token).toBeTruthy();
       await expect(page.getByText("Session Expired")).toHaveCount(0);
       const whoami = await fetchBrowserWhoAmI(page);
-      await test.info().attach(`${role}-whoami.json`, {
-        body: Buffer.from(`${JSON.stringify(whoami.body, null, 2)}\n`, "utf8"),
-        contentType: "application/json",
-      });
       expect(whoami.status).toBe(200);
       if (role === "cloud") {
         if (INVENTORY_EXPECTATION) {
@@ -89,10 +85,6 @@ test.describe.serial("Runtime Auth0 smoke", () => {
     expect(auth.token).toBeTruthy();
     await expect(page.getByText("Session Expired")).toHaveCount(0);
     const whoami = await fetchBrowserWhoAmI(page);
-    await test.info().attach("cloud-windows-browser-handoff-whoami.json", {
-      body: Buffer.from(`${JSON.stringify(whoami.body, null, 2)}\n`, "utf8"),
-      contentType: "application/json",
-    });
     expect(whoami.status).toBe(200);
     if (INVENTORY_EXPECTATION) {
       assertCanonicalDemoPrincipal(whoami.body);
@@ -233,7 +225,7 @@ async function verifyCloudInventoryCore(
       isUIAPIURL(response.url(), "stacks"),
     { timeout: 20_000 },
   );
-  await page.goto("/stacks", { waitUntil: "domcontentloaded" });
+  await page.goto("/dashboard", { waitUntil: "domcontentloaded" });
   const stacksResponse = await stacksResponsePromise;
   assertCandidateUIResponseOrigin(stacksResponse.url());
   expect(stacksResponse.ok()).toBe(true);
@@ -260,27 +252,25 @@ async function verifyCloudInventoryCore(
   const monitoringInventoryResponsePromise = page.waitForResponse(
     (response) =>
       response.request().method() === "GET" &&
-      isUIAPIURL(response.url(), "inventory/servers"),
+      new URL(response.url()).pathname.endsWith("/api/v1/servers"),
     { timeout: 20_000 },
   );
   await page.goto("/monitoring", { waitUntil: "domcontentloaded" });
   const monitoringInventoryResponse = await monitoringInventoryResponsePromise;
   assertCandidateUIResponseOrigin(monitoringInventoryResponse.url());
   expect(monitoringInventoryResponse.ok()).toBe(true);
-  const dashboardServerIDs = inventoryIDs(
-    await monitoringInventoryResponse.json(),
-    "servers",
-    true,
-  );
-  expect(dashboardServerIDs).toEqual(restServerIDs);
-  await expect(page.getByTestId("inventory-server-list")).toBeVisible();
-  await expect(page.getByTestId("inventory-unavailable")).toHaveCount(0);
-  await expect(page.getByTestId("inventory-server-card")).toHaveCount(
-    dashboardServerIDs.length,
+  await expect(page.getByTestId("monitoring-section-right-now")).toBeVisible();
+  await expect(
+    page.getByTestId("monitoring-inventory-unavailable"),
+  ).toHaveCount(0);
+  // Parity is asserted against the authoritative REST record above, so the
+  // page cannot pass by rendering a stale or partial population of its own.
+  await expect(page.getByTestId("monitoring-node-summary")).toHaveCount(
+    restServerIDs.length,
   );
   const dashboardDOMServerIDs = await domInventoryIDs(
     page,
-    "inventory-server-card",
+    "monitoring-node-summary",
     "data-server-id",
   );
   expect(dashboardDOMServerIDs).toEqual(restServerIDs);
@@ -289,11 +279,7 @@ async function verifyCloudInventoryCore(
     "P1 inventory proof requires a canonical server card",
   ).toBeGreaterThan(0);
   if (INVENTORY_EXPECTATION && exactInventory) {
-    await assertExpectedDashboardInventory(
-      page,
-      INVENTORY_EXPECTATION,
-      exactInventory.semantic.server.privateIp,
-    );
+    await assertExpectedDashboardInventory(page, INVENTORY_EXPECTATION);
   }
   const inventoryScreenshot = await page.screenshot({ fullPage: true });
   await writeFile(
@@ -416,8 +402,8 @@ async function verifyCloudInventoryCore(
         backend_origin: new URL(monitoringInventoryResponse.url()).origin,
         backend_status: monitoringInventoryResponse.status(),
         backend_response_shape_valid: true,
-        backend_item_count: dashboardServerIDs.length,
-        backend_ids_sha256: idsSha256(dashboardServerIDs),
+        backend_item_count: restServerIDs.length,
+        backend_ids_sha256: idsSha256(restServerIDs),
         dom_item_count: dashboardDOMServerIDs.length,
         dom_ids_sha256: idsSha256(dashboardDOMServerIDs),
         dom_ids_match_backend: true,
@@ -555,7 +541,7 @@ async function verifyCanonicalCloudRuntimeCore(
   const techstackQuery = selectedTechstackID
     ? `?techstack_id=${encodeURIComponent(selectedTechstackID)}`
     : "";
-  await page.goto(`/stacks${techstackQuery}`, {
+  await page.goto("/dashboard", {
     waitUntil: "domcontentloaded",
   });
   await expect(page.getByTestId("stacks-dashboard")).toBeVisible();
@@ -586,25 +572,41 @@ async function verifyCanonicalCloudRuntimeCore(
     "servers",
   );
   const monitoringAPIIDs = canonicalRowIDs(monitoringAPIRows, "servers");
-  await expect(page.getByTestId("inventory-unavailable")).toHaveCount(0);
-  await expect(page.getByTestId("inventory-server-card")).toHaveCount(
+  await expect(
+    page.getByTestId("monitoring-inventory-unavailable"),
+  ).toHaveCount(0);
+  await expect(page.getByTestId("monitoring-node-summary")).toHaveCount(
     monitoringAPIIDs.length,
   );
   const monitoringDOMIDs = await domInventoryIDs(
     page,
-    "inventory-server-card",
+    "monitoring-node-summary",
     "data-server-id",
   );
   expect(monitoringDOMIDs).toEqual(monitoringAPIIDs);
   if (expectedServer) {
     const expectedServerID = String(expectedServer.id ?? "").trim();
-    const serverCard = page.locator(
-      `[data-testid="inventory-server-card"][data-server-id="${expectedServerID}"]`,
+    await expect(
+      page.locator(
+        `[data-testid="monitoring-node-summary"][data-server-id="${expectedServerID}"]`,
+      ),
+    ).toHaveCount(1);
+    // Node identity lives on the node's own page; the fleet view carries the
+    // three axes and the id it is addressable by.
+    await page.goto(`/monitoring/${encodeURIComponent(expectedServerID)}`, {
+      waitUntil: "domcontentloaded",
+    });
+    const identity = page.getByTestId("server-monitoring-identity");
+    await expect(identity).toBeVisible({ timeout: 20_000 });
+    await expect(identity).toContainText(/cloud/i);
+    await expect(identity).toContainText(/external vps/i);
+    await expect(identity).toContainText(/hostinger/i);
+    await page.goto(`/monitoring${techstackQuery}`, {
+      waitUntil: "domcontentloaded",
+    });
+    await expect(page.getByTestId("monitoring-node-summary")).toHaveCount(
+      monitoringAPIIDs.length,
     );
-    await expect(serverCard).toHaveCount(1);
-    await expect(serverCard).toContainText(/cloud/i);
-    await expect(serverCard).toContainText(/external vps/i);
-    await expect(serverCard).toContainText(/hostinger/i);
   }
   await writeFile(
     path.join(artifactsDir, "canonical-monitoring.png"),
@@ -704,48 +706,31 @@ function serverDiagnostic(rows: Record<string, any>[]) {
   }));
 }
 
+/**
+ * The monitoring start page renders the three orthogonal axes per node, not
+ * the node's identity facts: address, domain, OS and StackKit come from the
+ * stack operations payload and are asserted on the stack server detail page,
+ * which is the surface that still reports them.
+ */
 async function assertExpectedDashboardInventory(
   page: Parameters<typeof authenticateRuntimeUser>[1],
   expectation: RuntimeInventoryExpectation,
-  observedPrivateIP: string,
 ) {
   const card = page.locator(
-    `[data-testid="inventory-server-card"][data-server-id="${expectation.server.id}"]`,
+    `[data-testid="monitoring-node-summary"][data-server-id="${expectation.server.id}"]`,
   );
   await expect(card).toHaveCount(1);
+  const axes = card.getByTestId("monitoring-node-axis");
+  await expect(axes).toHaveCount(3);
+  await expect(axes.filter({ hasText: /./ })).toHaveCount(3);
   await expect(
-    card.getByText(observedPrivateIP, { exact: true }),
-  ).toBeVisible();
+    card.locator('[data-axis="Conn"]'),
+  ).toHaveText(new RegExp(escapeRegExp(expectation.server.connection), "i"));
   await expect(
-    card.getByText(expectation.server.domain, { exact: true }),
-  ).toBeVisible();
-  await expect(card).toContainText(
-    new RegExp(escapeRegExp(expectation.server.os), "i"),
-  );
-  await expect(
-    card.getByText(
-      [
-        expectation.server.stackkit,
-        expectation.server.version,
-        expectation.server.variant,
-      ].join(" · "),
-      { exact: true },
-    ),
-  ).toBeVisible();
-  await expect(
-    card.getByText(
-      new RegExp(`^${escapeRegExp(expectation.server.health)}$`, "i"),
-    ),
-  ).toBeVisible();
-  const connection = card.getByTestId("inventory-server-connection-state");
-  await expect(connection).toBeVisible();
-  await expect(connection).toHaveText(
-    new RegExp(`^${escapeRegExp(expectation.server.connection)}$`, "i"),
-  );
-  const lifecycle = card.getByTestId("inventory-server-lifecycle-state");
-  await expect(lifecycle).toBeVisible();
-  await expect(lifecycle).toHaveText(
-    new RegExp(`^${escapeRegExp(expectation.server.lifecycle)}$`, "i"),
+    card.locator('[data-axis="Life"]'),
+  ).toHaveText(new RegExp(escapeRegExp(expectation.server.lifecycle), "i"));
+  await expect(card.locator('[data-axis="Health"]')).toHaveText(
+    new RegExp(escapeRegExp(expectation.server.health), "i"),
   );
 }
 

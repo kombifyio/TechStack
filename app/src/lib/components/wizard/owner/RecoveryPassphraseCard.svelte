@@ -4,8 +4,8 @@
   argon2id hash is stored on the config.
 -->
 <script lang="ts">
-  import type { OwnerStepState } from "$lib/wizard/owner-state.svelte";
-  import { tr } from "$lib/i18n.svelte";
+  import type { OwnerStepState } from "#lib/wizard/owner-state.svelte.js";
+  import { tr } from "#lib/i18n.svelte.js";
 
   interface Props {
     owner: OwnerStepState;
@@ -14,13 +14,13 @@
   let { owner }: Props = $props();
 </script>
 
-<div class="card p-4 space-y-4" data-testid="recovery-passphrase-card">
+<div class="space-y-4" data-testid="recovery-passphrase-card">
   <div>
     <h3 class="text-lg font-semibold text-foreground">
-      {tr("wizard.login.recovery.title")}
+      {tr("wizard.login.recovery.extra")}
     </h3>
     <p class="text-sm text-muted-foreground mt-1">
-      {tr("wizard.login.recovery.subtitle")}
+      {tr("wizard.login.recovery.extraDescription")}
     </p>
   </div>
 
@@ -63,7 +63,7 @@
 
   <div class="space-y-2">
     <p class="text-xs text-muted-foreground" data-testid="recovery-strength">
-      Strength: {owner.recoveryStrength.score}/4
+      {tr("wizard.login.recovery.strength")}: {owner.recoveryStrength.score}/4
     </p>
     {#if owner.recoveryStrength.feedback.length > 0}
       <ul class="space-y-1 text-xs text-muted-foreground">
@@ -73,7 +73,9 @@
       </ul>
     {/if}
     {#if owner.recoveryPassphraseConfirm && !owner.recoveryPassphrasesMatch}
-      <p class="text-destructive text-xs">Recovery passphrases do not match.</p>
+      <p class="text-destructive text-xs">
+        {tr("wizard.login.recovery.mismatch")}
+      </p>
     {/if}
     {#if owner.isHashingRecovery}
       <p class="text-xs text-muted-foreground" data-testid="recovery-status">

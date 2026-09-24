@@ -3,10 +3,12 @@ package discovery
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -23,16 +25,23 @@ type Prober struct {
 // HostKeyStore provides TOFU (Trust On First Use) host key management.
 // On first connection, the host key is stored. On subsequent connections,
 // it's verified against the stored key.
+//
+// Pins are scoped (tenant or another stable trust boundary) and persisted
+// atomically under the control-plane data directory. A store that cannot be
+// read or written fails the handshake closed instead of degrading to
+// trust-on-every-first-use.
 type HostKeyStore struct {
 	storePath string
-	keys      map[string]string // host:port -> base64 encoded key
+	keys      map[string]string // scopedKey -> base64 encoded key
 	mu        sync.RWMutex
+	loadErr   error
 }
 
-// NewHostKeyStore creates a new host key store.
+// NewHostKeyStore creates a new host key store. An empty path derives
+// <TECHSTACK_DATA_DIR>/known_hosts (default data/known_hosts).
 func NewHostKeyStore(storePath string) *HostKeyStore {
 	if storePath == "" {
-		storePath = filepath.Join("data", "known_hosts")
+		storePath = filepath.Join(defaultHostKeyStoreDir(), "known_hosts")
 	}
 	store := &HostKeyStore{
 		storePath: storePath,
@@ -42,14 +51,32 @@ func NewHostKeyStore(storePath string) *HostKeyStore {
 	return store
 }
 
+func defaultHostKeyStoreDir() string {
+	if dataDir := strings.TrimSpace(os.Getenv("TECHSTACK_DATA_DIR")); dataDir != "" {
+		return dataDir
+	}
+	return "data"
+}
+
+// hostKeyStoreKey combines the trust scope and address so one tenant's pin
+// can never block another tenant at a reused address.
+func hostKeyStoreKey(scope, host string) string {
+	return strings.TrimSpace(scope) + "\x00" + strings.TrimSpace(host)
+}
+
 // load reads stored host keys from disk.
 func (s *HostKeyStore) load() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.loadErr = nil
 	data, err := os.ReadFile(s.storePath)
-	if err != nil {
+	if errors.Is(err, os.ErrNotExist) {
 		return // File doesn't exist yet - that's fine
+	}
+	if err != nil {
+		s.loadErr = fmt.Errorf("read host key store: %w", err)
+		return
 	}
 
 	for _, line := range strings.Split(string(data), "\n") {
@@ -58,53 +85,113 @@ func (s *HostKeyStore) load() {
 			continue
 		}
 		parts := strings.Fields(line)
-		if len(parts) >= 2 {
-			s.keys[parts[0]] = parts[1]
+		var scope, host, encoded string
+		switch {
+		case len(parts) >= 3:
+			scope = parts[0]
+			if scope == "-" {
+				scope = ""
+			}
+			host, encoded = parts[1], parts[2]
+		case len(parts) == 2:
+			// Legacy unscoped line: host key.
+			host, encoded = parts[0], parts[1]
+		default:
+			s.loadErr = fmt.Errorf("host key store contains an unreadable line")
+			return
 		}
+		if _, decodeErr := base64.StdEncoding.DecodeString(encoded); decodeErr != nil {
+			s.loadErr = fmt.Errorf("host key store contains a non-base64 key")
+			return
+		}
+		s.keys[hostKeyStoreKey(scope, host)] = encoded
 	}
 }
 
-// save writes host keys to disk.
-func (s *HostKeyStore) save() error {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	// Ensure directory exists
+// saveLocked writes host keys to disk atomically. The caller must hold the
+// write lock.
+func (s *HostKeyStore) saveLocked() error {
 	dir := filepath.Dir(s.storePath)
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("failed to create host key directory: %w", err)
 	}
 
+	scopedKeys := make([]string, 0, len(s.keys))
+	for scoped := range s.keys {
+		scopedKeys = append(scopedKeys, scoped)
+	}
+	sort.Strings(scopedKeys)
+
 	var lines []string
 	lines = append(lines, "# kombifyTechstack known hosts (TOFU - Trust On First Use)")
-	for host, key := range s.keys {
-		lines = append(lines, fmt.Sprintf("%s %s", host, key))
+	for _, scoped := range scopedKeys {
+		scope, host, _ := strings.Cut(scoped, "\x00")
+		if scope == "" {
+			scope = "-"
+		}
+		lines = append(lines, fmt.Sprintf("%s %s %s", scope, host, s.keys[scoped]))
 	}
 
-	return os.WriteFile(s.storePath, []byte(strings.Join(lines, "\n")+"\n"), 0600)
+	temp, err := os.CreateTemp(dir, ".known_hosts-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create host key store temp file: %w", err)
+	}
+	tempName := temp.Name()
+	defer func() { _ = os.Remove(tempName) }()
+	if err := temp.Chmod(0o600); err != nil {
+		_ = temp.Close()
+		return fmt.Errorf("set host key store permissions: %w", err)
+	}
+	if _, err := temp.WriteString(strings.Join(lines, "\n") + "\n"); err != nil {
+		_ = temp.Close()
+		return fmt.Errorf("write host key store: %w", err)
+	}
+	if err := temp.Sync(); err != nil {
+		_ = temp.Close()
+		return fmt.Errorf("sync host key store: %w", err)
+	}
+	if err := temp.Close(); err != nil {
+		return fmt.Errorf("close host key store: %w", err)
+	}
+	if err := os.Rename(tempName, s.storePath); err != nil {
+		return fmt.Errorf("replace host key store: %w", err)
+	}
+	return nil
 }
 
-// GetCallback returns an SSH host key callback with TOFU behavior.
-// Returns nil on first use (trusts the key) or error if key changed.
+// GetCallback returns an SSH host key callback with TOFU behavior for an
+// unscoped pin.
 func (s *HostKeyStore) GetCallback(host string) ssh.HostKeyCallback {
+	return s.GetScopedCallback("", host)
+}
+
+// GetScopedCallback returns an SSH host key callback scoped to one trust
+// boundary (for example a tenant). The pin is stored on first use and
+// verified afterwards; a load or persistence failure fails closed.
+func (s *HostKeyStore) GetScopedCallback(scope, host string) ssh.HostKeyCallback {
 	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 		keyStr := base64.StdEncoding.EncodeToString(key.Marshal())
 
 		s.mu.Lock()
 		defer s.mu.Unlock()
 
-		storedKey, exists := s.keys[host]
+		if s.loadErr != nil {
+			return fmt.Errorf("host key store %s is unusable: %w", s.storePath, s.loadErr)
+		}
+
+		storeKey := hostKeyStoreKey(scope, host)
+		storedKey, exists := s.keys[storeKey]
 		if !exists {
-			// TOFU: First connection, trust and store the key
-			s.keys[host] = keyStr
-			if err := s.save(); err != nil {
-				// Log but don't fail - security > convenience
-				fmt.Printf("Warning: failed to save host key: %v\n", err)
+			// TOFU: first connection, trust and persist the key before the
+			// handshake may continue.
+			s.keys[storeKey] = keyStr
+			if err := s.saveLocked(); err != nil {
+				delete(s.keys, storeKey)
+				return fmt.Errorf("pin host key for %s: %w", host, err)
 			}
 			return nil
 		}
 
-		// Verify the key matches
 		if storedKey != keyStr {
 			return fmt.Errorf("SECURITY WARNING: host key for %s has changed! "+
 				"This could indicate a man-in-the-middle attack. "+
@@ -124,20 +211,6 @@ func NewProber(timeout time.Duration) *Prober {
 	return &Prober{
 		timeout:  timeout,
 		hostKeys: NewHostKeyStore(""),
-	}
-}
-
-// NewProberWithHostKeyStore creates a prober with a custom host key store.
-func NewProberWithHostKeyStore(timeout time.Duration, store *HostKeyStore) *Prober {
-	if timeout == 0 {
-		timeout = 30 * time.Second
-	}
-	if store == nil {
-		store = NewHostKeyStore("")
-	}
-	return &Prober{
-		timeout:  timeout,
-		hostKeys: store,
 	}
 }
 

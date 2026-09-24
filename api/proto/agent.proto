@@ -5,7 +5,7 @@ syntax = "proto3";
 
 package techstack.agent.v1;
 
-option go_package = "github.com/KombiverseLabs/kombifyTechstack/pkg/api/agentpb";
+option go_package = "github.com/kombifyio/techstack/pkg/api/agentpb";
 
 // AgentService handles communication between Core and Agents
 service AgentService {
@@ -84,6 +84,32 @@ enum StackKitOperation {
   STACKKIT_OPERATION_SERVICE_STOP = 11;
   STACKKIT_OPERATION_SERVICE_RESTART = 12;
   STACKKIT_OPERATION_SERVICE_LOGS = 13;
+  STACKKIT_OPERATION_REMOVE = 14;
+  // Bind a pre-allocated, secret-free public address prefix into a derived
+  // StackSpec before generation. The Agent still builds fixed CLI argv.
+  STACKKIT_OPERATION_ADDRESS_BIND = 15;
+  // Run one backup for the stack. Backups reach the node over this closed
+  // command set, not over an inbound HTTP call: the Guard transport is an
+  // outbound long poll authenticated by a per-agent token, so there is no
+  // inbound path and no fleet-wide secret on a customer machine.
+  STACKKIT_OPERATION_BACKUP_RUN = 16;
+  // Read the node's view of the backup repository. It is reporting only: the
+  // storage quota is measured control-plane side at the object store, because
+  // the node figure is the logical size of one generation.
+  STACKKIT_OPERATION_BACKUP_STATUS = 17;
+  // Verify and stage one exact owner-signed snapshot through StackKits'
+  // native v2 backup lifecycle. The live volumes are never activated by this
+  // operation; staged restore evidence is sufficient for a recovery drill.
+  STACKKIT_OPERATION_BACKUP_RESTORE = 18;
+  STACKKIT_OPERATION_OWNER_ACTIVATION_STATUS = 19;
+  STACKKIT_OPERATION_OWNER_ACTIVATION_ISSUE = 20;
+  STACKKIT_OPERATION_HOUSEHOLD_LIST = 21;
+  STACKKIT_OPERATION_HOUSEHOLD_INVITE = 22;
+  // Configure the owner-bound native v2 backup repository for the applied
+  // plan. StackKits requires it before the first backup run and after a
+  // backup policy or authority change; it is idempotent for an unchanged
+  // owner, authority and policy.
+  STACKKIT_OPERATION_BACKUP_CONFIGURE = 23;
 }
 
 enum StackKitDriftMode {
@@ -365,6 +391,30 @@ message StackKitCommand {
   // Canonical ResolvedPlan digest admitted by the control plane. Apply must
   // compare it under StackKits' node lifecycle/output lock before mutation.
   string expected_plan_hash = 24;
+  // StackKits-owned StackSpec/ResolvedPlan stackId expected in the selected
+  // workspace. Service operations must compare it before reading or mutating.
+  string stackkit_instance_id = 25;
+  // Exact ResolvedPlan workload ref selected for Owner-approved removal.
+  string workload_ref = 26;
+  // Secret-free DNS label allocated by the managed address authority.
+  string address_prefix = 27;
+  // Relative derived StackSpec written by the pinned StackKits address binder.
+  string bound_spec_path = 28;
+  // Complete approved canonical StackSpec for INIT only. The exact pinned
+  // CLI validates and persists these bounded bytes through its existing
+  // candidate-input/CAS path; the agent never reconstructs desired intent.
+  bytes candidate_spec_json = 29;
+  // Content-addressed owner-signed snapshot selected for BACKUP_RESTORE.
+  // The CLI resolves the repository snapshot and fixed staging path from this
+  // anchor; callers cannot supply a raw repository id or destination path.
+  string snapshot_anchor_id = 30;
+  // INIT only: the stack Owner's signed-in account email. StackKits requires a
+  // real email for --owner-source=local on a fresh node (the PocketID owner);
+  // a node that already holds Owner custody keeps its established identity.
+  string owner_email = 31;
+  string household_username = 32;
+  string household_email = 33;
+  string household_display_name = 34;
 }
 
 // StackKitResult transports the normalized stackkit.command-result/v1 JSON
@@ -382,6 +432,17 @@ message StackKitResult {
   int64 started_at_unix = 9;
   int64 finished_at_unix = 10;
   StackKitReleasePin release = 11;
+  // The Agent sets this only when the exact pinned StackKits CLI successfully
+  // returned native backup evidence after StackKits performed its local Owner
+  // custody verification. Techstack does not possess that Owner public key.
+  bool pinned_cli_evidence_verified = 12;
+  // SHA-256 of command_result_json, binding the attestation to the exact bytes
+  // transported on the authenticated Agent result channel.
+  string pinned_cli_evidence_sha256 = 13;
+  // Raw approved owner activation/invitation response. This field is valid
+  // only for explicitly approved identity mutations and must be consumed by
+  // the synchronous request path without job, ledger, event, or log storage.
+  bytes sensitive_result_json = 14;
 }
 
 // =============================================================================

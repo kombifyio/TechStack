@@ -11,14 +11,10 @@ import (
 
 const (
 	// SpecTemplatesEnv points at the canonical v2 StackSpec documents the
-	// image authored at build time, one directory per kit. Running
-	// `stackkit init` per request would put GitHub in the request path
-	// (init resolves and verifies the published release over the network),
-	// so seeds are consumed from these build-time templates instead.
+	// image authored at build time, one directory per kit. Seeds remain the
+	// topology base; the admitted release CLI authors only selected workload
+	// entries per request from its embedded CUE authority.
 	SpecTemplatesEnv = "TECHSTACK_STACKKIT_SPEC_TEMPLATES"
-
-	// specAPIVersion is the only shape the pinned CLI executes.
-	specAPIVersion = "stackkit/v2alpha1"
 )
 
 // SeedSource loads the canonical kit seed a projection starts from.
@@ -49,7 +45,7 @@ func (s *TemplateSeedSource) Seed(kitSlug string) (map[string]any, error) {
 		return nil, fmt.Errorf("specv2: seed templates root not configured (%s)", SpecTemplatesEnv)
 	}
 	kitSlug = strings.TrimSpace(kitSlug)
-	if !KnownKitSlugs[kitSlug] {
+	if !IsKnownKitSlug(kitSlug) {
 		return nil, fmt.Errorf("specv2: %q is not an installable kit", kitSlug)
 	}
 	path := filepath.Join(filepath.Clean(s.Root), kitSlug, "stack-spec.yaml")
@@ -61,12 +57,8 @@ func (s *TemplateSeedSource) Seed(kitSlug string) (map[string]any, error) {
 	if err := yaml.Unmarshal(data, &seed); err != nil {
 		return nil, fmt.Errorf("specv2: parse canonical %s seed: %w", kitSlug, err)
 	}
-	if len(seed) == 0 {
-		return nil, fmt.Errorf("specv2: canonical %s seed is empty", kitSlug)
-	}
-	apiVersion, _ := seed["apiVersion"].(string)
-	if strings.TrimSpace(apiVersion) != specAPIVersion {
-		return nil, fmt.Errorf("specv2: canonical %s seed has apiVersion %q, want %q", kitSlug, apiVersion, specAPIVersion)
+	if err := RequireCanonicalV2(seed); err != nil {
+		return nil, fmt.Errorf("specv2: canonical %s seed: %w", kitSlug, err)
 	}
 	kit, _ := seed["kit"].(map[string]any)
 	slug, _ := kit["slug"].(string)

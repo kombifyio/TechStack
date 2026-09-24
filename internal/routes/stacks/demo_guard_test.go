@@ -28,7 +28,7 @@ func TestDestroyStackBlocksOnlyMarkedDemoAnchor(t *testing.T) {
 	rec := httptest.NewRecorder()
 	event := &httpx.Event{Request: req, Response: rec}
 
-	h := crudRouteHandlers{stackStore: store}
+	h := crudRouteHandlers{stackStore: store, jobStore: store}
 	if err := h.destroyStack(event); err != nil {
 		t.Fatalf("destroyStack returned router error: %v", err)
 	}

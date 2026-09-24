@@ -1,10 +1,10 @@
 package jobs
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/kombifyio/techstack/pkg/unifier"
@@ -35,7 +35,7 @@ func newProjectedTestPersister(t *testing.T) *unifier.SpecPersister {
 	return persister
 }
 
-func TestStackKitSpecBytesForPayloadStripsProjectedSpec(t *testing.T) {
+func TestStackKitSpecBytesForPayloadWritesArchitectureV2Handoff(t *testing.T) {
 	payload := map[string]interface{}{
 		"stackkit":            "basement-kit",
 		"name":                "my-homelab",
@@ -49,23 +49,23 @@ func TestStackKitSpecBytesForPayloadStripsProjectedSpec(t *testing.T) {
 	if err := yaml.Unmarshal(bytes, &handoff); err != nil {
 		t.Fatalf("parse handoff: %v", err)
 	}
-	if _, exists := handoff[payloadKeyStackSpecV2]; exists {
-		t.Fatal("projected spec leaked into the v1 handoff; the v1 decoder refuses v2-only top-level fields")
+	if handoff["apiVersion"] != canonicalStackSpecAPIVersion {
+		t.Fatalf("handoff apiVersion = %v, want Architecture v2", handoff["apiVersion"])
 	}
-	if handoff["stackkit"] != "basement-kit" {
-		t.Fatalf("handoff lost its stackkit: %#v", handoff)
-	}
-	// The input payload itself must stay untouched (the job result still
-	// carries the projection).
 	if _, exists := payload[payloadKeyStackSpecV2]; !exists {
 		t.Fatal("input payload was mutated")
 	}
 }
 
-func TestPersistProjectedStackSpecWritesSiblingDocument(t *testing.T) {
+func TestPersistProjectedStackSpecTracksProjectionLifecycle(t *testing.T) {
 	persister := newProjectedTestPersister(t)
 
-	path, err := persistProjectedStackSpec(persister, map[string]interface{}{
+	path, err := persistProjectedStackSpec(persister, map[string]interface{}{"stackkit": "basement-kit"})
+	if err != nil || path != "" {
+		t.Fatalf("persist without projection = (%q, %v), want no sibling document", path, err)
+	}
+
+	path, err = persistProjectedStackSpec(persister, map[string]interface{}{
 		"stackkit":            "basement-kit",
 		payloadKeyStackSpecV2: projectedTestSpec(),
 	})
@@ -86,16 +86,14 @@ func TestPersistProjectedStackSpecWritesSiblingDocument(t *testing.T) {
 	if doc["apiVersion"] != canonicalStackSpecAPIVersion {
 		t.Fatalf("projected doc apiVersion = %v", doc["apiVersion"])
 	}
-}
 
-func TestPersistProjectedStackSpecIsNoopWithoutProjection(t *testing.T) {
-	persister := newProjectedTestPersister(t)
-	path, err := persistProjectedStackSpec(persister, map[string]interface{}{"stackkit": "basement-kit"})
-	if err != nil {
-		t.Fatalf("persistProjectedStackSpec: %v", err)
+	stale := path
+	path, err = persistProjectedStackSpec(persister, map[string]interface{}{"stackkit": "basement-kit"})
+	if err != nil || path != "" {
+		t.Fatalf("retire projection = (%q, %v), want empty path", path, err)
 	}
-	if path != "" {
-		t.Fatalf("expected no projected doc, got %s", path)
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("stale projected doc must be removed, stat err = %v", err)
 	}
 }
 
@@ -108,96 +106,102 @@ func TestPersistProjectedStackSpecRejectsWrongAPIVersion(t *testing.T) {
 	}
 }
 
-func TestCanonicalStackSpecForPrefersProjectedDocumentOverTemplate(t *testing.T) {
-	dir := t.TempDir()
-	stackSpecPath := filepath.Join(dir, "stack-spec.yaml")
-	// v1-shaped handoff (the wizard's synthesized wire shape).
-	handoff := map[string]interface{}{
-		"stackkit": "basement-kit",
-		"name":     "my-homelab",
-		"domain":   "wizard.example",
-	}
-	handoffBytes, err := yaml.Marshal(handoff)
+// Regression: a Wizard join updated config_json but a later bare deploy kept
+// executing the pre-join process-local projection written by provision.
+func TestDeployPrepareRematerializesJoinedProjectionFromSnapshot(t *testing.T) {
+	baseDir := t.TempDir()
+	stackID := "stack-joined"
+	persistDeployFixture(t, baseDir, stackID)
+	persister, err := unifier.NewSpecPersisterWithPath(filepath.Join(baseDir, stackID))
 	if err != nil {
-		t.Fatalf("marshal handoff: %v", err)
+		t.Fatalf("create persister: %v", err)
 	}
-	if writeErr := os.WriteFile(stackSpecPath, handoffBytes, 0o600); writeErr != nil {
-		t.Fatalf("write handoff: %v", writeErr)
+	stale := projectedTestSpec()
+	stale["nodes"] = stale["nodes"].([]interface{})[:1]
+	if _, err := persistProjectedStackSpec(persister, map[string]interface{}{payloadKeyStackSpecV2: stale}); err != nil {
+		t.Fatalf("seed pre-join projection: %v", err)
 	}
-	projectedBytes, err := json.Marshal(projectedTestSpec())
-	if err != nil {
-		t.Fatalf("marshal projected: %v", err)
-	}
-	if writeErr := os.WriteFile(filepath.Join(dir, projectedStackSpecFilename), projectedBytes, 0o600); writeErr != nil {
-		t.Fatalf("write projected: %v", writeErr)
-	}
-	// No template env: the template path would fail, proving the projected
-	// document short-circuits it.
-	t.Setenv(stackKitSpecTemplateEnv, "")
 
-	canonical, err := canonicalStackSpecFor(stackSpecPath, "basement-kit", "my-homelab")
+	job := &Job{ID: "deploy-joined", Type: JobTypeDeploy, TargetID: stackID, Payload: map[string]interface{}{
+		payloadKeyStackSpecV2: projectedTestSpec(),
+	}}
+	queue := &Queue{jobs: map[string]*Job{job.ID: job}}
+	if _, err := deployPrepare(context.Background(), &ProvisionConfig{SpecBaseDir: baseDir}, job, queue); err != nil {
+		t.Fatalf("deployPrepare: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(baseDir, stackID, projectedStackSpecFilename)) // #nosec G304 -- test temp dir
 	if err != nil {
-		t.Fatalf("canonicalStackSpecFor: %v", err)
+		t.Fatalf("read re-materialized projection: %v", err)
 	}
-	if !canonical.Derived || canonical.OutputRoot != "deploy" {
-		t.Fatalf("unexpected canonical result: %#v", canonical)
+	var projected map[string]interface{}
+	if err := json.Unmarshal(data, &projected); err != nil {
+		t.Fatalf("parse re-materialized projection: %v", err)
 	}
-	data, err := os.ReadFile(canonical.Path) // #nosec G304 -- test temp dir
-	if err != nil {
-		t.Fatalf("read canonical doc: %v", err)
-	}
-	var doc map[string]interface{}
-	if err := json.Unmarshal(data, &doc); err != nil {
-		t.Fatalf("parse canonical doc: %v", err)
-	}
-	nodes, _ := doc["nodes"].([]interface{})
+	nodes, _ := projected["nodes"].([]interface{})
 	if len(nodes) != 2 {
-		t.Fatalf("projection deltas lost: nodes = %d, want 2", len(nodes))
-	}
-	metadata, _ := doc["metadata"].(map[string]interface{})
-	if metadata["fleetRef"] != "hl-1" {
-		t.Fatalf("fleetRef lost: %#v", metadata)
-	}
-	// The routing domain is refreshed from the handoff chain.
-	network, _ := doc["network"].(map[string]interface{})
-	domain, _ := network["domain"].(map[string]interface{})
-	if domain["base"] != "wizard.example" {
-		t.Fatalf("domain not refreshed from handoff: %#v", domain)
+		t.Fatalf("bare deploy kept the stale pre-join projection: %#v", nodes)
 	}
 }
 
-func TestCanonicalStackSpecForKeepsProjectedDomainWhenHandoffResolvesNone(t *testing.T) {
-	dir := t.TempDir()
-	stackSpecPath := filepath.Join(dir, "stack-spec.yaml")
-	handoffBytes, err := yaml.Marshal(map[string]interface{}{
-		"stackkit": "basement-kit",
-		"name":     "my-homelab",
-	})
-	if err != nil {
-		t.Fatalf("marshal handoff: %v", err)
+func TestCanonicalStackSpecForPreservesProjectedDeltasAndResolvesDomain(t *testing.T) {
+	tests := []struct {
+		name          string
+		handoffDomain string
+		wantDomain    string
+	}{
+		{"handoff domain refreshes projection", "wizard.example", "wizard.example"},
+		{"missing handoff domain keeps projection", "", "example.homelab"},
 	}
-	if writeErr := os.WriteFile(stackSpecPath, handoffBytes, 0o600); writeErr != nil {
-		t.Fatalf("write handoff: %v", writeErr)
-	}
-	projectedBytes, err := json.Marshal(projectedTestSpec())
-	if err != nil {
-		t.Fatalf("marshal projected: %v", err)
-	}
-	if writeErr := os.WriteFile(filepath.Join(dir, projectedStackSpecFilename), projectedBytes, 0o600); writeErr != nil {
-		t.Fatalf("write projected: %v", writeErr)
-	}
-	t.Setenv(stackKitSpecTemplateEnv, "")
 
-	canonical, err := canonicalStackSpecFor(stackSpecPath, "basement-kit", "my-homelab")
-	if err != nil {
-		t.Fatalf("canonicalStackSpecFor: %v", err)
-	}
-	data, err := os.ReadFile(canonical.Path) // #nosec G304 -- test temp dir
-	if err != nil {
-		t.Fatalf("read canonical doc: %v", err)
-	}
-	if !strings.Contains(string(data), "example.homelab") {
-		t.Fatalf("projected domain must survive when the handoff resolves none: %s", data)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			stackSpecPath := filepath.Join(dir, "stack-spec.yaml")
+			handoff := map[string]interface{}{"stackkit": "basement-kit", "name": "my-homelab"}
+			if tt.handoffDomain != "" {
+				handoff["domain"] = tt.handoffDomain
+			}
+			handoffBytes, err := yaml.Marshal(handoff)
+			if err != nil {
+				t.Fatalf("marshal handoff: %v", err)
+			}
+			if err := os.WriteFile(stackSpecPath, handoffBytes, 0o600); err != nil {
+				t.Fatalf("write handoff: %v", err)
+			}
+			projectedBytes, err := json.Marshal(projectedTestSpec())
+			if err != nil {
+				t.Fatalf("marshal projected: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, projectedStackSpecFilename), projectedBytes, 0o600); err != nil {
+				t.Fatalf("write projected: %v", err)
+			}
+			// The empty template env proves the persisted projection short-circuits template authoring.
+			t.Setenv(stackKitSpecTemplateEnv, "")
+
+			canonical, err := canonicalStackSpecFor(stackSpecPath, "basement-kit", "my-homelab")
+			if err != nil {
+				t.Fatalf("canonicalStackSpecFor: %v", err)
+			}
+			if !canonical.Derived || canonical.OutputRoot != "deploy" {
+				t.Fatalf("unexpected canonical result: %#v", canonical)
+			}
+			data, err := os.ReadFile(canonical.Path) // #nosec G304 -- test temp dir
+			if err != nil {
+				t.Fatalf("read canonical doc: %v", err)
+			}
+			var doc map[string]interface{}
+			if err := json.Unmarshal(data, &doc); err != nil {
+				t.Fatalf("parse canonical doc: %v", err)
+			}
+			nodes, _ := doc["nodes"].([]interface{})
+			metadata, _ := doc["metadata"].(map[string]interface{})
+			network, _ := doc["network"].(map[string]interface{})
+			domain, _ := network["domain"].(map[string]interface{})
+			if len(nodes) != 2 || metadata["fleetRef"] != "hl-1" || domain["base"] != tt.wantDomain {
+				t.Fatalf("canonical projection lost deltas or domain precedence: %#v", doc)
+			}
+		})
 	}
 }
 
@@ -214,29 +218,5 @@ func TestCanonicalStackSpecForRejectsCorruptProjectedDocument(t *testing.T) {
 
 	if _, err := canonicalStackSpecFor(stackSpecPath, "basement-kit", "my-homelab"); err == nil {
 		t.Fatal("corrupt projected document must fail the rollout, not silently degrade")
-	}
-}
-
-func TestPersistProjectedStackSpecRemovesStaleSiblingWithoutProjection(t *testing.T) {
-	persister := newProjectedTestPersister(t)
-
-	if _, err := persistProjectedStackSpec(persister, map[string]interface{}{
-		"stackkit":            "basement-kit",
-		payloadKeyStackSpecV2: projectedTestSpec(),
-	}); err != nil {
-		t.Fatalf("seed projected doc: %v", err)
-	}
-	stale := filepath.Join(filepath.Dir(persister.GetStackSpecPath()), projectedStackSpecFilename)
-	if _, err := os.Stat(stale); err != nil {
-		t.Fatalf("projected doc missing after seed: %v", err)
-	}
-
-	// A later provision WITHOUT a projection (explicit body spec) must retire
-	// the stale sibling so it cannot override the operator's explicit spec.
-	if _, err := persistProjectedStackSpec(persister, map[string]interface{}{"stackkit": "basement-kit"}); err != nil {
-		t.Fatalf("persist without projection: %v", err)
-	}
-	if _, err := os.Stat(stale); !os.IsNotExist(err) {
-		t.Fatalf("stale projected doc must be removed, stat err = %v", err)
 	}
 }

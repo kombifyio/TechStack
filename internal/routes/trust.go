@@ -3,14 +3,12 @@
 package routes
 
 import (
-	"github.com/pocketbase/pocketbase/core"
-
 	"github.com/kombifyio/techstack/internal/routes/trust"
 	"github.com/kombifyio/techstack/pkg/httpx"
 )
 
 type TrustRouteStores = trust.RouteStores
 
-func RegisterTrustRoutesWithStores(r *httpx.Router, app core.App, stores TrustRouteStores) { // pocketbase-migration-compat: legacy app bridge while trust stores are wired
-	trust.RegisterRoutesWithStores(r, app, stores)
+func RegisterTrustRoutesWithStores(r *httpx.Router, stores TrustRouteStores) {
+	trust.RegisterRoutesWithStores(r, stores)
 }

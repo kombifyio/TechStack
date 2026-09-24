@@ -107,13 +107,6 @@ func DefaultAlertRules() []AlertRule {
 			Message:  "Container is not running",
 		},
 		{
-			Name:     "ProcessMissing",
-			Expr:     `process_pattern_up == 0`,
-			For:      2 * time.Minute,
-			Severity: "warning",
-			Message:  "Watched process not found",
-		},
-		{
 			// server_registry_outbox is bounded by the registry sweeper's 30d
 			// retention prune until the K6 projector lands; a growing estimate
 			// means the prune is not keeping up with accepted revisions.
@@ -174,30 +167,6 @@ func (e *AlertEngine) AllStates() []AlertState {
 		all = append(all, *s)
 	}
 	return all
-}
-
-// AddRule adds a new alert rule at runtime.
-func (e *AlertEngine) AddRule(rule AlertRule) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	e.rules = append(e.rules, rule)
-	e.states[rule.Name] = &AlertState{Rule: rule}
-}
-
-// RemoveRule removes an alert rule by name.
-func (e *AlertEngine) RemoveRule(name string) bool {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	for i, r := range e.rules {
-		if r.Name == name {
-			e.rules = append(e.rules[:i], e.rules[i+1:]...)
-			delete(e.states, name)
-			return true
-		}
-	}
-	return false
 }
 
 func (e *AlertEngine) evaluate(ctx context.Context) {

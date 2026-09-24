@@ -159,6 +159,32 @@ func TestJobDetailsFromStoreReconstructsWaitingProjection(t *testing.T) {
 	}
 }
 
+func TestJobDetailsFromStoreDoesNotExposeReusableCredentials(t *testing.T) {
+	job := controlplane.Job{Message: "Bearer reusable-progress-secret", Result: map[string]any{
+		"registration_token": "kpt1.reusable-enrollment-secret",
+		"runtime":            map[string]any{"authorization": "Bearer reusable-runtime-secret", "status": "ready"},
+	}, Logs: []map[string]any{{"message": "Bearer reusable-log-secret", "credential": "private"}}}
+	details := jobDetailsFromStore(job)
+	encoded, err := json.Marshal(details)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(encoded)
+	progress, err := json.Marshal(jobProgressFromStore(job))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text += string(progress)
+	for _, forbidden := range []string{"reusable-enrollment-secret", "reusable-runtime-secret", "reusable-log-secret", "reusable-progress-secret", "private"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("owner job projection exposed credential material: %s", text)
+		}
+	}
+	if !strings.Contains(text, `"status":"ready"`) {
+		t.Fatalf("owner job projection dropped non-sensitive state: %s", text)
+	}
+}
+
 func TestAPIJobWaitProjectionDecodesPersistedJSONRepresentations(t *testing.T) {
 	const raw = `{"job_wait":{"state":"waiting","reason":"waiting_enrollment","next_resume_at":"2026-07-19T08:15:00Z"}}`
 	tests := []struct {
@@ -232,49 +258,6 @@ func TestAPIJobResumeAvailabilityUsesServerClockAndRejectsInvalidSchedule(t *tes
 	}
 }
 
-func TestLegacyJobProgressChangedCoversEveryPublicStatusField(t *testing.T) {
-	base := JobProgress{
-		ID:                "job-1",
-		State:             "running",
-		WaitReason:        "waiting_enrollment",
-		NextResumeAt:      "2026-07-19T08:15:00Z",
-		ResumeAvailableAt: "2026-07-19T08:17:00Z",
-		ResumeAvailable:   false,
-		Progress:          20,
-		Step:              "prepare_rollout",
-		CurrentStep:       "Preparing rollout",
-		Message:           "Waiting for enrollment",
-		Error:             "",
-		ErrorDetails:      "",
-	}
-	tests := map[string]func(*JobProgress){
-		"state":               func(current *JobProgress) { current.State = "failed" },
-		"wait reason":         func(current *JobProgress) { current.WaitReason = "" },
-		"next resume":         func(current *JobProgress) { current.NextResumeAt = "2026-07-19T08:16:00Z" },
-		"resume available at": func(current *JobProgress) { current.ResumeAvailableAt = "2026-07-19T08:18:00Z" },
-		"resume available":    func(current *JobProgress) { current.ResumeAvailable = true },
-		"progress":            func(current *JobProgress) { current.Progress++ },
-		"step":                func(current *JobProgress) { current.Step = "verify_rollout" },
-		"current step":        func(current *JobProgress) { current.CurrentStep = "Verifying rollout" },
-		"message":             func(current *JobProgress) { current.Message = "New message" },
-		"error":               func(current *JobProgress) { current.Error = "rollout failed" },
-		"error details":       func(current *JobProgress) { current.ErrorDetails = "provider response" },
-	}
-
-	if legacyJobProgressChanged(base, base) {
-		t.Fatal("identical progress must not emit an SSE update")
-	}
-	for name, mutate := range tests {
-		t.Run(name, func(t *testing.T) {
-			current := base
-			mutate(&current)
-			if !legacyJobProgressChanged(base, current) {
-				t.Fatalf("change to %s was not detected", name)
-			}
-		})
-	}
-}
-
 func TestControlPlaneSSEDetectsErrorDetailsOnlyUpdate(t *testing.T) {
 	previous := jobProgressFromStore(controlplane.Job{
 		ID:           "job-error-details",
@@ -295,69 +278,19 @@ func TestControlPlaneSSEDetectsErrorDetailsOnlyUpdate(t *testing.T) {
 		ErrorDetails: "IONOS request id req-123 returned 503",
 	})
 
-	if !legacyJobProgressChanged(previous, current) {
+	if !jobProgressChanged(previous, current) {
 		t.Fatal("control-plane SSE suppressed an error_details-only update")
 	}
 }
 
-func TestConfiguredStoreJobDetailsReturnsAuthorizedJob(t *testing.T) {
-	t.Cleanup(func() { ConfigureJobRouteStores(JobRouteStores{}) })
+func TestJobDetailRouteReadsCanonicalStore(t *testing.T) {
 	store := controlplane.NewMemoryStore()
-	ConfigureJobRouteStores(JobRouteStores{Stacks: store, Jobs: store})
-	mustCreateJobStoreStack(t, store, "tenant-1", "stack-owned", "user-1")
-	mustCreateJob(t, store, "tenant-1", "job-1", "stack-owned", "provision", "running")
-
-	details, handled, err := configuredStoreJobDetails(jobStoreEvent("user-1", "tenant-1"), "user-1", "job-1")
-	if err != nil {
-		t.Fatalf("configuredStoreJobDetails: %v", err)
-	}
-	if !handled {
-		t.Fatal("configuredStoreJobDetails handled = false, want true")
-	}
-	if details["id"] != "job-1" || details["state"] != "running" {
-		t.Fatalf("details = %#v, want job-1 running", details)
-	}
-}
-
-func TestConfiguredStoreJobDetailsFallsBackWhenStoreJobMissing(t *testing.T) {
-	t.Cleanup(func() { ConfigureJobRouteStores(JobRouteStores{}) })
-	store := controlplane.NewMemoryStore()
-	ConfigureJobRouteStores(JobRouteStores{Stacks: store, Jobs: store})
-
-	details, handled, err := configuredStoreJobDetails(jobStoreEvent("user-1", "tenant-1"), "user-1", "job-missing")
-	if err != nil {
-		t.Fatalf("configuredStoreJobDetails: %v", err)
-	}
-	if handled || details != nil {
-		t.Fatalf("details=%#v handled=%v, want legacy fallback", details, handled)
-	}
-}
-
-func TestConfiguredStoreJobDetailsFallsBackWhenStoreStackProjectionMissing(t *testing.T) {
-	t.Cleanup(func() { ConfigureJobRouteStores(JobRouteStores{}) })
-	store := controlplane.NewMemoryStore()
-	ConfigureJobRouteStores(JobRouteStores{Stacks: store, Jobs: store})
-	mustCreateJob(t, store, "tenant-1", "job-1", "stack-missing", "provision", "failed")
-
-	details, handled, err := configuredStoreJobDetails(jobStoreEvent("user-1", "tenant-1"), "user-1", "job-1")
-	if err != nil {
-		t.Fatalf("configuredStoreJobDetails: %v", err)
-	}
-	if handled || details != nil {
-		t.Fatalf("details=%#v handled=%v, want legacy fallback for missing stack projection", details, handled)
-	}
-}
-
-func TestLegacyPocketBaseJobRecordRouteReadsControlPlaneStore(t *testing.T) {
-	t.Cleanup(func() { ConfigureJobRouteStores(JobRouteStores{}) })
-	store := controlplane.NewMemoryStore()
-	ConfigureJobRouteStores(JobRouteStores{Stacks: store, Jobs: store})
 	mustCreateJobStoreStack(t, store, "tenant-1", "stack-owned", "user-1")
 	mustCreateJob(t, store, "tenant-1", "job-1", "stack-owned", "provision", "running")
 
 	router := httpx.NewRouter()
-	RegisterJobsSSERoutes(router, nil)
-	req := httptest.NewRequest(http.MethodGet, "/api/collections/jobs/records/job-1", nil)
+	RegisterJobsSSERoutes(router, JobRouteStores{Stacks: store, Jobs: store})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/job-1", nil)
 	req = req.WithContext(identity.NewContext(req.Context(), &identity.Identity{
 		UserID: "user-1",
 		OrgID:  "tenant-1",
@@ -369,25 +302,8 @@ func TestLegacyPocketBaseJobRecordRouteReadsControlPlaneStore(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	var payload map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("decode legacy job record: %v", err)
-	}
-	if payload["id"] != "job-1" || payload["state"] != "running" {
-		t.Fatalf("payload = %#v, want raw job record", payload)
-	}
-	if _, ok := payload["data"]; ok {
-		t.Fatalf("legacy record route must not wrap payload in data: %#v", payload)
-	}
-}
-
-func TestConfigureJobRouteStoresStoresBothInterfaces(t *testing.T) {
-	t.Cleanup(func() { ConfigureJobRouteStores(JobRouteStores{}) })
-	store := controlplane.NewMemoryStore()
-	ConfigureJobRouteStores(JobRouteStores{Stacks: store, Jobs: store})
-	got := currentJobRouteStores()
-	if got.Stacks == nil || got.Jobs == nil {
-		t.Fatalf("stores = %#v, want both configured", got)
+	if body := rec.Body.String(); !strings.Contains(body, "job-1") || !strings.Contains(body, "running") {
+		t.Fatalf("canonical job response missing job state: %s", body)
 	}
 }
 

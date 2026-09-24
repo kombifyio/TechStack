@@ -81,6 +81,14 @@ func inventoryReadScopeForAuthorization(authorization InventoryAuthorization) (c
 		// A successful collection read relation does not implicitly grant every
 		// owner's rows. Regular read/operate decisions stay SQL owner-scoped;
 		// only the explicit admin relation can issue a tenant collection scope.
+		//
+		// That admin branch is unreachable today, and deliberately so:
+		// inventoryFGARelationForAuthorization returns no relation for
+		// InventoryActionAdmin, so the action is denied before it can reach
+		// FGA (TestInventoryFGAPolicyRejectsRelationsMissingFromThePinnedModel).
+		// The relation is not in the pinned authorization model, and failing
+		// closed is the point. The branch stays as the shape this takes once
+		// the model carries it — it is not dead code to delete.
 		if authorization.Action != InventoryActionAdmin {
 			return controlplane.NewOwnerInventoryReadScope(tenantID, authorization.SubjectID)
 		}
@@ -91,7 +99,10 @@ func inventoryReadScopeForAuthorization(authorization InventoryAuthorization) (c
 }
 
 func inventorySignedEntitlementAllows(ctx context.Context, action InventoryAction) bool {
-	entitlements, ok := middleware.SignedEntitlementsFromContext(ctx)
+	// Inventory is the one surface that intentionally accepts the server-owned
+	// membership fallback beside Edge-signed grants (see
+	// contextWithMembershipAuthorization); Edge-signed grants always win.
+	entitlements, _, ok := middleware.AuthorizedEntitlementsFromContext(ctx)
 	if !ok {
 		return false
 	}

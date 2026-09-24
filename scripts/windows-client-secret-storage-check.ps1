@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $programPath = Join-Path $root "clients\windows\Kombify.TechStack.Client\Program.cs"
-$storePath = Join-Path $root "clients\windows\Kombify.TechStack.Client\WindowsCredentialStore.cs"
+$storePath = Join-Path $root "clients\windows\Kombify.Client.Shell\WindowsCredentialStore.cs"
 $resetPath = Join-Path $root "scripts\reset-windows-client-state.ps1"
 $smokePath = Join-Path $root "scripts\windows-client-installed-smoke.ps1"
 
@@ -56,7 +56,8 @@ foreach ($target in @(
     "kombify/techstack/cloud/stack/access-token",
     "kombify/techstack/cloud/stack/refresh-token",
     "kombify/techstack/local/runtime-session-secret",
-    "kombify/techstack/local/device-session-token"
+    "kombify/techstack/local/device-session-token",
+    "kombify/techstack/local/runtime-encryption-key"
 )) {
     if (!$reset.Contains($target)) {
         throw "Windows reset does not delete credential target: $target"

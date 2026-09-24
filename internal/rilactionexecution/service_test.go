@@ -10,19 +10,21 @@ import (
 	"github.com/kombifyio/techstack/pkg/ril/actioncontract"
 )
 
-func TestServiceExecutesOnceAndCommitsExactEvidence(t *testing.T) {
+func TestServiceCommitsExactEvidenceAfterCallerCancellation(t *testing.T) {
 	now := time.Date(2026, 7, 22, 7, 0, 0, 0, time.UTC)
 	request := testRequest(now)
 	evidence := testEvidence(t, request, now)
 	ledger := &testLedger{reservation: rilaction.LedgerReservation{
 		Disposition: rilaction.LedgerAcquired, ReservationToken: "reservation-000000001",
 	}}
-	dispatcher := &testDispatcher{evidence: evidence}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	dispatcher := &testDispatcher{evidence: evidence, afterExecute: cancel}
 	service, err := New(Config{Ledger: ledger, Dispatcher: dispatcher, Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := service.Execute(t.Context(), request, testAdmissionDigest)
+	got, err := service.Execute(ctx, request, testAdmissionDigest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,20 +136,27 @@ func (l *testLedger) Reserve(_ context.Context, request rilaction.LedgerReservat
 	return l.reservation, l.reserveErr
 }
 
-func (l *testLedger) Complete(_ context.Context, completion rilaction.LedgerCompletion) error {
+func (l *testLedger) Complete(ctx context.Context, completion rilaction.LedgerCompletion) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	l.completeCalls++
 	l.completion = completion
 	return l.completeErr
 }
 
 type testDispatcher struct {
-	evidence rilaction.Evidence
-	err      error
-	calls    int
+	evidence     rilaction.Evidence
+	err          error
+	calls        int
+	afterExecute func()
 }
 
 func (d *testDispatcher) Execute(context.Context, rilaction.Request) (rilaction.Evidence, error) {
 	d.calls++
+	if d.afterExecute != nil {
+		d.afterExecute()
+	}
 	return d.evidence, d.err
 }
 

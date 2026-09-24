@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/promql/parser"
@@ -95,7 +96,7 @@ func (m *MonitorTSDB) Write(samples []MetricSample) error {
 
 	for _, s := range samples {
 		lblMap := make(map[string]string, len(s.Labels)+1)
-		lblMap[labels.MetricName] = s.Name
+		lblMap[model.MetricNameLabel] = s.Name
 		for k, v := range s.Labels {
 			lblMap[k] = v
 		}
@@ -123,9 +124,9 @@ type QueryResult struct {
 type MetricsQueryBackend interface {
 	InstantQuery(ctx context.Context, query string, ts time.Time) (*QueryResult, error)
 	RangeQuery(ctx context.Context, query string, start, end time.Time, step time.Duration) (*QueryResult, error)
-	LabelNames(ctx context.Context) ([]string, error)
-	LabelValues(ctx context.Context, name string) ([]string, error)
-	MetricNames(ctx context.Context) ([]string, error)
+	LabelNames(ctx context.Context, matchers ...*labels.Matcher) ([]string, error)
+	LabelValues(ctx context.Context, name string, matchers ...*labels.Matcher) ([]string, error)
+	MetricNames(ctx context.Context, matchers ...*labels.Matcher) ([]string, error)
 	Stats(ctx context.Context) (*TSDBStats, error)
 }
 
@@ -168,7 +169,7 @@ func (m *MonitorTSDB) RangeQuery(ctx context.Context, query string, start, end t
 }
 
 // LabelNames returns all known label names in the TSDB.
-func (m *MonitorTSDB) LabelNames(ctx context.Context) ([]string, error) {
+func (m *MonitorTSDB) LabelNames(ctx context.Context, matchers ...*labels.Matcher) ([]string, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -178,12 +179,12 @@ func (m *MonitorTSDB) LabelNames(ctx context.Context) ([]string, error) {
 	}
 	defer q.Close()
 
-	names, _, err := q.LabelNames(ctx, nil)
+	names, _, err := q.LabelNames(ctx, nil, matchers...)
 	return names, err
 }
 
 // LabelValues returns known values for a label name.
-func (m *MonitorTSDB) LabelValues(ctx context.Context, name string) ([]string, error) {
+func (m *MonitorTSDB) LabelValues(ctx context.Context, name string, matchers ...*labels.Matcher) ([]string, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -193,13 +194,13 @@ func (m *MonitorTSDB) LabelValues(ctx context.Context, name string) ([]string, e
 	}
 	defer q.Close()
 
-	vals, _, err := q.LabelValues(ctx, name, nil)
+	vals, _, err := q.LabelValues(ctx, name, nil, matchers...)
 	return vals, err
 }
 
 // MetricNames returns all distinct __name__ values (metric names) in the TSDB.
-func (m *MonitorTSDB) MetricNames(ctx context.Context) ([]string, error) {
-	return m.LabelValues(ctx, labels.MetricName)
+func (m *MonitorTSDB) MetricNames(ctx context.Context, matchers ...*labels.Matcher) ([]string, error) {
+	return m.LabelValues(ctx, model.MetricNameLabel, matchers...)
 }
 
 // SeriesCount returns an approximate count of active series.

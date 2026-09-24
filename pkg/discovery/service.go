@@ -37,27 +37,6 @@ type Service struct {
 	scanTTL time.Duration
 }
 
-// NewService creates a new discovery service.
-// Deprecated: Use New() with options instead for better configurability.
-func NewService(config *DiscoveryConfig) *Service {
-	if config == nil {
-		config = DefaultConfig()
-	}
-
-	return &Service{
-		config:      config,
-		scanner:     NewScanner(config),
-		prober:      NewProber(30 * time.Second),
-		cache:       make(map[string]*DiscoveredDevice),
-		scans:       make(map[string]*ScanResult),
-		scanCancels: make(map[string]context.CancelFunc),
-		logger:      slog.Default(),
-		cacheTTL:    5 * time.Minute,
-		maxScans:    100,
-		scanTTL:     1 * time.Hour,
-	}
-}
-
 // StartScan initiates a network discovery scan and returns immediately with
 // a running ScanResult (scan_id). The actual scan is executed asynchronously
 // and progress updates are stored in-memory and available via GetScanStatus.

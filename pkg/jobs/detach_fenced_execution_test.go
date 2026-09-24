@@ -6,17 +6,22 @@ import (
 	"time"
 )
 
+func queueWithDetachedTestJob(job *Job) *Queue {
+	q := NewQueue(1, nil)
+	q.jobsMu.Lock()
+	q.jobs[job.ID] = job
+	q.jobsMu.Unlock()
+	return q
+}
+
 // A durable fence means another executor owns the row. This process must stop
 // driving the job, not merely stop reporting on it - otherwise two processes
 // act on one job against real providers, and updated_at freezes on a job that
 // is still alive.
 func TestDetachFencedExecutionCancelsTheRunningHandler(t *testing.T) {
-	q := NewQueue(1, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	job := &Job{ID: "job-fenced", State: JobStateRunning, cancelFunc: cancel}
-	q.jobsMu.Lock()
-	q.jobs[job.ID] = job
-	q.jobsMu.Unlock()
+	q := queueWithDetachedTestJob(job)
 
 	if !q.DetachFencedExecution(job.ID, "claimed elsewhere") {
 		t.Fatal("DetachFencedExecution reported no running execution to detach")
@@ -46,12 +51,9 @@ func TestDetachFencedExecutionCancelsTheRunningHandler(t *testing.T) {
 
 // Detaching must never invent a running execution, and must still suppress
 // persistence for a non-terminal job this process no longer owns.
-func TestDetachFencedExecutionOnWaitingJobSuppressesWithoutClaimingADetach(t *testing.T) {
-	q := NewQueue(1, nil)
+func TestDetachFencedExecutionDoesNotClaimNonRunningJobs(t *testing.T) {
 	job := &Job{ID: "job-waiting", State: JobStateWaiting}
-	q.jobsMu.Lock()
-	q.jobs[job.ID] = job
-	q.jobsMu.Unlock()
+	q := queueWithDetachedTestJob(job)
 
 	if q.DetachFencedExecution(job.ID, "") {
 		t.Fatal("a waiting job has no running execution to detach")
@@ -61,17 +63,12 @@ func TestDetachFencedExecutionOnWaitingJobSuppressesWithoutClaimingADetach(t *te
 	if !job.suppressPersistence {
 		t.Fatal("a fenced waiting job must stop persisting over the new owner")
 	}
-}
-
-func TestDetachFencedExecutionIsSafeForAnUnknownJob(t *testing.T) {
-	q := NewQueue(1, nil)
 	if q.DetachFencedExecution("absent", "") {
 		t.Fatal("an unknown job must not report a detach")
 	}
 }
 
 func TestDetachFencedExecutionIfUnchangedDoesNotCancelNewResumeClaim(t *testing.T) {
-	q := NewQueue(1, nil)
 	waiting := JobSnapshot{ID: "job-resumed", Type: JobTypeProvision, State: JobStateWaiting}
 	startedAt := time.Now().UTC()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -80,9 +77,7 @@ func TestDetachFencedExecutionIfUnchangedDoesNotCancelNewResumeClaim(t *testing.
 		ID: waiting.ID, Type: waiting.Type, State: JobStateRunning,
 		StartedAt: &startedAt, cancelFunc: cancel,
 	}
-	q.jobsMu.Lock()
-	q.jobs[job.ID] = job
-	q.jobsMu.Unlock()
+	q := queueWithDetachedTestJob(job)
 
 	if q.DetachFencedExecutionIfUnchanged(job.ID, waiting, "claimed elsewhere") {
 		t.Fatal("stale waiting snapshot detached the newly claimed execution")

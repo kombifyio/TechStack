@@ -136,13 +136,6 @@ func managedRuntimeLeaseMachineEvidence(item managedRuntimeInventoryItem, hasCan
 // gone (pkg/monthlyruntime: runtimeObservedStateNotFound).
 const managedRuntimeObservedStateNotFound = "not_found"
 
-func requestTenantID(e *httpx.Event, fallback string) string {
-	if tenantID := requestExplicitTenantID(e); tenantID != "" {
-		return tenantID
-	}
-	return strings.TrimSpace(fallback)
-}
-
 func requestExplicitTenantID(e *httpx.Event) string {
 	if e != nil && e.Request != nil {
 		if id := identity.FromContext(e.Request.Context()); id != nil && strings.TrimSpace(id.OrgID) != "" {
@@ -548,7 +541,7 @@ func stackServerFromManagedRuntime(item managedRuntimeInventoryItem) stackOperat
 		Role:             item.Role,
 		Status:           item.Status,
 		Assignment:       managedRuntimeAssignStack,
-		TechstackID:      item.StackID,
+		KitDeploymentID:  item.StackID,
 		AgentID:          item.ID,
 		IP:               item.IP,
 		OS:               managedRuntimeOSLinux,

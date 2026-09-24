@@ -139,86 +139,65 @@ func TestServiceDecommissionTimeoutIsBlockedBeforeEdgeTimeout(t *testing.T) {
 	}
 }
 
-func TestServiceForceDecommissionCancelsLeaseAndEnqueuesReconciliation(t *testing.T) {
-	now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
-	leases := newLeaseServiceWith(t, now, enrollmentStatusEnrolled)
-	runtime := &fakeRuntimeClient{err: errors.New("dial tcp: no route to host")}
-	reconciler := &fakeReconciler{durable: true}
-	svc := &Service{Leases: nativeLeaseService(leases), Runtime: runtime, Features: fakeFeatureChecker{enabled: true}, Reconcile: reconciler}
+func TestServiceNativeDecommissionWithoutRuntimeEnqueuesReconciliation(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		force  bool
+		reason string
+	}{
+		{name: "owner requested", reason: "owner_requested_decommission"},
+		{name: "forced", force: true, reason: "force_decommission_unreachable"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
+			leases := newLeaseServiceWith(t, now, enrollmentStatusEnrolled)
+			reconciler := &fakeReconciler{durable: true}
+			svc := &Service{Leases: nativeLeaseService(leases), Features: fakeFeatureChecker{enabled: true}, Reconcile: reconciler}
 
-	resp, err := svc.Action(context.Background(), ActionRequest{
-		TenantID: "org-1", UserID: "user-1", LeaseID: "lease-1",
-		Action: serverruntime.RuntimeActionDecommission, Force: true,
-	})
-	if err != nil {
-		t.Fatalf("force decommission err = %v", err)
-	}
-	if resp == nil {
-		t.Fatal("force decommission returned nil response")
-	}
-	if len(runtime.requests) != 0 {
-		t.Fatalf("force decommission must NOT contact the runtime, got %d calls", len(runtime.requests))
-	}
-	if len(reconciler.calls) != 1 {
-		t.Fatalf("reconciler called %d times, want exactly 1 (leak safety)", len(reconciler.calls))
-	}
-	if reconciler.calls[0].LeaseID != "lease-1" {
-		t.Errorf("reconciliation lease = %q, want lease-1", reconciler.calls[0].LeaseID)
-	}
-	if reconciler.calls[0].ResourceGenerationDigest == "" {
-		t.Fatal("reconciliation request is missing the claimed resource generation digest")
-	}
-	stored, err := leases.Get(context.Background(), "org-1", "lease-1")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if stored.CancelledAt == nil {
-		t.Fatal("force decommission must cancel the lease")
-	}
-	if stored.Metadata["force_decommission_requested_at"] == "" {
-		t.Error("force_decommission_requested_at metadata not set")
-	}
-	if stored.Metadata["force_decommission_requested_by"] != "user-1" {
-		t.Errorf("force_decommission_requested_by = %q, want user-1", stored.Metadata["force_decommission_requested_by"])
-	}
-	if resp.ObservedState != runtimeObservedStateReconciliationPending || resp.LeaseState != runtimeObservedStateReconciliationPending {
-		t.Fatalf("force response = %#v, want honest reconciliation_pending state", resp)
-	}
-	wantDigest, err := vmleases.ResourceGenerationDigest("org-1", *stored)
-	if err != nil {
-		t.Fatalf("ResourceGenerationDigest: %v", err)
-	}
-	if got := reconciler.calls[0].ResourceGenerationDigest; got != wantDigest || stored.Metadata[vmleases.MetadataKeyDecommissionClaimDigest] != wantDigest {
-		t.Fatalf("force generation binding: request=%q claim=%q want=%q", got, stored.Metadata[vmleases.MetadataKeyDecommissionClaimDigest], wantDigest)
-	}
-	events, err := leases.ListOperations(context.Background(), "org-1", "lease-1", 10)
-	if err != nil {
-		t.Fatalf("ListOperations: %v", err)
-	}
-	if len(events) != 1 || events[0].EventType != vmleases.OperationEventDecommission || events[0].Status != vmleases.OperationStatusPending || events[0].ResourceGenerationDigest != wantDigest {
-		t.Fatalf("journal = %+v, force must record pending exact reconciliation rather than provider success", events)
-	}
-}
-
-func TestServiceForceDecommissionAbortsWhenEnqueueFails(t *testing.T) {
-	now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
-	leases := newLeaseServiceWith(t, now, enrollmentStatusEnrolled)
-	reconciler := &fakeReconciler{err: errors.New("queue full"), durable: true}
-	svc := &Service{Leases: nativeLeaseService(leases), Runtime: &fakeRuntimeClient{}, Features: fakeFeatureChecker{enabled: true}, Reconcile: reconciler}
-
-	_, err := svc.Action(context.Background(), ActionRequest{
-		TenantID: "org-1", UserID: "user-1", LeaseID: "lease-1",
-		Action: serverruntime.RuntimeActionDecommission, Force: true,
-	})
-	if err == nil {
-		t.Fatal("force decommission should fail when reconciliation enqueue fails")
-	}
-	stored, err := leases.Get(context.Background(), "org-1", "lease-1")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if stored.CancelledAt != nil {
-		t.Fatal("lease must NOT be canceled when reconciliation enqueue fails (VM leak safety)")
+			resp, err := svc.Action(context.Background(), ActionRequest{
+				TenantID: "org-1", UserID: "user-1", LeaseID: "lease-1",
+				Action: serverruntime.RuntimeActionDecommission, Force: test.force,
+			})
+			if err != nil {
+				t.Fatalf("decommission without runtime client: %v", err)
+			}
+			if resp == nil {
+				t.Fatal("decommission returned nil response")
+			}
+			if len(reconciler.calls) != 1 || reconciler.calls[0].LeaseID != "lease-1" || reconciler.calls[0].Reason != test.reason {
+				t.Fatalf("reconciliation = %+v, want one %q request for lease-1", reconciler.calls, test.reason)
+			}
+			if reconciler.calls[0].ResourceGenerationDigest == "" {
+				t.Fatal("reconciliation request is missing the claimed resource generation digest")
+			}
+			stored, err := leases.Get(context.Background(), "org-1", "lease-1")
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			if stored.CancelledAt == nil {
+				t.Fatal("decommission must cancel the lease")
+			}
+			if test.force && (stored.Metadata["force_decommission_requested_at"] == "" || stored.Metadata["force_decommission_requested_by"] != "user-1") {
+				t.Fatalf("force metadata = %+v, want timestamp and user-1 actor", stored.Metadata)
+			}
+			if resp.ObservedState != runtimeObservedStateReconciliationPending || resp.LeaseState != runtimeObservedStateReconciliationPending {
+				t.Fatalf("response = %#v, want honest reconciliation_pending state", resp)
+			}
+			wantDigest, err := vmleases.ResourceGenerationDigest("org-1", *stored)
+			if err != nil {
+				t.Fatalf("ResourceGenerationDigest: %v", err)
+			}
+			if got := reconciler.calls[0].ResourceGenerationDigest; got != wantDigest || stored.Metadata[vmleases.MetadataKeyDecommissionClaimDigest] != wantDigest {
+				t.Fatalf("generation binding: request=%q claim=%q want=%q", got, stored.Metadata[vmleases.MetadataKeyDecommissionClaimDigest], wantDigest)
+			}
+			events, err := leases.ListOperations(context.Background(), "org-1", "lease-1", 10)
+			if err != nil {
+				t.Fatalf("ListOperations: %v", err)
+			}
+			if len(events) != 1 || events[0].EventType != vmleases.OperationEventDecommission || events[0].Status != vmleases.OperationStatusPending || events[0].ResourceGenerationDigest != wantDigest {
+				t.Fatalf("journal = %+v, want pending exact reconciliation rather than provider success", events)
+			}
+		})
 	}
 }
 
@@ -256,45 +235,44 @@ func TestServiceForceDecommissionRedispatchesExactClaimOnCanceledLease(t *testin
 	}
 }
 
-func TestServiceForceDecommissionFailsClosedWhenCustodyIsNotDurable(t *testing.T) {
-	now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
-	leases := newLeaseServiceWith(t, now, enrollmentStatusEnrolled)
-	reconciler := &fakeReconciler{}
-	svc := &Service{Leases: nativeLeaseService(leases), Runtime: &fakeRuntimeClient{}, Features: fakeFeatureChecker{enabled: true}, Reconcile: reconciler}
+func TestServiceForceDecommissionFailuresDoNotCancelLease(t *testing.T) {
+	queueErr := errors.New("queue full")
+	for _, test := range []struct {
+		name       string
+		reconciler ReconciliationEnqueuer
+		wantErr    error
+		wantCalls  int
+	}{
+		{name: "missing reconciler", wantErr: ErrReconciliationUnavailable},
+		{name: "non-durable reconciler", reconciler: &fakeReconciler{}, wantErr: ErrReconciliationUnavailable},
+		{name: "enqueue failure", reconciler: &fakeReconciler{err: queueErr, durable: true}, wantErr: queueErr, wantCalls: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
+			leases := newLeaseServiceWith(t, now, enrollmentStatusEnrolled)
+			svc := &Service{Leases: nativeLeaseService(leases), Reconcile: test.reconciler}
 
-	_, err := svc.Action(context.Background(), ActionRequest{
-		TenantID: "org-1", UserID: "user-1", LeaseID: "lease-1",
-		Action: serverruntime.RuntimeActionDecommission, Force: true,
-	})
-	if !errors.Is(err, ErrReconciliationUnavailable) {
-		t.Fatalf("err = %v, want ErrReconciliationUnavailable", err)
-	}
-	if len(reconciler.calls) != 0 {
-		t.Fatalf("unsafe reconciler calls = %d, want zero", len(reconciler.calls))
-	}
-	stored, getErr := leases.Get(context.Background(), "org-1", "lease-1")
-	if getErr != nil {
-		t.Fatalf("Get: %v", getErr)
-	}
-	if stored.CancelledAt != nil {
-		t.Fatal("unsafe custody must not cancel the lease")
-	}
-	if stored.Metadata["runtime_observed_state"] == runtimeObservedStateReconciliationPending || stored.Metadata["provider_reconciliation_status"] != "" {
-		t.Fatalf("unsafe custody mutated reconciliation metadata: %#v", stored.Metadata)
-	}
-}
-
-func TestServiceForceDecommissionRefusedWithoutReconciler(t *testing.T) {
-	now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
-	leases := newLeaseServiceWith(t, now, enrollmentStatusEnrolled)
-	svc := &Service{Leases: nativeLeaseService(leases), Runtime: &fakeRuntimeClient{}, Features: fakeFeatureChecker{enabled: true}} // no Reconcile
-
-	_, err := svc.Action(context.Background(), ActionRequest{
-		TenantID: "org-1", UserID: "user-1", LeaseID: "lease-1",
-		Action: serverruntime.RuntimeActionDecommission, Force: true,
-	})
-	if !errors.Is(err, ErrReconciliationUnavailable) {
-		t.Fatalf("err = %v, want ErrReconciliationUnavailable", err)
+			_, err := svc.Action(t.Context(), ActionRequest{
+				TenantID: "org-1", UserID: "user-1", LeaseID: "lease-1",
+				Action: serverruntime.RuntimeActionDecommission, Force: true,
+			})
+			if !errors.Is(err, test.wantErr) {
+				t.Fatalf("Action error = %v, want %v", err, test.wantErr)
+			}
+			if reconciler, ok := test.reconciler.(*fakeReconciler); ok && len(reconciler.calls) != test.wantCalls {
+				t.Fatalf("reconciler calls = %d, want %d", len(reconciler.calls), test.wantCalls)
+			}
+			stored, err := leases.Get(t.Context(), "org-1", "lease-1")
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			if stored.CancelledAt != nil {
+				t.Fatal("failed force decommission must not cancel the lease")
+			}
+			if stored.Metadata["runtime_observed_state"] == runtimeObservedStateReconciliationPending || stored.Metadata["provider_reconciliation_status"] != "" {
+				t.Fatalf("failed force decommission projected pending reconciliation: %#v", stored.Metadata)
+			}
+		})
 	}
 }
 
@@ -328,65 +306,43 @@ func TestServiceReconnectConvergesToEnrolledAndIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestServiceReconnectRejectsInconclusiveSuccessfulProbe(t *testing.T) {
-	now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
-	leases := newLeaseServiceWith(t, now, EnrollmentStatusPending)
-	runtime := &fakeRuntimeClient{response: &serverruntime.LeaseRuntimeActionResponse{
-		ObservedState: "offline",
-		Status:        &serverruntime.NodeStatus{ID: "node-1", State: "offline"},
-		Metadata:      map[string]string{"connection_state": "offline"},
-	}}
-	svc := &Service{Leases: nativeLeaseService(leases), Runtime: runtime, Features: fakeFeatureChecker{enabled: true}}
-
-	if _, err := svc.Reconnect(context.Background(), ActionRequest{TenantID: "org-1", UserID: "user-1", LeaseID: "lease-1"}); !errors.Is(err, ErrEnrollmentPending) {
-		t.Fatalf("Reconnect error = %v, want ErrEnrollmentPending", err)
-	}
-	stored, err := leases.Get(context.Background(), "org-1", "lease-1")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if stored.Metadata["runtime_enrollment_status"] != EnrollmentStatusPending {
-		t.Fatalf("enrollment status = %q, want pending", stored.Metadata["runtime_enrollment_status"])
-	}
-}
-
-func TestServiceReconnectReturnsPatchFailure(t *testing.T) {
-	now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
-	leases := newLeaseServiceWith(t, now, EnrollmentStatusPending)
+func TestServiceReconnectFailuresPreservePendingEnrollment(t *testing.T) {
+	probeErr := errors.New("dial tcp: no route to host")
 	patchErr := errors.New("persist enrollment")
-	authority := &failingReconnectPatchLeaseService{nativeActiveLeaseService: nativeLeaseService(leases), err: patchErr}
-	runtime := &fakeRuntimeClient{response: &serverruntime.LeaseRuntimeActionResponse{
-		ObservedState: "running",
-		Metadata:      map[string]string{"connection_state": "connected"},
-	}}
-	svc := &Service{Leases: authority, Runtime: runtime, Features: fakeFeatureChecker{enabled: true}}
+	for _, test := range []struct {
+		name       string
+		response   *serverruntime.LeaseRuntimeActionResponse
+		runtimeErr error
+		patchErr   error
+		wantErr    error
+	}{
+		{name: "inconclusive probe", response: &serverruntime.LeaseRuntimeActionResponse{ObservedState: "offline"}, wantErr: ErrEnrollmentPending},
+		{name: "probe failure", runtimeErr: probeErr, wantErr: probeErr},
+		{name: "persistence failure", response: &serverruntime.LeaseRuntimeActionResponse{ObservedState: "running"}, patchErr: patchErr, wantErr: patchErr},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
+			leases := newLeaseServiceWith(t, now, EnrollmentStatusPending)
+			var authority LeaseAuthority = nativeLeaseService(leases)
+			if test.patchErr != nil {
+				authority = &failingReconnectPatchLeaseService{nativeActiveLeaseService: nativeLeaseService(leases), err: test.patchErr}
+			}
+			svc := &Service{
+				Leases:   authority,
+				Runtime:  &fakeRuntimeClient{response: test.response, err: test.runtimeErr},
+				Features: fakeFeatureChecker{enabled: true},
+			}
 
-	if _, err := svc.Reconnect(context.Background(), ActionRequest{TenantID: "org-1", UserID: "user-1", LeaseID: "lease-1"}); !errors.Is(err, patchErr) {
-		t.Fatalf("Reconnect error = %v, want patch failure", err)
-	}
-	stored, err := leases.Get(context.Background(), "org-1", "lease-1")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if stored.Metadata["runtime_enrollment_status"] != EnrollmentStatusPending {
-		t.Fatalf("enrollment status = %q, want pending", stored.Metadata["runtime_enrollment_status"])
-	}
-}
-
-func TestServiceReconnectReturnsErrorWhenProbeFails(t *testing.T) {
-	now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
-	leases := newLeaseServiceWith(t, now, EnrollmentStatusPending)
-	runtime := &fakeRuntimeClient{err: errors.New("dial tcp: no route to host")}
-	svc := &Service{Leases: nativeLeaseService(leases), Runtime: runtime, Features: fakeFeatureChecker{enabled: true}}
-
-	if _, err := svc.Reconnect(context.Background(), ActionRequest{TenantID: "org-1", UserID: "user-1", LeaseID: "lease-1"}); err == nil {
-		t.Fatal("Reconnect should return the probe error when the runtime is unreachable")
-	}
-	stored, err := leases.Get(context.Background(), "org-1", "lease-1")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if stored.Metadata["runtime_enrollment_status"] != EnrollmentStatusPending {
-		t.Errorf("enrollment status changed to %q on a failed probe, want pending", stored.Metadata["runtime_enrollment_status"])
+			if _, err := svc.Reconnect(t.Context(), ActionRequest{TenantID: "org-1", UserID: "user-1", LeaseID: "lease-1"}); !errors.Is(err, test.wantErr) {
+				t.Fatalf("Reconnect error = %v, want %v", err, test.wantErr)
+			}
+			stored, err := leases.Get(t.Context(), "org-1", "lease-1")
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			if stored.Metadata["runtime_enrollment_status"] != EnrollmentStatusPending {
+				t.Fatalf("enrollment status = %q, want pending", stored.Metadata["runtime_enrollment_status"])
+			}
+		})
 	}
 }

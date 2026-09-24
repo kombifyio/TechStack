@@ -104,8 +104,7 @@ test.describe("Embedded SSO session (mock-free)", () => {
   }) => {
     const ctx = await playwright.request.newContext({ baseURL: API_BASE });
     let reprojectionCtx:
-      | Awaited<ReturnType<typeof playwright.request.newContext>>
-      | undefined;
+      Awaited<ReturnType<typeof playwright.request.newContext>> | undefined;
     try {
       const token = mintSsoToken(SSO_SECRET as string);
 

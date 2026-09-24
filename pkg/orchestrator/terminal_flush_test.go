@@ -37,9 +37,10 @@ func newTerminalFlushFixture(t *testing.T) (*Orchestrator, *controlplane.MemoryS
 	if started.State != "running" {
 		t.Fatalf("seed state = %q, want running", started.State)
 	}
-	orch := NewWithApp(missingPocketBaseApp{}, &Config{
+	orch := New(&Config{
 		Workers: 1, StackStore: store, JobStore: store, WorkerStore: store,
 	}, nil)
+
 	t.Cleanup(orch.Stop)
 	return orch, store, now
 }

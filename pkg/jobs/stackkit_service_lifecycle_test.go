@@ -60,3 +60,11 @@ func TestStackKitServiceActionDurableIdentityAndLogProjection(t *testing.T) {
 		t.Fatalf("service logs missing: %#v", result)
 	}
 }
+
+func TestNormalizeStackKitRemoveRejectsMissingTerminalEvidence(t *testing.T) {
+	req := StackKitLifecycleRequest{Operation: StackKitLifecycleRemove, WorkloadRef: "photos"}
+	envelope := []byte(`{"schemaVersion":"stackkit.command-result/v1","command":"stackkit remove","status":"success","data":{}}`)
+	if _, err := normalizeStackKitLifecycleResult(req, &agentpb.StackKitResult{Success: true, CommandResultJson: envelope}); err == nil {
+		t.Fatal("normalizeStackKitLifecycleResult() accepted remove without terminal evidence")
+	}
+}

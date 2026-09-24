@@ -3,7 +3,7 @@
    * Toast - Modern notification component
    * Uses CSS variables and lucide-svelte icons
    */
-  import { toasts, type Toast } from "$lib/stores/toast";
+  import { toasts, type Toast } from "#lib/stores/toast.js";
   import { fly, fade } from "svelte/transition";
   import { CheckCircle, XCircle, AlertTriangle, Info, X } from "@lucide/svelte";
 
@@ -15,16 +15,16 @@
   };
 
   const colorMap = {
-    success: "bg-emerald-600/90 border-emerald-500/50",
+    success: "bg-success/90 border-success/50",
     error: "bg-destructive/90 border-destructive/50",
-    warning: "bg-amber-600/90 border-amber-500/50",
+    warning: "bg-warning/90 border-warning/50",
     info: "bg-primary/90 border-primary/50",
   };
 
   const iconColors = {
-    success: "text-emerald-200",
-    error: "text-red-200",
-    warning: "text-amber-200",
+    success: "text-success-foreground",
+    error: "text-destructive-foreground",
+    warning: "text-warning-foreground",
     info: "text-primary",
   };
 </script>

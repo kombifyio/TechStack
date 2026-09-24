@@ -35,16 +35,6 @@ func IsDemoTenant(tenantID string) bool {
 	return demo != "" && strings.TrimSpace(tenantID) == demo
 }
 
-// DemoOwnerID returns the first configured demo subject id (the owner used when
-// the demo automation provisions the anchor stack on the shared demo account),
-// falling back to the demo tenant id. Returns "" when nothing is configured.
-func DemoOwnerID() string {
-	for _, id := range splitList(os.Getenv(EnvDemoUserIDs)) {
-		return id
-	}
-	return DemoTenantID()
-}
-
 // IsDemoUser reports whether userID is one of the configured demo subject ids.
 func IsDemoUser(userID string) bool {
 	userID = strings.TrimSpace(userID)
@@ -77,11 +67,6 @@ func IsProtectedLease(leaseID string) bool {
 		}
 	}
 	return false
-}
-
-// ProtectedLeaseIDs returns the configured anchor lease ids.
-func ProtectedLeaseIDs() []string {
-	return splitList(os.Getenv(EnvDemoProtectedLeaseIDs))
 }
 
 func splitList(raw string) []string {

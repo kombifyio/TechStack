@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kombifyio/go-common/runtimeexecutor"
+	"github.com/kombifyio/techstack/internal/gocommon/runtimeexecutor"
 )
 
 func TestStackKitOperationsProcessUsesFixedAuthenticatedBoundary(t *testing.T) {
@@ -77,7 +77,7 @@ func TestStackKitOperationsProcessPreservesActionableRejectionEnvelope(t *testin
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(http.StatusUnprocessableEntity)
-		_, _ = writer.Write([]byte(`{"error":{"code":"STACKKIT_OPERATION_REJECTED","message":"Managed StackKits operation was rejected","details":{"reason_code":"backup_binding_stale","retryable":true,"user_guidance":"Regenerate the StackKits Inventory."}}}`))
+		_, _ = writer.Write([]byte(`{"error":{"code":"STACKKIT_OPERATION_REJECTED","message":"Managed StackKits operation was rejected","details":{"reason_code":"backup_binding_stale","retryable":true,"user_guidance":{"title":"Regenerate the StackKits Inventory","body":"The backup binding is stale.","next_steps":["Regenerate the StackKits Inventory."]}}}}`))
 	}))
 	defer server.Close()
 	err := executeStackKitOperationsProcess(
@@ -89,8 +89,47 @@ func TestStackKitOperationsProcessPreservesActionableRejectionEnvelope(t *testin
 	)
 	if err == nil || !strings.Contains(err.Error(), "reason=backup_binding_stale") ||
 		!strings.Contains(err.Error(), "retryable=true") ||
-		!strings.Contains(err.Error(), "guidance=Regenerate the StackKits Inventory.") {
+		!strings.Contains(err.Error(), "guidance=Regenerate the StackKits Inventory") {
 		t.Fatalf("actionable rejection = %v", err)
+	}
+}
+
+func TestStackKitOperationsProcessAcceptsTopLevelDenialEnvelope(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusForbidden)
+		_, _ = writer.Write([]byte(`{"error_code":"stackkit_operation_rejected","reason_code":"backup_binding_stale","retryable":true,"user_guidance":{"title":"Regenerate the StackKits Inventory","body":"The backup binding is stale.","next_steps":["Regenerate the StackKits Inventory."]}}`))
+	}))
+	defer server.Close()
+	err := executeStackKitOperationsProcess(
+		context.Background(),
+		bytes.NewReader(encodeOperationsRequest(t, "stack-1")),
+		&bytes.Buffer{},
+		writeOperationsEnrollment(t, server.URL),
+		server.Client(),
+	)
+	if err == nil || !strings.Contains(err.Error(), "reason=backup_binding_stale") ||
+		!strings.Contains(err.Error(), "guidance=Regenerate the StackKits Inventory") {
+		t.Fatalf("top-level denial envelope = %v", err)
+	}
+}
+
+func TestStackKitOperationsProcessRejectsStringUserGuidance(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = writer.Write([]byte(`{"error":{"code":"STACKKIT_OPERATION_REJECTED","message":"Managed StackKits operation was rejected","details":{"reason_code":"backup_binding_stale","retryable":true,"user_guidance":"Regenerate the StackKits Inventory."}}}`))
+	}))
+	defer server.Close()
+	err := executeStackKitOperationsProcess(
+		context.Background(),
+		bytes.NewReader(encodeOperationsRequest(t, "stack-1")),
+		&bytes.Buffer{},
+		writeOperationsEnrollment(t, server.URL),
+		server.Client(),
+	)
+	if err == nil || !strings.Contains(err.Error(), "invalid error envelope") {
+		t.Fatalf("string user_guidance must fail closed, got %v", err)
 	}
 }
 

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	commonedgeauth "github.com/kombifyio/go-common/edgeauth"
+	commonedgeauth "github.com/kombifyio/techstack/internal/gocommon/edgeauth"
 
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/identity"

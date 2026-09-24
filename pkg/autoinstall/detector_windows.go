@@ -103,9 +103,8 @@ func (d *detector) installOpenTofu(ctx context.Context) (*InstallResult, error) 
 	}
 	defer os.Remove(tmpFile)
 
-	// Extract
-	installDir := filepath.Join(os.Getenv("ProgramFiles"), "kombifyTechstack", "bin")
-	if err := os.MkdirAll(installDir, 0755); err != nil {
+	installDir, installRoot, err := openWindowsInstallRoot()
+	if err != nil {
 		return &InstallResult{
 			Dependency: dep,
 			Success:    false,
@@ -113,8 +112,9 @@ func (d *detector) installOpenTofu(ctx context.Context) (*InstallResult, error) 
 			Strategy:   StrategyDownload,
 		}, nil
 	}
+	defer installRoot.Close()
 
-	if err := d.extractZip(tmpFile, installDir, binName); err != nil {
+	if err := d.extractZip(tmpFile, installRoot, binName); err != nil {
 		return &InstallResult{
 			Dependency: dep,
 			Success:    false,
@@ -176,8 +176,8 @@ func (d *detector) installCloudflared(ctx context.Context) (*InstallResult, erro
 	}
 	defer os.Remove(tmpFile)
 
-	installDir := filepath.Join(os.Getenv("ProgramFiles"), "kombifyTechstack", "bin")
-	if err := os.MkdirAll(installDir, 0755); err != nil {
+	installDir, installRoot, err := openWindowsInstallRoot()
+	if err != nil {
 		return &InstallResult{
 			Dependency: dep,
 			Success:    false,
@@ -185,10 +185,11 @@ func (d *detector) installCloudflared(ctx context.Context) (*InstallResult, erro
 			Strategy:   StrategyDownload,
 		}, nil
 	}
+	defer installRoot.Close()
 
 	// Copy exe
 	destPath := filepath.Join(installDir, binName)
-	if err := d.copyFile(tmpFile, destPath); err != nil {
+	if err := d.copyFile(tmpFile, installRoot, binName); err != nil {
 		return &InstallResult{
 			Dependency: dep,
 			Success:    false,
@@ -258,7 +259,7 @@ func (d *detector) downloadFile(ctx context.Context, url string) (string, error)
 }
 
 // extractZip extracts a specific file from a ZIP archive.
-func (d *detector) extractZip(zipPath, destDir, targetFile string) error {
+func (d *detector) extractZip(zipPath string, destRoot *os.Root, targetFile string) error {
 	r, err := zip.OpenReader(zipPath)
 	if err != nil {
 		return err
@@ -267,28 +268,21 @@ func (d *detector) extractZip(zipPath, destDir, targetFile string) error {
 
 	for _, f := range r.File {
 		if filepath.Base(f.Name) == targetFile {
-			destPath := filepath.Join(destDir, targetFile)
-			return d.extractZipFile(f, destPath)
+			return d.extractZipFile(f, destRoot, targetFile)
 		}
 	}
 
 	return fmt.Errorf("file %s not found in archive", targetFile)
 }
 
-func (d *detector) extractZipFile(f *zip.File, destPath string) error {
-	// Prevent Zip Slip vulnerability: validate extraction path
-	cleanDest := filepath.Clean(destPath)
-	if !strings.HasPrefix(cleanDest, filepath.Clean(filepath.Dir(destPath))) {
-		return fmt.Errorf("invalid extraction path (possible Zip Slip attack): %s", f.Name)
-	}
-
+func (d *detector) extractZipFile(f *zip.File, destRoot *os.Root, destName string) error {
 	rc, err := f.Open()
 	if err != nil {
 		return err
 	}
 	defer rc.Close()
 
-	out, err := os.OpenFile(cleanDest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+	out, err := destRoot.OpenFile(destName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode().Perm())
 	if err != nil {
 		return err
 	}
@@ -298,15 +292,15 @@ func (d *detector) extractZipFile(f *zip.File, destPath string) error {
 	return err
 }
 
-// copyFile copies a file.
-func (d *detector) copyFile(src, dest string) error {
+// copyFile copies a file into a confined installation root.
+func (d *detector) copyFile(src string, destRoot *os.Root, destName string) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
 
-	out, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0755)
+	out, err := destRoot.OpenFile(destName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0755)
 	if err != nil {
 		return err
 	}
@@ -314,6 +308,23 @@ func (d *detector) copyFile(src, dest string) error {
 
 	_, err = io.Copy(out, in)
 	return err
+}
+
+func openWindowsInstallRoot() (string, *os.Root, error) {
+	programFiles := strings.TrimSpace(os.Getenv("ProgramFiles"))
+	if programFiles == "" || !filepath.IsAbs(programFiles) {
+		return "", nil, fmt.Errorf("ProgramFiles must be an absolute path")
+	}
+	installDir := filepath.Join(programFiles, "kombifyTechstack", "bin")
+	// #nosec G703 -- ProgramFiles is the Windows process environment boundary and is required to be absolute.
+	if err := os.MkdirAll(installDir, 0755); err != nil {
+		return "", nil, err
+	}
+	installRoot, err := os.OpenRoot(installDir)
+	if err != nil {
+		return "", nil, err
+	}
+	return installDir, installRoot, nil
 }
 
 // addToPath adds a directory to the system PATH.

@@ -1,4 +1,4 @@
-//nolint:goconst,gocyclo,govet,dupl // Closed wire validation keeps each accepted value and correlation check explicit.
+//nolint:goconst,govet,dupl // Closed wire validation keeps each accepted value and correlation check explicit.
 package rilaction
 
 import (
@@ -66,6 +66,30 @@ func ValidateEvidenceForRequest(request Request, evidence Evidence) error {
 	if err != nil {
 		return err
 	}
+	if err := validateEvidenceCorrelation(request, evidence, requestDigest, evidenceID, targetRef); err != nil {
+		return err
+	}
+	if err := validateEvidenceOutcome(evidence); err != nil {
+		return err
+	}
+	if err := validateEvidenceSummaryCodes(evidence.SummaryCodes); err != nil {
+		return err
+	}
+	if evidence.ProtectedDiagnosticRef != "" {
+		if err := validateOpaqueRef("evidence.protected_diagnostic_ref", evidence.ProtectedDiagnosticRef, "diagnostic"); err != nil {
+			return err
+		}
+	}
+	return validateEvidenceAuthorityWindow(request, evidence.EvaluatedAt)
+}
+
+func validateEvidenceCorrelation(
+	request Request,
+	evidence Evidence,
+	requestDigest string,
+	evidenceID string,
+	targetRef string,
+) error {
 	exact := map[string][2]string{
 		"evidence_id":             {evidence.EvidenceID, evidenceID},
 		"evidence_sink_ref":       {evidence.EvidenceSinkRef, request.EvidenceSinkRef},
@@ -85,6 +109,10 @@ func ValidateEvidenceForRequest(request Request, evidence Evidence) error {
 			return invalid("evidence."+field, "does not match the approved request")
 		}
 	}
+	return nil
+}
+
+func validateEvidenceOutcome(evidence Evidence) error {
 	if evidence.Status != "succeeded" && evidence.Status != "failed" {
 		return invalid("evidence.status", "is unsupported")
 	}
@@ -103,23 +131,26 @@ func ValidateEvidenceForRequest(request Request, evidence Evidence) error {
 	if evidence.Status == "succeeded" && evidence.Recovery.Kind != "none" {
 		return invalid("evidence.recovery", "must be not-required when the action succeeded")
 	}
-	if len(evidence.SummaryCodes) == 0 || len(evidence.SummaryCodes) > MaxSummaryCodes {
+	return nil
+}
+
+func validateEvidenceSummaryCodes(summaryCodes []string) error {
+	if len(summaryCodes) == 0 || len(summaryCodes) > MaxSummaryCodes {
 		return invalid("evidence.summary_codes", "must contain a bounded non-empty set")
 	}
-	for index, code := range evidence.SummaryCodes {
+	for index, code := range summaryCodes {
 		if err := validateContractID(fmt.Sprintf("evidence.summary_codes[%d]", index), code); err != nil {
 			return err
 		}
-		if index > 0 && evidence.SummaryCodes[index-1] >= code {
+		if index > 0 && summaryCodes[index-1] >= code {
 			return invalid("evidence.summary_codes", "must be strictly sorted and unique")
 		}
 	}
-	if evidence.ProtectedDiagnosticRef != "" {
-		if err := validateOpaqueRef("evidence.protected_diagnostic_ref", evidence.ProtectedDiagnosticRef, "diagnostic"); err != nil {
-			return err
-		}
-	}
-	evaluatedAt, err := parseTimestamp("evidence.evaluated_at", evidence.EvaluatedAt)
+	return nil
+}
+
+func validateEvidenceAuthorityWindow(request Request, rawEvaluatedAt string) error {
+	evaluatedAt, err := parseTimestamp("evidence.evaluated_at", rawEvaluatedAt)
 	if err != nil {
 		return err
 	}

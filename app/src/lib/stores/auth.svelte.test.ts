@@ -2,7 +2,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("$app/environment", () => ({
+vi.mock("$app/env", () => ({
   browser: true,
 }));
 
@@ -10,7 +10,7 @@ vi.mock("$app/navigation", () => ({
   goto: vi.fn(),
 }));
 
-vi.mock("$lib/api/auth", () => ({
+vi.mock("#lib/api/auth.js", () => ({
   getAuthMode: vi.fn(),
   getV2AuthProviders: vi.fn(),
   getV2WhoAmI: vi.fn(),
@@ -21,16 +21,16 @@ vi.mock("$lib/api/auth", () => ({
   verifyPortalToken: vi.fn(),
 }));
 
-vi.mock("$lib/auth/pocketbase-compat", () => ({
-  clearPocketBaseCompatStoredSession: vi.fn(),
-  getPocketBaseCompatStoredUser: vi.fn(() => null),
-  isPocketBaseAuthCompatEnabled: vi.fn(() => false),
-  savePocketBaseCompatStoredSession: vi.fn(),
-}));
-
-vi.mock("$lib/stores/stackIdentity", () => ({
+vi.mock("#lib/stores/stackIdentity.js", () => ({
   clearStackIdentity: vi.fn(),
   setStackIdentity: vi.fn(),
+}));
+
+vi.mock("#lib/auth/gateway-auth.js", () => ({
+  clearGatewayAuth: vi.fn(async () => undefined),
+  completeGatewayRedirectIfPresent: vi.fn(async () => null),
+  getGatewayToken: vi.fn(async () => "tok_abc"),
+  startGatewayLogin: vi.fn(async () => false),
 }));
 
 import { goto } from "$app/navigation";
@@ -40,8 +40,14 @@ import {
   getV2WhoAmI,
   logoutLocalSession,
   verifyPortalToken,
-} from "$lib/api/auth";
-import { rememberWindowsLocalClientContext } from "$lib/client/windows-onboarding";
+} from "#lib/api/auth.js";
+import {
+  clearGatewayAuth,
+  completeGatewayRedirectIfPresent,
+  getGatewayToken,
+  startGatewayLogin,
+} from "#lib/auth/gateway-auth.js";
+import { rememberWindowsLocalClientContext } from "#lib/client/windows-onboarding.js";
 import { authStore } from "./auth.svelte";
 
 describe("authStore cloud login redirects", () => {
@@ -84,6 +90,20 @@ describe("authStore cloud login redirects", () => {
     expect(redirect).toHaveBeenCalledWith(redirectURL);
   });
 
+  it("asks Auth0 for an interactive Universal Login when renewing a dead gateway session", () => {
+    const redirect = vi.fn();
+    authStore.v2LoginUrl = "/api/v2/auth/login";
+
+    const redirectURL = authStore.initiateCloudLogin({
+      returnTo: "/dashboard",
+      interactive: true,
+      redirect,
+    });
+
+    expect(new URL(redirectURL ?? "").searchParams.get("prompt")).toBe("login");
+    expect(redirect).toHaveBeenCalledWith(redirectURL);
+  });
+
   it("sanitizes unsafe return targets before redirecting", () => {
     const redirect = vi.fn();
     authStore.v2LoginUrl = "/api/v2/auth/login";
@@ -94,7 +114,7 @@ describe("authStore cloud login redirects", () => {
     });
 
     expect(new URL(redirectURL ?? "").searchParams.get("return_to")).toBe(
-      "/stacks",
+      "/dashboard",
     );
     expect(redirect).toHaveBeenCalledWith(redirectURL);
   });
@@ -130,6 +150,108 @@ describe("authStore cloud login redirects", () => {
     expect(authStore.deploymentMode).toBe("saas");
   });
 
+  it("navigates to the SPA gateway return path after claiming the callback", async () => {
+    vi.mocked(getAuthMode).mockResolvedValue({
+      mode: "cloud",
+      deployment_mode: "saas",
+      is_first_run: false,
+      cloud_auth_url: "/api/v2/auth/login",
+      portal_url: "https://app.kombify.io",
+      allow_local_login: false,
+    });
+    vi.mocked(getV2AuthProviders).mockResolvedValue([
+      {
+        id: "primary",
+        kind: "auth0",
+        issuer: "https://login.kombify.io/",
+      },
+    ]);
+    vi.mocked(getV2WhoAmI).mockResolvedValue({
+      subject: "auth0|demo",
+      tenantId: "default",
+      email: "demo@kombified.com",
+      provider: "primary",
+    });
+    vi.mocked(completeGatewayRedirectIfPresent).mockResolvedValueOnce(
+      "/dashboard",
+    );
+
+    await authStore.init();
+
+    expect(goto).toHaveBeenCalledWith("/dashboard");
+    expect(startGatewayLogin).not.toHaveBeenCalled();
+  });
+
+  it("starts a SPA gateway login when the cookie session has no API token", async () => {
+    window.sessionStorage.clear();
+    vi.mocked(getAuthMode).mockResolvedValue({
+      mode: "cloud",
+      deployment_mode: "saas",
+      is_first_run: false,
+      cloud_auth_url: "/api/v2/auth/login",
+      portal_url: "https://app.kombify.io",
+      allow_local_login: false,
+    });
+    vi.mocked(getV2AuthProviders).mockResolvedValue([
+      {
+        id: "primary",
+        kind: "auth0",
+        issuer: "https://login.kombify.io/",
+      },
+    ]);
+    vi.mocked(getV2WhoAmI).mockResolvedValue({
+      subject: "auth0|demo",
+      tenantId: "default",
+      email: "demo@kombified.com",
+      provider: "primary",
+    });
+    vi.mocked(getGatewayToken).mockRejectedValueOnce(
+      new Error("login_required"),
+    );
+    vi.mocked(startGatewayLogin).mockResolvedValueOnce(true);
+
+    await authStore.init();
+
+    expect(startGatewayLogin).toHaveBeenCalledWith(
+      expect.objectContaining({ interactive: false }),
+    );
+  });
+
+  it("adopts a renewed cookie session after the initial page boot", async () => {
+    vi.mocked(getAuthMode).mockResolvedValue({
+      mode: "cloud",
+      deployment_mode: "saas",
+      is_first_run: false,
+      cloud_auth_url: "/api/v2/auth/login",
+      portal_url: "https://app.kombify.io",
+      allow_local_login: false,
+    });
+    vi.mocked(getV2AuthProviders).mockResolvedValue([
+      {
+        id: "primary",
+        kind: "auth0",
+        issuer: "https://login.kombify.io/",
+      },
+    ]);
+    vi.mocked(getV2WhoAmI)
+      .mockRejectedValueOnce(new Error("expired cookie session"))
+      .mockResolvedValueOnce({
+        subject: "auth0|renewed-user",
+        tenantId: "default",
+        email: "renewed@example.test",
+        provider: "primary",
+      });
+
+    await authStore.init();
+    expect(authStore.v2SessionActive).toBe(false);
+
+    await expect(authStore.refreshSession()).resolves.toBe(true);
+
+    expect(getV2WhoAmI).toHaveBeenCalledTimes(2);
+    expect(authStore.v2SessionActive).toBe(true);
+    expect(authStore.cloudUser?.sub).toBe("auth0|renewed-user");
+  });
+
   it("defers same-origin whoami until the embedded portal exchange", async () => {
     vi.mocked(getAuthMode).mockResolvedValue({
       mode: "cloud",
@@ -152,8 +274,6 @@ describe("authStore cloud login redirects", () => {
     authStore.deploymentMode = "saas";
     authStore.allowLocalLogin = true;
     vi.mocked(verifyPortalToken).mockResolvedValue({
-      pb_token: "portal-session",
-      user: { id: "user-1", email: "owner@example.test", name: "Owner" },
       cloud_user: {
         sub: "auth0|user-1",
         email: "owner@example.test",
@@ -177,6 +297,7 @@ describe("authStore cloud login redirects", () => {
 
     await authStore.logout({ manualLogin: true, redirect });
 
+    expect(clearGatewayAuth).toHaveBeenCalled();
     expect(redirect).toHaveBeenCalledWith(
       "/api/v2/auth/logout?next=%2Fauth%2Fcloud-logout",
     );
@@ -206,8 +327,6 @@ describe("authStore cloud login redirects", () => {
       "1000000",
     );
     vi.mocked(verifyPortalToken).mockResolvedValue({
-      pb_token: "portal-session",
-      user: { id: "user-1", email: "owner@example.test", name: "Owner" },
       cloud_user: {
         sub: "auth0|user-1",
         email: "owner@example.test",
@@ -240,8 +359,6 @@ describe("authStore cloud login redirects", () => {
     authStore.deploymentMode = "saas";
     authStore.allowLocalLogin = true;
     vi.mocked(verifyPortalToken).mockResolvedValue({
-      pb_token: "portal-session",
-      user: { id: "user-1", email: "owner@example.test", name: "Owner" },
       cloud_user: {
         sub: "auth0|user-1",
         email: "owner@example.test",

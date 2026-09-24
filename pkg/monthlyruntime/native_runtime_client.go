@@ -31,9 +31,10 @@ func (e *NativeRuntimeActionUnsupportedError) Unwrap() error {
 }
 
 // NativeRuntimeActionUnsupportedDetails preserves actionable, stable guidance
-// when a provider capability is deliberately unavailable. Managed IONOS and
-// centron currently advertise can_pause=false and stop_effect=destroy, so a
-// fake successful power action would either keep billing or lose the server.
+// when an action has no configured native executor in this deployment. Start,
+// stop and SSH enable/disable are served by the provider-control power
+// controller and the execution-channel SSH controller; this envelope is only
+// reached when that composition is absent, so nothing was dispatched.
 func NativeRuntimeActionUnsupportedDetails(err error) map[string]any {
 	action := serverruntime.RuntimeAction("")
 	var unsupported *NativeRuntimeActionUnsupportedError
@@ -43,32 +44,39 @@ func NativeRuntimeActionUnsupportedDetails(err error) map[string]any {
 	reasonCode := "native_action_not_implemented"
 	title := "This managed-server action is not available"
 	body := "Techstack did not dispatch a provider mutation. Refresh the server state or choose a supported lifecycle action."
+	retryable := false
+	nextSteps := []string{
+		"Refresh the managed server to see its current provider and Guard state.",
+		"Use decommission only when you intend to permanently remove the managed server.",
+	}
 	switch action {
-	case serverruntime.RuntimeActionStop:
-		reasonCode = "provider_pause_unsupported"
-		title = "This managed server cannot be paused"
-		body = "IONOS and centron currently define stop as destroy, not pause. Use decommission only when you intend to remove the managed server."
-	case serverruntime.RuntimeActionStart:
-		reasonCode = "provider_recreate_not_ready"
-		title = "Managed-server recreation is not ready"
-		body = "Starting after provider teardown requires a new generation-bound provision operation. No provider mutation was dispatched."
+	case serverruntime.RuntimeActionStop, serverruntime.RuntimeActionStart:
+		reasonCode = "managed_power_control_unavailable"
+		title = "Managed power control is not available"
+		body = "This Techstack deployment has no provider-control power executor configured. No provider or node change was made."
 	case serverruntime.RuntimeActionEnableSSH, serverruntime.RuntimeActionDisableSSH:
-		reasonCode = "managed_ssh_lifecycle_not_ready"
-		title = "Managed SSH lifecycle is not ready"
-		body = "SSH access changes require the provider-control custody path. No provider mutation was dispatched."
+		reasonCode = "managed_ssh_access_unavailable"
+		title = "Managed SSH access control is not available"
+		body = "This Techstack deployment has no execution-channel SSH controller configured. No node change was made."
+	case serverruntime.RuntimeActionSSHInfo:
+		reasonCode = "managed_ssh_custody_pending"
+		title = "Managed SSH access is not ready"
+		body = "The exact lease has no provider-controlled SSH target in custody yet. No credential or provider mutation was exposed."
+		retryable = true
+		nextSteps = []string{
+			"Refresh the managed server after provider provisioning and Guard inventory have converged.",
+			"If access remains unavailable, use the lease ID to inspect its provider operation and credential-custody evidence.",
+		}
 	}
 	return map[string]any{
 		"error_code":  NativeRuntimeActionUnsupportedErrorCode,
 		"reason_code": reasonCode,
 		"action":      string(action),
-		"retryable":   false,
+		"retryable":   retryable,
 		"user_guidance": map[string]any{
-			"title": title,
-			"body":  body,
-			"next_steps": []string{
-				"Refresh the managed server to see its current provider and Guard state.",
-				"Use decommission only when you intend to permanently remove the managed server.",
-			},
+			"title":      title,
+			"body":       body,
+			"next_steps": nextSteps,
 		},
 	}
 }
@@ -77,12 +85,23 @@ type NativeRuntimeClient struct {
 	Servers controlplane.ServerRuntimeStore
 }
 
+func (client *NativeRuntimeClient) validateRuntimeAction(action serverruntime.RuntimeAction) error {
+	if action != serverruntime.RuntimeActionStatus {
+		return &NativeRuntimeActionUnsupportedError{Action: action}
+	}
+	return nil
+}
+
+func (client *NativeRuntimeClient) enrollmentAuthoritative() bool {
+	return client != nil && client.Servers != nil
+}
+
 // RuntimeAction serves status from the native provider-bound server aggregate.
-// Mutations remain fail-closed until the provider-control ledger owns their
-// exact generation-bound dispatch in the lifecycle slice.
+// It never mutates: start/stop and SSH changes are served by the Service's
+// power and SSH controllers, which the Service dispatches before this client.
 func (client *NativeRuntimeClient) RuntimeAction(ctx context.Context, req serverruntime.LeaseRuntimeActionRequest) (*serverruntime.LeaseRuntimeActionResponse, error) {
-	if req.Action != serverruntime.RuntimeActionStatus {
-		return nil, &NativeRuntimeActionUnsupportedError{Action: req.Action}
+	if err := client.validateRuntimeAction(req.Action); err != nil {
+		return nil, err
 	}
 	if client == nil || client.Servers == nil {
 		return nil, fmt.Errorf("%w: server registry is not configured", ErrNativeRuntimeObservationUnavailable)
@@ -111,7 +130,8 @@ func (client *NativeRuntimeClient) RuntimeAction(ctx context.Context, req server
 	observedState, reasonCode := nativeObservedState(*server)
 	publicIP := firstNativeRuntimeMetadata(req.Metadata, "runtime_public_ip", "public_ip", "ssh_host")
 	return &serverruntime.LeaseRuntimeActionResponse{
-		TenantID: tenantID, LeaseID: leaseID, Action: req.Action, OfferingID: req.OfferingID,
+		SSHEnabled: ownerSSHAccessStateEnabled(server.Metadata),
+		TenantID:   tenantID, LeaseID: leaseID, Action: req.Action, OfferingID: req.OfferingID,
 		ProviderID: providerID, DesiredState: strings.TrimSpace(server.DesiredState),
 		ObservedState: observedState, LeaseState: strings.TrimSpace(server.LifecycleState),
 		Status: &serverruntime.NodeStatus{

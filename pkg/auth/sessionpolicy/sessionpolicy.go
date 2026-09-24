@@ -4,7 +4,7 @@ package sessionpolicy
 import (
 	"time"
 
-	"github.com/kombifyio/go-common/authsession"
+	"github.com/kombifyio/techstack/internal/gocommon/authsession"
 )
 
 // BrowserSessionLifetime is the product-level lifetime for TechStack browser

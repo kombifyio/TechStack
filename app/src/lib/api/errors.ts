@@ -1,7 +1,7 @@
 import {
   normalizeServerOutcome,
   type ServerOutcome,
-} from "$lib/support/server-outcome";
+} from "#lib/support/server-outcome.js";
 
 export interface ParsedApiError {
   status: number;

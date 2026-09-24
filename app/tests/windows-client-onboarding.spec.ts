@@ -160,6 +160,13 @@ test("windows client local setup creates a real owner session and reaches Wallet
       body: JSON.stringify({ data: null }),
     });
   });
+  await page.route("**/api/v1/homelab", async (route) => {
+    await route.fulfill({
+      status: 404,
+      contentType: "application/json",
+      body: JSON.stringify({ reason_code: "homelab_not_found" }),
+    });
+  });
 
   await page.goto("/client/local?client=windows", {
     waitUntil: "domcontentloaded",
@@ -176,7 +183,7 @@ test("windows client local setup creates a real owner session and reaches Wallet
   await page.getByTestId("windows-local-admin-password").fill("testpass123");
   await page.getByTestId("windows-local-setup-submit").click();
 
-  await expect(page).toHaveURL(/\/stacks$/);
+  await expect(page).toHaveURL(/\/dashboard$/);
   expect(setupCalled).toBe(true);
   expect(loginCalled).toBe(true);
   await expect(page.getByTestId("stacks-dashboard")).toBeVisible();
@@ -186,8 +193,8 @@ test("windows client local setup creates a real owner session and reaches Wallet
   await expect(page.locator("[data-wallet-tab-nav]")).toBeVisible();
 
   await page.getByRole("link", { name: "Dashboard" }).click();
-  await expect(page).toHaveURL(/\/stacks$/);
-  await page.getByRole("link", { name: "Get started" }).click();
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await page.getByRole("button", { name: "Get started" }).click();
   await expect(page).toHaveURL(/\/stacks\/new$/);
   await expect(page.getByTestId("easy-wizard")).toBeVisible();
 });
@@ -286,7 +293,7 @@ test("windows client with existing local owner signs in without the legacy login
   await page.getByTestId("windows-local-existing-password").fill("testpass123");
   await page.getByTestId("windows-local-existing-submit").click();
 
-  await expect(page).toHaveURL(/\/stacks$/);
+  await expect(page).toHaveURL(/\/dashboard$/);
   expect(loginCalled).toBe(true);
   await expect(page.getByTestId("stacks-dashboard")).toBeVisible();
   await expect
@@ -365,7 +372,7 @@ test("windows client with active local session opens dashboard and logs out to l
     waitUntil: "domcontentloaded",
   });
 
-  await expect(page).toHaveURL(/\/stacks$/);
+  await expect(page).toHaveURL(/\/dashboard$/);
   await expect(page.getByTestId("stacks-dashboard")).toBeVisible();
 
   await page.getByRole("button", { name: /owner@test\.local/i }).click();
@@ -446,7 +453,7 @@ test("windows cloud login exposes default-browser handoff for password managers"
   expect(href).toBeTruthy();
   const url = new URL(href!, page.url());
   expect(url.pathname).toBe("/api/v2/auth/login");
-  expect(url.searchParams.get("return_to")).toBe("/stacks");
+  expect(url.searchParams.get("return_to")).toBe("/dashboard");
   expect(url.searchParams.get("client")).toBe("windows");
   expect(url.searchParams.get("open_browser")).toBe("1");
 });

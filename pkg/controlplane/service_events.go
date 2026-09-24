@@ -19,6 +19,7 @@ const (
 	serviceDimensionObserved   = "observed"
 	serviceDimensionHealth     = "health"
 	serviceDimensionManagement = "management"
+	serviceDimensionLock       = "mutation_lock"
 
 	serviceInstanceDefault = "default"
 	serviceSourceObserved  = serviceregistry.SourceObserved
@@ -104,61 +105,18 @@ type preparedServiceEvent struct {
 	applied     bool
 }
 
-//nolint:gocyclo // Admission validates the complete command envelope before authority dispatch.
 func prepareServiceEvent(current *serviceAggregateHead, event ServiceEvent, now time.Time) (*preparedServiceEvent, error) {
-	event.TenantID = strings.TrimSpace(event.TenantID)
-	event.ServiceID = strings.TrimSpace(event.ServiceID)
-	event.Authority = strings.TrimSpace(event.Authority)
-	event.Source = strings.TrimSpace(event.Source)
-	event.ReasonCode = strings.TrimSpace(event.ReasonCode)
-	if event.Source == "" {
-		event.Source = event.Authority
-	}
-	if event.ObservedAt.IsZero() {
-		event.ObservedAt = now.UTC()
-	} else {
-		event.ObservedAt = event.ObservedAt.UTC()
-	}
-	if event.TenantID == "" || event.ServiceID == "" {
-		return nil, fmt.Errorf("controlplane: service event tenant and service id required")
-	}
-	if event.Authority != ServiceEventAuthorityControlPlane && event.Authority != ServiceEventAuthorityGuard {
-		return nil, fmt.Errorf("%w: unsupported service event authority %q", ErrConflict, event.Authority)
-	}
-	if len(event.Source) > 128 || len(event.ReasonCode) > 128 {
-		return nil, fmt.Errorf("%w: service event source and reason code are bounded to 128 bytes", ErrConflict)
-	}
-	patch := event.Runtime
-	if trimmed := strings.TrimSpace(patch.TenantID); trimmed != "" && trimmed != event.TenantID {
-		return nil, fmt.Errorf("%w: service event tenant does not match runtime patch", ErrConflict)
-	}
-	if trimmed := strings.TrimSpace(patch.ID); trimmed != "" && trimmed != event.ServiceID {
-		return nil, fmt.Errorf("%w: service event id does not match runtime patch", ErrConflict)
-	}
-	if event.Authority == ServiceEventAuthorityControlPlane &&
-		(strings.TrimSpace(patch.ObservedState) != "" || strings.TrimSpace(patch.HealthState) != "") {
-		return nil, fmt.Errorf("%w: control plane cannot mutate measured service observation", ErrConflict)
-	}
-	if event.Authority == ServiceEventAuthorityGuard && serviceregistry.PlacementIntentPresent(patch.Placement) {
-		return nil, fmt.Errorf("%w: Guard cannot mutate service placement", ErrConflict)
-	}
-
-	if err := validateServiceEventRevision(current, event); err != nil {
+	event = normalizeServiceEvent(event, now)
+	if err := validateServiceEventEnvelope(event); err != nil {
 		return nil, err
 	}
-	if current != nil && current.Exists {
-		if current.Runtime.TenantID != event.TenantID || current.Runtime.ID != event.ServiceID {
-			return nil, fmt.Errorf("%w: service event aggregate identity mismatch", ErrConflict)
-		}
-		if event.EnforceIdentityBinding {
-			if err := validateServiceIdentityBinding(*current, event); err != nil {
-				return nil, err
-			}
-		}
+	if err := validateCurrentServiceEvent(current, event); err != nil {
+		return nil, err
 	}
 
 	next := baseServiceHead(current, event, now)
 	applyServicePatch(&next, current, event)
+	applyServiceMutationLock(&next, event, now)
 	if err := validateServiceDesiredIntentApplies(next, event); err != nil {
 		return nil, err
 	}
@@ -172,6 +130,81 @@ func prepareServiceEvent(current *serviceAggregateHead, event ServiceEvent, now 
 	next.Revision++
 	next.Runtime.UpdatedAt = now.UTC()
 	return &preparedServiceEvent{head: next, transitions: transitions, applied: true}, nil
+}
+
+func normalizeServiceEvent(event ServiceEvent, now time.Time) ServiceEvent {
+	event.TenantID = strings.TrimSpace(event.TenantID)
+	event.ServiceID = strings.TrimSpace(event.ServiceID)
+	event.Authority = strings.TrimSpace(event.Authority)
+	event.Source = strings.TrimSpace(event.Source)
+	event.ReasonCode = strings.TrimSpace(event.ReasonCode)
+	if event.Source == "" {
+		event.Source = event.Authority
+	}
+	if event.ObservedAt.IsZero() {
+		event.ObservedAt = now.UTC()
+	} else {
+		event.ObservedAt = event.ObservedAt.UTC()
+	}
+	return event
+}
+
+func validateServiceEventEnvelope(event ServiceEvent) error {
+	if event.TenantID == "" || event.ServiceID == "" {
+		return fmt.Errorf("controlplane: service event tenant and service id required")
+	}
+	if event.Authority != ServiceEventAuthorityControlPlane && event.Authority != ServiceEventAuthorityGuard {
+		return fmt.Errorf("%w: unsupported service event authority %q", ErrConflict, event.Authority)
+	}
+	if len(event.Source) > 128 || len(event.ReasonCode) > 128 {
+		return fmt.Errorf("%w: service event source and reason code are bounded to 128 bytes", ErrConflict)
+	}
+	patch := event.Runtime
+	if trimmed := strings.TrimSpace(patch.TenantID); trimmed != "" && trimmed != event.TenantID {
+		return fmt.Errorf("%w: service event tenant does not match runtime patch", ErrConflict)
+	}
+	if trimmed := strings.TrimSpace(patch.ID); trimmed != "" && trimmed != event.ServiceID {
+		return fmt.Errorf("%w: service event id does not match runtime patch", ErrConflict)
+	}
+	if event.Authority == ServiceEventAuthorityControlPlane &&
+		(strings.TrimSpace(patch.ObservedState) != "" || strings.TrimSpace(patch.HealthState) != "") {
+		return fmt.Errorf("%w: control plane cannot mutate measured service observation", ErrConflict)
+	}
+	if event.Authority == ServiceEventAuthorityGuard && serviceregistry.PlacementIntentPresent(patch.Placement) {
+		return fmt.Errorf("%w: Guard cannot mutate service placement", ErrConflict)
+	}
+	// The mutation lock is an owner guardrail, not an observation. Guard reports
+	// what it measures and must never assert or clear it, and an unknown lock
+	// value is rejected here rather than silently normalized away.
+	if lock := strings.TrimSpace(string(patch.MutationLock.State)); lock != "" {
+		if event.Authority != ServiceEventAuthorityControlPlane {
+			return fmt.Errorf("%w: Guard cannot mutate the service mutation lock", ErrConflict)
+		}
+		if string(serviceregistry.CanonicalMutationLockState(lock)) != strings.ToLower(lock) {
+			return fmt.Errorf("%w: unsupported service mutation lock state %q", ErrConflict, lock)
+		}
+	}
+	if len(patch.MutationLock.ReasonCode) > 128 || len(patch.MutationLock.Actor) > 256 {
+		return fmt.Errorf("%w: service mutation lock reason and actor are bounded", ErrConflict)
+	}
+	return nil
+}
+
+func validateCurrentServiceEvent(current *serviceAggregateHead, event ServiceEvent) error {
+	if err := validateServiceEventRevision(current, event); err != nil {
+		return err
+	}
+	if current != nil && current.Exists {
+		if current.Runtime.TenantID != event.TenantID || current.Runtime.ID != event.ServiceID {
+			return fmt.Errorf("%w: service event aggregate identity mismatch", ErrConflict)
+		}
+		if event.EnforceIdentityBinding {
+			if err := validateServiceIdentityBinding(*current, event); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func validateServiceEventRevision(current *serviceAggregateHead, event ServiceEvent) error {
@@ -243,6 +276,7 @@ func baseServiceHead(current *serviceAggregateHead, event ServiceEvent, now time
 			// must not claim we manage it. applyServicePatch resolves the real
 			// value from the asserted provenance before the head is validated.
 			ManagementState: string(serviceregistry.ManagementObserved),
+			MutationLock:    ServiceMutationLock{State: serviceregistry.MutationUnlocked},
 			Source:          serviceSourceObserved,
 			CreatedAt:       now.UTC(),
 		},
@@ -263,6 +297,33 @@ func baseServiceHead(current *serviceAggregateHead, event ServiceEvent, now time
 //
 // Guard never asserts ownership: a measured observation proves what is running,
 // not who declared it.
+// applyServiceMutationLock resolves the owner guardrail. An event that does not
+// assert a lock state leaves the stored guardrail exactly as it is, so a routine
+// Guard observation can never clear a lock by omission. Reason and actor are
+// only meaningful while locked, so unlocking clears them together with the
+// timestamp - a stale "locked by X" line on an unlocked service would be a lie.
+func applyServiceMutationLock(next *serviceAggregateHead, event ServiceEvent, now time.Time) {
+	assertion := strings.TrimSpace(string(event.Runtime.MutationLock.State))
+	if assertion == "" {
+		next.Runtime.MutationLock.State = serviceregistry.CanonicalMutationLockState(
+			string(next.Runtime.MutationLock.State))
+		return
+	}
+	state := serviceregistry.CanonicalMutationLockState(assertion)
+	changed := next.Runtime.MutationLock.State != state
+	next.Runtime.MutationLock.State = state
+	if state == serviceregistry.MutationUnlocked {
+		next.Runtime.MutationLock = ServiceMutationLock{State: state}
+		return
+	}
+	next.Runtime.MutationLock.ReasonCode = strings.TrimSpace(event.Runtime.MutationLock.ReasonCode)
+	next.Runtime.MutationLock.Actor = strings.TrimSpace(event.Runtime.MutationLock.Actor)
+	if changed || next.Runtime.MutationLock.ChangedAt == nil {
+		stamp := now.UTC()
+		next.Runtime.MutationLock.ChangedAt = &stamp
+	}
+}
+
 func resolveServiceManagementState(next *serviceAggregateHead, current *serviceAggregateHead, event ServiceEvent) {
 	if assertion := strings.TrimSpace(event.Runtime.ManagementState); assertion != "" &&
 		event.Authority == ServiceEventAuthorityControlPlane {
@@ -446,12 +507,25 @@ func serviceEventTransitions(current *serviceAggregateHead, next serviceAggregat
 		{name: serviceDimensionObserved, to: next.Runtime.ObservedState},
 		{name: serviceDimensionHealth, to: next.Runtime.HealthState},
 		{name: serviceDimensionManagement, to: next.Runtime.ManagementState},
+		// Unlocked is the absence of a guardrail, so a newly created aggregate
+		// starts there rather than transitioning into it: a mutation_lock row
+		// always means an owner changed the guardrail.
+		{
+			name: serviceDimensionLock,
+			from: string(serviceregistry.MutationUnlocked),
+			to: string(
+				serviceregistry.CanonicalMutationLockState(string(next.Runtime.MutationLock.State))),
+		},
 	}
 	if current != nil && current.Exists {
 		dimensions[0].from = current.Runtime.DesiredState
 		dimensions[1].from = current.Runtime.ObservedState
 		dimensions[2].from = current.Runtime.HealthState
 		dimensions[3].from = current.Runtime.ManagementState
+		// An aggregate stored before the guardrail existed carries no lock
+		// value. That is the unlocked default, not a transition into it.
+		dimensions[4].from = string(
+			serviceregistry.CanonicalMutationLockState(string(current.Runtime.MutationLock.State)))
 	}
 	// An observed service has no declared target, so its stored desired_state is
 	// not a contract and must never enter the timeline as if it were one.
@@ -497,6 +571,14 @@ func serviceHeadUnchanged(current serviceAggregateHead, next serviceAggregateHea
 		left.HealthState != right.HealthState || left.ManagementState != right.ManagementState {
 		return false
 	}
+	// Canonicalized: an aggregate stored before the guardrail existed carries an
+	// empty value, which is the unlocked default rather than a change.
+	if serviceregistry.CanonicalMutationLockState(string(left.MutationLock.State)) !=
+		serviceregistry.CanonicalMutationLockState(string(right.MutationLock.State)) ||
+		left.MutationLock.ReasonCode != right.MutationLock.ReasonCode ||
+		left.MutationLock.Actor != right.MutationLock.Actor {
+		return false
+	}
 	if !serviceregistry.PlacementEqual(left.ServerID, left.Placement, right.Placement) {
 		return false
 	}
@@ -525,6 +607,7 @@ func canonicalServiceRuntimeStates(service ServiceRuntime) ServiceRuntime {
 	} else {
 		service.ManagementState = string(serviceregistry.CanonicalManagementState(service.ManagementState))
 	}
+	service.MutationLock.State = serviceregistry.CanonicalMutationLockState(string(service.MutationLock.State))
 	service.ServerID = strings.TrimSpace(service.ServerID)
 	service.Placement = serviceregistry.NormalizePlacement(service.ServerID, service.Placement)
 	return service

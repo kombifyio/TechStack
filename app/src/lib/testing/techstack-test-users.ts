@@ -1,10 +1,5 @@
 export type TechStackTestUserRole =
-  | "admin"
-  | "superuser"
-  | "developer"
-  | "oneliner"
-  | "remote"
-  | "cloud";
+  "admin" | "superuser" | "developer" | "oneliner" | "remote" | "cloud";
 
 export interface TechStackTestUser {
   email: string;
@@ -173,15 +168,24 @@ function describeCandidates(
     .join(" or ");
 }
 
+function candidateUsers(
+  role: TechStackTestUserRole,
+  env: EnvSource,
+): TechStackTestUser[] {
+  return ROLE_SECRET_CANDIDATES[role].map((candidate) => ({
+    email: readSecret(env, candidate.email),
+    password: readSecret(env, candidate.password),
+  }));
+}
+
 export function getTechStackTestUser(
   role: TechStackTestUserRole = "admin",
   env: EnvSource = process.env,
 ): TechStackTestUser {
-  for (const candidate of ROLE_SECRET_CANDIDATES[role]) {
-    const email = readSecret(env, candidate.email);
-    const password = readSecret(env, candidate.password);
-    if (email && password) return { email, password };
-  }
+  const configuredUser = candidateUsers(role, env).find(
+    (candidate) => candidate.email && candidate.password,
+  );
+  if (configuredUser) return configuredUser;
 
   const localBootstrapUser = getLocalBootstrapUser(role, env);
   if (localBootstrapUser) {
@@ -198,16 +202,17 @@ export function buildTechStackTestUserReadiness(
     (Object.keys(ROLE_SECRET_CANDIDATES) as TechStackTestUserRole[]).map(
       (role) => {
         const localBootstrapUser = getLocalBootstrapUser(role, env);
+        const users = candidateUsers(role, env);
+        const configuredUser = users.find(
+          (candidate) => candidate.email && candidate.password,
+        );
+        const selectedUser =
+          configuredUser ??
+          users.find((candidate) => candidate.email || candidate.password);
         const emailConfigured =
-          !!localBootstrapUser ||
-          ROLE_SECRET_CANDIDATES[role].some(
-            (candidate) => readSecret(env, candidate.email).length > 0,
-          );
+          !!localBootstrapUser || Boolean(selectedUser?.email);
         const passwordConfigured =
-          !!localBootstrapUser ||
-          ROLE_SECRET_CANDIDATES[role].some(
-            (candidate) => readSecret(env, candidate.password).length > 0,
-          );
+          !!localBootstrapUser || Boolean(selectedUser?.password);
 
         return [
           role,

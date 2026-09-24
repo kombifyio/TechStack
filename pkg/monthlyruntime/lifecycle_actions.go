@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -21,7 +23,17 @@ var (
 	// requested but no reconciliation enqueuer is wired — forcing without one
 	// would cancel the lease and leak the provider VM.
 	ErrReconciliationUnavailable = errors.New("monthlyruntime: force decommission unavailable, reconciliation not configured")
+	// ErrAddressDeregistrationFailed is returned when the managed kombify.me
+	// addresses of a runtime could not be proven removed; provider teardown
+	// is then not admitted, so no address outlives its server.
+	ErrAddressDeregistrationFailed = errors.New("monthlyruntime: managed addresses could not be removed before decommission")
 )
+
+// AddressDeregistrar removes the managed kombify.me addresses that route to one
+// runtime origin and returns lease metadata evidence of their absence.
+type AddressDeregistrar interface {
+	DeregisterRuntimeAddresses(ctx context.Context, tenantID, ownerID, stackID, origin string) (map[string]string, error)
+}
 
 const (
 	runtimeObservedStateReconciliationPending = "reconciliation_pending"
@@ -167,6 +179,10 @@ func (s *Service) enqueueNativeDecommission(ctx context.Context, tenantID string
 	if req.Force {
 		reason = "force_decommission_unreachable"
 	}
+	addressEvidence, err := s.deregisterRuntimeAddresses(ctx, tenantID, lease)
+	if err != nil {
+		return nil, err
+	}
 	if enqueueErr := reconciler.EnqueueProviderReconciliation(ctx, ReconciliationRequest{
 		TenantID:                 tenantID,
 		OwnerID:                  strings.TrimSpace(lease.Subject.ID),
@@ -187,7 +203,10 @@ func (s *Service) enqueueNativeDecommission(ctx context.Context, tenantID string
 		metadata["force_decommission_requested_at"] = metadata["provider_decommission_requested_at"]
 		metadata["force_decommission_requested_by"] = actor
 	}
-	patched, err := s.Leases.Patch(ctx, tenantID, lease.ID, vmleases.PatchRequest{
+	for key, value := range addressEvidence {
+		metadata[key] = value
+	}
+	_, err = s.Leases.Patch(ctx, tenantID, lease.ID, vmleases.PatchRequest{
 		Cancel:                           lease.CancelledAt == nil,
 		ExpectedResourceGenerationDigest: claimDigest,
 		Metadata:                         metadata,
@@ -199,7 +218,7 @@ func (s *Service) enqueueNativeDecommission(ctx context.Context, tenantID string
 	// the same transaction that persisted its provider operation. Patch applies
 	// an idempotent cancel first, then metadata separately because a cancelled
 	// lease short-circuits another Cancel request by design.
-	patched, err = s.Leases.Patch(ctx, tenantID, lease.ID, vmleases.PatchRequest{
+	patched, err := s.Leases.Patch(ctx, tenantID, lease.ID, vmleases.PatchRequest{
 		ExpectedResourceGenerationDigest: claimDigest,
 		Metadata:                         metadata,
 	})
@@ -213,6 +232,32 @@ func (s *Service) enqueueNativeDecommission(ctx context.Context, tenantID string
 		return nil, recErr
 	}
 	return publicRuntimeResponse(resp, *lease), nil
+}
+
+// deregisterRuntimeAddresses removes the managed kombify.me addresses that
+// route to this lease's public IP before provider teardown is admitted: a
+// released provider IP can be reassigned and then pass ACME HTTP-01 for the
+// stack's hostnames. Addresses of the stack on another runtime stay.
+func (s *Service) deregisterRuntimeAddresses(ctx context.Context, tenantID string, lease *vmlease.Lease) (map[string]string, error) {
+	if s.Addresses == nil || lease == nil {
+		return nil, nil
+	}
+	stackID := strings.TrimSpace(lease.Metadata["stack_id"])
+	publicIP := strings.Trim(strings.TrimSpace(firstNonEmpty(
+		lease.Metadata["runtime_public_ip"], lease.Metadata["node_public_ip"], lease.Metadata["public_ip"],
+	)), "[]")
+	address, parseErr := netip.ParseAddr(publicIP)
+	if stackID == "" || parseErr != nil {
+		// Managed addresses are only registered for a stack runtime with a
+		// public IP, so this lease has none to remove.
+		return nil, nil
+	}
+	origin := "https://" + net.JoinHostPort(address.String(), "443")
+	evidence, err := s.Addresses.DeregisterRuntimeAddresses(ctx, tenantID, strings.TrimSpace(lease.Subject.ID), stackID, origin)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrAddressDeregistrationFailed, err)
+	}
+	return evidence, nil
 }
 
 // Reconnect re-runs the enrollment probe for a managed runtime, converging its
@@ -258,22 +303,33 @@ func (s *Service) Reconnect(ctx context.Context, req ActionRequest) (*RuntimeRes
 	}
 	actionCtx, cancel := context.WithTimeout(ctx, runtimeActionTimeout)
 	defer cancel()
-	resp, err := s.Runtime.RuntimeAction(actionCtx, serverruntime.LeaseRuntimeActionRequest{
+	probe := serverruntime.LeaseRuntimeActionRequest{
 		TenantID:   tenantID,
 		OwnerID:    strings.TrimSpace(lease.Subject.ID),
 		LeaseID:    string(lease.ID),
 		Action:     serverruntime.RuntimeActionStatus,
 		OfferingID: offeringID,
 		Metadata:   cloneMetadata(lease.Metadata),
-	})
+	}
+	resp, err := s.Runtime.RuntimeAction(actionCtx, probe)
 	if err != nil {
 		return nil, err
 	}
+	outcome := &ReconnectOutcome{}
 	if !reconnectProvesEnrollment(resp) {
-		return nil, ErrEnrollmentPending
+		resp, err = s.recoverGuardSession(actionCtx, req, lease, probe)
+		if err != nil {
+			return nil, err
+		}
+		outcome.AgentRestarted = true
 	}
+	outcome.ConnectionState = strings.TrimSpace(resp.Metadata["connection_state"])
+	outcome.ObservedAt = time.Now().UTC()
 	// The probe proved connection: converge enrollment to enrolled (idempotent).
-	if strings.TrimSpace(lease.Metadata["runtime_enrollment_status"]) != enrollmentStatusEnrolled {
+	// Native leases read enrollment from the canonical aggregate; the database
+	// forbids rewriting their legacy enrollment metadata.
+	canonical := s.canonicalEnrollment()
+	if !canonical && strings.TrimSpace(lease.Metadata["runtime_enrollment_status"]) != enrollmentStatusEnrolled {
 		patched, perr := s.Leases.Patch(ctx, tenantID, lease.ID, vmleases.PatchRequest{
 			Metadata: map[string]string{"runtime_enrollment_status": enrollmentStatusEnrolled},
 		})
@@ -285,7 +341,53 @@ func (s *Service) Reconnect(ctx context.Context, req ActionRequest) (*RuntimeRes
 		}
 		lease = patched
 	}
-	return publicRuntimeResponse(resp, *lease), nil
+	status := vmleases.OperationStatusStatusRequested
+	if outcome.AgentRestarted {
+		status = OperationStatusReconnected
+	}
+	s.recordDay2Operation(ctx, tenantID, lease.ID, strings.TrimSpace(req.UserID), status, "")
+	out := publicRuntimeResponse(resp, *lease)
+	if canonical {
+		out.EnrollmentStatus = enrollmentStatusEnrolled
+	}
+	out.Reconnect = outcome
+	return out, nil
+}
+
+// recoverGuardSession is the real reconnect: an intentionally stopped runtime
+// is refused, the owner's entitlement is re-checked before touching the node,
+// Guard is restarted over the execution channel and its connection is
+// re-observed within a bounded window. No provider resource is touched.
+func (s *Service) recoverGuardSession(
+	ctx context.Context,
+	req ActionRequest,
+	lease *vmlease.Lease,
+	probe serverruntime.LeaseRuntimeActionRequest,
+) (*serverruntime.LeaseRuntimeActionResponse, error) {
+	if s.runtimePowerStopped(ctx, strings.TrimSpace(req.TenantID), *lease) {
+		return nil, ErrRuntimeStopped
+	}
+	if s.Reconnector == nil {
+		return nil, ErrEnrollmentPending
+	}
+	if !req.Internal {
+		if err := s.ensureFeatures(ctx, strings.TrimSpace(req.UserID), *lease); err != nil {
+			return nil, err
+		}
+	}
+	actor := strings.TrimSpace(req.UserID)
+	if err := s.Reconnector.RestartAgent(ctx, AgentReconnectRequest{
+		TenantID: probe.TenantID, OwnerID: probe.OwnerID, LeaseID: probe.LeaseID,
+	}); err != nil {
+		s.recordDay2Operation(ctx, probe.TenantID, lease.ID, actor, vmleases.OperationStatusFailed, "reconnect: "+err.Error())
+		return nil, err
+	}
+	resp, err := s.awaitReconnect(ctx, probe)
+	if err != nil {
+		s.recordDay2Operation(ctx, probe.TenantID, lease.ID, actor, vmleases.OperationStatusFailed, "reconnect: guard restarted but no connection was observed")
+		return nil, err
+	}
+	return resp, nil
 }
 
 func reconnectProvesEnrollment(resp *serverruntime.LeaseRuntimeActionResponse) bool {

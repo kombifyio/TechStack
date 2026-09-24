@@ -1,60 +1,64 @@
 <script lang="ts">
-  import { page } from "$app/stores";
+  import { page } from '$app/state';
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import {
-    getWalletItemsByStack,
+    getWalletItemsByKitDeployment,
     createWalletItem,
     updateWalletItem,
     deleteWalletItem,
-  } from "$lib/api/wallet";
-  import type { PBWalletItem } from "$lib/stores/wallet";
-  import { parseApiError } from "$lib/api/errors";
-  import { buildWalletEntryPayload } from "$lib/wallet/payload";
-  import type { PBStack } from "$lib/stores/stacks";
-  import type { PBService } from "$lib/stores/services";
-  import CredentialForm from "$lib/components/CredentialForm.svelte";
-  import Modal from "$lib/components/Modal.svelte";
-  import {
-    discoverServiceCredentials,
-    type DiscoveredCredential,
-  } from "$lib/wallet/integration";
+  } from "#lib/api/wallet.js";
+  import type { WalletItem } from "#lib/wallet/types.js";
+  import { parseApiError } from "#lib/api/errors.js";
+  import { buildWalletEntryPayload } from "#lib/wallet/payload.js";
+  import CredentialForm from "#lib/components/CredentialForm.svelte";
+  import Modal from "#lib/components/Modal.svelte";
+  import { discoverServiceCredentials, type DiscoveredCredential } from "#lib/wallet/integration.js";
+
   import {
     decommissionMonthlyRuntime,
     disableMonthlyRuntimeSSH,
     enableMonthlyRuntimeSSH,
+    startMonthlyRuntime,
+    stopMonthlyRuntime,
     getStackOperations,
     getMonthlyRuntimeOfferings,
     getMonthlyRuntimeOperations,
     getMonthlyRuntimeSSHInfo,
     getMonthlyRuntimeStatus,
-    startMonthlyRuntime,
-    stopMonthlyRuntime,
-    type Stack as ApiStack,
+    type KitDeployment,
     type StackOperationService,
     type StackOperationsPayload,
     type MonthlyRuntimeOffering,
     type MonthlyRuntimeOperation,
     type MonthlyRuntimeStatus,
-  } from "$lib/api/stacks";
-  import { listServiceRegistry, type RegistryService } from "$lib/api/registry";
+  } from "#lib/api/stacks.js";
+  import { listServiceRegistry, type RegistryService } from "#lib/api/registry.js";
   import {
     openServiceUrl,
-    serviceCardMetrics,
     serviceCardName,
     serviceCardPlacement,
     serviceCardStatus,
     serviceCardStatusMessage,
     serviceTargetLabel,
-  } from "$lib/service-card-adapter";
-  import { ServiceCard } from "$lib/components/open-core";
-  import { confirmInApp } from "$lib/dialogs/in-app-dialog";
+    type TechStackServiceCardSource,
+  } from "#lib/service-card-adapter.js";
+  import { ServiceCard } from "@kombiverselabs/ui/service";
+  import { confirmInApp } from "#lib/dialogs/in-app-dialog.js";
+  import ManagedRuntimeRecreatePanel from "#lib/components/managed-runtime/ManagedRuntimeRecreatePanel.svelte";
 
   // Stack data
-  let stack = $state<PBStack | null>(null);
+  let stack = $state<KitDeployment | null>(null);
   let stackOperations = $state<StackOperationsPayload | null>(null);
-  let services = $state<PBService[]>([]);
-  let credentials = $state<PBWalletItem[]>([]);
+  type DeploymentService = TechStackServiceCardSource & {
+    id: string;
+    name: string;
+    type: string;
+    status: string;
+  };
+
+  let services = $state<DeploymentService[]>([]);
+  let credentials = $state<WalletItem[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
   let runtimeStatus = $state<MonthlyRuntimeStatus | null>(null);
@@ -63,16 +67,17 @@
   let runtimeLoading = $state(false);
   let runtimeError = $state<string | null>(null);
   let runtimeBusyAction = $state<string | null>(null);
+  let runtimeDecommissionRequested = $state(false);
 
   // Modal states
   let showCredentialForm = $state(false);
-  let editingCredential = $state<PBWalletItem | null>(null);
+  let editingCredential = $state<WalletItem | null>(null);
   let saving = $state(false);
 
   // Auto-discovered credentials that can be added
   let discoveredCredentials = $state<DiscoveredCredential[]>([]);
 
-  const stackId = $derived($page.params.id);
+  const stackId = $derived(page.params.id);
   const isMonthlyRuntimeStack = $derived(
     Boolean(
       stack?.lease_id ||
@@ -89,6 +94,27 @@
         (stack?.runtime_offering_id || runtimeStatus?.runtime_offering_id),
     ) || null,
   );
+  const primaryRuntimeCleanupStarted = $derived(
+    Boolean(
+      stack?.lease_id &&
+      (runtimeDecommissionRequested ||
+        stackOperations?.servers?.some(
+          (server) =>
+            server.lease_id === stack?.lease_id &&
+            ["decommissioning", "decommissioned"].includes(
+              server.capabilities?.lifecycle_state || "",
+            ),
+        ) ||
+        stackOperations?.retiredServers?.some(
+          (server) => server.lease_id === stack?.lease_id,
+        )),
+    ),
+  );
+  const additionalRetiredRuntimes = $derived(
+    (stackOperations?.retiredServers || []).filter(
+      (server) => server.lease_id && server.lease_id !== stack?.lease_id,
+    ),
+  );
 
   onMount(() => {
     loadData();
@@ -103,7 +129,7 @@
 
   async function loadData() {
     if (!stackId) {
-      error = "No stack ID provided";
+      error = "No StackKit deployment ID provided";
       loading = false;
       return;
     }
@@ -121,8 +147,8 @@
       if (services.length === 0) {
         try {
           services = (await listServiceRegistry()).services
-            .filter((service) => service.stack_id === stackId)
-            .map(registryServiceToPBService);
+            .filter((service) => service.kit_deployment_id === stackId)
+            .map(registryServiceToDeploymentService);
         } catch (serviceErr) {
           if (!loaded.operations) throw serviceErr;
           services = [];
@@ -130,7 +156,7 @@
       }
 
       try {
-        credentials = await getWalletItemsByStack(stackId);
+        credentials = await getWalletItemsByKitDeployment(stackId);
       } catch (walletErr) {
         if (!loaded.operations) throw walletErr;
         credentials = [];
@@ -140,9 +166,9 @@
     } catch (err) {
       stackOperations = null;
       const parsed = parseApiError(err);
-      error = parsed.message || "Failed to load stack";
+      error = parsed.message || "Failed to load StackKit deployment";
       if (parsed.isNotFound) {
-        goto("/stacks");
+        goto("/dashboard");
       }
     } finally {
       loading = false;
@@ -151,79 +177,60 @@
 
   async function loadStackRecord(
     id: string,
-  ): Promise<{ stack: PBStack; operations: StackOperationsPayload | null }> {
+  ): Promise<{
+    stack: KitDeployment;
+    operations: StackOperationsPayload | null;
+  }> {
     const operations = await getStackOperations(id);
     return {
-      stack: stackFromOperations(operations.stack),
+      stack: operations.stack,
       operations,
     };
   }
 
-  function stackFromOperations(
-    source: ApiStack & { status?: string; state?: string },
-  ): PBStack {
-    const extra = source as ApiStack & {
-      created?: string;
-      updated?: string;
-      mode?: PBStack["mode"];
-      owner_id?: string;
-      description?: string;
-      config?: Record<string, unknown>;
-    };
-    const created = extra.created || source.created_at || "";
-    const updated = extra.updated || source.updated_at || "";
-    return {
-      ...extra,
-      id: source.id,
-      name: source.name,
-      mode: extra.mode || "easy",
-      status: (source.status || source.state || "pending") as PBStack["status"],
-      services: source.services || [],
-      owner_id: extra.owner_id || "",
-      created,
-      updated,
-    } as unknown as PBStack;
-  }
-
   function servicesFromOperations(
     operations: StackOperationsPayload | null,
-  ): PBService[] {
-    return (operations?.services || []).map(operationServiceToPBService);
+  ): DeploymentService[] {
+    return (operations?.services || []).map(operationServiceToDeploymentService);
   }
 
-  function operationServiceToPBService(
+  function operationServiceToDeploymentService(
     service: StackOperationService,
-  ): PBService {
+  ): DeploymentService {
     return {
       id:
         service.id ||
         `${stackId}-${service.target_server_id || service.target_server || "server"}-${service.name}`,
       name: service.name,
       display_name: service.display_name,
-      type: service.type as PBService["type"],
+      type: service.type,
       url: service.url,
       port: service.port,
-      status: service.status as PBService["status"],
+      status: service.status,
       node_id: service.target_server_id || service.target_server || "",
-    } as unknown as PBService;
+    };
   }
 
-  function registryServiceToPBService(service: RegistryService): PBService {
+  function registryServiceToDeploymentService(
+    service: RegistryService,
+  ): DeploymentService {
     return {
       id:
         service.id ||
-        `${service.stack_id}-${service.server_id}-${service.name}`,
+        `${service.kit_deployment_id}-${service.server_id}-${service.name}`,
       name: service.name,
       display_name: service.display_name,
-      type: service.type as PBService["type"],
+      type: service.type,
       port: service.port,
       url: service.url,
-      status: service.status as PBService["status"],
+      status: service.status,
       node_id: service.server_id,
-    } as unknown as PBService;
+    };
   }
 
-  async function loadMonthlyRuntimePanel(currentStack: PBStack | null = stack) {
+  async function loadMonthlyRuntimePanel(
+    currentStack: KitDeployment | null = stack,
+  ) {
     runtimeStatus = null;
     runtimeOperations = [];
     runtimeError = null;
@@ -251,25 +258,32 @@
 
   async function runRuntimeAction(
     action:
-      | "start"
-      | "stop"
-      | "enable-ssh"
-      | "disable-ssh"
-      | "ssh"
-      | "decommission",
+      "start" |
+      "stop" |
+      "enable-ssh" |
+      "disable-ssh" |
+      "ssh" |
+      "decommission"
   ) {
     if (!stack?.lease_id) return;
     const leaseID = stack.lease_id;
-    if (
-      action === "decommission" &&
-      !(await confirmInApp({
-        title: "Decommission managed runtime?",
+
+    if (action === "stop" && !await confirmInApp({
+      title: "Stop managed server?",
+        message:
+          "The server shuts down and keeps its disk, address and monthly plan. Start it again at any time.",
+      confirmText: "Stop",
+      tone: "danger"
+    })) {
+      return;
+    }
+    if (action === "decommission" && !await confirmInApp({
+      title: "Decommission managed runtime?",
         message:
           "Techstack will begin provider cleanup for this managed runtime.",
-        confirmText: "Decommission",
-        tone: "danger",
-      }))
-    ) {
+      confirmText: "Decommission",
+      tone: "danger"
+    })) {
       return;
     }
     runtimeBusyAction = action;
@@ -293,7 +307,9 @@
           break;
         case "decommission":
           runtimeStatus = await decommissionMonthlyRuntime(leaseID);
+          runtimeDecommissionRequested = true;
           stack = { ...stack, desired_state: "stopped" };
+          stackOperations = await getStackOperations(stackId || stack.id);
           break;
       }
       runtimeOperations = await getMonthlyRuntimeOperations(leaseID);
@@ -325,12 +341,12 @@
     showCredentialForm = true;
   }
 
-  function openEditCredential(cred: PBWalletItem) {
+  function openEditCredential(cred: WalletItem) {
     editingCredential = cred;
     showCredentialForm = true;
   }
 
-  async function handleSaveCredential(data: Partial<PBWalletItem>) {
+  async function handleSaveCredential(data: Partial<WalletItem>) {
     saving = true;
     try {
       if (editingCredential) {
@@ -339,7 +355,7 @@
         await createWalletItem(
           buildWalletEntryPayload("recovery", {
             ...data,
-            stack_id: stackId,
+            kit_deployment_id: stackId,
           }),
         );
       }
@@ -352,15 +368,12 @@
   }
 
   async function handleDeleteCredential(id: string) {
-    if (
-      !(await confirmInApp({
-        title: "Delete credential?",
-        message: "This permanently removes the selected credential.",
-        confirmText: "Delete",
-        tone: "danger",
-      }))
-    )
-      return;
+    if (!await confirmInApp({
+      title: "Delete credential?",
+      message: "This permanently removes the selected credential.",
+      confirmText: "Delete",
+      tone: "danger"
+    })) return;
 
     try {
       await deleteWalletItem(id);
@@ -376,16 +389,16 @@
     try {
       await createWalletItem(
         buildWalletEntryPayload("recovery", {
-          name: discovered.name,
-          kind: discovered.kind,
-          username: discovered.username,
-          url: discovered.url,
-          notes: discovered.notes,
-          service_id: discovered.service_id,
-          stack_id: stackId,
-          secret: "", // User must fill this in
-        }),
-      );
+        name: discovered.name,
+        kind: discovered.kind,
+        username: discovered.username,
+        url: discovered.url,
+        notes: discovered.notes,
+        service_id: discovered.service_id,
+        kit_deployment_id: stackId,
+        secret: "" // User must fill this in
+      }));
+
       await loadData();
     } catch (err) {
       const parsed = parseApiError(err);
@@ -400,13 +413,13 @@
       case "password":
         return "bg-primary/10 text-primary";
       case "api_key":
-        return "bg-purple-500/10 text-purple-400";
+        return "bg-info/10 text-info";
       case "ssh_key":
-        return "bg-green-500/10 text-green-400";
+        return "bg-success/10 text-success";
       case "oauth_token":
-        return "bg-amber-500/10 text-amber-400";
+        return "bg-warning/10 text-warning";
       case "certificate":
-        return "bg-red-500/10 text-red-400";
+        return "bg-destructive/10 text-destructive";
       default:
         return "bg-muted text-muted-foreground";
     }
@@ -429,12 +442,8 @@
     }
   }
 
-  function hasSecret(cred: PBWalletItem): boolean {
-    return Boolean(
-      cred.has_secret ||
-      cred.has_totp ||
-      (cred.secret && cred.secret.trim().length > 0),
-    );
+  function hasSecret(cred: WalletItem): boolean {
+    return Boolean(cred.has_secret || cred.has_totp || cred.secret && cred.secret.trim().length > 0);
   }
 
   function runtimeLabel(value?: string | null): string {
@@ -452,7 +461,10 @@
 
   function sshStateLabel(): string {
     const enabled =
-      runtimeStatus?.ssh?.enabled ?? runtimeStatus?.status?.ssh_enabled;
+      runtimeStatus?.ssh_access?.enabled ??
+      runtimeStatus?.ssh_enabled ??
+      runtimeStatus?.ssh?.enabled ??
+      runtimeStatus?.status?.ssh_enabled;
     if (enabled === true) return "enabled";
     if (enabled === false) return "disabled";
     return "unknown";
@@ -467,7 +479,9 @@
 </script>
 
 <svelte:head>
-  <title>{stack?.name || "Stack"} - Credentials | kombify-TechStack</title>
+  <title
+    >{stack?.name || "StackKit Deployment"} - Credentials | kombify-Techstack</title
+  >
 </svelte:head>
 
 <div class="bg-background min-h-full">
@@ -476,16 +490,16 @@
     <div class="flex items-center justify-between mb-8">
       <div>
         <a
-          href="/stacks"
+          href="/dashboard"
           class="text-primary hover:text-primary/80 text-sm mb-2 inline-block"
         >
-          ← Back to Stacks
+          ← Back to Homelab
         </a>
         <h1 class="text-3xl font-bold text-foreground">
           {stack?.name || "Loading..."}
         </h1>
         <p class="text-muted-foreground mt-1">
-          Manage credentials for this stack
+          Manage credentials for this StackKit deployment
         </p>
       </div>
       <button
@@ -503,7 +517,7 @@
             stroke-linejoin="round"
             stroke-width="2"
             d="M12 4v16m8-8H4"
-          />
+          ></path>
         </svg>
         Add Credential
       </button>
@@ -524,7 +538,8 @@
     {:else}
       {#if isMonthlyRuntimeStack}
         <div
-          class="bg-card rounded-xl border border-border overflow-hidden mb-6"
+          data-kx="plate"
+          class="overflow-hidden mb-6"
           data-testid="monthly-runtime-card"
         >
           <div
@@ -545,7 +560,7 @@
                 disabled={!stack?.lease_id ||
                   runtimeLoading ||
                   Boolean(runtimeBusyAction)}
-                class="px-3 py-2 text-sm rounded-lg bg-primary text-primary-foreground hover:bg-primary/80 disabled:opacity-50"
+                class="px-3 py-2 text-sm rounded-lg bg-muted text-foreground hover:bg-muted/80 disabled:opacity-50"
               >
                 Start
               </button>
@@ -703,9 +718,30 @@
         </div>
       {/if}
 
+      {#if primaryRuntimeCleanupStarted && stack?.lease_id}
+        <div class="mb-6">
+          <ManagedRuntimeRecreatePanel
+            stackId={stackId || ""}
+            leaseId={stack.lease_id}
+            serverName={stack.name || "managed server"}
+          />
+        </div>
+      {/if}
+
+      {#each additionalRetiredRuntimes as retired (retired.id)}
+        <div class="mb-6">
+          <ManagedRuntimeRecreatePanel
+            stackId={stackId || ""}
+            leaseId={retired.lease_id || ""}
+            serverName={retired.hostname || "managed server"}
+          />
+        </div>
+      {/each}
+
       {#if stackOperations?.monitoring}
         <div
-          class="bg-card rounded-xl border border-border overflow-hidden mb-6"
+          data-kx="plate"
+          class="overflow-hidden mb-6"
           data-testid="stack-detail-monitoring-evidence"
         >
           <div class="px-6 py-4 border-b border-border">
@@ -757,9 +793,9 @@
       <!-- Discovered Credentials Section -->
       {#if discoveredCredentials.length > 0}
         <div
-          class="bg-amber-900/20 border border-amber-700/30 rounded-xl p-4 mb-6"
+          class="bg-warning/10 border border-warning/30 rounded-xl p-4 mb-6"
         >
-          <h3 class="font-semibold text-amber-400 mb-2 flex items-center gap-2">
+          <h3 class="font-semibold text-warning mb-2 flex items-center gap-2">
             <svg
               class="w-5 h-5"
               fill="none"
@@ -771,17 +807,17 @@
                 stroke-linejoin="round"
                 stroke-width="2"
                 d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-              />
+              ></path>
             </svg>
             Missing Credentials Detected
           </h3>
-          <p class="text-amber-300 text-sm mb-3">
+          <p class="text-warning/80 text-sm mb-3">
             The following services need credentials to be configured:
           </p>
           <div class="space-y-2">
             {#each discoveredCredentials as discovered}
               <div
-                class="flex items-center justify-between bg-card rounded-lg p-3 border border-amber-700/30"
+                class="flex items-center justify-between bg-card rounded-lg p-3 border border-warning/30"
               >
                 <div>
                   <span class="font-medium text-foreground"
@@ -809,7 +845,7 @@
       {/if}
 
       <!-- Credentials Table -->
-      <div class="bg-card rounded-xl border border-border overflow-hidden">
+      <div data-kx="plate" class="overflow-hidden">
         <div class="px-6 py-4 border-b border-border">
           <h2 class="text-lg font-semibold text-foreground">
             Stored Credentials
@@ -832,9 +868,9 @@
                 stroke-linejoin="round"
                 stroke-width="2"
                 d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"
-              />
+              ></path>
             </svg>
-            <p>No credentials configured for this stack.</p>
+            <p>No credentials configured for this StackKit deployment.</p>
             <p class="text-sm mt-1">
               Add credentials to enable auto-login and secure storage.
             </p>
@@ -865,7 +901,7 @@
                 >
               </tr>
             </thead>
-            <tbody class="bg-card divide-y divide-border">
+            <tbody class="divide-y divide-border">
               {#each credentials as cred}
                 <tr class="hover:bg-muted/50">
                   <td class="px-6 py-4 whitespace-nowrap">
@@ -895,7 +931,7 @@
                   <td class="px-6 py-4 whitespace-nowrap">
                     {#if hasSecret(cred)}
                       <span
-                        class="inline-flex items-center text-green-500 text-sm"
+                        class="inline-flex items-center text-success text-sm"
                       >
                         <svg
                           class="w-4 h-4 mr-1"
@@ -906,13 +942,13 @@
                             fill-rule="evenodd"
                             d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
                             clip-rule="evenodd"
-                          />
+                          ></path>
                         </svg>
                         Configured
                       </span>
                     {:else}
                       <span
-                        class="inline-flex items-center text-amber-400 text-sm"
+                        class="inline-flex items-center text-warning text-sm"
                       >
                         <svg
                           class="w-4 h-4 mr-1"
@@ -923,7 +959,7 @@
                             fill-rule="evenodd"
                             d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
                             clip-rule="evenodd"
-                          />
+                          ></path>
                         </svg>
                         Missing Secret
                       </span>
@@ -953,12 +989,13 @@
       <!-- Services Section -->
       {#if services.length > 0}
         <div
-          class="mt-8 bg-card rounded-xl border border-border overflow-hidden"
+          data-kx="plate"
+          class="mt-8 overflow-hidden"
           data-testid="stack-detail-service-registry"
         >
           <div class="px-6 py-4 border-b border-border">
             <h2 class="text-lg font-semibold text-foreground">
-              Stack Services
+              StackKit Deployment Services
             </h2>
             <p class="text-sm text-muted-foreground">
               {services.length} service{services.length !== 1 ? "s" : ""} deployed
@@ -970,10 +1007,9 @@
                 name={serviceCardName(service)}
                 description={service.url ||
                   serviceTargetLabel(service) ||
-                  "Stack service"}
+                  "StackKit service"}
                 placement={serviceCardPlacement(service)}
                 status={serviceCardStatus(service)}
-                metrics={serviceCardMetrics(service)}
                 statusMessage={serviceCardStatusMessage(service)}
                 onOpen={service.url ? () => openServiceUrl(service) : undefined}
               />
@@ -1001,7 +1037,7 @@
         showCredentialForm = false;
         editingCredential = null;
       }}
-      {saving}
+      saving={saving}
     />
   </Modal>
 {/if}

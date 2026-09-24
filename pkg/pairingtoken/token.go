@@ -28,9 +28,6 @@ var (
 	// ErrInvalidToken means the token is neither a canonical current token nor
 	// a canonical token emitted by the retired generator.
 	ErrInvalidToken = errors.New("invalid pairing token")
-	// ErrLegacyToken identifies a retired opaque wire format. Callers may attempt
-	// their pre-RLS lookup path, but must not treat it as tenant-scoped.
-	ErrLegacyToken = errors.New("legacy pairing token")
 )
 
 // ParsedToken is the bounded routing and authentication material derived from
@@ -94,30 +91,6 @@ func Parse(rawToken string) (ParsedToken, error) {
 	}
 	parsed.TokenHash = sha256Hex(rawToken)
 	return parsed, nil
-}
-
-// TenantID returns the tenant locator from a canonical current token. A token
-// in one of the exact retired opaque formats returns ErrLegacyToken so callers
-// can keep a deliberately bounded compatibility path.
-func TenantID(rawToken string) (string, error) {
-	parsed, err := Parse(rawToken)
-	if err != nil {
-		return "", err
-	}
-	if parsed.Legacy {
-		return "", ErrLegacyToken
-	}
-	return parsed.TenantID, nil
-}
-
-// Hash returns the full-token SHA-256 only after the wire value passes the
-// strict length and canonical-format checks.
-func Hash(rawToken string) (string, error) {
-	parsed, err := Parse(rawToken)
-	if err != nil {
-		return "", err
-	}
-	return parsed.TokenHash, nil
 }
 
 func sha256Hex(rawToken string) string {

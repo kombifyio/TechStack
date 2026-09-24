@@ -61,6 +61,7 @@ describe("isGatewayAuthFailure", () => {
     expect(isGatewayAuthFailure(new Error("gateway_auth_unavailable"))).toBe(
       true,
     );
+    expect(isGatewayAuthFailure(new Error("login_required"))).toBe(true);
   });
 
   it("rejects plain 401s and unrelated errors", () => {

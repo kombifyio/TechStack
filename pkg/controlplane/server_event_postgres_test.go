@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"regexp"
 	"testing"
@@ -10,13 +11,25 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 )
 
+type recordingServerEventProjector struct {
+	tx     *sql.Tx
+	result *ServerEventResult
+}
+
+func (p *recordingServerEventProjector) ProjectServerEvent(_ context.Context, tx *sql.Tx, result *ServerEventResult) error {
+	p.tx = tx
+	p.result = result
+	return nil
+}
+
 func TestPostgresStoreApplyServerEventCommitsAtomicChildren(t *testing.T) {
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	store := NewPostgresStore(db)
+	projector := &recordingServerEventProjector{}
+	store := NewPostgresStore(db, WithServerEventProjector(projector))
 	now := time.Date(2026, 7, 21, 16, 0, 0, 0, time.UTC)
 
 	mock.ExpectBegin()
@@ -28,7 +41,7 @@ func TestPostgresStoreApplyServerEventCommitsAtomicChildren(t *testing.T) {
 			"server-1", "tenant-1", nil, "stack-1", "owner-1", "guard-1", nil,
 			"lease-1", "centron", "unknown", nil, nil, nil, nil, nil, nil, nil, "runtime-1", "enrolling", "running", "connecting", "unknown",
 			nil, now, nil, int64(0), int64(1), int64(1), nil, nil, nil, int64(0), nil,
-			`[]`, `{}`, nil, "awaiting_guard", "desired_running", "guard_connecting", "health_unknown",
+			`[]`, `{}`, nil, nil, nil, "awaiting_guard", "desired_running", "guard_connecting", "health_unknown",
 			now, now, now, now, now,
 		))
 	mock.ExpectQuery(`(?s)UPDATE servers SET.*revision = \$27.*RETURNING`).
@@ -36,7 +49,7 @@ func TestPostgresStoreApplyServerEventCommitsAtomicChildren(t *testing.T) {
 			"server-1", "tenant-1", nil, "stack-1", "owner-1", "guard-1", nil,
 			"lease-1", "centron", "unknown", nil, nil, nil, nil, nil, nil, nil, "runtime-1", "enrolling", "running", "connected", "healthy",
 			nil, now, now, int64(1), int64(2), int64(1), "guard", "guard-1", "epoch-a", int64(1), now,
-			`[]`, `{}`, nil, "awaiting_guard", "desired_running", "guard_connected", "guard_healthy",
+			`[]`, `{}`, nil, nil, nil, "awaiting_guard", "desired_running", "guard_connected", "guard_healthy",
 			now, now, now, now, now,
 		))
 	for _, dimension := range []string{"connection", "health"} {
@@ -87,6 +100,9 @@ func TestPostgresStoreApplyServerEventCommitsAtomicChildren(t *testing.T) {
 		result.Server.ConnectionReasonCode != "guard_connected" || result.Server.HealthReasonCode != "guard_healthy" {
 		t.Fatalf("dimension reasons = %#v", result.Server)
 	}
+	if projector.tx == nil || projector.result == nil || projector.result.Server.Revision != result.Server.Revision || len(projector.result.Transitions) != 2 {
+		t.Fatalf("atomic server event projector = %#v", projector)
+	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +133,7 @@ func TestPostgresStoreApplyServerEventTxUsesCallerTransactionAndDatabaseTime(t *
 			"server-1", "tenant-1", nil, "stack-1", "owner-1", "guard-1", nil,
 			"lease-1", "centron", "unknown", nil, nil, nil, nil, nil, nil, nil, "runtime-1", "decommissioning", "absent", "offline", "unknown",
 			nil, now.Add(-time.Hour), nil, int64(0), int64(2), int64(1), nil, nil, nil, int64(0), nil,
-			`[]`, `{}`, nil, "cleanup_pending", "desired_absent", nil, nil,
+			`[]`, `{}`, nil, nil, nil, "cleanup_pending", "desired_absent", nil, nil,
 			now.Add(-time.Hour), now.Add(-time.Hour), now.Add(-time.Hour), now.Add(-time.Hour), now.Add(-time.Hour),
 		))
 	mock.ExpectQuery(`(?s)UPDATE servers SET.*revision = \$27.*RETURNING`).
@@ -125,7 +141,7 @@ func TestPostgresStoreApplyServerEventTxUsesCallerTransactionAndDatabaseTime(t *
 			"server-1", "tenant-1", nil, "stack-1", "owner-1", "guard-1", nil,
 			"lease-1", "centron", "unknown", nil, nil, nil, nil, nil, nil, nil, "runtime-1", "decommissioned", "absent", "offline", "unknown",
 			nil, now.Add(-time.Hour), nil, int64(0), int64(3), int64(1), nil, nil, nil, int64(0), nil,
-			`[]`, `{}`, now, "provider_absent", "desired_absent", nil, nil,
+			`[]`, `{}`, nil, nil, now, "provider_absent", "desired_absent", nil, nil,
 			now, now.Add(-time.Hour), now.Add(-time.Hour), now.Add(-time.Hour), now,
 		))
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO server_state_transitions (")).
@@ -186,17 +202,18 @@ func TestPostgresStoreApplyServerEventRollsBackHeadWhenInventoryFails(t *testing
 			"server-1", "tenant-1", nil, "stack-1", "owner-1", "guard-1", nil,
 			"lease-1", "centron", "unknown", nil, nil, nil, nil, nil, nil, nil, "runtime-1", "active", "running", "connected", "healthy",
 			nil, now, now, int64(0), int64(1), int64(1), "guard", "guard-1", "epoch-a", int64(1), now,
-			`[]`, `{}`, nil, nil, nil, nil, nil, now, now, now, now, now,
+			`[]`, `{}`, nil, nil, nil, nil, nil, nil, nil, now, now, now, now, now,
 		))
 	mock.ExpectQuery(`(?s)UPDATE servers SET.*RETURNING`).
 		WillReturnRows(serverEventRuntimeRows().AddRow(
 			"server-1", "tenant-1", nil, "stack-1", "owner-1", "guard-1", nil,
 			"lease-1", "centron", "unknown", nil, nil, nil, nil, nil, nil, nil, "runtime-1", "active", "running", "connected", "healthy",
 			nil, now, now, int64(1), int64(2), int64(1), "guard", "guard-1", "epoch-a", int64(2), now,
-			`[]`, `{}`, nil, nil, nil, nil, nil, now, now, now, now, now,
+			`[]`, `{}`, nil, nil, nil, nil, nil, nil, nil, now, now, now, now, now,
 		))
+	snapshotWriteErr := errors.New("snapshot write failed")
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO server_inventory_snapshots (")).
-		WillReturnError(errors.New("snapshot write failed"))
+		WillReturnError(snapshotWriteErr)
 	mock.ExpectRollback()
 
 	_, err = store.ApplyServerEvent(context.Background(), ServerEvent{
@@ -206,7 +223,7 @@ func TestPostgresStoreApplyServerEventRollsBackHeadWhenInventoryFails(t *testing
 		Runtime:   ServerRuntime{WorkerID: "guard-1", ConnectionState: "connected", HealthState: "healthy", LastHeartbeatAt: &now},
 		Inventory: &ServerInventoryEvent{Source: "guard-inventory", Inventory: map[string]any{"host": "observed"}},
 	})
-	if err == nil || err.Error() != "snapshot write failed" {
+	if !errors.Is(err, snapshotWriteErr) {
 		t.Fatalf("ApplyServerEvent error = %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -232,19 +249,20 @@ func TestPostgresStoreApplyServerEventRollsBackHeadWhenOutboxFails(t *testing.T)
 			"server-1", "tenant-1", nil, "stack-1", "owner-1", "guard-1", nil,
 			"lease-1", "centron", "unknown", nil, nil, nil, nil, nil, nil, nil, "runtime-1", "active", "running", "connected", "healthy",
 			nil, now, now, int64(0), int64(1), int64(1), "guard", "guard-1", "epoch-a", int64(1), now,
-			`[]`, `{}`, nil, nil, nil, nil, nil, now, now, now, now, now,
+			`[]`, `{}`, nil, nil, nil, nil, nil, nil, nil, now, now, now, now, now,
 		))
 	mock.ExpectQuery(`(?s)UPDATE servers SET.*RETURNING`).
 		WillReturnRows(serverEventRuntimeRows().AddRow(
 			"server-1", "tenant-1", nil, "stack-1", "owner-1", "guard-1", nil,
 			"lease-1", "centron", "unknown", nil, nil, nil, nil, nil, nil, nil, "runtime-1", "active", "running", "connected", "healthy",
 			nil, now, now, int64(0), int64(2), int64(1), "guard", "guard-1", "epoch-a", int64(2), now,
-			`[]`, `{}`, nil, nil, nil, nil, nil, now, now, now, now, now,
+			`[]`, `{}`, nil, nil, nil, nil, nil, nil, nil, now, now, now, now, now,
 		))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO server_guard_source_epochs (")).
 		WillReturnResult(sqlmock.NewResult(1, 1))
+	outboxWriteErr := errors.New("outbox write failed")
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO server_registry_outbox (")).
-		WillReturnError(errors.New("outbox write failed"))
+		WillReturnError(outboxWriteErr)
 	mock.ExpectRollback()
 
 	_, err = store.ApplyServerEvent(context.Background(), ServerEvent{
@@ -253,7 +271,7 @@ func TestPostgresStoreApplyServerEventRollsBackHeadWhenOutboxFails(t *testing.T)
 		SourceEpoch: "epoch-a", SourceSequence: 2, ObservedAt: now,
 		Runtime: ServerRuntime{WorkerID: "guard-1", ConnectionState: "connected", HealthState: "healthy", LastHeartbeatAt: &now},
 	})
-	if err == nil || err.Error() != "outbox write failed" {
+	if !errors.Is(err, outboxWriteErr) {
 		t.Fatalf("ApplyServerEvent error = %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -279,7 +297,7 @@ func TestPostgresStoreApplyServerEventRejectsPreviouslySeenEpoch(t *testing.T) {
 			"server-1", "tenant-1", nil, "stack-1", "owner-1", "guard-1", nil,
 			"lease-1", "centron", "unknown", nil, nil, nil, nil, nil, nil, nil, "runtime-1", "active", "running", "connected", "healthy",
 			nil, now, now, int64(1), int64(3), int64(1), "guard", "guard-1", "epoch-b", int64(1), now,
-			`[]`, `{}`, nil, nil, nil, nil, nil, now, now, now, now, now,
+			`[]`, `{}`, nil, nil, nil, nil, nil, nil, nil, now, now, now, now, now,
 		))
 	mock.ExpectQuery(`(?s)SELECT EXISTS .*FROM server_guard_source_epochs`).
 		WithArgs("tenant-1", "server-1", int64(1), "guard-1", "epoch-a").
@@ -312,7 +330,8 @@ func serverEventRuntimeRows() *sqlmock.Rows {
 		"health_state", "reason_code", "connection_changed_at", "last_heartbeat_at",
 		"inventory_revision", "revision", "generation", "source_authority", "source_id",
 		"source_epoch", "source_sequence", "source_observed_at", "channels_json", "metadata_json",
-		"decommissioned_at", "lifecycle_reason_code", "desired_reason_code", "connection_reason_code",
+		"last_outcome_json", "outcome_changed_at", "decommissioned_at",
+		"lifecycle_reason_code", "desired_reason_code", "connection_reason_code",
 		"health_reason_code", "lifecycle_changed_at", "desired_changed_at", "health_changed_at",
 		"created_at", "updated_at",
 	})

@@ -33,7 +33,7 @@ func TestInstallStackKitRuntimeBundleRejectsTraversal(t *testing.T) {
 		t.Fatal(err)
 	}
 	target := filepath.Join(t.TempDir(), ".stackkit")
-	if err := installStackKitRuntimeBundle(bundle, target); err == nil {
+	if err := installStackKitRuntimeBundleValidated(bundle, target, "test-bundle-digest", nil); err == nil {
 		t.Fatal("traversing bundle was accepted")
 	}
 	if _, err := os.Stat(filepath.Join(filepath.Dir(target), "escape")); !os.IsNotExist(err) {

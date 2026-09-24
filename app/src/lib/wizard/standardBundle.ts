@@ -7,7 +7,11 @@
  * Kit lists.
  */
 
-export type WizardSurface = "easy" | "techie";
+/**
+ * The wizard has one surface. Technical depth is a property of the use case
+ * card (compact -> large -> advanced), not a separate wizard.
+ */
+export type WizardSurface = "easy";
 
 export interface WizardStepDefinition {
   id: number;
@@ -61,12 +65,10 @@ export const USE_CASE_FEATURE_FLAGS = {
 export type AudienceConfigKey = "onlyMe" | "familyFriends" | "public";
 export type AccessModeValue = "home" | "anywhere";
 export type VpnValue = "headscale" | "wireguard" | "none";
-export type StackKitFoundationValue = "basement-kit" | "cloud-kit" | "base-kit";
+export type StackKitFoundationValue = "basement-kit" | "cloud-kit";
 export type RegistryNodeRoleValue = "foundation" | "worker" | "storage";
 export type ServerProvisioningModeValue =
-  | "kombify-cloud"
-  | "connect-remote"
-  | "install-command";
+  "kombify-cloud" | "connect-remote" | "install-command" | "hypervisor";
 export type ManagedProviderIDValue = "centron" | "ionos";
 export type IonosDatacenterValue = "de/fra" | "de/txl" | "us/ewr";
 
@@ -160,8 +162,9 @@ export interface StandardBundleDefinition {
         host: string;
         sshPort: number;
         sshUser: string;
-        authMethod: "ssh-key";
+        authMethod: "ssh-key" | "password";
         sshKeyLabel: string;
+        sshPassword: string;
         useSudo: boolean;
       };
     };
@@ -169,7 +172,7 @@ export interface StandardBundleDefinition {
     services: Record<StandardBundleServiceKey, boolean>;
     network: {
       accessMode: AccessModeValue;
-      vpn: "headscale";
+      vpn: VpnValue;
       enableCloudflare: boolean;
       publicAccess: boolean;
       reverseProxy: boolean;
@@ -179,7 +182,7 @@ export interface StandardBundleDefinition {
       toolProvider: "pocket-id";
       homelabProvider: "pocket-id";
       requiresPasskeys: boolean;
-      backendCapability: "external-identity";
+      backendCapability: "passkeys";
     };
     auth: {
       allowUsernameLogin: boolean;
@@ -200,9 +203,6 @@ export interface StandardBundleDefinition {
       displayName: string;
       recoveryPassphraseHash: string;
       recoveryMaterialRef: string;
-    };
-    admin: {
-      password: string;
     };
     advanced: {
       isolation: "isolated";
@@ -227,7 +227,7 @@ export interface StandardBundleDefinition {
     stackkitFoundations: BundleRegistryChoiceDefinition<StackKitFoundationValue>[];
     nodeRoles: BundleRegistryChoiceDefinition<RegistryNodeRoleValue>[];
     goalServiceMap: Record<
-      GoalConfigKey | "baseline" | "accessAnywhere",
+      GoalConfigKey | "baseline",
       StandardBundleServiceKey[]
     >;
   };
@@ -241,7 +241,17 @@ export interface StandardBundleDefinition {
 const mainNode = "main";
 export const USER_OWNED_STACKKIT_REF = "basement-kit";
 export const CLOUD_STACKKIT_REF = "cloud-kit";
-export const LEGACY_BASE_STACKKIT_REF = "base-kit";
+
+export function normalizeInstallableKitSlug(
+  raw: string,
+  managedLane: boolean,
+): string {
+  const trimmed = raw.trim();
+  if (trimmed === "") {
+    return managedLane ? CLOUD_STACKKIT_REF : USER_OWNED_STACKKIT_REF;
+  }
+  return trimmed;
+}
 
 function stackService(
   name: string,
@@ -263,7 +273,7 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
     kit: "basement-kit",
     serverMode: "user-owned",
     runtimeOfferingId: "monthly-runtime-standard",
-    providerId: "centron",
+    providerId: "ionos",
     ionosDatacenter: "de/fra",
     verificationStatus: "pending",
     serverProvisioning: {
@@ -277,6 +287,7 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
         sshUser: "root",
         authMethod: "ssh-key",
         sshKeyLabel: "",
+        sshPassword: "",
         useSudo: false,
       },
     },
@@ -284,7 +295,7 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
       "smart-home": false,
       photos: false,
       media: false,
-      vault: true,
+      vault: false,
       files: false,
       ai: false,
       dev: false,
@@ -298,13 +309,13 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
       headscale: false,
       monitoring: true,
       traefik: true,
-      vaultwarden: true,
+      vaultwarden: false,
       immich: false,
       files: false,
     },
     network: {
-      accessMode: "anywhere",
-      vpn: "headscale",
+      accessMode: "home",
+      vpn: "none",
       enableCloudflare: false,
       publicAccess: false,
       reverseProxy: true,
@@ -317,8 +328,8 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
     identity: {
       toolProvider: "pocket-id",
       homelabProvider: "pocket-id",
-      requiresPasskeys: false,
-      backendCapability: "external-identity",
+      requiresPasskeys: true,
+      backendCapability: "passkeys",
     },
     auth: {
       allowUsernameLogin: true,
@@ -340,9 +351,6 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
       recoveryPassphraseHash: "",
       recoveryMaterialRef: "",
     },
-    admin: {
-      password: "",
-    },
     advanced: {
       isolation: "isolated",
       autostart: "auto",
@@ -361,7 +369,7 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
         {
           id: 2,
           key: "server",
-          label: "Server",
+          label: "Node",
           labelKey: "wizard.step.server",
         },
         {
@@ -373,36 +381,9 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
         { id: 4, key: "users", label: "Users", labelKey: "wizard.step.users" },
         { id: 5, key: "login", label: "Login", labelKey: "wizard.step.login" },
       ],
-      techie: [
-        {
-          id: 1,
-          key: "server",
-          label: "Server",
-          labelKey: "wizard.step.server",
-        },
-        {
-          id: 2,
-          key: "network",
-          label: "Network",
-          labelKey: "wizard.step.network",
-        },
-        {
-          id: 3,
-          key: "services",
-          label: "Services",
-          labelKey: "wizard.step.services",
-        },
-        {
-          id: 4,
-          key: "review",
-          label: "Review",
-          labelKey: "wizard.step.review",
-        },
-      ],
     },
     discovery: {
       easy: false,
-      techie: false,
     },
     goals: [
       {
@@ -588,7 +569,7 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
         testId: "techie-vpn-none",
       },
     ],
-    // Product invariant: every lane must expose all three server paths.
+    // Product invariant: every lane exposes the same provisioning choices.
     // kombify Cloud only changes convenience/defaults; it must never gate
     // one-liner or direct SSH setup for user-owned self-hosted homelabs.
     serverProvisioningModes: [
@@ -643,7 +624,7 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
         value: "basement-kit",
         label: "Basement Kit",
         description:
-          "Local or user-owned server kit for first rollout and expansion.",
+          "Local or user-owned Node target for first rollout and expansion.",
         testId: "foundation-basement-kit",
       },
       {
@@ -658,25 +639,24 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
         value: "foundation",
         label: "Foundation Node",
         description:
-          "First/core server; wire-compatible with main, standalone, and control-plane.",
+          "First/core Node; wire-compatible with main, standalone, and control-plane.",
         testId: "server-role-foundation",
       },
       {
         value: "worker",
         label: "Worker Node",
-        description:
-          "Additional compute server for StackKit service placement.",
+        description: "Additional compute Node for StackKit service placement.",
         testId: "server-role-worker",
       },
       {
         value: "storage",
         label: "Storage Node",
-        description: "Additional server intended for storage-heavy services.",
+        description: "Additional Node intended for storage-heavy services.",
         testId: "server-role-storage",
       },
     ],
     goalServiceMap: {
-      baseline: ["pocketId", "monitoring", "traefik", "vaultwarden"],
+      baseline: ["pocketId", "monitoring", "traefik"],
       "smart-home": ["monitoring"],
       photos: ["immich"],
       media: ["monitoring"],
@@ -687,7 +667,6 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
       mail: ["traefik"],
       game: ["traefik"],
       everything: ["monitoring", "traefik", "vaultwarden", "immich", "files"],
-      accessAnywhere: ["headscale"],
     },
   },
   stackSpec: {
@@ -767,9 +746,9 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
       label: "Vaultwarden",
       description: "Password vault",
       helpText:
-        "Provides a login-protected password vault as part of the StackKit app baseline.",
+        "Adds a login-protected password vault when the Vault use case is selected.",
       testId: "techie-svc-vaultwarden",
-      defaultSelected: true,
+      defaultSelected: false,
       selectableInTechie: true,
       payloadServices: ["vaultwarden"],
       stackSpecServices: ["vaultwarden"],
@@ -783,7 +762,7 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
       helpText:
         "Expands to the Immich server, machine-learning worker, Postgres, and Redis specs.",
       testId: "techie-svc-immich",
-      defaultSelected: true,
+      defaultSelected: false,
       selectableInTechie: true,
       payloadServices: [
         "immich-server",
@@ -936,8 +915,14 @@ export function buildStackKitServicesFromBundle(
 export function applyStandardBundleGoalServices(
   serviceFlags: Record<StandardBundleServiceKey, boolean>,
   goals: Partial<Record<GoalConfigKey, boolean>> | undefined,
-  accessMode: AccessModeValue,
 ): void {
+  // Rebuild goal-owned flags so defaults and a previous submission cannot
+  // retain a workload the user has since deselected. Preserve other settings.
+  for (const keys of Object.values(
+    ACTIVE_STANDARD_BUNDLE.wizard.goalServiceMap,
+  )) {
+    for (const key of keys) serviceFlags[key] = false;
+  }
   for (const key of ACTIVE_STANDARD_BUNDLE.wizard.goalServiceMap.baseline) {
     serviceFlags[key] = true;
   }
@@ -951,7 +936,6 @@ export function applyStandardBundleGoalServices(
       }
     }
   }
-  serviceFlags.headscale = accessMode === "anywhere";
 }
 
 export function selectedCanonicalUseCasesFromGoals(

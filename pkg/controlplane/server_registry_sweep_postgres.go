@@ -101,6 +101,35 @@ func (s *PostgresStore) ListOutboxPruneTenants(ctx context.Context, afterTenantI
 	return scanTenantIDPage(rows, limit)
 }
 
+// ListServerProjectionTenants pages every tenant the registry has ever emitted
+// an event for. The platform projector needs the whole set, not just the
+// retention-due slice ListOutboxPruneTenants returns, because it republishes
+// current aggregate state rather than replaying outbox history (the resync
+// bootstrap this table's own prune comment describes).
+//
+// The index is trigger-maintained beside the outbox and deliberately lives
+// outside row-level security, which is what makes a cross-tenant sweep possible
+// at all; the per-tenant reads that follow are RLS-scoped as usual.
+func (s *PostgresStore) ListServerProjectionTenants(ctx context.Context, afterTenantID string, limit int) ([]string, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("controlplane: database not configured")
+	}
+	if limit < 1 || limit > 100 {
+		return nil, fmt.Errorf("controlplane: projection tenant limit from 1 to 100 is required")
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT tenant_id
+		FROM server_registry_outbox_prune_tenants
+		WHERE tenant_id > $1
+		ORDER BY tenant_id ASC
+		LIMIT $2
+	`, strings.TrimSpace(afterTenantID), limit)
+	if err != nil {
+		return nil, fmt.Errorf("controlplane: list server projection tenants: %w", err)
+	}
+	return scanTenantIDPage(rows, limit)
+}
+
 // PruneServerRegistryOutbox deletes one bounded batch of retention-expired
 // outbox rows inside the tenant's RLS scope. Pruning unclaimed history is safe:
 // the future K6 projector bootstraps via full aggregate resync, never by

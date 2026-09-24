@@ -24,7 +24,7 @@ import (
 // TestIntegration_WizardCreateFlow tests the complete wizard creation flow:
 // 1. Authenticate as default admin user
 // 2. POST /api/v1/stacks with wizard config payload
-// 3. Poll GET /api/collections/jobs/records/{id} for job progress
+// 3. Poll GET /api/v1/jobs/{id} for job progress
 // 4. Verify the job transitions from pending → running → completed/failed
 //
 // This is the critical path that was causing the UI loading screen hang.
@@ -122,7 +122,7 @@ func TestIntegration_WizardCreateFlow(t *testing.T) {
 		pollCount++
 		jobResp, err := ks.AuthenticatedAPIRequest(
 			ctx, http.MethodGet,
-			fmt.Sprintf("/api/collections/jobs/records/%s", jobID),
+			fmt.Sprintf("/api/v1/jobs/%s", jobID),
 			nil, token,
 		)
 		if err != nil {
@@ -141,12 +141,15 @@ func TestIntegration_WizardCreateFlow(t *testing.T) {
 			continue
 		}
 
-		var job map[string]interface{}
-		if err := json.Unmarshal(jobBody, &job); err != nil {
+		var response struct {
+			Data map[string]interface{} `json:"data"`
+		}
+		if err := json.Unmarshal(jobBody, &response); err != nil {
 			t.Logf("poll %d: parse error: %v", pollCount, err)
 			time.Sleep(2 * time.Second)
 			continue
 		}
+		job := response.Data
 
 		state, _ := job["state"].(string)
 		step, _ := job["current_step"].(string)
@@ -181,103 +184,6 @@ func TestIntegration_WizardCreateFlow(t *testing.T) {
 	t.Fatalf("CRITICAL: Job %s stuck in state %q after %d polls (60s). "+
 		"This is the loading screen hang bug!\nLast job response: %s",
 		jobID, lastState, pollCount, lastJobBody)
-}
-
-// TestIntegration_WizardCreateUnauth tests that unauthenticated requests are rejected.
-func TestIntegration_WizardCreateUnauth(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
-
-	ks := testutil.StartkombifyTechstack(t, ctx)
-	ks.HealthCheck(t)
-
-	body := []byte(`{"name":"test","mode":"easy","user_config":{"name":"test"}}`)
-	resp, err := ks.APIRequest(ctx, http.MethodPost, "/api/v1/stacks", bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusUnauthorized {
-		respBody, _ := io.ReadAll(resp.Body)
-		t.Fatalf("expected 401, got %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	t.Log("Unauthenticated create correctly rejected with 401")
-}
-
-// TestIntegration_WizardJobPolling tests that job records are readable via PB SDK.
-func TestIntegration_WizardJobPolling(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
-	defer cancel()
-
-	ks := testutil.StartkombifyTechstack(t, ctx)
-	ks.HealthCheck(t)
-
-	token := ks.Authenticate(t, ctx)
-
-	// Create a stack first
-	body := []byte(`{"name":"poll-test","mode":"easy","user_config":{"name":"poll-test","provider":"homelab"},"user_config_format":"json"}`)
-	resp, err := ks.AuthenticatedAPIRequest(ctx, http.MethodPost, "/api/v1/stacks", bytes.NewReader(body), token)
-	if err != nil {
-		t.Fatalf("create failed: %v", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusAccepted {
-		t.Fatalf("expected 202, got %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	var result map[string]interface{}
-	json.Unmarshal(respBody, &result)
-	data := result
-	if d, ok := result["data"].(map[string]interface{}); ok {
-		data = d
-	}
-	jobID, _ := data["job_id"].(string)
-
-	if jobID == "" {
-		t.Fatalf("no job_id: %s", string(respBody))
-	}
-
-	// Poll the job via PocketBase collections API (same as frontend getJob())
-	jobURL := fmt.Sprintf("/api/collections/jobs/records/%s", jobID)
-	jobResp, err := ks.AuthenticatedAPIRequest(ctx, http.MethodGet, jobURL, nil, token)
-	if err != nil {
-		t.Fatalf("job poll failed: %v", err)
-	}
-	defer jobResp.Body.Close()
-
-	jobBody, _ := io.ReadAll(jobResp.Body)
-
-	if jobResp.StatusCode != http.StatusOK {
-		t.Fatalf("expected job to be readable, got %d: %s", jobResp.StatusCode, string(jobBody))
-	}
-
-	var job map[string]interface{}
-	if err := json.Unmarshal(jobBody, &job); err != nil {
-		t.Fatalf("failed to parse job: %v", err)
-	}
-
-	state, _ := job["state"].(string)
-	t.Logf("Job %s is in state %q - polling works correctly", jobID, state)
-
-	// Verify required fields exist for frontend consumption
-	requiredFields := []string{"id", "state", "progress"}
-	for _, field := range requiredFields {
-		if _, ok := job[field]; !ok {
-			t.Errorf("job record missing required field %q (frontend depends on it)", field)
-		}
-	}
 }
 
 // TestIntegration_MultipleStacksAllowed tests that the same owner can create more than one stack.

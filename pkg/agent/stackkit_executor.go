@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,7 +22,9 @@ import (
 	"github.com/kombifyio/techstack/internal/stackkitrelease"
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
 	"github.com/kombifyio/techstack/pkg/secrets"
+	"github.com/kombifyio/techstack/pkg/specv2"
 	"github.com/kombifyio/techstack/pkg/stackkitcommand"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -44,6 +48,7 @@ var stackKitTargetReleasePattern = regexp.MustCompile(
 
 var stackKitExpectedSpecHashPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 var stackKitServiceKeyPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
+var stackKitAddressPrefixPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
 // StackKitExecutor is the agent-side adapter for the typed StackKitCommand
 // seam. It resolves the local immutable release pin on every operation and
@@ -137,8 +142,11 @@ func (executor *StackKitExecutor) execute(ctx context.Context, command *agentpb.
 	stdout := newBoundedStackKitBuffer(maxStackKitCommandOutputBytes)
 	stderr := newBoundedStackKitBuffer(maxStackKitCommandOutputBytes)
 	stderrLogs := newStackKitLineEmitter(command, "error", sink)
-	process := exec.CommandContext(runCtx, release.BinaryPath(), args...) // #nosec G204 -- executable is revalidated from the immutable release cache and argv is built from typed fields.
+	process := newStackKitProcess(runCtx, release.BinaryPath(), args...)
 	process.Dir = workDir
+	if command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_INIT {
+		process.Stdin = bytes.NewReader(command.CandidateSpecJson)
+	}
 	process.Env = stackKitChildEnvironment(os.Environ())
 	process.Stdout = stdout
 	process.Stderr = io.MultiWriter(stderr, stderrLogs)
@@ -170,17 +178,36 @@ func (executor *StackKitExecutor) execute(ctx context.Context, command *agentpb.
 
 	receipt := release.Receipt()
 	result.Release = stackKitReleasePinFromReceipt(receipt)
-	result.ExitCode = int32(exitCode(runErr))
+	result.ExitCode = clampIntToInt32(exitCode(runErr))
 	result.Stderr = secrets.Redact(stderr.String())
 	result.EventsJsonl = events
-	return finishStackKitResult(
+	publicOutput := []byte(secrets.Redact(stdout.String()))
+	if identityMutationCarriesTransientURL(command) {
+		// Bearer URLs are not covered by generic token regexes. Keep the
+		// ordinary result structurally secret-free; the approved direct caller
+		// receives the original envelope through SensitiveResultJson only.
+		var envelope struct {
+			SchemaVersion string `json:"schemaVersion"`
+			Command       string `json:"command"`
+			Status        string `json:"status"`
+		}
+		if json.Unmarshal([]byte(stdout.String()), &envelope) != nil {
+			runErr = errors.New("invalid identity command response")
+		}
+		publicOutput, _ = json.Marshal(map[string]any{"schemaVersion": envelope.SchemaVersion, "command": envelope.Command, "status": envelope.Status, "data": map[string]any{}})
+	}
+	finished := finishStackKitResult(
 		result,
 		command,
-		[]byte(secrets.Redact(stdout.String())),
+		publicOutput,
 		&receipt,
 		runErr,
 		started,
 	)
+	if finished.Success && identityMutationCarriesTransientURL(command) {
+		finished.SensitiveResultJson = []byte(stdout.String())
+	}
+	return finished
 }
 
 type stackKitLineEmitter struct {
@@ -293,19 +320,11 @@ func stackKitLiveLogEntry(command *agentpb.StackKitCommand, level, message strin
 	}
 	if command != nil {
 		fields["command_id"] = command.CommandId
-		fields["job_id"] = stackKitLiveJobID(command.CommandId)
+		fields["job_id"] = stackkitcommand.JobID(command.CommandId)
 		fields["stackkit"] = command.Stackkit
 		fields["stack_name"] = command.StackName
 	}
 	return &agentpb.LogEntry{TimestampUnix: time.Now().UTC().Unix(), Level: level, Message: secrets.Redact(message), Fields: fields}
-}
-
-func stackKitLiveJobID(commandID string) string {
-	value := strings.TrimSpace(commandID)
-	for _, suffix := range []string{"-plan", "-verify"} {
-		value = strings.TrimSuffix(value, suffix)
-	}
-	return value
 }
 
 func stackKitProgressLevel(status string) string {
@@ -374,6 +393,11 @@ func (executor *StackKitExecutor) prepare(command *agentpb.StackKitCommand) (
 	if err != nil {
 		return stackkitrelease.Release{}, nil, "", "", err
 	}
+	if stackkitcommand.RequiresWorkspaceInstanceBinding(command) {
+		if err := requireStackKitWorkspaceInstance(workDir, specPath, command.StackkitInstanceId); err != nil {
+			return stackkitrelease.Release{}, nil, "", "", err
+		}
+	}
 	eventFile, err := os.CreateTemp("", "techstack-stackkit-events-*.jsonl")
 	if err != nil {
 		return stackkitrelease.Release{}, nil, "", "", fmt.Errorf("create StackKits event spool: %w", err)
@@ -404,6 +428,34 @@ func (executor *StackKitExecutor) prepare(command *agentpb.StackKitCommand) (
 		return stackkitrelease.Release{}, nil, "", "", err
 	}
 	return release, append(args, operationArgs...), workDir, eventPath, nil
+}
+
+func requireStackKitWorkspaceInstance(workDir, specPath, expected string) error {
+	expected = strings.TrimSpace(expected)
+	if expected == "" {
+		return fmt.Errorf("StackKit workspace instance identity is required")
+	}
+	path := filepath.Join(workDir, filepath.FromSlash(specPath))
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("inspect StackKit workspace identity: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() <= 0 || info.Size() > 2<<20 {
+		return fmt.Errorf("StackKit workspace identity requires a bounded regular StackSpec")
+	}
+	data, err := os.ReadFile(path) // #nosec G304 -- path is confined to the validated StackKit workspace and relative spec path.
+	if err != nil {
+		return fmt.Errorf("read StackKit workspace identity: %w", err)
+	}
+	var spec map[string]any
+	if err := yaml.Unmarshal(data, &spec); err != nil {
+		return fmt.Errorf("decode StackKit workspace identity: %w", err)
+	}
+	actual := specv2.ResolvedStackKitInstanceID(spec)
+	if actual == "" || actual != expected {
+		return fmt.Errorf("StackKit workspace instance identity does not match the dispatched authority")
+	}
+	return nil
 }
 
 func materializeStackKitInventory(workDir string, raw []byte) error {
@@ -473,127 +525,230 @@ func materializeStackKitInventory(workDir string, raw []byte) error {
 func stackKitOperationArgs(command *agentpb.StackKitCommand) ([]string, error) {
 	switch command.Operation {
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_INIT:
-		kit := strings.TrimSpace(command.Stackkit)
-		if kit != "basement-kit" && kit != "cloud-kit" {
-			return nil, fmt.Errorf("StackKit init requires a supported StackKit")
-		}
-		name := strings.TrimSpace(command.StackName)
-		if name == "" || strings.HasPrefix(name, "-") || strings.ContainsAny(name, `/\\`) {
-			return nil, fmt.Errorf("StackKit init stack_name is invalid")
-		}
-		expectedHash := strings.TrimSpace(command.ExpectedSpecHash)
-		if expectedHash != "" && !stackKitExpectedSpecHashPattern.MatchString(expectedHash) {
-			return nil, fmt.Errorf("StackKit init expected_spec_hash is invalid")
-		}
-		args := []string{"init", kit, "--name", name, "--owner-source=local", "--non-interactive"}
-		if expectedHash != "" {
-			args = append(args, "--expected-spec-hash", expectedHash)
-		}
-		if domain := strings.TrimSpace(command.Domain); domain != "" {
-			if strings.HasPrefix(domain, "-") || strings.ContainsAny(domain, `/\\`) {
-				return nil, fmt.Errorf("StackKit init domain is invalid")
-			}
-			args = append(args, "--domain", domain)
-		}
-		return args, nil
+		return stackKitInitArgs(command)
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADDRESS_BIND:
+		return stackKitAddressBindArgs(command)
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_VALIDATE:
 		return []string{"validate"}, nil
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_GENERATE:
-		output, err := cleanStackKitRelativePath(command.OutputDirectory, "deploy", "output_directory")
-		if err != nil {
-			return nil, err
-		}
-		return []string{"generate", "--output", filepath.ToSlash(output)}, nil
+		return stackKitGenerateArgs(command)
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_PLAN:
 		return []string{"plan", "--json"}, nil
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_APPLY:
-		siteRef := strings.TrimSpace(command.LocalSiteRef)
-		nodeRef := strings.TrimSpace(command.LocalNodeRef)
-		channelRef := strings.TrimSpace(command.LocalExecutionChannelRef)
-		if siteRef == "" || nodeRef == "" || channelRef == "" {
-			return nil, fmt.Errorf("StackKit apply requires local Site, node, and execution-channel references")
-		}
-		expectedPlanHash := strings.TrimSpace(command.ExpectedPlanHash)
-		if !stackKitExpectedSpecHashPattern.MatchString(expectedPlanHash) {
-			return nil, fmt.Errorf("StackKit apply expected_plan_hash is required and must be a lowercase sha256:<64-hex> digest")
-		}
-		return []string{
-			"apply",
-			"--auto-approve",
-			"--expected-plan-hash", expectedPlanHash,
-			"--local-site", siteRef,
-			"--local-node", nodeRef,
-			"--local-execution-channel", channelRef,
-		}, nil
+		return stackKitApplyArgs(command)
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_VERIFY:
-		args := []string{"verify", "--json"}
-		if command.Offline {
-			args = append(args, "--offline")
-		}
-		return args, nil
+		return stackKitVerifyArgs(command), nil
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_UPGRADE:
-		target := strings.TrimSpace(command.TargetRelease)
-		if target == "" {
-			target = "latest"
-		}
-		if !stackKitTargetReleasePattern.MatchString(target) {
-			return nil, fmt.Errorf("StackKit upgrade target_release is invalid")
-		}
-		if !command.DryRun && !command.OwnerApproved {
-			return nil, fmt.Errorf("StackKit upgrade requires explicit Owner approval")
-		}
-		args := []string{"upgrade", "--to", target, "--json"}
-		if command.DryRun {
-			args = append(args, "--dry-run")
-		}
-		return args, nil
+		return stackKitUpgradeArgs(command)
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_DRIFT_DETECT:
 		return []string{"drift", "detect", "--json"}, nil
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_DRIFT_RECONCILE:
-		if !command.OwnerApproved {
-			return nil, fmt.Errorf("StackKit drift reconcile requires explicit Owner approval")
-		}
-		mode := "standard"
-		switch command.DriftMode {
-		case agentpb.StackKitDriftMode_STACKKIT_DRIFT_MODE_STANDARD:
-		case agentpb.StackKitDriftMode_STACKKIT_DRIFT_MODE_ADVANCED:
-			mode = "advanced"
-		default:
-			return nil, fmt.Errorf("StackKit drift reconcile requires an explicit drift_mode")
-		}
-		return []string{"drift", "reconcile", "--mode", mode, "--owner-approve", "--json"}, nil
+		return stackKitDriftReconcileArgs(command)
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_SERVICE_START,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_SERVICE_STOP,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_SERVICE_RESTART:
-		if !command.OwnerApproved {
-			return nil, fmt.Errorf("StackKit service mutation requires explicit Owner approval")
-		}
-		serviceKey := strings.TrimSpace(command.ServiceKey)
-		if !stackKitServiceKeyPattern.MatchString(serviceKey) {
-			return nil, fmt.Errorf("StackKit service_key is invalid")
-		}
-		action := strings.TrimPrefix(strings.ToLower(command.Operation.String()), "stackkit_operation_service_")
-		return []string{"service", action, serviceKey, "--json", "--owner-approve"}, nil
+		return stackKitServiceMutationArgs(command)
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_SERVICE_LOGS:
-		serviceKey := strings.TrimSpace(command.ServiceKey)
-		if !stackKitServiceKeyPattern.MatchString(serviceKey) {
-			return nil, fmt.Errorf("StackKit service_key is invalid")
+		return stackKitServiceLogsArgs(command)
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_REMOVE:
+		return stackKitRemoveArgs(command)
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RUN:
+		return stackKitBackupRunArgs(command)
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_STATUS:
+		return []string{"backup", "status", "--json"}, nil
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_CONFIGURE:
+		return []string{"backup", "configure", "--json"}, nil
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE:
+		return stackKitBackupRestoreArgs(command)
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_OWNER_ACTIVATION_STATUS:
+		return []string{"user", "owner", "status", "--json"}, nil
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_OWNER_ACTIVATION_ISSUE:
+		return []string{"user", "owner", "activate", "--owner-approve", "--json"}, nil
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_LIST:
+		return []string{"user", "list", "--json"}, nil
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_INVITE:
+		args := []string{"user", "add", command.HouseholdUsername, "--email", command.HouseholdEmail}
+		if command.HouseholdDisplayName != "" {
+			args = append(args, "--display-name", command.HouseholdDisplayName)
 		}
-		tail := command.LogTail
-		if tail == 0 {
-			tail = 100
-		}
-		if tail < 1 || tail > 200 {
-			return nil, fmt.Errorf("StackKit service log_tail must be between 1 and 200")
-		}
-		args := []string{"service", "logs", serviceKey, "--tail", fmt.Sprint(tail), "--json"}
-		if cursor := strings.TrimSpace(command.LogCursor); cursor != "" {
-			args = append(args, "--cursor", cursor)
-		}
-		return args, nil
+		return append(args, "--owner-approve", "--json"), nil
 	default:
 		return nil, fmt.Errorf("unsupported StackKit operation %s", command.Operation.String())
 	}
+}
+
+func identityMutationCarriesTransientURL(command *agentpb.StackKitCommand) bool {
+	if command == nil || !command.OwnerApproved {
+		return false
+	}
+	return command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_OWNER_ACTIVATION_ISSUE ||
+		command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_INVITE
+}
+
+func stackKitInitArgs(command *agentpb.StackKitCommand) ([]string, error) {
+	kit := strings.TrimSpace(command.Stackkit)
+	if kit != "basement-kit" && kit != "cloud-kit" {
+		return nil, fmt.Errorf("StackKit init requires a supported StackKit")
+	}
+	name := strings.TrimSpace(command.StackName)
+	if name == "" || strings.HasPrefix(name, "-") || strings.ContainsAny(name, `/\\`) {
+		return nil, fmt.Errorf("StackKit init stack_name is invalid")
+	}
+	expectedHash := strings.TrimSpace(command.ExpectedSpecHash)
+	if expectedHash != "" && !stackKitExpectedSpecHashPattern.MatchString(expectedHash) {
+		return nil, fmt.Errorf("StackKit init expected_spec_hash is invalid")
+	}
+	if err := stackkitcommand.ValidateInitCandidate(command.CandidateSpecJson, kit, name); err != nil {
+		return nil, err
+	}
+	args := []string{"init", kit, "--candidate-spec=-", "--owner-source=local", "--non-interactive"}
+	if expectedHash != "" {
+		args = append(args, "--expected-spec-hash", expectedHash)
+	}
+	// A fresh node has no Owner custody yet, and StackKits refuses a local
+	// Owner without a real email. A node that already holds custody keeps its
+	// established identity when the email is omitted.
+	if email := command.OwnerEmail; email != "" {
+		if !stackkitcommand.ValidOwnerEmail(email) {
+			return nil, fmt.Errorf("StackKit init owner_email is invalid")
+		}
+		args = append(args, "--owner-email", email)
+	}
+	return args, nil
+}
+
+func stackKitAddressBindArgs(command *agentpb.StackKitCommand) ([]string, error) {
+	prefix := strings.TrimSpace(command.AddressPrefix)
+	if !stackKitAddressPrefixPattern.MatchString(prefix) {
+		return nil, fmt.Errorf("StackKit address prefix is invalid")
+	}
+	boundSpecPath, err := cleanStackKitRelativePath(command.BoundSpecPath, "", "bound_spec_path")
+	if err != nil || boundSpecPath == "" {
+		return nil, fmt.Errorf("StackKit bound_spec_path is invalid")
+	}
+	return []string{"address", "bind", "--prefix", prefix, "--output", filepath.ToSlash(boundSpecPath)}, nil
+}
+
+func stackKitGenerateArgs(command *agentpb.StackKitCommand) ([]string, error) {
+	output, err := cleanStackKitRelativePath(command.OutputDirectory, "deploy", "output_directory")
+	if err != nil {
+		return nil, err
+	}
+	return []string{"generate", "--output", filepath.ToSlash(output)}, nil
+}
+
+func stackKitApplyArgs(command *agentpb.StackKitCommand) ([]string, error) {
+	siteRef := strings.TrimSpace(command.LocalSiteRef)
+	nodeRef := strings.TrimSpace(command.LocalNodeRef)
+	channelRef := strings.TrimSpace(command.LocalExecutionChannelRef)
+	if siteRef == "" || nodeRef == "" || channelRef == "" {
+		return nil, fmt.Errorf("StackKit apply requires local Site, node, and execution-channel references")
+	}
+	expectedPlanHash := strings.TrimSpace(command.ExpectedPlanHash)
+	if !stackKitExpectedSpecHashPattern.MatchString(expectedPlanHash) {
+		return nil, fmt.Errorf("StackKit apply expected_plan_hash is required and must be a lowercase sha256:<64-hex> digest")
+	}
+	return []string{
+		"apply",
+		"--auto-approve",
+		"--json",
+		"--expected-plan-hash", expectedPlanHash,
+		"--local-site", siteRef,
+		"--local-node", nodeRef,
+		"--local-execution-channel", channelRef,
+	}, nil
+}
+
+func stackKitVerifyArgs(command *agentpb.StackKitCommand) []string {
+	args := []string{"verify", "--json"}
+	if command.Offline {
+		args = append(args, "--offline")
+	}
+	return args
+}
+
+func stackKitUpgradeArgs(command *agentpb.StackKitCommand) ([]string, error) {
+	target := strings.TrimSpace(command.TargetRelease)
+	if target == "" {
+		target = "latest"
+	}
+	if !stackKitTargetReleasePattern.MatchString(target) {
+		return nil, fmt.Errorf("StackKit upgrade target_release is invalid")
+	}
+	if !command.DryRun && !command.OwnerApproved {
+		return nil, fmt.Errorf("StackKit upgrade requires explicit Owner approval")
+	}
+	args := []string{"upgrade", "--to", target, "--json"}
+	if command.DryRun {
+		args = append(args, "--dry-run")
+	}
+	return args, nil
+}
+
+func stackKitDriftReconcileArgs(command *agentpb.StackKitCommand) ([]string, error) {
+	if !command.OwnerApproved {
+		return nil, fmt.Errorf("StackKit drift reconcile requires explicit Owner approval")
+	}
+	mode := "standard"
+	switch command.DriftMode {
+	case agentpb.StackKitDriftMode_STACKKIT_DRIFT_MODE_STANDARD:
+	case agentpb.StackKitDriftMode_STACKKIT_DRIFT_MODE_ADVANCED:
+		mode = "advanced"
+	default:
+		return nil, fmt.Errorf("StackKit drift reconcile requires an explicit drift_mode")
+	}
+	return []string{"drift", "reconcile", "--mode", mode, "--owner-approve", "--json"}, nil
+}
+
+func stackKitServiceMutationArgs(command *agentpb.StackKitCommand) ([]string, error) {
+	if !command.OwnerApproved {
+		return nil, fmt.Errorf("StackKit service mutation requires explicit Owner approval")
+	}
+	serviceKey := strings.TrimSpace(command.ServiceKey)
+	if !stackKitServiceKeyPattern.MatchString(serviceKey) {
+		return nil, fmt.Errorf("StackKit service_key is invalid")
+	}
+	action := strings.TrimPrefix(strings.ToLower(command.Operation.String()), "stackkit_operation_service_")
+	return []string{"service", action, serviceKey, "--json", "--owner-approve"}, nil
+}
+
+func stackKitServiceLogsArgs(command *agentpb.StackKitCommand) ([]string, error) {
+	serviceKey := strings.TrimSpace(command.ServiceKey)
+	if !stackKitServiceKeyPattern.MatchString(serviceKey) {
+		return nil, fmt.Errorf("StackKit service_key is invalid")
+	}
+	tail := command.LogTail
+	if tail == 0 {
+		tail = 100
+	}
+	if tail < 1 || tail > 200 {
+		return nil, fmt.Errorf("StackKit service log_tail must be between 1 and 200")
+	}
+	args := []string{"service", "logs", serviceKey, "--tail", fmt.Sprint(tail), "--json"}
+	if cursor := strings.TrimSpace(command.LogCursor); cursor != "" {
+		args = append(args, "--cursor", cursor)
+	}
+	return args, nil
+}
+
+func stackKitRemoveArgs(command *agentpb.StackKitCommand) ([]string, error) {
+	if !command.OwnerApproved {
+		return nil, fmt.Errorf("StackKit remove requires explicit Owner approval")
+	}
+	workloadRef := strings.TrimSpace(command.WorkloadRef)
+	if workloadRef == "" || workloadRef != strings.ToLower(workloadRef) {
+		return nil, fmt.Errorf("StackKit remove requires one canonical workload_ref")
+	}
+	siteRef := strings.TrimSpace(command.LocalSiteRef)
+	nodeRef := strings.TrimSpace(command.LocalNodeRef)
+	channelRef := strings.TrimSpace(command.LocalExecutionChannelRef)
+	if siteRef == "" || nodeRef == "" || channelRef == "" {
+		return nil, fmt.Errorf("StackKit remove requires local Site, node, and execution-channel references")
+	}
+	return []string{
+		"remove", "--auto-approve", "--terminal-evidence-json", "--workload", workloadRef,
+		"--local-site", siteRef, "--local-node", nodeRef, "--local-execution-channel", channelRef,
+	}, nil
 }
 
 func requireMatchingStackKitRelease(expected *agentpb.StackKitReleasePin, actual stackkitrelease.Receipt) error {
@@ -671,6 +826,15 @@ func finishStackKitResult(
 	if result == nil {
 		result = &agentpb.StackKitResult{}
 	}
+	defer func() { attestPinnedCLILocalEvidence(result, command) }()
+	commandName := ""
+	if command != nil {
+		commandName = stackkitcommand.ResultCommandName(command.Operation)
+	}
+	typedStatus, typedResult := stackKitCommandResultStatus(stdout, commandName)
+	if typedResult && typedStatus != "success" && runErr == nil {
+		runErr = errors.New("StackKit command-result reported failure after a successful process exit")
+	}
 	result.CommandResultSchemaVersion = stackKitCommandResultVersion
 	result.EventsSchemaVersion = stackKitRolloutEventVersion
 	result.Success = runErr == nil
@@ -689,17 +853,25 @@ func finishStackKitResult(
 			result.Stderr += "\n" + message
 		}
 	}
-	if isStackKitCommandResult(stdout) {
+	if typedResult && (typedStatus == "success") == result.Success {
 		result.CommandResultJson = append([]byte(nil), stdout...)
 		return result
+	}
+	if typedResult && !result.Success {
+		// Apply can emit a valid partial ledger before its process exits nonzero.
+		// Normalize the transport status without hiding that ledger in output text.
+		var typedEnvelope map[string]json.RawMessage
+		if json.Unmarshal(stdout, &typedEnvelope) == nil {
+			typedEnvelope["status"] = json.RawMessage(`"failed"`)
+			if encoded, encodeErr := json.Marshal(typedEnvelope); encodeErr == nil {
+				result.CommandResultJson = encoded
+				return result
+			}
+		}
 	}
 	status := "success"
 	if runErr != nil {
 		status = "failed"
-	}
-	commandName := ""
-	if command != nil {
-		commandName = stackkitcommand.ResultCommandName(command.Operation)
 	}
 	releasePin := result.Release
 	if receipt != nil {
@@ -725,9 +897,51 @@ func finishStackKitResult(
 	return result
 }
 
-func isStackKitCommandResult(data []byte) bool {
+// attestPinnedCLILocalEvidence records what this process can prove: the exact
+// pinned CLI completed an operation whose StackKits implementation verifies
+// local Owner custody before returning its JSON evidence. The Agent binds that
+// observation to the exact result bytes. It does not claim to possess or use
+// the Owner public key itself.
+func attestPinnedCLILocalEvidence(result *agentpb.StackKitResult, command *agentpb.StackKitCommand) {
+	if result == nil {
+		return
+	}
+	result.PinnedCliEvidenceVerified = false
+	result.PinnedCliEvidenceSha256 = ""
+	if command == nil || !result.Success || len(result.CommandResultJson) == 0 {
+		return
+	}
+	var wantAPIVersion string
+	switch command.Operation {
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RUN:
+		wantAPIVersion = "stackkit.local-backup-snapshot-anchor/v1"
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE:
+		wantAPIVersion = "stackkit.local-backup-restore-result/v1"
+	default:
+		return
+	}
+	var envelope struct {
+		SchemaVersion string `json:"schemaVersion"`
+		Command       string `json:"command"`
+		Status        string `json:"status"`
+		Data          struct {
+			APIVersion string `json:"apiVersion"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(result.CommandResultJson, &envelope) != nil ||
+		envelope.SchemaVersion != stackKitCommandResultVersion ||
+		envelope.Command != stackkitcommand.ResultCommandName(command.Operation) ||
+		envelope.Status != "success" || envelope.Data.APIVersion != wantAPIVersion {
+		return
+	}
+	digest := sha256.Sum256(result.CommandResultJson)
+	result.PinnedCliEvidenceVerified = true
+	result.PinnedCliEvidenceSha256 = "sha256:" + hex.EncodeToString(digest[:])
+}
+
+func stackKitCommandResultStatus(data []byte, commandName string) (string, bool) {
 	if len(bytes.TrimSpace(data)) == 0 || !json.Valid(data) {
-		return false
+		return "", false
 	}
 	var identity struct {
 		SchemaVersion string `json:"schemaVersion"`
@@ -735,11 +949,12 @@ func isStackKitCommandResult(data []byte) bool {
 		Status        string `json:"status"`
 	}
 	if err := json.Unmarshal(data, &identity); err != nil {
-		return false
+		return "", false
 	}
-	return identity.SchemaVersion == stackKitCommandResultVersion &&
-		strings.TrimSpace(identity.Command) != "" &&
+	valid := identity.SchemaVersion == stackKitCommandResultVersion &&
+		identity.Command == commandName &&
 		(identity.Status == "success" || identity.Status == "failed" || identity.Status == "denied")
+	return identity.Status, valid
 }
 
 func readStackKitEvents(path string) ([][]byte, error) {

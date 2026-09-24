@@ -73,7 +73,7 @@ const (
 // single source of truth for the run's state (current mutable state, NOT an
 // event log to replay).
 type Run struct {
-	ID             string         `json:"id"`     // PocketBase record id
+	ID             string         `json:"id"`     // legacy compatibility id; Postgres keys RunID
 	RunID          string         `json:"run_id"` // stable external id (uuid)
 	Type           RunType        `json:"type"`
 	Status         RunStatus      `json:"status"`
@@ -150,8 +150,8 @@ type StepResult struct {
 }
 
 // Activities is the side-effecting activity registry a step calls into. The
-// runner provides a concrete implementation; steps never touch the network or
-// PocketBase directly — they go through idempotency-keyed activities.
+// runner provides a concrete implementation; steps never perform network or
+// persistence side effects directly — they use idempotency-keyed activities.
 type Activities interface {
 	Run(ctx context.Context, name string, input map[string]any, idempotencyKey string) (map[string]any, error)
 }

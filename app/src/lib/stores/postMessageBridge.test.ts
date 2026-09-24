@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("$app/environment", () => ({
+vi.mock("$app/env", () => ({
   browser: true,
 }));
 
@@ -11,7 +11,7 @@ vi.mock("$app/navigation", () => ({
 }));
 
 vi.mock("./theme", () => ({
-  theme: { set: vi.fn(), setSystemCardShape: vi.fn() },
+  theme: { set: vi.fn(), setSystemCardShape: vi.fn(), setHostFinish: vi.fn() },
 }));
 
 vi.mock("./stackIdentity", () => ({
@@ -56,6 +56,21 @@ describe("postMessageBridge token lanes", () => {
     vi.unstubAllGlobals();
   });
 
+  it("announces host-owned portal chrome on ready", async () => {
+    const parent = { postMessage: vi.fn() };
+    setParent(parent);
+    const { initBridge } = await import("./postMessageBridge");
+    initBridge("https://kombify.io");
+    expect(parent.postMessage).toHaveBeenCalledWith(
+      {
+        type: "ready",
+        tool: "kombifystack",
+        chrome: { overlayControls: "host", companion: "host" },
+      },
+      "https://kombify.io",
+    );
+  });
+
   it("uses a cached parent SSO token for auth-token requests", async () => {
     const parent = { postMessage: vi.fn() };
     setParent(parent);
@@ -70,6 +85,41 @@ describe("postMessageBridge token lanes", () => {
     expect(parent.postMessage).not.toHaveBeenCalled();
   });
 
+  it("preserves host-owned navigation when the portal sends a route", async () => {
+    const parent = { postMessage: vi.fn() };
+    setParent(parent);
+    window.history.replaceState(
+      {},
+      "",
+      "/dashboard?embedded=true&host_navigation=true",
+    );
+
+    const { initBridge } = await import("./postMessageBridge");
+    const { goto } = await import("$app/navigation");
+    initBridge("https://kombify.io");
+
+    portalMessage(parent, {
+      type: "navigate",
+      path: "/services?view=servers",
+    });
+
+    expect(goto).toHaveBeenCalledWith(
+      "/services?view=servers&host_navigation=true",
+    );
+
+    vi.mocked(goto).mockClear();
+    portalMessage(parent, {
+      type: "navigate",
+      path: "//external.example/dashboard",
+    });
+    portalMessage(parent, {
+      type: "navigate",
+      path: "/services\\evil",
+    });
+
+    expect(goto).not.toHaveBeenCalled();
+  });
+
   it("applies theme and card shape through the existing appearance message", async () => {
     const parent = { postMessage: vi.fn() };
     setParent(parent);
@@ -82,10 +132,14 @@ describe("postMessageBridge token lanes", () => {
       type: "theme",
       value: "dark",
       systemCardShape: "app",
+      finish: "aurora",
     });
 
     expect(theme.set).toHaveBeenCalledWith("dark");
     expect(theme.setSystemCardShape).toHaveBeenCalledWith("app");
+    // The optional §4 host design context rides on the same message; the
+    // store validates the vocabulary, the bridge just forwards.
+    expect(theme.setHostFinish).toHaveBeenCalledWith("aurora");
   });
 
   it("coalesces waiters and re-sends one lost auth request after the rate-limit floor", async () => {

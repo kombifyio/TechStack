@@ -8,6 +8,8 @@ import (
 
 type signedEntitlementsContextKey struct{}
 
+type membershipEntitlementsContextKey struct{}
+
 // SignedEntitlements is the immutable set extracted only after a v2 Edge
 // identity signature has been verified. It is deliberately separate from
 // feature flags because those are not authorization grants.
@@ -58,4 +60,49 @@ func WithSignedEntitlements(ctx context.Context, entitlements ...string) context
 		values[entitlement] = struct{}{}
 	}
 	return context.WithValue(ctx, signedEntitlementsContextKey{}, SignedEntitlements{values: values})
+}
+
+// WithMembershipEntitlements attaches grants that were persisted server-side
+// from a verified session's identity claims (the Cloud membership fallback).
+// They are NOT Edge-signed: the Gateway never vouched for them per request,
+// so they live in a separate bucket. Consumers that authorize cost-bearing or
+// provider-mutating work must keep reading SignedEntitlementsFromContext;
+// read-side surfaces that intentionally accept the membership fallback use
+// AuthorizedEntitlementsFromContext.
+func WithMembershipEntitlements(ctx context.Context, entitlements ...string) context.Context {
+	values := make(map[string]struct{}, len(entitlements))
+	for _, entitlement := range entitlements {
+		values[entitlement] = struct{}{}
+	}
+	return context.WithValue(ctx, membershipEntitlementsContextKey{}, SignedEntitlements{values: values})
+}
+
+// MembershipEntitlementsFromContext returns the server-owned membership grants.
+func MembershipEntitlementsFromContext(ctx context.Context) (SignedEntitlements, bool) {
+	if ctx == nil {
+		return SignedEntitlements{}, false
+	}
+	value, ok := ctx.Value(membershipEntitlementsContextKey{}).(SignedEntitlements)
+	return value, ok
+}
+
+// EntitlementSource names where an authorized entitlement set came from.
+type EntitlementSource string
+
+const (
+	EntitlementSourceSignedEdge EntitlementSource = "signed_edge"
+	EntitlementSourceMembership EntitlementSource = "membership"
+)
+
+// AuthorizedEntitlementsFromContext returns the Edge-signed grants when
+// present, otherwise the membership fallback, together with its source.
+// Existing Edge-signed grants always win; the fallback never merges into them.
+func AuthorizedEntitlementsFromContext(ctx context.Context) (SignedEntitlements, EntitlementSource, bool) {
+	if signed, ok := SignedEntitlementsFromContext(ctx); ok {
+		return signed, EntitlementSourceSignedEdge, true
+	}
+	if membership, ok := MembershipEntitlementsFromContext(ctx); ok {
+		return membership, EntitlementSourceMembership, true
+	}
+	return SignedEntitlements{}, "", false
 }

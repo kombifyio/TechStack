@@ -62,7 +62,7 @@ func (s *PostgresStore) Put(ctx context.Context, req PutRequest) (*PutResult, er
 func putRoutingDesiredState(ctx context.Context, tx *sql.Tx, req PutRequest) (*PutResult, error) {
 	// Serialize both first-write and update races for this exact stack. This
 	// keeps the idempotency receipt and routing revision in one transaction.
-	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, routingKey(req.TenantID, req.StackID)); err != nil {
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(format('%s:%s:%s', octet_length($1::text), $1::text, $2::text), 0))`, req.TenantID, req.StackID); err != nil {
 		return nil, err
 	}
 	replay, found, err := loadRoutingIdempotencyReceipt(ctx, tx, req)

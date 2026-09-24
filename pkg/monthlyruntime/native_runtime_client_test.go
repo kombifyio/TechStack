@@ -38,7 +38,7 @@ func TestNativeRuntimeClientProjectsProviderAndGuardTruth(t *testing.T) {
 	}
 }
 
-func TestNativeRuntimeClientFailsClosedForCrossTenantAndUnsupportedAction(t *testing.T) {
+func TestNativeRuntimeClientFailsClosedForCrossTenantAndUnsupportedActions(t *testing.T) {
 	store := controlplane.NewMemoryStore()
 	leaseID := "lease-1"
 	if _, err := store.UpsertServerRuntime(t.Context(), controlplane.ServerRuntime{
@@ -64,18 +64,19 @@ func TestNativeRuntimeClientFailsClosedForCrossTenantAndUnsupportedAction(t *tes
 	if !errors.As(err, &unsupported) || unsupported.Action != serverruntime.RuntimeActionStart {
 		t.Fatalf("unsupported action details = %#v", unsupported)
 	}
-	details := NativeRuntimeActionUnsupportedDetails(err)
-	if details["error_code"] != NativeRuntimeActionUnsupportedErrorCode ||
-		details["reason_code"] != "provider_recreate_not_ready" {
-		t.Fatalf("unsupported action details = %#v", details)
-	}
-}
-
-func TestNativeRuntimeStopGuidanceDoesNotClaimProviderPause(t *testing.T) {
-	err := &NativeRuntimeActionUnsupportedError{Action: serverruntime.RuntimeActionStop}
-	details := NativeRuntimeActionUnsupportedDetails(err)
-	if details["reason_code"] != "provider_pause_unsupported" || details["retryable"] != false {
-		t.Fatalf("stop details = %#v", details)
+	for _, tc := range []struct {
+		action serverruntime.RuntimeAction
+		reason string
+		retry  bool
+	}{
+		{action: serverruntime.RuntimeActionStart, reason: "managed_power_control_unavailable"},
+		{action: serverruntime.RuntimeActionStop, reason: "managed_power_control_unavailable"},
+		{action: serverruntime.RuntimeActionSSHInfo, reason: "managed_ssh_custody_pending", retry: true},
+	} {
+		details := NativeRuntimeActionUnsupportedDetails(&NativeRuntimeActionUnsupportedError{Action: tc.action})
+		if details["error_code"] != NativeRuntimeActionUnsupportedErrorCode || details["reason_code"] != tc.reason || details["retryable"] != tc.retry {
+			t.Fatalf("%s details = %#v, want reason %q retryable %v", tc.action, details, tc.reason, tc.retry)
+		}
 	}
 }
 

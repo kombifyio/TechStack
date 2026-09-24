@@ -40,18 +40,38 @@ async function attachFullPageScreenshot(page: Page, name: string) {
 async function loginAsAdmin(page: Page) {
   await page.goto("/login");
   await page.waitForLoadState("domcontentloaded");
-  await page.waitForTimeout(1000);
+  await page.waitForURL(
+    /\/client\/onboarding|\/client\/local|\/stacks|\/login/,
+    { timeout: 15_000 },
+  );
 
-  if (!page.url().includes("/login")) {
+  if (page.url().includes("/dashboard")) {
     await expect(page.locator("aside").first()).toBeVisible();
     return;
   }
 
-  await page.getByLabel("Email").fill(TEST_CREDENTIALS.email);
-  await page
-    .getByRole("textbox", { name: "Password", exact: true })
-    .fill(TEST_CREDENTIALS.password);
-  await page.getByRole("button", { name: "Sign in locally" }).click();
+  if (page.url().includes("/login")) {
+    const localOwner = page.getByRole("button", {
+      name: "Continue as local owner",
+    });
+    if (await localOwner.isVisible().catch(() => false)) {
+      await localOwner.click();
+      await page.waitForURL(/\/client\/local/);
+    }
+  }
+
+  const existingEmail = page.getByTestId("windows-local-existing-email");
+  if (await existingEmail.isVisible().catch(() => false)) {
+    await existingEmail.fill(TEST_CREDENTIALS.email);
+    await page
+      .getByTestId("windows-local-existing-password")
+      .fill(TEST_CREDENTIALS.password);
+    await page.getByTestId("windows-local-existing-submit").click();
+  } else {
+    await page.getByLabel("Email").fill(TEST_CREDENTIALS.email);
+    await page.getByLabel("Password").fill(TEST_CREDENTIALS.password);
+    await page.getByRole("button", { name: "Sign in locally" }).click();
+  }
 
   await page.waitForURL(/\/stacks/, { timeout: 30_000 });
   await expect(page.locator("aside").first()).toBeVisible();
@@ -76,6 +96,8 @@ async function completeEasyWizard(page: Page) {
   await nextBtn.click();
 
   await expect(page.getByTestId("easy-step-2")).toBeVisible();
+  await page.getByTestId("server-branch-owned").click();
+  await page.getByTestId("server-mode-install-command").click();
   await expect(nextBtn).toBeEnabled();
   await nextBtn.click();
 
@@ -87,7 +109,7 @@ async function completeEasyWizard(page: Page) {
   await nextBtn.click();
 
   await expect(page.getByTestId("easy-step-4")).toBeVisible();
-  const usersMe = page.getByTestId("easy-users-me");
+  const usersMe = page.getByTestId("easy-users-solo");
   if (await usersMe.isVisible().catch(() => false)) {
     await usersMe.click();
   }
@@ -138,29 +160,15 @@ test.describe.serial("Integration Flow (Real Docker Backend)", () => {
     await sharedPage.waitForTimeout(2000);
 
     // -- Semantic: verify login form structure --
-    await expect(
-      sharedPage.getByRole("heading", { name: "Owner sign-in" }),
-    ).toBeVisible();
-    await expect(sharedPage.getByLabel("Email")).toBeVisible();
-    await expect(
-      sharedPage.getByRole("textbox", { name: "Password", exact: true }),
-    ).toBeVisible();
-    await expect(
-      sharedPage.getByRole("button", { name: "Sign in locally" }),
-    ).toBeVisible();
-
-    // -- Semantic: no error banners --
-    const errorBanners = sharedPage.locator(
-      ".border-red-700, [role='alert'][class*='error'], .bg-destructive",
-    );
-    await expect(errorBanners).toHaveCount(0);
-
-    // -- Semantic: branding elements present --
-    await expect(
-      sharedPage.getByRole("heading", { name: "kombify TechStack" }),
-    ).toBeVisible();
+    await sharedPage.waitForURL(/\/client\/onboarding|\/client\/local|\/login/);
+    await expect(sharedPage.getByText("PocketBase")).toHaveCount(0);
     await expect(
       sharedPage.getByRole("heading", { name: "Emergency admin" }),
+    ).toHaveCount(0);
+    await expect(
+      sharedPage.getByRole("heading", {
+        name: /kombify Techstack|Local Techstack setup/,
+      }),
     ).toBeVisible();
 
     // -- Visual: attach diagnostic screenshot without baseline comparison --
@@ -176,7 +184,7 @@ test.describe.serial("Integration Flow (Real Docker Backend)", () => {
   // ── 04: Dashboard renders post-login ────────────────────────
 
   test("04 - Admin verification: dashboard renders", async () => {
-    await sharedPage.goto("/stacks");
+    await sharedPage.goto("/dashboard");
     await waitForPageLoad(sharedPage);
 
     // -- Semantic: main heading --
@@ -475,7 +483,7 @@ test.describe.serial("Integration Flow (Real Docker Backend)", () => {
   // ── 13: UI shows clean state after reset ──────────────────
 
   test("13 - Dashboard shows clean state after reset", async () => {
-    await sharedPage.goto("/stacks");
+    await sharedPage.goto("/dashboard");
     await waitForPageLoad(sharedPage);
 
     // After reset, dashboard should show the welcome/setup state

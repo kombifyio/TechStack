@@ -7,19 +7,22 @@ import (
 )
 
 const (
-	KeyServerNodeRole         = "server_node_role"
-	KeyRequestedServices      = "requested_services"
-	KeyServerRemoteHost       = "server_remote_host"
-	KeyServerRemoteUser       = "server_remote_user"
-	KeyServerRemotePort       = "server_remote_port"
-	KeyServerRemoteAuthMethod = "server_remote_auth_method"
-	KeyServerRemoteCredential = "server_remote_credential_ref"
-	KeyServerRemoteSSHKey     = "server_remote_ssh_key"
-	KeyServerRemoteUseSudo    = "server_remote_use_sudo"
+	KeyServerNodeRole          = "server_node_role"
+	KeyRuntimeEnvironmentClass = "runtime_environment_class"
+	KeyRequestedServices       = "requested_services"
+	KeyServerRemoteHost        = "server_remote_host"
+	KeyServerRemoteUser        = "server_remote_user"
+	KeyServerRemotePort        = "server_remote_port"
+	KeyServerRemoteAuthMethod  = "server_remote_auth_method"
+	KeyServerRemoteCredential  = "server_remote_credential_ref"
+	KeyServerRemoteSSHKey      = "server_remote_ssh_key"
+	KeyServerRemoteUseSudo     = "server_remote_use_sudo"
 )
 
 func NormalizeNodeRole(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "substrate":
+		return "substrate"
 	case "foundation", "main", "standalone", "control-plane", "control_plane":
 		return "foundation"
 	case "storage":
@@ -31,6 +34,8 @@ func NormalizeNodeRole(value string) string {
 
 func WorkerTypeForNodeRole(value string) string {
 	switch NormalizeNodeRole(value) {
+	case "substrate":
+		return "substrate"
 	case "foundation":
 		return "main"
 	case "storage":
@@ -38,10 +43,6 @@ func WorkerTypeForNodeRole(value string) string {
 	default:
 		return "worker"
 	}
-}
-
-func NodeRoleFromWorkerType(value string) string {
-	return NormalizeNodeRole(value)
 }
 
 func NormalizeServiceKeys(values []string) []string {

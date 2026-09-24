@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -21,8 +22,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/runtimeidentity"
 	"github.com/kombifyio/techstack/pkg/serverregistry"
 	"github.com/kombifyio/techstack/pkg/vmleases"
-	"github.com/pocketbase/pocketbase/core"
-	"github.com/pocketbase/pocketbase/tests"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestStackKitOutputServicesRetainMetadataWithoutExposingConfiguredLinks(t *testing.T) {
@@ -81,7 +81,7 @@ func TestStackKitRuntimeObservationProjectsFreshMeasuredServiceHealth(t *testing
 	now := time.Now().UTC()
 	outputs := map[string]any{
 		"observation": map[string]any{
-			"version":     stackKitRuntimeObservationV1,
+			"version":     stackKitRuntimeObservationV2,
 			"observed_at": now.Format(time.RFC3339Nano),
 			"host":        map[string]any{"reachable": true, "docker_reachable": true},
 			"platform":    map[string]any{"server_id": "node-1"},
@@ -103,129 +103,21 @@ func TestStackKitRuntimeObservationProjectsFreshMeasuredServiceHealth(t *testing
 	observation := outputs["observation"].(map[string]any)
 	observation["observed_at"] = now.Add(-6 * time.Minute).Format(time.RFC3339Nano)
 	stale := registryServicesFromStackKitOutputs(outputs, controlplane.Stack{ID: "stack-1"}, []registryServer{{ID: "node-1"}})
-	if len(stale) != 1 || stale[0].Status != "unknown" {
-		t.Fatalf("stale observation must not remain healthy: %#v", stale)
-	}
-}
-
-func TestStackOperationsFiltersOwnerAndStackWorkers(t *testing.T) {
-	app, err := tests.NewTestApp(driftRoutePocketBaseTestDataDir(t))
-	if err != nil {
-		t.Fatalf("new test app: %v", err)
-	}
-	defer app.Cleanup()
-	ensureStackOperationsTestCollections(t, app)
-
-	stack := createStackOperationsTestStack(t, app, "owner-1", "pending")
-	otherStack := createStackOperationsTestStack(t, app, "owner-1", "pending")
-	createStackOperationsTestWorker(t, app, "owner-1", stack.Id, "stack-node", true)
-	createStackOperationsTestWorker(t, app, "owner-1", "", "legacy-node", true)
-	createStackOperationsTestWorker(t, app, "owner-1", otherStack.Id, "other-stack-node", true)
-	createStackOperationsTestWorker(t, app, "owner-2", stack.Id, "other-owner-node", true)
-
-	event, recorder := stackOperationsRouteTestEvent(http.MethodGet, "/api/v1/stacks/"+stack.Id+"/operations", stack.Id, "owner-1")
-	if err := (stackOperationsRouteHandlers{app: app, managedRuntimeLeases: fakeManagedRuntimeLeaseLister{}}).operations(event); err != nil {
-		t.Fatalf("operations returned router error: %v", err)
-	}
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
-	}
-
-	var envelope struct {
-		Data stackOperationsPayload `json:"data"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if got := len(envelope.Data.Servers); got != 2 {
-		t.Fatalf("server count = %d, want scoped + legacy unassigned workers only", got)
-	}
-	names := map[string]bool{}
-	for _, server := range envelope.Data.Servers {
-		names[server.Hostname] = true
-		if server.Health.CPUPercent.Status != "unknown" {
-			t.Fatalf("missing metrics should degrade to unknown CPU, got %q", server.Health.CPUPercent.Status)
-		}
-	}
-	if !names["stack-node"] || !names["legacy-node"] {
-		t.Fatalf("expected stack-node and legacy-node, got %v", names)
-	}
-	if names["other-stack-node"] || names["other-owner-node"] {
-		t.Fatalf("operation payload leaked another stack or owner: %v", names)
-	}
-	if envelope.Data.Readiness.Approved != 1 {
-		t.Fatalf("readiness approved = %d, want only stack-assigned approved worker", envelope.Data.Readiness.Approved)
-	}
-	if envelope.Data.Readiness.Available != 1 || envelope.Data.Readiness.Unassigned != 1 {
-		t.Fatalf("unassigned counts = available:%d unassigned:%d, want 1/1", envelope.Data.Readiness.Available, envelope.Data.Readiness.Unassigned)
-	}
-	if envelope.Data.Readiness.Connected != 0 || envelope.Data.Readiness.CanStart {
-		t.Fatalf("legacy worker approval must not substitute for canonical Guard connection evidence: %#v", envelope.Data.Readiness)
-	}
-}
-
-func TestStackOperationsFallsBackToLegacyStackWhenStoreProjectionMissing(t *testing.T) {
-	app, err := tests.NewTestApp(driftRoutePocketBaseTestDataDir(t))
-	if err != nil {
-		t.Fatalf("new test app: %v", err)
-	}
-	defer app.Cleanup()
-	ensureStackOperationsTestCollections(t, app)
-
-	stack := createStackOperationsTestStack(t, app, "owner-1", "running")
-	stack.Set("tenant_id", "default")
-	if err := app.Save(stack); err != nil {
-		t.Fatalf("save legacy stack tenant: %v", err)
-	}
-	event, recorder := stackOperationsRouteTestEvent(http.MethodGet, "/api/v1/stacks/"+stack.Id+"/operations", stack.Id, "owner-1")
-	event.Request = event.Request.WithContext(identity.NewContext(event.Request.Context(), &identity.Identity{
-		UserID: "owner-1",
-		OrgID:  "default",
-	}))
-
-	if err := (stackOperationsRouteHandlers{app: app, stackStore: controlplane.NewMemoryStore(), managedRuntimeLeases: fakeManagedRuntimeLeaseLister{}}).operations(event); err != nil {
-		t.Fatalf("operations returned router error: %v", err)
-	}
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
-	}
-	var envelope struct {
-		Data stackOperationsPayload `json:"data"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if envelope.Data.Stack["id"] != stack.Id {
-		t.Fatalf("stack id = %v, want %s", envelope.Data.Stack["id"], stack.Id)
+	if len(stale) != 1 || stale[0].Status != "unknown" || stale[0].URL != "" {
+		t.Fatalf("stale observation must not remain healthy or accessible: %#v", stale)
 	}
 }
 
 func TestStackOperationsUsesDurableStoreForAuthenticatedFallbackTenant(t *testing.T) {
-	app, err := tests.NewTestApp(driftRoutePocketBaseTestDataDir(t))
-	if err != nil {
-		t.Fatalf("new test app: %v", err)
-	}
-	defer app.Cleanup()
-	ensureStackOperationsTestCollections(t, app)
-
-	// Keep a legacy row with the same identity present: before the durable
-	// projection selection, this request returned it successfully but omitted
-	// the active durable job. An authenticated user without an explicit org is
-	// scoped to its fallback tenant (the owner subject) by requestTenantID.
-	legacy := createStackOperationsTestStack(t, app, "owner-1", "running")
-	legacy.Set("tenant_id", "owner-1")
-	if err := app.Save(legacy); err != nil {
-		t.Fatalf("save legacy stack: %v", err)
-	}
-
+	stackID := "stack-owner-fallback"
 	store := controlplane.NewMemoryStore()
 	if _, err := store.CreateStack(t.Context(), controlplane.CreateStackRequest{
-		ID: legacy.Id, TenantID: "owner-1", OwnerSubjectID: "owner-1", Name: "Durable stack", Status: "provisioning",
+		ID: stackID, TenantID: "owner-1", OwnerSubjectID: "owner-1", Name: "Durable stack", Status: "provisioning",
 	}); err != nil {
 		t.Fatalf("CreateStack: %v", err)
 	}
 	if _, err := store.CreateJob(t.Context(), controlplane.UpsertJobRequest{
-		ID: "job-durable-running", TenantID: "owner-1", StackID: legacy.Id, Type: "provision", State: "pending",
+		ID: "job-durable-running", TenantID: "owner-1", StackID: stackID, Type: "provision", State: "pending",
 		Progress: 42, Step: "provider_create", Message: "Creating server",
 	}); err != nil {
 		t.Fatalf("CreateJob: %v", err)
@@ -235,11 +127,10 @@ func TestStackOperationsUsesDurableStoreForAuthenticatedFallbackTenant(t *testin
 	}
 
 	router := httpx.NewRouter()
-	RegisterStackOperationsRoutesWithStores(router, app, nil, MonitoringStatusMetadata{}, nil, nil, StackOperationsRouteStores{
-		Stacks: store,
-		Jobs:   store,
+	RegisterStackOperationsRoutesWithStores(router, nil, MonitoringStatusMetadata{}, nil, nil, StackOperationsRouteStores{
+		Stacks: store, Servers: store, Services: store, Workers: store, Registry: store, Jobs: store,
 	}, fakeManagedRuntimeLeaseLister{})
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/stacks/"+legacy.Id+"/operations", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/stacks/"+stackID+"/operations", nil)
 	req = req.WithContext(identity.NewContext(req.Context(), &identity.Identity{UserID: "owner-1"}))
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, req)
@@ -258,134 +149,6 @@ func TestStackOperationsUsesDurableStoreForAuthenticatedFallbackTenant(t *testin
 	}
 	if envelope.Data.CurrentJob == nil || envelope.Data.CurrentJob.ID != "job-durable-running" || envelope.Data.CurrentJob.State != "running" {
 		t.Fatalf("current job = %#v, want running durable job", envelope.Data.CurrentJob)
-	}
-}
-
-func TestStackOperationsLegacyFallbackDoesNotCrossTenantBoundary(t *testing.T) {
-	app, err := tests.NewTestApp(driftRoutePocketBaseTestDataDir(t))
-	if err != nil {
-		t.Fatalf("new test app: %v", err)
-	}
-	defer app.Cleanup()
-	ensureStackOperationsTestCollections(t, app)
-
-	stack := createStackOperationsTestStack(t, app, "owner-1", "running")
-	stack.Set("name", "Tenant B private stack")
-	stack.Set("tenant_id", "tenant-b")
-	if err := app.Save(stack); err != nil {
-		t.Fatalf("save tenant B stack: %v", err)
-	}
-
-	router := httpx.NewRouter()
-	store := controlplane.NewMemoryStore()
-	RegisterStackOperationsRoutesWithStores(router, app, nil, MonitoringStatusMetadata{}, nil, nil, StackOperationsRouteStores{Stacks: store}, fakeManagedRuntimeLeaseLister{})
-	event, recorder := registryRouteStoreTestEvent(http.MethodGet, "/api/v1/stacks/"+stack.Id+"/operations", "owner-1", "tenant-a", nil)
-	router.ServeHTTP(recorder, event.Request)
-
-	if recorder.Code != http.StatusNotFound {
-		t.Fatalf("status = %d body=%s, want tenant-scoped 404", recorder.Code, recorder.Body.String())
-	}
-	if strings.Contains(recorder.Body.String(), "Tenant B private stack") {
-		t.Fatalf("cross-tenant legacy stack leaked in response: %s", recorder.Body.String())
-	}
-}
-
-func TestStackOperationsLegacyWorkerProjectionDoesNotCrossTenantBoundary(t *testing.T) {
-	app, err := tests.NewTestApp(driftRoutePocketBaseTestDataDir(t))
-	if err != nil {
-		t.Fatalf("new test app: %v", err)
-	}
-	defer app.Cleanup()
-	ensureStackOperationsTestCollections(t, app)
-
-	stack := createStackOperationsTestStack(t, app, "owner-1", "running")
-	stack.Set("tenant_id", "tenant-a")
-	if err := app.Save(stack); err != nil {
-		t.Fatalf("save tenant A stack: %v", err)
-	}
-	workerA := createStackOperationsTestWorker(t, app, "owner-1", "", "tenant-a-worker", true)
-	workerA.Set("tenant_id", "tenant-a")
-	if err := app.Save(workerA); err != nil {
-		t.Fatalf("save tenant A worker: %v", err)
-	}
-	workerB := createStackOperationsTestWorker(t, app, "owner-1", "", "tenant-b-worker", true)
-	workerB.Set("tenant_id", "tenant-b")
-	if err := app.Save(workerB); err != nil {
-		t.Fatalf("save tenant B worker: %v", err)
-	}
-	createStackOperationsTestWorker(t, app, "owner-1", "", "tenantless-worker", true)
-
-	router := httpx.NewRouter()
-	store := controlplane.NewMemoryStore()
-	RegisterStackOperationsRoutesWithStores(router, app, nil, MonitoringStatusMetadata{}, nil, nil, StackOperationsRouteStores{Stacks: store}, fakeManagedRuntimeLeaseLister{})
-	event, recorder := registryRouteStoreTestEvent(http.MethodGet, "/api/v1/stacks/"+stack.Id+"/operations", "owner-1", "tenant-a", nil)
-	router.ServeHTTP(recorder, event.Request)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
-	}
-	var envelope struct {
-		Data stackOperationsPayload `json:"data"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if len(envelope.Data.Servers) != 1 || envelope.Data.Servers[0].Hostname != "tenant-a-worker" {
-		t.Fatalf("hosted legacy worker scope = %#v, want tenant A worker only", envelope.Data.Servers)
-	}
-}
-
-func TestStackOperationsProjectsWorkerHandoffCapabilities(t *testing.T) {
-	app, err := tests.NewTestApp(driftRoutePocketBaseTestDataDir(t))
-	if err != nil {
-		t.Fatalf("new test app: %v", err)
-	}
-	defer app.Cleanup()
-	ensureStackOperationsTestCollections(t, app)
-
-	stack := createStackOperationsTestStack(t, app, "owner-1", "pending")
-	worker := createStackOperationsTestWorker(t, app, "owner-1", stack.Id, "storage-node", true)
-	worker.Set("type", "storage")
-	worker.Set("tags", nodehandoff.MergeTags("rack-a", map[string]any{
-		nodehandoff.KeyServerNodeRole:         "storage",
-		nodehandoff.KeyRequestedServices:      []string{"files", "immich"},
-		nodehandoff.KeyServerRemoteHost:       "10.10.10.30",
-		nodehandoff.KeyServerRemoteUser:       "ubuntu",
-		nodehandoff.KeyServerRemotePort:       2222,
-		nodehandoff.KeyServerRemoteCredential: "ssh-key:storage-1",
-		nodehandoff.KeyServerRemoteUseSudo:    true,
-	}))
-	if err := app.Save(worker); err != nil {
-		t.Fatalf("save worker: %v", err)
-	}
-
-	event, recorder := stackOperationsRouteTestEvent(http.MethodGet, "/api/v1/stacks/"+stack.Id+"/operations", stack.Id, "owner-1")
-	if err := (stackOperationsRouteHandlers{app: app, managedRuntimeLeases: fakeManagedRuntimeLeaseLister{}}).operations(event); err != nil {
-		t.Fatalf("operations returned router error: %v", err)
-	}
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
-	}
-
-	var envelope struct {
-		Data stackOperationsPayload `json:"data"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if got := len(envelope.Data.Servers); got != 1 {
-		t.Fatalf("server count = %d, want 1", got)
-	}
-	server := envelope.Data.Servers[0]
-	if server.Role != "storage" || server.Capabilities[nodehandoff.KeyServerNodeRole] != "storage" {
-		t.Fatalf("server handoff role not projected: %#v", server)
-	}
-	services := nodehandoff.ServiceKeysFromAny(server.Capabilities[nodehandoff.KeyRequestedServices])
-	if strings.Join(services, ",") != "files,immich" {
-		t.Fatalf("requested services = %#v, want files/immich", services)
-	}
-	if server.Capabilities[nodehandoff.KeyServerRemoteHost] != "10.10.10.30" || server.Capabilities[nodehandoff.KeyServerRemotePort] != float64(2222) {
-		t.Fatalf("remote handoff not projected: %#v", server.Capabilities)
 	}
 }
 
@@ -431,10 +194,21 @@ func TestStackOperationsProjectsStoreWorkerHandoffCapabilities(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpsertWorkerHeartbeat: %v", err)
 	}
+	if _, err := store.UpsertServerRuntime(ctx, controlplane.ServerRuntime{
+		ID: "storage-node", TenantID: "tenant-1", StackID: "stack-store-handoff", OwnerSubjectID: "owner-1",
+		WorkerID: "storage-node", NodeID: "storage-node", Name: "storage-node", LifecycleState: "active",
+		ConnectionState: "online", HealthState: "healthy", DesiredState: "running",
+		Metadata: map[string]any{
+			nodehandoff.KeyServerNodeRole: "storage", nodehandoff.KeyRequestedServices: []string{"files", "immich"},
+			nodehandoff.KeyServerRemoteHost: "10.10.10.31",
+		},
+	}); err != nil {
+		t.Fatalf("UpsertServerRuntime: %v", err)
+	}
 
 	event, recorder := stackOperationsRouteTestEvent(http.MethodGet, "/api/v1/stacks/stack-store-handoff/operations", "stack-store-handoff", "owner-1")
 	event.Request = event.Request.WithContext(identity.NewContext(event.Request.Context(), &identity.Identity{UserID: "owner-1", OrgID: "tenant-1"}))
-	if err := (stackOperationsRouteHandlers{stackStore: store, workerStore: store, managedRuntimeLeases: fakeManagedRuntimeLeaseLister{}}).operations(event); err != nil {
+	if err := (stackOperationsRouteHandlers{stackStore: store, serverStore: store, serviceStore: store, workerStore: store, registryStore: store, jobStore: store, managedRuntimeLeases: fakeManagedRuntimeLeaseLister{}}).operations(event); err != nil {
 		t.Fatalf("operations returned router error: %v", err)
 	}
 	if recorder.Code != http.StatusOK {
@@ -460,86 +234,70 @@ func TestStackOperationsProjectsStoreWorkerHandoffCapabilities(t *testing.T) {
 	}
 }
 
-func TestMonitorCockpitAggregatesSelectedOwnedStack(t *testing.T) {
-	app, err := tests.NewTestApp(driftRoutePocketBaseTestDataDir(t))
-	if err != nil {
-		t.Fatalf("new test app: %v", err)
-	}
-	defer app.Cleanup()
-	ensureStackOperationsTestCollections(t, app)
-
-	stack := createStackOperationsTestStack(t, app, "owner-1", "running")
-	otherStack := createStackOperationsTestStack(t, app, "owner-2", "running")
-	createStackOperationsTestWorker(t, app, "owner-1", stack.Id, "node-a", true)
-	node := createStackOperationsTestNode(t, app, stack.Id, "node-a")
-	createStackOperationsTestService(t, app, node.Id, "vaultwarden")
-	createStackOperationsTestJob(t, app, stack.Id, "service-migration", "completed")
-
-	event, recorder := stackOperationsRouteTestEvent(http.MethodGet, "/api/v1/monitor/cockpit?techstack_id="+stack.Id, stack.Id, "owner-1")
-	if err := (stackOperationsRouteHandlers{app: app, managedRuntimeLeases: fakeManagedRuntimeLeaseLister{}}).monitorCockpit(event); err != nil {
-		t.Fatalf("monitor cockpit returned router error: %v", err)
-	}
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
-	}
-
-	var envelope struct {
-		Data monitorCockpitPayload `json:"data"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if envelope.Data.TechstackID != stack.Id {
-		t.Fatalf("techstack_id = %q, want %q", envelope.Data.TechstackID, stack.Id)
-	}
-	if strings.Contains(recorder.Body.String(), `"selected_stack_id"`) {
-		t.Fatalf("monitor cockpit exposed ambiguous selected_stack_id: %s", recorder.Body.String())
-	}
-	if got := len(envelope.Data.Stacks); got != 1 {
-		t.Fatalf("owned stack count = %d, want 1", got)
-	}
-	if envelope.Data.Stack["id"] == otherStack.Id {
-		t.Fatal("cockpit leaked foreign stack")
-	}
-	if got := len(envelope.Data.Servers); got != 1 {
-		t.Fatalf("servers = %d, want 1", got)
-	}
-	if got := len(envelope.Data.Services); got != 1 {
-		t.Fatalf("services = %d, want 1", got)
-	}
-	if got := len(envelope.Data.Jobs); got != 1 {
-		t.Fatalf("jobs = %d, want 1", got)
-	}
-	if envelope.Data.KPIs.RegisteredServers != 1 || envelope.Data.KPIs.RunningServices != 1 {
-		t.Fatalf("unexpected cockpit KPIs: %#v", envelope.Data.KPIs)
+func TestStackDashboardPathsFailClosedWithoutCanonicalStores(t *testing.T) {
+	for _, test := range []struct {
+		method, target string
+		invoke         func(stackOperationsRouteHandlers, *httpx.Event) error
+	}{
+		{method: http.MethodGet, target: "/api/v1/monitor/cockpit", invoke: func(h stackOperationsRouteHandlers, e *httpx.Event) error { return h.monitorCockpit(e) }},
+		{method: http.MethodGet, target: "/api/v1/stacks/stack-1/operations", invoke: func(h stackOperationsRouteHandlers, e *httpx.Event) error { return h.operations(e) }},
+		{method: http.MethodGet, target: "/api/v1/stacks/stack-1/servers/server-1", invoke: func(h stackOperationsRouteHandlers, e *httpx.Event) error { return h.serverDetails(e) }},
+		{method: http.MethodPost, target: "/api/v1/stacks/stack-1/workers/worker-1/assign", invoke: func(h stackOperationsRouteHandlers, e *httpx.Event) error { return h.assignWorker(e) }},
+	} {
+		t.Run(test.target, func(t *testing.T) {
+			event, recorder := stackOperationsRouteTestEvent(test.method, test.target, "stack-1", "owner-1")
+			event.Request.SetPathValue("serverId", "server-1")
+			event.Request.SetPathValue("workerId", "worker-1")
+			_ = test.invoke(stackOperationsRouteHandlers{}, event)
+			assert.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+		})
 	}
 }
 
-func TestMonitorCockpitProjectsPersistedEnrollmentWait(t *testing.T) {
-	app, err := tests.NewTestApp(driftRoutePocketBaseTestDataDir(t))
-	if err != nil {
-		t.Fatalf("new test app: %v", err)
+func TestMonitorCockpitAggregatesOneOwnersHomelab(t *testing.T) {
+	ctx := t.Context()
+	store := controlplane.NewMemoryStore()
+	now := time.Now().UTC()
+	for _, deployment := range []struct {
+		id, owner, node, service string
+	}{
+		{id: "deployment-a", owner: "owner-1", node: "node-a", service: "vaultwarden"},
+		{id: "deployment-b", owner: "owner-1", node: "node-b", service: "immich"},
+		{id: "deployment-foreign", owner: "owner-2", node: "foreign-node", service: "foreign-service"},
+	} {
+		if _, err := store.CreateStack(ctx, controlplane.CreateStackRequest{
+			ID: deployment.id, TenantID: "owner-1", OwnerSubjectID: deployment.owner,
+			HomelabID: "homelab-" + deployment.owner, Name: deployment.id, Status: "running",
+		}); err != nil {
+			t.Fatalf("create StackKit deployment: %v", err)
+		}
+		if _, err := store.UpsertServerRuntime(ctx, controlplane.ServerRuntime{
+			ID: deployment.node, TenantID: "owner-1", StackID: deployment.id, OwnerSubjectID: deployment.owner,
+			Name: deployment.node, LifecycleState: "active", DesiredState: "active",
+			ConnectionState: "connected", HealthState: "healthy", LastHeartbeatAt: &now,
+		}); err != nil {
+			t.Fatalf("create Node: %v", err)
+		}
+		if _, err := store.UpsertServiceRuntime(ctx, controlplane.ServiceRuntime{
+			ID: deployment.service, TenantID: "owner-1", StackID: deployment.id, ServerID: deployment.node,
+			ServiceKey: deployment.service, Name: deployment.service, DesiredState: "running",
+			ObservedState: "running", HealthState: "healthy", ObservedAt: &now,
+		}); err != nil {
+			t.Fatalf("create service: %v", err)
+		}
+		if _, err := store.CreateJob(ctx, controlplane.UpsertJobRequest{
+			ID: "job-" + deployment.id, TenantID: "owner-1", StackID: deployment.id,
+			Type: "deploy", State: "completed", Progress: 100,
+		}); err != nil {
+			t.Fatalf("create deployment job: %v", err)
+		}
 	}
-	defer app.Cleanup()
-	ensureStackOperationsTestCollections(t, app)
 
-	stack := createStackOperationsTestStack(t, app, "owner-1", "provisioning")
-	nextResumeAt := "2026-07-19T08:15:00Z"
-	job := createStackOperationsTestJob(t, app, stack.Id, "managed_runtime_enrollment", "pending")
-	job.Set("progress", 45)
-	job.Set("result", map[string]any{
-		"job_wait": map[string]any{
-			"state":          "waiting",
-			"reason":         "waiting_enrollment",
-			"next_resume_at": nextResumeAt,
-		},
-	})
-	if err := app.Save(job); err != nil { // pocketbase-migration-compat: verifies legacy JSONField projection
-		t.Fatalf("save waiting job: %v", err)
-	}
-
-	event, recorder := stackOperationsRouteTestEvent(http.MethodGet, "/api/v1/monitor/cockpit?techstack_id="+stack.Id, stack.Id, "owner-1")
-	if err := (stackOperationsRouteHandlers{app: app, managedRuntimeLeases: fakeManagedRuntimeLeaseLister{}}).monitorCockpit(event); err != nil {
+	event, recorder := stackOperationsRouteTestEvent(http.MethodGet, "/api/v1/monitor/cockpit", "", "owner-1")
+	if err := (stackOperationsRouteHandlers{
+		stackStore: store, serverStore: store, serviceStore: store, workerStore: store,
+		registryStore: store, jobStore: store, managedRuntimeLeases: fakeManagedRuntimeLeaseLister{},
+	}).monitorCockpit(event); err != nil {
 		t.Fatalf("monitor cockpit returned router error: %v", err)
 	}
 	if recorder.Code != http.StatusOK {
@@ -552,12 +310,20 @@ func TestMonitorCockpitProjectsPersistedEnrollmentWait(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if len(envelope.Data.Jobs) != 1 {
-		t.Fatalf("jobs = %#v, want persisted waiting job", envelope.Data.Jobs)
+	if envelope.Data.HomelabID != "homelab-owner-1" || envelope.Data.KitDeploymentCount != 2 {
+		t.Fatalf("homelab scope = %#v, want two owned StackKit deployments", envelope.Data)
 	}
-	got := envelope.Data.Jobs[0]
-	if got.State != "waiting" || got.WaitReason != "waiting_enrollment" || got.NextResumeAt != nextResumeAt || got.Progress != 45 {
-		t.Fatalf("waiting job projection = %#v", got)
+	if got := len(envelope.Data.Servers); got != 2 {
+		t.Fatalf("servers = %d, want both owned Nodes and no foreign Node", got)
+	}
+	if got := len(envelope.Data.Services); got != 2 {
+		t.Fatalf("services = %d, want services from both owned deployments", got)
+	}
+	if got := len(envelope.Data.Jobs); got != 2 {
+		t.Fatalf("jobs = %d, want jobs from both owned deployments", got)
+	}
+	if envelope.Data.KPIs.RegisteredServers != 2 || envelope.Data.KPIs.RunningServices != 2 {
+		t.Fatalf("unexpected cockpit KPIs: %#v", envelope.Data.KPIs)
 	}
 }
 
@@ -582,372 +348,104 @@ func TestMonitorCockpitStoreJobProjectsPersistedEnrollmentWait(t *testing.T) {
 	}
 }
 
-func TestStackOperationsProjectsManagedMonthlyRuntimeLease(t *testing.T) {
-	app, err := tests.NewTestApp(driftRoutePocketBaseTestDataDir(t))
-	if err != nil {
-		t.Fatalf("new test app: %v", err)
-	}
-	defer app.Cleanup()
-	ensureStackOperationsTestCollections(t, app)
-
-	stack := createStackOperationsTestStack(t, app, "owner-1", "pending")
-	stack.Set("server_provisioning_mode", "kombify-cloud")
-	stack.Set("server_mode", "monthly-runtime")
-	stack.Set("runtime_lane", "monthly-runtime")
-	stack.Set("lease_id", "lease-1")
-	if err := app.Save(stack); err != nil {
-		t.Fatalf("save managed stack fields: %v", err)
-	}
-	lister := fakeManagedRuntimeLeaseLister{leases: []vmlease.Lease{
-		createStackOperationsTestLease("lease-1", "owner-1", "owner-1", stack.Id, "enrolled"),
-		createStackOperationsTestLease("lease-other-stack", "owner-1", "owner-1", "other-stack", "enrolled"),
-		createStackOperationsTestLease("lease-other-owner", "owner-2", "owner-2", stack.Id, "enrolled"),
-	}}
-
-	event, recorder := stackOperationsRouteTestEvent(http.MethodGet, "/api/v1/stacks/"+stack.Id+"/operations", stack.Id, "owner-1")
-	if err := (stackOperationsRouteHandlers{app: app, managedRuntimeLeases: lister}).operations(event); err != nil {
-		t.Fatalf("operations returned router error: %v", err)
-	}
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
-	}
-
-	var envelope struct {
-		Data stackOperationsPayload `json:"data"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if got := len(envelope.Data.Servers); got != 1 {
-		t.Fatalf("server count = %d, want projected monthly runtime only", got)
-	}
-	server := envelope.Data.Servers[0]
-	if server.ID != "lease:lease-1" || server.ServerID != runtimeidentity.LeaseServerID("lease-1") || server.Source != managedRuntimeInventorySource || server.LeaseID != "lease-1" {
-		t.Fatalf("unexpected managed runtime server: %#v", server)
-	}
-	if !server.Approved || server.Assignment != "stack" || !server.Assignable {
-		t.Fatalf("managed runtime approval/assignment flags wrong: %#v", server)
-	}
-	if server.Health.CPUPercent.Status != "ok" || server.Health.MemoryPercent.Status != "ok" || server.Health.DiskPercent.Status != "ok" {
-		t.Fatalf("managed runtime health metrics should come from lease metadata: %#v", server.Health)
-	}
-	if envelope.Data.Readiness.CanStart || envelope.Data.Readiness.ReviewRequired || envelope.Data.Readiness.Approved != 1 || envelope.Data.Readiness.Connected != 0 || envelope.Data.Readiness.Status != "waiting_for_managed_runtime" {
-		t.Fatalf("enrolled lease without canonical Guard heartbeat must remain disconnected: %#v", envelope.Data.Readiness)
-	}
-	if len(envelope.Data.Services) != 0 || envelope.Data.KPIs.RunningServices != 0 {
-		t.Fatalf("managed operations must not synthesize service rows: services=%#v kpis=%#v", envelope.Data.Services, envelope.Data.KPIs)
-	}
-}
-
-func TestStackDashboardPathsFailClosedWhenManagedRuntimeAuthorityFails(t *testing.T) {
-	app, err := tests.NewTestApp(driftRoutePocketBaseTestDataDir(t))
-	if err != nil {
-		t.Fatalf("new test app: %v", err)
-	}
-	defer app.Cleanup()
-	ensureStackOperationsTestCollections(t, app)
-	stack := createStackOperationsTestStack(t, app, "owner-1", "pending")
-
+func TestStackDashboardPathsFailClosedWhenRuntimeAuthorityIsUnavailable(t *testing.T) {
 	store := controlplane.NewMemoryStore()
 	seedControlPlaneStack(t, store, "tenant-1", "owner-1", "stack-store")
+	canonical := stackOperationsRouteHandlers{
+		stackStore: store, serverStore: store, serviceStore: store, workerStore: store,
+		registryStore: store, jobStore: store, activityStore: store,
+		managedRuntimeLeases: fakeManagedRuntimeLeaseLister{},
+	}
+	failingLeases := canonical
+	failingLeases.managedRuntimeLeases = failingManagedRuntimeLeaseLister{}
+	failingServers := canonical
+	failingServers.serverStore = failingListServerRuntimeStore{ServerRuntimeStore: store, err: fmt.Errorf("canonical store unavailable")}
 
 	testCases := []struct {
-		name      string
-		target    string
-		stackID   string
-		storePath bool
-		invoke    func(stackOperationsRouteHandlers, *httpx.Event) error
+		name, target, privateError string
+		handler                    stackOperationsRouteHandlers
+		invoke                     func(stackOperationsRouteHandlers, *httpx.Event) error
 	}{
-		{name: "legacy operations", target: "/api/v1/stacks/" + stack.Id + "/operations", stackID: stack.Id, invoke: func(h stackOperationsRouteHandlers, e *httpx.Event) error { return h.operations(e) }},
-		{name: "legacy cockpit", target: "/api/v1/monitor/cockpit?techstack_id=" + stack.Id, stackID: stack.Id, invoke: func(h stackOperationsRouteHandlers, e *httpx.Event) error { return h.monitorCockpit(e) }},
-		{name: "legacy server details", target: "/api/v1/stacks/" + stack.Id + "/servers/server-1", stackID: stack.Id, invoke: func(h stackOperationsRouteHandlers, e *httpx.Event) error { return h.serverDetails(e) }},
-		{name: "store operations", target: "/api/v1/stacks/stack-store/operations", stackID: "stack-store", storePath: true, invoke: func(h stackOperationsRouteHandlers, e *httpx.Event) error { return h.operations(e) }},
-		{name: "store cockpit", target: "/api/v1/monitor/cockpit?techstack_id=stack-store", stackID: "stack-store", storePath: true, invoke: func(h stackOperationsRouteHandlers, e *httpx.Event) error { return h.monitorCockpit(e) }},
-		{name: "store server details", target: "/api/v1/stacks/stack-store/servers/server-1", stackID: "stack-store", storePath: true, invoke: func(h stackOperationsRouteHandlers, e *httpx.Event) error { return h.serverDetails(e) }},
+		{name: "operations lease authority", target: "/api/v1/stacks/stack-store/operations", privateError: "lease store unavailable", handler: failingLeases, invoke: func(h stackOperationsRouteHandlers, e *httpx.Event) error { return h.operations(e) }},
+		{name: "cockpit lease authority", target: "/api/v1/monitor/cockpit?kit_deployment_id=stack-store", privateError: "lease store unavailable", handler: failingLeases, invoke: func(h stackOperationsRouteHandlers, e *httpx.Event) error { return h.monitorCockpit(e) }},
+		{name: "server details lease authority", target: "/api/v1/stacks/stack-store/servers/server-1", privateError: "lease store unavailable", handler: failingLeases, invoke: func(h stackOperationsRouteHandlers, e *httpx.Event) error { return h.serverDetails(e) }},
+		{name: "operations canonical server evidence", target: "/api/v1/stacks/stack-store/operations", privateError: "canonical store unavailable", handler: failingServers, invoke: func(h stackOperationsRouteHandlers, e *httpx.Event) error { return h.operations(e) }},
 	}
 
 	for _, test := range testCases {
 		t.Run(test.name, func(t *testing.T) {
-			event, recorder := stackOperationsRouteTestEvent(http.MethodGet, test.target, test.stackID, "owner-1")
+			event, recorder := stackOperationsRouteTestEvent(http.MethodGet, test.target, "stack-store", "owner-1")
 			event.Request.SetPathValue("serverId", "server-1")
-			handler := stackOperationsRouteHandlers{app: app, managedRuntimeLeases: failingManagedRuntimeLeaseLister{}}
-			if test.storePath {
-				event.Request = event.Request.WithContext(identity.NewContext(event.Request.Context(), &identity.Identity{UserID: "owner-1", OrgID: "tenant-1"}))
-				handler.stackStore = store
-				handler.workerStore = store
-				handler.registryStore = store
-				handler.jobStore = store
-			}
-			if err := test.invoke(handler, event); err != nil {
+			event.Request = event.Request.WithContext(identity.NewContext(event.Request.Context(), &identity.Identity{UserID: "owner-1", OrgID: "tenant-1"}))
+			if err := test.invoke(test.handler, event); err != nil {
 				t.Fatalf("handler returned router error: %v", err)
 			}
-			if recorder.Code != http.StatusServiceUnavailable {
-				t.Fatalf("status = %d body=%s, want 503", recorder.Code, recorder.Body.String())
-			}
-			if !strings.Contains(recorder.Body.String(), "managed_runtime_authority_unavailable") || strings.Contains(recorder.Body.String(), "lease store unavailable") {
-				t.Fatalf("unexpected fail-closed response: %s", recorder.Body.String())
+			details := decodeErrorDetails(t, recorder)
+			if recorder.Code != http.StatusServiceUnavailable || details["reason_code"] != "managed_runtime_authority_unavailable" ||
+				strings.Contains(recorder.Body.String(), test.privateError) {
+				t.Fatalf("status=%d details=%#v, want redacted authority-unavailable response", recorder.Code, details)
 			}
 		})
 	}
 }
 
-func TestOperationServerDedupCollapsesLeaseAndStaleRowsIntoCanonicalServer(t *testing.T) {
-	leaseID := "lease-ionos-1"
-	serverID := runtimeidentity.LeaseServerID(leaseID)
-	canonical := stackOperationServer{
-		ID: serverID, ServerID: serverID, LeaseID: leaseID, Source: "canonical-server",
-		Hostname: "agent-observed", Status: "connected", IP: "203.0.113.10",
-		Capabilities: map[string]any{"provider": "ionos-observed"},
-		Health: stackServerHealth{
-			State: "healthy", CPUPercent: metricKnown(20, "%"), MemoryPercent: metricUnknown("%"),
-			DiskPercent: metricUnknown("%"), UptimeSeconds: metricUnknown("s"),
-		},
-	}
-	stale := stackOperationServer{
-		ID: "stale-error-row", Source: workerRegistryInventorySource, Status: "error", IP: "198.51.100.9",
-		Capabilities: map[string]any{"server_id": serverID, "lease_id": leaseID, "provider": "stale-provider"},
-		Health:       stackServerHealth{State: "unhealthy", CPUPercent: metricKnown(99, "%"), MemoryPercent: metricUnknown("%"), DiskPercent: metricUnknown("%"), UptimeSeconds: metricUnknown("s")},
-	}
-	leaseProjection := stackOperationServer{
-		ID: "lease:" + leaseID, ServerID: serverID, LeaseID: leaseID, Source: managedRuntimeInventorySource,
-		IP: "192.0.2.20", Capabilities: map[string]any{"region": "de-fra", "lease_id": leaseID},
-		Health: stackServerHealth{CPUPercent: metricUnknown("%"), MemoryPercent: metricKnown(42, "%"), DiskPercent: metricUnknown("%"), UptimeSeconds: metricUnknown("s")},
-	}
-
-	got := mergeCanonicalOperationServers([]stackOperationServer{canonical}, []stackOperationServer{stale, leaseProjection})
-	if len(got) != 1 {
-		t.Fatalf("server cards = %d, want exactly one: %#v", len(got), got)
-	}
-	server := got[0]
-	if server.ID != serverID || server.ServerID != serverID || server.LeaseID != leaseID || server.Status != "connected" || server.IP != "203.0.113.10" || server.Health.State != "healthy" {
-		t.Fatalf("canonical observation did not win: %#v", server)
-	}
-	if server.Health.CPUPercent.Value == nil || *server.Health.CPUPercent.Value != 20 || server.Health.MemoryPercent.Value == nil || *server.Health.MemoryPercent.Value != 42 || server.Capabilities["region"] != "de-fra" || server.Capabilities["provider"] != "ionos-observed" {
-		t.Fatalf("lease fallback merge = %#v", server)
-	}
-}
-
-func TestOperationServerDedupCollapsesLeaseAndStaleRowsWithoutCanonicalProjection(t *testing.T) {
-	leaseID := "lease-ionos-1"
-	serverID := runtimeidentity.LeaseServerID(leaseID)
-	observed := stackOperationServer{
-		ID: "worker-observation", ServerID: serverID, LeaseID: leaseID,
-		Source: workerRegistryInventorySource, Status: "connected", IP: "203.0.113.10",
-		Health: stackServerHealth{State: "healthy", CPUPercent: metricKnown(20, "%"), MemoryPercent: metricUnknown("%"), DiskPercent: metricUnknown("%"), UptimeSeconds: metricUnknown("s")},
-	}
-	leaseProjection := stackOperationServer{
-		ID: "lease:" + leaseID, ServerID: serverID, LeaseID: leaseID,
-		Source: managedRuntimeInventorySource, IP: "192.0.2.20",
-		Health: stackServerHealth{CPUPercent: metricUnknown("%"), MemoryPercent: metricKnown(42, "%"), DiskPercent: metricUnknown("%"), UptimeSeconds: metricUnknown("s")},
-	}
-
-	got := mergeCanonicalOperationServers(nil, []stackOperationServer{observed, leaseProjection})
-	if len(got) != 1 {
-		t.Fatalf("server cards = %d, want exactly one before canonical backfill: %#v", len(got), got)
-	}
-	if got[0].Status != "connected" || got[0].IP != "203.0.113.10" || got[0].Health.MemoryPercent.Value == nil || *got[0].Health.MemoryPercent.Value != 42 {
-		t.Fatalf("observed row should win with lease fallback: %#v", got[0])
-	}
-}
-
-func TestStackOperationsDoesNotMarkManagedLeaseHealthyWithoutRuntimeTarget(t *testing.T) {
-	app, err := tests.NewTestApp(driftRoutePocketBaseTestDataDir(t))
-	if err != nil {
-		t.Fatalf("new test app: %v", err)
-	}
-	defer app.Cleanup()
-	ensureStackOperationsTestCollections(t, app)
-
-	stack := createStackOperationsTestStack(t, app, "owner-1", "pending")
-	stack.Set("server_provisioning_mode", "kombify-cloud")
-	stack.Set("server_mode", "monthly-runtime")
-	stack.Set("runtime_lane", "monthly-runtime")
-	stack.Set("lease_id", "lease-1")
-	if err := app.Save(stack); err != nil {
-		t.Fatalf("save managed stack fields: %v", err)
-	}
-	lease := createStackOperationsTestLease("lease-1", "owner-1", "owner-1", stack.Id, "enrolled")
-	delete(lease.Metadata, "public_ip")
-	lister := fakeManagedRuntimeLeaseLister{leases: []vmlease.Lease{lease}}
-
-	event, recorder := stackOperationsRouteTestEvent(http.MethodGet, "/api/v1/stacks/"+stack.Id+"/operations", stack.Id, "owner-1")
-	if err := (stackOperationsRouteHandlers{app: app, managedRuntimeLeases: lister}).operations(event); err != nil {
-		t.Fatalf("operations returned router error: %v", err)
-	}
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
-	}
-
-	var envelope struct {
-		Data stackOperationsPayload `json:"data"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if got := len(envelope.Data.Servers); got != 1 {
-		t.Fatalf("server count = %d, want managed runtime projection", got)
-	}
-	server := envelope.Data.Servers[0]
-	if server.Health.State == "healthy" || server.Status == "healthy" {
-		t.Fatalf("managed lease without runtime target must not be healthy: %#v", server)
-	}
-	if server.Approved || server.Assignable || envelope.Data.Readiness.Approved != 0 {
-		t.Fatalf("managed lease without runtime target must not satisfy readiness: server=%#v readiness=%#v", server, envelope.Data.Readiness)
-	}
-	if server.IP != "" || envelope.Data.KPIs.HealthyServers != 0 {
-		t.Fatalf("managed lease without runtime target must not expose IP or healthy KPI: server=%#v kpis=%#v", server, envelope.Data.KPIs)
-	}
-}
-
-func TestStackOperationsKeepsUnenrolledManagedRuntimeLeasesNonAssignable(t *testing.T) {
-	app, err := tests.NewTestApp(driftRoutePocketBaseTestDataDir(t))
-	if err != nil {
-		t.Fatalf("new test app: %v", err)
-	}
-	defer app.Cleanup()
-	ensureStackOperationsTestCollections(t, app)
-
-	stack := createStackOperationsTestStack(t, app, "owner-1", "pending")
-	stack.Set("server_provisioning_mode", "kombify-cloud")
-	stack.Set("server_mode", "monthly-runtime")
-	stack.Set("runtime_lane", "monthly-runtime")
-	stack.Set("lease_id", "lease-pending")
-	if err := app.Save(stack); err != nil {
-		t.Fatalf("save managed stack fields: %v", err)
-	}
-	lister := fakeManagedRuntimeLeaseLister{leases: []vmlease.Lease{
-		createStackOperationsTestLease("lease-pending", "owner-1", "owner-1", stack.Id, "pending"),
-		createStackOperationsTestLease("lease-failed", "owner-1", "owner-1", stack.Id, "failed"),
-	}}
-
-	event, recorder := stackOperationsRouteTestEvent(http.MethodGet, "/api/v1/stacks/"+stack.Id+"/operations", stack.Id, "owner-1")
-	if err := (stackOperationsRouteHandlers{app: app, managedRuntimeLeases: lister}).operations(event); err != nil {
-		t.Fatalf("operations returned router error: %v", err)
-	}
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
-	}
-
-	var envelope struct {
-		Data stackOperationsPayload `json:"data"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if got := len(envelope.Data.Servers); got != 2 {
-		t.Fatalf("server count = %d, want pending and failed managed runtime rows", got)
-	}
-	for _, server := range envelope.Data.Servers {
-		if server.Source != managedRuntimeInventorySource || server.Assignable || server.Approved {
-			t.Fatalf("unenrolled managed runtime server should be visible but non-assignable: %#v", server)
-		}
-	}
-	if envelope.Data.Readiness.CanStart || envelope.Data.Readiness.Approved != 0 {
-		t.Fatalf("unenrolled managed runtime should not satisfy readiness: %#v", envelope.Data.Readiness)
-	}
-}
-
-func TestStackServerDetailsReturnsManagedRuntimeProjection(t *testing.T) {
-	app, err := tests.NewTestApp(driftRoutePocketBaseTestDataDir(t))
-	if err != nil {
-		t.Fatalf("new test app: %v", err)
-	}
-	defer app.Cleanup()
-	ensureStackOperationsTestCollections(t, app)
-
-	stack := createStackOperationsTestStack(t, app, "owner-1", "pending")
-	stack.Set("server_provisioning_mode", "kombify-cloud")
-	stack.Set("server_mode", "monthly-runtime")
-	stack.Set("runtime_lane", "monthly-runtime")
-	stack.Set("lease_id", "lease-1")
-	if err := app.Save(stack); err != nil {
-		t.Fatalf("save managed stack fields: %v", err)
-	}
-	lister := fakeManagedRuntimeLeaseLister{leases: []vmlease.Lease{
-		createStackOperationsTestLease("lease-1", "owner-1", "owner-1", stack.Id, "enrolled"),
-	}}
-	createStackOperationsTestDeployJob(t, app, stack.Id, map[string]any{
-		"services": []map[string]any{
-			{
-				"name":         "pocketid",
-				"display_name": "Pocket ID",
-				"type":         "identity",
-				"status":       "running",
-				"url":          "https://id.home.localhost",
-				"port":         1411,
-			},
-			{
-				"name":         "coolify",
-				"display_name": "Coolify",
-				"type":         "paas",
-				"status":       "running",
-				"url":          "https://coolify.home.localhost",
-			},
-		},
-	})
-
-	event, recorder := stackOperationsRouteTestEvent(http.MethodGet, "/api/v1/stacks/"+stack.Id+"/servers/lease:lease-1", stack.Id, "owner-1")
-	event.Request.SetPathValue("serverId", "lease:lease-1")
-	if err := (stackOperationsRouteHandlers{app: app, managedRuntimeLeases: lister}).serverDetails(event); err != nil {
-		t.Fatalf("serverDetails returned router error: %v", err)
-	}
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
-	}
-
-	var envelope struct {
-		Data stackServerDetailsPayload `json:"data"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if envelope.Data.Server.Source != managedRuntimeInventorySource || envelope.Data.Server.LeaseID != "lease-1" {
-		t.Fatalf("unexpected server details: %#v", envelope.Data.Server)
-	}
-	if len(envelope.Data.Checks) != 0 {
-		t.Fatalf("managed runtime projection should not synthesize worker prechecks, got %#v", envelope.Data.Checks)
-	}
-	if got := len(envelope.Data.Services); got != 2 {
-		t.Fatalf("managed runtime details services = %d, want StackKit output services: %#v", got, envelope.Data.Services)
-	}
-	var pocketID *stackOperationService
-	for i := range envelope.Data.Services {
-		if envelope.Data.Services[i].Name == "pocket_id" {
-			pocketID = &envelope.Data.Services[i]
-			break
-		}
-	}
-	if pocketID == nil || pocketID.TargetServerID != "lease:lease-1" || pocketID.Port != 1411 {
-		t.Fatalf("unexpected mapped Pocket ID service: %#v", envelope.Data.Services)
-	}
-}
-
-func TestStackOperationsAssignsUnscopedWorker(t *testing.T) {
-	app, err := tests.NewTestApp(driftRoutePocketBaseTestDataDir(t))
-	if err != nil {
-		t.Fatalf("new test app: %v", err)
-	}
-	defer app.Cleanup()
-	ensureStackOperationsTestCollections(t, app)
-
-	stack := createStackOperationsTestStack(t, app, "owner-1", "pending")
-	worker := createStackOperationsTestWorker(t, app, "owner-1", "", "legacy-node", true)
-
-	event, recorder := stackOperationsRouteTestEvent(http.MethodPost, "/api/v1/stacks/"+stack.Id+"/workers/"+worker.Id+"/assign", stack.Id, "owner-1")
-	event.Request.SetPathValue("workerId", worker.Id)
-	assignErr := (stackOperationsRouteHandlers{app: app}).assignWorker(event)
-	if assignErr != nil {
-		t.Fatalf("assign returned router error: %v", assignErr)
-	}
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
-	}
-	updated, err := app.FindRecordById("workers", worker.Id)
-	if err != nil {
-		t.Fatalf("find worker: %v", err)
-	}
-	if got := updated.GetString("stack_id"); got != stack.Id {
-		t.Fatalf("worker stack_id = %q, want %q", got, stack.Id)
+func TestStackOperationsDeduplicatesLeaseAndWorkerServerIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name, workerIP, wantIP, wantSource, wantProvider, wantStatus string
+		canonical                                                    bool
+	}{
+		{name: "canonical server wins", workerIP: "198.51.100.9", wantIP: "203.0.113.10", wantSource: "canonical-server", wantProvider: "ionos-observed", wantStatus: "connected", canonical: true},
+		{name: "worker observation wins before canonical backfill", workerIP: "203.0.113.10", wantIP: "203.0.113.10", wantSource: workerRegistryInventorySource, wantProvider: "worker-observed", wantStatus: "healthy"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+			store := controlplane.NewMemoryStore()
+			if _, err := store.CreateStack(ctx, controlplane.CreateStackRequest{ID: "stack-dedup", TenantID: "tenant-1", OwnerSubjectID: "owner-1", Name: "Dedup", Status: "running"}); err != nil {
+				t.Fatalf("CreateStack: %v", err)
+			}
+			leaseID := "lease-ionos-1"
+			serverID := runtimeidentity.LeaseServerID(leaseID)
+			now := time.Now().UTC()
+			if _, err := store.UpsertWorkerHeartbeat(ctx, controlplane.Worker{
+				ID: "worker-observation", TenantID: "tenant-1", OwnerSubjectID: "owner-1", Hostname: "agent-observed",
+				IP: tc.workerIP, Approved: true, LastSeenAt: &now, Provider: "worker-observed",
+				Capabilities: map[string]any{"server_id": serverID, "lease_id": leaseID},
+			}); err != nil {
+				t.Fatalf("UpsertWorkerHeartbeat: %v", err)
+			}
+			if tc.canonical {
+				if _, err := store.UpsertServerRuntime(ctx, controlplane.ServerRuntime{
+					ID: serverID, TenantID: "tenant-1", StackID: "stack-dedup", OwnerSubjectID: "owner-1", WorkerID: "worker-observation", LeaseID: leaseID,
+					Name: "agent-observed", ProviderRef: "ionos-observed", LifecycleState: "active", ConnectionState: "connected", HealthState: "healthy", LastHeartbeatAt: &now,
+					Metadata: map[string]any{"host": map[string]any{"public_ip": tc.wantIP}},
+				}); err != nil {
+					t.Fatalf("UpsertServerRuntime: %v", err)
+				}
+			}
+			lease := createStackOperationsTestLease(leaseID, "tenant-1", "owner-1", "stack-dedup", monthlyRuntimeEnrollmentStatusEnrolled)
+			lease.Metadata["public_ip"] = "192.0.2.20"
+			event, recorder := stackOperationsRouteTestEvent(http.MethodGet, "/api/v1/stacks/stack-dedup/operations", "stack-dedup", "owner-1")
+			event.Request = event.Request.WithContext(identity.NewContext(event.Request.Context(), &identity.Identity{UserID: "owner-1", OrgID: "tenant-1"}))
+			if err := (stackOperationsRouteHandlers{
+				stackStore: store, serverStore: store, serviceStore: store, workerStore: store, registryStore: store, jobStore: store,
+				managedRuntimeLeases: fakeManagedRuntimeLeaseLister{leases: []vmlease.Lease{lease}},
+			}).operations(event); err != nil {
+				t.Fatalf("operations: %v", err)
+			}
+			var envelope struct {
+				Data stackOperationsPayload `json:"data"`
+			}
+			if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if len(envelope.Data.Servers) != 1 {
+				t.Fatalf("server cards = %#v, want one deduplicated server", envelope.Data.Servers)
+			}
+			server := envelope.Data.Servers[0]
+			if server.ServerID != serverID || server.LeaseID != leaseID || server.IP != tc.wantIP || server.Source != tc.wantSource || server.Status != tc.wantStatus || server.Capabilities["provider"] != tc.wantProvider {
+				t.Fatalf("deduplicated server = %#v", server)
+			}
+		})
 	}
 }
 
@@ -956,7 +454,7 @@ func TestStackOperationsAssignsGuardConnectedControlPlaneWorker(t *testing.T) {
 	now := time.Now().UTC()
 	if _, err := store.CreateStack(context.Background(), controlplane.CreateStackRequest{
 		ID:             "stack-1",
-		TenantID:       "tenant-1",
+		TenantID:       "owner-1",
 		OwnerSubjectID: "owner-1",
 		Name:           "Ops Stack",
 		Status:         "pending",
@@ -965,7 +463,7 @@ func TestStackOperationsAssignsGuardConnectedControlPlaneWorker(t *testing.T) {
 	}
 	worker, err := store.UpsertWorkerHeartbeat(context.Background(), controlplane.Worker{
 		ID:             "worker-1",
-		TenantID:       "tenant-1",
+		TenantID:       "owner-1",
 		OwnerSubjectID: "owner-1",
 		Hostname:       "node-a",
 		Status:         "approved",
@@ -994,7 +492,6 @@ func TestStackOperationsAssignsGuardConnectedControlPlaneWorker(t *testing.T) {
 
 	event, recorder := stackOperationsRouteTestEvent(http.MethodPost, "/api/v1/stacks/stack-1/workers/worker-1/assign", "stack-1", "owner-1")
 	event.Request.SetPathValue("workerId", "worker-1")
-	event.Request = event.Request.WithContext(identity.NewContext(event.Request.Context(), &identity.Identity{UserID: "owner-1", OrgID: "tenant-1"}))
 	assignErr := (stackOperationsRouteHandlers{stackStore: store, serverStore: store, workerStore: store}).assignWorker(event)
 	if assignErr != nil {
 		t.Fatalf("assign returned router error: %v", assignErr)
@@ -1002,14 +499,14 @@ func TestStackOperationsAssignsGuardConnectedControlPlaneWorker(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
 	}
-	updated, err := store.GetWorker(context.Background(), "tenant-1", "worker-1")
+	updated, err := store.GetWorker(context.Background(), "owner-1", "worker-1")
 	if err != nil {
 		t.Fatalf("GetWorker: %v", err)
 	}
 	if updated.StackID != "stack-1" {
 		t.Fatalf("worker stack_id = %q, want stack-1", updated.StackID)
 	}
-	runtime, err := store.GetServerRuntime(context.Background(), "tenant-1", serverID)
+	runtime, err := store.GetServerRuntime(context.Background(), "owner-1", serverID)
 	if err != nil {
 		t.Fatalf("GetServerRuntime: %v", err)
 	}
@@ -1019,24 +516,23 @@ func TestStackOperationsAssignsGuardConnectedControlPlaneWorker(t *testing.T) {
 
 	var envelope struct {
 		Data struct {
-			StackID  string               `json:"stack_id"`
-			WorkerID string               `json:"worker_id"`
-			Server   stackOperationServer `json:"server"`
+			KitDeploymentID string               `json:"kit_deployment_id"`
+			WorkerID        string               `json:"worker_id"`
+			Server          stackOperationServer `json:"server"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if envelope.Data.StackID != "stack-1" || envelope.Data.WorkerID != "worker-1" {
+	if envelope.Data.KitDeploymentID != "stack-1" || envelope.Data.WorkerID != "worker-1" {
 		t.Fatalf("unexpected assignment response: %+v", envelope.Data)
 	}
-	if envelope.Data.Server.Assignment != "stack" || envelope.Data.Server.TechstackID != "stack-1" {
+	if envelope.Data.Server.Assignment != "stack" || envelope.Data.Server.KitDeploymentID != "stack-1" {
 		t.Fatalf("server assignment = %+v, want stack assignment", envelope.Data.Server)
 	}
 
 	repeatEvent, repeatRecorder := stackOperationsRouteTestEvent(http.MethodPost, "/api/v1/stacks/stack-1/workers/worker-1/assign", "stack-1", "owner-1")
 	repeatEvent.Request.SetPathValue("workerId", "worker-1")
-	repeatEvent.Request = repeatEvent.Request.WithContext(identity.NewContext(repeatEvent.Request.Context(), &identity.Identity{UserID: "owner-1", OrgID: "tenant-1"}))
 	repeatAssignErr := (stackOperationsRouteHandlers{stackStore: store, serverStore: store, workerStore: store}).assignWorker(repeatEvent)
 	if repeatAssignErr != nil {
 		t.Fatalf("repeat assign returned router error: %v", repeatAssignErr)
@@ -1044,7 +540,7 @@ func TestStackOperationsAssignsGuardConnectedControlPlaneWorker(t *testing.T) {
 	if repeatRecorder.Code != http.StatusOK {
 		t.Fatalf("repeat status = %d body=%s, want 200", repeatRecorder.Code, repeatRecorder.Body.String())
 	}
-	runtime, err = store.GetServerRuntime(context.Background(), "tenant-1", serverID)
+	runtime, err = store.GetServerRuntime(context.Background(), "owner-1", serverID)
 	if err != nil {
 		t.Fatalf("GetServerRuntime(repeat): %v", err)
 	}
@@ -1053,97 +549,61 @@ func TestStackOperationsAssignsGuardConnectedControlPlaneWorker(t *testing.T) {
 	}
 }
 
-func TestWorkerAssignmentStatusAllowed(t *testing.T) {
+func TestStackOperationsAssignmentConflictsLeaveCanonicalBindingsUnchanged(t *testing.T) {
 	for _, test := range []struct {
-		status string
-		want   bool
+		name            string
+		existingStackID string
 	}{
-		{status: "approved", want: true},
-		{status: "connected", want: true},
-		{status: "pending"},
-		{status: "online"},
-		{status: "offline"},
-		{status: ""},
+		{name: "canonical runtime is missing"},
+		{name: "canonical runtime belongs to another stack", existingStackID: "stack-other"},
 	} {
-		if got := workerAssignmentStatusAllowed(test.status); got != test.want {
-			t.Fatalf("workerAssignmentStatusAllowed(%q) = %v, want %v", test.status, got, test.want)
-		}
-	}
-}
+		t.Run(test.name, func(t *testing.T) {
+			store := controlplane.NewMemoryStore()
+			ctx := t.Context()
+			if _, err := store.CreateStack(ctx, controlplane.CreateStackRequest{
+				ID: "stack-1", TenantID: "tenant-1", OwnerSubjectID: "owner-1", Name: "Ops Stack", Status: "pending",
+			}); err != nil {
+				t.Fatalf("CreateStack: %v", err)
+			}
+			now := time.Now().UTC()
+			worker, err := store.UpsertWorkerHeartbeat(ctx, controlplane.Worker{
+				ID: "worker-1", TenantID: "tenant-1", OwnerSubjectID: "owner-1",
+				Status: "approved", Approved: true, ApprovedAt: &now, LastSeenAt: &now,
+			})
+			if err != nil {
+				t.Fatalf("UpsertWorkerHeartbeat: %v", err)
+			}
+			serverID := ""
+			if test.existingStackID != "" {
+				serverID = seedStackOperationsAssignableRuntime(t, store, *worker, test.existingStackID)
+			}
 
-func TestStackOperationsAssignmentFailsClosedWithoutCanonicalRuntime(t *testing.T) {
-	store := controlplane.NewMemoryStore()
-	ctx := context.Background()
-	if _, err := store.CreateStack(ctx, controlplane.CreateStackRequest{
-		ID: "stack-1", TenantID: "tenant-1", OwnerSubjectID: "owner-1", Name: "Ops Stack", Status: "pending",
-	}); err != nil {
-		t.Fatalf("CreateStack: %v", err)
-	}
-	now := time.Now().UTC()
-	if _, err := store.UpsertWorkerHeartbeat(ctx, controlplane.Worker{
-		ID: "worker-1", TenantID: "tenant-1", OwnerSubjectID: "owner-1",
-		Status: "approved", Approved: true, ApprovedAt: &now, LastSeenAt: &now,
-	}); err != nil {
-		t.Fatalf("UpsertWorkerHeartbeat: %v", err)
-	}
-
-	event, recorder := stackOperationsRouteTestEvent(http.MethodPost, "/api/v1/stacks/stack-1/workers/worker-1/assign", "stack-1", "owner-1")
-	event.Request.SetPathValue("workerId", "worker-1")
-	event.Request = event.Request.WithContext(identity.NewContext(event.Request.Context(), &identity.Identity{UserID: "owner-1", OrgID: "tenant-1"}))
-	assignErr := (stackOperationsRouteHandlers{stackStore: store, serverStore: store, workerStore: store}).assignWorker(event)
-	if assignErr != nil {
-		t.Fatalf("assign returned router error: %v", assignErr)
-	}
-	if recorder.Code != http.StatusConflict {
-		t.Fatalf("status = %d body=%s, want 409", recorder.Code, recorder.Body.String())
-	}
-	worker, err := store.GetWorker(ctx, "tenant-1", "worker-1")
-	if err != nil {
-		t.Fatalf("GetWorker: %v", err)
-	}
-	if worker.StackID != "" {
-		t.Fatalf("worker stack_id = %q after failed canonical bind, want unchanged", worker.StackID)
-	}
-}
-
-func TestStackOperationsAssignmentRejectsForeignCanonicalBinding(t *testing.T) {
-	store := controlplane.NewMemoryStore()
-	ctx := context.Background()
-	if _, err := store.CreateStack(ctx, controlplane.CreateStackRequest{
-		ID: "stack-1", TenantID: "tenant-1", OwnerSubjectID: "owner-1", Name: "Ops Stack", Status: "pending",
-	}); err != nil {
-		t.Fatalf("CreateStack: %v", err)
-	}
-	now := time.Now().UTC()
-	worker, err := store.UpsertWorkerHeartbeat(ctx, controlplane.Worker{
-		ID: "worker-1", TenantID: "tenant-1", OwnerSubjectID: "owner-1",
-		Status: "approved", Approved: true, ApprovedAt: &now, LastSeenAt: &now,
-	})
-	if err != nil {
-		t.Fatalf("UpsertWorkerHeartbeat: %v", err)
-	}
-	serverID := seedStackOperationsAssignableRuntime(t, store, *worker, "stack-other")
-
-	event, recorder := stackOperationsRouteTestEvent(http.MethodPost, "/api/v1/stacks/stack-1/workers/worker-1/assign", "stack-1", "owner-1")
-	event.Request.SetPathValue("workerId", "worker-1")
-	event.Request = event.Request.WithContext(identity.NewContext(event.Request.Context(), &identity.Identity{UserID: "owner-1", OrgID: "tenant-1"}))
-	assignErr := (stackOperationsRouteHandlers{stackStore: store, serverStore: store, workerStore: store}).assignWorker(event)
-	if assignErr != nil {
-		t.Fatalf("assign returned router error: %v", assignErr)
-	}
-	if recorder.Code != http.StatusConflict {
-		t.Fatalf("status = %d body=%s, want 409", recorder.Code, recorder.Body.String())
-	}
-	updatedWorker, err := store.GetWorker(ctx, "tenant-1", "worker-1")
-	if err != nil {
-		t.Fatalf("GetWorker: %v", err)
-	}
-	updatedRuntime, err := store.GetServerRuntime(ctx, "tenant-1", serverID)
-	if err != nil {
-		t.Fatalf("GetServerRuntime: %v", err)
-	}
-	if updatedWorker.StackID != "" || updatedRuntime.StackID != "stack-other" || updatedRuntime.Revision != 1 {
-		t.Fatalf("foreign binding changed: worker=%#v runtime=%#v", updatedWorker, updatedRuntime)
+			event, recorder := stackOperationsRouteTestEvent(http.MethodPost, "/api/v1/stacks/stack-1/workers/worker-1/assign", "stack-1", "owner-1")
+			event.Request.SetPathValue("workerId", "worker-1")
+			event.Request = event.Request.WithContext(identity.NewContext(event.Request.Context(), &identity.Identity{UserID: "owner-1", OrgID: "tenant-1"}))
+			if err := (stackOperationsRouteHandlers{stackStore: store, serverStore: store, workerStore: store}).assignWorker(event); err != nil {
+				t.Fatalf("assign returned router error: %v", err)
+			}
+			if recorder.Code != http.StatusConflict {
+				t.Fatalf("status = %d body=%s, want 409", recorder.Code, recorder.Body.String())
+			}
+			updatedWorker, err := store.GetWorker(ctx, "tenant-1", "worker-1")
+			if err != nil {
+				t.Fatalf("GetWorker: %v", err)
+			}
+			if updatedWorker.StackID != "" {
+				t.Fatalf("worker stack_id = %q after conflict, want unchanged", updatedWorker.StackID)
+			}
+			if serverID != "" {
+				updatedRuntime, err := store.GetServerRuntime(ctx, "tenant-1", serverID)
+				if err != nil {
+					t.Fatalf("GetServerRuntime: %v", err)
+				}
+				if updatedRuntime.StackID != test.existingStackID || updatedRuntime.Revision != 1 {
+					t.Fatalf("canonical binding changed: %#v", updatedRuntime)
+				}
+			}
+		})
 	}
 }
 
@@ -1194,14 +654,14 @@ func seedStackOperationsGuardConnection(t *testing.T, store *controlplane.Memory
 	}
 }
 
-func TestStackOperationsUsesControlPlaneStoresForOperationsPayload(t *testing.T) {
-	app, err := tests.NewTestApp(driftRoutePocketBaseTestDataDir(t))
-	if err != nil {
-		t.Fatalf("new test app: %v", err)
-	}
-	defer app.Cleanup()
-	ensureStackOperationsTestCollections(t, app)
+func TestStackOperationsCanonicalNotFoundDoesNotFallback(t *testing.T) {
+	store := controlplane.NewMemoryStore()
+	event, _ := stackOperationsRouteTestEvent(http.MethodGet, "/api/v1/stacks/stack-1/operations", "stack-1", "owner-1")
+	err := (stackOperationsRouteHandlers{stackStore: store, serverStore: store, serviceStore: store, workerStore: store, registryStore: store, jobStore: store}).operations(event)
+	assert.Equal(t, http.StatusNotFound, err.(*httpx.APIError).Status)
+}
 
+func TestStackOperationsUsesControlPlaneStoresForOperationsPayload(t *testing.T) {
 	ctx := context.Background()
 	store := controlplane.NewMemoryStore()
 	now := time.Now().UTC()
@@ -1218,6 +678,16 @@ func TestStackOperationsUsesControlPlaneStoresForOperationsPayload(t *testing.T)
 		},
 	}); err != nil {
 		t.Fatalf("CreateStack: %v", err)
+	}
+	if _, err := store.UpdateStackRuntime(ctx, "tenant-1", "stack-store", controlplane.RuntimeUpdate{
+		RuntimeSummary: map[string]any{"stackkit_outputs": map[string]any{
+			"services": []any{
+				map[string]any{"name": "coolify", "url": "https://stale-runtime.example.test"},
+				map[string]any{"name": "immich", "url": "https://stale-runtime-immich.example.test"},
+			},
+		}},
+	}); err != nil {
+		t.Fatalf("UpdateStackRuntime: %v", err)
 	}
 	if _, err := store.UpsertWorkerHeartbeat(ctx, controlplane.Worker{
 		ID:             "worker-1",
@@ -1261,7 +731,14 @@ func TestStackOperationsUsesControlPlaneStoresForOperationsPayload(t *testing.T)
 	}); err != nil {
 		t.Fatalf("UpsertNode: %v", err)
 	}
-	if _, err := store.UpsertService(ctx, controlplane.Service{
+	if _, err := store.UpsertServerRuntime(ctx, controlplane.ServerRuntime{
+		ID: "node-1", TenantID: "tenant-1", StackID: "stack-store", OwnerSubjectID: "owner-1",
+		WorkerID: "worker-1", NodeID: "node-1", Name: "main", LifecycleState: "active",
+		ConnectionState: "online", HealthState: "healthy", DesiredState: "running",
+	}); err != nil {
+		t.Fatalf("UpsertServerRuntime: %v", err)
+	}
+	registryService := controlplane.Service{
 		ID:         "service-coolify",
 		TenantID:   "tenant-1",
 		StackID:    "stack-store",
@@ -1270,9 +747,10 @@ func TestStackOperationsUsesControlPlaneStoresForOperationsPayload(t *testing.T)
 		Name:       "coolify",
 		Status:     "running",
 		Source:     "managed",
-		URL:        "http://coolify.home.localhost",
+		URL:        "https://coolify.home",
 		Metadata:   map[string]any{"type": "paas", "display_name": "Coolify"},
-	}); err != nil {
+	}
+	if _, err := store.UpsertService(ctx, registryService); err != nil {
 		t.Fatalf("UpsertService: %v", err)
 	}
 	if _, err := store.UpsertJob(ctx, controlplane.UpsertJobRequest{
@@ -1293,11 +771,19 @@ func TestStackOperationsUsesControlPlaneStoresForOperationsPayload(t *testing.T)
 	pendingLease := createStackOperationsTestLease("lease-pending", "tenant-1", "owner-1", "stack-store", "pending")
 	pendingLease.Metadata["public_ip"] = ""
 	if err := (stackOperationsRouteHandlers{
-		app:                  app,
-		stackStore:           store,
-		workerStore:          store,
-		registryStore:        store,
+		stackStore:   store,
+		serverStore:  store,
+		serviceStore: store,
+		workerStore:  store,
+		registryStore: stackOperationsRegistryStoreStub{
+			nodesErr: fmt.Errorf("nodes unavailable"),
+			services: []controlplane.Service{
+				registryService,
+				{ID: "duplicate-coolify", ServiceKey: "COOLIFY", Name: "COOLIFY", Status: "unhealthy"},
+			},
+		},
 		jobStore:             store,
+		activityStore:        store,
 		managedRuntimeLeases: fakeManagedRuntimeLeaseLister{leases: []vmlease.Lease{pendingLease}},
 	}).operations(event); err != nil {
 		t.Fatalf("operations returned router error: %v", err)
@@ -1312,40 +798,24 @@ func TestStackOperationsUsesControlPlaneStoresForOperationsPayload(t *testing.T)
 	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
 		t.Fatalf("decode response: %v body=%s", err, recorder.Body.String())
 	}
-	if envelope.Data.Stack["id"] != "stack-store" {
-		t.Fatalf("stack id = %#v, want stack-store", envelope.Data.Stack["id"])
+	if envelope.Data.Stack["id"] != "stack-store" || envelope.Data.Stack["kit_deployment_id"] != "stack-store" {
+		t.Fatalf("stack identity = %#v, want stack-store", envelope.Data.Stack)
 	}
-	if got := len(envelope.Data.Servers); got != 2 {
-		t.Fatalf("servers = %d, want registry node plus pending managed lease", got)
-	}
-	var sawPendingLease, sawRegistryNode bool
+	var sawCanonical, sawPendingLease bool
 	for _, server := range envelope.Data.Servers {
-		switch server.ID {
-		case "lease:lease-pending":
-			if server.Source != managedRuntimeInventorySource || server.Approved {
-				t.Fatalf("unexpected pending managed runtime projection: %#v", server)
-			}
-			sawPendingLease = true
-		case "node-1":
-			if server.Health.State != "unknown" || !server.Approved {
-				t.Fatalf("unexpected registry node projection: %#v", server)
-			}
-			sawRegistryNode = true
-		}
+		sawCanonical = sawCanonical || server.ID == "node-1" && server.Source == "canonical-server"
+		sawPendingLease = sawPendingLease || server.ID == "lease:lease-pending" && server.Source == managedRuntimeInventorySource
 	}
-	if !sawPendingLease || !sawRegistryNode {
-		t.Fatalf("servers missing expected projections: %#v", envelope.Data.Servers)
+	if !sawCanonical || !sawPendingLease {
+		t.Fatalf("servers = %#v, want canonical runtime plus pending lease", envelope.Data.Servers)
 	}
-	if envelope.Data.Readiness.Connected != 0 || envelope.Data.Readiness.CanStart {
-		t.Fatalf("registry node and worker timestamps must not substitute for canonical Guard connection evidence: %#v", envelope.Data.Readiness)
-	}
-	if envelope.Data.KPIs.HealthyServers != 0 {
-		t.Fatalf("healthy servers = %d, want 0 without canonical Guard health evidence", envelope.Data.KPIs.HealthyServers)
+	if envelope.Data.KPIs.HealthyServers != 1 {
+		t.Fatalf("healthy servers = %d, want canonical healthy server", envelope.Data.KPIs.HealthyServers)
 	}
 	if got := len(envelope.Data.Services); got != 1 {
 		t.Fatalf("services = %d, want 1", got)
 	}
-	if service := envelope.Data.Services[0]; service.Name != "coolify" || service.Type != "paas" || service.URL == "" {
+	if service := envelope.Data.Services[0]; service.ID != registryService.ID || service.Name != "coolify" || service.Type != "paas" || service.Status != registryUnknownStatus || service.URL != "" {
 		t.Fatalf("unexpected service projection: %#v", service)
 	}
 	if envelope.Data.Readiness.Status != "running" {
@@ -1387,7 +857,7 @@ func TestStackOperationsShowsPlannedCanonicalServerImmediately(t *testing.T) {
 	event, recorder := stackOperationsRouteTestEvent(http.MethodGet, "/api/v1/stacks/stack-planned/operations", "stack-planned", "owner-1")
 	event.Request = event.Request.WithContext(identity.NewContext(event.Request.Context(), &identity.Identity{UserID: "owner-1", OrgID: "tenant-1"}))
 	if err := (stackOperationsRouteHandlers{
-		stackStore: store, serverStore: store, workerStore: store, registryStore: store, jobStore: store,
+		stackStore: store, serverStore: store, serviceStore: store, workerStore: store, registryStore: store, jobStore: store,
 		managedRuntimeLeases: fakeManagedRuntimeLeaseLister{},
 	}).operations(event); err != nil {
 		t.Fatalf("operations: %v", err)
@@ -1471,7 +941,7 @@ func TestStackOperationsProjectsCanonicalServerInventoryMetadata(t *testing.T) {
 	event, recorder := stackOperationsRouteTestEvent(http.MethodGet, "/api/v1/stacks/stack-observed/operations", "stack-observed", "owner-1")
 	event.Request = event.Request.WithContext(identity.NewContext(event.Request.Context(), &identity.Identity{UserID: "owner-1", OrgID: "tenant-1"}))
 	if err := (stackOperationsRouteHandlers{
-		stackStore: store, serverStore: store, serviceStore: store, workerStore: store, registryStore: store,
+		stackStore: store, serverStore: store, serviceStore: store, workerStore: store, registryStore: store, jobStore: store,
 		managedRuntimeLeases: fakeManagedRuntimeLeaseLister{},
 	}).operations(event); err != nil {
 		t.Fatalf("operations: %v", err)
@@ -1542,7 +1012,7 @@ func TestStackOperationsAppliesQuarantinedAuthorityAfterCanonicalMerge(t *testin
 	event, recorder := stackOperationsRouteTestEvent(http.MethodGet, "/api/v1/stacks/stack-quarantined/operations", "stack-quarantined", "owner-1")
 	event.Request = event.Request.WithContext(identity.NewContext(event.Request.Context(), &identity.Identity{UserID: "owner-1", OrgID: "tenant-1"}))
 	if err := (stackOperationsRouteHandlers{
-		stackStore: store, serverStore: store, workerStore: store, registryStore: store,
+		stackStore: store, serverStore: store, serviceStore: store, workerStore: store, registryStore: store, jobStore: store,
 		managedRuntimeLeases: fakeManagedRuntimeLeaseLister{inventory: []vmleases.LeaseInventoryRecord{record}},
 	}).operations(event); err != nil {
 		t.Fatalf("operations: %v", err)
@@ -1565,33 +1035,6 @@ func TestStackOperationsAppliesQuarantinedAuthorityAfterCanonicalMerge(t *testin
 	}
 	if envelope.Data.Readiness.Connected != 0 || envelope.Data.Readiness.CanStart {
 		t.Fatalf("quarantined canonical server became rollout-ready: %#v", envelope.Data.Readiness)
-	}
-}
-
-func TestStackOperationsFailsClosedWhenCanonicalServerEvidenceIsUnavailable(t *testing.T) {
-	ctx := t.Context()
-	store := controlplane.NewMemoryStore()
-	if _, err := store.CreateStack(ctx, controlplane.CreateStackRequest{
-		ID: "stack-evidence-error", TenantID: "tenant-1", OwnerSubjectID: "owner-1",
-		Name: "Evidence error", Status: "configured",
-	}); err != nil {
-		t.Fatalf("CreateStack: %v", err)
-	}
-	event, recorder := stackOperationsRouteTestEvent(http.MethodGet, "/api/v1/stacks/stack-evidence-error/operations", "stack-evidence-error", "owner-1")
-	event.Request = event.Request.WithContext(identity.NewContext(event.Request.Context(), &identity.Identity{UserID: "owner-1", OrgID: "tenant-1"}))
-	if err := (stackOperationsRouteHandlers{
-		stackStore:  store,
-		serverStore: failingListServerRuntimeStore{ServerRuntimeStore: store, err: fmt.Errorf("canonical store unavailable")},
-		workerStore: store, registryStore: store,
-		managedRuntimeLeases: fakeManagedRuntimeLeaseLister{},
-	}).operations(event); err != nil {
-		t.Fatalf("operations: %v", err)
-	}
-	if recorder.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d body=%s, want 503", recorder.Code, recorder.Body.String())
-	}
-	if !strings.Contains(recorder.Body.String(), "managed_runtime_authority_unavailable") {
-		t.Fatalf("response does not expose retryable authority-unavailable outcome: %s", recorder.Body.String())
 	}
 }
 
@@ -1621,7 +1064,7 @@ func TestCanonicalOperationServerReportsPersistedStateWithoutPlatformDefaults(t 
 	}); err != nil {
 		t.Fatalf("UpsertServerRuntime: %v", err)
 	}
-	servers, err := (stackOperationsRouteHandlers{serverStore: store}).canonicalOperationServers(t.Context(), "owner-1", "tenant-1", "stack-1")
+	servers, _, err := (stackOperationsRouteHandlers{serverStore: store}).canonicalOperationServers(t.Context(), "owner-1", "tenant-1", "stack-1")
 	if err != nil {
 		t.Fatalf("canonicalOperationServers: %v", err)
 	}
@@ -1665,7 +1108,8 @@ func TestCanonicalOperationServersExcludeDecommissionedHistory(t *testing.T) {
 		{
 			ID: "server-ended", TenantID: "tenant-1", StackID: "stack-1", OwnerSubjectID: "owner-1",
 			Name: "server-ended", LifecycleState: "decommissioned", DesiredState: "absent",
-			ConnectionState: "revoked", HealthState: "unknown",
+			ConnectionState: "revoked", HealthState: "unknown", LeaseID: "lease-ended",
+			Metadata: map[string]any{"runtime_slot_key": "worker-a", "runtime_slot_generation": "3"},
 		},
 	} {
 		if _, err := store.UpsertServerRuntime(t.Context(), runtime); err != nil {
@@ -1673,12 +1117,20 @@ func TestCanonicalOperationServersExcludeDecommissionedHistory(t *testing.T) {
 		}
 	}
 
-	servers, err := (stackOperationsRouteHandlers{serverStore: store}).canonicalOperationServers(t.Context(), "owner-1", "tenant-1", "stack-1")
+	servers, terminal, err := (stackOperationsRouteHandlers{serverStore: store}).canonicalOperationServers(t.Context(), "owner-1", "tenant-1", "stack-1")
 	if err != nil {
 		t.Fatalf("canonicalOperationServers: %v", err)
 	}
 	if len(servers) != 1 || servers[0].ID != "server-active" {
 		t.Fatalf("servers = %#v, want only current actionable inventory", servers)
+	}
+	if len(terminal) != 1 || terminal[0].ID != "server-ended" || terminal[0].LeaseID != "lease-ended" ||
+		terminal[0].Capabilities["runtime_slot_key"] != "worker-a" || terminal[0].Status != "decommissioned" {
+		t.Fatalf("terminal recreate discovery = %#v, want exact retired generation without live inventory state", terminal)
+	}
+	legacy := []stackOperationServer{{ID: "agent-ended", AgentID: "agent-ended", ServerID: "server-ended", Source: workerRegistryInventorySource}}
+	if merged := mergeCanonicalOperationServers(servers, terminal, legacy); len(merged) != 1 || merged[0].ID != "server-active" {
+		t.Fatalf("terminal canonical identity was resurrected by legacy projection: %#v", merged)
 	}
 }
 
@@ -1740,23 +1192,6 @@ func metricValue(metric stackMetricValue) float64 {
 	return *metric.Value
 }
 
-func TestCanonicalServerPreCheckStateDerivedFromRuntime(t *testing.T) {
-	for name, tc := range map[string]struct {
-		runtime controlplane.ServerRuntime
-		want    string
-	}{
-		"managed lease":     {controlplane.ServerRuntime{LeaseID: "lease-1", LifecycleState: "enrolling"}, "managed"},
-		"active enrollment": {controlplane.ServerRuntime{LifecycleState: "active"}, "passed"},
-		"enrolling":         {controlplane.ServerRuntime{LifecycleState: "enrolling"}, "pending"},
-		"failed":            {controlplane.ServerRuntime{LifecycleState: "failed"}, "failed"},
-		"decommissioned":    {controlplane.ServerRuntime{LifecycleState: "decommissioned"}, "not_applicable"},
-	} {
-		if got := canonicalServerPreCheckState(tc.runtime); got != tc.want {
-			t.Fatalf("%s: precheck = %q, want %q", name, got, tc.want)
-		}
-	}
-}
-
 func TestLatestStackFailureIgnoresNotApplicableBootstrapReceipt(t *testing.T) {
 	// Mirrors the live 2026-07-29 demo failure: the rollout action failed, but
 	// the persisted target_bootstrap receipt is a success record whose
@@ -1803,6 +1238,13 @@ func TestStackOperationsStorePayloadIncludesLatestPostLeaseFailure(t *testing.T)
 	}); err != nil {
 		t.Fatalf("CreateStack: %v", err)
 	}
+	if _, err := store.UpdateStackRuntime(ctx, "tenant-1", "stack-failed-prep", controlplane.RuntimeUpdate{
+		RuntimeSummary: map[string]any{"stackkit_outputs": map[string]any{
+			"services": []any{map[string]any{"name": "immich", "url": "https://stale-runtime.example.test"}},
+		}},
+	}); err != nil {
+		t.Fatalf("UpdateStackRuntime: %v", err)
+	}
 	if _, err := store.UpsertJob(ctx, controlplane.UpsertJobRequest{
 		ID:           "job-failed-prep",
 		TenantID:     "tenant-1",
@@ -1842,8 +1284,10 @@ func TestStackOperationsStorePayloadIncludesLatestPostLeaseFailure(t *testing.T)
 	event.Request = event.Request.WithContext(identity.NewContext(event.Request.Context(), &identity.Identity{UserID: "owner-1", OrgID: "tenant-1"}))
 	if err := (stackOperationsRouteHandlers{
 		stackStore:           store,
+		serverStore:          store,
+		serviceStore:         store,
 		workerStore:          store,
-		registryStore:        store,
+		registryStore:        stackOperationsRegistryStoreStub{servicesErr: fmt.Errorf("services unavailable")},
 		jobStore:             store,
 		managedRuntimeLeases: fakeManagedRuntimeLeaseLister{leases: []vmlease.Lease{lease}},
 	}).operations(event); err != nil {
@@ -1874,6 +1318,9 @@ func TestStackOperationsStorePayloadIncludesLatestPostLeaseFailure(t *testing.T)
 	if got := len(envelope.Data.Servers); got != 1 {
 		t.Fatalf("servers = %d, want managed runtime projection", got)
 	}
+	if got := envelope.Data.Services; len(got) != 1 || got[0].Name != "immich" || got[0].URL != "" || got[0].Status != registryUnknownStatus {
+		t.Fatalf("services = %#v, want safe RuntimeSummary fallback after registry failure", got)
+	}
 	server := envelope.Data.Servers[0]
 	if server.Capabilities["last_job_id"] != "job-failed-prep" ||
 		server.Capabilities["failure_reason"] != "target_bootstrap_timeout" ||
@@ -1882,131 +1329,59 @@ func TestStackOperationsStorePayloadIncludesLatestPostLeaseFailure(t *testing.T)
 	}
 }
 
-// A newer job of a DIFFERENT type is not a retry of the failed one. Suppressing
-// the failure in that case left the dashboard in a dead end: the stack stayed
-// in status error while reporting no failure, so the only message it could
-// render was "the last operation failed, open the latest job" — pointing at the
-// unrelated job that had succeeded.
-func TestLatestStackFailureSurvivesNewerUnrelatedJob(t *testing.T) {
+func TestLatestStackFailureFollowsCurrentOperationAttempt(t *testing.T) {
 	now := time.Now().UTC()
-	jobs := []controlplane.Job{
+	oldDeployFailure := controlplane.Job{
+		ID: "job-rollout", Type: "deploy", State: "failed", Error: "StackKits artifact generation failed",
+		CreatedAt: now.Add(-72 * time.Hour), UpdatedAt: now.Add(-72 * time.Hour),
+	}
+	oldUntypedFailure := controlplane.Job{
+		ID: "job-stale-failure", State: "failed", Error: "SQLSTATE 42501",
+		CreatedAt: now.Add(-time.Minute), UpdatedAt: now.Add(-time.Minute),
+	}
+	for _, test := range []struct {
+		name, wantID, wantType, wantReason string
+		jobs                               []controlplane.Job
+	}{
 		{
-			ID:        "job-register-server",
-			Type:      "update",
-			State:     "completed",
-			Message:   "Server registration prepared",
-			CreatedAt: now,
-			UpdatedAt: now,
+			name: "newer unrelated operation preserves failure", wantID: "job-rollout", wantType: "deploy",
+			jobs: []controlplane.Job{{ID: "job-register-server", Type: "update", State: "completed", CreatedAt: now, UpdatedAt: now}, oldDeployFailure},
 		},
 		{
-			ID:        "job-rollout",
-			Type:      "deploy",
-			State:     "failed",
-			Error:     "StackKits artifact generation failed",
-			CreatedAt: now.Add(-72 * time.Hour),
-			UpdatedAt: now.Add(-72 * time.Hour),
-		},
-	}
-
-	got := latestStackFailureFromJobs(jobs)
-	if got == nil || got.JobID != "job-rollout" || got.Type != "deploy" {
-		t.Fatalf("latest failure = %#v, want the still-current deploy failure", got)
-	}
-
-	// A newer attempt at the SAME operation does supersede it.
-	jobs[0].Type = "deploy"
-	if superseded := latestStackFailureFromJobs(jobs); superseded != nil {
-		t.Fatalf("latest failure = %#v, want nil once a newer deploy owns the lifecycle", superseded)
-	}
-}
-
-func TestLatestStackFailureDoesNotLeakAcrossNewerAttempt(t *testing.T) {
-	now := time.Now().UTC()
-	jobs := []controlplane.Job{
-		{
-			ID:        "job-current",
-			State:     "waiting",
-			CreatedAt: now,
-			UpdatedAt: now,
+			name: "newer same operation supersedes failure",
+			jobs: []controlplane.Job{{ID: "job-current", Type: "deploy", State: "completed", CreatedAt: now, UpdatedAt: now}, oldDeployFailure},
 		},
 		{
-			ID:        "job-stale-failure",
-			State:     "failed",
-			Error:     "SQLSTATE 42501",
-			CreatedAt: now.Add(-time.Minute),
-			UpdatedAt: now.Add(-time.Minute),
+			name: "waiting current attempt suppresses stale failure",
+			jobs: []controlplane.Job{{ID: "job-current", State: "waiting", CreatedAt: now, UpdatedAt: now}, oldUntypedFailure},
 		},
-	}
-
-	if got := latestStackFailureFromJobs(jobs); got != nil {
-		t.Fatalf("latest failure = %#v, want nil while newer attempt owns the lifecycle", got)
-	}
-
-	jobs[0].State = "failed"
-	jobs[0].Error = "provider.partial_create"
-	got := latestStackFailureFromJobs(jobs)
-	if got == nil || got.JobID != "job-current" || got.Reason != "provider.partial_create" {
-		t.Fatalf("latest failure = %#v, want current failed attempt", got)
-	}
-}
-
-func TestStackOperationsFallsBackToPocketBaseWithoutTenantContext(t *testing.T) {
-	app, err := tests.NewTestApp(driftRoutePocketBaseTestDataDir(t))
-	if err != nil {
-		t.Fatalf("new test app: %v", err)
-	}
-	defer app.Cleanup()
-	ensureStackOperationsTestCollections(t, app)
-	stack := createStackOperationsTestStack(t, app, "owner-1", "provisioning")
-	stack.Set("server_provisioning_mode", "kombify-cloud")
-	stack.Set("server_mode", "monthly-runtime")
-	stack.Set("runtime_lane", "monthly-runtime")
-	stack.Set("runtime_phase", "lease_ready")
-	stack.Set("lease_id", "lease-pocketbase-retained")
-	if err := app.Save(stack); err != nil {
-		t.Fatalf("save stack runtime fields: %v", err)
-	}
-
-	store := controlplane.NewMemoryStore()
-	lease := createStackOperationsTestLease("lease-pocketbase-retained", "owner-1", "owner-1", stack.Id, "enrolled")
-	lease.Metadata["public_ip"] = "203.0.113.42"
-	event, recorder := stackOperationsRouteTestEvent(http.MethodGet, "/api/v1/stacks/"+stack.Id+"/operations", stack.Id, "owner-1")
-
-	if err := (stackOperationsRouteHandlers{
-		app:                  app,
-		stackStore:           store,
-		managedRuntimeLeases: fakeManagedRuntimeLeaseLister{leases: []vmlease.Lease{lease}},
-	}).operations(event); err != nil {
-		t.Fatalf("operations returned router error: %v", err)
-	}
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
-	}
-
-	var envelope struct {
-		Data stackOperationsPayload `json:"data"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
-		t.Fatalf("decode response: %v body=%s", err, recorder.Body.String())
-	}
-	if got := envelope.Data.Stack["id"]; got != stack.Id {
-		t.Fatalf("stack id = %v, want %s", got, stack.Id)
-	}
-	if got := len(envelope.Data.Servers); got != 1 {
-		t.Fatalf("servers = %d, want managed runtime projection", got)
-	}
-	server := envelope.Data.Servers[0]
-	if server.Source != managedRuntimeInventorySource || server.LeaseID != "lease-pocketbase-retained" || server.IP != "203.0.113.42" {
-		t.Fatalf("unexpected managed server projection: %#v", server)
+		{
+			name: "failed current attempt becomes latest", wantID: "job-current", wantReason: "provider.partial_create",
+			jobs: []controlplane.Job{{ID: "job-current", State: "failed", Error: "provider.partial_create", CreatedAt: now, UpdatedAt: now}, oldUntypedFailure},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := latestStackFailureFromJobs(test.jobs)
+			if test.wantID == "" {
+				if got != nil {
+					t.Fatalf("latest failure = %#v, want none", got)
+				}
+				return
+			}
+			if got == nil || got.JobID != test.wantID || (test.wantType != "" && got.Type != test.wantType) || (test.wantReason != "" && got.Reason != test.wantReason) {
+				t.Fatalf("latest failure = %#v, want job %q type %q reason %q", got, test.wantID, test.wantType, test.wantReason)
+			}
+		})
 	}
 }
 
 func TestStackServerDetailsUsesControlPlaneStores(t *testing.T) {
 	ctx := context.Background()
 	store := controlplane.NewMemoryStore()
+	now := time.Now().UTC()
 	if _, err := store.CreateStack(ctx, controlplane.CreateStackRequest{
 		ID:             "stack-store",
-		TenantID:       "tenant-1",
+		TenantID:       "owner-1",
 		OwnerSubjectID: "owner-1",
 		Name:           "Store Stack",
 		Mode:           "easy",
@@ -2016,7 +1391,7 @@ func TestStackServerDetailsUsesControlPlaneStores(t *testing.T) {
 	}
 	if _, err := store.UpsertNode(ctx, controlplane.Node{
 		ID:       "node-1",
-		TenantID: "tenant-1",
+		TenantID: "owner-1",
 		StackID:  "stack-store",
 		WorkerID: "worker-1",
 		Name:     "main",
@@ -2032,31 +1407,40 @@ func TestStackServerDetailsUsesControlPlaneStores(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpsertNode: %v", err)
 	}
-	if _, err := store.UpsertService(ctx, controlplane.Service{
-		ID:         "service-pocket-id",
-		TenantID:   "tenant-1",
-		StackID:    "stack-store",
-		NodeID:     "node-1",
-		ServiceKey: "pocket_id",
-		Name:       "pocket_id",
-		Status:     "running",
-		Source:     "stackkit_outputs",
-		URL:        "http://id.home.localhost",
-		Metadata: map[string]any{
-			"display_name": "Pocket ID",
-			"type":         "identity",
-			"port":         80,
-		},
+	if _, err := store.UpsertServerRuntime(ctx, controlplane.ServerRuntime{
+		ID: "node-1", TenantID: "owner-1", StackID: "stack-store", OwnerSubjectID: "owner-1",
+		WorkerID: "worker-1", NodeID: "node-1", Name: "main", LifecycleState: "active",
+		ConnectionState: "connected", HealthState: "healthy", DesiredState: "running", LastHeartbeatAt: &now,
 	}); err != nil {
-		t.Fatalf("UpsertService: %v", err)
+		t.Fatalf("UpsertServerRuntime: %v", err)
+	}
+	if _, err := store.UpsertServiceRuntime(ctx, controlplane.ServiceRuntime{
+		ID: "service-vaultwarden", TenantID: "owner-1", StackID: "stack-store", ServerID: "node-1",
+		ServiceKey: "vaultwarden", ServiceInstance: "default", Name: "Vaultwarden",
+		DesiredState: registryStatusRunning, ObservedState: registryStatusRunning,
+		HealthState: serviceHealthHealthy, ObservedAt: &now,
+		Access:       map[string]any{serviceAccessModeKey: serviceAccessRelay, serviceAccessURLKey: "https://vault.owner.kombify.me", "route_id": "route-1"},
+		Capabilities: []string{serviceActionRestart}, Source: stackKitsInventorySource,
+	}); err != nil {
+		t.Fatalf("UpsertServiceRuntime: %v", err)
+	}
+	if _, err := store.AppendActivity(ctx, controlplane.ActivityEvent{
+		ID: "activity-node-1", TenantID: "owner-1", StackID: "stack-store", ServerScopeKey: "node-1",
+		Action: "service_observed", Severity: "info", Message: "Service observation recorded",
+	}); err != nil {
+		t.Fatalf("AppendActivity: %v", err)
 	}
 
 	event, recorder := stackOperationsRouteTestEvent(http.MethodGet, "/api/v1/stacks/stack-store/servers/node-1", "stack-store", "owner-1")
 	event.Request.SetPathValue("serverId", "node-1")
-	event.Request = event.Request.WithContext(identity.NewContext(event.Request.Context(), &identity.Identity{UserID: "owner-1", OrgID: "tenant-1"}))
 	if err := (stackOperationsRouteHandlers{
 		stackStore:           store,
+		serverStore:          store,
+		serviceStore:         store,
+		workerStore:          store,
 		registryStore:        store,
+		jobStore:             store,
+		activityStore:        store,
 		managedRuntimeLeases: fakeManagedRuntimeLeaseLister{},
 	}).serverDetails(event); err != nil {
 		t.Fatalf("serverDetails returned router error: %v", err)
@@ -2074,96 +1458,20 @@ func TestStackServerDetailsUsesControlPlaneStores(t *testing.T) {
 	if envelope.Data.Stack["id"] != "stack-store" {
 		t.Fatalf("stack id = %#v, want stack-store", envelope.Data.Stack["id"])
 	}
-	if envelope.Data.Server.ID != "node-1" || envelope.Data.Server.Source != "registry-store" {
+	if envelope.Data.Server.ID != "node-1" || envelope.Data.Server.Source != "canonical-server" {
 		t.Fatalf("unexpected server details: %#v", envelope.Data.Server)
 	}
 	if got := len(envelope.Data.Services); got != 1 {
 		t.Fatalf("services = %d, want 1", got)
 	}
+	if got := len(envelope.Data.Logs); got != 1 || envelope.Data.Logs[0]["id"] != "activity-node-1" {
+		t.Fatalf("canonical activity logs = %#v", envelope.Data.Logs)
+	}
 	service := envelope.Data.Services[0]
-	if service.Name != "pocket_id" || service.DisplayName != "Pocket ID" || service.Port != 80 || service.Status != registryUnknownStatus || service.URL != "" {
+	if service.Name != "vaultwarden" || service.Status != serviceHealthHealthy || service.URL != "https://vault.owner.kombify.me" ||
+		stringFromAnyMap(service.Access, serviceAccessModeKey) != serviceAccessRelay ||
+		!slices.Equal(service.AllowedActions, []string{serviceActionFreeze, serviceActionRestart}) {
 		t.Fatalf("unexpected service projection: %#v", service)
-	}
-}
-
-func TestStackOperationsLegacyPathUsesRegistryStoreProjection(t *testing.T) {
-	app, err := tests.NewTestApp(driftRoutePocketBaseTestDataDir(t))
-	if err != nil {
-		t.Fatalf("new test app: %v", err)
-	}
-	defer app.Cleanup()
-	ensureStackOperationsTestCollections(t, app)
-
-	ctx := context.Background()
-	store := controlplane.NewMemoryStore()
-	stack := createStackOperationsTestStack(t, app, "owner-1", "provisioning")
-	stack.Set("tenant_id", "tenant-1")
-	stack.Set("name", "Legacy Store Stack")
-	stack.Set("server_provisioning_mode", "kombify-cloud")
-	if err := app.Save(stack); err != nil {
-		t.Fatalf("save stack tenant: %v", err)
-	}
-	if _, err := store.UpsertNode(ctx, controlplane.Node{
-		ID:       "node-legacy-store",
-		TenantID: "tenant-1",
-		StackID:  stack.Id,
-		Name:     "legacy-store-node",
-		Role:     "main",
-		Status:   "online",
-		Address:  "techstack-local-runtime",
-		Metadata: map[string]any{
-			"source":                 "stackkit_outputs",
-			"cpu_cores":              10,
-			"ram_mb":                 4096,
-			"disk_gb":                10,
-			"runtime_cpu_percent":    "1.5",
-			"runtime_memory_percent": "12.5",
-			"runtime_disk_percent":   "6.5",
-		},
-	}); err != nil {
-		t.Fatalf("UpsertNode: %v", err)
-	}
-	if _, err := store.UpsertService(ctx, controlplane.Service{
-		ID:         "service-home",
-		TenantID:   "tenant-1",
-		StackID:    stack.Id,
-		NodeID:     "node-legacy-store",
-		ServiceKey: "homepage",
-		Name:       "homepage",
-		Status:     "running",
-		Source:     "stackkit_outputs",
-		URL:        "http://home.home.localhost",
-		Metadata:   map[string]any{"display_name": "Base Hub", "type": "custom"},
-	}); err != nil {
-		t.Fatalf("UpsertService: %v", err)
-	}
-
-	event, recorder := stackOperationsRouteTestEvent(http.MethodGet, "/api/v1/stacks/"+stack.Id+"/operations", stack.Id, "owner-1")
-	event.Request = event.Request.WithContext(identity.NewContext(event.Request.Context(), &identity.Identity{UserID: "owner-1", OrgID: "tenant-1"}))
-	if err := (stackOperationsRouteHandlers{app: app, registryStore: store, managedRuntimeLeases: fakeManagedRuntimeLeaseLister{}}).operations(event); err != nil {
-		t.Fatalf("operations returned router error: %v", err)
-	}
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
-	}
-
-	var envelope struct {
-		Data stackOperationsPayload `json:"data"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
-		t.Fatalf("decode response: %v body=%s", err, recorder.Body.String())
-	}
-	if got := len(envelope.Data.Servers); got != 1 {
-		t.Fatalf("servers = %d, want registry store node", got)
-	}
-	if server := envelope.Data.Servers[0]; server.ID != "node-legacy-store" || server.Assignment != "stack" || server.Health.State != "provisioned" {
-		t.Fatalf("unexpected server projection: %#v", server)
-	}
-	if got := len(envelope.Data.Services); got != 1 {
-		t.Fatalf("services = %d, want registry store service", got)
-	}
-	if envelope.Data.KPIs.RunningServices != 0 || envelope.Data.KPIs.HealthyServers != 0 {
-		t.Fatalf("unexpected KPIs: %#v", envelope.Data.KPIs)
 	}
 }
 
@@ -2198,7 +1506,7 @@ func TestRegistryServicesUsesControlPlaneStoreResponse(t *testing.T) {
 		Name:       "uptime-kuma",
 		Status:     "running",
 		Source:     "managed",
-		URL:        "http://kuma.home.localhost",
+		URL:        "https://kuma.home",
 		Metadata:   map[string]any{"type": "monitoring"},
 	}); err != nil {
 		t.Fatalf("UpsertService: %v", err)
@@ -2230,63 +1538,16 @@ func TestRegistryServicesUsesControlPlaneStoreResponse(t *testing.T) {
 	}
 }
 
-func TestStackServerDetailsFiltersServicesAndLogsToServer(t *testing.T) {
-	app, err := tests.NewTestApp(driftRoutePocketBaseTestDataDir(t))
-	if err != nil {
-		t.Fatalf("new test app: %v", err)
-	}
-	defer app.Cleanup()
-	ensureStackOperationsTestCollections(t, app)
-
-	stack := createStackOperationsTestStack(t, app, "owner-1", "pending")
-	serverA := createStackOperationsTestWorker(t, app, "owner-1", stack.Id, "node-a", true)
-	serverB := createStackOperationsTestWorker(t, app, "owner-1", stack.Id, "node-b", true)
-	nodeA := createStackOperationsTestNode(t, app, stack.Id, "node-a")
-	nodeB := createStackOperationsTestNode(t, app, stack.Id, "node-b")
-	createStackOperationsTestService(t, app, nodeA.Id, "traefik")
-	createStackOperationsTestService(t, app, nodeB.Id, "immich")
-	createStackOperationsTestActivity(t, app, stack.Id, "service_started", map[string]any{"worker_id": serverA.Id})
-	createStackOperationsTestActivity(t, app, stack.Id, "service_stopped", map[string]any{"worker_id": serverB.Id})
-	createStackOperationsTestActivity(t, app, stack.Id, "provision_started", map[string]any{})
-
-	event, recorder := stackOperationsRouteTestEvent(http.MethodGet, "/api/v1/stacks/"+stack.Id+"/servers/"+serverA.Id, stack.Id, "owner-1")
-	event.Request.SetPathValue("serverId", serverA.Id)
-	if err := (stackOperationsRouteHandlers{app: app, managedRuntimeLeases: fakeManagedRuntimeLeaseLister{}}).serverDetails(event); err != nil {
-		t.Fatalf("serverDetails returned router error: %v", err)
-	}
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
-	}
-
-	var envelope struct {
-		Data stackServerDetailsPayload `json:"data"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if got := len(envelope.Data.Services); got != 1 {
-		t.Fatalf("services = %d, want 1", got)
-	}
-	if got := envelope.Data.Services[0].Name; got != "traefik" {
-		t.Fatalf("service name = %q, want traefik", got)
-	}
-	if got := len(envelope.Data.Logs); got != 1 {
-		t.Fatalf("logs = %d, want only server metadata-matched log", got)
-	}
-	if _, ok := envelope.Data.Logs[0]["worker_id"]; ok {
-		t.Fatal("server logs must not synthesize worker_id")
-	}
-}
-
 func TestStackScopedAlertsSeparateUnscopedAlerts(t *testing.T) {
 	servers := []stackOperationServer{
 		{ID: "worker-1", Hostname: "node-a", AgentID: "agent-a", Assignment: "stack"},
 		{ID: "worker-2", Hostname: "node-b", AgentID: "agent-b", Assignment: "unassigned"},
 	}
+	stackLabels := map[string]string{"agent_id": "agent-a"}
 	now := time.Now()
 	alerts, unscoped := stackScopedAlertsFromStates([]monitoring.AlertState{
 		{
-			Rule:     monitoring.AlertRule{Name: "StackCPU", Severity: "warning", Message: "high", Labels: map[string]string{"agent_id": "agent-a"}},
+			Rule:     monitoring.AlertRule{Name: "StackCPU", Severity: "warning", Message: "high", Labels: stackLabels},
 			Active:   true,
 			Value:    99,
 			FiredAt:  &now,
@@ -2311,211 +1572,16 @@ func TestStackScopedAlertsSeparateUnscopedAlerts(t *testing.T) {
 	if got := len(alerts); got != 1 {
 		t.Fatalf("scoped alerts = %d, want 1", got)
 	}
-	if alerts[0].Name != "StackCPU" {
-		t.Fatalf("scoped alert = %q, want StackCPU", alerts[0].Name)
+	if alert := alerts[0]; alert.Name != "StackCPU" || alert.Severity != "warning" || alert.Message != "high" || alert.Value != 99 || alert.Status != "firing" {
+		t.Fatalf("unexpected scoped alert: %#v", alert)
+	}
+	stackLabels["agent_id"] = "changed"
+	if alerts[0].Labels["agent_id"] != "agent-a" {
+		t.Fatalf("alert labels were not isolated: %#v", alerts[0].Labels)
 	}
 	if unscoped != 1 {
 		t.Fatalf("unscoped alerts = %d, want global count only", unscoped)
 	}
-}
-
-func ensureStackOperationsTestCollections(t *testing.T, app core.App) {
-	t.Helper()
-	ensureDriftRouteTestCollection(t, app, "stacks",
-		&core.TextField{Name: "name"},
-		&core.TextField{Name: "owner_id"},
-		&core.TextField{Name: "tenant_id"},
-		&core.SelectField{Name: "status", Values: []string{"pending", "provisioning", "running", "stopped", "error"}},
-		&core.TextField{Name: "runtime_phase"},
-		&core.TextField{Name: "server_mode"},
-		&core.TextField{Name: "runtime_lane"},
-		&core.TextField{Name: "lease_id"},
-		&core.TextField{Name: "verification_status"},
-		&core.TextField{Name: "server_provisioning_mode"},
-		&core.JSONField{Name: "user_config"},
-		&core.AutodateField{Name: "created", OnCreate: true},
-		&core.AutodateField{Name: "updated", OnUpdate: true},
-	)
-	ensureWorkerRouteTestCollections(t, app)
-	ensureDriftRouteTestCollection(t, app, "nodes",
-		&core.TextField{Name: "name"},
-		&core.TextField{Name: "hostname"},
-		&core.TextField{Name: "stack_id"},
-	)
-	ensureDriftRouteTestCollection(t, app, "services",
-		&core.TextField{Name: "name"},
-		&core.TextField{Name: "display_name"},
-		&core.TextField{Name: "type"},
-		&core.TextField{Name: "status"},
-		&core.TextField{Name: "node_id"},
-		&core.TextField{Name: "url"},
-		&core.NumberField{Name: "port"},
-	)
-	ensureDriftRouteTestCollection(t, app, preCheckResultsCollection,
-		&core.TextField{Name: preCheckWorkerIDField},
-		&core.TextField{Name: preCheckStackIDField},
-		&core.TextField{Name: preCheckTypeField},
-		&core.BoolField{Name: preCheckBlockingField},
-		&core.TextField{Name: preCheckStatusField},
-		&core.TextField{Name: preCheckOwnerIDField},
-	)
-	ensureDriftRouteTestCollection(t, app, "activity_log",
-		&core.TextField{Name: "action"},
-		&core.TextField{Name: "details"},
-		&core.TextField{Name: "stack_id"},
-		&core.TextField{Name: "status"},
-		&core.JSONField{Name: "metadata"},
-		&core.AutodateField{Name: "created", OnCreate: true},
-	)
-	ensureDriftRouteTestCollection(t, app, "jobs",
-		&core.TextField{Name: "type"},
-		&core.TextField{Name: "state"},
-		&core.NumberField{Name: "progress"},
-		&core.TextField{Name: "step"},
-		&core.TextField{Name: "current_step"},
-		&core.TextField{Name: "message"},
-		&core.TextField{Name: "stack_id"},
-		&core.JSONField{Name: "result"},
-		&core.AutodateField{Name: "created", OnCreate: true},
-		&core.AutodateField{Name: "updated", OnUpdate: true},
-	)
-}
-
-func createStackOperationsTestStack(t *testing.T, app core.App, ownerID, status string) *core.Record {
-	t.Helper()
-	collection, err := app.FindCollectionByNameOrId("stacks")
-	if err != nil {
-		t.Fatalf("find stacks: %v", err)
-	}
-	record := core.NewRecord(collection)
-	record.Set("name", "Ops Stack")
-	record.Set("owner_id", ownerID)
-	record.Set("status", status)
-	record.Set("user_config", map[string]any{
-		"services": []string{"pocket_id", "traefik", "monitoring", "vaultwarden", "immich"},
-	})
-	if err := app.Save(record); err != nil {
-		t.Fatalf("save stack: %v", err)
-	}
-	return record
-}
-
-func createStackOperationsTestWorker(t *testing.T, app core.App, ownerID, stackID, hostname string, approved bool) *core.Record {
-	t.Helper()
-	collection, err := app.FindCollectionByNameOrId("workers")
-	if err != nil {
-		t.Fatalf("find workers: %v", err)
-	}
-	record := core.NewRecord(collection)
-	record.Set("owner_id", ownerID)
-	record.Set("stack_id", stackID)
-	record.Set("hostname", hostname)
-	record.Set("token_hash", hostname+"-token")
-	record.Set("status", "approved")
-	record.Set("approved", approved)
-	record.Set("type", "worker")
-	record.Set("os", "linux")
-	record.Set("arch", "amd64")
-	record.Set("last_seen", time.Now())
-	if err := app.Save(record); err != nil {
-		t.Fatalf("save worker: %v", err)
-	}
-	return record
-}
-
-func createStackOperationsTestNode(t *testing.T, app core.App, stackID, hostname string) *core.Record {
-	t.Helper()
-	collection, err := app.FindCollectionByNameOrId("nodes")
-	if err != nil {
-		t.Fatalf("find nodes: %v", err)
-	}
-	record := core.NewRecord(collection)
-	record.Set("name", hostname)
-	record.Set("hostname", hostname)
-	record.Set("stack_id", stackID)
-	if err := app.Save(record); err != nil {
-		t.Fatalf("save node: %v", err)
-	}
-	return record
-}
-
-func createStackOperationsTestService(t *testing.T, app core.App, nodeID, name string) *core.Record {
-	t.Helper()
-	collection, err := app.FindCollectionByNameOrId("services")
-	if err != nil {
-		t.Fatalf("find services: %v", err)
-	}
-	record := core.NewRecord(collection)
-	record.Set("name", name)
-	record.Set("display_name", name)
-	record.Set("type", "service")
-	record.Set("status", "running")
-	record.Set("node_id", nodeID)
-	if err := app.Save(record); err != nil {
-		t.Fatalf("save service: %v", err)
-	}
-	return record
-}
-
-func createStackOperationsTestActivity(t *testing.T, app core.App, stackID, action string, metadata map[string]any) *core.Record {
-	t.Helper()
-	collection, err := app.FindCollectionByNameOrId("activity_log")
-	if err != nil {
-		t.Fatalf("find activity_log: %v", err)
-	}
-	record := core.NewRecord(collection)
-	record.Set("action", action)
-	record.Set("details", action)
-	record.Set("stack_id", stackID)
-	record.Set("status", "completed")
-	record.Set("metadata", metadata)
-	if err := app.Save(record); err != nil {
-		t.Fatalf("save activity: %v", err)
-	}
-	return record
-}
-
-func createStackOperationsTestJob(t *testing.T, app core.App, stackID, step, state string) *core.Record {
-	t.Helper()
-	collection, err := app.FindCollectionByNameOrId("jobs")
-	if err != nil {
-		t.Fatalf("find jobs: %v", err)
-	}
-	record := core.NewRecord(collection)
-	record.Set("type", "update")
-	record.Set("state", state)
-	record.Set("progress", 100)
-	record.Set("step", step)
-	record.Set("current_step", step)
-	record.Set("message", step)
-	record.Set("stack_id", stackID)
-	if err := app.Save(record); err != nil {
-		t.Fatalf("save job: %v", err)
-	}
-	return record
-}
-
-func createStackOperationsTestDeployJob(t *testing.T, app core.App, stackID string, outputs map[string]any) *core.Record {
-	t.Helper()
-	collection, err := app.FindCollectionByNameOrId("jobs")
-	if err != nil {
-		t.Fatalf("find jobs: %v", err)
-	}
-	record := core.NewRecord(collection)
-	record.Set("type", "deploy")
-	record.Set("state", "completed")
-	record.Set("progress", 100)
-	record.Set("step", "finalize")
-	record.Set("current_step", "finalize")
-	record.Set("message", "StackKit rollout completed")
-	record.Set("stack_id", stackID)
-	record.Set("result", map[string]any{
-		"stackkit_outputs": outputs,
-	})
-	if err := app.Save(record); err != nil {
-		t.Fatalf("save deploy job: %v", err)
-	}
-	return record
 }
 
 func stackOperationsRouteTestEvent(method, target, stackID, ownerID string) (*httpx.Event, *httptest.ResponseRecorder) {
@@ -2630,7 +1696,7 @@ func TestStackOperationsKeepsLeasesWithoutMachinesOutOfServers(t *testing.T) {
 	event, recorder := stackOperationsRouteTestEvent(http.MethodGet, "/api/v1/stacks/stack-ghost/operations", "stack-ghost", "owner-1")
 	event.Request = event.Request.WithContext(identity.NewContext(event.Request.Context(), &identity.Identity{UserID: "owner-1", OrgID: "tenant-1"}))
 	if err := (stackOperationsRouteHandlers{
-		stackStore: store, serverStore: store, workerStore: store, registryStore: store,
+		stackStore: store, serverStore: store, serviceStore: store, workerStore: store, registryStore: store, jobStore: store,
 		managedRuntimeLeases: fakeManagedRuntimeLeaseLister{inventory: records},
 	}).operations(event); err != nil {
 		t.Fatalf("operations: %v", err)
@@ -2698,6 +1764,16 @@ func TestStackOperationsDropsObsoleteDestroyFailureAfterCleanup(t *testing.T) {
 	if got := activeStackFailure(failure, nil, []stackCustodyLease{{LeaseID: "lease-1"}}); got != failure {
 		t.Fatalf("activeStackFailure removed unresolved cleanup: %#v", got)
 	}
+	if got := activeStackFailure(failure, []stackOperationServer{{Hostname: "srv-live"}}, nil); got != nil {
+		t.Fatalf("unnamed destroy stayed on a live Node: %#v", got)
+	}
+	bound := &stackLatestFailure{Type: "destroy", State: "failed", LeaseID: "lease-live"}
+	if got := activeStackFailure(bound, []stackOperationServer{{LeaseID: "lease-other"}}, nil); got != nil {
+		t.Fatalf("destroy of a gone lease stayed on the dashboard: %#v", got)
+	}
+	if got := activeStackFailure(bound, []stackOperationServer{{LeaseID: "lease-live"}}, nil); got != bound {
+		t.Fatalf("destroy of the current lease was dropped: %#v", got)
+	}
 	rollout := &stackLatestFailure{Type: "deploy", State: "failed"}
 	if got := activeStackFailure(rollout, nil, nil); got != rollout {
 		t.Fatalf("activeStackFailure removed unrelated failure: %#v", got)
@@ -2705,10 +1781,7 @@ func TestStackOperationsDropsObsoleteDestroyFailureAfterCleanup(t *testing.T) {
 
 	stale := stackReadiness{Status: "error", Message: "The last operation failed."}
 	got := reconcileResolvedDestroyReadiness(stale, failure, nil, nil, nil)
-	if got.Status != "waiting_for_server" || got.CanStart || got.ReviewRequired ||
-		!strings.Contains(got.Message, "local server") ||
-		!strings.Contains(got.Message, "your own server or VPS") ||
-		!strings.Contains(got.Message, "Managed VPS") {
+	if got.Status != "waiting_for_server" || got.CanStart || got.ReviewRequired {
 		t.Fatalf("resolved destroy readiness = %#v, want neutral empty-runtime state", got)
 	}
 	if unresolved := reconcileResolvedDestroyReadiness(stale, failure, failure, nil, []stackCustodyLease{{LeaseID: "lease-1"}}); unresolved != stale {

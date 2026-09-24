@@ -1,13 +1,10 @@
 package stacks
 
 import (
-	"strings"
-
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/demoguard"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/identity"
-	"github.com/pocketbase/pocketbase/core"
 )
 
 // demoRestrictedStackRequest reports whether the request principal belongs to
@@ -30,15 +27,6 @@ func demoProtectedStoreStackRequest(e *httpx.Event, stack *controlplane.Stack) b
 	return stack != nil &&
 		demoRestrictedStackRequest(e) &&
 		boolFromMaps("demo_anchor", stack.RuntimeSummary, stack.Config)
-}
-
-// demoProtectedLegacyStackRequest preserves the reserved pre-migration anchor
-// name without turning every old row owned by a demo visitor into an undeletable
-// record.
-func demoProtectedLegacyStackRequest(e *httpx.Event, stack *core.Record) bool {
-	return stack != nil &&
-		demoRestrictedStackRequest(e) &&
-		strings.EqualFold(strings.TrimSpace(stack.GetString("name")), "kombify-demo")
 }
 
 // demoRestrictedStackDetails is the structured denial envelope for stack-level

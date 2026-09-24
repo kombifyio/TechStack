@@ -36,39 +36,6 @@ async function mockPipelinePreview(context: any) {
   );
 }
 
-async function mockSaaSAuthMode(context: any) {
-  await context.route("**/api/v1/auth/mode", async (route: any) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        data: {
-          mode: "cloud",
-          deployment_mode: "saas",
-          is_first_run: false,
-          cloud_auth_url: null,
-          portal_url: "https://kombify.io",
-          allow_local_login: false,
-        },
-      }),
-    });
-  });
-  await context.route("**/api/v2/auth/providers", async (route: any) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ providers: [] }),
-    });
-  });
-  await context.route("**/api/v2/whoami", async (route: any) => {
-    await route.fulfill({
-      status: 401,
-      contentType: "application/json",
-      body: JSON.stringify({ error: "not authenticated" }),
-    });
-  });
-}
-
 async function completeLoginStep(page: Page) {
   const localOwner = page.getByTestId("owner-source-local");
   if (await localOwner.isVisible({ timeout: 1000 }).catch(() => false)) {
@@ -83,9 +50,7 @@ async function completeLoginStep(page: Page) {
       .fill("correct horse battery staple 12!");
     await page.locator("#recovery-passphrase-confirm").blur();
     await expect(page.getByTestId("recovery-status")).toContainText("ready");
-    await page.getByTestId("easy-auth-password").click();
-    await page.locator("#admin-password").fill("testpass123");
-    await page.locator("#admin-password-confirm").fill("testpass123");
+    await expect(page.getByTestId("easy-auth-passkey")).toBeVisible();
     return;
   }
 
@@ -141,13 +106,12 @@ async function mockCreateStackAndJob(
     });
   });
 
-  await context.route(
-    `**/api/collections/jobs/records/${jobId}**`,
-    async (route: any) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
+  await context.route(`**/api/v1/jobs/${jobId}**`, async (route: any) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        data: {
           id: jobId,
           type: "provision",
           state: "completed",
@@ -160,10 +124,10 @@ async function mockCreateStackAndJob(
             stack_id: stackId,
             registration_token: registrationToken,
           },
-        }),
-      });
-    },
-  );
+        },
+      }),
+    });
+  });
 
   return {
     getSubmittedPayload: () => submittedPayload,
@@ -255,7 +219,8 @@ test.describe("Wizard - Service Options", () => {
     await page.getByTestId("wizard-next").click();
 
     await expect(page.getByTestId("easy-step-2")).toBeVisible();
-    await expect(page.getByTestId("server-mode-kombify-cloud")).toBeVisible();
+    await page.getByTestId("server-branch-owned").click();
+    await page.getByTestId("server-mode-install-command").click();
     await page.getByTestId("wizard-next").click();
 
     // Step 3 should have access options
@@ -268,48 +233,6 @@ test.describe("Wizard - Service Options", () => {
     // Anywhere access option (implies VPN/Headscale)
     const anywhereAccess = page.getByTestId("easy-access-anywhere");
     await expect(anywhereAccess).toBeVisible();
-
-    await context.close();
-  });
-
-  test("SaaS wizard keeps own-server provisioning modes selectable", async ({
-    browser,
-    baseURL,
-  }) => {
-    const origin = requireAppBase(baseURL);
-    const context = await browser.newContext();
-    await context.grantPermissions(["notifications"], { origin });
-    await mockLoggedInContext(context, { allowMockAuth: true });
-    const page = await context.newPage();
-
-    await mockPipelinePreview(context);
-    await mockSaaSAuthMode(context);
-
-    await page.goto(`${origin}/stacks/new`);
-    await page
-      .getByTestId("hydrated")
-      .waitFor({ state: "attached", timeout: 10000 });
-
-    await page.getByTestId("wizard-next").click();
-    await expect(page.getByTestId("easy-step-2")).toBeVisible();
-
-    const managedMode = page.getByTestId("server-mode-kombify-cloud");
-    const remoteMode = page.getByTestId("server-mode-connect-remote");
-    const installMode = page.getByTestId("server-mode-install-command");
-
-    await expect(managedMode).toHaveAttribute("aria-checked", "true");
-    await expect(remoteMode).not.toHaveAttribute("aria-disabled", "true");
-    await expect(installMode).not.toHaveAttribute("aria-disabled", "true");
-    await expect(remoteMode).not.toContainText("Coming soon");
-    await expect(installMode).not.toContainText("Coming soon");
-
-    await remoteMode.click();
-    await expect(remoteMode).toHaveAttribute("aria-checked", "true");
-    await expect(page.getByTestId("remote-server-config")).toBeVisible();
-
-    await installMode.click();
-    await expect(installMode).toHaveAttribute("aria-checked", "true");
-    await expect(page.getByText("The one-liner is ready")).toBeVisible();
 
     await context.close();
   });
@@ -341,12 +264,14 @@ test.describe("Wizard - Service Options", () => {
     await page.getByTestId("easy-feature-storage").check();
     await page.getByTestId("wizard-next").click();
 
+    await page.getByTestId("server-branch-owned").click();
+    await page.getByTestId("server-mode-install-command").click();
     await page.getByTestId("wizard-next").click();
 
     await page.getByTestId("easy-access-anywhere").click();
     await page.getByTestId("wizard-next").click();
 
-    await page.getByTestId("easy-users-me").check();
+    await page.getByTestId("easy-users-solo").check();
     await page.getByTestId("wizard-next").click();
 
     await completeLoginStep(page);
@@ -360,79 +285,6 @@ test.describe("Wizard - Service Options", () => {
       enabled: true,
       type: "headscale",
     });
-
-    await context.close();
-  });
-
-  test("Selecting 'home' access should not require VPN", async ({
-    browser,
-    baseURL,
-  }) => {
-    const origin = requireAppBase(baseURL);
-    const context = await browser.newContext();
-    await context.grantPermissions(["notifications"], { origin });
-    await mockLoggedInContext(context, { allowMockAuth: true });
-    const page = await context.newPage();
-
-    await mockPipelinePreview(context);
-    const { waitForSubmittedPayload } = await mockCreateStackAndJob(context, {
-      jobId: "job_home",
-      stackId: "stack_home",
-      registrationToken: "reg_home",
-      name: "Test",
-    });
-
-    await page.goto(`${origin}/stacks/new`);
-    await page
-      .getByTestId("hydrated")
-      .waitFor({ state: "attached", timeout: 10000 });
-
-    // Complete wizard with "home" access only
-    await page.getByTestId("easy-feature-storage").check();
-    await page.getByTestId("wizard-next").click();
-
-    await page.getByTestId("wizard-next").click();
-
-    await page.getByTestId("easy-access-home").click();
-    await page.getByTestId("wizard-next").click();
-
-    await page.getByTestId("easy-users-me").check();
-    await page.getByTestId("wizard-next").click();
-
-    await completeLoginStep(page);
-    await page.getByTestId("wizard-create").click();
-
-    // Verify payload - VPN should not be headscale for home-only
-    const submittedPayload = await waitForSubmittedPayload();
-    expect(submittedPayload).toBeTruthy();
-    expect(submittedPayload.mode).toBe("easy");
-    expect(submittedPayload.stack_spec?.vpn).toBeUndefined();
-
-    await context.close();
-  });
-});
-
-test.describe("Wizard - Service Payload Validation", () => {
-  test("techie wizard service selection is a selectable creation surface", async ({
-    browser,
-    baseURL,
-  }) => {
-    const origin = requireAppBase(baseURL);
-    const context = await browser.newContext();
-    await context.grantPermissions(["notifications"], { origin });
-    await mockLoggedInContext(context, { allowMockAuth: true });
-    const page = await context.newPage();
-
-    await page.goto(`${origin}/stacks/new`);
-    await page
-      .getByTestId("hydrated")
-      .waitFor({ state: "attached", timeout: 10000 });
-
-    await expect(page.getByTestId("easy-step-1")).toBeVisible();
-    await expect(page.getByTestId("tab-techie")).toBeEnabled();
-    await page.getByTestId("tab-techie").click();
-    await expect(page.getByTestId("easy-step-1")).toHaveCount(0);
-    await expect(page.getByTestId("techie-step-1")).toBeVisible();
 
     await context.close();
   });

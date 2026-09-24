@@ -6,26 +6,22 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os/exec"
-	"path"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/kombifyio/techstack/pkg/auth"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/identity"
-	"github.com/pocketbase/pocketbase/core"
-	"github.com/pocketbase/pocketbase/tests"
 )
 
 func TestWalletRevealRequiresFreshReauth(t *testing.T) {
 	app := newWalletRouteTestApp(t)
 	item := createWalletRouteTestItem(t, app, "owner-1", "secret-value")
 
-	handler := walletRouteHandlers{app: app}
+	handler := walletRouteHandlers{wst: app, ast: app}
 	event, recorder := walletRevealRequestEvent("owner-1", item.Id, `{"reason":"copy recovery credential"}`)
 
 	if err := handler.reveal(event); err != nil {
@@ -34,7 +30,7 @@ func TestWalletRevealRequiresFreshReauth(t *testing.T) {
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status = %d body=%s, want 403", recorder.Code, recorder.Body.String())
 	}
-	assertWalletRouteActivity(t, app, walletRevealActionDenied)
+	assertWalletRouteActivity(t, app, "owner-1", walletRevealActionDenied)
 }
 
 func TestWalletReauthProofReturnsSignedProofForOwner(t *testing.T) {
@@ -46,7 +42,8 @@ func TestWalletReauthProofReturnsSignedProofForOwner(t *testing.T) {
 	timestamp, signature := signWalletPlatformReauthTestAssertion("owner-1", item.Id, secret, now)
 
 	handler := walletRouteHandlers{
-		app: app,
+		wst: app,
+		ast: app,
 		now: func() time.Time { return now },
 	}
 	body := `{"reason":"copy recovery credential","platform_reauth_at":` +
@@ -85,7 +82,8 @@ func TestWalletReauthProofRejectsSessionOnly(t *testing.T) {
 	now := time.Date(2026, 5, 14, 10, 0, 0, 0, time.UTC)
 
 	handler := walletRouteHandlers{
-		app: app,
+		wst: app,
+		ast: app,
 		now: func() time.Time { return now },
 	}
 	event, recorder := walletReauthProofRequestEvent("owner-1", item.Id, `{"reason":"copy recovery credential"}`)
@@ -108,7 +106,8 @@ func TestWalletRevealAcceptsIssuedReauthProof(t *testing.T) {
 	timestamp, signature := signWalletPlatformReauthTestAssertion("owner-1", item.Id, secret, now)
 
 	handler := walletRouteHandlers{
-		app: app,
+		wst: app,
+		ast: app,
 		now: func() time.Time { return now },
 	}
 	proofBody := `{"reason":"copy recovery credential","platform_reauth_at":` +
@@ -153,7 +152,7 @@ func TestWalletRevealRejectsDifferentOwner(t *testing.T) {
 		`,"reauth_signature":` +
 		strconv.Quote(signature) +
 		`}`
-	handler := walletRouteHandlers{app: app}
+	handler := walletRouteHandlers{wst: app, ast: app}
 	event, recorder := walletRevealRequestEvent("owner-2", item.Id, body)
 
 	if err := handler.reveal(event); err != nil {
@@ -162,7 +161,7 @@ func TestWalletRevealRejectsDifferentOwner(t *testing.T) {
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("status = %d body=%s, want 404", recorder.Code, recorder.Body.String())
 	}
-	assertWalletRouteActivity(t, app, walletRevealActionDenied)
+	assertWalletRouteActivity(t, app, "owner-2", walletRevealActionDenied)
 }
 
 func TestWalletRevealReturnsSecretAndAudits(t *testing.T) {
@@ -177,7 +176,7 @@ func TestWalletRevealReturnsSecretAndAudits(t *testing.T) {
 		`,"reauth_signature":` +
 		strconv.Quote(signature) +
 		`}`
-	handler := walletRouteHandlers{app: app}
+	handler := walletRouteHandlers{wst: app, ast: app}
 	event, recorder := walletRevealRequestEvent("owner-1", item.Id, body)
 
 	if err := handler.reveal(event); err != nil {
@@ -206,17 +205,21 @@ func TestWalletRevealReturnsSecretAndAudits(t *testing.T) {
 	if strings.Contains(recorder.Body.String(), "owner_id") {
 		t.Fatalf("response leaked owner_id: %s", recorder.Body.String())
 	}
-	assertWalletRouteActivity(t, app, walletRevealAction)
+	assertWalletRouteActivity(t, app, "owner-1", walletRevealAction)
 }
 
 func TestWalletCRUDUsesControlPlaneStore(t *testing.T) {
 	store := newFakeWalletStore()
-	handler := walletRouteHandlers{wst: store}
+	encryptor, err := auth.NewSecretEncryptor([]byte("01234567890123456789012345678901"))
+	if err != nil {
+		t.Fatalf("NewSecretEncryptor: %v", err)
+	}
+	handler := walletRouteHandlers{wst: store, encryptor: encryptor}
 
 	createEvent, createRecorder := walletStoreRequestEvent(
 		http.MethodPost,
 		"/api/v1/wallet",
-		`{"id":"wallet-1","name":"Admin","kind":"password","stack_id":"stack-1","service_id":"svc-1","secret":"secret-value"}`,
+		`{"id":"wallet-1","name":"Admin","kind":"password","stack_id":"stack-1","service_id":"svc-1","source_type":"stack","secret":"secret-value","totp":"123456"}`,
 		"owner-1",
 		"tenant-1",
 	)
@@ -233,8 +236,30 @@ func TestWalletCRUDUsesControlPlaneStore(t *testing.T) {
 	if created.Metadata["owner_id"] != "owner-1" || created.Metadata["has_secret"] != true {
 		t.Fatalf("unexpected stored metadata: %#v", created.Metadata)
 	}
+	storedSecret := walletString(created.Metadata["secret"])
+	if !auth.IsEncrypted(storedSecret) {
+		t.Fatalf("stored secret is not encrypted: %q", storedSecret)
+	}
+	decrypted, err := encryptor.Decrypt(storedSecret)
+	if err != nil || decrypted != "secret-value" {
+		t.Fatalf("decrypt stored secret = %q, %v", decrypted, err)
+	}
+	storedTOTP := walletString(created.Metadata["totp"])
+	decryptedTOTP, err := encryptor.Decrypt(storedTOTP)
+	if err != nil || decryptedTOTP != "123456" {
+		t.Fatalf("decrypt stored totp = %q, %v", decryptedTOTP, err)
+	}
 	if strings.Contains(createRecorder.Body.String(), "secret-value") {
 		t.Fatalf("create response leaked secret: %s", createRecorder.Body.String())
+	}
+	var createResponse struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(createRecorder.Body.Bytes(), &createResponse); err != nil || createResponse.Data["kit_deployment_id"] != "stack-1" || createResponse.Data["source_type"] != "kit_deployment" {
+		t.Fatalf("create response = %s, want canonical wallet ownership", createRecorder.Body.String())
+	}
+	store.items["wallet-foreign"] = controlplane.WalletItem{
+		ID: "wallet-foreign", TenantID: "tenant-1", StackID: "stack-1", Metadata: map[string]any{"owner_id": "owner-2", "name": "Foreign"},
 	}
 
 	listEvent, listRecorder := walletStoreRequestEvent(http.MethodGet, "/api/v1/wallet?stack_id=stack-1", "", "owner-1", "tenant-1")
@@ -246,6 +271,9 @@ func TestWalletCRUDUsesControlPlaneStore(t *testing.T) {
 	}
 	if !strings.Contains(listRecorder.Body.String(), `"wallet-1"`) {
 		t.Fatalf("list response missing wallet item: %s", listRecorder.Body.String())
+	}
+	if strings.Contains(listRecorder.Body.String(), "wallet-foreign") {
+		t.Fatalf("list response exposed another owner's wallet item: %s", listRecorder.Body.String())
 	}
 
 	deleteEvent, deleteRecorder := walletStoreRequestEvent(http.MethodDelete, "/api/v1/wallet/wallet-1", "", "owner-1", "tenant-1")
@@ -309,87 +337,30 @@ func TestWalletRevealUsesControlPlaneStore(t *testing.T) {
 	}
 }
 
-func newWalletRouteTestApp(t *testing.T) *tests.TestApp {
+func newWalletRouteTestApp(t *testing.T) *controlplane.MemoryStore {
 	t.Helper()
-
-	app, err := tests.NewTestApp(walletRoutePocketBaseTestDataDir(t))
-	if err != nil {
-		t.Fatalf("new test app: %v", err)
-	}
-	ensureWalletRouteTestCollections(t, app)
-	return app
+	return controlplane.NewMemoryStore()
 }
 
-func ensureWalletRouteTestCollections(t *testing.T, app core.App) {
-	t.Helper()
-
-	ensureWalletRouteTestCollection(t, app, "wallet",
-		&core.TextField{Name: "owner_id"},
-		&core.TextField{Name: "stack_id"},
-		&core.TextField{Name: "service_id"},
-		&core.TextField{Name: "name"},
-		&core.TextField{Name: "kind"},
-		&core.TextField{Name: "secret", Max: 5000},
-		&core.TextField{Name: "totp", Max: 5000},
-		&core.TextField{Name: "item_class"},
-		&core.BoolField{Name: "revealable"},
-		&core.BoolField{Name: "has_secret"},
-		&core.BoolField{Name: "has_totp"},
-	)
-	ensureWalletRouteTestCollection(t, app, "activity_log",
-		&core.SelectField{Name: "action", Required: true, Values: []string{
-			walletRevealAction,
-			walletRevealActionDenied,
-		}},
-		&core.TextField{Name: "details", Max: 2000},
-		&core.JSONField{Name: "metadata"},
-		&core.TextField{Name: "stack_id"},
-		&core.TextField{Name: "user_id"},
-		&core.SelectField{Name: "status", Values: []string{"success", "warning", "error", "info"}},
-		&core.TextField{Name: "target", Max: 500},
-		&core.TextField{Name: "actor", Max: 200},
-		&core.TextField{Name: "resource_type", Max: 200},
-		&core.TextField{Name: "resource_id", Max: 200},
-	)
+type walletRouteTestItem struct {
+	Id string
 }
 
-func ensureWalletRouteTestCollection(t *testing.T, app core.App, name string, fields ...core.Field) *core.Collection {
+func createWalletRouteTestItem(t *testing.T, app controlplane.WalletStore, ownerID, secret string) *walletRouteTestItem {
 	t.Helper()
-
-	collection, err := app.FindCollectionByNameOrId(name)
-	if err != nil {
-		collection = core.NewBaseCollection(name)
+	item := controlplane.WalletItem{
+		ID:       "wallet-" + ownerID,
+		TenantID: ownerID,
+		ItemType: "password",
+		Metadata: map[string]any{
+			"owner_id": ownerID, "name": "Recovery", "kind": "password",
+			"secret": secret, "has_secret": true, "revealable": true, "item_class": "recovery",
+		},
 	}
-	for _, field := range fields {
-		if collection.Fields.GetByName(field.GetName()) == nil {
-			collection.Fields.Add(field)
-		}
-	}
-	if err := app.Save(collection); err != nil {
-		t.Fatalf("save %s collection: %v", name, err)
-	}
-	return collection
-}
-
-func createWalletRouteTestItem(t *testing.T, app core.App, ownerID, secret string) *core.Record {
-	t.Helper()
-
-	collection, err := app.FindCollectionByNameOrId("wallet")
-	if err != nil {
-		t.Fatalf("find wallet collection: %v", err)
-	}
-	record := core.NewRecord(collection)
-	record.Set("owner_id", ownerID)
-	record.Set("name", "Recovery")
-	record.Set("kind", "password")
-	record.Set("secret", secret)
-	record.Set("has_secret", true)
-	record.Set("revealable", true)
-	record.Set("item_class", "recovery")
-	if err := app.Save(record); err != nil {
+	if _, err := app.UpsertWalletItem(context.Background(), item); err != nil {
 		t.Fatalf("save wallet item: %v", err)
 	}
-	return record
+	return &walletRouteTestItem{Id: item.ID}
 }
 
 func walletRevealRequestEvent(ownerID, itemID, body string) (*httpx.Event, *httptest.ResponseRecorder) {
@@ -438,52 +409,18 @@ func signWalletPlatformReauthTestAssertion(userID, walletID, secret string, at t
 	return timestamp, hex.EncodeToString(signWalletAssertion(walletPlatformReauthAssertionPurpose, userID, walletID, timestamp, secret))
 }
 
-func assertWalletRouteActivity(t *testing.T, app core.App, action string) {
+func assertWalletRouteActivity(t *testing.T, app controlplane.ActivityStore, tenantID, action string) {
 	t.Helper()
-
-	records, err := app.FindRecordsByFilter("activity_log", "action = {:action}", "", 0, 0, map[string]any{"action": action})
+	records, err := app.ListActivity(context.Background(), tenantID, "", 100)
 	if err != nil {
 		t.Fatalf("find activity: %v", err)
 	}
-	if len(records) == 0 {
-		t.Fatalf("expected activity action %q", action)
-	}
-}
-
-func walletRoutePocketBaseTestDataDir(t *testing.T) string {
-	t.Helper()
-
-	cmd := exec.Command("go", "env", "GOMODCACHE")
-	output, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("resolve go module cache: %v", err)
-	}
-
-	modCache := strings.TrimSpace(string(output))
-	if modCache == "" {
-		t.Fatal("resolve go module cache: empty result")
-	}
-
-	matches, err := filepath.Glob(filepath.Join(modCache, "github.com", "pocketbase", "pocketbase@*", "tests", "data"))
-	if err != nil {
-		t.Fatalf("resolve pocketbase test data: %v", err)
-	}
-	if len(matches) == 0 {
-		matches, err = filepath.Glob(filepath.Join(modCache, "github.com", "*", "pocketbase@*", "tests", "data"))
-		if err != nil {
-			t.Fatalf("resolve pocketbase test data fallback: %v", err)
+	for _, record := range records {
+		if record.Action == action {
+			return
 		}
 	}
-	for _, match := range matches {
-		if strings.Contains(filepath.ToSlash(match), path.Join("github.com", "pocketbase", "pocketbase@")) {
-			return match
-		}
-	}
-	if len(matches) > 0 {
-		return matches[0]
-	}
-	t.Fatal("resolve pocketbase test data: no matches")
-	return ""
+	t.Fatalf("expected activity action %q", action)
 }
 
 type fakeWalletStore struct {

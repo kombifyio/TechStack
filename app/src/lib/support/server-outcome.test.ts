@@ -3,9 +3,10 @@ import {
   isActionableOutcome,
   normalizeServerOutcome,
   outcomeFromLatestFailure,
+  retryDispatchFor,
   resolveGuidance,
 } from "./server-outcome";
-import type { StackLatestFailure } from "$lib/api/stacks";
+import type { StackLatestFailure } from "#lib/api/stacks.js";
 
 describe("normalizeServerOutcome", () => {
   it("returns null for values that carry no outcome fields", () => {
@@ -70,6 +71,43 @@ describe("normalizeServerOutcome", () => {
   });
 });
 
+describe("retryDispatchFor", () => {
+  it("bounds retry dispatch by retryability, job type, and lease identity", () => {
+    expect(
+      retryDispatchFor({
+        job_id: "job-blocked",
+        type: "deploy",
+        lease_id: "lease-1",
+        retryable: false,
+      }),
+    ).toBeNull();
+    expect(
+      retryDispatchFor({ job_id: "job-provision", type: "provision" }),
+    ).toEqual({ kind: "provision" });
+    expect(retryDispatchFor({ job_id: "job-deploy", type: "deploy" })).toEqual({
+      kind: "deploy",
+    });
+    expect(
+      retryDispatchFor({
+        job_id: "job-rollout",
+        type: "deploy",
+        lease_id: "lease-1",
+        retryable: true,
+      }),
+    ).toEqual({
+      kind: "rollout",
+      sourceJobId: "job-rollout",
+      leaseId: "lease-1",
+    });
+    expect(
+      retryDispatchFor({
+        job_id: "job-remote",
+        type: "remote_enrollment",
+      }),
+    ).toEqual({ kind: "remote_enrollment" });
+  });
+});
+
 describe("outcomeFromLatestFailure", () => {
   const failure: StackLatestFailure = {
     job_id: "job_1",
@@ -100,5 +138,37 @@ describe("outcomeFromLatestFailure", () => {
     const guidance = resolveGuidance(outcomeFromLatestFailure(failure));
     expect(guidance.title).toBeTruthy();
     expect(guidance.nextSteps.length).toBeGreaterThan(0);
+  });
+
+  it("labels connect-remote stackkit retries separately from SSH enrollment", () => {
+    const enrollment = outcomeFromLatestFailure({
+      job_id: "pair-1",
+      type: "remote_enrollment",
+      state: "failed",
+      reason: "ssh_auth_failed",
+      diagnostics_available: false,
+    });
+    expect(
+      enrollment.userGuidance?.nextSteps.find((step) => step.kind === "retry")
+        ?.label,
+    ).toBe("SSH-Verbindung erneut versuchen");
+
+    const stackkit = outcomeFromLatestFailure(
+      {
+        job_id: "job-provision",
+        type: "provision",
+        state: "failed",
+        reason: "prepare_rollout failed",
+        diagnostics_available: false,
+      },
+      {
+        serverProvisioningMode: "connect-remote",
+        connectedServers: 1,
+      },
+    );
+    expect(
+      stackkit.userGuidance?.nextSteps.find((step) => step.kind === "retry")
+        ?.label,
+    ).toBe("StackKit-Vorbereitung auf verbundenem Node fortsetzen");
   });
 });

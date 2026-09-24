@@ -3,6 +3,7 @@ package jobs
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -109,6 +110,10 @@ func payloadInt(value any) (int, bool) {
 	case uint32:
 		return int(v), true
 	case uint64:
+		if v > uint64(math.MaxInt) {
+			return 0, false
+		}
+		// #nosec G115 -- value is range-checked against the platform int maximum.
 		return int(v), true
 	case float32:
 		return int(v), true

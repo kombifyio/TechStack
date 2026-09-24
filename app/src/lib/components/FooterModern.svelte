@@ -14,15 +14,20 @@
    * - showLogoSwitch: Toggle button for logo style (default: false)
    * - showProduct: Show product links section (default: true)
    * - showCompany: Show company links section (default: true)
-   * - showLegal: Show legal links section (default: true)
+   * - showLegal: Show legal links section (default: true). The legal links
+   *   (Impressum/Privacy/Terms/Status) point at kombify.io and describe the
+   *   SaaS operator, so a self-host/OSS deployment must pass `showLegal={false}`
+   *   rather than rely on this default (KOMBIFY-LEGAL-STANDARD; Beads
+   *   platform-7rni.10 D-71).
    *
    * Company Info: Kombiverse Labs
    * Address: Oppelner Str. 3A, 33098 Paderborn, Germany
    * Contact: info@kombify.io
    */
   import { Heart, SunMoon } from "@lucide/svelte";
-  import GithubIcon from "$lib/icons/GithubIcon.svelte";
-  import XIcon from "$lib/icons/XIcon.svelte";
+  import GithubIcon from "#lib/icons/GithubIcon.svelte";
+  import XIcon from "#lib/icons/XIcon.svelte";
+  import { KOMBIFY_MAIN_WORDMARK } from "#lib/brand-assets.js";
 
   type Variant = "compact" | "full";
   type LogoStyle = "dark" | "light" | "auto";
@@ -64,13 +69,8 @@
   const currentYear = new Date().getFullYear();
 
   // Image fallback state
-  let iconImageFailed = $state(false);
   let logoImageFailed = $state(false);
   let currentLogoStyle = $derived<LogoStyle>(logoStyle);
-
-  function handleIconError() {
-    iconImageFailed = true;
-  }
 
   function handleLogoError() {
     logoImageFailed = true;
@@ -85,7 +85,7 @@
   }
 
   function getLogoSrc(): string {
-    return "/kombify-techstack-kombi3d.png";
+    return KOMBIFY_MAIN_WORDMARK;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -109,6 +109,7 @@
     { label: "Impressum", href: `${portalUrl}/impressum`, external: true },
     { label: "Privacy", href: `${portalUrl}/privacy`, external: true },
     { label: "Terms", href: `${portalUrl}/terms`, external: true },
+    { label: "Status", href: "https://status.kombify.io", external: true },
   ]);
 
   /**
@@ -130,25 +131,25 @@
 </script>
 
 {#if variant === "compact"}
-  <!-- Compact Footer -->
-  <footer
-    class="w-full border-t border-border bg-background/80 backdrop-blur-sm {className}"
-  >
+  <!-- Compact Footer — footer plate role supplies the material
+       (KOMBIFY-DESIGN-SYSTEM-STANDARD §7: nav chrome carries no color
+       utilities of its own), so it follows finish and product accent. -->
+  <footer data-kx="footer plate" class="kx-footer-edge w-full {className}">
     <div class="max-w-6xl mx-auto px-4 sm:px-6 py-4">
       <div class="flex flex-col sm:flex-row items-center justify-between gap-4">
         <!-- Logo Icon + Copyright -->
         <div class="flex items-center gap-3">
-          <a href="/" class="w-8 h-8 rounded-lg overflow-hidden shrink-0">
-            {#if !iconImageFailed}
+          <a href={portalUrl} class="h-8 w-auto overflow-hidden shrink-0">
+            {#if !logoImageFailed}
               <img
-                src="/kombify-techstack-k.png"
-                alt="kombify TechStack"
-                class="w-full h-full object-contain"
-                onerror={handleIconError}
+                src={getLogoSrc()}
+                alt="kombify"
+                class="w-auto h-full object-contain"
+                onerror={handleLogoError}
               />
             {:else}
               <div
-                class="w-full h-full rounded-lg bg-linear-to-br from-primary to-primary/70 flex items-center justify-center text-primary-foreground font-bold text-sm"
+                class="flex h-full w-full items-center justify-center rounded-lg bg-primary text-sm font-bold text-primary-foreground"
               >
                 K
               </div>
@@ -206,17 +207,15 @@
     </div>
   </footer>
 {:else}
-  <!-- Full Footer -->
-  <footer
-    class="w-full border-t border-border bg-linear-to-b from-background to-muted/20 {className}"
-  >
+  <!-- Full Footer — footer plate role supplies the material (§7). -->
+  <footer data-kx="footer plate" class="kx-footer-edge w-full {className}">
     <div class="max-w-6xl mx-auto px-4 sm:px-6">
       <!-- Main Footer Content -->
       <div class="py-10 grid grid-cols-2 md:grid-cols-5 gap-8">
         <!-- Logo + Description Column (spans 2 cols) -->
         <div class="col-span-2">
           <div class="flex items-center gap-3 mb-4">
-            <a href="/" class="inline-flex items-center gap-3 group">
+            <a href={portalUrl} class="inline-flex items-center gap-3 group">
               <div
                 class="w-auto h-12 rounded-xl overflow-hidden shrink-0 transition-transform group-hover:scale-105"
               >
@@ -229,7 +228,7 @@
                   />
                 {:else}
                   <div
-                    class="h-full w-12 rounded-xl bg-linear-to-br from-primary to-primary/70 flex items-center justify-center text-primary-foreground font-bold text-lg"
+                    class="flex h-full w-12 items-center justify-center rounded-xl bg-primary text-lg font-bold text-primary-foreground"
                   >
                     K
                   </div>
@@ -354,10 +353,19 @@
           {/if}
         </p>
         <p class="text-sm text-muted-foreground flex items-center gap-1.5">
-          Made with <Heart class="w-3.5 h-3.5 text-red-500 fill-red-500" /> for the
+          Made with <Heart class="w-3.5 h-3.5 text-destructive fill-destructive" /> for the
           homelab community
         </p>
       </div>
     </div>
   </footer>
 {/if}
+
+<style>
+  /* Geometry only: the footer squares off and keeps the top hairline of the
+   * plate rim (same treatment as the package FooterCompact). */
+  footer.kx-footer-edge {
+    border-radius: 0;
+    border-width: 1px 0 0;
+  }
+</style>

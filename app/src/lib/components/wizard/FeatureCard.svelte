@@ -5,6 +5,8 @@
   Used for feature/goal selection in wizards.
 -->
 <script lang="ts">
+  import CardHelpHint from "./CardHelpHint.svelte";
+
   interface Props {
     checked?: boolean;
     title: string;
@@ -12,6 +14,7 @@
     icon?: string;
     helpText?: string;
     helpTip?: string;
+    hint?: string;
     testId?: string;
     onchange?: (checked: boolean) => void;
   }
@@ -23,6 +26,7 @@
     icon,
     helpText,
     helpTip,
+    hint,
     testId,
     onchange,
   }: Props = $props();
@@ -90,32 +94,19 @@
     {/if}
 
     <!-- Title with help button -->
-    <div class="flex items-center gap-3 mb-2">
+    <div class="mb-2 flex items-start gap-3">
       <h3 class="text-foreground font-semibold text-lg leading-tight">
         {title}
       </h3>
       {#if helpText}
-        <button
-          type="button"
-          onclick={(e) => e.stopPropagation()}
-          class="relative group/tip shrink-0"
+        <CardHelpHint {helpText} {helpTip} />
+      {/if}
+      {#if hint}
+        <span
+          class="max-w-full rounded-full border border-primary/25 bg-primary/10 px-2 py-1 text-[11px] font-medium text-primary"
         >
-          <span
-            class="text-xs text-muted-foreground bg-muted px-2 py-1 rounded-full cursor-help hover:bg-muted/80 transition"
-          >
-            ?
-          </span>
-          <div
-            class="absolute right-0 top-full mt-2 w-72 p-4 rounded-lg card shadow-xl z-20 opacity-0 invisible group-hover/tip:opacity-100 group-hover/tip:visible transition-all duration-200"
-          >
-            <p class="text-sm text-foreground">{helpText}</p>
-            {#if helpTip}
-              <p class="mt-3 text-xs text-muted-foreground italic">
-                Tip: {helpTip}
-              </p>
-            {/if}
-          </div>
-        </button>
+          {hint}
+        </span>
       {/if}
     </div>
 

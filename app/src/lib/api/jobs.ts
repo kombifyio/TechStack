@@ -15,7 +15,12 @@ export interface Job {
   type: string;
   state: string;
   progress: number;
-  stack_id?: string;
+  phase?: string;
+  failure_class?: string;
+  reason_code?: string;
+  retryable?: boolean;
+  user_guidance?: JobUserGuidance;
+  kit_deployment_id?: string;
   target_id?: string;
   error?: string;
   wait_reason?: string;
@@ -24,6 +29,21 @@ export interface Job {
   resume_available?: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface JobUserGuidance {
+  title?: string;
+  body?: string;
+  next_steps?: Array<
+    | string
+    | {
+        id?: string;
+        label?: string;
+        kind?: string;
+        href?: string;
+        description?: string;
+      }
+  >;
 }
 
 export interface JobDetail extends Job {
@@ -41,8 +61,14 @@ interface JobDetailApiResponse {
   type?: string;
   state?: string;
   progress?: number;
+  phase?: string;
+  failure_class?: string;
+  reason_code?: string;
+  retryable?: boolean;
+  user_guidance?: JobUserGuidance;
   error?: string;
   stack_id?: string;
+  kit_deployment_id?: string;
   target_id?: string;
   payload?: Record<string, unknown>;
   result?: Record<string, unknown> | string;
@@ -65,7 +91,7 @@ export interface JobsListRequest {
   page?: number;
   perPage?: number;
   limit?: number;
-  stackId?: string;
+  kitDeploymentId?: string;
   state?: string;
   type?: string;
   search?: string;
@@ -88,13 +114,32 @@ interface JobsListApiResponse {
 }
 
 function normalizeJobDetail(job: JobDetailApiResponse): JobDetail {
+  const result =
+    job.result && typeof job.result === "object" ? job.result : undefined;
+  const resultString = (key: string) => {
+    const value = result?.[key];
+    return typeof value === "string" ? value : undefined;
+  };
+  const resultGuidance = result?.user_guidance;
+
   return {
     id: job.id,
     type: job.type ?? "",
     state: job.state ?? "pending",
     progress: job.progress ?? 0,
-    stack_id: job.stack_id,
-    target_id: job.target_id ?? job.stack_id,
+    phase: job.phase ?? resultString("phase"),
+    failure_class: job.failure_class ?? resultString("failure_class"),
+    reason_code: job.reason_code ?? resultString("reason_code"),
+    retryable:
+      job.retryable ??
+      (typeof result?.retryable === "boolean" ? result.retryable : undefined),
+    user_guidance:
+      job.user_guidance ??
+      (resultGuidance && typeof resultGuidance === "object"
+        ? (resultGuidance as JobUserGuidance)
+        : undefined),
+    kit_deployment_id: job.kit_deployment_id ?? job.stack_id,
+    target_id: job.target_id ?? job.kit_deployment_id ?? job.stack_id,
     error: job.error,
     payload: job.payload,
     result: job.result,
@@ -130,7 +175,9 @@ export async function listJobs(
   if (request.page) params.set("page", String(request.page));
   if (request.perPage) params.set("per_page", String(request.perPage));
   if (request.limit) params.set("limit", String(request.limit));
-  if (request.stackId) params.set("stack_id", request.stackId);
+  if (request.kitDeploymentId) {
+    params.set("stack_id", request.kitDeploymentId);
+  }
   if (request.state) params.set("state", request.state);
   if (request.type) params.set("type", request.type);
   if (request.search) params.set("search", request.search);
@@ -151,12 +198,12 @@ export async function listJobs(
   };
 }
 
-export async function getLatestStackProvisionJob(
-  stackId: string,
+export async function getLatestKitDeploymentProvisionJob(
+  kitDeploymentId: string,
 ): Promise<JobDetail | null> {
-  if (!stackId) return null;
+  if (!kitDeploymentId) return null;
   const result = await listJobs({
-    stackId,
+    kitDeploymentId,
     type: "provision",
     page: 1,
     perPage: 1,

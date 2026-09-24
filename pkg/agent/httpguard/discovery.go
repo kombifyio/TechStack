@@ -90,8 +90,9 @@ type hostDiscovery struct {
 // never produced evidence". Without that distinction an empty service list is
 // unreadable, which is exactly the failure this file exists to fix.
 type discoveryOutcome struct {
-	Services []Service
-	Probed   bool
+	Services      []Service
+	DockerVersion string
+	Probed        bool
 }
 
 func newHostDiscovery(cfg DiscoveryConfig) *hostDiscovery {
@@ -136,7 +137,17 @@ func (d *hostDiscovery) discover(ctx context.Context) discoveryOutcome {
 		collected = append(collected, services...)
 	}
 	outcome.Services = boundedUniqueServices(collected, d.cfg.MaxServices)
+	outcome.DockerVersion = d.observeDockerVersion(budgetCtx)
 	return outcome
+}
+
+func (d *hostDiscovery) observeDockerVersion(ctx context.Context) string {
+	output, err := d.cfg.run(ctx, discoveryPlatformDocker,
+		"version", "--format", "{{.Server.Version}}")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(output))
 }
 
 // dockerContainer is the subset of `docker ps --format {{json .}}` this probe
@@ -147,6 +158,7 @@ type dockerContainer struct {
 	Image  string `json:"Image"`
 	State  string `json:"State"`
 	Status string `json:"Status"`
+	Labels string `json:"Labels"`
 }
 
 func (d *hostDiscovery) discoverDockerContainers(ctx context.Context) ([]Service, bool) {
@@ -187,20 +199,44 @@ func dockerContainerService(container dockerContainer) (Service, bool) {
 	if reported := dockerReportedHealth(container.Status); reported != "" {
 		health[discoveryHealthKeyDocker] = reported
 	}
+	labels := dockerLabelMap(container.Labels)
+	runtimeIdentity := map[string]string{}
+	if project := labels["com.docker.compose.project"]; project != "" {
+		runtimeIdentity["kind"] = "docker_compose_service"
+		runtimeIdentity["project"] = project
+		runtimeIdentity["service"] = labels["com.docker.compose.service"]
+		runtimeIdentity["file"] = labels["com.docker.compose.project.config_files"]
+	}
 	return Service{
-		ID:           key,
-		ServiceID:    key,
-		Key:          key,
-		Name:         name,
-		Status:       dockerObservedState(container.State),
-		Source:       serviceregistry.SourceObserved,
-		Instance:     "default",
-		ContainerID:  strings.TrimSpace(container.ID),
-		PlatformID:   strings.TrimSpace(container.ID),
-		PlatformType: discoveryPlatformDocker,
-		Image:        strings.TrimSpace(container.Image),
-		Health:       health,
+		ID:              key,
+		ServiceID:       key,
+		Key:             key,
+		Name:            name,
+		Status:          dockerObservedState(container.State),
+		Source:          serviceregistry.SourceObserved,
+		Instance:        "default",
+		ContainerID:     strings.TrimSpace(container.ID),
+		PlatformID:      strings.TrimSpace(container.ID),
+		PlatformType:    discoveryPlatformDocker,
+		Image:           strings.TrimSpace(container.Image),
+		Health:          health,
+		RuntimeIdentity: runtimeIdentity,
 	}, true
+}
+
+func dockerLabelMap(raw string) map[string]string {
+	result := map[string]string{}
+	for _, entry := range strings.Split(raw, ",") {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		key, value = strings.TrimSpace(key), strings.TrimSpace(value)
+		if key != "" && len(key) <= 128 && len(value) <= 1024 {
+			result[key] = value
+		}
+	}
+	return result
 }
 
 // dockerObservedState projects a Docker container state onto the constrained
@@ -290,17 +326,18 @@ func (d *hostDiscovery) discoverSystemdUnits(ctx context.Context) ([]Service, bo
 func systemdUnitService(unit systemdUnit, name string) Service {
 	key := discoveryServiceKey(discoveryPlatformSystemd, strings.TrimSuffix(name, discoverySystemdUnitSufix))
 	return Service{
-		ID:           key,
-		ServiceID:    key,
-		Key:          key,
-		Name:         name,
-		Status:       systemdObservedState(unit.Active, unit.Sub),
-		Source:       serviceregistry.SourceObserved,
-		Instance:     "default",
-		PlatformID:   name,
-		PlatformType: discoveryPlatformSystemd,
-		Description:  strings.TrimSpace(unit.Description),
-		Health:       map[string]any{discoveryHealthKeySource: "systemctl-list-units"},
+		ID:              key,
+		ServiceID:       key,
+		Key:             key,
+		Name:            name,
+		Status:          systemdObservedState(unit.Active, unit.Sub),
+		Source:          serviceregistry.SourceObserved,
+		Instance:        "default",
+		PlatformID:      name,
+		PlatformType:    discoveryPlatformSystemd,
+		Description:     strings.TrimSpace(unit.Description),
+		Health:          map[string]any{discoveryHealthKeySource: "systemctl-list-units"},
+		RuntimeIdentity: map[string]string{"kind": "systemd_unit", "unit": name},
 	}
 }
 

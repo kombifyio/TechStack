@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -23,17 +22,18 @@ const (
 	creationServerProvisionModeField = "server_provisioning_mode"
 	creationServerConnectionField    = "server_connection_mode"
 	creationOperationsURLField       = "operations_url"
+	creationKitDeploymentIDField     = "kit_deployment_id"
 	creationStackIDField             = "stack_id"
 	creationJobIDField               = "job_id"
 	creationNameField                = "name"
 	creationMessageField             = "message"
 )
 
-func (h crudRouteHandlers) persistCreateServerIntent(e *httpx.Event, ownerID string, stack *persistedStack, req normalizedCreateStackRequest) (string, error) {
+func (h crudRouteHandlers) persistCreateServerIntent(e *httpx.Event, ownerID, tenantID string, stack *persistedStack, req normalizedCreateStackRequest) (string, error) {
 	if h.serverStore == nil || stack == nil {
 		return "", nil
 	}
-	tenantID := tenantIDFromRequest(e)
+	tenantID = strings.TrimSpace(tenantID)
 	if tenantID == "" {
 		return "", nil
 	}
@@ -92,14 +92,15 @@ func (h crudRouteHandlers) persistCreateServerIntent(e *httpx.Event, ownerID str
 	return server.ID, nil
 }
 
-func (h crudRouteHandlers) replayCreateJob(e *httpx.Event, stack *persistedStack, serverIDs ...string) (bool, error) {
-	if h.jobStore == nil || stack == nil || tenantIDFromRequest(e) == "" {
+func (h crudRouteHandlers) replayCreateJob(e *httpx.Event, tenantID string, stack *persistedStack, serverIDs ...string) (bool, error) {
+	tenantID = strings.TrimSpace(tenantID)
+	if h.jobStore == nil || stack == nil || tenantID == "" {
 		return false, nil
 	}
-	jobs, err := h.jobStore.ListJobsByStack(e.Request.Context(), tenantIDFromRequest(e), stack.Id, 50)
+	jobs, err := h.jobStore.ListJobsByStack(e.Request.Context(), tenantID, stack.Id, 50)
 	if err != nil {
 		return true, httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to resume stack creation", map[string]any{
-			creationStackIDField: stack.Id, creationOperationsURLField: operationsURL(stack.Id),
+			creationStackIDField: stack.Id, creationOperationsURLField: homelabDashboardURL(),
 		})
 	}
 	if len(jobs) == 0 {
@@ -108,9 +109,9 @@ func (h crudRouteHandlers) replayCreateJob(e *httpx.Event, stack *persistedStack
 	sort.SliceStable(jobs, func(i, j int) bool { return jobs[i].CreatedAt.After(jobs[j].CreatedAt) })
 	job := jobs[0]
 	response := map[string]any{
-		creationStackIDField: stack.Id, creationJobIDField: job.ID, creationNameField: stack.Name,
+		creationKitDeploymentIDField: stack.Id, creationJobIDField: job.ID, creationNameField: stack.Name,
 		"state": job.State, creationMessageField: "Stack creation request resumed",
-		"idempotent_replay": true, creationOperationsURLField: operationsURL(stack.Id),
+		"idempotent_replay": true, creationOperationsURLField: homelabDashboardURL(),
 	}
 	if len(serverIDs) > 0 && strings.TrimSpace(serverIDs[0]) != "" {
 		response["server_id"] = strings.TrimSpace(serverIDs[0])
@@ -118,8 +119,8 @@ func (h crudRouteHandlers) replayCreateJob(e *httpx.Event, stack *persistedStack
 	return true, httpx.Success(e, http.StatusAccepted, response)
 }
 
-func operationsURL(stackID string) string {
-	return "/stacks?stack_id=" + url.QueryEscape(strings.TrimSpace(stackID))
+func homelabDashboardURL() string {
+	return "/dashboard"
 }
 
 func sanitizeRuntimeIdentity(value string) string {

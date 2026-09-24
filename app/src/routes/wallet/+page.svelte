@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Component } from "svelte";
   import { onMount } from "svelte";
-  import { replaceState } from "$app/navigation";
+  import { goto } from "$app/navigation";
   import {
     Boxes,
     Copy,
@@ -22,31 +22,31 @@
     rotateWalletItem,
     resetSystemAccountPassword,
     type SystemAccountRole,
-  } from "$lib/api/wallet";
-  import { isCancelledRequestError, parseApiError } from "$lib/api/errors";
+  } from "#lib/api/wallet.js";
+  import { isCancelledRequestError, parseApiError } from "#lib/api/errors.js";
   import type {
     CredentialType,
-    PBWalletItem,
+    WalletItem,
     WalletEntryArea,
-  } from "$lib/stores/wallet";
-  import { buildWalletEntryPayload } from "$lib/wallet/payload";
-  import { authHandler } from "$lib/stores/authHandler.svelte";
-  import SessionRenewalPanel from "$lib/components/SessionRenewalPanel.svelte";
-  import { authStore } from "$lib/stores/auth.svelte";
-  import { showInlineTabs } from "$lib/stores/deploymentMode";
-  import Modal from "$lib/components/Modal.svelte";
-  import CredentialForm from "$lib/components/CredentialForm.svelte";
-  import ImportExportModal from "$lib/components/ImportExportModal.svelte";
-  import SSHKeyGenerator from "$lib/components/SSHKeyGenerator.svelte";
-  import ServiceDiscovery from "$lib/components/ServiceDiscovery.svelte";
-  import RotationReminders from "$lib/components/RotationReminders.svelte";
-  import type { ExportableCredential } from "$lib/wallet/export";
-  import { triggerPasswordManagerSave } from "$lib/wallet/quicksync";
-  import { FeatureGate } from "$lib/components";
-  import { isNetworkDiscoveryEnabled } from "$lib/stores/features";
-  import { confirmInApp, promptInApp } from "$lib/dialogs/in-app-dialog";
+  } from "#lib/wallet/types.js";
+  import { buildWalletEntryPayload } from "#lib/wallet/payload.js";
+  import { authHandler } from "#lib/stores/authHandler.svelte.js";
+  import SessionRenewalPanel from "#lib/components/SessionRenewalPanel.svelte";
+  import { authStore } from "#lib/stores/auth.svelte.js";
+  import { showInlineTabs } from "#lib/stores/deploymentMode.js";
+  import Modal from "#lib/components/Modal.svelte";
+  import CredentialForm from "#lib/components/CredentialForm.svelte";
+  import ImportExportModal from "#lib/components/ImportExportModal.svelte";
+  import SSHKeyGenerator from "#lib/components/SSHKeyGenerator.svelte";
+  import ServiceDiscovery from "#lib/components/ServiceDiscovery.svelte";
+  import RotationReminders from "#lib/components/RotationReminders.svelte";
+  import type { ExportableCredential } from "#lib/wallet/export.js";
+  import { triggerPasswordManagerSave } from "#lib/wallet/quicksync.js";
+  import { FeatureGate } from "#lib/components/index.js";
+  import { isNetworkDiscoveryEnabled } from "#lib/stores/features.js";
+  import { confirmInApp, promptInApp } from "#lib/dialogs/in-app-dialog.js";
 
-  let items = $state<PBWalletItem[]>([]);
+  let items = $state<WalletItem[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
   let sessionRenewalRequired = $state(false);
@@ -54,17 +54,17 @@
 
   // UI state
   let showAddForm = $state(false);
-  let editingItem = $state<PBWalletItem | null>(null);
+  let editingItem = $state<WalletItem | null>(null);
   let formArea = $state<WalletEntryArea>("recovery");
   let deletingId = $state<string | null>(null);
   let showImportExport = $state(false);
-  let exportItems = $state<PBWalletItem[]>([]);
+  let exportItems = $state<WalletItem[]>([]);
   let showSSHGenerator = $state(false);
   let showServiceDiscovery = $state(false);
   let showRotateModal = $state(false);
-  let rotatingItem = $state<PBWalletItem | null>(null);
+  let rotatingItem = $state<WalletItem | null>(null);
   let newSecret = $state("");
-  let revealedWalletItems = $state<Record<string, PBWalletItem>>({});
+  let revealedWalletItems = $state<Record<string, WalletItem>>({});
   const isSaaSDeployment = $derived(authStore.deploymentMode === "saas");
 
   // Quick-Sync state
@@ -112,6 +112,7 @@
       // Search filter
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase();
+
         return (
           item.name.toLowerCase().includes(query) ||
           item.username?.toLowerCase().includes(query) ||
@@ -202,11 +203,11 @@
       id: "admin",
       email: "admin@techstack.local",
       password: "",
-      role: "kombify-TechStack Admin",
-      description: "Application administrator with full stack management",
+      role: "kombify-Techstack Admin",
+      description: "Application administrator with full Homelab management",
       securityLevel: "high",
       features: [
-        "Stack management",
+        "Homelab management",
         "User management",
         "System settings",
         "Monitoring",
@@ -216,11 +217,11 @@
       id: "developer",
       email: "developer@techstack.local",
       password: "",
-      role: "kombify-TechStack Developer",
+      role: "kombify-Techstack Developer",
       description: "Developer access for testing and development",
       securityLevel: "medium",
       features: [
-        "Stack creation",
+        "StackKit deployment",
         "Simulation access",
         "API access",
         "Log viewing",
@@ -228,7 +229,7 @@
     },
   ]);
 
-  function syncSystemUsersFromWallet(walletItems: PBWalletItem[]) {
+  function syncSystemUsersFromWallet(walletItems: WalletItem[]) {
     const currentUsers = new Map(
       systemUsers.map((user) => [user.id, user] as const),
     );
@@ -333,11 +334,11 @@
   async function loadWalletItemDetail(
     id: string,
     reason = "wallet item reveal",
-  ): Promise<PBWalletItem | null> {
+  ): Promise<WalletItem | null> {
     const base = items.find((item) => item.id === id);
     try {
       const revealed = await revealWalletItemForCurrentLane(id, reason);
-      return { ...(base || ({} as PBWalletItem)), ...revealed } as PBWalletItem;
+      return { ...(base || ({} as WalletItem)), ...revealed } as WalletItem;
     } catch (err) {
       const parsed = parseApiError(err);
       if (
@@ -354,7 +355,7 @@
         const currentPassword = await promptInApp({
           title: "Confirm credential reveal",
           message:
-            "Enter your current local TechStack password to reveal this wallet entry.",
+            "Enter your current local Techstack password to reveal this wallet entry.",
           inputLabel: "Current password",
           inputType: "password",
           confirmText: "Reveal",
@@ -365,10 +366,11 @@
               reason,
               currentPassword: currentPassword.trim(),
             });
+
             return {
-              ...(base || ({} as PBWalletItem)),
+              ...(base || ({} as WalletItem)),
               ...revealed,
-            } as PBWalletItem;
+            } as WalletItem;
           } catch (retryErr) {
             const retryParsed = parseApiError(retryErr);
             error = retryParsed.message;
@@ -384,7 +386,7 @@
   async function revealWalletItemForCurrentLane(
     id: string,
     reason: string,
-  ): Promise<Pick<PBWalletItem, "id" | "secret" | "totp">> {
+  ): Promise<Pick<WalletItem, "id" | "secret" | "totp">> {
     if (!isSaaSDeployment) {
       return await revealWalletItem(id, { reason });
     }
@@ -398,7 +400,7 @@
 
   async function ensureWalletItemRevealed(
     id: string,
-  ): Promise<PBWalletItem | null> {
+  ): Promise<WalletItem | null> {
     if (revealedWalletItems[id]) {
       return revealedWalletItems[id];
     }
@@ -412,13 +414,14 @@
   }
 
   async function loadWalletItemsForSensitiveActions(
-    sourceItems: PBWalletItem[],
-  ): Promise<PBWalletItem[]> {
+    sourceItems: WalletItem[],
+  ): Promise<WalletItem[]> {
     return await Promise.all(
       sourceItems.map(async (item) => {
         if (!item.has_secret && !item.has_totp) {
           return item;
         }
+
         return (
           (await loadWalletItemDetail(item.id, "wallet export reveal")) || item
         );
@@ -426,7 +429,7 @@
     );
   }
 
-  function getDisplaySecret(item: PBWalletItem): string {
+  function getDisplaySecret(item: WalletItem): string {
     return revealedWalletItems[item.id]?.secret || item.secret || "";
   }
 
@@ -497,13 +500,13 @@
     return "•".repeat(Math.min(password.length, 16));
   }
 
-  function hasRevealableSecret(item: PBWalletItem): boolean {
+  function hasRevealableSecret(item: WalletItem): boolean {
     return Boolean(
       item.has_secret || item.secret || item.has_totp || item.totp,
     );
   }
 
-  function isToolItem(item: PBWalletItem): boolean {
+  function isToolItem(item: WalletItem): boolean {
     if (item.item_class === "launch") {
       return true;
     }
@@ -520,11 +523,11 @@
     );
   }
 
-  function isAccessEntry(item: PBWalletItem): boolean {
+  function isAccessEntry(item: WalletItem): boolean {
     return item.item_class === "user_account" || item.access_mode === "manage";
   }
 
-  function getWalletArea(item: PBWalletItem): WalletEntryArea {
+  function getWalletArea(item: WalletItem): WalletEntryArea {
     if (isToolItem(item)) {
       return "tools";
     }
@@ -536,11 +539,11 @@
     return "recovery";
   }
 
-  function getEntryActionLabel(item: PBWalletItem): string {
+  function getEntryActionLabel(item: WalletItem): string {
     return item.access_mode === "manage" ? "Manage" : "Open";
   }
 
-  function openWalletLink(item: PBWalletItem) {
+  function openWalletLink(item: WalletItem) {
     if (!item.url) {
       return;
     }
@@ -568,11 +571,11 @@
   function getSecurityLevelColor(level: string): string {
     switch (level) {
       case "critical":
-        return "bg-red-900/50 text-red-400 border-red-700/50";
+        return "bg-destructive/10 text-destructive border-destructive/30";
       case "high":
-        return "bg-orange-900/50 text-orange-400 border-orange-700/50";
+        return "bg-warning/10 text-warning border-warning/30";
       case "medium":
-        return "bg-yellow-900/50 text-yellow-400 border-yellow-700/50";
+        return "bg-warning/10 text-warning border-warning/30";
       default:
         return "bg-muted/50 text-muted-foreground border-border/50";
     }
@@ -609,7 +612,7 @@
     }
   }
 
-  async function handleSaveCredential(data: Partial<PBWalletItem>) {
+  async function handleSaveCredential(data: Partial<WalletItem>) {
     saving = true;
     error = null;
     try {
@@ -648,7 +651,7 @@
     }
   }
 
-  async function handleEditCredential(item: PBWalletItem) {
+  async function handleEditCredential(item: WalletItem) {
     formArea = getWalletArea(item);
     if (item.has_secret || item.has_totp) {
       editingItem = (await ensureWalletItemRevealed(item.id)) || item;
@@ -730,7 +733,7 @@
       buildWalletEntryPayload(
         "recovery",
         {
-          name: name,
+          name,
           kind: "ssh_key",
           secret: privateKey,
           notes: `Public Key:\n${publicKey}`,
@@ -751,15 +754,14 @@
 
   function getExpiryBadgeColor(expiresAt: string): string {
     const days = getDaysUntilExpiry(expiresAt);
-    if (days <= 0) return "bg-red-900/50 text-red-400 border-red-700/50";
-    if (days <= 7)
-      return "bg-orange-900/50 text-orange-400 border-orange-700/50";
-    if (days <= 30)
-      return "bg-yellow-900/50 text-yellow-400 border-yellow-700/50";
+    if (days <= 0)
+      return "bg-destructive/10 text-destructive border-destructive/30";
+    if (days <= 7) return "bg-warning/10 text-warning border-warning/30";
+    if (days <= 30) return "bg-warning/10 text-warning border-warning/30";
     return "bg-muted/50 text-muted-foreground border-border/50";
   }
 
-  function handleRotateCredential(item: PBWalletItem) {
+  function handleRotateCredential(item: WalletItem) {
     rotatingItem = item;
     newSecret = "";
     showRotateModal = true;
@@ -794,7 +796,7 @@
     }
   }
 
-  async function handleQuickSync(item: PBWalletItem) {
+  async function handleQuickSync(item: WalletItem) {
     quickSyncStates[item.id] = "syncing";
 
     try {
@@ -836,12 +838,13 @@
   async function copySystemUserPassword(user: SystemUser) {
     const password =
       getSystemUserPassword(user) || (await ensureSystemUserPassword(user.id));
+
     if (password) {
       copyToClipboard(password, `pass-${user.id}`);
     }
   }
 
-  async function copyWalletItemSecret(item: PBWalletItem) {
+  async function copyWalletItemSecret(item: WalletItem) {
     const detail =
       item.has_secret || item.has_totp
         ? await ensureWalletItemRevealed(item.id)
@@ -885,7 +888,7 @@
 
     const url = new URL(window.location.href);
     url.hash = tab === "tools" ? "" : tab;
-    replaceState(url, {});
+    goto(url, { shallow: true, replace: true });
   }
 </script>
 
@@ -983,7 +986,7 @@
             for="new-secret"
             class="block text-sm font-medium text-foreground/80 mb-2"
           >
-            New Secret <span class="text-red-400">*</span>
+            New Secret <span class="text-destructive">*</span>
           </label>
           <input
             id="new-secret"
@@ -1007,14 +1010,17 @@
               rotatingItem = null;
               newSecret = "";
             }}
-            class="btn btn-secondary"
+            data-kx="control"
+            class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
           >
             Cancel
           </button>
           <button
             onclick={handleConfirmRotation}
             disabled={saving || !newSecret.trim()}
-            class="btn btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+            data-kx="control"
+            data-variant="primary"
+            class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
           >
             {saving ? "Rotating..." : "Save"}
           </button>
@@ -1040,8 +1046,10 @@
       {#if expiredCredentials.length > 0 || expiringCredentials.length > 0}
         <div class="mb-8 space-y-3">
           {#if expiredCredentials.length > 0}
-            <div class="card border-destructive/30 bg-destructive/5">
-              <div class="card-content flex items-start gap-3">
+            <div
+              class="rounded-xl border border-destructive/30 bg-destructive/5"
+            >
+              <div class="p-6 flex items-start gap-3">
                 <div
                   class="w-10 h-10 rounded-lg bg-destructive/10 flex items-center justify-center shrink-0"
                 >
@@ -1056,7 +1064,7 @@
                       stroke-linejoin="round"
                       stroke-width="2"
                       d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                    />
+                    ></path>
                   </svg>
                 </div>
                 <div>
@@ -1075,8 +1083,8 @@
             </div>
           {/if}
           {#if expiringCredentials.length > 0}
-            <div class="card border-warning/30 bg-warning/5">
-              <div class="card-content flex items-start gap-3">
+            <div class="rounded-xl border border-warning/30 bg-warning/5">
+              <div class="p-6 flex items-start gap-3">
                 <div
                   class="w-10 h-10 rounded-lg bg-warning/10 flex items-center justify-center shrink-0"
                 >
@@ -1091,7 +1099,7 @@
                       stroke-linejoin="round"
                       stroke-width="2"
                       d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"
-                    />
+                    ></path>
                   </svg>
                 </div>
                 <div>
@@ -1119,33 +1127,27 @@
 
     {#if sessionRenewalRequired}
       <div class="mb-8">
-        <SessionRenewalPanel
-          onretry={() => {
-            sessionRenewalRequired = false;
-            loadWalletItems();
-          }}
-          busy={loading}
-          returnTo="/wallet"
-        />
+        <SessionRenewalPanel returnTo="/wallet" />
       </div>
     {/if}
 
     {#if loading}
       <div class="space-y-4 mb-8" data-wallet-state="loading">
         {#each Array(3) as _}
-          <div class="card animate-pulse h-28"></div>
+          <div data-kx="plate" class="animate-pulse h-28"></div>
         {/each}
       </div>
     {:else if error}
       <div
-        class="card border-destructive/30 bg-destructive/5 mb-8"
+        class="rounded-xl border border-destructive/30 bg-destructive/5 mb-8"
         data-wallet-state="error"
       >
-        <div class="card-content flex items-center justify-between gap-4">
+        <div class="p-6 flex items-center justify-between gap-4">
           <span class="text-foreground">{error}</span>
           <button
             onclick={() => (error = null)}
-            class="btn btn-ghost btn-sm text-muted-foreground hover:text-foreground"
+            data-kx="control"
+            class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
           >
             Dismiss
           </button>
@@ -1164,10 +1166,11 @@
             </p>
           </div>
           <div class="flex items-center gap-2">
-            <span class="badge badge-secondary">{toolItems.length}</span>
+            <span data-kx="tag">{toolItems.length}</span>
             <button
               onclick={() => openAddForm("tools")}
-              class="btn btn-secondary btn-sm"
+              data-kx="control"
+              class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
             >
               + Add Tool
             </button>
@@ -1175,8 +1178,8 @@
         </div>
 
         {#if toolItems.length === 0}
-          <div class="card border-border/60 bg-muted/10">
-            <div class="card-content py-6">
+          <div data-kx="plate">
+            <div class="p-6">
               <p class="text-foreground font-medium mb-1">No tools yet</p>
               <p class="text-sm text-muted-foreground">
                 Launch-ready tools and URL-backed service entries will surface
@@ -1185,7 +1188,9 @@
               <div class="mt-4">
                 <button
                   onclick={() => openAddForm("tools")}
-                  class="btn btn-primary btn-sm"
+                  data-kx="control"
+                  data-variant="primary"
+                  class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
                 >
                   + Add Tool
                 </button>
@@ -1195,8 +1200,11 @@
         {:else}
           <div class="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
             {#each toolItems as item}
-              <div class="card card-hover">
-                <div class="card-content">
+              <div
+                data-kx="plate"
+                class="transition-all hover:shadow-lg hover:shadow-primary/5"
+              >
+                <div class="p-6">
                   <div class="flex items-start justify-between gap-4 mb-4">
                     <div class="min-w-0 flex items-center gap-3">
                       <div
@@ -1213,7 +1221,7 @@
                           >
                             {item.name}
                           </h3>
-                          <span class="badge badge-outline text-xs">Tool</span>
+                          <span data-kx="tag" class="text-xs">Tool</span>
                         </div>
                         <p class="text-xs text-muted-foreground truncate">
                           {item.url || item.source_ref || "Tool surface"}
@@ -1223,7 +1231,8 @@
                     <div class="flex gap-1 shrink-0">
                       <button
                         onclick={() => handleEditCredential(item)}
-                        class="btn btn-ghost btn-sm p-2"
+                        data-kx="control"
+                        class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg p-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
                         title="Edit"
                       >
                         <svg
@@ -1237,13 +1246,14 @@
                             stroke-linejoin="round"
                             stroke-width="2"
                             d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
-                          />
+                          ></path>
                         </svg>
                       </button>
                       <button
                         onclick={() => handleDeleteCredential(item.id)}
                         disabled={deletingId === item.id}
-                        class="btn btn-ghost btn-sm p-2 hover:text-destructive disabled:opacity-50"
+                        data-kx="control"
+                        class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg p-2 text-sm font-medium hover:text-destructive disabled:pointer-events-none disabled:opacity-50"
                         title="Delete"
                       >
                         <svg
@@ -1257,7 +1267,7 @@
                             stroke-linejoin="round"
                             stroke-width="2"
                             d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                          />
+                          ></path>
                         </svg>
                       </button>
                     </div>
@@ -1339,7 +1349,9 @@
                       {#if item.url}
                         <button
                           onclick={() => openWalletLink(item)}
-                          class="btn btn-primary btn-sm flex-1"
+                          data-kx="control"
+                          data-variant="primary"
+                          class="inline-flex flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
                         >
                           {getEntryActionLabel(item)}
                         </button>
@@ -1348,7 +1360,8 @@
                         <button
                           onclick={() => handleQuickSync(item)}
                           disabled={quickSyncStates[item.id] === "syncing"}
-                          class="btn btn-secondary btn-sm flex-1 disabled:opacity-50"
+                          data-kx="control"
+                          class="inline-flex flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
                         >
                           {quickSyncStates[item.id] === "syncing"
                             ? "Syncing..."
@@ -1376,14 +1389,15 @@
             </p>
           </div>
           <div class="flex items-center gap-2">
-            <span class="badge badge-secondary"
+            <span data-kx="tag"
               >{systemUsers.length +
                 userAccountItems.length +
                 accessEntryItems.length}</span
             >
             <button
               onclick={() => openAddForm("access")}
-              class="btn btn-secondary btn-sm"
+              data-kx="control"
+              class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
             >
               + Add Access
             </button>
@@ -1397,13 +1411,16 @@
             <h3 class="text-lg font-semibold text-foreground">
               Access Controls
             </h3>
-            <span class="badge badge-secondary">{accessEntryItems.length}</span>
+            <span data-kx="tag">{accessEntryItems.length}</span>
           </div>
 
           <div class="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
             {#each accessEntryItems as item}
-              <div class="card card-hover">
-                <div class="card-content">
+              <div
+                data-kx="plate"
+                class="transition-all hover:shadow-lg hover:shadow-primary/5"
+              >
+                <div class="p-6">
                   <div class="flex items-start justify-between gap-4 mb-4">
                     <div class="min-w-0">
                       <div class="flex items-center gap-2">
@@ -1412,7 +1429,7 @@
                         >
                           {item.name}
                         </h3>
-                        <span class="badge badge-outline text-xs">Access</span>
+                        <span data-kx="tag" class="text-xs">Access</span>
                       </div>
                       <p class="text-xs text-muted-foreground">
                         {item.username ||
@@ -1424,7 +1441,8 @@
                     <div class="flex gap-1 shrink-0">
                       <button
                         onclick={() => handleEditCredential(item)}
-                        class="btn btn-ghost btn-sm p-2"
+                        data-kx="control"
+                        class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg p-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
                         title="Edit"
                       >
                         <svg
@@ -1438,13 +1456,14 @@
                             stroke-linejoin="round"
                             stroke-width="2"
                             d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
-                          />
+                          ></path>
                         </svg>
                       </button>
                       <button
                         onclick={() => handleDeleteCredential(item.id)}
                         disabled={deletingId === item.id}
-                        class="btn btn-ghost btn-sm p-2 hover:text-destructive disabled:opacity-50"
+                        data-kx="control"
+                        class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg p-2 text-sm font-medium hover:text-destructive disabled:pointer-events-none disabled:opacity-50"
                         title="Delete"
                       >
                         <svg
@@ -1458,7 +1477,7 @@
                             stroke-linejoin="round"
                             stroke-width="2"
                             d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                          />
+                          ></path>
                         </svg>
                       </button>
                     </div>
@@ -1544,7 +1563,8 @@
                       <div class="pt-3 border-t border-border">
                         <button
                           onclick={() => openWalletLink(item)}
-                          class="w-full btn btn-secondary btn-sm"
+                          data-kx="control"
+                          class="inline-flex w-full items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
                         >
                           {getEntryActionLabel(item)}
                         </button>
@@ -1562,13 +1582,16 @@
         <div class="mb-6">
           <div class="flex items-center gap-3 mb-3">
             <h3 class="text-lg font-semibold text-foreground">Managed Users</h3>
-            <span class="badge badge-secondary">{userAccountItems.length}</span>
+            <span data-kx="tag">{userAccountItems.length}</span>
           </div>
 
           <div class="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
             {#each userAccountItems as item}
-              <div class="card card-hover">
-                <div class="card-content">
+              <div
+                data-kx="plate"
+                class="transition-all hover:shadow-lg hover:shadow-primary/5"
+              >
+                <div class="p-6">
                   <div class="flex items-start justify-between gap-4 mb-4">
                     <div class="min-w-0">
                       <h3
@@ -1586,7 +1609,8 @@
                     <div class="flex gap-1 shrink-0">
                       <button
                         onclick={() => handleEditCredential(item)}
-                        class="btn btn-ghost btn-sm p-2"
+                        data-kx="control"
+                        class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg p-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
                         title="Edit"
                       >
                         <svg
@@ -1600,13 +1624,14 @@
                             stroke-linejoin="round"
                             stroke-width="2"
                             d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
-                          />
+                          ></path>
                         </svg>
                       </button>
                       <button
                         onclick={() => handleDeleteCredential(item.id)}
                         disabled={deletingId === item.id}
-                        class="btn btn-ghost btn-sm p-2 hover:text-destructive disabled:opacity-50"
+                        data-kx="control"
+                        class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg p-2 text-sm font-medium hover:text-destructive disabled:pointer-events-none disabled:opacity-50"
                         title="Delete"
                       >
                         <svg
@@ -1620,7 +1645,7 @@
                             stroke-linejoin="round"
                             stroke-width="2"
                             d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                          />
+                          ></path>
                         </svg>
                       </button>
                     </div>
@@ -1713,13 +1738,16 @@
       <div class="mb-6">
         <div class="flex items-center gap-3 mb-3">
           <h3 class="text-lg font-semibold text-foreground">System Users</h3>
-          <span class="badge badge-secondary">{systemUsers.length}</span>
+          <span data-kx="tag">{systemUsers.length}</span>
         </div>
 
         <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
           {#each systemUsers as user}
-            <div class="card card-hover">
-              <div class="card-content py-3 px-4">
+            <div
+              data-kx="plate"
+              class="transition-all hover:shadow-lg hover:shadow-primary/5"
+            >
+              <div class="px-4 py-3">
                 <!-- Compact Header -->
                 <div class="flex items-center justify-between gap-2 mb-2">
                   <div class="flex items-center gap-2 min-w-0">
@@ -1737,19 +1765,19 @@
                           stroke-linejoin="round"
                           stroke-width="2"
                           d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
-                        />
+                        ></path>
                       </svg>
                     </div>
                     <div class="min-w-0">
                       <h3 class="font-medium text-foreground text-sm truncate">
                         {user.role}
                       </h3>
-                      <span class="badge badge-outline text-xs"
+                      <span data-kx="tag" class="text-xs"
                         >{user.securityLevel}</span
                       >
                     </div>
                   </div>
-                  <span class="badge badge-info text-xs shrink-0">Auto</span>
+                  <span data-kx="tag" class="text-xs shrink-0">Auto</span>
                 </div>
 
                 <!-- Compact credentials -->
@@ -1834,7 +1862,7 @@
               the recovery zone.
             </p>
           </div>
-          <span class="badge badge-secondary">{vaultItems.length}</span>
+          <span data-kx="tag">{vaultItems.length}</span>
         </div>
       </div>
 
@@ -1904,7 +1932,8 @@
             {#snippet children()}
               <button
                 onclick={() => (showServiceDiscovery = true)}
-                class="btn btn-secondary text-sm"
+                data-kx="control"
+                class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
                 title="Discover service credentials"
               >
                 Discover
@@ -1913,19 +1942,23 @@
           </FeatureGate>
           <button
             onclick={() => (showSSHGenerator = true)}
-            class="btn btn-secondary text-sm"
+            data-kx="control"
+            class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
           >
             Generate SSH Key
           </button>
           <button
             onclick={openImportExportModal}
-            class="btn btn-secondary text-sm"
+            data-kx="control"
+            class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
           >
             Import / Export
           </button>
           <button
             onclick={() => openAddForm("recovery")}
-            class="btn btn-primary text-sm"
+            data-kx="control"
+            data-variant="primary"
+            class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
           >
             + Recovery
           </button>
@@ -1933,8 +1966,8 @@
       </div>
 
       {#if items.length === 0}
-        <div class="card">
-          <div class="card-content text-center py-8">
+        <div data-kx="plate">
+          <div class="px-6 py-8 text-center">
             <div
               class="w-12 h-12 mx-auto rounded-lg bg-muted/50 flex items-center justify-center mb-4"
             >
@@ -1949,7 +1982,7 @@
                   stroke-linejoin="round"
                   stroke-width="1.5"
                   d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
-                />
+                ></path>
               </svg>
             </div>
             <p class="text-foreground font-medium mb-2">
@@ -1962,7 +1995,9 @@
             <div class="flex flex-wrap items-center justify-center gap-2">
               <button
                 onclick={() => openAddForm("recovery")}
-                class="btn btn-primary"
+                data-kx="control"
+                data-variant="primary"
+                class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
               >
                 + Recovery
               </button>
@@ -1970,8 +2005,8 @@
           </div>
         </div>
       {:else if filteredItems.length === 0}
-        <div class="card">
-          <div class="card-content text-center py-8">
+        <div data-kx="plate">
+          <div class="px-6 py-8 text-center">
             <div
               class="w-12 h-12 mx-auto rounded-lg bg-muted/50 flex items-center justify-center mb-4"
             >
@@ -1986,7 +2021,7 @@
                   stroke-linejoin="round"
                   stroke-width="1.5"
                   d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                />
+                ></path>
               </svg>
             </div>
             <p class="text-foreground font-medium mb-2">
@@ -2000,15 +2035,16 @@
                 searchQuery = "";
                 filterType = "all";
               }}
-              class="btn btn-secondary"
+              data-kx="control"
+              class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
             >
               Clear Filters
             </button>
           </div>
         </div>
       {:else if vaultItems.length === 0}
-        <div class="card border-border/60 bg-muted/10">
-          <div class="card-content text-center py-8">
+        <div data-kx="plate">
+          <div class="px-6 py-8 text-center">
             <p class="text-foreground font-medium mb-2">
               No recovery items in this view
             </p>
@@ -2022,14 +2058,15 @@
         <div class="grid md:grid-cols-2 gap-4">
           {#each vaultItems as item}
             <div
-              class="card card-hover {item.expires_at &&
+              data-kx="plate"
+              class="transition-all hover:shadow-lg hover:shadow-primary/5 {item.expires_at &&
               getDaysUntilExpiry(item.expires_at) <= 0
                 ? 'border-destructive/50'
                 : item.expires_at && getDaysUntilExpiry(item.expires_at) <= 7
                   ? 'border-warning/50'
                   : ''}"
             >
-              <div class="card-content">
+              <div class="p-6">
                 <div class="flex items-start justify-between gap-4 mb-4">
                   <div class="min-w-0 flex items-center gap-3">
                     <div
@@ -2049,11 +2086,12 @@
                         {#if item.expires_at}
                           {@const days = getDaysUntilExpiry(item.expires_at)}
                           <span
-                            class="badge {days <= 0
-                              ? 'badge-destructive'
+                            data-kx="status"
+                            data-status={days <= 0
+                              ? "error"
                               : days <= 7
-                                ? 'badge-warning'
-                                : 'badge-secondary'}"
+                                ? "warn"
+                                : "off"}
                           >
                             {#if days <= 0}
                               Expired
@@ -2073,7 +2111,8 @@
                   <div class="flex gap-1">
                     <button
                       onclick={() => handleEditCredential(item)}
-                      class="btn btn-ghost btn-sm p-2"
+                      data-kx="control"
+                      class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg p-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
                       title="Edit"
                     >
                       <svg
@@ -2087,13 +2126,14 @@
                           stroke-linejoin="round"
                           stroke-width="2"
                           d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
-                        />
+                        ></path>
                       </svg>
                     </button>
                     <button
                       onclick={() => handleDeleteCredential(item.id)}
                       disabled={deletingId === item.id}
-                      class="btn btn-ghost btn-sm p-2 hover:text-destructive disabled:opacity-50"
+                      data-kx="control"
+                      class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg p-2 text-sm font-medium hover:text-destructive disabled:pointer-events-none disabled:opacity-50"
                       title="Delete"
                     >
                       {#if deletingId === item.id}
@@ -2106,12 +2146,12 @@
                             stroke="currentColor"
                             stroke-width="4"
                             fill="none"
-                          />
+                          ></circle>
                           <path
                             class="opacity-75"
                             fill="currentColor"
                             d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                          />
+                          ></path>
                         </svg>
                       {:else}
                         <svg
@@ -2125,7 +2165,7 @@
                             stroke-linejoin="round"
                             stroke-width="2"
                             d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                          />
+                          ></path>
                         </svg>
                       {/if}
                     </button>
@@ -2233,13 +2273,14 @@
                       <button
                         onclick={() => handleQuickSync(item)}
                         disabled={quickSyncStates[item.id] === "syncing"}
-                        class="w-full btn {quickSyncStates[item.id] ===
-                        'success'
-                          ? 'btn-success'
+                        data-kx="control"
+                        class="inline-flex w-full items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50 {quickSyncStates[
+                          item.id
+                        ] === 'success'
+                          ? 'text-success'
                           : quickSyncStates[item.id] === 'error'
-                            ? 'btn-destructive'
-                            : 'btn-secondary'}
-                    disabled:opacity-50 disabled:cursor-not-allowed"
+                            ? 'text-destructive'
+                            : ''}"
                         title="Save to external password manager (1Password, Bitwarden, etc.)"
                       >
                         {#if quickSyncStates[item.id] === "syncing"}
@@ -2252,12 +2293,12 @@
                               stroke="currentColor"
                               stroke-width="4"
                               fill="none"
-                            />
+                            ></circle>
                             <path
                               class="opacity-75"
                               fill="currentColor"
                               d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                            />
+                            ></path>
                           </svg>
                           <span>Triggering...</span>
                         {:else if quickSyncStates[item.id] === "success"}
@@ -2272,7 +2313,7 @@
                               stroke-linejoin="round"
                               stroke-width="2"
                               d="M5 13l4 4L19 7"
-                            />
+                            ></path>
                           </svg>
                           <span>Extension Triggered!</span>
                         {:else if quickSyncStates[item.id] === "error"}
@@ -2287,7 +2328,7 @@
                               stroke-linejoin="round"
                               stroke-width="2"
                               d="M6 18L18 6M6 6l12 12"
-                            />
+                            ></path>
                           </svg>
                           <span>Failed</span>
                         {:else}
@@ -2302,7 +2343,7 @@
                               stroke-linejoin="round"
                               stroke-width="2"
                               d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"
-                            />
+                            ></path>
                           </svg>
                           <span>Quick-Sync to Password Manager</span>
                         {/if}
@@ -2312,8 +2353,8 @@
                           class="text-xs text-center mt-1 {quickSyncStates[
                             item.id
                           ] === 'success'
-                            ? 'text-green-400'
-                            : 'text-red-400'}"
+                            ? 'text-success'
+                            : 'text-destructive'}"
                         >
                           {quickSyncToasts[item.id]}
                         </p>
@@ -2324,7 +2365,7 @@
 
                 {#if item.auto_generated}
                   <div class="mt-3 pt-3 border-t border-border">
-                    <span class="badge badge-info">Auto-generated</span>
+                    <span data-kx="tag">Auto-generated</span>
                   </div>
                 {/if}
               </div>

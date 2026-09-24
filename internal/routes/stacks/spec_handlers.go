@@ -3,19 +3,18 @@ package stacks
 
 import (
 	"encoding/base64"
+	"errors"
 	"net/http"
 
-	"github.com/pocketbase/pocketbase/core"
-
+	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
+	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/unifier"
 )
 
 const (
 	specPathStackIDKey             = "id"
-	specStacksCollection           = "stacks"
-	specOwnerIDField               = "owner_id"
 	specResponseBaseDirKey         = "base_dir"
 	specResponseByteLengthKey      = "byteLength"
 	specResponseContentKey         = "content"
@@ -51,8 +50,8 @@ const (
 //   - GET /api/v1/stacks/{id}/unified - Get unified spec
 //   - GET /api/v1/stacks/{id}/verify-chain - Verify hash chain integrity
 //   - GET /api/v1/stacks/{id}/pipeline-status - Get pipeline status
-func RegisterSpecRoutes(r *httpx.Router, app core.App) {
-	handlers := specRouteHandlers{app: app}
+func RegisterSpecRoutes(r *httpx.Router) {
+	handlers := specRouteHandlers{stackStore: currentControlPlaneStores().Stacks}
 	r.GET("/api/v1/stacks/{id}/intent", handlers.intent)
 	r.GET("/api/v1/stacks/{id}/requirements", handlers.requirements)
 	r.GET("/api/v1/stacks/{id}/unified", handlers.unified)
@@ -61,7 +60,7 @@ func RegisterSpecRoutes(r *httpx.Router, app core.App) {
 }
 
 type specRouteHandlers struct {
-	app core.App
+	stackStore controlplane.StackStore
 }
 
 type specRouteContext struct {
@@ -153,12 +152,25 @@ func (h specRouteHandlers) routeContext(e *httpx.Event) (specRouteContext, bool,
 	if authErr != nil || ownerID == "" {
 		return specRouteContext{}, false, authErr
 	}
-
-	stack, err := h.app.FindRecordById(specStacksCollection, stackID)
-	if err != nil {
+	tenantID, tenantErr := tenantguard.TenantScope(tenantIDFromRequest(e), ownerID, "techstack.stack.spec.read")
+	if tenantErr != nil {
+		return specRouteContext{}, false, tenantErr
+	}
+	if h.stackStore == nil {
+		return specRouteContext{}, false, httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+			"Stack spec authority is temporarily unavailable", map[string]any{
+				detailsKeyReasonCode: "stack_spec_authority_unavailable",
+				detailsKeyRetryable:  true,
+			})
+	}
+	stack, err := h.stackStore.GetStack(e.Request.Context(), tenantID, stackID)
+	if errors.Is(err, controlplane.ErrNotFound) {
 		return specRouteContext{}, false, httpx.NotFound(e, specStackNotFoundMessage)
 	}
-	if stack.GetString(specOwnerIDField) != ownerID {
+	if err != nil {
+		return specRouteContext{}, false, specInternalError(e, "failed to load stack authority", err)
+	}
+	if stack.OwnerSubjectID != ownerID {
 		return specRouteContext{}, false, httpx.Forbidden(e, specStackNotOwnedMessage)
 	}
 

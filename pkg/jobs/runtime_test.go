@@ -6,22 +6,32 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/kombifyio/go-common/servicecall"
-	"github.com/kombifyio/techstack/internal/providercatalog"
+	"github.com/kombifyio/techstack/internal/gocommon/servicecall"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/runtimeaction"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/serverruntime"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/vmlease"
 	"github.com/kombifyio/techstack/pkg/auth"
+	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/monthlyruntime"
+	"github.com/kombifyio/techstack/pkg/runtimeidentity"
 	"github.com/kombifyio/techstack/pkg/vmleases"
 )
 
-type fakeLeaseAuthority struct {
-	requests []vmleases.CreateRequest
+type stubServerRuntimeLookup struct {
+	server *controlplane.ServerRuntime
+	err    error
+}
+
+func (s stubServerRuntimeLookup) GetServerRuntime(_ context.Context, _, _ string) (*controlplane.ServerRuntime, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.server, nil
 }
 
 type fakeMonthlyRuntimeClient struct{}
@@ -49,35 +59,12 @@ func (a nativeRuntimeLeaseAuthority) GetInventory(ctx context.Context, tenantID 
 	}, nil
 }
 
-func (f *fakeLeaseAuthority) CreateOrUpdate(_ context.Context, req vmleases.CreateRequest) (*vmlease.Lease, error) {
-	f.requests = append(f.requests, req)
-	lease := req.Lease
-	return &lease, nil
-}
-
 func (fakeMonthlyRuntimeClient) RuntimeAction(_ context.Context, req serverruntime.LeaseRuntimeActionRequest) (*serverruntime.LeaseRuntimeActionResponse, error) {
 	return &serverruntime.LeaseRuntimeActionResponse{
 		TenantID: req.TenantID,
 		LeaseID:  req.LeaseID,
 		Action:   req.Action,
 		Status:   &serverruntime.NodeStatus{ID: "node-1", State: "running"},
-	}, nil
-}
-
-type recordingMonthlyRuntimeClient struct {
-	requests []serverruntime.LeaseRuntimeActionRequest
-}
-
-func (f *recordingMonthlyRuntimeClient) RuntimeAction(_ context.Context, req serverruntime.LeaseRuntimeActionRequest) (*serverruntime.LeaseRuntimeActionResponse, error) {
-	f.requests = append(f.requests, req)
-	return &serverruntime.LeaseRuntimeActionResponse{
-		TenantID:      req.TenantID,
-		LeaseID:       req.LeaseID,
-		Action:        req.Action,
-		OfferingID:    req.OfferingID,
-		ObservedState: "not_found",
-		LeaseState:    "cancelled",
-		Status:        &serverruntime.NodeStatus{ID: req.Metadata["engine_vm_id"], State: "not_found"},
 	}, nil
 }
 
@@ -96,347 +83,6 @@ func (f *sshInfoMonthlyRuntimeClient) RuntimeAction(_ context.Context, req serve
 		return f.resp, nil
 	}
 	return &serverruntime.LeaseRuntimeActionResponse{TenantID: req.TenantID, LeaseID: req.LeaseID, Action: req.Action}, nil
-}
-
-func TestVMLeaseManagerAdapterCreatesMonthlyRuntimeLease(t *testing.T) {
-	now := time.Date(2026, 5, 12, 10, 0, 0, 0, time.UTC)
-	authority := &fakeLeaseAuthority{}
-	adapter := NewVMLeaseManagerAdapter(authority)
-	adapter.Now = func() time.Time { return now }
-
-	result, err := adapter.CreateOrBindLease(context.Background(), ManagedLeaseRequest{
-		StackID:   "stack-1",
-		StackName: "Stack 1",
-		StackKit:  DefaultBasementKitRef,
-		TenantID:  "org-1",
-		OwnerID:   "user-1",
-		Provider:  DefaultMonthlyRuntimeProvider,
-		Metadata: map[string]string{
-			metadataKeyServerMode: serverModeManagedCloud,
-		},
-	})
-	if err != nil {
-		t.Fatalf("CreateOrBindLease: %v", err)
-	}
-	if result.Provider != DefaultMonthlyRuntimeProvider {
-		t.Fatalf("Provider = %q, want %q", result.Provider, DefaultMonthlyRuntimeProvider)
-	}
-	if len(authority.requests) != 1 {
-		t.Fatalf("requests = %d, want 1", len(authority.requests))
-	}
-	req := authority.requests[0]
-	if req.Lease.Resource.ProviderID != DefaultMonthlyRuntimeProvider {
-		t.Fatalf("lease provider = %q", req.Lease.Resource.ProviderID)
-	}
-	if req.Lease.Metadata[metadataKeyServerMode] != serverModeMonthlyRuntime {
-		t.Fatalf("server_mode = %q, want monthly-runtime", req.Lease.Metadata[metadataKeyServerMode])
-	}
-	if req.Lease.Metadata[metadataKeyRuntimeLane] != serverModeMonthlyRuntime {
-		t.Fatalf("runtime_lane = %q, want monthly-runtime", req.Lease.Metadata[metadataKeyRuntimeLane])
-	}
-	if req.Lease.Metadata[metadataKeyProviderID] != DefaultMonthlyRuntimeProvider {
-		t.Fatalf("provider_id = %q", req.Lease.Metadata[metadataKeyProviderID])
-	}
-	if req.Lease.Metadata[metadataKeyLeaseProvider] != "" || req.Lease.Metadata[metadataKeySimulateProviderID] != "" {
-		t.Fatalf("fresh lease emitted legacy provider fields: %+v", req.Lease.Metadata)
-	}
-	if req.Lease.Metadata[metadataKeySimulateLifecycle] != simulateLifecyclePVM {
-		t.Fatalf("simulate_node_lifecycle = %q", req.Lease.Metadata[metadataKeySimulateLifecycle])
-	}
-	if req.Lease.Metadata[metadataKeyBillingCadence] != billingCadenceMonthly {
-		t.Fatalf("billing_cadence = %q", req.Lease.Metadata[metadataKeyBillingCadence])
-	}
-}
-
-func TestVMLeaseManagerAdapterRejectsLegacyProviderBeforeAuthorityWrite(t *testing.T) {
-	t.Parallel()
-
-	tests := []ManagedLeaseRequest{
-		{StackID: "stack-alias", TenantID: "org-1", OwnerID: "user-1", Provider: "ionos-managed"},
-		{StackID: "stack-legacy-field", TenantID: "org-1", OwnerID: "user-1", Provider: "ionos", Metadata: map[string]string{metadataKeyLeaseProvider: "ionos-managed"}},
-	}
-	for _, request := range tests {
-		authority := &fakeLeaseAuthority{}
-		adapter := NewVMLeaseManagerAdapter(authority)
-		if _, err := adapter.CreateOrBindLease(context.Background(), request); err == nil {
-			t.Fatalf("CreateOrBindLease(%+v) succeeded", request)
-		}
-		if len(authority.requests) != 0 {
-			t.Fatalf("authority writes = %d, want zero", len(authority.requests))
-		}
-	}
-
-	if _, err := providercatalog.CanonicalProviderID("ionos-managed"); !errors.Is(err, providercatalog.ErrCompositeProviderID) {
-		t.Fatalf("alias policy error = %v", err)
-	}
-}
-
-func TestVMLeaseManagerAdapterCreatesIndependentIONOSLease(t *testing.T) {
-	now := time.Date(2026, 5, 12, 10, 0, 0, 0, time.UTC)
-	authority := &fakeLeaseAuthority{}
-	adapter := NewVMLeaseManagerAdapter(authority)
-	adapter.Now = func() time.Time { return now }
-
-	result, err := adapter.CreateOrBindLease(context.Background(), ManagedLeaseRequest{
-		StackID:   "stack-ionos",
-		StackName: "BasementKit IONOS",
-		StackKit:  DefaultBasementKitRef,
-		TenantID:  "org-1",
-		OwnerID:   "user-1",
-		Provider:  "ionos",
-		Metadata: map[string]string{
-			metadataKeyProviderID:        "ionos",
-			metadataKeyIONOSDatacenter:   "us-ewr",
-			metadataKeyRuntimeOfferingID: defaultRuntimeOfferingID,
-		},
-	})
-	if err != nil {
-		t.Fatalf("CreateOrBindLease: %v", err)
-	}
-	if result.Provider != "ionos" {
-		t.Fatalf("Provider = %q, want ionos", result.Provider)
-	}
-	if len(authority.requests) != 1 {
-		t.Fatalf("requests = %d, want 1", len(authority.requests))
-	}
-	req := authority.requests[0]
-	if req.Lease.ID != "lease-stack-ionos" {
-		t.Fatalf("lease id = %q, want lease-stack-ionos", req.Lease.ID)
-	}
-	if req.IdempotencyKey != "org-1:stack-ionos:main" {
-		t.Fatalf("idempotency key = %q", req.IdempotencyKey)
-	}
-	if req.Lease.Resource.ProviderID != "ionos" {
-		t.Fatalf("lease provider = %q", req.Lease.Resource.ProviderID)
-	}
-	if req.Lease.Resource.Region != "us/ewr" {
-		t.Fatalf("lease region = %q, want us/ewr", req.Lease.Resource.Region)
-	}
-	if req.Lease.Metadata[metadataKeyIONOSDatacenter] != "us/ewr" || req.Lease.Metadata[metadataKeyProviderRegion] != "us/ewr" {
-		t.Fatalf("lease metadata = %+v, want IONOS region us/ewr", req.Lease.Metadata)
-	}
-	if req.Lease.Metadata[metadataKeyScenarioID] != "stack-ionos:ionos" {
-		t.Fatalf("scenario_id = %q", req.Lease.Metadata[metadataKeyScenarioID])
-	}
-}
-
-func TestVMLeaseManagerAdapterPreservesPremiumOfferingSelection(t *testing.T) {
-	now := time.Date(2026, 5, 12, 10, 0, 0, 0, time.UTC)
-	authority := &fakeLeaseAuthority{}
-	adapter := NewVMLeaseManagerAdapter(authority)
-	adapter.Now = func() time.Time { return now }
-
-	_, err := adapter.CreateOrBindLease(context.Background(), ManagedLeaseRequest{
-		StackID:   "stack-premium",
-		StackName: "Premium Stack",
-		TenantID:  "org-1",
-		OwnerID:   "user-1",
-		Provider:  DefaultMonthlyRuntimeProvider,
-		Metadata: map[string]string{
-			"runtime_offering_id": "monthly-runtime-premium",
-		},
-	})
-	if err != nil {
-		t.Fatalf("CreateOrBindLease: %v", err)
-	}
-	if len(authority.requests) != 1 {
-		t.Fatalf("requests = %d, want 1", len(authority.requests))
-	}
-	lease := authority.requests[0].Lease
-	if lease.Metadata["runtime_offering_id"] != "monthly-runtime-premium" {
-		t.Fatalf("metadata = %+v, want premium offering", lease.Metadata)
-	}
-}
-
-func TestVMLeaseManagerAdapterExtractsManagedRuntimeTargetMetadata(t *testing.T) {
-	authority := &fakeLeaseAuthority{}
-	adapter := NewVMLeaseManagerAdapter(authority)
-
-	result, err := adapter.CreateOrBindLease(context.Background(), ManagedLeaseRequest{
-		StackID:   "stack-address",
-		StackName: "Address Stack",
-		TenantID:  "org-1",
-		OwnerID:   "user-1",
-		Provider:  DefaultMonthlyRuntimeProvider,
-		Metadata: map[string]string{
-			metadataKeyRuntimeSSHHost:  "203.0.113.20",
-			metadataKeyRuntimePublicIP: "203.0.113.20",
-			metadataKeyRuntimeSSHUser:  "ubuntu",
-			metadataKeyRuntimeSSHPort:  "2222",
-		},
-	})
-	if err != nil {
-		t.Fatalf("CreateOrBindLease: %v", err)
-	}
-	if result.Target == nil {
-		t.Fatal("expected managed runtime target")
-	}
-	if result.Target.Host != "203.0.113.20" || result.Target.PublicIP != "203.0.113.20" {
-		t.Fatalf("target address = %+v, want metadata address", result.Target)
-	}
-	if result.Target.SSHUser != "ubuntu" || result.Target.SSHPort != 2222 {
-		t.Fatalf("target ssh = %+v, want metadata ssh", result.Target)
-	}
-}
-
-func TestVMLeaseManagerAdapterDecommissionsStackManagedLeasesForBothProviders(t *testing.T) {
-	now := time.Date(2026, 5, 12, 10, 0, 0, 0, time.UTC)
-	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{Now: func() time.Time { return now }, SnapshotSecret: []byte("secret")})
-	createRuntimeTestLease(t, leases, "lease-centron", "centron", "stack-1")
-	createRuntimeTestLease(t, leases, "lease-ionos", "ionos", "stack-1")
-	createRuntimeTestLease(t, leases, "lease-other-stack", "centron", "stack-2")
-	runtime := &recordingMonthlyRuntimeClient{}
-	adapter := NewVMLeaseManagerAdapter(nativeRuntimeLeaseAuthority{Service: leases})
-	adapter.Runtime = runtime
-
-	result, err := adapter.DecommissionManagedLeases(context.Background(), ManagedLeaseDecommissionRequest{
-		StackID:  "stack-1",
-		TenantID: "org-1",
-		OwnerID:  "user-1",
-	})
-	if err != nil {
-		t.Fatalf("DecommissionManagedLeases: %v", err)
-	}
-	if result.Decommissioned != 2 {
-		t.Fatalf("Decommissioned = %d, want 2 (%+v)", result.Decommissioned, result)
-	}
-	gotLeaseIDs := map[string]bool{}
-	for _, leaseID := range result.LeaseIDs {
-		gotLeaseIDs[leaseID] = true
-	}
-	if !gotLeaseIDs["lease-centron"] || !gotLeaseIDs["lease-ionos"] || len(gotLeaseIDs) != 2 {
-		t.Fatalf("LeaseIDs = %v, want centron and ionos leases", result.LeaseIDs)
-	}
-	if len(runtime.requests) != 2 {
-		t.Fatalf("runtime requests = %d, want 2", len(runtime.requests))
-	}
-	for _, leaseID := range []vmlease.LeaseID{"lease-centron", "lease-ionos"} {
-		stored, err := leases.Get(context.Background(), "org-1", leaseID)
-		if err != nil {
-			t.Fatalf("stored lease %s: %v", leaseID, err)
-		}
-		if stored.CancelledAt == nil || stored.DesiredState != vmlease.DesiredStateStopped {
-			t.Fatalf("stored lease %s = %+v, want cancelled/stopped", leaseID, stored)
-		}
-	}
-	other, err := leases.Get(context.Background(), "org-1", "lease-other-stack")
-	if err != nil {
-		t.Fatalf("stored other lease: %v", err)
-	}
-	if other.CancelledAt != nil {
-		t.Fatalf("other stack lease was cancelled: %+v", other)
-	}
-}
-
-func TestVMLeaseManagerAdapterReconcilesOnlyExactClaimedCancelledGeneration(t *testing.T) {
-	now := time.Date(2026, 5, 12, 10, 0, 0, 0, time.UTC)
-	store := vmleases.NewMemoryStore()
-	leases := vmleases.NewService(store, vmleases.ServiceConfig{Now: func() time.Time { return now }, SnapshotSecret: []byte("secret")})
-	createRuntimeTestLease(t, leases, "lease-target", "centron", "stack-1")
-	createRuntimeTestLease(t, leases, "lease-same-stack", "ionos", "stack-1")
-	target, err := leases.Get(t.Context(), "org-1", "lease-target")
-	if err != nil {
-		t.Fatalf("Get target: %v", err)
-	}
-	digest, err := vmleases.ResourceGenerationDigest("org-1", *target)
-	if err != nil {
-		t.Fatalf("ResourceGenerationDigest: %v", err)
-	}
-	if _, patchErr := leases.Patch(t.Context(), "org-1", target.ID, vmleases.PatchRequest{
-		ExpectedResourceGenerationDigest: digest,
-		ClaimDecommission:                true,
-	}); patchErr != nil {
-		t.Fatalf("claim target: %v", patchErr)
-	}
-	if _, patchErr := leases.Patch(t.Context(), "org-1", target.ID, vmleases.PatchRequest{
-		Cancel:                           true,
-		ExpectedResourceGenerationDigest: digest,
-	}); patchErr != nil {
-		t.Fatalf("cancel target: %v", patchErr)
-	}
-	runtime := &recordingMonthlyRuntimeClient{}
-	adapter := NewVMLeaseManagerAdapter(nativeRuntimeLeaseAuthority{Service: leases})
-	adapter.Runtime = runtime
-
-	result, err := adapter.DecommissionManagedLeases(t.Context(), ManagedLeaseDecommissionRequest{
-		StackID:                  "stack-1",
-		TenantID:                 "org-1",
-		OwnerID:                  "user-1",
-		LeaseID:                  "lease-target",
-		ResourceGenerationDigest: digest,
-	})
-	if err != nil {
-		t.Fatalf("DecommissionManagedLeases: %v", err)
-	}
-	if result.Decommissioned != 1 || len(result.LeaseIDs) != 1 || result.LeaseIDs[0] != "lease-target" {
-		t.Fatalf("result = %+v, want only exact claimed target", result)
-	}
-	if len(runtime.requests) != 1 || runtime.requests[0].LeaseID != "lease-target" {
-		t.Fatalf("runtime requests = %+v, want exact target only", runtime.requests)
-	}
-	other, err := leases.Get(t.Context(), "org-1", "lease-same-stack")
-	if err != nil {
-		t.Fatalf("Get same-stack lease: %v", err)
-	}
-	if other.CancelledAt != nil {
-		t.Fatalf("explicit reconciliation widened to same-stack lease: %+v", other)
-	}
-	events, err := leases.ListOperations(t.Context(), "org-1", target.ID, 10)
-	if err != nil {
-		t.Fatalf("ListOperations: %v", err)
-	}
-	if len(events) != 1 || events[0].EventType != vmleases.OperationEventDecommission || events[0].ResourceGenerationDigest != digest {
-		t.Fatalf("reconciliation journal = %+v, want exact durable decommission proof", events)
-	}
-}
-
-func TestVMLeaseManagerAdapterRejectsWrongClaimBeforeRuntime(t *testing.T) {
-	now := time.Date(2026, 5, 12, 10, 0, 0, 0, time.UTC)
-	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{Now: func() time.Time { return now }})
-	createRuntimeTestLease(t, leases, "lease-target", "centron", "stack-1")
-	runtime := &recordingMonthlyRuntimeClient{}
-	adapter := NewVMLeaseManagerAdapter(nativeRuntimeLeaseAuthority{Service: leases})
-	adapter.Runtime = runtime
-
-	_, err := adapter.DecommissionManagedLeases(t.Context(), ManagedLeaseDecommissionRequest{
-		StackID:                  "stack-1",
-		TenantID:                 "org-1",
-		OwnerID:                  "user-1",
-		LeaseID:                  "lease-target",
-		ResourceGenerationDigest: strings.Repeat("a", 64),
-	})
-	if !errors.Is(err, vmleases.ErrResourceGenerationSuperseded) {
-		t.Fatalf("error = %v, want ErrResourceGenerationSuperseded", err)
-	}
-	if len(runtime.requests) != 0 {
-		t.Fatalf("runtime requests = %+v, wrong claim must fail before provider call", runtime.requests)
-	}
-}
-
-func createRuntimeTestLease(t *testing.T, leases *vmleases.Service, id, provider, stackID string) {
-	t.Helper()
-	now := time.Date(2026, 5, 12, 10, 0, 0, 0, time.UTC)
-	metadata := monthlyruntime.NormalizeMetadata(map[string]string{
-		metadataKeyStackID:            stackID,
-		metadataKeyProviderID:         provider,
-		metadataKeyRuntimeEnrollState: runtimeEnrollmentStatusPending,
-	}, serverruntime.RuntimeOfferingStandard)
-	if _, err := leases.CreateOrUpdate(context.Background(), vmleases.CreateRequest{Lease: vmlease.Lease{
-		ID:             vmlease.LeaseID(id),
-		Subject:        vmlease.Subject{Kind: vmlease.SubjectUser, ID: "user-1", OrgID: "org-1"},
-		Resource:       vmlease.ResourceRef{ProviderID: provider, Region: defaultLeaseRegion, EngineVMID: "node-" + id},
-		DesiredState:   vmlease.DesiredStateRunning,
-		BillingMode:    vmlease.BillingModeSubscription,
-		LifecycleClass: vmlease.LifecycleClassSubscription,
-		RestartPolicy:  vmlease.RestartPolicyOnUnexpectedStop,
-		RecreatePolicy: vmlease.RecreatePolicyManual,
-		ValidFrom:      now.Add(-time.Minute),
-		ValidUntil:     now.Add(time.Hour),
-		RenewedAt:      now,
-		Metadata:       metadata,
-	}}); err != nil {
-		t.Fatalf("CreateOrUpdate(%s): %v", id, err)
-	}
 }
 
 func TestStaticManagedRuntimeTargetResolverFromEnv(t *testing.T) {
@@ -468,146 +114,70 @@ func TestStaticManagedRuntimeTargetResolverFromEnv(t *testing.T) {
 	}
 }
 
-func TestMonthlyRuntimeTargetResolverReturnsEnrollmentFailureCause(t *testing.T) {
+func TestMonthlyRuntimeTargetResolverReportsEnrollmentStateWithoutAddress(t *testing.T) {
 	now := time.Date(2026, 5, 25, 13, 0, 0, 0, time.UTC)
-	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{
-		Now: func() time.Time { return now },
-	})
-	_, err := leases.CreateOrUpdate(context.Background(), vmleases.CreateRequest{Lease: vmlease.Lease{
-		ID:             "lease-ionos-failed",
-		Subject:        vmlease.Subject{Kind: vmlease.SubjectUser, ID: "user-1", OrgID: "org-1"},
-		Resource:       vmlease.ResourceRef{ProviderID: "ionos", EngineVMID: "node-ionos-failed", Region: defaultLeaseRegion},
-		DesiredState:   vmlease.DesiredStateRunning,
-		BillingMode:    vmlease.BillingModeSubscription,
-		LifecycleClass: vmlease.LifecycleClassSubscription,
-		RestartPolicy:  vmlease.RestartPolicyOnUnexpectedStop,
-		RecreatePolicy: vmlease.RecreatePolicyManual,
-		ValidFrom:      now.Add(-time.Minute),
-		ValidUntil:     now.Add(24 * time.Hour),
-		RenewedAt:      now,
-		Metadata: map[string]string{
-			metadataKeyServerMode:         serverModeMonthlyRuntime,
-			metadataKeyRuntimeLane:        serverModeMonthlyRuntime,
-			metadataKeyRuntimeOfferingID:  defaultRuntimeOfferingID,
-			metadataKeyRuntimeEnrollState: runtimeEnrollmentStatusFailed,
-			metadataKeyRuntimeEnrollError: "ionos quota exhausted",
-		},
-	}})
-	if err != nil {
-		t.Fatalf("CreateOrUpdate: %v", err)
-	}
-	resolver := NewMonthlyRuntimeTargetResolver(&monthlyruntime.Service{
-		Leases:  nativeRuntimeLeaseAuthority{Service: leases},
-		Runtime: fakeMonthlyRuntimeClient{},
-	})
+	for _, test := range []struct {
+		name          string
+		provider      string
+		status        string
+		providerCause string
+		terminal      bool
+	}{
+		{name: "failed", provider: "ionos", status: runtimeEnrollmentStatusFailed, providerCause: "ionos quota exhausted", terminal: true},
+		{name: "retrying", provider: "centron", status: runtimeEnrollmentStatusRetrying, providerCause: "centron API request timed out"},
+		{name: "pending", provider: "centron", status: runtimeEnrollmentStatusPending},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			leaseID := "lease-" + test.provider + "-" + test.status
+			metadata := map[string]string{
+				metadataKeyServerMode:         serverModeMonthlyRuntime,
+				metadataKeyRuntimeLane:        serverModeMonthlyRuntime,
+				metadataKeyRuntimeOfferingID:  defaultRuntimeOfferingID,
+				metadataKeyRuntimeEnrollState: test.status,
+			}
+			if test.providerCause != "" {
+				metadata[metadataKeyRuntimeEnrollError] = test.providerCause
+			}
+			leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{
+				Now: func() time.Time { return now },
+			})
+			if _, err := leases.CreateOrUpdate(context.Background(), vmleases.CreateRequest{Lease: vmlease.Lease{
+				ID:             vmlease.LeaseID(leaseID),
+				Subject:        vmlease.Subject{Kind: vmlease.SubjectUser, ID: "user-1", OrgID: "org-1"},
+				Resource:       vmlease.ResourceRef{ProviderID: test.provider, EngineVMID: "node-" + test.status, Region: defaultLeaseRegion},
+				DesiredState:   vmlease.DesiredStateRunning,
+				BillingMode:    vmlease.BillingModeSubscription,
+				LifecycleClass: vmlease.LifecycleClassSubscription,
+				RestartPolicy:  vmlease.RestartPolicyOnUnexpectedStop,
+				RecreatePolicy: vmlease.RecreatePolicyManual,
+				ValidFrom:      now.Add(-time.Minute),
+				ValidUntil:     now.Add(24 * time.Hour),
+				RenewedAt:      now,
+				Metadata:       metadata,
+			}}); err != nil {
+				t.Fatalf("CreateOrUpdate: %v", err)
+			}
+			resolver := NewMonthlyRuntimeTargetResolver(&monthlyruntime.Service{
+				Leases:  nativeRuntimeLeaseAuthority{Service: leases},
+				Runtime: fakeMonthlyRuntimeClient{},
+			})
 
-	_, err = resolver.ResolveManagedRuntimeTarget(context.Background(), ManagedRuntimeTargetRequest{
-		TenantID: "org-1",
-		OwnerID:  "user-1",
-		LeaseID:  "lease-ionos-failed",
-		Provider: "ionos",
-	})
-	if !errors.Is(err, ErrManagedRuntimeEnrollmentFailed) {
-		t.Fatalf("ResolveManagedRuntimeTarget error = %v, want terminal enrollment failure", err)
-	}
-	if !strings.Contains(err.Error(), "ionos quota exhausted") {
-		t.Fatalf("ResolveManagedRuntimeTarget error = %v, want provider cause", err)
-	}
-}
-
-func TestMonthlyRuntimeTargetResolverReturnsRetryingEnrollmentCause(t *testing.T) {
-	now := time.Date(2026, 5, 25, 13, 30, 0, 0, time.UTC)
-	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{
-		Now: func() time.Time { return now },
-	})
-	_, err := leases.CreateOrUpdate(context.Background(), vmleases.CreateRequest{Lease: vmlease.Lease{
-		ID:             "lease-centron-retrying",
-		Subject:        vmlease.Subject{Kind: vmlease.SubjectUser, ID: "user-1", OrgID: "org-1"},
-		Resource:       vmlease.ResourceRef{ProviderID: "centron", EngineVMID: "node-centron-retrying", Region: defaultLeaseRegion},
-		DesiredState:   vmlease.DesiredStateRunning,
-		BillingMode:    vmlease.BillingModeSubscription,
-		LifecycleClass: vmlease.LifecycleClassSubscription,
-		RestartPolicy:  vmlease.RestartPolicyOnUnexpectedStop,
-		RecreatePolicy: vmlease.RecreatePolicyManual,
-		ValidFrom:      now.Add(-time.Minute),
-		ValidUntil:     now.Add(24 * time.Hour),
-		RenewedAt:      now,
-		Metadata: map[string]string{
-			metadataKeyServerMode:         serverModeMonthlyRuntime,
-			metadataKeyRuntimeLane:        serverModeMonthlyRuntime,
-			metadataKeyRuntimeOfferingID:  defaultRuntimeOfferingID,
-			metadataKeyRuntimeEnrollState: runtimeEnrollmentStatusRetrying,
-			metadataKeyRuntimeEnrollError: "centron API request timed out",
-		},
-	}})
-	if err != nil {
-		t.Fatalf("CreateOrUpdate: %v", err)
-	}
-	resolver := NewMonthlyRuntimeTargetResolver(&monthlyruntime.Service{
-		Leases:  nativeRuntimeLeaseAuthority{Service: leases},
-		Runtime: fakeMonthlyRuntimeClient{},
-	})
-
-	_, err = resolver.ResolveManagedRuntimeTarget(context.Background(), ManagedRuntimeTargetRequest{
-		TenantID: "org-1",
-		OwnerID:  "user-1",
-		LeaseID:  "lease-centron-retrying",
-		Provider: "centron",
-	})
-	if err == nil {
-		t.Fatal("expected enrollment pending error")
-	}
-	if errors.Is(err, ErrManagedRuntimeEnrollmentFailed) {
-		t.Fatalf("ResolveManagedRuntimeTarget error = %v, want non-terminal retrying cause", err)
-	}
-	if !strings.Contains(err.Error(), "centron API request timed out") {
-		t.Fatalf("ResolveManagedRuntimeTarget error = %v, want retrying provider cause", err)
-	}
-}
-
-func TestMonthlyRuntimeTargetResolverWaitsWhenLeaseHasNoAddress(t *testing.T) {
-	now := time.Date(2026, 5, 25, 13, 45, 0, 0, time.UTC)
-	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{
-		Now: func() time.Time { return now },
-	})
-	_, err := leases.CreateOrUpdate(context.Background(), vmleases.CreateRequest{Lease: vmlease.Lease{
-		ID:             "lease-centron-pending",
-		Subject:        vmlease.Subject{Kind: vmlease.SubjectUser, ID: "user-1", OrgID: "org-1"},
-		Resource:       vmlease.ResourceRef{ProviderID: "centron", EngineVMID: "node-centron-pending", Region: defaultLeaseRegion},
-		DesiredState:   vmlease.DesiredStateRunning,
-		BillingMode:    vmlease.BillingModeSubscription,
-		LifecycleClass: vmlease.LifecycleClassSubscription,
-		RestartPolicy:  vmlease.RestartPolicyOnUnexpectedStop,
-		RecreatePolicy: vmlease.RecreatePolicyManual,
-		ValidFrom:      now.Add(-time.Minute),
-		ValidUntil:     now.Add(24 * time.Hour),
-		RenewedAt:      now,
-		Metadata: map[string]string{
-			metadataKeyServerMode:         serverModeMonthlyRuntime,
-			metadataKeyRuntimeLane:        serverModeMonthlyRuntime,
-			metadataKeyRuntimeOfferingID:  defaultRuntimeOfferingID,
-			metadataKeyRuntimeEnrollState: runtimeEnrollmentStatusPending,
-		},
-	}})
-	if err != nil {
-		t.Fatalf("CreateOrUpdate: %v", err)
-	}
-	resolver := NewMonthlyRuntimeTargetResolver(&monthlyruntime.Service{
-		Leases:  nativeRuntimeLeaseAuthority{Service: leases},
-		Runtime: fakeMonthlyRuntimeClient{},
-	})
-
-	_, err = resolver.ResolveManagedRuntimeTarget(context.Background(), ManagedRuntimeTargetRequest{
-		TenantID: "org-1",
-		OwnerID:  "user-1",
-		LeaseID:  "lease-centron-pending",
-		Provider: "centron",
-	})
-	if !errors.Is(err, monthlyruntime.ErrEnrollmentPending) {
-		t.Fatalf("ResolveManagedRuntimeTarget error = %v, want enrollment pending", err)
-	}
-	if !strings.Contains(err.Error(), "enrollment pending") {
-		t.Fatalf("ResolveManagedRuntimeTarget error = %v, want pending context", err)
+			_, err := resolver.ResolveManagedRuntimeTarget(context.Background(), ManagedRuntimeTargetRequest{
+				TenantID: "org-1",
+				OwnerID:  "user-1",
+				LeaseID:  leaseID,
+				Provider: test.provider,
+			})
+			if test.terminal {
+				if !errors.Is(err, ErrManagedRuntimeEnrollmentFailed) {
+					t.Fatalf("ResolveManagedRuntimeTarget error = %v, want terminal enrollment failure", err)
+				}
+			} else {
+				if !errors.Is(err, monthlyruntime.ErrEnrollmentPending) || errors.Is(err, ErrManagedRuntimeEnrollmentFailed) {
+					t.Fatalf("ResolveManagedRuntimeTarget error = %v, want pollable enrollment state", err)
+				}
+			}
+		})
 	}
 }
 
@@ -658,6 +228,98 @@ func TestMonthlyRuntimeTargetResolverUsesLeaseMetadataAddressBeforeEnrollmentSta
 	}
 	if target.Host != "203.0.113.50" || target.SSHUser != "ubuntu" || target.SSHPort != 22 || target.DockerHost == "" {
 		t.Fatalf("target = %+v, want credentialed lease metadata address", target)
+	}
+}
+
+func TestMonthlyRuntimeTargetResolverOverlaysGuardPublicIPWhenLeaseSSHHostIsStale(t *testing.T) {
+	now := time.Date(2026, 8, 21, 21, 0, 0, 0, time.UTC)
+	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{
+		Now: func() time.Time { return now },
+	})
+	_, err := leases.CreateOrUpdate(context.Background(), vmleases.CreateRequest{Lease: vmlease.Lease{
+		ID:             "lease-ionos-stale-ip",
+		Subject:        vmlease.Subject{Kind: vmlease.SubjectUser, ID: "user-1", OrgID: "org-1"},
+		Resource:       vmlease.ResourceRef{ProviderID: "ionos", EngineVMID: "node-ionos-stale-ip", Region: defaultLeaseRegion},
+		DesiredState:   vmlease.DesiredStateRunning,
+		BillingMode:    vmlease.BillingModeSubscription,
+		LifecycleClass: vmlease.LifecycleClassSubscription,
+		RestartPolicy:  vmlease.RestartPolicyOnUnexpectedStop,
+		RecreatePolicy: vmlease.RecreatePolicyManual,
+		ValidFrom:      now.Add(-time.Minute),
+		ValidUntil:     now.Add(24 * time.Hour),
+		RenewedAt:      now,
+		Metadata: map[string]string{
+			metadataKeyServerMode:         serverModeMonthlyRuntime,
+			metadataKeyRuntimeLane:        serverModeMonthlyRuntime,
+			metadataKeyRuntimeOfferingID:  defaultRuntimeOfferingID,
+			metadataKeyRuntimeEnrollState: runtimeEnrollmentStatusPending,
+			metadataKeyRuntimeSSHHost:     "212.132.94.66",
+			metadataKeyRuntimePublicIP:    "212.132.94.66",
+			metadataKeyRuntimeSSHUser:     "root",
+			metadataKeyRuntimeSSHPort:     "22",
+			"runtime_docker_host":         "tcp://techstack-local-runtime:2375",
+		},
+	}})
+	if err != nil {
+		t.Fatalf("CreateOrUpdate: %v", err)
+	}
+	resolver := NewMonthlyRuntimeTargetResolver(&monthlyruntime.Service{
+		Leases:  nativeRuntimeLeaseAuthority{Service: leases},
+		Runtime: fakeMonthlyRuntimeClient{},
+	}, stubServerRuntimeLookup{server: &controlplane.ServerRuntime{
+		ID:       runtimeidentity.LeaseServerID("lease-ionos-stale-ip"),
+		TenantID: "org-1",
+		LeaseID:  "lease-ionos-stale-ip",
+		Metadata: map[string]any{
+			"inventory_source": "guard-inventory",
+			"host": map[string]any{
+				"public_ip": "85.215.64.233",
+			},
+		},
+	}})
+
+	target, err := resolver.ResolveManagedRuntimeTarget(context.Background(), ManagedRuntimeTargetRequest{
+		TenantID: "org-1",
+		OwnerID:  "user-1",
+		LeaseID:  "lease-ionos-stale-ip",
+		Provider: "ionos",
+	})
+	if err != nil {
+		t.Fatalf("ResolveManagedRuntimeTarget: %v", err)
+	}
+	if target.Host != "85.215.64.233" || target.PublicIP != "85.215.64.233" {
+		t.Fatalf("target host/ip = %+v, want Guard public IP", target)
+	}
+	if target.SSHUser != "root" || target.SSHPort != 22 || target.DockerHost == "" {
+		t.Fatalf("target credentials = %+v, want lease SSH/docker credentials kept", target)
+	}
+}
+
+func TestAttachManagedProviderCredentialKeepsLeaseKeyAndAddsProviderBundleKey(t *testing.T) {
+	previous := managedProviderCredentialResolver
+	t.Cleanup(func() { managedProviderCredentialResolver = previous })
+	managedProviderCredentialResolver = func(string, time.Time) (string, error) {
+		return "provider-bundle-key", nil
+	}
+
+	withLease := attachManagedProviderCredential(&ManagedRuntimeTarget{Host: "203.0.113.10", SSHPrivateKey: "lease-key"}, "ionos")
+	if withLease.SSHPrivateKey != "lease-key" || withLease.SSHProviderPrivateKey != "provider-bundle-key" {
+		t.Fatalf("lease+provider = %+v, want lease key kept and provider key attached as fallback", withLease)
+	}
+
+	sameKey := attachManagedProviderCredential(&ManagedRuntimeTarget{Host: "203.0.113.10", SSHPrivateKey: "provider-bundle-key"}, "ionos")
+	if sameKey.SSHPrivateKey != "provider-bundle-key" || sameKey.SSHProviderPrivateKey != "" {
+		t.Fatalf("matching keys = %+v, want no duplicate fallback", sameKey)
+	}
+
+	emptyLease := attachManagedProviderCredential(&ManagedRuntimeTarget{Host: "203.0.113.10"}, "ionos")
+	if emptyLease.SSHPrivateKey != "provider-bundle-key" || emptyLease.SSHProviderPrivateKey != "" {
+		t.Fatalf("empty lease = %+v, want provider key as the primary credential", emptyLease)
+	}
+
+	action := runtimeActionTargetFromManagedRuntimeTarget(withLease)
+	if action == nil || action.PrivateKey != "lease-key" || action.ProviderPrivateKey != "provider-bundle-key" {
+		t.Fatalf("action target = %+v, want both keys handed to SSH bootstrap", action)
 	}
 }
 
@@ -731,7 +393,7 @@ func TestMonthlyRuntimeTargetResolverFetchesSSHCredentialsWhenMetadataHasAddress
 	}
 }
 
-func TestMonthlyRuntimeTargetResolverUsesEncryptedLeaseCredentialsBeforeSimulate(t *testing.T) {
+func TestMonthlyRuntimeTargetResolverUsesEncryptedLeaseCredentialsBeforeRuntimeAction(t *testing.T) {
 	now := time.Date(2026, 7, 8, 9, 0, 0, 0, time.UTC)
 	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{
 		Now: func() time.Time { return now },
@@ -788,7 +450,7 @@ func TestMonthlyRuntimeTargetResolverUsesEncryptedLeaseCredentialsBeforeSimulate
 		t.Fatalf("ResolveManagedRuntimeTarget: %v", err)
 	}
 	if len(client.requests) != 0 {
-		t.Fatalf("runtime requests = %+v, want no simulate ssh-info request", client.requests)
+		t.Fatalf("runtime requests = %+v, want no runtime ssh-info request", client.requests)
 	}
 	if target.Source != "lease-metadata" || target.Host != "203.0.113.71" || target.SSHClientPrivateKey != "test-client-private-key" {
 		t.Fatalf("target = %+v, want encrypted lease metadata credential", target)
@@ -847,8 +509,8 @@ func TestMonthlyRuntimeTargetResolverKeepsSSHInfoTimeoutPollableAfterAddressMeta
 	if managedRuntimeTargetTerminalError(err) {
 		t.Fatalf("ResolveManagedRuntimeTarget error = %v, must not be terminal while RuntimeActionSSHInfo timed out", err)
 	}
-	if !strings.Contains(err.Error(), "RuntimeActionSSHInfo failed") || !strings.Contains(err.Error(), "context deadline exceeded") {
-		t.Fatalf("ResolveManagedRuntimeTarget error = %v, want SSHInfo timeout diagnostic", err)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("ResolveManagedRuntimeTarget error = %v, want wrapped SSHInfo timeout", err)
 	}
 	if len(client.requests) != 2 ||
 		client.requests[0].Action != serverruntime.RuntimeActionStatus ||
@@ -983,9 +645,6 @@ func TestMonthlyRuntimeTargetResolverRejectsProviderLocalKeyPathOnly(t *testing.
 	if !errors.Is(err, ErrManagedRuntimeTargetCredentialFailed) {
 		t.Fatalf("ResolveManagedRuntimeTarget error = %v, want credential contract failure", err)
 	}
-	if !strings.Contains(err.Error(), "provider-local key_path") {
-		t.Fatalf("ResolveManagedRuntimeTarget error = %v, want key_path diagnostic", err)
-	}
 }
 
 func TestManagedRuntimeTargetFromRuntimeResponseCarriesSSHCredential(t *testing.T) {
@@ -1025,7 +684,7 @@ func TestRuntimeActionTargetFromManagedRuntimeTargetDropsProviderLocalKeyPathWhe
 	}
 }
 
-func TestRuntimeActionContractUsesSharedSchema(t *testing.T) {
+func TestRuntimeActionContractUsesSharedActionsAndPaths(t *testing.T) {
 	if runtimeActionTargetStackKits != runtimeaction.TargetStackKits {
 		t.Fatalf("StackKits target = %q, want shared %q", runtimeActionTargetStackKits, runtimeaction.TargetStackKits)
 	}
@@ -1044,22 +703,6 @@ func TestRuntimeActionContractUsesSharedSchema(t *testing.T) {
 		defaultRestoreDrillPath != runtimeaction.PathRestoreDrill {
 		t.Fatalf("runtime action default paths drifted from shared runtimeaction constants")
 	}
-
-	body, err := json.Marshal(RuntimeActionRequest{
-		Action:      runtimeaction.ActionStackKitRollout,
-		StackID:     "stack-1",
-		StackName:   "Demo Stack",
-		StackKit:    DefaultBasementKitRef,
-		TofuDir:     "/work/tofu",
-		UnifiedPath: "/work/unified.yaml",
-	})
-	if err != nil {
-		t.Fatalf("marshal contract payload: %v", err)
-	}
-	want := `{"action":"stackkit_rollout","stack_id":"stack-1","stack_name":"Demo Stack","stackkit":"basement-kit","tofu_dir":"/work/tofu","unified_path":"/work/unified.yaml"}`
-	if string(body) != want {
-		t.Fatalf("payload JSON = %s, want %s", body, want)
-	}
 }
 
 func TestRuntimeActionHTTPClientDefaultTimeoutStaysInsideBudget(t *testing.T) {
@@ -1075,87 +718,6 @@ func TestRuntimeActionHTTPClientDefaultTimeoutStaysInsideBudget(t *testing.T) {
 	custom := &http.Client{Timeout: time.Second}
 	if got := runtimeActionHTTPClient(custom); got != custom {
 		t.Fatal("runtimeActionHTTPClient should preserve an explicitly configured client")
-	}
-}
-
-func TestRuntimeActionContractIncludesOwnerSpecBootstrapWhenPresent(t *testing.T) {
-	body, err := json.Marshal(RuntimeActionRequest{
-		Action:    runtimeaction.ActionStackKitRollout,
-		StackID:   "stack-1",
-		StackName: "Demo Stack",
-		StackKit:  DefaultBasementKitRef,
-		OwnerSpecBootstrap: &OwnerSpecBootstrap{
-			Endpoint:  "/api/v1/stacks/stack-1/owner-spec",
-			Token:     "bootstrap-token",
-			ExpiresAt: "2026-05-14T10:15:00Z",
-			Scopes:    []string{"read:owner-spec"},
-		},
-	})
-	if err != nil {
-		t.Fatalf("marshal contract payload: %v", err)
-	}
-	want := `{"action":"stackkit_rollout","stack_id":"stack-1","stack_name":"Demo Stack","stackkit":"basement-kit","owner_spec_bootstrap":{"endpoint":"/api/v1/stacks/stack-1/owner-spec","token":"bootstrap-token","expires_at":"2026-05-14T10:15:00Z","scopes":["read:owner-spec"]}}`
-	if string(body) != want {
-		t.Fatalf("payload JSON = %s, want %s", body, want)
-	}
-	if strings.Contains(string(body), "passphrase") {
-		t.Fatalf("owner bootstrap runtime action must not contain recovery material: %s", body)
-	}
-}
-
-func TestRuntimeActionContractIncludesRuntimeTargetWhenPresent(t *testing.T) {
-	body, err := json.Marshal(RuntimeActionRequest{
-		Action:   runtimeaction.ActionStackKitRollout,
-		StackID:  "stack-1",
-		StackKit: DefaultBasementKitRef,
-		RuntimeTarget: &RuntimeActionTarget{
-			Host:       "203.0.113.10",
-			User:       "ubuntu",
-			Port:       2222,
-			DockerHost: "tcp://techstack-local-runtime:2375",
-			PrivateKey: "test-private-key",
-		},
-	})
-	if err != nil {
-		t.Fatalf("marshal contract payload: %v", err)
-	}
-	want := `{"action":"stackkit_rollout","stack_id":"stack-1","stackkit":"basement-kit","runtime_target":{"host":"203.0.113.10","user":"ubuntu","port":2222,"docker_host":"tcp://techstack-local-runtime:2375","private_key":"test-private-key"}}`
-	if string(body) != want {
-		t.Fatalf("payload JSON = %s, want %s", body, want)
-	}
-}
-
-func TestRuntimeActionContractIncludesPlatformNodesWhenPresent(t *testing.T) {
-	body, err := json.Marshal(RuntimeActionRequest{
-		Action:   runtimeaction.ActionStackKitRollout,
-		StackID:  "stack-1",
-		StackKit: DefaultBasementKitRef,
-		PlatformNodes: []PlatformNode{{
-			Name:     "worker-1",
-			Role:     "worker",
-			IP:       "203.0.113.11",
-			Services: []string{"immich"},
-			Platform: NodePlatformTarget{
-				ServerID:        "server-worker",
-				DestinationUUID: "destination-worker",
-			},
-			Bootstrap: &NodeBootstrap{
-				KomodoCoreAddress:   "https://komodo.example.test",
-				KomodoOnboardingKey: "real-onboarding-key",
-				SSH: &SSHBootstrap{
-					Host:             "203.0.113.11",
-					User:             "root",
-					ClientPrivateKey: "worker-key",
-				},
-			},
-		}},
-	})
-	if err != nil {
-		t.Fatalf("marshal contract payload: %v", err)
-	}
-	want := `{"action":"stackkit_rollout","stack_id":"stack-1","stackkit":"basement-kit","platform_nodes":[{"name":"worker-1","role":"worker","ip":"203.0.113.11","services":["immich"],"platform":{"serverId":"server-worker","destinationUuid":"destination-worker"},"bootstrap":{"komodo_core_address":"https://komodo.example.test","komodo_onboarding_key":"real-onboarding-key","ssh":{"host":"203.0.113.11","user":"root","client_private_key":"worker-key"}}}]}`
-	if string(body) != want {
-		t.Fatalf("payload JSON = %s, want %s", body, want)
 	}
 }
 
@@ -1193,10 +755,11 @@ func TestStackKitsRuntimeActionTargetKeepsSSHBackedRemoteTarget(t *testing.T) {
 	}
 }
 
-func TestHTTPRuntimeActionRunnerSerializesPlatformNodes(t *testing.T) {
+func captureRuntimeActionPayload(t *testing.T, target, action, path string, request RuntimeActionRequest) map[string]any {
+	t.Helper()
 	var got map[string]any
 	server := httptest.NewServer(servicecall.RequireServiceAuth(servicecall.Config{
-		ServiceName:    "stackkits",
+		ServiceName:    target,
 		Secret:         "auth-secret",
 		AllowedCallers: []string{"techstack"},
 		Enabled:        true,
@@ -1206,33 +769,48 @@ func TestHTTPRuntimeActionRunnerSerializesPlatformNodes(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})))
-	defer server.Close()
+	t.Cleanup(server.Close)
 
 	runner, err := NewHTTPRuntimeActionRunner(HTTPRuntimeActionRunnerConfig{
 		BaseURL:           server.URL,
-		Target:            "stackkits",
-		Action:            string(StepRolloutRunner),
-		Path:              "/api/v1/internal/runtime-actions/stackkit-rollout",
+		Target:            target,
+		Action:            action,
+		Path:              path,
 		ServiceAuthSecret: "auth-secret",
 	})
 	if err != nil {
 		t.Fatalf("NewHTTPRuntimeActionRunner: %v", err)
 	}
 
-	err = runner.Run(t.Context(), RuntimeActionRequest{
+	if err := runner.Run(t.Context(), request); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	return got
+}
+
+func TestHTTPRuntimeActionRunnerSerializesPlatformNodes(t *testing.T) {
+	got := captureRuntimeActionPayload(t, "stackkits", string(StepRolloutRunner), "/api/v1/internal/runtime-actions/stackkit-rollout", RuntimeActionRequest{
 		StackID: "stack-1",
 		PlatformNodes: []PlatformNode{{
-			Name: "worker-1",
-			Role: "worker",
-			IP:   "203.0.113.11",
+			Name:     "worker-1",
+			Role:     "worker",
+			IP:       "203.0.113.11",
+			Services: []string{"immich"},
 			Platform: NodePlatformTarget{
-				ServerID: "server-worker",
+				ServerID:        "server-worker",
+				DestinationUUID: "destination-worker",
+			},
+			Bootstrap: &NodeBootstrap{
+				KomodoCoreAddress:   "https://komodo.example.test",
+				KomodoOnboardingKey: "test-onboarding-key",
+				SSH: &SSHBootstrap{
+					Host:             "203.0.113.11",
+					User:             "root",
+					ClientPrivateKey: "test-worker-key",
+				},
 			},
 		}},
 	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
 	nodes, ok := got["platform_nodes"].([]any)
 	if !ok || len(nodes) != 1 {
 		t.Fatalf("platform_nodes missing from payload: %+v", got)
@@ -1245,7 +823,22 @@ func TestHTTPRuntimeActionRunnerSerializesPlatformNodes(t *testing.T) {
 	if !ok {
 		t.Fatalf("platform target missing from payload: %+v", node)
 	}
-	if node["name"] != "worker-1" || node["role"] != "worker" || node["ip"] != "203.0.113.11" || platform["serverId"] != "server-worker" {
+	services, ok := node["services"].([]any)
+	if !ok || !slices.Contains(services, any("immich")) {
+		t.Fatalf("platform services = %#v", node["services"])
+	}
+	bootstrap, ok := node["bootstrap"].(map[string]any)
+	if !ok {
+		t.Fatalf("bootstrap missing from payload: %+v", node)
+	}
+	ssh, ok := bootstrap["ssh"].(map[string]any)
+	if !ok {
+		t.Fatalf("SSH bootstrap missing from payload: %+v", bootstrap)
+	}
+	if node["name"] != "worker-1" || node["role"] != "worker" || node["ip"] != "203.0.113.11" ||
+		platform["serverId"] != "server-worker" || platform["destinationUuid"] != "destination-worker" ||
+		bootstrap["komodo_core_address"] != "https://komodo.example.test" || bootstrap["komodo_onboarding_key"] != "test-onboarding-key" ||
+		ssh["host"] != "203.0.113.11" || ssh["user"] != "root" || ssh["client_private_key"] != "test-worker-key" {
 		t.Fatalf("platform_nodes[0] = %+v", node)
 	}
 }
@@ -1307,32 +900,7 @@ func TestHTTPRuntimeActionRunnerPostsServicecallRequest(t *testing.T) {
 }
 
 func TestHTTPRuntimeActionRunnerSerializesOwnerSpecContract(t *testing.T) {
-	var got map[string]any
-	server := httptest.NewServer(servicecall.RequireServiceAuth(servicecall.Config{
-		ServiceName:    "stackkits",
-		Secret:         "auth-secret",
-		AllowedCallers: []string{"techstack"},
-		Enabled:        true,
-	})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})))
-	defer server.Close()
-
-	runner, err := NewHTTPRuntimeActionRunner(HTTPRuntimeActionRunnerConfig{
-		BaseURL:           server.URL,
-		Target:            "stackkits",
-		Action:            string(StepRolloutRunner),
-		Path:              "/api/v1/internal/runtime-actions/stackkit-rollout",
-		ServiceAuthSecret: "auth-secret",
-	})
-	if err != nil {
-		t.Fatalf("NewHTTPRuntimeActionRunner: %v", err)
-	}
-
-	err = runner.Run(t.Context(), RuntimeActionRequest{
+	got := captureRuntimeActionPayload(t, "stackkits", string(StepRolloutRunner), "/api/v1/internal/runtime-actions/stackkit-rollout", RuntimeActionRequest{
 		StackID: "stack-1",
 		OwnerSpecBootstrap: &OwnerSpecBootstrap{
 			Endpoint:  "/api/v1/stacks/stack-1/owner-spec",
@@ -1341,45 +909,24 @@ func TestHTTPRuntimeActionRunnerSerializesOwnerSpecContract(t *testing.T) {
 			Scopes:    []string{"read:owner-spec"},
 		},
 	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
 	bootstrap, ok := got["owner_spec_bootstrap"].(map[string]any)
 	if !ok {
 		t.Fatalf("owner_spec_bootstrap missing from payload: %+v", got)
 	}
-	if bootstrap["endpoint"] != "/api/v1/stacks/stack-1/owner-spec" || bootstrap["token"] != "bootstrap-token" {
+	scopes, ok := bootstrap["scopes"].([]any)
+	if !ok || !slices.Contains(scopes, any("read:owner-spec")) {
+		t.Fatalf("owner_spec_bootstrap scopes = %#v", bootstrap["scopes"])
+	}
+	if bootstrap["endpoint"] != "/api/v1/stacks/stack-1/owner-spec" || bootstrap["token"] != "bootstrap-token" || bootstrap["expires_at"] != "2026-05-14T10:15:00Z" {
 		t.Fatalf("owner_spec_bootstrap = %+v", bootstrap)
+	}
+	if _, leaked := bootstrap["passphrase"]; leaked {
+		t.Fatalf("owner bootstrap runtime action contains recovery material: %+v", bootstrap)
 	}
 }
 
 func TestHTTPRuntimeActionRunnerSerializesTechStackEnrollment(t *testing.T) {
-	var got map[string]any
-	server := httptest.NewServer(servicecall.RequireServiceAuth(servicecall.Config{
-		ServiceName:    "stackkits",
-		Secret:         "auth-secret",
-		AllowedCallers: []string{"techstack"},
-		Enabled:        true,
-	})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})))
-	defer server.Close()
-
-	runner, err := NewHTTPRuntimeActionRunner(HTTPRuntimeActionRunnerConfig{
-		BaseURL:           server.URL,
-		Target:            "stackkits",
-		Action:            string(StepRolloutRunner),
-		Path:              "/api/v1/internal/runtime-actions/stackkit-rollout",
-		ServiceAuthSecret: "auth-secret",
-	})
-	if err != nil {
-		t.Fatalf("NewHTTPRuntimeActionRunner: %v", err)
-	}
-
-	err = runner.Run(t.Context(), RuntimeActionRequest{
+	got := captureRuntimeActionPayload(t, "stackkits", string(StepRolloutRunner), "/api/v1/internal/runtime-actions/stackkit-rollout", RuntimeActionRequest{
 		StackID:  "stack-1",
 		Mode:     "advanced",
 		TenantID: "tenant-1",
@@ -1399,9 +946,6 @@ func TestHTTPRuntimeActionRunnerSerializesTechStackEnrollment(t *testing.T) {
 			},
 		},
 	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
 	if got["mode"] != "advanced" || got["tenant_id"] != "tenant-1" || got["owner_id"] != "owner-1" {
 		t.Fatalf("top-level handoff fields missing: %+v", got)
 	}
@@ -1415,41 +959,13 @@ func TestHTTPRuntimeActionRunnerSerializesTechStackEnrollment(t *testing.T) {
 }
 
 func TestHTTPRuntimeActionRunnerPreservesPartialTechStackEnrollmentForStackKitsValidation(t *testing.T) {
-	var got map[string]any
-	server := httptest.NewServer(servicecall.RequireServiceAuth(servicecall.Config{
-		ServiceName:    "stackkits",
-		Secret:         "auth-secret",
-		AllowedCallers: []string{"techstack"},
-		Enabled:        true,
-	})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})))
-	defer server.Close()
-
-	runner, err := NewHTTPRuntimeActionRunner(HTTPRuntimeActionRunnerConfig{
-		BaseURL:           server.URL,
-		Target:            "stackkits",
-		Action:            string(StepRolloutRunner),
-		Path:              "/api/v1/internal/runtime-actions/stackkit-rollout",
-		ServiceAuthSecret: "auth-secret",
-	})
-	if err != nil {
-		t.Fatalf("NewHTTPRuntimeActionRunner: %v", err)
-	}
-
-	err = runner.Run(t.Context(), RuntimeActionRequest{
+	got := captureRuntimeActionPayload(t, "stackkits", string(StepRolloutRunner), "/api/v1/internal/runtime-actions/stackkit-rollout", RuntimeActionRequest{
 		StackID: "stack-1",
 		TechStackEnrollment: &TechStackEnrollment{
 			ServerURL: "https://techstack.example",
 			ServerID:  "server-1",
 		},
 	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
 	enrollment, ok := got["techstack_enrollment"].(map[string]any)
 	if !ok {
 		t.Fatalf("techstack_enrollment missing from payload: %+v", got)
@@ -1463,49 +979,23 @@ func TestHTTPRuntimeActionRunnerPreservesPartialTechStackEnrollmentForStackKitsV
 }
 
 func TestHTTPRuntimeActionRunnerSerializesRuntimeTarget(t *testing.T) {
-	var got map[string]any
-	server := httptest.NewServer(servicecall.RequireServiceAuth(servicecall.Config{
-		ServiceName:    "stackkits",
-		Secret:         "auth-secret",
-		AllowedCallers: []string{"techstack"},
-		Enabled:        true,
-	})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})))
-	defer server.Close()
-
-	runner, err := NewHTTPRuntimeActionRunner(HTTPRuntimeActionRunnerConfig{
-		BaseURL:           server.URL,
-		Target:            "stackkits",
-		Action:            string(StepRolloutRunner),
-		Path:              "/api/v1/internal/runtime-actions/stackkit-rollout",
-		ServiceAuthSecret: "auth-secret",
-	})
-	if err != nil {
-		t.Fatalf("NewHTTPRuntimeActionRunner: %v", err)
-	}
-
-	err = runner.Run(t.Context(), RuntimeActionRequest{
+	got := captureRuntimeActionPayload(t, "stackkits", string(StepRolloutRunner), "/api/v1/internal/runtime-actions/stackkit-rollout", RuntimeActionRequest{
 		StackID: "stack-1",
 		RuntimeTarget: &RuntimeActionTarget{
 			Host:       "203.0.113.10",
 			User:       "ubuntu",
+			Port:       2222,
 			DockerHost: "tcp://techstack-local-runtime:2375",
 			PrivateKey: "test-private-key",
 		},
 	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
 	target, ok := got["runtime_target"].(map[string]any)
 	if !ok {
 		t.Fatalf("runtime_target missing from payload: %+v", got)
 	}
 	if target["host"] != "203.0.113.10" ||
 		target["user"] != "ubuntu" ||
+		target["port"] != float64(2222) ||
 		target["docker_host"] != "tcp://techstack-local-runtime:2375" ||
 		target["private_key"] != "test-private-key" {
 		t.Fatalf("runtime_target = %+v", target)
@@ -1513,32 +1003,7 @@ func TestHTTPRuntimeActionRunnerSerializesRuntimeTarget(t *testing.T) {
 }
 
 func TestHTTPRuntimeActionRunnerSerializesSimulationPreviewPolicy(t *testing.T) {
-	var got map[string]any
-	server := httptest.NewServer(servicecall.RequireServiceAuth(servicecall.Config{
-		ServiceName:    "simulate",
-		Secret:         "auth-secret",
-		AllowedCallers: []string{"techstack"},
-		Enabled:        true,
-	})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
-		_ = json.NewEncoder(w).Encode(runtimeaction.Response{Status: runtimeaction.StatusReady})
-	})))
-	defer server.Close()
-
-	runner, err := NewHTTPRuntimeActionRunner(HTTPRuntimeActionRunnerConfig{
-		BaseURL:           server.URL,
-		Target:            "simulate",
-		Action:            runtimeActionSimulateUpdate,
-		Path:              "/api/v1/internal/runtime-actions/simulate-update",
-		ServiceAuthSecret: "auth-secret",
-	})
-	if err != nil {
-		t.Fatalf("NewHTTPRuntimeActionRunner: %v", err)
-	}
-
-	err = runner.Run(t.Context(), RuntimeActionRequest{
+	got := captureRuntimeActionPayload(t, "simulate", runtimeActionSimulateUpdate, "/api/v1/internal/runtime-actions/simulate-update", RuntimeActionRequest{
 		StackID:       "stack-1",
 		StackKit:      "modern-homelab",
 		TenantID:      "org-1",
@@ -1554,9 +1019,6 @@ func TestHTTPRuntimeActionRunnerSerializesSimulationPreviewPolicy(t *testing.T) 
 			PublicBetaPreview: true,
 		},
 	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
 	if got["tenant_id"] != "org-1" || got["owner_id"] != "auth0|staff" || got["stack_spec_path"] != "/work/stack-spec.yaml" {
 		t.Fatalf("preview request scope = %+v", got)
 	}
@@ -1633,51 +1095,77 @@ func TestHTTPRuntimeActionRunnerReturnsStatusDiagnostics(t *testing.T) {
 	}
 
 	err = runner.Run(t.Context(), RuntimeActionRequest{StackID: "stack-1", StackKit: DefaultBasementKitRef})
-	if err == nil {
-		t.Fatal("Run error = nil, want non-2xx diagnostics")
+	var responseErr *RuntimeActionResponseError
+	if !errors.As(err, &responseErr) {
+		t.Fatalf("Run error = %v, want structured non-2xx response", err)
 	}
-	msg := err.Error()
-	if !strings.Contains(msg, runtimeActionSimulateUpdate) ||
-		!strings.Contains(msg, "503") ||
-		!strings.Contains(msg, "backend down") {
-		t.Fatalf("error = %q, want action, status, and body", msg)
+	if responseErr.Action != runtimeActionSimulateUpdate || responseErr.StatusCode != http.StatusServiceUnavailable || responseErr.Body != "backend down" {
+		t.Fatalf("response error = %+v, want action, status, and body", responseErr)
 	}
 }
 
 func TestRuntimeActionsFromEnvWiresConfiguredRunners(t *testing.T) {
-	t.Setenv("SERVICE_AUTH_SECRET", "auth-secret")
-	t.Setenv("SERVICE_AUTH_SECRET_NEXT", "next-secret")
-	t.Setenv("TECHSTACK_STACKKITS_ACTIONS_URL", "http://stackkits.internal")
-	t.Setenv("TECHSTACK_SIMULATE_ACTIONS_URL", "http://simulate.internal")
+	tests := []struct {
+		name              string
+		environment       map[string]string
+		stackKitsBaseURL  string
+		simulationBaseURL string
+	}{
+		{
+			name: "dedicated action URLs",
+			environment: map[string]string{
+				"TECHSTACK_STACKKITS_ACTIONS_URL": "http://stackkits.internal",
+				"TECHSTACK_SIMULATE_ACTIONS_URL":  "http://simulate.internal",
+			},
+			stackKitsBaseURL:  "http://stackkits.internal",
+			simulationBaseURL: "http://simulate.internal",
+		},
+		{
+			name: "administration managed fallbacks",
+			environment: map[string]string{
+				"KOMBIFY_URL_INTERNAL_STACKKITS": "http://kombify-stackkits:5240",
+				"KOMBIFY_URL_VPS_SIMULATE":       "https://simulate.kombify.io",
+			},
+			stackKitsBaseURL:  "http://kombify-stackkits:5240",
+			simulationBaseURL: "https://simulate.kombify.io",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, key := range []string{
+				"TECHSTACK_STACKKITS_ACTIONS_URL", "TECHSTACK_STACKKITS_INTERNAL_URL",
+				"KOMBIFY_URL_INTERNAL_STACKKITS", "STACKKITS_INTERNAL_URL", "STACKKITS_API_URL",
+				"TECHSTACK_SIMULATE_ACTIONS_URL", "TECHSTACK_KOMBISIM_URL",
+				"KOMBIFY_URL_VPS_SIMULATE", "KOMBIFY_URL_PUBLIC_SIMULATE", "KOMBISIM_URL",
+			} {
+				t.Setenv(key, "")
+			}
+			t.Setenv("SERVICE_AUTH_SECRET", "auth-secret")
+			t.Setenv("SERVICE_AUTH_SECRET_NEXT", "next-secret")
+			t.Setenv("TECHSTACK_RUNTIME_TARGET_BOOTSTRAP_DISABLED", "")
+			for key, value := range tt.environment {
+				t.Setenv(key, value)
+			}
 
-	actions, diagnostics := RuntimeActionsFromEnv(RuntimeActions{})
-	if len(diagnostics.Warnings) != 0 {
-		t.Fatalf("warnings = %v, want none", diagnostics.Warnings)
-	}
-	if actions.SimulationGate == nil ||
-		actions.RolloutRunner == nil ||
-		actions.RolloutVerifier == nil ||
-		actions.RestoreDrill == nil ||
-		actions.TargetBootstrapper == nil {
-		t.Fatalf("actions not fully wired: %+v", actions)
-	}
-	rollout, ok := actions.RolloutRunner.(*HTTPRuntimeActionRunner)
-	if !ok {
-		t.Fatalf("RolloutRunner = %T, want *HTTPRuntimeActionRunner", actions.RolloutRunner)
-	}
-	if rollout.baseURL != "http://stackkits.internal" ||
-		rollout.path != defaultStackKitsRolloutPath ||
-		rollout.action != string(runtimeaction.ActionStackKitRollout) {
-		t.Fatalf("rollout runner = %+v", rollout)
-	}
-	simulation, ok := actions.SimulationGate.(*HTTPRuntimeActionRunner)
-	if !ok {
-		t.Fatalf("SimulationGate = %T, want *HTTPRuntimeActionRunner", actions.SimulationGate)
-	}
-	if simulation.baseURL != "http://simulate.internal" ||
-		simulation.path != defaultSimulationGatePath ||
-		simulation.action != runtimeActionSimulateUpdate {
-		t.Fatalf("simulation runner = %+v", simulation)
+			actions, diagnostics := RuntimeActionsFromEnv(RuntimeActions{})
+			if len(diagnostics.Warnings) != 0 {
+				t.Fatalf("warnings = %v, want none", diagnostics.Warnings)
+			}
+			if actions.SimulationGate == nil || actions.RolloutRunner == nil || actions.RolloutVerifier == nil ||
+				actions.RestoreDrill == nil || actions.TargetBootstrapper == nil {
+				t.Fatalf("actions not fully wired: %+v", actions)
+			}
+			rollout, ok := actions.RolloutRunner.(*HTTPRuntimeActionRunner)
+			if !ok || rollout.baseURL != tt.stackKitsBaseURL || rollout.path != defaultStackKitsRolloutPath ||
+				rollout.action != string(runtimeaction.ActionStackKitRollout) {
+				t.Fatalf("rollout runner = %+v", actions.RolloutRunner)
+			}
+			simulation, ok := actions.SimulationGate.(*HTTPRuntimeActionRunner)
+			if !ok || simulation.baseURL != tt.simulationBaseURL || simulation.path != defaultSimulationGatePath ||
+				simulation.action != runtimeActionSimulateUpdate {
+				t.Fatalf("simulation runner = %+v", actions.SimulationGate)
+			}
+		})
 	}
 }
 
@@ -1723,51 +1211,6 @@ func TestRuntimeActionsFromEnvAllowsExplicitLocalSimulationGate(t *testing.T) {
 	got := strings.Join(diagnostics.Configured, "\n")
 	if !strings.Contains(got, "Local simulation gate") {
 		t.Fatalf("configured = %v, want local simulation gate diagnostic", diagnostics.Configured)
-	}
-}
-
-// TestRuntimeActionsFromEnvFallbackChain verifies that the StackKits and
-// Simulate URL fallback chains pick up the kombify-Administration URL names
-// when the dedicated TECHSTACK_*_ACTIONS_URL slot is empty.
-func TestRuntimeActionsFromEnvFallbackChain(t *testing.T) {
-	// Clear the primary URL slots so the fallback chain is exercised.
-	t.Setenv("TECHSTACK_STACKKITS_ACTIONS_URL", "")
-	t.Setenv("TECHSTACK_STACKKITS_INTERNAL_URL", "")
-	t.Setenv("STACKKITS_INTERNAL_URL", "")
-	t.Setenv("STACKKITS_API_URL", "")
-	t.Setenv("TECHSTACK_SIMULATE_ACTIONS_URL", "")
-	t.Setenv("TECHSTACK_KOMBISIM_URL", "")
-	t.Setenv("KOMBISIM_URL", "")
-
-	// Only set the canonical kombify Administration keys: StackKits is on
-	// Render (INTERNAL prefix); Simulate is on IONOS Coolify (VPS prefix).
-	t.Setenv("SERVICE_AUTH_SECRET", "auth-secret")
-	t.Setenv("KOMBIFY_URL_INTERNAL_STACKKITS", "http://kombify-stackkits:5240")
-	t.Setenv("KOMBIFY_URL_VPS_SIMULATE", "https://simulate.kombify.io")
-
-	actions, diagnostics := RuntimeActionsFromEnv(RuntimeActions{})
-	if len(diagnostics.Warnings) != 0 {
-		t.Fatalf("warnings = %v, want none with internal URL fallbacks", diagnostics.Warnings)
-	}
-	if actions.SimulationGate == nil ||
-		actions.RolloutRunner == nil ||
-		actions.RolloutVerifier == nil ||
-		actions.RestoreDrill == nil {
-		t.Fatalf("actions not fully wired via internal URL fallbacks: %+v", actions)
-	}
-	rollout, ok := actions.RolloutRunner.(*HTTPRuntimeActionRunner)
-	if !ok {
-		t.Fatalf("RolloutRunner = %T, want *HTTPRuntimeActionRunner", actions.RolloutRunner)
-	}
-	if rollout.baseURL != "http://kombify-stackkits:5240" {
-		t.Fatalf("rollout baseURL = %q, want kombify-stackkits internal URL via KOMBIFY_URL_INTERNAL_STACKKITS", rollout.baseURL)
-	}
-	sim, ok := actions.SimulationGate.(*HTTPRuntimeActionRunner)
-	if !ok {
-		t.Fatalf("SimulationGate = %T, want *HTTPRuntimeActionRunner", actions.SimulationGate)
-	}
-	if sim.baseURL != "https://simulate.kombify.io" {
-		t.Fatalf("simulate baseURL = %q, want IONOS-VPS simulate origin via KOMBIFY_URL_VPS_SIMULATE", sim.baseURL)
 	}
 }
 

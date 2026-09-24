@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kombifyio/go-common/authsession"
+	"github.com/kombifyio/techstack/internal/gocommon/authsession"
 )
 
 func TestBrowserSessionLifetimeIsProductPolicy(t *testing.T) {

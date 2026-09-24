@@ -63,7 +63,6 @@ relationships:
     - "./pkg/unifier/CONTRACT.yaml"
     - "./pkg/grpcserver/CONTRACT.yaml"
     - "./pkg/placement/"
-    - "./pkg/tofu/"
     - "./pkg/config/"
     - "./internal/routes/"
 

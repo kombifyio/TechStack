@@ -88,35 +88,12 @@ func (s *Service) CleanupStatus(ctx context.Context, tenantID, userID string, le
 	if record.ExecutionAuthority != vmleases.LeaseExecutionAuthorityTechStackProviderControl {
 		return nil, ErrExecutionAuthorityInactive
 	}
-	if s.CleanupReadback == nil {
-		return nil, ErrCleanupReadbackUnavailable
-	}
-	facts, err := s.CleanupReadback.ReadManagedRuntimeCleanup(ctx, tenantID, leaseID)
-	if err != nil {
-		return nil, err
-	}
-	if facts == nil {
-		return nil, ErrCleanupReadbackUnavailable
-	}
-	facts.AbsenceEvidenceRef = strings.TrimSpace(facts.AbsenceEvidenceRef)
-	if facts.AbsenceEvidenceRef != "" && !strings.HasPrefix(facts.AbsenceEvidenceRef, "provider-evidence://") {
-		return nil, ErrCleanupReadbackUnavailable
-	}
-
-	response := &CleanupReadback{LeaseID: string(lease.ID)}
-	response.Lease.DesiredTerminal = lease.DesiredState == vmlease.DesiredStateArchived || lease.CancelledAt != nil
-	response.Lease.ObservedTerminal = cleanupLeaseObservedTerminal(lease)
-	response.Server.Bound = facts.ServerBound
-	response.Server.Terminal = facts.ServerTerminal
-	response.ProviderOperation.Found = facts.ProviderOperationFound
-	response.ProviderOperation.Terminal = facts.ProviderOperationTerminal
-	response.ProviderOperation.AbsenceEvidenceRef = facts.AbsenceEvidenceRef
-	response.ProviderOperation.CapacityReleased = facts.CapacityReleased
-	return response, nil
+	return s.cleanupStatusForRecord(ctx, tenantID, lease)
 }
 
-func cleanupLeaseObservedTerminal(lease vmlease.Lease) bool {
-	observed := strings.ToLower(strings.TrimSpace(lease.Metadata["runtime_observed_state"]))
-	return observed == runtimeObservedStateNotFound ||
-		strings.EqualFold(strings.TrimSpace(lease.Metadata["custody_resolution_status"]), "resolved")
+func cleanupLeaseObservedTerminal(facts *CleanupReadbackFacts) bool {
+	// Native cleanup is observed through the exact generation's provider facts,
+	// not the legacy action-response metadata stored on the lease.
+	return facts.ServerBound && facts.ServerTerminal && facts.ProviderOperationFound &&
+		facts.ProviderOperationTerminal && facts.AbsenceEvidenceRef != "" && facts.CapacityReleased
 }

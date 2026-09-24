@@ -6,11 +6,14 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"cuelang.org/go/cue"
 	cueerrors "cuelang.org/go/cue/errors"
 	"github.com/kombifyio/techstack/pkg/core"
 )
+
+const validationTimeout = 5 * time.Second
 
 // Validate checks a KombinationSpec against CUE schemas and policies.
 // Returns validation result without executing any infrastructure changes.
@@ -53,10 +56,10 @@ func (e *Engine) Validate(spec *core.KombinationSpec) (*core.ValidationResult, e
 	}
 
 	// Robustheit: CUE-Validation mit Timeout (nie blockieren)
-	ctx, cancel := context.WithTimeout(context.Background(), DefaultValidationTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), validationTimeout)
 	defer cancel()
 
-	if err := ValidateWithTimeout(ctx, schemaDef, specValue); err != nil {
+	if err := validateWithTimeout(ctx, schemaDef, specValue); err != nil {
 		if ctx.Err() != nil {
 			return &core.ValidationResult{
 				Valid: false,
@@ -96,6 +99,20 @@ func (e *Engine) Validate(spec *core.KombinationSpec) (*core.ValidationResult, e
 		Valid:  true,
 		Errors: nil,
 	}, nil
+}
+
+func validateWithTimeout(ctx context.Context, schema, value cue.Value) error {
+	done := make(chan error, 1)
+	go func() {
+		done <- schema.Unify(value).Validate(cue.Concrete(true))
+	}()
+
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return fmt.Errorf("CUE validation timeout after %v: %w", validationTimeout, ctx.Err())
+	}
 }
 
 // extractValidationErrors converts CUE errors to ValidationError slice with path extraction.

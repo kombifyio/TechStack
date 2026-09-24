@@ -15,11 +15,12 @@ import (
 func validHubCommand(commandID string) *agentpb.StackKitCommand {
 	digest := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	return &agentpb.StackKitCommand{
-		CommandId:        commandID,
-		Operation:        agentpb.StackKitOperation_STACKKIT_OPERATION_SERVICE_LOGS,
-		WorkingDirectory: "/srv/stack",
-		ServiceKey:       "base",
-		LogTail:          100,
+		CommandId:          commandID,
+		Operation:          agentpb.StackKitOperation_STACKKIT_OPERATION_SERVICE_LOGS,
+		WorkingDirectory:   "/srv/stack",
+		StackkitInstanceId: "stackkit-main",
+		ServiceKey:         "base",
+		LogTail:            100,
 		Release: &agentpb.StackKitReleasePin{
 			Version: "v0.16.0", PlatformOs: "linux", PlatformArch: "amd64",
 			ArchiveSha256: digest, ReleaseIndexSha256: digest,
@@ -52,7 +53,7 @@ func TestHubDispatchesTypedCommandAndCorrelatesResult(t *testing.T) {
 		done <- result
 	}()
 
-	command, ok, err := hub.Poll(ctx, "agent-1", nil)
+	command, ok, err := hub.Poll(ctx, "agent-1", []string{stackkitcommand.WorkspaceInstanceCapability})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +84,7 @@ func TestHubRejectsDuplicatePendingCommandID(t *testing.T) {
 		_, err := hub.SendStackKitCommand(ctx, "agent-1", validHubCommand("command-1"))
 		done <- err
 	}()
-	command, ok, err := hub.Poll(ctx, "agent-1", nil)
+	command, ok, err := hub.Poll(ctx, "agent-1", []string{stackkitcommand.WorkspaceInstanceCapability})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,10 +109,10 @@ func TestHubDoesNotRedeliverAmbiguousCommand(t *testing.T) {
 	go func() {
 		_, _ = hub.SendStackKitCommand(ctx, "agent-1", validHubCommand("command-1"))
 	}()
-	if _, ok, _ := hub.Poll(ctx, "agent-1", nil); !ok {
+	if _, ok, _ := hub.Poll(ctx, "agent-1", []string{stackkitcommand.WorkspaceInstanceCapability}); !ok {
 		t.Fatal("first Poll() did not dispatch")
 	}
-	if _, ok, _ := hub.Poll(ctx, "agent-1", nil); ok {
+	if _, ok, _ := hub.Poll(ctx, "agent-1", []string{stackkitcommand.WorkspaceInstanceCapability}); ok {
 		t.Fatal("second Poll() redelivered an ambiguous apply")
 	}
 }
@@ -136,7 +137,7 @@ func TestHubRejectsApplyBeforeDispatchToAgentWithoutPlanHashCapability(t *testin
 	command.LocalSiteRef = "cloud"
 	command.LocalNodeRef = "cloud-main"
 	command.LocalExecutionChannelRef = "host-channel-cloud-main"
-	command.ExpectedPlanHash = strings.Repeat("b", 64)
+	command.ExpectedPlanHash = "sha256:" + strings.Repeat("b", 64)
 	errCh := make(chan error, 1)
 	go func() {
 		_, err := hub.SendStackKitCommand(ctx, "agent-old", command)
@@ -150,7 +151,7 @@ func TestHubRejectsApplyBeforeDispatchToAgentWithoutPlanHashCapability(t *testin
 	}
 }
 
-func TestHubRejectsReleaseSubstitutionWithoutCompletingPendingCommand(t *testing.T) {
+func TestHubRejectsReleaseSubstitutionAndTerminatesPendingCommand(t *testing.T) {
 	hub := NewHub()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -159,7 +160,7 @@ func TestHubRejectsReleaseSubstitutionWithoutCompletingPendingCommand(t *testing
 		_, err := hub.SendStackKitCommand(ctx, "agent-1", validHubCommand("command-1"))
 		errCh <- err
 	}()
-	command, ok, err := hub.Poll(ctx, "agent-1", nil)
+	command, ok, err := hub.Poll(ctx, "agent-1", []string{stackkitcommand.WorkspaceInstanceCapability})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,9 +173,8 @@ func TestHubRejectsReleaseSubstitutionWithoutCompletingPendingCommand(t *testing
 	if err := hub.SubmitResult("agent-1", result); !errors.Is(err, ErrResultRejected) {
 		t.Fatalf("SubmitResult() error = %v", err)
 	}
-	cancel()
-	if err := <-errCh; !errors.Is(err, context.Canceled) {
-		t.Fatalf("SendStackKitCommand() error = %v", err)
+	if err := <-errCh; err == nil || !strings.Contains(err.Error(), "release does not match") {
+		t.Fatalf("SendStackKitCommand() terminal error = %v", err)
 	}
 }
 

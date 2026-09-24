@@ -58,8 +58,12 @@ $allowedInstallRoot = Get-NormalizedPath (Join-Path $env:LOCALAPPDATA "Programs\
 if (!(Test-StrictChildPath $resolvedStateDir $allowedRoot)) {
     throw "Refusing to reset state outside $allowedRoot`: $resolvedStateDir"
 }
-if (!(Test-StrictChildPath $resolvedInstallDir $allowedInstallRoot)) {
-    throw "Refusing to stop a client outside $allowedInstallRoot`: $resolvedInstallDir"
+# The MSI installs per machine into this exact location; the portable
+# installer uses directories below the per-user root.
+$machineInstallDir = Get-NormalizedPath (Join-Path $env:ProgramFiles "kombify\techstack")
+if (!(Test-StrictChildPath $resolvedInstallDir $allowedInstallRoot) -and
+    !$resolvedInstallDir.Equals($machineInstallDir, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Refusing to stop a client outside $allowedInstallRoot or $machineInstallDir`: $resolvedInstallDir"
 }
 
 function Get-CredentialTargetSuffix([string]$ResolvedStateDir) {
@@ -87,7 +91,8 @@ $clientCredentialTargets = @(
     "kombify/techstack/cloud/stack/access-token",
     "kombify/techstack/cloud/stack/refresh-token",
     "kombify/techstack/local/runtime-session-secret",
-    "kombify/techstack/local/device-session-token"
+    "kombify/techstack/local/device-session-token",
+    "kombify/techstack/local/runtime-encryption-key"
 ) | ForEach-Object { "$_$credentialTargetSuffix" }
 if (!$PreserveCredentials) {
     foreach ($target in $clientCredentialTargets) {

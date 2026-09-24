@@ -49,10 +49,7 @@ async function mockJob(
   jobId: string,
   body: Record<string, unknown>,
 ) {
-  // The frontend polls /api/v1/jobs/{id}. Keep a parallel mock for the legacy
-  // PocketBase collections route so a frontend regression to the older endpoint
-  // does not silently pass.
-  const payload = JSON.stringify(body);
+  const payload = JSON.stringify({ data: body });
   await context.route(`**/api/v1/jobs/${jobId}`, async (route) => {
     await route.fulfill({
       status: 200,
@@ -60,16 +57,6 @@ async function mockJob(
       body: payload,
     });
   });
-  await context.route(
-    `**/api/collections/jobs/records/${jobId}**`,
-    async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: payload,
-      });
-    },
-  );
 }
 
 async function seedKombifyCloudConfig(context: BrowserContext, origin: string) {
@@ -260,11 +247,11 @@ test.describe("creation flow honesty", () => {
     await expect(
       waitingCard.getByRole("heading", {
         level: 2,
-        name: "Server wird noch bereitgestellt",
+        name: "Node provisioning is still in progress",
       }),
     ).toBeVisible();
-    await expect(waitingCard).toContainText("Nächste geplante Prüfung");
-    await expect(waitingCard).toContainText("keine neue VM");
+    await expect(waitingCard).toContainText("Next scheduled check");
+    await expect(waitingCard).toContainText("does not create another VM");
     await expect(waitingCard).toContainText(
       "IONOS bereitet den Server noch vor.",
     );
@@ -391,7 +378,7 @@ test.describe("creation flow honesty", () => {
 
     const recovery = page.getByTestId("waiting-enrollment-recovery");
     await expect(recovery).toBeVisible({ timeout: 15_000 });
-    await expect(recovery).toContainText("Stack, Quelljob und exakte Lease");
+    await expect(recovery).toContainText("stack, source job, and exact lease");
     await page.getByTestId("waiting-enrollment-retry").click();
     await expect(page).toHaveURL(/job_id=job-overdue-retry/, {
       timeout: 15_000,
@@ -435,7 +422,7 @@ test.describe("creation flow honesty", () => {
     );
 
     await expect(
-      page.getByText("Additional server", { exact: true }),
+      page.getByText("Additional Node", { exact: true }),
     ).toBeVisible({
       timeout: 15_000,
     });
@@ -493,7 +480,7 @@ test.describe("creation flow honesty", () => {
 
     await expect(
       page.getByRole("heading", {
-        name: "Managed server requested",
+        name: "Managed Node requested",
         level: 2,
       }),
     ).toBeVisible({ timeout: 15_000 });
@@ -688,9 +675,6 @@ test.describe("creation flow honesty", () => {
     await expect(
       page.getByRole("heading", { level: 2, name: "Creation failed" }),
     ).toBeVisible({ timeout: 15_000 });
-    await expect(
-      page.getByText("StackKit-Artefakte konnten nicht erzeugt werden").first(),
-    ).toBeVisible();
     await expect(page.getByText("No matching StackKit found")).toHaveCount(0);
 
     const provisionGroup = page.locator(
@@ -737,6 +721,122 @@ test.describe("creation flow honesty", () => {
     expect(deployCalls).toBe(0);
     expect(vmCreateCalls).toBe(0);
     expect(runtimeStatusCalls).toBe(0);
+
+    await context.close();
+  });
+
+  test("withholds automatic retry for an explicitly non-retryable job", async ({
+    browser,
+    baseURL,
+  }) => {
+    const origin = requireAppBase(baseURL);
+    const context = await browser.newContext();
+    await mockLoggedInContext(context, { allowMockAuth: true });
+    await mockDiscovery(context);
+
+    const stackId = "stack-non-retryable";
+    await mockJob(context, "job-non-retryable", {
+      id: "job-non-retryable",
+      type: "deploy",
+      state: "failed",
+      progress: 50,
+      step: "generate_iac",
+      retryable: false,
+      error: "Rollout requires operator review",
+      created: new Date().toISOString(),
+      updated: new Date().toISOString(),
+      result: {
+        stack_id: stackId,
+        server_provisioning_mode: "kombify-cloud",
+        runtime_phase: "lease_ready",
+        lease_id: "lease-non-retryable",
+      },
+    });
+
+    let retryCalls = 0;
+    await context.route(
+      `**/api/v1/stacks/${stackId}/retry-rollout`,
+      async (route) => {
+        retryCalls += 1;
+        await route.abort();
+      },
+    );
+
+    await seedKombifyCloudConfig(context, origin);
+    const page = await context.newPage();
+    await page.goto(
+      `${origin}/stacks/creating?name=Test%20Stack&job_id=job-non-retryable&stack_id=${stackId}`,
+    );
+
+    await expect(
+      page.getByRole("heading", { level: 2, name: "Creation failed" }),
+    ).toBeVisible({ timeout: 15_000 });
+    await expect(
+      page.getByRole("button", { name: "Retry rollout" }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Operations" }),
+    ).toBeVisible();
+    expect(retryCalls).toBe(0);
+
+    await context.close();
+  });
+
+  test("retries a structured deploy failure through the deploy authority", async ({
+    browser,
+    baseURL,
+  }) => {
+    const origin = requireAppBase(baseURL);
+    const context = await browser.newContext();
+    await mockLoggedInContext(context, { allowMockAuth: true });
+    await mockDiscovery(context);
+
+    const stackId = "stack-retry-deploy";
+    await mockJob(context, "job-retry-deploy", {
+      id: "job-retry-deploy",
+      type: "deploy",
+      state: "failed",
+      progress: 50,
+      retryable: true,
+      error: "Deployment failed before a lease was assigned",
+      created: new Date().toISOString(),
+      updated: new Date().toISOString(),
+      result: { stack_id: stackId },
+    });
+
+    let deployCalls = 0;
+    let exactRetryCalls = 0;
+    await context.route(`**/api/v1/stacks/${stackId}/deploy`, async (route) => {
+      deployCalls += 1;
+      await route.fulfill({
+        status: 202,
+        contentType: "application/json",
+        body: JSON.stringify({
+          data: { stack_id: stackId, job_id: "job-deploy-retry" },
+        }),
+      });
+    });
+    await context.route(
+      `**/api/v1/stacks/${stackId}/retry-rollout`,
+      async (route) => {
+        exactRetryCalls += 1;
+        await route.abort();
+      },
+    );
+
+    await seedKombifyCloudConfig(context, origin);
+    const page = await context.newPage();
+    await page.goto(
+      `${origin}/stacks/creating?name=Test%20Stack&job_id=job-retry-deploy&stack_id=${stackId}`,
+    );
+
+    await expect(
+      page.getByRole("heading", { level: 2, name: "Creation failed" }),
+    ).toBeVisible({ timeout: 15_000 });
+    await page.getByRole("button", { name: "Retry deployment" }).click();
+    await expect(page).toHaveURL(/job_id=job-deploy-retry/);
+    expect(deployCalls).toBe(1);
+    expect(exactRetryCalls).toBe(0);
 
     await context.close();
   });

@@ -119,12 +119,12 @@ func exerciseFixture(t *testing.T, name string, payload []byte) {
 			t.Fatalf("runtime lease compatibility failed: %v", err)
 		}
 	case "stackaction":
-		var request stackaction.VerifyRolloutRequest
+		var request stackaction.Request
 		if err := decodeClosed(payload, &request); err != nil {
 			t.Fatal(err)
 		}
-		if err := request.Validate(); err != nil {
-			t.Fatalf("StackKits verification compatibility failed: %+v err=%v", request, err)
+		if !stackaction.IsStackKitsAction(request.Action) || request.Action != stackaction.ActionVerifyRollout {
+			t.Fatalf("StackAction compatibility failed: %+v", request)
 		}
 	default:
 		t.Fatalf("unrecognized compatibility fixture %q", name)

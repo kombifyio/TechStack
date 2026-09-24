@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { cn } from "$lib/utils";
+  import { cn } from "#lib/utils.js";
   import type { Snippet } from "svelte";
-  import ErrorAiHandoverButton from "$lib/components/support/ErrorAiHandoverButton.svelte";
-  import type { ErrorAiHandoverContext } from "$lib/support/error-handover";
+  import ErrorAiHandoverButton from "#lib/components/support/ErrorAiHandoverButton.svelte";
+  import type { ErrorAiHandoverContext } from "#lib/support/error-handover.js";
 
   interface Props {
     message?: string | null;
@@ -21,15 +21,22 @@
   }: Props = $props();
 
   const alertClasses = {
-    error: "alert-destructive",
-    warning: "alert-warning",
-    info: "alert-info",
-    success: "alert-success",
+    error: "border-destructive/30 bg-destructive/5 text-destructive",
+    warning: "border-warning/30 bg-warning/5 text-warning",
+    info: "border-info/30 bg-info/5 text-info",
+    success: "border-success/30 bg-success/5 text-success",
   };
 </script>
 
 {#if message || children}
-  <div role="alert" class={cn("alert", alertClasses[tone], className)}>
+  <div
+    role="alert"
+    class={cn(
+      "relative flex w-full items-start gap-3 rounded-xl border p-4",
+      alertClasses[tone],
+      className,
+    )}
+  >
     {#if children}
       {@render children()}
     {:else}

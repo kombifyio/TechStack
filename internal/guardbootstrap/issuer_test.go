@@ -1,6 +1,9 @@
 package guardbootstrap
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"regexp"
 	"strings"
 	"testing"
@@ -39,15 +42,40 @@ func testRequest() EnrollmentRequest {
 // had already spent — a one-time credential that is no longer one-time.
 func TestRecordCapabilityIsInsertOnce(t *testing.T) {
 	issuer, mock := newTestIssuer(t)
+	request := testRequest()
+	payload, err := issuer.RenderPayload(request)
+	if err != nil {
+		t.Fatalf("render payload: %v", err)
+	}
+	_, tokenHash, err := issuer.derive(request)
+	if err != nil {
+		t.Fatalf("derive token: %v", err)
+	}
+	payloadDigest := sha256.Sum256(payload)
+	cloudInitSHA256 := "sha256:" + hex.EncodeToString(payloadDigest[:])
+	metadata, err := json.Marshal(map[string]string{
+		"lease_id":              request.LeaseID,
+		MetadataOperationID:     request.OperationID,
+		MetadataCloudInitSHA256: cloudInitSHA256,
+		"source":                "managed-provision-cloud-init",
+	})
+	if err != nil {
+		t.Fatalf("encode expected metadata: %v", err)
+	}
 	mock.ExpectBegin()
 	mock.ExpectExec("set_config").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery("FROM servers").
 		WillReturnRows(sqlmock.NewRows([]string{"owner_subject_id"}).AddRow("auth0|owner"))
 	mock.ExpectExec(regexp.QuoteMeta("ON CONFLICT (tenant_id, token_hash) DO NOTHING")).
+		WithArgs(
+			capabilityID(tokenHash), request.TenantID, request.StackID, "auth0|owner",
+			"managed-provision "+request.OperationID, tokenHash,
+			time.Date(2026, 7, 26, 9, 0, 0, 0, time.UTC).Add(enrolmentWindow), string(metadata),
+		).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	if err := issuer.RecordCapability(t.Context(), testRequest()); err != nil {
+	if err := issuer.RecordCapability(t.Context(), request); err != nil {
 		t.Fatalf("record: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {

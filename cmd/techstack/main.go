@@ -1,8 +1,8 @@
 // kombifyTechstack - The Hybrid Infrastructure Unifier
 // ==================================================
-// This is the new PocketBase-as-Framework entry point.
-// PocketBase provides: Auth, Collections API, Realtime SSE, Admin UI
-// kombifyTechstack provides: Custom routes, OpenTofu, Simulation, Business Logic
+// This is the Postgres-backed Techstack control-plane entry point.
+// PocketBase is bootstrapped only for bounded local-auth compatibility; it does
+// not serve HTTP or own control-plane state.
 package main
 
 import (
@@ -23,7 +23,7 @@ import (
 // rewrites this constant here by exact file path + regex. Keep the declaration
 // on its own line below. Version parsing/normalization helpers live in
 // version.go.
-const defaultProductVersion = "0.7.95"
+const defaultProductVersion = "0.26.0" // x-release-please-version
 
 func hasAnyAgentMTLSConfig(certFile, keyFile, caFile string) bool {
 	return certFile != "" || keyFile != "" || caFile != ""

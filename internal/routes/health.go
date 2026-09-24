@@ -1,5 +1,4 @@
-// Package routes provides custom HTTP routes for kombifyTechstack API.
-// These extend PocketBase's built-in collection routes.
+// Package routes provides health and runtime identity routes.
 package routes
 
 import (
@@ -14,7 +13,6 @@ import (
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/db"
 	"github.com/kombifyio/techstack/pkg/httpx"
-	"github.com/pocketbase/pocketbase/core"
 )
 
 var fullHealthRevisionPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -83,7 +81,7 @@ func controlPlaneDBHealth(database *db.DB) dbHealthStatus {
 
 // RegisterHealthRoutesWithDeps adds health endpoints with dependency checks.
 // This is the preferred method for production deployments with Kubernetes.
-func RegisterHealthRoutesWithDeps(r *httpx.Router, app core.App, version string, buildRevision string, startTime time.Time, deps *HealthDependencies) {
+func RegisterHealthRoutesWithDeps(r *httpx.Router, version string, buildRevision string, startTime time.Time, deps *HealthDependencies) {
 	// Main health endpoint (backwards compatible)
 	r.GET("/api/v1/health", func(e *httpx.Event) error {
 		now := time.Now().UTC().Format(time.RFC3339)
@@ -118,14 +116,12 @@ func RegisterHealthRoutesWithDeps(r *httpx.Router, app core.App, version string,
 
 		// Control-plane Postgres connectivity is the authoritative readiness gate
 		// (PocketBase retirement). Report schema version + migration status too.
-		var dbStatus dbHealthStatus
-		if deps != nil && deps.DB != nil {
-			dbStatus = controlPlaneDBHealth(deps.DB)
-			checks["database"] = dbStatus.Connected
-		} else {
-			// Coexistence fallback: verify the embedded PocketBase data layer.
-			checks["database"] = checkDatabase(app)
+		var database *db.DB
+		if deps != nil {
+			database = deps.DB
 		}
+		dbStatus := controlPlaneDBHealth(database)
+		checks["database"] = dbStatus.Connected
 
 		// Check gRPC only when the deployment configured that listener as a
 		// critical dependency. SaaS may deliberately use the HTTPS Guard path.
@@ -153,9 +149,7 @@ func RegisterHealthRoutesWithDeps(r *httpx.Router, app core.App, version string,
 			"status": status,
 			"checks": checks,
 		}
-		if deps != nil && deps.DB != nil {
-			payload["database_detail"] = dbStatus
-		}
+		payload["database_detail"] = dbStatus
 		return httpx.Success(e, statusCode, payload)
 	})
 
@@ -163,74 +157,50 @@ func RegisterHealthRoutesWithDeps(r *httpx.Router, app core.App, version string,
 	// Returns 200 if the service has finished initializing.
 	// Use this for slow-starting containers to avoid premature restarts.
 	r.GET("/api/v1/health/startup", func(e *httpx.Event) error {
-		// Service is "started" once the control-plane Postgres database is
-		// reachable and migrations have been applied. During the coexistence
-		// window fall back to the embedded PocketBase data layer when no DB is
-		// wired in.
-		if deps != nil && deps.DB != nil {
-			dbStatus := controlPlaneDBHealth(deps.DB)
-			if !dbStatus.Connected {
-				return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Service still starting", map[string]any{"database": dbStatus})
-			}
-			return httpx.Success(e, http.StatusOK, map[string]any{"status": "started", "database": dbStatus})
+		var database *db.DB
+		if deps != nil {
+			database = deps.DB
 		}
-		if !checkDatabase(app) {
-			return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Service still starting", nil)
+		dbStatus := controlPlaneDBHealth(database)
+		if !dbStatus.Connected {
+			return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Service still starting", map[string]any{"database": dbStatus})
 		}
-		return httpx.Success(e, http.StatusOK, map[string]string{"status": "started"})
+		return httpx.Success(e, http.StatusOK, map[string]any{"status": "started", "database": dbStatus})
 	})
-}
-
-// checkDatabase verifies database connectivity by executing a simple query.
-func checkDatabase(app core.App) bool {
-	// Use a short timeout context for the health check
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	// Try to query a simple system operation via PocketBase
-	// We'll check if we can access any collection (the collections themselves)
-	done := make(chan bool, 1)
-	go func() {
-		// PocketBase stores collections in memory, but the underlying SQLite
-		// connection is what we want to verify. We can use FindCollectionByNameOrId
-		// which will access the database.
-		_, err := app.FindCollectionByNameOrId("_superusers")
-		done <- (err == nil)
-	}()
-
-	select {
-	case result := <-done:
-		return result
-	case <-ctx.Done():
-		return false // Timeout means database is not responsive
-	}
 }
 
 // RegisterInfoRoutes adds the /api/v1/info endpoint. environment is the
 // runtime posture (development, staging, production, local).
-func RegisterInfoRoutes(r *httpx.Router, app core.App, version string, buildRevision string, startTime time.Time, edition config.Edition, mode config.DeploymentMode, environment string) {
+func RegisterInfoRoutes(r *httpx.Router, database *db.DB, version string, buildRevision string, startTime time.Time, edition config.Edition, mode config.DeploymentMode, environment string) {
 	r.GET("/api/v1/info", func(e *httpx.Event) error {
 		var m runtime.MemStats
 		runtime.ReadMemStats(&m)
 		edition, mode := normalizeRuntimeIdentity(edition, mode)
 
 		payload := map[string]any{
-			"service":         "techstack",
-			"version":         version,
-			"go_version":      runtime.Version(),
-			"uptime_secs":     time.Since(startTime).Seconds(),
-			"memory_mb":       m.Alloc / 1024 / 1024,
-			"goroutines":      runtime.NumGoroutine(),
-			"pocketbase":      true,
-			"edition":         string(edition),
-			"deployment_mode": string(mode),
-			"environment":     environment,
+			"service":          "techstack",
+			"version":          version,
+			"go_version":       runtime.Version(),
+			"uptime_secs":      time.Since(startTime).Seconds(),
+			"memory_mb":        m.Alloc / 1024 / 1024,
+			"goroutines":       runtime.NumGoroutine(),
+			"database_backend": databaseBackend(database),
+			"edition":          string(edition),
+			"deployment_mode":  string(mode),
+			"environment":      environment,
 		}
 		if revision := normalizedBuildRevision(buildRevision); revision != "" {
 			payload["revision"] = revision
 		}
 		return httpx.Success(e, http.StatusOK, payload)
 	})
+}
+
+func databaseBackend(database *db.DB) string {
+	if database == nil || database.DB == nil {
+		return "unconfigured"
+	}
+	return string(database.Backend())
 }
 
 func runtimeIdentityFields(deps *HealthDependencies) (config.Edition, config.DeploymentMode) {

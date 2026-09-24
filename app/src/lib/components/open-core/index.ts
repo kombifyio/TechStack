@@ -1,11 +1,20 @@
-export { default as NotificationBell } from "./NotificationBell.svelte";
-export { default as NotificationPreferences } from "./NotificationPreferences.svelte";
-export { default as ServerCard } from "./ServerCard.svelte";
-export { default as ServiceCard } from "./ServiceCard.svelte";
-export { default as ServiceCardCompact } from "./ServiceCardCompact.svelte";
-export { default as StackIdentityBadge } from "./StackIdentityBadge.svelte";
-export { default as StackIdentityDisplay } from "./StackIdentityDisplay.svelte";
-export { default as StackIdentityEditor } from "./StackIdentityEditor.svelte";
+/**
+ * Open-core surface: identity vocabulary plus the shared UI components.
+ *
+ * The components come from Brand's published packages — the ecosystem
+ * authority for notifications and stack identity presentation
+ * (the public tree installs their unmodified release tarballs from
+ * app/third_party/npm, so open-core closure never justifies a local fork). Only the identity
+ * normalization vocabulary stays product-local: Techstack adapts runtime
+ * data into the shared components, it renders nothing of its own.
+ */
+export {
+  NotificationBell,
+  NotificationPreferences,
+} from "@kombiverselabs/ui/notifications";
+export {
+  StackIdentityBadge,
+  StackIdentityDisplay,
+  StackIdentityEditor,
+} from "@kombiverselabs/ui/identity";
 export * from "./identity";
-export * from "./server";
-export * from "./service";
