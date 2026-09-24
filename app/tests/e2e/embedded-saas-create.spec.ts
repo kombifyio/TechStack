@@ -9,6 +9,10 @@ type ApiCall = {
   body: unknown;
 };
 
+function isAuth0Host(hostname: string): boolean {
+  return hostname === "auth0.com" || hostname.endsWith(".auth0.com");
+}
+
 let portalServer: Server;
 let portalOrigin: string;
 
@@ -75,7 +79,7 @@ test.describe("Embedded SaaS create flow", () => {
     page.on("request", (request) => {
       const url = request.url();
       if (
-        url.includes("auth0.com") ||
+        isAuth0Host(new URL(url).hostname) ||
         url.includes("/authorize") ||
         url.includes("/api/v2/auth/login")
       ) {
@@ -227,7 +231,7 @@ async function installEmbeddedSaaSApi(
         : url.pathname;
     const method = request.method();
 
-    if (url.hostname.includes("auth0.com") || path === "/api/v2/auth/login") {
+    if (isAuth0Host(url.hostname) || path === "/api/v2/auth/login") {
       forbiddenAuthNavigations.push(request.url());
       await route.fulfill({
         status: 500,
