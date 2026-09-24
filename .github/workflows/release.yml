@@ -27,7 +27,7 @@ jobs:
           test "$(tr -d '[:space:]' < VERSION)" = "$version"
       - name: Build exact public image
         env:
-          IMAGE: ghcr.io/kombifyio/techstack
+          IMAGE: ghcr.io/kombifyio/techstack-open-core
         run: |
           set -euo pipefail
           echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
