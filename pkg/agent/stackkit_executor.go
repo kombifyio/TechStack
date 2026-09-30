@@ -40,6 +40,10 @@ const (
 	maxStackKitCommandEventCount    = 10_000
 	maxStackKitInventoryBytes       = 2 << 20
 	stackKitOutputTruncationMessage = "\n<output truncated by Techstack agent>"
+	// stackKitAdvancedTrustBundlePath is the workspace-relative file the
+	// agent hands to `stackkit advanced trust import --bundle`; the CLI reads
+	// the bundle from a file only. It is removed after the command.
+	stackKitAdvancedTrustBundlePath = ".stackkit/techstack-advanced-trust-bundle.json"
 )
 
 var stackKitTargetReleasePattern = regexp.MustCompile(
@@ -124,9 +128,15 @@ func (executor *StackKitExecutor) execute(ctx context.Context, command *agentpb.
 		result.Release = cloneStackKitReleasePin(command.Release)
 	}
 
-	release, args, workDir, eventPath, err := executor.prepare(command)
+	release, args, workDir, eventPath, tempFiles, err := executor.prepare(command)
 	if eventPath != "" {
 		defer os.Remove(eventPath)
+	}
+	// The capability and candidate files exist only for this invocation.
+	defer removeStackKitTempFiles(tempFiles)
+	if workDir != "" && command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_TRUST_IMPORT {
+		bundlePath := filepath.Join(workDir, filepath.FromSlash(stackKitAdvancedTrustBundlePath))
+		defer func() { _ = os.Remove(bundlePath) }()
 	}
 	if err != nil {
 		return finishStackKitResult(result, command, nil, nil, err, started)
@@ -204,6 +214,18 @@ func (executor *StackKitExecutor) execute(ctx context.Context, command *agentpb.
 		runErr,
 		started,
 	)
+	if finished.Success && command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_CHANGE_SET_CREATE {
+		digest, digestErr := stackKitChangeSetRecordDigest(workDir, finished.CommandResultJson)
+		if digestErr != nil {
+			return finishStackKitResult(result, command, publicOutput, &receipt, digestErr, started)
+		}
+		finished.AdvancedChangeSetSha256 = digest
+	}
+	if finished.Success && command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_PLAN && command.LocalSiteRef == "cloud" && command.StackkitInstanceId != "" {
+		if err := attachManagedBackupPlan(workDir, command.StackkitInstanceId, finished); err != nil {
+			return finishStackKitResult(result, command, nil, &receipt, err, started)
+		}
+	}
 	if finished.Success && identityMutationCarriesTransientURL(command) {
 		finished.SensitiveResultJson = []byte(stdout.String())
 	}
@@ -362,17 +384,18 @@ func (executor *StackKitExecutor) prepare(command *agentpb.StackKitCommand) (
 	[]string,
 	string,
 	string,
+	[]string,
 	error,
 ) {
 	if command == nil {
-		return stackkitrelease.Release{}, nil, "", "", fmt.Errorf("StackKit command is required")
+		return stackkitrelease.Release{}, nil, "", "", nil, fmt.Errorf("StackKit command is required")
 	}
 	command.CommandId = strings.TrimSpace(command.CommandId)
 	if command.CommandId == "" {
-		return stackkitrelease.Release{}, nil, "", "", fmt.Errorf("StackKit command_id is required")
+		return stackkitrelease.Release{}, nil, "", "", nil, fmt.Errorf("StackKit command_id is required")
 	}
 	if executor == nil || executor.pinPath == "" || executor.cacheRoot == "" {
-		return stackkitrelease.Release{}, nil, "", "", fmt.Errorf(
+		return stackkitrelease.Release{}, nil, "", "", nil, fmt.Errorf(
 			"StackKit execution requires %s and %s",
 			stackKitReleasePinEnv,
 			stackKitReleaseCacheEnv,
@@ -380,36 +403,44 @@ func (executor *StackKitExecutor) prepare(command *agentpb.StackKitCommand) (
 	}
 	release, err := (stackkitrelease.Cache{Root: executor.cacheRoot}).ResolvePin(executor.pinPath)
 	if err != nil {
-		return stackkitrelease.Release{}, nil, "", "", fmt.Errorf("resolve pinned StackKits release: %w", err)
+		return stackkitrelease.Release{}, nil, "", "", nil, fmt.Errorf("resolve pinned StackKits release: %w", err)
 	}
 	if err := requireMatchingStackKitRelease(command.Release, release.Receipt()); err != nil {
-		return stackkitrelease.Release{}, nil, "", "", err
+		return stackkitrelease.Release{}, nil, "", "", nil, err
 	}
-	workDir, err := cleanStackKitWorkDir(command.WorkingDirectory)
+	hostOperation := stackkitcommand.IsHostOperation(command.Operation)
+	var workDir string
+	if hostOperation {
+		// Host maintenance acts on the node's OS, not a stack: it takes no
+		// workspace, StackSpec or workspace binding, only a neutral directory.
+		workDir, err = cleanStackKitWorkDir(os.TempDir())
+	} else {
+		workDir, err = cleanStackKitWorkDir(command.WorkingDirectory)
+	}
 	if err != nil {
-		return stackkitrelease.Release{}, nil, "", "", err
+		return stackkitrelease.Release{}, nil, "", "", nil, err
 	}
 	specPath, err := cleanStackKitRelativePath(command.SpecPath, "stack-spec.yaml", "spec_path")
 	if err != nil {
-		return stackkitrelease.Release{}, nil, "", "", err
+		return stackkitrelease.Release{}, nil, "", "", nil, err
 	}
 	if stackkitcommand.RequiresWorkspaceInstanceBinding(command) {
 		if err := requireStackKitWorkspaceInstance(workDir, specPath, command.StackkitInstanceId); err != nil {
-			return stackkitrelease.Release{}, nil, "", "", err
+			return stackkitrelease.Release{}, nil, "", "", nil, err
 		}
 	}
 	eventFile, err := os.CreateTemp("", "techstack-stackkit-events-*.jsonl")
 	if err != nil {
-		return stackkitrelease.Release{}, nil, "", "", fmt.Errorf("create StackKits event spool: %w", err)
+		return stackkitrelease.Release{}, nil, "", "", nil, fmt.Errorf("create StackKits event spool: %w", err)
 	}
 	eventPath := eventFile.Name()
 	if closeErr := eventFile.Close(); closeErr != nil {
 		_ = os.Remove(eventPath)
-		return stackkitrelease.Release{}, nil, "", "", fmt.Errorf("close StackKits event spool: %w", closeErr)
+		return stackkitrelease.Release{}, nil, "", "", nil, fmt.Errorf("close StackKits event spool: %w", closeErr)
 	}
 	if chmodErr := os.Chmod(eventPath, 0600); chmodErr != nil && runtime.GOOS != "windows" {
 		_ = os.Remove(eventPath)
-		return stackkitrelease.Release{}, nil, "", "", fmt.Errorf("protect StackKits event spool: %w", chmodErr)
+		return stackkitrelease.Release{}, nil, "", "", nil, fmt.Errorf("protect StackKits event spool: %w", chmodErr)
 	}
 
 	args := []string{
@@ -418,16 +449,36 @@ func (executor *StackKitExecutor) prepare(command *agentpb.StackKitCommand) (
 		"--spec", specPath,
 		"--progress-jsonl", eventPath,
 	}
-	operationArgs, err := stackKitOperationArgs(command)
+	if hostOperation {
+		args = []string{"--no-log", "--progress-jsonl", eventPath}
+	}
+	var tempFiles []string
+	var operationArgs []string
+	if hostOperation {
+		operationArgs, err = stackKitHostArgs(command)
+	} else if stackkitcommand.IsAdvancedOperation(command.Operation) {
+		operationArgs, tempFiles, err = stackKitAdvancedOperationArgs(release, workDir, specPath, command)
+	} else {
+		operationArgs, err = stackKitOperationArgs(command)
+	}
 	if err != nil {
 		_ = os.Remove(eventPath)
-		return stackkitrelease.Release{}, nil, "", "", err
+		return stackkitrelease.Release{}, nil, "", "", tempFiles, err
+	}
+	if hostOperation {
+		return release, append(args, operationArgs...), workDir, eventPath, tempFiles, nil
 	}
 	if err := materializeStackKitInventory(workDir, command.InventoryJson); err != nil {
 		_ = os.Remove(eventPath)
-		return stackkitrelease.Release{}, nil, "", "", err
+		return stackkitrelease.Release{}, nil, "", "", tempFiles, err
 	}
-	return release, append(args, operationArgs...), workDir, eventPath, nil
+	if command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_TRUST_IMPORT {
+		if err := materializeStackKitAdvancedTrustBundle(workDir, command.AdvancedTrustBundle); err != nil {
+			_ = os.Remove(eventPath)
+			return stackkitrelease.Release{}, nil, workDir, "", tempFiles, err
+		}
+	}
+	return release, append(args, operationArgs...), workDir, eventPath, tempFiles, nil
 }
 
 func requireStackKitWorkspaceInstance(workDir, specPath, expected string) error {
@@ -543,7 +594,8 @@ func stackKitOperationArgs(command *agentpb.StackKitCommand) ([]string, error) {
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_DRIFT_DETECT:
 		return []string{"drift", "detect", "--json"}, nil
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_DRIFT_RECONCILE:
-		return stackKitDriftReconcileArgs(command)
+		// A Techstack-managed deployment reconciles only in Advanced Mode.
+		return nil, fmt.Errorf("StackKit DRIFT_RECONCILE is not dispatched for a managed deployment; use ADVANCED_DRIFT_RECONCILE")
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_SERVICE_START,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_SERVICE_STOP,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_SERVICE_RESTART:
@@ -566,6 +618,8 @@ func stackKitOperationArgs(command *agentpb.StackKitCommand) ([]string, error) {
 		return []string{"user", "owner", "activate", "--owner-approve", "--json"}, nil
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_LIST:
 		return []string{"user", "list", "--json"}, nil
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_TRUST_IMPORT:
+		return stackKitAdvancedTrustImportArgs(command)
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_INVITE:
 		args := []string{"user", "add", command.HouseholdUsername, "--email", command.HouseholdEmail}
 		if command.HouseholdDisplayName != "" {
@@ -575,6 +629,46 @@ func stackKitOperationArgs(command *agentpb.StackKitCommand) ([]string, error) {
 	default:
 		return nil, fmt.Errorf("unsupported StackKit operation %s", command.Operation.String())
 	}
+}
+
+// stackKitAdvancedTrustImportArgs pins the exact bundle bytes Core sent; the
+// argv carries no issuer or capability semantics of its own.
+func stackKitAdvancedTrustImportArgs(command *agentpb.StackKitCommand) ([]string, error) {
+	bundle := command.AdvancedTrustBundle
+	if !command.OwnerApproved || len(bundle) == 0 || len(bundle) > stackkitcommand.MaxAdvancedTrustBundleBytes {
+		return nil, fmt.Errorf("StackKit advanced trust import requires Owner approval and a bounded trust bundle")
+	}
+	digest := sha256.Sum256(bundle)
+	return []string{
+		"advanced", "trust", "import",
+		"--bundle", stackKitAdvancedTrustBundlePath,
+		"--expect-sha256", "sha256:" + hex.EncodeToString(digest[:]),
+		"--owner-approve", "--json",
+	}, nil
+}
+
+func materializeStackKitAdvancedTrustBundle(workDir string, bundle []byte) error {
+	directory := filepath.Join(workDir, ".stackkit")
+	if err := os.MkdirAll(directory, 0o750); err != nil {
+		return fmt.Errorf("create StackKits workspace directory: %w", err)
+	}
+	tmp, err := os.CreateTemp(directory, ".advanced-trust-*.json")
+	if err != nil {
+		return fmt.Errorf("create temporary Advanced trust bundle: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }()
+	if _, err := tmp.Write(bundle); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write Advanced trust bundle: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close Advanced trust bundle: %w", err)
+	}
+	if err := replaceStackKitInventory(tmpName, filepath.Join(workDir, filepath.FromSlash(stackKitAdvancedTrustBundlePath))); err != nil {
+		return fmt.Errorf("publish Advanced trust bundle: %w", err)
+	}
+	return nil
 }
 
 func identityMutationCarriesTransientURL(command *agentpb.StackKitCommand) bool {
@@ -683,21 +777,6 @@ func stackKitUpgradeArgs(command *agentpb.StackKitCommand) ([]string, error) {
 		args = append(args, "--dry-run")
 	}
 	return args, nil
-}
-
-func stackKitDriftReconcileArgs(command *agentpb.StackKitCommand) ([]string, error) {
-	if !command.OwnerApproved {
-		return nil, fmt.Errorf("StackKit drift reconcile requires explicit Owner approval")
-	}
-	mode := "standard"
-	switch command.DriftMode {
-	case agentpb.StackKitDriftMode_STACKKIT_DRIFT_MODE_STANDARD:
-	case agentpb.StackKitDriftMode_STACKKIT_DRIFT_MODE_ADVANCED:
-		mode = "advanced"
-	default:
-		return nil, fmt.Errorf("StackKit drift reconcile requires an explicit drift_mode")
-	}
-	return []string{"drift", "reconcile", "--mode", mode, "--owner-approve", "--json"}, nil
 }
 
 func stackKitServiceMutationArgs(command *agentpb.StackKitCommand) ([]string, error) {
@@ -987,7 +1066,7 @@ func readStackKitEvents(path string) ([][]byte, error) {
 		}
 		if !json.Valid(line) || json.Unmarshal(line, &identity) != nil ||
 			identity.Time.IsZero() || strings.TrimSpace(identity.Phase) == "" ||
-			!validStackKitEventStatus(identity.Status) {
+			!stackkitcommand.ValidRolloutStatus(identity.Status) {
 			return nil, fmt.Errorf("StackKits event spool contains a malformed rollout event")
 		}
 		events = append(events, []byte(secrets.Redact(string(line))))
@@ -996,15 +1075,6 @@ func readStackKitEvents(path string) ([][]byte, error) {
 		return nil, fmt.Errorf("scan StackKits event spool: %w", err)
 	}
 	return events, nil
-}
-
-func validStackKitEventStatus(status string) bool {
-	switch status {
-	case "started", "running", "succeeded", "failed", "skipped":
-		return true
-	default:
-		return false
-	}
 }
 
 func stackKitReleasePinFromReceipt(receipt stackkitrelease.Receipt) *agentpb.StackKitReleasePin {

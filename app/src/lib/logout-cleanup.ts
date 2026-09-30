@@ -2,6 +2,7 @@ import { browser } from "$app/env";
 import { clearAutoReloginMarker } from "#lib/auth/session-recovery.js";
 import { clearStackIdentity } from "#lib/stores/stackIdentity.js";
 import { clearSectionCache } from "#lib/data/sectionCache.js";
+import { clearAllWizardIdempotencyKeys } from "#lib/wizard/idempotency-keys.js";
 
 const CREATING_SESSION_KEYS = new Set([
   "creatingOperation",
@@ -14,6 +15,7 @@ const CREATING_SESSION_KEYS = new Set([
 export function clearTechstackSecuritySessionState(): void {
   clearStackIdentity();
   clearCreatingSessionState();
+  if (browser) clearAllWizardIdempotencyKeys();
   clearAutoReloginMarker();
   // Cached page sections hold tenant inventory, and sessionStorage survives a
   // sign-out in the same tab. Signing in as somebody else must not paint the

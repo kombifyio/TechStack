@@ -20,6 +20,7 @@ import {
   getTroubleshootingForError,
 } from "./provider-errors";
 
+import { tr } from "#lib/i18n.svelte.js";
 /**
  * Job progress payload from the backend. `state` mirrors `status` (the API uses
  * `state`); both step fields are tolerated so the UI can read either shape.
@@ -451,7 +452,8 @@ export function updateTasksWithError(
   const failedIndex = failedTaskIndex(tasks, currentStepId);
 
   // Intelligent troubleshooting + the most useful detail string for the error.
-  const errorMessage = job.error || "An unexpected error occurred";
+  const errorMessage =
+    job.error || tr("ui.taskUpdates.anUnexpectedErrorOccurred");
   const troubleshootingInfo = getTroubleshootingForError(errorMessage);
   const guidance = normalizeJobGuidance(job.user_guidance);
   const details = guidance?.body

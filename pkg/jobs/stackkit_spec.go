@@ -21,6 +21,7 @@ const (
 	metadataKeyKombifyMeAddressPrefix = "kombify_me_address_prefix"
 	metadataKeyKombifyMeAddressLayout = "kombify_me_address_layout"
 	metadataKeyKombifyMeAddressZone   = "kombify_me_address_zone"
+	metadataKeyKombifyMeLoginHost     = "kombify_me_login_host"
 )
 
 func stackKitSpecBytesForPayload(specData interface{}) ([]byte, error) {

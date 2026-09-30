@@ -117,8 +117,8 @@ func (h wizardRouteHandlers) testRemoteSSH(e *httpx.Event) error {
 		})
 	}
 	return httpx.Success(e, http.StatusOK, map[string]any{
-		routeSuccessField:   true,
-		routeMessageField:   "SSH connection successful",
+		routeSuccessField: true,
+		routeMessageField: "SSH connection successful",
 	})
 }
 

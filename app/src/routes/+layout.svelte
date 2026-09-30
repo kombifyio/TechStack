@@ -2,7 +2,7 @@
   import "../app.css";
   import { page } from "$app/state";
   import { onMount } from "svelte";
-  import { initI18n } from "#lib/i18n.svelte.js";
+  import { initI18n, tr } from "#lib/i18n.svelte.js";
   import { getInfo } from "#lib/api/health.js";
   import { getInstance } from "#lib/api/instance.js";
   import { appDeployLabel, productIdentityLabel } from "#lib/config.js";
@@ -249,7 +249,7 @@
         data-kx="control"
         onclick={toggleSidebar}
         class="min-[48rem]:hidden fixed top-4 left-4 z-50 rounded-lg border border-border bg-card p-2 text-foreground shadow-lg transition-colors hover:bg-accent"
-        aria-label="Toggle menu"
+        aria-label={tr("ui.layout.toggleMenu")}
       >
         {#if sidebarOpen}
           <X class="w-6 h-6" />
@@ -264,7 +264,7 @@
           type="button"
           class="min-[48rem]:hidden fixed inset-0 z-30 bg-black/65 backdrop-blur-[1px]"
           onclick={toggleSidebar}
-          aria-label="Close menu"
+          aria-label={tr("ui.layout.closeMenu")}
         ></button>
       {/if}
 
@@ -274,7 +274,7 @@
            mobile uses the drawer. -->
       <div
         data-onboarding-anchor="techstack-nav"
-        class="fixed inset-y-0 left-0 z-40 h-full max-w-[86vw] overflow-hidden shadow-2xl transition-transform duration-300 min-[48rem]:relative min-[48rem]:max-w-none min-[48rem]:shadow-none {sidebarOpen
+        class="fixed inset-y-0 left-0 z-40 h-full max-w-[86vw] overflow-visible shadow-2xl transition-transform duration-300 min-[48rem]:relative min-[48rem]:max-w-none min-[48rem]:shadow-none {sidebarOpen
           ? 'translate-x-0'
           : '-translate-x-full min-[48rem]:translate-x-0'}"
       >
@@ -313,12 +313,24 @@
     </div>
   {:else if $isHostNavigationOwned}
     <!-- Cloud-owned embedded mode: the parent owns site navigation, account,
-         notifications, Companion and the full-app action. -->
-    <div data-kx="app" data-navigation-owner="host" class="min-h-screen">
-      <ReloginModal />
-      <div class="mx-auto w-full min-w-0 min-h-0 max-w-6xl">
-        {@render children()}
-      </div>
+         notifications, Companion and the full-app action. The frame is the
+         viewport, so this shell keeps the same definite-height chain as the
+         other shells: viewport-bound pages (the Node dashboard's `h-full` +
+         `contain: size`) resolve against it, and everything else scrolls
+         inside `main` instead of collapsing to its padding. -->
+    <div
+      data-kx="app"
+      data-navigation-owner="host"
+      class="flex h-screen flex-col overflow-hidden"
+    >
+      <main
+        class="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto overflow-x-hidden"
+      >
+        <ReloginModal />
+        <div class="min-w-0 flex-1">
+          {@render children()}
+        </div>
+      </main>
     </div>
   {:else if $showInlineTabs}
     <!-- SaaS Embedded Mode: Inline Tab Navigation -->

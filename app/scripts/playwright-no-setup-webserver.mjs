@@ -24,11 +24,14 @@ if (frontendMode !== "vite" && frontendMode !== "build") {
   );
 }
 
+// The no-setup server always proxies to its own mock backend. The repository
+// mise env sets TECHSTACK_API_URL to the dev Go API (5260), which is not
+// running in the affected gate; PLAYWRIGHT_MOCK_BACKEND_URL moves the mock.
 const env = {
   ...process.env,
-  TECHSTACK_API_URL: process.env.TECHSTACK_API_URL ?? mockBackendURL,
-  POCKETBASE_URL: process.env.POCKETBASE_URL ?? mockBackendURL,
-  VITE_API_URL: process.env.VITE_API_URL ?? mockBackendURL,
+  TECHSTACK_API_URL: mockBackendURL,
+  POCKETBASE_URL: mockBackendURL,
+  VITE_API_URL: mockBackendURL,
 };
 
 function sendJSON(res, status, body) {
@@ -120,6 +123,14 @@ const handlers = new Map([
           locked: false,
         },
       }),
+  ],
+  [
+    // Every mutating client call fetches a CSRF token first.
+    handlerKey("GET", "/api/v1/csrf"),
+    (_req, res) => {
+      res.setHeader("X-CSRF-Token", "mock-csrf-token");
+      sendJSON(res, 200, { token: "mock-csrf-token" });
+    },
   ],
   [
     handlerKey("GET", "/api/v1/info"),
@@ -355,6 +366,10 @@ const mockBackendServer = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", mockBackendOrigin);
   const handler = handlers.get(handlerKey(req.method ?? "GET", url.pathname));
   if (!handler) {
+    // tests/ui/fixtures.ts reports responses carrying this header, so a spec
+    // that forgot a mock names the request instead of failing on a later
+    // locator.
+    res.setHeader("X-Kombify-Unmocked", "1");
     sendJSON(res, 404, { error: `unhandled mock path: ${url.pathname}` });
     return;
   }

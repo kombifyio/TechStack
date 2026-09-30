@@ -79,7 +79,10 @@ func TestVerifier_Verify(t *testing.T) {
 
 	validClaims := &ssoCustomClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        "test-jti",
 			Subject:   "user-123",
+			Issuer:    CloudIssuer,
+			Audience:  jwt.ClaimStrings{"kombify-tool:kombifystack"},
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(5 * time.Minute)),
 		},
@@ -122,7 +125,10 @@ func TestVerifier_Verify(t *testing.T) {
 			tokenFunc: func(t *testing.T) string {
 				claims := &ssoCustomClaims{
 					RegisteredClaims: jwt.RegisteredClaims{
+						ID:        "test-jti",
 						Subject:   "user-456",
+						Issuer:    CloudIssuer,
+						Audience:  jwt.ClaimStrings{"kombify-tool:kombifystack"},
 						IssuedAt:  jwt.NewNumericDate(now),
 						ExpiresAt: jwt.NewNumericDate(now.Add(5 * time.Minute)),
 					},
@@ -148,7 +154,10 @@ func TestVerifier_Verify(t *testing.T) {
 			tokenFunc: func(t *testing.T) string {
 				claims := &ssoCustomClaims{
 					RegisteredClaims: jwt.RegisteredClaims{
+						ID:        "test-jti",
 						Subject:   "user-789",
+						Issuer:    CloudIssuer,
+						Audience:  jwt.ClaimStrings{"kombify-tool:kombifystack"},
 						IssuedAt:  jwt.NewNumericDate(now),
 						ExpiresAt: jwt.NewNumericDate(now.Add(5 * time.Minute)),
 					},
@@ -182,7 +191,10 @@ func TestVerifier_Verify(t *testing.T) {
 			tokenFunc: func(t *testing.T) string {
 				claims := &ssoCustomClaims{
 					RegisteredClaims: jwt.RegisteredClaims{
+						ID:        "test-jti",
 						Subject:   "user-123",
+						Issuer:    CloudIssuer,
+						Audience:  jwt.ClaimStrings{"kombify-tool:kombifystack"},
 						IssuedAt:  jwt.NewNumericDate(now.Add(-10 * time.Minute)),
 						ExpiresAt: jwt.NewNumericDate(now.Add(-5 * time.Minute)),
 					},
@@ -260,7 +272,10 @@ func TestVerifier_Verify(t *testing.T) {
 			tokenFunc: func(t *testing.T) string {
 				claims := &ssoCustomClaims{
 					RegisteredClaims: jwt.RegisteredClaims{
+						ID:        "test-jti",
 						Subject:   "", // missing
+						Issuer:    CloudIssuer,
+						Audience:  jwt.ClaimStrings{"kombify-tool:kombifystack"},
 						IssuedAt:  jwt.NewNumericDate(now),
 						ExpiresAt: jwt.NewNumericDate(now.Add(5 * time.Minute)),
 					},
@@ -281,7 +296,10 @@ func TestVerifier_Verify(t *testing.T) {
 			tokenFunc: func(t *testing.T) string {
 				claims := &ssoCustomClaims{
 					RegisteredClaims: jwt.RegisteredClaims{
+						ID:        "test-jti",
 						Subject:   "user-123",
+						Issuer:    CloudIssuer,
+						Audience:  jwt.ClaimStrings{"kombify-tool:kombifystack"},
 						IssuedAt:  jwt.NewNumericDate(now),
 						ExpiresAt: jwt.NewNumericDate(now.Add(5 * time.Minute)),
 					},
@@ -302,7 +320,10 @@ func TestVerifier_Verify(t *testing.T) {
 			tokenFunc: func(t *testing.T) string {
 				claims := &ssoCustomClaims{
 					RegisteredClaims: jwt.RegisteredClaims{
+						ID:        "test-jti",
 						Subject:   "user-123",
+						Issuer:    CloudIssuer,
+						Audience:  jwt.ClaimStrings{"kombify-tool:kombifystack"},
 						IssuedAt:  jwt.NewNumericDate(now),
 						ExpiresAt: jwt.NewNumericDate(now.Add(5 * time.Minute)),
 					},
@@ -390,7 +411,10 @@ func TestClockSkew(t *testing.T) {
 	// Token expired 10 seconds ago
 	claims := &ssoCustomClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        "test-jti",
 			Subject:   "user-123",
+			Issuer:    CloudIssuer,
+			Audience:  jwt.ClaimStrings{"kombify-tool:kombifystack"},
 			IssuedAt:  jwt.NewNumericDate(now.Add(-1 * time.Minute)),
 			ExpiresAt: jwt.NewNumericDate(now.Add(-10 * time.Second)),
 		},
@@ -421,5 +445,78 @@ func TestClockSkew(t *testing.T) {
 	_, err = v2.Verify(tokenString)
 	if !errors.Is(err, ErrTokenExpired) {
 		t.Errorf("expected ErrTokenExpired with minimal clock skew, got: %v", err)
+	}
+}
+
+// Only a token in Cloud's portal SSO launch shape for this tool may become a
+// login: bounded lifetime and a single-use token ID included.
+func TestVerifierAcceptsOnlyCloudPortalSSOTokens(t *testing.T) {
+	now := time.Now().Unix()
+	cloudToken := func(mutate func(jwt.MapClaims)) jwt.MapClaims {
+		// Exact payload of kombify-Cloud generateSSOToken.
+		claims := jwt.MapClaims{
+			"iss":                      "kombify-cloud",
+			"aud":                      "kombify-tool:kombifystack",
+			"jti":                      "8f14e45f-ceea-467a-9575-6f0a1c3e2b11",
+			"contract_version":         1,
+			"sub":                      "auth0|user-1",
+			"tenant_id":                "usr:auth0|user-1",
+			"email":                    "user@example.test",
+			"name":                     "User",
+			"tool":                     "kombifystack",
+			"role":                     "admin",
+			"roles":                    []string{"admin"},
+			"https://kombify.io/roles": []string{"admin"},
+			"iat":                      now,
+			"exp":                      now + 300,
+		}
+		if mutate != nil {
+			mutate(claims)
+		}
+		return claims
+	}
+
+	tests := []struct {
+		name   string
+		claims jwt.MapClaims
+		accept bool
+	}{
+		{name: "cloud portal sso token", claims: cloudToken(nil), accept: true},
+		{name: "foreign issuer", claims: cloudToken(func(c jwt.MapClaims) { c["iss"] = "kombify-gateway" })},
+		{name: "missing issuer", claims: cloudToken(func(c jwt.MapClaims) { delete(c, "iss") })},
+		{name: "cloud tool-api token", claims: cloudToken(func(c jwt.MapClaims) {
+			c["aud"] = "kombify-tool-api"
+			c["type"] = "tool_access"
+		})},
+		{name: "token for another tool", claims: cloudToken(func(c jwt.MapClaims) { c["aud"] = "kombify-tool:kombifysim" })},
+		{name: "missing audience", claims: cloudToken(func(c jwt.MapClaims) { delete(c, "aud") })},
+		{name: "missing exp", claims: cloudToken(func(c jwt.MapClaims) { delete(c, "exp") })},
+		{name: "missing iat", claims: cloudToken(func(c jwt.MapClaims) { delete(c, "iat") })},
+		{name: "iat in the future", claims: cloudToken(func(c jwt.MapClaims) { c["iat"] = now + 120 })},
+		{name: "missing jti", claims: cloudToken(func(c jwt.MapClaims) { delete(c, "jti") })},
+		{name: "lifetime over ten minutes", claims: cloudToken(func(c jwt.MapClaims) { c["exp"] = now + 601 })},
+	}
+
+	v, err := NewVerifier(Config{Secret: testSecret, AllowedTools: []string{"kombifystack"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, tt.claims).SignedString([]byte(testSecret))
+			if err != nil {
+				t.Fatal(err)
+			}
+			payload, err := v.Verify(token)
+			if tt.accept {
+				if err != nil || payload == nil || payload.Sub != "auth0|user-1" || payload.TenantID != "usr:auth0|user-1" {
+					t.Fatalf("Verify() = %+v, %v; want accepted Cloud identity", payload, err)
+				}
+				return
+			}
+			if err == nil || payload != nil {
+				t.Fatalf("Verify() accepted a token outside the Cloud portal SSO contract: %+v", payload)
+			}
+		})
 	}
 }

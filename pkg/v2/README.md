@@ -63,8 +63,7 @@ focused auth tests and the no-setup Playwright flow.
 
 Next phases keep moving more domain surfaces (stacks, jobs, workers,
 drift, prechecks, wallet, and related repositories) onto the
-Postgres-backed path while keeping PocketBase migrations frozen except
-for explicitly allowed bridge changes. Once those moves complete, this
+Postgres-backed path. Once those moves complete, this
 package's `v2` naming gets retired in favour of clean per-domain
 packages — only `pkg/v2/auth` is expected to keep
 the `v2` prefix during the auth-migration window.

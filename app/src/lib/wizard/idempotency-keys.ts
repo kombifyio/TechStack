@@ -1,7 +1,9 @@
 export type WizardJoinAdditionMode = "join" | "found";
 
+const JOIN_WIZARD_IDEMPOTENCY_STORAGE_PREFIX = "wizardJoinIdempotencyKey:";
+
 export function legacyJoinWizardIdempotencyStorageKey(stackId: string): string {
-  return `wizardJoinIdempotencyKey:${stackId}`;
+  return `${JOIN_WIZARD_IDEMPOTENCY_STORAGE_PREFIX}${stackId}`;
 }
 
 export function joinWizardIdempotencyStorageKey(
@@ -42,10 +44,75 @@ export function mintJoinWizardIdempotencyKey(
   return generated;
 }
 
+function stackLifecycleRetryScope(
+  stackId: string,
+  jobId: string,
+  kind: "deploy" | "provision",
+): string {
+  return `lifecycle-retry:${encodeURIComponent(stackId)}:${encodeURIComponent(jobId)}:${kind}`;
+}
+
+export function mintStackLifecycleRetryIdempotencyKey(
+  stackId: string,
+  jobId: string,
+  kind: "deploy" | "provision",
+): string {
+  return mintJoinWizardIdempotencyKey(
+    stackLifecycleRetryScope(stackId, jobId, kind),
+  );
+}
+
+export function clearStackLifecycleRetryIdempotencyKey(
+  stackId: string,
+  jobId: string,
+  kind: "deploy" | "provision",
+  submittedKey: string,
+): void {
+  const storageKey = joinWizardIdempotencyStorageKey(
+    stackLifecycleRetryScope(stackId, jobId, kind),
+  );
+  if (sessionStorage.getItem(storageKey) === submittedKey) {
+    sessionStorage.removeItem(storageKey);
+  }
+}
+
 export function clearJoinWizardIdempotencyKeys(stackId: string): void {
   if (!stackId) return;
   sessionStorage.removeItem(legacyJoinWizardIdempotencyStorageKey(stackId));
   for (const mode of ["join", "found"] as const) {
     sessionStorage.removeItem(joinWizardIdempotencyStorageKey(stackId, mode));
+  }
+}
+
+export function clearAllWizardIdempotencyKeys(): void {
+  const keysToRemove: string[] = [];
+  for (let index = 0; index < sessionStorage.length; index += 1) {
+    const key = sessionStorage.key(index);
+    if (key?.startsWith(JOIN_WIZARD_IDEMPOTENCY_STORAGE_PREFIX)) {
+      keysToRemove.push(key);
+    }
+  }
+  for (const key of keysToRemove) {
+    sessionStorage.removeItem(key);
+  }
+  sessionStorage.removeItem("stackCreationIdempotencyKey");
+}
+
+export function clearSubmittedJoinWizardIdempotencyKey(
+  idempotencyKey: string,
+): void {
+  if (!idempotencyKey) return;
+  const keysToRemove: string[] = [];
+  for (let index = 0; index < sessionStorage.length; index += 1) {
+    const key = sessionStorage.key(index);
+    if (
+      key?.startsWith(JOIN_WIZARD_IDEMPOTENCY_STORAGE_PREFIX) &&
+      sessionStorage.getItem(key) === idempotencyKey
+    ) {
+      keysToRemove.push(key);
+    }
+  }
+  for (const key of keysToRemove) {
+    sessionStorage.removeItem(key);
   }
 }

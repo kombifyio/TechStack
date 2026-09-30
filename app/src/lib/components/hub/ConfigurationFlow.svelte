@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { goto as svelteGoto } from "$app/navigation";
   import { getClientBootstrap } from "#lib/client/bootstrap.js";
   import { API_BASE } from "#lib/api/client.js";
@@ -27,6 +28,11 @@
     type TechstackCreationEventInput,
   } from "#lib/analytics/posthog.js";
   import { tr } from "#lib/i18n.svelte.js";
+  import {
+    putOperatorSelfDisclosure,
+    type OperatorSelfDisclosure,
+  } from "#lib/api/operatorProfile.js";
+  import { selfDisclosureWizardConfig } from "#lib/wizard/self-disclosure-handoff.js";
 
   interface Props {
     /** Remove page-owned spacing/title so the host can mount the full flow. */
@@ -34,13 +40,62 @@
     /** Host-owned navigation keeps the flow usable in a panel or modal shell. */
     onNavigate?: (href: string) => void | Promise<void>;
     returnTo?: string;
+    /** Voluntary answers handed over from the kombify Cloud capture surface. */
+    selfDisclosure?: OperatorSelfDisclosure | null;
+    /** Called once the handed-over answers were stored or given up on. */
+    onSelfDisclosureSettled?: () => void;
   }
 
   let {
     embedded = false,
     onNavigate,
     returnTo = "/stacks/new",
+    selfDisclosure = null,
+    onSelfDisclosureSettled,
   }: Props = $props();
+
+  // The wizard mounts only after a handed-over disclosure is stored, so its
+  // first recommendation already uses the profile the Unifier derives from it.
+  // A failed write never blocks creation: the wizard then opens without it.
+  const handedOver = untrack(() => selfDisclosure);
+  let selfDisclosureState = $state<
+    "none" | "pending" | "applying" | "applied" | "failed"
+  >(handedOver ? "pending" : "none");
+  const wizardPrefill = handedOver
+    ? selfDisclosureWizardConfig(handedOver)
+    : undefined;
+
+  // Hold the wizard back while the answers are (about to be) written; a
+  // signed-out visitor gets the wizard at once.
+  const holdWizardForSelfDisclosure = $derived(
+    selfDisclosureState === "applying" ||
+      (selfDisclosureState === "pending" &&
+        (authStore.loading ||
+          !authStore.modeDetected ||
+          authStore.isAuthenticated)),
+  );
+
+  function settleSelfDisclosure(state: "applied" | "failed") {
+    selfDisclosureState = state;
+    onSelfDisclosureSettled?.();
+  }
+
+  $effect(() => {
+    if (selfDisclosureState !== "pending" || !handedOver) return;
+    // Signed out: the sign-in redirect keeps the URL, so the answers are
+    // stored on the way back. Until then the wizard stays usable.
+    if (
+      authStore.loading ||
+      !authStore.modeDetected ||
+      !authStore.isAuthenticated
+    )
+      return;
+    selfDisclosureState = "applying";
+    void putOperatorSelfDisclosure(handedOver, "cloud").then(
+      () => settleSelfDisclosure("applied"),
+      () => settleSelfDisclosure("failed"),
+    );
+  });
 
   async function navigate(href: string) {
     if (onNavigate) {
@@ -158,10 +213,10 @@
     lines.push(details.guidanceBody || fallback);
     if (details.nextSteps.length > 0) {
       lines.push(
-        `Next steps:\n${details.nextSteps.map((step) => `- ${step}`).join("\n")}`,
+        `${tr("ui.configFlow.nextSteps")}\n${details.nextSteps.map((step) => `- ${step}`).join("\n")}`,
       );
     } else if (details.remediation) {
-      lines.push(`Next step: ${details.remediation}`);
+      lines.push(tr("ui.configFlow.nextStep", { value: details.remediation }));
     }
     return lines.join("\n\n");
   }
@@ -171,7 +226,7 @@
     const lines: string[] = [];
 
     if (details.phaseLabel) {
-      lines.push(`Step: ${details.phaseLabel}`);
+      lines.push(tr("ui.configFlow.step", { value: details.phaseLabel }));
     }
     if (lead && lead.trim()) {
       lines.push(lead);
@@ -180,36 +235,44 @@
     }
     const code = details.errorCode;
     if (code) {
-      lines.push(`Error code: ${code}`);
+      lines.push(tr("ui.configFlow.errorCode", { value: code }));
     }
     if (details.reasonCode) {
-      lines.push(`Reason: ${details.reasonCode}`);
+      lines.push(tr("ui.configFlow.reason", { value: details.reasonCode }));
     }
     if (details.providerId) {
-      lines.push(`Provider: ${details.providerId}`);
+      lines.push(tr("ui.configFlow.provider", { value: details.providerId }));
     }
     if (details.missingFeatures.length > 0) {
-      lines.push(`Missing features: ${details.missingFeatures.join(", ")}`);
+      lines.push(
+        tr("ui.configFlow.missingFeatures", {
+          value: details.missingFeatures.join(", "),
+        }),
+      );
     }
     if (details.requiredFeatures.length > 0) {
-      lines.push(`Required features: ${details.requiredFeatures.join(", ")}`);
+      lines.push(
+        tr("ui.configFlow.requiredFeatures", {
+          value: details.requiredFeatures.join(", "),
+        }),
+      );
     }
     if (details.capability) {
-      lines.push(`Capability: ${details.capability}`);
+      lines.push(tr("ui.configFlow.capability", { value: details.capability }));
     }
     if (details.stackId) {
-      lines.push(`Stack ID: ${details.stackId}`);
+      lines.push(tr("ui.configFlow.stackId", { value: details.stackId }));
     }
     if (details.requestId) {
-      lines.push(`Request ID: ${details.requestId}`);
+      lines.push(tr("ui.configFlow.requestId", { value: details.requestId }));
     }
     if (details.retryable === true) {
       lines.push(
-        "You can retry. If this happens again, share the error code and request ID with support.",
+        tr("ui.configurationFlow.youCanRetryIfThis"),
       );
     } else if (details.retryable === false && parsed.status >= 500) {
       lines.push(
-        "Retrying is unlikely to help until the server-side issue is fixed.",
+        tr("ui.configurationFlow.retryingIsUnlikelyToHelp"),
       );
     }
 
@@ -337,7 +400,7 @@
   // StackKits validation, persistence, and dispatch happen server-side. A
   // rejected run is a structured error and leaves no state behind.
   async function createViaWizardRun(config: StackConfig) {
-    validationStage = "Validating with StackKits...";
+    validationStage = tr("ui.configurationFlow.validatingWithStackkits");
     const request = buildFoundRunRequest(config);
     const idempotencyKey = creationIdempotencyKey();
     const run = await createWizardRun(request, idempotencyKey);
@@ -367,7 +430,7 @@
     isDeploying = true;
     sessionRenewalRequired = false;
     clearCreateError();
-    validationStage = "Validating configuration...";
+    validationStage = tr("ui.configurationFlow.validatingConfiguration");
     let attemptedStackName = config.name;
 
     try {
@@ -381,7 +444,7 @@
         const refreshed = await refreshEmbeddedCloudSession();
         if (!refreshed) {
           showLoginHint = true;
-          throw new Error("You must be logged in to deploy a StackKit.");
+          throw new Error(tr("ui.configurationFlow.youMustBeLoggedIn"));
         }
       }
 
@@ -432,13 +495,16 @@
 
       if (isNetworkError) {
         const apiBase = API_BASE;
-        deployError = "Cannot connect to backend";
-        deployErrorDetails =
-          (apiBase
-            ? `The API server at ${apiBase} is not reachable from your browser.\n\n`
-            : "The API server is not reachable from your browser.\n\n") +
-          `If the backend is running but the browser blocks the request (CORS), open DevTools → Console and look for a CORS error.\n\n` +
-          `Technical details: ${error instanceof Error ? error.message : String(error)}`;
+        deployError = tr("ui.configurationFlow.cannotConnectToBackend");
+        deployErrorDetails = [
+          apiBase
+            ? tr("ui.configFlow.apiUnreachableAt", { base: apiBase })
+            : tr("ui.configFlow.apiUnreachable"),
+          tr("ui.configFlow.corsHint"),
+          tr("ui.configFlow.technicalDetails", {
+            value: error instanceof Error ? error.message : String(error),
+          }),
+        ].join("\n\n");
       } else if (parsed.isAuthError) {
         // Use global auth handler for 401 errors. Auto-redirect is disabled
         // here: a full-page bounce would destroy the in-memory wizard config.
@@ -458,13 +524,13 @@
         return; // Don't show error UI, auth handler manages the flow
       } else if (!authStore.isAuthenticated) {
         showLoginHint = true;
-        deployError = "Authentication required";
+        deployError = tr("ui.configurationFlow.authenticationRequired");
         deployErrorDetails =
-          "You must be logged in to deploy a StackKit. Please log in first.";
+          tr("ui.configurationFlow.youMustBeLoggedIn2");
       } else if (parsed.isForbidden) {
         const details = createErrorDetails(parsed.details);
         if (details.errorCode === "managed_runtime_feature_disabled") {
-          deployError = details.guidanceTitle || "Managed server is not active";
+          deployError = details.guidanceTitle || tr("ui.configurationFlow.managedServerIsNotActive");
           deployErrorDetails = formatCreateErrorDetails(
             parsed,
             formatAvailabilityLead(details, parsed.message),
@@ -472,13 +538,13 @@
         } else if (details.guidanceTitle || details.guidanceBody) {
           // Structured denial with user_guidance (e.g. owner_bootstrap_denied):
           // lead with the actionable guidance instead of a generic headline.
-          deployError = details.guidanceTitle || "Permission denied";
+          deployError = details.guidanceTitle || tr("ui.configurationFlow.permissionDenied");
           deployErrorDetails = formatCreateErrorDetails(
             parsed,
             formatAvailabilityLead(details, parsed.message),
           );
         } else {
-          deployError = "Permission denied";
+          deployError = tr("ui.configurationFlow.permissionDenied");
           // Surface the real backend/upstream reason (status, message,
           // error_code, reason_code, missing/required features) instead of a
           // generic string. Required by FEATURE-ENTITLEMENT-UX-STANDARD, and
@@ -490,7 +556,7 @@
             parsed,
             parsed.message?.trim()
               ? undefined
-              : "You don't have permission to deploy StackKits, and the server did not provide a specific reason. Please share this with support.",
+              : tr("ui.configurationFlow.youDonTHavePermission"),
           );
         }
       } else if (parsed.status === 409 || (error as any)?.status === 409) {
@@ -505,25 +571,25 @@
           sessionStorage.removeItem(creationIdempotencyStorageKey);
           conflictStackId = conflictDetails.stackId || null;
           conflictStackName = null;
-          deployError = "A previous submission already completed";
+          deployError = tr("ui.configurationFlow.aPreviousSubmissionAlreadyCompleted");
           deployErrorDetails = formatCreateErrorDetails(
             parsed,
-            "An earlier submission from this browser session already completed with different answers. A fresh attempt key was generated — submit again, or open the existing deployment.",
+            tr("ui.configurationFlow.anEarlierSubmissionFromThis"),
           );
         } else {
           const conflict = extractConflictDetails(error, parsed.details);
           conflictStackId = conflict.stackId;
           conflictStackName = conflict.name || attemptedStackName;
-          deployError = "StackKit deployment name already exists";
+          deployError = tr("ui.configurationFlow.stackkitDeploymentNameAlreadyExists");
           const lead = conflictStackName
-            ? `A StackKit deployment named "${conflictStackName}" already exists in your Homelab. Open the existing deployment or choose a different name.`
+            ? tr("ui.configFlow.deploymentNameExists", { name: conflictStackName })
             : parsed.message ||
-              "The backend rejected this StackKit deployment request with a conflict.";
+              tr("ui.configurationFlow.theBackendRejectedThisStackkit");
           deployErrorDetails = formatCreateErrorDetails(parsed, lead);
         }
       } else if (parsed.isValidationError) {
         const validationDetails = createErrorDetails(parsed.details);
-        deployError = validationDetails.guidanceTitle || "Validation failed";
+        deployError = validationDetails.guidanceTitle || tr("ui.stackImportExportModal.validationFailed");
         // Show field-specific errors if available
         if (Object.keys(parsed.fieldErrors).length > 0) {
           const fieldMessages = Object.entries(parsed.fieldErrors)
@@ -531,7 +597,7 @@
             .join("\n");
           deployErrorDetails = formatCreateErrorDetails(
             parsed,
-            `Please fix the following:\n${fieldMessages}`,
+            `${tr("ui.configFlow.pleaseFix")}\n${fieldMessages}`,
           );
         } else {
           // The wizard-run facade carries the pinned CLI's rejection in
@@ -545,27 +611,30 @@
           deployErrorDetails = formatCreateErrorDetails(
             parsed,
             validateError
-              ? `${parsed.message}\n\nStackKits validation:\n${validateError}`
+              ? `${parsed.message}\n\n${tr("ui.configFlow.stackkitsValidation")}\n${validateError}`
               : parsed.message,
           );
         }
       } else if (parsed.status >= 500) {
         const details = createErrorDetails(parsed.details);
         deployError = details.phaseLabel
-          ? `Create failed at: ${details.phaseLabel}`
-          : "Server error";
+          ? tr("ui.configFlow.createFailedAt", { phase: details.phaseLabel })
+          : tr("ui.configurationFlow.serverError");
         deployErrorDetails = formatCreateErrorDetails(
           parsed,
-          `The server encountered an error (${parsed.status}). ${parsed.message}`,
+          tr("ui.configFlow.serverEncountered", {
+            status: parsed.status,
+            message: parsed.message,
+          }),
         );
       } else {
         // Fallback for other errors
         deployError =
-          error instanceof Error ? error.message : "Deployment failed";
+          error instanceof Error ? error.message : tr("ui.configurationFlow.deploymentFailed");
         deployErrorDetails =
           parsed.message !== deployError
             ? parsed.message
-            : "An unexpected error occurred. Please check the browser console for details.";
+            : tr("ui.configurationFlow.anUnexpectedErrorOccurredPlease");
       }
 
       deployErrorHandover = buildCreateErrorHandover(
@@ -679,12 +748,12 @@
           {#if showLoginHint}
             <div class="mt-3 p-3 bg-muted/50 rounded-lg border border-border">
               <p class="text-sm text-muted-foreground mb-2">
-                Default login credentials:
+                {tr("ui.configFlow.defaultCredentials")}
               </p>
               <div class="font-mono text-xs space-y-1">
                 <p class="text-primary">admin@techstack.local</p>
                 <p class="text-muted-foreground">
-                  (use the admin password configured for this instance)
+                  {tr("ui.configurationFlow.useTheAdminPasswordConfigured")}
                 </p>
               </div>
               <a
@@ -693,7 +762,7 @@
                 data-variant="primary"
                 class="mt-3 inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
               >
-                Continue setup
+                {tr("ui.configFlow.continueSetup")}
               </a>
             </div>
           {/if}
@@ -703,7 +772,7 @@
               ? 'text-warning hover:text-warning/80'
               : 'text-destructive hover:text-destructive/80'} underline"
           >
-            Dismiss
+            {tr("ui.common.dismiss")}
           </button>
           {#if conflictStackId}
             <button
@@ -712,7 +781,7 @@
               class="ml-3 mt-2 inline-flex items-center gap-1.5 rounded-md border border-destructive/40 px-3 py-1.5 text-sm font-medium text-destructive hover:bg-destructive/10"
             >
               <ExternalLink class="h-4 w-4" aria-hidden="true" />
-              Open existing
+              {tr("ui.configFlow.openExisting")}
             </button>
           {/if}
         </div>
@@ -720,6 +789,26 @@
     </div>
   {/if}
 
+  {#if selfDisclosureState !== "none" && selfDisclosureState !== "pending"}
+    <p
+      class="mb-4 rounded-lg border px-4 py-3 text-sm {selfDisclosureState ===
+      'failed'
+        ? 'border-warning/30 bg-warning/10 text-foreground'
+        : 'border-border bg-muted/40 text-muted-foreground'}"
+      role="status"
+      data-testid="self-disclosure-status"
+      data-state={selfDisclosureState}
+    >
+      {tr(`wizard.selfDisclosure.${selfDisclosureState}`)}
+    </p>
+  {/if}
+
   <!-- Wizard Content -->
-  <EasyWizard oncreate={handleCreate} {isDeploying} />
+  {#if !holdWizardForSelfDisclosure}
+    <EasyWizard
+      oncreate={handleCreate}
+      {isDeploying}
+      initialConfig={wizardPrefill}
+    />
+  {/if}
 </div>

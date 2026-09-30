@@ -109,8 +109,56 @@ func (s *MemoryStore) UpdateHomelabName(_ context.Context, tenantID, homelabID, 
 	homelab.UpdatedAt = s.now()
 	namedAt := homelab.UpdatedAt
 	homelab.NamedAt = &namedAt
+	homelab.Identity.Pending = true
 	s.homelabs[homelab.ID] = homelab
 	return cloneHomelab(homelab), nil
+}
+
+func (s *MemoryStore) UpdateHomelabStackIdentity(_ context.Context, tenantID, homelabID string, write HomelabStackIdentityWrite) (*Homelab, error) {
+	tenantID = strings.TrimSpace(tenantID)
+	homelabID = strings.TrimSpace(homelabID)
+	name := strings.TrimSpace(write.Name)
+	if tenantID == "" || homelabID == "" || name == "" {
+		return nil, fmt.Errorf("controlplane: tenant, homelab and name required")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	homelab, ok := s.homelabs[homelabID]
+	if !ok || homelab.TenantID != tenantID || homelab.DeletedAt != nil {
+		return nil, ErrNotFound
+	}
+	editedAt := write.EditedAt
+	if editedAt.IsZero() {
+		editedAt = s.now()
+	}
+	homelab.Name = name
+	homelab.NamedAt = &editedAt
+	homelab.UpdatedAt = s.now()
+	homelab.Identity = HomelabStackIdentity{
+		Presentation:  clonePresentation(write.Presentation),
+		CloudRevision: write.CloudRevision,
+		Pending:       write.Pending,
+	}
+	s.homelabs[homelab.ID] = homelab
+	return cloneHomelab(homelab), nil
+}
+
+func clonePresentation(presentation *StackIdentityPresentation) *StackIdentityPresentation {
+	if presentation == nil {
+		return nil
+	}
+	clone := *presentation
+	if presentation.AnimationEnabled != nil {
+		enabled := *presentation.AnimationEnabled
+		clone.AnimationEnabled = &enabled
+	}
+	if presentation.GlowColorOverride != nil {
+		glow := *presentation.GlowColorOverride
+		clone.GlowColorOverride = &glow
+	}
+	return &clone
 }
 
 // insertHomelabLocked mirrors the Postgres insert: it fails softly (created ==
@@ -162,6 +210,8 @@ func cloneHomelab(homelab Homelab) *Homelab {
 	clone := homelab
 	clone.Intent = deepCloneIntent(homelab.Intent)
 	clone.DeletedAt = cloneTime(homelab.DeletedAt)
+	clone.NamedAt = cloneTime(homelab.NamedAt)
+	clone.Identity.Presentation = clonePresentation(homelab.Identity.Presentation)
 	return &clone
 }
 

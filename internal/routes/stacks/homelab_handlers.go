@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
@@ -65,9 +64,6 @@ func (h crudRouteHandlers) getHomelab(e *httpx.Event) error {
 	})
 }
 
-// maxHomelabNameLength bounds the rename input; the column itself is text.
-const maxHomelabNameLength = 100
-
 type renameHomelabRequest struct {
 	Name string `json:"name"`
 }
@@ -111,33 +107,21 @@ func (h crudRouteHandlers) renameHomelab(e *httpx.Event) error {
 	if decodeErr := decoder.Decode(&request); decodeErr != nil {
 		return httpx.BadRequest(e, "Invalid JSON")
 	}
-	name := strings.TrimSpace(request.Name)
-	if name == "" || len([]rune(name)) > maxHomelabNameLength {
+	renamed, renameErr := controlplane.RenameOwnedHomelab(e.Request.Context(), h.homelabStore, tenantID, ownerID, request.Name)
+	switch {
+	case errors.Is(renameErr, controlplane.ErrInvalidOwnerChosenName):
 		return httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeValidation,
-			"Homelab name must be between 1 and 100 characters", map[string]any{
+			"Homelab name must be between 1 and 30 characters", map[string]any{
 				detailsKeyReasonCode: "homelab_name_invalid",
 				detailsKeyRetryable:  false,
 				"user_guidance": map[string]any{
 					"title": "Choose a name",
-					"body":  "Enter a name of at most 100 characters for your homelab.",
+					"body":  "Enter a name of at most 30 characters for your homelab.",
 				},
 			})
-	}
-
-	// Resolving by owner is the authorization: a caller can only ever rename
-	// their own homelab, never one addressed by id.
-	homelab, hlErr := h.homelabStore.GetHomelabByOwner(e.Request.Context(), tenantID, ownerID)
-	if hlErr != nil {
-		if errors.Is(hlErr, controlplane.ErrNotFound) {
-			return httpx.NotFound(e, "No homelab provisioned yet")
-		}
-		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to resolve homelab", nil)
-	}
-	renamed, renameErr := h.homelabStore.UpdateHomelabName(e.Request.Context(), tenantID, homelab.ID, name)
-	if renameErr != nil {
-		if errors.Is(renameErr, controlplane.ErrNotFound) {
-			return httpx.NotFound(e, "No homelab provisioned yet")
-		}
+	case errors.Is(renameErr, controlplane.ErrNotFound):
+		return httpx.NotFound(e, "No homelab provisioned yet")
+	case renameErr != nil:
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to rename homelab", nil)
 	}
 	return httpx.Success(e, http.StatusOK, map[string]any{"homelab": homelabItem(renamed)})

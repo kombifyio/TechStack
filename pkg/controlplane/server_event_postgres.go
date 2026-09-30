@@ -116,7 +116,7 @@ func applyServerEventTx(
 	}
 	var inventory *ServerInventorySnapshot
 	if prepared.inventory != nil {
-		stored, inventoryErr := insertServerInventoryTx(ctx, tx, *prepared.inventory)
+		stored, inventoryErr := insertServerInventoryTx(ctx, tx, *prepared.inventory, prepared.replaceInventory)
 		if inventoryErr != nil {
 			return nil, inventoryErr
 		}
@@ -314,10 +314,26 @@ func insertServerTransitionTx(ctx context.Context, tx *sql.Tx, transition Server
 		transition.ObservedAt, evidenceJSON))
 }
 
-func insertServerInventoryTx(ctx context.Context, tx *sql.Tx, snapshot ServerInventorySnapshot) (*ServerInventorySnapshot, error) {
+// insertServerInventoryTx stores the snapshot of a new inventory revision, or
+// with replace refreshes the snapshot of the unchanged revision.
+func insertServerInventoryTx(ctx context.Context, tx *sql.Tx, snapshot ServerInventorySnapshot, replace bool) (*ServerInventorySnapshot, error) {
 	inventoryJSON, err := marshalObject(snapshot.Inventory)
 	if err != nil {
 		return nil, err
+	}
+	if replace {
+		refreshed, refreshErr := scanServerInventory(tx.QueryRowContext(ctx, `
+			UPDATE server_inventory_snapshots
+			SET source = $4, observed_at = $5, inventory_json = $6::jsonb
+			WHERE tenant_id = $1 AND server_id = $2 AND revision = $3
+			RETURNING id, tenant_id, server_id, revision, source, observed_at,
+				inventory_json::text, created_at
+		`, snapshot.TenantID, snapshot.ServerID, snapshot.Revision, snapshot.Source,
+			snapshot.ObservedAt, inventoryJSON))
+		// A revision without a stored snapshot gets one.
+		if !errors.Is(refreshErr, sql.ErrNoRows) {
+			return refreshed, refreshErr
+		}
 	}
 	return scanServerInventory(tx.QueryRowContext(ctx, `
 		INSERT INTO server_inventory_snapshots (

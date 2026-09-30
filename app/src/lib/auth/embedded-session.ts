@@ -2,6 +2,7 @@ import { browser } from "$app/env";
 import { resolveLoginExperience } from "#lib/auth/login-experience.js";
 import { authStore } from "#lib/stores/auth.svelte.js";
 import { initBridge, requestAuthToken } from "#lib/stores/postMessageBridge.js";
+import { isReplayedPortalToken } from "#lib/api/auth.js";
 import {
   getGatewayToken,
   isGatewayAuthConfigured,
@@ -58,6 +59,22 @@ async function refreshEmbeddedCloudSessionUntilSettled(): Promise<boolean> {
   }
 }
 
+// Launch tokens are single-use. When the parent re-sends a token this browser
+// can no longer prove it exchanged (e.g. after the session cookie was lost),
+// ask the parent once for a newly minted token.
+async function exchangePortalToken(token: string): Promise<string> {
+  try {
+    await authStore.completePortalLogin(token);
+    return token;
+  } catch (err) {
+    if (!isReplayedPortalToken(err)) throw err;
+    const fresh = await requestAuthToken({ fresh: true });
+    if (fresh === token) throw err;
+    await authStore.completePortalLogin(fresh);
+    return fresh;
+  }
+}
+
 async function refreshEmbeddedCloudSessionOnce(
   forcePortalVerify: boolean,
 ): Promise<boolean> {
@@ -82,8 +99,7 @@ async function refreshEmbeddedCloudSessionOnce(
       !authStore.cloudUser ||
       !authStore.v2SessionActive
     ) {
-      await authStore.completePortalLogin(token);
-      lastExchangedPortalToken = token;
+      lastExchangedPortalToken = await exchangePortalToken(token);
     }
   } catch (err) {
     console.warn("[embedded-session] Parent SSO refresh failed:", err);

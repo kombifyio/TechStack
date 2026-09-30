@@ -41,18 +41,17 @@
     data-testid="guard-connected-summary"
   >
     <p class="text-xs font-semibold uppercase tracking-wide text-success">
-      Guard heartbeat verified
+      {tr("ui.stacksCreatingCreationCompletion.guardHeartbeatVerified")}
     </p>
     <h3 class="mt-1 text-lg font-semibold text-foreground">
       {creation.connectedServer.name}
     </h3>
     <p class="mt-2 text-sm text-muted-foreground">
-      Techstack now sees this Node as healthy and rollout-ready in the real Node
-      projection. Pairing preparation alone did not trigger this state.
+      {tr("ui.stacksCreatingCreationCompletion.techstackNowSeesThisNode")}
     </p>
     {#if creation.connectedServer.connection.last_heartbeat_at}
       <p class="mt-3 text-xs text-muted-foreground">
-        Last Guard heartbeat:
+        {tr("ui.stacksCreatingCreationCompletion.lastGuardHeartbeat")}
         <span class="font-mono"
           >{creation.connectedServer.connection.last_heartbeat_at}</span
         >
@@ -83,8 +82,8 @@
         <div>
           <p class="text-xs font-semibold uppercase tracking-wide text-success">
             {creation.serverProvisioningMode === "kombify-cloud"
-              ? "Managed provisioning complete"
-              : "Rollout complete"}
+              ? tr("ui.stacksCreatingCreationCompletion.managedProvisioningComplete")
+              : tr("ui.stacksCreatingCreationCompletion.rolloutComplete")}
           </p>
           <h3 class="mt-1 text-2xl font-semibold text-foreground">
             {tr("wizard.identity.installationComplete")}
@@ -103,18 +102,18 @@
             class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
             data-testid="homelab-ready-login-link"
           >
-            Open Homelab
+            {tr("ui.stacksCreatingCreationCompletion.openHomelab")}
           </a>
         {/if}
       </div>
 
       <div class="mt-5 grid gap-3 md:grid-cols-3">
         <div data-kx="plate" class="p-3">
-          <p class="text-xs text-muted-foreground">Owner</p>
+          <p class="text-xs text-muted-foreground">{tr("ui.stacksCreatingCreationCompletion.owner")}</p>
           <p class="mt-1 truncate text-sm font-semibold text-foreground">
             {creation.stackKitHandoff.ownerDisplayName ||
               creation.stackKitHandoff.ownerUsername ||
-              "Owner ready"}
+              tr("ui.stacksCreatingCreationCompletion.ownerReady")}
           </p>
           {#if creation.stackKitHandoff.ownerEmail}
             <p class="truncate text-xs text-muted-foreground">
@@ -123,31 +122,31 @@
           {/if}
         </div>
         <div data-kx="plate" class="p-3">
-          <p class="text-xs text-muted-foreground">Node</p>
+          <p class="text-xs text-muted-foreground">{tr("ui.services.node")}</p>
           <p class="mt-1 truncate text-sm font-semibold text-foreground">
             {creation.lease?.host ||
               creation.lease?.publicIp ||
               creation.lease?.privateIp ||
               creation.remoteServerHost ||
               (creation.serverProvisioningMode === "kombify-cloud"
-                ? "Managed runtime"
-                : "Your Node")}
+                ? tr("ui.homelabDashboardPage.managedRuntime")
+                : tr("ui.stacksCreatingCreationCompletion.yourNode"))}
           </p>
           <p class="truncate text-xs text-muted-foreground">
             {#if creation.serverProvisioningMode === "kombify-cloud"}
               {creation.lease?.provider || "kombify Cloud"} · {creation.lease
                 ?.offering || "standard"}
             {:else}
-              Self-hosted rollout
+              {tr("ui.stacksCreatingCreationCompletion.selfHostedRollout")}
             {/if}
           </p>
         </div>
         <div data-kx="plate" class="p-3">
-          <p class="text-xs text-muted-foreground">Recovery</p>
+          <p class="text-xs text-muted-foreground">{tr("ui.stacksCreatingCreationCompletion.recovery")}</p>
           <p class="mt-1 truncate text-sm font-semibold text-foreground">
             {creation.stackKitHandoff.recoveryRef
-              ? "Material linked"
-              : "Hash present"}
+              ? tr("ui.stacksCreatingCreationCompletion.materialLinked")
+              : tr("ui.stacksCreatingCreationCompletion.hashPresent")}
           </p>
           {#if creation.stackKitHandoff.recoveryRef}
             <p class="truncate text-xs text-muted-foreground">
@@ -163,21 +162,21 @@
           data-kx="control"
           class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium"
         >
-          Dashboard
+          {tr("ui.settings.dashboard")}
         </a>
         <a
           href={creation.monitoringHref()}
           data-kx="control"
           class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium"
         >
-          Monitoring
+          {tr("ui.monitoring.monitoring")}
         </a>
         <a
           href={creation.servicesHref()}
           data-kx="control"
           class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium"
         >
-          Services
+          {tr("ui.services.services")}
         </a>
       </div>
     </div>
@@ -190,24 +189,23 @@
     data-testid="owner-prepared-card"
   >
     <p class="text-xs font-semibold uppercase tracking-wide text-info">
-      Owner prepared
+      {tr("ui.stacksCreatingCreationCompletion.ownerPrepared")}
     </p>
     <h3 class="mt-1 text-lg font-semibold text-foreground">
       {creation.ownerSeedSummary?.displayName ||
         creation.ownerSeedSummary?.username ||
         creation.ownerSeedSummary?.email ||
-        "Owner seed ready"}
+        tr("ui.stacksCreatingCreationCompletion.ownerSeedReady")}
     </h3>
     <p class="mt-2 max-w-2xl text-sm text-muted-foreground">
       {#if creation.ownerSeedSummary?.source === "cloud-linked"}
-        The owner identity derives from your linked kombify Cloud profile.
+        {tr("ui.stacksCreatingCreationCompletion.theOwnerIdentityDerivesFrom")}
       {:else if creation.ownerSeedSummary?.email}
-        The owner seed is prepared for {creation.ownerSeedSummary.email}.
+        {tr("ui.creationCompletion.ownerSeedFor", { email: creation.ownerSeedSummary.email })}
       {:else}
-        The owner seed is prepared.
+        {tr("ui.stacksCreatingCreationCompletion.theOwnerSeedIsPrepared")}
       {/if}
-      The first login gateway and recovery reference arrive with the StackKit rollout
-      ("Review + Start").
+      {tr("ui.stacksCreatingCreationCompletion.theFirstLoginGatewayAnd")}
     </p>
   </section>
 {/if}

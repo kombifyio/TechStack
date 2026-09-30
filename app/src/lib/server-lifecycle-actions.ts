@@ -1,6 +1,7 @@
 import type { StackKitLifecycleOperation } from "#lib/api/stacks.js";
 import type { CanonicalServer } from "#lib/api/registry.js";
 
+import { tr } from "#lib/i18n.svelte.js";
 export interface ServerLifecycleAction {
   operation: StackKitLifecycleOperation;
   label: string;
@@ -17,38 +18,64 @@ export interface ServerLifecycleAction {
 const actions: Record<StackKitLifecycleOperation, ServerLifecycleAction> = {
   plan: {
     operation: "plan",
-    label: "Plan changes",
-    description: "Preview the next StackKit change for this server.",
+    get label() {
+      return tr("ui.serverLifecycleActions.planChanges");
+    },
+    get description() {
+      return tr("ui.serverLifecycleActions.previewTheNextStackKitChange");
+    },
     mutates: false,
   },
   apply: {
     operation: "apply",
-    label: "Apply plan",
-    description: "Apply the prepared StackKit plan to this server.",
+    get label() {
+      return tr("ui.serverLifecycleActions.applyPlan");
+    },
+    get description() {
+      return tr("ui.serverLifecycleActions.applyThePreparedStackKitPlan");
+    },
     mutates: true,
   },
   verify: {
     operation: "verify",
-    label: "Verify installation",
-    description: "Verify release receipt, Owner binding, and runtime state.",
+    get label() {
+      return tr("ui.serverLifecycleActions.verifyInstallation");
+    },
+    get description() {
+      return tr("ui.serverLifecycleActions.verifyReleaseReceiptOwnerBinding");
+    },
     mutates: false,
   },
   upgrade: {
     operation: "upgrade",
-    label: "Upgrade to latest",
-    description: "Upgrade through the published StackKits release channel.",
+    get label() {
+      return tr("ui.serverLifecycleActions.upgradeToLatest");
+    },
+    get description() {
+      return tr(
+        "ui.serverLifecycleActions.upgradeThroughThePublishedStackKits",
+      );
+    },
     mutates: true,
   },
   drift_detect: {
     operation: "drift_detect",
-    label: "Detect drift",
-    description: "Compare the running server with its desired StackKit state.",
+    get label() {
+      return tr("ui.serverLifecycleActions.detectDrift");
+    },
+    get description() {
+      return tr("ui.serverLifecycleActions.compareTheRunningServerWith");
+    },
     mutates: false,
   },
   drift_reconcile: {
     operation: "drift_reconcile",
-    label: "Reconcile drift",
-    description: "Restore the desired StackKit state on this server.",
+    get label() {
+      return tr("ui.serverLifecycleActions.reconcileDrift");
+    },
+    get description() {
+      return tr("ui.serverLifecycleActions.restoreTheDesiredStackKitState");
+    },
     mutates: true,
   },
 };

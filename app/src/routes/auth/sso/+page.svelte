@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "#lib/i18n.svelte.js";
   /**
    * SSO Landing Page
    *
@@ -68,7 +69,7 @@
         const refreshed = await refreshEmbeddedCloudSession();
         if (!refreshed) {
           throw new Error(
-            "Your kombify Cloud session could not be restored. Please try again.",
+            tr("ui.authSso.yourKombifyCloudSessionCould"),
           );
         }
         await finishAuthentication();
@@ -80,7 +81,7 @@
         const queryToken = queryParams.get("token");
 
         if (!queryToken) {
-          throw new Error("No SSO token provided");
+          throw new Error(tr("ui.authSso.noSsoTokenProvided"));
         }
 
         await completeLegacyLogin(queryToken);
@@ -91,7 +92,7 @@
       console.error("[SSO] Error:", err);
       status = "error";
       errorMessage =
-        err instanceof Error ? err.message : "SSO authentication failed";
+        err instanceof Error ? err.message : tr("ui.authSso.ssoAuthenticationFailed");
     }
   }
 
@@ -141,7 +142,7 @@
 </script>
 
 <svelte:head>
-  <title>SSO Authentication - kombify-Techstack</title>
+  <title>{tr("ui.authSso.ssoAuthenticationKombifyTechstack")}</title>
 </svelte:head>
 
 <div class="min-h-screen bg-background flex items-center justify-center">
@@ -153,9 +154,9 @@
           <Loader2 class="h-12 w-12 mx-auto text-primary animate-spin" />
         </div>
         <h1 class="text-2xl font-bold text-foreground mb-2">
-          Signing you in...
+          {tr("ui.sso.signingIn")}
         </h1>
-        <p class="text-muted-foreground">Verifying your portal credentials</p>
+        <p class="text-muted-foreground">{tr("ui.sso.verifying")}</p>
       </div>
     {:else if status === "success"}
       <!-- Success State -->
@@ -163,8 +164,8 @@
         <div class="mb-6">
           <CheckCircle class="h-12 w-12 mx-auto text-success" />
         </div>
-        <h1 class="text-2xl font-bold text-foreground mb-2">Welcome back!</h1>
-        <p class="text-muted-foreground">Redirecting to your dashboard...</p>
+        <h1 class="text-2xl font-bold text-foreground mb-2">{tr("ui.sso.welcomeBack")}</h1>
+        <p class="text-muted-foreground">{tr("ui.sso.redirecting")}</p>
       </div>
     {:else}
       <!-- Error State -->
@@ -173,24 +174,24 @@
           <XCircle class="h-12 w-12 mx-auto text-destructive" />
         </div>
         <h1 class="text-2xl font-bold text-foreground mb-2">
-          Authentication Failed
+          {tr("ui.sso.failed")}
         </h1>
         <p class="text-muted-foreground mb-6">
-          {errorMessage || "Unable to verify your credentials"}
+          {errorMessage || tr("ui.authSso.unableToVerifyYourCredentials")}
         </p>
         <div class="space-y-3">
           <button
             onclick={handleRetry}
             class="w-full py-3 px-4 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg font-medium transition-colors"
           >
-            Try Again
+            {tr("ui.sso.tryAgain")}
           </button>
           {#if !isEmbedded}
             <a
               href="/"
               class="block w-full py-3 px-4 bg-secondary hover:bg-secondary/80 text-foreground rounded-lg font-medium transition-colors text-center"
             >
-              Go Home
+              {tr("ui.sso.goHome")}
             </a>
           {/if}
         </div>

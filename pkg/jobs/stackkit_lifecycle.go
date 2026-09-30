@@ -5,9 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/advancedissuer"
 	"github.com/kombifyio/techstack/internal/stackkitrelease"
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
 	"github.com/kombifyio/techstack/pkg/grpcserver"
@@ -30,10 +32,35 @@ const (
 	StackKitLifecycleServiceLogs    = "service_logs"
 	StackKitLifecycleRemove         = "remove"
 	StackKitLifecycleAddressBind    = "address_bind"
+	// StackKitLifecycleAdvancedTrustImport installs this installation's
+	// Advanced issuer trust bundle on the managed host. Every managed rollout
+	// runs it after init; operators may re-run it to refresh the trust.
+	StackKitLifecycleAdvancedTrustImport = "advanced_trust_import"
+	// The native backup operations reuse the typed BACKUP_* commands the
+	// managed rollout's restore drill runs. Each binds the node-local plan it
+	// acts on; restore only stages a snapshot into StackKits' isolated area.
+	StackKitLifecycleBackupRun       = "backup_run"
+	StackKitLifecycleBackupStatus    = "backup_status"
+	StackKitLifecycleBackupConfigure = "backup_configure"
+	StackKitLifecycleBackupRestore   = "backup_restore"
+	// Advanced Mode operator operations (ADR-0045). Each dispatches
+	// capability-gated StackKits Advanced operations from the pinned
+	// release's catalog: advanced_change_set creates and applies a change set
+	// for the candidate StackSpec in the request body, drift_reconcile
+	// reconciles through a change set, rollback runs the coordinated rollback
+	// to rollback_target_ref, and restore_drill runs the native restore drill.
+	StackKitLifecycleAdvancedChangeSet = "advanced_change_set"
+	StackKitLifecycleRollback          = "rollback"
+	StackKitLifecycleRestoreDrill      = "restore_drill"
 
 	defaultStackKitNodeWorkspace = "/opt/stackkit"
 	stackKitReadCommandTimeout   = 5 * time.Minute
 	stackKitWriteCommandTimeout  = 12 * time.Minute
+	stackKitBackupCommandTimeout = 15 * time.Minute
+	// StackKits bounds the Advanced target at 15 minutes and gives a failed
+	// target a separate 10-minute recovery context. Admission and checkpoint
+	// also run inside this command, so the agent must outlive both phases.
+	stackKitAdvancedMutationCommandTimeout = 30 * time.Minute
 
 	// Managed rollout commands share one product budget which must terminate,
 	// collect target diagnostics, and leave persistence headroom before the
@@ -52,8 +79,8 @@ const (
 
 func managedStackKitOperationTimeout(operation string) time.Duration {
 	switch operation {
-	case StackKitLifecycleInit, StackKitLifecycleAddressBind, StackKitLifecycleGenerate,
-		StackKitLifecyclePlan, StackKitLifecycleApply:
+	case StackKitLifecycleInit, StackKitLifecycleAdvancedTrustImport, StackKitLifecycleAddressBind,
+		StackKitLifecycleGenerate, StackKitLifecyclePlan, StackKitLifecycleApply:
 		// The sequence context is the single lifecycle deadline. Artificial
 		// per-command caps made a healthy first-run init fail while it populated
 		// its release cache, even though the rollout still had ample total time.
@@ -66,6 +93,7 @@ func managedStackKitOperationTimeout(operation string) time.Duration {
 // StackKitLifecycleRequest is the closed operator-facing lifecycle input.
 // It deliberately has no argv, environment, binary path, or shell command.
 type StackKitLifecycleRequest struct {
+	BackupRenewal      *advancedissuer.BackupRenewal
 	StackID            string
 	StackKitInstanceID string
 	TenantID           string
@@ -79,8 +107,9 @@ type StackKitLifecycleRequest struct {
 	OwnerApproved      bool
 	WorkingDirectory   string
 	// SpecPath is a relative canonical StackSpec path inside WorkingDirectory.
-	// Operator lifecycle calls default to stack-spec.yaml; deploy binds this to
-	// the v2 document already materialized by the pinned generator.
+	// Deploy binds this to the v2 document already materialized by the pinned
+	// generator; operator lifecycle calls default to the StackSpec the stack's
+	// last managed rollout applied (ApplyStackKitRolloutDefaults).
 	SpecPath          string
 	StackName         string
 	Domain            string
@@ -106,6 +135,27 @@ type StackKitLifecycleRequest struct {
 	WorkloadRef         string
 	AddressPrefix       string
 	BoundSpecPath       string
+	// SnapshotAnchorID names the snapshot a staged backup restore reads.
+	SnapshotAnchorID string
+	// AdvancedTrustBundle is the installation's canonical public
+	// stackkit.advanced-trust-bundle/v1, set at dispatch for
+	// advanced_trust_import only and never persisted in a job payload.
+	AdvancedTrustBundle []byte
+	// RollbackTargetRef is the sha256 executor-state snapshot id or change-set
+	// id a rollback returns to.
+	RollbackTargetRef string
+}
+
+// AdvancedIssuer is the installation's Advanced capability issuer as seen by
+// lifecycle dispatch: the public trust bundle every managed host imports, and
+// the record of which local Owner each host bound it to.
+type AdvancedIssuer interface {
+	TrustBundle() []byte
+	RecordTrustBinding(context.Context, advancedissuer.TrustBinding) error
+	// TrustBindingFor returns the Owner and stack a deployment's host bound
+	// the trust to; Issue mints one capability for one Advanced operation.
+	TrustBindingFor(ctx context.Context, tenantID, deploymentID string) (advancedissuer.TrustBinding, error)
+	Issue(context.Context, advancedissuer.Request) (advancedissuer.Capability, error)
 }
 
 // localExecutionBinding is the Site/node/channel triple one kit's owner runs.
@@ -165,17 +215,17 @@ type tenantStackKitCommandSender interface {
 }
 
 type StackKitLifecycleConfig struct {
-	Sender          StackKitCommandSender
-	releaseResolver func() (*stackkitrelease.Release, error)
+	ManagedStackKitInventory ManagedStackKitInventoryBuilder
+	ManagedAddressAuthority  ManagedAddressAuthority
+	Sender                   StackKitCommandSender
+	AdvancedIssuer           AdvancedIssuer
+	releaseResolver          func() (*stackkitrelease.Release, error)
 }
 
 func NormalizeStackKitLifecycleRequest(req StackKitLifecycleRequest) (StackKitLifecycleRequest, error) {
 	req = normalizeStackKitLifecycleFields(req)
 	if req.WorkingDirectory == "" {
 		req.WorkingDirectory = defaultStackKitNodeWorkspace
-	}
-	if req.SpecPath == "" {
-		req.SpecPath = "stack-spec.yaml"
 	}
 	if req.StackID == "" || req.TenantID == "" || req.OwnerID == "" || req.AgentID == "" {
 		return req, fmt.Errorf("stack, tenant, Owner, and agent are required")
@@ -211,6 +261,8 @@ func normalizeStackKitLifecycleFields(req StackKitLifecycleRequest) StackKitLife
 	req.WorkloadRef = strings.TrimSpace(req.WorkloadRef)
 	req.AddressPrefix = strings.TrimSpace(req.AddressPrefix)
 	req.BoundSpecPath = strings.TrimSpace(req.BoundSpecPath)
+	req.SnapshotAnchorID = strings.TrimSpace(req.SnapshotAnchorID)
+	req.RollbackTargetRef = strings.TrimSpace(req.RollbackTargetRef)
 	return req
 }
 
@@ -221,12 +273,40 @@ func validateStackKitLifecycleOperation(req *StackKitLifecycleRequest) error {
 		if req.AddressPrefix == "" || req.BoundSpecPath == "" {
 			return fmt.Errorf("address bind requires prefix and bound StackSpec path")
 		}
-	case StackKitLifecycleInit, StackKitLifecycleApply, StackKitLifecycleDriftReconcile:
+	case StackKitLifecycleDriftReconcile, StackKitLifecycleAdvancedChangeSet:
+		if !req.OwnerApproved {
+			return fmt.Errorf("%s requires explicit Owner approval", req.Operation)
+		}
+		if req.Operation == StackKitLifecycleAdvancedChangeSet && len(req.CandidateSpecJSON) == 0 {
+			return fmt.Errorf("advanced_change_set requires the candidate StackSpec")
+		}
+		if len(req.CandidateSpecJSON) > stackkitcommand.MaxInitCandidateBytes || (len(req.CandidateSpecJSON) > 0 && !json.Valid(req.CandidateSpecJSON)) {
+			return fmt.Errorf("%s candidate must be one JSON StackSpec within %d bytes", req.Operation, stackkitcommand.MaxInitCandidateBytes)
+		}
+	case StackKitLifecycleRollback:
+		if !req.OwnerApproved {
+			return fmt.Errorf("rollback requires explicit Owner approval")
+		}
+		if !stackKitSnapshotAnchorPattern.MatchString(req.RollbackTargetRef) {
+			return fmt.Errorf("rollback requires a sha256 rollback_target_ref (snapshot or change-set id)")
+		}
+	case StackKitLifecycleRestoreDrill:
+		if !req.OwnerApproved {
+			return fmt.Errorf("restore_drill requires explicit Owner approval")
+		}
+		if req.SnapshotAnchorID != "" && !stackKitSnapshotAnchorPattern.MatchString(req.SnapshotAnchorID) {
+			return fmt.Errorf("restore_drill snapshot_anchor_id must be a sha256 anchor")
+		}
+	case StackKitLifecycleInit, StackKitLifecycleApply:
 		if req.Operation == StackKitLifecycleInit && (req.StackKit == "" || req.StackName == "") {
 			return fmt.Errorf("init requires StackKit and stack name")
 		}
 		if req.Operation == StackKitLifecycleInit {
 			return stackkitcommand.ValidateInitCandidate(req.CandidateSpecJSON, req.StackKit, req.StackName)
+		}
+	case StackKitLifecycleAdvancedTrustImport:
+		if !req.OwnerApproved {
+			return fmt.Errorf("advanced_trust_import requires explicit Owner approval")
 		}
 	case StackKitLifecycleUpgrade:
 		if !req.DryRun && !req.OwnerApproved {
@@ -248,6 +328,18 @@ func validateStackKitLifecycleOperation(req *StackKitLifecycleRequest) error {
 		}
 		if req.LogTail < 1 || req.LogTail > 200 {
 			return fmt.Errorf("service_logs tail must be between 1 and 200")
+		}
+	case StackKitLifecycleBackupStatus:
+	case StackKitLifecycleBackupRun, StackKitLifecycleBackupConfigure:
+		if !req.OwnerApproved {
+			return fmt.Errorf("%s requires explicit Owner approval", req.Operation)
+		}
+	case StackKitLifecycleBackupRestore:
+		if !req.OwnerApproved {
+			return fmt.Errorf("backup_restore requires explicit Owner approval")
+		}
+		if !stackKitSnapshotAnchorPattern.MatchString(req.SnapshotAnchorID) {
+			return fmt.Errorf("backup_restore requires a sha256 snapshot_anchor_id")
 		}
 	case StackKitLifecycleRemove:
 		if !req.OwnerApproved {
@@ -298,6 +390,8 @@ func StackKitLifecyclePayload(req StackKitLifecycleRequest) map[string]interface
 		"durable_job_id":        req.DurableJobID,
 		"service_action_digest": req.ServiceActionDigest,
 		"workload_ref":          req.WorkloadRef,
+		"snapshot_anchor_id":    req.SnapshotAnchorID,
+		"rollback_target_ref":   req.RollbackTargetRef,
 	}
 }
 
@@ -373,16 +467,27 @@ func StackKitLifecycleHandler(cfg StackKitLifecycleConfig) JobHandler {
 
 		job.setStep("stackkit_dispatch")
 		q.UpdateProgress(job.ID, 10, "Dispatching typed StackKits "+req.Operation+" operation")
+		if IsAdvancedStackKitLifecycleOperation(req.Operation) {
+			return runAdvancedStackKitLifecycleJob(ctx, cfg, job, q, req, *release)
+		}
+		if req.Operation == StackKitLifecycleAdvancedTrustImport {
+			if cfg.AdvancedIssuer == nil {
+				return NewConfigError(advancedissuer.ErrUnavailable)
+			}
+			req.AdvancedTrustBundle = cfg.AdvancedIssuer.TrustBundle()
+		}
 		expectedPlanHash := ""
-		if req.Operation == StackKitLifecycleApply {
+		if req.Operation == StackKitLifecycleApply || IsStackKitBackupOperation(req.Operation) {
+			// Apply and every native backup operation act on one exact
+			// node-local generation; plan it first and bind the command to it.
 			job.setStep("stackkit_plan_admission")
-			q.UpdateProgress(job.ID, 10, "Planning the exact StackKits generation before Apply")
+			q.UpdateProgress(job.ID, 10, "Planning the exact StackKits generation before "+req.Operation)
 			expectedPlanHash, err = planStackKitLifecycleApply(ctx, cfg.Sender, job.ID, req, *release)
 			if err != nil {
 				return NewPermanentError(err)
 			}
 			job.setStep("stackkit_dispatch")
-			q.UpdateProgress(job.ID, 30, "Applying the admitted StackKits plan")
+			q.UpdateProgress(job.ID, 30, "Dispatching "+req.Operation+" against the admitted StackKits plan")
 		}
 		command, err := stackKitLifecycleCommand(job.ID, req, *release)
 		if err != nil {
@@ -402,6 +507,20 @@ func StackKitLifecycleHandler(cfg StackKitLifecycleConfig) JobHandler {
 		if !result.Success {
 			job.replaceResult(normalized)
 			return NewPermanentError(fmt.Errorf("StackKits %s failed with exit code %d", req.Operation, result.ExitCode))
+		}
+		if req.Operation == StackKitLifecycleAdvancedTrustImport {
+			binding, bindErr := admitAdvancedTrustImport(ctx, cfg.AdvancedIssuer, req, req.StackKitInstanceID, command, result)
+			if bindErr != nil {
+				job.replaceResult(normalized)
+				return NewPermanentError(bindErr)
+			}
+			normalized["advanced_trust"] = binding
+		}
+		if evidence, evidenceErr := stackKitBackupEvidence(command, result); evidenceErr != nil {
+			job.replaceResult(normalized)
+			return NewPermanentError(evidenceErr)
+		} else if evidence != nil {
+			normalized["backup"] = evidence
 		}
 		if isStackKitServiceMutation(req.Operation) {
 			verifyRequest := req
@@ -493,6 +612,8 @@ func stackKitLifecycleRequestFromJob(job *Job) (StackKitLifecycleRequest, error)
 		DurableJobID:        stringFromInterface(job.Payload["durable_job_id"]),
 		ServiceActionDigest: stringFromInterface(job.Payload["service_action_digest"]),
 		WorkloadRef:         stringFromInterface(job.Payload["workload_ref"]),
+		SnapshotAnchorID:    stringFromInterface(job.Payload["snapshot_anchor_id"]),
+		RollbackTargetRef:   stringFromInterface(job.Payload["rollback_target_ref"]),
 		StackKit: firstNonEmpty(
 			stringFromInterface(job.Payload["stackkit"]),
 			stringFromInterface(job.Payload["stackkit_catalog_ref"]),
@@ -511,11 +632,15 @@ func stackKitLifecycleCommand(commandID string, req StackKitLifecycleRequest, re
 	if err != nil {
 		return nil, err
 	}
+	specPath := req.SpecPath
+	if specPath == "" {
+		specPath = defaultStackKitSpecPath
+	}
 	command := &agentpb.StackKitCommand{
 		CommandId:                commandID,
 		Operation:                operation,
 		WorkingDirectory:         req.WorkingDirectory,
-		SpecPath:                 req.SpecPath,
+		SpecPath:                 specPath,
 		OutputDirectory:          "deploy",
 		TimeoutSeconds:           stackKitLifecycleTimeout(operation),
 		Release:                  grpcserver.StackKitReleasePinFor(release),
@@ -538,13 +663,31 @@ func stackKitLifecycleCommand(commandID string, req StackKitLifecycleRequest, re
 		AddressPrefix:            req.AddressPrefix,
 		BoundSpecPath:            req.BoundSpecPath,
 	}
-	if operation == agentpb.StackKitOperation_STACKKIT_OPERATION_DRIFT_RECONCILE {
-		command.DriftMode = agentpb.StackKitDriftMode_STACKKIT_DRIFT_MODE_STANDARD
+	if operation == agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE {
+		command.SnapshotAnchorId = req.SnapshotAnchorID
 	}
-	if operation == agentpb.StackKitOperation_STACKKIT_OPERATION_INIT {
+	switch operation {
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_CHANGE_SET_CREATE,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_CHANGE_SET_APPLY,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_DRIFT_RECONCILE:
+		command.CandidateSpecJson = append([]byte(nil), req.CandidateSpecJSON...)
+		command.InventoryJson = append([]byte(nil), req.InventoryJSON...)
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_ROLLBACK:
+		command.RollbackTargetRef = req.RollbackTargetRef
+		command.InventoryJson = append([]byte(nil), req.InventoryJSON...)
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_RESTORE_DRILL:
+		command.SnapshotAnchorId = req.SnapshotAnchorID
+		command.InventoryJson = append([]byte(nil), req.InventoryJSON...)
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_INIT:
 		command.CandidateSpecJson = append([]byte(nil), req.CandidateSpecJSON...)
 		command.OwnerEmail = strings.TrimSpace(req.OwnerEmail)
-	} else {
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_TRUST_IMPORT:
+		// Trust import reads only the bundle; it needs no Inventory.
+		if len(req.AdvancedTrustBundle) == 0 {
+			return nil, advancedissuer.ErrUnavailable
+		}
+		command.AdvancedTrustBundle = append([]byte(nil), req.AdvancedTrustBundle...)
+	default:
 		// Init admits desired intent without Inventory. Deliver observed facts
 		// with the following operation, keeping the two bounded documents out
 		// of the same transport frame.
@@ -569,8 +712,16 @@ func stackKitLifecycleAgentOperation(operation string) (agentpb.StackKitOperatio
 		return agentpb.StackKitOperation_STACKKIT_OPERATION_UPGRADE, nil
 	case StackKitLifecycleDriftDetect:
 		return agentpb.StackKitOperation_STACKKIT_OPERATION_DRIFT_DETECT, nil
-	case StackKitLifecycleDriftReconcile:
-		return agentpb.StackKitOperation_STACKKIT_OPERATION_DRIFT_RECONCILE, nil
+	case stackKitStepChangeSetCreate:
+		return agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_CHANGE_SET_CREATE, nil
+	case stackKitStepChangeSetApply:
+		return agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_CHANGE_SET_APPLY, nil
+	case stackKitStepDriftReconcile:
+		return agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_DRIFT_RECONCILE, nil
+	case stackKitStepRollback:
+		return agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_ROLLBACK, nil
+	case stackKitStepRestoreDrill:
+		return agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_RESTORE_DRILL, nil
 	case StackKitLifecycleServiceStart:
 		return agentpb.StackKitOperation_STACKKIT_OPERATION_SERVICE_START, nil
 	case StackKitLifecycleServiceStop:
@@ -583,6 +734,16 @@ func stackKitLifecycleAgentOperation(operation string) (agentpb.StackKitOperatio
 		return agentpb.StackKitOperation_STACKKIT_OPERATION_REMOVE, nil
 	case StackKitLifecycleAddressBind:
 		return agentpb.StackKitOperation_STACKKIT_OPERATION_ADDRESS_BIND, nil
+	case StackKitLifecycleAdvancedTrustImport:
+		return agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_TRUST_IMPORT, nil
+	case StackKitLifecycleBackupRun:
+		return agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RUN, nil
+	case StackKitLifecycleBackupStatus:
+		return agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_STATUS, nil
+	case StackKitLifecycleBackupConfigure:
+		return agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_CONFIGURE, nil
+	case StackKitLifecycleBackupRestore:
+		return agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE, nil
 	default:
 		return agentpb.StackKitOperation_STACKKIT_OPERATION_UNSPECIFIED, fmt.Errorf("unsupported StackKits lifecycle operation %q", operation)
 	}
@@ -592,9 +753,18 @@ func stackKitLifecycleTimeout(operation agentpb.StackKitOperation) int32 {
 	switch operation {
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_APPLY,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_UPGRADE,
-		agentpb.StackKitOperation_STACKKIT_OPERATION_DRIFT_RECONCILE,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_CHANGE_SET_CREATE,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_REMOVE:
 		return int32(stackKitWriteCommandTimeout / time.Second)
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RUN,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_ROLLBACK,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_RESTORE_DRILL:
+		// The managed restore drill's per-step budget.
+		return int32(stackKitBackupCommandTimeout / time.Second)
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_CHANGE_SET_APPLY,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_DRIFT_RECONCILE:
+		return int32(stackKitAdvancedMutationCommandTimeout / time.Second)
 	default:
 		return int32(stackKitReadCommandTimeout / time.Second)
 	}
@@ -663,6 +833,13 @@ func normalizeStackKitLifecycleResult(req StackKitLifecycleRequest, result *agen
 	if receipt := StackKitServiceActionReceipt(req); receipt != nil {
 		normalized["service_action_receipt"] = receipt
 	}
+	if req.Operation == StackKitLifecycleDriftDetect && result.Success {
+		report, err := stackkitcommand.ParseDriftReport(&agentpb.StackKitCommand{Operation: agentpb.StackKitOperation_STACKKIT_OPERATION_DRIFT_DETECT}, result)
+		if err != nil {
+			return nil, fmt.Errorf("admit StackKits drift report: %w", err)
+		}
+		normalized["drift_report"] = driftReportMap(report)
+	}
 	if req.Operation == StackKitLifecycleServiceLogs {
 		data, _ := commandResult["data"].(map[string]interface{})
 		if output := strings.TrimSpace(stringFromInterface(data["output"])); output != "" {
@@ -692,6 +869,57 @@ func normalizeStackKitLifecycleResult(req StackKitLifecycleRequest, result *agen
 	return normalized, nil
 }
 
+// IsStackKitBackupOperation reports the native backup operations.
+func IsStackKitBackupOperation(operation string) bool {
+	switch strings.ToLower(strings.TrimSpace(operation)) {
+	case StackKitLifecycleBackupRun, StackKitLifecycleBackupStatus,
+		StackKitLifecycleBackupConfigure, StackKitLifecycleBackupRestore:
+		return true
+	default:
+		return false
+	}
+}
+
+var stackKitSnapshotAnchorPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
+
+// stackKitBackupEvidence admits the snapshot or staged-restore identity of a
+// successful backup operation, so the caller can name the snapshot a later
+// staged restore reads. Other operations carry no backup evidence.
+func stackKitBackupEvidence(command *agentpb.StackKitCommand, result *agentpb.StackKitResult) (map[string]interface{}, error) {
+	if command == nil || result == nil || !result.Success {
+		return nil, nil
+	}
+	switch command.Operation {
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RUN:
+		evidence, err := stackkitcommand.ParseBackupRunEvidence(command, result)
+		if err != nil {
+			return nil, fmt.Errorf("admit StackKits backup run evidence: %w", err)
+		}
+		return map[string]interface{}{
+			"snapshot_anchor_id": evidence.SnapshotAnchorID, "operation_id": evidence.OperationID,
+			"owner_ref": evidence.OwnerRef, "plan_hash": evidence.PlanHash,
+		}, nil
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE:
+		evidence, err := stackkitcommand.ParseBackupRestoreEvidence(command, result)
+		if err != nil {
+			return nil, fmt.Errorf("admit StackKits staged restore evidence: %w", err)
+		}
+		return map[string]interface{}{
+			"mode": "staged", "restore_result_id": evidence.RestoreResultID,
+			"snapshot_anchor_id": evidence.SnapshotAnchorID, "operation_id": evidence.OperationID,
+			"owner_ref": evidence.OwnerRef, "plan_hash": evidence.PlanHash,
+			"verified_at": evidence.VerifiedAt.UTC().Format(time.RFC3339Nano),
+		}, nil
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_CONFIGURE:
+		if err := stackkitcommand.ParseBackupConfigurationEvidence(command, result); err != nil {
+			return nil, fmt.Errorf("admit StackKits backup configuration evidence: %w", err)
+		}
+		return map[string]interface{}{"status": "configured"}, nil
+	default:
+		return nil, nil
+	}
+}
+
 func IsStackKitServiceLifecycleOperation(operation string) bool {
 	switch strings.ToLower(strings.TrimSpace(operation)) {
 	case StackKitLifecycleServiceStart, StackKitLifecycleServiceStop,
@@ -709,4 +937,34 @@ func stackKitLifecycleCommandDataStatus(commandResult map[string]interface{}) st
 	}
 	status, _ := data["status"].(string)
 	return strings.ToLower(strings.TrimSpace(status))
+}
+
+// admitAdvancedTrustImport accepts a host's trust-import evidence only when it
+// pins the exact bundle dispatched, then records the local Owner the host
+// bound it to. Capabilities for the deployment are scoped to that Owner.
+func admitAdvancedTrustImport(
+	ctx context.Context,
+	issuer AdvancedIssuer,
+	req StackKitLifecycleRequest,
+	stackKitStackID string,
+	command *agentpb.StackKitCommand,
+	result *agentpb.StackKitResult,
+) (map[string]interface{}, error) {
+	evidence, err := stackkitcommand.ParseAdvancedTrustImportEvidence(command, result)
+	if err != nil {
+		return nil, err
+	}
+	if issuer == nil {
+		return nil, advancedissuer.ErrUnavailable
+	}
+	if err := issuer.RecordTrustBinding(ctx, advancedissuer.TrustBinding{
+		TenantID: req.TenantID, DeploymentID: req.StackID, StackID: stackKitStackID,
+		OwnerRef: evidence.OwnerRef, BundleSHA256: evidence.BundleSHA256,
+	}); err != nil {
+		return nil, fmt.Errorf("record advanced trust binding: %w", err)
+	}
+	return map[string]interface{}{
+		"status": "imported", "owner_ref": evidence.OwnerRef,
+		"bundle_sha256": evidence.BundleSHA256, "stackkit_stack_id": stackKitStackID,
+	}, nil
 }

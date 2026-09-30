@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "stackkit.command-result/v1",
+  "command": "stackkit host updates apply",
+  "status": "denied",
+  "data": {
+    "schema_version": "stackkit.host-maintenance/v1",
+    "operation": "updates.apply",
+    "observed_at": "2026-09-25T11:17:25.068612786Z",
+    "os": {
+      "id": "ubuntu",
+      "version_id": "24.04",
+      "pretty_name": "Ubuntu 24.04.5 LTS"
+    },
+    "package_manager": "apt",
+    "plan_digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "pending_count": 0,
+    "security_count": 0,
+    "hold_scope": "Held packages are excluded from `stackkit host updates apply` only; unattended-upgrades is governed by the StackKit base policy.",
+    "reboot_likely": false,
+    "started_at": "2026-09-25T11:17:25.068612786Z",
+    "refusal": {
+      "code": "plan_stale",
+      "message": "the pending package set changed since the plan was made",
+      "guidance": [
+        "Run `stackkit host updates plan` again, review it, and apply its plan_digest."
+      ]
+    }
+  }
+}

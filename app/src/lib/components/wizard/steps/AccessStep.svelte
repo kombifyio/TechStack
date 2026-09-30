@@ -8,6 +8,7 @@
     StackConfig,
   } from "#lib/wizard/index.js";
   import { tr } from "#lib/i18n.svelte.js";
+  import "../substep-rail.css";
   import { revealWizardDetails } from "#lib/wizard/reveal-details.js";
 
   interface Props {
@@ -90,7 +91,11 @@
   }
 </script>
 
-<div class="step" data-testid="easy-step-3">
+<div
+  class="step substep-flow"
+  style:--substep-prefix="&quot;3.&quot;"
+  data-testid="easy-step-3"
+>
   <header class="heading">
     <p class="eyebrow">{tr("wizard.access.eyebrow")}</p>
     <h2>{tr("wizard.access.heading")}</h2>
@@ -102,6 +107,7 @@
     <p>{tr(`wizard.access.context.${contextGoal}`)}</p>
   </aside>
 
+  <div class="substep-group" data-substep>
   <fieldset class="choice-grid">
     <legend class="sr-only">{tr("wizard.access.heading")}</legend>
     {#each choices as mode (mode)}
@@ -164,8 +170,9 @@
       >
     </div>
   </section>
+  </div>
 
-  <section class="details">
+  <section class="details" data-substep>
     <button
       type="button"
       class="details-trigger"
@@ -329,6 +336,11 @@
   .step {
     display: grid;
     gap: 32px;
+  }
+  .substep-group {
+    display: grid;
+    gap: 32px;
+    min-width: 0;
   }
   .heading {
     padding-block: 14px 2px;
@@ -521,6 +533,7 @@
     font-weight: 600;
   }
   .details {
+    --substep-top: 14px;
     border-top: 1px solid var(--border);
     padding-top: 18px;
   }

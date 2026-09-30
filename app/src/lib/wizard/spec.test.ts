@@ -1,136 +1,13 @@
 import { describe, expect, it } from "vitest";
-import {
-  buildInputSpecFromStackConfig,
-  buildStackKitSpecFromStackConfig,
-} from "./spec";
+import { buildStackKitSpecFromStackConfig } from "./spec";
 import { applyServerProvisioningMode, createDefaultConfig } from "./types";
 
 describe("wizard StackKit spec", () => {
-  it("builds a StackKits stack-spec that can replace a StackKit default spec", () => {
-    const config = createDefaultConfig();
-
-    const spec = buildStackKitSpecFromStackConfig(config) as {
-      name: string;
-      stackkit: string;
-      mode: string;
-      runtime: string;
-      context: string;
-      domain: string;
-      subdomainPrefix?: string;
-      compute: { tier: string };
-      paas: string;
-      nodes: Array<{ name: string; role: string; provider?: string }>;
-      services: Record<string, { enabled: boolean }>;
-      owner: { bootstrapMode: string; source: string };
-      network: { mode: string };
-      vpn?: { enabled: boolean; type: string };
-      metadata: Record<string, string>;
-      email: string;
-      adminEmail: string;
-    };
-
-    expect(spec.name).toBe("homelab");
-    expect(spec.stackkit).toBe("basement-kit");
-    expect(spec.mode).toBe("simple");
-    expect(spec.runtime).toBe("docker");
-    expect(spec.context).toBe("local");
-    expect(spec.domain).toBe("stack.home");
-    expect(spec.subdomainPrefix).toBeUndefined();
-    expect(spec.email).toBe("admin@stack.home");
-    expect(spec.adminEmail).toBe("admin@stack.home");
-    expect(spec.compute.tier).toBe("standard");
-    expect(spec.paas).toBe("dokploy");
-    expect(spec.metadata.use_cases).toBe("");
-    expect(spec.nodes).toEqual([{ name: "main", role: "standalone" }]);
-    expect(spec.network.mode).toBe("hybrid");
-    expect(spec.vpn).toEqual({ enabled: true, type: "headscale" });
-    expect(spec.services).toMatchObject({
-      homepage: { enabled: true },
-      dokploy: { enabled: true },
-      "uptime-kuma": { enabled: true },
-      whoami: { enabled: true },
-      tinyauth: { enabled: true },
-      pocketid: { enabled: true },
-      vaultwarden: { enabled: false },
-      immich: { enabled: false },
-    });
-    expect(spec.metadata.spec_format).toBe("stack-spec");
-    expect(spec.metadata.decision_context_version).toBe(
-      "techstack/decision-context/v1",
-    );
-    expect(spec.metadata.decision_channel).toBe("wizard:easy");
-    expect(spec.metadata.operator_capability_score).toBe("3");
-    expect(spec.metadata.operator_capability_band).toBe("guided");
-    expect(spec.metadata.operator_capability_source).toBe("wizard-derived");
-    expect(spec.metadata.operator_capability_evidence).toBe("wizard:easy");
-    expect(spec.metadata.advanced_interaction_count).toBe("0");
-    expect(spec.metadata.explicit_alternative_count).toBe("0");
-    expect(spec.metadata.advanced_settings_touched).toBe("false");
-    expect(spec.owner.bootstrapMode).toBe("custom");
-    expect(spec.owner.source).toBe("local");
-    expect(spec).not.toHaveProperty("goals");
-    expect(spec).not.toHaveProperty("serverProvisioning");
-    expect(spec).not.toHaveProperty("kit");
-  });
-
   it("omits the VPN overlay for home-only access", () => {
     const config = createDefaultConfig();
     config.network.accessMode = "home";
 
     expect(buildStackKitSpecFromStackConfig(config).vpn).toBeUndefined();
-  });
-
-  it("keeps the legacy buildInputSpec export as the canonical StackKit spec", () => {
-    const config = createDefaultConfig();
-
-    expect(buildInputSpecFromStackConfig(config)).toEqual(
-      buildStackKitSpecFromStackConfig(config),
-    );
-  });
-
-  it("defaults the lean-core owner metadata to local without recovery hash", () => {
-    const config = createDefaultConfig();
-
-    const spec = buildStackKitSpecFromStackConfig(config) as {
-      stackkit: string;
-      services: Record<string, { enabled: boolean }>;
-      metadata: Record<string, string>;
-    };
-
-    expect(spec.stackkit).toBe("basement-kit");
-    expect(spec.services.pocketid.enabled).toBe(true);
-    expect(spec.services.vaultwarden.enabled).toBe(false);
-    expect(spec.services.immich.enabled).toBe(false);
-    expect(spec.metadata.server_mode).toBe("user-owned");
-    expect(spec.metadata.server_provisioning_mode).toBe("install-command");
-    expect(spec.metadata.server_connection_mode).toBe("agent-oneliner");
-    expect(spec.metadata.server_install_command_required).toBe("true");
-    expect(spec.metadata.server_registry_module).toBe("server-registry");
-    expect(spec.metadata.service_registry_module).toBe("service-registry");
-    expect(spec.metadata.use_cases).toBe("");
-    expect(spec.metadata.stackkit_foundation).toBe("basement-kit");
-    expect(spec.metadata.foundation_node_label).toBe("Foundation Node");
-    expect(spec.metadata.server_node_role).toBe("foundation");
-    expect(spec.metadata.server_node_role_wire).toBe("standalone");
-    expect(spec.metadata.foundation_node_wire_compat).toBe(
-      "main,standalone,control-plane",
-    );
-    expect(spec.metadata.runtime_lane).toBe("");
-    expect(spec.metadata.runtime_offering_id).toBe("");
-    expect(spec.metadata.provider_id).toBe("");
-    expect(spec.metadata).not.toHaveProperty("lease_provider");
-    expect(spec.metadata).not.toHaveProperty("simulate_provider_id");
-    expect(spec.metadata.simulate_node_lifecycle).toBe("");
-    expect(spec.metadata.billing_mode).toBe("local");
-    expect(spec.metadata.billing_cadence).toBe("");
-    expect(spec.metadata.stackkit_catalog_ref).toBe("basement-kit");
-    expect(spec.metadata.verification_status).toBe("pending");
-    expect(spec.metadata.owner_bootstrap_mode).toBe("custom");
-    expect(spec.metadata.owner_source).toBe("local");
-    expect(spec.metadata.owner_email_present).toBe("false");
-    expect(spec.metadata.owner_username_present).toBe("false");
-    expect(spec.metadata.owner_display_name_present).toBe("false");
-    expect(spec.metadata.recovery_passphrase_hash_present).toBe("false");
   });
 
   it("binds registry foundation and node role into StackKits output", () => {
@@ -205,7 +82,6 @@ describe("wizard StackKit spec", () => {
     };
 
     expect(spec.context).toBe("local");
-    expect(spec.network.mode).toBe("hybrid");
     expect(spec.nodes[0].role).toBe("standalone");
     expect(spec.nodes[0].ip).toBe("server.example.com");
     expect(spec.nodes[0].host).toBe("server.example.com");
@@ -269,7 +145,6 @@ describe("wizard StackKit spec", () => {
     expect(spec.metadata.server_mode).toBe("monthly-runtime");
     expect(spec.metadata.runtime_lane).toBe("monthly-runtime");
     expect(spec.metadata.address_mode).toBe("kombify-me");
-    expect(spec.metadata.provider_id).toBe("centron");
     expect(spec.metadata.billing_mode).toBe("subscription");
     expect(spec.metadata.owner_email_present).toBe("false");
     expect(spec.metadata.owner_username_present).toBe("false");

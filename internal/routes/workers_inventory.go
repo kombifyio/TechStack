@@ -68,14 +68,15 @@ type workerInventoryRequest struct {
 	DiscoveryObserved bool `json:"discovery_observed"`
 	// DiscoveredServiceCount is how many unmanaged services the Guard
 	// enumerated before any control-plane filtering.
-	DiscoveredServiceCount int                          `json:"discovered_service_count"`
-	Host                   workerInventoryHost          `json:"host"`
-	Services               []workerInventoryService     `json:"services"`
-	Channels               []workerInventoryChannel     `json:"channels"`
-	Endpoints              []workerInventoryEndpoint    `json:"endpoints"`
-	RuntimeConvergence     *runtimeconvergence.Snapshot `json:"runtime_convergence,omitempty"`
-	OpenPorts              []string                     `json:"open_ports"`
-	PortsObserved          bool                         `json:"ports_observed"`
+	DiscoveredServiceCount int `json:"discovered_service_count"`
+	hostMaintenanceFacts
+	Host               workerInventoryHost          `json:"host"`
+	Services           []workerInventoryService     `json:"services"`
+	Channels           []workerInventoryChannel     `json:"channels"`
+	Endpoints          []workerInventoryEndpoint    `json:"endpoints"`
+	RuntimeConvergence *runtimeconvergence.Snapshot `json:"runtime_convergence,omitempty"`
+	OpenPorts          []string                     `json:"open_ports"`
+	PortsObserved      bool                         `json:"ports_observed"`
 }
 
 type workerInventoryHost struct {
@@ -283,7 +284,7 @@ func (h workerRouteHandlers) commitWorkerInventory(
 }
 
 func (h workerRouteHandlers) persistInventoryCompatibilityViews(e *httpx.Event, worker controlplane.Worker, nodeID string, req workerInventoryRequest, observedAt time.Time) error {
-	if metricErr := h.writeInventoryMetrics(worker, req, observedAt); metricErr != nil {
+	if metricErr := h.writeInventoryMetrics(worker, nodeID, req, observedAt); metricErr != nil {
 		return metricErr
 	}
 	if registryErr := h.upsertInventoryRegistry(e, worker, nodeID, req, 0, observedAt); registryErr != nil {
@@ -694,7 +695,7 @@ func (h workerRouteHandlers) saveInventoryWorker(e *httpx.Event, worker controlp
 	return updated, nil
 }
 
-func (h workerRouteHandlers) writeInventoryMetrics(worker controlplane.Worker, req workerInventoryRequest, now time.Time) error {
+func (h workerRouteHandlers) writeInventoryMetrics(worker controlplane.Worker, serverID string, req workerInventoryRequest, now time.Time) error {
 	if h.metricWriter == nil {
 		return nil
 	}
@@ -712,7 +713,7 @@ func (h workerRouteHandlers) writeInventoryMetrics(worker controlplane.Worker, r
 	if heartbeat.DiskTotalBytes == 0 && req.Host.DiskGB > 0 {
 		heartbeat.DiskTotalBytes = int64(req.Host.DiskGB) * 1024 * 1024 * 1024
 	}
-	samples := workerHeartbeatSamplesFromStore(worker, heartbeat, now)
+	samples := workerHeartbeatSamplesFromStore(worker, serverID, heartbeat, now)
 	if len(samples) == 0 {
 		return nil
 	}

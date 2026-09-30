@@ -135,6 +135,7 @@ reports/
 artifacts/oss-byos-gate/
 artifacts/runtime-e2e/
 artifacts/provider-lifecycle-gate/
+artifacts/managed-lab/
 
 # Playwright
 web/playwright-report/

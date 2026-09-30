@@ -41,7 +41,7 @@
       }
       return;
     }
-    authStore.initiateCloudLogin({ interactive: true });
+    authStore.initiateCloudLogin();
   }
 
   function reopenPortal() {
@@ -166,8 +166,7 @@
         {:else}
           <div class="space-y-4">
             <p class="text-sm text-muted-foreground">
-              Continue on the local Techstack setup path. This screen does not
-              collect a password.
+              {tr("ui.relogin.localPath")}
             </p>
             <Button
               variant="primary"
@@ -177,10 +176,10 @@
                 window.location.assign(resolveUnauthenticatedEntry());
               }}
             >
-              Continue local setup
+              {tr("ui.relogin.continueLocal")}
             </Button>
             <Button variant="secondary" class="w-full" onclick={handleCancel}>
-              Cancel
+              {tr("common.cancel")}
             </Button>
           </div>
         {/if}

@@ -1170,26 +1170,32 @@ func TestNormalizeCreateStackRequest_AllowsUserOwnedServerProvisioningModes(t *t
 func TestValidateDeploymentLaneManagedRuntimeModes(t *testing.T) {
 	tests := []struct {
 		name        string
+		mode        config.DeploymentMode
 		environment string
+		simulation  bool
 		localE2E    bool
 		wantAllowed bool
 	}{
-		{name: "self hosted rejects", environment: "production"},
-		{name: "development E2E allows", environment: "development", localE2E: true, wantAllowed: true},
-		{name: "production ignores E2E override", environment: "production", localE2E: true},
+		{name: "self hosted rejects", mode: config.ModeSelfHosted, environment: "production"},
+		{name: "development E2E allows", mode: config.ModeSelfHosted, environment: "development", simulation: true, localE2E: true, wantAllowed: true},
+		{name: "local E2E allows", mode: config.ModeSelfHosted, environment: "local", simulation: true, localE2E: true, wantAllowed: true},
+		{name: "local without the simulation flag rejects", mode: config.ModeSelfHosted, environment: "local", localE2E: true},
+		{name: "local without the E2E flag rejects", mode: config.ModeSelfHosted, environment: "local", simulation: true},
+		{name: "production ignores E2E override", mode: config.ModeSelfHosted, environment: "production", simulation: true, localE2E: true},
+		{name: "saas takes the SaaS path", mode: config.ModeSaaS, environment: "production", wantAllowed: true},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Setenv("TECHSTACK_ENV", test.environment)
-			t.Setenv("TECHSTACK_ALLOW_LOCAL_SIMULATION_GATE", strconv.FormatBool(test.localE2E))
+			t.Setenv("TECHSTACK_ALLOW_LOCAL_SIMULATION_GATE", strconv.FormatBool(test.simulation))
 			t.Setenv("TECHSTACK_ALLOW_LOCAL_MANAGED_RUNTIME_E2E", strconv.FormatBool(test.localE2E))
 
 			normalized, msg := normalizeCreateStackRequest(managedRuntimeCreateRequest("centron"))
 			if msg != "" {
 				t.Fatalf("normalizeCreateStackRequest() message = %q, want empty", msg)
 			}
-			allowed := validateDeploymentLane(normalized, config.ModeSelfHosted) == ""
+			allowed := validateDeploymentLane(normalized, test.mode) == ""
 			if allowed != test.wantAllowed {
 				t.Fatalf("validateDeploymentLane() allowed = %t, want %t", allowed, test.wantAllowed)
 			}

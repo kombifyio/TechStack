@@ -147,14 +147,14 @@ func (h wizardRunHandlers) remoteEnrollmentPairingToken(
 		return "", errors.New("pairing store is unavailable for remote enrollment")
 	}
 	params := trust.PairingTokenParams{
-		Name:                    strings.TrimSpace(stack.Name + " remote-ssh"),
-		StackID:                 stack.ID,
-		SpecNodeID:              joinSpecNodeIDFromStack(stack),
-		ServerProvisioningMode:  specv2.TransportConnectRemote,
-		NodeRole:                remoteEnrollmentNodeRole(stack),
-		ServerRemoteHost:        runtimeStringFromConfig(stack.Config, "server_remote_host"),
-		ServerRemoteUser:        runtimeStringFromConfig(stack.Config, "server_remote_user"),
-		ServerRemoteAuthMethod:  runtimeStringFromConfig(stack.Config, "server_remote_auth_method"),
+		Name:                   strings.TrimSpace(stack.Name + " remote-ssh"),
+		StackID:                stack.ID,
+		SpecNodeID:             joinSpecNodeIDFromStack(stack),
+		ServerProvisioningMode: specv2.TransportConnectRemote,
+		NodeRole:               remoteEnrollmentNodeRole(stack),
+		ServerRemoteHost:       runtimeStringFromConfig(stack.Config, "server_remote_host"),
+		ServerRemoteUser:       runtimeStringFromConfig(stack.Config, "server_remote_user"),
+		ServerRemoteAuthMethod: runtimeStringFromConfig(stack.Config, "server_remote_auth_method"),
 		ServerRemoteSSHKeyLabel: firstNonEmpty(
 			runtimeStringFromConfig(stack.Config, "server_remote_credential_ref"),
 			runtimeStringFromConfig(stack.Config, "server_remote_ssh_key_label"),

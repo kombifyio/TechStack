@@ -35,6 +35,7 @@ type UnifierAPI struct {
 	loader          *unifier.Loader
 	recommendations *unifier.WizardRecommendationAuthority
 	workers         controlplane.WorkerStore
+	selfDisclosures controlplane.OperatorSelfDisclosureStore
 }
 
 // NewUnifierAPI creates a new UnifierAPI instance with full pipeline support.
@@ -46,12 +47,17 @@ func NewUnifierAPI(workers controlplane.WorkerStore) (*UnifierAPI, error) {
 
 	pipeline := unifier.NewPipeline(engine)
 
+	// The control-plane store that backs the worker registry also persists
+	// operator self-disclosures; both are tenant-scoped tables of one database.
+	selfDisclosures, _ := workers.(controlplane.OperatorSelfDisclosureStore)
+
 	return &UnifierAPI{
 		engine:          engine,
 		pipeline:        pipeline,
 		loader:          unifier.NewLoader(),
 		recommendations: unifier.NewWizardRecommendationAuthority(engine),
 		workers:         workers,
+		selfDisclosures: selfDisclosures,
 	}, nil
 }
 
@@ -181,6 +187,8 @@ func RegisterUnifierRoutes(r *httpx.Router, workers controlplane.WorkerStore) er
 	r.POST("/api/v1/unifier/validate", func(e *httpx.Event) error { return api.handleValidate(e) })
 	r.POST("/api/v1/unifier/unify", func(e *httpx.Event) error { return api.handleUnify(e) })
 	r.POST("/api/v1/unifier/recommendations", func(e *httpx.Event) error { return api.handleRecommendations(e) })
+	r.GET("/api/v1/operator/self-disclosure", func(e *httpx.Event) error { return api.handleGetSelfDisclosure(e) })
+	r.PUT("/api/v1/operator/self-disclosure", func(e *httpx.Event) error { return api.handlePutSelfDisclosure(e) })
 	r.POST("/api/v1/unifier/pipeline", func(e *httpx.Event) error { return api.handlePipeline(e) })
 	r.POST("/api/v1/unifier/pipeline/validate", func(e *httpx.Event) error { return api.handlePipeline(e) })
 	r.POST("/api/v1/unifier/pipeline/preview", func(e *httpx.Event) error { return api.handlePipelinePreview(e) })

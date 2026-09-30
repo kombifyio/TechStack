@@ -74,7 +74,7 @@ type ServerConfig struct {
 	// rate budget. The in-process limiter is per replica, so each replica
 	// enforces budget/replicas to keep the aggregate near the configured
 	// total. Set TECHSTACK_REPLICAS when scaling out.
-	Replicas int  `yaml:"replicas"`
+	Replicas int    `yaml:"replicas"`
 	DataDir  string `yaml:"data_dir"` // Path to data directory (default: pb_data)
 
 	// gRPC Queue Backpressure Settings (S7)

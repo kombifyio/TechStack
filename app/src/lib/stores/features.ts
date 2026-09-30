@@ -14,6 +14,7 @@ import {
 } from "#lib/api/features.js";
 import { ApiRequestError } from "#lib/api/client.js";
 
+import { tr } from "#lib/i18n.svelte.js";
 // Distinguishes a transient/auth verification failure (retryable, self-heals)
 // from a genuine not-entitled state. auth=401/403, network=no response, server=5xx.
 export type FeaturesErrorKind = "auth" | "network" | "server" | null;
@@ -184,7 +185,9 @@ function createFeaturesStore() {
         }));
       } catch (err) {
         const message =
-          err instanceof Error ? err.message : "Failed to load features";
+          err instanceof Error
+            ? err.message
+            : tr("ui.features.failedToLoadFeatures");
         state.update((s) => ({
           ...s,
           loading: false,

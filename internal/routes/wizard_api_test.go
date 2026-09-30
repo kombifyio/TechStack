@@ -41,7 +41,8 @@ func (f fakeValidator) ValidateSpec(context.Context, map[string]any) error {
 
 type fakeWizardGoalAuthor struct{}
 
-func (fakeWizardGoalAuthor) AuthorGoals(_ context.Context, _, _, _, _ string, goals []string) (specv2.GoalAuthoring, error) {
+func (fakeWizardGoalAuthor) AuthorGoals(_ context.Context, _, _, _, _ string, selection specv2.GoalSelection) (specv2.GoalAuthoring, error) {
+	goals := selection.Goals
 	workloads := map[string]any{}
 	var unmapped []string
 	for _, goal := range goals {
@@ -180,8 +181,8 @@ func TestWizardPreviewFoundProjectsAndValidates(t *testing.T) {
 		t.Fatalf("release_version = %v", data["release_version"])
 	}
 	spec := data["spec"].(map[string]any)
-	if domain := spec["network"].(map[string]any)["domain"].(map[string]any)["base"]; domain != "home" {
-		t.Fatalf("automatic local deployment domain = %v, want home", domain)
+	if domain := spec["network"].(map[string]any)["domain"].(map[string]any)["base"]; domain != "lab.home" {
+		t.Fatalf("automatic local deployment domain = %v, want lab.home", domain)
 	}
 	if spec["metadata"].(map[string]any)["name"] != "my-homelab" {
 		t.Fatalf("projected metadata = %#v, want contract-id name my-homelab", spec["metadata"])

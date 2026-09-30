@@ -16,6 +16,10 @@ import {
   currentAuthReturnTo,
   sanitizeAuthReturnTo,
 } from "#lib/auth/login-experience.js";
+import {
+  isStepUpRequiredFailure,
+  MFA_STEP_UP_ACR_VALUES,
+} from "#lib/auth/session-recovery.js";
 
 const DOMAIN =
   (import.meta.env.VITE_AUTH0_DOMAIN as string | undefined)?.trim() ?? "";
@@ -28,12 +32,20 @@ const AUDIENCE =
 let client: Auth0Client | null = null;
 let testClient: Auth0Client | null = null;
 let loginRedirectStarted = false;
+// Concurrent callers share one silent acquisition and its outcome.
+let tokenInFlight: Promise<string> | null = null;
+// Set when Auth0 refused the refresh grant for a missing second factor
+// (staff MFA). The same refresh token fails identically on every retry, so
+// no silent call goes to Auth0 again until a step-up login completes.
+let stepUpRefusal: unknown = null;
 
 /** Test seam: inject a fake Auth0Client. Pass null to reset. */
 export function __setAuth0ClientForTest(c: Auth0Client | null): void {
   testClient = c;
   client = null;
   loginRedirectStarted = false;
+  tokenInFlight = null;
+  stepUpRefusal = null;
 }
 
 /** True when the SPA build carries the Auth0 + audience config for the gateway path. */
@@ -71,6 +83,8 @@ export async function clearGatewayAuth(): Promise<void> {
   const active = testClient ?? client;
   client = null;
   loginRedirectStarted = false;
+  tokenInFlight = null;
+  stepUpRefusal = null;
   if (!active) return;
   try {
     await active.logout({ openUrl: false });
@@ -84,7 +98,9 @@ export async function clearGatewayAuth(): Promise<void> {
  * path when this tab's SPA transaction claimed the query, otherwise null so
  * the v2 server callback can still run.
  */
-export async function completeGatewayRedirectIfPresent(): Promise<string | null> {
+export async function completeGatewayRedirectIfPresent(): Promise<
+  string | null
+> {
   if (typeof window === "undefined") return null;
   if (!isGatewayAuthConfigured() && !testClient) return null;
   const params = new URLSearchParams(window.location.search);
@@ -106,6 +122,9 @@ export async function completeGatewayRedirectIfPresent(): Promise<string | null>
       `${url.pathname}${url.search}${url.hash}`,
     );
     loginRedirectStarted = false;
+    // The login completed (with the factor when it was a step-up); the new
+    // token family in the cache refreshes normally again.
+    stepUpRefusal = null;
     return returnTo;
   } catch {
     // Not this SPA client's transaction. Leave code+state for the v2
@@ -118,9 +137,13 @@ export async function completeGatewayRedirectIfPresent(): Promise<string | null>
  * Start the Auth0 SPA login that mints the API-audience token. Returns true
  * when navigation started. Standalone demo users land here after Universal
  * Login because the v2 cookie is not that token.
+ *
+ * It never forces a fresh credential login (no `prompt=login`/`max_age`):
+ * a live Auth0 SSO session completes silently. After an MFA refusal it is a
+ * step-up that asks only for the multi-factor acr, so the user confirms a
+ * factor at most (LOGIN-STANDARD "One login per device").
  */
 export async function startGatewayLogin(options?: {
-  interactive?: boolean;
   returnTo?: string | null;
 }): Promise<boolean> {
   if (typeof window === "undefined") return false;
@@ -137,7 +160,9 @@ export async function startGatewayLogin(options?: {
         audience: AUDIENCE,
         scope: "openid profile email offline_access",
         redirect_uri: window.location.origin,
-        ...(options?.interactive ? { prompt: "login", max_age: "0" } : {}),
+        ...(stepUpRefusal !== null
+          ? { acr_values: MFA_STEP_UP_ACR_VALUES }
+          : {}),
       },
       appState: {
         returnTo: sanitizeAuthReturnTo(
@@ -153,6 +178,29 @@ export async function startGatewayLogin(options?: {
 }
 
 /**
+ * User-initiated session renewal ("Sign in again"). Tries the silent
+ * refresh-token/iframe acquisition once and only redirects to Auth0 when that
+ * fails. Returns "renewed" when a fresh token is cached (no navigation),
+ * "redirecting" when the SPA login started, "unavailable" when this build
+ * has no gateway client (the caller falls back to the v2 cookie login).
+ */
+export async function renewGatewaySession(options?: {
+  returnTo?: string | null;
+}): Promise<"renewed" | "redirecting" | "unavailable"> {
+  if (typeof window === "undefined") return "unavailable";
+  if (!isGatewayAuthConfigured() && !testClient) return "unavailable";
+  if (stepUpRefusal === null) {
+    try {
+      await getGatewayToken();
+      return "renewed";
+    } catch {
+      // Fall through to the SPA login (a step-up after an MFA refusal).
+    }
+  }
+  return (await startGatewayLogin(options)) ? "redirecting" : "unavailable";
+}
+
+/**
  * Return the user's Auth0 access token for the kombify API audience.
  * Throws on failure (fail-closed) — callers must not treat a rejection as
  * "anonymous"; they should surface an error or use the parent-seed fallback.
@@ -161,13 +209,27 @@ export async function startGatewayLogin(options?: {
  * ladder so a wizard holding unsaved state can refuse the navigation.
  */
 export async function getGatewayToken(): Promise<string> {
-  const c = await getClient();
-  const token = await c.getTokenSilently({
-    authorizationParams: {
-      audience: AUDIENCE,
-      scope: "openid profile email offline_access",
-    },
+  if (stepUpRefusal !== null) throw stepUpRefusal;
+  tokenInFlight ??= acquireGatewayToken().finally(() => {
+    tokenInFlight = null;
   });
+  return tokenInFlight;
+}
+
+async function acquireGatewayToken(): Promise<string> {
+  const c = await getClient();
+  let token: string;
+  try {
+    token = await c.getTokenSilently({
+      authorizationParams: {
+        audience: AUDIENCE,
+        scope: "openid profile email offline_access",
+      },
+    });
+  } catch (err) {
+    if (isStepUpRequiredFailure(err)) stepUpRefusal = err;
+    throw err;
+  }
   if (!token) {
     throw new Error("gateway_token_empty");
   }

@@ -42,6 +42,12 @@ func Middleware(cfg Config) func(next http.Handler) http.Handler {
 				respondAuthError(w, http.StatusUnauthorized, "service_auth_invalid", err.Error())
 				return
 			}
+			// A bound token is not a generic service credential. Only the
+			// strict receiver verifies its method, target and body restriction.
+			if claims.RequestBinding != nil {
+				respondAuthError(w, http.StatusUnauthorized, "service_auth_invalid", "bound_token_requires_bound_route")
+				return
+			}
 			if claims.Aud != expectedAud {
 				respondAuthError(w, http.StatusUnauthorized, "service_auth_invalid", "wrong_audience")
 				return
@@ -57,6 +63,7 @@ func Middleware(cfg Config) func(next http.Handler) http.Handler {
 
 			caller := &Caller{
 				Service:    claims.Svc,
+				Scope:      claims.Scope,
 				OnBehalfOf: claims.OnBehalfOf,
 				RequestID:  claims.RequestID,
 				IssuedAt:   time.Unix(claims.Iat, 0),
@@ -96,6 +103,58 @@ func RequireServiceAuth(cfg Config) func(next http.Handler) http.Handler {
 			inner(next).ServeHTTP(w, r)
 		})
 	}
+}
+
+// RequireScope requires a verified service caller with the exact scope.
+// Compose it inside RequireServiceAuth on routes that need scoped authority.
+// Scopes are case-sensitive ASCII tokens separated by a single space.
+func RequireScope(required string) func(next http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			caller := FromContext(r.Context())
+			if caller == nil {
+				respondAuthError(w, http.StatusUnauthorized, "service_auth_required", "missing_service_auth_context")
+				return
+			}
+			if !hasScope(caller.Scope, required) {
+				respondAuthError(w, http.StatusForbidden, "service_auth_forbidden", "required_scope_missing")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func hasScope(claim, required string) bool {
+	if !validScopeToken(required) || claim == "" {
+		return false
+	}
+
+	found := false
+	for _, scope := range strings.Split(claim, " ") {
+		if !validScopeToken(scope) {
+			return false
+		}
+		if scope == required {
+			found = true
+		}
+	}
+	return found
+}
+
+func validScopeToken(scope string) bool {
+	if scope == "" {
+		return false
+	}
+	for i := 0; i < len(scope); i++ {
+		c := scope[i]
+		// OAuth scope-token grammar (RFC 6749 section 3.3). Punctuation is
+		// literal: an asterisk never matches another named capability.
+		if c < 0x21 || c == 0x22 || c == 0x5c || c > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 func buildAllowSet(list []string) map[string]struct{} {

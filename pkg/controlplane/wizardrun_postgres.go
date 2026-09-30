@@ -6,12 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 const wizardRunColumns = `id, tenant_id, owner_subject_id, idempotency_key, request_sha256,
 		run_kind, requested_run_kind, homelab_id, stack_id, node_id, job_id,
 		pairing_job_id, status, intent_json::text, result_json::text, error_reason,
-		created_at, updated_at`
+		created_at, updated_at, dismissed_at`
 
 func (s *PostgresStore) GetWizardRunByKey(ctx context.Context, tenantID, ownerSubjectID, idempotencyKey string) (*WizardRun, error) {
 	if s == nil || s.db == nil {
@@ -155,7 +156,8 @@ func (s *PostgresStore) UpsertWizardRun(ctx context.Context, run WizardRun) (*Wi
 				status = EXCLUDED.status,
 				intent_json = EXCLUDED.intent_json,
 				result_json = EXCLUDED.result_json,
-				error_reason = EXCLUDED.error_reason`
+				error_reason = EXCLUDED.error_reason,
+				dismissed_at = NULL`
 		}
 		query += `
 			RETURNING ` + wizardRunColumns
@@ -173,6 +175,30 @@ func (s *PostgresStore) UpsertWizardRun(ctx context.Context, run WizardRun) (*Wi
 		return nil, err
 	}
 	return out, nil
+}
+
+func (s *PostgresStore) DismissWizardRun(ctx context.Context, tenantID, ownerSubjectID, runID string, at time.Time) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("controlplane: database not configured")
+	}
+	tenantID, ownerSubjectID, runID = strings.TrimSpace(tenantID), strings.TrimSpace(ownerSubjectID), strings.TrimSpace(runID)
+	if tenantID == "" || ownerSubjectID == "" || runID == "" {
+		return fmt.Errorf("controlplane: tenant, owner and run id required")
+	}
+	return s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		// updated_at stays: dismissing is not run activity.
+		res, err := tx.ExecContext(ctx, `
+			UPDATE wizard_runs SET dismissed_at = $4
+			WHERE tenant_id = $1 AND owner_subject_id = $2 AND id = $3
+		`, tenantID, ownerSubjectID, runID, at.UTC())
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
 }
 
 func validateWizardRun(run WizardRun) error {
@@ -203,6 +229,7 @@ func scanWizardRun(row rowScanner) (*WizardRun, error) {
 		idempotencyKey, homelabID, stackID, nodeID sql.NullString
 		jobID, pairingJobID, errorReason           sql.NullString
 		intentRaw, resultRaw                       []byte
+		dismissedAt                                sql.NullTime
 	)
 	if err := row.Scan(
 		&run.ID,
@@ -223,6 +250,7 @@ func scanWizardRun(row rowScanner) (*WizardRun, error) {
 		&errorReason,
 		&run.CreatedAt,
 		&run.UpdatedAt,
+		&dismissedAt,
 	); err != nil {
 		return nil, err
 	}
@@ -233,6 +261,10 @@ func scanWizardRun(row rowScanner) (*WizardRun, error) {
 	run.JobID = jobID.String
 	run.PairingJobID = pairingJobID.String
 	run.ErrorReason = errorReason.String
+	if dismissedAt.Valid {
+		at := dismissedAt.Time
+		run.DismissedAt = &at
+	}
 	if err := decodeObject(intentRaw, &run.Intent); err != nil {
 		return nil, err
 	}

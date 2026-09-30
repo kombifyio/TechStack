@@ -9,9 +9,7 @@ import type { WalletItem } from "#lib/wallet/types.js";
  * Triggers browser password manager "Save Password" dialog using an invisible form
  * This works without API keys by leveraging standard HTML autocomplete attributes
  */
-export function triggerPasswordManagerSave(
-  item: WalletItem,
-): Promise<boolean> {
+export function triggerPasswordManagerSave(item: WalletItem): Promise<boolean> {
   return new Promise((resolve) => {
     let resolved = false;
 

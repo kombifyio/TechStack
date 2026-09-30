@@ -244,6 +244,10 @@ func managedRuntimeInventoryItemFromLease(record vmleases.LeaseInventoryRecord) 
 	metadata := lease.Metadata
 	offeringID := monthlyruntime.OfferingIDFromMetadata(metadata)
 	offering, _ := monthlyruntime.OfferingByID(offeringID)
+	size, sizeErr := monthlyruntime.PackageForProvider(lease.Resource.ProviderID, string(offeringID))
+	if sizeErr != nil {
+		size = monthlyruntime.ProviderPackage{VCPUs: offering.VCPUs, MemoryMB: offering.MemoryMB, DiskGB: offering.DiskGB}
+	}
 	enrollmentStatus := strings.TrimSpace(metadata["runtime_enrollment_status"])
 	if enrollmentStatus == "" {
 		enrollmentStatus = monthlyRuntimeEnrollmentStatusPending
@@ -278,9 +282,9 @@ func managedRuntimeInventoryItemFromLease(record vmleases.LeaseInventoryRecord) 
 		IP:                 firstNonEmptyString(publicIP, privateIP),
 		Region:             firstNonEmptyString(lease.Resource.Region, offering.Region),
 		Image:              offering.Image,
-		VCPUs:              managedRuntimeKnownInt(offering.VCPUs, targetReady),
-		MemoryMB:           managedRuntimeKnownInt(offering.MemoryMB, targetReady),
-		DiskGB:             managedRuntimeKnownInt(offering.DiskGB, targetReady),
+		VCPUs:              managedRuntimeKnownInt(size.VCPUs, targetReady),
+		MemoryMB:           managedRuntimeKnownInt(size.MemoryMB, targetReady),
+		DiskGB:             managedRuntimeKnownInt(size.DiskGB, targetReady),
 		CPUPercent:         managedRuntimeMetricFromMetadata(metadata, "%", "runtime_cpu_percent", "cpu_percent"),
 		MemoryPercent:      managedRuntimeMetricFromMetadata(metadata, "%", "runtime_memory_percent", "memory_percent"),
 		DiskPercent:        managedRuntimeMetricFromMetadata(metadata, "%", "runtime_disk_percent", "disk_percent"),

@@ -9,6 +9,8 @@
   import { tr } from "#lib/i18n.svelte.js";
   import { testWizardRemoteSSH } from "#lib/api/wizardRemoteSSH.js";
   import type { StackConfig } from "#lib/wizard/index.js";
+  import { NODE_GUIDES } from "#lib/docs-links.js";
+  import InfoTip from "./InfoTip.svelte";
   let {
     config = $bindable(),
     reviewMode = false,
@@ -92,8 +94,16 @@
   </header>
 
   <div class="connection-fields">
-    <label for="remote-server-host"
-      >{tr("wizard.server.remote.host")}
+    <div class="field">
+      <span class="field-label"
+        ><label for="remote-server-host"
+          >{tr("wizard.server.remote.host")}</label
+        ><InfoTip
+          topic={tr("wizard.server.remote.host")}
+          text={tr("wizard.tip.remoteHost")}
+          docs={NODE_GUIDES.sshHost}
+        /></span
+      >
       <input
         id="remote-server-host"
         type="text"
@@ -103,30 +113,42 @@
         spellcheck={false}
         data-testid="remote-server-host"
       />
-    </label>
+    </div>
 
     <fieldset>
       <legend>{tr("wizard.server.remote.auth")}</legend>
       <div class="auth-options">
-        <label
-          ><input
-            type="radio"
-            name="remote-server-auth"
-            value="ssh-key"
-            bind:group={remote.authMethod}
-          /><KeyRound size={16} aria-hidden="true" /><span
-            >{tr("wizard.server.remote.auth.sshKey")}</span
-          ></label
+        <span class="auth-option"
+          ><label
+            ><input
+              type="radio"
+              name="remote-server-auth"
+              value="ssh-key"
+              bind:group={remote.authMethod}
+            /><KeyRound size={16} aria-hidden="true" /><span
+              >{tr("wizard.server.remote.auth.sshKey")}</span
+            ></label
+          ><InfoTip
+            topic={tr("wizard.server.remote.auth.sshKey")}
+            text={tr("wizard.tip.authKey")}
+            docs={NODE_GUIDES.sshAuth}
+          /></span
         >
-        <label
-          ><input
-            type="radio"
-            name="remote-server-auth"
-            value="password"
-            bind:group={remote.authMethod}
-          /><LockKeyhole size={16} aria-hidden="true" /><span
-            >{tr("wizard.server.remote.auth.password")}</span
-          ></label
+        <span class="auth-option"
+          ><label
+            ><input
+              type="radio"
+              name="remote-server-auth"
+              value="password"
+              bind:group={remote.authMethod}
+            /><LockKeyhole size={16} aria-hidden="true" /><span
+              >{tr("wizard.server.remote.auth.password")}</span
+            ></label
+          ><InfoTip
+            topic={tr("wizard.server.remote.auth.password")}
+            text={tr("wizard.tip.authPassword")}
+            docs={NODE_GUIDES.sshAuth}
+          /></span
         >
       </div>
     </fieldset>
@@ -142,20 +164,29 @@
         /></label
       >
     {:else}
-      <label for="remote-server-key"
-        >{tr("wizard.server.remote.keyLabel")}<input
+      <div class="field">
+        <span class="field-label"
+          ><label for="remote-server-key"
+            >{tr("wizard.server.remote.keyLabel")}</label
+          ><InfoTip
+            topic={tr("wizard.server.remote.keyLabel")}
+            text={tr("wizard.tip.keyLabel")}
+            docs={NODE_GUIDES.sshKeyLabel}
+          /></span
+        ><input
           id="remote-server-key"
           type="text"
           bind:value={remote.sshKeyLabel}
           placeholder="root@server"
           autocomplete="off"
           data-testid="remote-server-key-label"
-        /><small>{tr("wizard.server.remote.keyHint")}</small></label
-      >
+        /><small>{tr("wizard.server.remote.keyHint")}</small>
+      </div>
     {/if}
   </div>
 
   <div class="technical-settings">
+    <div class="toggle-row">
     <button
       type="button"
       class="technical-toggle"
@@ -171,6 +202,12 @@
         class={advancedOpen ? "open" : undefined}
       />
     </button>
+    <InfoTip
+      topic={tr("wizard.server.remote.advanced")}
+      text={tr("wizard.tip.sshDetails")}
+      docs={NODE_GUIDES.sshDetails}
+    />
+    </div>
     {#if advancedOpen}
       <div class="ssh-details" id="remote-ssh-details">
         <label for="remote-server-user"
@@ -214,7 +251,11 @@
           ? "wizard.server.remote.testing"
           : "wizard.server.remote.test",
       )}</button
-    >
+    ><InfoTip
+      topic={tr("wizard.server.remote.test")}
+      text={tr("wizard.tip.testConnection")}
+      docs={NODE_GUIDES.sshTest}
+    />
     {#if remoteTestMessage}<p
         role="status"
         class:error={remoteTestState === "error"}
@@ -327,6 +368,25 @@
     accent-color: var(--primary);
     width: 16px;
     height: 16px;
+  }
+  .field {
+    display: grid;
+    gap: 8px;
+  }
+  .auth-option {
+    display: flex;
+    align-items: flex-start;
+  }
+  .field-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    min-height: 24px;
+  }
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
   }
   .technical-settings {
     display: grid;

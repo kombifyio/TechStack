@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "#lib/i18n.svelte.js";
   import { creation } from "./creation-controller.svelte.js";
 </script>
 
@@ -6,13 +7,11 @@
           {#if creation.showInstallCommand && creation.registrationToken && creation.installCommand && !creation.agentPairingRequired}
             <div class="bg-muted/70 rounded-xl p-6 mb-6">
               <h3 class="text-lg font-medium text-foreground mb-2">
-                Install worker
+                {tr("ui.stacksCreatingCreationInstallCommand.installWorker")}
               </h3>
               {#if creation.oneLinerPreviewRequired}
                 <p class="text-sm text-muted-foreground mb-4">
-                  Run this command on the server or device that should become
-                  the real target for this Homelab. Simulate may also provide a
-                  one-hour demo preview of the planned StackKit.
+                  {tr("ui.stacksCreatingCreationInstallCommand.runThisCommandOnThe")}
                 </p>
                 {#if creation.simulationPreviewUrl}
                   <a
@@ -22,22 +21,21 @@
                     class="inline-flex items-center text-sm text-primary hover:underline mb-4"
                     data-testid="simulation-preview-link"
                   >
-                    Open one-hour Simulate demo preview
+                    {tr("ui.stacksCreatingCreationInstallCommand.openOneHourSimulateDemo")}
                   </a>
                 {/if}
                 {#if creation.simulationPreviewExpiresAt}
                   <p class="text-xs text-muted-foreground mb-4">
-                    Preview expires at {creation.simulationPreviewExpiresAt}
+                    {tr("ui.creationInstall.previewExpires", { time: creation.simulationPreviewExpiresAt })}
                   </p>
                 {:else if creation.simulationPreviewUrl}
                   <p class="text-xs text-muted-foreground mb-4">
-                    Preview lifetime is limited to one hour.
+                    {tr("ui.stacksCreatingCreationInstallCommand.previewLifetimeIsLimitedTo")}
                   </p>
                 {/if}
               {:else}
                 <p class="text-sm text-muted-foreground mb-4">
-                  Run this command on all servers you want to integrate into
-                  your homelab:
+                  {tr("ui.stacksCreatingCreationInstallCommand.runThisCommandOnAll")}
                 </p>
               {/if}
 
@@ -47,7 +45,7 @@
                   for="server-url"
                   class="block text-xs text-muted-foreground mb-1"
                 >
-                  kombify-Techstack server URL (reachable by workers):
+                  {tr("ui.stacksCreatingCreationInstallCommand.kombifyTechstackServerUrlReachable")}
                 </label>
                 <input
                   id="server-url"
@@ -66,8 +64,8 @@
                   onclick={() => creation.copyToClipboard(creation.installCommand, "main")}
                   data-kx="control"
                   class="absolute right-2 top-1/2 -translate-y-1/2 rounded px-2 py-1"
-                  title="Copy"
-                  aria-label="Copy installation command to clipboard"
+                  title={tr("ui.stacksCreatingCreationInstallCommand.copy")}
+                  aria-label={tr("ui.stacksCreatingCreationInstallCommand.copyInstallationCommandToClipboard")}
                 >
                   {#if creation.copiedCommand === "main"}
                     <svg
@@ -121,7 +119,7 @@
                     d="M19 9l-7 7-7-7"
                   />
                 </svg>
-                Alternative installation methods
+                {tr("ui.stacksCreatingCreationInstallCommand.alternativeInstallationMethods")}
               </button>
 
               {#if creation.showAllCommands}
@@ -138,7 +136,7 @@
                           onclick={() =>
                             creation.copyToClipboard(cmd.command, cmd.platform)}
                           class="absolute right-1 top-1/2 -translate-y-1/2 p-1 hover:bg-secondary rounded"
-                          title="Copy"
+                          title={tr("ui.stacksCreatingCreationInstallCommand.copy")}
                         >
                           {#if creation.copiedCommand === cmd.platform}
                             <svg

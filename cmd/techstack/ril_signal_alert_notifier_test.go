@@ -31,14 +31,15 @@ func TestRILSignalAlertNotifierEmitsTenantScopedResourceSignal(t *testing.T) {
 	notifier := &rilSignalAlertNotifier{outbox: outbox}
 	alert := monitoring.Alert{
 		RuleName: "DiskFull", Severity: "critical", Message: "disk pressure", FiredAt: firedAt,
-		Labels: map[string]string{"tenant_id": "tenant-1", "server_id": "server-1"},
+		Labels: map[string]string{"tenant_id": "tenant-1", "server_id": "server-1", "container_name": "app_web_1"},
 	}
 	if err := notifier.Notify(t.Context(), alert); err != nil {
 		t.Fatal(err)
 	}
 	got := outbox.observation
 	if outbox.emitCalls != 1 || got.TenantID != "tenant-1" || got.UserID != "auth0|owner-1" ||
-		got.ServerID != "server-1" || got.Source != signals.SourceResource || got.Severity != signals.SeverityCritical {
+		got.ServerID != "server-1" || got.Source != signals.SourceResource || got.Severity != signals.SeverityCritical ||
+		got.AlertRule != "DiskFull" || got.Title != "DiskFull" || got.ServiceID != "app_web_1" {
 		t.Fatalf("observation = %#v, calls = %d", got, outbox.emitCalls)
 	}
 	if got.TraceID == "" || got.AuditID == "" || got.DedupeKey == "" || !got.ReceivedAt.Equal(firedAt) {

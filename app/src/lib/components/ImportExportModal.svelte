@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr, trn, formatDateTime } from "#lib/i18n.svelte.js";
   import {
     exportWallet,
     importWallet,
@@ -59,7 +60,7 @@
         downloadCSV(csvContent);
         onClose();
       } catch (err) {
-        exportError = err instanceof Error ? err.message : "CSV export failed";
+        exportError = err instanceof Error ? err.message : tr("ui.importExportModal.csvExportFailed");
       }
       return;
     }
@@ -72,7 +73,7 @@
         onClose();
       } catch (err) {
         exportError =
-          err instanceof Error ? err.message : "Bitwarden export failed";
+          err instanceof Error ? err.message : tr("ui.importExportModal.bitwardenExportFailed");
       }
       return;
     }
@@ -80,15 +81,15 @@
     // Handle encrypted kombify-TechStack JSON export
     if (exportEncrypted) {
       if (!exportPassword) {
-        exportError = "Password is required for encrypted export";
+        exportError = tr("ui.importExportModal.passwordIsRequiredForEncrypted");
         return;
       }
       if (exportPassword.length < 8) {
-        exportError = "Password must be at least 8 characters";
+        exportError = tr("ui.importExportModal.passwordMustBeAtLeast");
         return;
       }
       if (exportPassword !== exportConfirmPassword) {
-        exportError = "Passwords do not match";
+        exportError = tr("ui.importExportModal.passwordsDoNotMatch");
         return;
       }
     }
@@ -102,7 +103,7 @@
       downloadExport(exportData);
       onClose();
     } catch (err) {
-      exportError = err instanceof Error ? err.message : "Export failed";
+      exportError = err instanceof Error ? err.message : tr("ui.importExportModal.exportFailed");
     } finally {
       exporting = false;
     }
@@ -127,7 +128,7 @@
         importStep = "preview";
       }
     } catch (err) {
-      importError = err instanceof Error ? err.message : "Failed to read file";
+      importError = err instanceof Error ? err.message : tr("ui.importExportModal.failedToReadFile");
       importStep = "upload";
     }
   }
@@ -137,7 +138,7 @@
     importError = null;
 
     if (!importPassword) {
-      importError = "Password is required";
+      importError = tr("ui.importExportModal.passwordIsRequired");
       return;
     }
 
@@ -145,7 +146,7 @@
       importItems = await importWallet(importPreview, importPassword);
       importStep = "preview";
     } catch (err) {
-      importError = err instanceof Error ? err.message : "Decryption failed";
+      importError = err instanceof Error ? err.message : tr("ui.importExportModal.decryptionFailed");
     }
   }
 
@@ -157,7 +158,7 @@
       await onImport(importItems);
       onClose();
     } catch (err) {
-      importError = err instanceof Error ? err.message : "Import failed";
+      importError = err instanceof Error ? err.message : tr("ui.importExportModal.importFailed");
     } finally {
       importing = false;
     }
@@ -173,7 +174,7 @@
   }
 </script>
 
-<Modal title="Import / Export Credentials" {onClose} maxWidth="lg">
+<Modal title={tr("ui.importExportModal.importExportCredentials")} {onClose} maxWidth="lg">
   {#if mode === "select"}
     <div class="space-y-4">
       <button
@@ -196,10 +197,9 @@
             />
           </svg>
           <div>
-            <h3 class="text-foreground font-medium">Export Wallet</h3>
+            <h3 class="text-foreground font-medium">{tr("ui.importExportModal.exportWallet")}</h3>
             <p class="text-sm text-muted-foreground">
-              Download {items.length} credential{items.length !== 1 ? "s" : ""} as
-              encrypted JSON
+              {trn("ui.importExport.downloadEncrypted", items.length)}
             </p>
           </div>
         </div>
@@ -225,9 +225,9 @@
             />
           </svg>
           <div>
-            <h3 class="text-foreground font-medium">Import Wallet</h3>
+            <h3 class="text-foreground font-medium">{tr("ui.importExportModal.importWallet")}</h3>
             <p class="text-sm text-muted-foreground">
-              Restore credentials from a backup file
+              {tr("ui.importExportModal.restoreCredentialsFromABackup")}
             </p>
           </div>
         </div>
@@ -240,7 +240,7 @@
         data-kx="control"
         class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
       >
-        Cancel
+        {tr("ui.importExportModal.cancel")}
       </button>
     </div>
   {:else if mode === "export"}
@@ -251,7 +251,7 @@
       >
         ←
       </button>
-      <h2 class="text-xl font-semibold text-foreground">Export Credentials</h2>
+      <h2 class="text-xl font-semibold text-foreground">{tr("ui.importExportModal.exportCredentials")}</h2>
     </div>
 
     {#if exportError}
@@ -266,14 +266,14 @@
       <div data-kx="plate" class="p-4 text-sm">
         <p class="text-muted-foreground">
           <strong class="text-foreground">{items.length}</strong>
-          credential{items.length !== 1 ? "s" : ""} will be exported.
+          {trn("ui.importExport.willBeExported", items.length)}
         </p>
       </div>
 
       <!-- Export Format Selection -->
       <div>
         <div class="block text-sm font-medium text-foreground mb-3">
-          Export Format
+          {tr("ui.importExportModal.exportFormat")}
         </div>
         <div class="space-y-2">
           <label
@@ -287,10 +287,9 @@
               class="mt-1 w-4 h-4 border-border bg-input text-primary focus:ring-primary"
             />
             <div class="flex-1">
-              <span class="text-foreground font-medium">kombify-Techstack JSON</span>
+              <span class="text-foreground font-medium">{tr("ui.importExportModal.kombifyTechstackJson")}</span>
               <p class="text-xs text-muted-foreground mt-0.5">
-                Native format with encryption support. Best for backup and
-                restore.
+                {tr("ui.importExportModal.nativeFormatWithEncryptionSupport")}
               </p>
             </div>
           </label>
@@ -306,10 +305,9 @@
               class="mt-1 w-4 h-4 border-border bg-input text-primary focus:ring-primary"
             />
             <div class="flex-1">
-              <span class="text-foreground font-medium">Universal CSV</span>
+              <span class="text-foreground font-medium">{tr("ui.importExportModal.universalCsv")}</span>
               <p class="text-xs text-muted-foreground mt-0.5">
-                Compatible with KeePass, LastPass, and generic password
-                managers.
+                {tr("ui.importExportModal.compatibleWithKeepassLastpassAnd")}
               </p>
             </div>
           </label>
@@ -325,9 +323,9 @@
               class="mt-1 w-4 h-4 border-border bg-input text-primary focus:ring-primary"
             />
             <div class="flex-1">
-              <span class="text-foreground font-medium">Bitwarden JSON</span>
+              <span class="text-foreground font-medium">{tr("ui.importExportModal.bitwardenJson")}</span>
               <p class="text-xs text-muted-foreground mt-0.5">
-                Import directly into Bitwarden or compatible vaults.
+                {tr("ui.importExportModal.importDirectlyIntoBitwardenOr")}
               </p>
             </div>
           </label>
@@ -344,10 +342,10 @@
               class="w-5 h-5 rounded border-border bg-input text-primary focus:ring-primary"
             />
             <div>
-              <span class="text-foreground">Encrypt export</span>
+              <span class="text-foreground">{tr("ui.importExportModal.encryptExport")}</span>
               {#if !cryptoAvailable}
                 <p class="text-xs text-warning">
-                  Encryption not available (requires HTTPS)
+                  {tr("ui.importExportModal.encryptionNotAvailableRequiresHttps")}
                 </p>
               {/if}
             </div>
@@ -360,13 +358,13 @@
               for="export-password"
               class="block text-sm font-medium text-foreground mb-2"
             >
-              Encryption Password <span class="text-destructive">*</span>
+              {tr("ui.importExportModal.encryptionPassword")} <span class="text-destructive">*</span>
             </label>
             <input
               id="export-password"
               type="password"
               bind:value={exportPassword}
-              placeholder="Min. 8 characters"
+              placeholder={tr("ui.importExportModal.min8Characters")}
               class="w-full px-4 py-3 bg-input border border-border rounded-lg text-foreground placeholder-muted-foreground focus:border-primary focus:outline-none"
             />
           </div>
@@ -376,13 +374,13 @@
               for="export-confirm"
               class="block text-sm font-medium text-foreground mb-2"
             >
-              Confirm Password <span class="text-destructive">*</span>
+              {tr("ui.importExportModal.confirmPassword")} <span class="text-destructive">*</span>
             </label>
             <input
               id="export-confirm"
               type="password"
               bind:value={exportConfirmPassword}
-              placeholder="Re-enter password"
+              placeholder={tr("ui.importExportModal.reEnterPassword")}
               class="w-full px-4 py-3 bg-input border border-border rounded-lg text-foreground placeholder-muted-foreground focus:border-primary focus:outline-none"
             />
           </div>
@@ -390,8 +388,7 @@
           <div
             class="p-3 rounded-lg bg-warning/10 border border-warning/30 text-sm text-warning"
           >
-            <strong>Important:</strong> Keep this password safe! Without it, you won't
-            be able to restore your credentials.
+            <strong>{tr("ui.importExportModal.important")}</strong> {tr("ui.importExportModal.keepThisPasswordSafeWithout")}
           </div>
         {/if}
       {/if}
@@ -400,16 +397,14 @@
         <div
           class="p-3 rounded-lg bg-info/10 border border-info/30 text-sm text-info"
         >
-          <strong>Note:</strong>
-          {exportFormat === "csv" ? "CSV" : "Bitwarden JSON"} exports are not encrypted.
-          Store the file securely.
+          <strong>{tr("ui.importExportModal.note")}</strong>
+          {tr("ui.importExport.notEncrypted", { format: exportFormat === "csv" ? "CSV" : "Bitwarden JSON" })}
         </div>
       {:else if !exportEncrypted}
         <div
           class="p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-sm text-destructive"
         >
-          <strong>Warning:</strong> Exporting without encryption will save all secrets
-          in plain text. Only use this for testing.
+          <strong>{tr("ui.importExportModal.warning")}</strong> {tr("ui.importExportModal.exportingWithoutEncryptionWillSave")}
         </div>
       {/if}
     </div>
@@ -420,7 +415,7 @@
         data-kx="control"
         class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
       >
-        Back
+        {tr("ui.importExportModal.back")}
       </button>
       <button
         onclick={handleExport}
@@ -430,9 +425,9 @@
         class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
       >
         {#if exporting}
-          Exporting...
+          {tr("ui.importExportModal.exporting")}
         {:else}
-          Download
+          {tr("ui.importExportModal.download")}
         {/if}
       </button>
     </div>
@@ -447,7 +442,7 @@
       >
         ←
       </button>
-      <h2 class="text-xl font-semibold text-foreground">Import Credentials</h2>
+      <h2 class="text-xl font-semibold text-foreground">{tr("ui.importExportModal.importCredentials")}</h2>
     </div>
 
     {#if importError}
@@ -484,9 +479,9 @@
                 d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
               />
             </svg>
-            <p class="text-foreground mb-1">Click to select file</p>
+            <p class="text-foreground mb-1">{tr("ui.importExportModal.clickToSelectFile")}</p>
             <p class="text-sm text-muted-foreground">
-              kombify-Techstack wallet export (.json)
+              {tr("ui.importExportModal.kombifyTechstackWalletExportJson")}
             </p>
           </label>
         </div>
@@ -497,12 +492,11 @@
           data-kx="plate" class="p-4 text-sm"
         >
           <p class="text-muted-foreground">
-            This export is encrypted. Enter the password to decrypt.
+            {tr("ui.importExportModal.thisExportIsEncryptedEnter")}
           </p>
           {#if importPreview}
             <p class="text-muted-foreground mt-1 text-xs">
-              Exported: {new Date(importPreview.exportedAt).toLocaleString()}
-              • {importPreview.itemCount} items
+              {tr("ui.importExport.exportedSummary", { date: formatDateTime(importPreview.exportedAt), count: importPreview.itemCount })}
             </p>
           {/if}
         </div>
@@ -512,13 +506,13 @@
             for="import-password"
             class="block text-sm font-medium text-foreground mb-2"
           >
-            Decryption Password <span class="text-destructive">*</span>
+            {tr("ui.importExportModal.decryptionPassword")} <span class="text-destructive">*</span>
           </label>
           <input
             id="import-password"
             type="password"
             bind:value={importPassword}
-            placeholder="Enter export password"
+            placeholder={tr("ui.importExportModal.enterExportPassword")}
             class="w-full px-4 py-3 bg-input border border-border rounded-lg text-foreground placeholder-muted-foreground focus:border-primary focus:outline-none"
           />
         </div>
@@ -529,7 +523,7 @@
             data-kx="control"
         class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
           >
-            Choose Different File
+            {tr("ui.importExportModal.chooseDifferentFile")}
           </button>
           <button
             onclick={handleDecrypt}
@@ -537,7 +531,7 @@
             data-variant="primary"
             class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
           >
-            Decrypt
+            {tr("ui.importExportModal.decrypt")}
           </button>
         </div>
       </div>
@@ -547,10 +541,7 @@
           data-kx="plate" class="p-4 text-sm"
         >
           <p class="text-foreground font-medium mb-2">
-            Ready to import {importItems.length} credential{importItems.length !==
-            1
-              ? "s"
-              : ""}
+            {trn("ui.importExport.readyToImport", importItems.length)}
           </p>
           <div class="max-h-48 overflow-y-auto space-y-1">
             {#each importItems as item}
@@ -565,7 +556,7 @@
                         : item.kind === "oauth_token"
                           ? "OAuth"
                           : item.kind === "certificate"
-                            ? "Cert"
+                            ? tr("ui.credentialForm.cert")
                             : "?"}
                 </span>
                 <span class="truncate">{item.name}</span>
@@ -578,8 +569,7 @@
         <div
           class="p-3 rounded-lg bg-warning/10 border border-warning/30 text-sm text-warning"
         >
-          <strong>Note:</strong> Imported credentials will be added as new entries.
-          Duplicates are not automatically merged.
+          <strong>{tr("ui.importExportModal.note")}</strong> {tr("ui.importExportModal.importedCredentialsWillBeAdded")}
         </div>
       </div>
     {/if}
@@ -593,7 +583,7 @@
         data-kx="control"
         class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
       >
-        {importStep === "upload" ? "Back" : "Cancel"}
+        {importStep === "upload" ? tr("ui.importExportModal.back") : tr("ui.importExportModal.cancel")}
       </button>
       {#if importStep === "preview"}
         <button
@@ -604,9 +594,9 @@
         class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
         >
           {#if importing}
-            Importing...
+            {tr("ui.importExportModal.importing")}
           {:else}
-            Import
+            {tr("ui.importExportModal.import")}
           {/if}
         </button>
       {/if}

@@ -1,0 +1,63 @@
+/*
+ * Sub-step rail for wizard steps with several decision groups. A step root
+ * with .substep-flow and --substep-prefix (for example "2.") numbers every
+ * [data-substep] region inside it, including regions rendered by child
+ * modules, with a quiet marker and a line with an arrow down to the next
+ * region. Deliberately lighter than the main stepper circles.
+ *
+ * A region sets --substep-top to align its marker with its first heading.
+ * Size containers (container-type) scope CSS counters: a region after one
+ * needs an explicit counter-reset on its parent.
+ */
+.substep-flow {
+  counter-reset: substep;
+  --substep-rail: 46px;
+  --substep-dot: 26px;
+  --substep-tone: color-mix(in oklch, var(--primary) 32%, var(--border));
+}
+.substep-flow [data-substep] {
+  position: relative;
+  counter-increment: substep;
+  padding-inline-start: var(--substep-rail);
+}
+.substep-flow [data-substep]::before {
+  content: var(--substep-prefix) counter(substep);
+  position: absolute;
+  inset-inline-start: 0;
+  top: var(--substep-top, 0px);
+  width: var(--substep-dot);
+  height: var(--substep-dot);
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--substep-tone);
+  border-radius: 999px;
+  background: var(--background);
+  color: var(--muted-foreground);
+  font-size: 9.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+.substep-flow [data-substep]::after {
+  content: "";
+  position: absolute;
+  inset-inline-start: calc(var(--substep-dot) / 2 - 4.5px);
+  top: calc(var(--substep-top, 0px) + var(--substep-dot) + 6px);
+  bottom: 2px;
+  width: 9px;
+  background-color: var(--substep-tone);
+  mask:
+    linear-gradient(#000 0 0) center top / 1px calc(100% - 5px) no-repeat,
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 9 6'%3E%3Cpath d='M.6.6 4.5 5 8.4.6' fill='none' stroke='%23000' stroke-width='1.2'/%3E%3C/svg%3E")
+      center bottom / 9px 6px no-repeat;
+  pointer-events: none;
+}
+@media (max-width: 640px) {
+  .substep-flow {
+    --substep-rail: 34px;
+    --substep-dot: 22px;
+  }
+  .substep-flow [data-substep]::before {
+    font-size: 8.5px;
+  }
+}

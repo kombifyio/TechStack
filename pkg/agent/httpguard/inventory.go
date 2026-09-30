@@ -19,6 +19,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kombifyio/techstack/pkg/servermaintenance"
+
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/disk"
 	"github.com/shirou/gopsutil/v4/host"
@@ -41,6 +43,17 @@ type Heartbeat struct {
 	DiskTotalBytes     int64                        `json:"disk_total_bytes"`
 	UptimeSeconds      float64                      `json:"uptime_seconds"`
 	RuntimeConvergence *runtimeconvergence.Snapshot `json:"runtime_convergence,omitempty"`
+	HostMaintenanceFacts
+}
+
+// HostMaintenanceFacts are the node facts server maintenance reads: the boot
+// id proves a reboot happened, the machine-id digest identifies the host
+// running the control plane, and host_maintenance reports that this agent
+// can run the StackKits host commands (stackkit.host-maintenance.v1).
+type HostMaintenanceFacts struct {
+	HostBootID          string `json:"host_boot_id,omitempty"`
+	HostMachineIDSHA256 string `json:"host_machine_id_sha256,omitempty"`
+	HostMaintenance     bool   `json:"host_maintenance"`
 }
 
 // Snapshot is the existing worker inventory wire contract plus optional
@@ -85,7 +98,8 @@ type Snapshot struct {
 	RuntimeConvergence     *runtimeconvergence.Snapshot `json:"runtime_convergence,omitempty"`
 	OpenPorts              []string                     `json:"open_ports,omitempty"`
 	PortsObserved          bool                         `json:"ports_observed"`
-	runtimeServices        []accessManifestRuntimeService
+	HostMaintenanceFacts
+	runtimeServices []accessManifestRuntimeService
 }
 
 type Host struct {
@@ -240,6 +254,10 @@ func (c *SystemCollector) CollectHostSnapshot(ctx context.Context) (Snapshot, er
 		Arch:     hostInventory.Arch,
 		Host:     hostInventory,
 		Services: []Service{},
+		HostMaintenanceFacts: HostMaintenanceFacts{
+			HostBootID:          readHostBootID("/proc/sys/kernel/random/boot_id"),
+			HostMachineIDSHA256: servermaintenance.LocalMachineIDDigest(""),
+		},
 	}
 	snapshot.OpenPorts, snapshot.PortsObserved = c.collectOpenPorts(ctx)
 	return snapshot, nil
@@ -875,4 +893,18 @@ func safeInt(value uint64) int {
 		return maxInt
 	}
 	return int(value)
+}
+
+// readHostBootID returns the kernel boot id, or "" when it is unreadable or
+// not a boot id (a non-Linux host).
+func readHostBootID(path string) string {
+	raw, err := os.ReadFile(path) // #nosec G304 -- fixed procfs path.
+	if err != nil {
+		return ""
+	}
+	value := strings.TrimSpace(string(raw))
+	if len(value) != 36 || strings.Trim(value, "0123456789abcdef-") != "" {
+		return ""
+	}
+	return value
 }

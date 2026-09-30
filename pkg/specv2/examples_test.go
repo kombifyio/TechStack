@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/kombifyio/techstack/internal/stackkitrelease"
 )
 
 const examplesDir = "../../docs/examples"
@@ -94,11 +97,11 @@ func TestProjectionExamplesValidateWithStackKitsCLI(t *testing.T) {
 	if manifest == "" {
 		t.Skipf("set %s to project examples with the release manifest", CompatibilityManifestEnv)
 	}
-	goalWorkloads, err := loadGoalWorkloads(manifest, "")
+	goalWorkloads, goalBindings, err := loadGoalMetadata(manifest, "")
 	if err != nil {
 		t.Fatalf("load release compatibility: %v", err)
 	}
-	validator := &CLIValidator{Binary: binary, goalWorkloads: goalWorkloads}
+	validator := &CLIValidator{Binary: binary, goalWorkloads: goalWorkloads, goalBindings: goalBindings}
 	projector := NewReleaseProjector(validator)
 	for _, tc := range projectionExampleCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -130,10 +133,64 @@ func TestProjectionExamplesValidateWithStackKitsCLI(t *testing.T) {
 					workloads["vault"].(map[string]any)["alternative"] != "vaultwarden" {
 					t.Fatalf("published goal workloads = %#v", workloads)
 				}
-				if len(projection.UnmappedGoals) != 1 || projection.UnmappedGoals[0] != "smart-home" {
-					t.Fatalf("unmapped goals = %#v", projection.UnmappedGoals)
+				// The release ships Smart Home through the wizard adapter too.
+				if len(projection.UnmappedGoals) != 0 || workloads["smart-home"] == nil {
+					t.Fatalf("unmapped goals = %#v, workloads = %#v", projection.UnmappedGoals, workloads)
 				}
 			})
 		}
 	})
+}
+
+// TestWizardInstallChoicesValidateWithStackKitsCLI proves that an installing
+// alternative and an installing add-on setting reach the StackSpec the pinned
+// release accepts. It needs the release CLI, compatibility manifest and
+// use-case catalog, and skips otherwise.
+func TestWizardInstallChoicesValidateWithStackKitsCLI(t *testing.T) {
+	binary := strings.TrimSpace(os.Getenv(StackKitCLIEnv))
+	manifest := strings.TrimSpace(os.Getenv(CompatibilityManifestEnv))
+	if binary == "" || manifest == "" || strings.TrimSpace(os.Getenv(stackkitrelease.UseCaseCatalogEnv)) == "" {
+		t.Skipf("set %s, %s and %s to validate install choices", StackKitCLIEnv, CompatibilityManifestEnv, stackkitrelease.UseCaseCatalogEnv)
+	}
+	goalWorkloads, goalBindings, err := loadGoalMetadata(manifest, "")
+	if err != nil {
+		t.Fatalf("load release compatibility: %v", err)
+	}
+	validator := &CLIValidator{Binary: binary, goalWorkloads: goalWorkloads, goalBindings: goalBindings}
+
+	// The native seed the image authors at build time.
+	seedRoot := t.TempDir()
+	seedDir := filepath.Join(seedRoot, KitSlugBasement)
+	if err := os.Mkdir(seedDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	output, err := exec.Command(binary, "--no-log", "--chdir", seedDir, "init", KitSlugBasement, "--non-interactive",
+		"--name", "techstack-spec-template", "--owner-source=local", "--owner-email", "owner@smoke.stackkit.cc",
+		"--owner-username", "owner", "--api-version", NativeSpecAPIVersion, "--catalog-defaults",
+		"--domain", "template.invalid").CombinedOutput()
+	if err != nil {
+		t.Fatalf("author native seed: %v: %s", err, output)
+	}
+	seed, err := (&TemplateSeedSource{Root: seedRoot}).Seed(KitSlugBasement)
+	if err != nil {
+		t.Fatalf("read native seed: %v", err)
+	}
+
+	intent := foundIntent("Install Choices", "files")
+	intent.UseCaseSettings = map[string]map[string]any{"files": {"backend": "nextcloud", "office-editing": true}}
+	projection, err := NewReleaseProjector(validator).Project(context.Background(), seed, intent, "hl-install-choices")
+	if err != nil {
+		t.Fatalf("project install choices: %v", err)
+	}
+	if err := validator.ValidateSpec(context.Background(), projection.Spec); err != nil {
+		t.Fatalf("pinned CLI rejected the install choices: %v", err)
+	}
+	workloads, _ := projection.Spec["workloads"].(map[string]any)
+	modules, _ := projection.Spec["modules"].(map[string]any)
+	files, _ := workloads["files"].(map[string]any)
+	office, _ := workloads["files-office"].(map[string]any)
+	if files["alternative"] != "nextcloud" || office["alternative"] != "euro-office" ||
+		modules["stackkits-nextcloud-runtime"] == nil || modules["stackkits-euro-office-runtime"] == nil {
+		t.Fatalf("install choices missing from the StackSpec: workloads=%v modules=%v", workloads, modules)
+	}
 }

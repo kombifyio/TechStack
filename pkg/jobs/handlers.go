@@ -144,6 +144,10 @@ type ProvisionConfig struct {
 	// It is intentionally a narrow callback: the jobs package never selects a
 	// provider, deletes a provider resource, or touches legacy projections.
 	NoWorkspaceDestroyReconciler NoWorkspaceDestroyReconciler
+	// AdvancedIssuer is the installation's Advanced capability issuer. Every
+	// managed rollout imports its trust bundle on the host after init; a
+	// missing issuer fails the rollout closed instead of rolling out Standard.
+	AdvancedIssuer AdvancedIssuer
 	// RemoteEnrollment drives the durable connect-remote enrollment job. When
 	// nil, the job type fails closed instead of pretending the SSH lane ran.
 	RemoteEnrollment RemoteEnrollmentExecutor
@@ -241,6 +245,13 @@ func newSpecPersister(cfg *ProvisionConfig, stackID string) (*unifier.SpecPersis
 	return unifier.NewSpecPersister(stackID)
 }
 
+// Field names reported by missingStackKitIdentityHandoffFields.
+const (
+	identityHandoffOwnerField    = "identity.owner.username"
+	identityHandoffLoginField    = "login_gateway.url"
+	identityHandoffRecoveryField = "identity.recovery.bundle_ref|passphrase_hash_present"
+)
+
 // missingStackKitIdentityHandoffFields reports which required handoff fields
 // are absent from a StackKit verify/rollout response. The contract is:
 //   - identity.owner.username (or .user / .login)
@@ -258,7 +269,7 @@ func missingStackKitIdentityHandoffFields(outputs map[string]interface{}) []stri
 		stringFromInterface(owner["user"]),
 		stringFromInterface(owner["login"]),
 	) == "" {
-		missing = append(missing, "identity.owner.username")
+		missing = append(missing, identityHandoffOwnerField)
 	}
 
 	loginGateway := mapFromInterface(outputs["login_gateway"])
@@ -273,7 +284,7 @@ func missingStackKitIdentityHandoffFields(outputs map[string]interface{}) []stri
 		stringFromInterface(loginGateway["login_url"]),
 		stringFromInterface(loginGateway["loginUrl"]),
 	) == "" {
-		missing = append(missing, "login_gateway.url")
+		missing = append(missing, identityHandoffLoginField)
 	}
 
 	recovery := mapFromInterface(identity["recovery"])
@@ -293,7 +304,7 @@ func missingStackKitIdentityHandoffFields(outputs map[string]interface{}) []stri
 	hashPresent := boolFromInterface(recovery["passphrase_hash_present"]) ||
 		boolFromInterface(recovery["passphraseHashPresent"])
 	if bundleRef == "" && !hashPresent {
-		missing = append(missing, "identity.recovery.bundle_ref|passphrase_hash_present")
+		missing = append(missing, identityHandoffRecoveryField)
 	}
 
 	return missing
@@ -1086,7 +1097,8 @@ func RegisterDefaultHandlers(q *Queue, cfg *ProvisionConfig) {
 
 	// Drift detection handlers
 	driftCfg := &DriftCheckConfig{
-		WorkDir: cfg.WorkDir,
+		Sender:         cfg.StackKitCommander,
+		AdvancedIssuer: cfg.AdvancedIssuer,
 	}
 	RegisterDriftHandlers(q, driftCfg)
 }

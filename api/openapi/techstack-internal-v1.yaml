@@ -15,6 +15,7 @@ tags:
   - name: RuntimeLease
   - name: DomainRouting
   - name: RuntimeSummary
+  - name: UsageBudgets
 security:
   - servicecallAuth: []
 paths:
@@ -200,6 +201,36 @@ paths:
           $ref: "#/components/responses/RuntimeLeaseDenied"
         "503":
           $ref: "#/components/responses/RuntimeLeaseDenied"
+  /api/v1/internal/usage/budgets:
+    get:
+      operationId: getInternalUsageBudgets
+      tags: [UsageBudgets]
+      summary: Read the signed caller owner's managed-server usage for the Cloud budget panel
+      description: >-
+        Private Cloud read model behind GET /api/v1/usage/budgets. Same
+        servicecall authentication as the runtime summary: owner and tenant
+        come only from the signed on_behalf_of identity; any query string or
+        body is rejected. `used` is the count of managed-server slots the owner
+        holds, exactly as managed-runtime admission counts them. `limit`,
+        `period` and `resets_at` are always null: a service call carries no
+        Gateway-signed budget, so Cloud fills the limit from
+        plan-entitlement-budgets.json. An unknown count answers 503, never 0.
+      responses:
+        "200":
+          description: Owner-scoped budget usage
+          headers:
+            Cache-Control:
+              schema: { type: string, enum: ["private, no-cache"] }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsageBudgets"
+        "401":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+        "403":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+        "503":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
 components:
   securitySchemes:
     servicecallAuth:
@@ -260,6 +291,22 @@ components:
         services:
           type: object
           description: InventoryServiceList projection with management_state (see techstack-v1.yaml).
+    UsageBudgets:
+      type: object
+      required: [budgets]
+      properties:
+        budgets:
+          type: array
+          items:
+            type: object
+            required: [key, used, limit, unit, period, resets_at]
+            properties:
+              key: { type: string, enum: ["cloud.runtime.credits#managed_servers"] }
+              used: { type: integer, minimum: 0 }
+              limit: { type: "null" }
+              unit: { type: string, enum: ["server"] }
+              period: { type: "null" }
+              resets_at: { type: "null" }
     InternalDomainAttachRequest:
       type: object
       required: [stack_id, server_id, lease_id, domain, cf_zone_id, dns_provider, source]

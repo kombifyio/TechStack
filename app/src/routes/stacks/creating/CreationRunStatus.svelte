@@ -1,6 +1,6 @@
 <script lang="ts">
   import { creation } from "./creation-controller.svelte.js";
-  import { tr } from "#lib/i18n.svelte.js";
+  import { tr, trParts } from "#lib/i18n.svelte.js";
   import { STEP_DETAILS } from "#lib/wizard/index.js";
 </script>
 
@@ -20,20 +20,16 @@
                   <p
                     class="text-xs font-semibold uppercase tracking-wide text-warning"
                   >
-                    Provisioning in progress
+                    {tr("ui.stacksCreatingCreationRunStatus.provisioningInProgress")}
                   </p>
                   <h2 class="mt-1 text-xl font-semibold text-foreground">
-                    Node provisioning is still in progress
+                    {tr("ui.stacksCreatingCreationProgress.nodeProvisioningIsStillIn")}
                   </h2>
                   <p class="mt-2 max-w-2xl text-sm text-muted-foreground">
                     {#if creation.waitingForProviderProvision}
-                      The provider operation has not yet handed the existing
-                      Managed Runtime over to the StackKit rollout. Techstack
-                      scheduled the next exact-lease check.
+                      {tr("ui.stacksCreatingCreationRunStatus.theProviderOperationHasNot")}
                     {:else}
-                      The Managed Runtime is not fully reachable for rollout
-                      yet. The pending signal may be its address, credentials,
-                      or enrollment. Techstack scheduled the next check.
+                      {tr("ui.stacksCreatingCreationRunStatus.theManagedRuntimeIsNot")}
                     {/if}
                   </p>
                   {#if creation.nextResumeLabel}
@@ -41,19 +37,17 @@
                       class="mt-3 text-xs text-muted-foreground"
                       data-testid="waiting-enrollment-next-resume"
                     >
-                      Next scheduled check:
+                      {tr("ui.stacksCreatingCreationRunStatus.nextScheduledCheck")}
                       <time datetime={creation.jobNextResumeAt}>{creation.nextResumeLabel}</time>
                     </p>
                   {/if}
                   <p class="mt-3 max-w-2xl text-xs text-muted-foreground">
                     {#if creation.jobResumeAvailableAt}
-                      Starting at {creation.resumeAvailableLabel},
-                      the server can authorize a safe resume on the same VM.
+                      {tr("ui.creationRun.resumeStartingAt", { time: creation.resumeAvailableLabel })}
                     {:else}
-                      A manual resume is enabled only after server-side
-                      validation.
+                      {tr("ui.stacksCreatingCreationRunStatus.aManualResumeIsEnabled")}
                     {/if}
-                    This does not create another VM.
+                    {tr("ui.stacksCreatingCreationRunStatus.thisDoesNotCreateAnother")}
                   </p>
                 </div>
                 <span
@@ -62,7 +56,7 @@
                 >
                   <span class="h-2 w-2 animate-pulse rounded-full bg-warning"
                   ></span>
-                  Not reachable yet
+                  {tr("ui.creationRun.notReachableYet")}
                 </span>
               </div>
 
@@ -70,7 +64,7 @@
                 <div
                   class="mt-5 rounded-lg border border-warning/20 bg-warning/10 px-3 py-2"
                 >
-                  <p class="text-xs font-medium text-warning">Current status</p>
+                  <p class="text-xs font-medium text-warning">{tr("ui.stacksCreatingCreationRunStatus.currentStatus")}</p>
                   <p class="mt-1 text-sm text-foreground">
                     {creation.currentStepMessage}
                   </p>
@@ -89,7 +83,7 @@
                   class="inline-flex cursor-not-allowed items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium opacity-50"
                   data-testid="waiting-dashboard-disabled"
                 >
-                  Dashboard
+                  {tr("ui.settings.dashboard")}
                 </button>
                 <button
                   type="button"
@@ -99,7 +93,7 @@
                   class="inline-flex cursor-not-allowed items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium opacity-50"
                   data-testid="waiting-services-disabled"
                 >
-                  Services
+                  {tr("ui.services.services")}
                 </button>
                 <button
                   type="button"
@@ -109,12 +103,11 @@
                   class="inline-flex cursor-not-allowed items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium opacity-50"
                   data-testid="waiting-access-disabled"
                 >
-                  Node access
+                  {tr("ui.stacksCreatingCreationRunStatus.nodeAccess")}
                 </button>
               </div>
               <p class="mt-3 text-xs text-muted-foreground">
-                These access paths are enabled only after a real enrollment
-                signal.
+                {tr("ui.stacksCreatingCreationRunStatus.theseAccessPathsAreEnabled")}
               </p>
               {#if creation.waitingRecoveryAvailable}
                 <div
@@ -122,9 +115,7 @@
                   data-testid="waiting-enrollment-recovery"
                 >
                   <p class="text-xs text-muted-foreground">
-                    The scheduled check is overdue. Techstack validates the
-                    stack, source job, and exact lease together, then continues
-                    only the rollout on the existing VM.
+                    {tr("ui.stacksCreatingCreationRunStatus.theScheduledCheckIsOverdue")}
                   </p>
                   <button
                     type="button"
@@ -136,10 +127,10 @@
                     data-testid="waiting-enrollment-retry"
                   >
                     {creation.retryingRollout
-                      ? "Validating the existing VM..."
+                      ? tr("ui.stacksCreatingCreationRunStatus.validatingTheExistingVm")
                       : creation.waitingForProviderProvision
-                        ? "Continue rollout on the existing VM"
-                        : "Resume enrollment on the existing VM"}
+                        ? tr("ui.stacksCreatingCreationRunStatus.continueRolloutOnTheExisting")
+                        : tr("ui.stacksCreatingCreationRunStatus.resumeEnrollmentOnTheExisting")}
                   </button>
                   {#if creation.retryError}
                     <p
@@ -165,27 +156,25 @@
                   <p
                     class="text-xs font-semibold uppercase tracking-wide text-primary"
                   >
-                    Connect my Node
+                    {tr("ui.stacksCreatingCreationRunStatus.connectMyNode")}
                   </p>
                   <h2 class="mt-1 text-xl font-semibold text-foreground">
                     {#if creation.remoteEnrollmentActive}
-                      Connecting via SSH…
+                      {tr("ui.stacksCreatingCreationRunStatus.connectingViaSsh")}
                     {:else if creation.remoteEnrollmentFailed}
-                      Remote SSH connection failed
+                      {tr("ui.stacksCreatingCreationRunStatus.remoteSshConnectionFailed")}
                     {:else}
-                      Waiting for Guard heartbeat…
+                      {tr("ui.stacksCreatingCreationRunStatus.waitingForGuardHeartbeat")}
                     {/if}
                   </h2>
                   <p class="mt-2 max-w-2xl text-sm text-muted-foreground">
                     {#if creation.remoteEnrollmentActive}
-                      kombify is installing and enrolling the Guard on your server
-                      over SSH. You do not need to run a command manually.
+                      {tr("ui.stacksCreatingCreationRunStatus.kombifyIsInstallingAndEnrolling")}
                     {:else if creation.remoteEnrollmentFailed}
                       {creation.pairingRecoveryError ||
-                        "Check SSH host, credentials, and that the server can reach Techstack."}
+                        tr("ui.stacksCreatingCreationRunStatus.checkSshHostCredentialsAnd")}
                     {:else}
-                      Enrollment over SSH finished. This page will show “Node
-                      connected” once the Guard reports a fresh heartbeat.
+                      {tr("ui.stacksCreatingCreationRunStatus.enrollmentOverSshFinishedThis")}
                     {/if}
                   </p>
                 </div>
@@ -195,11 +184,11 @@
                 >
                   <span class="h-2 w-2 rounded-full bg-warning"></span>
                   {#if creation.remoteEnrollmentActive}
-                    Enrolling
+                    {tr("ui.stacksCreatingCreationRunStatus.enrolling")}
                   {:else if creation.remoteEnrollmentFailed}
-                    Failed
+                    {tr("ui.stacksCreatingCreationRunStatus.failed")}
                   {:else}
-                    Awaiting heartbeat
+                    {tr("ui.stacksCreatingCreationRunStatus.awaitingHeartbeat")}
                   {/if}
                 </span>
               </div>
@@ -208,7 +197,7 @@
                 <div
                   class="mt-5 rounded-lg border border-border bg-muted/40 p-3"
                 >
-                  <p class="text-xs text-muted-foreground">Remote target</p>
+                  <p class="text-xs text-muted-foreground">{tr("ui.stacksCreatingCreationRunStatus.remoteTarget")}</p>
                   <p class="mt-1 font-mono text-sm text-foreground">
                     {creation.remoteServerUser
                       ? `${creation.remoteServerUser}@`
@@ -235,7 +224,7 @@
                     data-testid="remote-ssh-enrollment-message"
                   >
                     {creation.remoteEnrollmentMessage ||
-                      "Connecting to your Node over SSH…"}
+                      tr("ui.stacksCreatingCreationRunStatus.connectingToYourNodeOver")}
                   </p>
                 </div>
               {:else if creation.remoteEnrollmentFailed}
@@ -250,8 +239,8 @@
                     data-testid="remote-ssh-enrollment-retry"
                   >
                     {creation.retryingRollout
-                      ? "Retrying SSH connection…"
-                      : "Retry connection on saved server"}
+                      ? tr("ui.stacksCreatingCreationRunStatus.retryingSshConnection")
+                      : tr("ui.stacksCreatingCreationRunStatus.retryConnectionOnSavedServer")}
                   </button>
                   {#if creation.pairingRecoveryError}
                     <p
@@ -286,17 +275,13 @@
                   <p
                     class="text-xs font-semibold uppercase tracking-wide text-primary"
                   >
-                    Waiting for real connection
+                    {tr("ui.stacksCreatingCreationRunStatus.waitingForRealConnection")}
                   </p>
                   <h2 class="mt-1 text-xl font-semibold text-foreground">
-                    Pairing command ready
+                    {tr("ui.stacksCreatingCreationRunStatus.pairingCommandReady")}
                   </h2>
                   <p class="mt-2 max-w-2xl text-sm text-muted-foreground">
-                    Run this one-liner on the additional Node. The completed
-                    registration job only created the pairing token; Techstack
-                    will show “Node connected” only after the outbound Guard
-                    reports a fresh heartbeat and the Node projection is
-                    healthy.
+                    {tr("ui.stacksCreatingCreationRunStatus.runThisOneLinerOn")}
                   </p>
                 </div>
                 <span
@@ -304,7 +289,7 @@
                   data-testid="guard-pairing-status"
                 >
                   <span class="h-2 w-2 rounded-full bg-warning"></span>
-                  Not connected yet
+                  {tr("ui.creationRun.notConnectedYet")}
                 </span>
               </div>
 
@@ -313,7 +298,7 @@
                   class="mt-5 rounded-lg border border-border bg-muted/40 p-3"
                 >
                   <p class="text-xs text-muted-foreground">
-                    Planned remote target
+                    {tr("ui.stacksCreatingCreationRunStatus.plannedRemoteTarget")}
                   </p>
                   <p class="mt-1 font-mono text-sm text-foreground">
                     {creation.remoteServerUser
@@ -323,9 +308,7 @@
                       : ""}
                   </p>
                   <p class="mt-1 text-xs text-muted-foreground">
-                    The SSH details are planning metadata. The current Guard
-                    connection is outbound HTTPS and starts with the command
-                    below.
+                    {tr("ui.stacksCreatingCreationRunStatus.theSshDetailsArePlanning")}
                   </p>
                 </div>
               {/if}
@@ -336,7 +319,7 @@
                     for="pairing-server-url"
                     class="block text-xs font-medium text-muted-foreground"
                   >
-                    Techstack URL reachable from the server
+                    {tr("ui.stacksCreatingCreationRunStatus.techstackUrlReachableFromThe")}
                   </label>
                   <input
                     id="pairing-server-url"
@@ -358,17 +341,16 @@
                   data-testid="copy-pairing-command"
                 >
                   {#if creation.copiedCommand === "pairing"}
-                    Pairing command copied
+                    {tr("ui.stacksCreatingCreationRunStatus.pairingCommandCopied")}
                   {:else if creation.copiedCommand === "error:pairing"}
-                    Copy failed — select the command above
+                    {tr("ui.stacksCreatingCreationRunStatus.copyFailedSelectTheCommand")}
                   {:else}
-                    Copy pairing command
+                    {tr("ui.stacksCreatingCreationRunStatus.copyPairingCommand")}
                   {/if}
                 </button>
                 {#if creation.pairingTokenExpiresAt}
                   <p class="mt-3 text-xs text-muted-foreground">
-                    Pairing token expires at
-                    <span class="font-mono">{creation.pairingTokenExpiresAt}</span>.
+                    {trParts("ui.creationRun.pairingTokenExpires")[0]}<span class="font-mono">{creation.pairingTokenExpiresAt}</span>{trParts("ui.creationRun.pairingTokenExpires")[1]}
                   </p>
                 {/if}
                 {#if creation.pairingTokenExpired}
@@ -377,10 +359,10 @@
                     role="alert"
                   >
                     <p class="text-sm font-medium text-destructive">
-                      This pairing token has expired.
+                      {tr("ui.stacksCreatingCreationRunStatus.thisPairingTokenHasExpired")}
                     </p>
                     <p class="mt-1 text-xs text-muted-foreground">
-                      Generate a fresh command to continue connecting this Node.
+                      {tr("ui.stacksCreatingCreationRunStatus.generateAFreshCommandTo")}
                     </p>
                     <button
                       type="button"
@@ -389,7 +371,7 @@
                       onclick={creation.recoverPairingCommand}
                       disabled={creation.pairingRecoveryBusy}
                     >
-                      Generate new command
+                      {tr("ui.stacksCreatingCreationRunStatus.generateNewCommand")}
                     </button>
                   </div>
                 {/if}
@@ -399,11 +381,10 @@
                   role="alert"
                 >
                   <p class="text-sm font-medium text-destructive">
-                    Pairing command unavailable
+                    {tr("ui.stacksCreatingCreationRunStatus.pairingCommandUnavailable")}
                   </p>
                   <p class="mt-1 text-xs text-muted-foreground">
-                    Generate a short-lived command for this Node. Connection
-                    credentials are not retained in job reports.
+                    {tr("ui.stacksCreatingCreationRunStatus.generateAShortLivedCommand")}
                   </p>
                   <button
                     type="button"
@@ -413,8 +394,8 @@
                     disabled={creation.pairingRecoveryBusy}
                   >
                     {creation.pairingRecoveryBusy
-                      ? "Preparing command…"
-                      : "Generate pairing command"}
+                      ? tr("ui.stacksCreatingCreationRunStatus.preparingCommand")
+                      : tr("ui.stacksCreatingCreationRunStatus.generatePairingCommand")}
                   </button>
                 </div>
               {/if}
@@ -459,7 +440,7 @@
                   </div>
                   <div class="flex-1 min-w-0">
                     <p class="text-xs text-primary font-medium mb-1">
-                      Step {creation.completedCount + 1} of {creation.tasks.length}
+                      {tr("ui.creationRun.stepOf", { step: creation.completedCount + 1, total: creation.tasks.length })}
                     </p>
                     <h3 class="text-lg font-semibold text-foreground mb-2">
                       {creation.currentStepInfo.title}
@@ -473,7 +454,7 @@
                         aria-live="polite"
                       >
                         <p class="text-xs font-medium text-primary">
-                          Current status
+                          {tr("ui.stacksCreatingCreationRunStatus.currentStatus")}
                         </p>
                         <p class="mt-1 text-sm text-foreground">
                           {creation.currentStepMessage}
@@ -495,7 +476,7 @@
           {#if creation.completedCount > 0}
             <div data-kx="plate" class="p-5">
               <p class="text-xs text-muted-foreground font-medium mb-3">
-                Completed
+                {tr("ui.stacksCreatingCreationRunStatus.completed")}
               </p>
               <div class="space-y-2">
                 {#each creation.tasks.filter((t) => t.status === "completed") as done (done.id)}
@@ -526,30 +507,23 @@
           <!-- What happens next -->
           <div data-kx="plate" class="p-5">
             <p class="text-xs text-muted-foreground font-medium mb-2">
-              After creation
+              {tr("ui.stacksCreatingCreationRunStatus.afterCreation")}
             </p>
             <p class="text-sm text-muted-foreground leading-relaxed">
               {#if creation.serverProvisioningMode === "hypervisor"}
                 {tr("wizard.server.hypervisor.progress")}
               {:else if creation.creationOperation === "add-server" && creation.serverProvisioningMode === "kombify-cloud"}
-                The additional managed Node is added to this Homelab and will
-                appear in the Node dashboard once enrollment reports back.
+                {tr("ui.stacksCreatingCreationRunStatus.theAdditionalManagedNodeIs")}
               {:else if creation.creationOperation === "add-server" && creation.agentPairingRequired}
-                After you run the one-liner, the outbound Guard enrolls with
-                this Homelab. The dashboard only marks the Node connected after
-                a fresh heartbeat is present in the Node projection.
+                {tr("ui.stacksCreatingCreationRunStatus.afterYouRunTheOne")}
               {:else if creation.creationOperation === "add-server"}
-                The additional Node is registered with this Homelab and can then
-                receive services from this StackKit deployment.
+                {tr("ui.stacksCreatingCreationRunStatus.theAdditionalNodeIsRegistered")}
               {:else if creation.serverProvisioningMode === "kombify-cloud"}
-                kombify will provision the subscription server and then continue
-                with the StackKit rollout.
+                {tr("ui.stacksCreatingCreationRunStatus.kombifyWillProvisionTheSubscription")}
               {:else if creation.serverProvisioningMode === "connect-remote"}
-                kombify will use the remote SSH configuration captured in the
-                wizard.
+                {tr("ui.stacksCreatingCreationRunStatus.kombifyWillUseTheRemote")}
               {:else}
-                You will receive a worker installation command to connect your
-                Nodes to this StackKit deployment.
+                {tr("ui.stacksCreatingCreationRunStatus.youWillReceiveAWorker")}
               {/if}
             </p>
           </div>

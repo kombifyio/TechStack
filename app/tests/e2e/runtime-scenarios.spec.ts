@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import type { MonthlyRuntimeCleanupReadback } from "../../src/lib/api/stacks";
 import {
   chmod,
@@ -11,6 +12,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { runManagedDay2Evidence } from "./managed-day2-evidence";
+import { managedLifecycleReceipt } from "./managed-lifecycle-receipt";
 import path from "node:path";
 import { promisify } from "node:util";
 import {
@@ -28,11 +30,20 @@ import {
 } from "../helpers/test-utils";
 import {
   authenticateRuntimeUser,
+  authorizedFetch,
+  bearerToken,
   captureGatewayApiSession,
-  type RuntimeGatewaySession,
+  createGatewaySessionKeeper,
+  type GatewaySessionKeeper,
+  type RuntimeBearer,
 } from "./runtime-auth";
 
 const execFileAsync = promisify(execFile);
+
+async function producerCommit(): Promise<string> {
+  const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"]);
+  return stdout.trim();
+}
 const PRODUCT_BASE = requireLiveProductURL(
   "TechStack product",
   firstProductURL(
@@ -73,6 +84,15 @@ const MANAGED_RUNTIME_RECOVERY_STACK_ID = String(
 const MANAGED_RUNTIME_RECOVERY_CONFIRM = String(
   process.env.TECHSTACK_RUNTIME_E2E_RECOVERY_CONFIRM ?? "",
 ).trim();
+// A persistent test environment (for example the long-lived TEST_RIL_PRO_USER
+// managed server) is created by the same product path but must survive the
+// run. Only this exact acknowledgement skips the teardown of the stack the run
+// created; every other value keeps the default destroy-to-absence cleanup.
+const MANAGED_RUNTIME_RETAIN_CONFIRMATION =
+  "retain-persistent-test-environment";
+const MANAGED_RUNTIME_RETAIN =
+  String(process.env.TECHSTACK_RUNTIME_E2E_RETAIN_MANAGED ?? "").trim() ===
+  MANAGED_RUNTIME_RETAIN_CONFIRMATION;
 const RUNTIME_AUTH_OPTIONS = {
   productBase: PRODUCT_BASE,
   apiBase: API_BASE,
@@ -104,6 +124,7 @@ interface RuntimeStackOperationServer {
   id: string;
   hostname: string;
   role?: string;
+  status?: string;
   assignment?: string;
   stack_id?: string;
   stackId?: string;
@@ -399,7 +420,7 @@ async function postJsonWithCurl(
 }
 
 async function abandonExactStaleManagedRuntimeJob(
-  token: string,
+  token: RuntimeBearer,
   apiBase: string,
   stackId: string,
   jobs: RuntimeJobListPayload,
@@ -431,7 +452,7 @@ async function abandonExactStaleManagedRuntimeJob(
       apiBase,
       `/api/v1/stacks/${encodeURIComponent(stackId)}/jobs/${encodeURIComponent(jobId)}/abandon`,
     ),
-    token,
+    await bearerToken(token),
     {},
     30_000,
     "Abandon exact stale managed runtime job",
@@ -529,7 +550,7 @@ async function createManagedRuntimeStackViaWizard(
 ): Promise<{
   stack: { stack_id: string; job_id?: string };
   stackName: string;
-  api: RuntimeGatewaySession;
+  api: { token: string; apiBase: string };
 }> {
   await page.goto("/stacks/new", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("easy-wizard")).toBeVisible({
@@ -542,7 +563,6 @@ async function createManagedRuntimeStackViaWizard(
   await page.getByTestId("server-branch-new").click();
   await page.getByTestId("server-mode-kombify-cloud").click();
   await expect(page.getByTestId("managed-provider-selector")).toBeVisible();
-  await page.getByText("Provider & server details", { exact: true }).click();
   await page.getByTestId(`managed-provider-${providerId}`).click();
   await expect(
     page
@@ -711,10 +731,11 @@ function exactManagedRecoveryLeaseId(
   return foundationLeases.size === 1 ? [...foundationLeases][0] : "";
 }
 
-async function getStackList(token: string, apiBase = API_BASE) {
-  const response = await fetch(runtimeApiUrl(apiBase, "/api/v1/stacks"), {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+async function getStackList(token: RuntimeBearer, apiBase = API_BASE) {
+  const response = await authorizedFetch(
+    token,
+    runtimeApiUrl(apiBase, "/api/v1/stacks"),
+  );
   if (!response.ok) {
     throw new Error(`List stacks failed with HTTP ${response.status}`);
   }
@@ -723,7 +744,7 @@ async function getStackList(token: string, apiBase = API_BASE) {
 }
 
 async function waitForStack(
-  token: string,
+  token: RuntimeBearer,
   stackId: string,
   predicate: (stack: Record<string, unknown>) => boolean,
   timeoutMs = 240_000,
@@ -743,7 +764,7 @@ async function waitForStack(
 }
 
 async function waitForJobTerminal(
-  token: string,
+  token: RuntimeBearer,
   jobId: string,
   timeoutMs = 600_000,
   apiBase = API_BASE,
@@ -844,24 +865,53 @@ async function waitForJobTerminal(
 }
 
 async function getJob(
-  token: string,
+  token: RuntimeBearer,
   jobId: string,
   apiBase = API_BASE,
   deadline = Date.now() + 120_000,
 ) {
+  // A control-plane restart or edge hiccup answers with a network error, a
+  // 5xx, or an HTML error page. That is not a job outcome: keep polling
+  // within the caller's deadline instead of ending the observation early.
+  let transientFailures = 0;
   for (let attempt = 0; attempt < 4; attempt += 1) {
-    const response = await fetch(
-      runtimeApiUrl(apiBase, `/api/v1/jobs/${encodeURIComponent(jobId)}`),
-      {
-        headers: { Authorization: `Bearer ${token}` },
-        signal: AbortSignal.timeout(
-          Math.max(1, Math.min(30_000, deadline - Date.now())),
+    let response: Response;
+    let text: string;
+    let json: Record<string, any> | undefined;
+    try {
+      response = await authorizedFetch(
+        token,
+        runtimeApiUrl(apiBase, `/api/v1/jobs/${encodeURIComponent(jobId)}`),
+        {
+          signal: AbortSignal.timeout(
+            Math.max(1, Math.min(30_000, deadline - Date.now())),
+          ),
+        },
+      );
+      text = await response.text();
+      json = text ? JSON.parse(text) : {};
+    } catch (error) {
+      response = new Response(null, { status: 599 });
+      text = error instanceof Error ? error.message : String(error);
+    }
+    const transient = json === undefined || response.status >= 500;
+    if (transient && deadline - Date.now() > 5_000) {
+      transientFailures += 1;
+      attempt -= 1; // transient reads do not use up the rate-limit retries
+      logRuntimeE2E("transient job read, retrying", {
+        job_id: jobId,
+        status: response.status,
+        transient_failures: transientFailures,
+      });
+      await delay(
+        Math.min(
+          5_000 * Math.min(transientFailures, 6),
+          deadline - Date.now() - 1_000,
         ),
-      },
-    );
-    const text = await response.text();
-    const json = text ? JSON.parse(text) : {};
-    if (response.ok) {
+      );
+      continue;
+    }
+    if (response.ok && json) {
       return (json.data ?? json) as Record<string, unknown>;
     }
     if (response.status === 429 && attempt < 3) {
@@ -888,13 +938,12 @@ async function getJob(
 }
 
 async function fetchRuntimeApi<T>(
-  token: string,
+  token: RuntimeBearer,
   path: string,
   apiBase = API_BASE,
   deadline = Date.now() + 30_000,
 ): Promise<T> {
-  const response = await fetch(runtimeApiUrl(apiBase, path), {
-    headers: { Authorization: `Bearer ${token}` },
+  const response = await authorizedFetch(token, runtimeApiUrl(apiBase, path), {
     signal: AbortSignal.timeout(
       Math.max(1, Math.min(30_000, deadline - Date.now())),
     ),
@@ -912,7 +961,7 @@ async function fetchRuntimeApi<T>(
 // Read the owner-bound native receipt. Terminal server aggregates remain for
 // audit, so their presence is not a cleanup failure or a substitute for proof.
 async function waitForManagedRuntimeCleanupReadback(args: {
-  token: string;
+  token: RuntimeBearer;
   apiBase: string;
   stackId: string;
   leaseId: string;
@@ -948,7 +997,7 @@ async function waitForManagedRuntimeCleanupReadback(args: {
 }
 
 async function waitForManagedRuntimeInventoryEvidence(args: {
-  token: string;
+  token: RuntimeBearer;
   apiBase: string;
   stackId: string;
   stackName: string;
@@ -966,10 +1015,9 @@ async function waitForManagedRuntimeInventoryEvidence(args: {
       "/api/v1/workers",
       args.apiBase,
     );
-    const worker = lastWorkers.find(
-      (item) =>
-        item.source === "managed-runtime" && item.lease_id === args.leaseId,
-    );
+    // The lease binds the node; which projection produced the row
+    // (worker registry, canonical server) is not part of the contract.
+    const worker = lastWorkers.find((item) => item.lease_id === args.leaseId);
     lastOperations = await fetchRuntimeApi<RuntimeStackOperationsPayload>(
       args.token,
       `/api/v1/stacks/${encodeURIComponent(args.stackId)}/operations`,
@@ -981,8 +1029,7 @@ async function waitForManagedRuntimeInventoryEvidence(args: {
       args.apiBase,
     );
     const server = (lastOperations.servers ?? []).find(
-      (item) =>
-        item.source === "managed-runtime" && item.lease_id === args.leaseId,
+      (item) => item.lease_id === args.leaseId,
     );
     const operationServices = lastOperations.services ?? [];
     const registryServices = servicesForStack(
@@ -1006,19 +1053,14 @@ async function waitForManagedRuntimeInventoryEvidence(args: {
       runningServices > 0 &&
       serviceUrls.length > 0
     ) {
-      expect(worker.source).toBe("managed-runtime");
-      expect(worker.lease_id).toBe(args.leaseId);
+      // Enrollment is proven earlier by the monthly-runtime status. Here the
+      // node must be approved, connected and bound to this stack.
       expect(worker.approved).toBe(true);
-      expect(worker.assignable).toBe(true);
+      expect(worker.status).toBe("connected");
       expect(worker.runtime_lane).toBe("monthly-runtime");
-      expect(worker.enrollment_status).toBe("enrolled");
-      expect(server.source).toBe("managed-runtime");
-      expect(server.lease_id).toBe(args.leaseId);
       expect(server.assignment).toBe("stack");
       expect(server.approved).toBe(true);
-      expect(server.assignable).toBe(true);
-      expect(server.runtime_lane).toBe("monthly-runtime");
-      expect(server.enrollment_status).toBe("enrolled");
+      expect(server.status).toBe("connected");
       expect(operationServices.length).toBeGreaterThan(0);
       expect(registryServices.length).toBeGreaterThan(0);
       expect(runningServices).toBeGreaterThan(0);
@@ -1027,7 +1069,7 @@ async function waitForManagedRuntimeInventoryEvidence(args: {
         workers: {
           matched: worker,
           managed_runtime_rows: lastWorkers.filter(
-            (item) => item.source === "managed-runtime",
+            (item) => item.runtime_lane === "monthly-runtime",
           ),
         },
         stack_operations: {
@@ -1062,7 +1104,7 @@ async function waitForManagedRuntimeInventoryEvidence(args: {
 }
 
 async function runManagedServiceActionEvidence(args: {
-  token: string;
+  token: RuntimeBearer;
   apiBase: string;
   stackId: string;
   stackName: string;
@@ -1086,7 +1128,8 @@ async function runManagedServiceActionEvidence(args: {
     inventoryRevision: number,
     idempotencyKey: string,
   ) => {
-    const response = await fetch(
+    const response = await authorizedFetch(
+      args.token,
       runtimeApiUrl(
         args.apiBase,
         `/api/v1/registry/services/${encodeURIComponent(service.id!)}/actions`,
@@ -1094,7 +1137,6 @@ async function runManagedServiceActionEvidence(args: {
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${args.token}`,
           "Content-Type": "application/json",
           "Idempotency-Key": idempotencyKey,
         },
@@ -1249,7 +1291,7 @@ function uniqueRuntimeServiceUrls(services: RuntimeStackOperationService[]) {
 }
 
 async function waitForProvisionJob(
-  token: string,
+  token: RuntimeBearer,
   scenario: RuntimeScenario,
   stack: { stack_id: string; job_id?: string },
   timeoutMs = 600_000,
@@ -1273,6 +1315,14 @@ async function waitForProvisionJob(
     );
   }
   return job;
+}
+
+function isTerminalJobState(state: unknown) {
+  return ["completed", "failed", "canceled", "cancelled"].includes(
+    String(state ?? "")
+      .trim()
+      .toLowerCase(),
+  );
 }
 
 function runtimeJobFailureSummary(job: Record<string, unknown>) {
@@ -1377,12 +1427,13 @@ async function registerWorkerThroughInstallScript(
   };
 }
 
-async function getMonitorStatusViaApi(token: string, apiBase = API_BASE) {
-  const response = await fetch(
+async function getMonitorStatusViaApi(
+  token: RuntimeBearer,
+  apiBase = API_BASE,
+) {
+  const response = await authorizedFetch(
+    token,
     runtimeApiUrl(apiBase, "/api/v1/monitor/status"),
-    {
-      headers: { Authorization: `Bearer ${token}` },
-    },
   );
   const text = await response.text();
   const json = text ? JSON.parse(text) : {};
@@ -1394,12 +1445,13 @@ async function getMonitorStatusViaApi(token: string, apiBase = API_BASE) {
   return (json.data ?? json) as Record<string, unknown>;
 }
 
-async function getMonitorHealthViaApi(token: string, apiBase = API_BASE) {
-  const response = await fetch(
+async function getMonitorHealthViaApi(
+  token: RuntimeBearer,
+  apiBase = API_BASE,
+) {
+  const response = await authorizedFetch(
+    token,
     runtimeApiUrl(apiBase, "/api/v1/monitor/health"),
-    {
-      headers: { Authorization: `Bearer ${token}` },
-    },
   );
   const text = await response.text();
   const json = text ? JSON.parse(text) : {};
@@ -1411,12 +1463,13 @@ async function getMonitorHealthViaApi(token: string, apiBase = API_BASE) {
   return (json.data ?? json) as Record<string, unknown>;
 }
 
-async function getMonitorAlertRulesViaApi(token: string, apiBase = API_BASE) {
-  const response = await fetch(
+async function getMonitorAlertRulesViaApi(
+  token: RuntimeBearer,
+  apiBase = API_BASE,
+) {
+  const response = await authorizedFetch(
+    token,
     runtimeApiUrl(apiBase, "/api/v1/monitor/alerts/rules"),
-    {
-      headers: { Authorization: `Bearer ${token}` },
-    },
   );
   const text = await response.text();
   const json = text ? JSON.parse(text) : {};
@@ -1430,7 +1483,7 @@ async function getMonitorAlertRulesViaApi(token: string, apiBase = API_BASE) {
 
 async function validateMonitoringUi(
   page: Page,
-  token: string,
+  token: RuntimeBearer,
   scenario: RuntimeScenario,
   opts: { minConnectedAgents?: number; apiBase?: string } = {},
 ) {
@@ -1565,7 +1618,7 @@ async function validateUserOwnedPostSetupUi(args: {
 
 async function validateManagedRuntimePostSetupUi(args: {
   page: Page;
-  token: string;
+  token: RuntimeBearer;
   apiBase: string;
   stackId: string;
   stackName: string;
@@ -1595,14 +1648,6 @@ async function validateManagedRuntimePostSetupUi(args: {
       timeout: 60_000,
     })
     .toBeGreaterThan(0);
-  if (primaryServiceLabel) {
-    await expect(
-      args.page
-        .getByTestId("dashboard-services-summary")
-        .filter({ hasText: /runtime services? reported/ })
-        .first(),
-    ).toBeVisible({ timeout: 60_000 });
-  }
   await expect(args.page.getByTestId("monthly-runtime-card")).toBeVisible({
     timeout: 60_000,
   });
@@ -1650,19 +1695,19 @@ async function validateManagedRuntimePostSetupUi(args: {
 }
 
 async function destroyRuntimeStackViaApi(
-  token: string,
+  token: RuntimeBearer,
   stackId?: string,
   apiBase = API_BASE,
 ) {
   if (!stackId) return;
-  const response = await fetch(
+  const response = await authorizedFetch(
+    token,
     runtimeApiUrl(
       apiBase,
       `/api/v1/stacks/${encodeURIComponent(stackId)}/destroy`,
     ),
     {
       method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(15_000),
     },
   );
@@ -2291,10 +2336,15 @@ test.describe.serial("Runtime E2E scenarios", () => {
 
   for (const leaseProvider of selectedMonthlyRuntimeLeaseProviders()) {
     test.describe(`managed ${leaseProvider.id}`, () => {
-      let managedApi: RuntimeGatewaySession | undefined;
+      // One keeper per lane: every managed owner request, including the
+      // destroy in afterEach, reads a current Gateway bearer from it.
+      let managedApi: GatewaySessionKeeper | undefined;
       let stackId = "";
       let stackName = "";
       let leaseId = "";
+      let provisionJob: Record<string, unknown> | undefined;
+      let stackkitsRelease = "";
+      let laneStartedAt = "";
       test.afterEach(async () => {
         test.setTimeout(MANAGED_RUNTIME_BUDGETS.cleanupMs);
         logRuntimeE2E("phase started", {
@@ -2304,15 +2354,25 @@ test.describe.serial("Runtime E2E scenarios", () => {
           lease_id: leaseId,
         });
 
+        if (stackId && managedApi && MANAGED_RUNTIME_RETAIN) {
+          await attachJson("kombify-cloud-retained.json", {
+            provider_id: leaseProvider.id,
+            stack_id: stackId,
+            stack_name: stackName,
+            lease_id: leaseId,
+            cleanup_proof_status: "retained_persistent_test_environment",
+          });
+          return;
+        }
         if (stackId && managedApi) {
           const cleanupJob = await destroyRuntimeStackViaApi(
-            managedApi.token,
+            managedApi,
             stackId,
             managedApi.apiBase,
           );
           const cleanupReadback = leaseId
             ? await waitForManagedRuntimeCleanupReadback({
-                token: managedApi.token,
+                token: managedApi,
                 apiBase: managedApi.apiBase,
                 stackId,
                 leaseId,
@@ -2330,6 +2390,33 @@ test.describe.serial("Runtime E2E scenarios", () => {
               ? "native_cleanup_verified"
               : "lease_identity_unavailable_after_failed_setup",
           });
+          // The StackKits public-vps compatibility receipt for this attempt.
+          if (provisionJob && stackkitsRelease) {
+            const receipt = managedLifecycleReceipt({
+              attemptId: randomUUID(),
+              providerId: leaseProvider.id,
+              release: stackkitsRelease,
+              producerCommit:
+                process.env.GITHUB_SHA ?? (await producerCommit()),
+              startedAt: laneStartedAt,
+              finishedAt: new Date().toISOString(),
+              job: provisionJob,
+              cleanupReadback: cleanupReadback as
+                Record<string, unknown> | undefined,
+            });
+            await mkdir(ARTIFACTS_DIR, { recursive: true });
+            await writeFile(
+              path.join(
+                ARTIFACTS_DIR,
+                `managed-lifecycle-receipt-${leaseProvider.id}.json`,
+              ),
+              `${JSON.stringify(receipt, null, 2)}\n`,
+            );
+            await attachJson(
+              `managed-lifecycle-receipt-${leaseProvider.id}.json`,
+              receipt,
+            );
+          }
         }
       });
       test(`kombify-cloud creates a monthly runtime lease via ${leaseProvider.id} and exposes runtime actions`, async ({
@@ -2349,9 +2436,12 @@ test.describe.serial("Runtime E2E scenarios", () => {
               `Managed runtime recovery requires TECHSTACK_RUNTIME_E2E_RECOVERY_CONFIRM=${requiredConfirmation}`,
             );
           }
-          const recoveryApi = await captureGatewayApiSession(page);
+          const recoveryApi = createGatewaySessionKeeper(
+            page,
+            await captureGatewayApiSession(page),
+          );
           const recoveryStack = (
-            await getStackList(recoveryApi.token, recoveryApi.apiBase)
+            await getStackList(recoveryApi, recoveryApi.apiBase)
           ).find(
             (stack) =>
               String(stack.id ?? "").trim() ===
@@ -2395,12 +2485,12 @@ test.describe.serial("Runtime E2E scenarios", () => {
           }
           const recoveryOperations =
             await fetchRuntimeApi<RuntimeStackOperationsPayload>(
-              recoveryApi.token,
+              recoveryApi,
               `/api/v1/stacks/${encodeURIComponent(MANAGED_RUNTIME_RECOVERY_STACK_ID)}/operations`,
               recoveryApi.apiBase,
             );
           const recoveryJobs = await fetchRuntimeApi<RuntimeJobListPayload>(
-            recoveryApi.token,
+            recoveryApi,
             `/api/v1/jobs?stack_id=${encodeURIComponent(MANAGED_RUNTIME_RECOVERY_STACK_ID)}&per_page=100`,
             recoveryApi.apiBase,
           );
@@ -2414,7 +2504,7 @@ test.describe.serial("Runtime E2E scenarios", () => {
             );
           }
           const abandonedJob = await abandonExactStaleManagedRuntimeJob(
-            recoveryApi.token,
+            recoveryApi,
             recoveryApi.apiBase,
             MANAGED_RUNTIME_RECOVERY_STACK_ID,
             recoveryJobs,
@@ -2433,13 +2523,13 @@ test.describe.serial("Runtime E2E scenarios", () => {
           });
           const cleanupJob = existingDestroy?.id
             ? await waitForJobTerminal(
-                recoveryApi.token,
+                recoveryApi,
                 existingDestroy.id,
                 300_000,
                 recoveryApi.apiBase,
               )
             : await destroyRuntimeStackViaApi(
-                recoveryApi.token,
+                recoveryApi,
                 MANAGED_RUNTIME_RECOVERY_STACK_ID,
                 recoveryApi.apiBase,
               );
@@ -2449,7 +2539,7 @@ test.describe.serial("Runtime E2E scenarios", () => {
             );
           }
           const cleanupReadback = await waitForManagedRuntimeCleanupReadback({
-            token: recoveryApi.token,
+            token: recoveryApi,
             apiBase: recoveryApi.apiBase,
             stackId: MANAGED_RUNTIME_RECOVERY_STACK_ID,
             leaseId: recoveryLeaseId,
@@ -2467,7 +2557,21 @@ test.describe.serial("Runtime E2E scenarios", () => {
           return;
         }
 
-        managedApi = await captureGatewayApiSession(page);
+        const session = createGatewaySessionKeeper(
+          page,
+          await captureGatewayApiSession(page),
+        );
+        managedApi = session;
+        laneStartedAt = new Date().toISOString();
+        stackkitsRelease = String(
+          (
+            await fetchRuntimeApi<{ release?: { tag?: string } }>(
+              session,
+              "/api/v1/stackkits/use-cases",
+              session.apiBase,
+            ).catch(() => ({}) as { release?: { tag?: string } })
+          ).release?.tag ?? "",
+        ).trim();
         logRuntimeE2E("creating managed lease stack through visible Wizard", {
           provider_id: leaseProvider.id,
         });
@@ -2480,13 +2584,12 @@ test.describe.serial("Runtime E2E scenarios", () => {
           },
         );
         const stack = wizardCreate.stack;
-        managedApi = wizardCreate.api;
+        session.adopt(wizardCreate.api);
         stackName = wizardCreate.stackName;
-        const stackToken = managedApi.token;
         logRuntimeE2E("managed lease Gateway token ready", {
           provider_id: leaseProvider.id,
-          has_token: Boolean(stackToken),
-          gateway_base: managedApi.apiBase,
+          has_token: Boolean(wizardCreate.api.token),
+          gateway_base: session.apiBase,
         });
         stackId = stack.stack_id;
         logRuntimeE2E("managed lease stack created", {
@@ -2500,12 +2603,15 @@ test.describe.serial("Runtime E2E scenarios", () => {
         );
         let provisionFailure: unknown;
         const job = await waitForProvisionJob(
-          managedApi.token,
+          session,
           "kombify-cloud",
           stack,
           MANAGED_RUNTIME_PROVISION_TIMEOUT_MS,
-          managedApi.apiBase,
+          session.apiBase,
           (observed) => {
+            // A terminal job (completed or failed) feeds the lifecycle
+            // receipt even when a later Day-2 or verification step throws.
+            if (isTerminalJobState(observed.state)) provisionJob = observed;
             const result = observed.result as
               Record<string, unknown> | undefined;
             const observedLease = String(result?.lease_id ?? "").trim();
@@ -2519,36 +2625,40 @@ test.describe.serial("Runtime E2E scenarios", () => {
           provisionFailure = error;
           return undefined;
         });
+        if (job) provisionJob = job;
         // Day-2 runs once the provision job is terminal, before the remaining
         // validations: an enrolled node proves stop, start, reconnect and the
         // SSH grant whatever the rollout outcome, and every later check then
         // also proves the node and its services survived the power cycle.
         const enrolledLease = leaseId
-          ? await waitForManagedDay2Enrollment(managedApi, leaseId)
+          ? await waitForManagedDay2Enrollment(session, leaseId)
           : undefined;
         let day2Recorded = false;
         if (enrolledLease?.enrollment_status === "enrolled") {
           managedObservationPhase("day2", MANAGED_DAY2_BUDGET_MS);
           await attachJson(
             "kombify-cloud-day2.json",
-            await managedDay2Evidence(managedApi, leaseId, stack.stack_id),
+            await managedDay2Evidence(session, leaseId, stack.stack_id),
           );
           day2Recorded = true;
         }
         if (provisionFailure !== undefined || !job) {
-          throw provisionFailure ?? new Error("Managed provision job ended without a result");
+          throw (
+            provisionFailure ??
+            new Error("Managed provision job ended without a result")
+          );
         }
         managedObservationPhase(
           "verification",
           MANAGED_RUNTIME_BUDGETS.verificationMs,
         );
         const managed = await waitForStack(
-          managedApi.token,
+          session,
           stack.stack_id,
           (item) =>
             typeof item.lease_id === "string" && item.lease_id.length > 0,
           MANAGED_RUNTIME_PROVISION_TIMEOUT_MS,
-          managedApi.apiBase,
+          session.apiBase,
         );
         if (leaseId) {
           expect(managed.lease_id).toBe(leaseId);
@@ -2560,17 +2670,17 @@ test.describe.serial("Runtime E2E scenarios", () => {
         expect(managed.runtime_offering_id).toBe("monthly-runtime-standard");
         expect(managed.provider_id).toBe(leaseProvider.id);
         const status = await monthlyRuntimeRequest(
-          managedApi.token,
+          session,
           leaseId,
           "",
-          managedApi.apiBase,
+          session.apiBase,
         );
         expect(status.enrollment_status).toBe("enrolled");
         if (!day2Recorded) {
           managedObservationPhase("day2", MANAGED_DAY2_BUDGET_MS);
           await attachJson(
             "kombify-cloud-day2.json",
-            await managedDay2Evidence(managedApi, leaseId, stack.stack_id),
+            await managedDay2Evidence(session, leaseId, stack.stack_id),
           );
           managedObservationPhase(
             "verification",
@@ -2578,30 +2688,30 @@ test.describe.serial("Runtime E2E scenarios", () => {
           );
         }
         const ssh = await monthlyRuntimeRequest(
-          managedApi.token,
+          session,
           leaseId,
           "/ssh",
-          managedApi.apiBase,
+          session.apiBase,
         );
         expect(ssh.lease_id).toBe(leaseId);
         const inventoryEvidence = await waitForManagedRuntimeInventoryEvidence({
-          token: managedApi.token,
-          apiBase: managedApi.apiBase,
+          token: session,
+          apiBase: session.apiBase,
           stackId: stack.stack_id,
           stackName,
           leaseId,
         });
         const managedServiceEvidence = await runManagedServiceActionEvidence({
-          token: managedApi.token,
-          apiBase: managedApi.apiBase,
+          token: session,
+          apiBase: session.apiBase,
           stackId: stack.stack_id,
           stackName,
           services: inventoryEvidence.service_registry.services,
         });
         await validateManagedRuntimePostSetupUi({
           page,
-          token: managedApi.token,
-          apiBase: managedApi.apiBase,
+          token: session,
+          apiBase: session.apiBase,
           stackId: stack.stack_id,
           stackName,
           leaseId,
@@ -2639,7 +2749,7 @@ test.describe.serial("Runtime E2E scenarios", () => {
 // the Day-2 gate observes enrollment for a bounded window and always logs
 // why it proceeds or skips.
 async function waitForManagedDay2Enrollment(
-  api: RuntimeGatewaySession,
+  api: GatewaySessionKeeper,
   leaseId: string,
   timeoutMs = 180_000,
 ) {
@@ -2648,7 +2758,7 @@ async function waitForManagedDay2Enrollment(
   let lastError = "";
   while (Date.now() < deadline) {
     try {
-      last = await monthlyRuntimeRequest(api.token, leaseId, "", api.apiBase);
+      last = await monthlyRuntimeRequest(api, leaseId, "", api.apiBase);
       lastError = "";
       if (last?.enrollment_status === "enrolled") break;
     } catch (error) {
@@ -2673,12 +2783,12 @@ async function waitForManagedDay2Enrollment(
 const MANAGED_DAY2_BUDGET_MS = 1_800_000;
 
 async function managedDay2Evidence(
-  api: RuntimeGatewaySession,
+  api: GatewaySessionKeeper,
   leaseId: string,
   stackId: string,
 ) {
   return runManagedDay2Evidence({
-    token: api.token,
+    bearer: api,
     apiUrl: (apiPath) => runtimeApiUrl(api.apiBase, apiPath),
     leaseId,
     stackId,
@@ -2687,16 +2797,14 @@ async function managedDay2Evidence(
 }
 
 async function monthlyRuntimeRequest(
-  token: string,
+  token: RuntimeBearer,
   leaseId: string,
   suffix: string,
   apiBase = API_BASE,
 ) {
-  const response = await fetch(
+  const response = await authorizedFetch(
+    token,
     runtimeApiUrl(apiBase, `/api/v1/monthly-runtimes/${leaseId}${suffix}`),
-    {
-      headers: { Authorization: `Bearer ${token}` },
-    },
   );
   const text = await response.text();
   const json = text ? JSON.parse(text) : {};

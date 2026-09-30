@@ -1,6 +1,7 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { onMount } from "svelte";
+  import { tr, trParts } from "#lib/i18n.svelte.js";
   import {
     defaultIdentity,
     StackIdentityDisplay,
@@ -16,12 +17,24 @@
     type KitDeployment,
     type StackPruneResponse,
   } from "#lib/api/stacks.js";
-  import { getHomelab, renameHomelab } from "#lib/api/homelab.js";
   import { authStore } from "#lib/stores/auth.svelte.js";
   import { theme, type Theme } from "#lib/stores/theme.js";
-  import { FINISHES, type Finish } from "@kombiverselabs/design/contract";
+  import {
+    dashboardPreset,
+    dashboardOwnerKey,
+  } from "#lib/stores/dashboardPreset.svelte.js";
+  import {
+    DASHBOARD_PRESETS,
+    isPresetAvailable,
+  } from "#lib/dashboard/presets.js";
+  import {
+    FINISHES,
+    NAV_FLYOUT_PREFERENCES,
+    type Finish,
+  } from "@kombiverselabs/design/contract";
   import { PageHeader } from "@kombiverselabs/ui/shell";
   import Button from "#lib/components/ui/Button.svelte";
+  import LanguageSwitcher from "#lib/components/ui/LanguageSwitcher.svelte";
   import {
     hydrateStackIdentityFromBackend,
     saveStackIdentityToBackend,
@@ -33,17 +46,12 @@
   // "Follow account" clears it and the account default (tier 3) shows again.
   let deviceFinishChosen = $state(false);
   const APPEARANCE_MODES: readonly Theme[] = ["dark", "light", "system"];
+  const themePreference = theme.preference;
+  const resolvedAppearance = theme.resolved;
   // The finish swatches render the real package recipes in miniature, so
   // they need the RESOLVED appearance the page is showing, not the `system`
   // preference — the same resolution the theme store applies to the root.
-  const swatchAppearance = $derived(
-    $theme === "system"
-      ? typeof matchMedia === "function" &&
-        matchMedia("(prefers-color-scheme: dark)").matches
-        ? "dark"
-        : "light"
-      : $theme,
-  );
+  const swatchAppearance = $derived($resolvedAppearance);
 
   function pickFinish(finish: Finish) {
     theme.setFinish(finish);
@@ -71,16 +79,9 @@
   // confirmed action rather than a control the operator meets on every visit.
   // The homelab name: generated as "homelab" at creation time, so the owner
   // needs a way to set the name they actually use. It titles the dashboard.
-  let homelabName = $state("");
-  let homelabNameInput = $state("");
-  let homelabNameSaving = $state(false);
-  let homelabNameError = $state<string | null>(null);
-  let homelabNameSaved = $state(false);
   // The API distinguishes two states the card must not conflate: a 404 (no
   // homelab provisioned at all) and a legal `homelab: null` alongside existing
   // deployments (pre-backfill lanes, PocketBase-only self-host).
-  let homelabMissing = $state(false);
-  let homelabUnadopted = $state(false);
 
   let deployments = $state<KitDeployment[]>([]);
   let deploymentsLoading = $state(false);
@@ -115,7 +116,7 @@
       stackIdentityLoaded = true;
     } catch (err) {
       stackIdentityError =
-        err instanceof Error ? err.message : "Failed to load Homelab identity";
+        err instanceof Error ? err.message : tr("ui.settings.failedToLoadHomelabIdentity");
     } finally {
       stackIdentityLoading = false;
     }
@@ -130,7 +131,7 @@
       stackIdentityEditable = response.editable;
     } catch (err) {
       stackIdentityError =
-        err instanceof Error ? err.message : "Failed to save Homelab identity";
+        err instanceof Error ? err.message : tr("ui.settings.failedToSaveHomelabIdentity");
     }
   }
 
@@ -144,7 +145,7 @@
       showOrphanPruneConfirm = true;
     } catch (err) {
       const parsed = parseApiError(err);
-      orphanPruneError = parsed.message || "Cleanup review failed";
+      orphanPruneError = parsed.message || tr("ui.settings.cleanupReviewFailed");
     } finally {
       pruningOrphans = false;
     }
@@ -175,40 +176,9 @@
       await goto("/dashboard", { refreshAll: true });
     } catch (err) {
       const parsed = parseApiError(err);
-      orphanPruneError = parsed.message || "Cleanup failed";
+      orphanPruneError = parsed.message || tr("ui.settings.cleanupFailed");
     } finally {
       pruningOrphans = false;
-    }
-  }
-
-  async function loadHomelab() {
-    homelabNameError = null;
-    try {
-      const view = await getHomelab();
-      homelabName = view?.homelab?.name ?? "";
-      homelabNameInput = homelabName;
-      homelabMissing = view === null;
-      homelabUnadopted = view !== null && !view.homelab;
-    } catch (err) {
-      homelabNameError = parseApiError(err).message || "Failed to load homelab";
-    }
-  }
-
-  async function saveHomelabName() {
-    const next = homelabNameInput.trim();
-    if (!next || next === homelabName || homelabNameSaving) return;
-    homelabNameSaving = true;
-    homelabNameError = null;
-    homelabNameSaved = false;
-    try {
-      const updated = await renameHomelab(next);
-      homelabName = updated.name;
-      homelabNameInput = updated.name;
-      homelabNameSaved = true;
-    } catch (err) {
-      homelabNameError = parseApiError(err).message || "Rename failed";
-    } finally {
-      homelabNameSaving = false;
     }
   }
 
@@ -219,7 +189,7 @@
       deployments = await listKitDeployments();
     } catch (err) {
       deploymentsError =
-        parseApiError(err).message || "Failed to load deployments";
+        parseApiError(err).message || tr("ui.settings.failedToLoadDeployments");
       deployments = [];
     } finally {
       deploymentsLoading = false;
@@ -251,7 +221,7 @@
         if (plan.candidates.length === 0) {
           throw new Error(
             plan.warnings?.[0] ||
-              "This entry is not verified test residue and cannot be removed by projection cleanup.",
+              tr("ui.settings.thisEntryIsNotVerified"),
           );
         }
         await applyOrphanCleanup(plan.digest, target.id);
@@ -262,7 +232,7 @@
       deleteConfirmName = "";
       await loadDeployments();
     } catch (err) {
-      deleteError = parseApiError(err).message || "Deletion failed";
+      deleteError = parseApiError(err).message || tr("ui.settings.deletionFailed");
     } finally {
       deletingDeployment = false;
     }
@@ -275,15 +245,25 @@
   onMount(() => {
     deviceFinishChosen = theme.hasDeviceFinish();
     void loadStackIdentitySettings();
-    void loadHomelab();
     void loadDeployments();
   });
 
   const finishValue = theme.finish;
+  const navFlyoutValue = theme.navFlyout;
+  const navFlyoutLabels: Record<
+    (typeof NAV_FLYOUT_PREFERENCES)[number],
+    string
+  > = $derived({
+    auto: tr("ui.settings.followFinish"),
+    flag: tr("ui.settings.flag"),
+    overlap: tr("ui.settings.overlap"),
+    tether: tr("ui.settings.tether"),
+    float: tr("ui.settings.float"),
+  });
 </script>
 
 <main class="mx-auto max-w-4xl p-6 md:p-8">
-  <PageHeader title="Settings" />
+  <PageHeader title={tr("ui.settings.settings")} />
 
   <div class="space-y-6">
     <section data-kx="plate">
@@ -292,14 +272,34 @@
           class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"
         >
           <div class="min-w-0">
-            <h2 class="text-lg font-semibold text-foreground">Account</h2>
+            <h2 class="text-lg font-semibold text-foreground">{tr("ui.settings.account")}</h2>
             <p class="mt-1 truncate text-sm text-muted-foreground">
-              {authStore.userEmail || "Signed in"}
+              {authStore.userEmail || tr("ui.settings.signedIn")}
             </p>
           </div>
           <Button variant="secondary" class="shrink-0" onclick={handleLogout}>
-            Logout
+            {tr("ui.settings.logout")}
           </Button>
+        </div>
+      </div>
+    </section>
+
+    <section id="language" class="scroll-mt-6" data-kx="plate">
+      <div class="p-6">
+        <div
+          class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div class="min-w-0">
+            <h2 class="text-lg font-semibold text-foreground">
+              {tr("settings.language")}
+            </h2>
+            <p class="mt-1 text-sm text-muted-foreground">
+              {tr("settings.language.description")}
+            </p>
+          </div>
+          <LanguageSwitcher
+            class="rounded-lg border border-border bg-card px-3 py-1.5 text-sm text-foreground"
+          />
         </div>
       </div>
     </section>
@@ -311,37 +311,49 @@
       data-testid="settings-appearance-card"
     >
       <div class="p-6">
-        <h2 class="text-lg font-semibold text-foreground">Appearance</h2>
+        <h2 class="text-lg font-semibold text-foreground">{tr("ui.settings.appearance")}</h2>
         <p class="mt-1 text-sm text-muted-foreground">
-          Light or dark, and the surface finish. The finish follows your kombify
-          account default until this device picks its own.
+          {tr("ui.settings.lightOrDarkAndThe")}
         </p>
         <div class="mt-4 flex flex-col gap-4">
           <div class="flex flex-wrap items-center justify-between gap-3">
-            <span class="text-sm font-medium text-foreground">Mode</span>
+            <span class="text-sm font-medium text-foreground">{tr("ui.settings.mode")}</span>
             <div
-              class="flex gap-1"
+              class="flex flex-wrap gap-1"
               role="radiogroup"
-              aria-label="Appearance mode"
+              aria-label={tr("ui.settings.appearanceMode")}
               data-testid="settings-appearance-mode"
             >
+              <button
+                type="button"
+                role="radio"
+                aria-checked={$themePreference === null}
+                data-kx={$themePreference === null
+                  ? "control selection"
+                  : "control"}
+                class="rounded-lg px-3 py-1.5 text-sm"
+                onclick={() => theme.followDefaultTheme()}
+                >{tr("appearance.inherit")}</button
+              >
               {#each APPEARANCE_MODES as mode}
                 <button
                   type="button"
                   role="radio"
-                  aria-checked={$theme === mode}
-                  data-kx={$theme === mode ? "control selection" : "control"}
+                  aria-checked={$themePreference === mode}
+                  data-kx={$themePreference === mode
+                    ? "control selection"
+                    : "control"}
                   class="rounded-lg px-3 py-1.5 text-sm capitalize"
                   onclick={() => theme.set(mode)}
                 >
-                  {mode}
+                  {tr(`appearance.${mode}`)}
                 </button>
               {/each}
             </div>
           </div>
           <div class="flex flex-wrap items-center justify-between gap-3">
             <div class="flex items-center gap-3">
-              <span class="text-sm font-medium text-foreground">Surface</span>
+              <span class="text-sm font-medium text-foreground">{tr("ui.settings.surface")}</span>
               {#if deviceFinishChosen}
                 <button
                   type="button"
@@ -350,14 +362,14 @@
                   data-testid="settings-finish-follow-account"
                   onclick={followAccount}
                 >
-                  Follow account
+                  {tr("ui.settings.followAccount")}
                 </button>
               {/if}
             </div>
             <div
               class="flex flex-wrap gap-1"
               role="radiogroup"
-              aria-label="Surface finish"
+              aria-label={tr("ui.settings.surfaceFinish")}
               data-testid="settings-finish"
             >
               {#each FINISHES as finishOption}
@@ -385,7 +397,10 @@
                     <span class="finish-swatch-scene"></span>
                     <span class="finish-swatch-frame">
                       <span class="finish-swatch-plate" data-kx="plate">
-                        <span class="finish-swatch-pill" data-kx="control selection"></span>
+                        <span
+                          class="finish-swatch-pill"
+                          data-kx="control selection"
+                        ></span>
                       </span>
                     </span>
                   </span>
@@ -394,65 +409,65 @@
               {/each}
             </div>
           </div>
-        </div>
-      </div>
-    </section>
-
-    <section data-kx="plate" data-testid="settings-homelab-card">
-      <div class="p-6">
-        <h2 class="text-lg font-semibold text-foreground">Homelab</h2>
-        <p class="mt-1 text-sm text-muted-foreground">
-          The name of your homelab. It titles your dashboard and groups every
-          kit deployment you operate.
-        </p>
-        {#if homelabMissing}
-          <p class="mt-3 text-sm text-muted-foreground">
-            No homelab yet — run the creation wizard first.
-          </p>
-        {:else if homelabUnadopted}
-          <p
-            class="mt-3 text-sm text-muted-foreground"
-            data-testid="settings-homelab-unadopted"
-          >
-            This homelab predates named homelabs. Naming becomes available once
-            its umbrella record exists; your deployments are unaffected.
-          </p>
-        {:else}
-          <div class="mt-3 flex flex-wrap items-end gap-3">
-            <div class="min-w-0 flex-1">
-              <label
-                class="mb-1 block text-sm text-muted-foreground"
-                for="settings-homelab-name"
-              >
-                Name
-              </label>
-              <input
-                id="settings-homelab-name"
-                class="w-full rounded-lg border border-border bg-input px-3 py-2 text-foreground"
-                data-testid="settings-homelab-name-input"
-                bind:value={homelabNameInput}
-                maxlength="100"
-                autocomplete="off"
-              />
-            </div>
-            <Button
-              variant="primary"
-              class="shrink-0"
-              testId="settings-homelab-name-save"
-              onclick={saveHomelabName}
-              disabled={homelabNameSaving ||
-                homelabNameInput.trim() === "" ||
-                homelabNameInput.trim() === homelabName}
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <span class="text-sm font-medium text-foreground">
+              {tr("ui.settings.navigationPreview")}
+            </span>
+            <div
+              class="flex flex-wrap gap-1"
+              role="radiogroup"
+              aria-label={tr("ui.settings.navigationPreviewShape")}
+              data-testid="settings-nav-flyout"
             >
-              {homelabNameSaving ? "Saving..." : "Save"}
-            </Button>
+              {#each NAV_FLYOUT_PREFERENCES as shape (shape)}
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={$navFlyoutValue === shape}
+                  data-kx={$navFlyoutValue === shape
+                    ? "control selection"
+                    : "control"}
+                  class="rounded-lg px-3 py-1.5 text-sm"
+                  onclick={() => theme.setNavFlyout(shape)}
+                >
+                  {navFlyoutLabels[shape]}
+                </button>
+              {/each}
+            </div>
           </div>
-        {/if}
-        {#if homelabNameError}
-          <p class="mt-3 text-sm text-destructive">{homelabNameError}</p>
-        {:else if homelabNameSaved}
-          <p class="mt-3 text-sm text-success">Homelab name saved.</p>
-        {/if}
+          <div class="flex flex-col gap-2">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <span class="text-sm font-medium text-foreground">{tr("ui.settings.dashboard")}</span>
+              <div
+                class="flex flex-wrap gap-1"
+                role="radiogroup"
+                aria-label={tr("ui.settings.dashboardLayout")}
+                data-testid="settings-dashboard-preset"
+              >
+                {#each DASHBOARD_PRESETS.filter( (preset) => isPresetAvailable( preset.id, { ownerKey: dashboardOwnerKey() } ) ) as preset (preset.id)}
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={dashboardPreset.current === preset.id}
+                    data-kx={dashboardPreset.current === preset.id
+                      ? "control selection"
+                      : "control"}
+                    class="rounded-lg px-3 py-1.5 text-sm"
+                    title={preset.description}
+                    onclick={() => dashboardPreset.set(preset.id)}
+                  >
+                    {preset.label}
+                  </button>
+                {/each}
+              </div>
+            </div>
+            <p class="text-xs text-muted-foreground">
+              {DASHBOARD_PRESETS.find(
+                (preset) => preset.id === dashboardPreset.current,
+              )?.description} {tr("ui.settings.savedOnDevice")}
+            </p>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -460,12 +475,12 @@
       <div class="p-6">
         <div class="mb-4">
           <h2 class="text-lg font-semibold text-foreground">
-            Homelab Identity
+            {tr("ui.settings.homelabIdentity")}
           </h2>
         </div>
 
         {#if stackIdentityLoading}
-          <p class="text-sm text-muted-foreground">Loading...</p>
+          <p class="text-sm text-muted-foreground">{tr("ui.login.loading")}</p>
         {:else if stackIdentityEditable && stackIdentityLoaded}
           <StackIdentityEditor
             identity={stackIdentityValue ?? fallbackIdentity}
@@ -476,11 +491,11 @@
           <p
             class="mt-4 rounded-lg border border-border bg-muted/40 p-3 text-sm text-muted-foreground"
           >
-            Managed by kombify Cloud.
+            {tr("ui.settings.managedByKombifyCloud")}
           </p>
         {:else if stackIdentityLoaded}
           <p class="text-sm text-muted-foreground">
-            No Homelab identity configured.
+            {tr("ui.settings.noHomelabIdentityConfigured")}
           </p>
         {/if}
 
@@ -498,7 +513,7 @@
 
     <section class="rounded-xl border border-destructive/30 bg-destructive/5">
       <div class="p-6">
-        <h2 class="mb-4 text-lg font-semibold text-destructive">Danger Zone</h2>
+        <h2 class="mb-4 text-lg font-semibold text-destructive">{tr("ui.settings.dangerZone")}</h2>
 
         <div
           class="rounded-lg border border-destructive/30 bg-destructive/5 p-4"
@@ -508,11 +523,9 @@
             class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between"
           >
             <div class="min-w-0">
-              <h3 class="font-medium text-foreground">Clean up test residue</h3>
+              <h3 class="font-medium text-foreground">{tr("ui.settings.cleanUpTestResidue")}</h3>
               <p class="mt-1 text-sm text-muted-foreground">
-                Reviews exact owner-scoped E2E and failed runtime projections.
-                Provider resources, active leases, recent Nodes, and normal
-                Homelab data remain unchanged.
+                {tr("ui.settings.reviewsExactOwnerScopedE2e")}
               </p>
             </div>
             <Button
@@ -522,7 +535,7 @@
               onclick={openOrphanPruneConfirm}
               disabled={pruningOrphans}
             >
-              {pruningOrphans ? "Reviewing..." : "Review cleanup"}
+              {pruningOrphans ? tr("ui.settings.reviewing") : tr("ui.settings.reviewCleanup")}
             </Button>
           </div>
 
@@ -531,7 +544,7 @@
           {/if}
           {#if orphanPruneSuccess}
             <p class="mt-3 text-sm text-success">
-              No verified test residue remains.
+              {tr("ui.settings.noVerifiedTestResidueRemains")}
             </p>
           {/if}
         </div>
@@ -541,23 +554,21 @@
           data-testid="settings-delete-deployment-card"
         >
           <div class="min-w-0">
-            <h3 class="font-medium text-foreground">Delete a deployment</h3>
+            <h3 class="font-medium text-foreground">{tr("ui.settings.deleteADeployment")}</h3>
             <p class="mt-1 text-sm text-muted-foreground">
-              Decommissions the deployment's managed runtime and removes its
-              entry. To remove a single server instead, use its decommission
-              action on the server.
+              {tr("ui.settings.decommissionsTheDeploymentSManaged")}
             </p>
           </div>
 
           {#if deploymentsLoading}
             <p class="mt-3 text-sm text-muted-foreground">
-              Loading deployments...
+              {tr("ui.settings.loadingDeployments")}
             </p>
           {:else if deploymentsError}
             <p class="mt-3 text-sm text-destructive">{deploymentsError}</p>
           {:else if deployments.length === 0}
             <p class="mt-3 text-sm text-muted-foreground">
-              No deployments to delete.
+              {tr("ui.settings.noDeploymentsToDelete")}
             </p>
           {:else}
             <ul class="mt-3 space-y-2">
@@ -581,10 +592,10 @@
                     onclick={() => openDeleteConfirm(deployment)}
                     disabled={deployment.demo_anchor || deletingDeployment}
                     ariaLabel={deployment.demo_anchor
-                      ? "The demo deployment is protected and cannot be deleted."
-                      : "Delete this deployment"}
+                      ? tr("ui.settings.theDemoDeploymentIsProtected")
+                      : tr("ui.settings.deleteThisDeployment")}
                   >
-                    Delete
+                    {tr("ui.settings.delete")}
                   </Button>
                 </li>
               {/each}
@@ -607,11 +618,10 @@
       <div class="p-6">
         <div class="mb-4">
           <h2 class="text-lg font-semibold text-destructive">
-            Delete "{deleteCandidate.name}"?
+            {tr("ui.settings.deleteNamed", { name: deleteCandidate.name })}
           </h2>
           <p class="mt-1 text-sm text-muted-foreground">
-            This decommissions the managed runtime and removes the deployment
-            entry. It cannot be undone.
+            {tr("ui.settings.thisDecommissionsTheManagedRuntime")}
           </p>
         </div>
 
@@ -619,9 +629,9 @@
           class="mb-1 block text-sm text-muted-foreground"
           for="settings-delete-deployment-name"
         >
-          Type <span class="font-medium text-foreground"
+          {trParts("ui.settings.typeToConfirm")[0]}<span class="font-medium text-foreground"
             >{deleteCandidate.name}</span
-          > to confirm
+          >{trParts("ui.settings.typeToConfirm")[1]}
         </label>
         <input
           id="settings-delete-deployment-name"
@@ -642,7 +652,7 @@
             onclick={cancelDelete}
             disabled={deletingDeployment}
           >
-            Cancel
+            {tr("ui.importExportModal.cancel")}
           </Button>
           <Button
             variant="destructive"
@@ -651,7 +661,7 @@
             onclick={confirmDelete}
             disabled={deletingDeployment || !deleteConfirmed}
           >
-            {deletingDeployment ? "Deleting..." : "Delete"}
+            {deletingDeployment ? tr("ui.settings.deleting") : tr("ui.settings.delete")}
           </Button>
         </div>
       </div>
@@ -670,20 +680,16 @@
       <div class="p-6">
         <div class="mb-4">
           <h2 class="text-lg font-semibold text-foreground">
-            Review verified test residue
+            {tr("ui.settings.reviewVerifiedTestResidue")}
           </h2>
           <p class="mt-1 text-sm text-muted-foreground">
-            This exact plan is bound to the digest below. No infrastructure is
-            destroyed.
+            {tr("ui.settings.thisExactPlanIsBound")}
           </p>
         </div>
 
         <div class="mb-4 rounded-lg border border-border bg-muted/40 p-3">
           <p class="text-sm text-foreground">
-            Only authenticated-owner <code>e2e-*</code> and strict
-            <code>runtime-cloud-&lt;provider&gt;-&lt;timestamp&gt;</code>
-            projections qualify. Active Managed Runtimes, provider resources, recent
-            Nodes, demo data, and normal Homelab data remain unchanged.
+            {tr("ui.settings.pruneQualifies", { owner: "e2e-*", strict: "runtime-cloud-<provider>-<timestamp>" })}
           </p>
         </div>
 
@@ -703,7 +709,7 @@
             class="mb-4 text-sm text-success"
             data-testid="settings-prune-orphans-empty"
           >
-            No verified test residue was found.
+            {tr("ui.settings.noVerifiedTestResidueWas")}
           </p>
         {/if}
 
@@ -718,7 +724,7 @@
             onclick={cancelOrphanPrune}
             disabled={pruningOrphans}
           >
-            {orphanPrunePlan?.candidates.length ? "Cancel" : "Done"}
+            {orphanPrunePlan?.candidates.length ? tr("ui.importExportModal.cancel") : tr("ui.groupedTaskList.done")}
           </Button>
           {#if orphanPrunePlan?.candidates.length}
             <Button
@@ -728,7 +734,7 @@
               onclick={confirmOrphanPrune}
               disabled={pruningOrphans}
             >
-              {pruningOrphans ? "Applying..." : "Apply exact plan"}
+              {pruningOrphans ? tr("ui.settings.applying") : tr("ui.settings.applyExactPlan")}
             </Button>
           {/if}
         </div>

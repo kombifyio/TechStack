@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr, trn, stateLabel, formatDateTime } from "#lib/i18n.svelte.js";
   import { page } from '$app/state';
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
@@ -129,7 +130,7 @@
 
   async function loadData() {
     if (!stackId) {
-      error = "No StackKit deployment ID provided";
+      error = tr("ui.stacksId.noStackkitDeploymentIdProvided");
       loading = false;
       return;
     }
@@ -166,7 +167,7 @@
     } catch (err) {
       stackOperations = null;
       const parsed = parseApiError(err);
-      error = parsed.message || "Failed to load StackKit deployment";
+      error = parsed.message || tr("ui.stacksId.failedToLoadStackkitDeployment");
       if (parsed.isNotFound) {
         goto("/dashboard");
       }
@@ -250,7 +251,7 @@
       runtimeOperations = operations;
     } catch (err) {
       runtimeError =
-        err instanceof Error ? err.message : "Failed to load runtime status";
+        err instanceof Error ? err.message : tr("ui.stacksId.failedToLoadRuntimeStatus");
     } finally {
       runtimeLoading = false;
     }
@@ -269,19 +270,19 @@
     const leaseID = stack.lease_id;
 
     if (action === "stop" && !await confirmInApp({
-      title: "Stop managed server?",
+      title: tr("ui.stacksId.stopManagedServer"),
         message:
-          "The server shuts down and keeps its disk, address and monthly plan. Start it again at any time.",
-      confirmText: "Stop",
+          tr("ui.stacksId.theServerShutsDownAnd"),
+      confirmText: tr("ui.stacksId.stop"),
       tone: "danger"
     })) {
       return;
     }
     if (action === "decommission" && !await confirmInApp({
-      title: "Decommission managed runtime?",
+      title: tr("ui.stacksId.decommissionManagedRuntime"),
         message:
-          "Techstack will begin provider cleanup for this managed runtime.",
-      confirmText: "Decommission",
+          tr("ui.stacksId.techstackWillBeginProviderCleanup"),
+      confirmText: tr("ui.stacksId.decommission"),
       tone: "danger"
     })) {
       return;
@@ -315,7 +316,7 @@
       runtimeOperations = await getMonthlyRuntimeOperations(leaseID);
     } catch (err) {
       runtimeError =
-        err instanceof Error ? err.message : "Monthly Runtime action failed";
+        err instanceof Error ? err.message : tr("ui.stacksId.monthlyRuntimeActionFailed");
     } finally {
       runtimeBusyAction = null;
     }
@@ -369,9 +370,9 @@
 
   async function handleDeleteCredential(id: string) {
     if (!await confirmInApp({
-      title: "Delete credential?",
-      message: "This permanently removes the selected credential.",
-      confirmText: "Delete",
+      title: tr("ui.stacksId.deleteCredential"),
+      message: tr("ui.stacksId.thisPermanentlyRemovesTheSelected"),
+      confirmText: tr("ui.settings.delete"),
       tone: "danger"
     })) return;
 
@@ -380,7 +381,7 @@
       await loadData();
     } catch (err) {
       const parsed = parseApiError(err);
-      error = parsed.message || "Failed to delete credential";
+      error = parsed.message || tr("ui.stacksId.failedToDeleteCredential");
     }
   }
 
@@ -402,7 +403,7 @@
       await loadData();
     } catch (err) {
       const parsed = parseApiError(err);
-      error = parsed.message || "Failed to add credential";
+      error = parsed.message || tr("ui.stacksId.failedToAddCredential");
     } finally {
       saving = false;
     }
@@ -428,15 +429,15 @@
   function formatKind(kind: string): string {
     switch (kind) {
       case "password":
-        return "Password";
+        return tr("ui.clientLocal.password");
       case "api_key":
-        return "API Key";
+        return tr("ui.credentialForm.apiKey");
       case "ssh_key":
-        return "SSH Key";
+        return tr("ui.credentialForm.sshKey");
       case "oauth_token":
         return "OAuth";
       case "certificate":
-        return "Certificate";
+        return tr("ui.credentialForm.certificate");
       default:
         return kind;
     }
@@ -447,7 +448,7 @@
   }
 
   function runtimeLabel(value?: string | null): string {
-    return value ? value.replace(/[-_]/g, " ") : "unknown";
+    return stateLabel(value);
   }
 
   function runtimeStateLabel(): string {
@@ -474,13 +475,13 @@
     if (!value) return "";
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return value;
-    return date.toLocaleString();
+    return formatDateTime(date);
   }
 </script>
 
 <svelte:head>
   <title
-    >{stack?.name || "StackKit Deployment"} - Credentials | kombify-Techstack</title
+    >{tr("ui.stacksId.pageTitle", { name: stack?.name || tr("ui.stacksId.deploymentFallback") })}</title
   >
 </svelte:head>
 
@@ -493,13 +494,13 @@
           href="/dashboard"
           class="text-primary hover:text-primary/80 text-sm mb-2 inline-block"
         >
-          ← Back to Homelab
+          {tr("ui.stacksId.backToHomelab")}
         </a>
         <h1 class="text-3xl font-bold text-foreground">
-          {stack?.name || "Loading..."}
+          {stack?.name || tr("ui.login.loading")}
         </h1>
         <p class="text-muted-foreground mt-1">
-          Manage credentials for this StackKit deployment
+          {tr("ui.stacksId.manageCredentialsForThisStackkit")}
         </p>
       </div>
       <button
@@ -519,7 +520,7 @@
             d="M12 4v16m8-8H4"
           ></path>
         </svg>
-        Add Credential
+        {tr("ui.stacksId.addCredential")}
       </button>
     </div>
 
@@ -547,10 +548,10 @@
           >
             <div>
               <h2 class="text-lg font-semibold text-foreground">
-                Monthly Runtime
+                {tr("ui.stacksId.monthlyRuntime")}
               </h2>
               <p class="text-sm text-muted-foreground">
-                {stack?.lease_id || "No lease attached"}
+                {stack?.lease_id || tr("ui.stacksId.noLeaseAttached")}
               </p>
             </div>
             <div class="flex flex-wrap gap-2">
@@ -562,7 +563,7 @@
                   Boolean(runtimeBusyAction)}
                 class="px-3 py-2 text-sm rounded-lg bg-muted text-foreground hover:bg-muted/80 disabled:opacity-50"
               >
-                Start
+                {tr("ui.stacksId.start")}
               </button>
               <button
                 data-testid="monthly-runtime-action-stop"
@@ -572,7 +573,7 @@
                   Boolean(runtimeBusyAction)}
                 class="px-3 py-2 text-sm rounded-lg bg-muted text-foreground hover:bg-muted/80 disabled:opacity-50"
               >
-                Stop
+                {tr("ui.stacksId.stop")}
               </button>
               <button
                 data-testid="monthly-runtime-action-enable-ssh"
@@ -582,7 +583,7 @@
                   Boolean(runtimeBusyAction)}
                 class="px-3 py-2 text-sm rounded-lg bg-muted text-foreground hover:bg-muted/80 disabled:opacity-50"
               >
-                SSH On
+                {tr("ui.stacksId.sshOn")}
               </button>
               <button
                 data-testid="monthly-runtime-action-disable-ssh"
@@ -592,7 +593,7 @@
                   Boolean(runtimeBusyAction)}
                 class="px-3 py-2 text-sm rounded-lg bg-muted text-foreground hover:bg-muted/80 disabled:opacity-50"
               >
-                SSH Off
+                {tr("ui.stacksId.sshOff")}
               </button>
               <button
                 data-testid="monthly-runtime-action-ssh"
@@ -602,7 +603,7 @@
                   Boolean(runtimeBusyAction)}
                 class="px-3 py-2 text-sm rounded-lg bg-muted text-foreground hover:bg-muted/80 disabled:opacity-50"
               >
-                SSH Info
+                {tr("ui.stacksId.sshInfo")}
               </button>
               <button
                 data-testid="monthly-runtime-action-decommission"
@@ -612,7 +613,7 @@
                   Boolean(runtimeBusyAction)}
                 class="px-3 py-2 text-sm rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20 disabled:opacity-50"
               >
-                Decommission
+                {tr("ui.stacksId.decommission")}
               </button>
             </div>
           </div>
@@ -620,7 +621,7 @@
           <div class="grid gap-4 p-6 md:grid-cols-4">
             <div data-testid="monthly-runtime-offering">
               <p class="text-xs uppercase tracking-wider text-muted-foreground">
-                Offering
+                {tr("ui.stacksCreatingCreationLease.offering")}
               </p>
               <p class="mt-1 font-medium text-foreground">
                 {selectedRuntimeOffering?.name ||
@@ -630,15 +631,13 @@
               </p>
               {#if selectedRuntimeOffering}
                 <p class="text-sm text-muted-foreground">
-                  {selectedRuntimeOffering.vcpus || 0} vCPU · {Math.round(
-                    (selectedRuntimeOffering.memory_mb || 0) / 1024,
-                  )} GB RAM
+                  {tr("ui.stacksId.offeringSpec", { vcpus: selectedRuntimeOffering.vcpus || 0, memory: Math.round((selectedRuntimeOffering.memory_mb || 0) / 1024) })}
                 </p>
               {/if}
             </div>
             <div data-testid="monthly-runtime-enrollment">
               <p class="text-xs uppercase tracking-wider text-muted-foreground">
-                Enrollment
+                {tr("ui.stacksId.enrollment")}
               </p>
               <p class="mt-1 font-medium text-foreground">
                 {runtimeLabel(stack?.verification_status)}
@@ -651,7 +650,7 @@
             </div>
             <div data-testid="monthly-runtime-state">
               <p class="text-xs uppercase tracking-wider text-muted-foreground">
-                Runtime
+                {tr("ui.stacksId.runtime")}
               </p>
               <p class="mt-1 font-medium text-foreground">
                 {runtimeLoading ? "loading" : runtimeStateLabel()}
@@ -667,7 +666,7 @@
 
           {#if runtimeBusyAction}
             <div class="px-6 pb-4 text-sm text-muted-foreground">
-              {runtimeLabel(runtimeBusyAction)} pending
+              {tr("ui.stacksId.actionPending", { action: runtimeLabel(runtimeBusyAction) })}
             </div>
           {/if}
           {#if runtimeError}
@@ -682,7 +681,7 @@
               data-testid="monthly-runtime-operations"
             >
               <h3 class="text-sm font-semibold text-foreground mb-3">
-                Operations
+                {tr("ui.stacksCreatingCreationFailure.operations")}
               </h3>
               <div class="space-y-2">
                 {#each runtimeOperations as operation}
@@ -746,17 +745,17 @@
         >
           <div class="px-6 py-4 border-b border-border">
             <h2 class="text-lg font-semibold text-foreground">
-              Monitoring Evidence
+              {tr("ui.stacksId.monitoringEvidence")}
             </h2>
             <p class="text-sm text-muted-foreground">
               {stackOperations.monitoring.message ||
-                "Latest operations snapshot"}
+                tr("ui.stacksId.latestOperationsSnapshot")}
             </p>
           </div>
           <div class="grid gap-4 p-6 md:grid-cols-4">
             <div>
               <p class="text-xs uppercase tracking-wider text-muted-foreground">
-                Status
+                {tr("ui.stacksId.status")}
               </p>
               <p class="mt-1 font-medium text-foreground">
                 {runtimeLabel(stackOperations.monitoring.status)}
@@ -764,7 +763,7 @@
             </div>
             <div>
               <p class="text-xs uppercase tracking-wider text-muted-foreground">
-                Query
+                {tr("ui.stacksId.query")}
               </p>
               <p class="mt-1 font-medium text-foreground">
                 {stackOperations.monitoring.queryBackend}
@@ -772,7 +771,7 @@
             </div>
             <div>
               <p class="text-xs uppercase tracking-wider text-muted-foreground">
-                Ingest
+                {tr("ui.stacksId.ingest")}
               </p>
               <p class="mt-1 font-medium text-foreground">
                 {stackOperations.monitoring.ingestBackend}
@@ -780,7 +779,7 @@
             </div>
             <div>
               <p class="text-xs uppercase tracking-wider text-muted-foreground">
-                Series
+                {tr("ui.stacksId.series")}
               </p>
               <p class="mt-1 font-medium text-foreground">
                 {stackOperations.monitoring.seriesCount ?? 0}
@@ -809,10 +808,10 @@
                 d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
               ></path>
             </svg>
-            Missing Credentials Detected
+            {tr("ui.stacksId.missingCredentialsDetected")}
           </h3>
           <p class="text-warning/80 text-sm mb-3">
-            The following services need credentials to be configured:
+            {tr("ui.stacksId.theFollowingServicesNeedCredentials")}
           </p>
           <div class="space-y-2">
             {#each discoveredCredentials as discovered}
@@ -836,7 +835,7 @@
                   disabled={saving}
                   class="text-primary hover:text-primary/80 text-sm font-medium disabled:opacity-50"
                 >
-                  + Add
+                  {tr("ui.stacksId.add")}
                 </button>
               </div>
             {/each}
@@ -848,10 +847,10 @@
       <div data-kx="plate" class="overflow-hidden">
         <div class="px-6 py-4 border-b border-border">
           <h2 class="text-lg font-semibold text-foreground">
-            Stored Credentials
+            {tr("ui.stacksId.storedCredentials")}
           </h2>
           <p class="text-sm text-muted-foreground">
-            {credentials.length} credential{credentials.length !== 1 ? "s" : ""} configured
+            {trn("ui.stacksId.credentialsConfigured", credentials.length)}
           </p>
         </div>
 
@@ -870,9 +869,9 @@
                 d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"
               ></path>
             </svg>
-            <p>No credentials configured for this StackKit deployment.</p>
+            <p>{tr("ui.stacksId.noCredentialsConfiguredForThis")}</p>
             <p class="text-sm mt-1">
-              Add credentials to enable auto-login and secure storage.
+              {tr("ui.stacksId.addCredentialsToEnableAuto")}
             </p>
           </div>
         {:else}
@@ -881,23 +880,23 @@
               <tr>
                 <th
                   class="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider"
-                  >Name</th
+                  >{tr("ui.credentialForm.name")}</th
                 >
                 <th
                   class="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider"
-                  >Type</th
+                  >{tr("ui.services.type2")}</th
                 >
                 <th
                   class="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider"
-                  >Username</th
+                  >{tr("ui.stacksId.username")}</th
                 >
                 <th
                   class="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider"
-                  >Status</th
+                  >{tr("ui.stacksId.status")}</th
                 >
                 <th
                   class="px-6 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wider"
-                  >Actions</th
+                  >{tr("ui.stacksId.actions")}</th
                 >
               </tr>
             </thead>
@@ -944,7 +943,7 @@
                             clip-rule="evenodd"
                           ></path>
                         </svg>
-                        Configured
+                        {tr("ui.stacksId.configured")}
                       </span>
                     {:else}
                       <span
@@ -961,7 +960,7 @@
                             clip-rule="evenodd"
                           ></path>
                         </svg>
-                        Missing Secret
+                        {tr("ui.stacksId.missingSecret")}
                       </span>
                     {/if}
                   </td>
@@ -970,13 +969,13 @@
                       onclick={() => openEditCredential(cred)}
                       class="text-primary hover:text-primary/80 mr-3"
                     >
-                      Edit
+                      {tr("ui.stacksId.edit")}
                     </button>
                     <button
                       onclick={() => handleDeleteCredential(cred.id)}
                       class="text-destructive hover:text-destructive/80"
                     >
-                      Delete
+                      {tr("ui.settings.delete")}
                     </button>
                   </td>
                 </tr>
@@ -995,10 +994,10 @@
         >
           <div class="px-6 py-4 border-b border-border">
             <h2 class="text-lg font-semibold text-foreground">
-              StackKit Deployment Services
+              {tr("ui.stacksId.stackkitDeploymentServices")}
             </h2>
             <p class="text-sm text-muted-foreground">
-              {services.length} service{services.length !== 1 ? "s" : ""} deployed
+              {trn("ui.stacksId.servicesDeployed", services.length)}
             </p>
           </div>
           <div class="grid gap-3 p-6 md:grid-cols-2">
@@ -1007,7 +1006,7 @@
                 name={serviceCardName(service)}
                 description={service.url ||
                   serviceTargetLabel(service) ||
-                  "StackKit service"}
+                  tr("ui.stacksId.stackkitService")}
                 placement={serviceCardPlacement(service)}
                 status={serviceCardStatus(service)}
                 statusMessage={serviceCardStatusMessage(service)}
@@ -1024,7 +1023,7 @@
 <!-- Credential Form Modal -->
 {#if showCredentialForm}
   <Modal
-    title={editingCredential ? "Edit Credential" : "Add Credential"}
+    title={editingCredential ? tr("ui.stacksId.editCredential") : tr("ui.stacksId.addCredential")}
     onClose={() => {
       showCredentialForm = false;
       editingCredential = null;

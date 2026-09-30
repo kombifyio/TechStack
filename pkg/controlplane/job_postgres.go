@@ -530,11 +530,28 @@ func (s *PostgresStore) ListJobsByStack(ctx context.Context, tenantID, stackID s
 	if limit <= 0 {
 		limit = 50
 	}
-	return s.listJobs(ctx, tenantID, `
+	// The payload is projected to the target ids only: the operations read
+	// needs the one server a job ran on, and a job that failed before its
+	// handler recorded a result carries that target only in its payload. The
+	// rest of the recovery payload never leaves the store here.
+	return s.listJobsWithPayload(ctx, tenantID, `
 		SELECT id, tenant_id, instance_id, stack_id, type, state, priority,
 			progress, step, message, error, error_details, logs_json::text,
-			result_json::text, scheduled_for, started_at, completed_at,
-			created_at, updated_at
+			result_json::text,
+			jsonb_strip_nulls(jsonb_build_object(
+				'server_id', payload_json->'server_id',
+				'agent_id', payload_json->'agent_id',
+				'runtime_agent_id', payload_json->'runtime_agent_id',
+				'node_id', payload_json->'node_id',
+				'workers', (
+					SELECT jsonb_agg(jsonb_build_object('id', worker->'id', 'server_id', worker->'server_id'))
+					FROM jsonb_array_elements(
+						CASE WHEN jsonb_typeof(payload_json->'workers') = 'array'
+							THEN payload_json->'workers' ELSE '[]'::jsonb END
+					) AS worker
+				)
+			))::text,
+			scheduled_for, started_at, completed_at, created_at, updated_at
 		FROM jobs
 		WHERE tenant_id = $1 AND stack_id = $2
 		ORDER BY created_at DESC
@@ -656,12 +673,12 @@ func (s *PostgresStore) StartJob(ctx context.Context, tenantID, jobID string, at
 	}
 	var out *Job
 	err := s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
-		var state, stackID string
+		var state, stackID, agentID string
 		if err := tx.QueryRowContext(ctx, `
-			SELECT state, COALESCE(stack_id, '') FROM jobs
+			SELECT state, COALESCE(stack_id, ''), COALESCE(payload_json->>'agent_id', '') FROM jobs
 			WHERE tenant_id = $1 AND id = $2
 			FOR UPDATE
-		`, tenantID, jobID).Scan(&state, &stackID); err != nil {
+		`, tenantID, jobID).Scan(&state, &stackID, &agentID); err != nil {
 			if err == sql.ErrNoRows {
 				return ErrNotFound
 			}
@@ -690,6 +707,16 @@ func (s *PostgresStore) StartJob(ctx context.Context, tenantID, jobID string, at
 			if busy {
 				return ErrStackExecutionBusy
 			}
+		}
+		// A claimed reboot or OS update holds the job's resolved agent (or its
+		// stack when the job names no agent); the job waits until it settles.
+		// The node admission lock serializes this read with a maintenance
+		// claim, which checks for pending and running jobs under the same lock.
+		if err := lockNodeAdmissionTx(ctx, tx, tenantID, agentID, stackID); err != nil {
+			return err
+		}
+		if err := refuseNodeUnderMaintenanceTx(ctx, tx, tenantID, agentID, stackID); err != nil {
+			return err
 		}
 		// StartJob is the only transition into 'running', so it is the only
 		// place an execution lease is issued. The deadline comes from the

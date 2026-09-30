@@ -83,7 +83,7 @@
       class="flex h-11 w-full items-center {collapsed
         ? 'justify-center'
         : 'gap-3'}"
-      title="kombify-Techstack"
+      title={tr("ui.sidebarNav.kombifyTechstack")}
     >
       {#if collapsed}
         <TechstackBrandLogo

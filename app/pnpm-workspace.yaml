@@ -5,11 +5,11 @@ allowBuilds:
   sharp: true
   workerd: true
 overrides:
-  cookie@<0.7.0: ">=0.7.0"
+  cookie@<0.7.0: ">=0.7.2"
   # Force-patch transitive dev-tool vulns (vitest/wrangler/miniflare -> ws/undici).
   # GHSA-96hv-2xvq-fx4p (ws DoS), GHSA-vmh5-mc38-953g / vxpw-j846-p89q / hm92-r4w5-c3mj (undici).
-  ws@>=8.0.0 <8.21.0: ">=8.21.0"
-  undici@>=7.0.0 <7.28.0: ">=7.28.0"
+  ws@>=8.0.0 <8.21.0: ">=8.21.3"
+  undici@>=7.0.0 <7.28.0: ">=7.30.0"
   # jsdom@29.1.1 uses undici/lib/handler/wrap-handler.js, which was removed in
   # undici 8.x, so jsdom's undici must stay on the 7.x line. 7.28.0 (released
   # since the original 7.27.2 pin) patches the three 2026-07 high advisories
@@ -19,15 +19,21 @@ overrides:
   # (GHSA-3jxr-9vmj-r5cp), js-yaml merge-key DoS (GHSA-52cp-r559-cp3m;
   # GHSA-2883-xcg3-v3hh needs 4.3.2),
   # sharp <0.35.0.
-  brace-expansion@1: 1.1.18
-  brace-expansion@5: 5.0.9
-  postcss@<=8.5.17: ">=8.5.18"
+  brace-expansion@1: 1.1.21
+  brace-expansion@5: 5.0.12
+  postcss@<=8.5.17: ">=8.5.28"
   js-yaml@>=4.0.0 <4.3.2: ">=4.3.2 <5.0.0"
-  sharp@<0.35.0: ">=0.35.0"
+  sharp@<0.35.0: ">=0.35.4"
   # Brand UI still declares @kombify/notifications ^0.3.32. Floor both the
   # published name and the @kombify alias so first-party-freshness passes.
-  "@kombiverselabs/notifications": "0.3.68"
-  "@kombify/notifications": "npm:@kombiverselabs/notifications@0.3.68"
+  "@kombiverselabs/notifications": "file:third_party/npm/notifications-0.3.87.tgz"
+  "@kombify/notifications": "file:third_party/npm/notifications-0.3.87.tgz"
+  "@kombiverselabs/ai-sdk": "file:third_party/npm/ai-sdk-0.10.2772.tgz"
+  "@kombiverselabs/design": "file:third_party/npm/design-0.10.376.tgz"
+  "@kombiverselabs/embed": "file:third_party/npm/embed-0.10.2772.tgz"
+  "@kombiverselabs/execution-contracts": "file:third_party/npm/execution-contracts-0.10.2772.tgz"
+  "@kombiverselabs/onboarding-core": "file:third_party/npm/onboarding-core-0.10.376.tgz"
+  "@kombiverselabs/ui": "file:third_party/npm/ui-0.10.376.tgz"
 minimumReleaseAgeExclude:
   # First-party packages are published from the governed Kombify delivery lane.
   - "@kombiverselabs/*"

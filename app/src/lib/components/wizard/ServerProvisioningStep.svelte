@@ -16,6 +16,7 @@
   import RemoteServerConnection from "./RemoteServerConnection.svelte";
   import ManagedServerOptions from "./ManagedServerOptions.svelte";
   import NodePathIllustration from "./NodePathIllustration.svelte";
+  import InfoTip from "./InfoTip.svelte";
   import BrandLogoScope from "../BrandLogoScope.svelte";
   import BrandLogoIcon from "../BrandLogoIcon.svelte";
   import {
@@ -32,21 +33,37 @@
   import { shouldDowngradeManagedRuntimeSelection } from "#lib/wizard/managed-runtime-selection.js";
   import { managedProviders } from "#lib/wizard/managed-providers.js";
   import { revealWizardDetails } from "#lib/wizard/reveal-details.js";
+  import { NODE_GUIDES } from "#lib/docs-links.js";
 
   let {
     config = $bindable(),
     selectionReady = $bindable(true),
+    detailsVisible = $bindable(false),
     onmanagedproviderselect,
     reviewMode = false,
     joinSurface = false,
   }: {
     config: StackConfig;
     selectionReady?: boolean;
+    /** Whether the path details region (the second sub-step) is shown. */
+    detailsVisible?: boolean;
     reviewMode?: boolean;
     joinSurface?: boolean;
     onmanagedproviderselect?: (provider: ManagedProviderID) => void;
   } = $props();
   const provisioningModes = getServerProvisioningModeChoices();
+  const sourceTips: Record<string, { text: string; docs: string }> = {
+    "install-command": {
+      text: "wizard.tip.installCommand",
+      docs: NODE_GUIDES.pairing,
+    },
+    "connect-remote": {
+      text: "wizard.tip.connectRemote",
+      docs: NODE_GUIDES.sshHost,
+    },
+    "kombify-cloud": { text: "wizard.tip.managed", docs: NODE_GUIDES.managed },
+    partner: { text: "wizard.tip.partner", docs: NODE_GUIDES.sources },
+  };
   const partnerChoice = {
     value: "partner",
     titleKey: "wizard.server.partner.title",
@@ -82,8 +99,8 @@
   );
   const missingBaseFeatures = $derived(
     [
-      { key: "monthly_runtime", label: "Monthly Runtime" },
-      { key: "monthly_runtime_cloudkit", label: "Cloud Kit rollout" },
+      { key: "monthly_runtime", label: tr("ui.stacksId.monthlyRuntime") },
+      { key: "monthly_runtime_cloudkit", label: tr("ui.serverProvisioningStep.cloudKitRollout") },
     ].filter((feature) => $allFeatures.get(feature.key)?.enabled !== true),
   );
   const managedUnavailableReason = $derived.by(() => {
@@ -146,6 +163,7 @@
   );
   let detailHeading = $state<HTMLElement>();
   let selectionRevision = 0;
+  let notifiedManagedProvider: ManagedProviderID | null = null;
 
   onMount(() => {
     void loadFeatures();
@@ -200,6 +218,7 @@
     if (!visibleManagedProviders.some((item) => item.value === provider))
       return;
     config.providerId = provider;
+    notifiedManagedProvider = provider;
     onmanagedproviderselect?.(provider);
     if (provider === "ionos")
       config.ionosDatacenter = normalizeIonosDatacenter(config.ionosDatacenter);
@@ -207,6 +226,7 @@
 
   $effect(() => {
     selectionReady = pathReady;
+    detailsVisible = shopping || pathReady;
     if (
       config.serverProvisioning.mode === "kombify-cloud" &&
       shouldDowngradeManagedRuntimeSelection({
@@ -218,21 +238,25 @@
       })
     )
       applyServerProvisioningMode(config, "install-command");
-    if (
-      config.serverProvisioning.mode === "kombify-cloud" &&
-      managedRuntimeSelectable &&
-      !visibleManagedProviders.some((item) => item.value === config.providerId)
-    )
-      selectManagedProvider(visibleManagedProviders[0].value);
+    if (config.serverProvisioning.mode === "kombify-cloud" && managedRuntimeSelectable) {
+      if (!visibleManagedProviders.some((item) => item.value === config.providerId)) {
+        selectManagedProvider(visibleManagedProviders[0].value);
+      } else if (notifiedManagedProvider !== config.providerId) {
+        notifiedManagedProvider = config.providerId;
+        onmanagedproviderselect?.(config.providerId);
+      }
+    }
   });
 </script>
 
 <div class="node-sources" data-testid="server-provisioning-step">
+  <div class="source-region" data-substep>
   <div
     class="branch-choices"
     role="group"
     aria-label={tr("wizard.server.branch.question")}
   >
+    <div class="branch-choice">
     <button
       type="button"
       aria-pressed={branch === "owned"}
@@ -247,6 +271,14 @@
       >
       <ArrowRight class="branch-arrow" size={21} aria-hidden="true" />
     </button>
+    <InfoTip
+      topic={tr("wizard.server.owned.title")}
+      text={tr("wizard.tip.owned")}
+      docs={NODE_GUIDES.sources}
+      placement="corner"
+    />
+    </div>
+    <div class="branch-choice">
     <button
       type="button"
       aria-pressed={branch === "new"}
@@ -261,6 +293,13 @@
       >
       <ArrowRight class="branch-arrow" size={21} aria-hidden="true" />
     </button>
+    <InfoTip
+      topic={tr("wizard.server.new.title")}
+      text={tr("wizard.tip.new")}
+      docs={NODE_GUIDES.managed}
+      placement="corner"
+    />
+    </div>
   </div>
 
   <svg
@@ -288,6 +327,8 @@
           : selectedEntry === mode.value}
         {@const unavailable =
           mode.value === "kombify-cloud" && !managedRuntimeSelectable}
+        {@const tip = sourceTips[mode.value]}
+        <div class="source-slot">
         <button
           type="button"
           class="source-card"
@@ -324,6 +365,13 @@
               >{/if}
           </span>
         </button>
+        {#if tip}<InfoTip
+            topic={tr(mode.titleKey)}
+            text={tr(tip.text)}
+            docs={tip.docs}
+            placement="corner"
+          />{/if}
+        </div>
       {/each}
     </div>
   {/key}
@@ -345,11 +393,13 @@
         >{/if}
     </div>
   {/if}
+  </div>
 
   {#if shopping}
     <section
       class="path-details partner-workspace"
       aria-labelledby="node-path-heading"
+      data-substep
     >
       <div class="detail-heading" bind:this={detailHeading}>
         <h3 id="node-path-heading">{tr("wizard.server.partner.next")}</h3>
@@ -380,7 +430,11 @@
       >
     </section>
   {:else if pathReady}
-    <section class="path-details" aria-labelledby="node-path-heading">
+    <section
+      class="path-details"
+      aria-labelledby="node-path-heading"
+      data-substep
+    >
       <div class="detail-heading" bind:this={detailHeading}>
         <h3 id="node-path-heading">
           {tr(
@@ -421,7 +475,8 @@
               <legend>{tr("wizard.server.system.title")}</legend>
               <p>{tr("wizard.server.system.hint")}</p>
               <div class="system-options">
-                <label
+                <div class="system-option"
+                ><label
                   ><input
                     type="radio"
                     name="node-system"
@@ -432,8 +487,14 @@
                       >{tr("wizard.server.system.ubuntuBody")}</small
                     ></span
                   ></label
+                ><InfoTip
+                  topic={tr("wizard.server.system.ubuntu")}
+                  text={tr("wizard.tip.systemUbuntu")}
+                  docs={NODE_GUIDES.system}
+                /></div
                 >
-                <label
+                <div class="system-option"
+                ><label
                   ><input
                     type="radio"
                     name="node-system"
@@ -445,6 +506,11 @@
                       >{tr("wizard.server.system.proxmoxBody")}</small
                     ></span
                   ></label
+                ><InfoTip
+                  topic={tr("wizard.server.system.proxmox")}
+                  text={tr("wizard.tip.systemProxmox")}
+                  docs={NODE_GUIDES.system}
+                /></div
                 >
               </div>
             </fieldset>
@@ -511,6 +577,33 @@
     grid-template-columns: 1fr 1fr;
     gap: 36px;
     margin-top: 10px;
+  }
+  .source-region {
+    --substep-top: 17px;
+  }
+  .path-details {
+    --substep-top: 26px;
+  }
+  .branch-choice {
+    position: relative;
+    display: grid;
+  }
+  .branch-choice {
+    --info-tip-top: 16px;
+    --info-tip-end: 30px;
+  }
+  .branch-choices button > span {
+    padding-inline-end: 26px;
+  }
+  .source-slot {
+    position: relative;
+    display: grid;
+  }
+
+  .system-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 2px;
   }
   .branch-choices button {
     display: flex;
@@ -843,6 +936,9 @@
     }
     .branch-choices :global(.branch-arrow) {
       display: none;
+    }
+    .branch-choice {
+      --info-tip-end: 0px;
     }
     .source-card {
       padding: 18px;

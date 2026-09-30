@@ -2,13 +2,8 @@ package grpcserver
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
-	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,110 +11,12 @@ import (
 	"time"
 
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
+	"github.com/kombifyio/techstack/pkg/auth"
 	"github.com/kombifyio/techstack/pkg/logger"
+	collectormetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 )
-
-// generateTestCerts creates temporary test certificates for TLS testing
-// Returns paths to ca.pem, server.pem, server-key.pem, and cleanup function
-func generateTestCerts(t *testing.T) (caFile, certFile, keyFile string, cleanup func()) {
-	t.Helper()
-
-	tmpDir, err := os.MkdirTemp("", "grpc-test-certs")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-
-	cleanup = func() { os.RemoveAll(tmpDir) }
-
-	// Generate CA key
-	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		cleanup()
-		t.Fatalf("Failed to generate CA key: %v", err)
-	}
-
-	// CA certificate template
-	caTemplate := &x509.Certificate{
-		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: "Test CA"},
-		NotBefore:             time.Now(),
-		NotAfter:              time.Now().Add(24 * time.Hour),
-		IsCA:                  true,
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
-		BasicConstraintsValid: true,
-	}
-
-	// Self-sign CA cert
-	caCertDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
-	if err != nil {
-		cleanup()
-		t.Fatalf("Failed to create CA cert: %v", err)
-	}
-
-	caCert, err := x509.ParseCertificate(caCertDER)
-	if err != nil {
-		cleanup()
-		t.Fatalf("Failed to parse CA cert: %v", err)
-	}
-
-	// Write CA cert
-	caFile = filepath.Join(tmpDir, "ca.pem")
-	caOut, err := os.Create(caFile)
-	if err != nil {
-		cleanup()
-		t.Fatalf("Failed to create CA file: %v", err)
-	}
-	pem.Encode(caOut, &pem.Block{Type: "CERTIFICATE", Bytes: caCertDER})
-	caOut.Close()
-
-	// Generate server key
-	serverKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		cleanup()
-		t.Fatalf("Failed to generate server key: %v", err)
-	}
-
-	// Server certificate template
-	serverTemplate := &x509.Certificate{
-		SerialNumber: big.NewInt(2),
-		Subject:      pkix.Name{CommonName: "localhost"},
-		NotBefore:    time.Now(),
-		NotAfter:     time.Now().Add(24 * time.Hour),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		DNSNames:     []string{"localhost"},
-	}
-
-	// Sign server cert with CA
-	serverCertDER, err := x509.CreateCertificate(rand.Reader, serverTemplate, caCert, &serverKey.PublicKey, caKey)
-	if err != nil {
-		cleanup()
-		t.Fatalf("Failed to create server cert: %v", err)
-	}
-
-	// Write server cert
-	certFile = filepath.Join(tmpDir, "server.pem")
-	certOut, err := os.Create(certFile)
-	if err != nil {
-		cleanup()
-		t.Fatalf("Failed to create cert file: %v", err)
-	}
-	pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: serverCertDER})
-	certOut.Close()
-
-	// Write server key
-	keyFile = filepath.Join(tmpDir, "server-key.pem")
-	keyOut, err := os.Create(keyFile)
-	if err != nil {
-		cleanup()
-		t.Fatalf("Failed to create key file: %v", err)
-	}
-	keyDER, _ := x509.MarshalECPrivateKey(serverKey)
-	pem.Encode(keyOut, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
-	keyOut.Close()
-
-	return caFile, certFile, keyFile, cleanup
-}
 
 // TestRemoveAgent tests agent removal functionality
 func TestRemoveAgent(t *testing.T) {
@@ -1069,36 +966,6 @@ func TestHeartbeatUpdatesResourcesNil(t *testing.T) {
 	}
 }
 
-// TestNewWithTLS tests server creation with valid TLS certificates
-func TestNewWithTLS(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping TLS test in short mode")
-	}
-
-	caFile, certFile, keyFile, cleanup := generateTestCerts(t)
-	defer cleanup()
-
-	log := logger.New("error", "text")
-
-	cfg := Config{
-		ListenAddr:       ":0",
-		CertFile:         certFile,
-		KeyFile:          keyFile,
-		CAFile:           caFile,
-		ReadTimeout:      60 * time.Second,
-		HeartbeatTimeout: 90 * time.Second,
-	}
-
-	srv, err := New(cfg, log)
-	if err != nil {
-		t.Fatalf("New() with TLS failed: %v", err)
-	}
-
-	if srv.tlsConfig == nil {
-		t.Error("TLS config should be set when certificates are provided")
-	}
-}
-
 // TestNewWithInvalidCert tests server creation with invalid certificate path
 func TestNewWithInvalidCert(t *testing.T) {
 	log := logger.New("error", "text")
@@ -1118,45 +985,86 @@ func TestNewWithInvalidCert(t *testing.T) {
 	}
 }
 
-// TestStartWithTLS tests server Start with TLS configuration
-func TestStartWithTLS(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping TLS server start test in short mode")
-	}
-
-	caFile, certFile, keyFile, cleanup := generateTestCerts(t)
-	defer cleanup()
-
-	log := logger.New("error", "text")
-
-	cfg := Config{
-		ListenAddr:       ":0",
-		CertFile:         certFile,
-		KeyFile:          keyFile,
-		CAFile:           caFile,
-		ReadTimeout:      60 * time.Second,
-		HeartbeatTimeout: 90 * time.Second,
-	}
-
-	srv, err := New(cfg, log)
+// TestMTLSListenerAdmitsOnlyCAIssuedTLS13Clients pins the agent listener's
+// security boundary: only clients presenting a certificate issued by the
+// configured CA, over TLS 1.3, reach an RPC handler.
+func TestMTLSListenerAdmitsOnlyCAIssuedTLS13Clients(t *testing.T) {
+	dir := t.TempDir()
+	cm, err := auth.NewCertManager(filepath.Join(dir, "ca"))
 	if err != nil {
-		t.Fatalf("New() failed: %v", err)
+		t.Fatalf("NewCertManager: %v", err)
 	}
+	serverCert, err := cm.GenerateServerCert("localhost", []string{"127.0.0.1"}, 1)
+	if err != nil {
+		t.Fatalf("GenerateServerCert: %v", err)
+	}
+	agentCert, err := cm.GenerateAgentCert("agent-1", 1)
+	if err != nil {
+		t.Fatalf("GenerateAgentCert: %v", err)
+	}
+	write := func(name string, data []byte) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+		return path
+	}
+	caFile := write("ca.pem", cm.CACertPEM())
+	serverCertFile := write("server.pem", serverCert.CertPEM)
+	serverKeyFile := write("server-key.pem", serverCert.KeyPEM)
 
+	srv, err := New(Config{
+		ListenAddr:  "127.0.0.1:0",
+		CertFile:    serverCertFile,
+		KeyFile:     serverKeyFile,
+		CAFile:      caFile,
+		RequireMTLS: true,
+	}, logger.New("error", "text"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	if err := srv.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer srv.Stop()
+	addr := srv.listener.Addr().String()
 
-	err = srv.Start(ctx)
+	caPool := x509.NewCertPool()
+	caPool.AppendCertsFromPEM(cm.CACertPEM())
+	agentKeyPair, err := tls.X509KeyPair(agentCert.CertPEM, agentCert.KeyPEM)
 	if err != nil {
-		t.Fatalf("Start() with TLS failed: %v", err)
+		t.Fatalf("agent key pair: %v", err)
 	}
 
-	// Give server time to start
-	time.Sleep(100 * time.Millisecond)
-
-	// Stop server
-	if err := srv.Stop(); err != nil {
-		t.Errorf("Stop() failed: %v", err)
+	cases := []struct {
+		name  string
+		tls   *tls.Config
+		admit bool
+	}{
+		{"ca-issued client cert", &tls.Config{RootCAs: caPool, Certificates: []tls.Certificate{agentKeyPair}}, true},
+		{"no client cert", &tls.Config{RootCAs: caPool}, false},
+		{"tls 1.2 client", &tls.Config{RootCAs: caPool, Certificates: []tls.Certificate{agentKeyPair}, MaxVersion: tls.VersionTLS12}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.tls.ServerName = "localhost"
+			conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(credentials.NewTLS(tc.tls)))
+			if err != nil {
+				t.Fatalf("grpc.NewClient: %v", err)
+			}
+			defer conn.Close()
+			callCtx, callCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer callCancel()
+			_, err = collectormetricspb.NewMetricsServiceClient(conn).Export(callCtx, &collectormetricspb.ExportMetricsServiceRequest{})
+			if tc.admit && err != nil {
+				t.Fatalf("CA-issued TLS 1.3 client was rejected: %v", err)
+			}
+			if !tc.admit && err == nil {
+				t.Fatal("client reached an RPC handler without passing mTLS")
+			}
+		})
 	}
 }
 

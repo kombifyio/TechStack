@@ -136,6 +136,10 @@ type registryServer struct {
 	HealthState     string `json:"health_state,omitempty"`
 	LastSeen        string `json:"last_seen,omitempty"`
 	RolloutReady    bool   `json:"rollout_ready"`
+	// EnvironmentClass is the canonical server's hosting class (local, cloud or
+	// unknown), identical to `environment_class` on /api/v1/servers. A row
+	// without a canonical aggregate has no placement evidence and is unknown.
+	EnvironmentClass string `json:"environment_class"`
 }
 
 type registryService struct {
@@ -159,6 +163,11 @@ type registryService struct {
 	ServerName        string `json:"server_name"`
 	Port              int    `json:"port,omitempty"`
 	URL               string `json:"url,omitempty"`
+	// EnvironmentClass is the hosting class of the server this service runs on,
+	// resolved through the same canonical-server match as `servers`, so a
+	// legacy node's services carry their server's class. It is omitted when the
+	// service has no server: ADR-039 gives serverless placements no class.
+	EnvironmentClass string `json:"environment_class,omitempty"`
 }
 
 type registryCatalogService struct {
@@ -335,7 +344,7 @@ func (h registryRouteHandlers) registryPayloadFromStore(e *httpx.Event, tenantID
 		for _, node := range nodes {
 			nodesByID[node.ID] = node
 		}
-		stackServers := registryServersForStack(canonicalServers[stack.ID], nodes, workersByID, now)
+		stackServers, classByServerRef := registryServersForStack(canonicalServers[stack.ID], nodes, workersByID, now)
 		payload.Servers = append(payload.Servers, stackServers...)
 		if len(nodesByID) == 0 && len(canonicalServers[stack.ID]) == 0 && h.workerStore != nil {
 			for _, worker := range workersByID {
@@ -345,6 +354,7 @@ func (h registryRouteHandlers) registryPayloadFromStore(e *httpx.Event, tenantID
 				server := serverRegistryRecordFromWorkerStore(worker)
 				payload.Servers = append(payload.Servers, server)
 				stackServers = append(stackServers, server)
+				classByServerRef[server.ID] = server.EnvironmentClass
 			}
 		}
 
@@ -355,7 +365,9 @@ func (h registryRouteHandlers) registryPayloadFromStore(e *httpx.Event, tenantID
 		stackServices := make([]registryService, 0, len(services))
 		for _, service := range services {
 			node := nodesByID[service.NodeID]
-			stackServices = append(stackServices, serviceRegistryRecordFromStoreWithHealth(service, stack, node, workersByID[node.WorkerID], now))
+			record := serviceRegistryRecordFromStoreWithHealth(service, stack, node, workersByID[node.WorkerID], now)
+			record.EnvironmentClass = registryServiceEnvironmentClass(record.ServerID, classByServerRef)
+			stackServices = append(stackServices, record)
 		}
 		if len(stackServices) == 0 {
 			outputs := stackKitOutputsFromLatestDeployJob(e.Request.Context(), h.jobStore, tenantID, stack.ID)
@@ -497,30 +509,65 @@ func (h registryRouteHandlers) canonicalServersByStack(ctx context.Context, tena
 // historical worker-heartbeat composition so an un-migrated deployment does
 // not lose its server list; that fallback disappears with the legacy tables in
 // kombify-Techstack-nzy1.7.
+//
+// The returned map resolves every server reference a stored service can carry
+// (legacy node id or canonical server id) to that server's hosting class, so a
+// service on a node linked by worker or lease identity reports the class of
+// the canonical server the node matched.
 func registryServersForStack(
 	runtimes []controlplane.ServerRuntime,
 	nodes []controlplane.Node,
 	workersByID map[string]controlplane.Worker,
 	now time.Time,
-) []registryServer {
+) ([]registryServer, map[string]string) {
 	servers := make([]registryServer, 0, len(runtimes)+len(nodes))
+	classByServerRef := make(map[string]string, len(runtimes)+len(nodes))
 	consumed := make(map[string]bool, len(runtimes))
 	for _, node := range nodes {
 		runtime, ok := matchCanonicalServerForNode(runtimes, consumed, node)
-		if !ok {
-			servers = append(servers, serverRegistryRecordFromStoreWithHealth(node, workersByID[node.WorkerID], now))
-			continue
+		var server registryServer
+		if ok {
+			consumed[runtime.ID] = true
+			server = registryServerFromCanonical(runtime, node)
+		} else {
+			server = serverRegistryRecordFromStoreWithHealth(node, workersByID[node.WorkerID], now)
 		}
-		consumed[runtime.ID] = true
-		servers = append(servers, registryServerFromCanonical(runtime, node))
+		servers = append(servers, server)
+		classByServerRef[node.ID] = server.EnvironmentClass
+		classByServerRef[server.ID] = server.EnvironmentClass
 	}
 	for _, runtime := range runtimes {
 		if consumed[runtime.ID] {
 			continue
 		}
-		servers = append(servers, registryServerFromCanonical(runtime, controlplane.Node{}))
+		server := registryServerFromCanonical(runtime, controlplane.Node{})
+		servers = append(servers, server)
+		classByServerRef[server.ID] = server.EnvironmentClass
 	}
-	return servers
+	return servers, classByServerRef
+}
+
+// registryServerEnvironmentClass serves the same class as /api/v1/servers and
+// never an empty value: a target without a class is unknown, not local.
+func registryServerEnvironmentClass(runtime controlplane.ServerRuntime) string {
+	if class := servedRuntimeTarget(runtime).EnvironmentClass; class != "" {
+		return string(class)
+	}
+	return string(serverregistry.EnvironmentUnknown)
+}
+
+// registryServiceEnvironmentClass resolves a service's server reference to its
+// server's class. A reference no listed server claims has no placement
+// evidence (unknown); a service without any server has no class at all.
+func registryServiceEnvironmentClass(serverID string, classByServerRef map[string]string) string {
+	serverID = strings.TrimSpace(serverID)
+	if serverID == "" {
+		return ""
+	}
+	if class, ok := classByServerRef[serverID]; ok && class != "" {
+		return class
+	}
+	return string(serverregistry.EnvironmentUnknown)
 }
 
 // matchCanonicalServerForNode binds a legacy node row to its canonical
@@ -590,6 +637,8 @@ func registryServerFromCanonical(runtime controlplane.ServerRuntime, node contro
 		HealthState:     string(state),
 		LastSeen:        formatOptionalTime(runtime.LastHeartbeatAt),
 		RolloutReady:    serverregistry.LegacyRolloutReady(runtime.LifecycleState, runtime.ConnectionState, runtime.HealthState),
+
+		EnvironmentClass: registryServerEnvironmentClass(runtime),
 	}
 }
 
@@ -623,6 +672,8 @@ func serverRegistryRecordFromStoreWithHealth(node controlplane.Node, worker cont
 		HealthState:     string(state),
 		LastSeen:        formatOptionalTime(worker.LastSeenAt),
 		RolloutReady:    state == runtimehealth.ServerHealthy,
+
+		EnvironmentClass: string(serverregistry.EnvironmentUnknown),
 	}
 }
 
@@ -650,6 +701,8 @@ func serverRegistryRecordFromWorkerStore(worker controlplane.Worker) registrySer
 		HealthState:     string(state),
 		LastSeen:        formatOptionalTime(worker.LastSeenAt),
 		RolloutReady:    worker.Approved && state == runtimehealth.ServerHealthy,
+
+		EnvironmentClass: string(serverregistry.EnvironmentUnknown),
 	}
 }
 
@@ -773,6 +826,7 @@ func registryServicesFromStackKitOutputs(outputs map[string]any, stack controlpl
 			ServerName:        firstNonEmptyString(server.Name, server.Hostname),
 			Port:              intFromAnyMap(item, "port"),
 			URL:               stackKitObservedServiceURL(item, now),
+			EnvironmentClass:  server.EnvironmentClass,
 		})
 	}
 	return services

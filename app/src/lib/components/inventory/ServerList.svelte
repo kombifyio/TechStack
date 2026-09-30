@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr, trn } from "#lib/i18n.svelte.js";
   import {
     ServerCard,
     type ServerCardAction,
@@ -57,10 +58,10 @@
 
   let {
     items,
-    title = "Nodes",
+    title = tr("ui.strataDashboard.nodes"),
     subtitle,
     unavailable = false,
-    unavailableMessage = "The canonical inventory is unavailable. Showing only telemetry that is currently authorized.",
+    unavailableMessage = tr("ui.serverList.theCanonicalInventoryIsUnavailable"),
     emptyTitle,
     emptyBody,
     testId = "server-list",
@@ -82,10 +83,10 @@
     <span class="shrink-0 text-sm text-muted-foreground">
       {#if unavailable}
         {items.length > 0
-          ? `${items.length} telemetry Node${items.length === 1 ? "" : "s"}`
-          : "Inventory unavailable"}
+          ? trn("ui.inventory.telemetryNodes", items.length)
+          : tr("ui.serverList.inventoryUnavailable")}
       {:else}
-        {items.length} Node{items.length === 1 ? "" : "s"}
+        {trn("ui.inventory.nodeCount", items.length)}
       {/if}
     </span>
   </div>

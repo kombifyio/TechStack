@@ -15,6 +15,9 @@
     wizardRunRequestCarriesSecret,
   } from "#lib/wizard/wizardRunRequest.js";
   import SubstrateEnrollment from "./SubstrateEnrollment.svelte";
+  import InfoTip from "#lib/components/wizard/InfoTip.svelte";
+  import { NODE_GUIDES } from "#lib/docs-links.js";
+  import { tr } from "#lib/i18n.svelte.js";
   import {
     applyServerProvisioningMode,
     CANONICAL_USE_CASE_GOALS,
@@ -23,7 +26,6 @@
     type StackConfig,
   } from "#lib/wizard/index.js";
   import { EasyWizard } from "#lib/components/wizard/index.js";
-  import { ArrowLeft, Server } from "@lucide/svelte";
 
   type NavigateOptions = Parameters<typeof svelteGoto>[1];
 
@@ -31,7 +33,6 @@
     stackId: string;
     /** Remove page-owned chrome and spacing when mounted by a Home Hub host. */
     embedded?: boolean;
-    backTo?: string;
     onNavigate?: (
       href: string,
       options?: NavigateOptions,
@@ -41,9 +42,29 @@
   let {
     stackId,
     embedded = false,
-    backTo = "/dashboard",
     onNavigate,
   }: Props = $props();
+
+  const additionOptions = $derived([
+    {
+      value: "join",
+      label: tr("ui.managedCreationFlow.workerOrStorageForThis"),
+      tip: "wizard.tip.nodeJoin",
+      docs: NODE_GUIDES.joinStackKit,
+    },
+    {
+      value: "found",
+      label: tr("ui.managedCreationFlow.newStackkitMainNode"),
+      tip: "wizard.tip.nodeFound",
+      docs: NODE_GUIDES.newStackKit,
+    },
+    {
+      value: "substrate",
+      label: tr("ui.managedCreationFlow.proxmoxHypervisor"),
+      tip: "wizard.tip.nodeSubstrate",
+      docs: NODE_GUIDES.nodeConfiguration,
+    },
+  ] as const);
 
   async function navigate(href: string, options?: NavigateOptions) {
     if (onNavigate) {
@@ -96,7 +117,6 @@
   let preparing = $state(false);
   let error = $state<string | null>(null);
   let requiresProviderReselection = $state(false);
-  let reselectedProviderId = $state<"centron" | "ionos" | null>(null);
   let stackDefaultsApplied = false;
 
   onMount(() => {
@@ -118,11 +138,10 @@
         deployment.provider_id === "ionos"
       ) {
         config.providerId = deployment.provider_id;
-        reselectedProviderId = null;
         requiresProviderReselection = false;
       } else {
-        // Historical provider labels are display-only and must never become a
-        // fresh executable selection. The user must choose a canonical ID.
+        // Historical provider labels are display-only. The provider step must
+        // confirm an entitled canonical ID before this request can proceed.
         requiresProviderReselection = true;
       }
       config.ionosDatacenter = normalizeIonosDatacenter(
@@ -143,13 +162,13 @@
     try {
       deployment = await loadDeploymentFallback();
       if (!deployment) {
-        error = "StackKit deployment not found.";
+        error = tr("ui.managedCreationFlow.stackkitDeploymentNotFound");
       }
     } catch (err) {
       deployment = await loadDeploymentFallback();
       if (!deployment) {
         const parsed = parseApiError(err);
-        error = parsed.message || "Failed to load Node inventory.";
+        error = parsed.message || tr("ui.managedCreationFlow.failedToLoadNodeInventory");
       }
     } finally {
       loading = false;
@@ -210,7 +229,7 @@
   async function prepareRegistration(wizardConfig: StackConfig = config) {
     const currentStackId = stackId;
     if (!currentStackId) {
-      error = "StackKit deployment not found.";
+      error = tr("ui.managedCreationFlow.stackkitDeploymentNotFound");
       return;
     }
     preparing = true;
@@ -219,12 +238,8 @@
       if (wizardConfig.serverProvisioning.mode === "kombify-cloud") {
         if (requiresProviderReselection) {
           throw new Error(
-            "Select Centron or IONOS explicitly before adding a managed Node to this historical StackKit deployment.",
+            tr("ui.managedCreationFlow.selectCentronOrIonosExplicitly"),
           );
-        }
-        const providerId = reselectedProviderId ?? wizardConfig.providerId;
-        if (providerId !== wizardConfig.providerId) {
-          wizardConfig = { ...wizardConfig, providerId };
         }
       }
       const request =
@@ -247,7 +262,7 @@
       );
     } catch (err) {
       const parsed = parseApiError(err);
-      error = parsed.message || "Failed to prepare Node registration.";
+      error = parsed.message || tr("ui.managedCreationFlow.failedToPrepareNodeRegistration");
     } finally {
       preparing = false;
     }
@@ -288,30 +303,6 @@
   data-flow="managed-creation"
   data-presentation={embedded ? "embedded" : "page"}
 >
-  {#if !embedded}
-    <button
-      data-kx="control"
-      class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50 mb-6"
-      onclick={() => void navigate(backTo)}
-    >
-      <ArrowLeft class="h-4 w-4" />
-      Back to StackKit deployment
-    </button>
-  {/if}
-
-  <div
-    class="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between"
-  >
-    <div>
-      <div class="mb-2 flex items-center gap-2">
-        <Server class="h-5 w-5 text-primary" />
-      </div>
-      <h1 class="text-xl font-semibold text-foreground">Add Node</h1>
-      <p class="max-w-3xl text-sm text-muted-foreground">
-        Add another device to your Homelab. We will guide you through the setup.
-      </p>
-    </div>
-  </div>
 
   {#if loading}
     <div class="rounded-lg border border-border bg-card p-6">
@@ -340,8 +331,8 @@
       initialConfig={config}
       oncreate={prepareRegistration}
       isDeploying={preparing}
-      submitLabel="Add Node"
-      submittingLabel="Preparing Node..."
+      submitLabel={tr("ui.managedCreationFlow.addNode")}
+      submittingLabel={tr("ui.managedCreationFlow.preparingNode")}
       showServerRole={true}
       showServerServices={false}
       applyDeploymentLaneDefaults={false}
@@ -351,34 +342,41 @@
         ? substrateContent
         : undefined}
       onmanagedproviderselect={(providerId) => {
-        reselectedProviderId = providerId;
+        config.providerId = providerId;
         requiresProviderReselection = false;
       }}
     >
       {#snippet nodeOptions(wizardConfig)}
-        <fieldset class="mb-6 flex flex-wrap gap-3">
-          <legend class="mb-2 font-medium">Node configuration</legend>
-          {#each [{ value: "join", label: "Worker or storage for this StackKit" }, { value: "found", label: "New StackKit / main Node" }, { value: "substrate", label: "Proxmox hypervisor" }] as option}
+        <div class="mb-6" data-substep>
+        <fieldset class="flex flex-wrap gap-3">
+          <legend class="mb-2 font-medium">{tr("ui.managed.nodeConfiguration")}</legend>
+          {#each additionOptions as option (option.value)}
+            <span class="inline-flex items-center gap-0.5">
             <button
               type="button"
               class="rounded-lg border border-border px-4 py-3 aria-pressed:bg-muted"
               aria-pressed={additionMode === option.value}
               onclick={() =>
                 chooseAddition(
-                  option.value as typeof additionMode,
+                  option.value,
                   wizardConfig,
                 )}>{option.label}</button
-            >
+            ><InfoTip
+              topic={option.label}
+              text={tr(option.tip)}
+              docs={option.docs}
+            />
+            </span>
           {/each}
         </fieldset>
+        </div>
         {#if additionMode !== "substrate" && requiresProviderReselection && wizardConfig.serverProvisioning.mode === "kombify-cloud"}
           <div
             class="mb-4 rounded-lg border border-warning/30 bg-warning/10 p-4"
             data-testid="managed-provider-reselection-required"
           >
             <p class="text-sm text-foreground">
-              Select Centron or IONOS below before adding a managed Node. This
-              StackKit deployment has no current provider selection.
+              {tr("ui.managed.selectProvider")}
             </p>
           </div>
         {/if}

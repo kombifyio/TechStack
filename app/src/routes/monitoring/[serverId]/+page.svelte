@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { formatDuration } from "#lib/dashboard/time.js";
+  import { tr, stateLabel, formatDateTime } from "#lib/i18n.svelte.js";
   import { onDestroy, onMount } from "svelte";
   import { page } from "$app/state";
   import { goto } from "$app/navigation";
@@ -57,7 +59,7 @@
       showDetachConfirmation = false;
       await goto("/monitoring");
     } catch (err) {
-      detachError = parseApiError(err).message || "Server could not be removed.";
+      detachError = parseApiError(err).message || tr("ui.monitoring.serverCouldNotBeRemoved");
     } finally {
       detaching = false;
     }
@@ -65,7 +67,7 @@
 
   /** Wire enums are snake_case; the header reads them as words. */
   function humanize(value: string | undefined): string {
-    return (value ?? "").replace(/_/g, " ");
+    return value ? stateLabel(value) : "";
   }
 
   const AXIS_TONE: Record<string, string> = {
@@ -82,10 +84,10 @@
    * is shown on the panel. That is what keeps the build-or-embed decision
    * open: the same panel definition can move to any PromQL-speaking frontend.
    */
-  const PANELS = [
+  const PANELS = $derived([
     {
       id: "cpu",
-      title: "CPU utilisation",
+      title: tr("ui.monitoringServerId.cpuUtilisation"),
       query: (id: string) =>
         `node_cpu_usage_percent{node_id="${id}",core="total"}`,
       unit: "%",
@@ -94,7 +96,7 @@
     },
     {
       id: "memory",
-      title: "Memory used",
+      title: tr("ui.monitoringServerId.memoryUsed"),
       query: (id: string) => `node_memory_usage_percent{node_id="${id}"}`,
       unit: "%",
       max: 100,
@@ -102,7 +104,7 @@
     },
     {
       id: "disk",
-      title: "Disk used",
+      title: tr("ui.monitoringServerId.diskUsed"),
       query: (id: string) => `node_disk_usage_percent{node_id="${id}"}`,
       unit: "%",
       max: 100,
@@ -110,11 +112,11 @@
     },
     {
       id: "containers",
-      title: "Containers running",
+      title: tr("ui.monitoringServerId.containersRunning"),
       query: (id: string) => `sum(container_running{node_id="${id}"})`,
       unit: "",
     },
-  ] as const;
+  ] as const);
 
   function latest(points: PromQLPoint[]): number | null {
     return points.length ? points[points.length - 1].value : null;
@@ -135,33 +137,20 @@
     return `${(ratio * 100).toFixed(ratio >= 0.9995 ? 0 : 2)} %`;
   }
 
-  function formatDuration(seconds: number | null | undefined): string {
-    if (seconds === null || seconds === undefined) return "—";
-    if (seconds < 60) return `${Math.round(seconds)} s`;
-    const minutes = Math.round(seconds / 60);
-    if (minutes < 60) return `${minutes} min`;
-    const hours = Math.floor(minutes / 60);
-    const rest = minutes % 60;
-    if (hours < 24)
-      return rest ? `${hours} h ${String(rest).padStart(2, "0")}` : `${hours} h`;
-    return `${Math.floor(hours / 24)} d ${hours % 24} h`;
-  }
-
   function formatStamp(value: string | undefined): string {
     if (!value) return "—";
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return "—";
-    return new Intl.DateTimeFormat(undefined, {
-      dateStyle: "short",
-      timeStyle: "short",
-    }).format(date);
+    return formatDateTime(date, { dateStyle: "short", timeStyle: "short" });
   }
 
   /** Nanoseconds, as the alert rule records them. */
   function formatFor(nanoseconds: number): string {
     const seconds = Math.round(nanoseconds / 1_000_000_000);
-    if (seconds === 0) return "0 s";
-    return seconds < 60 ? `${seconds} s` : `${Math.round(seconds / 60)} m`;
+    if (seconds === 0) return tr("ui.time.seconds", { count: 0 });
+    return seconds < 60
+      ? tr("ui.time.seconds", { count: seconds })
+      : tr("ui.time.minutesShort", { count: Math.round(seconds / 60) });
   }
 
   const serverReport = $derived(
@@ -224,7 +213,7 @@
       server = await getCanonicalServer(id);
     } catch (err) {
       error =
-        err instanceof Error ? err.message : "This server could not be loaded.";
+        err instanceof Error ? err.message : tr("ui.monitoringServerId.thisServerCouldNotBe");
       loading = false;
       return;
     }
@@ -259,7 +248,7 @@
 </script>
 
 <svelte:head>
-  <title>{server?.name ?? "Server"} — Monitoring</title>
+  <title>{tr("ui.monitoringServer.pageTitle", { name: server?.name ?? tr("ui.monitoringServer.server") })}</title>
 </svelte:head>
 
 <div class="mx-auto max-w-7xl p-4 md:p-6" data-testid="server-monitoring-page">
@@ -268,7 +257,7 @@
     class="mb-4 inline-flex items-center gap-2 text-[12.5px] font-medium text-primary hover:underline"
   >
     <ArrowLeft class="h-3.5 w-3.5" />
-    Monitoring
+    {tr("ui.monitoring.monitoring")}
   </a>
 
   {#if error}
@@ -319,10 +308,10 @@
       </div>
       <div class="flex flex-col items-end gap-2">
         <span class="font-mono text-[11.5px] text-muted-foreground">
-          inventory revision {server.inventory_revision}
+          {tr("ui.monitoringServer.inventoryRevision", { revision: server.inventory_revision })}
         </span>
         {#if loading}
-          <span class="text-[11.5px] text-muted-foreground">Refreshing…</span>
+          <span class="text-[11.5px] text-muted-foreground">{tr("ui.monitoringServerId.refreshing")}</span>
         {/if}
         {#if serverAllowsDetach(server)}
           {#if showDetachConfirmation}
@@ -331,10 +320,10 @@
               data-testid="server-monitoring-detach-confirmation"
             >
               <p class="text-sm font-medium text-foreground">
-                Remove {server.name} from Monitoring?
+                {tr("ui.monitoring.removeFrom", { name: server.name })}
               </p>
               <p class="mt-1 text-xs text-muted-foreground">
-                Guard is revoked immediately. The physical server stays in place.
+                {tr("ui.monitoringServerId.guardIsRevokedImmediatelyThe")}
               </p>
               {#if detachError}
                 <p class="mt-2 text-xs text-destructive">{detachError}</p>
@@ -348,7 +337,7 @@
                   disabled={detaching}
                 >
                   <Trash2 class="h-3.5 w-3.5" />
-                  {detaching ? "Removing..." : "Remove from view"}
+                  {detaching ? tr("ui.monitoring.removing") : tr("ui.monitoringServerId.removeFromView")}
                 </Button>
                 <Button
                   variant="secondary"
@@ -359,7 +348,7 @@
                   }}
                   disabled={detaching}
                 >
-                  Cancel
+                  {tr("ui.importExportModal.cancel")}
                 </Button>
               </div>
             </div>
@@ -372,7 +361,7 @@
               disabled={detaching}
             >
               <Trash2 class="h-3.5 w-3.5" />
-              Remove from view
+              {tr("ui.monitoringServerId.removeFromView")}
             </Button>
           {/if}
         {/if}
@@ -380,9 +369,9 @@
     </section>
 
     <div class="mb-3 flex items-center justify-between gap-4">
-      <h2 class="text-[15px] font-semibold text-foreground">Metrics · last 24 h</h2>
+      <h2 class="text-[15px] font-semibold text-foreground">{tr("ui.monitoringServerId.metricsLast24H")}</h2>
       <span class="font-mono text-[11px] text-muted-foreground">
-        every panel is one range query scoped to node_id="{serverId}"
+        {tr("ui.monitoringServer.rangeQueryHint", { id: serverId })}
       </span>
     </div>
 
@@ -391,8 +380,7 @@
         class="mb-4 rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground"
         data-testid="server-monitoring-metrics-unavailable"
       >
-        No metrics backend answered for this node. Availability below is derived
-        from the transition timeline and does not depend on it.
+        {tr("ui.monitoringServerId.noMetricsBackendAnsweredFor")}
       </section>
     {:else}
       <div class="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -418,14 +406,14 @@
                 </span>
                 {#if peak(panels[panel.id] ?? []) !== null}
                   <span class="font-mono text-[10.5px] text-muted-foreground">
-                    peak {formatValue(peak(panels[panel.id] ?? []), panel.unit)}
+                    {tr("ui.monitoringServer.peak", { value: formatValue(peak(panels[panel.id] ?? []), panel.unit) })}
                   </span>
                 {/if}
               </div>
             </div>
             <MetricSparkline
               points={panels[panel.id] ?? []}
-              label={`${panel.title} over the last 24 hours`}
+              label={tr("ui.monitoringServer.panelLast24h", { title: panel.title })}
               threshold={"threshold" in panel ? panel.threshold : undefined}
               max={"max" in panel ? panel.max : undefined}
             />
@@ -437,13 +425,13 @@
     <div class="grid gap-3 lg:grid-cols-[minmax(0,1fr)_400px]">
       <section class="rounded-lg border border-border bg-card p-4" data-testid="server-monitoring-alerts">
         <div class="mb-3 flex items-center justify-between gap-3">
-          <h2 class="text-[15px] font-semibold text-foreground">Alert rules</h2>
+          <h2 class="text-[15px] font-semibold text-foreground">{tr("ui.monitoringServerId.alertRules")}</h2>
           <span class="text-[11.5px] text-muted-foreground"
-            >{relevantAlerts.length} in scope for this node</span
+            >{tr("ui.monitoringServer.alertsInScope", { count: relevantAlerts.length })}</span
           >
         </div>
         {#if relevantAlerts.length === 0}
-          <p class="text-sm text-muted-foreground">No alert rules apply here.</p>
+          <p class="text-sm text-muted-foreground">{tr("ui.monitoringServerId.noAlertRulesApplyHere")}</p>
         {:else}
           <div class="flex flex-col">
             {#each relevantAlerts as alert (alert.rule.name)}
@@ -471,8 +459,10 @@
                   class:text-muted-foreground={!alert.active}
                 >
                   {alert.active
-                    ? `firing since ${formatStamp(alert.fired_at ?? alert.active_since ?? undefined)}`
-                    : "inactive"}
+                    ? tr("ui.monitoringServer.firingSince", {
+                        time: formatStamp(alert.fired_at ?? alert.active_since ?? undefined),
+                      })
+                    : tr("ui.monitoringServer.inactive")}
                 </span>
               </div>
             {/each}
@@ -483,21 +473,21 @@
       <section class="rounded-lg border border-border bg-card p-4" data-testid="server-monitoring-history">
         <div class="mb-3 flex items-center justify-between gap-3">
           <h2 class="text-[15px] font-semibold text-foreground">
-            This node&rsquo;s history
+            {tr("ui.monitoringServerId.thisNodeSHistory")}
           </h2>
           <a href="/monitoring" class="text-[11.5px] font-medium text-primary hover:underline"
-            >All episodes &rarr;</a
+            >{tr("ui.monitoringServer.allEpisodes")}</a
           >
         </div>
 
         {#if availabilityUnavailable}
           <p class="text-sm text-muted-foreground">
-            Availability history is unavailable on this deployment.
+            {tr("ui.monitoring.availabilityHistoryIsUnavailableOn")}
           </p>
         {:else if serverReport}
           <div class="mb-3 flex flex-col gap-2">
             <div class="flex items-baseline justify-between">
-              <span class="text-xs text-muted-foreground">Availability · 30 d</span>
+              <span class="text-xs text-muted-foreground">{tr("ui.monitoringServerId.availability30D")}</span>
               <span
                 class="font-mono text-[13px] font-semibold text-foreground"
                 data-testid="server-monitoring-uptime"
@@ -507,7 +497,7 @@
             <StateRibbon
               days={serverReport.days}
               height={22}
-              label={`${server.name}: daily connection state over 30 days`}
+              label={tr("ui.monitoringServer.dailyState30", { name: server.name })}
             />
           </div>
 
@@ -515,7 +505,7 @@
 
           {#if serverReport.episodes.length === 0}
             <p class="mt-3 text-sm text-muted-foreground">
-              No recorded downtime in this window.
+              {tr("ui.monitoring.noRecordedDowntimeInThis")}
             </p>
           {:else}
             <div class="mt-3 flex flex-col gap-3">
@@ -527,8 +517,8 @@
                       style={`background: ${episode.ongoing ? "oklch(0.67 0.2 25)" : "oklch(0.79 0.14 80)"}`}
                     ></span>
                     <span class="font-mono text-[11.5px] text-foreground">
-                      {formatStamp(episode.started_at)} &rarr; {episode.ongoing
-                        ? "ongoing"
+                      {formatStamp(episode.started_at)} → {episode.ongoing
+                        ? tr("ui.monitoring.ongoing")
                         : formatStamp(episode.ended_at)}
                     </span>
                     <span
@@ -537,9 +527,9 @@
                     >
                   </div>
                   <span class="pl-4 text-xs text-muted-foreground">
-                    <span class="font-mono">{episode.trigger_reason || "unrecorded"}</span
+                    <span class="font-mono">{episode.trigger_reason || tr("ui.monitoringServer.unrecorded")}</span
                     >{#if !episode.ongoing && episode.recovery_reason}
-                      &middot; recovered by <span class="font-mono"
+                      {tr("ui.monitoring.recoveredBy")} <span class="font-mono"
                         >{episode.recovery_reason}</span
                       >{/if}
                   </span>
@@ -548,7 +538,7 @@
             </div>
           {/if}
         {:else}
-          <p class="text-sm text-muted-foreground">No history for this node yet.</p>
+          <p class="text-sm text-muted-foreground">{tr("ui.monitoringServerId.noHistoryForThisNode")}</p>
         {/if}
       </section>
     </div>

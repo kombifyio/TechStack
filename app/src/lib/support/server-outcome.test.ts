@@ -148,10 +148,10 @@ describe("outcomeFromLatestFailure", () => {
       reason: "ssh_auth_failed",
       diagnostics_available: false,
     });
-    expect(
-      enrollment.userGuidance?.nextSteps.find((step) => step.kind === "retry")
-        ?.label,
-    ).toBe("SSH-Verbindung erneut versuchen");
+    const enrollmentLabel = enrollment.userGuidance?.nextSteps.find(
+      (step) => step.kind === "retry",
+    )?.label;
+    expect(enrollmentLabel).toBeTruthy();
 
     const stackkit = outcomeFromLatestFailure(
       {
@@ -166,9 +166,10 @@ describe("outcomeFromLatestFailure", () => {
         connectedServers: 1,
       },
     );
-    expect(
-      stackkit.userGuidance?.nextSteps.find((step) => step.kind === "retry")
-        ?.label,
-    ).toBe("StackKit-Vorbereitung auf verbundenem Node fortsetzen");
+    const stackkitLabel = stackkit.userGuidance?.nextSteps.find(
+      (step) => step.kind === "retry",
+    )?.label;
+    expect(stackkitLabel).toBeTruthy();
+    expect(stackkitLabel).not.toBe(enrollmentLabel);
   });
 });

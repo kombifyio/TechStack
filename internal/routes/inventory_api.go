@@ -47,6 +47,11 @@ type InventoryRouteConfig struct {
 	ServiceAuthNext   string
 	// Stored authorization resolved only after verifying the Cloud OBO signature.
 	RuntimeSummaryContext func(context.Context, string, string) (context.Context, error)
+	// ManagedServersHeld backs the private Cloud budget-usage read. Nil makes
+	// that route answer 503 rather than report an unknown count as zero.
+	ManagedServersHeld ManagedServersHeldFunc
+	// Homelabs backs the rename_homelab MCP tool; nil keeps it fail-closed (503).
+	Homelabs controlplane.HomelabStore
 }
 
 type inventoryHandlers struct {
@@ -55,13 +60,16 @@ type inventoryHandlers struct {
 	serviceAuthSecret     string
 	serviceAuthNext       string
 	runtimeSummaryContext func(context.Context, string, string) (context.Context, error)
+	managedServersHeld    ManagedServersHeldFunc
 }
 
 type inventoryApplication struct {
-	read   controlplane.InventoryReadStore
-	ports  portinventory.ReadAuthority
-	policy InventoryPolicy
-	now    func() time.Time
+	read     controlplane.InventoryReadStore
+	renamer  controlplane.InventoryServerRenamer
+	homelabs controlplane.HomelabStore
+	ports    portinventory.ReadAuthority
+	policy   InventoryPolicy
+	now      func() time.Time
 }
 
 type inventoryScope struct {
@@ -162,12 +170,19 @@ func RegisterInventoryRoutes(r *httpx.Router, cfg InventoryRouteConfig) {
 	if cfg.Policy == nil {
 		cfg.Policy = denyInventoryPolicy{}
 	}
+	// The rename write is optional on the read store; without it the route
+	// stays registered and fails closed (503).
+	renamer, _ := cfg.ReadStore.(controlplane.InventoryServerRenamer)
 	h := inventoryHandlers{
-		app:                   &inventoryApplication{read: cfg.ReadStore, ports: cfg.PortInventory, policy: cfg.Policy, now: cfg.Now},
+		app: &inventoryApplication{
+			read: cfg.ReadStore, renamer: renamer, homelabs: cfg.Homelabs,
+			ports: cfg.PortInventory, policy: cfg.Policy, now: cfg.Now,
+		},
 		version:               cfg.Version,
 		serviceAuthSecret:     strings.TrimSpace(cfg.ServiceAuthSecret),
 		serviceAuthNext:       strings.TrimSpace(cfg.ServiceAuthNext),
 		runtimeSummaryContext: cfg.RuntimeSummaryContext,
+		managedServersHeld:    cfg.ManagedServersHeld,
 	}
 	r.GET("/api/v1/inventory/servers", h.httpListServers)
 	// Public RIL is a compatibility view over the canonical inventory read
@@ -175,6 +190,7 @@ func RegisterInventoryRoutes(r *httpx.Router, cfg InventoryRouteConfig) {
 	r.GET("/v1/ril/servers", h.httpListServers)
 	r.GET("/api/v1/servers/summary", h.httpServerSummary)
 	r.GET("/v1/ril/servers/summary", h.httpServerSummary)
+	r.PATCH("/api/v1/inventory/servers/{serverId}", h.httpRenameServer)
 	r.GET("/api/v1/inventory/servers/{serverId}/health", h.httpServerHealth)
 	r.GET("/api/v1/inventory/servers/{serverId}/ports", h.httpServerPorts)
 	r.GET("/api/v1/inventory/services", h.httpListServices)
@@ -183,6 +199,9 @@ func RegisterInventoryRoutes(r *httpx.Router, cfg InventoryRouteConfig) {
 	// Private Cloud servicecall read for the dashboard Overview (servers +
 	// services of the on_behalf_of owner); see inventory_internal_summary.go.
 	r.GET("/api/v1/internal/runtime/summary", h.httpInternalRuntimeSummary)
+	// Private Cloud servicecall read for the budget panel (managed servers
+	// held by the on_behalf_of owner); see inventory_internal_usage.go.
+	r.GET("/api/v1/internal/usage/budgets", h.httpInternalUsageBudgets)
 	registerInventoryMCPRoutes(r, h)
 }
 
@@ -667,7 +686,7 @@ func (a *inventoryApplication) projectServer(server controlplane.ServerRuntime, 
 	}
 	cleanup := inventoryCleanupFromServer(server, metadata)
 	return inventoryServer{
-		ID: safeLabel(server.ID, 256), StackID: safeLabel(server.StackID, 256), Name: safeLabel(firstNonEmptyString(server.Name, server.ID), 256),
+		ID: safeLabel(server.ID, 256), StackID: safeLabel(server.StackID, 256), Name: safeLabel(firstNonEmptyString(server.DisplayName, server.Name, server.ID), 256),
 		ObservedAt: server.LastHeartbeatAt, Freshness: freshness, InventoryRevision: maxInt64(server.InventoryRevision, 0), Addresses: addresses,
 		Platform: inventoryPlatform{OS: safeLabel(firstNonEmptyString(stringFromAnyMap(host, "os"), stringFromAnyMap(metadata, "os")), 96), OSVersion: safeLabel(firstNonEmptyString(stringFromAnyMap(host, "os_version"), stringFromAnyMap(metadata, "os_version")), 128), Arch: safeLabel(firstNonEmptyString(stringFromAnyMap(host, "arch"), stringFromAnyMap(metadata, "arch")), 64)},
 		StackKit: stackKit, Provider: safeProviderLabel(firstNonEmptyString(stringFromAnyMap(metadata, "provider_id"), stringFromAnyMap(metadata, "provider"))),

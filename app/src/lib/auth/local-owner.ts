@@ -1,5 +1,6 @@
 import { fetchApi } from "#lib/api/client.js";
 
+import { tr } from "#lib/i18n.svelte.js";
 interface CreateLocalOwnerAccountInput {
   email: string;
   password: string;
@@ -37,8 +38,7 @@ export async function createLocalOwnerAccount({
   void password;
   void passwordConfirm;
   void derivedOwnerName;
-  throw Object.assign(
-    new Error("Local owner creation is only available during first-run setup."),
-    { status: 409 },
-  );
+  throw Object.assign(new Error(tr("ui.localOwner.localOwnerCreationIsOnly")), {
+    status: 409,
+  });
 }

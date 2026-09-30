@@ -48,6 +48,11 @@ const (
 	managedAddressLayoutZone = "zone"
 )
 
+// managedLoginGatewayServiceKey is the address plan service key of the
+// Owner's first login: the Cloud Kit's TinyAuth route (serviceRef "auth"),
+// which fronts PocketID ("id") as the StackKit login gateway.
+const managedLoginGatewayServiceKey = "auth"
+
 // allocateManagedAddressPlan registers the stack's managed kombify.me
 // addresses with the platform identity. Every route is bound to the stack's
 // owner and ID; kombify.me refuses to hand a route bound to anyone else to

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "#lib/i18n.svelte.js";
   import { page } from "$app/state";
   import { ArrowLeft, CheckCircle2, KeyRound, Monitor } from "@lucide/svelte";
   import { onMount } from "svelte";
@@ -80,7 +81,7 @@
       const ok = await authStore.loginWithPassword(email, adminPassword);
       if (!ok) {
         error =
-          authStore.error || "Local owner was created, but sign-in failed.";
+          authStore.error || tr("ui.clientLocal.localOwnerWasCreatedBut");
         return;
       }
       signedInEmail = email;
@@ -92,7 +93,7 @@
         parsed.fieldErrors.email?.message ||
         parsed.fieldErrors.password?.message ||
         parsed.message ||
-        (err instanceof Error ? err.message : "Local setup failed.");
+        (err instanceof Error ? err.message : tr("ui.clientLocal.localSetupFailed"));
     } finally {
       submitting = false;
     }
@@ -110,7 +111,7 @@
         existingOwnerPassword,
       );
       if (!ok) {
-        error = authStore.error || "Local sign-in failed.";
+        error = authStore.error || tr("ui.clientLocal.localSignInFailed");
         return;
       }
       signedInEmail = existingOwnerEmail;
@@ -123,7 +124,7 @@
 </script>
 
 <svelte:head>
-  <title>Local TechStack setup | kombify Techstack</title>
+  <title>{tr("ui.clientLocal.localTechstackSetupKombifyTechstack")}</title>
 </svelte:head>
 
 <main class="min-h-screen bg-background text-foreground">
@@ -135,7 +136,7 @@
         href={backHref}
         class="inline-flex items-center gap-2 text-sm font-semibold text-muted-foreground"
       >
-        <ArrowLeft class="h-4 w-4" /> Back
+        <ArrowLeft class="h-4 w-4" /> {tr("ui.importExportModal.back")}
       </a>
       <TechstackBrandLogo
         sizes="214px"
@@ -148,18 +149,18 @@
           class="mb-7 inline-flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm font-semibold"
         >
           <Monitor class="h-4 w-4" /> {windowsClient
-            ? "Local Windows installation"
-            : "Self-hosted local owner"}
+            ? tr("ui.clientOnboarding.localWindowsInstallation")
+            : tr("ui.clientLocal.selfHostedLocalOwner")}
         </div>
         <h1
           class="text-5xl font-semibold leading-tight tracking-normal text-foreground"
         >
-          Local TechStack setup.
+          {tr("ui.clientLocal.localTechstackSetup")}
         </h1>
         <p class="mt-5 text-lg leading-8 text-muted-foreground">
           {windowsClient
-            ? "Create the first local admin for this device. After setup, this Windows client opens the operator UI directly."
-            : "Create or sign in as the local owner for this self-hosted Techstack. After setup, the operator UI opens directly."}
+            ? tr("ui.clientLocal.createTheFirstLocalAdmin")
+            : tr("ui.clientLocal.createOrSignInAs")}
         </p>
       </div>
       <form
@@ -178,14 +179,14 @@
           <div
             class="rounded-md border border-border bg-muted/40 p-4 text-sm text-muted-foreground"
           >
-            Checking local auth state...
+            {tr("ui.clientLocal.checkingLocalAuthState")}
           </div>
         {:else if saved}
           <div
             class="rounded-xl border border-success/30 bg-success/5 p-4 text-sm text-success"
           >
             <div class="flex items-center gap-2 font-semibold">
-              <CheckCircle2 class="h-4 w-4" /> Local owner signed in.
+              <CheckCircle2 class="h-4 w-4" /> {tr("ui.clientLocal.localOwnerSignedIn")}
             </div>
             {#if signedInEmail}
               <p class="mt-2 text-xs text-success">{signedInEmail}</p>
@@ -204,15 +205,14 @@
             <div
               class="mb-5 flex items-center gap-2 text-lg font-semibold text-foreground"
             >
-              <KeyRound class="h-5 w-5 text-primary" /> Local owner sign-in
+              <KeyRound class="h-5 w-5 text-primary" /> {tr("ui.clientLocal.localOwnerSignIn")}
             </div>
             <p class="mb-5 text-sm leading-6 text-muted-foreground">
-              This device is already configured. Sign in with the local owner
-              account to open Techstack.
+              {tr("ui.clientLocal.thisDeviceIsAlreadyConfigured")}
             </p>
             <label
               class="block text-sm font-semibold text-foreground"
-              for="existing-owner-email">Email</label
+              for="existing-owner-email">{tr("ui.clientLocal.email")}</label
             >
             <input
               id="existing-owner-email"
@@ -227,7 +227,7 @@
             />
             <label
               class="mt-5 block text-sm font-semibold text-foreground"
-              for="existing-owner-password">Password</label
+              for="existing-owner-password">{tr("ui.clientLocal.password")}</label
             >
             <input
               id="existing-owner-password"
@@ -246,17 +246,17 @@
               disabled={!canSignInExistingOwner || submitting}
               class="mt-6 inline-flex h-10 w-full items-center justify-center rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {submitting ? "Signing in..." : "Sign in locally"}
+              {submitting ? tr("ui.clientLocal.signingIn") : tr("ui.clientLocal.signInLocally")}
             </button>
           {:else}
             <div
               class="mb-5 flex items-center gap-2 text-lg font-semibold text-foreground"
             >
-              <KeyRound class="h-5 w-5 text-primary" /> First local admin
+              <KeyRound class="h-5 w-5 text-primary" /> {tr("ui.clientLocal.firstLocalAdmin")}
             </div>
             <label
               class="block text-sm font-semibold text-foreground"
-              for="admin-email">Email</label
+              for="admin-email">{tr("ui.clientLocal.email")}</label
             >
             <input
               id="admin-email"
@@ -270,11 +270,11 @@
               disabled={submitting}
             />
             {#if ownerName}
-              <p class="mt-2 text-xs text-muted-foreground">Owner name: {ownerName}</p>
+              <p class="mt-2 text-xs text-muted-foreground">{tr("ui.clientLocal.ownerName", { name: ownerName })}</p>
             {/if}
             <label
               class="mt-5 block text-sm font-semibold text-foreground"
-              for="admin-password">Password</label
+              for="admin-password">{tr("ui.clientLocal.password")}</label
             >
             <input
               id="admin-password"
@@ -293,7 +293,7 @@
               disabled={!canSubmit || submitting}
               class="mt-6 inline-flex h-10 w-full items-center justify-center rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {submitting ? "Creating local owner..." : "Continue local setup"}
+              {submitting ? tr("ui.clientLocal.creatingLocalOwner") : tr("ui.clientLocal.continueLocalSetup")}
             </button>
           {/if}
         {/if}

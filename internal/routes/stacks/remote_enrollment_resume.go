@@ -149,10 +149,10 @@ func (h wizardRunHandlers) resumeRemoteEnrollment(e *httpx.Event) error {
 		recoveryResponseKitDeploymentIDKey: stackID,
 		"pairing_job_id":                   minted.JobID,
 		wizardRunPlannedServerID:           plannedServerID,
-		"server_remote_host":        runtimeStringFromConfig(stack.Config, "server_remote_host"),
-		"server_remote_user":        runtimeStringFromConfig(stack.Config, "server_remote_user"),
-		"server_remote_port":        stack.Config["server_remote_port"],
-		"server_remote_auth_method": runtimeStringFromConfig(stack.Config, "server_remote_auth_method"),
+		"server_remote_host":               runtimeStringFromConfig(stack.Config, "server_remote_host"),
+		"server_remote_user":               runtimeStringFromConfig(stack.Config, "server_remote_user"),
+		"server_remote_port":               stack.Config["server_remote_port"],
+		"server_remote_auth_method":        runtimeStringFromConfig(stack.Config, "server_remote_auth_method"),
 		"server_remote_credential_ref": firstNonEmpty(
 			runtimeStringFromConfig(stack.Config, "server_remote_credential_ref"),
 			runtimeStringFromConfig(stack.Config, "server_remote_ssh_key_label"),
@@ -185,14 +185,14 @@ func remoteEnrollmentNodeRole(stack *controlplane.Stack) string {
 
 func (h wizardRunHandlers) mintRemoteEnrollmentPairing(e *httpx.Event, run *wizardRunState, stack *controlplane.Stack, nodeRole, specNodeID string) (trust.MintedStackPairing, bool) {
 	params := trust.PairingTokenParams{
-		Name:                    strings.TrimSpace(stack.Name + " remote-ssh"),
-		StackID:                 stack.ID,
-		SpecNodeID:              specNodeID,
-		ServerProvisioningMode:  specv2.TransportConnectRemote,
-		NodeRole:                nodeRole,
-		ServerRemoteHost:        runtimeStringFromConfig(stack.Config, "server_remote_host"),
-		ServerRemoteUser:        runtimeStringFromConfig(stack.Config, "server_remote_user"),
-		ServerRemoteAuthMethod:  runtimeStringFromConfig(stack.Config, "server_remote_auth_method"),
+		Name:                   strings.TrimSpace(stack.Name + " remote-ssh"),
+		StackID:                stack.ID,
+		SpecNodeID:             specNodeID,
+		ServerProvisioningMode: specv2.TransportConnectRemote,
+		NodeRole:               nodeRole,
+		ServerRemoteHost:       runtimeStringFromConfig(stack.Config, "server_remote_host"),
+		ServerRemoteUser:       runtimeStringFromConfig(stack.Config, "server_remote_user"),
+		ServerRemoteAuthMethod: runtimeStringFromConfig(stack.Config, "server_remote_auth_method"),
 		ServerRemoteSSHKeyLabel: firstNonEmpty(
 			runtimeStringFromConfig(stack.Config, "server_remote_credential_ref"),
 			runtimeStringFromConfig(stack.Config, "server_remote_ssh_key_label"),

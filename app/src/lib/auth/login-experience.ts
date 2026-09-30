@@ -5,13 +5,14 @@ import {
 } from "#lib/client/windows-onboarding.js";
 import { withHostNavigation } from "#lib/embedded-navigation.js";
 
+import { tr } from "#lib/i18n.svelte.js";
 export type LoginExperience = "saas-auth0" | "self-hosted";
 export const SAAS_MANUAL_LOGIN_QUERY = "logged_out=1";
 export const SAAS_MANUAL_LOGOUT_QUERY = "manual=1&logged_out=1";
 export const DEFAULT_AUTH_RETURN_TO = "/dashboard";
 export const V2_CLOUD_LOGIN_PATH = "/api/v2/auth/login";
-export const AUTH0_SESSION_CREATION_ERROR =
-  "kombify Cloud sign-in completed, but Techstack could not create a browser session. Try again or contact support.";
+export const auth0SessionCreationError = () =>
+  tr("ui.loginExperience.kombifyCloudSignInCompleted");
 
 export function resolveLoginExperience(options: {
   deploymentMode: DeploymentMode;
@@ -158,7 +159,6 @@ export function buildCloudAuthRedirectURL(
   options: {
     origin?: string;
     returnTo?: string | null;
-    interactive?: boolean;
   } = {},
 ): string {
   const origin =
@@ -178,9 +178,6 @@ export function buildCloudAuthRedirectURL(
         sanitizeAuthReturnTo(options.returnTo ?? currentAuthReturnTo()),
       );
     }
-    if (options.interactive) {
-      url.searchParams.set("prompt", "login");
-    }
   }
 
   return origin ? url.toString() : `${url.pathname}${url.search}`;
@@ -197,7 +194,7 @@ export function formatLoginError(raw: string | null | undefined): string {
     value === "session_cookie_failed" ||
     /callback.*session|session.*mint/i.test(value)
   ) {
-    return AUTH0_SESSION_CREATION_ERROR;
+    return auth0SessionCreationError();
   }
 
   return value;

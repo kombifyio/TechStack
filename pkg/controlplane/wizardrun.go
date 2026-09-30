@@ -35,6 +35,9 @@ type WizardRun struct {
 	ErrorReason      string
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
+	// DismissedAt is set when the owner hid this run's dashboard notice. A
+	// keyed retry that rewrites the row clears it: a new outcome is news.
+	DismissedAt *time.Time
 }
 
 // WizardRunStore persists the wizard-run ledger. UpsertWizardRun keys on
@@ -47,4 +50,7 @@ type WizardRunStore interface {
 	// the resume/banner source for GET /api/v1/wizard/runs/active.
 	GetLatestWizardRunByOwner(ctx context.Context, tenantID, ownerSubjectID string) (*WizardRun, error)
 	UpsertWizardRun(ctx context.Context, run WizardRun) (*WizardRun, error)
+	// DismissWizardRun hides one of the owner's runs from the dashboard notice.
+	// ErrNotFound when the run does not exist for this owner.
+	DismissWizardRun(ctx context.Context, tenantID, ownerSubjectID, runID string, at time.Time) error
 }

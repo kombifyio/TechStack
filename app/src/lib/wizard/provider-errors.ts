@@ -1,3 +1,4 @@
+import { tr } from "#lib/i18n.svelte.js";
 /**
  * kombify-TechStack Provider Error Classification
  *
@@ -14,179 +15,271 @@ export const ERROR_TROUBLESHOOTING: Record<
   { message: string; details: string; steps: string[] }
 > = {
   validation_failed: {
-    message: "Configuration could not be validated",
-    details: "The submitted configuration contains invalid or missing values.",
-    steps: [
-      "Check that the submitted values are plausible",
-      "Make sure a StackKit was selected or detected",
-      "Check that the stack name is valid (letters, numbers, and hyphens only)",
-      "For authentication errors, make sure the passwords match",
-    ],
+    get message() {
+      return tr("ui.providerErrors.configurationCouldNotBeValidated");
+    },
+    get details() {
+      return tr("ui.providerErrors.theSubmittedConfigurationContainsInvalid");
+    },
+    get steps() {
+      return [
+        tr("ui.providerErrors.checkThatTheSubmittedValues"),
+        tr("ui.providerErrors.makeSureAStackKitWas"),
+        tr("ui.providerErrors.checkThatTheStackName"),
+        tr("ui.providerErrors.forAuthenticationErrorsMakeSure"),
+      ];
+    },
   },
   network_error: {
-    message: "Network error while saving",
-    details: "The kombify Techstack server could not be reached.",
-    steps: [
-      "Check your internet connection",
-      "Make sure the kombify Techstack server is running",
-      "Check that port 5260 is reachable",
-      "With Docker, use 'docker ps' to verify that all containers are running",
-    ],
+    get message() {
+      return tr("ui.providerErrors.networkErrorWhileSaving");
+    },
+    get details() {
+      return tr("ui.providerErrors.theKombifyTechstackServerCould");
+    },
+    get steps() {
+      return [
+        tr("ui.providerErrors.checkYourInternetConnection"),
+        tr("ui.providerErrors.makeSureTheKombifyTechstack"),
+        tr("ui.providerErrors.checkThatPort5260Is"),
+        tr("ui.providerErrors.withDockerUseDockerPs"),
+      ];
+    },
   },
   stackkit_files_missing: {
-    message: "StackKit files missing",
-    details:
-      "A StackKit was selected (e.g. basement-kit or cloud-kit), but the StackKit files are not available on the server.",
-    steps: [
-      "With Docker: rebuild the image (ensures the pinned StackKits checkout is present)",
-      "Check the server logs: 'docker compose logs techstack'",
-      "If running the binary outside the repo: set TECHSTACK_STACKKITS_DIR to a published StackKits checkout",
-      "Verify the StackKit directory exists on the server (e.g. /app/stackkits/basement-kit or /app/stackkits/cloud-kit)",
-    ],
+    get message() {
+      return tr("ui.providerErrors.stackkitFilesMissing");
+    },
+    get details() {
+      return tr("ui.providerErrors.aStackKitWasSelectedE");
+    },
+    get steps() {
+      return [
+        tr("ui.providerErrors.withDockerRebuildTheImage"),
+        tr("ui.providerErrors.checkTheServerLogsDocker"),
+        tr("ui.providerErrors.ifRunningTheBinaryOutside"),
+        tr("ui.providerErrors.verifyTheStackKitDirectoryExists"),
+      ];
+    },
   },
   stackkit_artifact_generation: {
-    message: "StackKit artifacts could not be generated",
-    details:
-      "The managed VM was prepared, but StackKits could not generate the rollout artifacts or kombify.me routing data.",
-    steps: [
-      "Do not create another provider VM; reuse the existing stack and lease for the next rollout attempt",
-      "Check the error details for kombify.me registration, quota, or StackKits CLI output",
-      "Resolve the kombify.me or StackKits blocker, then retry only the StackKit rollout",
-    ],
+    get message() {
+      return tr("ui.providerErrors.stackkitArtifactsCouldNotBe");
+    },
+    get details() {
+      return tr("ui.providerErrors.theManagedVMWasPrepared");
+    },
+    get steps() {
+      return [
+        tr("ui.providerErrors.doNotCreateAnotherProvider"),
+        tr("ui.providerErrors.checkTheErrorDetailsFor"),
+        tr("ui.providerErrors.resolveTheKombifyMeOr"),
+      ];
+    },
   },
   stackkit_not_found: {
-    message: "No matching StackKit found",
-    details:
-      "No compatible StackKit is available for the selected configuration.",
-    steps: [
-      "Try selecting fewer services",
-      "Switch to a different access mode (Home/Anywhere)",
-      "Check that StackKit files are present in the configured StackKits checkout",
-      "For custom StackKits: validate the CUE syntax",
-    ],
+    get message() {
+      return tr("ui.providerErrors.noMatchingStackKitFound");
+    },
+    get details() {
+      return tr("ui.providerErrors.noCompatibleStackKitIsAvailable");
+    },
+    get steps() {
+      return [
+        tr("ui.providerErrors.trySelectingFewerServices"),
+        tr("ui.providerErrors.switchToADifferentAccess"),
+        tr("ui.providerErrors.checkThatStackKitFilesAre"),
+        tr("ui.providerErrors.forCustomStackKitsValidateThe"),
+      ];
+    },
   },
   wizard_projection_rejected: {
-    message: "This Node could not be added",
-    details:
-      "The Additional Node intent could not be projected onto the Architecture v2 kit spec.",
-    steps: [
-      "Retry Additional Node. A Foundation role is joined as a worker on an existing kit",
-      "If this is a new homelab, found a kit instead of adding a Node",
-    ],
+    get message() {
+      return tr("ui.providerErrors.thisNodeCouldNotBe");
+    },
+    get details() {
+      return tr("ui.providerErrors.theAdditionalNodeIntentCould");
+    },
+    get steps() {
+      return [
+        tr("ui.providerErrors.retryAdditionalNodeAFoundation"),
+        tr("ui.providerErrors.ifThisIsANew"),
+      ];
+    },
   },
   stackspec_v1_rejected: {
-    message: "This deployment is not Architecture v2",
-    details:
-      "StackKits only accepts an Architecture v2 StackSpec. A v1 document, or v2 fields such as useCases on a v1 document, cannot be validated or joined.",
-    steps: [
-      "Found a new kit for this server instead of joining the existing v1 deployment",
-      "Do not retry Additional Node against a v1 homelab",
-      "If this is a new deployment, retry the Wizard so Techstack can project a stackkit/v2alpha1 spec",
-    ],
+    get message() {
+      return tr("ui.providerErrors.thisDeploymentIsNotArchitecture");
+    },
+    get details() {
+      return tr("ui.providerErrors.stackkitsOnlyAcceptsAnArchitecture");
+    },
+    get steps() {
+      return [
+        tr("ui.providerErrors.foundANewKitFor"),
+        tr("ui.providerErrors.doNotRetryAdditionalNode"),
+        tr("ui.providerErrors.ifThisIsANew2"),
+      ];
+    },
   },
   stackkit_identity_handoff_missing: {
-    message: "StackKit identity handoff is missing",
-    details:
-      "The rollout did not return the owner login, login gateway, and recovery outputs required to use the stack.",
-    steps: [
-      "Check the Runtime Action response for stackkit_outputs.identity.owner.username",
-      "Check the Runtime Action response for stackkit_outputs.login_gateway.url",
-      "Check the Runtime Action response for stackkit_outputs.identity.recovery",
-      "Retry only after the StackKit runtime action contract returns those outputs",
-    ],
+    get message() {
+      return tr(
+        "ui.stacksCreatingCreationLease.stackkitIdentityHandoffIsMissing",
+      );
+    },
+    get details() {
+      return tr("ui.providerErrors.theRolloutDidNotReturn");
+    },
+    get steps() {
+      return [
+        tr("ui.providerErrors.checkTheRuntimeActionResponse"),
+        tr("ui.providerErrors.checkTheRuntimeActionResponse2"),
+        tr("ui.providerErrors.checkTheRuntimeActionResponse3"),
+        tr("ui.providerErrors.retryOnlyAfterTheStackKit"),
+      ];
+    },
   },
   stackkit_rollout_failed: {
-    message: "StackKit rollout could not be applied",
-    details:
-      "The VM was prepared, but the StackKits Runtime Action could not apply the selected StackKit rollout.",
-    steps: [
-      "Check the error details for backend error, target bootstrap, and runtime diagnostics",
-      "Check the runtime logs for the same stack, job, lease, and provider",
-      "Do not create another provider VM until the existing job has a diagnostic artifact or a clear skip reason",
-      "Retry the rollout only after SSH, Docker, and the StackKits Runtime Action are stable on the target server",
-    ],
+    get message() {
+      return tr("ui.providerErrors.stackkitRolloutCouldNotBe");
+    },
+    get details() {
+      return tr("ui.providerErrors.theVMWasPreparedBut");
+    },
+    get steps() {
+      return [
+        tr("ui.providerErrors.checkTheErrorDetailsFor2"),
+        tr("ui.providerErrors.checkTheRuntimeLogsFor"),
+        tr("ui.providerErrors.doNotCreateAnotherProvider2"),
+        tr("ui.providerErrors.retryTheRolloutOnlyAfter"),
+      ];
+    },
   },
   database_error: {
-    message: "Database error",
-    details: "The configuration could not be saved to the database.",
-    steps: [
-      "Check that the PocketBase database is running",
-      "Verify write permissions for the pb_data/ directory",
-      "With Docker: ensure the volume is mounted correctly",
-      "Try restarting the kombify-Techstack server",
-    ],
+    get message() {
+      return tr("ui.providerErrors.databaseError");
+    },
+    get details() {
+      return tr("ui.providerErrors.theConfigurationCouldNotBe");
+    },
+    get steps() {
+      return [
+        tr("ui.providerErrors.checkThatThePocketBaseDatabase"),
+        tr("ui.providerErrors.verifyWritePermissionsForThe"),
+        tr("ui.providerErrors.withDockerEnsureTheVolume"),
+        tr("ui.providerErrors.tryRestartingTheKombifyTechstack"),
+      ];
+    },
   },
   unifier_error: {
-    message: "Unifier processing error",
-    details:
-      "The configuration could not be transformed into a valid deployment spec.",
-    steps: [
-      "Check that CUE is installed correctly",
-      "Review the logs with 'docker compose logs techstack'",
-      "Validate the stack-spec.yaml manually with the StackKits validator",
-      "For persistent errors: create a GitHub issue with the logs",
-    ],
+    get message() {
+      return tr("ui.providerErrors.unifierProcessingError");
+    },
+    get details() {
+      return tr("ui.providerErrors.theConfigurationCouldNotBe2");
+    },
+    get steps() {
+      return [
+        tr("ui.providerErrors.checkThatCUEIsInstalled"),
+        tr("ui.providerErrors.reviewTheLogsWithDocker"),
+        tr("ui.providerErrors.validateTheStackSpecYaml"),
+        tr("ui.providerErrors.forPersistentErrorsCreateA"),
+      ];
+    },
   },
   service_conflict: {
-    message: "Service conflict detected",
-    details: "The selected services have conflicting requirements.",
-    steps: [
-      "Disable conflicting services",
-      "Check port conflicts in the error message",
-      "For VPN services: only one VPN provider can be active at a time",
-      "For monitoring: VictoriaMetrics retention requires persistent storage",
-    ],
+    get message() {
+      return tr("ui.providerErrors.serviceConflictDetected");
+    },
+    get details() {
+      return tr("ui.providerErrors.theSelectedServicesHaveConflicting");
+    },
+    get steps() {
+      return [
+        tr("ui.providerErrors.disableConflictingServices"),
+        tr("ui.providerErrors.checkPortConflictsInThe"),
+        tr("ui.providerErrors.forVPNServicesOnlyOne"),
+        tr("ui.providerErrors.forMonitoringVictoriaMetricsRetentionRequires"),
+      ];
+    },
   },
   managed_runtime_decommission_failed: {
-    message: "This deployment could not be decommissioned",
-    details:
-      "The teardown stopped because Techstack could not match the request to an authoritative provider lease. Nothing was force-removed, so provider resources may still exist.",
-    steps: [
-      "Open the latest destroy job for the provider's own error",
-      "Check whether the server still exists at Centron or IONOS",
-      "Use the server's force decommission only after confirming the provider resources are gone",
-    ],
+    get message() {
+      return tr("ui.providerErrors.thisDeploymentCouldNotBe");
+    },
+    get details() {
+      return tr("ui.providerErrors.theTeardownStoppedBecauseTechstack");
+    },
+    get steps() {
+      return [
+        tr("ui.providerErrors.openTheLatestDestroyJob"),
+        tr("ui.providerErrors.checkWhetherTheServerStill"),
+        tr("ui.providerErrors.useTheServerSForce"),
+      ];
+    },
   },
   managed_runtime_pending: {
-    message: "Managed Runtime is not ready yet",
-    details:
-      "The VM lease has not reported an SSH host or public IP. Creation stopped so the operation cannot remain in provisioning indefinitely.",
-    steps: [
-      "Check the VM lease enrollment events and Sentry for the provider error",
-      "Check whether Centron or IONOS actually created the server",
-      "Retry creation only after the lease reports runtime_ssh_host or runtime_public_ip",
-    ],
+    get message() {
+      return tr("ui.providerErrors.managedRuntimeIsNotReady");
+    },
+    get details() {
+      return tr("ui.providerErrors.theVMLeaseHasNot");
+    },
+    get steps() {
+      return [
+        tr("ui.providerErrors.checkTheVMLeaseEnrollment"),
+        tr("ui.providerErrors.checkWhetherCentronOrIONOS"),
+        tr("ui.providerErrors.retryCreationOnlyAfterThe"),
+      ];
+    },
   },
   managed_runtime_bootstrap_failed: {
-    message: "Managed Runtime could not be prepared",
-    details:
-      "The VM is reachable, but Techstack could not prepare Docker or the bootstrap baseline reliably on the Managed Runtime server.",
-    steps: [
-      "Check the provider portal to see whether the server is still starting or was rebooted",
-      "Check cloud-init, Docker status, and SSH reachability on the Managed Runtime server",
-      "Retry creation only after SSH is stable and Docker starts without errors",
-    ],
+    get message() {
+      return tr("ui.providerErrors.managedRuntimeCouldNotBe");
+    },
+    get details() {
+      return tr("ui.providerErrors.theVMIsReachableBut");
+    },
+    get steps() {
+      return [
+        tr("ui.providerErrors.checkTheProviderPortalTo"),
+        tr("ui.providerErrors.checkCloudInitDockerStatus"),
+        tr("ui.providerErrors.retryCreationOnlyAfterSSH"),
+      ];
+    },
   },
   managed_runtime_provider_error: {
-    message: "Managed Runtime could not be created",
-    details:
-      "The cloud provider rejected or did not complete VM creation. The provider error is included in the details below.",
-    steps: [
-      "Check the provider error code in the error details",
-      "Wait for rate limits or create/delete throttling to clear before retrying",
-      "Check the lifecycle receipt and automatic cleanup status; do not start another Node until definitive absence is confirmed",
-      "If provider support is required, include the error code from the details",
-    ],
+    get message() {
+      return tr("ui.providerErrors.managedRuntimeCouldNotBe2");
+    },
+    get details() {
+      return tr("ui.providerErrors.theCloudProviderRejectedOr");
+    },
+    get steps() {
+      return [
+        tr("ui.providerErrors.checkTheProviderErrorCode"),
+        tr("ui.providerErrors.waitForRateLimitsOr"),
+        tr("ui.providerErrors.checkTheLifecycleReceiptAnd"),
+        tr("ui.providerErrors.ifProviderSupportIsRequired"),
+      ];
+    },
   },
   unknown_error: {
-    message: "Unexpected error",
-    details: "An unknown error occurred.",
-    steps: [
-      "Reload the page and try again",
-      "Check the browser console for JavaScript errors",
-      "Review the server logs",
-      "Create a GitHub issue with the reproduction steps",
-    ],
+    get message() {
+      return tr("ui.providerErrors.unexpectedError");
+    },
+    get details() {
+      return tr("ui.providerErrors.anUnknownErrorOccurred");
+    },
+    get steps() {
+      return [
+        tr("ui.providerErrors.reloadThePageAndTry"),
+        tr("ui.providerErrors.checkTheBrowserConsoleFor"),
+        tr("ui.providerErrors.reviewTheServerLogs"),
+        tr("ui.providerErrors.createAGitHubIssueWith"),
+      ];
+    },
   },
 };
 
@@ -218,15 +311,17 @@ export const PROVIDER_ERROR_CATEGORIES: ProviderErrorCategory[] = [
   {
     category: "provider_throttle",
     retryHint: "retry_after_provider_cooldown",
-    any: [
-      "vdc-5-1091",
-      "too many recent create and delete operations",
-      "too many recent create/delete operations",
-      "rate limit",
-      "rate-limit",
-      "ratelimit",
-      "throttl",
-    ],
+    get any() {
+      return [
+        "vdc-5-1091",
+        tr("ui.providerErrors.tooManyRecentCreateAnd"),
+        tr("ui.providerErrors.tooManyRecentCreateDelete"),
+        "rate limit",
+        "rate-limit",
+        "ratelimit",
+        "throttl",
+      ];
+    },
   },
   {
     category: "provider_quota",
@@ -254,12 +349,14 @@ export const PROVIDER_ERROR_CATEGORIES: ProviderErrorCategory[] = [
   {
     category: "provider_conflict",
     retryHint: "contact_provider_support",
-    any: [
-      "service conflict",
-      "already exists",
-      "name is already in use",
-      "resource conflict",
-    ],
+    get any() {
+      return [
+        "service conflict",
+        "already exists",
+        tr("ui.providerErrors.nameIsAlreadyInUse"),
+        "resource conflict",
+      ];
+    },
   },
 ];
 
@@ -327,13 +424,13 @@ export function parseManagedRuntimeProviderError(
 function retryHintGuidance(retryHint?: string): string {
   switch (retryHint) {
     case "retry_after_provider_cooldown":
-      return "Next step: Wait for the provider create/delete cooldown to end, then retry creation.";
+      return tr("ui.providerErrors.nextStepWaitForThe");
     case "free_provider_resources":
-      return "Next step: Check limits, quota, and running servers in the provider portal, then free the required resources.";
+      return tr("ui.providerErrors.nextStepCheckLimitsQuota");
     case "contact_provider_support":
-      return "Next step: Check the provider portal. If the error persists, send the error code to provider support.";
+      return tr("ui.providerErrors.nextStepCheckTheProvider");
     default:
-      return "Next step: Check the lifecycle receipt and automatic cleanup status. Retry only after definitive absence is confirmed.";
+      return tr("ui.providerErrors.nextStepCheckTheLifecycle");
   }
 }
 
@@ -342,19 +439,24 @@ export function buildManagedRuntimeProviderErrorDetails(
   backendDetails?: string,
 ): string {
   const info = parseManagedRuntimeProviderError(
-    `${errorMessage}\n${backendDetails ?? ""}`,
+    `${errorMessage}
+${backendDetails ?? ""}`,
   );
   if (!info.isProviderError) return "";
 
-  const lines = ["The cloud provider rejected server creation."];
+  const lines = [tr("ui.providerErrors.theCloudProviderRejectedServer")];
   if (info.providerLabel) lines.push(`Provider: ${info.providerLabel}`);
-  if (info.code) lines.push(`Error code: ${info.code}`);
-  if (info.summary) lines.push(`Provider message: ${info.summary}`);
+  if (info.code)
+    lines.push(tr("ui.providerErrors.errorCode", { code: info.code }));
+  if (info.summary)
+    lines.push(
+      tr("ui.providerErrors.providerMessage", { summary: info.summary }),
+    );
 
   lines.push(retryHintGuidance(info.retryHint));
 
   lines.push("");
-  lines.push("Technical details:");
+  lines.push(tr("ui.providerErrors.technicalDetails"));
   lines.push(errorMessage);
   return lines.join("\n");
 }
@@ -459,41 +561,52 @@ export const TROUBLESHOOTING_RULES: TroubleshootingRule[] = [
     entry: "managed_runtime_decommission_failed",
   },
   {
-    any: ["kit directory not found", "base stackkit not found"],
+    get any() {
+      return [
+        tr("ui.providerErrors.kitDirectoryNotFound"),
+        tr("ui.providerErrors.baseStackkitNotFound"),
+      ];
+    },
     entry: "stackkit_files_missing",
   },
   {
-    any: [
-      "wizard_projection_rejected",
-      "projection rejected",
-      "joining a second controller",
-      "this node could not be added",
-    ],
+    get any() {
+      return [
+        "wizard_projection_rejected",
+        "projection rejected",
+        tr("ui.providerErrors.joiningASecondController"),
+        tr("ui.providerErrors.thisNodeCouldNotBe2"),
+      ];
+    },
     entry: "wizard_projection_rejected",
   },
   {
-    any: [
-      "v1.unknown-fields",
-      "migration_blockers",
-      "architecture v2",
-      "stackkit/v2alpha1",
-      "v1 stackspec cannot carry",
-      "join requires an architecture v2",
-      "canonical v2",
-    ],
+    get any() {
+      return [
+        "v1.unknown-fields",
+        "migration_blockers",
+        "architecture v2",
+        "stackkit/v2alpha1",
+        tr("ui.providerErrors.v1StackspecCannotCarry"),
+        tr("ui.providerErrors.joinRequiresAnArchitectureV2"),
+        "canonical v2",
+      ];
+    },
     entry: "stackspec_v1_rejected",
   },
   {
-    any: [
-      "stackkits artifact generation failed",
-      "stackkit artifact generation failed",
-      "stackkits cli generate failed",
-      "stackkit cli generate failed",
-      "kombify.me registration failed",
-      "base subdomain limit reached",
-      "api error 429",
-      "no subdomainprefix is configured",
-    ],
+    get any() {
+      return [
+        tr("ui.providerErrors.stackkitsArtifactGenerationFailed"),
+        tr("ui.providerErrors.stackkitArtifactGenerationFailed"),
+        tr("ui.providerErrors.stackkitsCliGenerateFailed"),
+        tr("ui.providerErrors.stackkitCliGenerateFailed"),
+        tr("ui.providerErrors.kombifyMeRegistrationFailed"),
+        tr("ui.providerErrors.baseSubdomainLimitReached"),
+        "api error 429",
+        tr("ui.providerErrors.noSubdomainprefixIsConfigured"),
+      ];
+    },
     entry: "stackkit_artifact_generation",
   },
   {
@@ -506,47 +619,56 @@ export const TROUBLESHOOTING_RULES: TroubleshootingRule[] = [
     entry: "stackkit_identity_handoff_missing",
   },
   {
-    any: [
-      "stackkits rollout failed",
-      "stackkit rollout failed",
-      "stackkits could not apply",
-      "stackkit_rollout",
-      "runtime action stackkit_rollout",
-      "opentofu_apply_failed",
-    ],
+    get any() {
+      return [
+        "stackkits rollout failed",
+        "stackkit rollout failed",
+        tr("ui.providerErrors.stackkitsCouldNotApply"),
+        "stackkit_rollout",
+        tr("ui.providerErrors.runtimeActionStackkitRollout"),
+        "opentofu_apply_failed",
+      ];
+    },
     entry: "stackkit_rollout_failed",
   },
   { any: ["validation", "invalid"], entry: "validation_failed" },
   { any: ["network", "connection", "fetch"], entry: "network_error" },
-  { any: ["no matching stackkit", "kit not found"], entry: "stackkit_not_found" },
+  {
+    any: ["no matching stackkit", "kit not found"],
+    entry: "stackkit_not_found",
+  },
   { any: ["database", "pocketbase"], entry: "database_error" },
   { any: ["unifier", "cue"], entry: "unifier_error" },
   {
-    any: [
-      "lease enrollment failed",
-      "create ionos-managed node",
-      "create centron-managed node",
-      "ionos create server",
-      "centron create server",
-      "storage creation",
-      "too many recent create and delete operations",
-      "vdc-5-1091",
-    ],
+    get any() {
+      return [
+        "lease enrollment failed",
+        "create ionos-managed node",
+        "create centron-managed node",
+        "ionos create server",
+        "centron create server",
+        "storage creation",
+        tr("ui.providerErrors.tooManyRecentCreateAnd"),
+        "vdc-5-1091",
+      ];
+    },
     entry: "managed_runtime_provider_error",
     custom: (rawError) =>
       parseManagedRuntimeProviderError(rawError).isProviderError,
   },
   {
-    any: [
-      "target_bootstrap",
-      "target bootstrap",
-      "bootstrap managed runtime target",
-      "managed runtime target bootstrap failed",
-      "remote command exited without exit status",
-      "without exit status or exit signal",
-      "docker_ready=failed",
-      "phase=docker_status status=failed",
-    ],
+    get any() {
+      return [
+        "target_bootstrap",
+        "target bootstrap",
+        tr("ui.providerErrors.bootstrapManagedRuntimeTarget"),
+        tr("ui.providerErrors.managedRuntimeTargetBootstrapFailed"),
+        "remote command exited without exit status",
+        tr("ui.providerErrors.withoutExitStatusOrExit"),
+        "docker_ready=failed",
+        "phase=docker_status status=failed",
+      ];
+    },
     entry: "managed_runtime_bootstrap_failed",
   },
   { any: ["conflict", "port"], entry: "service_conflict" },

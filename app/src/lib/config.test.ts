@@ -18,6 +18,5 @@ describe("config", () => {
       expect(productIdentityLabel("0.6.14", "abc1234")).toBe("0.6.14");
       expect(productIdentityLabel("", "abc1234")).toBe("");
     });
-
   });
 });

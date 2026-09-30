@@ -4,6 +4,7 @@ import type {
   StackOperationServer,
 } from "#lib/api/stacks.js";
 
+import { tr } from "#lib/i18n.svelte.js";
 const TERMINAL_OR_UNREACHABLE = new Set([
   "offline",
   "unreachable",
@@ -58,7 +59,7 @@ function refreshErrorDetails(error: unknown): CockpitRefreshError {
   const message =
     typeof candidate?.message === "string" && candidate.message.trim()
       ? candidate.message
-      : "Monitoring cockpit could not be refreshed.";
+      : tr("ui.cockpitSnapshot.monitoringCockpitCouldNotBe");
   const retryableStatuses = new Set([429, 502, 503, 504]);
   return {
     message,

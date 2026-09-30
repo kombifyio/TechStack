@@ -21,10 +21,21 @@ const SESSION_COOKIE_NAME =
 const tierClaim = "https://kombify.io/tier";
 const entitlementsClaim = "https://kombify.io/entitlements";
 const commonEntitlements = [
-  "cloud.runtime.credits.ayn",
   "techstack.managed.runtime",
   "techstack.managed.runtime.cloudkit",
 ] as const;
+// Managed-server capacity comes from the quota entitlement of the token's own
+// paid tier (Cloud plan-entitlement-budgets: pro and ayn grant servers). The
+// lane fixture is ayn; the long-lived TEST_RIL_PRO_USER fixture is pro.
+// Paid tier aliases canonicalize like the edge (cloudflare-edge entitlements.ts).
+const managedServerTiers: Record<string, "pro" | "ayn"> = {
+  pro: "pro",
+  premium: "pro",
+  pro_plus: "pro",
+  ayn: "ayn",
+  all_you_need: "ayn",
+  all_you_need_tier: "ayn",
+};
 const managedProviders = ["centron", "ionos"] as const;
 type ManagedProviderID = (typeof managedProviders)[number];
 
@@ -79,7 +90,11 @@ function assertFreshCloudClaims(
   providerID: ManagedProviderID,
   issuedAfterSeconds: number,
 ) {
-  expect(claims[tierClaim]).toBe("ayn");
+  const tier =
+    typeof claims[tierClaim] === "string"
+      ? managedServerTiers[claims[tierClaim] as string]
+      : undefined;
+  expect(tier).toBeDefined();
   const entitlements = claims[entitlementsClaim];
   expect(Array.isArray(entitlements)).toBe(true);
   const granted = new Set(
@@ -91,6 +106,7 @@ function assertFreshCloudClaims(
   );
   for (const entitlement of [
     ...commonEntitlements,
+    `cloud.runtime.credits.${String(tier)}`,
     `techstack.managed.runtime.${providerID}`,
   ]) {
     expect(granted.has(entitlement)).toBe(true);

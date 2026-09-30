@@ -75,15 +75,15 @@
           {#if creation.isComplete}
             {creation.completionTitle}
           {:else if creation.handoffMissingFailure}
-            Rollout incomplete
+            {tr("ui.stacksCreatingCreationProgress.rolloutIncomplete")}
           {:else if creation.hasFailed}
-            Creation failed
+            {tr("ui.stacksCreatingCreationProgress.creationFailed")}
           {:else if creation.waitingForManagedRuntime}
-            Node provisioning is still in progress
+            {tr("ui.stacksCreatingCreationProgress.nodeProvisioningIsStillIn")}
           {:else if creation.agentPairingWaiting}
-            Run the pairing command
+            {tr("ui.stacksCreatingCreationProgress.runThePairingCommand")}
           {:else}
-            Please wait while we're
+            {tr("ui.stacksCreatingCreationProgress.pleaseWaitWhileWeRe")}
             <span class="inline-flex whitespace-nowrap">
               <MorphingText
                 texts={["Completing", "Validating", "Configuring", "Deploying"]}
@@ -96,14 +96,11 @@
         </h3>
         <p class="text-sm text-muted-foreground">
           {#if creation.waitingForManagedRuntime}
-            The next managed-runtime check is scheduled for this operation. If
-            it remains overdue after a replica handover or restart, Techstack
-            offers a resume action for that exact Node.
+            {tr("ui.stacksCreatingCreationProgress.theNextManagedRuntimeCheck")}
           {:else if creation.agentPairingWaiting}
-            The registration request is ready, but the Node is not connected
-            until a fresh Guard heartbeat appears in the Node projection.
+            {tr("ui.stacksCreatingCreationProgress.theRegistrationRequestIsReady")}
           {:else}
-            This may take a few minutes. You can track the progress below.
+            {tr("ui.stacksCreatingCreationProgress.thisMayTakeAFew")}
           {/if}
         </p>
       </div>
@@ -115,7 +112,7 @@
             class="mb-6 p-4 rounded-xl border border-destructive/30 bg-destructive/10"
             data-testid="init-error"
           >
-            <p class="text-destructive font-medium">Setup cannot continue</p>
+            <p class="text-destructive font-medium">{tr("ui.stacksCreatingCreationProgress.setupCannotContinue")}</p>
             <p class="text-sm text-destructive/80 mt-1">
               {creation.initError}
             </p>
@@ -123,7 +120,7 @@
               href="/stacks/new"
               class="inline-block mt-3 text-sm text-primary hover:text-primary/80 underline"
             >
-              Back to setup wizard →
+              {tr("ui.stacksCreatingCreationProgress.backToSetupWizard")}
             </a>
           </div>
         {/if}
@@ -131,7 +128,7 @@
         <!-- Progress bar -->
         <div class="mb-8">
           <div class="flex justify-between text-sm mb-2">
-            <span class="text-muted-foreground">Progress</span>
+            <span class="text-muted-foreground">{tr("ui.stacksCreatingCreationProgress.progress")}</span>
             <span class="text-primary font-mono" aria-live="polite"
               >{creation.overallProgress}%</span
             >
@@ -156,13 +153,11 @@
         {#if !creation.isComplete && !creation.hasFailed}
           <p class="text-center text-muted-foreground text-xs mt-6">
             {#if creation.waitingForManagedRuntime}
-              The next check is scheduled. Dashboard, services, and Node access
-              remain locked until enrollment is confirmed; an overdue check can
-              be resumed safely here.
+              {tr("ui.stacksCreatingCreationProgress.theNextCheckIsScheduled")}
             {:else if creation.agentPairingWaiting}
-              This page checks the real Node projection every few seconds.
+              {tr("ui.stacksCreatingCreationProgress.thisPageChecksTheReal")}
             {:else}
-              This can take a few minutes. Please do not close this page.
+              {tr("ui.stacksCreatingCreationProgress.thisCanTakeAFew")}
             {/if}
           </p>
         {/if}

@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Win32;
+using Kombify.Client.Shell;
 
 namespace Kombify.TechStack.Client;
 
@@ -50,6 +51,9 @@ internal static class ClientUpdater
     // launched and this process must exit so its files can be replaced.
     internal static bool TryApplyStagedUpdate(ClientConfig config)
     {
+        // The current signed descriptor and runtime verifier belong to the
+        // Local payload. Cloud needs its own edition-bound update feed first.
+        if (!DesktopEdition.IsLocal) return false;
         try
         {
             FinishRollback(config);
@@ -72,7 +76,7 @@ internal static class ClientUpdater
 
             var stageDir = Path.GetDirectoryName(staged.DescriptorPath)!;
             var installer = Path.Combine(stageDir, SetupFileName);
-            CopyVerified(staged.PackagePath, installer, staged.PackageSha256, staged.PackageSize);
+            VerifiedUpdateHandoff.CopyVerified(staged.PackagePath, installer, staged.PackageSha256, staged.PackageSize);
             ReplaceDirectory(config.RuntimeDataDir, SnapshotDirectory());
             var pending = new PendingUpdate
             {
@@ -101,6 +105,7 @@ internal static class ClientUpdater
     // was launched and this process must exit.
     internal static bool CompletePendingUpdate(ClientConfig config, bool runtimeHealthy, Action stopRuntime)
     {
+        if (!DesktopEdition.IsLocal) return false;
         var pending = ReadPending();
         if (pending is null)
         {
@@ -156,6 +161,7 @@ internal static class ClientUpdater
     // Stages a newer signed installer through the runtime binary. Never throws.
     internal static async Task CheckAndStageAsync(ClientConfig config, string runtimeExe)
     {
+        if (!DesktopEdition.IsLocal) return;
         if (!config.AutoUpdate || !IsMachineInstallation() ||
             string.IsNullOrWhiteSpace(config.UpdateManifestUrl) || !File.Exists(runtimeExe))
         {
@@ -257,25 +263,6 @@ internal static class ClientUpdater
             }
         }
         return newest;
-    }
-
-    private static void CopyVerified(string source, string destination, string expectedSha256, long expectedSize)
-    {
-        // The source stays open without write sharing while it is hashed and
-        // copied, and the copy is hashed again before it is launched.
-        using (var input = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read))
-        using (var output = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None))
-        {
-            input.CopyTo(output);
-        }
-        using var copy = new FileStream(destination, FileMode.Open, FileAccess.Read, FileShare.Read);
-        var digest = Convert.ToHexString(SHA256.HashData(copy)).ToLowerInvariant();
-        if (copy.Length != expectedSize || !digest.Equals(expectedSha256, StringComparison.OrdinalIgnoreCase))
-        {
-            copy.Dispose();
-            File.Delete(destination);
-            throw new InvalidOperationException("the staged installer no longer matches its verified digest");
-        }
     }
 
     // Burn keeps the installed bundle in its package cache; a copy of that

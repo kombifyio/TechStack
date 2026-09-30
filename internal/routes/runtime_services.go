@@ -37,6 +37,10 @@ type ServiceRuntimeRouteConfig struct {
 
 type serviceActionOrchestrator interface {
 	EnqueueStackKitLifecycle(context.Context, jobs.StackKitLifecycleRequest) (string, error)
+	// StackKitLifecycleJobQueued reports whether this process still holds the
+	// job in its queue; a durable pending job it does not hold was lost to a
+	// restart and must be enqueued again.
+	StackKitLifecycleJobQueued(jobID string) bool
 }
 
 type serviceRuntimeHandlers struct {
@@ -383,6 +387,24 @@ func (h *serviceRuntimeHandlers) action(e *httpx.Event) error {
 	if lockAction {
 		return h.applyMutationLock(e, tenantID, ownerID, service, request.Action)
 	}
+	digestBytes := sha256.Sum256([]byte(strings.Join([]string{
+		tenantID, serviceID, request.Action, strconv.FormatInt(request.ExpectedInventoryRevision, 10),
+		strconv.FormatBool(request.OwnerApproved), strconv.FormatInt(int64(request.Limit), 10), request.Cursor,
+	}, "\x00")))
+	digest := hex.EncodeToString(digestBytes[:])
+	operation := map[string]string{"start": jobs.StackKitLifecycleServiceStart, "stop": jobs.StackKitLifecycleServiceStop, serviceActionRestart: jobs.StackKitLifecycleServiceRestart, "logs": jobs.StackKitLifecycleServiceLogs}[request.Action]
+	lifecycleRequest := jobs.StackKitLifecycleRequest{
+		StackID: stack.ID, StackKitInstanceID: stack.StackKitInstanceID, TenantID: tenantID, OwnerID: ownerID,
+		Operation: operation, OwnerApproved: request.Action != "logs", ServiceKey: service.ServiceKey,
+		LogTail: request.Limit, LogCursor: request.Cursor, ServiceID: service.ID,
+		DurableJobID: jobs.StackKitServiceActionJobID(tenantID, ownerID, idempotencyKey), ServiceActionDigest: digest,
+	}
+	// Replay before validating the target: a lost-response retry must return
+	// the stored receipt even though the first attempt already moved the
+	// inventory revision, locked the service or lost its agent connection.
+	if replayed, replayErr := h.replayServiceAction(e, tenantID, service, request.Action, lifecycleRequest); replayed || replayErr != nil {
+		return replayErr
+	}
 	// Fail-closed: an owner guardrail refuses every agent-executed mutation.
 	// Reads stay open, so `logs` is still how an owner inspects a frozen service.
 	if service.MutationLock.Locked() && serviceMutatingActions[request.Action] {
@@ -396,19 +418,45 @@ func (h *serviceRuntimeHandlers) action(e *httpx.Event) error {
 	if targetErr != nil {
 		return targetErr
 	}
-	digestBytes := sha256.Sum256([]byte(strings.Join([]string{
-		tenantID, serviceID, request.Action, strconv.FormatInt(request.ExpectedInventoryRevision, 10),
-		strconv.FormatBool(request.OwnerApproved), strconv.FormatInt(int64(request.Limit), 10), request.Cursor,
-	}, "\x00")))
-	digest := hex.EncodeToString(digestBytes[:])
-	operation := map[string]string{"start": jobs.StackKitLifecycleServiceStart, "stop": jobs.StackKitLifecycleServiceStop, serviceActionRestart: jobs.StackKitLifecycleServiceRestart, "logs": jobs.StackKitLifecycleServiceLogs}[request.Action]
-	lifecycleRequest := jobs.StackKitLifecycleRequest{
-		StackID: stack.ID, StackKitInstanceID: stack.StackKitInstanceID, TenantID: tenantID, OwnerID: ownerID, AgentID: target.server.WorkerID,
-		Operation: operation, OwnerApproved: request.Action != "logs", StackKit: target.stackKit, ServiceKey: service.ServiceKey,
-		LogTail: request.Limit, LogCursor: request.Cursor, ServiceID: service.ID,
-		DurableJobID: jobs.StackKitServiceActionJobID(tenantID, ownerID, idempotencyKey), ServiceActionDigest: digest,
+	if maintenanceErr := refuseDuringServerMaintenance(e, h.servers, tenantID, controlplane.ServerMaintenanceScope{
+		ServerID: target.server.ID, AgentID: target.server.WorkerID,
+	}); maintenanceErr != nil {
+		return maintenanceErr
 	}
+	lifecycleRequest.AgentID = target.server.WorkerID
+	lifecycleRequest.StackKit = target.stackKit
 	return h.enqueueServiceAction(e, tenantID, stack.ID, service, request.Action, lifecycleRequest)
+}
+
+// replayServiceAction answers a retry from the stored job receipt. The job id
+// is derived from tenant, principal and Idempotency-Key, and the stored
+// receipt must match the request fingerprint, so a replay never crosses scopes
+// and a different body under the same key stays a conflict. Only a durable
+// pending job that this process no longer queues falls through, so the
+// validated enqueue path can rebuild a job lost to a restart.
+func (h *serviceRuntimeHandlers) replayServiceAction(
+	e *httpx.Event,
+	tenantID string,
+	service *controlplane.ServiceRuntime,
+	action string,
+	lifecycleRequest jobs.StackKitLifecycleRequest,
+) (bool, error) {
+	existing, err := h.jobs.GetJob(e.Request.Context(), tenantID, lifecycleRequest.DurableJobID)
+	if errors.Is(err, controlplane.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return true, httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Failed to inspect service action replay", nil)
+	}
+	if !jobs.MatchesStackKitServiceActionReceipt(existing.Result, lifecycleRequest) {
+		return true, httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "Idempotency-Key was already used for a different request", nil)
+	}
+	if strings.EqualFold(existing.State, "pending") && !h.orch.StackKitLifecycleJobQueued(existing.ID) {
+		return false, nil
+	}
+	return true, httpx.Success(e, http.StatusAccepted, serviceActionResponse{
+		JobID: existing.ID, ServiceID: service.ID, Action: action, Status: serviceActionJobStatus(existing.State),
+	})
 }
 
 type serviceActionTarget struct {
@@ -420,24 +468,24 @@ func decodeServiceActionRequest(e *httpx.Event) (string, string, serviceActionRe
 	serviceID := strings.TrimSpace(e.Request.PathValue("serviceId"))
 	idempotencyKey := strings.TrimSpace(e.Request.Header.Get("Idempotency-Key"))
 	if serviceID == "" || idempotencyKey == "" || len(idempotencyKey) > 128 {
-		return "", "", serviceActionRequest{}, false, httpx.BadRequest(e, "Service ID and a bounded Idempotency-Key are required", nil)
+		return "", "", serviceActionRequest{}, false, httpx.Reject(e, http.StatusBadRequest, ksapi.ErrCodeBadRequest, "Service ID and a bounded Idempotency-Key are required", nil)
 	}
 	var request serviceActionRequest
 	decoder := json.NewDecoder(io.LimitReader(e.Request.Body, 1<<20))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
-		return "", "", serviceActionRequest{}, false, httpx.BadRequest(e, "Invalid request body", nil)
+		return "", "", serviceActionRequest{}, false, httpx.Reject(e, http.StatusBadRequest, ksapi.ErrCodeBadRequest, "Invalid request body", nil)
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); err != io.EOF {
-		return "", "", serviceActionRequest{}, false, httpx.BadRequest(e, "Request body must contain one JSON document", nil)
+		return "", "", serviceActionRequest{}, false, httpx.Reject(e, http.StatusBadRequest, ksapi.ErrCodeBadRequest, "Request body must contain one JSON document", nil)
 	}
 	request.Action = strings.ToLower(strings.TrimSpace(request.Action))
 	if !serviceActionVocabulary[request.Action] {
-		return "", "", serviceActionRequest{}, false, httpx.BadRequest(e, "Action must be start, stop, restart, logs, freeze, or unfreeze", nil)
+		return "", "", serviceActionRequest{}, false, httpx.Reject(e, http.StatusBadRequest, ksapi.ErrCodeBadRequest, "Action must be start, stop, restart, logs, freeze, or unfreeze", nil)
 	}
 	if request.Action != serviceActionLogs && !request.OwnerApproved {
-		return "", "", serviceActionRequest{}, false, httpx.BadRequest(e, "Service mutations require explicit Owner approval", nil)
+		return "", "", serviceActionRequest{}, false, httpx.Reject(e, http.StatusBadRequest, ksapi.ErrCodeBadRequest, "Service mutations require explicit Owner approval", nil)
 	}
 	lockAction := request.Action == serviceActionFreeze || request.Action == serviceActionUnfreeze
 	// The guardrail is a control-plane fact, not an observation of the runtime.
@@ -445,7 +493,7 @@ func decodeServiceActionRequest(e *httpx.Event) (string, string, serviceActionRe
 	// not make - and would make a service unlockable exactly when its agent is
 	// unreachable, which is when an owner most wants to freeze it.
 	if lockAction && request.ExpectedInventoryRevision != 0 {
-		return "", "", serviceActionRequest{}, false, httpx.BadRequest(e, "expected_inventory_revision is not applicable to freeze and unfreeze", nil)
+		return "", "", serviceActionRequest{}, false, httpx.Reject(e, http.StatusBadRequest, ksapi.ErrCodeBadRequest, "expected_inventory_revision is not applicable to freeze and unfreeze", nil)
 	}
 	request.Cursor = strings.TrimSpace(request.Cursor)
 	if request.Action == serviceActionLogs {
@@ -453,10 +501,10 @@ func decodeServiceActionRequest(e *httpx.Event) (string, string, serviceActionRe
 			request.Limit = 100
 		}
 		if request.Limit < 1 || request.Limit > 200 || len(request.Cursor) > 2048 {
-			return "", "", serviceActionRequest{}, false, httpx.BadRequest(e, "Service logs require limit 1..200 and a bounded cursor", nil)
+			return "", "", serviceActionRequest{}, false, httpx.Reject(e, http.StatusBadRequest, ksapi.ErrCodeBadRequest, "Service logs require limit 1..200 and a bounded cursor", nil)
 		}
 	} else if request.Limit != 0 || request.Cursor != "" {
-		return "", "", serviceActionRequest{}, false, httpx.BadRequest(e, "limit and cursor are only valid for logs", nil)
+		return "", "", serviceActionRequest{}, false, httpx.Reject(e, http.StatusBadRequest, ksapi.ErrCodeBadRequest, "limit and cursor are only valid for logs", nil)
 	}
 	return serviceID, idempotencyKey, request, lockAction, nil
 }
@@ -469,29 +517,29 @@ func (h *serviceRuntimeHandlers) validateServiceActionTarget(
 	request serviceActionRequest,
 ) (serviceActionTarget, error) {
 	if strings.TrimSpace(stack.StackKitInstanceID) == "" {
-		return serviceActionTarget{}, httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "Service StackKit instance identity is unavailable", nil)
+		return serviceActionTarget{}, httpx.Reject(e, http.StatusConflict, ksapi.ErrCodeConflict, "Service StackKit instance identity is unavailable", nil)
 	}
 	placement := serviceregistry.NormalizePlacement(service.ServerID, service.Placement)
 	if placement.TargetKind != serviceregistry.TargetKindServer {
-		return serviceActionTarget{}, httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "Service runtime target is not server-bound", map[string]any{"target_kind": placement.TargetKind})
+		return serviceActionTarget{}, httpx.Reject(e, http.StatusConflict, ksapi.ErrCodeConflict, "Service runtime target is not server-bound", map[string]any{"target_kind": placement.TargetKind})
 	}
 	server, err := h.servers.GetServerRuntime(e.Request.Context(), tenantID, service.ServerID)
 	if err != nil || server == nil {
-		return serviceActionTarget{}, httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "Service server is unavailable", nil)
+		return serviceActionTarget{}, httpx.Reject(e, http.StatusConflict, ksapi.ErrCodeConflict, "Service server is unavailable", nil)
 	}
 	if request.ExpectedInventoryRevision <= 0 || request.ExpectedInventoryRevision != server.InventoryRevision || metadataInt64(service.Metadata, "inventory_revision") != server.InventoryRevision {
-		return serviceActionTarget{}, httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "Inventory revision is stale", map[string]any{"current_inventory_revision": server.InventoryRevision})
+		return serviceActionTarget{}, httpx.Reject(e, http.StatusConflict, ksapi.ErrCodeConflict, "Inventory revision is stale", map[string]any{"current_inventory_revision": server.InventoryRevision})
 	}
 	if service.ObservedAt == nil || h.now().UTC().Sub(service.ObservedAt.UTC()) > runtimehealth.FreshHeartbeatWindow {
-		return serviceActionTarget{}, httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "Service observation is stale", nil)
+		return serviceActionTarget{}, httpx.Reject(e, http.StatusConflict, ksapi.ErrCodeConflict, "Service observation is stale", nil)
 	}
 	if server.ConnectionState != string(serverregistry.ConnectionConnected) && server.ConnectionState != string(serverregistry.ConnectionDegraded) {
-		return serviceActionTarget{}, httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "Service agent is not connected", nil)
+		return serviceActionTarget{}, httpx.Reject(e, http.StatusConflict, ksapi.ErrCodeConflict, "Service agent is not connected", nil)
 	}
 	// Validated against the same projection the read model advertises, so the
 	// advertised and the enforced capability set cannot drift apart.
 	if !containsString(serviceRuntimeAllowedActions(service.Capabilities, service.MutationLock.Locked()), request.Action) {
-		return serviceActionTarget{}, httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "Service action is not allowed", nil)
+		return serviceActionTarget{}, httpx.Reject(e, http.StatusConflict, ksapi.ErrCodeConflict, "Service action is not allowed", nil)
 	}
 	stackKit := strings.TrimSpace(strings.Split(service.StackKitVersion, "@")[0])
 	if stackKit == "" {
@@ -873,14 +921,7 @@ func (h *serviceRuntimeHandlers) response(service controlplane.ServiceRuntime, s
 	if reasonCode != "" {
 		access = serviceAccess(serviceAccessUnavailable, "", "", reasonCode, "")
 	}
-	placementFreshness := serverRuntimeTargetFreshness{State: "unknown"}
-	if placement.EvidenceRef != "" && placement.ObservedAt != nil {
-		seconds := int64(h.now().UTC().Sub(placement.ObservedAt.UTC()).Seconds())
-		if seconds < 0 {
-			seconds = 0
-		}
-		placementFreshness = serverRuntimeTargetFreshness{State: "recorded", AgeSeconds: &seconds}
-	}
+	placementFreshness := h.placementFreshness(placement, service.ObservedAt)
 	provenance := map[string]interface{}{
 		"definition_authority": serviceStackKits, "runtime_authority": serviceRuntimeAuthority, "observation_source": service.Source,
 	}
@@ -916,6 +957,29 @@ func (h *serviceRuntimeHandlers) response(service controlplane.ServiceRuntime, s
 		Provenance:        provenance,
 		CreatedAt:         service.CreatedAt, UpdatedAt: service.UpdatedAt,
 	}
+}
+
+// placementFreshness reports how old the evidence behind a placement is. The
+// placement shapes are disjoint (migration 076): a server placement carries no
+// placement evidence of its own, because the server binding is the placement
+// and the service's runtime observation on that server is its evidence. A
+// managed workload carries its own evidence reference and observation time.
+// Anything else stays unknown.
+func (h *serviceRuntimeHandlers) placementFreshness(placement serviceregistry.Placement, serviceObservedAt *time.Time) serverRuntimeTargetFreshness {
+	var observedAt *time.Time
+	switch placement.TargetKind {
+	case serviceregistry.TargetKindServer:
+		observedAt = serviceObservedAt
+	case serviceregistry.TargetKindManagedWorkload:
+		if placement.EvidenceRef != "" {
+			observedAt = placement.ObservedAt
+		}
+	}
+	if observedAt == nil || observedAt.IsZero() {
+		return serverRuntimeTargetFreshness{State: "unknown"}
+	}
+	seconds := max(int64(h.now().UTC().Sub(observedAt.UTC()).Seconds()), 0)
+	return serverRuntimeTargetFreshness{State: "recorded", AgeSeconds: &seconds}
 }
 
 func stringMapFromAny(value any) map[string]string {

@@ -75,7 +75,8 @@ func (f *wizardRunFakeMigrator) CompleteMigration(_ context.Context, legacy, can
 
 type wizardRunFakeGoalAuthor struct{}
 
-func (wizardRunFakeGoalAuthor) AuthorGoals(_ context.Context, _, _, _, _ string, goals []string) (specv2.GoalAuthoring, error) {
+func (wizardRunFakeGoalAuthor) AuthorGoals(_ context.Context, _, _, _, _ string, selection specv2.GoalSelection) (specv2.GoalAuthoring, error) {
+	goals := selection.Goals
 	workloads := map[string]any{}
 	var unmapped []string
 	for _, goal := range goals {
@@ -98,7 +99,8 @@ type wizardRunReleaseGoalAuthor struct {
 	supported map[string]bool
 }
 
-func (author wizardRunReleaseGoalAuthor) AuthorGoals(_ context.Context, _, _, _, _ string, goals []string) (specv2.GoalAuthoring, error) {
+func (author wizardRunReleaseGoalAuthor) AuthorGoals(_ context.Context, _, _, _, _ string, selection specv2.GoalSelection) (specv2.GoalAuthoring, error) {
+	goals := selection.Goals
 	workloads := map[string]any{}
 	var unmapped []string
 	for _, goal := range goals {

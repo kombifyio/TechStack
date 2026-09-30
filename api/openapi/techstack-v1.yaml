@@ -73,6 +73,38 @@ x-kombify-route-projection:
     origin is never called directly. /v1/orchestrator is the legacy projection of
     the same origin and MUST NOT be used by mobile.
 
+# Agent-native surface (API-FIRST-STANDARD section 9). The generated artifacts
+# api/surface/api-surface.json, api/toolmanifest/tool-manifest.json, the
+# Gateway catalog fragment api/surface/mcp-catalog-fragment.json and the public
+# reference api/surface/openapi.public.yaml are produced by
+# `mise run api:surface`; never edit them by hand.
+x-kombify-surface:
+  product: techstack
+  capability: techstack.inventory.read
+  envelope: data
+  cli:
+    command: techstack
+  mcp:
+    transport: streamable-http
+    endpoint: /api/v1/mcp
+    protocolVersion: "2026-07-28"
+    # Every published operation without its own x-kombify-mcp decision is a
+    # derived tool (API-FIRST-STANDARD section 9.2); explicit objects and
+    # reviewed `false` exclusions override it per operation.
+    defaults:
+      readCapability: techstack.inventory.read
+      writeCapability: techstack.inventory.write
+      confirmCapability: techstack.inventory.operate
+    catalog:
+      serverKey: techstack
+      connectorFamily: techstack
+      upstream: { kind: product-native, ref: techstack }
+      portalVisibilityGroup: customer-build-preview
+      requiredScopes: ["mcp:connect"]
+      featurePrefix: mcp.customer
+      quotaPrefix: mcp.usage
+      auditPrefix: mcp.customer
+
 tags:
   - name: Health
     description: Health checks and service info (no auth required)
@@ -142,6 +174,8 @@ paths:
   /api/v1/health:
     get:
       operationId: getHealth
+      x-kombify-cli: { command: "health status" }
+      x-kombify-mcp: false # health/readiness probe, not an agent tool
       tags: [Health]
       summary: Main health check
       security: []
@@ -156,6 +190,8 @@ paths:
   /api/v1/health/live:
     get:
       operationId: getLiveness
+      x-kombify-cli: { command: "health live" }
+      x-kombify-mcp: false # health/readiness probe, not an agent tool
       tags: [Health]
       summary: Kubernetes liveness probe
       security: []
@@ -174,6 +210,8 @@ paths:
   /api/v1/health/ready:
     get:
       operationId: getReadiness
+      x-kombify-cli: { command: "health ready" }
+      x-kombify-mcp: false # health/readiness probe, not an agent tool
       tags: [Health]
       summary: Kubernetes readiness probe
       security: []
@@ -201,6 +239,8 @@ paths:
   /api/v1/health/startup:
     get:
       operationId: getStartup
+      x-kombify-cli: { command: "health startup" }
+      x-kombify-mcp: false # health/readiness probe, not an agent tool
       tags: [Health]
       summary: Kubernetes startup probe
       security: []
@@ -213,6 +253,8 @@ paths:
   /api/v1/info:
     get:
       operationId: getInfo
+      x-kombify-cli: { command: "system info" }
+      x-kombify-mcp: false # static instance/client metadata; agents discover the surface through tools/list
       tags: [Health]
       summary: Service info (version, runtime stats)
       security: []
@@ -227,6 +269,8 @@ paths:
   /api/v1/capabilities:
     get:
       operationId: getCapabilities
+      x-kombify-cli: { command: "system capabilities" }
+      x-kombify-mcp: false # static instance/client metadata; agents discover the surface through tools/list
       tags: [Health]
       summary: Discover API capabilities for clients
       description: |
@@ -245,6 +289,8 @@ paths:
   /api/v1/client/bootstrap:
     get:
       operationId: getClientBootstrap
+      x-kombify-cli: { command: "system client-bootstrap" }
+      x-kombify-mcp: false # static instance/client metadata; agents discover the surface through tools/list
       tags: [Health]
       summary: Public runtime config for the static SPA
       description: |
@@ -294,6 +340,8 @@ paths:
   /api/v1/csrf:
     get:
       operationId: getCSRFToken
+      x-kombify-cli: { command: "auth csrf", hidden: true }
+      x-kombify-mcp: false # browser CSRF bootstrap
       tags: [Auth]
       summary: Issue a CSRF token for cookie-authenticated browser mutations
       security: []
@@ -316,6 +364,8 @@ paths:
   /api/v1/openapi.yaml:
     get:
       operationId: getOpenAPIYAML
+      x-kombify-cli: { command: "system openapi" }
+      x-kombify-mcp: false # the contract document itself, published separately
       tags: [Health]
       summary: Download the OpenAPI contract
       security: []
@@ -333,6 +383,7 @@ paths:
   /api/v1/instance:
     get:
       operationId: getInstanceIdentity
+      x-kombify-cli: { command: "instance get" }
       tags: [Instance]
       summary: Get the stable local instance identity
       security: []
@@ -355,6 +406,7 @@ paths:
   /api/v1/enrollment:
     get:
       operationId: getEnrollmentRecord
+      x-kombify-cli: { command: "instance enrollment" }
       tags: [Instance]
       summary: Get the local enrollment record
       security: []
@@ -380,6 +432,7 @@ paths:
   /api/v1/stacks:
     get:
       operationId: listKitDeployments
+      x-kombify-cli: { command: "stacks list" }
       tags: [Stacks]
       summary: List the owner's StackKit deployments
       description: |
@@ -408,6 +461,13 @@ paths:
           $ref: "#/components/responses/ServiceUnavailable"
     post:
       operationId: createStack
+      x-kombify-cli: { command: "stacks create" }
+      x-kombify-confirmation: "This operation creates the StackKit deployment and starts provisioning, which can order billed servers."
+      x-kombify-mcp:
+        requiredCapability: techstack.inventory.provision
+        costBearing: true
+        actionClass: cost_bearing
+        annotations: { readOnlyHint: false, idempotentHint: false, destructiveHint: false, openWorldHint: true }
       tags: [Stacks]
       summary: Create a StackKit deployment in the owner's Homelab
       description: |
@@ -453,9 +513,88 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/homelab:
+    get:
+      operationId: getHomelab
+      tags: [Stacks]
+      summary: Get the caller's homelab and its StackKit deployments
+      description: >-
+        Resolves the authenticated owner's canonical Homelab umbrella together
+        with its StackKit deployments. `homelab` is null while a backfill has
+        deployments but no Homelab row yet; with neither, the route is 404.
+      x-kombify-cli: { command: "homelab get" }
+      responses:
+        "200":
+          description: The caller's homelab
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [homelab, kit_deployments]
+                    properties:
+                      homelab:
+                        oneOf:
+                          - $ref: "#/components/schemas/Homelab"
+                          - type: "null"
+                      kit_deployments:
+                        type: array
+                        items: { type: object }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: renameHomelab
+      tags: [Stacks]
+      summary: Rename the caller's homelab
+      description: >-
+        Renames the authenticated owner's homelab. The homelab name is the
+        Stack Identity name and syncs to kombify Cloud when connected.
+        Reversible; the homelab is resolved from the authenticated owner, never
+        from an argument.
+      x-kombify-cli: { command: "homelab rename", args: [name] }
+      x-kombify-mcp:
+        title: Rename homelab
+        requiredCapability: techstack.inventory.write
+        annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: false, openWorldHint: false }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 30 }
+      responses:
+        "200":
+          description: The renamed homelab
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [homelab]
+                    properties:
+                      homelab: { $ref: "#/components/schemas/Homelab" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /api/v1/stacks/prune-orphans:
     post:
       operationId: reviewOrApplyOrphanProjectionCleanup
+      x-kombify-cli: { command: "stacks prune-orphans" }
+      x-kombify-confirmation: "This operation deletes the reviewed orphaned control-plane records when mode is apply."
       tags: [Stacks]
       summary: Review or apply owner-scoped test-residue cleanup
       description: |
@@ -495,6 +634,7 @@ paths:
   /api/v1/stacks/{id}/owner-spec:
     get:
       operationId: getStackOwnerSpec
+      x-kombify-cli: { command: "stacks owner-spec", args: [stack_id] }
       tags: [Stacks]
       summary: Fetch the owner bootstrap spec for a StackKit deployment
       description: |
@@ -527,6 +667,13 @@ paths:
   /api/v1/stacks/{id}/provision:
     post:
       operationId: provisionStack
+      x-kombify-cli: { command: "stacks provision", args: [stack_id] }
+      x-kombify-confirmation: "This operation starts provisioning the StackKit deployment, which can order billed servers."
+      x-kombify-mcp:
+        requiredCapability: techstack.inventory.provision
+        costBearing: true
+        actionClass: cost_bearing
+        annotations: { readOnlyHint: false, idempotentHint: false, destructiveHint: false, openWorldHint: true }
       tags: [Stacks]
       summary: Start provisioning an existing StackKit deployment
       parameters:
@@ -570,6 +717,10 @@ paths:
   /api/v1/stacks/{id}/deploy:
     post:
       operationId: deployStack
+      x-kombify-cli: { command: "stacks deploy", args: [stack_id] }
+      x-kombify-mcp:
+        requiredCapability: techstack.inventory.operate
+        annotations: { readOnlyHint: false, idempotentHint: false, destructiveHint: false, openWorldHint: true }
       tags: [Stacks]
       summary: Roll out one StackKit deployment (unify + IaC + tofu apply)
       parameters:
@@ -615,7 +766,9 @@ paths:
         approved Nodes with freshness-qualified canonical Guard heartbeat,
         connection, and health evidence. The operation is read-only and never
         starts rollout, provisioning, or provider work.
+      x-kombify-cli: { command: "stacks operations", args: [stack_id] }
       x-kombify-mcp:
+        title: Get stack operations
         toolName: get_stack_operations
         requiredCapability: techstack.inventory.read
         annotations: { readOnlyHint: true, idempotentHint: true, destructiveHint: false, openWorldHint: false }
@@ -640,6 +793,7 @@ paths:
   /api/v1/managed-runtimes/authority:
     get:
       operationId: preflightManagedRuntimeAuthority
+      x-kombify-cli: { command: "managed-runtimes authority" }
       tags: [Stacks, Jobs]
       summary: Verify request-bound managed-runtime authority without creating a resource
       description: |
@@ -677,6 +831,13 @@ paths:
   /api/v1/stacks/{id}/managed-runtimes:
     post:
       operationId: addManagedRuntimeServer
+      x-kombify-cli: { command: "stacks managed-runtimes add", args: [stack_id] }
+      x-kombify-confirmation: "This operation orders an additional managed server for the StackKit deployment and is billed."
+      x-kombify-mcp:
+        requiredCapability: techstack.inventory.provision
+        costBearing: true
+        actionClass: cost_bearing
+        annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: false, openWorldHint: true }
       tags: [Stacks, Jobs]
       summary: Add one managed Node through native provider control
       description: |
@@ -748,6 +909,10 @@ paths:
   /api/v1/stacks/{id}/resume-enrollment:
     post:
       operationId: resumeStackEnrollment
+      x-kombify-cli: { command: "stacks resume-enrollment", args: [stack_id] }
+      x-kombify-mcp:
+        requiredCapability: techstack.inventory.operate
+        annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: false, openWorldHint: true }
       tags: [Stacks, Jobs]
       summary: Resume one overdue managed Node wait on its exact existing VM
       description: |
@@ -801,6 +966,10 @@ paths:
   /api/v1/stacks/{id}/retry-rollout:
     post:
       operationId: retryStackRollout
+      x-kombify-cli: { command: "stacks retry-rollout", args: [stack_id] }
+      x-kombify-mcp:
+        requiredCapability: techstack.inventory.operate
+        annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: false, openWorldHint: true }
       tags: [Stacks, Jobs]
       summary: Retry one failed StackKit deployment rollout on its exact existing managed VM
       description: |
@@ -844,6 +1013,7 @@ paths:
   /api/v1/stacks/{id}/routing:
     get:
       operationId: getStackRouting
+      x-kombify-cli: { command: "stacks routing get", args: [stack_id] }
       tags: [Stacks]
       summary: Read desired and observed routing state for one StackKit deployment
       description: >-
@@ -873,6 +1043,10 @@ paths:
           $ref: "#/components/responses/ServiceUnavailable"
     put:
       operationId: ensureStackRouting
+      x-kombify-cli: { command: "stacks routing ensure", args: [stack_id] }
+      x-kombify-mcp:
+        requiredCapability: techstack.inventory.operate
+        annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: false, openWorldHint: true }
       tags: [Stacks]
       summary: Ensure the desired routing overlay for one exact StackKit deployment and Node
       description: >-
@@ -949,6 +1123,7 @@ paths:
   /api/v1/stacks/{id}/routing/targets:
     get:
       operationId: listStackRoutingTargets
+      x-kombify-cli: { command: "stacks routing targets", args: [stack_id] }
       tags: [Stacks]
       summary: List explicit primary routing targets for one StackKit deployment
       description: >-
@@ -978,6 +1153,11 @@ paths:
   /api/v1/stacks/{id}/destroy:
     post:
       operationId: destroyStack
+      x-kombify-cli: { command: "stacks destroy", args: [stack_id] }
+      x-kombify-confirmation: "This operation decommissions all infrastructure of the StackKit deployment."
+      x-kombify-mcp:
+        requiredCapability: techstack.inventory.operate
+        annotations: { readOnlyHint: false, idempotentHint: false, destructiveHint: true, openWorldHint: true }
       tags: [Stacks]
       summary: Decommission one StackKit deployment and its infrastructure
       parameters:
@@ -1002,6 +1182,7 @@ paths:
   /api/v1/stacks/{id}/intent:
     get:
       operationId: getStackIntent
+      x-kombify-cli: { command: "stacks intent", args: [stack_id] }
       tags: [Stacks - Specs]
       summary: Get persisted kombination.yaml (byte-exact, base64)
       parameters:
@@ -1035,6 +1216,7 @@ paths:
   /api/v1/stacks/{id}/requirements:
     get:
       operationId: getStackRequirements
+      x-kombify-cli: { command: "stacks requirements", args: [stack_id] }
       tags: [Stacks - Specs]
       summary: Get requirements spec (Phase 1 output)
       parameters:
@@ -1052,6 +1234,7 @@ paths:
   /api/v1/stacks/{id}/unified:
     get:
       operationId: getStackUnified
+      x-kombify-cli: { command: "stacks unified", args: [stack_id] }
       tags: [Stacks - Specs]
       summary: Get unified spec (Phase 2 output)
       parameters:
@@ -1069,6 +1252,7 @@ paths:
   /api/v1/stacks/{id}/verify-chain:
     get:
       operationId: verifySpecChain
+      x-kombify-cli: { command: "stacks verify-chain", args: [stack_id] }
       tags: [Stacks - Specs]
       summary: Verify spec hash chain integrity
       parameters:
@@ -1091,6 +1275,7 @@ paths:
   /api/v1/stacks/{id}/pipeline-status:
     get:
       operationId: getPipelineStatus
+      x-kombify-cli: { command: "stacks pipeline-status", args: [stack_id] }
       tags: [Stacks - Specs]
       summary: Get complete pipeline status for all spec phases
       parameters:
@@ -1109,6 +1294,7 @@ paths:
   /api/v1/stacks/{id}/export:
     get:
       operationId: exportStack
+      x-kombify-cli: { command: "stacks export", args: [stack_id] }
       tags: [Stacks - Import/Export]
       summary: Export stack as stack-spec.yaml
       description: Returns StackKits stack-spec YAML or JSON depending on Accept header
@@ -1143,6 +1329,7 @@ paths:
   /api/v1/stacks/import:
     post:
       operationId: importStack
+      x-kombify-cli: { command: "stacks import" }
       tags: [Stacks - Import/Export]
       summary: Import stack-spec.yaml as a StackKit deployment
       description: Imports YAML or JSON as a deployment under the authenticated owner's Homelab.
@@ -1170,6 +1357,10 @@ paths:
   /api/v1/stacks/import/validate:
     post:
       operationId: validateImport
+      x-kombify-cli: { command: "stacks validate-import" }
+      x-kombify-mcp:
+        requiredCapability: techstack.inventory.write
+        annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: false, openWorldHint: false }
       tags: [Stacks - Import/Export]
       summary: Validate spec without importing
       requestBody:
@@ -1195,6 +1386,10 @@ paths:
   /api/v1/stacks/{id}/drift/check:
     post:
       operationId: checkDrift
+      x-kombify-cli: { command: "stacks drift check", args: [stack_id] }
+      x-kombify-mcp:
+        requiredCapability: techstack.inventory.write
+        annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: false, openWorldHint: true }
       tags: [Stacks - Drift]
       summary: Trigger drift check
       description: Rate limited to once per 5 minutes (unless force=true)
@@ -1222,6 +1417,7 @@ paths:
   /api/v1/stacks/{id}/drift/status:
     get:
       operationId: getDriftStatus
+      x-kombify-cli: { command: "stacks drift status", args: [stack_id] }
       tags: [Stacks - Drift]
       summary: Get current drift status
       parameters:
@@ -1237,6 +1433,7 @@ paths:
   /api/v1/stacks/{id}/drift/details:
     get:
       operationId: getDriftDetails
+      x-kombify-cli: { command: "stacks drift details", args: [stack_id] }
       tags: [Stacks - Drift]
       summary: Get detailed drift information with affected resources
       parameters:
@@ -1252,6 +1449,11 @@ paths:
   /api/v1/stacks/{id}/drift/resolve:
     post:
       operationId: resolveDrift
+      x-kombify-cli: { command: "stacks drift resolve", args: [stack_id] }
+      x-kombify-confirmation: "This operation re-applies the stack spec to its servers and overwrites drifted changes."
+      x-kombify-mcp:
+        requiredCapability: techstack.inventory.operate
+        annotations: { readOnlyHint: false, idempotentHint: false, destructiveHint: true, openWorldHint: true }
       tags: [Stacks - Drift]
       summary: Trigger drift resolution (re-apply)
       description: Precondition -- stack must have status "drifted"
@@ -1270,6 +1472,7 @@ paths:
   /api/v1/drift/results:
     get:
       operationId: listDriftResults
+      x-kombify-cli: { command: "drift results list" }
       tags: [Stacks - Drift]
       summary: List all drift results (paginated)
       parameters:
@@ -1286,6 +1489,7 @@ paths:
   /api/v1/drift/results/{id}:
     get:
       operationId: getDriftResult
+      x-kombify-cli: { command: "drift results get", args: [id] }
       tags: [Stacks - Drift]
       summary: Get single drift result
       parameters:
@@ -1301,6 +1505,8 @@ paths:
           $ref: "#/components/responses/NotFound"
     delete:
       operationId: deleteDriftResult
+      x-kombify-cli: { command: "drift results delete", args: [id] }
+      x-kombify-confirmation: "This operation permanently deletes the stored drift result."
       tags: [Stacks - Drift]
       summary: Delete drift result
       parameters:
@@ -1322,6 +1528,10 @@ paths:
   /api/v1/unifier/validate:
     post:
       operationId: validateSpec
+      x-kombify-cli: { command: "unifier validate" }
+      x-kombify-mcp:
+        requiredCapability: techstack.inventory.write
+        annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: false, openWorldHint: false }
       tags: [Unifier]
       summary: Validate a stack specification against CUE schemas
       description: Safe, idempotent. No side effects.
@@ -1346,6 +1556,10 @@ paths:
   /api/v1/unifier/analyze:
     post:
       operationId: analyzeSpec
+      x-kombify-cli: { command: "unifier analyze" }
+      x-kombify-mcp:
+        requiredCapability: techstack.inventory.write
+        annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: false, openWorldHint: false }
       tags: [Unifier]
       summary: Analyze spec to get requirements (Phase 1)
       description: Safe, idempotent. Returns hardware requirements, detected add-ons, required credentials.
@@ -1366,6 +1580,10 @@ paths:
   /api/v1/unifier/unify:
     post:
       operationId: unifySpec
+      x-kombify-cli: { command: "unifier unify" }
+      x-kombify-mcp:
+        requiredCapability: techstack.inventory.write
+        annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: false, openWorldHint: false }
       tags: [Unifier]
       summary: Unify specifications (Phase 2)
       requestBody:
@@ -1385,6 +1603,7 @@ paths:
   /api/v1/unifier/pipeline:
     post:
       operationId: runPipeline
+      x-kombify-cli: { command: "unifier pipeline run" }
       tags: [Unifier]
       summary: Run full unifier pipeline (validate + analyze + unify + generate)
       description: Side-effecting -- generates IaC output files.
@@ -1405,6 +1624,10 @@ paths:
   /api/v1/unifier/pipeline/validate:
     post:
       operationId: validatePipeline
+      x-kombify-cli: { command: "unifier pipeline validate" }
+      x-kombify-mcp:
+        requiredCapability: techstack.inventory.write
+        annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: false, openWorldHint: false }
       tags: [Unifier]
       summary: Validate pipeline inputs without executing
       requestBody:
@@ -1424,6 +1647,10 @@ paths:
   /api/v1/unifier/pipeline/preview:
     post:
       operationId: previewPipeline
+      x-kombify-cli: { command: "unifier pipeline preview" }
+      x-kombify-mcp:
+        requiredCapability: techstack.inventory.write
+        annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: false, openWorldHint: false }
       tags: [Unifier]
       summary: Preview pipeline results without side effects
       description: Safe, idempotent. Shows what would be generated. Backend validation or StackKit resolution failures return 200 with data.valid=false and structured data.errors; malformed input and auth failures remain HTTP errors.
@@ -1444,6 +1671,8 @@ paths:
   /api/v1/unifier/generate:
     post:
       operationId: generateIaC
+      x-kombify-cli: { command: "unifier generate", hidden: true }
+      x-kombify-mcp: false # retired endpoint that always answers 410 Gone
       tags: [Unifier]
       summary: Generate IaC from unified spec
       requestBody:
@@ -1463,6 +1692,8 @@ paths:
   /api/v1/unifier/iac:
     post:
       operationId: generateIaCDirect
+      x-kombify-cli: { command: "unifier iac generate", hidden: true }
+      x-kombify-mcp: false # retired endpoint that always answers 410 Gone
       tags: [Unifier]
       summary: Generate IaC directly
       requestBody:
@@ -1482,6 +1713,8 @@ paths:
   /api/v1/unifier/iac/preview:
     post:
       operationId: previewIaC
+      x-kombify-cli: { command: "unifier iac preview", hidden: true }
+      x-kombify-mcp: false # retired endpoint that always answers 410 Gone
       tags: [Unifier]
       summary: Preview IaC generation without writing files
       requestBody:
@@ -1504,6 +1737,7 @@ paths:
   /api/v1/stackkits:
     get:
       operationId: listStackKits
+      x-kombify-cli: { command: "stackkits list" }
       tags: [StackKits]
       summary: List available StackKits
       responses:
@@ -1517,6 +1751,7 @@ paths:
   /api/v1/stackkits/{name}:
     get:
       operationId: getStackKit
+      x-kombify-cli: { command: "stackkits get", args: [name] }
       tags: [StackKits]
       summary: Get specific StackKit details
       parameters:
@@ -1548,6 +1783,7 @@ paths:
   /api/v1/addons:
     get:
       operationId: listAddons
+      x-kombify-cli: { command: "addons list" }
       tags: [Add-ons]
       summary: List available add-ons
       responses:
@@ -1561,6 +1797,10 @@ paths:
   /api/v1/addons/detect:
     post:
       operationId: detectAddons
+      x-kombify-cli: { command: "addons detect" }
+      x-kombify-mcp:
+        requiredCapability: techstack.inventory.write
+        annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: false, openWorldHint: false }
       tags: [Add-ons]
       summary: Auto-detect applicable add-ons for a spec
       requestBody:
@@ -1600,7 +1840,9 @@ paths:
         - name: cursor
           in: query
           schema: { type: string, maxLength: 2048 }
+      x-kombify-cli: { command: "inventory servers list" }
       x-kombify-mcp:
+        title: List servers
         toolName: list_servers
         requiredCapability: techstack.inventory.read
         annotations: { readOnlyHint: true, idempotentHint: true, destructiveHint: false, openWorldHint: false }
@@ -1625,6 +1867,8 @@ paths:
   /api/v1/servers/summary:
     get:
       operationId: getRILServerSummary
+      x-kombify-cli: { command: "servers summary" }
+      x-kombify-mcp: false # Gateway compatibility read with a caller-supplied tenant argument; list_servers covers it
       tags: [Inventory, RIL]
       summary: Read the authenticated owner's server-presence summary
       description: >-
@@ -1659,13 +1903,69 @@ paths:
   /v1/ril/servers/summary:
     $ref: "#/paths/~1api~1v1~1servers~1summary"
 
+  /api/v1/inventory/servers/{serverId}:
+    patch:
+      operationId: renameInventoryServer
+      tags: [Inventory]
+      summary: Set or clear the owner-chosen name of one owned server
+      description: >-
+        Writes servers.display_name, which runtime projections never
+        overwrite. `null` or an empty string clears the rename. Requires the
+        signed techstack.inventory.write entitlement and the FGA server
+        `caller` relation; the write is bound to the authenticated tenant and
+        owner, and a server outside that scope is denied without revealing
+        whether it exists. The canonical inventory `name` reports the chosen
+        name when one is set.
+      x-kombify-cli: { command: "inventory servers rename", args: [server_id] }
+      x-kombify-mcp:
+        title: Rename server
+        toolName: rename_server
+        resourceBinding: { argument: server_id, dimension: techstack.server }
+        requiredCapability: techstack.inventory.write
+        annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: false, openWorldHint: false }
+      parameters:
+        - $ref: "#/components/parameters/serverId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [display_name]
+              additionalProperties: false
+              properties:
+                display_name: { type: [string, "null"], maxLength: 100 }
+      responses:
+        "200":
+          description: The renamed server's inventory item
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    allOf:
+                      - $ref: "#/components/schemas/InventoryServer"
+                      - type: object
+                        required: [display_name]
+                        properties:
+                          display_name: { type: [string, "null"], maxLength: 100 }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /api/v1/inventory/servers/{serverId}/health:
     get:
       operationId: getInventoryServerHealth
       tags: [Inventory]
       summary: Get freshness-qualified health for one owned server
+      x-kombify-cli: { command: "inventory servers health", args: [server_id] }
       x-kombify-mcp:
+        title: Get server health
         toolName: server_health
+        resourceBinding: { argument: server_id, dimension: techstack.server }
         requiredCapability: techstack.inventory.read
         annotations: { readOnlyHint: true, idempotentHint: true, destructiveHint: false, openWorldHint: false }
       parameters:
@@ -1694,7 +1994,9 @@ paths:
         Projects compiler-declared listener claims and generation-fenced
         reservations beside monotone Guard runtime evidence. Missing or stale
         observations remain explicit and never become optimistic availability.
+      x-kombify-cli: { command: "inventory servers ports", args: [server_id] }
       x-kombify-mcp:
+        title: Get server ports
         toolName: server_ports
         requiredCapability: techstack.inventory.read
         annotations: { readOnlyHint: true, idempotentHint: true, destructiveHint: false, openWorldHint: false }
@@ -1721,6 +2023,7 @@ paths:
   /api/v1/servers/{serverId}/ports:
     get:
       operationId: getServerRuntimePorts
+      x-kombify-cli: { command: "servers ports", args: [server_id] }
       tags: [Servers, Inventory]
       summary: Get the authenticated owner's port inventory for one canonical server
       description: >-
@@ -1752,8 +2055,11 @@ paths:
       operationId: listInventoryServices
       tags: [Inventory]
       summary: List sanitized services for the authenticated owner's servers
+      x-kombify-cli: { command: "inventory services list" }
       x-kombify-mcp:
+        title: List services
         toolName: list_services
+        resourceBinding: { argument: server_id, dimension: techstack.server }
         requiredCapability: techstack.inventory.read
         annotations: { readOnlyHint: true, idempotentHint: true, destructiveHint: false, openWorldHint: false }
       parameters:
@@ -1795,7 +2101,9 @@ paths:
         references, route IDs, credentials, tokens, SSH users, ports, keys,
         commands, or logs. This surface requires inventory operate permission;
         read permission alone is insufficient.
+      x-kombify-cli: { command: "inventory servers access-context", args: [server_id] }
       x-kombify-mcp:
+        title: Get server access context
         toolName: server_access_context
         requiredCapability: techstack.inventory.operate
         annotations: { readOnlyHint: true, idempotentHint: true, destructiveHint: false, openWorldHint: false }
@@ -1822,6 +2130,7 @@ paths:
   /api/v1/servers:
     get:
       operationId: listServerRuntimes
+      x-kombify-cli: { command: "servers list" }
       tags: [Servers]
       summary: List canonical Node runtime state
       description: |
@@ -1852,6 +2161,7 @@ paths:
   /api/v1/servers/{serverId}:
     get:
       operationId: getServerRuntime
+      x-kombify-cli: { command: "servers get", args: [server_id] }
       tags: [Servers]
       summary: Get canonical server lifecycle, connection, health, and channels
       parameters:
@@ -1874,6 +2184,7 @@ paths:
   /api/v1/servers/{serverId}/transitions:
     get:
       operationId: listServerRuntimeTransitions
+      x-kombify-cli: { command: "servers transitions", args: [server_id] }
       tags: [Servers]
       summary: List the persisted server state timeline
       parameters:
@@ -1889,6 +2200,8 @@ paths:
   /api/v1/servers/{serverId}/detach:
     post:
       operationId: detachSelfOwnedServer
+      x-kombify-cli: { command: "servers detach", args: [server_id] }
+      x-kombify-confirmation: "This operation revokes the server's credentials and removes it from management without touching the machine."
       tags: [Servers]
       summary: Revoke and detach one exact customer-operated BYO server
       description: Retains the terminal canonical server receipt and performs no provider API call.
@@ -1923,12 +2236,105 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
+  /api/v1/servers/{serverId}/actions:
+    post:
+      operationId: runServerMaintenanceAction
+      x-kombify-cli: { command: "servers maintenance run", args: [server_id] }
+      x-kombify-confirmation: "This operation reboots, updates or plans an update of the server's operating system as requested."
+      x-kombify-mcp:
+        requiredCapability: techstack.inventory.operate
+        annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: false, openWorldHint: true }
+      tags: [Servers, Jobs]
+      summary: Queue an owner-approved OS update plan, OS update or reboot
+      description: >-
+        Requires the Edge-signed `techstack.servers.maintenance` entitlement,
+        ownership of the server in the tenant, and for `reboot` and `os_update`
+        a multi-factor sign-in at most 300 seconds old from the verified edge
+        envelope. The body is decoded
+        strictly: exact lowercase keys, no duplicates, no unknown fields. A
+        replay with the same Idempotency-Key returns the stored receipt before
+        target validation. One reboot or OS update and, separately, one update
+        plan may be active per server; a job not finished by its deadline
+        fails with `deadline_exceeded` and frees its slot. The action is offered in
+        `allowed_actions` only when the server agent advertises
+        `stackkit.host-maintenance.v1`, and `reboot` only when the server also
+        reports `host_boot_id`. Refusals are client-error-envelope/v1
+        documents; 409 `reason_code` is one of control_plane_host,
+        substrate_node, protected_demo_server, service_locked,
+        maintenance_active, node_operation_active, plan_stale,
+        agent_capability_missing, boot_id_unknown, agent_not_connected, heartbeat_stale,
+        inventory_revision_stale or idempotency_key_reused; 403 carries
+        entitlement_required or server_maintenance_step_up_required.
+      parameters:
+        - $ref: "#/components/parameters/serverId"
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ServerMaintenanceRequest"
+      responses:
+        "202":
+          description: Maintenance job queued or exact durable replay returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/ServerMaintenanceResponse" }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /api/v1/servers/{serverId}/actions/{jobId}:
+    get:
+      operationId: getServerMaintenanceJob
+      x-kombify-cli: { command: "servers maintenance get", args: [server_id, job_id] }
+      tags: [Servers, Jobs]
+      summary: Read one maintenance job of an owned server
+      description: >-
+        Scoped like the POST: the Edge-signed `techstack.servers.maintenance`
+        entitlement, the tenant, ownership of the server, and a job that
+        belongs to this server and was requested by the caller. Anything else
+        is 404. Maintenance jobs have their own ledger and are not served by
+        `/api/v1/jobs/{id}`. There is no log endpoint: the job carries its
+        outcome, and a failure carries its stable code with user guidance.
+      parameters:
+        - $ref: "#/components/parameters/serverId"
+        - name: jobId
+          in: path
+          required: true
+          schema: { type: string, maxLength: 128 }
+      responses:
+        "200":
+          description: The maintenance job
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/ServerMaintenanceJob" }
+                  meta: { $ref: "#/components/schemas/ResponseMeta" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   # ============================================================
   # SERVICE RUNTIME REGISTRY
   # ============================================================
   /api/v1/services:
     get:
       operationId: listServiceRuntimes
+      x-kombify-cli: { command: "services list" }
       tags: [Services]
       summary: List canonical measured service runtime state
       parameters:
@@ -1960,6 +2366,7 @@ paths:
   /api/v1/services/{serviceId}:
     get:
       operationId: getServiceRuntime
+      x-kombify-cli: { command: "services get", args: [service_id] }
       tags: [Services]
       summary: Get desired, observed, health, access, and action capabilities for one service
       parameters:
@@ -1982,6 +2389,10 @@ paths:
   /api/v1/registry/services/{serviceId}/actions:
     post:
       operationId: runManagedServiceAction
+      x-kombify-cli: { command: "services run-action", args: [service_id] }
+      x-kombify-mcp:
+        requiredCapability: techstack.inventory.operate
+        annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: false, openWorldHint: true }
       tags: [Services, Jobs]
       summary: Queue an owner-authorized StackKits service action
       description: >-
@@ -1989,6 +2400,8 @@ paths:
         canonical inventory. Exact replays converge through a durable job
         receipt; the raw Idempotency-Key is never persisted. Mutations are
         followed by StackKits verify before measured state changes.
+        Agent-executed actions refuse with 409 `maintenance_active` while the
+        server is being rebooted or updated.
       parameters:
         - $ref: "#/components/parameters/serviceId"
         - name: Idempotency-Key
@@ -2020,6 +2433,7 @@ paths:
   /api/v1/registry/services/{serviceId}/logs:
     get:
       operationId: getManagedServiceLogs
+      x-kombify-cli: { command: "services logs", args: [service_id] }
       tags: [Services, Jobs]
       summary: Read the latest bounded, redacted StackKits service log page
       parameters:
@@ -2060,6 +2474,7 @@ paths:
   /api/v1/workers:
     get:
       operationId: listWorkers
+      x-kombify-cli: { command: "workers list" }
       tags: [Workers]
       summary: List registered workers (filtered by owner)
       parameters:
@@ -2076,6 +2491,8 @@ paths:
   /api/v1/workers/register:
     post:
       operationId: registerWorker
+      x-kombify-cli: { command: "workers register", hidden: true }
+      x-kombify-mcp: false # node agent protocol authenticated by machine credentials, not a user agent tool
       tags: [Workers]
       summary: Register worker via pairing token
       security: []
@@ -2107,6 +2524,8 @@ paths:
   /v1/ril/servers/connect:
     post:
       operationId: connectRILServer
+      x-kombify-cli: { command: "ril servers connect", hidden: true }
+      x-kombify-mcp: false # node agent protocol authenticated by machine credentials, not a user agent tool
       tags: [Workers, RIL]
       summary: Create an idempotent TechStack runtime enrollment
       description: >-
@@ -2156,6 +2575,8 @@ paths:
   /v1/ril/servers/{id}/credential/rotate:
     post:
       operationId: rotateRILServerCredential
+      x-kombify-cli: { command: "ril servers rotate-credential", args: [id], hidden: true }
+      x-kombify-mcp: false # node agent protocol authenticated by machine credentials, not a user agent tool
       tags: [Workers, RIL]
       summary: Rotate or recover one runtime-agent credential
       description: >-
@@ -2205,6 +2626,8 @@ paths:
   /api/v1/workers/{id}/heartbeat:
     post:
       operationId: heartbeatWorker
+      x-kombify-cli: { command: "workers heartbeat", args: [id], hidden: true }
+      x-kombify-mcp: false # node agent protocol authenticated by machine credentials, not a user agent tool
       tags: [Workers]
       summary: Runtime agent heartbeat
       description: Accepts either owner-authenticated legacy worker heartbeat or Guard Bearer heartbeat for runtime_agent_id liveness.
@@ -2227,6 +2650,8 @@ paths:
   /api/v1/workers/{id}/inventory:
     post:
       operationId: ingestWorkerInventory
+      x-kombify-cli: { command: "workers inventory", args: [id], hidden: true }
+      x-kombify-mcp: false # node agent protocol authenticated by machine credentials, not a user agent tool
       tags: [Workers, RIL]
       summary: Ingest Guard service inventory
       description: >-
@@ -2271,6 +2696,7 @@ paths:
   /api/v1/workers/{id}/approve:
     post:
       operationId: approveWorker
+      x-kombify-cli: { command: "workers approve", args: [id] }
       tags: [Workers]
       summary: Approve pending worker
       parameters:
@@ -2288,6 +2714,8 @@ paths:
   /install.sh:
     get:
       operationId: getInstallScript
+      x-kombify-cli: { command: "install-scripts sh" }
+      x-kombify-mcp: false # installer/host bootstrap for operators, not an agent tool
       tags: [Workers]
       summary: Worker bootstrap script
       security: []
@@ -2302,6 +2730,8 @@ paths:
   /install.ps1:
     get:
       operationId: getInstallScriptPS
+      x-kombify-cli: { command: "install-scripts ps1" }
+      x-kombify-mcp: false # installer/host bootstrap for operators, not an agent tool
       tags: [Workers]
       summary: Windows worker bootstrap script
       security: []
@@ -2319,6 +2749,8 @@ paths:
   /api/v1/workers/{id}/prechecks:
     post:
       operationId: runPreChecks
+      x-kombify-cli: { command: "workers prechecks run", args: [id] }
+      x-kombify-mcp: false # no control-plane route serves this contract operation; the direct invoker cannot serve it
       tags: [Pre-Checks]
       summary: Run pre-checks on worker
       parameters:
@@ -2338,6 +2770,8 @@ paths:
                 $ref: "#/components/schemas/PreCheckResponse"
     get:
       operationId: getWorkerPreChecks
+      x-kombify-cli: { command: "workers prechecks list", args: [id] }
+      x-kombify-mcp: false # no control-plane route serves this contract operation; the direct invoker cannot serve it
       tags: [Pre-Checks]
       summary: Get pre-check results for worker
       parameters:
@@ -2355,6 +2789,8 @@ paths:
   /api/v1/prechecks/request/{id}:
     get:
       operationId: getPreCheckByRequest
+      x-kombify-cli: { command: "prechecks get-by-request", args: [id] }
+      x-kombify-mcp: false # no control-plane route serves this contract operation; the direct invoker cannot serve it
       tags: [Pre-Checks]
       summary: Get pre-check results by request ID
       parameters:
@@ -2379,6 +2815,8 @@ paths:
   /api/v1/prechecks/{id}/result:
     post:
       operationId: updatePreCheckResult
+      x-kombify-cli: { command: "prechecks report", args: [id], hidden: true }
+      x-kombify-mcp: false # no control-plane route serves this contract operation; the direct invoker cannot serve it
       tags: [Pre-Checks]
       summary: Update pre-check result (called by agent)
       parameters:
@@ -2410,6 +2848,7 @@ paths:
   /api/v1/agents:
     get:
       operationId: listAgents
+      x-kombify-cli: { command: "agents list" }
       tags: [Agents]
       summary: List connected gRPC agents
       parameters:
@@ -2426,6 +2865,7 @@ paths:
   /api/v1/agents/{id}:
     get:
       operationId: getAgent
+      x-kombify-cli: { command: "agents get", args: [id] }
       tags: [Agents]
       summary: Get agent by ID with resources
       parameters:
@@ -2441,6 +2881,8 @@ paths:
           $ref: "#/components/responses/NotFound"
     delete:
       operationId: removeAgent
+      x-kombify-cli: { command: "agents remove", args: [id] }
+      x-kombify-confirmation: "This operation deregisters the agent; the node stops reporting until it enrolls again."
       tags: [Agents]
       summary: Remove/deregister agent
       parameters:
@@ -2461,6 +2903,11 @@ paths:
   /api/v1/agents/{id}/command:
     post:
       operationId: sendAgentCommand
+      x-kombify-cli: { command: "agents send-command", args: [id] }
+      x-kombify-confirmation: "This operation runs the command on the connected node agent."
+      x-kombify-mcp:
+        requiredCapability: techstack.inventory.operate
+        annotations: { readOnlyHint: false, idempotentHint: false, destructiveHint: true, openWorldHint: true }
       tags: [Agents]
       summary: Send command to agent
       parameters:
@@ -2500,6 +2947,7 @@ paths:
   /api/v1/agents/{id}/logs:
     get:
       operationId: getAgentLogs
+      x-kombify-cli: { command: "agents logs", args: [id] }
       tags: [Agents]
       summary: Get recent agent logs
       parameters:
@@ -2517,6 +2965,8 @@ paths:
   /api/v1/agents/{id}/logs/stream:
     get:
       operationId: streamAgentLogs
+      x-kombify-cli: { command: "agents logs-stream", args: [id], hidden: true }
+      x-kombify-mcp: false # Server-Sent Events stream; the direct invoker cannot serve a stream
       tags: [Agents]
       summary: Stream live agent logs via SSE
       parameters:
@@ -2537,6 +2987,7 @@ paths:
   /api/v1/jobs:
     get:
       operationId: listJobs
+      x-kombify-cli: { command: "jobs list" }
       tags: [Jobs]
       summary: List jobs owned by the authenticated user
       description: |
@@ -2588,6 +3039,7 @@ paths:
   /api/v1/jobs/{id}:
     get:
       operationId: getJob
+      x-kombify-cli: { command: "jobs get", args: [id] }
       tags: [Jobs]
       summary: Get the current state of one owned job
       description: |
@@ -2612,6 +3064,8 @@ paths:
   /api/v1/jobs/{id}/stream:
     get:
       operationId: streamJob
+      x-kombify-cli: { command: "jobs stream", args: [id], hidden: true }
+      x-kombify-mcp: false # Server-Sent Events stream; the direct invoker cannot serve a stream
       tags: [Jobs]
       summary: Stream job progress via SSE
       description: |
@@ -2631,6 +3085,7 @@ paths:
   /api/v1/jobs/{id}/logs:
     get:
       operationId: getJobLogs
+      x-kombify-cli: { command: "jobs logs", args: [id] }
       tags: [Jobs]
       summary: Get job logs
       parameters:
@@ -2646,6 +3101,7 @@ paths:
   /api/v1/jobs/stats:
     get:
       operationId: getJobStats
+      x-kombify-cli: { command: "jobs stats" }
       tags: [Jobs]
       summary: Get job queue statistics
       responses:
@@ -2685,6 +3141,7 @@ paths:
   /api/v1/discovery/networks:
     get:
       operationId: getNetworks
+      x-kombify-cli: { command: "discovery networks" }
       tags: [Discovery]
       summary: Get local network interfaces
       responses:
@@ -2703,6 +3160,10 @@ paths:
   /api/v1/discovery/scan:
     post:
       operationId: startScan
+      x-kombify-cli: { command: "discovery scans start" }
+      x-kombify-mcp:
+        requiredCapability: techstack.inventory.write
+        annotations: { readOnlyHint: false, idempotentHint: false, destructiveHint: false, openWorldHint: true }
       tags: [Discovery]
       summary: Start network scan (async)
       requestBody:
@@ -2722,6 +3183,7 @@ paths:
   /api/v1/discovery/scan/{id}:
     get:
       operationId: getScan
+      x-kombify-cli: { command: "discovery scans get", args: [id] }
       tags: [Discovery]
       summary: Get scan status and results
       parameters:
@@ -2739,6 +3201,7 @@ paths:
   /api/v1/discovery/scan/{id}/cancel:
     post:
       operationId: cancelScan
+      x-kombify-cli: { command: "discovery scans cancel", args: [id] }
       tags: [Discovery]
       summary: Cancel running scan
       parameters:
@@ -2757,6 +3220,10 @@ paths:
   /api/v1/discovery/scan/{id}/enrich:
     post:
       operationId: enrichScan
+      x-kombify-cli: { command: "discovery scans enrich", args: [id] }
+      x-kombify-mcp:
+        requiredCapability: techstack.inventory.write
+        annotations: { readOnlyHint: false, idempotentHint: false, destructiveHint: false, openWorldHint: true }
       tags: [Discovery]
       summary: Enrich scan results with additional data
       parameters:
@@ -2772,6 +3239,7 @@ paths:
   /api/v1/discovery/devices:
     get:
       operationId: listDevices
+      x-kombify-cli: { command: "discovery devices list" }
       tags: [Discovery]
       summary: List caller-owned discovered devices
       description: Returns only devices produced by scans owned by the authenticated caller.
@@ -2793,6 +3261,7 @@ paths:
   /api/v1/discovery/devices/{id}:
     get:
       operationId: getDevice
+      x-kombify-cli: { command: "discovery devices get", args: [id] }
       tags: [Discovery]
       summary: Get caller-owned discovered device
       parameters:
@@ -2810,6 +3279,8 @@ paths:
   /api/v1/discovery/probe:
     post:
       operationId: probeDevice
+      x-kombify-cli: { command: "discovery devices probe" }
+      x-kombify-mcp: false # takes a credential or secret as an argument
       tags: [Discovery]
       summary: Deep probe a caller-owned device
       description: Non-admin callers may only probe IPs from their own discovery results; admins may probe arbitrary IPs.
@@ -2836,6 +3307,8 @@ paths:
   /api/v1/discovery/test-ssh:
     post:
       operationId: testSSH
+      x-kombify-cli: { command: "discovery test-ssh" }
+      x-kombify-mcp: false # takes a credential or secret as an argument
       tags: [Discovery]
       summary: Test SSH connectivity to a device
       description: Non-admin callers may only test IPs from their own discovery results; admins may test arbitrary IPs.
@@ -2875,6 +3348,8 @@ paths:
   /api/v1/discovery/cache:
     delete:
       operationId: clearDiscoveryCache
+      x-kombify-cli: { command: "discovery cache clear" }
+      x-kombify-confirmation: "This operation discards every cached discovery result; the next discovery rescans the network."
       tags: [Discovery]
       summary: Clear discovery cache (admin only)
       responses:
@@ -2895,6 +3370,7 @@ paths:
   /api/v1/discovery/stats:
     get:
       operationId: getDiscoveryStats
+      x-kombify-cli: { command: "discovery stats" }
       tags: [Discovery]
       summary: Get discovery statistics (admin only)
       responses:
@@ -2909,6 +3385,7 @@ paths:
   /api/v1/features:
     get:
       operationId: listFeatures
+      x-kombify-cli: { command: "features list" }
       tags: [Features]
       summary: List all features grouped by category
       responses:
@@ -2935,6 +3412,7 @@ paths:
   /api/v1/trust/pairing-tokens:
     get:
       operationId: listPairingTokens
+      x-kombify-cli: { command: "pairing-tokens list" }
       tags: [Trust]
       summary: List pairing tokens
       responses:
@@ -2946,6 +3424,7 @@ paths:
                 $ref: "#/components/schemas/SuccessEnvelope"
     post:
       operationId: createPairingToken
+      x-kombify-cli: { command: "pairing-tokens create" }
       tags: [Trust]
       summary: Create pairing token for worker registration
       requestBody:
@@ -2977,6 +3456,8 @@ paths:
   /api/v1/client-pairing/issue:
     post:
       operationId: issueClientPairingEnvelope
+      x-kombify-cli: { command: "client-pairing issue" }
+      x-kombify-mcp: false # native client device-binding handshake, not an agent action
       tags: [Client Binding]
       summary: Issue a short-lived ClientPairingEnvelope v1
       description: >-
@@ -3023,6 +3504,8 @@ paths:
   /api/v1/client-pairing/redeem:
     post:
       operationId: redeemClientPairingEnvelope
+      x-kombify-cli: { command: "client-pairing redeem" }
+      x-kombify-mcp: false # native client device-binding handshake, not an agent action
       tags: [Client Binding]
       summary: Atomically redeem a ClientPairingEnvelope v1 code
       description: >-
@@ -3071,6 +3554,8 @@ paths:
   /api/v1/trust/pairing-tokens/{id}:
     delete:
       operationId: deletePairingToken
+      x-kombify-cli: { command: "pairing-tokens delete", args: [id] }
+      x-kombify-confirmation: "This operation revokes the pairing token; devices that have not paired yet can no longer use it."
       tags: [Trust]
       summary: Delete pairing token
       parameters:
@@ -3082,6 +3567,7 @@ paths:
   /api/v1/tunnel/registry-url:
     get:
       operationId: getTunnelRegistryUrl
+      x-kombify-cli: { command: "tunnel registry-url" }
       tags: [Tunnel]
       summary: Get public tunnel registry URL
       security: []
@@ -3092,6 +3578,7 @@ paths:
   /api/v1/tunnel/status:
     get:
       operationId: getTunnelStatus
+      x-kombify-cli: { command: "tunnel status" }
       tags: [Tunnel]
       summary: Get tunnel connection status
       security: []
@@ -3102,6 +3589,10 @@ paths:
   /api/v1/tunnel/start:
     post:
       operationId: startTunnel
+      x-kombify-cli: { command: "tunnel start" }
+      x-kombify-mcp:
+        requiredCapability: techstack.inventory.operate
+        annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: false, openWorldHint: true }
       tags: [Tunnel]
       summary: Start Cloudflare tunnel
       security: []
@@ -3112,6 +3603,10 @@ paths:
   /api/v1/tunnel/stop:
     post:
       operationId: stopTunnel
+      x-kombify-cli: { command: "tunnel stop" }
+      x-kombify-mcp:
+        requiredCapability: techstack.inventory.operate
+        annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: false, openWorldHint: true }
       tags: [Tunnel]
       summary: Stop Cloudflare tunnel
       security: []
@@ -3122,6 +3617,8 @@ paths:
   /api/v1/tunnel/install-command:
     post:
       operationId: createInstallCommand
+      x-kombify-cli: { command: "tunnel install-command" }
+      x-kombify-mcp: false # takes a credential or secret as an argument
       tags: [Tunnel]
       summary: Generate worker install command with tunnel URL
       requestBody:
@@ -3142,6 +3639,10 @@ paths:
   /api/v1/tunnel/validate-url:
     post:
       operationId: validateTunnelUrl
+      x-kombify-cli: { command: "tunnel validate-url" }
+      x-kombify-mcp:
+        requiredCapability: techstack.inventory.write
+        annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: false, openWorldHint: false }
       tags: [Tunnel]
       summary: Validate custom tunnel URL
       security: []
@@ -3160,6 +3661,7 @@ paths:
   /api/v1/tunnel/topology:
     get:
       operationId: getTopology
+      x-kombify-cli: { command: "tunnel topology" }
       tags: [Tunnel]
       summary: Detect network topology
       security: []
@@ -3170,6 +3672,7 @@ paths:
   /api/v1/tunnel/subdomains:
     get:
       operationId: listTunnelSubdomains
+      x-kombify-cli: { command: "tunnel subdomains list" }
       tags: [Tunnel]
       summary: List the caller's own kombify.me subdomains for diagnostics; registration is StackKits-owned
       description: Requires an authenticated caller. With the shared platform identity the list is scoped to the caller's owner binding.
@@ -3182,6 +3685,7 @@ paths:
   /api/v1/tunnel/subdomains/{baseId}/services:
     get:
       operationId: listTunnelSubdomainServices
+      x-kombify-cli: { command: "tunnel subdomains services", args: [base_id] }
       tags: [Tunnel]
       summary: List services under one of the caller's own kombify.me base subdomains
       parameters:
@@ -3204,6 +3708,7 @@ paths:
   /api/v1/monitor/metrics/instant:
     get:
       operationId: instantMonitorQuery
+      x-kombify-cli: { command: "monitor query" }
       tags: [Metrics]
       summary: Run a PromQL instant query
       parameters:
@@ -3224,6 +3729,7 @@ paths:
   /api/v1/monitor/metrics/query:
     get:
       operationId: rangeMonitorQuery
+      x-kombify-cli: { command: "monitor query-range" }
       tags: [Metrics]
       summary: Run a PromQL range query
       parameters:
@@ -3251,6 +3757,7 @@ paths:
   /api/v1/monitor/metrics/labels:
     get:
       operationId: listMonitorMetricLabels
+      x-kombify-cli: { command: "monitor metrics labels" }
       tags: [Metrics]
       summary: List metric label names
       responses:
@@ -3260,6 +3767,7 @@ paths:
   /api/v1/monitor/metrics/values:
     get:
       operationId: listMonitorMetricLabelValues
+      x-kombify-cli: { command: "monitor metrics label-values" }
       tags: [Metrics]
       summary: List values for a metric label
       parameters:
@@ -3275,6 +3783,7 @@ paths:
   /api/v1/monitor/metrics/names:
     get:
       operationId: listMonitorMetricNames
+      x-kombify-cli: { command: "monitor metrics names" }
       tags: [Metrics]
       summary: List metric names
       responses:
@@ -3284,6 +3793,7 @@ paths:
   /api/v1/monitor/status:
     get:
       operationId: getMonitorStatus
+      x-kombify-cli: { command: "monitor status" }
       tags: [Metrics]
       summary: Get monitoring backend status and runtime metadata
       responses:
@@ -3293,6 +3803,7 @@ paths:
   /api/v1/monitor/health:
     get:
       operationId: getMonitorHealth
+      x-kombify-cli: { command: "monitor health" }
       tags: [Metrics]
       summary: Get monitoring ingest/query health diagnostics
       responses:
@@ -3302,6 +3813,7 @@ paths:
   /api/v1/monitor/availability:
     get:
       operationId: getAvailabilityReport
+      x-kombify-cli: { command: "monitor availability" }
       tags: [Metrics]
       summary: Availability, downtime episodes and daily state, derived from the transition timeline
       description: >-
@@ -3339,6 +3851,7 @@ paths:
   /api/v1/monitor/alerts:
     get:
       operationId: listMonitorAlerts
+      x-kombify-cli: { command: "monitor alerts list" }
       tags: [Metrics]
       summary: List active monitoring alerts
       responses:
@@ -3348,6 +3861,7 @@ paths:
   /api/v1/monitor/alerts/rules:
     get:
       operationId: listMonitorAlertRules
+      x-kombify-cli: { command: "monitor alerts rules" }
       tags: [Metrics]
       summary: List monitoring alert rules
       responses:
@@ -3360,6 +3874,7 @@ paths:
   /api/v1/runtime/logs:
     get:
       operationId: getRuntimeLogs
+      x-kombify-cli: { command: "runtime logs" }
       tags: [Runtime]
       summary: Get recent runtime/deploy logs
       description: |
@@ -3428,6 +3943,7 @@ paths:
   /api/v1/wallet:
     get:
       operationId: listWalletItems
+      x-kombify-cli: { command: "wallet list" }
       tags: [Wallet]
       summary: List redacted wallet recovery items
       description: |
@@ -3454,6 +3970,8 @@ paths:
   /api/v1/wallet/{id}/reauth-proof:
     post:
       operationId: createWalletReauthProof
+      x-kombify-cli: { command: "wallet reauth-proof", args: [id] }
+      x-kombify-mcp: false # reveals or mints a credential behind interactive re-authentication
       tags: [Wallet]
       summary: Mint a short-lived reauth proof after a fresh platform re-auth
       description: |
@@ -3488,6 +4006,8 @@ paths:
   /api/v1/wallet/{id}/reveal:
     post:
       operationId: revealWalletItem
+      x-kombify-cli: { command: "wallet reveal", args: [id] }
+      x-kombify-mcp: false # reveals or mints a credential behind interactive re-authentication
       tags: [Wallet]
       summary: Reveal a wallet recovery secret/TOTP, gated by a fresh reauth proof
       description: |
@@ -3525,6 +4045,8 @@ paths:
   /api/v1/backups:
     post:
       operationId: createBackup
+      x-kombify-cli: { command: "backups create" }
+      x-kombify-mcp: false # no control-plane route serves this contract operation; the direct invoker cannot serve it
       tags: [Backups]
       summary: Create database backup (admin only)
       responses:
@@ -3534,6 +4056,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
     get:
       operationId: listBackups
+      x-kombify-cli: { command: "backups list" }
+      x-kombify-mcp: false # no control-plane route serves this contract operation; the direct invoker cannot serve it
       tags: [Backups]
       summary: List backups (admin only)
       responses:
@@ -3545,6 +4069,8 @@ paths:
   /api/v1/backups/latest:
     get:
       operationId: getLatestBackup
+      x-kombify-cli: { command: "backups latest" }
+      x-kombify-mcp: false # no control-plane route serves this contract operation; the direct invoker cannot serve it
       tags: [Backups]
       summary: Get latest backup info (admin only)
       responses:
@@ -3556,6 +4082,8 @@ paths:
   /api/v1/backups/{name}/download:
     get:
       operationId: downloadBackup
+      x-kombify-cli: { command: "backups download", args: [name] }
+      x-kombify-mcp: false # no control-plane route serves this contract operation; the direct invoker cannot serve it
       tags: [Backups]
       summary: Download backup file (admin only)
       parameters:
@@ -3580,6 +4108,9 @@ paths:
   /api/v1/backups/{name}:
     delete:
       operationId: deleteBackup
+      x-kombify-cli: { command: "backups delete", args: [name] }
+      x-kombify-mcp: false # no control-plane route serves this contract operation; the direct invoker cannot serve it
+      x-kombify-confirmation: "This operation permanently deletes the local backup archive."
       tags: [Backups]
       summary: Delete backup (admin only)
       parameters:
@@ -3597,6 +4128,8 @@ paths:
   /api/v1/backups/cleanup:
     post:
       operationId: cleanupBackups
+      x-kombify-cli: { command: "backups cleanup" }
+      x-kombify-mcp: false # no control-plane route serves this contract operation; the direct invoker cannot serve it
       tags: [Backups]
       summary: Apply retention policy (admin only)
       responses:
@@ -3608,6 +4141,8 @@ paths:
   /api/v1/backups/{name}/upload-s3:
     post:
       operationId: uploadBackupS3
+      x-kombify-cli: { command: "backups upload-s3", args: [name] }
+      x-kombify-mcp: false # no control-plane route serves this contract operation; the direct invoker cannot serve it
       tags: [Backups]
       summary: Upload backup to S3 (admin only)
       parameters:
@@ -3625,6 +4160,8 @@ paths:
   /api/v1/backups/s3:
     get:
       operationId: listS3Backups
+      x-kombify-cli: { command: "backups s3 list" }
+      x-kombify-mcp: false # no control-plane route serves this contract operation; the direct invoker cannot serve it
       tags: [Backups]
       summary: List S3 backups (admin only)
       responses:
@@ -3636,6 +4173,8 @@ paths:
   /api/v1/backups/s3/{name}/download:
     post:
       operationId: downloadS3Backup
+      x-kombify-cli: { command: "backups s3 download", args: [name] }
+      x-kombify-mcp: false # no control-plane route serves this contract operation; the direct invoker cannot serve it
       tags: [Backups]
       summary: Download backup from S3 (admin only)
       parameters:
@@ -3653,6 +4192,9 @@ paths:
   /api/v1/backups/s3/{name}:
     delete:
       operationId: deleteS3Backup
+      x-kombify-cli: { command: "backups s3 delete", args: [name] }
+      x-kombify-mcp: false # no control-plane route serves this contract operation; the direct invoker cannot serve it
+      x-kombify-confirmation: "This operation permanently deletes the backup from S3 storage."
       tags: [Backups]
       summary: Delete S3 backup (admin only)
       parameters:
@@ -3670,6 +4212,8 @@ paths:
   /api/v1/backups/s3/status:
     get:
       operationId: getS3Status
+      x-kombify-cli: { command: "backups s3 status" }
+      x-kombify-mcp: false # no control-plane route serves this contract operation; the direct invoker cannot serve it
       tags: [Backups]
       summary: Get S3 connection status (admin only)
       responses:
@@ -3684,6 +4228,8 @@ paths:
   /api/v1/auth/mode:
     get:
       operationId: getAuthMode
+      x-kombify-cli: { command: "auth mode" }
+      x-kombify-mcp: false # browser sign-in/session flow; agents authenticate through the Gateway
       tags: [Auth]
       summary: Get current auth mode (local or cloud)
       security: []
@@ -3702,6 +4248,8 @@ paths:
   /api/v1/auth/setup:
     post:
       operationId: setupLocalAuth
+      x-kombify-cli: { command: "auth local setup", hidden: true }
+      x-kombify-mcp: false # browser sign-in/session flow; agents authenticate through the Gateway
       tags: [Auth]
       summary: One-shot local owner setup
       security: []
@@ -3720,6 +4268,8 @@ paths:
   /api/v1/auth/methods:
     get:
       operationId: listAuthMethods
+      x-kombify-cli: { command: "auth methods" }
+      x-kombify-mcp: false # browser sign-in/session flow; agents authenticate through the Gateway
       tags: [Auth]
       summary: List available local and browser auth methods
       security: []
@@ -3734,6 +4284,8 @@ paths:
   /api/v1/auth/login:
     post:
       operationId: localAuthLogin
+      x-kombify-cli: { command: "auth local login", hidden: true }
+      x-kombify-mcp: false # browser sign-in/session flow; agents authenticate through the Gateway
       tags: [Auth]
       summary: Login with a local auth method
       security: []
@@ -3752,6 +4304,8 @@ paths:
   /api/v1/auth/breakglass/reveal:
     get:
       operationId: revealBreakGlassAccount
+      x-kombify-cli: { command: "auth break-glass reveal", hidden: true }
+      x-kombify-mcp: false # reveals or mints a credential behind interactive re-authentication
       tags: [Auth]
       summary: Reveal the unclaimed break-glass bootstrap account
       security: []
@@ -3764,6 +4318,8 @@ paths:
   /api/v1/auth/breakglass/claim:
     post:
       operationId: claimBreakGlassAccount
+      x-kombify-cli: { command: "auth break-glass claim", hidden: true }
+      x-kombify-mcp: false # reveals or mints a credential behind interactive re-authentication
       tags: [Auth]
       summary: Claim the break-glass bootstrap account
       security: []
@@ -3782,6 +4338,7 @@ paths:
   /api/v1/auth/stack-identity:
     get:
       operationId: getStackIdentity
+      x-kombify-cli: { command: "stack-identity get" }
       tags: [Auth]
       summary: Get stack identity metadata
       responses:
@@ -3793,6 +4350,7 @@ paths:
                 type: object
     put:
       operationId: updateStackIdentity
+      x-kombify-cli: { command: "stack-identity update" }
       tags: [Auth]
       summary: Update stack identity metadata
       requestBody:
@@ -3808,6 +4366,8 @@ paths:
   /api/v1/auth/portal-verify:
     post:
       operationId: verifyPortalSSO
+      x-kombify-cli: { command: "auth portal-sso verify", hidden: true }
+      x-kombify-mcp: false # browser sign-in/session flow; agents authenticate through the Gateway
       tags: [Auth]
       summary: Verify SSO token from portal
       security: []
@@ -3830,6 +4390,8 @@ paths:
   /api/v1/auth/callback:
     get:
       operationId: oidcCallbackV1
+      x-kombify-cli: { command: "auth oidc callback", hidden: true }
+      x-kombify-mcp: false # browser sign-in/session flow; agents authenticate through the Gateway
       tags: [Auth]
       summary: OIDC callback handler
       security: []
@@ -3851,6 +4413,8 @@ paths:
   /api/v1/auth/logout:
     get:
       operationId: oidcLogoutV1
+      x-kombify-cli: { command: "auth oidc logout", hidden: true }
+      x-kombify-mcp: false # browser sign-in/session flow; agents authenticate through the Gateway
       tags: [Auth]
       summary: OIDC logout handler
       security: []
@@ -3861,6 +4425,8 @@ paths:
   /auth/callback:
     get:
       operationId: oidcCallback
+      x-kombify-cli: { command: "auth oidc callback-legacy", hidden: true }
+      x-kombify-mcp: false # browser sign-in/session flow; agents authenticate through the Gateway
       tags: [Auth]
       summary: OIDC callback handler (cloud mode)
       description: Handles the OAuth2/OIDC redirect callback for cloud authentication.
@@ -3883,6 +4449,8 @@ paths:
   /auth/logout:
     get:
       operationId: oidcLogoutLegacy
+      x-kombify-cli: { command: "auth oidc logout-legacy", hidden: true }
+      x-kombify-mcp: false # browser sign-in/session flow; agents authenticate through the Gateway
       tags: [Auth]
       summary: Legacy OIDC logout alias
       security: []
@@ -3893,6 +4461,8 @@ paths:
   /api/v2/health:
     get:
       operationId: getV2Health
+      x-kombify-cli: { command: "health v2" }
+      x-kombify-mcp: false # health/readiness probe, not an agent tool
       tags: [Health]
       summary: V2 health check
       security: []
@@ -3903,6 +4473,8 @@ paths:
   /api/v2/whoami:
     get:
       operationId: getV2Whoami
+      x-kombify-cli: { command: "auth whoami" }
+      x-kombify-mcp: false # browser sign-in/session flow; agents authenticate through the Gateway
       tags: [Auth]
       summary: Return the current browser session identity
       responses:
@@ -3918,6 +4490,8 @@ paths:
   /api/v2/auth/providers:
     get:
       operationId: listV2AuthProviders
+      x-kombify-cli: { command: "auth v2 providers" }
+      x-kombify-mcp: false # browser sign-in/session flow; agents authenticate through the Gateway
       tags: [Auth]
       summary: List active browser auth providers
       security: []
@@ -3932,6 +4506,8 @@ paths:
   /api/v2/auth/login:
     get:
       operationId: startV2AuthLogin
+      x-kombify-cli: { command: "auth v2 login", hidden: true }
+      x-kombify-mcp: false # browser sign-in/session flow; agents authenticate through the Gateway
       tags: [Auth]
       summary: Start browser auth login flow
       security: []
@@ -3947,6 +4523,8 @@ paths:
   /api/v2/auth/callback:
     get:
       operationId: finishV2AuthCallback
+      x-kombify-cli: { command: "auth v2 callback", hidden: true }
+      x-kombify-mcp: false # browser sign-in/session flow; agents authenticate through the Gateway
       tags: [Auth]
       summary: Finish browser auth login flow
       security: []
@@ -3966,6 +4544,8 @@ paths:
   /api/v2/auth/logout:
     get:
       operationId: startV2AuthLogout
+      x-kombify-cli: { command: "auth v2 logout", hidden: true }
+      x-kombify-mcp: false # browser sign-in/session flow; agents authenticate through the Gateway
       tags: [Auth]
       summary: End the browser auth session
       security: []
@@ -3979,6 +4559,8 @@ paths:
   /api/v1/system-accounts/{role}/reset:
     post:
       operationId: resetSystemAccount
+      x-kombify-cli: { command: "system-accounts reset", args: [role] }
+      x-kombify-mcp: false # reveals or mints a credential behind interactive re-authentication
       tags: [Auth]
       summary: Reset system account password
       parameters:
@@ -3996,6 +4578,8 @@ paths:
   /api/v1/autoinstall/status:
     get:
       operationId: getAutoInstallStatus
+      x-kombify-cli: { command: "autoinstall status" }
+      x-kombify-mcp: false # installer/host bootstrap for operators, not an agent tool
       tags: [Health]
       summary: Check missing dependencies
       responses:
@@ -4005,6 +4589,8 @@ paths:
   /api/v1/autoinstall/install:
     post:
       operationId: installDependencies
+      x-kombify-cli: { command: "autoinstall run" }
+      x-kombify-mcp: false # installer/host bootstrap for operators, not an agent tool
       tags: [Health]
       summary: Install missing dependencies
       responses:
@@ -4017,6 +4603,8 @@ paths:
   /metrics:
     get:
       operationId: getMetrics
+      x-kombify-cli: { command: "system metrics-root", hidden: true }
+      x-kombify-mcp: false # Prometheus exposition for scrapers
       tags: [Metrics]
       summary: Prometheus-compatible instance metrics (admin/infra only)
       responses:
@@ -4032,6 +4620,8 @@ paths:
   /api/v1/metrics:
     get:
       operationId: getMetricsV1
+      x-kombify-cli: { command: "system metrics" }
+      x-kombify-mcp: false # Prometheus exposition for scrapers
       tags: [Metrics]
       summary: Prometheus-compatible instance metrics (API path alias, admin/infra only)
       responses:
@@ -4050,6 +4640,7 @@ paths:
   /api/v1/monthly-runtimes/offerings:
     get:
       operationId: listMonthlyRuntimeOfferings
+      x-kombify-cli: { command: "monthly-runtimes offerings" }
       tags: [Monthly Runtime]
       summary: List monthly runtime offerings
       description: Returns public, provider-free subscription runtime offerings.
@@ -4071,6 +4662,7 @@ paths:
   /api/v1/monthly-runtimes/{lease_id}:
     get:
       operationId: getMonthlyRuntimeStatus
+      x-kombify-cli: { command: "monthly-runtimes get", args: [lease_id] }
       tags: [Monthly Runtime]
       summary: Get monthly runtime status
       parameters:
@@ -4096,6 +4688,10 @@ paths:
   /api/v1/monthly-runtimes/{lease_id}/start:
     post:
       operationId: startMonthlyRuntime
+      x-kombify-cli: { command: "monthly-runtimes start", args: [lease_id] }
+      x-kombify-mcp:
+        requiredCapability: techstack.inventory.operate
+        annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: false, openWorldHint: true }
       tags: [Monthly Runtime]
       summary: Start a stopped managed server of the same generation
       description: >
@@ -4129,6 +4725,10 @@ paths:
   /api/v1/monthly-runtimes/{lease_id}/stop:
     post:
       operationId: stopMonthlyRuntime
+      x-kombify-cli: { command: "monthly-runtimes stop", args: [lease_id] }
+      x-kombify-mcp:
+        requiredCapability: techstack.inventory.operate
+        annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: false, openWorldHint: true }
       tags: [Monthly Runtime]
       summary: Stop a managed server without destroying it
       description: >
@@ -4160,6 +4760,10 @@ paths:
   /api/v1/monthly-runtimes/{lease_id}/enable-ssh:
     post:
       operationId: enableMonthlyRuntimeSSH
+      x-kombify-cli: { command: "monthly-runtimes ssh enable", args: [lease_id] }
+      x-kombify-mcp:
+        requiredCapability: techstack.inventory.operate
+        annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: false, openWorldHint: true }
       tags: [Monthly Runtime]
       summary: Enable owner SSH access for this generation
       description: >
@@ -4186,6 +4790,10 @@ paths:
   /api/v1/monthly-runtimes/{lease_id}/disable-ssh:
     post:
       operationId: disableMonthlyRuntimeSSH
+      x-kombify-cli: { command: "monthly-runtimes ssh disable", args: [lease_id] }
+      x-kombify-mcp:
+        requiredCapability: techstack.inventory.operate
+        annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: false, openWorldHint: true }
       tags: [Monthly Runtime]
       summary: Disable owner SSH access for this generation
       description: >
@@ -4211,6 +4819,11 @@ paths:
   /api/v1/monthly-runtimes/{lease_id}/decommission:
     post:
       operationId: decommissionMonthlyRuntime
+      x-kombify-cli: { command: "monthly-runtimes decommission", args: [lease_id] }
+      x-kombify-mcp:
+        requiredCapability: techstack.inventory.operate
+        annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: true, openWorldHint: true }
+      x-kombify-confirmation: "This operation decommissions the monthly runtime and tears down its provider resources."
       tags: [Monthly Runtime]
       summary: Decommission a monthly runtime lease
       parameters:
@@ -4218,6 +4831,7 @@ paths:
         - name: force
           in: query
           required: false
+          x-kombify-name: force_query
           schema:
             type: boolean
             default: false
@@ -4281,6 +4895,8 @@ paths:
   /api/v1/monthly-runtimes/{lease_id}/resolve-custody:
     post:
       operationId: resolveMonthlyRuntimeCustody
+      x-kombify-cli: { command: "monthly-runtimes resolve-custody", args: [lease_id] }
+      x-kombify-confirmation: "This operation records that the provider resources were cleaned up and releases the lease custody."
       tags: [Monthly Runtime]
       summary: Archive a legacy or unbound custody record after provider cleanup
       description: >
@@ -4319,6 +4935,10 @@ paths:
   /api/v1/monthly-runtimes/{lease_id}/reconnect:
     post:
       operationId: reconnectMonthlyRuntime
+      x-kombify-cli: { command: "monthly-runtimes reconnect", args: [lease_id] }
+      x-kombify-mcp:
+        requiredCapability: techstack.inventory.operate
+        annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: false, openWorldHint: true }
       tags: [Monthly Runtime]
       summary: Recover the Guard session of a managed runtime
       description: >
@@ -4349,6 +4969,7 @@ paths:
   /api/v1/monthly-runtimes/{lease_id}/ssh:
     get:
       operationId: getMonthlyRuntimeSSHInfo
+      x-kombify-cli: { command: "monthly-runtimes ssh get", args: [lease_id] }
       tags: [Monthly Runtime]
       summary: Get SSH connection information for a monthly runtime lease
       parameters:
@@ -4366,6 +4987,7 @@ paths:
   /api/v1/monthly-runtimes/{lease_id}/operations:
     get:
       operationId: listMonthlyRuntimeOperations
+      x-kombify-cli: { command: "monthly-runtimes operations", args: [lease_id] }
       tags: [Monthly Runtime]
       summary: List monthly runtime operation history
       parameters:
@@ -4388,6 +5010,7 @@ paths:
   /api/v1/monthly-runtimes/{lease_id}/cleanup-readback:
     get:
       operationId: getMonthlyRuntimeCleanupReadback
+      x-kombify-cli: { command: "monthly-runtimes cleanup-readback", args: [lease_id] }
       tags: [Monthly Runtime]
       summary: Read redacted managed runtime cleanup state facts
       description: >
@@ -4421,6 +5044,13 @@ paths:
   /api/v1/monthly-runtimes/{lease_id}/recreate:
     post:
       operationId: recreateMonthlyRuntime
+      x-kombify-cli: { command: "monthly-runtimes recreate", args: [lease_id] }
+      x-kombify-confirmation: "This operation replaces the runtime's provider server with a newly provisioned one and is billed."
+      x-kombify-mcp:
+        requiredCapability: techstack.inventory.provision
+        costBearing: true
+        actionClass: cost_bearing
+        annotations: { readOnlyHint: false, idempotentHint: false, destructiveHint: true, openWorldHint: true }
       tags: [Monthly Runtime, Stacks, Jobs]
       summary: Recreate one fully released managed server generation
       description: >
@@ -4478,6 +5108,7 @@ paths:
   /api/internal/sso/exchange:
     post:
       operationId: internalSSOExchange
+      x-kombify-internal: true
       tags: [Internal]
       summary: Legacy exchange of edge-validated SaaS token for PocketBase session
       deprecated: true
@@ -4522,6 +5153,7 @@ paths:
   /api/internal/feature-flags/apply:
     post:
       operationId: internalFeatureFlagsApply
+      x-kombify-internal: true
       tags: [Internal]
       summary: Apply feature flags from SaaS control plane (SaaS only)
       description: |
@@ -4605,6 +5237,7 @@ components:
     stackId:
       name: id
       in: path
+      x-kombify-name: stack_id
       required: true
       description: Stack ID
       schema:
@@ -4704,6 +5337,20 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
 
   schemas:
+    Homelab:
+      type: object
+      description: The owner's Homelab umbrella (ADR-0036).
+      required: [id, name, named, updated]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        named:
+          type: boolean
+          description: Whether the owner chose the name; a generated placeholder name reports false.
+        named_at: { type: string, format: date-time }
+        intent: { type: object }
+        created: { type: string, format: date-time }
+        updated: { type: string, format: date-time }
     OrphanProjectionCleanupRequest:
       type: object
       required: [mode]
@@ -5353,7 +6000,7 @@ components:
             no node `logs` id - no such endpoint exists.
           items:
             type: string
-            enum: [connect, terminal, reconnect, rotate_credentials, ssh_enable, ssh_disable, detach, decommission, resolve_custody]
+            enum: [connect, terminal, reconnect, rotate_credentials, ssh_enable, ssh_disable, detach, decommission, resolve_custody, reboot, os_update_plan, os_update]
         stack_actions:
           type: array
           uniqueItems: true
@@ -5371,6 +6018,148 @@ components:
         updated_at:
           type: string
           format: date-time
+
+    ServerMaintenanceRequest:
+      type: object
+      additionalProperties: false
+      required: [action, expected_inventory_revision]
+      properties:
+        action:
+          type: string
+          enum: [os_update_plan, os_update, reboot]
+        expected_inventory_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        owner_approved:
+          type: boolean
+          description: Required true for os_update and reboot.
+        expected_plan_digest:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+          description: >-
+            os_update only: the plan_digest of a completed os_update_plan for
+            this server that is at most 15 minutes old.
+
+    ServerMaintenanceResponse:
+      type: object
+      required: [job_id, server_id, action, status]
+      properties:
+        job_id: { type: string }
+        server_id: { type: string }
+        action: { type: string, enum: [os_update_plan, os_update, reboot] }
+        status: { type: string, enum: [queued, running, completed, failed, cancelled] }
+
+    ServerMaintenanceJob:
+      type: object
+      required: [job_id, server_id, action, state, status, result, created_at, updated_at]
+      properties:
+        job_id: { type: string }
+        server_id: { type: string }
+        action: { type: string, enum: [os_update_plan, os_update, reboot] }
+        state:
+          type: string
+          enum: [queued, running, waiting, awaiting_node_return, completed, failed, cancelled]
+          description: >-
+            Ledger state. A reboot waiting for its node to come back is the
+            state `awaiting_node_return` (never `waiting`). `waiting` is only
+            an OS update whose install unit outlived the CLI's wait
+            (`reason_code` apply_still_running); it is polled until it
+            completes or fails.
+        status:
+          type: string
+          enum: [queued, running, completed, failed, cancelled]
+          description: Coarse status of the POST receipt; waiting and awaiting_node_return report running.
+        reason_code:
+          type: string
+          description: >-
+            Stable code of the last transition, for example node_returned,
+            apply_still_running, apply_finished_after_wait, or the failure code
+            (apply_partial when the install unit ended with packages of the
+            approved plan still at their approved starting versions; the
+            result then lists them in `not_installed`).
+        plan_digest: { type: string, pattern: "^sha256:[0-9a-f]{64}$" }
+        failure:
+          type: object
+          description: Present when state is failed or cancelled.
+          required: [code, retryable, user_guidance]
+          properties:
+            code:
+              type: string
+              description: >-
+                Runner reasons (node_did_not_return, reboot_abandoned,
+                deadline_exceeded, server_removed, dispatch_failed,
+                dispatch_interrupted for a command no agent received,
+                apply_partial) or the
+                stackkit.host-maintenance/v1 refusal and failure codes; a host
+                code that is not a bounded snake_case token is
+                host_command_failed.
+            retryable: { type: boolean }
+            user_guidance:
+              type: object
+              required: [title, body, next_steps]
+              properties:
+                title: { type: string }
+                body: { type: string }
+                next_steps: { type: array, items: { type: string } }
+        result:
+          $ref: "#/components/schemas/ServerMaintenanceResult"
+        reboot:
+          type: object
+          description: Reboot jobs, once the node acknowledged the reboot.
+          required: [boot_id_changed]
+          properties:
+            scheduled_at: { type: string, format: date-time }
+            return_deadline:
+              type: string
+              format: date-time
+              description: Present while awaiting_node_return.
+            boot_id_changed:
+              type: boolean
+              description: The node reports a boot id other than the one before the reboot.
+        deadline_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+
+    ServerMaintenanceResult:
+      type: object
+      description: >-
+        Plan fields for os_update_plan, apply fields for os_update, empty for
+        reboot. Lists are bounded: at most 200 packages (packages_truncated
+        says whether the list was cut; the counts stay exact), 50 held names
+        and 20 dpkg problems, each string at most 256 characters.
+      properties:
+        plan_digest: { type: string }
+        pending_count: { type: integer, minimum: 0 }
+        security_count: { type: integer, minimum: 0 }
+        reboot_likely: { type: boolean }
+        hold_scope: { type: string }
+        held: { type: array, maxItems: 50, items: { type: string } }
+        dpkg_problems: { type: array, maxItems: 20, items: { type: string } }
+        packages:
+          type: array
+          maxItems: 200
+          items:
+            type: object
+            required: [name, from, to, security]
+            properties:
+              name: { type: string }
+              from: { type: string }
+              to: { type: string }
+              security: { type: boolean }
+        packages_truncated: { type: boolean }
+        outcome: { type: string, enum: [applied, noop, failed, running, partial] }
+        reboot_required: { type: boolean }
+        unit: { type: string }
+        changed: { type: integer, minimum: 0 }
+        remaining_pending_count: { type: integer, minimum: 0 }
+        plan_digest_after: { type: string }
+        not_installed:
+          type: array
+          maxItems: 50
+          description: apply_partial only; approved packages still at their approved starting versions.
+          items: { type: string }
 
     SelfOwnedServerDetachRequest:
       type: object

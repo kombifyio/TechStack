@@ -263,3 +263,50 @@ func ensureLeadingSlash(p string) string {
 	}
 	return "/" + p
 }
+
+// LeafHandler returns the handler registered for method and a path template,
+// together with the registered path pattern. Wildcard segments match by
+// position, so "/stacks/{stackId}" finds a route registered as "/stacks/{id}".
+// The handler is the bare leaf: none of the router or group middleware runs.
+// Callers that invoke it must already hold a verified request context.
+func (r *Router) LeafHandler(method, template string) (HandlerFunc, string, bool) {
+	method = strings.ToUpper(strings.TrimSpace(method))
+	want := pathShape(template)
+	for _, rt := range r.routes {
+		if rt.method == method && pathShape(rt.path) == want {
+			// Route- or group-bound middleware may carry authorization that a
+			// bare handler call would skip, so such routes are never exposed
+			// as leaf handlers (fail closed).
+			if len(rt.middlewares) > 0 {
+				return nil, "", false
+			}
+			return rt.handler, rt.path, true
+		}
+	}
+	return nil, "", false
+}
+
+// pathShape replaces every wildcard segment with "{}" so templates compare by
+// structure rather than wildcard names.
+func pathShape(p string) string {
+	segments := strings.Split(p, "/")
+	for i, segment := range segments {
+		if strings.HasPrefix(segment, "{") && strings.HasSuffix(segment, "}") {
+			segments[i] = "{}"
+		}
+	}
+	return strings.Join(segments, "/")
+}
+
+// Invoke runs one leaf handler without any middleware and renders a returned
+// error exactly like the router does. auth nil derives the principal from the
+// request context.
+func Invoke(w http.ResponseWriter, req *http.Request, auth *Principal, handler HandlerFunc) {
+	if auth == nil {
+		auth = authFromContext(req.Context())
+	}
+	e := &Event{Response: w, Request: req, Auth: auth, final: handler}
+	if err := e.Next(); err != nil {
+		renderError(e, err)
+	}
+}

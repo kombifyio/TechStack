@@ -2,7 +2,6 @@ package backupjobs
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/kombifyio/techstack/pkg/backupstore"
@@ -20,18 +19,17 @@ type UsageReader interface {
 
 // AdmissionConfig composes the entitlement gate and the usage meter into the
 // single decision the scanner and the routes both resolve.
+//
+// Backups are retention-limited, never gigabyte-limited
+// (BILLING-ENTITLEMENT-STANDARD §2.4, owner decision 2026-09-28): the meter
+// only records the measured basis a restore-drill renewal receipt signs, and
+// no measured size, missing measurement or unreadable meter denies a backup.
 type AdmissionConfig struct {
 	Features monthlyruntime.BackupFeatureChecker
 	Usage    UsageReader
-	// AllowUnmeasured admits a stack that has never been measured. It defaults
-	// to false. An unmeasured stack is unknown rather than empty, and admitting
-	// on unknown is how a quota stops being a quota; the flag exists only so an
-	// operator can bootstrap a fleet before the first sweep has run, and it is
-	// a deliberate, visible choice rather than a silent fallback.
-	AllowUnmeasured bool
 }
 
-// NewAdmission returns the fail-closed backup gate.
+// NewAdmission returns the fail-closed backup entitlement gate.
 func NewAdmission(cfg AdmissionConfig) (jobs.BackupAdmission, error) {
 	if cfg.Features == nil {
 		return nil, fmt.Errorf("backupjobs: admission requires a feature checker")
@@ -47,39 +45,17 @@ func NewAdmission(cfg AdmissionConfig) (jobs.BackupAdmission, error) {
 				Details: entitlement.BackupEntitlementDenialDetails(),
 			}, nil
 		}
-
-		usage, err := cfg.Usage.Usage(ctx, req.TenantID, req.StackID)
-		switch {
-		case errors.Is(err, backupstore.ErrUsageNotFound):
-			if !cfg.AllowUnmeasured {
-				return jobs.BackupAdmissionDecision{
-					Denied:     true,
-					QuotaBytes: entitlement.QuotaBytes,
-					Details: monthlyruntime.BackupQuotaExceededDetails(
-						entitlement.QuotaBytes, 0, entitlement.GrantedStorageFeature),
-				}, nil
-			}
-		case err != nil:
-			// A meter that cannot answer denies. Treating an unreadable meter
-			// as zero usage would admit every tenant precisely when the
-			// control plane has lost sight of what they are storing.
-			return jobs.BackupAdmissionDecision{Denied: true, QuotaBytes: entitlement.QuotaBytes},
-				fmt.Errorf("backupjobs: read measured backup usage: %w", err)
+		decision := jobs.BackupAdmissionDecision{
+			QuotaBytes:     monthlyruntime.BackupSizingCeilingBytes,
+			IncludeContent: req.IncludeContent,
 		}
-
-		if entitlement.QuotaBytes > 0 && usage.StoredBytes >= entitlement.QuotaBytes {
-			return jobs.BackupAdmissionDecision{
-				Denied:     true,
-				QuotaBytes: entitlement.QuotaBytes,
-				UsedBytes:  usage.StoredBytes,
-				Details: monthlyruntime.BackupQuotaExceededDetails(
-					entitlement.QuotaBytes, usage.StoredBytes, entitlement.GrantedStorageFeature),
-			}, nil
+		// A missing or unreadable measurement leaves MeasuredAt zero. Scheduled
+		// backups do not depend on it; the restore-drill path rejects a zero or
+		// stale measurement itself because its signed receipt needs one.
+		if usage, err := cfg.Usage.Usage(ctx, req.TenantID, req.StackID); err == nil {
+			decision.UsedBytes = usage.StoredBytes
+			decision.MeasuredAt = usage.MeasuredAt
 		}
-
-		return jobs.BackupAdmissionDecision{
-			QuotaBytes: entitlement.QuotaBytes,
-			UsedBytes:  usage.StoredBytes,
-		}, nil
+		return decision, nil
 	}, nil
 }

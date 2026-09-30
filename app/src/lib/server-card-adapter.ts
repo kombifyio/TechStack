@@ -23,13 +23,14 @@ import {
 } from "#lib/support/server-outcome.js";
 import { isManagedRuntimeServer } from "#lib/managed-runtime-server.js";
 
+import { tr, stateLabel } from "#lib/i18n.svelte.js";
 export type DashboardServer = StackOperationServer & {
   /** The StackKit deployment that owns this Node in the combined Home Hub. */
   kit_deployment_id: string;
 };
 
 export function statusLabel(status: string): string {
-  return status.replace(/_/g, " ");
+  return stateLabel(status);
 }
 
 export function canonicalServerFor(
@@ -54,11 +55,72 @@ export function actionableServerOutcome(
   return isActionableOutcome(outcome) ? outcome : null;
 }
 
+/**
+ * The one server a rollout job or its failure ran on. `server_id` and
+ * `agent_id` are the explicit target the backend records; `lease_id` and
+ * `runtime_ip` only resolve rows recorded before the job carried it.
+ */
+export interface NodeOperationTarget {
+  kit_deployment_id?: string;
+  server_id?: string;
+  agent_id?: string;
+  lease_id?: string;
+  runtime_ip?: string;
+}
+
+/**
+ * Resolve the Node a job or failure belongs to. A StackKit rollout always
+ * runs on exactly one server, so this returns that server or null; null keeps
+ * the job or failure as a page-level notice instead of dropping it. A
+ * deployment with a single Node resolves to it even without recorded ids.
+ */
+export function serverForOperationTarget<T extends DashboardServer>(
+  target: NodeOperationTarget | null | undefined,
+  servers: readonly T[],
+): T | null {
+  if (!target) return null;
+  const serverId = target.server_id?.trim();
+  const agentId = target.agent_id?.trim();
+  const leaseId = target.lease_id?.trim();
+  const runtimeIp = target.runtime_ip?.trim();
+  const byId =
+    (serverId &&
+      servers.find(
+        (server) => server.server_id === serverId || server.id === serverId,
+      )) ||
+    (agentId &&
+      servers.find(
+        (server) => server.agent_id === agentId || server.id === agentId,
+      )) ||
+    (leaseId &&
+      servers.find(
+        (server) =>
+          server.lease_id === leaseId ||
+          server.capabilities?.lease_id === leaseId,
+      )) ||
+    (runtimeIp &&
+      servers.find(
+        (server) =>
+          server.ip?.trim() === runtimeIp ||
+          (server.host_addresses ?? []).some(
+            (address) => address.address?.trim() === runtimeIp,
+          ),
+      ));
+  if (byId) return byId;
+  const deploymentId = target.kit_deployment_id?.trim();
+  if (!deploymentId) return null;
+  const deploymentServers = servers.filter(
+    (server) => server.kit_deployment_id === deploymentId,
+  );
+  return deploymentServers.length === 1 ? deploymentServers[0]! : null;
+}
+
 export function dashboardServerMeta(
   telemetry: StackOperationServer,
   canonical: CanonicalServer | undefined,
 ): string {
-  if (canonical?.node_role === "substrate") return "Proxmox hypervisor";
+  if (canonical?.node_role === "substrate")
+    return tr("ui.managedCreationFlow.proxmoxHypervisor");
   if (!canonical) return serverCardMeta(telemetry);
   return [
     statusLabel(canonical.environment_class || "unknown"),
@@ -70,7 +132,8 @@ export function dashboardServerMeta(
 }
 
 export function canonicalServerMeta(server: CanonicalServer): string {
-  if (server.node_role === "substrate") return "Proxmox hypervisor";
+  if (server.node_role === "substrate")
+    return tr("ui.managedCreationFlow.proxmoxHypervisor");
   return [
     statusLabel(server.environment_class || "unknown"),
     statusLabel(server.offering || "unknown_offering"),
@@ -112,13 +175,13 @@ export function formatCapacity(
 }
 
 export function serverOSLabel(server: StackOperationServer): string {
-  const os = server.os?.trim() || "os unknown";
+  const os = server.os?.trim() || tr("ui.serverCard.osUnknown");
   const version = server.os_version?.trim();
   const osWithVersion =
     version && !os.toLowerCase().includes(version.toLowerCase())
       ? `${os} ${version}`
       : os;
-  return `${osWithVersion}/${server.arch?.trim() || "arch unknown"}`;
+  return `${osWithVersion}/${server.arch?.trim() || tr("ui.serverCard.archUnknown")}`;
 }
 
 export function serverPrimaryAddress(server: StackOperationServer): string {
@@ -256,9 +319,22 @@ const HEALTH_STATES: ReadonlySet<ServerHealthState> = new Set([
  * state of its axis: visibly "not yet real" instead of silently optimistic.
  */
 export function canonicalServerAxes(server: CanonicalServer): ServerStatusAxes {
-  const lifecycle = (server.lifecycle?.state || "").trim().toLowerCase();
-  const connection = (server.connection?.state || "").trim().toLowerCase();
-  const health = (server.health?.state || "").trim().toLowerCase();
+  return serverAxesFromStates(
+    server.lifecycle?.state,
+    server.connection?.state,
+    server.health?.state,
+  );
+}
+
+/** The same closed-vocabulary mapping for raw axis values, e.g. telemetry. */
+export function serverAxesFromStates(
+  lifecycleState: string | undefined,
+  connectionState: string | undefined,
+  healthState: string | undefined,
+): ServerStatusAxes {
+  const lifecycle = (lifecycleState || "").trim().toLowerCase();
+  const connection = (connectionState || "").trim().toLowerCase();
+  const health = (healthState || "").trim().toLowerCase();
   return {
     lifecycle: LIFECYCLE_STATES.has(lifecycle as ServerLifecycleState)
       ? (lifecycle as ServerLifecycleState)
@@ -289,13 +365,16 @@ export function serverCardMetrics(
   return [
     { label: "CPU", value: formatMetric(server.health?.cpu_percent) },
     { label: "RAM", value: formatMetric(server.health?.memory_percent) },
-    { label: "Disk", value: formatMetric(server.health?.disk_percent) },
+    {
+      label: tr("ui.stacksIdServersServerId.disk"),
+      value: formatMetric(server.health?.disk_percent),
+    },
   ];
 }
 
 export function serverCardKit(server: StackOperationServer): ServerKitInfo {
   return {
-    name: serverStackKitName(server) || "not reported",
+    name: serverStackKitName(server) || tr("ui.time.notReported"),
     detail: serverStackKitVariant(server),
   };
 }
@@ -377,7 +456,9 @@ export function serverCardActions(
       id: action,
       state,
       disabledReason:
-        state === "disabled" ? "Another node action is running" : undefined,
+        state === "disabled"
+          ? tr("ui.serverCardAdapter.anotherNodeActionIsRunning")
+          : undefined,
       onSelect: () => context.onNodeAction(action),
     });
   }

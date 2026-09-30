@@ -185,3 +185,29 @@ func TestHubRejectsUnboundResult(t *testing.T) {
 		t.Fatalf("SubmitResult() error = %v", err)
 	}
 }
+
+// A host maintenance command reaches only an agent that advertises
+// stackkit.host-maintenance.v1: an older or unprivileged agent never receives
+// it, and the sender learns why.
+func TestHubNeverDispatchesHostCommandToAgentWithoutHostMaintenance(t *testing.T) {
+	hub := NewHub()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	command := validHubCommand("reboot-1")
+	command.Operation = agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_REBOOT
+	command.OwnerApproved = true
+	command.WorkingDirectory, command.StackkitInstanceId, command.ServiceKey, command.LogTail = "", "", "", 0
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := hub.SendStackKitCommand(ctx, "agent-unprivileged", command)
+		errCh <- err
+	}()
+	capabilities := []string{"stackkit", stackkitcommand.ExpectedPlanHashCapability, stackkitcommand.WorkspaceInstanceCapability}
+	if dispatched, found, err := hub.Poll(ctx, "agent-unprivileged", capabilities); err == nil || found || dispatched != nil {
+		t.Fatalf("Poll() = (%v, %v, %v), want the host command withheld", dispatched, found, err)
+	}
+	var missing *MissingCapabilityError
+	if err := <-errCh; !errors.As(err, &missing) || missing.Capability != stackkitcommand.HostMaintenanceCapability {
+		t.Fatalf("SendStackKitCommand() error = %v, want the missing host maintenance capability", err)
+	}
+}

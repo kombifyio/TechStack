@@ -96,6 +96,28 @@ func TestSSHRuntimeTargetBootstrapDialRetriesTransientReadinessErrors(t *testing
 	}
 }
 
+func TestSSHRuntimeTargetBootstrapTimeoutCoversAllRetries(t *testing.T) {
+	readinessErr := errors.New("dial tcp 203.0.113.10:22: connect: connection refused")
+	bootstrapper := NewSSHRuntimeTargetBootstrapper(SSHRuntimeTargetBootstrapperConfig{
+		Timeout:           100 * time.Millisecond,
+		MaxAttempts:       3,
+		DialRetryInterval: time.Millisecond,
+		RetryInterval:     time.Millisecond,
+		Dial: func(string, string, *ssh.ClientConfig) (*ssh.Client, error) {
+			return nil, readinessErr
+		},
+	})
+	result, err := bootstrapper.BootstrapRuntimeTarget(context.Background(), &RuntimeActionTarget{
+		Host: "203.0.113.10", Port: 22, User: "kombify", Password: "test-only",
+	})
+	if err == nil || result == nil || result.Status != "failed" {
+		t.Fatalf("bootstrap result = %#v, error = %v, want failed timeout", result, err)
+	}
+	if result.DurationMS > 200 || !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, readinessErr) {
+		t.Fatalf("bootstrap result = %#v, error = %v, want one bounded execution window and the network cause", result, err)
+	}
+}
+
 func TestRuntimeTargetBootstrapExecutionTimeoutLeavesDiagnosticAndTerminalReserve(t *testing.T) {
 	postExecutionReserve := runtimeTargetBootstrapDiagnosticsReserve + runtimeTargetBootstrapTerminalPersistenceReserve
 	wantUnbounded := defaultRuntimeTargetBootstrapTimeout - postExecutionReserve

@@ -6,23 +6,25 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
 
 // Token-validation errors. Kept package-level so callers can type-switch.
 var (
-	ErrBadToken         = errors.New("servicecall: malformed token")
-	ErrBadSignature     = errors.New("servicecall: invalid signature")
-	ErrExpired          = errors.New("servicecall: token expired")
-	ErrNotYetValid      = errors.New("servicecall: token not yet valid")
-	ErrEmptySecret      = errors.New("servicecall: empty signing secret")
-	ErrWrongAudience    = errors.New("servicecall: wrong audience")
-	ErrCallerDenied     = errors.New("servicecall: caller not in allowlist")
-	ErrMissingExpiry    = errors.New("servicecall: missing exp claim")
-	ErrMissingIssuedAt  = errors.New("servicecall: missing iat claim")
-	ErrLifetimeExceeded = errors.New("servicecall: token lifetime exceeds maximum")
-	ErrIssuerMismatch   = errors.New("servicecall: iss does not match svc")
+	ErrBadToken              = errors.New("servicecall: malformed token")
+	ErrBadSignature          = errors.New("servicecall: invalid signature")
+	ErrExpired               = errors.New("servicecall: token expired")
+	ErrNotYetValid           = errors.New("servicecall: token not yet valid")
+	ErrEmptySecret           = errors.New("servicecall: empty signing secret")
+	ErrWrongAudience         = errors.New("servicecall: wrong audience")
+	ErrCallerDenied          = errors.New("servicecall: caller not in allowlist")
+	ErrMissingExpiry         = errors.New("servicecall: missing exp claim")
+	ErrMissingIssuedAt       = errors.New("servicecall: missing iat claim")
+	ErrLifetimeExceeded      = errors.New("servicecall: token lifetime exceeds maximum")
+	ErrIssuerMismatch        = errors.New("servicecall: iss does not match svc")
+	ErrInvalidRequestBinding = errors.New("servicecall: invalid request binding")
 )
 
 // Fixed header bytes for HS256 JWT. Matches the standard `{"alg":"HS256","typ":"JWT"}`.
@@ -33,6 +35,34 @@ var jwtHeader = []byte(`{"alg":"HS256","typ":"JWT"}`)
 // IssueToken builds a signed service-call token from cfg and the supplied
 // target/obo/requestID. cfg.ServiceName and cfg.Secret must be set.
 func IssueToken(cfg Config, target string, obo *OnBehalfOf, requestID string) (string, error) {
+	return issueToken(cfg, target, obo, requestID, nil)
+}
+
+// NewRequestBinding constructs the canonical binding for exact raw body bytes.
+// method and requestURI are preserved rather than normalized.
+func NewRequestBinding(method, requestURI string, body []byte) (RequestBinding, error) {
+	binding := RequestBinding{
+		Method:     method,
+		RequestURI: requestURI,
+		BodySHA256: fmt.Sprintf("%x", sha256.Sum256(body)),
+	}
+	if !validRequestBinding(binding) {
+		return RequestBinding{}, ErrInvalidRequestBinding
+	}
+	return binding, nil
+}
+
+// IssueBoundToken issues a machine service token for one exact HTTP message.
+// It deliberately has no OnBehalfOf parameter: request-bound routes retain
+// machine provenance and must not manufacture an end-user identity.
+func IssueBoundToken(cfg Config, target string, binding RequestBinding, requestID string) (string, error) {
+	if !validRequestBinding(binding) {
+		return "", ErrInvalidRequestBinding
+	}
+	return issueToken(cfg, target, nil, requestID, &binding)
+}
+
+func issueToken(cfg Config, target string, obo *OnBehalfOf, requestID string, binding *RequestBinding) (string, error) {
 	if cfg.Secret == "" {
 		return "", ErrEmptySecret
 	}
@@ -45,13 +75,15 @@ func IssueToken(cfg Config, target string, obo *OnBehalfOf, requestID string) (s
 	}
 	now := time.Now()
 	claims := Claims{
-		Iss:        "kombify-" + cfg.ServiceName,
-		Aud:        "kombify-" + target,
-		Iat:        now.Unix(),
-		Exp:        now.Add(ttl).Unix(),
-		Svc:        cfg.ServiceName,
-		OnBehalfOf: obo,
-		RequestID:  requestID,
+		Iss:            "kombify-" + cfg.ServiceName,
+		Aud:            "kombify-" + target,
+		Iat:            now.Unix(),
+		Exp:            now.Add(ttl).Unix(),
+		Svc:            cfg.ServiceName,
+		Scope:          cfg.Scope,
+		OnBehalfOf:     obo,
+		RequestID:      requestID,
+		RequestBinding: binding,
 	}
 	return signClaims(claims, cfg.Secret)
 }

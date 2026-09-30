@@ -55,6 +55,9 @@ describe("isGatewayAuthFailure", () => {
   it("matches Auth0 SPA silent-auth error shapes", () => {
     expect(isGatewayAuthFailure({ error: "login_required" })).toBe(true);
     expect(isGatewayAuthFailure({ error: "missing_refresh_token" })).toBe(true);
+    // A staff session without a second factor recovers through the SSO
+    // round-trip instead of a dead error (platform-jx5m6).
+    expect(isGatewayAuthFailure({ error: "mfa_required" })).toBe(true);
   });
 
   it("matches the typed Error messages thrown by gateway-auth", () => {

@@ -81,6 +81,7 @@ func (p HostPrepProfile) stackKitReady() bool {
 const ExecutionChannelUser = "kombify"
 
 const executionChannelSudoersPath = "/etc/sudoers.d/60-kombify-execution-channel"
+const executionChannelBootstrapPath = "/usr/local/lib/kombify/execution-channel-v1"
 
 // RenderExecutionChannelUserProvisioning returns the idempotent shell that
 // establishes the execution-channel login from the key the provider already
@@ -120,6 +121,22 @@ func RenderExecutionChannelUserReadyTest(privilege string) string {
 		`id -u {USER} >/dev/null 2>&1 && {S}test -s /home/{USER}/.ssh/authorized_keys`)
 }
 
+func executionChannelBootstrapScript() string {
+	return `#!/bin/bash
+set -euo pipefail
+` + RenderExecutionChannelUserProvisioning("") + `
+` + RenderExecutionChannelUserReadyTest("") + `
+`
+}
+
+func guardInstallerCommand(readinessCommand, installerCommand, failureReport string) string {
+	pipeline := installerCommand
+	if readinessCommand = strings.TrimSpace(readinessCommand); readinessCommand != "" {
+		pipeline = readinessCommand + " && " + installerCommand
+	}
+	return "set -o pipefail; " + pipeline + " || { " + failureReport + "; }"
+}
+
 // RenderCloudInit returns the #cloud-config document that installs and enrols
 // the Guard on first boot.
 //
@@ -150,9 +167,13 @@ func RenderCloudInit(in CloudInitInput) ([]byte, error) {
 		shellQuote("Authorization: Bearer "+token),
 		shellQuote("X-Kombify-Log-Level: error"),
 		shellQuote("X-Kombify-Log-Phase: cloud-init"),
-		shellQuote("Cloud-init could not download or execute the Techstack installer."),
+		shellQuote("Cloud-init could not establish the execution channel or execute the Techstack installer."),
 	)
-	command := "set -o pipefail; " + installerCommand + " || { " + failureReport + "; }"
+	readinessCommand := ""
+	if in.HostPrepProfile.stackKitReady() {
+		readinessCommand = executionChannelBootstrapPath
+	}
+	command := guardInstallerCommand(readinessCommand, installerCommand, failureReport)
 	// The command is embedded in a YAML double-quoted scalar below. Shell
 	// quoting uses single quotes only, and both the origin and the token are
 	// already restricted to characters that exclude these, so a hit here means
@@ -192,6 +213,12 @@ func RenderCloudInit(in CloudInitInput) ([]byte, error) {
 		document.WriteString("      [Unit]\n      Description=Kombify StackKit-ready host preparation v2\n      After=network-online.target\n      Wants=network-online.target\n")
 		document.WriteString("      [Service]\n      Type=oneshot\n      ExecStart=/usr/local/lib/kombify/host-prep-v2\n      RemainAfterExit=yes\n")
 		document.WriteString("      [Install]\n      WantedBy=multi-user.target\n")
+		document.WriteString("  - path: " + executionChannelBootstrapPath + "\n")
+		document.WriteString("    permissions: '0755'\n")
+		document.WriteString("    content: |\n")
+		for _, line := range strings.Split(executionChannelBootstrapScript(), "\n") {
+			document.WriteString("      " + line + "\n")
+		}
 	}
 	document.WriteString("output:\n")
 	document.WriteString("  all: '| tee -a " + BootstrapLogPath + "'\n")
@@ -204,6 +231,7 @@ func RenderCloudInit(in CloudInitInput) ([]byte, error) {
 	document.WriteString("  - [\"/usr/sbin/ufw\", \"allow\", \"22/tcp\"]\n")
 	document.WriteString("  - [\"/usr/sbin/ufw\", \"--force\", \"enable\"]\n")
 	if in.HostPrepProfile.stackKitReady() {
+		document.WriteString("  - [\"" + executionChannelBootstrapPath + "\"]\n")
 		document.WriteString("  - [\"/bin/systemctl\", \"enable\", \"--now\", \"--no-block\", \"kombify-host-prep-v2.service\"]\n")
 	}
 	// List form: cloud-init execs the argv directly, so no second shell parses

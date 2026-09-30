@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr, trn } from "#lib/i18n.svelte.js";
   import { onMount } from "svelte";
   import {
     readSectionCache,
@@ -13,7 +14,7 @@
   import { getBestPublicServerUrl } from "#lib/api/client.js";
   import { getWorkerRegistryUrl } from "#lib/api/tunnel.js";
   import { listWorkers, type Worker } from "#lib/api/workers.js";
-  import { goto } from "$app/navigation";
+  import { goto, pushState } from "$app/navigation";
   import { page } from "$app/state";
   import {
     type DeploymentRequirements,
@@ -46,12 +47,12 @@
   } from "#lib/api/stacks.js";
   import { getLatestKitDeploymentProvisionJob } from "#lib/api/jobs.js";
   import {
-    chosenHomelabName,
     getHomelab,
+    chosenHomelabName,
     type HomelabView,
   } from "#lib/api/homelab.js";
   import { stackIdentity } from "#lib/stores/stackIdentity.js";
-  import { StackIdentityBadge } from "#lib/components/open-core/index.js";
+  import HomelabTitle from "#lib/components/dashboard/HomelabTitle.svelte";
   import {
     getActiveWizardRun,
     wizardRunNeedsAttention,
@@ -61,18 +62,40 @@
   import { confirmInApp } from "#lib/dialogs/in-app-dialog.js";
   import { cleanupActionForFailure } from "#lib/custody/cleanup-action.js";
   import {
+    actionableServerOutcome,
+    canonicalServerFor,
+    serverForOperationTarget,
     statusLabel,
     type DashboardServer,
   } from "#lib/server-card-adapter.js";
   import { ServerCard } from "@kombiverselabs/ui/server";
-  import ServerInventoryPanel from "#lib/components/hub/ServerInventoryPanel.svelte";
+  import CompleteDashboard from "#lib/components/dashboard/CompleteDashboard.svelte";
+  import StrataDashboard from "#lib/components/dashboard/StrataDashboard.svelte";
+  import NodeActions from "#lib/components/dashboard/NodeActions.svelte";
+  import DashboardServiceSheet from "#lib/components/dashboard/DashboardServiceSheet.svelte";
+  import WorkerRegistrationCard from "#lib/components/dashboard/WorkerRegistrationCard.svelte";
+  import CustodyLeasesPanel from "#lib/components/dashboard/CustodyLeasesPanel.svelte";
+  import {
+    buildNodeViews,
+    primaryWorkloadKeys,
+    serviceState,
+    type NodeView,
+  } from "#lib/dashboard/homelab-model.js";
+  import {
+    loadDevices,
+    loadPeople,
+    type DeviceEntry,
+    type PersonEntry,
+    type SectionState,
+  } from "#lib/dashboard/people.js";
+  import type { StatusFacts } from "#lib/dashboard/strata.js";
+  import { dashboardPreset } from "#lib/stores/dashboardPreset.svelte.js";
   import { Surface } from "@kombiverselabs/ui/primitives";
-  import { PageHeader } from "@kombiverselabs/ui/shell";
   import Button from "#lib/components/ui/Button.svelte";
-  import Collapsible from "#lib/components/ui/Collapsible.svelte";
   import {
     AlertTriangle,
     HeartPulse,
+    MonitorSmartphone,
     Play,
     Plus,
     RefreshCw,
@@ -122,8 +145,6 @@
   let loadRetryTimer: ReturnType<typeof setTimeout> | null = null;
   let sessionRenewalRequired = $state(false);
   let sessionRenewalBodyKey = $state<string | undefined>(undefined);
-  let copiedInstallCommand = $state(false);
-  let copiedRegistryUrl = $state(false);
   let showImportExport = $state(false);
   let importExportMode = $state<"import" | "export">("import");
   type DashboardFailure = NonNullable<
@@ -134,11 +155,16 @@
   };
   type DashboardOperations = Omit<
     StackOperationsPayload,
-    "stack" | "servers" | "latestFailure"
+    "stack" | "servers" | "latestFailure" | "currentJob"
   > & {
     stack: Omit<StackOperationsPayload["stack"], "kit_deployment_id">;
     servers: DashboardServer[];
     latestFailure?: DashboardFailure | null;
+    currentJob?:
+      | (NonNullable<StackOperationsPayload["currentJob"]> & {
+          kit_deployment_id?: string;
+        })
+      | null;
   };
 
   let operations = $state<DashboardOperations | null>(null);
@@ -196,36 +222,16 @@
     deployments.length === 1 ? deployments[0] : null,
   );
   let deploymentIds = $derived(new Set(deployments.map((item) => item.id)));
-  let plannedWorkloadsKnown = $derived(
-    deployments.some(
-      (item) => item.workload_selection_source === "stack_spec_v2",
-    ),
+  // The homelab's user-facing name: the saved Stack Identity is the one
+  // naming authority (owner direction 2026-09-26); a legacy chosen homelab
+  // name only fills in before an identity exists. Without either, "Your
+  // homelab" is the title.
+  let homelabName = $derived(
+    ($stackIdentity?.savedAt && $stackIdentity.name?.trim()) ||
+      chosenHomelabName(homelab?.homelab),
   );
-  let plannedWorkloads = $derived.by(() => {
-    const unique = new Map<string, { id: string; alternative?: string }>();
-    for (const deployment of deployments) {
-      for (const workload of deployment.desired_workloads ?? []) {
-        const id = workload.id?.trim();
-        if (!id) continue;
-        const alternative = workload.alternative?.trim() || undefined;
-        unique.set(`${id}\u0000${alternative ?? ""}`, { id, alternative });
-      }
-    }
-    return [...unique.values()].sort((left, right) =>
-      left.id.localeCompare(right.id),
-    );
-  });
-
-  // The homelab's user-facing title. A name the owner typed in Settings always
-  // wins - otherwise renaming would be a silent no-op for every account that
-  // has a cloud-provided identity. While the row still carries its generated
-  // name, that identity is the closest thing to a chosen name (D9).
   let homelabTitle = $derived(
-    homelabResolved
-      ? chosenHomelabName(homelab?.homelab) ||
-          $stackIdentity?.name?.trim() ||
-          "Your homelab"
-      : "",
+    homelabResolved ? homelabName || tr("ui.homelabDashboardPage.yourHomelab") : "",
   );
 
   // Worker registration state
@@ -283,10 +289,8 @@
   );
   let dashboardRunningServiceCount = $derived(
     !canonicalInventoryUnavailable && canonicalInventoryResolved
-      ? canonicalServices.filter((service) =>
-          ["healthy", "running", "reachable"].includes(
-            (service.health.state || service.observed_state).toLowerCase(),
-          ),
+      ? canonicalServices.filter(
+          (service) => serviceState(service).tone === "ok",
         ).length
       : (operations?.kpis.running_services ?? 0),
   );
@@ -337,7 +341,7 @@
   // reported" alone reads like a broken dashboard.
   let servicesEmptyReason = $derived.by<string>(() => {
     if (dashboardServers.length === 0) {
-      return "No Node has reported an inventory yet.";
+      return tr("ui.homelabDashboardPage.noNodeHasReportedAn");
     }
     const agentVersions = [
       ...new Set(
@@ -348,8 +352,10 @@
     ];
     const agentEvidence =
       agentVersions.length > 0
-        ? ` Reported agent version${agentVersions.length === 1 ? "" : "s"}: ${agentVersions.join(", ")}.`
-        : " The agent version was not reported.";
+        ? trn("ui.homelab.agentVersions", agentVersions.length, {
+            versions: agentVersions.join(", "),
+          })
+        : tr("ui.homelabDashboardPage.theAgentVersionWasNot");
     const manifestSeen = dashboardServers.some(
       (server) => server.capabilities?.stackkit_manifest_observed === true,
     );
@@ -357,30 +363,28 @@
       (server) => server.capabilities?.service_discovery_observed === true,
     );
     if (manifestSeen && discoveryRan) {
-      return (
-        "Both service sources reported an empty inventory: the StackKit manifest contained no services, and agent discovery found no running containers or units." +
-        agentEvidence
-      );
+      return [
+        tr("ui.homelabDashboardPage.bothServiceSourcesReportedAn"),
+        agentEvidence,
+      ].join(" ");
     }
     if (manifestSeen) {
-      return (
-        "The StackKit manifest source reported no services. Service discovery has not been observed, so containers and units are still unknown." +
-        agentEvidence
-      );
+      return [
+        tr("ui.homelabDashboardPage.theStackkitManifestSourceReported"),
+        agentEvidence,
+      ].join(" ");
     }
     if (discoveryRan) {
-      return (
-        "Agent discovery reported no running containers or units. No StackKit manifest has been observed, so declared StackKit services are still unknown." +
-        agentEvidence
-      );
+      return [
+        tr("ui.homelabDashboardPage.agentDiscoveryReportedNoRunning"),
+        agentEvidence,
+      ].join(" ");
     }
-    return (
-      "Services come from two sources: a completed StackKit rollout, and the containers and units the Agent discovers on the host. " +
-      "Neither source has been observed yet: no StackKit manifest was found and the agent ran no service discovery." +
-      agentEvidence +
-      " " +
-      "Open the Node details to check the Agent, and the failure panel below for the last rollout."
-    );
+    return [
+      tr("ui.homelab.noSourceObserved"),
+      agentEvidence,
+      tr("ui.homelabDashboardPage.openTheNodeDetailsTo"),
+    ].join(" ");
   });
   let custodyLeases = $derived<StackCustodyLease[]>(
     operations?.custodyLeases ?? [],
@@ -397,20 +401,6 @@
     ),
   );
 
-  // A custody lease is not a machine. The label explains why it has no server,
-  // so an operator can tell an expired lease from one whose VM was deleted at
-  // the provider.
-  const custodyReasonLabels: Record<string, string> = {
-    provider_reports_absent: "VM no longer exists at the provider",
-    lease_cancelled: "Lease cancelled",
-    lease_archived: "Lease archived",
-    enrollment_failed: "Node never finished enrolling",
-    no_execution_authority: "No execution authority (legacy or unbound lease)",
-    never_observed: "Never observed",
-  };
-  function custodyReasonLabel(reason: string): string {
-    return custodyReasonLabels[reason] ?? statusLabel(reason);
-  }
   let currentRuntimePhase = $derived(
     operations?.runtimeLifecycle?.phases.find(
       (phase) => phase.id === operations?.runtimeLifecycle?.current_phase,
@@ -424,44 +414,6 @@
     if (jobState) return ["pending", "running"].includes(jobState);
     return ["pending", "running"].includes(currentRuntimePhase?.status ?? "");
   });
-  const supportShelf = [
-    {
-      title: "Open monitoring",
-      description: "Review health, alerts, jobs, and audit history.",
-      href: "/monitoring",
-      label: "Monitoring",
-    },
-    {
-      title: "Manage services",
-      description: "View installed and observed services for each Node.",
-      href: "/services",
-      label: "Services",
-    },
-    {
-      title: "Open wallet",
-      description: "Manage credentials and recovery material.",
-      href: "/wallet",
-      label: "Wallet",
-    },
-    {
-      title: "Add another Node",
-      description: "Expand compute or storage through the Creation Wizard.",
-      href: "https://docs.kombify.io/techstack",
-      label: "Guide",
-    },
-    {
-      title: "Review backups",
-      description: "Run restore-oriented checks for production data.",
-      href: "https://docs.kombify.io/techstack",
-      label: "Guide",
-    },
-    {
-      title: "Share services securely",
-      description: "Use Gateway and identity defaults instead of raw ports.",
-      href: "https://docs.kombify.io/techstack",
-      label: "Guide",
-    },
-  ];
   let isManagedOperationsStack = $derived(
     deployments.some(
       (deployment) =>
@@ -612,7 +564,7 @@
       .at(-1);
     return {
       id: homelab?.homelab?.id || "homelab",
-      name: chosenHomelabName(homelab?.homelab) || "Your homelab",
+      name: homelabName || tr("ui.homelabDashboardPage.yourHomelab"),
       provider: "homelab",
       state: aggregateStatus(currentDeployments.map((item) => item.state)),
       services: Array.from(
@@ -740,13 +692,33 @@
         ),
       },
       alerts: snapshots.flatMap(({ payload }) => payload.alerts),
-      currentJob:
-        snapshots.length === 1 ? snapshots[0]!.payload.currentJob : null,
+      // Each rollout runs on one Node, so with several deployments the one
+      // active job is still attributable: it carries its deployment along.
+      currentJob: activeJobAcross(snapshots),
       runtimeLifecycle:
         snapshots.length === 1 ? snapshots[0]!.payload.runtimeLifecycle : null,
       latestFailure: failures[0] ?? null,
       custodyLeases,
     };
+  }
+
+  function activeJobAcross(
+    snapshots: Array<{
+      deployment: StackDashboardItem;
+      payload: StackOperationsPayload;
+    }>,
+  ): DashboardOperations["currentJob"] {
+    if (snapshots.length === 1) {
+      const job = snapshots[0]!.payload.currentJob;
+      return job ? { ...job, kit_deployment_id: snapshots[0]!.deployment.id } : null;
+    }
+    for (const { deployment, payload } of snapshots) {
+      const job = payload.currentJob;
+      if (job && ["pending", "running"].includes(job.state)) {
+        return { ...job, kit_deployment_id: deployment.id };
+      }
+    }
+    return null;
   }
 
   async function loadOperationsContext(
@@ -807,7 +779,7 @@
       );
       operationsError =
         uniqueMessages(messages) ||
-        "Operations data is not available for this homelab yet.";
+        tr("ui.homelabDashboardPage.operationsDataIsNotAvailable");
       return;
     }
     operations = aggregateOperations(snapshots);
@@ -821,7 +793,7 @@
     );
     operationsError =
       rejected.length > 0
-        ? `${rejected.length} StackKit deployment operation${rejected.length === 1 ? "" : "s"} could not be loaded.`
+        ? trn("ui.homelab.operationsNotLoaded", rejected.length)
         : null;
     captureConnectedOnce(operations);
   }
@@ -911,10 +883,64 @@
       return true;
     }
     if (failedCleanupAction) return true;
-    const liveNodes =
-      dashboardServers.length + canonicalOnlyServers.length;
+    const liveNodes = dashboardServers.length + canonicalOnlyServers.length;
     return liveNodes === 0 && custodyLeases.length > 0;
   });
+
+  // A StackKit rollout runs on exactly one server, so its failure and its
+  // progress belong on that Node's card. Null keeps them as a page-level
+  // notice under the health strip (e.g. before any Node is registered).
+  // The backend already resolved the target (T1-T4 in stack_operations.go);
+  // this only maps it onto the rendered cards. While any Node exists the
+  // failure is never a page-level banner: an unmatched target falls back to
+  // its deployment's Node, then to the first Node. The compact page notice
+  // remains only when there is no Node at all.
+  let failureServer = $derived.by(() => {
+    if (!showLatestFailurePanel || !latestFailureOutcome) return null;
+    const failure = operations?.latestFailure;
+    const direct = serverForOperationTarget(failure, dashboardServers);
+    if (direct) return direct;
+    return (
+      dashboardServers.find(
+        (server) => server.kit_deployment_id === failure?.kit_deployment_id,
+      ) ??
+      dashboardServers[0] ??
+      null
+    );
+  });
+  let runtimeJobServer = $derived(
+    showRuntimeProgress
+      ? serverForOperationTarget(
+          {
+            ...operations?.currentJob,
+            kit_deployment_id:
+              operations?.currentJob?.kit_deployment_id ||
+              (deployments.length === 1 ? deployments[0]!.id : undefined),
+          },
+          dashboardServers,
+        )
+      : null,
+  );
+  function isSameServer(
+    left: DashboardServer | null,
+    right: DashboardServer,
+  ): boolean {
+    return Boolean(
+      left &&
+      left.id === right.id &&
+      left.kit_deployment_id === right.kit_deployment_id,
+    );
+  }
+  // The card already shows its own last outcome; do not repeat the same
+  // failure under it.
+  function nodeShowsFailure(server: DashboardServer): boolean {
+    if (!isSameServer(failureServer, server)) return false;
+    const own = actionableServerOutcome(
+      server,
+      canonicalServerFor(server, canonicalServers),
+    );
+    return !own || own.reasonCode !== latestFailureOutcome?.reasonCode;
+  }
 
   // Last-operation failures belong in job history and on the Node/service
   // cards that actually failed. The homepage must not keep a degraded badge
@@ -939,16 +965,19 @@
       failure.job_id;
     const type = (failure.type || "").trim().toLowerCase();
     if (type === "remote_enrollment") {
-      return `SSH connection to your Node failed — ${detail}`;
+      return tr("ui.homelab.sshFailed", { detail });
     }
     if (
       latestFailureDeployment?.server_provisioning_mode === "connect-remote" &&
       (operations?.readiness?.connected_servers ?? 0) > 0 &&
       (type === "provision" || type === "deploy")
     ) {
-      return `StackKit preparation failed on connected Node — ${detail}`;
+      return tr("ui.homelab.preparationFailed", { detail });
     }
-    return `Latest ${statusLabel(failure.type || "rollout")} failed — ${detail}`;
+    return tr("ui.homelab.latestFailed", {
+      type: statusLabel(failure.type || "rollout"),
+      detail,
+    });
   });
 
   let operationsUnavailableOutcome = $derived.by<ServerOutcome | null>(() => {
@@ -959,9 +988,9 @@
       capability: "techstack.server.operations",
       retryable: true,
       userGuidance: {
-        title: "Operations data is not available yet",
+        title: tr("ui.homelabDashboardPage.operationsDataIsNotAvailable2"),
         body: operationsError,
-        nextSteps: [{ id: "ops-retry", label: "Retry", kind: "retry" }],
+        nextSteps: [{ id: "ops-retry", label: tr("ui.homelabDashboardPage.retry"), kind: "retry" }],
       },
     };
   });
@@ -1001,7 +1030,7 @@
         );
         if (!targetDeployment) {
           throw new Error(
-            "The failed StackKit deployment is no longer part of this homelab. Refresh the homelab and retry the exact deployment.",
+            tr("ui.homelabDashboardPage.theFailedStackkitDeploymentIs"),
           );
         }
         // Same authority the guidance panel uses to decide whether to offer
@@ -1032,7 +1061,7 @@
                   : null;
         if (!result) {
           throw new Error(
-            "This failed run cannot be retried automatically and safely.",
+            tr("ui.homelabDashboardPage.thisFailedRunCannotBe"),
           );
         }
         const params = new URLSearchParams();
@@ -1054,7 +1083,7 @@
       await loadOperationsContext(deployments);
     } catch (err) {
       const parsed = parseApiError(err);
-      error = `Rollout could not be retried: ${parsed.message}`;
+      error = tr("ui.homelab.retryFailed", { message: parsed.message });
     } finally {
       retryingOperations = false;
     }
@@ -1239,6 +1268,7 @@
         }),
         loadCanonicalInventoryContext(),
       ]);
+      if (deployments.length > 0) void loadPeopleAndDevices();
     } catch (err) {
       if (isCancelledRequestError(err)) return;
       const parsed = parseApiError(err);
@@ -1330,8 +1360,11 @@
     }
 
     load();
+    syncServiceSheetFromLocation();
+    window.addEventListener("popstate", syncServiceSheetFromLocation);
 
     return () => {
+      window.removeEventListener("popstate", syncServiceSheetFromLocation);
       if (loadRetryTimer) {
         clearTimeout(loadRetryTimer);
         loadRetryTimer = null;
@@ -1357,19 +1390,6 @@
     }
   }
 
-  function copyInstallCommand() {
-    navigator.clipboard.writeText(installCommand);
-    copiedInstallCommand = true;
-    setTimeout(() => (copiedInstallCommand = false), 2000);
-  }
-
-  function copyRegistryUrl() {
-    if (!serverUrl) return;
-    navigator.clipboard.writeText(serverUrl);
-    copiedRegistryUrl = true;
-    setTimeout(() => (copiedRegistryUrl = false), 2000);
-  }
-
   let rolloutLoading = $state(false);
 
   async function startRollout(deploymentId = singleDeployment?.id) {
@@ -1379,7 +1399,7 @@
       error =
         operationsError ||
         operations?.readiness?.message ||
-        "Rollout readiness is unavailable. Refresh the operations data before starting.";
+        tr("ui.homelabDashboardPage.rolloutReadinessIsUnavailableRefresh");
       return;
     }
 
@@ -1399,7 +1419,7 @@
       );
     } catch (err) {
       const parsed = parseApiError(err);
-      error = `Rollout failed: ${parsed.message}`;
+      error = tr("ui.homelab.rolloutFailed", { message: parsed.message });
     } finally {
       rolloutLoading = false;
     }
@@ -1434,10 +1454,10 @@
       reconnectOutcome = {
         leaseId: normalizedLeaseId,
         tone: "error",
-        title: "Reconnect failed",
+        title: tr("ui.homelabDashboardPage.reconnectFailed"),
         body:
           parsed.message ||
-          "The runtime probe returned no reason. Retry, or open the Node details for the full runtime record.",
+          tr("ui.homelabDashboardPage.theRuntimeProbeReturnedNo"),
       };
     } finally {
       reconnectingLeaseId = null;
@@ -1463,24 +1483,23 @@
       return {
         leaseId,
         tone: "success",
-        title: "Node is reporting again",
-        body: `The runtime answered the probe and the Guard heartbeat is current (${statusLabel(server.health.state)}).`,
+        title: tr("ui.homelabDashboardPage.nodeIsReportingAgain"),
+        body: tr("ui.homelab.probeAnswered", {
+          state: statusLabel(server.health.state),
+        }),
       };
     }
     const machineState =
       status.status?.state?.trim() ||
       status.observed_state?.trim() ||
-      "not reported";
-    const enrollment = status.enrollment_status?.trim() || "not reported";
+      tr("ui.serverDetail.sourceNotReported");
+    const enrollment =
+      status.enrollment_status?.trim() || tr("ui.serverDetail.sourceNotReported");
     return {
       leaseId,
       tone: "warning",
-      title: "Runtime answered, but the Node is still offline",
-      body:
-        `The provider reports the machine as "${machineState}" and enrollment as "${enrollment}". ` +
-        "Reconnect can only re-run that probe — it cannot restart the kombify Agent on the machine. " +
-        "The Node stays offline until the Agent sends a heartbeat again, so continue in the Node details, " +
-        "where the enrollment command and the last contact are shown.",
+      title: tr("ui.homelabDashboardPage.runtimeAnsweredButTheNode"),
+      body: tr("ui.homelab.probeOffline", { machineState, enrollment }),
     };
   }
 
@@ -1496,26 +1515,19 @@
       await load();
     } catch (err) {
       const parsed = parseApiError(err);
-      decommissionError = parsed.message || "Decommission failed";
+      decommissionError = parsed.message || tr("ui.homelabDashboardPage.decommissionFailed");
     } finally {
       cleaningCustodyLeaseId = null;
     }
   }
 
-  function custodyAllows(
-    lease: StackCustodyLease,
-    action: "decommission" | "resolve_custody",
-  ): boolean {
-    return lease.allowed_actions?.includes(action) === true;
-  }
-
   async function resolveCustodyLease(lease: StackCustodyLease) {
     if (resolvingCustodyLeaseId) return;
     const confirmed = await confirmInApp({
-      title: "Resolve stale custody record?",
+      title: tr("ui.homelabDashboardPage.resolveStaleCustodyRecord"),
       message:
-        "Confirm that the provider resource has already been removed. Techstack will archive only its stale custody record and will not delete a provider resource.",
-      confirmText: "Resolve record",
+        tr("ui.homelabDashboardPage.confirmThatTheProviderResource"),
+      confirmText: tr("ui.homelabDashboardPage.resolveRecord"),
       tone: "warning",
     });
     if (!confirmed) return;
@@ -1530,8 +1542,8 @@
       const parsed = parseApiError(err);
       decommissionError =
         parsed.code === "upstream_unavailable"
-          ? "Custody record unchanged: the Techstack gateway could not reach the backend. Retry this exact record when the service is available."
-          : parsed.message || "Custody resolution failed";
+          ? tr("ui.homelabDashboardPage.custodyRecordUnchangedTheTechstack")
+          : parsed.message || tr("ui.homelabDashboardPage.custodyResolutionFailed");
     } finally {
       resolvingCustodyLeaseId = null;
     }
@@ -1541,7 +1553,7 @@
     const selection = failedCleanupAction;
     if (!selection) {
       decommissionError =
-        "The failed cleanup is not bound to an actionable lease. Refresh the lifecycle evidence and use the action on the exact custody record.";
+        tr("ui.homelabDashboardPage.theFailedCleanupIsNot");
       return;
     }
     if (selection.action === "resolve_custody") {
@@ -1600,12 +1612,6 @@
     return `/services?tab=${encodeURIComponent(tab)}`;
   }
 
-  function shelfHref(href: string): string {
-    if (href === "/monitoring") return "/monitoring";
-    if (href === "/services") return servicesHref("services");
-    return href;
-  }
-
   function addServerHref(): string {
     return singleDeployment
       ? `/stacks/${encodeURIComponent(singleDeployment.id)}/servers/new`
@@ -1642,9 +1648,208 @@
     if (server.assignment === "stack") return true;
     return server.assignment === "unassigned" && server.assignable !== false;
   }
+  // ── Dashboard presets ────────────────────────────────────────────────
+  // One data load above feeds whichever preset the owner picked in Settings.
+  let peopleState = $state<SectionState<PersonEntry>>({ state: "loading" });
+  let devicesState = $state<SectionState<DeviceEntry>>({ state: "loading" });
+  let peopleLoadKey = "";
+
+  let showStrata = $derived(
+    dashboardPreset.current === "strata" &&
+      deployments.length > 0 &&
+      Boolean(operations) &&
+      hasServerInventory,
+  );
+  let nodeViews = $derived<NodeView[]>(
+    buildNodeViews(
+      dashboardServers,
+      canonicalOnlyServers,
+      canonicalServers,
+      canonicalServices,
+      primaryWorkloadKeys(deployments),
+    ),
+  );
+
+  // The wizard run's notice belongs to the one Node its rollout targets: the
+  // job's server, else a Node of the run's deployment. Only a homelab with no
+  // Node at all shows it at the top.
+  let wizardRunNotice = $derived(
+    activeWizardRun && wizardRunNeedsAttention(activeWizardRun)
+      ? activeWizardRun
+      : null,
+  );
+  let wizardRunNodeKey = $derived.by(() => {
+    const run = wizardRunNotice;
+    if (!run || !hasServerInventory || nodeViews.length === 0) return null;
+    const target = run.target_server_id || run.node_id || "";
+    const node =
+      (target &&
+        nodeViews.find(
+          (candidate) =>
+            candidate.server?.id === target ||
+            candidate.nodeId === target ||
+            candidate.canonical?.id === target,
+        )) ||
+      nodeViews.find(
+        (candidate) => candidate.deploymentId === run.kit_deployment_id,
+      ) ||
+      nodeViews[0];
+    return node.key;
+  });
+
+  // Top placement is only for a homelab whose Node list is settled and empty:
+  // while inventory loads the notice waits instead of flashing above Nodes.
+  let wizardRunTopNotice = $derived(
+    Boolean(wizardRunNotice) &&
+      !wizardRunNodeKey &&
+      homelabResolved &&
+      (deployments.length === 0 ||
+        (operationsResolved &&
+          (canonicalInventoryResolved || canonicalInventoryUnavailable) &&
+          !hasServerInventory)),
+  );
+
+  async function refreshWizardRun() {
+    try {
+      activeWizardRun = await getActiveWizardRun();
+    } catch {
+      // The next dashboard refresh retries; an unreadable run shows nothing.
+    }
+  }
+
+  function deploymentName(deploymentId: string): string {
+    return (
+      deployments.find((deployment) => deployment.id === deploymentId)?.name ||
+      tr("ui.homelabDashboardPage.stackkitDeployment")
+    );
+  }
+
+  function deploymentHref(deploymentId: string): string {
+    return deploymentId ? `/stacks/${encodeURIComponent(deploymentId)}` : "#";
+  }
+
+  function nodeHref(node: NodeView): string {
+    return node.server
+      ? serverDetailsHref(node.server.id, node.server.kit_deployment_id)
+      : serverDetailsHref(node.nodeId, node.deploymentId || undefined);
+  }
+
+  function nodeNameFor(server: DashboardServer | null): string | null {
+    if (!server) return null;
+    return (
+      nodeViews.find(
+        (node) =>
+          node.server?.id === server.id &&
+          node.server.kit_deployment_id === server.kit_deployment_id,
+      )?.name ?? null
+    );
+  }
+
+  const unhealthyConnections = new Set(["offline", "stale", "degraded", "revoked"]);
+  let strataFacts = $derived<StatusFacts>({
+    nodes: nodeViews.length,
+    unhealthyNodes: nodeViews.filter(
+      (node) =>
+        node.axes.health === "degraded" ||
+        node.axes.health === "unhealthy" ||
+        unhealthyConnections.has(node.axes.connection),
+    ).length,
+    alerts: operations?.kpis.active_alerts ?? 0,
+    rolloutNode: nodeNameFor(runtimeJobServer),
+    failureNode: nodeNameFor(failureServer),
+  });
+  let strataRollout = $derived(
+    runtimeJobServer
+      ? {
+          nodeKey: `${runtimeJobServer.kit_deployment_id}:${runtimeJobServer.id}`,
+          label:
+            currentRuntimePhase?.message ||
+            operations?.currentJob?.message ||
+            `StackKit rollout · ${statusLabel(
+              operations?.runtimeLifecycle?.current_phase ||
+                operations?.currentJob?.step ||
+                "pending",
+            )}`,
+          progress: Math.max(
+            0,
+            Math.min(100, operations?.currentJob?.progress ?? 0),
+          ),
+        }
+      : null,
+  );
+
+  /**
+   * People and devices load beside the fleet, never in front of it: each
+   * source settles into its own honest state.
+   */
+  async function loadPeopleAndDevices() {
+    const ids = deployments.map((deployment) => deployment.id);
+    const key = ids.slice().sort().join("\u0000");
+    const ownerName =
+      authStore.cloudUser?.name || authStore.cloudUser?.email || tr("ui.homelabDashboardPage.you");
+    if (key !== peopleLoadKey) {
+      peopleLoadKey = key;
+      peopleState = { state: "loading" };
+      devicesState = { state: "loading" };
+    }
+    const [people, devices] = await Promise.all([
+      loadPeople(ids, ownerName),
+      loadDevices(),
+    ]);
+    peopleState = people;
+    devicesState = devices;
+  }
+
+  // Service detail sheet, deep-linked as `?service=<id>` like the Services
+  // page: a click pushes the address, back closes it.
+  let detailServiceId = $state<string | null>(null);
+  let detailService = $derived(
+    detailServiceId
+      ? (canonicalServices.find((service) => service.id === detailServiceId) ??
+          null)
+      : null,
+  );
+  let detailNodeName = $derived(
+    detailService
+      ? nodeViews.find(
+          (node) =>
+            node.apps.includes(detailService!) ||
+            node.system.includes(detailService!),
+        )?.name
+      : undefined,
+  );
+
+  function openServiceSheet(serviceId: string) {
+    detailServiceId = serviceId;
+    const url = new URL(page.url.href);
+    url.searchParams.set("service", serviceId);
+    pushState(url, {});
+  }
+
+  function closeServiceSheet() {
+    if (!detailServiceId) return;
+    detailServiceId = null;
+    const url = new URL(page.url.href);
+    url.searchParams.delete("service");
+    pushState(url, {});
+  }
+
+  function syncServiceSheetFromLocation() {
+    detailServiceId = new URL(window.location.href).searchParams.get("service");
+  }
 </script>
 
-<div class="mx-auto max-w-6xl p-4 md:p-6" data-testid="stacks-dashboard">
+<!-- With a Node inventory the dashboard is bound to the viewport: header,
+     KPI strip and footer stay put and only the Node and device lists scroll.
+     `contain: size` keeps the content from stretching the shell's content
+     slot, so `h-full` resolves to the height left beside the footer; on a
+     screen too short for even the bounded lists the page area scrolls itself. -->
+<div
+  class="mx-auto max-w-[90rem] p-4 md:p-6 {hasServerInventory && operations
+    ? 'flex h-full min-h-0 flex-col overflow-y-auto [contain:size] md:py-4'
+    : ''}"
+  data-testid="stacks-dashboard"
+>
   <!-- Declared once at the root so both server surfaces report the same
        Reconnect result instead of one of them staying silent. -->
   {#snippet reconnectOutcomeBanner()}
@@ -1669,68 +1874,311 @@
     {/if}
   {/snippet}
 
-  <div class="mb-6" data-testid="homelab-header">
-    <PageHeader title={homelabTitle}>
-      {#snippet actions()}
-        <div class="flex min-w-0 items-center gap-3">
-          {#if $stackIdentity}
-            <StackIdentityBadge identity={$stackIdentity} />
-          {/if}
+  {#snippet runtimeProgressCard()}
+    <section
+      data-kx="plate"
+      class="p-5"
+      data-testid="runtime-lifecycle-progress"
+      aria-label={tr("ui.homelab.rolloutProgress")}
+    >
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <p class="text-sm font-medium text-foreground">{tr("ui.homelab.runtimeRollout")}</p>
+          <p class="mt-1 text-sm text-muted-foreground">
+            {currentRuntimePhase?.message ||
+              operations?.currentJob?.message ||
+              tr("ui.homelabDashboardPage.thePersistedRolloutIsWaiting")}
+          </p>
         </div>
-        {#if deployments.length > 0 && homelabResolved}
-          <div
-            class="flex flex-wrap items-center gap-2"
-            data-testid="stack-action-bar"
-          >
-            <Button
-              variant="primary"
-              testId="add-server-button"
-              anchor="techstack-add-server"
-              onclick={() => goto(addServerHref())}
-            >
-              <Plus class="h-4 w-4" />
-              Register additional Nodes
-            </Button>
-            {#if showReviewStart}
-              <Button
-                variant="primary"
-                testId="review-start-button"
-                onclick={() => startRollout()}
-                disabled={!canRollout || rolloutLoading}
-              >
-                <Play class="h-4 w-4" />
-                {rolloutLoading ? "Starting..." : "Review + Start"}
-              </Button>
-            {/if}
-            {#if singleDeployment}
-              <Button
-                variant="secondary"
-                onclick={() => {
-                  importExportMode = "export";
-                  showImportExport = true;
-                }}
-              >
-                Import / Export
-              </Button>
-            {/if}
-            <Button
-              variant="secondary"
-              testId="dashboard-refresh-button"
-              onclick={load}
-              disabled={loading}
-            >
-              <RefreshCw class="h-4 w-4" />
-              Refresh
-            </Button>
-          </div>
-        {/if}
-      {/snippet}
-    </PageHeader>
-  </div>
+        <span
+          data-kx="status"
+          data-status={statusKind(operations?.currentJob?.state || "pending")}
+          class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
+        >
+          {statusLabel(operations?.currentJob?.state || "pending")}
+        </span>
+      </div>
+      <div class="mt-4 h-2 overflow-hidden rounded-full bg-muted">
+        <div
+          class="h-full rounded-full bg-primary transition-[width]"
+          style={`width: ${Math.max(0, Math.min(100, operations?.currentJob?.progress ?? 0))}%`}
+        ></div>
+      </div>
+      <div
+        class="mt-2 flex flex-wrap justify-between gap-2 text-xs text-muted-foreground"
+      >
+        <span>
+          {tr("ui.homelab.phase", {
+            phase: statusLabel(
+              operations?.runtimeLifecycle?.current_phase ||
+              operations?.currentJob?.step ||
+              "pending",
+            ),
+          })}
+        </span>
+        <span>{operations?.currentJob?.progress ?? 0}%</span>
+      </div>
+    </section>
+  {/snippet}
 
-  {#if activeWizardRun && wizardRunNeedsAttention(activeWizardRun)}
+  <!-- The latest failed operation with its guidance and, for a failed
+       cleanup, the exact cleanup action. -->
+  {#snippet latestFailureGuidance(surface: string)}
+    {#if latestFailureOutcome}
+      <p class="mb-2 text-sm font-medium text-foreground">
+        {latestFailureSummary}
+      </p>
+      {#if failedCleanupAction && ["destroy", "decommission"].includes(operations?.latestFailure?.type?.toLowerCase() ?? "")}
+        <Button
+          variant="destructive"
+          size="sm"
+          class="mb-2"
+          testId="retry-destroy-cleanup"
+          onclick={retryDestroyCleanup}
+          disabled={cleaningCustodyLeaseId !== null}
+        >
+          {failedCleanupAction.action === "resolve_custody"
+            ? tr("ui.homelabDashboardPage.resolveExactRecord")
+            : tr("ui.homelabDashboardPage.retryExactCleanup")}
+        </Button>
+      {/if}
+      <GuidancePanel
+        outcome={latestFailureOutcome}
+        {surface}
+        resourceId={operations?.latestFailure?.kit_deployment_id ||
+          homelab?.homelab?.id}
+        resourceName={operations?.latestFailure?.kit_deployment_name ||
+          homelabTitle}
+        onRetry={retryOperations}
+        retrying={retryingOperations}
+        compact
+      />
+    {/if}
+  {/snippet}
+
+  {#snippet wizardRunNodeNotice(node: NodeView)}
+    {#if wizardRunNotice && node.key === wizardRunNodeKey}
+      <WizardRunBanner run={wizardRunNotice} onChanged={refreshWizardRun} />
+    {/if}
+  {/snippet}
+
+  {#snippet serverNotice(server: DashboardServer)}
+    {#if isSameServer(runtimeJobServer, server)}
+      {@render runtimeProgressCard()}
+    {/if}
+    {#if nodeShowsFailure(server)}
+      <div data-testid="node-latest-failure">
+        {@render latestFailureGuidance("stacks.hub.server")}
+      </div>
+    {/if}
+  {/snippet}
+
+  {#snippet headerActions()}
+    {#if deployments.length > 0 && homelabResolved}
+      <div
+        class="flex flex-wrap items-center gap-2"
+        data-testid="stack-action-bar"
+      >
+        <Button
+          variant="primary"
+          testId="add-server-button"
+          anchor="techstack-add-server"
+          onclick={() => goto(addServerHref())}
+        >
+          <Plus class="h-4 w-4" />
+          {tr("ui.homelab.newNode")}
+        </Button>
+        {#if showReviewStart}
+          <Button
+            variant="primary"
+            testId="review-start-button"
+            onclick={() => startRollout()}
+            disabled={!canRollout || rolloutLoading}
+          >
+            <Play class="h-4 w-4" />
+            {rolloutLoading ? tr("ui.homelabDashboardPage.starting") : tr("ui.homelabDashboardPage.reviewStart")}
+          </Button>
+        {/if}
+        {#if singleDeployment}
+          <Button
+            variant="secondary"
+            onclick={() => {
+              importExportMode = "export";
+              showImportExport = true;
+            }}
+          >
+            {tr("ui.common.importExport")}
+          </Button>
+        {/if}
+        <Button
+          variant="secondary"
+          testId="dashboard-refresh-button"
+          onclick={load}
+          disabled={loading}
+          ariaLabel={tr("ui.homelabDashboardPage.refresh")}
+        >
+          <RefreshCw class="h-4 w-4 {loading ? 'animate-spin' : ''}" />
+        </Button>
+      </div>
+    {/if}
+  {/snippet}
+
+  {#snippet nodeControls(node: NodeView)}
+    <NodeActions
+      {node}
+      {operationsEvidenceFresh}
+      assigning={Boolean(node.server && assigningWorkerId === node.server.id)}
+      reconnecting={Boolean(
+        node.server?.lease_id && reconnectingLeaseId === node.server.lease_id,
+      )}
+      {canRollout}
+      {rolloutLoading}
+      canReconnect={node.server ? canReconnectManagedRuntime(node.server) : false}
+      onAssign={() =>
+        node.server &&
+        assignWorkerToDeployment(node.server.kit_deployment_id, node.server.id)}
+      onDeploy={() => node.server && startRollout(node.server.kit_deployment_id)}
+      onReconnect={() =>
+        node.server?.lease_id && reconnectManagedRuntime(node.server.lease_id)}
+      onOpenDetails={() => goto(nodeHref(node))}
+    />
+  {/snippet}
+
+  {#if !showStrata}
+    <div
+      class={hasServerInventory ? "mb-3" : "mb-6"}
+      data-testid="homelab-header"
+    >
+      <!-- The Stack Identity is the title; no second badge beside the actions. -->
+      <header
+        class="flex flex-col items-start justify-between gap-4 py-4 sm:flex-row"
+      >
+        <!-- Below 48rem the fixed menu toggle sits top-left: the title moves
+             beside it and the eyebrow is dropped. -->
+        <div class="min-w-0 pl-14 min-[48rem]:pl-0">
+          {#if homelabName}
+            <p
+              class="mb-1 hidden text-[0.72rem] font-bold tracking-[0.08em] text-primary uppercase min-[48rem]:block"
+            >
+              {tr("ui.dashboard.yourHomelab")}
+            </p>
+          {/if}
+          <HomelabTitle
+            identity={$stackIdentity}
+            fallback={homelabTitle}
+            class="text-[clamp(1.35rem,2.5vw,2rem)] leading-tight font-bold text-foreground"
+          />
+        </div>
+        <div class="flex flex-wrap gap-2">
+          {@render headerActions()}
+        </div>
+      </header>
+    </div>
+  {/if}
+
+  <!-- Health first: the KPI strip sits directly under the title, with any
+       rollout or failure that no Node card can hold. -->
+  {#if deployments.length > 0 && operations && (hasServerInventory || (showRuntimeProgress && !runtimeJobServer) || (showLatestFailurePanel && latestFailureOutcome && !failureServer))}
+    <div
+      class="{hasServerInventory ? 'mb-3' : 'mb-6'} space-y-3"
+      data-testid="homelab-health"
+    >
+      {#if hasServerInventory && !showStrata}
+        <div
+          data-kx="plate"
+          class="grid grid-cols-2 overflow-hidden text-sm sm:flex sm:divide-x sm:divide-border"
+          data-testid="stack-kpi-strip"
+        >
+          <a
+            class="flex min-w-0 flex-1 items-center gap-1.5 px-3 py-2 transition-colors hover:bg-muted/30"
+            href={monitoringHref("servers")}
+          >
+            <Server class="h-4 w-4 shrink-0 text-primary" />
+            <span class="truncate text-xs text-muted-foreground">{tr("ui.dashboard.nodes")}</span>
+            <span class="font-semibold text-foreground">
+              {dashboardServerCount}
+            </span>
+            <span
+              class="truncate text-xs text-muted-foreground"
+              data-testid="worker-connected-count"
+              >{tr("ui.homelab.connectedOfTotal", { connected: dashboardConnectedServerCount, total: dashboardServerCount })}</span
+            >
+          </a>
+          <a
+            class="flex min-w-0 flex-1 items-center gap-1.5 px-3 py-2 transition-colors hover:bg-muted/30"
+            href={monitoringHref("health")}
+            title={tr("ui.homelab.heartbeat")}
+          >
+            <HeartPulse class="h-4 w-4 shrink-0 text-success" />
+            <span class="truncate text-xs text-muted-foreground">{tr("ui.dashboard.healthy")}</span>
+            <span class="font-semibold text-foreground">
+              {dashboardHealthyServerCount}
+            </span>
+          </a>
+          <a
+            class="flex min-w-0 flex-1 items-center gap-1.5 px-3 py-2 transition-colors hover:bg-muted/30"
+            href={monitoringHref("services")}
+            data-testid="stack-running-services-kpi"
+          >
+            <Waypoints class="h-4 w-4 shrink-0 text-info" />
+            <span class="truncate text-xs text-muted-foreground">{tr("ui.dashboard.services")}</span>
+            <span
+              class="font-semibold text-foreground"
+              data-testid="metric-card-value"
+            >
+              {dashboardRunningServiceCount}
+            </span>
+            <span class="truncate text-xs text-muted-foreground">
+              {tr("ui.homelab.recorded", { count: dashboardServiceCount })}
+            </span>
+          </a>
+          {#if devicesState.state === "ready"}
+            <a
+              class="flex min-w-0 flex-1 items-center gap-1.5 px-3 py-2 transition-colors hover:bg-muted/30"
+              href="#dashboard-people-title"
+              data-testid="stack-devices-kpi"
+            >
+              <MonitorSmartphone class="h-4 w-4 shrink-0 text-primary" />
+              <span class="truncate text-xs text-muted-foreground">{tr("ui.dashboard.devices")}</span>
+              <span class="font-semibold text-foreground">
+                {devicesState.items.length}
+              </span>
+              <span class="truncate text-xs text-muted-foreground">
+                {tr("ui.homelab.onlineCount", { count: devicesState.items.filter((item) => item.online).length })}
+              </span>
+            </a>
+          {/if}
+          <a
+            class="flex min-w-0 flex-1 items-center gap-1.5 px-3 py-2 transition-colors hover:bg-muted/30"
+            href={monitoringHref("alerts")}
+            title={statusLabel(operations.monitoring.status)}
+          >
+            <AlertTriangle class="h-4 w-4 shrink-0 text-warning" />
+            <span class="truncate text-xs text-muted-foreground">{tr("ui.dashboard.alerts")}</span>
+            <span class="font-semibold text-foreground">
+              {operations.kpis.active_alerts}
+            </span>
+          </a>
+        </div>
+      {/if}
+      {#if showRuntimeProgress && !runtimeJobServer}
+        {@render runtimeProgressCard()}
+      {/if}
+      {#if showLatestFailurePanel && latestFailureOutcome && !failureServer}
+        <div
+          class="space-y-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3"
+          data-testid="latest-failure-notice"
+          role="status"
+        >
+          {@render latestFailureGuidance("stacks.hub")}
+        </div>
+      {/if}
+    </div>
+  {/if}
+
+  {#if wizardRunNotice && wizardRunTopNotice}
     <div class="mb-6">
-      <WizardRunBanner run={activeWizardRun} />
+      <WizardRunBanner run={wizardRunNotice} onChanged={refreshWizardRun} />
     </div>
   {/if}
 
@@ -1750,8 +2198,7 @@
         class="text-sm text-muted-foreground"
         data-testid="stacks-stale-notice"
       >
-        Last verified state retained &mdash; the refresh failed and retries
-        automatically.
+        {tr("ui.homelabDashboardPage.lastVerifiedStateRetainedThe")}
       </p>
     </Surface>
   {/if}
@@ -1774,7 +2221,7 @@
     <section
       class="mb-8 space-y-4"
       data-testid="dashboard-loading-state"
-      aria-label="Loading homelab"
+      aria-label={tr("ui.homelab.loading")}
       aria-busy="true"
     >
       <div class="h-10 animate-pulse rounded-lg bg-muted"></div>
@@ -1785,7 +2232,7 @@
     <section
       class="mb-8 space-y-4"
       data-testid="dashboard-operations-loading-state"
-      aria-label="Loading homelab operations"
+      aria-label={tr("ui.homelab.loadingOperations")}
       aria-busy="true"
     >
       <div class="grid gap-3 lg:grid-cols-2">
@@ -1797,9 +2244,11 @@
 
   {#if deployments.length > 0 && operations}
     <section
-      class="mb-8 space-y-6"
+      class={hasServerInventory
+        ? "flex flex-1 flex-col gap-3"
+        : "mb-8 space-y-6"}
       data-testid="stack-operations-dashboard"
-      aria-label="Homelab operations"
+      aria-label={tr("ui.homelab.operations")}
     >
       {#if operationsFromCache && !operationsError}
         <!-- The cached snapshot is on screen so the dashboard is readable at
@@ -1810,8 +2259,7 @@
           data-testid="operations-evidence-reconfirming"
           role="status"
         >
-          Showing the last known state while it is reconfirmed. Node actions
-          unlock when it is.
+          {tr("ui.homelab.reconfirming")}
         </p>
       {/if}
 
@@ -1822,60 +2270,12 @@
           role="status"
         >
           <p class="font-medium text-foreground">
-            Operations evidence is stale
+            {tr("ui.homelab.evidenceStale")}
           </p>
           <p class="mt-1 text-sm text-muted-foreground">
-            The last verified snapshot remains visible, but Node mutations are
-            disabled until Refresh succeeds. {operationsError}
+            {tr("ui.homelab.evidenceStaleBody")} {operationsError}
           </p>
         </div>
-      {/if}
-
-      {#if showRuntimeProgress}
-        <section
-          data-kx="plate"
-          class="p-5"
-          data-testid="runtime-lifecycle-progress"
-          aria-label="Runtime rollout progress"
-        >
-          <div class="flex items-start justify-between gap-4">
-            <div>
-              <p class="text-sm font-medium text-foreground">Runtime rollout</p>
-              <p class="mt-1 text-sm text-muted-foreground">
-                {currentRuntimePhase?.message ||
-                  operations.currentJob?.message ||
-                  "The persisted rollout is waiting for its next checkpoint."}
-              </p>
-            </div>
-            <span
-              data-kx="status"
-              data-status={statusKind(
-                operations.currentJob?.state || "pending",
-              )}
-              class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
-            >
-              {statusLabel(operations.currentJob?.state || "pending")}
-            </span>
-          </div>
-          <div class="mt-4 h-2 overflow-hidden rounded-full bg-muted">
-            <div
-              class="h-full rounded-full bg-primary transition-[width]"
-              style={`width: ${Math.max(0, Math.min(100, operations.currentJob?.progress ?? 0))}%`}
-            ></div>
-          </div>
-          <div
-            class="mt-2 flex flex-wrap justify-between gap-2 text-xs text-muted-foreground"
-          >
-            <span>
-              Phase: {statusLabel(
-                operations.runtimeLifecycle?.current_phase ||
-                  operations.currentJob?.step ||
-                  "pending",
-              )}
-            </span>
-            <span>{operations.currentJob?.progress ?? 0}%</span>
-          </div>
-        </section>
       {/if}
 
       {#if showReviewStart && canRollout}
@@ -1885,19 +2285,17 @@
           role="status"
         >
           <p class="font-medium text-foreground">
-            Your Node is connected. Continue with the StackKit rollout.
+            {tr("ui.homelab.nodeConnected")}
           </p>
           <p class="mt-1 text-sm text-muted-foreground">
-            Review the selected StackKit, services, and Node placement, then use
-            Review + Start. A failed application does not block the rest of this
-            deployment from being reviewed or started again.
+            {tr("ui.homelab.reviewHint")}
           </p>
         </section>
       {/if}
 
       <!-- Review/waiting guidance can sit under the title. A failed job must
            not: that belongs in history and on the Node or service card. -->
-      {#if showHomepageReadinessLine}
+      {#if !showStrata && showHomepageReadinessLine}
         <div
           class="flex min-w-0 flex-wrap items-center gap-2 text-sm"
           data-testid="stack-readiness-line"
@@ -1907,7 +2305,7 @@
             data-status={statusKind(operations.readiness.status)}
             class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
           >
-            {reviewPhase ? "Review" : statusLabel(operations.readiness.status)}
+            {reviewPhase ? tr("ui.homelabDashboardPage.review") : statusLabel(operations.readiness.status)}
           </span>
           {#if operations.readiness.message}
             <span class="text-muted-foreground"
@@ -1915,129 +2313,69 @@
             >
           {:else if !hasServerInventory}
             <span class="text-muted-foreground">
-              No manageable Node or service inventory has been reported yet.
+              {tr("ui.homelab.noInventory")}
             </span>
           {/if}
         </div>
       {/if}
 
-      {#if plannedWorkloadsKnown}
-        <section
-          class="border-t border-border/40 pt-4"
-          aria-label="Planned workloads"
-          data-testid="planned-workloads-summary"
-        >
-          <p class="font-semibold text-foreground">Planned workloads</p>
-          <p class="mt-1 text-sm text-muted-foreground">
-            Selected in the validated StackSpec v2 for this Homelab. Runtime
-            services below remain measured evidence, not desired state.
-          </p>
-          {#if plannedWorkloads.length > 0}
-            <div
-              class="mt-3 flex flex-wrap gap-2"
-              aria-label="Selected workloads"
-            >
-              {#each plannedWorkloads as workload (`${workload.id}:${workload.alternative ?? ""}`)}
-                <span
-                  class="inline-flex items-center rounded-full border border-border/60 bg-muted/40 px-2.5 py-1 text-xs font-medium text-foreground"
-                >
-                  {statusLabel(workload.id)}{#if workload.alternative}
-                    <span class="mx-1 text-muted-foreground">·</span>
-                    {statusLabel(workload.alternative)}
-                  {/if}
-                </span>
-              {/each}
-            </div>
-          {:else}
-            <p class="mt-2 text-sm text-muted-foreground">
-              No application workloads are selected in the current StackSpec.
-            </p>
-          {/if}
-        </section>
-      {/if}
-
       {#if hasServerInventory}
-        <div
-          data-kx="plate"
-          class="flex divide-x divide-border overflow-hidden text-sm"
-          data-testid="stack-kpi-strip"
-        >
-          <a
-            class="flex min-w-0 flex-1 items-center gap-1.5 px-3 py-2 transition-colors hover:bg-muted/30"
-            href={monitoringHref("servers")}
+        {#if showStrata}
+          <StrataDashboard
+            title={homelabTitle}
+            identity={$stackIdentity}
+            nodes={nodeViews}
+            facts={strataFacts}
+            stats={{
+              apps: dashboardServiceCount,
+              appsNote: showRuntimeProgress
+                ? "1 rolling out"
+                : dashboardRunningServiceCount > 0 ||
+                    canonicalServices.some(
+                      (service) => serviceState(service).label,
+                    )
+                  ? `${dashboardRunningServiceCount} running`
+                  : "no health reported",
+              alerts: operations.kpis.active_alerts,
+              connected: dashboardConnectedServerCount,
+            }}
+            rollout={strataRollout}
+            {deploymentName}
+            {deploymentHref}
+            {nodeHref}
+            onOpenService={openServiceSheet}
+            people={peopleState}
+            devices={devicesState}
           >
-            <Server class="h-4 w-4 shrink-0 text-primary" />
-            <span class="truncate text-xs text-muted-foreground">Nodes</span>
-            <span class="font-semibold text-foreground">
-              {dashboardServerCount}
-            </span>
-            <span
-              class="truncate text-xs text-muted-foreground"
-              data-testid="worker-connected-count"
-              >{dashboardConnectedServerCount}/{dashboardServerCount}
-              connected</span
-            >
-          </a>
-          <a
-            class="flex min-w-0 flex-1 items-center gap-1.5 px-3 py-2 transition-colors hover:bg-muted/30"
-            href={monitoringHref("health")}
-            title="Heartbeat and metrics"
+            {#snippet actions()}
+              {@render headerActions()}
+            {/snippet}
+            {#snippet nodeNotice(node)}
+              {@render wizardRunNodeNotice(node)}
+            {/snippet}
+          </StrataDashboard>
+        {:else}
+          <CompleteDashboard
+            nodes={nodeViews}
+            {deploymentName}
+            {deploymentHref}
+            {nodeHref}
+            onOpenService={openServiceSheet}
+            people={peopleState}
+            devices={devicesState}
+            {canonicalInventoryUnavailable}
           >
-            <HeartPulse class="h-4 w-4 shrink-0 text-success" />
-            <span class="truncate text-xs text-muted-foreground">Healthy</span>
-            <span class="font-semibold text-foreground">
-              {dashboardHealthyServerCount}
-            </span>
-          </a>
-          <a
-            class="flex min-w-0 flex-1 items-center gap-1.5 px-3 py-2 transition-colors hover:bg-muted/30"
-            href={monitoringHref("services")}
-            data-testid="stack-running-services-kpi"
-          >
-            <Waypoints class="h-4 w-4 shrink-0 text-info" />
-            <span class="truncate text-xs text-muted-foreground">Services</span>
-            <span
-              class="font-semibold text-foreground"
-              data-testid="metric-card-value"
-            >
-              {dashboardRunningServiceCount}
-            </span>
-            <span class="truncate text-xs text-muted-foreground">
-              {dashboardServiceCount} recorded
-            </span>
-          </a>
-          <a
-            class="flex min-w-0 flex-1 items-center gap-1.5 px-3 py-2 transition-colors hover:bg-muted/30"
-            href={monitoringHref("alerts")}
-            title={statusLabel(operations.monitoring.status)}
-          >
-            <AlertTriangle class="h-4 w-4 shrink-0 text-warning" />
-            <span class="truncate text-xs text-muted-foreground">Alerts</span>
-            <span class="font-semibold text-foreground">
-              {operations.kpis.active_alerts}
-            </span>
-          </a>
-        </div>
-      {/if}
-
-      {#if hasServerInventory}
-        <ServerInventoryPanel
-          servers={dashboardServers}
-          {canonicalServers}
-          {canonicalOnlyServers}
-          {canonicalInventoryUnavailable}
-          {operationsEvidenceFresh}
-          {assigningWorkerId}
-          {reconnectingLeaseId}
-          {canRollout}
-          {rolloutLoading}
-          {serverDetailsHref}
-          canReconnect={canReconnectManagedRuntime}
-          onAssign={assignWorkerToDeployment}
-          onDeploy={startRollout}
-          onReconnect={reconnectManagedRuntime}
-          onNavigate={(href) => goto(href)}
-        />
+            {#snippet nodeNotice(node)}
+              {@render wizardRunNodeNotice(node)}
+              {#if node.server}
+                {@render serverNotice(node.server)}
+              {/if}
+            {/snippet}
+            {#snippet nodeActions(node)}
+              {@render nodeControls(node)}
+            {/snippet}
+          </CompleteDashboard>
+        {/if}
         {@render reconnectOutcomeBanner()}
         {#if decommissionError}
           <div
@@ -2048,203 +2386,27 @@
         {/if}
       {/if}
 
-      <!-- Leases without a machine. They stay visible because they can still
-           cost money, but they are never presented as servers. -->
       {#if custodyLeases.length > 0}
-        <div
-          class="rounded-lg border border-warning/40 bg-warning/5 p-4"
-          data-testid="custody-leases"
-        >
-          <div class="mb-3 flex items-center gap-2">
-            <AlertTriangle class="h-4 w-4 shrink-0 text-warning" />
-            <h3 class="text-sm font-semibold text-foreground">
-              {custodyLeases.length} lease{custodyLeases.length === 1
-                ? ""
-                : "s"}
-              without a Node
-            </h3>
-          </div>
-          <p class="mb-3 text-xs text-muted-foreground">
-            These leases still hold custody and may still be billed, but no
-            machine backs them. They are not shown as Nodes.
-          </p>
-          <ul class="space-y-2">
-            {#each custodyLeases as lease (lease.lease_id)}
-              <li
-                data-kx="plate"
-                class="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 text-sm"
-                data-testid="custody-lease"
-              >
-                <span class="font-medium text-foreground">{lease.label}</span>
-                {#if lease.provider}
-                  <span class="font-mono text-xs text-muted-foreground"
-                    >{lease.provider}</span
-                  >
-                {/if}
-                <span
-                  data-kx="status"
-                  data-status="warn"
-                  class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
-                  >{custodyReasonLabel(lease.reason)}</span
-                >
-                {#if lease.last_known_ip}
-                  <span
-                    class="font-mono text-xs text-muted-foreground"
-                    title="Last known address; the machine is gone"
-                    >was {lease.last_known_ip}</span
-                  >
-                {/if}
-                <span
-                  class="ml-auto font-mono text-[11px] text-muted-foreground"
-                  >{lease.lease_id}</span
-                >
-                {#if custodyAllows(lease, "decommission")}
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    testId="decommission-custody-lease"
-                    onclick={() => decommissionCustodyLease(lease.lease_id)}
-                    disabled={cleaningCustodyLeaseId === lease.lease_id}
-                  >
-                    {cleaningCustodyLeaseId === lease.lease_id
-                      ? "Decommissioning..."
-                      : "Decommission"}
-                  </Button>
-                {/if}
-                {#if custodyAllows(lease, "resolve_custody")}
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    testId="resolve-custody-lease"
-                    onclick={() => resolveCustodyLease(lease)}
-                    disabled={resolvingCustodyLeaseId === lease.lease_id}
-                  >
-                    {resolvingCustodyLeaseId === lease.lease_id
-                      ? "Resolving..."
-                      : "Resolve record"}
-                  </Button>
-                {/if}
-              </li>
-            {/each}
-          </ul>
-          {#if decommissionError}
-            <p class="mt-3 text-sm text-destructive">{decommissionError}</p>
-          {/if}
-        </div>
+        <CustodyLeasesPanel
+          {custodyLeases}
+          {cleaningCustodyLeaseId}
+          {resolvingCustodyLeaseId}
+          {decommissionError}
+          decommissionCustodyLease={(leaseId) =>
+            decommissionCustodyLease(leaseId)}
+          {resolveCustodyLease}
+        />
       {/if}
 
-      {#if showLatestFailurePanel && latestFailureOutcome}
-        {#if failedCleanupAction && ["destroy", "decommission"].includes(operations.latestFailure?.type?.toLowerCase() ?? "")}
-          <Button
-            variant="destructive"
-            size="sm"
-            class="mb-2"
-            testId="retry-destroy-cleanup"
-            onclick={retryDestroyCleanup}
-            disabled={cleaningCustodyLeaseId !== null}
-          >
-            {failedCleanupAction.action === "resolve_custody"
-              ? "Resolve exact record"
-              : "Retry exact cleanup"}
-          </Button>
-        {/if}
-        <Collapsible
-          summary={latestFailureSummary}
-          tone="error"
-          badge={statusLabel(operations.latestFailure?.state || "failed")}
-          testId="latest-failure-collapsible"
+      {#if hasServerInventory && dashboardServiceCount === 0}
+        <!-- The counts live in the stats above; only an empty inventory says
+             which source came back empty (owner direction 2026-09-26). -->
+        <p
+          class="shrink-0 pt-2 text-sm text-muted-foreground"
+          data-testid="services-empty-reason"
         >
-          <GuidancePanel
-            outcome={latestFailureOutcome}
-            surface="stacks.hub"
-            resourceId={operations.latestFailure?.kit_deployment_id ||
-              homelab?.homelab?.id}
-            resourceName={operations.latestFailure?.kit_deployment_name ||
-              homelabTitle}
-            onRetry={retryOperations}
-            retrying={retryingOperations}
-          />
-        </Collapsible>
-      {/if}
-
-      {#if hasServerInventory}
-        <!-- Boxless section (operator direction 2026-08-19): plain heading,
-             tiles directly on the page ground. -->
-        <section aria-label="Help & resources">
-          <div class="mb-3 flex items-center justify-between gap-3">
-            <h2 class="text-xl font-semibold text-foreground">
-              Help & resources
-            </h2>
-            <a
-              class="text-sm text-primary hover:underline"
-              href={monitoringHref("history")}
-            >
-              Open history
-            </a>
-          </div>
-          <div class="grid gap-2 md:grid-cols-3">
-            {#each supportShelf as item (item.title)}
-              <a
-                class="block min-w-0 rounded-[var(--radius-card)] px-3 py-2.5 hover:bg-muted/40"
-                href={shelfHref(item.href)}
-              >
-                <span class="text-xs font-semibold uppercase text-primary">
-                  {item.label}
-                </span>
-                <p class="mt-1 text-sm font-medium text-foreground">
-                  {item.title}
-                </p>
-                <p class="mt-1 text-xs text-muted-foreground">
-                  {item.description}
-                </p>
-              </a>
-            {/each}
-          </div>
-        </section>
-      {/if}
-
-      {#if hasServerInventory}
-        <!-- Boxless summary strip: hairline separation, no container card. -->
-        <section
-          class="border-t border-border/40 pt-4"
-          aria-label="Services summary"
-        >
-          <div
-            class="flex flex-wrap items-start justify-between gap-3"
-            data-testid="dashboard-services-summary"
-          >
-            <div>
-              <p class="font-semibold text-foreground">Services</p>
-              <p class="mt-1 text-sm text-muted-foreground">
-                {dashboardServiceCount} runtime service{dashboardServiceCount ===
-                1
-                  ? ""
-                  : "s"} recorded across {dashboardServers.length +
-                  canonicalOnlyServers.length} Node{dashboardServers.length +
-                  canonicalOnlyServers.length ===
-                1
-                  ? ""
-                  : "s"}.
-              </p>
-              {#if dashboardServiceCount === 0}
-                <p
-                  class="mt-2 text-sm text-muted-foreground"
-                  data-testid="services-empty-reason"
-                >
-                  {servicesEmptyReason}
-                </p>
-              {/if}
-            </div>
-            <Button
-              variant="secondary"
-              size="sm"
-              testId="dashboard-services-link"
-              onclick={() => goto(servicesHref("services"))}
-            >
-              Manage services
-            </Button>
-          </div>
-        </section>
+          {servicesEmptyReason}
+        </p>
       {/if}
     </section>
   {:else if deployments.length > 0 && operationsError}
@@ -2265,7 +2427,7 @@
           data-kx="plate"
           class="p-5"
           data-testid="partial-rollout-dashboard"
-          aria-label="Partial rollout managed runtime"
+          aria-label={tr("ui.homelab.partialRollout")}
         >
           <div class="mb-4 flex items-start justify-between gap-3">
             <div>
@@ -2273,27 +2435,26 @@
                 {singleDeployment.name}
               </p>
               <p class="mt-1 text-sm text-muted-foreground">
-                Managed-runtime lease/allocation metadata exists, but the
-                current provider and Guard state could not be verified.
+                {tr("ui.homelabDashboardPage.managedRuntimeLeaseAllocationMetadata")}
               </p>
               <p
                 class="mt-2 text-xs text-warning"
                 data-testid="worker-connected-count"
               >
-                0 verified connected · operations evidence unavailable
+                {tr("ui.homelabDashboardPage.0VerifiedConnectedOperationsEvidence")}
               </p>
             </div>
             <span
               data-kx="status"
               data-status="warn"
               class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
-              >partial rollout</span
+              >{tr("ui.homelab.partialRolloutBadge")}</span
             >
           </div>
 
           <ServerCard
             data-testid="server-card"
-            hostname="Managed runtime"
+            hostname={tr("ui.homelabDashboardPage.managedRuntime")}
             meta={[
               managedRuntimeProviderLabel(singleDeployment),
               "managed runtime",
@@ -2323,7 +2484,7 @@
                   disabled={!canRollout || rolloutLoading}
                 >
                   <Play class="h-4 w-4" />
-                  {rolloutLoading ? "Starting..." : "Deploy StackKit"}
+                  {rolloutLoading ? tr("ui.homelabDashboardPage.starting") : tr("ui.homelabDashboardPage.deployStackkit")}
                 </Button>
                 {#if singleDeployment.lease_id}
                   <Button
@@ -2333,7 +2494,7 @@
                     onclick={() =>
                       goto(managedRuntimeServerHref(singleDeployment))}
                   >
-                    Open Node details
+                    {tr("ui.node.openDetails")}
                   </Button>
                   <Button
                     variant="secondary"
@@ -2345,8 +2506,8 @@
                   >
                     <RefreshCw class="h-4 w-4" />
                     {reconnectingLeaseId === singleDeployment.lease_id
-                      ? "Reconnecting..."
-                      : "Reconnect"}
+                      ? tr("ui.homelabDashboardPage.reconnecting")
+                      : tr("ui.homelabDashboardPage.reconnect")}
                   </Button>
                 {/if}
               </div>
@@ -2365,374 +2526,39 @@
     </div>
   {/if}
 
-  <!-- Worker Registration Section (shown for deployed stacks) -->
-  {#if operationsResolved && stackContextResolved && singleDeployment && !operations && !operationsError && registrationToken && singleDeployment.state === "running"}
-    <Surface class="mb-6 p-5">
-      <div data-testid="worker-management-card">
-        <div class="flex items-start justify-between mb-4">
-          <div class="flex items-center gap-3">
-            <div
-              class="w-10 h-10 rounded-lg bg-success/10 flex items-center justify-center"
-            >
-              <svg
-                class="w-5 h-5 text-success"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M5 13l4 4L19 7"
-                />
-              </svg>
-            </div>
-            <div>
-              <h2 class="text-lg font-semibold text-foreground">
-                Connection status unavailable
-              </h2>
-              <p class="text-sm text-muted-foreground">
-                Operations evidence is required before connected Nodes can be
-                confirmed.
-              </p>
-            </div>
-          </div>
-          <span
-            data-kx="status"
-            data-status="warn"
-            class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
-            data-testid="worker-connected-count"
-            >{connectedWorkers} verified connected</span
-          >
-        </div>
-
-        <!-- Worker registry URL for running stack -->
-        {#if serverUrl}
-          <div class="rounded-lg bg-muted/50 p-4 mb-4">
-            <div class="flex items-center justify-between gap-3 mb-2">
-              <span class="text-sm text-muted-foreground">
-                Worker-Registry Link{registryMode ? ` (${registryMode})` : ""}:
-              </span>
-              <Button variant="ghost" size="sm" onclick={copyRegistryUrl}>
-                {copiedRegistryUrl ? "✓ Copied" : "Copy"}
-              </Button>
-            </div>
-            <a
-              href={serverUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              data-testid="worker-registry-url"
-              class="text-sm font-mono text-primary break-all hover:underline"
-            >
-              {serverUrl}
-            </a>
-            {#if registryUrlError}
-              <div class="mt-2 text-xs text-warning">
-                Could not automatically determine registry URL: {registryUrlError}
-              </div>
-            {/if}
-          </div>
-        {/if}
-
-        <!-- Install command for running stack -->
-        {#if installCommand}
-          <div class="rounded-lg bg-muted/50 p-4">
-            <div class="flex items-center justify-between mb-2">
-              <span class="text-sm text-muted-foreground"
-                >Install command for new workers:</span
-              >
-              <Button variant="ghost" size="sm" onclick={copyInstallCommand}>
-                {copiedInstallCommand ? "✓ Copied" : "Copy"}
-              </Button>
-            </div>
-            <pre
-              class="text-sm font-mono text-primary overflow-x-auto whitespace-pre-wrap break-all">{installCommand}</pre>
-          </div>
-        {/if}
-      </div>
-    </Surface>
-  {/if}
-
-  <!-- Worker Registration & Rollout Section (shown when stack exists but not fully deployed) -->
-  {#if operationsResolved && stackContextResolved && singleDeployment && !operations && !operationsError && registrationToken && singleDeployment.state !== "running"}
-    <Surface class="mb-8 p-5">
-      <div data-testid="worker-management-card">
-        <div class="flex items-start justify-between mb-4">
-          <div class="flex items-center gap-3">
-            <div
-              class="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center"
-            >
-              <svg
-                class="w-5 h-5 text-primary"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M5 12h14M12 5l7 7-7 7"
-                />
-              </svg>
-            </div>
-            <div>
-              <h2 class="text-lg font-semibold text-foreground">
-                Connect worker
-              </h2>
-              <p class="text-sm text-muted-foreground">
-                {#if requirements}
-                  {requirements.description}
-                {:else}
-                  Connect your Nodes to this Homelab
-                {/if}
-              </p>
-            </div>
-          </div>
-          <div class="text-right">
-            <div class="text-2xl font-bold text-primary">
-              <span data-testid="worker-connected-count"
-                >{connectedWorkers}/{requirements?.minTotalServers || 1}</span
-              >
-            </div>
-            <div class="text-xs text-muted-foreground">
-              Workers connected (verified)
-            </div>
-          </div>
-        </div>
-
-        <!-- Progress bar -->
-        {#if requirements}
-          <div class="mb-4">
-            <div class="h-2 bg-muted rounded-full overflow-hidden">
-              <div
-                class="h-full rounded-full transition-all duration-500 {canRollout
-                  ? 'bg-success'
-                  : 'bg-primary'}"
-                style="width: {Math.min(
-                  100,
-                  (connectedWorkers / requirements.minTotalServers) * 100,
-                )}%"
-              ></div>
-            </div>
-          </div>
-        {/if}
-
-        <!-- Approved workers remain visible, but approval is not connection evidence. -->
-        {#if approvedWorkers.length > 0}
-          <div class="mb-4 space-y-2">
-            <div class="text-sm text-muted-foreground mb-2">
-              Approved workers:
-            </div>
-            {#each approvedWorkers as w}
-              <div
-                data-testid="approved-worker-row"
-                class="flex items-center justify-between rounded-lg bg-muted/50 px-3 py-2"
-              >
-                <div class="flex items-center gap-3">
-                  <div
-                    class="h-2.5 w-2.5 rounded-full bg-muted-foreground"
-                  ></div>
-                  <div class="min-w-0">
-                    <div class="text-sm text-foreground truncate">
-                      {w.hostname || w.id}
-                    </div>
-                    <div class="text-xs text-muted-foreground truncate">
-                      {w.ip || "-"}
-                    </div>
-                  </div>
-                </div>
-                <span
-                  data-kx="status"
-                  data-status="off"
-                  class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
-                >
-                  Connection unverified
-                </span>
-              </div>
-            {/each}
-          </div>
-        {/if}
-
-        <!-- Worker registry URL (must be reachable from worker machines) -->
-        {#if serverUrl}
-          <div class="rounded-lg bg-muted/50 p-4 mb-4">
-            <div class="flex items-center justify-between gap-3 mb-2">
-              <span class="text-sm text-muted-foreground">
-                Worker-Registry Link{registryMode ? ` (${registryMode})` : ""}:
-              </span>
-              <Button variant="ghost" size="sm" onclick={copyRegistryUrl}>
-                {copiedRegistryUrl ? "✓ Copied" : "Copy"}
-              </Button>
-            </div>
-            <a
-              href={serverUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              data-testid="worker-registry-url"
-              class="text-sm font-mono text-primary break-all hover:underline"
-            >
-              {serverUrl}
-            </a>
-            {#if registryUrlError}
-              <div class="mt-2 text-xs text-warning">
-                Could not automatically determine registry URL: {registryUrlError}
-              </div>
-            {/if}
-          </div>
-        {/if}
-
-        <!-- Install command -->
-        {#if installCommand}
-          <div class="rounded-lg bg-muted/50 p-4 mb-4">
-            <div class="flex items-center justify-between mb-2">
-              <span class="text-sm text-muted-foreground">Install command:</span
-              >
-              <Button variant="ghost" size="sm" onclick={copyInstallCommand}>
-                {copiedInstallCommand ? "✓ Copied" : "Copy"}
-              </Button>
-            </div>
-            <pre
-              class="text-sm font-mono text-primary overflow-x-auto whitespace-pre-wrap break-all">{installCommand}</pre>
-          </div>
-        {/if}
-
-        <!-- Actions -->
-        <div class="flex flex-wrap gap-3">
-          <Button
-            testId="deploy-homelab-button"
-            onclick={() => startRollout()}
-            variant={canRollout && !rolloutLoading ? "primary" : "secondary"}
-            disabled={!canRollout || rolloutLoading}
-          >
-            {#if rolloutLoading}
-              Starting rollout...
-            {:else if canRollout}
-              Deploy homelab
-            {:else}
-              Waiting for verified workers ({connectedWorkers}/{requirements?.minTotalServers ||
-                1})
-            {/if}
-          </Button>
-        </div>
-
-        <!-- Requirements details - prominently displayed -->
-        {#if requirements?.details?.length && requirements.details.length > 0}
-          <div class="mt-6 pt-4 border-t border-border">
-            <h3
-              class="text-sm font-medium text-foreground mb-3 flex items-center gap-2"
-            >
-              <svg
-                class="w-4 h-4 text-info"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"
-                />
-              </svg>
-              Requirements for your setup
-            </h3>
-            <div class="grid gap-2 sm:grid-cols-2">
-              {#each requirements.details as detail, i}
-                <div
-                  class="flex items-start gap-2 text-sm text-muted-foreground bg-muted/30 rounded-lg px-3 py-2"
-                >
-                  <svg
-                    class="w-4 h-4 text-info shrink-0 mt-0.5"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                    />
-                  </svg>
-                  <span>{detail}</span>
-                </div>
-              {/each}
-            </div>
-
-            <!-- Next steps hint -->
-            {#if !canRollout}
-              <div
-                class="mt-4 p-3 bg-warning/10 border border-warning/30 rounded-lg"
-              >
-                <p class="text-sm text-foreground flex items-start gap-2">
-                  <svg
-                    class="w-4 h-4 text-warning shrink-0 mt-0.5"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                    />
-                  </svg>
-                  <span>
-                    <strong>Next step:</strong> Run the install command above on
-                    {requirements.minTotalServers > 1
-                      ? `at least ${requirements.minTotalServers} Nodes`
-                      : "your Node"}, then wait for operations evidence to
-                    confirm the connection.
-                  </span>
-                </p>
-              </div>
-            {:else}
-              <div
-                class="mt-4 p-3 bg-success/10 border border-success/30 rounded-lg"
-              >
-                <p class="text-sm text-foreground flex items-start gap-2">
-                  <svg
-                    class="w-4 h-4 text-success shrink-0 mt-0.5"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M5 13l4 4L19 7"
-                    />
-                  </svg>
-                  <span>
-                    <strong>Ready!</strong> All required workers are connected. You
-                    can now deploy the homelab.
-                  </span>
-                </p>
-              </div>
-            {/if}
-          </div>
-        {/if}
-      </div>
-    </Surface>
+  <!-- Legacy registration: a single deployment with a registration token
+       and no operations evidence yet. -->
+  {#if operationsResolved && stackContextResolved && singleDeployment && !operations && !operationsError && registrationToken}
+    <div class={singleDeployment.state === "running" ? "mb-6" : "mb-8"}>
+      <WorkerRegistrationCard
+        variant={singleDeployment.state === "running" ? "running" : "connect"}
+        {connectedWorkers}
+        {requirements}
+        {approvedWorkers}
+        {serverUrl}
+        {registryMode}
+        {registryUrlError}
+        {installCommand}
+        {canRollout}
+        {rolloutLoading}
+        onDeploy={() => startRollout()}
+      />
+    </div>
   {/if}
 
   {#if !loading && homelabResolved && deployments.length === 0}
     <!-- First Start Section -->
-    <Surface class="mb-8 p-6" ariaLabel="Start your Homelab">
+    <Surface class="mb-8 p-6" ariaLabel={tr("ui.homelab.start")}>
       <div
         class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between"
         data-testid="legacy-stacks-empty-state"
       >
         <div>
           <h2 class="text-lg font-semibold text-foreground">
-            Start your Homelab
+            {tr("ui.homelab.start")}
           </h2>
           <p class="text-sm text-muted-foreground">
-            Start with the wizard or import an existing StackKit spec.
+            {tr("ui.homelab.startHint")}
           </p>
         </div>
         <div class="flex flex-wrap gap-2">
@@ -2741,7 +2567,7 @@
             onclick={() => goto("/stacks/new")}
             anchor="techstack-wizard-entry"
           >
-            Get started
+            {tr("ui.homelab.getStarted")}
           </Button>
           <Button
             variant="secondary"
@@ -2750,13 +2576,19 @@
               showImportExport = true;
             }}
           >
-            Import / Export
+            {tr("ui.common.importExport")}
           </Button>
         </div>
       </div>
     </Surface>
   {/if}
 </div>
+
+<DashboardServiceSheet
+  service={detailService}
+  nodeName={detailNodeName}
+  onclose={closeServiceSheet}
+/>
 
 <!-- Import/Export Modal -->
 {#if showImportExport}

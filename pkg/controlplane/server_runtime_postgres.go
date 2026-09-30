@@ -22,7 +22,7 @@ const serverRuntimeColumns = `id, tenant_id, instance_id, stack_id, owner_subjec
 	source_epoch, source_sequence, source_observed_at, channels_json::text, metadata_json::text,
 	last_outcome_json::text, outcome_changed_at, decommissioned_at, lifecycle_reason_code, desired_reason_code,
 	connection_reason_code, health_reason_code, lifecycle_changed_at,
-	desired_changed_at, health_changed_at, created_at, updated_at`
+	desired_changed_at, health_changed_at, created_at, updated_at, display_name`
 
 func (s *PostgresStore) UpsertServerRuntime(ctx context.Context, server ServerRuntime) (*ServerRuntime, error) {
 	if s == nil || s.db == nil {
@@ -393,6 +393,7 @@ func scanServerRuntime(row rowScanner) (*ServerRuntime, error) {
 	var sourceAuthority, sourceID, sourceEpoch sql.NullString
 	var heartbeatAt, sourceObservedAt, outcomeChangedAt, decommissionedAt, runtimeTargetObservedAt sql.NullTime
 	var channelsJSON, metadataJSON, lastOutcomeJSON []byte
+	var displayName sql.NullString
 	if err := row.Scan(
 		&server.ID, &server.TenantID, &instanceID, &stackID, &server.OwnerSubjectID, &workerID, &nodeID,
 		&leaseID, &providerRef, &environmentClass, &offering, &providerID, &providerTargetRef,
@@ -406,11 +407,13 @@ func scanServerRuntime(row rowScanner) (*ServerRuntime, error) {
 		&decommissionedAt, &lifecycleReasonCode, &desiredReasonCode,
 		&connectionReasonCode, &healthReasonCode, &server.LifecycleChangedAt,
 		&server.DesiredChangedAt, &server.HealthChangedAt, &server.CreatedAt, &server.UpdatedAt,
+		&displayName,
 	); err != nil {
 		return nil, err
 	}
 	server.InstanceID, server.StackID, server.WorkerID, server.NodeID = instanceID.String, stackID.String, workerID.String, nodeID.String
 	server.LeaseID, server.ProviderRef, server.ReasonCode = leaseID.String, providerRef.String, reasonCode.String
+	server.DisplayName = displayName.String
 	server.RuntimeTarget = serverregistry.RuntimeTarget{
 		EnvironmentClass:  serverregistry.EnvironmentClass(environmentClass.String),
 		Offering:          serverregistry.Offering(offering.String),

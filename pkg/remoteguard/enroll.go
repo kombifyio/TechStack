@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	StepConnectSSH       = "remote_ssh_connect"
-	StepRunInstaller     = "remote_ssh_install"
+	StepConnectSSH        = "remote_ssh_connect"
+	StepRunInstaller      = "remote_ssh_install"
 	StepAwaitRegistration = "remote_ssh_await_registration"
 
 	ReasonSSHNotReady = "remote_ssh_not_ready"
@@ -156,10 +156,10 @@ func (e *Enroller) Enroll(ctx context.Context, tenantID string, req Request, pro
 }
 
 var (
-	errSSHNotReady     = errors.New(ReasonSSHNotReady)
-	errInstallFailed   = errors.New(ReasonInstall)
-	errAwaitTimeout    = errors.New(ReasonTimeout)
-	errAwaitCanceled   = errors.New(ReasonCanceled)
+	errSSHNotReady   = errors.New(ReasonSSHNotReady)
+	errInstallFailed = errors.New(ReasonInstall)
+	errAwaitTimeout  = errors.New(ReasonTimeout)
+	errAwaitCanceled = errors.New(ReasonCanceled)
 )
 
 func ClassifyEnrollmentError(err error) (reasonCode, message string, retryable bool) {

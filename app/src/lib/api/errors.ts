@@ -3,6 +3,7 @@ import {
   type ServerOutcome,
 } from "#lib/support/server-outcome.js";
 
+import { tr } from "#lib/i18n.svelte.js";
 export interface ParsedApiError {
   status: number;
   code?: string;
@@ -34,7 +35,7 @@ function messageFromUnknown(err: unknown): string {
   ) {
     return (err as { message: string }).message;
   }
-  return "An unknown error occurred";
+  return tr("ui.errors.anUnknownErrorOccurred");
 }
 
 function statusFromUnknown(err: unknown): number {

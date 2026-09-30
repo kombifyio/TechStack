@@ -66,13 +66,27 @@ type Claims struct {
 	Iat        int64       `json:"iat"`
 	Exp        int64       `json:"exp"`
 	Svc        string      `json:"svc"`
+	Scope      string      `json:"scope,omitempty"`
 	OnBehalfOf *OnBehalfOf `json:"on_behalf_of,omitempty"`
 	RequestID  string      `json:"req_id,omitempty"`
+	// RequestBinding is present only on tokens issued for strict HTTP routes.
+	// Legacy service-call tokens intentionally omit it.
+	RequestBinding *RequestBinding `json:"request_binding,omitempty"`
+}
+
+// RequestBinding binds service authority to one exact HTTP message. RequestURI
+// is the origin-form request target seen by the receiving Go server, including
+// its original escaping and query string. BodySHA256 is lowercase hexadecimal.
+type RequestBinding struct {
+	Method     string `json:"method"`
+	RequestURI string `json:"request_uri"`
+	BodySHA256 string `json:"body_sha256"`
 }
 
 // Caller is the verified caller identity after middleware validation.
 type Caller struct {
 	Service    string
+	Scope      string
 	OnBehalfOf *OnBehalfOf
 	RequestID  string
 	IssuedAt   time.Time
@@ -100,6 +114,10 @@ type Config struct {
 	// TokenTTL overrides DefaultTokenTTL. Client-side only.
 	TokenTTL time.Duration
 
+	// Scope is optional space-delimited service authority. Client-side only.
+	// Receiving routes enforce individual scopes explicitly with RequireScope.
+	Scope string
+
 	// AllowedCallers is the whitelist of caller svc ids. Tokens whose Svc
 	// claim is not in the list are rejected with 403 by the middleware. An
 	// empty list fails closed: with no allowlist, no service caller is
@@ -109,6 +127,15 @@ type Config struct {
 	// Enabled turns the middleware on. Defaults false so self-hosted
 	// builds without SERVICE_AUTH_SECRET keep working.
 	Enabled bool
+}
+
+// BoundRequestConfig configures a route that accepts only request-bound
+// service tokens. Unlike legacy Middleware, this strict route never passes
+// through when disabled or incompletely configured.
+type BoundRequestConfig struct {
+	Config
+	RequiredScope string
+	MaxBodyBytes  int64
 }
 
 type callerContextKey struct{}

@@ -8,6 +8,7 @@
  */
 import { fetchApi, ApiRequestError } from "./client";
 
+import { tr } from "#lib/i18n.svelte.js";
 /** Wire schema literal the backend's closed intent contract requires. */
 export const WIZARD_INTENT_SCHEMA = "techstack.wizard-intent/v1";
 
@@ -138,6 +139,8 @@ export interface ActiveWizardRunJob {
   progress?: number;
   step?: string;
   message?: string;
+  type?: string;
+  updated_at?: string;
 }
 
 export interface ActiveWizardRun {
@@ -148,6 +151,8 @@ export interface ActiveWizardRun {
   homelab_id?: string;
   kit_deployment_id?: string;
   node_id?: string;
+  /** The one server this run's rollout belongs to; its notice renders there. */
+  target_server_id?: string;
   job_id?: string;
   pairing_job_id?: string;
   error_reason?: string;
@@ -238,6 +243,37 @@ export async function getActiveWizardRun(): Promise<ActiveWizardRun | null> {
   }
 }
 
+/** Hide one run's dashboard notice for this owner on every device. */
+export async function dismissWizardRun(runId: string): Promise<void> {
+  await apiRequest<unknown>(
+    "POST",
+    `/api/v1/wizard/runs/${encodeURIComponent(runId)}/dismiss`,
+  );
+}
+
+/**
+ * Cancel the run's rollout through the stale-job abandon route. The job is
+ * failed on purpose and the deployment becomes retryable.
+ */
+export async function cancelWizardRunRollout(
+  run: ActiveWizardRun,
+): Promise<void> {
+  const jobId = run.job?.id || run.job_id;
+  if (!run.kit_deployment_id || !jobId) {
+    throw new Error(tr("ui.wizardRuns.thisRunHasNoRollout"));
+  }
+  await apiRequest<unknown>(
+    "POST",
+    `/api/v1/stacks/${encodeURIComponent(run.kit_deployment_id)}/jobs/${encodeURIComponent(jobId)}/abandon`,
+  );
+}
+
+/**
+ * Mirrors the server's bound (wizardRunNoticeStaleAfter): a job that wrote
+ * nothing for this long has nothing driving it.
+ */
+const JOB_SILENT_MS = 30 * 60 * 1000;
+
 /** Failed runs stay resumable, but an abandoned one must not nag forever. */
 const FAILED_RUN_ATTENTION_MS = 24 * 60 * 60 * 1000;
 /** Pairing tokens live at most 30 minutes; after that a resume mints anew. */
@@ -253,7 +289,8 @@ function runAgeMs(run: ActiveWizardRun): number {
  * True when an active run should surface a resume affordance: its provision
  * job is still moving, a join still awaits pairing (within the pairing
  * token's lifetime), or the run recently failed with a resumable partial
- * state. Terminal completed runs and stale leftovers stay quiet.
+ * state. Terminal completed runs, silent jobs and stale leftovers stay quiet;
+ * the server already withholds dismissed and superseded runs.
  */
 export function wizardRunNeedsAttention(run: ActiveWizardRun | null): boolean {
   if (!run) return false;
@@ -262,7 +299,8 @@ export function wizardRunNeedsAttention(run: ActiveWizardRun | null): boolean {
   }
   const jobState = run.job?.state ?? "";
   if (["pending", "running", "waiting", "in_progress"].includes(jobState)) {
-    return true;
+    const jobUpdated = Date.parse(run.job?.updated_at ?? "");
+    return Number.isNaN(jobUpdated) || Date.now() - jobUpdated < JOB_SILENT_MS;
   }
   const resultState =
     typeof run.result?.state === "string" ? run.result.state : "";

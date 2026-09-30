@@ -160,13 +160,23 @@ func EdgeIdentityMiddlewareWithConfig(cfg EdgeIdentityConfig) func(*httpx.Event)
 				http.Error(e.Response, "invalid edge authentication", http.StatusUnauthorized)
 				return nil
 			}
-			if err := verifyEdgeSignature(e.Request, cfg); err != nil {
+			stepUp, stepUpBound, err := verifyEdgeSignature(e.Request, cfg)
+			if err != nil {
 				slog.Warn("edge identity: signature verification failed", "error", err)
 				stripIdentityHeaders(e.Request)
 				http.Error(e.Response, "invalid edge authentication", http.StatusUnauthorized)
 				return nil
 			}
-			if err := attachV2EdgeEntitlements(e); err != nil {
+			if stepUpBound {
+				// Only a verified v7 envelope binds amr/acr/auth_time. Any
+				// other version attaches nothing, so step-up checks fail closed.
+				// v7 also binds the principal type, which the step-up requires.
+				e.Request = e.Request.WithContext(WithVerifiedStepUp(e.Request.Context(), StepUpClaims{
+					AMR: stepUp.AMR, ACR: stepUp.ACR, AuthTime: stepUp.AuthTime,
+					PrincipalType: strings.TrimSpace(e.Request.Header.Get(commonedgeauth.HeaderPrincipalType)),
+				}))
+			}
+			if err := attachSignedEdgeEntitlements(e); err != nil {
 				slog.Warn("edge identity: entitlement envelope invalid", "error", err)
 				stripIdentityHeaders(e.Request)
 				http.Error(e.Response, "invalid edge entitlements", http.StatusUnauthorized)
@@ -257,6 +267,11 @@ func stripIdentityHeaders(r *http.Request) {
 	r.Header.Del("X-User-Plan")
 	r.Header.Del("X-User-Tier")
 	r.Header.Del(headerUserScope)
+	// Step-up headers are read only from a verified v7 envelope, into the
+	// request context (see step_up.go); the raw headers never reach handlers.
+	r.Header.Del(HeaderUserAMR)
+	r.Header.Del(HeaderUserACR)
+	r.Header.Del(HeaderUserAuthTime)
 	r.Header.Del(commonedgeauth.HeaderEntitlements)
 	r.Header.Del(commonedgeauth.HeaderKnowledgeTier)
 	r.Header.Del(commonedgeauth.HeaderFlags)
@@ -266,11 +281,16 @@ func stripIdentityHeaders(r *http.Request) {
 	r.Header.Del(commonedgeauth.HeaderFlagsKeyID)
 }
 
-// attachV2EdgeEntitlements copies only entitlements cryptographically bound to
-// the verified v2 Edge envelope into an immutable request-context set. V1 and
-// shared-secret requests deliberately receive no authorization grants.
-func attachV2EdgeEntitlements(e *httpx.Event) error {
-	if e == nil || e.Request == nil || !strings.HasPrefix(strings.TrimSpace(e.Request.Header.Get(headerEdgeSignature)), "v2=") {
+// attachSignedEdgeEntitlements copies only entitlements cryptographically
+// bound to a verified v2 or v7 (a v2 superset) Edge envelope into an immutable
+// request-context set. V1 and shared-secret requests deliberately receive no
+// authorization grants.
+func attachSignedEdgeEntitlements(e *httpx.Event) error {
+	if e == nil || e.Request == nil {
+		return nil
+	}
+	signature := strings.TrimSpace(e.Request.Header.Get(headerEdgeSignature))
+	if !strings.HasPrefix(signature, "v2=") && !strings.HasPrefix(signature, commonedgeauth.EdgeSignatureVersionV7+"=") {
 		return nil
 	}
 	raw := strings.TrimSpace(e.Request.Header.Get(commonedgeauth.HeaderEntitlements))
@@ -400,9 +420,10 @@ func hasAnyEdgeFlagHeader(r *http.Request) bool {
 }
 
 // verifyEdgeSignature delegates HMAC envelope verification to the shared
-// go-common edgeauth verifier, which dual-accepts v1 and v2 signatures. The v2
+// go-common edgeauth verifier, which accepts v1, v2 and v7 signatures. The v2
 // payload additionally binds X-Kombify-Entitlements + X-Kombify-Knowledge-Tier
-// so those headers cannot be forged downstream. Techstack no longer hand-rolls
+// so those headers cannot be forged downstream; v7 also binds the step-up
+// facts, which it returns with bound=true. Techstack no longer hand-rolls
 // the edge-signature crypto — go-common is the single source of truth for the
 // contract (kombify-Core/standards/EDGE-AUTH-RESPONSIBILITY-STANDARD.md), so the
 // Gateway flip from v1 to v2 is accepted here without a further code change.
@@ -410,7 +431,7 @@ func hasAnyEdgeFlagHeader(r *http.Request) bool {
 // The caller only invokes this after confirming X-Kombify-Edge-Auth is present
 // and supported, so RequireEdgeAuth is set; go-common performs the version
 // negotiation, timestamp-window, signed-path and dual-key-rotation checks.
-func verifyEdgeSignature(r *http.Request, cfg EdgeIdentityConfig) error {
+func verifyEdgeSignature(r *http.Request, cfg EdgeIdentityConfig) (stepUp commonedgeauth.StepUpClaims, bound bool, err error) {
 	commonCfg := commonedgeauth.Config{
 		Enabled:            true,
 		RequireEdgeAuth:    true,
@@ -423,13 +444,14 @@ func verifyEdgeSignature(r *http.Request, cfg EdgeIdentityConfig) error {
 
 	verified := false
 	recorder := httptest.NewRecorder()
-	commonedgeauth.Middleware(commonCfg)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+	commonedgeauth.Middleware(commonCfg)(http.HandlerFunc(func(_ http.ResponseWriter, accepted *http.Request) {
 		verified = true
+		stepUp, bound = commonedgeauth.StepUpFromContext(accepted.Context())
 	})).ServeHTTP(recorder, r)
 	if !verified {
-		return fmt.Errorf("edge signature rejected (status %d)", recorder.Code)
+		return commonedgeauth.StepUpClaims{}, false, fmt.Errorf("edge signature rejected (status %d)", recorder.Code)
 	}
-	return nil
+	return stepUp, bound, nil
 }
 
 func isSupportedEdgeAuthValue(value string) bool {

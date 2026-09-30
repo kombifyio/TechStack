@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "#lib/i18n.svelte.js";
   import {
     TECHSTACK_ROSETTE,
     TECHSTACK_ROSETTE_DARK,
@@ -35,14 +36,14 @@
   {sizes}
   srcset={darkSrcset}
   src={darkSrc}
-  alt="kombify Techstack"
+  alt={tr("ui.techstackBrandLogo.kombifyTechstack")}
   class="{className} logo-dark"
 />
 <img
   {sizes}
   srcset={lightSrcset}
   src={lightSrc}
-  alt="kombify Techstack"
+  alt={tr("ui.techstackBrandLogo.kombifyTechstack")}
   class="{className} logo-light"
 />
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "#lib/i18n.svelte.js";
   import { Sparkles } from "@lucide/svelte";
   import { onDestroy, onMount } from "svelte";
   import { cn } from "#lib/utils.js";
@@ -98,27 +99,27 @@
       data-testid="ask-kombify-ai-error"
     >
       <Sparkles class="h-4 w-4 shrink-0" aria-hidden="true" />
-      <span>Ask kombify AI about this</span>
+      <span>{tr("ui.aiHandover.ask")}</span>
     </button>
     {#if handoverState === "connecting"}
       <span class="text-xs text-destructive/80" role="status" aria-live="polite">
-        Connecting to kombify AI...
+        {tr("ui.aiHandover.connecting")}
       </span>
     {:else if handoverState === "accepted"}
       <span class="text-xs text-destructive/80" role="status" aria-live="polite">
-        Preparing support session...
+        {tr("ui.aiHandover.preparing")}
       </span>
     {:else if handoverState === "ready"}
       <span class="text-xs text-destructive/80" role="status" aria-live="polite">
-        Support panel opened.
+        {tr("ui.aiHandover.opened")}
       </span>
     {:else if handoverState === "failed"}
       <span class="text-xs text-destructive/80" role="alert">
-        kombify AI could not open: {handoverFailure}
+        {tr("ui.aiHandover.couldNotOpen", { error: handoverFailure })}
       </span>
     {:else if handoverState === "standalone"}
       <span class="text-xs text-destructive/80">
-        AI handover is available in kombify Cloud.
+        {tr("ui.aiHandover.cloudOnly")}
       </span>
     {/if}
   </div>

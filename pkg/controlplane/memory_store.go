@@ -11,6 +11,7 @@ type MemoryStore struct {
 	homelabs          map[string]Homelab
 	wizardRuns        map[string]WizardRun
 	onboarding        map[string]OnboardingState
+	selfDisclosures   map[string]OperatorSelfDisclosure
 	stacks            map[string]Stack
 	jobs              map[string]Job
 	jobLeases         map[string]memoryJobExecutionLease
@@ -33,6 +34,7 @@ type MemoryStore struct {
 	driftResults      map[string]DriftResult
 	ownerSpecTokens   map[string]OwnerSpecToken
 	events            map[string]ActivityEvent
+	serverMaintenance map[string]ServerMaintenanceJob
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -41,6 +43,7 @@ func NewMemoryStore() *MemoryStore {
 		homelabs:          make(map[string]Homelab),
 		wizardRuns:        make(map[string]WizardRun),
 		onboarding:        make(map[string]OnboardingState),
+		selfDisclosures:   make(map[string]OperatorSelfDisclosure),
 		stacks:            make(map[string]Stack),
 		jobs:              make(map[string]Job),
 		jobLeases:         make(map[string]memoryJobExecutionLease),
@@ -61,6 +64,7 @@ func NewMemoryStore() *MemoryStore {
 		driftResults:      make(map[string]DriftResult),
 		ownerSpecTokens:   make(map[string]OwnerSpecToken),
 		events:            make(map[string]ActivityEvent),
+		serverMaintenance: make(map[string]ServerMaintenanceJob),
 	}
 }
 

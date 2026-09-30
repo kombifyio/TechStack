@@ -18,8 +18,10 @@ import (
 	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/controlplane"
+	"github.com/kombifyio/techstack/pkg/demoguard"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/jobs"
+	"github.com/kombifyio/techstack/pkg/middleware"
 	"github.com/kombifyio/techstack/pkg/serverregistry"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -143,6 +145,10 @@ func (h *serverTerminalHandlers) createSession(e *httpx.Event) error {
 	if err != nil || server == nil {
 		return err
 	}
+	if serverTerminalDemoRestricted(e.Request.Context(), server.TenantID, ownerID) {
+		return httpx.Error(e, http.StatusForbidden, ksapi.ErrCodeForbidden,
+			"This action is disabled on the kombify demo account", demoRestrictedDetails("runtime_ssh"))
+	}
 	var request createTerminalSessionRequest
 	if e.Request.Body != nil && e.Request.ContentLength != 0 {
 		if bindErr := e.BindBody(&request); bindErr != nil {
@@ -191,6 +197,10 @@ func (h *serverTerminalHandlers) authorizeUserKey(e *httpx.Event) error {
 	server, ownerID, err := h.ownedServer(e, "techstack.servers.access.authorize-key")
 	if err != nil || server == nil {
 		return err
+	}
+	if serverTerminalDemoRestricted(e.Request.Context(), server.TenantID, ownerID) {
+		return httpx.Error(e, http.StatusForbidden, ksapi.ErrCodeForbidden,
+			"This action is disabled on the kombify demo account", demoRestrictedDetails("runtime_ssh"))
 	}
 	if h.wallet == nil {
 		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Wallet custody is unavailable", nil)
@@ -252,6 +262,15 @@ func (h *serverTerminalHandlers) authorizeUserKey(e *httpx.Event) error {
 	server.Metadata = metadata
 	h.audit(e.Request.Context(), *server, ownerID, "server_ssh_key_authorized", "info", map[string]any{"user_key_fingerprint": userFingerprint})
 	return httpx.Success(e, http.StatusOK, h.resolveAccess(e.Request.Context(), *server, ownerID))
+}
+
+func serverTerminalDemoRestricted(ctx context.Context, tenantID, ownerID string) bool {
+	if demoguard.IsDemoSubject(tenantID, ownerID) {
+		return true
+	}
+	// Only the verified v7 context binds principal type; client headers are not authority.
+	claims, verified := middleware.VerifiedStepUpFromContext(ctx)
+	return verified && strings.TrimSpace(claims.PrincipalType) == "demo"
 }
 
 // ownerSSHAccessDisabled explains why key authorization is refused and how to
@@ -492,7 +511,6 @@ func (h *serverTerminalHandlers) resolveTarget(ctx context.Context, server contr
 	return &copy, nil
 }
 
-
 func (h *serverTerminalHandlers) ownedServer(e *httpx.Event, capability string) (*controlplane.ServerRuntime, string, error) {
 	ownerID, _, ok := authenticatedUser(e)
 	if !ok {
@@ -559,7 +577,6 @@ func terminalOriginAllowed(request *http.Request) bool {
 	return strings.EqualFold(parsed.Host, host)
 }
 
-
 func openPinnedSSH(ctx context.Context, target *jobs.ManagedRuntimeTarget, fingerprint string) (*ssh.Client, *ssh.Session, io.WriteCloser, io.Reader, error) {
 	client, err := executionchannel.Dial(ctx, target, fingerprint)
 	if err != nil {
@@ -580,7 +597,6 @@ func openPinnedSSH(ctx context.Context, target *jobs.ManagedRuntimeTarget, finge
 	session.Stdout, session.Stderr = outputWriter, outputWriter
 	return client, session, stdin, stdout, nil
 }
-
 
 func installAuthorizedKey(ctx context.Context, target *jobs.ManagedRuntimeTarget, hostFingerprint, publicKey string) error {
 	client, err := executionchannel.Dial(ctx, target, hostFingerprint)
@@ -658,7 +674,6 @@ func firstNonNilError(err, fallback error) error {
 	}
 	return fallback
 }
-
 
 func safeShellIdentity(value string) string {
 	value = strings.TrimSpace(value)

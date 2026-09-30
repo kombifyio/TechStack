@@ -9,14 +9,17 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"io"
+	"maps"
 	"math/big"
 	"net"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
 	"github.com/kombifyio/techstack/pkg/logger"
+	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
@@ -505,5 +508,53 @@ func assertGRPCCode(t *testing.T, err error, want codes.Code, msgFragment string
 	}
 	if msgFragment != "" && !strings.Contains(st.Message(), msgFragment) {
 		t.Errorf("message = %q, want containing %q", st.Message(), msgFragment)
+	}
+}
+
+// Tenant-scoped monitor reads filter on tenant_id and Companion reads worker
+// heartbeat series by worker_id and source, so neither ingest path may let an
+// agent choose those labels: they come from the enrolled peer identity, and an
+// OTLP export without that identity is refused.
+func TestMetricIngestBindsServerOwnedLabelsToEnrolledPeer(t *testing.T) {
+	store := NewMemoryAgentEnrollmentStore()
+	cert := makeClientCert(t, "agent-1", "tenant-A", big.NewInt(60))
+	store.Set(AgentEnrollment{AgentID: "agent-1", TenantID: "tenant-A", CertSerial: cert.SerialNumber.String()})
+	srv := newTestServerWithEnrollment(t, store)
+	tsdb := newTestTSDB(t)
+	srv.SetMonitorTSDB(tsdb)
+	if _, err := srv.Register(ctxWithPeerCert(cert), &agentpb.RegisterRequest{AgentId: "agent-1"}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	now := time.Now()
+	spoofed := map[string]string{"tenant_id": "tenant-B", "agent_id": "agent-9", "worker_id": "victim", "source": "worker-heartbeat"}
+	if _, err := srv.PushMetrics(ctxWithPeerCert(cert), &agentpb.MetricsBatch{
+		AgentId: "agent-1",
+		Samples: []*agentpb.MetricSample{{Name: "pushed_cpu", Value: 1, Labels: maps.Clone(spoofed), TimestampUnix: now.UnixMilli()}},
+	}); err != nil {
+		t.Fatalf("PushMetrics: %v", err)
+	}
+	otlp := newTestOTLPRequest(now)
+	for key, value := range spoofed {
+		otlp.ResourceMetrics[0].Resource.Attributes = append(otlp.ResourceMetrics[0].Resource.Attributes,
+			&commonpb.KeyValue{Key: key, Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: value}}})
+	}
+	if _, err := srv.Export(ctxWithPeerCert(cert), otlp); err != nil {
+		t.Fatalf("OTLP Export: %v", err)
+	}
+	_, err := srv.Export(context.Background(), newTestOTLPRequest(now))
+	assertGRPCCode(t, err, codes.Unauthenticated, "peer certificate")
+
+	for label, want := range map[string][]string{"tenant_id": {"tenant-A"}, "agent_id": {"agent-1"}, "worker_id": nil, "source": nil} {
+		got, err := tsdb.LabelValues(context.Background(), label)
+		if err != nil {
+			t.Fatalf("LabelValues(%s): %v", label, err)
+		}
+		if !slices.Equal(got, want) {
+			t.Fatalf("stored %s values = %v, want %v", label, got, want)
+		}
+	}
+	names, err := tsdb.MetricNames(context.Background())
+	if err != nil || !slices.Contains(names, "pushed_cpu") || !slices.Contains(names, "system_cpu_utilization") {
+		t.Fatalf("both ingest paths must have stored their samples: names=%v err=%v", names, err)
 	}
 }

@@ -11,6 +11,7 @@
   import { theme } from "#lib/stores/theme.js";
   import {
     BRAND_LOGO_CONTEXT,
+    localBrandLogoUrl,
     logoLinkUrl,
     type BrandLogoContext,
   } from "#lib/brand-logo.js";
@@ -18,7 +19,8 @@
   let {
     class: className = "",
     fallbackLabel = "",
-  }: { class?: string; fallbackLabel?: string } = $props();
+    circular = false,
+  }: { class?: string; fallbackLabel?: string; circular?: boolean } = $props();
 
   const brandLogo = getContext<BrandLogoContext>(BRAND_LOGO_CONTEXT);
   let logoTheme = $state<"light" | "dark">("dark");
@@ -43,11 +45,13 @@
     return () => observer.disconnect();
   });
 
+  const local = $derived(localBrandLogoUrl(brandLogo?.domain));
   const src = $derived(
-    logoLinkUrl(brandLogo?.domain, $clientBootstrap.contextDevLogolinkId, {
-      theme: logoTheme,
-      type: "icon",
-    }),
+    local ||
+      logoLinkUrl(brandLogo?.domain, $clientBootstrap.contextDevLogolinkId, {
+        theme: logoTheme,
+        type: "icon",
+      }),
   );
   let failed = $state(false);
   const imageFailed = $derived(failed || failedLogoUrls.has(src));
@@ -62,7 +66,8 @@
   <img
     {src}
     alt=""
-    class="{className} object-contain"
+    class="{className} brand-logo object-contain"
+    class:circular
     aria-hidden="true"
     loading="lazy"
     decoding="async"
@@ -80,6 +85,11 @@
 {/if}
 
 <style>
+  .brand-logo {
+    padding: 2px;
+    border-radius: 22%;
+    background: #f6f7f9;
+  }
   .brand-monogram {
     display: grid;
     place-items: center;
@@ -87,5 +97,10 @@
     font-weight: 700;
     letter-spacing: -0.04em;
     color: var(--primary);
+  }
+  .brand-logo.circular {
+    padding: 3px;
+    border-radius: 50%;
+    object-fit: contain;
   }
 </style>

@@ -1,7 +1,8 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import { ArrowLeft, RotateCcw } from "@lucide/svelte";
-  import { tr, getLocale, setLocale } from "#lib/i18n.svelte.js";
+  import { tr } from "#lib/i18n.svelte.js";
+  import LanguageSwitcher from "#lib/components/ui/LanguageSwitcher.svelte";
   import {
     createDefaultConfig,
     CANONICAL_USE_CASE_GOALS,
@@ -45,14 +46,7 @@
           "wizard.preview.reset",
         )}</button
       >
-      <select
-        aria-label={tr("wizard.preview.language")}
-        value={getLocale()}
-        onchange={(event) =>
-          setLocale(event.currentTarget.value === "de" ? "de" : "en")}
-        ><option value="en">English</option><option value="de">Deutsch</option
-        ></select
-      >
+      <LanguageSwitcher label={tr("wizard.preview.language")} />
     </div>
   </nav>
   <aside class="preview-notice" role="note">
@@ -147,7 +141,7 @@
   button {
     cursor: pointer;
   }
-  select {
+  .preview-actions :global(select) {
     padding: 7px;
     color: var(--foreground);
     background: var(--card);
@@ -163,7 +157,8 @@
     font-size: 12px;
     line-height: 1.7;
   }
-  :is(a, button, select):focus-visible {
+  :is(a, button):focus-visible,
+  .preview-actions :global(select):focus-visible {
     outline: 2px solid var(--ring);
     outline-offset: 4px;
   }

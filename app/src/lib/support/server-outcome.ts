@@ -18,6 +18,7 @@ import {
 import { getTroubleshootingForError } from "#lib/wizard/provider-errors.js";
 import type { StackLatestFailure } from "#lib/api/stacks.js";
 
+import { tr } from "#lib/i18n.svelte.js";
 export type ServerOutcomeStatus =
   "available" | "disabled" | "blocked" | "pending" | "degraded" | "failed";
 
@@ -321,7 +322,7 @@ function retryStepLabel(
 ): string {
   const type = (failure.type ?? "").trim().toLowerCase();
   if (type === "remote_enrollment") {
-    return "SSH-Verbindung erneut versuchen";
+    return tr("ui.serverOutcome.retrySsh");
   }
   const connectRemoteStackKitReady =
     context?.serverProvisioningMode === "connect-remote" &&
@@ -329,10 +330,10 @@ function retryStepLabel(
     (type === "provision" || type === "deploy");
   if (connectRemoteStackKitReady) {
     return type === "deploy"
-      ? "StackKit auf verbundenem Node fortsetzen"
-      : "StackKit-Vorbereitung auf verbundenem Node fortsetzen";
+      ? tr("ui.serverOutcome.continueOnConnected")
+      : tr("ui.serverOutcome.continuePrepOnConnected");
   }
-  return "Rollout erneut starten";
+  return tr("ui.serverOutcome.restartRollout");
 }
 
 export function failureIsRetryable(failure: StackLatestFailure): boolean {

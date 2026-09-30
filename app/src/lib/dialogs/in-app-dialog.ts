@@ -1,5 +1,6 @@
 import { writable } from "svelte/store";
 
+import { tr } from "#lib/i18n.svelte.js";
 export type InAppDialogTone = "primary" | "warning" | "danger";
 
 export interface InAppDialogRequest {
@@ -43,8 +44,8 @@ export function confirmInApp(options: {
       kind: "confirm",
       title: options.title,
       message: options.message,
-      confirmText: options.confirmText ?? "Confirm",
-      cancelText: options.cancelText ?? "Cancel",
+      confirmText: options.confirmText ?? tr("ui.inAppDialog.confirm"),
+      cancelText: options.cancelText ?? tr("ui.importExportModal.cancel"),
       tone: options.tone ?? "primary",
     },
     false,
@@ -67,8 +68,8 @@ export function promptInApp(options: {
       message: options.message,
       inputLabel: options.inputLabel,
       inputType: options.inputType ?? "text",
-      confirmText: options.confirmText ?? "Continue",
-      cancelText: options.cancelText ?? "Cancel",
+      confirmText: options.confirmText ?? tr("ui.inAppDialog.continue"),
+      cancelText: options.cancelText ?? tr("ui.importExportModal.cancel"),
       tone: options.tone ?? "primary",
     },
     null,

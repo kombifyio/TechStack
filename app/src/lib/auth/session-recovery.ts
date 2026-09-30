@@ -22,7 +22,9 @@ export type AuthRecoveryOutcome =
   | "origin_unverifiable";
 
 export const AUTO_RELOGIN_MARKER_KEY = "techstack:auth:spa_gateway_login_at";
-export const AUTO_RELOGIN_TTL_MS = 10 * 60_000;
+// One automatic re-login per tab per 5 minutes, matching the Cloud and CMO
+// step-up guards.
+export const AUTO_RELOGIN_TTL_MS = 5 * 60_000;
 export const GATEWAY_LOGIN_REDIRECTING_CODE = "gateway_login_redirecting";
 
 const GATEWAY_FAILURE_CODES = new Set([
@@ -35,7 +37,29 @@ const AUTH0_SILENT_FAILURE_CODES = new Set([
   "consent_required",
   "missing_refresh_token",
   "invalid_grant",
+  // Staff MFA (kombify-require-staff-mfa, Gateway #890) refuses refresh
+  // grants without a completed second factor. See STEP_UP_FAILURE_CODES.
+  "mfa_required",
+  "interaction_required",
 ]);
+
+/**
+ * Refusals that retrying the same refresh token can never fix: Auth0 wants a
+ * second factor on the SSO session. gateway-auth stops silent refresh on
+ * these and the next SPA login asks for the factor via MFA_STEP_UP_ACR_VALUES
+ * (platform-jx5m6).
+ */
+const STEP_UP_FAILURE_CODES = new Set(["mfa_required", "interaction_required"]);
+
+/** OIDC PAPE multi-factor policy; Auth0 challenges only the missing factor. */
+export const MFA_STEP_UP_ACR_VALUES =
+  "http://schemas.openid.net/pape/policies/2007/06/multi-factor";
+
+export function isStepUpRequiredFailure(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const code = (err as { error?: unknown }).error;
+  return typeof code === "string" && STEP_UP_FAILURE_CODES.has(code);
+}
 
 /**
  * True when the error is a gateway-token acquisition failure (our typed
@@ -73,7 +97,11 @@ export function isGatewayAuthFailure(err: unknown): boolean {
 
 export function isSilentAuthFailure(err: unknown): boolean {
   if (typeof err !== "object" || err === null) return false;
-  const candidate = err as { error?: unknown; message?: unknown; code?: unknown };
+  const candidate = err as {
+    error?: unknown;
+    message?: unknown;
+    code?: unknown;
+  };
   if (
     typeof candidate.error === "string" &&
     AUTH0_SILENT_FAILURE_CODES.has(candidate.error)

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr, trParts } from "#lib/i18n.svelte.js";
   /**
    * ShortcutsHelp Modal
    *
@@ -30,12 +31,12 @@
     return grouped;
   });
 
-  const categoryLabels: Record<string, string> = {
-    navigation: "Page Navigation",
-    list: "List Navigation",
-    actions: "Actions",
-    dialogs: "Dialogs",
-  };
+  const categoryLabels: Record<string, string> = $derived({
+    navigation: tr("ui.shortcutsHelp.pageNavigation"),
+    list: tr("ui.shortcutsHelp.listNavigation"),
+    actions: tr("ui.stacksId.actions"),
+    dialogs: tr("ui.shortcutsHelp.dialogs"),
+  });
 
   const categoryOrder = ["list", "navigation", "actions", "dialogs"];
 
@@ -94,13 +95,13 @@
             </svg>
           </div>
           <h2 id="shortcuts-title" class="text-lg font-semibold text-foreground">
-            Keyboard Shortcuts
+            {tr("ui.shortcuts.title")}
           </h2>
         </div>
         <button
           onclick={onclose}
           class="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-          aria-label="Close"
+          aria-label={tr("ui.common.close")}
         >
           <svg
             class="w-5 h-5"
@@ -173,16 +174,16 @@
       <div class="p-4 border-t border-border bg-muted/30">
         <div class="flex items-center justify-between text-sm">
           <span class="text-muted-foreground">
-            Press <kbd
+            {trParts("ui.shortcuts.pressToShow")[0]}<kbd
               class="px-1.5 py-0.5 bg-muted rounded text-xs font-mono text-foreground border border-border"
               >?</kbd
-            > anytime to show this help
+            >{trParts("ui.shortcuts.pressToShow")[1]}
           </span>
           <span class="text-muted-foreground">
-            Press <kbd
+            {trParts("ui.shortcuts.pressToClose")[0]}<kbd
               class="px-1.5 py-0.5 bg-muted rounded text-xs font-mono text-foreground border border-border"
-              >Esc</kbd
-            > to close
+              >{tr("ui.shortcutsHelp.esc")}</kbd
+            >{trParts("ui.shortcuts.pressToClose")[1]}
           </span>
         </div>
       </div>

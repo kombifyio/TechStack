@@ -1,3 +1,4 @@
+import { tr } from "#lib/i18n.svelte.js";
 export const cloudDeviceLoginUrl = "https://kombify.io/device";
 export const cloudUiLoginUrl =
   "https://techstack.kombify.io/login?manual=1&client=windows";
@@ -18,8 +19,8 @@ export function normalizeServerUrl(value: string): string {
 
 export function windowsClientModeLabel(mode: string | null): string {
   if (mode === "cloud") return "kombify Cloud";
-  if (mode === "server") return "Server connection";
-  return "Local Windows installation";
+  if (mode === "server") return tr("ui.windowsOnboarding.serverConnection");
+  return tr("ui.clientOnboarding.localWindowsInstallation");
 }
 
 export function deriveLocalOwnerName(email: string): string {

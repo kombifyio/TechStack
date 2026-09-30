@@ -12,16 +12,14 @@
                 <div>
                   <h3 class="text-lg font-medium text-foreground mb-1">
                     {creation.creationOperation === "add-server"
-                      ? "Managed Node requested"
-                      : "Managed runtime ready"}
+                      ? tr("ui.stacksCreatingCreationLease.managedNodeRequested")
+                      : tr("ui.stacksCreatingCreationLease.managedRuntimeReady")}
                   </h3>
                   <p class="text-sm text-muted-foreground">
                     {#if creation.creationOperation === "add-server"}
-                      The additional subscription VM request is recorded. It
-                      will appear in Operations as enrollment reports back.
+                      {tr("ui.stacksCreatingCreationLease.theAdditionalSubscriptionVmRequest")}
                     {:else}
-                      StackKit deployed on the leased subscription VM. Values
-                      below are returned by the runtime job - no demo data.
+                      {tr("ui.stacksCreatingCreationLease.stackkitDeployedOnTheLeased")}
                     {/if}
                   </p>
                 </div>
@@ -30,7 +28,7 @@
                   data-status="ok"
                   class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium shrink-0"
                 >
-                  {creation.creationOperation === "add-server" ? "Requested" : "Live"}
+                  {creation.creationOperation === "add-server" ? tr("ui.stacksCreatingCreationLease.requested") : tr("ui.stacksCreatingCreationLease.live")}
                 </span>
               </div>
               <dl
@@ -41,7 +39,7 @@
                   <dt
                     class="text-xs uppercase tracking-wide text-muted-foreground"
                   >
-                    Lease ID
+                    {tr("ui.stacksCreatingCreationLease.leaseId")}
                   </dt>
                   <dd class="mt-1 font-mono text-foreground break-all">
                     {creation.lease.id}
@@ -52,7 +50,7 @@
                     <dt
                       class="text-xs uppercase tracking-wide text-muted-foreground"
                     >
-                      Provider
+                      {tr("ui.stacksCreatingCreationLease.provider")}
                     </dt>
                     <dd class="mt-1 text-foreground">{creation.lease.provider}</dd>
                   </div>
@@ -62,7 +60,7 @@
                     <dt
                       class="text-xs uppercase tracking-wide text-muted-foreground"
                     >
-                      Offering
+                      {tr("ui.stacksCreatingCreationLease.offering")}
                     </dt>
                     <dd class="mt-1 text-foreground">{creation.lease.offering}</dd>
                   </div>
@@ -72,7 +70,7 @@
                     <dt
                       class="text-xs uppercase tracking-wide text-muted-foreground"
                     >
-                      Host
+                      {tr("ui.stacksCreatingCreationLease.host")}
                     </dt>
                     <dd class="mt-1 font-mono text-foreground break-all">
                       {creation.lease.host || creation.lease.publicIp}
@@ -84,7 +82,7 @@
                     <dt
                       class="text-xs uppercase tracking-wide text-muted-foreground"
                     >
-                      Desired state
+                      {tr("ui.stacksCreatingCreationLease.desiredState")}
                     </dt>
                     <dd class="mt-1 text-foreground">{creation.lease.desiredState}</dd>
                   </div>
@@ -94,7 +92,7 @@
                     <dt
                       class="text-xs uppercase tracking-wide text-muted-foreground"
                     >
-                      Billing
+                      {tr("ui.stacksCreatingCreationLease.billing")}
                     </dt>
                     <dd class="mt-1 text-foreground">{creation.lease.billingMode}</dd>
                   </div>
@@ -119,15 +117,18 @@
               data-testid="remote-server-provisioning-card"
             >
               <h3 class="text-lg font-medium text-foreground mb-2">
-                Remote server connection
+                {tr("ui.stacksCreatingCreationLease.remoteServerConnection")}
               </h3>
               <p class="text-sm text-muted-foreground">
-                kombify will use the captured SSH connection details for the
-                existing server{#if creation.remoteServerHost}
-                  <span>
-                    at {creation.remoteServerHost}{#if creation.remoteServerPort}:{creation.remoteServerPort}{/if}
-                  </span>{/if}{#if creation.remoteServerUser}
-                  <span> as {creation.remoteServerUser}</span>{/if}.
+                {#if creation.remoteServerHost && creation.remoteServerUser}
+                  {tr("ui.creationLease.sshHostUser", { host: creation.remoteServerHost + (creation.remoteServerPort ? ":" + creation.remoteServerPort : ""), user: creation.remoteServerUser })}
+                {:else if creation.remoteServerHost}
+                  {tr("ui.creationLease.sshHost", { host: creation.remoteServerHost + (creation.remoteServerPort ? ":" + creation.remoteServerPort : "") })}
+                {:else if creation.remoteServerUser}
+                  {tr("ui.creationLease.sshUser", { user: creation.remoteServerUser })}
+                {:else}
+                  {tr("ui.stacksCreatingCreationLease.kombifyWillUseTheCaptured")}.
+                {/if}
               </p>
             </div>
           {/if}
@@ -140,11 +141,10 @@
             >
               <div class="mb-4">
                 <h3 class="text-lg font-medium text-foreground">
-                  Runtime proof
+                  {tr("ui.stacksCreatingCreationLease.runtimeProof")}
                 </h3>
                 <p class="text-sm text-muted-foreground">
-                  These statuses come from Runtime Action responses and the
-                  final e2e proof.
+                  {tr("ui.stacksCreatingCreationLease.theseStatusesComeFromRuntime")}
                 </p>
               </div>
               <div class="grid gap-3 sm:grid-cols-2">
@@ -189,18 +189,17 @@
                 <div class="flex items-start justify-between gap-4 mb-4">
                   <div>
                     <h3 class="text-lg font-medium text-foreground mb-2">
-                      First login and recovery
+                      {tr("ui.stacksCreatingCreationLease.firstLoginAndRecovery")}
                     </h3>
                     <p class="text-sm text-muted-foreground">
-                      StackKit returned the owner login, login gateway, and
-                      recovery references for this verified Cloud Kit rollout.
+                      {tr("ui.stacksCreatingCreationLease.stackkitReturnedTheOwnerLogin")}
                     </p>
                   </div>
                   <span
                     data-kx="status"
                     data-status="ok"
                     class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium shrink-0"
-                    >Ready</span
+                    >{tr("ui.stacksCreatingCreationLease.ready")}</span
                   >
                 </div>
 
@@ -210,7 +209,7 @@
                     class="p-3"
                     data-testid="stackkit-owner-identity"
                   >
-                    <p class="text-xs text-muted-foreground mb-1">Owner</p>
+                    <p class="text-xs text-muted-foreground mb-1">{tr("ui.stacksCreatingCreationCompletion.owner")}</p>
                     <p class="text-sm text-foreground font-medium truncate">
                       {creation.stackKitHandoff.ownerDisplayName ||
                         creation.stackKitHandoff.ownerUsername}
@@ -229,7 +228,7 @@
 
                   <div data-kx="plate" class="p-3">
                     <p class="text-xs text-muted-foreground mb-2">
-                      Login gateway
+                      {tr("ui.stacksCreatingCreationLease.loginGateway")}
                     </p>
                     <a
                       href={creation.stackKitHandoff.loginGatewayUrl || "#"}
@@ -239,12 +238,12 @@
                       class="inline-flex w-full items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium"
                       data-testid="stackkit-login-gateway-link"
                     >
-                      {creation.stackKitHandoff.loginGatewayLabel || "Open first login"}
+                      {creation.stackKitHandoff.loginGatewayLabel || tr("ui.stacksCreatingCreationLease.openFirstLogin")}
                     </a>
                   </div>
 
                   <div data-kx="plate" class="p-3">
-                    <p class="text-xs text-muted-foreground mb-2">Wallet</p>
+                    <p class="text-xs text-muted-foreground mb-2">{tr("ui.stacksCreatingCreationLease.wallet")}</p>
                     <div class="flex flex-wrap gap-2">
                       <a
                         href="/wallet#access"
@@ -252,7 +251,7 @@
                         class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium"
                         data-testid="wallet-access-handoff-link"
                       >
-                        Access
+                        {tr("ui.stacksCreatingCreationLease.access")}
                       </a>
                       <a
                         href="/wallet#recovery"
@@ -260,7 +259,7 @@
                         class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium"
                         data-testid="wallet-recovery-handoff-link"
                       >
-                        Recovery
+                        {tr("ui.stacksCreatingCreationCompletion.recovery")}
                       </a>
                     </div>
                     {#if creation.stackKitHandoff.recoveryRef}
@@ -277,12 +276,10 @@
                 data-testid="stackkit-handoff-missing-card"
               >
                 <h3 class="text-lg font-semibold text-warning mb-2">
-                  StackKit identity handoff is missing
+                  {tr("ui.stacksCreatingCreationLease.stackkitIdentityHandoffIsMissing")}
                 </h3>
                 <p class="text-sm text-warning/80">
-                  The rollout completed, but the StackKit did not return owner
-                  login, login gateway, and recovery outputs. Treat this as a
-                  release blocker until the runtime action response includes
+                  {tr("ui.stacksCreatingCreationLease.theRolloutCompletedButThe")}
                   <span class="font-mono text-foreground">stackkit_outputs</span
                   >.
                 </p>
@@ -296,16 +293,14 @@
               data-testid="oneliner-simulation-preview-card"
             >
               <h3 class="text-lg font-semibold text-info mb-2">
-                Simulate demo preview
+                {tr("ui.stacksCreatingCreationLease.simulateDemoPreview")}
               </h3>
               <p class="text-sm text-info/80">
-                Your install command is ready. kombify-simulate is used as a
-                temporary demo preview when available and is limited to one
-                hour.
+                {tr("ui.stacksCreatingCreationLease.yourInstallCommandIsReady")}
               </p>
               {#if creation.simulationPreviewStatus}
                 <p class="mt-3 text-xs text-info/80">
-                  Status: <span class="font-mono"
+                  {tr("ui.stacksCreatingCreationLease.status")} <span class="font-mono"
                     >{creation.simulationPreviewStatus}</span
                   >
                 </p>

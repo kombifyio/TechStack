@@ -14,6 +14,7 @@ import {
   serverCardHostname,
   canonicalServerCardStatus,
   serverDomains,
+  serverForOperationTarget,
   serverOSLabel,
   serverPrimaryAddress,
   serverStackKitName,
@@ -144,7 +145,7 @@ describe("server card adapter", () => {
         name: "Cloud Kit",
         catalog_ref: "cloud-kit",
         version: "2.1.0",
-        mode: "standard",
+        mode: "advanced",
         context: "cloud",
         paas: "coolify",
         compute_tier: "managed-vps",
@@ -162,7 +163,7 @@ describe("server card adapter", () => {
     ).toBe("x");
     expect(serverStackKitName(makeServer({}))).toBe("not reported");
     expect(serverStackKitVariant(server)).toBe(
-      "2.1.0 · standard · cloud · coolify · managed-vps · observed",
+      "2.1.0 · advanced · cloud · coolify · managed-vps · observed",
     );
     expect(
       serverStackKitVariant(
@@ -308,5 +309,44 @@ describe("canonicalServerAxes", () => {
       connection: "pending",
       health: "unknown",
     });
+  });
+});
+
+describe("serverForOperationTarget", () => {
+  const alpha = {
+    ...makeServer({ id: "w1", server_id: "srv-1", agent_id: "agent-1" }),
+    kit_deployment_id: "kd-1",
+  };
+  const beta = {
+    ...makeServer({
+      id: "w2",
+      server_id: "srv-2",
+      agent_id: "agent-2",
+      ip: "10.0.0.2",
+    }),
+    kit_deployment_id: "kd-1",
+  };
+
+  it("resolves a rollout to the one server it ran on, or to none", () => {
+    expect(
+      serverForOperationTarget(
+        { kit_deployment_id: "kd-1", server_id: "srv-2" },
+        [alpha, beta],
+      ),
+    ).toBe(beta);
+    // Historical rows without server_id still resolve by runtime address.
+    expect(
+      serverForOperationTarget(
+        { kit_deployment_id: "kd-1", runtime_ip: "10.0.0.2" },
+        [alpha, beta],
+      ),
+    ).toBe(beta);
+    // No recorded target and several Nodes: the page keeps its own notice.
+    expect(
+      serverForOperationTarget({ kit_deployment_id: "kd-1" }, [alpha, beta]),
+    ).toBeNull();
+    expect(
+      serverForOperationTarget({ kit_deployment_id: "kd-1" }, [alpha]),
+    ).toBe(alpha);
   });
 });

@@ -1,3 +1,4 @@
+import { tr } from "#lib/i18n.svelte.js";
 /**
  * Wallet encryption utilities using Web Crypto API
  * Uses AES-GCM for symmetric encryption with PBKDF2 key derivation
@@ -92,7 +93,7 @@ export async function decrypt(
     );
     return decoder.decode(plaintext);
   } catch {
-    throw new Error("Decryption failed. Wrong password?");
+    throw new Error(tr("ui.crypto.decryptionFailedWrongPassword"));
   }
 }
 

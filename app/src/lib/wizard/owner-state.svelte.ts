@@ -27,6 +27,7 @@ import {
   type SignedInOwnerAccount,
 } from "./session-owner";
 
+import { tr } from "#lib/i18n.svelte.js";
 const CLOUD_LINK_POLL_INTERVAL_MS = 3000;
 const CLOUD_LINK_POLL_MAX_MS = 2 * 60 * 1000;
 
@@ -123,14 +124,10 @@ export class OwnerStepState {
     if (config.owner.bootstrapMode !== "custom") return errors;
 
     if (config.owner.source === "cloud") {
-      errors.push(
-        "The selected owner source is no longer supported. Choose a local owner or link your kombify Cloud profile.",
-      );
+      errors.push(tr("ui.ownerState.theSelectedOwnerSourceIs"));
     }
     if (config.owner.source === "cloud-linked" && !this.cloudLinkReady) {
-      errors.push(
-        "Connect your kombify Cloud profile (with a verified email) to use it as the owner",
-      );
+      errors.push(tr("ui.ownerState.connectYourKombifyCloudProfile"));
     }
     if (config.owner.source === "local" && !this.localOwnerEmailReady()) {
       errors.push(t("wizard.login.profile.emailRequired", getLocale()));
@@ -138,11 +135,13 @@ export class OwnerStepState {
     if (this.recoveryPassphrase || this.recoveryPassphraseConfirm) {
       if (!this.recoveryPassphraseLongEnough) {
         errors.push(
-          `Recovery passphrase must be at least ${MIN_RECOVERY_PASSPHRASE_LENGTH} characters`,
+          tr("ui.ownerState.recoveryPassphraseMustBeAt", {
+            MIN_RECOVERY_PASSPHRASE_LENGTH,
+          }),
         );
       }
       if (this.recoveryPassphraseConfirm && !this.recoveryPassphrasesMatch) {
-        errors.push("Recovery passphrases do not match");
+        errors.push(tr("ui.ownerState.recoveryPassphrasesDoNotMatch"));
       }
     }
     if (this.recoveryHashError) {
@@ -153,7 +152,7 @@ export class OwnerStepState {
       config.owner.source === "local" &&
       !this.localOwnerEmailReady()
     ) {
-      errors.push("Email is required for passwordless authentication");
+      errors.push(tr("ui.ownerState.emailIsRequiredForPasswordless"));
     }
     return errors;
   }
@@ -287,7 +286,7 @@ export class OwnerStepState {
       this.recoveryHashError =
         error instanceof Error
           ? error.message
-          : "Could not hash the recovery passphrase.";
+          : tr("ui.ownerState.couldNotHashTheRecovery");
       return false;
     } finally {
       this.isHashingRecovery = false;
@@ -341,11 +340,11 @@ export class OwnerStepState {
         this.cloudLinkState = "unavailable";
         this.cloudLinkGuidance =
           detail.details.user_guidance?.body ??
-          "This instance has no kombify Cloud login configured.";
+          tr("ui.ownerState.thisInstanceHasNoKombify");
       } else {
         this.cloudLinkState = "error";
         this.cloudLinkError =
-          detail?.message ?? "Could not start the kombify Cloud link.";
+          detail?.message ?? tr("ui.ownerState.couldNotStartTheKombify");
       }
       return null;
     }
@@ -414,16 +413,18 @@ export class OwnerStepState {
 export function cloudLinkReasonMessage(reason?: string): string {
   switch (reason) {
     case "email_unverified":
-      return "The kombify Cloud email is not verified. Verify it in your Cloud account, then link again.";
+      return tr("ui.ownerState.theKombifyCloudEmailIs");
     case "email_missing":
-      return "The kombify Cloud profile has no email address.";
+      return tr("ui.ownerState.theKombifyCloudProfileHas");
     case "state_expired":
-      return "The link request expired. Start the connection again.";
+      return tr("ui.ownerState.theLinkRequestExpiredStart");
+    case "browser_mismatch":
+      return tr("ui.ownerState.finishTheConnectionInThe");
     case "provider_error":
-      return "kombify Cloud login was cancelled or failed.";
+      return tr("ui.ownerState.kombifyCloudLoginWasCancelled");
     case "cloud_oidc_not_configured":
-      return "This instance has no kombify Cloud login configured.";
+      return tr("ui.ownerState.thisInstanceHasNoKombify");
     default:
-      return "Linking the kombify Cloud profile failed. Try again.";
+      return tr("ui.ownerState.linkingTheKombifyCloudProfile");
   }
 }

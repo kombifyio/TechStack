@@ -12,6 +12,8 @@ import (
 	"reflect"
 	"strings"
 	"time"
+
+	"github.com/kombifyio/techstack/pkg/ril/actions"
 )
 
 const maxDeliveryAttempts = 8
@@ -31,9 +33,20 @@ type Claim struct {
 	ExpiresAt  time.Time
 }
 
-type PostgresOutbox struct{ db *sql.DB }
+type PostgresOutbox struct {
+	db          *sql.DB
+	remediation RemediationPolicy
+}
 
-func NewPostgresOutbox(db *sql.DB) *PostgresOutbox { return &PostgresOutbox{db: db} }
+// NewPostgresOutbox uses Techstack's DefaultRemediationPolicy.
+func NewPostgresOutbox(db *sql.DB) *PostgresOutbox {
+	return NewPostgresOutboxWithPolicy(db, DefaultRemediationPolicy())
+}
+
+// NewPostgresOutboxWithPolicy binds an explicit remediation policy.
+func NewPostgresOutboxWithPolicy(db *sql.DB, policy RemediationPolicy) *PostgresOutbox {
+	return &PostgresOutbox{db: db, remediation: policy}
+}
 
 // ResolveServerOwner returns the canonical user subject for a tenant-scoped
 // server. Producers use it when their runtime observation has tenant/server
@@ -77,6 +90,15 @@ func (o *PostgresOutbox) ResolveServerOwner(ctx context.Context, tenantID, serve
 // Emit commits one canonical envelope only when the exact server exists in
 // the supplied tenant's RLS scope. Reusing a dedupe key returns the original
 // envelope without creating another delivery.
+//
+// Only a first insert consults the remediation policy. When the
+// observation's alert rule maps to a remediation template, the governed
+// action card ActionCardID is created in the same transaction as the outbox
+// row and the stored envelope is marked actionable. The card belongs to the
+// signal's tenant and owner; a signal without an owner stays
+// notification-only. A dedupe replay never creates another card, and a
+// failed policy lookup or card insert keeps the signal notification-only
+// instead of losing it.
 func (o *PostgresOutbox) Emit(ctx context.Context, observation Observation) (Record, bool, error) {
 	if o == nil || o.db == nil {
 		return Record{}, false, fmt.Errorf("ril signals: database not configured")
@@ -85,15 +107,16 @@ func (o *PostgresOutbox) Emit(ctx context.Context, observation Observation) (Rec
 	if err != nil {
 		return Record{}, false, err
 	}
-	payload, err := json.Marshal(envelope)
-	if err != nil {
-		return Record{}, false, err
-	}
 	tx, err := o.beginTenant(ctx, input.TenantID)
 	if err != nil {
 		return Record{}, false, err
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	payload, err := json.Marshal(envelope)
+	if err != nil {
+		return Record{}, false, err
+	}
 
 	var record Record
 	var storedPayload []byte
@@ -132,13 +155,83 @@ func (o *PostgresOutbox) Emit(ctx context.Context, observation Observation) (Rec
 	if err := json.Unmarshal(storedPayload, &record.Envelope); err != nil {
 		return Record{}, false, err
 	}
-	if !inserted && !reflect.DeepEqual(record.Envelope, envelope) {
-		return Record{}, false, ErrDedupeConflict
+	if !inserted {
+		// Actionability is decided once, at the first insert; a replay
+		// compares only the producer-owned envelope.
+		envelope.Actionable = record.Envelope.Actionable
+		if !reflect.DeepEqual(record.Envelope, envelope) {
+			return Record{}, false, ErrDedupeConflict
+		}
+	} else {
+		actionable, err := o.attachGovernedCard(ctx, tx, input, envelope, record.SequenceID)
+		if err != nil {
+			return Record{}, false, err
+		}
+		record.Envelope.Actionable = actionable
 	}
 	if err := tx.Commit(); err != nil {
 		return Record{}, false, err
 	}
 	return record, inserted, nil
+}
+
+// attachGovernedCard runs after the outbox insert passed the tenant, server,
+// owner and dedupe fences. Inside one savepoint it resolves the remediation
+// template, creates the governed card and marks the stored envelope
+// actionable. Any failure there rolls back to the savepoint, so the signal is
+// still committed as notification-only. Only savepoint errors are returned.
+func (o *PostgresOutbox) attachGovernedCard(ctx context.Context, tx *sql.Tx, input Observation, envelope Envelope, sequenceID int64) (bool, error) {
+	resolve := o.remediation[input.AlertRule]
+	if input.AlertRule == "" || input.UserID == "" || resolve == nil {
+		return false, nil
+	}
+	if _, err := tx.ExecContext(ctx, `SAVEPOINT ril_governed_card`); err != nil {
+		return false, err
+	}
+	if o.createGovernedCard(ctx, tx, resolve, input, envelope, sequenceID) == nil {
+		_, err := tx.ExecContext(ctx, `RELEASE SAVEPOINT ril_governed_card`)
+		return err == nil, err
+	}
+	_, err := tx.ExecContext(ctx, `ROLLBACK TO SAVEPOINT ril_governed_card`)
+	return false, err
+}
+
+var errNotRemediable = errors.New("ril signals: signal is not remediable")
+
+func (o *PostgresOutbox) createGovernedCard(ctx context.Context, tx *sql.Tx, resolve RemediationTemplate, input Observation, envelope Envelope, sequenceID int64) error {
+	template, ok, err := resolve(ctx, tx, RemediationSubject{
+		TenantID: input.TenantID, OwnerSubjectID: input.UserID, ServerID: input.ServerID,
+		ServiceID: input.ServiceID, AlertRule: input.AlertRule,
+		Source: input.Source, Severity: input.Severity,
+	})
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errNotRemediable
+	}
+	if _, err := actions.CreateInTx(ctx, tx, actions.CreateGovernedCard{
+		ID: envelope.ActionCardID, TenantID: input.TenantID, OwnerSubjectID: input.UserID,
+		ServerID: input.ServerID, Title: cardTitle(input), Severity: string(input.Severity),
+		Template: template,
+	}); err != nil {
+		return err
+	}
+	envelope.Actionable = true
+	payload, err := json.Marshal(envelope)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE ril_signal_outbox SET envelope_json=$3::jsonb WHERE tenant_id=$1 AND sequence_id=$2`,
+		input.TenantID, sequenceID, payload)
+	return err
+}
+
+func cardTitle(input Observation) string {
+	if input.Title != "" {
+		return input.Title
+	}
+	return input.AlertRule
 }
 
 func (o *PostgresOutbox) Claim(ctx context.Context, tenantID, owner string, lease time.Duration) (Claim, error) {

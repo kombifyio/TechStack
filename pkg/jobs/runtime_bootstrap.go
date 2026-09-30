@@ -176,6 +176,11 @@ func (b *SSHRuntimeTargetBootstrapper) bootstrapRuntimeTarget(ctx context.Contex
 	if len(authMethods) == 0 {
 		return nil, nil
 	}
+	// The execution budget covers the whole convergence, including retries.
+	// Giving each attempt a fresh deadline can turn a four-minute bootstrap
+	// into three four-minute waits and consume the caller's observation window.
+	executionCtx, cancelExecution := context.WithTimeout(ctx, b.executionTimeout(ctx))
+	defer cancelExecution()
 	var lastErr error
 	var lastOutput string
 	attempts := 0
@@ -184,8 +189,7 @@ func (b *SSHRuntimeTargetBootstrapper) bootstrapRuntimeTarget(ctx context.Contex
 		// Each attempt is a bounded, idempotent convergence phase. A package
 		// install or first-boot preparation that consumes one phase resumes from
 		// the observed host state instead of exhausting the whole rollout budget.
-		attemptCtx, cancelAttempt := context.WithTimeout(ctx, b.executionTimeout(ctx))
-		client, login, err := b.dial(attemptCtx, target, authMethods)
+		client, login, err := b.dial(executionCtx, target, authMethods)
 		if err == nil {
 			// The remaining rollout addresses the node through the login that
 			// actually answered, not the one the record was written with.
@@ -193,11 +197,10 @@ func (b *SSHRuntimeTargetBootstrapper) bootstrapRuntimeTarget(ctx context.Contex
 			if requested != nil {
 				requested.User = login
 			}
-			output, runErr := b.runCommand(attemptCtx, client, runtimeTargetBootstrapScript(), progress)
+			output, runErr := b.runCommand(executionCtx, client, runtimeTargetBootstrapScript(), progress)
 			_ = client.Close()
 			lastOutput = appendBootstrapAttemptOutput(lastOutput, attempts, output)
 			if runErr == nil {
-				cancelAttempt()
 				durationMS := maxInt64(0, b.now().Sub(started).Milliseconds())
 				output = truncateRuntimeDiagnosticsOutput(secrets.Redact(lastOutput), b.maxOutputSize)
 				agentStatus, agentSHA256 := runtimeTargetAgentConvergenceProof(output)
@@ -214,14 +217,17 @@ func (b *SSHRuntimeTargetBootstrapper) bootstrapRuntimeTarget(ctx context.Contex
 			}
 			err = runErr
 		}
-		cancelAttempt()
 		lastErr = err
+		if executionCtx.Err() != nil {
+			lastErr = errors.Join(executionCtx.Err(), err)
+			break
+		}
 		reason := classifyRuntimeTargetBootstrapError(err, lastOutput)
 		if !isRuntimeTargetBootstrapRetryable(reason) || attempts >= b.maxAttempts {
 			break
 		}
-		if waitErr := waitForRuntimeTargetSSHRetry(ctx, b.retryInterval); waitErr != nil {
-			lastErr = waitErr
+		if waitErr := waitForRuntimeTargetSSHRetry(executionCtx, b.retryInterval); waitErr != nil {
+			lastErr = errors.Join(waitErr, lastErr)
 			break
 		}
 	}

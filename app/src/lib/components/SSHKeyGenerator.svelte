@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "#lib/i18n.svelte.js";
   import {
     generateSSHKey,
     downloadKey,
@@ -31,23 +32,23 @@
     value: SSHKeyAlgorithm;
     label: string;
     description: string;
-  }> = [
+  }> = $derived([
     {
       value: "ed25519",
       label: "Ed25519",
-      description: "Modern, fast, secure (recommended)",
+      description: tr("ui.sSHKeyGenerator.modernFastSecureRecommended"),
     },
     {
       value: "rsa-4096",
       label: "RSA 4096-bit",
-      description: "Maximum compatibility, stronger",
+      description: tr("ui.sSHKeyGenerator.maximumCompatibilityStronger"),
     },
     {
       value: "rsa-2048",
       label: "RSA 2048-bit",
-      description: "Wide compatibility, standard strength",
+      description: tr("ui.sSHKeyGenerator.wideCompatibilityStandardStrength"),
     },
-  ];
+  ]);
 
   const cryptoAvailable = isSSHKeyGenAvailable();
 
@@ -55,7 +56,7 @@
     error = null;
 
     if (!name.trim()) {
-      error = "Please enter a name for this key";
+      error = tr("ui.sSHKeyGenerator.pleaseEnterANameFor");
       return;
     }
 
@@ -64,7 +65,7 @@
       keyPair = await generateSSHKey(algorithm);
       step = "generated";
     } catch (err) {
-      error = err instanceof Error ? err.message : "Key generation failed";
+      error = err instanceof Error ? err.message : tr("ui.sSHKeyGenerator.keyGenerationFailed");
     } finally {
       generating = false;
     }
@@ -97,7 +98,7 @@
       await onSave(name, keyPair.publicKey, keyPair.privateKey);
       onClose();
     } catch (err) {
-      error = err instanceof Error ? err.message : "Failed to save key";
+      error = err instanceof Error ? err.message : tr("ui.sSHKeyGenerator.failedToSaveKey");
     } finally {
       saving = false;
     }
@@ -124,7 +125,7 @@
 </script>
 
 <Modal
-  title={step === "configure" ? "Generate SSH Key" : "Key Generated"}
+  title={step === "configure" ? tr("ui.wallet.generateSshKey") : tr("ui.sSHKeyGenerator.keyGenerated")}
   {onClose}
   maxWidth="2xl"
 >
@@ -133,8 +134,7 @@
       <div
         class="mb-6 p-4 rounded-xl border border-destructive/30 bg-destructive/5 text-destructive"
       >
-        SSH key generation requires HTTPS and a modern browser with Web Crypto
-        API support.
+        {tr("ui.sSHKeyGenerator.sshKeyGenerationRequiresHttps")}
       </div>
     {/if}
 
@@ -153,13 +153,13 @@
           for="key-name"
           class="block text-sm font-medium text-foreground mb-2"
         >
-          Key Name <span class="text-destructive">*</span>
+          {tr("ui.sSHKeyGenerator.keyName")} <span class="text-destructive">*</span>
         </label>
         <input
           id="key-name"
           type="text"
           bind:value={name}
-          placeholder="e.g., Production Server, GitHub Deploy"
+          placeholder={tr("ui.sSHKeyGenerator.eGProductionServerGithub")}
           class="w-full px-4 py-3 bg-input border border-border rounded-lg text-foreground placeholder-muted-foreground focus:border-primary focus:outline-none"
         />
       </div>
@@ -167,7 +167,7 @@
       <!-- Algorithm Selection -->
       <fieldset>
         <legend class="block text-sm font-medium text-foreground mb-3">
-          Algorithm
+          {tr("ui.sSHKeyGenerator.algorithm")}
         </legend>
         <div class="space-y-2">
           {#each algorithms as algo}
@@ -199,8 +199,7 @@
       <div
         class="p-4 rounded-xl border border-info/30 bg-info/5 text-sm text-info"
       >
-        <strong>Tip:</strong> Ed25519 is recommended for most use cases. Use RSA only
-        if you need compatibility with older systems.
+        <strong>{tr("ui.sSHKeyGenerator.tip")}</strong> {tr("ui.sSHKeyGenerator.ed25519IsRecommendedForMost")}
       </div>
     </div>
 
@@ -210,7 +209,7 @@
         data-kx="control"
         class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
       >
-        Cancel
+        {tr("ui.importExportModal.cancel")}
       </button>
       <button
         onclick={handleGenerate}
@@ -237,10 +236,10 @@
                 d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
               />
             </svg>
-            Generating...
+            {tr("ui.sSHKeyGenerator.generating")}
           </span>
         {:else}
-          Generate
+          {tr("ui.sSHKeyGenerator.generate")}
         {/if}
       </button>
     </div>
@@ -272,34 +271,34 @@
               d="M5 13l4 4L19 7"
             />
           </svg>
-          <span class="font-medium">Key pair generated successfully</span>
+          <span class="font-medium">{tr("ui.sSHKeyGenerator.keyPairGeneratedSuccessfully")}</span>
         </div>
         <div class="text-sm text-success/80 space-y-1">
-          <p><strong>Name:</strong> {name}</p>
+          <p><strong>{tr("ui.sSHKeyGenerator.name")}</strong> {name}</p>
           <p>
-            <strong>Algorithm:</strong>
+            <strong>{tr("ui.sSHKeyGenerator.algorithm2")}</strong>
             {algorithms.find((a) => a.value === keyPair?.algorithm)?.label}
           </p>
-          <p><strong>Fingerprint:</strong> {keyPair.fingerprint}</p>
+          <p><strong>{tr("ui.sSHKeyGenerator.fingerprint")}</strong> {keyPair.fingerprint}</p>
         </div>
       </div>
 
       <!-- Public Key -->
       <div>
         <div class="flex items-center justify-between mb-2">
-          <span class="text-sm font-medium text-foreground">Public Key</span>
+          <span class="text-sm font-medium text-foreground">{tr("ui.sSHKeyGenerator.publicKey")}</span>
           <div class="flex gap-2">
             <button
               onclick={() => copyToClipboard(keyPair!.publicKey, false)}
               class="text-xs text-muted-foreground hover:text-foreground"
             >
-              {copiedPublic ? "✓ Copied" : "Copy"}
+              {copiedPublic ? "✓ Copied" : tr("ui.stacksCreatingCreationInstallCommand.copy")}
             </button>
             <button
               onclick={handleDownloadPublic}
               class="text-xs text-primary hover:text-primary"
             >
-              Download .pub
+              {tr("ui.sSHKeyGenerator.downloadPub")}
             </button>
           </div>
         </div>
@@ -309,26 +308,26 @@
           {keyPair.publicKey}
         </div>
         <p class="text-xs text-muted-foreground mt-1">
-          Add this to ~/.ssh/authorized_keys on your servers
+          {tr("ui.sSHKeyGenerator.addThisToSshAuthorized")}
         </p>
       </div>
 
       <!-- Private Key -->
       <div>
         <div class="flex items-center justify-between mb-2">
-          <span class="text-sm font-medium text-foreground">Private Key</span>
+          <span class="text-sm font-medium text-foreground">{tr("ui.sSHKeyGenerator.privateKey")}</span>
           <div class="flex gap-2">
             <button
               onclick={() => copyToClipboard(keyPair!.privateKey, true)}
               class="text-xs text-muted-foreground hover:text-foreground"
             >
-              {copiedPrivate ? "✓ Copied" : "Copy"}
+              {copiedPrivate ? "✓ Copied" : tr("ui.stacksCreatingCreationInstallCommand.copy")}
             </button>
             <button
               onclick={handleDownloadPrivate}
               class="text-xs text-primary hover:text-primary"
             >
-              Download
+              {tr("ui.importExportModal.download")}
             </button>
           </div>
         </div>
@@ -342,8 +341,7 @@
       <div
         class="p-3 rounded-xl border border-destructive/30 bg-destructive/5 text-sm text-destructive"
       >
-        <strong>Important:</strong> Download and securely store your private key now.
-        It cannot be recovered if lost. Never share your private key.
+        <strong>{tr("ui.importExportModal.important")}</strong> {tr("ui.sSHKeyGenerator.downloadAndSecurelyStoreYour")}
       </div>
     </div>
 
@@ -353,7 +351,7 @@
         data-kx="control"
         class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
       >
-        Close
+        {tr("ui.sSHKeyGenerator.close")}
       </button>
       <button
         onclick={handleSaveToWallet}
@@ -363,9 +361,9 @@
         class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
       >
         {#if saving}
-          Saving...
+          {tr("ui.credentialForm.saving")}
         {:else}
-          Save to Wallet
+          {tr("ui.sSHKeyGenerator.saveToWallet")}
         {/if}
       </button>
     </div>

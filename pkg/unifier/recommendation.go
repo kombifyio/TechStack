@@ -39,7 +39,12 @@ type WizardRecommendationEvaluation struct {
 	TenantID  string
 	OwnerID   string
 	Inventory WizardRecommendationInventory
-	Now       time.Time
+	// SelfDisclosure is the authenticated subject's persisted voluntary
+	// self-disclosure, loaded by the route from the tenant store. When it
+	// answers the experience question it decides the operator profile.
+	SelfDisclosure          *core.OperatorSelfDisclosure
+	SelfDisclosureUpdatedAt time.Time
+	Now                     time.Time
 }
 
 // StackKitCatalog is the existing StackKit catalog boundary. Engine satisfies
@@ -214,6 +219,8 @@ func buildWizardRecommendationDecisionContext(request core.WizardRecommendationR
 	if request.ProviderID != "" {
 		context.Constraints = append(context.Constraints, core.DecisionConstraint{Key: "provider_id", Value: request.ProviderID, Source: "wizard"})
 	}
+	context.Operator = OperatorCapabilityFromSelfDisclosure(input.SelfDisclosure, input.SelfDisclosureUpdatedAt)
+	context.Constraints = append(context.Constraints, selfDisclosureConstraints(input.SelfDisclosure)...)
 	for _, goal := range request.Goals {
 		context.Constraints = append(context.Constraints, core.DecisionConstraint{Key: "goal", Value: goal, Source: "wizard", Required: true})
 	}

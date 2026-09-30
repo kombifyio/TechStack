@@ -5,12 +5,20 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/jobs"
 )
 
 var ErrStackKitLifecycleUnavailable = errors.New("typed StackKits lifecycle is unavailable")
+
+// ErrStackKitBackupCustodyManaged refuses an operator backup operation for a
+// kit whose backup repository is kombify-managed custody. Those backups are
+// cost-bearing and run only through the entitlement-gated scheduled backup
+// path. Owner-approved managed restore drills additionally require fresh
+// admission and an operation-scoped signed renewal.
+var ErrStackKitBackupCustodyManaged = errors.New("backup operations for this StackKit run through the managed backup schedule")
 
 // ConfigureStackKitCommander installs the sole lifecycle Adapter used by
 // operator requests. Startup binds this seam to the authenticated transport the
@@ -21,8 +29,19 @@ func (o *Orchestrator) ConfigureStackKitCommander(sender jobs.StackKitCommandSen
 	defer o.mu.Unlock()
 	o.stackKitCommander = sender
 	o.cfg.StackKitCommander = sender
-	jobs.RegisterStackKitLifecycleHandler(o.queue, jobs.StackKitLifecycleConfig{Sender: sender})
+	jobs.RegisterStackKitLifecycleHandler(o.queue, jobs.StackKitLifecycleConfig{Sender: sender, AdvancedIssuer: o.cfg.AdvancedIssuer, ManagedStackKitInventory: o.managedStackKitInventory, ManagedAddressAuthority: o.managedChangeSetAddressAuthority})
 	jobs.RegisterDefaultHandlers(o.queue, o.provisionConfig(o.cfg.RuntimeActions))
+}
+
+// StackKitCommander returns the lifecycle Adapter installed by
+// ConfigureStackKitCommander, or nil before it is configured.
+func (o *Orchestrator) StackKitCommander() jobs.StackKitCommandSender {
+	if o == nil {
+		return nil
+	}
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	return o.stackKitCommander
 }
 
 // ConfigureManagedStackKitInventory installs the control-plane authority that
@@ -54,6 +73,16 @@ func (o *Orchestrator) EnqueueStackKitLifecycle(ctx context.Context, request job
 	if stack.tenantID != normalized.TenantID || stack.ownerID != normalized.OwnerID {
 		return "", controlplane.ErrNotFound
 	}
+	normalized = jobs.ApplyStackKitRolloutDefaults(normalized, stackKitRolloutBinding(stack), stackKitCatalogRef(stack))
+	// A caller cannot use a Basement spelling to bypass managed backup custody.
+	if (jobs.IsStackKitBackupOperation(normalized.Operation) || normalized.Operation == jobs.StackKitLifecycleRestoreDrill) && stackKitRolloutBinding(stack).StackKit == "cloud-kit" && normalized.StackKit != "cloud-kit" {
+		return "", ErrStackKitBackupCustodyManaged
+	}
+	// Direct managed backup operations remain schedule-owned.
+	if jobs.IsStackKitBackupOperation(normalized.Operation) &&
+		normalized.StackKit != jobs.DefaultBasementKitRef {
+		return "", ErrStackKitBackupCustodyManaged
+	}
 	normalized, err = bindStackKitLifecycleInstance(normalized, stack)
 	if err != nil {
 		return "", err
@@ -65,6 +94,27 @@ func (o *Orchestrator) EnqueueStackKitLifecycle(ctx context.Context, request job
 	normalized.AgentID = binding.AgentID
 	normalized.NodeID = binding.NodeID
 
+	var admission map[string]interface{}
+	if normalized.Operation == jobs.StackKitLifecycleRestoreDrill && normalized.StackKit != jobs.DefaultBasementKitRef {
+		rollout := stackKitRolloutBinding(stack)
+		if normalized.StackKit != "cloud-kit" || rollout.StackKit != "cloud-kit" || normalized.SpecPath != rollout.SpecPath || normalized.StackKitInstanceID == "" {
+			return "", ErrStackKitLifecycleUnavailable
+		}
+		o.mu.RLock()
+		gate := o.cfg.ManagedRestoreAdmission
+		o.mu.RUnlock()
+		decision, gateErr := jobs.AdmitBackup(ctx, gate, jobs.BackupAdmissionRequest{TenantID: stack.tenantID, StackID: stack.id, UserID: stack.ownerID})
+		if gateErr != nil {
+			return "", fmt.Errorf("%w: managed backup admission unavailable", ErrStackKitLifecycleUnavailable)
+		}
+		if decision.Denied {
+			return "", &ManagedBackupDeniedError{Details: decision.Details}
+		}
+		if decision.QuotaBytes <= 0 || decision.UsedBytes < 0 || decision.UsedBytes >= decision.QuotaBytes || decision.MeasuredAt.IsZero() || time.Since(decision.MeasuredAt) > 5*time.Minute || decision.MeasuredAt.After(time.Now().Add(time.Minute)) {
+			return "", ErrStackKitLifecycleUnavailable
+		}
+		admission = map[string]interface{}{"tenant_id": stack.tenantID, "stack_id": stack.id, "owner_id": stack.ownerID, "agent_id": binding.AgentID, "include_content": decision.IncludeContent, "quota_bytes": decision.QuotaBytes, "used_bytes": decision.UsedBytes, "measured_at": decision.MeasuredAt.UTC().Format(time.RFC3339Nano)}
+	}
 	jobID, replay, err := o.reserveStackKitLifecycleJob(ctx, stack, normalized)
 	if err != nil {
 		return "", err
@@ -82,6 +132,10 @@ func (o *Orchestrator) EnqueueStackKitLifecycle(ctx context.Context, request job
 		Result:      map[string]interface{}{"service_action_receipt": jobs.StackKitServiceActionReceipt(normalized)},
 		MaxAttempts: 1,
 	}
+	if admission != nil {
+		job.Payload[jobs.ManagedBackupAdmissionField] = admission
+		job.Result[jobs.ManagedBackupAdmissionField] = admission
+	}
 	jobs.CopyEdgeFlagsFromContext(ctx, job.Payload)
 	jobs.CaptureRequestAuthority(ctx, job, stack.tenantID, stack.ownerID)
 	if err := o.enqueueWithSync(job, stack.tenantID); err != nil {
@@ -97,8 +151,26 @@ func (o *Orchestrator) EnqueueStackKitLifecycle(ctx context.Context, request job
 	return jobID, nil
 }
 
+// StackKitLifecycleJobQueued reports whether this process's queue still holds
+// the job. A durable pending job it does not hold was lost to a restart.
+func (o *Orchestrator) StackKitLifecycleJobQueued(jobID string) bool {
+	if o == nil || o.queue == nil {
+		return false
+	}
+	_, queued := o.queue.Get(jobID)
+	return queued
+}
+
 func bindStackKitLifecycleInstance(request jobs.StackKitLifecycleRequest, stack *orchestratorStack) (jobs.StackKitLifecycleRequest, error) {
-	if !jobs.IsStackKitServiceLifecycleOperation(request.Operation) && request.Operation != jobs.StackKitLifecycleRemove {
+	if request.Operation == jobs.StackKitLifecycleAdvancedTrustImport || jobs.IsAdvancedStackKitLifecycleOperation(request.Operation) {
+		// The trust binding records the StackKit stack id when the stack has one.
+		if stack != nil {
+			request.StackKitInstanceID = strings.TrimSpace(stack.stackKitInstanceID)
+		}
+		return request, nil
+	}
+	if !jobs.IsStackKitServiceLifecycleOperation(request.Operation) && request.Operation != jobs.StackKitLifecycleRemove &&
+		!jobs.IsStackKitBackupOperation(request.Operation) {
 		return request, nil
 	}
 	if stack == nil || strings.TrimSpace(stack.stackKitInstanceID) == "" {
@@ -175,6 +247,7 @@ func (o *Orchestrator) admitStackKitLifecycleAgentOnServer(ctx context.Context, 
 }
 
 type stackKitLifecycleAgentBinding struct {
+	WorkerID string
 	NodeRef  string
 	NodeID   string
 	ServerID string
@@ -196,7 +269,8 @@ func (o *Orchestrator) approvedStackKitLifecycleAgentBindings(ctx context.Contex
 		}
 		serverID := strings.TrimSpace(stringFromAny(worker.Capabilities["server_id"]))
 		bindings = append(bindings, stackKitLifecycleAgentBinding{
-			NodeRef: strings.TrimSpace(worker.Hostname), ServerID: serverID,
+			WorkerID: worker.ID,
+			NodeRef:  strings.TrimSpace(worker.Hostname), ServerID: serverID,
 			NodeID:  firstNonEmptyString(stringFromAny(worker.Capabilities["node_id"]), serverID, worker.Hostname),
 			AgentID: firstNonEmptyString(stringFromAny(worker.Capabilities["runtime_agent_id"]), worker.ID),
 		})
@@ -223,3 +297,89 @@ func (o *Orchestrator) localStackKitTeardownNodeBindings(ctx context.Context, st
 	}
 	return bindings, nil
 }
+
+// stackKitRolloutBinding returns what the stack's last managed rollout applied.
+// The stack config copy is durable; the runtime summary copy is the deploy
+// result itself and is replaced by later job results.
+func stackKitRolloutBinding(stack *orchestratorStack) jobs.StackKitRolloutBinding {
+	if stack == nil {
+		return jobs.StackKitRolloutBinding{}
+	}
+	for _, values := range []map[string]any{stack.config, stack.runtimeSummary} {
+		if binding, ok := jobs.DecodeStackKitRolloutBinding(values[jobs.StackKitRolloutBindingResultField]); ok {
+			return binding
+		}
+	}
+	return jobs.StackKitRolloutBinding{}
+}
+
+// stackKitCatalogRef is the kit the stack record was created for, used only
+// when no rollout has recorded the kit it applied.
+func stackKitCatalogRef(stack *orchestratorStack) string {
+	if stack == nil {
+		return ""
+	}
+	for _, values := range []map[string]any{stack.runtimeSummary, stack.config} {
+		for _, key := range []string{runtimeFieldStackKitRef, "stackkit"} {
+			if value := strings.TrimSpace(stringFromAny(values[key])); value != "" {
+				return value
+			}
+		}
+	}
+	return ""
+}
+
+// persistStackKitRolloutBinding copies a completed rollout's binding into the
+// stack config. The runtime summary is replaced by every later job result, so
+// it cannot be the authority later operator operations read their StackSpec
+// path and kit from.
+func (o *Orchestrator) persistStackKitRolloutBinding(tenantID string, job jobs.JobSnapshot) {
+	if job.Type != jobs.JobTypeDeploy || job.State != jobs.JobStateCompleted {
+		return
+	}
+	binding, ok := jobs.DecodeStackKitRolloutBinding(job.Result[jobs.StackKitRolloutBindingResultField])
+	store := o.effectiveStackStore()
+	if !ok || store == nil {
+		return
+	}
+	for attempt := 0; attempt < 3; attempt++ {
+		stack, err := store.GetStack(o.ctx, tenantID, job.TargetID)
+		if err != nil {
+			o.log.Warn("stackkit_rollout_binding_not_persisted", "stack_id", job.TargetID, "error", err)
+			return
+		}
+		if current, exists := jobs.DecodeStackKitRolloutBinding(stack.Config[jobs.StackKitRolloutBindingResultField]); exists && current == binding &&
+			stringFromAny(stack.Config[jobs.StackKitModeField]) == jobs.StackKitModeAdvanced {
+			return
+		}
+		config := make(map[string]any, len(stack.Config)+1)
+		for key, value := range stack.Config {
+			config[key] = value
+		}
+		config[jobs.StackKitRolloutBindingResultField] = binding.Map()
+		// Every Techstack-managed deployment runs Advanced Mode.
+		config[jobs.StackKitModeField] = jobs.StackKitModeAdvanced
+		_, err = store.CompareAndSwapStackConfig(o.ctx, controlplane.StackConfigCAS{
+			TenantID: tenantID, StackID: job.TargetID, ExpectedUpdatedAt: stack.UpdatedAt, Config: config,
+		})
+		if err == nil {
+			return
+		}
+		if !errors.Is(err, controlplane.ErrConflict) {
+			o.log.Warn("stackkit_rollout_binding_not_persisted", "stack_id", job.TargetID, "error", err)
+			return
+		}
+	}
+	o.log.Warn("stackkit_rollout_binding_not_persisted", "stack_id", job.TargetID, "error", "stack config kept changing")
+}
+
+// ConfigureManagedRestoreAdmission shares the schedule's positive backend gate.
+func (o *Orchestrator) ConfigureManagedRestoreAdmission(admission jobs.BackupAdmission) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.cfg.ManagedRestoreAdmission = admission
+}
+
+type ManagedBackupDeniedError struct{ Details map[string]any }
+
+func (e *ManagedBackupDeniedError) Error() string { return "managed backup admission denied" }

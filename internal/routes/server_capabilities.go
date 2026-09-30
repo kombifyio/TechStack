@@ -23,6 +23,14 @@ import (
 //	ssh_disable        POST /api/v1/monthly-runtimes/{leaseId}/disable-ssh
 //	decommission       POST /api/v1/monthly-runtimes/{leaseId}/decommission
 //	resolve_custody    POST /api/v1/monthly-runtimes/{leaseId}/resolve-custody
+//	reboot             POST /api/v1/servers/{id}/actions {"action":"reboot"}
+//	os_update_plan     POST /api/v1/servers/{id}/actions {"action":"os_update_plan"}
+//	os_update          POST /api/v1/servers/{id}/actions {"action":"os_update"}
+//
+// The three maintenance ids come from serverMaintenanceHandlers.advertisedActions
+// and are offered only when the maintenance route is wired, the node is an
+// active, bound and connected non-substrate that is not the control-plane host,
+// and its agent advertises servermaintenance.AgentCapability.
 //
 // There is deliberately no `logs` id: no node-log endpoint exists, and a read
 // model that advertised one would be lying. The lease-scoped ids target

@@ -33,10 +33,13 @@ type Server struct {
 
 // AuthHandlers groups optional V2 auth endpoints.
 type AuthHandlers struct {
-	Providers http.Handler
-	Login     http.Handler
-	Callback  http.Handler
-	Logout    http.Handler
+	Providers     http.Handler
+	Login         http.Handler
+	Callback      http.Handler
+	Logout        http.Handler
+	NativeStart   http.Handler
+	NativeHandoff http.Handler
+	NativeRedeem  http.Handler
 
 	// Local credential surface (V1-shaped routes for frontend parity with
 	// kombify-Simulate). Optional; nil disables the local provider entirely.
@@ -94,6 +97,15 @@ func (s *Server) MergeAuthHandlers(h AuthHandlers) {
 	if h.Logout != nil {
 		s.auth.Logout = h.Logout
 	}
+	if h.NativeStart != nil {
+		s.auth.NativeStart = h.NativeStart
+	}
+	if h.NativeHandoff != nil {
+		s.auth.NativeHandoff = h.NativeHandoff
+	}
+	if h.NativeRedeem != nil {
+		s.auth.NativeRedeem = h.NativeRedeem
+	}
 	if h.Methods != nil {
 		s.auth.Methods = h.Methods
 	}
@@ -145,6 +157,15 @@ func (s *Server) Routes() http.Handler {
 	}
 	if s.auth.Logout != nil {
 		mux.Handle("GET /api/v2/auth/logout", s.auth.Logout)
+	}
+	if s.auth.NativeStart != nil {
+		mux.Handle("POST /api/v2/auth/native/start", s.auth.NativeStart)
+	}
+	if s.auth.NativeHandoff != nil {
+		mux.Handle("GET /api/v2/auth/native/handoff", s.auth.NativeHandoff)
+	}
+	if s.auth.NativeRedeem != nil {
+		mux.Handle("POST /api/v2/auth/native/redeem", s.auth.NativeRedeem)
 	}
 	if s.auth.Methods != nil {
 		mux.Handle("GET /api/v1/auth/methods", s.auth.Methods)

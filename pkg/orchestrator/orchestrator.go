@@ -166,7 +166,10 @@ type Config struct {
 	RuntimeActions jobs.RuntimeActions
 	// BackupScheduleProjector records the cadence a managed rollout selected.
 	// Without it the schedule projection stays empty and no backup is ever due.
-	BackupScheduleProjector  jobs.BackupScheduleProjector
+	BackupScheduleProjector jobs.BackupScheduleProjector
+	// AdvancedIssuer is the installation's Advanced capability issuer. Managed
+	// rollouts import its trust bundle on every host; nil fails them closed.
+	AdvancedIssuer           jobs.AdvancedIssuer
 	StackStore               controlplane.StackStore
 	JobStore                 controlplane.JobStore
 	WorkerStore              controlplane.WorkerStore
@@ -178,6 +181,7 @@ type Config struct {
 	RoutingStore             stackrouting.Store
 	StackKitCommander        jobs.StackKitCommandSender
 	ManagedStackKitInventory jobs.ManagedStackKitInventoryBuilder
+	ManagedRestoreAdmission  jobs.BackupAdmission
 	PortInventory            portinventory.LifecycleAuthority
 	// RemoteEnrollment drives the durable connect-remote enrollment job. It is
 	// late-bound by ConfigureRemoteEnrollment once route custody is wired.
@@ -326,6 +330,7 @@ func (o *Orchestrator) provisionConfig(actions jobs.RuntimeActions) *jobs.Provis
 		RoutingStore:                 o.routingStore,
 		AutoDeployAdmission:          o.admitProvisionAutoDeploy,
 		BackupScheduleProjector:      o.cfg.BackupScheduleProjector,
+		AdvancedIssuer:               o.cfg.AdvancedIssuer,
 		BackupAgentResolver:          o.resolveBackupAgent,
 		NoWorkspaceDestroyReconciler: o.reconcileNoWorkspaceDestroy,
 		RemoteEnrollment:             o.cfg.RemoteEnrollment,
@@ -337,6 +342,9 @@ func (o *Orchestrator) claimDurableJobExecution(ctx context.Context, claim jobs.
 		return nil
 	}
 	if _, err := o.jobStore.StartJob(ctx, claim.TenantID, claim.JobID, claim.StartedAt); err != nil {
+		if errors.Is(err, controlplane.ErrNodeUnderMaintenance) {
+			return fmt.Errorf("%w: %s", jobs.ErrExecutionNodeMaintenance, claim.TargetID)
+		}
 		if errors.Is(err, controlplane.ErrStackExecutionBusy) {
 			return fmt.Errorf("%w: %s", jobs.ErrExecutionTargetBusy, claim.TargetID)
 		}

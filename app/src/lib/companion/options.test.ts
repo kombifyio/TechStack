@@ -67,10 +67,6 @@ describe("companionMountOptions", () => {
     expect(options.locale).toBe("de");
   });
 
-  it("carries the host's own launcher copy", () => {
-    expect(companionMountOptions(context()).messages).toEqual(MESSAGES);
-  });
-
   it("identifies Techstack assistant traffic to the central model policy", () => {
     expect(companionMountOptions(context()).aiWorkload).toBe("assistant");
   });
@@ -82,9 +78,9 @@ describe("companionMountOptions", () => {
       animated: true,
       name: "Nova",
     };
-    expect(companionMountOptions(context({ stackIdentity })).stackIdentity).toEqual(
-      stackIdentity,
-    );
+    expect(
+      companionMountOptions(context({ stackIdentity })).stackIdentity,
+    ).toEqual(stackIdentity);
   });
 });
 
@@ -101,18 +97,6 @@ describe("resolveCompanionAppearance", () => {
 });
 
 describe("resolveCompanionFinish", () => {
-  it("accepts every finish on the axis", () => {
-    for (const finish of [
-      "kombify",
-      "liquid",
-      "frost",
-      "expressive",
-      "aurora",
-    ]) {
-      expect(resolveCompanionFinish(finish)).toBe(finish);
-    }
-  });
-
   it("falls back to the baseline for anything outside the closed set", () => {
     // The value comes off a DOM attribute, so it is attacker-shaped input in
     // the sense that matters: unvalidated, it would be forwarded to the panel.

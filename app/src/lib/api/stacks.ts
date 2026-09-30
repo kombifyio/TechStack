@@ -378,6 +378,8 @@ export interface StackServerStackKit {
 
 export interface StackOperationServer {
   id: string;
+  /** Canonical server id when `id` is the agent's worker id. */
+  server_id?: string;
   hostname: string;
   role: string;
   status: string;
@@ -565,6 +567,10 @@ export interface StackLatestFailure {
   message?: string;
   error?: string;
   reason?: string;
+  /** The one server the failed job ran on. */
+  server_id?: string;
+  /** The agent on that server the job dispatched to. */
+  agent_id?: string;
   lease_id?: string;
   runtime_ip?: string;
   runtime_phase?: string;
@@ -602,6 +608,13 @@ export interface StackOperationsJob {
   next_resume_at?: string;
   resume_available_at?: string;
   resume_available?: boolean;
+  /** The one server the job runs on. */
+  server_id?: string;
+  /** The agent on that server the job dispatches to. */
+  agent_id?: string;
+  /** Fallback target for rows recorded before `server_id`. */
+  lease_id?: string;
+  runtime_ip?: string;
   created_at?: string;
   updated_at?: string;
 }

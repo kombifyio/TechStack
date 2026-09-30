@@ -5,11 +5,14 @@
     <RootNamespace>Kombify.Client.Shell</RootNamespace>
     <PackageId>Kombify.Client.Shell</PackageId>
     <Description>Shared strict connection-profile and Windows secret-custody seams for thin Kombify WebView2 clients.</Description>
+    <RepositoryUrl>https://github.com/kombifyio/TechStack</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <IsPackable>true</IsPackable>
   </PropertyGroup>
 
   <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="\" />
+    <Compile Remove="KombifyConnect.cs" />
   </ItemGroup>
 </Project>

@@ -57,7 +57,6 @@ func RegisterStackOperationsRoutesWithStores(r *httpx.Router, backend monitoring
 		ingestHealth:         ingestHealth,
 		managedRuntimeLeases: leaseLister,
 	}
-	registerInventoryMCPStackOperationsHandler(r, h.operations)
 	r.GET("/api/v1/stacks/{id}/operations", h.operations)
 	r.GET("/api/v1/stacks/{id}/servers/{serverId}", h.serverDetails)
 	r.POST("/api/v1/stacks/{id}/workers/{workerId}/assign", h.assignWorker)
@@ -154,8 +153,15 @@ type monitorCockpitJob struct {
 	NextResumeAt      string `json:"next_resume_at,omitempty"`
 	ResumeAvailableAt string `json:"resume_available_at,omitempty"`
 	ResumeAvailable   bool   `json:"resume_available,omitempty"`
-	CreatedAt         string `json:"created_at,omitempty"`
-	UpdatedAt         string `json:"updated_at,omitempty"`
+	// ServerID and AgentID name the one server the job runs on, so the
+	// dashboard shows the job on that Node's card. LeaseID and RuntimeIP are
+	// kept for rows recorded before the job carried its target server.
+	ServerID  string `json:"server_id,omitempty"`
+	AgentID   string `json:"agent_id,omitempty"`
+	LeaseID   string `json:"lease_id,omitempty"`
+	RuntimeIP string `json:"runtime_ip,omitempty"`
+	CreatedAt string `json:"created_at,omitempty"`
+	UpdatedAt string `json:"updated_at,omitempty"`
 }
 
 type stackRuntimeLifecycle struct {
@@ -181,6 +187,8 @@ type stackLatestFailure struct {
 	Message              string         `json:"message,omitempty"`
 	Error                string         `json:"error,omitempty"`
 	Reason               string         `json:"reason,omitempty"`
+	ServerID             string         `json:"server_id,omitempty"`
+	AgentID              string         `json:"agent_id,omitempty"`
 	LeaseID              string         `json:"lease_id,omitempty"`
 	RuntimeIP            string         `json:"runtime_ip,omitempty"`
 	RuntimePhase         string         `json:"runtime_phase,omitempty"`
@@ -331,6 +339,7 @@ func (h stackOperationsRouteHandlers) operationsFromStore(e *httpx.Event) error 
 	latestFailure := h.latestStackFailureFromStore(ctx, tenantID, stack.ID)
 	latestRecordedFailure := latestFailure
 	latestFailure = activeStackFailure(latestFailure, servers, custodyLeases)
+	latestFailure = resolveFailureTarget(latestFailure, servers, custodyLeases)
 	servers = annotateManagedRuntimeServersWithFailure(servers, latestFailure)
 	services := h.operationServicesFromStore(ctx, tenantID, stack, servers)
 	alerts, unscopedAlerts := h.operationAlerts(stack.ID, servers)
@@ -407,6 +416,7 @@ func (h stackOperationsRouteHandlers) monitorCockpitFromStore(e *httpx.Event) er
 	// different snapshots - readiness naming a failure the rendered jobs list
 	// no longer contains.
 	jobs, latestFailure := h.stackJobsAndFailureFromStore(ctx, tenantID, selected.ID)
+	latestFailure = resolveFailureTarget(latestFailure, servers, nil)
 	readiness := buildStackReadinessFromStore(selected, servers, latestFailure)
 	monitoring := h.monitoringSummary(ctx)
 	monitoring.UnscopedAlerts = unscopedAlerts
@@ -446,6 +456,7 @@ func (h stackOperationsRouteHandlers) monitorHomelabCockpitFromStore(e *httpx.Ev
 		deploymentServices := h.operationServicesFromStore(ctx, tenantID, deployment, deploymentServers)
 		deploymentAlerts, deploymentUnscopedAlerts := h.operationAlerts(deployment.ID, deploymentServers)
 		deploymentJobs, latestFailure := h.stackJobsAndFailureFromStore(ctx, tenantID, deployment.ID)
+		latestFailure = resolveFailureTarget(latestFailure, deploymentServers, nil)
 		projections = append(projections, homelabCockpitDeployment{
 			HomelabID: strings.TrimSpace(deployment.HomelabID),
 			Readiness: buildStackReadinessFromStore(deployment, deploymentServers, latestFailure),
@@ -959,19 +970,130 @@ func latestStackFailureFromJobs(jobs []controlplane.Job) *stackLatestFailure {
 	// failure at all, so the dashboard could only say "the last operation
 	// failed, open the latest job" — and the latest job was the successful
 	// one. That dead end is what this per-type rule removes.
+	//
+	// A completed deploy is the one exception: it rolls the whole StackKit
+	// out on the deployment's server, so it also supersedes every older
+	// rollout-class failure (provision, lifecycle actions, drift resolution,
+	// enrollment). A failed Cloudreve lifecycle action followed by a
+	// successful rollout is history, not the deployment's current state.
 	supersededTypes := make(map[string]struct{}, len(jobs))
+	rolledOut := false
 	for _, job := range jobs {
 		jobType := strings.ToLower(strings.TrimSpace(job.Type))
 		if !isFailedJobState(job.State) {
 			supersededTypes[jobType] = struct{}{}
+			if jobType == "deploy" && strings.EqualFold(strings.TrimSpace(job.State), "completed") {
+				rolledOut = true
+			}
 			continue
 		}
 		if _, superseded := supersededTypes[jobType]; superseded {
 			continue
 		}
+		if rolledOut && isRolloutClassJob(jobType) {
+			continue
+		}
 		return stackLatestFailureFromJob(job)
 	}
 	return nil
+}
+
+// isRolloutClassJob lists the job types a completed deploy makes obsolete.
+// "update" (server registration) and "destroy" are not rollouts.
+func isRolloutClassJob(jobType string) bool {
+	switch jobType {
+	case "deploy", "provision", "stackkit_lifecycle", "drift_check", "drift_resolve", "remote_enrollment":
+		return true
+	default:
+		return false
+	}
+}
+
+// resolveFailureTarget projects a recorded rollout failure onto today's
+// inventory. A StackKit rollout always runs on exactly one server, so the
+// failure is shown on that server:
+//
+//   - T1: the job recorded its target (server id, agent id, lease id or
+//     runtime IP) and that server is in the inventory: it is the target.
+//   - T2: the recorded target no longer exists (neither a server nor a custody
+//     lease): the failure is history and is not reported.
+//   - T3: the job recorded no target (rows written before migration 112 kept
+//     no payload, and a job can fail before its handler records one): it
+//     belongs to the deployment's server - the only one, or the first server
+//     assigned to the deployment in inventory order.
+//   - T4: the deployment has no server at all: the failure stays unassigned
+//     and the dashboard shows its compact notice.
+//
+// Destroy failures keep their lease-based rule in activeStackFailure.
+func resolveFailureTarget(failure *stackLatestFailure, servers []stackOperationServer, custody []stackCustodyLease) *stackLatestFailure {
+	if failure == nil || isDestroyFailure(failure.Type) {
+		return failure
+	}
+	named := strings.TrimSpace(failure.ServerID) != "" || strings.TrimSpace(failure.AgentID) != "" ||
+		strings.TrimSpace(failure.LeaseID) != "" || strings.TrimSpace(failure.RuntimeIP) != ""
+	if target := failureTargetServer(failure, servers); target != nil {
+		return failureOnServer(failure, *target)
+	}
+	if named {
+		if leaseID := strings.TrimSpace(failure.LeaseID); leaseID != "" && leaseStillPresent(leaseID, servers, custody) {
+			return failure
+		}
+		return nil
+	}
+	var fallback *stackOperationServer
+	for index := range servers {
+		if servers[index].Assignment == "stack" {
+			fallback = &servers[index]
+			break
+		}
+	}
+	if fallback == nil && len(servers) > 0 {
+		fallback = &servers[0]
+	}
+	if fallback == nil {
+		return failure
+	}
+	return failureOnServer(failure, *fallback)
+}
+
+func failureTargetServer(failure *stackLatestFailure, servers []stackOperationServer) *stackOperationServer {
+	serverID := strings.TrimSpace(failure.ServerID)
+	agentID := strings.TrimSpace(failure.AgentID)
+	leaseID := strings.TrimSpace(failure.LeaseID)
+	runtimeIP := strings.TrimSpace(failure.RuntimeIP)
+	for index := range servers {
+		server := &servers[index]
+		switch {
+		case serverID != "" && (strings.TrimSpace(server.ServerID) == serverID || strings.TrimSpace(server.ID) == serverID):
+			return server
+		case agentID != "" && (strings.TrimSpace(server.AgentID) == agentID || strings.TrimSpace(server.ID) == agentID):
+			return server
+		case leaseID != "" && strings.TrimSpace(server.LeaseID) == leaseID:
+			return server
+		case runtimeIP != "" && serverHasAddress(*server, runtimeIP):
+			return server
+		}
+	}
+	return nil
+}
+
+func serverHasAddress(server stackOperationServer, address string) bool {
+	if strings.TrimSpace(server.IP) == address {
+		return true
+	}
+	for _, candidate := range server.HostAddresses {
+		if strings.TrimSpace(candidate.Address) == address {
+			return true
+		}
+	}
+	return false
+}
+
+func failureOnServer(failure *stackLatestFailure, server stackOperationServer) *stackLatestFailure {
+	resolved := *failure
+	resolved.ServerID = firstNonEmptyString(strings.TrimSpace(server.ServerID), strings.TrimSpace(server.ID))
+	resolved.AgentID = firstNonEmptyString(strings.TrimSpace(server.AgentID), resolved.AgentID)
+	return &resolved
 }
 
 func (h stackOperationsRouteHandlers) latestStackRuntimeLifecycleFromStore(ctx context.Context, tenantID, stackID string) (*monitorCockpitJob, *stackRuntimeLifecycle) {
@@ -993,6 +1115,7 @@ func monitorCockpitJobFromStore(job controlplane.Job) monitorCockpitJob {
 		job.Result,
 	)
 	resumeAvailableAt, resumeAvailable := apiJobResumeAvailability(waitReason, nextResumeAt, time.Now().UTC())
+	target := jobTargetServer(job)
 	return monitorCockpitJob{
 		ID:                job.ID,
 		Type:              job.Type,
@@ -1005,9 +1128,60 @@ func monitorCockpitJobFromStore(job controlplane.Job) monitorCockpitJob {
 		NextResumeAt:      nextResumeAt,
 		ResumeAvailableAt: resumeAvailableAt,
 		ResumeAvailable:   resumeAvailable,
+		ServerID:          target.serverID,
+		AgentID:           target.agentID,
+		LeaseID:           firstNonEmptyString(stringFromAnyMap(job.Result, "lease_id"), stringFromAnyMap(job.Result, "runtime_lease_id")),
+		RuntimeIP:         firstNonEmptyString(stringFromAnyMap(job.Result, "runtime_public_ip"), stringFromAnyMap(job.Result, "public_ip")),
 		CreatedAt:         formatTime(job.CreatedAt),
 		UpdatedAt:         formatTime(job.UpdatedAt),
 	}
+}
+
+type jobTarget struct {
+	serverID string
+	agentID  string
+}
+
+// jobTargetServer returns the one server a stack job runs on, from the ids its
+// handler records: the deploy rollout's enrollment (e2e_proof), the remote
+// enrollment and provisioning results, and the lifecycle job's dispatch
+// payload. The payload is read only for these ids and never leaves the route.
+func jobTargetServer(job controlplane.Job) jobTarget {
+	proof, _ := job.Result["e2e_proof"].(map[string]any)
+	serverID := firstNonEmptyString(
+		stringFromAnyMap(job.Result, "server_id"),
+		stringFromAnyMap(job.Result, "runtime_server_id"),
+		stringFromAnyMap(job.Result, "enrollment_resume_server_id"),
+		stringFromAnyMap(proof, "server_id"),
+		stringFromAnyMap(job.Payload, "server_id"),
+	)
+	agentID := firstNonEmptyString(
+		stringFromAnyMap(job.Result, "agent_id"),
+		stringFromAnyMap(job.Result, "runtime_agent_id"),
+		stringFromAnyMap(proof, "runtime_agent_id"),
+		stringFromAnyMap(job.Payload, "agent_id"),
+		stringFromAnyMap(job.Payload, "runtime_agent_id"),
+	)
+	if serverID == "" && agentID == "" {
+		// A deploy dispatched to a connected server lists exactly that server
+		// as its only worker before the rollout records its enrollment.
+		var workers []map[string]any
+		switch raw := job.Payload["workers"].(type) {
+		case []map[string]any:
+			workers = raw
+		case []any:
+			for _, item := range raw {
+				if worker, ok := item.(map[string]any); ok {
+					workers = append(workers, worker)
+				}
+			}
+		}
+		if len(workers) == 1 {
+			serverID = stringFromAnyMap(workers[0], "server_id")
+			agentID = stringFromAnyMap(workers[0], "id")
+		}
+	}
+	return jobTarget{serverID: serverID, agentID: agentID}
 }
 
 func stackRuntimeLifecycleFromResult(result map[string]any) *stackRuntimeLifecycle {
@@ -1052,6 +1226,7 @@ func stackLatestFailureFromJob(job controlplane.Job) *stackLatestFailure {
 	result := job.Result
 	targetBootstrap := sanitizedTargetBootstrap(result["target_bootstrap"])
 	runtimeDiagnostics := sanitizedRuntimeDiagnostics(result["runtime_diagnostics"])
+	target := jobTargetServer(job)
 	failure := &stackLatestFailure{
 		JobID:                job.ID,
 		Type:                 job.Type,
@@ -1059,6 +1234,8 @@ func stackLatestFailureFromJob(job controlplane.Job) *stackLatestFailure {
 		Step:                 job.Step,
 		Message:              job.Message,
 		Error:                job.Error,
+		ServerID:             target.serverID,
+		AgentID:              target.agentID,
 		LeaseID:              firstNonEmptyString(stringFromAnyMap(result, "lease_id"), stringFromAnyMap(result, "runtime_lease_id")),
 		RuntimeIP:            firstNonEmptyString(stringFromAnyMap(result, "runtime_public_ip"), stringFromAnyMap(result, "public_ip")),
 		RuntimePhase:         stringFromAnyMap(result, "runtime_phase"),

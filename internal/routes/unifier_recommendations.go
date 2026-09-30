@@ -72,11 +72,14 @@ func (api *UnifierAPI) handleRecommendations(e *httpx.Event) error {
 		}
 		authority = unifier.NewWizardRecommendationAuthority(catalog)
 	}
+	disclosure, disclosureUpdatedAt := api.loadSelfDisclosure(e.Request.Context(), tenantID, ownerID)
 	response := authority.Recommend(unifier.WizardRecommendationEvaluation{
-		Request:   request,
-		TenantID:  tenantID,
-		OwnerID:   ownerID,
-		Inventory: inventory,
+		Request:                 request,
+		TenantID:                tenantID,
+		OwnerID:                 ownerID,
+		Inventory:               inventory,
+		SelfDisclosure:          disclosure,
+		SelfDisclosureUpdatedAt: disclosureUpdatedAt,
 	})
 	var smartHome *specv2.SmartHomeRecommendation
 	for _, goal := range request.Goals {

@@ -1,6 +1,7 @@
 import type { ServerProvisioningMode } from "#lib/wizard/index.js";
 import { sanitizeSensitiveText } from "#lib/security/sensitive-data.js";
 
+import { tr, formatDateTime } from "#lib/i18n.svelte.js";
 export type StackKitIdentityHandoff = {
   ownerUsername?: string;
   ownerEmail?: string;
@@ -37,10 +38,10 @@ export function isRunningJobStatus(status: string): boolean {
 export function formatNextResumeAt(value: string): string {
   const timestamp = Date.parse(value);
   if (!Number.isFinite(timestamp)) return value;
-  return new Intl.DateTimeFormat(undefined, {
+  return formatDateTime(timestamp, {
     dateStyle: "medium",
     timeStyle: "medium",
-  }).format(new Date(timestamp));
+  });
 }
 
 export function normalizedServerIdentity(value?: string): string {
@@ -124,7 +125,10 @@ export function buildFailureFallback(
   const cleanError = error?.trim() ?? "";
   const cleanDetails = details?.trim() ?? "";
   if (cleanError && cleanDetails && cleanError !== cleanDetails) {
-    return `${cleanDetails}\n\nBackend error:\n${cleanError}`;
+    return tr("ui.stacksCreatingCreation-results.backendError", {
+      cleanDetails,
+      cleanError,
+    });
   }
   return cleanDetails || cleanError || undefined;
 }
@@ -147,9 +151,11 @@ export function buildFailureDetails(
   if (fallback) lines.push(fallback);
   if (job.id || stackId) {
     lines.push("");
-    lines.push("Incident context:");
-    if (job.id) lines.push(`Job ID: ${job.id}`);
-    if (stackId) lines.push(`Stack ID: ${stackId}`);
+    lines.push(tr("ui.stacksCreatingCreation-results.incidentContext"));
+    if (job.id)
+      lines.push(tr("ui.stacksCreatingCreation-results.jobID", { id: job.id }));
+    if (stackId)
+      lines.push(tr("ui.stacksCreatingCreation-results.stackID", { stackId }));
   }
 
   const runtimeProof = asRecord(result?.runtime_proof);
@@ -158,7 +164,7 @@ export function buildFailureDetails(
     asRecord(runtimeProof?.target_bootstrap);
   if (targetBootstrap) {
     lines.push("");
-    lines.push("Target bootstrap:");
+    lines.push(tr("ui.stacksCreatingCreation-results.targetBootstrap"));
     appendDetailLine(lines, "Status", targetBootstrap.status);
     appendDetailLine(lines, "Reason", targetBootstrap.reason_code);
     appendDetailLine(lines, "Attempts", targetBootstrap.attempts);
@@ -173,7 +179,7 @@ export function buildFailureDetails(
       ? diagnostics.commands.length
       : 0;
     lines.push("");
-    lines.push("Runtime diagnostics:");
+    lines.push(tr("ui.stacksCreatingCreation-results.runtimeDiagnostics"));
     appendDetailLine(lines, "Status", diagnostics.status);
     appendDetailLine(lines, "Reason", diagnostics.reason);
     if (commands > 0) lines.push(`Commands: ${commands}`);
@@ -231,7 +237,8 @@ export function extractStackKitIdentityHandoff(
     ownerDisplayName: getString(owner, ["display_name", "displayName"]),
     loginGatewayUrl: getString(loginGateway, ["url", "login_url", "loginUrl"]),
     loginGatewayLabel:
-      getString(loginGateway, ["label", "name"]) || "Open first login",
+      getString(loginGateway, ["label", "name"]) ||
+      tr("ui.stacksCreatingCreationLease.openFirstLogin"),
     recoveryRef: getString(recovery, [
       "bundle_ref",
       "bundleRef",

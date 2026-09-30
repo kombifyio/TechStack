@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr, trn } from "#lib/i18n.svelte.js";
   import type { WalletItem } from "#lib/wallet/types.js";
   import {
     getRotationInterval,
@@ -63,22 +64,22 @@
       case "certificate":
         return "TLS";
       default:
-        return "Secret";
+        return tr("ui.wallet.secret");
     }
   }
 
   function formatLastRotated(date: string | undefined): string {
-    if (!date) return "Never";
+    if (!date) return tr("ui.rotationReminders.never");
     const d = new Date(date);
     const now = new Date();
     const days = Math.floor(
       (now.getTime() - d.getTime()) / (1000 * 60 * 60 * 24),
     );
-    if (days === 0) return "Today";
-    if (days === 1) return "Yesterday";
-    if (days < 30) return `${days} days ago`;
-    if (days < 60) return "1 month ago";
-    return `${Math.floor(days / 30)} months ago`;
+    if (days === 0) return tr("ui.rotationReminders.today");
+    if (days === 1) return tr("ui.rotationReminders.yesterday");
+    if (days < 30) return trn("ui.rotationReminders.daysAgo", days);
+    if (days < 60) return trn("ui.rotationReminders.monthsAgo", 1);
+    return trn("ui.rotationReminders.monthsAgo", Math.floor(days / 30));
   }
 
   function getStatusBadge(
@@ -86,8 +87,8 @@
     neverRotated: boolean,
     daysUntil: number | null,
   ): string {
-    if (needsRotation) return "Overdue";
-    if (neverRotated) return "Setup needed";
+    if (needsRotation) return tr("ui.rotationReminders.overdue");
+    if (neverRotated) return tr("ui.rotationReminders.setupNeeded");
     if (daysUntil !== null && daysUntil <= 14) return `${daysUntil}d left`;
     return "OK";
   }
@@ -121,14 +122,14 @@
               />
             </svg>
           </div>
-          <h3 class="text-foreground font-semibold">Rotation Schedule</h3>
+          <h3 class="text-foreground font-semibold">{tr("ui.rotation.schedule")}</h3>
         </div>
         {#if needsAttention > 0}
           <span
             data-kx="status"
             data-status="error"
             class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
-            >{needsAttention} need attention</span
+            >{tr("ui.rotation.needAttention", { count: needsAttention })}</span
           >
         {/if}
       </div>
@@ -151,7 +152,7 @@
               <div class="min-w-0">
                 <p class="text-foreground text-sm truncate">{item.name}</p>
                 <p class="text-xs text-muted-foreground">
-                  Last: {formatLastRotated(item.last_rotated)} • Every {interval}d
+                  {tr("ui.rotation.lastEvery", { last: formatLastRotated(item.last_rotated), days: interval ?? "" })}
                 </p>
               </div>
             </div>
@@ -177,7 +178,7 @@
                   data-kx="control"
                   class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium disabled:pointer-events-none disabled:opacity-50 text-primary"
                 >
-                  Rotate Now
+                  {tr("ui.rotation.rotateNow")}
                 </button>
               {/if}
             </div>
@@ -187,8 +188,7 @@
 
       <div class="mt-4 pt-4 border-t border-border">
         <p class="text-xs text-muted-foreground">
-          Recommended rotation: API Keys (90d), Passwords (180d), OAuth Tokens
-          (30d), Certificates (365d)
+          {tr("ui.rotationReminders.recommendedRotationApiKeys90d")}
         </p>
       </div>
     </div>

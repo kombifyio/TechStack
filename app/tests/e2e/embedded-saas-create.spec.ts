@@ -123,7 +123,6 @@ test.describe("Embedded SaaS create flow", () => {
     await app.getByTestId("server-branch-new").click();
     await app.getByTestId("server-mode-kombify-cloud").click();
     await expect(app.getByTestId("managed-provider-selector")).toBeVisible();
-    await app.getByText("Provider & server details", { exact: true }).click();
     await app.getByTestId("managed-provider-centron").click();
     await expect(
       app

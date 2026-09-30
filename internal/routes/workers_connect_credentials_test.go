@@ -293,13 +293,13 @@ func workerCredentialConcurrencyFixture(t *testing.T) (*controlplane.MemoryStore
 		t.Fatal(err)
 	}
 	return store, workerRouteHandlers{
-			wst: store, credentialSecret: []byte(testWorkerCredentialSecret),
-		}, workerCredentialRequest{
-			TenantID: "tenant-1", OwnerID: "owner-1", StackID: "stack-1",
-			ServerID: "server-1", RuntimeAgentID: "runtime-1",
-			IdempotencyKey: "concurrent-attempt-0001",
-			RequestDigest:  "c5f6f126f491f4ef6687a36a2f16e56dfadf5bb8a507417d76c0d9c29c56f1bd",
-		}
+		wst: store, credentialSecret: []byte(testWorkerCredentialSecret),
+	}, workerCredentialRequest{
+		TenantID: "tenant-1", OwnerID: "owner-1", StackID: "stack-1",
+		ServerID: "server-1", RuntimeAgentID: "runtime-1",
+		IdempotencyKey: "concurrent-attempt-0001",
+		RequestDigest:  "c5f6f126f491f4ef6687a36a2f16e56dfadf5bb8a507417d76c0d9c29c56f1bd",
+	}
 }
 
 func leftPadInteger(value, width int) string {

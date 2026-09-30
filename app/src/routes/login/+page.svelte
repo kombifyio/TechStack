@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "#lib/i18n.svelte.js";
   import { goto } from "$app/navigation";
   import { onMount } from "svelte";
   import { loginWithLocalSession } from "#lib/api/auth.js";
@@ -175,7 +176,7 @@
     }
 
     error =
-      "Your kombify Cloud session could not be restored. Please try again.";
+      tr("ui.authSso.yourKombifyCloudSessionCould");
     loading = false;
   }
 
@@ -193,8 +194,8 @@
       backendUnavailable = true;
       error =
         e instanceof Error
-          ? `Could not contact backend: ${e.message}`
-          : "Could not contact backend.";
+          ? tr("ui.login.couldNotContactBackendWith", { message: e.message })
+          : tr("ui.login.couldNotContactBackend");
       methods = {
         providers: [],
         breakglass: {
@@ -227,7 +228,7 @@
 
     const provider = primaryCloudProvider;
     if (!provider?.auth_url) {
-      error = "kombify Cloud sign-in is not available right now.";
+      error = tr("ui.login.kombifyCloudSignInIs");
       return;
     }
     autoStartingCloudLogin = true;
@@ -256,11 +257,11 @@
       });
       if (r.status === 410) {
         revealError =
-          "The bootstrap password has expired. Restart the server to generate a new one.";
+          tr("ui.login.theBootstrapPasswordHasExpired");
         return;
       }
       if (r.status === 404) {
-        revealError = "Break-glass admin is not initialized yet.";
+        revealError = tr("ui.login.breakGlassAdminIsNot");
         return;
       }
       if (!r.ok) {
@@ -271,7 +272,7 @@
       revealedPwd = (await r.json()) as RevealResponse;
       emergencyPassword = revealedPwd.password;
     } catch (err) {
-      revealError = err instanceof Error ? err.message : "Reveal failed.";
+      revealError = err instanceof Error ? err.message : tr("ui.login.revealFailed");
     } finally {
       revealBusy = false;
     }
@@ -294,10 +295,10 @@
           : 0;
       error =
         status === 429
-          ? "Too many login attempts. Please wait and try again."
+          ? tr("ui.login.tooManyLoginAttemptsPlease")
           : err instanceof Error
             ? err.message
-            : "Emergency login failed.";
+            : tr("ui.login.emergencyLoginFailed");
     } finally {
       emergencyBusy = false;
     }
@@ -317,7 +318,7 @@
 </script>
 
 <svelte:head>
-  <title>Sign in | kombify Techstack</title>
+  <title>{tr("ui.login.signInKombifyTechstack")}</title>
 </svelte:head>
 
 <div
@@ -339,12 +340,11 @@
       <h1 class="text-3xl font-semibold">kombify Techstack</h1>
       <p class="text-sm text-muted-foreground">
         {#if recovery}
-          Emergency recovery only. Day-to-day sign-in stays on kombify Cloud or
-          the local owner path.
+          {tr("ui.login.emergencyRecoveryOnlyDayTo")}
         {:else if loginExperience === "self-hosted"}
-          Sign in with the local owner account for this Techstack.
+          {tr("ui.login.signInWithTheLocal")}
         {:else}
-          Sign in with kombify Cloud.
+          {tr("ui.login.signInWithKombifyCloud")}
         {/if}
       </p>
     </div>
@@ -353,7 +353,7 @@
       <div
         class="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground"
       >
-        You have been signed out.
+        {tr("ui.login.youHaveBeenSignedOut")}
       </div>
     {/if}
 
@@ -367,7 +367,7 @@
     {/if}
 
     {#if loading}
-      <div class="text-center text-sm text-muted-foreground">Loading...</div>
+      <div class="text-center text-sm text-muted-foreground">{tr("ui.login.loading")}</div>
     {:else if embedded}
       <div class="space-y-4">
         <Button
@@ -375,16 +375,15 @@
           class="w-full"
           onclick={recoverEmbeddedSession}
         >
-          Try again
+          {tr("ui.login.tryAgain")}
         </Button>
         <p class="text-center text-xs leading-5 text-muted-foreground">
-          Techstack reconnects through the kombify Cloud page that contains this
-          view. It will not open a second sign-in page inside this frame.
+          {tr("ui.login.techstackReconnectsThroughTheKombify")}
         </p>
       </div>
     {:else if recovery}
       <div class="space-y-4 rounded-xl border border-border bg-card p-6">
-        <h2 class="text-base font-semibold">Emergency admin</h2>
+        <h2 class="text-base font-semibold">{tr("ui.login.emergencyAdmin")}</h2>
         {#if bg?.initialized}
           {#if revealError}
             <div
@@ -395,12 +394,12 @@
           {/if}
           <div class="space-y-2 text-xs">
             <div>
-              <span class="text-muted-foreground">Emergency email:</span>
+              <span class="text-muted-foreground">{tr("ui.login.emergencyEmail")}</span>
               <code class="ml-2 font-mono">{emergencyEmail}</code>
             </div>
             {#if revealedPwd}
               <div>
-                <span class="text-muted-foreground">Bootstrap password:</span>
+                <span class="text-muted-foreground">{tr("ui.login.bootstrapPassword")}</span>
                 <code class="ml-2 font-mono break-all"
                   >{revealedPwd.password}</code
                 >
@@ -414,17 +413,17 @@
             onclick={onRevealEmergency}
           >
             {revealBusy
-              ? "Revealing..."
+              ? tr("ui.login.revealing")
               : bg.has_pending_reveal
-                ? "Reveal bootstrap password"
-                : "Use the stored emergency password"}
+                ? tr("ui.login.revealBootstrapPassword")
+                : tr("ui.login.useTheStoredEmergencyPassword")}
           </Button>
           <form class="space-y-3" onsubmit={onEmergencyLogin}>
             <label
               class="block space-y-1 text-xs font-medium"
               for="emergency-password"
             >
-              Emergency password
+              {tr("ui.login.emergencyPassword")}
               <input
                 id="emergency-password"
                 type="password"
@@ -440,24 +439,24 @@
               class="w-full"
               disabled={emergencyBusy}
             >
-              {emergencyBusy ? "Signing in..." : "Sign in as emergency admin"}
+              {emergencyBusy ? tr("ui.clientLocal.signingIn") : tr("ui.login.signInAsEmergencyAdmin")}
             </Button>
           </form>
         {:else}
           <p class="text-sm text-muted-foreground">
-            Emergency admin is not initialized yet.
+            {tr("ui.login.emergencyAdminIsNotInitialized")}
           </p>
         {/if}
       </div>
     {:else if backendUnavailable}
       <Button variant="secondary" class="w-full" onclick={retryBackend}>
-        Retry connection
+        {tr("ui.login.retryConnection")}
       </Button>
     {:else}
       <div class="space-y-3">
         {#if autoStartingCloudLogin}
           <div class="text-center text-sm text-muted-foreground">
-            Redirecting to kombify Cloud...
+            {tr("ui.login.redirectingToKombifyCloud")}
           </div>
         {:else}
           {#if localOwnerEnabled}
@@ -466,7 +465,7 @@
               class="w-full"
               onclick={() => goto(localOwnerHref)}
             >
-              Continue as local owner
+              {tr("ui.login.continueAsLocalOwner")}
             </Button>
           {/if}
 
@@ -476,7 +475,7 @@
               class="w-full"
               onclick={startCloudLogin}
             >
-              Continue with kombify Cloud
+              {tr("ui.login.continueWithKombifyCloud")}
             </Button>
             {#if windowsClient && windowsBrowserCloudLoginUrl}
               <a
@@ -484,14 +483,14 @@
                 class="flex w-full items-center justify-center rounded-md border border-border bg-background px-4 py-3 text-sm font-medium transition hover:bg-muted/50"
                 href={windowsBrowserCloudLoginUrl}
               >
-                Open kombify Cloud in browser
+                {tr("ui.login.openKombifyCloudInBrowser")}
               </a>
             {/if}
           {/if}
 
           {#if !primaryCloudProvider?.auth_url && (isSaasCloudLogin || !localOwnerEnabled)}
             <p class="text-center text-sm text-muted-foreground">
-              Cloud sign-in is not configured yet.
+              {tr("ui.login.cloudSignInIsNot")}
             </p>
           {/if}
         {/if}

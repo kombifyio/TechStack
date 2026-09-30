@@ -68,15 +68,3 @@ export function chosenHomelabName(
   if (homelab?.named === false) return null;
   return name.toLowerCase() === GENERATED_HOMELAB_NAME ? null : name;
 }
-
-/**
- * Rename the caller's homelab. Every homelab starts with a generated name
- * ("homelab"); this is how the operator gives it the name they actually use.
- */
-export async function renameHomelab(name: string): Promise<HomelabSummary> {
-  const res = await fetchApi<{ homelab: HomelabSummary }>("/api/v1/homelab", {
-    method: "PATCH",
-    body: JSON.stringify({ name }),
-  });
-  return res.data.homelab;
-}

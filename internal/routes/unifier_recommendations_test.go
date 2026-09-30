@@ -107,12 +107,17 @@ func TestWizardRecommendationsRejectCallerSuppliedPolicyContext(t *testing.T) {
 
 func wizardRecommendationRequest(t *testing.T, store controlplane.WorkerStore, body string) *httptest.ResponseRecorder {
 	t.Helper()
+	return wizardRecommendationRequestAs(t, store, "owner-1", body)
+}
+
+func wizardRecommendationRequestAs(t *testing.T, store controlplane.WorkerStore, owner, body string) *httptest.ResponseRecorder {
+	t.Helper()
 	router := httpx.NewRouter()
 	if err := RegisterUnifierRoutes(router, store); err != nil {
 		t.Fatal(err)
 	}
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/unifier/recommendations", bytes.NewBufferString(body))
-	request = request.WithContext(identity.NewContext(request.Context(), &identity.Identity{UserID: "owner-1", OrgID: "tenant-1"}))
+	request = request.WithContext(identity.NewContext(request.Context(), &identity.Identity{UserID: owner, OrgID: "tenant-1"}))
 	recorder := httptest.NewRecorder()
 	router.BuildMux().ServeHTTP(recorder, request)
 	return recorder

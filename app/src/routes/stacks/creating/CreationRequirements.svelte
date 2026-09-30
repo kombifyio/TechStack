@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "#lib/i18n.svelte.js";
   import { creation } from "./creation-controller.svelte.js";
 </script>
 
@@ -54,14 +55,14 @@
                         <span
                           class="px-2 py-1 bg-muted text-foreground rounded font-medium"
                         >
-                          RAM: Min. {Math.round(creation.requirements.minRAM / 1024)}GB
+                          {tr("ui.creationRequirements.minRam", { size: Math.round(creation.requirements.minRAM / 1024) })}
                         </span>
                       {/if}
                       {#if creation.requirements.minCPU}
                         <span
                           class="px-2 py-1 bg-muted text-foreground rounded font-medium"
                         >
-                          CPU: Min. {creation.requirements.minCPU} cores
+                          {tr("ui.creationRequirements.minCpu", { count: creation.requirements.minCPU })}
                         </span>
                       {/if}
                     </div>
@@ -96,11 +97,10 @@
               data-testid="requirements-missing-card"
             >
               <p class="text-sm font-medium text-foreground">
-                Backend requirements are unavailable
+                {tr("ui.stacksCreatingCreationRequirements.backendRequirementsAreUnavailable")}
               </p>
               <p class="mt-1 text-sm text-muted-foreground">
-                The page is not filling this with frontend estimates. Re-run
-                preparation if requirements are needed for review.
+                {tr("ui.stacksCreatingCreationRequirements.thePageIsNotFilling")}
               </p>
             </div>
           {/if}
@@ -126,7 +126,7 @@
                 </svg>
                 <div class="flex-1">
                   <p class="text-warning font-semibold text-sm mb-2">
-                    Required credentials
+                    {tr("ui.stacksCreatingCreationRequirements.requiredCredentials")}
                   </p>
                   <ul class="space-y-2">
                     {#each creation.requirements.requiredCredentials as cred (cred.key)}
@@ -142,7 +142,7 @@
                               rel="noopener noreferrer"
                               class="text-xs text-primary hover:text-primary/80 underline"
                             >
-                              Guide →
+                              {tr("ui.stacksCreatingCreationRequirements.guide")}
                             </a>
                           {/if}
                         </div>
@@ -154,7 +154,7 @@
                         {#if cred.required}
                           <span
                             class="inline-block mt-2 text-xs px-2 py-0.5 rounded bg-destructive/20 text-destructive font-medium"
-                            >Required</span
+                            >{tr("ui.stacksCreatingCreationRequirements.required")}</span
                           >
                         {/if}
                       </li>
@@ -186,12 +186,10 @@
                 </svg>
                 <div class="flex-1">
                   <p class="text-foreground font-semibold text-sm mb-1">
-                    Requirements your servers must meet
+                    {tr("ui.stacksCreatingCreationRequirements.requirementsYourServersMustMeet")}
                   </p>
                   <p class="text-xs text-muted-foreground mb-3">
-                    The orchestrator blocks rollout when a `Required` item is
-                    missing on the target server. Optional items only emit a log
-                    warning.
+                    {tr("ui.stacksCreatingCreationRequirements.theOrchestratorBlocksRolloutWhen")}
                   </p>
                   <ul class="space-y-2">
                     {#each creation.requirements.requiredPreChecks as check (check.type)}
@@ -203,14 +201,14 @@
                             ? 'bg-primary/30 text-primary'
                             : 'bg-muted text-muted-foreground'}"
                         >
-                          {check.blocking ? "Required" : "Optional"}
+                          {check.blocking ? tr("ui.stacksCreatingCreationRequirements.required") : tr("ui.stacksCreatingCreationRequirements.optional")}
                         </span>
                         <div class="min-w-0 flex-1">
                           <span class="font-medium">{check.type}</span>
                           {#if check.minVersion}
                             <span
                               class="ml-2 text-xs px-1.5 py-0.5 bg-muted rounded text-foreground"
-                              >min: {check.minVersion}</span
+                              >{tr("ui.creationRequirements.minVersion", { version: check.minVersion })}</span
                             >
                           {/if}
                           {#if check.description}

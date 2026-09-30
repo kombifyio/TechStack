@@ -172,6 +172,9 @@ func RegisterWizardRunRoutes(r *httpx.Router, cfg WizardRunRouteConfig) {
 	// GET /api/v1/wizard/runs/active - the owner's latest run with a live job
 	// snapshot; the dashboard banner and the creating page's resume use it.
 	r.GET("/api/v1/wizard/runs/active", h.getActiveWizardRun)
+	// POST /api/v1/wizard/runs/{runId}/dismiss - hide one run's notice for its
+	// owner on every device.
+	r.POST("/api/v1/wizard/runs/{runId}/dismiss", h.dismissWizardRun)
 	// POST /api/v1/stacks/{id}/resume-remote-enrollment - Retry connect-remote
 	// Guard enrollment on the persisted SSH connection without rerunning StackKit.
 	r.POST("/api/v1/stacks/{id}/resume-remote-enrollment", h.resumeRemoteEnrollment)
@@ -330,10 +333,10 @@ func (h wizardRunHandlers) createWizardRun(e *httpx.Event) error {
 }
 
 // getActiveWizardRun serves the owner's most recent wizard run together with
-// a live snapshot of its provision job. "Active" is the client's call: the
-// banner shows while the job is non-terminal, the run failed (resumable with
-// its Idempotency-Key), or a join still awaits pairing; the server only
-// reports the facts. No run at all is a plain {run: null}.
+// a live snapshot of its provision job and the server it targets. A run whose
+// notice is over (dismissed, terminal, silent past wizardRunNoticeStaleAfter or
+// superseded by a later completed rollout) reads as {run: null}, exactly like
+// no run at all; see wizardRunNoticeCurrent.
 func (h wizardRunHandlers) getActiveWizardRun(e *httpx.Event) error {
 	ownerID, authErr := requireStackAuth(e)
 	if authErr != nil {
@@ -362,6 +365,10 @@ func (h wizardRunHandlers) getActiveWizardRun(e *httpx.Event) error {
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal,
 			"Failed to read the wizard-run ledger", nil)
 	}
+	job := h.wizardRunJob(e.Request.Context(), tenantID, run.JobID)
+	if !h.wizardRunNoticeCurrent(e.Request.Context(), tenantID, run, job, time.Now()) {
+		return httpx.Success(e, http.StatusOK, map[string]any{"run": nil})
+	}
 	payload := map[string]any{
 		"run_id":             run.ID,
 		routingStatusKey:     run.Status,
@@ -377,18 +384,27 @@ func (h wizardRunHandlers) getActiveWizardRun(e *httpx.Event) error {
 		"updated_at":         run.UpdatedAt,
 		"result":             run.Result,
 	}
-	payload["job"] = h.wizardRunJobSnapshot(e.Request.Context(), tenantID, run.JobID)
+	payload["job"] = wizardRunJobSnapshot(job)
+	payload["target_server_id"] = wizardRunTargetServerID(run, job)
 	return httpx.Success(e, http.StatusOK, map[string]any{"run": payload})
 }
 
-// wizardRunJobSnapshot projects the provision job's live state for the banner
-// (nil when the run has no job or the job store cannot serve it).
-func (h wizardRunHandlers) wizardRunJobSnapshot(ctx context.Context, tenantID, jobID string) map[string]any {
+// wizardRunJob reads the run's provision job (nil when the run has no job or
+// the job store cannot serve it).
+func (h wizardRunHandlers) wizardRunJob(ctx context.Context, tenantID, jobID string) *controlplane.Job {
 	if h.crud.jobStore == nil || strings.TrimSpace(jobID) == "" {
 		return nil
 	}
 	job, err := h.crud.jobStore.GetJob(ctx, tenantID, jobID)
 	if err != nil {
+		return nil
+	}
+	return job
+}
+
+// wizardRunJobSnapshot projects the provision job's live state for the notice.
+func wizardRunJobSnapshot(job *controlplane.Job) map[string]any {
+	if job == nil {
 		return nil
 	}
 	return map[string]any{
@@ -397,6 +413,8 @@ func (h wizardRunHandlers) wizardRunJobSnapshot(ctx context.Context, tenantID, j
 		"progress":           job.Progress,
 		"step":               job.Step,
 		creationMessageField: job.Message,
+		"type":               job.Type,
+		"updated_at":         job.UpdatedAt,
 	}
 }
 

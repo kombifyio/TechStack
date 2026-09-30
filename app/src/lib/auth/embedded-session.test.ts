@@ -159,6 +159,38 @@ describe("refreshEmbeddedCloudSession", () => {
     expect(authState.completePortalLogin).toHaveBeenCalledTimes(2);
   });
 
+  it("recovers once with a fresh parent token when portal-verify reports a replayed token", async () => {
+    mockParent({ postMessage: vi.fn() });
+    const replayed = Object.assign(
+      new Error("SSO token has already been used"),
+      {
+        status: 401,
+        details: { reason_code: "sso_token_replayed" },
+      },
+    );
+    authState.completePortalLogin.mockImplementation(async (token?: string) => {
+      if (token === "portal-token") throw replayed;
+      authState.isAuthenticated = true;
+      authState.v2SessionActive = true;
+      authState.cloudUser = { sub: "portal-user" };
+    });
+    bridgeState.requestAuthToken.mockImplementation(
+      async (options?: { fresh?: boolean }) =>
+        options?.fresh ? "fresh-portal-token" : "portal-token",
+    );
+
+    const { refreshEmbeddedCloudSession } = await import("./embedded-session");
+
+    await expect(refreshEmbeddedCloudSession()).resolves.toBe(true);
+    expect(bridgeState.requestAuthToken).toHaveBeenLastCalledWith({
+      fresh: true,
+    });
+    expect(authState.completePortalLogin).toHaveBeenLastCalledWith(
+      "fresh-portal-token",
+    );
+    expect(authState.completePortalLogin).toHaveBeenCalledTimes(2);
+  });
+
   it("falls back when the parent cannot provide a token", async () => {
     mockParent({ postMessage: vi.fn() });
     bridgeState.requestAuthToken.mockRejectedValue(new Error("no token"));

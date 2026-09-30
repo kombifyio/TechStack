@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <RestoreSources>$(MSBuildThisFileDirectory)..\..\..\dist\client-shell;$(MSBuildThisFileDirectory)..\..\..\dist\client-cloud;$(RestoreSources)</RestoreSources>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Kombify.Client.Shell" Version="0.1.0-alpha.3" />
+    <PackageReference Include="Kombify.Client.Cloud" Version="0.1.0-alpha.1" />
+  </ItemGroup>
+</Project>

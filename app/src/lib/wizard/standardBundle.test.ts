@@ -33,11 +33,7 @@ describe("active StandardBundle wizard definition", () => {
       expect.arrayContaining(["pocketId", "traefik", "vaultwarden", "immich"]),
     );
     expect(services.map((service) => service.name)).toEqual(
-      expect.arrayContaining([
-        "pocket-id",
-        "traefik",
-        "otel-collector",
-      ]),
+      expect.arrayContaining(["pocket-id", "traefik", "otel-collector"]),
     );
     expect(toggles).toMatchObject({
       homepage: true,

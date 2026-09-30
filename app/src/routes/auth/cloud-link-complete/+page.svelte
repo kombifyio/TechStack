@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "#lib/i18n.svelte.js";
   /**
    * Cloud Link Complete Page
    *
@@ -41,7 +42,7 @@
 </script>
 
 <svelte:head>
-  <title>kombify Cloud Link - kombify-Techstack</title>
+  <title>{tr("ui.authCloud-link-complete.kombifyCloudLinkKombifyTechstack")}</title>
 </svelte:head>
 
 <div class="min-h-screen bg-background flex items-center justify-center">
@@ -67,12 +68,12 @@
         </div>
       </div>
       <h1 class="text-2xl font-bold text-foreground mb-2">
-        kombify Cloud connected
+        {tr("ui.authCloud-link-complete.kombifyCloudConnected")}
       </h1>
       <p class="text-muted-foreground">
         {canAutoClose
-          ? "This window closes automatically."
-          : "You can close this tab and return to the wizard."}
+          ? tr("ui.authCloud-link-complete.thisWindowClosesAutomatically")
+          : tr("ui.authCloud-link-complete.youCanCloseThisTab")}
       </p>
     {:else}
       <div class="mb-6">
@@ -95,15 +96,15 @@
         </div>
       </div>
       <h1 class="text-2xl font-bold text-foreground mb-2">
-        Linking did not complete
+        {tr("ui.cloudLink.incomplete")}
       </h1>
       <p class="text-muted-foreground" data-testid="cloud-link-complete-reason">
         {cloudLinkReasonMessage(reason ?? undefined)}
       </p>
       <p class="text-muted-foreground mt-4">
         {canAutoClose
-          ? "This window closes automatically."
-          : "Close this tab and try again from the wizard."}
+          ? tr("ui.authCloud-link-complete.thisWindowClosesAutomatically")
+          : tr("ui.authCloud-link-complete.closeThisTabAndTry")}
       </p>
     {/if}
   </div>

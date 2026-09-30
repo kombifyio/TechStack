@@ -4,6 +4,7 @@
   Collapsible section for advanced settings.
 -->
 <script lang="ts">
+  import { tr } from "#lib/i18n.svelte.js";
   import { slide } from "svelte/transition";
 
   interface Props {
@@ -13,7 +14,7 @@
   }
 
   let {
-    title = "Advanced Settings",
+    title = tr("ui.accordion.advancedSettings"),
     open = $bindable(false),
     children,
   }: Props = $props();

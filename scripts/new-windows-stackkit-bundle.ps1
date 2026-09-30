@@ -3,12 +3,12 @@
 param(
     [Parameter(Mandatory = $true)][string]$OutputPath,
     [string]$ControllerCatalogOutputPath = "",
-    [string]$ReleaseTag = "v0.39.7",
-    [string]$ReleaseVersion = "0.39.7",
-    [string]$LinuxArchiveSHA256 = "2c37b0f4826edda93495ef2bcd636373eb864ba62a5481954a65b48b0fa08985",
-    [string]$WindowsArchiveSHA256 = "84f35c5b0bbafbefd0044e9e58a59505221bbd15bf86438c8e766667ad7379e3",
-    [string]$ReleaseIndexSHA256 = "3b1dd48a0f2aab86b2216c5979082578f3391b3c82316a9a62ce10570c98a8de",
-    [string]$CompatibilityManifestSHA256 = "af7a05324713d9ec5ad3608dc4d6c8de3bcb3ed3c4124367b7b3991fe64cd91d",
+    [string]$ReleaseTag = "v0.49.4",
+    [string]$ReleaseVersion = "0.49.4",
+    [string]$LinuxArchiveSHA256 = "d40077968e410844c8c5726fe9df084ea4efa0732c27a801abd322bea3fc6027",
+    [string]$WindowsArchiveSHA256 = "e5c5ee6173d83956f5af459a39343138ce72cc8b0be0ab5dfd46db2149777c11",
+    [string]$ReleaseIndexSHA256 = "10958ff7339a7a35009c8e8e3155ba42cbe9b46d8009c39e21cb0327ccfadd54",
+    [string]$CompatibilityManifestSHA256 = "226fb3afcba477fcfcb8406af76397df1ff8bc5024388c1a0a45d154d58d208c",
     # Directory holding <kit>/stack-spec.yaml produced by the SAME pinned
     # StackKits release on Linux. Supplied in CI; when empty the script falls
     # back to generating them with the Windows CLI, which is what a developer
@@ -117,11 +117,38 @@ try {
             }
             Copy-Item -Recurse -Force -LiteralPath $catalogSource -Destination (Join-Path $resolvedCatalog $catalogEntry)
         }
-        Copy-Item -Force -LiteralPath (Join-Path $windowsRelease "LICENSE") -Destination (Join-Path $resolvedCatalog "LICENSE")
+        # StackKits replaced its single LICENSE with LICENSE-APACHE,
+        # LICENSE-GPL-3.0-or-later and LICENSING.md; carry whatever license
+        # files the pinned release ships instead of one fixed name.
+        $licenseFiles = @(Get-ChildItem -LiteralPath $windowsRelease -File | Where-Object { $_.Name -like "LICENSE*" -or $_.Name -eq "LICENSING.md" })
+        if ($licenseFiles.Count -eq 0) {
+            throw "Pinned StackKits release carries no license file."
+        }
+        foreach ($licenseFile in $licenseFiles) {
+            Copy-Item -Force -LiteralPath $licenseFile.FullName -Destination (Join-Path $resolvedCatalog $licenseFile.Name)
+        }
         Copy-Item -Force -LiteralPath $compatibilityManifest -Destination (Join-Path $resolvedCatalog "stackkits-compatibility-v1.json")
         $controllerBinaryDir = Join-Path $resolvedCatalog "bin"
         New-Item -ItemType Directory -Force -Path $controllerBinaryDir | Out-Null
         Copy-Item -Force -LiteralPath $windowsBinary -Destination (Join-Path $controllerBinaryDir "stackkit.exe")
+        # Retain the verified cross-platform provenance for controller-side
+        # address planning during later Advanced change sets. Runtime admission
+        # rechecks this exact executable and the Linux target's release identity.
+        $controllerAddressPlanner = [ordered]@{
+            schemaVersion = "techstack.controller-address-planner/v1"
+            linuxArchiveSha256 = $LinuxArchiveSHA256
+            controller = [ordered]@{
+                schemaVersion = "techstack.stackkit-release-pin/v2"
+                kit = "basement-kit"
+                version = $ReleaseTag
+                platform = [ordered]@{ os = "windows"; arch = "amd64" }
+                archiveSha256 = $WindowsArchiveSHA256
+                indexSha256 = $ReleaseIndexSHA256
+                binarySha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $windowsBinary).Hash.ToLowerInvariant()
+                binaryPath = "bin/stackkit.exe"
+            }
+        }
+        $controllerAddressPlanner | ConvertTo-Json -Depth 5 -Compress | Set-Content -Encoding utf8NoBOM -LiteralPath (Join-Path $resolvedCatalog "stackkits-controller-address-planner.json")
     }
 
     $binaryDir = Join-Path $stackKitRoot "bin"

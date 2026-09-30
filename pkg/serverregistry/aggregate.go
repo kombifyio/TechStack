@@ -41,8 +41,11 @@ type Aggregate struct {
 	// RuntimeTarget is the evidence-backed Local/Cloud classification. A
 	// provider-native workload never appears here; it is a service placement
 	// with target_kind=managed_workload instead of a fake server.
-	RuntimeTarget   RuntimeTarget
-	Name            string
+	RuntimeTarget RuntimeTarget
+	Name          string
+	// DisplayName is the owner-chosen name. Only the inventory rename path
+	// writes it; runtime projections overwrite Name but never this field.
+	DisplayName     string
 	LifecycleState  string
 	DesiredState    string
 	ConnectionState string

@@ -16,6 +16,7 @@ import type {
   SSHTestResult,
 } from "./types";
 
+import { tr } from "#lib/i18n.svelte.js";
 const API_BASE =
   import.meta.env.VITE_API_URL ||
   (typeof process !== "undefined" && process.env
@@ -51,9 +52,7 @@ async function fetchDiscovery<T>(
   options: RequestInit = {},
 ): Promise<T> {
   if (typeof window === "undefined" && !API_BASE) {
-    throw new Error(
-      "Server-side API base URL is not configured. Set TECHSTACK_API_URL (runtime) or VITE_API_URL (build time).",
-    );
+    throw new Error(tr("ui.api.serverSideAPIBaseURL"));
   }
 
   const prefix = API_BASE ? `${API_BASE}` : "";
@@ -69,9 +68,7 @@ async function fetchDiscovery<T>(
       },
     });
   } catch (err) {
-    throw new DiscoveryApiError(
-      `Network error: Could not connect to Discovery API. Is the backend running?`,
-    );
+    throw new DiscoveryApiError(tr("ui.api.networkErrorCouldNotConnect"));
   }
 
   if (!response.ok) {
@@ -214,7 +211,7 @@ export async function pollScanUntilComplete(
     attempts++;
   }
 
-  throw new DiscoveryApiError("Scan polling timeout");
+  throw new DiscoveryApiError(tr("ui.api.scanPollingTimeout"));
 }
 
 /**
@@ -240,9 +237,7 @@ export async function scanAndWait(
  */
 export async function cancelScan(scanId: string): Promise<boolean> {
   if (typeof window === "undefined" && !API_BASE) {
-    throw new Error(
-      "Server-side API base URL is not configured. Set TECHSTACK_API_URL (runtime) or VITE_API_URL (build time).",
-    );
+    throw new Error(tr("ui.api.serverSideAPIBaseURL"));
   }
   const prefix = API_BASE ? `${API_BASE}` : "";
   const url = `${prefix}/api/v1/discovery/scan/${encodeURIComponent(scanId)}/cancel`;

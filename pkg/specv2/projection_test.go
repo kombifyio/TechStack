@@ -10,7 +10,8 @@ import (
 
 type releaseGoalAuthorFixture struct{}
 
-func (releaseGoalAuthorFixture) AuthorGoals(_ context.Context, _, _, _, _ string, goals []string) (GoalAuthoring, error) {
+func (releaseGoalAuthorFixture) AuthorGoals(_ context.Context, _, _, _, _ string, selection GoalSelection) (GoalAuthoring, error) {
+	goals := selection.Goals
 	entries := map[string]any{
 		"files": map[string]any{
 			"alternative": "cloudreve", "runtimeAdapterRef": "standalone-compose",
@@ -54,7 +55,7 @@ func TestProjectFoundDomainIntent(t *testing.T) {
 		name, kit, access, requested, want string
 		wantError                          bool
 	}{
-		{name: "local automatic", kit: KitSlugBasement, access: AccessModeLocal, want: "home"},
+		{name: "local automatic", kit: KitSlugBasement, access: AccessModeLocal, want: "lab.home"},
 		{name: "local custom", kit: KitSlugBasement, access: AccessModeLocal, requested: " Home.Example.com ", want: "home.example.com"},
 		{name: "own VPS custom", kit: KitSlugCloud, access: AccessModeRemotePrivate, requested: "cloud.example.com", want: "cloud.example.com"},
 		{name: "hybrid custom", kit: KitSlugModern, access: AccessModeRemotePrivate, requested: "hybrid.example.com", want: "hybrid.example.com"},
@@ -232,7 +233,7 @@ func joinIntent(roles ...string) WizardIntent {
 
 type failingGoalAuthor struct{}
 
-func (failingGoalAuthor) AuthorGoals(context.Context, string, string, string, string, []string) (GoalAuthoring, error) {
+func (failingGoalAuthor) AuthorGoals(context.Context, string, string, string, string, GoalSelection) (GoalAuthoring, error) {
 	return GoalAuthoring{}, context.DeadlineExceeded
 }
 

@@ -9,7 +9,7 @@ import (
 
 type smartHomeAuthor struct{}
 
-func (smartHomeAuthor) AuthorGoals(context.Context, string, string, string, string, []string) (GoalAuthoring, error) {
+func (smartHomeAuthor) AuthorGoals(context.Context, string, string, string, string, GoalSelection) (GoalAuthoring, error) {
 	return GoalAuthoring{Workloads: map[string]any{"smart-home": map[string]any{"alternative": "home-assistant", "runtimeAdapterRef": "standalone-compose"}}}, nil
 }
 

@@ -18,68 +18,6 @@ import (
 	"github.com/kombifyio/techstack/pkg/monitoring"
 )
 
-func TestBuildMonitoringStatusPayload_PreservesLegacyFieldsAndAddsModeMetadata(t *testing.T) {
-	stats := &monitoring.TSDBStats{
-		NumSeries:     12,
-		MinTime:       1000,
-		MaxTime:       2000,
-		RetentionDays: 7,
-		TopMetrics: []monitoring.MetricCount{{
-			Name:  "system_cpu_utilization",
-			Count: 1,
-		}},
-	}
-	payload := buildMonitoringStatusPayload(stats, MonitoringStatusMetadata{
-		QueryBackend:      "remote-promql",
-		QueryBackendURL:   "https://victoriametrics.internal/api",
-		IngestBackend:     "embedded-tsdb",
-		CollectorMode:     "gateway",
-		CompatibilityMode: "dual-ingest",
-	})
-
-	if got := payload["seriesCount"]; got != uint64(12) {
-		t.Fatalf("expected seriesCount 12, got %v", got)
-	}
-	if got := payload["queryBackend"]; got != "remote-promql" {
-		t.Fatalf("expected queryBackend remote-promql, got %v", got)
-	}
-	if got := payload["queryBackendURL"]; got != "https://victoriametrics.internal/api" {
-		t.Fatalf("expected queryBackendURL to be preserved, got %v", got)
-	}
-	if got := payload["ingestBackend"]; got != "embedded-tsdb" {
-		t.Fatalf("expected ingestBackend embedded-tsdb, got %v", got)
-	}
-	if got := payload["collectorMode"]; got != "gateway" {
-		t.Fatalf("expected collectorMode gateway, got %v", got)
-	}
-	if got := payload["compatibilityMode"]; got != "dual-ingest" {
-		t.Fatalf("expected compatibilityMode dual-ingest, got %v", got)
-	}
-	if _, ok := payload["topMetrics"]; !ok {
-		t.Fatal("expected legacy topMetrics field to remain present")
-	}
-}
-
-func TestBuildMonitoringStatusPayload_Defaults(t *testing.T) {
-	payload := buildMonitoringStatusPayload(&monitoring.TSDBStats{}, MonitoringStatusMetadata{})
-
-	if got := payload["queryBackend"]; got != "embedded-tsdb" {
-		t.Fatalf("expected default queryBackend embedded-tsdb, got %v", got)
-	}
-	if got := payload["ingestBackend"]; got != "embedded-tsdb" {
-		t.Fatalf("expected default ingestBackend embedded-tsdb, got %v", got)
-	}
-	if got := payload["collectorMode"]; got != "direct" {
-		t.Fatalf("expected default collectorMode direct, got %v", got)
-	}
-	if got := payload["compatibilityMode"]; got != "dual-ingest" {
-		t.Fatalf("expected default compatibilityMode dual-ingest, got %v", got)
-	}
-	if _, ok := payload["queryBackendURL"]; ok {
-		t.Fatal("expected queryBackendURL to be omitted when empty")
-	}
-}
-
 func TestBuildMonitoringHealthPayload(t *testing.T) {
 	backend := staticHealthBackend{statsErr: errors.New("dial tcp backend: connect: connection refused")}
 	payload := buildMonitoringHealthPayload(context.Background(), backend, MonitoringStatusMetadata{

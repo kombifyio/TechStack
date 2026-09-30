@@ -3,6 +3,8 @@
 // through the owner-scoped product API. Every step records the ledger
 // operation or journal receipt it produced; nothing is inferred from UI state.
 
+import { authorizedFetch, type RuntimeBearer } from "./runtime-auth";
+
 export interface ManagedDay2PowerStep {
   requested_status: number;
   operation_id: string;
@@ -21,15 +23,24 @@ export interface ManagedDay2Evidence {
   stack_id: string;
   stop: ManagedDay2PowerStep;
   start: ManagedDay2PowerStep;
-  reconnect: { attempts: number; agent_restarted: boolean; connection_state?: string };
+  reconnect: {
+    attempts: number;
+    agent_restarted: boolean;
+    connection_state?: string;
+  };
   ssh_disable: Record<string, unknown>;
   ssh_enable: Record<string, unknown>;
-  status_after: { ssh_enabled?: boolean; observed_state?: string; desired_state?: string };
+  status_after: {
+    ssh_enabled?: boolean;
+    observed_state?: string;
+    desired_state?: string;
+  };
   journal: Array<{ event_type: string; status: string; created_at?: string }>;
 }
 
 interface Day2Args {
-  token: string;
+  // Read per request: the drill outlives a single Gateway bearer.
+  bearer: RuntimeBearer;
   apiUrl: (path: string) => string;
   leaseId: string;
   stackId: string;
@@ -68,15 +79,16 @@ async function runtimeCall<T>(
   accepted: number[] = [200],
 ): Promise<{ status: number; data: T }> {
   const path = `/api/v1/monthly-runtimes/${encodeURIComponent(args.leaseId)}${suffix}`;
-  const response = await fetch(args.apiUrl(path), {
+  const response = await authorizedFetch(args.bearer, args.apiUrl(path), {
     method,
-    headers: { Authorization: `Bearer ${args.token}` },
     signal: AbortSignal.timeout(110_000),
   });
   const text = await response.text();
   const json = text ? JSON.parse(text) : {};
   if (!accepted.includes(response.status)) {
-    throw new Error(`Managed Day-2 ${method} ${suffix || "status"} failed with HTTP ${response.status}: ${text}`);
+    throw new Error(
+      `Managed Day-2 ${method} ${suffix || "status"} failed with HTTP ${response.status}: ${text}`,
+    );
   }
   return { status: response.status, data: (json.data ?? json) as T };
 }
@@ -86,12 +98,22 @@ async function convergePower(
   action: "stop" | "start",
 ): Promise<ManagedDay2PowerStep> {
   const started = Date.now();
-  const requested = await runtimeCall<MonthlyRuntimePayload>(args, "POST", `/${action}`, [200, 202]);
+  const requested = await runtimeCall<MonthlyRuntimePayload>(
+    args,
+    "POST",
+    `/${action}`,
+    [200, 202],
+  );
   const operationId = requested.data.power?.operation_id ?? "";
   if (!operationId) {
-    throw new Error(`Managed ${action} returned no power operation: ${JSON.stringify(requested.data)}`);
+    throw new Error(
+      `Managed ${action} returned no power operation: ${JSON.stringify(requested.data)}`,
+    );
   }
-  args.log(`managed ${action} accepted`, { operation_id: operationId, http_status: requested.status });
+  args.log(`managed ${action} accepted`, {
+    operation_id: operationId,
+    http_status: requested.status,
+  });
   const deadline = started + (args.powerTimeoutMs ?? 720_000);
   let power = requested.data.power ?? undefined;
   while (power?.status !== "succeeded") {
@@ -99,7 +121,9 @@ async function convergePower(
       throw new Error(`Managed ${action} failed: ${JSON.stringify(power)}`);
     }
     if (Date.now() > deadline) {
-      throw new Error(`Managed ${action} did not converge: ${JSON.stringify(power)}`);
+      throw new Error(
+        `Managed ${action} did not converge: ${JSON.stringify(power)}`,
+      );
     }
     await delay(5_000);
     const status = await runtimeCall<MonthlyRuntimePayload>(args, "GET", "");
@@ -131,21 +155,36 @@ async function convergeSSHAccess(
   const suffix = action === "disable" ? "/disable-ssh" : "/enable-ssh";
   for (let attempt = 1; attempt <= 4; attempt++) {
     const result = await runtimeCall<MonthlyRuntimePayload & Day2Denial>(
-      args, "POST", suffix, [200, 503],
+      args,
+      "POST",
+      suffix,
+      [200, 503],
     );
     if (result.status === 200) return result.data;
     const details = result.data.error?.details;
-    if (details?.reason_code !== "managed_node_channel_unavailable" || details.retryable !== true) {
-      throw new Error(`Managed SSH ${action} was denied without retryable node-channel guidance`);
+    if (
+      details?.reason_code !== "managed_node_channel_unavailable" ||
+      details.retryable !== true
+    ) {
+      throw new Error(
+        `Managed SSH ${action} was denied without retryable node-channel guidance`,
+      );
     }
-    args.log(`managed SSH ${action} waiting for node channel`, { attempt, http_status: result.status });
+    args.log(`managed SSH ${action} waiting for node channel`, {
+      attempt,
+      http_status: result.status,
+    });
     if (attempt === 4) break;
     await delay(15_000);
   }
-  throw new Error(`Managed SSH ${action} node channel remained unavailable after 4 attempts`);
+  throw new Error(
+    `Managed SSH ${action} node channel remained unavailable after 4 attempts`,
+  );
 }
 
-export async function runManagedDay2Evidence(args: Day2Args): Promise<ManagedDay2Evidence> {
+export async function runManagedDay2Evidence(
+  args: Day2Args,
+): Promise<ManagedDay2Evidence> {
   const stop = await convergePower(args, "stop");
   const start = await convergePower(args, "start");
 
@@ -156,30 +195,44 @@ export async function runManagedDay2Evidence(args: Day2Args): Promise<ManagedDay
   let attempts = 0;
   while (!reconnect && attempts < 4) {
     attempts++;
-    const result = await runtimeCall<MonthlyRuntimePayload>(args, "POST", "/reconnect", [200, 409, 503]);
+    const result = await runtimeCall<MonthlyRuntimePayload>(
+      args,
+      "POST",
+      "/reconnect",
+      [200, 409, 503],
+    );
     if (result.status === 200) {
       reconnect = result.data.reconnect ?? { agent_restarted: false };
       break;
     }
-    args.log("managed reconnect not yet proven", { attempt: attempts, http_status: result.status });
+    args.log("managed reconnect not yet proven", {
+      attempt: attempts,
+      http_status: result.status,
+    });
     await delay(30_000);
   }
   if (!reconnect) {
-    throw new Error(`Managed reconnect never proved a Guard connection after ${attempts} attempts`);
+    throw new Error(
+      `Managed reconnect never proved a Guard connection after ${attempts} attempts`,
+    );
   }
 
   const disable = await convergeSSHAccess(args, "disable");
   if (disable.ssh_access?.enabled !== false) {
-    throw new Error(`Managed SSH disable did not report a disabled grant: ${JSON.stringify(disable)}`);
+    throw new Error(
+      `Managed SSH disable did not report a disabled grant: ${JSON.stringify(disable)}`,
+    );
   }
   const enable = await convergeSSHAccess(args, "enable");
   if (enable.ssh_access?.enabled !== true) {
-    throw new Error(`Managed SSH enable did not report an enabled grant: ${JSON.stringify(enable)}`);
+    throw new Error(
+      `Managed SSH enable did not report an enabled grant: ${JSON.stringify(enable)}`,
+    );
   }
   const statusAfter = await runtimeCall<MonthlyRuntimePayload>(args, "GET", "");
-  const journal = await runtimeCall<Array<{ event_type: string; status: string; created_at?: string }>>(
-    args, "GET", "/operations?limit=20",
-  );
+  const journal = await runtimeCall<
+    Array<{ event_type: string; status: string; created_at?: string }>
+  >(args, "GET", "/operations?limit=20");
   return {
     lease_id: args.leaseId,
     stack_id: args.stackId,
@@ -198,7 +251,9 @@ export async function runManagedDay2Evidence(args: Day2Args): Promise<ManagedDay
       desired_state: statusAfter.data.desired_state,
     },
     journal: (Array.isArray(journal.data) ? journal.data : []).map((event) => ({
-      event_type: event.event_type, status: event.status, created_at: event.created_at,
+      event_type: event.event_type,
+      status: event.status,
+      created_at: event.created_at,
     })),
   };
 }

@@ -13,6 +13,8 @@ import (
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/identity"
 	"github.com/kombifyio/techstack/pkg/runtimeidentity"
+	"github.com/kombifyio/techstack/pkg/serverregistry"
+	"github.com/kombifyio/techstack/pkg/serviceregistry"
 )
 
 func TestRegistryStoreProjectionExpiresInventoryWithoutHeartbeat(t *testing.T) {
@@ -134,6 +136,69 @@ func TestRegistryStoreProjectionNeverPromotesSatelliteHeartbeat(t *testing.T) {
 	if server.Status != "provisioned" || server.HealthState != "provisioned" {
 		t.Fatalf("satellite-only server must project as provisioned: %#v", server)
 	}
+}
+
+// TestRegistryServiceOnLegacyLinkedNodeReportsServerEnvironmentClass guards
+// kombify-Techstack-skyd: a legacy node linked to its canonical server only by
+// worker identity carries `server_id = node.ID`, which never equals the
+// /api/v1/servers id, so clients cannot join for placement. The registry must
+// serve the canonical server's hosting class on the service itself.
+func TestRegistryServiceOnLegacyLinkedNodeReportsServerEnvironmentClass(t *testing.T) {
+	ctx := context.Background()
+	store := controlplane.NewMemoryStore()
+	if _, err := store.CreateStack(ctx, controlplane.CreateStackRequest{
+		ID: "stack-byo", TenantID: "tenant-1", OwnerSubjectID: "owner-1", Name: "BYO stack", Status: "running",
+	}); err != nil {
+		t.Fatalf("CreateStack: %v", err)
+	}
+	target, ok := serverregistry.HostingerExternalVPSTarget("hostinger-vps:srv1", time.Now().UTC())
+	if !ok {
+		t.Fatal("HostingerExternalVPSTarget rejected a canonical binding")
+	}
+	if _, err := store.UpsertServerRuntime(ctx, controlplane.ServerRuntime{
+		ID: "server-canonical", TenantID: "tenant-1", StackID: "stack-byo", OwnerSubjectID: "owner-1",
+		WorkerID: "agent-byo", Name: "byo-vps", LifecycleState: "active", ConnectionState: "connected",
+		HealthState: "healthy", DesiredState: "running", ProviderRef: "hostinger-vps:srv1", RuntimeTarget: target,
+	}); err != nil {
+		t.Fatalf("UpsertServerRuntime: %v", err)
+	}
+	if _, err := store.UpsertNode(ctx, controlplane.Node{
+		ID: "node-legacy", TenantID: "tenant-1", StackID: "stack-byo", WorkerID: "agent-byo", Name: "byo-vps",
+	}); err != nil {
+		t.Fatalf("UpsertNode: %v", err)
+	}
+	if _, err := store.UpsertService(ctx, controlplane.Service{
+		ID: "service-byo", TenantID: "tenant-1", StackID: "stack-byo", NodeID: "node-legacy", ServiceKey: "immich", Name: "immich",
+		Source: serviceregistry.SourceObserved, Status: registryObservedState,
+	}); err != nil {
+		t.Fatalf("UpsertService: %v", err)
+	}
+
+	event, recorder := registryRouteStoreTestEvent(http.MethodGet, "/api/v1/registry/services", "owner-1", "tenant-1", nil)
+	h := registryRouteHandlers{stackStore: store, workerStore: store, registryStore: store, serverStore: store}
+	if err := h.services(event); err != nil {
+		t.Fatalf("services: %v", err)
+	}
+	var envelope struct {
+		Data struct {
+			Services []struct {
+				ID               string `json:"id"`
+				EnvironmentClass string `json:"environment_class"`
+			} `json:"services"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode response: %v body=%s", err, recorder.Body.String())
+	}
+	for _, service := range envelope.Data.Services {
+		if service.ID == "service-byo" {
+			if service.EnvironmentClass != string(serverregistry.EnvironmentCloud) {
+				t.Fatalf("service on a legacy-linked node must report its canonical server's class, got %q", service.EnvironmentClass)
+			}
+			return
+		}
+	}
+	t.Fatalf("service-byo missing from registry: %s", recorder.Body.String())
 }
 
 func TestRegistryImportCreatesObservedServiceForOwnedNode(t *testing.T) {

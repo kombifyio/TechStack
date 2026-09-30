@@ -19,6 +19,14 @@ const (
 	InventoryActionRILRead InventoryAction = "ril_read"
 	// InventoryActionOperate allows access-context and runtime operations.
 	InventoryActionOperate InventoryAction = "operate"
+	// InventoryActionProvision allows cost-bearing runtime operations that can
+	// order billed servers. It is authorized like operate but needs its own
+	// signed capability, so a destructive-operations grant never implies spend.
+	InventoryActionProvision InventoryAction = "provision"
+	// InventoryActionWrite allows reversible owner-scoped control-plane writes
+	// such as renaming a server or the homelab. A granted write is the mandate;
+	// the call needs no separate confirmation (workspace decision 2026-09-25).
+	InventoryActionWrite InventoryAction = "write"
 	// InventoryActionTransfer allows changing the responsible owner.
 	InventoryActionTransfer InventoryAction = "transfer"
 	// InventoryActionAdmin allows administrative inventory actions.
@@ -31,6 +39,11 @@ const (
 	InventoryEntitlementRILRead = "techstack.ril.read"
 	// InventoryEntitlementOperate is the signed capability for operate decisions.
 	InventoryEntitlementOperate = "techstack.inventory.operate"
+	// InventoryEntitlementProvision is the signed capability for cost-bearing
+	// provision decisions.
+	InventoryEntitlementProvision = "techstack.inventory.provision"
+	// InventoryEntitlementWrite is the signed capability for write decisions.
+	InventoryEntitlementWrite = "techstack.inventory.write"
 	// InventoryEntitlementTransfer is the signed capability for transfer decisions.
 	InventoryEntitlementTransfer = "techstack.inventory.transfer"
 	// InventoryEntitlementAdmin is the signed capability that covers every action.
@@ -101,6 +114,10 @@ func inventoryEntitlementForAction(action InventoryAction) string {
 		return InventoryEntitlementRILRead
 	case InventoryActionOperate:
 		return InventoryEntitlementOperate
+	case InventoryActionProvision:
+		return InventoryEntitlementProvision
+	case InventoryActionWrite:
+		return InventoryEntitlementWrite
 	case InventoryActionTransfer:
 		return InventoryEntitlementTransfer
 	case InventoryActionAdmin:

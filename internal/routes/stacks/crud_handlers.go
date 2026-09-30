@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/gocommon/denial"
 	"github.com/google/uuid"
 	"github.com/pocketbase/pocketbase/core"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/identity"
 	"github.com/kombifyio/techstack/pkg/jobs"
 	"github.com/kombifyio/techstack/pkg/logger"
+	"github.com/kombifyio/techstack/pkg/monthlyruntime"
 	"github.com/kombifyio/techstack/pkg/orchestrator"
 	"github.com/kombifyio/techstack/pkg/stackrouting"
 )
@@ -38,6 +40,7 @@ const (
 	runtimeProvisioningConnectRemote = "connect-remote"
 	runtimeProvisioningInstall       = "install-command"
 	managedRuntimeCapacityTopic      = "system.service-degraded"
+	managedServersBudgetKey          = "cloud.runtime.credits#managed_servers"
 	managedRuntimeCapacitySource     = "techstack"
 )
 
@@ -339,10 +342,8 @@ func (h crudRouteHandlers) writeManagedCreateAdmissionError(e *httpx.Event, stac
 	details := map[string]any{creationStackIDField: stackID, "admission_phase": phase}
 	var capacity *providercontrol.ManagedRuntimeCapacityExceededError
 	if errors.As(err, &capacity) {
-		details["reason_code"] = "managed_runtime_capacity_exceeded"
-		details["retryable"] = false
 		h.enqueueManagedRuntimeCapacityNotification(e.Request.Context(), stackID, request, capacity)
-		return httpx.Error(e, http.StatusForbidden, ksapi.ErrCodeForbidden, "This account already holds the maximum number of managed server slots", details)
+		return writeManagedRuntimeCapacityDenial(e, request.Provider, capacity, details)
 	}
 	var createBlocked providercontrol.ProviderCreateBlockedError
 	if errors.As(err, &createBlocked) {
@@ -410,6 +411,57 @@ func (h crudRouteHandlers) enqueueManagedRuntimeCapacityNotification(
 				"tenant_id", tenantID, "provider", provider, "channel", channel, "error", err)
 		}
 	}
+}
+
+// writeManagedRuntimeCapacityDenial writes the shared client-error-envelope/v1
+// (kombify-go-common/denial) for a full managed-server budget. The limit is the
+// Gateway-signed cloud.runtime.credits#managed_servers value the admission
+// enforced; held counts the owner's unreleased capacity reservations. The
+// legacy "error" object stays for httpx clients that read error.details.
+func writeManagedRuntimeCapacityDenial(
+	e *httpx.Event,
+	providerID string,
+	capacity *providercontrol.ManagedRuntimeCapacityExceededError,
+	details map[string]any,
+) error {
+	const reasonCode = "managed_runtime_capacity_exceeded"
+	held, limit := capacity.Held, capacity.Limit
+	env := denial.Envelope{
+		ErrorCode:  "managed_runtime_budget_exhausted",
+		ReasonCode: reasonCode,
+		Capability: monthlyruntime.ManagedRuntimeCapability,
+		ProviderID: strings.ToLower(strings.TrimSpace(providerID)),
+		Retryable:  false,
+		UserGuidance: denial.UserGuidance{
+			Title: "All managed servers in your plan are in use",
+			Body: fmt.Sprintf("Your account holds %d of %d managed servers included in its plan, so no additional managed server can be created.",
+				held, limit),
+			NextSteps: []string{
+				"Remove a managed server you no longer need, then retry.",
+				"Upgrade your plan to include more managed servers.",
+			},
+		},
+		SupportContext: map[string]any{
+			"budget_key": managedServersBudgetKey,
+			"used":       held,
+			"limit":      limit,
+			"unit":       "server",
+		},
+	}
+	raw, err := json.Marshal(env)
+	if err != nil {
+		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Managed server admission denial unavailable", nil)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Managed server admission denial unavailable", nil)
+	}
+	details["reason_code"] = reasonCode
+	details["retryable"] = false
+	details["held"] = held
+	details["limit"] = limit
+	payload["error"] = map[string]any{"code": ksapi.ErrCodeForbidden, "message": env.UserGuidance.Title, "details": details}
+	return e.JSON(http.StatusForbidden, payload)
 }
 
 func managedCreateUnavailable(e *httpx.Event, stackID, reasonCode string, retryable bool, message string) error {

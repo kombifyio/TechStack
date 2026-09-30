@@ -43,6 +43,7 @@ func TestPostgresStoreApplyServerEventCommitsAtomicChildren(t *testing.T) {
 			nil, now, nil, int64(0), int64(1), int64(1), nil, nil, nil, int64(0), nil,
 			`[]`, `{}`, nil, nil, nil, "awaiting_guard", "desired_running", "guard_connecting", "health_unknown",
 			now, now, now, now, now,
+			nil,
 		))
 	mock.ExpectQuery(`(?s)UPDATE servers SET.*revision = \$27.*RETURNING`).
 		WillReturnRows(serverEventRuntimeRows().AddRow(
@@ -51,6 +52,7 @@ func TestPostgresStoreApplyServerEventCommitsAtomicChildren(t *testing.T) {
 			nil, now, now, int64(1), int64(2), int64(1), "guard", "guard-1", "epoch-a", int64(1), now,
 			`[]`, `{}`, nil, nil, nil, "awaiting_guard", "desired_running", "guard_connected", "guard_healthy",
 			now, now, now, now, now,
+			nil,
 		))
 	for _, dimension := range []string{"connection", "health"} {
 		reasonCode := "guard_connected"
@@ -135,6 +137,7 @@ func TestPostgresStoreApplyServerEventTxUsesCallerTransactionAndDatabaseTime(t *
 			nil, now.Add(-time.Hour), nil, int64(0), int64(2), int64(1), nil, nil, nil, int64(0), nil,
 			`[]`, `{}`, nil, nil, nil, "cleanup_pending", "desired_absent", nil, nil,
 			now.Add(-time.Hour), now.Add(-time.Hour), now.Add(-time.Hour), now.Add(-time.Hour), now.Add(-time.Hour),
+			nil,
 		))
 	mock.ExpectQuery(`(?s)UPDATE servers SET.*revision = \$27.*RETURNING`).
 		WillReturnRows(serverEventRuntimeRows().AddRow(
@@ -143,6 +146,7 @@ func TestPostgresStoreApplyServerEventTxUsesCallerTransactionAndDatabaseTime(t *
 			nil, now.Add(-time.Hour), nil, int64(0), int64(3), int64(1), nil, nil, nil, int64(0), nil,
 			`[]`, `{}`, nil, nil, now, "provider_absent", "desired_absent", nil, nil,
 			now, now.Add(-time.Hour), now.Add(-time.Hour), now.Add(-time.Hour), now,
+			nil,
 		))
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO server_state_transitions (")).
 		WillReturnRows(serverEventTransitionRows().AddRow(
@@ -203,6 +207,7 @@ func TestPostgresStoreApplyServerEventRollsBackHeadWhenInventoryFails(t *testing
 			"lease-1", "centron", "unknown", nil, nil, nil, nil, nil, nil, nil, "runtime-1", "active", "running", "connected", "healthy",
 			nil, now, now, int64(0), int64(1), int64(1), "guard", "guard-1", "epoch-a", int64(1), now,
 			`[]`, `{}`, nil, nil, nil, nil, nil, nil, nil, now, now, now, now, now,
+			nil,
 		))
 	mock.ExpectQuery(`(?s)UPDATE servers SET.*RETURNING`).
 		WillReturnRows(serverEventRuntimeRows().AddRow(
@@ -210,6 +215,7 @@ func TestPostgresStoreApplyServerEventRollsBackHeadWhenInventoryFails(t *testing
 			"lease-1", "centron", "unknown", nil, nil, nil, nil, nil, nil, nil, "runtime-1", "active", "running", "connected", "healthy",
 			nil, now, now, int64(1), int64(2), int64(1), "guard", "guard-1", "epoch-a", int64(2), now,
 			`[]`, `{}`, nil, nil, nil, nil, nil, nil, nil, now, now, now, now, now,
+			nil,
 		))
 	snapshotWriteErr := errors.New("snapshot write failed")
 	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO server_inventory_snapshots (")).
@@ -250,6 +256,7 @@ func TestPostgresStoreApplyServerEventRollsBackHeadWhenOutboxFails(t *testing.T)
 			"lease-1", "centron", "unknown", nil, nil, nil, nil, nil, nil, nil, "runtime-1", "active", "running", "connected", "healthy",
 			nil, now, now, int64(0), int64(1), int64(1), "guard", "guard-1", "epoch-a", int64(1), now,
 			`[]`, `{}`, nil, nil, nil, nil, nil, nil, nil, now, now, now, now, now,
+			nil,
 		))
 	mock.ExpectQuery(`(?s)UPDATE servers SET.*RETURNING`).
 		WillReturnRows(serverEventRuntimeRows().AddRow(
@@ -257,6 +264,7 @@ func TestPostgresStoreApplyServerEventRollsBackHeadWhenOutboxFails(t *testing.T)
 			"lease-1", "centron", "unknown", nil, nil, nil, nil, nil, nil, nil, "runtime-1", "active", "running", "connected", "healthy",
 			nil, now, now, int64(0), int64(2), int64(1), "guard", "guard-1", "epoch-a", int64(2), now,
 			`[]`, `{}`, nil, nil, nil, nil, nil, nil, nil, now, now, now, now, now,
+			nil,
 		))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO server_guard_source_epochs (")).
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -298,6 +306,7 @@ func TestPostgresStoreApplyServerEventRejectsPreviouslySeenEpoch(t *testing.T) {
 			"lease-1", "centron", "unknown", nil, nil, nil, nil, nil, nil, nil, "runtime-1", "active", "running", "connected", "healthy",
 			nil, now, now, int64(1), int64(3), int64(1), "guard", "guard-1", "epoch-b", int64(1), now,
 			`[]`, `{}`, nil, nil, nil, nil, nil, nil, nil, now, now, now, now, now,
+			nil,
 		))
 	mock.ExpectQuery(`(?s)SELECT EXISTS .*FROM server_guard_source_epochs`).
 		WithArgs("tenant-1", "server-1", int64(1), "guard-1", "epoch-a").
@@ -333,7 +342,7 @@ func serverEventRuntimeRows() *sqlmock.Rows {
 		"last_outcome_json", "outcome_changed_at", "decommissioned_at",
 		"lifecycle_reason_code", "desired_reason_code", "connection_reason_code",
 		"health_reason_code", "lifecycle_changed_at", "desired_changed_at", "health_changed_at",
-		"created_at", "updated_at",
+		"created_at", "updated_at", "display_name",
 	})
 }
 

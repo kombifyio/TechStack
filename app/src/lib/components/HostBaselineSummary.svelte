@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tr } from "#lib/i18n.svelte.js";
+  import { tr, formatDateTime } from "#lib/i18n.svelte.js";
   import {
     getServerPortInventory,
     type ServerPortInventory,
@@ -75,9 +75,7 @@
   {#if error}<p class="mt-2 text-sm text-destructive">{error}</p>{/if}
   {#if inventory?.observed_at}
     <p class="mt-1 text-xs text-muted-foreground">
-      {tr("hostBaseline.observed")}: {new Date(
-        inventory.observed_at,
-      ).toLocaleString()}
+      {tr("hostBaseline.observed")}: {formatDateTime(inventory.observed_at)}
     </p>
   {/if}
   {#if observed.length > 0}

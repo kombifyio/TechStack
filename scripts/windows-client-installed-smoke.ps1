@@ -222,8 +222,23 @@ function Stop-SmokeProcesses {
         ($name -eq "cmd.exe" -and $stateCommand -and $cmd.IndexOf("postgres.exe", [StringComparison]::OrdinalIgnoreCase) -ge 0)
     }
 
-    foreach ($process in $processes) {
-        Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+    # Keep process handles until exit: termination is asynchronous on Windows.
+    # Restarting against a WebView profile still held by the old process can
+    # prevent WebView initialization before the local runtime even starts.
+    $stopping = @($processes | ForEach-Object {
+        Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue
+    })
+    foreach ($process in $stopping) {
+        Stop-Process -InputObject $process -Force -ErrorAction SilentlyContinue
+    }
+    foreach ($process in $stopping) {
+        try {
+            if (!$process.WaitForExit(30000)) {
+                throw "Smoke-owned process did not stop before restart: $($process.Id)"
+            }
+        } finally {
+            $process.Dispose()
+        }
     }
 }
 

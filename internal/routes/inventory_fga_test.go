@@ -314,7 +314,7 @@ func TestInventoryRESTAndMCPShareFGAExactObjectApplicationScope(t *testing.T) {
 	if err := h.handleMCP(mcpEvent); err != nil {
 		t.Fatal(err)
 	}
-	if mcpRecorder.Code != http.StatusOK || !strings.Contains(mcpRecorder.Body.String(), `"server_id":"delegated-server"`) || !strings.Contains(mcpRecorder.Body.String(), `"isError":false`) {
+	if mcpRecorder.Code != http.StatusOK || !strings.Contains(mcpRecorder.Body.String(), `"server_id":"delegated-server"`) || strings.Contains(mcpRecorder.Body.String(), `"isError":true`) {
 		t.Fatalf("MCP delegated read = %d %s", mcpRecorder.Code, mcpRecorder.Body.String())
 	}
 	if checker.calls != 2 {

@@ -123,6 +123,125 @@ export async function captureGatewayApiSession(
   return { token, apiBase: `${url.origin}/v1/techstack` };
 }
 
+// A Gateway bearer for owner API calls: either a fixed token (short scenarios)
+// or a keeper that is read at request time (long managed lanes).
+export type RuntimeBearer = string | GatewaySessionKeeper;
+
+export interface GatewaySessionKeeper {
+  readonly apiBase: string;
+  /** The current bearer; refreshed first when it is about to expire. */
+  token(): Promise<string>;
+  /** Re-capture the bearer now, for example after a 401. */
+  refresh(): Promise<string>;
+  /** Replace the held session with one observed elsewhere (Wizard create). */
+  adopt(session: RuntimeGatewaySession): void;
+}
+
+const KEEPER_MAX_AGE_MS = 5 * 60_000;
+// Below the Auth0 SPA SDK's 60s cache leeway, so a refresh then mints a new
+// token instead of returning the cached one.
+const KEEPER_EXPIRY_MARGIN_MS = 45_000;
+const KEEPER_MIN_INTERVAL_MS = 30_000;
+
+// createGatewaySessionKeeper holds the managed lane's Gateway session and
+// re-captures it from the signed-in page. The bearer lives about 15 minutes,
+// while a managed provision, Day-2 drill and destroy take far longer.
+//
+// A refresh navigates `page` to /dashboard, so it must never overlap a page
+// interaction of the test. There is deliberately no timer: a refresh runs
+// only inside token()/refresh(), which the API helpers await from the test's
+// single flow of control, so the page is idle whenever one runs. Concurrent
+// callers share one in-flight refresh. A failed refresh keeps the current
+// session, and the next 401 retries it.
+export function createGatewaySessionKeeper(
+  page: Page,
+  initial: RuntimeGatewaySession,
+): GatewaySessionKeeper {
+  let session = initial;
+  let capturedAt = Date.now();
+  let lastAttemptAt = 0;
+  let inflight: Promise<string> | undefined;
+
+  const refreshDue = () => {
+    const now = Date.now();
+    if (now - lastAttemptAt < KEEPER_MIN_INTERVAL_MS) return false;
+    const expiresAt = bearerExpiryMs(session.token);
+    return (
+      now - capturedAt >= KEEPER_MAX_AGE_MS ||
+      (expiresAt !== undefined && expiresAt - now < KEEPER_EXPIRY_MARGIN_MS)
+    );
+  };
+
+  const refresh = () => {
+    inflight ??= (async () => {
+      lastAttemptAt = Date.now();
+      try {
+        const next = await captureGatewayApiSession(page);
+        session = next;
+        capturedAt = Date.now();
+      } catch {
+        // Keep the current session; the caller's request reports any 401.
+      } finally {
+        inflight = undefined;
+      }
+      return session.token;
+    })();
+    return inflight;
+  };
+
+  return {
+    get apiBase() {
+      return session.apiBase;
+    },
+    async token() {
+      if (inflight) return inflight;
+      return refreshDue() ? refresh() : session.token;
+    },
+    refresh,
+    adopt(next) {
+      session = next;
+      capturedAt = Date.now();
+    },
+  };
+}
+
+export async function bearerToken(bearer: RuntimeBearer): Promise<string> {
+  return typeof bearer === "string" ? bearer : bearer.token();
+}
+
+// authorizedFetch sends one owner API request with the bearer read at call
+// time. With a keeper, a 401 (for example token_expired) re-captures the
+// session and retries once; an unauthorized request performed nothing, so the
+// retry cannot duplicate an action.
+export async function authorizedFetch(
+  bearer: RuntimeBearer,
+  url: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  const send = (token: string) => {
+    const headers = new Headers(init.headers);
+    headers.set("Authorization", `Bearer ${token}`);
+    return fetch(url, { ...init, headers });
+  };
+  const response = await send(await bearerToken(bearer));
+  if (response.status !== 401 || typeof bearer === "string") return response;
+  await response.body?.cancel().catch(() => undefined);
+  return send(await bearer.refresh());
+}
+
+function bearerExpiryMs(token: string): number | undefined {
+  const payload = token.split(".")[1];
+  if (!payload) return undefined;
+  try {
+    const exp = Number(
+      JSON.parse(Buffer.from(payload, "base64url").toString("utf8")).exp,
+    );
+    return Number.isFinite(exp) && exp > 0 ? exp * 1_000 : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function browserSessionToken(
   page: Page,
   options: RuntimeAuthOptions,

@@ -4,6 +4,7 @@ param(
     [string]$Configuration = "Release",
     [string]$Runtime = "win-x64",
     [string]$Version = "",
+    [ValidateSet("Local", "Cloud")][string]$DesktopEdition = "Local",
     [string]$RuntimeExe = "",
     [string]$LinuxRuntimeExe = "",
     [string]$OutputDir = "dist\windows-client",
@@ -24,6 +25,9 @@ $hasRuntimeInputs = @($RuntimeExe, $LinuxRuntimeExe) |
 if ($hasRuntimeInputs.Count -ne 0 -and $hasRuntimeInputs.Count -ne 2) {
     throw "Prebuilt Windows and Linux runtimes must be supplied together."
 }
+if ($DesktopEdition -eq "Cloud" -and $hasRuntimeInputs.Count -ne 0) {
+    throw "The Cloud installer cannot contain a local product runtime."
+}
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $sourceRevision = (& git -C $root rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or $sourceRevision -notmatch '^[0-9a-f]{40}$') {
@@ -32,9 +36,18 @@ if ($LASTEXITCODE -ne 0 -or $sourceRevision -notmatch '^[0-9a-f]{40}$') {
 # Pre-1.0 packaging produces the requested artifacts only. The optional
 # client checks remain independent diagnostics and are not release dependencies.
 $project = Join-Path $root "clients\windows\Kombify.TechStack.Client\Kombify.TechStack.Client.csproj"
-$publishDir = Join-Path $root "dist\windows-client\native"
-$stageDir = Join-Path $root "dist\windows-client\stage"
+$editionDir = if ($DesktopEdition -eq "Cloud") { "windows-client-cloud" } else { "windows-client" }
+if ($DesktopEdition -eq "Cloud" -and $OutputDir -eq "dist\windows-client") { $OutputDir = "dist\windows-client-cloud" }
+$publishDir = Join-Path $root "dist\$editionDir\native"
+$stageDir = Join-Path $root "dist\$editionDir\stage"
 $zipDir = Join-Path $root $OutputDir
+$safeDistRoot = [IO.Path]::GetFullPath((Join-Path $root "dist"))
+foreach ($target in @($publishDir, $stageDir)) {
+    $absolute = [IO.Path]::GetFullPath($target)
+    if (!$absolute.StartsWith($safeDistRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Packaging target escapes the workspace dist directory: $absolute"
+    }
+}
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
     $versionFile = Join-Path $root "VERSION"
@@ -49,10 +62,12 @@ dotnet publish $project -c $Configuration -r $Runtime --self-contained true -o $
     -p:PublishSingleFile=true `
     -p:IncludeNativeLibrariesForSelfExtract=true `
     -p:EnableCompressionInSingleFile=true `
-    -p:Version=$Version
+    -p:Version=$Version `
+    -p:DesktopEdition=$DesktopEdition
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit code $LASTEXITCODE" }
 Copy-Item -Recurse -Force -Path (Join-Path $publishDir "*") -Destination $stageDir
 
+if ($DesktopEdition -eq "Local") {
 $runtimeDestination = Join-Path $stageDir "techstack.exe"
 $linuxRuntimeDestination = Join-Path $stageDir "techstack-linux-amd64"
 if ($hasRuntimeInputs.Count -eq 2) {
@@ -83,6 +98,9 @@ if (-not [string]::IsNullOrWhiteSpace($SpecTemplatesPath)) {
 if ($LASTEXITCODE -ne 0) { throw "StackKits Linux bundle build failed with exit code $LASTEXITCODE" }
 Copy-Item -Force -Path (Join-Path $root "scripts\uninstall-windows-client.ps1") -Destination $stageDir
 Copy-Item -Force -Path (Join-Path $root "scripts\reset-windows-client-state.ps1") -Destination $stageDir
+} else {
+    Copy-Item -Force -Path (Join-Path $root "scripts\install-windows-cloud-client.ps1") -Destination $stageDir
+}
 Copy-Item -Force -Path (Join-Path $root "scripts\test-windows-client-authenticode.ps1") -Destination $stageDir
 Copy-Item -Force -Path (Join-Path $root "clients\windows\README.md") -Destination (Join-Path $stageDir "README.md")
 $stageAssetsDir = Join-Path $stageDir "Assets"
@@ -90,17 +108,17 @@ New-Item -ItemType Directory -Force -Path $stageAssetsDir | Out-Null
 Copy-Item -Force -Path (Join-Path $root "clients\windows\Kombify.TechStack.Client\Assets\kombify-navy.ico") -Destination $stageAssetsDir
 
 if ($RequireAuthenticode) {
-    foreach ($executable in @(
-        (Join-Path $stageDir "kombify-techstack-client.exe"),
-        (Join-Path $stageDir "techstack.exe")
-    )) {
+    $executables = @((Join-Path $stageDir "kombify-techstack-client.exe"))
+    if ($DesktopEdition -eq "Local") { $executables += (Join-Path $stageDir "techstack.exe") }
+    foreach ($executable in $executables) {
         & (Join-Path $PSScriptRoot "test-windows-client-authenticode.ps1") `
             -ExecutablePath $executable `
             -ExpectedSubjectPattern $ExpectedAuthenticodeSubjectPattern
     }
 }
 
-$zipPath = Join-Path $zipDir ("kombify-techstack-client_{0}_Windows_x86_64.zip" -f $Version)
+$zipName = if ($DesktopEdition -eq "Cloud") { "kombify-techstack-cloud-client_${Version}_Windows_x86_64.zip" } else { "kombify-techstack-client_${Version}_Windows_x86_64.zip" }
+$zipPath = Join-Path $zipDir $zipName
 if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
 Compress-Archive -Path (Join-Path $stageDir "*") -DestinationPath $zipPath -Force
 (Get-FileHash -Algorithm SHA256 $zipPath).Hash | Set-Content -Encoding ASCII -Path "$zipPath.sha256"
@@ -109,10 +127,11 @@ Compress-Archive -Path (Join-Path $stageDir "*") -DestinationPath $zipPath -Forc
 # release also ships the WiX v4 per-machine MSI and Burn setup.exe, both built
 # from this exact stage. Authenticode is intentionally not a packaging gate.
 $installerBuilder = Join-Path $PSScriptRoot "..\installer\wix\build-windows-installer.ps1"
-& $installerBuilder -StageDir $stageDir -Version $Version -OutputDir $OutputDir
+& $installerBuilder -StageDir $stageDir -Version $Version -OutputDir $OutputDir -DesktopEdition $DesktopEdition
 if ($LASTEXITCODE -ne 0) { throw "WiX Windows installer build failed with exit code $LASTEXITCODE" }
-$msiPath = Join-Path $zipDir "kombify-Techstack-x64.msi"
-$setupPath = Join-Path $zipDir "kombify-Techstack-Setup.exe"
+$suffix = if ($DesktopEdition -eq "Cloud") { "-Cloud" } else { "" }
+$msiPath = Join-Path $zipDir "kombify-Techstack$suffix-x64.msi"
+$setupPath = Join-Path $zipDir "kombify-Techstack$suffix-Setup.exe"
 foreach ($installerArtifact in @($msiPath, $setupPath)) {
     if (!(Test-Path -LiteralPath $installerArtifact -PathType Leaf)) {
         throw "Missing WiX Windows release artifact: $installerArtifact"
@@ -128,7 +147,7 @@ $checksumPath = Join-Path $zipDir "SHA256SUMS.txt"
 $checksumLines | Set-Content -Encoding ASCII -Path $checksumPath
 $unsignedMarker = Join-Path $zipDir "UNSIGNED-WINDOWS-RELEASE.txt"
 @"
-kombify Techstack Windows release $Version
+kombify Techstack $DesktopEdition Windows release $Version
 
 The Windows MSI and Burn setup.exe in this release are intentionally
 unsigned. Authenticode signing is optional for this alpha and never blocks
@@ -136,8 +155,8 @@ publication. Verify the downloaded assets against SHA256SUMS.txt before
 installing.
 
 Assets:
-- kombify-Techstack-Setup.exe (user-facing installer)
-- kombify-Techstack-x64.msi (per-machine MSI)
+- $(Split-Path -Leaf $setupPath) (user-facing installer)
+- $(Split-Path -Leaf $msiPath) (per-machine MSI)
 - $(Split-Path -Leaf $zipPath) (portable ZIP)
 "@ | Set-Content -Encoding UTF8 -Path $unsignedMarker
 

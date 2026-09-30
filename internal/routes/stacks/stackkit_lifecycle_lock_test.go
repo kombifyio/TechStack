@@ -56,7 +56,7 @@ func TestStackLifecycleRefusesToOverrideAServiceLock(t *testing.T) {
 		LeaseLister: routingTestLeaseLister{},
 	}, nil)
 	defer orch.Stop()
-	h := crudRouteHandlers{orch: orch, stackStore: store, jobStore: store, serviceStore: store}
+	h := crudRouteHandlers{orch: orch, stackStore: store, jobStore: store, serviceStore: store, serverStore: store}
 
 	event, recorder := stackLifecycleLockEvent(t, "apply")
 	if err := h.startStackKitLifecycle(event); err != nil {

@@ -13,19 +13,43 @@ references. The source PNGs are in the task's generated-images directory
 `01a0badf-7cf6-72d2-a9b4-69de2a8d229e`. The consumed files are full-size
 WebP encodings at quality 85, without resizing or semantic edits.
 
-| Use case | Source PNG |
-| --- | --- |
-| Photo Memories | `exec-58bfd448-2aba-4409-ac9e-6dc63557adc8.png` |
+| Use case          | Source PNG                                      |
+| ----------------- | ----------------------------------------------- |
+| Photo Memories    | `exec-58bfd448-2aba-4409-ac9e-6dc63557adc8.png` |
 | Documents & Files | `exec-191d6bbb-575d-4d9c-8fa0-1d8a0dc5f4d0.png` |
-| Password Vault | `exec-c87b4a50-03f9-43b2-b30e-89d4bc570190.png` |
-| Media Streaming | `exec-0b17199b-ccee-4d93-b4c8-5ca32afd5e62.png` |
-| Smart Home | `exec-37133453-d2d3-4aa7-9ae3-5ff6eaca3e56.png` |
-| Dev Platform | `exec-70164652-03d3-4f29-9245-530ba76483c2.png` |
-| Mail | `exec-3acb7cde-9b8a-480e-8ae9-d655e214a9e3.png` |
-| Games | `exec-a269624b-686b-414e-9356-b7d38ad8dfa8.png` |
+| Password Vault    | `exec-c87b4a50-03f9-43b2-b30e-89d4bc570190.png` |
+| Media Streaming   | `exec-0b17199b-ccee-4d93-b4c8-5ca32afd5e62.png` |
+| Smart Home        | `exec-37133453-d2d3-4aa7-9ae3-5ff6eaca3e56.png` |
+| Dev Platform      | `exec-70164652-03d3-4f29-9245-530ba76483c2.png` |
+| Mail              | `exec-3acb7cde-9b8a-480e-8ae9-d655e214a9e3.png` |
+| Games             | `exec-a269624b-686b-414e-9356-b7d38ad8dfa8.png` |
 
 Prompt set: create a standalone, wide daytime illustration of the human
 activity represented by each use case. Match the approved warm painterly
 editorial style and the Living Home panorama. Keep the subject centered for a
 responsive crop and leave room for an HTML title overlay. Include no UI, words,
 logos, frame or watermark.
+
+## Night variants
+
+The `*-night.webp` siblings were generated with built-in Imagegen on 2026-09-28,
+using each original daytime image as its sole reference. The prompt preserves
+the composition, people, geometry and painterly style while changing the exterior
+to moonlight and retaining warm practical indoor lighting. No UI, text or logos
+were added. They use the same full-size quality-85 WebP encoding.
+
+Source directory: `01a0e6d9-401d-7270-87f3-94aa318c7aa8`.
+
+| Use case   | Source PNG                                      |
+| ---------- | ----------------------------------------------- |
+| photos     | `exec-6bbb8d5d-f43b-4ba6-ac52-4582b27a806e.png` |
+| files      | `exec-82684838-8c49-466b-b928-faa8fc78d9f7.png` |
+| vault      | `exec-81a48d5f-d1fb-4579-8dba-210e956967fa.png` |
+| media      | `exec-65bd90ac-66d6-4e31-89bc-ff8e034b85e6.png` |
+| smart-home | `exec-a4ac497f-858b-4f7b-bb8e-f1dcf2c67742.png` |
+| dev        | `exec-23de978b-5e46-4172-bffc-6392541b8daa.png` |
+| mail       | `exec-8bbbe109-4561-46b0-8380-a98370426a52.png` |
+| game       | `exec-c510adac-ddf5-4902-b29c-a69641c088e3.png` |
+
+`GoalIllustration` selects the corresponding image from the resolved application
+appearance, including inherited host appearance and explicit app overrides.

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "#lib/i18n.svelte.js";
   import { goto } from "$app/navigation";
   import { parseApiError } from "#lib/api/errors.js";
   import {
@@ -74,10 +75,10 @@
   async function recreate() {
     if (!recreateReady || recreating || !stackId || !leaseId) return;
     const confirmed = await confirmInApp({
-      title: `Recreate ${serverName}?`,
+      title: tr("ui.recreate.confirmTitle", { name: serverName }),
       message:
-        "This provisions and bills a new managed server generation. Techstack will re-establish enrollment, endpoints, Guard evidence, and the StackKit rollout through the normal creation flow.",
-      confirmText: "Recreate server",
+        tr("ui.managedRuntimeRecreatePanel.thisProvisionsAndBillsA"),
+      confirmText: tr("ui.recreate.title"),
       tone: "danger",
     });
     if (!confirmed) return;
@@ -118,23 +119,19 @@
       <div class="min-w-0">
         <div class="flex items-center gap-2">
           <RotateCcw class="h-5 w-5 text-warning" />
-          <h2 class="text-lg font-semibold text-foreground">Recreate server</h2>
+          <h2 class="text-lg font-semibold text-foreground">{tr("ui.recreate.title")}</h2>
         </div>
         {#if loading}
           <p class="mt-2 text-sm text-muted-foreground">
-            Checking terminal provider cleanup…
+            {tr("ui.recreate.checking")}
           </p>
         {:else if recreateReady}
           <p class="mt-2 max-w-3xl text-sm text-muted-foreground">
-            Provider absence and capacity release are verified for the old
-            generation. Recreate provisions a new generation through the full
-            Creation screen; it does not restart the old server.
+            {tr("ui.recreate.ready")}
           </p>
         {:else if cleanupStarted}
           <p class="mt-2 max-w-3xl text-sm text-muted-foreground">
-            Cleanup is still in progress. Recreate unlocks only after the lease,
-            canonical server, provider operation, absence evidence, and capacity
-            release are all terminal.
+            {tr("ui.recreate.pending")}
           </p>
         {/if}
         {#if error}
@@ -150,7 +147,7 @@
             disabled={loading || recreating}
           >
             <RefreshCw class="h-4 w-4" />
-            {loading ? "Refreshing…" : "Refresh"}
+            {loading ? tr("ui.monitoringServerId.refreshing") : tr("ui.homelabDashboardPage.refresh")}
           </Button>
         {/if}
         {#if cleanupStarted}
@@ -161,7 +158,7 @@
             disabled={!recreateReady || loading || recreating}
           >
             <RotateCcw class="h-4 w-4" />
-            {recreating ? "Recreating…" : "Recreate server"}
+            {recreating ? tr("ui.recreate.recreating") : tr("ui.recreate.title")}
           </Button>
         {/if}
       </div>

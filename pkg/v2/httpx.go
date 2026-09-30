@@ -75,6 +75,15 @@ func (s *Server) routeTable() []v2Route {
 	if s.auth.Logout != nil {
 		routes = append(routes, v2Route{method: http.MethodGet, path: "/api/v2/auth/logout"})
 	}
+	if s.auth.NativeStart != nil {
+		routes = append(routes, v2Route{method: http.MethodPost, path: "/api/v2/auth/native/start"})
+	}
+	if s.auth.NativeHandoff != nil {
+		routes = append(routes, v2Route{method: http.MethodGet, path: "/api/v2/auth/native/handoff"})
+	}
+	if s.auth.NativeRedeem != nil {
+		routes = append(routes, v2Route{method: http.MethodPost, path: "/api/v2/auth/native/redeem"})
+	}
 	if s.auth.Methods != nil {
 		routes = append(routes, v2Route{method: http.MethodGet, path: "/api/v1/auth/methods"})
 	}

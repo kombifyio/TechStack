@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="WaitingTitle" xml:space="preserve"><value>अपने ब्राउज़र में जारी रखें।</value></data>
+  <data name="WaitingDetail" xml:space="preserve"><value>सामान्य kombify लॉगिन पूरा करें। इसके बाद यह विंडो अपने आप आगे बढ़ेगी।</value></data>
+  <data name="FailureTitle" xml:space="preserve"><value>Cloud लॉगिन पूरा नहीं हुआ।</value></data>
+  <data name="FailureDetail" xml:space="preserve"><value>Techstack विंडो पर लौटें और ब्राउज़र लॉगिन दोबारा आज़माएँ।</value></data>
+  <data name="AccountMismatch" xml:space="preserve"><value>इस इंस्टॉलेशन में किसी दूसरे Cloud खाते का डेटा है। उसी खाते का उपयोग करें या अलग Windows प्रोफ़ाइल इस्तेमाल करें।</value></data>
+  <data name="CallbackSuccess" xml:space="preserve"><value>लॉगिन प्राप्त हो गया। Techstack विंडो पर लौटें।</value></data>
+  <data name="CallbackFailure" xml:space="preserve"><value>अमान्य लॉगिन कॉलबैक।</value></data>
+  <data name="ConnectSignInRequired" xml:space="preserve"><value>पहले Cloud उत्पाद में साइन इन करें, फिर Techstack विंडो से kombify Connect खोलें।</value></data>
+  <data name="ConnectAccountRequired" xml:space="preserve"><value>Connect को इस खाते के लिए वर्तमान Cloud उत्पाद सत्र चाहिए। Techstack में साइन इन करें और दोबारा प्रयास करें।</value></data>
+</root>

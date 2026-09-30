@@ -63,3 +63,7 @@ func managedStackKitInventoryBuilder(deps routeDeps) jobs.ManagedStackKitInvento
 	}
 	return managedStackKitInventoryAdapter{builder: builder}
 }
+
+func (adapter managedStackKitInventoryAdapter) AttestBackupRenewal(ctx context.Context, request jobs.ManagedStackKitInventoryRequest) ([]byte, error) {
+	return adapter.builder.AttestBackupRenewal(ctx, managedstackkit.RolloutInventoryRequest{TenantID: request.TenantID, StackID: request.StackID, ResolvedPlan: request.ResolvedPlan, StackKitsVersion: request.StackKitsVersion, CandidateDigest: request.CandidateDigest, ValidFor: request.ValidFor})
+}

@@ -289,6 +289,9 @@ func (s *PostgresStore) Update(ctx context.Context, tenantID string, lease vmlea
 		if claimErr := ensureDecommissionClaimUnchanged(*existing, lease); claimErr != nil {
 			return claimErr
 		}
+		if hostKeyErr := ensureSSHHostKeyUnchanged(*existing, lease); hostKeyErr != nil {
+			return hostKeyErr
+		}
 		payload, err := json.Marshal(lease)
 		if err != nil {
 			return err
@@ -316,6 +319,69 @@ func (s *PostgresStore) Update(ctx context.Context, tenantID string, lease vmlea
 	})
 	if storeErr != nil {
 		return nil, storeErr
+	}
+	return out, nil
+}
+
+func (s *PostgresStore) PinSSHHostKey(ctx context.Context, request SSHHostKeyPinRequest) (*vmlease.Lease, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("vmleases: database not configured")
+	}
+	var out *vmlease.Lease
+	err := s.withTenant(ctx, request.TenantID, func(tx *sql.Tx) error {
+		var payload []byte
+		if err := tx.QueryRowContext(ctx, `
+			SELECT lease.lease_json::text
+			FROM techstack_vm_leases AS lease
+			JOIN servers AS server
+			  ON server.tenant_id = lease.tenant_id
+			 AND server.id = lease.server_id
+			 AND server.lease_id = lease.id
+			WHERE lease.tenant_id = $1
+			  AND lease.id = $2
+			  AND lease.owner_subject_id = $3
+			  AND lease.server_id = $4
+			  AND server.owner_subject_id = $3
+			  AND server.stack_id = $5
+			  AND server.generation = $6
+			FOR UPDATE OF lease, server
+		`, request.TenantID, request.LeaseID, request.OwnerSubjectID, request.ServerID,
+			request.StackID, request.ServerGeneration).Scan(&payload); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrSSHHostKeyBinding
+			}
+			return err
+		}
+		lease, err := decodeLease(payload)
+		if err != nil {
+			return err
+		}
+		digest, err := ResourceGenerationDigest(request.TenantID, *lease)
+		if err != nil || digest != request.ExpectedResourceGenerationDigest {
+			return ErrResourceGenerationSuperseded
+		}
+		if strings.TrimSpace(lease.Metadata[MetadataKeySSHHostKey]) != "" {
+			out = lease
+			return nil
+		}
+		if err := tx.QueryRowContext(ctx, `
+			UPDATE techstack_vm_leases
+			SET lease_json = jsonb_set(
+				lease_json,
+				'{metadata}',
+				COALESCE(lease_json->'metadata', '{}'::jsonb) || jsonb_build_object($3::text, $4::text),
+				true
+			), updated_at = now()
+			WHERE tenant_id = $1 AND id = $2
+			RETURNING lease_json::text
+		`, request.TenantID, request.LeaseID, MetadataKeySSHHostKey, request.HostKey).Scan(&payload); err != nil {
+			return err
+		}
+		out, err = decodeLease(payload)
+		return err
+	})
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }

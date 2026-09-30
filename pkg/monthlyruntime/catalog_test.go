@@ -137,9 +137,9 @@ func TestOfferingForMinimumResourcesChoosesSmallestMatchingOffering(t *testing.T
 		t.Fatalf("offering = %q, want standard", standard.ID)
 	}
 
-	// Standard is now the Cloud Kit floor (4 vCPU / 8 GiB). Premium matches
-	// that CPU/RAM and only adds disk, so the smallest matching offering is
-	// still standard.
+	// The offering sizes are the custom (Centron) sizes: Premium matches
+	// Standard's CPU/RAM and only adds disk, so the smallest matching offering
+	// is still standard. IONOS sizes come from PackageForProvider.
 	sameFloor, ok := OfferingForMinimumResources(4, 8192)
 	if !ok {
 		t.Fatal("expected an offering for the Cloud Kit floor")

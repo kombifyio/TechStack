@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"fmt"
 	"runtime/debug"
 	"time"
@@ -36,7 +37,9 @@ func SentryMiddleware(e *httpx.Event) (err error) {
 	}()
 
 	err = e.Next()
-	if err != nil && httpx.IsServerError(err) {
+	if err != nil && !errors.Is(err, httpx.ErrResponseWritten) && httpx.IsServerError(err) {
+		// Response helpers already report rendered 5xx failures. The sentinel
+		// only stops caller execution after a response; it is not a new failure.
 		// Only report 5xx/unknown failures. Returned client errors (4xx:
 		// validation, auth, not-found) are expected control flow, not bugs;
 		// capturing them floods Sentry with noise (e.g. 404 router.ApiError,

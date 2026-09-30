@@ -23,37 +23,80 @@ import (
 	"github.com/pocketbase/pocketbase/tests"
 )
 
-func TestGetSSOSecret_UsesLegacyKombifySecretAlias(t *testing.T) {
-	t.Setenv("SSO_JWT_SECRET", "")
-	t.Setenv("KOMBIFY_SSO_SECRET", "legacy-sso-secret")
-
-	secret, err := getSSOSecret()
+// portalTestToken signs a Cloud-shaped Techstack launch token; overrides
+// replace or (with a nil value) remove claims.
+func portalTestToken(t *testing.T, secret string, overrides jwt.MapClaims) string {
+	t.Helper()
+	now := time.Now()
+	claims := jwt.MapClaims{
+		"iss":       "kombify-cloud",
+		"aud":       "kombify-tool:kombifystack",
+		"jti":       "jti-" + t.Name() + "-" + now.Format(time.RFC3339Nano),
+		"sub":       "auth0|portal-user",
+		"tenant_id": "usr:auth0|portal-user",
+		"email":     "portal-user@example.test",
+		"name":      "Portal User",
+		"tool":      "kombifystack",
+		"iat":       now.Unix(),
+		"exp":       now.Add(5 * time.Minute).Unix(),
+	}
+	for key, value := range overrides {
+		if value == nil {
+			delete(claims, key)
+			continue
+		}
+		claims[key] = value
+	}
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(secret))
 	if err != nil {
-		t.Fatalf("getSSOSecret() unexpected error: %v", err)
+		t.Fatalf("sign portal token: %v", err)
 	}
-
-	if secret != "legacy-sso-secret" {
-		t.Fatalf("getSSOSecret() = %q, want %q", secret, "legacy-sso-secret")
-	}
+	return token
 }
 
-func TestGetSSOSecret_PrefersPrimarySecretWhenBothAreSet(t *testing.T) {
-	t.Setenv("SSO_JWT_SECRET", "primary-sso-secret")
-	t.Setenv("KOMBIFY_SSO_SECRET", "legacy-sso-secret")
-
-	secret, err := getSSOSecret()
+func runPortalVerify(t *testing.T, handler func(*httpx.Event) error, token string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
+	t.Helper()
+	body, err := json.Marshal(PortalVerifyRequest{Token: token})
 	if err != nil {
-		t.Fatalf("getSSOSecret() unexpected error: %v", err)
+		t.Fatalf("marshal request: %v", err)
 	}
-
-	if secret != "primary-sso-secret" {
-		t.Fatalf("getSSOSecret() = %q, want %q", secret, "primary-sso-secret")
+	recorder := httptest.NewRecorder()
+	event := &httpx.Event{
+		Request:  httptest.NewRequest(http.MethodPost, "/api/v1/auth/portal-verify", bytes.NewReader(body)),
+		Response: recorder,
 	}
+	event.Request.Header.Set("Content-Type", "application/json")
+	for _, cookie := range cookies {
+		event.Request.AddCookie(cookie)
+	}
+	if err := handler(event); err != nil {
+		t.Fatalf("handlePortalVerify() unexpected error: %v", err)
+	}
+	return recorder
 }
 
-func TestHandlePortalVerifyFailsClosedWithoutCanonicalIdentityStore(t *testing.T) {
-	const secret = "portal-verify-test-secret"
-	t.Setenv("SSO_JWT_SECRET", secret)
+func portalSessionCookie(recorder *httptest.ResponseRecorder) *http.Cookie {
+	for _, cookie := range recorder.Result().Cookies() {
+		if cookie.Name == "techstack_session" && cookie.Value != "" {
+			return cookie
+		}
+	}
+	return nil
+}
+
+func newPortalVerifyTestApp(t *testing.T) core.App {
+	t.Helper()
+	app, err := tests.NewTestApp(pocketBaseTestDataDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(app.Cleanup)
+	ensureSSOTestUserLinksCollection(t, app)
+	return app
+}
+
+func newPortalTestSession(t *testing.T) PortalSession {
+	t.Helper()
 	manager, err := session.NewManager(session.Config{
 		Audience: "portal-verify-test",
 		Secret:   []byte(strings.Repeat("s", 32)),
@@ -61,46 +104,21 @@ func TestHandlePortalVerifyFailsClosedWithoutCanonicalIdentityStore(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
+	return PortalSession{Manager: manager, CookieName: "techstack_session", AuthStore: &portalVerifyAuthStore{}}
+}
 
+func TestHandlePortalVerifyFailsClosedWithoutCanonicalIdentityStore(t *testing.T) {
+	const secret = "portal-verify-test-secret"
+	t.Setenv("TECHSTACK_SSO_JWT_SECRET", secret)
 	app, err := tests.NewTestApp()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer app.Cleanup()
+	ps := newPortalTestSession(t)
+	ps.AuthStore = nil
 
-	claims := jwt.MapClaims{
-		"sub":       "auth0|portal-user",
-		"tenant_id": "usr:auth0|portal-user",
-		"email":     "portal-user@example.test",
-		"name":      "Portal User",
-		"tool":      "kombifystack",
-		"iat":       time.Now().Unix(),
-		"exp":       time.Now().Add(time.Hour).Unix(),
-	}
-	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(secret))
-	if err != nil {
-		t.Fatalf("sign portal token: %v", err)
-	}
-	body, err := json.Marshal(PortalVerifyRequest{Token: token})
-	if err != nil {
-		t.Fatalf("marshal request: %v", err)
-	}
-	recorder := httptest.NewRecorder()
-	event := &httpx.Event{
-		Request: httptest.NewRequest(
-			http.MethodPost,
-			"/api/v1/auth/portal-verify",
-			bytes.NewReader(body),
-		),
-		Response: recorder,
-	}
-	event.Request.Header.Set("Content-Type", "application/json")
-
-	if err := handlePortalVerify(app, PortalSession{
-		Manager: manager, CookieName: "techstack_session",
-	})(event); err != nil {
-		t.Fatalf("handlePortalVerify() unexpected error: %v", err)
-	}
+	recorder := runPortalVerify(t, handlePortalVerify(app, ps), portalTestToken(t, secret, nil))
 	if got, want := recorder.Code, http.StatusInternalServerError; got != want {
 		t.Fatalf("status = %d, want %d (body=%s)", got, want, recorder.Body.String())
 	}
@@ -114,49 +132,16 @@ func TestHandlePortalVerifyFailsClosedWithoutCanonicalIdentityStore(t *testing.T
 
 func TestHandlePortalVerifyRejectsMissingTenantBeforeSessionProjection(t *testing.T) {
 	const secret = "portal-verify-missing-tenant-secret"
-	t.Setenv("SSO_JWT_SECRET", secret)
-	manager, err := session.NewManager(session.Config{
-		Audience: "portal-verify-missing-tenant",
-		Secret:   []byte(strings.Repeat("m", 32)),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	t.Setenv("TECHSTACK_SSO_JWT_SECRET", secret)
 	app, err := tests.NewTestApp()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer app.Cleanup()
+	ps := newPortalTestSession(t)
+	store := ps.AuthStore.(*portalVerifyAuthStore)
 
-	claims := jwt.MapClaims{
-		"sub":   "auth0|portal-user",
-		"email": "portal-user@example.test",
-		"name":  "Portal User",
-		"tool":  "kombifystack",
-		"iat":   time.Now().Unix(),
-		"exp":   time.Now().Add(time.Hour).Unix(),
-	}
-	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(secret))
-	if err != nil {
-		t.Fatalf("sign portal token: %v", err)
-	}
-	body, err := json.Marshal(PortalVerifyRequest{Token: token})
-	if err != nil {
-		t.Fatalf("marshal request: %v", err)
-	}
-	recorder := httptest.NewRecorder()
-	event := &httpx.Event{
-		Request:  httptest.NewRequest(http.MethodPost, "/api/v1/auth/portal-verify", bytes.NewReader(body)),
-		Response: recorder,
-	}
-	event.Request.Header.Set("Content-Type", "application/json")
-	store := &portalVerifyAuthStore{}
-
-	if err := handlePortalVerify(app, PortalSession{
-		Manager: manager, CookieName: "techstack_session", AuthStore: store,
-	})(event); err != nil {
-		t.Fatalf("handlePortalVerify() unexpected error: %v", err)
-	}
+	recorder := runPortalVerify(t, handlePortalVerify(app, ps), portalTestToken(t, secret, jwt.MapClaims{"tenant_id": nil}))
 	if got, want := recorder.Code, http.StatusUnauthorized; got != want {
 		t.Fatalf("status = %d, want %d (body=%s)", got, want, recorder.Body.String())
 	}
@@ -173,72 +158,24 @@ func TestHandlePortalVerifyUsesPayloadTenantForSessionAndMembership(t *testing.T
 		secret          = "portal-verify-tenant-test-secret"
 		canonicalTenant = "org_portal_customer"
 	)
-	t.Setenv("SSO_JWT_SECRET", secret)
-	manager, err := session.NewManager(session.Config{
-		Audience: "portal-verify-tenant-test",
-		Secret:   []byte(strings.Repeat("t", 32)),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	t.Setenv("TECHSTACK_SSO_JWT_SECRET", secret)
+	app := newPortalVerifyTestApp(t)
+	ps := newPortalTestSession(t)
+	store := ps.AuthStore.(*portalVerifyAuthStore)
 
-	app, err := tests.NewTestApp(pocketBaseTestDataDir(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer app.Cleanup()
-	ensureSSOTestUserLinksCollection(t, app)
-
-	claims := jwt.MapClaims{
+	recorder := runPortalVerify(t, handlePortalVerify(app, ps), portalTestToken(t, secret, jwt.MapClaims{
 		"sub":       "auth0|portal-tenant-user",
 		"email":     "portal-tenant-user@example.test",
-		"name":      "Portal Tenant User",
-		"tool":      "kombifystack",
 		"tenant_id": canonicalTenant,
-		"iat":       time.Now().Unix(),
-		"exp":       time.Now().Add(time.Hour).Unix(),
-	}
-	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(secret))
-	if err != nil {
-		t.Fatalf("sign portal token: %v", err)
-	}
-	body, err := json.Marshal(PortalVerifyRequest{Token: token})
-	if err != nil {
-		t.Fatalf("marshal request: %v", err)
-	}
-	recorder := httptest.NewRecorder()
-	event := &httpx.Event{
-		Request: httptest.NewRequest(
-			http.MethodPost,
-			"/api/v1/auth/portal-verify",
-			bytes.NewReader(body),
-		),
-		Response: recorder,
-	}
-	event.Request.Header.Set("Content-Type", "application/json")
-	store := &portalVerifyAuthStore{}
-
-	if err := handlePortalVerify(app, PortalSession{
-		Manager: manager, CookieName: "techstack_session",
-		AuthStore: store,
-	})(event); err != nil {
-		t.Fatalf("handlePortalVerify() unexpected error: %v", err)
-	}
+	}))
 	if got, want := recorder.Code, http.StatusOK; got != want {
 		t.Fatalf("status = %d, want %d (body=%s)", got, want, recorder.Body.String())
 	}
-
-	var sessionCookie *http.Cookie
-	for _, cookie := range recorder.Result().Cookies() {
-		if cookie.Name == "techstack_session" {
-			sessionCookie = cookie
-			break
-		}
-	}
+	sessionCookie := portalSessionCookie(recorder)
 	if sessionCookie == nil {
 		t.Fatal("portal verify did not issue the browser session cookie")
 	}
-	issuedClaims, err := manager.Verify(sessionCookie.Value)
+	issuedClaims, err := ps.Manager.Verify(sessionCookie.Value)
 	if err != nil {
 		t.Fatalf("verify issued browser session: %v", err)
 	}
@@ -247,6 +184,61 @@ func TestHandlePortalVerifyUsesPayloadTenantForSessionAndMembership(t *testing.T
 	}
 	if store.membership.TenantID != canonicalTenant {
 		t.Fatalf("control-plane membership tenant = %q, want payload tenant %q", store.membership.TenantID, canonicalTenant)
+	}
+}
+
+// Only Cloud's Techstack-only secret (or its rotation slot) signs a portal
+// session; the SSO_JWT_SECRET that Simulate and kombify.me also hold does not.
+func TestHandlePortalVerifyAcceptsOnlyTheTechstackSecret(t *testing.T) {
+	const (
+		techstackSecret = "techstack-portal-secret-0123456789abcdef"
+		rotationSecret  = "techstack-portal-secret-next-0123456789ab"
+		sharedSecret    = "shared-sso-secret-held-by-other-services"
+	)
+	t.Setenv("TECHSTACK_SSO_JWT_SECRET", techstackSecret)
+	t.Setenv("TECHSTACK_SSO_JWT_SECRET_NEXT", rotationSecret)
+	t.Setenv("SSO_JWT_SECRET", sharedSecret)
+	t.Setenv("KOMBIFY_SSO_SECRET", sharedSecret)
+	app := newPortalVerifyTestApp(t)
+	handler := handlePortalVerify(app, newPortalTestSession(t))
+
+	for _, tc := range []struct {
+		secret string
+		want   int
+	}{
+		{sharedSecret, http.StatusUnauthorized},
+		{rotationSecret, http.StatusOK},
+		{techstackSecret, http.StatusOK},
+	} {
+		recorder := runPortalVerify(t, handler, portalTestToken(t, tc.secret, jwt.MapClaims{"jti": "jti-" + tc.secret}))
+		if recorder.Code != tc.want || (tc.want != http.StatusOK) != (portalSessionCookie(recorder) == nil) {
+			t.Fatalf("token signed with %q: status %d, want %d (body=%s)", tc.secret, recorder.Code, tc.want, recorder.Body.String())
+		}
+	}
+}
+
+// A launch token is exchanged once. A replay from another client is refused;
+// the browser that already holds this subject's session may present it again
+// (Cloud's embed re-sends its cached token after an in-frame reload).
+func TestHandlePortalVerifyTokenIsSingleUse(t *testing.T) {
+	const secret = "portal-verify-single-use-secret"
+	t.Setenv("TECHSTACK_SSO_JWT_SECRET", secret)
+	app := newPortalVerifyTestApp(t)
+	handler := handlePortalVerify(app, newPortalTestSession(t))
+	token := portalTestToken(t, secret, nil)
+
+	first := runPortalVerify(t, handler, token)
+	session := portalSessionCookie(first)
+	if first.Code != http.StatusOK || session == nil {
+		t.Fatalf("first exchange: status %d, session %v (body=%s)", first.Code, session != nil, first.Body.String())
+	}
+	replay := runPortalVerify(t, handler, token)
+	if replay.Code != http.StatusUnauthorized || portalSessionCookie(replay) != nil {
+		t.Fatalf("replay from another client: status %d, want 401 without a session", replay.Code)
+	}
+	again := runPortalVerify(t, handler, token, session)
+	if again.Code != http.StatusOK {
+		t.Fatalf("re-presentation by the session holder: status %d, want 200 (body=%s)", again.Code, again.Body.String())
 	}
 }
 

@@ -1,13 +1,19 @@
 package routes
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"testing"
 	"time"
 
 	"github.com/kombifyio/techstack/pkg/controlplane"
+	"github.com/kombifyio/techstack/pkg/httpx"
+	"github.com/kombifyio/techstack/pkg/identity"
+	"github.com/kombifyio/techstack/pkg/middleware"
 	"github.com/kombifyio/techstack/pkg/serverregistry"
 	"github.com/kombifyio/techstack/pkg/serviceregistry"
 )
@@ -56,7 +62,7 @@ func postServiceAction(
 		http.MethodPost, "/api/v1/registry/services/service-1/actions", "owner-1", "tenant-1", body)
 	event.Request.SetPathValue("serviceId", "service-1")
 	event.Request.Header.Set("Idempotency-Key", idempotencyKey)
-	if err := h.action(event); err != nil {
+	if err := h.action(event); err != nil && !errors.Is(err, httpx.ErrResponseWritten) {
 		t.Fatalf("action %v: %v", body["action"], err)
 	}
 	return recorder.Code
@@ -210,5 +216,129 @@ func TestServiceReadModelNarrowsAllowedActionsWhileLocked(t *testing.T) {
 	// The measured dimensions stay untouched: a locked service keeps running.
 	if after.ObservedState != before.ObservedState || after.Health.State != before.Health.State {
 		t.Fatalf("lock collapsed a measured dimension: %#v -> %#v", before, after)
+	}
+}
+
+// postServiceActionAs sends one service action in ctx and returns the status
+// and the refusal reason.
+func postServiceActionAs(t *testing.T, h *serviceRuntimeHandlers, ctx context.Context, body map[string]any, key string) (int, string) {
+	t.Helper()
+	event, recorder := registryRouteStoreTestEvent(
+		http.MethodPost, "/api/v1/registry/services/service-1/actions", "owner-1", "tenant-1", body)
+	event.Request = event.Request.WithContext(ctx)
+	event.Request.SetPathValue("serviceId", "service-1")
+	event.Request.Header.Set("Idempotency-Key", key)
+	if err := h.action(event); err != nil && !errors.Is(err, httpx.ErrResponseWritten) {
+		t.Fatalf("action %v: %v", body["action"], err)
+	}
+	var payload struct {
+		ReasonCode string `json:"reason_code"`
+	}
+	_ = json.Unmarshal(recorder.Body.Bytes(), &payload)
+	return recorder.Code, payload.ReasonCode
+}
+
+// Service actions are gated by ownership, not by an inventory entitlement no
+// customer tier issues: a hosted owner session whose Edge-signed grants hold
+// no inventory key still restarts and freezes its own service.
+func TestServiceActionNeedsNoInventoryEntitlement(t *testing.T) {
+	store, now := lockableServiceFixture(t)
+	orch := &recordingServiceActionOrchestrator{store: store}
+	h := &serviceRuntimeHandlers{store: store, stacks: store, servers: store, jobs: store, now: func() time.Time { return now }, orch: orch}
+	ctx := middleware.WithSignedEntitlements(
+		identity.NewContext(context.Background(), &identity.Identity{UserID: "owner-1", OrgID: "tenant-1"}), "techstack.managed.runtime")
+	restart := map[string]any{"action": "restart", "expected_inventory_revision": 7, "owner_approved": true}
+	if status, reason := postServiceActionAs(t, h, ctx, restart, "restart-1"); status != http.StatusAccepted || len(orch.requests) != 1 {
+		t.Fatalf("restart status=%d reason=%q dispatches=%d, want 202 and one dispatch", status, reason, len(orch.requests))
+	}
+	if status, reason := postServiceActionAs(t, h, ctx, map[string]any{"action": "freeze", "owner_approved": true}, "freeze-1"); status != http.StatusOK {
+		t.Fatalf("freeze status=%d reason=%q, want 200", status, reason)
+	}
+}
+
+// A queued reboot holds its node: a service action on that node is refused
+// with maintenance_active and nothing is dispatched.
+func TestServiceActionRefusesWhileRebootQueued(t *testing.T) {
+	store, now := lockableServiceFixture(t)
+	if _, err := store.CreateServerMaintenanceJob(t.Context(), controlplane.ServerMaintenanceJob{
+		ID: "srvmaint-1", TenantID: "tenant-1", ServerID: "server-1", AgentID: "agent-1", StackID: "stack-1",
+		OwnerSubjectID: "owner-1", Action: controlplane.ServerMaintenanceActionReboot, RequestDigest: "digest",
+		State: controlplane.ServerMaintenanceStateQueued, InventoryRevision: 7,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	orch := &recordingServiceActionOrchestrator{store: store}
+	h := &serviceRuntimeHandlers{store: store, stacks: store, servers: store, jobs: store, now: func() time.Time { return now }, orch: orch}
+	ctx := identity.NewContext(context.Background(), &identity.Identity{UserID: "owner-1", OrgID: "tenant-1"})
+	restart := map[string]any{"action": "restart", "expected_inventory_revision": 7, "owner_approved": true}
+	if status, reason := postServiceActionAs(t, h, ctx, restart, "restart-1"); status != http.StatusConflict || reason != maintenanceReasonActive || len(orch.requests) != 0 {
+		t.Fatalf("status=%d reason=%q dispatches=%d, want 409 %s and none", status, reason, len(orch.requests), maintenanceReasonActive)
+	}
+}
+
+// barrierMaintenanceStore holds each maintenance read until every expected
+// service action is inside the maintenance check at the same time.
+type barrierMaintenanceStore struct {
+	*controlplane.MemoryStore
+	arrived chan struct{}
+	release chan struct{}
+}
+
+func (s *barrierMaintenanceStore) ActiveServerMaintenanceJob(ctx context.Context, tenantID string, scope controlplane.ServerMaintenanceScope) (*controlplane.ServerMaintenanceJob, error) {
+	s.arrived <- struct{}{}
+	select {
+	case <-s.release:
+	case <-time.After(5 * time.Second):
+	}
+	return s.MemoryStore.ActiveServerMaintenanceJob(ctx, tenantID, scope)
+}
+
+// The maintenance check of a service action is read-only: concurrent actions
+// on different services of one node all pass it at once instead of queuing
+// behind a node lock, and every one is accepted.
+func TestConcurrentServiceActionsOnOneNodeNeverBlockEachOther(t *testing.T) {
+	const actions = 3
+	store, now := lockableServiceFixture(t)
+	template, err := store.GetServiceRuntime(t.Context(), "tenant-1", "service-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 2; i <= actions; i++ {
+		sibling := *template
+		sibling.ID, sibling.ServiceKey = fmt.Sprintf("service-%d", i), fmt.Sprintf("auth-%d", i)
+		if _, err := store.UpsertServiceRuntime(t.Context(), sibling); err != nil {
+			t.Fatal(err)
+		}
+	}
+	servers := &barrierMaintenanceStore{MemoryStore: store, arrived: make(chan struct{}, actions), release: make(chan struct{})}
+	h := &serviceRuntimeHandlers{
+		store: store, stacks: store, servers: servers, jobs: store,
+		now: func() time.Time { return now }, orch: &recordingServiceActionOrchestrator{store: store},
+	}
+	statuses := make(chan int, actions)
+	for i := 1; i <= actions; i++ {
+		go func(serviceID string) {
+			event, recorder := registryRouteStoreTestEvent(http.MethodPost, "/api/v1/registry/services/"+serviceID+"/actions", "owner-1", "tenant-1",
+				map[string]any{"action": "restart", "expected_inventory_revision": 7, "owner_approved": true})
+			event.Request.SetPathValue("serviceId", serviceID)
+			event.Request.Header.Set("Idempotency-Key", "restart-"+serviceID)
+			_ = h.action(event)
+			statuses <- recorder.Code
+		}(fmt.Sprintf("service-%d", i))
+	}
+	deadline := time.After(2 * time.Second)
+	for i := 0; i < actions; i++ {
+		select {
+		case <-servers.arrived:
+		case <-deadline:
+			close(servers.release)
+			t.Fatalf("only %d of %d concurrent service actions reached the maintenance check together", i, actions)
+		}
+	}
+	close(servers.release)
+	for i := 0; i < actions; i++ {
+		if status := <-statuses; status != http.StatusAccepted {
+			t.Fatalf("concurrent restart status = %d, want 202", status)
+		}
 	}
 }
