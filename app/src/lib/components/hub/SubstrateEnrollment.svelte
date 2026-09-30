@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "#lib/i18n.svelte.js";
   import { API_BASE, fetchApi } from "#lib/api/client.js";
   import { parseApiError } from "#lib/api/errors.js";
 
@@ -25,7 +26,7 @@
         {
           method: "POST",
           body: JSON.stringify({
-            name: "Proxmox hypervisor connection",
+            name: tr("ui.substrateEnrollment.proxmoxHypervisorConnection"),
             server_provisioning_mode: "install-command",
             environment_class: "local",
             node_role: "substrate",
@@ -37,14 +38,14 @@
         !result.data?.token ||
         !/^kpt1\.[A-Za-z0-9_.-]+$/.test(result.data.token)
       ) {
-        throw new Error("A connection command could not be prepared.");
+        throw new Error(tr("ui.substrateEnrollment.aConnectionCommandCouldNot"));
       }
       // Only URL origins and the closed token alphabet enter the shell command.
       command = `curl -fsSL '${shellOrigin}/install.sh' | KOMBI_SERVER='${shellOrigin}' KOMBI_TOKEN='${result.data.token}' TECHSTACK_AS_SERVICE=1 bash`;
       expiresAt = result.data.expires_at;
     } catch (cause) {
       error =
-        parseApiError(cause).message || "Could not prepare the connection.";
+        parseApiError(cause).message || tr("ui.substrateEnrollment.couldNotPrepareTheConnection");
     } finally {
       pending = false;
     }
@@ -57,15 +58,12 @@
     : "space-y-4 rounded-lg border border-border bg-card p-6"}
   data-testid="substrate-enrollment"
 >
-  <h2 class="text-lg font-semibold">Connect a Proxmox hypervisor</h2>
+  <h2 class="text-lg font-semibold">{tr("ui.substrate.title")}</h2>
   <p>
-    Run the connection command in the Proxmox host shell as an administrator.
-    Its Guard reports health to your Homelab through an outbound connection.
+    {tr("ui.substrate.runCommand")}
   </p>
   <p class="text-sm text-muted-foreground">
-    The hypervisor hosts your Nodes. StackKits run inside Ubuntu guests. Guest
-    management is enabled after its local Proxmox client is configured and you
-    authorize the connection. Existing guests stay outside deletion custody.
+    {tr("ui.substrateEnrollment.theHypervisorHostsYourNodes")}
   </p>
   <button
     class="rounded-lg bg-primary px-4 py-2 text-primary-foreground disabled:opacity-50"
@@ -73,10 +71,10 @@
     onclick={prepare}
   >
     {pending
-      ? "Preparing..."
+      ? tr("ui.substrateEnrollment.preparing")
       : command
-        ? "Generate a new command"
-        : "Generate connection command"}
+        ? tr("ui.substrateEnrollment.generateANewCommand")
+        : tr("ui.substrateEnrollment.generateConnectionCommand")}
   </button>
   {#if error}<p role="alert" class="text-destructive">{error}</p>{/if}
   {#if command}
@@ -84,9 +82,8 @@
       class="overflow-x-auto rounded bg-muted p-4 text-sm"
       data-testid="substrate-registration-command">{command}</pre>
     <p class="text-sm text-muted-foreground">
-      Expires: {expiresAt}. The command is shown only here and is not retained
-      in job reports.
+      {tr("ui.substrate.expires", { time: expiresAt })}
     </p>
-    <a class="underline" href="/dashboard">View connected Nodes</a>
+    <a class="underline" href="/dashboard">{tr("ui.substrate.viewNodes")}</a>
   {/if}
 </section>

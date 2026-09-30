@@ -61,8 +61,8 @@ func TestDecodeWizardRemoteSSHTestRequestDefaultsPort(t *testing.T) {
 func TestWizardRemoteSSHTestRequiresPasswordForPasswordAuth(t *testing.T) {
 	handler := wizardRouteHandlers{
 		cfg: WizardRouteConfig{
-			Features:          fakeWizardFeatureChecker{enabled: true},
-			RemoteSSHTester:   &fakeWizardRemoteSSHTester{},
+			Features:        fakeWizardFeatureChecker{enabled: true},
+			RemoteSSHTester: &fakeWizardRemoteSSHTester{},
 		},
 	}
 	event, recorder := wizardRemoteSSHTestEvent(`{"host":"server.example.test","user":"root","auth_method":"password"}`)
@@ -129,9 +129,9 @@ func TestWizardRemoteSSHTestResolvesWalletSSHKeyByLabel(t *testing.T) {
 	}
 	handler := wizardRouteHandlers{
 		cfg: WizardRouteConfig{
-			Features:          fakeWizardFeatureChecker{enabled: true},
-			RemoteSSHTester:   tester,
-			Wallet:            store,
+			Features:        fakeWizardFeatureChecker{enabled: true},
+			RemoteSSHTester: tester,
+			Wallet:          store,
 		},
 	}
 	event, recorder := wizardRemoteSSHTestEvent(`{"host":"server.example.test","user":"ubuntu","auth_method":"ssh-key","ssh_key_label":"main-key"}`)

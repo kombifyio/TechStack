@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr, trn } from "#lib/i18n.svelte.js";
   import { onMount } from "svelte";
   import { page } from "$app/state";
   import { goto } from "$app/navigation";
@@ -31,7 +32,7 @@
     try {
       application = await getServiceApplication(applicationId || "");
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : "Application details could not be loaded.";
+      error = cause instanceof Error ? cause.message : tr("ui.servicesApplicationId.applicationDetailsCouldNotBe");
     } finally {
       loading = false;
     }
@@ -58,10 +59,10 @@
 </script>
 
 <div class="p-4 md:p-6" data-testid="service-application-detail">
-  <PageHeader title={application?.display_name || "Application details"}>
+  <PageHeader title={application?.display_name || tr("ui.servicesApplicationId.applicationDetails")}>
     {#snippet actions()}
       <Button variant="secondary" onclick={() => goto("/services")}>
-        <ArrowLeft class="h-4 w-4" /> Back to applications
+        <ArrowLeft class="h-4 w-4" /> {tr("ui.servicesApplicationId.backToApplications")}
       </Button>
     {/snippet}
   </PageHeader>
@@ -77,9 +78,11 @@
       <div class="space-y-6">
         <ServiceCard
           name={application.display_name}
-          description={`${application.components.length} component${application.components.length === 1 ? "" : "s"} on ${application.server_id}`}
+          description={trn("ui.services.componentsOn", application.components.length, {
+            server: application.server_id,
+          })}
           address={application.access.address}
-          addressUnavailableReason={application.access.address ? undefined : (application.access.reason || "No reachable address reported")}
+          addressUnavailableReason={application.access.address ? undefined : (application.access.reason || tr("ui.servicesApplicationId.noReachableAddressReported"))}
           placement="unknown"
           status={serviceCardStatus({ status: application.status })}
           statusLabel={application.status}
@@ -89,7 +92,7 @@
         />
 
         <section aria-labelledby="components-title">
-          <h2 id="components-title" class="mb-3 text-lg font-semibold">Components</h2>
+          <h2 id="components-title" class="mb-3 text-lg font-semibold">{tr("ui.services.components")}</h2>
           <div class="space-y-3">
             {#each application.components as component (component.id)}
               <article class="rounded-lg border border-border bg-card/60 p-4">
@@ -105,12 +108,12 @@
                   </span>
                 </div>
                 <dl class="mt-4 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
-                  <div><dt class="text-muted-foreground">Role</dt><dd>{component.role || "unclassified"}</dd></div>
-                  <div><dt class="text-muted-foreground">Lifecycle</dt><dd>{component.lifecycle || "unknown"}</dd></div>
-                  <div><dt class="text-muted-foreground">Impact</dt><dd>{component.operational_impact || "unknown"}</dd></div>
-                  <div><dt class="text-muted-foreground">Observed</dt><dd>{component.health.observed_at || "not available"}</dd></div>
-                  <div><dt class="text-muted-foreground">Source</dt><dd>{component.source}</dd></div>
-                  <div><dt class="text-muted-foreground">Management</dt><dd>{component.management_state}</dd></div>
+                  <div><dt class="text-muted-foreground">{tr("ui.servicesApplicationId.role")}</dt><dd>{component.role || "unclassified"}</dd></div>
+                  <div><dt class="text-muted-foreground">{tr("ui.servicesApplicationId.lifecycle")}</dt><dd>{component.lifecycle || "unknown"}</dd></div>
+                  <div><dt class="text-muted-foreground">{tr("ui.servicesApplicationId.impact")}</dt><dd>{component.operational_impact || "unknown"}</dd></div>
+                  <div><dt class="text-muted-foreground">{tr("ui.services.observed")}</dt><dd>{component.health.observed_at || "not available"}</dd></div>
+                  <div><dt class="text-muted-foreground">{tr("ui.servicesApplicationId.source")}</dt><dd>{component.source}</dd></div>
+                  <div><dt class="text-muted-foreground">{tr("ui.servicesApplicationId.management")}</dt><dd>{component.management_state}</dd></div>
                 </dl>
                 {#if component.management_state === "managed" && component.allowed_actions.length > 0}
                   <div class="mt-4 flex flex-wrap gap-2">
@@ -134,17 +137,17 @@
       </div>
 
       <aside class="h-fit rounded-lg border border-border bg-card/60 p-4">
-        <div class="flex items-center gap-2"><Server class="h-4 w-4 text-primary" /><h2 class="font-semibold">Runtime assignment</h2></div>
+        <div class="flex items-center gap-2"><Server class="h-4 w-4 text-primary" /><h2 class="font-semibold">{tr("ui.servicesApplicationId.runtimeAssignment")}</h2></div>
         <dl class="mt-4 space-y-3 text-sm">
-          <div><dt class="text-muted-foreground">Server</dt><dd class="break-all font-mono text-xs">{application.server_id}</dd></div>
-          <div><dt class="text-muted-foreground">Kit deployment</dt><dd class="break-all font-mono text-xs">{application.kit_deployment_id}</dd></div>
-          <div><dt class="text-muted-foreground">Application key</dt><dd class="font-mono text-xs">{application.application_key}</dd></div>
-          <div><dt class="text-muted-foreground">Freshness</dt><dd>{application.observed_at || "not observed"}</dd></div>
-          <div><dt class="text-muted-foreground">Address class</dt><dd>{application.access.kind}</dd></div>
+          <div><dt class="text-muted-foreground">{tr("ui.servicesApplicationId.server")}</dt><dd class="break-all font-mono text-xs">{application.server_id}</dd></div>
+          <div><dt class="text-muted-foreground">{tr("ui.servicesApplicationId.kitDeployment")}</dt><dd class="break-all font-mono text-xs">{application.kit_deployment_id}</dd></div>
+          <div><dt class="text-muted-foreground">{tr("ui.servicesApplicationId.applicationKey")}</dt><dd class="font-mono text-xs">{application.application_key}</dd></div>
+          <div><dt class="text-muted-foreground">{tr("ui.servicesApplicationId.freshness")}</dt><dd>{application.observed_at || "not observed"}</dd></div>
+          <div><dt class="text-muted-foreground">{tr("ui.servicesApplicationId.addressClass")}</dt><dd>{application.access.kind}</dd></div>
         </dl>
         {#if application.access.open_url}
           <Button class="mt-4 w-full" onclick={() => openServiceUrl({ url: application?.access.open_url })}>
-            <ExternalLink class="h-4 w-4" /> Open service
+            <ExternalLink class="h-4 w-4" /> {tr("ui.servicesApplicationId.openService")}
           </Button>
         {/if}
       </aside>

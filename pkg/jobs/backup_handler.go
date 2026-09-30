@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	agentpb "github.com/kombifyio/techstack/pkg/api/agentpb"
 )
@@ -34,8 +35,13 @@ type BackupAdmissionRequest struct {
 // bare error, because the customer has to be told which tier they are on and
 // what, if anything, they can do about it.
 type BackupAdmissionDecision struct {
-	Denied bool
-	// QuotaBytes is the granted storage budget for the resolved tier.
+	Denied         bool
+	IncludeContent bool
+	MeasuredAt     time.Time
+	// QuotaBytes is the internal sizing ceiling
+	// (monthlyruntime.BackupSizingCeilingBytes) that the signed restore-drill
+	// renewal receipt carries. It is never a customer limit: backups are
+	// retention-limited, not gigabyte-limited.
 	QuotaBytes int64
 	// UsedBytes is the measured object-store total. It is the control-plane
 	// measurement, never the node-reported repository size.
@@ -44,9 +50,9 @@ type BackupAdmissionDecision struct {
 	Details map[string]any
 }
 
-// BackupAdmission resolves entitlement and storage quota for one stack.
-// Implementations must be read-only and must fail closed: a missing checker, a
-// check error, an unmeasured stack or an exceeded budget all deny.
+// BackupAdmission resolves the backup entitlement for one stack.
+// Implementations must be read-only and must fail closed: a missing checker or
+// a check error denies. Stored size never denies (retention-limited backups).
 //
 // This runs BEFORE the job is enqueued, never inside the handler. Enqueuing
 // first and checking later would already have committed the platform to the
@@ -88,9 +94,9 @@ type BackupPayload struct {
 	StackName      string `json:"stack_name,omitempty"`
 	OwnerID        string `json:"owner_id,omitempty"`
 	IncludeContent bool   `json:"include_content"`
-	// QuotaBytes and AdmittedUsedBytes record what the gate saw when it
-	// admitted this job, so a receipt can show the basis of the decision
-	// rather than a figure re-read later under different conditions.
+	// QuotaBytes (internal sizing ceiling, never a customer limit) and
+	// AdmittedUsedBytes record what the gate saw when it admitted this job, so
+	// a receipt shows the measured basis rather than a figure re-read later.
 	QuotaBytes        int64 `json:"quota_bytes"`
 	AdmittedUsedBytes int64 `json:"admitted_used_bytes"`
 }

@@ -626,6 +626,7 @@ type workerHeartbeatRequest struct {
 	DiskTotalBytes     int64                        `json:"disk_total_bytes"`
 	UptimeSeconds      float64                      `json:"uptime_seconds"`
 	RuntimeConvergence *runtimeconvergence.Snapshot `json:"runtime_convergence,omitempty"`
+	hostMaintenanceFacts
 }
 
 func (h workerRouteHandlers) register(e *httpx.Event) error {

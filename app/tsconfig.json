@@ -8,12 +8,5 @@
   // The SvelteKit 3 codemod narrows this to ["src"]; Techstack type-checked
   // its Playwright specs and Vitest mocks before the migration, so the
   // pre-migration coverage (src + test + tests + the Vite configs) is kept.
-  "include": [
-    "src",
-    "test",
-    "tests",
-    "vite.config.ts",
-    "vitest.config.ts",
-    "playwright.config.ts"
-  ]
+  "include": ["src", "test", "tests", "vite.config.ts", "vitest.config.ts"]
 }

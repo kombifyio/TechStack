@@ -3,6 +3,7 @@ package grpcserver
 import (
 	"context"
 	"encoding/hex"
+	"math/big"
 	"testing"
 	"time"
 
@@ -10,6 +11,8 @@ import (
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
 	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestOTLPLogsExportAddsCorrelatedRuntimeLog(t *testing.T) {
@@ -70,6 +73,77 @@ func TestOTLPLogsExportAddsCorrelatedRuntimeLog(t *testing.T) {
 	}
 	if entry.Message == "compose rollout failed token=abcdefghijklmnopqrstuvwxyz" {
 		t.Fatalf("OTLP log body was not redacted: %q", entry.Message)
+	}
+}
+
+func TestOTLPLogsExportBindsIdentityToEnrolledPeer(t *testing.T) {
+	cert := makeClientCert(t, "agent-1", "tenant-A", big.NewInt(61))
+	revokedAt := time.Now()
+	for _, tc := range []struct {
+		name       string
+		ctx        context.Context
+		enrollment *AgentEnrollment
+		standalone bool
+		wantCode   codes.Code
+	}{
+		{name: "missing peer", ctx: context.Background(), wantCode: codes.Unauthenticated},
+		{name: "unenrolled peer", ctx: ctxWithPeerCert(cert), wantCode: codes.PermissionDenied},
+		{name: "revoked peer", ctx: ctxWithPeerCert(cert), enrollment: &AgentEnrollment{AgentID: "agent-1", TenantID: "tenant-A", CertSerial: cert.SerialNumber.String(), RevokedAt: &revokedAt}, wantCode: codes.PermissionDenied},
+		{name: "enrolled peer", ctx: ctxWithPeerCert(cert), enrollment: &AgentEnrollment{AgentID: "agent-1", TenantID: "tenant-A", CertSerial: cert.SerialNumber.String()}},
+		{name: "standalone", ctx: context.Background(), standalone: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := &Server{}
+			if !tc.standalone {
+				store := NewMemoryAgentEnrollmentStore()
+				if tc.enrollment != nil {
+					store.Set(*tc.enrollment)
+				}
+				srv = newTestServerWithEnrollment(t, store)
+			}
+			const message = "exporter identity regression"
+			_, err := newOTLPLogsService(srv).Export(tc.ctx, &collectorlogspb.ExportLogsServiceRequest{
+				ResourceLogs: []*logspb.ResourceLogs{{
+					Resource: &resourcepb.Resource{Attributes: []*commonpb.KeyValue{stringKV("tenant_id", "tenant-B"), stringKV("agent_id", "agent-9")}},
+					ScopeLogs: []*logspb.ScopeLogs{{
+						Scope:      &commonpb.InstrumentationScope{Attributes: []*commonpb.KeyValue{stringKV("tenant.id", "tenant-B"), stringKV("agent.id", "agent-9")}},
+						LogRecords: []*logspb.LogRecord{{Body: stringValue(message), Attributes: []*commonpb.KeyValue{stringKV("tenant_id", "tenant-B"), stringKV("agent_id", "agent-9")}}},
+					}},
+				}},
+			})
+			if status.Code(err) != tc.wantCode {
+				t.Errorf("Export code = %v, want %v", status.Code(err), tc.wantCode)
+			}
+			if logs := srv.GetRuntimeLogs(RuntimeLogQuery{TenantID: "tenant-B"}); len(logs) != 0 {
+				t.Errorf("exporter injected logs into another tenant: %+v", logs)
+			}
+			if logs := srv.GetRuntimeLogs(RuntimeLogQuery{AgentID: "agent-9"}); len(logs) != 0 {
+				t.Errorf("exporter impersonated another agent: %+v", logs)
+			}
+			if tc.wantCode != codes.OK {
+				if logs := srv.GetRuntimeLogs(RuntimeLogQuery{}); len(logs) != 0 {
+					t.Errorf("rejected export persisted logs: %+v", logs)
+				}
+				return
+			}
+			query := RuntimeLogQuery{}
+			if !tc.standalone {
+				query.TenantID, query.AgentID = tc.enrollment.TenantID, tc.enrollment.AgentID
+			}
+			logs := srv.GetRuntimeLogs(query)
+			if len(logs) != 1 || logs[0].Message != message {
+				t.Fatalf("accepted export not readable by its owner: %+v", logs)
+			}
+			entry := logs[0]
+			if entry.TenantID != query.TenantID || entry.AgentID != query.AgentID {
+				t.Errorf("stored identity = %q/%q, want %q/%q", entry.TenantID, entry.AgentID, query.TenantID, query.AgentID)
+			}
+			for _, key := range []string{"tenant_id", "tenant.id", "agent_id", "agent.id"} {
+				if value := entry.Fields[key]; value != "" && value != query.TenantID && value != query.AgentID {
+					t.Errorf("untrusted identity attribute %s=%q survived ingestion", key, value)
+				}
+			}
+		})
 	}
 }
 

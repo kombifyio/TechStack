@@ -12,6 +12,7 @@ import (
 
 	authsession "github.com/kombifyio/techstack/internal/gocommon/authsession"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
+	"github.com/kombifyio/techstack/pkg/auth/sessionpolicy"
 	"github.com/kombifyio/techstack/pkg/auth/sso"
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/controlplane"
@@ -56,7 +57,10 @@ type CloudUserInfo struct {
 // techstack_session session that the interactive OIDC login issues. Without
 // it the exchange cannot establish authenticated embedded requests.
 type PortalSession struct {
-	Manager    *session.Manager
+	Manager *session.Manager
+	// Browser stamps the idle Max-Age and the absolute-cap anchor onto the
+	// issued cookie (nil leaves the plain session cookie).
+	Browser    *sessionpolicy.Browser
 	CookieName string
 	Secure     bool
 	AuthStore  controlplane.AuthStore
@@ -84,6 +88,7 @@ func RegisterSSORoutes(r *httpx.Router, app core.App, ps PortalSession) {
 // A successful response contains the cloud identity and sets the authoritative
 // V2 browser-session cookie.
 func handlePortalVerify(app core.App, ps PortalSession) func(e *httpx.Event) error {
+	replay := sso.NewReplayGuard()
 	return func(e *httpx.Event) error {
 		// Parse request body
 		var req PortalVerifyRequest
@@ -95,18 +100,17 @@ func handlePortalVerify(app core.App, ps PortalSession) func(e *httpx.Event) err
 			return httpx.BadRequest(e, "Token is required")
 		}
 
-		// Get SSO secret from environment or auth_config
-		ssoSecret, err := getSSOSecret()
+		ssoSecret, ssoSecretNext, err := portalSSOSecrets()
 		if err != nil {
 			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal,
 				"SSO configuration error", nil)
 		}
 
-		// Create SSO verifier
 		verifier, err := sso.NewVerifier(sso.Config{
 			Secret:       ssoSecret,
+			NextSecret:   ssoSecretNext,
 			AllowedTools: []string{"kombifystack"},
-			ClockSkew:    30 * time.Second,
+			ClockSkew:    portalSSOClockSkew,
 		})
 		if err != nil {
 			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal,
@@ -120,6 +124,28 @@ func handlePortalVerify(app core.App, ps PortalSession) func(e *httpx.Event) err
 		}
 		if _, err := portalTenantID(payload); err != nil {
 			return handleSSOError(e, fmt.Errorf("%w: tenant_id", sso.ErrMissingClaims))
+		}
+
+		// Launch tokens are single-use. Cloud's embed re-sends its cached
+		// token after an in-frame reload, so the browser that already holds
+		// this subject's session may present it again; nobody else may.
+		reserved := replay.Reserve(payload.ID, time.Unix(payload.ExpiresAt, 0).Add(portalSSOClockSkew))
+		if !reserved && !portalSessionHeldBy(e.Request, ps, payload.Sub) {
+			// The embed recovers by asking kombify Cloud for a fresh token.
+			return httpx.Error(e, http.StatusUnauthorized, ksapi.ErrCodeUnauthorized,
+				"SSO token has already been used", map[string]any{
+					"reason_code": portalSSOTokenReplayed,
+					"retryable":   true,
+				})
+		}
+		exchanged := false
+		if reserved {
+			// A failed exchange must not burn the token Cloud keeps re-sending.
+			defer func() {
+				if !exchanged {
+					replay.Release(payload.ID)
+				}
+			}()
 		}
 
 		// portal-verify is only a successful login when it can establish the
@@ -140,7 +166,7 @@ func handlePortalVerify(app core.App, ps PortalSession) func(e *httpx.Event) err
 		}
 
 		// Find or create PocketBase user based on external_id
-		pbUser, err := findOrCreateUserFromSSO(app, payload)
+		_, err = findOrCreateUserFromSSO(app, payload)
 		if err != nil {
 			app.Logger().Error("Portal SSO: user lookup failed",
 				"sub", payload.Sub,
@@ -151,12 +177,9 @@ func handlePortalVerify(app core.App, ps PortalSession) func(e *httpx.Event) err
 				"Failed to create or find user", nil)
 		}
 
-		if payload.StackIdentity != nil {
-			if err := saveUserStackIdentity(app, pbUser, payload.StackIdentity); err != nil {
-				return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal,
-					"Failed to persist stack identity", nil)
-			}
-		}
+		// The launch token's Stack Identity is only echoed for the first paint.
+		// The homelab row is the one local copy; the browser's Cloud sync
+		// (Gateway /v1/cloud/stack-identity) is what persists it there.
 
 		// The V2 cookie is the authoritative browser-session proof. It is issued
 		// only after every fallible portal-verify step above has completed.
@@ -174,9 +197,10 @@ func handlePortalVerify(app core.App, ps PortalSession) func(e *httpx.Event) err
 				Name:    payload.Name,
 				IsAdmin: canonicalMembershipIsAdmin(membership),
 			},
-			StackIdentity: getStoredStackIdentity(pbUser),
+			StackIdentity: launchStackIdentity(payload.StackIdentity),
 		}
 
+		exchanged = true
 		return httpx.Success(e, http.StatusOK, response)
 	}
 }
@@ -200,6 +224,7 @@ const ssoProviderKey = "cloud"
 // qualify, because browsers reject SameSite=None without Secure.
 func setPortalSessionCookies(w http.ResponseWriter, ps PortalSession, token, portalOrigin string) error {
 	name := strings.TrimSpace(ps.CookieName)
+	defer ps.Browser.StampLogin(w.Header())
 	if !ps.Secure || config.CloudPreviewFrameOrigin(portalOrigin) == "" {
 		authsession.SetSessionCookie(w, name, token, ps.Secure)
 		return nil
@@ -314,18 +339,42 @@ func portalTenantID(payload *sso.SSOTokenPayload) (string, error) {
 	return "", errors.New("signed SSO tenant is inconsistent with subject")
 }
 
-// getSSOSecret retrieves the SSO JWT secret from canonical environment custody.
-func getSSOSecret() (string, error) {
-	// First, try environment variable
-	if secret := os.Getenv("SSO_JWT_SECRET"); secret != "" {
-		return secret, nil
-	}
+// portalSSOClockSkew is the leeway for launch-token time claims.
+const portalSSOClockSkew = 30 * time.Second
 
-	if secret := os.Getenv("KOMBIFY_SSO_SECRET"); secret != "" {
-		return secret, nil
-	}
+// portalSSOTokenReplayed tells the embedded app to request a fresh launch
+// token (postMessage auth-request with fresh=true) instead of re-sending one.
+const portalSSOTokenReplayed = "sso_token_replayed"
 
-	return "", errors.New("SSO_JWT_SECRET not configured")
+// portalSSOSecrets returns the Techstack-only portal SSO secret and its
+// optional rotation slot. Cloud signs Techstack launch tokens with a secret no
+// other service holds; the shared SSO_JWT_SECRET is deliberately not read, so
+// services that hold it (Simulate, kombify.me provisioning) cannot mint
+// Techstack sessions.
+func portalSSOSecrets() (string, string, error) {
+	secret := strings.TrimSpace(os.Getenv("TECHSTACK_SSO_JWT_SECRET"))
+	next := strings.TrimSpace(os.Getenv("TECHSTACK_SSO_JWT_SECRET_NEXT"))
+	if secret == "" {
+		secret, next = next, ""
+	}
+	if secret == "" {
+		return "", "", errors.New("TECHSTACK_SSO_JWT_SECRET not configured")
+	}
+	return secret, next, nil
+}
+
+// portalSessionHeldBy reports whether the request already carries a valid V2
+// browser session for subject.
+func portalSessionHeldBy(r *http.Request, ps PortalSession, subject string) bool {
+	if r == nil || ps.Manager == nil || strings.TrimSpace(ps.CookieName) == "" {
+		return false
+	}
+	cookie, err := r.Cookie(strings.TrimSpace(ps.CookieName))
+	if err != nil || cookie.Value == "" {
+		return false
+	}
+	claims, err := ps.Manager.Verify(cookie.Value)
+	return err == nil && claims != nil && strings.TrimSpace(claims.Subject) == strings.TrimSpace(subject)
 }
 
 // findOrCreateUserFromSSO finds or creates a PocketBase user based on SSO payload.

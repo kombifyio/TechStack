@@ -478,6 +478,7 @@ func (o *Orchestrator) updateStackStatusSnapshot(job jobs.JobSnapshot) {
 	if job.State != jobs.JobStateCompleted || job.Result == nil {
 		return
 	}
+	o.persistStackKitRolloutBinding(tenantID, job)
 	if syncErr := o.syncStackKitRuntimeInventoryFromJobSnapshot(tenantID, job); syncErr != nil {
 		o.log.Warn("stackkit_inventory_projection_failed", "stack_id", job.TargetID, "error", syncErr)
 	}

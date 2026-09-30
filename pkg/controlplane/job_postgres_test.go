@@ -172,14 +172,22 @@ func TestPostgresStoreStartJobLocksStackBeforeTransition(t *testing.T) {
 
 	mock.ExpectBegin()
 	expectTenantGUC(mock, "tenant-1")
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT state, COALESCE(stack_id, '') FROM jobs")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT state, COALESCE(stack_id, ''), COALESCE(payload_json->>'agent_id', '') FROM jobs")).
 		WithArgs("tenant-1", "job-first").
-		WillReturnRows(sqlmock.NewRows([]string{"state", "stack_id"}).AddRow("pending", "stack-1"))
+		WillReturnRows(sqlmock.NewRows([]string{"state", "stack_id", "agent_id"}).AddRow("pending", "stack-1", ""))
 	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")).
 		WithArgs("8:tenant-1stack-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(regexp.QuoteMeta("WHERE tenant_id = $1 AND stack_id = $2 AND id <> $3 AND state = 'running'")).
 		WithArgs("tenant-1", "stack-1", "job-first").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectExec(regexp.QuoteMeta("SELECT set_config('lock_timeout', '10s', true)")).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")).
+		WithArgs("node-admission:8:tenant-1:stack:stack-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(regexp.QuoteMeta("FROM server_maintenance_jobs")).
+		WithArgs("tenant-1", "", "stack-1").
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectQuery(regexp.QuoteMeta("UPDATE jobs")).
 		WithArgs("tenant-1", "job-first", startedAt, ProcessExecutionOwnerID()).
@@ -211,9 +219,9 @@ func TestPostgresStoreStartJobReturnsStackExecutionBusyBeforeTransition(t *testi
 
 	mock.ExpectBegin()
 	expectTenantGUC(mock, "tenant-1")
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT state, COALESCE(stack_id, '') FROM jobs")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT state, COALESCE(stack_id, ''), COALESCE(payload_json->>'agent_id', '') FROM jobs")).
 		WithArgs("tenant-1", "job-second").
-		WillReturnRows(sqlmock.NewRows([]string{"state", "stack_id"}).AddRow("pending", "stack-1"))
+		WillReturnRows(sqlmock.NewRows([]string{"state", "stack_id", "agent_id"}).AddRow("pending", "stack-1", ""))
 	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")).
 		WithArgs("8:tenant-1stack-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))

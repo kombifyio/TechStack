@@ -1,11 +1,17 @@
 // Theme store for dark/light mode toggle with persistence
-import { writable } from "svelte/store";
+import { get, writable } from "svelte/store";
 import { browser } from "$app/env";
 import {
   DEFAULT_FINISH,
   isFinish,
   type Finish,
+  type NavFlyoutPreference,
 } from "@kombiverselabs/design/contract";
+import {
+  applyNavFlyout,
+  readDeviceNavFlyout,
+  writeDeviceNavFlyout,
+} from "@kombiverselabs/design/runtime";
 import { fetchAccountDesign } from "#lib/design/accountDesign.js";
 
 export type Theme = "dark" | "light" | "system";
@@ -14,6 +20,8 @@ export type SystemCardShape = "square" | "app";
 const STORAGE_KEY = "techstack-theme";
 const CARD_SHAPE_STORAGE_KEY = "techstack-system-card-shape";
 const FINISH_STORAGE_KEY = "techstack-finish";
+/** How the rail's hover preview meets the rail (axis `navFlyout`), device-only. */
+const NAV_FLYOUT_STORAGE_KEY = "techstack-nav-flyout";
 
 /**
  * When embedded in the kombify Cloud portal, the portal passes its own theme as
@@ -21,10 +29,8 @@ const FINISH_STORAGE_KEY = "techstack-finish";
  * only arrive after our bridge announces "ready", which is too late for the
  * first paint and reads as a flash.
  *
- * The param is only ever present when a host put it there, so its presence
- * means "embedded", and in that case the host wins: an embed that does not
- * match the page around it is the bug we are fixing. Standalone Techstack is
- * unaffected — no param, so localStorage keeps deciding.
+ * This is inherited context, not a saved device choice. An explicit app
+ * appearance can override it; clearing that choice resumes inheritance.
  */
 function themeFromEmbedUrl(): Theme | null {
   if (!browser) return null;
@@ -32,18 +38,36 @@ function themeFromEmbedUrl(): Theme | null {
   return value === "dark" || value === "light" ? value : null;
 }
 
-function getInitialTheme(): Theme {
-  if (!browser) return "dark";
-
-  const fromEmbed = themeFromEmbedUrl();
-  if (fromEmbed) return fromEmbed;
-
+function deviceTheme(): Theme | null {
+  if (!browser) return null;
   const stored = localStorage.getItem(STORAGE_KEY) as Theme | null;
   if (stored && ["dark", "light", "system"].includes(stored)) {
     return stored;
   }
 
-  return "dark"; // Default to dark (kombify-TechStack is designed dark-first)
+  return null;
+}
+
+let hostAppearance: Theme | null = null;
+let accountAppearance: Theme | null = null;
+
+function resolveTheme(): Theme {
+  return (
+    deviceTheme() ??
+    hostAppearance ??
+    themeFromEmbedUrl() ??
+    accountAppearance ??
+    "system"
+  );
+}
+
+function resolveAppearance(value: Theme): "dark" | "light" {
+  return value === "dark" ||
+    (value === "system" &&
+      browser &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches)
+    ? "dark"
+    : "light";
 }
 
 function cardShapeFromEmbedUrl(): SystemCardShape | null {
@@ -116,9 +140,20 @@ function resolveFinish(): Finish {
 }
 
 function createThemeStore() {
-  const { subscribe, set, update } = writable<Theme>(getInitialTheme());
+  const themeStore = writable<Theme>(resolveTheme());
+  const { subscribe, set } = themeStore;
+  const preferenceStore = writable<Theme | null>(deviceTheme());
+  const resolvedStore = writable<"dark" | "light">(
+    resolveAppearance(resolveTheme()),
+  );
+  let initialized = false;
   const finishStore = writable<Finish>(
     browser ? resolveFinish() : DEFAULT_FINISH,
+  );
+  const navFlyoutStore = writable<NavFlyoutPreference>(
+    browser
+      ? readDeviceNavFlyout(localStorage, NAV_FLYOUT_STORAGE_KEY)
+      : "auto",
   );
 
   function reapplyFinish() {
@@ -130,10 +165,7 @@ function createThemeStore() {
   function applyTheme(theme: Theme) {
     if (!browser) return;
 
-    const isDark =
-      theme === "dark" ||
-      (theme === "system" &&
-        window.matchMedia("(prefers-color-scheme: dark)").matches);
+    const isDark = resolveAppearance(theme) === "dark";
 
     document.documentElement.classList.toggle("dark", isDark);
     document.documentElement.classList.toggle("light", !isDark);
@@ -146,18 +178,44 @@ function createThemeStore() {
     // the `dark` class; the pre-paint script in app.html sets the same pair
     // before first paint, and this keeps it true after every toggle.
     document.documentElement.dataset.appearance = isDark ? "dark" : "light";
+    resolvedStore.set(isDark ? "dark" : "light");
+  }
+
+  function reapplyTheme() {
+    const value = resolveTheme();
+    applyTheme(value);
+    preferenceStore.set(deviceTheme());
+    set(value);
+  }
+
+  function chooseTheme(value: Theme) {
+    if (browser) localStorage.setItem(STORAGE_KEY, value);
+    reapplyTheme();
   }
 
   return {
     subscribe,
+    preference: { subscribe: preferenceStore.subscribe },
+    resolved: { subscribe: resolvedStore.subscribe },
     /** The resolved finish, for pickers and previews. */
     finish: { subscribe: finishStore.subscribe },
-    set: (theme: Theme) => {
-      if (browser) {
-        localStorage.setItem(STORAGE_KEY, theme);
-      }
-      applyTheme(theme);
-      set(theme);
+    /** The device's rail preview shape; `auto` follows the finish. */
+    navFlyout: { subscribe: navFlyoutStore.subscribe },
+    setNavFlyout: (navFlyout: NavFlyoutPreference) => {
+      if (!browser) return;
+      writeDeviceNavFlyout(localStorage, navFlyout, NAV_FLYOUT_STORAGE_KEY);
+      const stored = readDeviceNavFlyout(localStorage, NAV_FLYOUT_STORAGE_KEY);
+      applyNavFlyout(document.documentElement, stored);
+      navFlyoutStore.set(stored);
+    },
+    set: chooseTheme,
+    setHostTheme: (value: Theme) => {
+      hostAppearance = value;
+      reapplyTheme();
+    },
+    followDefaultTheme: () => {
+      if (browser) localStorage.removeItem(STORAGE_KEY);
+      reapplyTheme();
     },
     /** An explicit device choice — outranks the account default (§4). */
     setFinish: (finish: Finish) => {
@@ -195,44 +253,29 @@ function createThemeStore() {
       applySystemCardShape(systemCardShape);
     },
     toggle: () => {
-      update((current) => {
-        const next = current === "dark" ? "light" : "dark";
-        if (browser) {
-          localStorage.setItem(STORAGE_KEY, next);
-        }
-        applyTheme(next);
-        return next;
-      });
+      chooseTheme(get(resolvedStore) === "dark" ? "light" : "dark");
     },
     cycle: () => {
-      update((current) => {
-        const order: Theme[] = ["dark", "light", "system"];
-        const nextIndex = (order.indexOf(current) + 1) % order.length;
-        const next = order[nextIndex];
-        if (browser) {
-          localStorage.setItem(STORAGE_KEY, next);
-        }
-        applyTheme(next);
-        return next;
-      });
+      const order: Theme[] = ["dark", "light", "system"];
+      chooseTheme(order[(order.indexOf(get(themeStore)) + 1) % order.length]);
     },
     init: () => {
-      const theme = getInitialTheme();
-      applyTheme(theme);
-      set(theme);
+      reapplyTheme();
       applySystemCardShape(getInitialSystemCardShape());
       reapplyFinish();
+      if (browser) {
+        applyNavFlyout(
+          document.documentElement,
+          readDeviceNavFlyout(localStorage, NAV_FLYOUT_STORAGE_KEY),
+        );
+      }
 
       // Listen for system theme changes when in system mode
-      if (browser) {
+      if (browser && !initialized) {
+        initialized = true;
         window
           .matchMedia("(prefers-color-scheme: dark)")
-          .addEventListener("change", (e) => {
-            const currentTheme = localStorage.getItem(STORAGE_KEY) as Theme;
-            if (currentTheme === "system") {
-              applyTheme("system");
-            }
-          });
+          .addEventListener("change", reapplyTheme);
 
         // Account default (tier 3), post-paint and fail-soft: it only shows
         // where no host context and no device choice exist, so a late fetch
@@ -243,14 +286,8 @@ function createThemeStore() {
             accountFinish = account.finish;
             reapplyFinish();
           }
-          const hasUrlTheme = themeFromEmbedUrl() !== null;
-          const hasStoredTheme = localStorage.getItem(STORAGE_KEY) !== null;
-          if (!hasUrlTheme && !hasStoredTheme) {
-            // Session-only: not persisted, so a later account change still
-            // propagates to this device on its next boot.
-            applyTheme(account.appearance);
-            set(account.appearance);
-          }
+          accountAppearance = account.appearance;
+          reapplyTheme();
         });
       }
     },

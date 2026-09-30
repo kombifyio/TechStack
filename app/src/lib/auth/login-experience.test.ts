@@ -172,18 +172,6 @@ describe("resolveLoginExperience", () => {
     );
   });
 
-  it("forces Universal Login when the operator asks to sign in again", () => {
-    expect(
-      buildCloudAuthRedirectURL("/api/v2/auth/login", {
-        origin: "https://techstack.kombify.io",
-        returnTo: "/dashboard",
-        interactive: true,
-      }),
-    ).toBe(
-      "https://techstack.kombify.io/api/v2/auth/login?return_to=%2Fdashboard&prompt=login",
-    );
-  });
-
   it("keeps a same-origin login path when no public origin is available", () => {
     const redirect = buildCloudAuthRedirectURL("/api/v2/auth/login", {
       returnTo: "/dashboard",

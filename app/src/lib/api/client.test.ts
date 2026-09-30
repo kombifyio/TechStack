@@ -352,7 +352,6 @@ describe("fetchApi embedded gateway auth", () => {
     const headers = new Headers(fetchMock.mock.calls[0][1]?.headers);
     expect(headers.get("authorization")).toBe("Bearer auth0-api-token");
   });
-
 });
 
 describe("fetchApi session-reprojection interceptor", () => {

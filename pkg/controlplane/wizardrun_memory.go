@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 )
 
 func (s *MemoryStore) GetWizardRunByKey(_ context.Context, tenantID, ownerSubjectID, idempotencyKey string) (*WizardRun, error) {
@@ -95,6 +96,23 @@ func (s *MemoryStore) UpsertWizardRun(_ context.Context, run WizardRun) (*Wizard
 	return cloneWizardRun(normalized), nil
 }
 
+func (s *MemoryStore) DismissWizardRun(_ context.Context, tenantID, ownerSubjectID, runID string, at time.Time) error {
+	tenantID, ownerSubjectID, runID = strings.TrimSpace(tenantID), strings.TrimSpace(ownerSubjectID), strings.TrimSpace(runID)
+	if tenantID == "" || ownerSubjectID == "" || runID == "" {
+		return fmt.Errorf("controlplane: tenant, owner and run id required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	run, ok := s.wizardRuns[runID]
+	if !ok || run.TenantID != tenantID || run.OwnerSubjectID != ownerSubjectID {
+		return ErrNotFound
+	}
+	dismissed := at.UTC()
+	run.DismissedAt = &dismissed
+	s.wizardRuns[runID] = run
+	return nil
+}
+
 func (s *MemoryStore) wizardRunByKeyLocked(tenantID, ownerSubjectID, idempotencyKey string) *WizardRun {
 	for id := range s.wizardRuns {
 		run := s.wizardRuns[id]
@@ -109,6 +127,10 @@ func cloneWizardRun(run WizardRun) *WizardRun {
 	clone := run
 	clone.Intent = deepCloneIntent(run.Intent)
 	clone.Result = deepCloneIntent(run.Result)
+	if run.DismissedAt != nil {
+		at := *run.DismissedAt
+		clone.DismissedAt = &at
+	}
 	return &clone
 }
 

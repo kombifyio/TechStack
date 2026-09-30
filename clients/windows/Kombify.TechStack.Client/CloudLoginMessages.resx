@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="WaitingTitle" xml:space="preserve"><value>Continue in your browser.</value></data>
+  <data name="WaitingDetail" xml:space="preserve"><value>Complete the normal kombify login. This window will continue automatically.</value></data>
+  <data name="FailureTitle" xml:space="preserve"><value>Cloud login did not complete.</value></data>
+  <data name="FailureDetail" xml:space="preserve"><value>Return to the Techstack window and try the browser login again.</value></data>
+  <data name="AccountMismatch" xml:space="preserve"><value>This installation contains data for another Cloud account. Use that account or a separate Windows profile.</value></data>
+  <data name="CallbackSuccess" xml:space="preserve"><value>Login received. Return to the Techstack window.</value></data>
+  <data name="CallbackFailure" xml:space="preserve"><value>Invalid login callback.</value></data>
+  <data name="ConnectSignInRequired" xml:space="preserve"><value>Sign in to the Cloud product first, then open kombify Connect from the Techstack window.</value></data>
+  <data name="ConnectAccountRequired" xml:space="preserve"><value>Connect needs a current Cloud product session for this account. Sign in to Techstack and try again.</value></data>
+</root>

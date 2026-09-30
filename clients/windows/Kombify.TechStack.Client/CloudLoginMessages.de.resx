@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="WaitingTitle" xml:space="preserve"><value>Weiter in deinem Browser.</value></data>
+  <data name="WaitingDetail" xml:space="preserve"><value>Schließe die normale kombify-Anmeldung ab. Dieses Fenster macht danach automatisch weiter.</value></data>
+  <data name="FailureTitle" xml:space="preserve"><value>Die Cloud-Anmeldung wurde nicht abgeschlossen.</value></data>
+  <data name="FailureDetail" xml:space="preserve"><value>Kehre zum Techstack-Fenster zurück und versuche die Browser-Anmeldung erneut.</value></data>
+  <data name="AccountMismatch" xml:space="preserve"><value>Diese Installation enthält Daten eines anderen Cloud-Kontos. Verwende dieses Konto oder ein separates Windows-Profil.</value></data>
+  <data name="CallbackSuccess" xml:space="preserve"><value>Anmeldung empfangen. Kehre zum Techstack-Fenster zurück.</value></data>
+  <data name="CallbackFailure" xml:space="preserve"><value>Ungültiger Anmelde-Callback.</value></data>
+  <data name="ConnectSignInRequired" xml:space="preserve"><value>Melde dich zuerst beim Cloud-Produkt an und öffne dann kombify Connect im Techstack-Fenster.</value></data>
+  <data name="ConnectAccountRequired" xml:space="preserve"><value>Connect braucht eine aktuelle Cloud-Produktsitzung für dieses Konto. Melde dich bei Techstack an und versuche es erneut.</value></data>
+</root>

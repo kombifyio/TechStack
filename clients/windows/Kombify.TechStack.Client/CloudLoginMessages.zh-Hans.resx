@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="WaitingTitle" xml:space="preserve"><value>请在浏览器中继续。</value></data>
+  <data name="WaitingDetail" xml:space="preserve"><value>请完成常规的 kombify 登录。完成后此窗口会自动继续。</value></data>
+  <data name="FailureTitle" xml:space="preserve"><value>Cloud 登录未完成。</value></data>
+  <data name="FailureDetail" xml:space="preserve"><value>请返回 Techstack 窗口，再次尝试浏览器登录。</value></data>
+  <data name="AccountMismatch" xml:space="preserve"><value>此安装包含另一个 Cloud 账户的数据。请使用该账户，或使用单独的 Windows 用户配置文件。</value></data>
+  <data name="CallbackSuccess" xml:space="preserve"><value>已收到登录信息。请返回 Techstack 窗口。</value></data>
+  <data name="CallbackFailure" xml:space="preserve"><value>登录回调无效。</value></data>
+  <data name="ConnectSignInRequired" xml:space="preserve"><value>请先登录 Cloud 产品，然后在 Techstack 窗口中打开 kombify Connect。</value></data>
+  <data name="ConnectAccountRequired" xml:space="preserve"><value>Connect 需要此账户当前有效的 Cloud 产品会话。请登录 Techstack 后重试。</value></data>
+</root>

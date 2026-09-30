@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr, stateLabel } from "#lib/i18n.svelte.js";
   import { Clipboard, TerminalSquare } from "@lucide/svelte";
   import Button from "#lib/components/ui/Button.svelte";
   import {
@@ -53,8 +54,8 @@
     const resolved = await resolveAccess();
     if (!resolved?.terminal_enabled) {
       error =
-        resolved?.reason?.replaceAll("_", " ") ||
-        "Terminal access is unavailable";
+        (resolved?.reason ? stateLabel(resolved.reason) : "") ||
+        tr("ui.serverAccessActions.terminalAccessIsUnavailable");
       return;
     }
     showTerminal = true;
@@ -64,11 +65,12 @@
     const resolved = await resolveAccess();
     if (!resolved?.ssh_command) {
       error =
-        resolved?.reason?.replaceAll("_", " ") || "SSH command is unavailable";
+        (resolved?.reason ? stateLabel(resolved.reason) : "") ||
+        tr("ui.serverAccessActions.sshCommandIsUnavailable");
       return;
     }
     if (!resolved.connect_ready) {
-      error = "Authorize one of your public keys on this Node first.";
+      error = tr("ui.serverAccessActions.authorizeOneOfYourPublic");
       await loadWalletKeys();
       showKeySetup = true;
       return;
@@ -98,9 +100,12 @@
     const key = walletKeys.find((item) => item.id === selectedWalletKey);
     if (
       !(await confirmInApp({
-        title: "Authorize SSH key",
-        message: `Install public key "${key?.name || "SSH key"}" once on ${serverName}? The private key never leaves the Wallet.`,
-        confirmText: "Install public key",
+        title: tr("ui.serverAccessActions.authorizeSshKey"),
+        message: tr("ui.serverAccess.installKeyConfirm", {
+          key: key?.name || tr("ui.serverAccess.sshKey"),
+          server: serverName,
+        }),
+        confirmText: tr("ui.serverAccessActions.installPublicKey"),
       }))
     )
       return;
@@ -145,7 +150,7 @@
     disabled={unavailable || loading}
     onclick={() => void openTerminal()}
   >
-    <TerminalSquare class="h-4 w-4" /> Open terminal
+    <TerminalSquare class="h-4 w-4" /> {tr("ui.serverAccessActions.openTerminal")}
   </Button>
   <Button
     variant="secondary"
@@ -154,7 +159,7 @@
     onclick={() => void copySSH()}
   >
     <Clipboard class="h-4 w-4" />
-    {copied ? "Copied" : "Copy SSH command"}
+    {copied ? "Copied" : tr("ui.serverAccessActions.copySshCommand")}
   </Button>
   {#if (unavailable && unavailableReason) || error || (access && !access.connect_ready)}
     <span
@@ -163,7 +168,7 @@
     >
       {error ||
         (unavailable ? unavailableReason : undefined) ||
-        "This command requires one of your previously authorized SSH keys."}
+        tr("ui.serverAccessActions.thisCommandRequiresOneOf")}
     </span>
   {/if}
   {#if access && !access.connect_ready && !unavailable}
@@ -176,7 +181,7 @@
         showKeySetup = true;
       }}
     >
-      Authorize my SSH key
+      {tr("ui.serverAccess.authorizeKey")}
     </Button>
   {/if}
   {#if showKeySetup}
@@ -184,7 +189,7 @@
       {#if walletKeys.length > 0}
         <label
           class="block text-xs font-medium text-foreground"
-          for={`ssh-wallet-key-${serverId}`}>Wallet Public Key</label
+          for={`ssh-wallet-key-${serverId}`}>{tr("ui.serverAccessActions.walletPublicKey")}</label
         >
         <div class="mt-2 flex flex-wrap gap-2">
           <select
@@ -201,14 +206,14 @@
             size="sm"
             disabled={loading || !selectedWalletKey}
             onclick={() => void installSelectedKey()}
-            >Install public key</Button
+            >{tr("ui.serverAccessActions.installPublicKey")}</Button
           >
         </div>
       {:else}
         <p class="text-xs text-muted-foreground">
-          No SSH key in the Wallet yet. <a
+          {tr("ui.serverAccessActions.noSshKeyInThe")} <a
             class="text-primary underline"
-            href="/wallet">Add one in the Wallet</a
+            href="/wallet">{tr("ui.serverAccessActions.addOneInTheWallet")}</a
           >.
         </p>
       {/if}

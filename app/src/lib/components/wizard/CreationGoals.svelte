@@ -6,7 +6,7 @@
     LayoutGrid,
     List,
     ShieldCheck,
-    Info,
+    Minimize2,
     Plus,
     Network,
     Workflow,
@@ -29,9 +29,10 @@
     type StackConfig,
     type BundleQuestionDefinition,
   } from "#lib/wizard/index.js";
-  import type {
-    UseCaseCatalogView,
-    UseCaseCatalogComponent,
+  import {
+    installsService,
+    type UseCaseCatalogView,
+    type UseCaseCatalogComponent,
   } from "#lib/api/useCaseCatalog.js";
   import { brandDomainForTool } from "#lib/brand-logo.js";
   import { useCaseGuideUrl } from "#lib/docs-links.js";
@@ -82,6 +83,8 @@
   );
   const selected = $derived(available.filter(isSelected));
   let expanded = $state<string | null>(null);
+  let pendingCard: string | null = null;
+  let advancedCard = $state<string | null>(null);
   const expandedIndex = $derived(
     available.findIndex((card) => card.id === expanded),
   );
@@ -95,7 +98,37 @@
   let disclosureRevision = 0;
   let globalAdvanced = $state(false);
 
-  onMount(() => () => activeTransition?.skipTransition());
+  onMount(() => {
+    function outsideClick(event: MouseEvent) {
+      const id = pendingCard ?? expanded;
+      if (!id || serviceInfo || !(event.target instanceof Node)) return;
+      const frame = goalsGrid?.querySelector(`[data-card-id="${id}"]`);
+      if (frame && !frame.contains(event.target)) void dismissDetails();
+    }
+    document.addEventListener("click", outsideClick, true);
+    return () => {
+      document.removeEventListener("click", outsideClick, true);
+      activeTransition?.skipTransition();
+    };
+  });
+
+  async function dismissDetails(restoreFocus = false) {
+    const id = pendingCard ?? expanded;
+    if (!id) return;
+    const frame = goalsGrid?.querySelector(`[data-card-id="${id}"]`);
+    ++disclosureRevision;
+    pendingCard = null;
+    activeTransition?.skipTransition();
+    ondisclose?.({ kind: "drawer", id, open: false });
+    expanded = null;
+    advancedCard = null;
+    if (restoreFocus) {
+      await tick();
+      frame
+        ?.querySelector<HTMLButtonElement>(".kf-uc-enhanced-foot button")
+        ?.focus();
+    }
+  }
 
   function title(card: CreationGoal) {
     if (["files", "mail", "game"].includes(card.id))
@@ -146,11 +179,15 @@
   }
   async function toggleDetails(card: CreationGoal, open: boolean) {
     const revision = ++disclosureRevision;
+    pendingCard = open ? card.id : null;
     await morph(() => {
+      if (revision !== disclosureRevision) return;
+      pendingCard = null;
       if (expanded && expanded !== card.id) {
         ondisclose?.({ kind: "drawer", id: expanded, open: false });
       }
       expanded = open ? card.id : null;
+      advancedCard = null;
       ondisclose?.({ kind: "drawer", id: card.id, open });
     });
     await tick();
@@ -167,9 +204,9 @@
     const expandedRow = Math.floor(expandedIndex / columns) + 1;
     if (expandedIndex < 0 || row < expandedRow) return { row, column };
     const expandedColumn = Math.min((expandedIndex % columns) + 1, columns - 1);
-    const rowSpan = columns > 2 ? 2 : 1;
-    // Keep the expanded tile anchored, including at the right edge, then
-    // fill all remaining slots in reading order without leaving a hole.
+    // The expanded tile is a 2x2 square. Keep it anchored, including at the
+    // right edge, then fill the remaining slots in reading order without a hole.
+    const rowSpan = 2;
     if (index === expandedIndex) {
       return {
         row: `${row} / span ${rowSpan}`,
@@ -206,12 +243,36 @@
       supportsCreationChoice(runtimeCatalog.get(card.id), setting, value)
     );
   }
+  // Main apps stay in the picker; custom extra controls render in Advanced.
+  const cardSettings = ["backend", "paperless", "hosting", "edition"];
+  function catalogSetting(card: CreationGoal, id: string) {
+    return (
+      reviewMode ? card.catalog : runtimeCatalog.get(card.id)
+    )?.settings.find((setting) => setting.id === id);
+  }
+  function savedForLater(card: CreationGoal, id: string) {
+    return catalogSetting(card, id)?.realization === "recorded";
+  }
   function preferenceNote() {
     return tr(
       reviewMode
         ? "wizard.preview.preferenceOnly"
         : "wizard.creation.preferenceOnly",
     );
+  }
+  /** Stack badges: apps the user can pick that this release only records. */
+  function laterMarkers(card: CreationGoal, notInRelease: boolean) {
+    const markers: Record<string, string> = {};
+    for (const component of backendChoices(card.catalog)) {
+      if (notInRelease)
+        markers[component.id] = tr("wizard.goals.notInThisRelease");
+      else if (
+        component.role === "alternative" &&
+        (reviewMode || !installsService(component))
+      )
+        markers[component.id] = tr("wizard.preview.savedForLater");
+    }
+    return markers;
   }
   async function closeServiceInfo() {
     const trigger = serviceInfo?.trigger;
@@ -227,6 +288,20 @@
       : description;
   }
 </script>
+
+<svelte:document
+  onkeydown={(event) => {
+    if (
+      event.key === "Escape" &&
+      !event.defaultPrevented &&
+      !serviceInfo &&
+      (expanded || pendingCard)
+    ) {
+      event.preventDefault();
+      void dismissDetails(true);
+    }
+  }}
+/>
 
 <div
   class="goals-preview"
@@ -300,7 +375,9 @@
       {@const medium = cardPosition(index, 2)}
       <div
         class="goal-frame"
+        data-card-id={card.id}
         class:expanded={expanded === card.id}
+        class:advanced-open={advancedCard === card.id && expanded === card.id}
         style:--wide-row={wide.row}
         style:--wide-column={wide.column}
         style:--narrow-row={narrow.row}
@@ -309,16 +386,47 @@
         style:--medium-column={medium.column}
         style={`view-transition-name: creation-${card.id}`}
       >
-        {#snippet visual()}<GoalIllustration
+        {#snippet visual()}
+          <GoalIllustration
             goal={card.id}
             compact={variant === "focus"}
             priority={index < 4}
-          />{/snippet}
+          />
+        {/snippet}
         {#snippet controls()}
+          {@const compact = variant !== "focus" && expanded !== card.id}
+          {@const chosen = selectedBackend(card.catalog, values(card).backend)}
+          {@const notInRelease =
+            !reviewMode && runtimeCatalog.get(card.id)?.deliverable === false}
+          {#if variant !== "focus" && card.question}
+            <!-- The artwork and title select the use case. The card's own art
+                 is decorative (aria-hidden), so this button lies over it as a
+                 sibling of the "+" toggle, which stays the visible state. -->
+            <button
+              type="button"
+              class="art-select"
+              aria-pressed={isSelected(card)}
+              aria-label={`${tr("wizard.preview.selectUseCase")} ${title(card)}`}
+              onclick={() => {
+                if (card.question)
+                  onGoalChange(card.question.configKey, !isSelected(card));
+              }}
+            ></button>
+          {/if}
+          {#if !compact}
+            <p class="eyebrow">
+              {tr("wizard.preview.serviceFor")}
+              {title(card)}
+            </p>
+          {/if}
           <UseCaseServicePicker
             components={backendChoices(card.catalog)}
-            selectedId={selectedBackend(card.catalog, values(card).backend)?.id}
+            selectedId={chosen?.id}
             label={`${tr("wizard.preview.serviceFor")} ${title(card)}`}
+            {compact}
+            savedForLater={laterMarkers(card, notInRelease)}
+            openLabel={tr("wizard.preview.explore")}
+            onopen={() => toggleDetails(card, true)}
             disabledIds={backendChoices(card.catalog)
               .filter((component) => !canChoose(card, "backend", component.id))
               .map((component) => component.id)}
@@ -327,75 +435,69 @@
               serviceInfo = { component, card, trigger };
             }}
           />
-          {#if values(card).backend && selectedBackend(card.catalog, values(card).backend)?.role === "alternative"}
-            <p class="preference-note">{preferenceNote()}</p>
-          {/if}
-          {#if !reviewMode && runtimeCatalog.get(card.id)?.deliverable === false}
-            <p class="preference-note">
-              {tr("wizard.goals.notInThisReleaseLong")}
-            </p>
+          <!-- The closed card marks these on the app stack; the sentences live here. -->
+          {#if !compact}
+            {#if values(card).backend && chosen?.role === "alternative" && (reviewMode || !installsService(chosen))}
+              <p class="preference-note">{preferenceNote()}</p>
+            {/if}
+            {#if notInRelease}
+              <p class="preference-note">
+                {tr("wizard.goals.notInThisReleaseLong")}
+              </p>
+            {/if}
           {/if}
         {/snippet}
         {#snippet details()}
-          <div class="goal-details">
-            <div class="detail-story">
-              <p class="eyebrow">{tr("wizard.preview.aboutUseCase")}</p>
-              <p>
-                {["files", "mail", "game", "dev"].includes(card.id)
-                  ? tr(`wizard.preview.${card.id}.help`)
-                  : card.question?.helpKey
-                    ? tr(card.question.helpKey)
-                    : description(card)}
-              </p>
-              {#if card.question?.tipKey && !["mail", "game", "dev"].includes(card.id)}<p
-                  class="detail-tip"
-                >
-                  <Check size={15} aria-hidden="true" />{tr(
-                    card.question.tipKey,
-                  )}
-                </p>{/if}
-              {#if useCaseGuideUrl(card.catalog?.docsPath)}<a
-                  href={useCaseGuideUrl(card.catalog?.docsPath)}
-                  target="_blank"
-                  rel="noreferrer"
-                  >{tr("wizard.goals.learnMore")}<ArrowUpRight
-                    size={14}
-                    aria-hidden="true"
-                  /></a
-                >{/if}
-            </div>
-            {#if (card.catalog?.components.length ?? 0) > 0}
-              <div class="included-tools">
-                <p class="eyebrow">{tr("wizard.preview.inside")}</p>
-                {#each card.catalog?.components ?? [] as component (component.id)}
-                  <button
-                    type="button"
-                    class="tool-row"
-                    onclick={(event) => {
-                      serviceInfo = {
-                        card,
-                        component,
-                        trigger: event.currentTarget,
-                      };
-                    }}
+          <div class="detail-content">
+            <div class="goal-details">
+              <div class="detail-story">
+                <p class="eyebrow">{tr("wizard.preview.aboutUseCase")}</p>
+                <p>
+                  {["files", "mail", "game", "dev"].includes(card.id)
+                    ? tr(`wizard.preview.${card.id}.help`)
+                    : card.question?.helpKey
+                      ? tr(card.question.helpKey)
+                      : description(card)}
+                </p>
+                {#if card.question?.tipKey && !["mail", "game", "dev"].includes(card.id)}<p
+                    class="detail-tip"
                   >
-                    <BrandLogoScope
-                      domain={brandDomainForTool(component.id, component.name)}
-                      ><BrandLogoIcon
-                        class="h-5 w-5"
-                        fallbackLabel={component.name}
-                      /></BrandLogoScope
-                    >
-                    <span
-                      >{component.name}<small
-                        >{tr(`wizard.preview.role.${component.role}`)}</small
-                      ></span
-                    ><Info size={15} aria-hidden="true" />
-                  </button>
-                {/each}
+                    <Check size={15} aria-hidden="true" />{tr(
+                      card.question.tipKey,
+                    )}
+                  </p>{/if}
+                {#if useCaseGuideUrl(card.catalog?.docsPath)}<a
+                    href={useCaseGuideUrl(card.catalog?.docsPath)}
+                    target="_blank"
+                    rel="noreferrer"
+                    >{tr("wizard.goals.learnMore")}<ArrowUpRight
+                      size={14}
+                      aria-hidden="true"
+                    /></a
+                  >{/if}
               </div>
-            {/if}
+            </div>
           </div>
+          <UseCaseSettings
+            inlay={variant !== "focus"}
+            open={advancedCard === card.id}
+            onopenchange={(open) => {
+              advancedCard = open ? card.id : null;
+            }}
+            catalog={reviewMode ? card.catalog : runtimeCatalog.get(card.id)}
+            exclude={cardSettings}
+            extras={["files", "mail", "game"].includes(card.id)
+              ? addons
+              : undefined}
+            preview={reviewMode}
+            values={values(card)}
+            onchange={(id, value) => {
+              if (card.question)
+                onSettingChange(card.question.configKey, id, value);
+            }}
+          />
+        {/snippet}
+        {#snippet addons()}
           {#if card.id === "files"}
             <label class="addon-choice">
               <input
@@ -414,7 +516,10 @@
                   >{tr(
                     "wizard.preview.paperless.help",
                   )}{#if !canChoose(card, "paperless")}
-                    · {tr("wizard.preview.comingSoon")}{/if}</small
+                    · {tr(
+                      "wizard.preview.comingSoon",
+                    )}{:else if savedForLater(card, "paperless")}
+                    · {tr("wizard.preview.savedForLater")}{/if}</small
                 ></span
               >
             </label>
@@ -422,43 +527,45 @@
             <label class="preview-choice"
               >{tr("wizard.preview.mail.hosting")}
               <select
-                value={values(card).hosting ?? "existing"}
+                value={values(card).hosting ??
+                  catalogSetting(card, "hosting")?.default ??
+                  "existing"}
                 disabled={!canChoose(card, "hosting")}
                 onchange={(event) =>
                   onSettingChange("mail", "hosting", event.currentTarget.value)}
               >
-                <option value="existing"
-                  >{tr("wizard.preview.mail.existing")}</option
-                >
-                <option value="stalwart">Stalwart</option><option
-                  value="mailcow">mailcow</option
-                >
+                {#each catalogSetting(card, "hosting")?.options ?? [{ id: "existing", name: tr("wizard.preview.mail.existing") }, { id: "stalwart", name: "Stalwart" }, { id: "mailcow", name: "mailcow" }] as option (option.id)}
+                  <option value={option.id}>{option.name}</option>
+                {/each}
               </select>
             </label>
+            {#if canChoose(card, "hosting") && savedForLater(card, "hosting")}
+              <p class="preference-note">
+                {tr("wizard.goals.setting.recorded")}
+              </p>
+            {/if}
           {:else if card.id === "game"}
             <label class="preview-choice"
               >{tr("wizard.preview.game.edition")}
               <select
-                value={values(card).edition ?? "java"}
+                value={values(card).edition ??
+                  catalogSetting(card, "edition")?.default ??
+                  "java"}
                 disabled={!canChoose(card, "edition")}
                 onchange={(event) =>
                   onSettingChange("game", "edition", event.currentTarget.value)}
               >
-                <option value="java">Minecraft Java</option><option
-                  value="bedrock">Minecraft Bedrock</option
-                >
+                {#each catalogSetting(card, "edition")?.options ?? [{ id: "java", name: "Minecraft Java" }, { id: "bedrock", name: "Minecraft Bedrock" }] as option (option.id)}
+                  <option value={option.id}>{option.name}</option>
+                {/each}
               </select>
             </label>
+            {#if canChoose(card, "edition") && savedForLater(card, "edition")}
+              <p class="preference-note">
+                {tr("wizard.goals.setting.recorded")}
+              </p>
+            {/if}
           {/if}
-          <UseCaseSettings
-            catalog={reviewMode ? card.catalog : runtimeCatalog.get(card.id)}
-            preview={reviewMode}
-            values={values(card)}
-            onchange={(id, value) => {
-              if (card.question)
-                onSettingChange(card.question.configKey, id, value);
-            }}
-          />
         {/snippet}
         <UseCaseCardCompact
           name={title(card)}
@@ -485,6 +592,17 @@
             ? `preview-goal-${card.id}`
             : card.question?.testId}
         />
+        {#if expanded === card.id && variant !== "focus"}
+          <button
+            type="button"
+            class="collapse-card"
+            aria-label={`${tr("wizard.preview.collapse")} ${title(card)}`}
+            title={tr("wizard.preview.collapse")}
+            onclick={() => dismissDetails(true)}
+          >
+            <Minimize2 size={17} aria-hidden="true" />
+          </button>
+        {/if}
       </div>
     {/each}
   </div>
@@ -597,7 +715,9 @@
             <dd>{title(serviceInfo!.card)}</dd>
           </div>
         </dl>
-        {#if service.role === "alternative"}<p class="service-disclaimer">
+        {#if service.role === "alternative" && (reviewMode || !installsService(service))}<p
+            class="service-disclaimer"
+          >
             {preferenceNote()}
           </p>{/if}
         {#if domain}<a
@@ -779,23 +899,78 @@
   .goals-grid {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    grid-auto-rows: 1fr;
     gap: 12px;
-    align-items: stretch;
+    align-items: start;
   }
   .goal-frame {
+    position: relative;
     min-width: 0;
     grid-row: var(--wide-row);
     grid-column: var(--wide-column);
   }
+  /* Closed cards are square with fixed rows: artwork (title on it), a
+     two-line description, the app stack and the footer. The artwork takes
+     whatever the fixed rows leave, so nothing overlaps or leaves the card. */
+  .goals-grid:not(.focus) .goal-frame:not(.expanded) {
+    container-type: inline-size;
+    aspect-ratio: 1;
+    --goal-desc-height: 38px;
+    --goal-apps-height: 42px;
+    --goal-foot-height: 38px;
+    --goal-art-height: calc(
+      100cqi - 28px - 3 * 8px - var(--goal-desc-height) -
+        var(--goal-apps-height) - var(--goal-foot-height)
+    );
+  }
   .goals-grid:not(.focus) .goal-frame :global(.kf-uc-enhanced) {
     height: 100%;
+  }
+  .goals-grid:not(.focus) .goal-frame:not(.expanded) :global(.kf-uc-enhanced) {
+    overflow: hidden;
   }
   .goals-grid:not(.focus)
     .goal-frame:not(.expanded)
     :global(.kf-uc-enhanced-main) {
     flex: 1;
-    grid-template-rows: var(--goal-art-height, 132px) 1fr auto auto auto;
+    min-height: 0;
+    grid-template-areas:
+      "visual visual"
+      "copy selection"
+      "controls controls"
+      "foot foot";
+    grid-template-rows:
+      var(--goal-art-height) var(--goal-desc-height)
+      var(--goal-apps-height) var(--goal-foot-height);
+  }
+  .goals-grid:not(.focus)
+    .goal-frame:not(.expanded)
+    :global(.kf-uc-enhanced-copy) {
+    grid-column: 1 / -1;
+    overflow: hidden;
+  }
+  .goals-grid:not(.focus)
+    .goal-frame:not(.expanded)
+    :global(.kf-uc-enhanced-desc) {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
+    font-size: 12px;
+    line-height: 1.55;
+  }
+  .goals-grid:not(.focus)
+    .goal-frame:not(.expanded)
+    :global(.kf-uc-enhanced-controls) {
+    padding: 0;
+    min-height: 0;
+  }
+  .goals-grid:not(.focus)
+    .goal-frame:not(.expanded)
+    :global(.kf-uc-enhanced-foot) {
+    box-sizing: border-box;
+    min-height: 0;
+    padding-top: 0;
   }
   .goals-grid:not(.focus) .goal-frame :global(.kf-uc-enhanced-main) {
     gap: 8px 12px;
@@ -818,9 +993,11 @@
     width: calc(100% - 82px);
     transform: translateY(-100%);
     color: white;
-    font-size: 16px;
+    font-size: 18px;
     line-height: 1.2;
-    text-shadow: 0 2px 8px rgb(5 10 18 / 75%);
+    -webkit-text-stroke: 0.6px #000;
+    paint-order: stroke fill;
+    text-shadow: 0 1px 3px #000;
   }
   .goals-grid:not(.focus) .goal-frame :global(.kf-uc-enhanced-desc) {
     margin-top: 0;
@@ -846,7 +1023,7 @@
     --goal-art-height: 245px;
   }
   .goals-grid:not(.focus) .goal-frame.expanded :global(.kf-uc-enhanced-name) {
-    font-size: 22px;
+    font-size: 24px;
   }
   .goals-grid:not(.focus) .goal-frame.expanded :global(.service-picker) {
     flex-direction: column;
@@ -855,8 +1032,142 @@
   .goals-grid:not(.focus) .goal-frame.expanded :global(.service-option) {
     flex: none;
   }
-  .goals-grid:not(.focus) .goal-frame :global(.kf-uc-enhanced-foot) {
+  .goals-grid:not(.focus) .goal-frame.expanded :global(.kf-uc-enhanced-foot) {
     padding-top: 9px;
+  }
+  .collapse-card {
+    position: absolute;
+    z-index: 4;
+    top: 24px;
+    right: 66px;
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    color: white;
+    background: rgb(15 22 32 / 85%);
+    border: 1px solid rgb(255 255 255 / 50%);
+    border-radius: 50%;
+  }
+  .goals-grid:not(.focus) .goal-frame.expanded :global(.kf-uc-enhanced-copy) {
+    display: contents;
+  }
+  .goals-grid:not(.focus) .goal-frame.expanded :global(.kf-uc-enhanced-desc) {
+    display: none;
+  }
+  /* On a multi-column grid the expanded card is a 2x2 square: two tiles and a
+     gap each way, so the rows around it keep the tile height. A short artwork
+     band spans the top; below it the description sits left and service
+     main application selection sits right. Advanced spans the
+     bottom and replaces the body when open. The card
+     never grows; the single-column layout keeps growing in height. */
+  @container creation-goals (min-width: 621px) {
+    .goals-grid:not(.focus) .goal-frame.expanded {
+      container-type: inline-size;
+      aspect-ratio: 1;
+      min-height: 0;
+      overflow: hidden;
+      --goal-art-height: 28cqi;
+    }
+    .goals-grid:not(.focus) .goal-frame.expanded :global(.kf-uc-enhanced) {
+      display: grid;
+      grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+      grid-template-rows: var(--goal-art-height) minmax(0, 1fr) auto auto;
+      grid-template-areas:
+        "visual visual"
+        "details controls"
+        "foot foot"
+        "advanced advanced";
+      gap: 12px 16px;
+      padding: 14px;
+      overflow: hidden;
+    }
+    .goals-grid:not(.focus) .goal-frame.expanded :global(.kf-uc-enhanced-main) {
+      display: contents;
+    }
+    .goals-grid:not(.focus)
+      .goal-frame.expanded
+      :global(.kf-uc-enhanced-controls),
+    .goals-grid:not(.focus) .goal-frame.expanded .detail-content {
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-width: thin;
+    }
+    .goals-grid:not(.focus)
+      .goal-frame.expanded
+      :global(.kf-uc-enhanced-details) {
+      display: contents;
+    }
+    .goals-grid:not(.focus) .goal-frame.expanded .detail-content {
+      grid-area: details;
+      padding: 0;
+      border-top: 0;
+    }
+    .goals-grid:not(.focus) .goal-frame.expanded .goal-details {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 20px;
+      padding-block: 8px 4px;
+    }
+  }
+  .goals-grid:not(.focus) .goal-frame.advanced-open :global(.kf-uc-enhanced) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: var(--goal-art-height) minmax(0, 1fr);
+    grid-template-areas: "visual" "advanced";
+    gap: 12px;
+    padding: 14px;
+  }
+  .goals-grid:not(.focus)
+    .goal-frame.advanced-open
+    :global(.kf-uc-enhanced-main),
+  .goals-grid:not(.focus)
+    .goal-frame.advanced-open
+    :global(.kf-uc-enhanced-copy),
+  .goals-grid:not(.focus)
+    .goal-frame.advanced-open
+    :global(.kf-uc-enhanced-details) {
+    display: contents;
+  }
+  .goals-grid:not(.focus)
+    .goal-frame.advanced-open
+    :global(.kf-uc-enhanced-desc),
+  .goals-grid:not(.focus)
+    .goal-frame.advanced-open
+    :global(.kf-uc-enhanced-controls),
+  .goals-grid:not(.focus)
+    .goal-frame.advanced-open
+    :global(.kf-uc-enhanced-foot),
+  .goals-grid:not(.focus) .goal-frame.advanced-open .detail-content {
+    display: none;
+  }
+  @container creation-goals (max-width: 620px) {
+    .goals-grid:not(.focus) .goal-frame.advanced-open {
+      height: calc(var(--goal-art-height) + 440px);
+    }
+  }
+  .art-select {
+    position: absolute;
+    z-index: 2;
+    top: 14px;
+    left: 14px;
+    width: calc(100% - 28px);
+    height: var(--goal-art-height, 132px);
+    border-radius: 9px;
+    background: transparent;
+    transition: background-color var(--kx-dur-fast, 120ms) ease-out;
+  }
+  .art-select:focus-visible {
+    outline-offset: -3px;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .art-select:hover {
+      background: rgb(255 255 255 / 8%);
+    }
+  }
+  /* The title lies on the artwork; clicks pass through it to the button. */
+  .goals-grid:not(.focus) .goal-frame :global(.kf-uc-enhanced-name) {
+    pointer-events: none;
   }
   .goals-grid.focus {
     grid-template-columns: 1fr;
@@ -868,7 +1179,7 @@
   }
   .goal-details {
     display: grid;
-    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     gap: 26px;
     padding-block: 8px 22px;
   }
@@ -904,28 +1215,6 @@
   }
   .detail-story a {
     margin-top: 14px;
-  }
-  .tool-row {
-    display: flex;
-    width: 100%;
-    gap: 10px;
-    align-items: center;
-    padding: 10px 0;
-    border-bottom: 1px solid var(--border);
-    font-size: 12px;
-    text-align: start;
-  }
-  .tool-row span {
-    flex: 1;
-  }
-  .tool-row small {
-    display: block;
-    color: var(--muted-foreground);
-    font-size: 10px;
-    margin-top: 3px;
-  }
-  .tool-row :global(svg) {
-    flex-shrink: 0;
   }
   .preference-note {
     font-size: 11px;
@@ -1059,12 +1348,7 @@
     outline: 2px solid var(--ring);
     outline-offset: 4px;
   }
-  @media (hover: hover) and (pointer: fine) {
-    .tool-row:hover {
-      color: var(--primary);
-    }
-  }
-  @container creation-goals (max-width: 1260px) {
+  @container creation-goals (max-width: 960px) {
     .goals-grid {
       grid-template-columns: repeat(3, minmax(0, 1fr));
     }
@@ -1072,11 +1356,8 @@
       grid-row: var(--narrow-row);
       grid-column: var(--narrow-column);
     }
-    .goals-grid:not(.focus) .goal-frame:not(.expanded) {
-      --goal-art-height: 142px;
-    }
   }
-  @container creation-goals (max-width: 1000px) {
+  @container creation-goals (max-width: 760px) {
     .goals-grid,
     .upcoming-grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1084,9 +1365,6 @@
     .goal-frame {
       grid-row: var(--medium-row);
       grid-column: var(--medium-column);
-    }
-    .goals-grid:not(.focus) .goal-frame:not(.expanded) {
-      --goal-art-height: 158px;
     }
     .goals-grid {
       grid-template-rows: none;
@@ -1103,7 +1381,6 @@
       grid-area: auto;
     }
     .goals-grid:not(.focus) .goal-frame:not(.expanded) {
-      --goal-art-height: 168px;
       width: 100%;
       max-width: 430px;
       justify-self: center;

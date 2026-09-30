@@ -30,6 +30,11 @@ const (
 	BillingSubscription    = "subscription"
 )
 
+// Offering is one customer-facing managed-runtime product. Its VCPUs,
+// MemoryMB and DiskGB are the custom server size for providers without a
+// recorded fixed package (Centron today). A provider with a fixed package
+// provisions that package instead; PackageForProvider is the only size a
+// provider adapter may use.
 type Offering struct {
 	ID             serverruntime.RuntimeOfferingID `json:"id"`
 	Name           string                          `json:"name"`
@@ -48,9 +53,11 @@ func Catalog() []Offering {
 			Name:           "Monthly Runtime Standard",
 			BillingCadence: serverruntime.BillingCadenceMonthly,
 			Image:          "ubuntu-24.04",
-			// Cloud Kit (Coolify, hub, PocketID, TinyAuth, host-security)
-			// needs at least 4 vCPU / 8 GiB. Demo and kombify-operated
-			// managed VPS must not go below this floor.
+			// StackKits declares the Cloud Kit minimum as 2 vCPU / 4 GB / 20 GB
+			// (PROVIDER-CATALOG §11). IONOS Standard is Basic Cube S, exactly
+			// that floor; a live Cloud Kit lane on Cube S must confirm it
+			// before customers get Standard. The custom 4 vCPU / 8 GiB size
+			// below stays for Centron until its package mapping is recorded.
 			VCPUs:    4,
 			MemoryMB: 8192,
 			DiskGB:   80,
@@ -66,6 +73,64 @@ func Catalog() []Offering {
 			DiskGB:         320,
 			Region:         "de-fra",
 		},
+	}
+}
+
+// ProviderPackage is the machine one provider provisions for one offering.
+// Template names a fixed provider package the adapter must resolve and verify
+// at runtime; an empty Template means a custom size from the offering.
+type ProviderPackage struct {
+	ProviderID string
+	OfferingID serverruntime.RuntimeOfferingID
+	Template   string
+	// Location pins where the package can be created; empty means the lease's
+	// region.
+	Location string
+	VCPUs    int
+	MemoryMB int
+	DiskGB   int
+}
+
+// IONOSCubeDatacenter is where Basic Cubes are created. IONOS location de/fra
+// has no cube feature (create answers 403 "427 Access Denied as the location
+// does not support the cube feature"); its Frankfurt sub-location de/fra/2
+// (frankfurt-east) lists "cube" in GET /locations (verified 2026-09-24).
+const IONOSCubeDatacenter = "de/fra/2"
+
+// ionosBasicCubes is the owner decision of 2026-09-24 (PROVIDER-CATALOG §11):
+// IONOS provisions only Basic Cubes, never a custom VCPU size.
+var ionosBasicCubes = map[serverruntime.RuntimeOfferingID]ProviderPackage{
+	serverruntime.RuntimeOfferingStandard: {
+		ProviderID: ProviderIONOS, OfferingID: serverruntime.RuntimeOfferingStandard,
+		Template: "Basic Cube S", Location: IONOSCubeDatacenter, VCPUs: 2, MemoryMB: 4096, DiskGB: 120,
+	},
+	serverruntime.RuntimeOfferingPremium: {
+		ProviderID: ProviderIONOS, OfferingID: serverruntime.RuntimeOfferingPremium,
+		Template: "Basic Cube M", Location: IONOSCubeDatacenter, VCPUs: 4, MemoryMB: 8192, DiskGB: 240,
+	},
+}
+
+// PackageForProvider resolves the exact machine a provider provisions for an
+// ordered offering. An unknown offering or provider fails closed.
+func PackageForProvider(providerID, offeringID string) (ProviderPackage, error) {
+	offering, err := ResolveOffering(offeringID)
+	if err != nil {
+		return ProviderPackage{}, err
+	}
+	switch strings.TrimSpace(providerID) {
+	case ProviderIONOS:
+		pkg, ok := ionosBasicCubes[offering.ID]
+		if !ok {
+			return ProviderPackage{}, fmt.Errorf("monthlyruntime: offering %q has no IONOS package", offering.ID)
+		}
+		return pkg, nil
+	case ProviderCentron:
+		return ProviderPackage{
+			ProviderID: ProviderCentron, OfferingID: offering.ID,
+			VCPUs: offering.VCPUs, MemoryMB: offering.MemoryMB, DiskGB: offering.DiskGB,
+		}, nil
+	default:
+		return ProviderPackage{}, fmt.Errorf("monthlyruntime: provider %q has no package for offering %q", providerID, offering.ID)
 	}
 }
 

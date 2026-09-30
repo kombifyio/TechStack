@@ -1,3 +1,4 @@
+import { tr } from "#lib/i18n.svelte.js";
 export type IconStyle = "filled" | "glass" | "gradient" | "outlined";
 
 export interface StackIdentity {
@@ -22,104 +23,138 @@ export type IdentityCharacter = {
 export const identityCharacters: readonly IdentityCharacter[] = [
   {
     id: "rocket",
-    label: "Rocket",
+    get label() {
+      return tr("ui.identity.rocket");
+    },
     tone: "oklch(0.75 0.18 55)",
     animationStyle: "identity-float",
   },
   {
     id: "robot",
-    label: "Robot",
+    get label() {
+      return tr("ui.identity.robot");
+    },
     tone: "oklch(0.75 0.2 145)",
     animationStyle: "identity-glitch",
   },
   {
     id: "astronaut",
-    label: "Astronaut",
+    get label() {
+      return tr("ui.identity.astronaut");
+    },
     tone: "oklch(0.65 0.2 250)",
     animationStyle: "identity-drift",
   },
   {
     id: "dragon",
-    label: "Dragon",
+    get label() {
+      return tr("ui.identity.dragon");
+    },
     tone: "oklch(0.7 0.25 30)",
     animationStyle: "identity-flame",
   },
   {
     id: "unicorn",
-    label: "Unicorn",
+    get label() {
+      return tr("ui.identity.unicorn");
+    },
     tone: "oklch(0.75 0.2 320)",
     animationStyle: "identity-rainbow",
   },
   {
     id: "phoenix",
-    label: "Phoenix",
+    get label() {
+      return tr("ui.identity.phoenix");
+    },
     tone: "oklch(0.75 0.22 60)",
     animationStyle: "identity-rise",
   },
   {
     id: "alien",
-    label: "Alien",
+    get label() {
+      return tr("ui.identity.alien");
+    },
     tone: "oklch(0.7 0.25 145)",
     animationStyle: "identity-pulse",
   },
   {
     id: "ghost",
-    label: "Ghost",
+    get label() {
+      return tr("ui.identity.ghost");
+    },
     tone: "oklch(0.8 0.05 260)",
     animationStyle: "identity-fade",
   },
   {
     id: "wizard",
-    label: "Wizard",
+    get label() {
+      return tr("ui.identity.wizard");
+    },
     tone: "oklch(0.65 0.25 280)",
     animationStyle: "identity-sparkle",
   },
   {
     id: "ninja",
-    label: "Ninja",
+    get label() {
+      return tr("ui.identity.ninja");
+    },
     tone: "oklch(0.5 0.05 0)",
     animationStyle: "identity-stealth",
   },
   {
     id: "satellite",
-    label: "Satellite",
+    get label() {
+      return tr("ui.identity.satellite");
+    },
     tone: "oklch(0.7 0.18 200)",
     animationStyle: "identity-orbit",
   },
   {
     id: "hologram",
-    label: "Hologram",
+    get label() {
+      return tr("ui.identity.hologram");
+    },
     tone: "oklch(0.7 0.15 180)",
     animationStyle: "identity-scanline",
   },
   {
     id: "circuit",
-    label: "Circuit",
+    get label() {
+      return tr("ui.identity.circuit");
+    },
     tone: "oklch(0.65 0.22 230)",
     animationStyle: "identity-trace",
   },
   {
     id: "nebula",
-    label: "Nebula",
+    get label() {
+      return tr("ui.identity.nebula");
+    },
     tone: "oklch(0.6 0.25 290)",
     animationStyle: "identity-cosmic",
   },
   {
     id: "quantum",
-    label: "Quantum",
+    get label() {
+      return tr("ui.identity.quantum");
+    },
     tone: "oklch(0.7 0.2 170)",
     animationStyle: "identity-quantum",
   },
   {
     id: "cybershield",
-    label: "Cybershield",
+    get label() {
+      return tr("ui.identity.cybershield");
+    },
     tone: "oklch(0.6 0.18 200)",
     animationStyle: "identity-shield",
   },
 ];
 
 export const defaultIdentity: StackIdentity = {
-  name: "My Homelab",
+  get name() {
+    return tr("ui.identity.myHomelab");
+  },
   characterId: "rocket",
   animationStyle: "identity-float",
   savedAt: null,

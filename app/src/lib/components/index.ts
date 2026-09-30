@@ -23,6 +23,4 @@ export {
   GuidancePanel,
   GuidedNextSteps,
   ManagedCreationFlow,
-  ServerInventoryPanel,
-  ServerStateCard,
 } from "./hub/index.js";

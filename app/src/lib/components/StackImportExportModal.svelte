@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "#lib/i18n.svelte.js";
   import { goto } from "$app/navigation";
   import Modal from "./Modal.svelte";
   import Button from "#lib/components/ui/Button.svelte";
@@ -108,7 +109,7 @@
       importContent = content;
       await validateContent();
     } catch (err) {
-      importError = err instanceof Error ? err.message : "Could not read file";
+      importError = err instanceof Error ? err.message : tr("ui.stackImportExportModal.couldNotReadFile");
     }
   }
 
@@ -133,14 +134,14 @@
       importContent = content;
       await validateContent();
     } catch (err) {
-      importError = err instanceof Error ? err.message : "Could not read file";
+      importError = err instanceof Error ? err.message : tr("ui.stackImportExportModal.couldNotReadFile");
     }
   }
 
   // Validate the content before import
   async function validateContent() {
     if (!importContent.trim()) {
-      importError = "No content found";
+      importError = tr("ui.stackImportExportModal.noContentFound");
       return;
     }
 
@@ -154,7 +155,7 @@
         importStep = "preview";
       }
     } catch (err) {
-      importError = err instanceof Error ? err.message : "Validation failed";
+      importError = err instanceof Error ? err.message : tr("ui.stackImportExportModal.validationFailed");
       importDiagnostics = buildDiagnostics("validate-import", err);
     } finally {
       validating = false;
@@ -164,7 +165,7 @@
   // Perform the import
   async function handleImport() {
     if (!importContent.trim()) {
-      importError = "No content to import";
+      importError = tr("ui.stackImportExportModal.noContentToImport");
       return;
     }
 
@@ -193,7 +194,7 @@
         );
       }
     } catch (err) {
-      importError = err instanceof Error ? err.message : "Import failed";
+      importError = err instanceof Error ? err.message : tr("ui.importExportModal.importFailed");
       importDiagnostics = buildDiagnostics("import", err);
       importStep = "preview";
     } finally {
@@ -204,7 +205,7 @@
   // Handle export
   async function handleExport() {
     if (!kitDeploymentId) {
-      exportError = "No StackKit deployment is available to export";
+      exportError = tr("ui.stackImportExportModal.noStackkitDeploymentIsAvailable");
       return;
     }
 
@@ -233,7 +234,7 @@
 
       onClose();
     } catch (err) {
-      exportError = err instanceof Error ? err.message : "Export failed";
+      exportError = err instanceof Error ? err.message : tr("ui.importExportModal.exportFailed");
       exportDiagnostics = buildDiagnostics("export", err);
     } finally {
       exporting = false;
@@ -253,8 +254,8 @@
 
 <Modal
   title={mode === "import"
-    ? "Import StackKit deployment spec"
-    : "Export StackKit deployment spec"}
+    ? tr("ui.stackImportExportModal.importStackkitDeploymentSpec")
+    : tr("ui.stackImportExportModal.exportStackkitDeploymentSpec")}
   {onClose}
   maxWidth="lg"
 >
@@ -263,9 +264,7 @@
     {#if importStep === "upload"}
       <div class="space-y-4">
         <p class="text-muted-foreground text-sm">
-          Import a <code class="text-primary">stack-spec.yaml</code> file to set
-          up a StackKit deployment in your Homelab. Legacy
-          <code class="text-primary">kombination.yaml</code> files are still accepted.
+          {tr("ui.stackImport.intro", { file: "stack-spec.yaml", legacy: "kombination.yaml" })}
         </p>
 
         <!-- Drag & Drop Zone -->
@@ -289,9 +288,9 @@
               d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
             />
           </svg>
-          <p class="text-muted-foreground mb-2">Drag file here or</p>
+          <p class="text-muted-foreground mb-2">{tr("ui.stackImportExportModal.dragFileHereOr")}</p>
           <Button variant="secondary" onclick={() => fileInput?.click()}>
-            Select File
+            {tr("ui.stackImportExportModal.selectFile")}
           </Button>
           <input
             bind:this={fileInput}
@@ -301,7 +300,7 @@
             onchange={handleFileSelect}
           />
           <p class="text-xs text-muted-foreground mt-2">
-            Supported: .yaml, .yml, .json
+            {tr("ui.stackImportExportModal.supportedYamlYmlJson")}
           </p>
         </div>
 
@@ -311,13 +310,13 @@
             <div class="w-full border-t border-border"></div>
           </div>
           <div class="relative flex justify-center text-sm">
-            <span class="px-2 bg-card text-muted-foreground">or paste</span>
+            <span class="px-2 bg-card text-muted-foreground">{tr("ui.stackImport.orPaste")}</span>
           </div>
         </div>
 
         <textarea
           bind:value={importContent}
-          placeholder="# Paste your stack-spec.yaml here..."
+          placeholder={tr("ui.stackImportExportModal.pasteYourStackSpecYaml")}
           class="w-full h-48 px-4 py-3 bg-input border border-border rounded-lg text-foreground font-mono text-sm placeholder-muted-foreground focus:border-primary focus:outline-none resize-none"
           oninput={() => {
             validationResult = null;
@@ -333,9 +332,9 @@
             class="w-full"
           >
             {#if validating}
-              <span class="animate-spin mr-2">⟳</span> Validating...
+              <span class="animate-spin mr-2">⟳</span> {tr("ui.stackImport.validating")}
             {:else}
-              Validate Configuration
+              {tr("ui.stackImportExportModal.validateConfiguration")}
             {/if}
           </Button>
         {/if}
@@ -366,7 +365,7 @@
                   />
                 </svg>
                 <span class="text-success font-medium"
-                  >Configuration is valid</span
+                  >{tr("ui.stackImportExportModal.configurationIsValid")}</span
                 >
               {:else}
                 <svg
@@ -383,7 +382,7 @@
                   />
                 </svg>
                 <span class="text-destructive font-medium"
-                  >Configuration errors</span
+                  >{tr("ui.stackImportExportModal.configurationErrors")}</span
                 >
               {/if}
             </div>
@@ -411,9 +410,7 @@
           {#if validationResult.valid}
             <div data-kx="plate" class="p-4">
               <p class="text-muted-foreground text-sm">
-                All required fields are present. After import, the Unifier
-                process will start and determine the appropriate StackKit for
-                your configuration.
+                {tr("ui.stackImportExportModal.allRequiredFieldsArePresent")}
               </p>
             </div>
           {/if}
@@ -422,7 +419,7 @@
         <!-- Action Buttons -->
         <div class="flex gap-3">
           <Button onclick={resetImport} variant="secondary" class="flex-1">
-            Back
+            {tr("ui.importExportModal.back")}
           </Button>
           {#if validationResult?.valid}
             <Button
@@ -435,9 +432,9 @@
                 <span
                   class="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent"
                   aria-hidden="true"
-                ></span> Importing...
+                ></span> {tr("ui.importExportModal.importing")}
               {:else}
-                Import & Start Setup
+                {tr("ui.stackImportExportModal.importStartSetup")}
               {/if}
             </Button>
           {/if}
@@ -449,9 +446,9 @@
         <div
           class="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent"
         ></div>
-        <p class="text-foreground">Importing configuration...</p>
+        <p class="text-foreground">{tr("ui.stackImportExportModal.importingConfiguration")}</p>
         <p class="text-muted-foreground text-sm mt-2">
-          You will be redirected to the setup page shortly.
+          {tr("ui.stackImportExportModal.youWillBeRedirectedTo")}
         </p>
       </div>
     {/if}
@@ -463,8 +460,7 @@
       >
         <p class="font-medium">{importError}</p>
         <p class="mt-2 text-xs text-destructive/80">
-          Tip: If you see an HTML page instead of JSON, the backend proxy or
-          your session/auth may be broken. Please try again.
+          {tr("ui.stackImportExportModal.tipIfYouSeeAn")}
         </p>
 
         {#if importDiagnostics}
@@ -475,7 +471,7 @@
                 if (importDiagnostics) await copyText(importDiagnostics);
               }}
             >
-              Copy Diagnostics (for developers)
+              {tr("ui.stackImportExportModal.copyDiagnosticsForDevelopers")}
             </Button>
           </div>
         {/if}
@@ -485,9 +481,7 @@
     <!-- EXPORT MODE -->
     <div class="space-y-4">
       <p class="text-muted-foreground text-sm">
-        Export this StackKit deployment configuration as <code
-          class="text-primary">stack-spec.yaml</code
-        >. You can edit the file and import it again later.
+        {tr("ui.stackImport.exportIntro", { file: "stack-spec.yaml" })}
       </p>
 
       <!-- Format Selection -->
@@ -502,7 +496,7 @@
             class="text-primary"
           />
           <span class="text-foreground">YAML</span>
-          <span class="text-xs text-muted-foreground">(recommended)</span>
+          <span class="text-xs text-muted-foreground">{tr("ui.stackImportExportModal.recommended")}</span>
         </label>
         <label class="flex items-center gap-2 cursor-pointer">
           <input
@@ -520,22 +514,21 @@
       <!-- Info Box -->
       <div data-kx="plate" class="p-4 text-sm">
         <p class="text-muted-foreground mb-2">
-          <strong class="text-foreground">What will be exported?</strong>
+          <strong class="text-foreground">{tr("ui.stackImportExportModal.whatWillBeExported")}</strong>
         </p>
         <ul class="text-muted-foreground space-y-1">
-          <li>• Stack name and configuration</li>
-          <li>• Node definitions (without credentials)</li>
-          <li>• Service configurations</li>
-          <li>• System, network, and security settings</li>
-          <li>• Metadata and intents</li>
+          <li>{tr("ui.stackImportExportModal.stackNameAndConfiguration")}</li>
+          <li>{tr("ui.stackImportExportModal.nodeDefinitionsWithoutCredentials")}</li>
+          <li>{tr("ui.stackImportExportModal.serviceConfigurations")}</li>
+          <li>{tr("ui.stackImportExportModal.systemNetworkAndSecuritySettings")}</li>
+          <li>{tr("ui.stackImportExportModal.metadataAndIntents")}</li>
         </ul>
       </div>
 
       <div
         class="p-3 rounded-lg bg-warning/10 border border-warning/30 text-sm text-warning"
       >
-        <strong>Note:</strong> SSH keys and secrets are not exported. These must be
-        reconfigured after an import.
+        <strong>{tr("ui.importExportModal.note")}</strong> {tr("ui.stackImportExportModal.sshKeysAndSecretsAre")}
       </div>
 
       {#if exportError}
@@ -544,8 +537,7 @@
         >
           <p class="font-medium">{exportError}</p>
           <p class="mt-2 text-xs text-destructive/80">
-            If the problem persists: copy the diagnostics and share them with
-            developers.
+            {tr("ui.stackImportExportModal.ifTheProblemPersistsCopy")}
           </p>
 
           {#if exportDiagnostics}
@@ -556,7 +548,7 @@
                   if (exportDiagnostics) await copyText(exportDiagnostics);
                 }}
               >
-                Copy Diagnostics
+                {tr("ui.stackImportExportModal.copyDiagnostics")}
               </Button>
             </div>
           {/if}
@@ -565,7 +557,7 @@
 
       <div class="flex gap-3">
         <Button onclick={onClose} variant="secondary" class="flex-1">
-          Cancel
+          {tr("ui.importExportModal.cancel")}
         </Button>
         <Button
           onclick={handleExport}
@@ -577,9 +569,9 @@
             <span
               class="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent"
               aria-hidden="true"
-            ></span> Exporting...
+            ></span> {tr("ui.importExportModal.exporting")}
           {:else}
-            Download
+            {tr("ui.importExportModal.download")}
           {/if}
         </Button>
       </div>

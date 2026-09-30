@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "#lib/i18n.svelte.js";
   import { goto } from "$app/navigation";
   import { Monitor, Server, ShieldCheck } from "@lucide/svelte";
   import { setLocalLANBridge } from "#lib/api/tunnel.js";
@@ -37,7 +38,7 @@
       localError =
         error instanceof Error
           ? error.message
-          : "The private-network enrollment channel could not be enabled.";
+          : tr("ui.clientOnboarding.thePrivateNetworkEnrollmentChannel");
     } finally {
       localStarting = false;
     }
@@ -45,7 +46,7 @@
 </script>
 
 <svelte:head>
-  <title>Windows Client Onboarding | kombify Techstack</title>
+  <title>{tr("ui.clientOnboarding.windowsClientOnboardingKombifyTechstack")}</title>
 </svelte:head>
 
 <main class="min-h-screen bg-background text-foreground">
@@ -70,17 +71,15 @@
         <div
           class="mb-7 inline-flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm font-semibold"
         >
-          <Monitor class="h-4 w-4" /> Local Windows installation
+          <Monitor class="h-4 w-4" /> {tr("ui.clientOnboarding.localWindowsInstallation")}
         </div>
         <h1
           class="text-5xl font-semibold leading-tight tracking-normal text-foreground"
         >
-          Set up kombify Techstack on this Windows device.
+          {tr("ui.clientOnboarding.setUpKombifyTechstackOn")}
         </h1>
         <p class="mt-5 text-lg leading-8 text-muted-foreground">
-          This client is the local desktop entry for orchestrating your own
-          servers and StackKits. The default path installs Techstack locally on
-          this device.
+          {tr("ui.clientOnboarding.thisClientIsTheLocal")}
         </p>
       </div>
       <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-2">
@@ -90,10 +89,9 @@
           >
             <Monitor class="h-5 w-5" />
           </div>
-          <h2 class="text-xl font-semibold text-foreground">Install locally</h2>
+          <h2 class="text-xl font-semibold text-foreground">{tr("ui.clientOnboarding.installLocally")}</h2>
           <p class="mt-3 min-h-20 text-sm leading-6 text-muted-foreground">
-            No Techstack account required. Techstack runs on this device and
-            opens a token-protected enrollment channel for your private network.
+            {tr("ui.clientOnboarding.noTechstackAccountRequiredTechstack")}
           </p>
           <button
             type="button"
@@ -103,7 +101,7 @@
             disabled={localStarting}
             onclick={useLocalInstallation}
           >
-            {localStarting ? "Starting locally..." : "Use locally"}
+            {localStarting ? tr("ui.clientOnboarding.startingLocally") : tr("ui.clientOnboarding.useLocally")}
           </button>
           {#if localError}
             <p class="mt-3 text-sm text-destructive" role="alert">{localError}</p>
@@ -117,22 +115,21 @@
           </div>
           <h2 class="text-xl font-semibold text-foreground">kombify Cloud</h2>
           <p class="mt-3 min-h-20 text-sm leading-6 text-muted-foreground">
-            Sign in with your kombify Cloud account and connect this desktop
-            client.
+            {tr("ui.clientOnboarding.signInWithYourKombify")}
           </p>
           <a
             data-kx="control"
             class="mt-5 inline-flex h-10 w-full items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
             href={cloudUiLoginUrl}
           >
-            Sign in with kombify Cloud
+            {tr("ui.clientOnboarding.signInWithKombifyCloud")}
           </a>
           <button
             type="button"
             class="mt-3 text-left text-xs font-semibold text-muted-foreground underline-offset-4 hover:text-primary hover:underline"
             onclick={() => (showServerInput = !showServerInput)}
           >
-            Use your own self-hosted server instead
+            {tr("ui.clientOnboarding.useYourOwnSelfHosted")}
           </button>
         </article>
         {#if showServerInput}
@@ -140,8 +137,7 @@
             <div
               class="mb-4 flex items-center gap-3 text-sm font-semibold text-foreground"
             >
-              <Server class="h-4 w-4 text-primary" /> Connect an existing self-hosted
-              server
+              <Server class="h-4 w-4 text-primary" /> {tr("ui.clientOnboarding.connectAnExistingSelfHosted")}
             </div>
             <div class="flex flex-col gap-3 sm:flex-row">
               <input
@@ -157,7 +153,7 @@
                 class="inline-flex h-10 items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
                 href={normalizedServerUrl || "#"}
               >
-                Connect server
+                {tr("ui.clientOnboarding.connectServer")}
               </a>
             </div>
           </article>

@@ -286,7 +286,10 @@ describe("serviceCardActions", () => {
       "needs_approval",
     );
 
-    const notLockable = serviceCardActions({ ...base, allowedActions: ["logs"] });
+    const notLockable = serviceCardActions({
+      ...base,
+      allowedActions: ["logs"],
+    });
     expect(notLockable.some((a) => a.id === "freeze")).toBe(false);
   });
 

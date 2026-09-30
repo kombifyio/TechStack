@@ -8,8 +8,8 @@ import (
 )
 
 // v2AuthForceLoginPrompt forwards ?prompt=login from Techstack's login URL onto
-// the upstream Auth0 authorize redirect. Silent SSO otherwise reuses a dead
-// gateway session and the operator never sees Universal Login.
+// the upstream Auth0 authorize redirect. Only the wallet-reveal fresh re-auth
+// sends it; session renewal never does (one login per device, LOGIN-STANDARD).
 func v2AuthForceLoginPrompt(next http.Handler) http.Handler {
 	if next == nil {
 		return nil

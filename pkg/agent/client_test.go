@@ -16,12 +16,14 @@ func TestNewClientRequiresTLSIdentity(t *testing.T) {
 	}
 }
 
-func TestLoadTLSConfigRejectsMissingCredentialFiles(t *testing.T) {
+func TestNewClientRejectsMissingCredentialFiles(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing")
-	_, err := loadTLSConfig(Config{
-		CertFile: missing + ".crt",
-		KeyFile:  missing + ".key",
-		CAFile:   missing + ".ca",
+	_, err := NewClient(Config{
+		CoreAddress: "core:5263",
+		AgentID:     "test-agent",
+		CertFile:    missing + ".crt",
+		KeyFile:     missing + ".key",
+		CAFile:      missing + ".ca",
 	})
 	if err == nil {
 		t.Fatal("TLS configuration admitted missing credential files")

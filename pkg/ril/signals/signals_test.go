@@ -2,6 +2,7 @@ package signals
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -91,5 +92,18 @@ func TestConnectorSignalRequiresBoundedDelegatedGrantContext(t *testing.T) {
 	}
 	if _, _, err := normalizeObservation(input); !errors.Is(err, ErrInvalidSignal) {
 		t.Fatalf("connector signal without grant context error = %v", err)
+	}
+}
+
+func TestNormalizeObservationOmitsOutOfContractPresentationFields(t *testing.T) {
+	input := Observation{
+		DedupeKey: "monitor:server-1", TenantID: "tenant-1", ServerID: "server-1",
+		Source: SourceHealth, Severity: SeverityHigh, TraceID: "trace-1", AuditID: "audit-1",
+		ReceivedAt: time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC),
+		Title:      strings.Repeat("t", maxTitleBytes+1), ServiceID: "/not a service",
+	}
+	_, envelope, err := normalizeObservation(input)
+	if err != nil || envelope.Title != "" || envelope.ServiceID != "" {
+		t.Fatalf("envelope = %+v, error = %v; want the signal without invalid optional fields", envelope, err)
 	}
 }

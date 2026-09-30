@@ -23,6 +23,7 @@ const (
 	wizardGuidanceBodyKey       = "body"
 	wizardResponseValidKey      = "valid"
 	wizardResponseNodeIDKey     = "node_id"
+	wizardNoticeTitleField      = "title"
 )
 
 // wizardFeatureChecker is the minimal capability check the wizard routes
@@ -91,7 +92,7 @@ func (h wizardRouteHandlers) preview(e *httpx.Event) error {
 			"missing_features":                []string{nativeV2WizardFeatureKey},
 			managedRuntimeDetailsRetryableKey: false,
 			wizardDetailUserGuidanceKey: map[string]any{
-				inventoryMCPTitleField: "Native v2 wizard is in beta",
+				wizardNoticeTitleField: "Native v2 wizard is in beta",
 				wizardGuidanceBodyKey:  "Enable the native_v2_wizard beta feature to preview Architecture v2 projections.",
 			},
 		})
@@ -124,7 +125,7 @@ func (h wizardRouteHandlers) preview(e *httpx.Event) error {
 			inventoryReasonCodeField:          "wizard_validator_unavailable",
 			managedRuntimeDetailsRetryableKey: true,
 			wizardDetailUserGuidanceKey: map[string]any{
-				inventoryMCPTitleField: "Validator unavailable",
+				wizardNoticeTitleField: "Validator unavailable",
 				wizardGuidanceBodyKey:  "The pinned StackKits release admission is not configured on this instance, so projected specs cannot be validated.",
 			},
 		})

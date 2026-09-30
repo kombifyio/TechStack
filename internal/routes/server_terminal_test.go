@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
@@ -15,11 +16,147 @@ import (
 	"time"
 
 	"github.com/kombifyio/techstack/internal/gocommon/authsession"
+	commonedgeauth "github.com/kombifyio/techstack/internal/gocommon/edgeauth"
 	"github.com/kombifyio/techstack/internal/executionchannel"
+	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/controlplane"
+	"github.com/kombifyio/techstack/pkg/demoguard"
+	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/jobs"
+	"github.com/kombifyio/techstack/pkg/middleware"
 	"golang.org/x/crypto/ssh"
 )
+
+func TestDemoPrincipalCannotOpenTerminalOrAuthorizeSSHKey(t *testing.T) {
+	public, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := ssh.NewPublicKey(public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicLine := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key)))
+	now := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+	for _, action := range []struct {
+		name, path string
+		invoke     func(*serverTerminalHandlers, *httpx.Event) error
+		body       map[string]any
+		status     int
+	}{
+		{"terminal", "/terminal-sessions", (*serverTerminalHandlers).createSession, nil, http.StatusCreated},
+		{"authorize-key", "/access/authorized-key", (*serverTerminalHandlers).authorizeUserKey,
+			map[string]any{"wallet_item_id": "wallet-key-1", "confirm": true}, http.StatusOK},
+	} {
+		for _, caller := range []struct {
+			name, demoTenant, demoUser, principalType string
+			signed, denied                            bool
+		}{
+			{name: "configured-tenant", demoTenant: "tenant-1", denied: true},
+			{name: "configured-subject", demoUser: "owner-1", denied: true},
+			{name: "signed-demo", principalType: "demo", signed: true, denied: true},
+			{name: "signed-owner", principalType: middleware.PrincipalTypeUser, signed: true},
+			{name: "unsigned-demo-header", principalType: "demo"},
+		} {
+			t.Run(action.name+"/"+caller.name, func(t *testing.T) {
+				t.Setenv(demoguard.EnvDemoTenantID, caller.demoTenant)
+				t.Setenv(demoguard.EnvDemoUserIDs, caller.demoUser)
+				store := controlplane.NewMemoryStore()
+				if _, err := store.UpsertServerRuntime(t.Context(), controlplane.ServerRuntime{
+					ID: "server-1", TenantID: "tenant-1", StackID: "stack-1", OwnerSubjectID: "owner-1",
+					LeaseID: "lease-1", ConnectionState: "connected", HealthState: "healthy",
+				}); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := store.UpsertWalletItem(t.Context(), controlplane.WalletItem{
+					ID: "wallet-key-1", TenantID: "tenant-1", StackID: "stack-1",
+					Metadata: map[string]any{"owner_id": "owner-1", "kind": "ssh_key", "notes": "Public Key:\n" + publicLine},
+				}); err != nil {
+					t.Fatal(err)
+				}
+				installed := false
+				h := serverTerminalHandlers{
+					servers: store, wallet: store, now: func() time.Time { return now },
+					targets: jobs.NewStaticManagedRuntimeTargetResolver(jobs.ManagedRuntimeTarget{
+						Host: "203.0.113.10", SSHUser: "kombify", SSHPort: 22,
+						SSHPrivateKey: "managed-test-secret", SSHHostKey: publicLine,
+					}),
+					installKey: func(context.Context, *jobs.ManagedRuntimeTarget, string, string) error {
+						installed = true
+						return nil
+					},
+					sessions: map[string]*serverTerminalSession{}, active: map[string]string{},
+				}
+				post := func(principalType string, signed bool) *httptest.ResponseRecorder {
+					t.Helper()
+					event, recorder := registryRouteStoreTestEvent(http.MethodPost, "/api/v1/servers/server-1"+action.path, "owner-1", "tenant-1", action.body)
+					event.Request.SetPathValue("serverId", "server-1")
+					event.Request.Header.Set(commonedgeauth.HeaderPrincipalType, principalType)
+					if signed {
+						for name, value := range map[string]string{
+							commonedgeauth.HeaderEdgeAuth:    commonedgeauth.EdgeAuthValueJWT,
+							commonedgeauth.HeaderEdgeService: "techstack", commonedgeauth.HeaderPublicPrefix: "/v1/techstack",
+							commonedgeauth.HeaderUserID: "owner-1", commonedgeauth.HeaderOrgID: "tenant-1",
+						} {
+							event.Request.Header.Set(name, value)
+						}
+						signMaintenanceEdgeEnvelope(event.Request, commonedgeauth.EdgeSignatureVersionV7)
+						edge := middleware.EdgeIdentityMiddlewareWithConfig(middleware.EdgeIdentityConfig{
+							Mode: config.ModeSaaS, EdgeAuthSecret: maintenanceEdgeSecret,
+						})
+						if err := edge(event); err != nil || recorder.Body.Len() > 0 {
+							t.Fatalf("edge verification: err=%v status=%d body=%s", err, recorder.Code, recorder.Body.String())
+						}
+					}
+					event.Request = event.Request.WithContext(authsession.WithClaims(event.Request.Context(), &authsession.Claims{
+						Subject: "owner-1", TenantID: "tenant-1", ReauthPurpose: terminalReauthPurpose,
+						ReauthResource: "server-1", AuthenticatedAt: now.Unix(),
+					}))
+					if err := action.invoke(&h, event); err != nil {
+						t.Fatal(err)
+					}
+					return recorder
+				}
+				recorder := post(caller.principalType, caller.signed)
+				if !caller.denied {
+					if recorder.Code != action.status || (action.name == "authorize-key" && !installed) {
+						t.Fatalf("ordinary owner: status=%d installed=%v body=%s", recorder.Code, installed, recorder.Body.String())
+					}
+					return
+				}
+				if recorder.Code != http.StatusForbidden || installed {
+					t.Fatalf("demo action: status=%d installed=%v body=%s, want 403 before execution", recorder.Code, installed, recorder.Body.String())
+				}
+				var envelope struct {
+					Error struct {
+						Details struct {
+							ErrorCode  string `json:"error_code"`
+							ReasonCode string `json:"reason_code"`
+							Capability string `json:"capability"`
+							Retryable  bool   `json:"retryable"`
+						} `json:"details"`
+					} `json:"error"`
+				}
+				// Stable denial values are part of the public API protocol.
+				if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
+					t.Fatal(err)
+				}
+				details := envelope.Error.Details
+				if details.ErrorCode != "demo_account_restricted" || details.ReasonCode != "demo_account" || details.Capability != "runtime_ssh" || details.Retryable {
+					t.Fatalf("demo denial = %#v", details)
+				}
+				// A refused terminal cannot reserve the owner's active slot; a refused
+				// key request cannot prevent an ordinary owner's later installation.
+				t.Setenv(demoguard.EnvDemoTenantID, "")
+				t.Setenv(demoguard.EnvDemoUserIDs, "")
+				retry := post(middleware.PrincipalTypeUser, true)
+				if retry.Code != action.status || (action.name == "authorize-key" && !installed) {
+					t.Fatalf("owner retry after demo refusal: status=%d installed=%v body=%s", retry.Code, installed, retry.Body.String())
+				}
+			})
+		}
+	}
+}
 
 func TestServerAccessIsOwnerScopedHostKeyPinnedAndSecretRedacted(t *testing.T) {
 	store := controlplane.NewMemoryStore()

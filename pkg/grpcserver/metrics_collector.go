@@ -67,11 +67,11 @@ func (s *Server) PushMetrics(ctx context.Context, req *agentpb.MetricsBatch) (*a
 		if lbls == nil {
 			lbls = map[string]string{}
 		}
-		// Tag every sample with the agent that produced it
-		lbls["agent_id"] = req.AgentId
-		if connectedAgent != nil && connectedAgent.Tenant != "" {
-			lbls["tenant_id"] = connectedAgent.Tenant
+		tenantID := ""
+		if connectedAgent != nil {
+			tenantID = connectedAgent.Tenant
 		}
+		bindMetricIdentity(lbls, req.AgentId, tenantID)
 
 		samples[i] = monitoring.MetricSample{
 			Name:      ps.Name,
@@ -109,4 +109,24 @@ func (s *Server) PushMetrics(ctx context.Context, req *agentpb.MetricsBatch) (*a
 		Accepted:        true,
 		SamplesAccepted: clampIntToInt32(len(samples)),
 	}, nil
+}
+
+// serverOwnedMetricLabels identify who produced a series. Tenant-scoped reads
+// filter on tenant_id and Companion reads heartbeat series by worker_id and
+// source, and Node views read them by node_id and server_id, so an agent must
+// never choose them.
+var serverOwnedMetricLabels = []string{"tenant_id", "agent_id", "worker_id", "source", "node_id", "server_id"}
+
+// bindMetricIdentity replaces every server-owned label with the authenticated
+// agent and tenant. An empty value leaves the label unset.
+func bindMetricIdentity(labels map[string]string, agentID, tenantID string) {
+	for _, key := range serverOwnedMetricLabels {
+		delete(labels, key)
+	}
+	if agentID != "" {
+		labels["agent_id"] = agentID
+	}
+	if tenantID != "" {
+		labels["tenant_id"] = tenantID
+	}
 }

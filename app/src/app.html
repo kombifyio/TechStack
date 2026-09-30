@@ -24,16 +24,16 @@
       // menu-plate render with no material at all.
       //
       // The precedence mirrors src/lib/stores/theme.ts exactly — an embed
-      // host's ?theme= wins over the device's localStorage choice — because
+      // explicit app choice wins over the inherited host theme — because
       // that store re-applies the same decision on mount. This pass only moves
       // it before first paint.
       try {
         var params = new URLSearchParams(window.location.search);
         var embed = params.get("theme");
-        var stored =
-          embed === "dark" || embed === "light"
-            ? embed
-            : localStorage.getItem("techstack-theme");
+        var device = localStorage.getItem("techstack-theme");
+        var stored = ["dark", "light", "system"].indexOf(device) >= 0
+          ? device
+          : embed === "dark" || embed === "light" ? embed : "system";
         var dark =
           stored === "system"
             ? matchMedia("(prefers-color-scheme: dark)").matches
@@ -55,6 +55,13 @@
             : localStorage.getItem("techstack-finish");
         if (finishes.indexOf(finish) >= 0) {
           document.documentElement.dataset.finish = finish;
+        }
+        // The rail preview's shape (axis navFlyout), device-only; absent
+        // means the finish decides. Mirrors NAV_FLYOUTS in the design contract.
+        var navShapes = ["flag", "overlap", "tether", "float"];
+        var navShape = localStorage.getItem("techstack-nav-flyout");
+        if (navShapes.indexOf(navShape) >= 0) {
+          document.documentElement.dataset.navFlyoutShape = navShape;
         }
       } catch (e) {
         /* localStorage unavailable: keep the dark-first default above. */

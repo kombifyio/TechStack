@@ -66,11 +66,11 @@ func (h crudRouteHandlers) persistJoinServerIntent(
 	server, err := h.serverStore.UpsertServerRuntime(ctx, controlplane.ServerRuntime{
 		ID: serverID, TenantID: tenantID, StackID: stack.ID, OwnerSubjectID: ownerID,
 		NodeID: nodeID, Name: displayName,
-		LifecycleState: string(serverregistry.LifecyclePlanned),
-		DesiredState:   string(serverregistry.DesiredRunning),
-		ConnectionState: string(serverregistry.ConnectionPending),
-		HealthState:     string(serverregistry.HealthUnknown),
-		ReasonCode:      "awaiting_pairing",
+		LifecycleState:      string(serverregistry.LifecyclePlanned),
+		DesiredState:        string(serverregistry.DesiredRunning),
+		ConnectionState:     string(serverregistry.ConnectionPending),
+		HealthState:         string(serverregistry.HealthUnknown),
+		ReasonCode:          "awaiting_pairing",
 		ConnectionChangedAt: now,
 		Metadata:            metadata,
 	})

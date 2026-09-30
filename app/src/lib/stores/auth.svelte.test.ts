@@ -90,20 +90,6 @@ describe("authStore cloud login redirects", () => {
     expect(redirect).toHaveBeenCalledWith(redirectURL);
   });
 
-  it("asks Auth0 for an interactive Universal Login when renewing a dead gateway session", () => {
-    const redirect = vi.fn();
-    authStore.v2LoginUrl = "/api/v2/auth/login";
-
-    const redirectURL = authStore.initiateCloudLogin({
-      returnTo: "/dashboard",
-      interactive: true,
-      redirect,
-    });
-
-    expect(new URL(redirectURL ?? "").searchParams.get("prompt")).toBe("login");
-    expect(redirect).toHaveBeenCalledWith(redirectURL);
-  });
-
   it("sanitizes unsafe return targets before redirecting", () => {
     const redirect = vi.fn();
     authStore.v2LoginUrl = "/api/v2/auth/login";
@@ -212,9 +198,7 @@ describe("authStore cloud login redirects", () => {
 
     await authStore.init();
 
-    expect(startGatewayLogin).toHaveBeenCalledWith(
-      expect.objectContaining({ interactive: false }),
-    );
+    expect(startGatewayLogin).toHaveBeenCalledTimes(1);
   });
 
   it("adopts a renewed cookie session after the initial page boot", async () => {

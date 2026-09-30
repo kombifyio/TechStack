@@ -73,6 +73,7 @@ func (o *Orchestrator) triggerDriftJob(req DriftLifecycleRequest, jobType jobs.J
 		},
 		MaxAttempts: 1,
 	}
+	o.bindDriftJobToManagedNode(ctx, stack, job.Payload)
 	if err := o.enqueueWithSync(job, stack.tenantID); err != nil {
 		if jobType == jobs.JobTypeDriftCheck {
 			_ = o.updateCanonicalDriftStatus(ctx, stack, "unknown", nil)
@@ -220,5 +221,28 @@ func (o *Orchestrator) appendDriftActivity(tenantID, ownerID string, stack *cont
 	})
 	if err != nil && !errors.Is(err, controlplane.ErrConflict) {
 		o.log.Error("failed_to_log_drift_activity", "stack_id", stack.ID, "error", err)
+	}
+}
+
+// bindDriftJobToManagedNode names the managed node's Agent, kit, StackSpec
+// and StackKit stack id in the drift job. Drift runs on that node through the
+// typed StackKits command channel; a stack without an approved Agent binding
+// leaves the fields empty and the drift job fails closed.
+func (o *Orchestrator) bindDriftJobToManagedNode(ctx context.Context, stack *orchestratorStack, payload map[string]interface{}) {
+	bindings, err := o.approvedStackKitLifecycleAgentBindings(ctx, stack)
+	if err != nil {
+		return
+	}
+	for _, binding := range bindings {
+		if binding.AgentID == "" {
+			continue
+		}
+		request := jobs.ApplyStackKitRolloutDefaults(jobs.StackKitLifecycleRequest{}, stackKitRolloutBinding(stack), stackKitCatalogRef(stack))
+		payload["agent_id"] = binding.AgentID
+		payload["node_id"] = binding.NodeID
+		payload["stackkit"] = request.StackKit
+		payload["spec_path"] = request.SpecPath
+		payload["stackkit_instance_id"] = strings.TrimSpace(stack.stackKitInstanceID)
+		return
 	}
 }

@@ -6,10 +6,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/stackkitrelease"
 	"github.com/kombifyio/techstack/pkg/outcome"
+	"github.com/kombifyio/techstack/pkg/stackkitcommand"
 )
 
 // Drift detection step IDs for frontend task tracking.
@@ -71,28 +73,25 @@ type PlanSummary struct {
 	Unchanged int `json:"unchanged"`
 }
 
-// DriftCheckConfig holds configuration for drift detection operations.
+// DriftCheckConfig holds configuration for drift detection operations. Drift
+// runs on the managed node through the typed StackKits command channel; the
+// control plane never executes a local StackKits CLI for a managed deployment.
 type DriftCheckConfig struct {
-	WorkDir          string
+	Sender           StackKitCommandSender
+	AdvancedIssuer   AdvancedIssuer
 	DetectTimeout    time.Duration
 	ReconcileTimeout time.Duration
+	releaseResolver  func() (*stackkitrelease.Release, error)
 }
 
 // DefaultDriftCheckConfig returns a default configuration.
 func DefaultDriftCheckConfig() *DriftCheckConfig {
-	return &DriftCheckConfig{
-		WorkDir:          filepath.Join("data", "provision"),
-		DetectTimeout:    stackKitReadCommandTimeout,
-		ReconcileTimeout: stackKitWriteCommandTimeout,
-	}
+	return &DriftCheckConfig{DetectTimeout: stackKitReadCommandTimeout, ReconcileTimeout: stackKitWriteCommandTimeout}
 }
 
 func normalizeDriftCheckConfig(cfg *DriftCheckConfig) *DriftCheckConfig {
 	if cfg == nil {
 		return DefaultDriftCheckConfig()
-	}
-	if cfg.WorkDir == "" {
-		cfg.WorkDir = filepath.Join("data", "provision")
 	}
 	if cfg.DetectTimeout <= 0 {
 		cfg.DetectTimeout = stackKitReadCommandTimeout
@@ -101,6 +100,57 @@ func normalizeDriftCheckConfig(cfg *DriftCheckConfig) *DriftCheckConfig {
 		cfg.ReconcileTimeout = stackKitWriteCommandTimeout
 	}
 	return cfg
+}
+
+// driftLifecycleRequest reads the managed node binding the orchestrator
+// resolved into the drift job and the pinned release.
+func driftLifecycleRequest(cfg *DriftCheckConfig, job *Job, operation string) (StackKitLifecycleRequest, *stackkitrelease.Release, error) {
+	if cfg.Sender == nil {
+		return StackKitLifecycleRequest{}, nil, fmt.Errorf("typed StackKits dispatcher is not configured")
+	}
+	payload := make(map[string]interface{}, len(job.Payload)+2)
+	for key, value := range job.Payload {
+		payload[key] = value
+	}
+	payload["operation"] = operation
+	payload["owner_approved"] = operation == StackKitLifecycleDriftReconcile
+	request, err := stackKitLifecycleRequestFromJob(&Job{TargetID: job.TargetID, Payload: payload})
+	if err != nil {
+		return StackKitLifecycleRequest{}, nil, fmt.Errorf("drift requires an enrolled StackKits agent bound to the stack: %w", err)
+	}
+	resolve := cfg.releaseResolver
+	if resolve == nil {
+		resolve = configuredTargetStackKitRelease
+	}
+	release, err := resolve()
+	if err == nil && release == nil {
+		err = fmt.Errorf("pinned published StackKits release is not configured")
+	}
+	if err != nil {
+		return StackKitLifecycleRequest{}, nil, err
+	}
+	return request, release, nil
+}
+
+// detectManagedStackKitDrift runs DRIFT_DETECT on the managed node.
+func detectManagedStackKitDrift(ctx context.Context, cfg *DriftCheckConfig, job *Job) (stackkitcommand.DriftReport, error) {
+	request, release, err := driftLifecycleRequest(cfg, job, StackKitLifecycleDriftDetect)
+	if err != nil {
+		return stackkitcommand.DriftReport{}, err
+	}
+	command, err := stackKitLifecycleCommand(job.ID+"-drift_detect", request, *release)
+	if err != nil {
+		return stackkitcommand.DriftReport{}, err
+	}
+	command.TimeoutSeconds = int32(cfg.DetectTimeout / time.Second)
+	result, err := sendStackKitCommandBoundedForTenant(ctx, cfg.Sender, request.TenantID, request.AgentID, command)
+	if err != nil {
+		return stackkitcommand.DriftReport{}, fmt.Errorf("typed StackKits drift detect dispatch failed: %w", err)
+	}
+	if result == nil || !result.Success {
+		return stackkitcommand.DriftReport{}, fmt.Errorf("StackKits drift detect failed: %s", strings.TrimSpace(result.GetStderr()))
+	}
+	return stackkitcommand.ParseDriftReport(command, result)
 }
 
 // DriftCheckHandler creates a job handler for StackKits drift detection.
@@ -124,7 +174,6 @@ func DriftCheckHandler(cfg *DriftCheckConfig) JobHandler {
 			triggerType = tt
 		}
 
-		workDir := filepath.Join(cfg.WorkDir, stackID)
 		q.UpdateProgress(job.ID, 10, "Stack validated")
 
 		job.setStep(StepDriftInitialize)
@@ -133,7 +182,7 @@ func DriftCheckHandler(cfg *DriftCheckConfig) JobHandler {
 		job.setStep(StepDriftCheckStacks)
 		q.UpdateProgress(job.ID, 30, "Running StackKits drift detect...")
 
-		report, err := detectStackKitDrift(ctx, workDir, cfg.DetectTimeout)
+		report, err := detectManagedStackKitDrift(ctx, cfg, job)
 
 		result := &DriftCheckResult{
 			StackID:     stackID,
@@ -151,12 +200,17 @@ func DriftCheckHandler(cfg *DriftCheckConfig) JobHandler {
 				result.ErrorDetails = fmt.Sprintf("Operation exceeded %v timeout", cfg.DetectTimeout)
 			}
 			q.UpdateProgress(job.ID, 50, fmt.Sprintf("Drift check failed: %s", result.ErrorMessage))
-		} else if report.HasDrift {
+		} else if report.Status == "drifted" {
 			result.Status = DriftStatusDrifted
 			result.AffectedResources = resourceChangesFromDriftReport(report)
 			result.AffectedCount = len(result.AffectedResources)
 			result.PlanSummary = summarizeDriftSubjects(report)
 			q.UpdateProgress(job.ID, 60, "Analyzing drift results...")
+		} else if report.Status == "unknown" {
+			result.Status = DriftStatusUnknown
+			result.AffectedResources = resourceChangesFromDriftReport(report)
+			result.AffectedCount = len(result.AffectedResources)
+			result.PlanSummary = summarizeDriftSubjects(report)
 		} else {
 			result.Status = DriftStatusInSync
 			result.PlanSummary = summarizeDriftSubjects(report)
@@ -178,6 +232,7 @@ func DriftCheckHandler(cfg *DriftCheckConfig) JobHandler {
 			"stack_id":     stackID,
 			"checked_at":   result.CheckedAt,
 			"duration_ms":  result.DurationMs,
+			"drift_report": driftReportMap(report),
 		})
 		switch result.Status {
 		case DriftStatusDrifted:
@@ -218,9 +273,10 @@ func DriftCheckHandler(cfg *DriftCheckConfig) JobHandler {
 	}
 }
 
-// DriftResolveHandler creates a job handler that asks StackKits to reconcile
-// drift. The pinned CLI currently denies reconcile before side effects; the
-// handler still dispatches that official command instead of applying tofu.
+// DriftResolveHandler reconciles drift of a managed deployment in Advanced
+// Mode only: Core creates a change set for the workspace StackSpec and
+// dispatches drift.reconcile.advanced through the managed node's Agent, each
+// with its own capability. Standard reconcile is never dispatched.
 func DriftResolveHandler(cfg *DriftCheckConfig) JobHandler {
 	cfg = normalizeDriftCheckConfig(cfg)
 
@@ -236,26 +292,25 @@ func DriftResolveHandler(cfg *DriftCheckConfig) JobHandler {
 				"The drift resolution request did not include a stack ID.")
 		}
 
-		workDir := filepath.Join(cfg.WorkDir, stackID)
-
 		job.setStep(StepDriftInitialize)
-		q.UpdateProgress(job.ID, 20, "Preparing StackKits drift reconcile...")
-
-		job.setStep(StepDriftCheckStacks)
-		q.UpdateProgress(job.ID, 50, "Reconciling drift with StackKits...")
-
-		if err := reconcileStackKitDrift(ctx, workDir, cfg.ReconcileTimeout); err != nil {
-			return wrapDriftError(StepDriftCheckStacks, fmt.Sprintf("stackkit drift reconcile failed: %v", err),
-				"Could not reconcile drift with the pinned StackKits CLI.")
+		q.UpdateProgress(job.ID, 20, "Preparing StackKits Advanced drift reconcile...")
+		request, release, err := driftLifecycleRequest(cfg, job, StackKitLifecycleDriftReconcile)
+		if err != nil {
+			return NewConfigError(err)
 		}
 
-		q.UpdateProgress(job.ID, 90, "Drift resolved")
-		job.replaceResult(map[string]interface{}{
-			"stack_id":    stackID,
-			"resolved":    true,
-			"duration_ms": time.Since(startTime).Milliseconds(),
-			"executor":    "stackkit-drift-reconcile",
-		})
+		job.setStep(StepDriftCheckStacks)
+		q.UpdateProgress(job.ID, 50, "Reconciling drift through a StackKits change set...")
+		summary, err := runAdvancedStackKitLifecycle(ctx, StackKitLifecycleConfig{Sender: cfg.Sender, AdvancedIssuer: cfg.AdvancedIssuer}, *release, job.ID, request)
+		if summary != nil {
+			summary["stack_id"] = stackID
+			summary["duration_ms"] = time.Since(startTime).Milliseconds()
+			job.replaceResult(summary)
+		}
+		if err != nil {
+			return NewPermanentError(fmt.Errorf("StackKits Advanced drift reconcile failed: %w", err))
+		}
+
 		q.recordJobOutcome(job, jobAvailableOutcome(job))
 		q.UpdateProgress(job.ID, 100, "Infrastructure synchronized successfully")
 		return nil
@@ -282,8 +337,17 @@ func wrapDriftError(step, message, details string) error {
 	}
 }
 
-func resourceChangesFromDriftReport(report stackKitDriftReport) []ResourceChange {
-	changes := make([]ResourceChange, 0, len(report.Subjects))
+func resourceChangesFromDriftReport(report stackkitcommand.DriftReport) []ResourceChange {
+	changes := make([]ResourceChange, 0, len(report.Subjects)+len(report.Stacks))
+	for _, stack := range report.Stacks {
+		if stack.Status == "converged" {
+			continue
+		}
+		changes = append(changes, ResourceChange{
+			Address: stack.StackID, ResourceType: "stackkit.stack", Name: firstNonEmpty(stack.ModuleRef, stack.StackID), Action: "update",
+			Changes: map[string]ChangeDetail{"status": {From: "converged", To: stack.Status}},
+		})
+	}
 	for _, subject := range report.Subjects {
 		if subject.Status != "drifted" {
 			continue
@@ -301,8 +365,15 @@ func resourceChangesFromDriftReport(report stackKitDriftReport) []ResourceChange
 	return changes
 }
 
-func summarizeDriftSubjects(report stackKitDriftReport) PlanSummary {
+func summarizeDriftSubjects(report stackkitcommand.DriftReport) PlanSummary {
 	summary := PlanSummary{}
+	for _, stack := range report.Stacks {
+		if stack.Status == "converged" {
+			summary.Unchanged++
+			continue
+		}
+		summary.ToUpdate++
+	}
 	for _, subject := range report.Subjects {
 		if subject.Status == "drifted" {
 			summary.ToUpdate++

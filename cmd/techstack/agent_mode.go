@@ -201,37 +201,68 @@ func runAgentMode(ctx context.Context, args []string) error {
 
 	runCtx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	relayCtx, stopRelay := context.WithCancel(runCtx)
-	var relayWG sync.WaitGroup
-	if cfg.kombifyMeAPIKey != "" {
-		relay, relayErr := kombifyme.NewRelay(kombifyme.RelayConfig{
-			URL:     cfg.kombifyMeRelayURL,
-			APIKey:  cfg.kombifyMeAPIKey,
-			AgentID: cfg.agentID,
-			Version: version,
-			Logger:  log,
-		})
-		if relayErr != nil {
-			stopRelay()
-			return fmt.Errorf("configure kombify.me relay: %w", relayErr)
-		}
-		relayWG.Add(1)
-		go func() {
-			defer relayWG.Done()
-			runKombifyMeRelay(relayCtx, relay, log)
-		}()
-		log.Info("kombify_me_relay_enabled", "url", cfg.kombifyMeRelayURL)
+	relay, err := newAgentRelayLifecycle(runCtx, cfg, cfg.agentID, log)
+	if err != nil {
+		return err
 	}
+	defer relay.Stop()
+	relay.Start()
 
 	log.Info("agent_mode_starting", "core", cfg.coreAddr, "agent_id", cfg.agentID)
 	err = supervisor.Run(runCtx)
-	stopRelay()
-	relayWG.Wait()
 	if err != nil && runCtx.Err() != nil {
 		log.Info("agent_mode_stopped", "reason", runCtx.Err().Error())
 		return nil
 	}
 	return err
+}
+
+// agentRelayLifecycle shares relay custody and shutdown across both enrolled
+// transports. HTTPS starts it only after the control plane accepts a heartbeat.
+type agentRelayLifecycle struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	relay  kombifyMeRelaySession
+	log    *slog.Logger
+	once   sync.Once
+	wg     sync.WaitGroup
+}
+
+func newAgentRelayLifecycle(ctx context.Context, cfg *agentModeConfig, agentID string, log *slog.Logger) (*agentRelayLifecycle, error) {
+	relayCtx, cancel := context.WithCancel(ctx)
+	lifecycle := &agentRelayLifecycle{ctx: relayCtx, cancel: cancel, log: log}
+	if cfg.kombifyMeAPIKey == "" {
+		return lifecycle, nil
+	}
+	relay, err := kombifyme.NewRelay(kombifyme.RelayConfig{
+		URL: cfg.kombifyMeRelayURL, APIKey: cfg.kombifyMeAPIKey,
+		AgentID: agentID, Version: version, Logger: log,
+	})
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("configure kombify.me relay: %w", err)
+	}
+	lifecycle.relay = relay
+	return lifecycle, nil
+}
+
+func (l *agentRelayLifecycle) Start() {
+	l.once.Do(func() {
+		if l.relay == nil || l.ctx.Err() != nil {
+			return
+		}
+		l.wg.Add(1)
+		go func() {
+			defer l.wg.Done()
+			runKombifyMeRelay(l.ctx, l.relay, l.log)
+		}()
+		l.log.Info("kombify_me_relay_enabled")
+	})
+}
+
+func (l *agentRelayLifecycle) Stop() {
+	l.cancel()
+	l.wg.Wait()
 }
 
 type kombifyMeRelaySession interface {

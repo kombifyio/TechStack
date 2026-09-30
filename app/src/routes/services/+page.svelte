@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr, trn, trParts, stateLabel } from "#lib/i18n.svelte.js";
   import { onMount } from "svelte";
   import { pushState } from "$app/navigation";
   import { page } from "$app/state";
@@ -83,7 +84,7 @@
     services: [],
     migration_available: false,
     migration_unavailable_reason:
-      "Runtime service migration is not enabled on this deployment.",
+      tr("ui.services.runtimeServiceMigrationIsNot"),
   };
 
   let registry = $state<ServiceRegistryPayload>(emptyRegistry);
@@ -190,13 +191,21 @@
     // that will not happen.
     const guardrail = action === "freeze" || action === "unfreeze";
     const approved = await confirmInApp({
-      title: `${action.charAt(0).toUpperCase()}${action.slice(1)} ${service.name}`,
+      title: tr("ui.services.actionTitle", {
+        action: tr(`ui.services.action.${action}`),
+        name: service.name,
+      }),
       message: guardrail
         ? action === "freeze"
-          ? `Lock ${service.name}? Start, stop and restart are refused while it is locked, including through a stack apply. The service keeps running.`
-          : `Unlock ${service.name}? Governed mutations become available again.`
-        : `Approve the governed ${action} of ${service.name}? A StackKits verify pass runs after the mutation before measured state changes.`,
-      confirmText: `Approve ${action}`,
+          ? tr("ui.services.confirmLock", { name: service.name })
+          : tr("ui.services.confirmUnlock", { name: service.name })
+        : tr("ui.services.confirmGoverned", {
+            action: tr(`ui.services.action.${action}`).toLowerCase(),
+            name: service.name,
+          }),
+      confirmText: tr("ui.services.approveAction", {
+        action: tr(`ui.services.action.${action}`).toLowerCase(),
+      }),
       tone: action === "stop" || action === "freeze" ? "warning" : "primary",
     });
     if (!approved) return;
@@ -295,7 +304,7 @@
   }
 
   function label(value?: string): string {
-    return (value || "unknown").replace(/[-_]/g, " ");
+    return stateLabel(value);
   }
 
   function registryServiceForRuntime(
@@ -413,8 +422,10 @@
         name: service?.display_name || runtime.name,
         meta:
           management === "observed"
-            ? `Discovered on ${server?.name || runtime.server_id || "this homelab"} — not managed by kombify`
-            : `${service?.type || runtime.service_key || "service"} · ${placement === "cloud" ? "Cloud" : placement === "managed" ? "Managed workload" : placement === "local" ? "Local" : "Placement unknown"}`,
+            ? tr("ui.services.discoveredOn", {
+                name: server?.name || runtime.server_id || tr("ui.services.thisHomelab"),
+              })
+            : `${service?.type || runtime.service_key || tr("ui.services.serviceFallback")} · ${tr(`ui.services.placement.${placement}`)}`,
         placement: cardPlacement,
         status: resolveServiceCardStatus(cardSource),
         statusLabel: label(runtimeState),
@@ -423,20 +434,23 @@
         targetKind: runtime.target_kind,
         targetLabel:
           runtime.target_kind === "managed_workload"
-            ? runtime.placement.provider_id || "Managed provider target"
-            : server?.name || runtime.server_id || "Placement unknown",
+            ? runtime.placement.provider_id || tr("ui.services.managedProviderTarget")
+            : server?.name || runtime.server_id || tr("ui.services.placementUnknown"),
         managementLabel:
           management === "managed"
-            ? "Configured"
+            ? tr("ui.stacksId.configured")
             : management === "observed"
-              ? "Observed"
-              : "Ownership unknown",
+              ? tr("ui.services.observed")
+              : tr("ui.services.ownershipUnknown"),
         workflowLabel: migration
           ? label(service?.migration_status || "operation active")
           : undefined,
         freshnessLabel: label(runtime.placement.freshness.state),
         sourceLabel: runtime.source || undefined,
-        details: `Desired ${runtime.desired_state || "unknown"} · Observed ${runtime.observed_state || "unknown"}`,
+        details: tr("ui.services.desiredObserved", {
+          desired: stateLabel(runtime.desired_state),
+          observed: stateLabel(runtime.observed_state),
+        }),
         logoDomain: brandDomainForTool(
           runtime.application_key,
           runtime.service_key,
@@ -574,8 +588,8 @@
         meta: server
           ? `${server.role_label} · ${server.hostname || server.id}`
           : service.targetKind === "managed_workload"
-            ? "Managed provider target"
-            : "Runtime target",
+            ? tr("ui.services.managedProviderTarget")
+            : tr("ui.services.runtimeTarget"),
         items: [service],
       });
     }
@@ -614,7 +628,7 @@
         return {
           id: application.application_id,
           name: application.display_name,
-          meta: `${application.components.length} component${application.components.length === 1 ? "" : "s"} · ${server?.name || application.server_id}`,
+          meta: `${trn("ui.services.componentCount", application.components.length)} · ${server?.name || application.server_id}`,
           address: application.access.address,
           addressUnavailableReason: application.access.address
             ? undefined
@@ -625,13 +639,13 @@
           statusLabel: label(application.status),
           statusMessage:
             application.access.kind === "internal"
-              ? "Internal address only; open it from the Node network."
+              ? tr("ui.services.internalAddressOnlyOpenIt")
               : undefined,
           runtimeTargetId: application.server_id,
           targetKind: "server",
           targetLabel: server?.name || application.server_id,
           freshnessLabel: application.observed_at || "not observed",
-          sourceLabel: "StackKits application model",
+          sourceLabel: tr("ui.services.stackkitsApplicationModel"),
           logoDomain: brandDomainForTool(
             application.application_key,
             application.display_name,
@@ -652,7 +666,7 @@
       const group = groups.get(application.runtimeTargetId) || {
         id: application.runtimeTargetId,
         name: server?.name || application.runtimeTargetId,
-        meta: server?.hostname || "Node-bound applications",
+        meta: server?.hostname || tr("ui.services.nodeBoundApplications"),
         targetKind: "server",
         items: [],
       };
@@ -799,7 +813,7 @@
       registryError =
         err instanceof Error
           ? err.message
-          : "Service Registry could not be loaded.";
+          : tr("ui.services.serviceRegistryCouldNotBe");
     } finally {
       loading = false;
     }
@@ -817,7 +831,7 @@
       inventoryError =
         err instanceof Error
           ? err.message
-          : "Runtime inventory could not be loaded.";
+          : tr("ui.services.runtimeInventoryCouldNotBe");
     } finally {
       inventoryLoading = false;
     }
@@ -891,7 +905,7 @@
 
   async function submitCatalogService() {
     if (!selectedTargetServer || !selectedCatalogId) {
-      actionError = "Select a node and catalog service.";
+      actionError = tr("ui.services.selectANodeAndCatalog");
       return;
     }
     saving = true;
@@ -908,7 +922,7 @@
       actionError =
         err instanceof Error
           ? err.message
-          : "Catalog service could not be added.";
+          : tr("ui.services.catalogServiceCouldNotBe");
     } finally {
       saving = false;
     }
@@ -916,7 +930,7 @@
 
   async function submitObservedService() {
     if (!selectedTargetServer || !unmanagedName.trim()) {
-      actionError = "Select a node, then enter a service name.";
+      actionError = tr("ui.services.selectANodeThenEnter");
       return;
     }
     saving = true;
@@ -942,7 +956,7 @@
       actionError =
         err instanceof Error
           ? err.message
-          : "Unmanaged service could not be imported.";
+          : tr("ui.services.unmanagedServiceCouldNotBe");
     } finally {
       saving = false;
     }
@@ -1012,7 +1026,7 @@
         return;
       }
       if (!result.job_id)
-        throw new Error("Service action did not return a job ID.");
+        throw new Error(tr("ui.services.serviceActionDidNotReturn"));
       serviceActionJobs = {
         ...serviceActionJobs,
         [service.id]: {
@@ -1028,7 +1042,7 @@
     } catch (err) {
       if (!servicesPageActive) return;
       const error =
-        err instanceof Error ? err.message : "Service action failed.";
+        err instanceof Error ? err.message : tr("ui.services.serviceActionFailed");
       serviceActionJobs = {
         ...serviceActionJobs,
         [service.id]: {
@@ -1151,7 +1165,7 @@
       const error =
         err instanceof Error
           ? err.message
-          : "Service logs could not be loaded.";
+          : tr("ui.services.serviceLogsCouldNotBe");
       serviceLogs = {
         ...serviceLogs,
         [serviceId]: {
@@ -1211,12 +1225,12 @@
           detail:
             state === "completed"
               ? update.job.message ||
-                "Action completed; inventory is refreshing."
+                tr("ui.services.actionCompletedInventoryIsRefreshing")
               : terminal
                 ? update.job.error_details ||
                   update.job.error ||
                   update.job.message ||
-                  "Service action did not complete."
+                  tr("ui.services.serviceActionDidNotComplete")
                 : update.job.message || update.job.current_step,
         };
         if (state === "completed") {
@@ -1238,7 +1252,7 @@
               nextCursor: previousLogs?.nextCursor,
               error:
                 nextActions[update.serviceId].detail ??
-                "Service log collection did not complete.",
+                tr("ui.services.serviceLogCollectionDidNot"),
             },
           };
         }
@@ -1269,7 +1283,7 @@
           reasonCode: "inventory_observation_timeout",
           retryable: true,
           detail:
-            "Action completed, but no newer inventory observation arrived within the service freshness window.",
+            tr("ui.services.actionCompletedButNoNewer"),
         };
         continue;
       }
@@ -1283,7 +1297,7 @@
         nextActions[serviceId] = {
           ...action,
           converging: false,
-          detail: "Action completed and fresh inventory was observed.",
+          detail: tr("ui.services.actionCompletedAndFreshInventory"),
         };
       }
     }
@@ -1362,7 +1376,7 @@
   }
 
   function applicationLabel(service: RegistryService | null): string {
-    return service?.application_name || service?.display_name || "Application";
+    return service?.application_name || service?.display_name || tr("ui.services.application");
   }
 
   function serviceDeployment(service: RegistryService) {
@@ -1461,17 +1475,17 @@
     if (!registry.migration_available) {
       return (
         registry.migration_unavailable_reason ||
-        "Runtime service migration is not enabled on this deployment."
+        tr("ui.services.runtimeServiceMigrationIsNot")
       );
     }
     if (isServiceMigrating(service.id)) {
-      return "Application is already moving or waiting for verification.";
+      return tr("ui.services.applicationIsAlreadyMovingOr");
     }
     return (
       service.move_blocked_reason ||
       (serviceManagementState(service) === "observed"
-        ? "Observed unmanaged applications must be adopted before they can be moved."
-        : "Application needs a stable running or stopped state before it can be moved.")
+        ? tr("ui.services.observedUnmanagedApplicationsMustBe")
+        : tr("ui.services.applicationNeedsAStableRunning"))
     );
   }
 
@@ -1502,7 +1516,7 @@
     }
     const target = targetServer || moveTargetsFor(service)[0];
     if (!target) {
-      actionError = "No available target Node for this application.";
+      actionError = tr("ui.services.noAvailableTargetNodeFor");
       return;
     }
     migrationSourceService = service;
@@ -1590,7 +1604,7 @@
       await refreshRegistryQuietly();
     } catch (err) {
       actionError =
-        err instanceof Error ? err.message : "Failed to initiate migration.";
+        err instanceof Error ? err.message : tr("ui.services.failedToInitiateMigration");
     } finally {
       saving = false;
     }
@@ -1639,15 +1653,15 @@
     const service = registry.services.find((s) => s.id === serviceId);
     const phase = service?.migration_status;
     if (phase === "migrating") {
-      return "Relocating on backend...";
+      return tr("ui.services.relocatingOnBackend");
     }
     if (phase === "deploying") {
-      return "Waiting for runtime deployment...";
+      return tr("ui.services.waitingForRuntimeDeployment");
     }
     if (phase === "pending_verification") {
-      return "Target is ready for verification.";
+      return tr("ui.services.targetIsReadyForVerification");
     }
-    return "Migration job is active.";
+    return tr("ui.services.migrationJobIsActive");
   }
 
   async function handleVerifyService(serviceId: string) {
@@ -1661,7 +1675,7 @@
       }
     } catch (err) {
       actionError =
-        err instanceof Error ? err.message : "Failed to verify service.";
+        err instanceof Error ? err.message : tr("ui.services.failedToVerifyService");
     } finally {
       saving = false;
     }
@@ -1670,10 +1684,10 @@
   async function handleRemoveOld(serviceId: string) {
     if (
       !(await confirmInApp({
-        title: "Delete archived service?",
+        title: tr("ui.services.deleteArchivedService"),
         message:
-          "This permanently deletes the archived service from its source Node.",
-        confirmText: "Delete",
+          tr("ui.services.thisPermanentlyDeletesTheArchived"),
+        confirmText: tr("ui.settings.delete"),
         tone: "danger",
       }))
     ) {
@@ -1691,7 +1705,7 @@
       actionError =
         err instanceof Error
           ? err.message
-          : "Failed to delete archived service.";
+          : tr("ui.services.failedToDeleteArchivedService");
     } finally {
       saving = false;
     }
@@ -1702,14 +1716,14 @@
   class="p-4 md:p-6 animate-in fade-in duration-300"
   data-testid="services-page"
 >
-  <PageHeader title="Services">
+  <PageHeader title={tr("ui.services.services")}>
     {#snippet actions()}
       <div
         class="flex flex-wrap items-center gap-3 animate-in slide-in-from-right-4 duration-300"
       >
         <div
           role="tablist"
-          aria-label="Services mode"
+          aria-label={tr("ui.services.servicesMode")}
           class="flex shrink-0 rounded-lg border border-border bg-card/60 p-1 text-sm shadow-sm"
         >
           <button
@@ -1722,7 +1736,7 @@
               : 'text-muted-foreground hover:text-foreground'}"
             onclick={() => (activeTab = "services")}
           >
-            Applications
+            {tr("ui.services.applications")}
           </button>
           <button
             type="button"
@@ -1735,7 +1749,7 @@
             onclick={() => (activeTab = "servers")}
             data-testid="server-management-tab"
           >
-            Placement Board
+            {tr("ui.services.placementBoard")}
           </button>
         </div>
 
@@ -1746,10 +1760,10 @@
             onclick={() => openNewService("catalog")}
             disabled={loading || registryError !== null}
             ariaLabel={registryError
-              ? "Application management is unavailable until the service registry recovers."
-              : "Add a new application"}
+              ? tr("ui.services.applicationManagementIsUnavailableUntil")
+              : tr("ui.services.addANewApplication")}
           >
-            New Application
+            {tr("ui.services.newApplication")}
           </Button>
         {/if}
       </div>
@@ -1762,7 +1776,7 @@
       <section
         class="mb-6 h-24 animate-pulse rounded-lg border border-border bg-muted/20"
         data-testid="inventory-services-loading"
-        aria-label="Loading canonical service inventory"
+        aria-label={tr("ui.services.loadingCanonicalServiceInventory")}
       ></section>
     {:else if inventoryError}
       <section
@@ -1788,7 +1802,7 @@
             : 'border-border hover:border-border/80'}"
         >
           <div class="text-xl font-bold text-foreground">{s.total}</div>
-          <div class="text-xs text-muted-foreground">All</div>
+          <div class="text-xs text-muted-foreground">{tr("ui.services.all")}</div>
         </button>
         <button
           type="button"
@@ -1799,7 +1813,7 @@
             : 'border-border hover:border-border/80'}"
         >
           <div class="text-xl font-bold text-success">{s.running}</div>
-          <div class="text-xs text-muted-foreground">Running</div>
+          <div class="text-xs text-muted-foreground">{tr("ui.services.running")}</div>
         </button>
         <button
           type="button"
@@ -1810,7 +1824,7 @@
             : 'border-border hover:border-border/80'}"
         >
           <div class="text-xl font-bold text-warning">{s.pending}</div>
-          <div class="text-xs text-muted-foreground">Pending</div>
+          <div class="text-xs text-muted-foreground">{tr("ui.services.pending")}</div>
         </button>
         <button
           type="button"
@@ -1821,7 +1835,7 @@
             : 'border-border hover:border-border/80'}"
         >
           <div class="text-xl font-bold text-info">{s.observed}</div>
-          <div class="text-xs text-muted-foreground">Observed</div>
+          <div class="text-xs text-muted-foreground">{tr("ui.services.observed")}</div>
         </button>
         <button
           type="button"
@@ -1832,7 +1846,7 @@
             : 'border-border hover:border-border/80'}"
         >
           <div class="text-xl font-bold text-destructive">{s.error}</div>
-          <div class="text-xs text-muted-foreground">Error</div>
+          <div class="text-xs text-muted-foreground">{tr("ui.services.error")}</div>
         </button>
       </div>
     {/if}
@@ -1840,14 +1854,16 @@
     {#if !inventoryLoading && !inventoryError}
       <ServiceList
         groups={applicationGroups}
-        title="Applications"
-        countLabel={`${applicationRows.length} shown · ${applicationSummary().total} application${applicationSummary().total === 1 ? "" : "s"}`}
+        title={tr("ui.services.applications")}
+        countLabel={trn("ui.services.applicationsShown", applicationSummary().total, {
+          shown: applicationRows.length,
+        })}
         emptyTitle={serviceApplications.length === 0
-          ? "No applications reported"
-          : `No applications matching ${statusFilter}`}
+          ? tr("ui.services.noApplicationsReported")
+          : tr("ui.services.noApplicationsMatching", { status: statusFilter })}
         emptyBody={serviceApplications.length === 0
-          ? "Applications appear after StackKits runtime facts are observed."
-          : "Clear the filter to show all applications."}
+          ? tr("ui.services.applicationsAppearAfterStackkitsRuntime")
+          : tr("ui.services.clearTheFilterToShow")}
         testId="runtime-service-list"
         cardTestId="runtime-service-card"
       >
@@ -1871,7 +1887,7 @@
               >
                 <p class="font-medium text-foreground">
                   {serviceActionJob.action}: {serviceActionJob.state}
-                  {#if serviceActionJob.converging}· verifying{/if}
+                  {#if serviceActionJob.converging}{tr("ui.services.verifying")}{/if}
                 </p>
                 {#if serviceActionJob.detail}<p
                     class="mt-1 text-muted-foreground"
@@ -1888,10 +1904,10 @@
         <div class="mt-10">
           <ServiceList
             groups={systemServiceGroups}
-            title="System Services"
-            countLabel="Observed technical components without application-level controls"
-            emptyTitle="No system services"
-            emptyBody="Unclassified runtime components appear here."
+            title={tr("ui.services.systemServices")}
+            countLabel={tr("ui.services.observedTechnicalComponentsWithoutApplication")}
+            emptyTitle={tr("ui.services.noSystemServices")}
+            emptyBody={tr("ui.services.unclassifiedRuntimeComponentsAppearHere")}
             display="adaptive"
             testId="system-service-list"
             cardTestId="system-service-card"
@@ -1909,12 +1925,10 @@
         <AlertTriangle class="mt-0.5 h-5 w-5 shrink-0 text-warning" />
         <div class="min-w-0">
           <p class="font-semibold">
-            Application management is temporarily unavailable
+            {tr("ui.services.applicationManagementIsTemporarilyUnavailable")}
           </p>
           <p class="mt-1 text-warning/80">
-            Any runtime inventory shown above remains read-only. Catalog,
-            import, verification, and migration actions stay disabled until the
-            service registry recovers.
+            {tr("ui.services.anyRuntimeInventoryShownAbove")}
           </p>
           <p class="mt-2 break-words font-mono text-xs text-warning/70">
             {registryError}
@@ -1925,7 +1939,7 @@
             class="mt-3"
             onclick={() => void loadRegistryManagement()}
           >
-            Retry management data
+            {tr("ui.services.retryManagementData")}
           </Button>
         </div>
       </div>
@@ -1940,10 +1954,10 @@
       >
         <AlertTriangle class="mt-0.5 h-5 w-5 shrink-0 text-warning" />
         <div>
-          <p class="font-semibold">Runtime migration is not enabled yet</p>
+          <p class="font-semibold">{tr("ui.services.runtimeMigrationIsNotEnabled")}</p>
           <p class="mt-1 text-warning/80">
             {registry.migration_unavailable_reason ||
-              "Drag-and-drop stays disabled until deployment, health verification, cutover, and source drain are handled by a real runtime executor."}
+              tr("ui.services.dragAndDropStaysDisabled")}
           </p>
         </div>
       </div>
@@ -1958,12 +1972,11 @@
         <div class="min-w-0">
           <p class="font-semibold">
             {cockpitError
-              ? "Capacity telemetry refresh failed"
-              : "Showing last verified capacity telemetry"}
+              ? tr("ui.services.capacityTelemetryRefreshFailed")
+              : tr("ui.services.showingLastVerifiedCapacityTelemetry")}
           </p>
           <p class="mt-1 text-warning/80">
-            The last successful snapshot remains visible until this StackKit
-            deployment reports replacement or explicit down evidence.
+            {tr("ui.services.theLastSuccessfulSnapshotRemains")}
           </p>
           {#if cockpitError}
             <p
@@ -1993,11 +2006,10 @@
         <AlertTriangle class="mt-0.5 h-5 w-5 shrink-0 text-warning" />
         <div class="min-w-0">
           <p class="font-semibold">
-            Application placement is temporarily unavailable
+            {tr("ui.services.applicationPlacementIsTemporarilyUnavailable")}
           </p>
           <p class="mt-1 text-warning/80">
-            Placement and migration controls stay disabled until the service
-            registry recovers.
+            {tr("ui.services.placementAndMigrationControlsStay")}
           </p>
           <p class="mt-2 break-words font-mono text-xs text-warning/70">
             {registryError}
@@ -2008,15 +2020,15 @@
             class="mt-3"
             onclick={() => void loadRegistryManagement()}
           >
-            Retry management data
+            {tr("ui.services.retryManagementData")}
           </Button>
         </div>
       </div>
     {:else if registry.servers.length === 0}
       <div class="rounded-lg border border-border bg-card/60 p-12 text-center">
-        <p class="text-lg text-foreground">No Nodes registered</p>
+        <p class="text-lg text-foreground">{tr("ui.services.noNodesRegistered")}</p>
         <p class="mt-1 text-sm text-muted-foreground">
-          Connect Nodes to your Homelab to manage application placement.
+          {tr("ui.services.connectNodesToYourHomelab")}
         </p>
       </div>
     {:else}
@@ -2042,7 +2054,7 @@
             ondragleave={handleDragLeave}
             ondrop={(e) => handleDrop(e, server.id)}
             role="list"
-            aria-label={`Node ${server.name} column`}
+            aria-label={tr("ui.services.nodeColumn", { name: server.name })}
           >
             <!-- Server Headline Card -->
             <div
@@ -2061,19 +2073,19 @@
               <p
                 class="text-[10px] text-muted-foreground/80 truncate font-mono mt-1"
               >
-                {server.hostname || "No hostname"}
+                {server.hostname || tr("ui.services.noHostname")}
               </p>
 
               <div
                 class="mt-3 pt-2.5 border-t border-border/50 flex items-center justify-between text-xs"
               >
-                <span class="text-muted-foreground font-medium">Type:</span>
+                <span class="text-muted-foreground font-medium">{tr("ui.services.type")}</span>
                 <span class="font-semibold text-foreground capitalize">
                   {deployment?.server_mode === "cloud" ||
                   deployment?.provider_id ||
                   deployment?.lease_provider
-                    ? "Cloud VPS"
-                    : "Local Node"}
+                    ? tr("ui.services.cloudVps")
+                    : tr("ui.services.localNode")}
                 </span>
               </div>
 
@@ -2084,13 +2096,13 @@
                     class="flex justify-between text-[10px] text-muted-foreground mb-1"
                   >
                     <span class="flex items-center gap-1 font-medium"
-                      ><HardDrive class="w-3.5 h-3.5 text-primary/80" /> Storage</span
+                      ><HardDrive class="w-3.5 h-3.5 text-primary/80" /> {tr("ui.services.storage")}</span
                     >
                     <span class="font-medium">
                       {#if cap.storageTotal}
-                        {cap.storageFree ?? "?"} GB free / {cap.storageTotal} GB
+                        {tr("ui.services.storageFreeOf", { free: cap.storageFree ?? "?", total: cap.storageTotal })}
                       {:else}
-                        telemetry pending
+                        {tr("ui.services.telemetryPending")}
                       {/if}
                     </span>
                   </div>
@@ -2112,9 +2124,9 @@
                     >
                     <span class="font-medium">
                       {#if cap.ramTotal}
-                        {cap.ramUsed ?? "?"} GB / {cap.ramTotal} GB
+                        {tr("ui.services.ramUsedOf", { used: cap.ramUsed ?? "?", total: cap.ramTotal })}
                       {:else}
-                        telemetry pending
+                        {tr("ui.services.telemetryPending")}
                       {/if}
                     </span>
                   </div>
@@ -2135,7 +2147,7 @@
                       ? "last verified telemetry"
                       : "live telemetry"
                     : cap.source === "capabilities"
-                      ? "Node capabilities"
+                      ? tr("ui.services.nodeCapabilities")
                       : "no capacity data"}
                 </p>
               </div>
@@ -2205,7 +2217,7 @@
                 >
                   <ArrowRight class="w-5 h-5 text-primary animate-pulse" />
                   <span class="font-medium"
-                    >Move {applicationLabel(activeDragService)} here</span
+                    >{tr("ui.services.moveHere", { name: applicationLabel(activeDragService) })}</span
                   >
                 </div>
               {/if}
@@ -2216,12 +2228,12 @@
                 >
                   <Server class="w-5 h-5 text-muted-foreground/50 mb-1.5" />
                   <span class="font-medium text-foreground/80"
-                    >No applications deployed</span
+                    >{tr("ui.services.noApplicationsDeployed")}</span
                   >
                   <span class="text-[10px] mt-1 text-muted-foreground/80"
                     >{registry.migration_available
-                      ? "Drop managed applications here"
-                      : "Runtime migration unavailable"}</span
+                      ? tr("ui.services.dropManagedApplicationsHere")
+                      : tr("ui.services.runtimeMigrationUnavailable")}</span
                   >
                 </div>
               {/if}
@@ -2236,7 +2248,7 @@
 <!-- Application Move Confirmation Modal -->
 {#if showMigrationConfirmModal && migrationSourceService && migrationTargetServer}
   {@const currentMigrationTarget = selectedMigrationTarget()}
-  <Modal title="Move Application" onClose={cancelMigration} maxWidth="md">
+  <Modal title={tr("ui.services.moveApplication")} onClose={cancelMigration} maxWidth="md">
     <div class="space-y-4">
       <div
         class="flex gap-3 p-3.5 bg-warning/10 border border-warning/20 text-warning rounded-lg text-sm"
@@ -2245,26 +2257,23 @@
           class="w-5 h-5 shrink-0 text-warning mt-0.5 animate-pulse"
         />
         <div>
-          <span class="font-semibold block">Application Move</span>
-          This starts a controlled move of
-          <strong class="text-foreground"
+          <span class="font-semibold block">{tr("ui.services.applicationMove")}</span>
+          {trParts("ui.services.startsControlledMove")[0]}<strong class="text-foreground"
             >{applicationLabel(migrationSourceService)}</strong
-          >.
+          >{trParts("ui.services.startsControlledMove")[1]}
         </div>
       </div>
 
       <p class="text-sm text-muted-foreground leading-relaxed">
-        You are about to move this application from <strong
+        {trParts("ui.services.aboutToMove")[0]}<strong
           class="text-foreground">{migrationSourceService.server_name}</strong
-        >
-        to
-        <strong class="text-foreground"
+        >{trParts("ui.services.aboutToMove")[1]}<strong class="text-foreground"
           >{currentMigrationTarget?.name || migrationTargetServer.name}</strong
-        >.
+        >{trParts("ui.services.aboutToMove")[2]}
       </p>
 
       <label class="block space-y-1.5 text-sm">
-        <span class="font-medium text-foreground">Target Node</span>
+        <span class="font-medium text-foreground">{tr("ui.services.targetNode")}</span>
         <select
           class="flex h-10 w-full rounded-lg border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
           bind:value={selectedMigrationTargetId}
@@ -2287,24 +2296,23 @@
       <div
         class="text-xs bg-muted/45 border border-border p-3.5 rounded-lg space-y-2"
       >
-        <div class="font-semibold text-foreground">Move Steps:</div>
+        <div class="font-semibold text-foreground">{tr("ui.services.moveSteps")}</div>
         <ol class="list-decimal list-inside space-y-1.5 text-muted-foreground">
           <li>
-            The application config will be duplicated on the target Node.
+            {tr("ui.services.theApplicationConfigWillBe")}
           </li>
           <li>
-            A temporary instance will be deployed on <span
+            {trParts("ui.services.temporaryInstance")[0]}<span
               class="text-foreground font-medium"
               >{currentMigrationTarget?.name ||
                 migrationTargetServer.name}</span
-            >.
+            >{trParts("ui.services.temporaryInstance")[1]}
           </li>
           <li>
-            You can test the new instance while the old one remains active.
+            {tr("ui.services.youCanTestTheNew")}
           </li>
           <li>
-            Upon your manual verification, the old instance is deactivated and
-            can be permanently removed.
+            {tr("ui.services.uponYourManualVerificationThe")}
           </li>
         </ol>
       </div>
@@ -2317,7 +2325,7 @@
         onclick={cancelMigration}
         disabled={saving}
       >
-        Cancel
+        {tr("ui.importExportModal.cancel")}
       </button>
       <button
         type="button"
@@ -2328,7 +2336,7 @@
         {#if saving}
           <Loader2 class="w-4 h-4 animate-spin" />
         {/if}
-        Start Move
+        {tr("ui.services.startMove")}
       </button>
     {/snippet}
   </Modal>
@@ -2356,34 +2364,34 @@
             id="new-service-title"
             class="text-xl font-semibold text-foreground"
           >
-            New Application
+            {tr("ui.services.newApplication")}
           </h2>
           <p class="mt-1 text-sm text-muted-foreground">
-            Add a catalog application or import unmanaged Node inventory.
+            {tr("ui.services.addACatalogApplicationOr")}
           </p>
         </div>
         <Button variant="secondary" onclick={closeNewService} disabled={saving}>
-          Close
+          {tr("ui.sSHKeyGenerator.close")}
         </Button>
       </div>
 
-      <div class="mb-5 flex gap-2" role="tablist" aria-label="Service mode">
+      <div class="mb-5 flex gap-2" role="tablist" aria-label={tr("ui.services.serviceMode")}>
         <Button
           variant={serviceMode === "catalog" ? "primary" : "secondary"}
           onclick={() => (serviceMode = "catalog")}
         >
-          Catalog
+          {tr("ui.services.catalog")}
         </Button>
         <Button
           variant={serviceMode === "import" ? "primary" : "secondary"}
           onclick={() => (serviceMode = "import")}
         >
-          Import unmanaged
+          {tr("ui.services.importUnmanaged")}
         </Button>
       </div>
 
       <label class="block">
-        <span class="mb-1 block text-sm text-muted-foreground">Node</span>
+        <span class="mb-1 block text-sm text-muted-foreground">{tr("ui.services.node")}</span>
         <select
           bind:value={selectedServerId}
           class="w-full rounded-lg border border-border bg-input px-3 py-2 text-foreground"
@@ -2401,7 +2409,7 @@
         <div
           class="mt-5 rounded-lg border border-warning/40 bg-warning/10 p-4 text-sm text-warning animate-in slide-in-from-top-2"
         >
-          A registered Node is required before services can be attached.
+          {tr("ui.services.aRegisteredNodeIsRequired")}
         </div>
       {:else if serviceMode === "catalog"}
         <div class="mt-5 grid gap-3 md:grid-cols-2">
@@ -2432,13 +2440,13 @@
         </div>
         {#if selectedCatalogService}
           <p class="mt-4 text-sm text-muted-foreground animate-in fade-in">
-            Selected: {selectedCatalogService.display_name}
+            {tr("ui.services.selected", { name: selectedCatalogService.display_name })}
           </p>
         {/if}
       {:else}
         <div class="mt-5 grid gap-4 md:grid-cols-2">
           <label class="block">
-            <span class="mb-1 block text-sm text-muted-foreground">Name</span>
+            <span class="mb-1 block text-sm text-muted-foreground">{tr("ui.credentialForm.name")}</span>
             <input
               bind:value={unmanagedName}
               class="w-full rounded-lg border border-border bg-input px-3 py-2 text-foreground"
@@ -2448,7 +2456,7 @@
           </label>
           <label class="block">
             <span class="mb-1 block text-sm text-muted-foreground"
-              >Display name</span
+              >{tr("ui.services.displayName")}</span
             >
             <input
               bind:value={unmanagedDisplayName}
@@ -2457,7 +2465,7 @@
             />
           </label>
           <label class="block">
-            <span class="mb-1 block text-sm text-muted-foreground">Type</span>
+            <span class="mb-1 block text-sm text-muted-foreground">{tr("ui.services.type2")}</span>
             <input
               bind:value={unmanagedType}
               class="w-full rounded-lg border border-border bg-input px-3 py-2 text-foreground"
@@ -2465,7 +2473,7 @@
             />
           </label>
           <label class="block">
-            <span class="mb-1 block text-sm text-muted-foreground">Port</span>
+            <span class="mb-1 block text-sm text-muted-foreground">{tr("ui.services.port")}</span>
             <input
               type="number"
               min="1"
@@ -2476,7 +2484,7 @@
             />
           </label>
           <label class="block md:col-span-2">
-            <span class="mb-1 block text-sm text-muted-foreground">URL</span>
+            <span class="mb-1 block text-sm text-muted-foreground">{tr("ui.services.url")}</span>
             <input
               type="url"
               bind:value={unmanagedUrl}
@@ -2498,7 +2506,7 @@
 
       <div class="mt-6 flex justify-end gap-3">
         <Button variant="secondary" onclick={closeNewService} disabled={saving}>
-          Cancel
+          {tr("ui.importExportModal.cancel")}
         </Button>
         {#if serviceMode === "catalog"}
           <Button
@@ -2507,7 +2515,7 @@
             disabled={saving || !selectedTargetServer}
             testId="attach-catalog-service"
           >
-            {saving ? "Adding..." : "Add Service"}
+            {saving ? tr("ui.serviceDiscovery.adding") : tr("ui.services.addService")}
           </Button>
         {:else}
           <Button
@@ -2516,7 +2524,7 @@
             disabled={saving || !selectedTargetServer}
             testId="import-observed-service"
           >
-            {saving ? "Importing..." : "Import as Observed"}
+            {saving ? tr("ui.importExportModal.importing") : tr("ui.services.importAsObserved")}
           </Button>
         {/if}
       </div>
@@ -2528,7 +2536,7 @@
   {@const detailRuntime = detailRow?.runtime}
   {@const detailName =
     detailRow?.name ||
-    (detailRegistryService ? applicationLabel(detailRegistryService) : "Service")}
+    (detailRegistryService ? applicationLabel(detailRegistryService) : tr("ui.services.service"))}
   <ServiceDetailSheet
     open={detailOpen}
     onclose={closeServiceSheet}
@@ -2546,7 +2554,7 @@
       ? `/services/${encodeURIComponent(detailApplication.application_id)}`
       : undefined}
     applicationLabel={detailApplication
-      ? `${detailApplication.display_name} · ${detailApplication.components.length} component${detailApplication.components.length === 1 ? "" : "s"}`
+      ? `${detailApplication.display_name} · ${trn("ui.services.componentCount", detailApplication.components.length)}`
       : undefined}
     bind:tab={detailTab}
   >
@@ -2555,29 +2563,29 @@
         {#if detailRuntime}
           <div class="grid grid-cols-3 gap-2">
             <div class="rounded-lg bg-muted/30 px-2.5 py-2">
-              <div class="text-[9px] uppercase tracking-wider text-muted-foreground">Desired</div>
+              <div class="text-[9px] uppercase tracking-wider text-muted-foreground">{tr("ui.services.desired")}</div>
               <div class="mt-0.5 font-mono text-[12.5px] font-semibold">
-                {detailRuntime.desired_state || "unknown"}
+                {stateLabel(detailRuntime.desired_state)}
               </div>
             </div>
             <div class="rounded-lg bg-muted/30 px-2.5 py-2">
-              <div class="text-[9px] uppercase tracking-wider text-muted-foreground">Observed</div>
+              <div class="text-[9px] uppercase tracking-wider text-muted-foreground">{tr("ui.services.observed")}</div>
               <div class="mt-0.5 font-mono text-[12.5px] font-semibold">
-                {detailRuntime.observed_state || "unknown"}
+                {stateLabel(detailRuntime.observed_state)}
               </div>
             </div>
             <div class="rounded-lg bg-muted/30 px-2.5 py-2">
-              <div class="text-[9px] uppercase tracking-wider text-muted-foreground">Health</div>
+              <div class="text-[9px] uppercase tracking-wider text-muted-foreground">{tr("ui.services.health")}</div>
               <div class="mt-0.5 font-mono text-[12.5px] font-semibold">
-                {detailRuntime.health.state || "unknown"}
+                {stateLabel(detailRuntime.health.state)}
               </div>
             </div>
           </div>
           <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-            <span>Ownership: {detailRuntime.management_state}</span>
-            <span>Target: {detailRow?.targetLabel || detailRow?.runtimeTargetId}</span>
-            <span>Freshness: {detailRow?.freshnessLabel}</span>
-            {#if detailRow?.sourceLabel}<span>Source: {detailRow.sourceLabel}</span>{/if}
+            <span>{tr("ui.serviceSheet.ownership", { value: detailRuntime.management_state })}</span>
+            <span>{tr("ui.services.targetValue", { value: detailRow?.targetLabel || detailRow?.runtimeTargetId || "" })}</span>
+            <span>{tr("ui.services.freshnessValue", { value: detailRow?.freshnessLabel ?? "" })}</span>
+            {#if detailRow?.sourceLabel}<span>{tr("ui.common.sourceValue", { value: detailRow.sourceLabel })}</span>{/if}
           </div>
           {#if typeof detailRuntime.access.url === "string" && detailRuntime.access.url}
             <div class="flex items-center gap-2 rounded-lg bg-muted/30 px-2.5 py-2">
@@ -2586,25 +2594,25 @@
                 variant="secondary"
                 size="sm"
                 onclick={() => openServiceUrl({ url: String(detailRuntime.access.url) })}
-                >Open</Button
+                >{tr("ui.services.open")}</Button
               >
             </div>
           {/if}
         {:else if detailRegistryService}
           <p class="text-sm text-muted-foreground">
-            No canonical runtime observation yet — registry projection shown.
+            {tr("ui.services.noCanonicalRuntimeObservationYet")}
           </p>
           <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-            <span>Status: {detailRegistryService.status || "unknown"}</span>
+            <span>{tr("ui.services.statusValue", { value: detailRegistryService.status || tr("ui.common.unknown") })}</span>
             {#if detailRegistryService.server_name}<span
-                >Node: {detailRegistryService.server_name}</span
+                >{tr("ui.serviceSheet.node", { node: detailRegistryService.server_name })}</span
               >{/if}
           </div>
         {/if}
         {#if detailApplication && detailApplication.components.length > 0}
           <div>
             <div class="mb-2 text-[9px] uppercase tracking-wider text-muted-foreground">
-              Components
+              {tr("ui.services.components")}
             </div>
             <div class="flex flex-col gap-1.5" data-testid="service-sheet-components">
               {#each detailApplication.components as component (component.id)}
@@ -2621,8 +2629,7 @@
                     {component.name || component.service_key}
                   </span>
                   <span class="font-mono text-[10px] text-muted-foreground">
-                    {component.observed_state || "unknown"} · {component.health.state ||
-                      "unknown"}
+                    {stateLabel(component.observed_state)} · {stateLabel(component.health.state)}
                   </span>
                 </div>
               {/each}
@@ -2647,7 +2654,7 @@
                 : ""}
             </p>
             {#if detailJob.jobId}<p class="mt-1 font-mono text-muted-foreground">
-                job {detailJob.jobId}
+                {tr("ui.services.jobId", { id: detailJob.jobId })}
               </p>{/if}
             {#if detailJob.detail}<p class="mt-1 text-muted-foreground">
                 {detailJob.detail}
@@ -2655,12 +2662,12 @@
           </div>
         {:else}
           <p class="text-sm text-muted-foreground">
-            No governed action has run in this session.
+            {tr("ui.services.noGovernedActionHasRun")}
           </p>
         {/if}
         {#if detailRow?.workflowLabel}
           <p class="text-xs text-muted-foreground">
-            Operation: {detailRow.workflowLabel}
+            {tr("ui.services.operationValue", { value: detailRow.workflowLabel })}
           </p>
         {/if}
       </div>
@@ -2675,7 +2682,7 @@
               disabled={isManagedServiceActionActive(detailJob)}
               onclick={() => void controlInventoryService(detailRuntime, "logs")}
             >
-              {detailLogState ? "Refresh logs" : "Fetch logs"}
+              {detailLogState ? tr("ui.services.refreshLogs") : tr("ui.services.fetchLogs")}
             </Button>
             {#if detailLogState?.loading}<Loader2
                 class="h-3.5 w-3.5 animate-spin text-muted-foreground"
@@ -2702,11 +2709,11 @@
               size="sm"
               disabled={isManagedServiceActionActive(detailJob)}
               onclick={() => loadMoreManagedServiceLogs(detailRuntime)}
-              >Load older logs</Button
+              >{tr("ui.services.loadOlderLogs")}</Button
             >
           {/if}
         {:else if detailLogState && !detailLogState.loading}
-          <p class="text-sm text-muted-foreground">The last log page was empty.</p>
+          <p class="text-sm text-muted-foreground">{tr("ui.services.theLastLogPageWas")}</p>
         {/if}
       </div>
     {/snippet}
@@ -2719,7 +2726,7 @@
             onclick={() => handleVerifyService(detailRegistryService.id!)}
             disabled={saving}
           >
-            <Check class="h-3.5 w-3.5" /> Verify &amp; Finish
+            <Check class="h-3.5 w-3.5" /> {tr("ui.services.verifyFinish")}
           </Button>
         {/if}
         {#if detailRegistryService && canMoveApplication(detailRegistryService)}
@@ -2729,7 +2736,7 @@
             onclick={() => openMigration(detailRegistryService)}
             disabled={saving || moveTargetsFor(detailRegistryService).length === 0}
           >
-            <ArrowRight class="h-3.5 w-3.5" /> Move to another Node…
+            <ArrowRight class="h-3.5 w-3.5" /> {tr("ui.services.moveToAnotherNode")}
           </Button>
         {/if}
         {#if detailRuntime?.management_state === "observed"}
@@ -2738,7 +2745,7 @@
             size="sm"
             onclick={() => openNewService("import")}
           >
-            Adopt into management…
+            {tr("ui.services.adoptIntoManagement")}
           </Button>
         {/if}
         {#if detailRegistryService?.status === "archived"}
@@ -2748,15 +2755,14 @@
             onclick={() => handleRemoveOld(detailRegistryService.id!)}
             disabled={saving}
           >
-            <Trash2 class="h-3.5 w-3.5" /> Remove old copy…
+            <Trash2 class="h-3.5 w-3.5" /> {tr("ui.services.removeOldCopy")}
           </Button>
         {/if}
         {#if !detailRegistryService && !detailRuntime}
-          <p class="text-sm text-muted-foreground">No operations available.</p>
+          <p class="text-sm text-muted-foreground">{tr("ui.services.noOperationsAvailable")}</p>
         {/if}
         <p class="mt-1 text-[10.5px] text-muted-foreground">
-          Mutations require owner approval; a StackKits verify pass runs before
-          measured state changes.
+          {tr("ui.services.mutationsRequireOwnerApprovalA")}
         </p>
       </div>
     {/snippet}

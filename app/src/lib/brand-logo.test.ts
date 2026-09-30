@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { brandDomainForTool, logoLinkUrl } from "./brand-logo.js";
+import {
+  brandDomainForTool,
+  distinctToolLogos,
+  logoLinkUrl,
+} from "./brand-logo.js";
 
 describe("brandDomainForTool", () => {
   it("maps StackKits application keys to vendor domains", () => {
@@ -9,8 +13,49 @@ describe("brandDomainForTool", () => {
     expect(brandDomainForTool("base", "Node Hub")).toBe("kombify.io");
   });
 
+  it("resolves runtime unit, compose and image names to their product", () => {
+    expect(brandDomainForTool("hermes-gateway.service")).toBe(
+      "nousresearch.com",
+    );
+    expect(brandDomainForTool("system", "hermes-webui")).toBe(
+      "nousresearch.com",
+    );
+    expect(brandDomainForTool("kombify-local-portal")).toBe("kombify.io");
+    expect(brandDomainForTool("photos-immich-server-1")).toBe("immich.app");
+    expect(
+      brandDomainForTool("app", "ghcr.io/immich-app/immich-server:v1.120"),
+    ).toBe("immich.app");
+    // A generic alias never matches as a leftover fragment.
+    expect(brandDomainForTool("home-server")).toBe("");
+  });
+
   it("leaves unknown tools without a domain", () => {
     expect(brandDomainForTool("custom-app", "My App")).toBe("");
+  });
+});
+
+describe("distinctToolLogos", () => {
+  it("collapses shared application marks while preserving other and unknown tools", () => {
+    const immich = { id: "immich-lite", name: "Immich Lite" };
+    const nextcloud = { id: "nextcloud", name: "Nextcloud" };
+    const customDrive = { id: "custom-drive", name: "Custom drive" };
+    const customArchive = { id: "custom-archive", name: "Custom archive" };
+    const tools = [
+      { id: "immich-kiosk", name: "Immich Kiosk" },
+      immich,
+      nextcloud,
+      { id: "immich-power-tools", name: "Immich Power Tools" },
+      customDrive,
+      { id: "immich-public-proxy", name: "Immich Public Proxy" },
+      customArchive,
+    ];
+
+    expect(distinctToolLogos(tools, immich.id)).toEqual([
+      immich,
+      nextcloud,
+      customDrive,
+      customArchive,
+    ]);
   });
 });
 

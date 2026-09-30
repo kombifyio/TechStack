@@ -1,7 +1,9 @@
 <script lang="ts">
-  import { tr } from "#lib/i18n.svelte.js";
+  import { tr, trParts } from "#lib/i18n.svelte.js";
   import ServerProvisioningStep from "./ServerProvisioningStep.svelte";
   import ServiceRegistrySelector from "./ServiceRegistrySelector.svelte";
+  import InfoTip from "./InfoTip.svelte";
+  import { NODE_GUIDES } from "#lib/docs-links.js";
   import {
     getRegistryNodeRoleChoices,
     getStackKitFoundationChoices,
@@ -36,6 +38,25 @@
   }: Props = $props();
 
   const foundations = getStackKitFoundationChoices();
+  const foundationTips: Record<StackKitFoundation, { text: string; docs: string }> =
+    {
+      "basement-kit": {
+        text: "wizard.tip.foundationBasement",
+        docs: NODE_GUIDES.basementKit,
+      },
+      "cloud-kit": {
+        text: "wizard.tip.foundationCloud",
+        docs: NODE_GUIDES.cloudKit,
+      },
+    };
+  const roleTips: Record<RegistryNodeRole, { text: string; docs: string }> = {
+    foundation: {
+      text: "wizard.tip.roleFoundation",
+      docs: NODE_GUIDES.roleFoundation,
+    },
+    worker: { text: "wizard.tip.roleWorker", docs: NODE_GUIDES.roleWorker },
+    storage: { text: "wizard.tip.roleStorage", docs: NODE_GUIDES.roleStorage },
+  };
   const boundFoundation = $derived(
     foundations.find(
       (foundation) =>
@@ -95,17 +116,20 @@
     <ServerProvisioningStep bind:config {onmanagedproviderselect} />
   {/if}
 
-  <section class="space-y-3" data-testid="stackkit-foundation-selector">
+  <section
+    class="space-y-3"
+    data-substep
+    data-testid="stackkit-foundation-selector"
+  >
     <div>
       <h3 class="text-base font-semibold text-foreground">
-        StackKit foundation
+        {tr("ui.serverRegistryPanel.stackkitFoundation")}
       </h3>
       <p class="text-sm text-muted-foreground">
         {#if lockFoundation}
-          This Node joins the existing StackKit. The foundation is already
-          bound.
+          {tr("ui.serverRegistryPanel.thisNodeJoinsTheExisting")}
         {:else}
-          Every registered server is bound to one concrete StackKit foundation.
+          {tr("ui.serverRegistryPanel.everyRegisteredServerIsBound")}
         {/if}
       </p>
     </div>
@@ -114,7 +138,19 @@
         class="foundation-option rounded-lg border border-primary/30 bg-primary/5 p-4"
         data-testid={boundFoundation.testId}
       >
-        <span class="font-medium text-foreground">{boundFoundation.label}</span>
+        <span class="flex items-center gap-0.5 font-medium text-foreground"
+          >{boundFoundation.label}<InfoTip
+            topic={boundFoundation.label}
+            text={tr(
+              lockFoundation
+                ? "wizard.tip.foundationLocked"
+                : foundationTips[boundFoundation.value].text,
+            )}
+            docs={lockFoundation
+              ? NODE_GUIDES.joinStackKit
+              : foundationTips[boundFoundation.value].docs}
+          /></span
+        >
         <span class="mt-1 block text-sm text-muted-foreground">
           {boundFoundation.description}
         </span>
@@ -122,6 +158,7 @@
     {:else}
       <div class="grid gap-3 md:grid-cols-2">
         {#each foundations as foundation (foundation.value)}
+          <div class="option-slot">
           <button
             type="button"
             class="foundation-option rounded-lg border border-border bg-card/70 p-4 text-left transition-colors hover:border-primary/60 {config
@@ -148,32 +185,38 @@
               {foundation.description}
             </span>
           </button>
+          <InfoTip
+            topic={foundation.label}
+            text={tr(foundationTips[foundation.value].text)}
+            docs={foundationTips[foundation.value].docs}
+            placement="corner"
+          />
+          </div>
         {/each}
       </div>
     {/if}
   </section>
 
   {#if showRole}
-    <section class="space-y-3" data-testid="server-role-selector">
+    <section class="space-y-3" data-substep data-testid="server-role-selector">
       <div>
-        <h3 class="text-base font-semibold text-foreground">Server role</h3>
+        <h3 class="text-base font-semibold text-foreground">{tr("ui.serverRegistryPanel.serverRole")}</h3>
         <p class="text-sm text-muted-foreground">
           {#if joinSurface}
-            This Node joins the existing StackKit deployment, which already has
-            its Foundation Node. A second main Node runs its own StackKit
-            deployment — <a
+            {trParts("ui.serverRegistry.joinSurface")[0]}<a
               class="underline underline-offset-2 hover:text-foreground"
               href="/stacks/new"
               data-testid="server-role-found-deployment-link"
-              >add one to this homelab</a
-            >.
+              >{tr("ui.serverRegistry.addOneToHomelab")}</a
+            >{trParts("ui.serverRegistry.joinSurface")[1]}
           {:else}
-            Foundation Node is the product label for the first/core server.
+            {tr("ui.serverRegistryPanel.foundationNodeIsTheProduct")}
           {/if}
         </p>
       </div>
       <div class="grid gap-3 md:grid-cols-3">
         {#each roles as role (role.value)}
+          <div class="option-slot">
           <button
             type="button"
             class="role-option rounded-lg border border-border bg-card/70 p-4 text-left transition-colors hover:border-primary/60 {config
@@ -189,20 +232,30 @@
               {role.description}
             </span>
           </button>
+          <InfoTip
+            topic={role.label}
+            text={tr(roleTips[role.value].text)}
+            docs={roleTips[role.value].docs}
+            placement="corner"
+          />
+          </div>
         {/each}
       </div>
     </section>
   {/if}
 
   {#if showServices}
-    <section class="space-y-3" data-testid="server-registry-services">
+    <section
+      class="space-y-3"
+      data-substep
+      data-testid="server-registry-services"
+    >
       <div>
         <h3 class="text-base font-semibold text-foreground">
-          Optional services
+          {tr("ui.serverRegistryPanel.optionalServices")}
         </h3>
         <p class="text-sm text-muted-foreground">
-          These selections feed the same Service Registry contract used by
-          Service Management.
+          {tr("ui.serverRegistryPanel.theseSelectionsFeedTheSame")}
         </p>
       </div>
       <ServiceRegistrySelector services={config.services} />
@@ -211,12 +264,24 @@
 </div>
 
 <style>
+  .option-slot {
+    position: relative;
+    display: grid;
+  }
+  .option-slot {
+    --info-tip-top: 10px;
+    --info-tip-end: 8px;
+  }
+  .foundation-option,
+  .role-option {
+    padding-inline-end: 40px;
+  }
   .flat .foundation-option,
   .flat .role-option {
     border-radius: 0;
     border-width: 0 0 1px;
     box-shadow: none;
     background: transparent;
-    padding-inline: 0;
+    padding-inline: 0 36px;
   }
 </style>

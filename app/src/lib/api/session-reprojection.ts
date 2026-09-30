@@ -31,12 +31,17 @@ export const SESSION_REPROJECTION_REASON_CODE = "session_reprojection_required";
  * users through Universal Login in a loop that could not terminate
  * (live 2026-09-12 to 2026-09-18).
  */
-export const EDGE_DECISION_UNVERIFIABLE_REASON_CODE = "edge_decision_unverifiable";
+export const EDGE_DECISION_UNVERIFIABLE_REASON_CODE =
+  "edge_decision_unverifiable";
 
 /** True when a 401 is the origin refusing the edge's decision, not the session. */
 export function isEdgeDecisionUnverifiableError(err: unknown): boolean {
   if (typeof err !== "object" || err === null) return false;
-  const candidate = err as { status?: unknown; code?: unknown; details?: unknown };
+  const candidate = err as {
+    status?: unknown;
+    code?: unknown;
+    details?: unknown;
+  };
   if (candidate.status !== 401) return false;
   if (candidate.code === EDGE_DECISION_UNVERIFIABLE_REASON_CODE) return true;
   const details = candidate.details;

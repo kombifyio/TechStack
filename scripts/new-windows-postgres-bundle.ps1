@@ -1,22 +1,55 @@
 #requires -Version 7.5
 param(
     [Parameter(Mandatory = $true)][string]$OutputDirectory,
-    [string]$ArchivePath = ""
+    # A cache path from the delivery workflow; downloaded into when absent.
+    [string]$ArchivePath = $env:WINDOWS_POSTGRES_ARCHIVE_PATH
 )
 
 $ErrorActionPreference = "Stop"
 # Same PostgreSQL release as embedded-postgres v1.34.0's V16 runtime pin.
 $version = "16.9.0"
 $archiveSHA256 = "f6c6499661eb7064d2be60833e0e53621e42a880309ae5b82aa0f93eaed02df2"
-$archiveUrl = "https://repo1.maven.org/maven2/io/zonky/test/postgres/embedded-postgres-binaries-windows-amd64/$version/embedded-postgres-binaries-windows-amd64-$version.jar"
+$archiveRelativePath = "io/zonky/test/postgres/embedded-postgres-binaries-windows-amd64/$version/embedded-postgres-binaries-windows-amd64-$version.jar"
+# Maven Central rate-blocks shared CI egress IPs with HTTP 403 (Techstack
+# 0.32.7), so Google's official Maven Central mirrors come first; the pinned
+# SHA-256 is checked for whichever source answers.
+$archiveSources = @(
+    "https://maven-central.storage-download.googleapis.com/maven2",
+    "https://maven-central-eu.storage-download.googleapis.com/maven2",
+    "https://repo1.maven.org/maven2"
+) | ForEach-Object { "$_/$archiveRelativePath" }
+$archiveUrl = $archiveSources[-1]
 $temporaryArchive = ""
 $temporaryBundle = ""
 try {
     if ([string]::IsNullOrWhiteSpace($ArchivePath)) {
         $temporaryArchive = [IO.Path]::GetTempFileName()
         $ArchivePath = $temporaryArchive
-        Write-Host "Downloading pinned Windows PostgreSQL $version archive."
-        Invoke-WebRequest -Uri $archiveUrl -OutFile $ArchivePath -TimeoutSec 120
+    }
+    if ((Test-Path -LiteralPath $ArchivePath) -and ((Get-Item -LiteralPath $ArchivePath).Length -gt 0)) {
+        Write-Host "Using Windows PostgreSQL $version archive at $ArchivePath."
+    } else {
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent ([IO.Path]::GetFullPath($ArchivePath))) | Out-Null
+        $downloaded = $false
+        foreach ($source in $archiveSources) {
+            Write-Host "Downloading pinned Windows PostgreSQL $version archive from $source"
+            try {
+                Invoke-WebRequest -Uri $source -OutFile $ArchivePath -TimeoutSec 120 -MaximumRetryCount 2 -RetryIntervalSec 5
+            } catch {
+                Write-Warning "Download from $source failed: $($_.Exception.Message)"
+                continue
+            }
+            if ((Get-FileHash -LiteralPath $ArchivePath -Algorithm SHA256).Hash.ToLowerInvariant() -eq $archiveSHA256) {
+                $archiveUrl = $source
+                $downloaded = $true
+                break
+            }
+            Write-Warning "Archive from $source does not match the pinned SHA-256."
+        }
+        if (-not $downloaded) {
+            Remove-Item -LiteralPath $ArchivePath -Force -ErrorAction SilentlyContinue
+            throw "No source delivered the pinned Windows PostgreSQL $version archive."
+        }
     }
     if ((Get-FileHash -LiteralPath $ArchivePath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $archiveSHA256) {
         throw "Windows PostgreSQL archive does not match the pinned SHA-256."

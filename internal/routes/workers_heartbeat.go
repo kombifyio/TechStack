@@ -83,6 +83,9 @@ func (h workerRouteHandlers) heartbeatWithRuntimeAgent(e *httpx.Event, id string
 		worker.Resources = mergeAnyMaps(worker.Resources, map[string]any{"runtime_convergence": convergence})
 		worker.Capabilities = mergeAnyMaps(worker.Capabilities, map[string]any{"runtime_convergence": convergence})
 	}
+	// Every heartbeat restates the host maintenance facts, so a downgraded
+	// agent stops advertising host maintenance on its next beat.
+	worker.Capabilities = mergeAnyMaps(worker.Capabilities, req.metadata())
 	if worker.Approved {
 		worker.Status = "connected"
 	} else if !strings.EqualFold(worker.Status, "rejected") {
@@ -101,7 +104,7 @@ func (h workerRouteHandlers) heartbeatWithRuntimeAgent(e *httpx.Event, id string
 	}
 	acceptedSamples := 0
 	if h.metricWriter != nil {
-		samples := workerHeartbeatSamplesFromStore(*updated, req, now)
+		samples := workerHeartbeatSamplesFromStore(*updated, serverID, req, now)
 		if len(samples) > 0 {
 			if err := h.metricWriter.Write(samples); err != nil {
 				return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to ingest worker metrics", map[string]any{
@@ -120,7 +123,11 @@ func (h workerRouteHandlers) heartbeatWithRuntimeAgent(e *httpx.Event, id string
 	})
 }
 
-func workerHeartbeatSamplesFromStore(worker controlplane.Worker, req workerHeartbeatRequest, now time.Time) []monitoring.MetricSample {
+// workerHeartbeatSamplesFromStore turns a Guard host report into TSDB samples.
+// serverID is the canonical server the report was projected onto; the Node
+// dashboards and the Node monitoring page select series by node_id, so without
+// it the host history is stored but never found.
+func workerHeartbeatSamplesFromStore(worker controlplane.Worker, serverID string, req workerHeartbeatRequest, now time.Time) []monitoring.MetricSample {
 	labels := map[string]string{
 		"agent_id":  worker.ID,
 		"worker_id": worker.ID,
@@ -128,9 +135,24 @@ func workerHeartbeatSamplesFromStore(worker controlplane.Worker, req workerHeart
 		"provider":  worker.Provider,
 		"source":    "worker-heartbeat",
 	}
+	// The tenant comes from the authenticated worker record, never the agent
+	// payload; SaaS monitor queries only return series carrying it.
+	if tenantID := strings.TrimSpace(worker.TenantID); tenantID != "" {
+		labels["tenant_id"] = tenantID
+	}
+	if serverID = strings.TrimSpace(serverID); serverID != "" {
+		labels["server_id"] = serverID
+		labels["node_id"] = serverID
+	}
 	samples := []monitoring.MetricSample{}
 	if validPercent(req.CPUPercent) {
-		samples = append(samples, monitoring.MetricSample{Name: "node_cpu_usage_percent", Value: req.CPUPercent, Labels: labels, Timestamp: now})
+		// The Guard reports whole-host CPU, the agent collector's core="total".
+		cpuLabels := make(map[string]string, len(labels)+1)
+		for key, value := range labels {
+			cpuLabels[key] = value
+		}
+		cpuLabels["core"] = "total"
+		samples = append(samples, monitoring.MetricSample{Name: "node_cpu_usage_percent", Value: req.CPUPercent, Labels: cpuLabels, Timestamp: now})
 	}
 	if percent, ok := bytesPercent(req.MemoryUsedBytes, req.MemoryTotalBytes); ok {
 		samples = append(samples, monitoring.MetricSample{Name: "node_memory_usage_percent", Value: percent, Labels: labels, Timestamp: now})

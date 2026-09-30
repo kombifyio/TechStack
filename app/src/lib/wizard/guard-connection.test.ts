@@ -11,10 +11,7 @@ const NOW = Date.parse("2026-09-14T18:00:00.000Z");
 const HEARTBEAT = "2026-09-14T17:59:30.000Z";
 const PAIRING_STARTED = "2026-09-14T17:58:00.000Z";
 
-function server(
-  id: string,
-  overrides: Record<string, unknown> = {},
-) {
+function server(id: string, overrides: Record<string, unknown> = {}) {
   return {
     id,
     node_id: id,

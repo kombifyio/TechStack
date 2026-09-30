@@ -223,36 +223,6 @@ export interface PipelineValidationResult {
   errors?: ValidationError[];
 }
 
-/**
- * Result of pipeline preview
- */
-export interface PipelinePreviewResult {
-  valid: boolean;
-  resolved_stackkit: string;
-  detected_addons: string[];
-  stages: PipelineStage[];
-  config?: unknown;
-  errors?: ValidationError[];
-  warnings?: string[];
-  requirements?: RequirementsSpec;
-  environment_gaps?: EnvironmentGap[];
-  guidance?: DecisionGuidance[];
-  decision_context?: DecisionContext;
-  decision_context_hash?: string;
-  decision_trace?: DecisionTrace;
-  decision_trace_hash?: string;
-}
-
-export class PipelinePreflightError extends Error {
-  result: PipelinePreviewResult;
-
-  constructor(result: PipelinePreviewResult) {
-    super(formatPipelinePreflightError(result));
-    this.name = "PipelinePreflightError";
-    this.result = result;
-  }
-}
-
 // ============================================================================
 // Requirements Analysis Types (from Unifier)
 // ============================================================================
@@ -385,23 +355,6 @@ export async function unifySpec(spec: unknown): Promise<{ unified: unknown }> {
 // Pipeline API Functions
 // ============================================================================
 
-function buildPipelineRequest(
-  spec: unknown,
-  decisionContext?: DecisionContext,
-): { body: string; contentType: string } {
-  if (decisionContext) {
-    return {
-      body: JSON.stringify({ spec, decision_context: decisionContext }),
-      contentType: "application/json",
-    };
-  }
-  return {
-    body: typeof spec === "string" ? spec : JSON.stringify(spec),
-    contentType:
-      typeof spec === "string" ? "application/yaml" : "application/json",
-  };
-}
-
 /**
  * Validate spec through the full pipeline (NEW)
  * Returns detailed stage information and auto-resolved StackKit
@@ -430,34 +383,6 @@ export async function validatePipeline(
 }
 
 /**
- * Preview the generated config through the pipeline (NEW)
- * @param spec - The kombination spec (YAML string or object)
- */
-export async function previewPipeline(
-  spec: unknown,
-  decisionContext?: DecisionContext,
-): Promise<PipelinePreviewResult> {
-  const { body, contentType } = buildPipelineRequest(spec, decisionContext);
-
-  const res = await fetchApi<PipelinePreviewResult>(
-    "/api/v1/unifier/pipeline/preview",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": contentType,
-      },
-      body,
-      // The preview performs the full CUE/StackKit resolution pipeline. A
-      // cold SaaS process can legitimately exceed the generic 10-second CRUD
-      // timeout, but the Wizard must still remain bounded and actionable.
-      timeoutMs: 60_000,
-    },
-  );
-
-  return res.data;
-}
-
-/**
  * Ask the authenticated Techstack recommendation authority to evaluate the
  * current Wizard answers. The closed request deliberately carries no
  * StackKit, tenant, subject, or DecisionContext override.
@@ -476,31 +401,6 @@ export async function recommendWizard(
     },
   );
   return res.data;
-}
-
-/**
- * Run the side-effect-free wizard preflight against the preview endpoint.
- * Invalid backend validation or StackKit resolution results block stack
- * creation so the Wizard cannot silently continue with a different rollout
- * truth than the backend.
- */
-export async function preflightPipeline(
-  spec: unknown,
-  decisionContext?: DecisionContext,
-): Promise<PipelinePreviewResult> {
-  const result = await previewPipeline(spec, decisionContext);
-  if (!result.valid) {
-    throw new PipelinePreflightError(result);
-  }
-  return result;
-}
-
-function formatPipelinePreflightError(result: PipelinePreviewResult): string {
-  const messages = result.errors?.map((error) => error.message).filter(Boolean);
-  if (messages?.length) {
-    return `Pipeline preflight failed: ${messages.join(", ")}`;
-  }
-  return "Pipeline preflight failed. Please review the selected StackKit, server, and service settings.";
 }
 
 // ============================================================================

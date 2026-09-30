@@ -8,6 +8,7 @@ import {
   clearGatewayAuth,
   completeGatewayRedirectIfPresent,
   getGatewayToken,
+  renewGatewaySession,
   startGatewayLogin,
 } from "./gateway-auth";
 
@@ -43,21 +44,28 @@ describe("getGatewayToken", () => {
     expect(loginWithRedirect).not.toHaveBeenCalled();
   });
 
-  it("starts an interactive SPA login when asked", async () => {
+  // platform-jx5m6: "Sign in again" forced prompt=login/max_age=0, so a live
+  // Auth0 session still demanded credentials (one login per device rule).
+  it("renews silently first and never forces a credential login", async () => {
+    const getTokenSilently = vi
+      .fn()
+      .mockRejectedValue(new Error("login_required"));
     const loginWithRedirect = vi.fn().mockResolvedValue(undefined);
-    __setAuth0ClientForTest(fakeClient({ loginWithRedirect }));
-
-    await expect(
-      startGatewayLogin({ interactive: true, returnTo: "/dashboard" }),
-    ).resolves.toBe(true);
-    expect(loginWithRedirect).toHaveBeenCalledWith(
-      expect.objectContaining({
-        authorizationParams: expect.objectContaining({
-          prompt: "login",
-        }),
-        appState: { returnTo: "/dashboard" },
-      }),
+    __setAuth0ClientForTest(
+      fakeClient({ getTokenSilently, loginWithRedirect }),
     );
+
+    await expect(renewGatewaySession({ returnTo: "/dashboard" })).resolves.toBe(
+      "redirecting",
+    );
+
+    expect(getTokenSilently).toHaveBeenCalledTimes(1);
+    expect(loginWithRedirect).toHaveBeenCalledTimes(1);
+    const { authorizationParams, appState } =
+      loginWithRedirect.mock.calls[0][0];
+    expect(authorizationParams.prompt).toBeUndefined();
+    expect(authorizationParams.max_age).toBeUndefined();
+    expect(appState).toEqual({ returnTo: "/dashboard" });
   });
 
   it("claims an SPA callback on the app origin", async () => {
@@ -99,6 +107,44 @@ describe("getGatewayToken", () => {
       true,
     );
     expect(loginWithRedirect).toHaveBeenCalledTimes(1);
+  });
+
+  // platform-jx5m6: a staff MFA refusal made every API call replay the same
+  // rejected refresh token (hundreds of Auth0 mfa_required events per hour).
+  it("stops silent refresh on an MFA refusal and steps up exactly once", async () => {
+    const refusal = Object.assign(
+      new Error("Multifactor authentication required"),
+      {
+        error: "mfa_required",
+      },
+    );
+    const getTokenSilently = vi.fn().mockRejectedValue(refusal);
+    const loginWithRedirect = vi.fn().mockResolvedValue(undefined);
+    __setAuth0ClientForTest(
+      fakeClient({ getTokenSilently, loginWithRedirect }),
+    );
+
+    const concurrent = await Promise.allSettled([
+      getGatewayToken(),
+      getGatewayToken(),
+      getGatewayToken(),
+    ]);
+    // Auth init, the recovery ladder and the renewal panel may all ask.
+    await startGatewayLogin({ returnTo: "/dashboard" });
+    await renewGatewaySession({ returnTo: "/dashboard" });
+    await expect(getGatewayToken()).rejects.toBe(refusal);
+
+    expect(concurrent.every((r) => r.status === "rejected")).toBe(true);
+    expect(getTokenSilently).toHaveBeenCalledTimes(1);
+    expect(loginWithRedirect).toHaveBeenCalledTimes(1);
+    const params = loginWithRedirect.mock.calls[0][0].authorizationParams;
+    expect(params.acr_values).toBe(
+      "http://schemas.openid.net/pape/policies/2007/06/multi-factor",
+    );
+    expect(params.prompt).toBeUndefined();
+    expect(loginWithRedirect.mock.calls[0][0].appState).toEqual({
+      returnTo: "/dashboard",
+    });
   });
 
   it("throws when the token comes back empty", async () => {

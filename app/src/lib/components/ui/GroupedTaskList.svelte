@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "#lib/i18n.svelte.js";
   /**
    * GroupedTaskList - Phase-grouped progress feedback for long-running
    * creation jobs. Each phase is one card with a status badge and a
@@ -50,11 +51,11 @@
   function badgeLabel(gs: GroupStatus): string {
     switch (gs.status) {
       case "completed":
-        return "Done";
+        return tr("ui.groupedTaskList.done");
       case "running":
         return `${gs.completed} / ${gs.total}`;
       case "failed":
-        return "Failed";
+        return tr("ui.stacksCreatingCreationRunStatus.failed");
       default:
         return `0 / ${gs.total}`;
     }

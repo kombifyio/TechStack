@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "#lib/i18n.svelte.js";
   /**
    * KeyboardShortcuts
    *
@@ -197,7 +198,7 @@
     data-kx="plate"
     class="fixed bottom-4 right-4 px-3 py-2 shadow-lg z-50"
   >
-    <span class="text-muted-foreground text-sm">Waiting for key: </span>
+    <span class="text-muted-foreground text-sm">{tr("ui.shortcuts.waiting")} </span>
     <kbd
       class="px-2 py-1 bg-muted rounded text-sm font-mono text-primary border border-border"
     >

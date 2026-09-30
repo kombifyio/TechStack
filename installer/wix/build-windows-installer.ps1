@@ -20,7 +20,8 @@ param(
     [string]$StageDir,
     [Parameter(Mandatory = $true)]
     [string]$Version,
-    [string]$OutputDir = "dist\windows-client"
+    [string]$OutputDir = "dist\windows-client",
+    [ValidateSet("Local", "Cloud")][string]$DesktopEdition = "Local"
 )
 
 $ErrorActionPreference = "Stop"
@@ -135,19 +136,28 @@ $output = if ([IO.Path]::IsPathRooted($OutputDir)) {
 }
 $intermediate = Join-Path $output "wix-intermediate"
 $stageFragment = Join-Path $intermediate "stage-files.wxs"
-$msiPath = Join-Path $output "kombify-Techstack-x64.msi"
-$bundlePath = Join-Path $output "kombify-Techstack-Setup.exe"
+$suffix = if ($DesktopEdition -eq "Cloud") { "-Cloud" } else { "" }
+$msiPath = Join-Path $output "kombify-Techstack$suffix-x64.msi"
+$bundlePath = Join-Path $output "kombify-Techstack$suffix-Setup.exe"
+$installDirectoryName = if ($DesktopEdition -eq "Cloud") { "techstack-cloud" } else { "techstack" }
+$msiUpgradeCode = if ($DesktopEdition -eq "Cloud") { "{E509478A-80C8-4AD4-994E-5D409AD5FB00}" } else { "{F85F01B8-7612-47AB-9666-29BEC1BE0E10}" }
+$bundleUpgradeCode = if ($DesktopEdition -eq "Cloud") { "{DB4EAFA7-84CD-4F2B-BFB6-E81427A5F6BC}" } else { "{E832F922-4AEC-4C41-A7B6-9546279CD913}" }
 $msiSource = Join-Path $root "installer\wix\TechStack.wxs"
 $bundleSource = Join-Path $root "installer\wix\TechStack.Bundle.wxs"
 
 foreach ($required in @(
     (Join-Path $stage "kombify-techstack-client.exe"),
-    (Join-Path $stage "techstack.exe"),
     (Join-Path $stage "Assets\kombify-navy.ico")
 )) {
     if (!(Test-Path -LiteralPath $required -PathType Leaf)) {
         throw "Windows client stage is incomplete; missing $required"
     }
+}
+if ($DesktopEdition -eq "Local" -and !(Test-Path -LiteralPath (Join-Path $stage "techstack.exe") -PathType Leaf)) {
+    throw "Local Windows client stage is incomplete; missing techstack.exe"
+}
+if ($DesktopEdition -eq "Cloud" -and (Test-Path -LiteralPath (Join-Path $stage "techstack.exe"))) {
+    throw "Cloud Windows client stage cannot contain the local Techstack runtime."
 }
 
 New-Item -ItemType Directory -Force -Path $output | Out-Null
@@ -166,6 +176,9 @@ Invoke-Wix @(
     "-intermediatefolder", (Join-Path $intermediate "msi"),
     "-d", "TechStackVersion=$Version",
     "-d", "StageDir=$stage",
+    "-d", "DesktopEdition=$DesktopEdition",
+    "-d", "InstallDirectoryName=$installDirectoryName",
+    "-d", "MsiUpgradeCode=$msiUpgradeCode",
     $msiSource,
     $stageFragment,
     "-out", $msiPath
@@ -179,6 +192,9 @@ Invoke-Wix @(
     "-intermediatefolder", (Join-Path $intermediate "bundle"),
     "-d", "TechStackVersion=$Version",
     "-d", "StageDir=$stage",
+    "-d", "DesktopEdition=$DesktopEdition",
+    "-d", "InstallDirectoryName=$installDirectoryName",
+    "-d", "BundleUpgradeCode=$bundleUpgradeCode",
     "-d", "MsiPath=$msiPath",
     $bundleSource,
     "-out", $bundlePath

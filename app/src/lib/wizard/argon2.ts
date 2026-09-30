@@ -1,4 +1,5 @@
 import argon2 from "argon2-browser/dist/argon2-bundled.min.js";
+import { tr } from "#lib/i18n.svelte.js";
 
 export const MIN_RECOVERY_PASSPHRASE_LENGTH = 12;
 
@@ -18,7 +19,7 @@ export interface PassphraseStrength {
 export async function hashPassphrase(passphrase: string): Promise<string> {
   if (passphrase.length < MIN_RECOVERY_PASSPHRASE_LENGTH) {
     throw new Error(
-      `Passphrase too short (minimum ${MIN_RECOVERY_PASSPHRASE_LENGTH} characters)`,
+      tr("ui.argon2.tooShort", { min: MIN_RECOVERY_PASSPHRASE_LENGTH }),
     );
   }
 
@@ -43,27 +44,27 @@ export function scoreStrength(passphrase: string): PassphraseStrength {
   if (passphrase.length >= MIN_RECOVERY_PASSPHRASE_LENGTH) {
     score += 1;
   } else {
-    feedback.push(`Use at least ${MIN_RECOVERY_PASSPHRASE_LENGTH} characters.`);
+    feedback.push(
+      tr("ui.argon2.useAtLeast", { min: MIN_RECOVERY_PASSPHRASE_LENGTH }),
+    );
   }
 
   if (passphrase.length >= 20) {
     score += 1;
   } else {
-    feedback.push("Longer passphrases are easier to remember and stronger.");
+    feedback.push(tr("ui.argon2.longer"));
   }
 
   if (/\d/.test(passphrase)) {
     score += 1;
   } else {
-    feedback.push("Add at least one number.");
+    feedback.push(tr("ui.argon2.addNumber"));
   }
 
   if (/[^\p{L}\d]/u.test(passphrase) || /\s/.test(passphrase)) {
     score += 1;
   } else {
-    feedback.push(
-      "Add spaces or symbols to make the passphrase harder to guess.",
-    );
+    feedback.push(tr("ui.argon2.addSymbols"));
   }
 
   return {

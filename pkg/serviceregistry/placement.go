@@ -80,7 +80,10 @@ func PlacementIntentPresent(placement Placement) bool {
 
 // ValidatePlacement enforces the disjoint placement shapes. In particular,
 // Managed workloads cannot masquerade as servers and a server placement cannot
-// exist without the exact ServerID to which it is bound.
+// exist without the exact ServerID to which it is bound. A server placement
+// never carries EvidenceRef or ObservedAt: the ServerID binding is the
+// placement, and the service's runtime observation on that server is its
+// evidence (placement freshness is derived from it on read).
 func ValidatePlacement(serverID string, placement Placement) error {
 	serverID = strings.TrimSpace(serverID)
 	placement = NormalizePlacement(serverID, placement)

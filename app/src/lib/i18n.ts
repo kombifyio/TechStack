@@ -2,21 +2,32 @@
  * kombify-TechStack Internationalization (i18n)
  *
  * Simple translation system with English as default language.
- * Language preference is stored in localStorage.
+ * Locale resolution: explicit choice stored on this device, then the browser
+ * language list, then English.
  */
 
 import { loginMessages } from "./wizard/login-messages";
 import { accessUsersMessages } from "./wizard/access-users-messages";
+import { nodeGuidanceMessages } from "./wizard/node-guidance-messages";
+import { uiMessages } from "./ui-messages";
+import { screenMessages } from "./screen-messages";
+import { es } from "./locales/es";
+import { zhHans } from "./locales/zh-Hans";
+import { hi } from "./locales/hi";
+import { ar } from "./locales/ar";
 
-export type Locale = "en" | "de";
+export type Locale = "en" | "de" | "es" | "zh-Hans" | "hi" | "ar";
 
 export const defaultLocale: Locale = "en";
 
 // Translation dictionary
-const translations: Record<Locale, Record<string, string>> = {
+export const translations: Record<Locale, Record<string, string>> = {
   en: {
     ...loginMessages.en,
     ...accessUsersMessages.en,
+    ...nodeGuidanceMessages.en,
+    ...uiMessages.en,
+    ...screenMessages.en,
     "wizard.creation.preferenceOnly":
       "Preference saved. This release installs the suggested service; the alternative is not applied yet.",
     "wizard.preview.mail.title": "Mail",
@@ -90,6 +101,7 @@ const translations: Record<Locale, Record<string, string>> = {
     "wizard.preview.availableHint": "Pick a use case. Make it yours.",
     "wizard.preview.defaultService": "Suggested",
     "wizard.preview.alternative": "Alternative",
+    "wizard.preview.savedForLater": "Saved for later",
     "wizard.preview.aboutService": "About",
     "wizard.preview.serviceFor": "Service for",
     "wizard.preview.preferenceOnly":
@@ -97,6 +109,7 @@ const translations: Record<Locale, Record<string, string>> = {
     "wizard.preview.aboutUseCase": "A closer look",
     "wizard.preview.inside": "Tools in this use case",
     "wizard.preview.explore": "Explore & customize",
+    "wizard.preview.selectUseCase": "Select",
     "wizard.preview.collapse": "Less detail",
     "wizard.preview.selected": "Selected",
     "wizard.preview.optional": "Optional",
@@ -229,6 +242,13 @@ const translations: Record<Locale, Record<string, string>> = {
     "nav.help": "Help",
     "nav.settings": "Settings",
     "nav.logout": "Logout",
+    "nav.theme": "Theme",
+    "appearance.inherit": "Follow default",
+    "appearance.dark": "Dark",
+    "appearance.light": "Light",
+    "appearance.system": "System",
+    "nav.localAdmin": "Open Local Admin",
+    "nav.administrator": "Administrator",
     "nav.allServices": "All services",
     "nav.servers": "Servers",
     "nav.monitoring.servers": "Servers",
@@ -344,6 +364,12 @@ const translations: Record<Locale, Record<string, string>> = {
 
     // Wizard
     "wizard.title": "Create kombify-Techstack",
+    "wizard.selfDisclosure.applying":
+      "Applying what you told us in kombify Cloud…",
+    "wizard.selfDisclosure.applied":
+      "We used what you told us in kombify Cloud. Everything stays editable.",
+    "wizard.selfDisclosure.failed":
+      "Your answers from kombify Cloud could not be saved. You can continue; the wizard works without them.",
     "wizard.step.goals": "Goals",
     "wizard.step.server": "Node",
     "wizard.step.access": "Access",
@@ -596,6 +622,8 @@ const translations: Record<Locale, Record<string, string>> = {
       "Choose from the providers enabled for your account.",
     "wizard.server.managed.providerAssigned":
       "This provider is included in your current VPS access.",
+    "wizard.server.managed.providerUnavailable":
+      "Not included in your current VPS access",
     "wizard.server.managed.moreOptionsPending":
       "Additional server sizes and locations are not available to choose here yet.",
     "wizard.server.remote.connectionDetails": "Connection details",
@@ -788,8 +816,6 @@ const translations: Record<Locale, Record<string, string>> = {
     // Settings
     "settings.title": "Settings",
     "settings.language": "Language",
-    "settings.language.en": "English",
-    "settings.language.de": "German",
     "settings.profile": "Profile",
     "settings.email": "Email",
     "settings.password": "Password",
@@ -825,6 +851,13 @@ const translations: Record<Locale, Record<string, string>> = {
     "wizard.run.banner.failedBody":
       "The last setup run did not finish. Continue where you left off.",
     "wizard.run.banner.resume": "Continue setup",
+    "wizard.run.banner.cancel": "Cancel rollout",
+    "wizard.run.banner.cancelTitle": "Cancel this rollout?",
+    "wizard.run.banner.cancelBody":
+      "The rollout stops and is marked as failed. The Node stays as it is, and you can start the rollout again later.",
+    "wizard.run.banner.cancelFailed": "The rollout could not be cancelled",
+    "wizard.run.banner.dismiss": "Dismiss",
+    "wizard.run.banner.dismissFailed": "The notice could not be dismissed",
 
     // Session expiry (modal)
     "auth.session.expired.default":
@@ -855,8 +888,11 @@ const translations: Record<Locale, Record<string, string>> = {
     "companion.launcherLabel": "Ask kombify",
   },
   de: {
+    ...uiMessages.de,
+    ...screenMessages.de,
     ...loginMessages.de,
     ...accessUsersMessages.de,
+    ...nodeGuidanceMessages.de,
     "wizard.creation.preferenceOnly":
       "Wunsch gespeichert. Dieses Release installiert den vorgeschlagenen Dienst; die Alternative wird noch nicht angewendet.",
     "wizard.preview.mail.title": "Mail",
@@ -931,6 +967,7 @@ const translations: Record<Locale, Record<string, string>> = {
       "Use Case auswählen. Nach deinen Wünschen anpassen.",
     "wizard.preview.defaultService": "Vorgeschlagen",
     "wizard.preview.alternative": "Alternative",
+    "wizard.preview.savedForLater": "Für später gespeichert",
     "wizard.preview.aboutService": "Über",
     "wizard.preview.serviceFor": "Dienst für",
     "wizard.preview.preferenceOnly":
@@ -938,6 +975,7 @@ const translations: Record<Locale, Record<string, string>> = {
     "wizard.preview.aboutUseCase": "Genauer ansehen",
     "wizard.preview.inside": "Die Tools dahinter",
     "wizard.preview.explore": "Entdecken & anpassen",
+    "wizard.preview.selectUseCase": "Auswählen",
     "wizard.preview.collapse": "Weniger Details",
     "wizard.preview.selected": "Ausgewählt",
     "wizard.preview.optional": "Optional",
@@ -1071,6 +1109,13 @@ const translations: Record<Locale, Record<string, string>> = {
     "nav.help": "Hilfe",
     "nav.settings": "Einstellungen",
     "nav.logout": "Abmelden",
+    "nav.theme": "Darstellung",
+    "appearance.inherit": "Standard übernehmen",
+    "appearance.dark": "Dunkel",
+    "appearance.light": "Hell",
+    "appearance.system": "System",
+    "nav.localAdmin": "Lokale Verwaltung öffnen",
+    "nav.administrator": "Administrator",
     "nav.allServices": "Alle Dienste",
     "nav.servers": "Server",
     "nav.monitoring.servers": "Server",
@@ -1187,8 +1232,12 @@ const translations: Record<Locale, Record<string, string>> = {
 
     // Wizard
     "wizard.title": "kombify-Techstack erstellen",
-    "wizard.subtitle":
-      "Konfiguriere das StackKit Deployment für deinen eigenen Node oder ein verwaltetes kombify-Ziel.",
+    "wizard.selfDisclosure.applying":
+      "Deine Angaben aus kombify Cloud werden übernommen…",
+    "wizard.selfDisclosure.applied":
+      "Wir haben deine Angaben aus kombify Cloud übernommen. Alles bleibt änderbar.",
+    "wizard.selfDisclosure.failed":
+      "Deine Angaben aus kombify Cloud konnten nicht gespeichert werden. Du kannst trotzdem weitermachen; der Assistent funktioniert auch ohne sie.",
     "wizard.step.goals": "Ziele",
     "wizard.step.server": "Node",
     "wizard.step.access": "Zugriff",
@@ -1446,6 +1495,8 @@ const translations: Record<Locale, Record<string, string>> = {
       "Wähle aus den für dein Konto freigeschalteten Anbietern.",
     "wizard.server.managed.providerAssigned":
       "Dieser Anbieter ist in deinem aktuellen VPS-Zugang enthalten.",
+    "wizard.server.managed.providerUnavailable":
+      "Nicht in deinem aktuellen VPS-Zugang enthalten",
     "wizard.server.managed.moreOptionsPending":
       "Weitere Servergrößen und Standorte lassen sich hier noch nicht auswählen.",
     "wizard.server.remote.connectionDetails": "Verbindungsdetails",
@@ -1639,8 +1690,6 @@ const translations: Record<Locale, Record<string, string>> = {
     // Settings
     "settings.title": "Einstellungen",
     "settings.language": "Sprache",
-    "settings.language.en": "Englisch",
-    "settings.language.de": "Deutsch",
     "settings.profile": "Profil",
     "settings.email": "E-Mail",
     "settings.password": "Passwort",
@@ -1677,6 +1726,15 @@ const translations: Record<Locale, Record<string, string>> = {
     "wizard.run.banner.failedBody":
       "Der letzte Einrichtungslauf wurde nicht abgeschlossen. Mach dort weiter, wo du aufgehört hast.",
     "wizard.run.banner.resume": "Einrichtung fortsetzen",
+    "wizard.run.banner.cancel": "Rollout abbrechen",
+    "wizard.run.banner.cancelTitle": "Diesen Rollout abbrechen?",
+    "wizard.run.banner.cancelBody":
+      "Der Rollout stoppt und wird als fehlgeschlagen markiert. Der Node bleibt, wie er ist, und du kannst den Rollout später erneut starten.",
+    "wizard.run.banner.cancelFailed":
+      "Der Rollout konnte nicht abgebrochen werden",
+    "wizard.run.banner.dismiss": "Ausblenden",
+    "wizard.run.banner.dismissFailed":
+      "Der Hinweis konnte nicht ausgeblendet werden",
 
     // Session expiry (modal)
     "auth.session.expired.default":
@@ -1704,33 +1762,118 @@ const translations: Record<Locale, Record<string, string>> = {
     "companion.startVoiceAgent": "Sprachassistent starten",
     "companion.launcherLabel": "kombify fragen",
   },
+  es,
+  "zh-Hans": zhHans,
+  hi,
+  ar,
 };
 
-// Get stored locale from localStorage
-export function getStoredLocale(): Locale {
-  if (typeof window === "undefined") return defaultLocale;
-  const stored = localStorage.getItem("techstack-locale");
-  if (stored === "en" || stored === "de") return stored;
+export interface LocaleInfo {
+  code: Locale;
+  /** Endonym: the language's name in that language. */
+  name: string;
+  dir: "ltr" | "rtl";
+}
+
+const localeInfos: LocaleInfo[] = [
+  { code: "en", name: "English", dir: "ltr" },
+  { code: "de", name: "Deutsch", dir: "ltr" },
+  { code: "es", name: "Español", dir: "ltr" },
+  { code: "zh-Hans", name: "简体中文", dir: "ltr" },
+  { code: "hi", name: "हिन्दी", dir: "ltr" },
+  { code: "ar", name: "العربية", dir: "rtl" },
+];
+
+const LOCALE_STORAGE_KEY = "techstack-locale";
+
+export function isLocale(value: unknown): value is Locale {
+  return localeInfos.some((info) => info.code === value);
+}
+
+/** Map one BCP 47 tag from the browser to a supported locale, if any. */
+export function matchBrowserLocale(tag: string): Locale | undefined {
+  const [language] = tag.toLowerCase().split("-");
+  switch (language) {
+    case "en":
+    case "de":
+    case "es":
+    case "hi":
+    case "ar":
+      return language;
+    case "zh":
+      return "zh-Hans";
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Resolve the locale: an explicit choice stored on this device wins, then the
+ * first supported language of the browser, then English.
+ */
+export function resolveLocale(
+  stored: string | null | undefined,
+  browserLanguages: readonly string[],
+): Locale {
+  if (isLocale(stored)) return stored;
+  for (const tag of browserLanguages) {
+    const match = matchBrowserLocale(tag);
+    if (match) return match;
+  }
   return defaultLocale;
 }
 
-// Store locale in localStorage
+// Resolve the locale for this device
+export function getStoredLocale(): Locale {
+  if (typeof window === "undefined") return defaultLocale;
+  let stored: string | null = null;
+  try {
+    stored = localStorage.getItem(LOCALE_STORAGE_KEY);
+  } catch {
+    // Storage can be blocked; fall back to the browser language.
+  }
+  const languages =
+    typeof navigator === "undefined"
+      ? []
+      : navigator.languages?.length
+        ? navigator.languages
+        : [navigator.language];
+  return resolveLocale(stored, languages);
+}
+
+// Store the explicit locale choice in localStorage
 export function setStoredLocale(locale: Locale): void {
   if (typeof window === "undefined") return;
-  localStorage.setItem("techstack-locale", locale);
+  try {
+    localStorage.setItem(LOCALE_STORAGE_KEY, locale);
+  } catch {
+    // The choice still applies for this session.
+  }
+}
+
+/** Reading direction of a locale. */
+export function localeDirection(locale: Locale): "ltr" | "rtl" {
+  return localeInfos.find((info) => info.code === locale)?.dir ?? "ltr";
 }
 
 // Translation function (static, for use in non-reactive contexts)
-export function t(key: string, locale?: Locale): string {
+export type MessageParams = Record<string, string | number>;
+
+export function t(
+  key: string,
+  locale?: Locale,
+  params?: MessageParams,
+): string {
   const currentLocale = locale || getStoredLocale();
   const dict = translations[currentLocale] || translations[defaultLocale];
-  return dict[key] || translations[defaultLocale][key] || key;
+  const message = dict[key] || translations[defaultLocale][key] || key;
+  if (!params) return message;
+  return message.replace(/\{(\w+)\}/g, (token, name: string) =>
+    name in params ? String(params[name]) : token,
+  );
 }
 
 // Get all available locales
 export function getAvailableLocales(): { code: Locale; name: string }[] {
-  return [
-    { code: "en", name: "English" },
-    { code: "de", name: "Deutsch" },
-  ];
+  return localeInfos.map(({ code, name }) => ({ code, name }));
 }

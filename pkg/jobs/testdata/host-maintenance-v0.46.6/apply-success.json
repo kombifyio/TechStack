@@ -1,0 +1,162 @@
+{
+  "schemaVersion": "stackkit.command-result/v1",
+  "command": "stackkit host updates apply",
+  "status": "success",
+  "data": {
+    "schema_version": "stackkit.host-maintenance/v1",
+    "operation": "updates.apply",
+    "observed_at": "2026-09-25T11:17:06.88143664Z",
+    "os": {
+      "id": "ubuntu",
+      "version_id": "24.04",
+      "pretty_name": "Ubuntu 24.04.4 LTS"
+    },
+    "package_manager": "apt",
+    "plan_digest": "sha256:0b734babcadb52d832cdc4c0b176aa2f05ffab04aeb2737abf615be689ad3204",
+    "pending_count": 12,
+    "security_count": 9,
+    "packages": [
+      {
+        "name": "base-files",
+        "from": "13ubuntu10.4",
+        "to": "13ubuntu10.5",
+        "security": false
+      },
+      {
+        "name": "gir1.2-glib-2.0",
+        "from": "2.80.0-6ubuntu3.8",
+        "to": "2.80.0-6ubuntu3.9",
+        "security": true
+      },
+      {
+        "name": "libaudit-common",
+        "from": "1:3.1.2-2.1build1.1",
+        "to": "1:3.1.2-2.1ubuntu0.1",
+        "security": false
+      },
+      {
+        "name": "libaudit1",
+        "from": "1:3.1.2-2.1build1.1",
+        "to": "1:3.1.2-2.1ubuntu0.1",
+        "security": false
+      },
+      {
+        "name": "libc-bin",
+        "from": "2.39-0ubuntu8.8",
+        "to": "2.39-0ubuntu8.9",
+        "security": true
+      },
+      {
+        "name": "libc6",
+        "from": "2.39-0ubuntu8.8",
+        "to": "2.39-0ubuntu8.9",
+        "security": true
+      },
+      {
+        "name": "libexpat1",
+        "from": "2.6.1-2ubuntu0.4",
+        "to": "2.6.1-2ubuntu0.6",
+        "security": true
+      },
+      {
+        "name": "libglib2.0-0t64",
+        "from": "2.80.0-6ubuntu3.8",
+        "to": "2.80.0-6ubuntu3.9",
+        "security": true
+      },
+      {
+        "name": "libglib2.0-data",
+        "from": "2.80.0-6ubuntu3.8",
+        "to": "2.80.0-6ubuntu3.9",
+        "security": true
+      },
+      {
+        "name": "libsqlite3-0",
+        "from": "3.45.1-1ubuntu2.7",
+        "to": "3.45.1-1ubuntu2.8",
+        "security": true
+      },
+      {
+        "name": "libxml2",
+        "from": "2.9.14+dfsg-1.3ubuntu3.8",
+        "to": "2.9.14+dfsg-1.3ubuntu3.9",
+        "security": true
+      },
+      {
+        "name": "perl-base",
+        "from": "5.38.2-3.2ubuntu0.4",
+        "to": "5.38.2-3.2ubuntu0.6",
+        "security": true
+      }
+    ],
+    "hold_scope": "Held packages are excluded from `stackkit host updates apply` only; unattended-upgrades is governed by the StackKit base policy.",
+    "reboot_likely": true,
+    "outcome": "applied",
+    "unit": "kombify-host-update-0b734babcadb-1790335030",
+    "changes": [
+      {
+        "name": "base-files",
+        "before": "13ubuntu10.4",
+        "after": "13ubuntu10.5"
+      },
+      {
+        "name": "gir1.2-glib-2.0",
+        "before": "2.80.0-6ubuntu3.8",
+        "after": "2.80.0-6ubuntu3.9"
+      },
+      {
+        "name": "libaudit-common",
+        "before": "1:3.1.2-2.1build1.1",
+        "after": "1:3.1.2-2.1ubuntu0.1"
+      },
+      {
+        "name": "libaudit1",
+        "before": "1:3.1.2-2.1build1.1",
+        "after": "1:3.1.2-2.1ubuntu0.1"
+      },
+      {
+        "name": "libc-bin",
+        "before": "2.39-0ubuntu8.8",
+        "after": "2.39-0ubuntu8.9"
+      },
+      {
+        "name": "libc6",
+        "before": "2.39-0ubuntu8.8",
+        "after": "2.39-0ubuntu8.9"
+      },
+      {
+        "name": "libexpat1",
+        "before": "2.6.1-2ubuntu0.4",
+        "after": "2.6.1-2ubuntu0.6"
+      },
+      {
+        "name": "libglib2.0-0t64",
+        "before": "2.80.0-6ubuntu3.8",
+        "after": "2.80.0-6ubuntu3.9"
+      },
+      {
+        "name": "libglib2.0-data",
+        "before": "2.80.0-6ubuntu3.8",
+        "after": "2.80.0-6ubuntu3.9"
+      },
+      {
+        "name": "libsqlite3-0",
+        "before": "3.45.1-1ubuntu2.7",
+        "after": "3.45.1-1ubuntu2.8"
+      },
+      {
+        "name": "libxml2",
+        "before": "2.9.14+dfsg-1.3ubuntu3.8",
+        "after": "2.9.14+dfsg-1.3ubuntu3.9"
+      },
+      {
+        "name": "perl-base",
+        "before": "5.38.2-3.2ubuntu0.4",
+        "after": "5.38.2-3.2ubuntu0.6"
+      }
+    ],
+    "reboot_required": false,
+    "started_at": "2026-09-25T11:17:06.88143664Z",
+    "finished_at": "2026-09-25T11:17:15.128322671Z"
+  }
+}

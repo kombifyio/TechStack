@@ -297,6 +297,9 @@ type StackKitArtifactGenerateRequest struct {
 	StackSpecPath string
 	OutputDir     string
 	RuntimeTarget *ManagedRuntimeTarget
+	// Progress, when set, receives job-facing progress messages such as
+	// waiting for another rollout's generation to finish.
+	Progress func(message string)
 }
 
 type StackKitArtifactGenerateResult struct {

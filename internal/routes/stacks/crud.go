@@ -44,6 +44,14 @@ func RegisterCRUDRoutesWithModeAndFeatures(r *httpx.Router, app core.App, orch *
 	// starting name is a placeholder, not a product name.
 	r.PATCH("/api/v1/homelab", h.renameHomelab)
 
+	// The homelab name is the Stack Identity name: these routes read and write
+	// the same homelab row, and /sync applies one kombify Cloud sync step
+	// (STACK-IDENTITY-CUSTOMIZATION-STANDARD §8).
+	r.GET("/api/v1/auth/stack-identity", h.getStackIdentity)
+	r.PUT("/api/v1/auth/stack-identity", h.updateStackIdentity)
+	r.PUT("/api/v1/auth/stack-identity/conditional", h.updateStackIdentityConditional)
+	r.POST("/api/v1/auth/stack-identity/sync", h.syncStackIdentity)
+
 	// GET /api/v1/stacks/{id} - Read one stack owned by the authenticated user.
 	r.GET("/api/v1/stacks/{id}", h.getStack)
 

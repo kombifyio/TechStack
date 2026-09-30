@@ -12,6 +12,7 @@
   import ServerProvisioningStep from "../ServerProvisioningStep.svelte";
   import type { ManagedProviderID, StackConfig } from "#lib/wizard/index.js";
   import { tr } from "#lib/i18n.svelte.js";
+  import "../substep-rail.css";
 
   interface Props {
     config: StackConfig;
@@ -25,6 +26,8 @@
     recommendedStackKit?: string;
     reviewMode?: boolean;
     selectionReady?: boolean;
+    /** Main wizard step number, the prefix of the sub-step rail (2.1, 2.2). */
+    stepNumber?: number;
   }
 
   let {
@@ -39,11 +42,23 @@
     recommendedStackKit,
     reviewMode = false,
     selectionReady = $bindable(true),
+    stepNumber = 2,
   }: Props = $props();
   let advancedOpen = $state(false);
+  let detailsVisible = $state(false);
+  // The provisioning module is a size container, and size containment scopes
+  // CSS counters, so the advanced regions cannot continue its count on their
+  // own; they start after the sub-steps shown above them.
+  const substepsBeforeAdvanced = $derived(
+    nodeAlternative ? 0 : detailsVisible ? 2 : 1,
+  );
 </script>
 
-<div class="space-y-8" data-testid="easy-step-2">
+<div
+  class="substep-flow space-y-8"
+  style:--substep-prefix={`"${stepNumber}."`}
+  data-testid="easy-step-2"
+>
   <div class="node-heading">
     <p class="eyebrow">{tr("wizard.server.eyebrow")}</p>
     <h2>
@@ -72,6 +87,7 @@
     <ServerProvisioningStep
       bind:config
       bind:selectionReady
+      bind:detailsVisible
       {onmanagedproviderselect}
       {reviewMode}
       {joinSurface}
@@ -91,7 +107,11 @@
       )}<ArrowRight size={15} aria-hidden="true" />
     </button>
     {#if advancedOpen}
-      <div id="node-advanced-options" class="advanced-content">
+      <div
+        id="node-advanced-options"
+        class="advanced-content"
+        style:counter-reset={`substep ${substepsBeforeAdvanced}`}
+      >
         {@render nodeOptions?.(config)}
         {#if nodeAlternative}
           {@render nodeAlternative()}
@@ -139,6 +159,7 @@
     padding-top: 18px;
   }
   .advanced-trigger {
+    margin-inline-start: var(--substep-rail);
     display: flex;
     gap: 9px;
     align-items: center;

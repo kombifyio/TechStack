@@ -18,6 +18,16 @@ export interface UseCaseCatalogComponent {
   name: string;
   role: UseCaseComponentRole;
   kind: string;
+  /**
+   * Set on alternatives: "install" when the pinned release installs it,
+   * "recorded" when it only keeps the choice for a later release.
+   */
+  realization?: "install" | "recorded";
+}
+
+/** Whether choosing this service installs it with the pinned release. */
+export function installsService(component: UseCaseCatalogComponent): boolean {
+  return component.role === "primary" || component.realization === "install";
 }
 
 /** StackKits' compute tiers as the catalog spells them. */
@@ -39,6 +49,8 @@ export interface UseCaseSettingOption {
   name: string;
   /** One-line consequence of choosing it. */
   note?: string;
+  /** Overrides the setting's realization for this option. */
+  realization?: "install" | "recorded";
 }
 
 export type UseCaseSettingKind = "choice" | "toggle" | "text";
@@ -65,6 +77,8 @@ export interface UseCaseSetting {
   default: string | boolean;
   placeholder?: string;
   realization: "install" | "recorded";
+  /** The application workload an installing toggle adds. */
+  workloadRef?: string;
 }
 
 export interface UseCaseCatalogEntry {

@@ -26,6 +26,8 @@ type ServerRuntimeRouteConfig struct {
 	Policy          InventoryPolicy
 	AgentDisconnect func(string) error
 	Now             func() time.Time
+	// Maintenance registers POST /api/v1/servers/{serverId}/actions when set.
+	Maintenance *ServerMaintenanceRouteConfig
 }
 
 type serverRuntimeHandlers struct {
@@ -35,6 +37,7 @@ type serverRuntimeHandlers struct {
 	policy          InventoryPolicy
 	agentDisconnect func(string) error
 	now             func() time.Time
+	maintenance     *serverMaintenanceHandlers
 }
 
 type serverRuntimeResponse struct {
@@ -42,6 +45,9 @@ type serverRuntimeResponse struct {
 	NodeID          string `json:"node_id"`
 	KitDeploymentID string `json:"kit_deployment_id,omitempty"`
 	Name            string `json:"name"`
+	// DisplayName is the owner-chosen name when one is set; Name already
+	// reports it, so clients can tell a rename apart from a projected name.
+	DisplayName string `json:"display_name,omitempty"`
 	// WorkerID is the bound Guard agent identity. It is additive on this
 	// response and exists because the canonical read model is now the UI's only
 	// server source (kombify-Techstack-nzy1.7): the pairing flow has to be able
@@ -122,12 +128,12 @@ func RegisterServerRuntimeRoutes(r *httpx.Router, cfg ServerRuntimeRouteConfig) 
 	if cfg.Now == nil {
 		cfg.Now = func() time.Time { return time.Now().UTC() }
 	}
-	if cfg.Detacher != nil && cfg.Policy == nil {
-		panic("RegisterServerRuntimeRoutes: inventory policy required for server detach")
+	if (cfg.Detacher != nil || cfg.Maintenance != nil) && cfg.Policy == nil {
+		panic("RegisterServerRuntimeRoutes: inventory policy required for server detach and maintenance")
 	}
 	h := serverRuntimeHandlers{
 		store: cfg.Store, ports: cfg.PortInventory, detacher: cfg.Detacher, policy: cfg.Policy,
-		agentDisconnect: cfg.AgentDisconnect, now: cfg.Now,
+		agentDisconnect: cfg.AgentDisconnect, now: cfg.Now, maintenance: newServerMaintenanceHandlers(cfg.Maintenance),
 	}
 	r.GET("/api/v1/servers", h.list)
 	r.GET("/api/v1/servers/{serverId}", h.get)
@@ -135,6 +141,10 @@ func RegisterServerRuntimeRoutes(r *httpx.Router, cfg ServerRuntimeRouteConfig) 
 	r.GET("/api/v1/servers/{serverId}/transitions", h.transitions)
 	if cfg.Detacher != nil {
 		r.POST("/api/v1/servers/{serverId}/detach", h.detach)
+	}
+	if h.maintenance != nil {
+		r.POST("/api/v1/servers/{serverId}/actions", h.maintenanceAction)
+		r.GET("/api/v1/servers/{serverId}/actions/{jobId}", h.maintenanceJob)
 	}
 }
 
@@ -362,10 +372,7 @@ func (h serverRuntimeHandlers) response(server controlplane.ServerRuntime) serve
 		}
 		staleness = &seconds
 	}
-	target := serverregistry.NormalizeRuntimeTarget(server.RuntimeTarget)
-	if !serverregistry.RuntimeTargetIntentPresent(target) {
-		target = serverregistry.UnknownRuntimeTarget()
-	}
+	target := servedRuntimeTarget(server)
 	targetFreshness := serverRuntimeTargetFreshness{State: "unknown"}
 	if target.EvidenceRef != "" && target.ObservedAt != nil {
 		seconds := int64(now.Sub(target.ObservedAt.UTC()).Seconds())
@@ -376,7 +383,7 @@ func (h serverRuntimeHandlers) response(server controlplane.ServerRuntime) serve
 	}
 	return serverRuntimeResponse{
 		ID: server.ID, NodeID: server.ID, KitDeploymentID: server.StackID,
-		Name: serverRuntimeDisplayName(server, target), WorkerID: server.WorkerID,
+		Name: serverRuntimeDisplayName(server, target), DisplayName: strings.TrimSpace(server.DisplayName), WorkerID: server.WorkerID,
 		NodeRole:   stringFromAnyMap(server.Metadata, "server_node_role"),
 		Lifecycle:  serverRuntimeLifecycle{State: server.LifecycleState, DesiredState: server.DesiredState, EndedAt: server.DecommissionedAt},
 		Connection: serverRuntimeConnection{State: connection, ReasonCode: server.ReasonCode, ChangedAt: server.ConnectionChangedAt, LastHeartbeatAt: server.LastHeartbeatAt, StalenessSeconds: staleness},
@@ -391,8 +398,25 @@ func (h serverRuntimeHandlers) response(server controlplane.ServerRuntime) serve
 		},
 		LastOutcome:      outcome.Clone(server.LastOutcome),
 		MutationsAllowed: serverregistry.MutationsAllowed(connection) && server.LifecycleState == string(serverregistry.LifecycleActive),
-		AllowedActions:   serverNodeActions(server, h.detacher != nil),
+		AllowedActions:   h.allowedNodeActions(server),
 		StackActions:     serverStackActions(server),
 		CreatedAt:        server.CreatedAt, UpdatedAt: server.UpdatedAt,
 	}
+}
+
+// servedRuntimeTarget is the hosting classification every read surface serves
+// for one canonical server: the persisted target, or the fail-closed unknown
+// target when no placement evidence was recorded (ADR-039).
+func servedRuntimeTarget(server controlplane.ServerRuntime) serverregistry.RuntimeTarget {
+	target := serverregistry.NormalizeRuntimeTarget(server.RuntimeTarget)
+	if !serverregistry.RuntimeTargetIntentPresent(target) {
+		return serverregistry.UnknownRuntimeTarget()
+	}
+	return target
+}
+
+func (h serverRuntimeHandlers) allowedNodeActions(server controlplane.ServerRuntime) []string {
+	actions := append(serverNodeActions(server, h.detacher != nil), h.maintenance.advertisedActions(server)...)
+	sort.Strings(actions)
+	return actions
 }

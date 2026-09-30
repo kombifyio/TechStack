@@ -102,8 +102,14 @@ func inventorySignedEntitlementAllows(ctx context.Context, action InventoryActio
 	// Inventory is the one surface that intentionally accepts the server-owned
 	// membership fallback beside Edge-signed grants (see
 	// contextWithMembershipAuthorization); Edge-signed grants always win.
-	entitlements, _, ok := middleware.AuthorizedEntitlementsFromContext(ctx)
+	entitlements, source, ok := middleware.AuthorizedEntitlementsFromContext(ctx)
 	if !ok {
+		return false
+	}
+	// A write or a cost-bearing provision needs the Edge-signed grant; the
+	// membership fallback is claim-derived and stays limited to reads and
+	// operate.
+	if (action == InventoryActionWrite || action == InventoryActionProvision) && source != middleware.EntitlementSourceSignedEdge {
 		return false
 	}
 	required := inventoryEntitlementForAction(action)
@@ -114,10 +120,34 @@ func inventoryFGARelationForAuthorization(authorization InventoryAuthorization) 
 	switch authorization.Action {
 	case InventoryActionRead, InventoryActionRILRead:
 		return inventoryFGARelationAccessor
-	case InventoryActionOperate:
-		if strings.TrimSpace(authorization.ResourceType) == controlplane.InventoryReadTargetServer &&
-			strings.TrimSpace(authorization.ResourceID) != "" {
-			return inventoryFGARelationCaller
+	case InventoryActionOperate, InventoryActionProvision:
+		// Provision is operate with its own cost-bearing entitlement; the
+		// pinned model has no separate relation for it.
+		switch strings.TrimSpace(authorization.ResourceType) {
+		case controlplane.InventoryReadTargetServer:
+			if strings.TrimSpace(authorization.ResourceID) != "" {
+				return inventoryFGARelationCaller
+			}
+		case controlplane.InventoryReadTargetTools:
+			// A route-invoked MCP operate tool is gated like the homelab write:
+			// the tools-surface `accessor` beside the signed operate
+			// entitlement; the invoked route still enforces its own
+			// per-resource ownership.
+			return inventoryFGARelationAccessor
+		}
+		return ""
+	case InventoryActionWrite:
+		// The pinned model has no write relation. A server write needs the
+		// per-server `caller` relation that already gates operate; the homelab
+		// has no FGA type, so its rename needs the tools-surface `accessor`
+		// beside the signed write entitlement and the owner-bound store write.
+		switch strings.TrimSpace(authorization.ResourceType) {
+		case controlplane.InventoryReadTargetServer:
+			if strings.TrimSpace(authorization.ResourceID) != "" {
+				return inventoryFGARelationCaller
+			}
+		case controlplane.InventoryReadTargetTools:
+			return inventoryFGARelationAccessor
 		}
 		return ""
 	default:
@@ -140,8 +170,12 @@ func inventoryFGAObject(authorization InventoryAuthorization) (string, error) {
 			return "", ErrInventoryAccessDenied
 		}
 	}
-	if authorization.Action != InventoryActionOperate {
+	mutation := authorization.Action == InventoryActionWrite || authorization.Action == InventoryActionOperate || authorization.Action == InventoryActionProvision
+	if !mutation {
 		return "", ErrInventoryAccessDenied
+	}
+	if strings.TrimSpace(authorization.ResourceType) == controlplane.InventoryReadTargetTools {
+		return "surface:" + tenantID + "/inventory/tools", nil
 	}
 	switch strings.TrimSpace(authorization.ResourceType) {
 	case controlplane.InventoryReadTargetServer:

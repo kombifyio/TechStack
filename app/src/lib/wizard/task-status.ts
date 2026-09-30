@@ -1,3 +1,4 @@
+import { tr } from "#lib/i18n.svelte.js";
 /**
  * kombify-TechStack Initialization Tasks
  *
@@ -28,42 +29,58 @@ export interface Task {
 export const DEFAULT_TASKS: Omit<Task, "status">[] = [
   {
     id: "validate",
-    label: "Validating configuration",
+    get label() {
+      return tr("ui.taskStatus.validatingConfiguration");
+    },
     labelKey: "tasks.validate",
   },
   {
     id: "save_config",
-    label: "Saving your configuration",
+    get label() {
+      return tr("ui.taskStatus.savingYourConfiguration");
+    },
     labelKey: "tasks.save_config",
   },
   {
     id: "find_stackkit",
-    label: "Finding the best StackKit for you",
+    get label() {
+      return tr("ui.taskStatus.findingTheBestStackKitFor");
+    },
     labelKey: "tasks.find_stackkit",
   },
   {
     id: "unify_services",
-    label: "Identifying services & best practices",
+    get label() {
+      return tr("ui.taskStatus.identifyingServicesBestPractices");
+    },
     labelKey: "tasks.unify_services",
   },
   {
     id: "unify_network",
-    label: "Configuring network settings",
+    get label() {
+      return tr("ui.taskStatus.configuringNetworkSettings");
+    },
     labelKey: "tasks.unify_network",
   },
   {
     id: "unify_security",
-    label: "Setting up security configuration",
+    get label() {
+      return tr("ui.taskStatus.settingUpSecurityConfiguration");
+    },
     labelKey: "tasks.unify_security",
   },
   {
     id: "unify_auth",
-    label: "Configuring authentication",
+    get label() {
+      return tr("ui.taskStatus.configuringAuthentication");
+    },
     labelKey: "tasks.unify_auth",
   },
   {
     id: "create_spec",
-    label: "Creating your deployment spec",
+    get label() {
+      return tr("ui.taskStatus.creatingYourDeploymentSpec");
+    },
     labelKey: "tasks.create_spec",
   },
 ];
@@ -71,92 +88,128 @@ export const DEFAULT_TASKS: Omit<Task, "status">[] = [
 export const RUNTIME_TASKS: Omit<Task, "status">[] = [
   {
     id: "create_lease",
-    label: "Requesting managed cloud Node",
+    get label() {
+      return tr("ui.taskStatus.requestingManagedCloudNode");
+    },
     labelKey: "tasks.runtime.create_lease",
   },
   {
     id: "prepare_rollout",
-    label: "Confirming VPS target",
+    get label() {
+      return tr("ui.taskStatus.confirmingVPSTarget");
+    },
     labelKey: "tasks.runtime.prepare_rollout",
   },
   {
     id: "runtime_connected",
-    label: "Connecting to runtime",
+    get label() {
+      return tr("ui.taskStatus.connectingToRuntime");
+    },
     labelKey: "tasks.runtime.runtime_connected",
   },
   {
     id: "telemetry_handshake",
-    label: "Starting telemetry handoff",
+    get label() {
+      return tr("ui.taskStatus.startingTelemetryHandoff");
+    },
     labelKey: "tasks.runtime.telemetry_handshake",
   },
   {
     id: "validate_workers",
-    label: "Checking rollout target",
+    get label() {
+      return tr("ui.taskStatus.checkingRolloutTarget");
+    },
     labelKey: "tasks.runtime.validate_workers",
   },
   {
     id: "generate_unified",
-    label: "Generating unified spec",
+    get label() {
+      return tr("ui.taskStatus.generatingUnifiedSpec");
+    },
     labelKey: "tasks.runtime.generate_unified",
   },
   {
     id: "persist_unified",
-    label: "Persisting rollout spec",
+    get label() {
+      return tr("ui.taskStatus.persistingRolloutSpec");
+    },
     labelKey: "tasks.runtime.persist_unified",
   },
   {
     id: "generate_iac",
-    label: "Generating StackKit IaC",
+    get label() {
+      return tr("ui.taskStatus.generatingStackKitIaC");
+    },
     labelKey: "tasks.runtime.generate_iac",
   },
   {
     id: "simulate_update",
-    label: "Running simulated update gate",
+    get label() {
+      return tr("ui.taskStatus.runningSimulatedUpdateGate");
+    },
     labelKey: "tasks.runtime.simulate_update",
   },
   {
     id: "stackkit_prepare",
-    label: "Preparing StackKits runtime",
+    get label() {
+      return tr("ui.taskStatus.preparingStackKitsRuntime");
+    },
     labelKey: "tasks.runtime.stackkit_prepare",
   },
   {
     id: "docker_ready",
-    label: "Installing and checking Docker",
+    get label() {
+      return tr("ui.taskStatus.installingAndCheckingDocker");
+    },
     labelKey: "tasks.runtime.docker_ready",
   },
   {
     id: "opentofu_ready",
-    label: "Checking OpenTofu",
+    get label() {
+      return tr("ui.taskStatus.checkingOpenTofu");
+    },
     labelKey: "tasks.runtime.opentofu_ready",
   },
   {
     id: "terramate_ready",
-    label: "Checking Terramate",
+    get label() {
+      return tr("ui.taskStatus.checkingTerramate");
+    },
     labelKey: "tasks.runtime.terramate_ready",
   },
   {
     id: "telemetry_ready",
-    label: "Preparing telemetry",
+    get label() {
+      return tr("ui.taskStatus.preparingTelemetry");
+    },
     labelKey: "tasks.runtime.telemetry_ready",
   },
   {
     id: "stackkit_rollout",
-    label: "Rolling out Cloud Kit",
+    get label() {
+      return tr("ui.taskStatus.rollingOutCloudKit");
+    },
     labelKey: "tasks.runtime.stackkit_rollout",
   },
   {
     id: "service_inventory",
-    label: "Reading service inventory",
+    get label() {
+      return tr("ui.taskStatus.readingServiceInventory");
+    },
     labelKey: "tasks.runtime.service_inventory",
   },
   {
     id: "verify_rollout",
-    label: "Verifying login-protected services",
+    get label() {
+      return tr("ui.taskStatus.verifyingLoginProtectedServices");
+    },
     labelKey: "tasks.runtime.verify_rollout",
   },
   {
     id: "restore_drill",
-    label: "Running restore drill",
+    get label() {
+      return tr("ui.taskStatus.runningRestoreDrill");
+    },
     labelKey: "tasks.runtime.restore_drill",
   },
 ];
@@ -164,7 +217,9 @@ export const RUNTIME_TASKS: Omit<Task, "status">[] = [
 export const ADD_SERVER_MANAGED_RUNTIME_TASKS: Omit<Task, "status">[] = [
   {
     id: "create_lease",
-    label: "Requesting managed Node",
+    get label() {
+      return tr("ui.taskStatus.requestingManagedNode");
+    },
     labelKey: "tasks.runtime.create_lease",
   },
 ];
@@ -172,7 +227,9 @@ export const ADD_SERVER_MANAGED_RUNTIME_TASKS: Omit<Task, "status">[] = [
 export const ADD_SERVER_REGISTRATION_TASKS: Omit<Task, "status">[] = [
   {
     id: "create_spec",
-    label: "Preparing Node registration",
+    get label() {
+      return tr("ui.taskStatus.preparingNodeRegistration");
+    },
     labelKey: "tasks.create_spec",
   },
 ];
@@ -186,185 +243,290 @@ export const STEP_DETAILS: Record<
   { title: string; description: string; detail: string }
 > = {
   validate: {
-    title: "Checking your choices",
-    description:
-      "Verifying that all selected options are valid and compatible with each other.",
-    detail:
-      "This checks feature selections, access modes, user configuration, and authentication settings for consistency.",
+    get title() {
+      return tr("ui.taskStatus.checkingYourChoices");
+    },
+    get description() {
+      return tr("ui.taskStatus.verifyingThatAllSelectedOptions");
+    },
+    get detail() {
+      return tr("ui.taskStatus.thisChecksFeatureSelectionsAccess");
+    },
   },
   save_config: {
-    title: "Persisting configuration",
-    description:
-      "Saving your choices to the database so they can be referenced during deployment.",
-    detail:
-      "This StackKit deployment configuration is stored securely and can be exported or modified later from the dashboard.",
+    get title() {
+      return tr("ui.taskStatus.persistingConfiguration");
+    },
+    get description() {
+      return tr("ui.taskStatus.savingYourChoicesToThe");
+    },
+    get detail() {
+      return tr("ui.taskStatus.thisStackKitDeploymentConfigurationIs");
+    },
   },
   find_stackkit: {
-    title: "Matching a StackKit",
-    description:
-      "Analyzing your goals to find the best-fitting StackKit template.",
-    detail:
-      "StackKits are curated infrastructure templates. The system picks one that covers your selected features with minimal overhead.",
+    get title() {
+      return tr("ui.taskStatus.matchingAStackKit");
+    },
+    get description() {
+      return tr("ui.taskStatus.analyzingYourGoalsToFind");
+    },
+    get detail() {
+      return tr("ui.taskStatus.stackkitsAreCuratedInfrastructureTemplates");
+    },
   },
   unify_services: {
-    title: "Building service list",
-    description:
-      "Determining which services are needed and applying best-practice defaults.",
-    detail:
-      "Based on your goals, the Unifier selects containers, sets resource limits, and resolves dependencies between services.",
+    get title() {
+      return tr("ui.taskStatus.buildingServiceList");
+    },
+    get description() {
+      return tr("ui.taskStatus.determiningWhichServicesAreNeeded");
+    },
+    get detail() {
+      return tr("ui.taskStatus.basedOnYourGoalsThe");
+    },
   },
   unify_network: {
-    title: "Setting up networking",
-    description:
-      "Configuring access profiles, reverse proxy, DNS, and internal networking.",
-    detail:
-      "Network settings are derived from your access mode. Local-only uses internal Docker networking; remote access adds the lane-appropriate private mesh or managed edge route.",
+    get title() {
+      return tr("ui.taskStatus.settingUpNetworking");
+    },
+    get description() {
+      return tr("ui.taskStatus.configuringAccessProfilesReverseProxy");
+    },
+    get detail() {
+      return tr("ui.taskStatus.networkSettingsAreDerivedFrom");
+    },
   },
   unify_security: {
-    title: "Applying security policies",
-    description:
-      "Configuring firewall rules, TLS certificates, and isolation settings.",
-    detail:
-      "Each service gets scoped permissions. TLS is enabled automatically where possible, and services are isolated by default.",
+    get title() {
+      return tr("ui.taskStatus.applyingSecurityPolicies");
+    },
+    get description() {
+      return tr("ui.taskStatus.configuringFirewallRulesTLSCertificates");
+    },
+    get detail() {
+      return tr("ui.taskStatus.eachServiceGetsScopedPermissions");
+    },
   },
   unify_auth: {
-    title: "Setting up authentication",
-    description:
-      "Configuring single sign-on, user accounts, and access control.",
-    detail:
-      "Your chosen auth method is applied across all services. Multi-user setups get group-based permissions automatically.",
+    get title() {
+      return tr("ui.taskStatus.settingUpAuthentication");
+    },
+    get description() {
+      return tr("ui.taskStatus.configuringSingleSignOnUser");
+    },
+    get detail() {
+      return tr("ui.taskStatus.yourChosenAuthMethodIs");
+    },
   },
   create_spec: {
-    title: "Generating deployment spec",
-    description:
-      "Compiling everything into a final StackKits deployment specification.",
-    detail:
-      "The spec contains all configuration needed to deploy your Homelab. It can be version-controlled and reproduced on any compatible Node.",
+    get title() {
+      return tr("ui.taskStatus.generatingDeploymentSpec");
+    },
+    get description() {
+      return tr("ui.taskStatus.compilingEverythingIntoAFinal");
+    },
+    get detail() {
+      return tr("ui.taskStatus.theSpecContainsAllConfiguration");
+    },
   },
   create_lease: {
-    title: "Requesting managed Node",
-    description:
-      "Creating or binding the subscription VM lease for this StackKit rollout.",
-    detail:
-      "The lease captures runtime state, billing cadence, and the managed provider that will host the Cloud Kit.",
+    get title() {
+      return tr("ui.taskStatus.requestingManagedNode");
+    },
+    get description() {
+      return tr("ui.taskStatus.creatingOrBindingTheSubscription");
+    },
+    get detail() {
+      return tr("ui.taskStatus.theLeaseCapturesRuntimeState");
+    },
   },
   prepare_rollout: {
-    title: "Confirming VPS target",
-    description:
-      "Loading the persisted intent and waiting for the managed VPS target to become reachable.",
-    detail:
-      "This checks that the persisted StackKit deployment spec and requirements-spec.yaml still match, then confirms the managed VM lease exposes a runtime SSH host or public IP before StackKits artifact generation starts.",
+    get title() {
+      return tr("ui.taskStatus.confirmingVPSTarget");
+    },
+    get description() {
+      return tr("ui.taskStatus.loadingThePersistedIntentAnd");
+    },
+    get detail() {
+      return tr("ui.taskStatus.thisChecksThatThePersisted");
+    },
   },
   runtime_connected: {
-    title: "Connecting to runtime",
-    description:
-      "Confirming that the bound managed VPS can be addressed by the StackKits CLI.",
-    detail:
-      "Once this succeeds, the Node projection is kept visible in Techstack even if preparation or rollout fails later.",
+    get title() {
+      return tr("ui.taskStatus.connectingToRuntime");
+    },
+    get description() {
+      return tr("ui.taskStatus.confirmingThatTheBoundManaged");
+    },
+    get detail() {
+      return tr("ui.taskStatus.onceThisSucceedsTheNode");
+    },
   },
   telemetry_handshake: {
-    title: "Starting telemetry handoff",
-    description:
-      "Preparing the runtime metadata used by monitoring, operations, and the Runtime Intelligence Layer.",
-    detail:
-      "Techstack records the managed target and prepares the orchestration handoff before StackKits performs the Cloud Kit rollout.",
+    get title() {
+      return tr("ui.taskStatus.startingTelemetryHandoff");
+    },
+    get description() {
+      return tr("ui.taskStatus.preparingTheRuntimeMetadataUsed");
+    },
+    get detail() {
+      return tr("ui.taskStatus.techstackRecordsTheManagedTarget");
+    },
   },
   validate_workers: {
-    title: "Checking rollout target",
-    description:
-      "Ensuring the deployment target satisfies the StackKit runtime requirements.",
-    detail:
-      "Managed kombify Cloud rollouts use the VM lease target; user-owned rollout targets require approved workers.",
+    get title() {
+      return tr("ui.taskStatus.checkingRolloutTarget");
+    },
+    get description() {
+      return tr("ui.taskStatus.ensuringTheDeploymentTargetSatisfies");
+    },
+    get detail() {
+      return tr("ui.taskStatus.managedKombifyCloudRolloutsUse");
+    },
   },
   generate_unified: {
-    title: "Generating unified spec",
-    description:
-      "Combining user intent, StackKit defaults, and runtime information into the final deployment spec.",
-    detail:
-      "The unified spec is the canonical input for StackKits and runtime verification.",
+    get title() {
+      return tr("ui.taskStatus.generatingUnifiedSpec");
+    },
+    get description() {
+      return tr("ui.taskStatus.combiningUserIntentStackKitDefaults");
+    },
+    get detail() {
+      return tr("ui.taskStatus.theUnifiedSpecIsThe");
+    },
   },
   persist_unified: {
-    title: "Persisting rollout spec",
-    description:
-      "Saving unified-spec.yaml so the rollout is reproducible and auditable.",
-    detail:
-      "The persisted spec links back to the requirements file and the original StackKit deployment request.",
+    get title() {
+      return tr("ui.taskStatus.persistingRolloutSpec");
+    },
+    get description() {
+      return tr("ui.taskStatus.savingUnifiedSpecYamlSo");
+    },
+    get detail() {
+      return tr("ui.taskStatus.thePersistedSpecLinksBack");
+    },
   },
   generate_iac: {
-    title: "Generating StackKit IaC",
-    description:
-      "Rendering the StackKit infrastructure files needed by the rollout adapter.",
-    detail:
-      "Techstack consumes StackKit artifacts here; StackKits remains responsible for applying them.",
+    get title() {
+      return tr("ui.taskStatus.generatingStackKitIaC");
+    },
+    get description() {
+      return tr("ui.taskStatus.renderingTheStackKitInfrastructureFiles");
+    },
+    get detail() {
+      return tr("ui.taskStatus.techstackConsumesStackKitArtifactsHere");
+    },
   },
   simulate_update: {
-    title: "Running simulation gate",
-    description:
-      "Validating the update path before applying the rollout to the managed runtime.",
-    detail:
-      "The simulation gate protects the first rollout and later update flows from unsafe changes.",
+    get title() {
+      return tr("ui.taskStatus.runningSimulationGate");
+    },
+    get description() {
+      return tr("ui.taskStatus.validatingTheUpdatePathBefore");
+    },
+    get detail() {
+      return tr("ui.taskStatus.theSimulationGateProtectsThe");
+    },
   },
   stackkit_prepare: {
-    title: "Preparing StackKits runtime",
-    description:
-      "Running the StackKits CLI prepare contract on the managed VPS.",
-    detail:
-      "This non-interactive prep step installs and checks the tools StackKits needs before applying the Cloud Kit.",
+    get title() {
+      return tr("ui.taskStatus.preparingStackKitsRuntime");
+    },
+    get description() {
+      return tr("ui.taskStatus.runningTheStackKitsCLIPrepare");
+    },
+    get detail() {
+      return tr("ui.taskStatus.thisNonInteractivePrepStep");
+    },
   },
   docker_ready: {
-    title: "Preparing Docker",
-    description:
-      "Installing or validating the Docker runtime used by the selected services.",
-    detail:
-      "If apt or unattended upgrades block package installation, Techstack keeps the bound VM visible and shows the collected diagnostics.",
+    get title() {
+      return tr("ui.taskStatus.preparingDocker");
+    },
+    get description() {
+      return tr("ui.taskStatus.installingOrValidatingTheDocker");
+    },
+    get detail() {
+      return tr("ui.taskStatus.ifAptOrUnattendedUpgrades");
+    },
   },
   opentofu_ready: {
-    title: "Checking OpenTofu",
-    description: "Verifying the infrastructure toolchain needed by StackKits.",
-    detail:
-      "OpenTofu readiness is part of the StackKits CLI prep contract, not a separate Techstack-owned bootstrap path.",
+    get title() {
+      return tr("ui.taskStatus.checkingOpenTofu");
+    },
+    get description() {
+      return tr("ui.taskStatus.verifyingTheInfrastructureToolchainNeeded");
+    },
+    get detail() {
+      return tr("ui.taskStatus.opentofuReadinessIsPartOf");
+    },
   },
   terramate_ready: {
-    title: "Checking Terramate",
-    description:
-      "Checking the Terramate toolchain when the selected StackKit lifecycle needs it.",
-    detail:
-      "Terramate readiness belongs to StackKits lifecycle preparation; Techstack does not require it for the initial managed VPS lease.",
+    get title() {
+      return tr("ui.taskStatus.checkingTerramate");
+    },
+    get description() {
+      return tr("ui.taskStatus.checkingTheTerramateToolchainWhen");
+    },
+    get detail() {
+      return tr("ui.taskStatus.terramateReadinessBelongsToStackKits");
+    },
   },
   telemetry_ready: {
-    title: "Preparing telemetry",
-    description:
-      "Preparing OpenTelemetry handoff data for monitoring and operations.",
-    detail:
-      "The first rollout records the runtime context that later service cards, metrics, and RIL workflows consume.",
+    get title() {
+      return tr("ui.taskStatus.preparingTelemetry");
+    },
+    get description() {
+      return tr("ui.taskStatus.preparingOpenTelemetryHandoffDataFor");
+    },
+    get detail() {
+      return tr("ui.taskStatus.theFirstRolloutRecordsThe");
+    },
   },
   stackkit_rollout: {
-    title: "Rolling out Cloud Kit",
-    description:
-      "Calling the StackKits runtime action that applies the generated Cloud Kit specification.",
-    detail:
-      "This is the point where the selected services are installed and configured on the runtime target.",
+    get title() {
+      return tr("ui.taskStatus.rollingOutCloudKit");
+    },
+    get description() {
+      return tr("ui.taskStatus.callingTheStackKitsRuntimeAction");
+    },
+    get detail() {
+      return tr("ui.taskStatus.thisIsThePointWhere");
+    },
   },
   service_inventory: {
-    title: "Reading service inventory",
-    description:
-      "Collecting service metadata exposed by the StackKits rollout.",
-    detail:
-      "The dashboard can show managed services as soon as StackKits exposes them, while later verification continues.",
+    get title() {
+      return tr("ui.taskStatus.readingServiceInventory");
+    },
+    get description() {
+      return tr("ui.taskStatus.collectingServiceMetadataExposedBy");
+    },
+    get detail() {
+      return tr("ui.taskStatus.theDashboardCanShowManaged");
+    },
   },
   verify_rollout: {
-    title: "Verifying services",
-    description:
-      "Checking that login-protected services and monitoring signals are available after rollout.",
-    detail:
-      "Verification confirms that the StackKit deployment is usable, not only that files were generated.",
+    get title() {
+      return tr("ui.taskStatus.verifyingServices");
+    },
+    get description() {
+      return tr("ui.taskStatus.checkingThatLoginProtectedServices");
+    },
+    get detail() {
+      return tr("ui.taskStatus.verificationConfirmsThatTheStackKit");
+    },
   },
   restore_drill: {
-    title: "Running restore drill",
-    description:
-      "Validating the backup and restore path before the StackKit deployment is marked verified.",
-    detail:
-      "A verified StackKit deployment must have a tested recovery path for the default services.",
+    get title() {
+      return tr("ui.taskStatus.runningRestoreDrill");
+    },
+    get description() {
+      return tr("ui.taskStatus.validatingTheBackupAndRestore");
+    },
+    get detail() {
+      return tr("ui.taskStatus.aVerifiedStackKitDeploymentMust");
+    },
   },
 };
 
@@ -389,8 +551,12 @@ export interface TaskGroup {
 export const TASK_GROUPS: TaskGroup[] = [
   {
     id: "configure",
-    label: "Configure StackKit deployment",
-    description: "Validating choices and building the deployment spec",
+    get label() {
+      return tr("ui.taskStatus.configureStackKitDeployment");
+    },
+    get description() {
+      return tr("ui.taskStatus.validatingChoicesAndBuildingThe");
+    },
     taskIds: [
       "validate",
       "save_config",
@@ -405,9 +571,12 @@ export const TASK_GROUPS: TaskGroup[] = [
   },
   {
     id: "provision",
-    label: "Provision managed runtime",
-    description:
-      "Reserving the subscription VM, connecting runtime, and preparing telemetry",
+    get label() {
+      return tr("ui.taskStatus.provisionManagedRuntime");
+    },
+    get description() {
+      return tr("ui.taskStatus.reservingTheSubscriptionVMConnecting");
+    },
     taskIds: [
       "create_lease",
       "prepare_rollout",
@@ -424,15 +593,23 @@ export const TASK_GROUPS: TaskGroup[] = [
   },
   {
     id: "generate",
-    label: "Generate deployment artifacts",
-    description: "Rendering StackKits artifacts after VPS readiness",
+    get label() {
+      return tr("ui.taskStatus.generateDeploymentArtifacts");
+    },
+    get description() {
+      return tr("ui.taskStatus.renderingStackKitsArtifactsAfterVPS");
+    },
     taskIds: ["generate_unified", "persist_unified", "generate_iac"],
     visibleTaskIds: ["generate_unified", "generate_iac"],
   },
   {
     id: "rollout",
-    label: "Roll out Cloud Kit",
-    description: "Preparing tools, applying the StackKit, and reading services",
+    get label() {
+      return tr("ui.taskStatus.rollOutCloudKit");
+    },
+    get description() {
+      return tr("ui.taskStatus.preparingToolsApplyingTheStackKit");
+    },
     taskIds: [
       "simulate_update",
       "stackkit_prepare",
@@ -446,8 +623,12 @@ export const TASK_GROUPS: TaskGroup[] = [
   },
   {
     id: "verify",
-    label: "Verify rollout",
-    description: "Confirming services and validating the restore drill",
+    get label() {
+      return tr("ui.taskStatus.verifyRollout");
+    },
+    get description() {
+      return tr("ui.taskStatus.confirmingServicesAndValidatingThe");
+    },
     taskIds: ["verify_rollout", "restore_drill"],
   },
 ];

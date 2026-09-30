@@ -20,13 +20,12 @@ package grpcserver
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"net"
-	"os"
 	"sync"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/gocommon/servertls"
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
 	"github.com/kombifyio/techstack/pkg/auth"
 	"github.com/kombifyio/techstack/pkg/controlplane"
@@ -338,28 +337,17 @@ func (s *Server) SetDefaultTenant(tenant string) {
 	s.defaultTenant = tenant
 }
 
+// loadTLSConfig builds the agent listener's mTLS configuration from the shared
+// go-common servertls foundation. A CA file makes servertls require and verify
+// client certificates; agents speak TLS 1.3 only.
 func loadTLSConfig(cfg Config) (*tls.Config, error) {
-	cert, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load server certificate: %w", err)
-	}
-
-	caCert, err := os.ReadFile(cfg.CAFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read CA certificate: %w", err)
-	}
-
-	caCertPool := x509.NewCertPool()
-	if !caCertPool.AppendCertsFromPEM(caCert) {
-		return nil, fmt.Errorf("failed to parse CA certificate")
-	}
-
-	return &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		ClientCAs:    caCertPool,
-		ClientAuth:   tls.RequireAndVerifyClientCert,
-		MinVersion:   tls.VersionTLS13,
-	}, nil
+	return servertls.ServerTLSConfig(servertls.Config{
+		Mode:       servertls.ModeFile,
+		CertFile:   cfg.CertFile,
+		KeyFile:    cfg.KeyFile,
+		CAFile:     cfg.CAFile,
+		MinVersion: tls.VersionTLS13,
+	})
 }
 
 // Start starts the gRPC server.

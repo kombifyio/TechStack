@@ -49,6 +49,15 @@ DROP TRIGGER IF EXISTS set_stack_backup_schedules_updated_at ON stack_backup_sch
 CREATE TRIGGER set_stack_backup_schedules_updated_at BEFORE UPDATE ON stack_backup_schedules
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
+-- The migration schema must be first so the unqualified function DDL below
+-- creates the function there. Keep pg_catalog and pg_temp in the captured
+-- search path; a hardcoded `public` breaks non-public migration schemas.
+SELECT pg_catalog.set_config(
+    'search_path',
+    pg_catalog.quote_ident(pg_catalog.current_schema()) || ', pg_catalog, pg_temp',
+    true
+);
+
 -- The scanner is control-plane and must see every tenant's due rows, which
 -- tenant RLS correctly forbids for a tenant-scoped connection. It reads through
 -- this SECURITY DEFINER function instead of being granted BYPASSRLS, matching
@@ -70,7 +79,7 @@ RETURNS TABLE (
 )
 LANGUAGE sql
 SECURITY DEFINER
-SET search_path = pg_catalog, public
+SET search_path FROM CURRENT
 AS $$
     SELECT s.tenant_id, s.stack_id, s.owner_id, s.stack_name, s.include_content
     FROM stack_backup_schedules s

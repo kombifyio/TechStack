@@ -4,7 +4,10 @@ import (
 	"context"
 	"time"
 
+	"fmt"
+
 	"github.com/kombifyio/techstack/internal/backupjobs"
+	storageauth "github.com/kombifyio/techstack/pkg/auth"
 	"github.com/kombifyio/techstack/pkg/backupstore"
 	"github.com/kombifyio/techstack/pkg/features"
 	"github.com/kombifyio/techstack/pkg/jobs"
@@ -80,9 +83,13 @@ func composeBackupScanner(
 		}
 		return nil
 	}
+	custody, err := backupstore.NewPostgresCustodyStore(boot.db.DB, storageauth.GetEncryptor())
+	if err != nil {
+		return nil
+	}
 	admission, err := backupjobs.NewAdmission(backupjobs.AdmissionConfig{
 		Features: featureSvc,
-		Usage:    usage,
+		Usage:    backupjobs.CurrentUsage{Custody: custody, Store: usage},
 	})
 	if err != nil {
 		if log != nil {
@@ -90,6 +97,14 @@ func composeBackupScanner(
 		}
 		return nil
 	}
+	orch.ConfigureManagedRestoreAdmission(func(ctx context.Context, req jobs.BackupAdmissionRequest) (jobs.BackupAdmissionDecision, error) {
+		schedule, err := schedules.Get(ctx, req.TenantID, req.StackID)
+		if err != nil || !schedule.Enabled || schedule.OwnerID != req.UserID {
+			return jobs.BackupAdmissionDecision{Denied: true}, fmt.Errorf("current owner-bound backup schedule is unavailable")
+		}
+		req.IncludeContent = schedule.IncludeContent
+		return jobs.AdmitBackup(ctx, admission, req)
+	})
 	scanner, err := backupjobs.NewScanner(backupjobs.ScannerConfig{
 		Store:     schedules,
 		Admission: admission,
@@ -104,12 +119,11 @@ func composeBackupScanner(
 				return
 			}
 			// A denial is expected operation, not a fault: it is how an
-			// over-quota or unentitled stack is meant to end. It is logged at
-			// info with the measured basis so support can answer "why did my
-			// backup not run" without reading the database.
+			// unentitled stack is meant to end. Backups are retention-limited,
+			// never size-limited, so the only denial is a missing entitlement.
 			log.Info("backup_scan_denied",
 				"tenant_id", due.TenantID, "stack_id", due.StackID,
-				"quota_bytes", decision.QuotaBytes, "used_bytes", decision.UsedBytes)
+				"reason_code", decision.Details["reason_code"])
 		},
 	})
 	if err != nil {

@@ -253,8 +253,37 @@ func (s *MemoryStore) Update(_ context.Context, tenantID string, lease vmlease.L
 	if err := ensureDecommissionClaimUnchanged(existing, lease); err != nil {
 		return nil, err
 	}
+	if err := ensureSSHHostKeyUnchanged(existing, lease); err != nil {
+		return nil, err
+	}
 	s.leases[lease.ID] = cloneLease(lease)
 	out := cloneLease(lease)
+	return &out, nil
+}
+
+func (s *MemoryStore) PinSSHHostKey(_ context.Context, request SSHHostKeyPinRequest) (*vmlease.Lease, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	existing, ok := s.leases[request.LeaseID]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	tenantID, err := tenantIDFromLease(existing)
+	if err != nil || tenantID != request.TenantID {
+		return nil, ErrNotFound
+	}
+	digest, err := ResourceGenerationDigest(request.TenantID, existing)
+	if err != nil || digest != request.ExpectedResourceGenerationDigest {
+		return nil, ErrResourceGenerationSuperseded
+	}
+	if strings.TrimSpace(existing.Metadata[MetadataKeySSHHostKey]) != "" {
+		out := cloneLease(existing)
+		return &out, nil
+	}
+	updated := cloneLease(existing)
+	setLeaseMetadata(&updated, MetadataKeySSHHostKey, request.HostKey)
+	s.leases[request.LeaseID] = updated
+	out := cloneLease(updated)
 	return &out, nil
 }
 

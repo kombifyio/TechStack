@@ -35,10 +35,7 @@ export function isWizardIdempotencyConflict(error: unknown): boolean {
   if (!(error instanceof ApiRequestError) || error.status !== 409) {
     return false;
   }
-  const reason = readString(
-    conflictDetailRecord(error.details),
-    "reason_code",
-  );
+  const reason = readString(conflictDetailRecord(error.details), "reason_code");
   return (
     reason === "wizard_idempotency_conflict" ||
     reason === "idempotency_conflict"

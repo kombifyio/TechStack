@@ -11,6 +11,9 @@ import (
 const (
 	linuxRuntimePinPath    = ".stackkit/stackkits-release-pin.json"
 	linuxRuntimeBinaryPath = ".stackkit/bin/stackkit"
+	// linuxRuntimeCatalogPath is the Advanced operations catalog the image
+	// build places beside the pin; absent for releases before the catalog.
+	linuxRuntimeCatalogPath = ".stackkit/" + AdvancedOperationsFileName
 )
 
 // ResolveLinuxRuntimeBundle returns the immutable release identity carried by
@@ -31,6 +34,7 @@ func ResolveLinuxRuntimeBundle(bundlePath string) (Release, error) {
 
 	reader := tar.NewReader(gz)
 	var pinData []byte
+	var catalog []byte
 	var binary fileDigest
 	var binaryFound bool
 	var total int64
@@ -79,6 +83,10 @@ func ResolveLinuxRuntimeBundle(bundlePath string) (Release, error) {
 			if err != nil || int64(len(pinData)) != header.Size {
 				return Release{}, fmt.Errorf("read StackKits Linux runtime pin: %w", err)
 			}
+		case linuxRuntimeCatalogPath:
+			if catalog, err = readArchiveCatalog(reader, header.Size); err != nil {
+				return Release{}, fmt.Errorf("read StackKits Linux runtime Advanced operations catalog: %w", err)
+			}
 		case linuxRuntimeBinaryPath:
 			binary, err = digestArchiveReader(reader, header.Size)
 			if err != nil {
@@ -108,8 +116,9 @@ func ResolveLinuxRuntimeBundle(bundlePath string) (Release, error) {
 		return Release{}, fmt.Errorf("StackKits Linux runtime binary differs from its immutable artifact pin")
 	}
 	return Release{
-		binaryPath:  linuxRuntimeBinaryPath,
-		receiptPath: bundlePath,
+		advancedOperations: catalog,
+		binaryPath:         linuxRuntimeBinaryPath,
+		receiptPath:        bundlePath,
 		receipt: Receipt{
 			SchemaVersion: PinSchemaVersion,
 			Kit:           pin.Kit,

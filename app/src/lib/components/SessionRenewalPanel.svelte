@@ -1,7 +1,7 @@
 <script lang="ts">
   import { authHandler } from "#lib/stores/authHandler.svelte.js";
   import { authStore } from "#lib/stores/auth.svelte.js";
-  import { startGatewayLogin } from "#lib/auth/gateway-auth.js";
+  import { renewGatewaySession } from "#lib/auth/gateway-auth.js";
   import { currentAuthReturnTo } from "#lib/auth/login-experience.js";
   import { tr } from "#lib/i18n.svelte.js";
   import Button from "#lib/components/ui/Button.svelte";
@@ -20,15 +20,12 @@
 
   async function signInAgain() {
     const target = returnTo ?? currentAuthReturnTo();
-    const started = await startGatewayLogin({
-      interactive: true,
-      returnTo: target,
-    });
-    if (!started) {
-      authStore.initiateCloudLogin({
-        returnTo: target,
-        interactive: true,
-      });
+    const outcome = await renewGatewaySession({ returnTo: target });
+    if (outcome === "renewed") {
+      // A fresh token is cached; reload the view without an Auth0 round-trip.
+      window.location.assign(target);
+    } else if (outcome === "unavailable") {
+      authStore.initiateCloudLogin({ returnTo: target });
     }
   }
 </script>

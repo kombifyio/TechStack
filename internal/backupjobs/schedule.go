@@ -231,3 +231,15 @@ func (s *Store) withTenant(ctx context.Context, tenantID string, fn func(*sql.Tx
 	committed = true
 	return nil
 }
+
+// Get reads only the exact tenant's current backup policy projection.
+func (s *Store) Get(ctx context.Context, tenantID, stackID string) (Schedule, error) {
+	var result Schedule
+	if strings.TrimSpace(tenantID) == "" || strings.TrimSpace(stackID) == "" {
+		return result, fmt.Errorf("backup schedule identity is required")
+	}
+	err := s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `SELECT tenant_id, stack_id, owner_id, include_content, enabled FROM stack_backup_schedules WHERE tenant_id=$1 AND stack_id=$2`, tenantID, stackID).Scan(&result.TenantID, &result.StackID, &result.OwnerID, &result.IncludeContent, &result.Enabled)
+	})
+	return result, err
+}

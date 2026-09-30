@@ -819,7 +819,7 @@ func TestConfigureV2AuthUsesBootDefaultTenantWithoutCloudProvider(t *testing.T) 
 	if err != nil {
 		t.Fatalf("verify issued session failed: %v", err)
 	}
-	if got, want := time.Duration(claims.Expires-claims.IssuedAt)*time.Second, sessionpolicy.BrowserSessionLifetime; got != want {
+	if got, want := time.Duration(claims.Expires-claims.IssuedAt)*time.Second, sessionpolicy.BrowserSessionIdleLifetime; got != want {
 		t.Fatalf("session lifetime = %s, want %s", got, want)
 	}
 }

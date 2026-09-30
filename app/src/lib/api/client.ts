@@ -18,6 +18,7 @@ import {
   recoverFromSessionReprojection,
 } from "#lib/api/session-reprojection.js";
 
+import { tr } from "#lib/i18n.svelte.js";
 // IMPORTANT:
 // - In the browser we prefer relative URLs so the deployment can decide routing
 //   (reverse proxy, same-origin, etc.) without hardcoding any host/port.
@@ -331,7 +332,8 @@ async function getCSRFToken(url: string): Promise<string> {
       const token = response.headers.get(CSRF_HEADER_NAME);
       if (token) return token;
       const payload = (await response.json()) as { token?: string };
-      if (!payload.token) throw new Error("CSRF token response missing token");
+      if (!payload.token)
+        throw new Error(tr("ui.client.csrfTokenResponseMissingToken"));
       return payload.token;
     })
     .then((token) => {
@@ -410,9 +412,10 @@ export async function parseApiErrorResponse(
 
   if (looksLikeHtml(bodyText) || contentType.includes("text/html")) {
     // This usually means a reverse proxy, auth redirect, or misrouted request.
-    message =
-      `${basePrefix}Server returned HTML instead of JSON (${response.status}). ` +
-      `Is the backend reachable and are you authenticated?`;
+    message = tr("ui.client.serverReturnedHTMLInsteadOf", {
+      basePrefix,
+      status: response.status,
+    });
     if ([502, 503, 504].includes(response.status)) {
       code = "upstream_unavailable";
     }
@@ -530,7 +533,7 @@ export async function fetchApi<T>(
         gatewayToken = await getParentBridgeGatewayToken();
       } catch (bridgeErr) {
         throw new ApiRequestError(
-          "Gateway authentication unavailable. Sign in again to verify your managed runtime entitlements.",
+          tr("ui.client.gatewayAuthenticationUnavailableSignIn"),
           {
             status: 401,
             code: "gateway_auth_unavailable",
@@ -542,7 +545,7 @@ export async function fetchApi<T>(
               parentBridge:
                 bridgeErr instanceof Error
                   ? bridgeErr.message
-                  : "parent gateway token failed",
+                  : tr("ui.client.parentGatewayTokenFailed"),
             },
           },
         );
@@ -595,12 +598,17 @@ export async function fetchApi<T>(
     clearTimeout(timeout);
     if (err instanceof Error && err.name === "AbortError") {
       throw new Error(
-        `Request timed out after ${Math.round(timeoutMs / 1000)}s: ${url}`,
+        tr("ui.client.requestTimedOutAfterS", {
+          v1: Math.round(timeoutMs / 1000),
+          url,
+        }),
       );
     }
     // Network error (CORS, offline, etc.)
     throw new Error(
-      `Network error: Could not connect to API${API_BASE ? ` at ${API_BASE}` : ""}. Is the backend reachable?`,
+      API_BASE
+        ? tr("ui.client.networkErrorAt", { base: API_BASE })
+        : tr("ui.client.networkError"),
     );
   } finally {
     clearTimeout(timeout);

@@ -141,13 +141,16 @@ func (TerramateOperation) EnumDescriptor() ([]byte, []int) {
 type StackKitOperation int32
 
 const (
-	StackKitOperation_STACKKIT_OPERATION_UNSPECIFIED     StackKitOperation = 0
-	StackKitOperation_STACKKIT_OPERATION_VALIDATE        StackKitOperation = 1
-	StackKitOperation_STACKKIT_OPERATION_GENERATE        StackKitOperation = 2
-	StackKitOperation_STACKKIT_OPERATION_APPLY           StackKitOperation = 3
-	StackKitOperation_STACKKIT_OPERATION_VERIFY          StackKitOperation = 4
-	StackKitOperation_STACKKIT_OPERATION_UPGRADE         StackKitOperation = 5
-	StackKitOperation_STACKKIT_OPERATION_DRIFT_DETECT    StackKitOperation = 6
+	StackKitOperation_STACKKIT_OPERATION_UNSPECIFIED  StackKitOperation = 0
+	StackKitOperation_STACKKIT_OPERATION_VALIDATE     StackKitOperation = 1
+	StackKitOperation_STACKKIT_OPERATION_GENERATE     StackKitOperation = 2
+	StackKitOperation_STACKKIT_OPERATION_APPLY        StackKitOperation = 3
+	StackKitOperation_STACKKIT_OPERATION_VERIFY       StackKitOperation = 4
+	StackKitOperation_STACKKIT_OPERATION_UPGRADE      StackKitOperation = 5
+	StackKitOperation_STACKKIT_OPERATION_DRIFT_DETECT StackKitOperation = 6
+	// Retired (kept for wire compatibility): Standard drift reconcile is never
+	// dispatched for a Techstack-managed deployment. Validation rejects it;
+	// managed deployments reconcile through ADVANCED_DRIFT_RECONCILE.
 	StackKitOperation_STACKKIT_OPERATION_DRIFT_RECONCILE StackKitOperation = 7
 	StackKitOperation_STACKKIT_OPERATION_PLAN            StackKitOperation = 8
 	StackKitOperation_STACKKIT_OPERATION_INIT            StackKitOperation = 9
@@ -181,6 +184,44 @@ const (
 	// backup policy or authority change; it is idempotent for an unchanged
 	// owner, authority and policy.
 	StackKitOperation_STACKKIT_OPERATION_BACKUP_CONFIGURE StackKitOperation = 23
+	// Import the Techstack installation's Advanced issuer trust bundle
+	// (stackkit.advanced-trust-bundle/v1, field advanced_trust_bundle) into the
+	// node's Owner-bound trust store. Every managed rollout runs it after INIT so
+	// the host verifies Techstack-issued Advanced capabilities offline.
+	StackKitOperation_STACKKIT_OPERATION_ADVANCED_TRUST_IMPORT StackKitOperation = 24
+	// Advanced Mode operations (ADR-0045). Each carries one Techstack-issued
+	// capability (field advanced_capability) that allows the
+	// stackkit.advanced-operations/v1 catalog operation named below. Core issues
+	// one capability per operator operation: a change-set flow uses the same
+	// capability for its create and its apply or reconcile, because StackKits
+	// binds a change set to the capability that created it. The Agent renders
+	// the argv from the catalog of the exact pinned release; catalog entries
+	// that are not available are refused on both sides.
+	// terramate.change-set.create: an Owner-signed change set from the candidate
+	// StackSpec (candidate_spec_json, or the workspace StackSpec when empty).
+	StackKitOperation_STACKKIT_OPERATION_ADVANCED_CHANGE_SET_CREATE StackKitOperation = 25
+	// terramate.change-set.apply: apply change_set_id pinned by
+	// change_set_sha256 with the same candidate through the governed transaction.
+	StackKitOperation_STACKKIT_OPERATION_ADVANCED_CHANGE_SET_APPLY StackKitOperation = 26
+	// drift.reconcile.advanced: reconcile through change_set_id and prove a clean
+	// per-stack drift report afterwards.
+	StackKitOperation_STACKKIT_OPERATION_ADVANCED_DRIFT_RECONCILE StackKitOperation = 27
+	// rollback.coordinated: coordinated rollback of the local Terramate stacks
+	// to rollback_target_ref (an executor-state snapshot id or a change-set id).
+	StackKitOperation_STACKKIT_OPERATION_ADVANCED_ROLLBACK StackKitOperation = 28
+	// restore.drill: stage and verify a restore of a new snapshot, or of
+	// snapshot_anchor_id when set, without activation.
+	StackKitOperation_STACKKIT_OPERATION_ADVANCED_RESTORE_DRILL StackKitOperation = 29
+	// Host maintenance (StackKits stackkit.host-maintenance/v1). The node's OS,
+	// not a stack: these carry no StackSpec, workspace binding or capability
+	// document, and need the agent capability stackkit.host-maintenance.v1.
+	// `stackkit host updates plan`: read-only pending-update plan and digest.
+	StackKitOperation_STACKKIT_OPERATION_HOST_UPDATE_PLAN StackKitOperation = 30
+	// `stackkit host updates apply`: install exactly the plan named by
+	// host_plan_digest.
+	StackKitOperation_STACKKIT_OPERATION_HOST_UPDATE_APPLY StackKitOperation = 31
+	// `stackkit host reboot`: schedule a guarded reboot after a fixed delay.
+	StackKitOperation_STACKKIT_OPERATION_HOST_REBOOT StackKitOperation = 32
 )
 
 // Enum value maps for StackKitOperation.
@@ -210,32 +251,50 @@ var (
 		21: "STACKKIT_OPERATION_HOUSEHOLD_LIST",
 		22: "STACKKIT_OPERATION_HOUSEHOLD_INVITE",
 		23: "STACKKIT_OPERATION_BACKUP_CONFIGURE",
+		24: "STACKKIT_OPERATION_ADVANCED_TRUST_IMPORT",
+		25: "STACKKIT_OPERATION_ADVANCED_CHANGE_SET_CREATE",
+		26: "STACKKIT_OPERATION_ADVANCED_CHANGE_SET_APPLY",
+		27: "STACKKIT_OPERATION_ADVANCED_DRIFT_RECONCILE",
+		28: "STACKKIT_OPERATION_ADVANCED_ROLLBACK",
+		29: "STACKKIT_OPERATION_ADVANCED_RESTORE_DRILL",
+		30: "STACKKIT_OPERATION_HOST_UPDATE_PLAN",
+		31: "STACKKIT_OPERATION_HOST_UPDATE_APPLY",
+		32: "STACKKIT_OPERATION_HOST_REBOOT",
 	}
 	StackKitOperation_value = map[string]int32{
-		"STACKKIT_OPERATION_UNSPECIFIED":             0,
-		"STACKKIT_OPERATION_VALIDATE":                1,
-		"STACKKIT_OPERATION_GENERATE":                2,
-		"STACKKIT_OPERATION_APPLY":                   3,
-		"STACKKIT_OPERATION_VERIFY":                  4,
-		"STACKKIT_OPERATION_UPGRADE":                 5,
-		"STACKKIT_OPERATION_DRIFT_DETECT":            6,
-		"STACKKIT_OPERATION_DRIFT_RECONCILE":         7,
-		"STACKKIT_OPERATION_PLAN":                    8,
-		"STACKKIT_OPERATION_INIT":                    9,
-		"STACKKIT_OPERATION_SERVICE_START":           10,
-		"STACKKIT_OPERATION_SERVICE_STOP":            11,
-		"STACKKIT_OPERATION_SERVICE_RESTART":         12,
-		"STACKKIT_OPERATION_SERVICE_LOGS":            13,
-		"STACKKIT_OPERATION_REMOVE":                  14,
-		"STACKKIT_OPERATION_ADDRESS_BIND":            15,
-		"STACKKIT_OPERATION_BACKUP_RUN":              16,
-		"STACKKIT_OPERATION_BACKUP_STATUS":           17,
-		"STACKKIT_OPERATION_BACKUP_RESTORE":          18,
-		"STACKKIT_OPERATION_OWNER_ACTIVATION_STATUS": 19,
-		"STACKKIT_OPERATION_OWNER_ACTIVATION_ISSUE":  20,
-		"STACKKIT_OPERATION_HOUSEHOLD_LIST":          21,
-		"STACKKIT_OPERATION_HOUSEHOLD_INVITE":        22,
-		"STACKKIT_OPERATION_BACKUP_CONFIGURE":        23,
+		"STACKKIT_OPERATION_UNSPECIFIED":                0,
+		"STACKKIT_OPERATION_VALIDATE":                   1,
+		"STACKKIT_OPERATION_GENERATE":                   2,
+		"STACKKIT_OPERATION_APPLY":                      3,
+		"STACKKIT_OPERATION_VERIFY":                     4,
+		"STACKKIT_OPERATION_UPGRADE":                    5,
+		"STACKKIT_OPERATION_DRIFT_DETECT":               6,
+		"STACKKIT_OPERATION_DRIFT_RECONCILE":            7,
+		"STACKKIT_OPERATION_PLAN":                       8,
+		"STACKKIT_OPERATION_INIT":                       9,
+		"STACKKIT_OPERATION_SERVICE_START":              10,
+		"STACKKIT_OPERATION_SERVICE_STOP":               11,
+		"STACKKIT_OPERATION_SERVICE_RESTART":            12,
+		"STACKKIT_OPERATION_SERVICE_LOGS":               13,
+		"STACKKIT_OPERATION_REMOVE":                     14,
+		"STACKKIT_OPERATION_ADDRESS_BIND":               15,
+		"STACKKIT_OPERATION_BACKUP_RUN":                 16,
+		"STACKKIT_OPERATION_BACKUP_STATUS":              17,
+		"STACKKIT_OPERATION_BACKUP_RESTORE":             18,
+		"STACKKIT_OPERATION_OWNER_ACTIVATION_STATUS":    19,
+		"STACKKIT_OPERATION_OWNER_ACTIVATION_ISSUE":     20,
+		"STACKKIT_OPERATION_HOUSEHOLD_LIST":             21,
+		"STACKKIT_OPERATION_HOUSEHOLD_INVITE":           22,
+		"STACKKIT_OPERATION_BACKUP_CONFIGURE":           23,
+		"STACKKIT_OPERATION_ADVANCED_TRUST_IMPORT":      24,
+		"STACKKIT_OPERATION_ADVANCED_CHANGE_SET_CREATE": 25,
+		"STACKKIT_OPERATION_ADVANCED_CHANGE_SET_APPLY":  26,
+		"STACKKIT_OPERATION_ADVANCED_DRIFT_RECONCILE":   27,
+		"STACKKIT_OPERATION_ADVANCED_ROLLBACK":          28,
+		"STACKKIT_OPERATION_ADVANCED_RESTORE_DRILL":     29,
+		"STACKKIT_OPERATION_HOST_UPDATE_PLAN":           30,
+		"STACKKIT_OPERATION_HOST_UPDATE_APPLY":          31,
+		"STACKKIT_OPERATION_HOST_REBOOT":                32,
 	}
 )
 
@@ -270,8 +329,10 @@ type StackKitDriftMode int32
 
 const (
 	StackKitDriftMode_STACKKIT_DRIFT_MODE_UNSPECIFIED StackKitDriftMode = 0
-	StackKitDriftMode_STACKKIT_DRIFT_MODE_STANDARD    StackKitDriftMode = 1
-	StackKitDriftMode_STACKKIT_DRIFT_MODE_ADVANCED    StackKitDriftMode = 2
+	// Retired (kept for wire compatibility): every Techstack-managed deployment
+	// runs Advanced Mode, so validation rejects STANDARD.
+	StackKitDriftMode_STACKKIT_DRIFT_MODE_STANDARD StackKitDriftMode = 1
+	StackKitDriftMode_STACKKIT_DRIFT_MODE_ADVANCED StackKitDriftMode = 2
 )
 
 // Enum value maps for StackKitDriftMode.
@@ -2678,9 +2739,12 @@ type StackKitCommand struct {
 	AddressPrefix string `protobuf:"bytes,27,opt,name=address_prefix,json=addressPrefix,proto3" json:"address_prefix,omitempty"`
 	// Relative derived StackSpec written by the pinned StackKits address binder.
 	BoundSpecPath string `protobuf:"bytes,28,opt,name=bound_spec_path,json=boundSpecPath,proto3" json:"bound_spec_path,omitempty"`
-	// Complete approved canonical StackSpec for INIT only. The exact pinned
-	// CLI validates and persists these bounded bytes through its existing
-	// candidate-input/CAS path; the agent never reconstructs desired intent.
+	// Complete approved canonical StackSpec (at most 2 MiB). INIT persists it
+	// through the pinned CLI's candidate-input/CAS path. The Advanced
+	// ADVANCED_CHANGE_SET_CREATE, ADVANCED_CHANGE_SET_APPLY and
+	// ADVANCED_DRIFT_RECONCILE operations pass it as --candidate-spec; when it
+	// is empty they use the workspace StackSpec at spec_path. Every other
+	// operation rejects it. The agent never reconstructs desired intent.
 	CandidateSpecJson []byte `protobuf:"bytes,29,opt,name=candidate_spec_json,json=candidateSpecJson,proto3" json:"candidate_spec_json,omitempty"`
 	// Content-addressed owner-signed snapshot selected for BACKUP_RESTORE.
 	// The CLI resolves the repository snapshot and fixed staging path from this
@@ -2693,8 +2757,29 @@ type StackKitCommand struct {
 	HouseholdUsername    string `protobuf:"bytes,32,opt,name=household_username,json=householdUsername,proto3" json:"household_username,omitempty"`
 	HouseholdEmail       string `protobuf:"bytes,33,opt,name=household_email,json=householdEmail,proto3" json:"household_email,omitempty"`
 	HouseholdDisplayName string `protobuf:"bytes,34,opt,name=household_display_name,json=householdDisplayName,proto3" json:"household_display_name,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// ADVANCED_TRUST_IMPORT only: the exact canonical
+	// stackkit.advanced-trust-bundle/v1 bytes (public keys only, at most
+	// 64 KiB). The agent pins their SHA-256 when it invokes the CLI.
+	AdvancedTrustBundle []byte `protobuf:"bytes,35,opt,name=advanced_trust_bundle,json=advancedTrustBundle,proto3" json:"advanced_trust_bundle,omitempty"`
+	// One canonical stackkit.advanced-capability/v1 document (at most 64 KiB)
+	// issued for this command's operator operation. Required by the
+	// capability-gated ADVANCED_* operations (25 to 29) and rejected by every
+	// other operation. The Agent writes it to a 0600 file in the working
+	// directory for --capability and removes the file afterwards.
+	AdvancedCapability []byte `protobuf:"bytes,36,opt,name=advanced_capability,json=advancedCapability,proto3" json:"advanced_capability,omitempty"`
+	// ADVANCED_CHANGE_SET_APPLY and ADVANCED_DRIFT_RECONCILE: the change set
+	// ADVANCED_CHANGE_SET_CREATE returned and the SHA-256 of its stored bytes,
+	// both sha256:<64 hex>.
+	ChangeSetId     string `protobuf:"bytes,37,opt,name=change_set_id,json=changeSetId,proto3" json:"change_set_id,omitempty"`
+	ChangeSetSha256 string `protobuf:"bytes,38,opt,name=change_set_sha256,json=changeSetSha256,proto3" json:"change_set_sha256,omitempty"`
+	// ADVANCED_ROLLBACK: the sha256 executor-state snapshot id or change-set id
+	// to roll back to (a change-set id selects its pre-apply checkpoint).
+	RollbackTargetRef string `protobuf:"bytes,39,opt,name=rollback_target_ref,json=rollbackTargetRef,proto3" json:"rollback_target_ref,omitempty"`
+	// HOST_UPDATE_APPLY only: the sha256:<64 hex> plan digest a completed
+	// HOST_UPDATE_PLAN returned; StackKits installs exactly that plan or refuses.
+	HostPlanDigest string `protobuf:"bytes,40,opt,name=host_plan_digest,json=hostPlanDigest,proto3" json:"host_plan_digest,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *StackKitCommand) Reset() {
@@ -2965,6 +3050,48 @@ func (x *StackKitCommand) GetHouseholdDisplayName() string {
 	return ""
 }
 
+func (x *StackKitCommand) GetAdvancedTrustBundle() []byte {
+	if x != nil {
+		return x.AdvancedTrustBundle
+	}
+	return nil
+}
+
+func (x *StackKitCommand) GetAdvancedCapability() []byte {
+	if x != nil {
+		return x.AdvancedCapability
+	}
+	return nil
+}
+
+func (x *StackKitCommand) GetChangeSetId() string {
+	if x != nil {
+		return x.ChangeSetId
+	}
+	return ""
+}
+
+func (x *StackKitCommand) GetChangeSetSha256() string {
+	if x != nil {
+		return x.ChangeSetSha256
+	}
+	return ""
+}
+
+func (x *StackKitCommand) GetRollbackTargetRef() string {
+	if x != nil {
+		return x.RollbackTargetRef
+	}
+	return ""
+}
+
+func (x *StackKitCommand) GetHostPlanDigest() string {
+	if x != nil {
+		return x.HostPlanDigest
+	}
+	return ""
+}
+
 // StackKitResult transports the normalized stackkit.command-result/v1 JSON
 // envelope and the StackKits rollout-event JSONL records as distinct typed
 // fields. stderr is redacted by the Agent before transport.
@@ -2992,8 +3119,12 @@ type StackKitResult struct {
 	// only for explicitly approved identity mutations and must be consumed by
 	// the synchronous request path without job, ledger, event, or log storage.
 	SensitiveResultJson []byte `protobuf:"bytes,14,opt,name=sensitive_result_json,json=sensitiveResultJson,proto3" json:"sensitive_result_json,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// ADVANCED_CHANGE_SET_CREATE only: sha256:<64 hex> of the stored change-set
+	// record the create result names (data.path), computed by the Agent. Apply
+	// and Advanced reconcile pin these exact bytes with --expect-sha256.
+	AdvancedChangeSetSha256 string `protobuf:"bytes,15,opt,name=advanced_change_set_sha256,json=advancedChangeSetSha256,proto3" json:"advanced_change_set_sha256,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
 }
 
 func (x *StackKitResult) Reset() {
@@ -3122,6 +3253,13 @@ func (x *StackKitResult) GetSensitiveResultJson() []byte {
 		return x.SensitiveResultJson
 	}
 	return nil
+}
+
+func (x *StackKitResult) GetAdvancedChangeSetSha256() string {
+	if x != nil {
+		return x.AdvancedChangeSetSha256
+	}
+	return ""
 }
 
 // PreCheckRequest is sent from Core to Agent to execute pre-deployment checks.
@@ -4889,7 +5027,7 @@ const file_api_proto_agent_proto_rawDesc = "" +
 	"platformOs\x12#\n" +
 	"\rplatform_arch\x18\x03 \x01(\tR\fplatformArch\x12%\n" +
 	"\x0earchive_sha256\x18\x04 \x01(\tR\rarchiveSha256\x120\n" +
-	"\x14release_index_sha256\x18\x05 \x01(\tR\x12releaseIndexSha256\"\x89\v\n" +
+	"\x14release_index_sha256\x18\x05 \x01(\tR\x12releaseIndexSha256\"\x98\r\n" +
 	"\x0fStackKitCommand\x12\x1d\n" +
 	"\n" +
 	"command_id\x18\x01 \x01(\tR\tcommandId\x12C\n" +
@@ -4931,7 +5069,13 @@ const file_api_proto_agent_proto_rawDesc = "" +
 	"ownerEmail\x12-\n" +
 	"\x12household_username\x18  \x01(\tR\x11householdUsername\x12'\n" +
 	"\x0fhousehold_email\x18! \x01(\tR\x0ehouseholdEmail\x124\n" +
-	"\x16household_display_name\x18\" \x01(\tR\x14householdDisplayName\"\x8e\x05\n" +
+	"\x16household_display_name\x18\" \x01(\tR\x14householdDisplayName\x122\n" +
+	"\x15advanced_trust_bundle\x18# \x01(\fR\x13advancedTrustBundle\x12/\n" +
+	"\x13advanced_capability\x18$ \x01(\fR\x12advancedCapability\x12\"\n" +
+	"\rchange_set_id\x18% \x01(\tR\vchangeSetId\x12*\n" +
+	"\x11change_set_sha256\x18& \x01(\tR\x0fchangeSetSha256\x12.\n" +
+	"\x13rollback_target_ref\x18' \x01(\tR\x11rollbackTargetRef\x12(\n" +
+	"\x10host_plan_digest\x18( \x01(\tR\x0ehostPlanDigest\"\xcb\x05\n" +
 	"\x0eStackKitResult\x12\x1d\n" +
 	"\n" +
 	"command_id\x18\x01 \x01(\tR\tcommandId\x12\x18\n" +
@@ -4948,7 +5092,8 @@ const file_api_proto_agent_proto_rawDesc = "" +
 	"\arelease\x18\v \x01(\v2&.techstack.agent.v1.StackKitReleasePinR\arelease\x12?\n" +
 	"\x1cpinned_cli_evidence_verified\x18\f \x01(\bR\x19pinnedCliEvidenceVerified\x12;\n" +
 	"\x1apinned_cli_evidence_sha256\x18\r \x01(\tR\x17pinnedCliEvidenceSha256\x122\n" +
-	"\x15sensitive_result_json\x18\x0e \x01(\fR\x13sensitiveResultJson\"\x99\x01\n" +
+	"\x15sensitive_result_json\x18\x0e \x01(\fR\x13sensitiveResultJson\x12;\n" +
+	"\x1aadvanced_change_set_sha256\x18\x0f \x01(\tR\x17advancedChangeSetSha256\"\x99\x01\n" +
 	"\x0fPreCheckRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12>\n" +
@@ -5109,7 +5254,8 @@ const file_api_proto_agent_proto_rawDesc = "" +
 	"\x1fTERRAMATE_OPERATION_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17TERRAMATE_OPERATION_RUN\x10\x01\x12\"\n" +
 	"\x1eTERRAMATE_OPERATION_SYNC_DRIFT\x10\x02\x12$\n" +
-	" TERRAMATE_OPERATION_LIST_CHANGED\x10\x03*\x81\a\n" +
+	" TERRAMATE_OPERATION_LIST_CHANGED\x10\x03*\x95\n" +
+	"\n" +
 	"\x11StackKitOperation\x12\"\n" +
 	"\x1eSTACKKIT_OPERATION_UNSPECIFIED\x10\x00\x12\x1f\n" +
 	"\x1bSTACKKIT_OPERATION_VALIDATE\x10\x01\x12\x1f\n" +
@@ -5135,7 +5281,16 @@ const file_api_proto_agent_proto_rawDesc = "" +
 	")STACKKIT_OPERATION_OWNER_ACTIVATION_ISSUE\x10\x14\x12%\n" +
 	"!STACKKIT_OPERATION_HOUSEHOLD_LIST\x10\x15\x12'\n" +
 	"#STACKKIT_OPERATION_HOUSEHOLD_INVITE\x10\x16\x12'\n" +
-	"#STACKKIT_OPERATION_BACKUP_CONFIGURE\x10\x17*|\n" +
+	"#STACKKIT_OPERATION_BACKUP_CONFIGURE\x10\x17\x12,\n" +
+	"(STACKKIT_OPERATION_ADVANCED_TRUST_IMPORT\x10\x18\x121\n" +
+	"-STACKKIT_OPERATION_ADVANCED_CHANGE_SET_CREATE\x10\x19\x120\n" +
+	",STACKKIT_OPERATION_ADVANCED_CHANGE_SET_APPLY\x10\x1a\x12/\n" +
+	"+STACKKIT_OPERATION_ADVANCED_DRIFT_RECONCILE\x10\x1b\x12(\n" +
+	"$STACKKIT_OPERATION_ADVANCED_ROLLBACK\x10\x1c\x12-\n" +
+	")STACKKIT_OPERATION_ADVANCED_RESTORE_DRILL\x10\x1d\x12'\n" +
+	"#STACKKIT_OPERATION_HOST_UPDATE_PLAN\x10\x1e\x12(\n" +
+	"$STACKKIT_OPERATION_HOST_UPDATE_APPLY\x10\x1f\x12\"\n" +
+	"\x1eSTACKKIT_OPERATION_HOST_REBOOT\x10 *|\n" +
 	"\x11StackKitDriftMode\x12#\n" +
 	"\x1fSTACKKIT_DRIFT_MODE_UNSPECIFIED\x10\x00\x12 \n" +
 	"\x1cSTACKKIT_DRIFT_MODE_STANDARD\x10\x01\x12 \n" +

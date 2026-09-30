@@ -3,6 +3,7 @@ package auth
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	tsauth "github.com/kombifyio/techstack/pkg/auth"
+	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/httpx"
 )
 
@@ -32,9 +34,11 @@ const (
 	cloudLinkPurposeOwnerLink = "owner-link"
 	cloudLinkCompletePath     = "/auth/cloud-link-complete"
 	cloudLinkCallbackPath     = "/api/v1/auth/cloud-link/callback"
+	cloudLinkBindingCookie    = "techstack_cloud_link"
 
 	cloudLinkUnavailableErrorCode = "cloud_link_unavailable"
 	reasonCloudOIDCNotConfigured  = "cloud_oidc_not_configured"
+	reasonSaaSManagedIdentity     = "saas_managed_identity"
 )
 
 type cloudLinkStartResponse struct {
@@ -52,8 +56,11 @@ type cloudLinkStatusResponse struct {
 
 // handleCloudLinkStart mints a single-use PKCE state and returns the hosted
 // authorization URL the frontend opens in a popup (or full-page redirect).
-func handleCloudLinkStart(app core.App) func(e *httpx.Event) error {
+func handleCloudLinkStart(app core.App, mode config.DeploymentMode) func(e *httpx.Event) error {
 	return func(e *httpx.Event) error {
+		if mode.IsSaaS() {
+			return cloudLinkUnavailableOnSaaS(e)
+		}
 		if err := CheckAuth(e); err != nil {
 			return err
 		}
@@ -75,6 +82,7 @@ func handleCloudLinkStart(app core.App) func(e *httpx.Event) error {
 			app.Logger().Error("cloud-link: failed to store state", "error", storeErr)
 			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to prepare the cloud link request", nil)
 		}
+		setCloudLinkBindingCookie(e, state)
 
 		challenge := base64.RawURLEncoding.EncodeToString(func() []byte {
 			sum := sha256.Sum256([]byte(verifier))
@@ -102,8 +110,11 @@ func handleCloudLinkStart(app core.App) func(e *httpx.Event) error {
 // link for the user who initiated the flow (never a new user). All failures
 // land on the completion page as fragment reasons so the popup can report
 // them without leaking details into server logs users cannot see.
-func handleCloudLinkCallback(app core.App) func(e *httpx.Event) error {
+func handleCloudLinkCallback(app core.App, mode config.DeploymentMode) func(e *httpx.Event) error {
 	return func(e *httpx.Event) error {
+		if mode.IsSaaS() {
+			return cloudLinkComplete(e, "error", cloudLinkUnavailableErrorCode)
+		}
 		query := e.Request.URL.Query()
 		if errParam := query.Get("error"); errParam != "" {
 			app.Logger().Warn("cloud-link: provider error", "error", errParam, "description", query.Get("error_description"))
@@ -114,6 +125,15 @@ func handleCloudLinkCallback(app core.App) func(e *httpx.Event) error {
 		if state == "" || code == "" {
 			return cloudLinkComplete(e, "error", "missing_code_or_state")
 		}
+		// The state (and with it the stored PKCE verifier) is usable only by
+		// the browser that started the flow. Without this, a victim who opens
+		// an attacker-started authorization URL would link their kombify
+		// Cloud identity to the attacker's local account.
+		if !cloudLinkBrowserMatches(e.Request, state) {
+			app.Logger().Warn("cloud-link: callback without the initiating browser binding")
+			return cloudLinkComplete(e, "error", "browser_mismatch")
+		}
+		clearCloudLinkBindingCookie(e)
 
 		userID, verifier, consumeErr := consumeCloudLinkState(app, state)
 		if consumeErr != nil {
@@ -208,6 +228,25 @@ func cloudLinkNotConfigured(e *httpx.Event) error {
 	})
 }
 
+// cloudLinkUnavailableOnSaaS answers the SaaS edition, where the kombify Cloud
+// account already is the operator identity: cloud-link only projects a Cloud
+// profile into a self-hosted install and has no state store here.
+func cloudLinkUnavailableOnSaaS(e *httpx.Event) error {
+	return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "Cloud link is only available on self-hosted installs", map[string]any{
+		"error_code":  cloudLinkUnavailableErrorCode,
+		"reason_code": reasonSaaSManagedIdentity,
+		"retryable":   false,
+		"user_guidance": map[string]any{
+			"title": "Your kombify Cloud account is already connected",
+			"body":  "On techstack.kombify.io you sign in with your kombify Cloud account, so there is nothing to link. Cloud link connects a kombify Cloud profile to a self-hosted Techstack install.",
+			"next_steps": []string{
+				"Continue with your current account; stacks you create use it as the owner.",
+				"To link a Cloud profile to a self-hosted install, start Cloud link from that install.",
+			},
+		},
+	})
+}
+
 func cloudLinkComplete(e *httpx.Event, status, reason string) error {
 	fragment := url.Values{}
 	fragment.Set("status", status)
@@ -225,6 +264,41 @@ func cloudLinkRedirectURI(req *http.Request) string {
 		return "https://localhost" + cloudLinkCallbackPath
 	}
 	return requestOrigin(req) + cloudLinkCallbackPath
+}
+
+// setCloudLinkBindingCookie binds the issued state to the initiating browser.
+// SameSite=Lax still accompanies the top-level redirect back from the hosted
+// login; the path scope keeps the cookie off every other request.
+func setCloudLinkBindingCookie(e *httpx.Event, state string) {
+	e.SetCookie(&http.Cookie{
+		Name:     cloudLinkBindingCookie,
+		Value:    state,
+		Path:     cloudLinkCallbackPath,
+		MaxAge:   int(cloudLinkStateTTL / time.Second),
+		HttpOnly: true,
+		Secure:   requestScheme(e.Request) == "https",
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+func clearCloudLinkBindingCookie(e *httpx.Event) {
+	e.SetCookie(&http.Cookie{
+		Name:     cloudLinkBindingCookie,
+		Value:    "",
+		Path:     cloudLinkCallbackPath,
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   requestScheme(e.Request) == "https",
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+func cloudLinkBrowserMatches(req *http.Request, state string) bool {
+	cookie, err := req.Cookie(cloudLinkBindingCookie)
+	if err != nil || cookie.Value == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(state)) == 1
 }
 
 func randomURLToken(bytes int) (string, error) {

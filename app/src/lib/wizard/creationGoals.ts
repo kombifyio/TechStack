@@ -14,8 +14,9 @@ export type CreationVariant = "discover" | "focus";
  * Target choices: StackKits docs/use-case-expansion/portfolio.md (eleven main
  * use cases). Owner correction, 2026-09-19: Documents/Files together; Paperless
  * is an add-on. Remote belongs to Dev. A twelfth main intent is still unresolved.
- * Owner decision, 2026-09-24: Game and Mail are active; Dev and AI still need
- * their target planning, so they stay Coming soon with Network and Automation.
+ * Owner decision, 2026-09-24: Game and Mail are active; AI still needs its
+ * target planning, so it stays Coming soon with Network and Automation.
+ * Owner decision, 2026-09-26: Dev is active (Gitea, Forgejo alternative).
  */
 export const CREATION_PORTFOLIO = [
   "photos",
@@ -32,12 +33,7 @@ export const CREATION_PORTFOLIO = [
 ] as const;
 export type CreationGoalId = (typeof CREATION_PORTFOLIO)[number];
 
-const COMING_SOON: readonly CreationGoalId[] = [
-  "network",
-  "automation",
-  "ai",
-  "dev",
-];
+const COMING_SOON: readonly CreationGoalId[] = ["network", "automation", "ai"];
 
 export interface CreationGoal {
   id: CreationGoalId;
@@ -130,11 +126,14 @@ export function supportsCreationChoice(
   );
 }
 
+/** The default (primary) first, then the alternatives in catalog order. The
+ * released catalog sorts components by id, so Ente would otherwise lead Immich. */
 export function backendChoices(catalog?: UseCaseCatalogView) {
-  return (catalog?.components ?? []).filter(
-    (component) =>
-      component.role === "primary" || component.role === "alternative",
-  );
+  const components = catalog?.components ?? [];
+  return [
+    ...components.filter((component) => component.role === "primary"),
+    ...components.filter((component) => component.role === "alternative"),
+  ];
 }
 
 export function selectedBackend(

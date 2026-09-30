@@ -77,6 +77,9 @@ enum StackKitOperation {
   STACKKIT_OPERATION_VERIFY = 4;
   STACKKIT_OPERATION_UPGRADE = 5;
   STACKKIT_OPERATION_DRIFT_DETECT = 6;
+  // Retired (kept for wire compatibility): Standard drift reconcile is never
+  // dispatched for a Techstack-managed deployment. Validation rejects it;
+  // managed deployments reconcile through ADVANCED_DRIFT_RECONCILE.
   STACKKIT_OPERATION_DRIFT_RECONCILE = 7;
   STACKKIT_OPERATION_PLAN = 8;
   STACKKIT_OPERATION_INIT = 9;
@@ -110,10 +113,50 @@ enum StackKitOperation {
   // backup policy or authority change; it is idempotent for an unchanged
   // owner, authority and policy.
   STACKKIT_OPERATION_BACKUP_CONFIGURE = 23;
+  // Import the Techstack installation's Advanced issuer trust bundle
+  // (stackkit.advanced-trust-bundle/v1, field advanced_trust_bundle) into the
+  // node's Owner-bound trust store. Every managed rollout runs it after INIT so
+  // the host verifies Techstack-issued Advanced capabilities offline.
+  STACKKIT_OPERATION_ADVANCED_TRUST_IMPORT = 24;
+  // Advanced Mode operations (ADR-0045). Each carries one Techstack-issued
+  // capability (field advanced_capability) that allows the
+  // stackkit.advanced-operations/v1 catalog operation named below. Core issues
+  // one capability per operator operation: a change-set flow uses the same
+  // capability for its create and its apply or reconcile, because StackKits
+  // binds a change set to the capability that created it. The Agent renders
+  // the argv from the catalog of the exact pinned release; catalog entries
+  // that are not available are refused on both sides.
+  // terramate.change-set.create: an Owner-signed change set from the candidate
+  // StackSpec (candidate_spec_json, or the workspace StackSpec when empty).
+  STACKKIT_OPERATION_ADVANCED_CHANGE_SET_CREATE = 25;
+  // terramate.change-set.apply: apply change_set_id pinned by
+  // change_set_sha256 with the same candidate through the governed transaction.
+  STACKKIT_OPERATION_ADVANCED_CHANGE_SET_APPLY = 26;
+  // drift.reconcile.advanced: reconcile through change_set_id and prove a clean
+  // per-stack drift report afterwards.
+  STACKKIT_OPERATION_ADVANCED_DRIFT_RECONCILE = 27;
+  // rollback.coordinated: coordinated rollback of the local Terramate stacks
+  // to rollback_target_ref (an executor-state snapshot id or a change-set id).
+  STACKKIT_OPERATION_ADVANCED_ROLLBACK = 28;
+  // restore.drill: stage and verify a restore of a new snapshot, or of
+  // snapshot_anchor_id when set, without activation.
+  STACKKIT_OPERATION_ADVANCED_RESTORE_DRILL = 29;
+  // Host maintenance (StackKits stackkit.host-maintenance/v1). The node's OS,
+  // not a stack: these carry no StackSpec, workspace binding or capability
+  // document, and need the agent capability stackkit.host-maintenance.v1.
+  // `stackkit host updates plan`: read-only pending-update plan and digest.
+  STACKKIT_OPERATION_HOST_UPDATE_PLAN = 30;
+  // `stackkit host updates apply`: install exactly the plan named by
+  // host_plan_digest.
+  STACKKIT_OPERATION_HOST_UPDATE_APPLY = 31;
+  // `stackkit host reboot`: schedule a guarded reboot after a fixed delay.
+  STACKKIT_OPERATION_HOST_REBOOT = 32;
 }
 
 enum StackKitDriftMode {
   STACKKIT_DRIFT_MODE_UNSPECIFIED = 0;
+  // Retired (kept for wire compatibility): every Techstack-managed deployment
+  // runs Advanced Mode, so validation rejects STANDARD.
   STACKKIT_DRIFT_MODE_STANDARD = 1;
   STACKKIT_DRIFT_MODE_ADVANCED = 2;
 }
@@ -400,9 +443,12 @@ message StackKitCommand {
   string address_prefix = 27;
   // Relative derived StackSpec written by the pinned StackKits address binder.
   string bound_spec_path = 28;
-  // Complete approved canonical StackSpec for INIT only. The exact pinned
-  // CLI validates and persists these bounded bytes through its existing
-  // candidate-input/CAS path; the agent never reconstructs desired intent.
+  // Complete approved canonical StackSpec (at most 2 MiB). INIT persists it
+  // through the pinned CLI's candidate-input/CAS path. The Advanced
+  // ADVANCED_CHANGE_SET_CREATE, ADVANCED_CHANGE_SET_APPLY and
+  // ADVANCED_DRIFT_RECONCILE operations pass it as --candidate-spec; when it
+  // is empty they use the workspace StackSpec at spec_path. Every other
+  // operation rejects it. The agent never reconstructs desired intent.
   bytes candidate_spec_json = 29;
   // Content-addressed owner-signed snapshot selected for BACKUP_RESTORE.
   // The CLI resolves the repository snapshot and fixed staging path from this
@@ -415,6 +461,27 @@ message StackKitCommand {
   string household_username = 32;
   string household_email = 33;
   string household_display_name = 34;
+  // ADVANCED_TRUST_IMPORT only: the exact canonical
+  // stackkit.advanced-trust-bundle/v1 bytes (public keys only, at most
+  // 64 KiB). The agent pins their SHA-256 when it invokes the CLI.
+  bytes advanced_trust_bundle = 35;
+  // One canonical stackkit.advanced-capability/v1 document (at most 64 KiB)
+  // issued for this command's operator operation. Required by the
+  // capability-gated ADVANCED_* operations (25 to 29) and rejected by every
+  // other operation. The Agent writes it to a 0600 file in the working
+  // directory for --capability and removes the file afterwards.
+  bytes advanced_capability = 36;
+  // ADVANCED_CHANGE_SET_APPLY and ADVANCED_DRIFT_RECONCILE: the change set
+  // ADVANCED_CHANGE_SET_CREATE returned and the SHA-256 of its stored bytes,
+  // both sha256:<64 hex>.
+  string change_set_id = 37;
+  string change_set_sha256 = 38;
+  // ADVANCED_ROLLBACK: the sha256 executor-state snapshot id or change-set id
+  // to roll back to (a change-set id selects its pre-apply checkpoint).
+  string rollback_target_ref = 39;
+  // HOST_UPDATE_APPLY only: the sha256:<64 hex> plan digest a completed
+  // HOST_UPDATE_PLAN returned; StackKits installs exactly that plan or refuses.
+  string host_plan_digest = 40;
 }
 
 // StackKitResult transports the normalized stackkit.command-result/v1 JSON
@@ -443,6 +510,10 @@ message StackKitResult {
   // only for explicitly approved identity mutations and must be consumed by
   // the synchronous request path without job, ledger, event, or log storage.
   bytes sensitive_result_json = 14;
+  // ADVANCED_CHANGE_SET_CREATE only: sha256:<64 hex> of the stored change-set
+  // record the create result names (data.path), computed by the Agent. Apply
+  // and Advanced reconcile pin these exact bytes with --expect-sha256.
+  string advanced_change_set_sha256 = 15;
 }
 
 // =============================================================================

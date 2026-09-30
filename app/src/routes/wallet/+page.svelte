@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr, trn, formatDate } from "#lib/i18n.svelte.js";
   import type { Component } from "svelte";
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
@@ -87,17 +88,17 @@
     }> => [
       {
         id: "tools",
-        label: "Tools",
+        label: tr("ui.wallet.tools"),
         icon: Boxes,
       },
       {
         id: "access",
-        label: "Access",
+        label: tr("ui.stacksCreatingCreationLease.access"),
         icon: ShieldCheck,
       },
       {
         id: "recovery",
-        label: "Recovery",
+        label: tr("ui.stacksCreatingCreationCompletion.recovery"),
         icon: ShieldAlert,
       },
     ],
@@ -189,13 +190,13 @@
       id: "superuser",
       email: "superuser@techstack.local",
       password: "",
-      role: "Local backend superuser",
-      description: "Self-hosted compatibility admin access",
+      role: tr("ui.wallet.localBackendSuperuser"),
+      description: tr("ui.wallet.selfHostedCompatibilityAdminAccess"),
       securityLevel: "critical",
       features: [
-        "Local backend admin",
-        "Database management",
-        "Collection editing",
+        tr("ui.wallet.localBackendAdmin"),
+        tr("ui.wallet.databaseManagement"),
+        tr("ui.wallet.collectionEditing"),
         "API rules",
       ],
     },
@@ -203,13 +204,13 @@
       id: "admin",
       email: "admin@techstack.local",
       password: "",
-      role: "kombify-Techstack Admin",
-      description: "Application administrator with full Homelab management",
+      role: tr("ui.wallet.kombifyTechstackAdmin"),
+      description: tr("ui.wallet.applicationAdministratorWithFullHomelab"),
       securityLevel: "high",
       features: [
-        "Homelab management",
-        "User management",
-        "System settings",
+        tr("ui.wallet.homelabManagement"),
+        tr("ui.wallet.userManagement"),
+        tr("ui.wallet.systemSettings"),
         "Monitoring",
       ],
     },
@@ -217,14 +218,14 @@
       id: "developer",
       email: "developer@techstack.local",
       password: "",
-      role: "kombify-Techstack Developer",
-      description: "Developer access for testing and development",
+      role: tr("ui.wallet.kombifyTechstackDeveloper"),
+      description: tr("ui.wallet.developerAccessForTestingAnd"),
       securityLevel: "medium",
       features: [
-        "StackKit deployment",
-        "Simulation access",
+        tr("ui.homelabDashboardPage.stackkitDeployment"),
+        tr("ui.wallet.simulationAccess"),
         "API access",
-        "Log viewing",
+        tr("ui.wallet.logViewing"),
       ],
     },
   ]);
@@ -347,18 +348,18 @@
         typeof window !== "undefined"
       ) {
         error =
-          "Fresh kombify Cloud re-authentication is required before wallet material can be revealed.";
+          tr("ui.wallet.freshKombifyCloudReAuthentication");
         redirectToCloudWalletReauth(reason);
         return null;
       }
       if (parsed.isForbidden && typeof window !== "undefined") {
         const currentPassword = await promptInApp({
-          title: "Confirm credential reveal",
+          title: tr("ui.wallet.confirmCredentialReveal"),
           message:
-            "Enter your current local Techstack password to reveal this wallet entry.",
-          inputLabel: "Current password",
+            tr("ui.wallet.enterYourCurrentLocalTechstack"),
+          inputLabel: tr("ui.wallet.currentPassword"),
           inputType: "password",
-          confirmText: "Reveal",
+          confirmText: tr("ui.wallet.reveal"),
         });
         if (currentPassword?.trim()) {
           try {
@@ -540,7 +541,7 @@
   }
 
   function getEntryActionLabel(item: WalletItem): string {
-    return item.access_mode === "manage" ? "Manage" : "Open";
+    return item.access_mode === "manage" ? tr("ui.wallet.manage") : tr("ui.services.open");
   }
 
   function openWalletLink(item: WalletItem) {
@@ -560,12 +561,14 @@
   function getFormTitle(): string {
     const label =
       formArea === "tools"
-        ? "Tool"
+        ? tr("ui.wallet.tool")
         : formArea === "access"
-          ? "Access Entry"
-          : "Recovery Item";
+          ? tr("ui.wallet.accessEntry")
+          : tr("ui.wallet.recoveryItem");
 
-    return editingItem ? `Edit ${label}` : `Add ${label}`;
+    return editingItem
+      ? tr("ui.wallet.editItem", { label })
+      : tr("ui.wallet.addItem", { label });
   }
 
   function getSecurityLevelColor(level: string): string {
@@ -592,9 +595,9 @@
       case "oauth_token":
         return "OAuth";
       case "certificate":
-        return "Cert";
+        return tr("ui.credentialForm.cert");
       default:
-        return "Other";
+        return tr("ui.wallet.other");
     }
   }
 
@@ -640,7 +643,7 @@
         return;
       }
       error = parsed.isForbidden
-        ? "You don't have permission to add wallet entries."
+        ? tr("ui.wallet.youDonTHavePermission")
         : parsed.isValidationError && Object.keys(parsed.fieldErrors).length > 0
           ? Object.entries(parsed.fieldErrors)
               .map(([f, { message }]) => `${f}: ${message}`)
@@ -664,9 +667,9 @@
   async function handleDeleteCredential(id: string) {
     if (
       !(await confirmInApp({
-        title: "Delete wallet entry?",
-        message: "This permanently removes the selected wallet entry.",
-        confirmText: "Delete",
+        title: tr("ui.wallet.deleteWalletEntry"),
+        message: tr("ui.wallet.thisPermanentlyRemovesTheSelected"),
+        confirmText: tr("ui.settings.delete"),
         tone: "danger",
       }))
     ) {
@@ -688,7 +691,7 @@
         return;
       }
       error = parsed.isForbidden
-        ? "You don't have permission to delete this credential."
+        ? tr("ui.wallet.youDonTHavePermission2")
         : parsed.message;
     } finally {
       deletingId = null;
@@ -809,10 +812,10 @@
       if (success) {
         quickSyncStates[item.id] = "success";
         quickSyncToasts[item.id] =
-          "Browser extension triggered! Check for save prompt.";
+          tr("ui.wallet.browserExtensionTriggeredCheckFor");
       } else {
         quickSyncStates[item.id] = "error";
-        quickSyncToasts[item.id] = "Could not trigger browser extension.";
+        quickSyncToasts[item.id] = tr("ui.wallet.couldNotTriggerBrowserExtension");
       }
 
       // Reset state after 3 seconds
@@ -824,7 +827,7 @@
       }, 3000);
     } catch (err) {
       quickSyncStates[item.id] = "error";
-      quickSyncToasts[item.id] = "Quick-Sync failed. Try copying manually.";
+      quickSyncToasts[item.id] = tr("ui.wallet.quickSyncFailedTryCopying");
 
       setTimeout(() => {
         quickSyncStates[item.id] = "idle";
@@ -903,7 +906,7 @@
     >
       <nav
         class="flex min-h-12 flex-wrap items-center gap-1"
-        aria-label="Wallet sections"
+        aria-label={tr("ui.wallet.walletSections")}
         data-wallet-tab-nav
       >
         {#each walletTabs as tab}
@@ -927,8 +930,7 @@
     </div>
 
     <p class="text-xs text-muted-foreground/80">
-      Wallet stays split into launch surfaces, operational access, and
-      recovery-only material.
+      {tr("ui.wallet.walletStaysSplitIntoLaunch")}
     </p>
   </div>
 
@@ -969,7 +971,7 @@
     <!-- Rotation Modal -->
     {#if showRotateModal && rotatingItem}
       <Modal
-        title="Rotate Credential"
+        title={tr("ui.wallet.rotateCredential")}
         onClose={() => {
           showRotateModal = false;
           rotatingItem = null;
@@ -978,7 +980,7 @@
         maxWidth="md"
       >
         <p class="text-muted-foreground text-sm mb-6">
-          Rotating: <strong class="text-white">{rotatingItem.name}</strong>
+          {tr("ui.wallet.rotating")} <strong class="text-white">{rotatingItem.name}</strong>
         </p>
 
         <div class="mb-6">
@@ -986,13 +988,13 @@
             for="new-secret"
             class="block text-sm font-medium text-foreground/80 mb-2"
           >
-            New Secret <span class="text-destructive">*</span>
+            {tr("ui.wallet.newSecret")} <span class="text-destructive">*</span>
           </label>
           <input
             id="new-secret"
             type="password"
             bind:value={newSecret}
-            placeholder="Enter new secret value"
+            placeholder={tr("ui.wallet.enterNewSecretValue")}
             class="w-full px-4 py-3 bg-input border border-border rounded-lg text-foreground placeholder-muted-foreground focus:border-primary focus:outline-none"
           />
         </div>
@@ -1000,7 +1002,7 @@
         <div
           class="p-3 rounded-lg bg-info/10 border border-info/30 text-sm text-muted-foreground mb-6"
         >
-          This will update the secret and record the rotation date for tracking.
+          {tr("ui.wallet.thisWillUpdateTheSecret")}
         </div>
 
         <div class="flex justify-end gap-3">
@@ -1013,7 +1015,7 @@
             data-kx="control"
             class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
           >
-            Cancel
+            {tr("ui.importExportModal.cancel")}
           </button>
           <button
             onclick={handleConfirmRotation}
@@ -1022,7 +1024,7 @@
             data-variant="primary"
             class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
           >
-            {saving ? "Rotating..." : "Save"}
+            {saving ? tr("ui.wallet.rotating2") : tr("ui.wallet.save")}
           </button>
         </div>
       </Modal>
@@ -1069,14 +1071,10 @@
                 </div>
                 <div>
                   <p class="font-medium text-foreground">
-                    {expiredCredentials.length} Expired Credential{expiredCredentials.length !==
-                    1
-                      ? "s"
-                      : ""}
+                    {trn("ui.wallet.expiredCredentials", expiredCredentials.length)}
                   </p>
                   <p class="text-sm text-muted-foreground mt-1">
-                    {expiredCredentials.map((c) => c.name).join(", ")} — consider
-                    rotating immediately.
+                    {tr("ui.wallet.considerRotating", { names: expiredCredentials.map((c) => c.name).join(", ") })}
                   </p>
                 </div>
               </div>
@@ -1104,10 +1102,7 @@
                 </div>
                 <div>
                   <p class="font-medium text-foreground">
-                    {expiringCredentials.length} Credential{expiringCredentials.length !==
-                    1
-                      ? "s"
-                      : ""} Expiring Soon
+                    {trn("ui.wallet.expiringCredentials", expiringCredentials.length)}
                   </p>
                   <p class="text-sm text-muted-foreground mt-1">
                     {expiringCredentials
@@ -1149,7 +1144,7 @@
             data-kx="control"
             class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
           >
-            Dismiss
+            {tr("ui.wallet.dismiss")}
           </button>
         </div>
       </div>
@@ -1159,10 +1154,9 @@
       <div class="mb-8">
         <div class="flex items-center justify-between gap-4 mb-4">
           <div>
-            <h2 class="text-xl font-semibold text-foreground">Tools</h2>
+            <h2 class="text-xl font-semibold text-foreground">{tr("ui.wallet.tools")}</h2>
             <p class="text-sm text-muted-foreground mt-1">
-              Wallet should be the first place to launch tools, services, and
-              operational surfaces without dropping into reveal flows.
+              {tr("ui.wallet.walletShouldBeTheFirst")}
             </p>
           </div>
           <div class="flex items-center gap-2">
@@ -1172,7 +1166,7 @@
               data-kx="control"
               class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
             >
-              + Add Tool
+              {tr("ui.wallet.addTool")}
             </button>
           </div>
         </div>
@@ -1180,10 +1174,9 @@
         {#if toolItems.length === 0}
           <div data-kx="plate">
             <div class="p-6">
-              <p class="text-foreground font-medium mb-1">No tools yet</p>
+              <p class="text-foreground font-medium mb-1">{tr("ui.wallet.noToolsYet")}</p>
               <p class="text-sm text-muted-foreground">
-                Launch-ready tools and URL-backed service entries will surface
-                here as Wallet becomes the central starting point.
+                {tr("ui.wallet.launchReadyToolsAndUrl")}
               </p>
               <div class="mt-4">
                 <button
@@ -1192,7 +1185,7 @@
                   data-variant="primary"
                   class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
                 >
-                  + Add Tool
+                  {tr("ui.wallet.addTool")}
                 </button>
               </div>
             </div>
@@ -1221,10 +1214,10 @@
                           >
                             {item.name}
                           </h3>
-                          <span data-kx="tag" class="text-xs">Tool</span>
+                          <span data-kx="tag" class="text-xs">{tr("ui.wallet.tool")}</span>
                         </div>
                         <p class="text-xs text-muted-foreground truncate">
-                          {item.url || item.source_ref || "Tool surface"}
+                          {item.url || item.source_ref || tr("ui.wallet.toolSurface")}
                         </p>
                       </div>
                     </div>
@@ -1233,7 +1226,7 @@
                         onclick={() => handleEditCredential(item)}
                         data-kx="control"
                         class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg p-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
-                        title="Edit"
+                        title={tr("ui.stacksId.edit")}
                       >
                         <svg
                           class="w-4 h-4"
@@ -1254,7 +1247,7 @@
                         disabled={deletingId === item.id}
                         data-kx="control"
                         class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg p-2 text-sm font-medium hover:text-destructive disabled:pointer-events-none disabled:opacity-50"
-                        title="Delete"
+                        title={tr("ui.settings.delete")}
                       >
                         <svg
                           class="w-4 h-4"
@@ -1276,7 +1269,7 @@
                   <div class="space-y-3 text-sm">
                     {#if item.username}
                       <div class="flex justify-between gap-3">
-                        <span class="text-muted-foreground">Account</span>
+                        <span class="text-muted-foreground">{tr("ui.settings.account")}</span>
                         <span class="text-foreground/80 truncate"
                           >{item.username}</span
                         >
@@ -1285,7 +1278,7 @@
 
                     {#if item.source_type}
                       <div class="flex justify-between gap-3">
-                        <span class="text-muted-foreground">Source</span>
+                        <span class="text-muted-foreground">{tr("ui.servicesApplicationId.source")}</span>
                         <span class="text-foreground/80 truncate"
                           >{item.source_type}</span
                         >
@@ -1297,7 +1290,7 @@
                         class="rounded-lg bg-muted/30 border border-border px-3 py-2"
                       >
                         <div class="text-muted-foreground mb-1 text-xs">
-                          Context
+                          {tr("ui.wallet.context")}
                         </div>
                         <div
                           class="text-foreground/80 whitespace-pre-wrap text-xs"
@@ -1310,7 +1303,7 @@
                     {#if hasRevealableSecret(item)}
                       <div>
                         <div class="flex justify-between gap-3 mb-1">
-                          <span class="text-muted-foreground">Secret</span>
+                          <span class="text-muted-foreground">{tr("ui.wallet.secret")}</span>
                           <div class="flex gap-1">
                             <button
                               onclick={() =>
@@ -1318,14 +1311,14 @@
                               class="text-muted-foreground hover:text-white text-xs"
                             >
                               {revealedPasswords.has(`item-${item.id}`)
-                                ? "Hide"
-                                : "Reveal"}
+                                ? tr("ui.wallet.hide")
+                                : tr("ui.wallet.reveal")}
                             </button>
                             <button
                               onclick={() => copyWalletItemSecret(item)}
                               class="text-muted-foreground hover:text-white text-xs"
                             >
-                              {copiedStates[`secret-${item.id}`] ? "✓" : "Copy"}
+                              {copiedStates[`secret-${item.id}`] ? "✓" : tr("ui.stacksCreatingCreationInstallCommand.copy")}
                             </button>
                           </div>
                         </div>
@@ -1364,8 +1357,8 @@
                           class="inline-flex flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
                         >
                           {quickSyncStates[item.id] === "syncing"
-                            ? "Syncing..."
-                            : "Quick-Sync"}
+                            ? tr("ui.wallet.syncing")
+                            : tr("ui.wallet.quickSync")}
                         </button>
                       {/if}
                     </div>
@@ -1382,10 +1375,9 @@
       <div class="mb-6">
         <div class="flex items-center justify-between gap-4 mb-3">
           <div>
-            <h2 class="text-xl font-semibold text-foreground">Access</h2>
+            <h2 class="text-xl font-semibold text-foreground">{tr("ui.stacksCreatingCreationLease.access")}</h2>
             <p class="text-sm text-muted-foreground mt-1">
-              Human users, admin identities, and system-owned login surfaces
-              live here as the operational access layer.
+              {tr("ui.wallet.humanUsersAdminIdentitiesAnd")}
             </p>
           </div>
           <div class="flex items-center gap-2">
@@ -1399,7 +1391,7 @@
               data-kx="control"
               class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
             >
-              + Add Access
+              {tr("ui.wallet.addAccess")}
             </button>
           </div>
         </div>
@@ -1409,7 +1401,7 @@
         <div class="mb-6">
           <div class="flex items-center gap-3 mb-3">
             <h3 class="text-lg font-semibold text-foreground">
-              Access Controls
+              {tr("ui.wallet.accessControls")}
             </h3>
             <span data-kx="tag">{accessEntryItems.length}</span>
           </div>
@@ -1429,13 +1421,13 @@
                         >
                           {item.name}
                         </h3>
-                        <span data-kx="tag" class="text-xs">Access</span>
+                        <span data-kx="tag" class="text-xs">{tr("ui.stacksCreatingCreationLease.access")}</span>
                       </div>
                       <p class="text-xs text-muted-foreground">
                         {item.username ||
                           item.url ||
                           item.source_ref ||
-                          "Access control"}
+                          tr("ui.wallet.accessControl")}
                       </p>
                     </div>
                     <div class="flex gap-1 shrink-0">
@@ -1443,7 +1435,7 @@
                         onclick={() => handleEditCredential(item)}
                         data-kx="control"
                         class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg p-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
-                        title="Edit"
+                        title={tr("ui.stacksId.edit")}
                       >
                         <svg
                           class="w-4 h-4"
@@ -1464,7 +1456,7 @@
                         disabled={deletingId === item.id}
                         data-kx="control"
                         class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg p-2 text-sm font-medium hover:text-destructive disabled:pointer-events-none disabled:opacity-50"
-                        title="Delete"
+                        title={tr("ui.settings.delete")}
                       >
                         <svg
                           class="w-4 h-4"
@@ -1486,7 +1478,7 @@
                   <div class="space-y-3 text-sm">
                     {#if item.url}
                       <div class="flex justify-between gap-3">
-                        <span class="text-muted-foreground">Surface</span>
+                        <span class="text-muted-foreground">{tr("ui.settings.surface")}</span>
                         <a
                           href={item.url}
                           target="_blank"
@@ -1499,7 +1491,7 @@
 
                     {#if item.source_type}
                       <div class="flex justify-between gap-3">
-                        <span class="text-muted-foreground">Source</span>
+                        <span class="text-muted-foreground">{tr("ui.servicesApplicationId.source")}</span>
                         <span class="text-foreground/80 truncate"
                           >{item.source_type}</span
                         >
@@ -1511,7 +1503,7 @@
                         class="rounded-lg bg-muted/30 border border-border px-3 py-2"
                       >
                         <div class="text-muted-foreground mb-1 text-xs">
-                          Notes
+                          {tr("ui.credentialForm.notes")}
                         </div>
                         <div
                           class="text-foreground/80 whitespace-pre-wrap text-xs"
@@ -1524,7 +1516,7 @@
                     {#if hasRevealableSecret(item)}
                       <div>
                         <div class="flex justify-between gap-3 mb-1">
-                          <span class="text-muted-foreground">Secret</span>
+                          <span class="text-muted-foreground">{tr("ui.wallet.secret")}</span>
                           <div class="flex gap-1">
                             <button
                               onclick={() =>
@@ -1532,14 +1524,14 @@
                               class="text-muted-foreground hover:text-white text-xs"
                             >
                               {revealedPasswords.has(`item-${item.id}`)
-                                ? "Hide"
-                                : "Reveal"}
+                                ? tr("ui.wallet.hide")
+                                : tr("ui.wallet.reveal")}
                             </button>
                             <button
                               onclick={() => copyWalletItemSecret(item)}
                               class="text-muted-foreground hover:text-white text-xs"
                             >
-                              {copiedStates[`secret-${item.id}`] ? "✓" : "Copy"}
+                              {copiedStates[`secret-${item.id}`] ? "✓" : tr("ui.stacksCreatingCreationInstallCommand.copy")}
                             </button>
                           </div>
                         </div>
@@ -1581,7 +1573,7 @@
       {#if userAccountItems.length > 0}
         <div class="mb-6">
           <div class="flex items-center gap-3 mb-3">
-            <h3 class="text-lg font-semibold text-foreground">Managed Users</h3>
+            <h3 class="text-lg font-semibold text-foreground">{tr("ui.wallet.managedUsers")}</h3>
             <span data-kx="tag">{userAccountItems.length}</span>
           </div>
 
@@ -1603,7 +1595,7 @@
                         {item.username ||
                           item.url ||
                           item.source_ref ||
-                          "Managed user"}
+                          tr("ui.wallet.managedUser")}
                       </p>
                     </div>
                     <div class="flex gap-1 shrink-0">
@@ -1611,7 +1603,7 @@
                         onclick={() => handleEditCredential(item)}
                         data-kx="control"
                         class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg p-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
-                        title="Edit"
+                        title={tr("ui.stacksId.edit")}
                       >
                         <svg
                           class="w-4 h-4"
@@ -1632,7 +1624,7 @@
                         disabled={deletingId === item.id}
                         data-kx="control"
                         class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg p-2 text-sm font-medium hover:text-destructive disabled:pointer-events-none disabled:opacity-50"
-                        title="Delete"
+                        title={tr("ui.settings.delete")}
                       >
                         <svg
                           class="w-4 h-4"
@@ -1654,7 +1646,7 @@
                   <div class="space-y-3 text-sm">
                     {#if item.username}
                       <div class="flex justify-between gap-3">
-                        <span class="text-muted-foreground">Identity</span>
+                        <span class="text-muted-foreground">{tr("ui.wallet.identity")}</span>
                         <span class="text-foreground/80 truncate"
                           >{item.username}</span
                         >
@@ -1663,7 +1655,7 @@
 
                     {#if item.url}
                       <div class="flex justify-between gap-3">
-                        <span class="text-muted-foreground">Manage</span>
+                        <span class="text-muted-foreground">{tr("ui.wallet.manage")}</span>
                         <a
                           href={item.url}
                           target="_blank"
@@ -1679,7 +1671,7 @@
                         class="rounded-lg bg-muted/30 border border-border px-3 py-2"
                       >
                         <div class="text-muted-foreground mb-1 text-xs">
-                          Notes
+                          {tr("ui.credentialForm.notes")}
                         </div>
                         <div
                           class="text-foreground/80 whitespace-pre-wrap text-xs"
@@ -1692,7 +1684,7 @@
                     {#if hasRevealableSecret(item)}
                       <div>
                         <div class="flex justify-between gap-3 mb-1">
-                          <span class="text-muted-foreground">Secret</span>
+                          <span class="text-muted-foreground">{tr("ui.wallet.secret")}</span>
                           <div class="flex gap-1">
                             <button
                               onclick={() =>
@@ -1700,14 +1692,14 @@
                               class="text-muted-foreground hover:text-white text-xs"
                             >
                               {revealedPasswords.has(`item-${item.id}`)
-                                ? "Hide"
-                                : "Reveal"}
+                                ? tr("ui.wallet.hide")
+                                : tr("ui.wallet.reveal")}
                             </button>
                             <button
                               onclick={() => copyWalletItemSecret(item)}
                               class="text-muted-foreground hover:text-white text-xs"
                             >
-                              {copiedStates[`secret-${item.id}`] ? "✓" : "Copy"}
+                              {copiedStates[`secret-${item.id}`] ? "✓" : tr("ui.stacksCreatingCreationInstallCommand.copy")}
                             </button>
                           </div>
                         </div>
@@ -1737,7 +1729,7 @@
       <!-- System Users Section -->
       <div class="mb-6">
         <div class="flex items-center gap-3 mb-3">
-          <h3 class="text-lg font-semibold text-foreground">System Users</h3>
+          <h3 class="text-lg font-semibold text-foreground">{tr("ui.wallet.systemUsers")}</h3>
           <span data-kx="tag">{systemUsers.length}</span>
         </div>
 
@@ -1777,7 +1769,7 @@
                       >
                     </div>
                   </div>
-                  <span data-kx="tag" class="text-xs shrink-0">Auto</span>
+                  <span data-kx="tag" class="text-xs shrink-0">{tr("ui.wallet.auto")}</span>
                 </div>
 
                 <!-- Compact credentials -->
@@ -1785,7 +1777,7 @@
                   <div
                     class="flex items-center justify-between gap-2 rounded bg-muted/50 px-2 py-1.5"
                   >
-                    <span class="text-muted-foreground">User</span>
+                    <span class="text-muted-foreground">{tr("ui.wallet.user")}</span>
                     <div class="flex items-center gap-1.5">
                       <code class="text-primary truncate max-w-32"
                         >{user.email}</code
@@ -1794,7 +1786,7 @@
                         onclick={() =>
                           copyToClipboard(user.email, `email-${user.id}`)}
                         class="text-muted-foreground hover:text-foreground"
-                        aria-label={`Copy ${user.role} email`}
+                        aria-label={tr("ui.wallet.copyRoleEmail", { role: user.role })}
                       >
                         <Copy class="h-3.5 w-3.5" />
                       </button>
@@ -1803,7 +1795,7 @@
                   <div
                     class="flex items-center justify-between gap-2 rounded bg-muted/50 px-2 py-1.5"
                   >
-                    <span class="text-muted-foreground">Secret</span>
+                    <span class="text-muted-foreground">{tr("ui.wallet.secret")}</span>
                     <div class="flex items-center gap-1.5">
                       {#if systemUserHasPassword(user)}
                         <code class="text-primary font-mono truncate max-w-20">
@@ -1815,8 +1807,8 @@
                           onclick={() => togglePasswordVisibility(user.id)}
                           class="text-muted-foreground hover:text-foreground"
                           aria-label={revealedPasswords.has(user.id)
-                            ? `Hide ${user.role} secret`
-                            : `Reveal ${user.role} secret`}
+                            ? tr("ui.wallet.hideRoleSecret", { role: user.role })
+                            : tr("ui.wallet.revealRoleSecret", { role: user.role })}
                         >
                           {#if revealedPasswords.has(user.id)}
                             <EyeOff class="h-3.5 w-3.5" />
@@ -1827,19 +1819,19 @@
                         <button
                           onclick={() => copySystemUserPassword(user)}
                           class="text-muted-foreground hover:text-foreground"
-                          aria-label={`Copy ${user.role} secret`}
+                          aria-label={tr("ui.wallet.copyRoleSecret", { role: user.role })}
                         >
                           <Copy class="h-3.5 w-3.5" />
                         </button>
                       {:else}
-                        <span class="text-muted-foreground italic">Not set</span
+                        <span class="text-muted-foreground italic">{tr("ui.wallet.notSet")}</span
                         >
                         <button
                           onclick={() => handleResetSystemPassword(user.id)}
                           class="text-primary"
                           disabled={systemResetting[user.id]}
                         >
-                          {systemResetting[user.id] ? "..." : "Reset"}
+                          {systemResetting[user.id] ? "..." : tr("ui.wallet.reset")}
                         </button>
                       {/if}
                     </div>
@@ -1856,10 +1848,9 @@
       <div class="mb-6">
         <div class="flex items-center justify-between gap-4 mb-3">
           <div>
-            <h2 class="text-xl font-semibold text-foreground">Recovery</h2>
+            <h2 class="text-xl font-semibold text-foreground">{tr("ui.stacksCreatingCreationCompletion.recovery")}</h2>
             <p class="text-sm text-muted-foreground mt-1">
-              Break-glass material, credentials, and reveal-only secrets stay in
-              the recovery zone.
+              {tr("ui.wallet.breakGlassMaterialCredentialsAnd")}
             </p>
           </div>
           <span data-kx="tag">{vaultItems.length}</span>
@@ -1879,11 +1870,11 @@
           class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4"
         >
           <div class="flex items-center gap-3">
-            <h2 class="text-xl font-semibold text-white">Recovery Items</h2>
+            <h2 class="text-xl font-semibold text-white">{tr("ui.wallet.recoveryItems")}</h2>
             <span
               class="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border"
             >
-              {vaultItems.length} stored
+              {tr("ui.wallet.storedCount", { count: vaultItems.length })}
             </span>
           </div>
 
@@ -1893,7 +1884,7 @@
               <input
                 type="text"
                 bind:value={searchQuery}
-                placeholder="Search credentials..."
+                placeholder={tr("ui.wallet.searchCredentials")}
                 data-search-input
                 class="w-64 px-4 py-2 pl-10 bg-input border border-border rounded-lg text-foreground placeholder-muted-foreground focus:border-primary focus:outline-none text-sm"
               />
@@ -1904,7 +1895,7 @@
                 <button
                   onclick={() => (searchQuery = "")}
                   class="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-white"
-                  aria-label="Clear wallet search"
+                  aria-label={tr("ui.wallet.clearWalletSearch")}
                 >
                   <X class="h-4 w-4" />
                 </button>
@@ -1915,13 +1906,13 @@
               bind:value={filterType}
               class="px-4 py-2 bg-input border border-border rounded-lg text-foreground text-sm focus:border-primary focus:outline-none"
             >
-              <option value="all">All Types</option>
-              <option value="password">Passwords</option>
-              <option value="api_key">API Keys</option>
-              <option value="ssh_key">SSH Keys</option>
-              <option value="oauth_token">OAuth Tokens</option>
-              <option value="certificate">Certificates</option>
-              <option value="other">Other</option>
+              <option value="all">{tr("ui.wallet.allTypes")}</option>
+              <option value="password">{tr("ui.wallet.passwords")}</option>
+              <option value="api_key">{tr("ui.wallet.apiKeys")}</option>
+              <option value="ssh_key">{tr("ui.wallet.sshKeys")}</option>
+              <option value="oauth_token">{tr("ui.wallet.oauthTokens")}</option>
+              <option value="certificate">{tr("ui.wallet.certificates")}</option>
+              <option value="other">{tr("ui.wallet.other")}</option>
             </select>
           </div>
         </div>
@@ -1934,9 +1925,9 @@
                 onclick={() => (showServiceDiscovery = true)}
                 data-kx="control"
                 class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
-                title="Discover service credentials"
+                title={tr("ui.wallet.discoverServiceCredentials")}
               >
-                Discover
+                {tr("ui.wallet.discover")}
               </button>
             {/snippet}
           </FeatureGate>
@@ -1945,14 +1936,14 @@
             data-kx="control"
             class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
           >
-            Generate SSH Key
+            {tr("ui.wallet.generateSshKey")}
           </button>
           <button
             onclick={openImportExportModal}
             data-kx="control"
             class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
           >
-            Import / Export
+            {tr("ui.wallet.importExport")}
           </button>
           <button
             onclick={() => openAddForm("recovery")}
@@ -1960,7 +1951,7 @@
             data-variant="primary"
             class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
           >
-            + Recovery
+            {tr("ui.wallet.recovery")}
           </button>
         </div>
       </div>
@@ -1986,11 +1977,10 @@
               </svg>
             </div>
             <p class="text-foreground font-medium mb-2">
-              No recovery items yet
+              {tr("ui.wallet.noRecoveryItemsYet")}
             </p>
             <p class="text-sm text-muted-foreground mb-4">
-              Add break-glass credentials, fallback material, or reveal-only
-              secrets here.
+              {tr("ui.wallet.addBreakGlassCredentialsFallback")}
             </p>
             <div class="flex flex-wrap items-center justify-center gap-2">
               <button
@@ -1999,7 +1989,7 @@
                 data-variant="primary"
                 class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
               >
-                + Recovery
+                {tr("ui.wallet.recovery")}
               </button>
             </div>
           </div>
@@ -2025,10 +2015,10 @@
               </svg>
             </div>
             <p class="text-foreground font-medium mb-2">
-              No matching recovery items
+              {tr("ui.wallet.noMatchingRecoveryItems")}
             </p>
             <p class="text-sm text-muted-foreground mb-4">
-              Try adjusting your search query or filter for reveal-only entries.
+              {tr("ui.wallet.tryAdjustingYourSearchQuery")}
             </p>
             <button
               onclick={() => {
@@ -2038,7 +2028,7 @@
               data-kx="control"
               class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
             >
-              Clear Filters
+              {tr("ui.wallet.clearFilters")}
             </button>
           </div>
         </div>
@@ -2046,11 +2036,10 @@
         <div data-kx="plate">
           <div class="px-6 py-8 text-center">
             <p class="text-foreground font-medium mb-2">
-              No recovery items in this view
+              {tr("ui.wallet.noRecoveryItemsInThis")}
             </p>
             <p class="text-sm text-muted-foreground mb-4">
-              Break-glass material, reveal-only credentials, and fallback
-              secrets will appear here.
+              {tr("ui.wallet.breakGlassMaterialRevealOnly")}
             </p>
           </div>
         </div>
@@ -2094,11 +2083,11 @@
                                 : "off"}
                           >
                             {#if days <= 0}
-                              Expired
+                              {tr("ui.wallet.expired")}
                             {:else if days <= 7}
-                              {days}d left
+                              {tr("ui.wallet.daysLeft", { days })}
                             {:else if days <= 30}
-                              {days}d
+                              {tr("ui.wallet.daysShort", { days })}
                             {/if}
                           </span>
                         {/if}
@@ -2113,7 +2102,7 @@
                       onclick={() => handleEditCredential(item)}
                       data-kx="control"
                       class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg p-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
-                      title="Edit"
+                      title={tr("ui.stacksId.edit")}
                     >
                       <svg
                         class="w-4 h-4"
@@ -2134,7 +2123,7 @@
                       disabled={deletingId === item.id}
                       data-kx="control"
                       class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg p-2 text-sm font-medium hover:text-destructive disabled:pointer-events-none disabled:opacity-50"
-                      title="Delete"
+                      title={tr("ui.settings.delete")}
                     >
                       {#if deletingId === item.id}
                         <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24">
@@ -2175,7 +2164,7 @@
                 <div class="space-y-3 text-sm">
                   {#if item.username}
                     <div class="flex justify-between gap-3">
-                      <span class="text-muted-foreground">Username</span>
+                      <span class="text-muted-foreground">{tr("ui.stacksId.username")}</span>
                       <div class="flex items-center gap-1">
                         <span class="text-foreground/80 truncate"
                           >{item.username}</span
@@ -2188,7 +2177,7 @@
                             )}
                           class="text-muted-foreground hover:text-white text-xs"
                         >
-                          {copiedStates[`user-${item.id}`] ? "✓" : "Copy"}
+                          {copiedStates[`user-${item.id}`] ? "✓" : tr("ui.stacksCreatingCreationInstallCommand.copy")}
                         </button>
                       </div>
                     </div>
@@ -2196,7 +2185,7 @@
 
                   {#if item.url}
                     <div class="flex justify-between gap-3">
-                      <span class="text-muted-foreground">URL</span>
+                      <span class="text-muted-foreground">{tr("ui.services.url")}</span>
                       <a
                         href={item.url}
                         target="_blank"
@@ -2209,7 +2198,7 @@
 
                   <div>
                     <div class="flex justify-between gap-3 mb-1">
-                      <span class="text-muted-foreground">Secret</span>
+                      <span class="text-muted-foreground">{tr("ui.wallet.secret")}</span>
                       <div class="flex gap-1">
                         {#if item.has_secret || item.secret}
                           <button
@@ -2218,14 +2207,14 @@
                             class="text-muted-foreground hover:text-white text-xs"
                           >
                             {revealedPasswords.has(`item-${item.id}`)
-                              ? "Hide"
-                              : "Show"}
+                              ? tr("ui.wallet.hide")
+                              : tr("ui.wallet.show")}
                           </button>
                           <button
                             onclick={() => copyWalletItemSecret(item)}
                             class="text-muted-foreground hover:text-white text-xs"
                           >
-                            {copiedStates[`secret-${item.id}`] ? "✓" : "Copy"}
+                            {copiedStates[`secret-${item.id}`] ? "✓" : tr("ui.stacksCreatingCreationInstallCommand.copy")}
                           </button>
                         {/if}
                       </div>
@@ -2247,9 +2236,9 @@
 
                   {#if item.expires_at}
                     <div class="flex justify-between gap-3">
-                      <span class="text-muted-foreground">Expires</span>
+                      <span class="text-muted-foreground">{tr("ui.wallet.expires")}</span>
                       <span class="text-foreground/80">
-                        {new Date(item.expires_at).toLocaleDateString()}
+                        {formatDate(item.expires_at)}
                       </span>
                     </div>
                   {/if}
@@ -2257,7 +2246,7 @@
                   {#if item.notes}
                     <div class="pt-3 border-t border-border">
                       <div class="text-muted-foreground mb-1 text-xs">
-                        Notes
+                        {tr("ui.credentialForm.notes")}
                       </div>
                       <div
                         class="text-foreground/80 whitespace-pre-wrap text-xs"
@@ -2281,7 +2270,7 @@
                           : quickSyncStates[item.id] === 'error'
                             ? 'text-destructive'
                             : ''}"
-                        title="Save to external password manager (1Password, Bitwarden, etc.)"
+                        title={tr("ui.wallet.saveToExternalPasswordManager")}
                       >
                         {#if quickSyncStates[item.id] === "syncing"}
                           <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24">
@@ -2300,7 +2289,7 @@
                               d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
                             ></path>
                           </svg>
-                          <span>Triggering...</span>
+                          <span>{tr("ui.wallet.triggering")}</span>
                         {:else if quickSyncStates[item.id] === "success"}
                           <svg
                             class="w-4 h-4"
@@ -2315,7 +2304,7 @@
                               d="M5 13l4 4L19 7"
                             ></path>
                           </svg>
-                          <span>Extension Triggered!</span>
+                          <span>{tr("ui.wallet.extensionTriggered")}</span>
                         {:else if quickSyncStates[item.id] === "error"}
                           <svg
                             class="w-4 h-4"
@@ -2330,7 +2319,7 @@
                               d="M6 18L18 6M6 6l12 12"
                             ></path>
                           </svg>
-                          <span>Failed</span>
+                          <span>{tr("ui.stacksCreatingCreationRunStatus.failed")}</span>
                         {:else}
                           <svg
                             class="w-4 h-4"
@@ -2345,7 +2334,7 @@
                               d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"
                             ></path>
                           </svg>
-                          <span>Quick-Sync to Password Manager</span>
+                          <span>{tr("ui.wallet.quickSyncToPasswordManager")}</span>
                         {/if}
                       </button>
                       {#if quickSyncToasts[item.id]}
@@ -2365,7 +2354,7 @@
 
                 {#if item.auto_generated}
                   <div class="mt-3 pt-3 border-t border-border">
-                    <span data-kx="tag">Auto-generated</span>
+                    <span data-kx="tag">{tr("ui.wallet.autoGenerated")}</span>
                   </div>
                 {/if}
               </div>

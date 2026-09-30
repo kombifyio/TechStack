@@ -21,7 +21,26 @@ import (
 var (
 	ErrCommandNotPending = errors.New("agent control command is not pending")
 	ErrResultRejected    = errors.New("agent control result was rejected")
+	// ErrCommandCancelledBeforeDispatch reports a durable command whose sender
+	// gave up before any agent received it: nothing ran on the host.
+	ErrCommandCancelledBeforeDispatch = errors.New("agent control command was cancelled before an agent received it")
 )
+
+// cancelledBeforeDispatchPrefix marks the stored error of a command failed
+// while still queued, so a re-attaching reader can tell it from a real
+// failure.
+const cancelledBeforeDispatchPrefix = "cancelled_before_dispatch: "
+
+// MissingCapabilityError refuses a command to an agent that does not
+// advertise a capability the command requires.
+type MissingCapabilityError struct {
+	AgentID    string
+	Capability string
+}
+
+func (e *MissingCapabilityError) Error() string {
+	return fmt.Sprintf("agent %q does not advertise %s", e.AgentID, e.Capability)
+}
 
 type pendingCommand struct {
 	agentID    string
@@ -145,7 +164,7 @@ func (h *Hub) pollInMemory(ctx context.Context, agentID string, capabilities []s
 				if !containsCapability(capabilities, capability) {
 					entry.dispatched = true
 					h.mu.Unlock()
-					err := fmt.Errorf("agent %q does not advertise %s", agentID, capability)
+					err := &MissingCapabilityError{AgentID: agentID, Capability: capability}
 					entry.outcome <- commandOutcome{err: err}
 					return nil, false, err
 				}
@@ -268,20 +287,55 @@ func (h *Hub) sendDurable(ctx context.Context, tenantID, agentID string, command
 		return nil, err
 	}
 
-	ticker := time.NewTicker(200 * time.Millisecond)
-	defer ticker.Stop()
+	outcome, err := h.awaitDurable(ctx, tenantID, command.GetCommandId())
+	if err != nil && ctx.Err() != nil {
+		// Only a command no agent has received yet is withdrawn. A dispatched
+		// command keeps running on the host; its durable outcome stays readable
+		// through AwaitStackKitCommandForTenant, so a restarted caller
+		// re-attaches instead of reporting a false failure.
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = h.withdrawQueued(cleanupCtx, tenantID, command.GetCommandId(), ctx.Err().Error())
+		cancel()
+		return nil, ctx.Err()
+	}
+	return outcome, err
+}
+
+// AwaitStackKitCommandForTenant waits for the durable outcome of a command
+// sent earlier, by this or another process, without sending anything.
+func (h *Hub) AwaitStackKitCommandForTenant(ctx context.Context, tenantID, commandID string) (*agentpb.StackKitResult, error) {
+	if h == nil || h.db == nil {
+		return nil, fmt.Errorf("typed HTTPS StackKits re-attach requires the durable command store")
+	}
+	tenantID, commandID = strings.TrimSpace(tenantID), strings.TrimSpace(commandID)
+	if tenantID == "" || commandID == "" {
+		return nil, fmt.Errorf("typed HTTPS StackKits re-attach requires tenant and command ids")
+	}
+	return h.awaitDurable(ctx, tenantID, commandID)
+}
+
+// awaitDurable polls the command's outcome, fast at first and every two
+// seconds once the command has run for five minutes.
+func (h *Hub) awaitDurable(ctx context.Context, tenantID, commandID string) (*agentpb.StackKitResult, error) {
+	started := time.Now()
 	for {
-		result, done, err := h.readDurableOutcome(ctx, tenantID, command.GetCommandId())
+		result, done, err := h.readDurableOutcome(ctx, tenantID, commandID)
 		if err != nil || done {
 			return result, err
 		}
+		interval := 200 * time.Millisecond
+		switch elapsed := time.Since(started); {
+		case elapsed > 5*time.Minute:
+			interval = 2 * time.Second
+		case elapsed > 30*time.Second:
+			interval = time.Second
+		}
+		timer := time.NewTimer(interval)
 		select {
 		case <-ctx.Done():
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			_ = h.failDurable(cleanupCtx, tenantID, command.GetCommandId(), ctx.Err().Error())
-			cancel()
+			timer.Stop()
 			return nil, ctx.Err()
-		case <-ticker.C:
+		case <-timer.C:
 		}
 	}
 }
@@ -430,21 +484,102 @@ func (h *Hub) readDurableOutcome(ctx context.Context, tenantID, commandID string
 		}
 		return result, true, nil
 	case "failed":
+		if strings.HasPrefix(commandError.String, cancelledBeforeDispatchPrefix) {
+			return nil, true, fmt.Errorf("%w: %s", ErrCommandCancelledBeforeDispatch, strings.TrimPrefix(commandError.String, cancelledBeforeDispatchPrefix))
+		}
 		return nil, true, errors.New(commandError.String)
 	default:
 		return nil, false, nil
 	}
 }
 
-func (h *Hub) failDurable(ctx context.Context, tenantID, commandID, message string) error {
+// CommandWithdrawal reports what withdrawing a command found.
+type CommandWithdrawal struct {
+	// Withdrawn is true when the command was still queued and will now never
+	// reach an agent.
+	Withdrawn bool
+	// InFlight is true when an agent received the command and no outcome is
+	// recorded yet: it may still run on the host.
+	InFlight bool
+}
+
+// WithdrawQueuedStackKitCommandForTenant fails a command that no agent has
+// received yet, so a caller that gives up on it (for example an expired
+// maintenance job releasing its node) cannot have it run later. A command
+// that already reached an agent is reported, never altered.
+func (h *Hub) WithdrawQueuedStackKitCommandForTenant(ctx context.Context, tenantID, commandID string) (CommandWithdrawal, error) {
+	if h == nil {
+		return CommandWithdrawal{}, fmt.Errorf("typed HTTPS StackKits command path is not initialized")
+	}
+	tenantID, commandID = strings.TrimSpace(tenantID), strings.TrimSpace(commandID)
+	if commandID == "" {
+		return CommandWithdrawal{}, fmt.Errorf("typed HTTPS StackKits withdrawal requires a command id")
+	}
+	if h.db == nil {
+		return h.withdrawInMemory(commandID), nil
+	}
+	if tenantID == "" {
+		return CommandWithdrawal{}, fmt.Errorf("typed HTTPS StackKits withdrawal requires a tenant id")
+	}
+	tx, err := h.tenantTx(ctx, tenantID)
+	if err != nil {
+		return CommandWithdrawal{}, err
+	}
+	defer tx.Rollback()
+	var state string
+	err = tx.QueryRowContext(ctx, `
+		UPDATE typed_agent_commands SET state = 'failed', error = $3, completed_at = now()
+		WHERE tenant_id = $1 AND command_id = $2 AND state = 'queued'
+		RETURNING state
+	`, tenantID, commandID, cancelledBeforeDispatchPrefix+"withdrawn by its caller").Scan(&state)
+	if err == nil {
+		return CommandWithdrawal{Withdrawn: true}, tx.Commit()
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return CommandWithdrawal{}, err
+	}
+	err = tx.QueryRowContext(ctx, `SELECT state FROM typed_agent_commands WHERE tenant_id = $1 AND command_id = $2`, tenantID, commandID).Scan(&state)
+	if errors.Is(err, sql.ErrNoRows) {
+		return CommandWithdrawal{}, nil
+	}
+	if err != nil {
+		return CommandWithdrawal{}, err
+	}
+	return CommandWithdrawal{InFlight: state == "dispatched"}, nil
+}
+
+func (h *Hub) withdrawInMemory(commandID string) CommandWithdrawal {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for agentID, entries := range h.pending {
+		for index, entry := range entries {
+			if entry.command.GetCommandId() != commandID {
+				continue
+			}
+			if entry.dispatched {
+				return CommandWithdrawal{InFlight: true}
+			}
+			h.pending[agentID] = append(entries[:index], entries[index+1:]...)
+			if len(h.pending[agentID]) == 0 {
+				delete(h.pending, agentID)
+			}
+			entry.outcome <- commandOutcome{err: fmt.Errorf("%w: withdrawn by its caller", ErrCommandCancelledBeforeDispatch)}
+			return CommandWithdrawal{Withdrawn: true}
+		}
+	}
+	return CommandWithdrawal{}
+}
+
+// withdrawQueued fails a command that no agent has received yet.
+func (h *Hub) withdrawQueued(ctx context.Context, tenantID, commandID, message string) error {
 	tx, err := h.tenantTx(ctx, tenantID)
 	if err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE typed_agent_commands SET state = 'failed', error = $2, completed_at = now()
-		WHERE command_id = $1 AND state IN ('queued', 'dispatched')
-	`, commandID, message); err != nil {
+		WHERE command_id = $1 AND state = 'queued'
+	`, commandID, cancelledBeforeDispatchPrefix+message); err != nil {
 		_ = tx.Rollback()
 		return err
 	}

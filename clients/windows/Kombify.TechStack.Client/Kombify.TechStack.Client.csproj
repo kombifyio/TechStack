@@ -7,14 +7,32 @@
     <RootNamespace>Kombify.TechStack.Client</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\kombify-navy.ico</ApplicationIcon>
+    <DesktopEdition Condition="'$(DesktopEdition)' == ''">Local</DesktopEdition>
+    <DefineConstants Condition="'$(DesktopEdition)' == 'Cloud'">$(DefineConstants);CLOUD_DESKTOP</DefineConstants>
   </PropertyGroup>
+
+  <Target Name="ValidateDesktopEdition" BeforeTargets="BeforeBuild">
+    <Error Condition="'$(DesktopEdition)' != 'Local' and '$(DesktopEdition)' != 'Cloud'" Text="DesktopEdition must be Local or Cloud." />
+  </Target>
 
   <ItemGroup>
     <InternalsVisibleTo Include="Kombify.TechStack.Client.ContractTests" />
+    <Compile Remove="obj\**\*.cs" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Kombify.Client.Shell\Kombify.Client.Shell.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(DesktopEdition)' == 'Local'">
+    <Compile Remove="ConnectEnrollment.cs" />
+    <Compile Remove="CloudProductLogin.cs" />
+    <Compile Remove="CloudLoginText.cs" />
+    <EmbeddedResource Remove="CloudLoginMessages*.resx" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(DesktopEdition)' == 'Cloud'">
+    <ProjectReference Include="..\Kombify.Client.Cloud\Kombify.Client.Cloud.csproj" />
   </ItemGroup>
 
   <ItemGroup>

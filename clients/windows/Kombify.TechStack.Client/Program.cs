@@ -24,6 +24,14 @@ internal static class Program
             return;
         }
         ApplicationConfiguration.Initialize();
+#if CLOUD_DESKTOP
+        if (args.Contains("--connect-enroll", StringComparer.Ordinal))
+        {
+            MessageBox.Show(CloudLoginText.Get("ConnectSignInRequired"), "kombify Connect",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+#endif
         Application.Run(new ClientWindow(config));
     }
 }
@@ -32,8 +40,14 @@ internal sealed record ClientConfig
 {
     private const string LegacyLocalOnboardingUrl = "http://127.0.0.1:5260/client/onboarding?client=windows";
     private const string DefaultLocalOnboardingUrl = "http://127.0.0.1:5260/client/local?client=windows";
+    private static readonly ClientStatePaths StatePaths = new("techstack", DesktopEdition.Name, DesktopEdition.Channel,
+        existingDefaultDirectory: DesktopEdition.IsLocal ? Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "kombify", "techstack-client") : null,
+        legacyOverridePrefixes: DesktopEdition.IsLocal
+            ? ["techstack-client-contract-", "techstack-client-startup-", "techstack-client-smoke-"] : null);
 
-    public string Mode { get; init; } = "local";
+    public string Mode { get; init; } = DesktopEdition.Name;
+#if CLOUD_DESKTOP
     public string CloudUrl { get; init; } = "https://kombify.io/device";
     public string CloudDeviceUrl { get; init; } = "https://kombify.io/device";
     public string CloudUiUrl { get; init; } = "https://techstack.kombify.io/login?manual=1&client=windows";
@@ -42,6 +56,7 @@ internal sealed record ClientConfig
     public string CloudDevicePollEndpoint { get; init; } =
         "https://app.kombify.io/api/v1/tools/auth/device-code/poll";
     public string ToolName { get; init; } = "stack";
+#endif
     public string LocalUiUrl { get; init; } = "http://127.0.0.1:5260/";
     public string LocalOnboardingUrl { get; init; } = DefaultLocalOnboardingUrl;
     public string ServerUrl { get; init; } = "";
@@ -52,11 +67,21 @@ internal sealed record ClientConfig
     // Signed update channel (NATIVE-CLIENT-PLATFORM-STANDARD section 7). The
     // manifest location may change; the trusted signing key is embedded in
     // techstack.exe and cannot be configured. AutoUpdate=false opts out.
-    public string UpdateManifestUrl { get; init; } =
-        "https://github.com/kombifyio/TechStack/releases/latest/download/kombify-techstack-windows-update.json";
-    public string UpdateChannel { get; init; } = "stable";
+    public string UpdateManifestUrl { get; init; } = DesktopEdition.IsLocal
+        ? "https://github.com/kombifyio/TechStack/releases/latest/download/kombify-techstack-windows-update.json"
+        : "";
+    public string UpdateChannel { get; init; } = DesktopEdition.Channel;
     public string UpdateMinSupportedVersion { get; init; } = "";
-    public bool AutoUpdate { get; init; } = true;
+    public bool AutoUpdate { get; init; } = DesktopEdition.IsLocal;
+#if CLOUD_DESKTOP
+    // kombify Connect installation enrollment (CONNECT-CONTRACT-STANDARD section 5).
+    // ConnectAuth0ClientId is the public Auth0 native application
+    // "kombify Techstack Windows" (PKCE, loopback /oauth/callback on 63690-63694).
+    public string ConnectOrigin { get; init; } = "https://connect.kombify.io/";
+    public string ConnectAuth0Issuer { get; init; } = "https://login.kombify.io/";
+    public string ConnectAuth0ClientId { get; init; } = "D8srdyeDyzxIpuqRYo4lwmEDaUKFE3X8";
+    public string ConnectAuth0Audience { get; init; } = "https://api.kombify.io";
+#endif
 
     public static ClientConfig Load(string[] args)
     {
@@ -68,6 +93,10 @@ internal sealed record ClientConfig
 
         for (var i = 0; i < args.Length; i++)
         {
+#if !CLOUD_DESKTOP
+            if (args[i] is "--cloud-ui-url" or "--connect-enroll")
+                throw new InvalidOperationException("The Local installer does not contain kombify Cloud or Connect enrollment.");
+#endif
             if (args[i] == "--url" && i + 1 < args.Length)
             {
                 config = config with { Mode = "server", ServerUrl = args[++i] };
@@ -80,11 +109,13 @@ internal sealed record ClientConfig
                 continue;
             }
 
+#if CLOUD_DESKTOP
             if (args[i] == "--cloud-ui-url" && i + 1 < args.Length)
             {
                 config = config with { Mode = "cloud", CloudUiUrl = args[++i] };
                 continue;
             }
+#endif
 
             if (args[i] == "--local-ui-url" && i + 1 < args.Length)
             {
@@ -123,6 +154,15 @@ internal sealed record ClientConfig
             }
         }
 
+        if (DesktopEdition.IsLocal && config.Mode.Equals("cloud", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("The Local installer cannot connect to kombify Cloud.");
+        if (!DesktopEdition.IsLocal && !config.Mode.Equals("cloud", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("The Cloud installer cannot select a self-hosted product authority.");
+        if (config.Mode is not ("local" or "server" or "cloud"))
+            throw new InvalidOperationException("The requested desktop connection mode is unsupported.");
+        if (!config.UpdateChannel.Equals(DesktopEdition.Channel, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("The update channel does not match this desktop installer.");
+        ClientAuthority.Validate(config);
         return config;
     }
 
@@ -133,6 +173,7 @@ internal sealed record ClientConfig
             return ServerUrl;
         }
 
+#if CLOUD_DESKTOP
         if (Mode.Equals("cloud", StringComparison.OrdinalIgnoreCase) && IsHttp(CloudUiUrl))
         {
             return CloudUiUrl;
@@ -142,8 +183,17 @@ internal sealed record ClientConfig
         {
             return CloudUrl;
         }
+#endif
 
         return IsHttp(LocalOnboardingUrl) ? LocalOnboardingUrl : LocalUiUrl;
+    }
+
+    public static void ValidateProfileAuthority(ClientConnectionProfile profile)
+    {
+        if (DesktopEdition.IsLocal && profile.DeploymentMode == "cloud")
+            throw new ClientProfileException("The Local installer cannot bind to a Cloud data authority.");
+        if (!DesktopEdition.IsLocal && profile.DeploymentMode != "cloud")
+            throw new ClientProfileException("The Cloud installer cannot bind to a self-hosted data authority.");
     }
 
     public Uri? LocalUiUri()
@@ -176,48 +226,13 @@ internal sealed record ClientConfig
 
     public static string StateDirectory()
     {
-        var defaultPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "kombify",
-            "techstack-client");
         var configured = Environment.GetEnvironmentVariable("TECHSTACK_CLIENT_STATE_DIR")?.Trim();
-        if (string.IsNullOrWhiteSpace(configured) || !Path.IsPathRooted(configured))
-        {
-            return defaultPath;
-        }
-
-        var allowedRoot = Path.GetFullPath(Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "kombify")).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var resolved = Path.GetFullPath(configured).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var allowedPrefix = allowedRoot + Path.DirectorySeparatorChar;
-        return !resolved.Equals(allowedRoot, StringComparison.OrdinalIgnoreCase)
-            && (resolved + Path.DirectorySeparatorChar).StartsWith(allowedPrefix, StringComparison.OrdinalIgnoreCase)
-            ? resolved
-            : defaultPath;
+        return StatePaths.ResolveDirectory(configured);
     }
 
     public static string CredentialTarget(string baseTarget)
     {
-        var defaultPath = Path.GetFullPath(Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "kombify",
-            "techstack-client"))
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var statePath = Path.GetFullPath(StateDirectory())
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        if (statePath.Equals(defaultPath, StringComparison.OrdinalIgnoreCase))
-        {
-            return baseTarget;
-        }
-
-        // Test/preview installations must never share Credential Manager names
-        // with the canonical product state. Derive a stable, non-secret suffix
-        // from the isolated state path so restart and reset use the same target.
-        var normalized = statePath.ToUpperInvariant();
-        var digest = SHA256.HashData(Encoding.UTF8.GetBytes(normalized));
-        var suffix = Convert.ToHexString(digest).ToLowerInvariant()[..16];
-        return $"{baseTarget}/state-{suffix}";
+        return StatePaths.CredentialTargetFor(StateDirectory(), baseTarget);
     }
 
     private static ClientConfig? Read(string path)
@@ -246,6 +261,7 @@ internal sealed record ClientConfig
     }
 }
 
+#if CLOUD_DESKTOP
 internal sealed record CloudDeviceCodeResponse
 {
     [JsonPropertyName("device_code")]
@@ -299,22 +315,25 @@ internal sealed record CloudAuthorizationResponse
     [JsonPropertyName("entitlements")]
     public CloudEntitlementResponse? Entitlements { get; init; }
 }
+#endif
 
-internal sealed class ClientWindow : Form
+internal sealed partial class ClientWindow : Form
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly object RuntimeLogLock = new();
     private const string LocalDeviceTokenEnv = "TECHSTACK_LOCAL_DEVICE_TOKEN";
-    private const string LocalDeviceTokenHeader = "X-TechStack-Device-Token";
     private const string LocalRuntimeSessionCredentialTarget = "kombify/techstack/local/runtime-session-secret";
     private const string LocalDeviceCredentialTarget = "kombify/techstack/local/device-session-token";
     private const string LocalRuntimeEncryptionKeyCredentialTarget = "kombify/techstack/local/runtime-encryption-key";
 
     private readonly ClientConfig _config;
     private readonly WebView2 _webView = new() { Dock = DockStyle.Fill };
-    private readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(15) };
+    // Discovery and credential-bearing requests must not follow an origin's redirect.
+    private readonly HttpClient _httpClient = ClientAuthority.CreateHttpClient();
+#if CLOUD_DESKTOP
     private CancellationTokenSource? _cloudLoginCancellation;
-    private Process? _runtimeProcess;
+#endif
+    private SupervisedProcess? _runtimeProcess;
     private ClientConnectionProfile? _boundServerProfile;
 
     public ClientWindow(ClientConfig config)
@@ -336,16 +355,76 @@ internal sealed class ClientWindow : Form
         Shown += async (_, _) => await StartAsync();
         FormClosed += (_, _) =>
         {
+#if CLOUD_DESKTOP
             _cloudLoginCancellation?.Cancel();
+            _cloudProductLoginCancellation?.Cancel();
+#endif
             StopStartedLocalRuntime();
         };
     }
+
+#if CLOUD_DESKTOP
+    // "kombify Connect…" in the window's system menu (Alt+Space / title-bar menu)
+    // is the settings entry point for Connect enrollment and confirmation.
+    private const int WmSysCommand = 0x0112;
+    private const int ConnectMenuCommand = 0x4B40; // low four bits must be zero for WM_SYSCOMMAND ids
+    private bool _connectSettingsOpening;
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr GetSystemMenu(IntPtr hWnd, bool bRevert);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern bool AppendMenu(IntPtr hMenu, uint uFlags, uint uIDNewItem, string lpNewItem);
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        var menu = GetSystemMenu(Handle, false);
+        AppendMenu(menu, 0x800 /* MF_SEPARATOR */, 0, "");
+        AppendMenu(menu, 0 /* MF_STRING */, ConnectMenuCommand, "kombify Connect…");
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        if (m.Msg == WmSysCommand && (m.WParam.ToInt64() & 0xFFF0) == ConnectMenuCommand)
+        {
+            _ = OpenConnectSettingsAsync();
+            return;
+        }
+
+        base.WndProc(ref m);
+    }
+
+    private async Task OpenConnectSettingsAsync()
+    {
+        if (_connectSettingsOpening) return;
+        _connectSettingsOpening = true;
+        try
+        {
+            var identity = await CurrentConnectIdentityAsync(CancellationToken.None);
+            if (IsDisposed) return;
+            using var settings = new ConnectSettingsForm(_config, identity, CurrentConnectIdentityAsync);
+            settings.ShowDialog(this);
+        }
+        catch (Exception)
+        {
+            if (!IsDisposed)
+                MessageBox.Show(CloudLoginText.Get("ConnectAccountRequired"), "kombify Connect",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            _connectSettingsOpening = false;
+        }
+    }
+#endif
 
     private async Task StartAsync()
     {
         try
         {
-            var userData = Path.Combine(ClientConfig.StateDirectory(), "webview2");
+            var userData = Path.Combine(ClientConfig.StateDirectory(),
+                DesktopEdition.IsLocal ? "webview2" : "webview2-cloud-product-v1");
             Directory.CreateDirectory(userData);
 
             var env = await CoreWebView2Environment.CreateAsync(null, userData);
@@ -356,17 +435,30 @@ internal sealed class ClientWindow : Form
             {
                 NavigateHtml(RenderLocalRuntimeStarting(_config.LocalOrigin()));
                 var runtimeReady = await EnsureLocalRuntimeAsync();
-                if (ClientUpdater.CompletePendingUpdate(_config, runtimeReady, StopStartedLocalRuntime))
+                if (!runtimeReady)
+                {
+                    if (ClientUpdater.CompletePendingUpdate(_config, false, StopStartedLocalRuntime))
+                        Close();
+                    return;
+                }
+                if (!await BootstrapLocalDeviceSessionAsync())
+                {
+                    if (ClientUpdater.CompletePendingUpdate(_config, false, StopStartedLocalRuntime))
+                    {
+                        Close();
+                        return;
+                    }
+                    NavigateHtml(RenderFallback(
+                        "Local TechStack runtime did not become ready.",
+                        LocalRuntimeMessages.IdentityVerificationFailed,
+                        RuntimeLogExtraHtml(_config.RuntimeLogPath())));
+                    return;
+                }
+                if (ClientUpdater.CompletePendingUpdate(_config, true, StopStartedLocalRuntime))
                 {
                     Close();
                     return;
                 }
-                if (!runtimeReady)
-                {
-                    return;
-                }
-
-                await BootstrapLocalDeviceSessionAsync();
             }
             else if (ClientUpdater.CompletePendingUpdate(_config, true, () => { }))
             {
@@ -440,6 +532,7 @@ internal sealed class ClientWindow : Form
                 throw new ClientProfileException("The discovery response exceeds the 64 KiB client-profile limit.");
             }
             var profile = ClientConnectionProfileValidator.ParseAndValidate(body, configuredEndpoint);
+            ClientConfig.ValidateProfileAuthority(profile);
             var path = Path.Combine(ClientConfig.StateDirectory(), "connection-profile.json");
             ClientConnectionProfileValidator.PersistPublicProfile(profile, path);
             return profile;
@@ -546,12 +639,8 @@ internal sealed class ClientWindow : Form
 			start.Environment["TECHSTACK_AGENT_BINARY_LINUX_AMD64"] = Path.Combine(runtimeDirectory, "techstack-linux-amd64");
 			start.Environment["TECHSTACK_STACKKIT_RELEASE_BUNDLE"] = Path.Combine(runtimeDirectory, "stackkit-release-linux-amd64.tar.gz");
 
-            _runtimeProcess = new Process { StartInfo = start, EnableRaisingEvents = true };
-            _runtimeProcess.OutputDataReceived += (_, e) => AppendRuntimeLog(logPath, e.Data);
-            _runtimeProcess.ErrorDataReceived += (_, e) => AppendRuntimeLog(logPath, e.Data);
-            _runtimeProcess.Start();
-            _runtimeProcess.BeginOutputReadLine();
-            _runtimeProcess.BeginErrorReadLine();
+            _runtimeProcess = new SupervisedProcess();
+            _runtimeProcess.Start(start, line => AppendRuntimeLog(logPath, line));
         }
         catch (Exception ex)
         {
@@ -618,12 +707,6 @@ internal sealed class ClientWindow : Form
     {
         var local = _config.LocalUiUri();
         return local is null ? null : new Uri(local, "/api/v1/auth/mode");
-    }
-
-    private Uri? LocalDeviceSessionUri()
-    {
-        var local = _config.LocalUiUri();
-        return local is null ? null : new Uri(local, "/api/v1/auth/device-session");
     }
 
     private string RuntimeListenAddr()
@@ -717,47 +800,32 @@ internal sealed class ClientWindow : Form
         return secret;
     }
 
-    private async Task BootstrapLocalDeviceSessionAsync()
+    private async Task<bool> BootstrapLocalDeviceSessionAsync()
     {
-        var endpoint = LocalDeviceSessionUri();
+        var authority = _config.LocalUiUri();
         var token = ReadLocalDeviceToken();
-        if (endpoint is null || string.IsNullOrWhiteSpace(token))
+        if (authority is null || string.IsNullOrWhiteSpace(token))
         {
-            return;
+            return false;
         }
 
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
-            request.Headers.TryAddWithoutValidation(LocalDeviceTokenHeader, token);
-            using var response = await _httpClient.SendAsync(request);
-            if (!response.IsSuccessStatusCode)
+            using var proofHttp = new HttpClient(new HttpClientHandler
             {
-                AppendRuntimeLog(
-                    _config.RuntimeLogPath(),
-                    $"[{DateTimeOffset.Now:u}] local device session skipped: {(int)response.StatusCode} {response.StatusCode}");
-                return;
-            }
-
-            ImportSetCookieHeaders(endpoint, response);
+                AllowAutoRedirect = false,
+                UseCookies = false,
+            }) { Timeout = TimeSpan.FromSeconds(5) };
+            var cookies = await LocalDeviceSessionProof.AuthenticateAsync(proofHttp, authority, token);
+            foreach (var cookie in cookies)
+                ImportSetCookieHeader(authority, cookie);
             AppendRuntimeLog(_config.RuntimeLogPath(), $"[{DateTimeOffset.Now:u}] local device session restored");
+            return true;
         }
         catch (Exception ex)
         {
             AppendRuntimeLog(_config.RuntimeLogPath(), $"[{DateTimeOffset.Now:u}] local device session failed: {ex.Message}");
-        }
-    }
-
-    private void ImportSetCookieHeaders(Uri endpoint, HttpResponseMessage response)
-    {
-        if (!response.Headers.TryGetValues("Set-Cookie", out var setCookieHeaders))
-        {
-            return;
-        }
-
-        foreach (var setCookie in setCookieHeaders)
-        {
-            ImportSetCookieHeader(endpoint, setCookie);
+            return false;
         }
     }
 
@@ -819,29 +887,8 @@ internal sealed class ClientWindow : Form
 
     private void StopStartedLocalRuntime()
     {
-        var process = _runtimeProcess;
-        if (process is null)
-        {
-            return;
-        }
-
-        try
-        {
-            if (!process.HasExited)
-            {
-                process.Kill(entireProcessTree: true);
-                process.WaitForExit(3000);
-            }
-        }
-        catch
-        {
-            // Best-effort cleanup for the runtime process this client started.
-        }
-        finally
-        {
-            process.Dispose();
-            _runtimeProcess = null;
-        }
+        _runtimeProcess?.Stop();
+        _runtimeProcess = null;
     }
 
     private void OnNavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs args)
@@ -850,13 +897,18 @@ internal sealed class ClientWindow : Form
         {
             return;
         }
-
+        // NavigateToString uses about:blank for shell-owned progress/error pages.
+        if (uri.AbsoluteUri == "about:blank") return;
+#if CLOUD_DESKTOP
+        if (uri.Scheme != Uri.UriSchemeHttps || !string.IsNullOrEmpty(uri.UserInfo))
+        {
+            args.Cancel = true;
+            return;
+        }
         if (IsWindowsBrowserLoginHandoff(uri))
         {
             args.Cancel = true;
-            var browserUrl = BrowserLoginHandoffUrl(uri);
-            OpenInBrowser(browserUrl);
-            ShowBrowserHandoff(browserUrl);
+            _ = BeginCloudProductLoginAsync();
             return;
         }
 
@@ -878,9 +930,14 @@ internal sealed class ClientWindow : Form
             args.Cancel = true;
             OpenInBrowser(args.Uri);
             ShowBrowserHandoff(args.Uri);
+            return;
         }
+#endif
+        if (!ClientAuthority.AllowsProductNavigation(uri, _boundServerProfile?.BaseUrl ?? _config.InitialUrl()))
+            args.Cancel = true;
     }
 
+#if CLOUD_DESKTOP
     private async Task BeginCloudDeviceLoginAsync()
     {
         _cloudLoginCancellation?.Cancel();
@@ -1016,25 +1073,14 @@ internal sealed class ClientWindow : Form
     {
         return uri.Host.Equals("app.kombify.io", StringComparison.OrdinalIgnoreCase)
             || uri.Host.Equals("kombify.io", StringComparison.OrdinalIgnoreCase)
-            || uri.Host.EndsWith(".auth0.com", StringComparison.OrdinalIgnoreCase);
+            || uri.Host.Equals("login.kombify.io", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsWindowsBrowserLoginHandoff(Uri uri)
     {
-        return uri.Query.Contains("client=windows", StringComparison.OrdinalIgnoreCase)
+        return ClientAuthority.AllowsProductNavigation(uri, ClientAuthority.CloudOrigin)
+            && uri.Query.Contains("client=windows", StringComparison.OrdinalIgnoreCase)
             && uri.Query.Contains("open_browser=1", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static string BrowserLoginHandoffUrl(Uri uri)
-    {
-        var builder = new UriBuilder(uri);
-        var query = uri.Query.TrimStart('?')
-            .Split('&', StringSplitOptions.RemoveEmptyEntries)
-            .Where(part =>
-                !part.Equals("open_browser=1", StringComparison.OrdinalIgnoreCase)
-                && !part.StartsWith("open_browser=", StringComparison.OrdinalIgnoreCase));
-        builder.Query = string.Join("&", query);
-        return builder.Uri.ToString();
     }
 
     private static bool HasDeviceCode(Uri uri)
@@ -1120,8 +1166,9 @@ internal sealed class ClientWindow : Form
             tool = "stack";
         }
 
-        return ClientConfig.CredentialTarget($"kombify/techstack/cloud/{tool}/{credentialKind}");
+        return ClientConfig.CredentialTarget($"kombify/techstack/cloud/{DesktopEdition.Channel}/{tool}/{credentialKind}");
     }
+#endif
 
     private void NavigateHtml(string html)
     {
@@ -1134,6 +1181,7 @@ internal sealed class ClientWindow : Form
         _webView.CoreWebView2.NavigateToString(html);
     }
 
+#if CLOUD_DESKTOP
     private static string CloudError(HttpStatusCode statusCode, string body)
     {
         var message = ExtractJsonError(body);
@@ -1176,6 +1224,7 @@ internal sealed class ClientWindow : Form
             "The Windows client is creating a one-time device code with kombify Cloud.",
             "");
     }
+#endif
 
     private static string RenderLocalRuntimeStarting(string localOrigin)
     {
@@ -1193,6 +1242,7 @@ internal sealed class ClientWindow : Form
             "");
     }
 
+#if CLOUD_DESKTOP
     private static string RenderDeviceLoginWaiting(CloudDeviceCodeResponse code, string verificationUrl)
     {
         return RenderShell(
@@ -1214,6 +1264,7 @@ internal sealed class ClientWindow : Form
                 ? $"""<p><a href="{Html(cloudUiUrl)}">Open TechStack Cloud UI</a></p>"""
                 : "");
     }
+#endif
 
     private static string RenderFallback(string title, string detail, string extraHtml = "")
     {
@@ -1239,7 +1290,7 @@ pre{max-height:220px;overflow:auto;background:#06142d;color:#f5f7fb;padding:14px
 
     private static string LocalRuntimeFailureDetail(string logPath, int exitCode)
     {
-        var tail = Tail(logPath);
+        var tail = ClientDiagnostics.ReadTail(logPath);
         if (tail.Contains("start embedded postgres", StringComparison.OrdinalIgnoreCase))
         {
             return "The bundled local Postgres database failed to start. Check postgres.log in the runtime data "
@@ -1266,7 +1317,7 @@ pre{max-height:220px;overflow:auto;background:#06142d;color:#f5f7fb;padding:14px
 
     private static string RuntimeLogExtraHtml(string logPath)
     {
-        var tail = Tail(logPath);
+        var tail = ClientDiagnostics.ReadTail(logPath);
         var pre = string.IsNullOrWhiteSpace(tail) ? "" : $"""<pre>{Html(tail)}</pre>""";
         return $"""<p class="copy small">Runtime log: <span class="path">{Html(logPath)}</span></p>{pre}""";
     }
@@ -1288,24 +1339,6 @@ pre{max-height:220px;overflow:auto;background:#06142d;color:#f5f7fb;padding:14px
         catch
         {
             // Runtime logging must never crash the shell.
-        }
-    }
-
-    private static string Tail(string path, int maxChars = 4000)
-    {
-        try
-        {
-            if (!File.Exists(path))
-            {
-                return "";
-            }
-
-            var text = File.ReadAllText(path);
-            return text.Length <= maxChars ? text : text[^maxChars..];
-        }
-        catch
-        {
-            return "";
         }
     }
 

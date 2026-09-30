@@ -1,6 +1,8 @@
 <script lang="ts">
+  import { tr } from "#lib/i18n.svelte.js";
   import { theme } from "#lib/stores/theme.js";
   import { onMount } from "svelte";
+  const resolved = theme.resolved;
 
   onMount(() => {
     theme.init();
@@ -16,10 +18,10 @@
   data-kx="control"
   onclick={toggleTheme}
   class="theme-toggle p-2 rounded-lg hover:bg-accent transition-colors"
-  title={$theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-  aria-label="Toggle dark/light theme"
+  title={$resolved === "dark" ? tr("ui.theme.toLight") : tr("ui.theme.toDark")}
+  aria-label={tr("ui.theme.toggle")}
 >
-  {#if $theme === "dark"}
+  {#if $resolved === "dark"}
     <!-- Sun icon for dark mode (click to go light) -->
     <svg
       xmlns="http://www.w3.org/2000/svg"

@@ -184,6 +184,9 @@ func uiSpecMetadata(dataMap map[string]interface{}, provider string, kit string)
 		applyUIMetadataOverrides(metadata, options)
 	}
 	if isManagedRuntimeUIConfig(dataMap) {
+		if err := projectManagedOffering(dataMap, metadata); err != nil {
+			return nil, err
+		}
 		return normalizeMonthlyRuntimeMetadata(metadata, providerIDFromProvider(provider))
 	}
 	return metadata, nil
@@ -270,6 +273,9 @@ func convertStackKitConfigToSpec(dataMap map[string]interface{}) (*core.Kombinat
 
 	spec.Network = stackKitNetworkToKombinationNetwork(dataMap)
 	if managed {
+		if err := projectManagedOffering(dataMap, spec.Metadata); err != nil {
+			return nil, err
+		}
 		metadata, err := normalizeMonthlyRuntimeMetadata(spec.Metadata, providerIDFromProvider(provider))
 		if err != nil {
 			return nil, err

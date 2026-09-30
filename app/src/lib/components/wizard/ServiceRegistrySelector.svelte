@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { trn } from "#lib/i18n.svelte.js";
   import type {
     ServicesConfig,
     StandardBundleServiceKey,
@@ -68,6 +69,6 @@
   </div>
 
   <p class="text-center text-sm text-muted-foreground">
-    {selectedCount} service{selectedCount !== 1 ? "s" : ""} selected
+    {trn("ui.serviceRegistry.selected", selectedCount)}
   </p>
 </div>

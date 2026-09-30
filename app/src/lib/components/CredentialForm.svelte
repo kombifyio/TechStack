@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "#lib/i18n.svelte.js";
   import type {
     CredentialType,
     WalletItem,
@@ -59,68 +60,68 @@
     value: WalletEntryArea;
     label: string;
     description: string;
-  }> = [
+  }> = $derived([
     {
       value: "tools",
-      label: "Tools",
-      description: "Administrative tools and operational surfaces.",
+      label: tr("ui.wallet.tools"),
+      description: tr("ui.credentialForm.administrativeToolsAndOperationalSurfaces"),
     },
     {
       value: "access",
-      label: "Access",
-      description: "Users, portals, IP/device gating, and access controls.",
+      label: tr("ui.stacksCreatingCreationLease.access"),
+      description: tr("ui.credentialForm.usersPortalsIpDeviceGating"),
     },
     {
       value: "recovery",
-      label: "Recovery",
-      description: "Break-glass secrets and reveal-only recovery material.",
+      label: tr("ui.stacksCreatingCreationCompletion.recovery"),
+      description: tr("ui.credentialForm.breakGlassSecretsAndReveal"),
     },
-  ];
+  ]);
 
   const credentialTypes: Array<{
     value: CredentialType;
     label: string;
     abbr: string;
-  }> = [
-    { value: "password", label: "Password", abbr: "PW" },
-    { value: "api_key", label: "API Key", abbr: "API" },
-    { value: "ssh_key", label: "SSH Key", abbr: "SSH" },
-    { value: "oauth_token", label: "OAuth Token", abbr: "OAuth" },
-    { value: "certificate", label: "Certificate", abbr: "Cert" },
-    { value: "other", label: "Other", abbr: "?" },
-  ];
+  }> = $derived([
+    { value: "password", label: tr("ui.clientLocal.password"), abbr: "PW" },
+    { value: "api_key", label: tr("ui.credentialForm.apiKey"), abbr: "API" },
+    { value: "ssh_key", label: tr("ui.credentialForm.sshKey"), abbr: "SSH" },
+    { value: "oauth_token", label: tr("ui.credentialForm.oauthToken"), abbr: "OAuth" },
+    { value: "certificate", label: tr("ui.credentialForm.certificate"), abbr: tr("ui.credentialForm.cert") },
+    { value: "other", label: tr("ui.wallet.other"), abbr: "?" },
+  ]);
 
   function getSecretLabel(): string {
     switch (kind) {
       case "password":
-        return "Password";
+        return tr("ui.clientLocal.password");
       case "api_key":
-        return "API Key";
+        return tr("ui.credentialForm.apiKey");
       case "ssh_key":
-        return "Private Key";
+        return tr("ui.sSHKeyGenerator.privateKey");
       case "oauth_token":
-        return "Token";
+        return tr("ui.credentialForm.token");
       case "certificate":
-        return "Certificate Content";
+        return tr("ui.credentialForm.certificateContent");
       default:
-        return "Secret";
+        return tr("ui.wallet.secret");
     }
   }
 
   function getSecretPlaceholder(): string {
     switch (kind) {
       case "password":
-        return "Enter password...";
+        return tr("ui.credentialForm.enterPassword");
       case "api_key":
         return "sk_live_xxxxx...";
       case "ssh_key":
         return "-----BEGIN OPENSSH PRIVATE KEY-----\n...";
       case "oauth_token":
-        return "Bearer token or refresh token...";
+        return tr("ui.credentialForm.bearerTokenOrRefreshToken");
       case "certificate":
         return "-----BEGIN CERTIFICATE-----\n...";
       default:
-        return "Enter secret value...";
+        return tr("ui.credentialForm.enterSecretValue");
     }
   }
 
@@ -139,24 +140,24 @@
   function getNamePlaceholder(): string {
     switch (walletArea) {
       case "tools":
-        return "e.g., PocketBase Admin";
+        return tr("ui.credentialForm.eGPocketbaseAdmin");
       case "access":
-        return "e.g., Tailscale Device Approval";
+        return tr("ui.credentialForm.eGTailscaleDeviceApproval");
       default:
-        return "e.g., Break-Glass Envelope";
+        return tr("ui.credentialForm.eGBreakGlassEnvelope");
     }
   }
 
   function getUsernameLabel(): string {
     switch (walletArea) {
       case "tools":
-        return kind === "api_key" ? "API Label / Owner" : "Operator / Account";
+        return kind === "api_key" ? tr("ui.credentialForm.apiLabelOwner") : tr("ui.credentialForm.operatorAccount");
       case "access":
-        return "User / Identity";
+        return tr("ui.credentialForm.userIdentity");
       default:
         return kind === "api_key"
-          ? "Key Identifier / Label"
-          : "Username / Email";
+          ? tr("ui.credentialForm.keyIdentifierLabel")
+          : tr("ui.credentialForm.usernameEmail");
     }
   }
 
@@ -173,11 +174,11 @@
   function getUrlLabel(): string {
     switch (walletArea) {
       case "tools":
-        return "Tool URL";
+        return tr("ui.credentialForm.toolUrl");
       case "access":
-        return "Portal / Policy URL";
+        return tr("ui.credentialForm.portalPolicyUrl");
       default:
-        return "Recovery URL / Endpoint";
+        return tr("ui.credentialForm.recoveryUrlEndpoint");
     }
   }
 
@@ -195,11 +196,11 @@
   function getNotesPlaceholder(): string {
     switch (walletArea) {
       case "tools":
-        return "What this tool is for, who uses it, and any launch context...";
+        return tr("ui.credentialForm.whatThisToolIsFor");
       case "access":
-        return "Describe the user, gate, or access policy this entry belongs to...";
+        return tr("ui.credentialForm.describeTheUserGateOr");
       default:
-        return "Describe the recovery path, storage location, or operator instructions...";
+        return tr("ui.credentialForm.describeTheRecoveryPathStorage");
     }
   }
 
@@ -208,12 +209,12 @@
     error = null;
 
     if (!name.trim()) {
-      error = "Name is required";
+      error = tr("ui.credentialForm.nameIsRequired");
       return;
     }
 
     if (isUrlRequired() && !url.trim()) {
-      error = "Tool URL is required";
+      error = tr("ui.credentialForm.toolUrlIsRequired");
       return;
     }
 
@@ -224,7 +225,7 @@
       !secret.trim() &&
       !totp.trim()
     ) {
-      error = "Access entries need at least a user, URL, or secret";
+      error = tr("ui.credentialForm.accessEntriesNeedAtLeast");
       return;
     }
 
@@ -262,7 +263,7 @@
       } else {
         error =
           parsed.message ||
-          (err instanceof Error ? err.message : "Failed to save credential");
+          (err instanceof Error ? err.message : tr("ui.credentialForm.failedToSaveCredential"));
       }
     }
   }
@@ -280,7 +281,7 @@
   <!-- Wallet Area -->
   <div>
     <span class="block text-sm font-medium text-foreground mb-2">
-      Wallet Area <span class="text-destructive">*</span>
+      {tr("ui.credentialForm.walletArea")} <span class="text-destructive">*</span>
     </span>
     <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
       {#each walletAreas as area}
@@ -302,7 +303,7 @@
   <!-- Name -->
   <div>
     <label for="name" class="block text-sm font-medium text-foreground mb-2">
-      Name <span class="text-destructive">*</span>
+      {tr("ui.credentialForm.name")} <span class="text-destructive">*</span>
     </label>
     <input
       id="name"
@@ -319,7 +320,7 @@
       id="credential-type-label"
       class="block text-sm font-medium text-foreground mb-2"
     >
-      Credential Type <span class="text-destructive">*</span>
+      {tr("ui.credentialForm.credentialType")} <span class="text-destructive">*</span>
     </span>
     <div
       class="grid grid-cols-2 md:grid-cols-3 gap-2"
@@ -370,7 +371,7 @@
       {#if isSecretRequired()}
         <span class="text-destructive">*</span>
       {:else}
-        <span class="text-muted-foreground">(optional)</span>
+        <span class="text-muted-foreground">{tr("ui.credentialForm.optional")}</span>
       {/if}
     </label>
     {#if isMultilineSecret()}
@@ -396,13 +397,13 @@
   {#if kind === "password"}
     <div>
       <label for="totp" class="block text-sm font-medium text-foreground mb-2">
-        TOTP <span class="text-muted-foreground">(optional)</span>
+        TOTP <span class="text-muted-foreground">{tr("ui.credentialForm.optional")}</span>
       </label>
       <input
         id="totp"
         type="text"
         bind:value={totp}
-        placeholder="otpauth://totp/... or base32 secret"
+        placeholder={tr("ui.credentialForm.otpauthTotpOrBase32Secret")}
         class="w-full px-4 py-3 bg-input border border-border rounded-lg text-foreground placeholder-muted-foreground focus:border-primary focus:outline-none font-mono"
       />
     </div>
@@ -415,7 +416,7 @@
       {#if isUrlRequired()}
         <span class="text-destructive">*</span>
       {:else}
-        <span class="text-muted-foreground">(optional)</span>
+        <span class="text-muted-foreground">{tr("ui.credentialForm.optional")}</span>
       {/if}
     </label>
     <input
@@ -430,7 +431,7 @@
   <!-- Expiry (optional) -->
   <div>
     <label for="expires" class="block text-sm font-medium text-foreground mb-2">
-      Expiry Date <span class="text-muted-foreground">(optional)</span>
+      {tr("ui.credentialForm.expiryDate")} <span class="text-muted-foreground">{tr("ui.credentialForm.optional")}</span>
     </label>
     <input
       id="expires"
@@ -443,7 +444,7 @@
   <!-- Notes (optional) -->
   <div>
     <label for="notes" class="block text-sm font-medium text-foreground mb-2">
-      Notes <span class="text-muted-foreground">(optional)</span>
+      {tr("ui.credentialForm.notes")} <span class="text-muted-foreground">{tr("ui.credentialForm.optional")}</span>
     </label>
     <textarea
       id="notes"
@@ -463,7 +464,7 @@
       data-kx="control"
       class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
     >
-      Cancel
+      {tr("common.cancel")}
     </button>
     <button
       type="submit"
@@ -490,10 +491,10 @@
               d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
             />
           </svg>
-          Saving...
+          {tr("ui.credentialForm.saving")}
         </span>
       {:else}
-        Save
+        {tr("common.save")}
       {/if}
     </button>
   </div>

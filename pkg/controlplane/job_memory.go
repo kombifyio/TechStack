@@ -70,7 +70,7 @@ func memoryJobFromUpsertRequest(req UpsertJobRequest, now time.Time) Job {
 		Type: req.Type, State: firstNonEmpty(req.State, jobStatePending), Priority: req.Priority,
 		Progress: req.Progress, Step: req.Step, Message: req.Message, Error: req.Error,
 		ErrorDetails: req.ErrorDetails, Logs: cloneSliceOfMaps(req.Logs), Result: cloneMap(req.Result),
-		Payload: cloneMap(req.Payload),
+		Payload:      cloneMap(req.Payload),
 		ScheduledFor: req.ScheduledFor, CreatedAt: now, UpdatedAt: now,
 	}
 	if job.ScheduledFor.IsZero() {
@@ -552,6 +552,10 @@ func (s *MemoryStore) StartJob(_ context.Context, tenantID, jobID string, at tim
 				return nil, ErrStackExecutionBusy
 			}
 		}
+	}
+	agentID, _ := job.Payload["agent_id"].(string)
+	if s.memoryNodeUnderMaintenanceLocked(tenantID, agentID, job.StackID) {
+		return nil, ErrNodeUnderMaintenance
 	}
 	job.State = jobStateRunning
 	job.StartedAt = &at

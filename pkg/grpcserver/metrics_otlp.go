@@ -12,13 +12,22 @@ import (
 	collectormetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/status"
 )
 
 // Export implements the OTLP MetricsService gRPC API beside the legacy
 // PushMetrics path. This keeps mixed fleets working during migration.
 func (s *Server) Export(ctx context.Context, req *collectormetricspb.ExportMetricsServiceRequest) (*collectormetricspb.ExportMetricsServiceResponse, error) {
-	_ = ctx
 	rejected := countOTLPDataPoints(req)
+	agentID, tenantID, authErr := s.authorizeOTLPExporter(ctx)
+	if authErr != nil {
+		if s.monitorIngestHealth != nil {
+			s.monitorIngestHealth.recordOTLPRejected(int(rejected), authErr.Error())
+		}
+		return nil, authErr
+	}
 
 	if s.monitorTSDB == nil {
 		if s.monitorIngestHealth != nil {
@@ -33,6 +42,9 @@ func (s *Server) Export(ctx context.Context, req *collectormetricspb.ExportMetri
 	}
 
 	samples := otlpMetricsToSamples(req)
+	for _, sample := range samples {
+		bindMetricIdentity(sample.Labels, agentID, tenantID)
+	}
 	if len(samples) == 0 {
 		if s.monitorIngestHealth != nil {
 			s.monitorIngestHealth.recordOTLPSuccess(0)
@@ -66,6 +78,30 @@ func (s *Server) Export(ctx context.Context, req *collectormetricspb.ExportMetri
 	}
 
 	return &collectormetricspb.ExportMetricsServiceResponse{}, nil
+}
+
+// authorizeOTLPExporter binds an OTLP export to the enrolled agent behind the
+// mTLS peer certificate, the same chain PushMetrics uses. OTLP carries no
+// agent id, so the certificate CN names the agent. Without identity binding
+// (standalone self-hosted) the export stays accepted but carries no tenant.
+func (s *Server) authorizeOTLPExporter(ctx context.Context) (string, string, error) {
+	if !s.requiresAgentIdentityBinding() {
+		return "", "", nil
+	}
+	peerInfo, _ := peer.FromContext(ctx)
+	cert, err := extractPeerCert(peerInfo)
+	if err != nil {
+		return "", "", status.Errorf(codes.Unauthenticated, "peer certificate required: %v", err)
+	}
+	agentID := strings.TrimSpace(cert.Subject.CommonName)
+	if agentID == "" {
+		return "", "", status.Error(codes.Unauthenticated, "client certificate names no agent")
+	}
+	tenantID, _, _, err := s.bindAgentIdentity(ctx, agentID, peerInfo)
+	if err != nil {
+		return "", "", err
+	}
+	return agentID, tenantID, nil
 }
 
 func countOTLPDataPoints(req *collectormetricspb.ExportMetricsServiceRequest) int64 {

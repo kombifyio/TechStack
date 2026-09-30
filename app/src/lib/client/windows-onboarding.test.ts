@@ -13,7 +13,6 @@ import {
   normalizeServerUrl,
   rememberWindowsLocalClientContext,
   windowsLocalClientReturnUrl,
-  windowsClientModeLabel,
 } from "./windows-onboarding";
 
 describe("windows client onboarding helpers", () => {
@@ -34,10 +33,6 @@ describe("windows client onboarding helpers", () => {
     expect(normalizeServerUrl("http://127.0.0.1:5261/")).toBe(
       "http://127.0.0.1:5261",
     );
-  });
-
-  it("keeps local install as default label", () => {
-    expect(windowsClientModeLabel(null)).toBe("Local Windows installation");
   });
 
   it("derives a deterministic local owner name from the email", () => {

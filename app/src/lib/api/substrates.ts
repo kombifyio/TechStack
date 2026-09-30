@@ -1,6 +1,7 @@
 import { fetchApi } from "./client";
 import type { DiscoveredDevice, ScanResult } from "#lib/discovery/types.js";
 
+import { tr } from "#lib/i18n.svelte.js";
 export interface SubstrateConnection {
   server_id: string;
   name: string;
@@ -42,7 +43,7 @@ export interface DiscoveryCapabilities {
 async function data<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetchApi<T>(path, options);
   if (!response.data)
-    throw new Error("The runtime did not return the requested data.");
+    throw new Error(tr("ui.substrates.theRuntimeDidNotReturn"));
   return response.data;
 }
 

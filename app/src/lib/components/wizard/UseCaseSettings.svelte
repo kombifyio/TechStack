@@ -15,7 +15,7 @@
     UseCaseSettingGroup,
   } from "#lib/api/useCaseCatalog.js";
   import { tr } from "#lib/i18n.svelte.js";
-  import { tick } from "svelte";
+  import { tick, type Snippet } from "svelte";
   import { revealWizardDetails } from "#lib/wizard/reveal-details.js";
 
   let {
@@ -24,12 +24,23 @@
     onchange,
     disabled = false,
     preview = false,
+    exclude = [],
+    inlay = false,
+    open = $bindable(false),
+    onopenchange,
+    extras,
   }: {
     catalog?: UseCaseCatalogView;
     values?: Record<string, string | boolean>;
     onchange: (id: string, value: string | boolean) => void;
     disabled?: boolean;
     preview?: boolean;
+    /** Settings the card already renders as its own prominent control. */
+    exclude?: string[];
+    inlay?: boolean;
+    open?: boolean;
+    onopenchange?: (open: boolean) => void;
+    extras?: Snippet;
   } = $props();
 
   const instanceId = $props.id();
@@ -50,7 +61,11 @@
     "features",
     "backend",
   ];
-  const settings = $derived(catalog?.settings ?? []);
+  const settings = $derived(
+    (catalog?.settings ?? []).filter(
+      (setting) => !exclude.includes(setting.id),
+    ),
+  );
   const tiers = $derived(
     (preview && !settings.some((setting) => setting.id === "profile")
       ? (["low", "standard", "high"] as const)
@@ -65,6 +80,7 @@
       .filter(
         (id) =>
           (id === "profile" && tiers.length > 0) ||
+          (id === "features" && Boolean(extras)) ||
           settings.some((setting) => setting.group === id),
       )
       .map((id) => ({
@@ -79,6 +95,14 @@
               values[setting.id] !== undefined &&
               values[setting.id] !== setting.default,
           ) ||
+          (id === "features" &&
+            Boolean(extras) &&
+            (catalog?.settings ?? []).some(
+              (setting) =>
+                ["paperless", "hosting", "edition"].includes(setting.id) &&
+                values[setting.id] !== undefined &&
+                values[setting.id] !== setting.default,
+            )) ||
           (id === "profile" &&
             tiers.length > 0 &&
             values.profile !== undefined &&
@@ -204,6 +228,7 @@
         {/if}
       </fieldset>
     {/each}
+    {#if group === "features" && extras}{@render extras()}{/if}
     {#if fields.some((setting) => setting.realization === "recorded") || (group === "profile" && tiers.length > 0)}
       <p class="recorded">
         <Clock3 size={14} aria-hidden="true" /><span
@@ -215,14 +240,28 @@
 {/snippet}
 
 {#if groups.length > 0}
-  <div bind:this={advancedElement} class="advanced-settings">
+  <div bind:this={advancedElement} class="advanced-settings" class:inlay>
     <UseCaseAdvanced
+      bind:open
+      variant={inlay ? "band" : "boxed"}
       {groups}
       label={tr("wizard.goals.advanced.label")}
       subtitle={groups.map((group) => group.label).join(" · ")}
       presentation="tabs"
       tabsLabel={tr("wizard.goals.advanced.tabsLabel")}
       ondisclose={async (event) => {
+        if (event.kind === "drawer") onopenchange?.(event.open);
+        if (inlay) {
+          if (event.kind === "drawer" && event.open) {
+            await tick();
+            advancedElement
+              ?.querySelector<HTMLButtonElement>(
+                '[role="tab"][aria-selected="true"]',
+              )
+              ?.focus();
+          }
+          return;
+        }
         if (!event.open) return;
         await tick();
         revealWizardDetails(advancedElement?.querySelector('[role="tablist"]'));
@@ -233,6 +272,33 @@
 {/if}
 
 <style>
+  .inlay {
+    grid-area: advanced;
+    min-width: 0;
+    min-height: 0;
+    --kf-uc-band-inset: 12px;
+  }
+  .inlay :global(.kf-uc-adv) {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+  }
+  .inlay :global(.kf-uc-adv-bar) {
+    flex-shrink: 0;
+    border-top: 1px solid var(--border);
+  }
+  .inlay :global(.kf-uc-adv-tabs) {
+    order: -1;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+  }
+  .inlay :global(.kf-uc-adv-tablist) {
+    flex-wrap: nowrap;
+  }
   .advanced-settings :global([role="tablist"]) {
     scroll-margin-block-end: 25vh;
   }

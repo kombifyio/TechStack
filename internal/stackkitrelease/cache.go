@@ -89,6 +89,9 @@ type Release struct {
 	installDir  string
 	receiptPath string
 	receipt     Receipt
+	// advancedOperations is the stackkit.advanced-operations/v1 catalog the
+	// release shipped; nil when the release predates the catalog.
+	advancedOperations []byte
 }
 
 // Cache resolves current artifact pins directly and legacy v1 pins from the
@@ -238,7 +241,7 @@ func (cache Cache) Resolve(pin Pin) (Release, error) {
 	if err != nil {
 		return Release{}, fmt.Errorf("verify pinned StackKits binary: %w", err)
 	}
-	published, err := digestArchiveExecutable(
+	published, catalog, err := digestArchiveExecutable(
 		filepath.Join(installDir, asset.Archive.Name),
 		asset.Archive.Name,
 		pin.Platform,
@@ -251,10 +254,11 @@ func (cache Cache) Resolve(pin Pin) (Release, error) {
 	}
 
 	return Release{
-		binaryPath:  binaryPath,
-		installDir:  installDir,
-		receiptPath: receiptPath,
-		receipt:     receipt,
+		binaryPath:         binaryPath,
+		installDir:         installDir,
+		receiptPath:        receiptPath,
+		receipt:            receipt,
+		advancedOperations: catalog,
 	}, nil
 }
 
@@ -286,10 +290,15 @@ func resolveArtifactPin(pin Pin, pinPath string) (Release, error) {
 	if current.sha256 != pin.BinarySHA256 {
 		return Release{}, fmt.Errorf("configured StackKits binary differs from the immutable artifact pin")
 	}
+	catalog, err := readReleaseAdvancedOperations(pinPath)
+	if err != nil {
+		return Release{}, err
+	}
 	return Release{
-		binaryPath:  binaryPath,
-		installDir:  filepath.Dir(binaryPath),
-		receiptPath: pinPath,
+		advancedOperations: catalog,
+		binaryPath:         binaryPath,
+		installDir:         filepath.Dir(binaryPath),
+		receiptPath:        pinPath,
 		receipt: Receipt{
 			SchemaVersion: PinSchemaVersion,
 			Kit:           pin.Kit,

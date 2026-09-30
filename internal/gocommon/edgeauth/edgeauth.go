@@ -18,12 +18,14 @@
 package edgeauth
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -75,9 +77,28 @@ const (
 	// EdgeSignatureVersionV5 additionally binds the Gateway-selected resource
 	// scope used by AI data isolation, budgets, and provider-key custody.
 	EdgeSignatureVersionV5 = "v5"
+	// EdgeSignatureVersionV7 binds every v6 field (issuer, AI context,
+	// resource scope, principal and agent attestation) plus the step-up facts
+	// amr, acr and auth_time. Only a v7 envelope yields StepUpClaims.
+	EdgeSignatureVersionV7 = "v7"
 	defaultEdgeKeyID       = "primary"
 	defaultEdgeNextKeyID   = "next"
 	defaultSignatureWindow = 5 * time.Minute
+)
+
+// Headers bound only by the v7 edge signature.
+const (
+	// Principal and agent attestation, bound from v6 (Gateway) and by v7 here.
+	HeaderPrincipalType  = "X-Kombify-Principal-Type"
+	HeaderAgentID        = "X-Kombify-Agent-ID"
+	HeaderAgentClass     = "X-Kombify-Agent-Class"
+	HeaderAgentPerimeter = "X-Kombify-Agent-Perimeter"
+	HeaderAgentPolicy    = "X-Kombify-Agent-Policy"
+	// Step-up facts of the verified Auth0 token, bound only by v7:
+	// comma-separated `amr`, the `acr` value and `auth_time` in Unix seconds.
+	HeaderUserAMR      = "X-User-AMR"
+	HeaderUserACR      = "X-User-ACR"
+	HeaderUserAuthTime = "X-User-Auth-Time"
 )
 
 // Config configures the edge auth middleware.
@@ -161,6 +182,15 @@ func Middleware(cfg Config) func(next http.Handler) http.Handler {
 
 			id := extractIdentity(r)
 			ctx := identity.NewContext(r.Context(), id)
+			if claims, ok := stepUpClaimsFromVerifiedRequest(r); ok {
+				ctx = context.WithValue(ctx, stepUpContextKey{}, claims)
+			} else {
+				// Below v7 the step-up headers are unsigned: drop them so no
+				// handler can read them as if they were verified.
+				r.Header.Del(HeaderUserAMR)
+				r.Header.Del(HeaderUserACR)
+				r.Header.Del(HeaderUserAuthTime)
+			}
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -223,6 +253,8 @@ func verifyEdgeSignature(r *http.Request, cfg Config) error {
 // staged rollout; origins separately decide which protected fields they need.
 func edgeSignatureVersionFromHeader(signature string) (string, error) {
 	switch {
+	case strings.HasPrefix(signature, EdgeSignatureVersionV7+"="):
+		return EdgeSignatureVersionV7, nil
 	case strings.HasPrefix(signature, EdgeSignatureVersionV5+"="):
 		return EdgeSignatureVersionV5, nil
 	case strings.HasPrefix(signature, EdgeSignatureVersionV4+"="):
@@ -240,45 +272,54 @@ func edgeSignatureVersionFromHeader(signature string) (string, error) {
 // signature version. v1 binds identity + route headers; v2 additionally binds
 // entitlements and knowledge tier; v4 additionally binds the verified issuer,
 // OAuth client, and client-registration-derived product/workload context. v5
-// additionally binds the selected resource scope. The
-// field order must match the Cloudflare edge signer
+// additionally binds the selected resource scope. v7 additionally binds the
+// principal/agent attestation and the step-up facts; its issuer may be empty,
+// as in the Gateway's v6. The field order must match the Cloudflare edge signer
 // (kombify-Gateway/cloudflare-edge/src/edge-signature.ts).
 func buildSignaturePayload(version, method, signedPath, keyID string, r *http.Request, timestamp, nonce string) string {
+	header := func(name string) string { return strings.TrimSpace(r.Header.Get(name)) }
+	bindsIssuer := version == EdgeSignatureVersionV4 || version == EdgeSignatureVersionV5 || version == EdgeSignatureVersionV7
+	bindsEntitlements := version == edgeSignatureVersionV2 || bindsIssuer
 	fields := []string{
 		version,
 		keyID,
 		strings.ToUpper(method),
 		signedPath,
-		strings.TrimSpace(r.Header.Get(HeaderEdgeAuth)),
-		strings.TrimSpace(r.Header.Get(HeaderEdgeService)),
-		strings.TrimSpace(r.Header.Get(HeaderPublicPrefix)),
+		header(HeaderEdgeAuth),
+		header(HeaderEdgeService),
+		header(HeaderPublicPrefix),
 	}
-	if version == EdgeSignatureVersionV4 || version == EdgeSignatureVersionV5 {
-		fields = append(fields, strings.TrimSpace(r.Header.Get(HeaderUserIssuer)))
+	if bindsIssuer {
+		fields = append(fields, header(HeaderUserIssuer))
 	}
 	fields = append(fields,
-		strings.TrimSpace(r.Header.Get(HeaderUserID)),
-		strings.TrimSpace(r.Header.Get(HeaderOrgID)),
-		strings.TrimSpace(r.Header.Get(HeaderUserEmail)),
-		strings.TrimSpace(r.Header.Get(HeaderUserTier)),
-		strings.TrimSpace(r.Header.Get(HeaderUserRoles)),
-		strings.TrimSpace(r.Header.Get(HeaderUserScope)),
+		header(HeaderUserID),
+		header(HeaderOrgID),
+		header(HeaderUserEmail),
+		header(HeaderUserTier),
+		header(HeaderUserRoles),
+		header(HeaderUserScope),
 	)
-	if version == edgeSignatureVersionV2 || version == EdgeSignatureVersionV4 || version == EdgeSignatureVersionV5 {
-		fields = append(fields,
-			strings.TrimSpace(r.Header.Get(HeaderEntitlements)),
-			strings.TrimSpace(r.Header.Get(HeaderKnowledgeTier)),
-		)
+	if bindsEntitlements {
+		fields = append(fields, header(HeaderEntitlements), header(HeaderKnowledgeTier))
 	}
-	if version == EdgeSignatureVersionV4 || version == EdgeSignatureVersionV5 {
-		fields = append(fields,
-			strings.TrimSpace(r.Header.Get(HeaderClientID)),
-			strings.TrimSpace(r.Header.Get(HeaderProductID)),
-			strings.TrimSpace(r.Header.Get(HeaderAIWorkload)),
-		)
+	if bindsIssuer {
+		fields = append(fields, header(HeaderClientID), header(HeaderProductID), header(HeaderAIWorkload))
 	}
-	if version == EdgeSignatureVersionV5 {
-		fields = append(fields, strings.TrimSpace(r.Header.Get(HeaderResourceScope)))
+	if version == EdgeSignatureVersionV5 || version == EdgeSignatureVersionV7 {
+		fields = append(fields, header(HeaderResourceScope))
+	}
+	if version == EdgeSignatureVersionV7 {
+		fields = append(fields,
+			header(HeaderPrincipalType),
+			header(HeaderAgentID),
+			header(HeaderAgentClass),
+			header(HeaderAgentPerimeter),
+			header(HeaderAgentPolicy),
+			header(HeaderUserAMR),
+			header(HeaderUserACR),
+			header(HeaderUserAuthTime),
+		)
 	}
 	fields = append(fields, timestamp, nonce)
 	return strings.Join(fields, "\n")
@@ -291,14 +332,17 @@ func buildSignaturePayload(version, method, signedPath, keyID string, r *http.Re
 func AIContextBoundBySignature(r *http.Request) bool {
 	signature := strings.TrimSpace(r.Header.Get(HeaderEdgeSignature))
 	return strings.HasPrefix(signature, EdgeSignatureVersionV4+"=") ||
-		strings.HasPrefix(signature, EdgeSignatureVersionV5+"=")
+		strings.HasPrefix(signature, EdgeSignatureVersionV5+"=") ||
+		strings.HasPrefix(signature, EdgeSignatureVersionV7+"=")
 }
 
 // AIResourceContextBoundBySignature reports whether the already-verified edge
 // envelope also covers the resource scope. Call it only after Middleware has
 // accepted the request.
 func AIResourceContextBoundBySignature(r *http.Request) bool {
-	return strings.HasPrefix(strings.TrimSpace(r.Header.Get(HeaderEdgeSignature)), EdgeSignatureVersionV5+"=")
+	signature := strings.TrimSpace(r.Header.Get(HeaderEdgeSignature))
+	return strings.HasPrefix(signature, EdgeSignatureVersionV5+"=") ||
+		strings.HasPrefix(signature, EdgeSignatureVersionV7+"=")
 }
 
 func signPayload(secret, payload string) string {
@@ -365,6 +409,9 @@ func hasUnsignedIdentityHeaders(r *http.Request) bool {
 		HeaderProductID,
 		HeaderAIWorkload,
 		HeaderResourceScope,
+		HeaderUserAMR,
+		HeaderUserACR,
+		HeaderUserAuthTime,
 		HeaderEdgeSignature,
 		HeaderEdgeTimestamp,
 		HeaderEdgeNonce,
@@ -401,4 +448,55 @@ func extractIdentity(r *http.Request) *identity.Identity {
 // must not be used as an authorization decision.
 func IsEdgeAuthenticated(r *http.Request) bool {
 	return isSupportedEdgeAuthValue(strings.TrimSpace(r.Header.Get(HeaderEdgeAuth)))
+}
+
+// StepUpClaims are the authentication facts a verified v7 envelope binds:
+// the Auth0 `amr` values, the `acr` value and `auth_time`. A zero AuthTime
+// means the token named none.
+type StepUpClaims struct {
+	AMR      []string
+	ACR      string
+	AuthTime time.Time
+}
+
+type stepUpContextKey struct{}
+
+// authTimePattern is the strict auth_time form shared with the TypeScript
+// verifier: positive decimal Unix seconds, no sign, spaces or leading zero.
+var authTimePattern = regexp.MustCompile(`^[1-9][0-9]{0,15}$`)
+
+// StepUpFromContext returns the step-up claims Middleware attached after
+// verifying a v7 envelope. Any other version, an unverified request or a
+// disabled middleware yields ok=false: origins treat that as "no fresh
+// multi-factor sign-in" and fail closed.
+func StepUpFromContext(ctx context.Context) (StepUpClaims, bool) {
+	if ctx == nil {
+		return StepUpClaims{}, false
+	}
+	claims, ok := ctx.Value(stepUpContextKey{}).(StepUpClaims)
+	if !ok {
+		return StepUpClaims{}, false
+	}
+	claims.AMR = append([]string(nil), claims.AMR...)
+	return claims, true
+}
+
+// stepUpClaimsFromVerifiedRequest reads the step-up headers of a request
+// whose envelope already verified. Only v7 covers them; below v7 they are
+// unsigned and ignored.
+func stepUpClaimsFromVerifiedRequest(r *http.Request) (StepUpClaims, bool) {
+	if !strings.HasPrefix(strings.TrimSpace(r.Header.Get(HeaderEdgeSignature)), EdgeSignatureVersionV7+"=") {
+		return StepUpClaims{}, false
+	}
+	claims := StepUpClaims{ACR: strings.TrimSpace(r.Header.Get(HeaderUserACR))}
+	for _, method := range strings.Split(r.Header.Get(HeaderUserAMR), ",") {
+		if method = strings.TrimSpace(method); method != "" {
+			claims.AMR = append(claims.AMR, method)
+		}
+	}
+	if raw := r.Header.Get(HeaderUserAuthTime); authTimePattern.MatchString(raw) {
+		seconds, _ := strconv.ParseInt(raw, 10, 64)
+		claims.AuthTime = time.Unix(seconds, 0).UTC()
+	}
+	return claims, true
 }

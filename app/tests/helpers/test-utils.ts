@@ -295,14 +295,6 @@ export async function login(page: Page, email?: string, password?: string) {
 }
 
 /**
- * Navigate to a specific page after login
- */
-export async function navigateTo(page: Page, path: string) {
-  await page.goto(path);
-  await page.waitForLoadState("domcontentloaded");
-}
-
-/**
  * Wait for page to finish loading (no skeleton loaders)
  */
 export async function waitForPageLoad(page: Page, timeout = 5000) {
@@ -316,21 +308,6 @@ export async function waitForPageLoad(page: Page, timeout = 5000) {
     }
     await page.waitForTimeout(200);
   }
-}
-
-/**
- * Check that a page has no error banners
- */
-export async function expectNoErrors(page: Page) {
-  const errorCount = await page.locator(".border-red-700").count();
-  expect(errorCount).toBe(0);
-}
-
-/**
- * Check that sidebar is visible (indicates logged in state)
- */
-export async function expectLoggedIn(page: Page) {
-  await expect(page.locator("aside")).toBeVisible();
 }
 
 /**
@@ -395,63 +372,45 @@ export async function mockLoggedInContext(
 }
 
 /**
- * Mock API endpoint
+ * Add a use case on wizard step 1 through its card's "Add to your kit" toggle.
  */
-export async function mockApiEndpoint(
-  page: Page,
-  urlPattern: string,
-  response: { status: number; body: object },
-) {
-  await page.route(urlPattern, async (route) => {
-    await route.fulfill({
-      status: response.status,
-      contentType: "application/json",
-      body: JSON.stringify(response.body),
-    });
-  });
+export async function selectUseCase(page: Page, feature: string) {
+  const card = page.getByTestId(`easy-feature-${feature}`);
+  await card.getByRole("button", { name: /^Add to your kit / }).click();
+  await expect(
+    card.getByRole("button", { name: /^Remove from your kit /, pressed: true }),
+  ).toBeVisible();
 }
 
 /**
  * Complete the easy wizard flow
  */
-export async function completeEasyWizard(
+type EasyWizardPath = {
+  feature?: string;
+  serverProvisioning?: "kombify-cloud" | "connect-remote" | "install-command";
+  access?: "home" | "anywhere";
+  users?: "solo" | "shared";
+};
+
+/**
+ * Walk the easy wizard through steps 1-4 and stop on the owner step. The one
+ * shared path keeps every creation spec on the current wizard contract.
+ */
+export async function walkEasyWizardToOwnerStep(
   page: Page,
-  options: {
-    feature?: string;
-    serverProvisioning?: "kombify-cloud" | "connect-remote" | "install-command";
-    access?: "home" | "anywhere";
-    users?: "me" | "family" | "public";
-    ownerSource?: "local" | "cloud";
-    recoveryPassphrase?: string;
-    admin?: {
-      username: string;
-      email: string;
-      displayName?: string;
-    };
-  } = {},
-) {
-  const {
+  {
     feature = "storage",
     serverProvisioning = "kombify-cloud",
     access = "anywhere",
-    users = "me",
-    ownerSource = "local",
-    recoveryPassphrase = "correct horse battery staple 12!",
-    admin = {
-      username: "admin",
-      email: "admin@test.local",
-      displayName: "Admin",
-    },
-  } = options;
-
-  // Step 1: Features
+    users = "solo",
+  }: EasyWizardPath = {},
+) {
   await page
     .getByTestId("hydrated")
     .waitFor({ state: "attached", timeout: 10000 });
-  await page.getByTestId(`easy-feature-${feature}`).check();
+  await selectUseCase(page, feature);
   await page.getByTestId("wizard-next").click();
 
-  // Step 2: Server provisioning
   await page
     .getByTestId(
       serverProvisioning === "kombify-cloud"
@@ -465,39 +424,65 @@ export async function completeEasyWizard(
   }
   await page.getByTestId("wizard-next").click();
 
-  // Step 3: Access
   await page.getByTestId(`easy-access-${access}`).click();
   await page.getByTestId("wizard-next").click();
 
-  // Step 4: Users
-  await page.getByTestId(`easy-users-${users}`).check();
+  const household = page.getByTestId(`easy-users-${users}`);
+  await household.click();
+  await expect(household.getByRole("radio")).toBeChecked();
   await page.getByTestId("wizard-next").click();
+  await expect(page.getByTestId("easy-step-5")).toBeVisible();
+}
 
-  // Step 5: Login + Create
-  await page.getByTestId(`owner-source-${ownerSource}`).click();
-  await page.locator("#owner-username").fill(admin.username);
+/**
+ * Pick the Homelab owner on the owner step. The radios are visually hidden,
+ * so the visible choice card (their label) takes the click.
+ */
+export async function chooseOwnerSource(
+  page: Page,
+  source: "local" | "cloud-linked",
+) {
+  const radio = page.getByTestId(
+    source === "local"
+      ? "owner-source-local"
+      : "owner-source-cloud-linked-select",
+  );
+  await radio.locator("xpath=ancestor::label[1]").click();
+  await expect(radio).toBeChecked();
+}
+
+/**
+ * Complete the easy wizard with a new local Homelab owner and submit it.
+ */
+export async function completeEasyWizard(
+  page: Page,
+  {
+    recoveryPassphrase = "correct horse battery staple 12!",
+    admin = {
+      username: "admin",
+      email: "admin@test.local",
+      displayName: "Admin",
+    },
+    ...path
+  }: EasyWizardPath & {
+    recoveryPassphrase?: string;
+    admin?: { username: string; email: string; displayName?: string };
+  } = {},
+) {
+  await walkEasyWizardToOwnerStep(page, path);
+
+  // Username and recovery live behind the "Make it yours" tabs.
+  await chooseOwnerSource(page, "local");
   await page.locator("#owner-email").fill(admin.email);
   if (admin.displayName) {
     await page.locator("#owner-display-name").fill(admin.displayName);
   }
+  await page.getByRole("button", { name: /^Make it yours/ }).click();
+  await page.getByRole("tab", { name: /^Sign-in/ }).click();
+  await page.locator("#owner-username").fill(admin.username);
+  await page.getByRole("tab", { name: /^Recovery/ }).click();
   await page.locator("#recovery-passphrase").fill(recoveryPassphrase);
   await page.locator("#recovery-passphrase-confirm").fill(recoveryPassphrase);
   await page.locator("#recovery-passphrase-confirm").blur();
-  await page.getByTestId("easy-auth-passkey").waitFor({ state: "visible" });
   await page.getByTestId("wizard-create").click();
-}
-
-/**
- * Get current page performance metrics
- */
-export async function getPerformanceMetrics(page: Page) {
-  return await page.evaluate(() => {
-    const timing = performance.timing;
-    return {
-      loadTime: timing.loadEventEnd - timing.navigationStart,
-      domContentLoaded:
-        timing.domContentLoadedEventEnd - timing.navigationStart,
-      firstPaint: timing.responseEnd - timing.navigationStart,
-    };
-  });
 }

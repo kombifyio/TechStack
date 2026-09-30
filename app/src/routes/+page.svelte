@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "#lib/i18n.svelte.js";
   // Auth redirect is now handled by +page.ts load function
   // This page shows a loading state while the redirect happens
 </script>
@@ -21,11 +22,11 @@
       </svg>
     </div>
     <p class="mb-4 text-sm text-muted-foreground">
-      Redirecting into your homelab...
+      {tr("ui.redirect.homelab")}
     </p>
-    <p class="text-muted-foreground mb-6">Redirecting...</p>
+    <p class="text-muted-foreground mb-6">{tr("ui.redirect.generic")}</p>
     <a href="/login" class="text-primary hover:underline"
-      >Continue setup</a
+      >{tr("ui.configFlow.continueSetup")}</a
     >
   </div>
 </div>

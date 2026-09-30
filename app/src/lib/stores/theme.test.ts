@@ -30,10 +30,12 @@ describe("theme store", () => {
     );
   });
 
-  it("defaults to dark when nothing else says otherwise", async () => {
+  it("follows the system appearance without saving an explicit choice", async () => {
     const { theme } = await import("./theme");
     theme.init();
-    expect(get(theme)).toBe("dark");
+    expect(get(theme)).toBe("system");
+    expect(document.documentElement.dataset.appearance).toBe("light");
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
   });
 
   it("restores an explicit local choice when running standalone", async () => {
@@ -55,15 +57,23 @@ describe("theme store", () => {
     expect(document.documentElement.classList.contains("dark")).toBe(false);
   });
 
-  it("lets the portal theme win over a stored value while embedded", async () => {
-    // An embed that does not match the page around it is the bug being fixed,
-    // so the host wins when it states a theme.
+  it("preserves an app override until the user resumes live parent inheritance", async () => {
     window.history.replaceState({}, "", "/?embedded=true&theme=light");
     localStorage.setItem(STORAGE_KEY, "dark");
 
     const { theme } = await import("./theme");
+    expect(get(theme.resolved)).toBe("dark");
     theme.init();
-    expect(get(theme)).toBe("light");
+    expect(document.documentElement.dataset.appearance).toBe("dark");
+    theme.setHostTheme("light");
+    expect(document.documentElement.dataset.appearance).toBe("dark");
+    expect(localStorage.getItem(STORAGE_KEY)).toBe("dark");
+    theme.followDefaultTheme();
+    expect(document.documentElement.dataset.appearance).toBe("light");
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+    theme.setHostTheme("dark");
+    expect(document.documentElement.dataset.appearance).toBe("dark");
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
   });
 
   it("ignores a malformed theme param", async () => {

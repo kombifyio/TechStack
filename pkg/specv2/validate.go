@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -33,6 +34,9 @@ const (
 	maxCompatibilityBytes  = 1 << 20
 	// Existing legacy seeds retain their compute-tier authoring contract.
 	authoringComputeTier = "standard"
+	// authoringOwnerEmail is the owner the image seeds are authored with
+	// (Dockerfile spec templates); it never reaches a projected StackSpec.
+	authoringOwnerEmail = "owner@smoke.stackkit.cc"
 )
 
 // SpecValidator is the acceptance authority for projected specs: the pinned
@@ -218,7 +222,7 @@ func readCompatibilityManifest(path string) (compatibilityManifest, error) {
 // AuthorGoals lets the published manifest decide which selected use cases are
 // shipped, then invokes that same release's CLI to author defaults, placement,
 // adapter selection and required secret references.
-func (v *CLIValidator) AuthorGoals(ctx context.Context, kitSlug, name, domainBase, apiVersion string, goals []string) (GoalAuthoring, error) {
+func (v *CLIValidator) AuthorGoals(ctx context.Context, kitSlug, name, domainBase, apiVersion string, selection GoalSelection) (GoalAuthoring, error) {
 	apiVersion = strings.TrimSpace(apiVersion)
 	if v == nil || strings.TrimSpace(v.Binary) == "" || v.goalWorkloads == nil {
 		return GoalAuthoring{}, fmt.Errorf("StackKits release goal author is not configured")
@@ -229,9 +233,13 @@ func (v *CLIValidator) AuthorGoals(ctx context.Context, kitSlug, name, domainBas
 	if !isCanonicalAPIVersion(apiVersion) {
 		return GoalAuthoring{}, fmt.Errorf("unsupported StackKits authoring API version %q", apiVersion)
 	}
-	mappedGoals, unmapped, workloadIDs := selectGoalWorkloads(goals, v.goalWorkloads)
+	mappedGoals, unmapped, workloadIDs := selectGoalWorkloads(selection.Goals, v.goalWorkloads)
 	if len(mappedGoals) == 0 {
 		return GoalAuthoring{UnmappedGoals: unmapped}, nil
+	}
+	useCases, choiceArgs, bindings, err := v.installChoices(apiVersion, mappedGoals, workloadIDs, selection)
+	if err != nil {
+		return GoalAuthoring{}, err
 	}
 
 	workDir, err := os.MkdirTemp("", "specv2-author-")
@@ -256,10 +264,16 @@ func (v *CLIValidator) AuthorGoals(ctx context.Context, kitSlug, name, domainBas
 		"--no-log", "--chdir", workDir, "init", kitSlug,
 		"--non-interactive", "--name", contractID(name),
 		"--owner-source", "local",
-		"--use-case", strings.Join(mappedGoals, ","),
+		// Init refuses a local owner without an email (StackKits v0.32.1+).
+		// The scratch workspace and its custody are discarded; only workload
+		// and module entries leave it, so the image seeds' owner is reused.
+		"--owner-email", authoringOwnerEmail,
+		"--owner-username", "owner",
+		"--use-case", strings.Join(useCases, ","),
 		"--platform", wizardRuntimeAdapter,
 		"--api-version", apiVersion,
 	}
+	args = append(args, choiceArgs...)
 	if apiVersion == NativeSpecAPIVersion {
 		args = append(args, "--catalog-defaults")
 	} else {
@@ -282,7 +296,47 @@ func (v *CLIValidator) AuthorGoals(ctx context.Context, kitSlug, name, domainBas
 	if err != nil {
 		return GoalAuthoring{}, fmt.Errorf("read StackKits-authored spec: %w", err)
 	}
-	return goalAuthoringFromDocument(document, kitSlug, mappedGoals, unmapped, workloadIDs, v.goalBindings)
+	return goalAuthoringFromDocument(document, kitSlug, mappedGoals, unmapped, workloadIDs, bindings)
+}
+
+// installChoices adds the selection's installing alternatives and add-on
+// workloads of shipped goals to the release init request. Only the native
+// contract selects alternatives, so a legacy seed refuses them rather than
+// installing a default the operator did not choose. Each choice carries its
+// catalog binding so the authored document is checked against exactly what
+// was requested.
+func (v *CLIValidator) installChoices(apiVersion string, mappedGoals []string, workloadIDs map[string]bool, selection GoalSelection) ([]string, []string, map[string]workloadModuleBinding, error) {
+	useCases := append([]string(nil), mappedGoals...)
+	bindings := make(map[string]workloadModuleBinding, len(v.goalBindings))
+	for workload, binding := range v.goalBindings {
+		bindings[workload] = binding
+	}
+	if apiVersion != NativeSpecAPIVersion {
+		if selection.hasInstallChoices() {
+			return nil, nil, nil, fmt.Errorf("alternatives and add-ons need a %s StackSpec, the seed is %s", NativeSpecAPIVersion, apiVersion)
+		}
+		return useCases, nil, bindings, nil
+	}
+	var args []string
+	for _, goal := range mappedGoals {
+		choice, ok := selection.Alternatives[goal]
+		if !ok || contractID(choice.Alternative) != choice.Alternative || contractID(choice.Module) != choice.Module {
+			continue
+		}
+		args = append(args, "--use-case-alternative", goal+"="+choice.Alternative)
+		bindings[v.goalWorkloads[goal]] = workloadModuleBinding{AlternativeRef: choice.Alternative, ModuleRef: choice.Module}
+	}
+	for _, addOn := range selection.AddOns {
+		workload := addOn.Workload
+		if !slices.Contains(mappedGoals, addOn.Goal) || workloadIDs[workload] ||
+			contractID(workload) != workload || contractID(addOn.Alternative) != addOn.Alternative || contractID(addOn.Module) != addOn.Module {
+			continue
+		}
+		useCases = append(useCases, workload)
+		workloadIDs[workload] = true
+		bindings[workload] = workloadModuleBinding{AlternativeRef: addOn.Alternative, ModuleRef: addOn.Module}
+	}
+	return useCases, args, bindings, nil
 }
 
 func selectGoalWorkloads(goals []string, goalWorkloads map[string]string) ([]string, []string, map[string]bool) {

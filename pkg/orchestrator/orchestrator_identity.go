@@ -70,6 +70,8 @@ func (o *Orchestrator) RunStackKitIdentityCommand(ctx context.Context, request S
 			Version: receipt.Version, PlatformOs: receipt.Platform.OS, PlatformArch: receipt.Platform.Arch,
 			ArchiveSha256: receipt.ArchiveSHA256, ReleaseIndexSha256: receipt.IndexSHA256,
 		},
+		// The identity commands read the StackSpec the rollout applied.
+		SpecPath:      jobs.ApplyStackKitRolloutDefaults(jobs.StackKitLifecycleRequest{}, stackKitRolloutBinding(stack), "").SpecPath,
 		OwnerApproved: request.OwnerApproved, StackkitInstanceId: stack.stackKitInstanceID,
 		HouseholdUsername: strings.TrimSpace(request.HouseholdUsername), HouseholdEmail: strings.TrimSpace(request.HouseholdEmail),
 		HouseholdDisplayName: strings.TrimSpace(request.HouseholdDisplayName),

@@ -208,12 +208,12 @@ func (h workerRouteHandlers) projectServerHeartbeat(ctx context.Context, worker 
 				"runtime_agent_id":    worker.ID,
 				"authority":           "guard",
 				"observed_host_state": "",
-			}, func() map[string]any {
+			}, mergeAnyMaps(hostMaintenanceMetadataFromWorker(worker), func() map[string]any {
 				if convergence := runtimeConvergenceMetadata(worker); convergence != nil {
 					return map[string]any{"runtime_convergence": convergence}
 				}
 				return nil
-			}()),
+			}())),
 		}})
 	if err != nil {
 		return err
@@ -276,6 +276,9 @@ func (h workerRouteHandlers) projectServerInventory(ctx context.Context, worker 
 	}
 	if convergence := runtimeConvergenceMetadata(worker); convergence != nil {
 		runtimeMetadata["runtime_convergence"] = convergence
+	}
+	for key, value := range req.metadata() {
+		runtimeMetadata[key] = value
 	}
 	inventoryPayload := map[string]any{
 		"host":       inventoryHostMap(req.Host),
@@ -536,16 +539,21 @@ func (h workerRouteHandlers) promoteObservedEnrollment(ctx context.Context, obse
 	// authority. A retired lease projection may lag or reject its metadata
 	// repair, but it must not turn a healthy heartbeat into HTTP 500 and prevent
 	// the following inventory sample from carrying the rollout target.
-	_ = h.markManagedRuntimeEnrolled(ctx, server.TenantID, server.LeaseID)
+	_ = h.markManagedRuntimeEnrolled(ctx, server)
 	return nil
 }
 
 type managedRuntimeEnrollmentStore interface {
 	Get(context.Context, string, vmlease.LeaseID) (*vmlease.Lease, error)
 	Patch(context.Context, string, vmlease.LeaseID, vmleases.PatchRequest) (*vmlease.Lease, error)
+	PinSSHHostKey(context.Context, vmleases.SSHHostKeyPinRequest) (*vmlease.Lease, error)
 }
 
-func (h workerRouteHandlers) markManagedRuntimeEnrolled(ctx context.Context, tenantID, leaseID string) error {
+func (h workerRouteHandlers) markManagedRuntimeEnrolled(ctx context.Context, server *controlplane.ServerRuntime) error {
+	if server == nil {
+		return nil
+	}
+	tenantID, leaseID := strings.TrimSpace(server.TenantID), strings.TrimSpace(server.LeaseID)
 	if strings.TrimSpace(tenantID) == "" || strings.TrimSpace(leaseID) == "" {
 		return nil
 	}
@@ -564,15 +572,60 @@ func (h workerRouteHandlers) markManagedRuntimeEnrolled(ctx context.Context, ten
 	if err != nil {
 		return fmt.Errorf("load managed runtime lease enrollment: %w", err)
 	}
-	if lease == nil || strings.EqualFold(strings.TrimSpace(lease.Metadata["runtime_enrollment_status"]), monthlyRuntimeEnrollmentStatusEnrolled) {
+	if lease == nil {
+		return nil
+	}
+	if hostKey := observedSSHHostKey(server.Metadata); hostKey != "" {
+		generationDigest, digestErr := vmleases.ResourceGenerationDigest(tenantID, *lease)
+		if digestErr != nil {
+			return fmt.Errorf("bind managed runtime SSH host key generation: %w", digestErr)
+		}
+		if _, pinErr := store.PinSSHHostKey(ctx, vmleases.SSHHostKeyPinRequest{
+			TenantID: tenantID, LeaseID: vmlease.LeaseID(leaseID),
+			OwnerSubjectID: server.OwnerSubjectID, ServerID: server.ID,
+			StackID: server.StackID, ServerGeneration: server.Generation,
+			ExpectedResourceGenerationDigest: generationDigest, HostKey: hostKey,
+		}); pinErr != nil {
+			return fmt.Errorf("persist managed runtime SSH host key: %w", pinErr)
+		}
+	}
+	metadata := map[string]string{}
+	if legacyEnrollment, present := lease.Metadata["runtime_enrollment_status"]; present &&
+		!strings.EqualFold(strings.TrimSpace(legacyEnrollment), monthlyRuntimeEnrollmentStatusEnrolled) {
+		metadata["runtime_enrollment_status"] = monthlyRuntimeEnrollmentStatusEnrolled
+	}
+	if len(metadata) == 0 {
 		return nil
 	}
 	if _, err := store.Patch(ctx, strings.TrimSpace(tenantID), vmlease.LeaseID(strings.TrimSpace(leaseID)), vmleases.PatchRequest{
-		Metadata: map[string]string{"runtime_enrollment_status": monthlyRuntimeEnrollmentStatusEnrolled},
+		Metadata: metadata,
 	}); err != nil {
 		return fmt.Errorf("persist managed runtime enrollment: %w", err)
 	}
 	return nil
+}
+
+func observedSSHHostKey(metadata map[string]any) string {
+	host, ok := mapFromJSONAny(metadata["host"])
+	if !ok {
+		return ""
+	}
+	var values []string
+	switch keys := host["ssh_host_keys"].(type) {
+	case []string:
+		values = keys
+	case []any:
+		for _, key := range keys {
+			if value, ok := key.(string); ok {
+				values = append(values, value)
+			}
+		}
+	}
+	keys := boundedSSHHostKeys(values)
+	if len(keys) == 0 {
+		return ""
+	}
+	return keys[0]
 }
 
 func validateGuardEventPosition(receiptAt time.Time, position guardEventPosition) (guardEventPosition, error) {

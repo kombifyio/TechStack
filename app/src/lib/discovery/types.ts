@@ -1,3 +1,4 @@
+import { tr, stateLabel } from "#lib/i18n.svelte.js";
 /**
  * kombify-TechStack Network Discovery Types
  *
@@ -175,12 +176,12 @@ export interface DiscoveryStats {
  */
 export function getRoleDisplayName(role: DeviceRole): string {
   const names: Record<DeviceRole, string> = {
-    main: "Main Controller",
-    worker: "Worker Node",
-    storage: "Storage Node",
-    utility: "Utility",
-    gateway: "Router/Gateway",
-    unknown: "Unknown",
+    main: tr("ui.types.mainController"),
+    worker: tr("ui.standardBundle.workerNode"),
+    storage: tr("ui.standardBundle.storageNode"),
+    utility: tr("ui.types.utility"),
+    gateway: tr("ui.types.routerGateway"),
+    unknown: tr("ui.types.unknown"),
   };
   return names[role] || role;
 }
@@ -208,11 +209,14 @@ export function getProbeStatusDisplay(status: ProbeStatus): {
   color: string;
 } {
   const displays: Record<ProbeStatus, { label: string; color: string }> = {
-    pending: { label: "Pending", color: "text-gray-400" },
-    probing: { label: "Probing...", color: "text-yellow-400" },
-    done: { label: "Complete", color: "text-green-400" },
-    failed: { label: "Failed", color: "text-red-400" },
-    skipped: { label: "Skipped", color: "text-gray-500" },
+    pending: { label: tr("ui.services.pending"), color: "text-gray-400" },
+    probing: { label: tr("ui.types.probing"), color: "text-yellow-400" },
+    done: { label: tr("ui.presets.complete"), color: "text-green-400" },
+    failed: {
+      label: tr("ui.stacksCreatingCreationRunStatus.failed"),
+      color: "text-red-400",
+    },
+    skipped: { label: tr("ui.types.skipped"), color: "text-gray-500" },
   };
   return displays[status] || { label: status, color: "text-gray-400" };
 }
@@ -225,11 +229,14 @@ export function getScanStatusDisplay(status: ScanStatus): {
   color: string;
 } {
   const displays: Record<ScanStatus, { label: string; color: string }> = {
-    pending: { label: "Pending", color: "text-gray-400" },
-    running: { label: "Scanning...", color: "text-primary" },
-    completed: { label: "Complete", color: "text-green-400" },
-    failed: { label: "Failed", color: "text-red-400" },
-    canceled: { label: "canceled", color: "text-gray-500" },
+    pending: { label: tr("ui.services.pending"), color: "text-gray-400" },
+    running: { label: tr("ui.types.scanning"), color: "text-primary" },
+    completed: { label: tr("ui.presets.complete"), color: "text-green-400" },
+    failed: {
+      label: tr("ui.stacksCreatingCreationRunStatus.failed"),
+      color: "text-red-400",
+    },
+    canceled: { label: stateLabel("canceled"), color: "text-gray-500" },
   };
   return displays[status] || { label: status, color: "text-gray-400" };
 }

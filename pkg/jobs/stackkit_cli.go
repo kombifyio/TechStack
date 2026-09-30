@@ -92,6 +92,24 @@ func (g *StackKitCLIGenerator) GenerateStackKitArtifacts(ctx context.Context, re
 		}
 	}
 
+	// validate, address plan/bind and generate each evaluate the CUE catalog;
+	// the slot covers the whole sequence and the wait does not consume the
+	// CLI timeout below.
+	waited := false
+	release, err := acquireStackKitCLI(ctx, func() {
+		waited = true
+		if req.Progress != nil {
+			req.Progress("Waiting for another rollout to finish generating StackKits artifacts...")
+		}
+	})
+	if err != nil {
+		return nil, fmt.Errorf("wait for StackKits CLI generation slot: %w", err)
+	}
+	defer release()
+	if waited && req.Progress != nil {
+		req.Progress("Generating StackKits rollout artifacts...")
+	}
+
 	timeout := g.Timeout
 	if timeout <= 0 || timeout > runtimeActionHTTPTimeout {
 		timeout = runtimeActionHTTPTimeout
@@ -198,6 +216,9 @@ func (g *StackKitCLIGenerator) stackKitCLIMetadata(
 			metadata[metadataKeyKombifyMeAddressZone] = managedAddress.Zone
 		} else {
 			metadata[metadataKeyKombifyMeAddressPrefix] = managedAddress.Prefix
+		}
+		if host := managedAddress.Hosts[managedLoginGatewayServiceKey]; host != "" {
+			metadata[metadataKeyKombifyMeLoginHost] = host
 		}
 	}
 	if !canonicalV2 {

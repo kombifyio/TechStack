@@ -3,13 +3,17 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
+	"time"
 )
 
 const homelabColumns = `id, tenant_id, owner_subject_id, name, intent_json::text,
-		created_at, updated_at, deleted_at, named_at`
+		created_at, updated_at, deleted_at, named_at,
+		identity_presentation::text, identity_cloud_revision, identity_pending`
 
 func (s *PostgresStore) CreateHomelab(ctx context.Context, req CreateHomelabRequest) (*Homelab, error) {
 	if s == nil || s.db == nil {
@@ -22,12 +26,18 @@ func (s *PostgresStore) CreateHomelab(ctx context.Context, req CreateHomelabRequ
 
 	var out *Homelab
 	err := s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		if _, err := lockStackIdentityRevision(ctx, tx, tenantID, strings.TrimSpace(req.OwnerSubjectID)); err != nil {
+			return err
+		}
 		homelab, err := s.insertHomelab(ctx, tx, req)
 		if err != nil {
 			return err
 		}
 		if homelab == nil {
 			return ErrConflict
+		}
+		if _, err := advanceStackIdentityRevision(ctx, tx, tenantID, strings.TrimSpace(req.OwnerSubjectID)); err != nil {
+			return err
 		}
 		out = homelab
 		return nil
@@ -81,11 +91,18 @@ func (s *PostgresStore) GetOrCreateHomelabForOwner(ctx context.Context, req Crea
 
 	var out *Homelab
 	err := s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		if _, err := lockStackIdentityRevision(ctx, tx, tenantID, ownerSubjectID); err != nil {
+			return err
+		}
 		homelab, err := s.insertHomelab(ctx, tx, req)
 		if err != nil {
 			return err
 		}
-		if homelab == nil {
+		if homelab != nil {
+			if _, err := advanceStackIdentityRevision(ctx, tx, tenantID, ownerSubjectID); err != nil {
+				return err
+			}
+		} else {
 			homelab, err = selectHomelabByOwner(ctx, tx, tenantID, ownerSubjectID)
 			if errors.Is(err, ErrNotFound) {
 				// The id collided with a row that does not belong to this
@@ -168,9 +185,13 @@ func (s *PostgresStore) UpdateHomelabName(ctx context.Context, tenantID, homelab
 
 	var out *Homelab
 	err := s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		ownerSubjectID, _, err := lockHomelabIdentityRevision(ctx, tx, tenantID, homelabID)
+		if err != nil {
+			return err
+		}
 		homelab, err := scanHomelab(tx.QueryRowContext(ctx, `
 			UPDATE homelabs
-			SET name = $3, updated_at = now(), named_at = now()
+			SET name = $3, updated_at = now(), named_at = now(), identity_pending = true
 			WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
 			RETURNING `+homelabColumns+`
 		`, tenantID, homelabID, name))
@@ -178,6 +199,81 @@ func (s *PostgresStore) UpdateHomelabName(ctx context.Context, tenantID, homelab
 			return ErrNotFound
 		}
 		if err != nil {
+			return err
+		}
+		if _, err := advanceStackIdentityRevision(ctx, tx, tenantID, ownerSubjectID); err != nil {
+			return err
+		}
+		out = homelab
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// UpdateHomelabStackIdentity replaces name, presentation and sync state in one
+// statement so a reader never sees a Cloud revision next to a stale name.
+func (s *PostgresStore) UpdateHomelabStackIdentity(ctx context.Context, tenantID, homelabID string, write HomelabStackIdentityWrite) (*Homelab, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("controlplane: database not configured")
+	}
+	tenantID = strings.TrimSpace(tenantID)
+	homelabID = strings.TrimSpace(homelabID)
+	name := strings.TrimSpace(write.Name)
+	if tenantID == "" || homelabID == "" || name == "" {
+		return nil, fmt.Errorf("controlplane: tenant, homelab and name required")
+	}
+	var presentation any
+	if write.Presentation != nil {
+		raw, err := json.Marshal(write.Presentation)
+		if err != nil {
+			return nil, err
+		}
+		presentation = string(raw)
+	}
+	editedAt := write.EditedAt
+	if editedAt.IsZero() {
+		editedAt = time.Now().UTC()
+	}
+
+	var out *Homelab
+	err := s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		ownerSubjectID, revision, err := lockHomelabIdentityRevision(ctx, tx, tenantID, homelabID)
+		if err != nil {
+			return err
+		}
+		if write.ExpectedRevision != nil && revision != *write.ExpectedRevision {
+			return ErrIdentityRevisionConflict
+		}
+		current, err := selectHomelabByOwner(ctx, tx, tenantID, ownerSubjectID)
+		if err != nil {
+			return err
+		}
+		if current.ID != homelabID {
+			return ErrNotFound
+		}
+		if current.Name == name && reflect.DeepEqual(current.Identity.Presentation, write.Presentation) &&
+			current.Identity.CloudRevision == write.CloudRevision && current.Identity.Pending == write.Pending &&
+			current.NamedAt != nil && current.NamedAt.Equal(editedAt) {
+			out = current
+			return nil
+		}
+		homelab, err := scanHomelab(tx.QueryRowContext(ctx, `
+			UPDATE homelabs
+			SET name = $3, identity_presentation = $4::jsonb, identity_cloud_revision = $5,
+				identity_pending = $6, named_at = $7, updated_at = now()
+			WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
+			RETURNING `+homelabColumns+`
+		`, tenantID, homelabID, name, presentation, write.CloudRevision, write.Pending, editedAt))
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if _, err := advanceStackIdentityRevision(ctx, tx, tenantID, ownerSubjectID); err != nil {
 			return err
 		}
 		out = homelab
@@ -254,6 +350,7 @@ func scanHomelab(row rowScanner) (*Homelab, error) {
 		intentRaw []byte
 		deletedAt sql.NullTime
 		namedAt   sql.NullTime
+		identity  sql.NullString
 	)
 	if err := row.Scan(
 		&homelab.ID,
@@ -265,6 +362,9 @@ func scanHomelab(row rowScanner) (*Homelab, error) {
 		&homelab.UpdatedAt,
 		&deletedAt,
 		&namedAt,
+		&identity,
+		&homelab.Identity.CloudRevision,
+		&homelab.Identity.Pending,
 	); err != nil {
 		return nil, err
 	}
@@ -278,6 +378,13 @@ func scanHomelab(row rowScanner) (*Homelab, error) {
 	if namedAt.Valid {
 		t := namedAt.Time
 		homelab.NamedAt = &t
+	}
+	if identity.Valid && strings.TrimSpace(identity.String) != "" && identity.String != "null" {
+		var presentation StackIdentityPresentation
+		if err := json.Unmarshal([]byte(identity.String), &presentation); err != nil {
+			return nil, err
+		}
+		homelab.Identity.Presentation = &presentation
 	}
 	return &homelab, nil
 }

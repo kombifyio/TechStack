@@ -167,6 +167,39 @@ func requireManagedRuntimeCapacityTx(
 	if grant.Mode == CapacityModeUnlimited {
 		return nil
 	}
+	held, err := countHeldManagedRuntimeCapacity(ctx, tx, tenantID, grant.ScopeID)
+	if err != nil {
+		return err
+	}
+	if held >= grant.Limit {
+		return &ManagedRuntimeCapacityExceededError{
+			TenantID: tenantID, OwnerSubjectID: grant.ScopeID,
+			Limit: grant.Limit, Held: held,
+		}
+	}
+	return nil
+}
+
+// HeldManagedRuntimeCapacity reports how many managed-server slots the owner
+// currently holds in the tenant: the same unreleased, unretired reservation
+// count requireManagedRuntimeCapacityTx enforces against the signed
+// cloud.runtime.credits#managed_servers limit. It is a read model for the
+// Cloud budget panel and never grants or reserves capacity.
+func HeldManagedRuntimeCapacity(ctx context.Context, database *sql.DB, tenantID, ownerSubjectID string) (int, error) {
+	ownerSubjectID = strings.TrimSpace(ownerSubjectID)
+	if ownerSubjectID == "" {
+		return 0, fmt.Errorf("%w: owner subject id required", ErrInvalidRequest)
+	}
+	var held int
+	err := withTenantDatabase(ctx, database, tenantID, func(tx *sql.Tx) error {
+		var countErr error
+		held, countErr = countHeldManagedRuntimeCapacity(ctx, tx, strings.TrimSpace(tenantID), ownerSubjectID)
+		return countErr
+	})
+	return held, err
+}
+
+func countHeldManagedRuntimeCapacity(ctx context.Context, tx *sql.Tx, tenantID, ownerSubjectID string) (int, error) {
 	var held int
 	if err := tx.QueryRowContext(ctx, `
 		SELECT count(*)
@@ -187,16 +220,10 @@ func requireManagedRuntimeCapacityTx(
 		        AND retirement.lease_id = reservation.lease_id
 		        AND retirement.resource_generation_id = reservation.resource_generation_id
 		  )
-	`, tenantID, grant.ScopeID).Scan(&held); err != nil {
-		return fmt.Errorf("providercontrol: count managed runtime capacity: %w", err)
+	`, tenantID, ownerSubjectID).Scan(&held); err != nil {
+		return 0, fmt.Errorf("providercontrol: count managed runtime capacity: %w", err)
 	}
-	if held >= grant.Limit {
-		return &ManagedRuntimeCapacityExceededError{
-			TenantID: tenantID, OwnerSubjectID: grant.ScopeID,
-			Limit: grant.Limit, Held: held,
-		}
-	}
-	return nil
+	return held, nil
 }
 
 func insertManagedRuntimeCapacityReservationTx(

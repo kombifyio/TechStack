@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "#lib/i18n.svelte.js";
   /**
    * Toast - Modern notification component
    * Uses CSS variables and lucide-svelte icons
@@ -51,7 +52,7 @@
       <button
         class="text-white/60 hover:text-white transition-colors rounded-md p-0.5 hover:bg-white/10 -mr-1 -mt-1"
         onclick={() => toasts.remove(toast.id)}
-        aria-label="Dismiss notification"
+        aria-label={tr("ui.toast.dismiss")}
       >
         <X class="w-4 h-4" />
       </button>

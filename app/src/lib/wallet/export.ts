@@ -6,6 +6,7 @@
 import type { WalletItem, CredentialType } from "#lib/wallet/types.js";
 import { encrypt, decrypt, isCryptoAvailable } from "./crypto";
 
+import { tr } from "#lib/i18n.svelte.js";
 // Export format version for future compatibility
 const EXPORT_VERSION = 1;
 
@@ -70,9 +71,7 @@ export async function exportWallet(
 
   if (password && password.length > 0) {
     if (!isCryptoAvailable()) {
-      throw new Error(
-        "Encryption not available. Please use a modern browser with HTTPS.",
-      );
+      throw new Error(tr("ui.export.encryptionNotAvailablePleaseUse"));
     }
     const encryptedData = await encrypt(jsonData, password);
     return {
@@ -102,7 +101,10 @@ export async function importWallet(
 ): Promise<ExportableCredential[]> {
   if (exportFile.version !== EXPORT_VERSION) {
     throw new Error(
-      `Unsupported export version: ${exportFile.version}. Expected: ${EXPORT_VERSION}`,
+      tr("ui.export.unsupportedExportVersionExpected", {
+        version: exportFile.version,
+        EXPORT_VERSION,
+      }),
     );
   }
 
@@ -110,12 +112,10 @@ export async function importWallet(
 
   if (exportFile.encrypted) {
     if (!password) {
-      throw new Error("Password required for encrypted export");
+      throw new Error(tr("ui.export.passwordRequiredForEncryptedExport"));
     }
     if (!isCryptoAvailable()) {
-      throw new Error(
-        "Decryption not available. Please use a modern browser with HTTPS.",
-      );
+      throw new Error(tr("ui.export.decryptionNotAvailablePleaseUse"));
     }
     jsonData = await decrypt(exportFile.data, password);
   } else {
@@ -126,17 +126,17 @@ export async function importWallet(
     const items = JSON.parse(jsonData) as ExportableCredential[];
     // Validate structure
     if (!Array.isArray(items)) {
-      throw new Error("Invalid export format: expected array");
+      throw new Error(tr("ui.export.invalidExportFormatExpectedArray"));
     }
     for (const item of items) {
       if (!item.name || !item.kind) {
-        throw new Error("Invalid credential: missing name or kind");
+        throw new Error(tr("ui.export.invalidCredentialMissingNameOr"));
       }
     }
     return items;
   } catch (err) {
     if (err instanceof SyntaxError) {
-      throw new Error("Invalid export file: malformed JSON");
+      throw new Error(tr("ui.export.invalidExportFileMalformedJSON"));
     }
     throw err;
   }
@@ -362,13 +362,15 @@ export async function readExportFile(file: File): Promise<WalletExport> {
           typeof parsed.encrypted !== "boolean" ||
           typeof parsed.data !== "string"
         ) {
-          throw new Error("Invalid export file structure");
+          throw new Error(tr("ui.export.invalidExportFileStructure"));
         }
 
         resolve(parsed);
       } catch (err) {
         reject(
-          err instanceof Error ? err : new Error("Failed to parse export file"),
+          err instanceof Error
+            ? err
+            : new Error(tr("ui.export.failedToParseExportFile")),
         );
       }
     };

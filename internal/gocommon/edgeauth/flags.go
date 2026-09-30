@@ -476,8 +476,12 @@ func decodeVerifiedDecision(method string, envelope decisionEnvelope) (FlagSet, 
 	return fs, nil
 }
 
+// supportsEntitlementIdentitySignature admits the identity versions a
+// request-bound decision may pair with: v2 and its superset v7.
 func supportsEntitlementIdentitySignature(signature string) bool {
-	return strings.HasPrefix(strings.TrimSpace(signature), edgeSignatureVersionV2+"=")
+	signature = strings.TrimSpace(signature)
+	return strings.HasPrefix(signature, edgeSignatureVersionV2+"=") ||
+		strings.HasPrefix(signature, EdgeSignatureVersionV7+"=")
 }
 
 // SignFlagHeaders produces the signed flag-delivery headers. Edge/runtime and

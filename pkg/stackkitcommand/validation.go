@@ -20,6 +20,19 @@ const (
 	RolloutEventVersion         = "stackkit.rollout-event/v1"
 	ExpectedPlanHashCapability  = "stackkit.apply.expected-plan-hash.v1"
 	WorkspaceInstanceCapability = "stackkit.workspace-instance-binding.v1"
+	// AdvancedTrustImportCapability marks an agent that can run
+	// ADVANCED_TRUST_IMPORT with the bundle from advanced_trust_bundle.
+	AdvancedTrustImportCapability = "stackkit.advanced-trust-import.v1"
+	// HostMaintenanceCapability marks an agent that can run the host
+	// maintenance operations: it executes the pinned StackKits CLI as root
+	// without NoNewPrivileges, and that release ships `stackkit host`.
+	HostMaintenanceCapability = "stackkit.host-maintenance.v1"
+	// MinHostUpdateRelease is the first release whose Plan observes active
+	// update units before package work, so it can safely poll an Apply.
+	MinHostUpdateRelease = "v0.48.9"
+	// MaxAdvancedTrustBundleBytes is the StackKits trust-bundle size limit.
+	MaxAdvancedTrustBundleBytes = 64 << 10
+	commandResultStatusSuccess  = "success"
 	maxResultBytes              = 16 << 20
 	maxEventBytes               = 16 << 20
 	maxEvents                   = 10_000
@@ -45,8 +58,11 @@ func ValidateCommand(command *agentpb.StackKitCommand) error {
 	if !commandIDPattern.MatchString(command.CommandId) {
 		return fmt.Errorf("StackKit command_id is invalid")
 	}
-	if strings.TrimSpace(command.WorkingDirectory) == "" {
+	if strings.TrimSpace(command.WorkingDirectory) == "" && !IsHostOperation(command.Operation) {
 		return fmt.Errorf("StackKit working_directory is required")
+	}
+	if command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_UPDATE_APPLY && strings.TrimSpace(command.HostPlanDigest) != "" {
+		return fmt.Errorf("StackKit host_plan_digest is only valid for host update apply")
 	}
 	if command.TimeoutSeconds < 0 || command.TimeoutSeconds > int32((2*time.Hour)/time.Second) {
 		return fmt.Errorf("StackKit timeout_seconds must be between 0 and 7200")
@@ -54,15 +70,18 @@ func ValidateCommand(command *agentpb.StackKitCommand) error {
 	if err := ValidateReleasePin(command.Release); err != nil {
 		return err
 	}
-	if command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_INIT && len(command.CandidateSpecJson) != 0 {
-		return fmt.Errorf("StackKit candidate intent is only valid for init")
-	}
 	if command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_INVITE &&
 		(strings.TrimSpace(command.HouseholdUsername) != "" || strings.TrimSpace(command.HouseholdEmail) != "" || strings.TrimSpace(command.HouseholdDisplayName) != "") {
 		return fmt.Errorf("StackKit household identity fields are only valid for household invite")
 	}
 	if command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_INIT && strings.TrimSpace(command.OwnerEmail) != "" {
 		return fmt.Errorf("StackKit owner_email is only valid for init")
+	}
+	if command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_TRUST_IMPORT && len(command.AdvancedTrustBundle) != 0 {
+		return fmt.Errorf("StackKit advanced_trust_bundle is only valid for advanced trust import")
+	}
+	if err := validateAdvancedFields(command); err != nil {
+		return err
 	}
 	switch command.Operation {
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_INIT:
@@ -108,9 +127,72 @@ func ValidateCommand(command *agentpb.StackKitCommand) error {
 		return nil
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_INVITE:
 		return validateHouseholdInviteCommand(command)
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_TRUST_IMPORT:
+		return validateAdvancedTrustImportCommand(command)
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_CHANGE_SET_CREATE,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_CHANGE_SET_APPLY,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_DRIFT_RECONCILE,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_ROLLBACK,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_RESTORE_DRILL:
+		// validateAdvancedFields admitted the capability and references.
+		return nil
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_UPDATE_PLAN,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_UPDATE_APPLY,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_REBOOT:
+		return validateHostCommand(command)
 	default:
 		return fmt.Errorf("unsupported StackKit operation %s", command.Operation.String())
 	}
+}
+
+// validateAdvancedTrustImportCommand bounds the public bundle transport. The
+// pinned StackKits CLI alone decides whether the bundle is canonical.
+func validateAdvancedTrustImportCommand(command *agentpb.StackKitCommand) error {
+	if !command.OwnerApproved {
+		return fmt.Errorf("StackKit advanced trust import requires Owner approval")
+	}
+	if len(command.AdvancedTrustBundle) == 0 || len(command.AdvancedTrustBundle) > MaxAdvancedTrustBundleBytes {
+		return fmt.Errorf("StackKit advanced trust import requires a trust bundle within %d bytes", MaxAdvancedTrustBundleBytes)
+	}
+	return nil
+}
+
+// AdvancedTrustImportEvidence is the host's record of an imported bundle.
+type AdvancedTrustImportEvidence struct {
+	OwnerRef     string
+	BundleSHA256 string
+}
+
+// ParseAdvancedTrustImportEvidence accepts a successful import only when the
+// host pinned the exact bundle bytes this command carried.
+func ParseAdvancedTrustImportEvidence(command *agentpb.StackKitCommand, result *agentpb.StackKitResult) (AdvancedTrustImportEvidence, error) {
+	if command == nil || result == nil || !result.Success || command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_TRUST_IMPORT {
+		return AdvancedTrustImportEvidence{}, fmt.Errorf("successful StackKit advanced trust import evidence is required")
+	}
+	var envelope struct {
+		SchemaVersion string `json:"schemaVersion"`
+		Command       string `json:"command"`
+		Status        string `json:"status"`
+		Data          struct {
+			SchemaVersion string `json:"schemaVersion"`
+			BundleSHA256  string `json:"bundleSHA256"`
+			OwnerRef      string `json:"ownerRef"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(result.CommandResultJson, &envelope); err != nil {
+		return AdvancedTrustImportEvidence{}, fmt.Errorf("decode StackKit advanced trust import evidence: %w", err)
+	}
+	digest := sha256.Sum256(command.AdvancedTrustBundle)
+	evidence := AdvancedTrustImportEvidence{
+		OwnerRef:     strings.TrimSpace(envelope.Data.OwnerRef),
+		BundleSHA256: strings.TrimSpace(envelope.Data.BundleSHA256),
+	}
+	if envelope.SchemaVersion != CommandResultVersion || envelope.Command != ResultCommandName(command.Operation) || envelope.Status != commandResultStatusSuccess ||
+		envelope.Data.SchemaVersion != "stackkit.local-advanced-trust/v1" || evidence.OwnerRef == "" ||
+		evidence.BundleSHA256 != "sha256:"+hex.EncodeToString(digest[:]) {
+		return AdvancedTrustImportEvidence{}, fmt.Errorf("StackKit advanced trust import evidence does not pin the dispatched bundle")
+	}
+	return evidence, nil
 }
 
 func validateHouseholdInviteCommand(command *agentpb.StackKitCommand) error {
@@ -238,15 +320,11 @@ func validateUpgradeCommand(command *agentpb.StackKitCommand) error {
 	return nil
 }
 
-func validateDriftReconcileCommand(command *agentpb.StackKitCommand) error {
-	if !command.OwnerApproved {
-		return fmt.Errorf("StackKit drift reconcile requires Owner approval")
-	}
-	if command.DriftMode != agentpb.StackKitDriftMode_STACKKIT_DRIFT_MODE_STANDARD &&
-		command.DriftMode != agentpb.StackKitDriftMode_STACKKIT_DRIFT_MODE_ADVANCED {
-		return fmt.Errorf("StackKit drift reconcile requires an explicit drift_mode")
-	}
-	return nil
+// validateDriftReconcileCommand refuses the deprecated DRIFT_RECONCILE: a
+// Techstack-managed deployment runs Advanced Mode and reconciles only through
+// ADVANCED_DRIFT_RECONCILE with a capability and a change set.
+func validateDriftReconcileCommand(*agentpb.StackKitCommand) error {
+	return fmt.Errorf("StackKit DRIFT_RECONCILE is not dispatched for a Techstack-managed deployment; use ADVANCED_DRIFT_RECONCILE")
 }
 
 func validateServiceMutationCommand(command *agentpb.StackKitCommand) error {
@@ -292,6 +370,56 @@ func validateRemoveCommand(command *agentpb.StackKitCommand) error {
 	return validateLocalExecutionPlacement(command, "remove")
 }
 
+// IsHostOperation reports the operations that act on the node's OS rather
+// than a stack.
+func IsHostOperation(operation agentpb.StackKitOperation) bool {
+	switch operation {
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_UPDATE_PLAN,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_UPDATE_APPLY,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_REBOOT:
+		return true
+	default:
+		return false
+	}
+}
+
+// ValidHostPlanDigest reports a StackKits host update plan digest.
+func ValidHostPlanDigest(digest string) bool {
+	return specHashPattern.MatchString(digest)
+}
+
+// validateHostCommand admits the only caller input of a host operation (the
+// plan digest of an apply) and refuses every stack-scoped field, so a host
+// command can never smuggle workspace, spec or capability inputs.
+func validateHostCommand(command *agentpb.StackKitCommand) error {
+	if command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_REBOOT &&
+		!ReleaseAtLeast(command.Release.Version, MinHostUpdateRelease) {
+		return fmt.Errorf("host updates require StackKits %s or newer; upgrade the configured release pin or Linux runtime bundle", MinHostUpdateRelease)
+	}
+	if len(command.CandidateSpecJson) != 0 || len(command.InventoryJson) != 0 || len(command.AdvancedCapability) != 0 ||
+		strings.TrimSpace(command.SpecPath) != "" || strings.TrimSpace(command.StackkitInstanceId) != "" ||
+		strings.TrimSpace(command.ServiceKey) != "" || strings.TrimSpace(command.ExpectedPlanHash) != "" {
+		return fmt.Errorf("StackKit host operations take no stack inputs")
+	}
+	switch command.Operation {
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_UPDATE_PLAN:
+		return nil
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_UPDATE_APPLY:
+		if !command.OwnerApproved {
+			return fmt.Errorf("StackKit host update apply requires Owner approval")
+		}
+		if !ValidHostPlanDigest(command.HostPlanDigest) {
+			return fmt.Errorf("StackKit host update apply requires a sha256 plan digest")
+		}
+		return nil
+	default:
+		if !command.OwnerApproved {
+			return fmt.Errorf("StackKit host reboot requires Owner approval")
+		}
+		return nil
+	}
+}
+
 func validateLocalExecutionPlacement(command *agentpb.StackKitCommand, operation string) error {
 	if strings.TrimSpace(command.LocalSiteRef) == "" || strings.TrimSpace(command.LocalNodeRef) == "" ||
 		strings.TrimSpace(command.LocalExecutionChannelRef) == "" {
@@ -328,6 +456,15 @@ func RequiredAgentCapabilities(command *agentpb.StackKitCommand) []string {
 	}
 	if RequiresWorkspaceInstanceBinding(command) {
 		required = append(required, WorkspaceInstanceCapability)
+	}
+	if command != nil && command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_TRUST_IMPORT {
+		required = append(required, AdvancedTrustImportCapability)
+	}
+	if command != nil && IsAdvancedOperation(command.Operation) {
+		required = append(required, AdvancedOperationsCapability)
+	}
+	if command != nil && IsHostOperation(command.Operation) {
+		required = append(required, HostMaintenanceCapability)
 	}
 	return required
 }
@@ -384,7 +521,20 @@ func ValidateResult(result *agentpb.StackKitResult, command *agentpb.StackKitCom
 			if err := ParseBackupConfigurationEvidence(command, result); err != nil {
 				return err
 			}
+		case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_TRUST_IMPORT:
+			if _, err := ParseAdvancedTrustImportEvidence(command, result); err != nil {
+				return err
+			}
+		default:
+			if IsAdvancedOperation(command.Operation) {
+				if _, err := ParseAdvancedOperationResult(command, result); err != nil {
+					return err
+				}
+			}
 		}
+	}
+	if command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_CHANGE_SET_CREATE && result.AdvancedChangeSetSha256 != "" {
+		return fmt.Errorf("StackKit advanced_change_set_sha256 is only valid for change-set create")
 	}
 	if result.EventsSchemaVersion != RolloutEventVersion {
 		return fmt.Errorf("StackKit result has unsupported rollout-event schema")
@@ -513,6 +663,24 @@ func ResultCommandName(operation agentpb.StackKitOperation) string {
 		return "stackkit user list"
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_INVITE:
 		return "stackkit user add"
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_TRUST_IMPORT:
+		return "stackkit advanced trust import"
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_CHANGE_SET_CREATE:
+		return "stackkit advanced change-set create"
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_CHANGE_SET_APPLY:
+		return "stackkit advanced change-set apply"
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_DRIFT_RECONCILE:
+		return "stackkit drift reconcile"
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_ROLLBACK:
+		return "stackkit advanced rollback run"
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_RESTORE_DRILL:
+		return "stackkit advanced restore-drill run"
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_UPDATE_PLAN:
+		return "stackkit host updates plan"
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_UPDATE_APPLY:
+		return "stackkit host updates apply"
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_REBOOT:
+		return "stackkit host reboot"
 	default:
 		return ""
 	}
@@ -720,9 +888,16 @@ func requireMatchingRelease(actual, expected *agentpb.StackKitReleasePin) error 
 	return nil
 }
 
+// ValidRolloutStatus admits the stackkit.rollout-event/v1 statuses: the
+// lifecycle statuses plus the per-stack statuses of the Advanced phases.
+func ValidRolloutStatus(status string) bool {
+	return validRolloutStatus(status)
+}
+
 func validRolloutStatus(status string) bool {
 	switch status {
-	case "started", "running", "succeeded", "failed", "skipped":
+	case "started", "running", "succeeded", "completed", "failed", "skipped",
+		"converged", "drifted", "pending_root", "other_host":
 		return true
 	default:
 		return false

@@ -8,6 +8,7 @@ import {
   type RegistryManagementState,
 } from "#lib/api/registry.js";
 
+import { tr } from "#lib/i18n.svelte.js";
 export type TechStackServiceCardSource = {
   id?: string;
   name?: string;
@@ -95,7 +96,7 @@ export function requireServiceManagementState(
 }
 
 export function serviceCardName(service: TechStackServiceCardSource): string {
-  return service.display_name || service.name || "Service";
+  return service.display_name || service.name || tr("ui.services.service");
 }
 
 export function serviceTypeLabel(service: TechStackServiceCardSource): string {
@@ -243,41 +244,39 @@ export function serviceCardStatusMessage(
   service: TechStackServiceCardSource,
 ): string | undefined {
   if (service.status === "archived") {
-    return "Archived source service.";
+    return tr("ui.serviceCardAdapter.archivedSourceService");
   }
   if (
     service.status === "error" ||
     service.status === "failed" ||
     service.status === "unhealthy"
   ) {
-    return service.move_blocked_reason || "Service reported an error.";
+    return (
+      service.move_blocked_reason ||
+      tr("ui.serviceCardAdapter.serviceReportedAnError")
+    );
   }
   if (service.status === "starting") {
-    return "Waiting for a Docker health or endpoint probe.";
+    return tr("ui.serviceCardAdapter.waitingForADockerHealth");
   }
   if (service.status === "unknown") {
-    return "No current runtime observation is available.";
+    return tr("ui.serviceCardAdapter.noCurrentRuntimeObservationIs");
   }
   if (service.status === "reachable") {
-    return "Endpoint is reachable, but protected service health is not verified.";
+    return tr("ui.serviceCardAdapter.endpointIsReachableButProtected");
   }
   if (service.status === "pending") {
-    return "Waiting for placement.";
+    return tr("ui.serviceCardAdapter.waitingForPlacement");
   }
   if ((service.management_state ?? "").trim().toLowerCase() === "observed") {
-    return "Observed only — adopt to manage lifecycle.";
+    return tr("ui.serviceCardAdapter.observedOnlyAdoptToManage");
   }
   return undefined;
 }
 
 /** Managed-service actions the governed endpoint executes today. */
 export type GovernedServiceAction =
-  | "start"
-  | "stop"
-  | "restart"
-  | "logs"
-  | "freeze"
-  | "unfreeze";
+  "start" | "stop" | "restart" | "logs" | "freeze" | "unfreeze";
 
 const GOVERNED_ACTIONS: readonly GovernedServiceAction[] = [
   "logs",
@@ -363,7 +362,9 @@ export function serviceCardActions(
       id: action,
       state,
       disabledReason:
-        state === "disabled" ? "Another governed action is running" : undefined,
+        state === "disabled"
+          ? tr("ui.serviceCardAdapter.anotherGovernedActionIsRunning")
+          : undefined,
       onSelect: () => context.onAction(action),
     };
   });
@@ -376,7 +377,8 @@ export function serviceCardActions(
       actions.push({
         id: action,
         state: "disabled",
-        disabledReason: context.lockedReason ?? "Locked",
+        disabledReason:
+          context.lockedReason ?? tr("ui.serviceCardAdapter.locked"),
         onSelect: () => {},
       });
     }
@@ -421,5 +423,7 @@ export function serviceLockReason(lock?: {
 }): string | undefined {
   if (!serviceIsLocked(lock)) return undefined;
   const actor = lock?.actor?.trim();
-  return actor ? `Locked by ${actor}` : "Locked";
+  return actor
+    ? tr("ui.serviceCardAdapter.lockedBy", { actor })
+    : tr("ui.serviceCardAdapter.locked");
 }

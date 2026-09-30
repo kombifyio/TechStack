@@ -2,14 +2,21 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
+	"fmt"
+	"github.com/gorilla/websocket"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	agentpkg "github.com/kombifyio/techstack/pkg/agent"
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
@@ -227,4 +234,141 @@ func writeEnrollmentFixture(t *testing.T, mode os.FileMode) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// Exercise the real HTTPS Guard heartbeat and relay sockets: an unaccepted
+// enrollment cannot connect, a dropped socket recovers, and shutdown closes it.
+func TestHTTPSGuardRelayFollowsAuthenticatedLifecycle(t *testing.T) {
+	t.Setenv("TECHSTACK_AGENT_SERVICE_DISCOVERY", "false")
+	var accepted atomic.Bool
+	denied := make(chan struct{}, 1)
+	core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer guard-fixture" || !accepted.Load() {
+			select {
+			case denied <- struct{}{}:
+			default:
+			}
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true,"data":{}}`))
+	}))
+	defer core.Close()
+	var effect atomic.Bool
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer workpaths-owner" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		effect.Store(true)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer target.Close()
+	connected := make(chan struct{}, 1)
+	forwarded := make(chan error, 1)
+	closed := make(chan struct{}, 1)
+	var drop atomic.Bool
+	upgrader := websocket.Upgrader{}
+	carrier := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Kombify-API-Key") != "kbi_fixture" || r.URL.Query().Get("agent_id") != "enrolled-node" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		select {
+		case connected <- struct{}{}:
+		default:
+		}
+		_ = conn.WriteJSON(map[string]any{"type": "handshake_ack", "payload": map[string]bool{"success": true}})
+		if !drop.Swap(true) {
+			return
+		}
+		for _, credential := range []string{"", "wrong", "workpaths-owner"} {
+			request := map[string]any{"type": "http_request", "request_id": "probe-" + credential, "payload": map[string]any{
+				"method": "POST", "path": "/event", "target_addr": target.URL, "host": "fixture.kombify.me",
+				"headers": map[string]string{"authorization": "Bearer " + credential}, "body": base64.StdEncoding.EncodeToString([]byte(`{}`)),
+			}}
+			if err := conn.WriteJSON(request); err != nil {
+				forwarded <- err
+				return
+			}
+			var response struct {
+				Payload struct {
+					Status int `json:"status_code"`
+				} `json:"payload"`
+			}
+			if err := conn.ReadJSON(&response); err != nil {
+				forwarded <- err
+				return
+			}
+			wanted := http.StatusUnauthorized
+			if credential == "workpaths-owner" {
+				wanted = http.StatusAccepted
+			}
+			if response.Payload.Status != wanted {
+				forwarded <- fmt.Errorf("local owner authorization changed through relay: got %d want %d", response.Payload.Status, wanted)
+				return
+			}
+		}
+		forwarded <- nil
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				closed <- struct{}{}
+				return
+			}
+		}
+	}))
+	defer carrier.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	cfg := &agentModeConfig{transport: httpsScheme, agentID: "enrolled-node", agentToken: "guard-fixture",
+		heartbeatURL: core.URL + "/heartbeat", inventoryURL: core.URL + "/inventory", heartbeatInterval: 10 * time.Millisecond,
+		kombifyMeAPIKey: "kbi_fixture", kombifyMeRelayURL: "ws" + strings.TrimPrefix(carrier.URL, "http")}
+	go func() { done <- runHTTPAgentMode(ctx, cfg, slog.New(slog.NewTextHandler(io.Discard, nil))) }()
+	select {
+	case <-denied:
+	case err := <-done:
+		t.Fatalf("Guard stopped: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("no denied heartbeat")
+	}
+	select {
+	case <-connected:
+		t.Fatal("relay connected before authenticated heartbeat")
+	case <-time.After(50 * time.Millisecond):
+	}
+	accepted.Store(true)
+	select {
+	case err := <-forwarded:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case err := <-done:
+		t.Fatalf("Guard stopped: %v", err)
+	case <-time.After(15 * time.Second):
+		t.Fatal("relay did not reconnect and forward")
+	}
+	if !effect.Load() {
+		t.Fatal("owner event had no effect")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Guard shutdown blocked")
+	}
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("relay socket survived Guard shutdown")
+	}
 }

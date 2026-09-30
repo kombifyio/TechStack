@@ -1,3 +1,4 @@
+import { tr } from "#lib/i18n.svelte.js";
 /**
  * SSH Key generation utilities
  * Generates Ed25519 or RSA keys in OpenSSH format using Web Crypto API
@@ -119,7 +120,7 @@ async function generateEd25519(): Promise<SSHKeyPair> {
     };
   } catch {
     // Ed25519 not supported, fall back to simulated key
-    throw new Error("Ed25519 not supported in this browser. Try RSA instead.");
+    throw new Error(tr("ui.sshKeygen.ed25519NotSupportedInThis"));
   }
 }
 
@@ -185,7 +186,7 @@ export async function generateSSHKey(
     case "rsa-4096":
       return generateRSA(4096);
     default:
-      throw new Error(`Unsupported algorithm: ${algorithm}`);
+      throw new Error(tr("ui.sshKeygen.unsupportedAlgorithm", { algorithm }));
   }
 }
 

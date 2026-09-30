@@ -21,13 +21,12 @@ func TestDriftHandlersValidateTargetAtJobBoundary(t *testing.T) {
 		{"check rejects missing target", "", jobs.StepDriftValidate, jobs.JobTypeDriftCheck, false, true},
 		{"resolve rejects missing target", "", jobs.StepDriftValidate, jobs.JobTypeDriftResolve, true, true},
 		{"check accepts TargetID", "my-test-stack", jobs.StepDriftNotify, jobs.JobTypeDriftCheck, false, false},
-		{"resolve accepts TargetID", "my-stack", jobs.StepDriftCheckStacks, jobs.JobTypeDriftResolve, true, false},
+		{"resolve accepts TargetID", "my-stack", jobs.StepDriftInitialize, jobs.JobTypeDriftResolve, true, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := jobs.DefaultDriftCheckConfig()
-			cfg.WorkDir = t.TempDir()
 			handler := jobs.DriftCheckHandler(cfg)
 			if tt.resolve {
 				handler = jobs.DriftResolveHandler(cfg)

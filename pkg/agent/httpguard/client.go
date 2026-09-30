@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -89,8 +90,12 @@ type Config struct {
 	// state. The callback is read atomically by the caller-owned tracker and is
 	// intentionally separate from service inventory collection.
 	RuntimeConvergence func() runtimeconvergence.Snapshot
-	OnFirstHeartbeat   func()
-	Logger             *slog.Logger
+	// HostMaintenanceCapabilities reports the host maintenance capability
+	// when this agent can run the StackKits host commands; nil or empty
+	// advertises nothing.
+	HostMaintenanceCapabilities func() []string
+	OnFirstHeartbeat            func()
+	Logger                      *slog.Logger
 	// PrivateLANHTTPOrigin is the exact alpha-only clear-text capability. It
 	// permits one literal RFC1918 :5264 origin, never DNS or public targets.
 	PrivateLANHTTPOrigin string
@@ -302,12 +307,21 @@ func (c *Client) controlIdentity() controlRequest {
 	return controlRequest{
 		RuntimeAgentID: c.cfg.RuntimeAgentID, TenantID: c.cfg.TenantID, OwnerID: c.cfg.OwnerID,
 		StackID: c.cfg.StackID, LeaseID: c.cfg.LeaseID, ServerID: c.cfg.ServerID,
-		Capabilities: []string{
+		Capabilities: append([]string{
 			"stackkit",
 			stackkitcommand.ExpectedPlanHashCapability,
 			stackkitcommand.WorkspaceInstanceCapability,
-		},
+			stackkitcommand.AdvancedTrustImportCapability,
+			stackkitcommand.AdvancedOperationsCapability,
+		}, c.hostMaintenanceCapabilities()...),
 	}
+}
+
+func (c *Client) hostMaintenanceCapabilities() []string {
+	if c == nil || c.cfg.HostMaintenanceCapabilities == nil {
+		return nil
+	}
+	return c.cfg.HostMaintenanceCapabilities()
 }
 
 func (c *Client) pollTypedCommand(ctx context.Context) (*agentpb.StackKitCommand, error) {
@@ -447,6 +461,7 @@ func (c *Client) sendCycle(ctx context.Context) error {
 func (c *Client) prepareObservation(snapshot *Snapshot) {
 	c.applyIdentity(snapshot)
 	snapshot.RuntimeConvergence = c.runtimeConvergenceSnapshot()
+	snapshot.HostMaintenance = slices.Contains(c.hostMaintenanceCapabilities(), stackkitcommand.HostMaintenanceCapability)
 	snapshot.SourceEpoch = c.sourceEpoch
 	snapshot.SourceSequence = c.sequence.Add(1)
 	snapshot.ObservedAt = time.Now().UTC()
@@ -480,14 +495,15 @@ func (c *Client) runtimeConvergenceSnapshot() *runtimeconvergence.Snapshot {
 func heartbeatFromSnapshot(snapshot Snapshot) Heartbeat {
 	return Heartbeat{
 		SourceEpoch: snapshot.SourceEpoch, SourceSequence: snapshot.SourceSequence,
-		ObservedAt:         snapshot.ObservedAt,
-		CPUPercent:         snapshot.Host.CPUPercent,
-		MemoryUsedBytes:    snapshot.Host.MemoryUsedBytes,
-		MemoryTotalBytes:   snapshot.Host.MemoryTotalBytes,
-		DiskUsedBytes:      snapshot.Host.DiskUsedBytes,
-		DiskTotalBytes:     snapshot.Host.DiskTotalBytes,
-		UptimeSeconds:      snapshot.Host.UptimeSeconds,
-		RuntimeConvergence: snapshot.RuntimeConvergence,
+		ObservedAt:           snapshot.ObservedAt,
+		CPUPercent:           snapshot.Host.CPUPercent,
+		MemoryUsedBytes:      snapshot.Host.MemoryUsedBytes,
+		MemoryTotalBytes:     snapshot.Host.MemoryTotalBytes,
+		DiskUsedBytes:        snapshot.Host.DiskUsedBytes,
+		DiskTotalBytes:       snapshot.Host.DiskTotalBytes,
+		UptimeSeconds:        snapshot.Host.UptimeSeconds,
+		RuntimeConvergence:   snapshot.RuntimeConvergence,
+		HostMaintenanceFacts: snapshot.HostMaintenanceFacts,
 	}
 }
 

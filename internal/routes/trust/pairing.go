@@ -110,6 +110,7 @@ func listPairingTokensFromStore(store controlplane.WorkerStore) func(e *httpx.Ev
 				"id":         token.ID,
 				"name":       token.Name,
 				"used":       token.Status == "used",
+				"status":     token.Status,
 				"expires_at": token.ExpiresAt,
 				"used_at":    token.UsedAt,
 				"created":    token.CreatedAt,

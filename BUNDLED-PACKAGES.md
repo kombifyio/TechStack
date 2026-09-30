@@ -6,7 +6,7 @@ contain license files. Their licenses are documented here alongside them.
 
 | Bundled package | Version | License in this distribution |
 | --- | --- | --- |
-| `internal/gocommon` | `v0.7.0` | Apache-2.0; see `internal/gocommon/LICENSE` |
+| `internal/gocommon` | `v0.7.1` | Apache-2.0; see `internal/gocommon/LICENSE` |
 | `internal/selfhostcontracts` | `v0.2.0` | Apache-2.0; see `internal/selfhostcontracts/LICENSE` |
 | `@kombiverselabs/ai-sdk` | `0.10.2419` | MIT; see `BUNDLED-MIT-LICENSE.txt` |
 | `@kombiverselabs/design` | `0.10.302` | Dual Apache-2.0 / GPL-3.0-or-later; see `LICENSE` |

@@ -149,3 +149,60 @@ func TestValidateResultBindsReleaseEnvelopeStatusAndEvents(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateResultAcceptsCompletedAdvancedMutation(t *testing.T) {
+	command := validationCommand()
+	result := validationResult(command)
+	result.EventsJsonl = [][]byte{[]byte(`{"time":"2026-09-27T16:00:00Z","phase":"advanced.mutation.target-apply","status":"completed"}`)}
+	if err := ValidateResult(result, command); err != nil {
+		t.Fatalf("ValidateResult() rejected completed Advanced mutation: %v", err)
+	}
+}
+
+func TestValidateCommandConfinesTheAdvancedTrustBundleToTrustImport(t *testing.T) {
+	bundle := []byte(`{"keys":[],"schemaVersion":"stackkit.advanced-trust-bundle/v1"}`)
+	command := validationCommand()
+	command.Operation = agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_TRUST_IMPORT
+	command.AdvancedTrustBundle = bundle
+	if err := ValidateCommand(command); err != nil {
+		t.Fatalf("ValidateCommand() trust import error = %v", err)
+	}
+	command.AdvancedTrustBundle = nil
+	if err := ValidateCommand(command); err == nil {
+		t.Fatal("ValidateCommand() accepted a trust import without a bundle")
+	}
+	command.AdvancedTrustBundle = make([]byte, MaxAdvancedTrustBundleBytes+1)
+	if err := ValidateCommand(command); err == nil {
+		t.Fatal("ValidateCommand() accepted a trust bundle above 64 KiB")
+	}
+	restart := validationCommand()
+	restart.AdvancedTrustBundle = bundle
+	if err := ValidateCommand(restart); err == nil {
+		t.Fatal("ValidateCommand() accepted a trust bundle on a service operation")
+	}
+}
+
+func TestValidateCommandAdmitsOnlyAdvancedModeForManagedDeployments(t *testing.T) {
+	capability := []byte(`{"schemaVersion":"stackkit.advanced-capability/v1"}`)
+	drill := validationCommand()
+	drill.Operation = agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_RESTORE_DRILL
+	drill.AdvancedCapability = capability
+	if err := ValidateCommand(drill); err != nil {
+		t.Fatalf("ValidateCommand() Advanced restore drill error = %v", err)
+	}
+	drill.AdvancedCapability = nil
+	if err := ValidateCommand(drill); err == nil {
+		t.Fatal("ValidateCommand() accepted an Advanced operation without a capability")
+	}
+	standard := validationCommand()
+	standard.Operation = agentpb.StackKitOperation_STACKKIT_OPERATION_DRIFT_RECONCILE
+	standard.DriftMode = agentpb.StackKitDriftMode_STACKKIT_DRIFT_MODE_STANDARD
+	if err := ValidateCommand(standard); err == nil {
+		t.Fatal("ValidateCommand() accepted a Standard drift reconcile for a managed deployment")
+	}
+	restart := validationCommand()
+	restart.AdvancedCapability = capability
+	if err := ValidateCommand(restart); err == nil {
+		t.Fatal("ValidateCommand() accepted a capability on a non-Advanced operation")
+	}
+}

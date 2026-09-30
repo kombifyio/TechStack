@@ -8,6 +8,10 @@ import (
 )
 
 func serverRuntimeDisplayName(server controlplane.ServerRuntime, target serverregistry.RuntimeTarget) string {
+	// The owner's rename outranks every projected name.
+	if chosen := strings.TrimSpace(server.DisplayName); chosen != "" {
+		return chosen
+	}
 	name := serverregistry.DisplayName(server.Name, server.ProviderRef, target, observedServerHostname(server.Metadata))
 	if name != "" {
 		return name

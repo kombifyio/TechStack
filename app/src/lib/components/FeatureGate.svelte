@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "#lib/i18n.svelte.js";
   import {
     features,
     getDefaultEnabled,
@@ -52,11 +53,44 @@
 
   function getDisabledMessage(): string {
     if (disabledMessage) return disabledMessage;
-    if (isLocked) return "This feature requires admin privileges";
+    if (isLocked) return tr("ui.featureGate.thisFeatureRequiresAdminPrivileges");
     if (requiresConsent && !hasConsent)
-      return "Grant consent in Settings → Features to enable";
-    return "Enable this feature in Settings → Features";
+      return tr("ui.featureGate.grantConsentInSettingsFeatures");
+    return tr("ui.featureGate.enableThisFeatureInSettings");
   }
+
+  // Hover and keyboard focus reveal the reason via CSS; a tap neither hovers
+  // (Tailwind gates hover: to hover-capable devices) nor focuses the div on
+  // iOS, so a click or Enter/Space pins it open until an outside tap or Escape.
+  let hintOpen = $state(false);
+  let hintRoot = $state<HTMLDivElement | null>(null);
+
+  function onHintKeyDown(event: KeyboardEvent) {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      hintOpen = !hintOpen;
+    } else if (event.key === "Escape") {
+      hintOpen = false;
+    }
+  }
+
+  $effect(() => {
+    if (!hintOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && hintRoot?.contains(target)) return;
+      hintOpen = false;
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") hintOpen = false;
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  });
 
   function getRiskBadgeColor(): string {
     switch (riskLevel) {
@@ -77,21 +111,26 @@
 {:else if showDisabledHint}
   <!-- Disabled hint with tooltip -->
   <div
+    bind:this={hintRoot}
     class="group relative inline-block"
     role="button"
     tabindex="0"
     aria-disabled="true"
+    aria-expanded={hintOpen}
+    onclick={() => (hintOpen = !hintOpen)}
+    onkeydown={onHintKeyDown}
   >
     <!-- Greyed out content wrapper -->
     <div class="opacity-50 pointer-events-none select-none grayscale">
       {@render children()}
     </div>
 
-    <!-- Overlay tooltip on hover -->
+    <!-- Overlay tooltip on hover, focus or tap -->
     <div
       class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2
              bg-popover border border-border rounded-lg shadow-xl
-             opacity-0 group-hover:opacity-100 group-focus:opacity-100
+             {hintOpen ? 'opacity-100' : 'opacity-0'}
+             group-hover:opacity-100 group-focus:opacity-100
              transition-opacity duration-200 pointer-events-none
              whitespace-nowrap z-50 text-sm"
     >
@@ -154,9 +193,9 @@
           <span
             class="text-xs px-1.5 py-0.5 rounded border {getRiskBadgeColor()}"
           >
-            High Risk
+            {tr("ui.featureGate.highRisk")}
           </span>
-          <span class="text-xs text-muted-foreground">Consent required</span>
+          <span class="text-xs text-muted-foreground">{tr("ui.featureGate.consentRequired")}</span>
         </div>
       {/if}
 

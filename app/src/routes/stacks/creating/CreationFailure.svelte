@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "#lib/i18n.svelte.js";
   import { creation } from "./creation-controller.svelte.js";
 </script>
 
@@ -27,14 +28,14 @@
               <div>
                 <h2 class="text-xl font-semibold text-foreground">
                   {creation.handoffMissingFailure
-                    ? "Rollout incomplete"
-                    : "Creation failed"}
+                    ? tr("ui.stacksCreatingCreationProgress.rolloutIncomplete")
+                    : tr("ui.stacksCreatingCreationProgress.creationFailed")}
                 </h2>
                 <p class="text-muted-foreground text-sm">
                   {#if creation.failedTask?.errorMessage}
                     {creation.failedTask.errorMessage}
                   {:else}
-                    An error occurred
+                    {tr("ui.stacksCreatingCreationFailure.anErrorOccurred")}
                   {/if}
                 </p>
               </div>
@@ -47,10 +48,10 @@
               data-testid="managed-lease-failure-summary"
             >
               <p class="text-sm font-medium text-foreground mb-2">
-                Existing managed VM lease referenced
+                {tr("ui.stacksCreatingCreationFailure.existingManagedVmLeaseReferenced")}
               </p>
               <p class="text-sm text-muted-foreground">
-                Lease {creation.lease.id}{creation.lease.provider
+                {tr("ui.creationFailure.lease")} {creation.lease.id}{creation.lease.provider
                   ? ` · ${creation.lease.provider}`
                   : ""}{creation.lease.host || creation.lease.publicIp
                   ? ` · ${creation.lease.host || creation.lease.publicIp}`
@@ -58,13 +59,11 @@
               </p>
               <p class="text-sm text-muted-foreground mt-2">
                 {#if creation.stackKitArtifactOrRoutingFailure}
-                  VPS provisioning completed. Only StackKit artifact, domain
-                  routing, or later rollout work failed.
+                  {tr("ui.stacksCreatingCreationFailure.vpsProvisioningCompletedOnlyStackkit")}
                 {:else}
-                  The rollout reached the existing managed VM.
+                  {tr("ui.stacksCreatingCreationFailure.theRolloutReachedTheExisting")}
                 {/if}
-                The exact retry endpoint validates this failed job and lease before
-                continuing on the existing server.
+                {tr("ui.stacksCreatingCreationFailure.theExactRetryEndpointValidates")}
               </p>
             </div>
           {/if}
@@ -75,12 +74,10 @@
               data-testid="connect-remote-stackkit-failure-summary"
             >
               <p class="text-sm font-medium text-foreground mb-2">
-                Node connection succeeded
+                {tr("ui.stacksCreatingCreationFailure.nodeConnectionSucceeded")}
               </p>
               <p class="text-sm text-muted-foreground">
-                SSH enrollment completed and the Node is visible in your
-                homelab. Only StackKit preparation or rollout failed. Retry
-                continues on the connected Node without repeating SSH enrollment.
+                {tr("ui.stacksCreatingCreationFailure.sshEnrollmentCompletedAndThe")}
               </p>
             </div>
           {/if}
@@ -91,12 +88,10 @@
               data-testid="wizard-idempotency-conflict-summary"
             >
               <p class="text-sm font-medium text-foreground mb-2">
-                Earlier registration attempt already completed
+                {tr("ui.stacksCreatingCreationFailure.earlierRegistrationAttemptAlreadyCompleted")}
               </p>
               <p class="text-sm text-muted-foreground">
-                This browser reused an attempt key from a different submission.
-                The earlier run may already have created a Node registration.
-                Resume that attempt, or start fresh with a new key.
+                {tr("ui.stacksCreatingCreationFailure.thisBrowserReusedAnAttempt")}
               </p>
               <button
                 type="button"
@@ -104,7 +99,7 @@
                 class="mt-4 inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium"
                 onclick={creation.resumePreviousWizardAttempt}
               >
-                Resume previous attempt
+                {tr("ui.stacksCreatingCreationFailure.resumePreviousAttempt")}
               </button>
             </div>
           {/if}
@@ -122,7 +117,7 @@
             >
               <div class="flex items-center justify-between gap-3">
                 <p class="text-destructive text-sm font-medium">
-                  Error details
+                  {tr("ui.stacksCreatingCreationFailure.errorDetails")}
                 </p>
                 <button
                   type="button"
@@ -131,7 +126,7 @@
                   data-testid="copy-error-details-button"
                   onclick={creation.copyErrorDetails}
                 >
-                  {creation.copiedErrorDetails ? "Copied" : "Copy error details"}
+                  {creation.copiedErrorDetails ? "Copied" : tr("ui.stacksCreatingCreationFailure.copyErrorDetails")}
                 </button>
               </div>
               <pre
@@ -162,7 +157,7 @@
                     d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
                   />
                 </svg>
-                Troubleshooting
+                {tr("ui.stacksCreatingCreationFailure.troubleshooting")}
               </p>
               <ol
                 class="text-sm text-foreground space-y-2 list-decimal list-inside"
@@ -176,20 +171,20 @@
             <!-- Fallback suggestions if no specific troubleshooting available -->
             <div class="bg-muted/50 rounded-xl p-4 mb-6">
               <p class="text-sm text-muted-foreground mb-3">
-                Possible solutions:
+                {tr("ui.stacksCreatingCreationFailure.possibleSolutions")}
               </p>
               <ul class="text-sm text-foreground/80 space-y-2">
                 <li class="flex items-start gap-2">
                   <span class="text-primary">•</span>
-                  <span>Check your network connection</span>
+                  <span>{tr("ui.stacksCreatingCreationFailure.checkYourNetworkConnection")}</span>
                 </li>
                 <li class="flex items-start gap-2">
                   <span class="text-primary">•</span>
-                  <span>Make sure the backend server is running</span>
+                  <span>{tr("ui.stacksCreatingCreationFailure.makeSureTheBackendServer")}</span>
                 </li>
                 <li class="flex items-start gap-2">
                   <span class="text-primary">•</span>
-                  <span>Review your configuration settings</span>
+                  <span>{tr("ui.stacksCreatingCreationFailure.reviewYourConfigurationSettings")}</span>
                 </li>
               </ul>
             </div>
@@ -212,7 +207,7 @@
               data-kx="control"
               class="inline-flex flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-xl px-6 py-3 text-sm font-medium"
             >
-              Operations
+              {tr("ui.stacksCreatingCreationFailure.operations")}
             </button>
           </div>
         </div>

@@ -45,6 +45,9 @@ const (
 	PriorityUrgent Priority = "urgent"
 )
 
+// maxTitleBytes keeps the optional title inside the RIL ingest contract bound.
+const maxTitleBytes = 1000
+
 var (
 	ErrInvalidSignal      = errors.New("ril signals: invalid signal")
 	ErrServerUnauthorized = errors.New("ril signals: server is not authorized for tenant")
@@ -54,6 +57,7 @@ var (
 	stableIDPattern       = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$`)
 	tenantIDPattern       = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:|@-]{0,255}$`)
 	userIDPattern         = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:|@-]{0,255}$`)
+	serviceIDPattern      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$`)
 	claimOwnerPattern     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,191}$`)
 )
 
@@ -82,6 +86,13 @@ type Observation struct {
 	AuditID           string
 	ReceivedAt        time.Time
 	Connector         *ConnectorRequirement
+	// AlertRule names the Techstack monitoring rule that produced the
+	// observation. It only selects Techstack's own remediation policy and is
+	// never part of the wire envelope.
+	AlertRule string
+	// Title and ServiceID are optional approval-card presentation fields.
+	Title     string
+	ServiceID string
 }
 
 // Envelope is the stable producer wire. Its JSON names match the public-beta
@@ -103,6 +114,11 @@ type Envelope struct {
 	ConnectorGrantID  string   `json:"connectorGrantId,omitempty"`
 	RequiredScopes    []string `json:"requiredScopes,omitempty"`
 	BindingScope      string   `json:"bindingScope,omitempty"`
+	Title             string   `json:"title,omitempty"`
+	ServiceID         string   `json:"serviceId,omitempty"`
+	// Actionable is true only when Emit committed the governed action card
+	// ActionCardID in the same transaction as this envelope.
+	Actionable bool `json:"actionable,omitempty"`
 }
 
 func ClassifyPriority(severity Severity) (Priority, error) {
@@ -128,6 +144,20 @@ func normalizeObservation(input Observation) (Observation, Envelope, error) {
 	input.TraceID = strings.TrimSpace(input.TraceID)
 	input.AuditID = strings.TrimSpace(input.AuditID)
 	input.RecommendedAction = strings.TrimSpace(input.RecommendedAction)
+	input.AlertRule = strings.TrimSpace(input.AlertRule)
+	input.Title = strings.TrimSpace(input.Title)
+	input.ServiceID = strings.TrimSpace(input.ServiceID)
+	// Optional presentation and policy fields never reject a signal: an
+	// out-of-contract value is omitted so the notification still flows.
+	if len(input.AlertRule) > 256 {
+		input.AlertRule = ""
+	}
+	if len(input.Title) > maxTitleBytes {
+		input.Title = ""
+	}
+	if input.ServiceID != "" && !serviceIDPattern.MatchString(input.ServiceID) {
+		input.ServiceID = ""
+	}
 	if !validSource(input.Source) || !validTenantID(input.TenantID) || !stableID(input.ServerID) ||
 		!stableID(input.DedupeKey) || !stableID(input.TraceID) || !stableID(input.AuditID) ||
 		(input.UserID != "" && !userIDPattern.MatchString(input.UserID)) || len(input.RecommendedAction) > 1024 {
@@ -162,7 +192,7 @@ func normalizeObservation(input Observation) (Observation, Envelope, error) {
 		ServerID: input.ServerID, Source: input.Source, Severity: input.Severity,
 		Priority: priority, ReceivedAt: input.ReceivedAt.Format(time.RFC3339Nano),
 		RecommendedAction: input.RecommendedAction, TraceID: input.TraceID,
-		AuditID: input.AuditID,
+		AuditID: input.AuditID, Title: input.Title, ServiceID: input.ServiceID,
 	}
 	if connector != nil {
 		envelope.ConnectorID = connector.ConnectorID

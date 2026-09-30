@@ -1,8 +1,10 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.27
 
 FROM node:24-slim AS frontend
 WORKDIR /build/app
-RUN corepack enable && corepack prepare pnpm@11.5.2 --activate
+# Corepack resolves pnpm from the packageManager field of app/package.json.
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable
 COPY app/package.json app/pnpm-lock.yaml app/pnpm-workspace.yaml app/.npmrc ./
 COPY app/scripts/install-deps.mjs ./scripts/install-deps.mjs
 COPY app/third_party ./third_party
@@ -12,7 +14,7 @@ COPY app/ .
 ENV PUBLIC_KOMBIFY_EDITION=selfhost-oss
 RUN pnpm build
 
-FROM golang:1.26.5-alpine AS backend
+FROM golang:1.27.1-alpine AS backend
 WORKDIR /build
 ENV GOTOOLCHAIN=local
 COPY go.mod go.sum ./
@@ -31,7 +33,7 @@ RUN set -eu; \
       -ldflags="-s -w -X main.version=${version} -X main.buildRevision=${revision}" \
       -o /out/techstack ./cmd/techstack
 
-FROM alpine:3.22
+FROM alpine:3.24
 RUN apk upgrade --no-cache && apk add --no-cache ca-certificates curl docker-cli docker-cli-compose git jq openssh-client
 RUN addgroup -S techstack && adduser -S -G techstack techstack && mkdir -p /data && chown techstack:techstack /data
 COPY --from=backend /out/techstack /app/techstack

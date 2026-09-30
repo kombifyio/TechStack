@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="WaitingTitle" xml:space="preserve"><value>تابع في المتصفح.</value></data>
+  <data name="WaitingDetail" xml:space="preserve"><value>أكمل تسجيل الدخول المعتاد إلى kombify. ستتابع هذه النافذة تلقائيًا.</value></data>
+  <data name="FailureTitle" xml:space="preserve"><value>لم يكتمل تسجيل الدخول إلى Cloud.</value></data>
+  <data name="FailureDetail" xml:space="preserve"><value>ارجع إلى نافذة Techstack وأعد محاولة تسجيل الدخول عبر المتصفح.</value></data>
+  <data name="AccountMismatch" xml:space="preserve"><value>يحتوي هذا التثبيت على بيانات حساب Cloud آخر. استخدم ذلك الحساب أو ملف تعريف Windows منفصلًا.</value></data>
+  <data name="CallbackSuccess" xml:space="preserve"><value>تم استلام تسجيل الدخول. ارجع إلى نافذة Techstack.</value></data>
+  <data name="CallbackFailure" xml:space="preserve"><value>رد نداء تسجيل الدخول غير صالح.</value></data>
+  <data name="ConnectSignInRequired" xml:space="preserve"><value>سجّل الدخول أولًا إلى منتج Cloud، ثم افتح kombify Connect من نافذة Techstack.</value></data>
+  <data name="ConnectAccountRequired" xml:space="preserve"><value>يحتاج Connect إلى جلسة حالية لمنتج Cloud لهذا الحساب. سجّل الدخول إلى Techstack وأعد المحاولة.</value></data>
+</root>

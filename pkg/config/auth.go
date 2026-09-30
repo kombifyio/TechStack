@@ -14,7 +14,6 @@ const (
 	// CanonicalAuthCallbackPath is the only callback path the v2 browser auth
 	// flow should generate for hosted kombify Cloud login.
 	CanonicalAuthCallbackPath = "/api/v2/auth/callback"
-
 )
 
 // NormalizeCloudAuthIssuer returns a stable issuer URL. Kombify-hosted

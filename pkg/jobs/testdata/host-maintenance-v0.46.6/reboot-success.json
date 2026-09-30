@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "stackkit.command-result/v1",
+  "command": "stackkit host reboot",
+  "status": "success",
+  "data": {
+    "schema_version": "stackkit.host-maintenance/v1",
+    "operation": "reboot",
+    "observed_at": "2026-09-25T11:17:40.699976445Z",
+    "os": {
+      "id": "ubuntu",
+      "version_id": "24.04",
+      "pretty_name": "Ubuntu 24.04.5 LTS"
+    },
+    "package_manager": "apt",
+    "unit": "kombify-host-reboot-1790335060",
+    "scheduled": true,
+    "boot_id_before": "27e032ef-b334-4e84-8b0d-b570a560c90f",
+    "scheduled_at": "2026-09-25T11:18:10.709019144Z",
+    "delay_seconds": 30
+  }
+}

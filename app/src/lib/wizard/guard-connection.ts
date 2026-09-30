@@ -26,11 +26,7 @@ export type GuardConnectionSelectionInput = GuardHeartbeatFreshness & {
   remoteServerHost?: string;
 };
 
-const ENROLLING_LIFECYCLE = new Set([
-  "enrolling",
-  "provisioning",
-  "active",
-]);
+const ENROLLING_LIFECYCLE = new Set(["enrolling", "provisioning", "active"]);
 
 export function serverGuardConnectionReady(server: CanonicalServer): boolean {
   const health = legacyServerState(
@@ -89,8 +85,7 @@ function serverCreatedDuringPairing(
 ): boolean {
   const createdAtMs = Date.parse(server.created_at || "");
   return (
-    Number.isFinite(createdAtMs) &&
-    createdAtMs >= pairingStartedAtMs - 60_000
+    Number.isFinite(createdAtMs) && createdAtMs >= pairingStartedAtMs - 60_000
   );
 }
 

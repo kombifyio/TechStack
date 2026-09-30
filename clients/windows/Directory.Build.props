@@ -6,6 +6,12 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <!-- Single pin for every project in this directory (kombify-Techstack-o1f). -->
-    <WebView2SdkVersion>1.0.3296.44</WebView2SdkVersion>
+    <WebView2SdkVersion>1.0.4258.31</WebView2SdkVersion>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'Kombify.TechStack.Client'">
+    <!-- Compile-time editions must never reuse one another's incremental obj output. -->
+    <DesktopEdition Condition="'$(DesktopEdition)' == ''">Local</DesktopEdition>
+    <BaseIntermediateOutputPath>obj\$(DesktopEdition)\</BaseIntermediateOutputPath>
+    <OutputPath>bin\$(DesktopEdition)\$(Configuration)\</OutputPath>
   </PropertyGroup>
 </Project>

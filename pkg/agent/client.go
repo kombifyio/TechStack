@@ -4,7 +4,6 @@ package agent
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/gocommon/servertls"
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
 	"github.com/kombifyio/techstack/pkg/stackkitcommand"
 	"google.golang.org/grpc"
@@ -174,41 +174,16 @@ func NewClient(cfg Config) (*Client, error) {
 	}, nil
 }
 
-// loadTLSConfig creates mTLS configuration for secure agent communication.
+// loadTLSConfig creates the agent's mTLS client configuration from the shared
+// go-common servertls foundation: it presents the agent certificate, pins the
+// Core CA and speaks TLS 1.3 only.
 func loadTLSConfig(cfg Config) (*tls.Config, error) {
-	// Validate file paths exist before attempting to load
-	if _, err := os.Stat(cfg.CertFile); os.IsNotExist(err) {
-		return nil, fmt.Errorf("certificate file not found: %s", cfg.CertFile)
-	}
-	if _, err := os.Stat(cfg.KeyFile); os.IsNotExist(err) {
-		return nil, fmt.Errorf("key file not found: %s", cfg.KeyFile)
-	}
-	if _, err := os.Stat(cfg.CAFile); os.IsNotExist(err) {
-		return nil, fmt.Errorf("CA file not found: %s", cfg.CAFile)
-	}
-
-	// Load agent certificate and key
-	cert, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile)
+	tc, err := servertls.ClientTLSConfig(cfg.CertFile, cfg.KeyFile, cfg.CAFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load agent certificate: %w", err)
+		return nil, err
 	}
-
-	// Load CA certificate to verify Core
-	caCert, err := os.ReadFile(cfg.CAFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read CA certificate: %w", err)
-	}
-
-	caCertPool := x509.NewCertPool()
-	if !caCertPool.AppendCertsFromPEM(caCert) {
-		return nil, fmt.Errorf("failed to parse CA certificate: invalid PEM data")
-	}
-
-	return &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		RootCAs:      caCertPool,
-		MinVersion:   tls.VersionTLS13, // Enforce TLS 1.3
-	}, nil
+	tc.MinVersion = tls.VersionTLS13
+	return tc, nil
 }
 
 // Connect establishes gRPC connection to Core with mTLS.
@@ -280,7 +255,13 @@ func (c *Client) Register(ctx context.Context) error {
 			StackKitAgentCapability,
 			stackkitcommand.ExpectedPlanHashCapability,
 			stackkitcommand.WorkspaceInstanceCapability,
+			stackkitcommand.AdvancedTrustImportCapability,
+			stackkitcommand.AdvancedOperationsCapability,
 		)
+		// Host maintenance is not advertised on the mTLS registration path:
+		// its heartbeat does not report host_boot_id or the machine-id
+		// digest, without which a reboot cannot be verified or the
+		// control-plane host recognized.
 	}
 	req := &agentpb.RegisterRequest{
 		AgentId:      c.agentID,

@@ -1,11 +1,8 @@
 param(
     [string]$InstallDir = "$env:LOCALAPPDATA\Programs\kombify\techstack",
-    [ValidateSet("local", "cloud", "server")]
+    [ValidateSet("local", "server")]
     [string]$Mode = "local",
     [string]$ServerUrl = "",
-    [string]$CloudUrl = "https://kombify.io/device",
-    [string]$CloudDeviceUrl = "https://kombify.io/device",
-    [string]$CloudUiUrl = "https://techstack.kombify.io/login?manual=1&client=windows",
     [string]$LocalUiUrl = "http://127.0.0.1:5260/",
     [string]$LocalOnboardingUrl = "http://127.0.0.1:5260/client/local?client=windows",
     [string]$StateDir = "$env:LOCALAPPDATA\kombify\techstack-client",
@@ -31,7 +28,7 @@ Get-ChildItem -Path $sourceDir -File | Where-Object { $_.Name -ne "install-windo
     Copy-Item -Force -Path $_.FullName -Destination (Join-Path $InstallDir $_.Name)
 }
 
-foreach ($dir in @("Assets", "runtimes", "postgres")) {
+foreach ($dir in @("Assets", "runtimes", "postgres", "stackkits")) {
     $source = Join-Path $sourceDir $dir
     if (Test-Path $source) { Copy-Item -Recurse -Force -Path $source -Destination $InstallDir }
 }
@@ -43,12 +40,6 @@ if ([string]::IsNullOrWhiteSpace($RuntimeDataDir)) {
 New-Item -ItemType Directory -Force -Path $RuntimeDataDir | Out-Null
 $config = [ordered]@{
     mode = $Mode
-    cloudUrl = $CloudUrl
-    cloudDeviceUrl = $CloudDeviceUrl
-    cloudUiUrl = $CloudUiUrl
-    cloudDeviceCodeEndpoint = "https://app.kombify.io/api/v1/tools/auth/device-code"
-    cloudDevicePollEndpoint = "https://app.kombify.io/api/v1/tools/auth/device-code/poll"
-    toolName = "stack"
     localUiUrl = $LocalUiUrl
     localOnboardingUrl = $LocalOnboardingUrl
     runtimeExecutablePath = (Join-Path $InstallDir "techstack.exe")

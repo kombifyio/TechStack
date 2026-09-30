@@ -10,6 +10,7 @@ import {
   normalizeServerProvisioningConfig,
 } from "./types";
 
+import { tr } from "#lib/i18n.svelte.js";
 export interface StackKitNodeSpec {
   name: string;
   role: "standalone" | "main" | "worker" | "storage" | "control-plane";
@@ -547,7 +548,7 @@ export function buildStackKitSpecFromStackConfig(
       server_registry_module: "server-registry",
       service_registry_module: "service-registry",
       stackkit_foundation: stackkitFoundation,
-      foundation_node_label: "Foundation Node",
+      foundation_node_label: tr("ui.standardBundle.foundationNode"),
       server_node_role: serverProvisioning.nodeRole,
       server_node_role_wire: stackSpecNodeRole,
       foundation_node_wire_compat: "main,standalone,control-plane",

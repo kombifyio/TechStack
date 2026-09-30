@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr, trn } from "#lib/i18n.svelte.js";
   import type { Snippet } from "svelte";
   import { Box, Server } from "@lucide/svelte";
   import {
@@ -74,7 +75,7 @@
 
   let {
     groups,
-    title = "Services by runtime target",
+    title = tr("ui.serviceList.servicesByRuntimeTarget"),
     countLabel,
     emptyTitle,
     emptyBody,
@@ -160,7 +161,7 @@
     <div>
       <h2 class="font-semibold text-foreground">{title}</h2>
       <p class="mt-1 text-xs text-muted-foreground">
-        {countLabel || `${total} service${total === 1 ? "" : "s"}`}
+        {countLabel || trn("ui.inventory.serviceCount", total)}
       </p>
     </div>
   </div>
@@ -200,7 +201,7 @@
               {/if}
             </div>
             <span class="shrink-0 text-xs text-muted-foreground">
-              {group.items.length} service{group.items.length === 1 ? "" : "s"}
+              {trn("ui.inventory.serviceCount", group.items.length)}
             </span>
           </div>
 

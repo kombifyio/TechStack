@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "#lib/i18n.svelte.js";
   import Modal from "./Modal.svelte";
   import Button from "#lib/components/ui/Button.svelte";
   import {
@@ -40,7 +41,7 @@
     {#snippet footer()}
       {#if $inAppDialog.kind !== "notice"}
         <Button variant="secondary" onclick={cancelInAppDialog}>
-          {$inAppDialog.cancelText ?? "Cancel"}
+          {$inAppDialog.cancelText ?? tr("ui.importExportModal.cancel")}
         </Button>
       {/if}
       <Button

@@ -2,6 +2,7 @@ package routes
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"github.com/kombifyio/techstack/internal/runtimeproduct/vmlease"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/runtimeconvergence"
+	"github.com/kombifyio/techstack/pkg/servermaintenance"
 	"github.com/kombifyio/techstack/pkg/serverregistry"
 	"github.com/kombifyio/techstack/pkg/vmleases"
 )
@@ -21,8 +23,21 @@ func (h workerRouteHandlers) projectServerEnrollment(ctx context.Context, worker
 type managedRuntimeEnrollmentRecorder struct {
 	lease       vmlease.Lease
 	patches     []vmleases.PatchRequest
+	pins        []vmleases.SSHHostKeyPinRequest
 	patchErrors int
 	getError    error
+}
+
+func (r *managedRuntimeEnrollmentRecorder) PinSSHHostKey(_ context.Context, request vmleases.SSHHostKeyPinRequest) (*vmlease.Lease, error) {
+	r.pins = append(r.pins, request)
+	if r.lease.Metadata == nil {
+		r.lease.Metadata = map[string]string{}
+	}
+	if r.lease.Metadata[vmleases.MetadataKeySSHHostKey] == "" {
+		r.lease.Metadata[vmleases.MetadataKeySSHHostKey] = request.HostKey
+	}
+	copy := r.lease
+	return &copy, nil
 }
 
 func (r *managedRuntimeEnrollmentRecorder) ListByTenant(context.Context, string) ([]vmlease.Lease, error) {
@@ -165,7 +180,12 @@ func TestGuardObservationConvergesManagedLeaseEnrollment(t *testing.T) {
 	store := controlplane.NewMemoryStore()
 	leases := &managedRuntimeEnrollmentRecorder{lease: vmlease.Lease{
 		ID:       "lease-1",
-		Metadata: map[string]string{"runtime_enrollment_status": "pending"},
+		Subject:  vmlease.Subject{Kind: vmlease.SubjectOrg, ID: "tenant-1", OrgID: "tenant-1"},
+		Resource: vmlease.ResourceRef{ProviderID: "centron", EngineVMID: "server-1"},
+		Metadata: map[string]string{
+			"runtime_enrollment_status":              "pending",
+			vmleases.MetadataKeyResourceGenerationID: "550e8400-e29b-41d4-a716-446655440000",
+		},
 	}}
 	handler := workerRouteHandlers{serverStore: store, managedRuntimeLeases: leases}
 	now := time.Date(2026, 8, 14, 13, 0, 0, 0, time.UTC)
@@ -200,6 +220,56 @@ func TestGuardObservationConvergesManagedLeaseEnrollment(t *testing.T) {
 	}
 	if len(leases.patches) != 1 {
 		t.Fatalf("repeated connected observation renewed enrollment %d times, want one transition", len(leases.patches))
+	}
+
+	firstHostKey := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIES1Xflf/Yf/edLYoabUDw1v88bOXzegNvZyNiiH+bik"
+	req := workerInventoryRequest{
+		SourceEpoch: "inventory-a", SourceSequence: 1, ObservedAt: now.Add(3 * time.Minute),
+		Host: workerInventoryHost{SSHHostKeys: []string{firstHostKey}},
+	}
+	if _, err := handler.projectServerInventory(t.Context(), worker, "server-1", "lease-1", req, now.Add(3*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if got := leases.lease.Metadata["runtime_ssh_host_key"]; got != firstHostKey {
+		t.Fatalf("lease SSH host key = %q, want authenticated Guard key", got)
+	}
+	if len(leases.pins) != 1 || leases.pins[0].ServerID != "server-1" || leases.pins[0].StackID != "stack-1" || leases.pins[0].OwnerSubjectID != "owner-1" {
+		t.Fatalf("SSH host key pin binding = %#v", leases.pins)
+	}
+	req.SourceSequence = 2
+	req.ObservedAt = now.Add(4 * time.Minute)
+	req.Host.SSHHostKeys = []string{"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILqyqJcqqaM5qWF7+Qgk8UmVXBNhVCGLyHpkvh043crA"}
+	if _, err := handler.projectServerInventory(t.Context(), worker, "server-1", "lease-1", req, now.Add(4*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if got := leases.lease.Metadata["runtime_ssh_host_key"]; got != firstHostKey {
+		t.Fatalf("authenticated observation rotated SSH host key to %q", got)
+	}
+	if len(leases.pins) != 2 {
+		t.Fatalf("Guard inventory pin attempts = %d, want both observations checked against immutable custody", len(leases.pins))
+	}
+
+	// Model an unpinned lease after a prior projection failure, then replace the
+	// Guard binding. The new Guard's heartbeat is current-generation authority
+	// for liveness, but it is not current-generation host-key evidence.
+	delete(leases.lease.Metadata, vmleases.MetadataKeySSHHostKey)
+	leases.pins = nil
+	replacement := worker
+	replacement.ID = "guard-2"
+	if _, err := handler.applyServerEvent(t.Context(), controlplane.ServerEvent{
+		TenantID: "tenant-1", ServerID: "server-1", Authority: controlplane.ServerEventAuthorityControlPlane,
+		Source: "reenrollment", SourceID: "enrollment-controller", ObservedAt: now.Add(5 * time.Minute),
+		Runtime: controlplane.ServerRuntime{WorkerID: replacement.ID},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.projectServerHeartbeat(t.Context(), replacement, "server-1", "lease-1", now.Add(6*time.Minute), "guard-heartbeat", guardEventPosition{
+		Epoch: "epoch-b", Sequence: 1, ObservedAt: now.Add(6 * time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(leases.pins) != 0 || leases.lease.Metadata[vmleases.MetadataKeySSHHostKey] != "" {
+		t.Fatalf("replacement Guard heartbeat pinned carried host evidence: %#v", leases.pins)
 	}
 }
 
@@ -559,5 +629,68 @@ func TestCanonicalInventoryChannelsDropsUnboundedLabelsAndSecrets(t *testing.T) 
 	}
 	if channels[1].Type != "ssh" || channels[1].State != "unknown" || len(channels[1].Metadata) != 0 {
 		t.Fatalf("unsafe labels survived canonicalization: %#v", channels[1])
+	}
+}
+
+// The reboot watcher and the control-plane-host guard read the boot id and
+// machine-id digest a Guard heartbeat reports; they reach server metadata
+// through the worker record, and a malformed value is dropped, not stored.
+func TestGuardHeartbeatProjectsHostBootIDIntoServerMetadata(t *testing.T) {
+	store := controlplane.NewMemoryStore()
+	handler := workerRouteHandlers{serverStore: store}
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	worker := controlplane.Worker{ID: "guard-1", TenantID: "tenant-1", StackID: "stack-1", OwnerSubjectID: "owner-1", Hostname: "runtime-1"}
+	if err := handler.projectServerEnrollment(t.Context(), worker, "server-1", "lease-1", now, "pairing-redemption"); err != nil {
+		t.Fatal(err)
+	}
+	var beat workerHeartbeatRequest
+	if err := json.Unmarshal([]byte(`{"host_boot_id":"0f5d2c1e-7a3b-4c2d-9e8f-1a2b3c4d5e6f","host_machine_id_sha256":"not-a-digest","host_maintenance":true}`), &beat); err != nil {
+		t.Fatal(err)
+	}
+	worker.Capabilities = mergeAnyMaps(worker.Capabilities, beat.metadata())
+	if err := handler.projectServerHeartbeat(t.Context(), worker, "server-1", "lease-1", now.Add(time.Second), "guard-heartbeat", guardEventPosition{Epoch: "epoch-a", Sequence: 1, ObservedAt: now.Add(time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	server, err := store.GetServerRuntime(t.Context(), "tenant-1", "server-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if server.Metadata[servermaintenance.MetadataBootID] != "0f5d2c1e-7a3b-4c2d-9e8f-1a2b3c4d5e6f" ||
+		server.Metadata[servermaintenance.MetadataMachineIDDigest] != "" || server.Metadata[servermaintenance.MetadataHostMaintenance] != true {
+		t.Fatalf("server metadata = %#v", server.Metadata)
+	}
+}
+
+// Guard inventory is posted every 30 seconds. A post whose inventory is
+// unchanged apart from resource usage, uptime and its source position keeps
+// the inventory revision (owner approvals bind to it) and still refreshes the
+// heartbeat.
+func TestNoOpInventoryPostKeepsTheInventoryRevision(t *testing.T) {
+	store := controlplane.NewMemoryStore()
+	handler := workerRouteHandlers{serverStore: store}
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	worker := controlplane.Worker{ID: "guard-1", TenantID: "tenant-1", StackID: "stack-1", OwnerSubjectID: "owner-1"}
+	if err := handler.projectServerEnrollment(t.Context(), worker, "server-1", "", now.Add(-time.Minute), "pairing-redemption"); err != nil {
+		t.Fatal(err)
+	}
+	req := workerInventoryRequest{
+		SourceEpoch: "epoch-a", SourceSequence: 1, ObservedAt: now, Hostname: "runtime-1",
+		Host:     workerInventoryHost{Hostname: "runtime-1", OS: "ubuntu", CPUPercent: 3, MemoryUsedBytes: 1 << 30, UptimeSeconds: 600},
+		Services: []workerInventoryService{{ServiceID: "db", Status: "healthy"}},
+	}
+	if _, err := handler.projectServerInventory(t.Context(), worker, "server-1", "", req, now); err != nil {
+		t.Fatal(err)
+	}
+	req.SourceSequence, req.ObservedAt = 2, now.Add(30*time.Second)
+	req.Host.CPUPercent, req.Host.MemoryUsedBytes, req.Host.UptimeSeconds = 71, 3<<30, 630
+	if _, err := handler.projectServerInventory(t.Context(), worker, "server-1", "", req, now.Add(30*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	server, err := store.GetServerRuntime(t.Context(), "tenant-1", "server-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if server.InventoryRevision != 1 || server.LastHeartbeatAt == nil || !server.LastHeartbeatAt.Equal(now.Add(30*time.Second)) {
+		t.Fatalf("revision=%d heartbeat=%v, want revision 1 and a refreshed heartbeat", server.InventoryRevision, server.LastHeartbeatAt)
 	}
 }

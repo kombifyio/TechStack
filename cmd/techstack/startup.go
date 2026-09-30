@@ -73,6 +73,7 @@ type v2Boot struct {
 	db                   *db.DB
 	server               *v2.Server
 	session              *session.Manager
+	browserSessions      *sessionpolicy.Browser
 	registry             *providers.Registry
 	authStore            controlplane.AuthStore
 	serverEventProjector controlplane.ServerEventProjector
@@ -114,8 +115,18 @@ type routeDeps struct {
 	providerCleanupReadback monthlyruntime.CleanupReadbackSource
 	providerResolution      any
 	providerActions         jobs.RuntimeActions
-	typedControl            *agentcontrol.Hub
-	portInventory           *portinventory.PostgresAuthority
+	// providerControlDB is the dedicated provider-control runtime pool; nil
+	// when provider control is disabled.
+	providerControlDB *sql.DB
+	typedControl      *agentcontrol.Hub
+	portInventory     *portinventory.PostgresAuthority
+}
+
+func providerControlSQL(database *db.DB) *sql.DB {
+	if database == nil {
+		return nil
+	}
+	return database.DB
 }
 
 type runtimeRouteState struct {
@@ -190,6 +201,12 @@ func runTechstack(ctx context.Context) error {
 		return runLoginMode(ctx, os.Args[1:])
 	}
 
+	// API client mode: `techstack api ...` runs the commands generated from the
+	// OpenAPI contract (API-FIRST-STANDARD section 9) and exits.
+	if isAPIMode(os.Args) {
+		return runAPIMode(ctx, os.Args[2:])
+	}
+
 	os.Args = applyDefaultServeHTTP(os.Args, defaultHTTPAddr)
 	if handled, err := handleEarlyCommand(ctx, os.Args); handled {
 		return err
@@ -259,9 +276,15 @@ func runTechstack(ctx context.Context) error {
 	portInventory := portinventory.NewPostgresAuthority(v2Boot.db.DB)
 	orchCfg.PortInventory = portInventory
 	orchCfg.BackupScheduleProjector = backupScheduleProjector(v2Boot, log)
+	orchCfg.AdvancedIssuer = advancedCapabilityIssuer(ctx, v2Boot, log)
 	orch := orchestrator.New(orchCfg, log)
 	typedControl := agentcontrol.NewHub(v2Boot.db.DB)
 	tunnelResolver := bootTunnelResolver(log)
+	if monthlyruntime.LocalManagedRuntimeE2EAllowed() {
+		log.Warn("local_managed_runtime_e2e_gate_open",
+			"message", "managed monthly runtimes can be created without SaaS entitlements; test lanes only",
+			"environment", startup.cfg.Server.Environment)
+	}
 	grpcState, err := bootAgentGRPC(startup.cfg, v2Boot, log)
 	if err != nil {
 		log.Error("agent_mtls_config_invalid", "error", err)
@@ -313,6 +336,7 @@ func runTechstack(ctx context.Context) error {
 		providerCleanupReadback: providerState.cleanupReadback,
 		providerResolution:      providerState.resolution,
 		providerActions:         providerState.actions,
+		providerControlDB:       providerControlSQL(providerDatabase),
 		typedControl:            typedControl,
 		portInventory:           portInventory,
 	}
@@ -347,7 +371,8 @@ func runTechstack(ctx context.Context) error {
 		orch.Queue().SetExecutionDeferObserver(observer)
 	}
 	backupScanner := composeBackupScanner(v2Boot, deps.featureSvc, orch, log)
-	handles := startRuntimeLifecycle(ctx, startup.cfg, orch, grpcState, monitorState, workflowEngine, rilSignalWorker, providerState.runner, registrySweeper, platformProjector, jobReclaimer, backupScanner, log)
+	serverMaintenance := bootServerMaintenanceLoop(v2Boot, orch, log)
+	handles := startRuntimeLifecycle(ctx, startup.cfg, orch, grpcState, monitorState, workflowEngine, rilSignalWorker, providerState.runner, registrySweeper, platformProjector, jobReclaimer, backupScanner, serverMaintenance, log)
 
 	addr := startup.cfg.Server.ListenAddr
 	if addr == "" {
@@ -424,6 +449,8 @@ func handleEarlyCommand(ctx context.Context, args []string) (bool, error) {
 		}
 		fmt.Println("provider-control runtime authority installed and verified")
 		return true, nil
+	case "operator-qualification-fixture":
+		return true, runOperatorQualificationFixture(ctx, args[2:])
 	default:
 		return false, nil
 	}
@@ -587,6 +614,12 @@ func configureV2Auth(ctx context.Context, cfg *config.Config, log *logger.Logger
 
 	boot.session = mgr
 	*options = append(*options, v2.WithSession(mgr))
+	browserSessions, err := sessionpolicy.NewBrowser(sessionCfg, mgr, boot.cookieName, cfg.IsProduction())
+	if err != nil {
+		log.Error("v2_browser_session_policy_invalid", "error", err)
+		return
+	}
+	boot.browserSessions = browserSessions
 
 	registry, source, err := v2AuthRegistry(ctx, boot.db)
 	if err != nil {
@@ -640,13 +673,23 @@ func configureV2Auth(ctx context.Context, cfg *config.Config, log *logger.Logger
 		log.Error("v2_auth_flow_invalid", "error", err)
 		return
 	}
+	nativeLogin := newNativeLoginHandlers(boot, config.PublicOriginFromEnv())
 	*options = append(*options, v2.WithAuthHandlers(v2.AuthHandlers{
 		Providers: authFlow.ProvidersHandler(),
-		Login: v2AuthForceLoginPrompt(
-			v2AuthPublicOriginHandler(authFlow.LoginHandler(), config.PublicOriginFromEnv()),
+		Login: v2AuthBindLoginState(
+			v2AuthForceLoginPrompt(
+				v2AuthPublicOriginHandler(authFlow.LoginHandler(), config.PublicOriginFromEnv()),
+			),
+			config.CanonicalAuthCallbackPath, cfg.IsProduction(),
 		),
-		Callback: v2AuthPublicOriginHandler(authFlow.CallbackHandler(), config.PublicOriginFromEnv()),
-		Logout:   authFlow.LogoutHandler(),
+		Callback: boot.browserSessions.WrapLogin(v2AuthRequireLoginStateBinding(
+			v2AuthPublicOriginHandler(authFlow.CallbackHandler(), config.PublicOriginFromEnv()),
+			config.CanonicalAuthCallbackPath, "/login", cfg.IsProduction(),
+		)),
+		Logout:        boot.browserSessions.WrapLogin(authFlow.LogoutHandler()),
+		NativeStart:   nativeLogin.NativeStart,
+		NativeHandoff: nativeLogin.NativeHandoff,
+		NativeRedeem:  nativeLogin.NativeRedeem,
 	}))
 	log.Info("v2_auth_enabled", "providers", registry.Len(), "source", source, "default_provider", defaultProviderID, "default_tenant", boot.defaultTenant)
 }
@@ -1004,6 +1047,7 @@ func v2SessionIdentityMiddleware(boot *v2Boot) func(*httpx.Event) error {
 		}
 		hydrateIdentityTenantFromMembership(id, membership)
 		projectLegacyDemoOwner(id)
+		boot.browserSessions.Renew(e.Response, e.Request)
 		ctx := identity.NewContext(e.Request.Context(), id)
 		ctx = authsession.WithClaims(ctx, claims)
 		ctx = contextWithMembershipAuthorization(ctx, membership)
@@ -1535,6 +1579,8 @@ func bindCSRF(router *httpx.Router, cfg *config.Config) {
 		"/api/v1/health/startup",
 		"/api/v1/openapi.yaml",
 		localDeviceSessionPath,
+		localDeviceChallengePath,
+		localDeviceProofPath,
 		"/live",
 		"/ready",
 		"/startup",
@@ -1564,7 +1610,7 @@ func bindCORS(router *httpx.Router, cfg *config.Config) {
 	router.BindFunc(httpx.CORS(httpx.CORSConfig{
 		AllowOrigins:     corsOrigins,
 		AllowMethods:     []string{"GET", "HEAD", "PUT", "PATCH", "POST", "DELETE"},
-		AllowHeaders:     []string{"Accept", "Accept-Language", "Content-Type", "Authorization", "X-CSRF-Token", "X-SSH-Fingerprint", localDeviceSessionHeader},
+		AllowHeaders:     []string{"Accept", "Accept-Language", "Content-Type", "Authorization", "X-CSRF-Token", "X-SSH-Fingerprint", localDeviceSessionHeader, localDeviceProofHeader},
 		AllowCredentials: !hasWildcardOrigin(corsOrigins),
 		ExposeHeaders:    []string{"X-CSRF-Token", "X-Request-ID", "X-Correlation-ID", "X-Trace-ID"},
 		MaxAge:           600,

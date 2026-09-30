@@ -20,6 +20,7 @@
     type HouseholdProfile,
   } from "#lib/wizard/household-draft.js";
   import { tr } from "#lib/i18n.svelte.js";
+  import "../substep-rail.css";
 
   interface Props {
     config: StackConfig;
@@ -66,14 +67,18 @@
   }
 </script>
 
-<div class="step" data-testid="easy-step-4">
+<div
+  class="step substep-flow"
+  style:--substep-prefix="&quot;4.&quot;"
+  data-testid="easy-step-4"
+>
   <header class="heading">
     <p class="eyebrow">{tr("wizard.users.eyebrow")}</p>
     <h2>{tr("wizard.users.heading")}</h2>
     <p class="intro">{tr("wizard.users.intro")}</p>
   </header>
 
-  <div class="household-layout">
+  <div class="household-layout" data-substep>
     <fieldset class="profiles">
       <legend class="sr-only">{tr("wizard.users.profile.label")}</legend>
       {#each profiles as profile (profile)}
@@ -106,7 +111,11 @@
     </div>
   </div>
 
-  <section class="publication" aria-labelledby="public-audience-heading">
+  <section
+    class="publication"
+    aria-labelledby="public-audience-heading"
+    data-substep
+  >
     <div class="publication-heading">
       <Globe2 size={23} aria-hidden="true" />
       <div>
@@ -135,6 +144,7 @@
   </section>
 
   {#if selectedProfile !== "solo"}
+    <div class="substep-group" data-substep>
     <section class="shared-access">
       <button
         type="button"
@@ -256,11 +266,13 @@
           {tr("wizard.users.access.body")}
         </p>{/if}
     </section>
+    </div>
   {/if}
 </div>
 
 <style>
   .publication {
+    --substep-top: 24px;
     border-block: 1px solid var(--border);
     padding-block: 24px;
   }
@@ -314,6 +326,11 @@
   .step {
     display: grid;
     gap: 32px;
+  }
+  .substep-group {
+    display: grid;
+    gap: 32px;
+    min-width: 0;
   }
   .heading {
     padding-block: 14px 2px;

@@ -52,18 +52,15 @@ The engine:
 - `pkg/drift` — drift detection, consumed by the drift-correction workflow.
 - `pkg/db/migrations` — Postgres schema via numbered SQL migrations (008).
 
-## Non-goals (binding)
+## Design choices
 
-- **No event-sourcing, no deterministic replay.** State is mutable in the
-  store; the audit trail is append-only and is NEVER read to reconstruct
-  run state. (This is what separates "adopt Temporal patterns" from "clone
-  Temporal".)
-- **No generic, user-defined workflows.** Those are kombify-AI v1.0.0
-  "Workflows" (ADK, SaaS-side) — a different domain. This engine runs a
-  closed, operator-defined set of Go workflows.
-- **No external service dependency.** No Temporal cluster. Runs embedded
-  on the product's own Postgres — D11: RIL is an OSS, self-hostable product
-  standard.
+- **Checkpoint state, not event sourcing.** State is mutable in the store;
+  the audit trail is append-only and is not read to reconstruct run state.
+  (This is what separates "adopt Temporal patterns" from "clone Temporal".)
+- **Operator-defined workflows.** This engine runs an operator-defined set
+  of Go workflows. Generic, user-defined workflows live in kombify-AI.
+- **Embedded.** Runs on the product's own Postgres without a Temporal
+  cluster — D11: RIL is an OSS, self-hostable product standard.
 - **Not the provisioning queue.** `pkg/jobs.Queue` (in-memory, 24h TTL,
   single-step) stays the substrate for short provisioning/deploy/drift jobs.
   This engine is separate and durable for long-running RIL workflows.
@@ -101,8 +98,6 @@ The engine:
 
 Engine tests use an in-memory `fakeStore` (fake_store_test.go) that validates
 all state-machine transitions via `ValidateRunTransition`/`ValidateStepTransition`.
-`PgStore` integration tests run against a real Postgres instance when
-`TECHSTACK_TEST_POSTGRES_URL` is set (see pg_store_test.go).
 The durable-timer invariant reconstructs the engine over the same store before
 the worker sweep, so restart recovery is tested instead of an in-memory-only
 callback path. `mise run test:race:core` includes the engine, definitions, and

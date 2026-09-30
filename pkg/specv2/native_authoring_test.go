@@ -9,7 +9,7 @@ import (
 // custody must travel with a new application, without replacing owned intent.
 type nativeDocumentAuthor struct{}
 
-func (nativeDocumentAuthor) AuthorGoals(context.Context, string, string, string, string, []string) (GoalAuthoring, error) {
+func (nativeDocumentAuthor) AuthorGoals(context.Context, string, string, string, string, GoalSelection) (GoalAuthoring, error) {
 	return goalAuthoringFromDocument([]byte(`{"apiVersion":"stackkit/v2alpha2","kind":"StackSpec","kit":{"slug":"basement-kit"},"workloads":{"files":{"alternative":"cloudreve"},"vault":{"alternative":"vaultwarden"}},"modules":{"stackkits-basement-core-lite-runtime":{"computeProfile":"low"},"stackkits-cloudreve-runtime":{"computeProfile":"standard"},"stackkits-vaultwarden-runtime":{"computeProfile":"standard"}}}`), KitSlugBasement, []string{"files", "vault"}, nil, map[string]bool{"files": true, "vault": true}, map[string]workloadModuleBinding{"files": {AlternativeRef: "cloudreve", ModuleRef: "stackkits-cloudreve-runtime"}, "vault": {AlternativeRef: "vaultwarden", ModuleRef: "stackkits-vaultwarden-runtime"}})
 }
 

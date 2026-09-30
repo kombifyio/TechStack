@@ -51,26 +51,25 @@ try {
     New-Item -ItemType Directory -Force -Path $frontendEmbedDir | Out-Null
     Copy-Item -Recurse -Force -Path (Join-Path $frontendBuildDir "*") -Destination $frontendEmbedDir
     Push-Location $root
+    $previousGOOS = $env:GOOS
+    $previousGOARCH = $env:GOARCH
     try {
+        # Both targets are explicit so the pair is correct on any build host.
+        $env:GOOS = "windows"
+        $env:GOARCH = "amd64"
         go build -buildvcs=false -tags techstack_static_ui -trimpath `
             -ldflags "-s -w -X main.version=$Version -X main.buildRevision=$SourceRevision" `
             -o $WindowsOutputPath ./cmd/techstack
         if ($LASTEXITCODE -ne 0) { throw "Windows runtime build failed with exit code $LASTEXITCODE" }
 
-        $previousGOOS = $env:GOOS
-        $previousGOARCH = $env:GOARCH
-        try {
-            $env:GOOS = "linux"
-            $env:GOARCH = "amd64"
-            go build -buildvcs=false -tags techstack_static_ui -trimpath `
-                -ldflags "-s -w -X main.version=$Version -X main.buildRevision=$SourceRevision" `
-                -o $LinuxOutputPath ./cmd/techstack
-            if ($LASTEXITCODE -ne 0) { throw "Linux runtime build failed with exit code $LASTEXITCODE" }
-        } finally {
-            $env:GOOS = $previousGOOS
-            $env:GOARCH = $previousGOARCH
-        }
+        $env:GOOS = "linux"
+        go build -buildvcs=false -tags techstack_static_ui -trimpath `
+            -ldflags "-s -w -X main.version=$Version -X main.buildRevision=$SourceRevision" `
+            -o $LinuxOutputPath ./cmd/techstack
+        if ($LASTEXITCODE -ne 0) { throw "Linux runtime build failed with exit code $LASTEXITCODE" }
     } finally {
+        $env:GOOS = $previousGOOS
+        $env:GOARCH = $previousGOARCH
         Pop-Location
     }
 } finally {

@@ -125,6 +125,23 @@ func (s *PostgresAuthority) Create(ctx context.Context, input CreateGovernedCard
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("ril actions: database not configured")
 	}
+	var out *GovernedCard
+	err := s.withTenant(ctx, input.TenantID, func(tx *sql.Tx) error {
+		card, err := CreateInTx(ctx, tx, input)
+		out = card
+		return err
+	})
+	return out, err
+}
+
+// CreateInTx inserts one governed card and its creation audit inside a caller
+// transaction that already carries the card tenant's app.tenant_id scope. It
+// lets another tenant-scoped authority (the RIL signal outbox) commit the card
+// atomically with its own write.
+func CreateInTx(ctx context.Context, tx *sql.Tx, input CreateGovernedCard) (*GovernedCard, error) {
+	if tx == nil {
+		return nil, fmt.Errorf("ril actions: transaction required")
+	}
 	input.ID = strings.TrimSpace(input.ID)
 	if input.ID == "" {
 		input.ID = uuid.NewString()
@@ -148,27 +165,25 @@ func (s *PostgresAuthority) Create(ctx context.Context, input CreateGovernedCard
 	if input.Template.Grant == nil {
 		status = "awaiting_grant"
 	}
-	var out *GovernedCard
-	err = s.withTenant(ctx, input.TenantID, func(tx *sql.Tx) error {
-		card, scanErr := scanGovernedCard(tx.QueryRowContext(ctx, `
-			INSERT INTO ril_action_cards (
-				id, tenant_id, owner_subject_id, server_id, stack_id, title,
-				status, severity, action_json, decision_json, action_template_json
-			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'{}'::jsonb,'{}'::jsonb,$9::jsonb)
-			RETURNING `+governedCardColumns,
-			input.ID, input.TenantID, input.OwnerSubjectID, input.ServerID,
-			input.Template.StackID, input.Title, status, input.Severity, templateJSON))
-		if scanErr == nil {
-			scanErr = appendActionTransitionAudit(ctx, tx, actionTransitionAudit{
-				TenantID: input.TenantID, CardID: input.ID, ToStatus: status,
-				CorrelationID: newAuditCorrelation(""), ActorSubjectID: input.OwnerSubjectID,
-				OccurredAt: card.CreatedAt,
-			})
-		}
-		out = card
-		return scanErr
-	})
-	return out, err
+	card, err := scanGovernedCard(tx.QueryRowContext(ctx, `
+		INSERT INTO ril_action_cards (
+			id, tenant_id, owner_subject_id, server_id, stack_id, title,
+			status, severity, action_json, decision_json, action_template_json
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'{}'::jsonb,'{}'::jsonb,$9::jsonb)
+		RETURNING `+governedCardColumns,
+		input.ID, input.TenantID, input.OwnerSubjectID, input.ServerID,
+		input.Template.StackID, input.Title, status, input.Severity, templateJSON))
+	if err != nil {
+		return nil, err
+	}
+	if err := appendActionTransitionAudit(ctx, tx, actionTransitionAudit{
+		TenantID: input.TenantID, CardID: input.ID, ToStatus: status,
+		CorrelationID: newAuditCorrelation(""), ActorSubjectID: input.OwnerSubjectID,
+		OccurredAt: card.CreatedAt,
+	}); err != nil {
+		return nil, err
+	}
+	return card, nil
 }
 
 func (s *PostgresAuthority) Get(ctx context.Context, tenantID, ownerID, cardID string) (*GovernedCard, error) {

@@ -456,6 +456,7 @@ func TestDeployRolloutCollectsRuntimeDiagnosticsOnStackKitsFailure(t *testing.T)
 	t.Setenv(stackKitReleasePinEnv, pinPath)
 	t.Setenv(stackKitReleaseCacheEnv, dir)
 	rollout.cfg.StackKitCommander = &failedApplyDiagnosticsSender{}
+	rollout.cfg.AdvancedIssuer = staticAdvancedIssuer{}
 	rollout.actionReq.TenantID, rollout.actionReq.OwnerID = "tenant-1", "owner-1"
 	rollout.actionReq.TechStackEnrollment = &TechStackEnrollment{RuntimeAgentID: "agent-1"}
 	rollout.actionReq.StackSpecPath = writeSpec(t, `{"apiVersion":"stackkit/v2alpha1","kind":"StackSpec","metadata":{"name":"diagnostics"},"kit":{"slug":"basement-kit"},"workloads":{"core":{"alternative":"standalone"}},"generation":{"outputRoot":"deploy"}}`)

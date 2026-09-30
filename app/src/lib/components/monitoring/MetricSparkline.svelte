@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "#lib/i18n.svelte.js";
   import type { PromQLPoint } from "#lib/api/monitoring.js";
 
   interface Props {
@@ -56,7 +57,7 @@
     class="flex items-center justify-center rounded-md border border-dashed border-border text-xs text-muted-foreground"
     style="height: {height}px"
   >
-    No samples in this window
+    {tr("ui.metric.noSamples")}
   </div>
 {:else}
   <svg

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/kombifyio/techstack/pkg/servermaintenance"
 	"sync"
 
 	"github.com/kombifyio/techstack/internal/backupjobs"
@@ -98,6 +99,7 @@ func startRuntimeLifecycle(
 	platformProjector *serverregistry.PlatformProjector,
 	jobReclaimer *orchestrator.JobExecutionReclaimer,
 	backupScanner *backupjobs.Scanner,
+	serverMaintenance *servermaintenance.Loop,
 	log *logger.Logger,
 ) *shutdownHandles {
 	background := newBackgroundRuntimeLifecycle(ctx)
@@ -117,6 +119,11 @@ func startRuntimeLifecycle(
 
 	orch.Start()
 	fmt.Println("   Jobs:           Orchestrator started with 4 workers")
+
+	if serverMaintenance != nil {
+		background.run(serverMaintenance.Run)
+		fmt.Println("   Maintenance:    Server maintenance runner started")
+	}
 
 	if backupScanner != nil {
 		// Bound to the runtime lifecycle context so a shutdown stops the pass

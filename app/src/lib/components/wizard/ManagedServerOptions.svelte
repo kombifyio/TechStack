@@ -3,12 +3,10 @@
   import {
     ArrowUpRight,
     Check,
-    ChevronDown,
     Cpu,
     HardDrive,
     MemoryStick,
     MapPin,
-    SlidersHorizontal,
   } from "@lucide/svelte";
   import BrandLogoScope from "../BrandLogoScope.svelte";
   import BrandLogoIcon from "../BrandLogoIcon.svelte";
@@ -23,6 +21,8 @@
   } from "#lib/wizard/index.js";
   import { managedProviders } from "#lib/wizard/managed-providers.js";
   import { tr } from "#lib/i18n.svelte.js";
+  import { NODE_GUIDES } from "#lib/docs-links.js";
+  import InfoTip from "./InfoTip.svelte";
 
   let {
     config = $bindable(),
@@ -36,7 +36,6 @@
   let offerings = $state<MonthlyRuntimeOffering[]>([]);
   let loading = $state(true);
   let loadFailed = $state(false);
-  let detailsOpen = $state(false);
   const provider = $derived(
     providers.find((item) => item.value === config.providerId),
   );
@@ -112,7 +111,7 @@
           </div>{/if}
         {#if offering.memory_mb}<div>
             <dt><MemoryStick size={15} aria-hidden="true" />RAM</dt>
-            <dd>{offering.memory_mb / 1024} GiB</dd>
+            <dd>{tr("ui.managed.sizeGiB", { size: offering.memory_mb / 1024 })}</dd>
           </div>{/if}
         {#if offering.disk_gb}<div>
             <dt>
@@ -120,7 +119,7 @@
                 "wizard.server.hypervisor.disk",
               )}
             </dt>
-            <dd>{offering.disk_gb} GB</dd>
+            <dd>{tr("ui.managed.sizeGB", { size: offering.disk_gb })}</dd>
           </div>{/if}
         {#if region}<div>
             <dt>
@@ -142,70 +141,60 @@
   </section>
 
   <section class="provider-settings">
-    <button
-      type="button"
-      class="details-toggle"
-      aria-expanded={detailsOpen}
-      aria-controls="managed-provider-details"
-      onclick={() => (detailsOpen = !detailsOpen)}
-    >
-      <SlidersHorizontal size={15} aria-hidden="true" />
-      <span
-        ><strong>{tr("wizard.server.managed.details")}</strong><small
-          >{tr("wizard.server.managed.detailsHint")}</small
-        ></span
-      >
-      <ChevronDown
-        size={15}
-        aria-hidden="true"
-        class={detailsOpen ? "open" : undefined}
-      />
-    </button>
-    {#if detailsOpen}
-      <div class="provider-content" id="managed-provider-details">
-        <div class="provider-copy">
-          <h4>{tr("wizard.server.managed.provider")}</h4>
-          <p>
-            {tr(
-              providers.length > 1
-                ? "wizard.server.managed.providerChoice"
-                : "wizard.server.managed.providerAssigned",
-            )}
-          </p>
-        </div>
-        <div
-          class="providers"
-          role="group"
-          aria-label={tr("wizard.server.managed.provider")}
-        >
-          {#each providers as item (item.value)}
-            <label data-testid={`managed-provider-${item.value}`}>
-              <input
-                type="radio"
-                name="managed-provider"
-                value={item.value}
-                checked={config.providerId === item.value}
-                onchange={() => onselect(item.value)}
-              />
-              <BrandLogoScope domain={item.domain}
-                ><BrandLogoIcon
-                  class="h-6 w-6"
-                  fallbackLabel={item.label}
-                /></BrandLogoScope
-              >
-              <strong>{item.label}</strong
-              >{#if config.providerId === item.value}<Check
-                  size={14}
-                  aria-hidden="true"
-                />{/if}
-            </label>
-          {/each}
-        </div>
-        <p class="scope-note">
-          {tr("wizard.server.managed.moreOptionsPending")}
+    <div class="provider-content">
+      <div class="provider-copy">
+        <h4 class="tip-heading">
+          {tr("wizard.server.managed.provider")}<InfoTip
+            topic={tr("wizard.server.managed.provider")}
+            text={tr("wizard.tip.managedProvider")}
+            docs={NODE_GUIDES.managedProviders}
+          />
+        </h4>
+        <p>
+          {tr(
+            providers.length > 1
+              ? "wizard.server.managed.providerChoice"
+              : "wizard.server.managed.providerAssigned",
+          )}
         </p>
       </div>
-    {/if}
+      <fieldset class="providers">
+        <legend class="sr-only">{tr("wizard.server.managed.provider")}</legend>
+        {#each managedProviders as item (item.value)}
+          {@const available = providers.some(
+            (provider) => provider.value === item.value,
+          )}
+          <label
+            data-testid={`managed-provider-${item.value}`}
+            class:unavailable={!available}
+          >
+            <input
+              type="radio"
+              name="managed-provider"
+              value={item.value}
+              checked={available && config.providerId === item.value}
+              disabled={!available}
+              onchange={() => onselect(item.value)}
+            />
+            <BrandLogoScope domain={item.domain}
+              ><BrandLogoIcon
+                class="h-6 w-6"
+                fallbackLabel={item.label}
+              /></BrandLogoScope
+            >
+            <span
+              ><strong>{item.label}</strong>
+              {#if !available}<small
+                  >{tr("wizard.server.managed.providerUnavailable")}</small
+                >{/if}
+            </span>
+          </label>
+        {/each}
+      </fieldset>
+      <p class="scope-note">
+        {tr("wizard.server.managed.moreOptionsPending")}
+      </p>
+    </div>
   </section>
 </div>
 
@@ -230,6 +219,11 @@
     place-items: center;
     width: 42px;
     height: 42px;
+  }
+  .tip-heading {
+    display: flex;
+    align-items: center;
+    gap: 2px;
   }
   h4 {
     font-size: 17px;
@@ -300,44 +294,9 @@
     display: grid;
     gap: 22px;
   }
-  .details-toggle {
-    display: flex;
-    align-items: center;
-    width: min(100%, 520px);
-    gap: 10px;
-    padding: 0 0 9px;
-    color: var(--muted-foreground);
-    border-bottom: 1px solid var(--border);
-    text-align: start;
-  }
-  .details-toggle:hover {
-    color: var(--foreground);
-  }
-  .details-toggle > span {
-    flex: 1;
-  }
-  .details-toggle strong,
-  .details-toggle small {
-    display: block;
-  }
-  .details-toggle strong {
-    color: var(--foreground);
-    font-size: 13px;
-    font-weight: 550;
-  }
-  .details-toggle small {
-    font-size: 11px;
-    margin-top: 3px;
-  }
-  .details-toggle :global(svg.open) {
-    transform: rotate(180deg);
-  }
   .provider-content {
     display: grid;
     gap: 20px;
-    padding-inline-start: 23px;
-    border-inline-start: 2px solid
-      color-mix(in oklch, var(--primary) 36%, var(--border));
   }
   .provider-copy h4 {
     font-size: 14px;
@@ -352,7 +311,6 @@
     border-bottom: 1px solid var(--border);
   }
   .providers label {
-    position: relative;
     display: flex;
     align-items: center;
     gap: 9px;
@@ -362,20 +320,18 @@
     cursor: pointer;
   }
   .providers input {
-    position: absolute;
-    opacity: 0;
-    pointer-events: none;
+    accent-color: var(--primary);
   }
   .providers label:has(input:checked) {
     color: var(--foreground);
   }
-  .providers label:has(input:checked)::after {
-    content: "";
-    position: absolute;
-    inset-inline: 0;
-    bottom: -1px;
-    height: 2px;
-    background: var(--primary);
+  .providers label.unavailable {
+    cursor: not-allowed;
+  }
+  .providers small {
+    display: block;
+    font-size: 11px;
+    margin-top: 3px;
   }
   .providers strong {
     font-size: 13px;
@@ -401,7 +357,7 @@
     outline: 2px solid var(--ring);
     outline-offset: 4px;
   }
-  .providers label:has(input:focus-visible) {
+  .providers input:focus-visible {
     outline: 2px solid var(--ring);
     outline-offset: 4px;
   }

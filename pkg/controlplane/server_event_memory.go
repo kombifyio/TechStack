@@ -36,6 +36,7 @@ func (s *MemoryStore) applyServerEventLocked(event ServerEvent) (*ServerEventRes
 	prepared.server.CreatedAt = now
 	if current != nil {
 		prepared.server.CreatedAt = current.CreatedAt
+		prepared.server.DisplayName = current.DisplayName
 	}
 	prepared.server.UpdatedAt = now
 	s.servers[event.ServerID] = *cloneServerRuntime(prepared.server)
@@ -57,7 +58,12 @@ func (s *MemoryStore) applyServerEventLocked(event ServerEvent) (*ServerEventRes
 		item.ID = s.nextServerEventID
 		item.CreatedAt = now
 		item.Inventory = cloneMap(item.Inventory)
-		s.serverInventory[event.ServerID] = append(s.serverInventory[event.ServerID], item)
+		rows := s.serverInventory[event.ServerID]
+		if prepared.replaceInventory && len(rows) > 0 && rows[len(rows)-1].Revision == item.Revision {
+			rows[len(rows)-1] = item
+		} else {
+			s.serverInventory[event.ServerID] = append(rows, item)
+		}
 		copy := item
 		copy.Inventory = cloneMap(item.Inventory)
 		inventory = &copy

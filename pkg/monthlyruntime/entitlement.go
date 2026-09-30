@@ -80,8 +80,14 @@ func managedRuntimeAdministrator(ctx context.Context) bool {
 // LocalManagedRuntimeE2EAllowed is the one narrow self-host development
 // exception. Both switches are required so one stale environment flag cannot
 // authorize a cost-bearing managed provider path.
+// LocalManagedRuntimeE2EAllowed opens managed monthly-runtime creation on a
+// non-SaaS Core for test lanes only: TECHSTACK_ENV development (the Docker
+// deployment-target E2E) or local (the loopback Core of
+// scripts/os-compat/managed-lab-lane.py --substrate provider), and both
+// explicit test flags. Every other environment keeps the SaaS-only rule.
 func LocalManagedRuntimeE2EAllowed() bool {
-	return strings.EqualFold(strings.TrimSpace(os.Getenv("TECHSTACK_ENV")), "development") &&
+	environment := strings.ToLower(strings.TrimSpace(os.Getenv("TECHSTACK_ENV")))
+	return (environment == "development" || environment == "local") &&
 		truthyManagedRuntimeEntitlementEnv("TECHSTACK_ALLOW_LOCAL_SIMULATION_GATE") &&
 		truthyManagedRuntimeEntitlementEnv("TECHSTACK_ALLOW_LOCAL_MANAGED_RUNTIME_E2E")
 }

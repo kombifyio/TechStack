@@ -7,18 +7,18 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal">
   <Bundle
-    Name="kombify Techstack"
+    Name="kombify Techstack $(var.DesktopEdition)"
     Manufacturer="kombify"
     Version="$(var.TechStackVersion)"
-    UpgradeCode="{E832F922-4AEC-4C41-A7B6-9546279CD913}"
+    UpgradeCode="$(var.BundleUpgradeCode)"
     IconSourceFile="$(var.StageDir)\Assets\kombify-navy.ico">
     <BootstrapperApplication>
       <bal:WixStandardBootstrapperApplication
         Theme="hyperlinkLicense"
         LicenseUrl="https://github.com/kombifyio/TechStack/blob/main/LICENSE"
         SuppressOptionsUI="yes"
-        LaunchTarget="[ProgramFiles6432Folder]kombify\techstack\kombify-techstack-client.exe"
-        LaunchWorkingFolder="[ProgramFiles6432Folder]kombify\techstack" />
+        LaunchTarget="[ProgramFiles6432Folder]kombify\$(var.InstallDirectoryName)\kombify-techstack-client.exe"
+        LaunchWorkingFolder="[ProgramFiles6432Folder]kombify\$(var.InstallDirectoryName)" />
     </BootstrapperApplication>
     <Chain>
       <MsiPackage SourceFile="$(var.MsiPath)" />

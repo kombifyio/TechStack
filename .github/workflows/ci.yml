@@ -18,9 +18,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
         with:
-          version: 11.5.2
+          package_json_file: app/package.json
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           node-version: 24

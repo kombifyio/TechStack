@@ -926,7 +926,10 @@ func validateMonthlyRuntimeLease(lease vmlease.Lease, action serverruntime.Runti
 }
 
 func (s *Service) ensureFeatures(ctx context.Context, userID string, lease vmlease.Lease) error {
-	if s.Features == nil {
+	// The test-only gate that admits a managed runtime's creation
+	// (EvaluateManagedRuntimeEntitlement) also admits its owner's Day-2 actions;
+	// every other environment keeps the signed feature check.
+	if s.Features == nil || LocalManagedRuntimeE2EAllowed() {
 		return nil
 	}
 	providerID := strings.TrimSpace(lease.Resource.ProviderID)
@@ -1187,7 +1190,8 @@ func persistedSSHInfoResponse(tenantID string, lease vmlease.Lease, offeringID s
 		lease.Metadata["node_public_ip"],
 		lease.Metadata["public_ip"],
 	)
-	if host == "" {
+	hostKey := strings.TrimSpace(lease.Metadata[vmleases.MetadataKeySSHHostKey])
+	if host == "" || hostKey == "" {
 		return nil
 	}
 	port := runtimeSSHPort(lease.Metadata["runtime_ssh_port"])
@@ -1220,7 +1224,7 @@ func persistedSSHInfoResponse(tenantID string, lease vmlease.Lease, offeringID s
 			NodePublicIP:  publicIP,
 			NodePrivateIP: privateIP,
 			Command:       fmt.Sprintf("ssh -p %d %s@%s", port, user, host),
-			HostKey:       strings.TrimSpace(lease.Metadata["runtime_ssh_host_key"]),
+			HostKey:       hostKey,
 		},
 		Metadata: cloneMetadata(lease.Metadata),
 	}

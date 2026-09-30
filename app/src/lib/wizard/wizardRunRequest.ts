@@ -25,6 +25,7 @@ import {
   normalizeInstallableKitSlug,
 } from "./standardBundle";
 
+import { tr } from "#lib/i18n.svelte.js";
 /** The wizard's fallback deployment name (EasyWizard has no name input). */
 const DEFAULT_RUN_NAME = "homelab";
 
@@ -188,9 +189,7 @@ function buildRunSubstrateParams(
   if (config.serverProvisioning.mode !== "hypervisor") return undefined;
   const guest = config.serverProvisioning.substrate;
   if (!isValidSubstrateGuest(guest) || !guest)
-    throw new Error(
-      "Select a connected hypervisor and valid Ubuntu guest resources.",
-    );
+    throw new Error(tr("ui.wizardRunRequest.selectAConnectedHypervisorAnd"));
   const wantsAppliance =
     config.goals?.["smart-home"] &&
     config.useCaseSettings?.["smart-home"]?.["operating-form"] === "haos" &&
@@ -205,7 +204,7 @@ function buildRunSubstrateParams(
       !Number.isInteger(appliance.memoryMiB) ||
       !Number.isInteger(appliance.diskGiB))
   )
-    throw new Error("Select separate Home Assistant OS guest resources.");
+    throw new Error(tr("ui.wizardRunRequest.selectSeparateHomeAssistantOS"));
   return {
     ...(appliance
       ? {

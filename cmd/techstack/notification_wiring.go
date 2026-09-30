@@ -67,7 +67,8 @@ func (n *rilSignalAlertNotifier) Notify(ctx context.Context, alert monitoring.Al
 		DedupeKey: "monitor:" + identity, TenantID: tenantID, UserID: ownerID, ServerID: serverID,
 		Source: source, Severity: severity, RecommendedAction: alert.Message,
 		TraceID: "ril-monitor-trace:" + identity, AuditID: "ril-monitor-audit:" + identity,
-		ReceivedAt: firedAt,
+		ReceivedAt: firedAt, AlertRule: alert.RuleName, Title: alert.RuleName,
+		ServiceID: firstNotificationLabel(alert.Labels, "service_id", "container_name"),
 	})
 	return err
 }

@@ -1,17 +1,20 @@
 {
   "schema_version": 1,
   "public_repository": "kombifyio/TechStack",
-  "source_commit": "e5c23d197705006cd2108171d6c248d63314f162",
-  "candidate_digest": "da8dc47cde2febcc3ce4714835f0751748db9ac71e3a01b496be4345d43b3548",
-  "candidate_file_count": 2025,
+  "source_commit": "a7af8a7612da77f7add0058b47b84b28ccf7d755",
+  "candidate_digest": "893ff577bf5cad7e28a0c02eaf3bbac35418eb9b7c24887958e528bf5a52b09e",
+  "candidate_file_count": 2267,
   "digest_scope": "sha256 over every exported file except this receipt, in code-unit path order, as path NUL content NUL",
   "projected_go_sources": [
     {
       "destination": "internal/gocommon",
-      "version": "v0.7.0",
-      "sum": "h1:8qBba5iwMhzPxdiXezs6Ea+N76JZVEwvrTKeBx2ZTC0=",
-      "commit": "6e596cce41f25fa4c8498f0a3d8430485f26c43d",
+      "version": "v0.7.7",
+      "sum": "h1:xQyPS9EB8xNfMjkBBdtPGy/AhjDJyPZpaJDlMyF9aJo=",
+      "commit": "977997fbd0156027d7dde9ad9a520676108ff64b",
       "packages": [
+        "apisurface",
+        "apisurface/cli",
+        "apisurface/mcpbind",
         "authflow",
         "authlocal",
         "authsession",
@@ -29,6 +32,7 @@
         "oidcclient",
         "role",
         "runtimeexecutor",
+        "servertls",
         "servicecall",
         "toolauth",
         "updateclient",
@@ -51,45 +55,52 @@
   "vendored_npm_packages": [
     {
       "name": "@kombiverselabs/ai-sdk",
-      "version": "0.10.2419",
-      "integrity": "sha512-ghMubPqnkb4pWob+crBSAgPn8QoJc6Nnz6FSBHqoIz5SOmxvQSfoRykfhSKEtbjPbqDiDsKSFS7W0LAorOTiHQ==",
+      "version": "0.10.2772",
+      "integrity": "sha512-oO2x/rDSMvgR9xMlELx4zGNosZONHU9lreoUkJc3TzbsLRt7W5a1JAu5XKGkC5xBwHA4bWnp0T6RPDTd1mrYBA==",
       "license": "MIT",
-      "path": "app/third_party/npm/ai-sdk-0.10.2419.tgz"
+      "path": "app/third_party/npm/ai-sdk-0.10.2772.tgz"
     },
     {
       "name": "@kombiverselabs/design",
-      "version": "0.10.302",
-      "integrity": "sha512-AS40IJ2HhdwFMSiMSLo6tKGLIVebtSoIRckbTTp1pluYQ6e3fGooQPRfOIHD2ltlN6Wmm//Usul1dzkFNpKAPg==",
+      "version": "0.10.376",
+      "integrity": "sha512-HrlM91zoq4cpjSdd1aYVghkKHqg7CymiAbATJWm9pt8FYtk29ROVMnUiFU0Eh+HITTe/reU5Nm1Pk8PiFnWTWQ==",
       "license": null,
-      "path": "app/third_party/npm/design-0.10.302.tgz"
+      "path": "app/third_party/npm/design-0.10.376.tgz"
     },
     {
       "name": "@kombiverselabs/embed",
-      "version": "0.10.2419",
-      "integrity": "sha512-BSmQyYtkT/XPsvWsexef4Wbe58qaA44ubsElEnTjAaBMD5mbLdC/VvgguwAFccuVOh7Cfh/lywrB31b0FSCKOQ==",
+      "version": "0.10.2772",
+      "integrity": "sha512-jH7+6wP5PYId4/tKu8fWyV2u1Fy1Z0eXoFTvl8ggMd09n0ZDOOc39byxlpqS7/SOsQ8yal6U5fkWGYkqh1rCBQ==",
       "license": "MIT",
-      "path": "app/third_party/npm/embed-0.10.2419.tgz"
+      "path": "app/third_party/npm/embed-0.10.2772.tgz"
+    },
+    {
+      "name": "@kombiverselabs/execution-contracts",
+      "version": "0.10.2772",
+      "integrity": "sha512-fgTjKxEoK59Vlx+CQ9iRwKrx/LPuwr0qxoakUB3s1nGkYo6xSKwdbCNjKme6texXIsxzcrf6czFYNIDIF8XJZQ==",
+      "license": "MIT",
+      "path": "app/third_party/npm/execution-contracts-0.10.2772.tgz"
     },
     {
       "name": "@kombiverselabs/notifications",
-      "version": "0.3.68",
-      "integrity": "sha512-MMBd4l/qKAhTNuTtxfJav/iaGueAFIStpkWQ23yK1JiB9yRcKNh+nr0f6wVi6k8jmu7LYaJmKe+eBVEltBW0Mg==",
+      "version": "0.3.87",
+      "integrity": "sha512-CO72UAYFeY4JRym91/no4NizwD1XLm32JkcZ80m+abuXVRVOuP49PqiclmEm1Z9iJDahHsk7ug7jUF72Kfg+KA==",
       "license": "MIT",
-      "path": "app/third_party/npm/notifications-0.3.68.tgz"
+      "path": "app/third_party/npm/notifications-0.3.87.tgz"
     },
     {
       "name": "@kombiverselabs/onboarding-core",
-      "version": "0.10.302",
-      "integrity": "sha512-mtVQCy4N9UNvkH7FKf/Imv7B/bBLP8D0SQGvnvEgOONiFA7mvcPke77jqgFggUO2o5b0vxryTLeHXRdfghaofQ==",
+      "version": "0.10.376",
+      "integrity": "sha512-L3oboN59YGoHI6q/A5PzkXmr6ho3u8Yi/iblIxFPF0b4ItpQHGms9NTBrlN7GsBAn9WG5cVe8AUD4WJEi3uBOw==",
       "license": "MIT",
-      "path": "app/third_party/npm/onboarding-core-0.10.302.tgz"
+      "path": "app/third_party/npm/onboarding-core-0.10.376.tgz"
     },
     {
       "name": "@kombiverselabs/ui",
-      "version": "0.10.302",
-      "integrity": "sha512-htVGaDVeJvBsVsq6skhzOfshGyrP2aKmhROwppmWkf6uwkjIbIzeCHQLl98S1tacKLwOtHNk9EgLKDXZHDggCA==",
+      "version": "0.10.376",
+      "integrity": "sha512-N7pq5oriRp9yhV7A8Rca04xb04ZQgSsS+fQE3mVP3Dv1EY6E1woEQd6W22T5+K7NxSvyArBOAh1qw5f2Iuzixw==",
       "license": "MIT",
-      "path": "app/third_party/npm/ui-0.10.302.tgz"
+      "path": "app/third_party/npm/ui-0.10.376.tgz"
     }
   ]
 }

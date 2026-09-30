@@ -39,6 +39,29 @@ type UseCaseComponent struct {
 	Name string `json:"name"`
 	Role string `json:"role"`
 	Kind string `json:"kind"`
+	// Realization is set on alternative components: "install" when the
+	// pinned release can install it, "recorded" when it only keeps the choice.
+	Realization string `json:"realization,omitempty"`
+}
+
+// UseCaseModule is one module an Architecture v2 alternative is built from.
+type UseCaseModule struct {
+	ID              string   `json:"id"`
+	ComputeProfiles []string `json:"computeProfiles,omitempty"`
+}
+
+// UseCaseAlternative is one Architecture v2 alternative of a workload.
+type UseCaseAlternative struct {
+	ID      string          `json:"id"`
+	Modules []UseCaseModule `json:"modules,omitempty"`
+}
+
+// UseCaseAddOn is an optional application workload of a use case. Its ID is
+// the workload ID an installing setting names in workloadRef.
+type UseCaseAddOn struct {
+	ID                 string               `json:"id"`
+	DefaultAlternative string               `json:"defaultAlternative"`
+	Alternatives       []UseCaseAlternative `json:"alternatives,omitempty"`
 }
 
 // UseCaseLoad is StackKits' declared residency/baseline/burst for one tier.
@@ -64,6 +87,9 @@ type UseCaseSettingOption struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	Note string `json:"note,omitempty"`
+	// Realization overrides the setting's realization for this option, so a
+	// service choice can mix installing and recorded alternatives.
+	Realization string `json:"realization,omitempty"`
 }
 
 // UseCaseSetting is a decision an operator makes about a use case before it
@@ -85,6 +111,8 @@ type UseCaseSetting struct {
 	Default     any                    `json:"default"`
 	Placeholder string                 `json:"placeholder,omitempty"`
 	Realization string                 `json:"realization"`
+	// WorkloadRef names the application workload an installing toggle adds.
+	WorkloadRef string `json:"workloadRef,omitempty"`
 }
 
 // UseCase is one catalog entry. The ID is the use-case slug the Wizard already
@@ -98,7 +126,10 @@ type UseCase struct {
 	Settings     []UseCaseSetting              `json:"settings,omitempty"`
 	// Docs is the path of the use case's guide on docs.kombify.io, when the
 	// catalog names one. Empty means "no guide yet", never "guess one".
-	Docs string `json:"docs,omitempty"`
+	Docs               string               `json:"docs,omitempty"`
+	DefaultAlternative string               `json:"defaultAlternative,omitempty"`
+	Alternatives       []UseCaseAlternative `json:"alternatives,omitempty"`
+	AddOns             []UseCaseAddOn       `json:"addOns,omitempty"`
 }
 
 // AcceptsSettingValue reports whether value is a legal value for setting:
@@ -148,12 +179,58 @@ func (useCase UseCase) FindSetting(id string) (UseCaseSetting, bool) {
 	return UseCaseSetting{}, false
 }
 
+// InstallingAlternative returns a non-default alternative the pinned release
+// installs: an alternative component marked realization "install" whose
+// Architecture v2 alternative is built from exactly one module. Anything else
+// stays a recorded preference.
+func (useCase UseCase) InstallingAlternative(id string) (UseCaseAlternative, bool) {
+	if id == "" || id == useCase.DefaultAlternative {
+		return UseCaseAlternative{}, false
+	}
+	installs := false
+	for _, component := range useCase.Components {
+		if component.ID == id && component.Role == "alternative" && component.Realization == "install" {
+			installs = true
+		}
+	}
+	if !installs {
+		return UseCaseAlternative{}, false
+	}
+	return singleModuleAlternative(useCase.Alternatives, id)
+}
+
+// DefaultWorkloadBinding resolves the default alternative and its module for
+// a workload the catalog declares, either a use case or an add-on. It is the
+// release-owned binding an installing setting's workloadRef selects.
+func (catalog UseCaseCatalog) DefaultWorkloadBinding(workloadID string) (UseCaseAlternative, bool) {
+	for _, useCase := range catalog.UseCases {
+		if useCase.ID == workloadID {
+			return singleModuleAlternative(useCase.Alternatives, useCase.DefaultAlternative)
+		}
+		for _, addOn := range useCase.AddOns {
+			if addOn.ID == workloadID {
+				return singleModuleAlternative(addOn.Alternatives, addOn.DefaultAlternative)
+			}
+		}
+	}
+	return UseCaseAlternative{}, false
+}
+
+func singleModuleAlternative(alternatives []UseCaseAlternative, id string) (UseCaseAlternative, bool) {
+	for _, alternative := range alternatives {
+		if alternative.ID == id && id != "" && len(alternative.Modules) == 1 && alternative.Modules[0].ID != "" {
+			return alternative, true
+		}
+	}
+	return UseCaseAlternative{}, false
+}
+
 // ConfigurationSettings projects the release catalog facts that Techstack can
 // safely record as Wizard preferences. StackKits' declared settings remain
 // authoritative and win on an id collision. Service choices come only from
-// primary/alternative components, and compute profiles only from included
-// tiers; both are recorded preferences until StackKits declares how to apply
-// them during installation.
+// primary/alternative components; an option installs when the release marks
+// its alternative realization "install" and stays recorded otherwise. Compute
+// profiles come only from included tiers and remain recorded preferences.
 func (useCase UseCase) ConfigurationSettings() []UseCaseSetting {
 	settings := append([]UseCaseSetting(nil), useCase.Settings...)
 	declared := make(map[string]struct{}, len(settings))
@@ -164,11 +241,20 @@ func (useCase UseCase) ConfigurationSettings() []UseCaseSetting {
 	if _, ok := declared["backend"]; !ok {
 		options := make([]UseCaseSettingOption, 0, len(useCase.Components))
 		defaultID := ""
+		realization := "recorded"
 		for _, component := range useCase.Components {
 			if component.Role != "primary" && component.Role != "alternative" {
 				continue
 			}
-			options = append(options, UseCaseSettingOption{ID: component.ID, Name: component.Name})
+			option := UseCaseSettingOption{ID: component.ID, Name: component.Name, Realization: "recorded"}
+			if component.Role == "primary" {
+				option.Realization = "install"
+			} else if _, installs := useCase.InstallingAlternative(component.ID); installs {
+				// The choice installs once one alternative does; the other
+				// options keep their own recorded realization.
+				option.Realization, realization = "install", "install"
+			}
+			options = append(options, option)
 			if defaultID == "" || component.Role == "primary" {
 				defaultID = component.ID
 			}
@@ -183,7 +269,7 @@ func (useCase UseCase) ConfigurationSettings() []UseCaseSetting {
 				Help:        "Preferred service from this StackKits release.",
 				Options:     options,
 				Default:     defaultID,
-				Realization: "recorded",
+				Realization: realization,
 			})
 		}
 	}
@@ -386,10 +472,11 @@ func DecodeUseCaseCatalog(data []byte) (UseCaseCatalog, error) {
 				continue
 			}
 			entry.Components = append(entry.Components, UseCaseComponent{
-				ID:   componentID,
-				Name: strings.TrimSpace(component.Name),
-				Role: strings.TrimSpace(component.Role),
-				Kind: strings.TrimSpace(component.Kind),
+				ID:          componentID,
+				Name:        strings.TrimSpace(component.Name),
+				Role:        strings.TrimSpace(component.Role),
+				Kind:        strings.TrimSpace(component.Kind),
+				Realization: strings.TrimSpace(component.Realization),
 			})
 		}
 		for _, setting := range useCase.Settings {
@@ -399,6 +486,9 @@ func DecodeUseCaseCatalog(data []byte) (UseCaseCatalog, error) {
 			entry.Settings = append(entry.Settings, setting)
 		}
 		entry.Docs = strings.TrimSpace(useCase.Docs)
+		entry.DefaultAlternative = strings.TrimSpace(useCase.DefaultAlternative)
+		entry.Alternatives = useCase.Alternatives
+		entry.AddOns = useCase.AddOns
 		catalog.UseCases = append(catalog.UseCases, entry)
 	}
 	return catalog, nil

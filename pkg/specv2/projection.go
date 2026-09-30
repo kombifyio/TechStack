@@ -7,6 +7,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/kombifyio/techstack/internal/stackkitrelease"
 )
 
 // GoalAuthoring is the release-owned workload projection for selected wizard
@@ -24,9 +26,10 @@ type GoalAuthoring struct {
 }
 
 // GoalAuthor resolves shipped use cases from a published compatibility
-// manifest and asks that exact release's CLI to author their workload entries.
+// manifest and asks that exact release's CLI to author their workload entries,
+// including the installing alternatives and add-ons of the selection.
 type GoalAuthor interface {
-	AuthorGoals(ctx context.Context, kitSlug, name, domainBase, apiVersion string, goals []string) (GoalAuthoring, error)
+	AuthorGoals(ctx context.Context, kitSlug, name, domainBase, apiVersion string, selection GoalSelection) (GoalAuthoring, error)
 }
 
 // Projector is the single projection path shared by preview and wizard runs.
@@ -38,10 +41,13 @@ type Projector interface {
 // workload entries authored by the pinned StackKits release.
 type ReleaseProjector struct {
 	author GoalAuthor
+	// catalog resolves the release use-case catalog that decides which
+	// wizard settings install; the handler validates settings against it.
+	catalog func() (stackkitrelease.UseCaseCatalog, error)
 }
 
 func NewReleaseProjector(author GoalAuthor) *ReleaseProjector {
-	return &ReleaseProjector{author: author}
+	return &ReleaseProjector{author: author, catalog: stackkitrelease.ResolveUseCaseCatalog}
 }
 
 // Projection is the result of applying wizard intent to a kit seed.
@@ -167,7 +173,7 @@ func projectFoundDomain(spec map[string]any, intent WizardIntent) error {
 			}
 			// StackKits Basement's canonical LAN domain (stackfile.cue).
 			// Its existing internal TLS and LAN DNS owners implement this path.
-			requested = "home"
+			requested = "lab.home"
 		}
 	}
 	domain["base"] = requested
@@ -230,17 +236,33 @@ func applyJoinOrFoundGoals(ctx context.Context, p *ReleaseProjector, spec map[st
 	domain, _ := network["domain"].(map[string]any)
 	domainBase, _ := domain["base"].(string)
 	apiVersion, _ := spec["apiVersion"].(string)
+	selection := GoalSelection{Goals: intent.Goals}
+	if len(intent.UseCaseSettings) > 0 && p.catalog != nil {
+		catalog, err := p.catalog()
+		if err != nil {
+			return fmt.Errorf("specv2: read the release use-case catalog for the selected settings: %w", err)
+		}
+		if selection, err = goalSelectionFromIntent(intent, catalog); err != nil {
+			return err
+		}
+		if err := requireNoAlternativeReplacement(spec, selection); err != nil {
+			return err
+		}
+	}
+	// An explicit installing choice fails loudly instead of degrading into an
+	// unmapped goal the operator believes is installed.
+	explicit := hasSmartHomeSelection(intent) || selection.hasInstallChoices()
 	authored, err := p.author.AuthorGoals(
 		ctx,
 		strings.TrimSpace(kitSlug),
 		contractID(intent.Name),
 		strings.TrimSpace(domainBase),
 		apiVersion,
-		intent.Goals,
+		selection,
 	)
 	if err != nil {
-		if hasSmartHomeSelection(intent) {
-			return fmt.Errorf("specv2: selected Smart Home installation needs release authoring: %w", err)
+		if explicit {
+			return fmt.Errorf("specv2: the selected installation needs release authoring: %w", err)
 		}
 		result.UnmappedGoals = appendUnmappedGoals(result.UnmappedGoals, intent.Goals)
 		return nil
@@ -249,7 +271,7 @@ func applyJoinOrFoundGoals(ctx context.Context, p *ReleaseProjector, spec map[st
 		return err
 	}
 	if err := applyAuthoredWorkloads(spec, authored); err != nil {
-		if hasSmartHomeSelection(intent) {
+		if explicit {
 			return err
 		}
 		result.UnmappedGoals = appendUnmappedGoals(result.UnmappedGoals, intent.Goals)

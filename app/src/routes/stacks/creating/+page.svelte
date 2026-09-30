@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "#lib/i18n.svelte.js";
   import { creation } from "./creation-controller.svelte.js";
   import { onMount, onDestroy } from "svelte";
   import CreationProgress from "./CreationProgress.svelte";
@@ -20,7 +21,7 @@
 
 
 <svelte:head>
-  <title>Creating StackKit deployment | kombify-Techstack</title>
+  <title>{tr("ui.stacksCreating.creatingStackkitDeploymentKombifyTechstack")}</title>
 </svelte:head>
 
 <div class="min-h-full w-full bg-background p-6 lg:p-8 overflow-x-hidden">
@@ -49,8 +50,8 @@
             data-testid="continue-to-stackkit-rollout"
           >
             {creation.serverProvisioningMode === "kombify-cloud"
-              ? "Open operations"
-              : "Review and start StackKit rollout"}
+              ? tr("ui.stacksCreating.openOperations")
+              : tr("ui.stacksCreating.reviewAndStartStackkitRollout")}
           </button>
         </div>
       {:else if creation.hasFailed}

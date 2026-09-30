@@ -10,10 +10,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/advancedissuer"
 	"github.com/kombifyio/techstack/internal/portinventory"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/runtimeaction"
 	"github.com/kombifyio/techstack/internal/stackkitrelease"
@@ -468,7 +470,8 @@ func deployGenerateArtifacts(ctx context.Context, cfg *ProvisionConfig, job *Job
 	}
 	artifactMetadata := map[string]string{}
 	artifactResult, err := generateStackKitArtifacts(ctx, cfg, job, unifiedSpec, stackSpecPath, tofuDir, prep.managedTarget,
-		managedRuntimeTenantID(job, prep.kombSpec), managedRuntimeOwnerID(job, prep.kombSpec))
+		managedRuntimeTenantID(job, prep.kombSpec), managedRuntimeOwnerID(job, prep.kombSpec),
+		func(message string) { q.UpdateProgress(job.ID, 60, message) })
 	if err != nil {
 		return nil, wrapProvisionCause(StepGenerateIaC, fmt.Errorf("StackKits artifact generation failed: %w", err),
 			"Could not generate StackKits rollout artifacts.")
@@ -1080,6 +1083,20 @@ func (r *deployRollout) runTypedStackKitApply(ctx context.Context) (map[string]i
 		// closed because replacement requires its current normalized hash.
 		ExpectedSpecHash: "",
 	}
+	var trustAdmission advancedTrustAdmission
+	if issuer := r.cfg.AdvancedIssuer; issuer != nil {
+		// Every managed deployment runs Advanced Mode from its first rollout:
+		// the host must trust this installation's issuer before generation.
+		baseRequest.AdvancedTrustBundle = issuer.TrustBundle()
+		trustAdmission = func(ctx context.Context, command *agentpb.StackKitCommand, result *agentpb.StackKitResult) error {
+			binding, admitErr := admitAdvancedTrustImport(ctx, issuer, baseRequest, stackName, command, result)
+			if admitErr != nil {
+				return admitErr
+			}
+			r.job.mutateResult(func(jobResult map[string]interface{}) { jobResult["advanced_trust"] = binding })
+			return nil
+		}
+	}
 	if strings.EqualFold(strings.TrimSpace(r.unifiedSpec.StackKit), "cloud-kit") {
 		resolvedPlan, readErr := readManagedResolvedPlan(r.actionReq.UnifiedPath)
 		if readErr != nil {
@@ -1093,7 +1110,7 @@ func (r *deployRollout) runTypedStackKitApply(ctx context.Context) (map[string]i
 		baseRequest.InventoryJSON = inventory
 	}
 	started := time.Now()
-	result, err := runTypedStackKitApplySequence(ctx, r.cfg.StackKitCommander, r.job.ID, baseRequest, *release)
+	result, err := runTypedStackKitApplySequenceWithBudget(ctx, r.cfg.StackKitCommander, r.job.ID, baseRequest, *release, typedStackKitSequenceTimeout, trustAdmission)
 	if err != nil {
 		reason := "typed_stackkit_rollout_failed"
 		var operationErr *typedStackKitOperationError
@@ -1125,8 +1142,14 @@ func (r *deployRollout) runTypedStackKitApply(ctx context.Context) (map[string]i
 			})
 		}
 		r.collectRuntimeDiagnostics(ctx, nil, r.actionReq, "stackkit_rollout", reason, time.Since(started), err)
+		return result, err
 	}
-	return result, err
+	// Later operator operations (verify, drift, backup, ...) must address the
+	// StackSpec and kit this rollout applied, not the CLI default path.
+	r.job.mutateResult(func(jobResult map[string]interface{}) {
+		jobResult[StackKitRolloutBindingResultField] = stackKitRolloutBindingFor(baseRequest).Map()
+	})
+	return result, nil
 }
 
 // StackOwnerEmailPayloadKey carries the stack Owner's signed-in email into a
@@ -1345,45 +1368,47 @@ func readManagedResolvedPlan(path string) ([]byte, error) {
 // Control-plane artifacts live in a different filesystem and cannot substitute
 // for this node-local generation boundary.
 func runTypedStackKitApplySequence(ctx context.Context, sender StackKitCommandSender, jobID string, baseRequest StackKitLifecycleRequest, release stackkitrelease.Release) (map[string]interface{}, error) {
-	return runTypedStackKitApplySequenceWithBudget(ctx, sender, jobID, baseRequest, release, typedStackKitSequenceTimeout)
+	return runTypedStackKitApplySequenceWithBudget(ctx, sender, jobID, baseRequest, release, typedStackKitSequenceTimeout, nil)
 }
 
-func runTypedStackKitApplySequenceWithBudget(ctx context.Context, sender StackKitCommandSender, jobID string, baseRequest StackKitLifecycleRequest, release stackkitrelease.Release, sequenceBudget time.Duration) (map[string]interface{}, error) {
+// advancedTrustAdmission admits and records the host's trust-import evidence.
+// A nil admission still requires evidence that pins the dispatched bundle.
+type advancedTrustAdmission func(context.Context, *agentpb.StackKitCommand, *agentpb.StackKitResult) error
+
+func runTypedStackKitApplySequenceWithBudget(ctx context.Context, sender StackKitCommandSender, jobID string, baseRequest StackKitLifecycleRequest, release stackkitrelease.Release, sequenceBudget time.Duration, admitTrust advancedTrustAdmission) (map[string]interface{}, error) {
 	if sequenceBudget <= 0 || sequenceBudget > typedStackKitSequenceTimeout {
 		sequenceBudget = typedStackKitSequenceTimeout
 	}
+	if len(baseRequest.AdvancedTrustBundle) == 0 {
+		// A managed rollout without an Advanced issuer would be a Standard-only
+		// rollout. Refuse before init touches the host.
+		return nil, &typedStackKitOperationError{
+			Operation: StackKitLifecycleAdvancedTrustImport, CommandID: jobID + "-" + StackKitLifecycleAdvancedTrustImport,
+			Err: fmt.Errorf("managed rollout requires the installation's Advanced trust bundle: %w", advancedissuer.ErrUnavailable),
+		}
+	}
+	// Every managed deployment runs Advanced Mode: when the pinned release
+	// ships the Advanced operations catalog, the node generates the Terramate
+	// target from its first rollout so every later mutation is a change set.
+	// StackKits change-set create needs a generated baseline and apply needs a
+	// configured backup checkpoint, so the very first rollout stays
+	// generate/plan/apply with the Terramate target.
+	generationTarget := "kit-default"
+	if len(baseRequest.CandidateSpecJSON) > 0 {
+		candidate, terramate, candidateErr := advancedGenerationCandidate(baseRequest.CandidateSpecJSON, release)
+		if candidateErr != nil {
+			return nil, &typedStackKitOperationError{Operation: StackKitLifecycleInit, CommandID: jobID + "-" + StackKitLifecycleInit, Err: candidateErr}
+		}
+		baseRequest.CandidateSpecJSON = candidate
+		if terramate {
+			generationTarget = "terramate"
+		}
+	}
 	sequenceCtx, cancel := context.WithTimeout(ctx, sequenceBudget)
 	defer cancel()
-	nodePlanHash := ""
-	operations := []string{StackKitLifecycleInit}
-	if baseRequest.AddressPrefix != "" {
-		operations = append(operations, StackKitLifecycleAddressBind)
-	}
-	operations = append(operations, StackKitLifecycleGenerate, StackKitLifecyclePlan)
-	for _, operation := range operations {
-		request := baseRequest
-		request.Operation = operation
-		if operation != StackKitLifecycleInit && operation != StackKitLifecycleAddressBind && request.BoundSpecPath != "" {
-			request.SpecPath = request.BoundSpecPath
-		}
-		request, err := NormalizeStackKitLifecycleRequest(request)
-		if err != nil {
-			return nil, err
-		}
-		result, _, err := dispatchTypedStackKitOperation(sequenceCtx, sender, jobID, request, release, nil)
-		if err != nil {
-			return nil, err
-		}
-		if operation == StackKitLifecyclePlan {
-			// The node-local generation is authoritative for the node-local apply.
-			// Controller generation includes controller-only inventory inputs and
-			// therefore cannot be used as an equality gate for this workspace.
-			var planErr error
-			nodePlanHash, planErr = typedStackKitPlanHash(result)
-			if planErr != nil {
-				return nil, planErr
-			}
-		}
+	nodePlanHash, err := runTypedStackKitPreApplySequence(sequenceCtx, sender, jobID, baseRequest, release, admitTrust)
+	if err != nil {
+		return nil, err
 	}
 
 	request := baseRequest
@@ -1391,7 +1416,7 @@ func runTypedStackKitApplySequenceWithBudget(ctx context.Context, sender StackKi
 	if request.BoundSpecPath != "" {
 		request.SpecPath = request.BoundSpecPath
 	}
-	request, err := NormalizeStackKitLifecycleRequest(request)
+	request, err = NormalizeStackKitLifecycleRequest(request)
 	if err != nil {
 		return nil, err
 	}
@@ -1411,10 +1436,68 @@ func runTypedStackKitApplySequenceWithBudget(ctx context.Context, sender StackKi
 		}
 		return nil, normErr
 	}
+	normalized[StackKitModeField] = StackKitModeAdvanced
+	normalized["generation_target"] = generationTarget
 	if err != nil {
 		return normalized, err
 	}
 	return normalized, nil
+}
+
+// runTypedStackKitPreApplySequence runs init, the Advanced trust import,
+// the optional address bind, generate and plan, and returns the node-local
+// plan hash that Apply must match.
+func runTypedStackKitPreApplySequence(ctx context.Context, sender StackKitCommandSender, jobID string, baseRequest StackKitLifecycleRequest, release stackkitrelease.Release, admitTrust advancedTrustAdmission) (string, error) {
+	nodePlanHash := ""
+	operations := []string{StackKitLifecycleInit, StackKitLifecycleAdvancedTrustImport}
+	if baseRequest.AddressPrefix != "" {
+		operations = append(operations, StackKitLifecycleAddressBind)
+	}
+	operations = append(operations, StackKitLifecycleGenerate, StackKitLifecyclePlan)
+	for _, operation := range operations {
+		request := baseRequest
+		request.Operation = operation
+		if operation != StackKitLifecycleInit && operation != StackKitLifecycleAdvancedTrustImport &&
+			operation != StackKitLifecycleAddressBind && request.BoundSpecPath != "" {
+			request.SpecPath = request.BoundSpecPath
+		}
+		request, err := NormalizeStackKitLifecycleRequest(request)
+		if err != nil {
+			return "", err
+		}
+		var dispatched *agentpb.StackKitCommand
+		result, commandID, err := dispatchTypedStackKitOperation(ctx, sender, jobID, request, release, func(command *agentpb.StackKitCommand) {
+			dispatched = command
+		})
+		if err != nil {
+			return "", err
+		}
+		switch operation {
+		case StackKitLifecycleAdvancedTrustImport:
+			if admitErr := admitTypedAdvancedTrustImport(ctx, admitTrust, dispatched, result); admitErr != nil {
+				return "", &typedStackKitOperationError{Operation: operation, CommandID: commandID, Err: admitErr}
+			}
+		case StackKitLifecyclePlan:
+			// The node-local generation is authoritative for the node-local apply.
+			// Controller generation includes controller-only inventory inputs and
+			// therefore cannot be used as an equality gate for this workspace.
+			nodePlanHash, err = typedStackKitPlanHash(result)
+			if err != nil {
+				return "", err
+			}
+		}
+	}
+	return nodePlanHash, nil
+}
+
+func admitTypedAdvancedTrustImport(ctx context.Context, admitTrust advancedTrustAdmission, command *agentpb.StackKitCommand, result *agentpb.StackKitResult) error {
+	if _, err := stackkitcommand.ParseAdvancedTrustImportEvidence(command, result); err != nil {
+		return err
+	}
+	if admitTrust == nil {
+		return nil
+	}
+	return admitTrust(ctx, command, result)
 }
 
 const typedStackKitRuntimePendingMaxAttempts = 8
@@ -2480,6 +2563,10 @@ func (r *deployRollout) runTypedStackKitRestoreDrill(ctx context.Context) (map[s
 		return nil, fmt.Errorf("admit native restore-drill repository configuration: %w", err)
 	}
 
+	if drill, handled, drillErr := r.runAdvancedRestoreDrill(ctx, request, *release, planHash); handled {
+		return drill, drillErr
+	}
+
 	backupOperationID := nativeRestoreDrillOperationID("backup", request.StackKitInstanceID, planHash)
 	restoreOperationID := nativeRestoreDrillOperationID("restore", request.StackKitInstanceID, planHash)
 	backupCommand := buildCommand(backupOperationID, agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RUN)
@@ -2623,6 +2710,12 @@ func (r *deployRollout) finalize(ctx context.Context, prep *deployPreparation, a
 		}
 	}
 
+	ownerHandoffRequired := ownerSpecBootstrapFromPayload(jobSnapshot.Payload) != nil
+	typedLifecycle := stackKitCommanderOwnsFullLifecycle(r.cfg.StackKitCommander)
+	if ownerHandoffRequired && typedLifecycle {
+		r.completeTypedIdentityHandoff(art.metadata)
+	}
+
 	runtimeLifecycle := copyRuntimeLifecycle(jobSnapshot.Result)
 	result := map[string]interface{}{
 		stackIDField:                  jobSnapshot.TargetID,
@@ -2634,6 +2727,10 @@ func (r *deployRollout) finalize(ctx context.Context, prep *deployPreparation, a
 		"verification_status":         string(r.finalRuntimePhase),
 		metadataKeyStackKitCatalogRef: art.unifiedSpec.StackKit,
 		"e2e_proof":                   r.e2eProof,
+	}
+	if r.managedRuntime || typedLifecycle {
+		// Techstack dispatches Advanced Mode only.
+		result[StackKitModeField] = StackKitModeAdvanced
 	}
 	copyRoutingDispatchReceipt(result, jobSnapshot.Payload, jobSnapshot.Result)
 	if len(runtimeLifecycle) > 0 {
@@ -2668,8 +2765,16 @@ func (r *deployRollout) finalize(ctx context.Context, prep *deployPreparation, a
 	// is required to call back with identity, login_gateway, and recovery
 	// outputs. Silent omission means the user has no way to log into the
 	// freshly provisioned stack, so refuse to mark the deploy "completed".
-	if ownerSpecBootstrapFromPayload(jobSnapshot.Payload) != nil {
-		if missing := missingStackKitIdentityHandoffFields(r.stackKitOutputs); len(missing) > 0 {
+	if ownerHandoffRequired {
+		missing := missingStackKitIdentityHandoffFields(r.stackKitOutputs)
+		if typedLifecycle {
+			// The typed v2 lifecycle has no recovery bundle: StackKits'
+			// Owner bootstrap is not part of its production commands, so
+			// there is no recovery reference for Techstack to report. Only
+			// the Owner login and login gateway are required there.
+			missing = slices.DeleteFunc(missing, func(field string) bool { return field == identityHandoffRecoveryField })
+		}
+		if len(missing) > 0 {
 			r.job.setStep(StepVerifyRollout)
 			return wrapProvisionError(
 				StepVerifyRollout,
@@ -2699,7 +2804,48 @@ func (r *deployRollout) finalize(ctx context.Context, prep *deployPreparation, a
 	return nil
 }
 
-func generateStackKitArtifacts(ctx context.Context, cfg *ProvisionConfig, job *Job, proposal *core.UnifiedSpec, stackSpecPath, outputDir string, runtimeTarget *ManagedRuntimeTarget, tenantID, ownerID string) (*StackKitArtifactGenerateResult, error) {
+// completeTypedIdentityHandoff fills the Owner identity handoff of a typed
+// StackKits rollout from facts Techstack owns. The stackkit.apply-result/v2
+// data carries no identity outputs, so the Owner login is the Owner email
+// Techstack sent to StackKits, and the login gateway is the managed address
+// Techstack registered for the StackKit's login service. Fields StackKits
+// did return are kept; fields Techstack cannot derive stay missing.
+func (r *deployRollout) completeTypedIdentityHandoff(metadata map[string]string) {
+	for _, field := range missingStackKitIdentityHandoffFields(r.stackKitOutputs) {
+		switch field {
+		case identityHandoffOwnerField:
+			email := stackOwnerEmail(r.job, r.actionReq.OwnerID)
+			if email == "" {
+				continue
+			}
+			identity := mapFromInterface(r.stackKitOutputs["identity"])
+			if identity == nil {
+				identity = map[string]interface{}{}
+			}
+			owner := mapFromInterface(identity["owner"])
+			if owner == nil {
+				owner = map[string]interface{}{}
+			}
+			owner["username"] = email
+			if stringFromInterface(owner["email"]) == "" {
+				owner["email"] = email
+			}
+			identity["owner"] = owner
+			r.stackKitOutputs["identity"] = identity
+		case identityHandoffLoginField:
+			host := strings.TrimSpace(metadata[metadataKeyKombifyMeLoginHost])
+			if host == "" {
+				continue
+			}
+			r.stackKitOutputs["login_gateway"] = map[string]interface{}{
+				"url":   "https://" + host,
+				"label": "Open first login",
+			}
+		}
+	}
+}
+
+func generateStackKitArtifacts(ctx context.Context, cfg *ProvisionConfig, job *Job, proposal *core.UnifiedSpec, stackSpecPath, outputDir string, runtimeTarget *ManagedRuntimeTarget, tenantID, ownerID string, progress func(string)) (*StackKitArtifactGenerateResult, error) {
 	if strings.TrimSpace(stackSpecPath) == "" {
 		return nil, fmt.Errorf("StackKits CLI artifact generation requires persisted %s", unifier.StackSpecFilename)
 	}
@@ -2728,6 +2874,7 @@ func generateStackKitArtifacts(ctx context.Context, cfg *ProvisionConfig, job *J
 		StackSpecPath: stackSpecPath,
 		OutputDir:     outputDir,
 		RuntimeTarget: cloneManagedRuntimeTarget(runtimeTarget),
+		Progress:      progress,
 	})
 	if err != nil {
 		return nil, err

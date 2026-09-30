@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "#lib/i18n.svelte.js";
   /**
    * FooterModern - THE CENTRAL, REUSABLE footer for all kombify tools
    *
@@ -96,20 +97,20 @@
    * Product Links - kombify tools and features
    */
   let productLinks: FooterLink[] = $derived([
-    { label: "Features", href: `${portalUrl}/features`, external: true },
-    { label: "Docs", href: docsUrl, external: true },
+    { label: tr("ui.footerModern.features"), href: `${portalUrl}/features`, external: true },
+    { label: tr("ui.footerModern.docs"), href: docsUrl, external: true },
   ]);
 
   let companyLinks: FooterLink[] = $derived([
-    { label: "About", href: `${portalUrl}/about`, external: true },
-    { label: "Contact", href: "mailto:info@kombify.io", external: true },
+    { label: tr("ui.footerModern.about"), href: `${portalUrl}/about`, external: true },
+    { label: tr("ui.footerModern.contact"), href: "mailto:info@kombify.io", external: true },
   ]);
 
   let legalLinks: FooterLink[] = $derived([
     { label: "Impressum", href: `${portalUrl}/impressum`, external: true },
-    { label: "Privacy", href: `${portalUrl}/privacy`, external: true },
-    { label: "Terms", href: `${portalUrl}/terms`, external: true },
-    { label: "Status", href: "https://status.kombify.io", external: true },
+    { label: tr("ui.footerModern.privacy"), href: `${portalUrl}/privacy`, external: true },
+    { label: tr("ui.footerModern.terms"), href: `${portalUrl}/terms`, external: true },
+    { label: tr("ui.stacksId.status"), href: "https://status.kombify.io", external: true },
   ]);
 
   /**
@@ -156,7 +157,7 @@
             {/if}
           </a>
           <span class="text-sm text-muted-foreground">
-            © {currentYear} Kombiverse Labs
+            {tr("ui.footer.copyright", { year: currentYear })}
           </span>
           {#if apiVersion}
             <span
@@ -167,8 +168,8 @@
           {#if instanceId}
             <span
               class="text-xs text-muted-foreground/60 font-mono"
-              title={`Instance ${instanceId}`}
-              >instance:{instanceId.slice(0, 8)}</span
+              title={tr("ui.footer.instanceTitle", { id: instanceId })}
+              >{tr("ui.footer.instanceShort", { id: instanceId.slice(0, 8) })}</span
             >
           {/if}
         </div>
@@ -239,7 +240,7 @@
               <button
                 onclick={toggleLogoStyle}
                 class="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-all"
-                title="Toggle logo style ({currentLogoStyle})"
+                title={tr("ui.footer.toggleLogoStyle", { style: currentLogoStyle })}
               >
                 <SunMoon class="w-4 h-4" />
               </button>
@@ -248,8 +249,7 @@
           <p
             class="text-sm text-muted-foreground max-w-xs mb-4 leading-relaxed"
           >
-            The hybrid infrastructure control plane. Deploy, manage, and monitor
-            your homelab with confidence.
+            {tr("ui.footer.tagline")}
           </p>
           <!-- Social Links -->
           <div class="flex items-center gap-2">
@@ -271,7 +271,7 @@
         <!-- Product Links -->
         {#if showProduct}
           <div>
-            <h3 class="text-sm font-semibold text-foreground mb-4">Product</h3>
+            <h3 class="text-sm font-semibold text-foreground mb-4">{tr("ui.footer.product")}</h3>
             <ul class="space-y-3">
               {#each productLinks as link}
                 <li>
@@ -292,7 +292,7 @@
         <!-- Company Links -->
         {#if showCompany}
           <div>
-            <h3 class="text-sm font-semibold text-foreground mb-4">Company</h3>
+            <h3 class="text-sm font-semibold text-foreground mb-4">{tr("ui.footer.company")}</h3>
             <ul class="space-y-3">
               {#each companyLinks as link}
                 <li>
@@ -313,7 +313,7 @@
         <!-- Legal Links -->
         {#if showLegal}
           <div>
-            <h3 class="text-sm font-semibold text-foreground mb-4">Legal</h3>
+            <h3 class="text-sm font-semibold text-foreground mb-4">{tr("ui.footer.legal")}</h3>
             <ul class="space-y-3">
               {#each legalLinks as link}
                 <li>
@@ -337,7 +337,7 @@
         class="py-4 border-t border-border flex flex-col sm:flex-row items-center justify-between gap-4"
       >
         <p class="text-sm text-muted-foreground">
-          © {currentYear} Kombiverse Labs. Made for humans, powered by intelligence.
+          {tr("ui.footer.copyrightTagline", { year: currentYear })}
           {#if apiVersion}
             <span
               data-testid="product-version-identity"
@@ -347,14 +347,13 @@
           {#if instanceId}
             <span
               class="text-muted-foreground/60 font-mono"
-              title={`Instance ${instanceId}`}
-              >• instance:{instanceId.slice(0, 8)}</span
+              title={tr("ui.footer.instanceTitle", { id: instanceId })}
+              >• {tr("ui.footer.instanceShort", { id: instanceId.slice(0, 8) })}</span
             >
           {/if}
         </p>
         <p class="text-sm text-muted-foreground flex items-center gap-1.5">
-          Made with <Heart class="w-3.5 h-3.5 text-destructive fill-destructive" /> for the
-          homelab community
+          {tr("ui.footerModern.madeWith")} <Heart class="w-3.5 h-3.5 text-destructive fill-destructive" /> {tr("ui.footer.forHomelabCommunity")}
         </p>
       </div>
     </div>

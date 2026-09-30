@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr, trParts, formatDateTime, stateLabel } from "#lib/i18n.svelte.js";
   import { page } from "$app/state";
   import { untrack } from "svelte";
   import { goto } from "$app/navigation";
@@ -177,7 +178,7 @@
     };
     void refresh();
     const closeStream = streamRuntimeLogs(logScope, merge, () => {
-      if (active) runtimeLogsError = "Live stream reconnecting…";
+      if (active) runtimeLogsError = tr("ui.stacksIdServersServerId.liveStreamReconnecting");
     });
     const poll = window.setInterval(refresh, 5_000);
     return () => {
@@ -310,7 +311,7 @@
       await load();
     } catch (err) {
       const parsed = parseApiError(err);
-      actionError = parsed.message || "Could not load server access context.";
+      actionError = parsed.message || tr("ui.stacksIdServersServerId.couldNotLoadServerAccess");
     } finally {
       actionLoading = null;
     }
@@ -326,7 +327,7 @@
       await load();
     } catch (err) {
       const parsed = parseApiError(err);
-      actionError = parsed.message || "Reconnect failed.";
+      actionError = parsed.message || tr("ui.stacksIdServersServerId.reconnectFailed");
     } finally {
       actionLoading = null;
     }
@@ -343,7 +344,7 @@
       await load();
     } catch (err) {
       const parsed = parseApiError(err);
-      actionError = parsed.message || "Decommission failed.";
+      actionError = parsed.message || tr("ui.stacksIdServersServerId.decommissionFailed");
     } finally {
       actionLoading = null;
     }
@@ -359,7 +360,7 @@
       await goto(`/stacks/${encodeURIComponent(stackId)}`);
     } catch (err) {
       const parsed = parseApiError(err);
-      actionError = parsed.message || "Server detach failed.";
+      actionError = parsed.message || tr("ui.stacksIdServersServerId.serverDetachFailed");
     } finally {
       actionLoading = null;
     }
@@ -376,7 +377,7 @@
       await load();
     } catch (err) {
       const parsed = parseApiError(err);
-      actionError = parsed.message || "Custody resolution failed.";
+      actionError = parsed.message || tr("ui.stacksIdServersServerId.custodyResolutionFailed");
     } finally {
       actionLoading = null;
     }
@@ -410,7 +411,8 @@
       await load();
     } catch (err) {
       const parsed = parseApiError(err);
-      actionError = parsed.message || `${action.label} could not be started.`;
+      actionError =
+        parsed.message || tr("ui.serverDetail.actionNotStarted", { action: action.label });
     } finally {
       lifecycleLoading = null;
     }
@@ -453,7 +455,7 @@
   }
 
   function formatStatus(status: string): string {
-    return status.replace(/_/g, " ");
+    return stateLabel(status);
   }
 
   function runtimeLogKey(entry: RuntimeLogEntry): string {
@@ -469,13 +471,13 @@
   function serverOSLabel(): string {
     const server = details?.server;
     if (!server) return "os unknown/arch unknown";
-    const os = server.os?.trim() || "os unknown";
+    const os = server.os?.trim() || tr("ui.serverCard.osUnknown");
     const version = server.os_version?.trim();
     const osWithVersion =
       version && !os.toLowerCase().includes(version.toLowerCase())
         ? `${os} ${version}`
         : os;
-    return `${osWithVersion}/${server.arch?.trim() || "arch unknown"}`;
+    return `${osWithVersion}/${server.arch?.trim() || tr("ui.serverCard.archUnknown")}`;
   }
 
   function serverAddresses(): StackServerAddress[] {
@@ -551,7 +553,7 @@
 </script>
 
 <svelte:head>
-  <title>Server Details | kombify-Techstack</title>
+  <title>{tr("ui.stacksIdServersServerId.serverDetailsKombifyTechstack")}</title>
 </svelte:head>
 
 <div
@@ -561,7 +563,7 @@
 >
   <Button variant="ghost" class="mb-6" onclick={() => goto(backHref())}>
     <ArrowLeft class="h-4 w-4" />
-    Back to operations
+    {tr("ui.stacksIdServersServerId.backToOperations")}
   </Button>
 
   {#if loading && !details}
@@ -569,7 +571,7 @@
       data-kx="plate"
       class="p-6"
       data-testid="server-details-loading-state"
-      aria-label="Loading server details"
+      aria-label={tr("ui.stacksIdServersServerId.loadingServerDetails")}
     >
       <div class="h-6 w-48 animate-pulse rounded bg-muted"></div>
       <div class="mt-4 grid gap-3 md:grid-cols-4">
@@ -596,7 +598,7 @@
     {/if}
     <nav
       class="mb-6 border-b border-border"
-      aria-label="Server detail sections"
+      aria-label={tr("ui.stacksIdServersServerId.serverDetailSections")}
       data-testid="server-details-tabs"
     >
       <div class="flex flex-wrap gap-1" role="tablist">
@@ -660,7 +662,7 @@
                 disabled={actionLoading !== null}
               >
                 <ShieldCheck class="h-4 w-4" />
-                {actionLoading === "ssh" ? "Checking..." : "Access"}
+                {actionLoading === "ssh" ? tr("ui.stacksIdServersServerId.checking") : tr("ui.stacksCreatingCreationLease.access")}
               </Button>
               <Button
                 variant="secondary"
@@ -670,8 +672,8 @@
               >
                 <RefreshCw class="h-4 w-4" />
                 {actionLoading === "reconnect"
-                  ? "Reconnecting..."
-                  : "Reconnect"}
+                  ? tr("ui.homelabDashboardPage.reconnecting")
+                  : tr("ui.homelabDashboardPage.reconnect")}
               </Button>
             {/if}
             <Button
@@ -681,7 +683,7 @@
               disabled={refreshing}
             >
               <RefreshCw class="h-4 w-4 {refreshing ? 'animate-spin' : ''}" />
-              {refreshing ? "Refreshing..." : "Refresh"}
+              {refreshing ? tr("ui.monitoring.refreshing") : tr("ui.homelabDashboardPage.refresh")}
             </Button>
           </div>
         </div>
@@ -699,7 +701,7 @@
         </div>
         <div data-kx="plate" class="p-4">
           <div class="mb-3 flex items-center justify-between">
-            <span class="text-sm text-muted-foreground">Memory</span>
+            <span class="text-sm text-muted-foreground">{tr("ui.stacksIdServersServerId.memory")}</span>
             <Server class="h-4 w-4 text-success" />
           </div>
           <p class="text-2xl font-semibold text-foreground">
@@ -708,7 +710,7 @@
         </div>
         <div data-kx="plate" class="p-4">
           <div class="mb-3 flex items-center justify-between">
-            <span class="text-sm text-muted-foreground">Disk</span>
+            <span class="text-sm text-muted-foreground">{tr("ui.stacksIdServersServerId.disk")}</span>
             <HardDrive class="h-4 w-4 text-info" />
           </div>
           <p class="text-2xl font-semibold text-foreground">
@@ -717,7 +719,7 @@
         </div>
         <div data-kx="plate" class="p-4">
           <div class="mb-3 flex items-center justify-between">
-            <span class="text-sm text-muted-foreground">Pre-checks</span>
+            <span class="text-sm text-muted-foreground">{tr("ui.stacksIdServersServerId.preChecks")}</span>
             <ListChecks class="h-4 w-4 text-warning" />
           </div>
           <p class="text-2xl font-semibold text-foreground">
@@ -742,21 +744,23 @@
         <div data-kx="plate" class="p-5">
           <div class="mb-4 flex items-center gap-2">
             <ShieldCheck class="h-5 w-5 text-primary" />
-            <h2 class="text-lg font-semibold text-foreground">Access</h2>
+            <h2 class="text-lg font-semibold text-foreground">{tr("ui.stacksCreatingCreationLease.access")}</h2>
           </div>
           <ServerAccessActions
             serverId={serverId || ""}
-            serverName={details.server.hostname || serverId || "Server"}
+            serverName={details.server.hostname || serverId || tr("ui.servicesApplicationId.server")}
             unavailable={canonicalServer?.connection.state === "offline" ||
               canonicalServer?.connection.state === "revoked"}
             unavailableReason={canonicalServer
-              ? `Server connection: ${formatStatus(canonicalServer.connection.state)}`
-              : "Canonical server access is not available yet."}
+              ? tr("ui.serverDetail.connectionState", {
+                state: formatStatus(canonicalServer.connection.state),
+              })
+              : tr("ui.stacksIdServersServerId.canonicalServerAccessIsNot")}
           />
           {#if managedLeaseId()}
             <dl class="grid grid-cols-2 gap-3 text-sm">
               <div class="rounded-lg bg-muted/40 p-3">
-                <dt class="text-muted-foreground">Host</dt>
+                <dt class="text-muted-foreground">{tr("ui.stacksCreatingCreationLease.host")}</dt>
                 <dd class="mt-1 break-all font-mono text-foreground">
                   {access.host || "pending"}
                 </dd>
@@ -770,12 +774,11 @@
               </div>
             </dl>
             <p class="mt-3 text-sm text-muted-foreground">
-              Managed runtime lease context.
+              {tr("ui.stacksIdServersServerId.managedRuntimeLeaseContext")}
             </p>
           {:else}
             <p class="text-sm text-muted-foreground">
-              This server is registered through the worker inventory; managed
-              runtime access actions are not attached.
+              {tr("ui.stacksIdServersServerId.thisServerIsRegisteredThrough")}
             </p>
           {/if}
         </div>
@@ -783,23 +786,23 @@
         <div data-kx="plate" class="p-5">
           <div class="mb-4 flex items-center gap-2">
             <Server class="h-5 w-5 text-primary" />
-            <h2 class="text-lg font-semibold text-foreground">Metadata</h2>
+            <h2 class="text-lg font-semibold text-foreground">{tr("ui.stacksIdServersServerId.metadata")}</h2>
           </div>
           <dl class="grid grid-cols-2 gap-3 text-sm">
             <div class="rounded-lg bg-muted/40 p-3">
-              <dt class="text-muted-foreground">Agent ID</dt>
+              <dt class="text-muted-foreground">{tr("ui.stacksIdServersServerId.agentId")}</dt>
               <dd class="mt-1 break-all font-mono text-foreground">
                 {details.server.agent_id}
               </dd>
             </div>
             <div class="rounded-lg bg-muted/40 p-3">
-              <dt class="text-muted-foreground">Last seen</dt>
+              <dt class="text-muted-foreground">{tr("ui.stacksIdServersServerId.lastSeen")}</dt>
               <dd class="mt-1 text-foreground">
                 {details.server.last_seen || "unknown"}
               </dd>
             </div>
             <div class="rounded-lg bg-muted/40 p-3">
-              <dt class="text-muted-foreground">CPU cores</dt>
+              <dt class="text-muted-foreground">{tr("ui.stacksIdServersServerId.cpuCores")}</dt>
               <dd class="mt-1 text-foreground">
                 {details.server.capabilities.cpu_cores || "unknown"}
               </dd>
@@ -819,13 +822,13 @@
               </dd>
             </div>
             <div class="rounded-lg bg-muted/40 p-3">
-              <dt class="text-muted-foreground">Provider</dt>
+              <dt class="text-muted-foreground">{tr("ui.stacksCreatingCreationLease.provider")}</dt>
               <dd class="mt-1 text-foreground">
                 {details.server.capabilities.provider || "unknown"}
               </dd>
             </div>
             <div class="rounded-lg bg-muted/40 p-3">
-              <dt class="text-muted-foreground">Operating system</dt>
+              <dt class="text-muted-foreground">{tr("ui.stacksIdServersServerId.operatingSystem")}</dt>
               <dd class="mt-1 text-foreground">
                 {details.server.os || "unknown"}
                 {details.server.os_version
@@ -834,7 +837,7 @@
               </dd>
             </div>
             <div class="rounded-lg bg-muted/40 p-3">
-              <dt class="text-muted-foreground">Architecture</dt>
+              <dt class="text-muted-foreground">{tr("ui.stacksIdServersServerId.architecture")}</dt>
               <dd class="mt-1 text-foreground">
                 {details.server.arch || "unknown"}
               </dd>
@@ -847,12 +850,10 @@
             <ListChecks class="mt-0.5 h-5 w-5 shrink-0 text-primary" />
             <div class="min-w-0 flex-1">
               <h2 class="text-lg font-semibold text-foreground">
-                StackKit actions
+                {tr("ui.stacksIdServersServerId.stackkitActions")}
               </h2>
               <p class="mt-2 max-w-3xl text-sm text-muted-foreground">
-                These actions target {details.server.hostname} directly. The available
-                controls follow its current connection and StackKit state; no server
-                or lifecycle status needs to be selected.
+                {tr("ui.serverDetail.actionsTarget", { name: details.server.hostname })}
               </p>
 
               {#if availableLifecycleActions.length === 0}
@@ -860,8 +861,7 @@
                   class="mt-4 rounded-lg bg-muted/40 p-3 text-sm text-muted-foreground"
                   data-testid="server-lifecycle-unavailable"
                 >
-                  Lifecycle actions become available when this server is
-                  connected, approved, and assigned to the stack.
+                  {tr("ui.stacksIdServersServerId.lifecycleActionsBecomeAvailableWhen")}
                 </p>
               {:else}
                 <div class="mt-4 grid gap-3 sm:grid-cols-2">
@@ -878,7 +878,7 @@
                       <span>
                         <span class="block font-medium">
                           {lifecycleLoading === action.operation
-                            ? "Starting..."
+                            ? tr("ui.homelabDashboardPage.starting")
                             : action.label}
                         </span>
                         <span class="mt-1 block text-xs font-normal opacity-75">
@@ -896,12 +896,10 @@
                   data-testid="server-lifecycle-confirmation"
                 >
                   <p class="text-sm font-medium text-foreground">
-                    Confirm {pendingLifecycleAction.label.toLowerCase()} for
-                    {details.server.hostname}
+                    {tr("ui.serverDetail.confirmActionFor", { action: pendingLifecycleAction.label, name: details.server.hostname })}
                   </p>
                   <p class="mt-1 text-sm text-muted-foreground">
-                    This changes the selected server through its enrolled
-                    StackKit agent.
+                    {tr("ui.stacksIdServersServerId.thisChangesTheSelectedServer")}
                   </p>
                   <div class="mt-4 flex flex-wrap gap-2">
                     <Button
@@ -911,14 +909,14 @@
                         executeLifecycleAction(pendingLifecycleAction)}
                       disabled={lifecycleLoading !== null}
                     >
-                      Confirm action
+                      {tr("ui.stacksIdServersServerId.confirmAction")}
                     </Button>
                     <Button
                       variant="secondary"
                       onclick={() => (lifecycleConfirmation = null)}
                       disabled={lifecycleLoading !== null}
                     >
-                      Cancel
+                      {tr("ui.importExportModal.cancel")}
                     </Button>
                   </div>
                 </div>
@@ -930,7 +928,7 @@
                   role="status"
                   data-testid="server-lifecycle-accepted"
                 >
-                  Job {lifecycleAccepted.job_id} was accepted for this server.
+                  {tr("ui.serverDetail.jobAccepted", { id: lifecycleAccepted.job_id })}
                 </div>
               {/if}
             </div>
@@ -959,21 +957,18 @@
               {stackKitVariant()}
             </p>
             <p class="mt-4 text-xs text-muted-foreground">
-              Evidence: {details.server.stackkit.sources.length
-                ? details.server.stackkit.sources.join(", ")
-                : "source not reported"}
+              {tr("ui.serverDetail.evidence", { sources: details.server.stackkit.sources.length ? details.server.stackkit.sources.join(", ") : tr("ui.serverDetail.sourceNotReported") })}
             </p>
             {#if details.server.stackkit.state !== "observed"}
               <p
                 class="mt-3 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-muted-foreground"
               >
-                This is configured StackKit intent; the Guard has not reported
-                matching deployment evidence yet.
+                {tr("ui.stacksIdServersServerId.thisIsConfiguredStackkitIntent")}
               </p>
             {/if}
           {:else}
             <p class="text-sm text-muted-foreground">
-              No StackKit deployment evidence has been reported by this server.
+              {tr("ui.stacksIdServersServerId.noStackkitDeploymentEvidenceHas")}
             </p>
           {/if}
         </div>
@@ -982,7 +977,7 @@
           <div class="mb-4 flex items-center gap-2">
             <Server class="h-5 w-5 text-primary" />
             <h2 class="text-lg font-semibold text-foreground">
-              Addresses & domains
+              {tr("ui.stacksIdServersServerId.addressesDomains")}
             </h2>
           </div>
           {#if serverAddresses().length}
@@ -1010,7 +1005,7 @@
             </div>
           {:else}
             <p class="text-sm text-muted-foreground">
-              No host address has been reported.
+              {tr("ui.stacksIdServersServerId.noHostAddressHasBeen")}
             </p>
           {/if}
           <div class="mt-4 flex flex-wrap gap-2" data-testid="server-domains">
@@ -1022,7 +1017,7 @@
               >
             {:else}
               <span class="text-sm text-muted-foreground">
-                No service domains reported.
+                {tr("ui.stacksIdServersServerId.noServiceDomainsReported")}
               </span>
             {/each}
           </div>
@@ -1036,7 +1031,7 @@
           <div class="mb-4 flex items-center gap-2">
             <Activity class="h-5 w-5 text-info" />
             <h2 class="text-lg font-semibold text-foreground">
-              Service endpoints
+              {tr("ui.stacksIdServersServerId.serviceEndpoints")}
             </h2>
           </div>
           {#if details.server.service_endpoints?.length}
@@ -1048,7 +1043,7 @@
                     class="flex flex-wrap items-center justify-between gap-2"
                   >
                     <p class="font-medium text-foreground">
-                      {endpoint.name || endpoint.service_key || "Service"}
+                      {endpoint.name || endpoint.service_key || tr("ui.services.service")}
                     </p>
                     <span
                       data-kx="status"
@@ -1082,7 +1077,7 @@
             </div>
           {:else}
             <p class="text-sm text-muted-foreground">
-              No observed service endpoints have been reported by this server.
+              {tr("ui.stacksIdServersServerId.noObservedServiceEndpointsHave")}
             </p>
           {/if}
         </div>
@@ -1090,11 +1085,10 @@
         <div data-kx="plate" class="p-5">
           <div class="mb-4 flex items-center gap-2">
             <CheckCircle2 class="h-5 w-5 text-success" />
-            <h2 class="text-lg font-semibold text-foreground">Health</h2>
+            <h2 class="text-lg font-semibold text-foreground">{tr("ui.services.health")}</h2>
           </div>
           <p class="text-sm text-muted-foreground">
-            Source: {details.health.source}. Monitoring backend: {details
-              .monitoring.queryBackend}.
+            {tr("ui.serverDetail.healthSource", { source: details.health.source, backend: details.monitoring.queryBackend })}
           </p>
           {#if details.health.notes?.length}
             <div class="mt-4 space-y-2">
@@ -1114,11 +1108,11 @@
       <section>
         <div class="mb-4 flex items-center gap-2">
           <ClipboardCheck class="h-5 w-5 text-info" />
-          <h2 class="text-lg font-semibold text-foreground">Services</h2>
+          <h2 class="text-lg font-semibold text-foreground">{tr("ui.services.services")}</h2>
         </div>
         {#if details.services.length === 0}
           <p class="text-sm text-muted-foreground">
-            No service placement is recorded for this server.
+            {tr("ui.stacksIdServersServerId.noServicePlacementIsRecorded")}
           </p>
         {:else}
           <div class="grid gap-2 md:grid-cols-2">
@@ -1153,17 +1147,16 @@
             <div class="flex items-center gap-2">
               <Activity class="h-5 w-5 text-info" />
               <h2 class="text-lg font-semibold text-foreground">
-                Port allocations
+                {tr("ui.stacksIdServersServerId.portAllocations")}
               </h2>
             </div>
             <p class="mt-1 text-sm text-muted-foreground">
-              Desired listeners, durable reservations, and runtime evidence for
-              this Node.
+              {tr("ui.stacksIdServersServerId.desiredListenersDurableReservationsAnd")}
             </p>
           </div>
           {#if portInventory?.observed_at}
             <p class="text-xs text-muted-foreground">
-              Observed {new Date(portInventory.observed_at).toLocaleString()}
+              {tr("ui.serverDetail.observedAt", { time: formatDateTime(portInventory.observed_at) })}
             </p>
           {/if}
         </div>
@@ -1171,7 +1164,7 @@
         {#if portInventoryError}
           <div class="rounded-lg border border-warning/40 bg-warning/10 p-4">
             <p class="font-medium text-foreground">
-              Port inventory is not available yet
+              {tr("ui.stacksIdServersServerId.portInventoryIsNotAvailable")}
             </p>
             <p class="mt-1 text-sm text-muted-foreground">
               {portInventoryError}
@@ -1183,7 +1176,7 @@
               disabled={refreshing}
             >
               <RefreshCw class="h-4 w-4 {refreshing ? 'animate-spin' : ''}" />
-              {refreshing ? "Refreshing..." : "Refresh"}
+              {refreshing ? tr("ui.monitoring.refreshing") : tr("ui.homelabDashboardPage.refresh")}
             </Button>
           </div>
         {:else if !portInventory || portInventory.allocations.length === 0}
@@ -1191,16 +1184,16 @@
             <p class="font-medium text-foreground">
               {portInventory?.observed_at
                 ? portInventory.listeners_complete
-                  ? "No port allocations recorded"
-                  : "Port evidence is partial"
-                : "No port evidence yet"}
+                  ? tr("ui.stacksIdServersServerId.noPortAllocationsRecorded")
+                  : tr("ui.stacksIdServersServerId.portEvidenceIsPartial")
+                : tr("ui.stacksIdServersServerId.noPortEvidenceYet")}
             </p>
             <p class="mt-1 text-sm text-muted-foreground">
               {portInventory?.observed_at
                 ? portInventory.listeners_complete
-                  ? "No compiler-declared reservation or bound runtime listener was present in the latest complete Guard snapshot."
-                  : "No desired listener is reserved, and the Guard could not complete its listener snapshot, so runtime listeners remain unknown."
-                : "No desired listener is reserved, and the Guard has not reported a listener snapshot for this Node yet."}
+                  ? tr("ui.stacksIdServersServerId.noCompilerDeclaredReservationOr")
+                  : tr("ui.stacksIdServersServerId.noDesiredListenerIsReserved")
+                : tr("ui.stacksIdServersServerId.noDesiredListenerIsReserved2")}
             </p>
           </div>
         {:else}
@@ -1210,12 +1203,12 @@
                 class="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground"
               >
                 <tr>
-                  <th class="px-4 py-3 font-medium">Listener</th>
-                  <th class="px-4 py-3 font-medium">Intent</th>
-                  <th class="px-4 py-3 font-medium">Reservation</th>
-                  <th class="px-4 py-3 font-medium">Observed</th>
-                  <th class="px-4 py-3 font-medium">Exposed</th>
-                  <th class="px-4 py-3 font-medium">Drift</th>
+                  <th class="px-4 py-3 font-medium">{tr("ui.stacksIdServersServerId.listener")}</th>
+                  <th class="px-4 py-3 font-medium">{tr("ui.stacksIdServersServerId.intent")}</th>
+                  <th class="px-4 py-3 font-medium">{tr("ui.stacksIdServersServerId.reservation")}</th>
+                  <th class="px-4 py-3 font-medium">{tr("ui.services.observed")}</th>
+                  <th class="px-4 py-3 font-medium">{tr("ui.stacksIdServersServerId.exposed")}</th>
+                  <th class="px-4 py-3 font-medium">{tr("ui.stacksIdServersServerId.drift")}</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-border">
@@ -1236,7 +1229,7 @@
                       <p>
                         {allocation.desired
                           ? formatStatus(allocation.exposure)
-                          : "Not declared"}
+                          : tr("ui.stacksIdServersServerId.notDeclared")}
                       </p>
                       {#if allocation.kit_deployment_id}
                         <p
@@ -1298,8 +1291,7 @@
           </div>
           {#if !portInventory.listeners_complete || !portInventory.exposures_complete}
             <p class="mt-3 text-sm text-muted-foreground">
-              Runtime evidence is partial. Unknown states stay unknown until the
-              Guard reports a complete listener or exposure snapshot.
+              {tr("ui.stacksIdServersServerId.runtimeEvidenceIsPartialUnknown")}
             </p>
           {/if}
         {/if}
@@ -1309,11 +1301,11 @@
       <section>
         <div class="mb-4 flex items-center gap-2">
           <ListChecks class="h-5 w-5 text-warning" />
-          <h2 class="text-lg font-semibold text-foreground">Checks</h2>
+          <h2 class="text-lg font-semibold text-foreground">{tr("ui.stacksIdServersServerId.checks")}</h2>
         </div>
         {#if details.checks.length === 0}
           <p class="text-sm text-muted-foreground">
-            No pre-check result is recorded yet.
+            {tr("ui.stacksIdServersServerId.noPreCheckResultIs")}
           </p>
         {:else}
           <div class="space-y-3">
@@ -1343,7 +1335,7 @@
       <section>
         <div class="mb-4 flex items-center gap-2">
           <TerminalSquare class="h-5 w-5 text-primary" />
-          <h2 class="text-lg font-semibold text-foreground">Logs</h2>
+          <h2 class="text-lg font-semibold text-foreground">{tr("ui.stacksIdServersServerId.logs")}</h2>
         </div>
         {#if runtimeLogsError}
           <p class="mb-3 text-sm text-warning">{runtimeLogsError}</p>
@@ -1360,26 +1352,26 @@
                     >{log.level.toUpperCase()} · {log.source || "runtime"}</span
                   >
                   <span class="text-muted-foreground"
-                    >{new Date(log.timestamp).toLocaleString()}</span
+                    >{formatDateTime(log.timestamp)}</span
                   >
                 </div>
                 <p class="mt-1 whitespace-pre-wrap break-words text-foreground">
                   {log.message}
                 </p>
                 {#if log.job_id}
-                  <p class="mt-1 text-muted-foreground">Job {log.job_id}</p>
+                  <p class="mt-1 text-muted-foreground">{tr("ui.serverDetail.jobLabel", { id: log.job_id })}</p>
                 {/if}
               </div>
             {/each}
           </div>
         {:else if details.logs.length === 0}
           <p class="text-sm text-muted-foreground">
-            No server, installer, or StackKits logs are recorded yet.
+            {tr("ui.stacksIdServersServerId.noServerInstallerOrStackkits")}
           </p>
         {/if}
         {#if details.logs.length > 0}
           <h3 class="mb-2 text-sm font-medium text-muted-foreground">
-            Activity history
+            {tr("ui.stacksIdServersServerId.activityHistory")}
           </h3>
           <div class="space-y-2">
             {#each details.logs as log (log.id || `${log.created}-${log.action}`)}
@@ -1412,12 +1404,11 @@
               id="server-settings-heading"
               class="text-lg font-semibold text-foreground"
             >
-              Server settings
+              {tr("ui.stacksIdServersServerId.serverSettings")}
             </h1>
           </div>
           <p class="mt-2 text-sm text-muted-foreground">
-            Manage settings that affect this server's lifecycle. Routine status
-            and service controls remain in their respective tabs.
+            {tr("ui.stacksIdServersServerId.manageSettingsThatAffectThis")}
           </p>
         </div>
 
@@ -1440,23 +1431,18 @@
                 {#if isManagedRuntimeCleanupStarted}
                   <h2 class="text-lg font-semibold text-foreground">
                     {isDecommissionedManagedRuntime
-                      ? "Server generation decommissioned"
-                      : "Server cleanup in progress"}
+                      ? tr("ui.stacksIdServersServerId.serverGenerationDecommissioned")
+                      : tr("ui.stacksIdServersServerId.serverCleanupInProgress")}
                   </h2>
                   <p class="mt-2 max-w-3xl text-sm text-muted-foreground">
-                    The old provider generation cannot be started again. Use
-                    Recreate above after exact provider absence and capacity
-                    release have been verified.
+                    {tr("ui.stacksIdServersServerId.theOldProviderGenerationCannot")}
                   </p>
                 {:else if hasLegacyOrUnboundCustody()}
                   <h2 class="text-lg font-semibold text-foreground">
-                    Resolve stale custody record
+                    {tr("ui.stacksIdServersServerId.resolveStaleCustodyRecord")}
                   </h2>
                   <p class="mt-2 max-w-3xl text-sm text-muted-foreground">
-                    This server is a legacy or unbound custody record. Confirm
-                    that the provider resource has already been removed;
-                    Techstack will archive only this record and will not call or
-                    delete a provider resource.
+                    {tr("ui.stacksIdServersServerId.thisServerIsALegacy")}
                   </p>
 
                   {#if showCustodyResolutionConfirmation}
@@ -1465,11 +1451,10 @@
                       data-testid="server-custody-resolution-confirmation"
                     >
                       <p class="text-sm font-medium text-foreground">
-                        Confirm provider removal for {details.server.hostname}
+                        {tr("ui.serverDetail.confirmProviderRemoval", { name: details.server.hostname })}
                       </p>
                       <p class="mt-1 text-sm text-muted-foreground">
-                        This only archives the stale Techstack custody record.
-                        It does not delete anything at the provider.
+                        {tr("ui.stacksIdServersServerId.thisOnlyArchivesTheStale")}
                       </p>
                       <div class="mt-4 flex flex-wrap gap-2">
                         <Button
@@ -1480,8 +1465,8 @@
                         >
                           <Trash2 class="h-4 w-4" />
                           {actionLoading === "resolve-custody"
-                            ? "Resolving..."
-                            : "Resolve record"}
+                            ? tr("ui.custodyLeasesPanel.resolving")
+                            : tr("ui.homelabDashboardPage.resolveRecord")}
                         </Button>
                         <Button
                           variant="secondary"
@@ -1489,7 +1474,7 @@
                             (showCustodyResolutionConfirmation = false)}
                           disabled={actionLoading !== null}
                         >
-                          Cancel
+                          {tr("ui.importExportModal.cancel")}
                         </Button>
                       </div>
                     </div>
@@ -1502,20 +1487,17 @@
                       disabled={actionLoading !== null}
                     >
                       <Trash2 class="h-4 w-4" />
-                      Resolve stale record
+                      {tr("ui.stacksIdServersServerId.resolveStaleRecord")}
                     </Button>
                   {/if}
                 {:else}
                   <h2 class="text-lg font-semibold text-foreground">
-                    Decommission server
+                    {tr("ui.stacksIdServersServerId.decommissionServer")}
                   </h2>
                   <p class="mt-2 max-w-3xl text-sm text-muted-foreground">
-                    Request the controlled removal of
-                    <strong class="font-medium text-foreground">
+                    {trParts("ui.serverDetail.decommissionIntro")[0]}<strong class="font-medium text-foreground">
                       {details.server.hostname}
-                    </strong>. Techstack keeps the provider custody record until
-                    absence is verified. This action is intentionally available
-                    only here.
+                    </strong>{trParts("ui.serverDetail.decommissionIntro")[1]}
                   </p>
 
                   {#if showDecommissionConfirmation}
@@ -1524,12 +1506,10 @@
                       data-testid="server-decommission-confirmation"
                     >
                       <p class="text-sm font-medium text-foreground">
-                        Confirm decommission for {details.server.hostname}
+                        {tr("ui.serverDetail.confirmDecommissionFor", { name: details.server.hostname })}
                       </p>
                       <p class="mt-1 text-sm text-muted-foreground">
-                        Services on this server may become unavailable. The
-                        request cannot be treated as complete until provider
-                        absence has been verified.
+                        {tr("ui.stacksIdServersServerId.servicesOnThisServerMay")}
                       </p>
                       <div class="mt-4 flex flex-wrap gap-2">
                         <Button
@@ -1540,15 +1520,15 @@
                         >
                           <Trash2 class="h-4 w-4" />
                           {actionLoading === "decommission"
-                            ? "Decommissioning..."
-                            : "Confirm decommission"}
+                            ? tr("ui.custodyLeasesPanel.decommissioning")
+                            : tr("ui.stacksIdServersServerId.confirmDecommission")}
                         </Button>
                         <Button
                           variant="secondary"
                           onclick={() => (showDecommissionConfirmation = false)}
                           disabled={actionLoading !== null}
                         >
-                          Cancel
+                          {tr("ui.importExportModal.cancel")}
                         </Button>
                       </div>
                     </div>
@@ -1561,21 +1541,18 @@
                       disabled={actionLoading !== null}
                     >
                       <Trash2 class="h-4 w-4" />
-                      Decommission server
+                      {tr("ui.stacksIdServersServerId.decommissionServer")}
                     </Button>
                   {/if}
                 {/if}
               {:else if canDetachSelfOwnedServer}
                 <h2 class="text-lg font-semibold text-foreground">
-                  Detach self-owned server
+                  {tr("ui.stacksIdServersServerId.detachSelfOwnedServer")}
                 </h2>
                 <p class="mt-2 max-w-3xl text-sm text-muted-foreground">
-                  Revoke the exact Guard Agent for
-                  <strong class="font-medium text-foreground">
+                  {trParts("ui.serverDetail.detachIntro")[0]}<strong class="font-medium text-foreground">
                     {details.server.hostname}
-                  </strong>
-                  and remove this attachment from current inventory. Techstack keeps
-                  the terminal audit receipt and performs no provider API call.
+                  </strong>{trParts("ui.serverDetail.detachIntro")[1]}
                 </p>
 
                 {#if showDetachConfirmation}
@@ -1584,11 +1561,10 @@
                     data-testid="server-detach-confirmation"
                   >
                     <p class="text-sm font-medium text-foreground">
-                      Confirm detach for {details.server.hostname}
+                      {tr("ui.serverDetail.confirmDetachFor", { name: details.server.hostname })}
                     </p>
                     <p class="mt-1 text-sm text-muted-foreground">
-                      The Agent identity will be revoked immediately. The
-                      physical server and its provider account remain untouched.
+                      {tr("ui.stacksIdServersServerId.theAgentIdentityWillBe")}
                     </p>
                     <div class="mt-4 flex flex-wrap gap-2">
                       <Button
@@ -1599,15 +1575,15 @@
                       >
                         <Trash2 class="h-4 w-4" />
                         {actionLoading === "detach"
-                          ? "Detaching..."
-                          : "Confirm detach"}
+                          ? tr("ui.stacksIdServersServerId.detaching")
+                          : tr("ui.stacksIdServersServerId.confirmDetach")}
                       </Button>
                       <Button
                         variant="secondary"
                         onclick={() => (showDetachConfirmation = false)}
                         disabled={actionLoading !== null}
                       >
-                        Cancel
+                        {tr("ui.importExportModal.cancel")}
                       </Button>
                     </div>
                   </div>
@@ -1620,14 +1596,12 @@
                     disabled={actionLoading !== null}
                   >
                     <Trash2 class="h-4 w-4" />
-                    Detach server
+                    {tr("ui.stacksIdServersServerId.detachServer")}
                   </Button>
                 {/if}
               {:else}
                 <p class="mt-2 text-sm text-muted-foreground">
-                  This server has no managed provider lease. Its recorded
-                  custody does not currently authorize either managed
-                  decommission or self-owned detach.
+                  {tr("ui.stacksIdServersServerId.thisServerHasNoManaged")}
                 </p>
               {/if}
             </div>

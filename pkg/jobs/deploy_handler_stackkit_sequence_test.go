@@ -2,6 +2,8 @@ package jobs
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -9,8 +11,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/advancedissuer"
 	"github.com/kombifyio/techstack/internal/stackkitrelease"
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
+	"github.com/kombifyio/techstack/pkg/core"
+	"github.com/kombifyio/techstack/pkg/logger"
 )
 
 type contextBoundStackKitCommandSender struct{}
@@ -44,10 +49,7 @@ func (sender *agentTimeoutResultSender) SendStackKitCommand(_ context.Context, _
 			CommandResultJson: []byte(`{"schemaVersion":"stackkit.command-result/v1","command":"stackkit generate","status":"failed","data":{"error":"StackKits command timed out after 30s: context deadline exceeded"}}`),
 		}, nil
 	}
-	commandResult := []byte(`{}`)
-	if command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_PLAN {
-		commandResult = typedPlanCommandResult(testResolvedPlanHash)
-	}
+	commandResult := typedStackKitFakeSuccessResult(command)
 	return &agentpb.StackKitResult{Success: true, CommandResultJson: commandResult, Release: command.Release}, nil
 }
 
@@ -56,10 +58,7 @@ func (sender *failingStackKitCommandSender) SendStackKitCommand(_ context.Contex
 	if command.Operation == sender.failOn {
 		return nil, context.DeadlineExceeded
 	}
-	commandResult := []byte(`{}`)
-	if command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_PLAN {
-		commandResult = typedPlanCommandResult(testResolvedPlanHash)
-	}
+	commandResult := typedStackKitFakeSuccessResult(command)
 	return &agentpb.StackKitResult{Success: true, CommandResultJson: commandResult, Release: command.Release}, nil
 }
 
@@ -82,10 +81,8 @@ func (builder *recordingManagedStackKitInventoryBuilder) Build(_ context.Context
 
 func (sender *recordingStackKitCommandSender) SendStackKitCommand(_ context.Context, _ string, command *agentpb.StackKitCommand) (*agentpb.StackKitResult, error) {
 	sender.commands = append(sender.commands, command)
-	commandResult := []byte(`{}`)
-	if command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_PLAN {
-		commandResult = typedPlanCommandResult(testResolvedPlanHash)
-	} else if command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_APPLY && sender.applyStatus != "" {
+	commandResult := typedStackKitFakeSuccessResult(command)
+	if command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_APPLY && sender.applyStatus != "" {
 		commandResult = typedApplyCommandResult(sender.applyStatus)
 	}
 	return &agentpb.StackKitResult{
@@ -103,11 +100,51 @@ func typedApplyCommandResult(status string) []byte {
 	return receipt
 }
 
+const testAdvancedTrustBundle = `{"keys":[{"issuerId":"techstack.test","keyId":"ed25519://sha256/` +
+	`56475aa75463474c0285df5dbf2bcab73da651358839e9b77481b2eab107708c","publicKey":"A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg"}],` +
+	`"schemaVersion":"stackkit.advanced-trust-bundle/v1"}`
+
+// staticAdvancedIssuer serves the test bundle and accepts every binding.
+type staticAdvancedIssuer struct{}
+
+func (staticAdvancedIssuer) TrustBundle() []byte { return []byte(testAdvancedTrustBundle) }
+func (staticAdvancedIssuer) RecordTrustBinding(context.Context, advancedissuer.TrustBinding) error {
+	return nil
+}
+func (staticAdvancedIssuer) TrustBindingFor(context.Context, string, string) (advancedissuer.TrustBinding, error) {
+	return advancedissuer.TrustBinding{StackID: "cloud-stack", OwnerRef: "owner/local/00112233445566778899aabbccddeeff"}, nil
+}
+func (staticAdvancedIssuer) Issue(_ context.Context, request advancedissuer.Request) (advancedissuer.Capability, error) {
+	return advancedissuer.Capability{ID: "capability-1", Operations: request.Operations, Raw: []byte(`{"allowedOperations":["` + strings.Join(request.Operations, `","`) + `"]}`)}, nil
+}
+
+// typedStackKitFakeSuccessResult answers like the pinned CLI for the
+// operations whose evidence the rollout admits.
+func typedStackKitFakeSuccessResult(command *agentpb.StackKitCommand) []byte {
+	switch command.Operation {
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_PLAN:
+		return typedPlanCommandResult(testResolvedPlanHash)
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_TRUST_IMPORT:
+		digest := sha256.Sum256(command.AdvancedTrustBundle)
+		receipt, _ := json.Marshal(map[string]interface{}{
+			"schemaVersion": "stackkit.command-result/v1", "command": "stackkit advanced trust import", "status": "success",
+			"data": map[string]interface{}{
+				"schemaVersion": "stackkit.local-advanced-trust/v1", "bundleSHA256": "sha256:" + hex.EncodeToString(digest[:]),
+				"ownerRef": "owner/local/00112233445566778899aabbccddeeff",
+			},
+		})
+		return receipt
+	default:
+		return []byte(`{}`)
+	}
+}
+
 func typedStackKitApplyRequest() StackKitLifecycleRequest {
 	return StackKitLifecycleRequest{
 		StackID: "stack-1", TenantID: "tenant-1", OwnerID: "owner-1", AgentID: "agent-1", OwnerApproved: true,
 		WorkingDirectory: "/opt/stackkit", SpecPath: "stack-spec.yaml", StackKit: "cloud-kit", StackName: "cloud-stack",
-		CandidateSpecJSON: []byte(`{"apiVersion":"stackkit/v2alpha2","metadata":{"name":"cloud-stack"},"kit":{"slug":"cloud-kit"},"workloads":{"cloud-core":{"alternative":"standalone"}},"modules":{"stackkits-cloud-core-runtime":{"computeProfile":"standard"}}}`),
+		CandidateSpecJSON:   []byte(`{"apiVersion":"stackkit/v2alpha2","metadata":{"name":"cloud-stack"},"kit":{"slug":"cloud-kit"},"workloads":{"cloud-core":{"alternative":"standalone"}},"modules":{"stackkits-cloud-core-runtime":{"computeProfile":"standard"}}}`),
+		AdvancedTrustBundle: []byte(testAdvancedTrustBundle),
 	}
 }
 
@@ -149,8 +186,8 @@ func TestTypedStackKitApplySequenceClassifiesOperationTimeouts(t *testing.T) {
 
 	transportTimeout := &failingStackKitCommandSender{failOn: agentpb.StackKitOperation_STACKKIT_OPERATION_GENERATE}
 	assertTimeout(transportTimeout)
-	if len(transportTimeout.commands) != 2 {
-		t.Fatalf("commands = %d, want init and generate only", len(transportTimeout.commands))
+	if len(transportTimeout.commands) != 3 {
+		t.Fatalf("commands = %d, want init, trust import and generate only", len(transportTimeout.commands))
 	}
 	assertTimeout(&agentTimeoutResultSender{failOn: agentpb.StackKitOperation_STACKKIT_OPERATION_GENERATE})
 }
@@ -158,11 +195,11 @@ func TestTypedStackKitApplySequenceClassifiesOperationTimeouts(t *testing.T) {
 func TestTypedStackKitApplySequenceShrinksAgentBudgetToJobDeadline(t *testing.T) {
 	sender := &failingStackKitCommandSender{failOn: agentpb.StackKitOperation_STACKKIT_OPERATION_APPLY}
 	request := typedStackKitApplyRequest()
-	_, _ = runTypedStackKitApplySequenceWithBudget(context.Background(), sender, "job-1", request, stackkitrelease.Release{}, 160*time.Second)
-	if len(sender.commands) != 4 {
-		t.Fatalf("commands = %d, want four", len(sender.commands))
+	_, _ = runTypedStackKitApplySequenceWithBudget(context.Background(), sender, "job-1", request, stackkitrelease.Release{}, 160*time.Second, nil)
+	if len(sender.commands) != 5 {
+		t.Fatalf("commands = %d, want five", len(sender.commands))
 	}
-	if got := time.Duration(sender.commands[3].TimeoutSeconds) * time.Second; got >= managedStackKitApplyTimeout || got > 150*time.Second {
+	if got := time.Duration(sender.commands[4].TimeoutSeconds) * time.Second; got >= managedStackKitApplyTimeout || got > 150*time.Second {
 		t.Fatalf("apply agent timeout = %s, want remaining job budget", got)
 	}
 }
@@ -196,10 +233,7 @@ func (sender *pendingThenReadyStackKitCommandSender) SendStackKitCommand(_ conte
 			}, nil
 		}
 	}
-	commandResult := []byte(`{}`)
-	if command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_PLAN {
-		commandResult = typedPlanCommandResult(testResolvedPlanHash)
-	}
+	commandResult := typedStackKitFakeSuccessResult(command)
 	return &agentpb.StackKitResult{Success: true, CommandResultJson: commandResult, Release: command.Release}, nil
 }
 
@@ -209,8 +243,18 @@ func TestTypedStackKitApplyGeneratesAndPlansBeforeMutatingTheManagedNode(t *test
 	request.Domain = "cloud.example"
 	request.InventoryJSON = []byte(`{"schemaVersion":"stackkit.inventory/v1"}`)
 
-	if _, err := runTypedStackKitApplySequence(context.Background(), sender, "job-1", request, stackkitrelease.Release{}); err != nil {
+	// A release that ships the Advanced catalog makes the first rollout
+	// generate the Terramate target; change sets follow for later mutations.
+	if _, err := runTypedStackKitApplySequence(context.Background(), sender, "job-1", request, releaseWithAdvancedCatalog(t)); err != nil {
 		t.Fatalf("runTypedStackKitApplySequence: %v", err)
+	}
+	var initCandidate struct {
+		Generation struct {
+			Target string `json:"target"`
+		} `json:"generation"`
+	}
+	if err := json.Unmarshal(sender.commands[0].CandidateSpecJson, &initCandidate); err != nil || initCandidate.Generation.Target != "terramate" {
+		t.Fatalf("init candidate generation.target = %q (%v), want terramate", initCandidate.Generation.Target, err)
 	}
 
 	operations := make([]agentpb.StackKitOperation, 0, len(sender.commands))
@@ -218,12 +262,19 @@ func TestTypedStackKitApplyGeneratesAndPlansBeforeMutatingTheManagedNode(t *test
 	for _, command := range sender.commands {
 		operations = append(operations, command.Operation)
 		commandIDs = append(commandIDs, command.CommandId)
+		if command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_TRUST_IMPORT {
+			if string(command.AdvancedTrustBundle) != testAdvancedTrustBundle || !command.OwnerApproved {
+				t.Fatalf("trust import = %+v, want the Owner-approved installation bundle", command)
+			}
+			continue
+		}
 		if command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_INIT && string(command.InventoryJson) != string(request.InventoryJSON) {
 			t.Fatalf("%s Inventory = %s, want %s", command.CommandId, command.InventoryJson, request.InventoryJSON)
 		}
 	}
 	wantOperations := []agentpb.StackKitOperation{
 		agentpb.StackKitOperation_STACKKIT_OPERATION_INIT,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_TRUST_IMPORT,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_GENERATE,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_PLAN,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_APPLY,
@@ -234,7 +285,7 @@ func TestTypedStackKitApplyGeneratesAndPlansBeforeMutatingTheManagedNode(t *test
 	if got := sender.commands[len(sender.commands)-1].ExpectedPlanHash; got != testResolvedPlanHash {
 		t.Fatalf("apply expected_plan_hash = %q, want %q", got, testResolvedPlanHash)
 	}
-	if want := []string{"job-1-init", "job-1-generate", "job-1-plan", "job-1-apply"}; !reflect.DeepEqual(commandIDs, want) {
+	if want := []string{"job-1-init", "job-1-advanced_trust_import", "job-1-generate", "job-1-plan", "job-1-apply"}; !reflect.DeepEqual(commandIDs, want) {
 		t.Fatalf("command IDs = %v, want %v", commandIDs, want)
 	}
 }
@@ -249,6 +300,7 @@ func TestTypedStackKitApplyBindsManagedAddressBeforeNodeGeneration(t *testing.T)
 	}
 	want := []agentpb.StackKitOperation{
 		agentpb.StackKitOperation_STACKKIT_OPERATION_INIT,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_TRUST_IMPORT,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_ADDRESS_BIND,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_GENERATE,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_PLAN,
@@ -258,8 +310,48 @@ func TestTypedStackKitApplyBindsManagedAddressBeforeNodeGeneration(t *testing.T)
 	for _, command := range sender.commands {
 		got = append(got, command.Operation)
 	}
-	if !reflect.DeepEqual(got, want) || sender.commands[1].SpecPath != "stack-spec.yaml" || sender.commands[2].SpecPath != request.BoundSpecPath || sender.commands[4].SpecPath != request.BoundSpecPath {
+	if !reflect.DeepEqual(got, want) || sender.commands[2].SpecPath != "stack-spec.yaml" || sender.commands[3].SpecPath != request.BoundSpecPath || sender.commands[5].SpecPath != request.BoundSpecPath {
 		t.Fatalf("bound lifecycle commands = %+v, want bind before generated %q", sender.commands, request.BoundSpecPath)
+	}
+}
+
+func TestTypedManagedRolloutCompletesOwnerHandoffFromTechstackFacts(t *testing.T) {
+	// Regression (kombify-Techstack-3pa8): a verified typed rollout for the
+	// Wizard's automatic cloud Owner failed because the v2 apply result
+	// carries no identity outputs.
+	sender := &recordingStackKitCommandSender{applyStatus: "applied"}
+	applyResult, err := runTypedStackKitApplySequence(context.Background(), sender, "job-owner-handoff", typedStackKitApplyRequest(), stackkitrelease.Release{})
+	if err != nil {
+		t.Fatalf("runTypedStackKitApplySequence: %v", err)
+	}
+	queue := NewQueue(1, logger.New("error", ""))
+	t.Cleanup(queue.Stop)
+	job := &Job{ID: "job-owner-handoff", TargetID: "stack-1", Result: map[string]interface{}{}, Payload: map[string]interface{}{
+		"owner_spec_bootstrap":    map[string]interface{}{"endpoint": "https://techstack.example/api/v1/stacks/stack-1/owner-spec", "token": "bootstrap-token", "expires_at": "2026-09-25T00:00:00Z"},
+		StackOwnerEmailPayloadKey: "owner@example.com",
+	}}
+	queue.jobs[job.ID] = job
+	rollout := &deployRollout{
+		cfg: &ProvisionConfig{StackKitCommander: sender}, job: job, q: queue, managedRuntime: true,
+		actionReq: RuntimeActionRequest{StackID: "stack-1", TenantID: "tenant-1", OwnerID: "owner-1"},
+		e2eProof:  map[string]any{}, runtimeProof: map[string]interface{}{},
+		stackKitOutputs: map[string]interface{}{}, runtimeMetrics: map[string]string{},
+		finalRuntimePhase: RuntimePhaseVerified,
+	}
+	mergeStackKitOutputs(rollout.stackKitOutputs, applyResult)
+
+	err = rollout.finalize(context.Background(), &deployPreparation{managedRuntime: true}, &deployArtifacts{
+		unifiedSpec: &core.UnifiedSpec{StackKit: "cloud-kit"},
+		metadata:    map[string]string{metadataKeyKombifyMeLoginHost: "auth.sh-demo-ab12.kombify.me"},
+	})
+	if err != nil {
+		t.Fatalf("finalize: %v", err)
+	}
+	outputs := mapFromInterface(job.Snapshot().Result[metadataKeyStackKitOutputs])
+	owner := mapFromInterface(mapFromInterface(outputs["identity"])["owner"])
+	gateway := mapFromInterface(outputs["login_gateway"])
+	if owner["username"] != "owner@example.com" || gateway["url"] != "https://auth.sh-demo-ab12.kombify.me" {
+		t.Fatalf("stackkit_outputs = %#v, want the Owner login and login gateway", outputs)
 	}
 }
 

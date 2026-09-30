@@ -23,11 +23,20 @@ func newOTLPLogsService(server *Server) *otlpLogsService {
 }
 
 func (s *otlpLogsService) Export(ctx context.Context, req *collectorlogspb.ExportLogsServiceRequest) (*collectorlogspb.ExportLogsServiceResponse, error) {
-	_ = ctx
 	if s == nil || s.server == nil {
 		return nil, status.Error(codes.Unavailable, "runtime log store not available")
 	}
+	agentID, tenantID, err := s.server.authorizeOTLPExporter(ctx)
+	if err != nil {
+		return nil, err
+	}
 	for _, entry := range otlpLogsToRuntimeLogs(req) {
+		entry.AgentID, entry.TenantID = agentID, tenantID
+		// Identity comes from the enrolled peer. Remove aliases as well so
+		// normalization cannot restore exporter-chosen identities in standalone mode.
+		for _, key := range []string{"agent_id", "agent.id", "tenant_id", "tenant.id"} {
+			delete(entry.Fields, key)
+		}
 		s.server.appendRuntimeLog(entry)
 	}
 	return &collectorlogspb.ExportLogsServiceResponse{}, nil

@@ -311,11 +311,11 @@
       config.serverProvisioning.mode === "connect-remote" &&
       !config.serverProvisioning.remote.host.trim()
     ) {
-      errors.push("Server host or IP is required for direct connection");
+      errors.push(tr("ui.easyWizard.serverHostOrIpIs"));
     }
 
     if (currentStepKey === "access" && !config.network.accessMode) {
-      errors.push("Please select an access mode (Home only or Anywhere)");
+      errors.push(tr("ui.easyWizard.pleaseSelectAnAccessMode"));
     }
     if (
       currentStepKey === "access" &&
@@ -326,7 +326,7 @@
     }
 
     if (currentStepKey === "users" && !hasUsers) {
-      errors.push("Please select who will use your server");
+      errors.push(tr("ui.easyWizard.pleaseSelectWhoWillUse"));
     }
 
     if (currentStepKey === "login") {

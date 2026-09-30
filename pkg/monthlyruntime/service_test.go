@@ -412,6 +412,10 @@ func TestServiceSSHInfoUsesPersistedLeaseTargetWithoutRuntimeCall(t *testing.T) 
 	lease.Metadata["runtime_private_ip"] = "10.0.0.55"
 	lease.Metadata["runtime_ssh_user"] = "root"
 	lease.Metadata["runtime_ssh_port"] = "2222"
+	if response := persistedSSHInfoResponse("org-1", lease, OfferingIDFromMetadata(lease.Metadata), serverruntime.RuntimeActionSSHInfo); response != nil {
+		t.Fatalf("SSH response without a trusted host key = %+v", response.SSH)
+	}
+	lease.Metadata["runtime_ssh_host_key"] = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIES1Xflf/Yf/edLYoabUDw1v88bOXzegNvZyNiiH+bik"
 	lease.Metadata["runtime_observed_state"] = "running"
 	lease.Metadata["runtime_lease_state"] = "valid"
 	if _, err := leases.CreateOrUpdate(context.Background(), vmleases.CreateRequest{Lease: lease}); err != nil {
@@ -428,7 +432,7 @@ func TestServiceSSHInfoUsesPersistedLeaseTargetWithoutRuntimeCall(t *testing.T) 
 	if err != nil {
 		t.Fatalf("Action: %v", err)
 	}
-	if resp.SSH == nil || resp.SSH.Host != "203.0.113.55" || resp.SSH.User != "root" || resp.SSH.Port != 2222 {
+	if resp.SSH == nil || resp.SSH.Host != "203.0.113.55" || resp.SSH.User != "root" || resp.SSH.Port != 2222 || resp.SSH.HostKey != lease.Metadata["runtime_ssh_host_key"] {
 		t.Fatalf("SSH response = %+v", resp.SSH)
 	}
 	if resp.Status == nil || resp.Status.PublicIP != "203.0.113.55" || resp.Status.PrivateIP != "10.0.0.55" {

@@ -54,6 +54,7 @@ import {
 } from "#lib/auth/session-recovery.js";
 import { clearTechstackSecuritySessionState } from "#lib/logout-cleanup.js";
 
+import { tr } from "#lib/i18n.svelte.js";
 const CLOUD_PORTAL_SESSION_PROVIDER_ID = "cloud";
 
 // ============================================================================
@@ -198,7 +199,8 @@ class AuthStore {
         }
       } catch (err) {
         console.error("[AuthStore] Init error:", err);
-        this.error = err instanceof Error ? err.message : "Auth init failed";
+        this.error =
+          err instanceof Error ? err.message : tr("ui.auth.authInitFailed");
       } finally {
         this.loading = false;
         this.initialized = true;
@@ -332,10 +334,7 @@ class AuthStore {
         return false;
       }
       markAutoReloginAttempt();
-      return startGatewayLogin({
-        interactive: false,
-        returnTo: currentAuthReturnTo(),
-      });
+      return startGatewayLogin({ returnTo: currentAuthReturnTo() });
     }
   }
 
@@ -374,7 +373,7 @@ class AuthStore {
       return this.v2SessionActive;
     } catch (err) {
       console.error("[AuthStore] Login error:", err);
-      this.error = "Invalid email or password";
+      this.error = tr("ui.auth.invalidEmailOrPassword");
       return false;
     } finally {
       this.loading = false;
@@ -387,20 +386,18 @@ class AuthStore {
   initiateCloudLogin(options?: {
     returnTo?: string | null;
     redirect?: (url: string) => void;
-    interactive?: boolean;
   }): string | null {
     const target = this.v2LoginUrl || this.cloudAuthUrl;
     if (target) {
       const redirectURL = buildCloudAuthRedirectURL(target, {
         returnTo: options?.returnTo ?? currentAuthReturnTo(),
-        interactive: options?.interactive,
       });
       (options?.redirect ?? window.location.assign.bind(window.location))(
         redirectURL,
       );
       return redirectURL;
     } else {
-      this.error = "Cloud authentication not configured";
+      this.error = tr("ui.auth.cloudAuthenticationNotConfigured");
       return null;
     }
   }
@@ -412,9 +409,7 @@ class AuthStore {
     const data = await verifyPortalToken(token);
     const v2SessionConfirmed = await this.syncV2Session();
     if (!v2SessionConfirmed || !this.v2SessionActive || !this.cloudUser) {
-      throw new Error(
-        "Portal sign-in did not establish a verified browser session",
-      );
+      throw new Error(tr("ui.auth.portalSignInDidNot"));
     }
     this.cloudUser = data.cloud_user
       ? portalCloudUserToCloudUser(data.cloud_user)

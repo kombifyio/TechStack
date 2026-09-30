@@ -3,6 +3,7 @@ package routes
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -12,9 +13,65 @@ import (
 
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
+	"github.com/kombifyio/techstack/pkg/identity"
 	"github.com/kombifyio/techstack/pkg/pairingtoken"
 	"github.com/kombifyio/techstack/pkg/runtimeidentity"
 )
+
+func TestPairingRevocationReadbackMatchesCapabilityRefusalAndPreservesOtherPairing(t *testing.T) {
+	handler, store := newAgentBinaryTestHandler(t, "canonical-artifact", "amd64")
+	foreignToken, foreignHash, err := pairingtoken.Generate("tenant-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpsertPairingToken(t.Context(), controlplane.PairingToken{
+		ID: "protected-pairing", TenantID: "tenant-1", OwnerSubjectID: "owner-1", TokenHash: foreignHash,
+		Status: "active", ExpiresAt: timePointer(time.Now().UTC().Add(time.Minute)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	router := agentBinaryTestRouter(handler)
+	RegisterTrustRoutesWithStores(router, TrustRouteStores{Workers: store})
+	if response := performAgentBinaryTestRequest(t, router, "/api/v1/agent/binary/linux/amd64"); response.Code != http.StatusOK {
+		t.Fatalf("initial capability refused: %d", response.Code)
+	}
+	ownerRequest := func(method, path string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, nil)
+		req = req.WithContext(identity.NewContext(req.Context(), &identity.Identity{UserID: "owner-1", OrgID: "tenant-1"}))
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, req)
+		return recorder
+	}
+	if response := ownerRequest(http.MethodDelete, "/api/v1/trust/pairing-tokens/pairing-1"); response.Code != http.StatusOK {
+		t.Fatalf("owner revocation failed: %d", response.Code)
+	}
+	if response := performAgentBinaryTestRequest(t, router, "/api/v1/agent/binary/linux/amd64"); response.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked capability still usable: %d", response.Code)
+	}
+	foreignReq := httptest.NewRequest(http.MethodPost, "/api/v1/agent/binary/linux/amd64", nil)
+	foreignReq.Header.Set("Authorization", "Bearer "+foreignToken)
+	foreignRecorder := httptest.NewRecorder()
+	router.ServeHTTP(foreignRecorder, foreignReq)
+	if foreignRecorder.Code != http.StatusOK {
+		t.Fatalf("protected capability changed: %d", foreignRecorder.Code)
+	}
+	response := ownerRequest(http.MethodGet, "/api/v1/trust/pairing-tokens")
+	var listed struct {
+		Data struct {
+			Tokens []struct{ ID, Status string } `json:"tokens"`
+		} `json:"data"`
+	}
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &listed) != nil {
+		t.Fatal("owner revocation readback unavailable")
+	}
+	states := make(map[string]string)
+	for _, row := range listed.Data.Tokens {
+		states[row.ID] = row.Status
+	}
+	if states["pairing-1"] != "revoked" || states["protected-pairing"] != "active" {
+		t.Fatalf("readback contradicts capability effects: %#v", states)
+	}
+}
 
 func TestResolveStorePairingTokenUsesVersionedTenantScope(t *testing.T) {
 	rawToken, tokenHash, generateErr := pairingtoken.Generate("tenant-1")

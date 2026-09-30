@@ -7,7 +7,7 @@ const webServerCommand =
   "node ./scripts/playwright-no-setup-webserver.mjs";
 
 export default defineConfig({
-  testDir: "./tests",
+  testDir: "./tests/ui",
   timeout: 60000,
   expect: { timeout: 10000 },
   retries: 0,

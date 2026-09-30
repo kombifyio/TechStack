@@ -1,48 +1,54 @@
 package toolmanifest
 
-import "testing"
+import (
+	"net/http"
+	"testing"
 
-func TestManifestPublishesOnlyReadOnlyInventoryTools(t *testing.T) {
+	"github.com/kombifyio/techstack/internal/gocommon/apisurface"
+
+	"github.com/kombifyio/techstack/api/surface"
+)
+
+// The manifest is generated from the OpenAPI contract, so tool order, count and
+// schema detail follow the spec. The agent boundary stays fixed: no tool
+// accepts caller identity, target hosts or credentials as arguments, only GET
+// operations claim to be read-only, every cost-bearing tool requires
+// techstack.inventory.provision and nothing else does, and every other
+// destructive tool requires the confirmation-gated techstack.inventory.operate
+// capability. The Gateway catalog refuses a capability that mixes classes.
+func TestManifestKeepsTheAgentToolBoundary(t *testing.T) {
 	manifest, err := Parse()
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	want := []string{"list_servers", "server_health", "server_ports", "list_services", "server_access_context", "get_stack_operations"}
-	wantCapability := []string{"techstack.inventory.read", "techstack.inventory.read", "techstack.inventory.read", "techstack.inventory.read", "techstack.inventory.operate", "techstack.inventory.read"}
-	if manifest.Product != "techstack" || manifest.Capability != "techstack.inventory.read" || len(manifest.Tools) != len(want) {
-		t.Fatalf("manifest identity/tools = %#v", manifest)
+	s, err := apisurface.Parse(surface.Raw)
+	if err != nil {
+		t.Fatalf("surface: %v", err)
 	}
-	for i, tool := range manifest.Tools {
-		if tool.Name != want[i] {
-			t.Fatalf("tool[%d] = %q, want %q", i, tool.Name, want[i])
+	costBearing := map[string]bool{}
+	for _, op := range s.Operations {
+		if op.MCP != nil {
+			costBearing[op.OperationID] = op.MCP.CostBearing
 		}
-		if tool.RequiredCapability != wantCapability[i] {
-			t.Fatalf("tool %s capability = %q, want %q", tool.Name, tool.RequiredCapability, wantCapability[i])
-		}
-		for _, key := range []string{"tenant_id", "owner_id", "host", "token", "credential"} {
-			if _, exists := tool.InputSchema["properties"].(map[string]any)[key]; exists {
+	}
+	forbidden := []string{"tenant", "tenant_id", "owner_id", "subject_id", "user_id", "host", "token", "password", "secret", "credential", "ssh_key", "private_key", "api_key"}
+	for _, tool := range manifest.Tools {
+		properties, _ := tool.InputSchema["properties"].(map[string]any)
+		for _, key := range forbidden {
+			if _, exists := properties[key]; exists {
 				t.Fatalf("tool %s accepts forbidden argument %q", tool.Name, key)
 			}
 		}
-		if tool.Annotations["readOnlyHint"] != true || tool.Annotations["idempotentHint"] != true || tool.Annotations["destructiveHint"] != false || tool.Annotations["openWorldHint"] != false {
-			t.Fatalf("tool %s annotations = %#v", tool.Name, tool.Annotations)
+		readOnly := tool.Annotations["readOnlyHint"] == true
+		if readOnly != (tool.HTTP.Method == http.MethodGet) {
+			t.Fatalf("tool %s (%s) readOnlyHint = %v", tool.Name, tool.HTTP.Method, readOnly)
 		}
-		if tool.Name == "get_stack_operations" {
-			if tool.OperationID != "getStackOperations" || tool.HTTP.Method != "GET" || tool.HTTP.Path != "/api/v1/stacks/{id}/operations" {
-				t.Fatalf("get_stack_operations binding = %#v", tool)
-			}
-			inputProperties, _ := tool.InputSchema["properties"].(map[string]any)
-			if inputProperties["stack_id"] == nil {
-				t.Fatal("get_stack_operations input is missing stack_id")
-			}
-			defs, _ := tool.OutputSchema["$defs"].(map[string]any)
-			readiness, _ := defs["readiness"].(map[string]any)
-			properties, _ := readiness["properties"].(map[string]any)
-			for _, field := range []string{"status", "can_start", "required_servers", "approved_servers", "connected_servers", "pending_servers", "assigned_servers", "available_servers", "unassigned_servers", "message", "review_required"} {
-				if properties[field] == nil {
-					t.Fatalf("get_stack_operations readiness is missing %s", field)
-				}
-			}
+		provision := tool.RequiredCapability == "techstack.inventory.provision"
+		if costBearing[tool.OperationID] != provision {
+			t.Fatalf("tool %s (costBearing %v) requires %s", tool.Name, costBearing[tool.OperationID], tool.RequiredCapability)
+		}
+		if tool.Annotations["destructiveHint"] == true && !provision && tool.RequiredCapability != "techstack.inventory.operate" {
+			t.Fatalf("destructive tool %s requires %s", tool.Name, tool.RequiredCapability)
 		}
 	}
 }

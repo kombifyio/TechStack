@@ -6,6 +6,7 @@
  */
 import { writable, derived, get } from "svelte/store";
 
+import { tr } from "#lib/i18n.svelte.js";
 /** State for keyboard navigation */
 export interface ShortcutsState {
   /** Whether shortcuts are globally enabled */
@@ -34,36 +35,108 @@ export interface ShortcutDef {
 /** All available shortcuts */
 export const SHORTCUTS: ShortcutDef[] = [
   // List Navigation
-  { keys: ["j", "↓"], description: "Move down in list", category: "list" },
-  { keys: ["k", "↑"], description: "Move up in list", category: "list" },
-  { keys: ["Enter"], description: "Select/open item", category: "list" },
-  { keys: ["Home"], description: "Jump to first item", category: "list" },
-  { keys: ["End"], description: "Jump to last item", category: "list" },
+  {
+    keys: ["j", "↓"],
+    get description() {
+      return tr("ui.shortcuts.moveDownInList");
+    },
+    category: "list",
+  },
+  {
+    keys: ["k", "↑"],
+    get description() {
+      return tr("ui.shortcuts.moveUpInList");
+    },
+    category: "list",
+  },
+  {
+    keys: ["Enter"],
+    get description() {
+      return tr("ui.shortcuts.selectOpenItem");
+    },
+    category: "list",
+  },
+  {
+    keys: ["Home"],
+    get description() {
+      return tr("ui.shortcuts.jumpToFirstItem");
+    },
+    category: "list",
+  },
+  {
+    keys: ["End"],
+    get description() {
+      return tr("ui.shortcuts.jumpToLastItem");
+    },
+    category: "list",
+  },
 
   // Page Navigation (g + key sequences)
   {
     keys: ["g", "h"],
-    description: "Go to Home/Dashboard",
+    get description() {
+      return tr("ui.shortcuts.goToHomeDashboard");
+    },
     category: "navigation",
   },
-  { keys: ["g", "s"], description: "Go to Services", category: "navigation" },
-  { keys: ["g", "m"], description: "Go to Monitoring", category: "navigation" },
-  { keys: ["g", "w"], description: "Go to Wallet", category: "navigation" },
-  { keys: ["g", "t"], description: "Go to Settings", category: "navigation" },
+  {
+    keys: ["g", "s"],
+    get description() {
+      return tr("ui.shortcuts.goToServices");
+    },
+    category: "navigation",
+  },
+  {
+    keys: ["g", "m"],
+    get description() {
+      return tr("ui.shortcuts.goToMonitoring");
+    },
+    category: "navigation",
+  },
+  {
+    keys: ["g", "w"],
+    get description() {
+      return tr("ui.shortcuts.goToWallet");
+    },
+    category: "navigation",
+  },
+  {
+    keys: ["g", "t"],
+    get description() {
+      return tr("ui.shortcuts.goToSettings");
+    },
+    category: "navigation",
+  },
 
   // Actions
-  { keys: ["r"], description: "Refresh current view", category: "actions" },
-  { keys: ["/"], description: "Focus search input", category: "actions" },
+  {
+    keys: ["r"],
+    get description() {
+      return tr("ui.shortcuts.refreshCurrentView");
+    },
+    category: "actions",
+  },
+  {
+    keys: ["/"],
+    get description() {
+      return tr("ui.shortcuts.focusSearchInput");
+    },
+    category: "actions",
+  },
 
   // Dialogs
   {
     keys: ["?"],
-    description: "Show keyboard shortcuts help",
+    get description() {
+      return tr("ui.shortcuts.showKeyboardShortcutsHelp");
+    },
     category: "dialogs",
   },
   {
     keys: ["Escape"],
-    description: "Close dialog/deselect",
+    get description() {
+      return tr("ui.shortcuts.closeDialogDeselect");
+    },
     category: "dialogs",
   },
 ];

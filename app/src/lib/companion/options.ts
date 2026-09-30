@@ -70,9 +70,9 @@ export function companionMountOptions(
     transport: { mode: "token", getToken: context.getToken },
     messages: context.messages,
     ...(context.stackIdentity
-      ? {
+      ? ({
           stackIdentity: context.stackIdentity,
-        } as Pick<MountCompanionOptions, "stackIdentity">
+        } as Pick<MountCompanionOptions, "stackIdentity">)
       : {}),
   };
 }

@@ -1,5 +1,6 @@
 import { fetchApi } from "./client";
 
+import { tr } from "#lib/i18n.svelte.js";
 type PairingProvisioningMode = "install-command" | "connect-remote";
 
 function pairingProvisioningMode(
@@ -15,7 +16,10 @@ function pairingRemoteFields(
   metadata: Record<string, unknown>,
 ): Record<string, unknown> {
   const remote: Record<string, unknown> = {};
-  if (typeof metadata.server_remote_host === "string" && metadata.server_remote_host) {
+  if (
+    typeof metadata.server_remote_host === "string" &&
+    metadata.server_remote_host
+  ) {
     remote.server_remote_host = metadata.server_remote_host;
   }
   if (
@@ -24,7 +28,10 @@ function pairingRemoteFields(
   ) {
     remote.server_remote_port = metadata.server_remote_port;
   }
-  if (typeof metadata.server_remote_user === "string" && metadata.server_remote_user) {
+  if (
+    typeof metadata.server_remote_user === "string" &&
+    metadata.server_remote_user
+  ) {
     remote.server_remote_user = metadata.server_remote_user;
   }
   if (
@@ -68,9 +75,7 @@ export async function renewNodePairing(
     (Array.isArray(services) &&
       services.some((item) => typeof item !== "string"))
   ) {
-    throw new Error(
-      "The original Node configuration is unavailable. Return to Add Node to prepare the connection.",
-    );
+    throw new Error(tr("ui.pairing.theOriginalNodeConfigurationIs"));
   }
   const response = await fetchApi<{ token: string; expires_at: string }>(
     "/api/v1/trust/pairing-tokens",
@@ -79,7 +84,7 @@ export async function renewNodePairing(
       body: JSON.stringify({
         // Existing API compatibility boundary; callers use deploymentId.
         stack_id: deploymentId,
-        name: "Node connection",
+        name: tr("ui.pairing.nodeConnection"),
         server_provisioning_mode: mode,
         node_role: role,
         stackkit: foundation,
@@ -92,7 +97,7 @@ export async function renewNodePairing(
     },
   );
   if (!response.data?.token || !response.data.expires_at) {
-    throw new Error("The connection command could not be prepared. Try again.");
+    throw new Error(tr("ui.pairing.theConnectionCommandCouldNot"));
   }
   return response.data;
 }

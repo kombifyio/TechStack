@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr, trn } from "#lib/i18n.svelte.js";
   import {
     findServicesWithoutCredentials,
     addServiceCredentials,
@@ -45,7 +46,7 @@
       });
       selectedCredentials = allIds;
     } catch (err) {
-      error = err instanceof Error ? err.message : "Discovery failed";
+      error = err instanceof Error ? err.message : tr("ui.serviceDiscovery.discoveryFailed");
     } finally {
       loading = false;
     }
@@ -91,7 +92,7 @@
       onCredentialsAdded();
       onClose();
     } catch (err) {
-      error = err instanceof Error ? err.message : "Failed to add credentials";
+      error = err instanceof Error ? err.message : tr("ui.serviceDiscovery.failedToAddCredentials");
     } finally {
       adding = false;
     }
@@ -108,7 +109,7 @@
       case "oauth_token":
         return "OAuth";
       case "certificate":
-        return "Cert";
+        return tr("ui.credentialForm.cert");
       default:
         return "?";
     }
@@ -130,9 +131,9 @@
   }
 </script>
 
-<Modal title="Service Credential Discovery" {onClose} maxWidth="2xl">
+<Modal title={tr("ui.discovery.title")} {onClose} maxWidth="2xl">
   <p class="text-muted-foreground text-sm mb-6">
-    We found services that could benefit from credential entries in your wallet.
+    {tr("ui.discovery.found")}
   </p>
 
   {#if error}
@@ -164,9 +165,9 @@
           d="M5 13l4 4L19 7"
         />
       </svg>
-      <p class="text-foreground mb-2">All services covered!</p>
+      <p class="text-foreground mb-2">{tr("ui.discovery.allCovered")}</p>
       <p class="text-muted-foreground text-sm">
-        No services found that need wallet entries.
+        {tr("ui.discovery.noneNeeded")}
       </p>
     </div>
   {:else}
@@ -175,10 +176,10 @@
         onclick={toggleAll}
         class="text-sm text-primary hover:text-primary"
       >
-        {selectedCredentials.size > 0 ? "Deselect All" : "Select All"}
+        {selectedCredentials.size > 0 ? tr("ui.serviceDiscovery.deselectAll") : tr("ui.serviceDiscovery.selectAll")}
       </button>
       <span class="text-sm text-muted-foreground">
-        {selectedCredentials.size} selected
+        {tr("ui.discovery.selected", { count: selectedCredentials.size })}
       </span>
     </div>
 
@@ -194,7 +195,7 @@
                 {discovery.service.display_name || discovery.service.name}
               </h3>
               <p class="text-xs text-muted-foreground">
-                {discovery.service.type} • {discovery.service.url || "No URL"}
+                {discovery.service.type} • {discovery.service.url || tr("ui.serviceDiscovery.noUrl")}
               </p>
             </div>
           </div>
@@ -237,8 +238,7 @@
     <div
       class="p-3 rounded-lg bg-info/10 border border-info/30 text-sm text-info mb-6"
     >
-      <strong>Note:</strong> Credential placeholders will be created. You'll need
-      to fill in the actual secrets manually.
+      <strong>{tr("ui.discovery.noteLead")}</strong> {tr("ui.discovery.noteBody")}
     </div>
   {/if}
 
@@ -248,7 +248,7 @@
       data-kx="control"
       class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
     >
-      Cancel
+      {tr("common.cancel")}
     </button>
     {#if discoveries.length > 0}
       <button
@@ -259,12 +259,9 @@
         class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
       >
         {#if adding}
-          Adding...
+          {tr("ui.serviceDiscovery.adding")}
         {:else}
-          Add {selectedCredentials.size} Credential{selectedCredentials.size !==
-          1
-            ? "s"
-            : ""}
+          {trn("ui.discovery.addCredentials", selectedCredentials.size)}
         {/if}
       </button>
     {/if}

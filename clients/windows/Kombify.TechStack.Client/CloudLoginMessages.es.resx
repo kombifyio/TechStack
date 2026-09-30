@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="WaitingTitle" xml:space="preserve"><value>Continúa en tu navegador.</value></data>
+  <data name="WaitingDetail" xml:space="preserve"><value>Completa el inicio de sesión normal de kombify. Esta ventana continuará automáticamente.</value></data>
+  <data name="FailureTitle" xml:space="preserve"><value>El inicio de sesión en la nube no se completó.</value></data>
+  <data name="FailureDetail" xml:space="preserve"><value>Vuelve a la ventana de Techstack e inténtalo de nuevo con el inicio de sesión en el navegador.</value></data>
+  <data name="AccountMismatch" xml:space="preserve"><value>Esta instalación contiene datos de otra cuenta de Cloud. Usa esa cuenta o un perfil de Windows independiente.</value></data>
+  <data name="CallbackSuccess" xml:space="preserve"><value>Inicio de sesión recibido. Vuelve a la ventana de Techstack.</value></data>
+  <data name="CallbackFailure" xml:space="preserve"><value>Devolución de llamada de inicio de sesión no válida.</value></data>
+  <data name="ConnectSignInRequired" xml:space="preserve"><value>Primero inicia sesión en el producto Cloud y después abre kombify Connect desde la ventana de Techstack.</value></data>
+  <data name="ConnectAccountRequired" xml:space="preserve"><value>Connect necesita una sesión vigente del producto Cloud para esta cuenta. Inicia sesión en Techstack e inténtalo de nuevo.</value></data>
+</root>

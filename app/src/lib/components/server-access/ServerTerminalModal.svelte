@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr, stateLabel } from "#lib/i18n.svelte.js";
   import { onMount } from "svelte";
   import { X } from "@lucide/svelte";
   import { createTerminalSession } from "#lib/api/server-access.js";
@@ -76,11 +77,11 @@
             }
             if (message.type === "error") {
               connectionState = "error";
-              reason = message.reason || "Terminal connection failed";
+              reason = message.reason || tr("ui.serverTerminalModal.terminalConnectionFailed");
             }
           } catch {
             connectionState = "error";
-            reason = "Invalid terminal stream response";
+            reason = tr("ui.serverTerminalModal.invalidTerminalStreamResponse");
           }
         });
         socket.addEventListener("close", () => {
@@ -164,19 +165,19 @@
     <header class="flex items-center justify-between gap-4 border-b border-white/10 px-4 py-3">
       <div class="min-w-0">
         <h2 id="server-terminal-title" class="truncate font-semibold text-white">
-          Terminal · {serverName}
+          {tr("ui.terminal.title", { name: serverName })}
         </h2>
         <p class="mt-0.5 text-xs text-white/60" aria-live="polite">
-          {connectionState}{reason ? ` · ${reason.replaceAll("_", " ")}` : ""}
+          {connectionState}{reason ? ` · ${stateLabel(reason)}` : ""}
         </p>
       </div>
-      <button class="rounded-md p-2 text-white/70 hover:bg-white/10 hover:text-white" aria-label="Close terminal" onclick={onClose}>
+      <button class="rounded-md p-2 text-white/70 hover:bg-white/10 hover:text-white" aria-label={tr("ui.terminal.close")} onclick={onClose}>
         <X class="h-5 w-5" />
       </button>
     </header>
     <div class="relative min-h-0 flex-1 p-2 sm:p-3">
       {#if connectionState === "connecting"}
-        <div class="absolute inset-0 z-10 grid place-items-center bg-[#07090b] text-sm text-white/60">Creating a new protected session…</div>
+        <div class="absolute inset-0 z-10 grid place-items-center bg-[#07090b] text-sm text-white/60">{tr("ui.terminal.creating")}</div>
       {:else if connectionState === "error"}
         <div class="absolute inset-0 z-10 grid place-items-center bg-[#07090b] p-6 text-center text-sm text-red-300" role="alert">{reason}</div>
       {/if}

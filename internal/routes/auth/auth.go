@@ -24,9 +24,8 @@ func RegisterRoutesWithConfig(r *httpx.Router, app core.App, mode config.Deploym
 	// First-run setup wizard (public, one-shot, blocked after completion)
 	r.POST("/api/v1/auth/setup", handleSetup(app, mode, cfg.LocalSetupProvisioner, cfg.LocalOwnerStore))
 
-	// Stack identity persistence and retrieval
-	r.GET("/api/v1/auth/stack-identity", getStackIdentity(app, mode))
-	r.PUT("/api/v1/auth/stack-identity", updateStackIdentity(app, mode))
+	// Stack identity routes live with the homelab (internal/routes/stacks):
+	// the homelab name is the Stack Identity name.
 
 	// Provider logout for hosted kombify Cloud login.
 	r.GET("/api/v1/auth/logout", handleOIDCLogout(app))
@@ -40,8 +39,8 @@ func RegisterRoutesWithConfig(r *httpx.Router, app core.App, mode config.Deploym
 	// Cloud-link flow: connect a kombify Cloud profile to the local operator
 	// account (PKCE authorization-code flow, used by the cloud-linked owner
 	// source in the stack creation wizard).
-	r.POST("/api/v1/auth/cloud-link/start", handleCloudLinkStart(app))
-	r.GET("/api/v1/auth/cloud-link/callback", handleCloudLinkCallback(app))
+	r.POST("/api/v1/auth/cloud-link/start", handleCloudLinkStart(app, mode))
+	r.GET("/api/v1/auth/cloud-link/callback", handleCloudLinkCallback(app, mode))
 	r.GET("/api/v1/auth/cloud-link/status", getCloudLinkStatus(app))
 	r.DELETE("/api/v1/auth/cloud-link", deleteCloudLink(app))
 

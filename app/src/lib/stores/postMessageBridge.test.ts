@@ -10,10 +10,6 @@ vi.mock("$app/navigation", () => ({
   goto: vi.fn(),
 }));
 
-vi.mock("./theme", () => ({
-  theme: { set: vi.fn(), setSystemCardShape: vi.fn(), setHostFinish: vi.fn() },
-}));
-
 vi.mock("./stackIdentity", () => ({
   setStackIdentity: vi.fn(),
 }));
@@ -46,8 +42,10 @@ function portalMessage(parent: object, data: Record<string, unknown>): void {
 
 describe("postMessageBridge token lanes", () => {
   beforeEach(() => {
+    localStorage.clear();
     vi.resetModules();
     vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+    vi.stubGlobal("matchMedia", () => ({ matches: false }));
   });
 
   afterEach(async () => {
@@ -125,7 +123,6 @@ describe("postMessageBridge token lanes", () => {
     setParent(parent);
 
     const bridge = await import("./postMessageBridge");
-    const { theme } = await import("./theme");
     bridge.initBridge("https://kombify.io");
 
     portalMessage(parent, {
@@ -135,11 +132,9 @@ describe("postMessageBridge token lanes", () => {
       finish: "aurora",
     });
 
-    expect(theme.set).toHaveBeenCalledWith("dark");
-    expect(theme.setSystemCardShape).toHaveBeenCalledWith("app");
-    // The optional §4 host design context rides on the same message; the
-    // store validates the vocabulary, the bridge just forwards.
-    expect(theme.setHostFinish).toHaveBeenCalledWith("aurora");
+    expect(document.documentElement.dataset.appearance).toBe("dark");
+    expect(document.documentElement.dataset.systemCardShape).toBe("app");
+    expect(document.documentElement.dataset.finish).toBe("aurora");
   });
 
   it("coalesces waiters and re-sends one lost auth request after the rate-limit floor", async () => {

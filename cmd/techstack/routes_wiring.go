@@ -22,6 +22,7 @@ import (
 	"github.com/kombifyio/techstack/internal/executionchannel"
 	"github.com/kombifyio/techstack/internal/managedstackkit"
 	productnotifications "github.com/kombifyio/techstack/internal/notifications"
+	"github.com/kombifyio/techstack/internal/providercontrol"
 	"github.com/kombifyio/techstack/internal/rilactionexecution"
 	"github.com/kombifyio/techstack/internal/routes"
 	"github.com/kombifyio/techstack/internal/routes/auth"
@@ -43,6 +44,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/monthlyruntime"
 	"github.com/kombifyio/techstack/pkg/ril/actions"
 	"github.com/kombifyio/techstack/pkg/ril/activities"
+	"github.com/kombifyio/techstack/pkg/servermaintenance"
 	"github.com/kombifyio/techstack/pkg/specv2"
 	"github.com/kombifyio/techstack/pkg/stackrouting"
 	v2 "github.com/kombifyio/techstack/pkg/v2"
@@ -268,6 +270,7 @@ func portalSession(boot *v2Boot, secure bool) auth.PortalSession {
 	}
 	return auth.PortalSession{
 		Manager:    boot.session,
+		Browser:    boot.browserSessions,
 		CookieName: boot.cookieName,
 		Secure:     secure,
 		AuthStore:  authStore,
@@ -349,6 +352,8 @@ func rilControlPlaneStore(boot *v2Boot) controlplane.RILStore {
 type serverRuntimeControlPlaneAuthority interface {
 	controlplane.ServerRuntimeStore
 	controlplane.SelfOwnedServerDetacher
+	controlplane.ServerMaintenanceStore
+	controlplane.ServerEventStore
 }
 
 func serverRuntimeControlPlaneStore(boot *v2Boot) serverRuntimeControlPlaneAuthority {
@@ -356,6 +361,26 @@ func serverRuntimeControlPlaneStore(boot *v2Boot) serverRuntimeControlPlaneAutho
 		return nil
 	}
 	return controlPlanePostgresStore(boot)
+}
+
+// serverAgentCapabilities reports what a server's agent advertised. An mTLS
+// agent registers its capabilities with the gRPC server; an HTTPS agent
+// restates host maintenance support with every heartbeat, which lands in the
+// server metadata. The hub still refuses a host command at dispatch when the
+// polling agent does not advertise the capability.
+func serverAgentCapabilities(boot *grpcBoot) func(controlplane.ServerRuntime) []string {
+	return func(server controlplane.ServerRuntime) []string {
+		var capabilities []string
+		if boot != nil && boot.server != nil {
+			if agent, ok := boot.server.GetAgent(server.WorkerID); ok && agent != nil {
+				capabilities = append(capabilities, agent.Capabilities...)
+			}
+		}
+		if capable, _ := server.Metadata[servermaintenance.MetadataHostMaintenance].(bool); capable {
+			capabilities = append(capabilities, servermaintenance.AgentCapability)
+		}
+		return capabilities
+	}
 }
 
 func serviceRuntimeControlPlaneStore(boot *v2Boot) controlplane.ServiceRuntimeStore {
@@ -403,9 +428,23 @@ func registerRuntimeInventoryRoutes(router *httpx.Router, deps routeDeps, state 
 	if serverRuntimeStore == nil {
 		panic("registerRuntimeInventoryRoutes: DATABASE_URL required for canonical server registry")
 	}
+	serviceRuntimeStore := serviceRuntimeControlPlaneStore(deps.v2)
+	if serviceRuntimeStore == nil {
+		panic("registerRuntimeInventoryRoutes: DATABASE_URL required for canonical service registry")
+	}
 	routes.RegisterServerRuntimeRoutes(router, routes.ServerRuntimeRouteConfig{
 		Store: serverRuntimeStore, PortInventory: deps.portInventory, Detacher: serverRuntimeStore,
 		Policy: inventoryPolicy, AgentDisconnect: deps.grpc.server.RemoveAgent,
+		// The dispatcher runs `stackkit host` on agents that advertise
+		// stackkit.host-maintenance.v1; without a commander it is nil and
+		// maintenance stays inert.
+		Maintenance: &routes.ServerMaintenanceRouteConfig{
+			Dispatcher: jobs.HostMaintenanceDispatcherFor(deps.orch.StackKitCommander()),
+			Jobs:       serverRuntimeStore, Services: serviceRuntimeStore, Events: serverRuntimeStore,
+			Entitlements:                routes.EntitlementGateForDeployment(deps.startup.cfg.DeploymentMode.IsSaaS()),
+			AgentCapabilities:           serverAgentCapabilities(deps.grpc),
+			ControlPlaneMachineIDDigest: servermaintenance.LocalMachineIDDigest(""),
+		},
 	})
 	// Device readiness reaches machines that are not enrolled yet, which only
 	// a control plane inside the operator's own network can do. On a hosted
@@ -431,10 +470,6 @@ func registerRuntimeInventoryRoutes(router *httpx.Router, deps routeDeps, state 
 			Store: serverRuntimeStore, Transitions: transitionWindows,
 		})
 	}
-	serviceRuntimeStore := serviceRuntimeControlPlaneStore(deps.v2)
-	if serviceRuntimeStore == nil {
-		panic("registerRuntimeInventoryRoutes: DATABASE_URL required for canonical service registry")
-	}
 	routes.RegisterServiceRuntimeRoutes(router, routes.ServiceRuntimeRouteConfig{
 		Store: serviceRuntimeStore, Stacks: stackStores.Stacks, Servers: serverRuntimeStore, Jobs: stackStores.Jobs, Orchestrator: deps.orch,
 	})
@@ -450,6 +485,8 @@ func registerRuntimeInventoryRoutes(router *httpx.Router, deps routeDeps, state 
 		ServiceAuthSecret:     os.Getenv("SERVICE_AUTH_SECRET"),
 		ServiceAuthNext:       os.Getenv("SERVICE_AUTH_SECRET_NEXT"),
 		RuntimeSummaryContext: runtimeSummaryAuthorizationContext(deps.v2.authStore),
+		ManagedServersHeld:    managedServersHeldCounter(deps.providerControlDB),
+		Homelabs:              stackStores.Homelabs,
 	})
 	var stackKitOperations routes.WorkerStackKitOperations
 	if deps.v2 == nil || deps.v2.db == nil || deps.v2.db.DB == nil {
@@ -809,9 +846,9 @@ func mergeLocalAuthHandlers(deps routeDeps) {
 	handlers := localAuthHandlers(localSvc, deps.v2.registry, deps.log)
 	deps.v2.server.MergeAuthHandlers(v2.AuthHandlers{
 		Methods:          handlers.MethodsHandler(),
-		LocalLogin:       localOwnerLoginHandler(deps, handlers.LoginHandler()),
-		LocalLogout:      handlers.LogoutHandler(),
-		BreakGlassClaim:  handlers.ClaimHandler(),
+		LocalLogin:       deps.v2.browserSessions.WrapLogin(localOwnerLoginHandler(deps, handlers.LoginHandler())),
+		LocalLogout:      deps.v2.browserSessions.WrapLogin(handlers.LogoutHandler()),
+		BreakGlassClaim:  deps.v2.browserSessions.WrapLogin(handlers.ClaimHandler()),
 		BreakGlassReveal: handlers.RevealHandler(),
 	})
 	deps.log.Info("v2_local_auth_enabled", "breakglass_locked", os.Getenv("TECHSTACK_BREAKGLASS_LOCKED") == "true")
@@ -919,18 +956,13 @@ func registerLocalDeviceSessionRoute(router *httpx.Router, deps routeDeps) {
 }
 
 func registerLocalDeviceSessionRouteWithStore(router *httpx.Router, deps routeDeps, store commonauthlocal.Store) {
+	registerLocalDeviceProofRoutes(router, deps, store)
 	router.POST(localDeviceSessionPath, func(e *httpx.Event) error {
-		if deps.v2 == nil || deps.v2.session == nil {
-			return httpx.NotFound(e, "Local device session is not available")
-		}
 		// Positive gate: the route exists only in the local posture on a
 		// self-hosted deployment with a provisioned device token. Everything
 		// else — production, development, staging, SaaS, missing token — 404s.
 		expectedToken := strings.TrimSpace(os.Getenv(localDeviceTokenEnv))
-		if deps.startup == nil || deps.startup.cfg == nil ||
-			!deps.startup.cfg.IsLocal() ||
-			!deps.startup.cfg.DeploymentMode.IsSelfHosted() ||
-			expectedToken == "" {
+		if !localDeviceSessionAvailable(deps, expectedToken) {
 			return httpx.NotFound(e, "Local device session is not available")
 		}
 		if !localDeviceSessionLoopback(e.Request) {
@@ -944,44 +976,64 @@ func registerLocalDeviceSessionRouteWithStore(router *httpx.Router, deps routeDe
 			return httpx.Unauthorized(e, "Invalid local device token")
 		}
 		localDeviceSessionAttempts.reset()
+		return issueLocalDeviceSession(e, deps, store, expectedToken, nil)
+	})
+}
 
-		localStore := store
-		if localStore == nil && deps.v2.db != nil && deps.v2.db.DB != nil {
-			localStore = breakglassAuthStore(deps)
+func localDeviceSessionAvailable(deps routeDeps, expectedToken string) bool {
+	return deps.v2 != nil && deps.v2.session != nil && deps.startup != nil &&
+		deps.startup.cfg != nil && deps.startup.cfg.IsLocal() &&
+		deps.startup.cfg.DeploymentMode.IsSelfHosted() && expectedToken != ""
+}
+
+func issueLocalDeviceSession(e *httpx.Event, deps routeDeps, store commonauthlocal.Store, expectedToken string, proof *localDeviceChallenge) error {
+	localStore := store
+	if localStore == nil && deps.v2.db != nil && deps.v2.db.DB != nil {
+		localStore = breakglassAuthStore(deps)
+	}
+	deviceID := sha256.Sum256([]byte(expectedToken))
+	claims := authsession.Claims{
+		Subject:  fmt.Sprintf("device:%x", deviceID),
+		TenantID: localDeviceSessionTenant(deps),
+		Email:    localDeviceEmail,
+		Provider: localDeviceProvider,
+		Role:     "admin",
+	}
+	if localStore != nil {
+		rec, err := localStore.Get(e.Request.Context())
+		if err != nil {
+			return httpx.InternalError(e, "Local owner lookup failed")
 		}
-		deviceID := sha256.Sum256([]byte(expectedToken))
-		claims := authsession.Claims{
-			Subject:  fmt.Sprintf("device:%x", deviceID),
-			TenantID: localDeviceSessionTenant(deps),
-			Email:    localDeviceEmail,
-			Provider: localDeviceProvider,
-			Role:     "admin",
-		}
-		if localStore != nil {
-			rec, err := localStore.Get(e.Request.Context())
-			if err != nil {
+		if rec != nil && rec.Claimed {
+			if strings.TrimSpace(rec.Email) == "" {
 				return httpx.InternalError(e, "Local owner lookup failed")
 			}
-			if rec != nil && rec.Claimed {
-				if strings.TrimSpace(rec.Email) == "" {
-					return httpx.InternalError(e, "Local owner lookup failed")
-				}
-				claims.Subject = "breakglass:" + commonauthlocal.BreakGlassRecordID
-				claims.Email = strings.TrimSpace(rec.Email)
-				claims.Provider = commonauthlocal.DefaultProviderID
-			}
+			claims.Subject = "breakglass:" + commonauthlocal.BreakGlassRecordID
+			claims.Email = strings.TrimSpace(rec.Email)
+			claims.Provider = commonauthlocal.DefaultProviderID
 		}
-		token, err := deps.v2.session.Issue(claims)
-		if err != nil {
+	}
+	token, err := deps.v2.session.Issue(claims)
+	if err != nil {
+		return httpx.InternalError(e, "Local device session could not be issued")
+	}
+	authsession.SetSessionCookie(e.Response, localDeviceSessionCookieName(deps), token, false)
+	deps.v2.browserSessions.StampLogin(e.Response.Header())
+	if proof != nil {
+		cookies := e.Response.Header().Values("Set-Cookie")
+		if len(cookies) != 2 {
+			e.Response.Header().Del("Set-Cookie")
 			return httpx.InternalError(e, "Local device session could not be issued")
 		}
-		authsession.SetSessionCookie(e.Response, localDeviceSessionCookieName(deps), token, false)
-		return httpx.Success(e, http.StatusOK, map[string]any{
-			"ok":       true,
-			"email":    claims.Email,
-			"provider": claims.Provider,
-			"source":   "windows-device",
-		})
+		e.Response.Header().Set(localDeviceProofHeader, localDeviceMAC(expectedToken,
+			localDeviceProofMessage("response", proof.origin, proof.clientNonce, proof.serverNonce,
+				"200", localDeviceCanonicalCookies(cookies))))
+	}
+	return httpx.Success(e, http.StatusOK, map[string]any{
+		"ok":       true,
+		"email":    claims.Email,
+		"provider": claims.Provider,
+		"source":   "windows-device",
 	})
 }
 
@@ -1065,6 +1117,18 @@ func localDeviceSessionLoopback(r *http.Request) bool {
 
 // Reads the same stored grants as the browser path for the exact signed OBO.
 // Never bootstraps membership, rebinds a tenant or derives access from a tier.
+// managedServersHeldCounter backs the Cloud budget-usage read with the same
+// reservation count managed-runtime admission enforces. Without provider
+// control there is no count, and the route answers 503 instead of zero.
+func managedServersHeldCounter(database *sql.DB) routes.ManagedServersHeldFunc {
+	if database == nil {
+		return nil
+	}
+	return func(ctx context.Context, tenantID, ownerSubjectID string) (int, error) {
+		return providercontrol.HeldManagedRuntimeCapacity(ctx, database, tenantID, ownerSubjectID)
+	}
+}
+
 func runtimeSummaryAuthorizationContext(store controlplane.AuthStore) func(context.Context, string, string) (context.Context, error) {
 	return func(ctx context.Context, tenantID, subjectID string) (context.Context, error) {
 		if store == nil {

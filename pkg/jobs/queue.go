@@ -51,13 +51,18 @@ func NewID() string {
 }
 
 var ErrExecutionTargetBusy = errors.New("job execution target is busy")
+
+// ErrExecutionNodeMaintenance is a busy target whose node a claimed reboot or
+// OS update holds; the job waits like any busy target, with its own reason.
+var ErrExecutionNodeMaintenance = fmt.Errorf("%w: node under server maintenance", ErrExecutionTargetBusy)
 var ErrExecutionSnapshotFenced = errors.New("job execution snapshot is fenced by durable state")
 var ErrExecutionClaimFenced = errors.New("job execution claim is fenced by durable state")
 
 const (
-	WaitReasonStackExecution = "waiting_stack_execution"
-	WaitReasonRetryBackoff   = "waiting_retry_backoff"
-	WaitReasonExecutionClaim = "waiting_execution_claim"
+	WaitReasonStackExecution  = "waiting_stack_execution"
+	WaitReasonNodeMaintenance = "waiting_node_maintenance"
+	WaitReasonRetryBackoff    = "waiting_retry_backoff"
+	WaitReasonExecutionClaim  = "waiting_execution_claim"
 )
 
 const durableExecutionClaimTimeout = 15 * time.Second
@@ -638,6 +643,11 @@ func (q *Queue) handleExecutionClaimError(ctx context.Context, job *Job, attempt
 		q.cancelJobInternal(job, reason)
 		return
 	}
+	if errors.Is(claimErr, ErrExecutionNodeMaintenance) {
+		q.deferExecutionClaim(ctx, job, attempt.cleanup, attempt.previousStartedAt, WaitReasonNodeMaintenance,
+			"The server is being rebooted or updated", "Waiting for the server maintenance to finish")
+		return
+	}
 	if errors.Is(claimErr, ErrExecutionTargetBusy) {
 		q.deferBusyExecutionClaim(ctx, job, attempt.cleanup, attempt.previousStartedAt)
 		return
@@ -734,9 +744,15 @@ func (q *Queue) handleJobExecutionError(ctx context.Context, job *Job, err error
 	if !retryable {
 		reason = fmt.Sprintf("non-retryable error (%s): %s", category.String(), err)
 	}
-	q.recordJobOutcome(job, jobFailedOutcome(job, "job_"+category.String(), false, map[string]any{
+	reasonCode, extra := "job_"+category.String(), map[string]any{
 		"error_category": category.String(), "attempts": currentAttempts,
-	}))
+	}
+	if advancedReason, advancedOperation, ok := advancedFailureReason(err); ok {
+		// A StackKits Advanced denial or unavailable operation keeps its own
+		// machine-readable reason instead of the generic job category.
+		reasonCode, extra["stackkit_operation"] = advancedReason, advancedOperation
+	}
+	q.recordJobOutcome(job, jobFailedOutcome(job, reasonCode, false, extra))
 	q.failJob(job, reason)
 }
 

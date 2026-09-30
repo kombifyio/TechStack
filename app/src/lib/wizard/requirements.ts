@@ -1,3 +1,4 @@
+import { tr } from "#lib/i18n.svelte.js";
 /**
  * kombify-TechStack Deployment Requirements
  *
@@ -81,13 +82,11 @@ export function calculateRequirements(config: {
       minCloudServers: 0,
       minLocalServers: 1,
       minTotalServers: 1,
-      description: "Ubuntu guest on your Proxmox hypervisor",
+      description: tr("ui.requirements.ubuntuGuestOnYourProxmox"),
       details: [
-        "Techstack prepares the VM, then continues the standard StackKits installation.",
+        tr("ui.requirements.techstackPreparesTheVMThen"),
         ...(config.goals?.["smart-home"]
-          ? [
-              "Home Assistant OS can run in a separate appliance VM on the same hypervisor.",
-            ]
+          ? [tr("ui.requirements.homeAssistantOSCanRun")]
           : []),
       ],
     };
@@ -95,52 +94,48 @@ export function calculateRequirements(config: {
 
   if (serverProvisioningMode === "kombify-cloud") {
     minCloudServers = 1;
-    details.push(
-      "A kombify Cloud server is provisioned automatically through the subscription",
-    );
+    details.push(tr("ui.requirements.aKombifyCloudServerIs"));
     if (config.goals?.everything) {
-      details.push(
-        "Complete setup: kombify Cloud server with sufficient resources",
-      );
+      details.push(tr("ui.requirements.completeSetupKombifyCloudServer"));
     }
 
     return {
       minCloudServers,
       minLocalServers,
       minTotalServers: minCloudServers + minLocalServers,
-      description: "1 kombify Cloud server is provisioned automatically",
+      description: tr("ui.requirements.1KombifyCloudServerIs"),
       details,
     };
   }
 
   if (serverProvisioningMode === "connect-remote") {
     minLocalServers = 1;
-    details.push("An existing remote server is connected over SSH");
+    details.push(tr("ui.requirements.anExistingRemoteServerIs"));
     if (config.goals?.everything) {
-      details.push("Complete setup: At least 1 capable server");
+      details.push(tr("ui.requirements.completeSetupAtLeast1"));
     }
 
     return {
       minCloudServers,
       minLocalServers,
       minTotalServers: minCloudServers + minLocalServers,
-      description: "At least 1 existing server",
+      description: tr("ui.requirements.atLeast1ExistingServer"),
       details,
     };
   }
 
   if (serverProvisioningMode === "install-command") {
     minLocalServers = 1;
-    details.push("The installation command runs on your own server or device");
+    details.push(tr("ui.requirements.theInstallationCommandRunsOn"));
     if (config.goals?.everything) {
-      details.push("Complete setup: At least 1 capable server");
+      details.push(tr("ui.requirements.completeSetupAtLeast1"));
     }
 
     return {
       minCloudServers,
       minLocalServers,
       minTotalServers: minCloudServers + minLocalServers,
-      description: "At least 1 user-owned server",
+      description: tr("ui.requirements.atLeast1UserOwned"),
       details,
     };
   }
@@ -151,7 +146,7 @@ export function calculateRequirements(config: {
 
   if (provider === "cloud" || accessMode === "anywhere") {
     minCloudServers = 1;
-    details.push("A cloud server is required for external access");
+    details.push(tr("ui.requirements.aCloudServerIsRequired"));
   }
 
   if (
@@ -160,19 +155,19 @@ export function calculateRequirements(config: {
     accessMode !== "cloud-only"
   ) {
     minLocalServers = 1;
-    details.push("A local server is required for homelab services");
+    details.push(tr("ui.requirements.aLocalServerIsRequired"));
   }
 
   // Hybrid setup needs both
   if (provider === "hybrid") {
     minCloudServers = Math.max(minCloudServers, 1);
     minLocalServers = Math.max(minLocalServers, 1);
-    details.push("Hybrid setup: Cloud and local servers are connected");
+    details.push(tr("ui.requirements.hybridSetupCloudAndLocal"));
   }
 
   if (config.goals?.everything) {
     minLocalServers = Math.max(minLocalServers, 1);
-    details.push("Complete setup: At least 1 capable server");
+    details.push(tr("ui.requirements.completeSetupAtLeast1"));
   }
 
   const minTotalServers = minCloudServers + minLocalServers;
@@ -180,11 +175,14 @@ export function calculateRequirements(config: {
   // Build description
   let description = "";
   if (minCloudServers > 0 && minLocalServers > 0) {
-    description = `At least ${minCloudServers} cloud server and ${minLocalServers} local server`;
+    description = tr("ui.requirements.atLeastCloudServerAnd", {
+      minCloudServers,
+      minLocalServers,
+    });
   } else if (minCloudServers > 0) {
-    description = `At least ${minCloudServers} cloud server`;
+    description = tr("ui.requirements.atLeastCloudServer", { minCloudServers });
   } else {
-    description = `At least ${minLocalServers} local server`;
+    description = tr("ui.requirements.atLeastLocalServer", { minLocalServers });
   }
 
   return {
@@ -233,18 +231,17 @@ export function generateInstallCommands(
     {
       platform: "linux",
       command: `curl -fsSL ${baseUrl}/install.sh | KOMBI_SERVER="${baseUrl}" KOMBI_TOKEN="${registrationToken}" TECHSTACK_AS_SERVICE=1 bash`,
-      description:
-        "Linux (recommended) — installs the persistent outbound Guard through the Core/API URL (/install.sh). If running on another host/VM, replace localhost with the reachable IP/domain of your kombify-Techstack server.",
+      description: tr("ui.requirements.linuxRecommendedInstallsThePersistent"),
     },
     {
       platform: "docker",
       command: `docker run -d --name techstack-agent -e KOMBI_SERVER="${baseUrl}" -e KOMBI_TOKEN="${registrationToken}" techstack/agent:latest`,
-      description: "Docker container",
+      description: tr("ui.requirements.dockerContainer"),
     },
     {
       platform: "manual",
       command: `techstack agent register --server "${baseUrl}" --token "${registrationToken}"`,
-      description: "Manual installation (after binary download)",
+      description: tr("ui.requirements.manualInstallationAfterBinaryDownload"),
     },
   ];
 }

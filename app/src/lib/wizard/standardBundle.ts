@@ -1,3 +1,4 @@
+import { tr } from "#lib/i18n.svelte.js";
 /**
  * Active StandardBundle fixture for the release wizard.
  *
@@ -265,7 +266,9 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
   id: "basement-kit.standard.v1",
   version: "1.0.0",
   kit: "basement-kit",
-  releaseLabel: "Basement Kit standard release",
+  get releaseLabel() {
+    return tr("ui.standardBundle.basementKitStandardRelease");
+  },
   defaults: {
     name: "homelab",
     provider: "local",
@@ -365,21 +368,46 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
   wizard: {
     steps: {
       easy: [
-        { id: 1, key: "goals", label: "Goals", labelKey: "wizard.step.goals" },
+        {
+          id: 1,
+          key: "goals",
+          get label() {
+            return tr("ui.standardBundle.goals");
+          },
+          labelKey: "wizard.step.goals",
+        },
         {
           id: 2,
           key: "server",
-          label: "Node",
+          get label() {
+            return tr("ui.services.node");
+          },
           labelKey: "wizard.step.server",
         },
         {
           id: 3,
           key: "access",
-          label: "Access",
+          get label() {
+            return tr("ui.stacksCreatingCreationLease.access");
+          },
           labelKey: "wizard.step.access",
         },
-        { id: 4, key: "users", label: "Users", labelKey: "wizard.step.users" },
-        { id: 5, key: "login", label: "Login", labelKey: "wizard.step.login" },
+        {
+          id: 4,
+          key: "users",
+          get label() {
+            return tr("ui.standardBundle.users");
+          },
+          labelKey: "wizard.step.users",
+        },
+        {
+          id: 5,
+          key: "login",
+          get label() {
+            return tr("ui.standardBundle.login");
+          },
+          labelKey: "wizard.step.login",
+        },
       ],
     },
     discovery: {
@@ -555,15 +583,21 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
       {
         value: "wireguard",
         label: "WireGuard",
-        description: "Direct private mesh",
+        get description() {
+          return tr("ui.standardBundle.directPrivateMesh");
+        },
         titleKey: "wizard.access.vpn.wireguard",
         descriptionKey: "wizard.access.anywhere.help",
         testId: "techie-vpn-wireguard",
       },
       {
         value: "none",
-        label: "None",
-        description: "Local network only",
+        get label() {
+          return tr("ui.standardBundle.none");
+        },
+        get description() {
+          return tr("ui.standardBundle.localNetworkOnly");
+        },
         titleKey: "wizard.access.home.title",
         descriptionKey: "wizard.access.home.description",
         testId: "techie-vpn-none",
@@ -603,13 +637,17 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
       {
         value: "de/fra",
         label: "Frankfurt",
-        description: "Germany / EU primary",
+        get description() {
+          return tr("ui.standardBundle.germanyEUPrimary");
+        },
         testId: "ionos-datacenter-de-fra",
       },
       {
         value: "de/txl",
         label: "Berlin",
-        description: "Germany / EU secondary",
+        get description() {
+          return tr("ui.standardBundle.germanyEUSecondary");
+        },
         testId: "ionos-datacenter-de-txl",
       },
       {
@@ -623,35 +661,49 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
       {
         value: "basement-kit",
         label: "Basement Kit",
-        description:
-          "Local or user-owned Node target for first rollout and expansion.",
+        get description() {
+          return tr("ui.standardBundle.localOrUserOwnedNode");
+        },
         testId: "foundation-basement-kit",
       },
       {
         value: "cloud-kit",
         label: "Cloud Kit",
-        description: "Managed VPS foundation for kombify Cloud rollouts.",
+        get description() {
+          return tr("ui.standardBundle.managedVPSFoundationForKombify");
+        },
         testId: "foundation-cloud-kit",
       },
     ],
     nodeRoles: [
       {
         value: "foundation",
-        label: "Foundation Node",
-        description:
-          "First/core Node; wire-compatible with main, standalone, and control-plane.",
+        get label() {
+          return tr("ui.standardBundle.foundationNode");
+        },
+        get description() {
+          return tr("ui.standardBundle.firstCoreNodeWireCompatible");
+        },
         testId: "server-role-foundation",
       },
       {
         value: "worker",
-        label: "Worker Node",
-        description: "Additional compute Node for StackKit service placement.",
+        get label() {
+          return tr("ui.standardBundle.workerNode");
+        },
+        get description() {
+          return tr("ui.standardBundle.additionalComputeNodeForStackKit");
+        },
         testId: "server-role-worker",
       },
       {
         value: "storage",
-        label: "Storage Node",
-        description: "Additional Node intended for storage-heavy services.",
+        get label() {
+          return tr("ui.standardBundle.storageNode");
+        },
+        get description() {
+          return tr("ui.standardBundle.additionalNodeIntendedForStorage");
+        },
         testId: "server-role-storage",
       },
     ],
@@ -680,9 +732,12 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
     {
       key: "pocketId",
       label: "Pocket ID",
-      description: "Default identity provider for login-protected services",
-      helpText:
-        "Pocket ID is the standard external identity head for StackKit access.",
+      get description() {
+        return tr("ui.standardBundle.defaultIdentityProviderForLogin");
+      },
+      get helpText() {
+        return tr("ui.standardBundle.pocketIDIsTheStandard");
+      },
       testId: "techie-svc-pocket-id",
       defaultSelected: true,
       selectableInTechie: false,
@@ -693,9 +748,12 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
     {
       key: "pocketbase",
       label: "PocketBase",
-      description: "Auth and database backend",
-      helpText:
-        "Optional backend capability when a stack needs PocketBase-native auth or data.",
+      get description() {
+        return tr("ui.standardBundle.authAndDatabaseBackend");
+      },
+      get helpText() {
+        return tr("ui.standardBundle.optionalBackendCapabilityWhenA");
+      },
       testId: "techie-svc-pocketbase",
       defaultSelected: false,
       selectableInTechie: true,
@@ -706,9 +764,12 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
     {
       key: "headscale",
       label: "Headscale",
-      description: "Tailscale-compatible mesh VPN",
-      helpText:
-        "Creates a secure mesh network for device access without public ports.",
+      get description() {
+        return tr("ui.standardBundle.tailscaleCompatibleMeshVPN");
+      },
+      get helpText() {
+        return tr("ui.standardBundle.createsASecureMeshNetwork");
+      },
       testId: "techie-svc-headscale",
       defaultSelected: false,
       selectableInTechie: true,
@@ -719,9 +780,12 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
     {
       key: "traefik",
       label: "Traefik",
-      description: "Reverse proxy and load balancer",
-      helpText:
-        "Handles routing, HTTPS, and service entrypoints for the stack.",
+      get description() {
+        return tr("ui.standardBundle.reverseProxyAndLoadBalancer");
+      },
+      get helpText() {
+        return tr("ui.standardBundle.handlesRoutingHTTPSAndService");
+      },
       testId: "techie-svc-traefik",
       defaultSelected: true,
       selectableInTechie: true,
@@ -732,8 +796,12 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
     {
       key: "monitoring",
       label: "OpenTelemetry Collector",
-      description: "Standard observability pipeline",
-      helpText: "Collects telemetry signals for the Day-2 monitoring baseline.",
+      get description() {
+        return tr("ui.standardBundle.standardObservabilityPipeline");
+      },
+      get helpText() {
+        return tr("ui.standardBundle.collectsTelemetrySignalsForThe");
+      },
       testId: "techie-svc-monitoring",
       defaultSelected: true,
       selectableInTechie: true,
@@ -744,9 +812,12 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
     {
       key: "vaultwarden",
       label: "Vaultwarden",
-      description: "Password vault",
-      helpText:
-        "Adds a login-protected password vault when the Vault use case is selected.",
+      get description() {
+        return tr("ui.standardBundle.passwordVault");
+      },
+      get helpText() {
+        return tr("ui.standardBundle.addsALoginProtectedPassword");
+      },
       testId: "techie-svc-vaultwarden",
       defaultSelected: false,
       selectableInTechie: true,
@@ -757,10 +828,12 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
     {
       key: "immich",
       label: "Immich",
-      description:
-        "Photo library with supporting database, cache, and ML services",
-      helpText:
-        "Expands to the Immich server, machine-learning worker, Postgres, and Redis specs.",
+      get description() {
+        return tr("ui.standardBundle.photoLibraryWithSupportingDatabase");
+      },
+      get helpText() {
+        return tr("ui.standardBundle.expandsToTheImmichServer");
+      },
       testId: "techie-svc-immich",
       defaultSelected: false,
       selectableInTechie: true,
@@ -783,10 +856,15 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
     },
     {
       key: "files",
-      label: "Files",
-      description: "File storage module",
-      helpText:
-        "Reserved for the file-storage module once it is in the release baseline.",
+      get label() {
+        return tr("ui.standardBundle.files");
+      },
+      get description() {
+        return tr("ui.standardBundle.fileStorageModule");
+      },
+      get helpText() {
+        return tr("ui.standardBundle.reservedForTheFileStorage");
+      },
       testId: "techie-svc-files",
       defaultSelected: false,
       selectableInTechie: true,

@@ -4,89 +4,61 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"sync"
 
-	"github.com/kombifyio/techstack/api/toolmanifest"
+	"github.com/kombifyio/techstack/internal/gocommon/apisurface"
+	"github.com/kombifyio/techstack/internal/gocommon/apisurface/mcpbind"
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/kombifyio/techstack/api/surface"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
 )
 
 const (
-	inventoryMCPAnnotationsField       = "annotations"
-	inventoryMCPCapabilitiesField      = "capabilities"
 	inventoryMCPCodeField              = "code"
-	inventoryMCPContentField           = "content"
-	inventoryMCPDataField              = "data"
-	inventoryMCPDescriptionField       = "description"
 	inventoryMCPDevelopmentVersion     = "dev"
 	inventoryMCPErrorField             = "error"
-	inventoryMCPIDField                = "id"
-	inventoryMCPInputSchemaField       = "inputSchema"
-	inventoryMCPInstructionsField      = "instructions"
-	inventoryMCPIsErrorField           = "isError"
+	inventoryMCPGetStackOperationsTool = "get_stack_operations"
 	inventoryMCPJSONRPCField           = "jsonrpc"
 	inventoryMCPJSONRPCVersion         = "2.0"
-	inventoryMCPListChangedField       = "listChanged"
-	inventoryMCPMessageField           = "message"
-	inventoryMCPNameField              = "name"
-	inventoryMCPGetStackOperationsTool = "get_stack_operations"
-	inventoryMCPOutputSchemaField      = "outputSchema"
-	inventoryMCPProtocolVersion        = "2025-11-25"
-	inventoryMCPProtocolVersionField   = "protocolVersion"
-	inventoryMCPRequiredCapability     = "x-kombify-capability"
-	inventoryMCPResultField            = "result"
-	inventoryMCPServerInfoField        = "serverInfo"
-	inventoryMCPServerName             = "kombify-techstack"
-	inventoryMCPStackIDField           = "stack_id"
-	inventoryMCPStatusField            = "status"
-	inventoryMCPStructuredContentField = "structuredContent"
-	inventoryMCPTextField              = "text"
-	inventoryMCPTitleField             = "title"
-	inventoryMCPToolsField             = "tools"
-	inventoryMCPTypeField              = "type"
-	inventoryMCPVersionField           = "version"
+	inventoryMCPPrivateCacheScope      = "private"
+	// inventoryMCPRequiredCapability names the per-tool entitlement key. The
+	// official SDK only carries tool extensions in `_meta`, so each listed tool
+	// publishes it there.
+	inventoryMCPRequiredCapability = "x-kombify-capability"
+	inventoryMCPServerName         = "kombify-techstack"
+	inventoryMCPStackIDField       = "stack_id"
+	inventoryMCPStatusField        = "status"
+	// JSON-RPC server-error codes from the implementation-defined range
+	// (-32000..-32019); the MCP-reserved range -32020..-32099 stays untouched.
+	inventoryMCPCodeUnauthenticated = -32001
+	inventoryMCPCodeForbidden       = -32003
 )
 
-type inventoryMCPRequest struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id,omitempty"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params,omitempty"`
-}
+// inventoryMCPStackOperationsPath is the canonical Operations route the
+// get_stack_operations tool invokes directly.
+const inventoryMCPStackOperationsPath = "/api/v1/stacks/{id}/operations"
 
-type inventoryMCPToolCall struct {
-	Name      string         `json:"name"`
-	Arguments map[string]any `json:"arguments"`
-}
+// inventoryMCPRouteLookup resolves the leaf handler registered for an
+// operation's method and path template (httpx.Router.LeafHandler). It is
+// consulted per call, so routes registered after the MCP endpoint are found.
+type inventoryMCPRouteLookup func(method, template string) (httpx.HandlerFunc, string, bool)
 
-// Router-scoped binding keeps MCP on the canonical Operations handler without
-// replaying request-bound edge authentication through a synthetic HTTP call.
-var inventoryMCPStackOperationsHandlers sync.Map // map[*httpx.Router]httpx.HandlerFunc
-
-func registerInventoryMCPStackOperationsHandler(r *httpx.Router, handler httpx.HandlerFunc) {
-	if r == nil || handler == nil {
-		return
-	}
-	inventoryMCPStackOperationsHandlers.Store(r, handler)
-}
-
-func inventoryMCPStackOperationsHandler(r *httpx.Router) httpx.HandlerFunc {
-	if r == nil {
-		return nil
-	}
-	handler, _ := inventoryMCPStackOperationsHandlers.Load(r)
-	result, _ := handler.(httpx.HandlerFunc)
-	return result
-}
+// inventoryMCPSurface is the embedded, generated API surface every tool is
+// registered from.
+var inventoryMCPSurface = sync.OnceValues(func() (*apisurface.Surface, error) {
+	return apisurface.Parse(surface.Raw)
+})
 
 func registerInventoryMCPRoutes(r *httpx.Router, h inventoryHandlers) {
-	handler := func(e *httpx.Event) error {
-		return h.handleMCPWithStackOperations(e, inventoryMCPStackOperationsHandler(r))
-	}
+	handler := newInventoryMCPHandler(h, r.LeafHandler)
 	methodNotAllowed := func(e *httpx.Event) error {
 		e.Response.Header().Set("Allow", http.MethodPost)
 		return e.NoContent(http.StatusMethodNotAllowed)
@@ -97,129 +69,263 @@ func registerInventoryMCPRoutes(r *httpx.Router, h inventoryHandlers) {
 	r.GET("/v1/mcp/public/techstack", methodNotAllowed)
 }
 
-func (h inventoryHandlers) handleMCPWithStackOperations(e *httpx.Event, stackOperations httpx.HandlerFunc) error {
-	e.Response.Header().Set("MCP-Protocol-Version", inventoryMCPProtocolVersion)
-	if !validMCPOrigin(e.Request) {
-		return writeMCPHTTPError(e, http.StatusForbidden, nil, -32003, "Forbidden", "origin_not_allowed")
+// inventoryMCPCaller is the authenticated request context every MCP method
+// re-derives from its own HTTP request; the stateless transport keeps no
+// connection-scoped authorization state.
+type inventoryMCPCaller struct {
+	scope inventoryScope
+	event *httpx.Event
+}
+
+type inventoryMCPCallerKey struct{}
+
+func inventoryMCPCallerFromContext(ctx context.Context) (inventoryMCPCaller, bool) {
+	caller, ok := ctx.Value(inventoryMCPCallerKey{}).(inventoryMCPCaller)
+	return caller, ok
+}
+
+// newInventoryMCPHandler serves the inventory MCP on the official go-sdk in
+// stateless mode: MCP 2026-07-28 with server/discover, plus the SDK's legacy
+// handling of earlier revisions (initialize-based clients and header-less
+// single tools/call requests such as the Gateway product-native backend call).
+// Browser origins and unauthenticated callers are rejected before the SDK
+// parses the body.
+func newInventoryMCPHandler(h inventoryHandlers, routes inventoryMCPRouteLookup) httpx.HandlerFunc {
+	server := h.newInventoryMCPServer(routes)
+	transport := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return server }, &mcpsdk.StreamableHTTPOptions{
+		Stateless:                    true,
+		JSONResponse:                 true,
+		PropagateRequestCancellation: true,
+	})
+	return func(e *httpx.Event) error {
+		if !validMCPOrigin(e.Request) {
+			return writeMCPHTTPError(e, http.StatusForbidden, inventoryMCPCodeForbidden, "Forbidden", "origin_not_allowed")
+		}
+		scope, err := inventoryScopeFromEvent(e)
+		if err != nil {
+			return writeMCPAuthError(e, err)
+		}
+		ctx := context.WithValue(e.Request.Context(), inventoryMCPCallerKey{}, inventoryMCPCaller{scope: scope, event: e})
+		transport.ServeHTTP(e.Response, e.Request.WithContext(ctx))
+		return nil
 	}
-	if header := strings.TrimSpace(e.Request.Header.Get("MCP-Protocol-Version")); header != "" && header != inventoryMCPProtocolVersion {
-		return writeMCPHTTPError(e, http.StatusBadRequest, nil, -32600, "Unsupported MCP protocol version", "unsupported_protocol_version")
-	}
-	var request inventoryMCPRequest
-	decoder := json.NewDecoder(e.Request.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil || request.JSONRPC != inventoryMCPJSONRPCVersion || strings.TrimSpace(request.Method) == "" {
-		return writeMCPHTTPError(e, http.StatusBadRequest, nil, -32600, "Invalid JSON-RPC request", "invalid_request")
-	}
-	scope, err := inventoryScopeFromEvent(e)
+}
+
+func (h inventoryHandlers) newInventoryMCPServer(routes inventoryMCPRouteLookup) *mcpsdk.Server {
+	server := mcpsdk.NewServer(&mcpsdk.Implementation{
+		Name:    inventoryMCPServerName,
+		Title:   "Kombify Techstack",
+		Version: firstNonEmptyString(h.version, inventoryMCPDevelopmentVersion),
+	}, &mcpsdk.ServerOptions{
+		Instructions: "Policy-scoped Techstack tools generated from the OpenAPI contract: reads (techstack.inventory.read), writes and validations (techstack.inventory.write), confirmation-gated runtime operations (techstack.inventory.operate) and cost-bearing provisioning (techstack.inventory.provision). Tenant and subject identity are derived from authenticated context and must never be supplied as tool arguments.",
+		Capabilities: &mcpsdk.ServerCapabilities{Tools: &mcpsdk.ToolCapabilities{}},
+	})
+	// The catalog is the embedded, generated API surface; a build that cannot
+	// bind every exposed operation fails at route registration instead of
+	// serving a partial catalog.
+	s, err := inventoryMCPSurface()
 	if err != nil {
-		return writeMCPAuthError(e, request.ID, err)
+		panic(fmt.Errorf("inventory MCP surface: %w", err))
 	}
-	if len(request.ID) == 0 {
-		if request.Method == "notifications/initialized" || strings.HasPrefix(request.Method, "notifications/") {
-			return e.NoContent(http.StatusAccepted)
+	handlers := h.inventoryMCPApplicationHandlers(routes)
+	applicationBound := make(map[string]bool, len(handlers))
+	for operationID := range handlers {
+		applicationBound[operationID] = true
+	}
+	for i := range s.Operations {
+		op := &s.Operations[i]
+		if op.MCP != nil && handlers[op.OperationID] == nil {
+			handlers[op.OperationID] = inventoryMCPRouteTool(op, s.Envelope, routes)
 		}
-		return writeMCPHTTPError(e, http.StatusBadRequest, nil, -32600, "Request id required", "request_id_required")
 	}
-	return h.dispatchMCPRequest(e, request, scope, stackOperations)
+	if err := mcpbind.Register(server, s, mcpbind.Options{
+		Handlers:  handlers,
+		Authorize: h.authorizeInventoryMCPTool(applicationBound),
+		Meta: func(op *apisurface.Operation) mcpsdk.Meta {
+			return mcpsdk.Meta{inventoryMCPRequiredCapability: op.MCP.RequiredCapability}
+		},
+	}); err != nil {
+		panic(fmt.Errorf("inventory MCP tools: %w", err))
+	}
+	server.AddReceivingMiddleware(h.authorizeInventoryMCPDiscovery)
+	return server
 }
 
-func (h inventoryHandlers) dispatchMCPRequest(e *httpx.Event, request inventoryMCPRequest, scope inventoryScope, stackOperations httpx.HandlerFunc) error {
-	switch request.Method {
-	case "initialize":
-		return writeMCPResult(e, request.ID, map[string]any{
-			inventoryMCPProtocolVersionField: inventoryMCPProtocolVersion,
-			inventoryMCPCapabilitiesField:    map[string]any{inventoryMCPToolsField: map[string]any{inventoryMCPListChangedField: false}},
-			inventoryMCPServerInfoField: map[string]any{
-				inventoryMCPNameField: inventoryMCPServerName, inventoryMCPTitleField: "Kombify Techstack", inventoryMCPVersionField: firstNonEmptyString(h.version, inventoryMCPDevelopmentVersion),
-			},
-			inventoryMCPInstructionsField: "Read-only, policy-scoped Techstack inventory. Tenant and subject identity are derived from authenticated context and must never be supplied as tool arguments.",
-		})
-	case "ping":
-		return writeMCPResult(e, request.ID, map[string]any{})
-	case "tools/list":
-		if _, err := h.app.authorize(e.Request.Context(), scope, InventoryActionRead, controlplane.InventoryReadTargetTools, ""); err != nil {
-			return writeMCPToolError(e, request.ID, err)
+// inventoryMCPApplicationHandlers binds the reviewed inventory tools to their
+// application operations, which authorize the exact resource themselves.
+func (h inventoryHandlers) inventoryMCPApplicationHandlers(routes inventoryMCPRouteLookup) map[string]mcpbind.Handler {
+	serverRead := func(read func(context.Context, inventoryScope, string) (any, error)) inventoryMCPApplicationCall {
+		return func(ctx context.Context, caller inventoryMCPCaller, arguments map[string]any) (any, error) {
+			if err := validateMCPArguments(arguments, map[string]bool{inventoryServerIDField: true}, map[string]bool{inventoryServerIDField: true}); err != nil {
+				return nil, err
+			}
+			return read(ctx, caller.scope, stringArgument(arguments, inventoryServerIDField))
 		}
-		manifest, parseErr := toolmanifest.Parse()
-		if parseErr != nil {
-			return writeMCPProtocolError(e, request.ID, -32603, "Tool catalog unavailable", map[string]any{inventoryReasonCodeField: "tool_catalog_unavailable"})
+	}
+	calls := map[string]inventoryMCPApplicationCall{
+		"listInventoryServers": func(ctx context.Context, caller inventoryMCPCaller, arguments map[string]any) (any, error) {
+			page, err := inventoryMCPPage(arguments, map[string]bool{inventoryCursorField: true, inventoryLimitField: true})
+			if err != nil {
+				return nil, err
+			}
+			return h.app.listServers(ctx, caller.scope, page)
+		},
+		"getInventoryServerHealth": serverRead(func(ctx context.Context, scope inventoryScope, serverID string) (any, error) {
+			return h.app.serverHealth(ctx, scope, serverID)
+		}),
+		"getInventoryServerPorts": serverRead(func(ctx context.Context, scope inventoryScope, serverID string) (any, error) {
+			return h.app.serverPorts(ctx, scope, serverID)
+		}),
+		"getInventoryServerAccessContext": serverRead(func(ctx context.Context, scope inventoryScope, serverID string) (any, error) {
+			return h.app.serverAccessContext(ctx, scope, serverID)
+		}),
+		"listInventoryServices": func(ctx context.Context, caller inventoryMCPCaller, arguments map[string]any) (any, error) {
+			page, err := inventoryMCPPage(arguments, map[string]bool{inventoryServerIDField: true, inventoryCursorField: true, inventoryLimitField: true})
+			if err != nil {
+				return nil, err
+			}
+			return h.app.listServices(ctx, caller.scope, stringArgument(arguments, inventoryServerIDField), page)
+		},
+		"renameInventoryServer": func(ctx context.Context, caller inventoryMCPCaller, arguments map[string]any) (any, error) {
+			allowed := map[string]bool{inventoryServerIDField: true, inventoryDisplayNameField: true}
+			if err := validateMCPArguments(arguments, allowed, map[string]bool{inventoryServerIDField: true}); err != nil {
+				return nil, err
+			}
+			// An empty display_name clears the rename, so presence is checked
+			// instead of a non-empty value.
+			if _, ok := arguments[inventoryDisplayNameField]; !ok {
+				return nil, inventoryValidationError("display_name_required", "Required tool argument missing")
+			}
+			displayName, _ := arguments[inventoryDisplayNameField].(string)
+			return h.app.renameServer(ctx, caller.scope, stringArgument(arguments, inventoryServerIDField), displayName)
+		},
+		"renameHomelab": func(ctx context.Context, caller inventoryMCPCaller, arguments map[string]any) (any, error) {
+			if err := validateMCPArguments(arguments, map[string]bool{inventoryHomelabNameField: true}, map[string]bool{inventoryHomelabNameField: true}); err != nil {
+				return nil, err
+			}
+			name, _ := arguments[inventoryHomelabNameField].(string)
+			return h.app.renameHomelab(ctx, caller.scope, name)
+		},
+		"getStackOperations": func(ctx context.Context, caller inventoryMCPCaller, arguments map[string]any) (any, error) {
+			stackID, err := inventoryMCPStackID(arguments)
+			if err != nil {
+				return nil, err
+			}
+			var stackOperations httpx.HandlerFunc
+			if routes != nil {
+				stackOperations, _, _ = routes(http.MethodGet, inventoryMCPStackOperationsPath)
+			}
+			return h.callStackOperationsTool(ctx, caller.scope, stackID, stackOperations, caller.event)
+		},
+	}
+	handlers := make(map[string]mcpbind.Handler, len(calls))
+	for operationID, call := range calls {
+		handlers[operationID] = inventoryMCPApplicationHandler(call)
+	}
+	return handlers
+}
+
+type inventoryMCPApplicationCall func(ctx context.Context, caller inventoryMCPCaller, arguments map[string]any) (any, error)
+
+func inventoryMCPApplicationHandler(call inventoryMCPApplicationCall) mcpbind.Handler {
+	return func(ctx context.Context, _ *mcpsdk.CallToolRequest, arguments map[string]any) (any, error) {
+		caller, ok := inventoryMCPCallerFromContext(ctx)
+		if !ok {
+			return nil, inventoryMCPFailure(inventoryMCPAuthenticationRequired())
 		}
-		tools := make([]map[string]any, 0, len(manifest.Tools))
-		for _, tool := range manifest.Tools {
-			tools = append(tools, map[string]any{
-				inventoryMCPNameField: tool.Name, inventoryMCPTitleField: tool.Title, inventoryMCPDescriptionField: tool.Description,
-				inventoryMCPInputSchemaField: tool.InputSchema, inventoryMCPOutputSchemaField: tool.OutputSchema, inventoryMCPAnnotationsField: tool.Annotations,
-				inventoryMCPRequiredCapability: tool.RequiredCapability,
-			})
+		result, err := call(ctx, caller, arguments)
+		if err != nil {
+			return nil, inventoryMCPFailure(err)
 		}
-		return writeMCPResult(e, request.ID, map[string]any{inventoryMCPToolsField: tools})
-	case "tools/call":
-		var call inventoryMCPToolCall
-		if len(request.Params) == 0 || json.Unmarshal(request.Params, &call) != nil || strings.TrimSpace(call.Name) == "" {
-			return writeMCPProtocolError(e, request.ID, -32602, "Invalid tool call", map[string]any{inventoryReasonCodeField: "invalid_tool_call"})
-		}
-		result, callErr := h.callInventoryTool(e.Request.Context(), scope, call, stackOperations, e)
-		if callErr != nil {
-			return writeMCPToolError(e, request.ID, callErr)
-		}
-		return writeMCPToolResult(e, request.ID, result)
-	default:
-		return writeMCPProtocolError(e, request.ID, -32601, "Method not found", nil)
+		return result, nil
 	}
 }
 
-func (h inventoryHandlers) callInventoryTool(ctx context.Context, scope inventoryScope, call inventoryMCPToolCall, stackOperations httpx.HandlerFunc, sourceEvent *httpx.Event) (any, error) {
-	arguments := call.Arguments
-	if arguments == nil {
-		arguments = map[string]any{}
+// authorizeInventoryMCPTool is the pre-handler authorization hook. Tools bound
+// to an application operation are authorized there against their exact
+// resource; every route-invoked tool needs the inventory action its required
+// capability names on the tenant tool surface before its route handler runs.
+func (h inventoryHandlers) authorizeInventoryMCPTool(applicationBound map[string]bool) func(context.Context, *apisurface.Operation) error {
+	return func(ctx context.Context, op *apisurface.Operation) error {
+		if applicationBound[op.OperationID] {
+			return nil
+		}
+		caller, ok := inventoryMCPCallerFromContext(ctx)
+		if !ok {
+			return inventoryMCPFailure(inventoryMCPAuthenticationRequired())
+		}
+		action, ok := inventoryMCPActionForCapability(op.MCP.RequiredCapability)
+		if !ok {
+			return inventoryMCPFailure(&inventoryError{status: http.StatusForbidden, reasonCode: "inventory_access_denied", message: "Inventory access denied"})
+		}
+		if _, err := h.app.authorize(ctx, caller.scope, action, controlplane.InventoryReadTargetTools, ""); err != nil {
+			return inventoryMCPFailure(err)
+		}
+		return nil
 	}
-	switch call.Name {
-	case "list_servers":
-		if err := validateMCPArguments(arguments, map[string]bool{inventoryCursorField: true, inventoryLimitField: true}, nil); err != nil {
-			return nil, err
-		}
-		page, err := inventoryPageFromMCPArguments(arguments)
-		if err != nil {
-			return nil, err
-		}
-		return h.app.listServers(ctx, scope, page)
-	case "server_health":
-		if err := validateMCPArguments(arguments, map[string]bool{inventoryServerIDField: true}, map[string]bool{inventoryServerIDField: true}); err != nil {
-			return nil, err
-		}
-		return h.app.serverHealth(ctx, scope, stringArgument(arguments, inventoryServerIDField))
-	case "server_ports":
-		if err := validateMCPArguments(arguments, map[string]bool{inventoryServerIDField: true}, map[string]bool{inventoryServerIDField: true}); err != nil {
-			return nil, err
-		}
-		return h.app.serverPorts(ctx, scope, stringArgument(arguments, inventoryServerIDField))
-	case "list_services":
-		if err := validateMCPArguments(arguments, map[string]bool{inventoryServerIDField: true, inventoryCursorField: true, inventoryLimitField: true}, nil); err != nil {
-			return nil, err
-		}
-		page, err := inventoryPageFromMCPArguments(arguments)
-		if err != nil {
-			return nil, err
-		}
-		return h.app.listServices(ctx, scope, stringArgument(arguments, inventoryServerIDField), page)
-	case "server_access_context":
-		if err := validateMCPArguments(arguments, map[string]bool{inventoryServerIDField: true}, map[string]bool{inventoryServerIDField: true}); err != nil {
-			return nil, err
-		}
-		return h.app.serverAccessContext(ctx, scope, stringArgument(arguments, inventoryServerIDField))
-	case inventoryMCPGetStackOperationsTool:
-		if err := validateMCPArguments(arguments, map[string]bool{inventoryMCPStackIDField: true}, map[string]bool{inventoryMCPStackIDField: true}); err != nil {
-			return nil, err
-		}
-		stackID := stringArgument(arguments, inventoryMCPStackIDField)
-		if len(stackID) > 256 {
-			return nil, &inventoryError{status: http.StatusBadRequest, reasonCode: "stack_id_invalid", message: "Stack ID is invalid"}
-		}
-		return h.callStackOperationsTool(ctx, scope, stackID, stackOperations, sourceEvent)
+}
+
+func inventoryMCPActionForCapability(capability string) (InventoryAction, bool) {
+	switch capability {
+	case InventoryEntitlementRead:
+		return InventoryActionRead, true
+	case InventoryEntitlementWrite:
+		return InventoryActionWrite, true
+	case InventoryEntitlementOperate:
+		return InventoryActionOperate, true
+	case InventoryEntitlementProvision:
+		return InventoryActionProvision, true
 	default:
-		return nil, &inventoryError{status: http.StatusBadRequest, reasonCode: "tool_not_found", message: "Tool not found"}
+		return "", false
 	}
+}
+
+func inventoryMCPAuthenticationRequired() *inventoryError {
+	return &inventoryError{status: http.StatusUnauthorized, reasonCode: "authentication_required", message: "Authentication required"}
+}
+
+// authorizeInventoryMCPDiscovery applies the inventory tool-catalog policy to
+// discovery (server/discover and tools/list), so a principal the policy denies
+// learns nothing, and marks the principal-gated results as privately cacheable.
+func (h inventoryHandlers) authorizeInventoryMCPDiscovery(next mcpsdk.MethodHandler) mcpsdk.MethodHandler {
+	return func(ctx context.Context, method string, request mcpsdk.Request) (mcpsdk.Result, error) {
+		if method != "server/discover" && method != "tools/list" {
+			return next(ctx, method, request)
+		}
+		caller, ok := inventoryMCPCallerFromContext(ctx)
+		if !ok {
+			return nil, inventoryMCPDenial(&inventoryError{status: http.StatusUnauthorized, reasonCode: "authentication_required", message: "Authentication required"})
+		}
+		if _, err := h.app.authorize(ctx, caller.scope, InventoryActionRead, controlplane.InventoryReadTargetTools, ""); err != nil {
+			return nil, inventoryMCPDenial(err)
+		}
+		result, err := next(ctx, method, request)
+		switch typed := result.(type) {
+		case *mcpsdk.ListToolsResult:
+			typed.CacheScope = inventoryMCPPrivateCacheScope
+		case *mcpsdk.DiscoverResult:
+			typed.CacheScope = inventoryMCPPrivateCacheScope
+		}
+		return result, err
+	}
+}
+
+func inventoryMCPPage(arguments map[string]any, allowed map[string]bool) (inventoryPageOptions, error) {
+	if err := validateMCPArguments(arguments, allowed, nil); err != nil {
+		return inventoryPageOptions{}, err
+	}
+	return inventoryPageFromMCPArguments(arguments)
+}
+
+func inventoryMCPStackID(arguments map[string]any) (string, error) {
+	if err := validateMCPArguments(arguments, map[string]bool{inventoryMCPStackIDField: true}, map[string]bool{inventoryMCPStackIDField: true}); err != nil {
+		return "", err
+	}
+	stackID := stringArgument(arguments, inventoryMCPStackIDField)
+	if len(stackID) > 256 {
+		return "", &inventoryError{status: http.StatusBadRequest, reasonCode: "stack_id_invalid", message: "Stack ID is invalid"}
+	}
+	return stackID, nil
 }
 
 func (h inventoryHandlers) callStackOperationsTool(ctx context.Context, scope inventoryScope, stackID string, stackOperations httpx.HandlerFunc, sourceEvent *httpx.Event) (any, error) {
@@ -338,26 +444,43 @@ func validMCPOrigin(request *http.Request) bool {
 	return strings.TrimSpace(request.Header.Get("Origin")) == ""
 }
 
-func writeMCPToolResult(e *httpx.Event, id json.RawMessage, value any) error {
-	raw, err := json.Marshal(value)
-	if err != nil {
-		return writeMCPProtocolError(e, id, -32603, "Failed to encode tool result", nil)
-	}
-	return writeMCPResult(e, id, map[string]any{
-		inventoryMCPContentField:           []map[string]any{{inventoryMCPTypeField: inventoryMCPTextField, inventoryMCPTextField: string(raw)}},
-		inventoryMCPStructuredContentField: value,
-		inventoryMCPIsErrorField:           false,
-	})
+// inventoryMCPToolFailure keeps the stable denial envelope in the tool result
+// (mcpbind structured error content) so an agent sees the reason instead of a
+// transport failure, without exposing an internal cause in the message.
+type inventoryMCPToolFailure struct {
+	message string
+	payload map[string]any
 }
 
-func writeMCPToolError(e *httpx.Event, id json.RawMessage, err error) error {
+func (f *inventoryMCPToolFailure) Error() string { return f.message }
+
+// ToolErrorPayload is the structured content mcpbind attaches to the result.
+func (f *inventoryMCPToolFailure) ToolErrorPayload() map[string]any { return f.payload }
+
+func inventoryMCPFailure(err error) error {
 	status, code, reason, message := inventoryErrorContract(err)
-	structured := map[string]any{inventoryMCPErrorField: map[string]any{inventoryMCPCodeField: code, inventoryMCPStatusField: status, inventoryReasonCodeField: reason}}
-	return writeMCPResult(e, id, map[string]any{
-		inventoryMCPContentField:           []map[string]any{{inventoryMCPTypeField: inventoryMCPTextField, inventoryMCPTextField: message}},
-		inventoryMCPStructuredContentField: structured,
-		inventoryMCPIsErrorField:           true,
-	})
+	return &inventoryMCPToolFailure{message: message, payload: map[string]any{inventoryMCPErrorField: map[string]any{
+		inventoryMCPCodeField: code, inventoryMCPStatusField: status, inventoryReasonCodeField: reason,
+	}}}
+}
+
+// inventoryMCPDenial is the protocol-level form of the same denial envelope for
+// discovery methods, which have no tool result to carry it.
+func inventoryMCPDenial(err error) error {
+	status, _, reason, message := inventoryErrorContract(err)
+	code := int64(jsonrpc.CodeInternalError)
+	switch status {
+	case http.StatusUnauthorized:
+		code = inventoryMCPCodeUnauthenticated
+	case http.StatusForbidden:
+		code = inventoryMCPCodeForbidden
+	}
+	return &jsonrpc.Error{Code: code, Message: message, Data: inventoryMCPErrorData(status, reason)}
+}
+
+func inventoryMCPErrorData(status int, reason string) json.RawMessage {
+	data, _ := json.Marshal(map[string]any{inventoryMCPStatusField: status, inventoryReasonCodeField: reason})
+	return data
 }
 
 func inventoryErrorContract(err error) (int, string, string, string) {
@@ -379,35 +502,20 @@ func inventoryErrorContract(err error) (int, string, string, string) {
 	}
 }
 
-func writeMCPAuthError(e *httpx.Event, id json.RawMessage, err error) error {
+func writeMCPAuthError(e *httpx.Event, err error) error {
 	status, _, reason, message := inventoryErrorContract(err)
-	protocolCode := -32001
+	code := inventoryMCPCodeUnauthenticated
 	if status == http.StatusForbidden {
-		protocolCode = -32003
+		code = inventoryMCPCodeForbidden
 	}
-	return writeMCPHTTPError(e, status, id, protocolCode, message, reason)
+	return writeMCPHTTPError(e, status, code, message, reason)
 }
 
-func writeMCPHTTPError(e *httpx.Event, status int, id json.RawMessage, code int, message, reason string) error {
-	e.Response.Header().Set("Content-Type", "application/json")
+// writeMCPHTTPError rejects a request before the MCP transport parses it, so
+// the JSON-RPC id is unknown and stays null.
+func writeMCPHTTPError(e *httpx.Event, status, code int, message, reason string) error {
 	return e.JSON(status, map[string]any{
-		inventoryMCPJSONRPCField: inventoryMCPJSONRPCVersion, inventoryMCPIDField: rawMCPID(id),
-		inventoryMCPErrorField: map[string]any{inventoryMCPCodeField: code, inventoryMCPMessageField: message, inventoryMCPDataField: map[string]any{inventoryMCPStatusField: status, inventoryReasonCodeField: reason}},
+		inventoryMCPJSONRPCField: inventoryMCPJSONRPCVersion, "id": nil,
+		inventoryMCPErrorField: map[string]any{inventoryMCPCodeField: code, routeMessageField: message, "data": map[string]any{inventoryMCPStatusField: status, inventoryReasonCodeField: reason}},
 	})
-}
-
-func writeMCPProtocolError(e *httpx.Event, id json.RawMessage, code int, message string, data any) error {
-	return e.JSON(http.StatusOK, map[string]any{inventoryMCPJSONRPCField: inventoryMCPJSONRPCVersion, inventoryMCPIDField: rawMCPID(id), inventoryMCPErrorField: map[string]any{inventoryMCPCodeField: code, inventoryMCPMessageField: message, inventoryMCPDataField: data}})
-}
-
-func writeMCPResult(e *httpx.Event, id json.RawMessage, result any) error {
-	e.Response.Header().Set("Content-Type", "application/json")
-	return e.JSON(http.StatusOK, map[string]any{inventoryMCPJSONRPCField: inventoryMCPJSONRPCVersion, inventoryMCPIDField: rawMCPID(id), inventoryMCPResultField: result})
-}
-
-func rawMCPID(id json.RawMessage) any {
-	if len(id) == 0 {
-		return nil
-	}
-	return id
 }

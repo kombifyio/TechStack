@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "#lib/i18n.svelte.js";
   import ErrorCallout from "#lib/components/ui/ErrorCallout.svelte";
   import GuidedNextSteps from "#lib/components/hub/GuidedNextSteps.svelte";
   import {
@@ -102,7 +103,7 @@
       </p>
     {/if}
     {#if retrying}
-      <p class="text-xs text-muted-foreground">Wird erneut geladen…</p>
+      <p class="text-xs text-muted-foreground">{tr("ui.guidance.retrying")}</p>
     {/if}
   </div>
 </ErrorCallout>

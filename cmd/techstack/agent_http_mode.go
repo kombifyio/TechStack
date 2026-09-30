@@ -194,6 +194,11 @@ func runHTTPAgentMode(ctx context.Context, cfg *agentModeConfig, log *slog.Logge
 	runtimeConvergence := runtimeconvergence.NewTracker(time.Now().UTC())
 	runCtx, stop := signalContext(ctx)
 	defer stop()
+	relay, err := newAgentRelayLifecycle(runCtx, cfg, enrollment.RuntimeAgentID, log)
+	if err != nil {
+		return err
+	}
+	defer relay.Stop()
 	client, err := httpguard.New(httpguard.Config{
 		HeartbeatURL:     enrollment.HeartbeatURL,
 		InventoryURL:     enrollment.InventoryURL,
@@ -209,6 +214,9 @@ func runHTTPAgentMode(ctx context.Context, cfg *agentModeConfig, log *slog.Logge
 		AgentVersion:     version,
 		Interval:         interval,
 		Collector:        collector,
+		// Only a root agent without NoNewPrivileges whose pinned StackKits
+		// ships `stackkit host` advertises host maintenance.
+		HostMaintenanceCapabilities: stackKitExecutor.HostMaintenanceCapabilities,
 		CommandExecutor: currentStackKitCommandExecutor{
 			runtime: stackKitExecutor,
 			cfg:     stackKitRuntimeConfig,
@@ -216,6 +224,7 @@ func runHTTPAgentMode(ctx context.Context, cfg *agentModeConfig, log *slog.Logge
 		},
 		RuntimeConvergence: runtimeConvergence.Snapshot,
 		OnFirstHeartbeat: func() {
+			relay.Start()
 			go convergeRuntimePackages(runCtx, stop, stackKitExecutor, techstackRuntimeConfig, stackKitRuntimeConfig, stackKitRuntimeConvergenceInterval, runtimeReady.Store, log, runtimeConvergence.Set)
 		},
 		Logger:               log,

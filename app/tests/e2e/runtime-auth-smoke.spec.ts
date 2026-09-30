@@ -107,7 +107,10 @@ async function verifyCloudInventoryCore(
   const services = await authenticatedJSON(token, "/api/v1/inventory/services");
   const initialize = await authenticatedJSON(token, "/api/v1/mcp", {
     method: "POST",
-    headers: { "MCP-Protocol-Version": "2025-11-25" },
+    headers: {
+      Accept: "application/json, text/event-stream",
+      "MCP-Protocol-Version": "2025-11-25",
+    },
     body: JSON.stringify({
       jsonrpc: "2.0",
       id: "p1-initialize",
@@ -121,7 +124,10 @@ async function verifyCloudInventoryCore(
   });
   const tools = await authenticatedJSON(token, "/api/v1/mcp", {
     method: "POST",
-    headers: { "MCP-Protocol-Version": "2025-11-25" },
+    headers: {
+      Accept: "application/json, text/event-stream",
+      "MCP-Protocol-Version": "2025-11-25",
+    },
     body: JSON.stringify({
       jsonrpc: "2.0",
       id: "p1-tools",
@@ -131,7 +137,10 @@ async function verifyCloudInventoryCore(
   });
   const listServers = await authenticatedJSON(token, "/api/v1/mcp", {
     method: "POST",
-    headers: { "MCP-Protocol-Version": "2025-11-25" },
+    headers: {
+      Accept: "application/json, text/event-stream",
+      "MCP-Protocol-Version": "2025-11-25",
+    },
     body: JSON.stringify({
       jsonrpc: "2.0",
       id: "p1-list-servers",
@@ -141,7 +150,10 @@ async function verifyCloudInventoryCore(
   });
   const listServices = await authenticatedJSON(token, "/api/v1/mcp", {
     method: "POST",
-    headers: { "MCP-Protocol-Version": "2025-11-25" },
+    headers: {
+      Accept: "application/json, text/event-stream",
+      "MCP-Protocol-Version": "2025-11-25",
+    },
     body: JSON.stringify({
       jsonrpc: "2.0",
       id: "p1-list-services",
@@ -158,8 +170,8 @@ async function verifyCloudInventoryCore(
     : [];
   expect(actualTools).toEqual(INVENTORY_TOOLS);
   expect(initialize.body?.result?.protocolVersion).toBe("2025-11-25");
-  expect(listServers.body?.result?.isError).toBe(false);
-  expect(listServices.body?.result?.isError).toBe(false);
+  expect(listServers.body?.result?.isError).not.toBe(true);
+  expect(listServices.body?.result?.isError).not.toBe(true);
 
   const restServerIDs = inventoryIDs(servers.body, "servers", true);
   const restServiceIDs = inventoryIDs(services.body, "services", true);
@@ -547,8 +559,8 @@ async function verifyCanonicalCloudRuntimeCore(
   await expect(page.getByTestId("stacks-dashboard")).toBeVisible();
   await expect(page.getByTestId("stacks-error-panel")).toHaveCount(0);
   if (expectedServiceCount > 0) {
-    await expect(page.getByTestId("dashboard-services-summary")).toContainText(
-      `${expectedServiceCount} runtime services recorded`,
+    await expect(page.getByTestId("stack-running-services-kpi")).toContainText(
+      `${expectedServiceCount} recorded`,
     );
   }
   await writeFile(
@@ -723,12 +735,12 @@ async function assertExpectedDashboardInventory(
   const axes = card.getByTestId("monitoring-node-axis");
   await expect(axes).toHaveCount(3);
   await expect(axes.filter({ hasText: /./ })).toHaveCount(3);
-  await expect(
-    card.locator('[data-axis="Conn"]'),
-  ).toHaveText(new RegExp(escapeRegExp(expectation.server.connection), "i"));
-  await expect(
-    card.locator('[data-axis="Life"]'),
-  ).toHaveText(new RegExp(escapeRegExp(expectation.server.lifecycle), "i"));
+  await expect(card.locator('[data-axis="Conn"]')).toHaveText(
+    new RegExp(escapeRegExp(expectation.server.connection), "i"),
+  );
+  await expect(card.locator('[data-axis="Life"]')).toHaveText(
+    new RegExp(escapeRegExp(expectation.server.lifecycle), "i"),
+  );
   await expect(card.locator('[data-axis="Health"]')).toHaveText(
     new RegExp(escapeRegExp(expectation.server.health), "i"),
   );

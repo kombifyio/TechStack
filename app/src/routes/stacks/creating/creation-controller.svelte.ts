@@ -69,7 +69,12 @@ import {
   isPostLeaseRuntimeTask,
   isStackKitArtifactOrRoutingTask,
 } from "#lib/wizard/index.js";
-import { clearJoinWizardIdempotencyKeys } from "#lib/wizard/idempotency-keys.js";
+import {
+  clearJoinWizardIdempotencyKeys,
+  clearSubmittedJoinWizardIdempotencyKey,
+  clearStackLifecycleRetryIdempotencyKey,
+  mintStackLifecycleRetryIdempotencyKey,
+} from "#lib/wizard/idempotency-keys.js";
 import {
   isWizardIdempotencyConflict,
   parseWizardConflictRecovery,
@@ -236,10 +241,6 @@ let remoteEnrollmentProgress = $state(0);
 let jobStreamClose: (() => void) | null = null;
 let sseActive = false;
 let pageDestroyed = false;
-// Safety: abort polling if job is stuck (e.g. no orchestrator processing it)
-const MAX_PENDING_DURATION_MS = 120_000; // 2 minutes
-const MAX_ADD_SERVER_RUNNING_DURATION_MS = 120_000; // add-server request jobs should be short
-let pollingStartedAt = $state<number>(0);
 let pollingInProgress = $state(false);
 let waitingRecoveryAvailable = $derived(
   waitingForManagedRuntime && jobResumeAvailable,
@@ -302,8 +303,9 @@ let failedTaskId = $derived(failedTask?.id || "");
 let hasManagedLeaseReference = $derived(Boolean(lease?.id));
 let creationHeaderLabel = $derived(
   creationOperation === "add-server"
-    ? "Additional Node"
-    : stackName || "Creating StackKit deployment",
+    ? tr("ui.stacksCreatingCreation-controller.additionalNode")
+    : stackName ||
+        tr("ui.stacksCreatingCreation-controller.creatingStackKitDeployment"),
 );
 let postLeaseManagedCloudFailure = $derived(
   creationOperation === "stack" &&
@@ -335,22 +337,28 @@ let connectRemoteStackKitFailed = $derived(
 );
 let failurePrimaryActionLabel = $derived(
   retryingRollout
-    ? "Retrying..."
+    ? tr("ui.stacksCreatingCreation-controller.retrying")
     : wizardIdempotencyConflictFailed
-      ? "Start fresh attempt"
+      ? tr("ui.stacksCreatingCreation-controller.startFreshAttempt")
       : connectRemoteStackKitFailed && failureRetryDispatch
         ? failureRetryDispatch.kind === "rollout"
-          ? "Continue StackKit rollout on connected Node"
+          ? tr(
+              "ui.stacksCreatingCreation-controller.continueStackKitRolloutOnConnected",
+            )
           : failureRetryDispatch.kind === "deploy"
-            ? "Continue StackKit deployment on connected Node"
-            : "Continue StackKit on connected Node"
+            ? tr(
+                "ui.stacksCreatingCreation-controller.continueStackKitDeploymentOnConnected",
+              )
+            : tr(
+                "ui.stacksCreatingCreation-controller.continueStackKitOnConnectedNode",
+              )
         : failureRetryDispatch?.kind === "rollout"
-          ? "Retry rollout"
+          ? tr("ui.stacksCreatingCreation-controller.retryRollout")
           : failureRetryDispatch?.kind === "deploy"
-            ? "Retry deployment"
+            ? tr("ui.stacksCreatingCreation-controller.retryDeployment")
             : failureRetryDispatch?.kind === "provision"
-              ? "Retry server request"
-              : "Try again",
+              ? tr("ui.stacksCreatingCreation-controller.retryServerRequest")
+              : tr("ui.login.tryAgain"),
 );
 let failurePrimaryActionDisabled = $derived(retryingRollout);
 let failurePrimaryActionAvailable = $derived(
@@ -359,32 +367,47 @@ let failurePrimaryActionAvailable = $derived(
 let completionTitle = $derived(
   creationOperation === "add-server"
     ? agentPairingRequired
-      ? "Node connected"
+      ? tr("ui.stacksCreatingCreation-controller.nodeConnected")
       : serverProvisioningMode === "kombify-cloud"
-        ? "Managed Node requested"
-        : "Node registration ready"
+        ? tr("ui.stacksCreatingCreationLease.managedNodeRequested")
+        : tr("ui.stacksCreatingCreation-controller.nodeRegistrationReady")
     : serverProvisioningMode === "hypervisor"
       ? tr("wizard.server.hypervisor.connected")
       : serverProvisioningMode === "kombify-cloud"
         ? tr("wizard.identity.installationComplete")
         : serverProvisioningMode === "connect-remote"
-          ? "Configuration prepared"
-          : "Node connection ready",
+          ? tr("ui.stacksCreatingCreation-controller.configurationPrepared")
+          : tr("ui.stacksCreatingCreation-controller.nodeConnectionReady"),
 );
 let completionSubtitle = $derived(
   creationOperation === "add-server"
     ? agentPairingRequired
-      ? `${connectedServer?.name || "The additional Node"} reported a fresh Guard heartbeat and is visible in the Node projection.`
+      ? tr(
+          "ui.stacksCreatingCreation-controller.reportedAFreshGuardHeartbeat",
+          {
+            name:
+              connectedServer?.name ||
+              tr("ui.creationController.theAdditionalNode"),
+          },
+        )
       : serverProvisioningMode === "kombify-cloud"
-        ? "kombify requested the additional managed Node. You can continue from the dashboard while enrollment finishes."
-        : "The additional Node registration is ready for the existing Homelab."
+        ? tr(
+            "ui.stacksCreatingCreation-controller.kombifyRequestedTheAdditionalManaged",
+          )
+        : tr(
+            "ui.stacksCreatingCreation-controller.theAdditionalNodeRegistrationIs",
+          )
     : serverProvisioningMode === "kombify-cloud"
       ? tr("wizard.identity.installationDescription")
       : serverProvisioningMode === "connect-remote"
-        ? "Your remote Node configuration is ready for rollout"
+        ? tr(
+            "ui.stacksCreatingCreation-controller.yourRemoteNodeConfigurationIs",
+          )
         : serverProvisioningMode === "hypervisor"
           ? tr("wizard.server.hypervisor.connectedDetail")
-          : "Connect your Node to continue the rollout",
+          : tr(
+              "ui.stacksCreatingCreation-controller.connectYourNodeToContinue",
+            ),
 );
 let dashboardHref = $derived(() => {
   const params = ["phase=review"];
@@ -403,10 +426,13 @@ let servicesHref = $derived(() => {
 });
 let proofRows = $derived(
   [
-    ["simulation", "Simulation gate"],
-    ["rollout", "StackKit rollout"],
-    ["verification", "Service verification"],
-    ["restore", "Restore drill"],
+    ["simulation", tr("ui.stacksCreatingCreation-controller.simulationGate")],
+    ["rollout", tr("ui.stacksCreatingCreation-controller.stackkitRollout")],
+    [
+      "verification",
+      tr("ui.stacksCreatingCreation-controller.serviceVerification"),
+    ],
+    ["restore", tr("ui.stacksCreatingCreation-controller.restoreDrill")],
   ]
     .map(([key, label]) => ({
       key,
@@ -467,15 +493,6 @@ function syncTaskListForOperation() {
   if (serverProvisioningMode === "kombify-cloud") {
     ensureRuntimeTaskList();
   }
-}
-
-function addServerRequestHasExceededGuard(status: string): boolean {
-  return (
-    creationOperation === "add-server" &&
-    isRunningJobStatus(status) &&
-    pollingStartedAt > 0 &&
-    Date.now() - pollingStartedAt > MAX_ADD_SERVER_RUNNING_DURATION_MS
-  );
 }
 
 // Generate install command
@@ -558,8 +575,9 @@ function stopConnectionPolling() {
 function expireConnectedServerWithoutFreshHeartbeat() {
   if (!connectedServer || hasFreshGuardHeartbeat(connectedServer)) return;
   connectedServer = null;
-  connectionPollError =
-    "The previously verified Guard heartbeat is no longer fresh. Waiting for current connection evidence.";
+  connectionPollError = tr(
+    "ui.stacksCreatingCreation-controller.thePreviouslyVerifiedGuardHeartbeat",
+  );
 }
 
 function maybeExpireConnectRemoteGuardWait() {
@@ -577,8 +595,9 @@ function maybeExpireConnectRemoteGuardWait() {
   ) {
     return;
   }
-  connectionPollError =
-    "Guard has not reported a fresh heartbeat for this Node yet. Retry SSH enrollment on the saved connection, or verify the agent is running on the server.";
+  connectionPollError = tr(
+    "ui.stacksCreatingCreation-controller.guardHasNotReportedA",
+  );
 }
 
 function guardConnectionPollingReady(): boolean {
@@ -640,8 +659,8 @@ async function pollGuardConnection() {
     }
   } catch {
     connectionPollError = usesAuthoritativeConnectRemoteTarget()
-      ? "The reserved Node could not be checked. Retry SSH enrollment on the saved connection once the server inventory is available again."
-      : "The Node projection could not be checked. The pairing command remains available, but this page will not claim a connection without a fresh Guard heartbeat.";
+      ? tr("ui.stacksCreatingCreation-controller.theReservedNodeCouldNot")
+      : tr("ui.stacksCreatingCreation-controller.theNodeProjectionCouldNot");
   } finally {
     connectionPollingInProgress = false;
   }
@@ -720,36 +739,6 @@ async function pollJobStatus() {
         ensureRuntimeTaskList();
       }
 
-      if (addServerRequestHasExceededGuard(jobStatus)) {
-        tasks = updateTasksWithError(tasks, {
-          step: tasks[0]?.id,
-          error: "Managed Node request is still running",
-          error_details:
-            "The Add Node request has been running for over 2 minutes. This path should only request or prepare the additional Node, not run the full StackKit rollout. Open Operations to check whether the Node request was created, then retry Add Node if no new Node appears.",
-        });
-        stopPolling();
-        return;
-      }
-
-      // Safety: detect genuinely stuck queue entries. A resumable `waiting`
-      // job is not stuck; the backend owns its next enrollment checkpoint.
-      if (
-        (jobStatus === "pending" || jobStatus === "queued") &&
-        pollingStartedAt > 0 &&
-        Date.now() - pollingStartedAt > MAX_PENDING_DURATION_MS
-      ) {
-        tasks = updateTasksWithError(tasks, {
-          error: "Job is not being processed",
-          error_details:
-            "The provisioning job has been pending for over 2 minutes without progress. " +
-            "This usually means the orchestrator is not running or has crashed.\n\n" +
-            "Check the server logs: docker compose logs techstack\n" +
-            "Try restarting: docker compose restart techstack",
-        });
-        stopPolling();
-        return;
-      }
-
       // Handle failed jobs with detailed error info
       if (jobStatus === "failed" || jobStatus === "error") {
         const legacyCurrentStep = (job as any)?.current_step as
@@ -800,9 +789,12 @@ async function pollJobStatus() {
         if (missingCloudHandoff) {
           tasks = updateTasksWithError(tasks, {
             step: "verify_rollout",
-            error: "StackKit runtime verification missing",
-            error_details:
-              "The completed runtime job did not return verified runtime evidence. Retry the rollout to verify the installation.",
+            error: tr(
+              "ui.stacksCreatingCreation-controller.stackkitRuntimeVerificationMissing",
+            ),
+            error_details: tr(
+              "ui.stacksCreatingCreation-controller.theCompletedRuntimeJobDid",
+            ),
           });
           captureRolloutResultOnce(
             "techstack:rollout_failed",
@@ -851,9 +843,10 @@ async function pollJobStatus() {
       if (job.state === "canceled") {
         tasks = updateTasksWithError(tasks, {
           step: job.step || tasks[0]?.id,
-          error: "Job was canceled",
-          error_details:
-            "The backend canceled this job before it completed. Retry to continue from the last safe checkpoint.",
+          error: tr("ui.stacksCreatingCreation-controller.jobWasCanceled"),
+          error_details: tr(
+            "ui.stacksCreatingCreation-controller.theBackendCanceledThisJob",
+          ),
           state: job.state,
           user_guidance: job.user_guidance,
         });
@@ -870,9 +863,10 @@ async function pollJobStatus() {
       e instanceof ApiRequestError && (e.status === 401 || e.status === 403);
     if (authFailure) {
       tasks = updateTasksWithError(tasks, {
-        error: "Session expired",
-        error_details:
-          "Your session is no longer valid, so the creation progress cannot be checked. Sign in again and reopen this creation to continue monitoring it.",
+        error: tr("ui.stacksCreatingCreation-controller.sessionExpired"),
+        error_details: tr(
+          "ui.stacksCreatingCreation-controller.yourSessionIsNoLonger",
+        ),
       });
       stopPolling();
       return;
@@ -889,8 +883,13 @@ async function pollJobStatus() {
       );
     if (pollErrorCount >= MAX_POLL_ERRORS) {
       tasks = updateTasksWithError(tasks, {
-        error: "Connection to server lost",
-        error_details: `After ${MAX_POLL_ERRORS} failed attempts, the backend could not be reached. The page keeps retrying with backoff; you can also check your network connection and reload to resume.`,
+        error: tr(
+          "ui.stacksCreatingCreation-controller.connectionToServerLost",
+        ),
+        error_details: tr(
+          "ui.stacksCreatingCreation-controller.afterFailedAttemptsTheBackend",
+          { MAX_POLL_ERRORS },
+        ),
       });
     }
   } finally {
@@ -998,7 +997,9 @@ async function recoverPairingCommand() {
     pairingRecoveryError = sanitizeSensitiveText(
       error instanceof Error
         ? error.message
-        : "Could not prepare the connection command.",
+        : tr(
+            "ui.stacksCreatingCreation-controller.couldNotPrepareTheConnection",
+          ),
     );
   } finally {
     pairingRecoveryBusy = false;
@@ -1033,7 +1034,7 @@ async function pollRemoteEnrollmentJob() {
     remoteEnrollmentMessage =
       job.message ||
       remoteEnrollmentMessage ||
-      "Connecting to your Node over SSH…";
+      tr("ui.stacksCreatingCreationRunStatus.connectingToYourNodeOver");
     remoteEnrollmentProgress =
       typeof job.progress === "number"
         ? job.progress
@@ -1041,7 +1042,9 @@ async function pollRemoteEnrollmentJob() {
     if (job.state === "failed" || job.state === "error") {
       remoteEnrollmentFailed = true;
       pairingRecoveryError = sanitizeSensitiveText(
-        job.error || job.message || "Remote SSH enrollment failed.",
+        job.error ||
+          job.message ||
+          tr("ui.stacksCreatingCreation-controller.remoteSSHEnrollmentFailed"),
       );
       return;
     }
@@ -1066,7 +1069,7 @@ async function pollRemoteEnrollmentJob() {
     pairingRecoveryError = sanitizeSensitiveText(
       error instanceof Error
         ? error.message
-        : "Could not check remote SSH enrollment progress.",
+        : tr("ui.stacksCreatingCreation-controller.couldNotCheckRemoteSSH"),
     );
   }
 }
@@ -1362,8 +1365,9 @@ function pendingWizardRunSubmission(): WizardRunSubmission | null {
 }
 
 function markWizardSubmissionRunning() {
-  latestJobMessage =
-    "Validating the selected StackKit and preparing the Node...";
+  latestJobMessage = tr(
+    "ui.stacksCreatingCreation-controller.validatingTheSelectedStackKitAnd",
+  );
   jobState = "running";
   tasks = tasks.map((task, index) =>
     index === 0
@@ -1403,7 +1407,6 @@ async function clearWizardSubmissionState(run?: WizardRunResponse) {
 function beginJobTracking() {
   if (!jobId) return;
   stopPolling();
-  pollingStartedAt = Date.now();
   pollErrorCount = 0;
   nextPollAttemptAt = 0;
   streamRetryAttempt = 0;
@@ -1433,7 +1436,9 @@ async function resumeWizardRunFromConflict(error: unknown): Promise<boolean> {
   wizardIdempotencyConflictFailed = false;
   initError = null;
   jobState = "running";
-  latestJobMessage = "Resuming the earlier Node registration attempt…";
+  latestJobMessage = tr(
+    "ui.stacksCreatingCreation-controller.resumingTheEarlierNodeRegistration",
+  );
   tasks = tasks.map((task, index) =>
     index === 0
       ? { ...task, status: "running", message: latestJobMessage }
@@ -1468,9 +1473,15 @@ async function submitPendingWizardRun(
       submission.idempotencyKey,
     );
     if (!run.job_id && !run.pairing_job_id) {
-      throw new Error("Node registration did not return a creation job.");
+      throw new Error(
+        tr("ui.stacksCreatingCreation-controller.nodeRegistrationDidNotReturn"),
+      );
     }
-    clearJoinWizardIdempotencyKeys(stackId);
+    if (submission.request.intent.kit_assignment.mode === "found") {
+      clearSubmittedJoinWizardIdempotencyKey(submission.idempotencyKey);
+    } else {
+      clearJoinWizardIdempotencyKeys(stackId);
+    }
     await clearWizardSubmissionState(run);
     await adoptActiveWizardRun(jobId);
     return true;
@@ -1486,7 +1497,9 @@ async function submitPendingWizardRun(
     jobState = "failed";
     tasks = updateTasksWithError(tasks, {
       step: tasks[0]?.id,
-      error: parsed.message || "Failed to prepare Node registration.",
+      error:
+        parsed.message ||
+        tr("ui.managedCreationFlow.failedToPrepareNodeRegistration"),
       error_details: wizardSubmissionErrorDetails(parsed.details),
       state: "failed",
     });
@@ -1555,7 +1568,6 @@ function resetCreationState() {
   jobStreamClose = null;
   sseActive = false;
   pageDestroyed = false;
-  pollingStartedAt = 0;
   pollingInProgress = false;
   retryingRollout = false;
   retryError = "";
@@ -1573,7 +1585,9 @@ async function mount() {
   // context and is also sufficient for dashboard/cross-device resume.
   const params = new URLSearchParams(window.location.search);
   jobId = params.get("job_id") || params.get("job") || "";
-  stackName = params.get("name") || "New StackKit deployment";
+  stackName =
+    params.get("name") ||
+    tr("ui.stacksCreatingCreation-controller.newStackKitDeployment");
   stackId = params.get("stack_id") || params.get("stack") || "";
   creationOperation =
     normalizeCreationOperation(params.get("operation")) || "stack";
@@ -1588,11 +1602,14 @@ async function mount() {
   syncTaskListForOperation();
 
   if (!jobId && !hasFailed) {
-    initError = "Missing job reference. Please start the setup wizard again.";
+    initError = tr(
+      "ui.stacksCreatingCreation-controller.missingJobReferencePleaseStart",
+    );
     tasks = updateTasksWithError(tasks, {
-      error: "No job found",
-      error_details:
-        "This page requires a job_id from the setup wizard. Please restart setup via /stacks/new.",
+      error: tr("ui.stacksCreatingCreation-controller.noJobFound"),
+      error_details: tr(
+        "ui.stacksCreatingCreation-controller.thisPageRequiresAJob",
+      ),
     });
   }
 
@@ -1709,8 +1726,9 @@ async function resumePreviousWizardAttempt() {
       beginJobTracking();
       return;
     }
-    retryError =
-      "Could not resume the earlier registration. Start a fresh attempt instead.";
+    retryError = tr(
+      "ui.stacksCreatingCreation-controller.couldNotResumeTheEarlier",
+    );
   } finally {
     retryingRollout = false;
   }
@@ -1736,25 +1754,40 @@ async function handleFailurePrimaryAction() {
 }
 
 async function retryStackLifecycle(kind: "deploy" | "provision") {
-  if (!stackId || retryingRollout) return;
+  if (!stackId || !jobId || retryingRollout) return;
+  const failedJobId = jobId;
+  const retryStackId = stackId;
   retryError = "";
   retryingRollout = true;
   try {
+    const idempotencyKey = mintStackLifecycleRetryIdempotencyKey(
+      retryStackId,
+      failedJobId,
+      kind,
+    );
     const response =
       kind === "deploy"
-        ? await deployStack(stackId)
-        : await provisionStack(stackId);
+        ? await deployStack(retryStackId, idempotencyKey)
+        : await provisionStack(retryStackId, idempotencyKey);
     await continueWithAcceptedRollout(
       response,
       kind === "deploy"
-        ? "Retrying deployment..."
-        : "Retrying server provisioning...",
+        ? tr("ui.stacksCreatingCreation-controller.retryingDeployment")
+        : tr("ui.stacksCreatingCreation-controller.retryingServerProvisioning"),
+    );
+    clearStackLifecycleRetryIdempotencyKey(
+      retryStackId,
+      failedJobId,
+      kind,
+      idempotencyKey,
     );
   } catch (error) {
     retryError =
       error instanceof Error
         ? error.message
-        : "Could not start lifecycle retry.";
+        : tr(
+            "ui.stacksCreatingCreation-controller.couldNotStartLifecycleRetry",
+          );
   } finally {
     retryingRollout = false;
   }
@@ -1778,8 +1811,9 @@ async function retryStackKitRollout() {
   retryingRollout = true;
   try {
     if (!jobId || !lease?.id) {
-      retryError =
-        "Rollout retry requires the exact failed job and managed VM lease.";
+      retryError = tr(
+        "ui.stacksCreatingCreation-controller.rolloutRetryRequiresTheExact",
+      );
       return;
     }
     const response = await retryStackRollout(stackId, {
@@ -1788,11 +1822,13 @@ async function retryStackKitRollout() {
     });
     await continueWithAcceptedRollout(
       response,
-      "Retrying rollout on the existing managed VM...",
+      tr("ui.stacksCreatingCreation-controller.retryingRolloutOnTheExisting"),
     );
   } catch (error) {
     retryError =
-      error instanceof Error ? error.message : "Could not start rollout retry.";
+      error instanceof Error
+        ? error.message
+        : tr("ui.stacksCreatingCreation-controller.couldNotStartRolloutRetry");
   } finally {
     retryingRollout = false;
   }
@@ -1802,8 +1838,9 @@ async function resumeOverdueManagedRuntime() {
   if (!stackId || !jobId || retryingRollout) return;
   const leaseId = lease?.id?.trim() || "";
   if (!leaseId) {
-    retryError =
-      "Managed rollout recovery was not started because the waiting job has no exact lease reference.";
+    retryError = tr(
+      "ui.stacksCreatingCreation-controller.managedRolloutRecoveryWasNot",
+    );
     return;
   }
   retryError = "";
@@ -1815,13 +1852,13 @@ async function resumeOverdueManagedRuntime() {
     });
     await continueWithAcceptedRollout(
       response,
-      "Recovering rollout on the exact existing managed VM...",
+      tr("ui.stacksCreatingCreation-controller.recoveringRolloutOnTheExact"),
     );
   } catch (error) {
     retryError =
       error instanceof Error
         ? error.message
-        : "Could not resume the overdue managed runtime wait.";
+        : tr("ui.stacksCreatingCreation-controller.couldNotResumeTheOverdue");
   } finally {
     retryingRollout = false;
   }
@@ -1834,7 +1871,9 @@ async function retryRemoteSSHEnrollment() {
   retryingRollout = true;
   remoteEnrollmentFailed = false;
   remoteEnrollmentActive = true;
-  remoteEnrollmentMessage = "Retrying SSH enrollment on the saved connection…";
+  remoteEnrollmentMessage = tr(
+    "ui.stacksCreatingCreation-controller.retryingSSHEnrollmentOnThe",
+  );
   try {
     const response = await resumeRemoteEnrollment(stackId, {
       pairing_job_id: pairingJobId || undefined,
@@ -1867,7 +1906,7 @@ async function retryRemoteSSHEnrollment() {
     pairingRecoveryError = sanitizeSensitiveText(
       error instanceof Error
         ? error.message
-        : "Could not retry remote SSH enrollment.",
+        : tr("ui.stacksCreatingCreation-controller.couldNotRetryRemoteSSH"),
     );
   } finally {
     retryingRollout = false;
@@ -1879,7 +1918,9 @@ async function continueWithAcceptedRollout(
   message: string,
 ) {
   if (!response.job_id) {
-    throw new Error("Rollout recovery did not return a job_id.");
+    throw new Error(
+      tr("ui.stacksCreatingCreation-controller.rolloutRecoveryDidNotReturn"),
+    );
   }
   stopPolling();
   jobId = response.job_id;
@@ -1907,7 +1948,6 @@ async function continueWithAcceptedRollout(
     reset: false,
   });
 
-  pollingStartedAt = Date.now();
   pollJobStatus();
   pollingInterval = setInterval(pollJobStatus, BASE_POLL_INTERVAL);
 }
@@ -2245,12 +2285,6 @@ export const creation = {
   set pageDestroyed(value: typeof pageDestroyed) {
     pageDestroyed = value;
   },
-  get pollingStartedAt() {
-    return pollingStartedAt;
-  },
-  set pollingStartedAt(value: typeof pollingStartedAt) {
-    pollingStartedAt = value;
-  },
   get pollingInProgress() {
     return pollingInProgress;
   },
@@ -2425,7 +2459,6 @@ export const creation = {
   ensureRuntimeTaskList,
   replaceTaskListIfShapeChanged,
   syncTaskListForOperation,
-  addServerRequestHasExceededGuard,
   hasFreshGuardHeartbeat,
   selectConnectedServer,
   stopConnectionPolling,
@@ -2473,8 +2506,6 @@ export const creation = {
   MAX_POLL_ERRORS,
   BASE_POLL_INTERVAL,
   SSE_SAFETY_POLL_INTERVAL,
-  MAX_PENDING_DURATION_MS,
-  MAX_ADD_SERVER_RUNNING_DURATION_MS,
   capturedCreationFailureJobIds,
   capturedRolloutResultKeys,
 };

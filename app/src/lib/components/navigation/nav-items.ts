@@ -49,7 +49,7 @@ function previewFor(section: string): NavPreview | undefined {
         })),
         emptyLabel: text(
           "nav.preview.noServices",
-          "No services registered yet.",
+          tr("ui.navItems.noServicesRegisteredYet"),
         ),
       };
     }

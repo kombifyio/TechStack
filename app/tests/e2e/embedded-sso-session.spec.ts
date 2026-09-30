@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 
 import { expect, test } from "@playwright/test";
 
@@ -50,13 +50,12 @@ const API_BASE = requireLiveHttpsOrigin(
 const SESSION_COOKIE_NAME =
   process.env.TECHSTACK_E2E_SESSION_COOKIE_NAME ?? "techstack_session";
 
-// The shared HS256 secret kombify Cloud signs SSO tokens with and TechStack
-// verifies against. A mismatch here is the "secret drift" failure mode — this
+// The Techstack-only HS256 secret kombify Cloud signs SSO tokens with and
+// TechStack verifies against. A mismatch here is the "secret drift" failure mode — this
 // test fails loudly (portal-verify 401) instead of leaving it to manual review.
 const SSO_SECRET = firstDefined(
   process.env.TECHSTACK_E2E_SSO_JWT_SECRET,
-  process.env.SSO_JWT_SECRET,
-  process.env.KOMBIFY_SSO_SECRET,
+  process.env.TECHSTACK_SSO_JWT_SECRET,
 );
 
 const SSO_TOOL_ID = "kombifystack";
@@ -78,10 +77,15 @@ function mintSsoToken(secret: string): string {
   const header = base64url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
   const payload = base64url(
     JSON.stringify({
+      iss: "kombify-cloud",
+      aud: `kombify-tool:${SSO_TOOL_ID}`,
+      contract_version: 1,
       sub: SSO_SUBJECT,
+      tenant_id: `usr:${SSO_SUBJECT}`,
       email: SSO_EMAIL,
       name: "Embedded SSO E2E",
       tool: SSO_TOOL_ID,
+      jti: randomUUID(),
       iat: now,
       exp: now + 300,
     }),
@@ -96,7 +100,7 @@ function mintSsoToken(secret: string): string {
 test.describe("Embedded SSO session (mock-free)", () => {
   test.skip(
     !SSO_SECRET,
-    "SSO secret unavailable; set SSO_JWT_SECRET/KOMBIFY_SSO_SECRET (a configured secret source) to run",
+    "SSO secret unavailable; set TECHSTACK_SSO_JWT_SECRET (a configured secret source) to run",
   );
 
   test("portal-verify issues a techstack_session that authenticates the API", async ({
@@ -135,17 +139,23 @@ test.describe("Embedded SSO session (mock-free)", () => {
         "the embedded SSO session must authenticate /api/v2/whoami; 401 means the request path does not honor the cookie",
       ).toBe(200);
 
-      // Model browser cookie loss while the parent still reuses its cached,
-      // valid portal token. The identical token must mint one new cookie
-      // session; treating token reuse as a no-op recreates the 401 loop.
+      // Model browser cookie loss while the parent still holds its cached
+      // portal token. Launch tokens are single-use: a client without the
+      // session is refused with sso_token_replayed, and the embed recovers
+      // with a freshly minted parent token.
       reprojectionCtx = await playwright.request.newContext({
         baseURL: API_BASE,
       });
+      const replay = await reprojectionCtx.post("/api/v1/auth/portal-verify", {
+        headers: { "content-type": "application/json" },
+        data: { token },
+      });
+      expect(replay.status()).toBe(401);
       const reprojection = await reprojectionCtx.post(
         "/api/v1/auth/portal-verify",
         {
           headers: { "content-type": "application/json" },
-          data: { token },
+          data: { token: mintSsoToken(SSO_SECRET as string) },
         },
       );
       expect(reprojection.status()).toBe(200);

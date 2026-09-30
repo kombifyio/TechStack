@@ -33,8 +33,12 @@ type preparedServerEvent struct {
 	server      ServerRuntime
 	transitions []ServerStateTransition
 	inventory   *ServerInventorySnapshot
-	outbox      *ServerRegistryOutboxItem
-	applied     bool
+	// replaceInventory refreshes the snapshot of the unchanged inventory
+	// revision instead of adding one: the observation changed nothing
+	// material.
+	replaceInventory bool
+	outbox           *ServerRegistryOutboxItem
+	applied          bool
 }
 
 //nolint:gocyclo // Admission validates the complete command envelope before authority dispatch.
@@ -243,6 +247,10 @@ func prepareControlPlaneServerEvent(current *ServerRuntime, event ServerEvent, n
 		next.HealthChangedAt = event.ObservedAt
 		next.LastHeartbeatAt = nil
 		next.Channels = nil
+		// Host facts are authenticated Guard inventory observations. Carrying
+		// them into a new binding generation could let the replacement Guard's
+		// first heartbeat re-authorize the prior generation's SSH host key.
+		delete(next.Metadata, "host")
 	}
 	if err := validateServerEventHead(next); err != nil {
 		return nil, err
@@ -457,8 +465,21 @@ func finalizePreparedServerEvent(current *ServerRuntime, next ServerRuntime, eve
 	serverRuntimeDefaults(&next, now)
 	transitions := serverEventTransitions(current, next, event)
 	var inventory *ServerInventorySnapshot
+	replaceInventory := false
 	if event.Inventory != nil {
-		next.InventoryRevision++
+		// The inventory revision is what owner approvals bind to, so it moves
+		// only when the reported inventory materially changes. Freshness
+		// (resource usage, uptime, timestamps, the Guard source position) is
+		// carried by the heartbeat fields and the refreshed snapshot.
+		digest := inventoryMaterialDigest(event.Inventory.Inventory)
+		replaceInventory = current != nil && current.InventoryRevision > 0 && digest != "" &&
+			stringFromMap(current.Metadata, inventoryMaterialDigestKey) == digest
+		if !replaceInventory {
+			next.InventoryRevision++
+		}
+		if digest != "" {
+			next.Metadata = mergeMaps(next.Metadata, map[string]any{inventoryMaterialDigestKey: digest})
+		}
 		inventory = &ServerInventorySnapshot{
 			TenantID: event.TenantID, ServerID: event.ServerID,
 			Revision:   next.InventoryRevision,
@@ -488,7 +509,8 @@ func finalizePreparedServerEvent(current *ServerRuntime, next ServerRuntime, eve
 		},
 	}
 	return &preparedServerEvent{
-		server: next, transitions: transitions, inventory: inventory, outbox: outbox, applied: true,
+		server: next, transitions: transitions, inventory: inventory, replaceInventory: replaceInventory,
+		outbox: outbox, applied: true,
 	}
 }
 
@@ -669,6 +691,10 @@ func validateGuardObservationPayload(patch ServerRuntime, inventory *ServerInven
 		"service_discovery_observed": true, "stackkit_manifest_observed": true,
 		"service_projection_expected": true, "stackkit": true,
 		"stackkit_mode": true, "stackkit_version": true,
+		// Server maintenance facts the Guard measures on the host: the kernel
+		// boot id, the domain-separated machine-id digest (never the raw id)
+		// and whether the agent can run the StackKits host commands.
+		"host_boot_id": true, "host_machine_id_sha256": true, "host_maintenance": true,
 	}
 	for key := range patch.Metadata {
 		if !allowedMetadata[strings.ToLower(strings.TrimSpace(key))] {

@@ -231,7 +231,7 @@ func TestMTTRIgnoresOngoingOutages(t *testing.T) {
 	if report.ClosedEpisodes != 1 {
 		t.Fatalf("closed episodes = %d, want 1", report.ClosedEpisodes)
 	}
-	if report.MTTRSeconds == nil || *report.MTTRSeconds != int64((2 * time.Hour).Seconds()) {
+	if report.MTTRSeconds == nil || *report.MTTRSeconds != int64((2*time.Hour).Seconds()) {
 		t.Fatalf("mttr = %v, want the closed episode only", report.MTTRSeconds)
 	}
 }

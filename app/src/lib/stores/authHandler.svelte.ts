@@ -21,6 +21,7 @@ import {
   type AuthRecoveryOutcome,
 } from "#lib/auth/session-recovery.js";
 
+import { tr } from "#lib/i18n.svelte.js";
 export type { AuthRecoveryOutcome } from "#lib/auth/session-recovery.js";
 
 export interface HandleUnauthorizedOptions {
@@ -244,7 +245,6 @@ class AuthHandlerStore {
       });
       const { startGatewayLogin } = await import("#lib/auth/gateway-auth.js");
       const spaStarted = await startGatewayLogin({
-        interactive: false,
         returnTo: currentAuthReturnTo(),
       });
       if (spaStarted) {
@@ -342,7 +342,7 @@ class AuthHandlerStore {
         if (this.isAuthError(err)) {
           this.showReloginPrompt(
             pendingRetry,
-            "Your session has expired. Please sign in again.",
+            tr("ui.authHandler.yourSessionHasExpiredPlease"),
             "retry_after_relogin_unauthorized",
             err,
           );

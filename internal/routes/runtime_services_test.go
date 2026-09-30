@@ -17,6 +17,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/runtimehealth"
 	"github.com/kombifyio/techstack/pkg/runtimeidentity"
 	"github.com/kombifyio/techstack/pkg/serverregistry"
+	"github.com/kombifyio/techstack/pkg/serviceregistry"
 )
 
 type recordingServiceActionOrchestrator struct {
@@ -131,6 +132,10 @@ func TestServiceApplicationListStopsAfterUnauthenticatedRejection(t *testing.T) 
 	}
 }
 
+func (o *recordingServiceActionOrchestrator) StackKitLifecycleJobQueued(jobID string) bool {
+	return o.enqueued[jobID]
+}
+
 func (o *recordingServiceActionOrchestrator) EnqueueStackKitLifecycle(ctx context.Context, request jobs.StackKitLifecycleRequest) (string, error) {
 	if o.enqueued == nil {
 		o.enqueued = map[string]bool{}
@@ -212,6 +217,109 @@ func TestServiceRuntimeActionDerivesAuthorityAndReplaysIdempotently(t *testing.T
 	event.Request.Header.Set("Idempotency-Key", "stop-1")
 	if err := recovered.action(event); err != nil || recorder.Code != http.StatusAccepted || len(recoveredOrch.requests) != 1 {
 		t.Fatalf("pending crash recovery status=%d requests=%d err=%v", recorder.Code, len(recoveredOrch.requests), err)
+	}
+}
+
+// A client that lost the response retries with the same Idempotency-Key. The
+// retry must return the stored receipt instead of re-running target
+// validation: while the job is still queued and the agent has dropped, and
+// after it completed and advanced the inventory revision. A different body
+// under the same key stays a conflict.
+func TestServiceRuntimeActionReplaysKeyBeforeValidation(t *testing.T) {
+	store := controlplane.NewMemoryStore()
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	observedAt := now.Add(-10 * time.Second)
+	if _, err := store.CreateStack(t.Context(), controlplane.CreateStackRequest{ID: "stack-1", TenantID: "tenant-1", OwnerSubjectID: "owner-1", StackKitInstanceID: "family-main", Name: "Stack", Config: map[string]any{"stackkit": "family-lab"}}); err != nil {
+		t.Fatal(err)
+	}
+	setTarget := func(revision int64, connection serverregistry.ConnectionState) {
+		t.Helper()
+		if _, err := store.UpsertServerRuntime(t.Context(), controlplane.ServerRuntime{ID: "server-1", TenantID: "tenant-1", StackID: "stack-1", OwnerSubjectID: "owner-1", WorkerID: "agent-1", InventoryRevision: revision, ConnectionState: string(connection), LastHeartbeatAt: &observedAt}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.UpsertServiceRuntime(t.Context(), controlplane.ServiceRuntime{ID: "service-1", TenantID: "tenant-1", StackID: "stack-1", ServerID: "server-1", ServiceKey: "auth", StackKitVersion: "family-lab@v0.1.0", ObservedAt: &observedAt, Capabilities: []string{"stop"}, Metadata: map[string]any{"inventory_revision": revision}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	orch := &recordingServiceActionOrchestrator{store: store}
+	h := serviceRuntimeHandlers{store: store, stacks: store, servers: store, jobs: store, now: func() time.Time { return now }, orch: orch}
+	post := func(revision int) (int, serviceActionResponse) {
+		t.Helper()
+		event, recorder := registryRouteStoreTestEvent(http.MethodPost, "/api/v1/registry/services/service-1/actions", "owner-1", "tenant-1", map[string]any{"action": "stop", "expected_inventory_revision": revision, "owner_approved": true})
+		event.Request.SetPathValue("serviceId", "service-1")
+		event.Request.Header.Set("Idempotency-Key", "stop-1")
+		if err := h.action(event); err != nil && !errors.Is(err, httpx.ErrResponseWritten) {
+			t.Fatal(err)
+		}
+		var envelope struct {
+			Data serviceActionResponse `json:"data"`
+		}
+		_ = json.Unmarshal(recorder.Body.Bytes(), &envelope)
+		return recorder.Code, envelope.Data
+	}
+
+	setTarget(7, serverregistry.ConnectionConnected)
+	status, first := post(7)
+	if status != http.StatusAccepted || first.JobID == "" {
+		t.Fatalf("first attempt status=%d response=%#v", status, first)
+	}
+
+	setTarget(7, serverregistry.ConnectionOffline)
+	status, queued := post(7)
+	if status != http.StatusAccepted || queued.JobID != first.JobID || queued.Status != "queued" || len(orch.requests) != 1 {
+		t.Fatalf("retry of a queued job with the agent offline status=%d response=%#v dispatches=%d", status, queued, len(orch.requests))
+	}
+
+	if _, err := store.StartJob(t.Context(), "tenant-1", first.JobID, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CompleteJob(t.Context(), "tenant-1", first.JobID, map[string]any{"service_action_receipt": jobs.StackKitServiceActionReceipt(orch.requests[0])}, now); err != nil {
+		t.Fatal(err)
+	}
+	setTarget(8, serverregistry.ConnectionConnected)
+	status, completed := post(7)
+	if status != http.StatusAccepted || completed.JobID != first.JobID || completed.Status != "completed" || len(orch.requests) != 1 {
+		t.Fatalf("retry after completion status=%d response=%#v dispatches=%d", status, completed, len(orch.requests))
+	}
+	if status, _ := post(8); status != http.StatusConflict || len(orch.requests) != 1 {
+		t.Fatalf("different body under the same key status=%d dispatches=%d", status, len(orch.requests))
+	}
+}
+
+// A refused service action writes exactly one error envelope and stops. The
+// request and target validators used to report success after writing their
+// refusal, so the handler kept going and appended a second response.
+func TestServiceRuntimeActionRefusalWritesOneEnvelope(t *testing.T) {
+	store, now := lockableServiceFixture(t)
+	for _, tc := range []struct {
+		name string
+		body map[string]any
+		want int
+	}{
+		{name: "invalid request", body: map[string]any{"action": "reboot", "owner_approved": true}, want: http.StatusBadRequest},
+		{name: "stale inventory revision", body: map[string]any{"action": "restart", "expected_inventory_revision": 6, "owner_approved": true}, want: http.StatusConflict},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			orch := &recordingServiceActionOrchestrator{store: store}
+			h := serviceRuntimeHandlers{store: store, stacks: store, servers: store, jobs: store, now: func() time.Time { return now }, orch: orch}
+			event, recorder := registryRouteStoreTestEvent(http.MethodPost, "/api/v1/registry/services/service-1/actions", "owner-1", "tenant-1", tc.body)
+			event.Request.SetPathValue("serviceId", "service-1")
+			event.Request.Header.Set("Idempotency-Key", "fresh-"+tc.name)
+			if err := h.action(event); err != nil && !errors.Is(err, httpx.ErrResponseWritten) {
+				t.Fatalf("action error = %v", err)
+			}
+			if recorder.Code != tc.want || len(orch.requests) != 0 {
+				t.Fatalf("status=%d dispatches=%d, want %d and none", recorder.Code, len(orch.requests), tc.want)
+			}
+			decoder := json.NewDecoder(recorder.Body)
+			var envelope map[string]any
+			if err := decoder.Decode(&envelope); err != nil {
+				t.Fatal(err)
+			}
+			if err := decoder.Decode(&struct{}{}); err != io.EOF {
+				t.Fatalf("response carries data after the refusal envelope: %v", err)
+			}
+		})
 	}
 }
 
@@ -376,6 +484,34 @@ func TestServiceRuntimeAccessGatesOnPersistedServerConnection(t *testing.T) {
 	got = projector.response(service, &server)
 	if got.Health.ReasonCode != "" || got.ObservedState != registryStatusRunning {
 		t.Fatalf("read path recomputed heartbeat freshness: %#v", got)
+	}
+}
+
+// TestServerPlacementFreshnessDerivesFromServiceObservation is the regression
+// for platform-hvle8: a server placement is valid only without placement
+// evidence, so its freshness must come from the service observation on that
+// server instead of staying permanently unknown.
+func TestServerPlacementFreshnessDerivesFromServiceObservation(t *testing.T) {
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	observedAt := now.Add(-45 * time.Second)
+	service := controlplane.ServiceRuntime{
+		ID: "service-server", ServerID: "server-1", ObservedAt: &observedAt,
+		Placement: serviceregistry.Placement{TargetKind: serviceregistry.TargetKindServer},
+	}
+	if err := serviceregistry.ValidatePlacement(service.ServerID, service.Placement); err != nil {
+		t.Fatalf("server placement rejected: %v", err)
+	}
+	server := controlplane.ServerRuntime{ID: "server-1", ConnectionState: string(serverregistry.ConnectionConnected)}
+	projector := serviceRuntimeHandlers{now: func() time.Time { return now }}
+
+	got := projector.response(service, &server).Placement.Freshness
+	if got.State != "recorded" || got.AgeSeconds == nil || *got.AgeSeconds != 45 {
+		t.Fatalf("observed server placement freshness = %#v, want recorded at 45s", got)
+	}
+
+	service.ObservedAt = nil
+	if got := projector.response(service, &server).Placement.Freshness; got.State != "unknown" || got.AgeSeconds != nil {
+		t.Fatalf("unobserved server placement freshness = %#v, want unknown", got)
 	}
 }
 

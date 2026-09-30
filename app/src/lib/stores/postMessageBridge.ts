@@ -38,6 +38,7 @@ import {
   withHostNavigation,
 } from "#lib/embedded-navigation.js";
 
+import { tr } from "#lib/i18n.svelte.js";
 const TOOL_ID = "kombifystack";
 /** Same payload as `@kombify/embed` `PORTAL_CHROME_HOST_SHELL`. */
 const PORTAL_EMBED_CHROME = {
@@ -172,8 +173,10 @@ export function destroyBridge(): void {
   window.removeEventListener("message", handleMessage);
   resizeObserver?.disconnect();
   resizeObserver = null;
-  rejectAuthWaiters(new Error("Bridge destroyed"));
-  rejectGatewayTokenWaiters(new Error("Bridge destroyed"));
+  rejectAuthWaiters(new Error(tr("ui.postMessageBridge.bridgeDestroyed")));
+  rejectGatewayTokenWaiters(
+    new Error(tr("ui.postMessageBridge.bridgeDestroyed")),
+  );
   clearPendingAiHandovers();
 }
 
@@ -277,12 +280,26 @@ function buildAiErrorHandoverMessage(
   };
 }
 
-export function requestAuthToken(): Promise<string> {
+export interface AuthTokenRequestOptions {
+  /**
+   * Ask the portal to mint a new launch token instead of re-sending its
+   * cached one. Launch tokens are single-use; portal-verify refuses a token
+   * this browser can no longer prove it exchanged.
+   */
+  fresh?: boolean;
+}
+
+export function requestAuthToken(
+  options: AuthTokenRequestOptions = {},
+): Promise<string> {
   if (!browser || window.parent === window) {
     return Promise.reject(new Error("Embedded auth bridge unavailable"));
   }
 
-  if (
+  const fresh = options.fresh === true;
+  if (fresh) {
+    cachedAuthToken = null;
+  } else if (
     cachedAuthToken &&
     Date.now() - cachedAuthToken.receivedAt < AUTH_TOKEN_CACHE_MS
   ) {
@@ -292,6 +309,7 @@ export function requestAuthToken(): Promise<string> {
   // Throttle sequential refreshes (concurrent callers are coalesced below)
   // so a stuck 401 cannot spam the parent into a 429 rate-limit loop.
   if (
+    !fresh &&
     pendingAuthWaiters.length === 0 &&
     Date.now() - lastAuthRequestSentAt < MIN_AUTH_REQUEST_INTERVAL_MS
   ) {
@@ -302,15 +320,20 @@ export function requestAuthToken(): Promise<string> {
     const isFirstWaiter = pendingAuthWaiters.length === 0;
     pendingAuthWaiters.push({ resolve, reject });
 
-    if (!isFirstWaiter) return;
+    if (!isFirstWaiter) {
+      if (fresh) sendAuthRequestToPortal(true);
+      return;
+    }
 
-    sendAuthRequestToPortal();
+    sendAuthRequestToPortal(fresh);
     authRequestRetryTimeout = setTimeout(() => {
       if (pendingAuthWaiters.length === 0) return;
-      sendAuthRequestToPortal();
+      sendAuthRequestToPortal(fresh);
     }, AUTH_REQUEST_RETRY_DELAY_MS);
     authRequestTimeout = setTimeout(() => {
-      rejectAuthWaiters(new Error("Auth token request timed out"));
+      rejectAuthWaiters(
+        new Error(tr("ui.postMessageBridge.authTokenRequestTimedOut")),
+      );
     }, AUTH_REQUEST_TIMEOUT_MS);
   });
 }
@@ -340,7 +363,9 @@ export function requestGatewayToken(
 
     sendToPortal({ type: "gateway-token-request", tool: TOOL_ID, audience });
     gatewayTokenRequestTimeout = setTimeout(() => {
-      rejectGatewayTokenWaiters(new Error("Gateway token request timed out"));
+      rejectGatewayTokenWaiters(
+        new Error(tr("ui.postMessageBridge.gatewayTokenRequestTimedOut")),
+      );
     }, GATEWAY_TOKEN_REQUEST_TIMEOUT_MS);
   });
 }
@@ -372,7 +397,7 @@ function handleMessage(event: MessageEvent): void {
 
     case "theme":
       if (data.value === "dark" || data.value === "light") {
-        theme.set(data.value);
+        theme.setHostTheme(data.value);
       }
       if (data.systemCardShape === "square" || data.systemCardShape === "app") {
         theme.setSystemCardShape(data.systemCardShape);
@@ -419,7 +444,9 @@ function handleMessage(event: MessageEvent): void {
       cachedAuthToken = null;
       rejectAuthWaiters(
         new Error(
-          typeof data.error === "string" ? data.error : "Authentication failed",
+          typeof data.error === "string"
+            ? data.error
+            : tr("ui.postMessageBridge.authenticationFailed"),
         ),
       );
       break;
@@ -430,7 +457,7 @@ function handleMessage(event: MessageEvent): void {
         new Error(
           typeof data.error === "string"
             ? data.error
-            : "Gateway authentication failed",
+            : tr("ui.postMessageBridge.gatewayAuthenticationFailed"),
         ),
       );
       break;
@@ -518,7 +545,7 @@ function trackAiHandover(
       status: "failed",
       error: {
         code: "handover_timeout",
-        message: "kombify AI did not confirm the support session in time.",
+        message: tr("ui.postMessageBridge.kombifyAIDidNotConfirm"),
         retryable: true,
       },
     });
@@ -673,9 +700,13 @@ function rejectAuthWaiters(error: Error): void {
   }
 }
 
-function sendAuthRequestToPortal(): void {
+function sendAuthRequestToPortal(fresh = false): void {
   lastAuthRequestSentAt = Date.now();
-  sendToPortal({ type: "auth-request", tool: TOOL_ID });
+  sendToPortal({
+    type: "auth-request",
+    tool: TOOL_ID,
+    ...(fresh ? { fresh: true } : {}),
+  });
 }
 
 function resolveGatewayTokenWaiters(token: string): void {

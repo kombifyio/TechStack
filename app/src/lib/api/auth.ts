@@ -5,6 +5,10 @@
  */
 
 import { fetchApi, post } from "./client";
+import type {
+  CloudStackIdentityPatch,
+  CloudStackIdentityV1,
+} from "./cloudStackIdentity";
 
 // ============================================================================
 // Types
@@ -79,6 +83,15 @@ export interface PortalVerifyResponse {
 export interface StackIdentitySettingsResponse {
   stack_identity?: StackIdentity;
   editable: boolean;
+  /** Local copy sync state; absent before the homelab exists. */
+  sync?: { cloud_revision: number; pending: boolean };
+}
+
+/** One kombify Cloud sync step (POST /api/v1/auth/stack-identity/sync). */
+export interface StackIdentitySyncResponse extends StackIdentitySettingsResponse {
+  action: "none" | "in_sync" | "adopt_cloud" | "push_local";
+  reason: string;
+  push?: { if_match: number; body: CloudStackIdentityPatch };
 }
 
 // ============================================================================
@@ -133,6 +146,22 @@ export function embeddingPortalOrigin(): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** portal-verify refused a launch token that was already exchanged. */
+export const PORTAL_TOKEN_REPLAYED_REASON = "sso_token_replayed";
+
+export function isReplayedPortalToken(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const candidate = err as { status?: unknown; details?: unknown };
+  if (candidate.status !== 401) return false;
+  const details = candidate.details;
+  return (
+    typeof details === "object" &&
+    details !== null &&
+    (details as { reason_code?: unknown }).reason_code ===
+      PORTAL_TOKEN_REPLAYED_REASON
+  );
 }
 
 /**
@@ -196,6 +225,24 @@ export async function getStackIdentitySettings(): Promise<StackIdentitySettingsR
   const res = await fetchApi<StackIdentitySettingsResponse>(
     "/api/v1/auth/stack-identity",
     {
+      credentials: "include",
+    },
+  );
+  return res.data;
+}
+
+/**
+ * Apply one sync step with Cloud's record (null when Cloud has none). The
+ * server owns the rules; the answer says whether to push the local copy.
+ */
+export async function syncStackIdentityStep(
+  cloud: CloudStackIdentityV1 | null,
+): Promise<StackIdentitySyncResponse> {
+  const res = await fetchApi<StackIdentitySyncResponse>(
+    "/api/v1/auth/stack-identity/sync",
+    {
+      method: "POST",
+      body: JSON.stringify({ cloud }),
       credentials: "include",
     },
   );

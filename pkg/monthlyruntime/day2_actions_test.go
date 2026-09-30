@@ -72,6 +72,33 @@ func TestServiceDay2MutationsFailClosedWithoutEntitlement(t *testing.T) {
 	}
 }
 
+// The local managed-runtime E2E gate that admits creation admits the owner's
+// Day-2 reads too, only with both test flags in a development or local Core.
+func TestServiceDay2EntitlementFollowsLocalManagedRuntimeGate(t *testing.T) {
+	for _, test := range []struct {
+		name, environment, simulation string
+		wantAllowed                   bool
+	}{
+		{name: "local with both flags", environment: "local", simulation: "true", wantAllowed: true},
+		{name: "local without the simulation flag", environment: "local"},
+		{name: "production with both flags", environment: "production", simulation: "true"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("TECHSTACK_ENV", test.environment)
+			t.Setenv("TECHSTACK_ALLOW_LOCAL_SIMULATION_GATE", test.simulation)
+			t.Setenv("TECHSTACK_ALLOW_LOCAL_MANAGED_RUNTIME_E2E", "true")
+			leases := newLeaseServiceWith(t, time.Now().UTC(), EnrollmentStatusEnrolled)
+			svc := &Service{Leases: nativeLeaseService(leases), Runtime: &fakeRuntimeClient{}, Features: fakeFeatureChecker{enabled: false}}
+			_, err := svc.Action(t.Context(), ActionRequest{
+				TenantID: "org-1", UserID: "user-1", LeaseID: "lease-1", Action: serverruntime.RuntimeActionStatus,
+			})
+			if allowed := err == nil; allowed != test.wantAllowed || (!allowed && !errors.Is(err, ErrFeatureDisabled)) {
+				t.Fatalf("status err = %v, want allowed=%t", err, test.wantAllowed)
+			}
+		})
+	}
+}
+
 // A stopped managed runtime stays under provider-control custody: the owner
 // still reads its status and can start it again. Live on 0.19.2 the stop
 // moved the lease out of custody, so status and start answered 409.

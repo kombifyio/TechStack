@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { tr } from "#lib/i18n.svelte.js";
+  import InfoTip from "./InfoTip.svelte";
   import type { StackConfig } from "#lib/wizard/types.js";
   import type { DiscoveredDevice } from "#lib/discovery/types.js";
   import {
@@ -303,17 +304,25 @@
     {/each}
     {#if inventory && profile}
       <div class="grid gap-4 sm:grid-cols-2">
-        <label class="text-sm"
-          >{tr("wizard.server.hypervisor.storage")}
+        <div class="text-sm">
+          <span class="flex items-center gap-0.5"
+            ><label for="hypervisor-guest-storage"
+              >{tr("wizard.server.hypervisor.storage")}</label
+            ><InfoTip
+              topic={`${tr("wizard.server.hypervisor.storage")} / ${tr("wizard.server.hypervisor.bridge")}`}
+              text={tr("wizard.tip.hypervisorResources")}
+            /></span
+          >
           <select
+            id="hypervisor-guest-storage"
             class="mt-1 w-full rounded-lg border border-border bg-input p-2"
             bind:value={guest.storage}
             ><option value="">{tr("wizard.server.hypervisor.select")}</option
             >{#each storage as item}<option value={item.storage}
-                >{item.storage} · {Math.floor(item.avail / 1073741824)} GiB</option
+                >{tr("ui.hypervisor.storageAvail", { name: item.storage, size: Math.floor(item.avail / 1073741824) })}</option
               >{/each}</select
           >
-        </label>
+        </div>
         <label class="text-sm"
           >{tr("wizard.server.hypervisor.bridge")}
           <select
@@ -327,18 +336,24 @@
         </label>
       </div>
       <div class="grid gap-4 sm:grid-cols-3">
-        <label class="text-sm"
-          >CPU<input
+        <div class="text-sm">
+          <span class="flex items-center gap-0.5"
+            ><label for="hypervisor-guest-cpu">CPU</label><InfoTip
+              topic="CPU / RAM / {tr('wizard.server.hypervisor.disk')}"
+              text={tr("wizard.tip.hypervisorSize")}
+            /></span
+          ><input
+            id="hypervisor-guest-cpu"
             class="mt-1 w-full rounded-lg border border-border bg-input p-2"
             type="number"
             min={profile.min_cpu}
             max={inventory.cpu}
             step="1"
             bind:value={guest.cpu}
-          /></label
-        >
+          />
+        </div>
         <label class="text-sm"
-          >RAM (MiB)<input
+          >{tr("ui.hypervisorSelection.ramMib")}<input
             class="mt-1 w-full rounded-lg border border-border bg-input p-2"
             type="number"
             min={profile.min_memory_mib}
@@ -348,7 +363,7 @@
           /></label
         >
         <label class="text-sm"
-          >{tr("wizard.server.hypervisor.disk")} (GiB)<input
+          >{tr("ui.hypervisor.diskGiB", { label: tr("wizard.server.hypervisor.disk") })}<input
             class="mt-1 w-full rounded-lg border border-border bg-input p-2"
             type="number"
             min={profile.min_disk_gib}
@@ -365,7 +380,7 @@
         </p>{/if}
       {#if wantsAppliance && guest.appliance && applianceProfile}
         <fieldset class="border-t border-border pt-4 space-y-3">
-          <legend class="font-medium">Home Assistant OS</legend>
+          <legend class="font-medium">{tr("ui.hypervisorSelection.homeAssistantOs")}</legend>
           <p class="text-sm text-muted-foreground">
             {tr("wizard.smartHome.haos")}
           </p>
@@ -402,7 +417,7 @@
               /></label
             >
             <label class="text-sm"
-              >RAM (MiB)<input
+              >{tr("ui.hypervisorSelection.ramMib")}<input
                 class="mt-1 w-full rounded-lg border border-border bg-input p-2"
                 type="number"
                 min={applianceProfile.min_memory_mib}
@@ -410,7 +425,7 @@
               /></label
             >
             <label class="text-sm"
-              >{tr("wizard.server.hypervisor.disk")} (GiB)<input
+              >{tr("ui.hypervisor.diskGiB", { label: tr("wizard.server.hypervisor.disk") })}<input
                 class="mt-1 w-full rounded-lg border border-border bg-input p-2"
                 type="number"
                 min={applianceProfile.min_disk_gib}

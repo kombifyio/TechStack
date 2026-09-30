@@ -14,10 +14,10 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:fire="http://wixtoolset.org/schemas/v4/wxs/firewall">
   <Package
-    Name="kombify Techstack"
+    Name="kombify Techstack $(var.DesktopEdition)"
     Manufacturer="kombify"
     Version="$(var.TechStackVersion)"
-    UpgradeCode="{F85F01B8-7612-47AB-9666-29BEC1BE0E10}"
+    UpgradeCode="$(var.MsiUpgradeCode)"
     ProductCode="*"
     Language="1033"
     Codepage="1252"
@@ -32,7 +32,8 @@
 
     <StandardDirectory Id="ProgramFiles6432Folder">
       <Directory Id="KombifyDir" Name="kombify">
-        <Directory Id="INSTALLFOLDER" Name="techstack">
+        <Directory Id="INSTALLFOLDER" Name="$(var.InstallDirectoryName)">
+<?if $(var.DesktopEdition) = Local ?>
           <Component Id="PrivateLANFirewall" Guid="*">
             <RegistryValue
               Root="HKLM"
@@ -49,6 +50,7 @@
               Protocol="tcp"
               Scope="localSubnet" />
           </Component>
+<?endif?>
         </Directory>
       </Directory>
     </StandardDirectory>
@@ -65,7 +67,7 @@
             Icon="TechStackIcon" />
           <RegistryValue
             Root="HKLM"
-            Key="Software\kombify\Techstack"
+            Key="Software\kombify\Techstack\$(var.DesktopEdition)"
             Name="StartMenuInstalled"
             Type="integer"
             Value="1"
@@ -82,7 +84,9 @@
     <Feature Id="ProductFeature" Title="kombify Techstack" Level="1">
       <ComponentGroupRef Id="StageFiles" />
       <ComponentRef Id="StartMenuShortcut" />
+<?if $(var.DesktopEdition) = Local ?>
       <ComponentRef Id="PrivateLANFirewall" />
+<?endif?>
     </Feature>
   </Package>
 

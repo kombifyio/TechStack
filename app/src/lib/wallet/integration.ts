@@ -12,6 +12,7 @@ import type { KitDeployment } from "#lib/api/stacks.js";
 import type { CredentialType } from "#lib/wallet/types.js";
 import { buildWalletEntryPayload } from "#lib/wallet/payload.js";
 
+import { tr } from "#lib/i18n.svelte.js";
 export interface DiscoveredCredential {
   name: string;
   kind: CredentialType;
@@ -50,11 +51,15 @@ const SERVICE_TEMPLATES: ServiceCredentialTemplate[] = [
     serviceType: "pocketbase",
     credentials: [
       {
-        nameSuffix: "Admin",
+        get nameSuffix() {
+          return tr("ui.integration.admin");
+        },
         kind: "password",
         usernameDefault: "admin@local.host",
         urlPattern: "{url}/_/",
-        notes: "PocketBase admin dashboard credentials",
+        get notes() {
+          return tr("ui.integration.pocketbaseAdminDashboardCredentials");
+        },
       },
     ],
   },
@@ -62,11 +67,15 @@ const SERVICE_TEMPLATES: ServiceCredentialTemplate[] = [
     serviceType: "traefik",
     credentials: [
       {
-        nameSuffix: "Dashboard",
+        get nameSuffix() {
+          return tr("ui.settings.dashboard");
+        },
         kind: "password",
         usernameDefault: "admin",
         urlPattern: "{url}/dashboard/",
-        notes: "Traefik dashboard basic auth",
+        get notes() {
+          return tr("ui.integration.traefikDashboardBasicAuth");
+        },
       },
     ],
   },
@@ -74,10 +83,14 @@ const SERVICE_TEMPLATES: ServiceCredentialTemplate[] = [
     serviceType: "headscale",
     credentials: [
       {
-        nameSuffix: "API Key",
+        get nameSuffix() {
+          return tr("ui.credentialForm.apiKey");
+        },
         kind: "api_key",
         urlPattern: "{url}/api/v1",
-        notes: "Headscale API key for management",
+        get notes() {
+          return tr("ui.integration.headscaleAPIKeyForManagement");
+        },
       },
     ],
   },
@@ -89,7 +102,9 @@ const SERVICE_TEMPLATES: ServiceCredentialTemplate[] = [
         kind: "password",
         usernameDefault: "admin",
         urlPattern: "{url}",
-        notes: "Grafana dashboard credentials",
+        get notes() {
+          return tr("ui.integration.grafanaDashboardCredentials");
+        },
       },
     ],
   },

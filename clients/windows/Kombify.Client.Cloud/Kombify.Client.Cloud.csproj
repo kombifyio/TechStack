@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <AssemblyName>Kombify.Client.Cloud</AssemblyName>
+    <PackageId>Kombify.Client.Cloud</PackageId>
+    <Description>Optional Windows Auth0 native login and kombify Connect adapter for Cloud installers.</Description>
+    <RepositoryUrl>https://github.com/kombifyio/TechStack</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\Kombify.Client.Shell\KombifyConnect.cs" Link="KombifyConnect.cs" />
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+</Project>

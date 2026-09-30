@@ -24,6 +24,8 @@ func (s *MemoryStore) UpsertServerRuntime(_ context.Context, server ServerRuntim
 			return nil, ErrConflict
 		}
 		server.CreatedAt = existing.CreatedAt
+		// Projections never carry the owner's rename; keep it (migration 123).
+		server.DisplayName = existing.DisplayName
 		if server.LifecycleReasonCode == "" {
 			server.LifecycleReasonCode = existing.LifecycleReasonCode
 		}

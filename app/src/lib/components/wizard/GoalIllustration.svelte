@@ -1,6 +1,9 @@
 <script lang="ts">
   import { Bot, Network, Workflow } from "@lucide/svelte";
   import type { CreationGoalId } from "#lib/wizard/creationGoals.js";
+  import { theme } from "#lib/stores/theme.js";
+
+  const appearance = theme.resolved;
 
   let {
     goal,
@@ -27,7 +30,7 @@
 <div class="scene" class:compact data-goal={goal} aria-hidden="true">
   {#if illustratedGoals.has(goal)}
     <img
-      src={`/illustrations/use-cases/${goal}.webp`}
+      src={`/illustrations/use-cases/${goal}${$appearance === "dark" ? "-night" : ""}.webp`}
       alt=""
       loading={priority ? "eager" : "lazy"}
       decoding="async"
@@ -65,13 +68,13 @@
   .scene:has(img)::after {
     content: "";
     position: absolute;
-    inset: 32% 0 0;
+    inset: 0;
     pointer-events: none;
     background: linear-gradient(
       to bottom,
-      transparent,
-      rgb(13 19 29 / 18%) 48%,
-      rgb(13 19 29 / 68%)
+      transparent 35%,
+      rgb(8 12 19 / 45%) 68%,
+      rgb(8 12 19 / 92%)
     );
   }
   .scene.compact:has(img)::after {

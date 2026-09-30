@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { UseCaseCatalogView } from "#lib/api/useCaseCatalog.js";
 import {
+  backendChoices,
   supportsCreationChoice,
   withCreationTargets,
 } from "./creationGoals.js";
@@ -50,4 +51,37 @@ describe("creation choices at the runtime intent boundary", () => {
       false,
     );
   });
+});
+
+it("offers the default app first although the release sorts components by id", () => {
+  const photos: UseCaseCatalogView = {
+    components: [
+      {
+        id: "ente-photos",
+        name: "Ente Photos",
+        role: "alternative",
+        kind: "application",
+      },
+      { id: "immich", name: "Immich", role: "primary", kind: "application" },
+      {
+        id: "immich-kiosk",
+        name: "Immich Kiosk",
+        role: "supporting",
+        kind: "application",
+      },
+      {
+        id: "immich-lite",
+        name: "Immich Lite",
+        role: "alternative",
+        kind: "application",
+      },
+    ],
+    computeTiers: {},
+    settings: [],
+  };
+  expect(backendChoices(photos).map((component) => component.id)).toEqual([
+    "immich",
+    "ente-photos",
+    "immich-lite",
+  ]);
 });

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tr } from "#lib/i18n.svelte.js";
   /**
    * Modal - Modern modal dialog component
    * Uses CSS variables for theming and smooth animations
@@ -98,7 +99,7 @@
           <button
             onclick={onClose}
             class="p-2 -m-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shrink-0"
-            aria-label="Close"
+            aria-label={tr("ui.common.close")}
           >
             <X class="w-5 h-5" />
           </button>

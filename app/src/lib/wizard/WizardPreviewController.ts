@@ -4,6 +4,7 @@ import {
   type WizardRecommendationResult,
 } from "#lib/api/unifier.js";
 
+import { tr } from "#lib/i18n.svelte.js";
 export type WizardPreviewState =
   | { phase: "idle" }
   | { phase: "loading"; previous?: WizardRecommendationResult }
@@ -71,7 +72,9 @@ export class WizardPreviewController {
             message:
               error instanceof Error
                 ? error.message
-                : "Recommendation preview is temporarily unavailable.",
+                : tr(
+                    "ui.wizardPreviewController.recommendationPreviewIsTemporarilyUnavailable",
+                  ),
           });
         })
         .finally(() => {
