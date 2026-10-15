@@ -1,4 +1,5 @@
 <script lang="ts">
+  import LoadingNote from "#lib/components/ui/LoadingNote.svelte";
   import { tr, trn, formatDateTime, stateLabel } from "#lib/i18n.svelte.js";
   import { onMount, untrack } from "svelte";
   import { page } from "$app/state";
@@ -486,12 +487,10 @@
   </PageHeader>
 
   {#if loading}
-    <div
-      class="h-48 animate-pulse rounded-lg border border-border bg-muted/20"
-      role="status"
-      aria-label={tr("ui.serviceDetail.loading")}
-      data-testid="application-detail-loading"
-    ></div>
+    <LoadingNote
+      label={tr("ui.serviceDetail.loading")}
+      testid="application-detail-loading"
+    />
   {:else if loadError}
     <div
       class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-destructive"
@@ -1094,9 +1093,7 @@
           </p>
         {/if}
         {#if recorded.loading && activityRows.length === 0}
-          <div
-            class="h-24 animate-pulse rounded-lg border border-border bg-muted/20"
-          ></div>
+          <LoadingNote label={tr("common.loading")} />
         {:else if activityRows.length === 0}
           <p
             class="rounded-lg border border-dashed border-border bg-background/40 p-6 text-center text-sm text-muted-foreground"

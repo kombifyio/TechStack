@@ -14,7 +14,7 @@ overrides:
   "@kombiverselabs/execution-contracts": "file:third_party/npm/execution-contracts-0.12.4.tgz"
   "@kombiverselabs/onboarding-core": "file:third_party/npm/onboarding-core-0.10.535.tgz"
   "@kombiverselabs/speechkit-voiceagent-client": "file:third_party/npm/speechkit-voiceagent-client-0.76.4.tgz"
-  "@kombiverselabs/ui": "file:third_party/npm/ui-0.10.535.tgz"
+  "@kombiverselabs/ui": "file:third_party/npm/ui-0.10.543.tgz"
   # kombify-vendor:end
   cookie@<0.7.0: ">=0.7.2"
   # Force-patch transitive dev-tool vulns (vitest/wrangler/miniflare -> ws/undici).

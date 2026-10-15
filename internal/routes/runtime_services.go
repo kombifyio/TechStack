@@ -68,6 +68,9 @@ type serviceRuntimeHandlers struct {
 	mu                   sync.Mutex
 	connectorAdmission   func() (*agentpb.StackKitReleasePin, error)
 	applicationAdmission func() (*agentpb.StackKitReleasePin, error)
+	// projectionAdmission answers adoption availability on reads; nil uses
+	// applicationAdmission. Execution always uses applicationAdmission.
+	projectionAdmission func() (*agentpb.StackKitReleasePin, error)
 	// updates and stackKitRelease are optional; without them a service reports
 	// no registry or release comparison instead of an invented one.
 	updates         *appcatalog.UpdateChecker
@@ -236,6 +239,7 @@ func RegisterServiceRuntimeRoutes(r *httpx.Router, cfg ServiceRuntimeRouteConfig
 	h.applicationAdmission = cfg.ApplicationAdmission
 	if h.applicationAdmission == nil {
 		h.applicationAdmission = jobs.ApplicationAdoptionRelease
+		h.projectionAdmission = jobs.CachedApplicationAdoptionRelease
 	}
 	h.updates = cfg.UpdateChecker
 	if h.updates == nil {
@@ -1038,13 +1042,21 @@ func (h *serviceRuntimeHandlers) serverMap(e *httpx.Event, tenantID, stackID str
 // read path no longer recomputes heartbeat freshness inline; persisted state
 // is returned and demoted servers mask their services as unknown.
 func (h *serviceRuntimeHandlers) response(service controlplane.ServiceRuntime, server *controlplane.ServerRuntime) serviceRuntimeResponse {
-	return h.responseWithAdmission(service, server, h.applicationAdmission)
+	return h.responseWithAdmission(service, server, h.readAdmission())
+}
+
+// readAdmission is the admission a read projection advertises from.
+func (h *serviceRuntimeHandlers) readAdmission() func() (*agentpb.StackKitReleasePin, error) {
+	if h.projectionAdmission != nil {
+		return h.projectionAdmission
+	}
+	return h.applicationAdmission
 }
 
 // A list projects one current signed admission across its eligible rows. The
 // closure belongs only to this read request; execution still admits afresh.
 func (h *serviceRuntimeHandlers) responseForRequest() func(controlplane.ServiceRuntime, *controlplane.ServerRuntime) serviceRuntimeResponse {
-	admission := h.applicationAdmission
+	admission := h.readAdmission()
 	if admission != nil {
 		admission = sync.OnceValues(admission)
 	}

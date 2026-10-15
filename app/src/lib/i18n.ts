@@ -26,9 +26,7 @@ import { actorsMessages } from "./actors/actors-messages";
 import { nodesMessages } from "./nodes/nodes-messages";
 import { creationTemplateMessages } from "./wizard/creation-template-messages";
 import { marketplaceMessages } from "./wizard/marketplace-messages";
-import { setupFlowMessages } from "./wizard/setup-flow-messages";
 import { connectDevicesMessages } from "./dashboard/connect-devices-messages";
-import { experienceMessages } from "./wizard/experience-messages";
 import { es } from "./locales/es";
 import { zhHans } from "./locales/zh-Hans";
 import { hi } from "./locales/hi";
@@ -57,9 +55,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...nodesMessages.en,
     ...creationTemplateMessages.en,
     ...marketplaceMessages.en,
-    ...setupFlowMessages.en,
     ...connectDevicesMessages.en,
-    ...experienceMessages.en,
     "wizard.creation.preferenceOnly":
       "Preference saved. This release installs the suggested service; the alternative is not applied yet.",
     "wizard.preview.mail.title": "Mail",
@@ -1019,9 +1015,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...nodesMessages.de,
     ...creationTemplateMessages.de,
     ...marketplaceMessages.de,
-    ...setupFlowMessages.de,
     ...connectDevicesMessages.de,
-    ...experienceMessages.de,
     ...loginMessages.de,
     ...accessUsersMessages.de,
     ...nodeGuidanceMessages.de,
@@ -1996,9 +1990,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...nodesMessages.es,
     ...creationTemplateMessages.es,
     ...marketplaceMessages.es,
-    ...setupFlowMessages.es,
     ...connectDevicesMessages.es,
-    ...experienceMessages.es,
   },
   "zh-Hans": {
     ...zhHans,
@@ -2013,9 +2005,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...nodesMessages["zh-Hans"],
     ...creationTemplateMessages["zh-Hans"],
     ...marketplaceMessages["zh-Hans"],
-    ...setupFlowMessages["zh-Hans"],
     ...connectDevicesMessages["zh-Hans"],
-    ...experienceMessages["zh-Hans"],
   },
   hi: {
     ...hi,
@@ -2030,9 +2020,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...nodesMessages.hi,
     ...creationTemplateMessages.hi,
     ...marketplaceMessages.hi,
-    ...setupFlowMessages.hi,
     ...connectDevicesMessages.hi,
-    ...experienceMessages.hi,
   },
   ar: {
     ...ar,
@@ -2047,9 +2035,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...nodesMessages.ar,
     ...creationTemplateMessages.ar,
     ...marketplaceMessages.ar,
-    ...setupFlowMessages.ar,
     ...connectDevicesMessages.ar,
-    ...experienceMessages.ar,
   },
 };
 

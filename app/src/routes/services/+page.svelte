@@ -1,4 +1,5 @@
 <script lang="ts">
+  import LoadingNote from "#lib/components/ui/LoadingNote.svelte";
   import { tr, trn, stateLabel } from "#lib/i18n.svelte.js";
   import { onMount } from "svelte";
   import { goto, pushState, replaceState } from "$app/navigation";
@@ -1375,11 +1376,11 @@
   {#if activeTab === "services"}
     <!-- Applications View -->
     {#if inventoryLoading}
-      <section
-        class="mb-6 h-24 animate-pulse rounded-lg border border-border bg-muted/20"
-        data-testid="inventory-services-loading"
-        aria-label={tr("ui.services.loadingCanonicalServiceInventory")}
-      ></section>
+      <LoadingNote
+        class="mb-6"
+        label={tr("ui.services.loadingCanonicalServiceInventory")}
+        testid="inventory-services-loading"
+      />
     {:else if inventoryError}
       <section
         class="mb-6 rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-destructive"

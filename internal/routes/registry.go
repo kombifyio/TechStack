@@ -88,7 +88,7 @@ func RegisterRegistryRoutesWithStores(r *httpx.Router, stores RegistryRouteStore
 		serviceStore:  stores.Services,
 		serviceProjector: &serviceRuntimeHandlers{
 			store: stores.Services, stacks: stores.Stacks, servers: stores.Servers, jobs: stores.Jobs,
-			now: func() time.Time { return time.Now().UTC() }, applicationAdmission: jobs.ApplicationAdoptionRelease,
+			now: func() time.Time { return time.Now().UTC() }, applicationAdmission: jobs.ApplicationAdoptionRelease, projectionAdmission: jobs.CachedApplicationAdoptionRelease,
 			updates: appcatalog.NewUpdateChecker(), stackKitRelease: pinnedStackKitRelease(),
 		},
 		allowLocalHomeAssistant: stores.AllowLocalHomeAssistant,

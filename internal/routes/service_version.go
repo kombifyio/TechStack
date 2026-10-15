@@ -155,7 +155,7 @@ func pinnedStackKitRelease() func() string {
 			return value
 		}
 		value = ""
-		if release, err := jobs.ConfiguredTargetStackKitRelease(); err == nil && release != nil {
+		if release, err := jobs.CachedTargetStackKitRelease(); err == nil && release != nil {
 			value = release.Receipt().Version
 		}
 		expires = time.Now().Add(5 * time.Minute)

@@ -272,7 +272,17 @@ func ApplicationContainerIdentity(service *controlplane.ServiceRuntime) string {
 // ApplicationAdoptionRelease admits only the exact producer release catalog.
 // A pre-adoption release cannot advertise executable adoption.
 func ApplicationAdoptionRelease() (*agentpb.StackKitReleasePin, error) {
-	release, err := configuredTargetStackKitRelease()
+	return applicationAdoptionPin(configuredTargetStackKitRelease)
+}
+
+// CachedApplicationAdoptionRelease answers the same question for read
+// projections from CachedTargetStackKitRelease; execution admits afresh.
+func CachedApplicationAdoptionRelease() (*agentpb.StackKitReleasePin, error) {
+	return applicationAdoptionPin(CachedTargetStackKitRelease)
+}
+
+func applicationAdoptionPin(resolve func() (*stackkitrelease.Release, error)) (*agentpb.StackKitReleasePin, error) {
+	release, err := resolve()
 	if err != nil {
 		return nil, err
 	}

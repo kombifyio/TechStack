@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "public_repository": "kombifyio/TechStack",
-  "source_commit": "17f5403e63d61ae89ec26633975e90dfa3a558bc",
-  "candidate_digest": "53c92e984a2bad55b9ce0a5cfbd403925b2d8f70ba07e77e61880ca2069146b7",
-  "candidate_file_count": 3002,
+  "source_commit": "22ae0124d25055d2947676bf4c1aa0cd535b6910",
+  "candidate_digest": "c4519749b4fb9b2dd17886b7b34ec3c9d749308efe33b156e85d478b6dc6e8bb",
+  "candidate_file_count": 2981,
   "digest_scope": "sha256 over every exported file except this receipt, in code-unit path order, as path NUL content NUL",
   "projected_go_sources": [
     {
@@ -110,10 +110,10 @@
     },
     {
       "name": "@kombiverselabs/ui",
-      "version": "0.10.535",
-      "integrity": "sha512-+hVbLtR95Hd/z3pqin+JY6YVCwFrlbwx4HOhfMQMl0gz0ljjl3M3XnUBXtn6Ab0Ss4+gAgF1YK7sM2bQJc83bw==",
+      "version": "0.10.543",
+      "integrity": "sha512-oUBotUnZmlod1nYW/EaJNtslRbB5Ix/BdZxaEJJliKVInmIvG1CChgrAL+vKfLKw97n7KQBhRDHZEqycU0loHQ==",
       "license": "MIT",
-      "path": "app/third_party/npm/ui-0.10.535.tgz"
+      "path": "app/third_party/npm/ui-0.10.543.tgz"
     }
   ]
 }

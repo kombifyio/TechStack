@@ -53,7 +53,7 @@
     "@kombiverselabs/design": "0.10.535",
     "@kombiverselabs/embed": "0.10.3043",
     "@kombiverselabs/onboarding-core": "0.10.535",
-    "@kombiverselabs/ui": "0.10.535",
+    "@kombiverselabs/ui": "0.10.543",
     "@lucide/svelte": "1.53.0",
     "@sentry/sveltekit": "^10.76.1",
     "@xterm/addon-fit": "^0.11.0",

@@ -219,7 +219,7 @@ func (h serverRuntimeHandlers) applyStackKitActions(item *serverRuntimeResponse,
 			capabilities = current
 		}
 	}
-	configured, err := jobs.ConfiguredTargetStackKitRelease()
+	configured, err := jobs.CachedTargetStackKitRelease()
 	if err != nil || configured == nil {
 		return
 	}

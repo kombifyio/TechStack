@@ -1,4 +1,5 @@
 <script lang="ts">
+  import LoadingNote from "#lib/components/ui/LoadingNote.svelte";
   import { goto as svelteGoto } from "$app/navigation";
   import { onMount } from "svelte";
   import { getKitDeployment, type KitDeployment } from "#lib/api/stacks.js";
@@ -305,10 +306,7 @@
 >
 
   {#if loading}
-    <div class="rounded-lg border border-border bg-card p-6">
-      <div class="h-5 w-48 animate-pulse rounded bg-muted"></div>
-      <div class="mt-4 h-24 animate-pulse rounded bg-muted/60"></div>
-    </div>
+    <LoadingNote label={tr("common.loading")} />
   {:else if error && !deployment}
     <div
       class="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-destructive"

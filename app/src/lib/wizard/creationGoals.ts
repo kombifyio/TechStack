@@ -1,3 +1,4 @@
+import { backendChoices } from "@kombiverselabs/ui/usecase";
 import {
   installsService,
   type UseCaseCatalogView,
@@ -87,15 +88,8 @@ export function supportsCreationChoice(
   );
 }
 
-/** The default (primary) first, then the alternatives in catalog order. The
- * released catalog sorts components by id, so Ente would otherwise lead Immich. */
-export function backendChoices(catalog?: UseCaseCatalogView) {
-  const components = catalog?.components ?? [];
-  return [
-    ...components.filter((component) => component.role === "primary"),
-    ...components.filter((component) => component.role === "alternative"),
-  ];
-}
+/** The default (primary) first, then the alternatives in catalog order. */
+export { backendChoices } from "@kombiverselabs/ui/usecase";
 
 export function selectedBackend(
   catalog?: UseCaseCatalogView,

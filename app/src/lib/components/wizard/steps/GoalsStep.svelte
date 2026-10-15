@@ -9,7 +9,7 @@
   import {
     acceleratorFromGpu,
     type SetupHardwareHints,
-  } from "#lib/wizard/setupFlows.js";
+  } from "@kombiverselabs/ui/usecase";
   import type { UseCaseCatalogView } from "#lib/api/useCaseCatalog.js";
   import type { WizardPreviewState } from "#lib/wizard/WizardPreviewController.js";
   import type {

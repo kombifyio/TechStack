@@ -1,4 +1,5 @@
 <script lang="ts">
+  import LoadingNote from "#lib/components/ui/LoadingNote.svelte";
   import { tr, trParts, formatDateTime, stateLabel } from "#lib/i18n.svelte.js";
   import { page } from "$app/state";
   import { untrack } from "svelte";
@@ -539,19 +540,10 @@
   </Button>
 
   {#if loading && !details}
-    <div
-      data-kx="plate"
-      class="p-6"
-      data-testid="server-details-loading-state"
-      aria-label={tr("ui.stacksIdServersServerId.loadingServerDetails")}
-    >
-      <div class="h-6 w-48 animate-pulse rounded bg-muted"></div>
-      <div class="mt-4 grid gap-3 md:grid-cols-4">
-        {#each Array(4) as _, i (i)}
-          <div class="h-24 animate-pulse rounded-lg bg-muted/50"></div>
-        {/each}
-      </div>
-    </div>
+    <LoadingNote
+      label={tr("ui.stacksIdServersServerId.loadingServerDetails")}
+      testid="server-details-loading-state"
+    />
   {:else if sessionRenewalRequired && !details}
     <SessionRenewalPanel />
   {:else if error && !details}

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import LoadingNote from "#lib/components/ui/LoadingNote.svelte";
   import { tr, trn, formatDate } from "#lib/i18n.svelte.js";
   import type { Component } from "svelte";
   import { onMount } from "svelte";
@@ -1145,10 +1146,8 @@
     {/if}
 
     {#if loading}
-      <div class="space-y-4 mb-8" data-wallet-state="loading">
-        {#each Array(3) as _}
-          <div data-kx="plate" class="animate-pulse h-28"></div>
-        {/each}
+      <div class="mb-8" data-wallet-state="loading">
+        <LoadingNote label={tr("common.loading")} />
       </div>
     {:else if error}
       <div

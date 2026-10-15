@@ -1,4 +1,5 @@
 <script lang="ts">
+  import LoadingNote from "#lib/components/ui/LoadingNote.svelte";
   import { onMount } from "svelte";
   import { PageHeader } from "@kombiverselabs/ui/shell";
   import HomelabSettingsWizard from "#lib/components/wizard/HomelabSettingsWizard.svelte";
@@ -39,7 +40,7 @@
   </p>
 
   {#if loading}
-    <div class="h-24 animate-pulse rounded-lg border border-border bg-muted/20"></div>
+    <LoadingNote label={tr("common.loading")} />
   {:else if error}
     <p class="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive" role="alert">
       {error}
