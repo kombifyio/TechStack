@@ -15,12 +15,17 @@
     Store,
   } from "@lucide/svelte";
   import {
-    resolveSetup,
+    experienceLevel,
+    setupAnswersFor,
+    setupChanges,
+    setupFlowFromCatalog,
+    useCaseSetupLabels,
+    UseCaseArt,
     UseCaseCardCompact,
     UseCaseGuidedSetup,
+    type SetupHardwareHints,
     type UseCaseSetupAnswers,
     type UseCaseSetupFlow,
-    type UseCaseSetupLabels,
     type UseCaseSetupResult,
   } from "@kombiverselabs/ui/usecase";
   import { KfDetailSheet } from "@kombiverselabs/ui/card";
@@ -46,21 +51,14 @@
   } from "#lib/api/useCaseCatalog.js";
   import { brandDomainForTool } from "#lib/brand-logo.js";
   import { useCaseGuideUrl } from "#lib/docs-links.js";
-  import { tr } from "#lib/i18n.svelte.js";
-  import GoalIllustration from "./GoalIllustration.svelte";
+  import { getLocale, tr } from "#lib/i18n.svelte.js";
+  import { theme } from "#lib/stores/theme.js";
   import UseCaseServicePicker from "./UseCaseServicePicker.svelte";
   import UseCaseSettings from "./UseCaseSettings.svelte";
   import BrandLogoIcon from "../BrandLogoIcon.svelte";
   import BrandLogoScope from "../BrandLogoScope.svelte";
   import { revealWizardDetails } from "#lib/wizard/reveal-details.js";
-  import { experienceLevel, flowForLevel } from "#lib/wizard/experience.js";
   import { operatorExperience } from "#lib/stores/operatorExperience.svelte.js";
-  import {
-    setupAnswersFor,
-    setupChanges,
-    setupFlowFor,
-    type SetupHardwareHints,
-  } from "#lib/wizard/setupFlows.js";
 
   let {
     config = $bindable(),
@@ -286,32 +284,19 @@
   /** The guided setup of an expanded card. The service picker above already
    * chooses the app, so the setup starts with what the app should do. */
   function setupFor(card: CreationGoal): UseCaseSetupFlow | undefined {
-    const flow = setupFlowFor(card.id, cardCatalog(card), tr, hardware);
+    const flow = setupFlowFromCatalog(card.id, cardCatalog(card), {
+      locale: getLocale(),
+      hardware,
+    });
     if (!flow) return undefined;
     const questions = flow.questions.filter((entry) => entry.id !== "backend");
     return questions.length > 0 ? { ...flow, questions } : undefined;
   }
-  /** Cards whose "More settings" are open. */
-  let allSettings = $state<Record<string, boolean>>({});
   /** How many steps the person sees follows the detail level they chose in
    * the kombify Cloud account setup; every other step keeps its
-   * recommendation and opens under "More settings". */
+   * recommendation and opens under the setup's "More settings". */
   const level = $derived(experienceLevel(operatorExperience.experience));
-  function tieredSetup(card: CreationGoal, flow: UseCaseSetupFlow) {
-    return flowForLevel(
-      flow,
-      level,
-      answersOf(card),
-      Boolean(allSettings[card.id]),
-    );
-  }
-  /** Answers of the shown steps over the kept answers of every other step. */
-  function mergedAnswers(
-    card: CreationGoal,
-    answers: UseCaseSetupAnswers,
-  ): UseCaseSetupAnswers {
-    return { ...answersOf(card), ...answers };
-  }
+  const appearance = theme.resolved;
   function answersOf(card: CreationGoal) {
     return setupAnswersFor(
       setupFor(card),
@@ -347,23 +332,7 @@
     onGoalChange(card.question.configKey, true);
     void dismissDetails(true);
   }
-  const setupLabels = $derived<Partial<UseCaseSetupLabels>>({
-    progress: tr("wizard.setup.progress"),
-    review: tr("wizard.setup.review"),
-    reviewHint: tr("wizard.setup.reviewHint"),
-    back: tr("wizard.setup.back"),
-    next: tr("wizard.setup.next"),
-    useRecommended: tr("wizard.setup.useRecommended"),
-    apply: tr("wizard.setup.apply"),
-    startOver: tr("wizard.setup.startOver"),
-    change: tr("wizard.setup.change"),
-    recommended: tr("wizard.setup.recommended"),
-    recorded: tr("wizard.setup.recorded"),
-    recordedHint: tr("wizard.setup.recordedHint"),
-    stepOf: (step, total) =>
-      tr("wizard.setup.stepOf", { step: String(step), total: String(total) }),
-    changeAnswer: (question) => tr("wizard.setup.changeAnswer", { question }),
-  });
+  const setupLabels = $derived(useCaseSetupLabels(getLocale()));
   /** Free-text settings (a mail domain) are not questions; they stay in the
    * settings drawer below the setup. */
   function textOnly(card: CreationGoal) {
@@ -506,9 +475,12 @@
         style={`view-transition-name: creation-${card.id}`}
       >
         {#snippet visual()}
-          <GoalIllustration
-            goal={card.id}
+          <UseCaseArt
+            class="goal-art"
+            useCase={card.id}
+            dark={$appearance === "dark"}
             compact={variant === "focus"}
+            shade={variant !== "focus"}
             priority={index < 4}
           />
         {/snippet}
@@ -612,49 +584,21 @@
                       aria-hidden="true"
                     /></a
                   >{/if}
-                {#if setupFor(card)}
-                  {@const more = tieredSetup(card, setupFor(card)!).more}
-                  {#if more > 0 || allSettings[card.id]}
-                    <button
-                      type="button"
-                      class="more-settings"
-                      data-testid={`more-settings-${card.id}`}
-                      aria-pressed={Boolean(allSettings[card.id])}
-                      onclick={() => {
-                        allSettings[card.id] = !allSettings[card.id];
-                      }}
-                      >{allSettings[card.id]
-                        ? tr("wizard.setup.less")
-                        : tr("wizard.setup.more", {
-                            count: String(more),
-                          })}</button
-                    >
-                  {/if}
-                {/if}
               </div>
               {#if setupFor(card)}
                 {@const flow = setupFor(card)!}
-                {@const tiered = tieredSetup(card, flow)}
-                {#key allSettings[card.id]}
-                  <UseCaseGuidedSetup
-                    class="goal-setup"
-                    flow={tiered.flow}
-                    answers={answersOf(card)}
-                    label={title(card)}
-                    labels={setupLabels}
-                    onchange={(result) => {
-                      keepSetupAnswers(
-                        card,
-                        mergedAnswers(card, result.answers),
-                      );
-                    }}
-                    oncomplete={(result) =>
-                      applySetup(
-                        card,
-                        resolveSetup(flow, mergedAnswers(card, result.answers)),
-                      )}
-                  />
-                {/key}
+                <UseCaseGuidedSetup
+                  class="goal-setup"
+                  {flow}
+                  {level}
+                  answers={answersOf(card)}
+                  label={title(card)}
+                  labels={setupLabels}
+                  onchange={(result) => {
+                    keepSetupAnswers(card, result.answers);
+                  }}
+                  oncomplete={(result) => applySetup(card, result)}
+                />
               {/if}
             </div>
           </div>
@@ -1284,7 +1228,7 @@
   .goals-grid:not(.focus)
     .goal-frame.expanded.guided
     .detail-story
-    > :not(a, .more-settings) {
+    > :not(a) {
     display: none;
   }
   .goals-grid:not(.focus) .goal-frame.expanded.guided .detail-story a {
@@ -1300,7 +1244,7 @@
   }
   .goals-grid:not(.focus)
     .goal-frame.expanded.guided
-    .detail-story:not(:has(a, .more-settings)) {
+    .detail-story:not(:has(a)) {
     display: none;
   }
   .goals-grid:not(.focus) .goal-frame.expanded.guided :global(.kf-uc-setup) {
@@ -1423,8 +1367,7 @@
       top: 24px;
       right: 108px;
     }
-    .goals-grid:not(.focus) .goal-frame.expanded.guided .detail-story a,
-    .goals-grid:not(.focus) .goal-frame.expanded.guided .more-settings {
+    .goals-grid:not(.focus) .goal-frame.expanded.guided .detail-story a {
       box-sizing: border-box;
       height: 32px;
       padding: 0 12px;
@@ -1575,17 +1518,17 @@
   .detail-story a {
     margin-top: 14px;
   }
-  .more-settings {
-    display: inline-flex;
-    align-items: center;
-    margin-top: 14px;
-    color: var(--primary);
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
+  /* The painting is the package's; only its crop and hover belong here. */
+  .goals-grid:not(.focus) .goal-frame:not(.expanded) :global(.goal-art img) {
+    object-position: center 55%;
   }
-  .goals-grid:not(.focus) .goal-frame.expanded.guided .more-settings {
-    margin-top: 0;
+  @media (prefers-reduced-motion: no-preference) {
+    :global(.goal-art img) {
+      transition: transform var(--kx-dur-morph) var(--kx-ease-morph);
+    }
+    .goal-frame:hover :global(.goal-art img) {
+      transform: scale(1.035);
+    }
   }
   .preference-note {
     font-size: 11px;

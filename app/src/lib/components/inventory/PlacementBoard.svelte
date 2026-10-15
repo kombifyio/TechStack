@@ -4,6 +4,7 @@
   (`onmove`); the page resolves every card, so this stays presentation.
 -->
 <script lang="ts">
+  import LoadingNote from "#lib/components/ui/LoadingNote.svelte";
   import {
     AlertTriangle,
     ArrowRight,
@@ -125,13 +126,7 @@
   </div>
 {/if}
 {#if loading}
-  <div class="flex gap-6 overflow-x-auto pb-4">
-    {#each Array(3) as _, i (i)}
-      <div
-        class="w-80 shrink-0 h-[450px] border border-border bg-card/30 rounded-xl animate-pulse p-4"
-      ></div>
-    {/each}
-  </div>
+  <LoadingNote label={tr("common.loading")} />
 {:else if registryError}
   <div
     class="flex gap-3 rounded-lg border border-warning/30 bg-warning/10 p-4 text-sm text-warning"

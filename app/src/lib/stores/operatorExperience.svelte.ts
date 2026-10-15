@@ -1,7 +1,7 @@
 /**
  * How hands-on the signed-in operator wants to be. The person answers it once
  * in the kombify Cloud account setup; Techstack only reads it and shows more
- * or fewer guided setup steps by it (`wizard/experience.ts`). A Techstack
+ * or fewer guided setup steps by it (`experienceLevel` in `@kombiverselabs/ui/usecase`). A Techstack
  * without Cloud falls back to the experience of its own self-description
  * (CREATION-EXPERIENCE-STANDARD §4).
  */

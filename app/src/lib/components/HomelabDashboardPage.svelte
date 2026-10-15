@@ -1,4 +1,5 @@
 <script lang="ts">
+  import LoadingNote from "#lib/components/ui/LoadingNote.svelte";
   import { tr, trn } from "#lib/i18n.svelte.js";
   import { onMount } from "svelte";
   import { createAppQuickActions } from "#lib/services/app-quick-actions.svelte.js";
@@ -2594,7 +2595,7 @@
       aria-label={tr("ui.homelab.loading")}
       aria-busy="true"
     >
-      <div class="h-10 animate-pulse rounded-lg bg-muted"></div>
+      <LoadingNote label={tr("ui.homelab.loading")} />
     </section>
   {/if}
 
@@ -2605,10 +2606,7 @@
       aria-label={tr("ui.homelab.loadingOperations")}
       aria-busy="true"
     >
-      <div class="grid gap-3 lg:grid-cols-2">
-        <div data-kx="plate" class="h-44 animate-pulse"></div>
-        <div data-kx="plate" class="h-44 animate-pulse"></div>
-      </div>
+      <LoadingNote label={tr("ui.homelab.loadingOperations")} />
     </section>
   {/if}
 

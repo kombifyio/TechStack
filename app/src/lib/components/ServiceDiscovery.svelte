@@ -1,4 +1,5 @@
 <script lang="ts">
+  import LoadingNote from "#lib/components/ui/LoadingNote.svelte";
   import { tr, trn } from "#lib/i18n.svelte.js";
   import {
     findServicesWithoutCredentials,
@@ -145,11 +146,7 @@
   {/if}
 
   {#if loading}
-    <div class="space-y-4">
-      {#each Array(3) as _}
-        <div data-kx="plate" class="animate-pulse h-20"></div>
-      {/each}
-    </div>
+    <LoadingNote label={tr("common.loading")} />
   {:else if discoveries.length === 0}
     <div class="text-center py-8">
       <svg

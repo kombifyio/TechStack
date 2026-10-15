@@ -1,4 +1,5 @@
 <script lang="ts">
+  import LoadingNote from "#lib/components/ui/LoadingNote.svelte";
   import { formatDuration } from "#lib/dashboard/time.js";
   import { tr, stateLabel, formatDateTime } from "#lib/i18n.svelte.js";
   import { onDestroy, onMount, untrack } from "svelte";
@@ -324,9 +325,7 @@
       {error}
     </div>
   {:else if !server}
-    <div
-      class="h-32 animate-pulse rounded-lg border border-border bg-card/40"
-    ></div>
+    <LoadingNote label={tr("common.loading")} />
   {:else}
     <section
       class="mb-4 flex flex-wrap items-start justify-between gap-6 rounded-lg border border-border bg-card p-5"
