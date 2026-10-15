@@ -23,10 +23,12 @@ import (
 //
 // A signed-in operator may tell Techstack about themselves: how hands-on they
 // want to be, what the homelab is for, where it runs and who uses it. The
-// Cloud dashboard captures these answers and hands them to the creation
-// wizard, which stores them here; Techstack's own surfaces may do the same.
-// The body carries raw answers only. The capability profile in every response
-// is derived by the Unifier, so no client can store a score.
+// Cloud dashboard captures these answers and links them into the creation
+// wizard. A link only prefills: the wizard stores the answers here after the
+// operator confirms them, with source "link"; answers typed in a Techstack
+// surface use source "techstack". The body carries raw answers only. The
+// capability profile in every response is derived by the Unifier, so no
+// client can store a score.
 
 const (
 	maxSelfDisclosureBodyBytes = 16 << 10
@@ -84,8 +86,8 @@ func (api *UnifierAPI) handlePutSelfDisclosure(e *httpx.Event) error {
 		decodeErr = request.Disclosure.Normalize()
 	}
 	source := strings.ToLower(strings.TrimSpace(request.Source))
-	if decodeErr == nil && source != controlplane.OperatorSelfDisclosureSourceCloud && source != controlplane.OperatorSelfDisclosureSourceTechstack {
-		decodeErr = errors.New("source must be cloud or techstack")
+	if decodeErr == nil && source != controlplane.OperatorSelfDisclosureSourceLink && source != controlplane.OperatorSelfDisclosureSourceTechstack {
+		decodeErr = errors.New("source must be link or techstack")
 	}
 	if decodeErr != nil {
 		return httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeBadRequest,

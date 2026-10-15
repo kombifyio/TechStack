@@ -5,4 +5,12 @@
   <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
   <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
   <data name="IdentityVerificationFailed" xml:space="preserve"><value>Der Windows-Client konnte die lokale Laufzeit nicht verifizieren. Schließe andere Anwendungen, die deren Port verwenden, und öffne den Client erneut.</value></data>
+  <data name="RecoveryIncomplete" xml:space="preserve"><value>Die Wiederherstellung von lokalem Techstack ist noch nicht abgeschlossen.</value></data>
+  <data name="RecoveryDatabaseRunning" xml:space="preserve"><value>Die lokale Laufzeit oder Datenbank läuft noch. Schließe andere Techstack-Fenster und öffne den Client erneut, um die Wiederherstellung abzuschließen. Deine Wiederherstellungsdaten bleiben erhalten.</value></data>
+  <data name="RecoverySnapshotMissing" xml:space="preserve"><value>Die Datensicherung von vor dem Update fehlt. Stelle die Wiederherstellungsdaten des Clients wieder her, bevor du Techstack erneut öffnest. Deine aktuellen Daten bleiben erhalten.</value></data>
+  <data name="RecoveryRestoreFailed" xml:space="preserve"><value>Der Client konnte die Daten von vor dem Update nicht wiederherstellen. Schließe Anwendungen, die auf die lokalen Daten zugreifen, und öffne den Client erneut. Die Wiederherstellung bleibt ausstehend.</value></data>
+  <data name="RecoveryInstallationPending" xml:space="preserve"><value>Die vorherige Techstack-Version wurde noch nicht wiederhergestellt. Repariere die Windows-Installation, bevor du den Client erneut öffnest. Die Wiederherstellungsdaten bleiben erhalten.</value></data>
+  <data name="WalletRevealTitle" xml:space="preserve"><value>Zugangsdaten anzeigen</value></data>
+  <data name="WalletRevealPrompt" xml:space="preserve"><value>Zugangsdaten für {0} anzeigen? Der Wert wird in diesem lokalen Techstack-Fenster angezeigt.</value></data>
+  <data name="WalletRevealFailed" xml:space="preserve"><value>Die lokale Offenlegung konnte nicht verifiziert werden. Bitte erneut versuchen.</value></data>
 </root>

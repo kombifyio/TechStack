@@ -174,6 +174,12 @@ func (o *Orchestrator) requeueTenantPendingJobs(ctx context.Context, tenantID st
 	skipped := 0
 	for index := range rows {
 		row := rows[index]
+		row, err = o.hydratePendingOriginalRestore(ctx, row)
+		if err != nil {
+			skipped++
+			o.log.Warn("pending_original_restore_proof_unavailable", "job_id", rows[index].ID, "error", err)
+			continue
+		}
 		if redacted := jobRecoveryRedactedKeys(row.Payload); len(redacted) > 0 {
 			skipped++
 			o.log.Warn("pending_job_requeue_skipped_redacted",
@@ -185,6 +191,11 @@ func (o *Orchestrator) requeueTenantPendingJobs(ctx context.Context, tenantID st
 			skipped++
 			o.log.Warn("pending_job_requeue_skipped_no_payload",
 				"job_id", row.ID, "stack_id", row.StackID, "type", row.Type)
+			continue
+		}
+		if err := o.validatePendingPartialInitRetry(ctx, row); err != nil {
+			skipped++
+			o.log.Warn("pending_job_requeue_skipped_native_retry_binding", "job_id", row.ID, "stack_id", row.StackID, "error", err)
 			continue
 		}
 		if row.CreatedAt.Before(now.Add(-pendingJobRecoveryWindow)) {
@@ -232,6 +243,58 @@ func (o *Orchestrator) requeueTenantPendingJobs(ctx context.Context, tenantID st
 		o.log.Info("pending_job_requeued", "job_id", row.ID, "stack_id", row.StackID, "type", row.Type)
 	}
 	return requeued, skipped
+}
+
+// Hydrate only a copied admission from its exact original row. The stored
+// legacy checkpoint remains immutable; neither current defaults nor a job
+// history page supplies the original workspace directory.
+func (o *Orchestrator) hydratePendingOriginalRestore(ctx context.Context, row controlplane.Job) (controlplane.Job, error) {
+	if row.Type != string(jobs.JobTypeStackKitLifecycle) {
+		return row, nil
+	}
+	var operationID string
+	switch row.Payload["operation"] {
+	case jobs.StackKitLifecycleBackupRestoreActivate:
+		operationID = "restore-" + row.ID
+	case jobs.StackKitLifecycleBackupRestoreRecover:
+		operationID = stringFromAny(row.Payload["activation_operation_id"])
+	default:
+		return row, nil
+	}
+	retained, exists := row.Result[jobs.RestoreActivationCheckpointResultKey]
+	if !exists {
+		return row, nil // An activation not yet admitted has no original effects.
+	}
+	admission, valid := retained.(map[string]any)
+	if !valid || len(admission) == 0 || admission["activation_operation_id"] != operationID {
+		return row, ErrStackKitLifecycleUnavailable
+	}
+	req := jobs.StackKitLifecycleRequest{
+		TenantID: row.TenantID, StackID: row.StackID, OwnerID: stringFromAny(row.Payload["owner_id"]),
+		AgentID: stringFromAny(row.Payload["agent_id"]), NodeID: stringFromAny(row.Payload["node_id"]), NodeRef: stringFromAny(row.Payload["node_ref"]),
+		StackKitInstanceID: stringFromAny(row.Payload["stackkit_instance_id"]), SpecPath: stringFromAny(row.Payload["spec_path"]),
+		RestoreResultID: stringFromAny(row.Payload["restore_result_id"]), ActivationOperationID: operationID,
+		RestorePlanHash: stringFromAny(admission["plan_hash"]),
+	}
+	stack, err := o.findStackForJob(ctx, req.StackID, ProvisionStackOptions{RequestContext: ctx, TenantID: req.TenantID, OwnerID: req.OwnerID})
+	if err != nil || stack == nil || stack.tenantID != req.TenantID || stack.ownerID != req.OwnerID || stack.stackKitInstanceID == "" || stack.stackKitInstanceID != req.StackKitInstanceID {
+		return row, ErrStackKitLifecycleUnavailable
+	}
+	binding, err := o.admitStackKitLifecycleAgent(ctx, stack, req.AgentID)
+	if err != nil || binding.NodeID != req.NodeID || binding.NodeRef != req.NodeRef || row.Payload["owner_approved"] != true {
+		return row, ErrStackKitLifecycleUnavailable
+	}
+	proved, checkpoint, err := o.originalRestoreActivationAdmission(ctx, req)
+	if err != nil || row.Payload["working_directory"] != proved.WorkingDirectory {
+		return row, ErrStackKitLifecycleUnavailable
+	}
+	result := make(map[string]any, len(row.Result))
+	for key, value := range row.Result {
+		result[key] = value
+	}
+	result[jobs.RestoreActivationCheckpointResultKey] = checkpoint
+	row.Result = result
+	return row, nil
 }
 
 // pendingJobIsSuperseded reports whether a newer dispatch exists for the same

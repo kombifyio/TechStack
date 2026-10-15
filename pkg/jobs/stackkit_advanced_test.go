@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -20,6 +21,10 @@ import (
 // releaseWithAdvancedCatalog resolves an artifact pin whose release ships the
 // stackkit.advanced-operations/v1 catalog beside the pin, as the image does.
 func releaseWithAdvancedCatalog(t *testing.T, executable ...[]byte) stackkitrelease.Release {
+	return releaseWithAdvancedCatalogVersion(t, "v0.47.0", executable...)
+}
+
+func releaseWithAdvancedCatalogVersion(t *testing.T, version string, executable ...[]byte) stackkitrelease.Release {
 	t.Helper()
 	root := t.TempDir()
 	binary := filepath.Join(root, "stackkit")
@@ -32,7 +37,7 @@ func releaseWithAdvancedCatalog(t *testing.T, executable ...[]byte) stackkitrele
 	}
 	digest := sha256.Sum256(content)
 	pin, _ := json.Marshal(map[string]any{
-		"schemaVersion": stackkitrelease.PinSchemaVersion, "kit": "basement-kit", "version": "v0.47.0",
+		"schemaVersion": stackkitrelease.PinSchemaVersion, "kit": "basement-kit", "version": version,
 		"platform":      map[string]string{"os": runtime.GOOS, "arch": runtime.GOARCH},
 		"archiveSha256": strings.Repeat("a", 64), "indexSha256": strings.Repeat("b", 64),
 		"binarySha256": hex.EncodeToString(digest[:]), "binaryPath": binary,
@@ -41,7 +46,7 @@ func releaseWithAdvancedCatalog(t *testing.T, executable ...[]byte) stackkitrele
 	if err := os.WriteFile(pinPath, pin, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	catalog, err := os.ReadFile(filepath.Join("..", "..", "internal", "stackkitrelease", "pinned-advanced-operations.json")) // #nosec G304 G703 -- fixed repository fixture.
+	catalog, err := os.ReadFile(filepath.Join("..", "..", "internal", "stackkitrelease", "testdata", "advanced-operations-v0.50.0.json")) // #nosec G304 G703 -- fixed repository fixture.
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,5 +194,27 @@ func TestAdvancedDenialFailsTheJobWithTheStackKitsReasonCode(t *testing.T) {
 	snapshot := job.Snapshot()
 	if snapshot.State != JobStateFailed || snapshot.Result["reason_code"] != "advanced_capability_expired" {
 		t.Fatalf("job state %s reason %v, want failed with advanced_capability_expired", snapshot.State, snapshot.Result["reason_code"])
+	}
+}
+
+// Every Techstack rollout runs Advanced Mode: a pinned release without its
+// Advanced operations catalog, or an installation without the Advanced
+// issuer, fails the rollout before any command reaches the node, so no
+// Standard or native fallback path runs.
+func TestRolloutWithoutAdvancedPrerequisitesFailsBeforeTheNode(t *testing.T) {
+	sender := &recordingStackKitCommandSender{}
+	_, err := runTypedStackKitApplySequence(context.Background(), sender, "job-1", typedStackKitApplyRequest(), stackkitrelease.Release{})
+	var prerequisite *AdvancedPrerequisiteError
+	if !errors.As(err, &prerequisite) || !errors.Is(err, stackkitrelease.ErrAdvancedOperationsMissing) || len(sender.commands) != 0 {
+		t.Fatalf("rollout without the release catalog: err %v, dispatched %d commands", err, len(sender.commands))
+	}
+
+	drillSender := &typedLifecycleCommander{planHash: testResolvedPlanHash}
+	rollout := managedNativeRestoreRollout(t, drillSender)
+	rollout.managedRuntime = false
+	rollout.cfg.AdvancedIssuer = nil
+	err = rollout.runRestoreDrill(context.Background())
+	if !errors.As(err, &prerequisite) || len(drillSender.commands) != 0 || rollout.finalRuntimePhase == RuntimePhaseVerified {
+		t.Fatalf("rollout without the Advanced issuer: err %v, dispatched %d commands, phase %q", err, len(drillSender.commands), rollout.finalRuntimePhase)
 	}
 }

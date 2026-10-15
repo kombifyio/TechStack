@@ -10,7 +10,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -26,18 +25,6 @@ type Admission interface {
 	AdmitSubstrateGuest(context.Context, providercontrol.NativeProvisionAdmissionRequest) (providercontrol.NativeProvisionAdmissionResult, error)
 }
 
-var ErrInsufficientResources = errors.New("insufficient hypervisor resources")
-
-type Placement struct {
-	ServerID  string `json:"server_id"`
-	ProfileID string `json:"profile_id"`
-	Storage   string `json:"storage"`
-	Bridge    string `json:"bridge"`
-	CPU       int    `json:"cpu"`
-	MemoryMiB int    `json:"memory_mib"`
-	DiskGiB   int    `json:"disk_gib"`
-	Isolated  bool   `json:"isolated,omitempty"`
-}
 type Request struct {
 	TenantID, OwnerID, StackID, NodeID, IdempotencyKey string
 	Placement                                          Placement
@@ -157,7 +144,7 @@ func (s *Service) Prepare(ctx context.Context, r Request) (Result, error) {
 			return Result{}, providercontrol.ErrNativeAdmissionConflict
 		}
 	}
-	if r.Placement.ProfileID == "ubuntu-24.04" {
+	if substrate.IsUbuntuProfile(r.Placement.ProfileID) {
 		if r.Placement.Isolated {
 			return Result{}, errors.New("Ubuntu enrollment requires reachable LAN")
 		}
@@ -183,7 +170,7 @@ func (s *Service) Prepare(ctx context.Context, r Request) (Result, error) {
 	if err = reserveUnobservedGuests(ctx, tx, r.TenantID, r.Placement.ServerID, &observed.Inventory); err != nil {
 		return Result{}, err
 	}
-	if err = validatePlacement(r.Placement, observed.Inventory); err != nil {
+	if err = ValidatePlacement(r.Placement, observed.Inventory); err != nil {
 		return Result{}, err
 	}
 	image, ok := bound.Images[r.Placement.ProfileID]
@@ -224,7 +211,7 @@ func (s *Service) Prepare(ctx context.Context, r Request) (Result, error) {
 	if err = tx.Commit(); err != nil {
 		return Result{}, err
 	}
-	guest := substrate.GuestSpec{GuestIdentity: substrate.GuestIdentity{ID: guestID, Name: "kombify-" + hex.EncodeToString(identity[:8]), OperationTag: "kombify-op-" + hex.EncodeToString(identity[:])}, ProfileID: r.Placement.ProfileID, CPU: r.Placement.CPU, MemoryMiB: r.Placement.MemoryMiB, DiskGiB: r.Placement.DiskGiB, Storage: r.Placement.Storage, Bridge: r.Placement.Bridge, Isolated: r.Placement.Isolated, ImageImport: substrate.ImageImport{Image: image, Storage: r.Placement.Storage}, Enrollment: r.Placement.ProfileID == "ubuntu-24.04"}
+	guest := substrate.GuestSpec{GuestIdentity: substrate.GuestIdentity{ID: guestID, Name: "kombify-" + hex.EncodeToString(identity[:8]), OperationTag: "kombify-op-" + hex.EncodeToString(identity[:])}, ProfileID: r.Placement.ProfileID, CPU: r.Placement.CPU, MemoryMiB: r.Placement.MemoryMiB, DiskGiB: r.Placement.DiskGiB, Storage: r.Placement.Storage, Bridge: r.Placement.Bridge, Isolated: r.Placement.Isolated, ImageImport: substrate.ImageImport{Image: image, Storage: r.Placement.Storage}, Enrollment: substrate.IsUbuntuProfile(r.Placement.ProfileID)}
 	desired, err := json.Marshal(substrate.ExecutionSpec{Action: "provision", Guest: guest})
 	if err != nil {
 		return Result{}, err
@@ -288,40 +275,4 @@ func reserveUnobservedGuests(ctx context.Context, tx *sql.Tx, tenant, server str
 		}
 	}
 	return rows.Err()
-}
-
-func validatePlacement(p Placement, inventory substrate.Inventory) error {
-	var profile *substrate.Profile
-	for _, candidate := range substrate.Profiles() {
-		if candidate.ID == p.ProfileID {
-			copy := candidate
-			profile = &copy
-			break
-		}
-	}
-	if profile == nil || p.CPU < profile.MinCPU || p.CPU > 256 || p.MemoryMiB < profile.MinMemoryMiB || p.MemoryMiB > 1048576 || p.DiskGiB < profile.MinDiskGiB || p.DiskGiB > 65536 {
-		return errors.New("guest resources outside profile limits")
-	}
-	if inventory.Architecture != profile.Architecture || !inventory.HardwareVirtualization {
-		return substrate.ErrCapability
-	}
-	if p.CPU > inventory.CPU || uint64(p.MemoryMiB)*1024*1024 > inventory.MemoryAvailable {
-		return ErrInsufficientResources
-	}
-	storageOK, bridgeOK := false, false
-	for _, s := range inventory.Storage {
-		if s.ID == p.Storage && s.Active == 1 && s.Available >= uint64(p.DiskGiB)*1024*1024*1024 {
-			content := "," + s.Content + ","
-			storageOK = strings.Contains(content, ",images,") && strings.Contains(content, ",import,") && (!profile.CloudInit || strings.Contains(content, ",snippets,")) && (!profile.Appliance || strings.Contains(content, ",vztmpl,"))
-		}
-	}
-	for _, n := range inventory.Networks {
-		if n.Name == p.Bridge && n.Type == "bridge" && n.Active == 1 {
-			bridgeOK = true
-		}
-	}
-	if !storageOK || !bridgeOK {
-		return fmt.Errorf("active LAN bridge and suitable image/import storage required")
-	}
-	return nil
 }

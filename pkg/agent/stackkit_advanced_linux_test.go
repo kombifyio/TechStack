@@ -48,7 +48,7 @@ func TestAgentHandsTheCapabilityOverAsAPrivateFileAndRemovesIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A release that ships the catalog lists restore.drill as available.
-	catalog, err := os.ReadFile(filepath.Join("..", "..", "internal", "stackkitrelease", "pinned-advanced-operations.json")) // #nosec G304 G703 -- fixed repository fixture.
+	catalog, err := os.ReadFile(filepath.Join("..", "..", "internal", "stackkitrelease", "testdata", "advanced-operations-v0.50.0.json")) // #nosec G304 G703 -- fixed repository fixture.
 	if err != nil {
 		t.Fatal(err)
 	}

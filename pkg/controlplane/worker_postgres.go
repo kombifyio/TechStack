@@ -243,48 +243,53 @@ func (s *PostgresStore) UpsertPairingToken(ctx context.Context, token PairingTok
 	if tenantID == "" {
 		return nil, fmt.Errorf("controlplane: tenant id required")
 	}
-	metadataJSON, err := marshalObject(token.Metadata)
-	if err != nil {
-		return nil, err
-	}
-
 	var out *PairingToken
-	err = s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
-		saved, err := scanPairingToken(tx.QueryRowContext(ctx, `
-			INSERT INTO pairing_tokens (
-				id, tenant_id, instance_id, stack_id, owner_subject_id, name, token_hash,
-				status, expires_at, used_at, metadata_json
-			) VALUES (
-				$1, $2, NULLIF($3, ''), NULLIF($4, ''), $5, NULLIF($6, ''), $7,
-				$8, $9, $10, $11::jsonb
-			)
-			ON CONFLICT (tenant_id, token_hash) DO UPDATE SET
-				instance_id = EXCLUDED.instance_id,
-				stack_id = EXCLUDED.stack_id,
-				owner_subject_id = EXCLUDED.owner_subject_id,
-				name = EXCLUDED.name,
-				status = EXCLUDED.status,
-				expires_at = EXCLUDED.expires_at,
-				used_at = EXCLUDED.used_at,
-				metadata_json = EXCLUDED.metadata_json,
-				updated_at = now()
-			RETURNING id, tenant_id, instance_id, stack_id, owner_subject_id, name, token_hash,
-				status, expires_at, used_at, metadata_json::text, created_at, updated_at
-		`,
-			token.ID, tenantID, token.InstanceID, token.StackID, token.OwnerSubjectID, token.Name,
-			token.TokenHash, firstNonEmpty(token.Status, "active"), nullableTime(token.ExpiresAt),
-			nullableTime(token.UsedAt), metadataJSON,
-		))
-		if err != nil {
-			return err
-		}
-		out = saved
-		return nil
+	err := s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		var err error
+		out, err = upsertPairingTokenTx(ctx, tx, token)
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+func upsertPairingTokenTx(ctx context.Context, tx *sql.Tx, token PairingToken) (*PairingToken, error) {
+	tenantID := strings.TrimSpace(token.TenantID)
+	metadataJSON, err := marshalObject(token.Metadata)
+	if err != nil {
+		return nil, err
+	}
+	saved, err := scanPairingToken(tx.QueryRowContext(ctx, `
+		INSERT INTO pairing_tokens (
+			id, tenant_id, instance_id, stack_id, owner_subject_id, name, token_hash,
+			status, expires_at, used_at, metadata_json
+		) VALUES (
+			$1, $2, NULLIF($3, ''), NULLIF($4, ''), $5, NULLIF($6, ''), $7,
+			$8, $9, $10, $11::jsonb
+		)
+		ON CONFLICT (tenant_id, token_hash) DO UPDATE SET
+			instance_id = EXCLUDED.instance_id,
+			stack_id = EXCLUDED.stack_id,
+			owner_subject_id = EXCLUDED.owner_subject_id,
+			name = EXCLUDED.name,
+			status = EXCLUDED.status,
+			expires_at = EXCLUDED.expires_at,
+			used_at = EXCLUDED.used_at,
+			metadata_json = EXCLUDED.metadata_json,
+			updated_at = now()
+		RETURNING id, tenant_id, instance_id, stack_id, owner_subject_id, name, token_hash,
+			status, expires_at, used_at, metadata_json::text, created_at, updated_at
+	`,
+		token.ID, tenantID, token.InstanceID, token.StackID, token.OwnerSubjectID, token.Name,
+		token.TokenHash, firstNonEmpty(token.Status, "active"), nullableTime(token.ExpiresAt),
+		nullableTime(token.UsedAt), metadataJSON,
+	))
+	if err != nil {
+		return nil, err
+	}
+	return saved, nil
 }
 
 func (s *PostgresStore) ListPairingTokensByOwner(ctx context.Context, tenantID, ownerSubjectID string) ([]PairingToken, error) {

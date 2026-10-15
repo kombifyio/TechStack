@@ -33,6 +33,7 @@
     type OperatorSelfDisclosure,
   } from "#lib/api/operatorProfile.js";
   import { selfDisclosureWizardConfig } from "#lib/wizard/self-disclosure-handoff.js";
+  import SelfDisclosureReview from "./SelfDisclosureReview.svelte";
 
   interface Props {
     /** Remove page-owned spacing/title so the host can mount the full flow. */
@@ -40,9 +41,11 @@
     /** Host-owned navigation keeps the flow usable in a panel or modal shell. */
     onNavigate?: (href: string) => void | Promise<void>;
     returnTo?: string;
-    /** Voluntary answers handed over from the kombify Cloud capture surface. */
+    /** Ephemeral creation intent selected by the caller, without profile storage. */
+    initialConfig?: StackConfig;
+    /** Voluntary answers a link handed over (the kombify Cloud capture surface). */
     selfDisclosure?: OperatorSelfDisclosure | null;
-    /** Called once the handed-over answers were stored or given up on. */
+    /** Called once the handed-over answers were stored, discarded or given up on. */
     onSelfDisclosureSettled?: () => void;
   }
 
@@ -50,52 +53,67 @@
     embedded = false,
     onNavigate,
     returnTo = "/stacks/new",
+    initialConfig,
     selfDisclosure = null,
     onSelfDisclosureSettled,
   }: Props = $props();
 
-  // The wizard mounts only after a handed-over disclosure is stored, so its
-  // first recommendation already uses the profile the Unifier derives from it.
-  // A failed write never blocks creation: the wizard then opens without it.
+  // A link only prefills. Anyone can craft one, so handed-over answers are
+  // shown for review and stored only when the operator chooses "Use these
+  // answers"; "Discard" drops them. The wizard mounts after that choice, so a
+  // confirmed profile already shapes its first recommendation. A failed write
+  // never blocks creation: the wizard then opens without the stored profile.
   const handedOver = untrack(() => selfDisclosure);
   let selfDisclosureState = $state<
-    "none" | "pending" | "applying" | "applied" | "failed"
-  >(handedOver ? "pending" : "none");
-  const wizardPrefill = handedOver
-    ? selfDisclosureWizardConfig(handedOver)
-    : undefined;
+    "none" | "review" | "applying" | "applied" | "failed" | "discarded"
+  >(handedOver ? "review" : "none");
+  const wizardPrefill = $derived.by(() => {
+    if (!handedOver || selfDisclosureState === "discarded")
+      return initialConfig;
+    const prefill = selfDisclosureWizardConfig(handedOver);
+    // A profile import must not replace an explicit creation selection.
+    return initialConfig ? { ...prefill, goals: initialConfig.goals } : prefill;
+  });
 
-  // Hold the wizard back while the answers are (about to be) written; a
-  // signed-out visitor gets the wizard at once.
+  // Only a signed-in operator has a profile to store into. A signed-out
+  // visitor gets the prefilled wizard at once; the sign-in redirect keeps the
+  // URL, so the review appears on the way back.
+  const reviewSelfDisclosure = $derived(
+    selfDisclosureState === "review" &&
+      !authStore.loading &&
+      authStore.modeDetected &&
+      authStore.isAuthenticated,
+  );
   const holdWizardForSelfDisclosure = $derived(
     selfDisclosureState === "applying" ||
-      (selfDisclosureState === "pending" &&
+      (selfDisclosureState === "review" &&
         (authStore.loading ||
           !authStore.modeDetected ||
           authStore.isAuthenticated)),
   );
 
-  function settleSelfDisclosure(state: "applied" | "failed") {
+  function settleSelfDisclosure(state: "applied" | "failed" | "discarded") {
     selfDisclosureState = state;
     onSelfDisclosureSettled?.();
   }
 
-  $effect(() => {
-    if (selfDisclosureState !== "pending" || !handedOver) return;
-    // Signed out: the sign-in redirect keeps the URL, so the answers are
-    // stored on the way back. Until then the wizard stays usable.
-    if (
-      authStore.loading ||
-      !authStore.modeDetected ||
-      !authStore.isAuthenticated
-    )
-      return;
+  function useHandedOverSelfDisclosure(notes: string) {
+    if (selfDisclosureState !== "review" || !handedOver) return;
     selfDisclosureState = "applying";
-    void putOperatorSelfDisclosure(handedOver, "cloud").then(
+    const typedNotes = notes.trim();
+    void putOperatorSelfDisclosure(
+      typedNotes ? { ...handedOver, notes: typedNotes } : handedOver,
+      "link",
+    ).then(
       () => settleSelfDisclosure("applied"),
       () => settleSelfDisclosure("failed"),
     );
-  });
+  }
+
+  function discardHandedOverSelfDisclosure() {
+    if (selfDisclosureState !== "review") return;
+    settleSelfDisclosure("discarded");
+  }
 
   async function navigate(href: string) {
     if (onNavigate) {
@@ -198,6 +216,7 @@
         stringArrayField(userGuidance, "next_steps"),
       requiredFeatures: stringArrayField(record, "required_features"),
       missingFeatures: stringArrayField(record, "missing_features"),
+      unfulfilledGoals: stringArrayField(record, "unfulfilled_goals"),
       stackId: stringField(record, "stack_id"),
       requestId: stringField(record, "request_id"),
       retryable:
@@ -600,8 +619,8 @@
             `${tr("ui.configFlow.pleaseFix")}\n${fieldMessages}`,
           );
         } else {
-          // The wizard-run facade carries the pinned CLI's rejection in
-          // validate_error — the one detail the user needs to fix the run.
+          // Keep the configured goals and attempt key for a corrected submit.
+          // The release's refusal is never a successful node-only creation.
           const validateError =
             stringField(recordFrom(parsed.details), "validate_error") ||
             stringField(
@@ -610,9 +629,15 @@
             );
           deployErrorDetails = formatCreateErrorDetails(
             parsed,
-            validateError
-              ? `${parsed.message}\n\n${tr("ui.configFlow.stackkitsValidation")}\n${validateError}`
-              : parsed.message,
+            [
+              formatAvailabilityLead(validationDetails, parsed.message),
+              validationDetails.unfulfilledGoals.length > 0
+                ? `${tr("ui.configFlow.pleaseFix")}\n${validationDetails.unfulfilledGoals.map((goal) => `- ${goal}`).join("\n")}`
+                : "",
+              validateError
+                ? `${tr("ui.configFlow.stackkitsValidation")}\n${validateError}`
+                : "",
+            ].filter(Boolean).join("\n\n"),
           );
         }
       } else if (parsed.status >= 500) {
@@ -789,7 +814,15 @@
     </div>
   {/if}
 
-  {#if selfDisclosureState !== "none" && selfDisclosureState !== "pending"}
+  {#if reviewSelfDisclosure && handedOver}
+    <SelfDisclosureReview
+      disclosure={handedOver}
+      onuse={useHandedOverSelfDisclosure}
+      ondiscard={discardHandedOverSelfDisclosure}
+    />
+  {/if}
+
+  {#if selfDisclosureState === "applying" || selfDisclosureState === "applied" || selfDisclosureState === "failed"}
     <p
       class="mb-4 rounded-lg border px-4 py-3 text-sm {selfDisclosureState ===
       'failed'

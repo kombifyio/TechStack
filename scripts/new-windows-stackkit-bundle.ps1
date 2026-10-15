@@ -3,12 +3,17 @@
 param(
     [Parameter(Mandatory = $true)][string]$OutputPath,
     [string]$ControllerCatalogOutputPath = "",
-    [string]$ReleaseTag = "v0.49.4",
-    [string]$ReleaseVersion = "0.49.4",
-    [string]$LinuxArchiveSHA256 = "d40077968e410844c8c5726fe9df084ea4efa0732c27a801abd322bea3fc6027",
-    [string]$WindowsArchiveSHA256 = "e5c5ee6173d83956f5af459a39343138ce72cc8b0be0ab5dfd46db2149777c11",
-    [string]$ReleaseIndexSHA256 = "10958ff7339a7a35009c8e8e3155ba42cbe9b46d8009c39e21cb0327ccfadd54",
-    [string]$CompatibilityManifestSHA256 = "226fb3afcba477fcfcb8406af76397df1ff8bc5024388c1a0a45d154d58d208c",
+    # A signed Guard publication already owns the Linux tree. Build only the
+    # native controller catalog/templates when packaging that immutable archive.
+    [switch]$ControllerOnly,
+    [string]$ExpectedReleaseTag = "",
+    [string]$ExpectedLinuxArchiveSHA256 = "",
+    [string]$ReleaseTag = "v0.53.8",
+    [string]$ReleaseVersion = "0.53.8",
+    [string]$LinuxArchiveSHA256 = "1282d175292d0d05150501b1ad3785e513c8e66652bd99e36a700b617d61636a",
+    [string]$WindowsArchiveSHA256 = "2a4b6e586634780ecbf319c120e2ed111bff85c3bc194b734cc27e58a46ccf13",
+    [string]$ReleaseIndexSHA256 = "42f20c73b5ab04003831c58b8417810bc2dff2e61c7ff0ac79a2abcb1bfb9fad",
+    [string]$CompatibilityManifestSHA256 = "bf30be6ca8d4f7dde734c15c3e81213eeb0e452d856a5bb75ce4d04b036fcad9",
     # Directory holding <kit>/stack-spec.yaml produced by the SAME pinned
     # StackKits release on Linux. Supplied in CI; when empty the script falls
     # back to generating them with the Windows CLI, which is what a developer
@@ -17,6 +22,15 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+if ($ControllerOnly -and [string]::IsNullOrWhiteSpace($ControllerCatalogOutputPath)) {
+    throw "ControllerOnly requires ControllerCatalogOutputPath."
+}
+if ($ExpectedReleaseTag -ne "" -and $ExpectedReleaseTag -ne $ReleaseTag) {
+    throw "The signed Guard and native controller pin different StackKits releases."
+}
+if ($ExpectedLinuxArchiveSHA256 -ne "" -and $ExpectedLinuxArchiveSHA256 -ne $LinuxArchiveSHA256) {
+    throw "The signed Guard and native controller pin different Linux release archives."
+}
 
 # StackKits checks object ownership against TokenOwner, which can differ from
 # TokenUser on elevated Windows. Its separate DACL check still grants access
@@ -83,23 +97,27 @@ function Assert-SHA256([string]$Path, [string]$Expected) {
 
 try {
     New-Item -ItemType Directory -Force -Path $tempRoot, $linuxRelease, $windowsRelease, $stackKitRoot | Out-Null
-    Invoke-WebRequest -UseBasicParsing "$releaseBase/$linuxName" -OutFile $linuxArchive
+    if (-not $ControllerOnly) {
+        Invoke-WebRequest -UseBasicParsing "$releaseBase/$linuxName" -OutFile $linuxArchive
+    }
     Invoke-WebRequest -UseBasicParsing "$releaseBase/$windowsName" -OutFile $windowsArchive
     Invoke-WebRequest -UseBasicParsing "$releaseBase/stackkits-compatibility-v1.json" -OutFile $compatibilityManifest
-    Assert-SHA256 $linuxArchive $LinuxArchiveSHA256
+    if (-not $ControllerOnly) { Assert-SHA256 $linuxArchive $LinuxArchiveSHA256 }
     Assert-SHA256 $windowsArchive $WindowsArchiveSHA256
     Assert-SHA256 $compatibilityManifest $CompatibilityManifestSHA256
     $compatibility = Get-Content -Raw -LiteralPath $compatibilityManifest | ConvertFrom-Json
     if ($compatibility.schemaVersion -ne "stackkits-compatibility/v1" -or $compatibility.release.tag -ne $ReleaseTag) {
         throw "StackKits compatibility manifest does not match $ReleaseTag."
     }
-    tar --extract --gzip --file $linuxArchive --directory $linuxRelease
-    if ($LASTEXITCODE -ne 0) { throw "Could not extract the pinned Linux StackKits release." }
+    if (-not $ControllerOnly) {
+        tar --extract --gzip --file $linuxArchive --directory $linuxRelease
+        if ($LASTEXITCODE -ne 0) { throw "Could not extract the pinned Linux StackKits release." }
+    }
     Expand-Archive -LiteralPath $windowsArchive -DestinationPath $windowsRelease
 
     $linuxBinary = Join-Path $linuxRelease "stackkit"
     $windowsBinary = Join-Path $windowsRelease "stackkit.exe"
-    if (!(Test-Path -LiteralPath $linuxBinary -PathType Leaf) -or !(Test-Path -LiteralPath $windowsBinary -PathType Leaf)) {
+    if ((!$ControllerOnly -and !(Test-Path -LiteralPath $linuxBinary -PathType Leaf)) -or !(Test-Path -LiteralPath $windowsBinary -PathType Leaf)) {
         throw "Pinned StackKits release is missing its platform executable."
     }
 
@@ -151,10 +169,12 @@ try {
         $controllerAddressPlanner | ConvertTo-Json -Depth 5 -Compress | Set-Content -Encoding utf8NoBOM -LiteralPath (Join-Path $resolvedCatalog "stackkits-controller-address-planner.json")
     }
 
-    $binaryDir = Join-Path $stackKitRoot "bin"
-    New-Item -ItemType Directory -Force -Path $binaryDir | Out-Null
-    Copy-Item -LiteralPath $linuxBinary -Destination (Join-Path $binaryDir "stackkit")
-    Copy-Item -LiteralPath $compatibilityManifest -Destination (Join-Path $stackKitRoot "stackkits-compatibility-v1.json")
+    if (-not $ControllerOnly) {
+        $binaryDir = Join-Path $stackKitRoot "bin"
+        New-Item -ItemType Directory -Force -Path $binaryDir | Out-Null
+        Copy-Item -LiteralPath $linuxBinary -Destination (Join-Path $binaryDir "stackkit")
+        Copy-Item -LiteralPath $compatibilityManifest -Destination (Join-Path $stackKitRoot "stackkits-compatibility-v1.json")
+    }
 
     $prebuiltTemplates = ""
     if (-not [string]::IsNullOrWhiteSpace($SpecTemplatesPath)) {
@@ -210,9 +230,11 @@ try {
             Pop-Location
         }
         }
-        $templateDir = Join-Path $stackKitRoot ("spec-templates\" + $kit)
-        New-Item -ItemType Directory -Force -Path $templateDir | Out-Null
-        Copy-Item -LiteralPath (Join-Path $templateWork "stack-spec.yaml") -Destination (Join-Path $templateDir "stack-spec.yaml")
+        if (-not $ControllerOnly) {
+            $templateDir = Join-Path $stackKitRoot ("spec-templates\" + $kit)
+            New-Item -ItemType Directory -Force -Path $templateDir | Out-Null
+            Copy-Item -LiteralPath (Join-Path $templateWork "stack-spec.yaml") -Destination (Join-Path $templateDir "stack-spec.yaml")
+        }
         if (![string]::IsNullOrWhiteSpace($ControllerCatalogOutputPath)) {
             $controllerTemplateDir = Join-Path $resolvedCatalog ("spec-templates\" + $kit)
             New-Item -ItemType Directory -Force -Path $controllerTemplateDir | Out-Null
@@ -220,6 +242,10 @@ try {
         }
     }
 
+    if ($ControllerOnly) {
+        Write-Host "StackKits native controller catalog: $resolvedCatalog"
+        return
+    }
     $binarySHA256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $binaryDir "stackkit")).Hash.ToLowerInvariant()
     $pin = [ordered]@{
         schemaVersion = "techstack.stackkit-release-pin/v2"

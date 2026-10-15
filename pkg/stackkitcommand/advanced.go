@@ -45,6 +45,10 @@ func AdvancedCatalogOperation(operation agentpb.StackKitOperation) string {
 		return "rollback.coordinated"
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_RESTORE_DRILL:
 		return "restore.drill"
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_ORIGIN_CERTIFICATE_REQUEST:
+		return originCertificateRequestOperation
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_ORIGIN_CERTIFICATE_INSTALL:
+		return originCertificateInstallOperation
 	default:
 		return ""
 	}
@@ -78,7 +82,7 @@ func appliesChangeSet(operation agentpb.StackKitOperation) bool {
 func validateAdvancedFields(command *agentpb.StackKitCommand) error {
 	for _, check := range []func(*agentpb.StackKitCommand) error{
 		validateAdvancedCapability, validateAdvancedCandidate, validateChangeSetReferences,
-		validateRollbackReference, validateAdvancedApproval,
+		validateRollbackReference, validateAdvancedApproval, validateOriginCertificateFields,
 	} {
 		if err := check(command); err != nil {
 			return err
@@ -214,6 +218,10 @@ type AdvancedOperationResult struct {
 	// Report is the operation's report payload: data.changeSetResult,
 	// data.driftReport, the drill report or the rollback result.
 	Report json.RawMessage
+	// OriginRequest and OriginInstall carry the typed evidence of the two
+	// origin-certificate operations; the persisted Report omits the CSR body.
+	OriginRequest *OriginCertificateRequestEvidence
+	OriginInstall *OriginCertificateInstallEvidence
 }
 
 // advancedData is the part of an Advanced command's data Core admits.
@@ -244,6 +252,9 @@ func ParseAdvancedOperationResult(command *agentpb.StackKitCommand, result *agen
 	}
 	if envelope.SchemaVersion != CommandResultVersion || envelope.Command != ResultCommandName(command.Operation) || envelope.Status != commandResultStatusSuccess {
 		return AdvancedOperationResult{}, fmt.Errorf("StackKit %s command-result identity is invalid", operation)
+	}
+	if IsOriginCertificateOperation(command.Operation) {
+		return admitOriginCertificateResult(operation, command, result)
 	}
 	var data advancedData
 	if err := json.Unmarshal(envelope.Data, &data); err != nil {

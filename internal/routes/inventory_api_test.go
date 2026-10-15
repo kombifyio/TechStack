@@ -13,6 +13,7 @@ import (
 	"github.com/kombifyio/techstack/internal/portinventory"
 	"github.com/kombifyio/techstack/internal/routes/sessionreauth"
 	"github.com/kombifyio/techstack/pkg/controlplane"
+	"github.com/kombifyio/techstack/pkg/middleware"
 	"github.com/kombifyio/techstack/pkg/runtimehealth"
 )
 
@@ -41,11 +42,13 @@ func TestInventoryPortReadModelIsOwnerScopedAndNeverCached(t *testing.T) {
 	reader := &recordingPortInventoryReader{result: portinventory.Inventory{
 		ServerID: "server-1", ServerGeneration: 2, Allocations: []portinventory.Allocation{},
 	}}
+	checker := &fakeInventoryRelationshipChecker{allowed: true}
 	h := inventoryHandlers{app: &inventoryApplication{
-		read: store, ports: reader, policy: NewSelfHostedInventoryPolicy(), now: time.Now,
+		read: store, ports: reader, policy: NewInventoryFGAPolicy(checker), now: time.Now,
 	}, version: "test"}
 	event, recorder := registryRouteStoreTestEvent(http.MethodGet, "/api/v1/inventory/servers/server-1/ports", "owner-1", "tenant-1", nil)
 	event.Request.SetPathValue("serverId", "server-1")
+	event.Request = event.Request.WithContext(middleware.WithSignedEntitlements(event.Request.Context(), "mcp.customer.access"))
 	if err := h.httpServerPorts(event); err != nil {
 		t.Fatal(err)
 	}
@@ -54,6 +57,45 @@ func TestInventoryPortReadModelIsOwnerScopedAndNeverCached(t *testing.T) {
 	}
 	if reader.request.TenantID != "tenant-1" || reader.request.ServerID != "server-1" || reader.request.OwnerSubjectID != "owner-1" {
 		t.Fatalf("owner-scoped port request = %#v", reader.request)
+	}
+	var response struct {
+		Data portinventory.Inventory `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil || response.Data.ServerID != "server-1" || response.Data.ServerGeneration != 2 {
+		t.Fatalf("port inventory response = %s, error = %v", recorder.Body.String(), err)
+	}
+	for _, denied := range []struct {
+		name, entitlement, tenant string
+		allowed                   bool
+		membershipOnly            bool
+		checkerErr                error
+		status                    int
+	}{
+		{name: "missing entitlement", tenant: "tenant-1", allowed: true, status: http.StatusForbidden},
+		{name: "RIL only", entitlement: InventoryEntitlementRILRead, tenant: "tenant-1", allowed: true, status: http.StatusForbidden},
+		{name: "write only", entitlement: "techstack.inventory.write", tenant: "tenant-1", allowed: true, status: http.StatusForbidden},
+		{name: "unsigned customer membership", entitlement: "mcp.customer.access", tenant: "tenant-1", allowed: true, membershipOnly: true, status: http.StatusForbidden},
+		{name: "missing surface grant", entitlement: "mcp.customer.access", tenant: "tenant-1", status: http.StatusForbidden},
+		{name: "unavailable FGA", entitlement: "mcp.customer.access", tenant: "tenant-1", checkerErr: errors.New("authority unavailable"), status: http.StatusServiceUnavailable},
+		{name: "foreign tenant", entitlement: "mcp.customer.access", tenant: "tenant-foreign", allowed: true, status: http.StatusNotFound},
+	} {
+		t.Run(denied.name, func(t *testing.T) {
+			reader.request = portinventory.InventoryRequest{}
+			checker.allowed, checker.err = denied.allowed, denied.checkerErr
+			event, recorder := registryRouteStoreTestEvent(http.MethodGet, "/api/v1/inventory/servers/server-1/ports", "owner-1", denied.tenant, nil)
+			event.Request.SetPathValue("serverId", "server-1")
+			ctx := middleware.WithSignedEntitlements(event.Request.Context(), denied.entitlement)
+			if denied.membershipOnly {
+				ctx = middleware.WithMembershipEntitlements(event.Request.Context(), denied.entitlement)
+			}
+			event.Request = event.Request.WithContext(ctx)
+			if err := h.httpServerPorts(event); err != nil {
+				t.Fatal(err)
+			}
+			if recorder.Code != denied.status || reader.request.ServerID != "" {
+				t.Fatalf("denied port read = status %d, reader request %#v", recorder.Code, reader.request)
+			}
+		})
 	}
 }
 
@@ -140,7 +182,7 @@ func TestInventoryAPIIsOwnerScopedFreshnessQualifiedAndSanitized(t *testing.T) {
 		Metadata: map[string]any{
 			"credential_ref": "never-return", "provider_id": "ionos", "stackkit": "cloud-kit", "stackkit_version": "0.6.2", "stackkit_mode": "main",
 			"service_projection_expected": 1, "cleanup_state": "absence_pending",
-			"host":   map[string]any{"os": "ubuntu", "os_version": "24.04", "arch": "amd64", "public_ip": "85.215.38.99", "private_ip": "10.0.0.4", "local_ip": "192.168.178.155"},
+			"host":   map[string]any{"os": "ubuntu", "os_version": "24.04", "arch": "amd64", "public_ip": "198.51.100.85", "private_ip": "10.0.0.4", "local_ip": "192.168.178.155"},
 			"domain": "base.demo.kombified.com",
 		},
 	}
@@ -533,4 +575,105 @@ func TestInventoryEmptyCollectionCursorRemainsFrozen(t *testing.T) {
 
 func newTestInventoryHandlers(store controlplane.InventoryReadStore, now func() time.Time) inventoryHandlers {
 	return inventoryHandlers{app: &inventoryApplication{read: store, policy: NewSelfHostedInventoryPolicy(), now: now}, version: "test"}
+}
+
+// TestInventoryServersNameTheHostingerServer is the agent regression from
+// 2026-09-30: two servers enrolled with the same cloned hostname were
+// indistinguishable in the MCP list_servers projection, so the Companion asked
+// the owner which one was "the Hostinger server" instead of acting.
+func TestInventoryServersNameTheHostingerServer(t *testing.T) {
+	store := controlplane.NewMemoryStore()
+	now := time.Date(2026, 9, 30, 19, 0, 0, 0, time.UTC)
+	observedAt := now.Add(-10 * time.Second)
+	if _, err := store.CreateStack(t.Context(), controlplane.CreateStackRequest{ID: "stack-owner", TenantID: "tenant-1", OwnerSubjectID: "owner-1", Name: "Owner"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, server := range []controlplane.ServerRuntime{
+		{ID: "hostinger-1", TenantID: "tenant-1", StackID: "stack-owner", OwnerSubjectID: "owner-1", Name: "t3-code-ryzen", ProviderRef: "hostinger-vps:srv1161760", LifecycleState: "active", LastHeartbeatAt: &observedAt},
+		{ID: "local-1", TenantID: "tenant-1", StackID: "stack-owner", OwnerSubjectID: "owner-1", Name: "t3-code-ryzen", LifecycleState: "active", LastHeartbeatAt: &observedAt},
+	} {
+		if _, err := store.UpsertServerRuntime(t.Context(), server); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := newTestInventoryHandlers(store, func() time.Time { return now })
+	event, recorder := registryRouteStoreTestEvent(http.MethodGet, "/api/v1/inventory/servers", "owner-1", "tenant-1", nil)
+	if err := h.httpListServers(event); err != nil {
+		t.Fatal(err)
+	}
+	var envelope struct {
+		Data inventoryServerList `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]inventoryServer{}
+	for _, server := range envelope.Data.Servers {
+		byID[server.ID] = server
+	}
+	hostinger, local := byID["hostinger-1"], byID["local-1"]
+	if hostinger.Provider != "hostinger" {
+		t.Fatalf("hostinger provider = %q, want hostinger", hostinger.Provider)
+	}
+	if hostinger.Name == "" || strings.EqualFold(hostinger.Name, local.Name) {
+		t.Fatalf("server names %q and %q are not distinguishable", hostinger.Name, local.Name)
+	}
+}
+
+type rilReadOnlyInventoryPolicy struct{}
+
+func (rilReadOnlyInventoryPolicy) AuthorizeInventory(_ context.Context, auth InventoryAuthorization) (InventoryDecision, error) {
+	if auth.Action != InventoryActionRILRead {
+		return InventoryDecision{}, ErrInventoryAccessDenied
+	}
+	readScope, err := controlplane.NewOwnerInventoryReadScope(auth.TenantID, auth.SubjectID)
+	if err != nil {
+		return InventoryDecision{}, ErrInventoryAccessDenied
+	}
+	return InventoryDecision{ReadScope: readScope}, nil
+}
+
+// A principal holding only techstack.ril.read can read the RIL summary; the
+// RIL roster must name its servers too, while the canonical inventory list
+// keeps requiring the inventory-read entitlement.
+func TestRILRosterIsReadableWithRILReadOnly(t *testing.T) {
+	store := controlplane.NewMemoryStore()
+	if _, err := store.UpsertServerRuntime(t.Context(), controlplane.ServerRuntime{ID: "owned", TenantID: "tenant-1", OwnerSubjectID: "owner-1"}); err != nil {
+		t.Fatal(err)
+	}
+	h := newTestInventoryHandlers(store, time.Now)
+	h.app.policy = rilReadOnlyInventoryPolicy{}
+
+	event, recorder := registryRouteStoreTestEvent(http.MethodGet, "/v1/ril/servers", "owner-1", "tenant-1", nil)
+	if err := h.httpListServers(event); err != nil {
+		t.Fatal(err)
+	}
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "owned") {
+		t.Fatalf("RIL roster = %d %s", recorder.Code, recorder.Body.String())
+	}
+	event, recorder = registryRouteStoreTestEvent(http.MethodGet, "/api/v1/inventory/servers", "owner-1", "tenant-1", nil)
+	if err := h.httpListServers(event); err != nil {
+		t.Fatal(err)
+	}
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("canonical inventory list = %d, want 403", recorder.Code)
+	}
+}
+
+func TestInventoryMetricsNeverPresentStaleHeartbeatFiguresAsCurrent(t *testing.T) {
+	host := map[string]any{"cpu_percent": 12.5, "memory_used_bytes": 2.0, "memory_total_bytes": 8.0, "uptime_seconds": 3600.0}
+	age := int64(30)
+
+	fresh := inventoryMetricsFromHost(host, inventoryFreshness{State: inventoryFresh, AgeSeconds: &age})
+	if fresh.CPUPercent.Value == nil || *fresh.CPUPercent.Value != 12.5 || fresh.MemoryPercent.Value == nil || *fresh.MemoryPercent.Value != 25 {
+		t.Fatalf("fresh figures = %+v, want cpu 12.5 and memory derived from used/total", fresh)
+	}
+	if fresh.DiskPercent.Status != monitoringStatusUnknown || fresh.DiskPercent.Value != nil {
+		t.Fatalf("an unreported disk figure = %+v, want unknown without a value", fresh.DiskPercent)
+	}
+
+	stale := inventoryMetricsFromHost(host, inventoryFreshness{State: inventoryStale, AgeSeconds: &age})
+	if stale.CPUPercent.Status != inventoryStale || stale.CPUPercent.Value != nil || stale.UptimeSeconds.Value != nil {
+		t.Fatalf("stale figures = %+v, want status stale without any value", stale)
+	}
 }

@@ -1,6 +1,7 @@
 package servicecall
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -174,5 +175,8 @@ func buildAllowSet(list []string) map[string]struct{} {
 func respondAuthError(w http.ResponseWriter, status int, code, reason string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_, _ = w.Write([]byte(`{"error":"` + code + `","reason":"` + reason + `"}`))
+	_ = json.NewEncoder(w).Encode(struct {
+		Error  string `json:"error"`
+		Reason string `json:"reason"`
+	}{Error: code, Reason: reason})
 }

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, type Snippet } from "svelte";
   import {
     Check,
     ArrowUpRight,
@@ -12,8 +12,17 @@
     Workflow,
     Bot,
     CodeXml,
+    Store,
   } from "@lucide/svelte";
-  import { UseCaseCardCompact } from "@kombiverselabs/ui/usecase";
+  import {
+    resolveSetup,
+    UseCaseCardCompact,
+    UseCaseGuidedSetup,
+    type UseCaseSetupAnswers,
+    type UseCaseSetupFlow,
+    type UseCaseSetupLabels,
+    type UseCaseSetupResult,
+  } from "@kombiverselabs/ui/usecase";
   import { KfDetailSheet } from "@kombiverselabs/ui/card";
   import {
     creationGoals,
@@ -31,6 +40,7 @@
   } from "#lib/wizard/index.js";
   import {
     installsService,
+    maturityLabelled,
     type UseCaseCatalogView,
     type UseCaseCatalogComponent,
   } from "#lib/api/useCaseCatalog.js";
@@ -43,6 +53,14 @@
   import BrandLogoIcon from "../BrandLogoIcon.svelte";
   import BrandLogoScope from "../BrandLogoScope.svelte";
   import { revealWizardDetails } from "#lib/wizard/reveal-details.js";
+  import { experienceLevel, flowForLevel } from "#lib/wizard/experience.js";
+  import { operatorExperience } from "#lib/stores/operatorExperience.svelte.js";
+  import {
+    setupAnswersFor,
+    setupChanges,
+    setupFlowFor,
+    type SetupHardwareHints,
+  } from "#lib/wizard/setupFlows.js";
 
   let {
     config = $bindable(),
@@ -54,6 +72,8 @@
     questions = getEasyGoalQuestions(),
     runtimeCatalog = catalog,
     ondisclose,
+    afterCards,
+    hardware = {},
   }: {
     config: StackConfig;
     catalog: Map<string, UseCaseCatalogView>;
@@ -72,6 +92,10 @@
       id?: string;
       open: boolean;
     }) => void;
+    /** Rendered directly below the available cards (selection templates). */
+    afterCards?: Snippet;
+    /** Hardware Techstack already knows, for the guided-setup recommendation. */
+    hardware?: SetupHardwareHints;
   } = $props();
 
   const cards = $derived(creationGoals(questions, catalog));
@@ -99,6 +123,16 @@
   let globalAdvanced = $state(false);
 
   onMount(() => {
+    void operatorExperience.load();
+    // A link that hands over setup answers opens that use case's card.
+    const handed = Object.keys(config.useCaseSetupAnswers ?? {});
+    const target = available.find((card) => card.id === handed[0]);
+    if (handed.length === 1 && target) {
+      // The app is chosen in the service picker, not in the setup.
+      const app = config.useCaseSetupAnswers?.[target.id]?.backend?.[0];
+      if (app) choose(target, app);
+      void toggleDetails(target, true);
+    }
     function outsideClick(event: MouseEvent) {
       const id = pendingCard ?? expanded;
       if (!id || serviceInfo || !(event.target instanceof Node)) return;
@@ -193,7 +227,9 @@
     await tick();
     if (open && expanded === card.id && revision === disclosureRevision) {
       revealWizardDetails(
-        goalsGrid?.querySelector(".expanded .detail-story .eyebrow"),
+        goalsGrid?.querySelector(
+          ".expanded.guided .goal-setup, .expanded:not(.guided) .detail-story .eyebrow",
+        ),
       );
     }
   }
@@ -230,6 +266,7 @@
   function choose(card: CreationGoal, id: string) {
     if (!card.question || card.availability !== "available") return;
     if (!canChoose(card, "backend", id)) return;
+    keepSetupAnswers(card, { ...answersOf(card), backend: [id] });
     onSettingChange(card.question.configKey, "backend", id);
     onGoalChange(card.question.configKey, true);
   }
@@ -243,15 +280,101 @@
       supportsCreationChoice(runtimeCatalog.get(card.id), setting, value)
     );
   }
-  // Main apps stay in the picker; custom extra controls render in Advanced.
-  const cardSettings = ["backend", "paperless", "hosting", "edition"];
-  function catalogSetting(card: CreationGoal, id: string) {
-    return (
-      reviewMode ? card.catalog : runtimeCatalog.get(card.id)
-    )?.settings.find((setting) => setting.id === id);
+  function cardCatalog(card: CreationGoal) {
+    return reviewMode ? card.catalog : runtimeCatalog.get(card.id);
   }
-  function savedForLater(card: CreationGoal, id: string) {
-    return catalogSetting(card, id)?.realization === "recorded";
+  /** The guided setup of an expanded card. The service picker above already
+   * chooses the app, so the setup starts with what the app should do. */
+  function setupFor(card: CreationGoal): UseCaseSetupFlow | undefined {
+    const flow = setupFlowFor(card.id, cardCatalog(card), tr, hardware);
+    if (!flow) return undefined;
+    const questions = flow.questions.filter((entry) => entry.id !== "backend");
+    return questions.length > 0 ? { ...flow, questions } : undefined;
+  }
+  /** Cards whose "More settings" are open. */
+  let allSettings = $state<Record<string, boolean>>({});
+  /** How many steps the person sees follows the detail level they chose in
+   * the kombify Cloud account setup; every other step keeps its
+   * recommendation and opens under "More settings". */
+  const level = $derived(experienceLevel(operatorExperience.experience));
+  function tieredSetup(card: CreationGoal, flow: UseCaseSetupFlow) {
+    return flowForLevel(
+      flow,
+      level,
+      answersOf(card),
+      Boolean(allSettings[card.id]),
+    );
+  }
+  /** Answers of the shown steps over the kept answers of every other step. */
+  function mergedAnswers(
+    card: CreationGoal,
+    answers: UseCaseSetupAnswers,
+  ): UseCaseSetupAnswers {
+    return { ...answersOf(card), ...answers };
+  }
+  function answersOf(card: CreationGoal) {
+    return setupAnswersFor(
+      setupFor(card),
+      values(card),
+      config.useCaseSetupAnswers?.[card.id],
+    );
+  }
+  function keepSetupAnswers(card: CreationGoal, answers: UseCaseSetupAnswers) {
+    config.useCaseSetupAnswers = {
+      ...config.useCaseSetupAnswers,
+      [card.id]: Object.fromEntries(
+        Object.entries(answers).map(([id, answer]) => [
+          id,
+          Array.isArray(answer) ? [...answer] : [answer],
+        ]),
+      ),
+    };
+  }
+  /** Applying the setup stores its decisions and adds the use case. */
+  function applySetup(card: CreationGoal, result: UseCaseSetupResult) {
+    if (!card.question) return;
+    const catalogView = cardCatalog(card);
+    const changes = setupChanges(catalogView, result, values(card));
+    for (const [id, value] of changes.settings)
+      if (canChoose(card, id, value))
+        onSettingChange(card.question.configKey, id, value);
+    if (catalogView?.capabilities?.length)
+      config.useCaseCapabilities = {
+        ...(config.useCaseCapabilities ?? {}),
+        [card.id]: changes.capabilities,
+      };
+    keepSetupAnswers(card, { ...answersOf(card), ...changes.answers });
+    onGoalChange(card.question.configKey, true);
+    void dismissDetails(true);
+  }
+  const setupLabels = $derived<Partial<UseCaseSetupLabels>>({
+    progress: tr("wizard.setup.progress"),
+    review: tr("wizard.setup.review"),
+    reviewHint: tr("wizard.setup.reviewHint"),
+    back: tr("wizard.setup.back"),
+    next: tr("wizard.setup.next"),
+    useRecommended: tr("wizard.setup.useRecommended"),
+    apply: tr("wizard.setup.apply"),
+    startOver: tr("wizard.setup.startOver"),
+    change: tr("wizard.setup.change"),
+    recommended: tr("wizard.setup.recommended"),
+    recorded: tr("wizard.setup.recorded"),
+    recordedHint: tr("wizard.setup.recordedHint"),
+    stepOf: (step, total) =>
+      tr("wizard.setup.stepOf", { step: String(step), total: String(total) }),
+    changeAnswer: (question) => tr("wizard.setup.changeAnswer", { question }),
+  });
+  /** Free-text settings (a mail domain) are not questions; they stay in the
+   * settings drawer below the setup. */
+  function textOnly(card: CreationGoal) {
+    return (cardCatalog(card)?.settings ?? [])
+      .filter((setting) => setting.kind !== "text")
+      .map((setting) => setting.id);
+  }
+  function hasTextSettings(card: CreationGoal) {
+    return (cardCatalog(card)?.settings ?? []).some(
+      (setting) => setting.kind === "text",
+    );
   }
   function preferenceNote() {
     return tr(
@@ -350,19 +473,11 @@
       <h2>{tr("wizard.preview.title")}</h2>
       <p class="intro">{tr("wizard.preview.subtitle")}</p>
     </div>
-    <span class="step-note">01 / 05</span>
-  </header>
-
-  <div class="section-heading">
-    <div>
-      <h3>{tr("wizard.preview.available")}</h3>
-      <span>{tr("wizard.preview.availableHint")}</span>
-    </div>
     <span class="selection-count" role="status" aria-live="polite">
       <strong>{selected.length}</strong>
       {tr("wizard.preview.selectionCount")}
     </span>
-  </div>
+  </header>
 
   <div
     bind:this={goalsGrid}
@@ -370,6 +485,7 @@
     class:focus={variant === "focus"}
   >
     {#each available as card, index (card.id)}
+      {@const widest = cardPosition(index, 5)}
       {@const wide = cardPosition(index, 4)}
       {@const narrow = cardPosition(index, 3)}
       {@const medium = cardPosition(index, 2)}
@@ -377,7 +493,10 @@
         class="goal-frame"
         data-card-id={card.id}
         class:expanded={expanded === card.id}
+        class:guided={variant !== "focus" && Boolean(setupFor(card))}
         class:advanced-open={advancedCard === card.id && expanded === card.id}
+        style:--widest-row={widest.row}
+        style:--widest-column={widest.column}
         style:--wide-row={wide.row}
         style:--wide-column={wide.column}
         style:--narrow-row={narrow.row}
@@ -413,13 +532,31 @@
               }}
             ></button>
           {/if}
-          {#if !compact}
+          {#if maturityLabelled(card.catalog?.maturity)}
+            <!-- The release's own status of this use case (owner decision
+                 2026-10-07): beta and experimental stay installable. -->
+            <span
+              class="maturity-chip"
+              data-maturity={card.catalog?.maturity}
+              data-testid={`maturity-${card.id}`}
+              title={tr("wizard.status.hint")}
+              >{tr(`wizard.status.${card.catalog?.maturity}`)}</span
+            >
+          {/if}
+          {@const guided =
+            variant !== "focus" &&
+            expanded === card.id &&
+            Boolean(setupFor(card))}
+          {#if !compact && !guided}
             <p class="eyebrow">
               {tr("wizard.preview.serviceFor")}
               {title(card)}
             </p>
           {/if}
           <UseCaseServicePicker
+            summary={guided}
+            describe={(component) =>
+              serviceDescription(component.id, component.role)}
             components={backendChoices(card.catalog)}
             selectedId={chosen?.id}
             label={`${tr("wizard.preview.serviceFor")} ${title(card)}`}
@@ -475,96 +612,68 @@
                       aria-hidden="true"
                     /></a
                   >{/if}
+                {#if setupFor(card)}
+                  {@const more = tieredSetup(card, setupFor(card)!).more}
+                  {#if more > 0 || allSettings[card.id]}
+                    <button
+                      type="button"
+                      class="more-settings"
+                      data-testid={`more-settings-${card.id}`}
+                      aria-pressed={Boolean(allSettings[card.id])}
+                      onclick={() => {
+                        allSettings[card.id] = !allSettings[card.id];
+                      }}
+                      >{allSettings[card.id]
+                        ? tr("wizard.setup.less")
+                        : tr("wizard.setup.more", {
+                            count: String(more),
+                          })}</button
+                    >
+                  {/if}
+                {/if}
               </div>
+              {#if setupFor(card)}
+                {@const flow = setupFor(card)!}
+                {@const tiered = tieredSetup(card, flow)}
+                {#key allSettings[card.id]}
+                  <UseCaseGuidedSetup
+                    class="goal-setup"
+                    flow={tiered.flow}
+                    answers={answersOf(card)}
+                    label={title(card)}
+                    labels={setupLabels}
+                    onchange={(result) => {
+                      keepSetupAnswers(
+                        card,
+                        mergedAnswers(card, result.answers),
+                      );
+                    }}
+                    oncomplete={(result) =>
+                      applySetup(
+                        card,
+                        resolveSetup(flow, mergedAnswers(card, result.answers)),
+                      )}
+                  />
+                {/key}
+              {/if}
             </div>
           </div>
-          <UseCaseSettings
-            inlay={variant !== "focus"}
-            open={advancedCard === card.id}
-            onopenchange={(open) => {
-              advancedCard = open ? card.id : null;
-            }}
-            catalog={reviewMode ? card.catalog : runtimeCatalog.get(card.id)}
-            exclude={cardSettings}
-            extras={["files", "mail", "game"].includes(card.id)
-              ? addons
-              : undefined}
-            preview={reviewMode}
-            values={values(card)}
-            onchange={(id, value) => {
-              if (card.question)
-                onSettingChange(card.question.configKey, id, value);
-            }}
-          />
-        {/snippet}
-        {#snippet addons()}
-          {#if card.id === "files"}
-            <label class="addon-choice">
-              <input
-                type="checkbox"
-                checked={values(card).paperless === true}
-                disabled={!canChoose(card, "paperless")}
-                onchange={(event) =>
-                  onSettingChange(
-                    "files",
-                    "paperless",
-                    event.currentTarget.checked,
-                  )}
-              />
-              <span
-                ><strong>{tr("wizard.preview.paperless.title")}</strong><small
-                  >{tr(
-                    "wizard.preview.paperless.help",
-                  )}{#if !canChoose(card, "paperless")}
-                    · {tr(
-                      "wizard.preview.comingSoon",
-                    )}{:else if savedForLater(card, "paperless")}
-                    · {tr("wizard.preview.savedForLater")}{/if}</small
-                ></span
-              >
-            </label>
-          {:else if card.id === "mail"}
-            <label class="preview-choice"
-              >{tr("wizard.preview.mail.hosting")}
-              <select
-                value={values(card).hosting ??
-                  catalogSetting(card, "hosting")?.default ??
-                  "existing"}
-                disabled={!canChoose(card, "hosting")}
-                onchange={(event) =>
-                  onSettingChange("mail", "hosting", event.currentTarget.value)}
-              >
-                {#each catalogSetting(card, "hosting")?.options ?? [{ id: "existing", name: tr("wizard.preview.mail.existing") }, { id: "stalwart", name: "Stalwart" }, { id: "mailcow", name: "mailcow" }] as option (option.id)}
-                  <option value={option.id}>{option.name}</option>
-                {/each}
-              </select>
-            </label>
-            {#if canChoose(card, "hosting") && savedForLater(card, "hosting")}
-              <p class="preference-note">
-                {tr("wizard.goals.setting.recorded")}
-              </p>
-            {/if}
-          {:else if card.id === "game"}
-            <label class="preview-choice"
-              >{tr("wizard.preview.game.edition")}
-              <select
-                value={values(card).edition ??
-                  catalogSetting(card, "edition")?.default ??
-                  "java"}
-                disabled={!canChoose(card, "edition")}
-                onchange={(event) =>
-                  onSettingChange("game", "edition", event.currentTarget.value)}
-              >
-                {#each catalogSetting(card, "edition")?.options ?? [{ id: "java", name: "Minecraft Java" }, { id: "bedrock", name: "Minecraft Bedrock" }] as option (option.id)}
-                  <option value={option.id}>{option.name}</option>
-                {/each}
-              </select>
-            </label>
-            {#if canChoose(card, "edition") && savedForLater(card, "edition")}
-              <p class="preference-note">
-                {tr("wizard.goals.setting.recorded")}
-              </p>
-            {/if}
+          {#if hasTextSettings(card)}
+            <UseCaseSettings
+              inlay={variant !== "focus"}
+              open={advancedCard === card.id}
+              onopenchange={(open) => {
+                advancedCard = open ? card.id : null;
+              }}
+              catalog={cardCatalog(card)}
+              exclude={textOnly(card)}
+              preview={reviewMode}
+              values={values(card)}
+              onchange={(id, value) => {
+                if (card.question)
+                  onSettingChange(card.question.configKey, id, value);
+              }}
+            />
           {/if}
         {/snippet}
         <UseCaseCardCompact
@@ -607,6 +716,8 @@
     {/each}
   </div>
 
+  {@render afterCards?.()}
+
   <section class="coming-soon" aria-labelledby="coming-soon-title">
     <div class="section-heading">
       <div>
@@ -623,13 +734,15 @@
             ? `${description(card)} · n8n / Activepieces`
             : description(card)}
           planState="unavailable"
-          icon={card.id === "network"
-            ? Network
-            : card.id === "automation"
-              ? Workflow
-              : card.id === "dev"
-                ? CodeXml
-                : Bot}
+          icon={card.id === "marketplace"
+            ? Store
+            : card.id === "network"
+              ? Network
+              : card.id === "automation"
+                ? Workflow
+                : card.id === "dev"
+                  ? CodeXml
+                  : Bot}
           planLabel={tr("wizard.preview.comingSoon")}
           unavailableReason={tr("wizard.preview.comingSoonHint")}
           selectable={false}
@@ -748,46 +861,42 @@
 {/if}
 
 <style>
-  .addon-choice,
-  .preview-choice {
-    display: flex;
-    gap: 12px;
-    margin: 16px 0;
-    padding: 16px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-control, 10px);
-    font-size: 13px;
-  }
-  .addon-choice input {
-    width: 18px;
-    height: 18px;
-    accent-color: var(--primary);
-    flex-shrink: 0;
-  }
-  .addon-choice span {
-    display: grid;
-    gap: 4px;
-  }
-  .addon-choice small {
-    color: var(--muted-foreground);
-    line-height: 1.6;
-  }
-  .preview-choice {
-    flex-direction: column;
-  }
-  .preview-choice select {
+  .maturity-chip {
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
     color: var(--foreground);
-    background: var(--input);
-    padding: 10px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
+    background: color-mix(in oklab, var(--warning, #d97706) 18%, transparent);
+    border: 1px solid
+      color-mix(in oklab, var(--warning, #d97706) 45%, transparent);
+  }
+  .maturity-chip[data-maturity="experimental"],
+  .maturity-chip[data-maturity="deprecated"] {
+    background: color-mix(
+      in oklab,
+      var(--destructive, #dc2626) 14%,
+      transparent
+    );
+    border-color: color-mix(
+      in oklab,
+      var(--destructive, #dc2626) 40%,
+      transparent
+    );
   }
   .goals-preview {
     --preview-space: clamp(18px, 3vw, 30px);
     container: creation-goals / inline-size;
     display: grid;
-    gap: 24px;
+    gap: 16px;
     width: 100%;
+    /* Uses the window's width up to five tiles; beyond that it stays centered. */
+    max-width: 1760px;
+    margin-inline: auto;
     min-width: 0;
   }
   button {
@@ -843,12 +952,14 @@
     background: var(--card);
     box-shadow: 0 1px 3px color-mix(in oklch, var(--foreground) 8%, transparent);
   }
+  /* Title with its intro below; the selection count sits beside them, so the
+     use cases start right after. */
   .goals-heading {
     display: flex;
     justify-content: space-between;
-    align-items: flex-start;
+    align-items: flex-end;
     gap: 24px;
-    padding-block: 14px 10px;
+    padding-block: 10px 8px;
   }
   .eyebrow {
     font-size: 10px;
@@ -856,13 +967,13 @@
     text-transform: uppercase;
     letter-spacing: 0.12em;
     color: var(--muted-foreground);
-    margin: 0 0 9px;
+    margin: 0 0 6px;
   }
   .goals-heading .eyebrow {
     color: var(--primary);
   }
   h2 {
-    font-size: clamp(27px, 3vw, 36px);
+    font-size: clamp(25px, 2.4vw, 32px);
     font-weight: 600;
     letter-spacing: -0.035em;
     line-height: 1.15;
@@ -870,18 +981,11 @@
     text-wrap: balance;
   }
   .intro {
-    max-width: 630px;
+    max-width: 72ch;
+    margin: 12px 0 0;
     font-size: 14px;
-    line-height: 1.75;
+    line-height: 1.6;
     color: var(--muted-foreground);
-    margin-top: 14px;
-  }
-  .step-note {
-    color: var(--muted-foreground);
-    font-size: 11px;
-    font-family: var(--font-mono);
-    padding-top: 5px;
-    white-space: nowrap;
   }
   .section-heading {
     justify-content: space-between;
@@ -898,9 +1002,20 @@
   }
   .goals-grid {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 12px;
+    grid-template-columns: repeat(var(--goal-cols), minmax(0, 1fr));
+    gap: var(--goal-gap);
     align-items: start;
+    /* The artwork follows the tile width up to a cap, so a wide window shows
+       two rows of use cases instead of one row of large pictures. */
+    --goal-cols: 4;
+    --goal-gap: 12px;
+    --goal-fixed-rows: 170px;
+    --goal-tile-width: calc(
+      (100cqi - (var(--goal-cols) - 1) * var(--goal-gap)) / var(--goal-cols)
+    );
+    --goal-tile-height: calc(
+      clamp(104px, var(--goal-tile-width) * 0.4, 184px) + var(--goal-fixed-rows)
+    );
   }
   .goal-frame {
     position: relative;
@@ -908,19 +1023,16 @@
     grid-row: var(--wide-row);
     grid-column: var(--wide-column);
   }
-  /* Closed cards are square with fixed rows: artwork (title on it), a
-     two-line description, the app stack and the footer. The artwork takes
-     whatever the fixed rows leave, so nothing overlaps or leaves the card. */
+  /* Closed cards have fixed rows: artwork (title on it), a two-line
+     description, the app stack and the footer. The artwork height comes from
+     the tile width, so nothing overlaps or leaves the card. */
   .goals-grid:not(.focus) .goal-frame:not(.expanded) {
     container-type: inline-size;
-    aspect-ratio: 1;
+    height: var(--goal-tile-height);
     --goal-desc-height: 38px;
     --goal-apps-height: 42px;
     --goal-foot-height: 38px;
-    --goal-art-height: calc(
-      100cqi - 28px - 3 * 8px - var(--goal-desc-height) -
-        var(--goal-apps-height) - var(--goal-foot-height)
-    );
+    --goal-art-height: clamp(104px, 40cqi, 184px);
   }
   .goals-grid:not(.focus) .goal-frame :global(.kf-uc-enhanced) {
     height: 100%;
@@ -993,8 +1105,8 @@
     width: calc(100% - 82px);
     transform: translateY(-100%);
     color: white;
-    font-size: 18px;
-    line-height: 1.2;
+    font-size: clamp(19px, 6.4cqi, 27px);
+    line-height: 1.15;
     -webkit-text-stroke: 0.6px #000;
     paint-order: stroke fill;
     text-shadow: 0 1px 3px #000;
@@ -1023,7 +1135,7 @@
     --goal-art-height: 245px;
   }
   .goals-grid:not(.focus) .goal-frame.expanded :global(.kf-uc-enhanced-name) {
-    font-size: 24px;
+    font-size: 30px;
   }
   .goals-grid:not(.focus) .goal-frame.expanded :global(.service-picker) {
     flex-direction: column;
@@ -1055,30 +1167,30 @@
   .goals-grid:not(.focus) .goal-frame.expanded :global(.kf-uc-enhanced-desc) {
     display: none;
   }
-  /* On a multi-column grid the expanded card is a 2x2 square: two tiles and a
-     gap each way, so the rows around it keep the tile height. A short artwork
-     band spans the top; below it the description sits left and service
-     main application selection sits right. Advanced spans the
-     bottom and replaces the body when open. The card
-     never grows; the single-column layout keeps growing in height. */
+  /* On a multi-column grid the expanded card covers 2x2 tiles: two tiles and
+     a gap each way, so the rows around it keep the tile height. A short
+     artwork band spans the top; below it the description sits left and the
+     application choice sits right, in equal columns. Advanced spans the
+     bottom and replaces the body when open. The card never grows; the
+     single-column layout keeps growing in height. */
   @container creation-goals (min-width: 621px) {
     .goals-grid:not(.focus) .goal-frame.expanded {
       container-type: inline-size;
-      aspect-ratio: 1;
+      height: calc(2 * var(--goal-tile-height) + var(--goal-gap));
       min-height: 0;
       overflow: hidden;
-      --goal-art-height: 28cqi;
+      --goal-art-height: clamp(120px, 18cqi, 172px);
     }
     .goals-grid:not(.focus) .goal-frame.expanded :global(.kf-uc-enhanced) {
       display: grid;
-      grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
       grid-template-rows: var(--goal-art-height) minmax(0, 1fr) auto auto;
       grid-template-areas:
         "visual visual"
         "details controls"
         "foot foot"
         "advanced advanced";
-      gap: 12px 16px;
+      gap: 14px 28px;
       padding: 14px;
       overflow: hidden;
     }
@@ -1093,6 +1205,61 @@
       overflow-y: auto;
       overscroll-behavior: contain;
       scrollbar-width: thin;
+      scrollbar-color: color-mix(in oklch, var(--foreground) 22%, transparent)
+        transparent;
+    }
+    /* Only a hairline thumb, without a track or arrow buttons. */
+    @supports selector(::-webkit-scrollbar) {
+      .goals-grid:not(.focus)
+        .goal-frame.expanded
+        :global(.kf-uc-enhanced-controls),
+      .goals-grid:not(.focus) .goal-frame.expanded .detail-content {
+        scrollbar-width: auto;
+        scrollbar-color: auto;
+      }
+      .goals-grid:not(.focus)
+        .goal-frame.expanded
+        :global(.kf-uc-enhanced-controls)::-webkit-scrollbar,
+      .goals-grid:not(.focus)
+        .goal-frame.expanded
+        .detail-content::-webkit-scrollbar {
+        width: 3px;
+      }
+      .goals-grid:not(.focus)
+        .goal-frame.expanded
+        :global(.kf-uc-enhanced-controls)::-webkit-scrollbar-thumb,
+      .goals-grid:not(.focus)
+        .goal-frame.expanded
+        .detail-content::-webkit-scrollbar-thumb {
+        border-radius: 3px;
+        background: color-mix(in oklch, var(--foreground) 22%, transparent);
+      }
+      .goals-grid:not(.focus)
+        .goal-frame.expanded
+        :global(.kf-uc-enhanced-controls)::-webkit-scrollbar-button,
+      .goals-grid:not(.focus)
+        .goal-frame.expanded
+        .detail-content::-webkit-scrollbar-button {
+        display: none;
+      }
+    }
+    /* The description is the card's left column: its scrollbar belongs on the
+       card edge, not between the two columns. */
+    :global(html:not([dir="rtl"]))
+      .goals-grid:not(.focus)
+      .goal-frame.expanded
+      .detail-content {
+      direction: rtl;
+      /* The bar sits in the card padding so the text keeps its left edge. */
+      margin-left: -10px;
+    }
+    :global(html:not([dir="rtl"]))
+      .goals-grid:not(.focus)
+      .goal-frame.expanded
+      .detail-content
+      > .goal-details {
+      direction: ltr;
+      padding-left: 10px;
     }
     .goals-grid:not(.focus)
       .goal-frame.expanded
@@ -1108,6 +1275,193 @@
       grid-template-columns: minmax(0, 1fr);
       gap: 20px;
       padding-block: 8px 4px;
+    }
+  }
+  /* With a guided setup the expanded card stacks instead: the chosen
+     application with its description and the apps to switch to on top, the
+     setup steps below across the full card width, so nothing needs to
+     scroll inside the 2x2 card. */
+  .goals-grid:not(.focus)
+    .goal-frame.expanded.guided
+    .detail-story
+    > :not(a, .more-settings) {
+    display: none;
+  }
+  .goals-grid:not(.focus) .goal-frame.expanded.guided .detail-story a {
+    margin-top: 0;
+  }
+  .goals-grid:not(.focus) .goal-frame.expanded.guided .detail-story {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .goals-grid:not(.focus) .goal-frame.expanded.guided .goal-details {
+    gap: 0;
+  }
+  .goals-grid:not(.focus)
+    .goal-frame.expanded.guided
+    .detail-story:not(:has(a, .more-settings)) {
+    display: none;
+  }
+  .goals-grid:not(.focus) .goal-frame.expanded.guided :global(.kf-uc-setup) {
+    gap: 10px;
+  }
+  .goals-grid:not(.focus)
+    .goal-frame.expanded.guided
+    :global(.kf-uc-setup-choices) {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
+    gap: 7px;
+    margin-top: 8px;
+  }
+  .goals-grid:not(.focus)
+    .goal-frame.expanded.guided
+    :global(.kf-uc-setup-choice) {
+    gap: 8px;
+    padding: 8px 10px;
+  }
+  .goals-grid:not(.focus)
+    .goal-frame.expanded.guided
+    :global(.kf-uc-setup-choice-copy) {
+    gap: 2px;
+  }
+  /* The check sits in the choice's corner, so the title, its chips and the
+     description get the whole choice width. */
+  .goals-grid:not(.focus)
+    .goal-frame.expanded.guided
+    :global(.kf-uc-setup-choice-mark) {
+    position: absolute;
+    top: 8px;
+    inset-inline-end: 8px;
+    width: 18px;
+    height: 18px;
+  }
+  .goals-grid:not(.focus)
+    .goal-frame.expanded.guided
+    :global(.kf-uc-setup-choice-head) {
+    padding-inline-end: 20px;
+  }
+  .goals-grid:not(.focus)
+    .goal-frame.expanded.guided
+    :global(.kf-uc-setup-choice small) {
+    font-size: 11px;
+    line-height: 1.38;
+  }
+  .goals-grid:not(.focus)
+    .goal-frame.expanded.guided
+    :global(.kf-uc-setup-choice-mark svg) {
+    width: 11px;
+    height: 11px;
+  }
+  .goals-grid:not(.focus)
+    .goal-frame.expanded.guided
+    :global(.kf-uc-setup-choice-head) {
+    gap: 4px;
+  }
+  .goals-grid:not(.focus)
+    .goal-frame.expanded.guided
+    :global(.kf-uc-setup-chip) {
+    padding: 0 4px;
+    font-size: 8.5px;
+    letter-spacing: 0.02em;
+  }
+  .goals-grid:not(.focus)
+    .goal-frame.expanded.guided
+    :global(.kf-uc-setup-help) {
+    margin-top: 3px;
+  }
+  @container creation-goals (min-width: 621px) {
+    .goals-grid:not(.focus) .goal-frame.expanded.guided {
+      --goal-art-height: clamp(76px, 12cqi, 116px);
+    }
+    /* The artwork already carries the collapse and plan buttons, so the
+       footer row would only repeat them. */
+    .goals-grid:not(.focus)
+      .goal-frame.expanded.guided
+      :global(.kf-uc-enhanced-foot) {
+      display: none;
+    }
+    /* The release status rides on the artwork instead of taking a row. */
+    .goals-grid:not(.focus) .goal-frame.expanded.guided .maturity-chip {
+      position: absolute;
+      z-index: 3;
+      top: 24px;
+      left: 24px;
+      background: color-mix(in oklab, var(--warning, #d97706) 30%, var(--card));
+    }
+    /* The rail names the current step. */
+    .goals-grid:not(.focus)
+      .goal-frame.expanded.guided
+      :global(.kf-uc-setup-question .kf-uc-setup-step) {
+      display: none;
+    }
+    .goals-grid:not(.focus)
+      .goal-frame.expanded.guided
+      :global(.kf-uc-enhanced) {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: var(--goal-art-height) auto minmax(0, 1fr) auto auto;
+      grid-template-areas:
+        "visual"
+        "controls"
+        "details"
+        "foot"
+        "advanced";
+      gap: 10px;
+    }
+    .goals-grid:not(.focus)
+      .goal-frame.expanded.guided
+      :global(.kf-uc-enhanced-controls) {
+      overflow: visible;
+    }
+    .goals-grid:not(.focus) .goal-frame.expanded.guided .goal-details {
+      padding-block: 0;
+    }
+    /* The guide link rides on the artwork, beside the collapse and plan
+       buttons. */
+    .goals-grid:not(.focus) .goal-frame.expanded.guided .detail-story {
+      position: absolute;
+      z-index: 3;
+      top: 24px;
+      right: 108px;
+    }
+    .goals-grid:not(.focus) .goal-frame.expanded.guided .detail-story a,
+    .goals-grid:not(.focus) .goal-frame.expanded.guided .more-settings {
+      box-sizing: border-box;
+      height: 32px;
+      padding: 0 12px;
+      color: white;
+      font-size: 12px;
+      background: rgb(15 22 32 / 72%);
+      border-radius: 999px;
+      box-shadow: inset 0 0 0 1px rgb(255 255 255 / 40%);
+      backdrop-filter: blur(8px);
+    }
+    .goals-grid:not(.focus)
+      .goal-frame.expanded.guided
+      :global(.kf-uc-setup-row) {
+      padding-block: 6px;
+    }
+    /* The rail and the Back/Next row always stay in view. Only a step with
+       unusually many long choices on a narrow card lets its choices scroll. */
+    .goals-grid:not(.focus) .goal-frame.expanded.guided .detail-content,
+    .goals-grid:not(.focus) .goal-frame.expanded.guided .goal-details {
+      display: grid;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .goals-grid:not(.focus) .goal-frame.expanded.guided .goal-details {
+      grid-template-rows: minmax(0, 1fr);
+    }
+    .goals-grid:not(.focus) .goal-frame.expanded.guided :global(.kf-uc-setup) {
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      min-height: 0;
+    }
+    .goals-grid:not(.focus)
+      .goal-frame.expanded.guided
+      :global(.kf-uc-setup-body) {
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-width: thin;
     }
   }
   .goals-grid:not(.focus) .goal-frame.advanced-open :global(.kf-uc-enhanced) {
@@ -1187,9 +1541,14 @@
     scroll-margin-block-end: 25vh;
   }
   .detail-story > p:not(.eyebrow) {
-    font-size: 13px;
-    line-height: 1.75;
+    font-size: 14px;
+    line-height: 1.65;
     color: var(--muted-foreground);
+  }
+  .detail-story > p:not(.eyebrow, .detail-tip) {
+    color: var(--foreground);
+    font-size: 14.5px;
+    line-height: 1.6;
   }
   .detail-story .detail-tip {
     display: flex;
@@ -1216,16 +1575,30 @@
   .detail-story a {
     margin-top: 14px;
   }
+  .more-settings {
+    display: inline-flex;
+    align-items: center;
+    margin-top: 14px;
+    color: var(--primary);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .goals-grid:not(.focus) .goal-frame.expanded.guided .more-settings {
+    margin-top: 0;
+  }
   .preference-note {
     font-size: 11px;
     line-height: 1.55;
     color: var(--muted-foreground);
     margin-top: 8px;
   }
-  .section-heading .selection-count {
-    flex-shrink: 0;
-    text-align: end;
+  .selection-count {
+    margin-bottom: 3px;
+    color: var(--muted-foreground);
+    font-size: 12px;
     font-variant-numeric: tabular-nums;
+    white-space: nowrap;
   }
   .selection-count strong {
     color: var(--foreground);
@@ -1348,9 +1721,18 @@
     outline: 2px solid var(--ring);
     outline-offset: 4px;
   }
+  @container creation-goals (min-width: 1480px) {
+    .goals-grid {
+      --goal-cols: 5;
+    }
+    .goal-frame {
+      grid-row: var(--widest-row);
+      grid-column: var(--widest-column);
+    }
+  }
   @container creation-goals (max-width: 960px) {
     .goals-grid {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      --goal-cols: 3;
     }
     .goal-frame {
       grid-row: var(--narrow-row);
@@ -1358,7 +1740,9 @@
     }
   }
   @container creation-goals (max-width: 760px) {
-    .goals-grid,
+    .goals-grid {
+      --goal-cols: 2;
+    }
     .upcoming-grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
@@ -1371,7 +1755,9 @@
     }
   }
   @container creation-goals (max-width: 620px) {
-    .goals-grid,
+    .goals-grid {
+      --goal-cols: 1;
+    }
     .upcoming-grid,
     .goal-details,
     .global-fields {
@@ -1383,7 +1769,19 @@
     .goals-grid:not(.focus) .goal-frame:not(.expanded) {
       width: 100%;
       max-width: 430px;
+      height: auto;
       justify-self: center;
+    }
+    /* On a phone the count takes its own line so the intro keeps the width. */
+    .goals-heading {
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .goals-heading > div {
+      flex: 1 0 100%;
+    }
+    .selection-count {
+      margin-inline-start: auto;
     }
     .preview-toolbar {
       flex-wrap: wrap;
@@ -1393,9 +1791,6 @@
     }
     .variant-switch button {
       flex: 1;
-    }
-    .step-note {
-      display: none;
     }
     .section-heading {
       align-items: flex-start;

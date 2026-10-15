@@ -1,8 +1,8 @@
 package routes
 
 import (
+	"errors"
 	"net/http"
-	"sort"
 
 	"github.com/kombifyio/techstack/internal/stackkitrelease"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
@@ -15,23 +15,9 @@ func (api *UnifierAPI) handleListStackKits(e *httpx.Event) error {
 	if _, err := requireUnifierAuth(e); err != nil {
 		return err
 	}
-	kits := api.engine.ListStackKits()
-
-	result := make([]*unifier.StackKitInfo, 0, len(kits))
-	for _, kit := range kits {
-		info, err := api.engine.GetStackKitInfo(kit)
-		if err != nil {
-			result = append(result, &unifier.StackKitInfo{
-				Name:        kit,
-				DisplayName: kit,
-				Version:     "1.0.0",
-				Description: "StackKit: " + kit,
-				Tags:        []string{},
-				Deprecated:  false,
-			})
-			continue
-		}
-		result = append(result, info)
+	result, err := api.engine.ListStackKitInfo()
+	if err != nil {
+		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "StackKits metadata could not be read", err.Error())
 	}
 
 	return httpx.Success(e, http.StatusOK, result)
@@ -48,7 +34,10 @@ func (api *UnifierAPI) handleGetStackKit(e *httpx.Event) error {
 
 	info, err := api.engine.GetStackKitInfo(name)
 	if err != nil {
-		return httpx.NotFound(e, "StackKit not found: "+err.Error())
+		if errors.Is(err, stackkitrelease.ErrKitMetadataNotFound) {
+			return httpx.NotFound(e, "StackKit not found")
+		}
+		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "StackKits metadata could not be read", err.Error())
 	}
 	return httpx.Success(e, http.StatusOK, info)
 }
@@ -57,26 +46,12 @@ func (api *UnifierAPI) handleListAddons(e *httpx.Event) error {
 	if _, err := requireUnifierAuth(e); err != nil {
 		return err
 	}
-	loader := unifier.NewAddonSchemaLoader()
-	if err := loader.LoadEmbedded(); err != nil {
-		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Add-on catalog could not be loaded", err.Error())
+	catalog, err := stackkitrelease.ResolveUseCaseCatalog()
+	if err != nil {
+		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Add-on catalog could not be read", err.Error())
 	}
 
-	names := loader.ListNames()
-	sort.Strings(names)
-	result := make([]map[string]any, 0, len(names))
-	for _, name := range names {
-		addon, err := loader.GetLoadedAddon(name)
-		if err != nil {
-			continue
-		}
-		result = append(result, map[string]any{
-			"name":        addon.Name,
-			"displayName": addon.DisplayName,
-			"description": addon.Description,
-			"priority":    addon.Priority,
-		})
-	}
+	result := catalog.AddOnViews()
 	return httpx.Success(e, http.StatusOK, map[string]any{"addons": result, "count": len(result)})
 }
 
@@ -137,43 +112,12 @@ func (api *UnifierAPI) handleUseCaseCatalog(e *httpx.Event) error {
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal,
 			"StackKits delivery compatibility could not be read", deliverErr.Error())
 	}
-
-	useCases := make([]map[string]any, 0, len(catalog.UseCases))
-	for _, useCase := range catalog.UseCases {
-		entry := map[string]any{
-			"id":          useCase.ID,
-			"title":       useCase.Title,
-			"description": useCase.Description,
-			"components":  useCase.Components,
-		}
-		if useCase.Components == nil {
-			entry["components"] = []stackkitrelease.UseCaseComponent{}
-		}
-		// StackKits' own per-tier verdict with its own reason. This is what the
-		// large card's advanced drawer shows at the technical depth level; the
-		// compact card never sees it.
-		if len(useCase.ComputeTiers) > 0 {
-			entry["compute_tiers"] = useCase.ComputeTiers
-		}
-		// What an operator decides about this use case, and where to read
-		// more. Both come from the catalog and differ per use case - this is
-		// what lets the cards stop showing the same three facts for all ten.
-		if settings := useCase.ConfigurationSettings(); len(settings) > 0 {
-			entry["settings"] = settings
-		}
-		if useCase.Docs != "" {
-			entry["docs"] = useCase.Docs
-		}
-		if deliverabilityKnown {
-			_, ok := deliverable[useCase.ID]
-			entry["deliverable"] = ok
-		}
-		useCases = append(useCases, entry)
+	deliveryStatuses, _, statusErr := specv2.GoalDeliveryStatuses()
+	if statusErr != nil {
+		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal,
+			"StackKits delivery compatibility could not be read", statusErr.Error())
 	}
-	return httpx.Success(e, http.StatusOK, map[string]any{
-		"configured":           true,
-		"deliverability_known": deliverabilityKnown,
-		"release":              catalog.Release,
-		"use_cases":            useCases,
-	})
+
+	return httpx.Success(e, http.StatusOK,
+		stackkitrelease.CreationCatalogPayload(catalog, deliverable, deliverabilityKnown, deliveryStatuses))
 }

@@ -55,6 +55,12 @@ func (s *MemoryStore) ApplyGuardInventoryProjection(_ context.Context, command G
 		return s.replayOrFenceGuardInventoryProjectionLocked(*result.Server, prepared)
 	}
 
+	if host, _ := prepared.command.Event.Runtime.Metadata[serverEventHostKey].(map[string]any); host != nil {
+		if sample, ok := HostMetricSample(host); ok {
+			s.recordServerMetricSampleLocked(result.Server.TenantID, result.Server.ID, result.Server.UpdatedAt, sample)
+		}
+	}
+
 	// prepareGuardInventoryProjection requires an inventory observation, so the
 	// accepted server event always assigns the revision before this point.
 	revision := result.Server.InventoryRevision

@@ -62,9 +62,9 @@ The same command also produces the public Windows release assets in
 - `kombify-techstack-client_<version>_Windows_x86_64.zip` — portable artifact
 - `SHA256SUMS.txt` and `UNSIGNED-WINDOWS-RELEASE.txt`
 
-The MSI and setup.exe are intentionally unsigned for the current alpha. Verify
-the hashes before installing; Authenticode signing is optional and never
-blocks publication.
+The MSI and setup.exe are intentionally unsigned on every channel, including
+stable. No Windows code-signing certificate is planned or required. Verify
+the hashes before installing.
 
 Cloud UI smoke:
 
@@ -90,6 +90,16 @@ Release/local-E2E automation may pass `-Discard` only for an isolated state
 directory; normal resets preserve data in a uniquely named timestamped backup.
 For a non-default installation, pass its exact `-InstallDir`; process shutdown
 is restricted to that installation and the selected state directory.
+
+### Backup scope (public beta Wave 1)
+
+The beta backup is a documented copy of the state directory, not a backup
+feature: quit the client, copy `%LOCALAPPDATA%\kombify\techstack-client` (the
+database, `client.json` and runtime files) to a safe place, and copy it back to
+restore. Credential Manager entries are not part of that copy; they stay with
+the Windows account. Do not copy while the client runs. A client that finds
+data written by a newer PostgreSQL major refuses to start and leaves the data
+untouched. Real backup and restore is follow-on work.
 
 Automated installed-client tests set `TECHSTACK_CLIENT_STATE_DIR` to an
 isolated random directory below `%LOCALAPPDATA%\kombify`; file state and
@@ -143,26 +153,38 @@ Signed updates (NATIVE-CLIENT-PLATFORM-STANDARD section 7):
   with it (`client-update-manifest.v1`), refuses downgrades and channels below
   `updateMinSupportedVersion`, and stages the installer below
   `<state>\updates\<version>` only after its size and SHA-256 match.
-- At the next start, before the runtime starts, the client re-verifies the
-  staged installer, snapshots the runtime data, keeps a copy of the installed
-  version's installer from the Burn package cache, and runs the new
-  Setup.exe (`/passive`, one elevation prompt). The new version then starts
-  on the retained data. If its runtime does not become healthy, the client
-  uninstalls it, reinstalls the previous version, and restores the snapshot
-  before that runtime starts.
+- Before applying an update, the client secures the signed exact installed
+  version's recovery package under `<state>\updates\rollback\<version>`.
+  Both MSI and Setup installations use this package, independent of the Burn
+  cache. Missing recovery publication leaves the current installation usable.
+  At the next start, the installed Go verifier authenticates both packages
+  again before the client snapshots runtime data and starts Setup.exe
+  (`/passive`, with elevation). The handoff holds verified installer files
+  against replacement and checks installer exit codes. If the new runtime
+  fails its health check, the recovery cursor and snapshot remain until the
+  previous version is reinstalled and its data restored before runtime startup.
+  Older recovery cursors are migrated only after signed packages for both
+  recorded versions are verified; missing historical manifests retain the
+  cursor and snapshot and are retried at the next start.
 - `client.json` sets `updateManifestUrl` (default: the public
   `kombifyio/TechStack` latest release asset
   `kombify-techstack-windows-update.json`), `updateChannel` (`stable`) and
   `autoUpdate` (`false` opts out). The trusted key cannot be configured.
-  Portable installations never update themselves. An unreachable channel
-  never delays a start.
-- The release publisher signs manifests with
+  Portable installations never update themselves. With no recovery pending,
+  an unreachable update channel does not delay runtime startup. Pending
+  recovery keeps the runtime stopped until authenticated recovery is possible.
+- The private release publisher signs manifests for checksum-verified public
+  release assets with
   `node scripts/new-client-update-manifest.mjs` (Ed25519; the private key is
-  read from a file or an environment variable and never printed).
+  read from an environment variable and never printed or supplied to public
+  tools). The exact public Go runtime verifies the retained and published
+  manifest. An interrupted upload is reconciled by readback, never repeated
+  blindly. Historical versions need their own verified recovery manifest;
+  publishing a newer manifest does not supply one for an older release.
 
-`-RequireAuthenticode` is a verifier, not a signing step. It remains
-available for a future signed lane, but it is not required by the current
-unsigned alpha release workflow.
+Windows packaging and publication do not depend on Authenticode. The existing
+update-manifest signature verifies update origin and integrity and does not
+require a Windows code-signing certificate.
 
 Uninstall preserves runtime data, connection configuration and scoped
 Credential Manager entries by default:

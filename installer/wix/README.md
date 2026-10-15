@@ -9,8 +9,8 @@ The public Windows release contains a WiX v4 MSI and a Burn bootstrapper:
 - `install-windows-client.ps1` and the ZIP remain the portable/development
   path.
 
-Both installer artifacts are intentionally unsigned for the current alpha.
-Signing is optional release metadata and must not block packaging. Release
+Both installer artifacts are intentionally unsigned on every release channel.
+No Windows code-signing certificate is planned or required. Release
 notes and `UNSIGNED-WINDOWS-RELEASE.txt` must make the unsigned status clear.
 
 The MSI installs only the staged application under

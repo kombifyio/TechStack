@@ -4,10 +4,8 @@
 
   import Button from "#lib/components/ui/Button.svelte";
   import ServerAccessActions from "#lib/components/server-access/ServerAccessActions.svelte";
-  import GuidancePanel from "#lib/components/hub/GuidancePanel.svelte";
   import { isManagedRuntimeServer } from "#lib/managed-runtime-server.js";
   import {
-    actionableServerOutcome,
     canonicalServerStatusLabel,
     type DashboardServer,
   } from "#lib/server-card-adapter.js";
@@ -20,9 +18,17 @@
     reconnecting?: boolean;
     canRollout?: boolean;
     rolloutLoading?: boolean;
+    /**
+     * Label of the restart that recovers this Node's failed rollout. When set,
+     * the restart replaces Deploy as the primary action: Deploy cannot work for
+     * a stack in error.
+     */
+    retryLabel?: string;
+    retrying?: boolean;
     canReconnect?: boolean;
     onAssign?: () => void;
     onDeploy?: () => void;
+    onRetry?: () => void;
     onReconnect?: () => void;
     onOpenDetails?: () => void;
   }
@@ -34,16 +40,18 @@
     reconnecting = false,
     canRollout = false,
     rolloutLoading = false,
+    retryLabel,
+    retrying = false,
     canReconnect = false,
     onAssign,
     onDeploy,
+    onRetry,
     onReconnect,
     onOpenDetails,
   }: Props = $props();
 
   const server = $derived<DashboardServer | undefined>(node.server);
   const canonical = $derived(node.canonical);
-  const outcome = $derived(actionableServerOutcome(server, canonical));
   const managedRuntime = $derived(
     server ? isManagedRuntimeServer(server) : false,
   );
@@ -61,15 +69,6 @@
   );
 </script>
 
-{#if server?.precheck_state === "failed"}
-  <p class="text-xs text-destructive">{tr("ui.node.precheckFailed")}</p>
-{/if}
-{#if !server && canonical}
-  <p class="text-xs text-warning">
-    {tr("ui.node.noTelemetry")}
-  </p>
-{/if}
-
 {#if showAssign}
   <Button
     variant="secondary"
@@ -84,18 +83,34 @@
 {/if}
 
 {#if managedRuntime && server}
-  <div class="flex flex-wrap gap-2" data-testid="managed-runtime-action-row">
-    <Button
-      variant="primary"
-      size="sm"
-      testId="deploy-stackkit-button"
-      onclick={onDeploy}
-      disabled={!canRollout || rolloutLoading}
-    >
-      <Play class="h-4 w-4" />
-      {rolloutLoading ? tr("ui.homelabDashboardPage.starting") : tr("ui.homelabDashboardPage.deployStackkit")}
-    </Button>
+  <div class="flex flex-col gap-2" data-testid="managed-runtime-action-row">
+    {#if retryLabel && onRetry}
+      <Button
+        variant="primary"
+        size="sm"
+        class="w-full"
+        testId="retry-rollout-button"
+        onclick={onRetry}
+        disabled={retrying}
+      >
+        <RefreshCw class="h-4 w-4 {retrying ? 'animate-spin' : ''}" />
+        {retrying ? tr("ui.guidance.retrying") : retryLabel}
+      </Button>
+    {:else}
+      <Button
+        variant="primary"
+        size="sm"
+        class="w-full"
+        testId="deploy-stackkit-button"
+        onclick={onDeploy}
+        disabled={!canRollout || rolloutLoading}
+      >
+        <Play class="h-4 w-4" />
+        {rolloutLoading ? tr("ui.homelabDashboardPage.starting") : tr("ui.homelabDashboardPage.deployStackkit")}
+      </Button>
+    {/if}
     <ServerAccessActions
+      layout="stack"
       serverId={canonical?.id || server.id}
       serverName={node.name}
       unavailable={accessUnavailable}
@@ -108,6 +123,7 @@
     <Button
       variant="secondary"
       size="sm"
+      class="w-full"
       testId="open-server-details-link"
       onclick={onOpenDetails}
     >
@@ -117,6 +133,7 @@
       <Button
         variant="secondary"
         size="sm"
+        class="w-full"
         testId="reconnect-server-button"
         onclick={onReconnect}
         disabled={!operationsEvidenceFresh || reconnecting}
@@ -128,6 +145,7 @@
   </div>
 {:else if !server && canonical}
   <ServerAccessActions
+    layout="stack"
     serverId={canonical.id}
     serverName={canonical.name}
     unavailable={accessUnavailable}
@@ -137,14 +155,14 @@
   />
 {/if}
 
-{#if outcome}
-  <GuidancePanel
-    {outcome}
-    surface="stacks.hub.server"
-    resourceId={canonical?.id || server?.id}
-    resourceName={node.name}
-    onRetry={server?.lease_id && canReconnect ? onReconnect : undefined}
-    retrying={reconnecting}
-    compact
-  />
+{#if !(managedRuntime && server)}
+  <Button
+    variant="secondary"
+    size="sm"
+    class="w-full"
+    testId="open-server-details-link"
+    onclick={onOpenDetails}
+  >
+    {tr("ui.node.openDetails")}
+  </Button>
 {/if}

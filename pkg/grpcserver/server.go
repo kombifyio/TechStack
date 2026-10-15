@@ -31,6 +31,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/logger"
 	"github.com/kombifyio/techstack/pkg/monitoring"
+	"github.com/kombifyio/techstack/pkg/usernotice"
 	collectorlogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	collectormetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	"google.golang.org/grpc"
@@ -89,6 +90,10 @@ type Server struct {
 	enrollmentStore AgentEnrollmentStore
 	healStore       RILHealStore
 	defaultTenant   string // fallback tenant for standalone / dev mode
+
+	// Opt-in user_notification class (smart-home notices).
+	userNotices     usernotice.Sink
+	userNoticeNodes usernotice.NodeResolver
 }
 
 // ConnectedAgent represents a connected agent.

@@ -26,11 +26,7 @@ func (s *PostgresStore) ListJobExecutionReclaimTenants(
 		return nil, fmt.Errorf("controlplane: job execution reclaim tenant limit from 1 to 100 is required")
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT tenant_id
-		FROM job_execution_reclaim_tenants
-		WHERE tenant_id > $1 AND earliest_lease_expires_at <= $2
-		ORDER BY tenant_id ASC
-		LIMIT $3
+		SELECT tenant_id FROM public.techstack_list_job_execution_reclaim_tenants($1,$2,$3)
 	`, strings.TrimSpace(afterTenantID), leaseCutoff.UTC(), limit)
 	if err != nil {
 		return nil, fmt.Errorf("controlplane: list job execution reclaim tenants: %w", err)
@@ -50,26 +46,9 @@ func (s *PostgresStore) CompactJobExecutionReclaimTenant(ctx context.Context, te
 		return fmt.Errorf("controlplane: job execution reclaim tenant id required")
 	}
 	return s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
-		var earliest sql.NullTime
-		if err := tx.QueryRowContext(ctx, `
-			SELECT MIN(execution_lease_expires_at)
-			FROM jobs
-			WHERE tenant_id = $1 AND state = 'running'
-			  AND execution_lease_expires_at IS NOT NULL
-		`, tenantID).Scan(&earliest); err != nil {
-			return fmt.Errorf("controlplane: compact job execution reclaim tenant: %w", err)
-		}
-		if !earliest.Valid {
-			_, err := tx.ExecContext(ctx, `
-				DELETE FROM job_execution_reclaim_tenants WHERE tenant_id = $1
-			`, tenantID)
-			return err
-		}
 		_, err := tx.ExecContext(ctx, `
-			UPDATE job_execution_reclaim_tenants
-			SET earliest_lease_expires_at = $2, refreshed_at = clock_timestamp()
-			WHERE tenant_id = $1
-		`, tenantID, earliest.Time.UTC())
+			SELECT public.techstack_compact_job_execution_reclaim_tenant($1)
+		`, tenantID)
 		return err
 	})
 }

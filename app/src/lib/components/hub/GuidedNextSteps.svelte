@@ -59,8 +59,9 @@
           {action.label}
         </Button>
       {:else}
+        <!-- The restart is the main action of a failure callout. -->
         <Button
-          variant="secondary"
+          variant={action.kind === "retry" ? "primary" : "secondary"}
           size="sm"
           onclick={() => onAction?.(action)}
         >

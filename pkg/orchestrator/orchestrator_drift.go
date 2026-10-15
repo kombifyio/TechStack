@@ -238,8 +238,13 @@ func (o *Orchestrator) bindDriftJobToManagedNode(ctx context.Context, stack *orc
 			continue
 		}
 		request := jobs.ApplyStackKitRolloutDefaults(jobs.StackKitLifecycleRequest{}, stackKitRolloutBinding(stack), stackKitCatalogRef(stack))
+		// A multi-node kit's drift runs on its authority node's agent.
+		if !jobs.IsStackKitAuthorityNode(request.StackKit, binding.NodeRef) {
+			continue
+		}
 		payload["agent_id"] = binding.AgentID
 		payload["node_id"] = binding.NodeID
+		payload["node_ref"] = binding.NodeRef
 		payload["stackkit"] = request.StackKit
 		payload["spec_path"] = request.SpecPath
 		payload["stackkit_instance_id"] = strings.TrimSpace(stack.stackKitInstanceID)

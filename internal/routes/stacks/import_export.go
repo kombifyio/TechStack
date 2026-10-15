@@ -5,6 +5,7 @@ package stacks
 
 import (
 	"encoding/json"
+	"github.com/kombifyio/techstack/internal/routes/auth"
 	"io"
 	"net/http"
 	"strings"
@@ -29,14 +30,17 @@ const (
 )
 
 func RegisterImportExportRoutesWithModeAndFeatures(r *httpx.Router, app core.App, orch *orchestrator.Orchestrator, mode config.DeploymentMode, featureChecker managedRuntimeFeatureChecker) {
+	RegisterImportExportRuntimeRoutes(r, auth.RuntimeStore{}, orch, mode, featureChecker)
+}
+
+func RegisterImportExportRuntimeRoutes(r *httpx.Router, runtime auth.RuntimeStore, orch *orchestrator.Orchestrator, mode config.DeploymentMode, featureChecker managedRuntimeFeatureChecker) {
 	if !mode.IsValid() {
 		mode = config.ModeSelfHosted
 	}
 	stores := currentControlPlaneStores()
 	h := importExportRouteHandlers{
-		app: app,
 		create: crudRouteHandlers{
-			app:             app,
+			authRuntime:     runtime,
 			orch:            orch,
 			deploymentMode:  mode,
 			runtimeFeatures: featureChecker,
@@ -46,6 +50,7 @@ func RegisterImportExportRoutesWithModeAndFeatures(r *httpx.Router, app core.App
 			walletStore:     stores.Wallet,
 			activityStore:   stores.Activity,
 			serverStore:     stores.Servers,
+			kombifyWallet:   currentKombifyWallet(),
 		},
 	}
 

@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/kombifyio/techstack/internal/gocommon/runtimeexecutor"
+	"github.com/kombifyio/techstack/internal/selfhostcontracts/runtimeexecutor"
 	"github.com/kombifyio/techstack/internal/managedstackkit"
 	"github.com/kombifyio/techstack/pkg/httpx"
 )
@@ -61,7 +61,7 @@ func (h workerRouteHandlers) executeStackKitOperations(e *httpx.Event) error {
 		RuntimeAgentID: id,
 		TenantID:       requestExplicitTenantID(e),
 	})
-	if !authenticated {
+	if !authenticated || !requireKeyBoundWorker(e, authCtx) {
 		return nil
 	}
 	outcome, err := h.stackKitOperations.Execute(e.Request.Context(), managedstackkit.OperationsRequest{

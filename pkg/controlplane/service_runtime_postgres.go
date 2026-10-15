@@ -156,16 +156,18 @@ func (s *PostgresStore) ListServiceRuntimes(ctx context.Context, tenantID, stack
 const legacyServiceRuntimeBackfillQuery = `
 	SELECT legacy.id, legacy.tenant_id, legacy.instance_id, legacy.stack_id,
 		mapped_server.id,
-		'server', NULL::text, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text, NULL::timestamptz,
+		CASE WHEN mapped_server.id IS NULL THEN 'unknown' ELSE 'server' END, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text, NULL::timestamptz,
 		lower(btrim(legacy.service_key)), 'default', legacy.name,
 		CASE WHEN lower(btrim(legacy.status)) IN ('stopped', 'exited', 'dead', 'archived', 'decommissioned') THEN 'stopped' ELSE 'running' END,
-		'unknown', 'unknown', legacy.management_state, NULL::timestamptz, NULL::text,
+		'unknown', 'unknown', legacy.management_state,
+		legacy.mutation_lock_state, legacy.mutation_lock_reason_code, legacy.mutation_lock_actor, legacy.mutation_lock_changed_at,
+		NULL::timestamptz, NULL::text,
 		'{"mode":"unavailable","reason_code":"legacy_backfill_requires_observation"}'::jsonb::text,
 		'[]'::jsonb::text, 'legacy-registry-backfill',
 		(legacy.metadata_json || jsonb_build_object('backfill', true, 'legacy_status', legacy.status, 'legacy_source', legacy.source))::text,
 		legacy.created_at, legacy.updated_at
 	FROM services legacy
-	JOIN LATERAL (
+	LEFT JOIN LATERAL (
 		SELECT candidate.id
 		FROM servers candidate
 		WHERE candidate.tenant_id = legacy.tenant_id AND candidate.stack_id = legacy.stack_id
@@ -174,7 +176,7 @@ const legacyServiceRuntimeBackfillQuery = `
 		LIMIT 1
 	) mapped_server ON true
 	WHERE legacy.tenant_id = $1 AND legacy.server_id IS NULL
-		AND legacy.node_id IS NOT NULL AND btrim(legacy.node_id) <> '' AND btrim(legacy.service_key) <> ''
+		AND btrim(legacy.service_key) <> ''
 		AND NOT EXISTS (
 			SELECT 1 FROM services measured
 			WHERE measured.tenant_id = legacy.tenant_id AND measured.stack_id = legacy.stack_id

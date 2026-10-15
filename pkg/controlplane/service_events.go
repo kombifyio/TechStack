@@ -1,6 +1,8 @@
 package controlplane
 
 import (
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -128,6 +130,12 @@ func prepareServiceEvent(current *serviceAggregateHead, event ServiceEvent, now 
 		return &preparedServiceEvent{head: *current, applied: false}, nil
 	}
 	next.Revision++
+	if event.Authority == ServiceEventAuthorityControlPlane && (ServiceContainerIdentity(next.Runtime) != "" || next.Runtime.Metadata["application_adoption"] != nil || event.Runtime.DesiredState != "") {
+		if next.Runtime.Metadata == nil {
+			next.Runtime.Metadata = map[string]any{}
+		}
+		next.Runtime.Metadata["application_intent_revision"] = next.Revision
+	}
 	next.Runtime.UpdatedAt = now.UTC()
 	return &preparedServiceEvent{head: next, transitions: transitions, applied: true}, nil
 }
@@ -325,6 +333,12 @@ func applyServiceMutationLock(next *serviceAggregateHead, event ServiceEvent, no
 }
 
 func resolveServiceManagementState(next *serviceAggregateHead, current *serviceAggregateHead, event ServiceEvent) {
+	if current != nil && event.Authority == ServiceEventAuthorityGuard && current.Runtime.Metadata["application_adoption"] != nil {
+		if !sameServiceContainer(current.Runtime, event.Runtime) {
+			next.Runtime.ManagementState = string(serviceregistry.ManagementObserved)
+			return
+		}
+	}
 	if assertion := strings.TrimSpace(event.Runtime.ManagementState); assertion != "" &&
 		event.Authority == ServiceEventAuthorityControlPlane {
 		next.Runtime.ManagementState = string(serviceregistry.CanonicalManagementState(assertion))
@@ -401,6 +415,7 @@ func applyServicePatch(next *serviceAggregateHead, current *serviceAggregateHead
 		next.URL = ""
 		next.Runtime.Access = guardServiceUnavailableAccess(retained)
 		next.Runtime.Metadata = mergeMaps(next.Runtime.Metadata, patch.Metadata)
+		retainApplicationAdoption(next, current, event)
 		return
 	}
 	// Status describes what the runtime is doing and is derived from the
@@ -412,6 +427,88 @@ func applyServicePatch(next *serviceAggregateHead, current *serviceAggregateHead
 	if patch.Metadata != nil {
 		next.Runtime.Metadata = cloneMap(patch.Metadata)
 	}
+	retainApplicationAdoption(next, current, event)
+}
+
+// ServiceContainerIdentity requires the collector's full immutable container ID.
+// Runtime names and short Docker IDs cannot retain an ownership binding.
+func ServiceContainerIdentity(service ServiceRuntime) string {
+	id, _ := service.Metadata["container_id"].(string)
+	if id == "" {
+		raw, _ := json.Marshal(service.Metadata["runtime_identity"])
+		var identity struct {
+			ContainerID string `json:"container_id"`
+		}
+		_ = json.Unmarshal(raw, &identity)
+		id = identity.ContainerID
+	}
+	if len(id) != 64 || id != strings.ToLower(id) {
+		return ""
+	}
+	if _, err := hex.DecodeString(id); err != nil {
+		return ""
+	}
+	return id
+}
+
+func sameServiceContainer(left, right ServiceRuntime) bool {
+	id := ServiceContainerIdentity(left)
+	return id != "" && id == ServiceContainerIdentity(right)
+}
+
+func retainApplicationAdoption(next *serviceAggregateHead, current *serviceAggregateHead, event ServiceEvent) {
+	if event.Authority != ServiceEventAuthorityGuard {
+		return
+	}
+	// Observation metadata never supplies control-plane ownership or replay
+	// markers, even when it happens to contain similarly named fields.
+	// A Guard reports runtime facts, never connector projection or replay
+	// authority. Retain only the control-plane projection for the same source.
+	for _, key := range []string{"application_connector", "application_connector_job_id", "application_connector_projection_revision"} {
+		delete(next.Runtime.Metadata, key)
+	}
+	if current != nil && sameServiceContainer(current.Runtime, event.Runtime) && current.Runtime.Source == serviceregistry.SourceStackKitsInventory && event.Runtime.Source == current.Runtime.Source && current.Runtime.StackID == event.Runtime.StackID && current.Runtime.ServerID == event.Runtime.ServerID && connectorServiceImage(current.Runtime) == connectorServiceImage(event.Runtime) && connectorServiceImage(current.Runtime) != "" {
+		for _, key := range []string{"application_connector", "application_connector_job_id", "application_connector_projection_revision"} {
+			if value := current.Runtime.Metadata[key]; value != nil {
+				next.Runtime.Metadata[key] = value
+			}
+		}
+	}
+	delete(next.Runtime.Metadata, "application_adoption")
+	delete(next.Runtime.Metadata, "application_adoption_job_id")
+	delete(next.Runtime.Metadata, "application_intent_revision")
+	// Declared service intent belongs to the canonical declaration, independently
+	// of the observed container. Retain only the stored marker, never Guard input;
+	// application adoption below still requires the exact immutable container.
+	if current != nil && sameDeclaredServiceIntent(current.Runtime, event.Runtime) {
+		if intent := current.Runtime.Metadata["application_intent_revision"]; intent != nil {
+			next.Runtime.Metadata["application_intent_revision"] = intent
+		}
+	}
+	if current == nil || !sameServiceContainer(current.Runtime, event.Runtime) {
+		if current != nil && current.Runtime.Metadata["application_adoption"] != nil {
+			next.Runtime.Capabilities = []string{}
+		}
+		return
+	}
+	if next.Runtime.Metadata == nil {
+		next.Runtime.Metadata = map[string]any{}
+	}
+	if intent := current.Runtime.Metadata["application_intent_revision"]; intent != nil {
+		next.Runtime.Metadata["application_intent_revision"] = intent
+	}
+	if current.Runtime.Metadata["application_adoption"] != nil {
+		next.Runtime.Metadata["application_adoption"] = current.Runtime.Metadata["application_adoption"]
+		next.Runtime.Metadata["application_adoption_job_id"] = current.Runtime.Metadata["application_adoption_job_id"]
+		next.Runtime.Capabilities = append([]string(nil), current.Runtime.Capabilities...)
+	}
+}
+
+func sameDeclaredServiceIntent(current, observed ServiceRuntime) bool {
+	return current.Source == serviceregistry.SourceStackKitsInventory && observed.Source == current.Source && current.ManagementState == "managed" &&
+		current.TenantID != "" && observed.TenantID == current.TenantID && current.StackID != "" && observed.StackID == current.StackID &&
+		current.ServerID != "" && observed.ServerID == current.ServerID && current.ServiceKey != "" && observed.ServiceKey == current.ServiceKey &&
+		current.ServiceInstance != "" && observed.ServiceInstance == current.ServiceInstance
 }
 
 // applyServicePlacement keeps service placement independent from management
@@ -423,7 +520,17 @@ func applyServicePlacement(next *ServiceRuntime, patch ServiceRuntime, event Ser
 		return
 	}
 	if !serviceregistry.PlacementIntentPresent(patch.Placement) {
-		next.ServerID = firstNonEmpty(strings.TrimSpace(patch.ServerID), next.ServerID)
+		reportedServer := strings.TrimSpace(patch.ServerID)
+		next.ServerID = firstNonEmpty(reportedServer, next.ServerID)
+		// A Guard observing the service on its own server is the evidence that
+		// binds it there. A row whose placement was cleared to `unknown` would
+		// otherwise keep the explicit unknown kind next to the reported
+		// ServerID, an invalid shape that rejected the server's whole inventory
+		// on every heartbeat.
+		if event.Authority == ServiceEventAuthorityGuard && reportedServer != "" &&
+			serviceregistry.NormalizePlacement(next.ServerID, next.Placement).TargetKind == serviceregistry.TargetKindUnknown {
+			next.Placement = serviceregistry.Placement{TargetKind: serviceregistry.TargetKindServer}
+		}
 		next.Placement = serviceregistry.NormalizePlacement(next.ServerID, next.Placement)
 		return
 	}
@@ -652,4 +759,15 @@ func equalJSONObjects(left, right map[string]any) bool {
 		return false
 	}
 	return string(leftJSON) == string(rightJSON)
+}
+
+func connectorServiceImage(service ServiceRuntime) string {
+	image, _ := service.Metadata["image"].(string)
+	if _, digest, ok := strings.Cut(image, "@"); ok {
+		return digest
+	}
+	if strings.HasPrefix(image, "sha256:") {
+		return image
+	}
+	return ""
 }

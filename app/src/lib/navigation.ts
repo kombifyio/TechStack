@@ -10,7 +10,15 @@
  */
 
 import type { Component } from "svelte";
-import { Activity, Wallet, Boxes, Home } from "@lucide/svelte";
+import {
+  Activity,
+  Wallet,
+  Boxes,
+  Home,
+  LayoutGrid,
+  Server,
+  Users,
+} from "@lucide/svelte";
 
 export interface NavItem {
   id: string;
@@ -80,15 +88,50 @@ const monitoringChildren: NavItem[] = [
 ];
 
 /**
+ * The product start page. `/` only redirects here once signed in, and the
+ * brand in the rail links here.
+ */
+export const START_PAGE_HREF = "/dashboard";
+
+/** The route is the start page: the brand mark cycles and unfolds the rail. */
+export function isStartPage(pathname: string): boolean {
+  return pathname.replace(/\/+$/, "") === START_PAGE_HREF;
+}
+
+/** Id of the content pane beside the rail; the resize separator controls it. */
+export const CONTENT_PANE_ID = "app-content";
+
+/**
  * Main navigation items - used in both layouts
  */
 export const mainNavItems: NavItem[] = [
   {
     id: "dashboard",
-    href: "/dashboard",
+    href: START_PAGE_HREF,
     labelKey: "nav.dashboard",
     labelFallback: "Dashboard",
     icon: Home,
+  },
+  {
+    id: "apps",
+    href: "/apps",
+    labelKey: "nav.apps",
+    labelFallback: "Apps",
+    icon: LayoutGrid,
+  },
+  {
+    id: "actors",
+    href: "/actors",
+    labelKey: "nav.actors",
+    labelFallback: "Actors",
+    icon: Users,
+  },
+  {
+    id: "nodes",
+    href: "/nodes",
+    labelKey: "nav.nodes",
+    labelFallback: "Nodes",
+    icon: Server,
   },
   {
     id: "services",
@@ -135,10 +178,31 @@ export const sidebarNavGroups: NavGroup[] = [
 export const embeddedNavItems: NavItem[] = [
   {
     id: "embedded-dashboard",
-    href: "/dashboard",
+    href: START_PAGE_HREF,
     labelKey: "nav.dashboard",
     labelFallback: "Dashboard",
     icon: Home,
+  },
+  {
+    id: "embedded-apps",
+    href: "/apps",
+    labelKey: "nav.apps",
+    labelFallback: "Apps",
+    icon: LayoutGrid,
+  },
+  {
+    id: "embedded-actors",
+    href: "/actors",
+    labelKey: "nav.actors",
+    labelFallback: "Actors",
+    icon: Users,
+  },
+  {
+    id: "embedded-nodes",
+    href: "/nodes",
+    labelKey: "nav.nodes",
+    labelFallback: "Nodes",
+    icon: Server,
   },
   {
     id: "embedded-services",

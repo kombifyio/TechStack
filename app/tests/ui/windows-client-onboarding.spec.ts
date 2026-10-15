@@ -1,5 +1,6 @@
 import { type Page } from "@playwright/test";
 import { test, expect } from "./fixtures";
+import journey from "../../../internal/onboarding/journeys/techstack.platform.v1.json" with { type: "json" };
 
 async function mockOperatorDashboardApis(page: Page) {
   await page.route("**/api/v1/wallet**", async (route) => {
@@ -39,7 +40,264 @@ async function mockOperatorDashboardApis(page: Page) {
   });
 }
 
-test("windows client local setup creates a real owner session and reaches Wallet plus Creation Wizard", async ({
+test("introduction replay preserves settings drafts and saved identity through delayed or failed hydration", async ({
+  page,
+}) => {
+  await mockOperatorDashboardApis(page);
+  await page.route("**/api/v2/auth/providers", (route) =>
+    route.fulfill({ json: { providers: [] } }),
+  );
+  let signedIn = true;
+  await page.route("**/api/v2/whoami", (route) =>
+    route.fulfill({
+      status: signedIn ? 200 : 401,
+      json: {
+        subject: "local-owner",
+        tenantId: "default",
+        email: "owner@test.local",
+        provider: "local",
+        role: "admin",
+      },
+    }),
+  );
+  let identity = {
+    name: "Saved Basement",
+    characterId: "rocket",
+    animationStyle: "identity-float",
+    savedAt: "2026-10-06T10:00:00Z",
+    animationEnabled: true,
+    iconStyle: "filled",
+    glowColorOverride: null,
+  };
+  let readMode: "ready" | "delayed" | "failed" = "ready";
+  let readStarted: (() => void) | undefined;
+  const pendingReads: (() => void)[] = [];
+  const writes: unknown[] = [];
+  let holdWrite = false;
+  let writeStarted: (() => void) | undefined;
+  let releaseWrite: (() => void) | undefined;
+  await page.route("**/api/v1/auth/stack-identity", async (route) => {
+    if (!signedIn && route.request().method() === "GET") {
+      await route.fulfill({ status: 401, json: { error: "Signed out" } });
+      return;
+    }
+    if (route.request().method() === "PUT") {
+      const updated = route.request().postDataJSON();
+      writes.push(updated);
+      identity = updated;
+      if (holdWrite) {
+        const pending = new Promise<void>((resolve) => {
+          releaseWrite = resolve;
+        });
+        writeStarted?.();
+        await pending;
+      }
+    } else if (readMode === "failed") {
+      await route.fulfill({
+        status: 503,
+        json: { error: "Identity temporarily unavailable" },
+      });
+      return;
+    } else if (readMode === "delayed") {
+      const pending = new Promise<void>((resolve) =>
+        pendingReads.push(resolve),
+      );
+      readStarted?.();
+      await pending;
+    }
+    await route.fulfill({
+      json: { data: { editable: true, stack_identity: identity } },
+    });
+  });
+  const progress = {
+    journey,
+    revision: 7,
+    availability: {},
+    state: {
+      schema_version: 1,
+      journey_id: journey.journey_id,
+      journey_version: journey.journey_version,
+      completed: [
+        {
+          step_id: "techstack.configure_intent",
+          source: "derived",
+          at: "2026-10-06T10:00:00Z",
+        },
+      ],
+      seen_steps: [],
+      status: "active",
+      dismissed_at: null,
+      reopened_at: null,
+      revision: 7,
+      updated_at: "2026-10-06T10:00:00Z",
+    },
+  };
+  const journeyWrites: string[] = [];
+  await page.route("**/api/v1/onboarding/**", (route) => {
+    if (route.request().method() !== "GET")
+      journeyWrites.push(route.request().method());
+    return route.fulfill({ json: { data: progress } });
+  });
+  await page.goto("/settings");
+  await page.getByTestId("identity-name").click();
+  await page.getByTestId("stack-name-input").fill("Unsaved Settings draft");
+  await page.getByTestId("stack-name-input").press("Tab");
+  await page
+    .getByRole("button", { name: "Replay the introduction", exact: true })
+    .click();
+  const tour = page.getByRole("dialog");
+  await tour.getByRole("button", { name: "Next", exact: true }).click();
+  await tour.getByRole("button", { name: "Next", exact: true }).click();
+  await tour.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(page).toHaveURL(/\/settings$/);
+  await expect(page.getByTestId("identity-name")).toHaveText(
+    "Unsaved Settings draft",
+  );
+  expect(writes).toEqual([]);
+  expect(journeyWrites).toEqual([]);
+
+  // Setup review stays on the mounted Settings form and has no write effects.
+  for (const action of ["Keep connection", "Skip setup"]) {
+    await page
+      .getByRole("button", { name: "Repeat setup", exact: true })
+      .click();
+    const setup = page.getByRole("dialog", { name: "Your current connection" });
+    await expect(setup).toContainText("Web browser");
+    await expect(setup).toContainText(new URL(page.url()).origin);
+    await setup.getByRole("button", { name: action, exact: true }).click();
+    await tour.getByRole("button", { name: "Next", exact: true }).click();
+    await tour.getByRole("button", { name: "Next", exact: true }).click();
+    await tour.getByRole("button", { name: "Done", exact: true }).click();
+    await expect(page).toHaveURL(/\/settings$/);
+    await expect(page.getByTestId("identity-name")).toHaveText(
+      "Unsaved Settings draft",
+    );
+    expect(writes).toEqual([]);
+    expect(journeyWrites).toEqual([]);
+  }
+
+  async function replayWelcome() {
+    await page.getByRole("button", { name: /owner@test\.local/i }).click();
+    await page
+      .getByRole("menuitem", { name: "Replay the introduction", exact: true })
+      .click();
+  }
+  readMode = "delayed";
+  let started = new Promise<void>((resolve) => {
+    readStarted = resolve;
+  });
+  await replayWelcome();
+  await started;
+  const start = page.getByTestId("introduction-welcome-start");
+  await expect(start).toBeDisabled();
+  await page
+    .getByTestId("introduction-welcome")
+    .getByRole("button", { name: "Skip the tour", exact: true })
+    .click();
+  started = new Promise<void>((resolve) => {
+    readStarted = resolve;
+  });
+  await replayWelcome();
+  await started;
+  pendingReads.shift()?.();
+  await expect(start).toBeDisabled();
+  pendingReads.shift()?.();
+  await expect(page.getByTestId("introduction-welcome-name")).toHaveValue(
+    identity.name,
+  );
+  await page
+    .getByTestId("introduction-welcome-name")
+    .fill("An explicit welcome draft");
+  await page
+    .getByTestId("introduction-welcome")
+    .getByRole("button", { name: "Skip the tour", exact: true })
+    .click();
+  await expect(page.getByTestId("identity-name")).toHaveText(
+    "Unsaved Settings draft",
+  );
+  expect(writes).toEqual([]);
+
+  readMode = "failed";
+  const failedRead = page.waitForResponse(
+    (response) =>
+      response.request().method() === "GET" &&
+      new URL(response.url()).pathname === "/api/v1/auth/stack-identity" &&
+      response.status() === 503,
+  );
+  await replayWelcome();
+  await failedRead;
+  await expect(start).toBeDisabled();
+  await page
+    .getByTestId("introduction-welcome")
+    .getByRole("button", { name: "Skip the tour", exact: true })
+    .click();
+  expect(writes).toEqual([]);
+
+  readMode = "delayed";
+  started = new Promise<void>((resolve) => {
+    readStarted = resolve;
+  });
+  await replayWelcome();
+  await started;
+  pendingReads.shift()?.();
+  await expect(page.getByTestId("introduction-welcome-name")).toHaveValue(
+    identity.name,
+  );
+  const explicitName = "Explicit new name";
+  await page.getByTestId("introduction-welcome-name").fill(explicitName);
+  await start.click();
+  await expect(page).toHaveURL(/\/stacks\/new$/);
+  expect(writes).toEqual([expect.objectContaining({ name: explicitName })]);
+  expect(identity.name).toBe(explicitName);
+  expect(journeyWrites).toEqual([]);
+
+  // A response authorized by the old session must not restore that identity
+  // to local storage after the owner signs out while its save is pending.
+  readMode = "ready";
+  await page.goto("/settings");
+  await page.route("**/api/v1/auth/logout", async (route) => {
+    signedIn = false;
+    await route.fulfill({ json: { ok: true } });
+  });
+  await replayWelcome();
+  await page.getByTestId("introduction-welcome-name").fill("Old session name");
+  holdWrite = true;
+  const saveStarted = new Promise<void>((resolve) => {
+    writeStarted = resolve;
+  });
+  await start.click();
+  await saveStarted;
+  await page
+    .getByRole("button", { name: "Logout", exact: true })
+    .press("Enter");
+  await expect(page).toHaveURL(/\/login$/);
+  await expect
+    .poll(() =>
+      page.evaluate(() => sessionStorage.getItem("techstack.stack-identity")),
+    )
+    .toBeNull();
+  const savedResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PUT" &&
+      new URL(response.url()).pathname === "/api/v1/auth/stack-identity",
+  );
+  releaseWrite?.();
+  await (await savedResponse).finished();
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  await expect
+    .poll(() =>
+      page.evaluate(() => sessionStorage.getItem("techstack.stack-identity")),
+    )
+    .toBeNull();
+  await expect(page).toHaveURL(/\/login$/);
+});
+
+test("manual local owner setup verifies operator proof and reaches Wallet plus Creation Wizard", async ({
   page,
 }) => {
   let setupCalled = false;
@@ -100,6 +358,7 @@ test("windows client local setup creates a real owner session and reaches Wallet
       name: "owner",
       email: "owner@test.local",
       password: "testpass123",
+      current_password: "mock-operator-bootstrap-proof",
     });
     await route.fulfill({
       status: 201,
@@ -182,6 +441,10 @@ test("windows client local setup creates a real owner session and reaches Wallet
 
   await page.getByTestId("windows-local-admin-email").fill("owner@test.local");
   await page.getByTestId("windows-local-admin-password").fill("testpass123");
+  await expect(page.getByTestId("windows-local-setup-submit")).toBeDisabled();
+  await page
+    .locator("#bootstrap-password")
+    .fill("mock-operator-bootstrap-proof");
   await page.getByTestId("windows-local-setup-submit").click();
 
   await expect(page).toHaveURL(/\/dashboard$/);

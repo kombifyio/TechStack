@@ -1,6 +1,7 @@
 package hooks
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -130,4 +131,17 @@ func TestShouldBootstrapUsers(t *testing.T) {
 			t.Fatal("shouldBootstrapUsers() = false, want true with explicit passwords")
 		}
 	})
+}
+
+// A deployment that keeps credentials in the kombify Wallet passes no legacy
+// store; the development bootstrap then stores nothing instead of failing the
+// boot or writing a legacy row.
+func TestDevelopmentBootstrapStoresNoCredentialsWithoutALegacyWalletStore(t *testing.T) {
+	err := ensureSystemCredentialsInWallet(context.Background(), nil, "tenant-1", true, "admin-id", "dev-id",
+		"superuser@techstack.local", "su-pass", true,
+		"admin@techstack.local", "admin-pass", true,
+		"developer@techstack.local", "dev-pass", true)
+	if err != nil {
+		t.Fatalf("ensureSystemCredentialsInWallet without a store: %v", err)
+	}
 }

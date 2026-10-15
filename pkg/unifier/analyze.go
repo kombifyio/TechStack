@@ -4,10 +4,13 @@
 package unifier
 
 import (
+	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/kombifyio/techstack/internal/runtimeproduct/serverruntime"
+	"github.com/kombifyio/techstack/internal/stackkitrelease"
 	"github.com/kombifyio/techstack/pkg/core"
 )
 
@@ -19,7 +22,8 @@ const serviceTypeMonitoring = "monitoring"
 
 // Analyze examines an IntentSpec and produces RequirementsSpec.
 // This is Phase 1 of the Two-Phase Unifier: determine what's needed before deployment.
-// Robustheit: Always returns valid RequirementsSpec, never blocks on errors.
+// Catalog and declared-resource errors remain explicit; no installation facts
+// are invented when their released authority cannot be read.
 func (e *Engine) Analyze(spec *core.KombinationSpec) (*core.RequirementsSpec, error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -38,7 +42,11 @@ func (e *Engine) Analyze(spec *core.KombinationSpec) (*core.RequirementsSpec, er
 	}
 
 	// 1. Select StackKit (explicit or auto-detect)
-	req.StackKit = e.selectStackKit(spec)
+	resolution := NewStackKitResolver(append([]string{}, e.ListStackKits()...)).Resolve(spec)
+	if !resolution.Valid {
+		return nil, fmt.Errorf("StackKit selection could not be admitted: %v", resolution.Warnings)
+	}
+	req.StackKit = resolution.StackKit
 	if spec.Kit == "" {
 		req.AppliedDefaults["autoSelectedKit"] = req.StackKit
 	}
@@ -47,7 +55,11 @@ func (e *Engine) Analyze(spec *core.KombinationSpec) (*core.RequirementsSpec, er
 	req.DetectedAddons = e.detectAddons(spec)
 
 	// 3. Calculate worker requirements
-	req.RequiredWorkers = e.calculateWorkerRequirements(spec)
+	workers, err := e.calculateWorkerRequirements(spec)
+	if err != nil {
+		return nil, err
+	}
+	req.RequiredWorkers = workers
 
 	// 4. Detect required credentials
 	req.RequiredCredentials = e.detectRequiredCredentials(spec)
@@ -59,33 +71,10 @@ func (e *Engine) Analyze(spec *core.KombinationSpec) (*core.RequirementsSpec, er
 	req.Description = e.generateDescription(req, spec)
 
 	decisionContext := BuildDecisionContext(spec, nil)
-	decisionTrace := BuildDecisionTrace(spec, decisionContext, &ResolveResult{
-		StackKit:     req.StackKit,
-		Reason:       "requirements analysis",
-		AutoSelected: spec.Kit == "",
-		Confidence:   0.75,
-		Valid:        true,
-	}, req.DetectedAddons)
+	decisionTrace := BuildDecisionTrace(spec, decisionContext, resolution, req.DetectedAddons)
 	ApplyDecisionArtifacts(req, spec, decisionContext, decisionTrace)
 
 	return req, nil
-}
-
-// selectStackKit chooses the appropriate StackKit based on services and complexity.
-func (e *Engine) selectStackKit(spec *core.KombinationSpec) string {
-	// Explicit kit takes precedence
-	if spec.Kit != "" {
-		if IsSupportedProductStackKit(spec.Kit) {
-			return CanonicalStackKitName(spec.Kit)
-		}
-		return StackKitBasement
-	}
-
-	result := NewStackKitResolver(DefaultKnownStackKits()).Resolve(spec)
-	if result == nil || result.StackKit == "" {
-		return StackKitBasement
-	}
-	return result.StackKit
 }
 
 // detectAddons identifies required add-ons based on spec configuration.
@@ -146,7 +135,7 @@ func (e *Engine) detectAddons(spec *core.KombinationSpec) []string {
 }
 
 // calculateWorkerRequirements estimates resources needed based on services.
-func (e *Engine) calculateWorkerRequirements(spec *core.KombinationSpec) core.WorkerRequirements {
+func (e *Engine) calculateWorkerRequirements(spec *core.KombinationSpec) (core.WorkerRequirements, error) {
 	req := core.WorkerRequirements{
 		MinCloudServers: 0,
 		MinLocalServers: 1, // Always need at least one
@@ -172,17 +161,77 @@ func (e *Engine) calculateWorkerRequirements(spec *core.KombinationSpec) core.Wo
 		req.MinLocalServers = 0
 	}
 
-	// Estimate resources per service
+	catalog, err := stackkitrelease.ResolveUseCaseCatalog()
+	if err != nil {
+		return req, err
+	}
+	profile := metadataValue(spec, "compute_tier", "standard")
+	var settings map[string]map[string]any
+	var capabilities map[string]map[string]string
+	if raw := spec.Metadata["use_case_settings"]; raw != "" {
+		if err := json.Unmarshal([]byte(raw), &settings); err != nil {
+			return req, fmt.Errorf("unifier: invalid use-case settings: %w", err)
+		}
+	}
+	if raw := spec.Metadata["use_case_capabilities"]; raw != "" {
+		if err := json.Unmarshal([]byte(raw), &capabilities); err != nil {
+			return req, fmt.Errorf("unifier: invalid use-case capabilities: %w", err)
+		}
+	}
+	goals := selectedUseCaseRefs(spec.Metadata, nil)
+	footprints, err := selectedFootprints(catalog, goals, profile, settings, capabilities)
+	if err != nil {
+		return req, err
+	}
+	byWorkload := map[string][]stackkitrelease.WorkloadFootprint{}
+	for _, footprint := range footprints {
+		byWorkload[footprint.Workload] = append(byWorkload[footprint.Workload], footprint)
+	}
+	reservation := stackkitrelease.UseCaseResources{}
+	// Only unrelated discovered services use Techstack's generic estimates.
 	for _, svc := range spec.Services {
+		serviceProfile := svc.ComputeProfile
+		if serviceProfile == "" {
+			serviceProfile = profile
+		}
+		facts, matched, err := catalog.ServiceFootprints(svc.Name, serviceProfile, true)
+		if !matched {
+			facts, matched, err = catalog.ServiceFootprints(svc.Type, serviceProfile, false)
+		}
+		if err != nil {
+			return req, err
+		}
+		if matched {
+			if len(facts) > 0 {
+				// A declared service alternative overrides only the implicit
+				// default, not an operator's installing backend selection.
+				if _, explicit := settings[facts[0].Workload]["backend"]; !explicit {
+					byWorkload[facts[0].Workload] = facts
+				}
+			}
+			continue
+		}
 		ram, cpu, special := e.estimateServiceResources(serviceIdentifier(svc))
-		req.MinRAM += ram
-		req.MinCPU += cpu
+		reservation.RAMGB += float64(ram) / 1024
+		reservation.CPUCores += float64(cpu)
 		if special != "" {
 			req.SpecialRequirements = appendUnique(req.SpecialRequirements, special)
 		}
 	}
-
-	return req
+	for _, facts := range byWorkload {
+		for _, footprint := range facts {
+			if footprint.CPUReservationUnspecified {
+				req.SpecialRequirements = appendUnique(req.SpecialRequirements, footprint.Module+": the released profile does not declare a CPU reservation")
+			}
+			req.MinRAM = max(req.MinRAM, int(math.Ceil(footprint.HostFloor.MinRAMGB*1024)))
+			req.MinCPU = max(req.MinCPU, int(math.Ceil(footprint.HostFloor.MinCPUCores)))
+			reservation.CPUCores += footprint.Reservation.CPUCores
+			reservation.RAMGB += footprint.Reservation.RAMGB
+		}
+	}
+	req.MinRAM = max(req.MinRAM, int(math.Ceil(reservation.RAMGB*1024)))
+	req.MinCPU = max(req.MinCPU, int(math.Ceil(reservation.CPUCores)))
+	return req, nil
 }
 
 func serviceIdentifier(svc core.ServiceSpec) string {
@@ -248,14 +297,10 @@ func (e *Engine) estimateServiceResources(serviceType string) (ram int, cpu int,
 		return 256, 0, ""
 	case "whoami", "base", "dashboard", "homepage":
 		return 64, 0, ""
-	case "jellyfin", "plex":
+	case "plex":
 		return 2048, 2, "Hardware-Transcoding empfohlen (Intel QSV/NVIDIA)"
-	case "nextcloud":
-		return 1024, 2, ""
 	case "homeassistant":
 		return 512, 1, ""
-	case "vaultwarden":
-		return 128, 1, ""
 	default:
 		return 256, 1, "" // Conservative default
 	}

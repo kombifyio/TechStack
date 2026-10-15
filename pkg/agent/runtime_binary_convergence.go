@@ -13,8 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/kombifyio/techstack/pkg/privatechannel"
 )
 
 const maxTechstackRuntimeBinaryBytes int64 = 512 << 20
@@ -35,7 +33,9 @@ type TechstackRuntimeConvergenceConfig struct {
 	AgentPath, OperationsPath                 string
 	Version                                   string
 	HTTPClient                                *http.Client
-	PrivateLANHTTPOrigin                      string
+	// StageDir is where an unprivileged Guard writes a downloaded artifact; empty
+	// stages next to AgentPath, which only a privileged process can write.
+	StageDir string
 }
 
 type TechstackRuntimeConvergenceResult struct {
@@ -61,7 +61,7 @@ func (executor *StackKitExecutor) EnsureTechstackRuntime(ctx context.Context, cf
 		}
 	}
 	parsedURL, err := url.Parse(strings.TrimSpace(cfg.URL))
-	if err != nil || parsedURL.Hostname() == "" || (parsedURL.Scheme != "https" && !(parsedURL.Scheme == "http" && isLoopbackHost(parsedURL.Hostname())) && !privatechannel.MatchesLANOrigin(cfg.URL, cfg.PrivateLANHTTPOrigin)) {
+	if err != nil || parsedURL.Hostname() == "" || (parsedURL.Scheme != "https" && !(parsedURL.Scheme == "http" && isLoopbackHost(parsedURL.Hostname()))) {
 		return result, fmt.Errorf("techstack runtime URL must use HTTPS or loopback HTTP")
 	}
 	localDigest, localErr := digestRuntimeExecutable(cfg.AgentPath)
@@ -69,7 +69,7 @@ func (executor *StackKitExecutor) EnsureTechstackRuntime(ctx context.Context, cf
 	if client == nil {
 		client = &http.Client{Timeout: 5 * time.Minute, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	}
-	stage, expected, notModified, err := fetchRuntimeArtifact(ctx, client, cfg, localDigest)
+	stage, expected, _, notModified, err := fetchRuntimeArtifact(ctx, client, cfg, localDigest)
 	if err != nil {
 		return result, err
 	}
@@ -93,6 +93,25 @@ func (executor *StackKitExecutor) EnsureTechstackRuntime(ctx context.Context, cf
 	return result, err
 }
 
+// FetchTechstackRuntimeArtifact downloads the executable the authenticated
+// control plane serves into cfg.StageDir. It installs nothing: an unprivileged
+// Guard hands the file to the privileged executor, which authenticates it.
+// localDigest lets the control plane answer that nothing changed.
+func FetchTechstackRuntimeArtifact(ctx context.Context, cfg TechstackRuntimeConvergenceConfig, localDigest string) (path, sha256Hex, version string, notModified bool, err error) {
+	parsedURL, err := url.Parse(strings.TrimSpace(cfg.URL))
+	if err != nil || parsedURL.Hostname() == "" || (parsedURL.Scheme != "https" && !(parsedURL.Scheme == "http" && isLoopbackHost(parsedURL.Hostname()))) {
+		return "", "", "", false, fmt.Errorf("techstack runtime URL must use HTTPS or loopback HTTP")
+	}
+	client := cfg.HTTPClient
+	if client == nil {
+		client = &http.Client{Timeout: 5 * time.Minute, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	}
+	return fetchRuntimeArtifact(ctx, client, cfg, localDigest)
+}
+
+// DigestInstalledExecutable returns the sha256 of an installed executable.
+func DigestInstalledExecutable(path string) (string, error) { return digestRuntimeExecutable(path) }
+
 // fetchRuntimeArtifact pulls the exact control-plane executable into a staging
 // file next to the target and returns its verified digest.
 //
@@ -112,20 +131,25 @@ func fetchRuntimeArtifact(
 	client *http.Client,
 	cfg TechstackRuntimeConvergenceConfig,
 	localDigest string,
-) (string, string, bool, error) {
-	if err := os.MkdirAll(filepath.Dir(cfg.AgentPath), 0755); err != nil {
-		return "", "", false, err
+) (string, string, string, bool, error) {
+	stageDir := cfg.StageDir
+	if stageDir == "" {
+		stageDir = filepath.Dir(cfg.AgentPath)
 	}
-	stage, err := os.CreateTemp(filepath.Dir(cfg.AgentPath), ".techstack-runtime-*")
+	if err := os.MkdirAll(stageDir, 0755); err != nil {
+		return "", "", "", false, err
+	}
+	stage, err := os.CreateTemp(stageDir, ".techstack-runtime-*")
 	if err != nil {
-		return "", "", false, err
+		return "", "", "", false, err
 	}
 	stagePath := stage.Name()
-	abort := func(cause error) (string, string, bool, error) {
+	abort := func(cause error) (string, string, string, bool, error) {
 		_ = stage.Close()
 		_ = os.Remove(stagePath)
-		return "", "", false, cause
+		return "", "", "", false, cause
 	}
+	artifactVersion := ""
 
 	hash := sha256.New()
 	expected := ""
@@ -138,10 +162,11 @@ func fetchRuntimeArtifact(
 		if slice.notModified {
 			_ = stage.Close()
 			_ = os.Remove(stagePath)
-			return "", "", true, nil
+			return "", "", "", true, nil
 		}
 		if expected == "" {
 			expected = slice.digest
+			artifactVersion = slice.version
 		} else if slice.digest != expected {
 			// The control plane was redeployed mid-download. Restarting is the
 			// only correct answer: the slices no longer describe one artifact.
@@ -171,14 +196,15 @@ func fetchRuntimeArtifact(
 	}
 	if err := stage.Close(); err != nil {
 		_ = os.Remove(stagePath)
-		return "", "", false, err
+		return "", "", "", false, err
 	}
-	return stagePath, expected, false, nil
+	return stagePath, expected, artifactVersion, false, nil
 }
 
 type runtimeArtifactSlice struct {
 	body        []byte
 	digest      string
+	version     string
 	total       int64
 	notModified bool
 }
@@ -257,7 +283,7 @@ func requestRuntimeArtifactSlice(
 	if len(body) == 0 {
 		return runtimeArtifactSlice{}, fmt.Errorf("techstack runtime slice at %d bytes is empty", offset)
 	}
-	slice := runtimeArtifactSlice{body: body, digest: digest}
+	slice := runtimeArtifactSlice{body: body, digest: digest, version: strings.TrimSpace(response.Header.Get("X-Kombify-Artifact-Version"))}
 	if response.StatusCode == http.StatusPartialContent {
 		total, parseErr := totalFromContentRange(response.Header.Get("Content-Range"))
 		if parseErr != nil {

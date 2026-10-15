@@ -84,6 +84,10 @@ func StartEmbeddedPostgres(dataDir string) (*EmbeddedPostgres, error) {
 		return nil, fmt.Errorf("create embedded postgres dir: %w", err)
 	}
 
+	if err := ensureDataDirCompatible(filepath.Join(baseDir, "data")); err != nil {
+		return nil, err
+	}
+
 	logPath := filepath.Join(baseDir, "postgres.log")
 	// #nosec G703 -- logPath is fixed beneath the operator-selected embedded database directory.
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)

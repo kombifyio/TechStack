@@ -102,10 +102,21 @@ func (e *Engine) SetBackgroundTask(task func(context.Context) error) {
 // StartRun persists a new run and drives it through its first phase (until it
 // suspends, completes, or fails). Returns the run id.
 func (e *Engine) StartRun(ctx context.Context, run *Run) (string, error) {
+	store, err := e.tenantStore(ctx)
+	if err != nil {
+		return "", err
+	}
+	if run == nil {
+		return "", fmt.Errorf("workflow: run required")
+	}
+	tenant, _ := tenantFromContext(ctx)
+	if run.TenantID != tenant {
+		return "", fmt.Errorf("workflow: tenant conflict")
+	}
 	if _, ok := e.defs[run.Type]; !ok {
 		return "", fmt.Errorf("workflow: no definition registered for type %q", run.Type)
 	}
-	if err := e.store.CreateRun(run); err != nil {
+	if err := store.CreateRun(run); err != nil {
 		return "", err
 	}
 	return run.RunID, e.Advance(ctx, run.RunID)
@@ -115,13 +126,24 @@ func (e *Engine) StartRun(ctx context.Context, run *Run) (string, error) {
 // matching persisted run. This closes the HTTP retry/process-restart window
 // without allowing a caller to reuse a run id for different work.
 func (e *Engine) StartOrResumeRun(ctx context.Context, run *Run) (string, error) {
+	store, err := e.tenantStore(ctx)
+	if err != nil {
+		return "", err
+	}
+	if run == nil {
+		return "", fmt.Errorf("workflow: run required")
+	}
+	tenant, _ := tenantFromContext(ctx)
+	if run.TenantID != tenant {
+		return "", fmt.Errorf("workflow: tenant conflict")
+	}
 	if run == nil || run.RunID == "" {
 		return "", fmt.Errorf("workflow: deterministic run_id required")
 	}
 	if _, ok := e.defs[run.Type]; !ok {
 		return "", fmt.Errorf("workflow: no definition registered for type %q", run.Type)
 	}
-	existing, err := e.store.GetRun(run.RunID)
+	existing, err := store.GetRun(run.RunID)
 	if err == nil {
 		if !sameRunIdentity(existing, run) {
 			return "", fmt.Errorf("workflow: run %s identity conflict", run.RunID)
@@ -131,10 +153,10 @@ func (e *Engine) StartOrResumeRun(ctx context.Context, run *Run) (string, error)
 	if !errors.Is(err, ErrNotFound) {
 		return "", err
 	}
-	if err := e.store.CreateRun(run); err != nil {
+	if err := store.CreateRun(run); err != nil {
 		// A concurrent retry may have won the insert. Adopt it only when every
 		// stable identity field and the complete input match.
-		existing, getErr := e.store.GetRun(run.RunID)
+		existing, getErr := store.GetRun(run.RunID)
 		if getErr != nil || !sameRunIdentity(existing, run) {
 			return "", err
 		}
@@ -144,15 +166,35 @@ func (e *Engine) StartOrResumeRun(ctx context.Context, run *Run) (string, error)
 }
 
 // GetRun returns the durable current state for a run.
-func (e *Engine) GetRun(runID string) (*Run, error) { return e.store.GetRun(runID) }
+func (e *Engine) GetRun(ctx context.Context, runID string) (*Run, error) {
+	store, err := e.tenantStore(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return store.GetRun(runID)
+}
 
 // ListSteps returns the durable checkpoints for one run.
-func (e *Engine) ListSteps(runID string) ([]*Step, error) { return e.store.ListSteps(runID) }
+func (e *Engine) ListSteps(ctx context.Context, runID string) ([]*Step, error) {
+	store, err := e.tenantStore(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return store.ListSteps(runID)
+}
 
 // ListAudit returns the append-only, tenant-scoped lifecycle record for one
 // run. The active Postgres store implements this optional read surface.
-func (e *Engine) ListAudit(tenantID, runID string, limit int) ([]AuditEvent, error) {
-	reader, ok := e.store.(interface {
+func (e *Engine) ListAudit(ctx context.Context, tenantID, runID string, limit int) ([]AuditEvent, error) {
+	store, err := e.tenantStore(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scopedTenant, _ := tenantFromContext(ctx)
+	if tenantID != scopedTenant {
+		return nil, fmt.Errorf("workflow: tenant conflict")
+	}
+	reader, ok := store.(interface {
 		ListAudit(string, string, int) ([]AuditEvent, error)
 	})
 	if !ok {
@@ -163,7 +205,7 @@ func (e *Engine) ListAudit(tenantID, runID string, limit int) ([]AuditEvent, err
 
 func sameRunIdentity(left, right *Run) bool {
 	return left != nil && right != nil && left.RunID == right.RunID &&
-		left.Type == right.Type && left.OwnerID == right.OwnerID &&
+		left.TenantID == right.TenantID && left.Type == right.Type && left.OwnerID == right.OwnerID &&
 		left.ServerID == right.ServerID && left.CardID == right.CardID &&
 		reflect.DeepEqual(left.Input, right.Input)
 }
@@ -172,7 +214,11 @@ func sameRunIdentity(left, right *Run) bool {
 // suspended run awaiting it, then resumes the run. Returns ErrNotFound (wrapped)
 // if no run is awaiting the signal — a benign race (already resumed).
 func (e *Engine) Deliver(ctx context.Context, sig Signal) error {
-	run, err := e.store.FindSuspendedBySignal(sig.Key)
+	store, err := e.tenantStore(ctx)
+	if err != nil {
+		return err
+	}
+	run, err := store.FindSuspendedBySignal(sig.Key)
 	if err != nil {
 		return err
 	}
@@ -189,7 +235,7 @@ func (e *Engine) Deliver(ctx context.Context, sig Signal) error {
 	run.AwaitingSignal = ""
 	from := run.Status
 	run.Status = RunRunning
-	if err := e.store.UpdateRun(run); err != nil {
+	if err := store.UpdateRun(run); err != nil {
 		return err
 	}
 	e.observeRun(run, from)
@@ -210,7 +256,11 @@ func (e *Engine) Advance(ctx context.Context, runID string) error {
 // triggering saga compensation). Caller MUST hold the per-run lock. Safe to
 // call repeatedly and after a restart — completed steps are not re-run.
 func (e *Engine) advance(ctx context.Context, runID string) error {
-	run, err := e.store.GetRun(runID)
+	store, err := e.tenantStore(ctx)
+	if err != nil {
+		return err
+	}
+	run, err := store.GetRun(runID)
 	if err != nil {
 		return err
 	}
@@ -223,6 +273,9 @@ func (e *Engine) advance(ctx context.Context, runID string) error {
 	}
 	steps := def.Steps()
 	policy := def.RetryPolicy()
+	if run.Status == RunCompensating {
+		return e.resumeCompensation(ctx, run, steps)
+	}
 
 	// A signal delivered by Deliver() is stashed in the run context; consume it
 	// so it reaches the (re-entrant) suspending step on resume.
@@ -233,7 +286,7 @@ func (e *Engine) advance(ctx context.Context, runID string) error {
 		from := run.Status
 		run.Status = RunRunning
 		run.StartedAt = &now
-		if err := e.store.UpdateRun(run); err != nil {
+		if err := store.UpdateRun(run); err != nil {
 			return err
 		}
 		e.observeRun(run, from)
@@ -241,7 +294,7 @@ func (e *Engine) advance(ctx context.Context, runID string) error {
 
 	for run.CurrentStep < len(steps) {
 		sd := steps[run.CurrentStep]
-		step, err := e.getOrCreateStep(run, sd.Name)
+		step, err := e.getOrCreateStep(ctx, run, sd.Name)
 		if err != nil {
 			return err
 		}
@@ -249,7 +302,7 @@ func (e *Engine) advance(ctx context.Context, runID string) error {
 		// Already-completed step (restart/idempotent resume): skip forward.
 		if step.Status == StepCompleted {
 			run.CurrentStep++
-			if err := e.store.UpdateRun(run); err != nil {
+			if err := store.UpdateRun(run); err != nil {
 				return err
 			}
 			continue
@@ -263,7 +316,7 @@ func (e *Engine) advance(ctx context.Context, runID string) error {
 			return e.failWithCompensation(ctx, run, steps, runErr)
 		}
 		if res.Suspend != nil {
-			return e.suspend(run, res.Suspend)
+			return e.suspend(ctx, run, res.Suspend)
 		}
 
 		// Success: checkpoint the step, advance the run.
@@ -272,12 +325,12 @@ func (e *Engine) advance(ctx context.Context, runID string) error {
 		step.Output = res.Output
 		step.Error = ""
 		step.FinishedAt = &now
-		if err := e.store.UpdateStep(step); err != nil {
+		if err := store.UpdateStep(step); err != nil {
 			return err
 		}
 		e.observeStep(run.Type, step, StepRunning)
 		run.CurrentStep++
-		if err := e.store.UpdateRun(run); err != nil {
+		if err := store.UpdateRun(run); err != nil {
 			return err
 		}
 	}
@@ -286,7 +339,7 @@ func (e *Engine) advance(ctx context.Context, runID string) error {
 	from := run.Status
 	run.Status = RunCompleted
 	run.FinishedAt = &now
-	if err := e.store.UpdateRun(run); err != nil {
+	if err := store.UpdateRun(run); err != nil {
 		return err
 	}
 	e.observeRun(run, from)
@@ -299,6 +352,10 @@ func (e *Engine) advance(ctx context.Context, runID string) error {
 // successful result) ends the loop immediately — suspend/resume does NOT consume
 // the retry budget; only failures increment Attempt.
 func (e *Engine) runStepWithRetry(ctx context.Context, runType RunType, step *Step, sd StepDef, policy RetryPolicy, rc *RunContext) (StepResult, error) {
+	store, err := e.tenantStore(ctx)
+	if err != nil {
+		return StepResult{}, err
+	}
 	for {
 		now := e.now()
 		step.StartedAt = &now
@@ -306,7 +363,7 @@ func (e *Engine) runStepWithRetry(ctx context.Context, runType RunType, step *St
 		// step is already Running; UpdateStep treats same-status as a no-op.
 		from := step.Status
 		step.Status = StepRunning
-		if err := e.store.UpdateStep(step); err != nil {
+		if err := store.UpdateStep(step); err != nil {
 			return StepResult{}, err
 		}
 		e.observeStep(runType, step, from)
@@ -320,7 +377,7 @@ func (e *Engine) runStepWithRetry(ctx context.Context, runType RunType, step *St
 		step.Error = err.Error()
 		from = step.Status
 		step.Status = StepFailed
-		if uerr := e.store.UpdateStep(step); uerr != nil {
+		if uerr := store.UpdateStep(step); uerr != nil {
 			return StepResult{}, uerr
 		}
 		e.observeStep(runType, step, from)
@@ -336,46 +393,57 @@ func (e *Engine) runStepWithRetry(ctx context.Context, runType RunType, step *St
 
 // suspend transitions the run to suspended awaiting a signal, optionally arming
 // a durable timer that will deliver the same signal (timed-out) on expiry.
-func (e *Engine) suspend(run *Run, d *SuspendDirective) error {
-	from := run.Status
-	run.Status = RunSuspended
-	run.AwaitingSignal = d.SignalKey
-	if err := e.store.UpdateRun(run); err != nil {
+func (e *Engine) suspend(ctx context.Context, run *Run, d *SuspendDirective) error {
+	store, err := e.tenantStore(ctx)
+	if err != nil {
 		return err
 	}
-	e.observeRun(run, from)
+	from := run.Status
+	suspended := *run
+	suspended.Status = RunSuspended
+	suspended.AwaitingSignal = d.SignalKey
+	var timer *Timer
 	if d.Timeout > 0 {
 		kind := d.TimerKind
 		if kind == "" {
 			kind = TimerEscalation
 		}
-		if err := e.store.CreateTimer(&Timer{
-			RunID:     run.RunID,
-			Kind:      kind,
-			FireAt:    e.now().Add(d.Timeout),
-			SignalKey: d.SignalKey,
-		}); err != nil {
-			return err
-		}
+		timer = &Timer{RunID: run.RunID, Kind: kind, FireAt: e.now().Add(d.Timeout), SignalKey: d.SignalKey}
 	}
+	if err := store.SuspendRun(&suspended, timer); err != nil {
+		return err
+	}
+	*run = suspended
+	e.observeRun(run, from)
 	e.log.Info("ril_workflow_run_suspended", "run_id", run.RunID, "signal", d.SignalKey, "timeout", d.Timeout.String())
 	return nil
 }
 
-// failWithCompensation runs saga compensation (each completed step's Compensate,
-// in reverse order) then marks the run failed. Compensation is best-effort:
-// a compensation error is logged but does not abort the remaining rollbacks.
+// failWithCompensation records the original failure before driving the saga.
 func (e *Engine) failWithCompensation(ctx context.Context, run *Run, stepDefs []StepDef, cause error) error {
+	store, err := e.tenantStore(ctx)
+	if err != nil {
+		return err
+	}
 	from := run.Status
 	run.Status = RunCompensating
 	run.Error = cause.Error()
-	if err := e.store.UpdateRun(run); err != nil {
+	if err := store.UpdateRun(run); err != nil {
 		return err
 	}
 	e.observeRun(run, from)
 	e.log.Warn("ril_workflow_compensating", "run_id", run.RunID, "cause", cause.Error())
+	return e.resumeCompensation(ctx, run, stepDefs)
+}
 
-	steps, err := e.store.ListSteps(run.RunID)
+// resumeCompensation resumes only reverse rollback. Pending work and errors
+// retain the compensating phase; a completed rollback is never called again.
+func (e *Engine) resumeCompensation(ctx context.Context, run *Run, stepDefs []StepDef) error {
+	store, err := e.tenantStore(ctx)
+	if err != nil {
+		return err
+	}
+	steps, err := store.ListSteps(run.RunID)
 	if err != nil {
 		return err
 	}
@@ -392,28 +460,41 @@ func (e *Engine) failWithCompensation(ctx context.Context, run *Run, stepDefs []
 			continue
 		}
 		rc := &RunContext{Run: run, Activities: e.acts}
-		if _, cerr := safeRunStep(ctx, comp, rc); cerr != nil {
+		res, cerr := safeRunStep(ctx, comp, rc)
+		// Persist adapter checkpoints before pending/error returns or step
+		// completion. External effects still use their stable activity key.
+		if err := store.UpdateRun(run); err != nil {
+			return err
+		}
+		if cerr != nil {
+			st.Error = cerr.Error()
+			if err := store.UpdateStep(st); err != nil {
+				return err
+			}
 			e.log.Error("ril_workflow_compensation_failed", "run_id", run.RunID, "step", st.Name, "error", cerr.Error())
-			continue
+			return cerr
+		}
+		if res.Pending || res.Suspend != nil {
+			return nil
 		}
 		stepFrom := st.Status
 		st.Status = StepCompensated
-		if uerr := e.store.UpdateStep(st); uerr != nil {
-			e.log.Error("ril_workflow_compensation_persist_failed", "run_id", run.RunID, "step", st.Name, "error", uerr.Error())
-			continue
+		st.Error = ""
+		if uerr := store.UpdateStep(st); uerr != nil {
+			return uerr
 		}
 		e.observeStep(run.Type, st, stepFrom)
 	}
 
 	now := e.now()
-	from = run.Status
+	from := run.Status
 	run.Status = RunFailed
 	run.FinishedAt = &now
-	if err := e.store.UpdateRun(run); err != nil {
+	if err := store.UpdateRun(run); err != nil {
 		return err
 	}
 	e.observeRun(run, from)
-	e.log.Warn("ril_workflow_run_failed", "run_id", run.RunID, "error", cause.Error())
+	e.log.Warn("ril_workflow_run_failed", "run_id", run.RunID, "error", run.Error)
 	return nil
 }
 
@@ -445,8 +526,12 @@ func (e *Engine) observeStep(runType RunType, step *Step, from StepStatus) {
 
 // getOrCreateStep returns the step row for run.CurrentStep, creating a pending
 // row (with a stable idempotency key) on first encounter.
-func (e *Engine) getOrCreateStep(run *Run, name string) (*Step, error) {
-	step, err := e.store.GetStep(run.RunID, run.CurrentStep)
+func (e *Engine) getOrCreateStep(ctx context.Context, run *Run, name string) (*Step, error) {
+	store, err := e.tenantStore(ctx)
+	if err != nil {
+		return nil, err
+	}
+	step, err := store.GetStep(run.RunID, run.CurrentStep)
 	if err == nil {
 		return step, nil
 	}
@@ -460,7 +545,7 @@ func (e *Engine) getOrCreateStep(run *Run, name string) (*Step, error) {
 		Status:         StepPending,
 		IdempotencyKey: fmt.Sprintf("%s:%d", run.RunID, run.CurrentStep),
 	}
-	if err := e.store.CreateStep(step); err != nil {
+	if err := store.CreateStep(step); err != nil {
 		return nil, err
 	}
 	return step, nil

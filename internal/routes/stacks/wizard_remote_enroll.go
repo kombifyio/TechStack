@@ -8,7 +8,6 @@ import (
 
 	"github.com/kombifyio/techstack/internal/routes/trust"
 	"github.com/kombifyio/techstack/pkg/config"
-	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/jobs"
 	"github.com/kombifyio/techstack/pkg/logger"
@@ -40,13 +39,8 @@ func (h wizardRunHandlers) startWizardRemoteEnrollment(
 	if minted.JobID == "" || h.cfg.Trust.Jobs == nil {
 		return
 	}
-	ctx := context.Background()
-	if e != nil && e.Request != nil {
-		ctx = e.Request.Context()
-	}
 	if h.crud.orch == nil {
-		h.failRemoteEnrollmentJob(ctx, run.tenantID, minted.JobID,
-			errors.New("the orchestrator is not configured; remote enrollment cannot be executed"))
+		logger.Default().Warn("wizard_remote_enrollment_admission_unavailable", "job_id", minted.JobID)
 		return
 	}
 	plannedServerID = strings.TrimSpace(plannedServerID)
@@ -73,7 +67,9 @@ func (h wizardRunHandlers) startWizardRemoteEnrollment(
 		MaxAttempts: 1,
 	}
 	if enqueueErr := h.crud.orch.EnqueuePreparedJob(job, run.tenantID); enqueueErr != nil {
-		h.failRemoteEnrollmentJob(ctx, run.tenantID, minted.JobID, enqueueErr)
+		// Local admission owns no execution outcome. Keep prepared work pending
+		// for recovery, or retain another process's running/completed result.
+		logger.Default().Warn("wizard_remote_enrollment_admission_failed", "job_id", minted.JobID, "error", enqueueErr)
 	}
 }
 
@@ -145,83 +141,6 @@ func (h wizardRunHandlers) credentialsFromRemoteRequest(ctx context.Context, run
 	}
 	creds.PrivateKey = key
 	return creds, nil
-}
-
-func (h wizardRunHandlers) patchRemoteEnrollmentJob(ctx context.Context, tenantID, jobID string, patch map[string]any) {
-	if h.cfg.Trust.Jobs == nil || strings.TrimSpace(jobID) == "" {
-		return
-	}
-	current, err := h.cfg.Trust.Jobs.GetJob(ctx, tenantID, jobID)
-	if err != nil || current == nil {
-		return
-	}
-	state := strings.TrimSpace(stringFromAny(patch["state"]))
-	if state == "" {
-		state = current.State
-	}
-	step := strings.TrimSpace(stringFromAny(patch["step"]))
-	if step == "" {
-		step = current.Step
-	}
-	message := strings.TrimSpace(stringFromAny(patch["message"]))
-	if message == "" {
-		message = current.Message
-	}
-	progress := current.Progress
-	if value, ok := patch["progress"].(int); ok {
-		progress = value
-	}
-	result := map[string]any{}
-	for key, value := range current.Result {
-		result[key] = value
-	}
-	if serverID := strings.TrimSpace(stringFromAny(patch["server_id"])); serverID != "" {
-		result["server_id"] = serverID
-	}
-	if plannedServerID := strings.TrimSpace(stringFromAny(patch["planned_server_id"])); plannedServerID != "" {
-		result[wizardRunPlannedServerID] = plannedServerID
-	}
-	req := controlplane.UpsertJobRequest{
-		ID:       current.ID,
-		TenantID: tenantID,
-		StackID:  current.StackID,
-		Type:     current.Type,
-		State:    state,
-		Progress: progress,
-		Step:     step,
-		Message:  message,
-		Result:   result,
-	}
-	if errText := strings.TrimSpace(stringFromAny(patch["error"])); errText != "" {
-		req.Error = errText
-	}
-	if details := strings.TrimSpace(stringFromAny(patch["error_details"])); details != "" {
-		req.ErrorDetails = details
-	}
-	if reason := strings.TrimSpace(stringFromAny(patch["reason_code"])); reason != "" {
-		result["reason_code"] = reason
-	}
-	if retryable, ok := patch["retryable"].(bool); ok {
-		result["retryable"] = retryable
-	}
-	req.Result = result
-	if _, err := h.cfg.Trust.Jobs.UpsertJob(ctx, req); err != nil {
-		logger.Default().Warn("wizard_remote_enrollment_job_patch_failed", "job_id", jobID, "error", err)
-	}
-}
-
-func (h wizardRunHandlers) failRemoteEnrollmentJob(ctx context.Context, tenantID, jobID string, err error) {
-	reason, message, retryable := remoteguard.ClassifyEnrollmentError(err)
-	h.patchRemoteEnrollmentJob(ctx, tenantID, jobID, map[string]any{
-		"state":         "failed",
-		"step":          remoteguard.StepConnectSSH,
-		"message":       message,
-		"error":         message,
-		"error_details": err.Error(),
-		"reason_code":   reason,
-		"retryable":     retryable,
-		"progress":      100,
-	})
 }
 
 func resolveWizardControlPlaneOrigin(e *httpx.Event) string {

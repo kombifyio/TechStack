@@ -17,9 +17,14 @@ import (
 	"github.com/kombifyio/techstack/pkg/agent/collectors"
 	"github.com/kombifyio/techstack/pkg/core"
 	"github.com/kombifyio/techstack/pkg/kombifyme"
+	"github.com/kombifyio/techstack/pkg/sdnotify"
 )
 
 const httpsScheme = "https"
+
+// guardWatchdogStall is how long the Guard's loops may go without reporting
+// progress before the systemd keepalive stops and the service is restarted.
+const guardWatchdogStall = 90 * time.Second
 
 // isAgentMode reports whether the binary was invoked as `techstack agent`.
 // The agent/worker mode turns the techstack binary into the node-side daemon
@@ -42,6 +47,7 @@ type agentModeConfig struct {
 	samplerInterval   time.Duration
 	disableMetrics    bool
 	enrollmentFile    string
+	waitForEnrollment bool
 	heartbeatURL      string
 	inventoryURL      string
 	agentTokenFile    string
@@ -50,6 +56,10 @@ type agentModeConfig struct {
 	publicIP          string
 	kombifyMeRelayURL string
 	kombifyMeAPIKey   string
+	// stateDir holds the Guard identity key and enrollment state.
+	stateDir string
+	// progress reports loop progress to the service watchdog; nil disables it.
+	progress func()
 }
 
 func parseAgentModeConfig(args []string) (*agentModeConfig, error) {
@@ -78,10 +88,14 @@ func parseAgentModeConfig(args []string) (*agentModeConfig, error) {
 		"disable the metrics pusher (heartbeats still carry resource usage)")
 	fs.StringVar(&cfg.enrollmentFile, "enrollment-file", envDefault("TECHSTACK_AGENT_ENROLLMENT_FILE", ""),
 		"root-readable enrollment response JSON for the HTTPS channel")
+	fs.BoolVar(&cfg.waitForEnrollment, "wait-for-enrollment", false,
+		"remain idle until instance enrollment is available (HTTPS with enrollment-file only)")
 	fs.StringVar(&cfg.heartbeatURL, "heartbeat-url", envDefault("TECHSTACK_HEARTBEAT_URL", ""),
 		"HTTPS heartbeat endpoint (prefer enrollment-file)")
 	fs.StringVar(&cfg.inventoryURL, "inventory-url", envDefault("TECHSTACK_INVENTORY_URL", ""),
 		"HTTPS inventory endpoint (prefer enrollment-file)")
+	fs.StringVar(&cfg.stateDir, "state-dir", envDefault(guardStateDirEnv, ""),
+		"kombify Guard state directory for the identity key and enrollment state (default "+defaultGuardStateDir()+")")
 	fs.StringVar(&cfg.agentTokenFile, "agent-token-file", envDefault("TECHSTACK_AGENT_TOKEN_FILE", ""),
 		"root-readable bearer token file for the HTTPS channel")
 	fs.StringVar(&cfg.accessManifest, "access-manifest", envDefault("TECHSTACK_ACCESS_MANIFEST", ""),
@@ -103,6 +117,9 @@ func parseAgentModeConfig(args []string) (*agentModeConfig, error) {
 	}
 	if cfg.transport != "grpc-mtls" && cfg.transport != httpsScheme {
 		return nil, fmt.Errorf("unsupported agent transport %q (want grpc-mtls or https)", cfg.transport)
+	}
+	if cfg.waitForEnrollment && (cfg.transport != httpsScheme || strings.TrimSpace(cfg.enrollmentFile) == "") {
+		return nil, errors.New("--wait-for-enrollment requires HTTPS and --enrollment-file")
 	}
 	if cfg.transport == httpsScheme {
 		if cfg.enrollmentFile == "" && cfg.agentToken == "" && cfg.agentTokenFile == "" {
@@ -152,6 +169,9 @@ func envDefault(key, fallback string) string {
 
 // runAgentMode runs the node-side agent daemon until SIGINT/SIGTERM.
 func runAgentMode(ctx context.Context, args []string) error {
+	if isAgentEnroll(args) {
+		return runAgentEnroll(ctx, args[1:], os.Stdout)
+	}
 	cfg, err := parseAgentModeConfig(args)
 	if err != nil {
 		return err
@@ -159,6 +179,17 @@ func runAgentMode(ctx context.Context, args []string) error {
 
 	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	log = log.With("service", "techstack-agent", "version", version)
+
+	// systemd integration (no-ops outside systemd): ready once configuration is
+	// valid, and a progress-gated watchdog so a hung Guard is restarted while a
+	// disconnected one is left running.
+	watchdog := sdnotify.NewWatchdog(guardWatchdogStall)
+	cfg.progress = watchdog.Progress
+	watchCtx, stopWatchdog := context.WithCancel(ctx)
+	defer stopWatchdog()
+	go watchdog.Run(watchCtx)
+	sdnotify.Ready()
+	defer sdnotify.Stopping()
 	if cfg.transport == httpsScheme {
 		return runHTTPAgentMode(ctx, cfg, log)
 	}
@@ -194,6 +225,7 @@ func runAgentMode(ctx context.Context, args []string) error {
 		Sampler:           agent.NewResourceSampler(cfg.samplerInterval, log),
 		Pusher:            pusher,
 		PreChecks:         agent.NewPreCheckRunner(baselinePreChecks()),
+		Progress:          cfg.progress,
 	})
 	if err != nil {
 		return fmt.Errorf("create supervisor: %w", err)
@@ -207,6 +239,7 @@ func runAgentMode(ctx context.Context, args []string) error {
 	}
 	defer relay.Stop()
 	relay.Start()
+	startUserNotificationListener(runCtx, cfg, client, log)
 
 	log.Info("agent_mode_starting", "core", cfg.coreAddr, "agent_id", cfg.agentID)
 	err = supervisor.Run(runCtx)

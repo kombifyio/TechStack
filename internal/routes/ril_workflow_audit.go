@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -9,15 +10,14 @@ import (
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/ril/workflow"
-	"github.com/kombifyio/techstack/pkg/ril/workflows"
 )
 
 const workflowAuditLimit = 500
 
 type WorkflowAuditReader interface {
-	GetRun(string) (*workflow.Run, error)
-	ListSteps(string) ([]*workflow.Step, error)
-	ListAudit(string, string, int) ([]workflow.AuditEvent, error)
+	GetRun(context.Context, string) (*workflow.Run, error)
+	ListSteps(context.Context, string) ([]*workflow.Step, error)
+	ListAudit(context.Context, string, string, int) ([]workflow.AuditEvent, error)
 }
 
 type workflowAuditHandler struct{ reader WorkflowAuditReader }
@@ -42,18 +42,19 @@ func (h workflowAuditHandler) get(e *httpx.Event) error {
 		return writeInventoryHTTPError(e, err)
 	}
 	runID := strings.TrimSpace(e.Request.PathValue("runId"))
-	run, err := h.reader.GetRun(runID)
+	ctx := workflow.WithTenant(e.Request.Context(), scope.tenantID)
+	run, err := h.reader.GetRun(ctx, runID)
 	if err != nil {
 		return writeWorkflowAuditError(e, err)
 	}
 	if run.OwnerID != scope.ownerID || workflowRunTenant(run) != scope.tenantID {
 		return httpx.NotFound(e, "Workflow run not found")
 	}
-	steps, err := h.reader.ListSteps(runID)
+	steps, err := h.reader.ListSteps(ctx, runID)
 	if err != nil {
 		return writeWorkflowAuditError(e, err)
 	}
-	events, err := h.reader.ListAudit(scope.tenantID, runID, workflowAuditLimit)
+	events, err := h.reader.ListAudit(ctx, scope.tenantID, runID, workflowAuditLimit)
 	if err != nil {
 		return writeWorkflowAuditError(e, err)
 	}
@@ -94,11 +95,10 @@ type workflowAuditResponse struct {
 }
 
 func workflowRunTenant(run *workflow.Run) string {
-	if run == nil || run.Input == nil {
+	if run == nil {
 		return ""
 	}
-	tenantID, _ := run.Input[workflows.InputTenantID].(string)
-	return strings.TrimSpace(tenantID)
+	return run.TenantID
 }
 
 func projectWorkflowRun(run *workflow.Run) workflowRunAudit {

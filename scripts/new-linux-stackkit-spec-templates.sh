@@ -3,6 +3,10 @@
 # from the pinned StackKits release. Shared by Delivery Windows client and the
 # hosted installed-client smoke so both package identical templates.
 set -euo pipefail
+umask 077
+work_root="$(mktemp -d /tmp/techstack-spec-templates.XXXXXXXX)"
+trap 'rm -rf -- "$work_root"' EXIT
+release_dir="$work_root/release"
 # The private Dockerfile supplies the pin in Delivery. The curated public
 # Dockerfile omits that stage, so its exported Windows bundle supplies the pin.
 STACKKIT_RELEASE_TAG="$(sed -n 's/^ARG STACKKIT_RELEASE_TAG="\(v[0-9][0-9.]*\)"$/\1/p' Dockerfile)"
@@ -18,32 +22,39 @@ STACKKIT_RELEASE_VERSION="${STACKKIT_RELEASE_TAG#v}"
 echo "pinned StackKits release: ${STACKKIT_RELEASE_TAG}"
 archive="stackkits-basement-kit_${STACKKIT_RELEASE_VERSION}_linux_amd64.tar.gz"
 url="https://github.com/kombifyio/StackKits/releases/download/${STACKKIT_RELEASE_TAG}/${archive}"
-curl --fail --silent --show-error --location "$url" --output /tmp/release.tar.gz
-echo "${STACKKIT_RELEASE_ARCHIVE_SHA256}  /tmp/release.tar.gz" | sha256sum -c -
-mkdir -p /tmp/release
-tar --extract --gzip --file /tmp/release.tar.gz --directory /tmp/release
-test -x /tmp/release/stackkit
-# Same flags as the container spec-template stage: since v0.24.27
-# native v2alpha2 is the CLI default and v2alpha2 refuses to choose
-# for you, so the api version and compute tier are named explicitly.
+curl --fail --silent --show-error --location "$url" --output "$work_root/release.tar.gz"
+echo "${STACKKIT_RELEASE_ARCHIVE_SHA256}  $work_root/release.tar.gz" | sha256sum -c -
+mkdir -p "$release_dir"
+tar --extract --gzip --file "$work_root/release.tar.gz" --directory "$release_dir"
+test -x "$release_dir/stackkit"
+# The release-authored seeds carry the recorded per-kit API-version decision.
+# Reuse that decision; native resource/module defaults remain CLI-owned.
 for kit in basement-kit cloud-kit modern-homelab; do
-  rm -rf "/tmp/tpl/$kit"
-  mkdir -p "/tmp/tpl/$kit"
-  ( cd "/tmp/tpl/$kit" && /tmp/release/stackkit --no-log init "$kit" \
+  api_version="$(jq -er '.apiVersion' "docs/examples/seeds/$kit/stack-spec.yaml")"
+  case "$api_version" in
+    stackkit/v2alpha2) authoring_args=(--api-version "$api_version" --catalog-defaults) ;;
+    stackkit/v2alpha1)
+      compute_tier="$(jq -er '.install.computeTier' "docs/examples/seeds/$kit/stack-spec.yaml")"
+      authoring_args=(--api-version "$api_version" --compute-tier "$compute_tier") ;;
+    *) echo "Unsupported recorded StackKits template API: $api_version" >&2; exit 1 ;;
+  esac
+  template_dir="$work_root/tpl/$kit"
+  custody_dir="$work_root/custody/$kit"
+  mkdir -p "$template_dir" "$custody_dir"
+  ( cd "$template_dir" && STACKKIT_CUSTODY_DIR="$custody_dir" "$release_dir/stackkit" --no-log init "$kit" \
       --non-interactive \
       --name techstack-spec-template \
       --owner-source=local \
       --owner-email owner@smoke.stackkit.cc \
       --owner-username owner \
-      --api-version stackkit/v2alpha1 \
-      --compute-tier standard \
+      "${authoring_args[@]}" \
       --domain template.invalid )
-  spec="/tmp/tpl/$kit/stack-spec.yaml"
+  spec="$template_dir/stack-spec.yaml"
   test -s "$spec"
-  jq -e --arg kit "$kit" \
-    '.apiVersion == "stackkit/v2alpha1" and .kind == "StackSpec" and .kit.slug == $kit' \
+  jq -e --arg kit "$kit" --arg api "$api_version" \
+    '.apiVersion == $api and .kind == "StackSpec" and .kit.slug == $kit' \
     "$spec" >/dev/null
-  /tmp/release/stackkit --no-log --chdir "/tmp/tpl/$kit" --spec stack-spec.yaml validate
+  STACKKIT_CUSTODY_DIR="$custody_dir" "$release_dir/stackkit" --no-log --chdir "$template_dir" --spec stack-spec.yaml validate
   mkdir -p "dist/spec-templates/$kit"
   cp "$spec" "dist/spec-templates/$kit/stack-spec.yaml"
   echo "spec template: $kit"

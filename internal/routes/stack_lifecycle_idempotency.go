@@ -511,6 +511,14 @@ func writeManagedRuntimeAdmissionError(
 			[]string{"Keep the provider create switch closed for this stack.", "Ask kombify support to reconcile the existing lease/server with immutable provider evidence."},
 		)
 	}
+	var protection providercontrol.CreateProtectionError
+	if errors.As(admissionErr, &protection) {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+			"New VM creation is temporarily protected", map[string]any{
+				"reason_code": protection.Protection.ReasonCode, "retryable": protection.Protection.State == "paused",
+				"create_protection": protection.Protection, "job_id": job.ID,
+			})
+	}
 	var createBlocked providercontrol.ProviderCreateBlockedError
 	if errors.As(admissionErr, &createBlocked) {
 		return writeManagedRuntimeAdmissionRecheckDenial(
@@ -797,6 +805,14 @@ func (h stackLifecycleRouteHandlers) preflightManagedRuntimeServer(
 			"This stack already has a managed lease or server without a verified runtime-slot binding. TechStack will not guess ownership or create another provider resource.",
 			[]string{"Do not create a replacement server.", "Ask kombify support to reconcile the existing lease/server with immutable provider evidence."},
 		)
+	}
+	var protection providercontrol.CreateProtectionError
+	if errors.As(err, &protection) {
+		return true, httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+			"New VM creation is temporarily protected", map[string]any{
+				"reason_code": protection.Protection.ReasonCode, "retryable": protection.Protection.State == "paused",
+				"create_protection": protection.Protection,
+			})
 	}
 	var createBlocked providercontrol.ProviderCreateBlockedError
 	if errors.As(err, &createBlocked) {

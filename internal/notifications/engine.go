@@ -214,6 +214,15 @@ func (e *Engine) DispatchProduct(ctx context.Context, event ProductEvent) (*Disp
 			dispatch[key] = value
 		}
 	}
+	if actor := event.Actor; actor != nil && strings.TrimSpace(actor.Subject) != "" {
+		dispatch["actor"] = map[string]string{
+			"subject":      strings.TrimSpace(actor.Subject),
+			"display_name": strings.TrimSpace(actor.DisplayName),
+		}
+	}
+	if len(event.Detail) > 0 {
+		dispatch["detail"] = event.Detail
+	}
 	body, err := json.Marshal(dispatch)
 	if err != nil {
 		return nil, err

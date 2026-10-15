@@ -8,6 +8,7 @@
   import { appDeployLabel, productIdentityLabel } from "#lib/config.js";
   import ReloginModal from "#lib/components/ReloginModal.svelte";
   import InAppDialogHost from "#lib/components/InAppDialogHost.svelte";
+  import WalletPromptHost from "#lib/kombify-wallet/components/WalletPromptHost.svelte";
   import TechstackAnalytics from "#lib/components/TechstackAnalytics.svelte";
   import {
     Toast,
@@ -34,7 +35,17 @@
     showInlineTabs,
   } from "#lib/stores/deploymentMode.js";
   import { withHostNavigation } from "#lib/embedded-navigation.js";
+  import { STEP_UP_COMPLETE_PATH } from "#lib/auth/step-up.js";
+  import { CONTENT_PANE_ID } from "#lib/navigation.js";
+  import {
+    loadRailPreference,
+    saveRailPreference,
+  } from "#lib/rail-preference.js";
   import { initBridge, destroyBridge } from "#lib/stores/postMessageBridge.js";
+  import {
+    initViewContext,
+    setViewContextRoute,
+  } from "#lib/stores/viewContext.svelte.js";
   import {
     clearStackIdentity,
     hydrateStackIdentityFromBackend,
@@ -120,12 +131,19 @@
     }
   });
 
+  // Name the page for the host (inside kombify Cloud its Companion cannot see
+  // this frame). Pages add the object they show on top of this.
+  $effect(() => {
+    setViewContextRoute(page.url.pathname);
+  });
+
   // Initialize i18n and deployment mode on mount
   onMount(() => {
     // Initialize bridge early when in iframe to receive theme messages ASAP
     if (window.parent !== window) {
       initBridge();
     }
+    const stopViewContext = initViewContext();
 
     initStackIdentity();
     theme.init();
@@ -133,9 +151,15 @@
     loadApiInfo();
     void (async () => {
       try {
-        await authStore.init({ embedded: window.parent !== window });
-        await deploymentMode.init(authStore.deploymentMode);
-        await refreshEmbeddedSessionIfNeeded();
+        // The step-up completion page only reports to the frame that opened
+        // its window and closes. It must not start a sign-in of its own: a
+        // standalone SaaS load would, and could navigate the window away
+        // before it closes.
+        if (page.url.pathname !== STEP_UP_COMPLETE_PATH) {
+          await authStore.init({ embedded: window.parent !== window });
+          await deploymentMode.init(authStore.deploymentMode);
+          await refreshEmbeddedSessionIfNeeded();
+        }
       } finally {
         authInitialized = true;
       }
@@ -149,6 +173,7 @@
 
     window.addEventListener("resize", syncViewport);
     return () => {
+      stopViewContext();
       destroyBridge();
       window.removeEventListener("resize", syncViewport);
       authInitialized = false;
@@ -193,17 +218,16 @@
     sidebarOpen = !sidebarOpen;
   }
 
-  function toggleSidebarCollapse() {
-    sidebarCollapsed = !sidebarCollapsed;
+  /*
+   * Rail width and fold are a device preference (see rail-preference.ts),
+   * read once on mount. The package reports every change: a drag sets the
+   * width, an overshoot folds, a drag out of a folded rail unfolds. Folding
+   * never overwrites the remembered width.
+   */
+  function handleRailCollapsedChange(next: boolean) {
+    sidebarCollapsed = next;
     persistRail();
   }
-
-  /*
-   * Rail width is a device preference, like the finish: it belongs to this
-   * browser and never to the account, so it lives in localStorage and is read
-   * once on mount. Guarded because the layout also renders on the server.
-   */
-  const RAIL_KEY = "techstack-rail-width";
 
   function handleRailResize(next: number) {
     sidebarWidth = next;
@@ -211,25 +235,13 @@
   }
 
   function persistRail() {
-    if (typeof localStorage === "undefined") return;
-    try {
-      localStorage.setItem(RAIL_KEY, String(sidebarWidth));
-      localStorage.setItem(RAIL_KEY + "-collapsed", String(sidebarCollapsed));
-    } catch {
-      // A browser that refuses storage still gets a working rail.
-    }
+    saveRailPreference({ collapsed: sidebarCollapsed, width: sidebarWidth });
   }
 
   $effect(() => {
-    if (typeof localStorage === "undefined") return;
-    try {
-      const stored = Number(localStorage.getItem(RAIL_KEY));
-      if (Number.isFinite(stored) && stored > 0) sidebarWidth = stored;
-      sidebarCollapsed =
-        localStorage.getItem(RAIL_KEY + "-collapsed") === "true";
-    } catch {
-      // ignore: defaults are fine
-    }
+    const stored = loadRailPreference();
+    sidebarWidth = stored.width;
+    sidebarCollapsed = stored.collapsed;
   });
 </script>
 
@@ -280,9 +292,9 @@
       >
         <SidebarNav
           collapsed={sidebarCollapsed || isCompactViewport}
-          onToggleCollapse={isCompactViewport
+          onCollapsedChange={isCompactViewport
             ? undefined
-            : toggleSidebarCollapse}
+            : handleRailCollapsedChange}
           width={isCompactViewport ? 76 : sidebarWidth}
           onResize={isCompactViewport ? undefined : handleRailResize}
           onNavigate={() => {
@@ -295,6 +307,7 @@
 
       <!-- Main content -->
       <main
+        id={CONTENT_PANE_ID}
         class="flex-1 min-w-0 overflow-auto overflow-x-hidden flex flex-col"
       >
         <ReloginModal />
@@ -366,6 +379,7 @@
 {/if}
 
 <InAppDialogHost />
+<WalletPromptHost />
 
 <!--
   Standalone owns Companion. Inside Cloud the portal already mounts one;

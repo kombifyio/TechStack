@@ -119,6 +119,15 @@ func (j *Job) setStep(step string) {
 	j.mu.Unlock()
 }
 
+func (j *Job) stepProgress() (string, int) {
+	if j == nil {
+		return "", 0
+	}
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	return j.Step, j.Progress
+}
+
 func (j *Job) replaceResult(result map[string]interface{}) {
 	if j == nil {
 		return

@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -259,5 +260,43 @@ func TestPrepareServiceEventRejectsIdentityRebinding(t *testing.T) {
 
 	if _, err := prepareServiceEvent(current, event, now); !errors.Is(err, ErrConflict) {
 		t.Fatalf("error = %v, want ErrConflict", err)
+	}
+}
+
+// The aggregate's public write boundary must not accept connector authority
+// from Guard observations, nor carry it onto a replaced runtime or image.
+func TestServiceObservationCannotForgeOrMoveConnectorAuthority(t *testing.T) {
+	for _, scenario := range []string{"same-source", "changed-container", "changed-image", "unbound"} {
+		t.Run(scenario, func(t *testing.T) {
+			store := NewMemoryStore()
+			ctx := t.Context()
+			container := strings.Repeat("a", 64)
+			image := "home-assistant@sha256:" + strings.Repeat("b", 64)
+			_, err := store.UpsertServiceRuntime(ctx, ServiceRuntime{ID: "ha", TenantID: "tenant-1", StackID: "stack-1", ServerID: "server-1", ServiceKey: "smart-home", ServiceInstance: "default", Source: serviceregistry.SourceStackKitsInventory, ManagementState: "managed", Metadata: map[string]any{"container_id": container, "image": image, "application_connector": map[string]any{"receipt_digest": "canonical"}, "application_connector_job_id": "canonical-job", "application_connector_projection_revision": int64(1)}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if scenario == "changed-container" {
+				container = strings.Repeat("c", 64)
+			}
+			if scenario == "changed-image" {
+				image = "home-assistant@sha256:" + strings.Repeat("d", 64)
+			}
+			if scenario == "unbound" {
+				image = "home-assistant:latest"
+			}
+			result, err := store.ApplyServiceEvent(ctx, ServiceEvent{TenantID: "tenant-1", ServiceID: "ha", Authority: ServiceEventAuthorityGuard, Runtime: ServiceRuntime{TenantID: "tenant-1", StackID: "stack-1", ServerID: "server-1", ServiceKey: "smart-home", ServiceInstance: "default", Source: serviceregistry.SourceStackKitsInventory, ObservedState: "running", Metadata: map[string]any{"container_id": container, "image": image, "application_connector": map[string]any{"receipt_digest": "forged"}, "application_connector_job_id": "forged-job", "application_connector_projection_revision": int64(99)}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			retained := result.Service.Metadata["application_connector_job_id"]
+			if scenario == "same-source" {
+				if retained != "canonical-job" {
+					t.Fatal("routine observation replaced canonical connector projection")
+				}
+			} else if retained != nil || result.Service.Metadata["application_connector"] != nil || result.Service.Metadata["application_connector_projection_revision"] != nil {
+				t.Fatal("connector authority followed another runtime or mutable image")
+			}
+		})
 	}
 }

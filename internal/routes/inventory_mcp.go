@@ -97,6 +97,7 @@ func newInventoryMCPHandler(h inventoryHandlers, routes inventoryMCPRouteLookup)
 		JSONResponse:                 true,
 		PropagateRequestCancellation: true,
 	})
+	verifiedTransport := maintenanceOriginMiddleware(h.maintenanceOrigin)(transport)
 	return func(e *httpx.Event) error {
 		if !validMCPOrigin(e.Request) {
 			return writeMCPHTTPError(e, http.StatusForbidden, inventoryMCPCodeForbidden, "Forbidden", "origin_not_allowed")
@@ -105,8 +106,16 @@ func newInventoryMCPHandler(h inventoryHandlers, routes inventoryMCPRouteLookup)
 		if err != nil {
 			return writeMCPAuthError(e, err)
 		}
-		ctx := context.WithValue(e.Request.Context(), inventoryMCPCallerKey{}, inventoryMCPCaller{scope: scope, event: e})
-		transport.ServeHTTP(e.Response, e.Request.WithContext(ctx))
+		request, maintenanceCall, captureErr := captureMaintenanceOrigin(e.Request, scope)
+		if captureErr != nil {
+			return writeMCPHTTPError(e, http.StatusUnauthorized, inventoryMCPCodeUnauthenticated, "Unauthorized", "mcp_origin_auth_invalid")
+		}
+		ctx := context.WithValue(request.Context(), inventoryMCPCallerKey{}, inventoryMCPCaller{scope: scope, event: e})
+		if maintenanceCall {
+			verifiedTransport.ServeHTTP(e.Response, request.WithContext(ctx))
+		} else {
+			transport.ServeHTTP(e.Response, request.WithContext(ctx))
+		}
 		return nil
 	}
 }
@@ -135,7 +144,29 @@ func (h inventoryHandlers) newInventoryMCPServer(routes inventoryMCPRouteLookup)
 	for i := range s.Operations {
 		op := &s.Operations[i]
 		if op.MCP != nil && handlers[op.OperationID] == nil {
-			handlers[op.OperationID] = inventoryMCPRouteTool(op, s.Envelope, routes)
+			lookup := routes
+			if op.OperationID == maintenanceOperationID {
+				// Global body-bound Edge authentication already ran on the MCP
+				// request. Invoke only the explicitly registered maintenance leaf;
+				// the generic lookup still denies routes with any middleware.
+				lookup = func(method, path string) (httpx.HandlerFunc, string, bool) {
+					const maintenancePath = "/api/v1/servers/{serverId}/actions"
+					if method != http.MethodPost || path != maintenancePath || h.maintenanceAction == nil {
+						return nil, "", false
+					}
+					return h.maintenanceAction, maintenancePath, true
+				}
+			}
+			if op.OperationID == "getServerMaintenanceImpact" {
+				lookup = func(method, path string) (httpx.HandlerFunc, string, bool) {
+					const impactPath = "/api/v1/servers/{serverId}/maintenance-impact"
+					if method != http.MethodGet || path != impactPath || h.maintenanceImpact == nil {
+						return nil, "", false
+					}
+					return h.maintenanceImpact, impactPath, true
+				}
+			}
+			handlers[op.OperationID] = inventoryMCPRouteTool(op, s.Envelope, lookup)
 		}
 	}
 	if err := mcpbind.Register(server, s, mcpbind.Options{
@@ -253,6 +284,24 @@ func (h inventoryHandlers) authorizeInventoryMCPTool(applicationBound map[string
 		caller, ok := inventoryMCPCallerFromContext(ctx)
 		if !ok {
 			return inventoryMCPFailure(inventoryMCPAuthenticationRequired())
+		}
+		if op.OperationID == maintenanceOperationID {
+			if caller.event == nil || caller.event.Request == nil || maintenanceOriginMarkedWithoutVerification(ctx, caller.event.Request.Header) {
+				return inventoryMCPFailure(&inventoryError{status: http.StatusForbidden, reasonCode: maintenanceReasonOriginDenied, message: "Maintenance origin authority required"})
+			}
+			if !entitlementGateOrHosted(h.maintenanceOrigin.Entitlements).SignedGrant(ctx, ServerMaintenanceEntitlement) {
+				return inventoryMCPFailure(&inventoryError{status: http.StatusForbidden, reasonCode: maintenanceReasonEntitlement, message: "Maintenance entitlement required"})
+			}
+			// Exact ownership, current delegated authority and local admission
+			// guards belong to the maintenance leaf, including stored replay.
+			return nil
+		}
+		if op.OperationID == "getServerMaintenanceImpact" {
+			if !entitlementGateOrHosted(h.maintenanceOrigin.Entitlements).SignedGrant(ctx, ServerMaintenanceEntitlement) {
+				return inventoryMCPFailure(&inventoryError{status: http.StatusForbidden, reasonCode: maintenanceReasonEntitlement, message: "Maintenance entitlement required"})
+			}
+			// The read-only leaf scopes the preview to the exact server owner.
+			return nil
 		}
 		action, ok := inventoryMCPActionForCapability(op.MCP.RequiredCapability)
 		if !ok {

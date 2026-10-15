@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { onMount } from "svelte";
-  import { tr, trParts } from "#lib/i18n.svelte.js";
+  import { getLocale, tr, trParts } from "#lib/i18n.svelte.js";
   import {
     defaultIdentity,
     StackIdentityDisplay,
@@ -18,6 +18,8 @@
     type StackPruneResponse,
   } from "#lib/api/stacks.js";
   import { authStore } from "#lib/stores/auth.svelte.js";
+  import { requestIntroductionStart } from "#lib/onboarding/introduction.js";
+  import SetupReplayDialog from "#lib/components/onboarding/SetupReplayDialog.svelte";
   import { theme, type Theme } from "#lib/stores/theme.js";
   import {
     dashboardPreset,
@@ -40,6 +42,12 @@
     saveStackIdentityToBackend,
     type StackIdentity,
   } from "#lib/stores/stackIdentity.js";
+
+  let replaySetup = $state(false);
+  function continueSetupReplay() {
+    replaySetup = false;
+    requestIntroductionStart({ tourOnly: true });
+  }
 
   // Appearance card state. `deviceFinish` mirrors whether this device holds
   // an explicit finish choice (section-4 tier 2); picking a finish sets it,
@@ -262,6 +270,13 @@
   });
 </script>
 
+{#if replaySetup}
+  <SetupReplayDialog
+    onContinue={continueSetupReplay}
+    onDismiss={() => (replaySetup = false)}
+  />
+{/if}
+
 <main class="mx-auto max-w-4xl p-6 md:p-8">
   <PageHeader title={tr("ui.settings.settings")} />
 
@@ -277,8 +292,43 @@
               {authStore.userEmail || tr("ui.settings.signedIn")}
             </p>
           </div>
-          <Button variant="secondary" class="shrink-0" onclick={handleLogout}>
-            {tr("ui.settings.logout")}
+          <div class="flex shrink-0 flex-wrap gap-2">
+            <Button variant="secondary" onclick={() => (replaySetup = true)}>
+              {tr("setupReplay.restart")}
+            </Button>
+            <Button
+              variant="secondary"
+              onclick={() => requestIntroductionStart({ tourOnly: true })}
+            >
+              {tr("introduction.restart")}
+            </Button>
+            <Button variant="secondary" onclick={handleLogout}>
+              {tr("ui.settings.logout")}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="homelab-settings" class="scroll-mt-6" data-kx="plate">
+      <div class="p-6">
+        <div
+          class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div class="min-w-0">
+            <h2 class="text-lg font-semibold text-foreground">
+              {tr("wizard.settings.title")}
+            </h2>
+            <p class="mt-1 text-sm text-muted-foreground">
+              {tr("wizard.settings.entry")}
+            </p>
+          </div>
+          <Button
+            variant="secondary"
+            testId="open-homelab-settings"
+            onclick={() => goto("/settings/homelab")}
+          >
+            {tr("wizard.settings.open")}
           </Button>
         </div>
       </div>
@@ -351,6 +401,9 @@
               {/each}
             </div>
           </div>
+          <p class="-mt-2 text-xs text-muted-foreground" data-testid="settings-appearance-session-hint">
+            {tr("appearance.sessionHint")}
+          </p>
           <div class="flex flex-wrap items-center justify-between gap-3">
             <div class="flex items-center gap-3">
               <span class="text-sm font-medium text-foreground">{tr("ui.settings.surface")}</span>
@@ -505,9 +558,12 @@
       </div>
     </section>
 
-    <section data-kx="plate">
+    <section id="notification-preferences" data-kx="plate">
       <div class="p-6">
-        <NotificationPreferences apiBase="/api/v1/notifications" />
+        <NotificationPreferences
+          apiBase="/api/v1/notifications"
+          locale={getLocale()}
+        />
       </div>
     </section>
 

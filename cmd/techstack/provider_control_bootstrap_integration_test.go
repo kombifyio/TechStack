@@ -397,14 +397,26 @@ func assertProviderControlRuntimeRolePersistsIncidentsAndWorkflowRuns(t *testing
 	}
 
 	runID := "provider-incident-" + incidentKey
-	if _, err := migrationDatabase.ExecContext(t.Context(), `
+	// RIL runs are FORCE-RLS tenant rows; the seed carries its exact tenant.
+	seedTx, err := migrationDatabase.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatalf("begin workflow run seed: %v", err)
+	}
+	defer func() { _ = seedTx.Rollback() }()
+	if _, err := seedTx.ExecContext(t.Context(), `SELECT set_config('app.tenant_id', $1, true)`, "tenant-bootstrap"); err != nil {
+		t.Fatalf("scope workflow run seed: %v", err)
+	}
+	if _, err := seedTx.ExecContext(t.Context(), `
 		INSERT INTO ril_workflow_runs
-			(run_id, type, status, current_step, input, context, owner_id, server_id,
+			(run_id, tenant_id, type, status, current_step, input, context, owner_id, server_id,
 			 card_id, awaiting_signal, error, created, updated)
-		VALUES ($1,$2,'pending',0,$3::jsonb,'{}'::jsonb,$4,'','','','',now(),now())
+		VALUES ($1,$4,$2,'pending',0,$3::jsonb,'{}'::jsonb,$4,'','','','',now(),now())
 		ON CONFLICT (run_id) DO NOTHING
 	`, runID, "provider_incident_advisory", `{"evidence":{"tenant_id":"tenant-bootstrap"}}`, "tenant-bootstrap"); err != nil {
 		t.Fatalf("seed workflow run prerequisite: %v", err)
+	}
+	if err := seedTx.Commit(); err != nil {
+		t.Fatalf("commit workflow run seed: %v", err)
 	}
 	_, execErr := runtimeDatabase.ExecContext(t.Context(), `
 		UPDATE provider_incidents

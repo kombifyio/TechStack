@@ -13,7 +13,7 @@ import (
 // ListStackKits returns all available StackKit names.
 func (e *Engine) ListStackKits() []string {
 	if e.kitLoader == nil {
-		return []string{StackKitBasement, StackKitCloud}
+		return nil
 	}
 	return e.kitLoader.ListAvailableKits()
 }
@@ -26,42 +26,22 @@ func (e *Engine) GetStackKitInfo(name string) (*StackKitInfo, error) {
 	return e.kitLoader.GetKitInfo(name)
 }
 
-// ValidateWithStackKit validates a spec against both base schema and StackKit.
-func (e *Engine) ValidateWithStackKit(spec *core.KombinationSpec) (*core.ValidationResult, error) {
-	// First do base validation
-	result, err := e.Validate(spec)
-	if err != nil {
-		return nil, err
+// ListStackKitInfo returns the complete metadata catalog or its authority
+// error. Callers must never replace a broken catalog with fabricated rows.
+func (e *Engine) ListStackKitInfo() ([]*StackKitInfo, error) {
+	if e.kitLoader == nil {
+		return nil, fmt.Errorf("StackKit loader not initialized")
 	}
-	if !result.Valid {
-		return result, nil
-	}
-
-	// Then validate against StackKit if available
-	if e.kitLoader != nil && spec.Kit != "" {
-		specValue := e.ctx.Encode(spec)
-		if specValue.Err() != nil {
-			return nil, fmt.Errorf("failed to encode spec: %w", specValue.Err())
-		}
-
-		if kitErr := e.kitLoader.ValidateAgainstKit(spec.Kit, specValue); kitErr != nil {
-			return &core.ValidationResult{
-				Valid: false,
-				Errors: []core.ValidationError{
-					{
-						Path:    "kit",
-						Code:    "stackkit_validation_error",
-						Message: kitErr.Error(),
-					},
-				},
-			}, nil
-		}
-	}
-
-	return result, nil
+	return e.kitLoader.ListKitInfo()
 }
 
-// GetStackKitLoader returns the StackKit loader (for advanced use).
+// ValidateWithStackKit retains the input-validation interface. Canonical
+// StackSpecs are separately authored and validated by the pinned CLI.
+func (e *Engine) ValidateWithStackKit(spec *core.KombinationSpec) (*core.ValidationResult, error) {
+	return e.Validate(spec)
+}
+
+// GetStackKitLoader returns the released metadata reader.
 func (e *Engine) GetStackKitLoader() *StackKitLoader {
 	return e.kitLoader
 }

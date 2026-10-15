@@ -3,6 +3,8 @@ package main
 import (
 	"testing"
 
+	"github.com/kombifyio/techstack/pkg/config"
+
 	"github.com/kombifyio/techstack/pkg/auth"
 	"github.com/kombifyio/techstack/pkg/grpcserver"
 )
@@ -44,5 +46,18 @@ func TestWorkerRoutesDoNotTreatTransportOnlyGRPCServerAsIdentityIssuer(t *testin
 	deps.grpc.identityIssuer = server
 	if issuer := workerAgentIdentityIssuer(deps); issuer != server {
 		t.Fatal("configured agent identity issuer was not exposed to worker routes")
+	}
+}
+
+func TestHostedEditionsNeverIssueGRPCAgentIdentities(t *testing.T) {
+	server := &grpcserver.Server{}
+	certManager := &auth.CertManager{}
+	for _, edition := range []config.Edition{config.EditionPreview, config.EditionSaaSStandalone, config.EditionSaaSEmbedded} {
+		if issuer := editionAgentIdentityIssuer(edition, server, certManager, true); issuer != nil {
+			t.Fatalf("edition %s issues gRPC agent identities with an agent CA configured", edition)
+		}
+	}
+	if issuer := editionAgentIdentityIssuer(config.EditionSelfHostOSS, server, certManager, true); issuer == nil {
+		t.Fatal("self-hosted edition lost gRPC agent identity issuance")
 	}
 }

@@ -104,3 +104,34 @@ func TestBackupOperationsMapToFixedArgv(t *testing.T) {
 		t.Fatalf("restore argv = %v", restore)
 	}
 }
+
+func TestRestoreActivationArgsPreserveOriginalJournalAndAttestReceipt(t *testing.T) {
+	command := &agentpb.StackKitCommand{CommandId: "job-activate-2", Operation: agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE_ACTIVATE, OwnerApproved: true, RestoreResultId: "sha256:" + strings.Repeat("a", 64), ActivationOperationId: "restore-job-original"}
+	command.ExpectedPlanHash = "sha256:" + strings.Repeat("b", 64)
+	args, err := stackKitOperationArgs(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(args, " ") != "backup restore activate "+command.RestoreResultId+" --owner-approve --json --operation-id restore-job-original --expected-plan-hash "+command.ExpectedPlanHash {
+		t.Fatalf("activation argv: %v", args)
+	}
+	command.Operation = agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE_RECOVER
+	args, err = stackKitOperationArgs(command)
+	if err != nil || strings.Join(args, " ") != "backup restore recover restore-job-original --rollback --owner-approve --json --expected-plan-hash "+command.ExpectedPlanHash {
+		t.Fatalf("recovery argv: %v %v", args, err)
+	}
+	stdout := []byte(`{"schemaVersion":"stackkit.command-result/v1","command":"stackkit backup restore recover","status":"success","data":{"apiVersion":"stackkit.restore-activation-result/v1"}}`)
+	result := finishStackKitResult(&agentpb.StackKitResult{}, command, stdout, nil, nil, time.Now())
+	if !result.PinnedCliEvidenceVerified || result.PinnedCliEvidenceSha256 != fmt.Sprintf("sha256:%x", sha256.Sum256(stdout)) {
+		t.Fatal("terminal node receipt not attested")
+	}
+	command.OwnerApproved = false
+	if _, err = stackKitOperationArgs(command); err == nil {
+		t.Fatal("recovery admitted without approval")
+	}
+	command.OwnerApproved = true
+	command.ActivationOperationId = "--replace"
+	if _, err = stackKitOperationArgs(command); err == nil {
+		t.Fatal("journal ID escaped closed argv")
+	}
+}

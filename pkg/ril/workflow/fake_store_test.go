@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"sync"
@@ -192,5 +193,22 @@ func (s *fakeStore) MarkTimerFired(timerID string) error {
 		return fmt.Errorf("%w: timer %s", ErrNotFound, timerID)
 	}
 	tm.Fired = true
+	return nil
+}
+
+// This fixture models engine state-machine mechanics only, not SQL/RLS authority.
+func (s *fakeStore) ForTenant(context.Context, string) (RunStore, error) { return s, nil }
+func (s *fakeStore) ListWorkerTenants(context.Context, string, int) ([]string, error) {
+	return []string{"engine-unit"}, nil
+}
+
+// Pure state-machine fixtures only; SQL atomicity is verified on managed PG.
+func (s *fakeStore) SuspendRun(run *Run, timer *Timer) error {
+	if err := s.UpdateRun(run); err != nil {
+		return err
+	}
+	if timer != nil {
+		return s.CreateTimer(timer)
+	}
 	return nil
 }

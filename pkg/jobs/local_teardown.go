@@ -320,7 +320,7 @@ func removeLocalStackKitWorkloadsWithRelease(ctx context.Context, cfg *Provision
 				StackID: authority.TechstackID, StackKitInstanceID: authority.StackKitInstanceID,
 				TenantID: authority.TenantID, OwnerID: authority.OwnerID, AgentID: server.AgentID,
 				Operation: StackKitLifecycleRemove, OwnerApproved: true, StackKit: authority.StackKit,
-				WorkloadRef: workload.WorkloadRef,
+				NodeRef: workload.NodeRef, WorkloadRef: workload.WorkloadRef,
 			})
 			if err != nil {
 				return err

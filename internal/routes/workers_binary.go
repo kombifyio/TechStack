@@ -15,6 +15,8 @@ import (
 	"time"
 
 	ksapi "github.com/kombifyio/techstack/pkg/api"
+	"github.com/kombifyio/techstack/pkg/controlplane"
+	"github.com/kombifyio/techstack/pkg/guardidentity"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/logger"
 	"github.com/kombifyio/techstack/pkg/pairingtoken"
@@ -163,6 +165,10 @@ func evictNextExpiringAgentBinaryDownloadAttempt(attempts map[string]agentBinary
 // verifies every downloaded byte against the returned SHA-256.
 func currentAgentBinaryArtifact() (agentBinaryArtifact, error) {
 	runningAgentBinaryOnce.Do(func() {
+		if dir := guardReleaseDir(); dir != "" {
+			runningAgentBinaryArtifact, runningAgentBinaryErr = signedGuardBinaryArtifact(dir, managedRuntimeOSLinux, "amd64")
+			return
+		}
 		if path := strings.TrimSpace(os.Getenv("TECHSTACK_AGENT_BINARY_LINUX_AMD64")); path != "" {
 			runningAgentBinaryArtifact, runningAgentBinaryErr = agentBinaryArtifactForPath(path, managedRuntimeOSLinux, "amd64")
 			return
@@ -241,7 +247,7 @@ func (h workerRouteHandlers) agentBinary(e *httpx.Event) error {
 		return httpx.BadRequest(e, "Unsupported agent platform", nil)
 	}
 
-	rawToken := bearerToken(e.Request)
+	rawToken := workerRequestCredential(e.Request)
 	if rawToken == "" {
 		return httpx.Unauthorized(e, "A valid agent download capability is required")
 	}
@@ -254,6 +260,13 @@ func (h workerRouteHandlers) agentBinary(e *httpx.Event) error {
 	artifactProvider := h.binaryArtifact
 	if artifactProvider == nil {
 		artifactProvider = currentAgentBinaryArtifact
+		if dir := guardReleaseDir(); dir != "" {
+			// A configured signed release is the only binary this control plane
+			// serves: the bytes the release workflow signed, not a rebuild.
+			artifactProvider = func() (agentBinaryArtifact, error) {
+				return signedGuardBinaryArtifact(dir, requestedOS, requestedArch)
+			}
+		}
 	}
 	artifact, err := artifactProvider()
 	if err != nil {
@@ -270,6 +283,9 @@ func (h workerRouteHandlers) agentBinary(e *httpx.Event) error {
 	etag := `"` + artifact.sha256 + `"`
 	e.Response.Header().Set("ETag", etag)
 	e.Response.Header().Set(agentBinaryChecksumHeader, artifact.sha256)
+	if version := guardArtifactVersion(); version != "" {
+		e.Response.Header().Set(agentBinaryVersionHeader, version)
+	}
 	if strings.TrimSpace(e.Request.Header.Get("If-None-Match")) == etag {
 		e.Response.Header().Set("Cache-Control", "private, no-store")
 		e.Response.Header().Set("Vary", "Authorization")
@@ -408,15 +424,21 @@ func (h workerRouteHandlers) authorizeAgentBinary(
 		if runtimeAgentID == "" || tenantID == "" {
 			return agentBinaryAuthorization{}, false, httpx.Unauthorized(e, "A valid agent download capability is required")
 		}
-		_, authenticated := h.authenticateRuntimeAgent(e, runtimeAgentID, workerInventoryRequest{
+		authCtx, authenticated := h.authenticateRuntimeAgent(e, runtimeAgentID, workerInventoryRequest{
 			TenantID:       tenantID,
 			RuntimeAgentID: runtimeAgentID,
 		})
 		if !authenticated {
 			return agentBinaryAuthorization{}, false, nil
 		}
+		tokenHash := workerauth.SHA256Hex(rawToken)
+		if authCtx.IdentityBinding == controlplane.IdentityBindingHostKey {
+			// Access tokens rotate every few minutes; the download budget
+			// belongs to the worker, not to one short-lived token.
+			tokenHash = workerauth.SHA256Hex("guard-worker\x00" + tenantID + "\x00" + runtimeAgentID)
+		}
 		return agentBinaryAuthorization{
-			tokenHash: workerauth.SHA256Hex(rawToken),
+			tokenHash: tokenHash,
 			resetAt:   now.Add(agentBinaryDefaultTokenWindow),
 		}, true, nil
 	}
@@ -449,4 +471,17 @@ func normalizeAgentBinaryArch(value string) string {
 	default:
 		return ""
 	}
+}
+
+// workerRequestCredential returns the credential of an artifact download: the
+// bearer capability of an installer or legacy agent, or the key-bound access
+// token of a Guard whose proof authenticateRuntimeAgent verifies.
+func workerRequestCredential(r *http.Request) string {
+	if token := bearerToken(r); token != "" {
+		return token
+	}
+	if scheme, credentials := authorizationScheme(r); scheme == strings.ToLower(guardidentity.TokenType) {
+		return credentials
+	}
+	return ""
 }

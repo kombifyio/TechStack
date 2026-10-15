@@ -6,17 +6,20 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/privatefs"
 	"github.com/kombifyio/techstack/internal/stackkitrelease"
-	"github.com/kombifyio/techstack/pkg/privatechannel"
 )
 
 const (
@@ -28,7 +31,9 @@ const (
 type StackKitRuntimeBootstrapConfig struct {
 	URL, AgentToken, RuntimeAgentID, TenantID string
 	HTTPClient                                *http.Client
-	PrivateLANHTTPOrigin                      string
+	// StageDir is where a downloaded bundle is written before installation;
+	// empty selects the system temp directory.
+	StageDir string
 }
 
 type StackKitRuntimeConvergenceResult struct {
@@ -50,28 +55,49 @@ func (executor *StackKitExecutor) EnsureRuntimeEvidence(ctx context.Context, cfg
 	if executor == nil {
 		return StackKitRuntimeConvergenceResult{}, fmt.Errorf("StackKits executor is required")
 	}
-	executor.mu.Lock()
-	defer executor.mu.Unlock()
-	if !executor.Available() {
-		return StackKitRuntimeConvergenceResult{}, fmt.Errorf("StackKits runtime paths are not configured")
+	installed, _ := executor.InstalledRuntimeBundleDigest()
+	bundle, err := FetchStackKitRuntimeBundle(ctx, cfg, installed)
+	if err != nil {
+		return StackKitRuntimeConvergenceResult{}, err
 	}
-	runtimeRoot := filepath.Dir(filepath.Clean(executor.pinPath))
+	if bundle.NotModified {
+		return executor.ConfirmInstalledRuntime()
+	}
+	defer func() { _ = os.Remove(bundle.Path) }()
+	return executor.InstallRuntimeBundle(bundle.Path, bundle.SHA256)
+}
+
+// StackKitRuntimeBundle is a downloaded, digest-checked StackKits runtime
+// bundle waiting to be installed.
+type StackKitRuntimeBundle struct {
+	// NotModified is true when the control plane reports the installed bundle
+	// as current; Path and SHA256 are empty then.
+	NotModified bool
+	Path        string
+	SHA256      string
+}
+
+// FetchStackKitRuntimeBundle downloads the bundle the authenticated control
+// plane currently publishes into cfg.StageDir (the system temp directory when
+// empty). It needs the Guard's credential and never installs anything, so an
+// unprivileged Guard can run it and hand the file to the privileged executor.
+func FetchStackKitRuntimeBundle(ctx context.Context, cfg StackKitRuntimeBootstrapConfig, installedDigest string) (StackKitRuntimeBundle, error) {
 	if strings.TrimSpace(cfg.URL) == "" {
-		return StackKitRuntimeConvergenceResult{}, fmt.Errorf("StackKits release URL is required")
+		return StackKitRuntimeBundle{}, fmt.Errorf("StackKits release URL is required")
 	}
 	parsedURL, err := url.Parse(cfg.URL)
-	if err != nil || parsedURL.Hostname() == "" || (parsedURL.Scheme != "https" && !(parsedURL.Scheme == "http" && isLoopbackHost(parsedURL.Hostname())) && !privatechannel.MatchesLANOrigin(cfg.URL, cfg.PrivateLANHTTPOrigin)) {
-		return StackKitRuntimeConvergenceResult{}, fmt.Errorf("StackKits release URL must use HTTPS or loopback HTTP")
+	if err != nil || parsedURL.Hostname() == "" || (parsedURL.Scheme != "https" && !(parsedURL.Scheme == "http" && isLoopbackHost(parsedURL.Hostname()))) {
+		return StackKitRuntimeBundle{}, fmt.Errorf("StackKits release URL must use HTTPS or loopback HTTP")
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.URL, nil)
 	if err != nil {
-		return StackKitRuntimeConvergenceResult{}, err
+		return StackKitRuntimeBundle{}, err
 	}
 	request.Header.Set("Authorization", "Bearer "+strings.TrimSpace(cfg.AgentToken))
 	request.Header.Set("X-Kombify-Runtime-Agent-ID", strings.TrimSpace(cfg.RuntimeAgentID))
 	request.Header.Set("X-Kombify-Tenant-ID", strings.TrimSpace(cfg.TenantID))
-	if digest, readErr := readInstalledStackKitBundleDigest(runtimeRoot); readErr == nil {
-		request.Header.Set("If-None-Match", `"`+digest+`"`)
+	if len(installedDigest) == sha256.Size*2 {
+		request.Header.Set("If-None-Match", `"`+installedDigest+`"`)
 	}
 	client := cfg.HTTPClient
 	if client == nil {
@@ -79,47 +105,356 @@ func (executor *StackKitExecutor) EnsureRuntimeEvidence(ctx context.Context, cfg
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		return StackKitRuntimeConvergenceResult{}, err
+		return StackKitRuntimeBundle{}, err
 	}
 	defer response.Body.Close()
 	if response.StatusCode == http.StatusNotModified {
-		if err := executor.validate(); err != nil {
-			return StackKitRuntimeConvergenceResult{}, fmt.Errorf("control plane reports current StackKits bundle but local runtime is invalid: %w", err)
-		}
-		return executor.currentStackKitRuntimeEvidence()
+		return StackKitRuntimeBundle{NotModified: true}, nil
 	}
 	if response.StatusCode != http.StatusOK {
-		return StackKitRuntimeConvergenceResult{}, fmt.Errorf("StackKits release download returned HTTP %d", response.StatusCode)
+		return StackKitRuntimeBundle{}, fmt.Errorf("StackKits release download returned HTTP %d", response.StatusCode)
 	}
 	expected := strings.ToLower(strings.TrimSpace(response.Header.Get("X-Kombify-Artifact-SHA256")))
 	if len(expected) != sha256.Size*2 {
-		return StackKitRuntimeConvergenceResult{}, fmt.Errorf("StackKits release checksum is missing")
+		return StackKitRuntimeBundle{}, fmt.Errorf("StackKits release checksum is missing")
 	}
-	tmp, err := os.CreateTemp("", "techstack-stackkit-release-*.tar.gz")
+	tmp, err := os.CreateTemp(cfg.StageDir, "techstack-stackkit-release-*.tar.gz")
 	if err != nil {
-		return StackKitRuntimeConvergenceResult{}, err
+		return StackKitRuntimeBundle{}, err
 	}
 	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
 	hash := sha256.New()
 	written, err := io.Copy(io.MultiWriter(tmp, hash), io.LimitReader(response.Body, maxStackKitRuntimeBundleBytes+1))
 	closeErr := tmp.Close()
+	fail := func(cause error) (StackKitRuntimeBundle, error) {
+		_ = os.Remove(tmpPath)
+		return StackKitRuntimeBundle{}, cause
+	}
+	if err != nil {
+		return fail(err)
+	}
+	if closeErr != nil {
+		return fail(closeErr)
+	}
+	if written > maxStackKitRuntimeBundleBytes {
+		return fail(fmt.Errorf("StackKits release bundle exceeds size limit"))
+	}
+	if hex.EncodeToString(hash.Sum(nil)) != expected {
+		return fail(fmt.Errorf("StackKits release bundle checksum mismatch"))
+	}
+	return StackKitRuntimeBundle{Path: tmpPath, SHA256: expected}, nil
+}
+
+// RuntimeRoot is the directory the StackKits runtime is installed into.
+func (executor *StackKitExecutor) RuntimeRoot() string {
+	if executor == nil || !executor.Available() {
+		return ""
+	}
+	return filepath.Dir(filepath.Clean(executor.pinPath))
+}
+
+// InstalledRuntimeBundleDigest returns the digest of the installed StackKits
+// bundle, which names the bundle the control plane may answer 304 for.
+func (executor *StackKitExecutor) InstalledRuntimeBundleDigest() (string, error) {
+	if executor == nil || !executor.Available() {
+		return "", fmt.Errorf("StackKits runtime paths are not configured")
+	}
+	executor.mu.RLock()
+	defer executor.mu.RUnlock()
+	ctx, cancel := context.WithTimeout(context.Background(), hostSecurityHelpTimeout)
+	defer cancel()
+	unlock, err := executor.lockRuntime(ctx, false)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+	return readInstalledStackKitBundleDigest(filepath.Dir(filepath.Clean(executor.pinPath)))
+}
+
+// ConfirmInstalledRuntime revalidates the installed runtime after the control
+// plane reported it current.
+func (executor *StackKitExecutor) ConfirmInstalledRuntime() (StackKitRuntimeConvergenceResult, error) {
+	if executor == nil {
+		return StackKitRuntimeConvergenceResult{}, fmt.Errorf("StackKits executor is required")
+	}
+	executor.mu.Lock()
+	defer executor.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), hostSecurityHelpTimeout)
+	defer cancel()
+	unlock, err := executor.lockRuntime(ctx, false)
 	if err != nil {
 		return StackKitRuntimeConvergenceResult{}, err
 	}
-	if closeErr != nil {
-		return StackKitRuntimeConvergenceResult{}, closeErr
+	defer unlock()
+	if err := executor.validate(); err != nil {
+		return StackKitRuntimeConvergenceResult{}, fmt.Errorf("control plane reports current StackKits bundle but local runtime is invalid: %w", err)
 	}
-	if written > maxStackKitRuntimeBundleBytes {
-		return StackKitRuntimeConvergenceResult{}, fmt.Errorf("StackKits release bundle exceeds size limit")
+	return executor.currentStackKitRuntimeEvidence()
+}
+
+// InstallRuntimeBundle installs a downloaded bundle whose sha256 the caller
+// has already established, then revalidates the pinned release.
+func (executor *StackKitExecutor) InstallRuntimeBundle(bundlePath, digest string) (StackKitRuntimeConvergenceResult, error) {
+	return executor.InstallRuntimeBundleChecked(bundlePath, digest, nil)
+}
+
+// InstallRuntimeBundleChecked installs a bundle after check approved its
+// extracted tree. The privileged executor uses it to require that the
+// executables about to run as root are the ones a signed release names.
+func (executor *StackKitExecutor) InstallRuntimeBundleChecked(bundlePath, digest string, check func(stageDir string) error) (StackKitRuntimeConvergenceResult, error) {
+	return executor.InstallRuntimeBundleCheckedContext(context.Background(), bundlePath, digest, check)
+}
+
+// InstallRuntimeBundleCheckedContext preserves the installed public artifact
+// before the verified replacement can remove its runtime tree.
+func (executor *StackKitExecutor) InstallRuntimeBundleCheckedContext(ctx context.Context, bundlePath, digest string, check func(stageDir string) error) (StackKitRuntimeConvergenceResult, error) {
+	if executor == nil {
+		return StackKitRuntimeConvergenceResult{}, fmt.Errorf("StackKits executor is required")
 	}
-	if hex.EncodeToString(hash.Sum(nil)) != expected {
-		return StackKitRuntimeConvergenceResult{}, fmt.Errorf("StackKits release bundle checksum mismatch")
+	executor.mu.Lock()
+	defer executor.mu.Unlock()
+	if !executor.Available() {
+		return StackKitRuntimeConvergenceResult{}, fmt.Errorf("StackKits runtime paths are not configured")
 	}
-	if err := installStackKitRuntimeBundleValidated(tmpPath, runtimeRoot, expected, executor.validate); err != nil {
+	unlock, err := executor.lockRuntime(ctx, true)
+	if err != nil {
+		return StackKitRuntimeConvergenceResult{}, err
+	}
+	defer unlock()
+	runtimeRoot := filepath.Dir(filepath.Clean(executor.pinPath))
+	prepare := func(stage string) error {
+		if check != nil {
+			if err := check(stage); err != nil {
+				return err
+			}
+		}
+		if err := executor.retainInstalledRelease(ctx, stage, check != nil); err != nil {
+			return fmt.Errorf("retain installed StackKits public artifact before replacement: %w", err)
+		}
+		return ctx.Err()
+	}
+	if err := installStackKitRuntimeBundleChecked(bundlePath, runtimeRoot, digest, prepare, executor.validate); err != nil {
 		return StackKitRuntimeConvergenceResult{}, err
 	}
 	return executor.currentStackKitRuntimeEvidence()
+}
+
+func (executor *StackKitExecutor) retainInstalledRelease(ctx context.Context, stage string, authenticated bool) error {
+	installed, err := stackkitrelease.LoadPin(executor.pinPath)
+	if errors.Is(err, os.ErrNotExist) {
+		entries, rootErr := os.ReadDir(executor.RuntimeRoot())
+		if errors.Is(rootErr, os.ErrNotExist) || (rootErr == nil && len(entries) == 0) {
+			return nil // A fresh installation has no original runtime to retain.
+		}
+		return fmt.Errorf("existing StackKits runtime has no valid installed release pin")
+	}
+	if err != nil {
+		return err
+	}
+	if filepath.Clean(installed.BinaryPath) != filepath.Join(executor.RuntimeRoot(), "bin", "stackkit") {
+		return fmt.Errorf("installed StackKits pin points outside the runtime root")
+	}
+	release, err := (stackkitrelease.Cache{Root: executor.cacheRoot}).ResolvePin(executor.pinPath)
+	if err != nil {
+		return err
+	}
+	next, err := stackkitrelease.LoadPin(filepath.Join(stage, "stackkits-release-pin.json"))
+	if err != nil {
+		return err
+	}
+	if installed.Kit == next.Kit && installed.Version == next.Version && installed.Platform == next.Platform &&
+		installed.ArchiveSHA256 == next.ArchiveSHA256 && installed.IndexSHA256 == next.IndexSHA256 && installed.BinarySHA256 == next.BinarySHA256 {
+		// Refreshing the same immutable CLI cannot strand a different original.
+		return nil
+	}
+	if !authenticated {
+		return fmt.Errorf("replacement CLI requires authenticated staged runtime evidence")
+	}
+	cache, err := executor.persistentReleaseCache()
+	if err != nil {
+		return err
+	}
+	if rel, err := filepath.Rel(stage, cache); err != nil || rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)) {
+		return fmt.Errorf("StackKits public artifact cache must be outside the staging tree")
+	}
+	cliDigest, err := stackKitRegularDigest(release.BinaryPath())
+	if err != nil {
+		return err
+	}
+	stagedCLI := filepath.Join(stage, "bin", "stackkit")
+	stagedDigest, err := stackKitRegularDigest(stagedCLI)
+	if err != nil || stagedDigest != next.BinarySHA256 {
+		return fmt.Errorf("staged StackKits CLI differs from its verified pin")
+	}
+	ctx, cancel := context.WithTimeout(ctx, defaultStackKitCommandTimeout)
+	defer cancel()
+	process := newStackKitProcess(ctx, stagedCLI, "--no-log", "kit", "prepare-source-generation", "--cache-only", "--release-cache", cache,
+		"--source-kit", installed.Kit, "--source-release", installed.Version,
+		"--source-os", installed.Platform.OS, "--source-arch", installed.Platform.Arch,
+		"--source-archive-sha256", installed.ArchiveSHA256, "--source-index-sha256", installed.IndexSHA256,
+		"--source-cli-sha256", cliDigest, "--json") // #nosec G204 -- fixed CLI beneath the authenticated private stage; arguments bind the installed pin and host cache.
+	process.Env = stackKitChildEnvironment(os.Environ())
+	stdout, stderr := newBoundedStackKitBuffer(maxStackKitCommandOutputBytes), newBoundedStackKitBuffer(maxStackKitCommandOutputBytes)
+	process.Stdout, process.Stderr = stdout, stderr
+	if err := process.Run(); err != nil {
+		return fmt.Errorf("public artifact retention failed: %w: %s", err, errorString(fmt.Errorf("%s", stderr.String())))
+	}
+	var result struct {
+		SchemaVersion string `json:"schemaVersion"`
+		Command       string `json:"command"`
+		Status        string `json:"status"`
+		Data          struct {
+			Prepared      bool                    `json:"prepared"`
+			SourceRelease stackkitrelease.Receipt `json:"sourceRelease"`
+			CLISHA256     string                  `json:"cliSha256"`
+		} `json:"data"`
+	}
+	if stdout.truncated || json.Unmarshal(stdout.buffer.Bytes(), &result) != nil {
+		return fmt.Errorf("public artifact retention returned invalid evidence")
+	}
+	proof := result.Data.SourceRelease
+	if result.SchemaVersion != stackKitCommandResultVersion || result.Command != "stackkit kit prepare-source-generation" || result.Status != "success" ||
+		!result.Data.Prepared || result.Data.CLISHA256 != cliDigest || proof.SchemaVersion != stackkitrelease.ReceiptSchemaVersion ||
+		proof.Kit != installed.Kit || proof.Version != installed.Version || proof.Platform != installed.Platform ||
+		proof.ArchiveSHA256 != installed.ArchiveSHA256 || proof.IndexSHA256 != installed.IndexSHA256 ||
+		!stackKitSHA256HexPattern.MatchString(proof.AttestationSHA256) || !stackKitSHA256HexPattern.MatchString(proof.IndexAttestationSHA256) ||
+		!stackKitSHA256HexPattern.MatchString(proof.TrustedRootSHA256) {
+		return fmt.Errorf("public artifact retention does not bind the installed StackKits artifact and CLI")
+	}
+	return nil
+}
+
+var stackKitSHA256HexPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+func stackKitRegularDigest(path string) (string, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > 512<<20 {
+		return "", fmt.Errorf("StackKits CLI must be a bounded regular file")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !os.SameFile(info, opened) {
+		return "", fmt.Errorf("StackKits CLI changed before hashing")
+	}
+	hash := sha256.New()
+	written, err := io.Copy(hash, io.LimitReader(file, info.Size()+1))
+	after, statErr := file.Stat()
+	if err != nil || statErr != nil || written != info.Size() || after.Size() != info.Size() || !after.ModTime().Equal(info.ModTime()) {
+		return "", fmt.Errorf("StackKits CLI changed while hashing")
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+// persistentReleaseCache is host configuration, independent of child env and
+// outside both trees that runtime replacement may delete. Refuse symlink routes.
+func (executor *StackKitExecutor) persistentReleaseCache() (string, error) {
+	if !filepath.IsAbs(executor.cacheRoot) {
+		return "", fmt.Errorf("StackKits public artifact cache must be absolute")
+	}
+	cache := filepath.Clean(executor.cacheRoot)
+	root, err := filepath.Abs(executor.RuntimeRoot())
+	if err != nil {
+		return "", err
+	}
+	for _, replaced := range []string{root, root + ".previous"} {
+		rel, err := filepath.Rel(replaced, cache)
+		if err != nil || rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)) {
+			return "", fmt.Errorf("StackKits public artifact cache must be outside the replaced runtime")
+		}
+	}
+	if err := stackKitTrustedDirectoryPath(cache); err != nil {
+		return "", err
+	}
+	return cache, nil
+}
+
+func stackKitTrustedDirectoryPath(leaf string) error {
+	protectedChild := false
+	for path := leaf; ; path = filepath.Dir(path) {
+		info, err := os.Lstat(path)
+		if err == nil && (!info.IsDir() || info.Mode()&os.ModeSymlink != 0) {
+			return fmt.Errorf("StackKits host path must use only directories without symlinks")
+		}
+		if err == nil && !(path != leaf && trustedStackKitTempAncestor(path, info)) {
+			anchor, openErr := os.OpenRoot(path)
+			if openErr != nil {
+				return openErr
+			}
+			ownerErr := checkStackKitRuntimeAncestor(anchor, path != leaf && filepath.Dir(path) == path && protectedChild)
+			_ = anchor.Close()
+			if ownerErr != nil {
+				return fmt.Errorf("StackKits host path ancestor %s is writable by another principal: %w", path, ownerErr)
+			}
+		}
+		protectedChild = err == nil
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if filepath.Dir(path) == path {
+			break
+		}
+	}
+	return nil
+}
+
+// Socket-activated Guard executors are separate processes. The sibling lock
+// survives runtime renames and protects the selected CLI through completion.
+func (executor *StackKitExecutor) lockRuntime(ctx context.Context, exclusive bool) (func(), error) {
+	if !executor.Available() {
+		return nil, fmt.Errorf("StackKits runtime paths are not configured")
+	}
+	parent := filepath.Dir(executor.RuntimeRoot())
+	if err := stackKitTrustedDirectoryPath(parent); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return nil, err
+	}
+	root, err := os.OpenRoot(parent)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	if err := checkStackKitRuntimeAncestor(root, false); err != nil {
+		return nil, err
+	}
+	name := "." + filepath.Base(executor.RuntimeRoot()) + ".runtime.lock"
+	file, err := privatefs.OpenFile(root, name, os.O_CREATE|os.O_RDWR, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		file, err = privatefs.OpenFile(root, name, os.O_RDWR, 0o600)
+	}
+	if err != nil {
+		return nil, err
+	}
+	for {
+		if err := ctx.Err(); err != nil {
+			_ = file.Close()
+			return nil, err
+		}
+		locked, err := tryStackKitRuntimeLock(file, exclusive)
+		if err != nil {
+			_ = file.Close()
+			return nil, err
+		}
+		if locked {
+			return func() { releaseStackKitRuntimeLock(file) }, nil
+		}
+		timer := time.NewTimer(100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			_ = file.Close()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 func (executor *StackKitExecutor) currentStackKitRuntimeEvidence() (StackKitRuntimeConvergenceResult, error) {
@@ -137,6 +472,12 @@ func isLoopbackHost(host string) bool {
 }
 
 func installStackKitRuntimeBundleValidated(bundlePath, targetRoot, bundleDigest string, validate func() error) error {
+	return installStackKitRuntimeBundleChecked(bundlePath, targetRoot, bundleDigest, nil, validate)
+}
+
+// installStackKitRuntimeBundleChecked extracts the bundle into a staging
+// directory, lets check inspect it, and only then activates it.
+func installStackKitRuntimeBundleChecked(bundlePath, targetRoot, bundleDigest string, check func(stageDir string) error, validate func() error) error {
 	parent := filepath.Dir(targetRoot)
 	if err := os.MkdirAll(parent, 0755); err != nil {
 		return err
@@ -202,6 +543,11 @@ func installStackKitRuntimeBundleValidated(bundlePath, targetRoot, bundleDigest 
 			}
 		default:
 			return fmt.Errorf("unsupported StackKits bundle entry %q", header.Name)
+		}
+	}
+	if check != nil {
+		if err := check(stage); err != nil {
+			return err
 		}
 	}
 	if err := os.WriteFile(filepath.Join(stage, stackKitRuntimeBundleDigestFile), []byte(bundleDigest+"\n"), 0600); err != nil {

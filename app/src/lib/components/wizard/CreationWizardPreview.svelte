@@ -7,15 +7,30 @@
     createDefaultConfig,
     CANONICAL_USE_CASE_GOALS,
   } from "#lib/wizard/index.js";
-  import { createPreviewCatalog } from "#lib/wizard/creationPreview.js";
+  import {
+    loadPreviewUseCaseCatalog,
+    type UseCaseCatalogView,
+  } from "#lib/api/useCaseCatalog.js";
   import type { CreationVariant } from "#lib/wizard/creationGoals.js";
   import CreationGoals from "./CreationGoals.svelte";
   import ThemeToggle from "../ui/ThemeToggle.svelte";
   import ServerStep from "./steps/ServerStep.svelte";
 
-  let { initialVariant = "discover" }: { initialVariant?: CreationVariant } =
-    $props();
-  const catalog = createPreviewCatalog();
+  let {
+    initialVariant = "discover",
+    catalogTag = "latest",
+  }: { initialVariant?: CreationVariant; catalogTag?: string } = $props();
+  // The tiles of exactly one StackKits release: the repin renders the same
+  // response the runtime API serves into static/preview-catalogs/<tag>.json.
+  let catalog = $state(new Map<string, UseCaseCatalogView>());
+  let releaseTag = $state<string | undefined>(undefined);
+  $effect(() => {
+    const tag = catalogTag;
+    void loadPreviewUseCaseCatalog(tag).then((loaded) => {
+      catalog = loaded.views;
+      releaseTag = loaded.release?.tag;
+    });
+  });
   function initialConfig() {
     const config = createDefaultConfig();
     const goals = Object.fromEntries(
@@ -49,8 +64,9 @@
       <LanguageSwitcher label={tr("wizard.preview.language")} />
     </div>
   </nav>
-  <aside class="preview-notice" role="note">
-    {tr("wizard.preview.sandboxNotice")}
+  <aside class="preview-notice" role="note" data-testid="preview-release">
+    {tr("wizard.preview.sandboxNotice")}{#if releaseTag}
+      · {tr("wizard.preview.release", { tag: releaseTag })}{/if}
   </aside>
   <div
     class="preview-steps"

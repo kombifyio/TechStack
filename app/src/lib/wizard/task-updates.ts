@@ -134,11 +134,14 @@ function failedTaskIndex(
 export function updateTasksFromJob(tasks: Task[], job: JobProgress): Task[] {
   const result = parseJobResult(job.result);
   const scopedTasks = isAddServerJob(result)
-    ? createAddServerTaskList(
-        getString(result, [
-          "server_provisioning_mode",
-          "serverProvisioningMode",
-        ]),
+    ? sameTaskShape(
+        tasks,
+        createAddServerTaskList(
+          getString(result, [
+            "server_provisioning_mode",
+            "serverProvisioningMode",
+          ]),
+        ),
       )
     : tasks;
   const { currentStepId, jobStatus, currentMessage, currentStepIndex } =
@@ -149,6 +152,15 @@ export function updateTasksFromJob(tasks: Task[], job: JobProgress): Task[] {
   }
   if (jobStatus === "failed" || jobStatus === "error") {
     return failTasksFromJob(scopedTasks, currentStepId);
+  }
+  if (
+    currentStepIndex >= 0 &&
+    currentStepIndex < reachedTaskIndex(scopedTasks)
+  ) {
+    // A resumed job replays steps that are already durable. The visible
+    // position only moves forward; the replay message belongs to an earlier
+    // step, so the active task keeps its own message.
+    return advanceTasksToActiveMessage(scopedTasks, "", job.progress);
   }
   if (currentStepIndex >= 0) {
     return advanceTasksToStep(
@@ -190,20 +202,34 @@ function isFullyCompletedRollout(
   return !hasRuntimeTasks || runtimeVerified;
 }
 
-// completeUpToIndex marks every task up to and including currentStepIndex as
-// completed and resets the rest to pending.
+// reachedTaskIndex is the furthest task the run has started or finished; -1
+// before the first step.
+function reachedTaskIndex(tasks: Task[]): number {
+  return tasks.findLastIndex(
+    (task) => task.status === "completed" || task.status === "running",
+  );
+}
+
+// completeUpToIndex marks every task up to and including currentStepIndex (or
+// the already completed prefix, whichever is further) as completed and resets
+// the rest to pending.
 function completeUpToIndex(tasks: Task[], currentStepIndex: number): Task[] {
+  const lastIndex = Math.max(
+    currentStepIndex,
+    tasks.findLastIndex((task) => task.status === "completed"),
+  );
   return tasks.map((task, index) =>
-    index <= currentStepIndex
+    index <= lastIndex
       ? { ...task, status: "completed" as const }
       : { ...task, status: "pending" as const },
   );
 }
 
 // completeDefaultTasks marks the Unifier (DEFAULT_TASKS) phases as completed and
-// resets any remaining runtime tasks to pending.
+// resets any unfinished runtime tasks to pending.
 function completeDefaultTasks(tasks: Task[]): Task[] {
   return tasks.map((task) =>
+    task.status === "completed" ||
     DEFAULT_TASKS.some((defaultTask) => defaultTask.id === task.id)
       ? { ...task, status: "completed" as const }
       : { ...task, status: "pending" as const },
@@ -223,6 +249,13 @@ function completeTasksFromJob(
     return completeUpToIndex(tasks, currentStepIndex);
   }
   return completeDefaultTasks(tasks);
+}
+
+// sameTaskShape keeps the current list (and its reached position) when it
+// already has the shape of `next`; otherwise the new shape starts fresh.
+function sameTaskShape(tasks: Task[], next: Task[]): Task[] {
+  const ids = (list: Task[]) => list.map((task) => task.id).join("|");
+  return ids(tasks) === ids(next) ? tasks : next;
 }
 
 function isAddServerJob(result: Record<string, unknown> | null): boolean {
@@ -320,6 +353,14 @@ function advanceTasksToActiveMessage(
   });
 }
 
+// Backend step ids that have no task of their own, mapped to the task whose
+// work they belong to (pkg/jobs/handlers.go).
+const BACKEND_STEP_TASK: Record<string, string> = {
+  provision: "prepare_rollout",
+  port_admission: "stackkit_rollout",
+  finalize: "restore_drill",
+};
+
 function resolveKnownTaskId(
   value: string | undefined,
   tasks: Task[],
@@ -327,6 +368,10 @@ function resolveKnownTaskId(
   const candidate = (value ?? "").trim();
   if (!candidate) return undefined;
   if (isExactTaskId(candidate, tasks)) return candidate;
+  const mapped = BACKEND_STEP_TASK[candidate];
+  if (mapped) {
+    return tasks.some((task) => task.id === mapped) ? mapped : undefined;
+  }
   const alias = resolveTaskIdAlias(candidate);
   return alias && tasks.some((task) => task.id === alias) ? alias : undefined;
 }
@@ -551,5 +596,10 @@ function resolveErrorDetails(
     isManagedRuntimeTroubleshooting(troubleshootingInfo),
   );
   if (shouldAppendRawError) return `${job.error_details}\n\n${errorMessage}`;
+  // An unclassified error has only a generic troubleshooting text; the raw
+  // backend message is the one actionable detail, so never hide it.
+  if (troubleshootingInfo === ERROR_TROUBLESHOOTING.unknown_error) {
+    return job.error_details || errorMessage;
+  }
   return job.error_details || troubleshootingInfo.details || errorMessage;
 }

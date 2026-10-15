@@ -2,6 +2,43 @@
 // routes. Merged into the main dictionary by i18n.ts.
 export const uiMessages = {
   en: {
+    "setupReplay.restart": "Repeat setup",
+    "setupReplay.title": "Your current connection",
+    "setupReplay.body":
+      "Review how this device connects, then revisit the introduction. Your settings draft stays here.",
+    "setupReplay.edition": "Installer edition",
+    "setupReplay.localEdition": "Techstack Local",
+    "setupReplay.cloudEdition": "Techstack Cloud",
+    "setupReplay.connection": "Connection",
+    "setupReplay.address": "Address",
+    "setupReplay.browser": "Web browser",
+    "setupReplay.unavailable":
+      "The desktop connection could not be read. You can still skip to the introduction.",
+    "setupReplay.skip": "Skip setup",
+    "setupReplay.keep": "Keep connection",
+    "ui.services.stackIt": "Stack it",
+    "ui.services.approveStackIt": "Approve this adoption",
+    "ui.services.releaseBinding": "Release lifecycle management",
+    "ui.services.adoptionScope":
+      "Review this existing Home Assistant Container for in-place lifecycle management. Other applications and moving to another Node are not supported by this profile.",
+    "ui.services.adoptionSource": "Existing container",
+    "ui.services.adoptionData": "Preserved configuration",
+    "ui.services.adoptionPreserves":
+      "Accounts, configuration and persistent data remain with this application. No runtime is recreated and no account is initialized.",
+    "ui.services.adoptionOperations":
+      "The approved binding permits verification, start, stop and restart. Updating or recreating the application requires a separate supported plan.",
+    "ui.services.adoptionProgress": "View operation progress",
+    "ui.services.adoptionChecking": "Checking the retained operation",
+    "ui.services.adoptionFailed":
+      "The operation did not complete. Review its evidence before retrying.",
+    "ui.services.adoptionUnavailable":
+      "This source needs an exact container identity and a capable published StackKits release on its connected Guard before adoption can be assessed.",
+    "ui.services.adoptionVerified":
+      "Lifecycle binding verified. This application is now Stacked.",
+    "ui.services.releasePreservesRuntime":
+      "Release the lifecycle binding. The existing container, accounts, configuration and data remain in place and keep their current state.",
+    "ui.services.bindingReleased":
+      "Lifecycle binding released. The application remains visible as Unstacked.",
     "language.switch": "Language",
     "settings.language.description":
       "The language of this interface on this device. Until you choose one, your browser language is used, and English otherwise.",
@@ -22,6 +59,8 @@ export const uiMessages = {
     "ui.dashboard.alerts": "Alerts",
     "ui.common.importExport": "Import / Export",
     "ui.dashboard.sections": "Homelab sections",
+    "ui.dashboard.failureDetails": "Details",
+    "ui.dashboard.hideFailureDetails": "Hide details",
     "ui.dashboard.inventoryUnavailable":
       "Canonical Node and service state are unavailable. The retained telemetry below is diagnostic and is not treated as a zero inventory.",
     "ui.dashboard.noNodes": "No Nodes are registered for this homelab yet.",
@@ -101,6 +140,10 @@ export const uiMessages = {
     "ui.theme.toggle": "Toggle dark/light theme",
     "ui.layout.toggleMenu": "Toggle menu",
     "ui.layout.closeMenu": "Close menu",
+    "ui.layout.collapseSidebar": "Collapse sidebar",
+    "ui.layout.expandSidebar": "Expand sidebar",
+    "ui.layout.resizeSidebar": "Resize sidebar",
+    "ui.layout.sidebarCollapsed": "Collapsed",
     "ui.redirect.homelab": "Redirecting into your homelab...",
     "ui.redirect.generic": "Redirecting...",
     "ui.sso.signingIn": "Signing you in...",
@@ -136,6 +179,43 @@ export const uiMessages = {
     "ui.homelab.getStarted": "Get started",
   },
   de: {
+    "setupReplay.restart": "Einrichtung wiederholen",
+    "setupReplay.title": "Deine aktuelle Verbindung",
+    "setupReplay.body":
+      "Prüfe die Verbindung dieses Geräts und wiederhole danach die Einführung. Dein Einstellungsentwurf bleibt hier.",
+    "setupReplay.edition": "Installer-Edition",
+    "setupReplay.localEdition": "Techstack Local",
+    "setupReplay.cloudEdition": "Techstack Cloud",
+    "setupReplay.connection": "Verbindung",
+    "setupReplay.address": "Adresse",
+    "setupReplay.browser": "Webbrowser",
+    "setupReplay.unavailable":
+      "Die Desktop-Verbindung konnte nicht gelesen werden. Du kannst trotzdem zur Einführung weitergehen.",
+    "setupReplay.skip": "Einrichtung überspringen",
+    "setupReplay.keep": "Verbindung beibehalten",
+    "ui.services.stackIt": "Stack it",
+    "ui.services.approveStackIt": "Diese Übernahme freigeben",
+    "ui.services.releaseBinding": "Lifecycle-Verwaltung lösen",
+    "ui.services.adoptionScope":
+      "Prüfe diesen vorhandenen Home Assistant Container für eine Übernahme am bisherigen Ort. Andere Anwendungen und der Umzug auf einen anderen Node werden von diesem Profil noch nicht unterstützt.",
+    "ui.services.adoptionSource": "Vorhandener Container",
+    "ui.services.adoptionData": "Erhaltene Konfiguration",
+    "ui.services.adoptionPreserves":
+      "Konten, Konfiguration und persistente Daten bleiben bei dieser Anwendung. Die Runtime wird nicht neu erstellt und kein Konto neu eingerichtet.",
+    "ui.services.adoptionOperations":
+      "Die freigegebene Bindung erlaubt Prüfung, Start, Stopp und Neustart. Updates oder Neuerstellung benötigen einen eigenen unterstützten Plan.",
+    "ui.services.adoptionProgress": "Fortschritt der Operation öffnen",
+    "ui.services.adoptionChecking": "Gespeicherte Operation wird geprüft",
+    "ui.services.adoptionFailed":
+      "Die Operation ist nicht abgeschlossen. Prüfe ihre Nachweise vor einem erneuten Versuch.",
+    "ui.services.adoptionUnavailable":
+      "Für die Prüfung braucht diese Quelle eine exakte Container-Identität und ein veröffentlichtes, geeignetes StackKits-Release auf ihrem verbundenen Guard.",
+    "ui.services.adoptionVerified":
+      "Lifecycle-Bindung geprüft. Diese Anwendung ist jetzt Stacked.",
+    "ui.services.releasePreservesRuntime":
+      "Löse die Lifecycle-Bindung. Container, Konten, Konfiguration und Daten bleiben am bisherigen Ort und behalten ihren aktuellen Zustand.",
+    "ui.services.bindingReleased":
+      "Lifecycle-Bindung gelöst. Die Anwendung bleibt als Unstacked sichtbar.",
     "language.switch": "Sprache",
     "settings.language.description":
       "Die Sprache dieser Oberfläche auf diesem Gerät. Solange du keine wählst, gilt die Sprache deines Browsers, sonst Englisch.",
@@ -156,6 +236,8 @@ export const uiMessages = {
     "ui.dashboard.alerts": "Warnungen",
     "ui.common.importExport": "Import / Export",
     "ui.dashboard.sections": "Homelab-Bereiche",
+    "ui.dashboard.failureDetails": "Details",
+    "ui.dashboard.hideFailureDetails": "Details ausblenden",
     "ui.dashboard.inventoryUnavailable":
       "Der maßgebliche Zustand von Nodes und Diensten ist nicht verfügbar. Die weiter unten angezeigte gespeicherte Telemetrie dient nur der Diagnose und gilt nicht als leeres Inventar.",
     "ui.dashboard.noNodes":
@@ -243,6 +325,10 @@ export const uiMessages = {
     "ui.theme.toggle": "Zwischen dunklem und hellem Design wechseln",
     "ui.layout.toggleMenu": "Menü umschalten",
     "ui.layout.closeMenu": "Menü schließen",
+    "ui.layout.collapseSidebar": "Seitenleiste einklappen",
+    "ui.layout.expandSidebar": "Seitenleiste ausklappen",
+    "ui.layout.resizeSidebar": "Größe der Seitenleiste ändern",
+    "ui.layout.sidebarCollapsed": "Eingeklappt",
     "ui.redirect.homelab": "Weiterleitung in dein Homelab...",
     "ui.redirect.generic": "Weiterleitung...",
     "ui.sso.signingIn": "Du wirst angemeldet...",

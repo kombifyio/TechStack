@@ -8,24 +8,33 @@ import (
 	"github.com/kombifyio/techstack/internal/routes/auth"
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/httpx"
+	"github.com/kombifyio/techstack/pkg/kombifywallet"
 )
 
 type LocalOwnerSetup = auth.LocalOwnerSetup
 type LocalSetupProvisioner = auth.LocalSetupProvisioner
 
 type AuthRouteConfig struct {
+	Runtime               auth.RuntimeStore
 	PortalSession         auth.PortalSession
 	LocalSetupProvisioner LocalSetupProvisioner
 	LocalOwnerStore       auth.LocalOwnerLookup
+	WalletSource          kombifywallet.Source
 }
 
 // RegisterAuthRoutesWithConfig registers auth routes with runtime-only
 // dependencies such as the V2 local setup provisioner.
 func RegisterAuthRoutesWithConfig(r *httpx.Router, app core.App, mode config.DeploymentMode, edition config.Edition, cfg AuthRouteConfig) {
-	auth.RegisterRoutesWithConfig(r, app, mode, edition, auth.RouteConfig{
+	RegisterRuntimeAuthRoutesWithConfig(r, mode, edition, cfg)
+}
+
+func RegisterRuntimeAuthRoutesWithConfig(r *httpx.Router, mode config.DeploymentMode, edition config.Edition, cfg AuthRouteConfig) {
+	auth.RegisterRuntimeRoutesWithConfig(r, mode, edition, auth.RouteConfig{
+		Runtime:               cfg.Runtime,
 		PortalSession:         cfg.PortalSession,
 		LocalSetupProvisioner: cfg.LocalSetupProvisioner,
 		LocalOwnerStore:       cfg.LocalOwnerStore,
+		WalletSource:          cfg.WalletSource,
 	})
 }
 

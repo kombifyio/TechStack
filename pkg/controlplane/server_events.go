@@ -695,10 +695,19 @@ func validateGuardObservationPayload(patch ServerRuntime, inventory *ServerInven
 		// boot id, the domain-separated machine-id digest (never the raw id)
 		// and whether the agent can run the StackKits host commands.
 		"host_boot_id": true, "host_machine_id_sha256": true, "host_maintenance": true,
+		// How the authenticated request proved the Guard's identity (host_key
+		// or legacy_bearer); the control plane derives it from the proof that
+		// admitted the observation.
+		"identity_binding": true,
 	}
-	for key := range patch.Metadata {
+	for key, value := range patch.Metadata {
 		if !allowedMetadata[strings.ToLower(strings.TrimSpace(key))] {
 			return fmt.Errorf("%w: Guard metadata key %q is outside observation authority", ErrConflict, key)
+		}
+		if strings.EqualFold(strings.TrimSpace(key), "identity_binding") {
+			if binding, _ := value.(string); binding != IdentityBindingHostKey && binding != IdentityBindingLegacyBearer {
+				return fmt.Errorf("%w: Guard metadata identity_binding is outside the canonical values", ErrConflict)
+			}
 		}
 	}
 	if err := validateSecretFreeObservation(patch.Metadata, "metadata"); err != nil {

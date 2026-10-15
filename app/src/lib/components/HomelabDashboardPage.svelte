@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tr, trn } from "#lib/i18n.svelte.js";
   import { onMount } from "svelte";
+  import { createAppQuickActions } from "#lib/services/app-quick-actions.svelte.js";
   import {
     readSectionCache,
     writeSectionCache,
@@ -12,6 +13,9 @@
   import { getClientBootstrap } from "#lib/client/bootstrap.js";
   import { isCancelledRequestError, parseApiError } from "#lib/api/errors.js";
   import { getBestPublicServerUrl } from "#lib/api/client.js";
+  import { onHostRefresh } from "#lib/stores/postMessageBridge.js";
+  import { useViewContextOverlay } from "#lib/stores/viewContext.svelte.js";
+  import type { ViewContextDetails } from "#lib/view-context.js";
   import { getWorkerRegistryUrl } from "#lib/api/tunnel.js";
   import { listWorkers, type Worker } from "#lib/api/workers.js";
   import { goto, pushState } from "$app/navigation";
@@ -58,7 +62,10 @@
     wizardRunNeedsAttention,
     type ActiveWizardRun,
   } from "#lib/api/wizardRuns.js";
-  import WizardRunBanner from "#lib/components/WizardRunBanner.svelte";
+  import WizardRunBanner, {
+    wizardRunTitleKey,
+  } from "#lib/components/WizardRunBanner.svelte";
+  import type { NodeMessage } from "#lib/dashboard/node-messages.js";
   import { confirmInApp } from "#lib/dialogs/in-app-dialog.js";
   import { cleanupActionForFailure } from "#lib/custody/cleanup-action.js";
   import {
@@ -103,8 +110,10 @@
     Waypoints,
   } from "@lucide/svelte";
   import GuidancePanel from "#lib/components/hub/GuidancePanel.svelte";
+  import FailureNotice from "#lib/components/dashboard/FailureNotice.svelte";
   import {
     outcomeFromLatestFailure,
+    resolveGuidance,
     retryDispatchFor,
     type ServerOutcome,
   } from "#lib/support/server-outcome.js";
@@ -176,6 +185,12 @@
   let operationsDeploymentKey = "";
   let canonicalServers = $state<CanonicalServer[]>([]);
   let canonicalServices = $state<CanonicalService[]>([]);
+  // Quick actions on the Node cards' application cards (Restart, Stack it, …).
+  const { provider: quickActions, start: startQuickActions } =
+    createAppQuickActions({
+      refresh: () => loadCanonicalInventoryContext(),
+      services: () => canonicalServices,
+    });
   let canonicalInventoryUnavailable = $state(false);
   let canonicalInventoryResolved = $state(false);
   let operationsError = $state<string | null>(null);
@@ -240,10 +255,16 @@
   let registrationToken = $state("");
   let serverUrl = $state("");
   let registryMode = $state<string>("");
+  // The private-LAN bridge pin applies only while serverUrl is that bridge.
+  let lanBridge = $state<{ url: string; pin: string } | null>(null);
   let registryUrlError = $state<string | null>(null);
   let installCommand = $derived(
     registrationToken && serverUrl
-      ? generateInstallCommand(serverUrl, registrationToken)
+      ? generateInstallCommand(
+          serverUrl,
+          registrationToken,
+          lanBridge && lanBridge.url === serverUrl ? lanBridge.pin : "",
+        )
       : "",
   );
   // Connection and rollout authority comes exclusively from the canonical
@@ -257,8 +278,23 @@
   let operationsEvidenceFresh = $derived(
     Boolean(operations && !operationsError && !operationsFromCache),
   );
+  // A failed rollout is restartable from the dashboard whatever the failed job
+  // type or the readiness projection says: the backend reports can_start=false
+  // for a managed stack in error and for failures whose type has no dedicated
+  // retry step (for example a pinned-release dispatch error), which left Deploy
+  // disabled with no way forward. Deploy starts a fresh job against the release
+  // pinned now; the backend still rejects it while a job is in flight. Destroy
+  // failures are cleanup, not rollout, and stay out.
+  let failedRolloutRestartable = $derived.by(() => {
+    if (!operationsEvidenceFresh || showRuntimeProgress) return false;
+    const failure = operations?.latestFailure;
+    if (!failure) return false;
+    const type = (failure.type ?? "").trim().toLowerCase();
+    return type !== "destroy" && type !== "decommission";
+  });
   let canRollout = $derived(
-    operationsEvidenceFresh && operations?.readiness?.can_start === true,
+    operationsEvidenceFresh &&
+      (operations?.readiness?.can_start === true || failedRolloutRestartable),
   );
 
   let approvedWorkers = $derived(
@@ -872,6 +908,24 @@
       : null,
   );
 
+  // A failed rollout that can restart on its existing server makes that restart
+  // the Node card's primary action: the prominent Deploy button cannot work
+  // there (the backend never reports can_start for a stack in error). Offered
+  // only on fresh evidence and while no job runs, from the same authority that
+  // decides whether the failure callout shows its restart step.
+  let failureRetryLabel = $derived.by(() => {
+    const failure = operations?.latestFailure;
+    if (!failure || !operationsEvidenceFresh || showRuntimeProgress) {
+      return null;
+    }
+    if (retryDispatchFor(failure) === null) return null;
+    return (
+      latestFailureOutcome?.userGuidance?.nextSteps.find(
+        (step) => step.kind === "retry",
+      )?.label ?? null
+    );
+  });
+
   // Destroy/decommission history is not the default dashboard state. Keep the
   // panel only while cleanup is still possible (matching custody) or the
   // fleet is empty of Nodes and still holding leases.
@@ -886,6 +940,62 @@
     const liveNodes = dashboardServers.length + canonicalOnlyServers.length;
     return liveNodes === 0 && custodyLeases.length > 0;
   });
+
+  // What kombify Cloud's Companion is told about this page while it is
+  // embedded: where the rollout stands and the ids of the failure or running
+  // job on screen. Ids and codes only. The subject is the deployment when the
+  // homelab has exactly one, so it is never a guess between several.
+  let viewContext = $derived.by<ViewContextDetails | null>(() => {
+    if (!homelabResolved) return null;
+    const job = showRuntimeProgress ? operations?.currentJob : null;
+    const failure =
+      !job && showLatestFailurePanel ? operations?.latestFailure : null;
+    const facts: NonNullable<ViewContextDetails["facts"]> = {
+      homelabId: homelab?.homelab?.id,
+      serviceId: detailServiceId,
+    };
+    let state = deployments.length > 0 ? "ready" : undefined;
+    let stackId: string | undefined;
+    if (job) {
+      state = "rollout_running";
+      stackId = job.kit_deployment_id;
+      Object.assign(facts, {
+        stackId,
+        jobId: job.id,
+        jobType: job.type,
+        serverId: job.server_id,
+        leaseId: job.lease_id,
+      });
+    } else if (failure) {
+      state = "rollout_failed";
+      stackId = failure.kit_deployment_id;
+      Object.assign(facts, {
+        stackId,
+        jobId: failure.job_id,
+        jobType: failure.type,
+        failedStep: failure.step,
+        reasonCode: failure.reason,
+        serverId: failure.server_id,
+        leaseId: failure.lease_id,
+      });
+    }
+    const deployment =
+      stackId && deployments.length === 1 && deployments[0]!.id === stackId
+        ? deployments[0]
+        : undefined;
+    return {
+      state,
+      subject: deployment
+        ? {
+            resourceType: "stackkit_deployment",
+            resourceId: deployment.id,
+            label: deployment.name,
+          }
+        : undefined,
+      facts,
+    };
+  });
+  useViewContextOverlay(() => viewContext);
 
   // A StackKit rollout runs on exactly one server, so its failure and its
   // progress belong on that Node's card. Null keeps them as a page-level
@@ -1118,9 +1228,14 @@
     // rows. An active wizard run keeps the timer alive too: the banner must
     // update while the first deployment has no stack row yet.
     if (workers.length > 0 || deployments.length > 0 || activeWizardRun) {
+      // A rollout started elsewhere (API, Companion agent) is queued or
+      // running: follow it closely, one overlap-guarded refresh at a time and
+      // never while the tab is hidden. Otherwise the slow cadence applies.
+      const period = showRuntimeProgress ? 5_000 : 15_000;
       refreshInterval = setInterval(() => {
+        if (showRuntimeProgress && document.visibilityState === "hidden") return;
         void refreshDashboardContext();
-      }, 15_000);
+      }, period);
     }
 
     return () => {
@@ -1128,6 +1243,31 @@
         clearInterval(refreshInterval);
         refreshInterval = null;
       }
+    };
+  });
+
+  // Something outside this page can start or change a rollout (the embedding
+  // portal, another tab). Re-read at once instead of waiting for the next poll:
+  // when the host asks, and when this tab becomes visible again. The refresh
+  // guards itself against overlap.
+  $effect(() => {
+    const refreshNow = () => {
+      if (!loading) void refreshDashboardContext();
+    };
+    // The refresh re-reads the deployments this page already knows. A first
+    // deployment created outside the page only shows up through the full load.
+    const stopHostRefresh = onHostRefresh(() => {
+      if (loading) return;
+      if (deployments.length === 0) void load();
+      else void refreshDashboardContext();
+    });
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") refreshNow();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      stopHostRefresh();
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   });
 
@@ -1315,6 +1455,7 @@
       if (res?.url) {
         serverUrl = res.url;
         registryMode = String(res.mode || "");
+        lanBridge = res.lan_pin ? { url: res.url, pin: res.lan_pin } : null;
       }
     } catch (err) {
       // Non-blocking: fall back to best-effort origin-based URL.
@@ -1322,6 +1463,8 @@
       registryUrlError = parsed.message;
     }
   }
+
+  onMount(startQuickActions);
 
   onMount(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1709,6 +1852,158 @@
           !hasServerInventory)),
   );
 
+  // What one Node card has to say, as one line each. The card shows the most
+  // severe line in its fixed status line; the details open only on click.
+  function nodeMessages(node: NodeView): NodeMessage[] {
+    const messages: NodeMessage[] = [];
+    const run = wizardRunNotice;
+    if (run && node.key === wizardRunNodeKey) {
+      const failed = run.status === "failed";
+      messages.push({
+        id: "wizard-run",
+        kind: "wizard-run",
+        tone: failed ? "warning" : "info",
+        summary:
+          (!failed && run.job?.message) || tr(wizardRunTitleKey(run)),
+      });
+    }
+    const server = node.server;
+    if (server) {
+      if (isSameServer(runtimeJobServer, server)) {
+        messages.push({
+          id: "rollout",
+          kind: "rollout",
+          tone: "info",
+          summary:
+            currentRuntimePhase?.message ||
+            operations?.currentJob?.message ||
+            tr("ui.homelab.runtimeRollout"),
+        });
+      }
+      if (nodeShowsFailure(server)) {
+        messages.push({
+          id: "latest-failure",
+          kind: "latest-failure",
+          tone: "error",
+          summary: latestFailureSummary,
+        });
+      }
+      if (server.precheck_state === "failed") {
+        messages.push({
+          id: "precheck",
+          kind: "precheck",
+          tone: "error",
+          summary: tr("ui.node.precheckFailed"),
+        });
+      }
+    } else if (node.canonical) {
+      messages.push({
+        id: "telemetry",
+        kind: "telemetry",
+        tone: "warning",
+        summary: tr("ui.node.noTelemetry"),
+      });
+    }
+    const outcome = actionableServerOutcome(node.server, node.canonical);
+    if (outcome) {
+      messages.push({
+        id: "outcome",
+        kind: "outcome",
+        tone: outcome.status === "failed" ? "error" : "warning",
+        summary:
+          resolveGuidance(outcome).title || tr("ui.nodeMessage.needsAttention"),
+      });
+    }
+    return messages;
+  }
+
+  // The Node list renders as cards; its own notices go to its status line
+  // instead of boxes above it, so the list never has to make way for them.
+  let completeListShown = $derived(
+    deployments.length > 0 &&
+      Boolean(operations) &&
+      hasServerInventory &&
+      !showStrata,
+  );
+
+  // Messages about the Node list itself, shown in the status line below it.
+  let listMessages = $derived.by<NodeMessage[]>(() => {
+    const messages: NodeMessage[] = [];
+    if (completeListShown) {
+      if (quickActions.error) {
+        messages.push({
+          id: "app-action-failed",
+          kind: "app-action-failed",
+          tone: "error",
+          summary: quickActions.error,
+        });
+      }
+      if (operationsError) {
+        messages.push({
+          id: "evidence-stale",
+          kind: "evidence-stale",
+          tone: "warning",
+          summary: tr("ui.homelab.evidenceStale"),
+        });
+      } else if (operationsFromCache) {
+        messages.push({
+          id: "reconfirming",
+          kind: "reconfirming",
+          tone: "info",
+          summary: tr("ui.homelab.reconfirming"),
+        });
+      }
+      if (!sessionRenewalRequired && !error && dataStale) {
+        messages.push({
+          id: "stale",
+          kind: "stale",
+          tone: "warning",
+          summary: tr("ui.homelabDashboardPage.lastVerifiedStateRetainedThe"),
+        });
+      }
+      if (operationsUnavailableOutcome) {
+        messages.push({
+          id: "operations-unavailable",
+          kind: "operations-unavailable",
+          tone: "error",
+          summary:
+            resolveGuidance(operationsUnavailableOutcome).title ||
+            tr("ui.homelab.evidenceStale"),
+        });
+      }
+      if (showReviewStart && canRollout) {
+        messages.push({
+          id: "rollout-ready",
+          kind: "rollout-ready",
+          tone: "info",
+          summary: tr("ui.homelab.nodeConnected"),
+        });
+      }
+    }
+    if (reconnectOutcome) {
+      messages.push({
+        id: "reconnect-outcome",
+        kind: "reconnect-outcome",
+        tone:
+          reconnectOutcome.tone === "error"
+            ? "error"
+            : reconnectOutcome.tone === "warning"
+              ? "warning"
+              : "info",
+        summary: reconnectOutcome.title,
+      });
+    }
+    if (decommissionError) {
+      messages.push({
+        id: "decommission-error",
+        kind: "decommission-error",
+        tone: "error",
+        summary: decommissionError,
+      });
+    }
+    return messages;
+  });
+
   async function refreshWizardRun() {
     try {
       activeWizardRun = await getActiveWizardRun();
@@ -1923,11 +2218,22 @@
 
   <!-- The latest failed operation with its guidance and, for a failed
        cleanup, the exact cleanup action. -->
+  {#snippet latestFailureNotice(surface: string, testId: string)}
+    {#if latestFailureOutcome}
+      <FailureNotice
+        summary={latestFailureSummary}
+        failureId={operations?.latestFailure?.job_id || latestFailureSummary}
+        {testId}
+      >
+        {#snippet details()}
+          {@render latestFailureGuidance(surface)}
+        {/snippet}
+      </FailureNotice>
+    {/if}
+  {/snippet}
+
   {#snippet latestFailureGuidance(surface: string)}
     {#if latestFailureOutcome}
-      <p class="mb-2 text-sm font-medium text-foreground">
-        {latestFailureSummary}
-      </p>
       {#if failedCleanupAction && ["destroy", "decommission"].includes(operations?.latestFailure?.type?.toLowerCase() ?? "")}
         <Button
           variant="destructive"
@@ -1962,14 +2268,77 @@
     {/if}
   {/snippet}
 
-  {#snippet serverNotice(server: DashboardServer)}
-    {#if isSameServer(runtimeJobServer, server)}
+  <!-- The full details of one Node message; they render inside the overlay
+       the card's status line opens. -->
+  {#snippet nodeMessageDetail(node: NodeView, message: NodeMessage)}
+    {#if message.kind === "wizard-run"}
+      {@render wizardRunNodeNotice(node)}
+    {:else if message.kind === "rollout"}
       {@render runtimeProgressCard()}
+    {:else if message.kind === "latest-failure"}
+      {@render latestFailureGuidance("stacks.hub.server")}
+    {:else if message.kind === "precheck"}
+      <p class="text-sm text-foreground/90">{tr("ui.node.precheckFailed")}</p>
+    {:else if message.kind === "telemetry"}
+      <p class="text-sm text-foreground/90">{tr("ui.node.noTelemetry")}</p>
+    {:else if message.kind === "outcome"}
+      {@const outcome = actionableServerOutcome(node.server, node.canonical)}
+      {#if outcome}
+        <GuidancePanel
+          {outcome}
+          surface="stacks.hub.server"
+          resourceId={node.canonical?.id || node.server?.id}
+          resourceName={node.name}
+          onRetry={node.server?.lease_id &&
+          canReconnectManagedRuntime(node.server)
+            ? () => node.server?.lease_id && reconnectManagedRuntime(node.server.lease_id)
+            : undefined}
+          retrying={Boolean(
+            node.server?.lease_id &&
+              reconnectingLeaseId === node.server.lease_id,
+          )}
+          compact
+        />
+      {/if}
     {/if}
-    {#if nodeShowsFailure(server)}
-      <div data-testid="node-latest-failure">
-        {@render latestFailureGuidance("stacks.hub.server")}
-      </div>
+  {/snippet}
+
+  {#snippet listMessageDetail(message: NodeMessage)}
+    {#if message.kind === "app-action-failed"}
+      <p class="text-sm text-foreground/90" data-testid="app-action-failed">
+        {message.summary}
+      </p>
+    {:else if message.kind === "evidence-stale"}
+      <p class="text-sm text-foreground/90" data-testid="operations-evidence-stale">
+        {tr("ui.homelab.evidenceStaleBody")} {operationsError}
+      </p>
+    {:else if message.kind === "reconfirming"}
+      <p class="text-sm text-foreground/90" data-testid="operations-evidence-reconfirming">
+        {tr("ui.homelab.reconfirming")}
+      </p>
+    {:else if message.kind === "stale"}
+      <p class="text-sm text-foreground/90" data-testid="stacks-stale-notice">
+        {tr("ui.homelabDashboardPage.lastVerifiedStateRetainedThe")}
+      </p>
+    {:else if message.kind === "operations-unavailable" && operationsUnavailableOutcome}
+      <GuidancePanel
+        outcome={operationsUnavailableOutcome}
+        surface="stacks.hub"
+        resourceId={homelab?.homelab?.id}
+        resourceName={homelabTitle}
+        onRetry={retryOperations}
+        retrying={retryingOperations}
+      />
+    {:else if message.kind === "rollout-ready"}
+      <p class="text-sm text-foreground/90" data-testid="stackkit-rollout-guidance">
+        {tr("ui.homelab.reviewHint")}
+      </p>
+    {:else if message.kind === "reconnect-outcome" && reconnectOutcome}
+      <p class="text-sm text-foreground/90" data-testid="reconnect-outcome">
+        {reconnectOutcome.body}
+      </p>
+    {:else if message.kind === "decommission-error"}
+      <p class="text-sm text-destructive">{decommissionError}</p>
     {/if}
   {/snippet}
 
@@ -2033,11 +2402,18 @@
       )}
       {canRollout}
       {rolloutLoading}
+      retryLabel={node.server &&
+      failureRetryLabel &&
+      isSameServer(failureServer, node.server)
+        ? failureRetryLabel
+        : undefined}
+      retrying={retryingOperations}
       canReconnect={node.server ? canReconnectManagedRuntime(node.server) : false}
       onAssign={() =>
         node.server &&
         assignWorkerToDeployment(node.server.kit_deployment_id, node.server.id)}
       onDeploy={() => node.server && startRollout(node.server.kit_deployment_id)}
+      onRetry={retryOperations}
       onReconnect={() =>
         node.server?.lease_id && reconnectManagedRuntime(node.server.lease_id)}
       onOpenDetails={() => goto(nodeHref(node))}
@@ -2165,13 +2541,7 @@
         {@render runtimeProgressCard()}
       {/if}
       {#if showLatestFailurePanel && latestFailureOutcome && !failureServer}
-        <div
-          class="space-y-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3"
-          data-testid="latest-failure-notice"
-          role="status"
-        >
-          {@render latestFailureGuidance("stacks.hub")}
-        </div>
+        {@render latestFailureNotice("stacks.hub", "latest-failure-notice")}
       {/if}
     </div>
   {/if}
@@ -2192,7 +2562,7 @@
         <p class="text-foreground">{error}</p>
       </div>
     </Surface>
-  {:else if dataStale}
+  {:else if dataStale && !completeListShown}
     <Surface class="mb-6 p-3">
       <p
         class="text-sm text-muted-foreground"
@@ -2203,7 +2573,7 @@
     </Surface>
   {/if}
 
-  {#if deployments.length > 0 && operationsUnavailableOutcome}
+  {#if deployments.length > 0 && operationsUnavailableOutcome && !completeListShown}
     <div class="mb-6">
       <GuidancePanel
         outcome={operationsUnavailableOutcome}
@@ -2250,7 +2620,7 @@
       data-testid="stack-operations-dashboard"
       aria-label={tr("ui.homelab.operations")}
     >
-      {#if operationsFromCache && !operationsError}
+      {#if operationsFromCache && !operationsError && !completeListShown}
         <!-- The cached snapshot is on screen so the dashboard is readable at
              once. Say plainly that it is not yet reconfirmed, because the
              mutation controls are disabled for exactly that reason. -->
@@ -2263,7 +2633,7 @@
         </p>
       {/if}
 
-      {#if operationsError}
+      {#if operationsError && !completeListShown}
         <div
           class="rounded-lg border border-warning/40 bg-warning/10 p-4"
           data-testid="operations-evidence-stale"
@@ -2278,7 +2648,7 @@
         </div>
       {/if}
 
-      {#if showReviewStart && canRollout}
+      {#if showReviewStart && canRollout && !completeListShown}
         <section
           class="rounded-lg border border-primary/40 bg-primary/10 p-4"
           data-testid="stackkit-rollout-guidance"
@@ -2346,12 +2716,16 @@
             onOpenService={openServiceSheet}
             people={peopleState}
             devices={devicesState}
+            nodeMessages={(node) =>
+              nodeMessages(node).filter(
+                (message) => message.kind === "wizard-run",
+              )}
           >
             {#snippet actions()}
               {@render headerActions()}
             {/snippet}
-            {#snippet nodeNotice(node)}
-              {@render wizardRunNodeNotice(node)}
+            {#snippet nodeMessageDetails(node, message)}
+              {@render nodeMessageDetail(node, message)}
             {/snippet}
           </StrataDashboard>
         {:else}
@@ -2364,25 +2738,29 @@
             people={peopleState}
             devices={devicesState}
             {canonicalInventoryUnavailable}
+            {nodeMessages}
+            {listMessages}
           >
-            {#snippet nodeNotice(node)}
-              {@render wizardRunNodeNotice(node)}
-              {#if node.server}
-                {@render serverNotice(node.server)}
-              {/if}
+            {#snippet nodeMessageDetails(node, message)}
+              {@render nodeMessageDetail(node, message)}
             {/snippet}
             {#snippet nodeActions(node)}
               {@render nodeControls(node)}
             {/snippet}
+            {#snippet listMessageDetails(message)}
+              {@render listMessageDetail(message)}
+            {/snippet}
           </CompleteDashboard>
         {/if}
-        {@render reconnectOutcomeBanner()}
-        {#if decommissionError}
-          <div
-            class="mt-4 rounded-lg border border-destructive/30 bg-destructive/10 p-3"
-          >
-            <p class="text-sm text-destructive">{decommissionError}</p>
-          </div>
+        {#if showStrata}
+          {@render reconnectOutcomeBanner()}
+          {#if decommissionError}
+            <div
+              class="mt-4 rounded-lg border border-destructive/30 bg-destructive/10 p-3"
+            >
+              <p class="text-sm text-destructive">{decommissionError}</p>
+            </div>
+          {/if}
         {/if}
       {/if}
 

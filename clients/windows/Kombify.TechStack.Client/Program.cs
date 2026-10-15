@@ -19,11 +19,17 @@ internal static class Program
     {
         var config = ClientConfig.Load(args);
         // A verified staged update is applied before anything else starts.
-        if (ClientUpdater.TryApplyStagedUpdate(config))
+        if (ClientUpdater.TryApplyStagedUpdate(config, out var startupBlockReason))
         {
             return;
         }
         ApplicationConfiguration.Initialize();
+        if (startupBlockReason is not null)
+        {
+            MessageBox.Show(startupBlockReason, LocalRuntimeMessages.RecoveryIncomplete,
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
 #if CLOUD_DESKTOP
         if (args.Contains("--connect-enroll", StringComparer.Ordinal))
         {
@@ -430,6 +436,7 @@ internal sealed partial class ClientWindow : Form
             var env = await CoreWebView2Environment.CreateAsync(null, userData);
             await _webView.EnsureCoreWebView2Async(env);
             _webView.CoreWebView2.NavigationStarting += OnNavigationStarting;
+            RegisterDeviceContextBridge();
 
             if (IsLocalMode())
             {
@@ -638,6 +645,14 @@ internal sealed partial class ClientWindow : Form
 			}
 			start.Environment["TECHSTACK_AGENT_BINARY_LINUX_AMD64"] = Path.Combine(runtimeDirectory, "techstack-linux-amd64");
 			start.Environment["TECHSTACK_STACKKIT_RELEASE_BUNDLE"] = Path.Combine(runtimeDirectory, "stackkit-release-linux-amd64.tar.gz");
+			var guardReleaseDirectory = Path.Combine(runtimeDirectory, "guard-release");
+			if (Directory.Exists(guardReleaseDirectory))
+			{
+				start.Environment["TECHSTACK_GUARD_RELEASE_DIR"] = guardReleaseDirectory;
+				start.Environment["TECHSTACK_GUARD_RELEASE_SOURCE"] = "kombifyio/TechStack";
+				start.Environment["TECHSTACK_STACKKIT_RELEASE_BUNDLE"] = Path.Combine(guardReleaseDirectory, "stackkit-runtime-linux-amd64.tar.gz");
+				start.Environment["TECHSTACK_AGENT_BINARY_LINUX_AMD64"] = Path.Combine(guardReleaseDirectory, "techstack-linux-amd64");
+			}
 
             _runtimeProcess = new SupervisedProcess();
             _runtimeProcess.Start(start, line => AppendRuntimeLog(logPath, line));

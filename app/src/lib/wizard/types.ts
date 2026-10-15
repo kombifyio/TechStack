@@ -7,7 +7,7 @@
 
 import {
   ACTIVE_STANDARD_BUNDLE,
-  CANONICAL_USE_CASE_GOALS,
+  selectedCanonicalUseCasesFromGoals,
   CLOUD_STACKKIT_REF,
   USER_OWNED_STACKKIT_REF,
   cloneDefaultServerProvisioning,
@@ -168,6 +168,11 @@ export interface RemoteServerConfig {
   authMethod: RemoteServerAuthMethod;
   sshKeyLabel: string;
   sshPassword: string;
+  /**
+   * Hosted Techstack: the kombify Wallet "server access" item that holds the
+   * SSH credential. When set, no key label or password is sent.
+   */
+  sshWalletItemId?: string;
   useSudo: boolean;
 }
 
@@ -197,7 +202,7 @@ export interface SubstrateGuestConfig {
     diskGiB: number;
   };
   serverId: string;
-  profileId: "ubuntu-24.04";
+  profileId: "ubuntu-26.04" | "ubuntu-24.04";
   storage: string;
   bridge: string;
   cpu: number;
@@ -213,7 +218,8 @@ export function isValidSubstrateGuest(
     guest.serverId.trim() &&
     guest.storage.trim() &&
     guest.bridge.trim() &&
-    guest.profileId === "ubuntu-24.04" &&
+    (guest.profileId === "ubuntu-26.04" ||
+      guest.profileId === "ubuntu-24.04") &&
     Number.isInteger(guest.cpu) &&
     guest.cpu >= 2 &&
     Number.isInteger(guest.memoryMiB) &&
@@ -275,9 +281,7 @@ export type GoalsConfig = Record<CanonicalUseCaseGoalKey, boolean> & {
 export function selectedUseCasesFromGoals(
   goals: Partial<GoalsConfig> | undefined,
 ): CanonicalUseCaseGoalKey[] {
-  if (!goals) return [];
-  if (goals.everything) return [...CANONICAL_USE_CASE_GOALS];
-  return CANONICAL_USE_CASE_GOALS.filter((goal) => goals[goal] === true);
+  return selectedCanonicalUseCasesFromGoals(goals);
 }
 
 /**
@@ -306,6 +310,14 @@ export interface StackConfig {
    * a different default does not carry a stale copy.
    */
   useCaseSettings?: Record<string, Record<string, string | boolean>>;
+  /** Capability selections per use case: an option id or "off". Explicit only. */
+  useCaseCapabilities?: Record<string, Record<string, string>>;
+  /**
+   * Desired guided-setup decisions in the existing draft, including pending
+   * choices and explicit empty/off answers. Link handoffs prefill this same
+   * draft. Executable selection is separate; these answers never execute.
+   */
+  useCaseSetupAnswers?: Record<string, Record<string, string[]>>;
   services: ServicesConfig;
 
   // Access & Network
@@ -420,7 +432,7 @@ export function applyServerProvisioningMode(
       config.serverProvisioning.connectionMode = "substrate-guard";
       config.serverProvisioning.substrate ??= {
         serverId: "",
-        profileId: "ubuntu-24.04",
+        profileId: "ubuntu-26.04",
         storage: "",
         bridge: "",
         cpu: 2,

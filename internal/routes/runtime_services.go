@@ -16,9 +16,13 @@ import (
 
 	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
+	"github.com/kombifyio/techstack/pkg/api/agentpb"
+	"github.com/kombifyio/techstack/pkg/appcatalog"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/jobs"
+	"github.com/kombifyio/techstack/pkg/monitoring"
+	"github.com/kombifyio/techstack/pkg/orchestrator"
 	"github.com/kombifyio/techstack/pkg/runtimehealth"
 	"github.com/kombifyio/techstack/pkg/runtimeidentity"
 	"github.com/kombifyio/techstack/pkg/secrets"
@@ -27,12 +31,21 @@ import (
 )
 
 type ServiceRuntimeRouteConfig struct {
-	Store        controlplane.ServiceRuntimeStore
-	Stacks       controlplane.StackStore
-	Servers      controlplane.ServerRuntimeStore
-	Jobs         controlplane.JobStore
-	Now          func() time.Time
-	Orchestrator serviceActionOrchestrator
+	Metrics              monitoring.MetricsQueryBackend
+	Policy               InventoryPolicy
+	Store                controlplane.ServiceRuntimeStore
+	Stacks               controlplane.StackStore
+	Servers              controlplane.ServerRuntimeStore
+	Jobs                 controlplane.JobStore
+	Now                  func() time.Time
+	Orchestrator         serviceActionOrchestrator
+	ApplicationAdmission func() (*agentpb.StackKitReleasePin, error)
+	// UpdateChecker answers registry update questions for observed container
+	// images; nil uses the public-registry checker.
+	UpdateChecker *appcatalog.UpdateChecker
+	// StackKitReleaseVersion reports the StackKits release this control plane
+	// pins, the target of the `update` action; nil resolves the configured pin.
+	StackKitReleaseVersion func() string
 }
 
 type serviceActionOrchestrator interface {
@@ -44,13 +57,21 @@ type serviceActionOrchestrator interface {
 }
 
 type serviceRuntimeHandlers struct {
-	store   controlplane.ServiceRuntimeStore
-	stacks  controlplane.StackStore
-	servers controlplane.ServerRuntimeStore
-	jobs    controlplane.JobStore
-	now     func() time.Time
-	orch    serviceActionOrchestrator
-	mu      sync.Mutex
+	metrics              monitoring.MetricsQueryBackend
+	policy               InventoryPolicy
+	store                controlplane.ServiceRuntimeStore
+	stacks               controlplane.StackStore
+	servers              controlplane.ServerRuntimeStore
+	jobs                 controlplane.JobStore
+	now                  func() time.Time
+	orch                 serviceActionOrchestrator
+	mu                   sync.Mutex
+	connectorAdmission   func() (*agentpb.StackKitReleasePin, error)
+	applicationAdmission func() (*agentpb.StackKitReleasePin, error)
+	// updates and stackKitRelease are optional; without them a service reports
+	// no registry or release comparison instead of an invented one.
+	updates         *appcatalog.UpdateChecker
+	stackKitRelease func() string
 }
 
 type serviceActionRequest struct {
@@ -82,21 +103,22 @@ type serviceLogsResponse struct {
 }
 
 type serviceRuntimeResponse struct {
-	ID                     string                  `json:"id"`
-	KitDeploymentID        string                  `json:"kit_deployment_id"`
-	ServerID               string                  `json:"server_id,omitempty"`
-	TargetKind             string                  `json:"target_kind"`
-	Placement              serviceRuntimePlacement `json:"placement"`
-	ServiceKey             string                  `json:"service_key"`
-	ServiceInstance        string                  `json:"service_instance"`
-	Name                   string                  `json:"name"`
-	ApplicationKey         string                  `json:"application_key,omitempty"`
-	ApplicationDisplayName string                  `json:"application_display_name,omitempty"`
-	Role                   string                  `json:"role,omitempty"`
-	Lifecycle              string                  `json:"lifecycle,omitempty"`
-	OperationalImpact      string                  `json:"operational_impact,omitempty"`
-	InternalAddress        string                  `json:"internal_address,omitempty"`
-	RuntimeIdentity        map[string]string       `json:"runtime_identity,omitempty"`
+	Adoption               serviceAdoptionAvailability `json:"adoption"`
+	ID                     string                      `json:"id"`
+	KitDeploymentID        string                      `json:"kit_deployment_id"`
+	ServerID               string                      `json:"server_id,omitempty"`
+	TargetKind             string                      `json:"target_kind"`
+	Placement              serviceRuntimePlacement     `json:"placement"`
+	ServiceKey             string                      `json:"service_key"`
+	ServiceInstance        string                      `json:"service_instance"`
+	Name                   string                      `json:"name"`
+	ApplicationKey         string                      `json:"application_key,omitempty"`
+	ApplicationDisplayName string                      `json:"application_display_name,omitempty"`
+	Role                   string                      `json:"role,omitempty"`
+	Lifecycle              string                      `json:"lifecycle,omitempty"`
+	OperationalImpact      string                      `json:"operational_impact,omitempty"`
+	InternalAddress        string                      `json:"internal_address,omitempty"`
+	RuntimeIdentity        map[string]string           `json:"runtime_identity,omitempty"`
 	// ManagementState is the persisted ownership dimension. `desired_state` is
 	// only a declared contract when this is `managed`; for an `observed` service
 	// there is no declared target and drift comparison is undefined.
@@ -104,19 +126,27 @@ type serviceRuntimeResponse struct {
 	// MutationLock is the owner guardrail. It is orthogonal to the measured
 	// dimensions: a locked service keeps running and keeps reporting its real
 	// observed state, and only `allowed_actions` narrows.
-	MutationLock      serviceRuntimeMutationLock `json:"mutation_lock"`
-	DesiredState      string                     `json:"desired_state"`
-	ObservedState     string                     `json:"observed_state"`
-	Health            serviceRuntimeHealth       `json:"health"`
-	StackKitVersion   string                     `json:"stackkit_version,omitempty"`
-	Access            map[string]any             `json:"access"`
-	AllowedActions    []string                   `json:"allowed_actions"`
-	InventoryRevision int64                      `json:"inventory_revision"`
-	EvidenceRef       string                     `json:"evidence_ref,omitempty"`
-	Source            string                     `json:"source"`
-	Provenance        map[string]interface{}     `json:"provenance"`
-	CreatedAt         time.Time                  `json:"created_at"`
-	UpdatedAt         time.Time                  `json:"updated_at"`
+	MutationLock    serviceRuntimeMutationLock `json:"mutation_lock"`
+	DesiredState    string                     `json:"desired_state"`
+	ObservedState   string                     `json:"observed_state"`
+	Health          serviceRuntimeHealth       `json:"health"`
+	StackKitVersion string                     `json:"stackkit_version,omitempty"`
+	Access          map[string]any             `json:"access"`
+	AllowedActions  []string                   `json:"allowed_actions"`
+	// Catalog is set when the service is a recognized well-known application.
+	Catalog *appcatalog.Entry `json:"catalog,omitempty"`
+	// Version is omitted when nothing about the running version was measured.
+	Version *serviceVersion `json:"version,omitempty"`
+	// PlacementClass is the evidence-backed local, cloud, managed or unknown
+	// class; unknown means no placement evidence is recorded.
+	PlacementClass    string                 `json:"placement_class"`
+	InventoryRevision int64                  `json:"inventory_revision"`
+	EvidenceRef       string                 `json:"evidence_ref,omitempty"`
+	Source            string                 `json:"source"`
+	Provenance        map[string]interface{} `json:"provenance"`
+	ActionGuard       map[string]any         `json:"action_guard,omitempty"`
+	CreatedAt         time.Time              `json:"created_at"`
+	UpdatedAt         time.Time              `json:"updated_at"`
 }
 
 func serviceMutationLockResponse(lock controlplane.ServiceMutationLock) serviceRuntimeMutationLock {
@@ -157,6 +187,13 @@ type serviceApplicationResponse struct {
 	ObservedAt      *time.Time               `json:"observed_at,omitempty"`
 	System          bool                     `json:"system"`
 	Provenance      map[string]any           `json:"provenance"`
+	// AllowedActions is the union of the actions its components offer.
+	AllowedActions []string `json:"allowed_actions"`
+	// Catalog, Version and PlacementClass describe the primary component: the
+	// recognized application component, else the first running one.
+	Catalog        *appcatalog.Entry `json:"catalog,omitempty"`
+	Version        *serviceVersion   `json:"version,omitempty"`
+	PlacementClass string            `json:"placement_class"`
 }
 
 type serviceRuntimeHealth struct {
@@ -187,12 +224,41 @@ func RegisterServiceRuntimeRoutes(r *httpx.Router, cfg ServiceRuntimeRouteConfig
 		cfg.Now = func() time.Time { return time.Now().UTC() }
 	}
 	h := serviceRuntimeHandlers{store: cfg.Store, stacks: cfg.Stacks, servers: cfg.Servers, jobs: cfg.Jobs, now: cfg.Now, orch: cfg.Orchestrator}
+	h.policy = cfg.Policy
+	h.metrics = cfg.Metrics
+	if configurable, ok := cfg.Orchestrator.(interface {
+		ConfigureApplicationOperationAuthorization(func(context.Context, string, string, string) error)
+	}); ok {
+		configurable.ConfigureApplicationOperationAuthorization(func(ctx context.Context, tenantID, ownerID, serverID string) error {
+			return authorizeInventoryServerOperate(ctx, cfg.Policy, inventoryScope{tenantID: tenantID, ownerID: ownerID}, serverID)
+		})
+	}
+	h.applicationAdmission = cfg.ApplicationAdmission
+	if h.applicationAdmission == nil {
+		h.applicationAdmission = jobs.ApplicationAdoptionRelease
+	}
+	h.updates = cfg.UpdateChecker
+	if h.updates == nil {
+		h.updates = appcatalog.NewUpdateChecker()
+	}
+	h.stackKitRelease = cfg.StackKitReleaseVersion
+	if h.stackKitRelease == nil {
+		h.stackKitRelease = pinnedStackKitRelease()
+	}
 	r.GET("/api/v1/services", h.list)
 	r.GET("/api/v1/services/{serviceId}", h.get)
+	r.GET("/api/v1/services/{serviceId}/metrics", h.serviceMetrics)
 	r.GET("/api/v1/service-applications", h.listApplications)
 	r.GET("/api/v1/service-applications/{applicationId}", h.getApplication)
 	r.POST("/api/v1/registry/services/{serviceId}/actions", h.action)
 	r.GET("/api/v1/registry/services/{serviceId}/logs", h.logs)
+	r.GET("/api/v1/services/{serviceId}/connector", h.readConnector)
+	r.POST("/api/v1/services/{serviceId}/connector", h.setupConnector)
+	r.POST("/api/v1/services/{serviceId}/connector/verify", h.verifyConnector)
+	r.POST("/api/v1/services/{serviceId}/adoption-plans", h.prepareAdoption)
+	r.GET("/api/v1/services/{serviceId}/adoption-plans/{planId}", h.readAdoption)
+	r.POST("/api/v1/services/{serviceId}/adoption-plans/{planId}/execute", h.executeAdoption)
+	r.POST("/api/v1/services/{serviceId}/release", h.releaseAdoption)
 }
 
 func (h *serviceRuntimeHandlers) listApplications(e *httpx.Event) error {
@@ -238,7 +304,7 @@ func (h *serviceRuntimeHandlers) applicationReadModel(e *httpx.Event) ([]service
 	if stackID != "" && !ownedStacks[stackID] {
 		return nil, httpx.Reject(e, http.StatusNotFound, ksapi.ErrCodeNotFound, "Stack not found", nil)
 	}
-	rows, err := h.store.ListServiceRuntimes(e.Request.Context(), tenantID, stackID, serverID)
+	rows, err := h.store.ListServiceRuntimes(e.Request.Context(), tenantID, stackID, "")
 	if err != nil {
 		return nil, httpx.Reject(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Service inventory is unavailable", nil)
 	}
@@ -246,9 +312,17 @@ func (h *serviceRuntimeHandlers) applicationReadModel(e *httpx.Event) ([]service
 	if err != nil {
 		return nil, httpx.Reject(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Server inventory is unavailable", nil)
 	}
+	rows = projectDeclaredServiceControls(rows, servers)
 	grouped := make(map[string]*serviceApplicationResponse)
+	response := h.responseForRequest()
 	for _, row := range rows {
-		if !ownedStacks[row.StackID] {
+		if !ownedStacks[row.StackID] || stringFromAnyMap(row.Metadata, serviceSupersededBy) != "" {
+			continue
+		}
+		if server := servers[row.ServerID]; server != nil {
+			row.ServerID = server.ID
+		}
+		if serverID != "" && row.ServerID != serverID {
 			continue
 		}
 		key := applicationKeyForService(row)
@@ -266,7 +340,7 @@ func (h *serviceRuntimeHandlers) applicationReadModel(e *httpx.Event) ([]service
 			}
 			grouped[id] = application
 		}
-		component := h.response(row, servers[row.ServerID])
+		component := response(row, servers[row.ServerID])
 		application.Components = append(application.Components, component)
 		application.Status = aggregateApplicationStatus(application.Status, component.Health.State, component.ObservedState)
 		if row.ObservedAt != nil && (application.ObservedAt == nil || row.ObservedAt.After(*application.ObservedAt)) {
@@ -278,6 +352,9 @@ func (h *serviceRuntimeHandlers) applicationReadModel(e *httpx.Event) ([]service
 	result := make([]serviceApplicationResponse, 0, len(grouped))
 	for _, application := range grouped {
 		sort.Slice(application.Components, func(i, j int) bool { return application.Components[i].Name < application.Components[j].Name })
+		primary := primaryApplicationComponent(application.Components)
+		application.AllowedActions = applicationActionUnion(application.Components)
+		application.Catalog, application.Version, application.PlacementClass = primary.Catalog, primary.Version, primary.PlacementClass
 		result = append(result, *application)
 	}
 	sort.Slice(result, func(i, j int) bool {
@@ -289,33 +366,29 @@ func (h *serviceRuntimeHandlers) applicationReadModel(e *httpx.Event) ([]service
 	return result, nil
 }
 
-func applicationKeyForService(service controlplane.ServiceRuntime) string {
-	if key := strings.ToLower(strings.TrimSpace(stringFromAnyMap(service.Metadata, "application_key"))); key != "" {
-		return key
+// primaryApplicationComponent picks the component that speaks for its
+// application: a recognized, non-infrastructure, non-database component first,
+// then any recognized one, then the first running one, then the first.
+func primaryApplicationComponent(components []serviceRuntimeResponse) serviceRuntimeResponse {
+	if len(components) == 0 {
+		return serviceRuntimeResponse{PlacementClass: placementClassUnknown}
 	}
-	// Rows persisted before the guard derived a bucket still carry the compose
-	// project in their runtime identity; grouping by it keeps one compose
-	// stack one application instead of collapsing every observed unit on the
-	// host into a single server-wide bucket.
-	identity := stringMapFromAny(service.Metadata["runtime_identity"])
-	if identity["kind"] == "docker_compose_service" {
-		if project := strings.ToLower(strings.TrimSpace(identity["project"])); project != "" {
-			return project
+	best, bestRank := components[0], -1
+	for _, component := range components {
+		rank := 0
+		switch {
+		case component.Catalog != nil && !component.Catalog.Infra && component.Catalog.Category != "database":
+			rank = 3
+		case component.Catalog != nil:
+			rank = 2
+		case component.ObservedState == string(serviceregistry.ObservedRunning):
+			rank = 1
+		}
+		if rank > bestRank {
+			best, bestRank = component, rank
 		}
 	}
-	if serviceregistry.CanonicalManagementState(service.ManagementState) == serviceregistry.ManagementObserved {
-		return "system"
-	}
-	return strings.ToLower(strings.TrimSpace(service.ServiceKey))
-}
-
-func applicationDisplayName(service controlplane.ServiceRuntime, key string) string {
-	// The System bucket never inherits a member's name: "hermes-webui" as the
-	// title of a bucket holding cups and symphony units misled the operator.
-	if key == "system" {
-		return "System Services"
-	}
-	return firstNonEmptyString(stringFromAnyMap(service.Metadata, "application_display_name"), service.Name, key)
+	return best
 }
 
 func aggregateApplicationStatus(current, health, observed string) string {
@@ -370,7 +443,7 @@ func (h *serviceRuntimeHandlers) action(e *httpx.Event) error {
 	if requestErr != nil {
 		return requestErr
 	}
-	service, err := h.store.GetServiceRuntime(e.Request.Context(), tenantID, serviceID)
+	service, err := h.loadServiceRuntime(e.Request.Context(), tenantID, serviceID)
 	if errors.Is(err, controlplane.ErrNotFound) {
 		return httpx.NotFound(e, "Service not found")
 	}
@@ -392,14 +465,21 @@ func (h *serviceRuntimeHandlers) action(e *httpx.Event) error {
 		strconv.FormatBool(request.OwnerApproved), strconv.FormatInt(int64(request.Limit), 10), request.Cursor,
 	}, "\x00")))
 	digest := hex.EncodeToString(digestBytes[:])
-	operation := map[string]string{"start": jobs.StackKitLifecycleServiceStart, "stop": jobs.StackKitLifecycleServiceStop, serviceActionRestart: jobs.StackKitLifecycleServiceRestart, "logs": jobs.StackKitLifecycleServiceLogs}[request.Action]
+	operation := map[string]string{"start": jobs.StackKitLifecycleServiceStart, "stop": jobs.StackKitLifecycleServiceStop, serviceActionRestart: jobs.StackKitLifecycleServiceRestart, "logs": jobs.StackKitLifecycleServiceLogs, serviceActionUpdate: jobs.StackKitLifecycleUpgrade, serviceActionBackup: jobs.StackKitLifecycleBackupRun}[request.Action]
 	lifecycleRequest := jobs.StackKitLifecycleRequest{
 		StackID: stack.ID, StackKitInstanceID: stack.StackKitInstanceID, TenantID: tenantID, OwnerID: ownerID,
-		Operation: operation, OwnerApproved: request.Action != "logs", ServiceKey: service.ServiceKey,
+		Operation: operation, OwnerApproved: request.Action != "logs", ServiceKey: serviceActionControlKey(service),
 		LogTail: request.Limit, LogCursor: request.Cursor, ServiceID: service.ID,
 		DurableJobID: jobs.StackKitServiceActionJobID(tenantID, ownerID, idempotencyKey), ServiceActionDigest: digest,
 	}
 	// Replay before validating the target: a lost-response retry must return
+	if adoptedApplication(service) && request.Action != "logs" && request.Action != serviceActionUpdate && request.Action != serviceActionBackup {
+		if err := authorizeInventoryServerOperate(e.Request.Context(), h.policy, inventoryScope{tenantID: tenantID, ownerID: ownerID}, service.ServerID); err != nil {
+			return writeInventoryHTTPError(e, err)
+		}
+		lifecycleRequest.Operation = jobs.StackKitLifecycleApplicationControl
+		lifecycleRequest.ServiceKey = "smart-home"
+	}
 	// the stored receipt even though the first attempt already moved the
 	// inventory revision, locked the service or lost its agent connection.
 	if replayed, replayErr := h.replayServiceAction(e, tenantID, service, request.Action, lifecycleRequest); replayed || replayErr != nil {
@@ -414,6 +494,11 @@ func (h *serviceRuntimeHandlers) action(e *httpx.Event) error {
 			"unlock_required_action": serviceActionUnfreeze,
 		})
 	}
+	if sources := serviceGroupLockSources(*service); len(sources) != 0 && serviceMutatingActions[request.Action] {
+		return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "Application control is locked", map[string]any{
+			"reason_code": "application_control_locked", "unlock_required_action": serviceActionUnfreeze, "unlock_service_ids": sources,
+		})
+	}
 	target, targetErr := h.validateServiceActionTarget(e, tenantID, service, stack, request)
 	if targetErr != nil {
 		return targetErr
@@ -425,6 +510,31 @@ func (h *serviceRuntimeHandlers) action(e *httpx.Event) error {
 	}
 	lifecycleRequest.AgentID = target.server.WorkerID
 	lifecycleRequest.StackKit = target.stackKit
+	if request.Action == serviceActionUpdate {
+		// An update is the stack upgrade to the pinned StackKits release. It
+		// rewrites every service of the stack, so a locked sibling refuses it.
+		if lockedErr := h.refuseLockedStackServices(e, tenantID, stack.ID); lockedErr != nil {
+			return lockedErr
+		}
+		if h.stackKitRelease != nil {
+			lifecycleRequest.TargetRelease = upgradeTargetRelease(h.stackKitRelease())
+		}
+	}
+	if adoptedApplication(service) && request.Action != "logs" && request.Action != serviceActionUpdate && request.Action != serviceActionBackup {
+		head, readErr := h.applicationHead(e.Request.Context(), tenantID, service.ID)
+		if readErr != nil {
+			return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Application identity authority is unavailable", nil)
+		}
+		pin, pinErr := h.applicationAdmission()
+		if pinErr != nil {
+			return adoptionUnavailable(e, pinErr)
+		}
+		lifecycleRequest.Operation = jobs.StackKitLifecycleApplicationControl
+		lifecycleRequest.ServiceKey = "smart-home"
+		lifecycleRequest.Application = retainedApplicationBinding(adoptionTarget{head: head})
+		lifecycleRequest.Application.Action = request.Action
+		lifecycleRequest.Application.ReleasePin = pin
+	}
 	return h.enqueueServiceAction(e, tenantID, stack.ID, service, request.Action, lifecycleRequest)
 }
 
@@ -482,7 +592,7 @@ func decodeServiceActionRequest(e *httpx.Event) (string, string, serviceActionRe
 	}
 	request.Action = strings.ToLower(strings.TrimSpace(request.Action))
 	if !serviceActionVocabulary[request.Action] {
-		return "", "", serviceActionRequest{}, false, httpx.Reject(e, http.StatusBadRequest, ksapi.ErrCodeBadRequest, "Action must be start, stop, restart, logs, freeze, or unfreeze", nil)
+		return "", "", serviceActionRequest{}, false, httpx.Reject(e, http.StatusBadRequest, ksapi.ErrCodeBadRequest, "Action must be start, stop, restart, logs, update, backup, freeze, or unfreeze", nil)
 	}
 	if request.Action != serviceActionLogs && !request.OwnerApproved {
 		return "", "", serviceActionRequest{}, false, httpx.Reject(e, http.StatusBadRequest, ksapi.ErrCodeBadRequest, "Service mutations require explicit Owner approval", nil)
@@ -538,12 +648,20 @@ func (h *serviceRuntimeHandlers) validateServiceActionTarget(
 	}
 	// Validated against the same projection the read model advertises, so the
 	// advertised and the enforced capability set cannot drift apart.
-	if !containsString(serviceRuntimeAllowedActions(service.Capabilities, service.MutationLock.Locked()), request.Action) {
+	if request.Action == serviceActionUpdate {
+		if !updateAllowed(*service, h.serviceVersionFor(*service), server) {
+			return serviceActionTarget{}, httpx.Reject(e, http.StatusConflict, ksapi.ErrCodeConflict, "Service action is not allowed", map[string]any{"reason_code": "service_update_unavailable"})
+		}
+	} else if request.Action == serviceActionBackup {
+		if !backupAllowed(*service, server) {
+			return serviceActionTarget{}, httpx.Reject(e, http.StatusConflict, ksapi.ErrCodeConflict, "Service action is not allowed", map[string]any{"reason_code": "service_backup_unavailable"})
+		}
+	} else if !containsString(serviceRuntimeAllowedActions(service.Capabilities, service.MutationLock.Locked()), request.Action) {
 		return serviceActionTarget{}, httpx.Reject(e, http.StatusConflict, ksapi.ErrCodeConflict, "Service action is not allowed", nil)
 	}
-	stackKit := strings.TrimSpace(strings.Split(service.StackKitVersion, "@")[0])
+	stackKit := serviceActionKitName(service.StackKitVersion)
 	if stackKit == "" {
-		stackKit = firstNonEmptyString(stringFromAnyMap(stack.Config, "stackkit"), stringFromAnyMap(stack.Config, "kit"))
+		stackKit = firstNonEmptyString(stackString(stack, "stackkit_catalog_ref"), stackString(stack, "stackkit_foundation"), stringFromAnyMap(stack.Config, "stackkit"), stringFromAnyMap(stack.Config, "kit"))
 	}
 	return serviceActionTarget{server: server, stackKit: stackKit}, nil
 }
@@ -576,8 +694,24 @@ func (h *serviceRuntimeHandlers) enqueueServiceAction(
 	}
 	jobID, err := h.orch.EnqueueStackKitLifecycle(e.Request.Context(), lifecycleRequest)
 	if err != nil {
+		if errors.Is(err, controlplane.ErrServiceOperationBusy) {
+			return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "A service action is already active", nil)
+		}
 		if errors.Is(err, controlplane.ErrConflict) {
 			return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "Idempotency-Key was already used for a different request", nil)
+		}
+		if errors.Is(err, orchestrator.ErrStackKitBackupCustodyManaged) {
+			return httpx.Error(e, http.StatusForbidden, ksapi.ErrCodeForbidden,
+				"Backups for this StackKit run through the managed backup schedule",
+				map[string]any{
+					"reason_code": "managed_backup_custody",
+					"retryable":   false,
+					"user_guidance": map[string]any{
+						"title":      "Backups for this stack are managed",
+						"body":       "This StackKit keeps its backups in kombify-managed storage, so they run on the stack's backup schedule under your plan's backup entitlement.",
+						"next_steps": []string{"Use the stack's backup schedule to run managed backups."},
+					},
+				})
 		}
 		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Failed to enqueue managed service action", map[string]any{"reason": err.Error()})
 	}
@@ -643,24 +777,11 @@ func serviceActionJobStatus(state string) string {
 }
 
 func (h *serviceRuntimeHandlers) activeServiceActionJob(ctx context.Context, tenantID, stackID, serviceID, excludeJobID string) (string, error) {
-	rows, err := h.jobs.ListJobsByStack(ctx, tenantID, stackID, 100)
-	if err != nil {
-		return "", err
+	serviceJobs, ok := h.jobs.(controlplane.ServiceOperationJobStore)
+	if !ok {
+		return "", errors.New("complete service operation store is unavailable")
 	}
-	for _, row := range rows {
-		if row.ID == excludeJobID {
-			continue
-		}
-		state := strings.ToLower(strings.TrimSpace(row.State))
-		if state != "pending" && state != "running" && state != "waiting" {
-			continue
-		}
-		receipt, _ := row.Result["service_action_receipt"].(map[string]any)
-		if stringFromAnyMap(receipt, "service_id") == serviceID {
-			return row.ID, nil
-		}
-	}
-	return "", nil
+	return serviceJobs.FindUnresolvedServiceJob(ctx, tenantID, stackID, serviceID, excludeJobID)
 }
 
 func (h *serviceRuntimeHandlers) logs(e *httpx.Event) error {
@@ -691,7 +812,7 @@ func (h *serviceRuntimeHandlers) logs(e *httpx.Event) error {
 	if len(cursor) > 2048 {
 		return httpx.BadRequest(e, "cursor is too long", nil)
 	}
-	service, err := h.store.GetServiceRuntime(e.Request.Context(), tenantID, serviceID)
+	service, err := h.loadServiceRuntime(e.Request.Context(), tenantID, serviceID)
 	if errors.Is(err, controlplane.ErrNotFound) {
 		return httpx.NotFound(e, "Service not found")
 	}
@@ -799,7 +920,7 @@ func (h *serviceRuntimeHandlers) list(e *httpx.Event) error {
 	if stackID != "" && !ownedStacks[stackID] {
 		return httpx.NotFound(e, "Stack not found")
 	}
-	rows, err := h.store.ListServiceRuntimes(e.Request.Context(), tenantID, stackID, serverID)
+	rows, err := h.store.ListServiceRuntimes(e.Request.Context(), tenantID, stackID, "")
 	if err != nil {
 		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Service inventory is unavailable", nil)
 	}
@@ -810,14 +931,37 @@ func (h *serviceRuntimeHandlers) list(e *httpx.Event) error {
 		// service fleet, so preserve it as a typed unavailable state instead.
 		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Server inventory is unavailable", nil)
 	}
+	rows = projectDeclaredServiceControls(rows, servers)
 	items := make([]serviceRuntimeResponse, 0, len(rows))
+	response := h.responseForRequest()
 	for _, row := range rows {
-		if !ownedStacks[row.StackID] {
+		if !ownedStacks[row.StackID] || stringFromAnyMap(row.Metadata, serviceSupersededBy) != "" {
 			continue
 		}
-		items = append(items, h.response(row, servers[row.ServerID]))
+		canonicalID := row.ServerID
+		if server := servers[row.ServerID]; server != nil {
+			canonicalID = server.ID
+		}
+		if serverID != "" && canonicalID != serverID {
+			continue
+		}
+		items = append(items, response(row, servers[row.ServerID]))
 	}
-	return httpx.Success(e, http.StatusOK, items)
+	validator := make([]serviceRuntimeResponse, len(items))
+	for i, item := range items {
+		validator[i] = item.withoutElapsedCounters()
+	}
+	return httpx.ConditionalSuccess(e, items, validator)
+}
+
+// withoutElapsedCounters clears `placement.freshness.age_seconds`, the clock
+// minus a timestamp the response also carries (`health.observed_at`, or
+// `placement.observed_at` for a managed workload). It is served as-is but
+// excluded from the response validator, because it changes every second and
+// would make a conditional read of an unchanged service never match.
+func (r serviceRuntimeResponse) withoutElapsedCounters() serviceRuntimeResponse {
+	r.Placement.Freshness.AgeSeconds = nil
+	return r
 }
 
 func (h *serviceRuntimeHandlers) get(e *httpx.Event) error {
@@ -833,7 +977,7 @@ func (h *serviceRuntimeHandlers) get(e *httpx.Event) error {
 	if tenantErr != nil {
 		return tenantErr
 	}
-	service, err := h.store.GetServiceRuntime(e.Request.Context(), tenantID, serviceID)
+	service, err := h.loadServiceRuntime(e.Request.Context(), tenantID, serviceID)
 	if errors.Is(err, controlplane.ErrNotFound) {
 		return httpx.NotFound(e, "Service not found")
 	}
@@ -856,7 +1000,8 @@ func (h *serviceRuntimeHandlers) get(e *httpx.Event) error {
 			return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Service server inventory is unavailable", nil)
 		}
 	}
-	return httpx.Success(e, http.StatusOK, h.response(*service, server))
+	item := h.response(*service, server)
+	return httpx.ConditionalSuccess(e, item, item.withoutElapsedCounters())
 }
 
 func (h *serviceRuntimeHandlers) ownedStackIDs(e *httpx.Event, tenantID, ownerID string, isAdmin bool) (map[string]bool, error) {
@@ -881,6 +1026,9 @@ func (h *serviceRuntimeHandlers) serverMap(e *httpx.Event, tenantID, stackID str
 	result := make(map[string]*controlplane.ServerRuntime, len(rows))
 	for i := range rows {
 		result[rows[i].ID] = &rows[i]
+		if rows[i].NodeID != "" {
+			result[rows[i].NodeID] = &rows[i]
+		}
 	}
 	return result, nil
 }
@@ -890,12 +1038,32 @@ func (h *serviceRuntimeHandlers) serverMap(e *httpx.Event, tenantID, stackID str
 // read path no longer recomputes heartbeat freshness inline; persisted state
 // is returned and demoted servers mask their services as unknown.
 func (h *serviceRuntimeHandlers) response(service controlplane.ServiceRuntime, server *controlplane.ServerRuntime) serviceRuntimeResponse {
+	return h.responseWithAdmission(service, server, h.applicationAdmission)
+}
+
+// A list projects one current signed admission across its eligible rows. The
+// closure belongs only to this read request; execution still admits afresh.
+func (h *serviceRuntimeHandlers) responseForRequest() func(controlplane.ServiceRuntime, *controlplane.ServerRuntime) serviceRuntimeResponse {
+	admission := h.applicationAdmission
+	if admission != nil {
+		admission = sync.OnceValues(admission)
+	}
+	return func(service controlplane.ServiceRuntime, server *controlplane.ServerRuntime) serviceRuntimeResponse {
+		return h.responseWithAdmission(service, server, admission)
+	}
+}
+
+func (h *serviceRuntimeHandlers) responseWithAdmission(service controlplane.ServiceRuntime, server *controlplane.ServerRuntime, admission func() (*agentpb.StackKitReleasePin, error)) serviceRuntimeResponse {
+	if server != nil {
+		service.ServerID = server.ID
+	}
 	placement := serviceregistry.NormalizePlacement(service.ServerID, service.Placement)
 	observedState, healthState := service.ObservedState, service.HealthState
 	reasonCode := ""
 	access := sanitizedServiceAccess(service.Access)
 	locked := service.MutationLock.Locked()
 	allowedActions := serviceRuntimeAllowedActions(service.Capabilities, locked)
+	version := h.serviceVersionFor(service)
 	switch placement.TargetKind {
 	case serviceregistry.TargetKindServer:
 		connection := string(serverregistry.ConnectionOffline)
@@ -918,12 +1086,50 @@ func (h *serviceRuntimeHandlers) response(service controlplane.ServiceRuntime, s
 	if locked && !containsString(allowedActions, serviceActionUnfreeze) {
 		allowedActions = append(allowedActions, serviceActionUnfreeze)
 	}
+	adoption := h.adoptionAvailability(service, admission)
+	// Serve the key and name the application read model actually groups by: an
+	// observed row persisted before recognition carries the agent's `system`
+	// placeholder, and a row stamped with its StackKit platform project would
+	// otherwise name every service of the kit after the kit.
+	grouping := resolveServiceApplication(service)
+	applicationKey, applicationName := grouping.Key, applicationDisplayName(service, grouping.Key)
+	if placement.TargetKind == serviceregistry.TargetKindServer {
+		// Advertised from the same rules the endpoints enforce: update runs the
+		// stack upgrade, adopt starts the adoption plan of an observed service.
+		if updateAllowed(service, version, server) {
+			allowedActions = append(allowedActions, serviceActionUpdate)
+		}
+		if backupAllowed(service, server) {
+			allowedActions = append(allowedActions, serviceActionBackup)
+		}
+		if adoption.ExecutionAvailable && !locked && serviceregistry.CanonicalManagementState(service.ManagementState) == serviceregistry.ManagementObserved {
+			allowedActions = append(allowedActions, serviceActionAdopt)
+		}
+		sort.Strings(allowedActions)
+	}
 	if reasonCode != "" {
 		access = serviceAccess(serviceAccessUnavailable, "", "", reasonCode, "")
 	}
 	placementFreshness := h.placementFreshness(placement, service.ObservedAt)
 	provenance := map[string]interface{}{
 		"definition_authority": serviceStackKits, "runtime_authority": serviceRuntimeAuthority, "observation_source": service.Source,
+	}
+	if control := stringFromAnyMap(service.Metadata, serviceControlKey); control != "" {
+		provenance[serviceControlKey] = control
+		provenance[serviceControlID] = stringFromAnyMap(service.Metadata, serviceControlID)
+		provenance["control_scope"] = "application"
+		provenance["control_application_key"] = applicationKey
+	}
+	var actionGuard map[string]any
+	if sources := serviceGroupLockSources(service); len(sources) != 0 {
+		actionGuard = map[string]any{"reason_code": "application_control_locked", "unlock_required_action": serviceActionUnfreeze, "unlock_service_ids": sources}
+	}
+	if counterpart := stringFromAnyMap(service.Metadata, serviceSupersededBy); counterpart != "" {
+		provenance[serviceSupersededBy] = counterpart
+		allowedActions = []string{}
+		if locked {
+			allowedActions = append(allowedActions, serviceActionUnfreeze)
+		}
 	}
 	if backfill, _ := service.Metadata["backfill"].(bool); backfill {
 		provenance["migration_mode"] = "read_through_backfill"
@@ -939,13 +1145,17 @@ func (h *serviceRuntimeHandlers) response(service controlplane.ServiceRuntime, s
 		},
 		ServiceKey: service.ServiceKey, ServiceInstance: service.ServiceInstance,
 		Name:                   service.Name,
-		ApplicationKey:         stringFromAnyMap(service.Metadata, "application_key"),
-		ApplicationDisplayName: stringFromAnyMap(service.Metadata, "application_display_name"),
+		ApplicationKey:         applicationKey,
+		ApplicationDisplayName: applicationName,
+		Catalog:                serviceCatalogEntry(service),
+		Version:                version,
+		PlacementClass:         servicePlacementClass(placement, server),
 		Role:                   stringFromAnyMap(service.Metadata, "role"),
 		Lifecycle:              stringFromAnyMap(service.Metadata, "lifecycle"),
 		OperationalImpact:      stringFromAnyMap(service.Metadata, "operational_impact"),
 		InternalAddress:        boundedInternalServiceAddress(stringFromAnyMap(service.Metadata, "internal_address")),
 		RuntimeIdentity:        stringMapFromAny(service.Metadata["runtime_identity"]),
+		Adoption:               adoption,
 		ManagementState:        string(serviceregistry.CanonicalManagementState(service.ManagementState)),
 		MutationLock:           serviceMutationLockResponse(service.MutationLock),
 		DesiredState:           service.DesiredState, ObservedState: observedState,
@@ -955,6 +1165,7 @@ func (h *serviceRuntimeHandlers) response(service controlplane.ServiceRuntime, s
 		InventoryRevision: metadataInt64(service.Metadata, "inventory_revision"),
 		EvidenceRef:       stringFromAnyMap(service.Metadata, "evidence_ref"),
 		Provenance:        provenance,
+		ActionGuard:       actionGuard,
 		CreatedAt:         service.CreatedAt, UpdatedAt: service.UpdatedAt,
 	}
 }
@@ -1025,4 +1236,18 @@ func boundedAccessValue(access map[string]any, key string) string {
 		return value[:256]
 	}
 	return value
+}
+
+// serviceActionKitName extracts the kit name from a service's StackKit
+// identity. The inventory records either "kit@version" or only the bare
+// version ("5.1.0"); a bare version names no kit, and handing it to the local
+// execution binding made every action on a cloud-kit service fail with "no
+// local execution binding is known for StackKit \"5.1.0\"".
+func serviceActionKitName(identity string) string {
+	name, _, _ := strings.Cut(strings.TrimSpace(identity), "@")
+	name = strings.TrimSpace(name)
+	if name == "" || (name[0] >= '0' && name[0] <= '9') {
+		return ""
+	}
+	return name
 }

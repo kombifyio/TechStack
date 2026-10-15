@@ -9,6 +9,7 @@ import (
 
 	"github.com/kombifyio/techstack/pkg/auth"
 	"github.com/kombifyio/techstack/pkg/controlplane"
+	"github.com/kombifyio/techstack/pkg/kombifywallet"
 	"github.com/kombifyio/techstack/pkg/remoteguard"
 	"github.com/kombifyio/techstack/pkg/specv2"
 )
@@ -47,7 +48,17 @@ func (h wizardRunHandlers) persistWizardRemoteConnectionBinding(ctx context.Cont
 		authMethod = "ssh-key"
 	}
 	credRef := strings.TrimSpace(remote.SSHKeyLabel)
-	if authMethod == "password" {
+	walletItemID := ""
+	switch {
+	case h.cfg.KombifyWallet != nil:
+		// The credential already lives in the owner's kombify Wallet; the stack
+		// keeps only the item id. Nothing is written to the legacy wallet.
+		walletItemID = strings.TrimSpace(remote.SSHWalletItemID)
+		if !kombifywallet.IsItemID(walletItemID) {
+			return kombifywallet.ItemRequired()
+		}
+		credRef = ""
+	case authMethod == "password":
 		password := strings.TrimSpace(remote.Password)
 		if password == "" {
 			return errors.New("SSH password is required to persist the remote connection")
@@ -59,7 +70,7 @@ func (h wizardRunHandlers) persistWizardRemoteConnectionBinding(ctx context.Cont
 		if err := h.upsertRemoteSSHPasswordWalletItem(ctx, run.tenantID, run.ownerID, stackID, credRef, password); err != nil {
 			return err
 		}
-	} else if credRef == "" {
+	case credRef == "":
 		return errors.New("SSH key label is required for key authentication")
 	}
 
@@ -73,14 +84,20 @@ func (h wizardRunHandlers) persistWizardRemoteConnectionBinding(ctx context.Cont
 	newConfig["server_remote_host_present"] = true
 	newConfig["server_remote_user_present"] = true
 	newConfig["server_remote_auth_method"] = authMethod
-	newConfig["server_remote_credential_ref"] = credRef
+	if walletItemID != "" {
+		newConfig[stackConfigKeyRemoteCredentialItemID] = walletItemID
+		delete(newConfig, "server_remote_credential_ref")
+		delete(newConfig, "server_remote_ssh_key_label")
+	} else {
+		newConfig["server_remote_credential_ref"] = credRef
+	}
 	if remote.Port != nil && *remote.Port > 0 {
 		newConfig["server_remote_port"] = *remote.Port
 	}
 	if remote.UseSudo {
 		newConfig["server_remote_use_sudo"] = true
 	}
-	if authMethod != "password" {
+	if authMethod != "password" && walletItemID == "" {
 		newConfig["server_remote_ssh_key_label"] = credRef
 	}
 	_, err = h.crud.stackStore.CompareAndSwapStackConfig(ctx, controlplane.StackConfigCAS{
@@ -92,11 +109,17 @@ func (h wizardRunHandlers) persistWizardRemoteConnectionBinding(ctx context.Cont
 	if err != nil {
 		return err
 	}
-	remote.SSHKeyLabel = credRef
+	if walletItemID == "" {
+		remote.SSHKeyLabel = credRef
+	}
 	return nil
 }
 
 func (h wizardRunHandlers) upsertRemoteSSHPasswordWalletItem(ctx context.Context, tenantID, ownerID, stackID, name, password string) error {
+	if h.cfg.KombifyWallet != nil {
+		// Defence in depth: kombify mode never writes the legacy wallet.
+		return kombifywallet.ItemRequired()
+	}
 	encrypted, err := auth.EncryptIfNeeded(auth.GetEncryptor(), password)
 	if err != nil {
 		return fmt.Errorf("encrypt remote ssh password: %w", err)
@@ -162,6 +185,11 @@ func (h wizardRunHandlers) credentialsFromStackConfig(ctx context.Context, tenan
 		Port:    port,
 		User:    user,
 		UseSudo: remoteUseSudoFromConfig(stack.Config),
+	}
+	// A stack bound to a kombify Wallet item reads only that item. It never
+	// falls back to a name label, which would resolve against the legacy store.
+	if itemID := strings.TrimSpace(runtimeStringFromConfig(stack.Config, stackConfigKeyRemoteCredentialItemID)); itemID != "" {
+		return h.credentialsFromWalletItem(ctx, ownerID, itemID, creds, authMethod)
 	}
 	if authMethod == "password" {
 		if credRef == "" {

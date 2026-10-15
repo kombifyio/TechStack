@@ -6,7 +6,10 @@
  *
  * Inbound messages (portal → app):
  *   { type: 'navigate', path: '/stacks/abc' }
- *   { type: 'refresh' }
+ *   { type: 'refresh' }            full reload of the frame
+ *   { type: 'host-refresh' }       re-read the data on screen without a reload
+ *                                  (the host started or changed something the
+ *                                  frame would otherwise only see on its poll)
  *   { type: 'theme', value: 'dark' | 'light' }
  *     with optional systemCardShape: 'square' | 'app'
  *     with optional finish: 'kombify'|'liquid'|'frost'|'expressive'|'aurora'
@@ -18,6 +21,8 @@
  *   { type: 'gateway-token', token: '<auth0-api-access-token>', audience: 'https://api.kombify.io', expiresAt?: number }
  *   { type: 'gateway-token-error', error: '...' }
  *   { type: 'ai-handover-ack', correlation_id: '...', status: 'accepted' | 'session-ready' | 'failed', ... }
+ *   { type: 'view-context-request' }   the host asks for the current view
+ *                                      context (after `ready`, after a frame load)
  *
  * Outbound messages (app → portal):
  *   { type: 'ready', tool: 'kombifystack', chrome: { overlayControls, companion } }
@@ -26,6 +31,9 @@
  *   { type: 'auth-request', tool: 'kombifystack' }
  *   { type: 'gateway-token-request', tool: 'kombifystack', audience: 'https://api.kombify.io' }
  *   { type: 'ai-handover', tool: 'kombifystack', ... }
+ *   { type: 'view-context', tool: 'kombifystack', schema: 'kombify.view-context.v1', seq, route, title, ... }
+ *     the page and object the user is looking at, ids and codes only
+ *     (see `#lib/view-context.ts`)
  */
 
 import { browser } from "$app/env";
@@ -37,6 +45,11 @@ import {
   isSafeInternalPath,
   withHostNavigation,
 } from "#lib/embedded-navigation.js";
+import {
+  VIEW_CONTEXT_SCHEMA,
+  sanitizeViewContext,
+  type ViewContextInput,
+} from "#lib/view-context.js";
 
 import { tr } from "#lib/i18n.svelte.js";
 const TOOL_ID = "kombifystack";
@@ -96,6 +109,11 @@ export type AiErrorHandoverUpdate =
     };
 
 let initialized = false;
+const hostRefreshListeners = new Set<() => void>();
+const viewContextRequestListeners = new Set<() => void>();
+// Monotone per document, so the host can order messages and drop a late one.
+let viewContextSeq = 0;
+let lastViewContextSignature = "";
 let allowedOrigins = new Set<string>();
 let targetOrigin: string | null = null;
 let resizeObserver: ResizeObserver | null = null;
@@ -178,6 +196,68 @@ export function destroyBridge(): void {
     new Error(tr("ui.postMessageBridge.bridgeDestroyed")),
   );
   clearPendingAiHandovers();
+  lastViewContextSignature = "";
+}
+
+/**
+ * Run `listener` whenever the host asks the frame to re-read its data. The
+ * request arrives through the bridge's own origin-checked message handler, so
+ * callers never listen to raw window messages. Returns the unsubscribe.
+ */
+export function onHostRefresh(listener: () => void): () => void {
+  hostRefreshListeners.add(listener);
+  return () => {
+    hostRefreshListeners.delete(listener);
+  };
+}
+
+/**
+ * Run `listener` whenever the host asks for the current view context. Same
+ * contract as `onHostRefresh`: the request is read by the bridge's own
+ * origin-checked handler. Returns the unsubscribe.
+ */
+export function onViewContextRequest(listener: () => void): () => void {
+  viewContextRequestListeners.add(listener);
+  return () => {
+    viewContextRequestListeners.delete(listener);
+  };
+}
+
+/** True when this document runs inside a host page (the Cloud frame). */
+export function isEmbeddedFrame(): boolean {
+  return browser && window.parent !== window;
+}
+
+/**
+ * Tell the host which page and object the user is looking at. The input is
+ * reduced to ids and short codes first (`sanitizeViewContext`), so nothing a
+ * page holds beyond that can reach the host. A message equal to the last one
+ * is skipped unless `force` (the host asked, or refreshed); `cleared` tells
+ * the host the app has nothing to describe. Returns whether a message was sent.
+ */
+export function publishViewContext(
+  input: ViewContextInput,
+  options: { force?: boolean; cleared?: boolean } = {},
+): boolean {
+  if (!isEmbeddedFrame()) return false;
+
+  const body = sanitizeViewContext(
+    options.cleared ? { route: input.route, title: input.title } : input,
+  );
+  const signature = `${options.cleared ? "cleared:" : ""}${JSON.stringify(body)}`;
+  if (!options.force && signature === lastViewContextSignature) return false;
+
+  lastViewContextSignature = signature;
+  viewContextSeq += 1;
+  sendToPortal({
+    type: "view-context",
+    tool: TOOL_ID,
+    schema: VIEW_CONTEXT_SCHEMA,
+    seq: viewContextSeq,
+    ...(options.cleared ? { cleared: true } : {}),
+    ...body,
+  });
+  return true;
 }
 
 /** Send a message to the parent portal. */
@@ -393,6 +473,26 @@ function handleMessage(event: MessageEvent): void {
 
     case "refresh":
       window.location.reload();
+      break;
+
+    case "host-refresh":
+      for (const listener of [...hostRefreshListeners]) {
+        try {
+          listener();
+        } catch {
+          // A page callback must not break the authenticated bridge.
+        }
+      }
+      break;
+
+    case "view-context-request":
+      for (const listener of [...viewContextRequestListeners]) {
+        try {
+          listener();
+        } catch {
+          // A page callback must not break the authenticated bridge.
+        }
+      }
       break;
 
     case "theme":

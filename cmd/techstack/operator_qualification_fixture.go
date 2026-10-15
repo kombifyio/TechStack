@@ -5,14 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"reflect"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/db"
@@ -24,10 +23,10 @@ const operatorQualificationFixtureGate = "TECHSTACK_OPERATOR_QUALIFICATION_FIXTU
 
 var qualificationRegionPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._/-]{0,62}$`)
 
+var errOperatorQualificationPrerequisite = errors.New("operator qualification requires its assigned managed test runtime and verified shared identity")
+
 type operatorQualificationFixtureStore interface {
-	UpsertTenant(context.Context, controlplane.Tenant) (*controlplane.Tenant, error)
-	UpsertUser(context.Context, controlplane.User) (*controlplane.User, error)
-	UpsertMembership(context.Context, controlplane.Membership) (*controlplane.Membership, error)
+	GetMembership(context.Context, string, string) (*controlplane.Membership, error)
 	GetOrCreateHomelabForOwner(context.Context, controlplane.CreateHomelabRequest) (*controlplane.Homelab, error)
 	CreateStack(context.Context, controlplane.CreateStackRequest) (*controlplane.Stack, error)
 	GetStack(context.Context, string, string) (*controlplane.Stack, error)
@@ -38,6 +37,8 @@ type operatorQualificationFixture struct {
 	TenantID string
 	Provider string
 	Region   string
+	// Supplied only by the verified shared Auth0 assignment, never a CLI argument.
+	OwnerSubjectID string
 }
 
 type operatorQualificationFixtureResult struct {
@@ -53,24 +54,41 @@ type operatorQualificationFixtureResult struct {
 }
 
 func runOperatorQualificationFixture(ctx context.Context, args []string) error {
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
 	request, err := parseOperatorQualificationFixture(args, os.Getenv)
 	if err != nil {
 		return err
 	}
-	cfg, err := db.ConfigFromEnv()
+	assignment, err := db.LoadManagedTestAssignment()
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %v", errOperatorQualificationPrerequisite, err)
 	}
-	if err := requireLocalQualificationDatabase(cfg, request.Attempt); err != nil {
-		return err
+	if request.TenantID != assignment.TenantID {
+		return fmt.Errorf("%w: tenant differs from the assignment", errOperatorQualificationPrerequisite)
 	}
-	database, err := db.Open(cfg)
+	if err := assignment.VerifyPin(); err != nil {
+		return fmt.Errorf("%w: %v", errOperatorQualificationPrerequisite, err)
+	}
+	claims, err := verifyManagedTestIdentity(ctx, *assignment, os.Getenv("TECHSTACK_MANAGED_TEST_ID_TOKEN"))
+	if err != nil {
+		return fmt.Errorf("%w: %v", errOperatorQualificationPrerequisite, err)
+	}
+	request.OwnerSubjectID = claims.Subject
+	cfg, err := db.ManagedTestConfig(*assignment, os.Getenv("DATABASE_URL"), db.ManagedTestApp)
+	if err != nil {
+		return fmt.Errorf("%w: %v", errOperatorQualificationPrerequisite, err)
+	}
+	database, err := db.OpenContext(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("open qualification database: %w", err)
 	}
 	defer func() { _ = database.Close() }()
-	if err := db.VerifyExpectedDatabaseIdentity(ctx, database.DB); err != nil {
-		return fmt.Errorf("verify qualification database identity: %w", err)
+	if err := db.VerifyManagedTestSession(ctx, database.DB, *assignment, db.ManagedTestApp); err != nil {
+		return fmt.Errorf("verify qualification app session: %w", err)
+	}
+	if err := database.VerifyMigrations(ctx); err != nil {
+		return fmt.Errorf("verify qualification migration ledger: %w", err)
 	}
 	result, err := seedOperatorQualificationFixture(ctx, controlplane.NewPostgresStore(database.DB), request)
 	if err != nil {
@@ -108,31 +126,21 @@ func parseOperatorQualificationFixture(args []string, getenv func(string) string
 	return operatorQualificationFixture{Attempt: attempt.String(), TenantID: tenantID, Provider: provider, Region: region}, nil
 }
 
-func requireLocalQualificationDatabase(cfg db.Config, attempt string) error {
-	if cfg.Backend != db.StoreBackendPostgres {
-		return fmt.Errorf("operator qualification fixture requires postgres")
-	}
-	parsed, err := pgx.ParseConfig(cfg.DSN)
-	if err != nil {
-		return fmt.Errorf("parse qualification database URL: %w", err)
-	}
-	host := strings.TrimSpace(parsed.Host)
-	if ip := net.ParseIP(host); (ip == nil || !ip.IsLoopback()) && !strings.EqualFold(host, "localhost") {
-		return fmt.Errorf("operator qualification fixture requires a loopback database")
-	}
-	expectedDatabase := "techstack_qualification_" + strings.ReplaceAll(attempt, "-", "")
-	if parsed.Database != expectedDatabase {
-		return fmt.Errorf("operator qualification fixture requires attempt database %q", expectedDatabase)
-	}
-	return nil
-}
-
 func seedOperatorQualificationFixture(ctx context.Context, store operatorQualificationFixtureStore, request operatorQualificationFixture) (operatorQualificationFixtureResult, error) {
 	if store == nil {
 		return operatorQualificationFixtureResult{}, fmt.Errorf("operator qualification fixture store is required")
 	}
+	if request.OwnerSubjectID == "" {
+		return operatorQualificationFixtureResult{}, errOperatorQualificationPrerequisite
+	}
+	membership, err := store.GetMembership(ctx, request.TenantID, request.OwnerSubjectID)
+	if err != nil || membership == nil || membership.TenantID != request.TenantID ||
+		membership.SubjectID != request.OwnerSubjectID || membership.UserID != request.OwnerSubjectID ||
+		membership.ProviderKey != "cloud" || membership.Status != "active" {
+		return operatorQualificationFixtureResult{}, fmt.Errorf("%w: existing active shared identity membership is required", errOperatorQualificationPrerequisite)
+	}
 	namespace := uuid.MustParse(request.Attempt)
-	ownerID := "qualification:" + request.Attempt
+	ownerID := request.OwnerSubjectID
 	homelabID := uuid.NewSHA1(namespace, []byte("homelab")).String()
 	stackID := uuid.NewSHA1(namespace, []byte("stack")).String()
 	stackkitID := uuid.NewSHA1(namespace, []byte("stackkit")).String()
@@ -147,33 +155,15 @@ func seedOperatorQualificationFixture(ctx context.Context, store operatorQualifi
 		allocation.OwnerID != ownerID || allocation.Provider != request.Provider || allocation.StackKit != "cloud-kit" {
 		return operatorQualificationFixtureResult{}, fmt.Errorf("qualification allocation intent binding mismatch")
 	}
-	if _, err := store.UpsertTenant(ctx, controlplane.Tenant{
-		ID: request.TenantID, ExternalOrgID: request.TenantID, DisplayName: "Standalone Cloud qualification",
-		Kind: "saas", Status: "active", Metadata: map[string]any{"qualification_attempt": request.Attempt},
-	}); err != nil {
-		return operatorQualificationFixtureResult{}, fmt.Errorf("seed qualification tenant: %w", err)
-	}
-	if _, err := store.UpsertUser(ctx, controlplane.User{
-		ID: ownerID, PrimaryEmail: name + "@example.test", DisplayName: "Qualification Owner", Status: "active",
-		Metadata: map[string]any{"qualification_attempt": request.Attempt},
-	}); err != nil {
-		return operatorQualificationFixtureResult{}, fmt.Errorf("seed qualification owner: %w", err)
-	}
-	if _, err := store.UpsertMembership(ctx, controlplane.Membership{
-		ID: request.TenantID + ":" + ownerID, TenantID: request.TenantID, UserID: ownerID,
-		RoleKey: "owner", ProviderKey: "operator-qualification", SubjectID: ownerID, Status: "active",
-		// The fixture supplies resource ownership only. NativeAdmission must get
-		// commercial authority independently from the signed request decision.
-		Metadata: map[string]any{"qualification_attempt": request.Attempt},
-	}); err != nil {
-		return operatorQualificationFixtureResult{}, fmt.Errorf("seed qualification membership: %w", err)
-	}
 	homelab, err := store.GetOrCreateHomelabForOwner(ctx, controlplane.CreateHomelabRequest{
 		ID: homelabID, TenantID: request.TenantID, OwnerSubjectID: ownerID, Name: name,
 		Intent: map[string]any{"qualification_attempt": request.Attempt, "kit": "cloud-kit", "provider_id": request.Provider},
 	})
 	if err != nil {
 		return operatorQualificationFixtureResult{}, fmt.Errorf("seed qualification homelab: %w", err)
+	}
+	if homelab == nil || homelab.TenantID != request.TenantID || homelab.OwnerSubjectID != ownerID {
+		return operatorQualificationFixtureResult{}, fmt.Errorf("qualification homelab ownership differs")
 	}
 	stack, err := store.CreateStack(ctx, controlplane.CreateStackRequest{
 		ID: stackID, TenantID: request.TenantID, OwnerSubjectID: ownerID, HomelabID: homelab.ID,

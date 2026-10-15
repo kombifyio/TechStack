@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/kombifyio/techstack/internal/routes/auth"
 	"io"
 	"net/http"
 	"strings"
@@ -24,6 +25,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/identity"
 	"github.com/kombifyio/techstack/pkg/jobs"
+	"github.com/kombifyio/techstack/pkg/kombifywallet"
 	"github.com/kombifyio/techstack/pkg/logger"
 	"github.com/kombifyio/techstack/pkg/monthlyruntime"
 	"github.com/kombifyio/techstack/pkg/orchestrator"
@@ -45,6 +47,7 @@ const (
 )
 
 type crudRouteHandlers struct {
+	authRuntime        auth.RuntimeStore
 	app                core.App
 	orch               *orchestrator.Orchestrator
 	deploymentMode     config.DeploymentMode
@@ -61,6 +64,9 @@ type crudRouteHandlers struct {
 	runtimeFeatures    managedRuntimeFeatureChecker
 	managedLeases      jobs.ManagedLeaseManager
 	notificationOutbox productnotifications.ProductEventEnqueuer
+	// kombifyWallet is the central kombify Wallet client; nil keeps the
+	// built-in (legacy) wallet.
+	kombifyWallet *kombifywallet.Client
 }
 
 type createStackRequest struct {
@@ -211,10 +217,10 @@ func (h crudRouteHandlers) createStack(e *httpx.Event) error {
 func (h crudRouteHandlers) ownerBootstrapContextForCreate(e *httpx.Event, ownerID string, normalized normalizedCreateStackRequest) ownerBootstrapContext {
 	ctx := ownerBootstrapContextFromRequest(e)
 	if requestsCloudLinkedOwner(normalized) {
-		ctx.CloudLink = cloudLinkForOwner(h.app, ownerID)
+		ctx.CloudLink = runtimeCloudLinkForOwner(e.Request.Context(), h.authRuntime, tenantIDFromRequest(e), ownerID)
 	}
 	if requestsAutomaticCloudOwner(normalized) {
-		ctx.CurrentProfile = verifiedCurrentCloudProfile(h.app, ownerID)
+		ctx.CurrentProfile = runtimeVerifiedCloudProfile(e.Request.Context(), h.authRuntime, tenantIDFromRequest(e), ownerID)
 	}
 	return ctx
 }
@@ -244,6 +250,9 @@ func (h crudRouteHandlers) createNormalizedStack(e *httpx.Event, ownerID, tenant
 			"X-Idempotency-Key is required for managed server creation", map[string]any{
 				"reason_code": "idempotency_key_invalid", "retryable": false,
 			})
+	}
+	if walletErr := h.requireWalletForCreate(e, ownerID, normalized); walletErr != nil {
+		return walletErr
 	}
 	stack, err := h.persistStack(e, ownerID, tenantID, normalized)
 	if err != nil {
@@ -344,6 +353,13 @@ func (h crudRouteHandlers) writeManagedCreateAdmissionError(e *httpx.Event, stac
 	if errors.As(err, &capacity) {
 		h.enqueueManagedRuntimeCapacityNotification(e.Request.Context(), stackID, request, capacity)
 		return writeManagedRuntimeCapacityDenial(e, request.Provider, capacity, details)
+	}
+	var protection providercontrol.CreateProtectionError
+	if errors.As(err, &protection) {
+		details["reason_code"] = protection.Protection.ReasonCode
+		details["retryable"] = protection.Protection.State == "paused"
+		details["create_protection"] = protection.Protection
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "New VM creation is temporarily protected", details)
 	}
 	var createBlocked providercontrol.ProviderCreateBlockedError
 	if errors.As(err, &createBlocked) {
@@ -479,6 +495,10 @@ func (h crudRouteHandlers) applyCreateOwnerBootstrap(e *httpx.Event, ownerID, te
 		return nil
 	}
 	if err := h.applyOwnerBootstrap(e.Request.Context(), tenantID, ownerID, stack.Id, normalized.Name, bootstrap); err != nil {
+		if denial := walletDenialOrNil(err); denial != nil {
+			_ = denial.Write(e)
+			return denial
+		}
 		return httpx.Reject(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to apply owner bootstrap", nil)
 	}
 	return nil
@@ -666,6 +686,11 @@ func (h crudRouteHandlers) deployStack(e *httpx.Event) error {
 					"reason_code": "deploy_idempotency_unavailable", "retryable": true,
 				})
 		}
+	}
+	// A rollout saves recovery material and StackKit outputs in the owner's
+	// kombify Wallet, so it does not start while Techstack may not save there.
+	if walletErr := h.requireWalletCreateRight(e, stack.OwnerSubjectID); walletErr != nil {
+		return walletErr
 	}
 	if h.orch == nil {
 		return deployOrchestratorUnavailable(e, stackID)

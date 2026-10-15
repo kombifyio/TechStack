@@ -3,6 +3,7 @@ package backupjobs
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/kombifyio/techstack/pkg/backupstore"
 	"github.com/kombifyio/techstack/pkg/jobs"
@@ -27,6 +28,10 @@ type UsageReader interface {
 type AdmissionConfig struct {
 	Features monthlyruntime.BackupFeatureChecker
 	Usage    UsageReader
+	// TestGrantTenantID is the local runtime test lane's own tenant
+	// (monthlyruntime.LocalRuntimeE2EBackupGrantTenant). Only that tenant
+	// holds the entitlement without the signed chain; empty grants none.
+	TestGrantTenantID string
 }
 
 // NewAdmission returns the fail-closed backup entitlement gate.
@@ -38,7 +43,10 @@ func NewAdmission(cfg AdmissionConfig) (jobs.BackupAdmission, error) {
 		return nil, fmt.Errorf("backupjobs: admission requires a usage reader")
 	}
 	return func(ctx context.Context, req jobs.BackupAdmissionRequest) (jobs.BackupAdmissionDecision, error) {
-		entitlement := monthlyruntime.EvaluateBackupEntitlement(ctx, cfg.Features, req.UserID, req.IncludeContent)
+		entitlement := monthlyruntime.BackupEntitlementDecision{}
+		if cfg.TestGrantTenantID == "" || strings.TrimSpace(req.TenantID) != cfg.TestGrantTenantID {
+			entitlement = monthlyruntime.EvaluateBackupEntitlement(ctx, cfg.Features, req.UserID, req.IncludeContent)
+		}
 		if entitlement.Denied {
 			return jobs.BackupAdmissionDecision{
 				Denied:  true,

@@ -321,10 +321,11 @@ type SSHConfig struct {
 
 // ServiceSpec defines a service in the user's spec.
 type ServiceSpec struct {
-	Name  string   `json:"name" yaml:"name"`
-	Type  string   `json:"type" yaml:"type"`                       // "reverse-proxy", "database", "docker", etc.
-	Node  string   `json:"node" yaml:"node"`                       // Target node name
-	Needs []string `json:"needs,omitempty" yaml:"needs,omitempty"` // Dependencies
+	Name           string   `json:"name" yaml:"name"`
+	Type           string   `json:"type" yaml:"type"`                       // "reverse-proxy", "database", "docker", etc.
+	Node           string   `json:"node" yaml:"node"`                       // Target node name
+	Needs          []string `json:"needs,omitempty" yaml:"needs,omitempty"` // Dependencies
+	ComputeProfile string   `json:"computeProfile,omitempty" yaml:"computeProfile,omitempty"`
 }
 
 // NetworkSpec defines network configuration in the user's spec.
@@ -510,18 +511,20 @@ type EnvironmentInventory struct {
 
 // EnvironmentComputeNode is a normalized compute node from user spec, registry, or lease state.
 type EnvironmentComputeNode struct {
-	ID       string            `json:"id,omitempty" yaml:"id,omitempty"`
-	Name     string            `json:"name,omitempty" yaml:"name,omitempty"`
-	Role     string            `json:"role,omitempty" yaml:"role,omitempty"`
-	Provider string            `json:"provider,omitempty" yaml:"provider,omitempty"`
-	Status   string            `json:"status,omitempty" yaml:"status,omitempty"`
-	CPU      int               `json:"cpu,omitempty" yaml:"cpu,omitempty"`
-	RAMMB    int               `json:"ramMb,omitempty" yaml:"ramMb,omitempty"`
-	DiskGB   int               `json:"diskGb,omitempty" yaml:"diskGb,omitempty"`
-	Arch     string            `json:"arch,omitempty" yaml:"arch,omitempty"`
-	OS       string            `json:"os,omitempty" yaml:"os,omitempty"`
-	Source   string            `json:"source,omitempty" yaml:"source,omitempty"`
-	Tags     map[string]string `json:"tags,omitempty" yaml:"tags,omitempty"`
+	ID                          string            `json:"id,omitempty" yaml:"id,omitempty"`
+	Name                        string            `json:"name,omitempty" yaml:"name,omitempty"`
+	Role                        string            `json:"role,omitempty" yaml:"role,omitempty"`
+	Provider                    string            `json:"provider,omitempty" yaml:"provider,omitempty"`
+	Status                      string            `json:"status,omitempty" yaml:"status,omitempty"`
+	CPU                         int               `json:"cpu,omitempty" yaml:"cpu,omitempty"`
+	RAMMB                       int               `json:"ramMb,omitempty" yaml:"ramMb,omitempty"`
+	DiskGB                      int               `json:"diskGb,omitempty" yaml:"diskGb,omitempty"`
+	Arch                        string            `json:"arch,omitempty" yaml:"arch,omitempty"`
+	OS                          string            `json:"os,omitempty" yaml:"os,omitempty"`
+	Source                      string            `json:"source,omitempty" yaml:"source,omitempty"`
+	Tags                        map[string]string `json:"tags,omitempty" yaml:"tags,omitempty"`
+	GPU                         *GPUInfo          `json:"gpu,omitempty" yaml:"gpu,omitempty"`
+	AMD64MicroarchitectureLevel int               `json:"amd64MicroarchitectureLevel,omitempty" yaml:"amd64MicroarchitectureLevel,omitempty"`
 }
 
 // AccessEndpoint describes a domain, subdomain, mail address, auth endpoint, or service URL.
@@ -600,6 +603,14 @@ type WizardRecommendationRequest struct {
 	DeploymentLane string   `json:"deployment_lane"`
 	ProviderID     string   `json:"provider_id,omitempty"`
 	Surface        string   `json:"surface"`
+	// SelectionIntent "all" asks which of AvailableGoals the full-homelab
+	// template should preselect for this operator; empty asks for none.
+	SelectionIntent string `json:"selection_intent,omitempty"`
+	// AvailableGoals are the use cases the released catalog offers.
+	AvailableGoals      []string                     `json:"available_goals,omitempty"`
+	ComputeProfile      string                       `json:"compute_profile,omitempty"`
+	UseCaseSettings     map[string]map[string]any    `json:"use_case_settings,omitempty"`
+	UseCaseCapabilities map[string]map[string]string `json:"use_case_capabilities,omitempty"`
 }
 
 // WizardRecommendationStatus is the explicit state of a recommendation
@@ -653,6 +664,34 @@ type WizardRecommendationResponse struct {
 	MissingInputs       []string                   `json:"missing_inputs"`
 	StaleInputs         []string                   `json:"stale_inputs"`
 	Recommendations     []WizardRecommendation     `json:"recommendations"`
+	Selection           *WizardSelectionGuidance   `json:"selection,omitempty"`
+}
+
+// WizardSelectionGuidance is the server-side answer to "which use cases fit
+// what we know" and "what does this selection need" (CREATION-EXPERIENCE-
+// STANDARD 3c). It never blocks a selection; Withheld goals stay selectable.
+type WizardSelectionGuidance struct {
+	// Preselect is set only for selection_intent "all", in card order.
+	Preselect []string `json:"preselect,omitempty"`
+	// Withheld lists goals left out of Preselect and why.
+	Withheld []WizardSelectionWithheld `json:"withheld,omitempty"`
+	// Context names the evidence the preselection read; "none" selects all.
+	Context []string `json:"context"`
+	// Tip is the single most useful consequence of the selection, if any.
+	Tip *WizardSelectionTip `json:"tip,omitempty"`
+}
+
+// WizardSelectionWithheld explains one goal left out of a preselection.
+type WizardSelectionWithheld struct {
+	Goal string `json:"goal"`
+	Code string `json:"code"`
+}
+
+// WizardSelectionTip is a positively framed, localizable consequence. Code
+// selects the client message; Params fill its placeholders.
+type WizardSelectionTip struct {
+	Code   string         `json:"code"`
+	Params map[string]int `json:"params,omitempty"`
 }
 
 // EnvironmentGap is a missing or misaligned environment capability.
@@ -797,8 +836,9 @@ type WorkerCapabilities struct {
 	DockerVersion string `json:"dockerVersion,omitempty"`
 
 	// Special hardware flags
-	HasNVMe        bool `json:"hasNVMe,omitempty"`
-	HasHWTranscode bool `json:"hasHWTranscode,omitempty"`
+	HasNVMe                     bool `json:"hasNVMe,omitempty"`
+	HasHWTranscode              bool `json:"hasHWTranscode,omitempty"`
+	AMD64MicroarchitectureLevel int  `json:"amd64MicroarchitectureLevel,omitempty"`
 }
 
 // GPUInfo contains GPU details for AI workloads.
@@ -814,6 +854,7 @@ type GPUInfo struct {
 
 	// Compute capability for CUDA
 	ComputeCapability string `json:"computeCapability,omitempty"`
+	DriverMajor       int    `json:"driverMajor,omitempty"`
 }
 
 // WorkerUsage tracks current resource allocation.

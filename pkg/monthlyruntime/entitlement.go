@@ -100,3 +100,17 @@ func truthyManagedRuntimeEntitlementEnv(name string) bool {
 		return false
 	}
 }
+
+// LocalRuntimeE2EBackupGrantTenant names the one tenant whose backup
+// entitlement a managed-runtime test lane may hold without the signed chain
+// (owner decision 2026-10-03). It applies only on a non-SaaS Core with
+// TECHSTACK_ENV=local and both runtime E2E test flags (the
+// LocalManagedRuntimeE2EAllowed exception), and only to the tenant the lane
+// provisions (TECHSTACK_RUNTIME_E2E_TENANT_ID). It grants the entitlement
+// only; every other admission check is unchanged.
+func LocalRuntimeE2EBackupGrantTenant(saas bool) string {
+	if saas || !strings.EqualFold(strings.TrimSpace(os.Getenv("TECHSTACK_ENV")), "local") || !LocalManagedRuntimeE2EAllowed() {
+		return ""
+	}
+	return strings.TrimSpace(os.Getenv("TECHSTACK_RUNTIME_E2E_TENANT_ID"))
+}

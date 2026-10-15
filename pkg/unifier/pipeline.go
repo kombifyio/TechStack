@@ -90,7 +90,7 @@ func NewPipeline(engine *Engine) *Pipeline {
 	preValidator := NewPreValidator(engine.ctx, engine.schema)
 
 	// Create resolver with available kits from engine
-	availableKits := engine.ListStackKits()
+	availableKits := append([]string{}, engine.ListStackKits()...)
 	resolver := NewStackKitResolver(availableKits)
 
 	// Create add-on detector

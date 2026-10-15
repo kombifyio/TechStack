@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -149,5 +150,63 @@ func TestNewRelayFailsClosedWithoutCredentialOrIdentity(t *testing.T) {
 	}
 	if _, err := NewRelay(RelayConfig{APIKey: "kbi_test", AgentID: ""}); err == nil {
 		t.Fatal("missing agent ID accepted")
+	}
+}
+
+// A relay with a proof provider authenticates with a fresh host proof per
+// connection and no static key, and tells a permanent refusal of the binding
+// (stop and report) from a retryable one.
+func TestRelayHostProofModeSendsAFreshProofAndClassifiesRefusals(t *testing.T) {
+	var proofs []string
+	var mu sync.Mutex
+	refusal := `{"error_code":"guard_relay_denied","reason_code":"binding_unknown","retryable":false}`
+	status := http.StatusUnauthorized
+	upgrader := websocket.Upgrader{}
+	relayServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		proofs = append(proofs, r.Header.Get("Authorization"))
+		mu.Unlock()
+		if r.Header.Get("X-Kombify-API-Key") != "" || r.URL.Query().Get("agent_id") != "" {
+			t.Errorf("host proof mode sent a static credential: %q agent_id=%q", r.Header.Get("X-Kombify-API-Key"), r.URL.Query().Get("agent_id"))
+		}
+		if refusal != "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(refusal))
+			return
+		}
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err == nil {
+			_ = conn.Close()
+		}
+	}))
+	defer relayServer.Close()
+
+	minted := 0
+	relay, err := NewRelay(RelayConfig{
+		URL: "ws" + strings.TrimPrefix(relayServer.URL, "http"), Version: "test",
+		ProofProvider: func(context.Context) (string, error) { minted++; return "proof-" + string(rune('a'+minted)), nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	denial := AsRelayDenial(relay.RunSession(t.Context()))
+	if denial == nil || denial.Status != http.StatusUnauthorized || denial.ReasonCode != "binding_unknown" || !denial.Permanent() {
+		t.Fatalf("permanent refusal = %+v", denial)
+	}
+
+	refusal, status = `{"reason_code":"host_proof_expired","retryable":true}`, http.StatusUnauthorized
+	if denial := AsRelayDenial(relay.RunSession(t.Context())); denial == nil || denial.Permanent() {
+		t.Fatalf("retryable refusal = %+v", denial)
+	}
+	// An outage without an envelope is never read as a revoked binding.
+	refusal, status = "<html>bad gateway</html>", http.StatusBadGateway
+	if denial := AsRelayDenial(relay.RunSession(t.Context())); denial == nil || denial.Permanent() {
+		t.Fatalf("proxy error = %+v", denial)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(proofs) != 3 || proofs[0] != "KombifyGuard proof-b" || proofs[0] == proofs[1] {
+		t.Fatalf("Authorization headers = %v, want a fresh KombifyGuard proof per connection", proofs)
 	}
 }

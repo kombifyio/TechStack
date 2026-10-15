@@ -23,7 +23,7 @@ func TestWorkerRegisterAdoptsJoinPlannedServerOnMultiNodeStack(t *testing.T) {
 	}
 	if _, err := store.UpsertServerRuntime(t.Context(), controlplane.ServerRuntime{
 		ID: plannedID, TenantID: "tenant-1", StackID: "stack-1", OwnerSubjectID: "owner-1",
-		NodeID: "worker-2", Name: "82.165.251.178", LifecycleState: "planned",
+		NodeID: "worker-2", Name: "203.0.113.81", LifecycleState: "planned",
 		ConnectionState: "pending", HealthState: "unknown",
 	}); err != nil {
 		t.Fatal(err)
@@ -40,7 +40,7 @@ func TestWorkerRegisterAdoptsJoinPlannedServerOnMultiNodeStack(t *testing.T) {
 		Metadata: map[string]any{
 			"spec_node_id":       "worker-2",
 			"planned_server_id":  plannedID,
-			"server_remote_host": "82.165.251.178",
+			"server_remote_host": "203.0.113.81",
 		},
 	}); err != nil {
 		t.Fatal(err)

@@ -77,18 +77,17 @@ func (e *Engine) Validate(spec *core.KombinationSpec) (*core.ValidationResult, e
 		}, nil
 	}
 
-	// If StackKit is specified and loader is available, validate against kit.
-	// This is strict: invalid StackKit schema must block downstream provisioning.
-	if spec.Kit != "" && e.kitLoader != nil {
-		if kitErr := e.kitLoader.ValidateAgainstKit(spec.Kit, specValue); kitErr != nil {
-			// StackKit validation failed
+	// Admit the Techstack input selection through released metadata. The
+	// canonical StackSpec is separately authored and validated by the pinned CLI.
+	if spec.Kit != "" {
+		if _, kitErr := e.GetStackKitInfo(spec.Kit); kitErr != nil {
 			return &core.ValidationResult{
 				Valid: false,
 				Errors: []core.ValidationError{
 					{
 						Path:    "kit",
 						Code:    "stackkit_validation_error",
-						Message: fmt.Sprintf("StackKit validation failed: %v", kitErr),
+						Message: fmt.Sprintf("StackKit metadata could not admit the selection: %v", kitErr),
 					},
 				},
 			}, nil

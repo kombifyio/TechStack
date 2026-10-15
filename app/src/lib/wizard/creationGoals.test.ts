@@ -1,13 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { UseCaseCatalogView } from "#lib/api/useCaseCatalog.js";
-import {
-  backendChoices,
-  supportsCreationChoice,
-  withCreationTargets,
-} from "./creationGoals.js";
+import { backendChoices, supportsCreationChoice } from "./creationGoals.js";
 
 describe("creation choices at the runtime intent boundary", () => {
-  it("does not admit a planned tool or setting through display-only product targets", () => {
+  it("admits only the tools and settings the release advertises", () => {
     const released: UseCaseCatalogView = {
       components: [
         {
@@ -33,7 +29,6 @@ describe("creation choices at the runtime intent boundary", () => {
       computeTiers: {},
     };
     const catalog = new Map([["game", released]]);
-    withCreationTargets(catalog);
     expect(
       supportsCreationChoice(catalog.get("game"), "backend", "pterodactyl"),
     ).toBe(false);

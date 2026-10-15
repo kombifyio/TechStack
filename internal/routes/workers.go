@@ -11,6 +11,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -20,8 +21,11 @@ import (
 	"github.com/kombifyio/techstack/internal/runtimeproduct/serverruntime"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/vmlease"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
+	"github.com/kombifyio/techstack/pkg/auth"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/grpcserver"
+	"github.com/kombifyio/techstack/pkg/guardbinding"
+	"github.com/kombifyio/techstack/pkg/guardidentity"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/logger"
 	"github.com/kombifyio/techstack/pkg/monitoring"
@@ -29,6 +33,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/pairingtoken"
 	"github.com/kombifyio/techstack/pkg/runtimeconvergence"
 	"github.com/kombifyio/techstack/pkg/runtimeidentity"
+	"github.com/kombifyio/techstack/pkg/usernotice"
 	"github.com/kombifyio/techstack/pkg/vmleases"
 	"github.com/kombifyio/techstack/pkg/workerauth"
 )
@@ -42,7 +47,12 @@ type WorkerRuntimeLogWriter interface {
 	AppendRuntimeLog(grpcserver.AgentLogEntry) grpcserver.AgentLogEntry
 }
 
+type ConnectorReconciler interface {
+	ReconcileApplicationConnectors(context.Context, string, string, string, string)
+}
+
 type WorkerRouteConfig struct {
+	ConnectorReconciler  ConnectorReconciler
 	MetricWriter         WorkerMetricWriter
 	ManagedRuntimeLeases managedRuntimeLeaseLister
 	Store                controlplane.WorkerStore
@@ -54,6 +64,24 @@ type WorkerRouteConfig struct {
 	StackKitOperations   WorkerStackKitOperations
 	RuntimeLogs          WorkerRuntimeLogWriter
 	PortObservations     portinventory.ObservationWriter
+	// Reach is the kombify Guard reach service (kombify.me relay binding and
+	// Connect resource). Nil in editions without a Cloud connection.
+	Reach WorkerReach
+	// Posture is the kombify Guard posture service: host security, recovery and
+	// update observations. Nil in editions without posture.
+	Posture WorkerPosture
+	// Telemetry stores the host and container telemetry a Guard sends over the
+	// managed transport. Nil in editions that store none.
+	Telemetry WorkerTelemetry
+	// Entitlements gates the step-up of operator actions; nil is the
+	// fail-closed hosted gate.
+	Entitlements EntitlementGate
+	// NetworkRebinder queues the automatic rebind after a detected home network
+	// move. Nil leaves the move recorded and the rebind to the owner.
+	NetworkRebinder NetworkRebinder
+	// UserNotices admits the opt-in user_notification class: user-authored
+	// smart-home notices a node reports. Nil refuses them as unavailable.
+	UserNotices usernotice.Sink
 }
 
 // WorkerAgentIdentityIssuer is the fail-closed bridge from one claimed
@@ -86,6 +114,26 @@ func RegisterWorkerRoutesWithStore(r *httpx.Router, cfg WorkerRouteConfig) {
 	if !ok {
 		panic("RegisterWorkerRoutesWithStore: worker store must support atomic enrollment claims")
 	}
+	identityStore, ok := cfg.Store.(controlplane.WorkerIdentityStore)
+	if !ok {
+		panic("RegisterWorkerRoutesWithStore: worker store must support host-key identity bindings")
+	}
+	if err := workerauth.CheckStrict(); err != nil {
+		panic("RegisterWorkerRoutesWithStore: " + err.Error())
+	}
+	// The encryption key is the base secret each worker's binding key is
+	// derived from; GetEncryptor admits only a well-formed one.
+	var bindingKeyBase []byte
+	if auth.GetEncryptor() != nil {
+		bindingKeyBase = []byte(os.Getenv(auth.EncryptionKeyEnvVar))
+	} else {
+		logger.Default().Warn("guard_binding_signing_disabled",
+			"guidance", "set "+auth.EncryptionKeyEnvVar+" so each paired Guard gets its own command-binding signing key")
+	}
+	if workerauth.SharesServiceSecret() {
+		logger.Default().Warn("worker_auth_secret_shared_with_service_auth",
+			"guidance", "set TECHSTACK_WORKER_AGENT_TOKEN_SECRET and then "+workerauth.StrictSecretEnv+"=true so worker credentials stop sharing the service secret")
+	}
 	h := workerRouteHandlers{
 		managedRuntimeLeases: cfg.ManagedRuntimeLeases,
 		metricWriter:         cfg.MetricWriter,
@@ -98,28 +146,53 @@ func RegisterWorkerRoutesWithStore(r *httpx.Router, cfg WorkerRouteConfig) {
 		stackKitOperations:   cfg.StackKitOperations,
 		runtimeLogs:          cfg.RuntimeLogs,
 		portObservations:     cfg.PortObservations,
+		reach:                cfg.Reach,
+		posture:              cfg.Posture,
+		telemetry:            cfg.Telemetry,
+		userNotices:          cfg.UserNotices,
+		entitlements:         cfg.Entitlements,
+		networkRebinder:      cfg.NetworkRebinder,
+		connectorReconciler:  cfg.ConnectorReconciler,
 		credentialStore:      credentialStore,
 		enrollmentStore:      enrollmentStore,
+		identityStore:        identityStore,
 		credentialSecret:     workerauth.SecretFromEnv(),
+		bindingKeyBase:       bindingKeyBase,
 	}
 	r.GET("/api/v1/workers", h.list)
-	r.POST("/api/v1/workers/register", h.register)
-	r.POST("/v1/ril/servers/connect", h.connectServer)
-	r.POST("/v1/ril/servers/{id}/credential/rotate", h.rotateServerCredential)
-	r.POST("/api/v1/workers/{id}/approve", h.approve)
-	r.POST("/api/v1/workers/{id}/heartbeat", h.heartbeat)
-	r.POST("/api/v1/workers/{id}/inventory", h.inventory)
-	r.POST("/api/v1/workers/{id}/commands/next", h.nextTypedCommand)
-	r.POST("/api/v1/workers/{id}/commands/result", h.submitTypedCommandResult)
-	r.POST("/api/v1/workers/{id}/provider/next", h.nextProviderCommand)
-	r.POST("/api/v1/workers/{id}/provider/result", h.submitProviderCommandResult)
-	r.POST("/api/v1/workers/{id}/provider/bootstrap", h.providerBootstrap)
-	r.POST("/api/v1/workers/{id}/stackkit/operations", h.executeStackKitOperations)
-	r.POST("/api/v1/workers/{id}/runtime/logs", h.ingestRuntimeLog)
-	r.POST("/api/v1/workers/bootstrap/logs", h.ingestBootstrapLog)
+	r.POST("/api/v1/workers/register", h.register).BindFunc(workerBodyBound(workerRegistrationMaxBodyBytes))
+	r.POST("/v1/ril/servers/connect", h.connectServer).BindFunc(workerBodyBound(workerSmallBodyLimit))
+	r.POST("/v1/ril/servers/{id}/credential/rotate", h.rotateServerCredential).BindFunc(workerBodyBound(workerSmallBodyLimit))
+	r.POST("/api/v1/workers/{id}/approve", h.approve).BindFunc(workerBodyBound(workerSmallBodyLimit))
+	// Agent routes: the credential is required and the body is bounded before
+	// either is processed (Guard finding F-04).
+	r.POST("/api/v1/workers/{id}/heartbeat", h.heartbeat).BindFunc(h.workerAgentIngress(workerHeartbeatBodyLimit))
+	r.POST("/api/v1/workers/{id}/inventory", h.inventory).BindFunc(h.workerAgentIngress(workerInventoryBodyLimit))
+	r.POST("/api/v1/workers/{id}/commands/next", h.nextTypedCommand).BindFunc(h.workerAgentIngress(workerPollBodyLimit))
+	r.POST("/api/v1/workers/{id}/commands/result", h.submitTypedCommandResult).BindFunc(h.workerAgentIngress(maxTypedResultBytes))
+	r.GET("/api/v1/workers/{id}/outcomes", h.listUnresolvedOutcomes)
+	r.POST("/api/v1/workers/{id}/outcomes/{command_id}/resolve", h.resolveOutcome).BindFunc(workerBodyBound(workerSmallBodyLimit))
+	r.POST("/api/v1/workers/{id}/provider/next", h.nextProviderCommand).BindFunc(h.workerAgentIngress(workerPollBodyLimit))
+	r.POST("/api/v1/workers/{id}/provider/result", h.submitProviderCommandResult).BindFunc(h.workerAgentIngress(workerProviderBodyLimit))
+	r.POST("/api/v1/workers/{id}/provider/bootstrap", h.providerBootstrap).BindFunc(h.workerAgentIngress(workerBootstrapBodyLimit))
+	r.POST("/api/v1/workers/{id}/stackkit/operations", h.executeStackKitOperations).BindFunc(h.workerAgentIngress(maxStackKitOperationsPayload))
+	r.POST("/api/v1/workers/{id}/runtime/logs", h.ingestRuntimeLog).BindFunc(h.workerAgentIngress(maxWorkerRuntimeLogPayload))
+	r.POST("/api/v1/workers/{id}/identity/token", h.workerIdentityToken).BindFunc(h.workerAgentIngress(workerIdentityMaxBody))
+	r.POST("/api/v1/workers/{id}/identity/bind", h.workerIdentityBind).BindFunc(h.workerAgentIngress(workerIdentityMaxBody))
+	r.POST("/api/v1/workers/{id}/identity/rotate", h.workerIdentityRotate).BindFunc(h.workerAgentIngress(workerIdentityMaxBody))
+	r.GET("/api/v1/workers/identity-upgrades", h.identityUpgradeList)
+	r.GET("/api/v1/workers/{id}/identity/upgrade", h.identityUpgradeStatus)
+	r.POST("/api/v1/workers/{id}/identity/upgrade/approve", h.identityUpgradeApprove).BindFunc(workerBodyBound(4 << 10))
+	r.POST("/api/v1/workers/{id}/identity/upgrade/reject", h.identityUpgradeReject).BindFunc(workerBodyBound(4 << 10))
+	r.POST("/api/v1/workers/{id}/reach", h.workerReach).BindFunc(h.workerAgentIngress(workerReachMaxBody))
+	r.POST("/api/v1/workers/{id}/posture", h.workerPosture).BindFunc(h.workerAgentIngress(workerPostureBodyLimit))
+	r.POST("/api/v1/workers/{id}/telemetry", h.workerTelemetry).BindFunc(h.workerAgentIngress(workerTelemetryBodyLimit))
+	r.POST("/api/v1/workers/{id}/user-notification", h.workerUserNotification).BindFunc(h.workerAgentIngress(workerUserNotificationBodyLimit))
+	r.POST("/api/v1/workers/bootstrap/logs", h.ingestBootstrapLog).BindFunc(workerBodyBound(maxBootstrapLogPayload))
 	h.binaryDownloadGuard = newAgentBinaryDownloadGuard()
-	r.POST("/api/v1/agent/binary/{os}/{arch}", h.agentBinary)
-	r.POST("/api/v1/agent/stackkit-release/{os}/{arch}", h.agentStackKitRelease)
+	r.POST("/api/v1/agent/binary/{os}/{arch}", h.agentBinary).BindFunc(workerBodyBound(workerSmallBodyLimit))
+	r.POST("/api/v1/agent/release-evidence/{os}/{arch}", h.agentReleaseEvidence).BindFunc(workerBodyBound(workerSmallBodyLimit))
+	r.POST("/api/v1/agent/stackkit-release/{os}/{arch}", h.agentStackKitRelease).BindFunc(workerBodyBound(workerSmallBodyLimit))
 	r.GET("/install.sh", h.installScript)
 	r.GET("/install.ps1", h.installScriptPS)
 }
@@ -136,12 +209,24 @@ type workerRouteHandlers struct {
 	stackKitOperations      WorkerStackKitOperations
 	runtimeLogs             WorkerRuntimeLogWriter
 	portObservations        portinventory.ObservationWriter
+	reach                   WorkerReach
+	posture                 WorkerPosture
+	telemetry               WorkerTelemetry
+	userNotices             usernotice.Sink
+	entitlements            EntitlementGate
 	credentialStore         controlplane.WorkerCredentialStore
 	enrollmentStore         controlplane.WorkerEnrollmentStore
+	identityStore           controlplane.WorkerIdentityStore
 	credentialSecret        []byte
 	binaryArtifact          func() (agentBinaryArtifact, error)
 	stackKitReleaseArtifact func() (agentBinaryArtifact, error)
 	binaryDownloadGuard     *agentBinaryDownloadGuard
+	networkRebinder         NetworkRebinder
+	connectorReconciler     ConnectorReconciler
+
+	// bindingKeyBase is the secret each worker's command-binding key is derived
+	// from. Empty leaves new Guards unpinned and bindings unsigned.
+	bindingKeyBase []byte
 }
 
 func (h workerRouteHandlers) list(e *httpx.Event) error {
@@ -611,21 +696,31 @@ type workerRegistrationRequest struct {
 	HasNVME        bool    `json:"has_nvme"`
 	HasHWTranscode bool    `json:"has_hw_transcode"`
 	GPU            string  `json:"gpu"`
+	// GuardPublicKey and AttemptID bind the registering Guard's host key. Both
+	// are optional for legacy installers and required together otherwise.
+	GuardPublicKey json.RawMessage `json:"guard_public_key,omitempty"`
+	AttemptID      string          `json:"attempt_id,omitempty"`
 }
 
 const workerRegistrationMaxBodyBytes int64 = 64 << 10
 
 type workerHeartbeatRequest struct {
-	SourceEpoch        string                       `json:"source_epoch"`
-	SourceSequence     int64                        `json:"source_sequence"`
-	ObservedAt         time.Time                    `json:"observed_at"`
-	CPUPercent         float64                      `json:"cpu_percent"`
-	MemoryUsedBytes    int64                        `json:"memory_used_bytes"`
-	MemoryTotalBytes   int64                        `json:"memory_total_bytes"`
-	DiskUsedBytes      int64                        `json:"disk_used_bytes"`
-	DiskTotalBytes     int64                        `json:"disk_total_bytes"`
-	UptimeSeconds      float64                      `json:"uptime_seconds"`
-	RuntimeConvergence *runtimeconvergence.Snapshot `json:"runtime_convergence,omitempty"`
+	SourceEpoch          string                       `json:"source_epoch"`
+	SourceSequence       int64                        `json:"source_sequence"`
+	ObservedAt           time.Time                    `json:"observed_at"`
+	CPUPercent           float64                      `json:"cpu_percent"`
+	MemoryUsedBytes      int64                        `json:"memory_used_bytes"`
+	MemoryTotalBytes     int64                        `json:"memory_total_bytes"`
+	DiskUsedBytes        int64                        `json:"disk_used_bytes"`
+	DiskTotalBytes       int64                        `json:"disk_total_bytes"`
+	UptimeSeconds        float64                      `json:"uptime_seconds"`
+	RuntimeConvergence   *runtimeconvergence.Snapshot `json:"runtime_convergence,omitempty"`
+	StackKitCapabilities []string                     `json:"stackkit_capabilities,omitempty"`
+	// GuardJournal is the additive durable-operations health of a Guard that
+	// journals command intent and outcome; its absence marks a legacy Guard.
+	GuardJournal *guardbinding.JournalHealth `json:"guard_journal,omitempty"`
+	// GuardPosture is how the Guard is isolated and how its latest update went.
+	GuardPosture *guardbinding.Posture `json:"guard_posture,omitempty"`
 	hostMaintenanceFacts
 }
 
@@ -640,6 +735,21 @@ func (h workerRouteHandlers) register(e *httpx.Event) error {
 
 func (h workerRouteHandlers) registerWithStore(e *httpx.Event, req workerRegistrationRequest) error {
 	now := time.Now().UTC()
+	guard, guardProblem, guardOK := parseGuardRegistration(req)
+	if !guardOK {
+		return httpx.BadRequest(e, guardProblem, nil)
+	}
+	if guard != nil {
+		if h.identityStore == nil {
+			denyGuard(e, guardidentity.CodeIdentityUnavailable, "")
+			return nil
+		}
+		// The same capability, attempt and key repeat a redemption whose
+		// response was lost: replace the unconfirmed credential atomically.
+		if handled, err := h.repeatGuardRegistration(e, req, *guard, now); handled {
+			return err
+		}
+	}
 	// Check the declared machine class before consuming the owner's capability.
 	resolved, _, resolveErr := h.resolveStorePairingToken(e, req.Token)
 	if resolveErr != nil || resolved == nil {
@@ -689,6 +799,12 @@ func (h workerRouteHandlers) registerWithStore(e *httpx.Event, req workerRegistr
 			serverID,
 		)
 		workerID = h.existingPairingWorkerID(e.Request.Context(), *token, serverID, workerID)
+		if guard != nil && plannedServerIDFromPairingToken(*token) == "" {
+			if interrupted := h.interruptedGuardWorker(e.Request.Context(), *token, guard.thumbprint); interrupted != nil {
+				workerID = interrupted.ID
+				serverID = firstNonEmpty(stringFromAny(interrupted.Capabilities[workerFieldServerID]), serverID)
+			}
+		}
 	}
 	agentToken, agentTokenErr := h.issueRuntimeAgentToken()
 	if agentTokenErr != nil || strings.TrimSpace(agentToken) == "" {
@@ -705,6 +821,20 @@ func (h workerRouteHandlers) registerWithStore(e *httpx.Event, req workerRegistr
 	}), serverID, leaseID, now)
 	if err != nil {
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to persist worker enrollment", nil)
+	}
+	var guardIdentity *guardEnrollmentIdentity
+	if guard != nil {
+		// The key is bound together with the credential that was just stored:
+		// the worker row may predate this redemption and keep an older hash.
+		issued, issueErr := h.identityStore.IssueWorkerIdentity(e.Request.Context(), controlplane.WorkerIdentityIssue{
+			TenantID: worker.TenantID, WorkerID: worker.ID, AttemptID: guard.attemptID,
+			PairingTokenHash: tokenHash, Thumbprint: guard.thumbprint, PublicKeyJWK: guard.publicKeyJWK,
+			CredentialSHA256: workerauth.SHA256Hex(agentToken), IssuedAt: now,
+		})
+		if issueErr != nil {
+			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to bind the Guard identity key", nil)
+		}
+		guardIdentity = &guardEnrollmentIdentity{State: issued.State, AttemptID: issued.AttemptID, Thumbprint: issued.Thumbprint}
 	}
 	var issuedIdentity *grpcserver.IssuedIdentity
 	if h.agentIdentityIssuer != nil {
@@ -739,6 +869,65 @@ func (h workerRouteHandlers) registerWithStore(e *httpx.Event, req workerRegistr
 		Accepted:       accepted,
 		AgentToken:     agentToken,
 		GRPCIdentity:   issuedIdentity,
+		GuardIdentity:  guardIdentity,
+	}))
+}
+
+// repeatGuardRegistration answers a repeated redemption of a pairing capability
+// whose key binding is still unconfirmed. It reports handled=false when the
+// capability has no binding yet, so the ordinary first redemption proceeds.
+func (h workerRouteHandlers) repeatGuardRegistration(e *httpx.Event, req workerRegistrationRequest, guard guardRegistration, now time.Time) (bool, error) {
+	parsed, parseErr := pairingtoken.Parse(req.Token)
+	if parseErr != nil || parsed.Legacy || parsed.TenantID == "" {
+		return false, nil
+	}
+	ctx := e.Request.Context()
+	identity, err := h.identityStore.GetWorkerIdentityByPairing(ctx, parsed.TenantID, parsed.TokenHash)
+	if errors.Is(err, controlplane.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return true, httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to validate pairing token", nil)
+	}
+	if identity.State != controlplane.WorkerIdentityIssuedUnconfirmed ||
+		identity.AttemptID != guard.attemptID || identity.Thumbprint != guard.thumbprint {
+		return true, httpx.Unauthorized(e, "Token already used")
+	}
+	deadline := identity.IssuedAt.Add(controlplane.WorkerIdentityRedemptionWindow)
+	if token, tokenErr := h.wst.GetPairingTokenByHash(ctx, parsed.TenantID, parsed.TokenHash); tokenErr == nil && token != nil &&
+		token.ExpiresAt != nil && token.ExpiresAt.Before(deadline) {
+		deadline = *token.ExpiresAt
+	}
+	agentToken, tokenErr := h.issueRuntimeAgentToken()
+	if tokenErr != nil || strings.TrimSpace(agentToken) == "" {
+		return true, httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to create runtime agent credential", nil)
+	}
+	reissued, reissueErr := h.identityStore.ReissueUnconfirmedWorkerIdentity(ctx, controlplane.WorkerIdentityReissue{
+		TenantID: parsed.TenantID, WorkerID: identity.WorkerID, AttemptID: guard.attemptID,
+		PairingTokenHash: parsed.TokenHash, Thumbprint: guard.thumbprint,
+		NewCredentialSHA256: workerauth.SHA256Hex(agentToken), Now: now, Deadline: deadline,
+	})
+	switch {
+	case errors.Is(reissueErr, controlplane.ErrWorkerIdentityWindowClosed):
+		return true, httpx.Unauthorized(e, "Token expired")
+	case errors.Is(reissueErr, controlplane.ErrConflict), errors.Is(reissueErr, controlplane.ErrNotFound):
+		return true, httpx.Unauthorized(e, "Token already used")
+	case reissueErr != nil:
+		return true, httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to persist worker enrollment", nil)
+	}
+	worker, workerErr := h.wst.GetWorker(ctx, parsed.TenantID, identity.WorkerID)
+	if workerErr != nil || worker == nil {
+		return true, httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to persist worker enrollment", nil)
+	}
+	e.Response.Header().Set("Cache-Control", "no-store")
+	return true, httpx.Success(e, http.StatusOK, h.workerEnrollmentResponse(e, workerEnrollmentContext{
+		WorkerID: worker.ID, GuardRole: worker.Type, ServerID: stringFromAny(worker.Capabilities[workerFieldServerID]),
+		RuntimeAgentID: worker.ID, TenantID: worker.TenantID, OwnerID: worker.OwnerSubjectID, StackID: worker.StackID,
+		LeaseID: runtimeLeaseIDFromMetadata(worker.Capabilities), Accepted: worker.Approved,
+		AgentToken: agentToken,
+		GuardIdentity: &guardEnrollmentIdentity{
+			State: reissued.State, AttemptID: reissued.AttemptID, Thumbprint: reissued.Thumbprint,
+		},
 	}))
 }
 

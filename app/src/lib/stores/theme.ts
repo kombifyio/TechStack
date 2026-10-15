@@ -17,7 +17,16 @@ import { fetchAccountDesign } from "#lib/design/accountDesign.js";
 export type Theme = "dark" | "light" | "system";
 export type SystemCardShape = "square" | "app";
 
-const STORAGE_KEY = "techstack-theme";
+/**
+ * Appearance (owner rule 2026-10-09): the lasting default is the account's,
+ * set in kombify Cloud Settings. A switch inside Techstack holds for this
+ * browser session only, and an embedding host always decides. The retired
+ * `techstack-theme` device choice outranked the host and is removed on init.
+ */
+const LEGACY_DEVICE_THEME_KEY = "techstack-theme";
+const SESSION_THEME_KEY = "techstack-theme-session";
+/** The last account default read; only a first-paint hint for app.html. */
+const ACCOUNT_THEME_CACHE_KEY = "techstack-account-theme";
 const CARD_SHAPE_STORAGE_KEY = "techstack-system-card-shape";
 const FINISH_STORAGE_KEY = "techstack-finish";
 /** How the rail's hover preview meets the rail (axis `navFlyout`), device-only. */
@@ -29,8 +38,7 @@ const NAV_FLYOUT_STORAGE_KEY = "techstack-nav-flyout";
  * only arrive after our bridge announces "ready", which is too late for the
  * first paint and reads as a flash.
  *
- * This is inherited context, not a saved device choice. An explicit app
- * appearance can override it; clearing that choice resumes inheritance.
+ * This is inherited context, and it wins over every choice inside the app.
  */
 function themeFromEmbedUrl(): Theme | null {
   if (!browser) return null;
@@ -38,27 +46,56 @@ function themeFromEmbedUrl(): Theme | null {
   return value === "dark" || value === "light" ? value : null;
 }
 
-function deviceTheme(): Theme | null {
-  if (!browser) return null;
-  const stored = localStorage.getItem(STORAGE_KEY) as Theme | null;
-  if (stored && ["dark", "light", "system"].includes(stored)) {
-    return stored;
-  }
-
-  return null;
+function isTheme(value: unknown): value is Theme {
+  return value === "dark" || value === "light" || value === "system";
 }
 
+function readStoredTheme(storage: () => Storage, key: string): Theme | null {
+  if (!browser) return null;
+  try {
+    const stored = storage().getItem(key);
+    return isTheme(stored) ? stored : null;
+  } catch {
+    return null;
+  }
+}
+
+/** This session's temporary switch. */
+function sessionTheme(): Theme | null {
+  return readStoredTheme(() => sessionStorage, SESSION_THEME_KEY);
+}
+
+function isEmbedded(): boolean {
+  if (!browser) return false;
+  try {
+    return window.parent !== window;
+  } catch {
+    return true;
+  }
+}
+
+// The SSO continuation and client navigation remove the launch query. Keep
+// its validated host seed for this document; live host messages still win.
+const embeddedAppearance = isEmbedded() ? themeFromEmbedUrl() : null;
 let hostAppearance: Theme | null = null;
 let accountAppearance: Theme | null = null;
 
+function cachedAccountTheme(): Theme | null {
+  return readStoredTheme(() => localStorage, ACCOUNT_THEME_CACHE_KEY);
+}
+
 function resolveTheme(): Theme {
-  return (
-    deviceTheme() ??
-    hostAppearance ??
-    themeFromEmbedUrl() ??
-    accountAppearance ??
-    "system"
-  );
+  const account = accountAppearance ?? cachedAccountTheme();
+  if (isEmbedded()) {
+    return (
+      hostAppearance ??
+      embeddedAppearance ??
+      sessionTheme() ??
+      account ??
+      "system"
+    );
+  }
+  return sessionTheme() ?? account ?? "system";
 }
 
 function resolveAppearance(value: Theme): "dark" | "light" {
@@ -142,7 +179,7 @@ function resolveFinish(): Finish {
 function createThemeStore() {
   const themeStore = writable<Theme>(resolveTheme());
   const { subscribe, set } = themeStore;
-  const preferenceStore = writable<Theme | null>(deviceTheme());
+  const preferenceStore = writable<Theme | null>(sessionTheme());
   const resolvedStore = writable<"dark" | "light">(
     resolveAppearance(resolveTheme()),
   );
@@ -184,12 +221,19 @@ function createThemeStore() {
   function reapplyTheme() {
     const value = resolveTheme();
     applyTheme(value);
-    preferenceStore.set(deviceTheme());
+    preferenceStore.set(sessionTheme());
     set(value);
   }
 
+  /** A temporary switch for this browser session. */
   function chooseTheme(value: Theme) {
-    if (browser) localStorage.setItem(STORAGE_KEY, value);
+    if (browser) {
+      try {
+        sessionStorage.setItem(SESSION_THEME_KEY, value);
+      } catch {
+        // Session storage is optional.
+      }
+    }
     reapplyTheme();
   }
 
@@ -214,7 +258,13 @@ function createThemeStore() {
       reapplyTheme();
     },
     followDefaultTheme: () => {
-      if (browser) localStorage.removeItem(STORAGE_KEY);
+      if (browser) {
+        try {
+          sessionStorage.removeItem(SESSION_THEME_KEY);
+        } catch {
+          // Session storage is optional.
+        }
+      }
       reapplyTheme();
     },
     /** An explicit device choice — outranks the account default (§4). */
@@ -260,6 +310,13 @@ function createThemeStore() {
       chooseTheme(order[(order.indexOf(get(themeStore)) + 1) % order.length]);
     },
     init: () => {
+      if (browser) {
+        try {
+          localStorage.removeItem(LEGACY_DEVICE_THEME_KEY);
+        } catch {
+          // Device storage is optional.
+        }
+      }
       reapplyTheme();
       applySystemCardShape(getInitialSystemCardShape());
       reapplyFinish();
@@ -277,16 +334,25 @@ function createThemeStore() {
           .matchMedia("(prefers-color-scheme: dark)")
           .addEventListener("change", reapplyTheme);
 
-        // Account default (tier 3), post-paint and fail-soft: it only shows
-        // where no host context and no device choice exist, so a late fetch
-        // never fights an explicit selection.
+        // Account default, post-paint and fail-soft: it only shows where no
+        // host context and no session switch exist, so a late fetch never
+        // fights an explicit selection. It is cached for the next first paint.
         void fetchAccountDesign().then((account) => {
           if (!account) return;
           if (isFinish(account.finish)) {
             accountFinish = account.finish;
             reapplyFinish();
           }
-          accountAppearance = account.appearance;
+          accountAppearance = isTheme(account.appearance)
+            ? account.appearance
+            : null;
+          if (accountAppearance) {
+            try {
+              localStorage.setItem(ACCOUNT_THEME_CACHE_KEY, accountAppearance);
+            } catch {
+              // Device storage is optional.
+            }
+          }
           reapplyTheme();
         });
       }

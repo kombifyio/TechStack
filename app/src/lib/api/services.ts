@@ -2,7 +2,7 @@ import { fetchApi } from "./client";
 import { parseManagementState, type RegistryManagementState } from "./registry";
 
 export type ManagedServiceAction =
-  "start" | "stop" | "restart" | "logs" | "freeze" | "unfreeze";
+  "start" | "stop" | "restart" | "logs" | "freeze" | "unfreeze" | "update" | "backup";
 
 /**
  * Guardrail actions are applied synchronously by the control plane: no job is
@@ -48,7 +48,69 @@ export interface CanonicalServiceMutationLock {
   changed_at?: string;
 }
 
+/** Catalog recognition of a service or application (additive backend field). */
+export interface ServiceCatalogRef {
+  id: string;
+  display_name?: string;
+  category?: string;
+  /** Vendor domain used for the logo lookup. */
+  brand_domain?: string;
+  /** Default UI port inside the container. */
+  web_port?: number;
+  /** Our guide or article for this application, when one exists. */
+  guide_url?: string;
+  /** The upstream project, from the StackKits catalog (additive backend field). */
+  vendor?: ServiceVendor;
+  /** Official end-user clients (stores and installers), when the catalog lists any. */
+  clients?: ServiceClient[];
+}
+
+export interface ServiceSupport {
+  kind: "donate" | "sponsor" | "purchase";
+  url: string;
+}
+
+export interface ServiceVendor {
+  name?: string;
+  website?: string;
+  docs?: string;
+  license?: string;
+  support?: ServiceSupport[];
+}
+
+export interface ServiceClient {
+  platform: "android" | "ios" | "windows" | "macos" | "linux";
+  kind: "store" | "download";
+  url: string;
+}
+
+/**
+ * Measured version facts (additive backend field). `current` and `latest`
+ * are never invented: `latest` exists only after a real registry or release
+ * check succeeded, otherwise `reason_code` says why it is unknown.
+ */
+export interface ServiceVersionInfo {
+  current?: string;
+  source?: "image_tag" | "image_label" | "stackkit" | string;
+  image?: string;
+  latest?: string;
+  update_available?: boolean;
+  checked_at?: string;
+  update_mode?: "stackkit_upgrade" | "adopt_required" | "unavailable" | string;
+  reason_code?: string;
+}
+
+/** Where the backend says a service runs; `serverless` is not emitted. */
+export type ServicePlacementClass = "local" | "cloud" | "managed" | "unknown";
+
 export interface CanonicalService {
+  adoption?: {
+    preview_available: boolean;
+    execution_available: boolean;
+    release_available: boolean;
+    profile_ref?: string;
+    reason_code?: string;
+  };
   id: string;
   kit_deployment_id: string;
   server_id?: string;
@@ -76,6 +138,9 @@ export interface CanonicalService {
   observed_state: string;
   health: CanonicalServiceHealth;
   stackkit_version?: string;
+  catalog?: ServiceCatalogRef | null;
+  version?: ServiceVersionInfo | null;
+  placement_class?: ServicePlacementClass | string;
   access: Record<string, unknown>;
   allowed_actions: string[];
   inventory_revision: number;
@@ -84,6 +149,84 @@ export interface CanonicalService {
   provenance: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+}
+
+export interface ApplicationAdoptionPlan {
+  plan_id: string;
+  service_id: string;
+  status: string;
+  error?: string;
+  assessment?: {
+    planDigest: string;
+    profileRef: string;
+    mode: string;
+    source: { containerId: string; imageDigest: string; configMount: string };
+    preservedFields: string[];
+    admittedOperations: string[];
+  };
+}
+export async function prepareApplicationAdoption(
+  service: CanonicalService,
+  key: string,
+) {
+  const response = await fetchApi<ManagedServiceActionResponse>(
+    `/api/v1/services/${encodeURIComponent(service.id)}/adoption-plans`,
+    {
+      method: "POST",
+      headers: { "Idempotency-Key": key },
+      body: JSON.stringify({
+        mode: "adopt_in_place",
+        expected_inventory_revision: service.inventory_revision,
+      }),
+    },
+  );
+  return response.data;
+}
+export async function readApplicationAdoption(
+  serviceId: string,
+  planId: string,
+) {
+  const response = await fetchApi<ApplicationAdoptionPlan>(
+    `/api/v1/services/${encodeURIComponent(serviceId)}/adoption-plans/${encodeURIComponent(planId)}`,
+  );
+  return response.data;
+}
+export async function executeApplicationAdoption(
+  service: CanonicalService,
+  plan: ApplicationAdoptionPlan,
+  key: string,
+) {
+  const response = await fetchApi<ManagedServiceActionResponse>(
+    `/api/v1/services/${encodeURIComponent(service.id)}/adoption-plans/${encodeURIComponent(plan.plan_id)}/execute`,
+    {
+      method: "POST",
+      headers: { "Idempotency-Key": key },
+      body: JSON.stringify({
+        mode: "adopt_in_place",
+        plan_digest: plan.assessment?.planDigest,
+        expected_inventory_revision: service.inventory_revision,
+        owner_approved: true,
+      }),
+    },
+  );
+  return response.data;
+}
+export async function releaseApplicationAdoption(
+  service: CanonicalService,
+  key: string,
+) {
+  const response = await fetchApi<ManagedServiceActionResponse>(
+    `/api/v1/services/${encodeURIComponent(service.id)}/release`,
+    {
+      method: "POST",
+      headers: { "Idempotency-Key": key },
+      body: JSON.stringify({
+        expected_inventory_revision: service.inventory_revision,
+        owner_approved: true,
+      }),
+    },
+  );
+  return response.data;
 }
 
 type CanonicalServiceWire = Omit<
@@ -103,6 +246,134 @@ function requireKitDeploymentId(
   return value;
 }
 
+const PLACEMENT_CLASSES: readonly ServicePlacementClass[] = [
+  "local",
+  "cloud",
+  "managed",
+  "unknown",
+];
+
+/** A recognised placement class, or undefined so callers fall back to heuristics. */
+export function parsePlacementClass(
+  value: unknown,
+): ServicePlacementClass | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase();
+  // `serverless` is a deprecated alias of managed on the Brand side.
+  if (normalized === "serverless") return "managed";
+  return PLACEMENT_CLASSES.find((candidate) => candidate === normalized);
+}
+
+function textField(
+  record: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const value = record[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function normalizeCatalogRef(value: unknown): ServiceCatalogRef | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  const id = textField(record, "id");
+  if (!id) return undefined;
+  return {
+    id,
+    display_name: textField(record, "display_name"),
+    category: textField(record, "category"),
+    brand_domain: textField(record, "brand_domain"),
+    web_port:
+      typeof record.web_port === "number" && record.web_port > 0
+        ? record.web_port
+        : undefined,
+    guide_url: httpsUrl(record.guide_url),
+    vendor: normalizeVendor(record.vendor),
+    clients: normalizeClients(record.clients),
+  };
+}
+
+function httpsUrl(value: unknown): string | undefined {
+  return typeof value === "string" && value.startsWith("https://")
+    ? value
+    : undefined;
+}
+
+function normalizeVendor(value: unknown): ServiceVendor | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  const support = Array.isArray(record.support)
+    ? record.support.flatMap((entry) => {
+        const item = (entry ?? {}) as Record<string, unknown>;
+        const url = httpsUrl(item.url);
+        const kind = item.kind;
+        return url && (kind === "donate" || kind === "sponsor" || kind === "purchase")
+          ? [{ kind, url } as ServiceSupport]
+          : [];
+      })
+    : undefined;
+  const vendor: ServiceVendor = {
+    name: textField(record, "name"),
+    website: httpsUrl(record.website),
+    docs: httpsUrl(record.docs),
+    license: textField(record, "license"),
+    support: support?.length ? support : undefined,
+  };
+  return Object.values(vendor).some(Boolean) ? vendor : undefined;
+}
+
+const CLIENT_PLATFORMS = ["android", "ios", "windows", "macos", "linux"];
+
+function normalizeClients(value: unknown): ServiceClient[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const clients = value.flatMap((entry) => {
+    const item = (entry ?? {}) as Record<string, unknown>;
+    const url = httpsUrl(item.url);
+    if (
+      !url ||
+      !CLIENT_PLATFORMS.includes(String(item.platform)) ||
+      (item.kind !== "store" && item.kind !== "download")
+    )
+      return [];
+    return [
+      { platform: item.platform, kind: item.kind, url } as ServiceClient,
+    ];
+  });
+  return clients.length ? clients : undefined;
+}
+
+function normalizeVersionInfo(value: unknown): ServiceVersionInfo | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  const version: ServiceVersionInfo = {
+    current: textField(record, "current"),
+    source: textField(record, "source"),
+    image: textField(record, "image"),
+    latest: textField(record, "latest"),
+    update_available: record.update_available === true,
+    checked_at: textField(record, "checked_at"),
+    update_mode: textField(record, "update_mode"),
+    reason_code: textField(record, "reason_code"),
+  };
+  // A version block with nothing measured carries no information.
+  return version.current ||
+    version.latest ||
+    version.image ||
+    version.reason_code
+    ? version
+    : undefined;
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
+}
+
+/**
+ * Normalize one canonical service. Identity and ownership are contract
+ * violations that throw; every other field is optional so a backend that
+ * predates it (or omits it for one row) still renders.
+ */
 function normalizeCanonicalService(
   service: CanonicalServiceWire,
   context: string,
@@ -112,6 +383,22 @@ function normalizeCanonicalService(
     ...result,
     kit_deployment_id: requireKitDeploymentId(kit_deployment_id, context),
     management_state: parseManagementState(service.management_state, context),
+    catalog: normalizeCatalogRef(service.catalog) ?? null,
+    version: normalizeVersionInfo(service.version) ?? null,
+    placement_class: parsePlacementClass(service.placement_class),
+    allowed_actions: stringList(service.allowed_actions),
+    access:
+      service.access && typeof service.access === "object"
+        ? service.access
+        : {},
+    health:
+      service.health && typeof service.health === "object"
+        ? service.health
+        : { state: "" },
+    placement: {
+      ...service.placement,
+      freshness: service.placement?.freshness ?? { state: "unknown" },
+    },
   };
 }
 
@@ -134,6 +421,12 @@ export interface ServiceApplication {
   observed_at?: string;
   system: boolean;
   provenance: Record<string, unknown>;
+  /** Union of the actions that apply app-wide (additive backend field). */
+  allowed_actions?: string[];
+  catalog?: ServiceCatalogRef | null;
+  /** Version of the primary component. */
+  version?: ServiceVersionInfo | null;
+  placement_class?: ServicePlacementClass | string;
 }
 
 type ServiceApplicationWire = Omit<
@@ -141,35 +434,116 @@ type ServiceApplicationWire = Omit<
   "kit_deployment_id" | "components"
 > & {
   kit_deployment_id?: string;
-  components: CanonicalServiceWire[];
+  components?: CanonicalServiceWire[];
 };
+
+/** A row the client could not read; reported, never fatal for the list. */
+export interface ServiceRowRejection {
+  index: number;
+  id?: string;
+  reason: string;
+}
+
+export interface ServiceRowsResult<T> {
+  items: T[];
+  rejected: ServiceRowRejection[];
+}
+
+function rowId(value: unknown, keys: string[]): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  for (const key of keys) {
+    const candidate = (value as Record<string, unknown>)[key];
+    if (typeof candidate === "string" && candidate) return candidate;
+  }
+  return undefined;
+}
+
+/**
+ * Normalize a list row by row. One malformed row (unknown ownership, empty
+ * deployment identity) is dropped and reported instead of blanking the list.
+ */
+function normalizeRows<Wire, T>(
+  rows: Wire[] | null | undefined,
+  idKeys: string[],
+  normalize: (row: Wire, index: number) => T,
+): ServiceRowsResult<T> {
+  const items: T[] = [];
+  const rejected: ServiceRowRejection[] = [];
+  (rows ?? []).forEach((row, index) => {
+    try {
+      items.push(normalize(row, index));
+    } catch (error) {
+      rejected.push({
+        index,
+        id: rowId(row, idKeys),
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+  return { items, rejected };
+}
 
 function normalizeServiceApplication(
   application: ServiceApplicationWire,
   context: string,
+  rejected?: ServiceRowRejection[],
 ): ServiceApplication {
   const { kit_deployment_id, components, ...result } = application;
+  const normalizedComponents = normalizeRows(
+    components,
+    ["id"],
+    (component: CanonicalServiceWire, index) =>
+      normalizeCanonicalService(component, `${context}.components[${index}]`),
+  );
+  rejected?.push(...normalizedComponents.rejected);
   return {
     ...result,
     kit_deployment_id: requireKitDeploymentId(kit_deployment_id, context),
-    components: components.map((component, index) =>
-      normalizeCanonicalService(component, `${context}.components[${index}]`),
-    ),
+    components: normalizedComponents.items,
+    access:
+      application.access && typeof application.access === "object"
+        ? application.access
+        : { kind: "unavailable" },
+    system: application.system === true,
+    provenance: application.provenance ?? {},
+    allowed_actions: stringList(application.allowed_actions),
+    catalog: normalizeCatalogRef(application.catalog) ?? null,
+    version: normalizeVersionInfo(application.version) ?? null,
+    placement_class: parsePlacementClass(application.placement_class),
   };
 }
 
-export async function listServiceApplications(
+/** Applications plus the rows that could not be read. */
+export async function listServiceApplicationsReport(
   kitDeploymentId?: string,
-): Promise<ServiceApplication[]> {
+): Promise<ServiceRowsResult<ServiceApplication>> {
   const query = kitDeploymentId
     ? `?kit_deployment_id=${encodeURIComponent(kitDeploymentId)}`
     : "";
   const response = await fetchApi<ServiceApplicationWire[]>(
     `/api/v1/service-applications${query}`,
   );
-  return (response.data ?? []).map((application, index) =>
-    normalizeServiceApplication(application, `service-applications[${index}]`),
+  const componentRejections: ServiceRowRejection[] = [];
+  const result = normalizeRows(
+    response.data,
+    ["application_id", "application_key"],
+    (application: ServiceApplicationWire, index) =>
+      normalizeServiceApplication(
+        application,
+        `service-applications[${index}]`,
+        componentRejections,
+      ),
   );
+  return {
+    items: result.items,
+    rejected: [...result.rejected, ...componentRejections],
+  };
+}
+
+export async function listServiceApplications(
+  kitDeploymentId?: string,
+): Promise<ServiceApplication[]> {
+  return (await listServiceApplicationsReport(kitDeploymentId)).items;
 }
 
 export async function getServiceApplication(
@@ -184,19 +558,29 @@ export async function getServiceApplication(
   );
 }
 
-/** List the canonical service aggregates for the caller's tenant. */
-export async function listCanonicalServices(
+/** Canonical services plus the rows that could not be read. */
+export async function listCanonicalServicesReport(
   kitDeploymentId?: string,
-): Promise<CanonicalService[]> {
+): Promise<ServiceRowsResult<CanonicalService>> {
   const query = kitDeploymentId
     ? `?kit_deployment_id=${encodeURIComponent(kitDeploymentId)}`
     : "";
   const response = await fetchApi<CanonicalServiceWire[]>(
     `/api/v1/services${query}`,
   );
-  return (response.data ?? []).map((service, index) =>
-    normalizeCanonicalService(service, `services[${index}]`),
+  return normalizeRows(
+    response.data,
+    ["id"],
+    (service: CanonicalServiceWire, index) =>
+      normalizeCanonicalService(service, `services[${index}]`),
   );
+}
+
+/** List the canonical service aggregates for the caller's tenant. */
+export async function listCanonicalServices(
+  kitDeploymentId?: string,
+): Promise<CanonicalService[]> {
+  return (await listCanonicalServicesReport(kitDeploymentId)).items;
 }
 
 /** Read one canonical service aggregate. */

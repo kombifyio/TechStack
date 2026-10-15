@@ -20,6 +20,9 @@ export interface Task {
   errorMessage?: string; // Short error description
   errorDetails?: string; // Detailed error info for troubleshooting
   troubleshooting?: string[]; // Actionable troubleshooting steps
+  // Completed, but an independent part of it did not finish (degraded
+  // completion); rendered as completed-with-warning, never as failed.
+  attention?: boolean;
 }
 
 /**
@@ -545,12 +548,19 @@ export interface TaskGroup {
   label: string;
   description: string;
   taskIds: string[];
+  /** Listed sub-steps; each one also covers the hidden tasks that follow it. */
   visibleTaskIds?: string[];
+  /**
+   * Orientation duration of the whole phase on a managed Cloud rollout. It
+   * weights the overall progress bar and is shown next to the phase timer.
+   */
+  typicalSeconds: number;
 }
 
 export const TASK_GROUPS: TaskGroup[] = [
   {
     id: "configure",
+    typicalSeconds: 15,
     get label() {
       return tr("ui.taskStatus.configureStackKitDeployment");
     },
@@ -571,6 +581,7 @@ export const TASK_GROUPS: TaskGroup[] = [
   },
   {
     id: "provision",
+    typicalSeconds: 300,
     get label() {
       return tr("ui.taskStatus.provisionManagedRuntime");
     },
@@ -593,6 +604,7 @@ export const TASK_GROUPS: TaskGroup[] = [
   },
   {
     id: "generate",
+    typicalSeconds: 30,
     get label() {
       return tr("ui.taskStatus.generateDeploymentArtifacts");
     },
@@ -604,6 +616,7 @@ export const TASK_GROUPS: TaskGroup[] = [
   },
   {
     id: "rollout",
+    typicalSeconds: 360,
     get label() {
       return tr("ui.taskStatus.rollOutCloudKit");
     },
@@ -623,6 +636,7 @@ export const TASK_GROUPS: TaskGroup[] = [
   },
   {
     id: "verify",
+    typicalSeconds: 120,
     get label() {
       return tr("ui.taskStatus.verifyRollout");
     },
@@ -686,55 +700,90 @@ export function isStackKitArtifactOrRoutingTask(
 
 export interface GroupStatus {
   group: TaskGroup;
+  /** Listed sub-steps, each aggregated over the tasks it covers. */
   tasks: Task[];
+  /** Every task of the phase present in the current run. */
+  memberTasks: Task[];
   status: Task["status"];
+  /** Completed listed sub-steps; `total` is the number of listed sub-steps. */
   completed: number;
   total: number;
   runningTask?: Task;
   failedTask?: Task;
+  attention: boolean;
 }
 
 /**
  * Compute the aggregated status for a single group from the current task list.
- * A group is failed if any sub-task failed; running if any sub-task is running;
- * completed if every sub-task is completed; pending otherwise. Sub-tasks that
- * are not present in the current task list (e.g. RUNTIME_TASKS on a non-cloud
- * flow) are dropped from `tasks` and `total`.
+ * A group is failed if any sub-task failed; running if any sub-task is running
+ * or the group is partly done; completed if every sub-task is completed;
+ * pending otherwise. Sub-tasks that are not present in the current task list
+ * (e.g. RUNTIME_TASKS on a non-cloud flow) are dropped. The counter always
+ * counts the listed sub-steps, so "2 / 4" matches the four lines the user sees.
  */
 export function computeGroupStatus(
   tasks: Task[],
   group: TaskGroup,
 ): GroupStatus {
   const taskById = new Map(tasks.map((t) => [t.id, t]));
-  const groupTasks = group.taskIds
+  const memberTasks = group.taskIds
     .map((id) => taskById.get(id))
     .filter((t): t is Task => Boolean(t));
-  const visibleIds = group.visibleTaskIds ?? group.taskIds;
-  const visibleTasks = visibleIds
-    .map((id) => taskById.get(id))
-    .filter((t): t is Task => Boolean(t));
+  const steps = listedSteps(memberTasks, group.visibleTaskIds);
 
-  const total = groupTasks.length;
-  const completed = groupTasks.filter((t) => t.status === "completed").length;
-  const failedTask = groupTasks.find((t) => t.status === "failed");
-  const runningTask = groupTasks.find((t) => t.status === "running");
-
-  let status: Task["status"] = "pending";
-  if (total > 0) {
-    if (failedTask) status = "failed";
-    else if (runningTask) status = "running";
-    else if (completed === total) status = "completed";
-  }
+  const total = steps.length;
+  const completed = steps.filter((t) => t.status === "completed").length;
+  const failedTask = memberTasks.find((t) => t.status === "failed");
+  const runningTask = memberTasks.find((t) => t.status === "running");
+  const status = aggregateStatus(memberTasks);
 
   return {
     group,
-    tasks: visibleTasks,
+    tasks: steps,
+    memberTasks,
     status,
     completed,
     total,
     runningTask,
     failedTask,
+    attention: status === "completed" && memberTasks.some((t) => t.attention),
   };
+}
+
+// listedSteps folds every hidden task into the listed step before it (or the
+// first listed step), so a listed step finishes only with the work it covers.
+function listedSteps(memberTasks: Task[], visibleIds?: string[]): Task[] {
+  if (!visibleIds) return memberTasks;
+  const spans: Task[][] = [];
+  for (const task of memberTasks) {
+    if (visibleIds.includes(task.id) || spans.length === 0) {
+      spans.push([task]);
+    } else {
+      spans[spans.length - 1].push(task);
+    }
+  }
+  return spans.map((span) => {
+    const active = span.find(
+      (t) => t.status === "running" || t.status === "failed",
+    );
+    return {
+      ...span[0],
+      status: aggregateStatus(span),
+      message: active?.message,
+      errorMessage: active?.errorMessage,
+    };
+  });
+}
+
+function aggregateStatus(span: Task[]): Task["status"] {
+  if (span.length === 0) return "pending";
+  if (span.some((t) => t.status === "failed")) return "failed";
+  const completed = span.filter((t) => t.status === "completed").length;
+  if (completed === span.length) return "completed";
+  if (completed > 0 || span.some((t) => t.status === "running")) {
+    return "running";
+  }
+  return "pending";
 }
 
 /**

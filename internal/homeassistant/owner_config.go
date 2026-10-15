@@ -9,7 +9,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/kombifyio/techstack/internal/gocommon/runtimeexecutor"
+	"github.com/kombifyio/techstack/internal/selfhostcontracts/runtimeexecutor"
 	"github.com/kombifyio/techstack/pkg/auth"
 	"github.com/kombifyio/techstack/pkg/backupstore"
 )

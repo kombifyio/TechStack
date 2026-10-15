@@ -20,10 +20,16 @@ type fakeTargetObjectAPI struct {
 	readPayload []byte
 	headErr     error
 	deleteErr   error
+	putErrs     []error
 }
 
 func (f *fakeTargetObjectAPI) PutObject(_ context.Context, input *s3.PutObjectInput, _ ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
 	f.calls = append(f.calls, "put:"+aws.ToString(input.Bucket)+":"+aws.ToString(input.Key))
+	if len(f.putErrs) > 0 {
+		err := f.putErrs[0]
+		f.putErrs = f.putErrs[1:]
+		return nil, err
+	}
 	f.written, _ = io.ReadAll(input.Body)
 	return &s3.PutObjectOutput{}, nil
 }
@@ -101,4 +107,30 @@ func TestTargetVerifierRejectsPriorAttestationAndUnknownHeadErrors(t *testing.T)
 
 func testCustodyEvidence() CustodyEvidence {
 	return CustodyEvidence{BindingEvidence: []byte("binding"), TargetEvidence: []byte("target"), ObservedAt: time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC)}
+}
+
+// Regression (managed Cloud lane 2026-10-03): a just-created per-stack R2
+// token answered 401 Unauthorized to the first sentinel write.
+func TestTargetVerifierWaitsForANewTokenToBeAccepted(t *testing.T) {
+	unauthorized := &smithy.GenericAPIError{Code: "Unauthorized", Message: "not yet valid"}
+	client := &fakeTargetObjectAPI{putErrs: []error{unauthorized, unauthorized}, headErr: &smithy.GenericAPIError{Code: "NotFound", Message: "gone"}}
+	var slept time.Duration
+	verifier := &TargetVerifier{
+		client: client, now: func() time.Time { return time.Date(2026, 10, 3, 14, 0, 0, 0, time.UTC) },
+		random: bytes.NewReader(bytes.Repeat([]byte{0x2a}, attestationPayloadBytes)),
+		sleep:  func(_ context.Context, d time.Duration) error { slept += d; return nil },
+	}
+	verified, err := verifier.Verify(context.Background(), testCredentials(), testCustodyEvidence())
+	if err != nil {
+		t.Fatalf("a token that becomes valid within the budget must attest: %v", err)
+	}
+	if len(verified.AttestationEvidence) == 0 || slept == 0 || slept > credentialPropagationBudget {
+		t.Fatalf("attestation=%q slept=%s", verified.AttestationEvidence, slept)
+	}
+
+	denied := &fakeTargetObjectAPI{putErrs: []error{&smithy.GenericAPIError{Code: "AccessDenied", Message: "no"}}}
+	verifier.client, verifier.random, slept = denied, bytes.NewReader(bytes.Repeat([]byte{0x2a}, attestationPayloadBytes)), 0
+	if _, err := verifier.Verify(context.Background(), testCredentials(), testCustodyEvidence()); err == nil || slept != 0 {
+		t.Fatalf("403 must fail at once without waiting: err=%v slept=%s", err, slept)
+	}
 }

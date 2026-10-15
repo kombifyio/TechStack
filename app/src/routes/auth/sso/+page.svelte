@@ -182,7 +182,9 @@
         <div class="space-y-3">
           <button
             onclick={handleRetry}
-            class="w-full py-3 px-4 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg font-medium transition-colors"
+            data-kx="control"
+            data-variant="primary"
+            class="w-full py-3 px-4 rounded-lg font-medium"
           >
             {tr("ui.sso.tryAgain")}
           </button>

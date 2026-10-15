@@ -17,12 +17,15 @@ import (
 	"github.com/kombifyio/techstack/internal/runtimeproduct/vmlease"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/jobs"
+	"github.com/kombifyio/techstack/pkg/kombifywallet"
 	"github.com/kombifyio/techstack/pkg/logger"
 	"github.com/kombifyio/techstack/pkg/monthlyruntime"
 	"github.com/kombifyio/techstack/pkg/nodehandoff"
+	"github.com/kombifyio/techstack/pkg/originca"
 	"github.com/kombifyio/techstack/pkg/runtimehealth"
 	"github.com/kombifyio/techstack/pkg/runtimeidentity"
 	"github.com/kombifyio/techstack/pkg/serverregistry"
+	"github.com/kombifyio/techstack/pkg/specv2"
 	"github.com/kombifyio/techstack/pkg/stackrouting"
 	"github.com/kombifyio/techstack/pkg/vmleases"
 )
@@ -96,12 +99,15 @@ type Orchestrator struct {
 	jobStore                 controlplane.JobStore
 	workerStore              controlplane.WorkerStore
 	walletStore              controlplane.WalletStore
+	kombifyWallet            *kombifywallet.Client
 	driftStore               controlplane.DriftResultStore
 	activityStore            controlplane.ActivityStore
 	registry                 controlplane.RegistryStore
 	leaseLister              ManagedRuntimeLeaseLister
 	routingStore             stackrouting.Store
 	stackKitCommander        jobs.StackKitCommandSender
+	applicationAuthorize     func(context.Context, string, string, string) error
+	connectorReadAuthorize   func(context.Context, string, string, string) error
 	managedStackKitInventory jobs.ManagedStackKitInventoryBuilder
 	terminalJobObservers     []TerminalJobObserver
 	now                      func() time.Time
@@ -167,6 +173,12 @@ type Config struct {
 	// BackupScheduleProjector records the cadence a managed rollout selected.
 	// Without it the schedule projection stays empty and no backup is ever due.
 	BackupScheduleProjector jobs.BackupScheduleProjector
+	// BackupDecommissioner revokes the off-site backup token of a destroyed
+	// stack and starts its retention clock.
+	BackupDecommissioner jobs.BackupDecommissioner
+	// OriginCertificates issues, re-issues and revokes the managed kombify.me
+	// origin certificate (ADR-0047). Nil fails managed kombify.me rollouts closed.
+	OriginCertificates *originca.Service
 	// AdvancedIssuer is the installation's Advanced capability issuer. Managed
 	// rollouts import its trust bundle on every host; nil fails them closed.
 	AdvancedIssuer           jobs.AdvancedIssuer
@@ -181,8 +193,11 @@ type Config struct {
 	RoutingStore             stackrouting.Store
 	StackKitCommander        jobs.StackKitCommandSender
 	ManagedStackKitInventory jobs.ManagedStackKitInventoryBuilder
-	ManagedRestoreAdmission  jobs.BackupAdmission
-	PortInventory            portinventory.LifecycleAuthority
+	// FederationFabric issues the inter-site link binding of a managed Modern
+	// deployment; nil leaves the rollout at the link-binding blocker.
+	FederationFabric        jobs.FederationFabric
+	ManagedRestoreAdmission jobs.BackupAdmission
+	PortInventory           portinventory.LifecycleAuthority
 	// RemoteEnrollment drives the durable connect-remote enrollment job. It is
 	// late-bound by ConfigureRemoteEnrollment once route custody is wired.
 	RemoteEnrollment jobs.RemoteEnrollmentExecutor
@@ -190,6 +205,17 @@ type Config struct {
 	// execution retains wall-clock timestamps; injecting this clock lets the
 	// stale-heartbeat fence be deterministically verified without sleeping.
 	Now func() time.Time
+	// RolloutRetrySpecValidator uses the same pinned CLI acceptance boundary.
+	// Nil resolves production custody from the configured release pin.
+	RolloutRetrySpecValidator specv2.SpecValidator
+	// KombifyWallet is the central kombify Wallet client. When set, StackKit
+	// outputs are saved there and the legacy WalletStore is never written; nil
+	// keeps the legacy sync.
+	KombifyWallet *kombifywallet.Client
+	// WalletHostAuthority is the Wallet's public delivering key. With
+	// KombifyWallet it lets ai_provider seal a Wallet item to a node; without
+	// it that operation fails closed.
+	WalletHostAuthority *kombifywallet.HostAuthority
 }
 
 type ManagedRuntimeLeaseLister interface {
@@ -197,27 +223,31 @@ type ManagedRuntimeLeaseLister interface {
 }
 
 type ProvisionStackOptions struct {
-	AutoDeploy            bool
-	OwnerSpecBootstrap    *jobs.OwnerSpecBootstrap
-	IdempotencyKey        string
-	RequestContext        context.Context
-	TenantID              string
-	OwnerID               string
-	StackName             string
-	PreparedManagedLease  *jobs.ManagedLeaseRequest
-	CustomerGuest         *jobs.CustomerGuestBinding
-	RequiredLeaseID       string
-	RequiredServerID      string
-	RoutingRevision       int64
-	RoutingIdempotencyKey string
-	enrollmentResumeJobID string
-	enrollmentResumeAt    string
-	enrollmentResumeKind  string
-	enrollmentResumeKey   string
-	enrollmentResumeNewID string
-	rolloutRetryJobID     string
-	rolloutRetryKey       string
-	rolloutRetryNewID     string
+	AutoDeploy               bool
+	OwnerSpecBootstrap       *jobs.OwnerSpecBootstrap
+	IdempotencyKey           string
+	RequestContext           context.Context
+	TenantID                 string
+	OwnerID                  string
+	StackName                string
+	PreparedManagedLease     *jobs.ManagedLeaseRequest
+	CustomerGuest            *jobs.CustomerGuestBinding
+	RequiredLeaseID          string
+	RequiredServerID         string
+	RoutingRevision          int64
+	RoutingIdempotencyKey    string
+	enrollmentResumeJobID    string
+	enrollmentResumeAt       string
+	enrollmentResumeKind     string
+	enrollmentResumeKey      string
+	enrollmentResumeNewID    string
+	rolloutRetryJobID        string
+	rolloutRetryKey          string
+	rolloutRetryNewID        string
+	rolloutRetryCandidateSHA string
+	rolloutRetryCandidate    map[string]any
+	rolloutRetryIntent       map[string]any
+	rolloutRetryCurrentHash  string
 }
 
 type orchestratorStack struct {
@@ -289,6 +319,7 @@ func New(cfg *Config, log *logger.Logger) *Orchestrator {
 		jobStore:                 cfg.JobStore,
 		workerStore:              cfg.WorkerStore,
 		walletStore:              cfg.WalletStore,
+		kombifyWallet:            cfg.KombifyWallet,
 		driftStore:               cfg.DriftStore,
 		activityStore:            cfg.ActivityStore,
 		registry:                 cfg.RegistryStore,
@@ -326,12 +357,16 @@ func (o *Orchestrator) provisionConfig(actions jobs.RuntimeActions) *jobs.Provis
 		RuntimeActions:               actions,
 		StackKitCommander:            o.stackKitCommander,
 		ManagedStackKitInventory:     o.managedStackKitInventory,
+		StackKitNodeAgents:           o.resolveStackKitNodeAgent,
+		FederationFabric:             o.cfg.FederationFabric,
 		PortInventory:                o.cfg.PortInventory,
 		RoutingStore:                 o.routingStore,
 		AutoDeployAdmission:          o.admitProvisionAutoDeploy,
 		BackupScheduleProjector:      o.cfg.BackupScheduleProjector,
 		AdvancedIssuer:               o.cfg.AdvancedIssuer,
 		BackupAgentResolver:          o.resolveBackupAgent,
+		BackupDecommissioner:         o.cfg.BackupDecommissioner,
+		OriginCertificates:           o.cfg.OriginCertificates,
 		NoWorkspaceDestroyReconciler: o.reconcileNoWorkspaceDestroy,
 		RemoteEnrollment:             o.cfg.RemoteEnrollment,
 	}
@@ -378,15 +413,67 @@ func (o *Orchestrator) ConfigureRemoteEnrollment(executor jobs.RemoteEnrollmentE
 }
 
 // EnqueuePreparedJob admits an already-persisted pending job into this
-// process's queue. The durable row must exist in pending state; the queue's
-// execution claim stays the single authority for running it.
+// process's queue. Exact running/completed enrollment replays retain the durable
+// outcome; the queue's execution claim stays the single authority for running it.
 func (o *Orchestrator) EnqueuePreparedJob(job *jobs.Job, tenantID string) error {
 	if o == nil || o.queue == nil || job == nil {
 		return fmt.Errorf("orchestrator is not configured for prepared jobs")
 	}
 	unlockStack := o.stackLocks.lock(job.TargetID)
 	defer unlockStack()
+	if job.Type == jobs.JobTypeRemoteEnrollment {
+		if dispatched, err := o.preparedEnrollmentAlreadyDispatched(job, tenantID); err != nil || dispatched {
+			return err
+		}
+		if current, exists := o.queue.Get(job.ID); exists && !current.Snapshot().PersistenceSuppressed {
+			snapshot := current.Snapshot()
+			if snapshot.Payload["tenant_id"] != strings.TrimSpace(tenantID) || snapshot.Payload["owner_id"] != job.Payload["owner_id"] || snapshot.Payload["planned_server_id"] != job.Payload["planned_server_id"] || snapshot.TargetID != job.TargetID || snapshot.Type != job.Type {
+				return fmt.Errorf("prepared enrollment identity conflict")
+			}
+			return nil
+		}
+		if err := o.enqueueWithSync(job, tenantID); err != nil {
+			// Another process may claim/complete the pending row between the
+			// read and admission. Only the same durable operation is a replay.
+			if dispatched, readErr := o.preparedEnrollmentAlreadyDispatched(job, tenantID); readErr == nil && dispatched {
+				return nil
+			}
+			return err
+		}
+		return nil
+	}
 	return o.enqueueWithSync(job, tenantID)
+}
+
+func (o *Orchestrator) preparedEnrollmentAlreadyDispatched(job *jobs.Job, tenantID string) (bool, error) {
+	reader, ok := o.jobStore.(interface {
+		GetJobForRecovery(context.Context, string, string) (*controlplane.Job, error)
+	})
+	if !ok {
+		return false, fmt.Errorf("durable prepared enrollment recovery is unavailable")
+	}
+	tenantID = strings.TrimSpace(tenantID)
+	snapshot := job.Snapshot()
+	owner, ownerOK := snapshot.Payload["owner_id"].(string)
+	server, serverOK := snapshot.Payload["planned_server_id"].(string)
+	if tenantID == "" || !ownerOK || strings.TrimSpace(owner) == "" || !serverOK || strings.TrimSpace(server) == "" || snapshot.Payload["tenant_id"] != tenantID {
+		return false, fmt.Errorf("%w: prepared enrollment identity required", controlplane.ErrConflict)
+	}
+	durable, err := reader.GetJobForRecovery(o.ctx, tenantID, snapshot.ID)
+	if err != nil {
+		return false, err
+	}
+	if durable == nil || durable.ID != snapshot.ID || durable.TenantID != tenantID || durable.StackID != snapshot.TargetID || durable.Type != string(snapshot.Type) || durable.Payload["tenant_id"] != tenantID || durable.Payload["owner_id"] != owner || durable.Payload["planned_server_id"] != server {
+		return false, fmt.Errorf("%w: prepared enrollment identity conflict", controlplane.ErrConflict)
+	}
+	switch canonicalEnrollmentJobState(durable.State) {
+	case persistentStateRunning, string(jobs.JobStateCompleted):
+		return true, nil
+	case persistentStatePending:
+		return false, nil
+	default:
+		return false, fmt.Errorf("%w: prepared enrollment is no longer pending", controlplane.ErrConflict)
+	}
 }
 
 // admitProvisionAutoDeploy is the read-only control-plane fence for the one
@@ -934,6 +1021,16 @@ func (o *Orchestrator) deployJobPayload(
 	stack *orchestratorStack,
 	opts ProvisionStackOptions,
 ) (map[string]any, error) {
+	if bound := stringFromAny(stack.config[rolloutRetryCandidateField]); isRolloutRetry(opts) && bound != "" && bound != opts.rolloutRetryCandidateSHA {
+		return nil, fmt.Errorf("%w: repaired canonical dispatch candidate is required", ErrRolloutRetryInvalid)
+	}
+	if opts.rolloutRetryCandidateSHA != "" {
+		projection, _ := providerIdentityMap(stack.config["stack_spec_v2"])
+		digest, err := rolloutCandidateDigest(projection)
+		if err != nil || digest != opts.rolloutRetryCandidateSHA {
+			return nil, fmt.Errorf("%w: repaired canonical dispatch revision changed", ErrRolloutRetryInvalid)
+		}
+	}
 	managedPayload, err := o.managedRuntimePayloadForStackWithRequirements(ctx, stack, opts)
 	if err != nil {
 		return nil, err
@@ -1217,6 +1314,9 @@ func buildDeployJobPayload(stack *orchestratorStack, approvedWorkers []map[strin
 	// repository or an unfenced second read.
 	if projection, ok := stack.config["stack_spec_v2"]; ok {
 		payload["stack_spec_v2"] = projection
+	}
+	if opts.rolloutRetryCandidateSHA != "" {
+		payload["stack_spec_v2"] = opts.rolloutRetryCandidate
 	}
 	return payload
 }

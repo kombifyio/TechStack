@@ -13,4 +13,5 @@
   initialVariant={page.url.searchParams.get("variant") === "b"
     ? "focus"
     : "discover"}
+  catalogTag={page.url.searchParams.get("catalog") ?? "latest"}
 />

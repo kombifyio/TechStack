@@ -10,14 +10,10 @@ package authflow
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"sort"
@@ -58,18 +54,23 @@ type TenantResolver func(ctx context.Context, claims *oidcclient.Claims, provide
 // error redirects to the login error page with reason `user_upsert_failed`.
 type UserUpsert func(ctx context.Context, claims *oidcclient.Claims, tenantID, providerID string) error
 
-// CallbackPath is the path appended to the request scheme+host to derive the
+// CallbackPath is the path appended to the configured public origin to derive the
 // `redirect_uri` sent to identity providers. It MUST match the path
 // registered with the IdP. Override via [Config.CallbackPath].
 const CallbackPath = "/api/v1/auth/callback"
 
 // Config configures a [Service].
 type Config struct {
+	// PublicBaseURL is the canonical external origin from the consumer service-URL
+	// registry. Required; HTTPS except explicit loopback HTTP development. Request
+	// Host and forwarding headers never determine the OIDC callback origin.
+	PublicBaseURL string
+
 	// Providers is the registry of configured OIDC providers. Required.
 	Providers *oidcclient.Registry
 	// Sessions mints HS256 session JWTs after a successful callback. Required.
 	Sessions *authsession.Manager
-	// StateSecret signs the short-lived state token (CSRF + redirect carrier).
+	// StateSecret seals the short-lived state and browser-binding cookie.
 	// Must be at least 32 bytes.
 	StateSecret []byte
 
@@ -92,7 +93,10 @@ type Config struct {
 	// to [authsession.DefaultSessionCookieName].
 	SessionCookieName string
 	// SessionCookieSecure controls the cookie's Secure flag. Set true in
-	// production.
+	// production; false is reserved for loopback local HTTP development. The
+	// secure browser-binding cookie uses __Host- and Path=/ to prevent sibling
+	// subdomains from injecting a competing Domain cookie; its callback path
+	// remains bound in the encrypted payload's additional authenticated data.
 	SessionCookieSecure bool
 
 	// Exchanger overrides the default RFC-6749 code exchanger. Tests inject
@@ -118,6 +122,10 @@ type Service struct {
 
 // NewService validates Config and returns a new auth-code flow service.
 func NewService(cfg Config) (*Service, error) {
+	publicBaseURL, err := validatedPublicBaseURL(cfg.PublicBaseURL)
+	if err != nil {
+		return nil, err
+	}
 	if cfg.Providers == nil || cfg.Providers.Len() == 0 {
 		return nil, fmt.Errorf("%w: at least one provider is required", ErrInvalidConfig)
 	}
@@ -136,6 +144,9 @@ func NewService(cfg Config) (*Service, error) {
 	if cfg.CallbackPath == "" {
 		cfg.CallbackPath = CallbackPath
 	}
+	if err := validateBrowserCookiePath(cfg.CallbackPath); err != nil {
+		return nil, err
+	}
 	if cfg.SessionCookieName == "" {
 		cfg.SessionCookieName = authsession.DefaultSessionCookieName
 	}
@@ -149,6 +160,7 @@ func NewService(cfg Config) (*Service, error) {
 	}
 	return &Service{
 		cfg: Config{
+			PublicBaseURL:       publicBaseURL,
 			Providers:           cfg.Providers,
 			Sessions:            cfg.Sessions,
 			StateSecret:         cfg.StateSecret,
@@ -244,11 +256,18 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	binding, err := s.newBrowserBinding(verifier)
+	if err != nil {
+		http.Error(w, "create browser binding failed", http.StatusInternalServerError)
+		return
+	}
 	state, err := s.issueState(loginState{
 		ProviderID:     provider.ID(),
 		TenantID:       tenantID,
 		ReturnTo:       returnTo,
-		PKCEVerifier:   verifier,
+		BrowserBinding: binding.stateHash(),
+		IssuedAt:       binding.IssuedAt,
+		ExpiresAt:      binding.ExpiresAt,
 		ReauthPurpose:  reauthPurpose,
 		ReauthResource: reauthResource,
 	})
@@ -256,10 +275,14 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	redirectURI := buildAbsoluteURL(r, s.cfg.CallbackPath)
-	authorizationURL, err := authorizationURL(provider.AuthCodeURL(redirectURI, state, challenge), reauthPurpose != "")
+	redirectURI := s.callbackURL()
+	authorizationURL, err := authorizationURL(provider.AuthCodeURL(redirectURI, state, challenge), reauthPurpose != "", binding.oidcNonce())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := s.setBrowserCookie(w, binding); err != nil {
+		http.Error(w, "seal browser binding failed", http.StatusInternalServerError)
 		return
 	}
 	// #nosec G710 -- authorizationURL is based on the validated, server-configured
@@ -268,19 +291,18 @@ func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) handleCallback(w http.ResponseWriter, r *http.Request) {
+	state, binding, err := s.consumeBrowserBinding(w, r)
+	if err != nil {
+		s.redirectToLoginError(w, r, "invalid_state")
+		return
+	}
 	if errorCode := strings.TrimSpace(r.URL.Query().Get("error")); errorCode != "" {
 		s.redirectToLoginError(w, r, errorCode)
 		return
 	}
 	code := strings.TrimSpace(r.URL.Query().Get("code"))
-	stateToken := strings.TrimSpace(r.URL.Query().Get("state"))
-	if code == "" || stateToken == "" {
+	if code == "" {
 		s.redirectToLoginError(w, r, "missing_authorization_code")
-		return
-	}
-	state, err := s.parseState(stateToken)
-	if err != nil {
-		s.redirectToLoginError(w, r, "invalid_state")
 		return
 	}
 	provider, err := s.resolveProvider(state.ProviderID)
@@ -288,28 +310,10 @@ func (s *Service) handleCallback(w http.ResponseWriter, r *http.Request) {
 		s.redirectToLoginError(w, r, "unknown_provider")
 		return
 	}
-	redirectURI := buildAbsoluteURL(r, s.cfg.CallbackPath)
-	exchange, err := s.exchanger.ExchangeCode(r.Context(), provider, oidcclient.CodeExchangeRequest{
-		Code:         code,
-		RedirectURI:  redirectURI,
-		PKCEVerifier: state.PKCEVerifier,
-	})
-	if err != nil || exchange == nil || strings.TrimSpace(exchange.IDToken) == "" {
-		s.redirectToLoginError(w, r, "token_exchange_failed")
+	claims, authenticatedAt, failure := s.authenticateCallback(r, provider, state, binding, code)
+	if failure != "" {
+		s.redirectToLoginError(w, r, failure)
 		return
-	}
-	claims, err := provider.Verify(r.Context(), exchange.IDToken)
-	if err != nil {
-		s.redirectToLoginError(w, r, "invalid_id_token")
-		return
-	}
-	authenticatedAt := int64(0)
-	if state.ReauthPurpose != "" {
-		authenticatedAt, err = freshAuthenticationTime(claims.Raw, s.now().UTC())
-		if err != nil {
-			s.redirectToLoginError(w, r, "reauthentication_required")
-			return
-		}
 	}
 	tenantID := state.TenantID
 	if s.cfg.TenantResolver != nil {
@@ -379,7 +383,7 @@ type loginState struct {
 	ProviderID     string `json:"provider_id"`
 	TenantID       string `json:"tenant_id"`
 	ReturnTo       string `json:"return_to"`
-	PKCEVerifier   string `json:"pkv,omitempty"`
+	BrowserBinding string `json:"browser_binding"`
 	ReauthPurpose  string `json:"reauth_purpose,omitempty"`
 	ReauthResource string `json:"reauth_resource,omitempty"`
 	IssuedAt       int64  `json:"iat"`
@@ -387,26 +391,28 @@ type loginState struct {
 }
 
 func (s *Service) issueState(state loginState) (string, error) {
-	now := s.now().UTC()
 	claims := loginState{
 		ProviderID:     state.ProviderID,
 		TenantID:       state.TenantID,
 		ReturnTo:       sanitizeReturnTo(state.ReturnTo, s.cfg.DefaultReturnTo),
-		PKCEVerifier:   state.PKCEVerifier,
+		BrowserBinding: state.BrowserBinding,
 		ReauthPurpose:  state.ReauthPurpose,
 		ReauthResource: state.ReauthResource,
-		IssuedAt:       now.Unix(),
-		ExpiresAt:      now.Add(defaultStateLifetime).Unix(),
+		IssuedAt:       state.IssuedAt,
+		ExpiresAt:      state.ExpiresAt,
+	}
+	if !validStateFields(&claims) || !s.validLoginLifetime(claims.IssuedAt, claims.ExpiresAt) {
+		return "", ErrInvalidState
 	}
 	payload, err := json.Marshal(claims)
 	if err != nil {
 		return "", fmt.Errorf("marshal state: %w", err)
 	}
-	return s.sealState(payload)
+	return s.sealLoginValue(stateRole, payload)
 }
 
 func (s *Service) parseState(raw string) (*loginState, error) {
-	payload, err := s.openState(raw)
+	payload, err := s.openLoginValue(stateRole, raw)
 	if err != nil {
 		return nil, ErrInvalidState
 	}
@@ -414,15 +420,15 @@ func (s *Service) parseState(raw string) (*loginState, error) {
 	if err := json.Unmarshal(payload, claims); err != nil {
 		return nil, ErrInvalidState
 	}
-	if claims.ProviderID == "" {
+	if !validStateFields(claims) {
 		return nil, ErrInvalidState
 	}
 	if _, _, err := normalizedReauthenticationBinding(claims.ReauthPurpose, claims.ReauthResource); err != nil {
 		return nil, ErrInvalidState
 	}
-	now := s.now().UTC().Unix()
-	if claims.IssuedAt <= 0 || claims.ExpiresAt <= now {
-		return nil, ErrInvalidState
+	if !s.validLoginLifetime(claims.IssuedAt, claims.ExpiresAt) {
+		// Retain only authenticated, bounded state to retire its expired cookie.
+		return claims, ErrInvalidState
 	}
 	claims.ReturnTo = sanitizeReturnTo(claims.ReturnTo, s.cfg.DefaultReturnTo)
 	return claims, nil
@@ -456,17 +462,17 @@ func validReauthenticationValue(value string) bool {
 	return true
 }
 
-func authorizationURL(raw string, reauthenticate bool) (string, error) {
-	if !reauthenticate {
-		return raw, nil
-	}
+func authorizationURL(raw string, reauthenticate bool, nonce string) (string, error) {
 	target, err := url.Parse(raw)
 	if err != nil {
 		return "", fmt.Errorf("parse provider authorization URL: %w", err)
 	}
 	query := target.Query()
-	query.Set("prompt", "login")
-	query.Set("max_age", "0")
+	query.Set("nonce", nonce)
+	if reauthenticate {
+		query.Set("prompt", "login")
+		query.Set("max_age", "0")
+	}
 	target.RawQuery = query.Encode()
 	return target.String(), nil
 }
@@ -502,53 +508,6 @@ func unixClaim(raw interface{}) (int64, bool) {
 	}
 }
 
-func (s *Service) sealState(plaintext []byte) (string, error) {
-	aead, err := s.newStateCipher()
-	if err != nil {
-		return "", err
-	}
-	nonce := make([]byte, aead.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return "", fmt.Errorf("read state nonce: %w", err)
-	}
-	sealed := aead.Seal(nil, nonce, plaintext, nil)
-	buf := append(nonce, sealed...)
-	return base64.RawURLEncoding.EncodeToString(buf), nil
-}
-
-func (s *Service) openState(raw string) ([]byte, error) {
-	aead, err := s.newStateCipher()
-	if err != nil {
-		return nil, err
-	}
-	buf, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(raw))
-	if err != nil {
-		return nil, ErrInvalidState
-	}
-	nonceSize := aead.NonceSize()
-	if len(buf) <= nonceSize {
-		return nil, ErrInvalidState
-	}
-	plaintext, err := aead.Open(nil, buf[:nonceSize], buf[nonceSize:], nil)
-	if err != nil {
-		return nil, ErrInvalidState
-	}
-	return plaintext, nil
-}
-
-func (s *Service) newStateCipher() (cipher.AEAD, error) {
-	key := sha256.Sum256(s.cfg.StateSecret)
-	block, err := aes.NewCipher(key[:])
-	if err != nil {
-		return nil, fmt.Errorf("build state cipher: %w", err)
-	}
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("build state aead: %w", err)
-	}
-	return aead, nil
-}
-
 func (s *Service) redirectToLoginError(w http.ResponseWriter, r *http.Request, code string) {
 	target := s.cfg.LoginErrorPath
 	sep := "?"
@@ -574,23 +533,65 @@ func sanitizeReturnTo(raw, fallback string) string {
 	return raw
 }
 
-func buildAbsoluteURL(r *http.Request, path string) string {
-	scheme := "https"
-	if r.TLS == nil {
-		if proto := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); proto != "" {
-			scheme = proto
-		} else {
-			scheme = "http"
+func validatedPublicBaseURL(raw string) (string, error) {
+	origin, err := url.Parse(raw)
+	if err != nil || origin.Hostname() == "" || origin.Opaque != "" || origin.User != nil {
+		return "", fmt.Errorf("%w: public base URL must be an absolute origin without credentials", ErrInvalidConfig)
+	}
+	if (origin.Path != "" && origin.Path != "/") || origin.RawPath != "" ||
+		origin.RawQuery != "" || origin.ForceQuery || strings.Contains(raw, "#") ||
+		strings.ContainsAny(raw, "\\\r\n\t ") {
+		return "", fmt.Errorf("%w: public base URL must not contain a path, query or fragment", ErrInvalidConfig)
+	}
+	if err := validatePublicOriginTransport(origin); err != nil {
+		return "", err
+	}
+	origin.Path = ""
+	return origin.String(), nil
+}
+
+func validatePublicOriginPort(origin *url.URL) error {
+	if strings.HasSuffix(origin.Host, ":") {
+		return fmt.Errorf("%w: public base URL has an invalid port", ErrInvalidConfig)
+	}
+	if port := origin.Port(); port != "" {
+		number, portErr := strconv.Atoi(port)
+		if portErr != nil || number < 1 || number > 65535 {
+			return fmt.Errorf("%w: public base URL has an invalid port", ErrInvalidConfig)
 		}
 	}
-	host := r.Host
-	if forwardedHost := strings.TrimSpace(r.Header.Get("X-Forwarded-Host")); forwardedHost != "" {
-		host = forwardedHost
+	return nil
+}
+
+func validatePublicOriginTransport(origin *url.URL) error {
+	if err := validatePublicOriginPort(origin); err != nil {
+		return err
 	}
-	if path == "" {
-		path = "/"
+
+	host := strings.ToLower(origin.Hostname())
+	ip := net.ParseIP(host)
+	if strings.HasPrefix(origin.Host, "[") && (!strings.Contains(host, ":") || ip == nil) {
+		return fmt.Errorf("%w: bracketed public host must be an IPv6 literal", ErrInvalidConfig)
 	}
-	return fmt.Sprintf("%s://%s%s", scheme, host, path)
+	if strings.Contains(host, ":") && (!strings.HasPrefix(origin.Host, "[") || ip == nil) {
+		return fmt.Errorf("%w: public base URL has an invalid host", ErrInvalidConfig)
+	}
+	switch origin.Scheme {
+	case "https":
+		return nil
+	case "http":
+		if host == "localhost" || (ip != nil && ip.IsLoopback()) {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: public base URL requires HTTPS except for loopback development", ErrInvalidConfig)
+}
+
+func (s *Service) callbackURL() string {
+	// CallbackPath is validated separately; direct concatenation keeps even a
+	// path beginning with // inside the configured origin rather than resolving
+	// it as a replacement URL authority.
+	return s.cfg.PublicBaseURL + s.cfg.CallbackPath
 }
 
 func firstClaim(raw map[string]interface{}, keys ...string) string {
@@ -605,4 +606,31 @@ func firstClaim(raw map[string]interface{}, keys ...string) string {
 		}
 	}
 	return ""
+}
+
+func (s *Service) authenticateCallback(r *http.Request, provider *oidcclient.Provider, state *loginState, binding *browserBinding, code string) (*oidcclient.Claims, int64, string) {
+	redirectURI := s.callbackURL()
+	exchange, err := s.exchanger.ExchangeCode(r.Context(), provider, oidcclient.CodeExchangeRequest{
+		Code:         code,
+		RedirectURI:  redirectURI,
+		PKCEVerifier: binding.PKCEVerifier,
+	})
+	if err != nil || exchange == nil || strings.TrimSpace(exchange.IDToken) == "" {
+		return nil, 0, "token_exchange_failed"
+	}
+	claims, err := provider.Verify(r.Context(), exchange.IDToken)
+	if err != nil {
+		return nil, 0, "invalid_id_token"
+	}
+	if !binding.matchesOIDCNonce(claims.Raw["nonce"]) {
+		return nil, 0, "invalid_id_token"
+	}
+	authenticatedAt := int64(0)
+	if state.ReauthPurpose != "" {
+		authenticatedAt, err = freshAuthenticationTime(claims.Raw, s.now().UTC())
+		if err != nil {
+			return nil, 0, "reauthentication_required"
+		}
+	}
+	return claims, authenticatedAt, ""
 }

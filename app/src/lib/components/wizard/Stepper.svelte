@@ -57,7 +57,7 @@
   data-testid={navigationOnly ? "wizard-footer" : "wizard-stepper"}
 >
   <!-- Back Button -->
-  <div class="flex min-h-8 w-full items-center sm:w-24">
+  <div class="flex min-h-8 w-full items-center sm:w-auto sm:min-w-24 sm:shrink-0">
     {#if !isFirstStep}
       <button
         onclick={onprev}
@@ -72,7 +72,7 @@
 
   <!-- Step Indicators -->
   {#if !navigationOnly}<div
-      class="flex w-full min-w-0 flex-1 items-center justify-start gap-1 overflow-x-auto overscroll-contain px-0.5 py-1 sm:justify-center sm:gap-2 sm:overflow-visible sm:px-0 sm:py-0"
+      class="flex w-full min-w-0 flex-1 items-center justify-start gap-1 overflow-x-auto overscroll-contain px-0.5 py-1 sm:justify-center sm:gap-2 sm:px-0"
     >
       {#each steps as step, idx (step.id)}
         {@const disabledReason = disabledStepReasons[step.id]}
@@ -123,7 +123,7 @@
   {/if}
 
   <!-- Next/Deploy Button -->
-  <div class="flex min-h-8 w-full justify-end sm:w-40">
+  <div class="flex min-h-8 w-full justify-end sm:w-auto sm:min-w-40 sm:shrink-0">
     {#if !isLastStep}
       <button
         onclick={onnext}

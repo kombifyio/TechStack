@@ -12,7 +12,6 @@ import (
 	"github.com/kombifyio/techstack/internal/gocommon/servicecall"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
-	"github.com/kombifyio/techstack/pkg/middleware"
 )
 
 const runtimeSummaryTestSecret = "runtime-summary-servicecall-test-secret"
@@ -149,30 +148,31 @@ func TestInternalRuntimeSummaryFailsClosedWithoutCloudIdentity(t *testing.T) {
 	}
 }
 
-// Regression: missing stored entitlement context previously became a false empty 200.
-func TestInternalRuntimeSummaryUsesStoredGrantsWithoutWideningFGA(t *testing.T) {
+// The Overview is the owner reading their own homelab: a verified membership
+// is enough, no plan grants the agent inventory entitlement, and the answer
+// never holds another owner's rows (regression: every customer answered 403).
+func TestInternalRuntimeSummaryReadsOnlyTheVerifiedOwnersRows(t *testing.T) {
 	now := time.Date(2026, 9, 13, 18, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {
 		name             string
-		grants, relation bool
+		member, relation bool
 		want             int
 	}{
-		{"authorized owner", true, true, http.StatusOK},
-		{"missing grants", false, true, http.StatusForbidden},
-		{"revoked FGA relation", true, false, http.StatusForbidden},
+		{"member without the agent entitlement or FGA relation", true, false, http.StatusOK},
+		{"no membership", false, true, http.StatusForbidden},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newTestInventoryHandlers(seedRuntimeSummaryStore(t, now), func() time.Time { return now })
 			h.app.policy = NewInventoryFGAPolicy(&fakeInventoryRelationshipChecker{allowed: tc.relation})
 			h.serviceAuthSecret = runtimeSummaryTestSecret
-			h.runtimeSummaryContext = func(ctx context.Context, tenant, subject string) (context.Context, error) {
+			h.runtimeSummaryContext = func(ctx context.Context, tenant, subject string) (context.Context, string, error) {
 				if tenant != "tenant-1" || subject != "auth0|owner" {
 					t.Fatal("OBO scope changed")
 				}
-				if tc.grants {
-					return middleware.WithMembershipEntitlements(ctx, InventoryEntitlementRead), nil
+				if !tc.member {
+					return nil, "", ErrInventoryAccessDenied
 				}
-				return ctx, nil
+				return ctx, tenant, nil
 			}
 			e, rec := runtimeSummaryTestEvent("/api/v1/internal/runtime/summary", runtimeSummaryCloudToken(t, &servicecall.OnBehalfOf{Sub: "auth0|owner", OrgID: "tenant-1"}))
 			if err := h.httpInternalRuntimeSummary(e); err != nil {

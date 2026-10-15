@@ -26,6 +26,7 @@ OPERATIONS_BINARY_NAME="techstack-stackkit-operations"
 MIN_SUPPORTED_VERSION="${MIN_SUPPORTED_VERSION:-0.6.10}"
 
 NO_INSTALL="${TECHSTACK_NO_INSTALL:-0}"
+STAGE_ONLY="${TECHSTACK_STAGE_ONLY:-0}"
 AS_SERVICE="${TECHSTACK_AS_SERVICE:-}"
 if [ "${TECHSTACK_REGISTRATION_ONLY:-0}" = "1" ]; then
     AS_SERVICE="0"
@@ -59,9 +60,11 @@ bootstrap_log() {
     if ! validate_control_plane_url "$_bootstrap_server" >/dev/null 2>&1; then
         return 0
     fi
-    curl -sS --max-time 5 --connect-timeout 2 \
+    # The pairing capability goes to curl on standard input, never as an argument
+    # another local user could read from /proc/<pid>/cmdline.
+    printf 'Authorization: Bearer %s\n' "$KOMBI_TOKEN" | server_curl -sS --max-time 5 --connect-timeout 2 \
         -X POST "${_bootstrap_server}/api/v1/workers/bootstrap/logs" \
-        -H "Authorization: Bearer ${KOMBI_TOKEN}" \
+        -H @- \
         -H "Content-Type: text/plain; charset=utf-8" \
         -H "X-Kombify-Log-Level: ${_level}" \
         -H "X-Kombify-Log-Phase: ${BOOTSTRAP_PHASE}" \
@@ -84,25 +87,55 @@ bootstrap_phase() {
 
 validate_control_plane_url() {
 	_server=$1
+	# A private LAN bridge presents a self-signed key: only the pin from the
+	# install command the user pasted makes it trustworthy.
+	if is_private_lan_origin "$_server"; then
+		if is_lan_pin "${KOMBI_PRIVATE_LAN_PIN:-}"; then
+			return 0
+		fi
+		echo "${RED}The private LAN control plane ${_server} requires the KOMBI_PRIVATE_LAN_PIN from its install command.${NC}" >&2
+		return 1
+	fi
 	case "$_server" in
 		https://*) return 0 ;;
 		http://localhost|http://localhost:*|http://localhost/*|http://127.0.0.1|http://127.0.0.1:*|http://127.0.0.1/*|http://\[::1\]|http://\[::1\]:*|http://\[::1\]/*) return 0 ;;
 	esac
-	_private_origin=${KOMBI_PRIVATE_LAN_HTTP_ORIGIN%/}
-	if [ -n "$_private_origin" ] && [ "$_server" = "$_private_origin" ] && is_private_lan_origin "$_private_origin"; then
-		return 0
-	fi
-	echo "${RED}The kombify control plane requires HTTPS, loopback HTTP, or the exact private LAN :5264 origin supplied by Techstack.${NC}" >&2
+	echo "${RED}The kombify control plane requires HTTPS or loopback HTTP.${NC}" >&2
 	return 1
+}
+
+# is_lan_pin accepts curl's sha256//<base64 SHA-256> public-key pin.
+is_lan_pin() {
+	case "$1" in
+		sha256//*) ;;
+		*) return 1 ;;
+	esac
+	_digest=${1#sha256//}
+	[ "${#_digest}" -eq 44 ] || return 1
+	case "$_digest" in
+		*[!A-Za-z0-9+/=]*) return 1 ;;
+	esac
+	return 0
+}
+
+# server_curl is curl for requests to the control plane. Against a private LAN
+# bridge it trusts exactly the pinned key (curl checks the pin even with
+# --insecure, which only skips the CA chain a self-signed key cannot have).
+server_curl() {
+	if [ -n "${KOMBI_PRIVATE_LAN_PIN:-}" ] && is_private_lan_origin "${KOMBI_SERVER%/}"; then
+		curl --insecure --pinnedpubkey "$KOMBI_PRIVATE_LAN_PIN" "$@"
+		return
+	fi
+	curl "$@"
 }
 
 is_private_lan_origin() {
 	_origin=${1%/}
 	case "$_origin" in
-		http://*:5264) ;;
+		https://*:5264) ;;
 		*) return 1 ;;
 	esac
-	_host=${_origin#http://}
+	_host=${_origin#https://}
 	_host=${_host%:5264}
 	_old_ifs=$IFS
 	IFS=.
@@ -128,6 +161,7 @@ usage() {
     echo "Options:"
     echo "  --no-install      Skip binary installation (registration only)"
     echo "  --service         Install and enable SystemD service (Linux only)"
+    echo "  --stage-only      Stage the verified server runtime only; no enrollment or service changes"
     echo ""
     echo "A KOMBI_SERVER/KOMBI_TOKEN worker one-liner installs the persistent Guard by default."
     echo "For an already enrolled worker, also set KOMBI_RUNTIME_AGENT_ID and KOMBI_TENANT_ID."
@@ -141,6 +175,8 @@ parse_args() {
                 NO_INSTALL="1"; shift 1 ;;
             --service)
                 AS_SERVICE="1"; shift 1 ;;
+            --stage-only)
+                STAGE_ONLY="1"; shift 1 ;;
             -h|--help)
                 usage; exit 0 ;;
             *)
@@ -190,6 +226,79 @@ prepare_existing_runtime_enrollment() {
     WORKER_REGISTERED="1"
 }
 
+# enroll_with_guard_binary redeems the pairing capability through the installed
+# Guard binary (`techstack agent enroll`). The Guard generates its identity key on
+# this server, binds it during redemption, persists the enrollment atomically and
+# deletes the capability once the binding is confirmed, so the credential the
+# control plane issues is bound to this host. Returns 1 when the installed binary
+# cannot do that (older release, registration-only run); the caller then falls
+# back to the legacy curl redemption.
+enroll_with_guard_binary() {
+    GUARD_BINARY="${INSTALL_DIR%/}/${BINARY_NAME}"
+    if [ "${AS_SERVICE:-}" != "1" ] || [ "${OS:-}" != "linux" ] || [ ! -x "$GUARD_BINARY" ]; then
+        return 1
+    fi
+    if ! "$GUARD_BINARY" agent enroll --check >/dev/null 2>&1; then
+        return 1
+    fi
+    SERVER=${KOMBI_SERVER%/}
+    if ! validate_control_plane_url "$SERVER"; then
+        exit 1
+    fi
+    echo "${CYAN}Enrolling kombify Guard with a host-bound identity key...${NC}"
+    echo "${CYAN}Server:${NC} ${SERVER}"
+    umask 077
+    ENROLL_TOKEN_FILE=$(mktemp)
+    ENROLL_ERR_FILE=$(mktemp)
+    trap 'rm -f "$ENROLL_TOKEN_FILE" "$ENROLL_ERR_FILE"' 0 1 2 15
+    printf '%s' "$KOMBI_TOKEN" > "$ENROLL_TOKEN_FILE"
+    sudo install -d -m 0750 /etc/techstack
+    sudo install -d -m 0700 /var/lib/techstack/guard
+    LAN_PIN_FLAG=""
+    if is_private_lan_origin "$SERVER"; then
+        LAN_PIN_FLAG="--lan-pin=${KOMBI_PRIVATE_LAN_PIN}"
+    fi
+    SUBSTRATE_FLAG=""
+    if [ "$SUBSTRATE_HOST" = 1 ]; then
+        SUBSTRATE_FLAG="--substrate"
+    fi
+    # shellcheck disable=SC2086
+    if ENROLL_OUT=$(sudo "$GUARD_BINARY" agent enroll \
+        --server "$SERVER" --token-file "$ENROLL_TOKEN_FILE" \
+        --enrollment-file /etc/techstack/agent-enrollment.json \
+        --state-dir /var/lib/techstack/guard $SUBSTRATE_FLAG $LAN_PIN_FLAG 2>"$ENROLL_ERR_FILE"); then
+        rm -f "$ENROLL_TOKEN_FILE" "$ENROLL_ERR_FILE"
+        trap - 0 1 2 15
+        if echo "$ENROLL_OUT" | grep -q 'accepted=true'; then
+            echo "${GREEN}✓ Worker registered and accepted.${NC}"
+        else
+            echo "${YELLOW}Worker registered but pending approval in the UI.${NC}"
+            echo "Open the kombify Techstack dashboard and approve the worker to continue."
+        fi
+        WORKER_REGISTERED="1"
+        GUARD_ENROLLED="1"
+        return 0
+    fi
+    bootstrap_log error "Guard enrollment failed; inspect the installer transcript on the server."
+    echo "${RED}Guard enrollment failed.${NC}" >&2
+    sed 's/^/  /' "$ENROLL_ERR_FILE" >&2
+    rm -f "$ENROLL_TOKEN_FILE" "$ENROLL_ERR_FILE"
+    trap - 0 1 2 15
+    exit 1
+}
+
+# guard_service_type_lines prints the systemd Type/watchdog lines. A Guard that
+# understands readiness and watchdog notification (the same release that can
+# enroll itself) runs as Type=notify with a progress-gated watchdog; an older
+# binary keeps Type=simple, because it would never signal readiness.
+guard_service_type_lines() {
+    if "${BINARY_PATH}" agent enroll --check >/dev/null 2>&1; then
+        printf 'Type=notify\nNotifyAccess=main\nWatchdogSec=120'
+    else
+        printf 'Type=simple'
+    fi
+}
+
 worker_register_if_env_set() {
     # Back-compat: The UI already generates commands like:
     #   curl -fsSL <server>/install.sh | KOMBI_SERVER="<server>" KOMBI_TOKEN="<token>" bash
@@ -201,6 +310,10 @@ worker_register_if_env_set() {
     fi
     if [ "$EXISTING_RUNTIME_ENROLLMENT" = "1" ]; then
         echo "${GREEN}✓ Existing runtime enrollment retained; pairing redemption is not required.${NC}"
+        return 0
+    fi
+
+    if enroll_with_guard_binary; then
         return 0
     fi
 
@@ -282,7 +395,7 @@ worker_register_if_env_set() {
     trap 'cleanup_worker_registration' 0
     trap 'cleanup_worker_registration; exit 1' 1 2 15
 
-    HTTP_CODE=$(curl -s -S --max-time 10 --connect-timeout 3 \
+    HTTP_CODE=$(server_curl -s -S --max-time 10 --connect-timeout 3 \
         -o "$TMP_BODY" -w "%{http_code}" \
         "$SERVER/api/v1/workers/register" \
         -H "Content-Type: application/json" \
@@ -448,6 +561,34 @@ get_latest_version() {
     echo "${GREEN}Latest version: ${LATEST_VERSION}${NC}"
 }
 
+# guard_enrollment_resumable succeeds when this host holds an enrollment that was
+# interrupted while redeeming exactly this pairing capability and the Guard
+# binary it ran is still installed. The control plane has claimed such a
+# capability, so it can no longer authorize a binary download, but the installed
+# Guard resumes the same redemption (same attempt, same host key) with it. A
+# different capability, or a host with no interrupted enrollment, answers no and
+# the normal download path runs. The capability never leaves the host here.
+guard_enrollment_resumable() {
+    GUARD_BINARY="${INSTALL_DIR%/}/${BINARY_NAME}"
+    if [ "${AS_SERVICE:-}" != "1" ] || [ "${OS:-}" != "linux" ] || [ ! -x "$GUARD_BINARY" ] ||
+       [ -z "${KOMBI_SERVER:-}" ] || [ -z "${KOMBI_TOKEN:-}" ] || [ "$EXISTING_RUNTIME_ENROLLMENT" = "1" ]; then
+        return 1
+    fi
+    if ! "$GUARD_BINARY" agent enroll --check >/dev/null 2>&1; then
+        return 1
+    fi
+    _resume_token_file=$(umask 077; mktemp)
+    printf '%s' "$KOMBI_TOKEN" > "$_resume_token_file"
+    _resume_answer=$(sudo "$GUARD_BINARY" agent enroll --resumable \
+        --server "${KOMBI_SERVER%/}" --token-file "$_resume_token_file" \
+        --state-dir /var/lib/techstack/guard 2>/dev/null) || _resume_answer=""
+    rm -f "$_resume_token_file"
+    case "$_resume_answer" in
+        *GUARD_ENROLL_RESUMABLE=true*) return 0 ;;
+    esac
+    return 1
+}
+
 # Prefer the exact Linux executable currently serving KOMBI_SERVER. This keeps
 # the Guard in lockstep with the deployed HTTPS enrollment contract while the
 # public release mirror is dormant. The download is authorized by the active
@@ -498,14 +639,14 @@ install_binary_from_control_plane() {
     trap 'cleanup_control_plane_download; exit 1' 1 2 15
 
     echo "${CYAN}Requesting the deployed Guard binary from ${SERVER}...${NC}"
-    if HTTP_CODE=$(curl -sS --request POST --connect-timeout 5 --max-time "$DOWNLOAD_TIMEOUT" \
+    if HTTP_CODE=$(server_curl -sS --request POST --connect-timeout 5 --max-time "$DOWNLOAD_TIMEOUT" \
         -H "@${AUTH_HEADER_TMP}" \
         -H "Content-Type: application/octet-stream" \
         -D "$HEADERS_TMP" -o "$BINARY_TMP" -w "%{http_code}" \
         "$CONTROL_PLANE_BINARY_URL"); then
         :
     else
-        echo "${YELLOW}The control-plane binary endpoint is unreachable; checking the release fallback.${NC}" >&2
+        echo "${YELLOW}The control-plane binary endpoint is unreachable.${NC}" >&2
         cleanup_control_plane_download
         trap - 0 1 2 15
         return 1
@@ -515,7 +656,7 @@ install_binary_from_control_plane() {
     case "$HTTP_CODE" in
         200) ;;
         404|405|501)
-            echo "${YELLOW}This control plane does not publish a compatible Guard binary; checking the release fallback.${NC}" >&2
+            echo "${YELLOW}This control plane does not publish a compatible Guard binary.${NC}" >&2
             cleanup_control_plane_download
             trap - 0 1 2 15
             return 1
@@ -614,54 +755,143 @@ install_binary_from_control_plane() {
     return 0
 }
 
-# Download and install
-install_binary() {
-    # Capitalize OS name (portable approach)
-    OS_CAPITALIZED=$(echo "$OS" | awk '{print toupper(substr($0,1,1)) tolower(substr($0,2))}')
-    
-    DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${LATEST_VERSION}/${BINARY_NAME}_${OS_CAPITALIZED}_${ARCH}.tar.gz"
-    
-    if [ "$OS" = "windows" ]; then
-        DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${LATEST_VERSION}/${BINARY_NAME}_${OS_CAPITALIZED}_${ARCH}.zip"
+# probe_signed_guard_release asks the control plane whether it publishes a signed
+# Guard release. The pairing capability authorizes the probe without consuming it.
+probe_signed_guard_release() {
+    SIGNED_GUARD_RELEASE=0
+    if [ -z "${KOMBI_SERVER:-}" ] || [ -z "${KOMBI_TOKEN:-}" ] || [ "$OS" != "linux" ] || ! command -v curl >/dev/null 2>&1; then
+        return 0
     fi
-
-    echo "${CYAN}Downloading from: ${DOWNLOAD_URL}${NC}"
-    
-    TMP_DIR=$(mktemp -d)
-    INSTALL_CALLER_DIR=$(pwd)
-    cd "$TMP_DIR"
-
-    if ! curl -fsSL "$DOWNLOAD_URL" -o archive; then
-        echo "${RED}Failed to download binary${NC}"
-        cd "$INSTALL_CALLER_DIR"
-        rm -rf "$TMP_DIR"
-        exit 1
+    _probe_server=${KOMBI_SERVER%/}
+    if ! validate_control_plane_url "$_probe_server" >/dev/null 2>&1; then
+        return 0
     fi
-
-    echo "${CYAN}Extracting...${NC}"
-    if [ "$OS" = "windows" ]; then
-        unzip -q archive
-    else
-        tar -xzf archive
+    _probe_headers=$(mktemp)
+    printf 'Authorization: Bearer %s\n' "$KOMBI_TOKEN" > "$_probe_headers"
+    if [ "$EXISTING_RUNTIME_ENROLLMENT" = "1" ]; then
+        printf 'X-Kombify-Runtime-Agent-ID: %s\n' "$KOMBI_RUNTIME_AGENT_ID" >> "$_probe_headers"
+        printf 'X-Kombify-Tenant-ID: %s\n' "$KOMBI_TENANT_ID" >> "$_probe_headers"
     fi
-
-    echo "${CYAN}Installing to ${INSTALL_DIR}...${NC}"
-    
-    # Check if we need sudo
-    if [ -w "$INSTALL_DIR" ]; then
-        mv "$BINARY_NAME" "$INSTALL_DIR/"
-        chmod +x "$INSTALL_DIR/$BINARY_NAME"
-    else
-        echo "${YELLOW}Elevated permissions required for installation${NC}"
-        sudo mv "$BINARY_NAME" "$INSTALL_DIR/"
-        sudo chmod +x "$INSTALL_DIR/$BINARY_NAME"
+    chmod 0600 "$_probe_headers"
+    _probe_code=$(server_curl -sS --request POST --connect-timeout 5 --max-time 30 \
+        -H "@${_probe_headers}" -o /dev/null -w '%{http_code}' \
+        "${_probe_server}/api/v1/agent/release-evidence/${OS}/${ARCH}" 2>/dev/null) || _probe_code=000
+    rm -f "$_probe_headers"
+    if [ "$_probe_code" = 200 ]; then
+        SIGNED_GUARD_RELEASE=1
     fi
-
-    cd "$INSTALL_CALLER_DIR"
-    rm -rf "$TMP_DIR"
-    
-    echo "${GREEN}✓ kombify Techstack installed successfully!${NC}"
+    return 0
 }
+
+# verify_release_archive checks a downloaded public-release archive against a
+# SHA-256 before anything from it is extracted or installed. An operator-supplied
+# TECHSTACK_BINARY_SHA256 (obtained out of band) is the authenticating pin. Without
+# it the digest comes from the release's own SHA256SUMS.txt: that detects a
+# corrupt or mismatched download, but it is served by the same origin as the
+# archive and therefore proves transfer integrity only, never authenticity.
+verify_release_archive() {
+    _archive=$1
+    _asset=$2
+    if command -v sha256sum >/dev/null 2>&1; then
+        _actual=$(sha256sum "$_archive" | awk '{print tolower($1)}')
+    elif command -v shasum >/dev/null 2>&1; then
+        _actual=$(shasum -a 256 "$_archive" | awk '{print tolower($1)}')
+    else
+        echo "${RED}sha256sum or shasum is required to verify the downloaded release archive.${NC}" >&2
+        return 1
+    fi
+    if [ -n "${TECHSTACK_BINARY_SHA256:-}" ]; then
+        _expected=$(printf '%s' "$TECHSTACK_BINARY_SHA256" | tr 'A-F' 'a-f')
+        _source="TECHSTACK_BINARY_SHA256"
+    else
+        if ! curl -fsSL "https://github.com/${REPO}/releases/download/${LATEST_VERSION}/SHA256SUMS.txt" -o checksums.txt; then
+            echo "${RED}The release publishes no SHA256SUMS.txt, so the archive cannot be verified.${NC}" >&2
+            echo "${YELLOW}Pin the archive digest obtained out of band: TECHSTACK_BINARY_SHA256=<sha256> <installer>${NC}" >&2
+            return 1
+        fi
+        _expected=$(awk -v name="$_asset" '$2 == name || $2 == "*" name { digest=tolower($1); n++ } END { if (n == 1) print digest }' checksums.txt)
+        _source="release SHA256SUMS.txt (transfer integrity only)"
+    fi
+    case "$_expected" in
+        *[!0-9a-f]*|'') _expected="" ;;
+    esac
+    if [ "${#_expected}" -ne 64 ]; then
+        echo "${RED}No valid SHA-256 is available for ${_asset} (${_source}).${NC}" >&2
+        return 1
+    fi
+    if [ "$_actual" != "$_expected" ]; then
+        echo "${RED}Release archive checksum verification failed for ${_asset}.${NC}" >&2
+        return 1
+    fi
+    return 0
+}
+
+# The published Local client ZIP transports distinct controller runtimes. Extract
+# only the selected server executable, never the desktop client or a Guard seed.
+install_binary() (
+    if [ -n "${KOMBI_SERVER:-}" ] && [ "$STAGE_ONLY" != 1 ]; then
+        echo "A managed Guard must use its enrolling control plane's signed release; no public runtime fallback." >&2
+        return 1
+    fi
+    case "$OS/$ARCH" in
+        linux/x86_64) RUNTIME_ENTRY="techstack-linux-amd64" ;;
+        *) echo "The public runtime transport supports Linux x86_64. Use the published Compose image, or install.ps1 for Windows x64." >&2; return 1 ;;
+    esac
+    PRODUCT_VERSION=${LATEST_VERSION#v}
+    if ! printf '%s\n' "$PRODUCT_VERSION" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+        echo "A stable numeric public release tag is required." >&2
+        return 1
+    fi
+    command -v unzip >/dev/null 2>&1 || { echo "Install unzip to extract the published runtime transport, or use the Compose bundle." >&2; return 1; }
+    PUBLIC_ASSET="kombify-techstack-client_${PRODUCT_VERSION}_Windows_x86_64.zip"
+    DOWNLOAD_URL="https://github.com/${REPO}/releases/download/v${PRODUCT_VERSION}/${PUBLIC_ASSET}"
+    TMP_DIR=$(mktemp -d)
+    trap 'rm -rf "$TMP_DIR"' 0
+    cd "$TMP_DIR"
+    echo "Downloading the public server runtime transport: ${DOWNLOAD_URL}"
+    if ! curl -fsSL "$DOWNLOAD_URL" -o archive; then
+        echo "No public runtime transport at this tag. Use the published Compose server bundle; no substitute binary was installed." >&2
+        return 1
+    fi
+    LATEST_VERSION="v${PRODUCT_VERSION}"
+    verify_release_archive archive "$PUBLIC_ASSET" || return 1
+    if [ "$(unzip -Z1 archive | awk -v name="$RUNTIME_ENTRY" '$0 == name { n++ } END { print n+0 }')" != 1 ]; then
+        echo "The Local public ZIP has no unique Linux server runtime. Use the published Compose server bundle." >&2
+        return 1
+    fi
+    unzip -p archive "$RUNTIME_ENTRY" > "$BINARY_NAME" || return 1
+    chmod 0755 "$BINARY_NAME"
+    if [ "$STAGE_ONLY" != 1 ]; then
+        REPORTED_VERSION=$("./$BINARY_NAME" version) || return 1
+        if ! printf '%s\n' "$REPORTED_VERSION" | grep -Fx "kombifyTechstack v${PRODUCT_VERSION}" >/dev/null; then
+            echo "The staged server runtime does not report the selected public version; nothing was installed." >&2
+            return 1
+        fi
+    fi
+    # Stage-only is an owned directory flow and never requests elevation.
+    if [ "$STAGE_ONLY" = 1 ]; then
+        mkdir -p "$INSTALL_DIR"
+        cp "$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
+    elif [ -w "$INSTALL_DIR" ]; then
+        mv "$BINARY_NAME" "$INSTALL_DIR/"
+    else
+        sudo install -d "$INSTALL_DIR"
+        sudo install -m 0755 "$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
+    fi
+    if command -v sha256sum >/dev/null 2>&1; then
+        RUNTIME_SHA256=$(sha256sum "$INSTALL_DIR/$BINARY_NAME" | awk '{print tolower($1)}')
+    else
+        RUNTIME_SHA256=$(shasum -a 256 "$INSTALL_DIR/$BINARY_NAME" | awk '{print tolower($1)}')
+    fi
+    printf '{"role":"techstack-server","version":"%s","releaseUrl":"%s","asset":"%s","archiveSha256":"%s","digestSource":"%s","entry":"%s","runtimeSha256":"%s"}\n' \
+        "$PRODUCT_VERSION" "${DOWNLOAD_URL%/*}" "$PUBLIC_ASSET" "$_actual" "$_source" "$RUNTIME_ENTRY" "$RUNTIME_SHA256" > receipt.json
+    if [ -w "$INSTALL_DIR" ]; then
+        cp receipt.json "$INSTALL_DIR/techstack-install-receipt.json"
+    else
+        sudo cp receipt.json "$INSTALL_DIR/techstack-install-receipt.json"
+    fi
+    echo "Verified server runtime staged at ${INSTALL_DIR}/${BINARY_NAME}."
+)
 
 # Verify installation
 verify_installation() {
@@ -798,22 +1028,14 @@ install_systemd_service() {
     fi
 }
 
-install_systemd_agent_service() {
-    if [ "$EXISTING_RUNTIME_ENROLLMENT" = "1" ]; then
-        install_existing_runtime_agent_service
-        return $?
-    fi
-    if [ -z "$ENROLLMENT_RESPONSE" ] || ! echo "$ENROLLMENT_RESPONSE" | grep -q '"agent_token"[[:space:]]*:'; then
-        echo "${RED}Cannot install the Guard service: registration did not return an agent token.${NC}" >&2
-        return 1
-    fi
-
-    BINARY_PATH="${INSTALL_DIR%/}/${BINARY_NAME}"
-    ENROLLMENT_TMP=$(mktemp)
+# install_legacy_guard_unit installs the pre-split root unit. It is the fallback
+# for hosts where the privilege-split layout cannot be applied (a Proxmox
+# substrate Guard, a binary that predates the layout command, no systemd user
+# management). Such a Guard keeps running as root; it is never described as
+# isolated, and it moves to the split layout on its own once that is possible.
+install_legacy_guard_unit() {
     UNIT_TMP=$(mktemp)
-    trap 'rm -f "$ENROLLMENT_TMP" "$UNIT_TMP"' 0 1 2 15
     umask 077
-    printf '%s\n' "$ENROLLMENT_RESPONSE" > "$ENROLLMENT_TMP"
     cat > "$UNIT_TMP" <<EOF
 [Unit]
 Description=Kombify TechStack Guard (outbound HTTPS runtime channel)
@@ -822,7 +1044,10 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+$(guard_service_type_lines)
+# Stop the whole executor process tree with the Guard, so a restarted Guard
+# never races a surviving StackKits child (durable outcomes, G04).
+KillMode=control-group
 User=root
 ExecStart=${BINARY_PATH} agent --transport=https --enrollment-file=/etc/techstack/agent-enrollment.json
 Restart=always
@@ -850,23 +1075,85 @@ ReadOnlyPaths=/etc/techstack -/root/my-homelab
 ReadWritePaths=/app /opt /srv /mnt /media ${INSTALL_DIR%/} ${OPERATIONS_DIR} /etc /usr /var /run /root/.docker -/home/kombify/.ssh
 Environment=TECHSTACK_ACCESS_MANIFEST=/opt/stackkit/.stackkit/access.json,/root/my-homelab/.stackkit/access.json
 Environment=TECHSTACK_STACKKIT_RELEASE_PIN=/app/.stackkit/stackkits-release-pin.json
-Environment=TECHSTACK_STACKKIT_RELEASE_CACHE=/app/.stackkit/releases
+Environment=TECHSTACK_STACKKIT_RELEASE_CACHE=/var/lib/techstack/.stackkit/releases
 Environment=TECHSTACK_AGENT_EXECUTABLE_PATH=${BINARY_PATH}
 Environment=TECHSTACK_OPERATIONS_EXECUTABLE_PATH=${OPERATIONS_DIR%/}/${OPERATIONS_BINARY_NAME}
 
 [Install]
 WantedBy=multi-user.target
 EOF
-
-    sudo install -d -m 0750 /etc/techstack
-    sudo install -d -m 0755 /app /opt/stackkit /root/.docker
-    sudo install -m 0600 "$ENROLLMENT_TMP" /etc/techstack/agent-enrollment.json
     sudo install -m 0644 "$UNIT_TMP" /etc/systemd/system/techstack-agent.service
-    rm -f "$ENROLLMENT_TMP" "$UNIT_TMP"
-    trap - 0 1 2 15
+    rm -f "$UNIT_TMP"
     sudo systemctl daemon-reload
     sudo systemctl enable techstack-agent.service
     sudo systemctl restart techstack-agent.service
+}
+
+# install_split_guard_layout applies the privilege-split layout: the long-running
+# Guard runs as the unprivileged kombify-guard user and every host effect goes
+# through a socket-activated privileged executor. It succeeds only when the
+# installed Guard reports the layout as switched; otherwise the caller installs
+# the legacy unit, so a host is never left without a running Guard.
+install_split_guard_layout() {
+    if [ "$SUBSTRATE_HOST" = 1 ] || [ "${TECHSTACK_GUARD_LAYOUT:-split}" = legacy ]; then
+        return 1
+    fi
+    if ! command -v systemctl >/dev/null 2>&1; then
+        return 1
+    fi
+    # A Guard on the split layout authenticates every update and StackKits runtime
+    # against a signed release; without one it could not update or run commands.
+    if [ "${SIGNED_GUARD_RELEASE:-0}" != 1 ]; then
+        echo "${YELLOW}WARNING: this control plane publishes no signed Guard release; installing the root service. This Guard runs as root and does not update itself until a signed release is published.${NC}" >&2
+        bootstrap_log warn "No signed Guard release: the Guard runs as root and does not update until one is published."
+        return 1
+    fi
+    LAYOUT_OUT=$(sudo "$BINARY_PATH" guard layout apply \
+        --binary "$BINARY_PATH" \
+        --operations "${OPERATIONS_DIR%/}/${OPERATIONS_BINARY_NAME}" \
+        --activate 2>&1) || {
+        echo "${YELLOW}The privilege-split Guard layout could not be applied; installing the root service instead.${NC}" >&2
+        printf '%s\n' "$LAYOUT_OUT" | sed 's/^/  /' >&2
+        bootstrap_log warn "Guard privilege-split layout failed; the Guard runs as root until it migrates."
+        return 1
+    }
+    case "$LAYOUT_OUT" in
+        *"GUARD_LAYOUT switched=true"*) return 0 ;;
+    esac
+    bootstrap_log warn "Guard privilege-split layout did not switch; the Guard runs as root until it migrates."
+    return 1
+}
+
+install_systemd_agent_service() {
+    if [ "$EXISTING_RUNTIME_ENROLLMENT" = "1" ]; then
+        install_existing_runtime_agent_service
+        return $?
+    fi
+    if [ "${GUARD_ENROLLED:-0}" != "1" ] &&
+       { [ -z "$ENROLLMENT_RESPONSE" ] || ! echo "$ENROLLMENT_RESPONSE" | grep -q '"agent_token"[[:space:]]*:'; }; then
+        echo "${RED}Cannot install the Guard service: registration did not return an agent token.${NC}" >&2
+        return 1
+    fi
+
+    BINARY_PATH="${INSTALL_DIR%/}/${BINARY_NAME}"
+    ENROLLMENT_TMP=$(mktemp)
+    trap 'rm -f "$ENROLLMENT_TMP"' 0 1 2 15
+    umask 077
+    if [ "${GUARD_ENROLLED:-0}" != "1" ]; then
+        printf '%s\n' "$ENROLLMENT_RESPONSE" > "$ENROLLMENT_TMP"
+    fi
+    sudo install -d -m 0750 /etc/techstack
+    sudo install -d -m 0755 /app /opt/stackkit /root/.docker
+    if [ "${GUARD_ENROLLED:-0}" != "1" ]; then
+        sudo install -m 0600 "$ENROLLMENT_TMP" /etc/techstack/agent-enrollment.json
+    fi
+    rm -f "$ENROLLMENT_TMP"
+    trap - 0 1 2 15
+    if install_split_guard_layout; then
+        echo "${GREEN}✓ kombify Guard runs unprivileged; host changes go through the privileged executor.${NC}"
+    else
+        install_legacy_guard_unit
+    fi
 
     echo "${GREEN}✓ Outbound HTTPS Guard installed and started.${NC}"
     echo "  Status: sudo systemctl status techstack-agent"
@@ -876,66 +1163,22 @@ EOF
 install_existing_runtime_agent_service() {
     BINARY_PATH="${INSTALL_DIR%/}/${BINARY_NAME}"
     ENROLLMENT_TMP=$(mktemp)
-    UNIT_TMP=$(mktemp)
-    trap 'rm -f "$ENROLLMENT_TMP" "$UNIT_TMP"' 0 1 2 15
+    trap 'rm -f "$ENROLLMENT_TMP"' 0 1 2 15
     umask 077
     HEARTBEAT_URL="${SERVER}/api/v1/workers/${KOMBI_RUNTIME_AGENT_ID}/heartbeat"
     INVENTORY_URL="${SERVER}/api/v1/workers/${KOMBI_RUNTIME_AGENT_ID}/inventory"
     TOKEN_ESC=$(printf '%s' "$KOMBI_TOKEN" | sed 's/\\/\\\\/g; s/"/\\"/g')
     printf '%s\n' "{\"data\":{\"runtime_agent_id\":\"${KOMBI_RUNTIME_AGENT_ID}\",\"server_id\":\"${KOMBI_SERVER_ID}\",\"tenant_id\":\"${KOMBI_TENANT_ID}\",\"owner_id\":\"${KOMBI_OWNER_ID}\",\"stack_id\":\"${KOMBI_STACK_ID}\",\"lease_id\":\"${KOMBI_LEASE_ID}\",\"agent_token\":\"${TOKEN_ESC}\",\"heartbeat_url\":\"${HEARTBEAT_URL}\",\"inventory_url\":\"${INVENTORY_URL}\"}}" > "$ENROLLMENT_TMP"
-    cat > "$UNIT_TMP" <<EOF
-[Unit]
-Description=Kombify TechStack Guard (outbound HTTPS runtime channel)
-Documentation=https://github.com/kombifyio/TechStack
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=root
-ExecStart=${BINARY_PATH} agent --transport=https --enrollment-file=/etc/techstack/agent-enrollment.json
-Restart=always
-RestartSec=15
-TimeoutStopSec=20
-NoNewPrivileges=no
-PrivateTmp=yes
-# No ProtectSystem: StackKits installs host packages under /usr, and for the
-# same path systemd lets ProtectSystem's read-only /usr win over
-# ReadWritePaths=/usr, so every such install failed with EROFS.
-ProtectSystem=no
-ProtectHome=read-only
-ProtectKernelTunables=no
-ProtectKernelModules=yes
-ProtectControlGroups=yes
-ReadOnlyPaths=/etc/techstack -/root/my-homelab
-# The Agent converges its own executable by staging a sibling temp file and
-# renaming it into place, so it needs the CONTAINING DIRECTORY, not just the
-# file. Granting only the executable path made every self-update fail with
-# "read-only file system" while the download itself succeeded (incident
-# 2026-08-12: fleet stranded on 0.7.90 against a 0.7.154 control plane).
-# StackKits Standard Mode is the owner-approved host authority: its pinned
-# executors install packages and converge /etc while keeping the enrollment
-# itself read-only through the more-specific ReadOnlyPaths entry above.
-ReadWritePaths=/app /opt /srv /mnt /media ${INSTALL_DIR%/} ${OPERATIONS_DIR} /etc /usr /var /run /root/.docker -/home/kombify/.ssh
-Environment=TECHSTACK_ACCESS_MANIFEST=/opt/stackkit/.stackkit/access.json,/root/my-homelab/.stackkit/access.json
-Environment=TECHSTACK_STACKKIT_RELEASE_PIN=/app/.stackkit/stackkits-release-pin.json
-Environment=TECHSTACK_STACKKIT_RELEASE_CACHE=/app/.stackkit/releases
-Environment=TECHSTACK_AGENT_EXECUTABLE_PATH=${BINARY_PATH}
-Environment=TECHSTACK_OPERATIONS_EXECUTABLE_PATH=${OPERATIONS_DIR%/}/${OPERATIONS_BINARY_NAME}
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
     sudo install -d -m 0750 /etc/techstack
     sudo install -d -m 0755 /app /opt/stackkit /root/.docker
     sudo install -m 0600 "$ENROLLMENT_TMP" /etc/techstack/agent-enrollment.json
-    sudo install -m 0644 "$UNIT_TMP" /etc/systemd/system/techstack-agent.service
-    rm -f "$ENROLLMENT_TMP" "$UNIT_TMP"
+    rm -f "$ENROLLMENT_TMP"
     trap - 0 1 2 15
-    sudo systemctl daemon-reload
-    sudo systemctl enable techstack-agent.service
-    sudo systemctl restart techstack-agent.service
+    if install_split_guard_layout; then
+        echo "${GREEN}✓ kombify Guard runs unprivileged; host changes go through the privileged executor.${NC}"
+    else
+        install_legacy_guard_unit
+    fi
 
     echo "${GREEN}✓ Existing outbound HTTPS Guard enrollment installed and started.${NC}"
     echo "  Status: sudo systemctl status techstack-agent"
@@ -951,6 +1194,12 @@ main() {
     echo ""
 
     parse_args "$@"
+    if [ "$STAGE_ONLY" = 1 ]; then
+        detect_platform
+        get_latest_version
+        install_binary
+        return 0
+    fi
     prepare_existing_runtime_enrollment
     trap bootstrap_failed 0
     bootstrap_phase starting "Techstack installer started."
@@ -973,13 +1222,22 @@ main() {
     bootstrap_phase platform "Detecting the server platform."
     detect_platform
     bootstrap_phase binary "Installing the pinned Techstack Guard binary."
-    if install_binary_from_control_plane; then
+    if guard_enrollment_resumable; then
+        echo "${CYAN}An enrollment of this server with this pairing capability was interrupted; keeping the installed Guard binary and resuming it.${NC}"
+    elif install_binary_from_control_plane; then
         :
+    elif [ -n "${KOMBI_SERVER:-}" ] && [ -n "${KOMBI_TOKEN:-}" ] && [ "$OS" = "linux" ] && [ -z "${TECHSTACK_VERSION:-}" ]; then
+        # A managed Linux Guard is installed only from the control plane that
+        # enrolls it, which serves the binary with the digest its release
+        # evidence names. There is no fallback to a public mirror.
+        echo "${RED}The control plane at ${KOMBI_SERVER%/} did not serve a Guard binary; the installer does not fall back to another source for a managed server.${NC}" >&2
+        exit 1
     else
         get_latest_version
         install_binary
     fi
     verify_installation
+    probe_signed_guard_release
     bootstrap_phase stackkits-runtime "Installing the pinned StackKits operations runtime."
     if [ "$SUBSTRATE_HOST" != 1 ]; then
         install_stackkit_operations_process

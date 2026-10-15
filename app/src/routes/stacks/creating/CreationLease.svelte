@@ -1,6 +1,17 @@
 <script lang="ts">
   import { creation } from "./creation-controller.svelte.js";
   import { tr } from "#lib/i18n.svelte.js";
+  import { authStore } from "#lib/stores/auth.svelte.js";
+  import { WALLET_ITEM_ID } from "#lib/kombify-wallet/item-types.js";
+
+  // The kombify Wallet opens an item by id; a recovery reference that names
+  // one lands on that item, anything else on the Wallet's recovery preset.
+  const recoveryHref = $derived.by(() => {
+    const ref = creation.stackKitHandoff?.recoveryRef ?? "";
+    return authStore.walletSource === "kombify" && WALLET_ITEM_ID.test(ref)
+      ? `/wallet?item=${ref}`
+      : "/wallet#recovery";
+  });
 </script>
 
           {#if creation.serverProvisioningMode === "kombify-cloud" && creation.lease}
@@ -254,7 +265,7 @@
                         {tr("ui.stacksCreatingCreationLease.access")}
                       </a>
                       <a
-                        href="/wallet#recovery"
+                        href={recoveryHref}
                         data-kx="control"
                         class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium"
                         data-testid="wallet-recovery-handoff-link"

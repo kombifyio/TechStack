@@ -2,8 +2,11 @@ import type { StackKitLifecycleOperation } from "#lib/api/stacks.js";
 import type { CanonicalServer } from "#lib/api/registry.js";
 
 import { tr } from "#lib/i18n.svelte.js";
+import { operatorMessage } from "#lib/stackkit-operator-messages.js";
+export type StackKitOperatorOperation =
+  StackKitLifecycleOperation | "backup_run" | "backup_configure";
 export interface ServerLifecycleAction {
-  operation: StackKitLifecycleOperation;
+  operation: StackKitOperatorOperation;
   label: string;
   description: string;
   mutates: boolean;
@@ -15,7 +18,58 @@ export interface ServerLifecycleAction {
  * connection, agent binding and the observed kit — this module no longer
  * guesses it from a status string.
  */
-const actions: Record<StackKitLifecycleOperation, ServerLifecycleAction> = {
+const actions: Record<StackKitOperatorOperation, ServerLifecycleAction> = {
+  advanced_change_set: {
+    operation: "advanced_change_set",
+    get label() {
+      return operatorMessage("advanced_change_set");
+    },
+    get description() {
+      return operatorMessage("advanced_change_setDescription");
+    },
+    mutates: true,
+  },
+  rollback: {
+    operation: "rollback",
+    get label() {
+      return operatorMessage("rollback");
+    },
+    get description() {
+      return operatorMessage("rollbackDescription");
+    },
+    mutates: true,
+  },
+  restore_drill: {
+    operation: "restore_drill",
+    get label() {
+      return operatorMessage("restore_drill");
+    },
+    get description() {
+      return operatorMessage("restore_drillDescription");
+    },
+    mutates: true,
+  },
+  backup_run: {
+    operation: "backup_run",
+    get label() {
+      return operatorMessage("backup_run");
+    },
+    get description() {
+      return operatorMessage("backup_runDescription");
+    },
+    mutates: true,
+  },
+  backup_configure: {
+    operation: "backup_configure",
+    get label() {
+      return operatorMessage("backup_configure");
+    },
+    get description() {
+      return operatorMessage("backup_configureDescription");
+    },
+    mutates: true,
+  },
+
   plan: {
     operation: "plan",
     get label() {
@@ -90,6 +144,6 @@ export function serverLifecycleActions(
   server: CanonicalServer | undefined,
 ): ServerLifecycleAction[] {
   return (server?.stack_actions ?? [])
-    .map((operation) => actions[operation as StackKitLifecycleOperation])
+    .map((operation) => actions[operation as StackKitOperatorOperation])
     .filter((action): action is ServerLifecycleAction => Boolean(action));
 }

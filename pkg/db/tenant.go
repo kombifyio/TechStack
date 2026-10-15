@@ -29,24 +29,12 @@ const TenantGUC = "app.tenant_id"
 // On success the transaction is committed. On any error from fn the
 // transaction is rolled back and the original error is returned.
 func (db *DB) WithTenant(ctx context.Context, tenantID string, fn func(*sql.Tx) error) error {
-	if strings.TrimSpace(tenantID) == "" {
-		return ErrNoTenant
-	}
-	if db == nil || db.DB == nil {
+	if db == nil {
 		return errors.New("db: handle is nil")
 	}
-
-	tx, err := db.BeginTx(ctx, nil)
+	tx, err := BeginTenantTransaction(ctx, db.DB, tenantID)
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-
-	// set_config(name, value, is_local=true) is equivalent to SET LOCAL
-	// but allows passing the value as a parameter, which is safer than
-	// concatenating into a SET LOCAL statement.
-	if _, err := tx.ExecContext(ctx, "SELECT set_config($1, $2, true)", TenantGUC, tenantID); err != nil {
-		_ = tx.Rollback()
-		return fmt.Errorf("set tenant guc: %w", err)
+		return err
 	}
 
 	if err := fn(tx); err != nil {
@@ -54,4 +42,24 @@ func (db *DB) WithTenant(ctx context.Context, tenantID string, fn func(*sql.Tx) 
 		return err
 	}
 	return tx.Commit()
+}
+
+// BeginTenantTransaction is the shared transaction primitive for scoped stores.
+// The returned transaction has its exact local tenant set before any payload SQL.
+func BeginTenantTransaction(ctx context.Context, pool *sql.DB, tenantID string) (*sql.Tx, error) {
+	if ctx == nil || strings.TrimSpace(tenantID) == "" {
+		return nil, ErrNoTenant
+	}
+	if pool == nil {
+		return nil, errors.New("db: handle is nil")
+	}
+	tx, err := pool.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return nil, fmt.Errorf("begin tenant tx: %w", err)
+	}
+	if _, err = tx.ExecContext(ctx, "SELECT set_config($1, $2, true)", TenantGUC, tenantID); err != nil {
+		_ = tx.Rollback()
+		return nil, fmt.Errorf("set tenant guc: %w", err)
+	}
+	return tx, nil
 }

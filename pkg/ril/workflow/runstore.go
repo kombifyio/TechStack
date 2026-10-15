@@ -16,6 +16,8 @@ type RunStore interface {
 	CreateRun(run *Run) error
 	GetRun(runID string) (*Run, error)
 	UpdateRun(run *Run) error
+	// SuspendRun atomically stores the suspended checkpoint and optional timer.
+	SuspendRun(run *Run, timer *Timer) error
 	ListRunsByStatus(status RunStatus, limit int) ([]*Run, error)
 	FindSuspendedBySignal(signalKey string) (*Run, error)
 

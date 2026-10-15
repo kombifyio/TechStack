@@ -112,6 +112,26 @@ type WizardIntent struct {
 	// Recorded against the homelab beside the goals; a setting whose
 	// realization is "recorded" waits for a release that honours it.
 	UseCaseSettings map[string]map[string]any `json:"use_case_settings,omitempty"`
+	// UseCaseCapabilities selects capability modules per selected use case,
+	// keyed by use-case slug then capability id. The value is an option id the
+	// catalog declares or "off". Validated against the catalog by the handler.
+	UseCaseCapabilities map[string]map[string]string `json:"use_case_capabilities,omitempty"`
+	// Desired setup answers preserve explicit, pending and off decisions.
+	// They are non-executable intent; release-admitted settings/capabilities
+	// remain the only input to goal authoring.
+	UseCaseSetupAnswers map[string]map[string][]string `json:"use_case_setup_answers,omitempty"`
+	// Backup records the owner's explicit backup choices for a new deployment.
+	Backup BackupIntent `json:"backup,omitempty"`
+}
+
+// OffsiteBackupCapability is the Cloud Kit capability that binds a
+// kombify-custodied off-site object repository for scheduled backups.
+const OffsiteBackupCapability = "offsite-object-backup"
+
+// BackupIntent carries the owner's backup choices. Offsite selects the Cloud
+// Kit off-site object backup; it is never enabled implicitly.
+type BackupIntent struct {
+	Offsite bool `json:"offsite,omitempty"`
 }
 
 // AccessIntent captures the default private reachability and explicit public
@@ -211,6 +231,34 @@ func (intent WizardIntent) Validate() error {
 			}
 		}
 	}
+	for slug, capabilities := range intent.UseCaseCapabilities {
+		if strings.TrimSpace(slug) == "" || len(capabilities) == 0 {
+			return fmt.Errorf("specv2: use_case_capabilities entries must name a use case and at least one capability")
+		}
+		if !slices.Contains(intent.Goals, slug) {
+			return fmt.Errorf("specv2: use_case_capabilities for %q without that goal", slug)
+		}
+		for id, value := range capabilities {
+			if strings.TrimSpace(id) == "" || strings.TrimSpace(value) == "" {
+				return fmt.Errorf("specv2: use_case_capabilities.%s names an empty capability or value", slug)
+			}
+		}
+	}
+	for slug, answers := range intent.UseCaseSetupAnswers {
+		if !slices.Contains(intent.Goals, slug) || len(answers) == 0 || len(answers) > 128 {
+			return fmt.Errorf("specv2: setup answers must name a selected goal and bounded decisions")
+		}
+		for id, choices := range answers {
+			if strings.TrimSpace(id) == "" || len(id) > 128 || len(choices) > 128 {
+				return fmt.Errorf("specv2: setup answers contain an invalid decision")
+			}
+			for _, choice := range choices {
+				if strings.TrimSpace(choice) == "" || len(choice) > 128 {
+					return fmt.Errorf("specv2: setup answers contain an invalid choice")
+				}
+			}
+		}
+	}
 	if !slices.Contains([]string{"", TransportInstallCommand, TransportConnectRemote, TransportKombifyCloud, TransportHypervisor}, strings.TrimSpace(intent.Server.Transport)) {
 		return fmt.Errorf("specv2: unsupported server transport")
 	}
@@ -222,6 +270,9 @@ func (intent WizardIntent) Validate() error {
 	}
 	if err := intent.Household.validate(); err != nil {
 		return err
+	}
+	if intent.Backup.Offsite && (intent.KitAssignment.Mode != KitAssignmentFound || intent.KitAssignment.KitSlug != KitSlugCloud) {
+		return fmt.Errorf("specv2: backup.offsite is available only when founding a %s deployment", KitSlugCloud)
 	}
 	return nil
 }

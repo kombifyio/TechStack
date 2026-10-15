@@ -101,80 +101,89 @@ func (s *PostgresStore) UpsertWizardRun(ctx context.Context, run WizardRun) (*Wi
 
 	var out *WizardRun
 	err := s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
-		intentJSON, err := marshalObject(run.Intent)
-		if err != nil {
-			return err
-		}
-		resultJSON, err := marshalObject(run.Result)
-		if err != nil {
-			return err
-		}
-		args := []any{
-			strings.TrimSpace(run.ID),
-			tenantID,
-			strings.TrimSpace(run.OwnerSubjectID),
-			strings.TrimSpace(run.IdempotencyKey),
-			strings.TrimSpace(run.RequestSHA256),
-			strings.TrimSpace(run.RunKind),
-			strings.TrimSpace(run.RequestedRunKind),
-			strings.TrimSpace(run.HomelabID),
-			strings.TrimSpace(run.StackID),
-			strings.TrimSpace(run.NodeID),
-			strings.TrimSpace(run.JobID),
-			strings.TrimSpace(run.PairingJobID),
-			strings.TrimSpace(run.Status),
-			intentJSON,
-			resultJSON,
-			strings.TrimSpace(run.ErrorReason),
-		}
-		// A keyed run upserts on the (tenant, owner, key) partial-unique index
-		// so a retried run replaces its earlier failed row; keyless runs are
-		// audit-only inserts and never conflict on anything but the id.
-		query := `
-			INSERT INTO wizard_runs (
-				id, tenant_id, owner_subject_id, idempotency_key, request_sha256,
-				run_kind, requested_run_kind, homelab_id, stack_id, node_id, job_id,
-				pairing_job_id, status, intent_json, result_json, error_reason
-			) VALUES (
-				$1, $2, $3, NULLIF($4, ''), $5,
-				$6, $7, NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, ''),
-				NULLIF($12, ''), $13, $14::jsonb, $15::jsonb, NULLIF($16, '')
-			)`
-		if strings.TrimSpace(run.IdempotencyKey) != "" {
-			query += `
-			ON CONFLICT (tenant_id, owner_subject_id, idempotency_key)
-				WHERE idempotency_key IS NOT NULL
-			DO UPDATE SET
-				request_sha256 = EXCLUDED.request_sha256,
-				run_kind = EXCLUDED.run_kind,
-				requested_run_kind = EXCLUDED.requested_run_kind,
-				homelab_id = EXCLUDED.homelab_id,
-				stack_id = EXCLUDED.stack_id,
-				node_id = EXCLUDED.node_id,
-				job_id = EXCLUDED.job_id,
-				pairing_job_id = EXCLUDED.pairing_job_id,
-				status = EXCLUDED.status,
-				intent_json = EXCLUDED.intent_json,
-				result_json = EXCLUDED.result_json,
-				error_reason = EXCLUDED.error_reason,
-				dismissed_at = NULL`
-		}
-		query += `
-			RETURNING ` + wizardRunColumns
-		stored, err := scanWizardRun(tx.QueryRowContext(ctx, query, args...))
-		if isUniqueViolation(err) {
-			return ErrConflict
-		}
-		if err != nil {
-			return err
-		}
-		out = stored
-		return nil
+		var err error
+		out, err = upsertWizardRunTx(ctx, tx, run, true)
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+func upsertWizardRunTx(ctx context.Context, tx *sql.Tx, run WizardRun, replaceExisting bool) (*WizardRun, error) {
+	tenantID := strings.TrimSpace(run.TenantID)
+	intentJSON, err := marshalObject(run.Intent)
+	if err != nil {
+		return nil, err
+	}
+	resultJSON, err := marshalObject(run.Result)
+	if err != nil {
+		return nil, err
+	}
+	args := []any{
+		strings.TrimSpace(run.ID),
+		tenantID,
+		strings.TrimSpace(run.OwnerSubjectID),
+		strings.TrimSpace(run.IdempotencyKey),
+		strings.TrimSpace(run.RequestSHA256),
+		strings.TrimSpace(run.RunKind),
+		strings.TrimSpace(run.RequestedRunKind),
+		strings.TrimSpace(run.HomelabID),
+		strings.TrimSpace(run.StackID),
+		strings.TrimSpace(run.NodeID),
+		strings.TrimSpace(run.JobID),
+		strings.TrimSpace(run.PairingJobID),
+		strings.TrimSpace(run.Status),
+		intentJSON,
+		resultJSON,
+		strings.TrimSpace(run.ErrorReason),
+	}
+	// A keyed run upserts on the (tenant, owner, key) partial-unique index
+	// so a retried run replaces its earlier failed row; keyless runs are
+	// audit-only inserts and never conflict on anything but the id.
+	query := `
+		INSERT INTO wizard_runs (
+			id, tenant_id, owner_subject_id, idempotency_key, request_sha256,
+			run_kind, requested_run_kind, homelab_id, stack_id, node_id, job_id,
+			pairing_job_id, status, intent_json, result_json, error_reason
+		) VALUES (
+			$1, $2, $3, NULLIF($4, ''), $5,
+			$6, $7, NULLIF($8, ''), NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, ''),
+			NULLIF($12, ''), $13, $14::jsonb, $15::jsonb, NULLIF($16, '')
+		)`
+	if strings.TrimSpace(run.IdempotencyKey) != "" && replaceExisting {
+		query += `
+		ON CONFLICT (tenant_id, owner_subject_id, idempotency_key)
+			WHERE idempotency_key IS NOT NULL
+		DO UPDATE SET
+			request_sha256 = EXCLUDED.request_sha256,
+			run_kind = EXCLUDED.run_kind,
+			requested_run_kind = EXCLUDED.requested_run_kind,
+			homelab_id = EXCLUDED.homelab_id,
+			stack_id = EXCLUDED.stack_id,
+			node_id = EXCLUDED.node_id,
+			job_id = EXCLUDED.job_id,
+			pairing_job_id = COALESCE(wizard_runs.pairing_job_id, EXCLUDED.pairing_job_id),
+			status = EXCLUDED.status,
+			intent_json = EXCLUDED.intent_json,
+			result_json = EXCLUDED.result_json,
+			error_reason = EXCLUDED.error_reason,
+			dismissed_at = NULL`
+	}
+	if !replaceExisting {
+		query += ` ON CONFLICT DO NOTHING`
+	}
+	query += `
+		RETURNING ` + wizardRunColumns
+	stored, err := scanWizardRun(tx.QueryRowContext(ctx, query, args...))
+	if isUniqueViolation(err) || errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrConflict
+	}
+	if err != nil {
+		return nil, err
+	}
+	return stored, nil
 }
 
 func (s *PostgresStore) DismissWizardRun(ctx context.Context, tenantID, ownerSubjectID, runID string, at time.Time) error {

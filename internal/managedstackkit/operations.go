@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kombifyio/techstack/internal/gocommon/runtimeexecutor"
+	"github.com/kombifyio/techstack/internal/selfhostcontracts/runtimeexecutor"
 	"github.com/kombifyio/techstack/pkg/backupstore"
 	"github.com/kombifyio/stackkits/pkg/backupbinding"
 )
@@ -69,6 +69,7 @@ func RejectionDetails(err error) OperationRejectionDetails {
 type operationsCustody interface {
 	Get(context.Context, string, string) (backupstore.Credentials, error)
 	Evidence(context.Context, string, string) (backupstore.CustodyEvidence, error)
+	NodeBinding(context.Context, string, string) (backupstore.NodeBinding, error)
 	RecordAttestation(context.Context, string, string, backupstore.CustodyEvidence) (backupstore.CustodyEvidence, error)
 }
 
@@ -127,8 +128,12 @@ func (o *Operations) Execute(ctx context.Context, input OperationsRequest) (runt
 	if err != nil {
 		return runtimeexecutor.ExecutionOutcome{}, rejectOperation("backup_evidence_unavailable", true, "Re-attest the managed backup target and regenerate the StackKits Inventory.", fmt.Errorf("load managed StackKits backup evidence: %w", err))
 	}
-	if err = validateManagedBindingEvidence(binding, evidence); err != nil {
-		return runtimeexecutor.ExecutionOutcome{}, rejectOperation("backup_binding_stale", true, "Regenerate the StackKits Inventory from current durable backup custody and retry.", err)
+	issued, err := o.custody.NodeBinding(ctx, input.TenantID, input.StackID)
+	if err != nil {
+		return runtimeexecutor.ExecutionOutcome{}, rejectOperation("backup_binding_unrecorded", true, "Deliver the backup target to the node again so it issues its own binding, then retry.", fmt.Errorf("load the node-issued backup binding: %w", err))
+	}
+	if err = validateManagedNodeBinding(binding, issued); err != nil {
+		return runtimeexecutor.ExecutionOutcome{}, rejectOperation("backup_binding_stale", true, "Deliver the backup target to the node again so it issues a fresh binding, then retry.", err)
 	}
 	freshInput := evidence
 	freshInput.AttestationEvidence = nil
@@ -232,24 +237,12 @@ func managedArtifactMatches(target runtimeexecutor.RuntimeTarget, artifact runti
 		artifact.UnitRef == cloudBackupUnitRef && slices.Equal(artifact.SiteRefs, target.SiteRefs) && slices.Equal(artifact.NodeRefs, target.NodeRefs)
 }
 
-func validateManagedBindingEvidence(binding runtimeexecutor.BackupTargetBinding, evidence backupstore.CustodyEvidence) error {
-	if len(evidence.BindingEvidence) == 0 || len(evidence.TargetEvidence) == 0 || len(evidence.AttestationEvidence) == 0 {
-		return errors.New("managed StackKits backup custody has no durable operational attestation")
-	}
-	bindingRef, err := backupbinding.OpaqueReference("backup-target-binding", evidence.BindingEvidence)
-	if err != nil {
-		return err
-	}
-	targetRef, err := backupbinding.OpaqueReference("backup-target", evidence.TargetEvidence)
-	if err != nil {
-		return err
-	}
-	attestationRef, err := backupbinding.OpaqueReference("backup-custody-attestation", evidence.AttestationEvidence)
-	if err != nil {
-		return err
-	}
-	if binding.BindingRef != bindingRef || binding.BackupTargetRef != targetRef || binding.CustodyAttestationRef != attestationRef {
-		return errors.New("managed StackKits backup binding does not match current durable custody")
+// validateManagedNodeBinding accepts only the binding the node itself issued
+// when it opened the delivery. Core cannot derive these references, so it never
+// vouches for a binding it did not receive from the node.
+func validateManagedNodeBinding(binding runtimeexecutor.BackupTargetBinding, issued backupstore.NodeBinding) error {
+	if binding.BackupTargetRef == "" || binding.BackupTargetRef != issued.BackupTargetRef || binding.CustodyAttestationRef != issued.CustodyAttestationRef {
+		return errors.New("managed StackKits backup binding is not the one the node issued")
 	}
 	return nil
 }

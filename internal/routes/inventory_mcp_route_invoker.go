@@ -17,6 +17,7 @@ import (
 
 	"github.com/kombifyio/techstack/internal/gocommon/apisurface"
 	"github.com/kombifyio/techstack/internal/gocommon/apisurface/mcpbind"
+	"github.com/kombifyio/techstack/internal/gocommon/mcporiginauth"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/kombifyio/techstack/pkg/httpx"
@@ -172,7 +173,16 @@ func inventoryMCPRouteRequest(ctx context.Context, op *apisurface.Operation, pat
 	}
 	request.Header.Set("Accept", "application/json")
 	if op.Mutating || (op.Method != http.MethodGet && op.Method != http.MethodHead) {
-		request.Header.Set("Idempotency-Key", inventoryMCPIdempotencyKey(source))
+		var key string
+		if principal, verified := mcporiginauth.FromContext(ctx); verified && op.OperationID == maintenanceOperationID && len(principal.DelegatedAuthority) != 0 {
+			key, err = maintenanceSignedIdempotency(principal)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			key = inventoryMCPIdempotencyKey(source)
+		}
+		request.Header.Set("Idempotency-Key", key)
 	}
 	return request, nil
 }

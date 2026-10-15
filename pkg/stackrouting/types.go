@@ -51,20 +51,21 @@ type Provenance struct {
 // DesiredState is the durable, revisioned routing overlay for exactly one
 // stack/server/lease tuple.
 type DesiredState struct {
-	TenantID       string     `json:"-"`
-	StackID        string     `json:"stack_id"`
-	OwnerSubjectID string     `json:"-"`
-	ServerID       string     `json:"server_id"`
-	LeaseID        string     `json:"lease_id,omitempty"`
-	Revision       int64      `json:"revision"`
-	Mode           string     `json:"mode"`
-	Domain         string     `json:"domain"`
-	Provenance     Provenance `json:"provenance"`
-	RolloutStatus  string     `json:"rollout_status"`
-	RolloutJobID   string     `json:"rollout_job_id,omitempty"`
-	ReasonCode     string     `json:"reason_code,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	TenantID       string       `json:"-"`
+	StackID        string       `json:"stack_id"`
+	OwnerSubjectID string       `json:"-"`
+	ServerID       string       `json:"server_id"`
+	LeaseID        string       `json:"lease_id,omitempty"`
+	Revision       int64        `json:"revision"`
+	Mode           string       `json:"mode"`
+	Domain         string       `json:"domain"`
+	Provenance     Provenance   `json:"provenance"`
+	Expectations   Expectations `json:"expectations"`
+	RolloutStatus  string       `json:"rollout_status"`
+	RolloutJobID   string       `json:"rollout_job_id,omitempty"`
+	ReasonCode     string       `json:"reason_code,omitempty"`
+	CreatedAt      time.Time    `json:"created_at"`
+	UpdatedAt      time.Time    `json:"updated_at"`
 }
 
 // EnsureInput is the API/application-service input. Idempotency and optimistic
@@ -75,6 +76,7 @@ type EnsureInput struct {
 	Mode          string
 	Domain        string
 	Provenance    Provenance
+	Expectations  *Expectations
 	EnsureRollout bool
 	// RequireLease is set by managed service-to-service handovers. Public
 	// user-owned/local routing leaves it false and still rejects an invented
@@ -90,9 +92,10 @@ type MutationOptions struct {
 // PutRequest is the normalized atomic persistence command.
 type PutRequest struct {
 	DesiredState
-	IdempotencyKey   string
-	RequestHash      string
-	ExpectedRevision *int64
+	IdempotencyKey       string
+	RequestHash          string
+	ExpectedRevision     *int64
+	PreserveExpectations bool
 }
 
 type PutResult struct {

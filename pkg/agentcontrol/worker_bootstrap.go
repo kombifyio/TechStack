@@ -7,6 +7,7 @@ import (
 	providerexecutor "github.com/kombifyio/techstack/internal/selfhostcontracts/providerexecutor/v1beta1"
 	"github.com/kombifyio/techstack/internal/guardbootstrap"
 	"github.com/kombifyio/techstack/internal/substrate"
+	"strings"
 	"time"
 )
 
@@ -31,7 +32,7 @@ func (h *Hub) WorkerBootstrap(ctx context.Context, tenant, worker, invocation st
 		return nil, err
 	}
 	var spec substrate.ExecutionSpec
-	if json.Unmarshal(execution.Payload, &spec) != nil || !spec.Guest.Enrollment || spec.Guest.ProfileID != "ubuntu-24.04" {
+	if json.Unmarshal(execution.Payload, &spec) != nil || !spec.Guest.Enrollment || !substrate.IsUbuntuProfile(spec.Guest.ProfileID) {
 		return nil, errors.New("bootstrap profile invalid")
 	}
 	var stack string
@@ -43,7 +44,7 @@ func (h *Hub) WorkerBootstrap(ctx context.Context, tenant, worker, invocation st
 	if err != nil {
 		return nil, err
 	}
-	request := guardbootstrap.EnrollmentRequest{TenantID: tenant, OperationID: execution.Command.OperationID, LeaseID: execution.Command.LeaseID, StackID: stack, Hostname: spec.Guest.Name, HostPrepProfile: guardbootstrap.HostPrepProfileStackKitReadyUbuntu2404V1}
+	request := guardbootstrap.EnrollmentRequest{TenantID: tenant, OperationID: execution.Command.OperationID, LeaseID: execution.Command.LeaseID, StackID: stack, Hostname: spec.Guest.Name, HostPrepProfile: guardbootstrap.UbuntuHostPrepProfile(strings.TrimPrefix(spec.Guest.ProfileID, "ubuntu-"))}
 	payload, err := issuer.RenderPayload(request)
 	if err != nil {
 		return nil, err

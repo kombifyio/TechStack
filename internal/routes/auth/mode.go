@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -11,7 +12,9 @@ import (
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/cloudlogin"
 	"github.com/kombifyio/techstack/pkg/config"
+	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
+	"github.com/kombifyio/techstack/pkg/kombifywallet"
 	"github.com/pocketbase/pocketbase/core"
 )
 
@@ -22,6 +25,7 @@ type AuthModeResponse struct {
 	Mode            string  `json:"mode"`              // "local" or "cloud"
 	Edition         string  `json:"edition"`           // "selfhost-oss", "preview", "saas-standalone", or "saas-embedded"
 	DeploymentMode  string  `json:"deployment_mode"`   // "self-hosted" or "saas"
+	WalletSource    string  `json:"wallet_source"`     // "legacy" (built-in wallet) or "kombify" (central kombify Wallet)
 	IsFirstRun      bool    `json:"is_first_run"`      // true when the canonical local owner store is empty
 	CloudAuthURL    *string `json:"cloud_auth_url"`    // OAuth2 authorization URL for cloud mode
 	PortalURL       *string `json:"portal_url"`        // Portal URL for cloud mode
@@ -42,11 +46,15 @@ type AuthModeResponse struct {
 //	  }
 //	}
 func getAuthMode(app core.App, mode config.DeploymentMode, edition config.Edition, owners LocalOwnerLookup) func(e *httpx.Event) error {
+	return getRuntimeAuthMode(RuntimeStore{}, mode, edition, owners)
+}
+
+func getRuntimeAuthMode(runtime RuntimeStore, mode config.DeploymentMode, edition config.Edition, owners LocalOwnerLookup) func(e *httpx.Event) error {
 	return func(e *httpx.Event) error {
-		var record *core.Record
+		var record *controlplane.AuthConfig
 		if !mode.IsSaaS() {
 			var err error
-			record, err = loadAuthConfig(app)
+			record, err = runtime.authConfig(e.Request.Context())
 			if err != nil {
 				return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal,
 					"Failed to read auth configuration", nil)
@@ -68,6 +76,7 @@ func getAuthMode(app core.App, mode config.DeploymentMode, edition config.Editio
 			Mode:            "local",
 			Edition:         string(authResponseEdition(edition, mode)),
 			DeploymentMode:  string(mode),
+			WalletSource:    string(walletSourceFromContext(e.Request.Context()).Normalized()),
 			IsFirstRun:      false,
 			CloudAuthURL:    nil,
 			PortalURL:       nil,
@@ -76,8 +85,8 @@ func getAuthMode(app core.App, mode config.DeploymentMode, edition config.Editio
 		applyPlatformAuthPolicy(&response, mode)
 
 		if record == nil {
-			// Canonical local owner store is first-run authority. PocketBase
-			// auth_config is only a compatibility marker for mode fields.
+			// The canonical local owner store owns first-run state;
+			// instance auth_config supplies only mode fields.
 			response.IsFirstRun = !mode.IsSaaS() && !ownerPresent
 
 			// No config record found — self-hosted deployments can still opt into cloud auth via env.
@@ -97,12 +106,12 @@ func getAuthMode(app core.App, mode config.DeploymentMode, edition config.Editio
 		}
 
 		// Read values from the record
-		recordMode := record.GetString("mode")
+		recordMode := record.Mode
 		if recordMode == "" {
 			recordMode = "local"
 		}
 		response.Mode = recordMode
-		response.AllowLocalLogin = record.GetBool("allow_local_login")
+		response.AllowLocalLogin, _ = record.Config["allow_local_login"].(bool)
 		applyPlatformAuthPolicy(&response, mode)
 		applySelfHostedCloudLoginGate(&response, mode)
 
@@ -321,4 +330,20 @@ func isLoopbackHost(host string) bool {
 
 	ip := net.ParseIP(candidate)
 	return ip != nil && ip.IsLoopback()
+}
+
+type walletSourceContextKey struct{}
+
+// withWalletSource tells the auth-mode handler where this deployment keeps
+// credentials, so the UI can pick the label flow or the kombify Wallet picker.
+func withWalletSource(source kombifywallet.Source, next func(e *httpx.Event) error) func(e *httpx.Event) error {
+	return func(e *httpx.Event) error {
+		e.Request = e.Request.WithContext(context.WithValue(e.Request.Context(), walletSourceContextKey{}, source))
+		return next(e)
+	}
+}
+
+func walletSourceFromContext(ctx context.Context) kombifywallet.Source {
+	source, _ := ctx.Value(walletSourceContextKey{}).(kombifywallet.Source)
+	return source
 }

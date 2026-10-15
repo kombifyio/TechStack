@@ -22,12 +22,15 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kombifyio/techstack/internal/gocommon/identity"
@@ -59,6 +62,10 @@ const (
 	HeaderEdgeNonce      = "X-Kombify-Edge-Nonce"
 	HeaderEdgeSignedPath = "X-Kombify-Edge-Signed-Path"
 	HeaderEdgeKeyID      = "X-Kombify-Edge-Key-ID"
+	// HeaderEdgeSignatureEd25519 carries "<version>=<kid>.<base64url sig>":
+	// an Ed25519 signature over the same payload as HeaderEdgeSignature.
+	// Origins verify it with public keys only, so they cannot mint envelopes.
+	HeaderEdgeSignatureEd25519 = "X-Kombify-Edge-Signature-Ed25519"
 	// HeaderEntitlements and HeaderKnowledgeTier are forwarded from the edge and
 	// consumed by AI-Platform access policy / knowledge tiering. They are bound by
 	// the v2 edge signature so they cannot be forged downstream.
@@ -133,19 +140,83 @@ type Config struct {
 	RequireSignature bool
 
 	// SignatureWindow is the maximum allowed skew for X-Kombify-Edge-Timestamp.
-	// Defaults to 5 minutes.
+	// Defaults to 5 minutes. 60 seconds is the recommended value. Timestamps
+	// up to SignatureWindow in the future are accepted, so an envelope stays
+	// acceptable for up to 2 × SignatureWindow after a ReplayGuard first
+	// records it; the guard must remember nonces at least that long.
 	SignatureWindow time.Duration
+
+	// ExpectedServices lists every X-Kombify-Edge-Service name under which the
+	// edge router reaches the handler this Config protects. An origin can be
+	// addressed under several names (for example "simulation" and
+	// "simulation-nodes"); list all of them. When set, a correctly signed
+	// envelope that names any other service is denied with
+	// ErrEdgeServiceMismatch, so an envelope minted for one origin cannot be
+	// replayed against another. Blank entries are ignored. When no non-blank
+	// entry is set, the service is not checked and Middleware logs a one-time
+	// deprecation warning; every SaaS origin should set it.
+	ExpectedServices []string
+
+	// EdgePublicKeys lists the Ed25519 envelope verification keys as
+	// "kid=base64url(32-byte public key)" entries separated by commas. When
+	// empty, EDGE_AUTH_ED25519_PUBLIC_KEYS is read from the environment. A
+	// present Ed25519 signature is then verified and, when valid, accepted
+	// without the HMAC secret; an invalid one is denied.
+	EdgePublicKeys string
+
+	// RequireEd25519 denies envelopes without a valid Ed25519 signature, so
+	// HMAC-only envelopes stop being accepted. When false,
+	// EDGE_AUTH_REQUIRE_ED25519=true in the environment has the same effect.
+	RequireEd25519 bool
+
+	// ReplayGuard, when set, is consulted by Middleware after the envelope
+	// verified; an envelope whose nonce it reports as seen is denied with
+	// ErrEdgeNonceReplayed. When nil, nonces are not checked.
+	ReplayGuard ReplayGuard
+}
+
+// ReplayGuard records verified edge envelope nonces. Seen atomically records
+// the (kid, nonce) pair and reports whether it had already been recorded. It
+// never sees the envelope timestamp, and the verifier accepts timestamps up to
+// Config.SignatureWindow in the future, so it must remember a pair for at
+// least 2 × Config.SignatureWindow from first sight. It must report true when
+// it cannot decide (store unavailable, capacity exhausted), so the verifier
+// fails closed. A guard shared across replicas needs a shared store.
+type ReplayGuard interface {
+	Seen(ctx context.Context, kid, nonce string) bool
+}
+
+// Typed verification failures. Middleware returns their text as the JSON
+// "reason" of the 401 response; wrapping verifiers keep them for errors.Is.
+var (
+	// ErrEdgeServiceMismatch: the signed X-Kombify-Edge-Service does not
+	// name any of Config.ExpectedServices.
+	ErrEdgeServiceMismatch = errors.New("edge_service_mismatch")
+	// ErrEdgeNonceReplayed: Config.ReplayGuard has already seen the nonce.
+	ErrEdgeNonceReplayed = errors.New("edge_signature_replayed")
+)
+
+var expectedServiceDeprecation sync.Once
+
+func warnExpectedServiceUnset() {
+	expectedServiceDeprecation.Do(func() {
+		slog.Warn("edgeauth: Config.ExpectedServices is unset; edge envelopes are accepted for any X-Kombify-Edge-Service. Set edgeauth.Config.ExpectedServices to every edge service name the router uses for this origin (deprecated behaviour, Module B).")
+	})
 }
 
 // Middleware returns an http.Handler middleware that:
 //  1. Skips if Enabled=false.
 //  2. Requires a supported X-Kombify-Edge-Auth marker value.
-//  3. Verifies the signed edge envelope fail-closed.
+//  3. Verifies the signed edge envelope fail-closed, including
+//     Config.ExpectedServices and Config.ReplayGuard when they are set.
 //  4. On success: extracts identity, stores in context via identity.NewContext.
 //  5. On missing header: rejects (401) if RequireEdgeAuth=true, else passes through.
 //
 // Use identity.FromContext(ctx) to retrieve the identity in handlers.
 func Middleware(cfg Config) func(next http.Handler) http.Handler {
+	if cfg.Enabled && !hasExpectedServices(cfg.ExpectedServices) {
+		warnExpectedServiceUnset()
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !cfg.Enabled {
@@ -174,7 +245,12 @@ func Middleware(cfg Config) func(next http.Handler) http.Handler {
 				return
 			}
 
-			if err := verifyEdgeSignature(r, cfg); err != nil {
+			err := verifyEdgeSignature(r, cfg)
+			if err == nil && cfg.ReplayGuard != nil &&
+				cfg.ReplayGuard.Seen(r.Context(), strings.TrimSpace(r.Header.Get(HeaderEdgeKeyID)), strings.TrimSpace(r.Header.Get(HeaderEdgeNonce))) {
+				err = ErrEdgeNonceReplayed
+			}
+			if err != nil {
 				w.Header().Set("WWW-Authenticate", `Bearer realm="api.kombify.io"`)
 				http.Error(w, fmt.Sprintf(`{"error":"edge_auth_required","reason":"%s"}`, err.Error()), http.StatusUnauthorized)
 				return
@@ -201,22 +277,37 @@ func verifyEdgeSignature(r *http.Request, cfg Config) error {
 	next := strings.TrimSpace(firstNonEmpty(cfg.EdgeAuthNextSecret, os.Getenv("EDGE_AUTH_SECRET_NEXT")))
 	primaryKeyID := strings.TrimSpace(firstNonEmpty(cfg.EdgeAuthKeyID, os.Getenv("EDGE_AUTH_KEY_ID"), defaultEdgeKeyID))
 	nextKeyID := strings.TrimSpace(firstNonEmpty(cfg.EdgeAuthNextKeyID, os.Getenv("EDGE_AUTH_KEY_ID_NEXT"), defaultEdgeNextKeyID))
+	publicKeys, err := parseEdgePublicKeys(firstNonEmpty(cfg.EdgePublicKeys, os.Getenv("EDGE_AUTH_ED25519_PUBLIC_KEYS")))
+	if err != nil {
+		return err
+	}
+	requireEd25519 := cfg.RequireEd25519 || strings.EqualFold(strings.TrimSpace(os.Getenv("EDGE_AUTH_REQUIRE_ED25519")), "true")
+	if requireEd25519 && len(publicKeys) == 0 {
+		return fmt.Errorf("edge_signature_public_key_missing")
+	}
 	hasSecret := primary != "" || next != ""
-	if !hasSecret {
+	if !hasSecret && len(publicKeys) == 0 {
 		return fmt.Errorf("edge_signature_secret_missing")
 	}
 
 	signature := strings.TrimSpace(r.Header.Get(HeaderEdgeSignature))
+	asymmetric := strings.TrimSpace(r.Header.Get(HeaderEdgeSignatureEd25519))
 	timestamp := strings.TrimSpace(r.Header.Get(HeaderEdgeTimestamp))
 	nonce := strings.TrimSpace(r.Header.Get(HeaderEdgeNonce))
 	signedPath := strings.TrimSpace(r.Header.Get(HeaderEdgeSignedPath))
 	keyID := strings.TrimSpace(r.Header.Get(HeaderEdgeKeyID))
-	if signature == "" || timestamp == "" || nonce == "" || signedPath == "" || keyID == "" {
+	if (signature == "" && asymmetric == "") || timestamp == "" || nonce == "" || signedPath == "" || keyID == "" {
 		return fmt.Errorf("edge_signature_missing")
 	}
-	version, err := edgeSignatureVersionFromHeader(signature)
+	version, err := edgeSignatureVersionFromHeader(firstNonEmpty(signature, asymmetric))
 	if err != nil {
 		return err
+	}
+	if signature != "" && asymmetric != "" {
+		asymVersion, err := edgeSignatureVersionFromHeader(asymmetric)
+		if err != nil || asymVersion != version {
+			return fmt.Errorf("edge_signature_version_mismatch")
+		}
 	}
 	if signedPath != requestSignedPath(r) {
 		return fmt.Errorf("edge_signature_path_mismatch")
@@ -226,6 +317,21 @@ func verifyEdgeSignature(r *http.Request, cfg Config) error {
 	}
 
 	payload := buildSignaturePayload(version, r.Method, signedPath, keyID, r, timestamp, nonce)
+	if asymmetric != "" && len(publicKeys) > 0 {
+		if !verifyEd25519Envelope(publicKeys, strings.TrimPrefix(asymmetric, version+"="), payload) {
+			return fmt.Errorf("edge_signature_invalid")
+		}
+		if !expectedServiceAllowed(cfg.ExpectedServices, r.Header.Get(HeaderEdgeService)) {
+			return ErrEdgeServiceMismatch
+		}
+		return nil
+	}
+	if requireEd25519 {
+		return fmt.Errorf("edge_signature_ed25519_missing")
+	}
+	if signature == "" || !hasSecret {
+		return fmt.Errorf("edge_signature_missing")
+	}
 	presented := strings.TrimPrefix(signature, version+"=")
 	for _, candidate := range []struct {
 		keyID  string
@@ -242,10 +348,37 @@ func verifyEdgeSignature(r *http.Request, cfg Config) error {
 		}
 		expected := signPayload(candidate.secret, payload)
 		if hmac.Equal([]byte(presented), []byte(expected)) {
+			if !expectedServiceAllowed(cfg.ExpectedServices, r.Header.Get(HeaderEdgeService)) {
+				return ErrEdgeServiceMismatch
+			}
 			return nil
 		}
 	}
 	return fmt.Errorf("edge_signature_invalid")
+}
+
+func hasExpectedServices(allowed []string) bool {
+	for _, service := range allowed {
+		if strings.TrimSpace(service) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// expectedServiceAllowed reports whether the signed service is one of the
+// non-blank allowed names. An empty allow list admits every service.
+func expectedServiceAllowed(allowed []string, signed string) bool {
+	if !hasExpectedServices(allowed) {
+		return true
+	}
+	signed = strings.TrimSpace(signed)
+	for _, service := range allowed {
+		if service = strings.TrimSpace(service); service != "" && service == signed {
+			return true
+		}
+	}
+	return false
 }
 
 // edgeSignatureVersionFromHeader returns the supported signature version encoded
@@ -413,6 +546,7 @@ func hasUnsignedIdentityHeaders(r *http.Request) bool {
 		HeaderUserACR,
 		HeaderUserAuthTime,
 		HeaderEdgeSignature,
+		HeaderEdgeSignatureEd25519,
 		HeaderEdgeTimestamp,
 		HeaderEdgeNonce,
 		HeaderEdgeSignedPath,

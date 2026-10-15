@@ -7,16 +7,16 @@ import (
 	"encoding/hex"
 	"net/http"
 	"os"
-	"strings"
 
 	"github.com/kombifyio/techstack/pkg/httpx"
+	"github.com/kombifyio/techstack/pkg/trustedproxy"
 )
 
 // linuxInstallerArtifactSHA256 pins the authoritative repository install.sh
 // after CRLF-to-LF normalization. The runtime image copies that exact artifact;
 // serving any partial, stale, or locally substituted shell fragment fails
 // closed until the contract digest is deliberately updated with the installer.
-const linuxInstallerArtifactSHA256 = "9dd0b9b30ac56b02c8caf488b507079713a3c1ef28f9358a014195ca10413aac"
+const linuxInstallerArtifactSHA256 = "aee6ff9b025a91c861fa0337553795ba415e28771eb48edcaab8d7c573906a64"
 
 func (h workerRouteHandlers) installScript(e *httpx.Event) error {
 	return serveLinuxInstallScript(e, h.installScriptPaths())
@@ -87,22 +87,10 @@ func (h workerRouteHandlers) installScriptPSPaths() []string {
 	}
 }
 
+// getClientIP is the client address of the registering host: the direct peer,
+// or the client behind a trusted proxy (never a caller-supplied header).
 func getClientIP(e *httpx.Event) string {
-	// proxy headers
-	if ip := e.Request.Header.Get("X-Real-IP"); ip != "" {
-		return strings.TrimSpace(ip)
-	}
-	if xff := e.Request.Header.Get("X-Forwarded-For"); xff != "" {
-		if idx := strings.Index(xff, ","); idx != -1 {
-			return strings.TrimSpace(xff[:idx])
-		}
-		return strings.TrimSpace(xff)
-	}
-	addr := e.Request.RemoteAddr
-	if idx := strings.LastIndex(addr, ":"); idx != -1 {
-		return addr[:idx]
-	}
-	return addr
+	return trustedproxy.FromEnv().ClientIP(e.Request)
 }
 
 // getEmbeddedInstallScriptPS returns a minimal Windows PowerShell worker

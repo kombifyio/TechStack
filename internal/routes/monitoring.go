@@ -56,6 +56,7 @@ func RegisterMonitoringRoutes(r *httpx.Router, backend monitoring.MetricsQueryBa
 	r.GET("/api/v1/monitor/metrics/labels", monitoringRequireAuth(handlers.labelNames))
 	r.GET("/api/v1/monitor/metrics/values", monitoringRequireAuth(handlers.labelValues))
 	r.GET("/api/v1/monitor/metrics/names", monitoringRequireAuth(handlers.metricNames))
+	r.GET("/api/v1/monitor/storage-forecast", monitoringRequireAuth(handlers.storageForecast))
 	r.GET("/api/v1/monitor/status", monitoringRequireAuth(handlers.status))
 	r.GET("/api/v1/monitor/health", monitoringRequireAuth(handlers.health))
 }
@@ -603,19 +604,54 @@ func RegisterAlertRoutes(r *httpx.Router, engine *monitoring.AlertEngine) {
 
 	// Active alerts
 	r.GET("/api/v1/monitor/alerts", func(e *httpx.Event) error {
-		if _, err := requireAuth(e); err != nil {
+		states, err := alertStatesForCaller(e, engine.ActiveAlerts(), "techstack.monitor.alerts.read")
+		if err != nil {
 			return err
 		}
-		return httpx.Success(e, http.StatusOK, engine.ActiveAlerts())
+		return httpx.Success(e, http.StatusOK, states)
 	})
 
 	// All alert rule states
 	r.GET("/api/v1/monitor/alerts/rules", func(e *httpx.Event) error {
-		if _, err := requireAuth(e); err != nil {
+		states, err := alertStatesForCaller(e, engine.AllStates(), "techstack.monitor.alerts.rules")
+		if err != nil {
 			return err
 		}
-		return httpx.Success(e, http.StatusOK, engine.AllStates())
+		return httpx.Success(e, http.StatusOK, states)
 	})
+}
+
+// alertStatesForCaller narrows the alert engine's states to what the caller may
+// read. The engine evaluates one rule set over the whole fleet, so a state
+// carries a value measured on some tenant's host. Self-hosted serves everything
+// to the single tenant. Hosted serves the fleet view to platform staff only; a
+// customer sees just the states whose rule is labelled with their own tenant,
+// and none when no rule is, never a fleet-wide value.
+func alertStatesForCaller(e *httpx.Event, states []monitoring.AlertState, capability string) ([]monitoring.AlertState, error) {
+	ownerID, err := requireAuth(e)
+	if err != nil {
+		return nil, err
+	}
+	if !tenantguard.Active() || platformStaffCaller(e) {
+		return states, nil
+	}
+	tenantID, err := tenantguard.TenantScope(requestExplicitTenantID(e), ownerID, capability)
+	if err != nil {
+		return nil, err
+	}
+	scoped := make([]monitoring.AlertState, 0, len(states))
+	for _, state := range states {
+		if state.Rule.Labels["tenant_id"] == tenantID {
+			scoped = append(scoped, state)
+		}
+	}
+	return scoped, nil
+}
+
+// platformStaffCaller reports whether the caller is platform staff: the same
+// signed-admin check that guards the instance-wide /metrics endpoint.
+func platformStaffCaller(e *httpx.Event) bool {
+	return e != nil && ((e.Auth != nil && e.Auth.IsSuperuser()) || signedEdgeAdmin(e))
 }
 
 // parseTimeParam parses a time parameter as RFC3339, Unix timestamp, or relative duration.

@@ -1258,7 +1258,7 @@ func TestStackOperationsStorePayloadIncludesLatestPostLeaseFailure(t *testing.T)
 		ErrorDetails: "phase=apt_wait status=begin",
 		Result: map[string]any{
 			"lease_id":          "lease-mwhrsh04v3hl2qo",
-			"runtime_public_ip": "188.64.59.141",
+			"runtime_public_ip": "203.0.113.82",
 			"runtime_phase":     "lease_ready",
 			"target_bootstrap": map[string]any{
 				"status":         "failed",
@@ -1278,7 +1278,7 @@ func TestStackOperationsStorePayloadIncludesLatestPostLeaseFailure(t *testing.T)
 		t.Fatalf("UpsertJob: %v", err)
 	}
 	lease := createStackOperationsTestLease("lease-mwhrsh04v3hl2qo", "tenant-1", "owner-1", "stack-failed-prep", "enrolled")
-	lease.Metadata["public_ip"] = "188.64.59.141"
+	lease.Metadata["public_ip"] = "203.0.113.82"
 
 	event, recorder := stackOperationsRouteTestEvent(http.MethodGet, "/api/v1/stacks/stack-failed-prep/operations", "stack-failed-prep", "owner-1")
 	event.Request = event.Request.WithContext(identity.NewContext(event.Request.Context(), &identity.Identity{UserID: "owner-1", OrgID: "tenant-1"}))
@@ -1686,7 +1686,7 @@ func TestStackOperationsKeepsLeasesWithoutMachinesOutOfServers(t *testing.T) {
 	}
 	// Two sibling leases of one stack, no canonical server row for either.
 	first := createStackOperationsTestLease("lease-stack-ghost", "tenant-1", "owner-1", "stack-ghost", monthlyRuntimeEnrollmentStatusPending)
-	first.Metadata["public_ip"] = "85.215.38.99"
+	first.Metadata["public_ip"] = "198.51.100.85"
 	second := createStackOperationsTestLease("lease-stack-ghost-foundation-97268281", "tenant-1", "owner-1", "stack-ghost", monthlyRuntimeEnrollmentStatusPending)
 	records := []vmleases.LeaseInventoryRecord{
 		{Lease: first, ExecutionAuthority: vmleases.LeaseExecutionAuthorityLegacySimulate, AuthorityState: vmleases.LeaseAuthorityStateLegacyQuarantined},

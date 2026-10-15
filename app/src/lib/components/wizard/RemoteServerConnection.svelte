@@ -8,6 +8,8 @@
   } from "@lucide/svelte";
   import { tr } from "#lib/i18n.svelte.js";
   import { testWizardRemoteSSH } from "#lib/api/wizardRemoteSSH.js";
+  import { authStore } from "#lib/stores/auth.svelte.js";
+  import WalletServerAccessPicker from "#lib/kombify-wallet/components/WalletServerAccessPicker.svelte";
   import type { StackConfig } from "#lib/wizard/index.js";
   import { NODE_GUIDES } from "#lib/docs-links.js";
   import InfoTip from "./InfoTip.svelte";
@@ -23,6 +25,8 @@
   let connectionRevision = 0;
   const remote = $derived(config.serverProvisioning.remote);
   const remoteUsesPasswordAuth = $derived(remote.authMethod === "password");
+  // Hosted Techstack keeps the SSH credential in the person's kombify Wallet.
+  const useWallet = $derived(authStore.walletSource === "kombify");
   $effect(() => {
     void [
       remote.host,
@@ -31,6 +35,7 @@
       remote.authMethod,
       remote.sshPassword,
       remote.sshKeyLabel,
+      remote.sshWalletItemId,
       remote.useSudo,
     ];
     connectionRevision++;
@@ -41,36 +46,48 @@
     if (reviewMode) return;
     const host = remote.host.trim();
     const user = remote.sshUser.trim() || "root";
-    if (
-      !host ||
-      (remoteUsesPasswordAuth
+    const missingCredential = useWallet
+      ? !remote.sshWalletItemId
+      : remoteUsesPasswordAuth
         ? !remote.sshPassword.trim()
-        : !remote.sshKeyLabel.trim())
-    ) {
+        : !remote.sshKeyLabel.trim();
+    if (!host || missingCredential) {
       remoteTestState = "error";
       remoteTestMessage = !host
         ? tr("wizard.server.remote.host")
-        : tr(
-            remoteUsesPasswordAuth
-              ? "wizard.server.remote.password"
-              : "wizard.server.remote.keyLabel",
-          );
+        : useWallet
+          ? tr("kwallet.wizard.item_required")
+          : tr(
+              remoteUsesPasswordAuth
+                ? "wizard.server.remote.password"
+                : "wizard.server.remote.keyLabel",
+            );
       return;
     }
     const revision = connectionRevision;
     remoteTestState = "testing";
     remoteTestMessage = "";
     try {
-      const result = await testWizardRemoteSSH({
-        host,
-        port: remote.sshPort || 22,
-        user,
-        auth_method: remote.authMethod,
-        password: remoteUsesPasswordAuth ? remote.sshPassword : undefined,
-        ssh_key_label: remoteUsesPasswordAuth
-          ? undefined
-          : remote.sshKeyLabel.trim(),
-      });
+      const result = await testWizardRemoteSSH(
+        useWallet
+          ? {
+              host,
+              port: remote.sshPort || 22,
+              user,
+              auth_method: remote.authMethod,
+              ssh_wallet_item_id: remote.sshWalletItemId,
+            }
+          : {
+              host,
+              port: remote.sshPort || 22,
+              user,
+              auth_method: remote.authMethod,
+              password: remoteUsesPasswordAuth ? remote.sshPassword : undefined,
+              ssh_key_label: remoteUsesPasswordAuth
+                ? undefined
+                : remote.sshKeyLabel.trim(),
+            },
+      );
       if (revision !== connectionRevision) return;
       remoteTestState = result.success ? "success" : "error";
       remoteTestMessage = result.success
@@ -153,7 +170,24 @@
       </div>
     </fieldset>
 
-    {#if remoteUsesPasswordAuth}
+    {#if useWallet}
+      <div class="wallet-access" data-testid="remote-wallet-access">
+        <WalletServerAccessPicker
+          id="remote-server-wallet-item"
+          value={remote.sshWalletItemId ?? ""}
+          onchange={(itemId) => (remote.sshWalletItemId = itemId)}
+          disabled={reviewMode}
+          host={remote.host}
+          method={remote.authMethod}
+          createWith={{
+            host: remote.host,
+            user: remote.sshUser,
+            port: remote.sshPort,
+          }}
+        />
+        <small>{tr("kwallet.wizard.hint")}</small>
+      </div>
+    {:else if remoteUsesPasswordAuth}
       <label for="remote-server-password"
         >{tr("wizard.server.remote.password")}<input
           id="remote-server-password"
@@ -373,6 +407,12 @@
     display: grid;
     gap: 8px;
   }
+  .wallet-access {
+    grid-column: 1 / -1;
+    display: grid;
+    gap: 8px;
+    max-width: calc(60% - 12px);
+  }
   .auth-option {
     display: flex;
     align-items: flex-start;
@@ -452,6 +492,9 @@
     }
     .connection-fields > :last-child {
       grid-column: auto;
+      max-width: none;
+    }
+    .wallet-access {
       max-width: none;
     }
     .ssh-details {

@@ -84,7 +84,7 @@ describe("renewNodePairing", () => {
       server_node_role: "worker",
       stackkit_foundation: "basement-kit",
       requested_services: ["vault"],
-      server_remote_host: "82.165.251.178",
+      server_remote_host: "203.0.113.81",
       server_remote_port: 22,
       server_remote_user: "root",
       server_remote_auth_method: "password",
@@ -95,7 +95,7 @@ describe("renewNodePairing", () => {
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
       stack_id: "deployment-1",
       server_provisioning_mode: "connect-remote",
-      server_remote_host: "82.165.251.178",
+      server_remote_host: "203.0.113.81",
       server_remote_port: 22,
       server_remote_user: "root",
       server_remote_auth_method: "password",

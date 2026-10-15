@@ -21,13 +21,12 @@ import {
 import { tr, stateLabel } from "#lib/i18n.svelte.js";
 /**
  * Platform components every StackKit brings along. They are real services,
- * but not what an owner opens day to day, so the dashboards fold them behind
- * "+ N system services" instead of spending an app tile on them.
+ * but not what an owner opens day to day, so the dashboards leave them to the
+ * server's own service list instead of spending an app tile on them. Pocket ID
+ * is not one of them: owners open it to manage their passkeys.
  */
 const SYSTEM_SERVICE_KEYS = new Set([
   "traefik",
-  "pocket-id",
-  "pocketid",
   "tinyauth",
   "crowdsec",
   "dozzle",
@@ -52,8 +51,12 @@ function token(value: string | undefined | null): string {
     .replace(/[\s_]+/g, "-");
 }
 
+/** Catalog categories that never make an application on their own. */
+const NON_APP_CATEGORIES = new Set(["infra", "database", "unknown"]);
+
 export function isSystemService(service: CanonicalService): boolean {
   if (token(service.application_key) === "system") return true;
+  if (token(service.catalog?.category) === "infra") return true;
   return [service.application_key, service.service_key, service.name].some(
     (candidate) => SYSTEM_SERVICE_KEYS.has(token(candidate)),
   );
@@ -82,16 +85,75 @@ function isPrimary(service: CanonicalService, primary: Set<string>): boolean {
 }
 
 export interface NodeApps {
-  /** User apps, the selected use cases' primary services first. */
+  /**
+   * One entry per user application with a UI: the component that speaks for
+   * it (the one to open), the selected use cases' primary services first.
+   */
   apps: CanonicalService[];
-  /** Platform components, folded behind "+ N system services". */
+  /** Everything else on the Node: platform, databases, units without a UI. */
   system: CanonicalService[];
+  /** Every component of an application, keyed by its `apps` entry's id. */
+  members: Record<string, CanonicalService[]>;
+}
+
+/** The web address a component can be opened at, if one is known. */
+function componentOpenUrl(service: CanonicalService): string | undefined {
+  const address = (service.internal_address || "").trim();
+  return (
+    serviceAccessUrl(service) ??
+    (/^https?:\/\/[^\s]+$/.test(address) ? address : undefined)
+  );
+}
+
+/** A recognized application whose catalog entry is not plumbing or storage. */
+function isCatalogApp(service: CanonicalService): boolean {
+  const catalog = service.catalog;
+  return Boolean(
+    catalog &&
+    catalog.id !== "custom" &&
+    !NON_APP_CATEGORIES.has(token(catalog.category)),
+  );
 }
 
 /**
- * The services placed on one Node, split and ordered for display. A service
+ * Whether an owner opens this component in a browser: it has a web address,
+ * or the catalog knows it as an application with a web UI.
+ */
+export function hasUserInterface(service: CanonicalService): boolean {
+  return Boolean(componentOpenUrl(service)) || isCatalogApp(service);
+}
+
+/** The component that speaks for an application on its tile. */
+function representative(members: CanonicalService[]): CanonicalService {
+  return (
+    members.find((member) => serviceAccessUrl(member)) ??
+    members.find(isCatalogApp) ??
+    members.find((member) => componentOpenUrl(member)) ??
+    members[0]
+  );
+}
+
+/** Where an application opens: its representative first, then any member. */
+export function applicationOpenUrl(
+  members: readonly CanonicalService[],
+): string | undefined {
+  for (const member of members) {
+    const url = serviceAccessUrl(member);
+    if (url) return url;
+  }
+  for (const member of members) {
+    const url = componentOpenUrl(member);
+    if (url) return url;
+  }
+  return undefined;
+}
+
+/**
+ * The services placed on one Node, folded into applications. A service
  * belongs to a Node only through its recorded `server_id`; nothing is placed
- * by name or guess.
+ * by name or guess. Components of one application (a web UI and its backend)
+ * share the application key and become one entry; only applications with a
+ * UI are apps, the rest stays with the server's own service list.
  */
 export function nodeApps(
   services: readonly CanonicalService[],
@@ -101,16 +163,79 @@ export function nodeApps(
   const placed = services.filter(
     (service) => service.server_id && serverIds.has(service.server_id),
   );
-  const apps = placed
-    .filter((service) => !isSystemService(service))
-    .sort(
-      (left, right) =>
-        Number(isPrimary(right, primary as Set<string>)) -
-          Number(isPrimary(left, primary as Set<string>)) ||
-        serviceDisplayName(left).localeCompare(serviceDisplayName(right)),
-    );
-  const system = placed.filter(isSystemService);
-  return { apps, system };
+  return foldApplications(placed, primary);
+}
+
+/**
+ * Services folded into applications: everything a user opens through a UI
+ * (Immich, Hermes, a kombify tool running on the server). Components of one
+ * application share its key and become one entry; platform services, databases
+ * and units without a UI stay services.
+ */
+export function foldApplications(
+  placed: readonly CanonicalService[],
+  primary: ReadonlySet<string> = new Set(),
+): NodeApps {
+  const groups = new Map<string, CanonicalService[]>();
+  const system: CanonicalService[] = [];
+  for (const service of placed) {
+    if (isSystemService(service)) {
+      system.push(service);
+      continue;
+    }
+    const key = token(service.application_key) || `service:${service.id}`;
+    const group = groups.get(key);
+    if (group) group.push(service);
+    else groups.set(key, [service]);
+  }
+  const apps: CanonicalService[] = [];
+  const members: Record<string, CanonicalService[]> = {};
+  for (const group of groups.values()) {
+    if (!group.some(hasUserInterface)) {
+      system.push(...group);
+      continue;
+    }
+    const lead = representative(group);
+    apps.push(lead);
+    members[lead.id] = group;
+  }
+  apps.sort(
+    (left, right) =>
+      Number(isPrimary(right, primary as Set<string>)) -
+        Number(isPrimary(left, primary as Set<string>)) ||
+      serviceDisplayName(left).localeCompare(serviceDisplayName(right)),
+  );
+  return { apps, system, members };
+}
+
+/** An app is stacked when any of its components is governed by a StackKit. */
+export function isStackedApp(members: readonly CanonicalService[]): boolean {
+  return members.some((member) => member.management_state === "managed");
+}
+
+/**
+ * Once the StackKit on a Node is rolled out cleanly (its manifest is observed
+ * and it governs at least one app), the Node shows only the apps it deployed;
+ * the unstacked ones it found stay with the server's own service list. Until
+ * then every found app shows, so Techstack also works on servers without a
+ * StackKit.
+ */
+export function stackedAppsOnly(
+  found: NodeApps,
+  manifestObserved: boolean,
+): NodeApps {
+  const stacked = (app: CanonicalService) =>
+    isStackedApp(found.members[app.id] ?? [app]);
+  if (!manifestObserved || !found.apps.some(stacked)) return found;
+  const hidden = found.apps.filter((app) => !stacked(app));
+  return {
+    apps: found.apps.filter(stacked),
+    system: [
+      ...found.system,
+      ...hidden.flatMap((app) => found.members[app.id] ?? [app]),
+    ],
+    members: found.members,
+  };
 }
 
 export function serviceDisplayName(service: CanonicalService): string {
@@ -156,6 +281,21 @@ export function serviceState(service: CanonicalService): {
   return { label: state ? statusLabel(state) : "", tone: "off" };
 }
 
+/**
+ * The tile status of an application: a failing component speaks for the
+ * whole application, otherwise its representative does.
+ */
+export function applicationState(
+  lead: CanonicalService,
+  members: readonly CanonicalService[] = [lead],
+): { label: string; tone: ServiceTone } {
+  for (const member of members) {
+    const state = serviceState(member);
+    if (state.tone === "error") return state;
+  }
+  return serviceState(lead);
+}
+
 export function serviceAccessUrl(
   service: CanonicalService,
 ): string | undefined {
@@ -189,6 +329,16 @@ const PLACEMENT_LABELS: Record<string, string> = {
     return tr("ui.homelabModel.managedVPS");
   },
 };
+
+/** Where a Node runs, as the Local/Cloud class its application cards show. */
+export function offeringPlacement(
+  offering: string | undefined,
+): "local" | "cloud" | undefined {
+  const key = (offering || "").trim();
+  if (key === "self_owned_device") return "local";
+  if (key === "external_vps" || key === "managed_vps") return "cloud";
+  return undefined;
+}
 
 export function placementLabel(offering: string | undefined): string {
   const key = (offering || "").trim();
@@ -279,6 +429,25 @@ export interface NodeView {
   disk: number | null;
   apps: CanonicalService[];
   system: CanonicalService[];
+  /** Every component of each app, keyed by the app entry's id. */
+  members: Record<string, CanonicalService[]>;
+  /** When the Node joined the homelab; empty when no source reports it. */
+  addedAt: string;
+}
+
+/**
+ * Nodes in the order they joined: a new Node lands at the end of the list
+ * instead of pushing the running ones down. Nodes without a join time keep
+ * their order after the dated ones.
+ */
+export function oldestFirst<T extends { addedAt: string }>(
+  nodes: readonly T[],
+): T[] {
+  const time = (node: T) => {
+    const value = Date.parse(node.addedAt);
+    return Number.isNaN(value) ? Number.POSITIVE_INFINITY : value;
+  };
+  return [...nodes].sort((a, b) => time(a) - time(b));
 }
 
 function canonicalRole(canonical: CanonicalServer): string {
@@ -304,7 +473,10 @@ export function buildNodeViews(
         (value): value is string => Boolean(value),
       ),
     );
-    const { apps, system } = nodeApps(services, ids, primary);
+    const { apps, system, members } = stackedAppsOnly(
+      nodeApps(services, ids, primary),
+      server.capabilities?.stackkit_manifest_observed === true,
+    );
     const kit = serverStackKitName(server);
     return {
       key: `${server.kit_deployment_id}:${server.id}`,
@@ -332,10 +504,12 @@ export function buildNodeViews(
       disk: meterPercent(server.health?.disk_percent),
       apps,
       system,
+      members,
+      addedAt: canonical?.created_at || server.approved_at || "",
     };
   });
   const registryOnly = canonicalOnly.map((canonical): NodeView => {
-    const { apps, system } = nodeApps(
+    const { apps, system, members } = nodeApps(
       services,
       new Set([canonical.id, canonical.worker_id || ""].filter(Boolean)),
       primary,
@@ -356,9 +530,11 @@ export function buildNodeViews(
       disk: null,
       apps,
       system,
+      members,
+      addedAt: canonical.created_at,
     };
   });
-  return [...live, ...registryOnly];
+  return oldestFirst([...live, ...registryOnly]);
 }
 
 export interface NodeGroup<T> {

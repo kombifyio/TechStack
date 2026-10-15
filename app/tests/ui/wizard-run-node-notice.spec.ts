@@ -247,7 +247,11 @@ test.describe("wizard run notice", () => {
     const node = page
       .getByTestId("node-row")
       .filter({ hasText: "cloudreve-box" });
-    const notice = node.getByTestId("wizard-run-banner");
+    // One status line on the Node itself; the banner opens above it on click.
+    await node.getByTestId("node-message-toggle").click();
+    const notice = page
+      .getByTestId("node-message-overlay")
+      .getByTestId("wizard-run-banner");
     await expect(notice).toContainText("Rolling out Cloudreve");
     await expect(page.getByTestId("wizard-run-banner")).toHaveCount(1);
   });
@@ -273,6 +277,7 @@ test.describe("wizard run notice", () => {
     const calls = await mockDashboard(page, activeRun(new Date()));
     await page.goto("/dashboard");
 
+    await page.getByTestId("node-message-toggle").click();
     await page.getByTestId("wizard-run-banner-cancel").click();
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
     expect(calls.abandon).toBe(0);

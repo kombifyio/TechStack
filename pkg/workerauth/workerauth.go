@@ -1,6 +1,7 @@
 package workerauth
 
 import (
+	"crypto/hkdf"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -50,16 +51,103 @@ type OpaqueTokenContext struct {
 	Generation     int64
 }
 
-func SecretFromEnv() []byte {
-	secret := firstNonEmpty(
+// StrictSecretEnv, when true, makes the dedicated worker secret mandatory: the
+// platform-wide SERVICE_AUTH_SECRET is then never used to sign or derive worker
+// credentials. Turn it on once TECHSTACK_WORKER_AGENT_TOKEN_SECRET is
+// provisioned; it fails a deployment that lacks the dedicated secret at boot
+// (ErrDedicatedSecretRequired) instead of silently sharing one key between the
+// service identity and every worker credential.
+const StrictSecretEnv = "TECHSTACK_WORKER_SECRET_STRICT"
+
+// ErrDedicatedSecretRequired reports strict mode without a dedicated secret.
+var ErrDedicatedSecretRequired = errors.New("workerauth: " + StrictSecretEnv + " requires TECHSTACK_WORKER_AGENT_TOKEN_SECRET")
+
+func dedicatedSecret() string {
+	return firstNonEmpty(
 		os.Getenv("TECHSTACK_WORKER_AGENT_TOKEN_SECRET"),
 		os.Getenv("TECHSTACK_WORKER_TOKEN_SECRET"),
-		os.Getenv("SERVICE_AUTH_SECRET"),
 	)
+}
+
+// Strict reports whether the dedicated secret is mandatory.
+func Strict() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(StrictSecretEnv))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// SharesServiceSecret reports that worker credentials are keyed with the
+// platform-wide SERVICE_AUTH_SECRET because no dedicated secret is configured.
+func SharesServiceSecret() bool {
+	return dedicatedSecret() == "" && !Strict() && strings.TrimSpace(os.Getenv("SERVICE_AUTH_SECRET")) != ""
+}
+
+// CheckStrict fails when strict mode is on and the dedicated secret is missing.
+func CheckStrict() error {
+	if Strict() && dedicatedSecret() == "" {
+		return ErrDedicatedSecretRequired
+	}
+	return nil
+}
+
+// SecretFromEnv returns the base secret of worker credentials: the dedicated
+// secret, or, unless strict mode forbids it, the service secret.
+func SecretFromEnv() []byte {
+	secret := dedicatedSecret()
+	if secret == "" && !Strict() {
+		secret = strings.TrimSpace(os.Getenv("SERVICE_AUTH_SECRET"))
+	}
 	if secret == "" {
 		return nil
 	}
 	return []byte(secret)
+}
+
+// NextSecretFromEnv returns the rotation successor of the shared service secret
+// (SERVICE_AUTH_SECRET_NEXT) while worker credentials are keyed with it. A
+// dedicated worker secret has its own rotation, so then there is no successor.
+// Credentials are verified against it after the current secret and never
+// signed with it.
+func NextSecretFromEnv() []byte {
+	if dedicatedSecret() != "" || Strict() {
+		return nil
+	}
+	next := strings.TrimSpace(os.Getenv("SERVICE_AUTH_SECRET_NEXT"))
+	if next == "" || next == strings.TrimSpace(os.Getenv("SERVICE_AUTH_SECRET")) {
+		return nil
+	}
+	return []byte(next)
+}
+
+// VerifyRotating verifies a signed worker token against the current secret and,
+// while a SERVICE_AUTH_SECRET rotation is open, against its successor.
+func VerifyRotating(token string, now time.Time) (Claims, error) {
+	claims, err := Verify(SecretFromEnv(), token, now)
+	if err == nil || errors.Is(err, ErrExpiredToken) {
+		return claims, err
+	}
+	if next := NextSecretFromEnv(); len(next) > 0 {
+		if nextClaims, nextErr := Verify(next, token, now); nextErr == nil || errors.Is(nextErr, ErrExpiredToken) {
+			return nextClaims, nextErr
+		}
+	}
+	return claims, err
+}
+
+// PurposeKey derives one key per purpose from the base secret (HKDF-SHA256,
+// the purpose is the info label). A token minted for one purpose never verifies
+// under another, and a leak of a derived key does not reveal the base secret.
+func PurposeKey(base []byte, purpose string) []byte {
+	if len(base) == 0 || strings.TrimSpace(purpose) == "" {
+		return nil
+	}
+	key, err := hkdf.Key(sha256.New, base, nil, "kombify-techstack/worker-auth/"+purpose, 32)
+	if err != nil {
+		return nil
+	}
+	return key
 }
 
 func Issue(secret []byte, claims Claims, now time.Time, ttl time.Duration) (string, error) {

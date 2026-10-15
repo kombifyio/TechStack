@@ -25,6 +25,7 @@ import (
 // must satisfy to open mutations: the at-most-once executor plus the opaque
 // custody authority that native admission materializes per tenant subject.
 type managedProviderAdapter interface {
+	providercontrol.ProviderCreateRegionResolver
 	providercontrol.AtMostOnceProvisionExecutor
 	providercontrol.ManagedProviderSafetyReporter
 	ManagedCredentialAuthority() providercontrol.ManagedCredentialAuthority

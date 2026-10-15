@@ -101,8 +101,10 @@ export async function hydrateStackIdentityFromBackend(): Promise<StackIdentitySe
 
 export async function saveStackIdentityToBackend(
   identity: StackIdentity,
+  isCurrent: () => boolean = () => true,
 ): Promise<StackIdentitySettingsResponse> {
   const response = await updateStackIdentitySettings(identity);
+  if (!isCurrent()) return response;
   setStackIdentity(response.stack_identity ?? identity);
   void syncStackIdentityWithCloud();
   return response;

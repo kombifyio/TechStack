@@ -17,6 +17,11 @@ var ErrCleanupReadbackUnavailable = errors.New("monthlyruntime: cleanup readback
 // CleanupReadbackSource is the narrow, read-only provider-control seam used
 // after monthly-runtime authorization has completed. It deliberately exposes
 // neither provider resource identifiers nor provider credentials.
+// BackupStoreReadback answers whether a stack's off-site backup bucket is gone.
+type BackupStoreReadback interface {
+	BackupStoreAbsent(ctx context.Context, tenantID, stackID string) (bool, error)
+}
+
 type CleanupReadbackSource interface {
 	ReadManagedRuntimeCleanup(context.Context, string, vmlease.LeaseID) (*CleanupReadbackFacts, error)
 }
@@ -47,6 +52,11 @@ type CleanupReadback struct {
 		Bound    bool `json:"bound"`
 		Terminal bool `json:"terminal"`
 	} `json:"server"`
+	// BackupStore is true once the stack's off-site bucket is wiped (or never
+	// existed). Inside the retention window it is false.
+	BackupStore struct {
+		Absent bool `json:"absent"`
+	} `json:"backup_store"`
 	ProviderOperation struct {
 		Found              bool   `json:"found"`
 		Terminal           bool   `json:"terminal"`

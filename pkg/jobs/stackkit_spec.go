@@ -22,6 +22,9 @@ const (
 	metadataKeyKombifyMeAddressLayout = "kombify_me_address_layout"
 	metadataKeyKombifyMeAddressZone   = "kombify_me_address_zone"
 	metadataKeyKombifyMeLoginHost     = "kombify_me_login_host"
+	// metadataKeyKombifyMeRouteHosts lists the registered route hostnames
+	// (comma separated, sorted) the managed origin certificate covers.
+	metadataKeyKombifyMeRouteHosts = "kombify_me_route_hosts"
 )
 
 func stackKitSpecBytesForPayload(specData interface{}) ([]byte, error) {
@@ -46,7 +49,7 @@ func stackKitSpecBytesForPayload(specData interface{}) ([]byte, error) {
 	if _, ok := shaped["stackkit"]; !ok {
 		return nil, nil
 	}
-	return yaml.Marshal(stackKitSpecWithManagedRuntimeDefaults(shaped))
+	return yaml.Marshal(shaped)
 }
 
 // provisionSpecFromCanonicalV2 keeps the provision payload's runtime fields
@@ -70,18 +73,6 @@ func provisionSpecFromCanonicalV2(payload, projected map[string]interface{}) map
 	if strings.TrimSpace(stringFromInterface(next["name"])) == "" {
 		next["name"] = stringFromInterface(mapFromInterface(projected["metadata"])["name"])
 	}
-	return next
-}
-
-func stackKitSpecWithManagedRuntimeDefaults(spec map[string]interface{}) map[string]interface{} {
-	if !stackKitSpecUsesManagedRuntime(spec) {
-		return spec
-	}
-	next := make(map[string]interface{}, len(spec)+1)
-	for key, value := range spec {
-		next[key] = value
-	}
-	next["mode"] = "bootstrapped"
 	return next
 }
 

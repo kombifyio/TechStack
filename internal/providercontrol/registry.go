@@ -20,6 +20,8 @@ type Registry struct {
 }
 
 type registeredAdapter struct {
+	providerID    string
+	createRegion  func(string, string) (string, error)
 	crashReadOnly CrashRecoverableReadOnlyExecutor
 	crashMutation CrashRecoverableMutationExecutor
 	crashRecovery CrashRecoveryCapability
@@ -186,6 +188,14 @@ func (r *Registry) RegisterAtMostOnceProvision(adapterID string, executor AtMost
 	r.adapters[adapterID] = registeredAdapter{
 		atMostOnce: executor, reconcile: reconcile, resolution: resolution, manifestHash: capability.AdapterManifestHash,
 		continuationManifestHashes: continuationManifestHashSet(capability.CompatibleContinuationManifestHashes),
+	}
+	if resolver, ok := executor.(ProviderCreateRegionResolver); ok {
+		if reporter, ok := executor.(ManagedProviderSafetyReporter); ok {
+			registered := r.adapters[adapterID]
+			registered.providerID = reporter.ProviderSafetyCapabilities().ProviderID
+			registered.createRegion = resolver.ProviderCreateRegion
+			r.adapters[adapterID] = registered
+		}
 	}
 	return nil
 }

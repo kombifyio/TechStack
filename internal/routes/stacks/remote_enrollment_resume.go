@@ -1,6 +1,7 @@
 package stacks
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -10,12 +11,18 @@ import (
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
+	"github.com/kombifyio/techstack/pkg/kombifywallet"
 	"github.com/kombifyio/techstack/pkg/specv2"
 )
 
 type resumeRemoteEnrollmentRequest struct {
 	PairingJobID string `json:"pairing_job_id"`
-	Password     string `json:"password"`
+	// Password refreshes the legacy wallet's stored SSH password. A deployment
+	// that reads the kombify Wallet refuses it.
+	Password string `json:"password"`
+	// SSHWalletItemID rebinds the stack to another kombify Wallet node access
+	// item before the retry. Legacy deployments refuse it.
+	SSHWalletItemID string `json:"ssh_wallet_item_id,omitempty"`
 }
 
 // resumeRemoteEnrollment retries connect-remote Guard enrollment using the
@@ -73,7 +80,13 @@ func (h wizardRunHandlers) resumeRemoteEnrollment(e *httpx.Event) error {
 		tenantID: tenantID,
 		ownerID:  ownerID,
 	}
-	if password := strings.TrimSpace(req.Password); password != "" {
+	if h.cfg.KombifyWallet != nil {
+		if denial := h.rebindRemoteWalletItem(e.Request.Context(), run, stack, req); denial != nil {
+			return denial.Write(e)
+		}
+	} else if strings.TrimSpace(req.SSHWalletItemID) != "" {
+		return kombifywallet.ItemUnsupported().Write(e)
+	} else if password := strings.TrimSpace(req.Password); password != "" {
 		remote := &wizardRunRemoteParams{
 			Host:       runtimeStringFromConfig(stack.Config, "server_remote_host"),
 			User:       runtimeStringFromConfig(stack.Config, "server_remote_user"),
@@ -102,6 +115,9 @@ func (h wizardRunHandlers) resumeRemoteEnrollment(e *httpx.Event) error {
 	}
 
 	if _, credErr := h.resolveWizardRemoteCredentials(e.Request.Context(), run, stackID); credErr != nil {
+		if denial := walletDenialOrNil(credErr); denial != nil {
+			return denial.Write(e)
+		}
 		return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict,
 			"Persisted remote SSH credentials are unavailable", wizardRunDetails(
 				"remote_enrollment_credentials_missing", true,
@@ -153,6 +169,7 @@ func (h wizardRunHandlers) resumeRemoteEnrollment(e *httpx.Event) error {
 		"server_remote_user":               runtimeStringFromConfig(stack.Config, "server_remote_user"),
 		"server_remote_port":               stack.Config["server_remote_port"],
 		"server_remote_auth_method":        runtimeStringFromConfig(stack.Config, "server_remote_auth_method"),
+		"server_remote_credential_item_id": runtimeStringFromConfig(stack.Config, stackConfigKeyRemoteCredentialItemID),
 		"server_remote_credential_ref": firstNonEmpty(
 			runtimeStringFromConfig(stack.Config, "server_remote_credential_ref"),
 			runtimeStringFromConfig(stack.Config, "server_remote_ssh_key_label"),
@@ -219,4 +236,44 @@ func (h wizardRunHandlers) mintRemoteEnrollmentPairing(e *httpx.Event, run *wiza
 		return minted, true
 	}
 	return minted, false
+}
+
+// rebindRemoteWalletItem handles the resume request of a deployment that reads
+// the kombify Wallet. A plaintext password is refused; an item id rebinds the
+// stack's persisted connection to that node access item before the retry.
+func (h wizardRunHandlers) rebindRemoteWalletItem(ctx context.Context, run *wizardRunState, stack *controlplane.Stack, req resumeRemoteEnrollmentRequest) *kombifywallet.Denial {
+	if strings.TrimSpace(req.Password) != "" {
+		return kombifywallet.ItemRequired()
+	}
+	itemID := strings.TrimSpace(req.SSHWalletItemID)
+	if itemID == "" {
+		return nil
+	}
+	if !kombifywallet.IsItemID(itemID) {
+		return kombifywallet.ItemInvalid()
+	}
+	remote := &wizardRunRemoteParams{
+		Host:            runtimeStringFromConfig(stack.Config, "server_remote_host"),
+		User:            runtimeStringFromConfig(stack.Config, "server_remote_user"),
+		AuthMethod:      runtimeStringFromConfig(stack.Config, "server_remote_auth_method"),
+		SSHWalletItemID: itemID,
+		UseSudo:         remoteUseSudoFromConfig(stack.Config),
+	}
+	switch typed := stack.Config["server_remote_port"].(type) {
+	case int:
+		remote.Port = &typed
+	case float64:
+		port := int(typed)
+		remote.Port = &port
+	}
+	run.request.Remote = remote
+	run.request.Intent.Server.Transport = specv2.TransportConnectRemote
+	defer func() { run.request.Remote = nil }()
+	if err := h.persistWizardRemoteConnectionBinding(ctx, run, stack.ID); err != nil {
+		if denial := walletDenialOrNil(err); denial != nil {
+			return denial
+		}
+		return kombifywallet.ItemInvalid()
+	}
+	return nil
 }

@@ -17,7 +17,12 @@ import (
 )
 
 type productAlertNotifier struct {
-	outbox *productnotifications.Outbox
+	outbox productAlertOutbox
+}
+
+type productAlertOutbox interface {
+	ResolveWorkerRecipient(context.Context, string, string) (string, error)
+	Enqueue(context.Context, productnotifications.ProductEvent) error
 }
 
 const notificationSourceApp = "techstack"
@@ -63,6 +68,9 @@ func (n *rilSignalAlertNotifier) Notify(ctx context.Context, alert monitoring.Al
 	}
 	firedAt := alert.FiredAt.UTC()
 	identity := stableAlertIdentity(tenantID, serverID, alert.RuleName, firedAt.Format(time.RFC3339Nano))
+	if eventID := firstNotificationLabel(alert.Labels, "event_id"); eventID != "" {
+		identity = stableAlertIdentity(tenantID, serverID, firstNotificationLabel(alert.Labels, "drive_id"), eventID)
+	}
 	_, _, err := n.outbox.Emit(ctx, signals.Observation{
 		DedupeKey: "monitor:" + identity, TenantID: tenantID, UserID: ownerID, ServerID: serverID,
 		Source: source, Severity: severity, RecommendedAction: alert.Message,
@@ -99,6 +107,10 @@ func (n *productAlertNotifier) Notify(ctx context.Context, alert monitoring.Aler
 		occurredAt = *alert.ResolvedAt
 	}
 	key := fmt.Sprintf("techstack-monitor:%s:%s:%s:%d", organizationID, recipient, alert.RuleName, occurredAt.UTC().UnixNano())
+	if eventID := firstNotificationLabel(alert.Labels, "event_id"); eventID != "" {
+		key = "techstack-monitor:" + stableAlertIdentity(organizationID, recipient,
+			firstNotificationLabel(alert.Labels, "server_id"), firstNotificationLabel(alert.Labels, "drive_id"), eventID, transition)
+	}
 	return n.outbox.Enqueue(ctx, productnotifications.ProductEvent{
 		Topic: topic, Auth0UserID: recipient, OrganizationID: organizationID, IdempotencyKey: key,
 		Payload: map[string]any{

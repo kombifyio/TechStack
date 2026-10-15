@@ -96,9 +96,20 @@ func VerifyExpectedDatabaseIdentity(ctx context.Context, querier migrationTableQ
 	}
 	systemIdentifier := ""
 	if pin.SystemIdentifier != "" {
+		query := "SELECT system_identifier::text FROM pg_catalog.pg_control_system()"
+		if os.Getenv(EnvManagedTestAssignment) != "" {
+			a, err := LoadManagedTestAssignment()
+			if err != nil {
+				return err
+			}
+			if err := a.VerifyPin(); err != nil {
+				return err
+			}
+			query = "SELECT system_identifier FROM public.techstack_test_database_identity()"
+		}
 		if err := querier.QueryRowContext(
 			ctx,
-			"SELECT system_identifier::text FROM pg_catalog.pg_control_system()",
+			query,
 		).Scan(&systemIdentifier); err != nil {
 			return fmt.Errorf(
 				"%s pins a system_identifier but pg_control_system() is not readable on this connection; refusing to migrate an unverified database: %w",

@@ -22,6 +22,11 @@ type GoalAuthoring struct {
 	// ModuleProfiles associates each newly authored workload with its
 	// release-owned module profile intent. Seed-owned workloads remain intact.
 	ModuleProfiles map[string]map[string]any
+	// Routes and access policies are authored by the selected release module,
+	// not synthesized from an application name by Techstack.
+	Routes         map[string]map[string]any
+	AccessPolicies map[string]map[string]any
+	DataBindings   map[string]map[string]any
 	UnmappedGoals  []string
 }
 
@@ -125,6 +130,9 @@ func (p *ReleaseProjector) Project(ctx context.Context, seed map[string]any, int
 			return nil, err
 		}
 	}
+	if intent.Backup.Offsite {
+		enableCapability(spec, OffsiteBackupCapability)
+	}
 	DropBindingRejectedFields(spec)
 	if err := RequireCanonicalV2(spec); err != nil {
 		return nil, fmt.Errorf("specv2: projected spec: %w", err)
@@ -224,11 +232,7 @@ func reservedDomain(domain string) bool {
 
 func applyJoinOrFoundGoals(ctx context.Context, p *ReleaseProjector, spec map[string]any, intent WizardIntent, result *Projection) error {
 	if p == nil || p.author == nil {
-		if hasSmartHomeSelection(intent) {
-			return fmt.Errorf("specv2: Smart Home selection requires pinned release authoring")
-		}
-		result.UnmappedGoals = appendUnmappedGoals(result.UnmappedGoals, intent.Goals)
-		return nil
+		return fmt.Errorf("specv2: selected goals require pinned release authoring")
 	}
 	kit, _ := spec["kit"].(map[string]any)
 	kitSlug, _ := kit["slug"].(string)
@@ -237,11 +241,13 @@ func applyJoinOrFoundGoals(ctx context.Context, p *ReleaseProjector, spec map[st
 	domainBase, _ := domain["base"].(string)
 	apiVersion, _ := spec["apiVersion"].(string)
 	selection := GoalSelection{Goals: intent.Goals}
-	if len(intent.UseCaseSettings) > 0 && p.catalog != nil {
+	var aiCatalog *stackkitrelease.UseCaseCatalog
+	if (len(intent.UseCaseSettings) > 0 || len(intent.UseCaseCapabilities) > 0) && p.catalog != nil {
 		catalog, err := p.catalog()
 		if err != nil {
 			return fmt.Errorf("specv2: read the release use-case catalog for the selected settings: %w", err)
 		}
+		aiCatalog = &catalog
 		if selection, err = goalSelectionFromIntent(intent, catalog); err != nil {
 			return err
 		}
@@ -249,9 +255,6 @@ func applyJoinOrFoundGoals(ctx context.Context, p *ReleaseProjector, spec map[st
 			return err
 		}
 	}
-	// An explicit installing choice fails loudly instead of degrading into an
-	// unmapped goal the operator believes is installed.
-	explicit := hasSmartHomeSelection(intent) || selection.hasInstallChoices()
 	authored, err := p.author.AuthorGoals(
 		ctx,
 		strings.TrimSpace(kitSlug),
@@ -261,21 +264,23 @@ func applyJoinOrFoundGoals(ctx context.Context, p *ReleaseProjector, spec map[st
 		selection,
 	)
 	if err != nil {
-		if explicit {
-			return fmt.Errorf("specv2: the selected installation needs release authoring: %w", err)
-		}
-		result.UnmappedGoals = appendUnmappedGoals(result.UnmappedGoals, intent.Goals)
-		return nil
+		return fmt.Errorf("specv2: the selected installation needs release authoring: %w", err)
 	}
 	if err := proposeSmartHomeSelection(spec, intent, &authored); err != nil {
 		return err
 	}
-	if err := applyAuthoredWorkloads(spec, authored); err != nil {
-		if explicit {
-			return err
+	if aiCatalog == nil && slices.Contains(intent.Goals, privateAIUseCase) && p.catalog != nil {
+		// Untouched AI settings still install their release defaults; without
+		// a readable catalog nothing is claimed, exactly as before.
+		if catalog, err := p.catalog(); err == nil {
+			aiCatalog = &catalog
 		}
-		result.UnmappedGoals = appendUnmappedGoals(result.UnmappedGoals, intent.Goals)
-		return nil
+	}
+	if aiCatalog != nil {
+		proposePrivateAISettings(intent, *aiCatalog, &authored)
+	}
+	if err := applyAuthoredWorkloads(spec, authored); err != nil {
+		return err
 	}
 	result.UnmappedGoals = appendUnmappedGoals(result.UnmappedGoals, authored.UnmappedGoals)
 	return nil
@@ -403,6 +408,12 @@ func appendJoinNode(spec map[string]any, server ServerIntent) (string, error) {
 // seed does not already carry (a seed-owned entry wins). Secret references stay
 // release-owned so the CLI can establish local owner-bound custody at init.
 func applyAuthoredWorkloads(spec map[string]any, authored GoalAuthoring) error {
+	accessIntent := map[string]any{}
+	for _, section := range []string{"routes", "access", "data"} {
+		if value, found := spec[section]; found {
+			accessIntent[section] = deepCopyValue(value)
+		}
+	}
 	workloads, _ := spec["workloads"].(map[string]any)
 	workloads, _ = deepCopyValue(workloads).(map[string]any)
 	if workloads == nil {
@@ -442,6 +453,27 @@ func applyAuthoredWorkloads(spec map[string]any, authored GoalAuthoring) error {
 			}
 			modules[moduleID] = deepCopyValue(profile)
 		}
+		if err := mergeAuthoredWorkloadAccess(accessIntent, id, authored); err != nil {
+			return err
+		}
+		if len(authored.DataBindings[id]) > 0 {
+			data, _ := accessIntent["data"].(map[string]any)
+			if data == nil {
+				data = map[string]any{}
+				accessIntent["data"] = data
+			}
+			bindings, _ := data["bindings"].(map[string]any)
+			if bindings == nil {
+				bindings = map[string]any{}
+				data["bindings"] = bindings
+			}
+			for ref, binding := range authored.DataBindings[id] {
+				// Existing placement/classification remains customer intent.
+				if _, owned := bindings[ref]; !owned {
+					bindings[ref] = deepCopyValue(binding)
+				}
+			}
+		}
 		workloads[id] = entry
 	}
 	if len(workloads) > 0 {
@@ -449,6 +481,29 @@ func applyAuthoredWorkloads(spec map[string]any, authored GoalAuthoring) error {
 	}
 	if len(modules) > 0 {
 		spec["modules"] = modules
+	}
+	for section, value := range accessIntent {
+		spec[section] = value
+	}
+	return nil
+}
+
+func mergeAuthoredWorkloadAccess(spec map[string]any, workload string, authored GoalAuthoring) error {
+	for section, entries := range map[string]map[string]any{"routes": authored.Routes[workload], "access": authored.AccessPolicies[workload]} {
+		if len(entries) == 0 {
+			continue
+		}
+		owned, _ := spec[section].(map[string]any)
+		if owned == nil {
+			owned = map[string]any{}
+			spec[section] = owned
+		}
+		for ref, value := range entries {
+			if existing, found := owned[ref]; found && !reflect.DeepEqual(existing, value) {
+				return fmt.Errorf("specv2: authored workload %q conflicts with existing %s intent %q", workload, section, ref)
+			}
+			owned[ref] = deepCopyValue(value)
+		}
 	}
 	return nil
 }
@@ -577,3 +632,20 @@ func deepCopyValue(value any) any {
 }
 
 var _ Projector = (*ReleaseProjector)(nil)
+
+// enableCapability adds one optional kit capability to capabilities.enable,
+// keeping the seed's existing selections. The pinned CLI validates the result.
+func enableCapability(spec map[string]any, capability string) {
+	capabilities, _ := spec["capabilities"].(map[string]any)
+	if capabilities == nil {
+		capabilities = map[string]any{"enable": []any{}, "disable": []any{}}
+		spec["capabilities"] = capabilities
+	}
+	enabled, _ := capabilities["enable"].([]any)
+	for _, existing := range enabled {
+		if existing == capability {
+			return
+		}
+	}
+	capabilities["enable"] = append(enabled, capability)
+}

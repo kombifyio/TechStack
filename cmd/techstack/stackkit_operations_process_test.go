@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kombifyio/techstack/internal/gocommon/runtimeexecutor"
+	"github.com/kombifyio/techstack/internal/selfhostcontracts/runtimeexecutor"
 )
 
 func TestStackKitOperationsProcessUsesFixedAuthenticatedBoundary(t *testing.T) {

@@ -13,7 +13,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/kombifyio/techstack/internal/gocommon/authsession"
 	"github.com/kombifyio/techstack/internal/executionchannel"
 	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
@@ -21,6 +20,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/demoguard"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/jobs"
+	"github.com/kombifyio/techstack/pkg/kombifywallet"
 	"github.com/kombifyio/techstack/pkg/middleware"
 	"github.com/kombifyio/techstack/pkg/serverregistry"
 	"github.com/google/uuid"
@@ -32,7 +32,6 @@ const (
 	terminalIdleLimit     = 10 * time.Minute
 	terminalHardLimit     = 60 * time.Minute
 	terminalReauthPurpose = "kombify.cloud.server-terminal.v1"
-	terminalReauthSkew    = 30 * time.Second
 )
 
 var shellIdentityPattern = regexp.MustCompile(`^[A-Za-z0-9._:@\[\]-]+$`)
@@ -43,12 +42,17 @@ type ServerTerminalRouteConfig struct {
 	Wallet   controlplane.WalletStore
 	Activity controlplane.ActivityStore
 	Now      func() time.Time
+	// KombifyWallet is the central kombify Wallet client. When set, a
+	// wallet_item_id that is a kombify Wallet item id is read from the Wallet;
+	// any other id keeps resolving against the legacy Wallet store.
+	KombifyWallet *kombifywallet.Client
 }
 
 type serverTerminalHandlers struct {
 	servers    controlplane.ServerRuntimeStore
 	targets    jobs.ManagedRuntimeTargetResolver
 	wallet     controlplane.WalletStore
+	kombify    *kombifywallet.Client
 	activity   controlplane.ActivityStore
 	now        func() time.Time
 	installKey func(context.Context, *jobs.ManagedRuntimeTarget, string, string) error
@@ -120,7 +124,7 @@ func RegisterServerTerminalRoutes(r *httpx.Router, cfg ServerTerminalRouteConfig
 		cfg.Now = func() time.Time { return time.Now().UTC() }
 	}
 	h := &serverTerminalHandlers{
-		servers: cfg.Servers, targets: cfg.Targets, wallet: cfg.Wallet, activity: cfg.Activity, now: cfg.Now,
+		servers: cfg.Servers, targets: cfg.Targets, wallet: cfg.Wallet, kombify: cfg.KombifyWallet, activity: cfg.Activity, now: cfg.Now,
 		installKey: installAuthorizedKey,
 		channel:    &executionchannel.Channel{Servers: cfg.Servers, Targets: cfg.Targets, Now: cfg.Now},
 		sessions:   map[string]*serverTerminalSession{}, active: map[string]string{},
@@ -159,7 +163,7 @@ func (h *serverTerminalHandlers) createSession(e *httpx.Event) error {
 	signature := firstNonEmptyWallet(request.ReauthSignature, e.Request.Header.Get("X-Kombify-Reauth-Signature"), e.Request.Header.Get("X-TechStack-Reauth-Signature"))
 	if !h.validReauth(e.Request.Context(), ownerID, server.ID, timestamp, signature) {
 		h.audit(e.Request.Context(), *server, ownerID, "server_terminal_denied", "warning", map[string]any{"error_class": "reauth_required"})
-		return httpx.Forbidden(e, "Fresh server-terminal re-authentication required")
+		return stepUpRequired(e, "Fresh server-terminal re-authentication required", serverAccessStepUpReason)
 	}
 	access := h.resolveAccess(e.Request.Context(), *server, ownerID)
 	if !access.TerminalEnabled {
@@ -202,7 +206,7 @@ func (h *serverTerminalHandlers) authorizeUserKey(e *httpx.Event) error {
 		return httpx.Error(e, http.StatusForbidden, ksapi.ErrCodeForbidden,
 			"This action is disabled on the kombify demo account", demoRestrictedDetails("runtime_ssh"))
 	}
-	if h.wallet == nil {
+	if h.wallet == nil && h.kombify == nil {
 		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Wallet custody is unavailable", nil)
 	}
 	if !executionchannel.OwnerSSHAccessFromMetadata(server.Metadata).Enabled() {
@@ -216,15 +220,11 @@ func (h *serverTerminalHandlers) authorizeUserKey(e *httpx.Event) error {
 	signature := firstNonEmptyWallet(request.ReauthSignature, e.Request.Header.Get("X-Kombify-Reauth-Signature"), e.Request.Header.Get("X-TechStack-Reauth-Signature"))
 	if !h.validReauth(e.Request.Context(), ownerID, server.ID, timestamp, signature) {
 		h.audit(e.Request.Context(), *server, ownerID, "server_ssh_key_denied", "warning", map[string]any{"error_class": "reauth_required"})
-		return httpx.Forbidden(e, "Fresh server-access re-authentication required")
+		return stepUpRequired(e, "Fresh server-access re-authentication required", serverAccessStepUpReason)
 	}
-	item, itemErr := h.wallet.GetWalletItem(e.Request.Context(), server.TenantID, strings.TrimSpace(request.WalletItemID))
-	if itemErr != nil || item == nil || !walletItemOwnedBy(item.Metadata, ownerID) {
-		return httpx.NotFound(e, "Wallet SSH key not found")
-	}
-	publicKey, userFingerprint, keyErr := walletSSHPublicKey(item)
-	if keyErr != nil {
-		return httpx.BadRequest(e, "Wallet item does not contain a valid SSH public key", nil)
+	publicKey, userFingerprint, ok := h.userPublicKey(e, *server, ownerID, strings.TrimSpace(request.WalletItemID))
+	if !ok {
+		return nil
 	}
 	target, targetErr := h.resolveTarget(e.Request.Context(), *server, ownerID)
 	if targetErr != nil || !executionchannel.HasCredential(target) {
@@ -264,6 +264,49 @@ func (h *serverTerminalHandlers) authorizeUserKey(e *httpx.Event) error {
 	return httpx.Success(e, http.StatusOK, h.resolveAccess(e.Request.Context(), *server, ownerID))
 }
 
+// userPublicKey reads the SSH public key to authorize. A kombify Wallet item
+// id is read through the kombify Wallet (the node access item's public key, or
+// the one derived from its private key); any other id is a legacy wallet row.
+// When it cannot produce a key it has already answered the request and ok is
+// false.
+func (h *serverTerminalHandlers) userPublicKey(e *httpx.Event, server controlplane.ServerRuntime, ownerID, itemID string) (publicKey, fingerprint string, ok bool) {
+	if h.kombify != nil && kombifywallet.IsItemID(itemID) {
+		access, err := h.kombify.NodeAccess(e.Request.Context(), ownerID, itemID)
+		if err != nil {
+			h.audit(e.Request.Context(), server, ownerID, "server_ssh_key_denied", "warning", map[string]any{"error_class": "wallet_item_unavailable"})
+			_ = kombifywallet.Denied(err).Write(e)
+			return "", "", false
+		}
+		defer access.Wipe()
+		publicKey, fingerprint, err = access.PublicKeyLine()
+		if err != nil {
+			_ = kombifywallet.Denied(err).Write(e)
+			return "", "", false
+		}
+		return publicKey, fingerprint, true
+	}
+	if h.kombify != nil {
+		// kombify Wallet mode never reads a legacy wallet_items row.
+		_ = kombifywallet.ItemInvalid().Write(e)
+		return "", "", false
+	}
+	if h.wallet == nil {
+		_ = httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Wallet custody is unavailable", nil)
+		return "", "", false
+	}
+	item, itemErr := h.wallet.GetWalletItem(e.Request.Context(), server.TenantID, itemID)
+	if itemErr != nil || item == nil || !walletItemOwnedBy(item.Metadata, ownerID) {
+		_ = httpx.NotFound(e, "Wallet SSH key not found")
+		return "", "", false
+	}
+	publicKey, fingerprint, keyErr := walletSSHPublicKey(item)
+	if keyErr != nil {
+		_ = httpx.BadRequest(e, "Wallet item does not contain a valid SSH public key", nil)
+		return "", "", false
+	}
+	return publicKey, fingerprint, true
+}
+
 func serverTerminalDemoRestricted(ctx context.Context, tenantID, ownerID string) bool {
 	if demoguard.IsDemoSubject(tenantID, ownerID) {
 		return true
@@ -291,15 +334,8 @@ func ownerSSHAccessDisabled(e *httpx.Event) error {
 }
 
 func (h *serverTerminalHandlers) validReauth(ctx context.Context, ownerID, resourceID, timestamp, signature string) bool {
-	if claims, err := authsession.ClaimsFrom(ctx); err == nil &&
-		claims.Subject == ownerID &&
-		claims.ReauthPurpose == terminalReauthPurpose &&
-		claims.ReauthResource == resourceID {
-		authenticatedAt := time.Unix(claims.AuthenticatedAt, 0).UTC()
-		age := h.now().UTC().Sub(authenticatedAt)
-		if claims.AuthenticatedAt > 0 && age <= walletReauthWindow && age >= -terminalReauthSkew {
-			return true
-		}
+	if verifySessionReauth(ctx, h.now(), ownerID, terminalReauthPurpose, resourceID) == nil {
+		return true
 	}
 	secret := walletReauthSecret()
 	if secret == "" {
@@ -316,6 +352,14 @@ func terminalStreamURL(request *http.Request, sessionID string) string {
 		defaultProto = "https"
 	}
 	proto := strings.ToLower(firstNonEmptyString(strings.TrimSpace(request.Header.Get("X-Forwarded-Proto")), defaultProto))
+	// The page that opens the stream is the authority on its own scheme. A
+	// proxy chain that drops X-Forwarded-Proto would otherwise hand an https
+	// page (for instance Techstack framed in the kombify Cloud dashboard) a
+	// ws:// URL, which the browser blocks as mixed content.
+	if origin, err := url.Parse(strings.TrimSpace(request.Header.Get("Origin"))); err == nil &&
+		strings.EqualFold(origin.Host, host) && (origin.Scheme == "https" || origin.Scheme == "http") {
+		proto = origin.Scheme
+	}
 	scheme := "wss"
 	if proto == "http" {
 		scheme = "ws"

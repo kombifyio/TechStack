@@ -17,8 +17,19 @@
     type HouseholdPlannedPerson,
   } from "#lib/api/homelabIdentity.js";
   import { ownerUsernameFromEmail } from "#lib/wizard/session-owner.js";
-  import { tr } from "#lib/i18n.svelte.js";
-  let { deploymentId }: { deploymentId: string } = $props();
+  import { tr, stateLabel } from "#lib/i18n.svelte.js";
+  /**
+   * `all` is the post-creation card. The Homelab settings wizard shows the
+   * owner sign-in (`owner`) and the household (`household`) as separate
+   * modules over the same identity runtime.
+   */
+  let {
+    deploymentId,
+    section = "all",
+  }: { deploymentId: string; section?: "all" | "owner" | "household" } =
+    $props();
+  const showOwner = $derived(section !== "household");
+  const showHousehold = $derived(section !== "owner");
   let status = $state<HomelabIdentityStatus | null>(null);
   let loading = $state(true);
   let busy = $state(false);
@@ -145,6 +156,7 @@
   aria-labelledby="identity-setup-title"
   data-testid="homelab-identity-setup"
 >
+  {#if showOwner}
   <div class="identity-heading">
     <Fingerprint size={31} aria-hidden="true" />
     <div>
@@ -208,7 +220,37 @@
   {#if status?.owner.origin}<p class="origin">
       {tr("wizard.identity.destination")} <span>{status.owner.origin}</span>
     </p>{/if}
-  {#if status?.household.planned_people?.length}
+  {:else}
+    <div aria-live="polite">
+      {#if loading && !status}<p>{tr("wizard.identity.loading")}</p>{/if}
+      {#if error}<p class="error" role="alert">{error}</p>{/if}
+    </div>
+  {/if}
+  {#if showHousehold && section === "household" && status && !status.household.planned_people?.length}
+    <p data-testid="homelab-identity-no-planned-people">
+      {tr("wizard.settings.noPlannedPeople")}
+    </p>
+  {/if}
+  {#if showHousehold && section === "household" && status?.household.members?.length}
+    <section class="household members" data-testid="homelab-identity-members">
+      <h4>
+        <UsersRound size={17} aria-hidden="true" />{tr(
+          "wizard.settings.members",
+        )}
+      </h4>
+      {#each status.household.members as member (member.username)}
+        <div class="person">
+          <div>
+            <strong>{member.display_name || member.username}</strong><span
+              >{member.email || member.username}</span
+            >
+          </div>
+          <span>{member.status ? stateLabel(member.status) : ""}</span>
+        </div>
+      {/each}
+    </section>
+  {/if}
+  {#if showHousehold && status?.household.planned_people?.length}
     <section class="household">
       <h4>
         <UsersRound size={17} aria-hidden="true" />{tr(

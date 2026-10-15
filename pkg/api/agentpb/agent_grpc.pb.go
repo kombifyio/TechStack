@@ -22,17 +22,18 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AgentService_Register_FullMethodName            = "/techstack.agent.v1.AgentService/Register"
-	AgentService_Heartbeat_FullMethodName           = "/techstack.agent.v1.AgentService/Heartbeat"
-	AgentService_CommandStream_FullMethodName       = "/techstack.agent.v1.AgentService/CommandStream"
-	AgentService_ReportStatus_FullMethodName        = "/techstack.agent.v1.AgentService/ReportStatus"
-	AgentService_RunPreChecks_FullMethodName        = "/techstack.agent.v1.AgentService/RunPreChecks"
-	AgentService_PushMetrics_FullMethodName         = "/techstack.agent.v1.AgentService/PushMetrics"
-	AgentService_GetSystemInfo_FullMethodName       = "/techstack.agent.v1.AgentService/GetSystemInfo"
-	AgentService_ReportHealEvent_FullMethodName     = "/techstack.agent.v1.AgentService/ReportHealEvent"
-	AgentService_ReportDetection_FullMethodName     = "/techstack.agent.v1.AgentService/ReportDetection"
-	AgentService_StreamLogs_FullMethodName          = "/techstack.agent.v1.AgentService/StreamLogs"
-	AgentService_GetUpdateCandidates_FullMethodName = "/techstack.agent.v1.AgentService/GetUpdateCandidates"
+	AgentService_Register_FullMethodName               = "/techstack.agent.v1.AgentService/Register"
+	AgentService_Heartbeat_FullMethodName              = "/techstack.agent.v1.AgentService/Heartbeat"
+	AgentService_CommandStream_FullMethodName          = "/techstack.agent.v1.AgentService/CommandStream"
+	AgentService_ReportStatus_FullMethodName           = "/techstack.agent.v1.AgentService/ReportStatus"
+	AgentService_RunPreChecks_FullMethodName           = "/techstack.agent.v1.AgentService/RunPreChecks"
+	AgentService_PushMetrics_FullMethodName            = "/techstack.agent.v1.AgentService/PushMetrics"
+	AgentService_GetSystemInfo_FullMethodName          = "/techstack.agent.v1.AgentService/GetSystemInfo"
+	AgentService_ReportHealEvent_FullMethodName        = "/techstack.agent.v1.AgentService/ReportHealEvent"
+	AgentService_ReportDetection_FullMethodName        = "/techstack.agent.v1.AgentService/ReportDetection"
+	AgentService_StreamLogs_FullMethodName             = "/techstack.agent.v1.AgentService/StreamLogs"
+	AgentService_GetUpdateCandidates_FullMethodName    = "/techstack.agent.v1.AgentService/GetUpdateCandidates"
+	AgentService_ReportUserNotification_FullMethodName = "/techstack.agent.v1.AgentService/ReportUserNotification"
 )
 
 // AgentServiceClient is the client API for AgentService service.
@@ -63,6 +64,12 @@ type AgentServiceClient interface {
 	StreamLogs(ctx context.Context, in *StreamLogsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[LogEntry], error)
 	// GetUpdateCandidates returns available OS/package/container updates.
 	GetUpdateCandidates(ctx context.Context, in *UpdateCandidatesRequest, opts ...grpc.CallOption) (*UpdateCandidatesResponse, error)
+	// ReportUserNotification carries one user-authored smart-home notice (the
+	// opt-in `user_notification` agent-channel class, SERVER-CONNECTION-STANDARD
+	// section 9). The node holds no notifications-engine credential: Core
+	// authenticates the agent, enforces the text bound and the per-node rate
+	// limit, resolves the recipients and dispatches the Feed item itself.
+	ReportUserNotification(ctx context.Context, in *UserNotification, opts ...grpc.CallOption) (*UserNotificationAck, error)
 }
 
 type agentServiceClient struct {
@@ -195,6 +202,16 @@ func (c *agentServiceClient) GetUpdateCandidates(ctx context.Context, in *Update
 	return out, nil
 }
 
+func (c *agentServiceClient) ReportUserNotification(ctx context.Context, in *UserNotification, opts ...grpc.CallOption) (*UserNotificationAck, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UserNotificationAck)
+	err := c.cc.Invoke(ctx, AgentService_ReportUserNotification_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AgentServiceServer is the server API for AgentService service.
 // All implementations must embed UnimplementedAgentServiceServer
 // for forward compatibility.
@@ -223,6 +240,12 @@ type AgentServiceServer interface {
 	StreamLogs(*StreamLogsRequest, grpc.ServerStreamingServer[LogEntry]) error
 	// GetUpdateCandidates returns available OS/package/container updates.
 	GetUpdateCandidates(context.Context, *UpdateCandidatesRequest) (*UpdateCandidatesResponse, error)
+	// ReportUserNotification carries one user-authored smart-home notice (the
+	// opt-in `user_notification` agent-channel class, SERVER-CONNECTION-STANDARD
+	// section 9). The node holds no notifications-engine credential: Core
+	// authenticates the agent, enforces the text bound and the per-node rate
+	// limit, resolves the recipients and dispatches the Feed item itself.
+	ReportUserNotification(context.Context, *UserNotification) (*UserNotificationAck, error)
 	mustEmbedUnimplementedAgentServiceServer()
 }
 
@@ -265,6 +288,9 @@ func (UnimplementedAgentServiceServer) StreamLogs(*StreamLogsRequest, grpc.Serve
 }
 func (UnimplementedAgentServiceServer) GetUpdateCandidates(context.Context, *UpdateCandidatesRequest) (*UpdateCandidatesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetUpdateCandidates not implemented")
+}
+func (UnimplementedAgentServiceServer) ReportUserNotification(context.Context, *UserNotification) (*UserNotificationAck, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReportUserNotification not implemented")
 }
 func (UnimplementedAgentServiceServer) mustEmbedUnimplementedAgentServiceServer() {}
 func (UnimplementedAgentServiceServer) testEmbeddedByValue()                      {}
@@ -467,6 +493,24 @@ func _AgentService_GetUpdateCandidates_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AgentService_ReportUserNotification_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UserNotification)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).ReportUserNotification(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_ReportUserNotification_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).ReportUserNotification(ctx, req.(*UserNotification))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AgentService_ServiceDesc is the grpc.ServiceDesc for AgentService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -509,6 +553,10 @@ var AgentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetUpdateCandidates",
 			Handler:    _AgentService_GetUpdateCandidates_Handler,
+		},
+		{
+			MethodName: "ReportUserNotification",
+			Handler:    _AgentService_ReportUserNotification_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

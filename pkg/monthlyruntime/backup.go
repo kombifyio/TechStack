@@ -2,8 +2,8 @@ package monthlyruntime
 
 // Backup product entitlements (photo-vault lifecycle plan, phase 3).
 // Feature keys ride the same Stripe/FGA/Flagship entitlement chain as the
-// managed-runtime keys and resolve at the edge as signed flags; unknown keys
-// evaluate to false, so the gate is fail-closed by construction. Enforcement
+// managed-runtime keys and resolve at the edge as signed flags. Both default
+// to off in pkg/features, so the gate is fail-closed by construction. Enforcement
 // happens BEFORE any job enqueue, provider call, or storage provisioning
 // (FEATURE-ENTITLEMENT-UX-STANDARD).
 

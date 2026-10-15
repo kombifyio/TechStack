@@ -28,6 +28,6 @@ which have their own reporting path on [kombify.io](https://kombify.io).
 
 ## Release integrity
 
-Every release lists SHA-256 checksums for its assets. Until Windows code
-signing is available, the Windows installer ships with
+Every release lists SHA-256 checksums for its assets. Windows installers are
+intentionally unsigned on every release channel and ship with
 `UNSIGNED-WINDOWS-RELEASE.txt`; verify the checksum before you install it.

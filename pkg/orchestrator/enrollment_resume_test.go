@@ -661,8 +661,9 @@ func TestResumeEnrollmentRecoversCanonicalGuardWaitAsDeployWithoutProvision(t *t
 	}
 	source := enrollmentResumeStoredJob(t, stored, "job-guard-wait")
 	if canonicalEnrollmentJobState(source.State) != string(jobs.JobStateCancelled) ||
-		source.Result[enrollmentResumeKindField] != jobs.WaitReasonCanonicalGuardEvidence {
-		t.Fatalf("guard source handover = %#v", source)
+		source.Result[enrollmentResumeKindField] != jobs.WaitReasonCanonicalGuardEvidence ||
+		jobs.SupersededByJobID(source.ID, source.Result) != result.JobID {
+		t.Fatalf("guard source handover = %#v, want it to point at %s", source, result.JobID)
 	}
 	replacement := enrollmentResumeStoredJob(t, stored, result.JobID)
 	if replacement.Type != string(jobs.JobTypeDeploy) ||

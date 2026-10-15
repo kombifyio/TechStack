@@ -195,6 +195,18 @@ func (r Runner) dispatch(ctx context.Context, job controlplane.ServerMaintenance
 		return nil, ErrDispatchUnavailable
 	}
 	claimed, err := r.claim(ctx, job, CommandID(job.ID, job.Action, r.now()))
+	if errors.Is(err, controlplane.ErrServerMaintenanceImpactChanged) || errors.Is(err, controlplane.ErrServerMaintenanceImpactUnavailable) {
+		reason := "impact_changed"
+		if errors.Is(err, controlplane.ErrServerMaintenanceImpactUnavailable) {
+			reason = "impact_unavailable"
+		}
+		// The claim refused before recording a command or dispatching. Releasing
+		// the queued job lets the owner review a fresh preview and confirm anew.
+		return r.write(ctx, job.TenantID, job.ID, controlplane.ServerMaintenanceUpdate{
+			ExpectedState: controlplane.ServerMaintenanceStateQueued, State: controlplane.ServerMaintenanceStateFailed,
+			ReasonCode: reason, Result: job.Result, At: r.now(),
+		})
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -238,7 +250,8 @@ func (r Runner) reattach(ctx context.Context, job controlplane.ServerMaintenance
 // execute runs job's command (or re-attaches to it) and stores the outcome.
 func (r Runner) execute(ctx context.Context, job controlplane.ServerMaintenanceJob, target Target) (*controlplane.ServerMaintenanceJob, error) {
 	next := controlplane.ServerMaintenanceUpdate{ExpectedState: controlplane.ServerMaintenanceStateRunning, DeadlineAt: job.DeadlineAt}
-	result := map[string]any{ResultCommandID: target.CommandID}
+	result := cloneResult(job.Result)
+	result[ResultCommandID] = target.CommandID
 	var err error
 	switch job.Action {
 	case controlplane.ServerMaintenanceActionPlan:

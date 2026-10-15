@@ -20,7 +20,17 @@
     class: className = "",
     fallbackLabel = "",
     circular = false,
-  }: { class?: string; fallbackLabel?: string; circular?: boolean } = $props();
+    flush = false,
+    fallbackClass = "",
+  }: {
+    class?: string;
+    fallbackLabel?: string;
+    circular?: boolean;
+    /** The logo fills its box edge to edge, without the inner padding. */
+    flush?: boolean;
+    /** Classes for the neutral glyph instead of `class`, when no logo loads. */
+    fallbackClass?: string;
+  } = $props();
 
   const brandLogo = getContext<BrandLogoContext>(BRAND_LOGO_CONTEXT);
   let logoTheme = $state<"light" | "dark">("dark");
@@ -68,6 +78,7 @@
     alt=""
     class="{className} brand-logo object-contain"
     class:circular
+    class:flush
     aria-hidden="true"
     loading="lazy"
     decoding="async"
@@ -81,7 +92,7 @@
     >{fallbackLabel.slice(0, 2).toUpperCase()}</span
   >
 {:else}
-  <Box class={className} aria-hidden="true" />
+  <Box class={fallbackClass || className} aria-hidden="true" />
 {/if}
 
 <style>
@@ -97,6 +108,9 @@
     font-weight: 700;
     letter-spacing: -0.04em;
     color: var(--primary);
+  }
+  .brand-logo.flush {
+    padding: 0;
   }
   .brand-logo.circular {
     padding: 3px;

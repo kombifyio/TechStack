@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/kombifyio/techstack/internal/routes/auth"
 	// #nosec G501 -- md5 derives the deterministic homelab id matching
 	// migration 044's backfill scheme ('hl-' || md5(md5(tenant)||md5(owner)));
 	// it is an identity projection, not cryptography.
@@ -42,6 +43,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/jobs"
+	"github.com/kombifyio/techstack/pkg/kombifywallet"
 	"github.com/kombifyio/techstack/pkg/orchestrator"
 	"github.com/kombifyio/techstack/pkg/specv2"
 )
@@ -89,6 +91,7 @@ const (
 // Validator, and Migrator are release-bound dependencies; Trust carries the
 // pairing mint stores.
 type WizardRunRouteConfig struct {
+	AuthRuntime        auth.RuntimeStore
 	App                core.App
 	Orch               *orchestrator.Orchestrator
 	DeploymentMode     config.DeploymentMode
@@ -105,6 +108,9 @@ type WizardRunRouteConfig struct {
 	NotificationOutbox productnotifications.ProductEventEnqueuer
 	Wallet             controlplane.WalletStore
 	IdentityRuntime    WizardIdentityRuntime
+	// KombifyWallet is the central kombify Wallet client. Nil means the
+	// deployment reads the built-in (legacy) wallet through Wallet.
+	KombifyWallet *kombifywallet.Client
 }
 
 // WizardManagedRuntimeExpansion is the narrow adapter boundary from the
@@ -196,7 +202,7 @@ func newWizardRunHandlers(cfg WizardRunRouteConfig) wizardRunHandlers {
 	stores := currentControlPlaneStores()
 	return wizardRunHandlers{
 		crud: crudRouteHandlers{
-			app:                cfg.App,
+			authRuntime:        cfg.AuthRuntime,
 			orch:               cfg.Orch,
 			deploymentMode:     cfg.DeploymentMode,
 			stackStore:         stores.Stacks,
@@ -209,6 +215,7 @@ func newWizardRunHandlers(cfg WizardRunRouteConfig) wizardRunHandlers {
 			runtimeFeatures:    cfg.Features,
 			managedLeases:      cfg.ManagedLeases,
 			notificationOutbox: cfg.NotificationOutbox,
+			kombifyWallet:      cfg.KombifyWallet,
 		},
 		wizardRuns: stores.WizardRuns,
 		cfg:        cfg,
@@ -245,9 +252,15 @@ type wizardRunRemoteParams struct {
 	AuthMethod  string `json:"auth_method,omitempty"`
 	SSHKeyLabel string `json:"ssh_key_label,omitempty"`
 	UseSudo     bool   `json:"use_sudo,omitempty"`
+	// SSHWalletItemID names the kombify Wallet node access item that holds the
+	// SSH key or password. A deployment that reads the kombify Wallet requires
+	// it for both authentication methods and refuses SSHKeyLabel and Password;
+	// a legacy deployment refuses it. The item id is not a secret and is kept
+	// in the stack configuration as server_remote_credential_item_id.
+	SSHWalletItemID string `json:"ssh_wallet_item_id,omitempty"`
 	// Password is accepted for the enrollment request window and is persisted
 	// in the wallet under server_remote_credential_ref; it never enters the
-	// wizard ledger or stack configuration as plaintext.
+	// wizard ledger or stack configuration as plaintext. Legacy deployments only.
 	Password string `json:"password,omitempty"`
 }
 
@@ -317,6 +330,11 @@ func (h wizardRunHandlers) createWizardRun(e *httpx.Event) error {
 		intentAdjustments: intentAdjustments,
 		requestHash:       wizardRunRequestHash(wizardRunRequestWithIntent(request, requestedIntent)),
 		key:               key,
+	}
+	if key != "" {
+		// Bind the run identity to the existing tenant/owner/attempt key even
+		// when an interrupted first delivery cannot write its failure ledger.
+		run.runID = uuid.NewSHA1(uuid.NameSpaceURL, []byte("wizard-run:"+deterministicStackID(tenantID, ownerID, key))).String()
 	}
 	if handled := h.replayWizardRunFromLedger(e, &run); handled {
 		return nil
@@ -389,8 +407,14 @@ func (h wizardRunHandlers) getActiveWizardRun(e *httpx.Event) error {
 	return httpx.Success(e, http.StatusOK, map[string]any{"run": payload})
 }
 
+// wizardRunSupersessionHops bounds how far a run follows recovery
+// replacements of its creation job.
+const wizardRunSupersessionHops = 4
+
 // wizardRunJob reads the run's provision job (nil when the run has no job or
-// the job store cannot serve it).
+// the job store cannot serve it). The ledger keeps the job the run dispatched;
+// when recovery handed that job over to a deterministic replacement, the
+// replacement is the live job behind the run.
 func (h wizardRunHandlers) wizardRunJob(ctx context.Context, tenantID, jobID string) *controlplane.Job {
 	if h.crud.jobStore == nil || strings.TrimSpace(jobID) == "" {
 		return nil
@@ -398,6 +422,17 @@ func (h wizardRunHandlers) wizardRunJob(ctx context.Context, tenantID, jobID str
 	job, err := h.crud.jobStore.GetJob(ctx, tenantID, jobID)
 	if err != nil {
 		return nil
+	}
+	for hop := 0; hop < wizardRunSupersessionHops; hop++ {
+		replacementID := jobs.SupersededByJobID(job.ID, job.Result)
+		if replacementID == "" {
+			break
+		}
+		replacement, replacementErr := h.crud.jobStore.GetJob(ctx, tenantID, replacementID)
+		if replacementErr != nil || replacement.StackID != job.StackID {
+			break
+		}
+		job = replacement
 	}
 	return job
 }
@@ -445,7 +480,11 @@ type wizardRunState struct {
 	resumeStack *controlplane.Stack
 	// priorFailed is the ledger entry of an earlier failed attempt with this
 	// key; the join lane uses its NodeID to avoid appending a second node.
-	priorFailed *controlplane.WizardRun
+	priorFailed  *controlplane.WizardRun
+	pairingJobID string
+	// evaluatedGoals is the original projection's scope. Nil is unknown legacy
+	// scope; an empty slice records that no backlog goal was evaluated.
+	evaluatedGoals []string
 	// existingServerIDs is the canonical pre-join runtime baseline. Keeping it
 	// in the durable result lets another tab or device distinguish the newly
 	// paired server from an already healthy server on the same deployment.
@@ -499,6 +538,10 @@ func (h wizardRunHandlers) decodeWizardRun(e *httpx.Event) (wizardRunRequest, sp
 	if !h.validateWizardGuestRequest(e, request) {
 		return request, requestedIntent, intentAdjustments, false
 	}
+	if denial := h.remoteCredentialSourceDenial(request); denial != nil {
+		_ = denial.Write(e)
+		return request, requestedIntent, intentAdjustments, false
+	}
 	return request, requestedIntent, intentAdjustments, true
 }
 
@@ -538,10 +581,12 @@ func (h wizardRunHandlers) replayWizardRunFromLedger(e *httpx.Event, run *wizard
 		return true
 	}
 	if stored.Status != "completed" {
-		if wizardRunTransport(run.request) == specv2.TransportHypervisor && stored.RequestSHA256 != run.requestHash {
-			_ = httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "Idempotency-Key already identifies a different guest request", nil)
+		if (wizardRunTransport(run.request) == specv2.TransportHypervisor || stored.ErrorReason == "projection_pending" || stored.ErrorReason == "intent_projection_failed") && stored.RequestSHA256 != run.requestHash {
+			_ = httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "Idempotency-Key already identifies a different projection request", nil)
 			return true
 		}
+		run.runID = stored.ID
+		run.pairingJobID = stored.PairingJobID
 		run.priorFailed = stored
 		return false
 	}
@@ -590,6 +635,16 @@ func (h wizardRunHandlers) prepareWizardRun(e *httpx.Event, run *wizardRunState)
 			"Wizard use-case settings rejected", wizardRunDetails(
 				"wizard_use_case_setting_rejected", false,
 				"Change the setting",
+				err.Error(),
+			))
+		return true
+	}
+
+	if err := validateUseCaseCapabilitiesAgainstCatalog(run.request.Intent); err != nil {
+		_ = httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeValidation,
+			"Wizard use-case capabilities rejected", wizardRunDetails(
+				"wizard_use_case_capability_rejected", false,
+				"Change the capability",
 				err.Error(),
 			))
 		return true
@@ -653,6 +708,37 @@ func validateUseCaseSettingsAgainstCatalog(intent specv2.WizardIntent) error {
 			}
 			if !setting.AcceptsSettingValue(value) {
 				return fmt.Errorf("use case %q setting %q does not accept the given value", slug, id)
+			}
+		}
+	}
+	return nil
+}
+
+// validateUseCaseCapabilitiesAgainstCatalog closes the capability contract:
+// each capability must be declared by the use case, and its value must be the
+// default option, the alternative option or "off" (never for a required
+// capability). A recorded option is rejected because the release cannot
+// install it.
+func validateUseCaseCapabilitiesAgainstCatalog(intent specv2.WizardIntent) error {
+	if len(intent.UseCaseCapabilities) == 0 {
+		return nil
+	}
+	catalog, err := stackkitrelease.ResolveUseCaseCatalog()
+	if err != nil {
+		return fmt.Errorf("the StackKits use-case catalog could not be read: %w", err)
+	}
+	for slug, values := range intent.UseCaseCapabilities {
+		useCase, ok := catalog.FindUseCase(slug)
+		if !ok {
+			return fmt.Errorf("use case %q is not in the catalog", slug)
+		}
+		for id, value := range values {
+			capability, ok := useCase.FindCapability(id)
+			if !ok {
+				return fmt.Errorf("use case %q declares no capability %q", slug, id)
+			}
+			if err := capability.AcceptsSelection(value); err != nil {
+				return fmt.Errorf("use case %q: %w", slug, err)
 			}
 		}
 	}

@@ -300,12 +300,12 @@ describe("serviceCardActions", () => {
       // way out is offered instead.
       allowedActions: ["logs", "unfreeze"],
       locked: true,
-      lockedReason: "Locked by marcel · 2h ago",
+      lockedReason: "Locked by alex · 2h ago",
     });
 
     const restart = actions.find((a) => a.id === "restart");
     expect(restart?.state).toBe("disabled");
-    expect(restart?.disabledReason).toBe("Locked by marcel · 2h ago");
+    expect(restart?.disabledReason).toBe("Locked by alex · 2h ago");
     // The way out is never disabled, and reads stay open.
     expect(actions.find((a) => a.id === "unfreeze")?.state).toBe(
       "needs_approval",

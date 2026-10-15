@@ -196,6 +196,10 @@ func fetchUserInfo(reqCtx *http.Request, issuer, accessToken string) (*oidcUserI
 // browser to the Techstack login entrypoint. If cloud logout is not configured,
 // it falls back to the local login page instead of returning a 404.
 func handleOIDCLogout(app core.App) func(e *httpx.Event) error {
+	return handleRuntimeOIDCLogout()
+}
+
+func handleRuntimeOIDCLogout() func(e *httpx.Event) error {
 	return func(e *httpx.Event) error {
 		if logoutURL := resolveCloudLogoutURL(e.Request); logoutURL != nil {
 			return e.Redirect(http.StatusFound, *logoutURL)

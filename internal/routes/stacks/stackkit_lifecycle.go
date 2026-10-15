@@ -1,6 +1,7 @@
 package stacks
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -27,7 +28,10 @@ type stackKitLifecycleRequest struct {
 	StackKit string `json:"stackkit,omitempty"`
 	// SnapshotAnchorID names the snapshot backup_restore stages, or the
 	// existing anchor a restore_drill drills.
-	SnapshotAnchorID string `json:"snapshot_anchor_id,omitempty"`
+	SnapshotAnchorID      string `json:"snapshot_anchor_id,omitempty"`
+	RestoreResultID       string `json:"restore_result_id,omitempty"`
+	ActivationOperationID string `json:"activation_operation_id,omitempty"`
+	RestorePlanHash       string `json:"restore_plan_hash,omitempty"`
 	// CandidateSpec is the proposed canonical StackSpec an
 	// advanced_change_set creates and applies (optional for drift_reconcile,
 	// which otherwise reconciles to the workspace StackSpec).
@@ -35,6 +39,12 @@ type stackKitLifecycleRequest struct {
 	// RollbackTargetRef is the executor-state snapshot id or change-set id a
 	// rollback returns to.
 	RollbackTargetRef string `json:"rollback_target_ref,omitempty"`
+	// ai_provider: the provider's https base URL and the Wallet item holding
+	// its API key, or ai_provider_disable to remove it.
+	AIProviderBaseURL string `json:"ai_provider_base_url,omitempty"`
+	WalletItemID      string `json:"wallet_item_id,omitempty"`
+	WalletItemRotate  bool   `json:"wallet_item_rotate,omitempty"`
+	AIProviderDisable bool   `json:"ai_provider_disable,omitempty"`
 }
 
 type stackKitLifecycleResponse struct {
@@ -56,8 +66,11 @@ var stackLockGuardedOperations = map[string]bool{
 	jobs.StackKitLifecycleDriftReconcile: true,
 	jobs.StackKitLifecycleUpgrade:        true,
 	// Advanced change sets and rollbacks rewrite the stack's services.
-	jobs.StackKitLifecycleAdvancedChangeSet: true,
-	jobs.StackKitLifecycleRollback:          true,
+	jobs.StackKitLifecycleAdvancedChangeSet:     true,
+	jobs.StackKitLifecycleRollback:              true,
+	jobs.StackKitLifecycleBackupRestoreActivate: true,
+	// ai_provider reconciles the stack with the new provider setting.
+	jobs.StackKitLifecycleAIProvider: true,
 }
 
 // lockedStackServices returns the ids of the stack's locked services for an
@@ -68,17 +81,23 @@ func (h crudRouteHandlers) lockedStackServices(
 	e *httpx.Event,
 	tenantID, stackID, operation string,
 ) ([]string, error) {
+	locked, err := h.lockedStackServicesContext(e.Request.Context(), tenantID, stackID, operation)
+	if err != nil {
+		return nil, httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Service lock state is unavailable", nil)
+	}
+	return locked, nil
+}
+
+func (h crudRouteHandlers) lockedStackServicesContext(ctx context.Context, tenantID, stackID, operation string) ([]string, error) {
 	if !stackLockGuardedOperations[operation] {
 		return nil, nil
 	}
 	if h.serviceStore == nil {
-		return nil, httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
-			"Service lock state is unavailable", nil)
+		return nil, errors.New("service lock state is unavailable")
 	}
-	services, err := h.serviceStore.ListServiceRuntimes(e.Request.Context(), tenantID, stackID, "")
+	services, err := h.serviceStore.ListServiceRuntimes(ctx, tenantID, stackID, "")
 	if err != nil {
-		return nil, httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
-			"Failed to read service lock state", nil)
+		return nil, err
 	}
 	locked := make([]string, 0, len(services))
 	for i := range services {
@@ -99,11 +118,7 @@ func (h crudRouteHandlers) lockedStackServices(
 // orchestrator, so maintenance on that agent is seen here only through the
 // stack scope (the server's stack id).
 func (h crudRouteHandlers) refuseDuringServerMaintenance(e *httpx.Event, tenantID, stackID, agentID string) error {
-	store, ok := h.serverStore.(controlplane.ServerMaintenanceStore)
-	if !ok {
-		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Server maintenance state is unavailable", nil)
-	}
-	active, err := store.ActiveServerMaintenanceJob(e.Request.Context(), tenantID, controlplane.ServerMaintenanceScope{AgentID: agentID, StackID: stackID})
+	active, err := h.activeStackMaintenanceContext(e.Request.Context(), tenantID, stackID, agentID)
 	if errors.Is(err, controlplane.ErrNotFound) {
 		return nil
 	}
@@ -113,6 +128,14 @@ func (h crudRouteHandlers) refuseDuringServerMaintenance(e *httpx.Event, tenantI
 	return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "A server of this stack is under maintenance", map[string]interface{}{
 		"reason": "maintenance_active", "job_id": active.ID, "server_id": active.ServerID,
 	})
+}
+
+func (h crudRouteHandlers) activeStackMaintenanceContext(ctx context.Context, tenantID, stackID, agentID string) (*controlplane.ServerMaintenanceJob, error) {
+	store, ok := h.serverStore.(controlplane.ServerMaintenanceStore)
+	if !ok {
+		return nil, errors.New("server maintenance state is unavailable")
+	}
+	return store.ActiveServerMaintenanceJob(ctx, tenantID, controlplane.ServerMaintenanceScope{AgentID: agentID, StackID: stackID})
 }
 
 func (h crudRouteHandlers) startStackKitLifecycle(e *httpx.Event) error {
@@ -141,21 +164,55 @@ func (h crudRouteHandlers) startStackKitLifecycle(e *httpx.Event) error {
 	if err := decodeStrictJSONBody(e.Request.Body, &request); err != nil {
 		return httpx.BadRequest(e, "Invalid request body")
 	}
-	normalized, err := jobs.NormalizeStackKitLifecycleRequest(jobs.StackKitLifecycleRequest{
-		StackID:           stackID,
-		TenantID:          tenantID,
-		OwnerID:           ownerID,
-		AgentID:           request.AgentID,
-		Operation:         request.Operation,
-		TargetRelease:     request.TargetRelease,
-		DryRun:            request.DryRun,
-		Offline:           request.Offline,
-		OwnerApproved:     request.OwnerApproved,
-		StackKit:          request.StackKit,
-		SnapshotAnchorID:  request.SnapshotAnchorID,
-		CandidateSpecJSON: []byte(request.CandidateSpec),
-		RollbackTargetRef: request.RollbackTargetRef,
-	})
+	input := jobs.StackKitLifecycleRequest{
+		StackID:               stackID,
+		TenantID:              tenantID,
+		OwnerID:               ownerID,
+		AgentID:               request.AgentID,
+		Operation:             request.Operation,
+		TargetRelease:         request.TargetRelease,
+		DryRun:                request.DryRun,
+		Offline:               request.Offline,
+		OwnerApproved:         request.OwnerApproved,
+		StackKit:              request.StackKit,
+		SnapshotAnchorID:      request.SnapshotAnchorID,
+		RestoreResultID:       request.RestoreResultID,
+		ActivationOperationID: request.ActivationOperationID,
+		RestorePlanHash:       request.RestorePlanHash,
+		CandidateSpecJSON:     []byte(request.CandidateSpec),
+		RollbackTargetRef:     request.RollbackTargetRef,
+		AIProviderBaseURL:     request.AIProviderBaseURL,
+		WalletItemID:          request.WalletItemID,
+		WalletItemRotate:      request.WalletItemRotate,
+		AIProviderDisable:     request.AIProviderDisable,
+	}
+	if strings.ToLower(strings.TrimSpace(input.Operation)) == jobs.StackKitLifecycleBackupRestoreActivate {
+		if len(e.Request.Header.Values("Idempotency-Key")) != 1 {
+			return httpx.BadRequest(e, "Exactly one bounded Idempotency-Key is required for restore activation")
+		}
+		input, err = jobs.PrepareRestoreActivationIdempotency(input, e.Request.Header.Get("Idempotency-Key"))
+		if err != nil {
+			return httpx.BadRequest(e, err.Error())
+		}
+		if original, replayed, replayErr := h.orch.ReplayRestoreActivationRequest(e.Request.Context(), input); replayErr != nil {
+			var conflict *orchestrator.RestoreActivationRequestConflict
+			if errors.As(replayErr, &conflict) {
+				details := map[string]interface{}{}
+				if conflict.JobID != "" {
+					details["job_id"] = conflict.JobID
+					details["kit_deployment_id"] = conflict.StackID
+				}
+				return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, conflict.Error(), details)
+			}
+			if errors.Is(replayErr, controlplane.ErrNotFound) {
+				return httpx.NotFound(e, "Stack not found")
+			}
+			return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Original restore acceptance is unavailable", nil)
+		} else if replayed {
+			return httpx.Success(e, http.StatusAccepted, stackKitLifecycleResponse{JobID: original, KitDeploymentID: stackID, AgentID: input.AgentID, Operation: input.Operation, Status: "queued"})
+		}
+	}
+	normalized, err := jobs.NormalizeStackKitLifecycleRequest(input)
 	if err != nil {
 		return httpx.BadRequest(e, err.Error())
 	}

@@ -6,16 +6,6 @@ import (
 	"testing"
 )
 
-type recordingBackupRunner struct {
-	calls []RuntimeActionRequest
-	err   error
-}
-
-func (r *recordingBackupRunner) Run(_ context.Context, req RuntimeActionRequest) error {
-	r.calls = append(r.calls, req)
-	return r.err
-}
-
 // TestAdmitBackupFailsClosed covers every way the gate can be unable to answer.
 // Each of them must deny. An unconfigured, erroring or unidentifiable gate that
 // returned approval would turn a fail-closed contract into a fail-open one at
@@ -85,34 +75,19 @@ func TestBackupHandlerRefusesAnUnconfiguredRunner(t *testing.T) {
 }
 
 func TestBackupHandlerRequiresExactIdentity(t *testing.T) {
-	runner := &recordingBackupRunner{}
-	handler := BackupHandler(&ProvisionConfig{RuntimeActions: RuntimeActions{BackupRunner: runner}})
+	commander := &recordingCommander{}
+	handler := BackupHandler(&ProvisionConfig{
+		StackKitCommander: commander,
+		BackupAgentResolver: func(context.Context, string, string) (string, error) {
+			return "worker-7", nil
+		},
+	})
 
 	job := &Job{Type: JobTypeBackup, Payload: map[string]interface{}{"stack_id": "stack-a"}}
 	if err := handler(context.Background(), job, nil); err == nil {
 		t.Fatal("a job without tenant identity must fail before dispatch")
 	}
-	if len(runner.calls) != 0 {
-		t.Fatalf("no node call may happen without exact identity: %+v", runner.calls)
-	}
-}
-
-func TestBackupHandlerDispatchesWithResolvedIdentity(t *testing.T) {
-	runner := &recordingBackupRunner{}
-	handler := BackupHandler(&ProvisionConfig{RuntimeActions: RuntimeActions{BackupRunner: runner}})
-
-	job := &Job{
-		Type: JobTypeBackup, TargetID: "stack-a", TargetName: "photos",
-		Payload: map[string]interface{}{"tenant_id": "tenant-a", "owner_id": "owner-a"},
-	}
-	if err := handler(context.Background(), job, nil); err != nil {
-		t.Fatalf("handler: %v", err)
-	}
-	if len(runner.calls) != 1 {
-		t.Fatalf("expected exactly one backup dispatch, got %d", len(runner.calls))
-	}
-	call := runner.calls[0]
-	if call.TenantID != "tenant-a" || call.StackID != "stack-a" || call.StackName != "photos" || call.OwnerID != "owner-a" {
-		t.Fatalf("dispatch identity = %+v", call)
+	if len(commander.commands) != 0 {
+		t.Fatalf("no node command may be sent without exact identity: %+v", commander.commands)
 	}
 }

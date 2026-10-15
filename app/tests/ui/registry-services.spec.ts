@@ -436,6 +436,317 @@ test.describe("Service Registry", () => {
     });
   });
 
+  test("reviews the existing source before adoption and releases the verified binding", async ({
+    page,
+  }) => {
+    const containerId = "a".repeat(64);
+    const planDigest = `sha256:${"b".repeat(64)}`;
+    let adopted = false;
+    const service = () => ({
+      ...canonicalServicesPayload().data[0],
+      observed_state: "running",
+      management_state: adopted ? "managed" : "observed",
+      adoption: {
+        preview_available: !adopted,
+        execution_available: !adopted,
+        release_available: adopted,
+      },
+    });
+    await page.route("**/api/v1/services", (route) =>
+      route.fulfill({ json: { data: [service()] } }),
+    );
+    await page.route("**/api/v1/service-applications**", (route) =>
+      route.fulfill({
+        json: {
+          data: [
+            {
+              application_id: "app-svc-1",
+              kit_deployment_id: "stack-1",
+              server_id: "node-1",
+              application_key: "home-assistant",
+              display_name: "Home Assistant",
+              status: "running",
+              access: { kind: "internal" },
+              components: [service()],
+              system: false,
+              provenance: {},
+            },
+          ],
+        },
+      }),
+    );
+    await page.route(
+      "**/api/v1/services/svc-1/adoption-plans",
+      async (route) => {
+        expect(route.request().postDataJSON().owner_approved).toBeUndefined();
+        await route.fulfill({
+          status: 202,
+          json: {
+            data: {
+              job_id: "job-inspect-1",
+              service_id: "svc-1",
+              status: "queued",
+            },
+          },
+        });
+      },
+    );
+    await page.route(
+      "**/api/v1/services/svc-1/adoption-plans/job-inspect-1",
+      (route) =>
+        route.fulfill({
+          json: {
+            data: {
+              plan_id: "job-inspect-1",
+              service_id: "svc-1",
+              status: "completed",
+              assessment: {
+                planDigest,
+                profileRef: "home-assistant-container-in-place/v1",
+                mode: "adopt_in_place",
+                source: {
+                  containerId,
+                  imageDigest: planDigest,
+                  configMount: "/srv/homeassistant",
+                },
+                preservedFields: [
+                  "accounts",
+                  "configuration",
+                  "persistentData",
+                ],
+                admittedOperations: [
+                  "verify",
+                  "start",
+                  "stop",
+                  "restart",
+                  "release",
+                ],
+              },
+            },
+          },
+        }),
+    );
+    await page.route(
+      "**/api/v1/services/svc-1/adoption-plans/job-inspect-1/execute",
+      async (route) => {
+        expect(route.request().postDataJSON()).toMatchObject({
+          plan_digest: planDigest,
+          owner_approved: true,
+          mode: "adopt_in_place",
+        });
+        await route.fulfill({
+          status: 202,
+          json: {
+            data: {
+              job_id: "job-adopt-1",
+              service_id: "svc-1",
+              status: "queued",
+            },
+          },
+        });
+      },
+    );
+    await page.route("**/api/v1/services/svc-1/release", (route) =>
+      route.fulfill({
+        status: 202,
+        json: {
+          data: {
+            job_id: "job-release-1",
+            service_id: "svc-1",
+            status: "queued",
+          },
+        },
+      }),
+    );
+    await page.route("**/api/v1/jobs/job-*", async (route) => {
+      const id = new URL(route.request().url()).pathname.split("/").pop();
+      if (id === "job-adopt-1") adopted = true;
+      if (id === "job-release-1") adopted = false;
+      await route.fulfill({
+        json: { data: { id, state: "completed", progress: 100 } },
+      });
+    });
+    await page.goto("/services?service=svc-1");
+    await page.getByRole("tab", { name: "Operations", exact: true }).click();
+    await page.getByTestId("stack-it-service").click();
+    const dialog = page.getByTestId("service-adoption-dialog");
+    await expect(dialog).toContainText(containerId);
+    await expect(dialog).toContainText("/srv/homeassistant");
+    await page.getByTestId("approve-service-adoption").click();
+    await expect(dialog.getByRole("status")).toContainText("verified");
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await page
+      .getByRole("button", {
+        name: "Release lifecycle management",
+        exact: true,
+      })
+      .click();
+    await page.getByTestId("approve-service-adoption").click();
+    await expect(
+      page.getByTestId("service-adoption-dialog").getByRole("status"),
+    ).toContainText("released");
+  });
+
+  test("keeps the source unstacked when local Owner adoption authority is missing", async ({
+    page,
+  }) => {
+    const services = canonicalServicesPayload();
+    const service = {
+      ...services.data[0],
+      adoption: {
+        preview_available: true,
+        execution_available: true,
+        release_available: false,
+      },
+    };
+    await page.route("**/api/v1/services", (route) =>
+      route.fulfill({ json: { data: [service] } }),
+    );
+    await page.route("**/api/v1/services/svc-1/adoption-plans", (route) =>
+      route.fulfill({
+        status: 202,
+        json: { data: { job_id: "job-denied-1" } },
+      }),
+    );
+    await page.route("**/api/v1/jobs/job-denied-1", (route) =>
+      route.fulfill({
+        json: {
+          data: {
+            id: "job-denied-1",
+            state: "failed",
+            error:
+              "Local Owner adoption grant is missing. Authorize this exact Home Assistant container in StackKits before preparing a new assessment.",
+          },
+        },
+      }),
+    );
+    await page.goto("/services?service=svc-1");
+    await page.getByRole("tab", { name: "Operations", exact: true }).click();
+    await page.getByTestId("stack-it-service").click();
+    await expect(
+      page.getByTestId("service-adoption-dialog").getByRole("alert"),
+    ).toContainText("Local Owner adoption grant is missing");
+    await expect(page.getByTestId("approve-service-adoption")).toBeHidden();
+  });
+
+  test("offers Update from a version grant and Stack it for an observed application", async ({
+    page,
+  }) => {
+    const base = canonicalServicesPayload().data[0];
+    const component = (overrides: Record<string, unknown>) => ({
+      ...base,
+      observed_state: "running",
+      health: { state: "running", observed_at: "2026-05-18T10:00:00Z" },
+      ...overrides,
+    });
+    const updatable = component({
+      id: "svc-ha",
+      name: "Home Assistant",
+      service_key: "home-assistant",
+      management_state: "managed",
+      allowed_actions: ["logs", "update"],
+      version: {
+        current: "2024.5.1",
+        latest: "2024.6.0",
+        update_available: true,
+        update_mode: "stackkit_upgrade",
+        source: "image_tag",
+      },
+    });
+    const observed = component({
+      id: "svc-hermes",
+      name: "Hermes Agent",
+      service_key: "hermes-webui",
+      management_state: "observed",
+      allowed_actions: ["adopt"],
+      adoption: { preview_available: true, execution_available: true },
+      catalog: { id: "hermes", brand_domain: "nousresearch.com" },
+    });
+    const application = (
+      id: string,
+      key: string,
+      name: string,
+      member: Record<string, unknown>,
+    ) => ({
+      application_id: id,
+      kit_deployment_id: "stack-1",
+      server_id: "node-1",
+      application_key: key,
+      display_name: name,
+      status: "running",
+      access: { kind: "internal", address: "10.0.0.5:8123" },
+      components: [member],
+      system: false,
+      provenance: {},
+      placement_class: "local",
+    });
+    await page.route("**/api/v1/services", (route) =>
+      route.fulfill({ json: { data: [updatable, observed] } }),
+    );
+    await page.route("**/api/v1/service-applications**", (route) =>
+      route.fulfill({
+        json: {
+          data: [
+            application(
+              "app-ha",
+              "home-assistant",
+              "Home Assistant",
+              updatable,
+            ),
+            application("app-hermes", "hermes", "Hermes Agent", observed),
+          ],
+        },
+      }),
+    );
+    let updateRequest: Record<string, unknown> | undefined;
+    await page.route(
+      "**/api/v1/registry/services/svc-ha/actions",
+      async (route) => {
+        updateRequest = route.request().postDataJSON();
+        await route.fulfill({
+          status: 202,
+          json: {
+            data: {
+              job_id: "job-update-1",
+              service_id: "svc-ha",
+              action: "update",
+              status: "queued",
+            },
+          },
+        });
+      },
+    );
+    await page.route("**/api/v1/jobs/job-update-1", (route) =>
+      route.fulfill({
+        json: { data: { id: "job-update-1", state: "running", progress: 40 } },
+      }),
+    );
+
+    await page.goto("/services");
+
+    const home = page
+      .getByTestId("runtime-service-card")
+      .filter({ hasText: "Home Assistant" });
+    await expect(home).toContainText("2024.6.0");
+    await home.getByRole("button", { name: "Update", exact: true }).click();
+    // Nothing is sent until the owner approves.
+    expect(updateRequest).toBeUndefined();
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "Approve update" })
+      .click();
+    await expect
+      .poll(() => updateRequest)
+      .toMatchObject({ action: "update", owner_approved: true });
+
+    const hermes = page
+      .getByTestId("runtime-service-card")
+      .filter({ hasText: "Hermes Agent" });
+    await expect(
+      hermes.getByRole("button", { name: "Stack it" }),
+    ).toBeVisible();
+  });
+
   test("opens New Application and imports unmanaged services as observed", async ({
     page,
   }) => {
@@ -457,10 +768,13 @@ test.describe("Service Registry", () => {
 
     await page.getByRole("button", { name: "Import unmanaged" }).click();
     await page.getByTestId("unmanaged-service-name").fill("grafana");
-    await page.getByTestId("import-observed-service").click();
+    await page.getByTestId("wizard-next").click();
+    await page.getByTestId("wizard-create").click();
 
-    await expect(page.getByTestId("new-service-dialog")).toBeHidden();
     await expect.poll(() => importRequest).toMatchObject({ name: "grafana" });
+    await expect(page.getByTestId("add-application-result")).toBeVisible();
+    await page.getByTestId("add-application-done").click();
+    await expect(page.getByTestId("new-service-dialog")).toBeHidden();
   });
 
   test("shows stale service metadata without an Open action", async ({
@@ -522,9 +836,25 @@ test.describe("Service Registry", () => {
     );
     await page.getByTestId("new-service-button").click();
     await expect(page.getByTestId("new-service-dialog")).toBeVisible();
-    await page.getByTestId("catalog-service-vaultwarden").click();
-    await page.getByTestId("attach-catalog-service").click();
+    // Access, Users and Login are inherited from the Homelab: never editable here.
+    for (const id of [3, 4, 5]) {
+      await expect(page.getByTestId(`wizard-step-${id}`)).toHaveAttribute(
+        "data-state",
+        "inactive",
+      );
+    }
+    await page
+      .getByTestId("catalog-service-vaultwarden")
+      .getByRole("button", { name: /Vaultwarden/ })
+      .click();
+    await page.getByTestId("wizard-next").click();
+    await expect(page.getByTestId("service-target-server")).toBeVisible();
+    await page.getByTestId("wizard-create").click();
 
+    await expect(page.getByTestId("add-application-result")).toContainText(
+      /vaultwarden.*foundation-1/i,
+    );
+    await page.getByTestId("add-application-done").click();
     await expect(page.getByTestId("new-service-dialog")).toBeHidden();
     await expect(page.getByTestId("runtime-service-list")).toBeVisible();
     await expect(page.getByTestId("registry-service-card")).toHaveCount(0);

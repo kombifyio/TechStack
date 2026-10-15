@@ -19,6 +19,29 @@ registered fails before any ledger row is created. `Coordinator.Advance` moves
 exactly one legal state-machine step per call, which keeps recovery decisions
 and partial cleanup state visible.
 
+Fresh provision admission also reads VM creation protection under an account,
+provider and canonical-region transaction lock. The existing operation envelope
+pins the create region; exact request replay precedes mutable policy. Three
+qualifying failures within 15 minutes since the last successful create pause
+fresh creates for 15 minutes. Each first-claim provider dispatch contributes at
+most one sanitized failure; invalid spec, conflict, not-found and denied input
+neither increment nor reset the circuit. A failed recovery trial reopens the
+cooldown; successful recovery clears it. At most one unresolved create is
+admitted per scope, and time never clears unknown generation custody.
+New submissions wait for the current submission in that scope; this waiting
+state is distinct from the temporary pause triggered by three failures. Other
+account/provider/region scopes remain independent. Retained
+handles, a vanished dispatch claim, or ambiguous create outcomes remain fenced
+until the existing resource-free resolution or exact-generation decommission
+proves completion. Status, stop and delete keep their existing authorization.
+`GET /internal/v1/runtime/creation-pauses` exposes the same secret-free ledger
+projection to authenticated Cloud members; it is never an admission permit.
+The registered adapter resolves actual placement through the same immutable
+configuration as create: the IONOS package location and Centron pool override
+ignored client region strings. Historical operations without an immutable
+scope conservatively protect every region of that account/provider; no
+credential inspection, guessed backfill or parallel lifecycle state is used.
+
 Adapter-bearing `Advance` calls acquire a short-lived, durable claim bound to
 the exact receipt head. A second worker does not invoke the adapter while the
 claim is live, and the claim token is consumed atomically with the receipt-head

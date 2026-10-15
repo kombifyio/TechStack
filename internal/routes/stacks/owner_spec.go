@@ -21,6 +21,7 @@ import (
 	tsauth "github.com/kombifyio/techstack/pkg/auth"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
+	"github.com/kombifyio/techstack/pkg/kombifywallet"
 	"github.com/kombifyio/techstack/pkg/logger"
 )
 
@@ -286,6 +287,21 @@ func (h crudRouteHandlers) ownerSpecFromControlPlane(e *httpx.Event, claims *own
 		})
 		return httpx.Forbidden(e, "Bootstrap token does not match this stack owner")
 	}
+	// The bootstrap token is single use. A deployment that reads the kombify
+	// Wallet therefore reads the recovery hash first: a Wallet outage must not
+	// burn the only token a StackKit has.
+	var response ownerSpecResponse
+	var responseErr error
+	prefetched := h.kombifyWallet != nil
+	if prefetched {
+		response, responseErr = h.ownerSpecResponseFromControlPlane(e.Request.Context(), stack, claims, now)
+		if denial := walletDenialOrNil(responseErr); denial != nil {
+			h.recordOwnerSpecAudit(e.Request.Context(), claims.TenantID, claims.StackID, claims.OwnerID, ownerSpecActionDenied, "error", "Owner spec unavailable", map[string]any{
+				ownerSpecAuditReasonKey: denial.Reason,
+			})
+			return denial.Write(e)
+		}
+	}
 	if consumeErr := h.consumeOwnerSpecBootstrapToken(e.Request.Context(), claims, now); consumeErr != nil {
 		h.recordOwnerSpecAudit(e.Request.Context(), claims.TenantID, claims.StackID, claims.OwnerID, ownerSpecActionDenied, "error", "Owner spec denied: bootstrap token already used or unavailable", map[string]any{
 			ownerSpecAuditReasonKey: ownerSpecTokenErrorReason(consumeErr),
@@ -295,7 +311,9 @@ func (h crudRouteHandlers) ownerSpecFromControlPlane(e *httpx.Event, claims *own
 		}
 		return httpx.Forbidden(e, "Bootstrap token has already been used")
 	}
-	response, responseErr := h.ownerSpecResponseFromControlPlane(e.Request.Context(), stack, claims, now)
+	if !prefetched {
+		response, responseErr = h.ownerSpecResponseFromControlPlane(e.Request.Context(), stack, claims, now)
+	}
 	if responseErr != nil {
 		h.recordOwnerSpecAudit(e.Request.Context(), claims.TenantID, claims.StackID, claims.OwnerID, ownerSpecActionDenied, "error", "Owner spec unavailable", map[string]any{
 			ownerSpecAuditReasonKey: responseErr.Error(),
@@ -316,13 +334,11 @@ func (h crudRouteHandlers) ownerSpecResponseFromControlPlane(ctx context.Context
 	if !ok || !ownerSourceSeedsPocketID(bootstrap.Source) || bootstrap.Email == "" || bootstrap.Username == "" {
 		return ownerSpecResponse{}, fmt.Errorf("missing local owner bootstrap")
 	}
-	recovery, err := h.walletStore.GetWalletItem(ctx, stack.TenantID, fmt.Sprintf("%s:%s", stack.ID, recoveryWalletServiceID))
-	if err != nil || recovery == nil {
-		return ownerSpecResponse{}, fmt.Errorf("missing recovery wallet entry")
+	recoveryHash, err := h.ownerRecoveryHash(ctx, stack)
+	if err != nil {
+		return ownerSpecResponse{}, err
 	}
-	secret := strings.TrimSpace(stringFromAny(recovery.Metadata["secret"]))
-	recoveryHash, decryptErr := tsauth.DecryptIfNeeded(tsauth.GetEncryptor(), secret)
-	if decryptErr != nil || !strings.HasPrefix(strings.TrimSpace(recoveryHash), "$argon2id$") {
+	if !strings.HasPrefix(strings.TrimSpace(recoveryHash), "$argon2id$") {
 		return ownerSpecResponse{}, fmt.Errorf("recovery hash unavailable")
 	}
 	expiresAt := ""
@@ -439,4 +455,33 @@ func normalizeOwnerSpecAuditStatus(status string) string {
 	default:
 		return "info"
 	}
+}
+
+// ownerRecoveryHash reads the stack's owner-bootstrap recovery hash from the
+// kombify Wallet item recorded in the stack configuration, or, for the legacy
+// wallet, from the stack's recovery row. A Wallet failure is returned as a
+// denial and never falls back to a legacy row.
+func (h crudRouteHandlers) ownerRecoveryHash(ctx context.Context, stack *controlplane.Stack) (string, error) {
+	if h.kombifyWallet != nil {
+		itemID := strings.TrimSpace(stringFromAny(stack.Config[stackConfigKeyOwnerRecoveryItemID]))
+		if !kombifywallet.IsItemID(itemID) {
+			return "", fmt.Errorf("missing recovery wallet entry")
+		}
+		secret, err := h.kombifyWallet.Reveal(ctx, stack.OwnerSubjectID, itemID)
+		if err != nil {
+			return "", err
+		}
+		defer secret.Wipe()
+		return strings.TrimSpace(secret.Reveal()), nil
+	}
+	recovery, err := h.walletStore.GetWalletItem(ctx, stack.TenantID, fmt.Sprintf("%s:%s", stack.ID, recoveryWalletServiceID))
+	if err != nil || recovery == nil {
+		return "", fmt.Errorf("missing recovery wallet entry")
+	}
+	secret := strings.TrimSpace(stringFromAny(recovery.Metadata["secret"]))
+	recoveryHash, decryptErr := tsauth.DecryptIfNeeded(tsauth.GetEncryptor(), secret)
+	if decryptErr != nil {
+		return "", fmt.Errorf("recovery hash unavailable")
+	}
+	return recoveryHash, nil
 }

@@ -67,6 +67,9 @@ func (s *MemoryStore) Put(_ context.Context, req PutRequest) (*PutResult, error)
 	}
 
 	next := req.DesiredState
+	if exists && req.PreserveExpectations && current.Domain == next.Domain && current.ServerID == next.ServerID && current.LeaseID == next.LeaseID {
+		next.Expectations = CloneExpectations(current.Expectations)
+	}
 	if exists && current.RolloutStatus == RolloutPending && !sameDesiredRouting(current, next) {
 		return nil, ErrRolloutInProgress
 	}
@@ -209,7 +212,7 @@ func sameDesiredRouting(left, right DesiredState) bool {
 		left.LeaseID == right.LeaseID &&
 		left.Mode == right.Mode &&
 		left.Domain == right.Domain &&
-		left.Provenance == right.Provenance
+		left.Provenance == right.Provenance && expectationsEqual(left.Expectations, right.Expectations)
 }
 
 var _ Store = (*MemoryStore)(nil)

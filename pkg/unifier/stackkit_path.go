@@ -1,11 +1,6 @@
 package unifier
 
-import (
-	"os"
-	"path/filepath"
-	"sort"
-	"strings"
-)
+import "strings"
 
 const (
 	StackKitBasement      = "basement-kit"
@@ -15,20 +10,27 @@ const (
 	StackKitDevHomelab    = "dev-homelab"
 )
 
-// DefaultStackKitsDir resolves an explicitly configured StackKits checkout.
-// Production sets TECHSTACK_STACKKITS_DIR to the pinned published tree.
-// A sibling workspace checkout is not implicit authority.
-func DefaultStackKitsDir() string {
-	for _, key := range []string{"TECHSTACK_STACKKITS_DIR", "STACKKITS_REPO", "STACKKITS_PATH"} {
-		if dir := existingDir(os.Getenv(key)); dir != "" {
-			return dir
-		}
-	}
-	return ""
+// DefaultKnownStackKits retains the existing selection interface, backed by
+// released metadata. An unreadable explicit authority never falls back.
+func DefaultKnownStackKits() []string {
+	names, _ := releasedStackKitNames()
+	return names
 }
 
-func DefaultKnownStackKits() []string {
-	return []string{StackKitBasement, StackKitCloud, StackKitModernHomelab}
+func releasedStackKitNames() ([]string, error) {
+	loader, err := NewStackKitLoader()
+	if err != nil {
+		return nil, err
+	}
+	kits, err := loader.ListKitInfo()
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(kits))
+	for _, kit := range kits {
+		names = append(names, kit.Name)
+	}
+	return names, nil
 }
 
 func IsSupportedProductStackKit(name string) bool {
@@ -55,55 +57,4 @@ func CanonicalStackKitName(name string) string {
 	default:
 		return strings.TrimSpace(name)
 	}
-}
-
-func DiscoverAvailableStackKits(root string) []string {
-	root = existingDir(root)
-	if root == "" {
-		return nil
-	}
-
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return nil
-	}
-
-	seen := make(map[string]struct{})
-	kits := make([]string, 0)
-	for _, entry := range entries {
-		if entry.Type()&os.ModeSymlink != 0 || !entry.IsDir() {
-			continue
-		}
-		metaPath := filepath.Join(root, entry.Name(), "stackkit.yaml")
-		if info, err := os.Lstat(metaPath); err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-			continue
-		}
-		kit := CanonicalStackKitName(entry.Name())
-		if kit == "" || !IsSupportedProductStackKit(kit) {
-			continue
-		}
-		if _, ok := seen[kit]; ok {
-			continue
-		}
-		seen[kit] = struct{}{}
-		kits = append(kits, kit)
-	}
-
-	sort.Strings(kits)
-	return kits
-}
-
-func existingDir(path string) string {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return ""
-	}
-	resolved, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		return ""
-	}
-	if st, err := os.Stat(resolved); err == nil && st.IsDir() { // #nosec G703 -- path is operator-supplied StackKits checkout config; existence check only.
-		return filepath.Clean(resolved)
-	}
-	return ""
 }

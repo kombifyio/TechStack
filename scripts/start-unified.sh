@@ -3,7 +3,6 @@
 set -euo pipefail
 
 public_port="${PORT:-5260}"
-stackkits_port="${TECHSTACK_STACKKITS_INTERNAL_PORT:-8082}"
 data_dir="${TECHSTACK_DATA_DIR:-/data}"
 pb_data_dir="${TECHSTACK_PB_DATA_DIR:-${data_dir}/pb_data}"
 stackkits_log_dir="${STACKKITS_LOG_DIR:-${pb_data_dir}/stackkits/logs}"
@@ -68,7 +67,7 @@ if [[ -z "${GOMEMLIMIT:-}" ]]; then
   fi
 fi
 
-echo "[unified] ports: public=${public_port} stackkits=${stackkits_port} data=${pb_data_dir}"
+echo "[unified] ports: public=${public_port} data=${pb_data_dir}"
 
 mkdir -p "${pb_data_dir}"
 
@@ -80,36 +79,14 @@ export TECHSTACK_PORT="${public_port}"
 # cfg.Server.ListenAddr (TECHSTACK_LISTEN_ADDR), so pin it to the public port.
 export TECHSTACK_LISTEN_ADDR="0.0.0.0:${public_port}"
 
-stackkits_pid=""
-if command -v stackkit-server >/dev/null 2>&1; then
-  embedded_stackkits_url="http://127.0.0.1:${stackkits_port}"
-  if [[ "${TECHSTACK_STACKKITS_ACTIONS_EXTERNAL:-}" == "1" || "${TECHSTACK_STACKKITS_ACTIONS_EXTERNAL:-}" == "true" ]]; then
-    export TECHSTACK_STACKKITS_ACTIONS_URL="${TECHSTACK_STACKKITS_ACTIONS_URL:-${embedded_stackkits_url}}"
-  else
-    if [[ -n "${TECHSTACK_STACKKITS_ACTIONS_URL:-}" && "${TECHSTACK_STACKKITS_ACTIONS_URL}" != "${embedded_stackkits_url}" ]]; then
-      echo "[unified] overriding TECHSTACK_STACKKITS_ACTIONS_URL for embedded StackKits runtime actions"
-    fi
-    export TECHSTACK_STACKKITS_ACTIONS_URL="${embedded_stackkits_url}"
-  fi
-  export STACKKITS_RUNTIME_PROFILE="${STACKKITS_RUNTIME_PROFILE:-local}"
-  export STACKKITS_ALLOW_UNAUTHENTICATED="${STACKKITS_ALLOW_UNAUTHENTICATED:-true}"
-  export STACKKITS_RUNTIME_ACTION_MODE="${STACKKITS_RUNTIME_ACTION_MODE:-apply}"
-  export STACKKITS_BASE_DIR="${STACKKITS_BASE_DIR:-/app/stackkits}"
-  export STACKKITS_LOG_DIR="${stackkits_log_dir}"
-  mkdir -p "${STACKKITS_LOG_DIR}"
-  stackkit-server "--port=${stackkits_port}" "--base-dir=${STACKKITS_BASE_DIR}" --allow-unauthenticated &
-  stackkits_pid=$!
-fi
-
+# StackKits has no HTTP action service: every StackKits operation is a typed
+# command the enrolled node runs with the pinned CLI.
 /app/techstack serve "--http=0.0.0.0:${public_port}" "--dir=${pb_data_dir}" &
 backend_pid=$!
 
 pids=("${backend_pid}")
-if [[ -n "${stackkits_pid}" ]]; then
-  pids+=("${stackkits_pid}")
-fi
 
-echo "[unified] backend=${backend_pid} stackkits=${stackkits_pid:-disabled}"
+echo "[unified] backend=${backend_pid}"
 
 cleanup() {
   kill "${pids[@]}" 2>/dev/null || true
@@ -123,9 +100,6 @@ status=$?
 # Log which process exited for debugging
 if ! kill -0 "${backend_pid}" 2>/dev/null; then
   echo "[unified] backend exited (status=${status})"
-fi
-if [[ -n "${stackkits_pid}" ]] && ! kill -0 "${stackkits_pid}" 2>/dev/null; then
-  echo "[unified] stackkits exited (status=${status})"
 fi
 
 cleanup

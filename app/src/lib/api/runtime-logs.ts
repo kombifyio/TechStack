@@ -18,6 +18,8 @@ export interface RuntimeLogEntry {
 export interface RuntimeLogScope {
   agentId?: string;
   serverId?: string;
+  /** The records one job's commands produced, e.g. a rollout's apply. */
+  jobId?: string;
 }
 
 function runtimeLogQuery(scope: RuntimeLogScope, limit = 500): string {
@@ -25,14 +27,16 @@ function runtimeLogQuery(scope: RuntimeLogScope, limit = 500): string {
   if (scope.agentId?.trim()) query.set("agent_id", scope.agentId.trim());
   else if (scope.serverId?.trim())
     query.set("server_id", scope.serverId.trim());
+  else if (scope.jobId?.trim()) query.set("job_id", scope.jobId.trim());
   return query.toString();
 }
 
 export async function getRuntimeLogs(
   scope: RuntimeLogScope,
+  limit?: number,
 ): Promise<RuntimeLogEntry[]> {
   return get<RuntimeLogEntry[]>(
-    `/api/v1/runtime/logs?${runtimeLogQuery(scope)}`,
+    `/api/v1/runtime/logs?${runtimeLogQuery(scope, limit)}`,
   );
 }
 

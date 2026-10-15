@@ -775,6 +775,8 @@ async function waitForJobTerminal(
   const observation = createJobObservation(
     timeoutMs,
     managedObservation ? MANAGED_RUNTIME_BUDGETS.rolloutMs : undefined,
+    Date.now(),
+    managedObservation ? MANAGED_RUNTIME_BUDGETS.backendVerificationMs : undefined,
   );
   let last: Record<string, unknown> | undefined;
   let lastProgressSignature = "";
@@ -793,8 +795,10 @@ async function waitForJobTerminal(
       if (managedObservation && observed.phase !== phase) {
         phase = observed.phase;
         managedObservationPhase(
-          "rollout",
-          MANAGED_RUNTIME_BUDGETS.rolloutMs + 30_000,
+          phase === "verification" ? "backend verification" : "rollout",
+          (phase === "verification"
+            ? MANAGED_RUNTIME_BUDGETS.backendVerificationMs
+            : MANAGED_RUNTIME_BUDGETS.rolloutMs) + 30_000,
         );
       }
       const state = String(last.state ?? "");

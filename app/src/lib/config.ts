@@ -9,7 +9,7 @@ export const appVersion = __APP_VERSION__;
 // full SHA to seven characters. Matches the contract in
 // kombify-AI/apps/portal/src/lib/version.ts and
 // kombify-simulate/app/src/lib/config.ts so the deploy identity is rendered
-// consistently across the three SvelteKit surfaces (Marcel 2026-05-24).
+// consistently across the three SvelteKit surfaces (owner decision 2026-05-24).
 export const appCommit: string =
   typeof __APP_COMMIT__ !== "undefined" && __APP_COMMIT__ ? __APP_COMMIT__ : "";
 

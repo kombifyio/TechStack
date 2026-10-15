@@ -48,8 +48,8 @@ func TestEngine_HappyPath(t *testing.T) {
 		steps:  []StepDef{mk("a"), mk("b"), mk("c")},
 	})
 
-	run := &Run{Type: TypeActionCardRemediation, OwnerID: "u"}
-	runID, err := eng.StartRun(context.Background(), run)
+	run := &Run{TenantID: "engine-unit", Type: TypeActionCardRemediation, OwnerID: "u"}
+	runID, err := eng.StartRun(WithTenant(context.Background(), "engine-unit"), run)
 	if err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
@@ -109,8 +109,8 @@ func TestEngine_SuspendAndResume(t *testing.T) {
 		steps:  []StepDef{mk("pre"), approval, mk("post")},
 	})
 
-	run := &Run{Type: TypeDriftCorrection, OwnerID: "u"}
-	runID, err := eng.StartRun(context.Background(), run)
+	run := &Run{TenantID: "engine-unit", Type: TypeDriftCorrection, OwnerID: "u"}
+	runID, err := eng.StartRun(WithTenant(context.Background(), "engine-unit"), run)
 	if err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestEngine_SuspendAndResume(t *testing.T) {
 	}
 
 	// Deliver the approval.
-	if err := eng.Deliver(context.Background(), Signal{Key: "approval:r1", Payload: map[string]any{"approved": true}}); err != nil {
+	if err := eng.Deliver(WithTenant(context.Background(), "engine-unit"), Signal{Key: "approval:r1", Payload: map[string]any{"approved": true}}); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 
@@ -165,8 +165,8 @@ func TestEngine_RetryThenSucceed(t *testing.T) {
 		steps:  []StepDef{flaky},
 	})
 
-	run := &Run{Type: TypeCertRotation, OwnerID: "u"}
-	runID, err := eng.StartRun(context.Background(), run)
+	run := &Run{TenantID: "engine-unit", Type: TypeCertRotation, OwnerID: "u"}
+	runID, err := eng.StartRun(WithTenant(context.Background(), "engine-unit"), run)
 	if err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
@@ -203,8 +203,8 @@ func TestEngine_FailWithCompensation(t *testing.T) {
 		steps:  []StepDef{prep, boom},
 	})
 
-	run := &Run{Type: TypeRollingUpdate, OwnerID: "u"}
-	runID, err := eng.StartRun(context.Background(), run)
+	run := &Run{TenantID: "engine-unit", Type: TypeRollingUpdate, OwnerID: "u"}
+	runID, err := eng.StartRun(WithTenant(context.Background(), "engine-unit"), run)
 	if err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
@@ -262,8 +262,8 @@ func TestEngine_RestartResume(t *testing.T) {
 
 	// Engine #1 starts the run; it suspends at the gate.
 	eng1 := build()
-	run := &Run{Type: TypeActionCardRemediation, OwnerID: "u"}
-	runID, err := eng1.StartRun(context.Background(), run)
+	run := &Run{TenantID: "engine-unit", Type: TypeActionCardRemediation, OwnerID: "u"}
+	runID, err := eng1.StartRun(WithTenant(context.Background(), "engine-unit"), run)
 	if err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestEngine_RestartResume(t *testing.T) {
 
 	// Engine #2 (fresh instance, same DB) delivers the signal and resumes.
 	eng2 := build()
-	if err := eng2.Deliver(context.Background(), Signal{Key: "sig:restart"}); err != nil {
+	if err := eng2.Deliver(WithTenant(context.Background(), "engine-unit"), Signal{Key: "sig:restart"}); err != nil {
 		t.Fatalf("Deliver on fresh engine: %v", err)
 	}
 	if got, _ := eng2.store.GetRun(runID); got.Status != RunCompleted {
@@ -303,8 +303,8 @@ func TestEngine_ActivityIdempotencyKey(t *testing.T) {
 	}}
 	eng.Register(testWF{typ: TypeActionCardRemediation, policy: DefaultRetryPolicy(), steps: []StepDef{stepWithKey}})
 
-	run := &Run{Type: TypeActionCardRemediation, OwnerID: "u"}
-	if _, err := eng.StartRun(context.Background(), run); err != nil {
+	run := &Run{TenantID: "engine-unit", Type: TypeActionCardRemediation, OwnerID: "u"}
+	if _, err := eng.StartRun(WithTenant(context.Background(), "engine-unit"), run); err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
 	if gotIdem != "idem-xyz" {
@@ -319,19 +319,19 @@ func TestEngine_StartOrResumeRunAdoptsOnlyTheSameDurableWork(t *testing.T) {
 		calls++
 		return StepResult{}, nil
 	}}}})
-	run := &Run{RunID: "deterministic-action-run", Type: TypeActionCardRemediation, OwnerID: "owner-1", CardID: "card-1", Input: map[string]any{"idempotency_key": "idem-1"}}
-	if _, err := eng.StartOrResumeRun(t.Context(), run); err != nil {
+	run := &Run{TenantID: "engine-unit", RunID: "deterministic-action-run", Type: TypeActionCardRemediation, OwnerID: "owner-1", CardID: "card-1", Input: map[string]any{"idempotency_key": "idem-1"}}
+	if _, err := eng.StartOrResumeRun(WithTenant(t.Context(), "engine-unit"), run); err != nil {
 		t.Fatal(err)
 	}
-	retry := &Run{RunID: run.RunID, Type: run.Type, OwnerID: run.OwnerID, CardID: run.CardID, Input: map[string]any{"idempotency_key": "idem-1"}}
-	if _, err := eng.StartOrResumeRun(t.Context(), retry); err != nil {
+	retry := &Run{TenantID: "engine-unit", RunID: run.RunID, Type: run.Type, OwnerID: run.OwnerID, CardID: run.CardID, Input: map[string]any{"idempotency_key": "idem-1"}}
+	if _, err := eng.StartOrResumeRun(WithTenant(t.Context(), "engine-unit"), retry); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 1 {
 		t.Fatalf("durable work executed %d times, want exactly once", calls)
 	}
 	retry.Input["idempotency_key"] = "different"
-	if _, err := eng.StartOrResumeRun(t.Context(), retry); err == nil {
+	if _, err := eng.StartOrResumeRun(WithTenant(t.Context(), "engine-unit"), retry); err == nil {
 		t.Fatal("run id was reused for different work")
 	}
 }

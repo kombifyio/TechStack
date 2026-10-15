@@ -4,7 +4,7 @@
   "source": {
     "product": "techstack",
     "path": "api/openapi/techstack-v1.yaml",
-    "sha256": "0aaef4c8afc4e111a5b1dbcb3ba33e45c8b39e28f00dc73a4135e95eb4499129"
+    "sha256": "9dbd312c8306f5919a16c10f7b3bc75592b17a29fb205ee90c8afa235619373e"
   },
   "tools": [
     {
@@ -214,6 +214,64 @@
       "costBearing": false,
       "upstreamKind": "product-native",
       "liveEnabled": false
+    },
+    {
+      "toolId": "techstack.approve_worker_identity_upgrade",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "approve_worker_identity_upgrade",
+      "alias": "techstack.approve_worker_identity_upgrade",
+      "title": "Approve the key a legacy server proposed",
+      "description": "Binds the pending key named by `key_thumbprint`, which makes the worker key-bound (bearer-only requests are denied afterwards). Requires the owner and a fresh multi-factor sign-in (at most 300 seconds old). The approving subject and time are recorded with the identity and logged. 409 `identity_upgrade_not_pending` when no unexpired pending key has that fingerprint.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "Resource ID",
+            "type": "string"
+          },
+          "key_thumbprint": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "key_thumbprint"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.operate",
+      "entitlementKey": "techstack.inventory.operate",
+      "fgaObject": "tool:techstack/approve_worker_identity_upgrade",
+      "auditEvent": "mcp.customer.techstack.inventory.approve_worker_identity_upgrade",
+      "operationIds": [
+        "techstack.approveWorkerIdentityUpgrade"
+      ],
+      "risk": "high",
+      "approvalPolicy": "human",
+      "actionClass": "destructive",
+      "quotaKey": "mcp.usage.techstack.inventory.operate",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.operate",
+      "requiredCapabilities": [
+        "techstack.inventory.operate"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
     },
     {
       "toolId": "techstack.cancel_scan",
@@ -1147,6 +1205,72 @@
             "description": "Request reconciliation without implying that it has already been dispatched or applied.",
             "type": "boolean"
           },
+          "expectations": {
+            "additionalProperties": false,
+            "description": "Omission preserves expectations for the same domain/server/lease. An explicit empty object clears optional DNS and TLS pins.",
+            "properties": {
+              "dns": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "description": "Exact routing domain or child name; defaults to the routing domain. Wildcards are rejected.",
+                      "type": "string"
+                    },
+                    "proxied": {
+                      "default": false,
+                      "description": "Public edge addresses cannot verify this origin value; valid for A, AAAA or CNAME only.",
+                      "type": "boolean"
+                    },
+                    "type": {
+                      "enum": [
+                        "A",
+                        "AAAA",
+                        "CNAME",
+                        "NS",
+                        "TXT"
+                      ],
+                      "type": "string"
+                    },
+                    "values": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "maxItems": 32,
+                      "minItems": 1,
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "values"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 64,
+                "type": "array"
+              },
+              "tls": {
+                "additionalProperties": false,
+                "properties": {
+                  "fingerprint_sha256": {
+                    "description": "Optional SHA-256 leaf certificate pin, normalized to 64 hexadecimal characters.",
+                    "type": "string"
+                  },
+                  "hostname": {
+                    "description": "Additional expected hostname; defaults to the endpoint domain, which is always independently verified.",
+                    "type": "string"
+                  },
+                  "issuer": {
+                    "maxLength": 512,
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "type": "object"
+          },
           "if_match": {
             "description": "Optional optimistic-concurrency routing revision, for example `\"3\"`.",
             "type": "string"
@@ -1241,6 +1365,84 @@
       "costBearing": false,
       "upstreamKind": "product-native",
       "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.execute_application_adoption",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "execute_application_adoption",
+      "alias": "techstack.execute_application_adoption",
+      "title": "Execute the exact reviewed source plan with explicit Owner approval",
+      "description": "Revalidates the retained digest, source identity, revision and release. Only an authenticated pinned-CLI custody receipt establishes membership. Accounts, configuration and persistent data are preserved; no new runtime is created. Moving to another Node and generic adoption are not supported.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_inventory_revision": {
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "mode": {
+            "enum": [
+              "adopt_in_place"
+            ],
+            "type": "string"
+          },
+          "owner_approved": {
+            "default": false,
+            "type": "boolean"
+          },
+          "plan_digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "plan_id": {
+            "type": "string"
+          },
+          "service_id": {
+            "description": "Canonical service runtime ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "service_id",
+          "plan_id",
+          "expected_inventory_revision"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/execute_application_adoption",
+      "auditEvent": "mcp.customer.techstack.inventory.execute_application_adoption",
+      "operationIds": [
+        "techstack.executeApplicationAdoption"
+      ],
+      "risk": "medium",
+      "approvalPolicy": "none",
+      "actionClass": "reversible_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": false
     },
     {
       "toolId": "techstack.export_stack",
@@ -2085,6 +2287,165 @@
       "liveEnabled": false
     },
     {
+      "toolId": "techstack.get_monitor_domains",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "get_monitor_domains",
+      "alias": "techstack.get_monitor_domains",
+      "title": "Read domain lifecycle and observed DNS/TLS differences",
+      "description": "Owner and tenant scoped, read-only projection of canonical routing, server domains and service endpoints. Registration expiry from RDAP and certificate expiry from the presented public TLS leaf are separate facts with independent sources and observation deadlines. Missing data stays unknown. Expected DNS is never inferred from observed addresses. Proxied origins are explicitly unobservable from recursive public DNS. Conditions persist across failures and stale observations, and resolve only after fresh positive evidence. An unavailable store returns 503.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "server_id": {
+            "maxLength": 128,
+            "type": "string"
+          },
+          "service_id": {
+            "maxLength": 128,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.read",
+      "entitlementKey": "techstack.inventory.read",
+      "fgaObject": "tool:techstack/get_monitor_domains",
+      "auditEvent": "mcp.customer.techstack.inventory.get_monitor_domains",
+      "operationIds": [
+        "techstack.getMonitorDomains"
+      ],
+      "risk": "low",
+      "approvalPolicy": "none",
+      "actionClass": "read",
+      "quotaKey": "mcp.usage.techstack.inventory.read",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.read",
+      "requiredCapabilities": [
+        "techstack.inventory.read"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": false
+    },
+    {
+      "toolId": "techstack.get_monitor_drive_health",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "get_monitor_drive_health",
+      "alias": "techstack.get_monitor_drive_health",
+      "title": "Read per-drive SMART and NVMe health evidence",
+      "description": "Authenticated, tenant-scoped projection of Guard drive observations. Self-hosted installations use their configured installation tenant. Hardware identities retain history independently of mutable device paths; replacements never inherit earlier readings. Anonymous observations have attempt-specific IDs and cannot establish historical continuity. Missing, unsupported, inaccessible, incomplete, stale and disconnected observations stay explicit and cannot imply healthy hardware. A server with no observations returns a missing state when selected explicitly. Last successful readings remain historical evidence when a new attempt fails. Only a complete inventory or an explicit missing observation can establish disconnection, and an unreadable identity at a seen path stays uncertain. Reads age evidence and condition episodes, without initiating collection, self-tests, repairs, provisioning or other device actions. Capacity growth forecasts remain on the separate storage-forecast route.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "server_id": {
+            "description": "Restrict evidence to one server within the authenticated tenant; an unobserved server remains explicitly missing.",
+            "maxLength": 128,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.read",
+      "entitlementKey": "techstack.inventory.read",
+      "fgaObject": "tool:techstack/get_monitor_drive_health",
+      "auditEvent": "mcp.customer.techstack.inventory.get_monitor_drive_health",
+      "operationIds": [
+        "techstack.getMonitorDriveHealth"
+      ],
+      "risk": "low",
+      "approvalPolicy": "none",
+      "actionClass": "read",
+      "quotaKey": "mcp.usage.techstack.inventory.read",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.read",
+      "requiredCapabilities": [
+        "techstack.inventory.read"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.get_monitor_drive_health_alerts",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "get_monitor_drive_health_alerts",
+      "alias": "techstack.get_monitor_drive_health_alerts",
+      "title": "Read active and recovered drive-health condition episodes",
+      "description": "Authenticated, tenant-scoped read of hardware and collection conditions. Each condition names its affected server and, when attributable, immutable drive identity, severity, observed evidence and recommended next step. Collection failures are distinct from hardware diagnoses. Stable episode IDs deduplicate unchanged conditions; resolved_at records recovery only when fresh evidence covers the condition. Anonymous collection incidents deduplicate by server and path, independently of anonymous hardware IDs. Nonzero cumulative counters describe historical totals; measured increases are separate conditions. NVMe command-error increases and consumed rated endurance are advisories, rather than standalone evidence of media failure. Resolved history is bounded to 64 episodes per condition scope and 90 days. Reads initiate no repair, device mutation or provider action.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "server_id": {
+            "description": "Restrict evidence to one server within the authenticated tenant; an unobserved server remains explicitly missing.",
+            "maxLength": 128,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.read",
+      "entitlementKey": "techstack.inventory.read",
+      "fgaObject": "tool:techstack/get_monitor_drive_health_alerts",
+      "auditEvent": "mcp.customer.techstack.inventory.get_monitor_drive_health_alerts",
+      "operationIds": [
+        "techstack.getMonitorDriveHealthAlerts"
+      ],
+      "risk": "low",
+      "approvalPolicy": "none",
+      "actionClass": "read",
+      "quotaKey": "mcp.usage.techstack.inventory.read",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.read",
+      "requiredCapabilities": [
+        "techstack.inventory.read"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
       "toolId": "techstack.get_monitor_health",
       "connectorFamily": "techstack",
       "serverKey": "techstack",
@@ -2155,6 +2516,65 @@
       "auditEvent": "mcp.customer.techstack.inventory.get_monitor_status",
       "operationIds": [
         "techstack.getMonitorStatus"
+      ],
+      "risk": "low",
+      "approvalPolicy": "none",
+      "actionClass": "read",
+      "quotaKey": "mcp.usage.techstack.inventory.read",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.read",
+      "requiredCapabilities": [
+        "techstack.inventory.read"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": false
+    },
+    {
+      "toolId": "techstack.get_monitor_storage_forecast",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "get_monitor_storage_forecast",
+      "alias": "techstack.get_monitor_storage_forecast",
+      "title": "Project filesystem growth from observed storage gauges",
+      "description": "Read-only, tenant-scoped projection of node_disk_used_bytes with contemporaneous node_disk_total_bytes or used plus free bytes. The latter is effective usable capacity, not physical disk capacity. Uses a 14-day window with hourly query evaluation, retaining actual source observation times and deduplicating repeated lookback values. Counts describe hourly sampled observations, not all ingested samples; sparse observations outside the backend lookback may be absent. No interpolation or per-service storage attribution is performed. Separate origin/source streams remain separate resources and are never summed. Guard OTLP times describe Guard collection, not original OTLP point time. Unknown capacity, stale/inadequate history and inconsistent measurements return an explicit state without an exhaustion estimate. Exhaustion is a growth scenario range measured from the latest observation, not a statistical confidence interval. Both bounded queries share a timeout.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_id": {
+            "maxLength": 128,
+            "type": "string"
+          },
+          "node_id": {
+            "maxLength": 128,
+            "type": "string"
+          },
+          "server_id": {
+            "maxLength": 128,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.read",
+      "entitlementKey": "techstack.inventory.read",
+      "fgaObject": "tool:techstack/get_monitor_storage_forecast",
+      "auditEvent": "mcp.customer.techstack.inventory.get_monitor_storage_forecast",
+      "operationIds": [
+        "techstack.getMonitorStorageForecast"
       ],
       "risk": "low",
       "approvalPolicy": "none",
@@ -2578,6 +2998,68 @@
       "liveEnabled": false
     },
     {
+      "toolId": "techstack.get_server_maintenance_impact",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "get_server_maintenance_impact",
+      "alias": "techstack.get_server_maintenance_impact",
+      "title": "Preview service and stack impact before confirming OS maintenance",
+      "description": "Requires the signed maintenance entitlement and ownership of the server. Lists canonical service placement and stack membership, with reasons and inventory freshness and completeness. An empty services array means no affected services only when inventory.status is current. An incomplete, stale or unavailable inventory cannot authorize maintenance. The digest binds the server, operation and material dependency snapshot; ordinary observation timestamps do not invalidate unchanged impact. Responses are private and must not be cached.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "os_update",
+              "reboot"
+            ],
+            "type": "string"
+          },
+          "server_id": {
+            "description": "Canonical server runtime ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_id",
+          "action"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.server.maintenance",
+      "entitlementKey": "techstack.server.maintenance",
+      "fgaObject": "tool:techstack/get_server_maintenance_impact",
+      "auditEvent": "mcp.customer.techstack.server.get_server_maintenance_impact",
+      "operationIds": [
+        "techstack.getServerMaintenanceImpact"
+      ],
+      "risk": "low",
+      "approvalPolicy": "none",
+      "actionClass": "read",
+      "quotaKey": "mcp.usage.techstack.server.maintenance",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.server.maintenance",
+      "requiredCapabilities": [
+        "techstack.server.maintenance"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
       "toolId": "techstack.get_server_maintenance_job",
       "connectorFamily": "techstack",
       "serverKey": "techstack",
@@ -2615,6 +3097,60 @@
       "auditEvent": "mcp.customer.techstack.inventory.get_server_maintenance_job",
       "operationIds": [
         "techstack.getServerMaintenanceJob"
+      ],
+      "risk": "low",
+      "approvalPolicy": "none",
+      "actionClass": "read",
+      "quotaKey": "mcp.usage.techstack.inventory.read",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.read",
+      "requiredCapabilities": [
+        "techstack.inventory.read"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": false
+    },
+    {
+      "toolId": "techstack.get_server_network",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "get_server_network",
+      "alias": "techstack.get_server_network",
+      "title": "Read the server's network facts and any recorded home network move",
+      "description": "The network the server's kombify Guard last observed (address, gateway, subnet, interface, WiFi network), the `network_move` record kombify wrote when the server turned up on a different network, and the state of the re-bind that followed. A moved server re-binds itself automatically; `can_rebind` says whether the owner can start one now.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "server_id": {
+            "description": "Canonical server runtime ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.read",
+      "entitlementKey": "techstack.inventory.read",
+      "fgaObject": "tool:techstack/get_server_network",
+      "auditEvent": "mcp.customer.techstack.inventory.get_server_network",
+      "operationIds": [
+        "techstack.getServerNetwork"
       ],
       "risk": "low",
       "approvalPolicy": "none",
@@ -2723,6 +3259,113 @@
       "auditEvent": "mcp.customer.techstack.inventory.get_server_runtime_ports",
       "operationIds": [
         "techstack.getServerRuntimePorts"
+      ],
+      "risk": "low",
+      "approvalPolicy": "none",
+      "actionClass": "read",
+      "quotaKey": "mcp.usage.techstack.inventory.read",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.read",
+      "requiredCapabilities": [
+        "techstack.inventory.read"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": false
+    },
+    {
+      "toolId": "techstack.get_server_security_auto_repair",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "get_server_security_auto_repair",
+      "alias": "techstack.get_server_security_auto_repair",
+      "title": "Read the owner's approval of automatic security repair",
+      "description": "A server without an approval, or with an expired one, is observe-only.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "server_id": {
+            "description": "Canonical server runtime ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.read",
+      "entitlementKey": "techstack.inventory.read",
+      "fgaObject": "tool:techstack/get_server_security_auto_repair",
+      "auditEvent": "mcp.customer.techstack.inventory.get_server_security_auto_repair",
+      "operationIds": [
+        "techstack.getServerSecurityAutoRepair"
+      ],
+      "risk": "low",
+      "approvalPolicy": "none",
+      "actionClass": "read",
+      "quotaKey": "mcp.usage.techstack.inventory.read",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.read",
+      "requiredCapabilities": [
+        "techstack.inventory.read"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": false
+    },
+    {
+      "toolId": "techstack.get_service_metrics",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "get_service_metrics",
+      "alias": "techstack.get_service_metrics",
+      "title": "Read measured resource metrics for an owned service",
+      "description": "Uses the existing Guard telemetry query backend and fixes the tenant, canonical server and container selectors from authorized service inventory. An empty vector means no resource metric was measured.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "service_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "service_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.read",
+      "entitlementKey": "techstack.inventory.read",
+      "fgaObject": "tool:techstack/get_service_metrics",
+      "auditEvent": "mcp.customer.techstack.inventory.get_service_metrics",
+      "operationIds": [
+        "techstack.getServiceMetrics"
       ],
       "risk": "low",
       "approvalPolicy": "none",
@@ -3360,6 +4003,60 @@
       "liveEnabled": false
     },
     {
+      "toolId": "techstack.get_worker_identity_upgrade",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "get_worker_identity_upgrade",
+      "alias": "techstack.get_worker_identity_upgrade",
+      "title": "Show whether a server still needs its identity key approved",
+      "description": "For the owner of the worker. `identity_binding=legacy_bearer` with `code=guard_identity_upgrade_required` means the server authenticates with its bearer credential alone and is observe-only; `pending` carries the fingerprint of the key the server proposed, which the owner compares with the fingerprint the Guard logs on the server. A worker of another tenant or owner is 404.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "Resource ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.read",
+      "entitlementKey": "techstack.inventory.read",
+      "fgaObject": "tool:techstack/get_worker_identity_upgrade",
+      "auditEvent": "mcp.customer.techstack.inventory.get_worker_identity_upgrade",
+      "operationIds": [
+        "techstack.getWorkerIdentityUpgrade"
+      ],
+      "risk": "low",
+      "approvalPolicy": "none",
+      "actionClass": "read",
+      "quotaKey": "mcp.usage.techstack.inventory.read",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.read",
+      "requiredCapabilities": [
+        "techstack.inventory.read"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": false
+    },
+    {
       "toolId": "techstack.import_stack",
       "connectorFamily": "techstack",
       "serverKey": "techstack",
@@ -3727,6 +4424,60 @@
       "liveEnabled": false
     },
     {
+      "toolId": "techstack.list_guard_unresolved_outcomes",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "list_guard_unresolved_outcomes",
+      "alias": "techstack.list_guard_unresolved_outcomes",
+      "title": "List the unresolved operation outcomes of one kombify Guard",
+      "description": "Lists the operations of an owned worker whose outcome is unknown: the kombify Guard recorded that the effect may or may not have happened and no observation settled it. Each one fences further changes on the server. `state` is `reconciling` while the Guard still tries to settle it and `needs_operator` once it stayed unresolved past the configured time (`TECHSTACK_GUARD_OUTCOME_NEEDS_OPERATOR_AFTER`, default 30 minutes). The time only changes how the outcome is shown; it never releases the fence. Another tenant's or owner's worker is 404.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "Resource ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.read",
+      "entitlementKey": "techstack.inventory.read",
+      "fgaObject": "tool:techstack/list_guard_unresolved_outcomes",
+      "auditEvent": "mcp.customer.techstack.inventory.list_guard_unresolved_outcomes",
+      "operationIds": [
+        "techstack.listGuardUnresolvedOutcomes"
+      ],
+      "risk": "low",
+      "approvalPolicy": "none",
+      "actionClass": "read",
+      "quotaKey": "mcp.usage.techstack.inventory.read",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.read",
+      "requiredCapabilities": [
+        "techstack.inventory.read"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": false
+    },
+    {
       "toolId": "techstack.list_jobs",
       "connectorFamily": "techstack",
       "serverKey": "techstack",
@@ -3750,6 +4501,10 @@
             "type": "integer"
           },
           "search": {
+            "type": "string"
+          },
+          "service_id": {
+            "description": "Return only jobs whose recorded service target matches this id.",
             "type": "string"
           },
           "stack_id": {
@@ -4243,6 +4998,52 @@
       "liveEnabled": false
     },
     {
+      "toolId": "techstack.list_registry_services",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "list_registry_services",
+      "alias": "techstack.list_registry_services",
+      "title": "List owned services with their catalog and canonical placement",
+      "description": "Runtime records use the same state, capabilities, version and owner lock projection as service detail. Historical records remain readable with unknown observed state and no unmeasured action capabilities.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.read",
+      "entitlementKey": "techstack.inventory.read",
+      "fgaObject": "tool:techstack/list_registry_services",
+      "auditEvent": "mcp.customer.techstack.inventory.list_registry_services",
+      "operationIds": [
+        "techstack.listRegistryServices"
+      ],
+      "risk": "low",
+      "approvalPolicy": "none",
+      "actionClass": "read",
+      "quotaKey": "mcp.usage.techstack.inventory.read",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.read",
+      "requiredCapabilities": [
+        "techstack.inventory.read"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": false
+    },
+    {
       "toolId": "techstack.list_server_runtime_transitions",
       "connectorFamily": "techstack",
       "serverKey": "techstack",
@@ -4347,13 +5148,121 @@
       "liveEnabled": false
     },
     {
+      "toolId": "techstack.list_server_security_findings",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "list_server_security_findings",
+      "alias": "techstack.list_server_security_findings",
+      "title": "List the open findings and recent findings history of one server",
+      "description": "The findings ledger behind the server's `security`, `recovery` and Guard alerts. One finding is one episode: opened when a fact is first observed wrong, resolved when it is observed right again, with at most one alert (`alerted_at`) and one resolution. History is kept 90 days.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "server_id": {
+            "description": "Canonical server runtime ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.read",
+      "entitlementKey": "techstack.inventory.read",
+      "fgaObject": "tool:techstack/list_server_security_findings",
+      "auditEvent": "mcp.customer.techstack.inventory.list_server_security_findings",
+      "operationIds": [
+        "techstack.listServerSecurityFindings"
+      ],
+      "risk": "low",
+      "approvalPolicy": "none",
+      "actionClass": "read",
+      "quotaKey": "mcp.usage.techstack.inventory.read",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.read",
+      "requiredCapabilities": [
+        "techstack.inventory.read"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": false
+    },
+    {
+      "toolId": "techstack.list_server_security_repairs",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "list_server_security_repairs",
+      "alias": "techstack.list_server_security_repairs",
+      "title": "List the recent security repairs of one server",
+      "description": "List the recent security repairs of one server",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "server_id": {
+            "description": "Canonical server runtime ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.read",
+      "entitlementKey": "techstack.inventory.read",
+      "fgaObject": "tool:techstack/list_server_security_repairs",
+      "auditEvent": "mcp.customer.techstack.inventory.list_server_security_repairs",
+      "operationIds": [
+        "techstack.listServerSecurityRepairs"
+      ],
+      "risk": "low",
+      "approvalPolicy": "none",
+      "actionClass": "read",
+      "quotaKey": "mcp.usage.techstack.inventory.read",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.read",
+      "requiredCapabilities": [
+        "techstack.inventory.read"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": false
+    },
+    {
       "toolId": "techstack.list_servers",
       "connectorFamily": "techstack",
       "serverKey": "techstack",
       "toolName": "list_servers",
       "alias": "techstack.list_servers",
       "title": "List servers",
-      "description": "Returns only servers owned by the authenticated subject in the trusted tenant context. Tenant and owner overrides are not accepted. Raw metadata, channel endpoints, provider-resource references, credentials, SSH material, tokens, and logs are never returned. The lease projection contains only an opaque identifier and state. Cursor pages share one authorization- and filter-bound collection watermark and exclude later inserts.",
+      "description": "Returns only servers owned by the authenticated subject in the trusted tenant context. Tenant and owner overrides are not accepted. Raw metadata, channel endpoints, provider-resource references, credentials, SSH material, tokens, and logs are never returned. The lease projection contains only an opaque identifier and state. Cursor pages share one authorization- and filter-bound collection watermark and exclude later inserts. Each server carries its connection and health state and a freshness-qualified metrics block (cpu, memory and disk percent, uptime seconds); a figure from a stale heartbeat is reported as stale without a value.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -4773,6 +5682,52 @@
       "liveEnabled": false
     },
     {
+      "toolId": "techstack.list_worker_identity_upgrades",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "list_worker_identity_upgrades",
+      "alias": "techstack.list_worker_identity_upgrades",
+      "title": "List server key approvals waiting for the owner",
+      "description": "For the owner. Each entry is a server of theirs that proposed a key and is observe-only until that exact key is approved with `approveWorkerIdentityUpgrade` (fresh multi-factor sign-in required). Entries carry the hostname and the key fingerprint to compare with the one the Guard logs on the server. Listing grants nothing.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.read",
+      "entitlementKey": "techstack.inventory.read",
+      "fgaObject": "tool:techstack/list_worker_identity_upgrades",
+      "auditEvent": "mcp.customer.techstack.inventory.list_worker_identity_upgrades",
+      "operationIds": [
+        "techstack.listWorkerIdentityUpgrades"
+      ],
+      "risk": "low",
+      "approvalPolicy": "none",
+      "actionClass": "read",
+      "quotaKey": "mcp.usage.techstack.inventory.read",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.read",
+      "requiredCapabilities": [
+        "techstack.inventory.read"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
       "toolId": "techstack.list_workers",
       "connectorFamily": "techstack",
       "serverKey": "techstack",
@@ -4885,6 +5840,80 @@
       "capabilityBundle": "techstack.inventory.read",
       "requiredCapabilities": [
         "techstack.inventory.read"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": false
+    },
+    {
+      "toolId": "techstack.prepare_application_adoption",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "prepare_application_adoption",
+      "alias": "techstack.prepare_application_adoption",
+      "title": "Assess one exact existing Home Assistant Container for in-place adoption",
+      "description": "Retains the source-bound assessment in the existing durable job store. Requires a connected Guard and the exact capable published CLI release. This read-only operation does not establish Stacked membership.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_inventory_revision": {
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "mode": {
+            "enum": [
+              "adopt_in_place"
+            ],
+            "type": "string"
+          },
+          "owner_approved": {
+            "default": false,
+            "type": "boolean"
+          },
+          "plan_digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "service_id": {
+            "description": "Canonical service runtime ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "service_id",
+          "expected_inventory_revision"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/prepare_application_adoption",
+      "auditEvent": "mcp.customer.techstack.inventory.prepare_application_adoption",
+      "operationIds": [
+        "techstack.prepareApplicationAdoption"
+      ],
+      "risk": "medium",
+      "approvalPolicy": "none",
+      "actionClass": "reversible_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
       ],
       "costBearing": false,
       "upstreamKind": "product-native",
@@ -5064,6 +6093,172 @@
       "liveEnabled": false
     },
     {
+      "toolId": "techstack.read_application_adoption_plan",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "read_application_adoption_plan",
+      "alias": "techstack.read_application_adoption_plan",
+      "title": "Read the retained application assessment and durable progress",
+      "description": "Read the retained application assessment and durable progress",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "plan_id": {
+            "type": "string"
+          },
+          "service_id": {
+            "description": "Canonical service runtime ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "service_id",
+          "plan_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.read",
+      "entitlementKey": "techstack.inventory.read",
+      "fgaObject": "tool:techstack/read_application_adoption_plan",
+      "auditEvent": "mcp.customer.techstack.inventory.read_application_adoption_plan",
+      "operationIds": [
+        "techstack.readApplicationAdoptionPlan"
+      ],
+      "risk": "low",
+      "approvalPolicy": "none",
+      "actionClass": "read",
+      "quotaKey": "mcp.usage.techstack.inventory.read",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.read",
+      "requiredCapabilities": [
+        "techstack.inventory.read"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": false
+    },
+    {
+      "toolId": "techstack.read_application_connector",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "read_application_connector",
+      "alias": "techstack.read_application_connector",
+      "title": "Read node-owned connector status and current published transport admission",
+      "description": "Returns a secret-free projection. An unavailable supporting catalog remains nondispatchable SourcePreview; stale evidence on a supporting pin requires current read-only verification. Dispatchability additionally requires current canonical host-key, node and lease authority.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "service_id": {
+            "description": "Canonical service runtime ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "service_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.read",
+      "entitlementKey": "techstack.inventory.read",
+      "fgaObject": "tool:techstack/read_application_connector",
+      "auditEvent": "mcp.customer.techstack.inventory.read_application_connector",
+      "operationIds": [
+        "techstack.readApplicationConnector"
+      ],
+      "risk": "low",
+      "approvalPolicy": "none",
+      "actionClass": "read",
+      "quotaKey": "mcp.usage.techstack.inventory.read",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.read",
+      "requiredCapabilities": [
+        "techstack.inventory.read"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": false
+    },
+    {
+      "toolId": "techstack.rebind_server_network",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "rebind_server_network",
+      "alias": "techstack.rebind_server_network",
+      "title": "Re-bind a moved server to the network it is on now",
+      "description": "Runs `stackkit network rebind` on the server through its kombify Guard: the node re-detects its LAN address, re-issues the signed LAN DNS custody record and regenerates and re-applies the workspace. The request takes no body. Requires the owner, the Inventory operate grant and the `techstack.servers.maintenance` entitlement, and a connected Guard (409 `server_network_not_ready` otherwise). A rebind that is already queued or running answers with its job instead of queueing another.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "server_id": {
+            "description": "Canonical server runtime ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_id"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.operate",
+      "entitlementKey": "techstack.inventory.operate",
+      "fgaObject": "tool:techstack/rebind_server_network",
+      "auditEvent": "mcp.customer.techstack.inventory.rebind_server_network",
+      "operationIds": [
+        "techstack.rebindServerNetwork"
+      ],
+      "risk": "high",
+      "approvalPolicy": "human",
+      "actionClass": "destructive",
+      "quotaKey": "mcp.usage.techstack.inventory.operate",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.operate",
+      "requiredCapabilities": [
+        "techstack.inventory.operate"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": false
+    },
+    {
       "toolId": "techstack.reconnect_monthly_runtime",
       "connectorFamily": "techstack",
       "serverKey": "techstack",
@@ -5178,6 +6373,80 @@
       "costBearing": true,
       "upstreamKind": "product-native",
       "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.release_application_lifecycle",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "release_application_lifecycle",
+      "alias": "techstack.release_application_lifecycle",
+      "title": "Release an adopted lifecycle binding without deleting or stopping its runtime",
+      "description": "Release an adopted lifecycle binding without deleting or stopping its runtime",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_inventory_revision": {
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "mode": {
+            "enum": [
+              "adopt_in_place"
+            ],
+            "type": "string"
+          },
+          "owner_approved": {
+            "default": false,
+            "type": "boolean"
+          },
+          "plan_digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "service_id": {
+            "description": "Canonical service runtime ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "service_id",
+          "expected_inventory_revision"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.write",
+      "entitlementKey": "techstack.inventory.write",
+      "fgaObject": "tool:techstack/release_application_lifecycle",
+      "auditEvent": "mcp.customer.techstack.inventory.release_application_lifecycle",
+      "operationIds": [
+        "techstack.releaseApplicationLifecycle"
+      ],
+      "risk": "medium",
+      "approvalPolicy": "none",
+      "actionClass": "reversible_write",
+      "quotaKey": "mcp.usage.techstack.inventory.write",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.write",
+      "requiredCapabilities": [
+        "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": false
     },
     {
       "toolId": "techstack.remove_agent",
@@ -5350,6 +6619,67 @@
         "argument": "server_id",
         "dimension": "techstack.server"
       },
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.repair_stack_component",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "repair_stack_component",
+      "alias": "techstack.repair_stack_component",
+      "title": "Repair one degraded component of a completed rollout on its existing server",
+      "description": "A rollout whose stack core applied completes degraded when an independent component could not finish; the component is recorded in the stack's `degraded_components` and repaired automatically. This operation starts that repair now. `public_tls` installs the managed kombify.me origin certificate (ADR-0047) on the stack's server; its hostnames come from the degraded rollout, never from the request. Answers 409 `component_repair_not_needed` when nothing is degraded.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "component": {
+            "enum": [
+              "public_tls"
+            ],
+            "type": "string"
+          },
+          "stack_id": {
+            "description": "Stack ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stack_id",
+          "component"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "featureKey": "mcp.customer.techstack.inventory.operate",
+      "entitlementKey": "techstack.inventory.operate",
+      "fgaObject": "tool:techstack/repair_stack_component",
+      "auditEvent": "mcp.customer.techstack.inventory.repair_stack_component",
+      "operationIds": [
+        "techstack.repairStackComponent"
+      ],
+      "risk": "high",
+      "approvalPolicy": "none",
+      "actionClass": "external_write",
+      "quotaKey": "mcp.usage.techstack.inventory.operate",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.operate",
+      "requiredCapabilities": [
+        "techstack.inventory.operate"
+      ],
       "costBearing": false,
       "upstreamKind": "product-native",
       "liveEnabled": true
@@ -5546,10 +6876,24 @@
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "candidate_spec": {
+            "additionalProperties": true,
+            "description": "Optional canonical StackSpec repairing missing route, access and data dependencies of already admitted modules. The pinned CLI validates it; revision CAS and candidate digest bind retries. Applied installations must use their existing change-set authority.",
+            "type": "object"
+          },
+          "current_spec_hash": {
+            "description": "Normalized current node intent hash for an exact failed INIT whose immutable retry lineage proves a prior failed APPLY on this runtime. Required only for that partial INIT recovery; rejected on other paths. This is solely the CLI atomic CAS precondition, never authorization. Obtain through the pinned CLI resolve on the same current canonical node document. The durable receipt seals this value and lineage against changed replay.",
+            "pattern": "^sha256:[a-f0-9]{64}$",
+            "type": "string"
+          },
           "lease_id": {
             "description": "Exact active managed foundation lease bound to the failed job.",
             "minLength": 1,
             "type": "string"
+          },
+          "owner_approved": {
+            "description": "Required true when supplying a canonical initial-rollout repair candidate.",
+            "type": "boolean"
           },
           "source_job_id": {
             "description": "Exact failed deploy job used as immutable retry evidence.",
@@ -5685,11 +7029,13 @@
                 "additionalProperties": false,
                 "properties": {
                   "action": {
+                    "description": "`update` runs the StackKit upgrade of the owning stack to the pinned release; it is accepted only while `allowed_actions` advertises it.",
                     "enum": [
                       "start",
                       "stop",
                       "restart",
-                      "logs"
+                      "logs",
+                      "update"
                     ],
                     "type": "string"
                   },
@@ -5848,8 +7194,8 @@
       "serverKey": "techstack",
       "toolName": "run_server_maintenance_action",
       "alias": "techstack.run_server_maintenance_action",
-      "title": "Queue an owner-approved OS update plan, OS update or reboot",
-      "description": "Requires the Edge-signed `techstack.servers.maintenance` entitlement, ownership of the server in the tenant, and for `reboot` and `os_update` a multi-factor sign-in at most 300 seconds old from the verified edge envelope. The body is decoded strictly: exact lowercase keys, no duplicates, no unknown fields. A replay with the same Idempotency-Key returns the stored receipt before target validation. One reboot or OS update and, separately, one update plan may be active per server; a job not finished by its deadline fails with `deadline_exceeded` and frees its slot. The action is offered in `allowed_actions` only when the server agent advertises `stackkit.host-maintenance.v1`, and `reboot` only when the server also reports `host_boot_id`. Refusals are client-error-envelope/v1 documents; 409 `reason_code` is one of control_plane_host, substrate_node, protected_demo_server, service_locked, maintenance_active, node_operation_active, plan_stale, agent_capability_missing, boot_id_unknown, agent_not_connected, heartbeat_stale, inventory_revision_stale or idempotency_key_reused; 403 carries entitlement_required or server_maintenance_step_up_required.",
+      "title": "Queue an owned server OS update plan, OS update or reboot",
+      "description": "Requires the Edge-signed `techstack.servers.maintenance` entitlement, ownership of the server in the tenant, and current server-bound standing authority for delegated native MCP calls. These three ordinary actions require no fresh MFA or separate owner_approved assertion. Reboot and os_update require expected_impact_digest from the preview the user confirmed. Impact is compared atomically at admission and again at execution claim; changed or incomplete evidence sends no command and requires a refreshed preview and renewed confirmation with a new request key. The body is decoded strictly: exact lowercase keys, no duplicates, no unknown fields. A replay with the same Idempotency-Key returns the stored receipt before target validation. One reboot or OS update and, separately, one update plan may be active per server; a job not finished by its deadline fails with `deadline_exceeded` and frees its slot. The action is offered in `allowed_actions` only when the server agent advertises `stackkit.host-maintenance.v1`, and `reboot` only when the server also reports `host_boot_id`. Refusals are client-error-envelope/v1 documents; 409 `reason_code` is one of control_plane_host, substrate_node, protected_demo_server, service_locked, maintenance_active, node_operation_active, plan_stale, agent_capability_missing, boot_id_unknown, agent_not_connected, heartbeat_stale, inventory_revision_stale, idempotency_key_reused, impact_confirmation_required, impact_changed or impact_unavailable; 403 carries entitlement_required or maintenance_origin_authority_denied.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -5859,6 +7205,11 @@
               "os_update",
               "reboot"
             ],
+            "type": "string"
+          },
+          "expected_impact_digest": {
+            "description": "Required for os_update and reboot, forbidden for os_update_plan. snapshot_digest of the current impact preview confirmed for this exact server and action. Changing it under an existing Idempotency-Key is a conflict; a renewed confirmation uses a new key.",
+            "pattern": "^sha256:[0-9a-f]{64}$",
             "type": "string"
           },
           "expected_inventory_revision": {
@@ -5872,7 +7223,7 @@
             "type": "string"
           },
           "owner_approved": {
-            "description": "Required true for os_update and reboot.",
+            "description": "Optional legacy field; it does not grant maintenance authority.",
             "type": "boolean"
           },
           "server_id": {
@@ -5893,16 +7244,156 @@
         "idempotentHint": true,
         "openWorldHint": true
       },
-      "featureKey": "mcp.customer.techstack.inventory.operate",
-      "entitlementKey": "techstack.inventory.operate",
+      "featureKey": "mcp.customer.techstack.server.maintenance",
+      "entitlementKey": "techstack.server.maintenance",
       "fgaObject": "tool:techstack/run_server_maintenance_action",
-      "auditEvent": "mcp.customer.techstack.inventory.run_server_maintenance_action",
+      "auditEvent": "mcp.customer.techstack.server.run_server_maintenance_action",
       "operationIds": [
         "techstack.runServerMaintenanceAction"
       ],
       "risk": "high",
-      "approvalPolicy": "human",
+      "approvalPolicy": "none",
       "actionClass": "external_write",
+      "quotaKey": "mcp.usage.techstack.server.maintenance",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.server.maintenance",
+      "requiredCapabilities": [
+        "techstack.server.maintenance"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.run_stackkit_operation",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "run_stackkit_operation",
+      "alias": "techstack.run_stackkit_operation",
+      "title": "Run an admitted StackKit operation",
+      "description": "Uses the same tenant- and owner-scoped dispatcher as the operator UI. The node executes through its authenticated channel, current release pin, native Advanced catalog and issued operation capability. Techstack never executes Terramate, apply, rollback, backup or restore itself. A mutation requires owner_approved; service locks and active server maintenance are checked before enqueue. Direct backup_run and backup_configure remain Basement-only; managed kits keep their schedule and sealed target-renewal authority. backup_configure derives the node's target and plan from existing custody and accepts no credential fields. advanced_change_set requires candidate_spec; rollback requires an exact rollback_target_ref; restore_drill may reuse a snapshot_anchor_id. ai_provider lets Private AI offer an external OpenAI-compatible provider: the kombify Wallet seals the item wallet_item_id (the provider's API key) to the node, which must be listed as a host target of that item, the node binds it to ai_provider_base_url, and a drift reconcile applies the setting. ai_provider_disable removes it. Restore activation requires exactly one Idempotency-Key header, while other operations have no replay guarantee. Acceptance is not execution success; read the returned job and its scoped result to observe effects.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "activation_operation_id": {
+            "type": "string"
+          },
+          "agent_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "ai_provider_base_url": {
+            "description": "https base URL of the OpenAI-compatible provider API for ai_provider.",
+            "maxLength": 512,
+            "type": "string"
+          },
+          "ai_provider_disable": {
+            "description": "Remove the external provider instead of setting it.",
+            "type": "boolean"
+          },
+          "candidate_spec": {
+            "additionalProperties": true,
+            "description": "Canonical candidate StackSpec validated by the pinned node executor; required for advanced_change_set.",
+            "type": "object"
+          },
+          "offline": {
+            "type": "boolean"
+          },
+          "operation": {
+            "enum": [
+              "plan",
+              "apply",
+              "verify",
+              "upgrade",
+              "drift_detect",
+              "drift_reconcile",
+              "advanced_change_set",
+              "rollback",
+              "restore_drill",
+              "backup_run",
+              "backup_configure",
+              "backup_status",
+              "backup_restore",
+              "backup_restore_activate",
+              "backup_restore_recover",
+              "ai_provider"
+            ],
+            "type": "string"
+          },
+          "operation_dry_run": {
+            "type": "boolean"
+          },
+          "owner_approved": {
+            "type": "boolean"
+          },
+          "restore_plan_hash": {
+            "pattern": "^sha256:[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "restore_result_id": {
+            "pattern": "^sha256:[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "rollback_target_ref": {
+            "description": "Exact executor-state snapshot or change-set digest.",
+            "pattern": "^sha256:[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "snapshot_anchor_id": {
+            "pattern": "^sha256:[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "stack_id": {
+            "description": "Stack ID",
+            "type": "string"
+          },
+          "stackkit": {
+            "description": "Optional execution binding; normally derived from the stack's managed rollout.",
+            "type": "string"
+          },
+          "target_release": {
+            "type": "string"
+          },
+          "wallet_item_id": {
+            "description": "kombify Wallet item holding the provider's API key for ai_provider.",
+            "pattern": "^itm_[a-z2-7]{26}$",
+            "type": "string"
+          },
+          "wallet_item_rotate": {
+            "description": "Deliver a rotated item that replaces the version the node holds.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "stack_id",
+          "agent_id",
+          "operation"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "featureKey": "mcp.customer.techstack.inventory.operate",
+      "entitlementKey": "techstack.inventory.operate",
+      "fgaObject": "tool:techstack/run_stackkit_operation",
+      "auditEvent": "mcp.customer.techstack.inventory.run_stackkit_operation",
+      "operationIds": [
+        "techstack.runStackKitLifecycleOperation"
+      ],
+      "risk": "high",
+      "approvalPolicy": "human",
+      "actionClass": "destructive",
       "quotaKey": "mcp.usage.techstack.inventory.operate",
       "upstream": {
         "kind": "product-native",
@@ -6149,6 +7640,87 @@
       "capabilityBundle": "techstack.inventory.read",
       "requiredCapabilities": [
         "techstack.inventory.read"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.setup_application_connector",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "setup_application_connector",
+      "alias": "techstack.setup_application_connector",
+      "title": "Ensure or revoke one declared owned Home Assistant connector on its node",
+      "description": "Requires fresh backend ownership, positive operate authority, exact current inventory and Owner approval. Transports only closed correlation metadata through Guard to the published pinned CLI, whose local signedApply and Owner setup authority remain mandatory. Stores pre-send durable intent; unknown acknowledgement only reconciles the original operation read-only. Current v0.51.8 lacks the supporting catalog and returns nondispatchable SourcePreview. Credentials stay in node custody.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "ensure",
+              "revoke"
+            ],
+            "type": "string"
+          },
+          "expected_inventory_revision": {
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "lifespan_days": {
+            "maximum": 365,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "owner_approved": {
+            "enum": [
+              true
+            ],
+            "type": "boolean"
+          },
+          "service_id": {
+            "description": "Canonical service runtime ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "service_id",
+          "action",
+          "expected_inventory_revision",
+          "lifespan_days",
+          "owner_approved"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.operate",
+      "entitlementKey": "techstack.inventory.operate",
+      "fgaObject": "tool:techstack/setup_application_connector",
+      "auditEvent": "mcp.customer.techstack.inventory.setup_application_connector",
+      "operationIds": [
+        "techstack.setupApplicationConnector"
+      ],
+      "risk": "high",
+      "approvalPolicy": "human",
+      "actionClass": "destructive",
+      "quotaKey": "mcp.usage.techstack.inventory.operate",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.operate",
+      "requiredCapabilities": [
+        "techstack.inventory.operate"
       ],
       "costBearing": false,
       "upstreamKind": "product-native",
@@ -6743,6 +8315,65 @@
       "capabilityBundle": "techstack.inventory.write",
       "requiredCapabilities": [
         "techstack.inventory.write"
+      ],
+      "costBearing": false,
+      "upstreamKind": "product-native",
+      "liveEnabled": true
+    },
+    {
+      "toolId": "techstack.verify_application_connector",
+      "connectorFamily": "techstack",
+      "serverKey": "techstack",
+      "toolName": "verify_application_connector",
+      "alias": "techstack.verify_application_connector",
+      "title": "Refresh the current node-owned connector through a distinct read-only job",
+      "description": "Retains the original signed setup operation and exact receipt, requires current published catalog and positive backend node/resource authority, and never reissues setup. Ordinary authenticated inventory reconciliation uses the same consumer for stale projections. Current v0.51.8 remains nondispatchable SourcePreview.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "additionalProperties": false,
+            "type": "object"
+          },
+          "service_id": {
+            "description": "Canonical service runtime ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "service_id",
+          "body"
+        ],
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "featureKey": "mcp.customer.techstack.inventory.read",
+      "entitlementKey": "techstack.inventory.read",
+      "fgaObject": "tool:techstack/verify_application_connector",
+      "auditEvent": "mcp.customer.techstack.inventory.verify_application_connector",
+      "operationIds": [
+        "techstack.verifyApplicationConnector"
+      ],
+      "risk": "low",
+      "approvalPolicy": "none",
+      "actionClass": "read",
+      "quotaKey": "mcp.usage.techstack.inventory.read",
+      "upstream": {
+        "kind": "product-native",
+        "ref": "techstack"
+      },
+      "portalVisibilityGroup": "customer-build-preview",
+      "requiredScopes": [
+        "mcp:connect"
+      ],
+      "capabilityBundle": "techstack.inventory.read",
+      "requiredCapabilities": [
+        "techstack.inventory.read"
       ],
       "costBearing": false,
       "upstreamKind": "product-native",

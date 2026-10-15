@@ -145,24 +145,13 @@ func (a *NativeAdmission) PreflightProvision(
 	if !a.configured() {
 		return fmt.Errorf("%w: native admission is not configured", ErrInvalidRequest)
 	}
-	normalized, _, _, normalizeErr := normalizeNativeProvisionAdmission(request)
+	normalized, digest, digestText, normalizeErr := normalizeNativeProvisionAdmission(request)
 	if normalizeErr != nil {
 		return normalizeErr
 	}
 	if normalized.Lease.CustodyClass == vmlease.CustodyCustomerSubstrate {
 		return a.preflightSubstrate(ctx, normalized)
 	}
-	if createErr := a.providerCreates.RequireProviderCreate(ctx, normalized.Lease.Resource.ProviderID); createErr != nil {
-		return createErr
-	}
-	capacity, capacityErr := resolveNativeAdmissionCapacity(ctx, a.capacity, normalized)
-	if capacityErr != nil {
-		return capacityErr
-	}
-	if activationErr := a.activation.Require(ctx); activationErr != nil {
-		return activationErr
-	}
-
 	tx, beginErr := a.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted, ReadOnly: true})
 	if beginErr != nil {
 		return fmt.Errorf("providercontrol: begin native admission preflight: %w", beginErr)
@@ -176,8 +165,38 @@ func (a *NativeAdmission) PreflightProvision(
 	if _, setTenantErr := tx.ExecContext(ctx, `SELECT set_config($1, $2, true)`, tenantContextKey, normalized.TenantID); setTenantErr != nil {
 		return fmt.Errorf("providercontrol: set native admission preflight tenant context: %w", setTenantErr)
 	}
+	if _, found, err := a.loadNativeAdmissionReplayTx(ctx, tx, normalized, digest, digestText); err != nil {
+		return err
+	} else if found {
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		committed = true
+		return nil
+	}
+	if createErr := a.providerCreates.RequireProviderCreate(ctx, normalized.Lease.Resource.ProviderID); createErr != nil {
+		return createErr
+	}
+	capacity, capacityErr := resolveNativeAdmissionCapacity(ctx, a.capacity, normalized)
+	if capacityErr != nil {
+		return capacityErr
+	}
+	if activationErr := a.activation.Require(ctx); activationErr != nil {
+		return activationErr
+	}
 	if custodyErr := requireNoUnclassifiedManagedRuntimeCustodyTx(ctx, tx, normalized); custodyErr != nil {
 		return custodyErr
+	}
+	region, regionErr := a.coordinator.registry.CanonicalCreateRegion(normalized.Lease.Resource.ProviderID, normalized.Lease.Metadata[runtimeOfferingMetadataKey], normalized.Lease.Resource.Region)
+	if regionErr != nil {
+		return regionErr
+	}
+	protection, protectionErr := readCreateProtectionTx(ctx, tx, normalized.TenantID, normalized.Lease.Resource.ProviderID, region)
+	if protectionErr != nil {
+		return protectionErr
+	}
+	if protection.State != "ready" {
+		return CreateProtectionError{protection}
 	}
 	if capacityErr := requireManagedRuntimeCapacityTx(ctx, tx, normalized.TenantID, capacity); capacityErr != nil {
 		return capacityErr
@@ -272,6 +291,13 @@ func (a *NativeAdmission) requireNativeAdmissionCreateTx(
 		return normalizedCapacityGrant{}, err
 	}
 	if err := a.activation.Require(ctx); err != nil {
+		return normalizedCapacityGrant{}, err
+	}
+	region, regionErr := a.coordinator.registry.CanonicalCreateRegion(request.Lease.Resource.ProviderID, request.Lease.Metadata[runtimeOfferingMetadataKey], request.Lease.Resource.Region)
+	if regionErr != nil {
+		return normalizedCapacityGrant{}, regionErr
+	}
+	if err := requireCreateProtectionTx(ctx, tx, request.TenantID, request.Lease.Resource.ProviderID, region); err != nil {
 		return normalizedCapacityGrant{}, err
 	}
 	capacity, err := resolveNativeAdmissionCapacity(ctx, a.capacity, request)
@@ -620,6 +646,7 @@ func normalizeNativeProvisionFields(request NativeProvisionAdmissionRequest) Nat
 	request.Lease.Subject.ID = strings.TrimSpace(request.Lease.Subject.ID)
 	request.Lease.Subject.OrgID = strings.TrimSpace(request.Lease.Subject.OrgID)
 	request.Lease.Resource.ProviderID = strings.ToLower(strings.TrimSpace(request.Lease.Resource.ProviderID))
+	request.Lease.Resource.Region = strings.ToLower(strings.TrimSpace(request.Lease.Resource.Region))
 	request.Server.InstanceID = strings.TrimSpace(request.Server.InstanceID)
 	request.Server.StackID = strings.TrimSpace(request.Server.StackID)
 	request.Server.Name = strings.TrimSpace(request.Server.Name)

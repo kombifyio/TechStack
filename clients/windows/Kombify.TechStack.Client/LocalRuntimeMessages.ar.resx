@@ -5,4 +5,12 @@
   <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
   <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
   <data name="IdentityVerificationFailed" xml:space="preserve"><value>تعذّر على عميل Windows التحقق من بيئة التشغيل المحلية. أغلق التطبيقات الأخرى التي تستخدم منفذها، ثم أعد فتح العميل.</value></data>
+  <data name="RecoveryIncomplete" xml:space="preserve"><value>لم تكتمل استعادة Techstack المحلي.</value></data>
+  <data name="RecoveryDatabaseRunning" xml:space="preserve"><value>لا تزال بيئة التشغيل المحلية أو قاعدة البيانات قيد التشغيل. أغلق نوافذ Techstack الأخرى وأعد فتح العميل لإكمال الاستعادة. تم الاحتفاظ ببيانات الاستعادة.</value></data>
+  <data name="RecoverySnapshotMissing" xml:space="preserve"><value>النسخة الاحتياطية للبيانات السابقة للتحديث مفقودة. استعد بيانات استعادة العميل قبل إعادة فتح Techstack. تم الاحتفاظ ببياناتك الحالية.</value></data>
+  <data name="RecoveryRestoreFailed" xml:space="preserve"><value>تعذّر على العميل استعادة البيانات السابقة للتحديث. أغلق التطبيقات التي تستخدم البيانات المحلية وأعد فتح العميل. لا تزال الاستعادة معلّقة.</value></data>
+  <data name="RecoveryInstallationPending" xml:space="preserve"><value>لم تتم استعادة إصدار Techstack السابق. أصلح تثبيت Windows قبل إعادة فتح العميل. تم الاحتفاظ ببيانات الاستعادة.</value></data>
+  <data name="WalletRevealTitle" xml:space="preserve"><value>إظهار بيانات الاعتماد</value></data>
+  <data name="WalletRevealPrompt" xml:space="preserve"><value>هل تريد إظهار بيانات الاعتماد لـ {0}؟ ستظهر القيمة في نافذة Techstack المحلية هذه.</value></data>
+  <data name="WalletRevealFailed" xml:space="preserve"><value>تعذر التحقق من إظهار بيانات الاعتماد المحلية. حاول مرة أخرى.</value></data>
 </root>

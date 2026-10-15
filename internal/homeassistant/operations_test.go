@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kombifyio/techstack/internal/gocommon/runtimeexecutor"
+	"github.com/kombifyio/techstack/internal/selfhostcontracts/runtimeexecutor"
 	"github.com/kombifyio/techstack/internal/managedstackkit"
 )
 

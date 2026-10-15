@@ -1,12 +1,5 @@
 import { tr } from "#lib/i18n.svelte.js";
-/**
- * Active StandardBundle fixture for the release wizard.
- *
- * This is the documented read-only fallback until the StackKits registry/API
- * serves the same shape. Wizard screens, defaults, payload service names, and
- * StackKit service specs should read from here instead of carrying local Base
- * Kit lists.
- */
+/** Techstack wizard questions and intent preferences. StackKits authoring and service composition belong to the pinned release CLI. */
 
 /**
  * The wizard has one surface. Technical depth is a property of the use case
@@ -31,6 +24,7 @@ export const CANONICAL_USE_CASE_GOALS = [
   "dev",
   "mail",
   "game",
+  "marketplace",
 ] as const;
 
 export type CanonicalUseCaseGoalKey = (typeof CANONICAL_USE_CASE_GOALS)[number];
@@ -50,6 +44,7 @@ export const ADVANCED_USE_CASE_GOALS = [
   "dev",
   "mail",
   "game",
+  "marketplace",
 ] as const satisfies readonly CanonicalUseCaseGoalKey[];
 
 export const USE_CASE_FEATURE_FLAGS = {
@@ -62,7 +57,7 @@ export const USE_CASE_FEATURE_FLAGS = {
   dev: "use_case_dev",
   mail: "use_case_mail",
   game: "use_case_game",
-} as const satisfies Record<CanonicalUseCaseGoalKey, string>;
+} as const satisfies Partial<Record<CanonicalUseCaseGoalKey, string>>;
 export type AudienceConfigKey = "onlyMe" | "familyFriends" | "public";
 export type AccessModeValue = "home" | "anywhere";
 export type VpnValue = "headscale" | "wireguard" | "none";
@@ -120,12 +115,6 @@ export interface BundleRegistryChoiceDefinition<
   testId: string;
 }
 
-export interface StackKitServiceDefinition {
-  name: string;
-  type: string;
-  needs?: string[];
-}
-
 export interface BundleServiceDefinition {
   key: StandardBundleServiceKey;
   label: string;
@@ -134,9 +123,6 @@ export interface BundleServiceDefinition {
   testId: string;
   defaultSelected: boolean;
   selectableInTechie: boolean;
-  payloadServices: string[];
-  stackSpecServices: string[];
-  stackKitServices: StackKitServiceDefinition[];
 }
 
 export interface StandardBundleDefinition {
@@ -166,6 +152,7 @@ export interface StandardBundleDefinition {
         authMethod: "ssh-key" | "password";
         sshKeyLabel: string;
         sshPassword: string;
+        sshWalletItemId?: string;
         useSudo: boolean;
       };
     };
@@ -227,19 +214,10 @@ export interface StandardBundleDefinition {
     ionosDatacenters: BundleRegistryChoiceDefinition<IonosDatacenterValue>[];
     stackkitFoundations: BundleRegistryChoiceDefinition<StackKitFoundationValue>[];
     nodeRoles: BundleRegistryChoiceDefinition<RegistryNodeRoleValue>[];
-    goalServiceMap: Record<
-      GoalConfigKey | "baseline",
-      StandardBundleServiceKey[]
-    >;
-  };
-  stackSpec: {
-    coreServices: string[];
-    paasServices: Record<"dokploy" | "coolify", string>;
   };
   services: BundleServiceDefinition[];
 }
 
-const mainNode = "main";
 export const USER_OWNED_STACKKIT_REF = "basement-kit";
 export const CLOUD_STACKKIT_REF = "cloud-kit";
 
@@ -252,14 +230,6 @@ export function normalizeInstallableKitSlug(
     return managedLane ? CLOUD_STACKKIT_REF : USER_OWNED_STACKKIT_REF;
   }
   return trimmed;
-}
-
-function stackService(
-  name: string,
-  type: string,
-  needs?: string[],
-): StackKitServiceDefinition {
-  return needs && needs.length > 0 ? { name, type, needs } : { name, type };
 }
 
 export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
@@ -304,6 +274,7 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
       dev: false,
       mail: false,
       game: false,
+      marketplace: false,
       everything: false,
     },
     services: {
@@ -523,6 +494,16 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
         tipKey: "wizard.goals.game.tip",
         testId: "easy-feature-game",
       },
+      {
+        key: "marketplace",
+        configKey: "marketplace",
+        surface: "advanced",
+        titleKey: "wizard.goals.marketplace.title",
+        descriptionKey: "wizard.goals.marketplace.description",
+        helpKey: "wizard.goals.marketplace.help",
+        tipKey: "wizard.goals.marketplace.tip",
+        testId: "easy-feature-marketplace",
+      },
     ],
     access: [
       {
@@ -707,26 +688,6 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
         testId: "server-role-storage",
       },
     ],
-    goalServiceMap: {
-      baseline: ["pocketId", "monitoring", "traefik"],
-      "smart-home": ["monitoring"],
-      photos: ["immich"],
-      media: ["monitoring"],
-      vault: ["vaultwarden"],
-      files: ["files"],
-      ai: ["monitoring"],
-      dev: ["traefik"],
-      mail: ["traefik"],
-      game: ["traefik"],
-      everything: ["monitoring", "traefik", "vaultwarden", "immich", "files"],
-    },
-  },
-  stackSpec: {
-    coreServices: ["homepage", "whoami", "tinyauth"],
-    paasServices: {
-      dokploy: "dokploy",
-      coolify: "coolify",
-    },
   },
   services: [
     {
@@ -741,9 +702,6 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
       testId: "techie-svc-pocket-id",
       defaultSelected: true,
       selectableInTechie: false,
-      payloadServices: ["pocket-id"],
-      stackSpecServices: ["pocketid"],
-      stackKitServices: [stackService("pocket-id", "auth")],
     },
     {
       key: "pocketbase",
@@ -757,9 +715,6 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
       testId: "techie-svc-pocketbase",
       defaultSelected: false,
       selectableInTechie: true,
-      payloadServices: ["pocketbase"],
-      stackSpecServices: ["pocketbase"],
-      stackKitServices: [stackService("pocketbase", "backend")],
     },
     {
       key: "headscale",
@@ -773,9 +728,6 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
       testId: "techie-svc-headscale",
       defaultSelected: false,
       selectableInTechie: true,
-      payloadServices: ["headscale"],
-      stackSpecServices: ["headscale"],
-      stackKitServices: [stackService("headscale", "vpn")],
     },
     {
       key: "traefik",
@@ -789,9 +741,6 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
       testId: "techie-svc-traefik",
       defaultSelected: true,
       selectableInTechie: true,
-      payloadServices: ["traefik"],
-      stackSpecServices: ["traefik"],
-      stackKitServices: [stackService("traefik", "reverse-proxy")],
     },
     {
       key: "monitoring",
@@ -805,9 +754,6 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
       testId: "techie-svc-monitoring",
       defaultSelected: true,
       selectableInTechie: true,
-      payloadServices: ["otel-collector"],
-      stackSpecServices: ["uptime-kuma"],
-      stackKitServices: [stackService("otel-collector", "monitoring")],
     },
     {
       key: "vaultwarden",
@@ -821,9 +767,6 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
       testId: "techie-svc-vaultwarden",
       defaultSelected: false,
       selectableInTechie: true,
-      payloadServices: ["vaultwarden"],
-      stackSpecServices: ["vaultwarden"],
-      stackKitServices: [stackService("vaultwarden", "auth")],
     },
     {
       key: "immich",
@@ -837,22 +780,6 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
       testId: "techie-svc-immich",
       defaultSelected: false,
       selectableInTechie: true,
-      payloadServices: [
-        "immich-server",
-        "immich-ml",
-        "immich-postgres",
-        "immich-redis",
-      ],
-      stackSpecServices: ["immich"],
-      stackKitServices: [
-        stackService("immich-postgres", "database"),
-        stackService("immich-redis", "cache"),
-        stackService("immich-ml", "media"),
-        stackService("immich-server", "media", [
-          "immich-postgres",
-          "immich-redis",
-        ]),
-      ],
     },
     {
       key: "files",
@@ -868,24 +795,12 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
       testId: "techie-svc-files",
       defaultSelected: false,
       selectableInTechie: true,
-      payloadServices: ["files"],
-      stackSpecServices: ["files"],
-      stackKitServices: [stackService("files", "storage")],
     },
   ],
 };
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
-}
-
-function addUnique<T>(
-  items: T[],
-  candidate: T,
-  key: (item: T) => string,
-): void {
-  if (items.some((item) => key(item) === key(candidate))) return;
-  items.push(candidate);
 }
 
 export function cloneStandardBundleDefaults() {
@@ -942,84 +857,11 @@ export function isDiscoveryEnabledForWizard(surface: WizardSurface): boolean {
   return ACTIVE_STANDARD_BUNDLE.wizard.discovery[surface] === true;
 }
 
-export function buildPayloadServicesFromBundle(
-  serviceFlags: StandardBundleServiceSelections,
-): string[] {
-  const services: string[] = [];
-  for (const definition of ACTIVE_STANDARD_BUNDLE.services) {
-    if (!serviceFlags[definition.key]) continue;
-    for (const name of definition.payloadServices) {
-      if (!services.includes(name)) services.push(name);
-    }
-  }
-  return services;
-}
-
-export function buildStackSpecServiceTogglesFromBundle(
-  serviceFlags: StandardBundleServiceSelections,
-): Record<string, boolean> {
-  const toggles: Record<string, boolean> = {};
-  for (const service of ACTIVE_STANDARD_BUNDLE.stackSpec.coreServices) {
-    toggles[service] = true;
-  }
-  for (const definition of ACTIVE_STANDARD_BUNDLE.services) {
-    for (const name of definition.stackSpecServices) {
-      toggles[name] = serviceFlags[definition.key] === true;
-    }
-  }
-  return toggles;
-}
-
-export function buildStackKitServicesFromBundle(
-  serviceFlags: StandardBundleServiceSelections,
-): Array<StackKitServiceDefinition & { node: string }> {
-  const services: Array<StackKitServiceDefinition & { node: string }> = [];
-  for (const definition of ACTIVE_STANDARD_BUNDLE.services) {
-    if (!serviceFlags[definition.key]) continue;
-    for (const spec of definition.stackKitServices) {
-      addUnique(
-        services,
-        {
-          ...spec,
-          node: mainNode,
-        },
-        (service) => service.name,
-      );
-    }
-  }
-  return services;
-}
-
-export function applyStandardBundleGoalServices(
-  serviceFlags: Record<StandardBundleServiceKey, boolean>,
-  goals: Partial<Record<GoalConfigKey, boolean>> | undefined,
-): void {
-  // Rebuild goal-owned flags so defaults and a previous submission cannot
-  // retain a workload the user has since deselected. Preserve other settings.
-  for (const keys of Object.values(
-    ACTIVE_STANDARD_BUNDLE.wizard.goalServiceMap,
-  )) {
-    for (const key of keys) serviceFlags[key] = false;
-  }
-  for (const key of ACTIVE_STANDARD_BUNDLE.wizard.goalServiceMap.baseline) {
-    serviceFlags[key] = true;
-  }
-  if (goals) {
-    for (const goal of ACTIVE_STANDARD_BUNDLE.wizard.goals) {
-      if (!goals[goal.configKey]) continue;
-      for (const key of ACTIVE_STANDARD_BUNDLE.wizard.goalServiceMap[
-        goal.configKey
-      ]) {
-        serviceFlags[key] = true;
-      }
-    }
-  }
-}
-
 export function selectedCanonicalUseCasesFromGoals(
   goals: Partial<Record<GoalConfigKey, boolean>> | undefined,
 ): CanonicalUseCaseGoalKey[] {
   if (!goals) return [];
-  if (goals.everything) return [...CANONICAL_USE_CASE_GOALS];
+  // Templates toggle available cards. The marker must not reintroduce
+  // goals absent from the release or left out by recommendations.
   return CANONICAL_USE_CASE_GOALS.filter((goal) => goals[goal] === true);
 }

@@ -5,4 +5,12 @@
   <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
   <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
   <data name="IdentityVerificationFailed" xml:space="preserve"><value>Windows क्लाइंट स्थानीय रनटाइम को सत्यापित नहीं कर सका। उसके पोर्ट का उपयोग करने वाले अन्य एप्लिकेशन बंद करें, फिर क्लाइंट को दोबारा खोलें।</value></data>
+  <data name="RecoveryIncomplete" xml:space="preserve"><value>स्थानीय Techstack की बहाली अभी पूरी नहीं हुई है।</value></data>
+  <data name="RecoveryDatabaseRunning" xml:space="preserve"><value>स्थानीय रनटाइम या डेटाबेस अभी चल रहा है। बहाली पूरी करने के लिए अन्य Techstack विंडो बंद करें और क्लाइंट फिर से खोलें। बहाली का डेटा सुरक्षित रखा गया है।</value></data>
+  <data name="RecoverySnapshotMissing" xml:space="preserve"><value>अपडेट से पहले के डेटा का बैकअप नहीं मिल रहा है। Techstack फिर से खोलने से पहले क्लाइंट की बहाली का डेटा पुनर्स्थापित करें। आपका वर्तमान डेटा सुरक्षित रखा गया है।</value></data>
+  <data name="RecoveryRestoreFailed" xml:space="preserve"><value>क्लाइंट अपडेट से पहले का डेटा बहाल नहीं कर सका। स्थानीय डेटा का उपयोग करने वाले ऐप बंद करें और क्लाइंट फिर से खोलें। बहाली अभी लंबित है।</value></data>
+  <data name="RecoveryInstallationPending" xml:space="preserve"><value>Techstack का पिछला संस्करण अभी बहाल नहीं हुआ है। क्लाइंट फिर से खोलने से पहले Windows इंस्टॉलेशन की मरम्मत करें। बहाली का डेटा सुरक्षित रखा गया है।</value></data>
+  <data name="WalletRevealTitle" xml:space="preserve"><value>क्रेडेंशियल दिखाएँ</value></data>
+  <data name="WalletRevealPrompt" xml:space="preserve"><value>क्या {0} का क्रेडेंशियल दिखाना है? मान इस स्थानीय Techstack विंडो में दिखाई देगा।</value></data>
+  <data name="WalletRevealFailed" xml:space="preserve"><value>स्थानीय क्रेडेंशियल प्रकटीकरण सत्यापित नहीं हो सका। पुनः प्रयास करें।</value></data>
 </root>

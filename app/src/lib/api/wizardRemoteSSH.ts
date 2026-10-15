@@ -7,6 +7,8 @@ export interface WizardRemoteSSHTestRequest {
   auth_method?: "ssh-key" | "password";
   password?: string;
   ssh_key_label?: string;
+  /** Hosted: the Wallet item with the SSH credential; replaces label and password. */
+  ssh_wallet_item_id?: string;
   private_key?: string;
 }
 

@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kombifyio/techstack/pkg/appcatalog"
 	"github.com/kombifyio/techstack/pkg/servermaintenance"
 
 	"github.com/shirou/gopsutil/v4/cpu"
@@ -27,22 +28,30 @@ import (
 	"github.com/shirou/gopsutil/v4/mem"
 	gopsutilnet "github.com/shirou/gopsutil/v4/net"
 
+	"github.com/kombifyio/techstack/pkg/guardbinding"
 	"github.com/kombifyio/techstack/pkg/runtimeconvergence"
 	"github.com/kombifyio/techstack/pkg/serviceregistry"
 )
 
 // Heartbeat is the existing worker heartbeat wire contract.
 type Heartbeat struct {
-	SourceEpoch        string                       `json:"source_epoch"`
-	SourceSequence     int64                        `json:"source_sequence"`
-	ObservedAt         time.Time                    `json:"observed_at"`
-	CPUPercent         float64                      `json:"cpu_percent"`
-	MemoryUsedBytes    int64                        `json:"memory_used_bytes"`
-	MemoryTotalBytes   int64                        `json:"memory_total_bytes"`
-	DiskUsedBytes      int64                        `json:"disk_used_bytes"`
-	DiskTotalBytes     int64                        `json:"disk_total_bytes"`
-	UptimeSeconds      float64                      `json:"uptime_seconds"`
-	RuntimeConvergence *runtimeconvergence.Snapshot `json:"runtime_convergence,omitempty"`
+	SourceEpoch          string                       `json:"source_epoch"`
+	SourceSequence       int64                        `json:"source_sequence"`
+	ObservedAt           time.Time                    `json:"observed_at"`
+	CPUPercent           float64                      `json:"cpu_percent"`
+	MemoryUsedBytes      int64                        `json:"memory_used_bytes"`
+	MemoryTotalBytes     int64                        `json:"memory_total_bytes"`
+	DiskUsedBytes        int64                        `json:"disk_used_bytes"`
+	DiskTotalBytes       int64                        `json:"disk_total_bytes"`
+	UptimeSeconds        float64                      `json:"uptime_seconds"`
+	RuntimeConvergence   *runtimeconvergence.Snapshot `json:"runtime_convergence,omitempty"`
+	StackKitCapabilities []string                     `json:"stackkit_capabilities,omitempty"`
+	// GuardJournal is the durable-operations health of this Guard; it is
+	// omitted by a Guard that does not journal command outcomes.
+	GuardJournal *guardbinding.JournalHealth `json:"guard_journal,omitempty"`
+	// GuardPosture says how this Guard is isolated and how its latest update
+	// went.
+	GuardPosture *guardbinding.Posture `json:"guard_posture,omitempty"`
 	HostMaintenanceFacts
 }
 
@@ -88,6 +97,9 @@ type Snapshot struct {
 	// host runs nothing we can see" from "discovery never produced evidence",
 	// which an empty service array alone cannot express.
 	DiscoveryObserved bool `json:"discovery_observed"`
+	// DiscoveryComplete proves every supported discovery probe finished without
+	// failed reads, malformed output, or truncation. Older payloads omit it.
+	DiscoveryComplete bool `json:"discovery_complete,omitempty"`
 	// DiscoveredServiceCount is the number of unmanaged services discovery
 	// enumerated, before any control-plane filtering.
 	DiscoveredServiceCount int                          `json:"discovered_service_count,omitempty"`
@@ -96,6 +108,7 @@ type Snapshot struct {
 	Channels               []Channel                    `json:"channels,omitempty"`
 	Endpoints              []Endpoint                   `json:"endpoints,omitempty"`
 	RuntimeConvergence     *runtimeconvergence.Snapshot `json:"runtime_convergence,omitempty"`
+	StackKitCapabilities   []string                     `json:"stackkit_capabilities,omitempty"`
 	OpenPorts              []string                     `json:"open_ports,omitempty"`
 	PortsObserved          bool                         `json:"ports_observed"`
 	HostMaintenanceFacts
@@ -121,6 +134,9 @@ type Host struct {
 	DiskTotalBytes   int64    `json:"disk_total_bytes"`
 	UptimeSeconds    float64  `json:"uptime_seconds"`
 	SSHHostKeys      []string `json:"ssh_host_keys,omitempty"`
+	// Network is the observed network position (Linux only); a change of its
+	// fingerprint is how the control plane detects a home network move.
+	Network *Network `json:"network,omitempty"`
 }
 
 type Service struct {
@@ -135,14 +151,17 @@ type Service struct {
 	// on the host without one. An absent value is read as
 	// `stackkits-inventory` by the control plane, which is what every agent
 	// predating unmanaged discovery could ever report.
-	Source                 string            `json:"source,omitempty"`
-	URL                    string            `json:"url,omitempty"`
-	OwnerStack             string            `json:"owner_stack,omitempty"`
-	TargetServer           string            `json:"target_server,omitempty"`
-	ContainerID            string            `json:"container_id,omitempty"`
-	PlatformID             string            `json:"platform_id,omitempty"`
-	PlatformType           string            `json:"platform_type,omitempty"`
-	Image                  string            `json:"image,omitempty"`
+	Source       string `json:"source,omitempty"`
+	URL          string `json:"url,omitempty"`
+	OwnerStack   string `json:"owner_stack,omitempty"`
+	TargetServer string `json:"target_server,omitempty"`
+	ContainerID  string `json:"container_id,omitempty"`
+	PlatformID   string `json:"platform_id,omitempty"`
+	PlatformType string `json:"platform_type,omitempty"`
+	Image        string `json:"image,omitempty"`
+	// ImageVersion is the image's own org.opencontainers.image.version label,
+	// reported only when the container carries it.
+	ImageVersion           string            `json:"image_version,omitempty"`
 	Description            string            `json:"description,omitempty"`
 	Instance               string            `json:"instance,omitempty"`
 	StackKitVersion        string            `json:"stackkit_version,omitempty"`
@@ -158,6 +177,10 @@ type Service struct {
 	OperationalImpact      string            `json:"operational_impact,omitempty"`
 	InternalAddress        string            `json:"internal_address,omitempty"`
 	RuntimeIdentity        map[string]string `json:"runtime_identity,omitempty"`
+
+	// publishedPorts carries the discovered host port mappings from discovery
+	// to the collector, which turns them into InternalAddress. Never serialized.
+	publishedPorts []publishedPort
 }
 
 type Endpoint struct {
@@ -181,11 +204,15 @@ type Channel struct {
 // SystemCollectorConfig configures honest host and StackKit observations.
 type SystemCollectorConfig struct {
 	AccessManifestFiles []string
-	PublicIP            string
-	ProbeTimeout        time.Duration
-	ProbeBudget         time.Duration
-	ProbeConcurrency    int
-	ProbeClient         *http.Client
+	// ReadManifest reads an access manifest; nil reads the file directly. An
+	// unprivileged Guard reads root-only manifests through the privileged
+	// executor.
+	ReadManifest     func(path string) ([]byte, error)
+	PublicIP         string
+	ProbeTimeout     time.Duration
+	ProbeBudget      time.Duration
+	ProbeConcurrency int
+	ProbeClient      *http.Client
 	// Discovery bounds unmanaged service discovery. The zero value enables it
 	// with the documented defaults.
 	Discovery DiscoveryConfig
@@ -326,23 +353,37 @@ func (c *SystemCollector) CollectInventory(ctx context.Context, snapshot Snapsho
 // the manifest carries a declared contract, discovery only carries evidence.
 
 // discoveredApplicationBucket derives the application grouping for a
-// discovered unit the manifest did not claim. A docker-compose container
-// belongs to its compose project — that is the operator's own application
-// boundary — and everything else stays in the honest System bucket. Without
-// this every observed unit on a host collapsed into one server-wide
-// application named after whichever row happened to be first.
+// discovered unit the manifest did not claim, with the same rule the control
+// plane applies to rows persisted earlier (pkg/appcatalog.Group): a compose
+// project is the operator's own application boundary, a recognized application
+// becomes its catalog application, any other docker container is its own
+// application, and everything else stays in the honest System bucket.
 func discoveredApplicationBucket(service Service) (key string, display string) {
-	if service.RuntimeIdentity["kind"] == "docker_compose_service" {
-		if project := strings.ToLower(strings.TrimSpace(service.RuntimeIdentity["project"])); project != "" {
-			return project, strings.TrimSpace(service.RuntimeIdentity["project"])
-		}
+	subject := appcatalog.Subject{
+		Name: service.Name, Image: service.Image, Platform: service.PlatformType,
+		ComposeService: service.RuntimeIdentity["service"],
 	}
-	return "system", "System Services"
+	if service.RuntimeIdentity["kind"] == "docker_compose_service" {
+		subject.ComposeProject = service.RuntimeIdentity["project"]
+	}
+	grouping := appcatalog.Group(subject)
+	return grouping.Key, grouping.DisplayName
+}
+
+// finalizeDiscoveredService groups a discovered unit and gives it the one
+// reachable address its published ports prove.
+func finalizeDiscoveredService(service Service, host Host) Service {
+	service.ApplicationKey, service.ApplicationDisplayName = discoveredApplicationBucket(service)
+	if service.InternalAddress == "" {
+		service.InternalAddress = publishedAddress(service, host)
+	}
+	return service
 }
 
 func (c *SystemCollector) appendDiscoveredServices(ctx context.Context, snapshot Snapshot) Snapshot {
 	outcome := c.discovery.discover(ctx)
 	snapshot.DiscoveryObserved = outcome.Probed
+	snapshot.DiscoveryComplete = outcome.Complete
 	snapshot.Host.DockerVersion = outcome.DockerVersion
 	if len(snapshot.runtimeServices) > 0 {
 		return reconcileManifestRuntimeServices(snapshot, outcome.Services)
@@ -409,7 +450,11 @@ func reconcileManifestRuntimeServices(snapshot Snapshot, discovered []Service) S
 		snapshot.Services = append(snapshot.Services, service)
 		snapshot.DiscoveredServiceCount++
 	}
-	snapshot.Services = boundedUniqueServices(snapshot.Services, discoveryDefaultMax)
+	unique := boundedUniqueServices(snapshot.Services, len(snapshot.Services)+1)
+	if len(unique) > discoveryDefaultMax {
+		snapshot.DiscoveryComplete = false
+	}
+	snapshot.Services = boundedUniqueServices(unique, discoveryDefaultMax)
 	return snapshot
 }
 
@@ -441,7 +486,12 @@ func runtimeFactService(fact accessManifestRuntimeService, stackKitVersion strin
 
 func mergeRuntimeMeasurement(declared, measured Service) Service {
 	declared.Status, declared.ContainerID = measured.Status, measured.ContainerID
+	if declared.RuntimeIdentity == nil {
+		declared.RuntimeIdentity = map[string]string{}
+	}
+	declared.RuntimeIdentity["container_name"] = measured.RuntimeIdentity["container_name"]
 	declared.PlatformID, declared.PlatformType, declared.Image = measured.PlatformID, measured.PlatformType, measured.Image
+	declared.ImageVersion = measured.ImageVersion
 	declared.Health = measured.Health
 	return declared
 }
@@ -490,7 +540,7 @@ func runtimeIdentityPathMatches(observed, declared string) bool {
 // indefinitely.
 func (c *SystemCollector) collectManifestServices(ctx context.Context, snapshot Snapshot) (Snapshot, error) {
 	snapshot.ManifestObserved = false
-	manifest, err := readFirstAccessManifest(c.cfg.AccessManifestFiles)
+	manifest, err := readFirstAccessManifest(c.cfg.AccessManifestFiles, c.cfg.ReadManifest)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return snapshot, nil
@@ -599,6 +649,7 @@ func collectHost(ctx context.Context, configuredPublicIP string) (Host, error) {
 		DiskTotalBytes:   safeInt64(du.Total),
 		UptimeSeconds:    float64(info.Uptime),
 		SSHHostKeys:      observedSSHHostKeys(),
+		Network:          collectNetwork(ctx, firstNonEmpty(localIP, privateIP, publicIP)),
 	}, nil
 }
 
@@ -761,13 +812,16 @@ type accessManifestRuntimeIdentity struct {
 	Unit       string `json:"unit"`
 }
 
-func readFirstAccessManifest(paths []string) (accessManifest, error) {
+func readFirstAccessManifest(paths []string, read func(string) ([]byte, error)) (accessManifest, error) {
+	if read == nil {
+		read = os.ReadFile
+	}
 	for _, path := range paths {
 		path = strings.TrimSpace(path)
 		if path == "" {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Clean(path))
+		data, err := read(filepath.Clean(path))
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
@@ -866,6 +920,10 @@ func endpointVisibility(hostname string) string {
 	}
 	return "public"
 }
+
+// DefaultAccessManifestFiles lists where StackKits writes the access manifest.
+// The privileged executor reads exactly these files for an unprivileged Guard.
+func DefaultAccessManifestFiles() []string { return defaultAccessManifestFiles() }
 
 func defaultAccessManifestFiles() []string {
 	paths := []string{

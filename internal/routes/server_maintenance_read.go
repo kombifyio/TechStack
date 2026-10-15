@@ -20,20 +20,21 @@ import (
 // awaiting_node_return (a reboot waiting for its node), completed, failed or
 // cancelled.
 type serverMaintenanceJobView struct {
-	JobID       string                       `json:"job_id"`
-	ServerID    string                       `json:"server_id"`
-	Action      string                       `json:"action"`
-	State       string                       `json:"state"`
-	Status      string                       `json:"status"`
-	ReasonCode  string                       `json:"reason_code,omitempty"`
-	PlanDigest  string                       `json:"plan_digest,omitempty"`
-	Failure     *serverMaintenanceFailure    `json:"failure,omitempty"`
-	Result      map[string]any               `json:"result"`
-	Reboot      *serverMaintenanceRebootView `json:"reboot,omitempty"`
-	DeadlineAt  *time.Time                   `json:"deadline_at,omitempty"`
-	CreatedAt   time.Time                    `json:"created_at"`
-	UpdatedAt   time.Time                    `json:"updated_at"`
-	CompletedAt *time.Time                   `json:"completed_at,omitempty"`
+	JobID        string                       `json:"job_id"`
+	ServerID     string                       `json:"server_id"`
+	Action       string                       `json:"action"`
+	State        string                       `json:"state"`
+	Status       string                       `json:"status"`
+	ReasonCode   string                       `json:"reason_code,omitempty"`
+	ImpactDigest string                       `json:"impact_snapshot_digest,omitempty"`
+	PlanDigest   string                       `json:"plan_digest,omitempty"`
+	Failure      *serverMaintenanceFailure    `json:"failure,omitempty"`
+	Result       map[string]any               `json:"result"`
+	Reboot       *serverMaintenanceRebootView `json:"reboot,omitempty"`
+	DeadlineAt   *time.Time                   `json:"deadline_at,omitempty"`
+	CreatedAt    time.Time                    `json:"created_at"`
+	UpdatedAt    time.Time                    `json:"updated_at"`
+	CompletedAt  *time.Time                   `json:"completed_at,omitempty"`
 }
 
 type serverMaintenanceFailure struct {
@@ -106,6 +107,7 @@ func serverMaintenanceJobResponse(job controlplane.ServerMaintenanceJob, server 
 		Result: map[string]any{}, DeadlineAt: job.DeadlineAt,
 		CreatedAt: job.CreatedAt, UpdatedAt: job.UpdatedAt, CompletedAt: job.CompletedAt,
 	}
+	view.ImpactDigest, _ = job.Result[controlplane.ServerMaintenanceImpactDigestKey].(string)
 	for _, key := range serverMaintenanceResultKeys {
 		if value, ok := job.Result[key]; ok {
 			view.Result[key] = value
@@ -142,6 +144,13 @@ func serverMaintenanceRebootFor(job controlplane.ServerMaintenanceJob, server co
 // codes a maintenance job can end with: the runner's own reasons and the
 // stackkit.host-maintenance/v1 refusal and failure codes.
 var serverMaintenanceFailureGuidance = map[string]maintenanceGuidance{
+	maintenanceReasonImpactChanged:     serverMaintenanceGuidance[maintenanceReasonImpactChanged],
+	maintenanceReasonImpactUnavailable: serverMaintenanceGuidance[maintenanceReasonImpactUnavailable],
+	"owner_cancelled": {
+		title: "Maintenance was cancelled",
+		body:  "The queued request was cancelled before a command was sent to the server.",
+		steps: []string{"Review a new impact preview if you decide to start maintenance later."},
+	},
 	servermaintenance.ReasonNodeDidNotReturn: {
 		title: "The server did not come back",
 		body:  "The server went offline for the reboot and did not reconnect within 10 minutes.",

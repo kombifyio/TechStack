@@ -24,6 +24,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/secrets"
 	"github.com/kombifyio/techstack/pkg/specv2"
 	"github.com/kombifyio/techstack/pkg/stackkitcommand"
+	"google.golang.org/protobuf/proto"
 	"gopkg.in/yaml.v3"
 )
 
@@ -58,28 +59,38 @@ var stackKitAddressPrefixPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 // seam. It resolves the local immutable release pin on every operation and
 // never accepts an executable, argv, environment, or shell fragment from Core.
 type StackKitExecutor struct {
-	pinPath   string
-	cacheRoot string
-	mu        sync.RWMutex
+	pinPath                  string
+	cacheRoot                string
+	preinstalledManifestPath string
+	// silenceLimit overrides stackKitApplySilenceLimit; zero keeps the default.
+	silenceLimit time.Duration
+	mu           sync.RWMutex
 }
 
 // NewStackKitExecutorFromEnv creates a lazy executor. Missing configuration is
 // reported when a command arrives, so agents that do not advertise the
 // "stackkit" command class can still start.
 func NewStackKitExecutorFromEnv() *StackKitExecutor {
-	pinPath := strings.TrimSpace(os.Getenv(stackKitReleasePinEnv))
-	cacheRoot := strings.TrimSpace(os.Getenv(stackKitReleaseCacheEnv))
+	return NewStackKitExecutorFromConfig(os.Getenv(stackKitReleasePinEnv), os.Getenv(stackKitReleaseCacheEnv))
+}
+
+// NewStackKitExecutorFromConfig accepts only host-owned runtime configuration.
+// The privileged Guard uses its own EnvironmentFile, never request fields.
+func NewStackKitExecutorFromConfig(pinPath, cacheRoot string) *StackKitExecutor {
+	pinPath = strings.TrimSpace(pinPath)
+	cacheRoot = strings.TrimSpace(cacheRoot)
 	if runtime.GOOS == "linux" {
 		if pinPath == "" {
 			pinPath = "/app/.stackkit/stackkits-release-pin.json"
 		}
 		if cacheRoot == "" {
-			cacheRoot = "/app/.stackkit/releases"
+			cacheRoot = "/var/lib/techstack/.stackkit/releases"
 		}
 	}
 	return &StackKitExecutor{
-		pinPath:   pinPath,
-		cacheRoot: cacheRoot,
+		pinPath:                  pinPath,
+		cacheRoot:                cacheRoot,
+		preinstalledManifestPath: defaultStackKitPreinstalledManifest(),
 	}
 }
 
@@ -90,6 +101,13 @@ func (executor *StackKitExecutor) Available() bool {
 func (executor *StackKitExecutor) Validate() error {
 	executor.mu.RLock()
 	defer executor.mu.RUnlock()
+	ctx, cancel := context.WithTimeout(context.Background(), hostSecurityHelpTimeout)
+	defer cancel()
+	unlock, err := executor.lockRuntime(ctx, false)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	return executor.validate()
 }
 
@@ -127,6 +145,17 @@ func (executor *StackKitExecutor) execute(ctx context.Context, command *agentpb.
 		result.CommandId = command.CommandId
 		result.Release = cloneStackKitReleasePin(command.Release)
 	}
+	timeout := defaultStackKitCommandTimeout
+	if command != nil && command.TimeoutSeconds > 0 {
+		timeout = time.Duration(command.TimeoutSeconds) * time.Second
+	}
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	unlock, lockErr := executor.lockRuntime(runCtx, false)
+	if lockErr != nil {
+		return finishStackKitResult(result, command, nil, nil, lockErr, started)
+	}
+	defer unlock()
 
 	release, args, workDir, eventPath, tempFiles, err := executor.prepare(command)
 	if eventPath != "" {
@@ -142,22 +171,29 @@ func (executor *StackKitExecutor) execute(ctx context.Context, command *agentpb.
 		return finishStackKitResult(result, command, nil, nil, err, started)
 	}
 
-	timeout := defaultStackKitCommandTimeout
-	if command.TimeoutSeconds > 0 {
-		timeout = time.Duration(command.TimeoutSeconds) * time.Second
-	}
-	runCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
 	stdout := newBoundedStackKitBuffer(maxStackKitCommandOutputBytes)
 	stderr := newBoundedStackKitBuffer(maxStackKitCommandOutputBytes)
 	stderrLogs := newStackKitLineEmitter(command, "error", sink)
-	process := newStackKitProcess(runCtx, release.BinaryPath(), args...)
+	// The wall-clock deadline of runCtx stays the upper cap. endProcess ends the
+	// same process earlier, with its own cause, when an apply goes silent.
+	processCtx, endProcess := context.WithCancelCause(runCtx)
+	defer endProcess(nil)
+	process := newStackKitProcess(processCtx, release.BinaryPath(), args...)
 	process.Dir = workDir
 	if command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_INIT {
 		process.Stdin = bytes.NewReader(command.CandidateSpecJson)
 	}
+	if (stackkitcommand.IsBackupTargetDeliveryOperation(command.Operation) || command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_WALLET_ITEM_IMPORT) && len(command.SealedDelivery) != 0 {
+		// Ciphertext only: the pinned CLI opens it with the node's own key.
+		process.Stdin = bytes.NewReader(command.SealedDelivery)
+	}
 	process.Env = stackKitChildEnvironment(os.Environ())
+	if command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_INIT {
+		// INIT consumes only this non-secret mode marker. Its native image
+		// admission enforces the CUE-owned managed target; prepare's separate
+		// orchestration custody environment is never passed to this child.
+		process.Env = append(process.Env, "TECHSTACK_MANAGED=1")
+	}
 	process.Stdout = stdout
 	process.Stderr = io.MultiWriter(stderr, stderrLogs)
 	eventsDone := make(chan struct{})
@@ -170,11 +206,33 @@ func (executor *StackKitExecutor) execute(ctx context.Context, command *agentpb.
 	} else {
 		close(eventsStopped)
 	}
-	runErr := process.Run()
+	silenceStopped := make(chan struct{})
+	if command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_APPLY {
+		go func() {
+			defer close(silenceStopped)
+			ticker := time.NewTicker(stackKitProgressPollInterval)
+			defer ticker.Stop()
+			watchStackKitSilence(eventPath, newStackKitSilenceWatch(executor.applySilenceLimit()), ticker.C, eventsDone,
+				func(stall stackkitcommand.ApplyStall) { endProcess(&stackKitApplyStalledError{stall: stall}) })
+		}()
+	} else {
+		close(silenceStopped)
+	}
+	runErr := process.Start()
+	if runErr == nil {
+		observeStackKitProcess(ctx, process)
+		runErr = process.Wait()
+	}
 	close(eventsDone)
 	<-eventsStopped
+	<-silenceStopped
 	stderrLogs.Close()
-	if runCtx.Err() != nil {
+	var stalled *stackKitApplyStalledError
+	switch cause := context.Cause(processCtx); {
+	case errors.As(cause, &stalled) && runErr != nil:
+		// The node ended the apply itself: it went silent, it was not slow.
+		runErr = stalled
+	case runCtx.Err() != nil:
 		runErr = fmt.Errorf("StackKits command timed out after %s: %w", timeout, runCtx.Err())
 	}
 	events, eventsErr := readStackKitEvents(eventPath)
@@ -206,6 +264,18 @@ func (executor *StackKitExecutor) execute(ctx context.Context, command *agentpb.
 		}
 		publicOutput, _ = json.Marshal(map[string]any{"schemaVersion": envelope.SchemaVersion, "command": envelope.Command, "status": envelope.Status, "data": map[string]any{}})
 	}
+	var handoffDocument []byte
+	if stackkitcommand.IsHandoffOperation(command.Operation) && runErr == nil {
+		// The documents are public by contract and must reach the other node
+		// unredacted, so they are read from the CLI's own output, not from the
+		// redacted copy.
+		document, envelope, handoffErr := collectStackKitHandoff(workDir, command, []byte(stdout.String()))
+		if handoffErr != nil {
+			runErr = handoffErr
+		} else {
+			handoffDocument, publicOutput = document, envelope
+		}
+	}
 	finished := finishStackKitResult(
 		result,
 		command,
@@ -214,6 +284,9 @@ func (executor *StackKitExecutor) execute(ctx context.Context, command *agentpb.
 		runErr,
 		started,
 	)
+	if finished.Success && len(handoffDocument) != 0 {
+		finished.HandoffDocument = handoffDocument
+	}
 	if finished.Success && command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_CHANGE_SET_CREATE {
 		digest, digestErr := stackKitChangeSetRecordDigest(workDir, finished.CommandResultJson)
 		if digestErr != nil {
@@ -222,8 +295,18 @@ func (executor *StackKitExecutor) execute(ctx context.Context, command *agentpb.
 		finished.AdvancedChangeSetSha256 = digest
 	}
 	if finished.Success && command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_PLAN && command.LocalSiteRef == "cloud" && command.StackkitInstanceId != "" {
+		if command.SourceGenerationInspection {
+			if err := attachSourceGenerationInspection(finished); err != nil {
+				return finishStackKitResult(result, command, nil, &receipt, err, started)
+			}
+		}
 		if err := attachManagedBackupPlan(workDir, command.StackkitInstanceId, finished); err != nil {
 			return finishStackKitResult(result, command, nil, &receipt, err, started)
+		}
+		if command.SourceGenerationInspection {
+			if _, _, err := stackkitcommand.ManagedSourceGenerationBackupPlan(finished, command.StackkitInstanceId); err != nil {
+				return finishStackKitResult(result, command, nil, &receipt, err, started)
+			}
 		}
 	}
 	if finished.Success && identityMutationCarriesTransientURL(command) {
@@ -276,7 +359,7 @@ func (writer *stackKitLineEmitter) emit(line []byte) {
 }
 
 func streamStackKitEventFile(ctx context.Context, path string, command *agentpb.StackKitCommand, sink func(*agentpb.LogEntry), done <-chan struct{}) {
-	ticker := time.NewTicker(250 * time.Millisecond)
+	ticker := time.NewTicker(stackKitProgressPollInterval)
 	defer ticker.Stop()
 	offset := 0
 	read := func(final bool) {
@@ -326,7 +409,8 @@ func emitStackKitProgressLine(command *agentpb.StackKitCommand, raw []byte, sink
 	if strings.TrimSpace(message) == "" {
 		message = strings.TrimSpace(phase + " " + status)
 	}
-	fields := map[string]string{"phase": phase, "status": status}
+	fields := forwardedStackKitEventFields(event)
+	fields["phase"], fields["status"] = phase, status
 	entry := stackKitLiveLogEntry(command, stackKitProgressLevel(status), message, fields)
 	if rawTime, _ := event["time"].(string); rawTime != "" {
 		if parsed, err := time.Parse(time.RFC3339Nano, rawTime); err == nil {
@@ -389,6 +473,11 @@ func (executor *StackKitExecutor) prepare(command *agentpb.StackKitCommand) (
 ) {
 	if command == nil {
 		return stackkitrelease.Release{}, nil, "", "", nil, fmt.Errorf("StackKit command is required")
+	}
+	if stackkitcommand.IsRestoreActivationOperation(command.Operation) {
+		if err := stackkitcommand.ValidateCommand(command); err != nil {
+			return stackkitrelease.Release{}, nil, "", "", nil, err
+		}
 	}
 	command.CommandId = strings.TrimSpace(command.CommandId)
 	if command.CommandId == "" {
@@ -456,6 +545,12 @@ func (executor *StackKitExecutor) prepare(command *agentpb.StackKitCommand) (
 	var operationArgs []string
 	if hostOperation {
 		operationArgs, err = stackKitHostArgs(command)
+	} else if stackkitcommand.IsHandoffOperation(command.Operation) {
+		operationArgs, tempFiles, err = stackKitHandoffArgs(workDir, command)
+	} else if stackkitcommand.IsApplicationConnectorOperation(command.Operation) {
+		operationArgs, tempFiles, err = stackKitConnectorArgs(release, workDir, command)
+	} else if stackkitcommand.IsApplicationOperation(command.Operation) {
+		operationArgs, err = stackKitApplicationArgs(release, command)
 	} else if stackkitcommand.IsAdvancedOperation(command.Operation) {
 		operationArgs, tempFiles, err = stackKitAdvancedOperationArgs(release, workDir, specPath, command)
 	} else {
@@ -464,6 +559,30 @@ func (executor *StackKitExecutor) prepare(command *agentpb.StackKitCommand) (
 	if err != nil {
 		_ = os.Remove(eventPath)
 		return stackkitrelease.Release{}, nil, "", "", tempFiles, err
+	}
+	if command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE_RECOVER && command.OriginalRecoveryRelease != nil {
+		cache, cacheErr := executor.persistentReleaseCache()
+		if cacheErr != nil {
+			_ = os.Remove(eventPath)
+			return stackkitrelease.Release{}, nil, "", "", tempFiles, cacheErr
+		}
+		operationArgs = append(operationArgs, "--original-release-cache", cache)
+	}
+	if command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_INIT {
+		manifest, admissionErr := stackKitPreinstalledManifest(executor.preinstalledManifestPath)
+		if admissionErr != nil {
+			_ = os.Remove(eventPath)
+			return stackkitrelease.Release{}, nil, "", "", tempFiles, admissionErr
+		}
+		if manifest != "" {
+			if len(command.InventoryJson) != 0 {
+				_ = os.Remove(eventPath)
+				return stackkitrelease.Release{}, nil, "", "", tempFiles, fmt.Errorf("preinstalled image INIT requires Inventory to be handed off after native admission")
+			}
+			// StackKits owns content, profile, release and retry admission. Keep
+			// the flag on every INIT, including an already activated workspace.
+			operationArgs = append(operationArgs, "--preinstalled-manifest", manifest)
+		}
 	}
 	if hostOperation {
 		return release, append(args, operationArgs...), workDir, eventPath, tempFiles, nil
@@ -533,6 +652,9 @@ func materializeStackKitInventory(workDir string, raw []byte) error {
 		}
 		return fmt.Errorf("decode trailing StackKits Inventory data: %w", err)
 	}
+	if err := preserveNodeIssuedBackupBinding(workDir, inventory); err != nil {
+		return err
+	}
 	canonical, err := json.Marshal(inventory)
 	if err != nil {
 		return fmt.Errorf("encode StackKits Inventory: %w", err)
@@ -583,8 +705,14 @@ func stackKitOperationArgs(command *agentpb.StackKitCommand) ([]string, error) {
 		return []string{"validate"}, nil
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_GENERATE:
 		return stackKitGenerateArgs(command)
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_PREPARE_SOURCE_GENERATION:
+		return []string{"kit", "prepare-source-generation", "--json"}, nil
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_PLAN:
-		return []string{"plan", "--json"}, nil
+		args := []string{"plan", "--json"}
+		if command.SourceGenerationInspection {
+			args = append(args, "--source-generation")
+		}
+		return args, nil
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_APPLY:
 		return stackKitApplyArgs(command)
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_VERIFY:
@@ -612,6 +740,25 @@ func stackKitOperationArgs(command *agentpb.StackKitCommand) ([]string, error) {
 		return []string{"backup", "configure", "--json"}, nil
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE:
 		return stackKitBackupRestoreArgs(command)
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE_ACTIVATE,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE_RECOVER:
+		return stackKitRestoreActivationArgs(command)
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_TARGET_RECIPIENT:
+		return stackKitBackupTargetRecipientArgs(command)
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_TARGET_IMPORT,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_TARGET_REBIND:
+		return stackKitBackupTargetImportArgs(command)
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_DELIVERY_RECIPIENT,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_WALLET_ITEM_IMPORT,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_AI_PROVIDER_SETUP:
+		return stackkitcommand.WalletItemDeliveryArgs(command)
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_NETWORK_REBIND:
+		if !command.OwnerApproved {
+			return nil, fmt.Errorf("StackKit network rebind requires Owner approval")
+		}
+		return []string{"network", "rebind", "--yes", "--json"}, nil
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_NETWORK_STATUS:
+		return []string{"network", "status", "--json"}, nil
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_OWNER_ACTIVATION_STATUS:
 		return []string{"user", "owner", "status", "--json"}, nil
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_OWNER_ACTIVATION_ISSUE:
@@ -626,6 +773,11 @@ func stackKitOperationArgs(command *agentpb.StackKitCommand) ([]string, error) {
 			args = append(args, "--display-name", command.HouseholdDisplayName)
 		}
 		return append(args, "--owner-approve", "--json"), nil
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_REMOVE:
+		if !command.OwnerApproved || strings.TrimSpace(command.HouseholdUsername) == "" {
+			return nil, fmt.Errorf("StackKit household removal requires Owner approval and a username")
+		}
+		return []string{"user", "remove", command.HouseholdUsername, "--owner-approve", "--json"}, nil
 	default:
 		return nil, fmt.Errorf("unsupported StackKit operation %s", command.Operation.String())
 	}
@@ -681,7 +833,7 @@ func identityMutationCarriesTransientURL(command *agentpb.StackKitCommand) bool 
 
 func stackKitInitArgs(command *agentpb.StackKitCommand) ([]string, error) {
 	kit := strings.TrimSpace(command.Stackkit)
-	if kit != "basement-kit" && kit != "cloud-kit" {
+	if kit != "basement-kit" && kit != "cloud-kit" && kit != "modern-homelab" {
 		return nil, fmt.Errorf("StackKit init requires a supported StackKit")
 	}
 	name := strings.TrimSpace(command.StackName)
@@ -990,12 +1142,58 @@ func attestPinnedCLILocalEvidence(result *agentpb.StackKitResult, command *agent
 	if command == nil || !result.Success || len(result.CommandResultJson) == 0 {
 		return
 	}
+	if stackkitcommand.IsApplicationConnectorOperation(command.Operation) {
+		digest := sha256.Sum256(result.CommandResultJson)
+		proof := proto.Clone(result).(*agentpb.StackKitResult)
+		proof.PinnedCliEvidenceVerified = true
+		proof.PinnedCliEvidenceSha256 = "sha256:" + hex.EncodeToString(digest[:])
+		if _, _, err := stackkitcommand.ParseApplicationConnectorEvidence(command, proof); err != nil {
+			return
+		}
+		result.PinnedCliEvidenceVerified = true
+		result.PinnedCliEvidenceSha256 = proof.PinnedCliEvidenceSha256
+		return
+	}
 	var wantAPIVersion string
+	if stackkitcommand.IsApplicationOperation(command.Operation) && command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_APPLICATION_INSPECT {
+		var envelope struct {
+			Data struct {
+				Result struct {
+					APIVersion string `json:"apiVersion"`
+				} `json:"result"`
+			} `json:"data"`
+		}
+		if json.Unmarshal(result.CommandResultJson, &envelope) != nil {
+			return
+		}
+		if command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_APPLICATION_VERIFY {
+			var verified struct {
+				Data struct {
+					APIVersion        string `json:"apiVersion"`
+					SignatureVerified bool   `json:"signatureVerified"`
+				} `json:"data"`
+			}
+			if json.Unmarshal(result.CommandResultJson, &verified) != nil || verified.Data.APIVersion != "stackkit.application-adoption-verification/v1" || !verified.Data.SignatureVerified {
+				return
+			}
+		} else if envelope.Data.Result.APIVersion != "stackkit.application-adoption-result/v1" {
+			return
+		}
+		// The published CLI verifies the signature against existing node-local
+		// Owner custody before returning this receipt, as for backup evidence.
+		digest := sha256.Sum256(result.CommandResultJson)
+		result.PinnedCliEvidenceVerified = true
+		result.PinnedCliEvidenceSha256 = "sha256:" + hex.EncodeToString(digest[:])
+		return
+	}
 	switch command.Operation {
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RUN:
 		wantAPIVersion = "stackkit.local-backup-snapshot-anchor/v1"
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE:
 		wantAPIVersion = "stackkit.local-backup-restore-result/v1"
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE_ACTIVATE,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE_RECOVER:
+		wantAPIVersion = "stackkit.restore-activation-result/v1"
 	default:
 		return
 	}
@@ -1170,4 +1368,36 @@ func (buffer *boundedStackKitBuffer) String() string {
 		return buffer.buffer.String() + stackKitOutputTruncationMessage
 	}
 	return buffer.buffer.String()
+}
+
+// nodeBackupBindingsKey is the Inventory section the node itself writes when
+// `backup target import` issues its own backup-target binding. Core's Inventory
+// carries observed facts and execution channels only, so replacing the node's
+// Inventory must never drop the node-issued binding.
+const nodeBackupBindingsKey = "externalBackupTargetBindings"
+
+func preserveNodeIssuedBackupBinding(workDir string, incoming map[string]any) error {
+	if _, carries := incoming[nodeBackupBindingsKey]; carries {
+		return nil
+	}
+	path := filepath.Join(workDir, ".stackkit", "inventory.json")
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil || !info.Mode().IsRegular() || info.Size() > maxStackKitInventoryBytes {
+		return fmt.Errorf("inspect the node StackKits Inventory before replacing it")
+	}
+	raw, err := os.ReadFile(path) // #nosec G304 -- fixed node workspace Inventory path.
+	if err != nil {
+		return fmt.Errorf("read the node StackKits Inventory before replacing it: %w", err)
+	}
+	var existing map[string]any
+	if err := json.Unmarshal(raw, &existing); err != nil {
+		return fmt.Errorf("decode the node StackKits Inventory before replacing it: %w", err)
+	}
+	if bindings, ok := existing[nodeBackupBindingsKey]; ok {
+		incoming[nodeBackupBindingsKey] = bindings
+	}
+	return nil
 }

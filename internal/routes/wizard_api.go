@@ -10,6 +10,7 @@ import (
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
+	"github.com/kombifyio/techstack/pkg/kombifywallet"
 	"github.com/kombifyio/techstack/pkg/specv2"
 )
 
@@ -45,6 +46,9 @@ type WizardRouteConfig struct {
 	// connect-remote wizard. It is intentionally separate from LAN discovery.
 	RemoteSSHTester wizardRemoteSSHTester
 	Wallet          controlplane.WalletStore
+	// KombifyWallet is the central kombify Wallet client. Nil means this
+	// deployment reads the built-in (legacy) wallet through Wallet.
+	KombifyWallet *kombifywallet.Client
 }
 
 type wizardRouteHandlers struct {

@@ -3,6 +3,8 @@ package controlplane
 import (
 	"context"
 	"fmt"
+	"path"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -31,6 +33,7 @@ func (s *MemoryStore) UpsertJob(_ context.Context, req UpsertJobRequest) (*Job, 
 		ErrorDetails: req.ErrorDetails,
 		Logs:         cloneSliceOfMaps(req.Logs),
 		Result:       cloneMap(req.Result),
+		Payload:      cloneMap(req.Payload),
 		ScheduledFor: req.ScheduledFor,
 		CreatedAt:    now,
 		UpdatedAt:    now,
@@ -42,6 +45,9 @@ func (s *MemoryStore) UpsertJob(_ context.Context, req UpsertJobRequest) (*Job, 
 		if existing.State == jobStateRunning {
 			return nil, ErrConflict
 		}
+		if _, admitted := existing.Result[RestoreActivationAdmissionResultKey]; admitted {
+			return nil, ErrConflict // Admitted restores use the fenced snapshot path.
+		}
 		job.CreatedAt = existing.CreatedAt
 		job.StartedAt = cloneTime(existing.StartedAt)
 		job.CompletedAt = cloneTime(existing.CompletedAt)
@@ -50,11 +56,29 @@ func (s *MemoryStore) UpsertJob(_ context.Context, req UpsertJobRequest) (*Job, 
 	return cloneJob(job), nil
 }
 
-func (s *MemoryStore) CreateJob(_ context.Context, req UpsertJobRequest) (*Job, error) {
+func (s *MemoryStore) CreateJob(ctx context.Context, req UpsertJobRequest) (*Job, error) {
+	return s.createJob(ctx, req, "")
+}
+
+func (s *MemoryStore) CreateServiceOperationJob(ctx context.Context, req UpsertJobRequest, serviceID string) (*Job, error) {
+	if err := serviceJobReservation(req, serviceID); err != nil {
+		return nil, err
+	}
+	return s.createJob(ctx, req, serviceID)
+}
+
+func (s *MemoryStore) createJob(_ context.Context, req UpsertJobRequest, serviceID string) (*Job, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if jobWriteBypassesExecutionClaim(req.State) {
 		return nil, ErrConflict
+	}
+	if serviceID != "" {
+		for _, existing := range s.jobs {
+			if unresolvedServiceJob(existing, req.TenantID, req.StackID, serviceID, req.ID) {
+				return nil, ErrServiceOperationBusy
+			}
+		}
 	}
 	if _, exists := s.jobs[strings.TrimSpace(req.ID)]; exists {
 		return nil, ErrConflict
@@ -95,6 +119,16 @@ func (s *MemoryStore) SyncJobSnapshot(_ context.Context, syncReq SyncJobSnapshot
 	if !memoryJobSnapshotTransitionAllowed(job, syncReq) {
 		return nil, ErrConflict
 	}
+	if !restoreDenialMatchesExecution(syncReq) {
+		return nil, ErrConflict
+	}
+	if !restoreAdmissionDirectoryMatchesPayload(req.Result, job.Payload) {
+		return nil, ErrConflict
+	}
+	result, err := retainOriginalRestoreAdmission(job.Result, req.Result, job.Payload)
+	if err != nil {
+		return nil, err
+	}
 
 	job.State = firstNonEmpty(req.State, jobStatePending)
 	job.Type = strings.TrimSpace(req.Type)
@@ -105,7 +139,7 @@ func (s *MemoryStore) SyncJobSnapshot(_ context.Context, syncReq SyncJobSnapshot
 	job.Error = req.Error
 	job.ErrorDetails = req.ErrorDetails
 	job.Logs = cloneSliceOfMaps(req.Logs)
-	job.Result = cloneMap(req.Result)
+	job.Result = result
 	job.ScheduledFor = req.ScheduledFor
 	if job.ScheduledFor.IsZero() {
 		job.ScheduledFor = s.now()
@@ -121,6 +155,65 @@ func (s *MemoryStore) SyncJobSnapshot(_ context.Context, syncReq SyncJobSnapshot
 		s.releaseJobExecutionLeaseLocked(job.ID)
 	}
 	return cloneJob(job), nil
+}
+
+func retainOriginalRestoreAdmission(stored, incoming, payload map[string]any) (map[string]any, error) {
+	if backup, ok := incoming["backup"].(map[string]any); ok && backup["mode"] == "not-admitted" {
+		if _, present := stored[RestoreActivationAdmissionResultKey]; present {
+			return nil, ErrConflict
+		}
+		if _, present := incoming[RestoreActivationAdmissionResultKey]; present {
+			return nil, ErrConflict
+		}
+	}
+	result := cloneMap(incoming)
+	for _, key := range []string{RestoreActivationAdmissionResultKey, RestoreActivationRequestResultKey} {
+		next, supplied := incoming[key]
+		if supplied {
+			if value, ok := next.(map[string]any); !ok || len(value) == 0 {
+				return nil, ErrConflict
+			}
+		}
+		prior, exists := stored[key]
+		if !exists {
+			continue
+		}
+		value, ok := prior.(map[string]any)
+		equivalent := reflect.DeepEqual(prior, next)
+		if key == RestoreActivationAdmissionResultKey && supplied && ok {
+			if _, bound := value["working_directory"]; !bound {
+				if projected, valid := next.(map[string]any); valid && restoreAdmissionDirectoryMatchesPayload(incoming, payload) {
+					withoutDirectory := cloneMap(projected)
+					delete(withoutDirectory, "working_directory")
+					equivalent = reflect.DeepEqual(value, withoutDirectory)
+				}
+			}
+		}
+		if !ok || len(value) == 0 || (supplied && !equivalent) {
+			return nil, ErrConflict
+		}
+		if result == nil {
+			result = map[string]any{}
+		}
+		result[key] = cloneMap(value)
+	}
+	return result, nil
+}
+
+func restoreDenialMatchesExecution(req SyncJobSnapshotRequest) bool {
+	backup, ok := req.Job.Result["backup"].(map[string]any)
+	if !ok || backup["mode"] != "not-admitted" {
+		return true
+	}
+	if backup["job_id"] != req.Job.ID || req.AttemptStartedAt == nil {
+		return false
+	}
+	value, ok := backup["attempt_started_at"].(string)
+	if !ok {
+		return false
+	}
+	at, err := time.Parse(time.RFC3339Nano, value)
+	return err == nil && at.Equal(req.AttemptStartedAt.UTC().Truncate(time.Microsecond))
 }
 
 func memoryJobSnapshotTransitionAllowed(job Job, req SyncJobSnapshotRequest) bool {
@@ -371,6 +464,46 @@ func (s *MemoryStore) GetJob(_ context.Context, tenantID, jobID string) (*Job, e
 	return cloneJob(job), nil
 }
 
+func (s *MemoryStore) GetOriginalRestoreActivation(_ context.Context, tenantID, stackID, jobID string) (*OriginalRestoreActivation, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	job, ok := s.jobs[jobID]
+	if !ok || job.TenantID != tenantID || job.StackID != stackID {
+		return nil, ErrNotFound
+	}
+	return originalRestoreActivationFromJob(job)
+}
+
+func originalRestoreActivationFromJob(job Job) (*OriginalRestoreActivation, error) {
+	admission, ok := job.Result[RestoreActivationAdmissionResultKey].(map[string]any)
+	directory, directoryOK := job.Payload["working_directory"].(string)
+	// These are Linux node paths, independent of the controller's host OS.
+	if job.Type != "stackkit_lifecycle" || !ok || len(admission) == 0 ||
+		job.Payload["operation"] != "backup_restore_activate" || !directoryOK ||
+		!path.IsAbs(directory) || path.Clean(directory) != directory ||
+		strings.TrimSpace(directory) != directory || strings.ContainsAny(directory, "\\\x00") ||
+		admission["tenant_id"] != job.TenantID || admission["stack_id"] != job.StackID ||
+		admission["activation_operation_id"] != "restore-"+job.ID ||
+		!restoreAdmissionDirectoryMatchesPayload(job.Result, job.Payload) {
+		return nil, ErrConflict
+	}
+	return &OriginalRestoreActivation{JobID: job.ID, TenantID: job.TenantID, StackID: job.StackID,
+		WorkingDirectory: directory, Admission: cloneMap(admission)}, nil
+}
+
+func restoreAdmissionDirectoryMatchesPayload(result, payload map[string]any) bool {
+	admission, ok := result[RestoreActivationAdmissionResultKey].(map[string]any)
+	if !ok {
+		return true
+	}
+	directory, supplied := admission["working_directory"]
+	if !supplied { // Legacy proof is resolved only by the exact-row read above.
+		return true
+	}
+	value, valid := directory.(string)
+	return valid && value != "" && payload["working_directory"] == value
+}
+
 func (s *MemoryStore) ListJobsByTenant(_ context.Context, tenantID string, limit int) ([]Job, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -530,6 +663,13 @@ func (s *MemoryStore) SetJobPayload(_ context.Context, tenantID, jobID string, p
 	if !ok || job.TenantID != strings.TrimSpace(tenantID) || job.State != jobStatePending {
 		return fmt.Errorf("%w: job %s is missing or no longer pending", ErrConflict, jobID)
 	}
+	if _, admitted := job.Result[RestoreActivationAdmissionResultKey]; admitted {
+		directory, valid := job.Payload["working_directory"].(string)
+		if !valid || directory == "" || payload["working_directory"] != directory ||
+			payload["operation"] != job.Payload["operation"] || !restoreAdmissionDirectoryMatchesPayload(job.Result, payload) {
+			return ErrConflict
+		}
+	}
 	job.Payload = cloneMap(payload)
 	job.UpdatedAt = s.now()
 	s.jobs[job.ID] = job
@@ -594,6 +734,11 @@ func (s *MemoryStore) setJobState(tenantID, jobID, state string, at time.Time, m
 	if job.State != jobStateRunning {
 		return nil, ErrConflict
 	}
+	if state == jobStateCompleted {
+		if _, admitted := job.Result[RestoreActivationAdmissionResultKey]; admitted {
+			return nil, ErrConflict // Restore completion uses SyncJobSnapshot.
+		}
+	}
 	job.State = state
 	job.UpdatedAt = at
 	mutate(&job)
@@ -610,3 +755,30 @@ func limitJobs(jobs []Job, limit int) []Job {
 }
 
 var _ JobStore = (*MemoryStore)(nil)
+
+func (s *MemoryStore) FindUnresolvedServiceJob(_ context.Context, tenantID, stackID, serviceID, excludeJobID string) (string, error) {
+	if err := serviceJobScope(tenantID, stackID, serviceID); err != nil {
+		return "", err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, candidate := range s.jobs {
+		if unresolvedServiceJob(candidate, tenantID, stackID, serviceID, excludeJobID) {
+			return candidate.ID, nil
+		}
+	}
+	return "", nil
+}
+
+func (s *MemoryStore) GetServiceOperationJob(_ context.Context, tenantID, stackID, serviceID, jobID string) (*Job, error) {
+	if err := serviceJobScope(tenantID, stackID, serviceID); err != nil {
+		return nil, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	job, ok := s.jobs[jobID]
+	if !ok || job.TenantID != tenantID || job.StackID != stackID || !serviceJobTarget(job.Result, job.Payload, serviceID) {
+		return nil, ErrNotFound
+	}
+	return cloneJob(job), nil
+}

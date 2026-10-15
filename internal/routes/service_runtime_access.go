@@ -46,6 +46,7 @@ const (
 var serviceActionVocabulary = map[string]bool{
 	serviceActionStart: true, serviceActionStop: true, serviceActionRestart: true,
 	serviceActionLogs: true, serviceActionFreeze: true, serviceActionUnfreeze: true,
+	serviceActionUpdate: true, serviceActionBackup: true,
 }
 
 // serviceMutatingActions is the closed set of agent-executed operations the
@@ -53,6 +54,7 @@ var serviceActionVocabulary = map[string]bool{
 // service is not a mutation.
 var serviceMutatingActions = map[string]bool{
 	serviceActionStart: true, serviceActionStop: true, serviceActionRestart: true,
+	serviceActionUpdate: true,
 }
 
 // serviceRuntimeAllowedActions is exactly what the action endpoint accepts for

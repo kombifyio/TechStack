@@ -36,6 +36,18 @@ type ProductEvent struct {
 	DeepLink       string
 	GroupKey       string
 	Priority       string
+	// Actor names who the item is from when it is not the producing service
+	// itself. Techstack sets it only for a node: subject "node:<stack_id>".
+	Actor *EventActor
+	// Detail is the structured detail of the Feed item (FeedDetail). The
+	// engine admits only the kinds a producer owns.
+	Detail map[string]any
+}
+
+// EventActor is the Feed contract v1 actor of an item.
+type EventActor struct {
+	Subject     string
+	DisplayName string
 }
 
 // ProductEventEnqueuer is the durable product-notification boundary used by
@@ -134,6 +146,17 @@ func enqueueProductEvent(ctx context.Context, executor productEventExecutor, eve
 			"deep_link":   strings.TrimSpace(event.DeepLink),
 			"group_key":   strings.TrimSpace(event.GroupKey),
 			"priority":    strings.TrimSpace(event.Priority),
+		}
+		if envelope, ok := persistedPayload[activityEnvelopePayloadKey].(map[string]any); ok {
+			if actor := event.Actor; actor != nil && strings.TrimSpace(actor.Subject) != "" {
+				envelope["actor"] = map[string]any{
+					"subject":      strings.TrimSpace(actor.Subject),
+					"display_name": strings.TrimSpace(actor.DisplayName),
+				}
+			}
+			if len(event.Detail) > 0 {
+				envelope["detail"] = event.Detail
+			}
 		}
 	}
 	payload, err := json.Marshal(persistedPayload)
@@ -318,6 +341,12 @@ func (o *Outbox) claim(ctx context.Context, now time.Time) (*outboxItem, error) 
 		item.DeepLink = activityEnvelopeString(envelope, "deep_link")
 		item.GroupKey = activityEnvelopeString(envelope, "group_key")
 		item.Priority = activityEnvelopeString(envelope, "priority")
+		if actor, ok := envelope["actor"].(map[string]any); ok {
+			item.Actor = &EventActor{Subject: activityEnvelopeString(actor, "subject"), DisplayName: activityEnvelopeString(actor, "display_name")}
+		}
+		if detail, ok := envelope["detail"].(map[string]any); ok {
+			item.Detail = detail
+		}
 		delete(item.Payload, activityEnvelopePayloadKey)
 	}
 	if _, err := tx.ExecContext(ctx, `

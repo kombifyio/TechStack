@@ -81,6 +81,31 @@ func TestIssuedCapabilityVerifiesUnderStackKitsRulesForItsStackOnly(t *testing.T
 	}
 }
 
+// The managed rollout requests and installs a kombify.me origin certificate
+// through two capability-gated operations (ADR-0047). The issuer must issue
+// them, or every managed rollout with kombify.me routes fails before apply.
+func TestIssuedCapabilityAuthorizesTheOriginCertificateOperations(t *testing.T) {
+	_, key, _ := ed25519.GenerateKey(nil)
+	now := time.Date(2026, 10, 4, 15, 0, 0, 0, time.UTC)
+	issuer, err := New(Config{IssuerID: "techstack.0f1e2d3c", PrivateKey: key, Recorder: &memoryRecorder{}, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := "owner/local/" + hex.EncodeToString(bytes.Repeat([]byte{0xcd}, 16))
+	capability, err := issuer.Issue(context.Background(), Request{
+		TenantID: "tenant-1", DeploymentID: "stack-1", StackID: "cloud-stack", OwnerRef: owner,
+		Operations: []string{OperationOriginCertificateRequest, OperationOriginCertificateInstall},
+	})
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	for _, operation := range []string{OperationOriginCertificateRequest, OperationOriginCertificateInstall} {
+		if err := stackKitsVerify(capability.Raw, issuer.TrustBundle(), now.Add(time.Minute), "cloud-stack", owner, operation); err != nil {
+			t.Fatalf("capability for %s rejected: %v", operation, err)
+		}
+	}
+}
+
 var (
 	errMalformed     = errors.New("malformed")
 	errUntrusted     = errors.New("untrusted key")

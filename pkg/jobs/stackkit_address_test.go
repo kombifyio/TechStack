@@ -21,11 +21,13 @@ func TestAllocateManagedAddressPlanBindsExactRuntimeWithoutCredentialPayload(t *
 		zoneSwitch     bool
 		existingLayout string
 		wantZone       bool
+		registeredZone bool
 	}{
 		{name: "new address"}, {name: "existing address", prefix: "owned-original"},
 		{name: "new install zone", zoneSwitch: true, wantZone: true},
 		{name: "existing flat install with the switch on", zoneSwitch: true, existingLayout: "flat"},
 		{name: "existing install zone with the switch off", existingLayout: "zone", wantZone: true},
+		{name: "registered zone preserves bound prefix with switch off", prefix: "owned-original", registeredZone: true, wantZone: true},
 		{name: "foreign address", prefix: "owned-original", refusal: http.StatusForbidden},
 		{name: "missing address", prefix: "owned-original", refusal: http.StatusNotFound},
 		{name: "unexpected binding", prefix: "owned-original", wrongBase: true},
@@ -90,10 +92,14 @@ func TestAllocateManagedAddressPlanBindsExactRuntimeWithoutCredentialPayload(t *
 			if tc.zoneSwitch {
 				t.Setenv(kombifyme.InstallZonesEnv, "true")
 			}
-			binding, err := allocateManagedAddressPlan(t.Context(), stackKitAddressPlan{
+			plan := stackKitAddressPlan{
 				APIVersion: stackKitAddressPlanV1, Provider: addressModeKombifyMe, StackName: "demo", Domain: addressModeKombifyMeDomain, SubdomainPrefix: tc.prefix,
 				Services: []stackKitAddressPlanService{{ServiceKey: "auth"}, {ServiceKey: "base"}},
-			}, &ManagedRuntimeTarget{PublicIP: "203.0.113.10", SSHPrivateKey: "never-send"}, address)
+			}
+			if tc.registeredZone {
+				plan.RegisteredZone = tc.prefix + ".kombify.me"
+			}
+			binding, err := allocateManagedAddressPlan(t.Context(), plan, &ManagedRuntimeTarget{PublicIP: "203.0.113.10", SSHPrivateKey: "never-send"}, address)
 			if tc.refusal != 0 || tc.wrongBase {
 				if err == nil || serviceMutated {
 					t.Fatalf("unavailable bound address was not preserved: err=%v mutated=%v", err, serviceMutated)

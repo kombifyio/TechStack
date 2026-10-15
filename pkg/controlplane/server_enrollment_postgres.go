@@ -43,6 +43,7 @@ func (s *PostgresStore) ApplyServerEnrollment(ctx context.Context, command Serve
 		}
 		return nil, err
 	}
+	s.announceServerEvents(result.ServerEventResult)
 	return &result, nil
 }
 

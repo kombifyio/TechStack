@@ -16,6 +16,8 @@ type MemoryStore struct {
 	jobs              map[string]Job
 	jobLeases         map[string]memoryJobExecutionLease
 	worker            map[string]Worker
+	workerIdentities  map[string]WorkerIdentity
+	workerProofs      map[string]time.Time
 	tokens            map[string]PairingToken
 	nodes             map[string]Node
 	svcs              map[string]Service
@@ -29,6 +31,7 @@ type MemoryStore struct {
 	serverInventory   map[string][]ServerInventorySnapshot
 	serverOutbox      []ServerRegistryOutboxItem
 	serverGuardEpochs map[string]struct{}
+	metricBuckets     map[memoryMetricKey]map[time.Time]*MetricBucket
 	nextServerEventID int64
 	wallet            map[string]WalletItem
 	driftResults      map[string]DriftResult
@@ -48,6 +51,8 @@ func NewMemoryStore() *MemoryStore {
 		jobs:              make(map[string]Job),
 		jobLeases:         make(map[string]memoryJobExecutionLease),
 		worker:            make(map[string]Worker),
+		workerIdentities:  make(map[string]WorkerIdentity),
+		workerProofs:      make(map[string]time.Time),
 		tokens:            make(map[string]PairingToken),
 		nodes:             make(map[string]Node),
 		svcs:              make(map[string]Service),

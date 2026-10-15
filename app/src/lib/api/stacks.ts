@@ -177,22 +177,388 @@ export interface StackJobAcceptedResponse {
 }
 
 export type StackKitLifecycleOperation =
-  "plan" | "apply" | "verify" | "upgrade" | "drift_detect" | "drift_reconcile";
+  | "plan"
+  | "apply"
+  | "verify"
+  | "upgrade"
+  | "drift_detect"
+  | "drift_reconcile"
+  | "advanced_change_set"
+  | "rollback"
+  | "restore_drill";
+
+export type StackKitBackupOperation =
+  | "backup_run"
+  | "backup_configure"
+  | "backup_status"
+  | "backup_restore"
+  | "backup_restore_activate"
+  | "backup_restore_recover";
 
 export interface StackKitLifecycleRequest {
-  operation: StackKitLifecycleOperation;
+  operation: StackKitLifecycleOperation | StackKitBackupOperation;
   agent_id: string;
   target_release?: string;
+  /** Canonical proposed StackSpec; validation and execution remain node-owned. */
+  candidate_spec?: Record<string, unknown>;
+  rollback_target_ref?: string;
   owner_approved?: boolean;
+  snapshot_anchor_id?: string;
+  restore_result_id?: string;
+  activation_operation_id?: string;
+  restore_plan_hash?: string;
 }
 
 export interface StackKitLifecycleAcceptedResponse {
   job_id: string;
   kit_deployment_id: string;
   agent_id: string;
-  operation: StackKitLifecycleOperation;
+  operation: StackKitLifecycleOperation | StackKitBackupOperation;
   status: string;
   message?: string;
+}
+
+export interface StackKitRecoveryPoint {
+  evidenceId: string;
+  recordedAt: string;
+  currentPlan: boolean;
+  state: "recorded" | "clock-skew";
+}
+
+function backupRecord(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value === "string") {
+    try {
+      return backupRecord(JSON.parse(value));
+    } catch {
+      return undefined;
+    }
+  }
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+/** Node observations are choices, never proof that historical blobs remain. */
+export function stackKitBackupResultMatchesScope(
+  jobResult: unknown,
+  stackId: string,
+  agentId: string,
+  operation: StackKitBackupOperation,
+): boolean {
+  const result = backupRecord(jobResult);
+  return (
+    result?.schema_version === "techstack.stackkit-lifecycle-result/v1" &&
+    result.techstack_id === stackId &&
+    result.agent_id === agentId &&
+    result.operation === operation
+  );
+}
+
+export function stackKitRecoveryPoints(
+  jobResult: unknown,
+  agentId: string,
+  stackId: string,
+): StackKitRecoveryPoint[] {
+  const result = backupRecord(jobResult);
+  if (
+    !stackKitBackupResultMatchesScope(
+      result,
+      stackId,
+      agentId,
+      "backup_status",
+    ) ||
+    result?.success !== true
+  )
+    return [];
+  const command = backupRecord(result.command_result);
+  if (
+    command?.schemaVersion !== "stackkit.command-result/v1" ||
+    command.command !== "stackkit backup status" ||
+    command.status !== "success"
+  )
+    return [];
+  const history = backupRecord(backupRecord(command.data)?.history);
+  if (!Array.isArray(history?.recoveryPoints)) return [];
+  const seen = new Set<string>();
+  return history.recoveryPoints.flatMap((value: unknown) => {
+    const point = backupRecord(value);
+    if (
+      typeof point?.evidenceId !== "string" ||
+      !/^sha256:[a-f0-9]{64}$/.test(point.evidenceId) ||
+      typeof point.recordedAt !== "string" ||
+      !Number.isFinite(Date.parse(point.recordedAt)) ||
+      typeof point.currentPlan !== "boolean" ||
+      (point.state !== "recorded" && point.state !== "clock-skew") ||
+      seen.has(point.evidenceId)
+    )
+      return [];
+    seen.add(point.evidenceId);
+    return [
+      {
+        evidenceId: point.evidenceId,
+        recordedAt: point.recordedAt,
+        currentPlan: point.currentPlan,
+        state: point.state,
+      },
+    ];
+  });
+}
+
+/** Job completion becomes a staged restore only with matching node evidence. */
+export function stackKitRestoreWasStaged(
+  jobResult: unknown,
+  agentId: string,
+  anchorId: string,
+  stackId: string,
+): boolean {
+  const result = backupRecord(jobResult);
+  const backup = backupRecord(result?.backup);
+  return (
+    stackKitBackupResultMatchesScope(
+      result,
+      stackId,
+      agentId,
+      "backup_restore",
+    ) &&
+    result?.success === true &&
+    backup?.mode === "staged" &&
+    backup.snapshot_anchor_id === anchorId &&
+    typeof backup.restore_result_id === "string" &&
+    /^sha256:[a-f0-9]{64}$/.test(backup.restore_result_id)
+  );
+}
+
+export interface StackKitStagedRestore {
+  restoreResultId: string;
+  planHash: string;
+  instanceId: string;
+  anchorId: string;
+  ownerRef: string;
+}
+
+export interface StackKitRestoreBinding extends StackKitStagedRestore {
+  stackId: string;
+  agentId: string;
+  nodeId: string;
+}
+
+export interface StackKitRestoreAdmission {
+  activationOperationId: string;
+  restoreResultId: string;
+  planHash: string;
+}
+
+export interface StackKitRestoreOutcome extends StackKitRestoreAdmission {
+  mode: "activated" | "recovered" | "recovery-required";
+  verifiedAt?: string;
+}
+
+export function stackKitRestoreRequestDigest(
+  jobResult: unknown,
+  binding: StackKitRestoreBinding,
+  actorId: string,
+  tenantId: string,
+  keySHA256: string,
+): string | undefined {
+  const receipt = backupRecord(
+    backupRecord(jobResult)?.restore_activation_request,
+  );
+  if (
+    receipt?.schema_version !== "techstack.restore-activation-request/v1" ||
+    receipt.owner_id !== actorId ||
+    (tenantId && receipt.tenant_id !== tenantId) ||
+    typeof receipt.tenant_id !== "string" ||
+    !receipt.tenant_id ||
+    receipt.techstack_id !== binding.stackId ||
+    receipt.agent_id !== binding.agentId ||
+    receipt.restore_result_id !== binding.restoreResultId ||
+    receipt.node_id !== binding.nodeId ||
+    receipt.stackkit_instance_id !== binding.instanceId ||
+    receipt.owner_approved !== true ||
+    receipt.key_sha256 !== keySHA256 ||
+    typeof receipt.request_digest !== "string" ||
+    !/^[a-f0-9]{64}$/.test(receipt.request_digest)
+  )
+    return;
+  return receipt.request_digest;
+}
+
+export function stackKitRestoreNotAdmitted(
+  jobResult: unknown,
+  binding: StackKitRestoreBinding,
+  actorId: string,
+  tenantId: string,
+  keySHA256: string,
+  requestDigest: string,
+  jobId: string,
+  startedAt: string | undefined,
+): boolean {
+  const result = backupRecord(jobResult);
+  const backup = backupRecord(result?.backup);
+  return (
+    stackKitRestoreRequestDigest(
+      result,
+      binding,
+      actorId,
+      tenantId,
+      keySHA256,
+    ) === requestDigest &&
+    result?.restore_activation_admission === undefined &&
+    backup?.mode === "not-admitted" &&
+    backup.job_id === jobId &&
+    sameRestoreExecutionGeneration(backup.attempt_started_at, startedAt) &&
+    backup.restore_result_id === binding.restoreResultId &&
+    backup.key_sha256 === keySHA256 &&
+    backup.request_digest === requestDigest
+  );
+}
+
+function sameRestoreExecutionGeneration(
+  left: unknown,
+  right: unknown,
+): boolean {
+  const microseconds = (value: unknown): bigint | undefined => {
+    if (typeof value !== "string") return;
+    const parts = value.match(
+      /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})$/,
+    );
+    if (!parts) return;
+    const seconds = Date.parse(parts[1] + parts[3]);
+    if (!Number.isFinite(seconds)) return;
+    return (
+      BigInt(seconds) * 1000n +
+      BigInt((parts[2] ?? "").padEnd(6, "0").slice(0, 6))
+    );
+  };
+  const a = microseconds(left),
+    b = microseconds(right);
+  return a !== undefined && b !== undefined && a === b;
+}
+
+const backupDigest = (value: unknown): value is string =>
+  typeof value === "string" && /^sha256:[a-f0-9]{64}$/.test(value);
+
+export function stackKitStagedRestore(
+  jobResult: unknown,
+  agentId: string,
+  anchorId: string,
+  stackId: string,
+): StackKitStagedRestore | undefined {
+  if (!stackKitRestoreWasStaged(jobResult, agentId, anchorId, stackId)) return;
+  const result = backupRecord(jobResult)!;
+  const backup = backupRecord(result.backup)!;
+  if (
+    !backupDigest(backup.plan_hash) ||
+    typeof result.stackkit_instance_id !== "string" ||
+    !result.stackkit_instance_id ||
+    typeof backup.owner_ref !== "string" ||
+    !backup.owner_ref
+  )
+    return;
+  return {
+    restoreResultId: backup.restore_result_id as string,
+    planHash: backup.plan_hash,
+    instanceId: result.stackkit_instance_id,
+    anchorId,
+    ownerRef: backup.owner_ref,
+  };
+}
+
+/** Admission is controller-owned job metadata, never caller-supplied custody. */
+export function stackKitRestoreAdmission(
+  jobResult: unknown,
+  binding: StackKitRestoreBinding,
+): StackKitRestoreAdmission | undefined {
+  const admission = backupRecord(
+    backupRecord(jobResult)?.restore_activation_admission,
+  );
+  if (
+    !admission ||
+    admission.stack_id !== binding.stackId ||
+    admission.agent_id !== binding.agentId ||
+    admission.node_id !== binding.nodeId ||
+    admission.stackkit_instance_id !== binding.instanceId ||
+    admission.restore_result_id !== binding.restoreResultId ||
+    admission.plan_hash !== binding.planHash ||
+    typeof admission.activation_operation_id !== "string" ||
+    !/^restore-[a-z0-9][a-z0-9._-]{0,119}$/.test(
+      admission.activation_operation_id,
+    )
+  )
+    return;
+  return {
+    activationOperationId: admission.activation_operation_id,
+    restoreResultId: binding.restoreResultId,
+    planHash: binding.planHash,
+  };
+}
+
+/** A failed job can still carry a verified prior-state recovery receipt. */
+export function stackKitRestoreOutcome(
+  jobResult: unknown,
+  binding: StackKitRestoreBinding,
+  operation: StackKitBackupOperation,
+  admission: StackKitRestoreAdmission,
+): StackKitRestoreOutcome | undefined {
+  const result = backupRecord(jobResult);
+  if (
+    !stackKitBackupResultMatchesScope(
+      result,
+      binding.stackId,
+      binding.agentId,
+      operation,
+    ) ||
+    result?.stackkit_instance_id !== binding.instanceId
+  )
+    return;
+  const backup = backupRecord(result?.backup);
+  if (
+    backup?.restore_result_id !== binding.restoreResultId ||
+    backup.plan_hash !== binding.planHash ||
+    backup.activation_operation_id !== admission.activationOperationId
+  )
+    return;
+  if (backup.mode === "recovery-required")
+    return { ...admission, mode: "recovery-required" };
+  if (backup.mode !== "activated" && backup.mode !== "recovered") return;
+  const command = backupRecord(result?.command_result);
+  const data = backupRecord(command?.data);
+  const verification = backupRecord(data?.verification);
+  const signature = backupRecord(data?.signature);
+  if (
+    command?.schemaVersion !== "stackkit.command-result/v1" ||
+    command.status !== "success" ||
+    (command.command !== "stackkit backup restore activate" &&
+      command.command !== "stackkit backup restore recover") ||
+    data?.apiVersion !== "stackkit.restore-activation-result/v1" ||
+    data.status !== backup.mode ||
+    data.operationId !== admission.activationOperationId ||
+    data.restoreResultId !== binding.restoreResultId ||
+    data.planHash !== binding.planHash ||
+    !backupDigest(data.safetySnapshotId) ||
+    !backupDigest(data.managedVolumeSetHash) ||
+    verification?.apiVersion !==
+      "stackkit.local-backup-restore-verification/v1" ||
+    verification.servicesVerified !== true ||
+    verification.planHash !== binding.planHash ||
+    verification.ownerRef !== binding.ownerRef ||
+    !backupDigest(verification.ownerBindingDigest) ||
+    typeof verification.pocketIdSubject !== "string" ||
+    !verification.pocketIdSubject ||
+    signature?.ownerRef !== verification.ownerRef ||
+    typeof signature.keyId !== "string" ||
+    !signature.keyId ||
+    typeof signature.value !== "string" ||
+    !signature.value ||
+    typeof verification.verifiedAt !== "string" ||
+    !Number.isFinite(Date.parse(verification.verifiedAt))
+  )
+    return;
+  return {
+    ...admission,
+    mode: backup.mode,
+    verifiedAt: verification.verifiedAt,
+  };
 }
 
 export interface ResumeStackEnrollmentRequest {
@@ -203,6 +569,8 @@ export interface ResumeStackEnrollmentRequest {
 export interface ResumeRemoteEnrollmentRequest {
   pairing_job_id?: string;
   password?: string;
+  /** Hosted: rebind the stack to another Wallet server access item. */
+  ssh_wallet_item_id?: string;
 }
 
 export interface ResumeRemoteEnrollmentResponse {
@@ -234,6 +602,14 @@ export interface StackRolloutContinuationResponse extends StackJobAcceptedRespon
 export interface RetryStackRolloutRequest {
   source_job_id: string;
   lease_id: string;
+}
+
+export interface RepairStackComponentRequest {
+  component: string;
+}
+
+export interface RepairStackComponentResponse {
+  job_id: string;
 }
 
 export interface StackPruneCandidate {
@@ -901,6 +1277,20 @@ export async function retryStackRollout(
   );
 }
 
+// repairStackComponent repairs one degraded component of a completed rollout
+// on the existing server; denials use the structured outcome envelope.
+export async function repairStackComponent(
+  stackId: string,
+  req: RepairStackComponentRequest,
+): Promise<RepairStackComponentResponse> {
+  const encoded = encodeURIComponent(stackId);
+  return apiRequest<RepairStackComponentResponse>(
+    "POST",
+    `/api/v1/stacks/${encoded}/repair`,
+    JSON.stringify(req),
+  );
+}
+
 // destroyStack tears down the stack's runtime resources and removes the entry
 // from the dashboard. The backend rejects it for the protected demo anchor.
 export async function destroyStack(
@@ -931,11 +1321,14 @@ export async function getStackOperations(
 export async function runStackKitLifecycleOperation(
   stackId: string,
   request: StackKitLifecycleRequest,
+  idempotencyKey?: string,
 ): Promise<StackKitLifecycleAcceptedResponse> {
   return apiRequest<StackKitLifecycleAcceptedResponse>(
     "POST",
     `/api/v1/stacks/${encodeURIComponent(stackId)}/stackkit/operations`,
     JSON.stringify(request),
+    undefined,
+    idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
   );
 }
 

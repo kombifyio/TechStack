@@ -44,6 +44,7 @@ type GuardInventoryProjection struct {
 	Services               []GuardInventoryServiceProjection
 	ManifestObserved       bool
 	DiscoveryObserved      bool
+	DiscoveryComplete      bool `json:",omitempty"`
 	DiscoveredServiceCount int
 	ServiceSource          string
 }
@@ -121,12 +122,16 @@ func normalizeGuardInventoryProjection(command GuardInventoryProjection) (GuardI
 	event.Runtime.Metadata["service_projection_expected"] = int64(len(services))
 	node.Metadata["manifest_observed"] = command.ManifestObserved
 	node.Metadata["discovery_observed"] = command.DiscoveryObserved
+	if command.DiscoveryComplete {
+		node.Metadata["discovery_complete"] = true
+	}
 	node.Metadata["discovered_service_count"] = int64(command.DiscoveredServiceCount)
 	delete(node.Metadata, "inventory_revision")
 
 	return GuardInventoryProjection{
 		Event: event, Node: node, Services: services,
 		ManifestObserved: command.ManifestObserved, DiscoveryObserved: command.DiscoveryObserved,
+		DiscoveryComplete:      command.DiscoveryComplete,
 		DiscoveredServiceCount: command.DiscoveredServiceCount, ServiceSource: serviceSource,
 	}, nil
 }
@@ -552,6 +557,7 @@ func guardInventoryProjectionEnvelope(command GuardInventoryProjection, digest s
 		"generation":               command.Event.Generation,
 		"manifest_observed":        command.ManifestObserved,
 		"discovery_observed":       command.DiscoveryObserved,
+		"discovery_complete":       command.DiscoveryComplete,
 		"discovered_service_count": command.DiscoveredServiceCount,
 		"service_source":           command.ServiceSource,
 	}

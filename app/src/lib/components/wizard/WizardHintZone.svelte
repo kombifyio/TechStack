@@ -25,6 +25,8 @@
       result?.recommendations[0],
   );
 
+  const tip = $derived(result?.selection?.tip);
+
   function stackKitLabel(value: string): string {
     return value
       .split("-")
@@ -106,6 +108,11 @@
         {:else}
           <p class="mt-1 text-sm text-muted-foreground">
             {tr("wizard.hints.evaluating")}
+          </p>
+        {/if}
+        {#if tip}
+          <p class="mt-2 text-sm text-muted-foreground" data-testid="wizard-selection-tip">
+            {tr(`wizard.hints.tip.${tip.code}`, tip.params)}
           </p>
         {/if}
       </div>

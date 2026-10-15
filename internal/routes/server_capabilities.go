@@ -1,12 +1,17 @@
 package routes
 
 import (
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/kombifyio/techstack/internal/executionchannel"
+	"github.com/kombifyio/techstack/internal/stackkitrelease"
 	"github.com/kombifyio/techstack/pkg/controlplane"
+	"github.com/kombifyio/techstack/pkg/jobs"
+	"github.com/kombifyio/techstack/pkg/runtimeconvergence"
 	"github.com/kombifyio/techstack/pkg/serverregistry"
+	"github.com/kombifyio/techstack/pkg/stackkitcommand"
 )
 
 // Node action vocabulary of the canonical server read model. Every id maps to
@@ -53,12 +58,21 @@ const (
 // POST /api/v1/stacks/{id}/stackkit/operations and are scoped to the StackKit
 // deployment on this node, never to the node itself.
 const (
-	serverStackActionPlan           = "plan"
-	serverStackActionApply          = "apply"
-	serverStackActionVerify         = "verify"
-	serverStackActionUpgrade        = "upgrade"
-	serverStackActionDriftDetect    = "drift_detect"
-	serverStackActionDriftReconcile = "drift_reconcile"
+	serverStackActionPlan            = "plan"
+	serverStackActionApply           = "apply"
+	serverStackActionVerify          = "verify"
+	serverStackActionUpgrade         = "upgrade"
+	serverStackActionDriftDetect     = "drift_detect"
+	serverStackActionDriftReconcile  = "drift_reconcile"
+	serverStackActionBackupStatus    = "backup_status"
+	serverStackActionBackupRestore   = "backup_restore"
+	serverStackActionRestoreActivate = "backup_restore_activate"
+	serverStackActionRestoreRecover  = "backup_restore_recover"
+	serverStackActionBackupRun       = "backup_run"
+	serverStackActionBackupConfigure = "backup_configure"
+	serverStackActionAdvancedChange  = "advanced_change_set"
+	serverStackActionRollback        = "rollback"
+	serverStackActionRestoreDrill    = "restore_drill"
 )
 
 // serverNodeActions is what an authorized owner may currently invoke against
@@ -182,6 +196,115 @@ func serverStackActions(server controlplane.ServerRuntime) []string {
 		serverStackActionPlan, serverStackActionVerify, serverStackActionApply,
 		serverStackActionUpgrade, serverStackActionDriftDetect, serverStackActionDriftReconcile,
 	}
+	// Direct backup operations are admitted only for Basement by the existing
+	// orchestrator. Cloud and other managed kits retain their schedule authority.
+	if jobs.NormalizeStackKitRef(stringFromAnyMap(server.Metadata, "stackkit")) == jobs.DefaultBasementKitRef {
+		actions = append(actions, serverStackActionBackupStatus, serverStackActionBackupRestore)
+	}
 	sort.Strings(actions)
 	return actions
+}
+
+// Day-2 actions require the authenticated node transport and the exact runtime
+// release it has converged. The dispatcher still performs operation admission,
+// capability issuance, service-lock checks and owner approval before dispatch.
+func (h serverRuntimeHandlers) applyStackKitActions(item *serverRuntimeResponse, server controlplane.ServerRuntime) {
+	if item.Capabilities == nil || item.Capabilities.IdentityBinding != serverIdentityKeyBound ||
+		!slices.Contains(item.StackActions, serverStackActionApply) {
+		return
+	}
+	capabilities := append([]string(nil), item.Capabilities.stackKitCapabilities...)
+	if h.currentMTLSCapabilities != nil {
+		if current, present := h.currentMTLSCapabilities(server); present {
+			capabilities = current
+		}
+	}
+	configured, err := jobs.ConfiguredTargetStackKitRelease()
+	if err != nil || configured == nil {
+		return
+	}
+	// A missing catalog leaves only the non-Advanced actions admitted by the
+	// pinned receipt. Release verification remains with its owning resolver.
+	catalog, _ := configured.AdvancedOperations()
+	item.StackActions = append(item.StackActions, stackKitDay2Actions(item, capabilities, configured.Receipt(), catalog)...)
+	sort.Strings(item.StackActions)
+}
+
+// stackKitDay2Actions classifies already verified release and node observations.
+// It opens no database and grants no command authority: the central dispatcher
+// repeats the tenant, entitlement, release, approval and execution admission.
+func stackKitDay2Actions(item *serverRuntimeResponse, capabilities []string, configured stackkitrelease.Receipt, catalog stackkitrelease.AdvancedOperationsCatalog) []string {
+	if item.Capabilities == nil || item.Capabilities.IdentityBinding != serverIdentityKeyBound ||
+		!slices.Contains(item.StackActions, serverStackActionApply) || !stackKitRuntimeConverged(item, configured) {
+		return nil
+	}
+	for _, required := range []string{"stackkit", stackkitcommand.ExpectedPlanHashCapability, stackkitcommand.WorkspaceInstanceCapability} {
+		if !slices.Contains(capabilities, required) {
+			return nil
+		}
+	}
+	actions := []string{}
+	// Direct backup custody remains Basement-only, as admitted by the base
+	// projection. Other managed kits retain their existing schedule authority.
+	if slices.Contains(item.StackActions, serverStackActionBackupStatus) {
+		actions = append(actions, serverStackActionBackupRun, serverStackActionBackupConfigure)
+	}
+	if restoreStackActionsSupported(item, capabilities, configured) {
+		actions = append(actions, serverStackActionRestoreActivate, serverStackActionRestoreRecover)
+	}
+	if slices.Contains(capabilities, stackkitcommand.AdvancedOperationsCapability) {
+		actions = append(actions, advancedStackActions(catalog)...)
+	}
+	return actions
+}
+
+// Both phases must be present in the pinned catalog before the change-set
+// action is offered. A partial or unavailable operation remains unadvertised.
+func advancedStackActions(catalog stackkitrelease.AdvancedOperationsCatalog) []string {
+	actions := []string{}
+	if catalog.Dispatchable("terramate.change-set.create") == nil && catalog.Dispatchable("terramate.change-set.apply") == nil {
+		actions = append(actions, serverStackActionAdvancedChange)
+	}
+	for action, operation := range map[string]string{
+		serverStackActionRollback:     "rollback.coordinated",
+		serverStackActionRestoreDrill: "restore.drill",
+	} {
+		if catalog.Dispatchable(operation) == nil {
+			actions = append(actions, action)
+		}
+	}
+	return actions
+}
+
+// This classifies already verified release and observation data. It grants no
+// mutation authority; the typed dispatcher still enforces the exact pin.
+func restoreStackActionsSupported(item *serverRuntimeResponse, capabilities []string, configured stackkitrelease.Receipt) bool {
+	if item.Capabilities == nil || item.Capabilities.IdentityBinding != serverIdentityKeyBound || !slices.Contains(item.StackActions, serverStackActionBackupRestore) ||
+		!stackkitcommand.ReleaseAtLeast(configured.Version, stackkitcommand.MinRestoreActivationRelease) {
+		return false
+	}
+	for _, required := range []string{"stackkit", stackkitcommand.ExpectedPlanHashCapability, stackkitcommand.WorkspaceInstanceCapability, stackkitcommand.RestoreActivationCapability} {
+		if !slices.Contains(capabilities, required) {
+			return false
+		}
+	}
+	return stackKitRuntimeConverged(item, configured)
+}
+
+func stackKitRuntimeConverged(item *serverRuntimeResponse, configured stackkitrelease.Receipt) bool {
+	if item.Capabilities == nil {
+		return false
+	}
+	observed := item.Capabilities.runtimeConvergence
+	if observed == nil || observed.State != runtimeconvergence.StateReady {
+		return false
+	}
+	for _, component := range observed.Components {
+		if component.Name == runtimeconvergence.StackKitsRuntimeComponent && component.State == runtimeconvergence.ComponentReady &&
+			strings.TrimPrefix(component.Version, "v") == strings.TrimPrefix(configured.Version, "v") &&
+			component.ArtifactSHA256 == configured.ArchiveSHA256 {
+			return true
+		}
+	}
+	return false
 }

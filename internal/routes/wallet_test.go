@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/gocommon/authsession"
 	"github.com/kombifyio/techstack/pkg/auth"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
@@ -95,6 +96,79 @@ func TestWalletReauthProofRejectsSessionOnly(t *testing.T) {
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status = %d body=%s, want 403", recorder.Code, recorder.Body.String())
 	}
+}
+
+// A hosted sign-in bound to one wallet item proves a fresh authentication; the
+// same session cannot unlock another item, outlive the window, belong to
+// another subject or borrow the binding of another purpose. A refusal is
+// audited and tells the browser that a fresh sign-in resolves it.
+func TestWalletReauthProofAcceptsOnlyFreshSessionReauthBoundToTheItem(t *testing.T) {
+	secret := "test-reauth-secret" // #nosec G101 -- test-only signing key.
+	t.Setenv("TECHSTACK_REAUTH_SECRET", secret)
+	now := time.Date(2026, 5, 14, 10, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name   string
+		edit   func(*authsession.Claims)
+		status int
+	}{
+		{"fresh sign-in bound to the item", func(*authsession.Claims) {}, http.StatusOK},
+		{"another wallet item", func(c *authsession.Claims) { c.ReauthResource = "wallet-owner-2" }, http.StatusForbidden},
+		{"stale sign-in", func(c *authsession.Claims) { c.AuthenticatedAt = now.Add(-walletReauthWindow - time.Minute).Unix() }, http.StatusForbidden},
+		{"another subject", func(c *authsession.Claims) { c.Subject = "owner-2" }, http.StatusForbidden},
+		{"binding of another purpose", func(c *authsession.Claims) { c.ReauthPurpose = terminalReauthPurpose }, http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newWalletRouteTestApp(t)
+			item := createWalletRouteTestItem(t, app, "owner-1", "secret-value")
+			claims := authsession.Claims{
+				Subject: "owner-1", TenantID: "owner-1", ReauthPurpose: walletPlatformReauthAssertionPurpose,
+				ReauthResource: item.Id, AuthenticatedAt: now.Add(-time.Minute).Unix(),
+			}
+			tc.edit(&claims)
+			handler := walletRouteHandlers{wst: app, ast: app, now: func() time.Time { return now }}
+			event, recorder := walletReauthProofRequestEvent("owner-1", item.Id, `{"reason":"copy recovery credential"}`)
+			event.Request = event.Request.WithContext(authsession.WithClaims(event.Request.Context(), &claims))
+
+			if err := handler.reauthProof(event); err != nil {
+				t.Fatalf("reauthProof returned unexpected error: %v", err)
+			}
+			if recorder.Code != tc.status {
+				t.Fatalf("status = %d body=%s, want %d", recorder.Code, recorder.Body.String(), tc.status)
+			}
+			if tc.status == http.StatusOK {
+				var envelope struct {
+					Data walletReauthProofResponse `json:"data"`
+				}
+				if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
+					t.Fatalf("decode response: %v", err)
+				}
+				if err := verifyWalletSignature("owner-1", item.Id, envelope.Data.ReauthTimestamp, envelope.Data.ReauthSignature, secret, walletRevealAssertionPurpose, now); err != nil {
+					t.Fatalf("verify proof signature: %v", err)
+				}
+				return
+			}
+			assertWalletRouteActivity(t, app, "owner-1", walletRevealActionDenied)
+			if got := stepUpReasonOf(t, recorder); got != walletRevealStepUpReason {
+				t.Fatalf("refusal reason = %q, want %q", got, walletRevealStepUpReason)
+			}
+		})
+	}
+}
+
+// stepUpReasonOf reads the machine-readable reason of a refusal envelope.
+func stepUpReasonOf(t *testing.T, recorder *httptest.ResponseRecorder) string {
+	t.Helper()
+	var envelope struct {
+		Error struct {
+			Details struct {
+				Reason string `json:"reason"`
+			} `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode refusal: %v", err)
+	}
+	return envelope.Error.Details.Reason
 }
 
 func TestWalletRevealAcceptsIssuedReauthProof(t *testing.T) {
@@ -219,7 +293,7 @@ func TestWalletCRUDUsesControlPlaneStore(t *testing.T) {
 	createEvent, createRecorder := walletStoreRequestEvent(
 		http.MethodPost,
 		"/api/v1/wallet",
-		`{"id":"wallet-1","name":"Admin","kind":"password","stack_id":"stack-1","service_id":"svc-1","source_type":"stack","secret":"secret-value","totp":"123456"}`,
+		`{"name":"Admin","kind":"password","stack_id":"stack-1","service_id":"svc-1","source_type":"stack","secret":"secret-value","totp":"123456"}`,
 		"owner-1",
 		"tenant-1",
 	)
@@ -229,7 +303,16 @@ func TestWalletCRUDUsesControlPlaneStore(t *testing.T) {
 	if createRecorder.Code != http.StatusCreated {
 		t.Fatalf("create status = %d body=%s, want 201", createRecorder.Code, createRecorder.Body.String())
 	}
-	created := store.items["wallet-1"]
+	var response struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(createRecorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	itemID := response.Data.ID
+	created := store.items[itemID]
 	if created.TenantID != "tenant-1" || created.StackID != "stack-1" || created.ItemType != "password" {
 		t.Fatalf("unexpected stored wallet item: %#v", created)
 	}
@@ -269,22 +352,22 @@ func TestWalletCRUDUsesControlPlaneStore(t *testing.T) {
 	if listRecorder.Code != http.StatusOK {
 		t.Fatalf("list status = %d body=%s, want 200", listRecorder.Code, listRecorder.Body.String())
 	}
-	if !strings.Contains(listRecorder.Body.String(), `"wallet-1"`) {
+	if !strings.Contains(listRecorder.Body.String(), strconv.Quote(itemID)) {
 		t.Fatalf("list response missing wallet item: %s", listRecorder.Body.String())
 	}
 	if strings.Contains(listRecorder.Body.String(), "wallet-foreign") {
 		t.Fatalf("list response exposed another owner's wallet item: %s", listRecorder.Body.String())
 	}
 
-	deleteEvent, deleteRecorder := walletStoreRequestEvent(http.MethodDelete, "/api/v1/wallet/wallet-1", "", "owner-1", "tenant-1")
-	deleteEvent.Request.SetPathValue("id", "wallet-1")
+	deleteEvent, deleteRecorder := walletStoreRequestEvent(http.MethodDelete, "/api/v1/wallet/"+itemID, "", "owner-1", "tenant-1")
+	deleteEvent.Request.SetPathValue("id", itemID)
 	if err := handler.delete(deleteEvent); err != nil {
 		t.Fatalf("delete returned unexpected error: %v", err)
 	}
 	if deleteRecorder.Code != http.StatusOK {
 		t.Fatalf("delete status = %d body=%s, want 200", deleteRecorder.Code, deleteRecorder.Body.String())
 	}
-	if _, ok := store.items["wallet-1"]; ok {
+	if _, ok := store.items[itemID]; ok {
 		t.Fatal("wallet item was not deleted")
 	}
 }
@@ -431,6 +514,20 @@ func newFakeWalletStore() *fakeWalletStore {
 	return &fakeWalletStore{items: map[string]controlplane.WalletItem{}}
 }
 
+func (f *fakeWalletStore) CreateWalletItem(ctx context.Context, item controlplane.WalletItem) (*controlplane.WalletItem, error) {
+	if _, exists := f.items[item.ID]; exists {
+		return nil, controlplane.ErrConflict
+	}
+	return f.UpsertWalletItem(ctx, item)
+}
+
+func (f *fakeWalletStore) UpdateWalletItem(ctx context.Context, item controlplane.WalletItem) (*controlplane.WalletItem, error) {
+	if _, exists := f.items[item.ID]; !exists {
+		return nil, controlplane.ErrNotFound
+	}
+	return f.UpsertWalletItem(ctx, item)
+}
+
 func (f *fakeWalletStore) UpsertWalletItem(_ context.Context, item controlplane.WalletItem) (*controlplane.WalletItem, error) {
 	if item.CreatedAt.IsZero() {
 		item.CreatedAt = time.Now().UTC()
@@ -469,4 +566,26 @@ func (f *fakeWalletStore) DeleteWalletItem(_ context.Context, tenantID, itemID s
 	}
 	delete(f.items, itemID)
 	return nil
+}
+
+func (f *fakeWalletStore) DeleteWalletItemForOwner(ctx context.Context, tenantID, itemID, ownerID, itemType string) error {
+	item, err := f.GetWalletItem(ctx, tenantID, itemID)
+	if err != nil {
+		return err
+	}
+	if controlplane.WalletOwnerID(item.Metadata) != ownerID || item.ItemType != itemType {
+		return controlplane.ErrConflict
+	}
+	return f.DeleteWalletItem(ctx, tenantID, itemID)
+}
+
+func TestLegacyWalletRefusedWhenKombifyWalletIsInUse(t *testing.T) {
+	event, recorder := walletStoreRequestEvent(http.MethodPost, "/api/v1/wallet", `{"name":"x","secret":"s"}`, "owner-1", "tenant-1")
+
+	if err := refuseLegacyWallet(event); err != nil {
+		t.Fatalf("refuseLegacyWallet returned unexpected error: %v", err)
+	}
+	if recorder.Code != http.StatusConflict || !strings.Contains(recorder.Body.String(), "wallet_self_hosted_only") {
+		t.Fatalf("status = %d body=%s, want 409 wallet_self_hosted_only", recorder.Code, recorder.Body.String())
+	}
 }

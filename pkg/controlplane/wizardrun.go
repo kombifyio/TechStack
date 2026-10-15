@@ -54,3 +54,17 @@ type WizardRunStore interface {
 	// ErrNotFound when the run does not exist for this owner.
 	DismissWizardRun(ctx context.Context, tenantID, ownerSubjectID, runID string, at time.Time) error
 }
+
+// AtomicWizardProjectionStore commits a Join's Stack CAS and its existing run
+// ledger identity together. Neither side can survive alone. A competing run/key
+// or CAS loser commits nothing and cannot claim the winner's Node.
+type AtomicWizardProjectionStore interface {
+	CommitWizardJoinProjection(context.Context, StackConfigCAS, WizardRun) (*Stack, *WizardRun, error)
+}
+
+// WizardPairingPreparationStore binds one durable job to the keyed run before
+// mint. Token/result preparation is serialized in the existing job transaction;
+// the callback uses the transaction-bound worker writer, never a second store.
+type WizardPairingPreparationStore interface {
+	PrepareWizardPairing(context.Context, WizardRun, UpsertJobRequest, func(WorkerStore) (map[string]any, error)) (*Job, bool, error)
+}

@@ -79,6 +79,216 @@ export interface CanonicalRuntimeTargetEvidence {
   };
 }
 
+/** One kombify Guard reach registration; `reason_code` names why it is not registered. */
+export interface CanonicalGuardReachTarget {
+  state: "pending" | "registered" | "failed" | "revoked" | "not_enabled";
+  /** kombify.me address, set on the kombify_me target once registered. */
+  address?: string;
+  /** Connect techstack-node id, set on the connect target once registered. */
+  node_id?: string;
+  reason_code?: string;
+}
+
+/**
+ * kombify Guard reach as the control plane persisted it. `ready` is the
+ * "Reachable and governed" state; nothing here is derived client-side, and a
+ * missing section means the deployment has no Cloud connection.
+ */
+export interface CanonicalGuardReach {
+  state:
+    | "not_enrolled"
+    | "pending"
+    | "failed"
+    | "ready"
+    | "revoked"
+    | "not_enabled";
+  generation?: number;
+  /** The owner's publication choice; nothing is published until enabled. */
+  public?: {
+    enabled: boolean;
+    service?: string;
+    scheme?: string;
+    target_port?: number;
+  };
+  kombify_me: CanonicalGuardReachTarget;
+  connect: CanonicalGuardReachTarget;
+  relay?: { state: "connecting" | "connected" | "denied" | "stopped"; reason_code?: string; reported_at?: string };
+  updated_at: string;
+}
+
+/** One host security control that is not compliant, as the control plane persisted it. */
+export interface CanonicalSecurityFinding {
+  control:
+    | "firewall.default_inbound"
+    | "ssh.password_authentication"
+    | "ssh.root_login"
+    | "ssh.port"
+    | "bruteforce.fail2ban"
+    | "updates.unattended_upgrades"
+    | "updates.pending_security"
+    | "updates.reboot_required"
+    | "kernel.sysctl"
+    | "exposure.listeners"
+    | "exposure.published_ports"
+    | "tls.certificate_expiry"
+    | "ssh.user_ca_trust"
+    | "ssh.host_certificate";
+  state: "drifted" | "unknown" | "exception";
+  severity: "critical" | "high" | "medium" | "low" | "info";
+  expected: string;
+  observed: string;
+  /** Stable follow-up code, e.g. `no_authorized_key` or `exposed_published_port`. */
+  reason_code?: string;
+  remediation: {
+    /** `automatic` controls can be repaired through the repair route. */
+    capability: "automatic" | "manual" | "none";
+    action?: string;
+  };
+  exception?: { owner: string; reason: string; expires_at: string };
+}
+
+/**
+ * Host security posture from the StackKits evidence the Guard last reported,
+ * judged by the control plane at read time. Never derived from the heartbeat: a
+ * connected, healthy server without fresh evidence is `unknown`, and `unknown`
+ * is never compliant. Absent on a server without a Guard.
+ */
+export interface CanonicalServerSecurity {
+  state: "compliant" | "drifted" | "unknown" | "exception_only";
+  /** Why `state` is unknown (not_observed, evidence_stale, stackkit_cli_unsupported, ...). */
+  reason_code?: string;
+  baseline_version?: string;
+  observed_at?: string;
+  expires_at?: string;
+  findings: CanonicalSecurityFinding[];
+}
+
+/** A snapshot's age never proves a restore works; only a verified drill speaks for that. */
+export interface CanonicalServerRecovery {
+  backup: {
+    state: "fresh" | "stale" | "unknown";
+    reason_code?: string;
+    last_snapshot_at?: string;
+    /** ISO 8601 duration, e.g. `PT36H`. */
+    policy_max_age: string;
+  };
+  restore_drill: {
+    state: "verified" | "stale" | "unknown";
+    reason_code?: string;
+    verified_at?: string;
+    policy_max_age: string;
+  };
+}
+
+export interface CanonicalServerUpdates {
+  guard: {
+    version?: string;
+    /** True when the Guard's update path admits only signed releases. */
+    signed: boolean;
+    state:
+      | "current"
+      | "staged"
+      | "trial"
+      | "denied"
+      | "rolled_back"
+      | "layout_rolled_back"
+      | "recovery_needed"
+      | "unknown";
+  };
+  /** Read from the security evidence; a field the evidence does not state is absent. */
+  os: {
+    pending_security_updates?: number;
+    reboot_required?: boolean;
+    last_unattended_run?: string;
+  };
+}
+
+/**
+ * The Guard facts persisted for the server's worker. No credential or key
+ * material. `credential_generation` is the value the fenced credential rotation
+ * must echo as `expected_credential_generation`. Absent on a server without a
+ * Guard worker.
+ */
+export interface CanonicalServerCapabilities {
+  identity_binding: "key_bound" | "legacy_bearer" | "unknown";
+  credential_generation: number;
+  guard_operations?: {
+    contract: string;
+    /** The journal state. */
+    state?: string;
+    /** True only while the journal is writable and nothing is unresolved. */
+    durable: boolean;
+    unresolved_outcome_unknown: number;
+    unacked_results: number;
+    in_flight: number;
+    journal_bytes?: number;
+    journal_budget_bytes?: number;
+    reason?: string;
+  };
+  guard_posture?: {
+    mode: "split" | "legacy_root" | "unavailable";
+    reported: boolean;
+    deny_mutations: boolean;
+    update_state?: string;
+    update_version?: string;
+    update_reason?: string;
+  };
+}
+
+/** One repair of named drifted controls (`POST /api/v1/servers/{id}/security/repairs`). */
+export interface SecurityRepair {
+  id: string;
+  server_id: string;
+  mode: "operator" | "auto";
+  requested_by: string;
+  controls: string[];
+  status:
+    | "queued"
+    | "dispatched"
+    | "succeeded"
+    | "manual_required"
+    | "blocked"
+    | "failed"
+    | "expired"
+    | "outcome_unknown";
+  reason_code?: string;
+  command_id: string;
+  steps?: { control: string; status: string; reason_code?: string }[];
+  requested_at: string;
+  expires_at: string;
+  dispatched_at?: string;
+  finished_at?: string;
+}
+
+/** The owner's approval of automatic repair; off by default, expiring, never self-renewing. */
+export interface SecurityAutoRepair {
+  server_id: string;
+  enabled: boolean;
+  active: boolean;
+  controls: string[];
+  expires_at?: string;
+  approved_by?: string;
+  approved_at?: string;
+  allowed_controls: string[];
+}
+
+/** One entry of the findings ledger (open or resolved episode). */
+export interface SecurityFindingRecord {
+  id: string;
+  key: string;
+  scope: "security" | "recovery" | "guard";
+  severity: "critical" | "high" | "medium" | "low" | "info";
+  state: string;
+  expected: string;
+  observed: string;
+  reason_code?: string;
+  remediation_capability?: "automatic" | "manual" | "none";
+  opened_at: string;
+  last_seen_at: string;
+  alerted_at?: string;
+  resolved_at?: string;
+}
+
 export interface CanonicalServer {
   node_role?: string;
   id: string;
@@ -110,6 +320,11 @@ export interface CanonicalServer {
   allowed_actions?: string[];
   /** StackKit-deployment scope, kept separate from the node scope. */
   stack_actions?: string[];
+  reach?: CanonicalGuardReach;
+  security?: CanonicalServerSecurity;
+  recovery?: CanonicalServerRecovery;
+  updates?: CanonicalServerUpdates;
+  capabilities?: CanonicalServerCapabilities;
   created_at: string;
   updated_at: string;
 }

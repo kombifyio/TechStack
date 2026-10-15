@@ -20,12 +20,12 @@ import {
 } from "#lib/api/wizardRuns.js";
 import { isValidSubstrateGuest, type StackConfig } from "./types";
 import {
-  buildPayloadServicesFromBundle,
   selectedCanonicalUseCasesFromGoals,
   normalizeInstallableKitSlug,
 } from "./standardBundle";
 
 import { tr } from "#lib/i18n.svelte.js";
+import { remoteSshKeyLabel } from "./remote-credential";
 /** The wizard's fallback deployment name (EasyWizard has no name input). */
 const DEFAULT_RUN_NAME = "homelab";
 
@@ -46,6 +46,41 @@ function runUseCaseSettings(
     out[slug] = { ...values };
   }
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** Capability selections for selected goals only, mirroring runUseCaseSettings. */
+function runUseCaseCapabilities(
+  config: StackConfig,
+  goals: string[],
+): WizardIntent["use_case_capabilities"] {
+  const all = config.useCaseCapabilities ?? {};
+  const out: Record<string, Record<string, string>> = {};
+  for (const slug of goals) {
+    const values = all[slug];
+    if (!values || Object.keys(values).length === 0) continue;
+    out[slug] = { ...values };
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** Preserve desired decisions separately from release-admitted execution. */
+function runUseCaseSetupAnswers(
+  config: StackConfig,
+  goals: string[],
+): WizardIntent["use_case_setup_answers"] {
+  const selected = Object.entries(config.useCaseSetupAnswers ?? {}).filter(
+    ([slug]) => goals.includes(slug),
+  );
+  return selected.length
+    ? Object.fromEntries(
+        selected.map(([slug, answers]) => [
+          slug,
+          Object.fromEntries(
+            Object.entries(answers).map(([id, choices]) => [id, [...choices]]),
+          ),
+        ]),
+      )
+    : undefined;
 }
 
 /** Normalize the client kit reference onto an installable v2 kit slug. */
@@ -173,10 +208,19 @@ function buildRunRemoteParams(
   if (remote.host.trim() !== "") params.host = remote.host.trim();
   if (remote.sshPort > 0) params.port = remote.sshPort;
   if (remote.sshUser.trim() !== "") params.user = remote.sshUser.trim();
-  if (remote.authMethod) params.auth_method = remote.authMethod;
-  if (remote.sshKeyLabel.trim() !== "")
-    params.ssh_key_label = remote.sshKeyLabel.trim();
   if (remote.useSudo) params.use_sudo = true;
+  const walletItem = remote.sshWalletItemId?.trim() ?? "";
+  if (walletItem !== "") {
+    // The credential lives in the owner's Wallet item, which has to hold the
+    // secret of the chosen authentication method; no label or password leaves
+    // the browser.
+    if (remote.authMethod) params.auth_method = remote.authMethod;
+    params.ssh_wallet_item_id = walletItem;
+    return params;
+  }
+  if (remote.authMethod) params.auth_method = remote.authMethod;
+  const keyLabel = remoteSshKeyLabel(remote);
+  if (keyLabel) params.ssh_key_label = keyLabel;
   if (remote.authMethod === "password" && remote.sshPassword.trim() !== "") {
     params.password = remote.sshPassword;
   }
@@ -230,9 +274,8 @@ function buildRunSubstrateParams(
 
 /**
  * A found run for /stacks/new: the first run founds the homelab (the backend
- * coerces to an expansion when one already operates deployments). Services
- * use the payload wire names — the same vocabulary the legacy create request
- * sent for first runs.
+ * coerces to an expansion when one already operates deployments). The pinned
+ * release authors the service graph from goals, settings and capabilities.
  */
 export function buildFoundRunRequest(config: StackConfig): WizardRunRequest {
   if (config.network.publicAccess) {
@@ -270,12 +313,15 @@ export function buildFoundRunRequest(config: StackConfig): WizardRunRequest {
       kit_slug: normalizeRunKitSlug(config),
     },
   };
+  intent.use_case_setup_answers = runUseCaseSetupAnswers(
+    config,
+    intent.goals ?? [],
+  );
   const foundSettings = runUseCaseSettings(config, intent.goals ?? []);
   if (foundSettings) intent.use_case_settings = foundSettings;
-  const request: WizardRunRequest = {
-    intent,
-    services: buildPayloadServicesFromBundle(config.services),
-  };
+  const foundCapabilities = runUseCaseCapabilities(config, intent.goals ?? []);
+  if (foundCapabilities) intent.use_case_capabilities = foundCapabilities;
+  const request: WizardRunRequest = { intent };
   const owner = buildRunOwnerOptions(config);
   if (owner) request.owner = owner;
   const managed = buildRunManagedParams(config);
@@ -321,8 +367,14 @@ export function buildJoinRunRequest(
       kit_slug: normalizeRunKitSlug(config),
     },
   };
+  intent.use_case_setup_answers = runUseCaseSetupAnswers(
+    config,
+    intent.goals ?? [],
+  );
   const joinSettings = runUseCaseSettings(config, intent.goals ?? []);
   if (joinSettings) intent.use_case_settings = joinSettings;
+  const joinCapabilities = runUseCaseCapabilities(config, intent.goals ?? []);
+  if (joinCapabilities) intent.use_case_capabilities = joinCapabilities;
   const request: WizardRunRequest = { intent, services };
   const substrate = buildRunSubstrateParams(config);
   if (substrate) request.substrate = substrate;

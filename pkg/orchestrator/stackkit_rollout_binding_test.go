@@ -53,23 +53,35 @@ func enqueuedLifecyclePayload(t *testing.T, orch *Orchestrator, operation string
 // managed rollout read the CLI default stack-spec.yaml, which the rollout never
 // wrote, and failed with "canonical StackSpec v2 is required".
 func TestVerifyAfterManagedRolloutUsesTheRolloutSpecPath(t *testing.T) {
-	orch, _ := newRolledOutStack(t, nil)
-	binding := jobs.StackKitRolloutBinding{StackKit: "basement-kit", SpecPath: "stack-spec.v2.json"}
-	orch.updateStackStatusSnapshot((&jobs.Job{
-		ID: "job-deploy", Type: jobs.JobTypeDeploy, TargetID: "stack-1", State: jobs.JobStateCompleted,
-		Payload: map[string]interface{}{stackTenantIDField: "tenant-1", stackOwnerIDField: "owner-1"},
-		Result:  map[string]interface{}{jobs.StackKitRolloutBindingResultField: binding.Map()},
-	}).Snapshot())
-	// A later failed operation replaces the runtime summary; the binding must survive it.
-	orch.updateStackStatusSnapshot((&jobs.Job{
-		ID: "job-verify-failed", Type: jobs.JobTypeStackKitLifecycle, TargetID: "stack-1", State: jobs.JobStateFailed,
-		Payload: map[string]interface{}{stackTenantIDField: "tenant-1", stackOwnerIDField: "owner-1"},
-		Result:  map[string]interface{}{"operation": "verify"},
-	}).Snapshot())
+	for _, scenario := range []struct {
+		name    string
+		jobType jobs.JobType
+		state   jobs.JobState
+	}{
+		{"completed_deploy", jobs.JobTypeDeploy, jobs.JobStateCompleted},
+		{"completed_typed_apply", jobs.JobTypeStackKitLifecycle, jobs.JobStateCompleted},
+		{"applied_deploy_with_failed_restore", jobs.JobTypeDeploy, jobs.JobStateFailed},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			orch, _ := newRolledOutStack(t, nil)
+			binding := jobs.StackKitRolloutBinding{StackKit: "basement-kit", SpecPath: "stack-spec.v2.json"}
+			orch.updateStackStatusSnapshot((&jobs.Job{
+				ID: "job-applied", Type: scenario.jobType, TargetID: "stack-1", State: scenario.state,
+				Payload: map[string]interface{}{stackTenantIDField: "tenant-1", stackOwnerIDField: "owner-1", "operation": jobs.StackKitLifecycleApply, "spec_path": binding.SpecPath, "stackkit": binding.StackKit},
+				Result:  map[string]interface{}{jobs.StackKitRolloutBindingResultField: binding.Map(), "operation": jobs.StackKitLifecycleApply, "success": true},
+			}).Snapshot())
+			// A later failed operation replaces the runtime summary; the binding must survive it.
+			orch.updateStackStatusSnapshot((&jobs.Job{
+				ID: "job-verify-failed", Type: jobs.JobTypeStackKitLifecycle, TargetID: "stack-1", State: jobs.JobStateFailed,
+				Payload: map[string]interface{}{stackTenantIDField: "tenant-1", stackOwnerIDField: "owner-1"},
+				Result:  map[string]interface{}{"operation": "verify"},
+			}).Snapshot())
 
-	payload := enqueuedLifecyclePayload(t, orch, jobs.StackKitLifecycleVerify)
-	if payload["spec_path"] != "stack-spec.v2.json" {
-		t.Fatalf("verify spec_path = %v, want the rollout's stack-spec.v2.json", payload["spec_path"])
+			payload := enqueuedLifecyclePayload(t, orch, jobs.StackKitLifecycleVerify)
+			if payload["spec_path"] != "stack-spec.v2.json" {
+				t.Fatalf("verify spec_path = %v, want the rollout's stack-spec.v2.json", payload["spec_path"])
+			}
+		})
 	}
 }
 
@@ -80,5 +92,41 @@ func TestOperationWithoutStackKitUsesTheStackRecordKit(t *testing.T) {
 	payload := enqueuedLifecyclePayload(t, orch, jobs.StackKitLifecycleDriftDetect)
 	if payload["stackkit"] != "basement-kit" {
 		t.Fatalf("drift_detect stackkit = %v, want basement-kit", payload["stackkit"])
+	}
+}
+
+// A Modern Homelab operation runs on the node its addressed agent owns, and an
+// agent whose host owns no Modern node is refused before a job exists.
+func TestModernOperationAddressesTheAgentsNode(t *testing.T) {
+	orch, store := newRolledOutStack(t, map[string]any{"stackkit_catalog_ref": "modern-homelab"})
+	ctx := context.Background()
+	for _, worker := range []controlplane.Worker{
+		{ID: "worker-home", Hostname: "home-main", Capabilities: map[string]any{"runtime_agent_id": "agent-home", "server_id": "server-home"}},
+		{ID: "worker-cloud", Hostname: "cloud-edge", Capabilities: map[string]any{"runtime_agent_id": "agent-cloud", "server_id": "server-cloud"}},
+		{ID: "worker-stray", Hostname: "managed-guest", Capabilities: map[string]any{"runtime_agent_id": "agent-stray", "server_id": "server-stray"}},
+	} {
+		worker.TenantID, worker.StackID, worker.OwnerSubjectID, worker.Approved = "tenant-1", "stack-1", "owner-1", true
+		if _, err := store.UpsertWorkerHeartbeat(ctx, worker); err != nil {
+			t.Fatal(err)
+		}
+	}
+	enqueue := func(agent string) (map[string]interface{}, error) {
+		jobID, err := orch.EnqueueStackKitLifecycle(ctx, jobs.StackKitLifecycleRequest{
+			StackID: "stack-1", TenantID: "tenant-1", OwnerID: "owner-1", AgentID: agent, Operation: jobs.StackKitLifecyclePlan,
+		})
+		if err != nil {
+			return nil, err
+		}
+		job, _ := orch.Queue().Get(jobID)
+		return job.Payload, nil
+	}
+	for agent, node := range map[string]string{"agent-home": "home-main", "agent-cloud": "cloud-edge"} {
+		payload, err := enqueue(agent)
+		if err != nil || payload["node_ref"] != node || payload["agent_id"] != agent {
+			t.Fatalf("%s enqueued node_ref=%v agent_id=%v err=%v, want %s", agent, payload["node_ref"], payload["agent_id"], err, node)
+		}
+	}
+	if _, err := enqueue("agent-stray"); err == nil {
+		t.Fatal("agent owning no Modern node was admitted")
 	}
 }

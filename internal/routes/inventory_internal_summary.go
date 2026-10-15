@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/kombifyio/techstack/internal/gocommon/denial"
 	"github.com/kombifyio/techstack/internal/gocommon/servicecall"
+	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
 )
 
@@ -21,9 +24,11 @@ const (
 
 // runtimeSummary is the private Cloud read model behind the dashboard
 // Overview: the caller's servers and services in one round trip. It is a pure
-// projection of the canonical inventory read model — same authorization
-// policy, same sanitized shapes — so it can never expose more than the
-// public inventory routes do.
+// projection of the canonical inventory read model with the same sanitized
+// shapes. Authorization differs on purpose: a verified active membership
+// reads the signed owner's own rows (ownerInventoryReadPolicy), without the
+// agent inventory entitlement and FGA surface relation that /api/v1/inventory
+// requires; it never reaches another owner's rows.
 type runtimeSummary struct {
 	Version     string `json:"version"`
 	GeneratedAt string `json:"generated_at"`
@@ -41,6 +46,28 @@ type cloudReadSurface struct {
 	unavailableReason string
 	title             string
 	body              string
+	// queryKeys are the only query parameters the surface accepts, each once.
+	// They carry a read option (a range, a limit), never scope: a principal
+	// field is rejected like any other unknown key. Empty means no query.
+	queryKeys []string
+}
+
+// queryAllowed reports whether the request carries no query at all or only the
+// surface's own read options, each exactly once.
+func (s cloudReadSurface) queryAllowed(request *http.Request) bool {
+	if request.URL.RawQuery == "" {
+		return true
+	}
+	values, err := url.ParseQuery(request.URL.RawQuery)
+	if err != nil {
+		return false
+	}
+	for key, found := range values {
+		if len(found) != 1 || !slices.Contains(s.queryKeys, key) {
+			return false
+		}
+	}
+	return true
 }
 
 var runtimeSummarySurface = cloudReadSurface{
@@ -96,7 +123,7 @@ func (h inventoryHandlers) serveCloudRead(
 				"Open Techstack from the authenticated Kombify Cloud organization and retry.")
 			return
 		}
-		if request.URL.RawQuery != "" || request.ContentLength != 0 {
+		if !surface.queryAllowed(request) || request.ContentLength != 0 {
 			_ = surface.deny(e, http.StatusForbidden, "principal_injection_denied", false,
 				"Do not send principal or scope fields; Techstack derives them from the signed Cloud service identity.")
 			return
@@ -107,8 +134,8 @@ func (h inventoryHandlers) serveCloudRead(
 		}
 		ctx := request.Context()
 		if h.runtimeSummaryContext != nil {
-			resolved, err := h.runtimeSummaryContext(ctx, scope.tenantID, scope.ownerID)
-			if err != nil || resolved == nil {
+			resolved, tenantID, err := h.runtimeSummaryContext(ctx, scope.tenantID, scope.ownerID)
+			if err != nil || resolved == nil || strings.TrimSpace(tenantID) == "" {
 				status, reason, retryable := http.StatusServiceUnavailable, "authorization_unavailable", true
 				if errors.Is(err, ErrInventoryAccessDenied) {
 					status, reason, retryable = http.StatusForbidden, "inventory_access_denied", false
@@ -117,6 +144,7 @@ func (h inventoryHandlers) serveCloudRead(
 				return
 			}
 			ctx = resolved
+			scope.tenantID = strings.TrimSpace(tenantID)
 		}
 		e.Response.Header().Set("Cache-Control", "private, no-cache")
 		e.Response.Header().Set("Vary", "Authorization, X-Kombify-Service-Auth")
@@ -133,12 +161,19 @@ func (h inventoryHandlers) serveRuntimeSummary(e *httpx.Event, ctx context.Conte
 	page := inventoryPageOptions{Limit: runtimeSummaryPageSize}
 	now := h.app.now().UTC()
 
-	servers, err := h.app.listServers(ctx, scope, page)
+	// The Overview is the owner looking at their own homelab, an account
+	// feature in every plan. Once the signed subject's active membership in
+	// the tenant is verified, the read is that owner's own rows only: the
+	// agent/MCP inventory entitlement (which no plan grants by itself) and its
+	// FGA surface relation do not apply here.
+	app := h.ownerReadApplication()
+
+	servers, err := app.listServers(ctx, scope, page)
 	if err != nil {
 		h.writeRuntimeSummaryError(e, err)
 		return
 	}
-	services, err := h.app.listServices(ctx, scope, "", page)
+	services, err := app.listServices(ctx, scope, "", page)
 	if err != nil {
 		h.writeRuntimeSummaryError(e, err)
 		return
@@ -153,19 +188,52 @@ func (h inventoryHandlers) serveRuntimeSummary(e *httpx.Event, ctx context.Conte
 	})
 }
 
+// ownerInventoryReadPolicy admits only collection reads, scoped to the
+// requesting owner's own rows in the verified tenant. Anything else (an
+// object read, operate, write, provision, admin) is denied.
+//
+// The private monitoring reads (history, events, ports, backups; see
+// inventory_internal_monitoring.go) run under this same policy without
+// widening it: each is a read of the owner's own server collection, so it
+// needs no new target, action or capability, and nothing writable or
+// object-level becomes reachable through them.
+type ownerInventoryReadPolicy struct{}
+
+func (ownerInventoryReadPolicy) AuthorizeInventory(_ context.Context, authorization InventoryAuthorization) (InventoryDecision, error) {
+	if authorization.Action != InventoryActionRead {
+		return InventoryDecision{}, ErrInventoryAccessDenied
+	}
+	switch authorization.ResourceType {
+	case controlplane.InventoryReadTargetServerCollection, controlplane.InventoryReadTargetServiceCollection:
+	default:
+		return InventoryDecision{}, ErrInventoryAccessDenied
+	}
+	readScope, err := controlplane.NewOwnerInventoryReadScope(authorization.TenantID, authorization.SubjectID)
+	if err != nil {
+		return InventoryDecision{}, ErrInventoryAccessDenied
+	}
+	return InventoryDecision{ReadScope: readScope}, nil
+}
+
 // writeRuntimeSummaryError always writes a response. Inside the servicecall
 // middleware the router never sees a returned error, so the inventory denials
 // that are normally rendered by the router (tenant guard, access denial) must
 // be written here explicitly, in this surface's envelope. A denied collection
 // must never be reported as a successful empty inventory.
 func (h inventoryHandlers) writeRuntimeSummaryError(e *httpx.Event, err error) {
+	h.writeCloudReadError(e, runtimeSummarySurface, err)
+}
+
+// writeCloudReadError is writeRuntimeSummaryError for any private Cloud read
+// surface: the denials are written in that surface's envelope.
+func (h inventoryHandlers) writeCloudReadError(e *httpx.Event, surface cloudReadSurface, err error) {
 	var inventoryErr *inventoryError
 	if errors.As(err, &inventoryErr) && inventoryErr.reasonCode == "inventory_access_denied" {
-		_ = writeRuntimeSummaryDenial(e, http.StatusForbidden, "inventory_access_denied", false, "Refresh Techstack access for this account and organization before retrying.")
+		_ = surface.deny(e, http.StatusForbidden, "inventory_access_denied", false, "Refresh Techstack access for this account and organization before retrying.")
 		return
 	}
 	if errors.As(err, &inventoryErr) && inventoryErr.reasonCode == "tenant_context_missing" {
-		_ = writeRuntimeSummaryDenial(e, http.StatusForbidden, "tenant_context_required", false,
+		_ = surface.deny(e, http.StatusForbidden, "tenant_context_required", false,
 			"Open Techstack from the authenticated Kombify Cloud organization and retry.")
 		return
 	}

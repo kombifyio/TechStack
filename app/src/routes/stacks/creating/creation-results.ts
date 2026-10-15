@@ -1,4 +1,4 @@
-import type { ServerProvisioningMode } from "#lib/wizard/index.js";
+import type { ServerProvisioningMode, Task } from "#lib/wizard/index.js";
 import { sanitizeSensitiveText } from "#lib/security/sensitive-data.js";
 
 import { tr, formatDateTime } from "#lib/i18n.svelte.js";
@@ -311,4 +311,204 @@ export function safeJsonParse(value: string): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+export type DegradedRepairStatus =
+  "scheduled" | "running" | "repaired" | "failed";
+
+export type DegradedRepair = {
+  mode: "automatic";
+  status?: DegradedRepairStatus;
+  jobId?: string;
+  nextAttemptAt?: string;
+  attempts?: number;
+};
+
+export type DegradedComponent = {
+  component: string;
+  reasonCode: string;
+  stage?: string;
+  retryable: boolean;
+  detail?: string;
+  repair?: DegradedRepair;
+};
+
+export type DegradedCompletion = {
+  components: DegradedComponent[];
+};
+
+const DEGRADED_REPAIR_STATUSES: readonly DegradedRepairStatus[] = [
+  "scheduled",
+  "running",
+  "repaired",
+  "failed",
+];
+
+function parseDegradedRepair(value: unknown): DegradedRepair | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  const status = getString(record, ["status"]) as DegradedRepairStatus;
+  const attempts = record.attempts;
+  return {
+    mode: "automatic",
+    status: DEGRADED_REPAIR_STATUSES.includes(status) ? status : undefined,
+    jobId: getString(record, ["job_id", "jobId"]) || undefined,
+    nextAttemptAt:
+      getString(record, ["next_attempt_at", "nextAttemptAt"]) || undefined,
+    attempts:
+      typeof attempts === "number" && Number.isFinite(attempts)
+        ? attempts
+        : undefined,
+  };
+}
+
+function parseDegradedComponents(value: unknown): DegradedComponent[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((raw) => {
+    const record = asRecord(raw);
+    const component = getString(record, ["component"]).trim();
+    if (!record || !component) return [];
+    const detail = getString(record, ["detail"]);
+    return [
+      {
+        component,
+        reasonCode: getString(record, ["reason_code", "reasonCode"]).trim(),
+        stage: getString(record, ["stage"]).trim() || undefined,
+        retryable: record.retryable === true,
+        detail: detail
+          ? sanitizeSensitiveText(detail).slice(0, 300)
+          : undefined,
+        repair: parseDegradedRepair(record.repair),
+      },
+    ];
+  });
+}
+
+/**
+ * A completed job whose core applied while an independent component could not
+ * be finished. The runtime lifecycle status is the authority; the component
+ * list is read tolerantly and may be absent.
+ */
+export function extractDegradedCompletion(
+  jobState: string,
+  result: Record<string, unknown> | null,
+): DegradedCompletion | null {
+  if (jobState !== "completed" && jobState !== "success") return null;
+  if (!result) return null;
+  const lifecycle = asRecord(result.runtime_lifecycle);
+  const components = parseDegradedComponents(result.degraded_components);
+  const lifecycleDegraded =
+    getString(lifecycle, ["status"]) === "completed_degraded";
+  if (!lifecycleDegraded && components.length === 0) return null;
+  return { components };
+}
+
+// Backend stage ids (job steps and runtime lifecycle phases) mapped onto the
+// creation task that carries the warning.
+const DEGRADED_STAGE_TASK_ALIASES: Record<string, string> = {
+  prepare_apply: "stackkit_rollout",
+  generate: "generate_iac",
+  verify: "verify_rollout",
+  monitoring_ready: "telemetry_ready",
+};
+const DEFAULT_DEGRADED_TASK_ID = "stackkit_rollout";
+
+/**
+ * Completes every task and marks the ones that carry a degraded component as
+ * completed-with-warning.
+ */
+export function markDegradedTasks(
+  tasks: Task[],
+  degraded: DegradedCompletion,
+): Task[] {
+  const known = new Set(tasks.map((task) => task.id));
+  const resolve = (stage?: string): string => {
+    const candidate = stage ? DEGRADED_STAGE_TASK_ALIASES[stage] || stage : "";
+    if (candidate && known.has(candidate)) return candidate;
+    if (known.has(DEFAULT_DEGRADED_TASK_ID)) return DEFAULT_DEGRADED_TASK_ID;
+    return tasks[tasks.length - 1]?.id ?? "";
+  };
+  const stages = degraded.components.length
+    ? degraded.components.map((component) => component.stage)
+    : [undefined];
+  const attentionIds = new Set(stages.map(resolve));
+  return tasks.map((task) => ({
+    ...task,
+    status: "completed" as const,
+    attention: attentionIds.has(task.id),
+  }));
+}
+
+/** Short localized title of a degraded component. */
+export function degradedComponentTitle(component: string): string {
+  return component === "public_tls"
+    ? tr("ui.stacksCreatingCreationDegraded.publicTlsTitle")
+    : tr("ui.stacksCreatingCreationDegraded.genericTitle");
+}
+
+/** One line: what the degraded component means for the user right now. */
+export function degradedComponentMeaning(component: DegradedComponent): string {
+  if (component.reasonCode === "acme_rate_limited") {
+    return tr("ui.stacksCreatingCreationDegraded.reasonAcmeRateLimited");
+  }
+  if (component.component === "public_tls") {
+    return tr("ui.stacksCreatingCreationDegraded.publicTlsMeaning");
+  }
+  return component.retryable || component.repair
+    ? tr("ui.stacksCreatingCreationDegraded.genericMeaningRepair")
+    : tr("ui.stacksCreatingCreationDegraded.genericMeaning");
+}
+
+/** Repair state the UI shows: a tracked repair job wins over the job result. */
+export function effectiveRepairStatus(
+  component: DegradedComponent,
+  tracked?: DegradedRepairStatus,
+): DegradedRepairStatus | undefined {
+  return tracked ?? component.repair?.status;
+}
+
+export type OperationReferences = {
+  serverId?: string;
+  agentId?: string;
+  reasonCodes: string[];
+};
+
+/**
+ * Identifiers and reason codes an operator handoff needs. Reads only plain
+ * identifiers and codes, never credentials, certificates or command output.
+ */
+export function extractOperationReferences(
+  job: { reason_code?: string; payload?: Record<string, unknown> },
+  result: Record<string, unknown> | null,
+): OperationReferences {
+  const payload = asRecord(job.payload);
+  const supportContext = asRecord(result?.support_context);
+  const runtimeProof = asRecord(result?.runtime_proof);
+  const targetBootstrap =
+    asRecord(result?.target_bootstrap) ||
+    asRecord(runtimeProof?.target_bootstrap);
+  const diagnostics = asRecord(result?.runtime_diagnostics);
+  const serverKeys = ["runtime_server_id", "server_id"];
+  const agentKeys = ["runtime_agent_id", "agent_id"];
+  const reasonCodes = [
+    job.reason_code,
+    getString(result, ["reason_code"]),
+    getString(supportContext, ["stackkit_reason_code"]),
+    getString(targetBootstrap, ["reason_code"]),
+    // The "Reason:" line the failure page shows under runtime diagnostics.
+    getString(diagnostics, ["reason"]),
+  ]
+    .map((code) => code?.trim() ?? "")
+    .filter((code, index, all) => code && all.indexOf(code) === index);
+  return {
+    serverId:
+      getString(result, serverKeys) ||
+      getString(payload, serverKeys) ||
+      undefined,
+    agentId:
+      getString(result, agentKeys) ||
+      getString(payload, agentKeys) ||
+      undefined,
+    reasonCodes,
+  };
 }

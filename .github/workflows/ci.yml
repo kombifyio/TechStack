@@ -30,6 +30,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          node scripts/verify-public-export.mjs
           go build ./...
           go build -trimpath -o techstack ./cmd/techstack
       - name: Build operator UI
@@ -37,5 +38,5 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           PUBLIC_KOMBIFY_EDITION=selfhost-oss pnpm build
-      - name: Build self-hosted image
-        run: docker build -t techstack:selfhost .
+      - name: Build pre-sign source and UI closure
+        run: docker build --target backend -t techstack:selfhost-source .

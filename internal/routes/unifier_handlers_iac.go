@@ -27,7 +27,7 @@ func (api *UnifierAPI) handleAnalyze(e *httpx.Event) error {
 	} else {
 		input, err := api.loader.LoadInputBytes(body)
 		if err != nil {
-			spec = &kscore.KombinationSpec{Name: "default-stack"}
+			return httpx.BadRequest(e, "parse error: "+err.Error())
 		} else {
 			spec = unifier.NormalizeInputSpec(input)
 			if spec == nil {
@@ -38,17 +38,8 @@ func (api *UnifierAPI) handleAnalyze(e *httpx.Event) error {
 
 	requirements, err := api.engine.Analyze(spec)
 	if err != nil {
-		return httpx.Success(e, http.StatusOK, map[string]any{
-			"stackKit":            registryBaseKit,
-			"detectedAddons":      []string{},
-			"requiredWorkers":     map[string]any{"minLocalServers": 1, "minRAM": 1024, "minCPU": 1},
-			"requiredCredentials": []any{},
-			"requiredPreChecks":   []any{},
-			"appliedDefaults":     map[string]any{"kit": registryBaseKit},
-			"description":         "Default stack using Basement Kit.",
-			"intentName":          spec.Name,
-			"_warning":            err.Error(),
-		})
+		return httpx.Error(e, http.StatusUnprocessableEntity, ksapi.ErrCodeBadRequest,
+			"StackKits requirements could not be resolved", err.Error())
 	}
 	return httpx.Success(e, http.StatusOK, requirements)
 }

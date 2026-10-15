@@ -23,17 +23,35 @@
       // class leaves every --glass-* variable undefined, so plate and
       // menu-plate render with no material at all.
       //
-      // The precedence mirrors src/lib/stores/theme.ts exactly — an embed
-      // explicit app choice wins over the inherited host theme — because
-      // that store re-applies the same decision on mount. This pass only moves
-      // it before first paint.
+      // The precedence mirrors src/lib/stores/theme.ts exactly: embedded,
+      // the host's theme wins; otherwise this session's temporary switch,
+      // then the cached account default (set in kombify Cloud Settings).
+      // That store re-applies the same decision on mount; this pass only
+      // moves it before first paint.
       try {
         var params = new URLSearchParams(window.location.search);
         var embed = params.get("theme");
-        var device = localStorage.getItem("techstack-theme");
-        var stored = ["dark", "light", "system"].indexOf(device) >= 0
-          ? device
-          : embed === "dark" || embed === "light" ? embed : "system";
+        var modes = ["dark", "light", "system"];
+        var session = null;
+        var account = null;
+        try {
+          session = sessionStorage.getItem("techstack-theme-session");
+        } catch (e) {}
+        try {
+          account = localStorage.getItem("techstack-account-theme");
+        } catch (e) {}
+        var framed = true;
+        try {
+          framed = window.parent !== window;
+        } catch (e) {}
+        var stored =
+          framed && (embed === "dark" || embed === "light")
+            ? embed
+            : modes.indexOf(session) >= 0
+              ? session
+              : modes.indexOf(account) >= 0
+                ? account
+                : "system";
         var dark =
           stored === "system"
             ? matchMedia("(prefers-color-scheme: dark)").matches

@@ -14,32 +14,18 @@ import (
 
 	"github.com/kombifyio/techstack/internal/gocommon/identity"
 	"github.com/kombifyio/techstack/internal/gocommon/servicecall"
-	"github.com/kombifyio/techstack/internal/selfhostcontracts/stackaction"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/runtimeaction"
 )
 
 const (
-	runtimeActionTargetStackKits = runtimeaction.TargetStackKits
-	runtimeActionTargetSimulate  = runtimeaction.TargetSimulate
+	runtimeActionTargetSimulate = runtimeaction.TargetSimulate
 
 	runtimeActionSimulateUpdate = string(runtimeaction.ActionSimulateUpdate)
 
 	defaultRuntimeActionPathPrefix = runtimeaction.PathPrefix
 	defaultSimulationGatePath      = runtimeaction.PathSimulateUpdate
-	// Rollout and verify default to the governed Architecture v2 execution
-	// surface: the v1 deployment actions are retired on the native v2 line
-	// (410 legacy_runtime_action_retired). TECHSTACK_STACKKITS_ROLLOUT_PATH /
-	// _VERIFY_PATH still override for older StackKits lines.
-	defaultStackKitsRolloutPath = runtimeaction.ArchitectureV2PathStackKitRollout
-	defaultStackKitsVerifyPath  = runtimeaction.ArchitectureV2PathStackKitVerify
-	defaultRestoreDrillPath     = runtimeaction.PathRestoreDrill
-	// Backup actions come from the generated StackAction contract rather than
-	// the local runtimeaction vocabulary: StackKits owns that authority and
-	// kombify-runtime-contracts-go/stackaction is generated from it.
-	defaultBackupRunPath     = stackaction.PathBackupRun
-	defaultBackupStatusPath  = stackaction.PathBackupStatus
-	runtimeActionServiceName = "techstack"
-	runtimeActionHTTPTimeout = 14*time.Minute + 30*time.Second
+	runtimeActionServiceName       = "techstack"
+	runtimeActionHTTPTimeout       = 14*time.Minute + 30*time.Second
 )
 
 type HTTPRuntimeActionRunnerConfig struct {
@@ -145,32 +131,22 @@ func (r *HTTPRuntimeActionRunner) RunWithResult(ctx context.Context, req Runtime
 	if r == nil || r.client == nil {
 		return nil, fmt.Errorf("runtime action %q is not configured", runtimeActionName(r))
 	}
-	var payload any
-	if strings.HasPrefix(r.path, runtimeaction.ArchitectureV2PathPrefix) {
-		v2Payload, v2Err := architectureV2ExecutionPayload(r.action, req)
-		if v2Err != nil {
-			return nil, fmt.Errorf("runtime action %s v2 envelope: %w", r.action, v2Err)
-		}
-		payload = v2Payload
-	} else {
-		payload = RuntimeActionRequest{
-			Action:              runtimeaction.NormalizeAction(r.action),
-			StackID:             strings.TrimSpace(req.StackID),
-			StackName:           strings.TrimSpace(req.StackName),
-			StackKit:            strings.TrimSpace(req.StackKit),
-			Mode:                strings.TrimSpace(req.Mode),
-			TenantID:            strings.TrimSpace(req.TenantID),
-			OwnerID:             strings.TrimSpace(req.OwnerID),
-			StackSpec:           req.StackSpec,
-			StackSpecPath:       strings.TrimSpace(req.StackSpecPath),
-			TofuDir:             strings.TrimSpace(req.TofuDir),
-			UnifiedPath:         strings.TrimSpace(req.UnifiedPath),
-			OwnerSpecBootstrap:  normalizeOwnerSpecBootstrap(req.OwnerSpecBootstrap),
-			RuntimeTarget:       normalizeRuntimeActionTarget(req.RuntimeTarget),
-			PlatformNodes:       normalizePlatformNodes(req.PlatformNodes),
-			PreviewPolicy:       normalizePreviewPolicy(req.PreviewPolicy),
-			TechStackEnrollment: normalizeTechStackEnrollment(req.TechStackEnrollment),
-		}
+	payload := RuntimeActionRequest{
+		Action:              runtimeaction.NormalizeAction(r.action),
+		StackID:             strings.TrimSpace(req.StackID),
+		StackName:           strings.TrimSpace(req.StackName),
+		StackKit:            strings.TrimSpace(req.StackKit),
+		TenantID:            strings.TrimSpace(req.TenantID),
+		OwnerID:             strings.TrimSpace(req.OwnerID),
+		StackSpec:           req.StackSpec,
+		StackSpecPath:       strings.TrimSpace(req.StackSpecPath),
+		TofuDir:             strings.TrimSpace(req.TofuDir),
+		UnifiedPath:         strings.TrimSpace(req.UnifiedPath),
+		OwnerSpecBootstrap:  normalizeOwnerSpecBootstrap(req.OwnerSpecBootstrap),
+		RuntimeTarget:       normalizeRuntimeActionTarget(req.RuntimeTarget),
+		PlatformNodes:       normalizePlatformNodes(req.PlatformNodes),
+		PreviewPolicy:       normalizePreviewPolicy(req.PreviewPolicy),
+		TechStackEnrollment: normalizeTechStackEnrollment(req.TechStackEnrollment),
 	}
 	resp, err := r.client.PostJSON(ctx, r.baseURL+r.path, payload, servicecall.OnBehalfOfIdentity(identity.FromContext(ctx)))
 	if err != nil {
@@ -218,7 +194,6 @@ func normalizeTechStackEnrollment(in *TechStackEnrollment) *TechStackEnrollment 
 		AgentToken:       strings.TrimSpace(in.AgentToken),
 		HeartbeatURL:     strings.TrimSpace(in.HeartbeatURL),
 		InventoryURL:     strings.TrimSpace(in.InventoryURL),
-		ControlURLs:      compactStrings(in.ControlURLs),
 		ChannelBootstrap: cloneAnyMap(in.ChannelBootstrap),
 	}
 	if !techStackEnrollmentRequested(out) {
@@ -241,7 +216,6 @@ func techStackEnrollmentRequested(in *TechStackEnrollment) bool {
 		in.AgentToken != "" ||
 		in.HeartbeatURL != "" ||
 		in.InventoryURL != "" ||
-		len(in.ControlURLs) > 0 ||
 		len(in.ChannelBootstrap) > 0
 }
 
@@ -328,17 +302,8 @@ func RuntimeActionsFromEnv(base RuntimeActions) (RuntimeActions, RuntimeActionsE
 	}
 	secret := strings.TrimSpace(os.Getenv("SERVICE_AUTH_SECRET"))
 	secretNext := strings.TrimSpace(os.Getenv("SERVICE_AUTH_SECRET_NEXT"))
-	// StackKits fallback chain:
-	// dedicated action URL → Administration-managed internal URL → explicit API URL.
-	// STACKKITS_PUBLIC_URL is intentionally excluded because it is the public
-	// docs/static-site origin in production, not a runtime-action API.
-	stackKitsURL := firstRuntimeActionEnv(
-		"TECHSTACK_STACKKITS_ACTIONS_URL",
-		"TECHSTACK_STACKKITS_INTERNAL_URL",
-		"KOMBIFY_URL_INTERNAL_STACKKITS",
-		"STACKKITS_INTERNAL_URL",
-		"STACKKITS_API_URL",
-	)
+	// StackKits has no HTTP action service: every StackKits operation is a
+	// typed command the enrolled node runs with the pinned CLI.
 	// Simulate fallback chain (Simulate runs on IONOS Coolify, NOT Render —
 	// see PLATFORM-ARCHITECTURE.md §1 and SERVICE-URL-REGISTRY.md §5). The
 	// canonical key is KOMBIFY_URL_VPS_SIMULATE; KOMBIFY_URL_INTERNAL_SIMULATE
@@ -352,16 +317,6 @@ func RuntimeActionsFromEnv(base RuntimeActions) (RuntimeActions, RuntimeActionsE
 		"KOMBIFY_URL_PUBLIC_SIMULATE",
 		"KOMBISIM_URL",
 	)
-
-	if needsStackKitsRuntimeActions(actions) {
-		if stackKitsURL == "" {
-			diagnostics.Warnings = append(diagnostics.Warnings, "StackKits runtime actions disabled: set TECHSTACK_STACKKITS_ACTIONS_URL and SERVICE_AUTH_SECRET to enable rollout, verification, and restore drill")
-		} else if secret == "" {
-			diagnostics.Warnings = append(diagnostics.Warnings, "StackKits runtime actions disabled: SERVICE_AUTH_SECRET is required for servicecall authentication")
-		} else {
-			actions = configureStackKitsRuntimeActions(actions, stackKitsURL, secret, secretNext, &diagnostics)
-		}
-	}
 
 	if actions.SimulationGate == nil {
 		if simulateURL == "" {
@@ -421,66 +376,6 @@ func truthyRuntimeActionEnv(name string) bool {
 	default:
 		return false
 	}
-}
-
-func configureStackKitsRuntimeActions(actions RuntimeActions, baseURL, secret, secretNext string, diagnostics *RuntimeActionsEnvDiagnostics) RuntimeActions {
-	if actions.RolloutRunner == nil {
-		if runner, err := newStackKitsRuntimeAction(baseURL, string(runtimeaction.ActionStackKitRollout), firstNonEmpty(firstRuntimeActionEnv("TECHSTACK_STACKKITS_ROLLOUT_PATH"), defaultStackKitsRolloutPath), secret, secretNext); err != nil {
-			diagnostics.Warnings = append(diagnostics.Warnings, fmt.Sprintf("StackKits rollout runner disabled: %v", err))
-		} else {
-			actions.RolloutRunner = runner
-			diagnostics.Configured = append(diagnostics.Configured, "StackKits rollout runner")
-		}
-	}
-	if actions.RolloutVerifier == nil {
-		if runner, err := newStackKitsRuntimeAction(baseURL, string(runtimeaction.ActionVerifyRollout), firstNonEmpty(firstRuntimeActionEnv("TECHSTACK_STACKKITS_VERIFY_PATH"), defaultStackKitsVerifyPath), secret, secretNext); err != nil {
-			diagnostics.Warnings = append(diagnostics.Warnings, fmt.Sprintf("StackKits rollout verifier disabled: %v", err))
-		} else {
-			actions.RolloutVerifier = runner
-			diagnostics.Configured = append(diagnostics.Configured, "StackKits rollout verifier")
-		}
-	}
-	if actions.RestoreDrill == nil {
-		if runner, err := newStackKitsRuntimeAction(baseURL, string(runtimeaction.ActionRestoreDrill), firstNonEmpty(firstRuntimeActionEnv("TECHSTACK_STACKKITS_RESTORE_DRILL_PATH"), defaultRestoreDrillPath), secret, secretNext); err != nil {
-			diagnostics.Warnings = append(diagnostics.Warnings, fmt.Sprintf("StackKits restore drill disabled: %v", err))
-		} else {
-			actions.RestoreDrill = runner
-			diagnostics.Configured = append(diagnostics.Configured, "StackKits restore drill")
-		}
-	}
-	if actions.BackupRunner == nil {
-		if runner, err := newStackKitsRuntimeAction(baseURL, string(stackaction.ActionBackupRun), firstNonEmpty(firstRuntimeActionEnv("TECHSTACK_STACKKITS_BACKUP_RUN_PATH"), defaultBackupRunPath), secret, secretNext); err != nil {
-			diagnostics.Warnings = append(diagnostics.Warnings, fmt.Sprintf("StackKits backup runner disabled: %v", err))
-		} else {
-			actions.BackupRunner = runner
-			diagnostics.Configured = append(diagnostics.Configured, "StackKits backup runner")
-		}
-	}
-	if actions.BackupStatus == nil {
-		if runner, err := newStackKitsRuntimeAction(baseURL, string(stackaction.ActionBackupStatus), firstNonEmpty(firstRuntimeActionEnv("TECHSTACK_STACKKITS_BACKUP_STATUS_PATH"), defaultBackupStatusPath), secret, secretNext); err != nil {
-			diagnostics.Warnings = append(diagnostics.Warnings, fmt.Sprintf("StackKits backup status disabled: %v", err))
-		} else {
-			actions.BackupStatus = runner
-			diagnostics.Configured = append(diagnostics.Configured, "StackKits backup status")
-		}
-	}
-	return actions
-}
-
-func newStackKitsRuntimeAction(baseURL, action, path, secret, secretNext string) (*HTTPRuntimeActionRunner, error) {
-	return NewHTTPRuntimeActionRunner(HTTPRuntimeActionRunnerConfig{
-		BaseURL:           baseURL,
-		Target:            runtimeActionTargetStackKits,
-		Action:            action,
-		Path:              path,
-		ServiceAuthSecret: secret,
-		ServiceAuthNext:   secretNext,
-	})
-}
-
-func needsStackKitsRuntimeActions(actions RuntimeActions) bool {
-	return actions.RolloutRunner == nil || actions.RolloutVerifier == nil || actions.RestoreDrill == nil ||
-		actions.BackupRunner == nil || actions.BackupStatus == nil
 }
 
 func normalizeRuntimeActionBaseURL(raw string) (string, error) {

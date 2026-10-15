@@ -24,8 +24,10 @@ var devPortalFrameOrigins = []string{
 // host. Previews are the sanctioned pre-merge review surface for Cloud, and a
 // Cloud preview embeds Techstack exactly as production does, so the exact
 // preview origin may frame this app. Only this pattern: a bare *.onrender.com
-// wildcard would admit every Render app.
-var cloudPreviewOriginPattern = regexp.MustCompile(`^https://kombify-cloud-native-pr-[0-9]+\.onrender\.com$`)
+// wildcard would admit every Render app. Render appends a random 4-character
+// suffix when the preview slug is already taken
+// (kombify-cloud-native-pr-1146-lft5); kombify Cloud accepts the same form.
+var cloudPreviewOriginPattern = regexp.MustCompile(`^https://kombify-cloud-native-pr-[0-9]+(?:-[a-z0-9]{4})?\.onrender\.com$`)
 
 // CloudPreviewFrameOrigin returns the sanitized origin of a kombify Cloud
 // Render PR preview when raw (a Referer or Origin header value) is one, and

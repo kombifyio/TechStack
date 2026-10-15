@@ -6,6 +6,35 @@ import (
 	"testing"
 )
 
+func TestReleasedApplicationMaturityRetainsRuntimeAcceptanceDenial(t *testing.T) {
+	const maturity = "experimental"
+	application := UseCase{
+		ID: "application", DefaultAlternative: "engine",
+		ComputeTiers: map[string]UseCaseComputeTier{"standard": {Included: false, Reason: "runtime acceptance pending"}},
+		Components:   []UseCaseComponent{{ID: "engine", Role: "primary", Kind: "application"}},
+		Alternatives: []UseCaseAlternative{{ID: "engine", Modules: []UseCaseModule{{
+			ComputeProfileFacts: map[string]UseCaseProfileFacts{"standard": {Maturity: maturity, Executable: true}},
+		}}}},
+	}
+	if application.ApplicationMaturity("engine") != maturity {
+		t.Fatal("executable application maturity must survive a denied runtime tier")
+	}
+	payload := CreationCatalogPayload(UseCaseCatalog{UseCases: []UseCase{application}}, map[string]string{}, true, nil)
+	entry := payload["use_cases"].([]map[string]any)[0]
+	if entry["maturity"] != maturity || entry["deliverable"] != false {
+		t.Fatal("presentation must retain maturity without turning runtime denial into delivery admission")
+	}
+	if entry["compute_tiers"].(map[string]UseCaseComputeTier)["standard"] != application.ComputeTiers["standard"] {
+		t.Fatal("presentation changed the runtime acceptance verdicts")
+	}
+	facts := application.Alternatives[0].Modules[0].ComputeProfileFacts["standard"]
+	facts.Executable = false
+	application.Alternatives[0].Modules[0].ComputeProfileFacts["standard"] = facts
+	if application.ApplicationMaturity("engine") != "" {
+		t.Fatal("a non-executable application must not become available")
+	}
+}
+
 func TestPinnedUseCaseCatalogOmitsMediaOnLow(t *testing.T) {
 	t.Setenv(UseCaseCatalogEnv, "")
 	t.Setenv("STACKKITS_REPO", filepath.Join(t.TempDir(), "missing-checkout"))

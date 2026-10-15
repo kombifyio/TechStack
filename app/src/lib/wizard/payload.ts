@@ -15,10 +15,9 @@ import {
   type StackConfig,
 } from "./types";
 import {
-  applyStandardBundleGoalServices,
-  buildPayloadServicesFromBundle,
   selectedCanonicalUseCasesFromGoals,
 } from "./standardBundle";
+import { remoteSshKeyLabel } from "./remote-credential";
 
 /**
  * API payload structure (matches backend expectations)
@@ -107,7 +106,6 @@ export function buildPayload(config: StackConfig): CreateStackPayload {
   const usesCloudLinkedOwner = config.owner.source === "cloud-linked";
   const usesRemoteSSH = serverProvisioning.mode === "connect-remote";
 
-  const services = buildPayloadServicesFromBundle(config.services);
   const useCases = selectedCanonicalUseCasesFromGoals(config.goals);
 
   // Determine multi-user mode
@@ -122,7 +120,8 @@ export function buildPayload(config: StackConfig): CreateStackPayload {
   return {
     name: config.name || "homelab",
     provider: config.provider,
-    services,
+    // The released CLI owns the service graph for these use-case choices.
+    services: [],
     options: {
       vpn,
       cloudflare_zero_trust: config.network.enableCloudflare,
@@ -180,10 +179,9 @@ export function buildPayload(config: StackConfig): CreateStackPayload {
       server_remote_auth_method: usesRemoteSSH
         ? serverProvisioning.remote.authMethod
         : undefined,
-      server_remote_ssh_key_label:
-        usesRemoteSSH && serverProvisioning.remote.sshKeyLabel
-          ? serverProvisioning.remote.sshKeyLabel
-          : undefined,
+      server_remote_ssh_key_label: usesRemoteSSH
+        ? remoteSshKeyLabel(serverProvisioning.remote)
+        : undefined,
       server_remote_use_sudo: usesRemoteSSH
         ? serverProvisioning.remote.useSudo
         : undefined,
@@ -258,9 +256,9 @@ function toApiIdentityHead(provider: IdentityConfig["homelabProvider"]) {
 }
 
 /**
- * Derive services from easy wizard goals
+ * Retained for legacy callers preparing identity preferences. Goals remain
+ * intent; only the pinned StackKits CLI expands them into services.
  */
 export function deriveServicesFromGoals(config: StackConfig): void {
   deriveIdentityServices(config);
-  applyStandardBundleGoalServices(config.services, config.goals);
 }

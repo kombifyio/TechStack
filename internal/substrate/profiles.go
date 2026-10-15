@@ -24,18 +24,25 @@ type Profile struct {
 	CloudInit    bool   `json:"cloud_init"`
 }
 
+// IsUbuntuProfile admits the current default and explicit compatibility intent.
+func IsUbuntuProfile(id string) bool { return id == "ubuntu-26.04" || id == "ubuntu-24.04" }
+
 func Profiles() []Profile {
 	return []Profile{
+		{ID: "ubuntu-26.04", Title: "Ubuntu 26.04 LTS", Architecture: "amd64", MinCPU: 2, MinMemoryMiB: 2048, MinDiskGiB: 32, CloudInit: true},
 		{ID: "ubuntu-24.04", Title: "Ubuntu 24.04 LTS", Architecture: "amd64", MinCPU: 2, MinMemoryMiB: 2048, MinDiskGiB: 32, CloudInit: true},
 		{ID: "haos", Title: "Home Assistant OS", Architecture: "amd64", MinCPU: 2, MinMemoryMiB: 4096, MinDiskGiB: 32, Appliance: true},
 	}
 }
 
-// DefaultImage pins the vendor artifacts verified on 2026-09-10. Ubuntu's pin
+// DefaultImage pins the vendor artifacts (Ubuntu 26.04 verified 2026-10-01).
+// Ubuntu's pin
 // comes from release-20260826/SHA256SUMS; HAOS's from the 18.2 release asset
 // digest. Updating these defaults never updates an existing customer's VM.
 func DefaultImage(profileID string) (Image, error) {
 	switch profileID {
+	case "ubuntu-26.04":
+		return Image{ProfileID: profileID, Version: "20260823", URL: "https://cloud-images.ubuntu.com/releases/resolute/release-20260823/ubuntu-26.04-server-cloudimg-amd64.img", SHA256: "8196be9d7958059cb56c6c75c80fdf6cee8a8885bc149ea791d7db1c7ef93035"}, nil
 	case "ubuntu-24.04":
 		return Image{ProfileID: profileID, Version: "20260826", URL: "https://cloud-images.ubuntu.com/releases/noble/release-20260826/ubuntu-24.04-server-cloudimg-amd64.img", SHA256: "d0fe84bb5f80853425fa6be28e2c106f30104c3cfe8611933f2e65c9b63f0e30"}, nil
 	case "haos":
@@ -79,9 +86,14 @@ func (i Image) Validate() error {
 	if err != nil || u.Scheme != "https" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Port() != "" {
 		return errors.New("substrate: official HTTPS image required")
 	}
-	if i.ProfileID == "ubuntu-24.04" {
-		if u.Host != "cloud-images.ubuntu.com" || !strings.HasPrefix(u.Path, "/releases/noble/release-"+i.Version+"/") || !strings.HasSuffix(u.Path, "/ubuntu-24.04-server-cloudimg-amd64.img") || i.Compression != "" {
-			return errors.New("substrate: pinned Ubuntu 24.04 amd64 cloud image required")
+	if IsUbuntuProfile(i.ProfileID) {
+		codename := "noble"
+		if i.ProfileID == "ubuntu-26.04" {
+			codename = "resolute"
+		}
+		version := strings.TrimPrefix(i.ProfileID, "ubuntu-")
+		if u.Host != "cloud-images.ubuntu.com" || u.Path != "/releases/"+codename+"/release-"+i.Version+"/ubuntu-"+version+"-server-cloudimg-amd64.img" || i.Compression != "" {
+			return errors.New("substrate: pinned official Ubuntu amd64 cloud image required")
 		}
 	} else if u.Host != "github.com" || u.Path != "/home-assistant/operating-system/releases/download/"+i.Version+"/haos_ova-"+i.Version+".qcow2.xz" || i.Compression != "xz" {
 		return errors.New("substrate: official versioned HAOS KVM image required")

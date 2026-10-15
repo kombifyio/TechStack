@@ -128,7 +128,13 @@ func (e *Enroller) Enroll(ctx context.Context, tenantID string, req Request, pro
 	}
 	defer client.Close()
 
-	installCommand, err := guardbootstrap.RenderInstallerOneLiner(req.ControlPlaneURL, req.PairingToken)
+	installCommand, err := guardbootstrap.RenderInstallerCommand(req.ControlPlaneURL)
+	if err != nil {
+		return err
+	}
+	// The pairing capability travels on the session's standard input, never in
+	// the remote command line.
+	capability, err := guardbootstrap.InstallerStdin(req.PairingToken)
 	if err != nil {
 		return err
 	}
@@ -136,7 +142,7 @@ func (e *Enroller) Enroll(ctx context.Context, tenantID string, req Request, pro
 
 	emit(StepRunInstaller, "Installing and enrolling the Guard over SSH…", 35)
 
-	output, runErr := runSSHCommand(ctx, client, remoteCommand)
+	output, runErr := runSSHCommand(ctx, client, remoteCommand, capability)
 	if runErr != nil {
 		return fmt.Errorf("%w: %v\n%s", errInstallFailed, runErr, secrets.Redact(output))
 	}
@@ -214,12 +220,13 @@ func wrapRemoteCommand(installCommand string, useSudo bool, user string) string 
 	)
 }
 
-func runSSHCommand(ctx context.Context, client *ssh.Client, command string) (string, error) {
+func runSSHCommand(ctx context.Context, client *ssh.Client, command, stdin string) (string, error) {
 	session, err := client.NewSession()
 	if err != nil {
 		return "", err
 	}
 	defer session.Close()
+	session.Stdin = strings.NewReader(stdin)
 
 	type result struct {
 		output []byte

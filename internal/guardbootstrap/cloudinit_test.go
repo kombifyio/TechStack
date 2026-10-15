@@ -33,12 +33,27 @@ func TestGuardEnrollmentWaitsForExecutionChannelReadiness(t *testing.T) {
 		t.Fatal(err)
 	}
 	var config struct {
-		RunCmd [][]string `yaml:"runcmd"`
+		RunCmd     [][]string `yaml:"runcmd"`
+		WriteFiles []struct {
+			Path    string `yaml:"path"`
+			Content string `yaml:"content"`
+		} `yaml:"write_files"`
 	}
 	if err := yaml.Unmarshal(document, &config); err != nil {
 		t.Fatal(err)
 	}
+	bootstrap := filepath.Join(directory, "guard-bootstrap")
 	run := func() error {
+		// The script removes itself when a run ends, so each run starts from the
+		// file cloud-init would have written.
+		for _, file := range config.WriteFiles {
+			if file.Path == GuardBootstrapScriptPath {
+				content := strings.ReplaceAll(file.Content, executionChannelBootstrapPath, readiness)
+				if err := os.WriteFile(bootstrap, []byte(content), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
 		var last error
 		for _, command := range config.RunCmd {
 			// Host firewall/service managers are outside the enrollment boundary.
@@ -47,7 +62,7 @@ func TestGuardEnrollmentWaitsForExecutionChannelReadiness(t *testing.T) {
 			}
 			argv := make([]string, len(command))
 			for i, argument := range command {
-				argv[i] = strings.ReplaceAll(argument, executionChannelBootstrapPath, readiness)
+				argv[i] = strings.ReplaceAll(strings.ReplaceAll(argument, executionChannelBootstrapPath, readiness), GuardBootstrapScriptPath, bootstrap)
 			}
 			last = exec.Command(argv[0], argv[1:]...).Run()
 		}
@@ -135,7 +150,7 @@ func TestRenderEnablesSSHOnlyHostFirewallBeforeInstaller(t *testing.T) {
 		`["/usr/sbin/ufw", "default", "allow", "outgoing"]`,
 		`["/usr/sbin/ufw", "allow", "22/tcp"]`,
 		`["/usr/sbin/ufw", "--force", "enable"]`,
-		"install.sh",
+		`["` + GuardBootstrapScriptPath + `"]`,
 	}
 	position := -1
 	for _, fragment := range ordered {
@@ -414,5 +429,49 @@ func TestRenderErrorsNeverCarryTheToken(t *testing.T) {
 	secret := strings.Split(token, ".")[2]
 	if strings.Contains(err.Error(), secret) {
 		t.Fatalf("error leaked the token secret: %v", err)
+	}
+}
+
+// The pairing capability is a root-only file read by the first-boot script, never
+// a process argument another local user could read from /proc/<pid>/cmdline.
+func TestRenderKeepsThePairingCapabilityOutOfEveryProcessArgument(t *testing.T) {
+	token := testToken(t, "tenant-demo", "op_1")
+	document, err := RenderCloudInit(CloudInitInput{
+		ServerURL: "https://techstack.kombify.io", PairingToken: token, HostPrepProfile: HostPrepProfileIONOSUbuntu2404DockerV1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		RunCmd     [][]string `yaml:"runcmd"`
+		WriteFiles []struct {
+			Path        string `yaml:"path"`
+			Permissions string `yaml:"permissions"`
+			Content     string `yaml:"content"`
+		} `yaml:"write_files"`
+	}
+	if err := yaml.Unmarshal(document, &config); err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range config.RunCmd {
+		if strings.Contains(strings.Join(command, " "), token) {
+			t.Fatalf("the pairing capability is in a command line: %v", command)
+		}
+	}
+	var held bool
+	for _, file := range config.WriteFiles {
+		if !strings.Contains(file.Content, token) {
+			continue
+		}
+		held = true
+		if file.Path != GuardBootstrapScriptPath || file.Permissions != "0700" {
+			t.Fatalf("the capability is in %s with mode %s, want the root-only bootstrap script", file.Path, file.Permissions)
+		}
+		if strings.Contains(strings.ReplaceAll(file.Content, "export KOMBI_TOKEN="+shellQuote(token), ""), token) {
+			t.Fatalf("the capability is used as an argument inside the script:\n%s", file.Content)
+		}
+	}
+	if !held {
+		t.Fatal("the pairing capability is not delivered to the node")
 	}
 }

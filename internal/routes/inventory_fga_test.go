@@ -104,6 +104,13 @@ func TestInventoryFGAPolicyRequiresEntitlementAndRelationship(t *testing.T) {
 	if checker.calls != 2 {
 		t.Fatalf("FGA called for entitlement denial: %d", checker.calls)
 	}
+	for _, action := range []InventoryAction{InventoryActionWrite, InventoryActionProvision, InventoryActionOperate, InventoryActionTransfer, InventoryActionAdmin, InventoryActionRILRead} {
+		restricted := authorization
+		restricted.Action = action
+		if _, err := policy.AuthorizeInventory(middleware.WithSignedEntitlements(t.Context(), "mcp.customer.access"), restricted); !errors.Is(err, ErrInventoryAccessDenied) {
+			t.Fatalf("customer inventory baseline authorized %s: %v", action, err)
+		}
+	}
 
 	operateCtx := middleware.WithSignedEntitlements(t.Context(), InventoryEntitlementOperate)
 	if _, err := policy.AuthorizeInventory(operateCtx, authorization); err != nil {

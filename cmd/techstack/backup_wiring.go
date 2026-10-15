@@ -9,10 +9,9 @@ import (
 	"github.com/kombifyio/techstack/internal/backupjobs"
 	storageauth "github.com/kombifyio/techstack/pkg/auth"
 	"github.com/kombifyio/techstack/pkg/backupstore"
-	"github.com/kombifyio/techstack/pkg/features"
 	"github.com/kombifyio/techstack/pkg/jobs"
 	"github.com/kombifyio/techstack/pkg/logger"
-	"github.com/kombifyio/techstack/pkg/orchestrator"
+	"github.com/kombifyio/techstack/pkg/monthlyruntime"
 )
 
 // backupScheduleProjector records the cadence a managed rollout selected so the
@@ -46,21 +45,24 @@ func backupScheduleProjector(boot *v2Boot, log *logger.Logger) jobs.BackupSchedu
 	}
 }
 
-// composeBackupScanner builds the due-stack scanner. It returns nil when any
-// authority is missing, which disables scheduled backups rather than running
-// them ungated: NewScanner refuses an absent admission for the same reason.
+// composeBackupScanner builds the due-stack scanner and installs the managed
+// restore-drill admission on the orchestrator from the same gate. It returns
+// nil when any authority is missing, which disables scheduled backups rather
+// than running them ungated: NewScanner refuses an absent admission for the
+// same reason. Without the admission a managed restore drill is refused as
+// unavailable.
 //
 // A disabled scanner is visible in the log and denies nothing that was already
 // promised, because without it no backup is ever due.
-func composeBackupScanner(
-	boot *v2Boot,
-	featureSvc *features.Service,
-	orch *orchestrator.Orchestrator,
-	log *logger.Logger,
-) *backupjobs.Scanner {
+//
+// The feature service comes from deps itself. The route build receives its
+// dependencies by value, so a service it creates never reaches the caller.
+func composeBackupScanner(deps *routeDeps, encryptor *storageauth.SecretEncryptor) *backupjobs.Scanner {
+	boot, orch, log := deps.v2, deps.orch, deps.log
 	if boot == nil || boot.db == nil || boot.db.DB == nil || orch == nil {
 		return nil
 	}
+	featureSvc := deps.sharedFeatureService()
 	if featureSvc == nil {
 		// Without the entitlement chain every backup would have to deny, so
 		// running the loop would only burn passes producing denials.
@@ -83,13 +85,23 @@ func composeBackupScanner(
 		}
 		return nil
 	}
-	custody, err := backupstore.NewPostgresCustodyStore(boot.db.DB, storageauth.GetEncryptor())
+	custody, err := backupstore.NewPostgresCustodyStore(boot.db.DB, encryptor)
 	if err != nil {
+		if log != nil {
+			log.Warn("backup_scanner_unavailable", "reason", "custody_store_invalid", "error", err)
+		}
 		return nil
 	}
+	testGrantTenant := monthlyruntime.LocalRuntimeE2EBackupGrantTenant(boot.saasMode)
+	if testGrantTenant != "" && log != nil {
+		log.Warn("local_runtime_e2e_backup_grant_open",
+			"message", "the runtime test tenant holds the backup entitlement without the signed chain; test lanes only",
+			"tenant_id", testGrantTenant)
+	}
 	admission, err := backupjobs.NewAdmission(backupjobs.AdmissionConfig{
-		Features: featureSvc,
-		Usage:    backupjobs.CurrentUsage{Custody: custody, Store: usage},
+		Features:          featureSvc,
+		Usage:             backupjobs.CurrentUsage{Custody: custody, Store: usage},
+		TestGrantTenantID: testGrantTenant,
 	})
 	if err != nil {
 		if log != nil {

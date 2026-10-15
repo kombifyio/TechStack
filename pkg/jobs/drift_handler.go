@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kombifyio/techstack/internal/stackkitrelease"
+	"github.com/kombifyio/techstack/pkg/api/agentpb"
 	"github.com/kombifyio/techstack/pkg/outcome"
 	"github.com/kombifyio/techstack/pkg/stackkitcommand"
 )
@@ -143,6 +144,9 @@ func detectManagedStackKitDrift(ctx context.Context, cfg *DriftCheckConfig, job 
 		return stackkitcommand.DriftReport{}, err
 	}
 	command.TimeoutSeconds = int32(cfg.DetectTimeout / time.Second)
+	// Every Techstack-managed deployment runs Advanced Mode: drift is
+	// detected per Terramate stack, never in Standard mode.
+	command.DriftMode = agentpb.StackKitDriftMode_STACKKIT_DRIFT_MODE_ADVANCED
 	result, err := sendStackKitCommandBoundedForTenant(ctx, cfg.Sender, request.TenantID, request.AgentID, command)
 	if err != nil {
 		return stackkitcommand.DriftReport{}, fmt.Errorf("typed StackKits drift detect dispatch failed: %w", err)
@@ -150,8 +154,19 @@ func detectManagedStackKitDrift(ctx context.Context, cfg *DriftCheckConfig, job 
 	if result == nil || !result.Success {
 		return stackkitcommand.DriftReport{}, fmt.Errorf("StackKits drift detect failed: %s", strings.TrimSpace(result.GetStderr()))
 	}
-	return stackkitcommand.ParseDriftReport(command, result)
+	report, err := stackkitcommand.ParseDriftReport(command, result)
+	if err != nil {
+		return stackkitcommand.DriftReport{}, err
+	}
+	if report.GenerationTarget != advancedGenerationTarget {
+		return stackkitcommand.DriftReport{}, fmt.Errorf("drift report is from generation target %q, not the Advanced %q target; re-run the rollout so the deployment runs Advanced Mode", report.GenerationTarget, advancedGenerationTarget)
+	}
+	return report, nil
 }
+
+// advancedGenerationTarget is the StackKits generation target of Advanced
+// Mode; its drift report carries one entry per Terramate stack.
+const advancedGenerationTarget = "terramate"
 
 // DriftCheckHandler creates a job handler for StackKits drift detection.
 func DriftCheckHandler(cfg *DriftCheckConfig) JobHandler {

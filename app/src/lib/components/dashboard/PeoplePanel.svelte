@@ -1,7 +1,18 @@
 <script lang="ts">
   import { tr } from "#lib/i18n.svelte.js";
-  import { Laptop, Smartphone, UserRound, Monitor } from "@lucide/svelte";
-  import { SegmentedControl, Sheet } from "@kombiverselabs/ui/primitives";
+  import { Laptop, Smartphone, Monitor } from "@lucide/svelte";
+  import { SegmentedControl } from "@kombiverselabs/ui/primitives";
+  import {
+    ActorCard,
+    DEFAULT_ENTITY_LABELS,
+    DeviceCard,
+    EntityDetailSheet,
+    deviceFormFactorFromPlatform,
+    type EntityFact,
+    type EntityIcon,
+    type EntityLabels,
+    type EntityPresence,
+  } from "@kombiverselabs/ui/entity";
 
   import {
     platformLabel,
@@ -53,10 +64,41 @@
     return Laptop;
   }
 
-  function dotClass(online: boolean | null): string {
-    if (online === null) return "bg-muted-foreground/40";
-    return online ? "bg-success" : "bg-warning";
+  function presence(online: boolean | null): EntityPresence {
+    if (online === null) return "unknown";
+    return online ? "online" : "offline";
   }
+
+  const audienceLabel = (entry: PeopleEntry) =>
+    entry.audience === "owner"
+      ? tr("ui.stacksCreatingCreationCompletion.owner")
+      : tr("ui.peoplePanel.household");
+
+  const D = DEFAULT_ENTITY_LABELS;
+  const labels = $derived<Partial<EntityLabels>>({
+    kind: {
+      ...D.kind,
+      person: tr("ui.peoplePanel.person"),
+      device: tr("ui.peoplePanel.device"),
+    },
+    presence: {
+      ...D.presence,
+      online: tr("actors.presence.online"),
+      offline: tr("actors.presence.offline"),
+      unknown: tr("actors.presence.unknown"),
+    },
+    personRole: {
+      ...D.personRole,
+      owner: tr("actors.role.owner"),
+      member: tr("actors.role.member"),
+    },
+    facts: {
+      ...D.facts,
+      lastSeen: tr("ui.stacksIdServersServerId.lastSeen"),
+      clients: "kombify clients",
+    },
+    detail: { ...D.detail, facts: tr("actors.detail.facts") },
+  });
 
   const facts = $derived.by<Array<{ k: string; v: string }>>(() => {
     const entry = selected;
@@ -121,44 +163,34 @@
 {/snippet}
 
 {#snippet row(entry: PeopleEntry)}
-  {@const Icon = entry.kind === "device" ? deviceIcon(entry) : UserRound}
-  <li>
-    <button
-      type="button"
-      class="flex w-full items-center gap-3 border-b border-border/60 px-4 py-2.5 text-left transition-colors last:border-b-0 hover:bg-muted/30"
-      data-testid="people-row"
-      data-audience={entry.audience}
-      onclick={() => (selected = entry)}
-    >
-      <span
-        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] {entry.audience ===
-        'owner'
-          ? 'bg-primary/12 text-primary'
-          : 'bg-info/12 text-info'}"
-      >
-        <Icon class="h-[18px] w-[18px]" />
-      </span>
-      <span class="flex min-w-0 flex-1 flex-col">
-        <span class="truncate text-sm font-semibold text-foreground"
-          >{entry.name}</span
-        >
-        <span class="truncate text-xs text-muted-foreground">
-          {entry.kind === "person" ? entry.status : entry.detail}
-        </span>
-      </span>
-      <span class="flex flex-col items-end gap-1">
-        <span
-          class="rounded px-1.5 py-px text-[10px] font-semibold {entry.audience ===
-          'owner'
-            ? 'bg-primary/12 text-primary'
-            : 'bg-info/12 text-info'}"
-        >
-          {entry.audience === "owner" ? tr("ui.stacksCreatingCreationCompletion.owner") : tr("ui.peoplePanel.household")}
-        </span>
-        <span class="h-[7px] w-[7px] rounded-full {dotClass(entry.online)}"
-        ></span>
-      </span>
-    </button>
+  <li data-testid="people-row" data-audience={entry.audience}>
+    {#if entry.kind === "person"}
+      <ActorCard
+        kind="person"
+        size="row"
+        name={entry.name}
+        role={entry.audience === "owner" ? "owner" : "member"}
+        handle={entry.detail || undefined}
+        statusLabel={entry.status}
+        selected={selected?.id === entry.id}
+        onselect={() => (selected = entry)}
+        {labels}
+      />
+    {:else}
+      <DeviceCard
+        size="row"
+        name={entry.name}
+        formFactor={deviceFormFactorFromPlatform(entry.platform)}
+        model={platformLabel(entry.platform) || undefined}
+        lastSeen={entry.lastSeen ? formatRelative(entry.lastSeen) : undefined}
+        clients={entry.clients}
+        owner={audienceLabel(entry)}
+        presence={presence(entry.online)}
+        selected={selected?.id === entry.id}
+        onselect={() => (selected = entry)}
+        {labels}
+      />
+    {/if}
   </li>
 {/snippet}
 
@@ -175,6 +207,13 @@
       >
         {tr("ui.dashboard.devicesPeople")}
       </h2>
+      <a
+        href="/actors"
+        class="text-sm font-medium text-muted-foreground hover:text-foreground"
+        data-testid="dashboard-people-actors"
+      >
+        {tr("actors.seeAll")}
+      </a>
     </div>
   {:else}
     <h2 id="dashboard-people-title" class="sr-only">{tr("ui.dashboard.devicesPeople")}</h2>
@@ -195,7 +234,7 @@
     {@render sectionNote(people, "people-state")}
     {#if people.state === "ready"}
       {#if shownPeople.length > 0}
-        <ul>
+        <ul class="flex flex-col gap-2 p-2">
           {#each shownPeople as entry (entry.id)}
             {@render row(entry)}
           {/each}
@@ -217,7 +256,7 @@
     {@render sectionNote(devices, "devices-state")}
     {#if devices.state === "ready"}
       {#if shownDevices.length > 0}
-        <ul>
+        <ul class="flex flex-col gap-2 p-2">
           {#each shownDevices as entry (entry.id)}
             {@render row(entry)}
           {/each}
@@ -236,19 +275,23 @@
   </p>
 </section>
 
-<Sheet
-  open={selected !== null}
-  title={selected?.name ?? ""}
-  description={selected?.kind === "device" ? tr("ui.peoplePanel.device") : tr("ui.peoplePanel.person")}
-  onclose={() => (selected = null)}
->
-  <dl
-    class="grid grid-cols-[8rem_minmax(0,1fr)] gap-x-3 gap-y-2.5 text-sm"
-    data-testid="people-sheet"
-  >
-    {#each facts as fact, index (`${fact.k}:${index}`)}
-      <dt class="text-muted-foreground">{fact.k}</dt>
-      <dd class="min-w-0 break-words text-foreground">{fact.v}</dd>
-    {/each}
-  </dl>
-</Sheet>
+{#if selected}
+  <EntityDetailSheet
+    open
+    onclose={() => (selected = null)}
+    kind={selected.kind}
+    name={selected.name}
+    meta={selected.kind === "device"
+      ? platformLabel(selected.platform) || undefined
+      : selected.detail || undefined}
+    icon={selected.kind === "device"
+      ? (deviceIcon(selected) as unknown as EntityIcon)
+      : undefined}
+    shape={selected.kind === "person" ? "circle" : undefined}
+    presence={selected.kind === "device" ? presence(selected.online) : undefined}
+    statusLabel={selected.kind === "person" ? selected.status : undefined}
+    tags={[audienceLabel(selected)]}
+    facts={facts.map<EntityFact>((fact) => ({ label: fact.k, value: fact.v }))}
+    {labels}
+  />
+{/if}

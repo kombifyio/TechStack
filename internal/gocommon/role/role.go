@@ -10,7 +10,7 @@
 // Canonical SSOT: kombify-Core/standards/PLATFORM-CONSOLIDATION-PLAN.md §K1.
 package role
 
-import "strings"
+import "github.com/kombifyio/techstack/internal/gocommon/entitlements"
 
 // Role represents a platform-level authorization role.
 // Stored in Auth0 project roles and propagated via the Cloudflare edge
@@ -37,20 +37,10 @@ var AllRoles = []Role{GlobalAdmin, Admin, Developer, Manager, User}
 // StaffRoles lists roles that grant access to Admin Center and Company Tools.
 var StaffRoles = []Role{GlobalAdmin, Admin, Developer, Manager}
 
-// roleHierarchy maps each role to a numeric level for comparison.
-// Higher value = more privileges.
-var roleHierarchy = map[Role]int{
-	GlobalAdmin: 100,
-	Admin:       90,
-	Developer:   80,
-	Manager:     60,
-	User:        10,
-}
-
 // Level returns the numeric privilege level for a role.
 // Unknown roles return 0.
 func (r Role) Level() int {
-	return roleHierarchy[r]
+	return entitlements.RoleLevel[entitlements.Role(r)]
 }
 
 // AtLeast returns true if this role has at least the privilege level of target.
@@ -71,7 +61,7 @@ func (r Role) IsStaff() bool {
 
 // IsValid returns true if this role is a known platform role.
 func (r Role) IsValid() bool {
-	_, ok := roleHierarchy[r]
+	_, ok := entitlements.RoleLevel[entitlements.Role(r)]
 	return ok
 }
 
@@ -108,47 +98,12 @@ const (
 // Aliases (ProPlus, AllYouNeed, Business) are intentionally excluded.
 var AllPlans = []Plan{Anonymous, Free, Starter, Pro, Ayn}
 
-// planHierarchy maps each plan to a numeric level for comparison.
-// ProPlus resolves to Pro; Ayn, AllYouNeed and Business resolve to the same level (30).
-var planHierarchy = map[Plan]int{
-	Anonymous:  -1,
-	Free:       0,
-	Starter:    10,
-	Pro:        20,
-	ProPlus:    20, // backward-compat alias
-	Ayn:        30,
-	AllYouNeed: 30, // backward-compat alias
-	Business:   30, // backward-compat alias (was a separate tier 50 pre-ADR-0002)
-}
-
-// planAliases maps every accepted spelling to its canonical plan. Mirrors
-// PLAN_TIER_ALIASES in kombify-Gateway/cloudflare-edge/src/entitlements.ts.
-var planAliases = map[string]Plan{
-	"anonymous":         Anonymous,
-	"public":            Anonymous,
-	"free":              Free,
-	"starter":           Starter,
-	"pro":               Pro,
-	"premium":           Pro,
-	"pro_plus":          Pro,
-	"proplus":           Pro,
-	"all_you_need":      Ayn,
-	"all_you_need_tier": Ayn,
-	"ayn":               Ayn,
-	"business":          Ayn,
-	"enterprise":        Ayn,
-	"team":              Ayn,
-	"staff":             Ayn,
-	"internal":          Ayn,
-}
-
 // ParsePlan normalizes a raw tier string (JWT claim, X-User-Tier header, DB
-// value) to its canonical plan. Matching is case-insensitive and treats '-'
-// as '_'. ok is false for unknown values.
+// value) to its canonical plan through entitlements.NormalizeKey and the
+// generated alias vocabulary. ok is false for unknown values.
 func ParsePlan(s string) (Plan, bool) {
-	key := strings.ReplaceAll(strings.ToLower(strings.TrimSpace(s)), "-", "_")
-	p, ok := planAliases[key]
-	return p, ok
+	t, ok := entitlements.ParsePlanTier(s)
+	return Plan(t), ok
 }
 
 // NormalizePlan is ParsePlan with the edge default: unknown values normalize
@@ -161,11 +116,11 @@ func NormalizePlan(s string) Plan {
 	return Free
 }
 
-// Level returns the numeric tier level for a plan.
-// Unknown plans return -1 (the Anonymous level — fail-closed).
+// Level returns the tier rank for a plan (entitlements.PlanTierRank; only the
+// order is contractual). Unknown plans return -1 (the Anonymous level — fail-closed).
 func (p Plan) Level() int {
-	if v, ok := planHierarchy[p]; ok {
-		return v
+	if t, ok := entitlements.ParsePlanTier(string(p)); ok {
+		return entitlements.PlanTierRank[t]
 	}
 	return -1
 }
@@ -177,7 +132,7 @@ func (p Plan) AtLeast(target Plan) bool {
 
 // IsValid returns true if this plan is a known plan.
 func (p Plan) IsValid() bool {
-	_, ok := planHierarchy[p]
+	_, ok := entitlements.ParsePlanTier(string(p))
 	return ok
 }
 

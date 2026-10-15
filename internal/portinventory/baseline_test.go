@@ -20,12 +20,17 @@ func TestHostBaselinePreservesForeignListenerAndScopesUnknownExposure(t *testing
 	if err := EvaluateHostBaseline(inventory, []Requirement{requirement}, "deployment", now); err != nil {
 		t.Fatalf("unrelated transport or unknown exposure blocked an available binding: %v", err)
 	}
-	inventory.Allocations = []Allocation{
-		{Transport: TransportTCP, BindAddress: "127.0.0.1", Port: 5353, ObservedState: EvidencePresent, Desired: true, StackID: "deployment", ClaimState: ClaimStateActive},
-		{Transport: TransportTCP, BindAddress: "127.0.0.1", Port: 5353, ObservedState: EvidencePresent, Desired: true, StackID: "deployment", ClaimState: ClaimStatePending},
-	}
-	if err := EvaluateHostBaseline(inventory, []Requirement{requirement}, "deployment", now); err != nil {
-		t.Fatalf("owned successor rollout was blocked by its own pending claim: %v", err)
+	for _, retainedState := range []ClaimState{ClaimStateActive, ClaimStateUncertain} {
+		inventory.Allocations = []Allocation{
+			{Transport: TransportTCP, BindAddress: "127.0.0.1", Port: 5353, ObservedState: EvidencePresent, Desired: true, StackID: "deployment", ClaimState: retainedState},
+			{Transport: TransportTCP, BindAddress: "127.0.0.1", Port: 5353, ObservedState: EvidencePresent, Desired: true, StackID: "deployment", ClaimState: ClaimStatePending},
+		}
+		if err := EvaluateHostBaseline(inventory, []Requirement{requirement}, "deployment", now); err != nil {
+			t.Fatalf("owned successor over %s was blocked before local reconciliation: %v", retainedState, err)
+		}
+		if EvaluateHostBaseline(inventory, []Requirement{requirement}, "another-deployment", now) == nil {
+			t.Fatalf("another deployment could reuse %s claims", retainedState)
+		}
 	}
 	inventory.ListenersComplete = false
 	if EvaluateHostBaseline(inventory, []Requirement{requirement}, "deployment", now) == nil {

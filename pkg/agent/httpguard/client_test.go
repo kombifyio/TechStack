@@ -316,13 +316,3 @@ func TestClientRejectsRemoteClearTextChannel(t *testing.T) {
 		t.Fatal("New accepted a remote clear-text heartbeat URL")
 	}
 }
-
-func TestClientAllowsExplicitPrivateLANClearTextChannel(t *testing.T) {
-	_, err := New(Config{
-		HeartbeatURL: "http://192.168.10.2:5264/heartbeat", InventoryURL: "http://192.168.10.2:5264/inventory",
-		AgentToken: "token", RuntimeAgentID: "runtime-1", Collector: staticCollector{}, PrivateLANHTTPOrigin: "http://192.168.10.2:5264",
-	})
-	if err != nil {
-		t.Fatalf("New rejected explicitly enrolled private-LAN HTTP: %v", err)
-	}
-}

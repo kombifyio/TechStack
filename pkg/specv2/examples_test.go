@@ -69,8 +69,8 @@ func TestProjectionExamplesPreserveStackSpecContract(t *testing.T) {
 	for _, tc := range projectionExampleCases {
 		t.Run(tc.name, func(t *testing.T) {
 			projection, intent := projectExampleCase(t, tc.intentFile, tc.seedKit)
-			if projection.Spec["apiVersion"] != "stackkit/v2alpha1" || projection.Spec["kind"] != "StackSpec" {
-				t.Fatalf("projection schema identity = %v/%v", projection.Spec["apiVersion"], projection.Spec["kind"])
+			if err := RequireCanonicalV2(projection.Spec); err != nil {
+				t.Fatalf("projection contract: %v", err)
 			}
 			kit, ok := projection.Spec["kit"].(map[string]any)
 			if !ok || kit["slug"] != tc.seedKit {

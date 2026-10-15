@@ -145,6 +145,16 @@ func TestManagedRuntimeProjectionIncludesPersistedAccessContext(t *testing.T) {
 	}
 }
 
+// Changing the allocation default must never claim an OS upgrade for retained
+// leases, including explicit compatibility images whose OS is not observed here.
+func TestManagedRuntimeProjectionDoesNotRelabelExistingLeaseImage(t *testing.T) {
+	lease := createStackOperationsTestLease("retained-lease", "tenant-1", "owner-1", "stack-1", monthlyRuntimeEnrollmentStatusEnrolled)
+	server := stackServerFromManagedRuntime(managedRuntimeInventoryItemFromLease(nativeActiveManagedRuntimeRecord(lease)))
+	if server.Capabilities["image"] != "" {
+		t.Fatalf("existing resource inherited an allocation default instead of observed OS evidence: %v", server.Capabilities["image"])
+	}
+}
+
 func TestProjectManagedRuntimeLeasesKeepsCanceledInventoryVisible(t *testing.T) {
 	now := time.Date(2026, 7, 3, 16, 45, 0, 0, time.UTC)
 	active := createStackOperationsTestLease("lease-active", "tenant-1", "owner-1", "stack-1", monthlyRuntimeEnrollmentStatusEnrolled)

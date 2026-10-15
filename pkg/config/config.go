@@ -47,7 +47,7 @@ type Config struct {
 
 // DriftConfig holds drift detection scheduler settings.
 type DriftConfig struct {
-	Enabled   bool   `yaml:"enabled"`   // Enable periodic drift checks (TECHSTACK_DRIFT_ENABLED)
+	Enabled   bool   `yaml:"enabled"`   // Periodic Advanced drift checks, on by default (TECHSTACK_DRIFT_ENABLED=false disables)
 	Interval  string `yaml:"interval"`  // Check interval e.g. "6h", "1h", "30m" (TECHSTACK_DRIFT_INTERVAL)
 	Retention int    `yaml:"retention"` // Max drift results to keep per stack (TECHSTACK_DRIFT_RETENTION, default 50)
 }
@@ -180,7 +180,9 @@ func DefaultConfig() *Config {
 			LegacyPushLaneRequirement: "optional",
 		},
 		Drift: DriftConfig{
-			Enabled:   false,
+			// Advanced Mode includes per-stack drift detection, so the
+			// schedule is on unless explicitly disabled.
+			Enabled:   true,
 			Interval:  "6h",
 			Retention: 50,
 		},
@@ -342,8 +344,8 @@ func (c *Config) loadFromEnv() error {
 	c.StackKitsDir = envStr("TECHSTACK_STACKKITS_DIR", c.StackKitsDir)
 
 	// Drift detection scheduler settings
-	if envBool("TECHSTACK_DRIFT_ENABLED") {
-		c.Drift.Enabled = true
+	if value := os.Getenv("TECHSTACK_DRIFT_ENABLED"); value != "" {
+		c.Drift.Enabled = value == "true" || value == "1"
 	}
 	c.Drift.Interval = envStr("TECHSTACK_DRIFT_INTERVAL", c.Drift.Interval)
 	c.Drift.Retention = envInt("TECHSTACK_DRIFT_RETENTION", c.Drift.Retention)

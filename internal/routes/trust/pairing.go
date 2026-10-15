@@ -193,6 +193,8 @@ type MintedStackPairing struct {
 	// JobID is the completed registration job the wizard polls. Empty when the
 	// mint was stack-less or the job store is not wired.
 	JobID string
+	// Reused marks preparation replay of the same retained durable operation.
+	Reused bool
 	// failureStage records which phase failed for the HTTP error message.
 	failureStage string
 }
@@ -280,6 +282,7 @@ func MintStackPairingTokenOnly(ctx context.Context, stores RouteStores, tenantID
 func storePairingJobResult(req pairingTokenRequest, rawToken string, expiresAt time.Time) map[string]any {
 	result := map[string]any{
 		"creation_operation":       "add-server",
+		"spec_node_id":             req.SpecNodeID,
 		"registration_token":       rawToken,
 		"token_expires_at":         expiresAt,
 		"server_provisioning_mode": normalizePairingServerMode(req.ServerProvisioningMode),
@@ -341,7 +344,15 @@ func createStoreRemoteEnrollmentJob(ctx context.Context, jobs controlplane.JobSt
 	if jobs == nil || stack == nil {
 		return "", nil
 	}
-	job, err := jobs.UpsertJob(ctx, controlplane.UpsertJobRequest{
+	payload := map[string]any{
+		"tenant_id":                  strings.TrimSpace(stack.TenantID),
+		"owner_id":                   stack.OwnerSubjectID,
+		"remote_enrollment_recovery": true,
+	}
+	if nodeID, ok := result["spec_node_id"].(string); ok && strings.TrimSpace(nodeID) != "" {
+		payload["planned_server_id"] = runtimeidentity.StackServerID(stack.ID, nodeID)
+	}
+	job, err := jobs.CreateJob(ctx, controlplane.UpsertJobRequest{
 		ID:       uuid.NewString(),
 		TenantID: strings.TrimSpace(stack.TenantID),
 		StackID:  stack.ID,
@@ -351,6 +362,7 @@ func createStoreRemoteEnrollmentJob(ctx context.Context, jobs controlplane.JobSt
 		Step:     "remote_ssh_connect",
 		Message:  "Connecting to your Node over SSH…",
 		Result:   result,
+		Payload:  payload,
 	})
 	if err != nil {
 		return "", err
@@ -489,4 +501,10 @@ func firstNonEmptyPairing(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// PairingJobResult exposes the existing registration result projection to the
+// keyed Wizard operation boundary without duplicating token serialization.
+func PairingJobResult(req PairingTokenParams, minted MintedStackPairing) map[string]any {
+	return storePairingJobResult(req, minted.Token, minted.ExpiresAt)
 }

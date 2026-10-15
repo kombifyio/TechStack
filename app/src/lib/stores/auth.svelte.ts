@@ -26,6 +26,7 @@ import {
   type V2WhoAmIResponse,
   type DeploymentMode,
   type CloudUser,
+  type WalletSource,
 } from "#lib/api/auth.js";
 import {
   buildCloudAuthRedirectURL,
@@ -103,6 +104,8 @@ class AuthStore {
   v2LoginUrl = $state<string | null>(null);
   portalUrl = $state<string | null>(null);
   allowLocalLogin = $state(true);
+  /** Which Wallet backs the app; `legacy` until the backend says otherwise. */
+  walletSource = $state<WalletSource>("legacy");
   cloudUser = $state<CloudUser | null>(null);
   v2SessionActive = $state(false);
   loading = $state(false);
@@ -244,6 +247,8 @@ class AuthStore {
       this.cloudAuthUrl = authModeResponse.cloud_auth_url;
       this.portalUrl = authModeResponse.portal_url;
       this.allowLocalLogin = authModeResponse.allow_local_login;
+      this.walletSource =
+        authModeResponse.wallet_source === "kombify" ? "kombify" : "legacy";
       this.modeDetected = true;
     } catch {
       // Default to local mode if backend is unreachable
@@ -253,6 +258,7 @@ class AuthStore {
       this.mode = "local";
       this.deploymentMode = "self-hosted";
       this.isFirstRun = false;
+      this.walletSource = "legacy";
       this.modeDetected = true;
     }
   }

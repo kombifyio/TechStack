@@ -29,7 +29,7 @@ import (
 
 // ServerMaintenanceEntitlement is the tier-gated capability for owner-requested
 // reboots and OS updates. Auth0 issues it and the Gateway signs it into the v2
-// or v7 envelope (and enforces MFA step-up); Techstack accepts only that
+// or v7 envelope; Techstack accepts only that
 // signed grant, never the membership fallback. Together with server ownership
 // and tenant scope it is the whole authorization: no inventory entitlement or
 // FGA tuple is required, because maintaining one's own server is an owner
@@ -52,12 +52,13 @@ const (
 	maintenanceReasonHeartbeatStale    = "heartbeat_stale"
 	maintenanceReasonRevisionStale     = "inventory_revision_stale"
 	maintenanceReasonIdempotencyReused = "idempotency_key_reused"
-	maintenanceReasonStepUpRequired    = "server_maintenance_step_up_required"
+	maintenanceReasonOriginDenied      = "maintenance_origin_authority_denied"
+	maintenanceReasonOriginUnavailable = "maintenance_origin_authority_unavailable"
+	maintenanceReasonImpactRequired    = "impact_confirmation_required"
+	maintenanceReasonImpactChanged     = "impact_changed"
+	maintenanceReasonImpactUnavailable = "impact_unavailable"
+	maintenanceReasonNotCancellable    = "maintenance_not_cancellable"
 )
-
-// serverMaintenanceStepUpMaxAge bounds how old the multi-factor sign-in
-// behind a reboot or OS update may be.
-const serverMaintenanceStepUpMaxAge = 300 * time.Second
 
 var maintenancePlanDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
@@ -77,6 +78,7 @@ type ServerMaintenanceRouteConfig struct {
 	// ControlPlaneMachineIDDigest is servermaintenance.MachineIDDigest of this
 	// control plane's own host; "" when unknown.
 	ControlPlaneMachineIDDigest string
+	OriginAuthority             MaintenanceOriginAuthority
 }
 
 type serverMaintenanceHandlers struct {
@@ -87,6 +89,7 @@ type serverMaintenanceHandlers struct {
 	dispatcher        servermaintenance.Dispatcher
 	agentCapabilities func(server controlplane.ServerRuntime) []string
 	controlPlaneHost  string
+	originAuthority   MaintenanceOriginAuthority
 }
 
 func newServerMaintenanceHandlers(cfg *ServerMaintenanceRouteConfig) *serverMaintenanceHandlers {
@@ -100,6 +103,7 @@ func newServerMaintenanceHandlers(cfg *ServerMaintenanceRouteConfig) *serverMain
 		jobs: cfg.Jobs, services: cfg.Services, events: cfg.Events,
 		entitlements: entitlementGateOrHosted(cfg.Entitlements), dispatcher: cfg.Dispatcher,
 		agentCapabilities: cfg.AgentCapabilities, controlPlaneHost: strings.TrimSpace(cfg.ControlPlaneMachineIDDigest),
+		originAuthority: cfg.OriginAuthority,
 	}
 }
 
@@ -108,6 +112,7 @@ type serverMaintenanceRequest struct {
 	ExpectedInventoryRevision int64  `json:"expected_inventory_revision"`
 	OwnerApproved             bool   `json:"owner_approved"`
 	ExpectedPlanDigest        string `json:"expected_plan_digest,omitempty"`
+	ExpectedImpactDigest      string `json:"expected_impact_digest,omitempty"`
 }
 
 type serverMaintenanceResponse struct {
@@ -191,6 +196,9 @@ func (h serverRuntimeHandlers) maintenanceAction(e *httpx.Event) error {
 		return httpx.BadRequest(e, "Server ID is required", nil)
 	}
 	ctx := e.Request.Context()
+	if maintenanceOriginMarkedWithoutVerification(ctx, e.Request.Header) {
+		return writeServerMaintenanceOriginDenial(e, errors.New("maintenance origin verification required"))
+	}
 	if !m.entitlements.SignedGrant(ctx, ServerMaintenanceEntitlement) {
 		return writeServerMaintenanceDenial(e, http.StatusForbidden, maintenanceReasonEntitlement, nil)
 	}
@@ -198,18 +206,15 @@ func (h serverRuntimeHandlers) maintenanceAction(e *httpx.Event) error {
 	if err != nil {
 		return err
 	}
-	// Defense in depth behind the Gateway step-up: a reboot or OS update needs
-	// a fresh multi-factor sign-in bound by the verified edge envelope.
-	if request.Action != controlplane.ServerMaintenanceActionPlan &&
-		!m.entitlements.FreshMultiFactor(ctx, h.now().UTC(), serverMaintenanceStepUpMaxAge) {
-		return writeServerMaintenanceDenial(e, http.StatusForbidden, maintenanceReasonStepUpRequired, nil)
-	}
 	idempotencyKey := strings.TrimSpace(e.Request.Header.Get("Idempotency-Key"))
 	if idempotencyKey == "" || len(idempotencyKey) > 128 {
 		return httpx.BadRequest(e, "A bounded Idempotency-Key is required", nil)
 	}
 	jobID := serverMaintenanceJobID(tenantID, ownerID, idempotencyKey)
 	digest := serverMaintenanceRequestDigest(tenantID, serverID, request)
+	if err := checkMaintenanceOriginCurrent(ctx, m.originAuthority, ownerID, tenantID, serverID, request.Action); err != nil {
+		return writeServerMaintenanceOriginDenial(e, err)
+	}
 	// Replay before validating the target: a lost-response retry must return
 	// the stored receipt even after the first attempt moved the inventory
 	// revision or rebooted the node.
@@ -263,24 +268,38 @@ func (h serverRuntimeHandlers) maintenanceAction(e *httpx.Event) error {
 			return writeServerMaintenanceDenial(e, http.StatusConflict, maintenanceReasonPlanStale, nil)
 		}
 	}
+	if request.Action != controlplane.ServerMaintenanceActionPlan && request.ExpectedImpactDigest == "" {
+		return writeServerMaintenanceDenial(e, http.StatusConflict, maintenanceReasonImpactRequired, nil)
+	}
 	// Node check, durable per-server fence and enqueue in one transaction
 	// under the node's advisory lock. A job the runner never starts expires at
 	// its deadline and frees the fence.
 	queueDeadline := now.Add(servermaintenance.QueueTimeout)
+	if err := checkMaintenanceOriginCurrent(ctx, m.originAuthority, ownerID, tenantID, serverID, request.Action); err != nil {
+		return writeServerMaintenanceOriginDenial(e, err)
+	}
 	job, err := m.jobs.AdmitServerMaintenanceJob(ctx, controlplane.ServerMaintenanceJob{
 		ID: jobID, TenantID: tenantID, ServerID: server.ID, AgentID: server.WorkerID, StackID: server.StackID,
 		OwnerSubjectID: ownerID, Action: request.Action, RequestDigest: digest,
 		State: controlplane.ServerMaintenanceStateQueued, InventoryRevision: server.InventoryRevision,
 		PlanDigest: request.ExpectedPlanDigest, DeadlineAt: &queueDeadline,
+		Result: map[string]any{controlplane.ServerMaintenanceImpactDigestKey: request.ExpectedImpactDigest},
 	})
 	var busy *controlplane.NodeBusyError
 	switch {
+	case errors.Is(err, controlplane.ErrServerMaintenanceImpactChanged):
+		return writeServerMaintenanceDenial(e, http.StatusConflict, maintenanceReasonImpactChanged, nil)
+	case errors.Is(err, controlplane.ErrServerMaintenanceImpactUnavailable):
+		return writeServerMaintenanceDenial(e, http.StatusConflict, maintenanceReasonImpactUnavailable, nil)
 	case errors.As(err, &busy):
 		return writeServerMaintenanceDenial(e, http.StatusConflict, maintenanceReasonNodeOperation, map[string]any{"job_id": busy.JobID})
 	case errors.Is(err, controlplane.ErrServerMaintenanceActive):
 		return writeServerMaintenanceDenial(e, http.StatusConflict, maintenanceReasonActive, nil)
 	case errors.Is(err, controlplane.ErrConflict):
 		// A concurrent request with the same key won the insert.
+		if err := checkMaintenanceOriginCurrent(ctx, m.originAuthority, ownerID, tenantID, serverID, request.Action); err != nil {
+			return writeServerMaintenanceOriginDenial(e, err)
+		}
 		if replayed, replayErr := m.replay(e, tenantID, jobID, serverID, digest); replayed || replayErr != nil {
 			return replayErr
 		}
@@ -301,6 +320,7 @@ func (h serverRuntimeHandlers) maintenanceAction(e *httpx.Event) error {
 // let {"action":"os_update_plan","ACTION":"reboot"} reboot past the edge check.
 var serverMaintenanceRequestFields = map[string]bool{
 	"action": true, "expected_inventory_revision": true, "owner_approved": true, "expected_plan_digest": true,
+	"expected_impact_digest": true,
 }
 
 func decodeServerMaintenanceRequest(e *httpx.Event) (serverMaintenanceRequest, error) {
@@ -319,6 +339,7 @@ func decodeServerMaintenanceRequest(e *httpx.Event) (serverMaintenanceRequest, e
 	}
 	request.Action = strings.ToLower(strings.TrimSpace(request.Action))
 	request.ExpectedPlanDigest = strings.TrimSpace(request.ExpectedPlanDigest)
+	request.ExpectedImpactDigest = strings.TrimSpace(request.ExpectedImpactDigest)
 	switch request.Action {
 	case controlplane.ServerMaintenanceActionPlan, controlplane.ServerMaintenanceActionUpdate, controlplane.ServerMaintenanceActionReboot:
 	default:
@@ -327,12 +348,13 @@ func decodeServerMaintenanceRequest(e *httpx.Event) (serverMaintenanceRequest, e
 	if request.ExpectedInventoryRevision <= 0 {
 		return request, httpx.Reject(e, http.StatusBadRequest, ksapi.ErrCodeBadRequest, "expected_inventory_revision is required", nil)
 	}
-	if request.Action != controlplane.ServerMaintenanceActionPlan && !request.OwnerApproved {
-		return request, httpx.Reject(e, http.StatusBadRequest, ksapi.ErrCodeBadRequest, "Reboots and OS updates require explicit Owner approval", nil)
-	}
 	if (request.Action == controlplane.ServerMaintenanceActionUpdate) != (request.ExpectedPlanDigest != "") ||
 		(request.ExpectedPlanDigest != "" && !maintenancePlanDigestPattern.MatchString(request.ExpectedPlanDigest)) {
 		return request, httpx.Reject(e, http.StatusBadRequest, ksapi.ErrCodeBadRequest, "expected_plan_digest (sha256:<hex>) is required for os_update and only for it", nil)
+	}
+	if request.ExpectedImpactDigest != "" && (request.Action == controlplane.ServerMaintenanceActionPlan ||
+		!maintenancePlanDigestPattern.MatchString(request.ExpectedImpactDigest)) {
+		return request, httpx.Reject(e, http.StatusBadRequest, ksapi.ErrCodeBadRequest, "expected_impact_digest must be a maintenance preview digest for os_update or reboot", nil)
 	}
 	return request, nil
 }
@@ -370,10 +392,15 @@ func serverMaintenanceJobID(tenantID, ownerID, idempotencyKey string) string {
 }
 
 func serverMaintenanceRequestDigest(tenantID, serverID string, request serverMaintenanceRequest) string {
-	sum := sha256.Sum256([]byte(strings.Join([]string{
+	parts := []string{
 		tenantID, serverID, request.Action, strconv.FormatInt(request.ExpectedInventoryRevision, 10),
 		strconv.FormatBool(request.OwnerApproved), request.ExpectedPlanDigest,
-	}, "\x00")))
+	}
+	// Preserve exact replay of receipts admitted before impact previews existed.
+	if request.ExpectedImpactDigest != "" {
+		parts = append(parts, request.ExpectedImpactDigest)
+	}
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -467,15 +494,40 @@ type maintenanceGuidance struct {
 }
 
 var serverMaintenanceGuidance = map[string]maintenanceGuidance{
+	maintenanceReasonImpactRequired: {
+		title: "Review the maintenance impact",
+		body:  "Confirm a current impact preview for this server and operation before starting maintenance.",
+		steps: []string{"Open the impact preview and confirm the affected services and stacks."},
+	},
+	maintenanceReasonImpactChanged: {
+		title: "The maintenance impact changed",
+		body:  "The server or its deployed services changed after confirmation. No maintenance was started.",
+		steps: []string{"Refresh the impact preview and confirm it again."}, retryable: true,
+	},
+	maintenanceReasonImpactUnavailable: {
+		title: "The maintenance impact cannot be confirmed",
+		body:  "A complete, current inventory is required, and affected services must be unlocked. No maintenance was started.",
+		steps: []string{"Refresh the impact preview and resolve its inventory or service lock warning."}, retryable: true,
+	},
+	maintenanceReasonNotCancellable: {
+		title: "This maintenance job can no longer be cancelled",
+		body:  "Only a queued job can be cancelled. A command already sent to the server may still run.",
+		steps: []string{"Follow the current maintenance job to its reported outcome."},
+	},
 	maintenanceReasonEntitlement: {
 		title: "Server maintenance is not included in your plan",
-		body:  "Reboots and OS updates from kombify need the server maintenance entitlement and a recent multi-factor sign-in.",
-		steps: []string{"Upgrade to a plan that includes server maintenance.", "Sign in again with your second factor and retry."},
+		body:  "Reboots and OS updates from kombify need the server maintenance entitlement.",
+		steps: []string{"Upgrade to a plan that includes server maintenance."},
 	},
-	maintenanceReasonStepUpRequired: {
-		title:     "Confirm it is you",
-		body:      "Reboots and OS updates need a multi-factor sign-in from the last five minutes.",
-		steps:     []string{"Sign in again with your second factor, then retry."},
+	maintenanceReasonOriginDenied: {
+		title: "The agent's maintenance authority is no longer valid",
+		body:  "Maintenance requires current authority for this exact server and action.",
+		steps: []string{"Review the agent's current server maintenance grant."},
+	},
+	maintenanceReasonOriginUnavailable: {
+		title:     "Current maintenance authority could not be checked",
+		body:      "No maintenance job was admitted without a current authority check.",
+		steps:     []string{"Wait for the authority service, then retry with a fresh tool request."},
 		retryable: true,
 	},
 	maintenanceReasonControlPlaneHost: {
@@ -576,6 +628,9 @@ func writeServerMaintenanceDenial(e *httpx.Event, status int, reason string, sup
 	code := ksapi.ErrCodeConflict
 	if status == http.StatusForbidden {
 		code = ksapi.ErrCodeForbidden
+	}
+	if status == http.StatusServiceUnavailable {
+		code = ksapi.ErrCodeUnavailable
 	}
 	payload["error"] = map[string]any{"code": code, "message": guidance.title, "details": map[string]any{"reason": reason}}
 	if err := e.JSON(status, payload); err != nil {

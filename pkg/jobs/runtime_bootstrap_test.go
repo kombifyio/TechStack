@@ -3,7 +3,9 @@ package jobs
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -12,6 +14,111 @@ import (
 	"github.com/kombifyio/techstack/internal/guardbootstrap"
 	"golang.org/x/crypto/ssh"
 )
+
+// A host-bound enrollment must never fall back to a bearer downloader or
+// overwrite the Guard. SSH admits only a protected, running canonical service;
+// authenticated artifact/version proof stays with its runtime readiness gate.
+func TestRuntimeTargetEnrolledAgentDelegatesOnlyToReadyProtectedGuard(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("POSIX shell is unavailable")
+	}
+	for _, tc := range []struct {
+		name, legacy, state, owner, enabled, active, admission, status string
+		newer                                                          bool
+		wantFailure                                                    bool
+	}{
+		{name: "legacy root layout", legacy: "credential", owner: "0:600", status: "delegated"},
+		{name: "migrated Guard layout", state: "credential", owner: "321:600", status: "delegated"},
+		{name: "newer state credential", legacy: "credential", state: "credential", newer: true, owner: "321:644", status: "failed", wantFailure: true},
+		{name: "newer revoked credential", legacy: "credential", state: "empty", newer: true, owner: "321:600", status: "failed", wantFailure: true},
+		{name: "disabled Guard", legacy: "credential", owner: "0:600", enabled: "1", status: "failed", wantFailure: true},
+		{name: "inactive Guard", legacy: "credential", owner: "0:600", active: "1", status: "failed", wantFailure: true},
+		{name: "restarting Guard", state: "credential", owner: "321:600", active: "restart", status: "delegated"},
+		{name: "unenrolled direct target", status: "not_applicable"},
+		{name: "host admission denied", legacy: "credential", owner: "0:600", admission: "1", wantFailure: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := filepath.ToSlash(t.TempDir())
+			for name, content := range map[string]string{"legacy": tc.legacy, "state": tc.state} {
+				if content == "" {
+					continue
+				}
+				if content == "empty" {
+					content = ""
+				}
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.newer {
+				old := time.Now().Add(-time.Hour)
+				if err := os.Chtimes(filepath.Join(dir, "legacy"), old, old); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// The host boundary is faked; run the production shell function itself.
+			// For the old layout the protected enrollment is root-owned, while the
+			// state copy uses the configured owner and may invalidate delegation.
+			script := `set -u
+log() { printf '%s\n' "$*"; }
+admit_ufw_nftables() { :; }
+admit_docker_firewall() { return "${ADMISSION:-0}"; }
+admit_guard_host_writes() { :; }
+id() { printf '321\n'; }
+sleep() { :; }
+curl() { printf 'unauthorized download\n' >> "$FIXTURE/effects"; return 1; }
+install() { printf 'unsigned activation\n' >> "$FIXTURE/effects"; return 1; }
+mv() { printf 'binary replacement\n' >> "$FIXTURE/effects"; return 1; }
+host() {
+  operation="$1"; shift
+  case "$operation" in
+    test)
+      a="${2:-}"; b="${3:-}"
+      case "$a" in /etc/techstack/agent-enrollment.json) a="$FIXTURE/legacy";; /var/lib/techstack/guard/agent-enrollment.json) a="$FIXTURE/state";; esac
+      case "$b" in /etc/techstack/agent-enrollment.json) b="$FIXTURE/legacy";; /var/lib/techstack/guard/agent-enrollment.json) b="$FIXTURE/state";; esac
+      if [ "$a" = "-nt" ]; then
+        case "$1" in /var/lib/techstack/guard/agent-enrollment.json) test "$FIXTURE/state" -nt "$b";; *) return 1;; esac
+      else test "$1" "$a"; fi
+      ;;
+    stat)
+      if [ "$3" = "/etc/techstack/agent-enrollment.json" ]; then printf '0:600\n'; else printf '%s\n' "$OWNER"; fi
+      ;;
+    systemctl)
+      case "$1" in
+        is-enabled) return "${ENABLED:-0}";;
+        is-active)
+          if [ "${ACTIVE:-0}" = "restart" ]; then
+            if test -f "$FIXTURE/restarted"; then return 0; fi
+            printf 'restarting\n' > "$FIXTURE/restarted"; return 1
+          fi
+          return "${ACTIVE:-0}";;
+        *) printf 'unexpected service mutation\n' >> "$FIXTURE/effects"; return 1;;
+      esac
+      ;;
+    *) "$operation" "$@";;
+  esac
+}
+SUDO=host
+` + runtimeTargetEnrolledAgentConvergenceScript + "\nconverge_enrolled_agent\n"
+			cmd := exec.Command(sh)
+			cmd.Stdin = strings.NewReader(script)
+			cmd.Env = append(os.Environ(), "FIXTURE="+dir, "OWNER="+tc.owner,
+				"ENABLED="+firstNonEmpty(tc.enabled, "0"), "ACTIVE="+firstNonEmpty(tc.active, "0"), "ADMISSION="+firstNonEmpty(tc.admission, "0"))
+			output, runErr := cmd.CombinedOutput()
+			if (runErr != nil) != tc.wantFailure {
+				t.Fatalf("bootstrap error=%v, output=%s", runErr, output)
+			}
+			status, digest := runtimeTargetAgentConvergenceProof(string(output))
+			if status != tc.status || digest != "" {
+				t.Fatalf("bootstrap proof=(%q, %q), output=%s", status, digest, output)
+			}
+			if effects, err := os.ReadFile(filepath.Join(dir, "effects")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("bootstrap attempted a competing update: %s (read error %v)", effects, err)
+			}
+		})
+	}
+}
 
 func TestRuntimeTargetBootstrapScriptParsesAsPOSIXShell(t *testing.T) {
 	sh, err := exec.LookPath("sh")
@@ -63,6 +170,10 @@ func TestRuntimeTargetAgentConvergenceProofIsStructured(t *testing.T) {
 	status, sha256 = runtimeTargetAgentConvergenceProof("phase=agent_convergence status=failed reason=checksum_mismatch")
 	if status != "failed" || sha256 != "" {
 		t.Fatalf("failed agent proof = (%q, %q)", status, sha256)
+	}
+	status, sha256 = runtimeTargetAgentConvergenceProof("phase=agent_convergence status=updated sha256=" + digest + "\nphase=agent_convergence status=delegated")
+	if status != "delegated" || sha256 != "" {
+		t.Fatalf("delegated convergence must not retain a previous artifact proof: (%q, %q)", status, sha256)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"github.com/kombifyio/techstack/internal/backupjobs"
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/db"
+	"github.com/kombifyio/techstack/pkg/guardreach"
 	"github.com/kombifyio/techstack/pkg/logger"
 	"github.com/kombifyio/techstack/pkg/monitoring"
 	"github.com/kombifyio/techstack/pkg/orchestrator"
@@ -94,12 +95,15 @@ func startRuntimeLifecycle(
 	monitorState *monitoringBoot,
 	workflowEngine *workflow.Engine,
 	rilSignalWorker *signals.Worker,
+	guardReach *guardreach.Service,
 	providerRuntime providerRuntimeRunner,
 	registrySweeper *serverregistry.Sweeper,
 	platformProjector *serverregistry.PlatformProjector,
 	jobReclaimer *orchestrator.JobExecutionReclaimer,
 	backupScanner *backupjobs.Scanner,
+	backupRetention *backupRetention,
 	serverMaintenance *servermaintenance.Loop,
+	driftScheduler *orchestrator.DriftScheduler,
 	log *logger.Logger,
 ) *shutdownHandles {
 	background := newBackgroundRuntimeLifecycle(ctx)
@@ -132,6 +136,11 @@ func startRuntimeLifecycle(
 		fmt.Println("   Backups:        Due-stack scanner started")
 	}
 
+	if backupRetention != nil {
+		background.run(backupRetention.Run)
+		fmt.Println("   Backups:        Retention wipe sweeper started")
+	}
+
 	// A crash between the durable job insert and the queue enqueue stranded
 	// the run until the user retried. Re-admit recent pending jobs whose
 	// recovery payload survived redaction; the per-stack execution claim keeps
@@ -149,10 +158,14 @@ func startRuntimeLifecycle(
 		fmt.Println("   Job reclaim:    orphaned execution reconciliation started")
 	}
 
-	if cfg.Drift.Enabled {
-		fmt.Println("   Drift:          Scheduler unavailable until canonical tenant enumeration is configured")
-	} else {
-		fmt.Println("   Drift:          Scheduler disabled (set TECHSTACK_DRIFT_ENABLED=true to enable)")
+	switch {
+	case driftScheduler != nil:
+		background.run(driftScheduler.Run)
+		fmt.Printf("   Drift:          Advanced drift detection every %s\n", driftScheduler.Interval())
+	case cfg.Drift.Enabled:
+		fmt.Println("   Drift:          Scheduler unavailable without the control-plane database")
+	default:
+		fmt.Println("   Drift:          Scheduler disabled (TECHSTACK_DRIFT_ENABLED=false)")
 	}
 
 	startMonitoringRuntime(background, monitorState, log)
@@ -165,6 +178,11 @@ func startRuntimeLifecycle(
 	if rilSignalWorker != nil {
 		background.run(rilSignalWorker.Run)
 		fmt.Println("   RIL signals:    durable Gateway publisher started")
+	}
+
+	if guardReach != nil {
+		background.run(guardReach.Run)
+		fmt.Println("   Guard reach:    kombify.me relay binding + Connect resource reconciler started")
 	}
 
 	if registrySweeper != nil {
@@ -220,6 +238,9 @@ func stopRuntimeLifecycle(
 			}
 		},
 		func() {
+			if v2State.advancedIssuerCustody != nil {
+				_ = v2State.advancedIssuerCustody.Close()
+			}
 			if v2State.db != nil {
 				_ = v2State.db.Close()
 			}
@@ -254,6 +275,15 @@ func runRuntimeShutdownSequence(
 }
 
 func startMonitoringRuntime(background *backgroundRuntimeLifecycle, state *monitoringBoot, log *logger.Logger) {
+	if state.domainMonitor != nil {
+		background.run(state.domainMonitor.Run)
+	}
+	if state.driveHealth != nil {
+		background.run(state.driveHealth.Run)
+	}
+	if state.notifyOutbox != nil {
+		background.run(state.notifyOutbox.Run)
+	}
 	if state.tsdb == nil && state.remote == nil {
 		return
 	}
@@ -263,9 +293,6 @@ func startMonitoringRuntime(background *backgroundRuntimeLifecycle, state *monit
 	}
 	if state.alertEngine != nil {
 		background.run(state.alertEngine.Run)
-	}
-	if state.notifyOutbox != nil {
-		background.run(state.notifyOutbox.Run)
 	}
 	printMonitoringStartup(state)
 }

@@ -15,6 +15,7 @@
 
   let adminEmail = $state("");
   let adminPassword = $state("");
+  let bootstrapPassword = $state("");
   let existingOwnerEmail = $state("");
   let existingOwnerPassword = $state("");
   let loading = $state(true);
@@ -25,7 +26,9 @@
   let setupAvailable = $state(true);
 
   const canSubmit = $derived(
-    setupAvailable && localSetupReady(adminEmail, adminPassword),
+    setupAvailable &&
+      bootstrapPassword.trim().length > 0 &&
+      localSetupReady(adminEmail, adminPassword),
   );
   const canSignInExistingOwner = $derived(
     !setupAvailable &&
@@ -76,15 +79,16 @@
         email: adminEmail,
         password: adminPassword,
         passwordConfirm: adminPassword,
+        currentPassword: bootstrapPassword,
         isFirstRun: authStore.isFirstRun,
       });
       const ok = await authStore.loginWithPassword(email, adminPassword);
       if (!ok) {
-        error =
-          authStore.error || tr("ui.clientLocal.localOwnerWasCreatedBut");
+        error = authStore.error || tr("ui.clientLocal.localOwnerWasCreatedBut");
         return;
       }
       signedInEmail = email;
+      bootstrapPassword = "";
       saved = true;
       openOperatorUi();
     } catch (err) {
@@ -93,7 +97,9 @@
         parsed.fieldErrors.email?.message ||
         parsed.fieldErrors.password?.message ||
         parsed.message ||
-        (err instanceof Error ? err.message : tr("ui.clientLocal.localSetupFailed"));
+        (err instanceof Error
+          ? err.message
+          : tr("ui.clientLocal.localSetupFailed"));
     } finally {
       submitting = false;
     }
@@ -136,7 +142,8 @@
         href={backHref}
         class="inline-flex items-center gap-2 text-sm font-semibold text-muted-foreground"
       >
-        <ArrowLeft class="h-4 w-4" /> {tr("ui.importExportModal.back")}
+        <ArrowLeft class="h-4 w-4" />
+        {tr("ui.importExportModal.back")}
       </a>
       <TechstackBrandLogo
         sizes="214px"
@@ -148,7 +155,8 @@
         <div
           class="mb-7 inline-flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm font-semibold"
         >
-          <Monitor class="h-4 w-4" /> {windowsClient
+          <Monitor class="h-4 w-4" />
+          {windowsClient
             ? tr("ui.clientOnboarding.localWindowsInstallation")
             : tr("ui.clientLocal.selfHostedLocalOwner")}
         </div>
@@ -186,7 +194,8 @@
             class="rounded-xl border border-success/30 bg-success/5 p-4 text-sm text-success"
           >
             <div class="flex items-center gap-2 font-semibold">
-              <CheckCircle2 class="h-4 w-4" /> {tr("ui.clientLocal.localOwnerSignedIn")}
+              <CheckCircle2 class="h-4 w-4" />
+              {tr("ui.clientLocal.localOwnerSignedIn")}
             </div>
             {#if signedInEmail}
               <p class="mt-2 text-xs text-success">{signedInEmail}</p>
@@ -205,7 +214,8 @@
             <div
               class="mb-5 flex items-center gap-2 text-lg font-semibold text-foreground"
             >
-              <KeyRound class="h-5 w-5 text-primary" /> {tr("ui.clientLocal.localOwnerSignIn")}
+              <KeyRound class="h-5 w-5 text-primary" />
+              {tr("ui.clientLocal.localOwnerSignIn")}
             </div>
             <p class="mb-5 text-sm leading-6 text-muted-foreground">
               {tr("ui.clientLocal.thisDeviceIsAlreadyConfigured")}
@@ -227,7 +237,8 @@
             />
             <label
               class="mt-5 block text-sm font-semibold text-foreground"
-              for="existing-owner-password">{tr("ui.clientLocal.password")}</label
+              for="existing-owner-password"
+              >{tr("ui.clientLocal.password")}</label
             >
             <input
               id="existing-owner-password"
@@ -244,16 +255,41 @@
               type="submit"
               data-testid="windows-local-existing-submit"
               disabled={!canSignInExistingOwner || submitting}
-              class="mt-6 inline-flex h-10 w-full items-center justify-center rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              data-kx="control"
+              data-variant="primary"
+              class="mt-6 inline-flex h-10 w-full items-center justify-center rounded-md px-4 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {submitting ? tr("ui.clientLocal.signingIn") : tr("ui.clientLocal.signInLocally")}
+              {submitting
+                ? tr("ui.clientLocal.signingIn")
+                : tr("ui.clientLocal.signInLocally")}
             </button>
           {:else}
             <div
               class="mb-5 flex items-center gap-2 text-lg font-semibold text-foreground"
             >
-              <KeyRound class="h-5 w-5 text-primary" /> {tr("ui.clientLocal.firstLocalAdmin")}
+              <KeyRound class="h-5 w-5 text-primary" />
+              {tr("ui.clientLocal.firstLocalAdmin")}
             </div>
+            <p class="mb-5 text-sm leading-6 text-muted-foreground">
+              {tr("ui.clientLocal.bootstrapGuidance", {
+                command: "techstack owner bootstrap",
+              })}
+            </p>
+            <label
+              class="block text-sm font-semibold text-foreground"
+              for="bootstrap-password"
+            >
+              {tr("ui.clientLocal.bootstrapPassword")}
+            </label>
+            <input
+              id="bootstrap-password"
+              class="mb-5 mt-2 h-10 w-full rounded-md border border-border bg-background px-3 text-sm outline-none focus:border-primary"
+              bind:value={bootstrapPassword}
+              type="password"
+              autocomplete="off"
+              required
+              disabled={submitting}
+            />
             <label
               class="block text-sm font-semibold text-foreground"
               for="admin-email">{tr("ui.clientLocal.email")}</label
@@ -270,7 +306,9 @@
               disabled={submitting}
             />
             {#if ownerName}
-              <p class="mt-2 text-xs text-muted-foreground">{tr("ui.clientLocal.ownerName", { name: ownerName })}</p>
+              <p class="mt-2 text-xs text-muted-foreground">
+                {tr("ui.clientLocal.ownerName", { name: ownerName })}
+              </p>
             {/if}
             <label
               class="mt-5 block text-sm font-semibold text-foreground"
@@ -291,9 +329,13 @@
               type="submit"
               data-testid="windows-local-setup-submit"
               disabled={!canSubmit || submitting}
-              class="mt-6 inline-flex h-10 w-full items-center justify-center rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              data-kx="control"
+              data-variant="primary"
+              class="mt-6 inline-flex h-10 w-full items-center justify-center rounded-md px-4 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {submitting ? tr("ui.clientLocal.creatingLocalOwner") : tr("ui.clientLocal.continueLocalSetup")}
+              {submitting
+                ? tr("ui.clientLocal.creatingLocalOwner")
+                : tr("ui.clientLocal.continueLocalSetup")}
             </button>
           {/if}
         {/if}

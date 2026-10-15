@@ -51,6 +51,13 @@ func (s *serverLocalStore) Save(_ context.Context, rec *commonauthlocal.Record) 
 	return nil
 }
 
+func (s *serverLocalStore) CompareAndSwap(ctx context.Context, expected, next *commonauthlocal.Record) (bool, error) {
+	if (s.rec == nil) != (expected == nil) || s.rec != nil && (*s.rec != *expected || s.rec.Claimed || s.rec.Locked) {
+		return false, nil
+	}
+	return true, s.Save(ctx, next)
+}
+
 func (f *serverFakeExchanger) ExchangeCode(_ context.Context, _ *commonoidc.Provider, _ commonoidc.CodeExchangeRequest) (*commonoidc.CodeExchangeResult, error) {
 	if f.err != nil {
 		return nil, f.err
@@ -89,7 +96,7 @@ func newServerProviderFixture(t *testing.T) (*providers.Provider, *rsa.PrivateKe
 	return provider, key, server
 }
 
-func signServerTestIDToken(t *testing.T, key *rsa.PrivateKey, issuer string) string {
+func signServerTestIDToken(t *testing.T, key *rsa.PrivateKey, issuer, nonce string) string {
 	t.Helper()
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
 		"iss":   issuer,
@@ -98,6 +105,7 @@ func signServerTestIDToken(t *testing.T, key *rsa.PrivateKey, issuer string) str
 		"email": "user@example.com",
 		"role":  "admin",
 		"exp":   time.Now().Add(time.Minute).Unix(),
+		"nonce": nonce,
 	})
 	token.Header["kid"] = "kid-1"
 	raw, err := token.SignedString(key)
@@ -246,7 +254,9 @@ func TestEndToEndAuthFlowThroughServerRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	exchanger := &serverFakeExchanger{result: &commonoidc.CodeExchangeResult{}}
 	authFlow, err := commonauthflow.NewService(commonauthflow.Config{
+		PublicBaseURL:     "http://127.0.0.1:5260",
 		Providers:         registry,
 		Sessions:          mgr,
 		StateSecret:       []byte("fedcba9876543210fedcba9876543210"),
@@ -255,9 +265,7 @@ func TestEndToEndAuthFlowThroughServerRoutes(t *testing.T) {
 		DefaultReturnTo:   "/stacks",
 		CallbackPath:      config.CanonicalAuthCallbackPath,
 		SessionCookieName: DefaultSessionCookieName,
-		Exchanger: &serverFakeExchanger{result: &commonoidc.CodeExchangeResult{
-			IDToken: signServerTestIDToken(t, key, jwksServer.URL),
-		}},
+		Exchanger:         exchanger,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -288,6 +296,11 @@ func TestEndToEndAuthFlowThroughServerRoutes(t *testing.T) {
 		t.Fatalf("login status: got %d, want %d", got, want)
 	}
 	loginLocation := loginRec.Header().Get("Location")
+	authorizationURL, err := url.Parse(loginLocation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exchanger.result.IDToken = signServerTestIDToken(t, key, jwksServer.URL, authorizationURL.Query().Get("nonce"))
 	assertRedirectURIFromLocation(t, loginLocation, "http://127.0.0.1:5260"+config.CanonicalAuthCallbackPath)
 	state := mustStateFromLocation(t, loginLocation)
 
@@ -303,11 +316,14 @@ func TestEndToEndAuthFlowThroughServerRoutes(t *testing.T) {
 	assertRedirectURIFromLocation(
 		t,
 		forwardedLoginRec.Header().Get("Location"),
-		"https://techstack.kombify.io"+config.CanonicalAuthCallbackPath,
+		"http://127.0.0.1:5260"+config.CanonicalAuthCallbackPath,
 	)
 
 	callbackReq := httptest.NewRequest(http.MethodGet, "/api/v2/auth/callback?code=code-123&state="+url.QueryEscape(state), nil)
 	callbackReq.Host = "127.0.0.1:5260"
+	for _, cookie := range loginRec.Result().Cookies() {
+		callbackReq.AddCookie(cookie)
+	}
 	callbackRec := httptest.NewRecorder()
 	handler.ServeHTTP(callbackRec, callbackReq)
 	if got, want := callbackRec.Code, http.StatusFound; got != want {
@@ -317,13 +333,14 @@ func TestEndToEndAuthFlowThroughServerRoutes(t *testing.T) {
 		t.Fatalf("callback redirect: got %q, want %q", got, want)
 	}
 
-	callbackCookies := callbackRec.Result().Cookies()
-	if len(callbackCookies) != 1 {
-		t.Fatalf("callback cookies: %+v", callbackCookies)
+	var sessionCookie *http.Cookie
+	for _, cookie := range callbackRec.Result().Cookies() {
+		if cookie.Name == DefaultSessionCookieName {
+			sessionCookie = cookie
+		}
 	}
-	sessionCookie := callbackCookies[0]
-	if sessionCookie.Name != DefaultSessionCookieName {
-		t.Fatalf("session cookie name: got %q", sessionCookie.Name)
+	if sessionCookie == nil {
+		t.Fatal("callback did not authenticate the initiating browser")
 	}
 
 	whoamiReq := httptest.NewRequest(http.MethodGet, "/api/v2/whoami", nil)

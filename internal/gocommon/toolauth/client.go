@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/kombifyio/techstack/internal/gocommon/internal/httpsecurity"
 )
 
 // Config configures the toolauth Client.
@@ -74,6 +76,7 @@ func New(cfg Config) (*Client, error) {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
+	httpClient = httpsecurity.WithoutRedirects(httpClient)
 
 	c := &Client{
 		cfg:        cfg,

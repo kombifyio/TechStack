@@ -46,7 +46,7 @@ func (a *recordingCurrentPortAuthority) AdmitCurrent(_ context.Context, request 
 func TestPortGovernedLifecycleKeepsTechstackAndStackKitInstanceIdentitiesSeparate(t *testing.T) {
 	order := []string{}
 	authority := newRecordingCurrentPortAuthority(&order)
-	rollout := testPortGovernedRollout(t, authority, &fakeRuntimeRunner{name: "rollout", order: &order}, &fakeRuntimeRunner{name: "verify", order: &order})
+	rollout := testPortGovernedRollout(t, authority, &typedLifecycleCommander{planHash: testResolvedPlanHash, order: &order})
 	plan, err := os.ReadFile(rollout.actionReq.UnifiedPath)
 	if err != nil {
 		t.Fatal(err)
@@ -68,7 +68,7 @@ func TestPortGovernedLifecycleKeepsTechstackAndStackKitInstanceIdentitiesSeparat
 func TestPortGovernedLifecycleRefusesMissingCompilerListenerAuthority(t *testing.T) {
 	order := []string{}
 	authority := newRecordingCurrentPortAuthority(&order)
-	rollout := testPortGovernedRollout(t, authority, &fakeRuntimeRunner{name: "rollout", order: &order}, &fakeRuntimeRunner{name: "verify", order: &order})
+	rollout := testPortGovernedRollout(t, authority, &typedLifecycleCommander{planHash: testResolvedPlanHash, order: &order})
 	plan := `{"apiVersion":"stackkit.resolved-plan/v1","kind":"ResolvedPlan","stackId":"custom-kit","planHash":"` + testResolvedPlanHash + `","network":{"ownerDefinedListeners":[]}}`
 	if err := os.WriteFile(rollout.actionReq.UnifiedPath, []byte(plan), 0600); err != nil {
 		t.Fatal(err)
@@ -129,7 +129,7 @@ func TestPortGovernedLifecycleConflictCausesZeroRuntimeMutation(t *testing.T) {
 		UserGuidance: portinventory.UserGuidance{Body: "Choose another port."},
 	}
 	authority.admitErr = conflict
-	rollout := testPortGovernedRollout(t, authority, &fakeRuntimeRunner{name: "rollout", order: &order}, &fakeRuntimeRunner{name: "verify", order: &order})
+	rollout := testPortGovernedRollout(t, authority, &typedLifecycleCommander{planHash: testResolvedPlanHash, order: &order})
 
 	applied, err := rollout.runPortGovernedLifecycle(t.Context())
 	if err == nil || applied {
@@ -160,7 +160,7 @@ func TestPortGovernedLifecycleTransitionsClaimsAroundRuntimeMutation(t *testing.
 		{name: "active replay only verifies", activeReplay: true, wantApplied: true, wantOrder: []string{"admit", "verify"}},
 		{name: "non-verified result stays uncertain", verifyFails: true, wantError: true, wantOrder: []string{"admit", "mutation", "rollout", "verify", "uncertain"}},
 		{name: "rollout failure stays uncertain", rolloutFails: true, wantError: true, wantOrder: []string{"admit", "mutation", "rollout", "uncertain"}},
-		{name: "missing runner aborts before mutation", missingRollout: true, wantError: true, wantOrder: []string{"admit", "abort"}},
+		{name: "missing typed commander aborts before mutation", missingRollout: true, wantError: true, wantOrder: []string{"admit", "abort"}},
 		{name: "evaluate only avoids mutation", evaluateOnly: true, wantOrder: []string{"evaluate"}},
 	}
 
@@ -171,17 +171,18 @@ func TestPortGovernedLifecycleTransitionsClaimsAroundRuntimeMutation(t *testing.
 			if tt.activeReplay {
 				authority.state = portinventory.ClaimStateActive
 			}
-			var rolloutRunner RuntimeActionRunner = &fakeRuntimeRunner{name: "rollout", order: &order}
+			commander := &typedLifecycleCommander{planHash: testResolvedPlanHash, order: &order}
 			if tt.rolloutFails {
-				rolloutRunner = &fakeRuntimeRunner{name: "rollout", order: &order, err: errors.New("apply failed")}
-			} else if tt.missingRollout {
-				rolloutRunner = nil
+				commander.applyErr = errors.New("apply failed")
 			}
-			verifyResult := map[string]interface{}(nil)
 			if tt.verifyFails {
-				verifyResult = map[string]interface{}{"status": "failed"}
+				commander.verifyStatus = "failed"
 			}
-			rollout := testPortGovernedRollout(t, authority, rolloutRunner, &fakeRuntimeRunner{name: "verify", order: &order, result: verifyResult})
+			var sender StackKitCommandSender = commander
+			if tt.missingRollout {
+				sender = nil
+			}
+			rollout := testPortGovernedRollout(t, authority, sender)
 			if tt.evaluateOnly {
 				rollout.job.Payload["apply"] = false
 			}
@@ -208,8 +209,10 @@ func newRecordingCurrentPortAuthority(order *[]string) *recordingCurrentPortAuth
 	}}
 }
 
-func testPortGovernedRollout(t *testing.T, authority portinventory.LifecycleAuthority, rolloutRunner, verifier RuntimeActionRunner) *deployRollout {
+func testPortGovernedRollout(t *testing.T, authority portinventory.LifecycleAuthority, commander StackKitCommandSender) *deployRollout {
 	t.Helper()
+	configureTestStackKitRelease(t)
+	specPath := writeSpec(t, `{"apiVersion":"stackkit/v2alpha2","kind":"StackSpec","metadata":{"name":"stack-a"},"kit":{"slug":"cloud-kit"},"workloads":{"cloud-core":{"alternative":"standalone"}},"generation":{"outputRoot":"deploy"}}`)
 	planPath := filepath.Join(t.TempDir(), "resolved-plan.json")
 	plan := resolvedPlanWithListeners(`[
 		{"id":"https","moduleRef":"module","unitRef":"unit","instanceRef":"instance","nodeRef":"cloud-main","componentRef":"api","transport":"tcp","bindAddress":"0.0.0.0","port":8443,"targetPort":443,"sharing":"exclusive","sourceRouteRefs":["route-a"],"exposure":"public"}
@@ -221,14 +224,16 @@ func testPortGovernedRollout(t *testing.T, authority portinventory.LifecycleAuth
 	queue := NewQueue(0, nil)
 	queue.jobs[job.ID] = job
 	return &deployRollout{
-		cfg: &ProvisionConfig{PortInventory: authority, RuntimeActions: RuntimeActions{
-			RolloutRunner: rolloutRunner, RolloutVerifier: verifier,
-		}},
+		cfg: &ProvisionConfig{
+			PortInventory: authority, StackKitCommander: commander, AdvancedIssuer: staticAdvancedIssuer{},
+			ManagedStackKitInventory: &recordingManagedStackKitInventoryBuilder{},
+		},
 		job: job, q: queue, unifiedSpec: &core.UnifiedSpec{StackKit: "cloud-kit"}, targetKind: "managed",
 		generatedPlanHash: testResolvedPlanHash,
 		actionReq: RuntimeActionRequest{
-			StackID: "stack-a", StackKit: "cloud-kit", UnifiedPath: planPath,
-			TechStackEnrollment: &TechStackEnrollment{TenantID: "tenant-a", OwnerID: "owner-a", ServerID: "server-a"},
+			StackID: "stack-a", StackKit: "cloud-kit", UnifiedPath: planPath, StackSpecPath: specPath,
+			TenantID: "tenant-a", OwnerID: "owner-a",
+			TechStackEnrollment: &TechStackEnrollment{TenantID: "tenant-a", OwnerID: "owner-a", ServerID: "server-a", RuntimeAgentID: "agent-a"},
 		},
 		e2eProof: map[string]any{"phases_completed": []string{}}, runtimeProof: map[string]interface{}{}, stackKitOutputs: map[string]interface{}{},
 		runtimeMetrics: map[string]string{}, finalRuntimePhase: RuntimePhaseDeployed,
@@ -249,7 +254,7 @@ func TestPortGovernedLifecycleRefusesStaleHostBaselineBeforeSideEffects(t *testi
 	authority := newRecordingCurrentPortAuthority(&order)
 	expired := time.Now().Add(-time.Minute)
 	authority.baseline = &portinventory.Inventory{ObservedAt: &expired, ExpiresAt: &expired, ListenersComplete: true}
-	rollout := testPortGovernedRollout(t, authority, &fakeRuntimeRunner{name: "rollout", order: &order}, &fakeRuntimeRunner{name: "verify", order: &order})
+	rollout := testPortGovernedRollout(t, authority, &typedLifecycleCommander{planHash: testResolvedPlanHash, order: &order})
 	applied, err := rollout.runPortGovernedLifecycle(t.Context())
 	if err == nil || applied {
 		t.Fatal("stale host baseline permitted rollout")

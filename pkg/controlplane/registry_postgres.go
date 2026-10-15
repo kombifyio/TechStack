@@ -180,79 +180,54 @@ func (s *PostgresStore) GetService(ctx context.Context, tenantID, serviceID stri
 }
 
 func (s *PostgresStore) ListNodesByStack(ctx context.Context, tenantID, stackID string) ([]Node, error) {
-	if s == nil || s.db == nil {
-		return nil, fmt.Errorf("controlplane: database not configured")
-	}
-	tenantID = strings.TrimSpace(tenantID)
-	if tenantID == "" {
-		return nil, fmt.Errorf("controlplane: tenant id required")
-	}
+	return queryTenantRows(ctx, s, tenantID, `
+		SELECT `+nodeColumns+`
+		FROM nodes
+		WHERE tenant_id = $1 AND stack_id = $2
+		ORDER BY created_at ASC, id ASC
+	`, scanNode, stackID)
+}
 
-	var out []Node
-	err := s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx, `
-			SELECT id, tenant_id, instance_id, stack_id, worker_id, name, role, status, address,
-				metadata_json::text, created_at, updated_at
-			FROM nodes
-			WHERE tenant_id = $1 AND stack_id = $2
-			ORDER BY created_at ASC
-		`, tenantID, stackID)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = rows.Close() }()
-		for rows.Next() {
-			node, err := scanNode(rows)
-			if err != nil {
-				return err
-			}
-			out = append(out, *node)
-		}
-		return rows.Err()
-	})
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
+// ListNodesByTenant is ListNodesByStack for every stack of the tenant in one
+// transaction.
+func (s *PostgresStore) ListNodesByTenant(ctx context.Context, tenantID string) ([]Node, error) {
+	return queryTenantRows(ctx, s, tenantID, `
+		SELECT `+nodeColumns+`
+		FROM nodes
+		WHERE tenant_id = $1
+		ORDER BY created_at ASC, id ASC
+	`, scanNode)
 }
 
 func (s *PostgresStore) ListServicesByStack(ctx context.Context, tenantID, stackID string) ([]Service, error) {
-	if s == nil || s.db == nil {
-		return nil, fmt.Errorf("controlplane: database not configured")
-	}
-	tenantID = strings.TrimSpace(tenantID)
-	if tenantID == "" {
-		return nil, fmt.Errorf("controlplane: tenant id required")
-	}
-
-	var out []Service
-	err := s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx, `
-			SELECT id, tenant_id, instance_id, stack_id, node_id, service_key, name, status,
-				source, url, migration_status, metadata_json::text, management_state,
-				created_at, updated_at
-			FROM services
-			WHERE tenant_id = $1 AND stack_id = $2
-			ORDER BY created_at ASC
-		`, tenantID, stackID)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = rows.Close() }()
-		for rows.Next() {
-			service, err := scanService(rows)
-			if err != nil {
-				return err
-			}
-			out = append(out, *service)
-		}
-		return rows.Err()
-	})
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
+	return queryTenantRows(ctx, s, tenantID, `
+		SELECT `+serviceColumns+`
+		FROM services
+		WHERE tenant_id = $1 AND stack_id = $2
+		ORDER BY created_at ASC, id ASC
+	`, scanService, stackID)
 }
+
+// ListServicesByTenant is ListServicesByStack for every stack of the tenant in
+// one transaction.
+func (s *PostgresStore) ListServicesByTenant(ctx context.Context, tenantID string) ([]Service, error) {
+	return queryTenantRows(ctx, s, tenantID, `
+		SELECT `+serviceColumns+`
+		FROM services
+		WHERE tenant_id = $1
+		ORDER BY created_at ASC, id ASC
+	`, scanService)
+}
+
+// The id tie-break keeps rows created in the same instant in a stable order, so
+// identical state reads back identically.
+const (
+	nodeColumns = `id, tenant_id, instance_id, stack_id, worker_id, name, role, status, address,
+		metadata_json::text, created_at, updated_at`
+	serviceColumns = `id, tenant_id, instance_id, stack_id, node_id, service_key, name, status,
+		source, url, migration_status, metadata_json::text, management_state,
+		created_at, updated_at`
+)
 
 func (s *PostgresStore) DeleteService(ctx context.Context, tenantID, serviceID string) error {
 	if s == nil || s.db == nil {

@@ -11,11 +11,14 @@ export type TunnelMode = "auto" | "local" | "tunnel" | "tailscale" | "custom";
 export interface RegistryUrlResult {
   url: string;
   mode: TunnelMode | string;
+  /** Key pin of the private-LAN bridge, present only when url is that bridge. */
+  lan_pin?: string;
 }
 
 export interface LocalLANBridgeStatus {
   enabled: boolean;
   origin?: string;
+  pin?: string;
   address?: string;
   port: number;
   mode: string;

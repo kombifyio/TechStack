@@ -31,8 +31,8 @@ const kombifyClaimNamespace = "https://kombify.io/"
 // v2CloudTenantResolver resolves the tenant stamped into the v2 session at
 // cloud-login time so standalone and embedded resolve the same tenant
 // (one-truth rule). Chain: demo tenant -> kombify org/tenant claims (the same
-// ones the edge turns into x-org-id) -> org_* control-plane membership -> any
-// existing active membership -> Auth0 Management API organizations ->
+// ones the edge turns into x-org-id) -> org_* control-plane membership still listed by Auth0 -> any
+// other active membership -> Auth0 Management API organizations ->
 // owner tenant (the subject itself). The final rung mirrors the data-plane
 // owner-as-tenant behavior so a user without any provisioned org resolves the
 // SAME tenant through the browser session as through the gateway. Malformed
@@ -60,20 +60,48 @@ func v2CloudTenantResolver(store controlplane.AuthStore, orgs organizationLister
 		); orgID != "" {
 			return orgID, nil
 		}
-		if membership := preferredMembershipFromStore(ctx, store, subject); membership != nil {
-			return strings.TrimSpace(membership.TenantID), nil
-		}
+		// Auth0 is the authority for organization membership. A cloud org_*
+		// membership row is only honoured while Auth0 still lists that
+		// organization; otherwise it is stale and ignored (it would be
+		// refreshed at every login and never age out). When the lookup is
+		// unavailable the stored rows stay authoritative.
+		var orgIDs []string
+		orgsKnown := false
 		if orgs != nil {
-			orgIDs, err := orgs.UserOrganizations(ctx, subject)
+			listed, err := orgs.UserOrganizations(ctx, subject)
 			if err != nil {
 				logger.Default().Warn("v2_cloud_org_lookup_failed", "error", err, "subject", subject)
-			} else if len(orgIDs) > 0 {
-				sort.Strings(orgIDs)
-				if len(orgIDs) > 1 {
-					logger.Default().Warn("org_resolution_ambiguous", "source", "auth0_mgmt", "subject", subject, "count", len(orgIDs))
-				}
-				return orgIDs[0], nil
+			} else {
+				orgIDs, orgsKnown = listed, true
 			}
+		}
+		keep := func(m controlplane.Membership) bool { return true }
+		if orgsKnown {
+			current := make(map[string]struct{}, len(orgIDs))
+			for _, id := range orgIDs {
+				current[strings.TrimSpace(id)] = struct{}{}
+			}
+			keep = func(m controlplane.Membership) bool {
+				tenantID := strings.TrimSpace(m.TenantID)
+				if m.ProviderKey != "cloud" || !strings.HasPrefix(tenantID, orgTenantPrefix) {
+					return true
+				}
+				if _, ok := current[tenantID]; ok {
+					return true
+				}
+				logger.Default().Warn("stale_org_membership_ignored", "subject", subject, "tenant", tenantID)
+				return false
+			}
+		}
+		if membership := preferredMembershipFromStoreFiltered(ctx, store, subject, keep); membership != nil {
+			return strings.TrimSpace(membership.TenantID), nil
+		}
+		if len(orgIDs) > 0 {
+			sort.Strings(orgIDs)
+			if len(orgIDs) > 1 {
+				logger.Default().Warn("org_resolution_ambiguous", "source", "auth0_mgmt", "subject", subject, "count", len(orgIDs))
+			}
+			return orgIDs[0], nil
 		}
 		// Owner tenant: the same deterministic fallback the data plane uses
 		// for identities without any org context.
@@ -104,6 +132,12 @@ func isOwnerTenantID(tenantID, subject string) bool {
 // deterministically: org_* tenants win, then the newest membership (list
 // order is newest first; ties broken by tenant id).
 func preferredMembershipFromStore(ctx context.Context, store controlplane.AuthStore, userID string) *controlplane.Membership {
+	return preferredMembershipFromStoreFiltered(ctx, store, userID, nil)
+}
+
+// preferredMembershipFromStoreFiltered is preferredMembershipFromStore over
+// the memberships keep accepts (nil accepts all).
+func preferredMembershipFromStoreFiltered(ctx context.Context, store controlplane.AuthStore, userID string, keep func(controlplane.Membership) bool) *controlplane.Membership {
 	if store == nil {
 		return nil
 	}
@@ -115,6 +149,15 @@ func preferredMembershipFromStore(ctx context.Context, store controlplane.AuthSt
 	if err != nil {
 		logger.Default().Warn("v2_cloud_membership_lookup_failed", "error", err, "subject", userID)
 		return nil
+	}
+	if keep != nil {
+		kept := memberships[:0:0]
+		for _, m := range memberships {
+			if keep(m) {
+				kept = append(kept, m)
+			}
+		}
+		memberships = kept
 	}
 	if len(memberships) == 0 {
 		return nil

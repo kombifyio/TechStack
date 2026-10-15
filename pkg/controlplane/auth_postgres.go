@@ -112,6 +112,27 @@ func (s *PostgresStore) EnsureTenant(ctx context.Context, tenant Tenant) (*Tenan
 	return out, nil
 }
 
+// GetTenant reads an existing tenant without creating or updating its authority.
+func (s *PostgresStore) GetTenant(ctx context.Context, tenantID string) (*Tenant, error) {
+	if s == nil || s.db == nil || strings.TrimSpace(tenantID) == "" {
+		return nil, fmt.Errorf("controlplane: database and tenant required")
+	}
+	var tenant *Tenant
+	err := s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		var err error
+		tenant, err = scanTenant(tx.QueryRowContext(ctx, `
+			SELECT id, external_org_id, display_name, kind, status,
+				metadata_json::text, created_at, updated_at
+			FROM techstack_tenants WHERE id = $1
+		`, tenantID))
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	})
+	return tenant, err
+}
+
 func (s *PostgresStore) UpsertUser(ctx context.Context, user User) (*User, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("controlplane: database not configured")
@@ -146,7 +167,11 @@ func (s *PostgresStore) UpsertUser(ctx context.Context, user User) (*User, error
 			primary_email = EXCLUDED.primary_email,
 			display_name = EXCLUDED.display_name,
 			status = EXCLUDED.status,
-			metadata_json = EXCLUDED.metadata_json,
+			-- Login refreshes verified claims without erasing instance-scoped cloud links.
+			metadata_json = EXCLUDED.metadata_json || CASE
+                WHEN techstack_users.metadata_json ? 'cloud_links'
+                THEN jsonb_build_object('cloud_links', techstack_users.metadata_json->'cloud_links')
+                ELSE '{}'::jsonb END,
 			updated_at = now()
 		RETURNING id, primary_email, display_name, status,
 			metadata_json::text, created_at, updated_at
@@ -445,6 +470,64 @@ func (s *PostgresStore) GetBreakglassAdmin(ctx context.Context, tenantID string)
 		return nil, err
 	}
 	return out, nil
+}
+
+// CompareAndSwapBreakglassAdmin updates only the local bootstrap fields of an
+// unlocked, unclaimed singleton. Identity, user linkage, last use and unrelated
+// custody metadata remain owned by the existing row. An expected nil permits
+// initialization only; concurrent inserts cannot overwrite a bootstrap owner.
+func (s *PostgresStore) CompareAndSwapBreakglassAdmin(ctx context.Context, expected, next *BreakglassAdmin) (bool, error) {
+	if s == nil || s.db == nil || next == nil || strings.TrimSpace(next.TenantID) == "" || strings.TrimSpace(next.ID) == "" {
+		return false, fmt.Errorf("controlplane: bootstrap record and database required")
+	}
+	if next.Locked || !unclaimedBreakglassSnapshot(expected, next) {
+		return false, nil
+	}
+	metadata, err := marshalObject(next.Metadata)
+	if err != nil {
+		return false, err
+	}
+	saved := false
+	err = s.withTenant(ctx, next.TenantID, func(tx *sql.Tx) error {
+		var result sql.Result
+		var writeErr error
+		if expected == nil {
+			result, writeErr = tx.ExecContext(ctx, `
+				INSERT INTO breakglass_admin (id, tenant_id, email, password_hash, locked, metadata_json)
+				VALUES ($1, $2, $3, $4, false, $5::jsonb)
+				ON CONFLICT (tenant_id) DO NOTHING
+			`, next.ID, next.TenantID, next.Email, next.PasswordHash, metadata)
+		} else {
+			expectedPassword, _ := expected.Metadata["show_password"].(string)
+			expectedUntil, _ := expected.Metadata["show_until"].(string)
+			result, writeErr = tx.ExecContext(ctx, `
+				UPDATE breakglass_admin SET
+					email = $3, password_hash = $4,
+					metadata_json = (metadata_json - 'show_until') || $5::jsonb,
+					updated_at = now()
+				WHERE tenant_id = $1 AND id = $2 AND locked = false
+					AND lower(COALESCE(metadata_json->>'claimed', 'false')) <> 'true'
+					AND email = $6 AND password_hash = $7 AND updated_at = $8
+					AND COALESCE(metadata_json->>'show_password', '') = $9
+					AND COALESCE(metadata_json->>'show_until', '') = $10
+			`, next.TenantID, next.ID, next.Email, next.PasswordHash, metadata,
+				expected.Email, expected.PasswordHash, expected.UpdatedAt, expectedPassword, expectedUntil)
+		}
+		if writeErr != nil {
+			return writeErr
+		}
+		changed, writeErr := result.RowsAffected()
+		if writeErr != nil {
+			return writeErr
+		}
+		saved = changed == 1
+		return nil
+	})
+	return saved, err
+}
+
+func unclaimedBreakglassSnapshot(expected, next *BreakglassAdmin) bool {
+	return expected == nil || !expected.Locked && expected.TenantID == next.TenantID && expected.ID == next.ID && !strings.EqualFold(fmt.Sprint(expected.Metadata["claimed"]), "true")
 }
 
 func scanTenant(row rowScanner) (*Tenant, error) {

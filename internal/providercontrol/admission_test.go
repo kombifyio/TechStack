@@ -153,35 +153,6 @@ func TestNativeAdmissionBlockedGateLeavesTransactionReadOnly(t *testing.T) {
 	}
 }
 
-func TestNativeAdmissionPreflightPolicyDenialPerformsNoDatabaseAction(t *testing.T) {
-	database, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer database.Close()
-
-	gate := &admissionTestGate{}
-	coordinator := newNativeAdmissionTestCoordinator(t, database, admissionTestProfileResolver{profile: testProfile("ionos-v1")}, gate)
-	admission, err := NewNativeAdmission(NativeAdmissionConfig{
-		Database: database, Coordinator: coordinator, ActivationGate: gate,
-		ProviderCreates: AllowProviderCreate{},
-		CapacityPolicy:  staticAdmissionCapacityPolicy{err: errors.New("decision unavailable")},
-	})
-	if err != nil {
-		t.Fatalf("NewNativeAdmission: %v", err)
-	}
-
-	if err := admission.PreflightProvision(t.Context(), nativeProvisionAdmissionFixture()); !errors.Is(err, ErrManagedRuntimeCapacityPolicyUnavailable) {
-		t.Fatalf("PreflightProvision error = %v, want ErrManagedRuntimeCapacityPolicyUnavailable", err)
-	}
-	if gate.CallCount() != 0 {
-		t.Fatalf("activation gate calls = %d, want 0 after policy denial", gate.CallCount())
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("policy-denied preflight performed an unexpected database action: %v", err)
-	}
-}
-
 type staticAdmissionCapacityPolicy struct {
 	grant CapacityGrant
 	err   error

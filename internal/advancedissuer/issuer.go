@@ -44,6 +44,8 @@ const (
 // capability-gated StackKitCommand operation binds to one of these.
 const (
 	OperationDriftReconcileAdvanced   = "drift.reconcile.advanced"
+	OperationOriginCertificateInstall = "public-tls.origin-certificate.install"
+	OperationOriginCertificateRequest = "public-tls.origin-certificate.request"
 	OperationRestoreDrill             = "restore.drill"
 	OperationRollbackCoordinated      = "rollback.coordinated"
 	OperationTerramateChangeSetApply  = "terramate.change-set.apply"
@@ -52,6 +54,8 @@ const (
 
 var knownOperations = map[string]struct{}{
 	OperationDriftReconcileAdvanced:   {},
+	OperationOriginCertificateInstall: {},
+	OperationOriginCertificateRequest: {},
 	OperationRestoreDrill:             {},
 	OperationRollbackCoordinated:      {},
 	OperationTerramateChangeSetApply:  {},

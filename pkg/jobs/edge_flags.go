@@ -54,22 +54,46 @@ func CopyEdgeFlagsFromContext(ctx context.Context, payload map[string]interface{
 // request must fail closed. Exact NativeAdmission replay remains available from
 // its durable database records.
 func CaptureRequestAuthority(ctx context.Context, job *Job, tenantID, ownerID string) {
+	captureRequestAuthority(ctx, job, tenantID, ownerID, false)
+}
+
+// CaptureRequestOperateAuthority retains the existing Inventory operate grant
+// for non-spend runtime control. Cost-bearing capture still requires budgets.
+func CaptureRequestOperateAuthority(ctx context.Context, job *Job, tenantID, ownerID string) {
+	captureRequestAuthority(ctx, job, tenantID, ownerID, true)
+}
+
+func captureRequestAuthority(ctx context.Context, job *Job, tenantID, ownerID string, operate bool) {
 	if ctx == nil || job == nil {
 		return
 	}
 	tenantID = strings.TrimSpace(tenantID)
 	ownerID = strings.TrimSpace(ownerID)
 	principal := identity.FromContext(ctx)
-	entitlements, hasEntitlements := middleware.SignedEntitlementsFromContext(ctx)
+	entitlements, source, hasEntitlements := middleware.AuthorizedEntitlementsFromContext(ctx)
 	decisions, hasDecisions := edgeauth.FlagsFromContext(ctx)
 	if tenantID == "" || ownerID == "" || principal == nil || principal.UserID != ownerID ||
 		(strings.TrimSpace(principal.OrgID) != "" && strings.TrimSpace(principal.OrgID) != tenantID) ||
-		!hasEntitlements || !hasDecisions || len(decisions.Budgets) == 0 {
+		!hasEntitlements {
+		return
+	}
+	if operate {
+		if !entitlements.Has("techstack.inventory.operate") && !entitlements.Has("techstack.inventory.admin") {
+			return
+		}
+	} else if source != middleware.EntitlementSourceSignedEdge || !hasDecisions || len(decisions.Budgets) == 0 {
 		return
 	}
 	snapshotEntitlements := entitlements.Values()
-	authorityCtx := edgeauth.FlagsToContext(context.Background(), decisions)
-	authorityCtx = middleware.WithSignedEntitlements(authorityCtx, snapshotEntitlements...)
+	authorityCtx := context.Background()
+	if hasDecisions {
+		authorityCtx = edgeauth.FlagsToContext(authorityCtx, decisions)
+	}
+	if source == middleware.EntitlementSourceSignedEdge {
+		authorityCtx = middleware.WithSignedEntitlements(authorityCtx, snapshotEntitlements...)
+	} else {
+		authorityCtx = middleware.WithMembershipEntitlements(authorityCtx, snapshotEntitlements...)
+	}
 	snapshot := &requestAuthoritySnapshot{
 		tenantID: tenantID, ownerID: ownerID,
 		authorityCtx: authorityCtx,

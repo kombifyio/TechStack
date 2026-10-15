@@ -73,14 +73,24 @@ func TestV2CloudTenantResolverPrefersOrgMembershipOverDefault(t *testing.T) {
 		{TenantID: "default", UserID: "auth0|user-1", RoleKey: "member", Status: "active"},
 		{TenantID: "org_acme", UserID: "auth0|user-1", RoleKey: "member", Status: "active"},
 	}}
-	lister := &fakeOrgLister{orgs: []string{"org_should_not_be_used"}}
+	lister := &fakeOrgLister{orgs: []string{"org_acme"}}
 	resolver := v2CloudTenantResolver(store, lister)
 	tenantID, err := resolver(context.Background(), &oidcclient.Claims{Subject: "auth0|user-1"}, "primary", "")
 	if err != nil || tenantID != "org_acme" {
 		t.Fatalf("resolver = %q, %v; want org_acme from memberships", tenantID, err)
 	}
-	if lister.calls != 0 {
-		t.Fatalf("management API consulted %d times despite membership hit", lister.calls)
+}
+
+func TestV2CloudTenantResolverIgnoresStaleOrgMembership(t *testing.T) {
+	// The user left the Auth0 organization: the cloud membership row that
+	// remains must not keep winning tenant resolution.
+	store := &stubAuthStore{memberships: []controlplane.Membership{
+		{TenantID: "org_gone", UserID: "auth0|user-1", RoleKey: "member", ProviderKey: "cloud", Status: "active"},
+	}}
+	resolver := v2CloudTenantResolver(store, &fakeOrgLister{orgs: []string{}})
+	tenantID, err := resolver(context.Background(), &oidcclient.Claims{Subject: "auth0|user-1"}, "primary", "")
+	if err != nil || tenantID != "usr:auth0|user-1" {
+		t.Fatalf("resolver = %q, %v; want owner tenant after leaving the org", tenantID, err)
 	}
 }
 

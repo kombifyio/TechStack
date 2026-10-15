@@ -147,6 +147,124 @@ func TestServerRuntimeRoutesReturnSweeperDemotedState(t *testing.T) {
 	}
 }
 
+// TestServerRuntimeRoutesHoldHeartbeatWindowsWithoutSweeper: a Guard server the
+// sweeper has not demoted yet still reads stale after 90 s and offline after
+// 5 min of heartbeat silence, and stays connected inside the window.
+func TestServerRuntimeRoutesHoldHeartbeatWindowsWithoutSweeper(t *testing.T) {
+	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name       string
+		silence    time.Duration
+		connection string
+		mutations  bool
+	}{
+		{"inside the fresh window", 89 * time.Second, "connected", true},
+		{"past the fresh window", 91 * time.Second, "stale", false},
+		{"past the stale window", 301 * time.Second, "offline", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := controlplane.NewMemoryStore()
+			heartbeat := now.Add(-tc.silence)
+			// Persisted exactly as the last accepted Guard heartbeat left it.
+			if _, err := store.UpsertServerRuntime(context.Background(), controlplane.ServerRuntime{
+				ID: "guard-server", TenantID: "tenant-1", OwnerSubjectID: "owner-1", Name: "Guard", WorkerID: "worker-1",
+				LifecycleState: "active", ConnectionState: "connected", HealthState: "healthy", LastHeartbeatAt: &heartbeat,
+				SourceAuthority: serverregistry.AuthorityGuard, SourceID: "worker-1", SourceEpoch: "epoch-1",
+			}); err != nil {
+				t.Fatalf("UpsertServerRuntime: %v", err)
+			}
+			event, recorder := registryRouteStoreTestEvent(http.MethodGet, "/api/v1/servers", "owner-1", "tenant-1", nil)
+			if err := (serverRuntimeHandlers{store: store, now: func() time.Time { return now }}).list(event); err != nil {
+				t.Fatalf("list: %v", err)
+			}
+			var envelope struct {
+				Data []serverRuntimeResponse `json:"data"`
+			}
+			if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil || len(envelope.Data) != 1 {
+				t.Fatalf("decode: %v rows=%d", err, len(envelope.Data))
+			}
+			got := envelope.Data[0]
+			if got.Connection.State != tc.connection || got.MutationsAllowed != tc.mutations {
+				t.Fatalf("after %s of silence: connection=%q mutations=%v, want %q/%v", tc.silence, got.Connection.State, got.MutationsAllowed, tc.connection, tc.mutations)
+			}
+		})
+	}
+}
+
+// TestServerRuntimeListRevalidatesUntilTheStateChanges: the elapsed-time
+// counters of an unchanged server must not break revalidation (the app would
+// download the full list on every read), while the heartbeat window running out
+// is a real state change that must reach the client.
+func TestServerRuntimeListRevalidatesUntilTheStateChanges(t *testing.T) {
+	store := controlplane.NewMemoryStore()
+	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	heartbeat := now.Add(-10 * time.Second)
+	if _, err := store.UpsertServerRuntime(context.Background(), controlplane.ServerRuntime{
+		ID: "guard-server", TenantID: "tenant-1", OwnerSubjectID: "owner-1", Name: "Guard", WorkerID: "worker-1",
+		LifecycleState: "active", ConnectionState: "connected", HealthState: "healthy", LastHeartbeatAt: &heartbeat,
+		SourceAuthority: serverregistry.AuthorityGuard, SourceID: "worker-1", SourceEpoch: "epoch-1",
+	}); err != nil {
+		t.Fatalf("UpsertServerRuntime: %v", err)
+	}
+	handlers := serverRuntimeHandlers{store: store, now: func() time.Time { return now }}
+	read := func(ifNoneMatch string) *httptest.ResponseRecorder {
+		event, recorder := registryRouteStoreTestEvent(http.MethodGet, "/api/v1/servers", "owner-1", "tenant-1", nil)
+		if ifNoneMatch != "" {
+			event.Request.Header.Set("If-None-Match", ifNoneMatch)
+		}
+		if err := handlers.list(event); err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		return recorder
+	}
+
+	first := read("")
+	etag := first.Header().Get("ETag")
+	if first.Code != http.StatusOK || etag == "" {
+		t.Fatalf("first read = %d etag=%q", first.Code, etag)
+	}
+
+	now = now.Add(30 * time.Second) // still connected: only the age counters moved
+	if again := read(`W/"stale", ` + etag); again.Code != http.StatusNotModified || again.Body.Len() != 0 {
+		t.Fatalf("unchanged server did not revalidate: %d body=%q", again.Code, again.Body.String())
+	}
+
+	now = now.Add(70 * time.Second) // heartbeat now 110 s old: the server reads stale
+	changed := read(etag)
+	if changed.Code != http.StatusOK || changed.Header().Get("ETag") == etag {
+		t.Fatalf("state change was hidden behind the old validator: %d etag=%q", changed.Code, changed.Header().Get("ETag"))
+	}
+}
+
+func TestDetachedServerNeverReadsConnected(t *testing.T) {
+	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	heartbeat := now.Add(-5 * time.Second)
+	store := controlplane.NewMemoryStore()
+	// The detach transaction writes lifecycle and desired state only; the last
+	// Guard heartbeat is still fresh.
+	if _, err := store.UpsertServerRuntime(context.Background(), controlplane.ServerRuntime{
+		ID: "detached", TenantID: "tenant-1", OwnerSubjectID: "owner-1", Name: "Detached", WorkerID: "worker-1",
+		LifecycleState: "decommissioned", DesiredState: "absent", ConnectionState: "connected", HealthState: "healthy",
+		LastHeartbeatAt: &heartbeat, SourceAuthority: serverregistry.AuthorityGuard, SourceID: "worker-1", SourceEpoch: "epoch-1",
+	}); err != nil {
+		t.Fatalf("UpsertServerRuntime: %v", err)
+	}
+	event, recorder := registryRouteStoreTestEvent(http.MethodGet, "/api/v1/servers/detached", "owner-1", "tenant-1", nil)
+	event.Request.SetPathValue("serverId", "detached")
+	if err := (serverRuntimeHandlers{store: store, now: func() time.Time { return now }}).get(event); err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	var envelope struct {
+		Data serverRuntimeResponse `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode: %v body=%s", err, recorder.Body.String())
+	}
+	if envelope.Data.Connection.State != "revoked" || envelope.Data.MutationsAllowed {
+		t.Fatalf("detached server connection=%q mutations=%v, want revoked/false", envelope.Data.Connection.State, envelope.Data.MutationsAllowed)
+	}
+}
+
 func TestServerRuntimeDetailHidesForeignServer(t *testing.T) {
 	store := controlplane.NewMemoryStore()
 	if _, err := store.UpsertServerRuntime(context.Background(), controlplane.ServerRuntime{

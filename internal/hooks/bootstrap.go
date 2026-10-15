@@ -253,7 +253,10 @@ func ensureSystemCredentialsInWallet(
 	adminEmail, adminPassword string, adminKnown bool,
 	devEmail, devPassword string, devKnown bool,
 ) error {
-	if !isDev {
+	// No store means the deployment keeps credentials elsewhere (the kombify
+	// Wallet): these operator accounts are not Wallet owners, and nothing is
+	// written to the legacy store.
+	if !isDev || store == nil {
 		return nil
 	}
 

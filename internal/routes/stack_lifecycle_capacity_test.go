@@ -616,7 +616,7 @@ func serveEdgeProtectedAddServer(
 
 func signEdgeCapacityIdentityV2(request *http.Request, secret string) {
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
-	nonce := "edge-capacity-nonce"
+	nonce := "edge-capacity-nonce-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	signedPath := request.URL.RequestURI()
 	payload := strings.Join([]string{
 		"v2", "primary", request.Method, signedPath,

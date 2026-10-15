@@ -63,13 +63,13 @@ type WizardRecommendationAuthority struct {
 }
 
 // NewWizardRecommendationAuthority creates the recommendation authority from
-// the existing StackKit catalog. A nil catalog keeps the resolver's embedded
-// supported-product defaults for self-hosted development.
+// the existing StackKit catalog. A nil catalog uses pinned release metadata.
+// An explicit empty catalog remains empty.
 func NewWizardRecommendationAuthority(catalog StackKitCatalog) *WizardRecommendationAuthority {
 	available := []string(nil)
-	source := "embedded-known-stackkits"
+	source := "pinned-stackkits-metadata"
 	if catalog != nil {
-		available = catalog.ListStackKits()
+		available = append([]string{}, catalog.ListStackKits()...)
 		source = "stackkits-catalog"
 	}
 	return &WizardRecommendationAuthority{
@@ -99,6 +99,7 @@ func (a *WizardRecommendationAuthority) Recommend(input WizardRecommendationEval
 		response.CatalogSource = "embedded-known-stackkits"
 	}
 
+	response.Selection = GuideWizardSelection(req, input)
 	spec := wizardRecommendationSpec(req)
 	decisionContext := buildWizardRecommendationDecisionContext(req, input, spec)
 	response.DecisionContext = decisionContext
@@ -119,8 +120,15 @@ func (a *WizardRecommendationAuthority) Recommend(input WizardRecommendationEval
 	resolved := resolver.Resolve(spec)
 	trace := BuildDecisionTrace(spec, decisionContext, resolved, nil)
 	response.Recommendations = wizardRecommendations(req, resolved, trace, response.CatalogSource)
+	capacityReasons, unknownCapacity := catalogCapacityReasons(req, input.Inventory)
+	for i := range response.Recommendations {
+		response.Recommendations[i].Reasons = append(response.Recommendations[i].Reasons, capacityReasons...)
+	}
 
 	switch {
+	case unknownCapacity:
+		response.Status = core.WizardRecommendationDegraded
+		response.StaleInputs = appendUniqueString(response.StaleInputs, "module_capacity")
 	case strings.EqualFold(strings.TrimSpace(input.Inventory.State), wizardRecommendationInventoryUnavailable):
 		response.Status = core.WizardRecommendationDegraded
 		response.StaleInputs = appendUniqueString(response.StaleInputs, "worker_inventory")
@@ -145,6 +153,9 @@ func normalizeWizardRecommendationRequest(request core.WizardRecommendationReque
 		(request.ProviderID != providerCentron && request.ProviderID != providerIONOS) {
 		request.ProviderID = ""
 	}
+	request.AvailableGoals = normalizeWizardRecommendationValues(request.AvailableGoals)
+	request.SelectionIntent = strings.ToLower(strings.TrimSpace(request.SelectionIntent))
+	request.ComputeProfile = strings.TrimSpace(request.ComputeProfile)
 	request.Surface = strings.ToLower(strings.TrimSpace(request.Surface))
 	if request.Surface != wizardRecommendationSurfaceTechie {
 		request.Surface = wizardRecommendationSurfaceEasy
@@ -185,6 +196,9 @@ func wizardRecommendationSpec(request core.WizardRecommendationRequest) *core.Ko
 		"deployment_lane": request.DeploymentLane,
 		"provider_id":     request.ProviderID,
 		"use_cases":       strings.Join(request.Goals, ","),
+	}
+	if request.ComputeProfile != "" {
+		metadata["compute_tier"] = request.ComputeProfile
 	}
 	services := make([]core.ServiceSpec, 0, len(request.Services))
 	for _, service := range request.Services {
@@ -248,6 +262,7 @@ func buildWizardRecommendationDecisionContext(request core.WizardRecommendationR
 			Status: status, CPU: worker.Capabilities.CPU, RAMMB: worker.Capabilities.RAM,
 			DiskGB: worker.Capabilities.Disk, Arch: worker.Capabilities.Arch, OS: worker.Capabilities.OS,
 			Source: "worker-registry", Tags: cloneRecommendationTags(worker.Tags),
+			GPU: worker.Capabilities.GPU, AMD64MicroarchitectureLevel: worker.Capabilities.AMD64MicroarchitectureLevel,
 		})
 	}
 	return BuildDecisionContext(spec, context)

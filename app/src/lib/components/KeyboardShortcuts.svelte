@@ -84,6 +84,12 @@
 
     // Handle Escape
     if (e.key === "Escape") {
+      // A native modal <dialog> (the Brand sheets and dialogs) closes itself
+      // on Escape, even when focus has dropped back to the body; preventing
+      // the default here would keep it open.
+      if (document.querySelector("dialog[open]")) {
+        return;
+      }
       e.preventDefault();
       // Clear selection if any
       shortcutsStore.clearSelection();

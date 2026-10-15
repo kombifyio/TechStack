@@ -52,4 +52,14 @@ internal static class ClientAuthority
     internal static bool AllowsProductNavigation(Uri destination, string selectedAuthority) =>
         Uri.TryCreate(DesktopEdition.IsLocal ? selectedAuthority : CloudOrigin, UriKind.Absolute, out var authority)
         && SameOrigin(destination, authority);
+
+    internal static bool AllowsDeviceContextReply(string source, string current, string selectedAuthority,
+        long requestedRevision, long currentRevision, string? requestedToken, string currentToken, bool navigating) =>
+        !navigating && requestedRevision == currentRevision
+        && !string.IsNullOrEmpty(currentToken) && requestedToken == currentToken
+        && Uri.TryCreate(source, UriKind.Absolute, out var messageDocument)
+        && Uri.TryCreate(current, UriKind.Absolute, out var currentDocument)
+        && AllowsProductNavigation(messageDocument, selectedAuthority)
+        && AllowsProductNavigation(currentDocument, selectedAuthority)
+        && messageDocument.AbsoluteUri == currentDocument.AbsoluteUri;
 }

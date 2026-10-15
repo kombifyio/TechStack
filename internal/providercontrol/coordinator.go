@@ -187,6 +187,9 @@ func NewCoordinator(cfg CoordinatorConfig) (*Coordinator, error) {
 		claimOwner = "coordinator-" + claimOwner
 	}
 	terminalFailureObserver := cfg.TerminalFailureObserver
+	if ledger, ok := cfg.Ledger.(*PostgresLedger); ok {
+		ledger.createRegions = cfg.Registry
+	}
 	if terminalFailureObserver == nil {
 		terminalFailureObserver = func(command providerexecutor.Command, previous, next providerexecutor.Receipt) {
 			logTerminalFailureObservation(command, previous, next)

@@ -9,16 +9,12 @@ package stackkitrelease
 // the catalog of the exact pinned release and never hand-writes those flags.
 
 import (
-	"crypto/sha256"
-	_ "embed"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -32,38 +28,21 @@ const (
 	// runtime bundle carries it at the same place.
 	AdvancedOperationsFileName = "stackkits-advanced-operations-v1.json"
 
-	// AdvancedOperationsSourceRelease marks a catalog read from the pinned
-	// release itself. It is authoritative for that release.
-	AdvancedOperationsSourceRelease = "release"
-	// AdvancedOperationsSourceEmbedded marks the embedded fallback used while
-	// the pinned release predates the catalog. An entry of that copy is only
-	// dispatchable when its sinceRelease is at or below the pinned version.
-	AdvancedOperationsSourceEmbedded = "embedded-fallback"
-
-	// pinnedAdvancedOperationsSHA256 pins the embedded fallback bytes: the
-	// catalog of StackKits main at 1fab95a7 (P1.6). It is temporary. The next
-	// StackKits repin (the auto-repin workflow bumps the Dockerfile pin) ships a
-	// release whose archive carries the catalog, and the embedded copy is then
-	// never read; delete it with the first repin that carries the catalog.
-	pinnedAdvancedOperationsSHA256 = "bedf159e51455804eb105b34f4bc98794af8a2d9ecb20241e7670fbd0e91c25f"
-
 	maxAdvancedOperationsBytes = 1 << 20
 	advancedOperationStatusOK  = "available"
 )
 
-//go:embed pinned-advanced-operations.json
-var pinnedAdvancedOperationsJSON []byte
+// ErrAdvancedOperationsMissing reports a pinned release that does not carry
+// its Advanced operations catalog. Every Techstack-managed deployment runs
+// Advanced Mode, so such a release cannot serve a rollout: there is no
+// embedded or Standard fallback.
+var ErrAdvancedOperationsMissing = errors.New("the pinned StackKits release does not carry its Advanced operations catalog")
 
-var (
-	advancedPlaceholderPattern = regexp.MustCompile(`^\{([A-Za-z][A-Za-z0-9]*)\}$`)
-	releaseVersionPattern      = regexp.MustCompile(`^v([0-9]+)\.([0-9]+)\.([0-9]+)`)
-)
+var advancedPlaceholderPattern = regexp.MustCompile(`^\{([A-Za-z][A-Za-z0-9]*)\}$`)
 
 // AdvancedOperationsCatalog is the decoded catalog of one pinned release.
 type AdvancedOperationsCatalog struct {
 	SchemaVersion string
-	// Source is AdvancedOperationsSourceRelease or AdvancedOperationsSourceEmbedded.
-	Source string
 	// ReleaseVersion is the pinned release the catalog is evaluated against.
 	ReleaseVersion string
 	Operations     []AdvancedOperation
@@ -74,7 +53,6 @@ type AdvancedOperationsCatalog struct {
 type AdvancedOperation struct {
 	Operation    string                `json:"operation"`
 	Status       string                `json:"status"`
-	SinceRelease string                `json:"sinceRelease"`
 	Command      string                `json:"command"`
 	Argv         []string              `json:"argv"`
 	OptionalArgs []AdvancedOptionalArg `json:"optionalArgs"`
@@ -110,7 +88,7 @@ type advancedParameter struct {
 }
 
 // DecodeAdvancedOperations validates and decodes catalog bytes.
-func DecodeAdvancedOperations(raw []byte, source, releaseVersion string) (AdvancedOperationsCatalog, error) {
+func DecodeAdvancedOperations(raw []byte, releaseVersion string) (AdvancedOperationsCatalog, error) {
 	if len(raw) == 0 || len(raw) > maxAdvancedOperationsBytes {
 		return AdvancedOperationsCatalog{}, fmt.Errorf("StackKits Advanced operations catalog must be non-empty and at most %d bytes", maxAdvancedOperationsBytes)
 	}
@@ -141,32 +119,23 @@ func DecodeAdvancedOperations(raw []byte, source, releaseVersion string) (Advanc
 		seen[operation.Operation] = true
 	}
 	return AdvancedOperationsCatalog{
-		SchemaVersion: document.SchemaVersion, Source: source, ReleaseVersion: releaseVersion,
+		SchemaVersion: document.SchemaVersion, ReleaseVersion: releaseVersion,
 		Operations: document.Operations, patterns: patterns,
 	}, nil
 }
 
-// PinnedAdvancedOperations returns the embedded fallback catalog after
-// verifying its pinned digest.
-func PinnedAdvancedOperations(releaseVersion string) (AdvancedOperationsCatalog, error) {
-	digest := sha256.Sum256(pinnedAdvancedOperationsJSON)
-	if hex.EncodeToString(digest[:]) != pinnedAdvancedOperationsSHA256 {
-		return AdvancedOperationsCatalog{}, errors.New("embedded StackKits Advanced operations catalog does not match its pinned SHA-256")
-	}
-	return DecodeAdvancedOperations(pinnedAdvancedOperationsJSON, AdvancedOperationsSourceEmbedded, releaseVersion)
-}
-
-// AdvancedOperations returns the catalog of this exact release: the one the
-// release shipped, or the embedded fallback when the release predates it.
+// AdvancedOperations returns the catalog this exact release shipped. A
+// release without one fails with ErrAdvancedOperationsMissing.
 func (release Release) AdvancedOperations() (AdvancedOperationsCatalog, error) {
-	if len(release.advancedOperations) > 0 {
-		return DecodeAdvancedOperations(release.advancedOperations, AdvancedOperationsSourceRelease, release.receipt.Version)
+	if len(release.advancedOperations) == 0 {
+		return AdvancedOperationsCatalog{}, fmt.Errorf("%w (release %q)", ErrAdvancedOperationsMissing, release.receipt.Version)
 	}
-	return PinnedAdvancedOperations(release.receipt.Version)
+	return DecodeAdvancedOperations(release.advancedOperations, release.receipt.Version)
 }
 
 // readReleaseAdvancedOperations reads the catalog placed beside a release pin.
-// A missing file means the release predates the catalog.
+// A missing file leaves the release without a catalog; AdvancedOperations then
+// refuses every Advanced dispatch.
 func readReleaseAdvancedOperations(pinPath string) ([]byte, error) {
 	if strings.TrimSpace(pinPath) == "" {
 		return nil, nil
@@ -193,10 +162,7 @@ func (catalog AdvancedOperationsCatalog) Lookup(operation string) (AdvancedOpera
 }
 
 // Dispatchable reports why an operation may not be dispatched to this
-// release, or nil when it may. Only available entries with argv qualify; an
-// entry of the embedded fallback also needs a sinceRelease at or below the
-// pinned release, because that copy may describe commands the pinned CLI
-// does not have yet.
+// release, or nil when it may. Only available entries with argv qualify.
 func (catalog AdvancedOperationsCatalog) Dispatchable(operation string) error {
 	entry, ok := catalog.Lookup(operation)
 	if !ok {
@@ -204,9 +170,6 @@ func (catalog AdvancedOperationsCatalog) Dispatchable(operation string) error {
 	}
 	if entry.Status != advancedOperationStatusOK || len(entry.Argv) == 0 {
 		return fmt.Errorf("the Advanced operation %s is %s, not available, in the pinned StackKits release %s", operation, entry.Status, catalog.ReleaseVersion)
-	}
-	if catalog.Source != AdvancedOperationsSourceRelease && !releaseAtLeast(catalog.ReleaseVersion, entry.SinceRelease) {
-		return fmt.Errorf("the Advanced operation %s ships in StackKits %s, after the pinned release %s", operation, entry.SinceRelease, catalog.ReleaseVersion)
 	}
 	return nil
 }
@@ -268,37 +231,4 @@ func (catalog AdvancedOperationsCatalog) renderWords(words []string, values map[
 		out = append(out, value)
 	}
 	return out, nil
-}
-
-// releaseAtLeast reports whether the exact release version is at or after
-// since. A since that is not a release version (for example "pending") is
-// never reached.
-func releaseAtLeast(version, since string) bool {
-	have, ok := parseReleaseVersion(version)
-	want, wantOK := parseReleaseVersion(since)
-	if !ok || !wantOK {
-		return false
-	}
-	for index := range have {
-		if have[index] != want[index] {
-			return have[index] > want[index]
-		}
-	}
-	return true
-}
-
-func parseReleaseVersion(value string) ([3]int, bool) {
-	match := releaseVersionPattern.FindStringSubmatch(strings.TrimSpace(value))
-	if match == nil {
-		return [3]int{}, false
-	}
-	var parsed [3]int
-	for index := range parsed {
-		number, err := strconv.Atoi(match[index+1])
-		if err != nil {
-			return [3]int{}, false
-		}
-		parsed[index] = number
-	}
-	return parsed, true
 }

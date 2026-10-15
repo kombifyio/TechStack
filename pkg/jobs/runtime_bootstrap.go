@@ -292,6 +292,7 @@ func runtimeTargetAgentConvergenceProof(output string) (string, string) {
 		if len(fields) == 0 || fields[0] != "phase=agent_convergence" {
 			continue
 		}
+		digest = ""
 		for _, field := range fields[1:] {
 			key, value, ok := strings.Cut(field, "=")
 			if !ok {
@@ -306,6 +307,9 @@ func runtimeTargetAgentConvergenceProof(output string) (string, string) {
 				}
 			}
 		}
+		if status != "current" && status != "updated" {
+			digest = ""
+		}
 	}
 	return status, digest
 }
@@ -316,6 +320,8 @@ func runtimeTargetBootstrapReadyMessage(agentStatus string) string {
 		return "Docker is reachable and the enrolled Agent was updated to the exact control-plane artifact"
 	case "current":
 		return "Docker is reachable and the enrolled Agent already matches the exact control-plane artifact"
+	case "delegated":
+		return "Docker is reachable; authenticated Guard runtime convergence is delegated and readiness is pending"
 	default:
 		return "Docker is installed and reachable"
 	}
@@ -629,6 +635,50 @@ func (b *SSHRuntimeTargetBootstrapper) runCommand(ctx context.Context, client *s
 	}
 }
 
+// The SSH bootstrap admits the host, but never replaces the enrolled Guard.
+// Its authenticated convergence loop owns artifact proof, signed activation,
+// restart and runtime readiness before typed commands may execute.
+const runtimeTargetEnrolledAgentConvergenceScript = `converge_enrolled_agent() {
+  admit_ufw_nftables
+  admit_docker_firewall || return 1
+  admit_guard_host_writes || return 1
+  enrollment_file="/etc/techstack/agent-enrollment.json"
+  state_enrollment="/var/lib/techstack/guard/agent-enrollment.json"
+  # Match hostidentity.LocateEnrollment: the newer protected copy wins.
+  if $SUDO test -f "$state_enrollment" && { ! $SUDO test -f "$enrollment_file" || $SUDO test "$state_enrollment" -nt "$enrollment_file"; }; then
+    enrollment_file="$state_enrollment"
+  fi
+  if ! $SUDO test -f "$enrollment_file"; then
+    log "phase=agent_convergence status=not_applicable reason=enrollment_missing"
+    return 0
+  fi
+  guard_uid="$(id -u kombify-guard 2>/dev/null || echo 0)"
+  enrollment_owner="$($SUDO stat -c '%u:%a' "$enrollment_file" 2>/dev/null || true)"
+  if [ "$enrollment_owner" != "0:600" ] && [ "$enrollment_owner" != "${guard_uid}:600" ]; then
+    log "phase=agent_convergence status=failed reason=enrollment_permissions_invalid"
+    return 1
+  fi
+  if ! $SUDO test -s "$enrollment_file"; then
+    log "phase=agent_convergence status=failed reason=enrollment_empty"
+    return 1
+  fi
+  if ! $SUDO systemctl is-enabled --quiet techstack-agent.service; then
+    log "phase=agent_convergence status=failed reason=service_not_enabled"
+    return 1
+  fi
+  # The Guard may be trialling an authenticated update and restarting now.
+  for i in $(seq 1 30); do
+    if $SUDO systemctl is-active --quiet techstack-agent.service; then
+      log "phase=agent_convergence status=delegated reason=authenticated_guard_runtime"
+      return 0
+    fi
+    sleep 1
+  done
+  log "phase=agent_convergence status=failed reason=service_not_active"
+  return 1
+}
+`
+
 func runtimeTargetBootstrapScript() string {
 	return `set -u
 log() { printf '%s\n' "$*"; }
@@ -723,6 +773,13 @@ admit_guard_host_writes() {
     log "phase=guard_sandbox status=not_applicable"
     return 0
   fi
+  # The privilege-split Guard daemon runs as its own unprivileged user and never
+  # needs host writes; the privileged executor applies them. Loosening its
+  # sandbox would undo the split, so it is never repaired here.
+  if $SUDO grep -q '^User=kombify-guard' "$unit"; then
+    log "phase=guard_sandbox status=not_applicable reason=privilege_split"
+    return 0
+  fi
   $SUDO mkdir -p /root/.docker /opt/stackkit/.stackkit /etc/ssh/sshd_config.d
   $SUDO mkdir -p -m 0700 /home/kombify/.ssh
   pid="$($SUDO systemctl show -p MainPID --value techstack-agent.service 2>/dev/null || true)"
@@ -764,123 +821,7 @@ admit_guard_host_writes() {
   log "phase=guard_sandbox status=failed"
   return 1
 }
-converge_enrolled_agent() {
-  admit_ufw_nftables
-  admit_docker_firewall || return 1
-  admit_guard_host_writes || return 1
-  enrollment_file="/etc/techstack/agent-enrollment.json"
-  if ! $SUDO test -f "$enrollment_file"; then
-    log "phase=agent_convergence status=not_applicable reason=enrollment_missing"
-    return 0
-  fi
-  if [ "$($SUDO stat -c '%u:%a' "$enrollment_file" 2>/dev/null || true)" != "0:600" ]; then
-    log "phase=agent_convergence status=failed reason=enrollment_permissions_invalid"
-    return 1
-  fi
-  if ! command -v jq >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1 || ! command -v sha256sum >/dev/null 2>&1; then
-    log "phase=agent_convergence status=failed reason=prerequisite_missing"
-    return 1
-  fi
-  agent_token="$($SUDO jq -er '.data.agent_token // .agent_token // empty' "$enrollment_file")" || {
-    log "phase=agent_convergence status=failed reason=agent_token_missing"
-    return 1
-  }
-  runtime_agent_id="$($SUDO jq -er '.data.runtime_agent_id // .runtime_agent_id // .data.worker_id // .worker_id // empty' "$enrollment_file")" || {
-    log "phase=agent_convergence status=failed reason=runtime_agent_id_missing"
-    return 1
-  }
-  tenant_id="$($SUDO jq -er '.data.tenant_id // .tenant_id // .data.channel_bootstrap.tenant_id // .channel_bootstrap.tenant_id // empty' "$enrollment_file")" || {
-    log "phase=agent_convergence status=failed reason=tenant_id_missing"
-    return 1
-  }
-  heartbeat_url="$($SUDO jq -er '.data.heartbeat_url // .heartbeat_url // .data.channel_bootstrap.heartbeat_url // .channel_bootstrap.heartbeat_url // empty' "$enrollment_file")" || {
-    log "phase=agent_convergence status=failed reason=heartbeat_url_missing"
-    return 1
-  }
-  case "$heartbeat_url" in
-    https://*/api/v1/workers/*/heartbeat) ;;
-    *)
-      log "phase=agent_convergence status=failed reason=heartbeat_url_invalid"
-      return 1
-      ;;
-  esac
-  api_base="${heartbeat_url%%/api/v1/workers/*}"
-  case "$(uname -m)" in
-    x86_64|amd64) agent_arch="amd64" ;;
-    aarch64|arm64) agent_arch="arm64" ;;
-    armv7|armv7l) agent_arch="arm" ;;
-    *)
-      log "phase=agent_convergence status=failed reason=architecture_unsupported"
-      return 1
-      ;;
-  esac
-  agent_url="${api_base}/api/v1/agent/binary/linux/${agent_arch}"
-  auth_file="$(mktemp "${TMPDIR:-/tmp}/techstack-agent-auth.XXXXXX")"
-  header_file="$(mktemp "${TMPDIR:-/tmp}/techstack-agent-headers.XXXXXX")"
-  binary_file="$(mktemp "${TMPDIR:-/tmp}/techstack-agent-binary.XXXXXX")"
-  chmod 0600 "$auth_file" "$header_file" "$binary_file"
-  cleanup_agent_convergence() {
-    trap - EXIT HUP INT TERM
-    rm -f "$auth_file" "$header_file" "$binary_file"
-  }
-  trap 'cleanup_agent_convergence' EXIT
-  trap 'cleanup_agent_convergence; exit 1' HUP INT TERM
-  printf 'header = "Authorization: Bearer %s"\nheader = "X-Kombify-Runtime-Agent-ID: %s"\nheader = "X-Kombify-Tenant-ID: %s"\n' \
-    "$agent_token" "$runtime_agent_id" "$tenant_id" > "$auth_file"
-  unset agent_token
-  log "phase=agent_convergence status=download_begin"
-  if ! run_bounded 50 curl --config "$auth_file" --fail-with-body --silent --show-error \
-    --proto '=https' --tlsv1.2 --retry 1 --connect-timeout 5 --max-time 45 \
-    --dump-header "$header_file" --output "$binary_file" --request POST "$agent_url"; then
-    cleanup_agent_convergence
-    log "phase=agent_convergence status=failed reason=download_failed"
-    return 1
-  fi
-  expected_sha="$(awk 'tolower($1) == "x-kombify-artifact-sha256:" {gsub("\\r", "", $2); print tolower($2)}' "$header_file" | tail -n 1)"
-  case "$expected_sha" in
-    *[!0-9a-f]*|'')
-      cleanup_agent_convergence
-      log "phase=agent_convergence status=failed reason=checksum_missing"
-      return 1
-      ;;
-  esac
-  if [ "${#expected_sha}" -ne 64 ] || ! printf '%s  %s\n' "$expected_sha" "$binary_file" | sha256sum -c - >/dev/null 2>&1; then
-    cleanup_agent_convergence
-    log "phase=agent_convergence status=failed reason=checksum_mismatch"
-    return 1
-  fi
-  current_sha=""
-  if [ -f /usr/local/bin/techstack ]; then
-    current_sha="$(sha256sum /usr/local/bin/techstack | awk '{print $1}')"
-  fi
-  if [ "$current_sha" = "$expected_sha" ]; then
-    cleanup_agent_convergence
-    log "phase=agent_convergence status=current sha256=$expected_sha"
-    return 0
-  fi
-  stage_path="/usr/local/bin/.techstack-agent-${expected_sha}.next"
-  if ! $SUDO install -m 0755 "$binary_file" "$stage_path" || ! $SUDO mv -f "$stage_path" /usr/local/bin/techstack; then
-    $SUDO rm -f "$stage_path" || true
-    cleanup_agent_convergence
-    log "phase=agent_convergence status=failed reason=activation_failed"
-    return 1
-  fi
-  cleanup_agent_convergence
-  if ! $SUDO systemctl daemon-reload || ! $SUDO systemctl restart techstack-agent.service; then
-    log "phase=agent_convergence status=failed reason=restart_failed"
-    return 1
-  fi
-  for i in $(seq 1 30); do
-    if $SUDO systemctl is-active --quiet techstack-agent.service; then
-      log "phase=agent_convergence status=updated sha256=$expected_sha"
-      return 0
-    fi
-    sleep 1
-  done
-  log "phase=agent_convergence status=failed reason=service_not_active"
-  return 1
-}
-host_prep_status=/var/lib/kombify/host-prep/v1.status
+` + runtimeTargetEnrolledAgentConvergenceScript + `host_prep_status=/var/lib/kombify/host-prep/v1.status
 if [ -f "$host_prep_status" ]; then
   # The bootstrap context is the authority for this wait. Do not introduce a
   # shorter local timeout than the declared first-boot preparation contract;

@@ -16,9 +16,47 @@ tags:
   - name: DomainRouting
   - name: RuntimeSummary
   - name: UsageBudgets
+  - name: Household
 security:
   - servicecallAuth: []
 paths:
+  /internal/v1/runtime/creation-pauses:
+    get:
+      operationId: getInternalRuntimeCreationPause
+      tags: [RuntimeSummary]
+      summary: Read authoritative account-scoped VM creation protection
+      description: >-
+        Cloud servicecall and stored membership authorization are required.
+        Account scope comes from the authorized signed org, never query input.
+        Provider and region are read filters, each supplied at most once.
+        The immutable native operation and receipt ledger is authoritative;
+        this projection is not a create permit. Status, stop, and delete retain
+        their existing authorization. Expired cooldown admits one scoped trial;
+        unknown outcomes require canonical existing-generation reconciliation.
+      parameters:
+        - name: provider_id
+          in: query
+          required: true
+          schema: { type: string, examples: [ionos, centron] }
+        - name: region
+          in: query
+          required: false
+          description: Desired region filter; adapter resolves actual canonical placement, including package locations or configured pools. Empty selects existing default placement. Returned region may differ when provider placement overrides the request.
+          schema: { type: string, maxLength: 128 }
+      responses:
+        "200":
+          description: Durable account/provider/region creation protection
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreateProtection" }
+        "400":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+        "401":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+        "403":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+        "503":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
   /api/internal/stacks/domain-attach:
     post:
       operationId: ensureInternalStackDomainRouting
@@ -201,6 +239,117 @@ paths:
           $ref: "#/components/responses/RuntimeLeaseDenied"
         "503":
           $ref: "#/components/responses/RuntimeLeaseDenied"
+  /api/v1/internal/runtime/history:
+    get:
+      operationId: getInternalRuntimeHistory
+      tags: [RuntimeSummary]
+      summary: Read the signed caller owner's host-metric history
+      description: >-
+        Private Cloud monitoring read. Same servicecall boundary and owner
+        scope as the runtime summary; the only accepted query parameter is
+        `range`. One series per visible server (an empty series when no
+        sample exists in the window). A point carries only the figures the
+        Guard reported in that interval; gaps are never interpolated. Samples
+        are bucketed at 60 s for 24 h and 900 s for 30 d, then aggregated to
+        `step_seconds`. An unavailable store answers 503, never an empty list.
+      parameters:
+        - name: range
+          in: query
+          required: true
+          schema: { type: string, enum: ["1h", "24h", "7d", "30d"] }
+      responses:
+        "200":
+          description: Owner-scoped metric history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RuntimeHistory"
+        "400":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+        "401":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+        "403":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+        "503":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+  /api/v1/internal/runtime/events:
+    get:
+      operationId: getInternalRuntimeEvents
+      tags: [RuntimeSummary]
+      summary: Read the signed caller owner's recent server and service state changes
+      description: >-
+        Private Cloud monitoring read over the server and service transition
+        timelines of the last 30 days, newest first. A first observation is a
+        registration, not a change, and is not listed. Service `observed`
+        transitions are reported as field `lifecycle`.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: Owner-scoped state changes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RuntimeEvents"
+        "400":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+        "401":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+        "403":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+        "503":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+  /api/v1/internal/runtime/ports:
+    get:
+      operationId: getInternalRuntimePorts
+      tags: [RuntimeSummary]
+      summary: Read the signed caller owner's observed open ports per server
+      description: >-
+        Private Cloud monitoring read over the port inventory authority. A
+        server whose Guard never reported listeners is `unknown` and an
+        expired observation is `stale`; both omit `ports`. An observed host
+        with no open port has an empty list.
+      responses:
+        "200":
+          description: Owner-scoped open ports
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RuntimePorts"
+        "401":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+        "403":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+        "503":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+  /api/v1/internal/runtime/backups:
+    get:
+      operationId: getInternalRuntimeBackups
+      tags: [RuntimeSummary]
+      summary: Read the signed caller owner's backup facts per server
+      description: >-
+        Private Cloud monitoring read. `state` is the Guard-observed freshness
+        of the newest snapshot (it never proves a restore works; see
+        `restore_drill`). `offsite_stored_bytes` is the measured size of the
+        stack's whole off-site repository, not of one run. `recent` lists the
+        newest backup run outcome per UTC day for the last days that had a run;
+        a day without a run has no entry.
+      responses:
+        "200":
+          description: Owner-scoped backup facts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RuntimeBackups"
+        "401":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+        "403":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+        "503":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
   /api/v1/internal/usage/budgets:
     get:
       operationId: getInternalUsageBudgets
@@ -226,6 +375,134 @@ paths:
               schema:
                 $ref: "#/components/schemas/UsageBudgets"
         "401":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+        "403":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+        "503":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+  /api/v1/internal/household/projection:
+    post:
+      operationId: projectInternalHouseholdMember
+      tags: [Household]
+      summary: Project a Cloud household member to the owner's homelab
+      description: >-
+        Companion Feed household (Feed contract v1). Cloud sends the owner-approved
+        projection when the owner invites a household member or removes one. The
+        service token carries scope `household:projection` and `on_behalf_of.sub`
+        equal to `owner_subject` (a member may also remove themselves);
+        `on_behalf_of.org_id` is optional and the tenant otherwise resolves from the
+        owner's verified membership. `add` runs the StackKits identity operation
+        HOUSEHOLD_INVITE on the owner's node and stores a HomelabIdentityRefV1
+        reference with status `invited`; `remove` runs HOUSEHOLD_REMOVE
+        (`stackkit user remove`) and deletes the reference. An invitation alone never
+        links. Techstack keeps no queue: `pending` means the node could not take the
+        command now and Cloud re-sends it, which is idempotent.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HouseholdProjectionRequest"
+      responses:
+        "202":
+          description: Projection outcome
+          headers:
+            Cache-Control:
+              schema: { type: string, enum: ["no-store"] }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HouseholdProjectionResult"
+        "400":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+        "401":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+        "403":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+        "503":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+  /api/v1/internal/household/links/begin:
+    post:
+      operationId: beginInternalHouseholdLink
+      tags: [Household]
+      summary: Read what a member needs to prove the Pocket ID identity
+      description: >-
+        Kombify Connect D10. Scope `household:link`, `on_behalf_of.sub` is the
+        invited member. Returns the stack's Pocket ID issuer (from Techstack's own
+        service inventory, never from a token), the OIDC client id and the scopes for
+        an authorization-code login with PKCE.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HouseholdLinkRequest"
+      responses:
+        "200":
+          description: Login parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HouseholdLinkBegin"
+        "403":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+        "404":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+        "503":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+  /api/v1/internal/household/links/complete:
+    post:
+      operationId: completeInternalHouseholdLink
+      tags: [Household]
+      summary: Complete the link with the member's verified Pocket ID login
+      description: >-
+        Kombify Connect D10. Scope `household:link`, `on_behalf_of.sub` is the
+        invited member. Techstack verifies the ID token (signature through the
+        issuer's JWKS, issuer, audience, expiry, nonce) and requires the login to
+        name the invited Pocket ID username, or else the invited e-mail address. The
+        reference moves from `invited` to `linked`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HouseholdLinkRequest"
+      responses:
+        "200":
+          description: The linked reference
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HomelabIdentityRef"
+        "403":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+        "404":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+        "503":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+  /api/v1/internal/household/links:
+    get:
+      operationId: listInternalHouseholdLinks
+      tags: [Household]
+      summary: List the owner's household references per stack
+      description: >-
+        Scope `household:links`. Recipient resolution for producers and Cloud
+        (`homelab_linked`). Called on behalf of the owner or with no user it returns
+        the whole household; on behalf of a member it returns only that member's own
+        reference. `members` holds the linked people, `invited` the still unlinked.
+      parameters:
+        - name: owner_subject
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The owner's household
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HouseholdLinks"
+        "400":
           $ref: "#/components/responses/RuntimeLeaseDenied"
         "403":
           $ref: "#/components/responses/RuntimeLeaseDenied"
@@ -279,6 +556,32 @@ components:
           schema:
             $ref: "#/components/schemas/InternalErrorEnvelope"
   schemas:
+    CreateProtection:
+      type: object
+      required: [provider_id, region, state, reason_code, consecutive_failures, recovery, policy]
+      properties:
+        provider_id: { type: string }
+        region: { type: string }
+        state: { type: string, enum: [ready, paused, probe_in_flight, outcome_unknown] }
+        reason_code: { type: string }
+        consecutive_failures: { type: integer, minimum: 0 }
+        retry_at: { type: string, format: date-time }
+        recovery:
+          type: string
+          enum: [none, automatic_after_cooldown, wait_for_current_create, reconcile_existing_create]
+        last_failure:
+          type: object
+          required: [code, at]
+          properties:
+            code: { type: string }
+            at: { type: string, format: date-time }
+        policy:
+          type: object
+          required: [threshold, window_seconds, cooldown_seconds]
+          properties:
+            threshold: { type: integer, const: 3 }
+            window_seconds: { type: integer, const: 900 }
+            cooldown_seconds: { type: integer, const: 900 }
     RuntimeSummary:
       type: object
       required: [version, generated_at, servers, services]
@@ -291,6 +594,128 @@ components:
         services:
           type: object
           description: InventoryServiceList projection with management_state (see techstack-v1.yaml).
+    RuntimeMonitoringEnvelope:
+      type: object
+      required: [version, generated_at, scope_state]
+      properties:
+        version: { type: string, enum: ["1"] }
+        generated_at: { type: string, format: date-time }
+        scope_state: { type: string, enum: ["ok"] }
+    RuntimeHistory:
+      allOf:
+        - $ref: "#/components/schemas/RuntimeMonitoringEnvelope"
+        - type: object
+          required: [range, step_seconds, servers]
+          properties:
+            range: { type: string, enum: ["1h", "24h", "7d", "30d"] }
+            step_seconds: { type: integer }
+            servers:
+              type: array
+              items:
+                type: object
+                required: [server_id, points]
+                properties:
+                  server_id: { type: string }
+                  points:
+                    type: array
+                    items:
+                      type: object
+                      required: [t]
+                      properties:
+                        t: { type: string, format: date-time }
+                        cpu: { type: number, minimum: 0, maximum: 100 }
+                        memory: { type: number, minimum: 0, maximum: 100 }
+                        disk: { type: number, minimum: 0, maximum: 100 }
+    RuntimeEvents:
+      allOf:
+        - $ref: "#/components/schemas/RuntimeMonitoringEnvelope"
+        - type: object
+          required: [events]
+          properties:
+            events:
+              type: array
+              items:
+                type: object
+                required: [at, kind, id, name, server_id, field, from, to]
+                properties:
+                  at: { type: string, format: date-time }
+                  kind: { type: string, enum: ["server", "service"] }
+                  id: { type: string }
+                  name: { type: string }
+                  server_id: { type: string }
+                  field: { type: string, enum: ["health", "connection", "lifecycle"] }
+                  from: { type: string }
+                  to: { type: string }
+                  reason_code: { type: string }
+    RuntimePorts:
+      allOf:
+        - $ref: "#/components/schemas/RuntimeMonitoringEnvelope"
+        - type: object
+          required: [servers]
+          properties:
+            servers:
+              type: array
+              items:
+                type: object
+                required: [server_id, state, listeners_complete]
+                properties:
+                  server_id: { type: string }
+                  state: { type: string, enum: ["observed", "stale", "unknown"] }
+                  observed_at: { type: string, format: date-time }
+                  listeners_complete: { type: boolean }
+                  ports:
+                    type: array
+                    items:
+                      type: object
+                      required: [port, protocol, bind_address, exposure, exposed_state, desired]
+                      properties:
+                        port: { type: integer, minimum: 1, maximum: 65535 }
+                        protocol: { type: string, enum: ["tcp", "udp"] }
+                        bind_address: { type: string }
+                        exposure: { type: string, enum: ["local", "lan", "remote-private", "public"] }
+                        exposed_state: { type: string, enum: ["present", "missing", "unknown", "stale"] }
+                        desired: { type: boolean }
+    RuntimeBackups:
+      allOf:
+        - $ref: "#/components/schemas/RuntimeMonitoringEnvelope"
+        - type: object
+          required: [servers]
+          properties:
+            servers:
+              type: array
+              items:
+                type: object
+                required: [server_id, state, offsite_configured, recent]
+                properties:
+                  server_id: { type: string }
+                  state: { type: string, enum: ["fresh", "stale", "unknown"] }
+                  reason_code: { type: string }
+                  last_snapshot_at: { type: string, format: date-time }
+                  policy_max_age: { type: string }
+                  restore_drill:
+                    type: object
+                    required: [state]
+                    properties:
+                      state: { type: string, enum: ["verified", "stale", "unknown"] }
+                      verified_at: { type: string, format: date-time }
+                  offsite_configured: { type: boolean }
+                  offsite_stored_bytes: { type: integer, minimum: 0 }
+                  offsite_measured_at: { type: string, format: date-time }
+                  schedule:
+                    type: object
+                    required: [cadence, enabled]
+                    properties:
+                      cadence: { type: string, enum: ["hourly", "daily", "weekly"] }
+                      enabled: { type: boolean }
+                      last_run_at: { type: string, format: date-time }
+                  recent:
+                    type: array
+                    items:
+                      type: object
+                      required: [date, state]
+                      properties:
+                        date: { type: string, format: date }
+                        state: { type: string, enum: ["completed", "failed"] }
     UsageBudgets:
       type: object
       required: [budgets]
@@ -514,6 +939,93 @@ components:
         simulation_id: { type: string }
         vm_id: { type: string }
         region: { type: string }
+    HouseholdProjectionRequest:
+      type: object
+      required: [owner_subject, member, action]
+      additionalProperties: false
+      properties:
+        owner_subject: { type: string }
+        member:
+          type: object
+          required: [subject, email, display_name]
+          additionalProperties: false
+          properties:
+            subject: { type: string, description: Auth0 subject of the member }
+            email: { type: string }
+            display_name: { type: string }
+        action: { type: string, enum: [add, remove] }
+    HouseholdProjectionResult:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [projected, none, pending]
+          description: >-
+            projected: the invite or removal was issued to the node. none: the
+            owner has no homelab. pending: the node could not take it now, retry.
+        stack_id: { type: string }
+        username: { type: string, description: Pocket ID username on the node }
+        link_status: { type: string, enum: [invited, linked] }
+        activation_url:
+          type: string
+          description: >-
+            One-time passkey enrolment link the node issued with an add. Returned
+            once and never stored; hand it to the invited person.
+        activation_expires_at: { type: string, format: date-time }
+        stacks:
+          type: array
+          items: { type: string }
+          description: Stacks the member was removed from (action remove).
+        reason_code: { type: string }
+        retryable: { type: boolean }
+    HouseholdLinkRequest:
+      type: object
+      required: [owner_subject]
+      additionalProperties: false
+      properties:
+        owner_subject: { type: string }
+        stack_id: { type: string, description: Required when the member is invited on several stacks }
+        id_token: { type: string, description: Pocket ID ID token (links/complete only) }
+        nonce: { type: string, description: Nonce used in the login (links/complete only) }
+    HouseholdLinkBegin:
+      type: object
+      required: [stack_id, username, issuer, client_id, scope]
+      properties:
+        stack_id: { type: string }
+        username: { type: string }
+        issuer: { type: string, description: The stack's Pocket ID origin }
+        client_id: { type: string, description: Public OIDC client registered on the node's Pocket ID }
+        scope: { type: string }
+    HomelabIdentityRef:
+      type: object
+      required: [stack_id, idp, username, role, cloud_subject, status]
+      properties:
+        stack_id: { type: string }
+        idp: { type: string, enum: [pocket-id, tinyauth] }
+        username: { type: string }
+        role: { type: string, enum: [owner, member] }
+        cloud_subject: { type: string }
+        status: { type: string, enum: [invited, linked] }
+        linked_at: { type: string, format: date-time }
+    HouseholdLinks:
+      type: object
+      required: [owner_subject, stacks]
+      properties:
+        owner_subject: { type: string }
+        stacks:
+          type: array
+          items:
+            type: object
+            required: [stack_id, members, invited]
+            properties:
+              stack_id: { type: string }
+              members:
+                type: array
+                items: { $ref: "#/components/schemas/HomelabIdentityRef" }
+              invited:
+                type: array
+                items: { $ref: "#/components/schemas/HomelabIdentityRef" }
     InternalErrorEnvelope:
       type: object
       required: [error_code, reason_code, required_features, missing_features, retryable, user_guidance]

@@ -1,6 +1,7 @@
 param(
     [switch]$NoInstall,
     [switch]$Service,
+    [switch]$StageOnly,
     [switch]$Help
 )
 
@@ -31,6 +32,7 @@ $InstallDir = if ($env:INSTALL_DIR) { $env:INSTALL_DIR } else { Join-Path $env:L
 # Merge env fallbacks into the switch flags (iex path can only pass env).
 if ($env:TECHSTACK_NO_INSTALL -eq "1") { $NoInstall = $true }
 if ($env:TECHSTACK_AS_SERVICE -eq "1") { $Service = $true }
+if ($env:TECHSTACK_STAGE_ONLY -eq "1") { $StageOnly = $true }
 
 $script:WorkerRegistered = $false
 
@@ -40,6 +42,7 @@ function Show-Usage {
     Write-Host "Options:"
     Write-Host "  -NoInstall   Skip binary installation (registration only)"
     Write-Host "  -Service     Install and register a Windows Service"
+    Write-Host "  -StageOnly   Stage the verified server runtime only; no PATH, service or enrollment changes"
 }
 
 function Register-WorkerIfEnvSet {
@@ -142,41 +145,61 @@ function Get-LatestVersion {
 }
 
 function Install-Binary([string]$version) {
-    $arch = Get-Arch
-    $downloadUrl = "https://github.com/{0}/releases/download/{1}/{2}_Windows_{3}.zip" -f $Repo, $version, $BinaryName, $arch
-    Write-Host ("Downloading from: {0}" -f $downloadUrl) -ForegroundColor Cyan
-
-    $tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("techstack-install-" + [System.Guid]::NewGuid().ToString("N"))
-    New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
-    $archive = Join-Path $tmpDir "archive.zip"
-
+    if ((Get-Arch) -ne "x86_64") {
+        throw "The public runtime transport supports Windows x64. Use the published Compose image for other server platforms."
+    }
+    if ($version -notmatch '^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+        throw "A stable numeric public release tag is required."
+    }
+    # The Local client ZIP transports a separate server runtime. Never install
+    # the desktop client or use this unsigned transport as a managed Guard seed.
+    $productVersion = $version -replace '^v', ''
+    $asset = "kombify-techstack-client_${productVersion}_Windows_x86_64.zip"
+    $releaseUrl = "https://github.com/$Repo/releases/download/v$productVersion"
+    $downloadUrl = "$releaseUrl/$asset"
+    $tmpDir = Join-Path ([IO.Path]::GetTempPath()) ("techstack-install-" + [Guid]::NewGuid())
+    New-Item -ItemType Directory -Path $tmpDir | Out-Null
     try {
-        Invoke-WebRequest -Uri $downloadUrl -OutFile $archive -TimeoutSec 60
-    } catch {
-        Write-Host ("Failed to download binary: {0}" -f $_.Exception.Message) -ForegroundColor Red
-        Remove-Item -Recurse -Force $tmpDir -ErrorAction SilentlyContinue
-        exit 1
-    }
-
-    Write-Host "Extracting..." -ForegroundColor Cyan
-    Expand-Archive -Path $archive -DestinationPath $tmpDir -Force
-
-    if (-not (Test-Path $InstallDir)) {
+        $archive = Join-Path $tmpDir "archive.zip"
+        Invoke-WebRequest -Uri $downloadUrl -OutFile $archive -TimeoutSec 300
+        $expected = $env:TECHSTACK_BINARY_SHA256
+        $digestSource = "TECHSTACK_BINARY_SHA256"
+        if ([string]::IsNullOrWhiteSpace($expected)) {
+            $checksumResponse = Invoke-WebRequest -Uri "$releaseUrl/SHA256SUMS.txt" -TimeoutSec 60
+            $checksums = if ($checksumResponse.Content -is [byte[]]) { [Text.Encoding]::UTF8.GetString($checksumResponse.Content) } else { [string]$checksumResponse.Content }
+            $matches = @($checksums -split '\r?\n' | Where-Object { $_ -match ('^[0-9a-fA-F]{64}\s+\*?' + [regex]::Escape($asset) + '$') })
+            if ($matches.Count -ne 1) { throw "SHA256SUMS.txt must name exactly one checksum for $asset. Supply an independently obtained TECHSTACK_BINARY_SHA256 archive pin." }
+            $expected = ($matches[0] -split '\s+')[0]
+            $digestSource = "release SHA256SUMS.txt (transfer integrity only)"
+        }
+        if ($expected -notmatch '^[0-9a-fA-F]{64}$') { throw "TECHSTACK_BINARY_SHA256 must be a SHA-256 archive digest." }
+        $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actual -ne $expected.ToLowerInvariant()) { throw "Release archive checksum mismatch; no runtime was installed." }
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $zip = [IO.Compression.ZipFile]::OpenRead($archive)
+        try {
+            $entries = @($zip.Entries | Where-Object { $_.FullName -ceq "techstack.exe" })
+            if ($entries.Count -ne 1) { throw "The Local public ZIP has no unique Windows server runtime. Use its published desktop installer for the client, or Compose for the server." }
+            $staged = Join-Path $tmpDir "techstack.exe"
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($entries[0], $staged)
+        } finally { $zip.Dispose() }
+        $versionOutput = & $staged version
+        if ($LASTEXITCODE -ne 0 -or ($versionOutput -join "`n") -notmatch ('(?m)^kombifyTechstack v' + [regex]::Escape($productVersion) + '\r?$')) {
+            throw "The staged server runtime does not report the selected public version."
+        }
         New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
-    }
-    $exeSource = Join-Path $tmpDir ($BinaryName + ".exe")
-    if (-not (Test-Path $exeSource)) {
-        # Some archives place the binary without extension; normalize.
-        $exeSource = Join-Path $tmpDir $BinaryName
-    }
-    $exeTarget = Join-Path $InstallDir ($BinaryName + ".exe")
-    Write-Host ("Installing to {0}..." -f $InstallDir) -ForegroundColor Cyan
-    Copy-Item -Path $exeSource -Destination $exeTarget -Force
-    Remove-Item -Recurse -Force $tmpDir -ErrorAction SilentlyContinue
-
-    Add-ToUserPath $InstallDir
-    Write-Host "kombify Techstack installed successfully." -ForegroundColor Green
-    return $exeTarget
+        $exeTarget = Join-Path $InstallDir "techstack.exe"
+        Copy-Item -LiteralPath $staged -Destination $exeTarget -Force
+        @{
+            role = "techstack-server"; version = $productVersion; releaseUrl = $releaseUrl
+            asset = $asset; archiveSha256 = $actual; digestSource = $digestSource
+            entry = "techstack.exe"; runtimeSha256 = (Get-FileHash -LiteralPath $exeTarget -Algorithm SHA256).Hash.ToLowerInvariant()
+        } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $InstallDir "techstack-install-receipt.json") -Encoding UTF8
+        if (-not $StageOnly) { Add-ToUserPath $InstallDir }
+        return $exeTarget
+    } catch {
+        throw "Public server runtime staging failed for ${downloadUrl}: $($_.Exception.Message). Use the published Compose server bundle or the Windows desktop installer for its respective role."
+    } finally { Remove-Item -LiteralPath $tmpDir -Recurse -Force }
 }
 
 function Add-ToUserPath([string]$dir) {
@@ -226,7 +249,10 @@ Write-Host "   The Hybrid Infrastructure Unifier" -ForegroundColor Cyan
 Write-Host "----------------------------------------" -ForegroundColor Cyan
 Write-Host ""
 
-Register-WorkerIfEnvSet
+if (-not $StageOnly -and $env:KOMBI_SERVER -and ($Service -or $env:TECHSTACK_INSTALL_BINARY -eq "1") -and -not $NoInstall) {
+    throw "A managed Guard must come from its enrolling control plane's signed release. This public installer stages the server runtime; use the supported Linux Guard enrollment path."
+}
+if (-not $StageOnly) { Register-WorkerIfEnvSet }
 
 if ($script:WorkerRegistered -and -not $Service -and $env:TECHSTACK_INSTALL_BINARY -ne "1") {
     Write-Host "Worker bootstrap complete." -ForegroundColor Green
@@ -241,6 +267,7 @@ if ($NoInstall) {
 
 $version = Get-LatestVersion
 $exePath = Install-Binary $version
+if ($StageOnly) { Write-Host "Verified server runtime staged at $exePath; no client, service, PATH or enrollment changes."; return }
 
 try {
     $versionOut = & $exePath version 2>$null

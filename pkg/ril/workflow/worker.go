@@ -31,10 +31,12 @@ func DefaultWorkerConfig() WorkerConfig {
 // timers (escalation/reminder). Inline StartRun/Deliver still advance runs
 // immediately; the worker is the background safety net + timer engine.
 type Worker struct {
-	engine *Engine
-	store  RunStore
-	cfg    WorkerConfig
-	log    *logger.Logger
+	engine     *Engine
+	store      RunStore
+	pollAfter  string
+	timerAfter string
+	cfg        WorkerConfig
+	log        *logger.Logger
 }
 
 // NewWorker builds a worker. Zero-valued config fields fall back to defaults.
@@ -96,44 +98,77 @@ func (w *Worker) PollRuns(ctx context.Context) {
 			w.log.Warn("ril_workflow_background_task_failed", "error", err.Error())
 		}
 	}
-	for _, st := range []RunStatus{RunPending, RunRunning} {
-		runs, err := w.store.ListRunsByStatus(st, w.cfg.Batch)
-		if err != nil {
-			w.log.Error("ril_workflow_poll_list_failed", "status", string(st), "error", err.Error())
-			continue
-		}
-		for _, r := range runs {
-			if err := w.engine.tryAdvance(ctx, r.RunID); err != nil {
-				w.log.Warn("ril_workflow_poll_advance_failed", "run_id", r.RunID, "error", err.Error())
+	w.eachTenant(ctx, &w.pollAfter, func(scoped context.Context, store RunStore) {
+		for _, st := range []RunStatus{RunPending, RunRunning, RunCompensating} {
+			runs, err := store.ListRunsByStatus(st, w.cfg.Batch)
+			if err != nil {
+				w.log.Error("ril_workflow_poll_list_failed", "status", string(st), "error", err)
+				continue
+			}
+			for _, r := range runs {
+				if err := w.engine.tryAdvance(scoped, r.RunID); err != nil {
+					w.log.Warn("ril_workflow_poll_advance_failed", "run_id", r.RunID, "error", err)
+				}
 			}
 		}
-	}
+	})
 }
 
 // SweepTimers fires due timers: it delivers a timed-out signal to the run
 // awaiting the timer's signal key, then marks the timer fired. A run that was
 // already resumed (ErrNotFound) is benign — the timer is still marked fired.
 func (w *Worker) SweepTimers(ctx context.Context) {
-	timers, err := w.store.ListDueTimers(w.engine.now(), w.cfg.Batch)
-	if err != nil {
-		w.log.Error("ril_workflow_timer_list_failed", "error", err.Error())
+	w.eachTenant(ctx, &w.timerAfter, func(scoped context.Context, store RunStore) {
+		timers, err := store.ListDueTimers(w.engine.now(), w.cfg.Batch)
+		if err != nil {
+			w.log.Error("ril_workflow_timer_list_failed", "error", err.Error())
+			return
+		}
+		for _, tm := range timers {
+			sig := Signal{Key: tm.SignalKey, TimedOut: true, DeliverAt: w.engine.now()}
+			outcome := TimerOutcomeDelivered
+			if derr := w.engine.Deliver(scoped, sig); derr != nil && !errors.Is(derr, ErrNotFound) {
+				w.log.Warn("ril_workflow_timer_deliver_failed", "run_id", tm.RunID, "signal", tm.SignalKey, "error", derr.Error())
+				w.engine.obs.ObserveTimer(tm.Kind, TimerOutcomeDeliveryFailed)
+				continue
+			} else if errors.Is(derr, ErrNotFound) {
+				outcome = TimerOutcomeAlreadyResolved
+			}
+			if merr := store.MarkTimerFired(tm.ID); merr != nil {
+				w.log.Warn("ril_workflow_timer_mark_failed", "timer_id", tm.ID, "error", merr.Error())
+				w.engine.obs.ObserveTimer(tm.Kind, TimerOutcomeMarkFailed)
+				continue
+			}
+			w.engine.obs.ObserveTimer(tm.Kind, outcome)
+		}
+	})
+}
+
+func (w *Worker) eachTenant(ctx context.Context, after *string, fn func(context.Context, RunStore)) {
+	reader, ok := w.store.(interface {
+		ListWorkerTenants(context.Context, string, int) ([]string, error)
+	})
+	if !ok {
+		w.log.Error("ril_workflow_worker_scope_unavailable")
 		return
 	}
-	for _, tm := range timers {
-		sig := Signal{Key: tm.SignalKey, TimedOut: true, DeliverAt: w.engine.now()}
-		outcome := TimerOutcomeDelivered
-		if derr := w.engine.Deliver(ctx, sig); derr != nil && !errors.Is(derr, ErrNotFound) {
-			w.log.Warn("ril_workflow_timer_deliver_failed", "run_id", tm.RunID, "signal", tm.SignalKey, "error", derr.Error())
-			w.engine.obs.ObserveTimer(tm.Kind, TimerOutcomeDeliveryFailed)
+	tenants, err := reader.ListWorkerTenants(ctx, *after, 50)
+	if err != nil {
+		w.log.Error("ril_workflow_worker_tenants_failed", "error", err)
+		return
+	}
+	if len(tenants) == 0 {
+		*after = ""
+		return
+	}
+	for _, id := range tenants {
+		scoped := WithTenant(ctx, id)
+		store, err := w.engine.tenantStore(scoped)
+		if err != nil {
+			w.log.Error("ril_workflow_worker_scope_failed", "error", err)
 			continue
-		} else if errors.Is(derr, ErrNotFound) {
-			outcome = TimerOutcomeAlreadyResolved
 		}
-		if merr := w.store.MarkTimerFired(tm.ID); merr != nil {
-			w.log.Warn("ril_workflow_timer_mark_failed", "timer_id", tm.ID, "error", merr.Error())
-			w.engine.obs.ObserveTimer(tm.Kind, TimerOutcomeMarkFailed)
-			continue
-		}
-		w.engine.obs.ObserveTimer(tm.Kind, outcome)
+		fn(scoped, store)
+		*after = id
 	}
 }

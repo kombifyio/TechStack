@@ -7,8 +7,11 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
+	"os"
 	"strings"
 
 	"github.com/kombifyio/techstack/pkg/db"
@@ -24,60 +27,7 @@ const (
 	providerControlSCRAMSaltBytes  = 16
 )
 
-type providerControlTableGrant struct {
-	table      string
-	privileges string
-}
-
-var providerControlRuntimeTableGrants = []providerControlTableGrant{
-	{table: "provider_catalog_versions", privileges: "SELECT"},
-	{table: "provider_catalog_profiles", privileges: "SELECT"},
-	{table: "provider_credential_handles", privileges: "SELECT,INSERT"},
-	{table: "substrate_bindings", privileges: "SELECT"},
-	{table: "substrate_guest_leases", privileges: "SELECT,INSERT"},
-	{table: "home_assistant_owner_bindings", privileges: "SELECT,INSERT,UPDATE"},
-	{table: "typed_agent_commands", privileges: "SELECT,INSERT,UPDATE"},
-	{table: "servers", privileges: "SELECT,INSERT,UPDATE"},
-	{table: "server_state_transitions", privileges: "SELECT,INSERT"},
-	{table: "server_registry_outbox", privileges: "SELECT,INSERT"},
-	{table: "techstack_vm_leases", privileges: "SELECT,INSERT,UPDATE"},
-	{table: "runtime_lease_execution_authorities", privileges: "SELECT,INSERT"},
-	{table: "runtime_lease_idempotency_records", privileges: "SELECT,INSERT"},
-	{table: "managed_runtime_capacity_reservations", privileges: "SELECT,INSERT"},
-	{table: "managed_runtime_server_slots", privileges: "SELECT,INSERT"},
-	{table: "managed_runtime_server_slot_generations", privileges: "SELECT,INSERT"},
-	{table: "managed_runtime_capacity_release_facts", privileges: "SELECT,INSERT"},
-	{table: "managed_runtime_capacity_quarantine_retirements", privileges: "SELECT"},
-	{table: "provider_desired_spec_revisions", privileges: "SELECT,INSERT,UPDATE"},
-	{table: "provider_operations", privileges: "SELECT,INSERT,UPDATE"},
-	{table: "provider_async_requests", privileges: "SELECT,INSERT,UPDATE"},
-	{table: "provider_operation_receipts", privileges: "SELECT,INSERT"},
-	{table: "provider_operation_resources", privileges: "SELECT,INSERT,UPDATE"},
-	{table: "provider_operation_evidence", privileges: "SELECT,INSERT,UPDATE"},
-	// Absence observations are append-only custody: the adapter records the
-	// provider read, the verifier reads it back. No UPDATE, no DELETE.
-	{table: "provider_absence_observations", privileges: "SELECT,INSERT"},
-	{table: "provider_operation_execution_claims", privileges: "SELECT,INSERT,UPDATE"},
-	{table: "provider_provision_dispatch_guards", privileges: "SELECT,INSERT"},
-	// Provision resolution is append-only operator custody. Recovery records the
-	// certified provider read and its decision through the runtime pool, then
-	// reads both back to settle the exact generation. No UPDATE, no DELETE.
-	{table: "provider_provision_discovery_observations", privileges: "SELECT,INSERT"},
-	{table: "provider_provision_resolution_decisions", privileges: "SELECT,INSERT"},
-	{table: "server_provider_resource_bindings", privileges: "SELECT,INSERT"},
-	{table: "provider_operation_resource_free_terminalizations", privileges: "SELECT,INSERT"},
-	// Managed provisioning records the node's Guard enrolment capability on the
-	// dispatch path so the VM can redeem it on first boot. INSERT only: the
-	// runtime never reads a capability back, and redemption is a separate
-	// authenticated surface.
-	{table: "pairing_tokens", privileges: "SELECT,INSERT"},
-	// Terminal observation only upserts/reads incidents and enqueues an
-	// idempotent workflow run. Advisory advancement remains control-plane-only.
-	{table: "provider_incidents", privileges: "SELECT,INSERT"},
-	// ON CONFLICT DO NOTHING requires SELECT on the conflict key for the
-	// idempotency check; no workflow state mutation is granted.
-	{table: "ril_workflow_runs", privileges: "SELECT,INSERT"},
-}
+var providerControlRuntimeTableGrants = db.ProviderRuntimeTableGrants
 
 var providerControlRuntimeSequences = []string{
 	"server_state_transitions_id_seq",
@@ -98,13 +48,36 @@ var providerControlRuntimeFunctions = []string{
 	"provider_control_runtime_authority()",
 }
 
-// runProviderControlRuntimeBootstrap is a deployment-only command. It applies
-// migrations with DATABASE_URL, creates the one canonical login only when it
+// The existing Render preDeploy command defaults to verification only.
+// Privileged changes belong to the normal producer's explicit prepare phase.
+func runProviderControlRuntimeBootstrap(ctx context.Context) error {
+	if expected := os.Getenv("TECHSTACK_EXPECTED_PREPARATION_SOURCE_SHA"); expected != "" && expected != buildRevision {
+		return errors.New("provider preparation artifact differs from the admitted source")
+	}
+	mode := os.Getenv("TECHSTACK_ADVANCED_ISSUER_PREPARATION_MODE")
+	if mode == "prepare-provider-grants" {
+		return prepareAssignedProviderRuntimeGrants(ctx)
+	}
+	if mode == "prepare" {
+		return prepareProviderAndIssuerRuntime(ctx)
+	}
+	if mode != "" && mode != "verify" {
+		return errors.New("unknown provider preparation mode")
+	}
+	return verifyProviderAndIssuerPreDeploy(ctx)
+}
+
+// prepareProviderAndIssuerRuntime runs only in the explicit privileged producer
+// phase. It applies migrations, creates the one canonical login only when it
 // is absent, reconciles direct grants, then proves the resulting runtime DSN
 // through the same posture gate used by normal startup. It never prints a DSN,
 // username password, or connection payload.
-func runProviderControlRuntimeBootstrap(ctx context.Context) error {
-	migrationConfig, err := db.ConfigFromEnv()
+func prepareProviderAndIssuerRuntime(ctx context.Context) error {
+	issuerConfig, err := advancedIssuerBootstrapConfigFromEnv()
+	if err != nil {
+		return err
+	}
+	migrationConfig, err := db.MigrationConfigFromEnv()
 	if err != nil {
 		return fmt.Errorf("provider-control runtime bootstrap migration database: %w", err)
 	}
@@ -140,8 +113,27 @@ func runProviderControlRuntimeBootstrap(ctx context.Context) error {
 	if err := db.VerifyExpectedDatabaseIdentity(ctx, migrationDatabase.DB); err != nil {
 		return fmt.Errorf("provider-control runtime bootstrap verify expected database identity: %w", err)
 	}
+	var retainedIssuerID, retainedKeyID string
+	if !installationIssuerGenesisAuthorized() {
+		retainedIssuerID, retainedKeyID, err = verifyRetainedIssuerBeforePreparation(ctx, migrationDatabase, issuerConfig)
+		if err != nil {
+			return err
+		}
+	}
+	previousMode, modePresent := os.LookupEnv(db.EnvDatabaseMigrationMode)
+	_ = os.Setenv(db.EnvDatabaseMigrationMode, "apply")
+	defer func() {
+		if modePresent {
+			_ = os.Setenv(db.EnvDatabaseMigrationMode, previousMode)
+		} else {
+			_ = os.Unsetenv(db.EnvDatabaseMigrationMode)
+		}
+	}()
 	if err := migrationDatabase.Migrate(ctx); err != nil {
 		return fmt.Errorf("provider-control runtime bootstrap migrate: %w", err)
+	}
+	if err := prepareApplicationPrincipal(ctx, migrationDatabase, issuerConfig); err != nil {
+		return err
 	}
 	if err := ensureProviderControlRuntimeLogin(
 		ctx,
@@ -171,7 +163,18 @@ func runProviderControlRuntimeBootstrap(ctx context.Context) error {
 	); err != nil {
 		return err
 	}
-	return nil
+	issuerID, keyID, err := prepareAdvancedIssuerFromConfigWithIdentity(ctx, migrationDatabase, issuerConfig)
+	if err != nil {
+		return err
+	}
+	if retainedIssuerID != "" && (issuerID != retainedIssuerID || keyID != retainedKeyID) {
+		return errors.New("prepared issuer identity differs from the qualified retained identity")
+	}
+	issuerURL, _ := url.Parse(issuerConfig.issuerDSN)
+	return json.NewEncoder(os.Stdout).Encode(map[string]any{"schema": "techstack.credential-preparation/v1", "operation": "prepare", "status": "acknowledged", "source_sha": buildRevision,
+		"provider_role": providerControlRuntimeRoleName, "provider_privileges_verified": true, "application_role": issuerConfig.appRole,
+		"signing_role": issuerURL.User.Username(), "database_identity": os.Getenv("TECHSTACK_EXPECTED_DATABASE_IDENTITY"),
+		"issuer_id": issuerID, "key_id": keyID, "wrapping_verified": true})
 }
 
 func ensureProviderControlRuntimeLogin(
@@ -323,10 +326,10 @@ func installProviderControlRuntimeGrants(ctx context.Context, database *sql.DB, 
 		}
 	}
 	for _, grant := range providerControlRuntimeTableGrants {
-		statement := "GRANT " + grant.privileges + " ON TABLE " +
-			pgx.Identifier{schemaName, grant.table}.Sanitize() + " TO " + quotedRole
+		statement := "GRANT " + grant.Privileges + " ON TABLE " +
+			pgx.Identifier{schemaName, grant.Table}.Sanitize() + " TO " + quotedRole
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
-			return fmt.Errorf("provider-control runtime bootstrap grant table %s: %w", grant.table, err)
+			return fmt.Errorf("provider-control runtime bootstrap grant table %s: %w", grant.Table, err)
 		}
 	}
 	for _, sequence := range providerControlRuntimeSequences {

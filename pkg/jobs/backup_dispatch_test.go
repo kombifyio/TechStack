@@ -34,15 +34,13 @@ func backupJob() *Job {
 	}
 }
 
-// TestBackupPrefersTheTypedAgentCommand pins the transport. The Guard polls
+// TestBackupDispatchesTheTypedAgentCommand pins the transport. The Guard polls
 // outbound and holds a per-agent token, so the closed command set is the only
-// path to a node; the HTTP runner exists for a co-located self-hosted server.
-func TestBackupPrefersTheTypedAgentCommand(t *testing.T) {
+// path to a node.
+func TestBackupDispatchesTheTypedAgentCommand(t *testing.T) {
 	commander := &recordingCommander{}
-	httpRunner := &recordingBackupRunner{}
 	handler := BackupHandler(&ProvisionConfig{
 		StackKitCommander: commander,
-		RuntimeActions:    RuntimeActions{BackupRunner: httpRunner},
 		BackupAgentResolver: func(context.Context, string, string) (string, error) {
 			return "worker-7", nil
 		},
@@ -53,9 +51,6 @@ func TestBackupPrefersTheTypedAgentCommand(t *testing.T) {
 	}
 	if len(commander.commands) != 1 {
 		t.Fatalf("expected one typed command, got %d", len(commander.commands))
-	}
-	if len(httpRunner.calls) != 0 {
-		t.Fatalf("the legacy HTTP runner must not be used when a commander exists: %+v", httpRunner.calls)
 	}
 	cmd := commander.commands[0]
 	if cmd.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RUN {

@@ -2,11 +2,18 @@ import type {
   ServiceCardAction,
   ServicePlacement,
   ServiceStatusKind,
+  ServiceUpdate,
 } from "@kombiverselabs/ui/service";
 import {
   ManagementStateContractError,
   type RegistryManagementState,
 } from "#lib/api/registry.js";
+import {
+  parsePlacementClass,
+  type ServiceCatalogRef,
+  type ServiceVersionInfo,
+} from "#lib/api/services.js";
+import { brandDomainForTool, localBrandLogoUrl } from "#lib/brand-logo.js";
 
 import { tr } from "#lib/i18n.svelte.js";
 export type TechStackServiceCardSource = {
@@ -40,6 +47,11 @@ export type TechStackServiceCardSource = {
    * still Cloud even when its Docker/container name looks local.
    */
   placement?: ServicePlacement;
+  /**
+   * The backend's own placement answer (`local|cloud|managed|unknown`). It is
+   * consulted first; `unknown` falls through to the heuristics below.
+   */
+  placement_class?: string;
   provider?: string;
   /**
    * A real, persisted workflow indicator.  A lifecycle word in `status`
@@ -128,6 +140,8 @@ export function serviceCardPlacement(
   service: TechStackServiceCardSource,
   hint?: string,
 ): ServicePlacement {
+  const measured = parsePlacementClass(service.placement_class);
+  if (measured && measured !== "unknown") return measured;
   if (
     service.placement === "cloud" ||
     service.placement === "local" ||
@@ -276,13 +290,14 @@ export function serviceCardStatusMessage(
 
 /** Managed-service actions the governed endpoint executes today. */
 export type GovernedServiceAction =
-  "start" | "stop" | "restart" | "logs" | "freeze" | "unfreeze";
+  "start" | "stop" | "restart" | "logs" | "freeze" | "unfreeze" | "update";
 
 const GOVERNED_ACTIONS: readonly GovernedServiceAction[] = [
   "logs",
   "start",
   "stop",
   "restart",
+  "update",
   "freeze",
   "unfreeze",
 ];
@@ -295,12 +310,14 @@ const MUTATING_ACTIONS: ReadonlySet<GovernedServiceAction> = new Set([
   "start",
   "stop",
   "restart",
+  "update",
 ]);
 /** Guardrail changes are owner decisions, so they carry the approval gate. */
 const APPROVAL_ACTIONS: ReadonlySet<GovernedServiceAction> = new Set([
   "start",
   "stop",
   "restart",
+  "update",
   "freeze",
   "unfreeze",
 ]);
@@ -320,7 +337,7 @@ export interface ServiceCardActionContext {
    * them, disabled with this reason, so a familiar button never just vanishes.
    */
   locked?: boolean;
-  /** Why the service is locked, e.g. "Locked by marcel · 2h ago". */
+  /** Why the service is locked, e.g. "Locked by alex · 2h ago". */
   lockedReason?: string;
   /** The governed action currently in flight for this service, if any. */
   activeAction?: string;
@@ -328,6 +345,17 @@ export interface ServiceCardActionContext {
   converging?: boolean;
   /** Runs a governed action (owner approval handled by the caller). */
   onAction: (action: GovernedServiceAction) => void;
+  /**
+   * "Stack it": adopt an observed service into a stack. Rendered only when the
+   * backend granted `adopt` and the caller can open the adoption flow.
+   */
+  onAdopt?: () => void;
+  /**
+   * An update is known for this service. A locked service then still shows
+   * the Update action, disabled with the lock reason, so the strip never
+   * offers something that silently vanished.
+   */
+  updateAvailable?: boolean;
   /** Opens the service UI; omitted when no safe address exists. */
   onOpen?: () => void;
   /** Opens the service detail sheet. */
@@ -374,6 +402,7 @@ export function serviceCardActions(
   if (context.locked) {
     for (const action of MUTATING_ACTIONS) {
       if (granted.includes(action)) continue;
+      if (action === "update" && !context.updateAvailable) continue;
       actions.push({
         id: action,
         state: "disabled",
@@ -382,6 +411,9 @@ export function serviceCardActions(
         onSelect: () => {},
       });
     }
+  }
+  if (context.onAdopt && context.allowedActions.includes("adopt")) {
+    actions.push({ id: "adopt", state: "ready", onSelect: context.onAdopt });
   }
   if (context.onDetails) {
     actions.push({ id: "details", onSelect: context.onDetails });
@@ -426,4 +458,76 @@ export function serviceLockReason(lock?: {
   return actor
     ? tr("ui.serviceCardAdapter.lockedBy", { actor })
     : tr("ui.serviceCardAdapter.locked");
+}
+
+/** The installed version chip, only when a real measurement exists. */
+export function serviceCardVersion(
+  version?: ServiceVersionInfo | null,
+): string | undefined {
+  return version?.current?.trim() || undefined;
+}
+
+/**
+ * The update strip. It exists only for a measured update: the backend said one
+ * is available AND a latest version is known. An unknown latest never produces
+ * an invented target.
+ */
+export function serviceCardUpdate(
+  version?: ServiceVersionInfo | null,
+): ServiceUpdate | undefined {
+  if (!version?.update_available) return undefined;
+  const to = version.latest?.trim();
+  if (!to) return undefined;
+  return {
+    from: version.current?.trim() || tr("ui.serviceCards.versionUnknown"),
+    to,
+  };
+}
+
+/** Vendor domain for the logo: the backend catalog first, then the name map. */
+export function serviceCardLogoDomain(
+  catalog: ServiceCatalogRef | null | undefined,
+  ...names: Array<string | undefined | null>
+): string {
+  return (
+    catalog?.brand_domain?.trim() || brandDomainForTool(catalog?.id, ...names)
+  );
+}
+
+/** Bundled logo URL for a vendor domain; empty falls back to the logo scope. */
+export function serviceCardLogoSrc(domain: string): string | undefined {
+  return localBrandLogoUrl(domain) || undefined;
+}
+
+/**
+ * The address "Open" navigates to, or undefined. Only http(s) URLs are ever
+ * opened; an internal `host:port` address is lifted to http, which is how a
+ * service on the Node network is reached from the browser.
+ */
+export function serviceOpenUrl(access?: {
+  kind?: string;
+  open_url?: string;
+  address?: string;
+}): string | undefined {
+  if (!access) return undefined;
+  const isHttp = (value: string | undefined): boolean => {
+    if (!value) return false;
+    try {
+      const url = new URL(value);
+      return url.protocol === "http:" || url.protocol === "https:";
+    } catch {
+      return false;
+    }
+  };
+  if (access.open_url && isHttp(access.open_url)) return access.open_url;
+  if (access.address && isHttp(access.address)) return access.address;
+  const address = access.address?.trim();
+  if (
+    access.kind === "internal" &&
+    address &&
+    /^[A-Za-z0-9.-]+:\d{1,5}(\/[^\s]*)?$/.test(address)
+  ) {
+    return `http://${address}`;
+  }
+  return undefined;
 }

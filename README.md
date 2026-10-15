@@ -17,9 +17,9 @@ Download `kombify-Techstack-Setup.exe` from the
 [latest release](https://github.com/kombifyio/TechStack/releases/latest) and
 compare its SHA-256 with `SHA256SUMS.txt` from the same release. The
 installer contains the server, the operator UI, and the database runtime; no
-kombify account is required. Until Windows code signing is available, releases
-include `UNSIGNED-WINDOWS-RELEASE.txt` and Windows SmartScreen asks for
-confirmation.
+kombify account is required. Windows releases are intentionally unsigned and
+include `UNSIGNED-WINDOWS-RELEASE.txt`; Windows SmartScreen may ask for
+confirmation. A code-signing certificate is not a release prerequisite.
 
 ## Run with Docker Compose
 
@@ -30,11 +30,44 @@ cp .env.example .env
 # The .env.example attached to a GitHub Release already contains that tag.
 # Generate one value each for TECHSTACK_V2_SESSION_SECRET and POSTGRES_PASSWORD:
 openssl rand -hex 32
+# Generate TECHSTACK_ENCRYPTION_KEY (exactly 32 text bytes):
+openssl rand -base64 24
 docker compose up -d
 ```
 
 The default binds the HTTP and gRPC ports to localhost. Configure a trusted
 reverse proxy and HTTPS before exposing the service beyond the host.
+
+Keep the three generated secrets in `.env` stable and preserve them alongside
+your data backups. `TECHSTACK_ENCRYPTION_KEY` protects Wallet credentials and
+the installation's Advanced signing key; replacing it makes retained secrets
+unreadable. Runtime identity and monitoring data live in `techstack-data`, and
+control-plane state lives in `techstack-postgres-data`.
+
+After the service starts, obtain the canonical bootstrap password in
+your host terminal:
+
+```bash
+docker compose exec techstack /app/techstack owner bootstrap
+```
+
+For a source installation, run `techstack owner bootstrap` under the installation's
+operator account with its existing database and session configuration. This command
+does not start another server or initialize a database. HTTP bootstrap reveal is
+disabled. The command consumes an available envelope locally; if it expired or was
+already consumed, it explicitly replaces the unclaimed bootstrap credential.
+**That replacement immediately invalidates the previous bootstrap password.** It
+refuses claimed or locked owners, and never returns a secret after a concurrent
+change. Keep the printed value private; redirected output is refused.
+
+Open `/client/local`, enter that bootstrap password and choose the owner's email
+and permanent password. Then use that owner's current password when revealing a Wallet
+credential; this requires no kombify Cloud account.
+
+If owner creation succeeds but a compatibility profile or setup marker fails,
+retry the same chosen email and password. The canonical owner must authenticate
+before setup can finish; another email/password cannot replace it. The Windows
+local client continues using its automatic OS-custodied device session.
 
 ## Build from source
 

@@ -27,8 +27,9 @@
   } from "#lib/onboarding/introduction.js";
   import { resolveOnboardingMessage } from "#lib/onboarding/journey.js";
   import { onboardingStore } from "#lib/onboarding/store.svelte.js";
+  import { authStore } from "#lib/stores/auth.svelte.js";
+  import { getStackIdentitySettings } from "#lib/api/auth.js";
   import {
-    hydrateStackIdentityFromBackend,
     saveStackIdentityToBackend,
     type StackIdentity,
   } from "#lib/stores/stackIdentity.js";
@@ -44,6 +45,10 @@
   let identity = $state<StackIdentity>(defaultIdentity);
   let identityEditable = $state(false);
   let identityNamed = $state(false);
+  let identityLoaded = $state(false);
+  let identityLoading = $state(false);
+  let identityLoadVersion = 0;
+  let welcomePrincipal = $state(authStore.currentUser);
   let saving = $state(false);
   let identityError = $state("");
 
@@ -56,40 +61,84 @@
    */
   const welcomeName = $derived(identityNamed ? identity.name : "");
 
-  async function loadIdentity(): Promise<void> {
-    identityError = "";
-    const response = await hydrateStackIdentityFromBackend();
-    identityEditable = response?.editable ?? false;
-    identityNamed = Boolean(response?.stack_identity?.name);
-    identity = normalizeStackIdentity(response?.stack_identity);
+  async function loadIdentity(requestVersion: number): Promise<void> {
+    const principal = welcomePrincipal;
+    const current = () =>
+      requestVersion === identityLoadVersion &&
+      phase === "welcome" &&
+      authStore.currentUser === principal;
+    try {
+      const response = await getStackIdentitySettings();
+      if (!current()) return;
+      if (!response) {
+        identityError = tr("ui.settings.failedToLoadHomelabIdentity");
+        return;
+      }
+      identityEditable = response.editable;
+      identityNamed = Boolean(response.stack_identity?.name);
+      identity = normalizeStackIdentity(response.stack_identity);
+      identityLoaded = true;
+    } catch {
+      if (current())
+        identityError = tr("ui.settings.failedToLoadHomelabIdentity");
+    } finally {
+      if (current()) identityLoading = false;
+    }
   }
 
-  function start(): void {
+  function start(tourOnly = false): void {
+    if (saving) return;
+    identityLoadVersion += 1;
     markIntroductionStarted();
+    if (tourOnly) {
+      phase = "tour";
+      return;
+    }
+    identityLoaded = false;
+    identityLoading = true;
+    identityEditable = false;
+    identityNamed = false;
+    identityError = "";
+    welcomePrincipal = authStore.currentUser;
     phase = "welcome";
     // Fail-soft: an unreachable identity endpoint costs the name field, not
     // the introduction.
-    void loadIdentity();
+    void loadIdentity(identityLoadVersion);
   }
 
   async function acceptName(name: string): Promise<void> {
-    if (saving) return;
+    if (
+      saving ||
+      !identityLoaded ||
+      identityLoading ||
+      phase !== "welcome" ||
+      authStore.currentUser !== welcomePrincipal
+    )
+      return;
+    const principal = welcomePrincipal;
+    const requestVersion = identityLoadVersion;
+    const current = () =>
+      authStore.currentUser === principal &&
+      phase === "welcome" &&
+      identityLoadVersion === requestVersion;
     saving = true;
     identityError = "";
     try {
       if (identityEditable && name !== welcomeName) {
-        const response = await saveStackIdentityToBackend({
-          ...identity,
-          name,
-        });
+        const response = await saveStackIdentityToBackend(
+          { ...identity, name },
+          current,
+        );
+        if (!current()) return;
         identity = normalizeStackIdentity(
           response.stack_identity ?? { ...identity, name },
         );
         identityNamed = true;
       }
+      if (!current()) return;
       await beginCreation();
     } catch {
-      identityError = tr("onboarding.ui.start_failed");
+      if (current()) identityError = tr("onboarding.ui.start_failed");
     } finally {
       saving = false;
     }
@@ -101,20 +150,42 @@
   }
 
   function dismiss(stopId: string): void {
+    if (saving) return;
+    identityLoadVersion += 1;
+    identityLoading = false;
     markIntroductionDismissed(stopId);
     phase = "idle";
   }
 
   function finish(): void {
+    identityLoadVersion += 1;
+    identityLoading = false;
     markIntroductionCompleted();
     phase = "idle";
   }
 
   onMount(() => {
-    const onRequest = () => start();
+    const onRequest = (event: Event) =>
+      start(
+        (event as CustomEvent<{ tourOnly?: boolean }>).detail?.tourOnly ===
+          true,
+      );
     window.addEventListener(INTRODUCTION_START_EVENT, onRequest);
-    return () =>
+    return () => {
+      identityLoadVersion += 1;
       window.removeEventListener(INTRODUCTION_START_EVENT, onRequest);
+    };
+  });
+
+  // An identity belongs to the session that opened this welcome, including
+  // after its read has completed. A new account starts a fresh introduction.
+  $effect(() => {
+    if (phase !== "welcome" || authStore.currentUser === welcomePrincipal)
+      return;
+    identityLoadVersion += 1;
+    identityLoaded = false;
+    identityLoading = false;
+    phase = "idle";
   });
 
   // Wait for the journey before deciding: "has this user done anything yet"
@@ -140,10 +211,12 @@
   open={phase === "welcome"}
   name={welcomeName}
   nameEditable={identityEditable}
+  ready={identityLoaded}
+  loading={identityLoading}
   {saving}
   error={identityError}
   onStart={(name) => void acceptName(name)}
-  onExplore={() => (phase = "tour")}
+  onExplore={() => start(true)}
   onDismiss={() => dismiss("welcome")}
 />
 

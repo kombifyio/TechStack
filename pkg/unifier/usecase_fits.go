@@ -78,18 +78,27 @@ func selectedUseCaseRefs(metadata map[string]string, serviceNames []string) []st
 }
 
 func serviceUseCaseRef(name string) string {
-	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "photos", "immich":
-		return "photos"
-	case "media", "jellyfin":
-		return "media"
-	case "files", "cloudreve":
-		return "files"
-	case "vault", "vaultwarden":
-		return "vault"
-	default:
+	catalog, err := stackkitrelease.ResolveUseCaseCatalog()
+	if err != nil {
 		return ""
 	}
+	name = strings.ToLower(strings.TrimSpace(name))
+	for _, useCase := range catalog.UseCases {
+		if name == useCase.ID {
+			return useCase.ID
+		}
+		for _, alternative := range useCase.Alternatives {
+			if name == alternative.ID {
+				return useCase.ID
+			}
+			for _, module := range alternative.Modules {
+				if name == module.ID {
+					return useCase.ID
+				}
+			}
+		}
+	}
+	return ""
 }
 
 func loadUseCaseFits() map[string]map[string]UseCaseFit {

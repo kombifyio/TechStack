@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kombifyio/techstack/internal/gocommon/runtimeexecutor"
+	"github.com/kombifyio/techstack/internal/selfhostcontracts/runtimeexecutor"
 	"github.com/kombifyio/techstack/pkg/backupstore"
 	"github.com/kombifyio/stackkits/pkg/backupbinding"
 )
@@ -16,7 +16,12 @@ import (
 type fakeOperationsCustody struct {
 	credentials backupstore.Credentials
 	evidence    backupstore.CustodyEvidence
+	issued      backupstore.NodeBinding
 	recorded    bool
+}
+
+func (f *fakeOperationsCustody) NodeBinding(context.Context, string, string) (backupstore.NodeBinding, error) {
+	return f.issued, nil
 }
 
 func (f *fakeOperationsCustody) Get(context.Context, string, string) (backupstore.Credentials, error) {
@@ -31,11 +36,15 @@ func (f *fakeOperationsCustody) RecordAttestation(_ context.Context, _, _ string
 	return evidence, nil
 }
 
+func nodeIssuedBinding() backupstore.NodeBinding {
+	return backupstore.NodeBinding{BackupTargetRef: "backup-target://sha256/" + strings.Repeat("1", 64), CustodyAttestationRef: "backup-custody-attestation://sha256/" + strings.Repeat("2", 64)}
+}
+
 func TestManagedOperationsReturnsAppliedHealthyOnlyAfterFreshTargetVerification(t *testing.T) {
 	evidence := operationsEvidence(t)
-	request := operationsExecutionRequest(t, evidence)
+	request := operationsExecutionRequest(t, nodeIssuedBinding())
 	called := false
-	custody := &fakeOperationsCustody{credentials: backupstore.Credentials{TenantID: "tenant-a", StackID: "stack-a"}, evidence: evidence}
+	custody := &fakeOperationsCustody{credentials: backupstore.Credentials{TenantID: "tenant-a", StackID: "stack-a"}, evidence: evidence, issued: nodeIssuedBinding()}
 	operations, _ := NewOperations(custody)
 	operations.validate = func() error { return nil }
 	operations.now = func() time.Time { return time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC) }
@@ -57,11 +66,13 @@ func TestManagedOperationsReturnsAppliedHealthyOnlyAfterFreshTargetVerification(
 	}
 }
 
-func TestManagedOperationsRejectsBindingThatDoesNotMatchCustody(t *testing.T) {
+// Core cannot derive the node's references, so a binding that is not the one the
+// node issued never reaches the target.
+func TestManagedOperationsRejectsBindingTheNodeDidNotIssue(t *testing.T) {
 	evidence := operationsEvidence(t)
-	request := operationsExecutionRequest(t, evidence)
+	request := operationsExecutionRequest(t, nodeIssuedBinding())
 	request.BackupTargetBindings[0].BackupTargetRef = "backup-target://sha256/" + strings.Repeat("0", 64)
-	operations, _ := NewOperations(&fakeOperationsCustody{evidence: evidence})
+	operations, _ := NewOperations(&fakeOperationsCustody{evidence: evidence, issued: nodeIssuedBinding()})
 	operations.validate = func() error { return nil }
 	operations.now = func() time.Time { return time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC) }
 	operations.attest = func(context.Context, backupstore.Credentials, backupstore.CustodyEvidence) (backupstore.CustodyEvidence, error) {
@@ -91,11 +102,10 @@ func TestOperationRejectionDetailsRemainStable(t *testing.T) {
 	}
 }
 
-func operationsExecutionRequest(t *testing.T, evidence backupstore.CustodyEvidence) runtimeexecutor.ExecutionRequest {
+func operationsExecutionRequest(t *testing.T, issued backupstore.NodeBinding) runtimeexecutor.ExecutionRequest {
 	t.Helper()
-	bindingRef, _ := backupbinding.OpaqueReference("backup-target-binding", evidence.BindingEvidence)
-	targetRef, _ := backupbinding.OpaqueReference("backup-target", evidence.TargetEvidence)
-	attestationRef, _ := backupbinding.OpaqueReference("backup-custody-attestation", evidence.AttestationEvidence)
+	bindingRef := "backup-target-binding://sha256/" + strings.Repeat("3", 64)
+	targetRef, attestationRef := issued.BackupTargetRef, issued.CustodyAttestationRef
 	binding := runtimeexecutor.BackupTargetBinding{ID: "binding-a", Kind: "backup-target", RuntimeRequirementID: "requirement-a", StackID: "stack-a", SiteRef: managedOperationsSite,
 		CapabilityRef: backupbinding.Capability, ContractOwnerRef: cloudBackupProviderRef, TargetNodeRefs: []string{managedOperationsNode}, BindingRef: bindingRef,
 		BindingHash: testDigest("b"), BackupTargetRef: targetRef, CustodyAttestationRef: attestationRef, ValidUntil: "2026-08-07T00:00:00Z"}

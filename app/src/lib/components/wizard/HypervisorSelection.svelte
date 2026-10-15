@@ -114,7 +114,9 @@
       profiles.status === "fulfilled"
         ? profiles.value.profiles.find(
             (item) =>
-              item.id === "ubuntu-24.04" && !item.appliance && item.cloud_init,
+              item.id === (guest?.profileId ?? "ubuntu-26.04") &&
+              !item.appliance &&
+              item.cloud_init,
           )
         : undefined;
     capabilities =

@@ -53,8 +53,8 @@ func (c HomeAssistantMigrationRoutes) start(e *httpx.Event) error {
 	}
 	hash := sha256.Sum256([]byte(tenant + "\x00" + owner + "\x00" + req.Target))
 	id := "ha-migration-" + hex.EncodeToString(hash[:])
-	run := &workflow.Run{RunID: id, Type: workflows.TypeHomeAssistantMigration, OwnerID: owner, Input: map[string]any{"tenant_id": tenant, "source_service_id": req.Source, "target_binding_ref": req.Target, "authorization_ref": req.Authorization}}
-	if _, err := c.Engine.StartOrResumeRun(e.Request.Context(), run); err != nil {
+	run := &workflow.Run{TenantID: tenant, RunID: id, Type: workflows.TypeHomeAssistantMigration, OwnerID: owner, Input: map[string]any{"tenant_id": tenant, "source_service_id": req.Source, "target_binding_ref": req.Target, "authorization_ref": req.Authorization}}
+	if _, err := c.Engine.StartOrResumeRun(workflow.WithTenant(e.Request.Context(), run.TenantID), run); err != nil {
 		return httpx.Error(e, 409, "migration_not_advanced", "Migration did not advance; inspect its retained run", map[string]any{"run_id": id})
 	}
 	return httpx.Success(e, http.StatusAccepted, map[string]any{"run_id": id})
@@ -67,11 +67,11 @@ func (c HomeAssistantMigrationRoutes) owned(e *httpx.Event) (*workflow.Run, erro
 	if c.Engine == nil {
 		return nil, httpx.NewAPIError(404, "not_found", "Migration unavailable", nil)
 	}
-	run, err := c.Engine.GetRun(e.Request.PathValue("id"))
+	run, err := c.Engine.GetRun(workflow.WithTenant(e.Request.Context(), tenant), e.Request.PathValue("id"))
 	if err != nil {
 		return nil, httpx.NewAPIError(404, "not_found", "Migration not found", nil)
 	}
-	if run.OwnerID != owner || run.Input["tenant_id"] != tenant || (run.Type != workflows.TypeHomeAssistantMigration && run.Type != workflows.TypeHomeAssistantRollback) {
+	if run.OwnerID != owner || run.TenantID != tenant || (run.Type != workflows.TypeHomeAssistantMigration && run.Type != workflows.TypeHomeAssistantRollback) {
 		return nil, httpx.NewAPIError(404, "not_found", "Migration not found", nil)
 	}
 	return run, nil
@@ -81,7 +81,7 @@ func (c HomeAssistantMigrationRoutes) get(e *httpx.Event) error {
 	if err != nil {
 		return err
 	}
-	steps, err := c.Engine.ListSteps(run.RunID)
+	steps, err := c.Engine.ListSteps(workflow.WithTenant(e.Request.Context(), run.TenantID), run.RunID)
 	if err != nil {
 		return httpx.NewInternalServerError("Migration steps unavailable", nil)
 	}
@@ -102,7 +102,7 @@ func (c HomeAssistantMigrationRoutes) confirm(e *httpx.Event) error {
 	if run.Status != workflow.RunSuspended || run.AwaitingSignal != key {
 		return httpx.BadRequest(e, "Migration is not awaiting cutover confirmation", nil)
 	}
-	if err := c.Engine.Deliver(e.Request.Context(), workflow.Signal{Key: key, Payload: map[string]any{"confirmed": true}}); err != nil {
+	if err := c.Engine.Deliver(workflow.WithTenant(e.Request.Context(), run.TenantID), workflow.Signal{Key: key, Payload: map[string]any{"confirmed": true}}); err != nil {
 		return httpx.Error(e, 409, "cutover_not_advanced", "Cutover did not advance; inspect the retained run", nil)
 	}
 	return httpx.Success(e, 202, map[string]any{"run_id": run.RunID})
@@ -120,8 +120,8 @@ func (c HomeAssistantMigrationRoutes) rollback(e *httpx.Event) error {
 		input[k] = v
 	}
 	input["migration_run_id"] = original.RunID
-	run := &workflow.Run{RunID: original.RunID + ":rollback", Type: workflows.TypeHomeAssistantRollback, OwnerID: original.OwnerID, Input: input, Context: original.Context}
-	if _, err := c.Engine.StartOrResumeRun(e.Request.Context(), run); err != nil {
+	run := &workflow.Run{TenantID: original.TenantID, RunID: original.RunID + ":rollback", Type: workflows.TypeHomeAssistantRollback, OwnerID: original.OwnerID, Input: input, Context: original.Context}
+	if _, err := c.Engine.StartOrResumeRun(workflow.WithTenant(e.Request.Context(), run.TenantID), run); err != nil {
 		return httpx.Error(e, 409, "rollback_not_advanced", "Return did not advance; inspect the retained run", nil)
 	}
 	return httpx.Success(e, 202, map[string]any{"run_id": run.RunID})

@@ -37,6 +37,21 @@ The beyond-IaC operational layer that manages infrastructure after provisioning.
 - [ ] Event bus with correlation and notification dispatch
 - [ ] Rolling update orchestration
 
+## User notifications (smart-home notices)
+
+- `ReportUserNotification(UserNotification) returns (UserNotificationAck)` is the
+  opt-in `user_notification` agent-channel class
+  (`SERVER-CONNECTION-STANDARD.md` section 9). The agent is authenticated like
+  every other RPC; the node identity (tenant, stack, owner) comes from that
+  authentication, never from the message. Core bounds the text (280
+  characters), rate-limits the node (30 per hour), collapses by
+  `automation_id`, resolves the recipients and dispatches the Feed item. A
+  refusal is a structured ack (`refusal_code`, `retry_after_seconds`), not a
+  transport error. The node holds no notifications-engine credential.
+- `STACKKIT_OPERATION_HOUSEHOLD_REMOVE = 52` removes one household subject
+  (`stackkit user remove <username> --owner-approve --json`). It requires Owner
+  approval and `household_username`.
+
 ## StackKitCommand Advanced fields
 
 - `STACKKIT_OPERATION_ADVANCED_TRUST_IMPORT = 24` imports the installation's

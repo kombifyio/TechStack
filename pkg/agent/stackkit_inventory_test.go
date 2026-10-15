@@ -60,3 +60,27 @@ func TestMaterializeStackKitInventoryRejectsInvalidContractBeforeWriting(t *test
 		})
 	}
 }
+
+// Core's Inventory carries facts and channels only; replacing the node's
+// Inventory keeps the backup binding the node issued itself.
+func TestReplacingTheNodeInventoryKeepsTheNodeIssuedBackupBinding(t *testing.T) {
+	workDir := t.TempDir()
+	directory := filepath.Join(workDir, ".stackkit")
+	if err := os.MkdirAll(directory, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	node := `{"schemaVersion":"stackkit.inventory/v1","externalBackupTargetBindings":{"cloud":{"offsite-object-backup":{"bindingHash":"node-issued"}}},"executionChannels":{"old":{}}}`
+	if err := os.WriteFile(filepath.Join(directory, "inventory.json"), []byte(node), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := materializeStackKitInventory(workDir, []byte(`{"schemaVersion":"stackkit.inventory/v1","executionChannels":{"new":{}}}`)); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := os.ReadFile(filepath.Join(directory, "inventory.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(stored), "node-issued") || !strings.Contains(string(stored), `"new"`) || strings.Contains(string(stored), `"old"`) {
+		t.Fatalf("replaced Inventory = %s", stored)
+	}
+}

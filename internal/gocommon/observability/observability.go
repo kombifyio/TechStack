@@ -28,9 +28,11 @@ package observability
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -97,7 +99,7 @@ func MustInit(cfg Config) func() {
 		traces = *cfg.TracesSampleRate
 	}
 
-	err := sentry.Init(sentry.ClientOptions{
+	options := sentry.ClientOptions{
 		Dsn:              dsn,
 		Environment:      env,
 		Release:          release,
@@ -105,10 +107,11 @@ func MustInit(cfg Config) func() {
 		AttachStacktrace: true,
 		EnableTracing:    traces > 0,
 		TracesSampleRate: traces,
-		SendDefaultPII:   false,
 		Debug:            cfg.Debug,
 		BeforeSend:       scrubPII,
-	})
+	}
+	options.BeforeSendTransaction = scrubPII
+	err := sentry.Init(options)
 	if err != nil {
 		// Do not fatal — observability failure must not take down the service.
 		fmt.Fprintf(os.Stderr, "observability: sentry init failed: %v\n", err)
@@ -143,7 +146,6 @@ func Middleware(next http.Handler) http.Handler {
 			if id := identity.FromContext(r.Context()); id.IsAuthenticated() {
 				hub.Scope().SetUser(sentry.User{
 					ID:       id.UserID,
-					Email:    id.Email,
 					Username: id.UserID,
 				})
 				if id.OrgID != "" {
@@ -185,28 +187,248 @@ func defaultTracesRate(env string) float64 {
 	return 1.0
 }
 
-// scrubPII is the BeforeSend hook enforcing the PII rules from
+// scrubPII is the error and transaction hook enforcing the PII rules from
 // OBSERVABILITY-STANDARD.md §6. It strips request bodies, auth headers and
 // cookies from outgoing events before they leave the process.
 func scrubPII(event *sentry.Event, _ *sentry.EventHint) *sentry.Event {
+	secrets := []string{event.User.Email, event.User.IPAddress}
+	collectRequestSecrets(event.Request, &secrets)
+	// Collect from every container before redacting any copied value. Normalize
+	// once so typed maps and slices share the same recursive policy.
+	for index, breadcrumb := range event.Breadcrumbs {
+		if breadcrumb != nil {
+			// Scope breadcrumbs are shared between errors and transactions. Keep
+			// their original evidence available to the next event's collection.
+			owned := *breadcrumb
+			owned.Data = prepareMetadata(breadcrumb.Data, &secrets)
+			event.Breadcrumbs[index] = &owned
+			collectURLSecrets(owned.Message, &secrets)
+		}
+	}
+	for _, span := range event.Spans {
+		if span != nil {
+			span.Data = prepareMetadata(span.Data, &secrets)
+			collectURLSecrets(span.Description, &secrets)
+		}
+	}
+	for key, data := range event.Contexts {
+		event.Contexts[key] = sentry.Context(prepareMetadata(data, &secrets))
+	}
 	if event.Request != nil {
 		event.Request.Data = "" // body
 		event.Request.Cookies = ""
-		if event.Request.Headers != nil {
-			for k := range event.Request.Headers {
-				lk := strings.ToLower(k)
-				if lk == "authorization" || lk == "cookie" || lk == "set-cookie" ||
-					strings.HasPrefix(lk, "x-user-") || strings.HasPrefix(lk, "x-org-") {
-					event.Request.Headers[k] = "[scrubbed]"
-				}
+		event.Request.QueryString = ""
+		event.Request.Env = nil
+		for k := range event.Request.Headers {
+			if !safeRequestHeader(k) {
+				delete(event.Request.Headers, k)
 			}
 		}
-		// Drop query string from URL.
-		if i := strings.IndexByte(event.Request.URL, '?'); i >= 0 {
-			event.Request.URL = event.Request.URL[:i]
+		event.Request.URL = scrubURL(event.Request.URL)
+	}
+	event.User.Email = ""
+	event.User.IPAddress = ""
+	for _, breadcrumb := range event.Breadcrumbs {
+		if breadcrumb != nil {
+			breadcrumb.Message = scrubText(breadcrumb.Message, secrets)
+			scrubMetadataValue(breadcrumb.Data, secrets)
 		}
 	}
+	for _, span := range event.Spans {
+		if span != nil {
+			span.Description = scrubText(span.Description, secrets)
+			scrubMetadataValue(span.Data, secrets)
+		}
+	}
+	// Root-span data is projected into the trace context, not event.Spans.
+	for _, data := range event.Contexts {
+		scrubMetadataValue(map[string]interface{}(data), secrets)
+	}
 	return event
+}
+
+func collectRequestSecrets(request *sentry.Request, secrets *[]string) {
+	if request == nil {
+		return
+	}
+	collectURLSecrets(request.URL, secrets)
+	collectQuerySecrets(request.QueryString, secrets)
+	*secrets = append(*secrets, request.Data, request.Cookies)
+	var body interface{}
+	if json.Unmarshal([]byte(request.Data), &body) == nil {
+		collectMetadataStrings(body, secrets)
+	}
+	for _, value := range request.Env {
+		*secrets = append(*secrets, value)
+	}
+	for header, value := range request.Headers {
+		if !safeRequestHeader(header) {
+			*secrets = append(*secrets, value)
+		}
+	}
+}
+
+func safeRequestHeader(key string) bool {
+	switch strings.ToLower(key) {
+	case "content-type", "accept", "x-request-id":
+		return true
+	default:
+		return false
+	}
+}
+
+func scrubURL(value string) string {
+	parsed, err := url.Parse(value)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return value
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.ForceQuery = false
+	parsed.Fragment = ""
+	return parsed.String()
+}
+
+// Normalize arbitrary JSON-shaped SDK metadata before walking it so nested
+// typed maps/slices cannot bypass the same policy. Unserializable data is dropped.
+func prepareMetadata(data map[string]interface{}, secrets *[]string) map[string]interface{} {
+	encoded, err := json.Marshal(data)
+	if err != nil {
+		return nil
+	}
+	var normalized map[string]interface{}
+	if json.Unmarshal(encoded, &normalized) != nil {
+		return nil
+	}
+	// The SDK may already have removed request credentials. Also collect copies
+	// under sensitive metadata keys before removing them, then redact aliases.
+	collectSensitiveMetadata(normalized, secrets)
+	return normalized
+}
+
+func scrubMetadataValue(value interface{}, secrets []string) interface{} {
+	switch data := value.(type) {
+	case string:
+		return scrubText(data, secrets)
+	case map[string]interface{}:
+		scrubMetadataMap(data, secrets, false)
+	case []interface{}:
+		for i, value := range data {
+			data[i] = scrubMetadataValue(value, secrets)
+		}
+	}
+	return value
+}
+
+func metadataHeaders(key string) bool {
+	return strings.HasSuffix(strings.ToLower(key), "headers")
+}
+
+func scrubMetadataMap(data map[string]interface{}, secrets []string, headers bool) {
+	for key, value := range data {
+		if sensitiveMetadataKey(key) || (headers && !safeRequestHeader(key)) {
+			delete(data, key)
+			continue
+		}
+		if metadataHeaders(key) {
+			if nested, ok := value.(map[string]interface{}); ok {
+				scrubMetadataMap(nested, secrets, true)
+			} else {
+				delete(data, key)
+			}
+			continue
+		}
+		data[key] = scrubMetadataValue(value, secrets)
+	}
+}
+
+func sensitiveMetadataKey(key string) bool {
+	name := strings.NewReplacer("-", "", "_", "", ".", "").Replace(strings.ToLower(key))
+	for _, sensitive := range []string{"authorization", "cookie", "password", "secret", "token", "signature", "query", "body", "email", "ipaddress", "requestdata", "env", "xkombify", "xuser", "xorg"} {
+		if strings.Contains(name, sensitive) {
+			return true
+		}
+	}
+	return false
+}
+
+func collectSensitiveMetadata(value interface{}, secrets *[]string) {
+	switch data := value.(type) {
+	case map[string]interface{}:
+		for key, value := range data {
+			if sensitiveMetadataKey(key) {
+				collectMetadataStrings(value, secrets)
+			}
+			if metadataHeaders(key) {
+				collectHeaderSecrets(value, secrets)
+			}
+			collectSensitiveMetadata(value, secrets)
+		}
+	case []interface{}:
+		for _, value := range data {
+			collectSensitiveMetadata(value, secrets)
+		}
+	case string:
+		collectURLSecrets(data, secrets)
+	}
+}
+
+func collectHeaderSecrets(value interface{}, secrets *[]string) {
+	if headers, ok := value.(map[string]interface{}); ok {
+		for key, value := range headers {
+			if !safeRequestHeader(key) {
+				collectMetadataStrings(value, secrets)
+			}
+		}
+	} else {
+		collectMetadataStrings(value, secrets)
+	}
+}
+
+func collectQuerySecrets(query string, secrets *[]string) {
+	*secrets = append(*secrets, query)
+	values, _ := url.ParseQuery(query)
+	for _, items := range values {
+		*secrets = append(*secrets, items...)
+	}
+}
+
+func collectURLSecrets(value string, secrets *[]string) {
+	parsed, err := url.Parse(value)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return
+	}
+	if parsed.User != nil {
+		password, _ := parsed.User.Password()
+		*secrets = append(*secrets, parsed.User.Username(), password)
+	}
+	collectQuerySecrets(parsed.RawQuery, secrets)
+	*secrets = append(*secrets, parsed.Fragment)
+}
+
+func scrubText(value string, secrets []string) string {
+	value = scrubURL(value)
+	for _, secret := range secrets {
+		if secret != "" {
+			value = strings.ReplaceAll(value, secret, "[scrubbed]")
+		}
+	}
+	return value
+}
+
+func collectMetadataStrings(value interface{}, values *[]string) {
+	switch data := value.(type) {
+	case string:
+		*values = append(*values, data)
+	case map[string]interface{}:
+		for _, value := range data {
+			collectMetadataStrings(value, values)
+		}
+	case []interface{}:
+		for _, value := range data {
+			collectMetadataStrings(value, values)
+		}
+	}
 }
 
 // ErrObservabilityDisabled is returned by utilities that require Sentry but
@@ -216,5 +438,5 @@ var ErrObservabilityDisabled = errors.New("observability: disabled (no SENTRY_DS
 
 // IsEnabled reports whether Sentry was initialized successfully.
 func IsEnabled() bool {
-	return sentry.CurrentHub().Client() != nil
+	return sentry.CurrentHub().Client().IsEnabled()
 }

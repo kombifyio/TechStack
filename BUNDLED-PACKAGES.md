@@ -11,7 +11,7 @@ contain license files. Their licenses are documented here alongside them.
 | `@kombiverselabs/ai-sdk` | `0.10.2419` | MIT; see `BUNDLED-MIT-LICENSE.txt` |
 | `@kombiverselabs/design` | `0.10.302` | Dual Apache-2.0 / GPL-3.0-or-later; see `LICENSE` |
 | `@kombiverselabs/embed` | `0.10.2419` | MIT; see `BUNDLED-MIT-LICENSE.txt` |
-| `@kombiverselabs/notifications` | `0.3.68` | MIT; see `BUNDLED-MIT-LICENSE.txt` |
+| `@kombiverselabs/cloud-notifications` | `0.3.115` | MIT; see `BUNDLED-MIT-LICENSE.txt` |
 | `@kombiverselabs/onboarding-core` | `0.10.302` | MIT; see `BUNDLED-MIT-LICENSE.txt` |
 | `@kombiverselabs/ui` | `0.10.302` | MIT; see `BUNDLED-MIT-LICENSE.txt` |
 

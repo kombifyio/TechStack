@@ -86,6 +86,14 @@ export function parseApiError(err: unknown): ParsedApiError {
   };
 }
 
+/**
+ * What to tell the owner about a refused request: the structured denial's own
+ * guidance when the backend sent one, otherwise the error message.
+ */
+export function denialMessage(parsed: ParsedApiError): string {
+  return parsed.outcome?.userGuidance?.body || parsed.message;
+}
+
 export function isCancelledRequestError(err: unknown): boolean {
   const maybeAny = err as { name?: unknown; message?: unknown } | null;
   const name = typeof maybeAny?.name === "string" ? maybeAny.name : "";

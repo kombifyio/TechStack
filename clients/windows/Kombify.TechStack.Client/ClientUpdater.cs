@@ -3,9 +3,9 @@ using System.Net;
 using System.Net.NetworkInformation;
 using System.Reflection;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Microsoft.Win32;
 using Kombify.Client.Shell;
 
 namespace Kombify.TechStack.Client;
@@ -16,10 +16,10 @@ namespace Kombify.TechStack.Client;
 // class applies a staged installer at start, before the runtime is spawned,
 // verifies the result on the next start and rolls back when the updated
 // runtime does not become healthy. Only the per-machine installation (the
-// shipped Setup.exe/MSI) updates itself; update problems never block a start.
+// shipped Setup.exe/MSI) updates itself. Update checks never block a start;
+// rollback recovery must finish before a runtime can use retained data.
 internal static class ClientUpdater
 {
-    private const string BundleUpgradeCode = "{E832F922-4AEC-4C41-A7B6-9546279CD913}";
     private const string SetupFileName = "kombify-Techstack-Setup.exe";
     private const string PhaseApplying = "applying";
     private const string PhaseRollingBack = "rolling-back";
@@ -48,49 +48,65 @@ internal static class ClientUpdater
     }
 
     // Runs before the window exists. Returns true when an installer was
-    // launched and this process must exit so its files can be replaced.
-    internal static bool TryApplyStagedUpdate(ClientConfig config)
+    // launched; a blocked recovery also prevents starting the runtime.
+    internal static bool TryApplyStagedUpdate(ClientConfig config, out string? startupBlockReason)
     {
+        startupBlockReason = null;
         // The current signed descriptor and runtime verifier belong to the
         // Local payload. Cloud needs its own edition-bound update feed first.
         if (!DesktopEdition.IsLocal) return false;
         try
         {
-            FinishRollback(config);
+            if (ResumePendingRollback(config, out startupBlockReason)) return true;
+            if (startupBlockReason is not null) return false;
+            startupBlockReason = FinishRollback(config);
+            if (startupBlockReason is not null) return false;
             if (!config.AutoUpdate || !IsMachineInstallation() || File.Exists(PendingPath()))
             {
                 return false;
             }
 
             var current = CurrentVersion();
-            var staged = NewestStagedUpdate(current);
+            var staged = NewestStagedUpdate(current, config.UpdateChannel);
             if (staged is null)
             {
                 return false;
             }
-            if (LocalRuntimePortInUse(config))
+            if (LocalRuntimePortInUse(config) || EmbeddedPostgresRunning(config))
             {
-                Log(config, $"client update {staged.Version} is staged; a local runtime is still running, so it applies at the next start");
+                Log(config, $"client update {staged.Version} is staged; the local runtime or database is still running, so it applies at the next start");
                 return false;
             }
 
-            var stageDir = Path.GetDirectoryName(staged.DescriptorPath)!;
+            var recovery = CaptureRollbackInstaller(current, config.UpdateChannel);
+            if (recovery is null)
+            {
+                Log(config, $"client update {staged.Version} waits: no verified recovery installer for {current} is available");
+                return false;
+            }
+
+            var stageDir = Path.Combine(UpdatesDirectory(), staged.Version);
             var installer = Path.Combine(stageDir, SetupFileName);
-            VerifiedUpdateHandoff.CopyVerified(staged.PackagePath, installer, staged.PackageSha256, staged.PackageSize);
+            var verified = VerifyStagedPackage(UpdatesDirectory(), staged.Version, config.UpdateChannel, "update", config.UpdateMinSupportedVersion);
+            VerifiedUpdateHandoff.CopyVerified(verified.PackagePath, installer, verified.PackageSha256, verified.PackageSize);
             ReplaceDirectory(config.RuntimeDataDir, SnapshotDirectory());
             var pending = new PendingUpdate
             {
                 From = current,
                 To = staged.Version,
                 Installer = installer,
-                RollbackInstaller = CaptureRollbackInstaller(current),
+                RollbackInstaller = recovery.Path,
+                InstallerSha256 = verified.PackageSha256,
+                InstallerSize = verified.PackageSize,
+                RollbackSha256 = recovery.Sha256,
+                RollbackSize = recovery.Size,
                 Phase = PhaseApplying,
                 StartedAt = DateTimeOffset.UtcNow,
             };
             WritePending(pending);
             Log(config, $"applying client update {current} -> {staged.Version}; rollback installer {(pending.RollbackInstaller.Length > 0 ? "kept" : "unavailable")}");
-            LaunchAndRestart(("KOMBIFY_UPDATE_INSTALLER", installer),
-                "start \"\" /wait \"%KOMBIFY_UPDATE_INSTALLER%\" /passive /norestart");
+            LaunchAndRestart(config, [new InstallerHandoff(installer, verified.PackageSha256,
+                verified.PackageSize, "/passive /norestart")]);
             return true;
         }
         catch (Exception ex)
@@ -106,14 +122,14 @@ internal static class ClientUpdater
     internal static bool CompletePendingUpdate(ClientConfig config, bool runtimeHealthy, Action stopRuntime)
     {
         if (!DesktopEdition.IsLocal) return false;
-        var pending = ReadPending();
-        if (pending is null)
-        {
-            return false;
-        }
-
+        var recoveryCommitted = false;
         try
         {
+            var pending = ReadPending();
+            if (pending is null) return false;
+            // Only pre-start recovery can finish a rollback. Runtime health
+            // cannot replace restoring its pre-update data.
+            if (pending.Phase == PhaseRollingBack) return false;
             var current = CurrentVersion();
             if (SameVersion(current, pending.To) && pending.Phase == PhaseApplying)
             {
@@ -126,22 +142,16 @@ internal static class ClientUpdater
                     File.Delete(PendingPath());
                     return false;
                 }
-                if (File.Exists(pending.Installer) && File.Exists(pending.RollbackInstaller))
-                {
-                    stopRuntime();
-                    WritePending(pending with { Phase = PhaseRollingBack });
-                    Log(config, $"client update {pending.To} failed its health check; rolling back to {pending.From}");
-                    LaunchAndRestart(
-                        ("KOMBIFY_UPDATE_INSTALLER", pending.Installer),
-                        "start \"\" /wait \"%KOMBIFY_UPDATE_INSTALLER%\" /uninstall /passive /norestart & " +
-                        "start \"\" /wait \"%KOMBIFY_UPDATE_ROLLBACK%\" /passive /norestart",
-                        ("KOMBIFY_UPDATE_ROLLBACK", pending.RollbackInstaller));
-                    return true;
-                }
-                Log(config, $"client update {pending.To} failed its health check and no rollback installer is available; the pre-update data snapshot is kept at {SnapshotDirectory()}");
-                MarkFailed(pending.To);
-                File.Delete(PendingPath());
-                return false;
+                // Commit recovery before attempting an installer. A missing
+                // package must not erase recovery or let the failed runtime
+                // start again against data it may already have migrated.
+                stopRuntime();
+                WritePending(pending with { Phase = PhaseRollingBack });
+                recoveryCommitted = true;
+                var installers = BindRollbackInstallers(config, pending with { Phase = PhaseRollingBack }, ResolveSignedRollbackPackage);
+                Log(config, $"client update {pending.To} failed its health check; rolling back to {pending.From}");
+                LaunchAndRestart(config, installers);
+                return true;
             }
 
             Log(config, SameVersion(current, pending.From)
@@ -154,7 +164,7 @@ internal static class ClientUpdater
         catch (Exception ex)
         {
             Log(config, $"client update verification failed: {ex.Message}");
-            return false;
+            return recoveryCommitted;
         }
     }
 
@@ -170,39 +180,21 @@ internal static class ClientUpdater
 
         try
         {
-            var start = new ProcessStartInfo(runtimeExe)
+            // Installer authority always belongs to the installed binary,
+            // never a user-configured runtime-executable override.
+            runtimeExe = Path.Combine(AppContext.BaseDirectory, "techstack.exe");
+            var current = CurrentVersion();
+            if (CaptureRollbackInstaller(current, config.UpdateChannel) is null)
             {
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-            foreach (var argument in new[]
-            {
-                "client-update",
-                "--manifest-url", config.UpdateManifestUrl,
-                "--channel", config.UpdateChannel,
-                "--staging-dir", UpdatesDirectory(),
-            })
-            {
-                start.ArgumentList.Add(argument);
+                var recoveryManifest = RecoveryManifestUrl(config.UpdateManifestUrl, current);
+                if (recoveryManifest is null)
+                    throw new InvalidOperationException("The configured update feed has no supported exact-version recovery manifest URL.");
+                if (!await StagePackageAsync(config, runtimeExe, recoveryManifest,
+                        Path.Combine(UpdatesDirectory(), "rollback"), current) ||
+                    CaptureRollbackInstaller(current, config.UpdateChannel) is null)
+                    throw new InvalidOperationException($"No signed recovery installer for installed version {current} is available; the installation was not changed.");
             }
-            if (!string.IsNullOrWhiteSpace(config.UpdateMinSupportedVersion))
-            {
-                start.ArgumentList.Add("--min-supported-version");
-                start.ArgumentList.Add(config.UpdateMinSupportedVersion);
-            }
-
-            using var process = Process.Start(start);
-            if (process is null)
-            {
-                return;
-            }
-            using var budget = new CancellationTokenSource(TimeSpan.FromMinutes(15));
-            var stdout = process.StandardOutput.ReadToEndAsync(budget.Token);
-            var stderr = process.StandardError.ReadToEndAsync(budget.Token);
-            await process.WaitForExitAsync(budget.Token);
-            Log(config, $"client update check: {(await stdout).Trim()} {(await stderr).Trim()}".Trim());
+            await StagePackageAsync(config, runtimeExe, config.UpdateManifestUrl, UpdatesDirectory(), null);
         }
         catch (Exception ex)
         {
@@ -210,32 +202,225 @@ internal static class ClientUpdater
         }
     }
 
-    // A rolled-back installation restores the pre-update runtime data before
-    // its runtime starts, because the newer runtime may have migrated it.
-    private static void FinishRollback(ClientConfig config)
+    private static VerifiedPackage VerifyStagedPackage(string root, string version, string channel, string purpose,
+        string minimumVersion = "")
     {
-        var pending = ReadPending();
-        if (pending is null || pending.Phase != PhaseRollingBack || !SameVersion(CurrentVersion(), pending.From))
+        var start = new ProcessStartInfo(Path.Combine(AppContext.BaseDirectory, "techstack.exe"))
         {
-            return;
-        }
-        if (EmbeddedPostgresRunning(config))
+            UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardOutput = true, RedirectStandardError = true,
+        };
+        foreach (var argument in new[] { "client-update", "--verify-staged-version", version,
+                     "--staging-dir", root, "--channel", channel }) start.ArgumentList.Add(argument);
+        if (purpose == "recovery")
         {
-            Log(config, "client update rollback waits: the embedded PostgreSQL of the updated runtime is still running");
-            return;
+            start.ArgumentList.Add("--recovery-version");
+            start.ArgumentList.Add(CurrentVersion());
         }
-        var snapshot = SnapshotDirectory();
-        if (Directory.Exists(snapshot))
+        else if (purpose == "rollback") start.ArgumentList.Add("--verify-rollback");
+        else if (!string.IsNullOrWhiteSpace(minimumVersion))
         {
-            RestoreDirectory(snapshot, config.RuntimeDataDir);
-            DeleteDirectory(snapshot);
+            start.ArgumentList.Add("--min-supported-version");
+            start.ArgumentList.Add(minimumVersion);
         }
-        MarkFailed(pending.To);
-        File.Delete(PendingPath());
-        Log(config, $"client update rolled back to {pending.From}; runtime data restored from the pre-update snapshot");
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("The installed update verifier did not start.");
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(30_000))
+        {
+            process.Kill(entireProcessTree: true);
+            process.WaitForExit();
+            throw new InvalidOperationException("The installed update verifier did not finish.");
+        }
+        var output = stdout.GetAwaiter().GetResult();
+        var errors = stderr.GetAwaiter().GetResult();
+        if (process.ExitCode != 0) throw new InvalidDataException($"The installed update verifier refused the package: {errors} {output}");
+        var verified = JsonSerializer.Deserialize<VerifiedPackage>(output)
+            ?? throw new InvalidDataException("The installed update verifier returned no package.");
+        var expected = Path.GetFullPath(Path.Combine(root, version, "package"));
+        if (verified.Status != $"verified-{purpose}" || verified.Version != version ||
+            !Path.GetFullPath(verified.PackagePath).Equals(expected, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("The installed update verifier returned a different package.");
+        return verified;
     }
 
-    private static StagedUpdate? NewestStagedUpdate(string current)
+    // Returning to this cursor on the next start retries signed artifact
+    // acquisition; retaining a snapshot alone is not an executable rollback.
+    // Dependency seams below the production caller allow isolated module probes.
+    internal static bool ResumePendingRollback(ClientConfig config, out string? blocked,
+        Func<ClientConfig, string, string, VerifiedPackage>? resolve = null,
+        Action<InstallerHandoff[]>? launch = null)
+    {
+        blocked = null;
+        PendingUpdate? pending;
+        try { pending = ReadPending(); }
+        catch (Exception ex)
+        {
+            Log(config, $"client rollback cursor is invalid: {ex.Message}");
+            blocked = LocalRuntimeMessages.RecoveryRestoreFailed;
+            return false;
+        }
+        if (pending is null || pending.Phase != PhaseRollingBack || SameVersion(CurrentVersion(), pending.From))
+            return false;
+        blocked = LocalRuntimeMessages.RecoveryInstallationPending;
+        try
+        {
+            var installers = BindRollbackInstallers(config, pending, resolve ?? ResolveSignedRollbackPackage);
+            if (launch is null) LaunchAndRestart(config, installers);
+            else launch(installers);
+            blocked = null;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log(config, $"client rollback remains pending: {ex.Message}; signed artifact acquisition will retry at the next start");
+            return false;
+        }
+    }
+
+    private static VerifiedPackage ResolveSignedRollbackPackage(ClientConfig config, string root, string version)
+    {
+        try { return VerifyStagedPackage(root, version, config.UpdateChannel, "rollback"); }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or System.ComponentModel.Win32Exception)
+        {
+            var manifest = RecoveryManifestUrl(config.UpdateManifestUrl, version)
+                ?? throw new InvalidOperationException("The update feed has no supported exact-version rollback manifest URL.");
+            var runtime = Path.Combine(AppContext.BaseDirectory, "techstack.exe");
+            if (!StagePackageAsync(config, runtime, manifest, root, version, rollback: true)
+                    .GetAwaiter().GetResult())
+                throw new InvalidDataException($"No signed rollback package for exact version {version} is available.");
+            return VerifyStagedPackage(root, version, config.UpdateChannel, "rollback");
+        }
+    }
+
+    private static InstallerHandoff[] BindRollbackInstallers(ClientConfig config, PendingUpdate pending,
+        Func<ClientConfig, string, string, VerifiedPackage> resolve)
+    {
+        if (CurrentVersion() != pending.To || CompareVersions(pending.From, pending.To) is not < 0)
+            throw new InvalidDataException("The rollback does not belong to this installation.");
+        if (!Directory.Exists(SnapshotDirectory()))
+            throw new InvalidDataException("The pre-update snapshot is missing; rollback data was not changed.");
+        if (LocalRuntimePortInUse(config) || EmbeddedPostgresRunning(config))
+            throw new InvalidOperationException("The local runtime or PostgreSQL must stop before rollback.");
+        var legacy = pending.InstallerSha256.Length == 0 && pending.RollbackSha256.Length == 0 &&
+                     pending.InstallerSize == 0 && pending.RollbackSize == 0;
+        var updated = resolve(config, UpdatesDirectory(), pending.To);
+        if (!legacy && (!updated.PackageSha256.Equals(pending.InstallerSha256, StringComparison.OrdinalIgnoreCase) ||
+            updated.PackageSize != pending.InstallerSize))
+            throw new InvalidDataException("The signed update package changed since the recovery snapshot.");
+        var newInstaller = Path.Combine(UpdatesDirectory(), pending.To, SetupFileName);
+        VerifiedUpdateHandoff.CopyVerified(updated.PackagePath, newInstaller, updated.PackageSha256, updated.PackageSize);
+        var oldInstaller = Path.Combine(UpdatesDirectory(), "rollback", pending.From, SetupFileName);
+        var recovery = resolve(config, Path.Combine(UpdatesDirectory(), "rollback"), pending.From);
+        if (!legacy && (!recovery.PackageSha256.Equals(pending.RollbackSha256, StringComparison.OrdinalIgnoreCase) ||
+            recovery.PackageSize != pending.RollbackSize))
+            throw new InvalidDataException("The signed recovery package changed since the recovery snapshot.");
+        VerifiedUpdateHandoff.CopyVerified(recovery.PackagePath, oldInstaller, recovery.PackageSha256, recovery.PackageSize);
+        // Legacy paths and self-declared hashes are never migration authority.
+        // Publish all signer-derived bindings together before the handoff.
+        WritePending(pending with { Installer = newInstaller, RollbackInstaller = oldInstaller,
+            InstallerSha256 = updated.PackageSha256, InstallerSize = updated.PackageSize,
+            RollbackSha256 = recovery.PackageSha256, RollbackSize = recovery.PackageSize });
+        return [new InstallerHandoff(newInstaller, updated.PackageSha256, updated.PackageSize, "/uninstall /passive /norestart"),
+            new InstallerHandoff(oldInstaller, recovery.PackageSha256, recovery.PackageSize, "/passive /norestart")];
+    }
+
+    private static string? RecoveryManifestUrl(string feed, string version)
+    {
+        if (!Uri.TryCreate(feed, UriKind.Absolute, out var url) || url.Scheme != "https" ||
+            !url.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase) ||
+            url.UserInfo.Length != 0 || url.Query.Length != 0 || url.Fragment.Length != 0 ||
+            CompareVersions(version, version) is null) return null;
+        var parts = url.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 6 || parts[2] != "releases" || parts[3] != "latest" || parts[4] != "download")
+            return null;
+        return $"https://github.com/{parts[0]}/{parts[1]}/releases/download/v{version}/{parts[5]}";
+    }
+
+    private static async Task<bool> StagePackageAsync(ClientConfig config, string runtimeExe,
+        string manifestUrl, string stagingDirectory, string? recoveryVersion, bool rollback = false)
+    {
+        var start = new ProcessStartInfo(runtimeExe)
+        {
+            UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardOutput = true, RedirectStandardError = true,
+        };
+        foreach (var argument in new[] { "client-update", "--manifest-url", manifestUrl,
+                     "--channel", config.UpdateChannel, "--staging-dir", stagingDirectory })
+            start.ArgumentList.Add(argument);
+        if (recoveryVersion is not null)
+        {
+            start.ArgumentList.Add(rollback ? "--rollback-version" : "--recovery-version");
+            start.ArgumentList.Add(recoveryVersion);
+        }
+        else if (!string.IsNullOrWhiteSpace(config.UpdateMinSupportedVersion))
+        {
+            start.ArgumentList.Add("--min-supported-version");
+            start.ArgumentList.Add(config.UpdateMinSupportedVersion);
+        }
+        using var process = Process.Start(start);
+        if (process is null) return false;
+        using var budget = new CancellationTokenSource(TimeSpan.FromMinutes(15));
+        try
+        {
+            var stdout = process.StandardOutput.ReadToEndAsync(budget.Token);
+            var stderr = process.StandardError.ReadToEndAsync(budget.Token);
+            await process.WaitForExitAsync(budget.Token).ConfigureAwait(false);
+            Log(config, $"client {(rollback ? "rollback" : recoveryVersion is null ? "update" : "recovery")} check: {(await stdout.ConfigureAwait(false)).Trim()} {(await stderr.ConfigureAwait(false)).Trim()}".Trim());
+            return process.ExitCode == 0;
+        }
+        finally
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync().ConfigureAwait(false);
+            }
+        }
+    }
+
+    // A rolled-back installation restores the pre-update runtime data before
+    // its runtime starts, because the newer runtime may have migrated it.
+    private static string? FinishRollback(ClientConfig config)
+    {
+        try
+        {
+            var pending = ReadPending();
+            if (pending is null || pending.Phase != PhaseRollingBack) return null;
+            if (!SameVersion(CurrentVersion(), pending.From))
+            {
+                Log(config, "client update rollback waits: the previous installation has not been restored");
+                return LocalRuntimeMessages.RecoveryInstallationPending;
+            }
+            if (LocalRuntimePortInUse(config) || EmbeddedPostgresRunning(config))
+            {
+                Log(config, "client update rollback waits: the local runtime or embedded PostgreSQL is still running");
+                return LocalRuntimeMessages.RecoveryDatabaseRunning;
+            }
+            var snapshot = SnapshotDirectory();
+            if (!Directory.Exists(snapshot))
+            {
+                Log(config, "client update rollback waits: the pre-update data snapshot is missing");
+                return LocalRuntimeMessages.RecoverySnapshotMissing;
+            }
+            RestoreDirectory(snapshot, config.RuntimeDataDir);
+            MarkFailed(pending.To);
+            File.Delete(PendingPath());
+            // Recovery is committed once the data is restored and its cursor
+            // consumed. A cleanup failure must not block or replay that restore.
+            try { DeleteDirectory(snapshot); }
+            catch (Exception ex) { Log(config, $"client update rollback snapshot cleanup failed: {ex.Message}"); }
+            Log(config, $"client update rolled back to {pending.From}; runtime data restored from the pre-update snapshot");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            Log(config, $"client update rollback could not finish: {ex.Message}");
+            return LocalRuntimeMessages.RecoveryRestoreFailed;
+        }
+    }
+
+    private static StagedUpdate? NewestStagedUpdate(string current, string channel)
     {
         var root = UpdatesDirectory();
         if (!Directory.Exists(root))
@@ -244,12 +429,18 @@ internal static class ClientUpdater
         }
 
         StagedUpdate? newest = null;
-        foreach (var descriptorPath in Directory.EnumerateFiles(root, "stage.json", SearchOption.AllDirectories))
+        // Recovery packages are not upgrade candidates. Only the normal
+        // updater's immediate version directories belong to this channel.
+        foreach (var directory in Directory.EnumerateDirectories(root))
         {
+            var descriptorPath = Path.Combine(directory, "stage.json");
+            if (!File.Exists(descriptorPath)) continue;
             try
             {
                 var staged = JsonSerializer.Deserialize<StagedUpdate>(File.ReadAllText(descriptorPath));
-                if (staged is null || File.Exists(Path.Combine(Path.GetDirectoryName(descriptorPath)!, "failed")) ||
+                if (staged is null || Path.GetFileName(directory) != staged.Version ||
+                    (File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0 ||
+                    staged.Channel != channel || File.Exists(Path.Combine(directory, "failed")) ||
                     CompareVersions(staged.Version, current) is not > 0 ||
                     (newest is not null && CompareVersions(staged.Version, newest.Version) is not > 0))
                 {
@@ -265,41 +456,17 @@ internal static class ClientUpdater
         return newest;
     }
 
-    // Burn keeps the installed bundle in its package cache; a copy of that
-    // exact installer is what a rollback reinstalls.
-    private static string CaptureRollbackInstaller(string current)
+    // Both MSI and Burn recover from the signed exact installed release.
+    // Burn removes its original cache during upgrade, so that cache cannot
+    // authorize a retained user-state copy after the old bundle is unregistered.
+    private static RecoveryInstaller? CaptureRollbackInstaller(string current, string channel)
     {
-        foreach (var view in new[] { RegistryView.Registry32, RegistryView.Registry64 })
-        {
-            using var hive = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view);
-            using var uninstall = hive.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall");
-            if (uninstall is null)
-            {
-                continue;
-            }
-            foreach (var name in uninstall.GetSubKeyNames())
-            {
-                using var entry = uninstall.OpenSubKey(name);
-                var upgradeCodes = entry?.GetValue("BundleUpgradeCode") switch
-                {
-                    string[] codes => codes,
-                    string code => new[] { code },
-                    _ => Array.Empty<string>(),
-                };
-                if (!upgradeCodes.Any(code => code.Equals(BundleUpgradeCode, StringComparison.OrdinalIgnoreCase)) ||
-                    !SameVersion(entry?.GetValue("DisplayVersion") as string ?? "", current) ||
-                    entry?.GetValue("BundleCachePath") is not string cached || !File.Exists(cached))
-                {
-                    continue;
-                }
-                var rollbackDir = Path.Combine(UpdatesDirectory(), "rollback", current);
-                Directory.CreateDirectory(rollbackDir);
-                var rollback = Path.Combine(rollbackDir, SetupFileName);
-                File.Copy(cached, rollback, overwrite: true);
-                return rollback;
-            }
-        }
-        return "";
+        var descriptor = Path.Combine(UpdatesDirectory(), "rollback", current, "stage.json");
+        if (!File.Exists(descriptor)) return null;
+        var verified = VerifyStagedPackage(Path.Combine(UpdatesDirectory(), "rollback"), current, channel, "recovery");
+        var installer = Path.Combine(Path.GetDirectoryName(descriptor)!, SetupFileName);
+        VerifiedUpdateHandoff.CopyVerified(verified.PackagePath, installer, verified.PackageSha256, verified.PackageSize);
+        return new RecoveryInstaller(installer, verified.PackageSha256, verified.PackageSize);
     }
 
     private static bool LocalRuntimePortInUse(ClientConfig config)
@@ -328,27 +495,80 @@ internal static class ClientUpdater
         }
     }
 
-    // The installer replaces this executable, so a detached command waits until
-    // this process has exited, runs the installer(s) and then starts the (new)
-    // client, which inherits this environment. Paths travel as environment
-    // variables so that no path character is parsed as a command.
-    private static void LaunchAndRestart((string Name, string Value) first, string installerCommands,
-        params (string Name, string Value)[] more)
+    // The trusted inline coordinator survives this shell's exit. It hashes
+    // deny-write/delete handles and holds them until the installers exit, so a
+    // copied package cannot be substituted during the elevation handoff.
+    private static void LaunchAndRestart(ClientConfig config, InstallerHandoff[] installers)
     {
-        var start = new ProcessStartInfo("cmd.exe")
+        using var process = Process.Start(InstallerHandoffStartInfo(installers,
+            Path.Combine(AppContext.BaseDirectory, "kombify-techstack-client.exe"), config.RuntimeLogPath(), Environment.ProcessId))
+            ?? throw new InvalidOperationException("The installer coordinator did not start.");
+    }
+
+    internal static ProcessStartInfo InstallerHandoffStartInfo(InstallerHandoff[] installers,
+        string clientPath, string logPath, int parentId)
+    {
+        if (installers.Length is < 1 or > 2) throw new ArgumentException("The installer handoff must contain one update or one rollback pair.");
+        const string coordinator = """
+            $ErrorActionPreference = 'Stop'
+            $heldPackages = @()
+            try {
+                for ($packageIndex = 0; $packageIndex -lt [int]$env:KOMBIFY_UPDATE_COUNT; $packageIndex++) {
+                    $prefix = "KOMBIFY_UPDATE_${packageIndex}_"
+                    $packagePath = [Environment]::GetEnvironmentVariable($prefix + 'PATH')
+                    $expectedSize = [long][Environment]::GetEnvironmentVariable($prefix + 'SIZE')
+                    $expectedHash = [Environment]::GetEnvironmentVariable($prefix + 'SHA256')
+                    $packageStream = [IO.FileStream]::new($packagePath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+                    $heldPackages += @{ Stream = $packageStream; Path = $packagePath; Arguments = [Environment]::GetEnvironmentVariable($prefix + 'ARGUMENTS') }
+                    $hasher = [Security.Cryptography.SHA256]::Create()
+                    try { $actualHash = [BitConverter]::ToString($hasher.ComputeHash($packageStream)).Replace('-', '') }
+                    finally { $hasher.Dispose() }
+                    if ($packageStream.Length -ne $expectedSize -or $actualHash -ne $expectedHash) {
+                        throw 'The installer no longer matches its verified digest and size.'
+                    }
+                }
+                if ([int]$env:KOMBIFY_UPDATE_PARENT_ID -gt 0) {
+                    try { $handoffParent = [Diagnostics.Process]::GetProcessById([int]$env:KOMBIFY_UPDATE_PARENT_ID) }
+                    catch [ArgumentException] { $handoffParent = $null }
+                    if ($null -ne $handoffParent) { try { $handoffParent.WaitForExit() } finally { $handoffParent.Dispose() } }
+                }
+                foreach ($packageEntry in $heldPackages) {
+                    $installerProcess = Start-Process -FilePath $packageEntry.Path -ArgumentList $packageEntry.Arguments -WindowStyle Hidden -Wait -PassThru
+                    try {
+                        if ($installerProcess.ExitCode -ne 0 -and $installerProcess.ExitCode -ne 3010) {
+                            throw "The installer failed with exit code $($installerProcess.ExitCode). Recovery remains pending."
+                        }
+                    } finally { $installerProcess.Dispose() }
+                }
+            } catch {
+                try { [IO.File]::AppendAllText($env:KOMBIFY_UPDATE_LOG, "[$([DateTimeOffset]::Now.ToString('u'))] installer handoff failed: $($_.Exception.Message)`r`n") } catch {}
+                exit 1
+            } finally {
+                foreach ($packageEntry in $heldPackages) { $packageEntry.Stream.Dispose() }
+            }
+            Start-Process -FilePath $env:KOMBIFY_UPDATE_CLIENT -WindowStyle Hidden
+            """;
+        var start = new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),
+            "WindowsPowerShell", "v1.0", "powershell.exe"))
         {
             UseShellExecute = false,
             CreateNoWindow = true,
-            Arguments = "/d /s /c \"ping -n 4 127.0.0.1 >nul & " + installerCommands +
-                " & start \"\" \"%KOMBIFY_UPDATE_CLIENT%\"\"",
+            Arguments = "-NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand " +
+                        Convert.ToBase64String(Encoding.Unicode.GetBytes(coordinator)),
         };
-        start.Environment["KOMBIFY_UPDATE_CLIENT"] = Path.Combine(AppContext.BaseDirectory, "kombify-techstack-client.exe");
-        start.Environment[first.Name] = first.Value;
-        foreach (var (name, value) in more)
+        start.Environment["KOMBIFY_UPDATE_CLIENT"] = clientPath;
+        start.Environment["KOMBIFY_UPDATE_LOG"] = logPath;
+        start.Environment["KOMBIFY_UPDATE_PARENT_ID"] = parentId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        start.Environment["KOMBIFY_UPDATE_COUNT"] = installers.Length.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        for (var index = 0; index < installers.Length; index++)
         {
-            start.Environment[name] = value;
+            var prefix = $"KOMBIFY_UPDATE_{index}_";
+            start.Environment[prefix + "PATH"] = installers[index].Path;
+            start.Environment[prefix + "SHA256"] = installers[index].Sha256;
+            start.Environment[prefix + "SIZE"] = installers[index].Size.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            start.Environment[prefix + "ARGUMENTS"] = installers[index].Arguments;
         }
-        Process.Start(start)?.Dispose();
+        return start;
     }
 
     private static void DeleteAppliedStages(string current)
@@ -376,22 +596,32 @@ internal static class ClientUpdater
 
     private static PendingUpdate? ReadPending()
     {
-        try
-        {
-            return File.Exists(PendingPath())
-                ? JsonSerializer.Deserialize<PendingUpdate>(File.ReadAllText(PendingPath()), JsonOptions)
-                : null;
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
+        if (!File.Exists(PendingPath())) return null;
+        var pending = JsonSerializer.Deserialize<PendingUpdate>(File.ReadAllText(PendingPath()), JsonOptions);
+        if (pending is null || pending.Phase is not (PhaseApplying or PhaseRollingBack) ||
+            CompareVersions(pending.From, pending.From) is null || CompareVersions(pending.To, pending.To) is null)
+            throw new InvalidDataException("The pending client recovery state is invalid.");
+        return pending;
     }
 
     private static void WritePending(PendingUpdate pending)
     {
         Directory.CreateDirectory(UpdatesDirectory());
-        File.WriteAllText(PendingPath(), JsonSerializer.Serialize(pending, JsonOptions));
+        var path = PendingPath();
+        var temporary = path + $".{Guid.NewGuid():N}.tmp";
+        try
+        {
+            using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                file.Write(JsonSerializer.SerializeToUtf8Bytes(pending, JsonOptions));
+                file.Flush(flushToDisk: true);
+            }
+            File.Move(temporary, path, overwrite: true);
+        }
+        finally
+        {
+            File.Delete(temporary);
+        }
     }
 
     private static void ReplaceDirectory(string source, string destination)
@@ -526,7 +756,23 @@ internal static class ClientUpdater
         public string To { get; init; } = "";
         public string Installer { get; init; } = "";
         public string RollbackInstaller { get; init; } = "";
+        public string InstallerSha256 { get; init; } = "";
+        public long InstallerSize { get; init; }
+        public string RollbackSha256 { get; init; } = "";
+        public long RollbackSize { get; init; }
         public string Phase { get; init; } = "";
         public DateTimeOffset StartedAt { get; init; }
+    }
+
+    private sealed record RecoveryInstaller(string Path, string Sha256, long Size);
+    internal sealed record InstallerHandoff(string Path, string Sha256, long Size, string Arguments);
+
+    internal sealed record VerifiedPackage
+    {
+        [JsonPropertyName("status")] public string Status { get; init; } = "";
+        [JsonPropertyName("version")] public string Version { get; init; } = "";
+        [JsonPropertyName("package_path")] public string PackagePath { get; init; } = "";
+        [JsonPropertyName("package_sha256")] public string PackageSha256 { get; init; } = "";
+        [JsonPropertyName("package_size")] public long PackageSize { get; init; }
     }
 }

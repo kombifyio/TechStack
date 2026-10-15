@@ -49,6 +49,7 @@
     loadUseCaseCatalog,
     type UseCaseCatalogView,
   } from "#lib/api/useCaseCatalog.js";
+  import { creationGoals } from "#lib/wizard/creationGoals.js";
   import { features, getDefaultEnabled } from "#lib/stores/features.js";
 
   interface Props {
@@ -117,8 +118,12 @@
     ),
   );
   const availableCanonicalUseCaseGoals = $derived.by(() =>
-    [...primaryGoalQuestions, ...advancedGoalQuestions]
-      .map((goal) => goal.configKey)
+    creationGoals(
+      [...primaryGoalQuestions, ...advancedGoalQuestions],
+      useCaseCatalog,
+    )
+      .filter((card) => card.availability === "available")
+      .flatMap((card) => (card.question ? [card.question.configKey] : []))
       .filter(isCanonicalUseCaseGoal),
   );
 
@@ -195,6 +200,8 @@
           : {}),
       },
       goals: selectedCanonicalUseCasesFromGoals(config.goals),
+      use_case_settings: config.useCaseSettings,
+      use_case_capabilities: config.useCaseCapabilities,
       services: [],
       deployment_lane: wizardDeploymentLane === "saas" ? "saas" : "self-hosted",
       ...(config.serverProvisioning.mode === "kombify-cloud"
@@ -314,6 +321,15 @@
       errors.push(tr("ui.easyWizard.serverHostOrIpIs"));
     }
 
+    if (
+      currentStepKey === "server" &&
+      config.serverProvisioning.mode === "connect-remote" &&
+      authStore.walletSource === "kombify" &&
+      !config.serverProvisioning.remote.sshWalletItemId
+    ) {
+      errors.push(tr("kwallet.wizard.item_required"));
+    }
+
     if (currentStepKey === "access" && !config.network.accessMode) {
       errors.push(tr("ui.easyWizard.pleaseSelectAnAccessMode"));
     }
@@ -347,6 +363,13 @@
         return isValidSubstrateGuest(config.serverProvisioning.substrate);
       }
       if (config.serverProvisioning.mode !== "connect-remote") return true;
+      // Hosted Techstack reaches the server with a Wallet item, so a join or
+      // found run without one would only be refused (`wallet_item_required`).
+      if (
+        authStore.walletSource === "kombify" &&
+        !config.serverProvisioning.remote.sshWalletItemId
+      )
+        return false;
       return config.serverProvisioning.remote.host.trim().length > 0;
     }
     if (currentStepKey === "login") return ownerState.adminIsValid();
@@ -424,9 +447,8 @@
 
   /**
    * Which products each use case is built from, straight from the StackKits
-   * catalog. Loaded once and best-effort: the Goals step renders immediately
-   * and the component strips appear when the catalog answers. A deployment
-   * without a catalog keeps cards with no strip rather than an empty step.
+   * catalog. Cards render immediately, but only become selectable when
+   * this pinned catalog advertises their applications.
    */
   let useCaseCatalog = $state<Map<string, UseCaseCatalogView>>(new Map());
   $effect(() => {

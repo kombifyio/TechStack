@@ -38,18 +38,12 @@ func (e *Engine) Unify(spec *core.KombinationSpec, workers []core.Worker) (*core
 		KombinationSpec: *spec,
 		StackKit:        spec.Kit,
 	}
-	selectedStackKit := spec.Kit
-	if selectedStackKit == "" {
-		selectedStackKit = e.selectStackKit(spec)
+	resolution := NewStackKitResolver(append([]string{}, e.ListStackKits()...)).Resolve(spec)
+	if !resolution.Valid {
+		return nil, fmt.Errorf("StackKit selection could not be admitted: %v", resolution.Warnings)
 	}
 	decisionContext := BuildDecisionContext(spec, nil)
-	decisionTrace := BuildDecisionTrace(spec, decisionContext, &ResolveResult{
-		StackKit:     selectedStackKit,
-		Reason:       "unifier-engine direct resolution",
-		AutoSelected: spec.Kit == "",
-		Confidence:   0.75,
-		Valid:        true,
-	}, nil)
+	decisionTrace := BuildDecisionTrace(spec, decisionContext, resolution, nil)
 	ApplyUnifiedDecisionArtifacts(unified, decisionContext, decisionTrace)
 	if unified.StackKit == "" {
 		unified.StackKit = decisionTrace.SelectedStackKit

@@ -229,7 +229,7 @@
       return;
     }
 
-    if (isSecretRequired() && !secret.trim()) {
+    if (isSecretRequired() && !credential?.id && !secret.trim()) {
       error = `${getSecretLabel()} is required`;
       return;
     }
@@ -331,6 +331,7 @@
         <button
           type="button"
           onclick={() => (kind = type.value)}
+          disabled={Boolean(credential?.id)}
           class="p-3 rounded-lg border text-left transition-colors {kind ===
           type.value
             ? 'bg-primary/10 border-primary/50 text-primary'

@@ -1,5 +1,7 @@
 <script lang="ts">
   import { tr } from "#lib/i18n.svelte.js";
+  import { Sparkles } from "@lucide/svelte";
+  import ErrorAiHandoverButton from "#lib/components/support/ErrorAiHandoverButton.svelte";
   import { creation } from "./creation-controller.svelte.js";
 </script>
 
@@ -190,22 +192,42 @@
             </div>
           {/if}
 
-          <div class="flex gap-3">
+          <!-- The retry on the existing server leads; the Companion handoff
+               sits next to it; Operations stays a quiet way out. -->
+          <div class="flex flex-wrap items-center gap-2">
             {#if creation.failurePrimaryActionAvailable}
               <button
                 onclick={creation.handleFailurePrimaryAction}
                 disabled={creation.failurePrimaryActionDisabled}
                 data-kx="control"
                 data-variant="primary"
-                class="inline-flex flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-xl px-6 py-3 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
+                class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-xl px-5 py-2.5 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
               >
                 {creation.failurePrimaryActionLabel}
               </button>
             {/if}
+            {#if creation.companionAvailable && creation.failedTask}
+              <button
+                onclick={creation.askCompanionAboutFailure}
+                data-kx="control"
+                data-testid="creation-failure-ask-companion"
+                class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-xl px-5 py-2.5 text-sm font-medium"
+              >
+                <Sparkles class="h-4 w-4" aria-hidden="true" />
+                {tr("ui.stacksCreatingCreationFailure.askCompanion")}
+              </button>
+            {:else if creation.failedTask}
+              <!-- Embedded in kombify Cloud, Techstack's own Companion is not
+                   mounted: the host's Companion takes the failure instead. The
+                   button renders only where such a host exists. -->
+              <ErrorAiHandoverButton
+                context={creation.failureHandoverContext}
+                class="mt-0"
+              />
+            {/if}
             <button
               onclick={creation.goToStack}
-              data-kx="control"
-              class="inline-flex flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-xl px-6 py-3 text-sm font-medium"
+              class="inline-flex items-center justify-center whitespace-nowrap rounded-xl px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
             >
               {tr("ui.stacksCreatingCreationFailure.operations")}
             </button>

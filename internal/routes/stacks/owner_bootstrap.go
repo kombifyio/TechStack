@@ -516,6 +516,9 @@ func (h crudRouteHandlers) applyOwnerBootstrap(ctx context.Context, tenantID, ow
 	if !ownerSourceSeedsPocketID(bootstrap.Source) {
 		return nil
 	}
+	if h.kombifyWallet != nil {
+		return h.saveOwnerRecoveryInKombifyWallet(ctx, tenantID, ownerID, stackID, bootstrap)
+	}
 	if h.walletStore == nil {
 		return fmt.Errorf("canonical owner bootstrap wallet store unavailable")
 	}

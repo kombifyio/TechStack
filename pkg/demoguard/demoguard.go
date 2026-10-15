@@ -22,7 +22,36 @@ const (
 	// provider-created demo VPS leases belong here; personal development VPS
 	// subscriptions are never demo anchors.
 	EnvDemoProtectedLeaseIDs = "TECHSTACK_DEMO_PROTECTED_LEASE_IDS"
+	// MetadataKeySlot is the lease metadata key that classifies a demo-tenant
+	// lease. The nightly reset works from an allowlist: only a lease whose slot
+	// is SlotResettable can be decommissioned by it. Every other lease, marked
+	// with another slot or not marked at all, is left alone.
+	MetadataKeySlot = "demo_slot"
+	// SlotResettable marks the disposable demo slot the nightly reset may
+	// decommission.
+	SlotResettable = "resettable"
+	// SlotShowcase marks a persistent demo server that visitors see. The reset
+	// never touches it, and the reset workflow fails if one is ever admitted.
+	SlotShowcase = "showcase"
+	// SlotUnmarked is the receipt label of a lease without a slot mark.
+	SlotUnmarked = "unmarked"
 )
+
+// LeaseSlot returns the normalized demo slot of a lease's metadata, or
+// SlotUnmarked when the lease carries no mark.
+func LeaseSlot(metadata map[string]string) string {
+	slot := strings.ToLower(strings.TrimSpace(metadata[MetadataKeySlot]))
+	if slot == "" {
+		return SlotUnmarked
+	}
+	return slot
+}
+
+// IsResettableSlot reports whether the metadata explicitly marks a lease as
+// the resettable demo slot. It is the only positive answer the reset accepts.
+func IsResettableSlot(metadata map[string]string) bool {
+	return LeaseSlot(metadata) == SlotResettable
+}
 
 // DemoTenantID returns the configured demo tenant id, or "" when unset.
 func DemoTenantID() string {

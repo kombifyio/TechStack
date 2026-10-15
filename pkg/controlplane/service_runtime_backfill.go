@@ -44,7 +44,7 @@ func backfilledServiceRuntime(service Service, serverID string) ServiceRuntime {
 	return ServiceRuntime{
 		ID: service.ID, TenantID: service.TenantID, InstanceID: service.InstanceID,
 		StackID: service.StackID, ServerID: serverID,
-		Placement:  serviceregistry.Placement{TargetKind: serviceregistry.TargetKindServer},
+		Placement:  serviceregistry.NormalizePlacement(serverID, serviceregistry.Placement{}),
 		ServiceKey: strings.ToLower(strings.TrimSpace(service.ServiceKey)), ServiceInstance: "default",
 		Name: service.Name, DesiredState: legacyServiceDesiredState(service.Status),
 		ObservedState: legacyServiceRuntimeUnknown, HealthState: legacyServiceRuntimeUnknown,

@@ -1,18 +1,21 @@
 package auth
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
-	"github.com/kombifyio/techstack/internal/authprojection"
-	"github.com/pocketbase/dbx"
+	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/pocketbase/pocketbase/core"
 
 	ksapi "github.com/kombifyio/techstack/pkg/api"
@@ -27,7 +30,6 @@ import (
 // OIDC authorization-code exchange with PKCE against the hosted cloud issuer;
 // credentials are only ever collected on the hosted Universal Login page.
 const (
-	cloudLinkStatesCollection = "cloud_link_states"
 	cloudLinkStateTTL         = 10 * time.Minute
 	cloudLinkStatusIssued     = "issued"
 	cloudLinkStatusConsumed   = "consumed"
@@ -57,6 +59,10 @@ type cloudLinkStatusResponse struct {
 // handleCloudLinkStart mints a single-use PKCE state and returns the hosted
 // authorization URL the frontend opens in a popup (or full-page redirect).
 func handleCloudLinkStart(app core.App, mode config.DeploymentMode) func(e *httpx.Event) error {
+	return handleRuntimeCloudLinkStart(RuntimeStore{}, mode)
+}
+
+func handleRuntimeCloudLinkStart(runtime RuntimeStore, mode config.DeploymentMode) func(e *httpx.Event) error {
 	return func(e *httpx.Event) error {
 		if mode.IsSaaS() {
 			return cloudLinkUnavailableOnSaaS(e)
@@ -65,7 +71,6 @@ func handleCloudLinkStart(app core.App, mode config.DeploymentMode) func(e *http
 			return err
 		}
 		userID, _ := AuthUserID(e)
-		userID = authprojection.PocketBaseUserID(userID)
 
 		issuer, clientID, _, err := getCloudOIDCConfig()
 		if err != nil {
@@ -78,8 +83,8 @@ func handleCloudLinkStart(app core.App, mode config.DeploymentMode) func(e *http
 			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to prepare the cloud link request", nil)
 		}
 		expiresAt := time.Now().UTC().Add(cloudLinkStateTTL)
-		if storeErr := storeCloudLinkState(app, userID, state, verifier, expiresAt); storeErr != nil {
-			app.Logger().Error("cloud-link: failed to store state", "error", storeErr)
+		if storeErr := storeRuntimeCloudLinkState(runtime, e.Request.Context(), userID, state, verifier, expiresAt); storeErr != nil {
+			slog.Default().Error("cloud-link: failed to store state", "error", storeErr)
 			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to prepare the cloud link request", nil)
 		}
 		setCloudLinkBindingCookie(e, state)
@@ -111,13 +116,17 @@ func handleCloudLinkStart(app core.App, mode config.DeploymentMode) func(e *http
 // land on the completion page as fragment reasons so the popup can report
 // them without leaking details into server logs users cannot see.
 func handleCloudLinkCallback(app core.App, mode config.DeploymentMode) func(e *httpx.Event) error {
+	return handleRuntimeCloudLinkCallback(RuntimeStore{}, mode)
+}
+
+func handleRuntimeCloudLinkCallback(runtime RuntimeStore, mode config.DeploymentMode) func(e *httpx.Event) error {
 	return func(e *httpx.Event) error {
 		if mode.IsSaaS() {
 			return cloudLinkComplete(e, "error", cloudLinkUnavailableErrorCode)
 		}
 		query := e.Request.URL.Query()
 		if errParam := query.Get("error"); errParam != "" {
-			app.Logger().Warn("cloud-link: provider error", "error", errParam, "description", query.Get("error_description"))
+			slog.Default().Warn("cloud-link: provider error", "error", errParam, "description", query.Get("error_description"))
 			return cloudLinkComplete(e, "error", "provider_error")
 		}
 		state := strings.TrimSpace(query.Get("state"))
@@ -130,14 +139,14 @@ func handleCloudLinkCallback(app core.App, mode config.DeploymentMode) func(e *h
 		// an attacker-started authorization URL would link their kombify
 		// Cloud identity to the attacker's local account.
 		if !cloudLinkBrowserMatches(e.Request, state) {
-			app.Logger().Warn("cloud-link: callback without the initiating browser binding")
+			slog.Default().Warn("cloud-link: callback without the initiating browser binding")
 			return cloudLinkComplete(e, "error", "browser_mismatch")
 		}
 		clearCloudLinkBindingCookie(e)
 
-		userID, verifier, consumeErr := consumeCloudLinkState(app, state)
+		userID, verifier, consumeErr := consumeRuntimeCloudLinkState(runtime, e.Request.Context(), state)
 		if consumeErr != nil {
-			app.Logger().Warn("cloud-link: state consume failed", "error", consumeErr)
+			slog.Default().Warn("cloud-link: state consume failed", "error", consumeErr)
 			return cloudLinkComplete(e, "error", "state_expired")
 		}
 
@@ -147,12 +156,12 @@ func handleCloudLinkCallback(app core.App, mode config.DeploymentMode) func(e *h
 		}
 		tokenResp, tokenErr := exchangeCodeForTokens(e.Request, issuer, clientID, clientSecret, code, cloudLinkRedirectURI(e.Request), verifier)
 		if tokenErr != nil {
-			app.Logger().Error("cloud-link: token exchange failed", "error", tokenErr)
+			slog.Default().Error("cloud-link: token exchange failed", "error", tokenErr)
 			return cloudLinkComplete(e, "error", "token_exchange_failed")
 		}
 		userInfo, infoErr := fetchUserInfo(e.Request, issuer, tokenResp.AccessToken)
 		if infoErr != nil {
-			app.Logger().Error("cloud-link: userinfo fetch failed", "error", infoErr)
+			slog.Default().Error("cloud-link: userinfo fetch failed", "error", infoErr)
 			return cloudLinkComplete(e, "error", "userinfo_failed")
 		}
 		if strings.TrimSpace(userInfo.Email) == "" {
@@ -162,8 +171,8 @@ func handleCloudLinkCallback(app core.App, mode config.DeploymentMode) func(e *h
 			return cloudLinkComplete(e, "error", "email_unverified")
 		}
 
-		if upsertErr := upsertCloudLinkForUser(app, userID, userInfo); upsertErr != nil {
-			app.Logger().Error("cloud-link: link upsert failed", "error", upsertErr)
+		if upsertErr := upsertRuntimeCloudLinkForUser(runtime, e.Request.Context(), userID, userInfo); upsertErr != nil {
+			slog.Default().Error("cloud-link: link upsert failed", "error", upsertErr)
 			return cloudLinkComplete(e, "error", "link_persist_failed")
 		}
 		return cloudLinkComplete(e, "ok", "")
@@ -173,40 +182,52 @@ func handleCloudLinkCallback(app core.App, mode config.DeploymentMode) func(e *h
 // getCloudLinkStatus reports the operator's current cloud link; the wizard
 // polls it while the popup flow runs.
 func getCloudLinkStatus(app core.App) func(e *httpx.Event) error {
+	return getRuntimeCloudLinkStatus(RuntimeStore{})
+}
+
+func getRuntimeCloudLinkStatus(runtime RuntimeStore) func(e *httpx.Event) error {
 	return func(e *httpx.Event) error {
 		if err := CheckAuth(e); err != nil {
 			return err
 		}
 		userID, _ := AuthUserID(e)
-		userID = authprojection.PocketBaseUserID(userID)
-		record := findCloudLinkRecord(app, userID)
-		if record == nil {
+		if err := runtime.Validate(); err != nil {
+			return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Canonical cloud-link authority is unavailable", nil)
+		}
+		profile, err := runtime.Persistence.GetCloudProfile(e.Request.Context(), runtime.TenantID, runtime.InstanceID, userID)
+		if errors.Is(err, controlplane.ErrNotFound) || err == nil && (profile == nil || profile.Link == nil) {
 			return httpx.Success(e, http.StatusOK, cloudLinkStatusResponse{Linked: false})
 		}
-		return httpx.Success(e, http.StatusOK, cloudLinkStatusResponse{
-			Linked:        true,
-			ExternalEmail: record.GetString("external_email"),
-			ExternalName:  record.GetString("external_name"),
-			EmailVerified: record.GetBool("email_verified"),
-			LinkedAt:      record.GetString("updated"),
-		})
+		if err != nil {
+			return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Cloud-link readback is unavailable", nil)
+		}
+		link := profile.Link
+		return httpx.Success(e, http.StatusOK, cloudLinkStatusResponse{Linked: true, ExternalEmail: link.Email, ExternalName: link.DisplayName, EmailVerified: link.EmailVerified, LinkedAt: link.LinkedAt})
 	}
 }
 
-// deleteCloudLink removes the operator's cloud link ("use a different account").
 func deleteCloudLink(app core.App) func(e *httpx.Event) error {
+	return deleteRuntimeCloudLink(RuntimeStore{})
+}
+
+func deleteRuntimeCloudLink(runtime RuntimeStore) func(e *httpx.Event) error {
 	return func(e *httpx.Event) error {
 		if err := CheckAuth(e); err != nil {
 			return err
 		}
+		if err := runtime.Validate(); err != nil {
+			return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Canonical cloud-link authority is unavailable", nil)
+		}
 		userID, _ := AuthUserID(e)
-		userID = authprojection.PocketBaseUserID(userID)
-		record := findCloudLinkRecord(app, userID)
-		if record == nil {
+		profile, err := runtime.Persistence.GetCloudProfile(e.Request.Context(), runtime.TenantID, runtime.InstanceID, userID)
+		if errors.Is(err, controlplane.ErrNotFound) || err == nil && (profile == nil || profile.Link == nil) {
 			return httpx.Success(e, http.StatusOK, map[string]any{"removed": false})
 		}
-		if err := app.Delete(record); err != nil {
-			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to remove the cloud link", nil)
+		if err != nil {
+			return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Cloud-link readback is unavailable", nil)
+		}
+		if err := runtime.Persistence.SetCloudLink(e.Request.Context(), runtime.TenantID, runtime.InstanceID, userID, nil); err != nil {
+			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to remove cloud link", nil)
 		}
 		return httpx.Success(e, http.StatusOK, map[string]any{"removed": true})
 	}
@@ -314,97 +335,41 @@ func cloudLinkStateHash(state string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func storeCloudLinkState(app core.App, userID, state, verifier string, expiresAt time.Time) error {
-	collection, err := app.FindCollectionByNameOrId(cloudLinkStatesCollection)
+func storeRuntimeCloudLinkState(runtime RuntimeStore, ctx context.Context, userID, state, verifier string, expiresAt time.Time) error {
+	if err := runtime.Validate(); err != nil {
+		return err
+	}
+	encrypted, err := tsauth.EncryptIfNeeded(tsauth.GetEncryptor(), verifier)
 	if err != nil {
 		return err
 	}
-	encryptedVerifier, encErr := tsauth.EncryptIfNeeded(tsauth.GetEncryptor(), verifier)
-	if encErr != nil {
-		encryptedVerifier = verifier
-	}
-	record := core.NewRecord(collection)
-	record.Set("state_hash", cloudLinkStateHash(state))
-	record.Set("user", userID)
-	record.Set("code_verifier", encryptedVerifier)
-	record.Set("purpose", cloudLinkPurposeOwnerLink)
-	record.Set("status", cloudLinkStatusIssued)
-	record.Set("expires_at", expiresAt.Format(time.RFC3339))
-	return app.Save(record)
+	return runtime.Persistence.SaveCloudLinkState(ctx, controlplane.CloudLinkState{TenantID: runtime.TenantID, InstanceID: runtime.InstanceID, SubjectID: userID, StateHash: cloudLinkStateHash(state), VerifierCiphertext: encrypted, ExpiresAt: expiresAt})
 }
 
-// consumeCloudLinkState atomically consumes a single-use state and returns the
-// initiating user plus the PKCE verifier. The guarded UPDATE makes replayed
-// callbacks lose the race instead of silently double-linking.
-func consumeCloudLinkState(app core.App, state string) (userID, verifier string, err error) {
-	record, findErr := app.FindFirstRecordByFilter(
-		cloudLinkStatesCollection,
-		"state_hash = {:stateHash}",
-		map[string]any{"stateHash": cloudLinkStateHash(state)},
-	)
-	if findErr != nil || record == nil {
-		return "", "", errCloudLinkStateInvalid
+func consumeRuntimeCloudLinkState(runtime RuntimeStore, ctx context.Context, state string) (string, string, error) {
+	if err := runtime.Validate(); err != nil {
+		return "", "", err
 	}
-	if record.GetString("purpose") != cloudLinkPurposeOwnerLink {
-		return "", "", errCloudLinkStateInvalid
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	result, updateErr := app.DB().NewQuery(`
-		UPDATE {{` + cloudLinkStatesCollection + `}}
-		SET [[status]] = {:consumed}, [[consumed_at]] = {:now}
-		WHERE [[state_hash]] = {:stateHash}
-			AND [[status]] = {:issued}
-			AND [[expires_at]] > {:now}
-	`).Bind(dbx.Params{
-		"consumed":  cloudLinkStatusConsumed,
-		"now":       now,
-		"stateHash": cloudLinkStateHash(state),
-		"issued":    cloudLinkStatusIssued,
-	}).Execute()
-	if updateErr != nil {
-		return "", "", updateErr
-	}
-	if rows, rowsErr := result.RowsAffected(); rowsErr != nil || rows != 1 {
-		return "", "", errCloudLinkStateInvalid
-	}
-	decrypted, decErr := tsauth.DecryptIfNeeded(tsauth.GetEncryptor(), record.GetString("code_verifier"))
-	if decErr != nil {
-		decrypted = record.GetString("code_verifier")
-	}
-	return record.GetString("user"), decrypted, nil
-}
-
-func findCloudLinkRecord(app core.App, userID string) *core.Record {
-	if app == nil || strings.TrimSpace(userID) == "" {
-		return nil
-	}
-	record, err := app.FindFirstRecordByFilter(
-		"user_links",
-		"user = {:userID} && provider = 'cloud'",
-		map[string]any{"userID": userID},
-	)
+	stored, err := runtime.Persistence.ConsumeCloudLinkState(ctx, runtime.TenantID, runtime.InstanceID, cloudLinkStateHash(state), time.Now().UTC())
 	if err != nil {
-		return nil
+		return "", "", err
 	}
-	return record
+	if stored == nil || !tsauth.IsEncrypted(stored.VerifierCiphertext) {
+		return "", "", errCloudLinkStateInvalid
+	}
+	verifier, err := tsauth.DecryptIfNeeded(tsauth.GetEncryptor(), stored.VerifierCiphertext)
+	if err != nil {
+		return "", "", err
+	}
+	return stored.SubjectID, verifier, nil
 }
 
-// upsertCloudLinkForUser links (or relinks) the verified cloud identity to the
-// already-authenticated local operator; it never creates an identity user.
-func upsertCloudLinkForUser(app core.App, userID string, userInfo *oidcUserInfo) error {
-	record := findCloudLinkRecord(app, userID)
-	if record == nil {
-		collection, err := app.FindCollectionByNameOrId("user_links")
-		if err != nil {
-			return err
-		}
-		record = core.NewRecord(collection)
-		record.Set("user", userID)
-		record.Set("provider", "cloud")
+func upsertRuntimeCloudLinkForUser(runtime RuntimeStore, ctx context.Context, userID string, info *oidcUserInfo) error {
+	if err := runtime.Validate(); err != nil {
+		return err
 	}
-	record.Set("external_id", userInfo.Sub)
-	record.Set("external_email", userInfo.Email)
-	record.Set("external_name", userInfo.Name)
-	record.Set("email_verified", userInfo.EmailVerified)
-	return app.Save(record)
+	if info == nil {
+		return fmt.Errorf("cloud identity required")
+	}
+	return runtime.Persistence.SetCloudLink(ctx, runtime.TenantID, runtime.InstanceID, userID, &controlplane.CloudIdentity{SubjectID: info.Sub, Email: info.Email, DisplayName: info.Name, EmailVerified: info.EmailVerified, LinkedAt: time.Now().UTC().Format(time.RFC3339Nano)})
 }

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -21,6 +22,12 @@ import (
 const (
 	attestationPayloadBytes = 32
 	attestationKeyPrefix    = ".kombify/target-attestation/"
+
+	// A freshly created per-stack R2 token can answer 401 Unauthorized for a
+	// short time before R2 accepts it. The first write polls within this
+	// budget; 403 and every other error fail at once.
+	credentialPropagationBudget = 60 * time.Second
+	credentialPropagationPoll   = 3 * time.Second
 )
 
 type targetObjectAPI interface {
@@ -37,6 +44,7 @@ type TargetVerifier struct {
 	client targetObjectAPI
 	now    func() time.Time
 	random io.Reader
+	sleep  func(context.Context, time.Duration) error
 }
 
 func NewTargetVerifier(ctx context.Context, custody Credentials) (*TargetVerifier, error) {
@@ -55,7 +63,7 @@ func NewTargetVerifier(ctx context.Context, custody Credentials) (*TargetVerifie
 		options.BaseEndpoint = aws.String(custody.Endpoint)
 		options.UsePathStyle = true
 	})
-	return &TargetVerifier{client: client, now: time.Now, random: rand.Reader}, nil
+	return &TargetVerifier{client: client, now: time.Now, random: rand.Reader, sleep: sleepContext}, nil
 }
 
 // Verify completes custody evidence only after the target passes the full
@@ -90,10 +98,25 @@ func (v *TargetVerifier) Verify(ctx context.Context, custody Credentials, eviden
 		_, _ = v.client.DeleteObject(cleanupContext, &s3.DeleteObjectInput{Bucket: aws.String(custody.Bucket), Key: aws.String(key)})
 	}()
 
-	if _, err = v.client.PutObject(ctx, &s3.PutObjectInput{
-		Bucket: aws.String(custody.Bucket), Key: aws.String(key), Body: bytes.NewReader(payload),
-		ContentLength: aws.Int64(int64(len(payload))), ContentType: aws.String("application/octet-stream"),
-	}); err != nil {
+	sleep := v.sleep
+	if sleep == nil {
+		sleep = sleepContext
+	}
+	put := func() error {
+		_, putErr := v.client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(custody.Bucket), Key: aws.String(key), Body: bytes.NewReader(payload),
+			ContentLength: aws.Int64(int64(len(payload))), ContentType: aws.String("application/octet-stream"),
+		})
+		return putErr
+	}
+	err = put()
+	for waited := time.Duration(0); isCredentialNotYetAccepted(err) && waited < credentialPropagationBudget; waited += credentialPropagationPoll {
+		if sleepErr := sleep(ctx, credentialPropagationPoll); sleepErr != nil {
+			break
+		}
+		err = put()
+	}
+	if err != nil {
 		return CustodyEvidence{}, fmt.Errorf("write managed backup target sentinel: %w", err)
 	}
 	objectCreated = true
@@ -149,5 +172,30 @@ func isObjectNotFound(err error) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// isCredentialNotYetAccepted reports R2's 401 Unauthorized, which a new token
+// returns until it propagates. A wrong secret is 403 SignatureDoesNotMatch.
+func isCredentialNotYetAccepted(err error) bool {
+	if err == nil {
+		return false
+	}
+	var responseError *awshttp.ResponseError
+	if errors.As(err, &responseError) && responseError.HTTPStatusCode() == 401 {
+		return true
+	}
+	var apiError smithy.APIError
+	return errors.As(err, &apiError) && apiError.ErrorCode() == "Unauthorized"
+}
+
+func sleepContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
 }

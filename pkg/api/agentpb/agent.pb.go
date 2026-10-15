@@ -222,6 +222,82 @@ const (
 	StackKitOperation_STACKKIT_OPERATION_HOST_UPDATE_APPLY StackKitOperation = 31
 	// `stackkit host reboot`: schedule a guarded reboot after a fixed delay.
 	StackKitOperation_STACKKIT_OPERATION_HOST_REBOOT StackKitOperation = 32
+	// `stackkit host security repair --apply`: restore the named drifted host
+	// security controls (host_security_controls) without cutting the management
+	// path. A host operation needing the agent capability
+	// stackkit.host-security.v1; it carries no stack inputs.
+	StackKitOperation_STACKKIT_OPERATION_HOST_SECURITY_REPAIR StackKitOperation = 33
+	// Source-bound application adoption; never creates or recreates a runtime.
+	StackKitOperation_STACKKIT_OPERATION_APPLICATION_INSPECT StackKitOperation = 34
+	StackKitOperation_STACKKIT_OPERATION_APPLICATION_ADOPT   StackKitOperation = 35
+	StackKitOperation_STACKKIT_OPERATION_APPLICATION_VERIFY  StackKitOperation = 36
+	StackKitOperation_STACKKIT_OPERATION_APPLICATION_RELEASE StackKitOperation = 37
+	StackKitOperation_STACKKIT_OPERATION_APPLICATION_CONTROL StackKitOperation = 38
+	// Sealed host delivery of the managed off-site backup target (Wallet host
+	// delivery). The node, not the control plane, holds the custody and issues
+	// its own backup-target binding.
+	// `stackkit backup target recipient`: prove the node's separate encryption
+	// recipient key, answering recipient_challenge. Carries no secret.
+	StackKitOperation_STACKKIT_OPERATION_BACKUP_TARGET_RECIPIENT StackKitOperation = 39
+	// `stackkit backup target import --sealed`: open sealed_delivery into the
+	// node's encrypted custody and let the node issue its binding.
+	StackKitOperation_STACKKIT_OPERATION_BACKUP_TARGET_IMPORT StackKitOperation = 40
+	// `... import --sealed --rebind`: renew an expired node-issued binding over
+	// identical custody from a fresh sealed_delivery.
+	StackKitOperation_STACKKIT_OPERATION_BACKUP_TARGET_REBIND StackKitOperation = 41
+	// One step of the Modern Homelab Cloud-node hand-off: Core relays a public
+	// document between the Home node and the Cloud node. The closed step set and
+	// its argv live in the Agent; the step selects the pinned CLI command.
+	StackKitOperation_STACKKIT_OPERATION_FEDERATION_HANDOFF StackKitOperation = 42
+	// Explicit authenticated cache preparation for the retained generation's
+	// attested source release. Never runs Upgrade, Apply, or changes its plan.
+	StackKitOperation_STACKKIT_OPERATION_PREPARE_SOURCE_GENERATION StackKitOperation = 43
+	// Home network move (agent capability stackkit.network.v1). The server was
+	// carried to another network: `stackkit network rebind --yes --json`
+	// re-detects the LAN address, re-issues the signed LAN DNS custody record and
+	// regenerates and re-applies the workspace.
+	StackKitOperation_STACKKIT_OPERATION_NETWORK_REBIND StackKitOperation = 44
+	// `stackkit network status --json`: read-only view of the node's network
+	// facts and of its LAN DNS binding.
+	StackKitOperation_STACKKIT_OPERATION_NETWORK_STATUS StackKitOperation = 45
+	// public-tls.origin-certificate.request (ADR-0047): the node generates the
+	// origin key pair, keeps it, and returns only the CSR for origin_hosts.
+	// Capability-gated like the other ADVANCED_* operations.
+	StackKitOperation_STACKKIT_OPERATION_ADVANCED_ORIGIN_CERTIFICATE_REQUEST StackKitOperation = 46
+	// public-tls.origin-certificate.install (ADR-0047): verify and install the
+	// PEM certificate Cloudflare issued for the pending CSR (origin_certificate_pem,
+	// public data) against the node-held key.
+	StackKitOperation_STACKKIT_OPERATION_ADVANCED_ORIGIN_CERTIFICATE_INSTALL StackKitOperation = 47
+	// Node-owned Home Assistant connector setup. Only closed metadata crosses
+	// Guard; native credentials and Owner custody remain on the node.
+	StackKitOperation_STACKKIT_OPERATION_APPLICATION_CONNECTOR StackKitOperation = 48
+	// Read the exact original setup receipt against current local custody and
+	// deployment. Never issues, revokes, bootstraps an IdP or replays setup.
+	StackKitOperation_STACKKIT_OPERATION_APPLICATION_CONNECTOR_VERIFY StackKitOperation = 49
+	// Promote a verified node-owned staged result, or reconcile its original journal.
+	StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE_ACTIVATE StackKitOperation = 50
+	StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE_RECOVER  StackKitOperation = 51
+	// Remove one household subject from the node's Pocket ID
+	// (`stackkit user remove <username> --owner-approve --json`). It requires
+	// Owner approval and household_username; StackKits refuses owner and admin
+	// identities itself.
+	StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_REMOVE StackKitOperation = 52
+	// Wallet items on the node (StackKits pkg/hostdelivery). The kombify Wallet,
+	// not the control plane, seals each value to the node's host delivery
+	// recipient key; Techstack carries the node's public statement to the Wallet
+	// and the ciphertext back.
+	// `stackkit host delivery recipient`: prove the node's host delivery
+	// recipient key, answering recipient_challenge, and pin the Wallet's
+	// delivering key (delivery_authority_key) for its generation. No secret.
+	StackKitOperation_STACKKIT_OPERATION_HOST_DELIVERY_RECIPIENT StackKitOperation = 53
+	// `stackkit wallet-item import`: open sealed_delivery, addressed to
+	// delivery_tenant_ref, into the node's encrypted Wallet item custody.
+	StackKitOperation_STACKKIT_OPERATION_WALLET_ITEM_IMPORT StackKitOperation = 54
+	// `stackkit setup ai-provider`: offer an external OpenAI-compatible
+	// provider (ai_provider_base_url) in Private AI with the key of the
+	// delivered Wallet item wallet_item_ref, or remove it (ai_provider_disable).
+	// The StackSpec and bundle carry only the URL and an opaque key reference.
+	StackKitOperation_STACKKIT_OPERATION_AI_PROVIDER_SETUP StackKitOperation = 55
 )
 
 // Enum value maps for StackKitOperation.
@@ -260,41 +336,87 @@ var (
 		30: "STACKKIT_OPERATION_HOST_UPDATE_PLAN",
 		31: "STACKKIT_OPERATION_HOST_UPDATE_APPLY",
 		32: "STACKKIT_OPERATION_HOST_REBOOT",
+		33: "STACKKIT_OPERATION_HOST_SECURITY_REPAIR",
+		34: "STACKKIT_OPERATION_APPLICATION_INSPECT",
+		35: "STACKKIT_OPERATION_APPLICATION_ADOPT",
+		36: "STACKKIT_OPERATION_APPLICATION_VERIFY",
+		37: "STACKKIT_OPERATION_APPLICATION_RELEASE",
+		38: "STACKKIT_OPERATION_APPLICATION_CONTROL",
+		39: "STACKKIT_OPERATION_BACKUP_TARGET_RECIPIENT",
+		40: "STACKKIT_OPERATION_BACKUP_TARGET_IMPORT",
+		41: "STACKKIT_OPERATION_BACKUP_TARGET_REBIND",
+		42: "STACKKIT_OPERATION_FEDERATION_HANDOFF",
+		43: "STACKKIT_OPERATION_PREPARE_SOURCE_GENERATION",
+		44: "STACKKIT_OPERATION_NETWORK_REBIND",
+		45: "STACKKIT_OPERATION_NETWORK_STATUS",
+		46: "STACKKIT_OPERATION_ADVANCED_ORIGIN_CERTIFICATE_REQUEST",
+		47: "STACKKIT_OPERATION_ADVANCED_ORIGIN_CERTIFICATE_INSTALL",
+		48: "STACKKIT_OPERATION_APPLICATION_CONNECTOR",
+		49: "STACKKIT_OPERATION_APPLICATION_CONNECTOR_VERIFY",
+		50: "STACKKIT_OPERATION_BACKUP_RESTORE_ACTIVATE",
+		51: "STACKKIT_OPERATION_BACKUP_RESTORE_RECOVER",
+		52: "STACKKIT_OPERATION_HOUSEHOLD_REMOVE",
+		53: "STACKKIT_OPERATION_HOST_DELIVERY_RECIPIENT",
+		54: "STACKKIT_OPERATION_WALLET_ITEM_IMPORT",
+		55: "STACKKIT_OPERATION_AI_PROVIDER_SETUP",
 	}
 	StackKitOperation_value = map[string]int32{
-		"STACKKIT_OPERATION_UNSPECIFIED":                0,
-		"STACKKIT_OPERATION_VALIDATE":                   1,
-		"STACKKIT_OPERATION_GENERATE":                   2,
-		"STACKKIT_OPERATION_APPLY":                      3,
-		"STACKKIT_OPERATION_VERIFY":                     4,
-		"STACKKIT_OPERATION_UPGRADE":                    5,
-		"STACKKIT_OPERATION_DRIFT_DETECT":               6,
-		"STACKKIT_OPERATION_DRIFT_RECONCILE":            7,
-		"STACKKIT_OPERATION_PLAN":                       8,
-		"STACKKIT_OPERATION_INIT":                       9,
-		"STACKKIT_OPERATION_SERVICE_START":              10,
-		"STACKKIT_OPERATION_SERVICE_STOP":               11,
-		"STACKKIT_OPERATION_SERVICE_RESTART":            12,
-		"STACKKIT_OPERATION_SERVICE_LOGS":               13,
-		"STACKKIT_OPERATION_REMOVE":                     14,
-		"STACKKIT_OPERATION_ADDRESS_BIND":               15,
-		"STACKKIT_OPERATION_BACKUP_RUN":                 16,
-		"STACKKIT_OPERATION_BACKUP_STATUS":              17,
-		"STACKKIT_OPERATION_BACKUP_RESTORE":             18,
-		"STACKKIT_OPERATION_OWNER_ACTIVATION_STATUS":    19,
-		"STACKKIT_OPERATION_OWNER_ACTIVATION_ISSUE":     20,
-		"STACKKIT_OPERATION_HOUSEHOLD_LIST":             21,
-		"STACKKIT_OPERATION_HOUSEHOLD_INVITE":           22,
-		"STACKKIT_OPERATION_BACKUP_CONFIGURE":           23,
-		"STACKKIT_OPERATION_ADVANCED_TRUST_IMPORT":      24,
-		"STACKKIT_OPERATION_ADVANCED_CHANGE_SET_CREATE": 25,
-		"STACKKIT_OPERATION_ADVANCED_CHANGE_SET_APPLY":  26,
-		"STACKKIT_OPERATION_ADVANCED_DRIFT_RECONCILE":   27,
-		"STACKKIT_OPERATION_ADVANCED_ROLLBACK":          28,
-		"STACKKIT_OPERATION_ADVANCED_RESTORE_DRILL":     29,
-		"STACKKIT_OPERATION_HOST_UPDATE_PLAN":           30,
-		"STACKKIT_OPERATION_HOST_UPDATE_APPLY":          31,
-		"STACKKIT_OPERATION_HOST_REBOOT":                32,
+		"STACKKIT_OPERATION_UNSPECIFIED":                         0,
+		"STACKKIT_OPERATION_VALIDATE":                            1,
+		"STACKKIT_OPERATION_GENERATE":                            2,
+		"STACKKIT_OPERATION_APPLY":                               3,
+		"STACKKIT_OPERATION_VERIFY":                              4,
+		"STACKKIT_OPERATION_UPGRADE":                             5,
+		"STACKKIT_OPERATION_DRIFT_DETECT":                        6,
+		"STACKKIT_OPERATION_DRIFT_RECONCILE":                     7,
+		"STACKKIT_OPERATION_PLAN":                                8,
+		"STACKKIT_OPERATION_INIT":                                9,
+		"STACKKIT_OPERATION_SERVICE_START":                       10,
+		"STACKKIT_OPERATION_SERVICE_STOP":                        11,
+		"STACKKIT_OPERATION_SERVICE_RESTART":                     12,
+		"STACKKIT_OPERATION_SERVICE_LOGS":                        13,
+		"STACKKIT_OPERATION_REMOVE":                              14,
+		"STACKKIT_OPERATION_ADDRESS_BIND":                        15,
+		"STACKKIT_OPERATION_BACKUP_RUN":                          16,
+		"STACKKIT_OPERATION_BACKUP_STATUS":                       17,
+		"STACKKIT_OPERATION_BACKUP_RESTORE":                      18,
+		"STACKKIT_OPERATION_OWNER_ACTIVATION_STATUS":             19,
+		"STACKKIT_OPERATION_OWNER_ACTIVATION_ISSUE":              20,
+		"STACKKIT_OPERATION_HOUSEHOLD_LIST":                      21,
+		"STACKKIT_OPERATION_HOUSEHOLD_INVITE":                    22,
+		"STACKKIT_OPERATION_BACKUP_CONFIGURE":                    23,
+		"STACKKIT_OPERATION_ADVANCED_TRUST_IMPORT":               24,
+		"STACKKIT_OPERATION_ADVANCED_CHANGE_SET_CREATE":          25,
+		"STACKKIT_OPERATION_ADVANCED_CHANGE_SET_APPLY":           26,
+		"STACKKIT_OPERATION_ADVANCED_DRIFT_RECONCILE":            27,
+		"STACKKIT_OPERATION_ADVANCED_ROLLBACK":                   28,
+		"STACKKIT_OPERATION_ADVANCED_RESTORE_DRILL":              29,
+		"STACKKIT_OPERATION_HOST_UPDATE_PLAN":                    30,
+		"STACKKIT_OPERATION_HOST_UPDATE_APPLY":                   31,
+		"STACKKIT_OPERATION_HOST_REBOOT":                         32,
+		"STACKKIT_OPERATION_HOST_SECURITY_REPAIR":                33,
+		"STACKKIT_OPERATION_APPLICATION_INSPECT":                 34,
+		"STACKKIT_OPERATION_APPLICATION_ADOPT":                   35,
+		"STACKKIT_OPERATION_APPLICATION_VERIFY":                  36,
+		"STACKKIT_OPERATION_APPLICATION_RELEASE":                 37,
+		"STACKKIT_OPERATION_APPLICATION_CONTROL":                 38,
+		"STACKKIT_OPERATION_BACKUP_TARGET_RECIPIENT":             39,
+		"STACKKIT_OPERATION_BACKUP_TARGET_IMPORT":                40,
+		"STACKKIT_OPERATION_BACKUP_TARGET_REBIND":                41,
+		"STACKKIT_OPERATION_FEDERATION_HANDOFF":                  42,
+		"STACKKIT_OPERATION_PREPARE_SOURCE_GENERATION":           43,
+		"STACKKIT_OPERATION_NETWORK_REBIND":                      44,
+		"STACKKIT_OPERATION_NETWORK_STATUS":                      45,
+		"STACKKIT_OPERATION_ADVANCED_ORIGIN_CERTIFICATE_REQUEST": 46,
+		"STACKKIT_OPERATION_ADVANCED_ORIGIN_CERTIFICATE_INSTALL": 47,
+		"STACKKIT_OPERATION_APPLICATION_CONNECTOR":               48,
+		"STACKKIT_OPERATION_APPLICATION_CONNECTOR_VERIFY":        49,
+		"STACKKIT_OPERATION_BACKUP_RESTORE_ACTIVATE":             50,
+		"STACKKIT_OPERATION_BACKUP_RESTORE_RECOVER":              51,
+		"STACKKIT_OPERATION_HOUSEHOLD_REMOVE":                    52,
+		"STACKKIT_OPERATION_HOST_DELIVERY_RECIPIENT":             53,
+		"STACKKIT_OPERATION_WALLET_ITEM_IMPORT":                  54,
+		"STACKKIT_OPERATION_AI_PROVIDER_SETUP":                   55,
 	}
 )
 
@@ -2763,7 +2885,7 @@ type StackKitCommand struct {
 	AdvancedTrustBundle []byte `protobuf:"bytes,35,opt,name=advanced_trust_bundle,json=advancedTrustBundle,proto3" json:"advanced_trust_bundle,omitempty"`
 	// One canonical stackkit.advanced-capability/v1 document (at most 64 KiB)
 	// issued for this command's operator operation. Required by the
-	// capability-gated ADVANCED_* operations (25 to 29) and rejected by every
+	// capability-gated ADVANCED_* operations (25 to 29, 44, 45) and rejected by every
 	// other operation. The Agent writes it to a 0600 file in the working
 	// directory for --capability and removes the file afterwards.
 	AdvancedCapability []byte `protobuf:"bytes,36,opt,name=advanced_capability,json=advancedCapability,proto3" json:"advanced_capability,omitempty"`
@@ -2778,8 +2900,72 @@ type StackKitCommand struct {
 	// HOST_UPDATE_APPLY only: the sha256:<64 hex> plan digest a completed
 	// HOST_UPDATE_PLAN returned; StackKits installs exactly that plan or refuses.
 	HostPlanDigest string `protobuf:"bytes,40,opt,name=host_plan_digest,json=hostPlanDigest,proto3" json:"host_plan_digest,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// HOST_SECURITY_REPAIR only: the control ids to restore (at least one, at
+	// most the closed stackkit.host-security-evidence/v1 set, no duplicates).
+	HostSecurityControls []string `protobuf:"bytes,41,rep,name=host_security_controls,json=hostSecurityControls,proto3" json:"host_security_controls,omitempty"`
+	// APPLICATION_* only: immutable full Docker container identity. Adopt
+	// binds the exact reviewed source assessment; operation id is replay-safe.
+	ApplicationContainerId string `protobuf:"bytes,42,opt,name=application_container_id,json=applicationContainerId,proto3" json:"application_container_id,omitempty"`
+	ApplicationPlanDigest  string `protobuf:"bytes,43,opt,name=application_plan_digest,json=applicationPlanDigest,proto3" json:"application_plan_digest,omitempty"`
+	ApplicationOperationId string `protobuf:"bytes,44,opt,name=application_operation_id,json=applicationOperationId,proto3" json:"application_operation_id,omitempty"`
+	// APPLICATION_CONTROL only: start, stop, or restart.
+	ApplicationAction string `protobuf:"bytes,45,opt,name=application_action,json=applicationAction,proto3" json:"application_action,omitempty"`
+	// BACKUP_TARGET_IMPORT and BACKUP_TARGET_REBIND only: one sealed
+	// stackkit.sealed-host-delivery/v1 envelope (ciphertext only, at most
+	// 64 KiB, short-lived and single-use). It is bound to the tenant, node,
+	// binding generation, operation, recipient key and expiry; only the node's
+	// StackKits opens it. The agent hands it to the pinned CLI on stdin.
+	SealedDelivery []byte `protobuf:"bytes,46,opt,name=sealed_delivery,json=sealedDelivery,proto3" json:"sealed_delivery,omitempty"`
+	// The tenant a sealed delivery is addressed to (non-secret).
+	DeliveryTenantRef string `protobuf:"bytes,47,opt,name=delivery_tenant_ref,json=deliveryTenantRef,proto3" json:"delivery_tenant_ref,omitempty"`
+	// BACKUP_TARGET_RECIPIENT only: the fresh value the node must echo in its
+	// signed recipient statement (non-secret, at most 128 bytes).
+	RecipientChallenge string `protobuf:"bytes,48,opt,name=recipient_challenge,json=recipientChallenge,proto3" json:"recipient_challenge,omitempty"`
+	// FEDERATION_HANDOFF only. handoff_step is one of member-admit, member-join,
+	// member-certify, member-import, peer-request, peer-enroll, peer-install,
+	// binding-adopt, link-requirement, link-bind. handoff_ref and handoff_ref2 are the step's
+	// references (node, peer, Home key id, origin server name or Home root
+	// digest); each is empty unless the step takes it. handoff_document is the
+	// public JSON the previous step produced (at most 128 KiB); it never carries
+	// a private key or custody directory content.
+	HandoffStep     string `protobuf:"bytes,49,opt,name=handoff_step,json=handoffStep,proto3" json:"handoff_step,omitempty"`
+	HandoffRef      string `protobuf:"bytes,50,opt,name=handoff_ref,json=handoffRef,proto3" json:"handoff_ref,omitempty"`
+	HandoffDocument []byte `protobuf:"bytes,51,opt,name=handoff_document,json=handoffDocument,proto3" json:"handoff_document,omitempty"`
+	HandoffRef2     string `protobuf:"bytes,52,opt,name=handoff_ref2,json=handoffRef2,proto3" json:"handoff_ref2,omitempty"`
+	// PLAN and BACKUP_TARGET_RECIPIENT only: inspect an already applied
+	// generation through its installed attested historical source for managed
+	// same-custody renewal. Never authorizes historical Apply or Restore.
+	SourceGenerationInspection bool `protobuf:"varint,53,opt,name=source_generation_inspection,json=sourceGenerationInspection,proto3" json:"source_generation_inspection,omitempty"`
+	// ADVANCED_ORIGIN_CERTIFICATE_REQUEST only: the managed kombify.me hostnames
+	// the origin certificate covers (every name ends in .kombify.me).
+	OriginHosts []string `protobuf:"bytes,54,rep,name=origin_hosts,json=originHosts,proto3" json:"origin_hosts,omitempty"`
+	// ADVANCED_ORIGIN_CERTIFICATE_INSTALL only: the PEM leaf certificate
+	// (public data, at most 64 KiB). Never a private key.
+	OriginCertificatePem []byte `protobuf:"bytes,55,opt,name=origin_certificate_pem,json=originCertificatePem,proto3" json:"origin_certificate_pem,omitempty"`
+	// APPLICATION_CONNECTOR[_VERIFY] only: bounded, closed metadata document
+	// stackkit.home-assistant-connector-request/v1. application_operation_id
+	// retains the original setup identity even for a new read command_id.
+	ApplicationConnectorRequestJson []byte `protobuf:"bytes,56,opt,name=application_connector_request_json,json=applicationConnectorRequestJson,proto3" json:"application_connector_request_json,omitempty"`
+	// Exact owner-signed staged result; no repository ID or filesystem path.
+	RestoreResultId string `protobuf:"bytes,57,opt,name=restore_result_id,json=restoreResultId,proto3" json:"restore_result_id,omitempty"`
+	// Stable node activation identity, independent of transport retries and recover job IDs.
+	ActivationOperationId string `protobuf:"bytes,58,opt,name=activation_operation_id,json=activationOperationId,proto3" json:"activation_operation_id,omitempty"`
+	// RECOVER only: immutable original admission A. release remains the verified
+	// current execution B; the current CLI may only delegate this original journal.
+	OriginalRecoveryRelease *StackKitReleasePin `protobuf:"bytes,59,opt,name=original_recovery_release,json=originalRecoveryRelease,proto3" json:"original_recovery_release,omitempty"`
+	// HOST_DELIVERY_RECIPIENT only: the delivering authority's Ed25519 public
+	// key (unpadded standard base64) and key id the node pins for its current
+	// generation. Public values; both empty keeps the pinned authority.
+	DeliveryAuthorityKey   string `protobuf:"bytes,60,opt,name=delivery_authority_key,json=deliveryAuthorityKey,proto3" json:"delivery_authority_key,omitempty"`
+	DeliveryAuthorityKeyId string `protobuf:"bytes,61,opt,name=delivery_authority_key_id,json=deliveryAuthorityKeyId,proto3" json:"delivery_authority_key_id,omitempty"`
+	// AI_PROVIDER_SETUP only: the provider's https base URL and the Wallet item
+	// (itm_...) delivered to the node that holds its key, or ai_provider_disable
+	// to remove the provider. Never a key value.
+	AiProviderBaseUrl string `protobuf:"bytes,62,opt,name=ai_provider_base_url,json=aiProviderBaseUrl,proto3" json:"ai_provider_base_url,omitempty"`
+	WalletItemRef     string `protobuf:"bytes,63,opt,name=wallet_item_ref,json=walletItemRef,proto3" json:"wallet_item_ref,omitempty"`
+	AiProviderDisable bool   `protobuf:"varint,64,opt,name=ai_provider_disable,json=aiProviderDisable,proto3" json:"ai_provider_disable,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *StackKitCommand) Reset() {
@@ -3092,6 +3278,174 @@ func (x *StackKitCommand) GetHostPlanDigest() string {
 	return ""
 }
 
+func (x *StackKitCommand) GetHostSecurityControls() []string {
+	if x != nil {
+		return x.HostSecurityControls
+	}
+	return nil
+}
+
+func (x *StackKitCommand) GetApplicationContainerId() string {
+	if x != nil {
+		return x.ApplicationContainerId
+	}
+	return ""
+}
+
+func (x *StackKitCommand) GetApplicationPlanDigest() string {
+	if x != nil {
+		return x.ApplicationPlanDigest
+	}
+	return ""
+}
+
+func (x *StackKitCommand) GetApplicationOperationId() string {
+	if x != nil {
+		return x.ApplicationOperationId
+	}
+	return ""
+}
+
+func (x *StackKitCommand) GetApplicationAction() string {
+	if x != nil {
+		return x.ApplicationAction
+	}
+	return ""
+}
+
+func (x *StackKitCommand) GetSealedDelivery() []byte {
+	if x != nil {
+		return x.SealedDelivery
+	}
+	return nil
+}
+
+func (x *StackKitCommand) GetDeliveryTenantRef() string {
+	if x != nil {
+		return x.DeliveryTenantRef
+	}
+	return ""
+}
+
+func (x *StackKitCommand) GetRecipientChallenge() string {
+	if x != nil {
+		return x.RecipientChallenge
+	}
+	return ""
+}
+
+func (x *StackKitCommand) GetHandoffStep() string {
+	if x != nil {
+		return x.HandoffStep
+	}
+	return ""
+}
+
+func (x *StackKitCommand) GetHandoffRef() string {
+	if x != nil {
+		return x.HandoffRef
+	}
+	return ""
+}
+
+func (x *StackKitCommand) GetHandoffDocument() []byte {
+	if x != nil {
+		return x.HandoffDocument
+	}
+	return nil
+}
+
+func (x *StackKitCommand) GetHandoffRef2() string {
+	if x != nil {
+		return x.HandoffRef2
+	}
+	return ""
+}
+
+func (x *StackKitCommand) GetSourceGenerationInspection() bool {
+	if x != nil {
+		return x.SourceGenerationInspection
+	}
+	return false
+}
+
+func (x *StackKitCommand) GetOriginHosts() []string {
+	if x != nil {
+		return x.OriginHosts
+	}
+	return nil
+}
+
+func (x *StackKitCommand) GetOriginCertificatePem() []byte {
+	if x != nil {
+		return x.OriginCertificatePem
+	}
+	return nil
+}
+
+func (x *StackKitCommand) GetApplicationConnectorRequestJson() []byte {
+	if x != nil {
+		return x.ApplicationConnectorRequestJson
+	}
+	return nil
+}
+
+func (x *StackKitCommand) GetRestoreResultId() string {
+	if x != nil {
+		return x.RestoreResultId
+	}
+	return ""
+}
+
+func (x *StackKitCommand) GetActivationOperationId() string {
+	if x != nil {
+		return x.ActivationOperationId
+	}
+	return ""
+}
+
+func (x *StackKitCommand) GetOriginalRecoveryRelease() *StackKitReleasePin {
+	if x != nil {
+		return x.OriginalRecoveryRelease
+	}
+	return nil
+}
+
+func (x *StackKitCommand) GetDeliveryAuthorityKey() string {
+	if x != nil {
+		return x.DeliveryAuthorityKey
+	}
+	return ""
+}
+
+func (x *StackKitCommand) GetDeliveryAuthorityKeyId() string {
+	if x != nil {
+		return x.DeliveryAuthorityKeyId
+	}
+	return ""
+}
+
+func (x *StackKitCommand) GetAiProviderBaseUrl() string {
+	if x != nil {
+		return x.AiProviderBaseUrl
+	}
+	return ""
+}
+
+func (x *StackKitCommand) GetWalletItemRef() string {
+	if x != nil {
+		return x.WalletItemRef
+	}
+	return ""
+}
+
+func (x *StackKitCommand) GetAiProviderDisable() bool {
+	if x != nil {
+		return x.AiProviderDisable
+	}
+	return false
+}
+
 // StackKitResult transports the normalized stackkit.command-result/v1 JSON
 // envelope and the StackKits rollout-event JSONL records as distinct typed
 // fields. stderr is redacted by the Agent before transport.
@@ -3123,8 +3477,11 @@ type StackKitResult struct {
 	// record the create result names (data.path), computed by the Agent. Apply
 	// and Advanced reconcile pin these exact bytes with --expect-sha256.
 	AdvancedChangeSetSha256 string `protobuf:"bytes,15,opt,name=advanced_change_set_sha256,json=advancedChangeSetSha256,proto3" json:"advanced_change_set_sha256,omitempty"`
-	unknownFields           protoimpl.UnknownFields
-	sizeCache               protoimpl.SizeCache
+	// FEDERATION_HANDOFF only: the public document the step produced for the
+	// other node, read by the Agent from the pinned CLI's own output.
+	HandoffDocument []byte `protobuf:"bytes,16,opt,name=handoff_document,json=handoffDocument,proto3" json:"handoff_document,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *StackKitResult) Reset() {
@@ -3260,6 +3617,13 @@ func (x *StackKitResult) GetAdvancedChangeSetSha256() string {
 		return x.AdvancedChangeSetSha256
 	}
 	return ""
+}
+
+func (x *StackKitResult) GetHandoffDocument() []byte {
+	if x != nil {
+		return x.HandoffDocument
+	}
+	return nil
 }
 
 // PreCheckRequest is sent from Core to Agent to execute pre-deployment checks.
@@ -4810,6 +5174,171 @@ func (x *UpdateCandidate) GetChangelogUrl() string {
 	return ""
 }
 
+// UserNotification is one notice a Home Assistant automation author wrote. It
+// carries only that text: never entity states, presence, locks, cameras or
+// sensor history.
+type UserNotification struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	AgentId        string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	AutomationId   string                 `protobuf:"bytes,2,opt,name=automation_id,json=automationId,proto3" json:"automation_id,omitempty"`       // Collapse key: one Feed item per automation
+	Text           string                 `protobuf:"bytes,3,opt,name=text,proto3" json:"text,omitempty"`                                           // At most 280 characters
+	Audience       string                 `protobuf:"bytes,4,opt,name=audience,proto3" json:"audience,omitempty"`                                   // "me", "household" or "member"
+	MemberUsername string                 `protobuf:"bytes,5,opt,name=member_username,json=memberUsername,proto3" json:"member_username,omitempty"` // Pocket ID username, only for audience "member"
+	Source         string                 `protobuf:"bytes,6,opt,name=source,proto3" json:"source,omitempty"`                                       // "home_assistant"
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *UserNotification) Reset() {
+	*x = UserNotification{}
+	mi := &file_api_proto_agent_proto_msgTypes[49]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UserNotification) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UserNotification) ProtoMessage() {}
+
+func (x *UserNotification) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_agent_proto_msgTypes[49]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UserNotification.ProtoReflect.Descriptor instead.
+func (*UserNotification) Descriptor() ([]byte, []int) {
+	return file_api_proto_agent_proto_rawDescGZIP(), []int{49}
+}
+
+func (x *UserNotification) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *UserNotification) GetAutomationId() string {
+	if x != nil {
+		return x.AutomationId
+	}
+	return ""
+}
+
+func (x *UserNotification) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
+func (x *UserNotification) GetAudience() string {
+	if x != nil {
+		return x.Audience
+	}
+	return ""
+}
+
+func (x *UserNotification) GetMemberUsername() string {
+	if x != nil {
+		return x.MemberUsername
+	}
+	return ""
+}
+
+func (x *UserNotification) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
+}
+
+// UserNotificationAck answers a UserNotification. A refusal is structured, not
+// a transport error, so the node can show the automation author the reason.
+type UserNotificationAck struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Accepted          bool                   `protobuf:"varint,1,opt,name=accepted,proto3" json:"accepted,omitempty"`
+	Status            string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`                                                   // "accepted" or "refused"
+	RefusalCode       string                 `protobuf:"bytes,3,opt,name=refusal_code,json=refusalCode,proto3" json:"refusal_code,omitempty"`                      // text_too_long, rate_limited, audience_invalid, no_recipients, ...
+	RetryAfterSeconds int32                  `protobuf:"varint,4,opt,name=retry_after_seconds,json=retryAfterSeconds,proto3" json:"retry_after_seconds,omitempty"` // Set with rate_limited
+	Recipients        int32                  `protobuf:"varint,5,opt,name=recipients,proto3" json:"recipients,omitempty"`                                          // Number of Feed recipients dispatched
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *UserNotificationAck) Reset() {
+	*x = UserNotificationAck{}
+	mi := &file_api_proto_agent_proto_msgTypes[50]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UserNotificationAck) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UserNotificationAck) ProtoMessage() {}
+
+func (x *UserNotificationAck) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_agent_proto_msgTypes[50]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UserNotificationAck.ProtoReflect.Descriptor instead.
+func (*UserNotificationAck) Descriptor() ([]byte, []int) {
+	return file_api_proto_agent_proto_rawDescGZIP(), []int{50}
+}
+
+func (x *UserNotificationAck) GetAccepted() bool {
+	if x != nil {
+		return x.Accepted
+	}
+	return false
+}
+
+func (x *UserNotificationAck) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *UserNotificationAck) GetRefusalCode() string {
+	if x != nil {
+		return x.RefusalCode
+	}
+	return ""
+}
+
+func (x *UserNotificationAck) GetRetryAfterSeconds() int32 {
+	if x != nil {
+		return x.RetryAfterSeconds
+	}
+	return 0
+}
+
+func (x *UserNotificationAck) GetRecipients() int32 {
+	if x != nil {
+		return x.Recipients
+	}
+	return 0
+}
+
 var File_api_proto_agent_proto protoreflect.FileDescriptor
 
 const file_api_proto_agent_proto_rawDesc = "" +
@@ -5027,7 +5556,7 @@ const file_api_proto_agent_proto_rawDesc = "" +
 	"platformOs\x12#\n" +
 	"\rplatform_arch\x18\x03 \x01(\tR\fplatformArch\x12%\n" +
 	"\x0earchive_sha256\x18\x04 \x01(\tR\rarchiveSha256\x120\n" +
-	"\x14release_index_sha256\x18\x05 \x01(\tR\x12releaseIndexSha256\"\x98\r\n" +
+	"\x14release_index_sha256\x18\x05 \x01(\tR\x12releaseIndexSha256\"\xef\x16\n" +
 	"\x0fStackKitCommand\x12\x1d\n" +
 	"\n" +
 	"command_id\x18\x01 \x01(\tR\tcommandId\x12C\n" +
@@ -5075,7 +5604,32 @@ const file_api_proto_agent_proto_rawDesc = "" +
 	"\rchange_set_id\x18% \x01(\tR\vchangeSetId\x12*\n" +
 	"\x11change_set_sha256\x18& \x01(\tR\x0fchangeSetSha256\x12.\n" +
 	"\x13rollback_target_ref\x18' \x01(\tR\x11rollbackTargetRef\x12(\n" +
-	"\x10host_plan_digest\x18( \x01(\tR\x0ehostPlanDigest\"\xcb\x05\n" +
+	"\x10host_plan_digest\x18( \x01(\tR\x0ehostPlanDigest\x124\n" +
+	"\x16host_security_controls\x18) \x03(\tR\x14hostSecurityControls\x128\n" +
+	"\x18application_container_id\x18* \x01(\tR\x16applicationContainerId\x126\n" +
+	"\x17application_plan_digest\x18+ \x01(\tR\x15applicationPlanDigest\x128\n" +
+	"\x18application_operation_id\x18, \x01(\tR\x16applicationOperationId\x12-\n" +
+	"\x12application_action\x18- \x01(\tR\x11applicationAction\x12'\n" +
+	"\x0fsealed_delivery\x18. \x01(\fR\x0esealedDelivery\x12.\n" +
+	"\x13delivery_tenant_ref\x18/ \x01(\tR\x11deliveryTenantRef\x12/\n" +
+	"\x13recipient_challenge\x180 \x01(\tR\x12recipientChallenge\x12!\n" +
+	"\fhandoff_step\x181 \x01(\tR\vhandoffStep\x12\x1f\n" +
+	"\vhandoff_ref\x182 \x01(\tR\n" +
+	"handoffRef\x12)\n" +
+	"\x10handoff_document\x183 \x01(\fR\x0fhandoffDocument\x12!\n" +
+	"\fhandoff_ref2\x184 \x01(\tR\vhandoffRef2\x12@\n" +
+	"\x1csource_generation_inspection\x185 \x01(\bR\x1asourceGenerationInspection\x12!\n" +
+	"\forigin_hosts\x186 \x03(\tR\voriginHosts\x124\n" +
+	"\x16origin_certificate_pem\x187 \x01(\fR\x14originCertificatePem\x12K\n" +
+	"\"application_connector_request_json\x188 \x01(\fR\x1fapplicationConnectorRequestJson\x12*\n" +
+	"\x11restore_result_id\x189 \x01(\tR\x0frestoreResultId\x126\n" +
+	"\x17activation_operation_id\x18: \x01(\tR\x15activationOperationId\x12b\n" +
+	"\x19original_recovery_release\x18; \x01(\v2&.techstack.agent.v1.StackKitReleasePinR\x17originalRecoveryRelease\x124\n" +
+	"\x16delivery_authority_key\x18< \x01(\tR\x14deliveryAuthorityKey\x129\n" +
+	"\x19delivery_authority_key_id\x18= \x01(\tR\x16deliveryAuthorityKeyId\x12/\n" +
+	"\x14ai_provider_base_url\x18> \x01(\tR\x11aiProviderBaseUrl\x12&\n" +
+	"\x0fwallet_item_ref\x18? \x01(\tR\rwalletItemRef\x12.\n" +
+	"\x13ai_provider_disable\x18@ \x01(\bR\x11aiProviderDisable\"\xf6\x05\n" +
 	"\x0eStackKitResult\x12\x1d\n" +
 	"\n" +
 	"command_id\x18\x01 \x01(\tR\tcommandId\x12\x18\n" +
@@ -5093,7 +5647,8 @@ const file_api_proto_agent_proto_rawDesc = "" +
 	"\x1cpinned_cli_evidence_verified\x18\f \x01(\bR\x19pinnedCliEvidenceVerified\x12;\n" +
 	"\x1apinned_cli_evidence_sha256\x18\r \x01(\tR\x17pinnedCliEvidenceSha256\x122\n" +
 	"\x15sensitive_result_json\x18\x0e \x01(\fR\x13sensitiveResultJson\x12;\n" +
-	"\x1aadvanced_change_set_sha256\x18\x0f \x01(\tR\x17advancedChangeSetSha256\"\x99\x01\n" +
+	"\x1aadvanced_change_set_sha256\x18\x0f \x01(\tR\x17advancedChangeSetSha256\x12)\n" +
+	"\x10handoff_document\x18\x10 \x01(\fR\x0fhandoffDocument\"\x99\x01\n" +
 	"\x0fPreCheckRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12>\n" +
@@ -5242,7 +5797,22 @@ const file_api_proto_agent_proto_rawDesc = "" +
 	"\amanager\x18\x04 \x01(\tR\amanager\x12\x1a\n" +
 	"\bseverity\x18\x05 \x01(\tR\bseverity\x12\x17\n" +
 	"\acve_ids\x18\x06 \x03(\tR\x06cveIds\x12#\n" +
-	"\rchangelog_url\x18\a \x01(\tR\fchangelogUrl*\xb2\x01\n" +
+	"\rchangelog_url\x18\a \x01(\tR\fchangelogUrl\"\xc3\x01\n" +
+	"\x10UserNotification\x12\x19\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12#\n" +
+	"\rautomation_id\x18\x02 \x01(\tR\fautomationId\x12\x12\n" +
+	"\x04text\x18\x03 \x01(\tR\x04text\x12\x1a\n" +
+	"\baudience\x18\x04 \x01(\tR\baudience\x12'\n" +
+	"\x0fmember_username\x18\x05 \x01(\tR\x0ememberUsername\x12\x16\n" +
+	"\x06source\x18\x06 \x01(\tR\x06source\"\xbc\x01\n" +
+	"\x13UserNotificationAck\x12\x1a\n" +
+	"\baccepted\x18\x01 \x01(\bR\baccepted\x12\x16\n" +
+	"\x06status\x18\x02 \x01(\tR\x06status\x12!\n" +
+	"\frefusal_code\x18\x03 \x01(\tR\vrefusalCode\x12.\n" +
+	"\x13retry_after_seconds\x18\x04 \x01(\x05R\x11retryAfterSeconds\x12\x1e\n" +
+	"\n" +
+	"recipients\x18\x05 \x01(\x05R\n" +
+	"recipients*\xb2\x01\n" +
 	"\rTofuOperation\x12\x1e\n" +
 	"\x1aTOFU_OPERATION_UNSPECIFIED\x10\x00\x12\x17\n" +
 	"\x13TOFU_OPERATION_INIT\x10\x01\x12\x17\n" +
@@ -5254,8 +5824,7 @@ const file_api_proto_agent_proto_rawDesc = "" +
 	"\x1fTERRAMATE_OPERATION_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17TERRAMATE_OPERATION_RUN\x10\x01\x12\"\n" +
 	"\x1eTERRAMATE_OPERATION_SYNC_DRIFT\x10\x02\x12$\n" +
-	" TERRAMATE_OPERATION_LIST_CHANGED\x10\x03*\x95\n" +
-	"\n" +
+	" TERRAMATE_OPERATION_LIST_CHANGED\x10\x03*\xb8\x12\n" +
 	"\x11StackKitOperation\x12\"\n" +
 	"\x1eSTACKKIT_OPERATION_UNSPECIFIED\x10\x00\x12\x1f\n" +
 	"\x1bSTACKKIT_OPERATION_VALIDATE\x10\x01\x12\x1f\n" +
@@ -5290,7 +5859,30 @@ const file_api_proto_agent_proto_rawDesc = "" +
 	")STACKKIT_OPERATION_ADVANCED_RESTORE_DRILL\x10\x1d\x12'\n" +
 	"#STACKKIT_OPERATION_HOST_UPDATE_PLAN\x10\x1e\x12(\n" +
 	"$STACKKIT_OPERATION_HOST_UPDATE_APPLY\x10\x1f\x12\"\n" +
-	"\x1eSTACKKIT_OPERATION_HOST_REBOOT\x10 *|\n" +
+	"\x1eSTACKKIT_OPERATION_HOST_REBOOT\x10 \x12+\n" +
+	"'STACKKIT_OPERATION_HOST_SECURITY_REPAIR\x10!\x12*\n" +
+	"&STACKKIT_OPERATION_APPLICATION_INSPECT\x10\"\x12(\n" +
+	"$STACKKIT_OPERATION_APPLICATION_ADOPT\x10#\x12)\n" +
+	"%STACKKIT_OPERATION_APPLICATION_VERIFY\x10$\x12*\n" +
+	"&STACKKIT_OPERATION_APPLICATION_RELEASE\x10%\x12*\n" +
+	"&STACKKIT_OPERATION_APPLICATION_CONTROL\x10&\x12.\n" +
+	"*STACKKIT_OPERATION_BACKUP_TARGET_RECIPIENT\x10'\x12+\n" +
+	"'STACKKIT_OPERATION_BACKUP_TARGET_IMPORT\x10(\x12+\n" +
+	"'STACKKIT_OPERATION_BACKUP_TARGET_REBIND\x10)\x12)\n" +
+	"%STACKKIT_OPERATION_FEDERATION_HANDOFF\x10*\x120\n" +
+	",STACKKIT_OPERATION_PREPARE_SOURCE_GENERATION\x10+\x12%\n" +
+	"!STACKKIT_OPERATION_NETWORK_REBIND\x10,\x12%\n" +
+	"!STACKKIT_OPERATION_NETWORK_STATUS\x10-\x12:\n" +
+	"6STACKKIT_OPERATION_ADVANCED_ORIGIN_CERTIFICATE_REQUEST\x10.\x12:\n" +
+	"6STACKKIT_OPERATION_ADVANCED_ORIGIN_CERTIFICATE_INSTALL\x10/\x12,\n" +
+	"(STACKKIT_OPERATION_APPLICATION_CONNECTOR\x100\x123\n" +
+	"/STACKKIT_OPERATION_APPLICATION_CONNECTOR_VERIFY\x101\x12.\n" +
+	"*STACKKIT_OPERATION_BACKUP_RESTORE_ACTIVATE\x102\x12-\n" +
+	")STACKKIT_OPERATION_BACKUP_RESTORE_RECOVER\x103\x12'\n" +
+	"#STACKKIT_OPERATION_HOUSEHOLD_REMOVE\x104\x12.\n" +
+	"*STACKKIT_OPERATION_HOST_DELIVERY_RECIPIENT\x105\x12)\n" +
+	"%STACKKIT_OPERATION_WALLET_ITEM_IMPORT\x106\x12(\n" +
+	"$STACKKIT_OPERATION_AI_PROVIDER_SETUP\x107*|\n" +
 	"\x11StackKitDriftMode\x12#\n" +
 	"\x1fSTACKKIT_DRIFT_MODE_UNSPECIFIED\x10\x00\x12 \n" +
 	"\x1cSTACKKIT_DRIFT_MODE_STANDARD\x10\x01\x12 \n" +
@@ -5303,7 +5895,7 @@ const file_api_proto_agent_proto_rawDesc = "" +
 	"\x11HealEventSeverity\x12\x16\n" +
 	"\x12HEAL_SEVERITY_INFO\x10\x00\x12\x19\n" +
 	"\x15HEAL_SEVERITY_WARNING\x10\x01\x12\x1a\n" +
-	"\x16HEAL_SEVERITY_CRITICAL\x10\x022\xec\a\n" +
+	"\x16HEAL_SEVERITY_CRITICAL\x10\x022\xd5\b\n" +
 	"\fAgentService\x12U\n" +
 	"\bRegister\x12#.techstack.agent.v1.RegisterRequest\x1a$.techstack.agent.v1.RegisterResponse\x12X\n" +
 	"\tHeartbeat\x12$.techstack.agent.v1.HeartbeatRequest\x1a%.techstack.agent.v1.HeartbeatResponse\x12V\n" +
@@ -5316,7 +5908,8 @@ const file_api_proto_agent_proto_rawDesc = "" +
 	"\x0fReportDetection\x12#.techstack.agent.v1.DetectionReport\x1a .techstack.agent.v1.DetectionAck\x12S\n" +
 	"\n" +
 	"StreamLogs\x12%.techstack.agent.v1.StreamLogsRequest\x1a\x1c.techstack.agent.v1.LogEntry0\x01\x12p\n" +
-	"\x13GetUpdateCandidates\x12+.techstack.agent.v1.UpdateCandidatesRequest\x1a,.techstack.agent.v1.UpdateCandidatesResponseB0Z.github.com/kombifyio/techstack/pkg/api/agentpbb\x06proto3"
+	"\x13GetUpdateCandidates\x12+.techstack.agent.v1.UpdateCandidatesRequest\x1a,.techstack.agent.v1.UpdateCandidatesResponse\x12g\n" +
+	"\x16ReportUserNotification\x12$.techstack.agent.v1.UserNotification\x1a'.techstack.agent.v1.UserNotificationAckB0Z.github.com/kombifyio/techstack/pkg/api/agentpbb\x06proto3"
 
 var (
 	file_api_proto_agent_proto_rawDescOnce sync.Once
@@ -5331,7 +5924,7 @@ func file_api_proto_agent_proto_rawDescGZIP() []byte {
 }
 
 var file_api_proto_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 6)
-var file_api_proto_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 60)
+var file_api_proto_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 62)
 var file_api_proto_agent_proto_goTypes = []any{
 	(TofuOperation)(0),               // 0: techstack.agent.v1.TofuOperation
 	(TerramateOperation)(0),          // 1: techstack.agent.v1.TerramateOperation
@@ -5388,21 +5981,23 @@ var file_api_proto_agent_proto_goTypes = []any{
 	(*UpdateCandidatesRequest)(nil),  // 52: techstack.agent.v1.UpdateCandidatesRequest
 	(*UpdateCandidatesResponse)(nil), // 53: techstack.agent.v1.UpdateCandidatesResponse
 	(*UpdateCandidate)(nil),          // 54: techstack.agent.v1.UpdateCandidate
-	nil,                              // 55: techstack.agent.v1.AgentConfig.EnvironmentEntry
-	nil,                              // 56: techstack.agent.v1.ExecuteCommand.EnvironmentEntry
-	nil,                              // 57: techstack.agent.v1.DeployService.EnvironmentEntry
-	nil,                              // 58: techstack.agent.v1.LogEntry.FieldsEntry
-	nil,                              // 59: techstack.agent.v1.TofuCommand.EnvironmentEntry
-	nil,                              // 60: techstack.agent.v1.TofuResult.OutputsEntry
-	nil,                              // 61: techstack.agent.v1.TerramateCommand.EnvironmentEntry
-	nil,                              // 62: techstack.agent.v1.PreCheckDefinition.ParamsEntry
-	nil,                              // 63: techstack.agent.v1.PreCheckResult.DetailsEntry
-	nil,                              // 64: techstack.agent.v1.MetricSample.LabelsEntry
-	nil,                              // 65: techstack.agent.v1.HealEventReport.MetadataEntry
+	(*UserNotification)(nil),         // 55: techstack.agent.v1.UserNotification
+	(*UserNotificationAck)(nil),      // 56: techstack.agent.v1.UserNotificationAck
+	nil,                              // 57: techstack.agent.v1.AgentConfig.EnvironmentEntry
+	nil,                              // 58: techstack.agent.v1.ExecuteCommand.EnvironmentEntry
+	nil,                              // 59: techstack.agent.v1.DeployService.EnvironmentEntry
+	nil,                              // 60: techstack.agent.v1.LogEntry.FieldsEntry
+	nil,                              // 61: techstack.agent.v1.TofuCommand.EnvironmentEntry
+	nil,                              // 62: techstack.agent.v1.TofuResult.OutputsEntry
+	nil,                              // 63: techstack.agent.v1.TerramateCommand.EnvironmentEntry
+	nil,                              // 64: techstack.agent.v1.PreCheckDefinition.ParamsEntry
+	nil,                              // 65: techstack.agent.v1.PreCheckResult.DetailsEntry
+	nil,                              // 66: techstack.agent.v1.MetricSample.LabelsEntry
+	nil,                              // 67: techstack.agent.v1.HealEventReport.MetadataEntry
 }
 var file_api_proto_agent_proto_depIdxs = []int32{
 	8,  // 0: techstack.agent.v1.RegisterResponse.config:type_name -> techstack.agent.v1.AgentConfig
-	55, // 1: techstack.agent.v1.AgentConfig.environment:type_name -> techstack.agent.v1.AgentConfig.EnvironmentEntry
+	57, // 1: techstack.agent.v1.AgentConfig.environment:type_name -> techstack.agent.v1.AgentConfig.EnvironmentEntry
 	11, // 2: techstack.agent.v1.HeartbeatRequest.resources:type_name -> techstack.agent.v1.ResourceUsage
 	22, // 3: techstack.agent.v1.HeartbeatResponse.pending_commands:type_name -> techstack.agent.v1.PendingCommand
 	15, // 4: techstack.agent.v1.AgentMessage.command_result:type_name -> techstack.agent.v1.CommandResult
@@ -5417,66 +6012,69 @@ var file_api_proto_agent_proto_depIdxs = []int32{
 	27, // 13: techstack.agent.v1.CoreMessage.tofu_command:type_name -> techstack.agent.v1.TofuCommand
 	29, // 14: techstack.agent.v1.CoreMessage.terramate_command:type_name -> techstack.agent.v1.TerramateCommand
 	33, // 15: techstack.agent.v1.CoreMessage.stackkit_command:type_name -> techstack.agent.v1.StackKitCommand
-	56, // 16: techstack.agent.v1.ExecuteCommand.environment:type_name -> techstack.agent.v1.ExecuteCommand.EnvironmentEntry
-	57, // 17: techstack.agent.v1.DeployService.environment:type_name -> techstack.agent.v1.DeployService.EnvironmentEntry
+	58, // 16: techstack.agent.v1.ExecuteCommand.environment:type_name -> techstack.agent.v1.ExecuteCommand.EnvironmentEntry
+	59, // 17: techstack.agent.v1.DeployService.environment:type_name -> techstack.agent.v1.DeployService.EnvironmentEntry
 	17, // 18: techstack.agent.v1.DeployService.volumes:type_name -> techstack.agent.v1.VolumeMount
 	8,  // 19: techstack.agent.v1.ConfigUpdate.new_config:type_name -> techstack.agent.v1.AgentConfig
-	58, // 20: techstack.agent.v1.LogEntry.fields:type_name -> techstack.agent.v1.LogEntry.FieldsEntry
+	60, // 20: techstack.agent.v1.LogEntry.fields:type_name -> techstack.agent.v1.LogEntry.FieldsEntry
 	24, // 21: techstack.agent.v1.StatusReport.node:type_name -> techstack.agent.v1.NodeStatus
 	21, // 22: techstack.agent.v1.StatusReport.services:type_name -> techstack.agent.v1.ServiceStatus
 	25, // 23: techstack.agent.v1.StatusReport.network:type_name -> techstack.agent.v1.NetworkStatus
 	11, // 24: techstack.agent.v1.NodeStatus.resources:type_name -> techstack.agent.v1.ResourceUsage
 	0,  // 25: techstack.agent.v1.TofuCommand.operation:type_name -> techstack.agent.v1.TofuOperation
-	59, // 26: techstack.agent.v1.TofuCommand.environment:type_name -> techstack.agent.v1.TofuCommand.EnvironmentEntry
-	60, // 27: techstack.agent.v1.TofuResult.outputs:type_name -> techstack.agent.v1.TofuResult.OutputsEntry
+	61, // 26: techstack.agent.v1.TofuCommand.environment:type_name -> techstack.agent.v1.TofuCommand.EnvironmentEntry
+	62, // 27: techstack.agent.v1.TofuResult.outputs:type_name -> techstack.agent.v1.TofuResult.OutputsEntry
 	1,  // 28: techstack.agent.v1.TerramateCommand.operation:type_name -> techstack.agent.v1.TerramateOperation
-	61, // 29: techstack.agent.v1.TerramateCommand.environment:type_name -> techstack.agent.v1.TerramateCommand.EnvironmentEntry
+	63, // 29: techstack.agent.v1.TerramateCommand.environment:type_name -> techstack.agent.v1.TerramateCommand.EnvironmentEntry
 	31, // 30: techstack.agent.v1.TerramateResult.drift_reports:type_name -> techstack.agent.v1.DriftReport
 	2,  // 31: techstack.agent.v1.StackKitCommand.operation:type_name -> techstack.agent.v1.StackKitOperation
 	32, // 32: techstack.agent.v1.StackKitCommand.release:type_name -> techstack.agent.v1.StackKitReleasePin
 	3,  // 33: techstack.agent.v1.StackKitCommand.drift_mode:type_name -> techstack.agent.v1.StackKitDriftMode
-	32, // 34: techstack.agent.v1.StackKitResult.release:type_name -> techstack.agent.v1.StackKitReleasePin
-	36, // 35: techstack.agent.v1.PreCheckRequest.checks:type_name -> techstack.agent.v1.PreCheckDefinition
-	62, // 36: techstack.agent.v1.PreCheckDefinition.params:type_name -> techstack.agent.v1.PreCheckDefinition.ParamsEntry
-	38, // 37: techstack.agent.v1.PreCheckResponse.results:type_name -> techstack.agent.v1.PreCheckResult
-	63, // 38: techstack.agent.v1.PreCheckResult.details:type_name -> techstack.agent.v1.PreCheckResult.DetailsEntry
-	64, // 39: techstack.agent.v1.MetricSample.labels:type_name -> techstack.agent.v1.MetricSample.LabelsEntry
-	4,  // 40: techstack.agent.v1.MetricSample.type:type_name -> techstack.agent.v1.MetricType
-	39, // 41: techstack.agent.v1.MetricsBatch.samples:type_name -> techstack.agent.v1.MetricSample
-	11, // 42: techstack.agent.v1.SystemInfoResponse.resources:type_name -> techstack.agent.v1.ResourceUsage
-	44, // 43: techstack.agent.v1.SystemInfoResponse.packages:type_name -> techstack.agent.v1.InstalledPackage
-	45, // 44: techstack.agent.v1.SystemInfoResponse.services:type_name -> techstack.agent.v1.RunningService
-	46, // 45: techstack.agent.v1.SystemInfoResponse.containers:type_name -> techstack.agent.v1.ContainerInfo
-	5,  // 46: techstack.agent.v1.HealEventReport.severity:type_name -> techstack.agent.v1.HealEventSeverity
-	65, // 47: techstack.agent.v1.HealEventReport.metadata:type_name -> techstack.agent.v1.HealEventReport.MetadataEntry
-	54, // 48: techstack.agent.v1.UpdateCandidatesResponse.candidates:type_name -> techstack.agent.v1.UpdateCandidate
-	6,  // 49: techstack.agent.v1.AgentService.Register:input_type -> techstack.agent.v1.RegisterRequest
-	9,  // 50: techstack.agent.v1.AgentService.Heartbeat:input_type -> techstack.agent.v1.HeartbeatRequest
-	12, // 51: techstack.agent.v1.AgentService.CommandStream:input_type -> techstack.agent.v1.AgentMessage
-	23, // 52: techstack.agent.v1.AgentService.ReportStatus:input_type -> techstack.agent.v1.StatusReport
-	35, // 53: techstack.agent.v1.AgentService.RunPreChecks:input_type -> techstack.agent.v1.PreCheckRequest
-	40, // 54: techstack.agent.v1.AgentService.PushMetrics:input_type -> techstack.agent.v1.MetricsBatch
-	42, // 55: techstack.agent.v1.AgentService.GetSystemInfo:input_type -> techstack.agent.v1.SystemInfoRequest
-	47, // 56: techstack.agent.v1.AgentService.ReportHealEvent:input_type -> techstack.agent.v1.HealEventReport
-	49, // 57: techstack.agent.v1.AgentService.ReportDetection:input_type -> techstack.agent.v1.DetectionReport
-	51, // 58: techstack.agent.v1.AgentService.StreamLogs:input_type -> techstack.agent.v1.StreamLogsRequest
-	52, // 59: techstack.agent.v1.AgentService.GetUpdateCandidates:input_type -> techstack.agent.v1.UpdateCandidatesRequest
-	7,  // 60: techstack.agent.v1.AgentService.Register:output_type -> techstack.agent.v1.RegisterResponse
-	10, // 61: techstack.agent.v1.AgentService.Heartbeat:output_type -> techstack.agent.v1.HeartbeatResponse
-	13, // 62: techstack.agent.v1.AgentService.CommandStream:output_type -> techstack.agent.v1.CoreMessage
-	26, // 63: techstack.agent.v1.AgentService.ReportStatus:output_type -> techstack.agent.v1.StatusAck
-	37, // 64: techstack.agent.v1.AgentService.RunPreChecks:output_type -> techstack.agent.v1.PreCheckResponse
-	41, // 65: techstack.agent.v1.AgentService.PushMetrics:output_type -> techstack.agent.v1.PushAck
-	43, // 66: techstack.agent.v1.AgentService.GetSystemInfo:output_type -> techstack.agent.v1.SystemInfoResponse
-	48, // 67: techstack.agent.v1.AgentService.ReportHealEvent:output_type -> techstack.agent.v1.HealEventAck
-	50, // 68: techstack.agent.v1.AgentService.ReportDetection:output_type -> techstack.agent.v1.DetectionAck
-	20, // 69: techstack.agent.v1.AgentService.StreamLogs:output_type -> techstack.agent.v1.LogEntry
-	53, // 70: techstack.agent.v1.AgentService.GetUpdateCandidates:output_type -> techstack.agent.v1.UpdateCandidatesResponse
-	60, // [60:71] is the sub-list for method output_type
-	49, // [49:60] is the sub-list for method input_type
-	49, // [49:49] is the sub-list for extension type_name
-	49, // [49:49] is the sub-list for extension extendee
-	0,  // [0:49] is the sub-list for field type_name
+	32, // 34: techstack.agent.v1.StackKitCommand.original_recovery_release:type_name -> techstack.agent.v1.StackKitReleasePin
+	32, // 35: techstack.agent.v1.StackKitResult.release:type_name -> techstack.agent.v1.StackKitReleasePin
+	36, // 36: techstack.agent.v1.PreCheckRequest.checks:type_name -> techstack.agent.v1.PreCheckDefinition
+	64, // 37: techstack.agent.v1.PreCheckDefinition.params:type_name -> techstack.agent.v1.PreCheckDefinition.ParamsEntry
+	38, // 38: techstack.agent.v1.PreCheckResponse.results:type_name -> techstack.agent.v1.PreCheckResult
+	65, // 39: techstack.agent.v1.PreCheckResult.details:type_name -> techstack.agent.v1.PreCheckResult.DetailsEntry
+	66, // 40: techstack.agent.v1.MetricSample.labels:type_name -> techstack.agent.v1.MetricSample.LabelsEntry
+	4,  // 41: techstack.agent.v1.MetricSample.type:type_name -> techstack.agent.v1.MetricType
+	39, // 42: techstack.agent.v1.MetricsBatch.samples:type_name -> techstack.agent.v1.MetricSample
+	11, // 43: techstack.agent.v1.SystemInfoResponse.resources:type_name -> techstack.agent.v1.ResourceUsage
+	44, // 44: techstack.agent.v1.SystemInfoResponse.packages:type_name -> techstack.agent.v1.InstalledPackage
+	45, // 45: techstack.agent.v1.SystemInfoResponse.services:type_name -> techstack.agent.v1.RunningService
+	46, // 46: techstack.agent.v1.SystemInfoResponse.containers:type_name -> techstack.agent.v1.ContainerInfo
+	5,  // 47: techstack.agent.v1.HealEventReport.severity:type_name -> techstack.agent.v1.HealEventSeverity
+	67, // 48: techstack.agent.v1.HealEventReport.metadata:type_name -> techstack.agent.v1.HealEventReport.MetadataEntry
+	54, // 49: techstack.agent.v1.UpdateCandidatesResponse.candidates:type_name -> techstack.agent.v1.UpdateCandidate
+	6,  // 50: techstack.agent.v1.AgentService.Register:input_type -> techstack.agent.v1.RegisterRequest
+	9,  // 51: techstack.agent.v1.AgentService.Heartbeat:input_type -> techstack.agent.v1.HeartbeatRequest
+	12, // 52: techstack.agent.v1.AgentService.CommandStream:input_type -> techstack.agent.v1.AgentMessage
+	23, // 53: techstack.agent.v1.AgentService.ReportStatus:input_type -> techstack.agent.v1.StatusReport
+	35, // 54: techstack.agent.v1.AgentService.RunPreChecks:input_type -> techstack.agent.v1.PreCheckRequest
+	40, // 55: techstack.agent.v1.AgentService.PushMetrics:input_type -> techstack.agent.v1.MetricsBatch
+	42, // 56: techstack.agent.v1.AgentService.GetSystemInfo:input_type -> techstack.agent.v1.SystemInfoRequest
+	47, // 57: techstack.agent.v1.AgentService.ReportHealEvent:input_type -> techstack.agent.v1.HealEventReport
+	49, // 58: techstack.agent.v1.AgentService.ReportDetection:input_type -> techstack.agent.v1.DetectionReport
+	51, // 59: techstack.agent.v1.AgentService.StreamLogs:input_type -> techstack.agent.v1.StreamLogsRequest
+	52, // 60: techstack.agent.v1.AgentService.GetUpdateCandidates:input_type -> techstack.agent.v1.UpdateCandidatesRequest
+	55, // 61: techstack.agent.v1.AgentService.ReportUserNotification:input_type -> techstack.agent.v1.UserNotification
+	7,  // 62: techstack.agent.v1.AgentService.Register:output_type -> techstack.agent.v1.RegisterResponse
+	10, // 63: techstack.agent.v1.AgentService.Heartbeat:output_type -> techstack.agent.v1.HeartbeatResponse
+	13, // 64: techstack.agent.v1.AgentService.CommandStream:output_type -> techstack.agent.v1.CoreMessage
+	26, // 65: techstack.agent.v1.AgentService.ReportStatus:output_type -> techstack.agent.v1.StatusAck
+	37, // 66: techstack.agent.v1.AgentService.RunPreChecks:output_type -> techstack.agent.v1.PreCheckResponse
+	41, // 67: techstack.agent.v1.AgentService.PushMetrics:output_type -> techstack.agent.v1.PushAck
+	43, // 68: techstack.agent.v1.AgentService.GetSystemInfo:output_type -> techstack.agent.v1.SystemInfoResponse
+	48, // 69: techstack.agent.v1.AgentService.ReportHealEvent:output_type -> techstack.agent.v1.HealEventAck
+	50, // 70: techstack.agent.v1.AgentService.ReportDetection:output_type -> techstack.agent.v1.DetectionAck
+	20, // 71: techstack.agent.v1.AgentService.StreamLogs:output_type -> techstack.agent.v1.LogEntry
+	53, // 72: techstack.agent.v1.AgentService.GetUpdateCandidates:output_type -> techstack.agent.v1.UpdateCandidatesResponse
+	56, // 73: techstack.agent.v1.AgentService.ReportUserNotification:output_type -> techstack.agent.v1.UserNotificationAck
+	62, // [62:74] is the sub-list for method output_type
+	50, // [50:62] is the sub-list for method input_type
+	50, // [50:50] is the sub-list for extension type_name
+	50, // [50:50] is the sub-list for extension extendee
+	0,  // [0:50] is the sub-list for field type_name
 }
 
 func init() { file_api_proto_agent_proto_init() }
@@ -5506,7 +6104,7 @@ func file_api_proto_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_agent_proto_rawDesc), len(file_api_proto_agent_proto_rawDesc)),
 			NumEnums:      6,
-			NumMessages:   60,
+			NumMessages:   62,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -12,9 +12,11 @@ package placement
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 
+	"github.com/kombifyio/techstack/internal/stackkitrelease"
 	"github.com/kombifyio/techstack/pkg/core"
 )
 
@@ -117,9 +119,12 @@ func (p *PlacementEngine) PlaceServices(
 		candidates := p.filterWorkers(svc, workers, allocation)
 		if len(candidates) == 0 {
 			need := estimateServiceRequirements(svc)
+			if need.Unavailable != "" {
+				return nil, 0, fmt.Errorf("cannot place service %s: %s", svc.Name, need.Unavailable)
+			}
 			return nil, 0, fmt.Errorf(
-				"no suitable worker found for service %s: needs %dm CPU / %dMB RAM / %dGB disk on top of already-placed reservations; no worker has that much free",
-				svc.Name, need.CPU, need.RAM, need.Disk,
+				"no suitable worker found for service %s: needs %dm CPU / %dMB RAM / %dGB disk on top of already-placed reservations and a released host floor of %g CPU / %gGB RAM / %gGB disk (amd64 level %d)",
+				svc.Name, need.CPU, need.RAM, need.Disk, need.HostFloor.MinCPUCores, need.HostFloor.MinRAMGB, need.HostFloor.MinStorageGB, need.HostFloor.MinAMD64MicroarchitectureLevel,
 			)
 		}
 
@@ -173,10 +178,22 @@ func (p *PlacementEngine) filterWorkers(
 ) []core.Worker {
 	svcReq := estimateServiceRequirements(svc)
 	candidates := make([]core.Worker, 0, len(workers))
+	if svcReq.Unavailable != "" {
+		return candidates
+	}
 
 	for _, w := range workers {
 		// Predicate 1: Worker must be online
 		if w.Status != "online" {
+			continue
+		}
+		if float64(w.Capabilities.CPU) < svcReq.HostFloor.MinCPUCores ||
+			float64(w.Capabilities.RAM)/1024 < svcReq.HostFloor.MinRAMGB ||
+			float64(w.Capabilities.Disk) < svcReq.HostFloor.MinStorageGB {
+			continue
+		}
+		if svcReq.HostFloor.MinAMD64MicroarchitectureLevel > 0 && w.Capabilities.Arch == "amd64" &&
+			w.Capabilities.AMD64MicroarchitectureLevel < svcReq.HostFloor.MinAMD64MicroarchitectureLevel {
 			continue
 		}
 
@@ -241,6 +258,9 @@ func (p *PlacementEngine) scoreWorkers(
 		allocated := allocation[w.ID]
 		score := 0
 		var warnings []string
+		if svcReq.CPUReservationUnspecified {
+			warnings = append(warnings, "The released profile does not declare a complete CPU reservation")
+		}
 
 		// Factor 1: Resource balance (prefer 40-70% utilization)
 		score += p.scoreResourceBalance(w, allocated, svcReq) * p.weights.ResourceBalance / 100
@@ -457,28 +477,52 @@ const serviceTypeWhoami = "whoami"
 func coresToMillicores(cores int) int { return cores * cpuMillicoresPerCore }
 
 type serviceRequirement struct {
-	CPU            int
-	RAM            int
-	Disk           int
-	RequiresGPU    bool
-	RequiresDocker bool
-	Arch           string
+	CPU                       int
+	RAM                       int
+	Disk                      int
+	RequiresGPU               bool
+	RequiresDocker            bool
+	Arch                      string
+	HostFloor                 stackkitrelease.UseCaseHostFloor
+	Unavailable               string
+	CPUReservationUnspecified bool
 }
 
 // estimateServiceRequirements returns resource needs for a service, in
 // millicores for CPU.
 //
-// These are steady-state container reservations, not peak capability: homelab
-// hardware time-shares burst load (transcoding, ML inference), so reserving
-// peaks would price every default kit off the 2-core machines the product
-// targets. The invariant is pinned by TestFullDefaultKitFitsA2Core4GBHost.
-//
-// Wizard specs carry generic types (media/auth/cache) with specific names, so
-// a well-known service name is matched before falling back to the type.
+// Released workload reservations and whole-host floors stay distinct. Only
+// unrelated discovered services use Techstack's generic estimates.
 func estimateServiceRequirements(svc core.ServiceSpec) serviceRequirement {
 	req := serviceRequirement{
 		RequiresDocker: true,    // Most services need Docker
 		Arch:           "amd64", // Default architecture
+	}
+	catalog, err := stackkitrelease.ResolveUseCaseCatalog()
+	if err != nil {
+		req.Unavailable = err.Error()
+		return req
+	}
+	footprints, matched, err := catalog.ServiceFootprints(svc.Name, svc.ComputeProfile, true)
+	if !matched {
+		footprints, matched, err = catalog.ServiceFootprints(svc.Type, svc.ComputeProfile, false)
+	}
+	if err != nil {
+		req.Unavailable = err.Error()
+		return req
+	}
+	if matched {
+		for _, footprint := range footprints {
+			req.CPUReservationUnspecified = req.CPUReservationUnspecified || footprint.CPUReservationUnspecified
+			req.CPU += footprint.Reservation.CPUMillicores()
+			req.RAM += footprint.Reservation.RAMMiB()
+			req.Disk += footprint.Reservation.StorageGiB()
+			req.HostFloor.MinCPUCores = math.Max(req.HostFloor.MinCPUCores, footprint.HostFloor.MinCPUCores)
+			req.HostFloor.MinRAMGB = math.Max(req.HostFloor.MinRAMGB, footprint.HostFloor.MinRAMGB)
+			req.HostFloor.MinStorageGB = math.Max(req.HostFloor.MinStorageGB, footprint.HostFloor.MinStorageGB)
+			req.HostFloor.MinAMD64MicroarchitectureLevel = max(req.HostFloor.MinAMD64MicroarchitectureLevel, footprint.HostFloor.MinAMD64MicroarchitectureLevel)
+		}
+		return req
 	}
 	estimate, ok := serviceResourceEstimate(svc.Name)
 	if !ok {
@@ -503,7 +547,7 @@ func serviceResourceEstimate(key string) (resourceEstimate, bool) {
 	case ServiceTypeDatabase, ServiceTypePostgres, ServiceTypeMySQL, ServiceTypeMariaDB, "immich-postgres":
 		return resourceEstimate{CPU: 300, RAM: 512, Disk: 8}, true
 
-	case "jellyfin", "plex", "emby":
+	case "plex", "emby":
 		// Transcoding saturates cores while it runs, but it time-shares with
 		// everything else; a dedicated-two-core reservation would ban these
 		// from every small host.
@@ -514,16 +558,16 @@ func serviceResourceEstimate(key string) (resourceEstimate, bool) {
 		// a dedicated one around the clock.
 		return resourceEstimate{CPU: 400, RAM: 1024, Disk: 8}, true
 
-	case "immich", "immich-server", "media":
+	case "immich-server":
 		return resourceEstimate{CPU: 400, RAM: 768, Disk: 15}, true
 
-	case "nextcloud", "photoprism":
+	case "photoprism":
 		return resourceEstimate{CPU: 400, RAM: 768, Disk: 20}, true
 
 	case "reverse-proxy", "traefik", "nginx", "caddy":
 		return resourceEstimate{CPU: 100, RAM: 128, Disk: 2}, true
 
-	case "auth", "pocket-id", "vaultwarden", "authelia", "pocketbase", "headscale":
+	case "auth", "pocket-id", "authelia", "pocketbase", "headscale":
 		return resourceEstimate{CPU: 100, RAM: 128, Disk: 2}, true
 
 	case "monitoring", "otel-collector", "otel-gateway", "victoriametrics", "prometheus", "grafana", "uptime-kuma":

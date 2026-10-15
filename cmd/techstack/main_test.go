@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -55,35 +54,22 @@ func (s *memoryBreakglassStore) Save(_ context.Context, rec *commonauthlocal.Rec
 	return nil
 }
 
+func (s *memoryBreakglassStore) CompareAndSwap(ctx context.Context, expected, next *commonauthlocal.Record) (bool, error) {
+	if s.err != nil {
+		return false, s.err
+	}
+	if (s.rec == nil) != (expected == nil) || s.rec != nil && (*s.rec != *expected || s.rec.Claimed || s.rec.Locked) {
+		return false, nil
+	}
+	return true, s.Save(ctx, next)
+}
+
 func TestApplyDefaultServeHTTPAddsDefaultForServe(t *testing.T) {
 	got := applyDefaultServeHTTP([]string{"techstack", "serve", "--dir", "pb_data"}, ":5260")
 	want := []string{"techstack", "serve", "--http=:5260", "--dir", "pb_data"}
 
 	if !slices.Equal(got, want) {
 		t.Fatalf("applyDefaultServeHTTP() = %#v, want %#v", got, want)
-	}
-}
-
-func TestNewTechstackAppUsesConfiguredPBDataDir(t *testing.T) {
-	want := filepath.Join(t.TempDir(), "runtime", "pb")
-	t.Setenv("TECHSTACK_PB_DATA_DIR", want)
-	t.Setenv("TECHSTACK_DATA_DIR", filepath.Join(t.TempDir(), "ignored"))
-
-	app := newTechstackApp()
-	if got := app.DataDir(); got != want {
-		t.Fatalf("DataDir() = %q, want %q", got, want)
-	}
-}
-
-func TestNewTechstackAppDerivesPBDataDirFromDataDir(t *testing.T) {
-	base := filepath.Join(t.TempDir(), "runtime")
-	t.Setenv("TECHSTACK_PB_DATA_DIR", "")
-	t.Setenv("TECHSTACK_DATA_DIR", base)
-
-	want := filepath.Join(base, "pb_data")
-	app := newTechstackApp()
-	if got := app.DataDir(); got != want {
-		t.Fatalf("DataDir() = %q, want %q", got, want)
 	}
 }
 

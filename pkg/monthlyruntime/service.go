@@ -140,6 +140,9 @@ type Service struct {
 	// It is optional for legacy/self-host compatibility, but a missing source
 	// never fabricates cleanup success.
 	CleanupReadback CleanupReadbackSource
+	// BackupStores reads the off-site backup cleanup fact. When nil the fact
+	// stays false: absence is never assumed.
+	BackupStores BackupStoreReadback
 	// Reconcile schedules provider-resource teardown after a forced
 	// decommission. When nil, force decommission is refused (see
 	// ErrReconciliationUnavailable) so a canceled lease never leaks a VM.

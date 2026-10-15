@@ -21,6 +21,12 @@ export type DeploymentMode = "self-hosted" | "saas";
 export type DeploymentEdition =
   "selfhost-oss" | "preview" | "saas-standalone" | "saas-embedded";
 
+/**
+ * Which Wallet backs the app: the built-in one of a self-hosted install
+ * (`legacy`) or the person's central kombify Wallet (`kombify`, hosted).
+ */
+export type WalletSource = "legacy" | "kombify";
+
 export interface AuthModeResponse {
   mode: AuthMode;
   edition?: DeploymentEdition;
@@ -29,6 +35,8 @@ export interface AuthModeResponse {
   cloud_auth_url: string | null;
   portal_url: string | null;
   allow_local_login: boolean;
+  /** Absent on a backend that predates the central Wallet: `legacy`. */
+  wallet_source?: WalletSource;
 }
 
 export interface CloudUser {

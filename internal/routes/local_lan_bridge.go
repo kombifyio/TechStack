@@ -16,9 +16,26 @@ type LocalLANBridgeStatus struct {
 	Enabled bool   `json:"enabled"`
 	Origin  string `json:"origin,omitempty"`
 	Address string `json:"address,omitempty"`
+	Pin     string `json:"pin,omitempty"`
 	Port    int    `json:"port"`
 	Mode    string `json:"mode"`
 	Error   string `json:"error,omitempty"`
+}
+
+type localLANBridgeKey struct{}
+
+type localLANBridgeRequest struct{ origin, pin string }
+
+// WithLocalLANBridge marks a request as received by the private-LAN bridge
+// listener, with the bridge's own origin and certificate pin. Only the bridge
+// sets it; no header or Host value a client sends can.
+func WithLocalLANBridge(ctx context.Context, origin, pin string) context.Context {
+	return context.WithValue(ctx, localLANBridgeKey{}, localLANBridgeRequest{origin: origin, pin: pin})
+}
+
+func localLANBridgeFrom(ctx context.Context) (localLANBridgeRequest, bool) {
+	bridge, ok := ctx.Value(localLANBridgeKey{}).(localLANBridgeRequest)
+	return bridge, ok && bridge.origin != "" && bridge.pin != ""
 }
 
 type LocalLANBridgeControl interface {

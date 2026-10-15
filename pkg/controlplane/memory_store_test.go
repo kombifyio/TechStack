@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -481,6 +482,78 @@ func TestMemoryStoreReclaimStaleManagedDestroyRecoveryRequiresExactMarkerAndStal
 	}
 	if reclaimed.State != jobStatePending || reclaimed.StartedAt != nil || !reclaimed.ScheduledFor.Equal(staleRequest.ReclaimedAt) {
 		t.Fatalf("reclaimed job = %#v", reclaimed)
+	}
+}
+
+func TestMemoryStoreSyncJobSnapshotRetainsOriginalRestoreAdmission(t *testing.T) {
+	ctx := t.Context()
+	store := NewMemoryStore()
+	started := time.Now().UTC()
+	request := map[string]any{"request_digest": "original-intent", "restore_result_id": "sha256:result", "owner_approved": true}
+	if _, err := store.CreateJob(ctx, UpsertJobRequest{ID: "restore-job", TenantID: "tenant-1", StackID: "stack-1", Type: "stackkit_lifecycle", State: "pending", Result: map[string]any{RestoreActivationRequestResultKey: request}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.StartJob(ctx, "tenant-1", "restore-job", started); err != nil {
+		t.Fatal(err)
+	}
+	heartbeat := SyncJobSnapshotRequest{Job: UpsertJobRequest{ID: "restore-job", TenantID: "tenant-1", StackID: "stack-1", Type: "stackkit_lifecycle", State: "running", Result: map[string]any{"progress": "before-admission"}}, ObservedState: "running", AttemptStartedAt: &started}
+	if _, err := store.SyncJobSnapshot(ctx, heartbeat); err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.GetJob(ctx, "tenant-1", "restore-job")
+	if err != nil || !reflect.DeepEqual(before.Result[RestoreActivationRequestResultKey], request) {
+		t.Fatal("pre-admission heartbeat lost accepted request")
+	}
+	original := map[string]any{"activation_operation_id": "restore-restore-job", "plan_hash": "sha256:original", "restore_result_id": "sha256:result", "agent_id": "node-1", "release_archive_sha256": "original-archive"}
+	admitted := heartbeat
+	admitted.Job.Result = map[string]any{"restore_activation_admission": original}
+	if _, err := store.SyncJobSnapshot(ctx, admitted); err != nil {
+		t.Fatal(err)
+	}
+	// This is an earlier heartbeat captured before the ACK, delivered after it
+	// under the SAME execution generation. It must not erase recovery authority.
+	if _, err := store.SyncJobSnapshot(ctx, heartbeat); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.GetJob(ctx, "tenant-1", "restore-job")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(loaded.Result["restore_activation_admission"], original) {
+		t.Fatalf("delayed heartbeat lost original admission: %v", loaded.Result)
+	}
+	if !reflect.DeepEqual(loaded.Result[RestoreActivationRequestResultKey], request) {
+		t.Fatal("admission overwrote accepted request")
+	}
+	conflicting := heartbeat
+	conflicting.Job.Result = map[string]any{"restore_activation_admission": map[string]any{"activation_operation_id": "another-operation"}}
+	if _, err = store.SyncJobSnapshot(ctx, conflicting); !errors.Is(err, ErrConflict) {
+		t.Fatalf("conflicting admission accepted: %v", err)
+	}
+	conflicting.Job.Result = map[string]any{RestoreActivationRequestResultKey: map[string]any{"request_digest": "different-intent"}}
+	if _, err = store.SyncJobSnapshot(ctx, conflicting); !errors.Is(err, ErrConflict) {
+		t.Fatal("accepted request replaced")
+	}
+	conflicting.Job.Result = map[string]any{"backup": map[string]any{"mode": "not-admitted"}}
+	if _, err = store.SyncJobSnapshot(ctx, conflicting); !errors.Is(err, ErrConflict) {
+		t.Fatal("admitted restore falsely classified as not admitted")
+	}
+	heartbeat.Job.State = "completed"
+	heartbeat.ObservedState = "completed"
+	if _, err = store.SyncJobSnapshot(ctx, heartbeat); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err = store.GetJob(ctx, "tenant-1", "restore-job")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(loaded.Result["restore_activation_admission"], original) {
+		t.Fatal("terminal snapshot lost original admission")
+	}
+	heartbeat.Job.State = "running"
+	heartbeat.ObservedState = "running"
+	if _, err = store.SyncJobSnapshot(ctx, heartbeat); !errors.Is(err, ErrConflict) {
+		t.Fatal("terminal execution fence weakened")
 	}
 }
 

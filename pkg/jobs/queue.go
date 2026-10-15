@@ -531,7 +531,7 @@ func (q *Queue) processJob(ctx context.Context, job *Job) {
 		q.failJob(job, fmt.Sprintf("no handler for job type: %s", snapshot.Type))
 		return
 	}
-	q.addLog(job, "info", fmt.Sprintf("Job started (attempt %d/%d)", attempt.attempts, attempt.maxAttempts))
+	q.addLogUnlessRecent(job, "info", fmt.Sprintf("Job started (attempt %d/%d)", attempt.attempts, attempt.maxAttempts))
 	q.log.Info("job_started", "id", snapshot.ID, "type", snapshot.Type, "target", snapshot.TargetID, "attempt", attempt.attempts)
 
 	handlerCtx, finishSentry := withJobSentryScope(attempt.ctx, job)
@@ -716,7 +716,11 @@ func (q *Queue) handleJobExecutionError(ctx context.Context, job *Job, err error
 		q.waitJob(ctx, job, waitErr)
 		return
 	}
-	if provisionErr, ok := err.(*ProvisionError); ok {
+	// A wrapped ProvisionError still names its failed step. An explicit
+	// JobError classification keeps its own retry decision.
+	var provisionErr *ProvisionError
+	var classified *JobError
+	if !errors.As(err, &classified) && errors.As(err, &provisionErr) && provisionErr != nil {
 		job.mu.Lock()
 		if job.State == JobStateRunning {
 			job.Step = provisionErr.Step
@@ -918,11 +922,13 @@ func (q *Queue) waitJob(ctx context.Context, job *Job, waitErr *JobWaitError) {
 	job.Error = ""
 	job.ErrorDetails = ""
 	job.cancelFunc = nil
-	job.Logs = append(job.Logs, LogEntry{
-		Timestamp: time.Now(),
-		Level:     "info",
-		Message:   waitLog,
-	})
+	if !recentJobLogHasPrefix(job.Logs, "info", message+" Next resume at ") {
+		job.Logs = append(job.Logs, LogEntry{
+			Timestamp: time.Now(),
+			Level:     "info",
+			Message:   waitLog,
+		})
+	}
 	job.mu.Unlock()
 
 	q.log.Info("job_waiting", "id", job.ID, "reason", reason, "resume_at", nextResumeAt)
@@ -1243,6 +1249,41 @@ func (q *Queue) addLog(job *Job, level, message string) {
 	})
 }
 
+// recentJobLogWindow bounds replay-noise suppression. A waiting job replays its
+// handler every few seconds and would otherwise append the same progress lines
+// on every cycle for the whole wait.
+const recentJobLogWindow = 32
+
+func recentJobLogHasPrefix(logs []LogEntry, level, prefix string) bool {
+	start := len(logs) - recentJobLogWindow
+	if start < 0 {
+		start = 0
+	}
+	for _, entry := range logs[start:] {
+		if entry.Level == level && strings.HasPrefix(entry.Message, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// addLogUnlessRecent appends a log line unless the same line is already among
+// the most recent entries, so replayed progress is not logged again.
+func (q *Queue) addLogUnlessRecent(job *Job, level, message string) {
+	job.mu.Lock()
+	defer job.mu.Unlock()
+	start := len(job.Logs) - recentJobLogWindow
+	if start < 0 {
+		start = 0
+	}
+	for _, entry := range job.Logs[start:] {
+		if entry.Level == level && entry.Message == message {
+			return
+		}
+	}
+	job.Logs = append(job.Logs, LogEntry{Timestamp: time.Now(), Level: level, Message: message})
+}
+
 // Enqueue adds a new job to the queue.
 func (q *Queue) Enqueue(job *Job) error {
 	if job.ID == "" {
@@ -1255,7 +1296,8 @@ func (q *Queue) Enqueue(job *Job) error {
 	job.WaitReason = ""
 	job.NextResumeAt = nil
 	job.CreatedAt = time.Now()
-	job.Progress = 0
+	// Progress is left as given: a rehydrated durable job carries its
+	// persisted progress, and a new job starts at zero anyway.
 
 	q.jobsMu.Lock()
 	if existing, exists := q.jobs[job.ID]; exists && !existing.Snapshot().PersistenceSuppressed {
@@ -1457,7 +1499,7 @@ func (q *Queue) UpdateProgress(jobID string, progress int, message string) {
 		}
 		job.mu.Unlock()
 		if message != "" {
-			q.addLog(job, "info", message)
+			q.addLogUnlessRecent(job, "info", message)
 		}
 	}
 }

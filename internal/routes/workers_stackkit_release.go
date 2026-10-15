@@ -27,7 +27,7 @@ func (h workerRouteHandlers) agentStackKitRelease(e *httpx.Event) error {
 	if requestedOS != managedRuntimeOSLinux || requestedArch == "" {
 		return httpx.BadRequest(e, "Unsupported StackKits runtime platform", nil)
 	}
-	rawToken := bearerToken(e.Request)
+	rawToken := workerRequestCredential(e.Request)
 	if rawToken == "" {
 		return httpx.Unauthorized(e, "A valid agent download capability is required")
 	}

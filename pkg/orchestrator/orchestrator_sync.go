@@ -464,6 +464,16 @@ func (o *Orchestrator) updateStackStatusSnapshot(job jobs.JobSnapshot) {
 		// while handling the terminal snapshot.
 		return
 	}
+	// A typed Apply updates document custody without asserting that an
+	// earlier full rollout's restore or simulation checks completed.
+	if job.Type == jobs.JobTypeStackKitLifecycle && job.State == jobs.JobStateCompleted && job.Result != nil {
+		if tenantID := firstNonEmptyJobString(job, stackTenantIDField); tenantID != "" {
+			o.persistStackKitRolloutBinding(tenantID, job)
+		}
+	}
+	if tenantID := firstNonEmptyJobString(job, stackTenantIDField); tenantID != "" {
+		o.projectPublicTLSRepair(tenantID, job)
+	}
 	newStatus := stackStatusForJob(job)
 	if newStatus == "" {
 		return
@@ -478,20 +488,37 @@ func (o *Orchestrator) updateStackStatusSnapshot(job jobs.JobSnapshot) {
 	if job.State != jobs.JobStateCompleted || job.Result == nil {
 		return
 	}
+	go o.repairDegradedPublicTLS(tenantID, job)
 	o.persistStackKitRolloutBinding(tenantID, job)
 	if syncErr := o.syncStackKitRuntimeInventoryFromJobSnapshot(tenantID, job); syncErr != nil {
 		o.log.Warn("stackkit_inventory_projection_failed", "stack_id", job.TargetID, "error", syncErr)
 	}
-	if o.walletStore != nil {
-		count, syncErr := walletsync.SyncStackKitOutputsToStore(o.ctx, o.walletStore, walletsync.SyncRequest{
-			TenantID: tenantID, OwnerID: firstNonEmptyJobString(job, stackOwnerIDField),
-			StackID: job.TargetID, StackName: job.TargetName, Result: job.Result,
-		})
-		if syncErr != nil {
-			o.log.Warn("stackkit_wallet_sync_failed", "stack_id", job.TargetID, "error", syncErr)
-		} else if count > 0 {
-			o.log.Info("stackkit_wallet_sync_completed", "stack_id", job.TargetID, "items", count)
-		}
+	o.syncStackKitOutputsToWallet(tenantID, job)
+}
+
+// syncStackKitOutputsToWallet saves the StackKit outputs of a completed job in
+// the wallet the deployment uses. With the kombify Wallet as the source the
+// outputs go there and the legacy store is never written, even when the
+// Wallet fails; the failure is logged and the next completed job retries.
+func (o *Orchestrator) syncStackKitOutputsToWallet(tenantID string, job jobs.JobSnapshot) {
+	request := walletsync.SyncRequest{
+		TenantID: tenantID, OwnerID: firstNonEmptyJobString(job, stackOwnerIDField),
+		StackID: job.TargetID, StackName: job.TargetName, Result: job.Result,
+	}
+	var count int
+	var syncErr error
+	switch {
+	case o.kombifyWallet != nil:
+		count, syncErr = walletsync.SyncStackKitOutputsToKombifyWallet(o.ctx, o.kombifyWallet, request)
+	case o.walletStore != nil:
+		count, syncErr = walletsync.SyncStackKitOutputsToStore(o.ctx, o.walletStore, request)
+	default:
+		return
+	}
+	if syncErr != nil {
+		o.log.Warn("stackkit_wallet_sync_failed", "stack_id", job.TargetID, "error", syncErr)
+	} else if count > 0 {
+		o.log.Info("stackkit_wallet_sync_completed", "stack_id", job.TargetID, "items", count)
 	}
 }
 
@@ -544,6 +571,25 @@ func (o *Orchestrator) updateControlPlaneStackStatus(job jobs.JobSnapshot, newSt
 	runtimeSummary := map[string]any{}
 	for key, value := range job.Result {
 		runtimeSummary[key] = value
+	}
+	if _, provided := job.Result[jobs.StackKitRolloutBindingResultField]; !provided {
+		current, err := store.GetStack(o.ctx, tenantID, job.TargetID)
+		if err != nil {
+			o.log.Error("failed_to_read_current_stack_runtime_binding", "stack_id", job.TargetID, "error", err)
+			return
+		}
+		// Generate, plan and service jobs replace the transient summary but
+		// do not replace the document the last successful Apply owns.
+		if binding, ok := jobs.DecodeStackKitRolloutBinding(current.RuntimeSummary[jobs.StackKitRolloutBindingResultField]); ok {
+			runtimeSummary[jobs.StackKitRolloutBindingResultField] = binding.Map()
+		}
+		// Degraded components stay visible until a rollout or repair
+		// reports them again.
+		if components, ok := current.RuntimeSummary[jobs.DegradedComponentsResultField]; ok {
+			if _, provided := job.Result[jobs.DegradedComponentsResultField]; !provided {
+				runtimeSummary[jobs.DegradedComponentsResultField] = components
+			}
+		}
 	}
 	if _, err := store.UpdateStackRuntime(o.ctx, tenantID, job.TargetID, controlplane.RuntimeUpdate{
 		Status:         newStatus,
