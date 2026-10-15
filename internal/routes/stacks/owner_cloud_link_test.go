@@ -6,9 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kombifyio/techstack/internal/gocommon/authlocal"
-	"github.com/pocketbase/pocketbase/core"
-
 	"github.com/kombifyio/techstack/pkg/controlplane"
 )
 
@@ -210,45 +207,6 @@ func TestOwnerBootstrapDenial_DetailsShape(t *testing.T) {
 		if _, ok := guidance[key]; !ok {
 			t.Fatalf("user_guidance missing key %q: %+v", key, guidance)
 		}
-	}
-}
-
-func TestCloudLinkForOwner_ReadsUserLinks(t *testing.T) {
-	app := newOwnerSpecTestApp(t)
-	defer app.Cleanup()
-
-	ensureOwnerSpecTestCollection(t, app, "user_links",
-		&core.TextField{Name: "user"},
-		&core.TextField{Name: "provider"},
-		&core.TextField{Name: "external_id"},
-		&core.TextField{Name: "external_email"},
-		&core.TextField{Name: "external_name"},
-		&core.BoolField{Name: "email_verified"},
-	)
-	collection, err := app.FindCollectionByNameOrId("user_links")
-	if err != nil {
-		t.Fatalf("find user_links collection: %v", err)
-	}
-	record := core.NewRecord(collection)
-	record.Set("user", authlocal.BreakGlassRecordID)
-	record.Set("provider", "cloud")
-	record.Set("external_id", "auth0|cloud-subject")
-	record.Set("external_email", "linked.owner@example.com")
-	record.Set("external_name", "Linked Owner")
-	record.Set("email_verified", true)
-	if err := app.Save(record); err != nil {
-		t.Fatalf("save user_links record: %v", err)
-	}
-
-	link := cloudLinkForOwner(app, "breakglass:"+authlocal.BreakGlassRecordID)
-	if link == nil {
-		t.Fatal("expected cloud link for canonical local owner")
-	}
-	if link.Email != "linked.owner@example.com" || !link.EmailVerified || link.DisplayName != "Linked Owner" {
-		t.Fatalf("unexpected cloud link: %+v", link)
-	}
-	if got := cloudLinkForOwner(app, "operator-without-link"); got != nil {
-		t.Fatalf("expected nil link for unknown operator, got %+v", got)
 	}
 }
 

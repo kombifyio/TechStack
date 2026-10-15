@@ -208,7 +208,7 @@ func (h workerRouteHandlers) projectServerHeartbeat(ctx context.Context, worker 
 				"runtime_agent_id":    worker.ID,
 				"authority":           "guard",
 				"observed_host_state": "",
-			}, mergeAnyMaps(hostMaintenanceMetadataFromWorker(worker), func() map[string]any {
+			}, mergeAnyMaps(mergeAnyMaps(identityBindingMetadataFromWorker(worker), hostMaintenanceMetadataFromWorker(worker)), func() map[string]any {
 				if convergence := runtimeConvergenceMetadata(worker); convergence != nil {
 					return map[string]any{"runtime_convergence": convergence}
 				}
@@ -295,6 +295,7 @@ func (h workerRouteHandlers) projectServerInventory(ctx context.Context, worker 
 		ServiceSource:          stackKitsInventorySource,
 		ManifestObserved:       req.ManifestObserved,
 		DiscoveryObserved:      req.DiscoveryObserved,
+		DiscoveryComplete:      req.DiscoveryComplete,
 		DiscoveredServiceCount: req.DiscoveredServiceCount,
 		Node:                   node,
 		Services:               services,
@@ -715,4 +716,15 @@ func canonicalGuardChannelProvenance(value string) string {
 	default:
 		return ""
 	}
+}
+
+// identityBindingMetadataFromWorker carries how the Guard last proved its
+// identity into server state, so legacy_bearer workers stay visible until they
+// bind a host key.
+func identityBindingMetadataFromWorker(worker controlplane.Worker) map[string]any {
+	binding := strings.TrimSpace(stringFromAny(worker.Capabilities[workerCapabilityIdentityBinding]))
+	if binding == "" {
+		return nil
+	}
+	return map[string]any{workerCapabilityIdentityBinding: binding}
 }

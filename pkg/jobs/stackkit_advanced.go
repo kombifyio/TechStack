@@ -23,6 +23,10 @@ const (
 	stackKitStepDriftReconcile  = "advanced_drift_reconcile"
 	stackKitStepRollback        = "advanced_rollback"
 	stackKitStepRestoreDrill    = "advanced_restore_drill"
+	// The managed kombify.me origin certificate (ADR-0047): the node returns a
+	// CSR, Techstack has Cloudflare issue it, the node installs the result.
+	stackKitStepOriginCertificateRequest = "origin_certificate_request"
+	stackKitStepOriginCertificateInstall = "origin_certificate_install"
 
 	// StackKitModeAdvanced is the stackkit_mode every managed deployment
 	// records: Techstack dispatches Advanced Mode only.
@@ -48,7 +52,7 @@ const (
 func IsAdvancedStackKitLifecycleOperation(operation string) bool {
 	switch strings.ToLower(strings.TrimSpace(operation)) {
 	case StackKitLifecycleAdvancedChangeSet, StackKitLifecycleDriftReconcile,
-		StackKitLifecycleRollback, StackKitLifecycleRestoreDrill:
+		StackKitLifecycleRollback, StackKitLifecycleRestoreDrill, StackKitLifecyclePublicTLSRepair:
 		return true
 	default:
 		return false
@@ -80,6 +84,26 @@ func (e *AdvancedOperationUnavailableError) Error() string {
 
 func (e *AdvancedOperationUnavailableError) Unwrap() error { return e.Err }
 
+// AdvancedPrerequisiteError reports a managed rollout whose Advanced
+// prerequisite is missing: the pinned release's own operations catalog or the
+// installation's Advanced issuer. Every Techstack-managed deployment runs
+// Advanced Mode, so the rollout fails closed; there is no Standard fallback.
+type AdvancedPrerequisiteError struct {
+	Prerequisite string
+	Err          error
+}
+
+func (e *AdvancedPrerequisiteError) Error() string {
+	return fmt.Sprintf("managed rollout requires Advanced Mode, but %s is missing: %v", e.Prerequisite, e.Err)
+}
+
+func (e *AdvancedPrerequisiteError) Unwrap() error { return e.Err }
+
+const (
+	advancedPrerequisiteCatalog = "the pinned release's Advanced operations catalog"
+	advancedPrerequisiteIssuer  = "the Advanced capability issuer"
+)
+
 // advancedFailureReason maps an Advanced failure to its structured reason.
 func advancedFailureReason(err error) (string, string, bool) {
 	var denied *AdvancedOperationDeniedError
@@ -89,6 +113,10 @@ func advancedFailureReason(err error) (string, string, bool) {
 	var unavailable *AdvancedOperationUnavailableError
 	if errors.As(err, &unavailable) {
 		return "advanced_operation_unavailable", unavailable.Operation, true
+	}
+	var prerequisite *AdvancedPrerequisiteError
+	if errors.As(err, &prerequisite) {
+		return "advanced_prerequisite_missing", "", true
 	}
 	return "", "", false
 }
@@ -248,6 +276,9 @@ func runAdvancedStackKitLifecycle(ctx context.Context, cfg StackKitLifecycleConf
 	if err != nil {
 		return nil, err
 	}
+	if request.Operation == StackKitLifecyclePublicTLSRepair {
+		return repairPublicTLS(ctx, cfg, dispatcher, jobID, request)
+	}
 	steps := map[string][]string{
 		StackKitLifecycleAdvancedChangeSet: {stackKitStepChangeSetCreate, stackKitStepChangeSetApply},
 		StackKitLifecycleDriftReconcile:    {stackKitStepChangeSetCreate, stackKitStepDriftReconcile},
@@ -278,6 +309,16 @@ func runAdvancedStackKitLifecycle(ctx context.Context, cfg StackKitLifecycleConf
 			return summary, err
 		}
 		summary[ManagedAddressReconciliationResultField] = reconciliation
+		// A changed route set needs a certificate for the new hostnames before
+		// apply verifies TLS; the old certificate is revoked after the swap.
+		certificate, certErr := reissueOriginCertificateForRoutes(ctx, cfg.OriginCertificates, dispatcher, jobID, reconciliation)
+		if certificate != nil {
+			summary[OriginCertificateResultField] = certificate
+		}
+		if certErr != nil {
+			summary["success"] = false
+			return summary, certErr
+		}
 	}
 	var created stackkitcommand.AdvancedOperationResult
 	stepResults := make([]interface{}, 0, len(steps))
@@ -314,22 +355,19 @@ func runAdvancedStackKitLifecycle(ctx context.Context, cfg StackKitLifecycleConf
 }
 
 // advancedGenerationCandidate sets generation.target terramate on the
-// managed rollout's candidate StackSpec when the pinned release ships the
-// Advanced operations catalog. Releases before the catalog do not allow the
-// Terramate target for every kit (v0.46.1 allows only compose for Cloud Kit)
-// and lack the Terramate executor, so their rollouts keep the kit's own
-// target until the next repin.
-func advancedGenerationCandidate(candidate []byte, release stackkitrelease.Release) ([]byte, bool, error) {
-	catalog, err := release.AdvancedOperations()
-	if err != nil {
-		return nil, false, err
+// managed rollout's candidate StackSpec. Every managed rollout generates the
+// Terramate target from its first rollout; a pinned release without its own
+// Advanced operations catalog cannot serve it and fails the rollout.
+func advancedGenerationCandidate(candidate []byte, release stackkitrelease.Release) ([]byte, error) {
+	if _, err := release.AdvancedOperations(); err != nil {
+		return nil, &AdvancedPrerequisiteError{Prerequisite: advancedPrerequisiteCatalog, Err: err}
 	}
-	if catalog.Source != stackkitrelease.AdvancedOperationsSourceRelease {
-		return candidate, false, nil
+	if len(candidate) == 0 {
+		return nil, fmt.Errorf("managed rollout requires the candidate StackSpec for its Terramate generation")
 	}
 	var document map[string]interface{}
 	if decodeErr := json.Unmarshal(candidate, &document); decodeErr != nil {
-		return nil, false, fmt.Errorf("decode managed rollout candidate: %w", decodeErr)
+		return nil, fmt.Errorf("decode managed rollout candidate: %w", decodeErr)
 	}
 	generation := mapFromInterface(document["generation"])
 	if generation == nil {
@@ -339,9 +377,9 @@ func advancedGenerationCandidate(candidate []byte, release stackkitrelease.Relea
 	document["generation"] = generation
 	encoded, err := json.Marshal(document)
 	if err != nil {
-		return nil, false, fmt.Errorf("encode managed rollout candidate: %w", err)
+		return nil, fmt.Errorf("encode managed rollout candidate: %w", err)
 	}
-	return encoded, true, nil
+	return encoded, nil
 }
 
 // runAdvancedStackKitLifecycleJob runs an operator Advanced operation as a
@@ -366,16 +404,30 @@ func runAdvancedStackKitLifecycleJob(ctx context.Context, cfg StackKitLifecycleC
 	}
 	job.setStep("stackkit_advanced_" + req.Operation)
 	q.UpdateProgress(job.ID, 40, "Dispatching StackKits Advanced "+req.Operation)
-	summary, err := runAdvancedStackKitLifecycle(ctx, cfg, release, job.ID, req)
+	commandScope := job.ID
+	if req.Operation == StackKitLifecyclePublicTLSRepair {
+		// Each queue attempt is a new pair of node commands: an at-most-once
+		// command id is never dispatched twice.
+		job.mu.RLock()
+		commandScope = fmt.Sprintf("%s-a%d", job.ID, job.Attempts)
+		job.mu.RUnlock()
+	}
+	summary, err := runAdvancedStackKitLifecycle(ctx, cfg, release, commandScope, req)
 	if summary != nil {
 		if managedAdmission != nil {
 			summary[ManagedBackupAdmissionField] = managedAdmission
 		}
-		job.replaceResult(summary)
+		job.replaceStackKitLifecycleResult(req, summary)
 	}
 	if err != nil {
 		if errors.Is(err, advancedissuer.ErrUnavailable) {
 			return NewConfigError(err)
+		}
+		var unavailable *AdvancedOperationUnavailableError
+		if req.Operation == StackKitLifecyclePublicTLSRepair && !errors.As(err, &unavailable) {
+			// Cloudflare issuance and node install failures are transient: the
+			// queue retries this job with backoff instead of giving up.
+			return NewTransientError(err)
 		}
 		return NewPermanentError(err)
 	}
@@ -428,27 +480,33 @@ func driftReportMap(report stackkitcommand.DriftReport) map[string]interface{} {
 	}
 }
 
-// runAdvancedRestoreDrill runs the managed rollout's restore drill as the
-// Advanced restore.drill operation when the pinned release offers it. It
-// reports handled false when the catalog lacks an available restore.drill,
-// so the caller keeps the native backup run and staged restore sequence as
-// the explicit fallback for releases before the drill shipped.
-func (r *deployRollout) runAdvancedRestoreDrill(ctx context.Context, request StackKitLifecycleRequest, release stackkitrelease.Release, planHash string) (map[string]interface{}, bool, error) {
+// requireAdvancedRestoreDrill fails a rollout whose drill cannot run as the
+// Advanced restore.drill of the pinned release: a missing issuer, catalog or
+// available restore.drill entry is an error. There is no native staged
+// restore fallback.
+func (r *deployRollout) requireAdvancedRestoreDrill(release stackkitrelease.Release) error {
 	if r.cfg.AdvancedIssuer == nil {
-		return nil, false, nil
+		return &AdvancedPrerequisiteError{Prerequisite: advancedPrerequisiteIssuer, Err: advancedissuer.ErrUnavailable}
 	}
 	catalog, err := release.AdvancedOperations()
 	if err != nil {
-		return nil, true, err
+		return &AdvancedPrerequisiteError{Prerequisite: advancedPrerequisiteCatalog, Err: err}
 	}
-	if catalog.Dispatchable(stackkitcommand.AdvancedCatalogOperation(agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_RESTORE_DRILL)) != nil {
-		return nil, false, nil
+	drill := stackkitcommand.AdvancedCatalogOperation(agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_RESTORE_DRILL)
+	if dispatchErr := catalog.Dispatchable(drill); dispatchErr != nil {
+		return &AdvancedOperationUnavailableError{Operation: drill, Err: dispatchErr}
 	}
+	return nil
+}
+
+// runAdvancedRestoreDrill runs the rollout's restore drill as the Advanced
+// restore.drill operation of the pinned release.
+func (r *deployRollout) runAdvancedRestoreDrill(ctx context.Context, request StackKitLifecycleRequest, release stackkitrelease.Release, planHash string) (map[string]interface{}, error) {
 	request.Operation = StackKitLifecycleRestoreDrill
 	request.OwnerApproved = true
 	summary, err := runAdvancedStackKitLifecycle(ctx, StackKitLifecycleConfig{Sender: r.cfg.StackKitCommander, AdvancedIssuer: r.cfg.AdvancedIssuer}, release, r.job.ID+"-restore-drill", request)
 	if err != nil {
-		return nil, true, err
+		return nil, err
 	}
 	advanced, _ := summary[advancedResultField].(map[string]interface{})
 	report, _ := advanced["report"].(map[string]interface{})
@@ -462,5 +520,5 @@ func (r *deployRollout) runAdvancedRestoreDrill(ctx context.Context, request Sta
 		resultSnapshotAnchorKey: report["anchorId"],
 		"restore_result_id":     report["restoreResultId"],
 		"capability_id":         summary["capability_id"],
-	}, true, nil
+	}, nil
 }

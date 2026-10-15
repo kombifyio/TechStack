@@ -7,9 +7,9 @@ param(
     [ValidateSet("Local", "Cloud")][string]$DesktopEdition = "Local",
     [string]$RuntimeExe = "",
     [string]$LinuxRuntimeExe = "",
+    [string]$GuardReleaseDirectory = "",
+    [string]$GuardReleaseTool = "",
     [string]$OutputDir = "dist\windows-client",
-    [switch]$RequireAuthenticode,
-    [string]$ExpectedAuthenticodeSubjectPattern = "",
     # Spec templates produced by the same pinned StackKits release on Linux.
     # Passed through to the bundle builder so the Windows CLI never has to
     # generate them here; see kombify-Techstack-uxss.
@@ -32,6 +32,21 @@ $root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $sourceRevision = (& git -C $root rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or $sourceRevision -notmatch '^[0-9a-f]{40}$') {
     throw "Windows client packaging requires an exact Git source revision."
+}
+$publicProfile = Test-Path -LiteralPath (Join-Path $root ".techstack-public-export.json")
+if ($DesktopEdition -eq "Local" -and $publicProfile -and [string]::IsNullOrWhiteSpace($GuardReleaseDirectory)) {
+    throw "Public Local packaging requires the exact-source signed Guard publication."
+}
+$signedGuardDirectory = ""
+if (-not [string]::IsNullOrWhiteSpace($GuardReleaseDirectory)) {
+    if ($DesktopEdition -ne "Local" -or [string]::IsNullOrWhiteSpace($GuardReleaseTool)) {
+        throw "A signed Guard seed requires Local packaging and its canonical release verifier."
+    }
+    $signedGuardDirectory = (Resolve-Path -LiteralPath $GuardReleaseDirectory).Path
+    $verifier = (Resolve-Path -LiteralPath $GuardReleaseTool).Path
+    & $verifier verify $signedGuardDirectory --expected-source $sourceRevision --require-runtime-bundles
+    if ($LASTEXITCODE -ne 0) { throw "The signed Guard publication does not match this source/runtime." }
+    $signedManifest = Get-Content -Raw -LiteralPath (Join-Path $signedGuardDirectory "release-manifest.json") | ConvertFrom-Json
 }
 # Pre-1.0 packaging produces the requested artifacts only. The optional
 # client checks remain independent diagnostics and are not release dependencies.
@@ -94,28 +109,54 @@ $bundleArgs = @{
 if (-not [string]::IsNullOrWhiteSpace($SpecTemplatesPath)) {
     $bundleArgs.SpecTemplatesPath = $SpecTemplatesPath
 }
+if ($signedGuardDirectory -ne "" -and $signedManifest.version -ne $Version) {
+    throw "The signed Guard version must match the product being packaged."
+}
+if ($signedGuardDirectory -ne "") {
+    $bundleArgs.ControllerOnly = $true
+    $bundleArgs.ExpectedReleaseTag = $signedManifest.stackkits.version
+    $bundleArgs.ExpectedLinuxArchiveSHA256 = $signedManifest.stackkits.archiveSha256
+}
 & (Join-Path $PSScriptRoot "new-windows-stackkit-bundle.ps1") @bundleArgs
 if ($LASTEXITCODE -ne 0) { throw "StackKits Linux bundle build failed with exit code $LASTEXITCODE" }
+if ($signedGuardDirectory -ne "") {
+    $seedDestination = Join-Path $stageDir "guard-release"
+    New-Item -ItemType Directory -Force -Path $seedDestination | Out-Null
+    foreach ($asset in @("release-manifest.json", "release-manifest.sigstore.json", "techstack-linux-amd64", "techstack-linux-amd64.sigstore.json", "techstack-linux-arm64", "techstack-linux-arm64.sigstore.json", "stackkit-runtime-linux-amd64.tar.gz", "stackkit-runtime-linux-arm64.tar.gz")) {
+        Copy-Item -Force -LiteralPath (Join-Path $signedGuardDirectory $asset) -Destination (Join-Path $seedDestination $asset)
+    }
+    # The consumer serves the producer's exact archive, never a Windows repack.
+    Copy-Item -Force -LiteralPath (Join-Path $seedDestination "stackkit-runtime-linux-amd64.tar.gz") -Destination $bundleArgs.OutputPath
+    Copy-Item -Force -LiteralPath (Join-Path $seedDestination "techstack-linux-amd64") -Destination $linuxRuntimeDestination
+    $metadataDirectory = [IO.Path]::GetFullPath((Join-Path $stageDir "signed-runtime-metadata"))
+    if (!$metadataDirectory.StartsWith($safeDistRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Signed runtime metadata target escapes the workspace dist directory."
+    }
+    New-Item -ItemType Directory -Force -Path $metadataDirectory | Out-Null
+    try {
+        tar --extract --gzip --file $bundleArgs.OutputPath --directory $metadataDirectory .stackkit/stackkits-release-pin.json .stackkit/stackkits-use-case-catalog-v1.json .stackkit/stackkits-advanced-operations-v1.json
+        if ($LASTEXITCODE -ne 0) { throw "Could not read the verified runtime catalogs." }
+        $linuxPin = Get-Content -Raw -LiteralPath (Join-Path $metadataDirectory ".stackkit\stackkits-release-pin.json") | ConvertFrom-Json
+        $controllerPlanner = Get-Content -Raw -LiteralPath (Join-Path $bundleArgs.ControllerCatalogOutputPath "stackkits-controller-address-planner.json") | ConvertFrom-Json
+        if ($linuxPin.indexSha256 -ne $controllerPlanner.controller.indexSha256) {
+            throw "The signed Guard and native controller pin different release indexes."
+        }
+        foreach ($catalog in @("stackkits-use-case-catalog-v1.json", "stackkits-advanced-operations-v1.json")) {
+            Copy-Item -Force -LiteralPath (Join-Path $metadataDirectory ".stackkit\$catalog") -Destination (Join-Path $bundleArgs.ControllerCatalogOutputPath $catalog)
+        }
+    } finally {
+        Remove-Item -LiteralPath $metadataDirectory -Recurse -Force
+    }
+}
 Copy-Item -Force -Path (Join-Path $root "scripts\uninstall-windows-client.ps1") -Destination $stageDir
 Copy-Item -Force -Path (Join-Path $root "scripts\reset-windows-client-state.ps1") -Destination $stageDir
 } else {
     Copy-Item -Force -Path (Join-Path $root "scripts\install-windows-cloud-client.ps1") -Destination $stageDir
 }
-Copy-Item -Force -Path (Join-Path $root "scripts\test-windows-client-authenticode.ps1") -Destination $stageDir
 Copy-Item -Force -Path (Join-Path $root "clients\windows\README.md") -Destination (Join-Path $stageDir "README.md")
 $stageAssetsDir = Join-Path $stageDir "Assets"
 New-Item -ItemType Directory -Force -Path $stageAssetsDir | Out-Null
 Copy-Item -Force -Path (Join-Path $root "clients\windows\Kombify.TechStack.Client\Assets\kombify-navy.ico") -Destination $stageAssetsDir
-
-if ($RequireAuthenticode) {
-    $executables = @((Join-Path $stageDir "kombify-techstack-client.exe"))
-    if ($DesktopEdition -eq "Local") { $executables += (Join-Path $stageDir "techstack.exe") }
-    foreach ($executable in $executables) {
-        & (Join-Path $PSScriptRoot "test-windows-client-authenticode.ps1") `
-            -ExecutablePath $executable `
-            -ExpectedSubjectPattern $ExpectedAuthenticodeSubjectPattern
-    }
-}
 
 $zipName = if ($DesktopEdition -eq "Cloud") { "kombify-techstack-cloud-client_${Version}_Windows_x86_64.zip" } else { "kombify-techstack-client_${Version}_Windows_x86_64.zip" }
 $zipPath = Join-Path $zipDir $zipName
@@ -150,8 +191,8 @@ $unsignedMarker = Join-Path $zipDir "UNSIGNED-WINDOWS-RELEASE.txt"
 kombify Techstack $DesktopEdition Windows release $Version
 
 The Windows MSI and Burn setup.exe in this release are intentionally
-unsigned. Authenticode signing is optional for this alpha and never blocks
-publication. Verify the downloaded assets against SHA256SUMS.txt before
+unsigned on every release channel, including stable. No Authenticode
+certificate is required. Verify the downloaded assets against SHA256SUMS.txt before
 installing.
 
 Assets:

@@ -43,6 +43,13 @@ service AgentService {
 
   // GetUpdateCandidates returns available OS/package/container updates.
   rpc GetUpdateCandidates(UpdateCandidatesRequest) returns (UpdateCandidatesResponse);
+
+  // ReportUserNotification carries one user-authored smart-home notice (the
+  // opt-in `user_notification` agent-channel class, SERVER-CONNECTION-STANDARD
+  // section 9). The node holds no notifications-engine credential: Core
+  // authenticates the agent, enforces the text bound and the per-node rate
+  // limit, resolves the recipients and dispatches the Feed item itself.
+  rpc ReportUserNotification(UserNotification) returns (UserNotificationAck);
 }
 
 // =============================================================================
@@ -151,6 +158,82 @@ enum StackKitOperation {
   STACKKIT_OPERATION_HOST_UPDATE_APPLY = 31;
   // `stackkit host reboot`: schedule a guarded reboot after a fixed delay.
   STACKKIT_OPERATION_HOST_REBOOT = 32;
+  // `stackkit host security repair --apply`: restore the named drifted host
+  // security controls (host_security_controls) without cutting the management
+  // path. A host operation needing the agent capability
+  // stackkit.host-security.v1; it carries no stack inputs.
+  STACKKIT_OPERATION_HOST_SECURITY_REPAIR = 33;
+  // Source-bound application adoption; never creates or recreates a runtime.
+  STACKKIT_OPERATION_APPLICATION_INSPECT = 34;
+  STACKKIT_OPERATION_APPLICATION_ADOPT = 35;
+  STACKKIT_OPERATION_APPLICATION_VERIFY = 36;
+  STACKKIT_OPERATION_APPLICATION_RELEASE = 37;
+  STACKKIT_OPERATION_APPLICATION_CONTROL = 38;
+  // Sealed host delivery of the managed off-site backup target (Wallet host
+  // delivery). The node, not the control plane, holds the custody and issues
+  // its own backup-target binding.
+  // `stackkit backup target recipient`: prove the node's separate encryption
+  // recipient key, answering recipient_challenge. Carries no secret.
+  STACKKIT_OPERATION_BACKUP_TARGET_RECIPIENT = 39;
+  // `stackkit backup target import --sealed`: open sealed_delivery into the
+  // node's encrypted custody and let the node issue its binding.
+  STACKKIT_OPERATION_BACKUP_TARGET_IMPORT = 40;
+  // `... import --sealed --rebind`: renew an expired node-issued binding over
+  // identical custody from a fresh sealed_delivery.
+  STACKKIT_OPERATION_BACKUP_TARGET_REBIND = 41;
+  // One step of the Modern Homelab Cloud-node hand-off: Core relays a public
+  // document between the Home node and the Cloud node. The closed step set and
+  // its argv live in the Agent; the step selects the pinned CLI command.
+  STACKKIT_OPERATION_FEDERATION_HANDOFF = 42;
+  // Explicit authenticated cache preparation for the retained generation's
+  // attested source release. Never runs Upgrade, Apply, or changes its plan.
+  STACKKIT_OPERATION_PREPARE_SOURCE_GENERATION = 43;
+  // Home network move (agent capability stackkit.network.v1). The server was
+  // carried to another network: `stackkit network rebind --yes --json`
+  // re-detects the LAN address, re-issues the signed LAN DNS custody record and
+  // regenerates and re-applies the workspace.
+  STACKKIT_OPERATION_NETWORK_REBIND = 44;
+  // `stackkit network status --json`: read-only view of the node's network
+  // facts and of its LAN DNS binding.
+  STACKKIT_OPERATION_NETWORK_STATUS = 45;
+  // public-tls.origin-certificate.request (ADR-0047): the node generates the
+  // origin key pair, keeps it, and returns only the CSR for origin_hosts.
+  // Capability-gated like the other ADVANCED_* operations.
+  STACKKIT_OPERATION_ADVANCED_ORIGIN_CERTIFICATE_REQUEST = 46;
+  // public-tls.origin-certificate.install (ADR-0047): verify and install the
+  // PEM certificate Cloudflare issued for the pending CSR (origin_certificate_pem,
+  // public data) against the node-held key.
+  STACKKIT_OPERATION_ADVANCED_ORIGIN_CERTIFICATE_INSTALL = 47;
+  // Node-owned Home Assistant connector setup. Only closed metadata crosses
+  // Guard; native credentials and Owner custody remain on the node.
+  STACKKIT_OPERATION_APPLICATION_CONNECTOR = 48;
+  // Read the exact original setup receipt against current local custody and
+  // deployment. Never issues, revokes, bootstraps an IdP or replays setup.
+  STACKKIT_OPERATION_APPLICATION_CONNECTOR_VERIFY = 49;
+  // Promote a verified node-owned staged result, or reconcile its original journal.
+  STACKKIT_OPERATION_BACKUP_RESTORE_ACTIVATE = 50;
+  STACKKIT_OPERATION_BACKUP_RESTORE_RECOVER = 51;
+  // Remove one household subject from the node's Pocket ID
+  // (`stackkit user remove <username> --owner-approve --json`). It requires
+  // Owner approval and household_username; StackKits refuses owner and admin
+  // identities itself.
+  STACKKIT_OPERATION_HOUSEHOLD_REMOVE = 52;
+  // Wallet items on the node (StackKits pkg/hostdelivery). The kombify Wallet,
+  // not the control plane, seals each value to the node's host delivery
+  // recipient key; Techstack carries the node's public statement to the Wallet
+  // and the ciphertext back.
+  // `stackkit host delivery recipient`: prove the node's host delivery
+  // recipient key, answering recipient_challenge, and pin the Wallet's
+  // delivering key (delivery_authority_key) for its generation. No secret.
+  STACKKIT_OPERATION_HOST_DELIVERY_RECIPIENT = 53;
+  // `stackkit wallet-item import`: open sealed_delivery, addressed to
+  // delivery_tenant_ref, into the node's encrypted Wallet item custody.
+  STACKKIT_OPERATION_WALLET_ITEM_IMPORT = 54;
+  // `stackkit setup ai-provider`: offer an external OpenAI-compatible
+  // provider (ai_provider_base_url) in Private AI with the key of the
+  // delivered Wallet item wallet_item_ref, or remove it (ai_provider_disable).
+  // The StackSpec and bundle carry only the URL and an opaque key reference.
+  STACKKIT_OPERATION_AI_PROVIDER_SETUP = 55;
 }
 
 enum StackKitDriftMode {
@@ -467,7 +550,7 @@ message StackKitCommand {
   bytes advanced_trust_bundle = 35;
   // One canonical stackkit.advanced-capability/v1 document (at most 64 KiB)
   // issued for this command's operator operation. Required by the
-  // capability-gated ADVANCED_* operations (25 to 29) and rejected by every
+  // capability-gated ADVANCED_* operations (25 to 29, 44, 45) and rejected by every
   // other operation. The Agent writes it to a 0600 file in the working
   // directory for --capability and removes the file afterwards.
   bytes advanced_capability = 36;
@@ -482,6 +565,70 @@ message StackKitCommand {
   // HOST_UPDATE_APPLY only: the sha256:<64 hex> plan digest a completed
   // HOST_UPDATE_PLAN returned; StackKits installs exactly that plan or refuses.
   string host_plan_digest = 40;
+  // HOST_SECURITY_REPAIR only: the control ids to restore (at least one, at
+  // most the closed stackkit.host-security-evidence/v1 set, no duplicates).
+  repeated string host_security_controls = 41;
+  // APPLICATION_* only: immutable full Docker container identity. Adopt
+  // binds the exact reviewed source assessment; operation id is replay-safe.
+  string application_container_id = 42;
+  string application_plan_digest = 43;
+  string application_operation_id = 44;
+  // APPLICATION_CONTROL only: start, stop, or restart.
+  string application_action = 45;
+  // BACKUP_TARGET_IMPORT and BACKUP_TARGET_REBIND only: one sealed
+  // stackkit.sealed-host-delivery/v1 envelope (ciphertext only, at most
+  // 64 KiB, short-lived and single-use). It is bound to the tenant, node,
+  // binding generation, operation, recipient key and expiry; only the node's
+  // StackKits opens it. The agent hands it to the pinned CLI on stdin.
+  bytes sealed_delivery = 46;
+  // The tenant a sealed delivery is addressed to (non-secret).
+  string delivery_tenant_ref = 47;
+  // BACKUP_TARGET_RECIPIENT only: the fresh value the node must echo in its
+  // signed recipient statement (non-secret, at most 128 bytes).
+  string recipient_challenge = 48;
+  // FEDERATION_HANDOFF only. handoff_step is one of member-admit, member-join,
+  // member-certify, member-import, peer-request, peer-enroll, peer-install,
+  // binding-adopt, link-requirement, link-bind. handoff_ref and handoff_ref2 are the step's
+  // references (node, peer, Home key id, origin server name or Home root
+  // digest); each is empty unless the step takes it. handoff_document is the
+  // public JSON the previous step produced (at most 128 KiB); it never carries
+  // a private key or custody directory content.
+  string handoff_step = 49;
+  string handoff_ref = 50;
+  bytes handoff_document = 51;
+  string handoff_ref2 = 52;
+  // PLAN and BACKUP_TARGET_RECIPIENT only: inspect an already applied
+  // generation through its installed attested historical source for managed
+  // same-custody renewal. Never authorizes historical Apply or Restore.
+  bool source_generation_inspection = 53;
+  // ADVANCED_ORIGIN_CERTIFICATE_REQUEST only: the managed kombify.me hostnames
+  // the origin certificate covers (every name ends in .kombify.me).
+  repeated string origin_hosts = 54;
+  // ADVANCED_ORIGIN_CERTIFICATE_INSTALL only: the PEM leaf certificate
+  // (public data, at most 64 KiB). Never a private key.
+  bytes origin_certificate_pem = 55;
+  // APPLICATION_CONNECTOR[_VERIFY] only: bounded, closed metadata document
+  // stackkit.home-assistant-connector-request/v1. application_operation_id
+  // retains the original setup identity even for a new read command_id.
+  bytes application_connector_request_json = 56;
+  // Exact owner-signed staged result; no repository ID or filesystem path.
+  string restore_result_id = 57;
+  // Stable node activation identity, independent of transport retries and recover job IDs.
+  string activation_operation_id = 58;
+  // RECOVER only: immutable original admission A. release remains the verified
+  // current execution B; the current CLI may only delegate this original journal.
+  StackKitReleasePin original_recovery_release = 59;
+  // HOST_DELIVERY_RECIPIENT only: the delivering authority's Ed25519 public
+  // key (unpadded standard base64) and key id the node pins for its current
+  // generation. Public values; both empty keeps the pinned authority.
+  string delivery_authority_key = 60;
+  string delivery_authority_key_id = 61;
+  // AI_PROVIDER_SETUP only: the provider's https base URL and the Wallet item
+  // (itm_...) delivered to the node that holds its key, or ai_provider_disable
+  // to remove the provider. Never a key value.
+  string ai_provider_base_url = 62;
+  string wallet_item_ref = 63;
+  bool ai_provider_disable = 64;
 }
 
 // StackKitResult transports the normalized stackkit.command-result/v1 JSON
@@ -514,6 +661,9 @@ message StackKitResult {
   // record the create result names (data.path), computed by the Agent. Apply
   // and Advanced reconcile pin these exact bytes with --expect-sha256.
   string advanced_change_set_sha256 = 15;
+  // FEDERATION_HANDOFF only: the public document the step produced for the
+  // other node, read by the Agent from the pinned CLI's own output.
+  bytes handoff_document = 16;
 }
 
 // =============================================================================
@@ -729,4 +879,28 @@ message UpdateCandidate {
   string severity = 5;             // none, low, medium, high, critical
   repeated string cve_ids = 6;     // Related CVE identifiers
   string changelog_url = 7;
+}
+
+// --- User Notification Messages (smart-home notices) ---
+
+// UserNotification is one notice a Home Assistant automation author wrote. It
+// carries only that text: never entity states, presence, locks, cameras or
+// sensor history.
+message UserNotification {
+  string agent_id = 1;
+  string automation_id = 2;        // Collapse key: one Feed item per automation
+  string text = 3;                 // At most 280 characters
+  string audience = 4;             // "me", "household" or "member"
+  string member_username = 5;      // Pocket ID username, only for audience "member"
+  string source = 6;               // "home_assistant"
+}
+
+// UserNotificationAck answers a UserNotification. A refusal is structured, not
+// a transport error, so the node can show the automation author the reason.
+message UserNotificationAck {
+  bool accepted = 1;
+  string status = 2;               // "accepted" or "refused"
+  string refusal_code = 3;         // text_too_long, rate_limited, audience_invalid, no_recipients, ...
+  int32 retry_after_seconds = 4;   // Set with rate_limited
+  int32 recipients = 5;            // Number of Feed recipients dispatched
 }

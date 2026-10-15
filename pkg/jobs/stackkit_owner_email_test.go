@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/kombifyio/techstack/internal/stackkitrelease"
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
 	"github.com/kombifyio/techstack/pkg/identity"
 )
@@ -25,7 +24,7 @@ func TestManagedRolloutSendsOnlyTheOwnersEmailWithInit(t *testing.T) {
 		request.OwnerEmail = stackOwnerEmail(&Job{Payload: payload}, "auth0|owner")
 
 		sender := &recordingStackKitCommandSender{}
-		if _, err := runTypedStackKitApplySequence(context.Background(), sender, "job-1", request, stackkitrelease.Release{}); err != nil {
+		if _, err := runTypedStackKitApplySequence(context.Background(), sender, "job-1", request, releaseWithAdvancedCatalog(t)); err != nil {
 			t.Fatalf("runTypedStackKitApplySequence: %v", err)
 		}
 		for _, command := range sender.commands {

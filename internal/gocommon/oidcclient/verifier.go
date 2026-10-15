@@ -68,9 +68,17 @@ type Verifier struct {
 	cfg    VerifierConfig
 	client *http.Client
 
-	mu        sync.RWMutex
-	keys      map[string]*rsa.PublicKey
-	fetchedAt time.Time
+	mu             sync.RWMutex
+	keys           map[string]*rsa.PublicKey
+	fetchedAt      time.Time
+	lastAttempt    time.Time
+	lastRefreshErr error
+	refreshing     *jwksRefresh
+}
+
+type jwksRefresh struct {
+	done chan struct{}
+	err  error
 }
 
 // NewVerifier constructs a Verifier and validates required config.
@@ -110,6 +118,7 @@ func (v *Verifier) Verify(ctx context.Context, rawToken string) (*Claims, error)
 	parserOptions := []jwt.ParserOption{
 		jwt.WithValidMethods([]string{jwt.SigningMethodRS256.Alg()}),
 		jwt.WithIssuedAt(),
+		jwt.WithExpirationRequired(),
 	}
 	if v.cfg.ClockSkew > 0 {
 		parserOptions = append(parserOptions, jwt.WithLeeway(v.cfg.ClockSkew))
@@ -194,23 +203,70 @@ func audienceMatches(raw interface{}, expected string) bool {
 }
 
 func (v *Verifier) keyFor(ctx context.Context, kid string) (*rsa.PublicKey, error) {
-	v.mu.RLock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	v.mu.Lock()
 	key, ok := v.keys[kid]
 	age := time.Since(v.fetchedAt)
-	v.mu.RUnlock()
 	if ok && age < v.cfg.JWKSRefreshMax {
+		v.mu.Unlock()
 		return key, nil
 	}
-	// Either unknown KID or cache stale → refresh, but throttle.
-	if !ok && age < v.cfg.JWKSRefreshMin {
+	if pending := v.refreshing; pending != nil {
+		v.mu.Unlock()
+		return v.waitForRefresh(ctx, kid, pending)
+	}
+	// Failed attempts are throttled too; cached keys never outlive RefreshMax.
+	if time.Since(v.lastAttempt) < v.cfg.JWKSRefreshMin {
+		refreshErr := v.lastRefreshErr
+		v.mu.Unlock()
+		if refreshErr != nil {
+			return nil, refreshErr
+		}
 		return nil, ErrUnknownKID
 	}
-	if err := v.refresh(ctx); err != nil {
-		return nil, err
+	pending := &jwksRefresh{done: make(chan struct{})}
+	v.refreshing = pending
+	v.lastAttempt = time.Now()
+	v.mu.Unlock()
+	go v.refreshShared(ctx, pending)
+	return v.waitForRefresh(ctx, kid, pending)
+}
+
+func (v *Verifier) waitForRefresh(ctx context.Context, kid string, pending *jwksRefresh) (*rsa.PublicKey, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-pending.done:
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return v.refreshedKey(kid, pending.err)
+	}
+}
+
+func (v *Verifier) refreshShared(initiator context.Context, pending *jwksRefresh) {
+	// A caller owns its wait, not the shared fetch. The fixed bound also covers
+	// custom clients with no timeout; any shorter client timeout still applies.
+	requestContext, cancel := context.WithTimeout(context.WithoutCancel(initiator), DefaultHTTPTimeout)
+	defer cancel()
+	refreshErr := v.refresh(requestContext)
+	v.mu.Lock()
+	pending.err = refreshErr
+	v.lastRefreshErr = refreshErr
+	v.refreshing = nil
+	close(pending.done)
+	v.mu.Unlock()
+}
+
+func (v *Verifier) refreshedKey(kid string, refreshErr error) (*rsa.PublicKey, error) {
+	if refreshErr != nil {
+		return nil, refreshErr
 	}
 	v.mu.RLock()
 	defer v.mu.RUnlock()
-	key, ok = v.keys[kid]
+	key, ok := v.keys[kid]
 	if !ok {
 		return nil, ErrUnknownKID
 	}

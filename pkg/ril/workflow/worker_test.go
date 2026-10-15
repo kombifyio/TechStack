@@ -29,8 +29,8 @@ func TestWorker_SweepTimers_ResumesDurableTimerAfterRestart(t *testing.T) {
 	definition := testWF{typ: TypeActionCardRemediation, policy: DefaultRetryPolicy(), steps: []StepDef{gate}}
 	eng.Register(definition)
 
-	run := &Run{Type: TypeActionCardRemediation, OwnerID: "u"}
-	runID, err := eng.StartRun(context.Background(), run)
+	run := &Run{TenantID: "engine-unit", Type: TypeActionCardRemediation, OwnerID: "u"}
+	runID, err := eng.StartRun(WithTenant(context.Background(), "engine-unit"), run)
 	if err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
@@ -44,7 +44,7 @@ func TestWorker_SweepTimers_ResumesDurableTimerAfterRestart(t *testing.T) {
 	restarted.Register(definition)
 	restarted.now = func() time.Time { return started.Add(2 * time.Minute) }
 	w := NewWorker(restarted, WorkerConfig{Batch: 10})
-	w.SweepTimers(context.Background())
+	w.SweepTimers(WithTenant(context.Background(), "engine-unit"))
 
 	got, _ := restarted.store.GetRun(runID)
 	if got.Status != RunCompleted {
@@ -70,7 +70,7 @@ func TestWorker_SweepTimers_RetriesTimerAfterDeliveryFailure(t *testing.T) {
 	}
 	eng := NewEngine(failingSignalStore{RunStore: store}, NewActivityRunner())
 	eng.now = func() time.Time { return now }
-	NewWorker(eng, WorkerConfig{Batch: 10}).SweepTimers(context.Background())
+	NewWorker(eng, WorkerConfig{Batch: 10}).SweepTimers(WithTenant(context.Background(), "engine-unit"))
 
 	due, err := store.ListDueTimers(now, 0)
 	if err != nil || len(due) != 1 {
@@ -94,7 +94,7 @@ func TestWorker_PollRuns_AdvancesPending(t *testing.T) {
 
 	// Create a run directly in pending WITHOUT advancing it (simulates a run
 	// enqueued for the worker, or one left pending by a crash before advance).
-	run := &Run{Type: TypeDriftCorrection, OwnerID: "u"}
+	run := &Run{TenantID: "engine-unit", Type: TypeDriftCorrection, OwnerID: "u"}
 	if err := eng.store.CreateRun(run); err != nil {
 		t.Fatalf("CreateRun: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestWorker_PollRuns_AdvancesPending(t *testing.T) {
 	}
 
 	// The poll loop should pick it up and drive it to completion.
-	w.PollRuns(context.Background())
+	w.PollRuns(WithTenant(context.Background(), "engine-unit"))
 
 	if !ran {
 		t.Error("poll did not execute the pending run's step")
@@ -133,12 +133,12 @@ func TestWorker_PollRuns_RunsBackgroundTaskWithoutBlockingPendingRuns(t *testing
 			return ok(nil)
 		}}},
 	})
-	run := &Run{Type: TypeDriftCorrection, OwnerID: "u"}
+	run := &Run{TenantID: "engine-unit", Type: TypeDriftCorrection, OwnerID: "u"}
 	if err := eng.store.CreateRun(run); err != nil {
 		t.Fatal(err)
 	}
 
-	w.PollRuns(context.Background())
+	w.PollRuns(WithTenant(context.Background(), "engine-unit"))
 	if backgroundCalls != 1 {
 		t.Fatalf("background calls = %d, want 1", backgroundCalls)
 	}
@@ -159,11 +159,11 @@ func TestWorker_PollRuns_AdvancesEnqueuedProviderIncident(t *testing.T) {
 			return ok(nil)
 		}}},
 	})
-	run := &Run{RunID: "provider-incident-stable", Type: TypeProviderIncidentAdvisory, OwnerID: "tenant-a"}
+	run := &Run{TenantID: "engine-unit", RunID: "provider-incident-stable", Type: TypeProviderIncidentAdvisory, OwnerID: "tenant-a"}
 	if err := eng.store.CreateRun(run); err != nil {
 		t.Fatalf("CreateRun: %v", err)
 	}
-	w.PollRuns(context.Background())
+	w.PollRuns(WithTenant(context.Background(), "engine-unit"))
 	if !advanced {
 		t.Fatal("worker did not advance the enqueued provider incident run")
 	}
@@ -179,4 +179,19 @@ func TestNewWorker_Defaults(t *testing.T) {
 	if w.cfg.PollInterval <= 0 || w.cfg.TimerInterval <= 0 || w.cfg.Batch <= 0 {
 		t.Errorf("zero config not defaulted: %+v", w.cfg)
 	}
+}
+
+func (s failingSignalStore) ForTenant(ctx context.Context, tenantID string) (RunStore, error) {
+	scoped, err := s.RunStore.(interface {
+		ForTenant(context.Context, string) (RunStore, error)
+	}).ForTenant(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	return failingSignalStore{scoped}, nil
+}
+func (s failingSignalStore) ListWorkerTenants(ctx context.Context, after string, limit int) ([]string, error) {
+	return s.RunStore.(interface {
+		ListWorkerTenants(context.Context, string, int) ([]string, error)
+	}).ListWorkerTenants(ctx, after, limit)
 }

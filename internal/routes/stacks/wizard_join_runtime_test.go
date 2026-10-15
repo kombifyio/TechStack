@@ -29,7 +29,7 @@ func TestPersistJoinServerIntentReservesPlannedNodeOnMultiNodeStack(t *testing.T
 		stack,
 		projection,
 		specv2.TransportConnectRemote,
-		"82.165.251.178",
+		"203.0.113.81",
 	)
 	if err != nil {
 		t.Fatalf("persistJoinServerIntent: %v", err)
@@ -50,7 +50,7 @@ func TestPersistJoinServerIntentReservesPlannedNodeOnMultiNodeStack(t *testing.T
 	if err != nil {
 		t.Fatalf("GetServerRuntime planned: %v", err)
 	}
-	if planned.LifecycleState != "planned" || planned.WorkerID != "" || planned.Name != "82.165.251.178" {
+	if planned.LifecycleState != "planned" || planned.WorkerID != "" || planned.Name != "203.0.113.81" {
 		t.Fatalf("planned join server = %#v", planned)
 	}
 }

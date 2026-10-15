@@ -28,6 +28,9 @@ AUDIT-REPORT.md
 
 # Go
 vendor/
+# Vendored private npm tarballs (SECRETS-ACCESS-STANDARD 6d) are tracked.
+!app/vendor/
+!app/vendor/npm/
 *.cover
 coverage.out
 *.pprof
@@ -203,3 +206,7 @@ clients/windows/**/obj/
 
 # bd 1.3 workspace-gate lock beside .beads/
 *.gate.lock*
+
+# Python interpreter bytecode is machine-local generated state.
+__pycache__/
+*.py[cod]

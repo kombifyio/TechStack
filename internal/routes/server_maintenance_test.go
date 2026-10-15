@@ -58,6 +58,7 @@ func newMaintenanceFixture(t *testing.T, dispatcher servermaintenance.Dispatcher
 	store := controlplane.NewMemoryStore()
 	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
 	f := &maintenanceFixture{t: t, store: store, now: now, h: maintenanceTestHandlers(store, now, dispatcher)}
+	store.SetNow(func() time.Time { return f.now })
 	f.setServer("owner-1", 7, nil)
 	return f
 }
@@ -83,11 +84,20 @@ func (f *maintenanceFixture) setServer(ownerID string, revision int64, metadata 
 	if _, reported := metadata[servermaintenance.MetadataBootID]; !reported {
 		metadata[servermaintenance.MetadataBootID] = "0f5d2c1e-7a3b-4c2d-9e8f-1a2b3c4d5e6f"
 	}
+	metadata["service_projection_expected"] = int64(0)
 	if _, err := f.store.UpsertServerRuntime(f.t.Context(), controlplane.ServerRuntime{
 		ID: "server-1", TenantID: "tenant-1", OwnerSubjectID: ownerID, WorkerID: "agent-1",
 		LifecycleState: string(serverregistry.LifecycleActive), DesiredState: string(serverregistry.DesiredRunning),
 		ConnectionState: string(serverregistry.ConnectionConnected), HealthState: string(serverregistry.HealthHealthy),
-		InventoryRevision: revision, LastHeartbeatAt: &heartbeat, Metadata: metadata,
+		InventoryRevision: revision - 1, LastHeartbeatAt: &heartbeat, Metadata: metadata,
+	}); err != nil {
+		f.t.Fatal(err)
+	}
+	if _, err := f.store.RecordServerInventory(f.t.Context(), controlplane.ServerInventorySnapshot{
+		TenantID: "tenant-1", ServerID: "server-1", Revision: revision, Source: "guard-inventory", ObservedAt: heartbeat,
+		Inventory: map[string]any{"services": []any{}, "deployment": map[string]any{
+			"_guard_projection": map[string]any{"schema": "guard-inventory-projection/v1", "discovery_complete": true},
+		}},
 	}); err != nil {
 		f.t.Fatal(err)
 	}
@@ -226,12 +236,13 @@ func signMaintenanceEdgeEnvelope(r *http.Request, version string) {
 			fields = append(fields, header(name))
 		}
 	}
-	fields = append(fields, timestamp, "nonce-maintenance")
+	nonce := "nonce-maintenance-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	fields = append(fields, timestamp, nonce)
 	mac := hmac.New(sha256.New, []byte(maintenanceEdgeSecret))
 	_, _ = mac.Write([]byte(strings.Join(fields, "\n")))
 	r.Header.Set(commonedgeauth.HeaderEdgeKeyID, "primary")
 	r.Header.Set(commonedgeauth.HeaderEdgeTimestamp, timestamp)
-	r.Header.Set(commonedgeauth.HeaderEdgeNonce, "nonce-maintenance")
+	r.Header.Set(commonedgeauth.HeaderEdgeNonce, nonce)
 	r.Header.Set(commonedgeauth.HeaderEdgeSignedPath, r.URL.RequestURI())
 	r.Header.Set(commonedgeauth.HeaderEdgeSignature, version+"="+base64.RawURLEncoding.EncodeToString(mac.Sum(nil)))
 }
@@ -241,8 +252,18 @@ func (f *maintenanceFixture) jobExists(key string) bool {
 	return err == nil
 }
 
-func reboot(revision int64) map[string]any {
-	return map[string]any{"action": "reboot", "expected_inventory_revision": revision, "owner_approved": true}
+func (f *maintenanceFixture) impactDigest(action string) string {
+	f.t.Helper()
+	impact, err := f.store.GetServerMaintenanceImpact(f.t.Context(), "tenant-1", "server-1", action, f.now)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return impact.SnapshotDigest
+}
+
+func (f *maintenanceFixture) reboot(revision int64) map[string]any {
+	return map[string]any{"action": "reboot", "expected_inventory_revision": revision, "owner_approved": true,
+		"expected_impact_digest": f.impactDigest(controlplane.ServerMaintenanceActionReboot)}
 }
 
 // Only the Edge-signed grant counts: the membership fallback is not a
@@ -251,7 +272,7 @@ func TestServerMaintenanceWithoutSignedEntitlementCreatesNoJob(t *testing.T) {
 	for _, grant := range []string{"", "membership"} {
 		t.Run("grant="+grant, func(t *testing.T) {
 			f := newMaintenanceFixture(t, inertMaintenanceDispatcher{})
-			status, _, reason := f.post(maintenanceCaller{grant: grant, authAge: time.Minute}, "reboot-1", reboot(7))
+			status, _, reason := f.post(maintenanceCaller{grant: grant, authAge: time.Minute}, "reboot-1", f.reboot(7))
 			if status != http.StatusForbidden || reason != maintenanceReasonEntitlement || f.jobExists("reboot-1") {
 				t.Fatalf("status=%d reason=%q job=%v, want 403 entitlement_required and no job", status, reason, f.jobExists("reboot-1"))
 			}
@@ -262,17 +283,14 @@ func TestServerMaintenanceWithoutSignedEntitlementCreatesNoJob(t *testing.T) {
 func TestServerMaintenanceHidesAnotherOwnersServer(t *testing.T) {
 	f := newMaintenanceFixture(t, inertMaintenanceDispatcher{})
 	f.setServer("owner-2", 7, nil)
-	if status, _, _ := f.post(fullyAuthorizedCaller, "reboot-1", reboot(7)); status != http.StatusNotFound || f.jobExists("reboot-1") {
+	if status, _, _ := f.post(fullyAuthorizedCaller, "reboot-1", f.reboot(7)); status != http.StatusNotFound || f.jobExists("reboot-1") {
 		t.Fatalf("status=%d, want 404 and no job", status)
 	}
 }
 
-// A reboot needs a multi-factor sign-in at most 300 seconds old by a human
-// user, bound by a verified v7 edge envelope. The request runs through the
-// real edge identity middleware: stale or missing claims, claims in a v2
-// envelope that does not sign them, or claims of a principal not signed as
-// "user" are refused and create no job.
-func TestServerMaintenanceStepUpFollowsVerifiedEdgeEnvelope(t *testing.T) {
+// Ordinary owner maintenance keeps the signed commercial/owner boundary,
+// without treating a fresh MFA claim or legacy body flag as authority.
+func TestServerMaintenanceOwnerAuthorityFollowsVerifiedEdgeEnvelope(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
 		version       string
@@ -281,20 +299,22 @@ func TestServerMaintenanceStepUpFollowsVerifiedEdgeEnvelope(t *testing.T) {
 		wantStatus    int
 	}{
 		{name: "fresh v7 claims", version: "v7", principalType: "user", authAge: time.Minute, wantStatus: http.StatusAccepted},
-		{name: "stale v7 claims", version: "v7", principalType: "user", authAge: 301 * time.Second, wantStatus: http.StatusForbidden},
-		{name: "v7 without claims", version: "v7", principalType: "user", wantStatus: http.StatusForbidden},
-		{name: "fresh claims under v2", version: "v2", principalType: "user", authAge: time.Minute, wantStatus: http.StatusForbidden},
+		{name: "stale v7 claims", version: "v7", principalType: "user", authAge: 301 * time.Second, wantStatus: http.StatusAccepted},
+		{name: "v7 without claims", version: "v7", principalType: "user", wantStatus: http.StatusAccepted},
+		{name: "v2 owner envelope", version: "v2", principalType: "user", wantStatus: http.StatusAccepted},
 		{name: "fresh v7 claims of a machine", version: "v7", principalType: "machine", authAge: time.Minute, wantStatus: http.StatusForbidden},
 		{name: "fresh v7 claims without principal type", version: "v7", authAge: time.Minute, wantStatus: http.StatusForbidden},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newMaintenanceFixture(t, inertMaintenanceDispatcher{})
-			status, reason := f.postThroughEdge(tc.version, tc.principalType, tc.authAge, "reboot-1", reboot(7))
+			body := f.reboot(7)
+			delete(body, "owner_approved")
+			status, reason := f.postThroughEdge(tc.version, tc.principalType, tc.authAge, "reboot-1", body)
 			if status != tc.wantStatus || f.jobExists("reboot-1") != (tc.wantStatus == http.StatusAccepted) {
 				t.Fatalf("status=%d reason=%q job=%v, want %d", status, reason, f.jobExists("reboot-1"), tc.wantStatus)
 			}
-			if tc.wantStatus == http.StatusForbidden && reason != maintenanceReasonStepUpRequired {
-				t.Fatalf("reason=%q, want %s", reason, maintenanceReasonStepUpRequired)
+			if tc.wantStatus == http.StatusForbidden && reason != "maintenance_origin_authority_denied" {
+				t.Fatalf("reason=%q, want maintenance_origin_authority_denied", reason)
 			}
 		})
 	}
@@ -323,15 +343,16 @@ func TestServerMaintenanceRefusesAmbiguousBodies(t *testing.T) {
 // different body under the same key is a conflict.
 func TestServerMaintenanceReplaysReceiptAfterRevisionMoved(t *testing.T) {
 	f := newMaintenanceFixture(t, inertMaintenanceDispatcher{})
-	status, first, _ := f.post(fullyAuthorizedCaller, "reboot-1", reboot(7))
+	body := f.reboot(7)
+	status, first, _ := f.post(fullyAuthorizedCaller, "reboot-1", body)
 	if status != http.StatusAccepted || first.JobID == "" || first.Status != "queued" {
 		t.Fatalf("first status=%d receipt=%+v", status, first)
 	}
 	f.setServer("owner-1", 8, nil)
-	if status, replay, _ := f.post(fullyAuthorizedCaller, "reboot-1", reboot(7)); status != http.StatusAccepted || replay.JobID != first.JobID {
+	if status, replay, _ := f.post(fullyAuthorizedCaller, "reboot-1", body); status != http.StatusAccepted || replay.JobID != first.JobID {
 		t.Fatalf("replay status=%d receipt=%+v, want the first receipt", status, replay)
 	}
-	if status, _, reason := f.post(fullyAuthorizedCaller, "reboot-1", reboot(8)); status != http.StatusConflict || reason != maintenanceReasonIdempotencyReused {
+	if status, _, reason := f.post(fullyAuthorizedCaller, "reboot-1", f.reboot(8)); status != http.StatusConflict || reason != maintenanceReasonIdempotencyReused {
 		t.Fatalf("different body status=%d reason=%q, want 409 %s", status, reason, maintenanceReasonIdempotencyReused)
 	}
 }
@@ -349,7 +370,7 @@ func TestServerMaintenanceRefusesSubstrateAndControlPlaneHost(t *testing.T) {
 		t.Run(tc.reason, func(t *testing.T) {
 			f := newMaintenanceFixture(t, inertMaintenanceDispatcher{})
 			f.setServer("owner-1", 7, tc.metadata)
-			status, _, reason := f.post(fullyAuthorizedCaller, "reboot-1", reboot(7))
+			status, _, reason := f.post(fullyAuthorizedCaller, "reboot-1", f.reboot(7))
 			if status != http.StatusConflict || reason != tc.reason || f.jobExists("reboot-1") {
 				t.Fatalf("status=%d reason=%q, want 409 %s and no job", status, reason, tc.reason)
 			}
@@ -373,7 +394,7 @@ func TestServerMaintenanceShipsInertWithoutDispatcher(t *testing.T) {
 	if slices.Contains(inert.h.response(*server).AllowedActions, controlplane.ServerMaintenanceActionReboot) {
 		t.Fatalf("reboot advertised without a dispatcher")
 	}
-	status, _, reason := inert.post(fullyAuthorizedCaller, "reboot-1", reboot(7))
+	status, _, reason := inert.post(fullyAuthorizedCaller, "reboot-1", inert.reboot(7))
 	if status != http.StatusConflict || reason != maintenanceReasonCapabilityMissing || inert.jobExists("reboot-1") {
 		t.Fatalf("status=%d reason=%q, want 409 %s and no job", status, reason, maintenanceReasonCapabilityMissing)
 	}
@@ -391,7 +412,7 @@ func TestServerMaintenanceLockedServiceVetoes(t *testing.T) {
 	}, "owner_locked"); err != nil {
 		t.Fatal(err)
 	}
-	status, _, reason := f.post(fullyAuthorizedCaller, "reboot-1", reboot(7))
+	status, _, reason := f.post(fullyAuthorizedCaller, "reboot-1", f.reboot(7))
 	if status != http.StatusConflict || reason != maintenanceReasonServiceLocked || f.jobExists("reboot-1") {
 		t.Fatalf("status=%d reason=%q, want 409 service_locked and no job", status, reason)
 	}
@@ -405,10 +426,10 @@ func TestServerMaintenanceFenceRefusesConcurrentMaintenance(t *testing.T) {
 	if status, _, reason := f.post(fullyAuthorizedCaller, "plan-1", plan); status != http.StatusAccepted {
 		t.Fatalf("plan status=%d reason=%q", status, reason)
 	}
-	if status, _, reason := f.post(fullyAuthorizedCaller, "reboot-1", reboot(7)); status != http.StatusAccepted {
+	if status, _, reason := f.post(fullyAuthorizedCaller, "reboot-1", f.reboot(7)); status != http.StatusAccepted {
 		t.Fatalf("reboot next to a running plan status=%d reason=%q", status, reason)
 	}
-	status, _, reason := f.post(fullyAuthorizedCaller, "reboot-2", reboot(7))
+	status, _, reason := f.post(fullyAuthorizedCaller, "reboot-2", f.reboot(7))
 	if status != http.StatusConflict || reason != maintenanceReasonActive || f.jobExists("reboot-2") {
 		t.Fatalf("second reboot status=%d reason=%q, want 409 maintenance_active and no job", status, reason)
 	}
@@ -416,7 +437,8 @@ func TestServerMaintenanceFenceRefusesConcurrentMaintenance(t *testing.T) {
 
 func TestServerMaintenanceUpdateRefusesStalePlan(t *testing.T) {
 	f := newMaintenanceFixture(t, inertMaintenanceDispatcher{})
-	update := map[string]any{"action": "os_update", "expected_inventory_revision": 7, "owner_approved": true, "expected_plan_digest": maintenanceTestPlanDigest}
+	update := map[string]any{"action": "os_update", "expected_inventory_revision": 7, "owner_approved": true, "expected_plan_digest": maintenanceTestPlanDigest,
+		"expected_impact_digest": f.impactDigest(controlplane.ServerMaintenanceActionUpdate)}
 	completePlan := func(key string, completedAt time.Time) {
 		t.Helper()
 		id := serverMaintenanceJobID("tenant-1", "owner-1", key)
@@ -449,6 +471,12 @@ func TestServerMaintenanceUpdateRefusesStalePlan(t *testing.T) {
 func TestServerMaintenanceApprovalSurvivesANoOpInventoryPost(t *testing.T) {
 	store := controlplane.NewMemoryStore()
 	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	store.SetNow(func() time.Time { return now })
+	if _, err := store.CreateStack(t.Context(), controlplane.CreateStackRequest{
+		ID: "stack-1", TenantID: "tenant-1", OwnerSubjectID: "owner-1", Name: "Home",
+	}); err != nil {
+		t.Fatal(err)
+	}
 	guard := workerRouteHandlers{serverStore: store}
 	worker := controlplane.Worker{ID: "agent-1", TenantID: "tenant-1", StackID: "stack-1", OwnerSubjectID: "owner-1"}
 	if err := guard.projectServerEnrollment(t.Context(), worker, "server-1", "", now.Add(-time.Hour), "pairing-redemption"); err != nil {
@@ -458,6 +486,7 @@ func TestServerMaintenanceApprovalSurvivesANoOpInventoryPost(t *testing.T) {
 		t.Helper()
 		req := workerInventoryRequest{
 			SourceEpoch: "epoch-a", SourceSequence: sequence, ObservedAt: at, Hostname: "runtime-1",
+			ManifestObserved: true, ManifestServiceCount: 1, DiscoveryObserved: true, DiscoveryComplete: true,
 			Host:     workerInventoryHost{Hostname: "runtime-1", OS: "ubuntu", CPUPercent: cpu, UptimeSeconds: float64(sequence) * 30},
 			Services: []workerInventoryService{{ServiceID: "db", Status: "healthy"}},
 		}
@@ -471,9 +500,10 @@ func TestServerMaintenanceApprovalSurvivesANoOpInventoryPost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	post(2, now.Add(-30*time.Second), 57)
 	f := &maintenanceFixture{t: t, store: store, now: now, h: maintenanceTestHandlers(store, now, inertMaintenanceDispatcher{})}
-	if status, _, reason := f.post(fullyAuthorizedCaller, "reboot-1", reboot(shown.InventoryRevision)); status != http.StatusAccepted {
+	body := f.reboot(shown.InventoryRevision)
+	post(2, now.Add(-30*time.Second), 57)
+	if status, _, reason := f.post(fullyAuthorizedCaller, "reboot-1", body); status != http.StatusAccepted {
 		t.Fatalf("approval of revision %d after a no-op post: status=%d reason=%q", shown.InventoryRevision, status, reason)
 	}
 }

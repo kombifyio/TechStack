@@ -1,16 +1,16 @@
 {
   "schema_version": 1,
   "public_repository": "kombifyio/TechStack",
-  "source_commit": "a7af8a7612da77f7add0058b47b84b28ccf7d755",
-  "candidate_digest": "893ff577bf5cad7e28a0c02eaf3bbac35418eb9b7c24887958e528bf5a52b09e",
-  "candidate_file_count": 2267,
+  "source_commit": "17f5403e63d61ae89ec26633975e90dfa3a558bc",
+  "candidate_digest": "53c92e984a2bad55b9ce0a5cfbd403925b2d8f70ba07e77e61880ca2069146b7",
+  "candidate_file_count": 3002,
   "digest_scope": "sha256 over every exported file except this receipt, in code-unit path order, as path NUL content NUL",
   "projected_go_sources": [
     {
       "destination": "internal/gocommon",
-      "version": "v0.7.7",
-      "sum": "h1:xQyPS9EB8xNfMjkBBdtPGy/AhjDJyPZpaJDlMyF9aJo=",
-      "commit": "977997fbd0156027d7dde9ad9a520676108ff64b",
+      "version": "v0.7.14",
+      "sum": "h1:83sATZARQby2fll5SGEmZRXD0GwnqWE63OYTUs9bOs8=",
+      "commit": "66d3349e7993ce89a1bdedae0b131236d09ec37d",
       "packages": [
         "apisurface",
         "apisurface/cli",
@@ -21,11 +21,14 @@
         "cloudlogin",
         "denial",
         "edgeauth",
+        "entitlements",
         "fga",
         "httputil",
         "identity",
+        "internal/httpsecurity",
         "internal/referenceid",
         "internal/semverlite",
+        "mcporiginauth",
         "nativeclient/interactiveauth",
         "nativeclient/profile",
         "observability",
@@ -36,16 +39,19 @@
         "servicecall",
         "toolauth",
         "updateclient",
-        "updateclient/manifest"
+        "updateclient/manifest",
+        "walletservice"
       ]
     },
     {
       "destination": "internal/selfhostcontracts",
-      "version": "v0.2.0",
-      "sum": "h1:PvniJaLbL1HzpqApthYl9ltecU+ynQZ/MydS1A1edB4=",
-      "commit": "44dd59ddb619b5f8e3b0b3992c8e3f36ee204c1c",
+      "version": "v0.2.6",
+      "sum": "h1:GoAshnNWwX/9BASyLweYFr9ewv4y+b7jYnhSq8xllzc=",
+      "commit": "9372059b309c9ba89ddb166043d932bda03bb3ed",
       "packages": [
+        "internal/referenceid",
         "providerexecutor/v1beta1",
+        "runtimeexecutor",
         "runtimeinventory",
         "runtimelease",
         "stackaction"
@@ -55,52 +61,59 @@
   "vendored_npm_packages": [
     {
       "name": "@kombiverselabs/ai-sdk",
-      "version": "0.10.2772",
-      "integrity": "sha512-oO2x/rDSMvgR9xMlELx4zGNosZONHU9lreoUkJc3TzbsLRt7W5a1JAu5XKGkC5xBwHA4bWnp0T6RPDTd1mrYBA==",
+      "version": "0.10.3043",
+      "integrity": "sha512-RsXp/25R0EZf8/yQuYsX5oKWd0yXpvuinFAALepyZ7peQtvKhvxaFbY8vWvsNYYmONL7nibH0af2IOe4yjnLcQ==",
       "license": "MIT",
-      "path": "app/third_party/npm/ai-sdk-0.10.2772.tgz"
+      "path": "app/third_party/npm/ai-sdk-0.10.3043.tgz"
+    },
+    {
+      "name": "@kombiverselabs/cloud-notifications",
+      "version": "0.3.118",
+      "integrity": "sha512-tsnXjIyYIeN4T5QqY5eylReU9HeAA5CbYCOnsRMdVdbjYbhsvmGky9bG+eDjVzKp6Ghw0YbsjZrU5AWg6yDiDw==",
+      "license": "MIT",
+      "path": "app/third_party/npm/cloud-notifications-0.3.118.tgz"
     },
     {
       "name": "@kombiverselabs/design",
-      "version": "0.10.376",
-      "integrity": "sha512-HrlM91zoq4cpjSdd1aYVghkKHqg7CymiAbATJWm9pt8FYtk29ROVMnUiFU0Eh+HITTe/reU5Nm1Pk8PiFnWTWQ==",
+      "version": "0.10.535",
+      "integrity": "sha512-dvYGK23dr+vKsF0ko1h5gGthtbRQxAoj5gbfYEXmDw5+Y/3Y42FBFTgrp40iQREwLgL61MSvpdT2tQEY003JJA==",
       "license": null,
-      "path": "app/third_party/npm/design-0.10.376.tgz"
+      "path": "app/third_party/npm/design-0.10.535.tgz"
     },
     {
       "name": "@kombiverselabs/embed",
-      "version": "0.10.2772",
-      "integrity": "sha512-jH7+6wP5PYId4/tKu8fWyV2u1Fy1Z0eXoFTvl8ggMd09n0ZDOOc39byxlpqS7/SOsQ8yal6U5fkWGYkqh1rCBQ==",
+      "version": "0.10.3043",
+      "integrity": "sha512-oGGi/c8ttKEkntEPM4HFkRAt4PV7hrUOjRX/NHu6DIIPH/fS0aC9TfiOc3iJPh7Kcb3RfHFse4wJASgoSq2egQ==",
       "license": "MIT",
-      "path": "app/third_party/npm/embed-0.10.2772.tgz"
+      "path": "app/third_party/npm/embed-0.10.3043.tgz"
     },
     {
       "name": "@kombiverselabs/execution-contracts",
-      "version": "0.10.2772",
-      "integrity": "sha512-fgTjKxEoK59Vlx+CQ9iRwKrx/LPuwr0qxoakUB3s1nGkYo6xSKwdbCNjKme6texXIsxzcrf6czFYNIDIF8XJZQ==",
+      "version": "0.12.4",
+      "integrity": "sha512-vv+fvDV2iibTqyMV4Grxaz6LvRNpG35OtewcRM3y6EJMcOh1SF1AhXz6kvIWrbAXqfbkoSpOUpqDy/cRsZt7ZA==",
       "license": "MIT",
-      "path": "app/third_party/npm/execution-contracts-0.10.2772.tgz"
-    },
-    {
-      "name": "@kombiverselabs/notifications",
-      "version": "0.3.87",
-      "integrity": "sha512-CO72UAYFeY4JRym91/no4NizwD1XLm32JkcZ80m+abuXVRVOuP49PqiclmEm1Z9iJDahHsk7ug7jUF72Kfg+KA==",
-      "license": "MIT",
-      "path": "app/third_party/npm/notifications-0.3.87.tgz"
+      "path": "app/third_party/npm/execution-contracts-0.12.4.tgz"
     },
     {
       "name": "@kombiverselabs/onboarding-core",
-      "version": "0.10.376",
-      "integrity": "sha512-L3oboN59YGoHI6q/A5PzkXmr6ho3u8Yi/iblIxFPF0b4ItpQHGms9NTBrlN7GsBAn9WG5cVe8AUD4WJEi3uBOw==",
+      "version": "0.10.535",
+      "integrity": "sha512-BEsJAi8qky55uUwtxrpymAx7CxpxQ7sfVjL2DGUjQnSIxpCyfwg4Jzfqd/VWhyk4sDuqj/XAf5yjEr35mctTOw==",
       "license": "MIT",
-      "path": "app/third_party/npm/onboarding-core-0.10.376.tgz"
+      "path": "app/third_party/npm/onboarding-core-0.10.535.tgz"
+    },
+    {
+      "name": "@kombiverselabs/speechkit-voiceagent-client",
+      "version": "0.76.4",
+      "integrity": "sha512-7jbMuYPb0XfTCxQ5jtVGHQmY/lcyVB5+bZmP8jZ1tuifCg7dyvlMXpPd4jECwlEM4OvfyoYL0stKdW86NkGPIg==",
+      "license": "Apache-2.0",
+      "path": "app/third_party/npm/speechkit-voiceagent-client-0.76.4.tgz"
     },
     {
       "name": "@kombiverselabs/ui",
-      "version": "0.10.376",
-      "integrity": "sha512-N7pq5oriRp9yhV7A8Rca04xb04ZQgSsS+fQE3mVP3Dv1EY6E1woEQd6W22T5+K7NxSvyArBOAh1qw5f2Iuzixw==",
+      "version": "0.10.535",
+      "integrity": "sha512-+hVbLtR95Hd/z3pqin+JY6YVCwFrlbwx4HOhfMQMl0gz0ljjl3M3XnUBXtn6Ab0Ss4+gAgF1YK7sM2bQJc83bw==",
       "license": "MIT",
-      "path": "app/third_party/npm/ui-0.10.376.tgz"
+      "path": "app/third_party/npm/ui-0.10.535.tgz"
     }
   ]
 }

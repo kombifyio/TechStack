@@ -1,8 +1,8 @@
 import type { StackConfig } from "./types";
 import { deriveIdentityServices } from "./payload";
+import { remoteSshKeyLabel } from "./remote-credential";
 import {
   ACTIVE_STANDARD_BUNDLE,
-  buildStackSpecServiceTogglesFromBundle,
   selectedCanonicalUseCasesFromGoals,
 } from "./standardBundle";
 import {
@@ -31,7 +31,6 @@ export interface StackKitServiceToggle {
 export interface StackKitStackSpec {
   name: string;
   stackkit: string;
-  mode: "simple" | "bootstrapped" | "advanced";
   runtime: "docker" | "native";
   context: "local" | "cloud" | "pi";
   domain: string;
@@ -50,7 +49,7 @@ export interface StackKitStackSpec {
     port: number;
   };
   nodes: StackKitNodeSpec[];
-  paas: "dokploy" | "coolify";
+  paas?: "dokploy" | "coolify";
   addons: string[];
   services: Record<string, StackKitServiceToggle>;
   owner: {
@@ -178,18 +177,6 @@ function buildComputeTier(
   return "standard";
 }
 
-function buildPAAS(config: StackConfig): StackKitStackSpec["paas"] {
-  if (usesManagedRuntime(config)) return "coolify";
-  const context = buildContext(config);
-  if (
-    context === "cloud" &&
-    config.serverProvisioning.mode === "kombify-cloud"
-  ) {
-    return "coolify";
-  }
-  return "dokploy";
-}
-
 function buildAddons(config: StackConfig): string[] {
   if (
     config.network.accessMode === "anywhere" &&
@@ -297,23 +284,6 @@ function operatorCapabilityEvidence(
   if (config.serverProvisioning.mode === "kombify-cloud")
     evidence.push("managed-runtime");
   return evidence.join(",");
-}
-
-function buildServices(config: StackConfig): StackKitStackSpec["services"] {
-  const services: StackKitStackSpec["services"] = {};
-  const toggles = buildStackSpecServiceTogglesFromBundle(config.services);
-  for (const [name, enabled] of Object.entries(toggles)) {
-    services[name] = { enabled };
-  }
-
-  const paas = buildPAAS(config);
-  const paasServices = ACTIVE_STANDARD_BUNDLE.stackSpec.paasServices;
-  services[paasServices.dokploy] = { enabled: paas === "dokploy" };
-  if (paas === "coolify") {
-    services[paasServices.coolify] = { enabled: true };
-  }
-
-  return services;
 }
 
 function buildSSH(
@@ -429,7 +399,6 @@ export function buildStackKitSpecFromStackConfig(
   return {
     name,
     stackkit: stackkitFoundation,
-    mode: usesManagedRuntime ? "bootstrapped" : "simple",
     runtime: "docker",
     context,
     domain,
@@ -444,9 +413,9 @@ export function buildStackKitSpecFromStackConfig(
     },
     ssh: buildSSH(serverProvisioning),
     nodes: [buildNode(serverProvisioning)],
-    paas: buildPAAS(config),
     addons: buildAddons(config),
-    services: buildServices(config),
+    // This legacy intent preview does not author StackKits service defaults.
+    services: {},
     owner: {
       bootstrapMode: ownerBootstrapMode,
       source: ownerSource,
@@ -537,7 +506,7 @@ export function buildStackKitSpecFromStackConfig(
         ? serverProvisioning.remote.authMethod
         : "",
       server_remote_ssh_key_label: usesRemoteSSH
-        ? serverProvisioning.remote.sshKeyLabel
+        ? (remoteSshKeyLabel(serverProvisioning.remote) ?? "")
         : "",
       server_remote_use_sudo: usesRemoteSSH
         ? String(serverProvisioning.remote.useSudo)

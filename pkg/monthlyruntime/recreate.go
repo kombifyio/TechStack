@@ -147,6 +147,13 @@ func (s *Service) cleanupStatusForRecord(ctx context.Context, tenantID string, l
 	response.ProviderOperation.Terminal = facts.ProviderOperationTerminal
 	response.ProviderOperation.AbsenceEvidenceRef = facts.AbsenceEvidenceRef
 	response.ProviderOperation.CapacityReleased = facts.CapacityReleased
+	if stackID := strings.TrimSpace(lease.Metadata["stack_id"]); s.BackupStores != nil && stackID != "" {
+		absent, err := s.BackupStores.BackupStoreAbsent(ctx, tenantID, stackID)
+		if err != nil {
+			return nil, ErrCleanupReadbackUnavailable
+		}
+		response.BackupStore.Absent = absent
+	}
 	return response, nil
 }
 

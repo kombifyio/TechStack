@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Bot, Network, Workflow } from "@lucide/svelte";
+  import { Bot, Network, Workflow, Store } from "@lucide/svelte";
   import type { CreationGoalId } from "#lib/wizard/creationGoals.js";
   import { theme } from "#lib/stores/theme.js";
 
@@ -21,7 +21,12 @@
     "mail",
     "game",
   ]);
-  const fallbackIcons = { network: Network, automation: Workflow, ai: Bot };
+  const fallbackIcons = {
+    network: Network,
+    automation: Workflow,
+    ai: Bot,
+    marketplace: Store,
+  };
   const FallbackIcon = $derived(
     fallbackIcons[goal as keyof typeof fallbackIcons] ?? Network,
   );

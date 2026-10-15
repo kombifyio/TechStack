@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/kombifyio/techstack/pkg/auth"
+	"github.com/kombifyio/techstack/pkg/controlplane"
 )
 
 func (h wizardRunHandlers) resolveWalletSSHKey(ctx context.Context, tenantID, ownerID, label string) (string, error) {
@@ -49,19 +50,8 @@ func (h wizardRunHandlers) resolveWalletSSHKey(ctx context.Context, tenantID, ow
 }
 
 func walletItemOwnedBy(metadata map[string]any, ownerID string) bool {
-	if metadata == nil {
-		return false
-	}
 	ownerID = strings.TrimSpace(ownerID)
-	if ownerID == "" {
-		return false
-	}
-	for _, key := range []string{"owner_subject_id", "owner_id", "user_id"} {
-		if strings.TrimSpace(walletMetadataString(metadata[key])) == ownerID {
-			return true
-		}
-	}
-	return false
+	return ownerID != "" && controlplane.WalletOwnerID(metadata) == ownerID
 }
 
 func walletMetadataString(value any) string {

@@ -153,7 +153,7 @@ func signDeniedQualificationRequest(t *testing.T, request *http.Request, ownerID
 	}, ","))
 
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
-	nonce := "qualification-edge-nonce"
+	nonce := "qualification-edge-nonce-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	signedPath := request.URL.RequestURI()
 	payload := strings.Join([]string{
 		"v2", "primary", request.Method, signedPath,

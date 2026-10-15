@@ -13,6 +13,8 @@
   import { parseApiError } from "#lib/api/errors.js";
   import { buildWalletEntryPayload } from "#lib/wallet/payload.js";
   import CredentialForm from "#lib/components/CredentialForm.svelte";
+  import StackWalletCredentials from "#lib/kombify-wallet/components/StackWalletCredentials.svelte";
+  import { authStore } from "#lib/stores/auth.svelte.js";
   import Modal from "#lib/components/Modal.svelte";
   import { discoverServiceCredentials, type DiscoveredCredential } from "#lib/wallet/integration.js";
 
@@ -46,6 +48,7 @@
   } from "#lib/service-card-adapter.js";
   import { ServiceCard } from "@kombiverselabs/ui/service";
   import { confirmInApp } from "#lib/dialogs/in-app-dialog.js";
+  import ServerOperationsDetail from "#lib/components/stackkit/ServerOperationsDetail.svelte";
   import ManagedRuntimeRecreatePanel from "#lib/components/managed-runtime/ManagedRuntimeRecreatePanel.svelte";
 
   // Stack data
@@ -60,6 +63,9 @@
 
   let services = $state<DeploymentService[]>([]);
   let credentials = $state<WalletItem[]>([]);
+  // Hosted Techstack keeps a stack's credentials in the person's kombify
+  // Wallet (scope `project:<stack id>`), not in the built-in one.
+  const useWallet = $derived(authStore.walletSource === "kombify");
   let loading = $state(true);
   let error = $state<string | null>(null);
   let runtimeStatus = $state<MonthlyRuntimeStatus | null>(null);
@@ -156,14 +162,19 @@
         }
       }
 
-      try {
-        credentials = await getWalletItemsByKitDeployment(stackId);
-      } catch (walletErr) {
-        if (!loaded.operations) throw walletErr;
+      if (useWallet) {
         credentials = [];
-      }
+        discoveredCredentials = [];
+      } else {
+        try {
+          credentials = await getWalletItemsByKitDeployment(stackId);
+        } catch (walletErr) {
+          if (!loaded.operations) throw walletErr;
+          credentials = [];
+        }
 
-      discoverMissingCredentials();
+        discoverMissingCredentials();
+      }
     } catch (err) {
       stackOperations = null;
       const parsed = parseApiError(err);
@@ -503,9 +514,12 @@
           {tr("ui.stacksId.manageCredentialsForThisStackkit")}
         </p>
       </div>
+      {#if !useWallet}
       <button
         onclick={openAddCredential}
-        class="bg-primary hover:bg-primary/80 text-primary-foreground px-4 py-2 rounded-lg flex items-center gap-2"
+        data-kx="control"
+        data-variant="primary"
+        class="px-4 py-2 rounded-lg flex items-center gap-2"
       >
         <svg
           class="w-5 h-5"
@@ -522,6 +536,7 @@
         </svg>
         {tr("ui.stacksId.addCredential")}
       </button>
+      {/if}
     </div>
 
     {#if loading}
@@ -537,6 +552,9 @@
         {error}
       </div>
     {:else}
+      {#each stackOperations?.servers || [] as server (server.id)}
+        <ServerOperationsDetail stackId={stackId || ""} serverId={server.id} serverName={server.hostname || server.id} />
+      {/each}
       {#if isMonthlyRuntimeStack}
         <div
           data-kx="plate"
@@ -790,7 +808,7 @@
       {/if}
 
       <!-- Discovered Credentials Section -->
-      {#if discoveredCredentials.length > 0}
+      {#if !useWallet && discoveredCredentials.length > 0}
         <div
           class="bg-warning/10 border border-warning/30 rounded-xl p-4 mb-6"
         >
@@ -843,6 +861,9 @@
         </div>
       {/if}
 
+      {#if useWallet}
+        {#if stackId}<StackWalletCredentials {stackId} />{/if}
+      {:else}
       <!-- Credentials Table -->
       <div data-kx="plate" class="overflow-hidden">
         <div class="px-6 py-4 border-b border-border">
@@ -984,6 +1005,7 @@
           </table>
         {/if}
       </div>
+      {/if}
 
       <!-- Services Section -->
       {#if services.length > 0}

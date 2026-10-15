@@ -63,6 +63,7 @@ type Config struct {
 	MaxIdleConns    int
 	ConnMaxLifetime time.Duration
 	ConnMaxIdleTime time.Duration
+	managedTestRole string
 }
 
 // DefaultConfig returns conservative connection defaults. ConfigFromEnv
@@ -102,6 +103,23 @@ func ConfigFromEnv() (Config, error) {
 		}
 		cfg.DSN = databaseURL
 		cfg.DriverName = PostgresDriverName
+		if strings.TrimSpace(os.Getenv(EnvManagedTestAssignment)) != "" || isManagedTestDSN(databaseURL) {
+			a, err := LoadManagedTestAssignment()
+			if err != nil {
+				return Config{}, err
+			}
+			if os.Getenv(EnvMigrationDatabaseURL) != "" || os.Getenv(EnvManagedTestAdminDatabaseURL) != "" ||
+				os.Getenv(EnvDatabaseMigrationMode) != "verify" || genesisOptInFromEnv() {
+				return Config{}, fmt.Errorf("assigned app startup requires verify mode without owner/admin credentials or genesis")
+			}
+			if _, err := a.Connection(databaseURL, ManagedTestApp); err != nil {
+				return Config{}, err
+			}
+			if err := a.VerifyPin(); err != nil {
+				return Config{}, err
+			}
+			cfg.managedTestRole = ManagedTestApp
+		}
 		return cfg, nil
 	default:
 		return Config{}, fmt.Errorf("unsupported %s value %q", EnvStoreBackend, backend)
@@ -110,11 +128,35 @@ func ConfigFromEnv() (Config, error) {
 
 // Open creates a PostgreSQL database handle when the SQL store is explicitly enabled.
 func Open(cfg Config) (*DB, error) {
+	return OpenContext(context.Background(), cfg)
+}
+
+// OpenContext uses the same driver/config authority with a caller-bound
+// connection deadline for governed administrative and fixture commands.
+func OpenContext(ctx context.Context, cfg Config) (*DB, error) {
 	if cfg.Backend != StoreBackendPostgres {
 		return nil, fmt.Errorf("%w for backend %q", ErrSQLStoreDisabled, cfg.Backend)
 	}
 	if strings.TrimSpace(cfg.DSN) == "" {
 		return nil, fmt.Errorf("%s is required for postgres backend", EnvDatabaseURL)
+	}
+	if os.Getenv(EnvManagedTestAssignment) != "" || isManagedTestDSN(cfg.DSN) {
+		a, err := LoadManagedTestAssignment()
+		if err != nil {
+			return nil, err
+		}
+		if cfg.managedTestRole != ManagedTestApp && cfg.managedTestRole != ManagedTestOwner && cfg.managedTestRole != ManagedTestProvider && cfg.managedTestRole != ManagedTestIssuer {
+			return nil, fmt.Errorf("managed test connection requires an assigned role configuration")
+		}
+		if cfg.DriverName != "" && cfg.DriverName != PostgresDriverName {
+			return nil, fmt.Errorf("managed test runtime requires the PostgreSQL driver")
+		}
+		if _, err := a.Connection(cfg.DSN, cfg.managedTestRole); err != nil {
+			return nil, err
+		}
+		if err := a.VerifyPin(); err != nil {
+			return nil, err
+		}
 	}
 	driverName := cfg.DriverName
 	if driverName == "" {
@@ -140,7 +182,7 @@ func Open(cfg Config) (*DB, error) {
 	db.SetConnMaxLifetime(cfg.ConnMaxLifetime)
 	db.SetConnMaxIdleTime(cfg.ConnMaxIdleTime)
 
-	if err := db.Ping(); err != nil {
+	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
@@ -151,8 +193,31 @@ func Open(cfg Config) (*DB, error) {
 	}, nil
 }
 
-// Migrate runs all pending migrations.
+// Migrate applies governed migrations, or verifies the existing schema in verify mode.
 func (db *DB) Migrate(ctx context.Context) error {
+	return db.migrate(ctx, nil)
+}
+
+// MigrateForward retains the existing locked migration runner while refusing
+// any pending batch except one exact embedded, digest-bound forward migration.
+func (db *DB) MigrateForward(ctx context.Context, version, digest string, verify func(context.Context, *sql.Tx) error) error {
+	if verify == nil {
+		return fmt.Errorf("forward migration requires transactional capability verification")
+	}
+	return db.migrate(ctx, &forwardMigration{version: version, digest: digest, verify: verify})
+}
+
+func (db *DB) migrate(ctx context.Context, forward *forwardMigration) error {
+	if forward != nil && os.Getenv(EnvDatabaseMigrationMode) != "apply" {
+		return fmt.Errorf("forward migration requires explicit apply mode")
+	}
+	switch mode := strings.TrimSpace(os.Getenv(EnvDatabaseMigrationMode)); mode {
+	case "verify":
+		return db.VerifyMigrations(ctx)
+	case "", "apply":
+	default:
+		return fmt.Errorf("unsupported %s=%q: expected apply or verify", EnvDatabaseMigrationMode, mode)
+	}
 	migrationCtx, cancelMigration := context.WithTimeout(ctx, migrationExecutionLimit)
 	defer cancelMigration()
 	ctx = migrationCtx
@@ -211,15 +276,20 @@ func (db *DB) Migrate(ctx context.Context) error {
 	if err := verifyGenesisAllowed(ctx, lockConn); err != nil {
 		return err
 	}
+	if forward != nil {
+		if err := verifyForwardMigration(ctx, lockConn, *forward); err != nil {
+			return err
+		}
+	} else {
 
-	// Self-heal a legacy schema_migrations table left by an older, integer-keyed
-	// migration framework. This tracker keys migrations by their filename
-	// (TEXT), so a pre-existing `version` column of a non-text type (e.g.
-	// bigint) makes the status query below fail with SQLSTATE 22P02 and the
-	// whole control-plane startup aborts. Drop the incompatible table so it is
-	// recreated with the correct schema; the migrations themselves re-apply
-	// idempotently (CREATE TABLE IF NOT EXISTS).
-	if _, err := lockConn.ExecContext(ctx, `
+		// Self-heal a legacy schema_migrations table left by an older, integer-keyed
+		// migration framework. This tracker keys migrations by their filename
+		// (TEXT), so a pre-existing `version` column of a non-text type (e.g.
+		// bigint) makes the status query below fail with SQLSTATE 22P02 and the
+		// whole control-plane startup aborts. Drop the incompatible table so it is
+		// recreated with the correct schema; the migrations themselves re-apply
+		// idempotently (CREATE TABLE IF NOT EXISTS).
+		if _, err := lockConn.ExecContext(ctx, `
 		DO $$
 		BEGIN
 			IF EXISTS (
@@ -233,21 +303,21 @@ func (db *DB) Migrate(ctx context.Context) error {
 			END IF;
 		END $$;
 	`); err != nil {
-		return fmt.Errorf("failed to reconcile legacy schema_migrations table: %w", err)
-	}
+			return fmt.Errorf("failed to reconcile legacy schema_migrations table: %w", err)
+		}
 
-	// Self-heal legacy PocketBase tables that share names with pkg/db migration
-	// targets but have incompatible schemas (no tenant_id column). These were
-	// created by the PocketBase framework before the PB-retirement merge and
-	// block migration 006 which tries to create RLS policies using tenant_id.
-	// All three tables are empty in the control-plane DB; drop them so the
-	// migrations can recreate them with the correct schema.
-	// Also purge the PocketBase _collections metadata for each dropped table so
-	// that PocketBase no longer references tables whose schema pkg/db now owns.
-	// Without this, app.Bootstrap() would find the collection in _collections,
-	// discover it has no tenant_id field, and the startup tenant-backfill check
-	// would abort as a fatal issue.
-	if _, err := lockConn.ExecContext(ctx, `
+		// Self-heal legacy PocketBase tables that share names with pkg/db migration
+		// targets but have incompatible schemas (no tenant_id column). These were
+		// created by the PocketBase framework before the PB-retirement merge and
+		// block migration 006 which tries to create RLS policies using tenant_id.
+		// All three tables are empty in the control-plane DB; drop them so the
+		// migrations can recreate them with the correct schema.
+		// Also purge the PocketBase _collections metadata for each dropped table so
+		// that PocketBase no longer references tables whose schema pkg/db now owns.
+		// Without this, app.Bootstrap() would find the collection in _collections,
+		// discover it has no tenant_id field, and the startup tenant-backfill check
+		// would abort as a fatal issue.
+		if _, err := lockConn.ExecContext(ctx, `
 		DO $$
 		DECLARE tbl text;
 		BEGIN
@@ -276,17 +346,18 @@ func (db *DB) Migrate(ctx context.Context) error {
 			END LOOP;
 		END $$;
 	`); err != nil {
-		return fmt.Errorf("failed to drop legacy PocketBase tables: %w", err)
-	}
+			return fmt.Errorf("failed to drop legacy PocketBase tables: %w", err)
+		}
 
-	_, createTrackerErr := lockConn.ExecContext(ctx, `
+		_, createTrackerErr := lockConn.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			version TEXT PRIMARY KEY,
 			applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
 		)
 	`)
-	if createTrackerErr != nil {
-		return fmt.Errorf("failed to create migrations table: %w", createTrackerErr)
+		if createTrackerErr != nil {
+			return fmt.Errorf("failed to create migrations table: %w", createTrackerErr)
+		}
 	}
 
 	// Read migrations
@@ -325,6 +396,16 @@ func (db *DB) Migrate(ctx context.Context) error {
 		if _, err := tx.ExecContext(ctx, string(content)); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("failed to execute migration %s: %w", version, err)
+		}
+		if forward != nil {
+			if version != forward.version {
+				_ = tx.Rollback()
+				return fmt.Errorf("unexpected forward migration transaction")
+			}
+			if err := forward.verify(ctx, tx); err != nil {
+				_ = tx.Rollback()
+				return fmt.Errorf("forward migration capability verification: %w", err)
+			}
 		}
 
 		if _, err := tx.ExecContext(ctx, "INSERT INTO schema_migrations (version) VALUES ($1)", version); err != nil {
@@ -390,9 +471,11 @@ func verifyRequiredControlPlaneTables(ctx context.Context, querier migrationTabl
 		if err := querier.QueryRowContext(ctx, `
 			SELECT EXISTS (
 				SELECT 1
-				FROM information_schema.tables
-				WHERE table_schema = current_schema()
-				  AND table_name = $1
+				FROM pg_catalog.pg_class c
+				JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+				WHERE n.nspname = current_schema()
+				  AND c.relname = $1
+				  AND c.relkind IN ('r', 'p')
 			)
 		`, table).Scan(&exists); err != nil {
 			return fmt.Errorf("failed to verify migration table %s: %w", table, err)

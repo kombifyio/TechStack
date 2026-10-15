@@ -73,3 +73,29 @@ func TestResolveBackupAgentRequiresIdentityAndAuthority(t *testing.T) {
 		t.Fatal("a missing worker authority must fail rather than resolve nothing quietly")
 	}
 }
+
+// A Modern stack has two approved agents. The rollout addresses the Cloud node
+// by name, so it must get the agent whose host spells that node and never the
+// Home agent, an unapproved enrollment, or another owner's agent.
+func TestResolveStackKitNodeAgentReturnsOnlyTheNodesOwnApprovedAgent(t *testing.T) {
+	stack := func(id, host, owner string, approved bool) controlplane.Worker {
+		return controlplane.Worker{ID: id, TenantID: "tenant-a", StackID: "stack-a", Hostname: host, OwnerSubjectID: owner, Approved: approved}
+	}
+	store := storeWith(t,
+		stack("worker-home", "home-main", "owner-a", true),
+		stack("worker-cloud", "cloud-edge", "owner-a", true),
+		stack("worker-stranger", "cloud-edge", "owner-b", true),
+	)
+	o := &Orchestrator{workerStore: store}
+	agent, err := o.resolveStackKitNodeAgent(context.Background(), "tenant-a", "owner-a", "stack-a", "cloud-edge")
+	if err != nil || agent != "worker-cloud" {
+		t.Fatalf("agent = %q err = %v, want the Cloud node's own agent", agent, err)
+	}
+	if agent, _ := o.resolveStackKitNodeAgent(context.Background(), "tenant-a", "owner-a", "stack-a", "home-standby"); agent != "" {
+		t.Fatalf("a node with no agent resolved to %q", agent)
+	}
+	twin := storeWith(t, stack("worker-1", "cloud-edge", "owner-a", true), stack("worker-2", "cloud-edge", "owner-a", true))
+	if _, err := (&Orchestrator{workerStore: twin}).resolveStackKitNodeAgent(context.Background(), "tenant-a", "owner-a", "stack-a", "cloud-edge"); err == nil {
+		t.Fatal("two agents for one node must be refused, not guessed")
+	}
+}

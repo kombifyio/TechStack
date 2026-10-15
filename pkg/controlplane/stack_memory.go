@@ -138,6 +138,10 @@ func (s *MemoryStore) CompareAndSwapStackConfig(_ context.Context, command Stack
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	return s.compareAndSwapStackConfigLocked(prepared)
+}
+
+func (s *MemoryStore) compareAndSwapStackConfigLocked(prepared StackConfigCAS) (*Stack, error) {
 	stack, ok := s.stacks[prepared.StackID]
 	if !ok || stack.TenantID != prepared.TenantID || stack.DeletedAt != nil {
 		return nil, ErrConflict

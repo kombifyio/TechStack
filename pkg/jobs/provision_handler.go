@@ -2,9 +2,13 @@ package jobs
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -96,6 +100,11 @@ func ProvisionHandler(cfg *ProvisionConfig) JobHandler {
 			// different request from the mutable StackKit spec.
 			result[PreparedManagedLeaseRequestResultKey] = ManagedLeaseRequestPayload(*preparedLeaseRequest)
 		}
+		if token := stringFromMap(previousResult, "registration_token"); token != "" {
+			// A replay must not rotate the enrollment token issued by the
+			// first pass; only a new job mints a new one.
+			result["registration_token"] = token
+		}
 		preparedManagedLease := restorePreparedManagedLeaseCheckpoint(result, previousResult, job, providerID)
 		job.replaceResult(result)
 		if customerGuest != nil {
@@ -110,21 +119,30 @@ func ProvisionHandler(cfg *ProvisionConfig) JobHandler {
 				}
 			})
 		}
+		restoreManagedProvisionWaitCheckpoint(job, previousResult)
 
 		if isManagedCloudSpec(spec) && !isInstallCommandSpec(spec) {
 			startRuntimeLifecyclePhase(job, runtimePhaseServerAllocate, "Allocating or binding the managed server")
+			// A resumed job replays the Unifier steps; restore the lease step so
+			// the reported position never falls back behind the existing lease.
+			job.setStep(StepCreateLease)
 			if !preparedManagedLease {
 				if err := provisionCreateManagedLease(ctx, cfg, job, q, spec, providerID, runtimePhase, preparedLeaseRequest); err != nil {
-					return err
+					if !providerWaitSurvivesLeaseError(previousResult, err) {
+						return err
+					}
+					// The admitted operation is durable; only this replay failed
+					// to reach the lease authority. Stay in the provider wait.
+					job.mutateResult(func(result map[string]interface{}) {
+						result["runtime_phase"] = string(RuntimePhaseLeasePending)
+						result[leaseIDField] = previousResult[leaseIDField]
+						result[operationIDField] = previousResult[operationIDField]
+					})
+					return managedProviderProvisionWait(job, q, err)
 				}
 			}
 			if stringFromMap(job.Snapshot().Result, "runtime_phase") == string(RuntimePhaseLeasePending) {
-				q.UpdateProgress(job.ID, 82, "Managed provider operation is still provisioning...")
-				return &JobWaitError{
-					Reason:      WaitReasonManagedRuntimeProvider,
-					Message:     "The managed provider operation is still provisioning its durable server resources.",
-					ResumeAfter: 15 * time.Second,
-				}
+				return managedProviderProvisionWait(job, q, nil)
 			}
 			completeRuntimeLifecyclePhase(job, runtimePhaseServerAllocate, "Managed server allocation is persisted", map[string]interface{}{
 				leaseIDField: stringFromMap(job.Result, leaseIDField),
@@ -147,6 +165,31 @@ func ProvisionHandler(cfg *ProvisionConfig) JobHandler {
 
 		return nil
 	}
+}
+
+func managedProviderProvisionWait(job *Job, q *Queue, cause error) error {
+	recordManagedProvisionWaitCheckpoint(job, WaitReasonManagedRuntimeProvider)
+	q.UpdateProgress(job.ID, 82, "Managed provider operation is still provisioning...")
+	return &JobWaitError{
+		Reason:      WaitReasonManagedRuntimeProvider,
+		Message:     "The managed provider operation is still provisioning its durable server resources.",
+		ResumeAfter: 15 * time.Second,
+		Cause:       cause,
+	}
+}
+
+// providerWaitSurvivesLeaseError reports whether a lease error on the replay of
+// an already admitted provider operation is a transient transport or database
+// failure. Only those keep the wait; every admission decision, including a
+// terminal operation replay, still fails the job.
+func providerWaitSurvivesLeaseError(previous map[string]interface{}, err error) bool {
+	if stringFromMap(previous, "runtime_phase") != string(RuntimePhaseLeasePending) ||
+		stringFromMap(previous, leaseIDField) == "" || stringFromMap(previous, operationIDField) == "" {
+		return false
+	}
+	var netErr net.Error
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, driver.ErrBadConn) ||
+		errors.Is(err, sql.ErrConnDone) || errors.As(err, &netErr)
 }
 
 func preparedManagedLeaseRequest(job *Job) (*ManagedLeaseRequest, error) {
@@ -213,6 +256,8 @@ func restorePreparedManagedLeaseCheckpoint(result, previous map[string]interface
 		tenantIDField,
 		"owner_id",
 		"registration_token",
+		operationIDField,
+		ManagedProvisionWaitCheckpointResultKey,
 		metadataKeyRuntimePublicIP,
 		metadataKeyRuntimePrivateIP,
 		metadataKeyRuntimeSSHHost,
@@ -537,7 +582,11 @@ func provisionPersistArtifacts(cfg *ProvisionConfig, job *Job, q *Queue, spec *c
 
 	// Persist requirements-spec.yaml
 	var reqPath string
-	if requirementsSpec != nil {
+	if reused := reusableRequirementsPath(job, persister, intentHash); reused != "" && requirementsSpec != nil {
+		// A wait replay derives the same requirements from the same intent;
+		// rewriting them would only churn their generated timestamp.
+		reqPath = reused
+	} else if requirementsSpec != nil {
 		p, saveErr := persister.SaveRequirementsSpec(requirementsSpec, intentPath)
 		if saveErr != nil {
 			return nil, wrapProvisionCause(StepCreateSpec, fmt.Errorf("failed to persist requirements: %w", saveErr),
@@ -553,6 +602,22 @@ func provisionPersistArtifacts(cfg *ProvisionConfig, job *Job, q *Queue, spec *c
 		stackSpecHash: stackSpecHash,
 		reqPath:       reqPath,
 	}, nil
+}
+
+// reusableRequirementsPath returns the requirements file this job already
+// persisted for the exact same intent, when it still exists on this host.
+func reusableRequirementsPath(job *Job, persister *unifier.SpecPersister, intentHash string) string {
+	previous := job.Snapshot().Result
+	path := stringFromMap(previous, "requirements_path")
+	if path == "" || intentHash == "" || stringFromMap(previous, "intent_sha256") != intentHash ||
+		!persister.RequirementsSpecExists() {
+		return ""
+	}
+	current, err := filepath.Abs(persister.GetRequirementsSpecPath())
+	if err != nil || filepath.Clean(path) != current {
+		return ""
+	}
+	return path
 }
 
 // buildProvisionResult assembles the job.Result map for the prepared stack,
@@ -811,7 +876,8 @@ func provisionMaybeAutoDeploy(ctx context.Context, cfg *ProvisionConfig, job *Jo
 		return false, nil
 	}
 	if cfg == nil || cfg.AutoDeployAdmission == nil {
-		return true, ErrAutoDeployAdmissionUnavailable
+		return true, wrapProvisionCause(StepPrepareRollout, ErrAutoDeployAdmissionUnavailable,
+			"The managed server is ready, but the rollout could not confirm its Guard connection on this control plane.")
 	}
 	snapshot := job.Snapshot()
 	request := AutoDeployAdmissionRequest{
@@ -824,6 +890,9 @@ func provisionMaybeAutoDeploy(ctx context.Context, cfg *ProvisionConfig, job *Jo
 		return true, autoDeployGuardWaitError(cfg, job, q, err)
 	}
 	clearAutoDeployGuardWaitStart(job)
+	// From here the rollout may cause side effects; the job is no longer a
+	// replay of a wait that recovery may resume.
+	clearManagedProvisionWaitCheckpoint(job)
 	job.mutateResult(func(result map[string]interface{}) {
 		result["auto_deploy_guard_verified_at"] = time.Now().UTC().Format(time.RFC3339Nano)
 	})
@@ -853,10 +922,14 @@ func autoDeployGuardWaitError(cfg *ProvisionConfig, job *Job, q *Queue, cause er
 		setAutoDeployGuardWaitStart(job, now)
 	}
 	if timeout <= 0 || now.Sub(startedAt) >= timeout {
-		return fmt.Errorf("%w after %s: %v", ErrAutoDeployAdmissionTimeout, timeout, cause)
+		return wrapProvisionCause(StepPrepareRollout, fmt.Errorf("%w after %s: %v", ErrAutoDeployAdmissionTimeout, timeout, cause),
+			"The managed server was created, but its Guard did not report a fresh heartbeat in time. Retry the rollout once the server is reachable.")
 	}
 	remaining := timeout - now.Sub(startedAt)
 	resumeAfter := managedRuntimeEnrollmentBoundedDelay(managedRuntimeEnrollmentResumeDelay(interval), remaining)
+	// The server exists; waiting for its Guard is the VPS-target confirmation.
+	job.setStep(StepPrepareRollout)
+	recordManagedProvisionWaitCheckpoint(job, WaitReasonCanonicalGuardEvidence)
 	q.UpdateProgress(job.ID, 90, "Managed runtime prepared; waiting for fresh canonical Guard evidence...")
 	return &JobWaitError{
 		Reason:      WaitReasonCanonicalGuardEvidence,

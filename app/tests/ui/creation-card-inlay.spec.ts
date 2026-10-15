@@ -1,6 +1,6 @@
 import { test, expect } from "./fixtures";
 
-test("advanced card inlay uses the full body and preserves edits when closed", async ({
+test("guided setup applies the recommendation and adds the use case", async ({
   page,
 }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -8,66 +8,42 @@ test("advanced card inlay uses the full body and preserves edits when closed", a
     await page.setViewportSize({ width, height: 950 });
     await page.goto("/preview/creation-wizard");
     const card = page.getByTestId("preview-goal-photos");
-    await card
-      .getByRole("button", { name: "Explore & customize", exact: true })
-      .click();
-    const advanced = card.getByRole("button", { name: /^Advanced/ });
-    const service = card.getByRole("button", {
-      name: "Immich Suggested",
+    const explore = card.getByRole("button", {
+      name: "Explore & customize",
       exact: true,
     });
-    await expect(service).toBeVisible();
-    await advanced.click();
-    await expect(service).toBeHidden();
+    await explore.click();
+    await card
+      .getByRole("button", { name: "Use our recommendation", exact: true })
+      .click();
+    await card
+      .getByRole("button", { name: "Apply setup", exact: true })
+      .click();
+    await expect(explore).toBeVisible();
     await expect(
-      card.getByRole("tab", { name: "Profile", exact: true }),
-    ).toBeInViewport();
-    const tabs = await card.getByRole("tab").all();
-    const tabBounds = await Promise.all(tabs.map((tab) => tab.boundingBox()));
-    for (const box of tabBounds) {
-      expect(box!.y).toBeCloseTo(tabBounds[0]!.y, 0);
-      expect(box!.x + box!.width).toBeLessThanOrEqual(
-        (await card.boundingBox())!.x + (await card.boundingBox())!.width,
-      );
-    }
-    const panel = card.getByRole("tabpanel").filter({ visible: true });
-    const bounds = await card.boundingBox();
-    const panelBounds = await panel.boundingBox();
-    expect(panelBounds!.width).toBeGreaterThan(bounds!.width * 0.85);
-    const radio = panel.locator('input[type="radio"][value="high"]');
-    await radio.check();
-    await advanced.click();
-    await expect(service).toBeVisible();
-    await advanced.click();
-    await expect(radio).toBeChecked();
-    const currentBounds = await card.boundingBox();
-    const currentPanelBounds = await panel.boundingBox();
-    const toggleBounds = await advanced.boundingBox();
-    expect(toggleBounds!.y).toBeGreaterThan(currentPanelBounds!.y);
-    expect(toggleBounds!.y + toggleBounds!.height).toBeLessThanOrEqual(
-      currentBounds!.y + currentBounds!.height,
-    );
+      card.getByRole("button", { name: /^Remove from your kit/ }),
+    ).toBeVisible();
   }
 });
 
-test("document add-on is configured in Advanced and retained after closing", async ({
-  page,
-}) => {
+test("setup answers survive closing the card", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/preview/creation-wizard");
   const card = page.getByTestId("preview-goal-files");
-  await card
-    .getByRole("button", { name: "Explore & customize", exact: true })
+  const explore = card.getByRole("button", {
+    name: "Explore & customize",
+    exact: true,
+  });
+  await explore.click();
+  await card.getByRole("button", { name: /^Extras/ }).click();
+  const addon = card.getByRole("checkbox", { name: /^Document archive/ });
+  await card.locator("label").filter({ hasText: "Document archive" }).click();
+  await expect(addon).toBeChecked();
+  await page
+    .getByRole("button", { name: "Less detail Documents & Files", exact: true })
     .click();
-  const addon = card.getByRole("checkbox", { name: /Paperless/ });
-  await expect(addon).toBeHidden();
-  const advanced = card.getByRole("button", { name: /^Advanced/ });
-  await advanced.click();
-  await card.getByRole("tab", { name: /^Features/ }).click();
-  await addon.check();
-  await advanced.click();
-  await expect(addon).toBeHidden();
-  await advanced.click();
-  await card.getByRole("tab", { name: /^Features/ }).click();
+  await explore.click();
+  await card.getByRole("button", { name: /^Extras/ }).click();
   await expect(addon).toBeChecked();
 });
 
@@ -88,12 +64,12 @@ test("expanded cards dismiss without losing the selected application", async ({
   await explore.click();
   await nextcloud.click();
   await page
-    .getByRole("heading", { name: "Choose your use cases", exact: true })
+    .getByRole("heading", { name: "Make room for what matters.", exact: true })
     .click();
   await expect(explore).toBeVisible();
   await explore.click();
   await expect(nextcloud).toHaveAttribute("aria-pressed", "true");
-  await card.getByRole("button", { name: /^Advanced/ }).click();
+  await card.getByRole("button", { name: /^Extras/ }).click();
   await page.keyboard.press("Escape");
   await expect(explore).toBeFocused();
   await explore.click();
@@ -103,4 +79,25 @@ test("expanded cards dismiss without losing the selected application", async ({
   await expect(explore).toBeFocused();
   await explore.click();
   await expect(nextcloud).toHaveAttribute("aria-pressed", "true");
+});
+
+test("steps above the detail level open under More settings", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.setViewportSize({ width: 1360, height: 950 });
+  await page.goto("/preview/creation-wizard");
+  const card = page.getByTestId("preview-goal-photos");
+  await card
+    .getByRole("button", { name: "Explore & customize", exact: true })
+    .click();
+  const steps = card.getByRole("list", { name: "Setup steps" }).locator("li");
+  const guided = await steps.count();
+  await card.getByRole("button", { name: /^More settings/ }).click();
+  await expect(steps).not.toHaveCount(guided);
+  expect(await steps.count()).toBeGreaterThan(guided);
+  await card
+    .getByRole("button", { name: "Fewer settings", exact: true })
+    .click();
+  await expect(steps).toHaveCount(guided);
 });

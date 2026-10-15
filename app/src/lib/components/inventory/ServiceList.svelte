@@ -10,6 +10,7 @@
     type ServiceMetric,
     type ServicePlacement,
     type ServiceStatusKind,
+    type ServiceUpdate,
   } from "@kombiverselabs/ui/service";
   import BrandLogoIcon from "#lib/components/BrandLogoIcon.svelte";
   import BrandLogoScope from "#lib/components/BrandLogoScope.svelte";
@@ -49,6 +50,15 @@
     targetKind?: "server" | "managed_workload" | "unknown" | string;
     /** Vendor domain for context.dev Logo Link; empty keeps the generic glyph. */
     logoDomain?: string;
+    /** Bundled logo image; the glyph icon stays the fallback if it fails. */
+    logoSrc?: string;
+    /** Measured installed version, rendered as a chip by the title. */
+    version?: string;
+    /** Measured available update; renders the update strip. */
+    update?: ServiceUpdate;
+    /** Owner guardrail engaged on the whole item. */
+    locked?: boolean;
+    lockedReason?: string;
     /** Attention services use the detailed standard card in adaptive lists. */
     attention?: boolean;
   }
@@ -98,6 +108,11 @@
     addressUnavailableReason: item.addressUnavailableReason,
     detailsHref: item.detailsHref,
     icon: BrandLogoIcon,
+    logoSrc: item.logoSrc,
+    version: item.version,
+    update: item.update,
+    locked: item.locked,
+    lockedReason: item.lockedReason,
     placement: item.placement,
     status: item.status,
     statusLabel: item.statusLabel,
@@ -138,10 +153,13 @@
         name={item.name}
         meta={item.meta}
         icon={BrandLogoIcon}
+        logoSrc={item.logoSrc}
         placement={item.placement}
         status={item.status}
         statusLabel={item.statusLabel}
         managementLabel={item.managementLabel}
+        locked={item.locked}
+        lockedReason={item.lockedReason}
         actions={item.actions}
         desiredState={item.desiredState}
         observedState={item.observedState}

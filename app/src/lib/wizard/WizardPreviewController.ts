@@ -117,6 +117,15 @@ function normalizeRequest(
     services,
     deployment_lane: request.deployment_lane,
     ...(provider ? { provider_id: provider } : {}),
+    ...(request.compute_profile
+      ? { compute_profile: request.compute_profile.trim() }
+      : {}),
+    ...(request.use_case_settings
+      ? { use_case_settings: request.use_case_settings }
+      : {}),
+    ...(request.use_case_capabilities
+      ? { use_case_capabilities: request.use_case_capabilities }
+      : {}),
     surface: request.surface,
   };
 }

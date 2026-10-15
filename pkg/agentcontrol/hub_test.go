@@ -2,12 +2,14 @@ package agentcontrol
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
+	"github.com/kombifyio/techstack/pkg/guardbinding"
 	"github.com/kombifyio/techstack/pkg/stackkitcommand"
 	"google.golang.org/protobuf/proto"
 )
@@ -209,5 +211,93 @@ func TestHubNeverDispatchesHostCommandToAgentWithoutHostMaintenance(t *testing.T
 	var missing *MissingCapabilityError
 	if err := <-errCh; !errors.As(err, &missing) || missing.Capability != stackkitcommand.HostMaintenanceCapability {
 		t.Fatalf("SendStackKitCommand() error = %v, want the missing host maintenance capability", err)
+	}
+}
+
+// A worker that authenticates with a bearer credential alone may observe but
+// is never handed a command that changes its host; the same command is
+// dispatched to a key-bound worker.
+func TestHubWithholdsMutatingCommandsFromObserveOnlyWorkers(t *testing.T) {
+	hub := NewHub()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	apply := validHubCommand("apply-1")
+	apply.Operation = agentpb.StackKitOperation_STACKKIT_OPERATION_APPLY
+	apply.OwnerApproved = true
+	apply.ServiceKey, apply.LogTail = "", 0
+	apply.LocalSiteRef, apply.LocalNodeRef, apply.LocalExecutionChannelRef = "cloud", "cloud-main", "host-channel-cloud-main"
+	apply.ExpectedPlanHash = "sha256:" + strings.Repeat("b", 64)
+	capabilities := append(stackkitcommand.RequiredAgentCapabilities(apply), stackkitcommand.WorkspaceInstanceCapability)
+	go func() { _, _ = hub.SendStackKitCommand(ctx, "agent-1", apply) }()
+	go func() { _, _ = hub.SendStackKitCommand(ctx, "agent-1", validHubCommand("logs-1")) }()
+	time.Sleep(100 * time.Millisecond)
+
+	observe := func(wait time.Duration) string {
+		pollCtx, stop := context.WithTimeout(ctx, wait)
+		defer stop()
+		offer, found, err := hub.PollBoundForTenant(pollCtx, PollOptions{AgentID: "agent-1", Capabilities: capabilities, ObserveOnly: true})
+		if err != nil || !found {
+			return ""
+		}
+		return offer.Command.GetCommandId()
+	}
+	if got := observe(time.Second); got != "logs-1" {
+		t.Fatalf("observe-only poll = %q, want the read-only command", got)
+	}
+	if got := observe(300 * time.Millisecond); got != "" {
+		t.Fatalf("observe-only poll was handed %q", got)
+	}
+	offer, found, err := hub.PollBoundForTenant(ctx, PollOptions{AgentID: "agent-1", Capabilities: capabilities})
+	if err != nil || !found || offer.Command.GetCommandId() != "apply-1" {
+		t.Fatalf("key-bound poll = %+v, %v, %v", offer, found, err)
+	}
+}
+
+// The in-memory hub binds what it offers a bound Guard to that Guard, and a
+// Guard's refusal ends the caller's wait instead of leaving it to time out.
+func TestInMemoryHubBindsOffersAndHonoursGuardRefusal(t *testing.T) {
+	hub := NewHub()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	command := validHubCommand("logs-1")
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := hub.SendStackKitCommand(ctx, "agent-1", command)
+		errCh <- err
+	}()
+	capabilities := append(stackkitcommand.RequiredAgentCapabilities(command), guardbinding.Capability)
+	var offer *Offer
+	for offer == nil {
+		pollCtx, stop := context.WithTimeout(ctx, 200*time.Millisecond)
+		got, found, err := hub.PollBoundForTenant(pollCtx, PollOptions{TenantID: "tenant-1", AgentID: "agent-1", Capabilities: capabilities})
+		stop()
+		if err != nil && ctx.Err() != nil {
+			t.Fatalf("PollBoundForTenant() error = %v", err)
+		}
+		if found {
+			offer = got
+		}
+	}
+	if offer.Binding == nil {
+		t.Fatal("a bound Guard was offered a command without a binding")
+	}
+	raw, err := json.Marshal(offer.Command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if denial := offer.Binding.Validate(raw, offer.Command.Operation.String(), guardbinding.Expectation{TenantID: "tenant-1", WorkerID: "agent-1"}, time.Now()); denial != nil {
+		t.Fatalf("the Guard would refuse its own binding: %v", denial)
+	}
+	report := guardbinding.ResultReport{Revision: 1, State: guardbinding.ReportRejected, Reason: "binding mismatch"}
+	if _, err := hub.SubmitReportForTenant(ctx, ReportRequest{TenantID: "tenant-1", AgentID: "agent-1", CommandID: "logs-1", Report: report}); err != nil {
+		t.Fatalf("SubmitReportForTenant(rejected) error = %v", err)
+	}
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, ErrResultRejected) {
+			t.Fatalf("SendStackKitCommand() error = %v, want the Guard's refusal", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the caller is still waiting after the Guard refused the command")
 	}
 }

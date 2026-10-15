@@ -28,15 +28,23 @@ func (s *Service) Bootstrap(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("get record: %w", err)
 	}
 	if rec != nil && rec.PasswordHash != "" {
+		if rec.Claimed || rec.Locked || s.cfg.ClaimLocked {
+			return "", nil
+		}
 		// Already bootstrapped; if the envelope expired, scrub it.
 		if !rec.ShowUntil.IsZero() && s.cfg.Now().After(rec.ShowUntil) {
-			rec.ShowPassword = ""
-			rec.ShowUntil = time.Time{}
-			if saveErr := s.cfg.Store.Save(ctx, rec); saveErr != nil {
+			next := *rec
+			next.ShowPassword = ""
+			next.ShowUntil = time.Time{}
+			next.UpdatedAt = s.cfg.Now()
+			if saveErr := s.compareAndSwap(ctx, rec, &next); saveErr != nil {
 				return "", fmt.Errorf("scrub envelope: %w", saveErr)
 			}
 		}
 		return "", nil
+	}
+	if s.cfg.ClaimLocked || rec != nil && rec.Locked {
+		return "", ErrLockedByOperator
 	}
 
 	password, err := generateSecureToken(18)
@@ -57,7 +65,7 @@ func (s *Service) Bootstrap(ctx context.Context) (string, error) {
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
-	if err := s.cfg.Store.Save(ctx, fresh); err != nil {
+	if err := s.compareAndSwap(ctx, rec, fresh); err != nil {
 		return "", fmt.Errorf("save record: %w", err)
 	}
 	return password, nil
@@ -75,6 +83,9 @@ type RevealResult struct {
 // Calling Reveal on an expired or already-consumed envelope returns
 // [ErrPasswordExpired].
 func (s *Service) Reveal(ctx context.Context) (*RevealResult, error) {
+	if s.cfg.ClaimLocked {
+		return nil, ErrLockedByOperator
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -85,6 +96,9 @@ func (s *Service) Reveal(ctx context.Context) (*RevealResult, error) {
 	if rec == nil || rec.PasswordHash == "" {
 		return nil, ErrNotFound
 	}
+	if rec.Locked {
+		return nil, ErrLockedByOperator
+	}
 	if rec.Claimed {
 		return nil, ErrPasswordExpired
 	}
@@ -93,9 +107,11 @@ func (s *Service) Reveal(ctx context.Context) (*RevealResult, error) {
 	}
 	if !rec.ShowUntil.IsZero() && s.cfg.Now().After(rec.ShowUntil) {
 		// Auto-scrub expired envelope.
-		rec.ShowPassword = ""
-		rec.ShowUntil = time.Time{}
-		if err := s.cfg.Store.Save(ctx, rec); err != nil {
+		next := *rec
+		next.ShowPassword = ""
+		next.ShowUntil = time.Time{}
+		next.UpdatedAt = s.cfg.Now()
+		if err := s.compareAndSwap(ctx, rec, &next); err != nil {
 			return nil, fmt.Errorf("scrub envelope: %w", err)
 		}
 		return nil, ErrPasswordExpired
@@ -106,13 +122,75 @@ func (s *Service) Reveal(ctx context.Context) (*RevealResult, error) {
 		ExpiresAt: rec.ShowUntil,
 		Claimed:   rec.Claimed,
 	}
-	rec.ShowPassword = ""
-	rec.ShowUntil = time.Time{}
-	rec.UpdatedAt = s.cfg.Now()
-	if err := s.cfg.Store.Save(ctx, rec); err != nil {
+	next := *rec
+	next.ShowPassword = ""
+	next.ShowUntil = time.Time{}
+	next.UpdatedAt = s.cfg.Now()
+	if err := s.compareAndSwap(ctx, rec, &next); err != nil {
 		return nil, fmt.Errorf("consume envelope: %w", err)
 	}
 	return result, nil
+}
+
+// ReissueBootstrap replaces the credential of an existing, unclaimed bootstrap
+// owner. The previous password stops authenticating immediately. It neither
+// restores consumed plaintext nor creates a new owner. The returned password is
+// already consumed locally: it is never placed in an HTTP reveal envelope.
+//
+// This is an operator-only primitive. Consumers must call it exclusively from
+// their host-local administration command, after proving access to the existing
+// self-hosted installation; never expose it through an anonymous HTTP handler.
+func (s *Service) ReissueBootstrap(ctx context.Context) (string, error) {
+	if s.cfg.ClaimLocked {
+		return "", ErrLockedByOperator
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, err := s.cfg.Store.Get(ctx)
+	if err != nil {
+		return "", fmt.Errorf("get record: %w", err)
+	}
+	if rec == nil || rec.PasswordHash == "" {
+		return "", ErrNotFound
+	}
+	if rec.Locked {
+		return "", ErrLockedByOperator
+	}
+	if rec.Claimed {
+		return "", ErrAlreadyClaimed
+	}
+	password, err := generateSecureToken(18)
+	if err != nil {
+		return "", err
+	}
+	hash, err := hashPassword(password)
+	if err != nil {
+		return "", err
+	}
+	next := *rec
+	next.PasswordHash = hash
+	next.ShowPassword = ""
+	next.ShowUntil = time.Time{}
+	next.UpdatedAt = s.cfg.Now()
+	if err := s.compareAndSwap(ctx, rec, &next); err != nil {
+		return "", fmt.Errorf("reissue bootstrap: %w", err)
+	}
+	return password, nil
+}
+
+func (s *Service) compareAndSwap(ctx context.Context, expected, next *Record) error {
+	store, ok := s.cfg.Store.(AtomicStore)
+	if !ok {
+		return ErrAtomicStoreRequired
+	}
+	saved, err := store.CompareAndSwap(ctx, expected, next)
+	if err != nil {
+		return err
+	}
+	if !saved {
+		return ErrConcurrentUpdate
+	}
+	return nil
 }
 
 // ClaimRequest is the input to [Service.Claim].
@@ -147,6 +225,9 @@ func (s *Service) Claim(ctx context.Context, req ClaimRequest) error {
 	if rec == nil || rec.PasswordHash == "" {
 		return ErrNotFound
 	}
+	if rec.Locked {
+		return ErrLockedByOperator
+	}
 	if rec.Claimed {
 		return ErrAlreadyClaimed
 	}
@@ -166,13 +247,14 @@ func (s *Service) Claim(ctx context.Context, req ClaimRequest) error {
 		email = rec.Email
 	}
 	now := s.cfg.Now()
-	rec.Email = email
-	rec.PasswordHash = hash
-	rec.ShowPassword = ""
-	rec.ShowUntil = time.Time{}
-	rec.Claimed = true
-	rec.UpdatedAt = now
-	if err := s.cfg.Store.Save(ctx, rec); err != nil {
+	next := *rec
+	next.Email = email
+	next.PasswordHash = hash
+	next.ShowPassword = ""
+	next.ShowUntil = time.Time{}
+	next.Claimed = true
+	next.UpdatedAt = now
+	if err := s.compareAndSwap(ctx, rec, &next); err != nil {
 		return fmt.Errorf("save record: %w", err)
 	}
 	return nil
@@ -226,13 +308,13 @@ func (s *Service) CurrentStatus(ctx context.Context) (Status, error) {
 	if rec == nil || rec.PasswordHash == "" {
 		return Status{Initialized: false, Locked: s.cfg.ClaimLocked}, nil
 	}
-	pending := rec.ShowPassword != "" && (rec.ShowUntil.IsZero() || s.cfg.Now().Before(rec.ShowUntil))
+	pending := !rec.Claimed && !rec.Locked && !s.cfg.ClaimLocked && rec.ShowPassword != "" && (rec.ShowUntil.IsZero() || s.cfg.Now().Before(rec.ShowUntil))
 	return Status{
 		Initialized:      true,
 		Claimed:          rec.Claimed,
 		Email:            rec.Email,
 		HasPendingReveal: pending,
 		RevealExpiresAt:  rec.ShowUntil,
-		Locked:           s.cfg.ClaimLocked,
+		Locked:           s.cfg.ClaimLocked || rec.Locked,
 	}, nil
 }

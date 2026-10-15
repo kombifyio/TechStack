@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	commonoidc "github.com/kombifyio/techstack/internal/gocommon/oidcclient"
 	"github.com/kombifyio/techstack/pkg/config"
@@ -94,6 +95,10 @@ func (p *Provider) AuthCodeURL(redirectURI, state string) string {
 // Verify is removed in favor of [Provider.ToOIDCClient] +
 // [github.com/kombifyio/techstack/internal/gocommon/oidcclient.Provider.Verify].
 
+// auth0ClockSkew covers observed subsecond issuer/consumer clock differences.
+// The explicit two-second bound leaves all other token checks in the shared verifier.
+const auth0ClockSkew = 2 * time.Second
+
 // ToOIDCClient converts the TechStack provider into the shared go-common
 // provider shape used by authflow/authlocal.
 func (p *Provider) ToOIDCClient() (*commonoidc.Provider, error) {
@@ -103,6 +108,10 @@ func (p *Provider) ToOIDCClient() (*commonoidc.Provider, error) {
 	kind, err := toOIDCClientKind(p.cfg.Kind)
 	if err != nil {
 		return nil, err
+	}
+	clockSkew := time.Duration(0)
+	if p.cfg.Kind == KindAuth0 {
+		clockSkew = auth0ClockSkew
 	}
 	return commonoidc.NewProvider(commonoidc.ProviderConfig{
 		ID:               p.cfg.ID,
@@ -115,6 +124,7 @@ func (p *Provider) ToOIDCClient() (*commonoidc.Provider, error) {
 		TokenURL:         p.cfg.TokenURL,
 		JWKSURL:          p.cfg.JWKSURL,
 		Scopes:           append([]string(nil), p.cfg.Scopes...),
+		ClockSkew:        clockSkew,
 	})
 }
 

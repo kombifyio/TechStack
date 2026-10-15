@@ -10,6 +10,7 @@
  */
 export {
   NotificationBell,
+  NotificationCenter,
   NotificationPreferences,
 } from "@kombiverselabs/ui/notifications";
 export {

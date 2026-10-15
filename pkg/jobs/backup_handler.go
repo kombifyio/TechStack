@@ -108,10 +108,9 @@ type BackupPayload struct {
 // the decision or, worse, disagree with it after the fact while the job is
 // already durable.
 //
-// Dispatch prefers the typed agent command set. That is the transport the node
+// Dispatch uses the typed agent command set. That is the transport the node
 // actually has: the Guard polls outbound and holds a per-agent token, so there
-// is no inbound path to it. The HTTP runner remains only for a co-located
-// self-hosted StackKits action server.
+// is no inbound path to it.
 func BackupHandler(cfg *ProvisionConfig) JobHandler {
 	return func(ctx context.Context, job *Job, q *Queue) error {
 		if cfg == nil {
@@ -121,18 +120,10 @@ func BackupHandler(cfg *ProvisionConfig) JobHandler {
 		if err != nil {
 			return err
 		}
-		if cfg.StackKitCommander != nil {
-			return dispatchBackupCommand(ctx, cfg, job, payload)
+		if cfg.StackKitCommander == nil {
+			return fmt.Errorf("no backup dispatcher is configured: the typed agent commander is required")
 		}
-		if cfg.RuntimeActions.BackupRunner == nil {
-			return fmt.Errorf("no backup dispatcher is configured: neither a typed agent commander nor a StackKits action runner")
-		}
-		return cfg.RuntimeActions.BackupRunner.Run(ctx, RuntimeActionRequest{
-			StackID:   payload.StackID,
-			StackName: payload.StackName,
-			TenantID:  payload.TenantID,
-			OwnerID:   payload.OwnerID,
-		})
+		return dispatchBackupCommand(ctx, cfg, job, payload)
 	}
 }
 

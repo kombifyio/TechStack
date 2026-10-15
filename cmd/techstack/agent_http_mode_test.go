@@ -18,9 +18,13 @@ import (
 	"testing"
 	"time"
 
+	"encoding/json"
 	agentpkg "github.com/kombifyio/techstack/pkg/agent"
+	"github.com/kombifyio/techstack/pkg/agent/httpguard"
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
+	"github.com/kombifyio/techstack/pkg/guardbinding"
 	"github.com/kombifyio/techstack/pkg/runtimeconvergence"
+	"github.com/kombifyio/techstack/pkg/stackkitcommand"
 )
 
 type fakeCurrentStackKitRuntime struct {
@@ -36,6 +40,25 @@ type fakeRuntimePackageConverger struct {
 	stackKitErr     error
 	techstackCalls  int
 	stackKitCalls   int
+}
+
+// Regression: an unchanged Agent digest cannot skip a newly available split
+// migration and reach the StackKits replacement boundary in legacy mode.
+func TestLateGuardMigrationPrecedesUnchangedRuntimeConvergence(t *testing.T) {
+	runtime := &fakeRuntimePackageConverger{}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	available, stopped := false, false
+	migrate := func(context.Context) bool { return available }
+	first := convergeRuntimePackagesOnceStatus(t.Context(), func() { stopped = true }, runtime, agentpkg.TechstackRuntimeConvergenceConfig{}, agentpkg.StackKitRuntimeBootstrapConfig{}, log, migrate)
+	if !first.keepRunning || !first.converged || stopped {
+		t.Fatal("existing runtime did not remain usable before migration was available")
+	}
+	before := runtime.stackKitCalls
+	available = true
+	next := convergeRuntimePackagesOnceStatus(t.Context(), func() { stopped = true }, runtime, agentpkg.TechstackRuntimeConvergenceConfig{}, agentpkg.StackKitRuntimeBootstrapConfig{}, log, migrate)
+	if next.keepRunning || next.converged || !stopped || runtime.stackKitCalls != before {
+		t.Fatal("late migration did not stop the legacy replacement path")
+	}
 }
 
 func (runtime *fakeRuntimePackageConverger) EnsureTechstackRuntime(context.Context, agentpkg.TechstackRuntimeConvergenceConfig) (agentpkg.TechstackRuntimeConvergenceResult, error) {
@@ -185,6 +208,14 @@ func TestParseHTTPSAgentModeDoesNotRequireGRPCCertificates(t *testing.T) {
 		enrollment.CommandResultURL != "https://techstack.example/api/v1/workers/runtime-1/commands/result" {
 		t.Fatalf("derived typed control URLs = %q, %q", enrollment.CommandURL, enrollment.CommandResultURL)
 	}
+	for _, args := range [][]string{
+		{"--wait-for-enrollment", "--transport=grpc-mtls"},
+		{"--wait-for-enrollment", "--enrollment-file="},
+	} {
+		if _, err := parseAgentModeConfig(args); err == nil {
+			t.Fatal("accepted enrollment waiting without its HTTPS file boundary")
+		}
+	}
 }
 
 func TestHTTPSAgentEnrollmentRejectsGroupReadableSecretFile(t *testing.T) {
@@ -192,6 +223,11 @@ func TestHTTPSAgentEnrollmentRejectsGroupReadableSecretFile(t *testing.T) {
 		t.Skip("Windows ACLs are not represented by POSIX permission bits")
 	}
 	path := writeEnrollmentFixture(t, 0o644)
+	// Fixture creation honors the process umask; apply the unsafe mode explicitly
+	// so a restrictive development shell still exercises the rejection boundary.
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	_, err := loadAgentEnrollment(path)
 	if err == nil || !strings.Contains(err.Error(), "group/world") {
 		t.Fatalf("loadAgentEnrollment error = %v", err)
@@ -327,7 +363,7 @@ func TestHTTPSGuardRelayFollowsAuthenticatedLifecycle(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)
-	cfg := &agentModeConfig{transport: httpsScheme, agentID: "enrolled-node", agentToken: "guard-fixture",
+	cfg := &agentModeConfig{transport: httpsScheme, agentID: "enrolled-node", agentToken: "guard-fixture", stateDir: t.TempDir(),
 		heartbeatURL: core.URL + "/heartbeat", inventoryURL: core.URL + "/inventory", heartbeatInterval: 10 * time.Millisecond,
 		kombifyMeAPIKey: "kbi_fixture", kombifyMeRelayURL: "ws" + strings.TrimPrefix(carrier.URL, "http")}
 	go func() { done <- runHTTPAgentMode(ctx, cfg, slog.New(slog.NewTextHandler(io.Discard, nil))) }()
@@ -371,4 +407,41 @@ func TestHTTPSGuardRelayFollowsAuthenticatedLifecycle(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("relay socket survived Guard shutdown")
 	}
+}
+
+// An unknown connector mutation may be settled only by qualified current CLI
+// evidence for the original operation; a successful unverified executor result
+// keeps the local journal fence escalated.
+func TestApplicationConnectorJournalOracleNeverRepeatsMutation(t *testing.T) {
+	runtime := &connectorOracleRuntime{t: t}
+	oracle := stackKitReconciler{executor: currentStackKitCommandExecutor{runtime: runtime}}
+	metadata := stackkitcommand.ConnectorRequest{SchemaVersion: stackkitcommand.ApplicationConnectorRequestSchema}
+	metadata.Connector.Binding = stackkitcommand.ConnectorSource{ResourceID: "service-1", ContainerID: strings.Repeat("a", 64), ImageDigest: "sha256:" + strings.Repeat("b", 64), ServiceRevision: 1, Node: stackkitcommand.ConnectorNode{SiteRef: "home", NodeRef: "main", ExecutionChannelRef: "local-home-main"}}
+	metadata.Connector.Action = "ensure"
+	metadata.Connector.LifespanDays = 30
+	raw, _ := json.Marshal(metadata)
+	hint := httpguard.ReconcileHint{WorkingDirectory: "/opt/stackkit", SpecPath: "stack-spec.yaml", StackkitInstanceID: "instance-1", ExpectedPlanHash: "sha256:" + strings.Repeat("c", 64), ConnectorRequest: raw, ConnectorOperationID: "original-connector", LocalSiteRef: "home", LocalNodeRef: "main", LocalExecutionChannelRef: "local-home-main", Release: &agentpb.StackKitReleasePin{Version: "v0.51.8", PlatformOs: "linux", PlatformArch: "amd64", ArchiveSha256: strings.Repeat("d", 64), ReleaseIndexSha256: strings.Repeat("e", 64)}}
+	outcome := oracle.Reconcile(t.Context(), httpguard.ReconcileRequest{CommandID: "original-connector", Operation: agentpb.StackKitOperation_STACKKIT_OPERATION_APPLICATION_CONNECTOR.String(), Hint: hint})
+	if outcome.Resolution != guardbinding.ResolutionEscalated || !runtime.readOnly {
+		t.Fatal("unverified current observation released the connector journal fence")
+	}
+}
+
+type connectorOracleRuntime struct {
+	t        *testing.T
+	readOnly bool
+}
+
+func (*connectorOracleRuntime) EnsureRuntime(context.Context, agentpkg.StackKitRuntimeBootstrapConfig) error {
+	return nil
+}
+func (r *connectorOracleRuntime) Execute(_ context.Context, c *agentpb.StackKitCommand) *agentpb.StackKitResult {
+	if c.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_APPLICATION_CONNECTOR_VERIFY || c.OwnerApproved || c.ApplicationOperationId != "original-connector" || c.CommandId == c.ApplicationOperationId {
+		r.t.Fatal("journal oracle replayed mutation or changed original operation")
+	}
+	r.readOnly = true
+	return &agentpb.StackKitResult{CommandId: c.CommandId, Success: true}
+}
+func (*connectorOracleRuntime) FailureResult(c *agentpb.StackKitCommand, err error) *agentpb.StackKitResult {
+	return &agentpb.StackKitResult{CommandId: c.CommandId, Stderr: err.Error()}
 }

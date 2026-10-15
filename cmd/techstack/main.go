@@ -1,8 +1,8 @@
 // kombifyTechstack - The Hybrid Infrastructure Unifier
 // ==================================================
 // This is the Postgres-backed Techstack control-plane entry point.
-// PocketBase is bootstrapped only for bounded local-auth compatibility; it does
-// not serve HTTP or own control-plane state.
+// The supported HTTP runtime uses the canonical PostgreSQL auth, configuration
+// and session authorities without a local PocketBase database.
 package main
 
 import (
@@ -23,7 +23,7 @@ import (
 // rewrites this constant here by exact file path + regex. Keep the declaration
 // on its own line below. Version parsing/normalization helpers live in
 // version.go.
-const defaultProductVersion = "0.33.5" // x-release-please-version
+const defaultProductVersion = "0.41.1" // x-release-please-version
 
 func hasAnyAgentMTLSConfig(certFile, keyFile, caFile string) bool {
 	return certFile != "" || keyFile != "" || caFile != ""

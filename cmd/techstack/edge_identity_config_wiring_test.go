@@ -257,6 +257,10 @@ func signV2EdgeRequestForConfigWiringTest(req *http.Request, secret string) {
 
 func signV2EdgeRequestForConfigWiringTestWithNonce(req *http.Request, secret, nonce string) {
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	nonce += "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	if req.Header.Get(commonedgeauth.HeaderEdgeService) == "" {
+		req.Header.Set(commonedgeauth.HeaderEdgeService, "capabilities")
+	}
 	signedPath := req.URL.RequestURI()
 	keyID := "primary"
 	payload := strings.Join([]string{

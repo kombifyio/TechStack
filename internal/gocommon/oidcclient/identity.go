@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/kombifyio/techstack/internal/gocommon/identity"
+	"github.com/kombifyio/techstack/internal/gocommon/role"
 )
 
 // IdentityFromClaims projects an OIDC [Claims] onto a
@@ -17,8 +18,13 @@ import (
 //   - Email   ← `email`
 //   - OrgID   ← `org_id` || `org` || `project_id` (raw claim)
 //   - Tier    ← `tier` || `plan` (raw claim)
-//   - Roles   ← `roles` (raw claim, []string or comma-separated string)
-//     || single `role` claim
+//   - Roles   ← when `role.DefaultRoleClaimNamespace` is present, the role
+//     package projects known platform roles from the namespace and flat claims,
+//     with its canonical ordering, deduplication and safe default. Presence
+//     selects this mode even for an empty or malformed namespaced value.
+//     Without the namespace, provider-neutral `roles` (JSON array or
+//     comma-separated string) || single `role` retain their original order
+//     and arbitrary role names.
 //
 // Returns nil if claims is nil.
 func IdentityFromClaims(c *Claims) *identity.Identity {
@@ -54,6 +60,14 @@ func firstStringClaim(raw map[string]interface{}, keys ...string) string {
 func rolesFromClaims(raw map[string]interface{}) []string {
 	if raw == nil {
 		return nil
+	}
+	if _, canonical := raw[role.DefaultRoleClaimNamespace]; canonical {
+		platformRoles := role.ExtractAllRolesFromClaims(raw, role.DefaultRoleClaimNamespace)
+		out := make([]string, len(platformRoles))
+		for index, platformRole := range platformRoles {
+			out[index] = string(platformRole)
+		}
+		return out
 	}
 	if v, ok := raw["roles"]; ok {
 		switch t := v.(type) {

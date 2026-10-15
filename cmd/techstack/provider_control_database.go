@@ -135,10 +135,13 @@ required_tenant_rls(table_name) AS (
         ('server_provider_resource_bindings'),
         ('provider_operation_resource_free_terminalizations'),
         ('pairing_tokens'),
-        ('provider_incidents')
+        ('provider_incidents'),
+        ('ril_workflow_runs')
 ),
 security_definer_boundary(function_name, runtime_executable) AS (
     VALUES
+        ('techstack_project_ril_workflow_tenant', false),
+        ('techstack_list_ril_workflow_tenants', false),
         ('provider_execution_immutable_update', false),
         ('substrate_execution_claim_guard', false),
         ('substrate_guest_custody_valid', true),
@@ -658,6 +661,13 @@ func providerControlRuntimeDatabaseConfigFromEnv() (db.Config, error) {
 			return db.Config{}, fmt.Errorf("provider-control runtime database configuration must not override role or session authority")
 		}
 	}
+	if os.Getenv(db.EnvManagedTestAssignment) != "" || parsed.Host == db.ManagedTestHost || parsed.Database == db.ManagedTestDatabase {
+		a, err := db.LoadManagedTestAssignment()
+		if err != nil {
+			return db.Config{}, err
+		}
+		return db.ManagedTestConfig(*a, dsn, db.ManagedTestProvider)
+	}
 	return db.Config{
 		Backend:         db.StoreBackendPostgres,
 		DSN:             dsn,
@@ -687,6 +697,26 @@ func verifyProviderControlRuntimeRolePosture(ctx context.Context, runtimeDatabas
 	}
 	if pinErr := verifyProviderControlExpectedDatabaseIdentity(migrationIdentity); pinErr != nil {
 		return pinErr
+	}
+	// Ordinary runtime carries the application pool, not the migration owner.
+	// Both pools independently read the existing bounded identity helper above;
+	// its catalog owner is the canonical authority, never the app session role.
+	if migrationIdentity.roleOID != migrationIdentity.authorityOwnerOID {
+		ownerOID := migrationIdentity.authorityOwnerOID
+		if os.Getenv(db.EnvManagedTestAssignment) != "" {
+			a, err := db.LoadManagedTestAssignment()
+			if err != nil {
+				return err
+			}
+			ownerOID, err = db.ManagedTestAuthorityOwnerOID(ctx, migrationDatabase, *a)
+			if err != nil {
+				return err
+			}
+		}
+		if ownerOID == migrationIdentity.roleOID || ownerOID == posture.identity.roleOID {
+			return fmt.Errorf("provider runtime authority must have a distinct canonical owner")
+		}
+		return validateProviderControlRuntimeAuthorityForOwner(posture, migrationIdentity, ownerOID)
 	}
 	return validateProviderControlRuntimeAuthority(posture, migrationIdentity)
 }
@@ -732,10 +762,16 @@ func verifyProviderControlExpectedDatabaseIdentity(migrationIdentity providerCon
 }
 
 func validateProviderControlRuntimeAuthority(posture providerControlRuntimeRolePosture, migrationIdentity providerControlDatabaseIdentity) error {
+	return validateProviderControlRuntimeAuthorityForOwner(posture, migrationIdentity, migrationIdentity.roleOID)
+}
+
+// The actual primary session remains an app session in assigned test mode.
+// Its trusted schema owner is independently read and never impersonated.
+func validateProviderControlRuntimeAuthorityForOwner(posture providerControlRuntimeRolePosture, migrationIdentity providerControlDatabaseIdentity, ownerOID int64) error {
 	if posture.identity.roleOID == migrationIdentity.roleOID {
 		return fmt.Errorf("verify provider-control runtime role posture: runtime and migration role OIDs must differ")
 	}
-	if posture.identity.authorityOwnerOID != migrationIdentity.roleOID || migrationIdentity.authorityOwnerOID != migrationIdentity.roleOID {
+	if ownerOID <= 0 || posture.identity.authorityOwnerOID != ownerOID || migrationIdentity.authorityOwnerOID != ownerOID {
 		return fmt.Errorf("verify provider-control runtime role posture: bounded authority functions must be owned by the migration role")
 	}
 	if posture.superuser || posture.bypassRLS || posture.createDatabase || posture.createRole || posture.replication || posture.setRoleMembership {
@@ -763,8 +799,33 @@ func validateProviderControlRuntimeAuthority(posture providerControlRuntimeRoleP
 }
 
 func loadProviderControlRuntimeRolePosture(ctx context.Context, database *sql.DB) (providerControlRuntimeRolePosture, error) {
+	return loadProviderControlPostureQuery(ctx, database, providerControlRuntimeRolePostureQuery)
+}
+
+// Preparation reads effective catalog capabilities for the existing provider
+// through the authenticated app/owner helper. This is not runtime impersonation;
+// the independent provider login must still pass the ordinary gate after commit.
+func loadProviderControlGrantCatalog(ctx context.Context, database providerControlPostureQuerier) (providerControlRuntimeRolePosture, error) {
+	query := strings.Replace(providerControlRuntimeRolePostureQuery, "WHERE runtime_role.rolname = current_user", "WHERE runtime_role.rolname = $1", 1)
+	return loadProviderControlPostureQuery(ctx, database, query, providerControlRuntimeRoleName)
+}
+
+func loadProviderControlGrantPreparationCatalog(ctx context.Context, database providerControlPostureQuerier) (providerControlRuntimeRolePosture, error) {
+	query := strings.Replace(providerControlRuntimeRolePostureQuery, "WHERE runtime_role.rolname = current_user", "WHERE runtime_role.rolname = $1", 1)
+	// Required EXECUTE is the diagnosed absent effect being prepared. Keep all
+	// structural owner/search-path/PUBLIC fences and forbid unexpected EXECUTE;
+	// the full unmodified predicate is required before commit and in runtime.
+	query = strings.Replace(query, "IS DISTINCT FROM boundary.runtime_executable", "AND NOT boundary.runtime_executable", 1)
+	return loadProviderControlPostureQuery(ctx, database, query, providerControlRuntimeRoleName)
+}
+
+type providerControlPostureQuerier interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func loadProviderControlPostureQuery(ctx context.Context, database providerControlPostureQuerier, query string, args ...any) (providerControlRuntimeRolePosture, error) {
 	var posture providerControlRuntimeRolePosture
-	err := database.QueryRowContext(ctx, providerControlRuntimeRolePostureQuery).Scan(
+	err := database.QueryRowContext(ctx, query, args...).Scan(
 		&posture.identity.roleOID,
 		&posture.identity.roleName,
 		&posture.identity.sessionRoleOID,

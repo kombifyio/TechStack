@@ -31,10 +31,20 @@ type OperatorSelfDisclosureStore interface {
 	UpsertOperatorSelfDisclosure(ctx context.Context, disclosure OperatorSelfDisclosure) (*OperatorSelfDisclosure, error)
 }
 
-// Self-disclosure sources name the surface that captured the answers.
+// Self-disclosure sources record how the answers reached the store, so
+// answers an operator typed stay distinguishable from answers a link carried.
 const (
-	OperatorSelfDisclosureSourceCloud     = "cloud"
+	// OperatorSelfDisclosureSourceLink marks answers that arrived as URL state
+	// (the Cloud Finder hand-off or any other link) and that the operator
+	// confirmed in Techstack before they were stored.
+	OperatorSelfDisclosureSourceLink = "link"
+	// OperatorSelfDisclosureSourceTechstack marks answers the operator typed
+	// in a Techstack surface.
 	OperatorSelfDisclosureSourceTechstack = "techstack"
+	// OperatorSelfDisclosureSourceLegacyCloud marks rows the wizard stored
+	// straight from a link, before a confirmation was required. Such rows stay
+	// readable; nothing writes this source any more.
+	OperatorSelfDisclosureSourceLegacyCloud = "cloud"
 )
 
 // normalizeOperatorSelfDisclosure validates the record and returns a trimmed
@@ -54,7 +64,7 @@ func normalizeOperatorSelfDisclosure(disclosure OperatorSelfDisclosure) (Operato
 		return out, fmt.Errorf("controlplane: owner subject id required")
 	}
 	switch out.Source {
-	case OperatorSelfDisclosureSourceCloud, OperatorSelfDisclosureSourceTechstack:
+	case OperatorSelfDisclosureSourceLink, OperatorSelfDisclosureSourceTechstack:
 	default:
 		return out, fmt.Errorf("controlplane: self-disclosure source %q is not valid", out.Source)
 	}

@@ -17,7 +17,7 @@ func TestCatalogExposesStandardAndPremiumOfferings(t *testing.T) {
 		standard.VCPUs != 4 ||
 		standard.MemoryMB != 8192 ||
 		standard.DiskGB != 80 ||
-		standard.Image != "ubuntu-24.04" ||
+		standard.Image != "ubuntu-26.04" ||
 		standard.Region != "de-fra" ||
 		standard.BillingCadence != serverruntime.BillingCadenceMonthly {
 		t.Fatalf("standard offering = %+v", standard)
@@ -31,7 +31,7 @@ func TestCatalogExposesStandardAndPremiumOfferings(t *testing.T) {
 		premium.VCPUs != 4 ||
 		premium.MemoryMB != 8192 ||
 		premium.DiskGB != 320 ||
-		premium.Image != "ubuntu-24.04" ||
+		premium.Image != "ubuntu-26.04" ||
 		premium.Region != "de-fra" ||
 		premium.BillingCadence != serverruntime.BillingCadenceMonthly {
 		t.Fatalf("premium offering = %+v", premium)

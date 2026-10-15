@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -57,6 +58,9 @@ type RolloutRetryRequest struct {
 	StackName               string
 	SourceJobID             string
 	LeaseID                 string
+	CandidateSpec           map[string]any
+	OwnerApproved           bool
+	CurrentSpecHash         string
 	IssueOwnerSpecBootstrap func() (*jobs.OwnerSpecBootstrap, error)
 }
 
@@ -97,6 +101,7 @@ func (o *Orchestrator) RetryRollout(req RolloutRetryRequest) (*RolloutRetryResul
 		return nil, replayErr
 	}
 	if found && !rehydrate {
+		o.recordRolloutRetrySupersession(ctx, req.TenantID, req.SourceJobID, replayID)
 		return &RolloutRetryResult{
 			JobID: replayID, LeaseID: req.LeaseID, ServerID: serverID, IdempotentReplay: true,
 		}, nil
@@ -147,6 +152,12 @@ func normalizeRolloutRetryRequest(req *RolloutRetryRequest) error {
 	if !normalizeExactRecoveryIdentity(&req.StackID, &req.TenantID, &req.OwnerID, &req.SourceJobID, &req.LeaseID) {
 		return fmt.Errorf("%w: stack, tenant, owner, source job, and lease are required", ErrRolloutRetryInvalid)
 	}
+	if len(req.CandidateSpec) > 0 && !req.OwnerApproved {
+		return fmt.Errorf("%w: canonical repair requires owner approval", ErrRolloutRetryInvalid)
+	}
+	if req.CurrentSpecHash != "" && !jobs.ValidRolloutRetryCurrentSpecHash(req.CurrentSpecHash) {
+		return fmt.Errorf("%w: current spec hash must be a normalized SHA-256 binding", ErrRolloutRetryInvalid)
+	}
 	return nil
 }
 
@@ -189,6 +200,27 @@ func (o *Orchestrator) prepareRolloutRetry(
 	opts.rolloutRetryJobID = req.SourceJobID
 	opts.rolloutRetryKey = exactRolloutRetryKey(req.StackID, req.SourceJobID, req.LeaseID)
 	opts.rolloutRetryNewID = exactRolloutRetryJobID(opts.rolloutRetryKey)
+	candidate := req.CandidateSpec
+	if len(candidate) == 0 && strings.TrimSpace(stringFromAny(stack.config[rolloutRetryCandidateField])) == "" {
+		// Even an unchanged native retry snapshots its current durable intent.
+		// A cached preparation handoff is not that dispatch's authority.
+		candidate, _ = providerIdentityMap(stack.config["stack_spec_v2"])
+	}
+	var digestErr error
+	opts.rolloutRetryCandidateSHA, digestErr = rolloutCandidateDigest(candidate)
+	if digestErr != nil {
+		return nil, nil, opts, "", digestErr
+	}
+	opts.rolloutRetryCandidate = cloneProvisionSpec(candidate)
+	if bound := strings.TrimSpace(stringFromAny(stack.config[rolloutRetryCandidateField])); bound != "" && bound != opts.rolloutRetryCandidateSHA {
+		return nil, nil, opts, "", fmt.Errorf("%w: canonical repair candidate is already bound", ErrRolloutRetryInvalid)
+	}
+	currentIntent, intentErr := o.rolloutRetryIntentForRequest(ctx, req, *source, serverID, opts.rolloutRetryCandidateSHA)
+	if intentErr != nil {
+		return nil, nil, opts, "", intentErr
+	}
+	opts.rolloutRetryIntent = currentIntent
+	opts.rolloutRetryCurrentHash = req.CurrentSpecHash
 	return stack, source, opts, serverID, nil
 }
 
@@ -206,6 +238,9 @@ func (o *Orchestrator) dispatchRolloutRetry(
 	if runtimeErr := o.requireExactManagedRuntimeDeploy(ctx, stack, req.LeaseID, serverID); runtimeErr != nil {
 		return nil, runtimeErr
 	}
+	if repairErr := o.repairRolloutCandidate(ctx, req, stack, opts); repairErr != nil {
+		return nil, repairErr
+	}
 	if bootstrapErr := issueRolloutRetryOwnerSpecBootstrap(req, &opts); bootstrapErr != nil {
 		return nil, bootstrapErr
 	}
@@ -213,9 +248,25 @@ func (o *Orchestrator) dispatchRolloutRetry(
 	if deployErr != nil {
 		return nil, deployErr
 	}
+	o.recordRolloutRetrySupersession(ctx, req.TenantID, req.SourceJobID, jobID)
 	return &RolloutRetryResult{
 		JobID: jobID, LeaseID: req.LeaseID, ServerID: serverID, IdempotentReplay: idempotentReplay,
 	}, nil
+}
+
+// recordRolloutRetrySupersession points the failed source job at its
+// deterministic replacement so a client polling the source can follow it. The
+// pointer is not an authority: a failed write leaves the dispatched retry
+// intact and the next idempotent request records it again.
+func (o *Orchestrator) recordRolloutRetrySupersession(ctx context.Context, tenantID, sourceJobID, replacementJobID string) {
+	recorder, ok := o.jobStore.(controlplane.JobSupersessionRecorder)
+	if !ok || strings.TrimSpace(replacementJobID) == "" {
+		return
+	}
+	if err := recorder.RecordJobSupersededBy(ctx, tenantID, sourceJobID, replacementJobID); err != nil {
+		o.log.Warn("rollout_retry_supersession_not_recorded",
+			"tenant_id", tenantID, "source_job_id", sourceJobID, "replacement_job_id", replacementJobID, "error", err)
+	}
 }
 
 func issueRolloutRetryOwnerSpecBootstrap(req RolloutRetryRequest, opts *ProvisionStackOptions) error {
@@ -286,16 +337,47 @@ func rolloutRetryDispatchResult(opts ProvisionStackOptions) map[string]any {
 	if !isRolloutRetry(opts) {
 		return nil
 	}
-	return map[string]any{
+	result := map[string]any{
 		rolloutRetryKindField:              rolloutRetryKindExact,
 		rolloutRetryKeyField:               strings.TrimSpace(opts.rolloutRetryKey),
 		rolloutRetrySourceField:            strings.TrimSpace(opts.rolloutRetryJobID),
 		rolloutRetryLeaseField:             strings.TrimSpace(opts.RequiredLeaseID),
 		rolloutRetryServerField:            strings.TrimSpace(opts.RequiredServerID),
 		rolloutRetryReplacementField:       strings.TrimSpace(opts.rolloutRetryNewID),
+		rolloutRetryCandidateField:         opts.rolloutRetryCandidateSHA,
 		enrollmentResumeGenericLeaseField:  strings.TrimSpace(opts.RequiredLeaseID),
 		enrollmentResumeGenericServerField: strings.TrimSpace(opts.RequiredServerID),
 	}
+	if opts.rolloutRetryIntent != nil {
+		result[jobs.RolloutRetryCurrentIntentField] = cloneProvisionSpec(opts.rolloutRetryIntent)
+	}
+	if opts.rolloutRetryCurrentHash != "" {
+		result[jobs.RolloutRetryCurrentSpecHashField] = opts.rolloutRetryCurrentHash
+	}
+	return result
+}
+
+// A failed node Apply positively proves that INIT and generation established
+// native intent. Preparation failures retain the ordinary fresh INIT path.
+// This evidence comes from the validated source job, never the retry request.
+func rolloutRetryCurrentIntent(source controlplane.Job, leaseID, serverID string) (map[string]any, error) {
+	failure, _ := providerIdentityMap(source.Result["typed_stackkit_rollout"])
+	if stringFromAny(failure["operation"]) != jobs.StackKitLifecycleApply {
+		return nil, nil
+	}
+	proof, _ := providerIdentityMap(source.Result["e2e_proof"])
+	path := strings.TrimSpace(stringFromAny(proof["stack_spec_path"]))
+	kit := jobs.NormalizeStackKitRef(stringFromAny(proof["stackkit_ref"]))
+	agentID := strings.TrimSpace(stringFromAny(proof["runtime_agent_id"]))
+	release := strings.TrimSpace(stringFromAny(failure["release"]))
+	if stringFromAny(failure["status"]) != "failed" ||
+		stringFromAny(failure["command_id"]) != source.ID+"-"+jobs.StackKitLifecycleApply ||
+		stringFromAny(proof["lease_id"]) != leaseID || stringFromAny(proof["server_id"]) != serverID ||
+		path == "" || kit == "" || agentID == "" || release == "" {
+		return nil, fmt.Errorf("%w: failed Apply has no exact native intent binding", ErrRolloutRetryInvalid)
+	}
+	return map[string]any{"source_job_id": source.ID, "lease_id": leaseID, "server_id": serverID,
+		"agent_id": agentID, "stackkit": kit, "spec_path": path, "release": release}, nil
 }
 
 func isRolloutRetry(opts ProvisionStackOptions) bool {
@@ -345,10 +427,15 @@ func exactRolloutRetryReceipt(candidate, expected map[string]any) (bool, error) 
 		strings.TrimSpace(stringFromAny(candidate[rolloutRetrySourceField])) != strings.TrimSpace(stringFromAny(expected[rolloutRetrySourceField])) {
 		return false, nil
 	}
-	for _, field := range []string{rolloutRetryLeaseField, rolloutRetryServerField, rolloutRetryReplacementField} {
+	for _, field := range []string{rolloutRetryLeaseField, rolloutRetryServerField, rolloutRetryReplacementField, rolloutRetryCandidateField, jobs.RolloutRetryCurrentSpecHashField} {
 		if strings.TrimSpace(stringFromAny(candidate[field])) != strings.TrimSpace(stringFromAny(expected[field])) {
 			return false, fmt.Errorf("%w: rollout retry key belongs to another exact target", stackrouting.ErrIdempotencyConflict)
 		}
+	}
+	candidateIntent, _ := providerIdentityMap(candidate[jobs.RolloutRetryCurrentIntentField])
+	expectedIntent, _ := providerIdentityMap(expected[jobs.RolloutRetryCurrentIntentField])
+	if !reflect.DeepEqual(candidateIntent, expectedIntent) {
+		return false, fmt.Errorf("%w: rollout retry native intent lineage changed", stackrouting.ErrIdempotencyConflict)
 	}
 	return true, nil
 }
@@ -373,6 +460,12 @@ func (o *Orchestrator) findRolloutRetryReplay(
 	}
 	if queued, ok := o.queue.Get(replacement.ID); ok {
 		snapshot := queued.Snapshot()
+		if opts.rolloutRetryCurrentHash != "" {
+			exactPayload, payloadErr := exactRolloutRetryReceipt(snapshot.Payload, receipt)
+			if payloadErr != nil || !exactPayload {
+				return "", false, false, fmt.Errorf("%w: queued retry precondition differs from its receipt", stackrouting.ErrIdempotencyConflict)
+			}
+		}
 		switch snapshot.State {
 		case jobs.JobStatePending, jobs.JobStateRunning, jobs.JobStateWaiting, jobs.JobStateCompleted:
 			return replacement.ID, true, false, nil

@@ -10,6 +10,45 @@ import (
 	"github.com/kombifyio/techstack/pkg/stackkitcommand"
 )
 
+// The signed historical CLI proves the old generation; retain its complete
+// public provenance separately while the existing parser binds its Plan hash.
+func attachSourceGenerationInspection(result *agentpb.StackKitResult) error {
+	var envelope map[string]json.RawMessage
+	if result == nil || json.Unmarshal(result.CommandResultJson, &envelope) != nil {
+		return fmt.Errorf("source generation receipt is invalid")
+	}
+	var data map[string]json.RawMessage
+	if json.Unmarshal(envelope["data"], &data) != nil {
+		return fmt.Errorf("source generation receipt data is invalid")
+	}
+	var output string
+	if json.Unmarshal(data["output"], &output) != nil {
+		return fmt.Errorf("source generation receipt output is invalid")
+	}
+	if len(output) == 0 || len(output) > 2<<20 {
+		return fmt.Errorf("source generation inspection is not bounded")
+	}
+	var source struct {
+		APIVersion string          `json:"apiVersion"`
+		Inspection json.RawMessage `json:"inspection"`
+	}
+	if json.Unmarshal([]byte(output), &source) != nil {
+		return fmt.Errorf("source generation inspection is invalid")
+	}
+	if source.APIVersion == "stackkit.plan-inspection/v1" {
+		return nil // Same release: ordinary current CUE inspection.
+	}
+	if source.APIVersion != "stackkit.source-generation-inspection/v1" || len(source.Inspection) == 0 {
+		return fmt.Errorf("source generation inspection version is invalid")
+	}
+	data["source_generation_authority"] = json.RawMessage(output)
+	data["output"], _ = json.Marshal(string(source.Inspection))
+	envelope["data"], _ = json.Marshal(data)
+	var err error
+	result.CommandResultJson, err = json.Marshal(envelope)
+	return err
+}
+
 // attachManagedBackupPlan reads only the canonical artifact inspected by PLAN.
 // OpenRoot confines all traversal; symlink components are additionally refused.
 func attachManagedBackupPlan(workspace, instance string, result *agentpb.StackKitResult) error {

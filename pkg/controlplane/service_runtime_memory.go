@@ -39,6 +39,11 @@ func (s *MemoryStore) UpsertServiceRuntime(_ context.Context, service ServiceRun
 		}
 	}
 	service.UpdatedAt = now
+	if existing, ok := s.serviceRuntime[service.ID]; ok {
+		service.Revision = existing.Revision + 1
+	} else {
+		service.Revision = 1
+	}
 	service.Access = cloneMap(service.Access)
 	service.Metadata = cloneMap(service.Metadata)
 	service.Capabilities = append([]string(nil), service.Capabilities...)
@@ -63,35 +68,18 @@ func (s *MemoryStore) UpsertServiceRuntime(_ context.Context, service ServiceRun
 // same rules the Postgres boundary enforces: unlocking clears reason, actor and
 // timestamp together, and the timestamp only moves when the state changed.
 func (s *MemoryStore) SetServiceMutationLock(
-	_ context.Context,
+	ctx context.Context,
 	tenantID, serviceID string,
 	lock ServiceMutationLock,
-	_ string,
+	reasonCode string,
 ) (*ServiceRuntime, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	service, ok := s.serviceRuntime[serviceID]
-	if !ok || service.TenantID != tenantID {
-		return nil, ErrNotFound
+	result, err := s.ApplyServiceEvent(ctx, ServiceEvent{TenantID: tenantID, ServiceID: serviceID,
+		Authority: ServiceEventAuthorityControlPlane, Source: ServiceEventAuthorityControlPlane,
+		ReasonCode: reasonCode, Runtime: ServiceRuntime{MutationLock: lock}})
+	if err != nil {
+		return nil, err
 	}
-	state := serviceregistry.CanonicalMutationLockState(string(lock.State))
-	changed := serviceregistry.CanonicalMutationLockState(string(service.MutationLock.State)) != state
-	if state == serviceregistry.MutationUnlocked {
-		service.MutationLock = ServiceMutationLock{State: state}
-	} else {
-		service.MutationLock.State = state
-		service.MutationLock.ReasonCode = lock.ReasonCode
-		service.MutationLock.Actor = lock.Actor
-		if changed || service.MutationLock.ChangedAt == nil {
-			stamp := s.now().UTC()
-			service.MutationLock.ChangedAt = &stamp
-		}
-	}
-	if changed {
-		service.UpdatedAt = s.now()
-	}
-	s.serviceRuntime[serviceID] = service
-	return cloneServiceRuntime(service), nil
+	return result.Service, nil
 }
 
 func (s *MemoryStore) GetServiceRuntime(_ context.Context, tenantID, serviceID string) (*ServiceRuntime, error) {
@@ -106,9 +94,6 @@ func (s *MemoryStore) GetServiceRuntime(_ context.Context, tenantID, serviceID s
 		return nil, ErrNotFound
 	}
 	serverID := legacyServiceServerID(legacy, s.servers)
-	if serverID == "" {
-		return nil, ErrNotFound
-	}
 	return cloneServiceRuntime(backfilledServiceRuntime(legacy, serverID)), nil
 }
 
@@ -134,7 +119,7 @@ func (s *MemoryStore) ListServiceRuntimes(_ context.Context, tenantID, stackID, 
 			continue
 		}
 		mappedServerID := legacyServiceServerID(legacy, s.servers)
-		if mappedServerID == "" || (serverID != "" && mappedServerID != serverID) {
+		if serverID != "" && mappedServerID != serverID {
 			continue
 		}
 		backfilled := backfilledServiceRuntime(legacy, mappedServerID)

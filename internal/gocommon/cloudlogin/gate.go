@@ -154,6 +154,10 @@ func Evaluate(opts Options) Result {
 	if err != nil || token == nil || !token.Valid {
 		return Result{Reason: "token_invalid"}
 	}
+	return evaluateEnrollmentClaims(opts, claims, audience, expectedOrigin)
+}
+
+func evaluateEnrollmentClaims(opts Options, claims *enrollmentClaims, audience, expectedOrigin string) Result {
 	if strings.TrimSpace(claims.Subject) == "" {
 		return Result{Reason: "subject_missing"}
 	}

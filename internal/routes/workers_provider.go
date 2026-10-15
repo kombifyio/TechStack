@@ -42,6 +42,9 @@ func (h workerRouteHandlers) providerCommand(e *httpx.Event, result bool) error 
 	if !ok {
 		return nil
 	}
+	if !requireKeyBoundWorker(e, auth) {
+		return nil
+	}
 	if auth.Worker == nil || auth.Worker.Type != "substrate" {
 		return httpx.Error(e, http.StatusForbidden, "FORBIDDEN", "An enrolled substrate Guard is required", nil)
 	}
@@ -79,6 +82,9 @@ func (h workerRouteHandlers) providerBootstrap(e *httpx.Event) error {
 	id := strings.TrimSpace(e.Request.PathValue("id"))
 	auth, ok := h.authenticateRuntimeAgent(e, id, request.authRequest(id))
 	if !ok {
+		return nil
+	}
+	if !requireKeyBoundWorker(e, auth) {
 		return nil
 	}
 	if auth.Worker == nil || auth.Worker.Type != "substrate" {

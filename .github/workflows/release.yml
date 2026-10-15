@@ -1,7 +1,6 @@
 name: Open-Core Release
 
 on:
-  pull_request:
   push:
     tags: ['v[0-9]+.[0-9]+.[0-9]+']
 
@@ -22,6 +21,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          node scripts/verify-public-export.mjs
           version="${GITHUB_REF_NAME#v}"
           [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
           test "$(tr -d '[:space:]' < VERSION)" = "$version"
@@ -69,6 +69,11 @@ jobs:
           node-version: 24
           cache: pnpm
           cache-dependency-path: app/pnpm-lock.yaml
+      - name: Verify reviewed public source
+        shell: pwsh
+        run: |
+          node scripts/verify-public-export.mjs
+          if ($LASTEXITCODE -ne 0) { throw "Public source receipt does not match." }
       - name: Install public UI dependencies
         shell: pwsh
         run: pnpm --dir app install --frozen-lockfile
@@ -77,6 +82,8 @@ jobs:
         run: |
           $version = (Get-Content -Raw VERSION).Trim()
           .\scripts\build-windows-runtime-pair.ps1 -Version $version -SourceRevision $env:GITHUB_SHA -WindowsOutputPath 'dist\windows-runtime-pair\techstack.exe' -LinuxOutputPath 'dist\windows-runtime-pair\techstack-linux-amd64'
+          go build -mod=readonly -buildvcs=false -trimpath -o 'dist\windows-runtime-pair\guard-release-tool.exe' ./cmd/guard-release-tool
+          if ($LASTEXITCODE -ne 0) { throw "Canonical Guard verifier build failed." }
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: windows-runtime-pair
@@ -112,9 +119,14 @@ jobs:
           wix --version
       - name: Build unsigned Windows setup assets
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $version = (Get-Content -Raw VERSION).Trim()
-          pwsh -NoProfile -File .\scripts\package-windows-client.ps1 -Version $version -RuntimeExe 'dist\windows-runtime-pair\techstack.exe' -LinuxRuntimeExe 'dist\windows-runtime-pair\techstack-linux-amd64' -SpecTemplatesPath 'dist\spec-templates'
+          if ($env:GITHUB_REF_NAME -ne "v$version") { throw "Numeric tag and public source version differ." }
+          gh release download "guard-v$version" --repo $env:GITHUB_REPOSITORY --dir 'dist\guard-release' --pattern 'release-manifest*' --pattern 'techstack-linux-*' --pattern 'stackkit-runtime-linux-*.tar.gz'
+          if ($LASTEXITCODE -ne 0) { throw "Exact-source public Guard publication is required before packaging." }
+          pwsh -NoProfile -File .\scripts\package-windows-client.ps1 -Version $version -RuntimeExe 'dist\windows-runtime-pair\techstack.exe' -LinuxRuntimeExe 'dist\guard-release\techstack-linux-amd64' -SpecTemplatesPath 'dist\spec-templates' -GuardReleaseDirectory 'dist\guard-release' -GuardReleaseTool 'dist\windows-runtime-pair\guard-release-tool.exe'
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: windows-client

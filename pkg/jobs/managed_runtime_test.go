@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/kombifyio/techstack/internal/guardbootstrap"
-	"github.com/kombifyio/techstack/pkg/core"
 	"github.com/kombifyio/techstack/pkg/monthlyruntime"
 )
 
@@ -143,43 +142,5 @@ func TestManagedRuntimeTargetTerminalErrorTreatsRuntimeVMGoneAsTerminal(t *testi
 		"lease-ghost", fmt.Errorf("%w for lease %q: managed runtime ssh_info returned 404", monthlyruntime.ErrRuntimeVMGone, "lease-ghost"))
 	if !managedRuntimeTargetTerminalError(err) {
 		t.Fatalf("managedRuntimeTargetTerminalError(%v) = false, want true", err)
-	}
-}
-
-func TestDeployRuntimeActionModeFollowsSpecInsteadOfHardcodingAdvanced(t *testing.T) {
-	specWith := func(mode string) *deployPreparation {
-		metadata := map[string]string{}
-		if mode != "" {
-			metadata["mode"] = mode
-		}
-		return &deployPreparation{
-			managedRuntime: true,
-			kombSpec:       &core.KombinationSpec{Metadata: metadata},
-		}
-	}
-	cases := []struct {
-		name string
-		prep *deployPreparation
-		want string
-	}{
-		{"managed empty spec defaults bootstrapped", specWith(""), "bootstrapped"},
-		{"managed wizard mode folds to bootstrapped", specWith("easy"), "bootstrapped"},
-		{"managed legacy simple folds to bootstrapped", specWith("simple"), "bootstrapped"},
-		{"managed explicit advanced is preserved", specWith("advanced"), "advanced"},
-		{"managed legacy terramate folds to advanced", specWith("terramate"), "advanced"},
-		{"managed bare is preserved", specWith("bare"), "bare"},
-	}
-	for _, tc := range cases {
-		if got := deployRuntimeActionMode(&Job{}, tc.prep); got != tc.want {
-			t.Fatalf("%s: deployRuntimeActionMode = %q, want %q", tc.name, got, tc.want)
-		}
-	}
-
-	selfHosted := &deployPreparation{
-		managedRuntime: false,
-		kombSpec:       &core.KombinationSpec{Metadata: map[string]string{"mode": "easy"}},
-	}
-	if got := deployRuntimeActionMode(&Job{}, selfHosted); got != "easy" {
-		t.Fatalf("self-hosted mode pass-through = %q, want easy (unchanged behavior)", got)
 	}
 }

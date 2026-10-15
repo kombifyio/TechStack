@@ -15,8 +15,11 @@ import (
 )
 
 type retryStackRolloutRequest struct {
-	SourceJobID string `json:"source_job_id"`
-	LeaseID     string `json:"lease_id"`
+	SourceJobID     string         `json:"source_job_id"`
+	LeaseID         string         `json:"lease_id"`
+	CandidateSpec   map[string]any `json:"candidate_spec,omitempty"`
+	OwnerApproved   bool           `json:"owner_approved,omitempty"`
+	CurrentSpecHash *string        `json:"current_spec_hash,omitempty"`
 }
 
 //nolint:dupl // Keep the typed retry contract explicit; authorization, bootstrap, and response projection are shared with enrollment recovery.
@@ -38,11 +41,22 @@ func (h crudRouteHandlers) retryStackRollout(e *httpx.Event) error {
 			detailsKeyReasonCode: "rollout_retry_target_required",
 		})
 	}
+	currentSpecHash := ""
+	if req.CurrentSpecHash != nil {
+		currentSpecHash = *req.CurrentSpecHash
+		if currentSpecHash == "" {
+			return httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeBadRequest, "current_spec_hash must be a normalized SHA-256 binding", map[string]any{
+				detailsKeyReasonCode: "invalid_rollout_retry_current_spec_hash",
+			})
+		}
+	}
 	var ownerSpecAccess ownerSpecBootstrapAccess
 	result, retryErr := h.orch.RetryRollout(orchestrator.RolloutRetryRequest{
 		RequestContext: e.Request.Context(), StackID: stack.ID, TenantID: stack.TenantID,
 		OwnerID: stack.OwnerSubjectID, StackName: stack.Name, SourceJobID: req.SourceJobID,
-		LeaseID:                 req.LeaseID,
+		LeaseID:       req.LeaseID,
+		CandidateSpec: req.CandidateSpec, OwnerApproved: req.OwnerApproved,
+		CurrentSpecHash:         currentSpecHash,
 		IssueOwnerSpecBootstrap: h.recoveryOwnerSpecIssuer(e.Request.Context(), stack, &ownerSpecAccess),
 	})
 	if retryErr != nil {

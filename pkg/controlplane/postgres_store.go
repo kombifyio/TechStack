@@ -15,6 +15,7 @@ const tenantGUC = "app.tenant_id"
 type PostgresStore struct {
 	db                   *sql.DB
 	serverEventProjector ServerEventProjector
+	serverEventCommitted ServerEventCommitObserver
 }
 
 // ServerEventProjector records product-local projections inside the same SQL
@@ -23,11 +24,35 @@ type ServerEventProjector interface {
 	ProjectServerEvent(context.Context, *sql.Tx, *ServerEventResult) error
 }
 
+// ServerEventCommitObserver is optionally implemented by a ServerEventProjector.
+// ServerEventCommitted runs after the store-owned transaction that accepted the
+// event has committed (ApplyServerEvent, server enrollment, Guard inventory
+// projection and owner detach), never inside it and never for a rolled-back
+// event. It must not block or fail the caller. ApplyServerEventTx leaves the
+// commit to its caller and does not call it.
+type ServerEventCommitObserver interface {
+	ServerEventCommitted(*ServerEventResult)
+}
+
 type PostgresStoreOption func(*PostgresStore)
 
 func WithServerEventProjector(projector ServerEventProjector) PostgresStoreOption {
 	return func(store *PostgresStore) {
 		store.serverEventProjector = projector
+		store.serverEventCommitted, _ = projector.(ServerEventCommitObserver)
+	}
+}
+
+// announceServerEvents tells the commit observer about events whose
+// transaction has just committed.
+func (s *PostgresStore) announceServerEvents(results ...*ServerEventResult) {
+	if s == nil || s.serverEventCommitted == nil {
+		return
+	}
+	for _, result := range results {
+		if result != nil {
+			s.serverEventCommitted.ServerEventCommitted(result)
+		}
 	}
 }
 

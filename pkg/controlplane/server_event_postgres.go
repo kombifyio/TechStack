@@ -39,6 +39,7 @@ func (s *PostgresStore) ApplyServerEvent(ctx context.Context, event ServerEvent)
 		}
 		return nil, err
 	}
+	s.announceServerEvents(result)
 	return result, nil
 }
 
@@ -133,6 +134,7 @@ func applyServerEventTx(
 	}
 	result := &ServerEventResult{
 		Server: persisted, Transitions: transitions, Inventory: inventory, Outbox: outbox, Applied: true,
+		InventoryRefreshed: prepared.replaceInventory,
 	}
 	if projector != nil {
 		if err := projector.ProjectServerEvent(ctx, tx, result); err != nil {

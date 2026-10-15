@@ -1,9 +1,12 @@
 package routes
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -17,6 +20,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/auth"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
+	"github.com/kombifyio/techstack/pkg/kombifywallet"
 	"github.com/google/uuid"
 )
 
@@ -35,24 +39,69 @@ const (
 )
 
 type walletRouteHandlers struct {
-	wst       controlplane.WalletStore
-	ast       controlplane.ActivityStore
-	encryptor *auth.SecretEncryptor
-	now       func() time.Time
+	wst          controlplane.WalletStore
+	ast          controlplane.ActivityStore
+	encryptor    *auth.SecretEncryptor
+	now          func() time.Time
+	localReauth  WalletLocalReauth
+	deviceReauth *WalletLocalDeviceReauth
+}
+
+// WalletLocalReauth verifies the current owner through the installation's
+// canonical local login authority. Hosted deployments do not supply it.
+type WalletLocalReauth func(context.Context, string, string) error
+
+// WalletDeviceBinding is made from the authorized, unredacted store snapshot.
+// The device authority cannot select another owner or another disclosure.
+type WalletDeviceBinding struct {
+	OwnerID, TenantID, ItemID, Snapshot, ReasonDigest, DisplayName string
+}
+
+type WalletDeviceChallenge struct {
+	Origin        string `json:"origin"`
+	OwnerID       string `json:"owner_id"`
+	TenantID      string `json:"tenant_id"`
+	Provider      string `json:"provider"`
+	ItemID        string `json:"item_id"`
+	Snapshot      string `json:"snapshot"`
+	ReasonDigest  string `json:"reason_digest"`
+	SessionDigest string `json:"session_digest"`
+	DisplayName   string `json:"display_name"`
+	ClientNonce   string `json:"client_nonce"`
+	ServerNonce   string `json:"server_nonce"`
+	ExpiresAt     string `json:"expires_at"`
+	Proof         string `json:"proof"`
+}
+
+type WalletDeviceProof struct {
+	ClientNonce string `json:"client_nonce"`
+	ServerNonce string `json:"server_nonce"`
+	Proof       string `json:"proof"`
+}
+
+// These callbacks serve only this Wallet operation. The native credential and
+// all intermediate proofs stay outside the browser's JavaScript context.
+type WalletLocalDeviceReauth struct {
+	Challenge func(*httpx.Event, WalletDeviceBinding, string) (*WalletDeviceChallenge, error)
+	Verify    func(*httpx.Event, WalletDeviceBinding, WalletDeviceProof) (func(string) string, error)
 }
 
 type WalletRouteConfig struct {
-	Store    controlplane.WalletStore
-	Activity controlplane.ActivityStore
+	Store        controlplane.WalletStore
+	Activity     controlplane.ActivityStore
+	LocalReauth  WalletLocalReauth
+	DeviceReauth *WalletLocalDeviceReauth
 }
 
 type walletRevealRequest struct {
-	Reason           string `json:"reason"`
-	CurrentPassword  string `json:"current_password"`
-	ReauthTimestamp  string `json:"reauth_timestamp"`
-	ReauthSignature  string `json:"reauth_signature"`
-	ReauthAssertion  string `json:"reauth_assertion"`
-	PlatformReauthAt string `json:"platform_reauth_at"`
+	Reason           string             `json:"reason"`
+	CurrentPassword  string             `json:"current_password"`
+	ReauthTimestamp  string             `json:"reauth_timestamp"`
+	ReauthSignature  string             `json:"reauth_signature"`
+	ReauthAssertion  string             `json:"reauth_assertion"`
+	PlatformReauthAt string             `json:"platform_reauth_at"`
+	ClientNonce      string             `json:"client_nonce"`
+	DeviceProof      *WalletDeviceProof `json:"device_proof,omitempty"`
 }
 
 type walletRevealResponse struct {
@@ -73,9 +122,11 @@ type walletReauthProofResponse struct {
 // RegisterWalletRoutesWithConfig exposes server-side wallet secret reveal endpoints.
 func RegisterWalletRoutesWithConfig(r *httpx.Router, cfg WalletRouteConfig) {
 	h := walletRouteHandlers{
-		wst:       cfg.Store,
-		ast:       cfg.Activity,
-		encryptor: auth.GetEncryptor(),
+		wst:          cfg.Store,
+		ast:          cfg.Activity,
+		encryptor:    auth.GetEncryptor(),
+		localReauth:  cfg.LocalReauth,
+		deviceReauth: cfg.DeviceReauth,
 	}
 	r.GET("/api/v1/wallet", h.list)
 	r.POST("/api/v1/wallet", h.create)
@@ -83,6 +134,88 @@ func RegisterWalletRoutesWithConfig(r *httpx.Router, cfg WalletRouteConfig) {
 	r.DELETE("/api/v1/wallet/{id}", h.delete)
 	r.POST("/api/v1/wallet/{id}/reauth-proof", h.reauthProof)
 	r.POST("/api/v1/wallet/{id}/reveal", h.reveal)
+	r.POST("/api/v1/wallet/{id}/device-reauth/challenge", h.deviceChallenge)
+}
+
+// RegisterWalletRefusal answers every legacy wallet route with a structured
+// denial when the deployment keeps credentials in the kombify Wallet, so no
+// wallet_items row is read or written with TECHSTACK_ENCRYPTION_KEY there.
+func RegisterWalletRefusal(r *httpx.Router) {
+	r.GET("/api/v1/wallet", refuseLegacyWallet)
+	r.POST("/api/v1/wallet", refuseLegacyWallet)
+	r.PATCH("/api/v1/wallet/{id}", refuseLegacyWallet)
+	r.DELETE("/api/v1/wallet/{id}", refuseLegacyWallet)
+	r.POST("/api/v1/wallet/{id}/reauth-proof", refuseLegacyWallet)
+	r.POST("/api/v1/wallet/{id}/reveal", refuseLegacyWallet)
+	r.POST("/api/v1/wallet/{id}/device-reauth/challenge", refuseLegacyWallet)
+}
+
+func refuseLegacyWallet(e *httpx.Event) error {
+	if _, err := requireAuth(e); err != nil {
+		return err
+	}
+	return kombifywallet.SelfHostedOnly(
+		"Use the kombify Wallet",
+		"This deployment keeps credentials in the kombify Wallet, not in Techstack. Manage, reveal and save credentials in the kombify Wallet; nothing was read or changed here.",
+	).Write(e)
+}
+
+func walletDeviceBinding(item *controlplane.WalletItem, ownerID, reason string) (WalletDeviceBinding, error) {
+	snapshot := *item
+	snapshot.CreatedAt = snapshot.CreatedAt.UTC()
+	snapshot.UpdatedAt = snapshot.UpdatedAt.UTC()
+	// encoding/json orders metadata keys and retains nanosecond timestamps.
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		return WalletDeviceBinding{}, err
+	}
+	digest := sha256.Sum256(encoded)
+	reasonDigest := sha256.Sum256([]byte(reason))
+	display := walletString(item.Metadata["name"])
+	if display == "" {
+		display = walletString(item.Metadata["label"])
+	}
+	if display == "" {
+		display = item.ID
+	}
+	return WalletDeviceBinding{OwnerID: ownerID, TenantID: item.TenantID, ItemID: item.ID,
+		Snapshot: hex.EncodeToString(digest[:]), ReasonDigest: hex.EncodeToString(reasonDigest[:]), DisplayName: display}, nil
+}
+
+func (h walletRouteHandlers) deviceChallenge(e *httpx.Event) error {
+	if h.deviceReauth == nil {
+		return httpx.NotFound(e, "Local device reveal is not available")
+	}
+	ownerID, authErr := requireAuth(e)
+	if authErr != nil {
+		return authErr
+	}
+	tenantID, err := tenantguard.TenantScope(requestExplicitTenantID(e), ownerID, "techstack.wallet.device-reauth")
+	if err != nil {
+		return err
+	}
+	if h.wst == nil || h.ast == nil {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Wallet custody is not configured", nil)
+	}
+	var req walletRevealRequest
+	if err := e.BindBody(&req); err != nil {
+		return httpx.BadRequest(e, "invalid request body", nil)
+	}
+	itemID := strings.TrimSpace(e.Request.PathValue("id"))
+	item, denial := h.findRevealableWalletItem(e, tenantID, itemID, ownerID, req.Reason)
+	if denial != nil {
+		return denial(e)
+	}
+	binding, err := walletDeviceBinding(item, ownerID, req.Reason)
+	if err != nil {
+		return httpx.InternalError(e, "Wallet snapshot unavailable")
+	}
+	challenge, err := h.deviceReauth.Challenge(e, binding, req.ClientNonce)
+	if err != nil {
+		h.recordWalletRevealAuditRequest(e, itemID, ownerID, walletRevealActionDenied, walletAuditStatusWarning, "device confirmation unavailable", nil)
+		return httpx.Forbidden(e, "Local device confirmation required")
+	}
+	return httpx.Success(e, http.StatusOK, challenge)
 }
 
 func (h walletRouteHandlers) list(e *httpx.Event) error {
@@ -130,11 +263,14 @@ func (h walletRouteHandlers) create(e *httpx.Event) error {
 	if bindErr := e.BindBody(&payload); bindErr != nil {
 		return httpx.BadRequest(e, "invalid request body", nil)
 	}
-	item, err := walletItemFromPayload(tenantID, ownerID, firstNonEmptyWallet(walletString(payload["id"]), uuid.NewString()), payload, h.encryptor)
+	if walletString(payload["id"]) != "" {
+		return httpx.BadRequest(e, "wallet item ids are assigned by the server")
+	}
+	item, err := walletItemFromPayload(tenantID, ownerID, uuid.NewString(), payload, h.encryptor)
 	if err != nil {
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "failed to encrypt wallet secret", nil)
 	}
-	saved, err := h.wst.UpsertWalletItem(e.Request.Context(), item)
+	saved, err := h.wst.CreateWalletItem(e.Request.Context(), item)
 	if err != nil {
 		return h.walletStoreError(e, err, "failed to create wallet item")
 	}
@@ -170,11 +306,28 @@ func (h walletRouteHandlers) update(e *httpx.Event) error {
 	if !walletItemOwnedBy(existing.Metadata, ownerID) {
 		return httpx.NotFound(e, "wallet item not found")
 	}
+	for _, key := range []string{"id", "owner_id", "owner_subject_id", "user_id", "kind", "item_type"} {
+		value, supplied := payload[key]
+		if !supplied {
+			continue
+		}
+		expected := ownerID
+		if key == "id" {
+			expected = itemID
+		} else if key == "kind" || key == "item_type" {
+			expected = firstNonEmptyWallet(existing.ItemType, "other")
+		}
+		if walletString(value) != expected {
+			return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "wallet identity is immutable", nil)
+		}
+	}
 	merged := cloneWalletMetadata(existing.Metadata)
 	for key, value := range payload {
 		merged[key] = value
 	}
 	merged["id"] = itemID
+	merged["kind"] = firstNonEmptyWallet(existing.ItemType, "other")
+	merged["item_type"] = merged["kind"]
 	item, err := walletItemFromPayload(tenantID, ownerID, itemID, merged, h.encryptor)
 	if err != nil {
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "failed to encrypt wallet secret", nil)
@@ -185,7 +338,7 @@ func (h walletRouteHandlers) update(e *httpx.Event) error {
 	if item.StackID == "" {
 		item.StackID = existing.StackID
 	}
-	saved, err := h.wst.UpsertWalletItem(e.Request.Context(), item)
+	saved, err := h.wst.UpdateWalletItem(e.Request.Context(), item)
 	if err != nil {
 		return h.walletStoreError(e, err, "failed to update wallet item")
 	}
@@ -216,7 +369,7 @@ func (h walletRouteHandlers) delete(e *httpx.Event) error {
 	if !walletItemOwnedBy(existing.Metadata, ownerID) {
 		return httpx.NotFound(e, "wallet item not found")
 	}
-	if err := h.wst.DeleteWalletItem(e.Request.Context(), tenantID, itemID); err != nil {
+	if err := h.wst.DeleteWalletItemForOwner(e.Request.Context(), tenantID, itemID, ownerID, existing.ItemType); err != nil {
 		return h.walletStoreError(e, err, "failed to delete wallet item")
 	}
 	return httpx.Success(e, http.StatusOK, map[string]any{"ok": true})
@@ -253,7 +406,7 @@ func (h walletRouteHandlers) reauthProof(e *httpx.Event) error {
 		h.recordWalletRevealAuditRequest(e, itemID, ownerID, walletRevealActionDenied, walletAuditStatusWarning, platformErr.Error(), map[string]any{
 			walletAuditReasonKey: normalizeWalletRevealReason(req.Reason),
 		})
-		return httpx.Forbidden(e, "Fresh platform re-authentication required")
+		return stepUpRequired(e, "Fresh platform re-authentication required", walletRevealStepUpReason)
 	}
 
 	secret := walletReauthSecret()
@@ -305,16 +458,31 @@ func (h walletRouteHandlers) reveal(e *httpx.Event) error {
 	if findErr != nil {
 		return findErr(e)
 	}
-	if reauthErr := h.verifyWalletRevealReauth(e, ownerID, itemID, req); reauthErr != nil {
+	var seal func(string) string
+	var reauthErr error
+	if req.DeviceProof != nil {
+		if h.deviceReauth == nil {
+			reauthErr = errors.New("local device confirmation unavailable")
+		} else {
+			var binding WalletDeviceBinding
+			binding, reauthErr = walletDeviceBinding(item, ownerID, req.Reason)
+			if reauthErr == nil {
+				seal, reauthErr = h.deviceReauth.Verify(e, binding, *req.DeviceProof)
+			}
+		}
+	} else {
+		reauthErr = h.verifyWalletRevealReauth(e, ownerID, itemID, req)
+	}
+	if reauthErr != nil {
 		h.recordWalletRevealAuditRequest(e, itemID, ownerID, walletRevealActionDenied, walletAuditStatusWarning, reauthErr.Error(), map[string]any{
 			walletAuditReasonKey: normalizeWalletRevealReason(req.Reason),
 		})
 		return httpx.Forbidden(e, "Fresh re-authentication required")
 	}
-	return h.revealWalletValues(e, itemID, ownerID, req.Reason, item.ID, walletString(item.Metadata["secret"]), walletString(item.Metadata["totp"]))
+	return h.revealWalletValues(e, itemID, ownerID, req.Reason, item.ID, walletString(item.Metadata["secret"]), walletString(item.Metadata["totp"]), seal)
 }
 
-func (h walletRouteHandlers) revealWalletValues(e *httpx.Event, itemID, ownerID, reason, responseID, secretValue, totpValue string) error {
+func (h walletRouteHandlers) revealWalletValues(e *httpx.Event, itemID, ownerID, reason, responseID, secretValue, totpValue string, seal func(string) string) error {
 	secret, err := walletRevealField(secretValue)
 	if err != nil {
 		h.recordWalletRevealAuditRequest(e, itemID, ownerID, walletRevealActionDenied, walletAuditStatusError, "failed to decrypt wallet secret", nil)
@@ -335,18 +503,28 @@ func (h walletRouteHandlers) revealWalletValues(e *httpx.Event, itemID, ownerID,
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "failed to audit wallet reveal", nil)
 	}
 
-	return httpx.Success(e, http.StatusOK, walletRevealResponse{
+	result := walletRevealResponse{
 		ID:         responseID,
 		Secret:     secret,
 		TOTP:       totp,
 		RevealedAt: revealedAt,
-	})
+	}
+	if seal != nil {
+		encoded, err := json.Marshal(result)
+		if err != nil {
+			return httpx.InternalError(e, "Wallet response unavailable")
+		}
+		payload := base64.RawURLEncoding.EncodeToString(encoded)
+		return httpx.Success(e, http.StatusOK, map[string]string{"payload": payload, "proof": seal(payload)})
+	}
+	return httpx.Success(e, http.StatusOK, result)
 }
 
 func (h walletRouteHandlers) verifyWalletRevealReauth(e *httpx.Event, ownerID, itemID string, req walletRevealRequest) error {
-	// Password-based re-auth (PocketBase user-record ValidatePassword) is retired:
-	// Auth0 owns credentials post-PB. Re-authentication is proven via the trusted
-	// HMAC signature/timestamp assertion below (or the platform reauth proof).
+	if req.CurrentPassword != "" && h.localReauth != nil {
+		return h.localReauth(e.Request.Context(), ownerID, req.CurrentPassword)
+	}
+	// Hosted re-authentication remains bound to the platform's signed proof.
 
 	timestamp := firstNonEmptyWallet(
 		req.ReauthTimestamp,
@@ -375,7 +553,14 @@ func (h walletRouteHandlers) verifyWalletRevealReauth(e *httpx.Event, ownerID, i
 	return nil
 }
 
+// verifyFreshPlatformReauth accepts a fresh sign-in bound to this wallet item,
+// carried by the session itself (hosted login with reauth_purpose and
+// reauth_resource), or the platform's signed assertion.
 func (h walletRouteHandlers) verifyFreshPlatformReauth(e *httpx.Event, ownerID, itemID string, req walletRevealRequest) error {
+	sessionErr := verifySessionReauth(e.Request.Context(), h.currentTime(), ownerID, walletPlatformReauthAssertionPurpose, itemID)
+	if sessionErr == nil {
+		return nil
+	}
 	timestamp := firstNonEmptyWallet(
 		req.ReauthTimestamp,
 		req.PlatformReauthAt,
@@ -389,6 +574,9 @@ func (h walletRouteHandlers) verifyFreshPlatformReauth(e *httpx.Event, ownerID, 
 		e.Request.Header.Get("X-TechStack-Reauth-Signature"),
 	)
 	if timestamp == "" || signature == "" {
+		if !errors.Is(sessionErr, errSessionReauthAbsent) {
+			return sessionErr
+		}
 		return errors.New("fresh platform re-authentication proof missing")
 	}
 	secret := walletReauthSecret()
@@ -546,9 +734,9 @@ func (h walletRouteHandlers) appendWalletRevealAudit(e *httpx.Event, itemID, own
 func walletItemFromPayload(tenantID, ownerID, itemID string, payload map[string]any, encryptor *auth.SecretEncryptor) (controlplane.WalletItem, error) {
 	metadata := cloneWalletMetadata(payload)
 	metadata["id"] = itemID
-	if strings.TrimSpace(walletString(metadata["owner_id"])) == "" {
-		metadata["owner_id"] = ownerID
-	}
+	metadata["owner_id"] = ownerID
+	delete(metadata, "owner_subject_id")
+	delete(metadata, "user_id")
 	if strings.TrimSpace(walletString(metadata["has_secret"])) == "" && strings.TrimSpace(walletString(metadata["secret"])) != "" {
 		metadata["has_secret"] = true
 	}
@@ -580,7 +768,7 @@ func walletItemFromPayload(tenantID, ownerID, itemID string, payload map[string]
 func walletItemResponse(item controlplane.WalletItem, includeSecret bool) map[string]any {
 	out := cloneWalletMetadata(item.Metadata)
 	out["id"] = item.ID
-	out["kind"] = firstNonEmptyWallet(walletString(out["kind"]), item.ItemType, "other")
+	out["kind"] = firstNonEmptyWallet(item.ItemType, "other")
 	kitDeploymentID := firstNonEmptyWallet(walletString(out["kit_deployment_id"]), walletString(out["stack_id"]), item.StackID)
 	delete(out, "stack_id")
 	if kitDeploymentID != "" {
@@ -610,8 +798,8 @@ func walletItemResponse(item controlplane.WalletItem, includeSecret bool) map[st
 }
 
 func walletItemOwnedBy(metadata map[string]any, ownerID string) bool {
-	storedOwner := strings.TrimSpace(walletString(metadata["owner_id"]))
-	return storedOwner == "" || storedOwner == ownerID
+	ownerID = strings.TrimSpace(ownerID)
+	return ownerID != "" && controlplane.WalletOwnerID(metadata) == ownerID
 }
 
 func cloneWalletMetadata(in map[string]any) map[string]any {

@@ -18,12 +18,21 @@ import (
 
 	"github.com/kombifyio/techstack/internal/substrate"
 	agentpkg "github.com/kombifyio/techstack/pkg/agent"
+	"github.com/kombifyio/techstack/pkg/agent/hostidentity"
 	"github.com/kombifyio/techstack/pkg/agent/httpguard"
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
+	"github.com/kombifyio/techstack/pkg/guardbinding"
+	"github.com/kombifyio/techstack/pkg/guardexec"
+	"github.com/kombifyio/techstack/pkg/privatechannel"
 	"github.com/kombifyio/techstack/pkg/runtimeconvergence"
+	"github.com/kombifyio/techstack/pkg/sdnotify"
 )
 
 const maxAgentSecretFileBytes = 1 << 20
+
+// identityMaintenanceInterval paces key-age checks and, for a Guard still on
+// the bearer credential, the retry of host-key binding.
+const identityMaintenanceInterval = 10 * time.Minute
 const stackKitRuntimeConvergenceInterval = 5 * time.Minute
 const runtimePackageConvergenceRetryInterval = 15 * time.Second
 
@@ -69,44 +78,138 @@ type agentEnrollmentFile struct {
 }
 
 type agentEnrollment struct {
-	GuardRole            string `json:"guard_role"`
-	WorkerID             string `json:"worker_id"`
-	ServerID             string `json:"server_id"`
-	RuntimeAgentID       string `json:"runtime_agent_id"`
-	TenantID             string `json:"tenant_id"`
-	OwnerID              string `json:"owner_id"`
-	StackID              string `json:"stack_id"`
-	LeaseID              string `json:"lease_id"`
-	AgentToken           string `json:"agent_token"`
-	HeartbeatURL         string `json:"heartbeat_url"`
-	InventoryURL         string `json:"inventory_url"`
-	CommandURL           string `json:"command_url"`
-	CommandResultURL     string `json:"command_result_url"`
-	StackKitReleaseURL   string `json:"stackkit_release_url"`
-	AllowPrivateLANHTTP  bool   `json:"allow_private_lan_http"`
-	PrivateLANHTTPOrigin string `json:"private_lan_http_origin"`
-	ChannelBootstrap     struct {
-		TenantID             string `json:"tenant_id"`
-		OwnerID              string `json:"owner_id"`
-		StackID              string `json:"stack_id"`
-		LeaseID              string `json:"lease_id"`
-		ServerID             string `json:"server_id"`
-		RuntimeAgentID       string `json:"runtime_agent_id"`
-		HeartbeatURL         string `json:"heartbeat_url"`
-		InventoryURL         string `json:"inventory_url"`
-		CommandURL           string `json:"command_url"`
-		CommandResultURL     string `json:"command_result_url"`
-		StackKitReleaseURL   string `json:"stackkit_release_url"`
-		AllowPrivateLANHTTP  bool   `json:"allow_private_lan_http"`
-		PrivateLANHTTPOrigin string `json:"private_lan_http_origin"`
+	GuardRole          string `json:"guard_role"`
+	WorkerID           string `json:"worker_id"`
+	ServerID           string `json:"server_id"`
+	RuntimeAgentID     string `json:"runtime_agent_id"`
+	TenantID           string `json:"tenant_id"`
+	OwnerID            string `json:"owner_id"`
+	StackID            string `json:"stack_id"`
+	LeaseID            string `json:"lease_id"`
+	AgentToken         string `json:"agent_token"`
+	HeartbeatURL       string `json:"heartbeat_url"`
+	InventoryURL       string `json:"inventory_url"`
+	CommandURL         string `json:"command_url"`
+	CommandResultURL   string `json:"command_result_url"`
+	StackKitReleaseURL string `json:"stackkit_release_url"`
+	PrivateLANOrigin   string `json:"private_lan_origin"`
+	PrivateLANPin      string `json:"private_lan_pin"`
+	IdentityTokenURL   string `json:"identity_token_url"`
+	IdentityBindURL    string `json:"identity_bind_url"`
+	IdentityRotateURL  string `json:"identity_rotate_url"`
+	ChannelBootstrap   struct {
+		IdentityTokenURL   string `json:"identity_token_url"`
+		IdentityBindURL    string `json:"identity_bind_url"`
+		IdentityRotateURL  string `json:"identity_rotate_url"`
+		TenantID           string `json:"tenant_id"`
+		OwnerID            string `json:"owner_id"`
+		StackID            string `json:"stack_id"`
+		LeaseID            string `json:"lease_id"`
+		ServerID           string `json:"server_id"`
+		RuntimeAgentID     string `json:"runtime_agent_id"`
+		HeartbeatURL       string `json:"heartbeat_url"`
+		InventoryURL       string `json:"inventory_url"`
+		CommandURL         string `json:"command_url"`
+		CommandResultURL   string `json:"command_result_url"`
+		StackKitReleaseURL string `json:"stackkit_release_url"`
+		PrivateLANOrigin   string `json:"private_lan_origin"`
+		PrivateLANPin      string `json:"private_lan_pin"`
 	} `json:"channel_bootstrap"`
+	// BindingSigningKeys pins the control plane's command-binding keys. They
+	// arrive with the pairing redemption and are read only from the enrollment
+	// file, never from a poll or heartbeat response.
+	BindingSigningKeys []guardbinding.PinnedKey `json:"binding_signing_keys,omitempty"`
 }
 
-func runHTTPAgentMode(ctx context.Context, cfg *agentModeConfig, log *slog.Logger) error {
-	enrollment, err := resolveHTTPAgentEnrollment(cfg)
+func runHTTPAgentMode(ctx context.Context, cfg *agentModeConfig, log *slog.Logger) (result error) {
+	runCtx, stop := signalContext(ctx)
+	defer stop()
+	cfg.stateDir = resolveGuardStateDir(cfg.stateDir)
+	manager, stateErr := hostidentity.Open(cfg.stateDir)
+	if stateErr != nil {
+		return fmt.Errorf("admit Guard identity custody: %w", stateErr)
+	}
+	if manager != nil && strings.TrimSpace(cfg.enrollmentFile) != "" {
+		resumeBootstrapEnrollment(runCtx, manager, cfg.enrollmentFile, log)
+	}
+	if manager != nil && manager.Record().State == hostidentity.StateRevoked {
+		// A revoked Guard holds no secrets and starts no work: it finishes
+		// destroying them (a restart can interrupt that) and idles until it is
+		// paired again.
+		decommissionRevokedGuard(manager, cfg, log)
+		return holdUntilStopped(runCtx, hostidentity.ErrRevoked, log, cfg.progress)
+	}
+	if cfg.waitForEnrollment {
+		if err := waitForInstanceEnrollment(runCtx, cfg, log); err != nil {
+			if runCtx.Err() != nil {
+				return nil
+			}
+			return err
+		}
+		// Enrollment runs in the installer process. Reload its confirmed record
+		// and key instead of writing over it with the pre-enrollment Manager.
+		manager, err := hostidentity.Open(cfg.stateDir)
+		if err != nil {
+			return err
+		}
+		return runEnrolledHTTPAgentMode(runCtx, stop, cfg, log, manager)
+	}
+	return runEnrolledHTTPAgentMode(runCtx, stop, cfg, log, manager)
+}
+
+func runEnrolledHTTPAgentMode(runCtx context.Context, stop context.CancelFunc, cfg *agentModeConfig, log *slog.Logger, manager *hostidentity.Manager) (result error) {
+	if manager != nil && manager.Record().State == hostidentity.StateRevoked {
+		decommissionRevokedGuard(manager, cfg, log)
+		return holdUntilStopped(runCtx, hostidentity.ErrRevoked, log, cfg.progress)
+	}
+	if manager == nil {
+		return errors.New("Guard identity custody is required")
+	}
+	custodyRoot, err := manager.OpenCustodyRoot()
+	if err != nil {
+		return fmt.Errorf("retain Guard custody: %w", err)
+	}
+	defer custodyRoot.Close()
+	enrollment, err := resolveHTTPAgentEnrollmentWithIdentity(cfg, manager)
 	if err != nil {
 		return err
 	}
+	// Before any request: a LAN-paired Guard reaches its control plane only
+	// through the pinned bridge key.
+	if err := pinPrivateLAN(enrollment); err != nil {
+		return fmt.Errorf("pin the private LAN bridge: %w", err)
+	}
+	sdnotify.Status("establishing kombify Guard identity")
+	identity := establishGuardIdentity(runCtx, manager, enrollment, log, cfg.progress)
+	if identity.held != nil {
+		if runCtx.Err() != nil {
+			return nil
+		}
+		if errors.Is(identity.held, hostidentity.ErrRevoked) {
+			decommissionRevokedGuard(manager, cfg, log)
+		}
+		return holdUntilStopped(runCtx, identity.held, log, cfg.progress)
+	}
+	if identity.client != nil {
+		go identity.client.Maintain(runCtx, identityMaintenanceInterval)
+	}
+	// A revocation observed while running stops every loop and any command in
+	// flight; the Guard then idles until it is paired again.
+	execCtx, cancelExec := context.WithCancel(runCtx)
+	defer cancelExec()
+	if manager != nil {
+		go watchIdentityRevocation(execCtx, manager, cancelExec)
+	}
+	defer func() {
+		if revoked := guardIdentityRevoked(manager); revoked && runCtx.Err() == nil {
+			log.Error("guard_identity_revoked_stopping_execution")
+			decommissionRevokedGuard(manager, cfg, log)
+			result = holdUntilStopped(runCtx, hostidentity.ErrRevoked, log, cfg.progress)
+		}
+	}()
+	guardHTTP := identity.httpClient(15 * time.Second)
+	downloadHTTP := identity.httpClient(5 * time.Minute)
+	sdnotify.Status("connected to the control plane")
 	_, hypervisorErr := os.Stat("/etc/pve/local")
 	if enrollment.GuardRole == "substrate" {
 		if hypervisorErr != nil {
@@ -120,7 +223,8 @@ func runHTTPAgentMode(ctx context.Context, cfg *agentModeConfig, log *slog.Logge
 			ServerID: enrollment.ServerID, TenantID: enrollment.TenantID,
 			OwnerID: enrollment.OwnerID, StackID: enrollment.StackID,
 			AgentVersion: version, Interval: cfg.heartbeatInterval, Logger: log,
-			Collector: httpguard.NewSystemCollector(httpguard.SystemCollectorConfig{}),
+			Collector:  httpguard.NewSystemCollector(httpguard.SystemCollectorConfig{}),
+			HTTPClient: guardHTTP, OnProgress: cfg.progress,
 		}
 		localConfigPath := envDefault("TECHSTACK_SUBSTRATE_CONFIG", "/var/lib/kombify/substrate.json")
 		localConfig, localErr := substrate.LoadConfig(localConfigPath)
@@ -142,23 +246,25 @@ func runHTTPAgentMode(ctx context.Context, cfg *agentModeConfig, log *slog.Logge
 		if err != nil {
 			return err
 		}
-		runCtx, stop := signalContext(ctx)
-		defer stop()
-		return client.Run(runCtx)
+		return client.Run(execCtx)
 	}
 	if hypervisorErr == nil {
 		return errors.New("Proxmox requires an explicit substrate enrollment")
 	}
-	if err := repairHTTPSGuardSandbox(log); err != nil {
-		if errors.Is(err, errHTTPSGuardSandboxRestarting) {
-			log.Info("https_guard_sandbox_restarting")
-			return nil
-		}
-		log.Warn("https_guard_sandbox_repair_failed", "err", err)
+	execution := selectGuardExecution(runCtx, log)
+	tryMigration := func(ctx context.Context) bool {
+		return execution.mode == guardModeLegacyRoot && guardLayoutMigrationEligible("") &&
+			signedGuardReleaseAvailable(ctx, downloadHTTP, enrollment, log) && migrateGuardLayout(ctx, log)
+	}
+	if tryMigration(runCtx) {
+		// Prepare the executor before the independent supervisor stops the
+		// legacy daemon, transfers custody and starts the reversible split trial.
+		return nil
 	}
 	manifestPaths := splitNonEmpty(cfg.accessManifest)
 	collector := httpguard.NewSystemCollector(httpguard.SystemCollectorConfig{
 		AccessManifestFiles: manifestPaths,
+		ReadManifest:        execution.manifestReader(),
 		PublicIP:            cfg.publicIP,
 		// Unmanaged service discovery is on by default: a host without a
 		// StackKit must still report what it is actually running. The kill
@@ -166,6 +272,7 @@ func runHTTPAgentMode(ctx context.Context, cfg *agentModeConfig, log *slog.Logge
 		// waiting for an agent release.
 		Discovery: httpguard.DiscoveryConfig{
 			Disabled: !envBoolDefault("TECHSTACK_AGENT_SERVICE_DISCOVERY", true),
+			Probe:    execution.dockerProbe(),
 		},
 	})
 	interval := cfg.heartbeatInterval
@@ -173,28 +280,25 @@ func runHTTPAgentMode(ctx context.Context, cfg *agentModeConfig, log *slog.Logge
 		interval = 30 * time.Second
 	}
 	stackKitReleaseURL := firstCLIValue(enrollment.StackKitReleaseURL, enrollment.ChannelBootstrap.StackKitReleaseURL, derivedAgentReleaseURL(enrollment.HeartbeatURL))
-	privateLANHTTPOrigin := firstCLIValue(enrollment.PrivateLANHTTPOrigin, enrollment.ChannelBootstrap.PrivateLANHTTPOrigin)
-	stackKitExecutor := agentpkg.NewStackKitExecutorFromEnv()
+	stackKitExecutor := execution.runtime
 	techstackRuntimeConfig := agentpkg.TechstackRuntimeConvergenceConfig{
-		URL:                  derivedAgentBinaryURL(enrollment.HeartbeatURL),
-		AgentToken:           enrollment.AgentToken,
-		RuntimeAgentID:       enrollment.RuntimeAgentID,
-		TenantID:             enrollment.TenantID,
-		AgentPath:            envDefault("TECHSTACK_AGENT_EXECUTABLE_PATH", "/usr/local/bin/techstack"),
-		OperationsPath:       envDefault("TECHSTACK_OPERATIONS_EXECUTABLE_PATH", "/usr/local/libexec/techstack-stackkit-operations"),
-		Version:              version,
-		PrivateLANHTTPOrigin: privateLANHTTPOrigin,
+		URL:            derivedAgentBinaryURL(enrollment.HeartbeatURL),
+		AgentToken:     enrollment.AgentToken,
+		RuntimeAgentID: enrollment.RuntimeAgentID,
+		TenantID:       enrollment.TenantID,
+		AgentPath:      envDefault("TECHSTACK_AGENT_EXECUTABLE_PATH", "/usr/local/bin/techstack"),
+		OperationsPath: envDefault("TECHSTACK_OPERATIONS_EXECUTABLE_PATH", "/usr/local/libexec/techstack-stackkit-operations"),
+		Version:        version,
+		HTTPClient:     downloadHTTP,
 	}
 	stackKitRuntimeConfig := agentpkg.StackKitRuntimeBootstrapConfig{
 		URL: stackKitReleaseURL, AgentToken: enrollment.AgentToken,
 		RuntimeAgentID: enrollment.RuntimeAgentID, TenantID: enrollment.TenantID,
-		PrivateLANHTTPOrigin: privateLANHTTPOrigin,
+		HTTPClient: downloadHTTP,
 	}
 	var runtimeReady atomic.Bool
 	runtimeConvergence := runtimeconvergence.NewTracker(time.Now().UTC())
-	runCtx, stop := signalContext(ctx)
-	defer stop()
-	relay, err := newAgentRelayLifecycle(runCtx, cfg, enrollment.RuntimeAgentID, log)
+	relay, err := newAgentRelayLifecycle(execCtx, cfg, enrollment.RuntimeAgentID, log)
 	if err != nil {
 		return err
 	}
@@ -214,27 +318,52 @@ func runHTTPAgentMode(ctx context.Context, cfg *agentModeConfig, log *slog.Logge
 		AgentVersion:     version,
 		Interval:         interval,
 		Collector:        collector,
-		// Only a root agent without NoNewPrivileges whose pinned StackKits
-		// ships `stackkit host` advertises host maintenance.
+		// Once the control plane's key is pinned, a command binding without
+		// its signature is refused.
+		BindingSigningKeys: enrollment.BindingSigningKeys,
+		// Only a privileged executor without NoNewPrivileges whose pinned
+		// StackKits ships `stackkit host` advertises host maintenance.
 		HostMaintenanceCapabilities: stackKitExecutor.HostMaintenanceCapabilities,
+		ApplicationCapabilities:     stackKitExecutor.ApplicationCapabilities,
 		CommandExecutor: currentStackKitCommandExecutor{
 			runtime: stackKitExecutor,
 			cfg:     stackKitRuntimeConfig,
 			ready:   runtimeReady.Load,
 		},
 		RuntimeConvergence: runtimeConvergence.Snapshot,
+		Posture:            execution.posture,
 		OnFirstHeartbeat: func() {
+			confirmGuardUpdateTrial(execution, log)
 			relay.Start()
-			go convergeRuntimePackages(runCtx, stop, stackKitExecutor, techstackRuntimeConfig, stackKitRuntimeConfig, stackKitRuntimeConvergenceInterval, runtimeReady.Store, log, runtimeConvergence.Set)
+			startGuardReach(execCtx, cfg, enrollment, identity, manager, log)
+			startGuardPosture(execCtx, enrollment, identity, execution, log)
+			startGuardTelemetry(execCtx, cfg, custodyRoot, enrollment, identity, execution, log)
+			if forwarder := newHTTPSNoticeForwarder(enrollment, identity); forwarder != nil {
+				startUserNotificationListener(execCtx, cfg, forwarder, log)
+			}
+			go convergeRuntimePackages(execCtx, stop, stackKitExecutor, techstackRuntimeConfig, stackKitRuntimeConfig, stackKitRuntimeConvergenceInterval, runtimeReady.Store, log, tryMigration, runtimeConvergence.Set)
 		},
-		Logger:               log,
-		PrivateLANHTTPOrigin: privateLANHTTPOrigin,
+		Logger:     log,
+		HTTPClient: guardHTTP,
+		OnProgress: cfg.progress,
 	})
 	if err != nil {
 		return fmt.Errorf("configure HTTPS guard: %w", err)
 	}
+	if execution.mode == guardModeSplit {
+		// The privileged side reaches the control plane through this daemon only.
+		opsHTTP := identity.httpClient(2 * time.Minute)
+		go func() {
+			if err := serveStackKitOperationsProxy(execCtx, envDefault(stackKitOperationsSocketEnv, guardexec.DefaultOperationsSocket), enrollment, opsHTTP, log); err != nil {
+				log.Warn("guard_operations_proxy_stopped", "error", err.Error())
+			}
+		}()
+	}
+	enableGuardDurableOperations(custodyRoot, client, stackKitReconciler{executor: currentStackKitCommandExecutor{
+		runtime: stackKitExecutor, cfg: stackKitRuntimeConfig, ready: runtimeReady.Load,
+	}}, log)
 	log.Info("agent_mode_starting", "transport", httpsScheme, "agent_id", enrollment.RuntimeAgentID)
-	if err := client.Run(runCtx); err != nil {
+	if err := client.Run(execCtx); err != nil {
 		return err
 	}
 	log.Info("agent_mode_stopped", "transport", httpsScheme)
@@ -242,12 +371,31 @@ func runHTTPAgentMode(ctx context.Context, cfg *agentModeConfig, log *slog.Logge
 }
 
 func resolveHTTPAgentEnrollment(cfg *agentModeConfig) (agentEnrollment, error) {
+	return resolveHTTPAgentEnrollmentWithIdentity(cfg, nil)
+}
+
+func resolveHTTPAgentEnrollmentWithIdentity(cfg *agentModeConfig, manager *hostidentity.Manager) (agentEnrollment, error) {
 	var enrollment agentEnrollment
 	if cfg == nil {
 		return enrollment, errors.New("agent config is required")
 	}
 	if path := strings.TrimSpace(cfg.enrollmentFile); path != "" {
-		loaded, err := loadAgentEnrollment(path)
+		var loaded agentEnrollment
+		var err error
+		if manager != nil {
+			var file *os.File
+			file, err = manager.OpenEnrollment(path)
+			if err == nil {
+				var data []byte
+				data, err = readSecretHandle(file, path)
+				file.Close()
+				if err == nil {
+					loaded, err = parseAgentEnrollment(data)
+				}
+			}
+		} else {
+			loaded, err = loadAgentEnrollment(hostidentity.LocateEnrollment(path, cfg.stateDir))
+		}
 		if err != nil {
 			return enrollment, err
 		}
@@ -319,6 +467,7 @@ func convergeRuntimePackages(
 	interval time.Duration,
 	markReady func(bool),
 	log *slog.Logger,
+	tryMigration func(context.Context) bool,
 	statusPublishers ...func(runtimeconvergence.Snapshot),
 ) {
 	if interval < time.Minute {
@@ -326,7 +475,7 @@ func convergeRuntimePackages(
 	}
 	ready := false
 	for {
-		status := convergeRuntimePackagesOnceStatus(ctx, stop, executor, techstackCfg, stackKitCfg, log)
+		status := convergeRuntimePackagesOnceStatus(ctx, stop, executor, techstackCfg, stackKitCfg, log, tryMigration)
 		for _, publish := range statusPublishers {
 			if publish != nil {
 				publish(status.snapshot)
@@ -371,10 +520,24 @@ func convergeRuntimePackagesOnceStatus(
 	techstackCfg agentpkg.TechstackRuntimeConvergenceConfig,
 	stackKitCfg agentpkg.StackKitRuntimeBootstrapConfig,
 	log *slog.Logger,
+	migration ...func(context.Context) bool,
 ) runtimePackageConvergenceStatus {
 	observedAt := time.Now().UTC()
+	if len(migration) != 0 && migration[0] != nil && migration[0](ctx) {
+		stop()
+		return runtimePackageConvergenceStatus{snapshot: runtimeconvergence.Aggregate(observedAt,
+			runtimeconvergence.Component{Name: runtimeconvergence.TechstackRuntimeComponent, State: runtimeconvergence.ComponentPending, ObservedAt: observedAt, ErrorCode: runtimeconvergence.AgentRestartRequiredError},
+			runtimeconvergence.Component{Name: runtimeconvergence.StackKitsRuntimeComponent, State: runtimeconvergence.ComponentPending, ObservedAt: observedAt})}
+	}
 	result, err := executor.EnsureTechstackRuntime(ctx, techstackCfg)
 	techstackReady := err == nil
+	var denied *guardexec.UpdateDeniedError
+	if errors.As(err, &denied) {
+		// A refused candidate leaves the installed Guard exactly as it was, so the
+		// runtime is as ready as it was before the candidate appeared.
+		log.Warn("guard_update_denied", "code", denied.Code, "reason", denied.Message)
+		techstackReady, err = true, nil
+	}
 	if err != nil {
 		log.Warn("techstack_runtime_convergence_failed", "error", err.Error())
 	} else if result.AgentUpdated {
@@ -460,11 +623,24 @@ func derivedAgentControlURL(heartbeatURL, suffix string) string {
 	return base + "/" + strings.TrimPrefix(suffix, "/")
 }
 
+// pinPrivateLAN makes this process trust the LAN bridge of a LAN-paired
+// enrollment only by its key pin. Other enrollments leave it unchanged.
+func pinPrivateLAN(enrollment agentEnrollment) error {
+	return privatechannel.InstallProcessPin(
+		firstCLIValue(enrollment.PrivateLANOrigin, enrollment.ChannelBootstrap.PrivateLANOrigin),
+		firstCLIValue(enrollment.PrivateLANPin, enrollment.ChannelBootstrap.PrivateLANPin),
+	)
+}
+
 func loadAgentEnrollment(path string) (agentEnrollment, error) {
 	data, err := readSecretFile(path)
 	if err != nil {
 		return agentEnrollment{}, fmt.Errorf("read enrollment file: %w", err)
 	}
+	return parseAgentEnrollment(data)
+}
+
+func parseAgentEnrollment(data []byte) (agentEnrollment, error) {
 	var wrapped agentEnrollmentFile
 	if err := json.Unmarshal(data, &wrapped); err != nil {
 		return agentEnrollment{}, fmt.Errorf("parse enrollment file: %w", err)
@@ -493,6 +669,10 @@ func readSecretFile(path string) ([]byte, error) {
 		return nil, err
 	}
 	defer func() { _ = secret.Close() }()
+	return readSecretHandle(secret, path)
+}
+
+func readSecretHandle(secret *os.File, path string) ([]byte, error) {
 	info, err := secret.Stat()
 	if err != nil {
 		return nil, err

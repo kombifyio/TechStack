@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"slices"
@@ -58,8 +59,9 @@ func TestObservedDiscoveryGroupsByComposeProjectNotByServer(t *testing.T) {
 	for _, application := range applications {
 		byKey[application.ApplicationKey] = application
 	}
-	compose, hasCompose := byKey["librechat-k4es"]
-	if !hasCompose || len(compose.Components) != 2 || compose.System {
+	// A project named after a catalog application is that application.
+	compose, hasCompose := byKey["librechat"]
+	if !hasCompose || len(compose.Components) != 2 || compose.System || compose.DisplayName != "LibreChat" {
 		t.Fatalf("compose project must group its own components only: %#v", applications)
 	}
 	system, hasSystem := byKey["system"]
@@ -180,6 +182,32 @@ func TestServiceRuntimeActionDerivesAuthorityAndReplaysIdempotently(t *testing.T
 		t.Fatal(err)
 	}
 	orch := &recordingServiceActionOrchestrator{store: store}
+
+	// Pending recovery can predate the presentation history and have no receipt.
+	if _, err := store.CreateJob(t.Context(), controlplane.UpsertJobRequest{ID: "old-service-action", TenantID: "tenant-1", StackID: "stack-1", Type: string(jobs.JobTypeStackKitLifecycle), State: "waiting", Payload: map[string]any{"service_id": "service-1"}}); err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < 125; index++ {
+		if _, err := store.CreateJob(t.Context(), controlplane.UpsertJobRequest{ID: fmt.Sprintf("newer-service-history-%d", index), TenantID: "tenant-1", StackID: "stack-1", Type: string(jobs.JobTypeStackKitLifecycle), State: "completed"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	blocked := serviceRuntimeHandlers{store: store, stacks: store, servers: store, jobs: store, now: func() time.Time { return now }, orch: orch}
+	denied, response := registryRouteStoreTestEvent(http.MethodPost, "/api/v1/registry/services/service-1/actions", "owner-1", "tenant-1", map[string]any{"action": "stop", "expected_inventory_revision": 7, "owner_approved": true})
+	denied.Request.SetPathValue("serviceId", "service-1")
+	denied.Request.Header.Set("Idempotency-Key", "stop-1")
+	if err := blocked.action(denied); err != nil && !errors.Is(err, httpx.ErrResponseWritten) {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusConflict {
+		t.Fatalf("older pending target admitted service action: %d", response.Code)
+	}
+	if _, err := store.GetJob(t.Context(), "tenant-1", jobs.StackKitServiceActionJobID("tenant-1", "owner-1", "stop-1")); !errors.Is(err, controlplane.ErrNotFound) {
+		t.Fatalf("denied service action persisted: %v", err)
+	}
+	if _, err := store.UpsertJob(t.Context(), controlplane.UpsertJobRequest{ID: "old-service-action", TenantID: "tenant-1", StackID: "stack-1", Type: string(jobs.JobTypeStackKitLifecycle), State: "completed", Payload: map[string]any{"service_id": "service-1"}}); err != nil {
+		t.Fatal(err)
+	}
 	for attempt := 0; attempt < 2; attempt++ {
 		// Reconstruct the handler to prove replay survives a process-local
 		// handler restart and is owned by the durable job receipt.
@@ -623,5 +651,61 @@ func TestSanitizedServiceAccessPreservesOnlyTrustedObservedDirectEndpoints(t *te
 				t.Fatalf("mode = %q, want %q: %#v", gotMode, wantMode, got)
 			}
 		})
+	}
+}
+
+// A bare version names no kit: it used to reach the local execution binding
+// as the kit name and fail every action on a cloud-kit service.
+func TestServiceActionKitNameIgnoresBareVersions(t *testing.T) {
+	for identity, want := range map[string]string{
+		"cloud-kit@5.1.0": "cloud-kit",
+		"basement-kit":    "basement-kit",
+		"5.1.0":           "",
+		"":                "",
+	} {
+		if got := serviceActionKitName(identity); got != want {
+			t.Fatalf("serviceActionKitName(%q) = %q, want %q", identity, got, want)
+		}
+	}
+}
+
+// Owner direction 2026-10-10: a stacked application backs up from its card.
+// The service is the handle; StackKits runs the backup on its node, and only a
+// node that takes direct backup operations is granted the action.
+func TestServiceRuntimeBackupRunsOnStackedServiceOfBackupCapableNode(t *testing.T) {
+	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	observedAt := now.Add(-10 * time.Second)
+	run := func(t *testing.T, kit string, management string) (int, []jobs.StackKitLifecycleRequest) {
+		t.Helper()
+		store := controlplane.NewMemoryStore()
+		if _, err := store.CreateStack(t.Context(), controlplane.CreateStackRequest{ID: "stack-1", TenantID: "tenant-1", OwnerSubjectID: "owner-1", StackKitInstanceID: "family-main", Name: "Stack", Config: map[string]any{"stackkit": kit}}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.UpsertServerRuntime(t.Context(), controlplane.ServerRuntime{ID: "server-1", TenantID: "tenant-1", StackID: "stack-1", OwnerSubjectID: "owner-1", WorkerID: "agent-1", InventoryRevision: 7, LifecycleState: string(serverregistry.LifecycleActive), ConnectionState: string(serverregistry.ConnectionConnected), LastHeartbeatAt: &observedAt, Metadata: map[string]any{"stackkit": kit}}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.UpsertServiceRuntime(t.Context(), controlplane.ServiceRuntime{ID: "service-1", TenantID: "tenant-1", StackID: "stack-1", ServerID: "server-1", ServiceKey: "immich", ManagementState: management, StackKitVersion: kit + "@v0.1.0", ObservedAt: &observedAt, Capabilities: []string{"restart"}, Metadata: map[string]any{"inventory_revision": int64(7)}}); err != nil {
+			t.Fatal(err)
+		}
+		orch := &recordingServiceActionOrchestrator{store: store}
+		h := serviceRuntimeHandlers{store: store, stacks: store, servers: store, jobs: store, now: func() time.Time { return now }, orch: orch}
+		event, recorder := registryRouteStoreTestEvent(http.MethodPost, "/api/v1/registry/services/service-1/actions", "owner-1", "tenant-1", map[string]any{"action": "backup", "expected_inventory_revision": 7, "owner_approved": true})
+		event.Request.SetPathValue("serviceId", "service-1")
+		event.Request.Header.Set("Idempotency-Key", "backup-1")
+		if err := h.action(event); err != nil && !errors.Is(err, httpx.ErrResponseWritten) {
+			t.Fatal(err)
+		}
+		return recorder.Code, orch.requests
+	}
+
+	status, requests := run(t, jobs.DefaultBasementKitRef, "managed")
+	if status != http.StatusAccepted || len(requests) != 1 || requests[0].Operation != jobs.StackKitLifecycleBackupRun || !requests[0].OwnerApproved {
+		t.Fatalf("stacked service backup status=%d requests=%#v", status, requests)
+	}
+	if status, requests = run(t, jobs.DefaultBasementKitRef, "observed"); status != http.StatusConflict || len(requests) != 0 {
+		t.Fatalf("unstacked service backup status=%d requests=%d", status, len(requests))
+	}
+	if status, requests = run(t, "cloud-kit", "managed"); status != http.StatusConflict || len(requests) != 0 {
+		t.Fatalf("managed-custody kit backup status=%d requests=%d", status, len(requests))
 	}
 }

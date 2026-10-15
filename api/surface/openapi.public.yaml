@@ -632,6 +632,42 @@ paths:
           $ref: "#/components/responses/NotFound"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
+  /api/v1/stacks/{id}/stackkit/operations:
+    post:
+      operationId: runStackKitLifecycleOperation
+      tags: [Stacks, Jobs]
+      summary: Queue an owned node's typed Advanced or backup operation
+      description: >-
+        Uses the same tenant- and owner-scoped dispatcher as the operator UI. The node executes through its authenticated channel, current release pin, native Advanced catalog and issued operation capability. Techstack never executes Terramate, apply, rollback, backup or restore itself. A mutation requires owner_approved; service locks and active server maintenance are checked before enqueue. Direct backup_run and backup_configure remain Basement-only; managed kits keep their schedule and sealed target-renewal authority. backup_configure derives the node's target and plan from existing custody and accepts no credential fields. advanced_change_set requires candidate_spec; rollback requires an exact rollback_target_ref; restore_drill may reuse a snapshot_anchor_id. ai_provider lets Private AI offer an external OpenAI-compatible provider: the kombify Wallet seals the item wallet_item_id (the provider's API key) to the node, which must be listed as a host target of that item, the node binds it to ai_provider_base_url, and a drift reconcile applies the setting. ai_provider_disable removes it. Restore activation requires exactly one Idempotency-Key header, while other operations have no replay guarantee. Acceptance is not execution success; read the returned job and its scoped result to observe effects.
+      parameters:
+        - $ref: "#/components/parameters/stackId"
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema: {type: string, minLength: 1, maxLength: 128}
+          description: Required for backup_restore_activate; derived identity binds durable replay.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StackKitLifecycleRequest"
+      responses:
+        "202":
+          description: Typed lifecycle job accepted; execution and evidence remain pending
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: "#/components/schemas/StackKitLifecycleAccepted"}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
   /api/v1/managed-runtimes/authority:
     get:
       operationId: preflightManagedRuntimeAuthority
@@ -816,6 +852,48 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ExactRolloutRetryEnvelope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /api/v1/stacks/{id}/repair:
+    post:
+      operationId: repairStackComponent
+      tags: [Stacks, Jobs]
+      summary: Repair one degraded component of a completed rollout on its existing server
+      description: |
+        A rollout whose stack core applied completes degraded when an
+        independent component could not finish; the component is recorded in
+        the stack's `degraded_components` and repaired automatically. This
+        operation starts that repair now. `public_tls` installs the managed
+        kombify.me origin certificate (ADR-0047) on the stack's server; its
+        hostnames come from the degraded rollout, never from the request.
+        Answers 409 `component_repair_not_needed` when nothing is degraded.
+      parameters:
+        - $ref: "#/components/parameters/stackId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StackComponentRepairRequest"
+      responses:
+        "202":
+          description: Repair job queued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StackComponentRepairEnvelope"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -1510,7 +1588,7 @@ paths:
       tags: [Inventory]
       summary: List sanitized server inventory for the authenticated owner
       description: >-
-        Returns only servers owned by the authenticated subject in the trusted tenant context. Tenant and owner overrides are not accepted. Raw metadata, channel endpoints, provider-resource references, credentials, SSH material, tokens, and logs are never returned. The lease projection contains only an opaque identifier and state. Cursor pages share one authorization- and filter-bound collection watermark and exclude later inserts.
+        Returns only servers owned by the authenticated subject in the trusted tenant context. Tenant and owner overrides are not accepted. Raw metadata, channel endpoints, provider-resource references, credentials, SSH material, tokens, and logs are never returned. The lease projection contains only an opaque identifier and state. Cursor pages share one authorization- and filter-bound collection watermark and exclude later inserts. Each server carries its connection and health state and a freshness-qualified metrics block (cpu, memory and disk percent, uptime seconds); a figure from a stale heartbeat is reported as stale without a value.
       parameters:
         - name: limit
           in: query
@@ -1832,13 +1910,281 @@ paths:
           $ref: "#/components/responses/Conflict"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
+  /api/v1/servers/{serverId}/security/verify:
+    post:
+      operationId: requestServerSecurityVerification
+      tags: [Servers]
+      summary: Ask the kombify Guard for a fresh host security observation
+      description: >-
+        Records that a fresh observation of the host baseline is wanted. The Guard answers at its next check-in (within about a minute) with a new report; nothing on the host changes. The server's `security` read model is updated only by that report, never by this request. Another tenant's or owner's server is 404; a server without a Guard is 409 `guard_not_connected`.
+      parameters:
+        - $ref: "#/components/parameters/serverId"
+      responses:
+        "202":
+          description: The observation was requested
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [server_id, requested_at]
+                    properties:
+                      server_id: {type: string}
+                      requested_at: {type: string, format: date-time}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/servers/{serverId}/security/findings:
+    get:
+      operationId: listServerSecurityFindings
+      tags: [Servers]
+      summary: List the open findings and recent findings history of one server
+      description: >-
+        The findings ledger behind the server's `security`, `recovery` and Guard alerts. One finding is one episode: opened when a fact is first observed wrong, resolved when it is observed right again, with at most one alert (`alerted_at`) and one resolution. History is kept 90 days.
+      parameters:
+        - $ref: "#/components/parameters/serverId"
+      responses:
+        "200":
+          description: Open findings and history, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: "#/components/schemas/ServerSecurityFindingLedger"}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/servers/{serverId}/security/repairs:
+    get:
+      operationId: listServerSecurityRepairs
+      tags: [Servers]
+      summary: List the recent security repairs of one server
+      parameters:
+        - $ref: "#/components/parameters/serverId"
+      responses:
+        "200":
+          description: Recent repairs, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [server_id, repairs]
+                    properties:
+                      server_id: {type: string}
+                      repairs:
+                        type: array
+                        items: {$ref: "#/components/schemas/SecurityRepair"}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+    post:
+      operationId: requestServerSecurityRepair
+      tags: [Servers]
+      summary: Repair named drifted host security controls
+      description: >-
+        Requests a bounded repair of controls the fresh host security evidence reports as drifted and automatically repairable. Requires the server's owner, the Edge-signed `techstack.servers.maintenance` entitlement and a fresh multi-factor sign-in (at most 300 seconds old). The repair travels as a typed, journaled Guard command that runs `stackkit host security repair --apply` for exactly the named controls; StackKits refuses, before changing anything, a change that would cut the management path or lock the owner out. Bounds: one repair per server at a time (409 `repair_in_progress`), a per-control cooldown (429 `repair_cooldown`), a daily attempt budget per control (429 `repair_attempts_exhausted`) and a circuit breaker after consecutive failures (429 `repair_circuit_open`); the 429 answers carry `retry_after`. A control that is compliant (409 `control_not_drifted`), under an approved exception (`control_has_exception`), manual (`control_not_repairable`), blocked on an authorized SSH key (`needs_authorized_key`) or not observed is refused. The body is decoded strictly.
+      parameters:
+        - $ref: "#/components/parameters/serverId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SecurityRepairRequest"
+      responses:
+        "202":
+          description: The repair was admitted and is running
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: "#/components/schemas/SecurityRepair"}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "429":
+          description: A repair bound was reached; `retry_after` names when to try again
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/servers/{serverId}/security/auto-repair:
+    get:
+      operationId: getServerSecurityAutoRepair
+      tags: [Servers]
+      summary: Read the owner's approval of automatic security repair
+      description: A server without an approval, or with an expired one, is observe-only.
+      parameters:
+        - $ref: "#/components/parameters/serverId"
+      responses:
+        "200":
+          description: The approval state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: "#/components/schemas/SecurityAutoRepair"}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+    put:
+      operationId: setServerSecurityAutoRepair
+      tags: [Servers]
+      summary: Approve or withdraw automatic repair of a small safe set of controls
+      description: >-
+        Off by default. An approval names controls from the safe set (`allowed_controls`: brute-force protection, the firewall policy, kernel parameters and automatic security updates; never the ssh controls), expires within 90 days and never renews itself. While it is in force the control plane repairs a named control that fresh evidence reports drifted, inside the same bounds as an operator repair. Requires the owner, the `techstack.servers.maintenance` entitlement and a fresh multi-factor sign-in. `enabled: false` withdraws the approval.
+      parameters:
+        - $ref: "#/components/parameters/serverId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SecurityAutoRepairRequest"
+      responses:
+        "200":
+          description: The approval as recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: "#/components/schemas/SecurityAutoRepair"}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/servers/{serverId}/network:
+    get:
+      operationId: getServerNetwork
+      tags: [Servers]
+      summary: Read the server's network facts and any recorded home network move
+      description: >-
+        The network the server's kombify Guard last observed (address, gateway, subnet, interface, WiFi network), the `network_move` record kombify wrote when the server turned up on a different network, and the state of the re-bind that followed. A moved server re-binds itself automatically; `can_rebind` says whether the owner can start one now.
+      parameters:
+        - $ref: "#/components/parameters/serverId"
+      responses:
+        "200":
+          description: The server's network section
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: "#/components/schemas/ServerNetwork"}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/servers/{serverId}/network/rebind:
+    post:
+      operationId: rebindServerNetwork
+      tags: [Servers]
+      summary: Re-bind a moved server to the network it is on now
+      description: >-
+        Runs `stackkit network rebind` on the server through its kombify Guard: the node re-detects its LAN address, re-issues the signed LAN DNS custody record and regenerates and re-applies the workspace. The request takes no body. Requires the owner, the Inventory operate grant and the `techstack.servers.maintenance` entitlement, and a connected Guard (409 `server_network_not_ready` otherwise). A rebind that is already queued or running answers with its job instead of queueing another.
+      parameters:
+        - $ref: "#/components/parameters/serverId"
+      responses:
+        "202":
+          description: The re-bind job
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: "#/components/schemas/ServerNetworkRebind"}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/servers/{serverId}/reach:
+    put:
+      operationId: setServerPublicReach
+      tags: [Servers]
+      summary: Publish the server at a kombify.me address, or stop publishing it
+      description: >-
+        Nothing is published by default: a paired server has no public route and the relay carries no traffic. The owner enables it per server with an explicit `service` name and `target_port` (the origin is always the Guard host's loopback, never another machine) and may withdraw it at any time. The relay authenticates the Guard, not the visitor, so what answers on that port must protect itself. Enabling requires the owner, the `techstack.servers.maintenance` entitlement and a fresh multi-factor sign-in (reason `server_reach_step_up_required`); withdrawing is never gated. Responds with the reach section of the server read model; the reconciler then creates or withdraws the route.
+      parameters:
+        - $ref: "#/components/parameters/serverId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GuardPublicReachRequest"
+      responses:
+        "200":
+          description: The reach section after the change
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: "#/components/schemas/GuardReach"}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/servers/{serverId}/maintenance-impact:
+    get:
+      operationId: getServerMaintenanceImpact
+      tags: [Servers]
+      summary: Preview service and stack impact before confirming OS maintenance
+      description: >-
+        Requires the signed maintenance entitlement and ownership of the server. Lists canonical service placement and stack membership, with reasons and inventory freshness and completeness. An empty services array means no affected services only when inventory.status is current. An incomplete, stale or unavailable inventory cannot authorize maintenance. The digest binds the server, operation and material dependency snapshot; ordinary observation timestamps do not invalidate unchanged impact. Responses are private and must not be cached.
+      parameters:
+        - $ref: "#/components/parameters/serverId"
+        - name: action
+          in: query
+          required: true
+          schema: {type: string, enum: [os_update, reboot]}
+      responses:
+        "200":
+          description: Current impact evidence, including incomplete inventory
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: "#/components/schemas/ServerMaintenanceImpact"}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
   /api/v1/servers/{serverId}/actions:
     post:
       operationId: runServerMaintenanceAction
       tags: [Servers, Jobs]
-      summary: Queue an owner-approved OS update plan, OS update or reboot
+      summary: Queue an owned server OS update plan, OS update or reboot
       description: >-
-        Requires the Edge-signed `techstack.servers.maintenance` entitlement, ownership of the server in the tenant, and for `reboot` and `os_update` a multi-factor sign-in at most 300 seconds old from the verified edge envelope. The body is decoded strictly: exact lowercase keys, no duplicates, no unknown fields. A replay with the same Idempotency-Key returns the stored receipt before target validation. One reboot or OS update and, separately, one update plan may be active per server; a job not finished by its deadline fails with `deadline_exceeded` and frees its slot. The action is offered in `allowed_actions` only when the server agent advertises `stackkit.host-maintenance.v1`, and `reboot` only when the server also reports `host_boot_id`. Refusals are client-error-envelope/v1 documents; 409 `reason_code` is one of control_plane_host, substrate_node, protected_demo_server, service_locked, maintenance_active, node_operation_active, plan_stale, agent_capability_missing, boot_id_unknown, agent_not_connected, heartbeat_stale, inventory_revision_stale or idempotency_key_reused; 403 carries entitlement_required or server_maintenance_step_up_required.
+        Requires the Edge-signed `techstack.servers.maintenance` entitlement, ownership of the server in the tenant, and current server-bound standing authority for delegated native MCP calls. These three ordinary actions require no fresh MFA or separate owner_approved assertion. Reboot and os_update require expected_impact_digest from the preview the user confirmed. Impact is compared atomically at admission and again at execution claim; changed or incomplete evidence sends no command and requires a refreshed preview and renewed confirmation with a new request key. The body is decoded strictly: exact lowercase keys, no duplicates, no unknown fields. A replay with the same Idempotency-Key returns the stored receipt before target validation. One reboot or OS update and, separately, one update plan may be active per server; a job not finished by its deadline fails with `deadline_exceeded` and frees its slot. The action is offered in `allowed_actions` only when the server agent advertises `stackkit.host-maintenance.v1`, and `reboot` only when the server also reports `host_boot_id`. Refusals are client-error-envelope/v1 documents; 409 `reason_code` is one of control_plane_host, substrate_node, protected_demo_server, service_locked, maintenance_active, node_operation_active, plan_stale, agent_capability_missing, boot_id_unknown, agent_not_connected, heartbeat_stale, inventory_revision_stale, idempotency_key_reused, impact_confirmation_required, impact_changed or impact_unavailable; 403 carries entitlement_required or maintenance_origin_authority_denied.
       parameters:
         - $ref: "#/components/parameters/serverId"
         - name: Idempotency-Key
@@ -1894,6 +2240,34 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/servers/{serverId}/actions/{jobId}/cancel:
+    post:
+      operationId: cancelServerMaintenanceJob
+      tags: [Servers, Jobs]
+      summary: Cancel an owned maintenance job before execution starts
+      description: >-
+        Uses the same tenant, entitlement, server and requesting-owner scope as the job read. Cancellation and execution claim use the same queued-state compare-and-set. Repeating a successful cancellation returns its receipt; a claimed or finished job returns maintenance_not_cancellable. Cancelling never claims to stop a command that has already reached the server.
+      parameters:
+        - $ref: "#/components/parameters/serverId"
+        - name: jobId
+          in: path
+          required: true
+          schema: {type: string, maxLength: 128}
+      responses:
+        "200":
+          description: Cancelled job, including an exact cancellation replay
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: "#/components/schemas/ServerMaintenanceJob"}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
   /api/v1/services:
     get:
       operationId: listServiceRuntimes
@@ -1945,6 +2319,197 @@ paths:
                     $ref: "#/components/schemas/ResponseMeta"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/services/{serviceId}/connector:
+    get:
+      operationId: readApplicationConnector
+      tags: [Services]
+      summary: Read node-owned connector status and current published transport admission
+      description: Returns a secret-free projection. An unavailable supporting catalog remains nondispatchable SourcePreview; stale evidence on a supporting pin requires current read-only verification. Dispatchability additionally requires current canonical host-key, node and lease authority.
+      parameters:
+        - $ref: "#/components/parameters/serviceId"
+      responses:
+        "200":
+          description: Connector source preview and projected receipt status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: "#/components/schemas/ApplicationConnectorStatus"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+    post:
+      operationId: setupApplicationConnector
+      tags: [Services, Jobs]
+      summary: Ensure or revoke one declared owned Home Assistant connector on its node
+      description: >-
+        Requires fresh backend ownership, positive operate authority, exact current inventory and Owner approval. Transports only closed correlation metadata through Guard to the published pinned CLI, whose local signedApply and Owner setup authority remain mandatory. Stores pre-send durable intent; unknown acknowledgement only reconciles the original operation read-only. Current v0.51.8 lacks the supporting catalog and returns nondispatchable SourcePreview. Credentials stay in node custody.
+      parameters:
+        - $ref: "#/components/parameters/serviceId"
+        - $ref: "#/components/parameters/applicationIdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ApplicationConnectorRequest"}
+      responses:
+        "202": {$ref: "#/components/responses/ApplicationConnectorQueued"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/services/{serviceId}/connector/verify:
+    post:
+      operationId: verifyApplicationConnector
+      tags: [Services, Jobs]
+      summary: Refresh the current node-owned connector through a distinct read-only job
+      description: Retains the original signed setup operation and exact receipt, requires current published catalog and positive backend node/resource authority, and never reissues setup. Ordinary authenticated inventory reconciliation uses the same consumer for stale projections. Current v0.51.8 remains nondispatchable SourcePreview.
+      parameters:
+        - $ref: "#/components/parameters/serviceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: false}
+      responses:
+        "202": {$ref: "#/components/responses/ApplicationConnectorQueued"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/services/{serviceId}/adoption-plans:
+    post:
+      operationId: prepareApplicationAdoption
+      tags: [Services, Jobs]
+      summary: Assess one exact existing Home Assistant Container for in-place adoption
+      description: >-
+        Retains the source-bound assessment in the existing durable job store. Requires a connected Guard and the exact capable published CLI release. This read-only operation does not establish Stacked membership.
+      parameters:
+        - $ref: "#/components/parameters/serviceId"
+        - $ref: "#/components/parameters/applicationIdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ApplicationAdoptionRequest"}
+      responses:
+        "202": {$ref: "#/components/responses/ApplicationLifecycleQueued"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/services/{serviceId}/adoption-plans/{planId}:
+    get:
+      operationId: readApplicationAdoptionPlan
+      tags: [Services, Jobs]
+      summary: Read the retained application assessment and durable progress
+      parameters:
+        - $ref: "#/components/parameters/serviceId"
+        - $ref: "#/components/parameters/adoptionPlanId"
+      responses:
+        "200":
+          description: Retained plan for this exact service and Owner
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: "#/components/schemas/ApplicationAdoptionPlan"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /api/v1/services/{serviceId}/adoption-plans/{planId}/execute:
+    post:
+      operationId: executeApplicationAdoption
+      tags: [Services, Jobs]
+      summary: Execute the exact reviewed source plan with explicit Owner approval
+      description: >-
+        Revalidates the retained digest, source identity, revision and release. Only an authenticated pinned-CLI custody receipt establishes membership. Accounts, configuration and persistent data are preserved; no new runtime is created. Moving to another Node and generic adoption are not supported.
+      parameters:
+        - $ref: "#/components/parameters/serviceId"
+        - $ref: "#/components/parameters/adoptionPlanId"
+        - $ref: "#/components/parameters/applicationIdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ApplicationAdoptionRequest"}
+      responses:
+        "202": {$ref: "#/components/responses/ApplicationLifecycleQueued"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/services/{serviceId}/release:
+    post:
+      operationId: releaseApplicationLifecycle
+      tags: [Services, Jobs]
+      summary: Release an adopted lifecycle binding without deleting or stopping its runtime
+      parameters:
+        - $ref: "#/components/parameters/serviceId"
+        - $ref: "#/components/parameters/applicationIdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ApplicationAdoptionRequest"}
+      responses:
+        "202": {$ref: "#/components/responses/ApplicationLifecycleQueued"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/services/{serviceId}/metrics:
+    get:
+      operationId: getServiceMetrics
+      tags: [Services]
+      summary: Read measured resource metrics for an owned service
+      description: >-
+        Uses the existing Guard telemetry query backend and fixes the tenant, canonical server and container selectors from authorized service inventory. An empty vector means no resource metric was measured.
+      parameters:
+        - name: serviceId
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: PromQL instant vector with admitted container resource measurements
+          content:
+            application/json:
+              schema: {type: object}
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          description: Metrics backend unavailable
+  /api/v1/registry/services:
+    get:
+      operationId: listRegistryServices
+      tags: [Services]
+      summary: List owned services with their catalog and canonical placement
+      description: >-
+        Runtime records use the same state, capabilities, version and owner lock projection as service detail. Historical records remain readable with unknown observed state and no unmeasured action capabilities.
+      responses:
+        "200":
+          description: Owned catalog, deployments, servers and services
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/RegistryServices"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /api/v1/registry/services/{serviceId}/actions:
     post:
       operationId: runManagedServiceAction
@@ -2051,6 +2616,21 @@ paths:
                   type: string
                 ip:
                   type: string
+                guard_public_key:
+                  type: object
+                  description: >-
+                    Public half of the kombify Guard host key (OKP/Ed25519 JWK with only kty, crv and x). The control plane binds its RFC 7638 thumbprint to the worker. Send together with attempt_id.
+                  additionalProperties: false
+                  required: [kty, crv, x]
+                  properties:
+                    kty: {type: string, enum: [OKP]}
+                    crv: {type: string, enum: [Ed25519]}
+                    x: {type: string}
+                attempt_id:
+                  type: string
+                  pattern: "^[A-Za-z0-9_-]{16,64}$"
+                  description: >-
+                    Non-secret redemption attempt id persisted by the Guard before redemption. Repeating the same pairing token, attempt and key within the bootstrap window atomically replaces the still unconfirmed credential.
       responses:
         "200":
           description: Worker registered
@@ -2060,6 +2640,356 @@ paths:
                 $ref: "#/components/schemas/SuccessEnvelope"
         "401":
           description: Invalid pairing token
+  /api/v1/workers/{id}/identity/token:
+    post:
+      operationId: exchangeWorkerIdentityToken
+      tags: [Workers]
+      summary: Exchange the worker credential and a key proof for an access token
+      description: >-
+        kombify Guard host identity. The worker credential (Authorization Bearer) plus a DPoP-shaped proof (RFC 9449: JWS typ dpop+jwt, alg EdDSA, public jwk in the header; claims htm, htu, iat, jti) signed with the Guard host key yield a short-lived access token bound to the key thumbprint (cnf.jkt). The first successful exchange confirms an unconfirmed enrollment. Denials use the codes guard_proof_invalid, guard_proof_replayed, guard_identity_revoked and guard_token_expired.
+      security:
+        - runtimeAgentAuth: []
+      parameters:
+        - $ref: "#/components/parameters/resourceId"
+        - name: DPoP
+          in: header
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: Access token issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "401":
+          description: Credential or proof not accepted (guard_proof_invalid, guard_proof_replayed)
+        "403":
+          description: Identity revoked (guard_identity_revoked)
+  /api/v1/workers/{id}/identity/bind:
+    post:
+      operationId: bindWorkerIdentityKey
+      tags: [Workers]
+      summary: Propose a host key for a legacy bearer worker
+      description: >-
+        Key bind request of an upgraded kombify Guard that still authenticates with the bearer credential alone (identity_binding=legacy_bearer). The bearer credential authenticates the worker and a proof signed by the new key proves possession, which only shows that the caller holds the bearer, which may be a copy: the key is held as `upgrade_pending` (202) and binds the server only once the owner approves that exact key (`approveWorkerIdentityUpgrade`). Until then the worker stays observe-only on its bearer credential: it may heartbeat, report inventory and posture and update itself, but receives no mutating command, no provider control and no managed operation (`guard_identity_upgrade_required`). Another key while one is pending is refused (409 `guard_identity_upgrade_pending`, reason `other_key_pending`). A proposal not approved within 24 hours expires.
+      security:
+        - runtimeAgentAuth: []
+      parameters:
+        - $ref: "#/components/parameters/resourceId"
+        - name: DPoP
+          in: header
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [public_key, attempt_id]
+              properties:
+                public_key:
+                  type: object
+                  additionalProperties: false
+                  required: [kty, crv, x]
+                  properties:
+                    kty: {type: string, enum: [OKP]}
+                    crv: {type: string, enum: [Ed25519]}
+                    x: {type: string}
+                attempt_id:
+                  type: string
+                  pattern: "^[A-Za-z0-9_-]{16,64}$"
+      responses:
+        "200":
+          description: The same key is already bound
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "202":
+          description: Key held pending owner approval (identity_state=upgrade_pending, approval_required=true)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "401":
+          description: Credential or proof not accepted
+        "409":
+          description: A different key is already bound (guard_identity_already_bound) or another key awaits approval (guard_identity_upgrade_pending)
+        "413": {$ref: "#/components/responses/PayloadTooLarge"}
+  /api/v1/workers/identity-upgrades:
+    get:
+      operationId: listWorkerIdentityUpgrades
+      tags: [Workers]
+      summary: List the owner's servers that wait for an identity key approval
+      description: >-
+        For the owner. Each entry is a server of theirs that proposed a key and is observe-only until that exact key is approved with `approveWorkerIdentityUpgrade` (fresh multi-factor sign-in required). Entries carry the hostname and the key fingerprint to compare with the one the Guard logs on the server. Listing grants nothing.
+      responses:
+        "200":
+          description: Pending identity upgrades of the owner's servers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [upgrades]
+                    properties:
+                      upgrades:
+                        type: array
+                        items: {$ref: "#/components/schemas/GuardIdentityUpgrade"}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/workers/{id}/identity/upgrade:
+    get:
+      operationId: getWorkerIdentityUpgrade
+      tags: [Workers]
+      summary: Show whether a server still needs its identity key approved
+      description: >-
+        For the owner of the worker. `identity_binding=legacy_bearer` with `code=guard_identity_upgrade_required` means the server authenticates with its bearer credential alone and is observe-only; `pending` carries the fingerprint of the key the server proposed, which the owner compares with the fingerprint the Guard logs on the server. A worker of another tenant or owner is 404.
+      parameters:
+        - $ref: "#/components/parameters/resourceId"
+      responses:
+        "200":
+          description: The identity upgrade state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: "#/components/schemas/GuardIdentityUpgrade"}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/workers/{id}/identity/upgrade/approve:
+    post:
+      operationId: approveWorkerIdentityUpgrade
+      tags: [Workers]
+      summary: Approve the key a legacy server proposed
+      description: >-
+        Binds the pending key named by `key_thumbprint`, which makes the worker key-bound (bearer-only requests are denied afterwards). Requires the owner and a fresh multi-factor sign-in (at most 300 seconds old). The approving subject and time are recorded with the identity and logged. 409 `identity_upgrade_not_pending` when no unexpired pending key has that fingerprint.
+      parameters:
+        - $ref: "#/components/parameters/resourceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [key_thumbprint]
+              properties:
+                key_thumbprint: {type: string}
+      responses:
+        "200":
+          description: The key is bound
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: "#/components/schemas/GuardIdentityUpgrade"}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/workers/{id}/identity/upgrade/reject:
+    post:
+      operationId: rejectWorkerIdentityUpgrade
+      tags: [Workers]
+      summary: Discard the key a legacy server proposed
+      description: >-
+        The owner's reset when the pending key is not the server's own: the proposal is discarded and must be made again. Rotating the server credential ends the holder's access to the bind endpoint.
+      parameters:
+        - $ref: "#/components/parameters/resourceId"
+      responses:
+        "200":
+          description: The pending key was discarded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: "#/components/schemas/GuardIdentityUpgrade"}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/workers/{id}/identity/rotate:
+    post:
+      operationId: rotateWorkerIdentityKey
+      tags: [Workers]
+      summary: Rotate the kombify Guard host key
+      description: >-
+        Authenticated by the current key (access token plus proof). The new key proves possession with its own proof. The predecessor stays valid for a bounded overlap.
+      parameters:
+        - $ref: "#/components/parameters/resourceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [new_public_key, new_key_proof]
+              properties:
+                new_public_key:
+                  type: object
+                  additionalProperties: false
+                  required: [kty, crv, x]
+                  properties:
+                    kty: {type: string, enum: [OKP]}
+                    crv: {type: string, enum: [Ed25519]}
+                    x: {type: string}
+                new_key_proof:
+                  type: string
+                  description: DPoP-shaped proof for this request signed by the new key.
+                emergency:
+                  type: boolean
+                  description: End the predecessor key at once instead of after the short (two minute) overlap, for a Guard that suspects its key was copied.
+      responses:
+        "200":
+          description: Key rotated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "401":
+          description: Access token or proof not accepted
+        "409":
+          description: The key changed during the rotation
+  /api/v1/workers/{id}/posture:
+    post:
+      operationId: reportWorkerPosture
+      tags: [Workers]
+      summary: Report kombify Guard host security and backup observations
+      description: >-
+        The Guard's posture channel. A full report carries what the Guard observed through the privileged executor's read-only StackKits operations: the `stackkit.host-security-evidence/v1` document of `stackkit host security verify` and the receipt states of `stackkit backup status`. A check-in (`check_in: true`) carries nothing and only asks whether a fresh observation was requested. The identity is the authenticated worker's; the control plane recomputes the verdict from the controls, judges time by its own clock, and records a document it cannot read (unknown schema version, unknown control or state, bad freshness window) as `evidence_rejected`, which leaves no earlier pass standing. A StackKits release without the command is reported as `unsupported` and shows as `security.state: unknown` with `reason_code: stackkit_cli_unsupported`. The answer is the directive: `verify_requested` and the routine cadence. Editions without posture answer `state: disabled`.
+      security:
+        - runtimeAgentAuth: []
+      parameters:
+        - $ref: "#/components/parameters/resourceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GuardPostureReport"
+      responses:
+        "200":
+          description: The directive for the next observation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      posture: {$ref: "#/components/schemas/GuardPostureDirective"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {description: "Access token or proof not accepted"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/workers/{id}/telemetry:
+    post:
+      operationId: ingestWorkerTelemetry
+      tags: [Workers]
+      summary: Send kombify Guard host and container telemetry
+      description: >-
+        Telemetry on the managed transport. A batch carries records of one source epoch with increasing sequence numbers: each record is one collection cycle of the data contract (host CPU, memory, swap, load, disk per mount, uptime and container resource usage; SERVER-CONNECTION-STANDARD section 9) or an explicit gap marker. The control plane repeats the contract filter, stamps tenant, worker and server from the authentication, stores the samples and acknowledges only what it stored (`acked_sequence`), so a Guard that lost an acknowledgement replays without duplicates and keeps everything else. Editions that store no telemetry answer `state: disabled` and the Guard stops collecting.
+      security:
+        - runtimeAgentAuth: []
+      parameters:
+        - $ref: "#/components/parameters/resourceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GuardTelemetryBatch"
+      responses:
+        "200":
+          description: The acknowledgement
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      telemetry: {$ref: "#/components/schemas/GuardTelemetryAck"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {description: "Access token or proof not accepted"}
+        "413": {description: "The batch exceeds its bound"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/workers/{id}/reach:
+    post:
+      operationId: exchangeWorkerReach
+      tags: [Workers]
+      summary: Exchange kombify Guard reach state with the control plane
+      description: >-
+        kombify Guard reach. A Guard with a bound host key (access token plus proof) reports its kombify.me relay connection and hands over the host proof the control plane requested for its Connect registration; the answer is the reach document: the overall state, the relay target once kombify.me holds the binding for the current generation, and at most one outstanding proof request with the exact claims to sign. The document carries no credential. Legacy bearer Guards receive `needs_host_key`; deployments without a Cloud connection receive `disabled`. A failure downstream is recorded and reported on the server read model, never returned as an error to the Guard.
+      security:
+        - runtimeAgentAuth: []
+      parameters:
+        - $ref: "#/components/parameters/resourceId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                relay:
+                  type: object
+                  required: [state]
+                  properties:
+                    state:
+                      type: string
+                      enum: [connecting, connected, denied, stopped]
+                    reason_code:
+                      type: string
+                      pattern: "^[a-z0-9_.-]{0,64}$"
+                    generation:
+                      type: integer
+                      format: int64
+                proofs:
+                  type: array
+                  maxItems: 4
+                  items:
+                    type: object
+                    required: [audience, generation, proof]
+                    properties:
+                      audience:
+                        type: string
+                        enum: ["https://connect.kombify.io"]
+                      generation:
+                        type: integer
+                        format: int64
+                        minimum: 1
+                      proof:
+                        type: string
+                        maxLength: 4096
+      responses:
+        "200":
+          description: The reach document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "401":
+          description: Access token or proof not accepted
+        "403":
+          description: Identity revoked (guard_identity_revoked)
+        "503":
+          description: Reach is temporarily unavailable
   /v1/ril/servers/connect:
     post:
       operationId: connectRILServer
@@ -2168,6 +3098,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SuccessEnvelope"
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "413": {$ref: "#/components/responses/PayloadTooLarge"}
   /api/v1/workers/{id}/inventory:
     post:
       operationId: ingestWorkerInventory
@@ -2206,6 +3138,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "409":
           $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
   /api/v1/workers/{id}/approve:
     post:
       operationId: approveWorker
@@ -2222,6 +3156,64 @@ paths:
                 $ref: "#/components/schemas/SuccessEnvelope"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/workers/{id}/outcomes:
+    get:
+      operationId: listGuardUnresolvedOutcomes
+      tags: [Workers]
+      summary: List the unresolved operation outcomes of one kombify Guard
+      description: >-
+        Lists the operations of an owned worker whose outcome is unknown: the kombify Guard recorded that the effect may or may not have happened and no observation settled it. Each one fences further changes on the server. `state` is `reconciling` while the Guard still tries to settle it and `needs_operator` once it stayed unresolved past the configured time (`TECHSTACK_GUARD_OUTCOME_NEEDS_OPERATOR_AFTER`, default 30 minutes). The time only changes how the outcome is shown; it never releases the fence. Another tenant's or owner's worker is 404.
+      parameters:
+        - $ref: "#/components/parameters/resourceId"
+      responses:
+        "200":
+          description: Unresolved outcomes, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: "#/components/schemas/GuardUnresolvedOutcomeList"}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /api/v1/workers/{id}/outcomes/{command_id}/resolve:
+    post:
+      operationId: resolveGuardUnresolvedOutcome
+      tags: [Workers]
+      summary: Release an unresolved kombify Guard operation outcome
+      description: >-
+        Commits an append-only operator resolution revision for an operation whose outcome is unknown and releases the worker's fence. `disposition` is `verified_applied` (the effect is in place), `verified_not_applied` (nothing happened) or `accept_unknown` (release without a verified outcome); `note` records what was verified. The actor is the authenticated subject and is recorded with the revision; a Guard cannot commit these dispositions. A fresh multi-factor sign-in (at most 300 seconds old) is required. `expected_revision` must be the revision the list returned, otherwise 409 `outcome_revision_stale`. The body is decoded strictly: exact keys, no unknown fields.
+      parameters:
+        - $ref: "#/components/parameters/resourceId"
+        - name: command_id
+          in: path
+          required: true
+          schema: {type: string, maxLength: 128}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GuardOutcomeResolutionRequest"
+      responses:
+        "200":
+          description: The resolution revision was committed and the fence released
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {$ref: "#/components/schemas/GuardOutcomeResolution"}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
   /install.sh:
     get:
       operationId: getInstallScript
@@ -2476,6 +3468,12 @@ paths:
         - name: stack_id
           in: query
           required: false
+          schema:
+            type: string
+        - name: service_id
+          in: query
+          required: false
+          description: Return only jobs whose recorded service target matches this id.
           schema:
             type: string
         - name: state
@@ -3142,6 +4140,164 @@ paths:
       responses:
         "200":
           description: Metric names
+  /api/v1/monitor/storage-forecast:
+    get:
+      operationId: getMonitorStorageForecast
+      tags: [Metrics]
+      summary: Project filesystem growth from observed storage gauges
+      description: |
+        Read-only, tenant-scoped projection of node_disk_used_bytes with
+        contemporaneous node_disk_total_bytes or used plus free bytes. The
+        latter is effective usable capacity, not physical disk capacity.
+        Uses a 14-day window with hourly query evaluation, retaining actual
+        source observation times and deduplicating repeated lookback values.
+        Counts describe hourly sampled observations, not all ingested samples;
+        sparse observations outside the backend lookback may be absent. No
+        interpolation or per-service storage attribution is performed. Separate
+        origin/source streams remain separate resources and are never summed.
+        Guard OTLP times describe Guard collection, not original OTLP point time.
+        Unknown capacity, stale/inadequate history and inconsistent measurements
+        return an explicit state without an exhaustion estimate. Exhaustion is
+        a growth scenario range measured from the latest observation, not a
+        statistical confidence interval. Both bounded queries share a timeout.
+      parameters:
+        - name: node_id
+          in: query
+          schema: {type: string, maxLength: 128}
+        - name: server_id
+          in: query
+          schema: {type: string, maxLength: 128}
+        - name: agent_id
+          in: query
+          schema: {type: string, maxLength: 128}
+      responses:
+        "200":
+          description: Observed filesystem forecasts, bounded to 384 metric streams
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {$ref: "#/components/schemas/StorageForecastResponse"}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400":
+          description: Invalid identity filter
+        "401":
+          description: Authentication required
+        "403":
+          description: Tenant scope required
+        "503":
+          description: Query unavailable, unsupported, or over bounded result limits
+  /api/v1/monitor/drive-health:
+    get:
+      operationId: getMonitorDriveHealth
+      tags: [Metrics]
+      summary: Read per-drive SMART and NVMe health evidence
+      description: |
+        Authenticated, tenant-scoped projection of Guard drive observations.
+        Self-hosted installations use their configured installation tenant.
+        Hardware identities retain history independently of mutable device paths;
+        replacements never inherit earlier readings. Anonymous observations have
+        attempt-specific IDs and cannot establish historical continuity.
+        Missing, unsupported, inaccessible, incomplete, stale and disconnected
+        observations stay explicit and cannot imply healthy hardware. A server
+        with no observations returns a missing state when selected explicitly.
+        Last successful readings remain historical evidence when a new attempt
+        fails. Only a complete inventory or an explicit missing observation can
+        establish disconnection, and an unreadable identity at a seen path stays
+        uncertain. Reads age evidence and condition episodes, without initiating
+        collection, self-tests, repairs, provisioning or other device actions.
+        Capacity growth forecasts remain on the separate storage-forecast route.
+      parameters:
+        - $ref: "#/components/parameters/driveHealthServerId"
+      responses:
+        "200":
+          description: Current collection state, retained drive readings and durable condition episodes
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {$ref: "#/components/schemas/DriveHealthResponse"}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "503": {$ref: "#/components/responses/DriveHealthUnavailable"}
+  /api/v1/monitor/drive-health/alerts:
+    get:
+      operationId: getMonitorDriveHealthAlerts
+      tags: [Metrics]
+      summary: Read active and recovered drive-health condition episodes
+      description: |
+        Authenticated, tenant-scoped read of hardware and collection conditions.
+        Each condition names its affected server and, when attributable, immutable
+        drive identity, severity, observed evidence and recommended next step.
+        Collection failures are distinct from hardware diagnoses. Stable episode
+        IDs deduplicate unchanged conditions; resolved_at records recovery only
+        when fresh evidence covers the condition. Anonymous collection incidents
+        deduplicate by server and path, independently of anonymous hardware IDs.
+        Nonzero cumulative counters describe historical totals; measured increases
+        are separate conditions. NVMe command-error increases and consumed rated
+        endurance are advisories, rather than standalone evidence of media failure.
+        Resolved history is bounded to 64 episodes per condition scope and 90 days.
+        Reads initiate no repair, device mutation or provider action.
+      parameters:
+        - $ref: "#/components/parameters/driveHealthServerId"
+      responses:
+        "200":
+          description: Active and retained recovered episodes across the selected tenant/server scope
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {$ref: "#/components/schemas/DriveHealthAlertsResponse"}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "503": {$ref: "#/components/responses/DriveHealthUnavailable"}
+  /api/v1/monitor/domains:
+    get:
+      operationId: getMonitorDomains
+      tags: [Metrics]
+      summary: Read domain lifecycle and observed DNS/TLS differences
+      description: |
+        Owner and tenant scoped, read-only projection of canonical routing,
+        server domains and service endpoints. Registration expiry from RDAP
+        and certificate expiry from the presented public TLS leaf are separate
+        facts with independent sources and observation deadlines. Missing data
+        stays unknown. Expected DNS is never inferred from observed addresses.
+        Proxied origins are explicitly unobservable from recursive public DNS.
+        Conditions persist across failures and stale observations, and resolve
+        only after fresh positive evidence. An unavailable store returns 503.
+      parameters:
+        - name: server_id
+          in: query
+          schema: {type: string, maxLength: 128}
+        - name: service_id
+          in: query
+          schema: {type: string, maxLength: 128}
+      responses:
+        "200":
+          description: Current targets with independently aged evidence and durable conditions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {$ref: "#/components/schemas/DomainMonitoringReport"}
+                  meta: {$ref: "#/components/schemas/ResponseMeta"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403":
+          description: Tenant scope required
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
   /api/v1/monitor/status:
     get:
       operationId: getMonitorStatus
@@ -3361,152 +4517,6 @@ paths:
           description: Fresh re-authentication required, or item not revealable
         "404":
           $ref: "#/components/responses/NotFound"
-  /api/v1/backups:
-    post:
-      operationId: createBackup
-      tags: [Backups]
-      summary: Create database backup (admin only)
-      responses:
-        "200":
-          description: Backup created
-        "403":
-          $ref: "#/components/responses/Forbidden"
-    get:
-      operationId: listBackups
-      tags: [Backups]
-      summary: List backups (admin only)
-      responses:
-        "200":
-          description: Backup list
-        "403":
-          $ref: "#/components/responses/Forbidden"
-  /api/v1/backups/latest:
-    get:
-      operationId: getLatestBackup
-      tags: [Backups]
-      summary: Get latest backup info (admin only)
-      responses:
-        "200":
-          description: Latest backup
-        "403":
-          $ref: "#/components/responses/Forbidden"
-  /api/v1/backups/{name}/download:
-    get:
-      operationId: downloadBackup
-      tags: [Backups]
-      summary: Download backup file (admin only)
-      parameters:
-        - name: name
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Backup file
-          content:
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-  /api/v1/backups/{name}:
-    delete:
-      operationId: deleteBackup
-      tags: [Backups]
-      summary: Delete backup (admin only)
-      parameters:
-        - name: name
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Deleted
-        "403":
-          $ref: "#/components/responses/Forbidden"
-  /api/v1/backups/cleanup:
-    post:
-      operationId: cleanupBackups
-      tags: [Backups]
-      summary: Apply retention policy (admin only)
-      responses:
-        "200":
-          description: Cleanup applied
-        "403":
-          $ref: "#/components/responses/Forbidden"
-  /api/v1/backups/{name}/upload-s3:
-    post:
-      operationId: uploadBackupS3
-      tags: [Backups]
-      summary: Upload backup to S3 (admin only)
-      parameters:
-        - name: name
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Uploaded
-        "403":
-          $ref: "#/components/responses/Forbidden"
-  /api/v1/backups/s3:
-    get:
-      operationId: listS3Backups
-      tags: [Backups]
-      summary: List S3 backups (admin only)
-      responses:
-        "200":
-          description: S3 backup list
-        "403":
-          $ref: "#/components/responses/Forbidden"
-  /api/v1/backups/s3/{name}/download:
-    post:
-      operationId: downloadS3Backup
-      tags: [Backups]
-      summary: Download backup from S3 (admin only)
-      parameters:
-        - name: name
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Downloaded
-        "403":
-          $ref: "#/components/responses/Forbidden"
-  /api/v1/backups/s3/{name}:
-    delete:
-      operationId: deleteS3Backup
-      tags: [Backups]
-      summary: Delete S3 backup (admin only)
-      parameters:
-        - name: name
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Deleted
-        "403":
-          $ref: "#/components/responses/Forbidden"
-  /api/v1/backups/s3/status:
-    get:
-      operationId: getS3Status
-      tags: [Backups]
-      summary: Get S3 connection status (admin only)
-      responses:
-        "200":
-          description: S3 status
-        "403":
-          $ref: "#/components/responses/Forbidden"
   /api/v1/auth/mode:
     get:
       operationId: getAuthMode
@@ -3529,18 +4539,44 @@ paths:
       operationId: setupLocalAuth
       tags: [Auth]
       summary: One-shot local owner setup
+      description: Local setup verifies the operator's canonical bootstrap password. An authenticated retry with the same chosen owner credentials may finish a missing compatibility marker. Completed setup cannot replace the owner. A legacy cloud choice returns read-only navigation guidance without changing local setup or owner state.
       security: []
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
               type: object
+              required: [mode]
+              properties:
+                mode:
+                  type: string
+                  enum: [local, cloud]
+                name:
+                  type: string
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  writeOnly: true
+                  minLength: 8
+                  description: Chosen local owner password; also proves the existing owner during an incomplete-setup retry.
+                current_password:
+                  type: string
+                  writeOnly: true
+                  description: Canonical bootstrap password obtained from the host-local owner bootstrap command. Required for an unclaimed local owner.
       responses:
         "200":
-          description: Setup completed or already initialized
+          description: Read-only cloud login navigation guidance
+        "201":
+          description: Local owner setup completed
+        "401":
+          description: Invalid or missing canonical owner proof
+        "403":
+          description: Setup completed, locked, or managed by SaaS
         "409":
-          description: Setup is no longer available
+          description: Canonical bootstrap changed concurrently
   /api/v1/auth/methods:
     get:
       operationId: listAuthMethods
@@ -4239,6 +5275,22 @@ components:
       name: X-Edge-Internal-Trust
       description: Legacy trust header injected by the public edge during the migration cutover (SaaS mode only)
   parameters:
+    driveHealthServerId:
+      name: server_id
+      in: query
+      required: false
+      description: Restrict evidence to one server within the authenticated tenant; an unobserved server remains explicitly missing.
+      schema: {type: string, maxLength: 128}
+    applicationIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: {type: string, minLength: 1, maxLength: 200}
+    adoptionPlanId:
+      name: planId
+      in: path
+      required: true
+      schema: {type: string}
     serverId:
       name: serverId
       in: path
@@ -4304,6 +5356,22 @@ components:
         minimum: 1
         maximum: 100
   responses:
+    ApplicationConnectorQueued:
+      description: Connector action queued or exact durable replay returned
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data: {$ref: "#/components/schemas/ApplicationConnectorAction"}
+    ApplicationLifecycleQueued:
+      description: Application lifecycle queued or exact durable replay returned
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data: {$ref: "#/components/schemas/ServiceActionResponse"}
     BadRequest:
       description: Bad request
       content:
@@ -4334,12 +5402,29 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+    PayloadTooLarge:
+      description: >-
+        The request body exceeds the route's bound. Worker routes cap the body before any decoding or authentication work; a request without a usable credential is refused (401) before its body is read.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
     ValidationError:
       description: Request failed semantic validation
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+    DriveHealthUnavailable:
+      description: |
+        Drive evidence cannot be read because persistence is unavailable or its
+        read failed. When persistence is not configured, details.reason_code is
+        drive_health_persistence_unavailable and details.retryable is true.
+        Authentication and hosted organization scope are checked before this error.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/DriveHealthUnavailableError"
     ServiceUnavailable:
       description: Required control-plane persistence or dependency is unavailable
       content:
@@ -4353,6 +5438,249 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
   schemas:
+    DriveHealthResponse:
+      type: object
+      required: [generated_at, servers]
+      properties:
+        generated_at: {type: string, format: date-time}
+        servers:
+          type: array
+          items: {$ref: "#/components/schemas/DriveHealthServerState"}
+    DriveHealthAlertsResponse:
+      type: object
+      required: [generated_at, alerts]
+      properties:
+        generated_at: {type: string, format: date-time}
+        alerts:
+          type: array
+          items: {$ref: "#/components/schemas/DriveHealthAlert"}
+    DriveHealthServerState:
+      type: object
+      required: [server_id, worker_id, last_attempt_at, collection_status, inventory_complete, drives, alerts]
+      properties:
+        server_id: {type: string}
+        worker_id:
+          type: string
+          description: Authenticated Guard identity; empty when the selected server has no observation.
+        last_attempt_at:
+          type: string
+          format: date-time
+          description: Latest accepted collection attempt; the zero timestamp 0001-01-01T00:00:00Z denotes no observation.
+        collection_status: {$ref: "#/components/schemas/DriveObservationState"}
+        collection_reason: {type: string}
+        inventory_complete:
+          type: boolean
+          description: Only a complete inventory supports inference that an absent known identity disconnected.
+        drives:
+          type: array
+          items: {$ref: "#/components/schemas/DriveHealthState"}
+        alerts:
+          type: array
+          description: Server collection conditions, including path-scoped anonymous availability incidents.
+          items: {$ref: "#/components/schemas/DriveHealthAlert"}
+    DriveObservationState:
+      type: string
+      enum: [available, incomplete, unsupported, inaccessible, missing, stale, disconnected]
+      description: Observation availability, independently of the hardware health assessment.
+    DriveHealthState:
+      type: object
+      required: [drive_id, device_path, observation_status, health, last_attempt_at, last_attempt, last_success, alerts]
+      properties:
+        drive_id:
+          type: string
+          description: Immutable hardware-derived identity, or an attempt-specific unidentified-* display ID with no historical continuity.
+        device_path: {type: string}
+        observation_status: {$ref: "#/components/schemas/DriveObservationState"}
+        health:
+          type: string
+          enum: [healthy, warning, critical, unknown]
+          description: Current supported evidence assessment; failed, incomplete or stale collection cannot establish health from absent values.
+        last_attempt_at:
+          type: string
+          format: date-time
+          description: Latest attempt, including an ambiguous identity read at a previously observed path; it may be newer than last_attempt.observed_at.
+        last_attempt:
+          oneOf:
+            - $ref: "#/components/schemas/DriveHealthReading"
+            - {type: "null"}
+        last_success:
+          description: Last available identified reading; retained as historical evidence across failed or incomplete attempts.
+          oneOf:
+            - $ref: "#/components/schemas/DriveHealthReading"
+            - {type: "null"}
+        alerts:
+          type: array
+          items: {$ref: "#/components/schemas/DriveHealthAlert"}
+    DriveHealthReading:
+      type: object
+      required: [drive_id, device_path, protocol, model, serial, wwn, source, observed_at, status, missing, smart_passed, attribute_failed, temperature_celsius, temperature_warning_celsius, temperature_critical_celsius, critical_warning, percentage_used, available_spare, spare_threshold, media_errors, error_log_entries, self_test_failed, reallocated_sectors, pending_sectors, uncorrectable_sectors, power_on_hours, wear_attributes]
+      properties:
+        drive_id:
+          type: string
+          description: SHA-256 of hardware identity, or empty when identity could not be read; never derived from the path.
+          pattern: '^(|[a-f0-9]{64})$'
+        device_path: {type: string}
+        protocol: {type: string, enum: [ATA, NVMe, SCSI, ""]}
+        model: {type: string, maxLength: 256}
+        serial: {type: string, maxLength: 256}
+        wwn: {type: string, maxLength: 256}
+        source: {type: string, enum: [smartctl, nvme_cli, inventory]}
+        observed_at: {type: string, format: date-time}
+        status: {type: string, enum: [available, incomplete, unsupported, inaccessible, missing]}
+        reason: {type: string}
+        missing:
+          type: [array, "null"]
+          maxItems: 20
+          uniqueItems: true
+          items:
+            type: string
+            enum: [identity, smart_passed, attribute_failed, temperature_celsius, critical_warning, percentage_used, available_spare, spare_threshold, media_errors, error_log_entries, self_test_failed, reallocated_sectors, pending_sectors, uncorrectable_sectors, power_on_hours]
+        smart_passed: {type: [boolean, "null"]}
+        attribute_failed: {type: [boolean, "null"]}
+        self_test_failed:
+          type: [boolean, "null"]
+          description: Failed latest reported self-test result; null denotes unreported or unavailable evidence, not a passing test. Reading never starts a self-test.
+        temperature_celsius: {type: [number, "null"], minimum: -273.15, maximum: 1000}
+        temperature_warning_celsius: {type: [number, "null"], minimum: -273.15, maximum: 1000}
+        temperature_critical_celsius:
+          type: [number, "null"]
+          minimum: -273.15
+          maximum: 1000
+          description: Device-reported critical limit. Missing device limits use advisory Guard policy thresholds (65 C warning, 80 C critical), identified in alert evidence as guard_policy rather than a vendor failure threshold.
+        critical_warning:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 255
+          description: NVMe critical-warning bit mask; nonzero bits retain their device meaning.
+        percentage_used:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 255
+          description: Manufacturer estimate of consumed rated endurance, which may exceed 100. It is neither remaining life nor a precise failure forecast; crossing 90 or 100 is advisory warning absent independent failing evidence.
+        available_spare: {type: [integer, "null"], minimum: 0, maximum: 100}
+        spare_threshold: {type: [integer, "null"], minimum: 0, maximum: 100}
+        media_errors: {$ref: "#/components/schemas/DriveHealthCounter"}
+        error_log_entries:
+          allOf:
+            - $ref: "#/components/schemas/DriveHealthCounter"
+          description: Cumulative NVMe error-log entries; command errors alone do not establish media failure. Increases receive an advisory inspect-log condition.
+        reallocated_sectors: {$ref: "#/components/schemas/DriveHealthCounter"}
+        pending_sectors: {$ref: "#/components/schemas/DriveHealthCounter"}
+        uncorrectable_sectors: {$ref: "#/components/schemas/DriveHealthCounter"}
+        power_on_hours: {$ref: "#/components/schemas/DriveHealthCounter"}
+        wear_attributes:
+          type: [array, "null"]
+          maxItems: 16
+          items: {$ref: "#/components/schemas/DriveHealthWearAttribute"}
+    DriveHealthCounter:
+      type: [string, "null"]
+      pattern: '^(0|[1-9][0-9]{0,38})$'
+      description: Exact unsigned decimal counter bounded to 128 bits. Null means unreported; clients must preserve precision rather than convert to a floating-point number.
+    DriveHealthWearAttribute:
+      type: object
+      required: [id, name, value, raw, interpretation]
+      properties:
+        id: {type: integer, minimum: 1, maximum: 255}
+        name: {type: string}
+        value:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 255
+          description: Manufacturer-normalized attribute, without universal percentage interpretation.
+        raw: {$ref: "#/components/schemas/DriveHealthCounter"}
+        interpretation: {type: string, enum: [vendor_specific]}
+    DriveHealthAlert:
+      type: object
+      required: [id, worker_id, server_id, category, code, severity, message, evidence, recommended_step, first_seen_at, last_seen_at]
+      properties:
+        id: {type: string, format: uuid, description: Stable condition episode identity.}
+        worker_id: {type: string}
+        condition_key:
+          type: string
+          description: Stable server/path availability key for anonymous collection incidents; does not identify physical hardware.
+        server_id: {type: string}
+        drive_id: {type: string, description: Attributable drive identity; absent on server or anonymous path collection conditions.}
+        category: {type: string, enum: [collection, hardware]}
+        code:
+          type: string
+          enum: [collection, stale, observation, disconnected, smart_failed, self_test_failed, attribute_failed, nvme_warning, wear, spare, temperature, media_errors, media_errors_increase, error_log_entries_increase, reallocated_sectors, reallocated_sectors_increase, pending_sectors, pending_sectors_increase, uncorrectable_sectors, uncorrectable_sectors_increase]
+        severity: {type: string, enum: [info, warning, critical]}
+        message: {type: string, description: Technical fallback; customer clients localize by condition code.}
+        evidence:
+          type: object
+          additionalProperties: {type: string}
+          description: Measured values, source/time/path and condition-specific interpretation or threshold_source (device or guard_policy).
+        recommended_step: {type: string, description: Technical next-step guidance; clients localize recommendations by condition code.}
+        first_seen_at: {type: string, format: date-time}
+        last_seen_at: {type: string, format: date-time}
+        resolved_at:
+          type: string
+          format: date-time
+          description: Present only after fresh evidence resolves the episode; absence means active, including when later fields are missing.
+    DriveHealthUnavailableError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: {type: string, const: INTERNAL_ERROR}
+            message: {type: string}
+            details:
+              type: object
+              properties:
+                reason_code: {type: string, const: drive_health_persistence_unavailable}
+                retryable: {type: boolean, const: true}
+    StorageForecastResponse:
+      type: object
+      required: [generated_at, window_start, window_end, resources]
+      properties:
+        generated_at: {type: string, format: date-time}
+        window_start: {type: string, format: date-time}
+        window_end: {type: string, format: date-time}
+        resources:
+          type: array
+          maxItems: 384
+          items:
+            type: object
+            required: [id, labels, forecast]
+            properties:
+              id: {type: string}
+              labels:
+                type: object
+                additionalProperties: {type: string}
+              forecast: {$ref: "#/components/schemas/StorageForecast"}
+    StorageForecast:
+      type: object
+      required: [state, notes, sample_count, bucket_count, horizon_days]
+      properties:
+        state:
+          type: string
+          enum: [insufficient_data, capacity_reached, growing, flat, shrinking, beyond_horizon]
+        reason: {type: string}
+        notes:
+          type: array
+          items: {type: string}
+        used_bytes: {type: number, minimum: 0}
+        capacity_bytes: {type: number, exclusiveMinimum: 0}
+        free_bytes: {type: number, minimum: 0}
+        latest_at: {type: string, format: date-time}
+        observed_from: {type: string, format: date-time}
+        observed_to: {type: string, format: date-time}
+        sample_count: {type: integer, minimum: 0}
+        bucket_count: {type: integer, minimum: 0}
+        growth_bytes_per_day: {type: number}
+        growth_low_bytes_per_day: {type: number}
+        growth_high_bytes_per_day: {type: number}
+        exhaustion:
+          type: object
+          required: [earliest_days]
+          properties:
+            earliest_days: {type: number, minimum: 0}
+            latest_days: {type: number, minimum: 0}
+        horizon_days: {type: number, minimum: 0}
+        capacity_changed_at: {type: string, format: date-time}
     Homelab:
       type: object
       description: The owner's Homelab umbrella (ADR-0036).
@@ -4477,6 +5805,22 @@ components:
         reason_code: {type: string}
         changed_at: {type: string, format: date-time}
         observed_at: {type: string, format: date-time}
+    InventoryResourceMetric:
+      type: object
+      required: [status]
+      description: One heartbeat-observed resource figure. A value is present only when status is ok; a figure outside the freshness window is stale and carries no value.
+      properties:
+        status: {type: string, enum: [ok, stale, unknown]}
+        value: {type: number}
+        unit: {type: string}
+    InventoryResourceMetrics:
+      type: object
+      required: [cpu_percent, memory_percent, disk_percent, uptime_seconds]
+      properties:
+        cpu_percent: {$ref: "#/components/schemas/InventoryResourceMetric"}
+        memory_percent: {$ref: "#/components/schemas/InventoryResourceMetric"}
+        disk_percent: {$ref: "#/components/schemas/InventoryResourceMetric"}
+        uptime_seconds: {$ref: "#/components/schemas/InventoryResourceMetric"}
     InventoryLifecycleProjection:
       type: object
       required: [state]
@@ -4521,7 +5865,7 @@ components:
         arch: {type: string}
     InventoryServer:
       type: object
-      required: [id, name, observed_at, freshness, inventory_revision, addresses, platform, stackkit, lifecycle, desired, lease, cleanup, connection, health]
+      required: [id, name, observed_at, freshness, inventory_revision, addresses, platform, stackkit, lifecycle, desired, lease, cleanup, connection, health, metrics]
       properties:
         id: {type: string}
         stack_id: {type: string}
@@ -4542,6 +5886,7 @@ components:
         cleanup: {$ref: "#/components/schemas/InventoryCleanupProjection"}
         connection: {$ref: "#/components/schemas/InventoryObservedState"}
         health: {$ref: "#/components/schemas/InventoryObservedState"}
+        metrics: {$ref: "#/components/schemas/InventoryResourceMetrics"}
     InventoryServerList:
       type: object
       required: [observed_at, freshness, inventory_revision, collection_cursor, page_size, servers]
@@ -4562,7 +5907,7 @@ components:
         observed_at: {type: string, format: date-time}
     InventoryServerHealth:
       type: object
-      required: [server_id, observed_at, freshness, inventory_revision, connection, health]
+      required: [server_id, observed_at, freshness, inventory_revision, connection, health, metrics]
       properties:
         server_id: {type: string}
         observed_at:
@@ -4573,6 +5918,7 @@ components:
         inventory_revision: {type: integer, format: int64, minimum: 0}
         connection: {$ref: "#/components/schemas/InventoryObservedState"}
         health: {$ref: "#/components/schemas/InventoryObservedState"}
+        metrics: {$ref: "#/components/schemas/InventoryResourceMetrics"}
     ServerPortAllocation:
       type: object
       required: [id, transport, bind_address, port, exposure, observed_state, exposed_state, drift_state, desired]
@@ -4627,6 +5973,10 @@ components:
         server_id: {type: string}
         key: {type: string}
         name: {type: string}
+        management_state:
+          type: string
+          enum: [managed, observed]
+          description: Definition ownership, independent of desired state, observed state and health. Omitted when unreported.
         desired_state: {type: string}
         observed_state: {type: string}
         observed_at:
@@ -4989,12 +6339,608 @@ components:
           items:
             type: string
             enum: [plan, apply, verify, upgrade, drift_detect, drift_reconcile]
+        reach:
+          $ref: "#/components/schemas/GuardReach"
+        security:
+          $ref: "#/components/schemas/ServerSecurity"
+        recovery:
+          $ref: "#/components/schemas/ServerRecovery"
+        updates:
+          $ref: "#/components/schemas/ServerUpdates"
+        capabilities:
+          $ref: "#/components/schemas/ServerCapabilities"
         created_at:
           type: string
           format: date-time
         updated_at:
           type: string
           format: date-time
+    ServerSecurity:
+      type: object
+      description: >-
+        The persisted host security posture of a server with a kombify Guard: the StackKits `stackkit.host-security-evidence/v1` the Guard last reported, judged by the control plane at read time. Never derived from the heartbeat and never client-side: a connected, healthy server without fresh evidence is `unknown`. Evidence past `expires_at`, an older StackKits CLI without the command, a document that could not be read and an incomplete baseline are all `unknown` with a `reason_code`; `unknown` is never compliant. Absent on a server without a Guard.
+      required: [state, findings]
+      properties:
+        state:
+          type: string
+          enum: [compliant, drifted, unknown, exception_only]
+        reason_code:
+          type: string
+          description: >-
+            Why the state is unknown: not_observed, evidence_stale, incomplete_evidence, stackkit_cli_unsupported, stackkit_runtime_unavailable, workspace_unavailable, executor_unavailable, observation_failed or evidence_rejected.
+        baseline_version:
+          type: string
+        observed_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time}
+        findings:
+          type: array
+          description: The controls that are not compliant. Empty while the evidence is stale.
+          items: {$ref: "#/components/schemas/ServerSecurityFinding"}
+    ServerSecurityFinding:
+      type: object
+      required: [control, state, severity, expected, observed, remediation]
+      properties:
+        control:
+          type: string
+          enum:
+            - firewall.default_inbound
+            - ssh.password_authentication
+            - ssh.root_login
+            - ssh.port
+            - bruteforce.fail2ban
+            - updates.unattended_upgrades
+            - updates.pending_security
+            - updates.reboot_required
+            - kernel.sysctl
+            - exposure.listeners
+            - exposure.published_ports
+            - tls.certificate_expiry
+            - ssh.user_ca_trust
+            - ssh.host_certificate
+        state: {type: string, enum: [drifted, unknown, exception]}
+        severity: {type: string, enum: [critical, high, medium, low, info]}
+        expected: {type: string}
+        observed: {type: string}
+        reason_code:
+          type: string
+          description: A stable code for a finding that needs a specific follow-up, for example no_authorized_key or exposed_published_port.
+        remediation:
+          type: object
+          required: [capability]
+          properties:
+            capability:
+              type: string
+              enum: [automatic, manual, none]
+              description: automatic controls can be repaired through the security repair route; manual ones need another command or the owner.
+            action: {type: string}
+        exception:
+          type: object
+          description: Present when an owner-approved exception covers the control.
+          required: [owner, reason, expires_at]
+          properties:
+            owner: {type: string}
+            reason: {type: string}
+            expires_at: {type: string, format: date-time}
+    ServerRecovery:
+      type: object
+      description: >-
+        Persisted recoverability evidence. A snapshot's age never proves that a restore works: only a verified restore-drill receipt speaks for that.
+      required: [backup, restore_drill]
+      properties:
+        backup:
+          type: object
+          required: [state, policy_max_age]
+          properties:
+            state: {type: string, enum: [fresh, stale, unknown]}
+            reason_code:
+              type: string
+              description: "Why it is unknown: not_observed, observation_stale, no_receipt, clock_skew or the Guard's reason."
+            last_snapshot_at: {type: string, format: date-time}
+            policy_max_age:
+              type: string
+              description: ISO 8601 duration after which a snapshot receipt is stale.
+        restore_drill:
+          type: object
+          required: [state, policy_max_age]
+          properties:
+            state: {type: string, enum: [verified, stale, unknown]}
+            reason_code: {type: string}
+            verified_at: {type: string, format: date-time}
+            policy_max_age: {type: string, description: "ISO 8601 duration after which a verified receipt is stale."}
+    ServerUpdates:
+      type: object
+      required: [guard, os]
+      properties:
+        guard:
+          type: object
+          required: [signed, state]
+          properties:
+            version: {type: string}
+            signed:
+              type: boolean
+              description: True when the Guard's update path admits only signed releases (the privilege-split layout without an unsigned-build opt-in).
+            state:
+              type: string
+              enum: [current, staged, trial, denied, rolled_back, layout_rolled_back, recovery_needed, unknown]
+        os:
+          type: object
+          description: Read from the security evidence controls; a field the evidence does not state is absent.
+          properties:
+            pending_security_updates: {type: integer, minimum: 0}
+            reboot_required: {type: boolean}
+            last_unattended_run: {type: string, format: date-time}
+    ServerCapabilities:
+      type: object
+      description: >-
+        The Guard facts the control plane persisted for the server's worker, tenant scoped. No token hash and no key material; `credential_generation` is the integer the fenced credential rotation must echo as `expected_credential_generation`. Absent on a server without a Guard worker.
+      required: [identity_binding, credential_generation]
+      properties:
+        identity_binding:
+          type: string
+          enum: [key_bound, legacy_bearer, unknown]
+          description: How the Guard last proved its identity.
+        credential_generation: {type: integer, format: int64, minimum: 0}
+        identity_upgrade:
+          type: object
+          description: >-
+            Present while the server authenticates with its bearer credential alone: it reports and updates itself but receives no mutating command until the owner approves its identity key.
+          required: [required, code]
+          properties:
+            required: {type: boolean}
+            code: {type: string, enum: [guard_identity_upgrade_required]}
+        guard_operations:
+          type: object
+          description: The Guard's durable operation journal health. `durable` is true only while the journal is writable and nothing is unresolved.
+          required: [contract, durable, unresolved_outcome_unknown, unacked_results, in_flight]
+          properties:
+            contract: {type: string}
+            state: {type: string, description: "The journal state."}
+            durable: {type: boolean}
+            unresolved_outcome_unknown: {type: integer, minimum: 0}
+            unacked_results: {type: integer, minimum: 0}
+            in_flight: {type: integer, minimum: 0}
+            journal_bytes: {type: integer, format: int64}
+            journal_budget_bytes: {type: integer, format: int64}
+            reason: {type: string}
+        guard_posture:
+          type: object
+          description: How the Guard is isolated and how its latest update went. A Guard that reports nothing is legacy_root, never isolated.
+          required: [mode, reported, deny_mutations]
+          properties:
+            mode: {type: string, enum: [split, legacy_root, unavailable]}
+            reported: {type: boolean}
+            deny_mutations: {type: boolean}
+            update_state: {type: string}
+            update_version: {type: string}
+            update_reason: {type: string}
+    ServerSecurityFindingLedger:
+      type: object
+      required: [server_id, open, history]
+      properties:
+        server_id: {type: string}
+        open:
+          type: array
+          items: {$ref: "#/components/schemas/SecurityFindingRecord"}
+        history:
+          type: array
+          items: {$ref: "#/components/schemas/SecurityFindingRecord"}
+    SecurityFindingRecord:
+      type: object
+      required: [id, key, scope, severity, state, expected, observed, opened_at, last_seen_at]
+      properties:
+        id: {type: string}
+        key:
+          type: string
+          description: control:<control id>, recovery:backup, recovery:restore_drill, guard:update_rolled_back, guard:recovery_needed or guard:outcome_needs_operator.
+        scope: {type: string, enum: [security, recovery, guard]}
+        severity: {type: string, enum: [critical, high, medium, low, info]}
+        state: {type: string}
+        expected: {type: string}
+        observed: {type: string}
+        reason_code: {type: string}
+        remediation_capability: {type: string, enum: [automatic, manual, none]}
+        opened_at: {type: string, format: date-time}
+        last_seen_at: {type: string, format: date-time}
+        alerted_at: {type: string, format: date-time}
+        resolved_at: {type: string, format: date-time}
+    SecurityRepairRequest:
+      type: object
+      additionalProperties: false
+      required: [controls]
+      properties:
+        controls:
+          type: array
+          minItems: 1
+          maxItems: 12
+          uniqueItems: true
+          items:
+            type: string
+            enum:
+              - firewall.default_inbound
+              - ssh.password_authentication
+              - ssh.root_login
+              - ssh.port
+              - bruteforce.fail2ban
+              - updates.unattended_upgrades
+              - updates.pending_security
+              - updates.reboot_required
+              - kernel.sysctl
+              - exposure.listeners
+              - exposure.published_ports
+              - tls.certificate_expiry
+              - ssh.user_ca_trust
+              - ssh.host_certificate
+    SecurityRepair:
+      type: object
+      required: [id, server_id, mode, requested_by, controls, status, command_id, requested_at, expires_at]
+      properties:
+        id: {type: string}
+        server_id: {type: string}
+        mode: {type: string, enum: [operator, auto]}
+        requested_by: {type: string, description: "The authenticated operator, or the owner who approved automatic repair."}
+        controls: {type: array, items: {type: string}}
+        status:
+          type: string
+          enum: [queued, dispatched, succeeded, manual_required, blocked, failed, expired, outcome_unknown]
+          description: >-
+            blocked means StackKits refused a change that would cut the management path or lock the owner out; nothing was changed. outcome_unknown means no result arrived; the next observation says what the host looks like. The next observation is requested after every repair, whatever its outcome.
+        reason_code: {type: string}
+        command_id: {type: string}
+        steps:
+          type: array
+          items:
+            type: object
+            required: [control, status]
+            properties:
+              control: {type: string}
+              status: {type: string, enum: [planned, applied, noop, manual, blocked, failed]}
+              reason_code: {type: string}
+        requested_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time}
+        dispatched_at: {type: string, format: date-time}
+        finished_at: {type: string, format: date-time}
+    SecurityAutoRepairRequest:
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled: {type: boolean}
+        controls:
+          type: array
+          items:
+            type: string
+            enum: [bruteforce.fail2ban, firewall.default_inbound, kernel.sysctl, updates.unattended_upgrades]
+        expires_at: {type: string, format: date-time}
+    SecurityAutoRepair:
+      type: object
+      required: [server_id, enabled, active, controls, allowed_controls]
+      properties:
+        server_id: {type: string}
+        enabled: {type: boolean}
+        active: {type: boolean, description: "True while the approval is enabled and unexpired."}
+        controls: {type: array, items: {type: string}}
+        expires_at: {type: string, format: date-time}
+        approved_by: {type: string}
+        approved_at: {type: string, format: date-time}
+        allowed_controls: {type: array, items: {type: string}}
+    GuardPostureReport:
+      type: object
+      additionalProperties: false
+      required: [schema_version, source_epoch, source_sequence, observed_at]
+      properties:
+        schema_version: {type: string, enum: ["kombify.guard-posture/v1"]}
+        check_in: {type: boolean, description: "A check-in carries no observation."}
+        source_epoch: {type: string, maxLength: 64}
+        source_sequence: {type: integer, format: int64, minimum: 0}
+        observed_at: {type: string, format: date-time}
+        guard_version: {type: string, maxLength: 64}
+        guard_signed: {type: boolean}
+        verify_request_id:
+          type: string
+          pattern: "^[A-Za-z0-9_-]{1,64}$"
+          description: The `verify_request_id` of the directive being answered. Set only on a report whose observation the Guard started after it received that directive; a routine observation carries none.
+        security:
+          type: object
+          required: [status]
+          properties:
+            status: {type: string, enum: [observed, unsupported, unavailable, failed]}
+            reason_code: {type: string, pattern: "^[a-z0-9_]{1,64}$"}
+            evidence:
+              type: object
+              description: The stackkit.host-security-evidence/v1 document (schemas/stackkit-host-security-evidence-v1.schema.json), at most 256 KiB.
+        backup:
+          type: object
+          required: [status]
+          properties:
+            status: {type: string, enum: [observed, unsupported, unavailable, failed]}
+            reason_code: {type: string, pattern: "^[a-z0-9_]{1,64}$"}
+            ready: {type: boolean}
+            snapshot_state: {type: string, enum: [recorded, unverified, clock-skew]}
+            last_snapshot_at: {type: string, format: date-time}
+            restore_state: {type: string, enum: [recorded, unverified, clock-skew]}
+            last_restore_at: {type: string, format: date-time}
+    GuardPostureDirective:
+      type: object
+      properties:
+        state: {type: string, enum: [disabled], description: "Present only where posture is off."}
+        verify_requested: {type: boolean}
+        verify_request_id:
+          type: string
+          description: Opaque token of the pending request. The Guard echoes it as `verify_request_id` in the report of the fresh observation it starts for the request; only that report answers it. A Guard that does not echo it keeps working, and its second report without the token answers the request.
+        verify_interval_seconds: {type: integer, minimum: 0}
+    GuardTelemetryBatch:
+      type: object
+      additionalProperties: false
+      required: [schema_version, source_epoch, records]
+      properties:
+        schema_version: {type: string, enum: ["kombify.guard-telemetry/v1"]}
+        source_epoch: {type: string, maxLength: 64}
+        records:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items:
+            type: object
+            additionalProperties: false
+            required: [sequence, at]
+            properties:
+              sequence: {type: integer, format: int64, minimum: 1}
+              at: {type: string, format: date-time}
+              samples:
+                type: array
+                maxItems: 600
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [name, value]
+                  properties:
+                    name:
+                      type: string
+                      description: A metric of the telemetry contract; anything else is dropped and counted.
+                    value: {type: number}
+                    labels:
+                      type: object
+                      additionalProperties: {type: string, maxLength: 128}
+                      description: Only core, mount, container_name and origin, each with a bounded value.
+              gap:
+                type: object
+                additionalProperties: false
+                required: [from, to, from_sequence, to_sequence, reason]
+                properties:
+                  from: {type: string, format: date-time}
+                  to: {type: string, format: date-time}
+                  from_sequence: {type: integer, format: int64}
+                  to_sequence: {type: integer, format: int64}
+                  reason: {type: string, enum: [spool_budget, rejected]}
+    GuardTelemetryAck:
+      type: object
+      properties:
+        state: {type: string, enum: [disabled]}
+        acked_sequence: {type: integer, format: int64, description: "Every record up to this sequence is stored."}
+        accepted: {type: integer, minimum: 0}
+        dropped: {type: integer, minimum: 0, description: "Samples outside the telemetry contract."}
+    NetworkPoint:
+      type: object
+      description: One network position of a server. Every field is optional; a Guard reports what its host can observe.
+      properties:
+        ip: {type: string, description: The server's private address.}
+        gateway: {type: string, description: The default IPv4 gateway.}
+        cidr: {type: string, description: The subnet of the server's address.}
+        ssid: {type: string, description: The connected WiFi network.}
+        interface: {type: string}
+        wireless: {type: boolean}
+        fingerprint: {type: string, description: Stable identity of the network (gateway, subnet and SSID).: ''}
+    ServerNetwork:
+      type: object
+      required: [server_id, current, can_rebind, connection_state]
+      properties:
+        server_id: {type: string}
+        current:
+          $ref: "#/components/schemas/NetworkPoint"
+        network_move:
+          type: object
+          description: Recorded once when the server turned up on a different network.
+          required: [detected_at, previous, current, rebind_status]
+          properties:
+            detected_at: {type: string, format: date-time}
+            previous: {$ref: "#/components/schemas/NetworkPoint"}
+            current: {$ref: "#/components/schemas/NetworkPoint"}
+            rebind_status: {type: string, enum: [queued, running, succeeded, failed]}
+        rebind:
+          type: object
+          description: The latest re-bind attempt, automatic or requested by the owner.
+          properties:
+            status: {type: string, enum: [queued, running, succeeded, failed]}
+            trigger: {type: string, enum: [auto, manual]}
+            job_id: {type: string}
+            requested_at: {type: string, format: date-time}
+            reason: {type: string, description: Why a re-bind could not be queued.}
+        can_rebind: {type: boolean}
+        connection_state: {type: string}
+        observed_at: {type: string, format: date-time}
+        guidance:
+          type: array
+          items: {type: string}
+          description: Message ids of owner guidance, for example `offline_move_hint`.
+    ServerNetworkRebind:
+      type: object
+      required: [server_id, job_id, status]
+      properties:
+        server_id: {type: string}
+        job_id: {type: string}
+        status: {type: string, enum: [queued, running]}
+    GuardReach:
+      type: object
+      description: >-
+        kombify Guard reach, persisted and never derived client-side: whether the server's kombify.me address answers through the Guard relay and whether the server is listed as a Connect resource. `ready` is shown as "Reachable and governed". A reach failure never blocks Guard enrollment or execution and never changes the server lifecycle. Absent on deployments without a Cloud connection.
+      required: [state, kombify_me, connect, updated_at]
+      properties:
+        state:
+          type: string
+          enum: [not_enrolled, pending, failed, ready, revoked, not_enabled]
+          description: >-
+            pending is reach_pending, failed is reach_failed (see the reason codes of the two targets). not_enabled is a server the owner has not published at a kombify.me address (the default): no route exists and nothing is served.
+        generation:
+          type: integer
+          format: int64
+          description: Binding generation, raised when the Guard key or pairing changes.
+        public:
+          type: object
+          description: The owner's publication choice; nothing is published until it is enabled with a service and a port.
+          required: [enabled]
+          properties:
+            enabled: {type: boolean}
+            service: {type: string, description: The route label the owner chose.}
+            scheme: {type: string, enum: [http, https]}
+            target_port: {type: integer, minimum: 1, maximum: 65535, description: The port of the service on the Guard host's loopback.}
+            enabled_by: {type: string}
+            enabled_at: {type: string, format: date-time}
+        kombify_me:
+          $ref: "#/components/schemas/GuardReachTarget"
+        connect:
+          $ref: "#/components/schemas/GuardReachTarget"
+        relay:
+          type: object
+          description: The Guard's own report of its relay connection.
+          required: [state]
+          properties:
+            state:
+              type: string
+              enum: [connecting, connected, denied, stopped]
+            reason_code:
+              type: string
+            reported_at:
+              type: string
+              format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    GuardReachTarget:
+      type: object
+      required: [state]
+      properties:
+        state:
+          type: string
+          enum: [pending, registered, failed, revoked, not_enabled]
+        address:
+          type: string
+          description: kombify.me address (kombify_me target, registered only).
+        node_id:
+          type: string
+          description: Connect techstack-node id (connect target, registered only).
+        reason_code:
+          type: string
+          description: Stable structured reason for a pending or failed target.
+    GuardPublicReachRequest:
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled: {type: boolean}
+        service:
+          type: string
+          pattern: "^[a-z]([a-z0-9-]{0,12}[a-z0-9])?$"
+          description: Required when enabling. The route label; the kombify.me route is <base>-<service>-<server suffix>.
+        target_port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+          description: Required when enabling. The port the service listens on, on the Guard host's loopback (the host is fixed).
+        target_scheme: {type: string, enum: [http, https], default: http}
+    GuardIdentityUpgrade:
+      type: object
+      required: [worker_id, identity_binding]
+      properties:
+        worker_id: {type: string}
+        identity_binding: {type: string, enum: [legacy_bearer, host_key]}
+        code: {type: string, enum: [guard_identity_upgrade_required]}
+        pending:
+          type: object
+          required: [key_thumbprint, requested_at, expires_at]
+          properties:
+            key_thumbprint: {type: string}
+            requested_at: {type: string, format: date-time}
+            expires_at: {type: string, format: date-time}
+        approved_by: {type: string}
+        approved_at: {type: string, format: date-time}
+        hostname: {type: string, description: Set only by the list of pending upgrades}
+    GuardUnresolvedOutcomeList:
+      type: object
+      required: [worker_id, outcomes]
+      properties:
+        worker_id: {type: string}
+        outcomes:
+          type: array
+          items: {$ref: "#/components/schemas/GuardUnresolvedOutcome"}
+    GuardUnresolvedOutcome:
+      type: object
+      required: [command_id, operation, state, revision, escalated, unresolved_since, needs_operator_at]
+      properties:
+        command_id: {type: string}
+        operation: {type: string}
+        state: {type: string, enum: [reconciling, needs_operator]}
+        revision:
+          type: integer
+          format: int64
+          description: The committed revision an operator resolution must supersede.
+        reason: {type: string}
+        escalated: {type: boolean}
+        unresolved_since: {type: string, format: date-time}
+        needs_operator_at: {type: string, format: date-time}
+    GuardOutcomeResolutionRequest:
+      type: object
+      additionalProperties: false
+      required: [disposition, expected_revision, note]
+      properties:
+        disposition: {type: string, enum: [verified_applied, verified_not_applied, accept_unknown]}
+        expected_revision: {type: integer, format: int64, minimum: 1}
+        note: {type: string, minLength: 1, maxLength: 400}
+    GuardOutcomeResolution:
+      type: object
+      required: [command_id, revision, disposition, actor, fence_released]
+      properties:
+        command_id: {type: string}
+        revision: {type: integer, format: int64}
+        disposition: {type: string}
+        actor: {type: string}
+        fence_released: {type: boolean}
+    ServerMaintenanceImpact:
+      type: object
+      required: [server_id, action, inventory_revision, snapshot_digest, inventory, services, stacks, confirmable]
+      properties:
+        server_id: {type: string}
+        action: {type: string, enum: [os_update, reboot]}
+        inventory_revision: {type: integer, format: int64}
+        snapshot_digest: {type: string, pattern: "^sha256:[0-9a-f]{64}$"}
+        confirmable: {type: boolean}
+        inventory:
+          type: object
+          required: [status, reason_codes]
+          properties:
+            status: {type: string, enum: [current, stale, incomplete, unavailable]}
+            observed_at: {type: string, format: date-time}
+            reason_codes: {type: array, items: {type: string}}
+        services:
+          type: array
+          items:
+            type: object
+            required: [id, name, state, locked, reason_codes]
+            properties:
+              id: {type: string}
+              name: {type: string}
+              stack_id: {type: string}
+              state: {type: string}
+              locked: {type: boolean}
+              reason_codes: {type: array, items: {type: string}}
+        stacks:
+          type: array
+          items:
+            type: object
+            required: [id, name, reason_codes]
+            properties:
+              id: {type: string}
+              name: {type: string}
+              reason_codes: {type: array, items: {type: string}}
     ServerMaintenanceRequest:
       type: object
       additionalProperties: false
@@ -5009,12 +6955,17 @@ components:
           minimum: 1
         owner_approved:
           type: boolean
-          description: Required true for os_update and reboot.
+          description: Optional legacy field; it does not grant maintenance authority.
         expected_plan_digest:
           type: string
           pattern: "^sha256:[0-9a-f]{64}$"
           description: >-
             os_update only: the plan_digest of a completed os_update_plan for this server that is at most 15 minutes old.
+        expected_impact_digest:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+          description: >-
+            Required for os_update and reboot, forbidden for os_update_plan. snapshot_digest of the current impact preview confirmed for this exact server and action. Changing it under an existing Idempotency-Key is a conflict; a renewed confirmation uses a new key.
     ServerMaintenanceResponse:
       type: object
       required: [job_id, server_id, action, status]
@@ -5044,6 +6995,7 @@ components:
           description: >-
             Stable code of the last transition, for example node_returned, apply_still_running, apply_finished_after_wait, or the failure code (apply_partial when the install unit ended with packages of the approved plan still at their approved starting versions; the result then lists them in `not_installed`).
         plan_digest: {type: string, pattern: "^sha256:[0-9a-f]{64}$"}
+        impact_snapshot_digest: {type: string, pattern: "^sha256:[0-9a-f]{64}$"}
         failure:
           type: object
           description: Present when state is failed or cancelled.
@@ -5146,10 +7098,82 @@ components:
           format: date-time
         replay:
           type: boolean
+    RegistryServices:
+      type: object
+      required: [catalog, kit_deployments, servers, services, migration_available]
+      properties:
+        catalog:
+          type: array
+          items:
+            type: object
+            required: [id, display_name, type, description, required, recommended, foundations, icon_url]
+            properties:
+              id: {type: string}
+              display_name: {type: string}
+              type: {type: string}
+              description: {type: string}
+              required: {type: boolean}
+              recommended: {type: boolean}
+              foundations: {type: array, items: {type: string}}
+              icon_url: {type: string, format: uri}
+        kit_deployments: {type: array, items: {type: object}}
+        servers: {type: array, items: {type: object}}
+        services:
+          type: array
+          items:
+            $ref: "#/components/schemas/RegistryService"
+        migration_available: {type: boolean}
+        migration_unavailable_reason: {type: string}
+    RegistryService:
+      type: object
+      required: [id, name, display_name, kit_deployment_id, server_id, allowed_actions, inventory_revision, desired_state, observed_state, version, catalog, mutation_lock]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        display_name: {type: string}
+        application_key: {type: string}
+        application_name: {type: string}
+        type: {type: string}
+        status: {type: string}
+        health_state: {type: string}
+        observed_at: {type: string, format: date-time}
+        management_state: {type: string, enum: [managed, observed]}
+        kit_deployment_id: {type: string}
+        stack_name: {type: string}
+        server_id: {type: string, description: Canonical server id, or empty when placement is unknown.: ''}
+        server_name: {type: string}
+        environment_class: {type: string}
+        port: {type: integer}
+        url: {type: string}
+        allowed_actions:
+          $ref: "#/components/schemas/ServiceRuntime/properties/allowed_actions"
+        inventory_revision: {type: integer, format: int64}
+        desired_state: {type: string}
+        observed_state: {type: string}
+        version:
+          oneOf:
+            - $ref: "#/components/schemas/ServiceRuntime/properties/version"
+            - type: "null"
+        catalog:
+          $ref: "#/components/schemas/ServiceRuntime/properties/catalog"
+        mutation_lock:
+          $ref: "#/components/schemas/ServiceRuntime/properties/mutation_lock"
+        provenance:
+          $ref: "#/components/schemas/ServiceRuntime/properties/provenance"
+        action_guard:
+          $ref: "#/components/schemas/ServiceRuntime/properties/action_guard"
     ServiceRuntime:
       type: object
       required: [id, stack_id, server_id, service_key, service_instance, name, desired_state, observed_state, health, access, allowed_actions, mutation_lock, source, provenance, created_at, updated_at]
       properties:
+        adoption:
+          type: object
+          properties:
+            preview_available: {type: boolean}
+            execution_available: {type: boolean}
+            release_available: {type: boolean}
+            profile_ref: {type: string}
+            reason_code: {type: string}
         id:
           type: string
         stack_id:
@@ -5191,7 +7215,36 @@ components:
             Exactly what the action endpoint accepts for this service right now. A locked service advertises only its read path plus `unfreeze`; the suppressed mutations are explained by `mutation_lock`.
           items:
             type: string
-            enum: [start, stop, restart, logs, freeze, unfreeze]
+            enum: [start, stop, restart, logs, update, adopt, freeze, unfreeze]
+        catalog:
+          type: object
+          description: Recognized application facts, or category unknown with the generic Kombify icon.
+          required: [id, display_name, category, icon_url]
+          properties:
+            id: {type: string}
+            display_name: {type: string}
+            category: {type: string}
+            icon_url: {type: string, format: uri, description: Kombify-hosted PNG logo or generic service icon.}
+            brand_domain: {type: string}
+            web_port: {type: integer}
+        version:
+          type: object
+          description: >-
+            Running version and update fact. Omitted when nothing was measured; `latest` is only set after a real registry or release-pin comparison.
+          required: [update_available, update_mode]
+          properties:
+            current: {type: string}
+            source: {type: string, enum: [image_tag, image_label, stackkit]}
+            image: {type: string}
+            latest: {type: string}
+            update_available: {type: boolean}
+            checked_at: {type: string, format: date-time}
+            update_mode: {type: string, enum: [stackkit_upgrade, adopt_required, unavailable]}
+            reason_code: {type: string}
+        placement_class:
+          type: string
+          enum: [local, cloud, managed, unknown]
+          description: Evidence-backed class from the server's recorded runtime target.
         mutation_lock:
           $ref: "#/components/schemas/ServiceMutationLock"
         inventory_revision:
@@ -5206,12 +7259,78 @@ components:
         provenance:
           type: object
           additionalProperties: true
+          description: >-
+            Declared components with control_scope=application dispatch their start, stop, restart and logs through declared_control_service_key for the entire control application. Their immutable service id remains the job and observation identity. Superseded observed history exposes superseded_by_service_id and remains inspectable.
+        action_guard:
+          type: object
+          description: A group guardrail does not change this service's own mutation_lock or grant it another service's unfreeze action.
+          properties:
+            reason_code: {type: string, enum: [application_control_locked]}
+            unlock_required_action: {type: string, enum: [unfreeze]}
+            unlock_service_ids:
+              type: array
+              items: {type: string}
         created_at:
           type: string
           format: date-time
         updated_at:
           type: string
           format: date-time
+    ApplicationConnectorAction:
+      type: object
+      required: [job_id, service_id, action, status]
+      properties:
+        job_id: {type: string}
+        service_id: {type: string}
+        action: {type: string, enum: [application_connector, application_connector_verify]}
+        status: {type: string, enum: [queued, running, waiting, completed, failed, canceled]}
+    ApplicationConnectorRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_inventory_revision, action, lifespan_days, owner_approved]
+      properties:
+        expected_inventory_revision: {type: integer, format: int64, minimum: 1}
+        action: {type: string, enum: [ensure, revoke]}
+        lifespan_days: {type: integer, minimum: 1, maximum: 365}
+        owner_approved: {type: boolean, enum: [true]}
+    ApplicationConnectorStatus:
+      type: object
+      required: [service_id, source_preview, dispatchable, reason_code]
+      properties:
+        service_id: {type: string}
+        source_preview: {type: boolean}
+        dispatchable: {type: boolean}
+        reason_code: {type: string}
+        connector:
+          type: object
+          nullable: true
+          description: Secret-free projection of node verified receipt status; contains no token, secret reference or Owner key.
+          additionalProperties: true
+    ApplicationAdoptionRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_inventory_revision]
+      properties:
+        expected_inventory_revision: {type: integer, format: int64, minimum: 1}
+        mode: {type: string, enum: [adopt_in_place]}
+        plan_digest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+        owner_approved: {type: boolean, default: false}
+    ApplicationAdoptionPlan:
+      type: object
+      required: [plan_id, service_id, status]
+      properties:
+        plan_id: {type: string}
+        service_id: {type: string}
+        status: {type: string}
+        assessment:
+          type: object
+          description: Exact producer stackkit.application-adoption-plan/v1 assessment; never contains credentials.
+          additionalProperties: true
+        source_binding:
+          type: object
+          description: Tenant and source-bound retained dispatch authority.
+          additionalProperties: true
+        error: {type: string}
     ServiceActionRequest:
       description: >-
         Either an agent-executed runtime action bound to a fresh inventory revision, or an owner lock action executed entirely in the control plane. The lock is not bound to an inventory observation: an owner must be able to freeze a service whose agent is unreachable.
@@ -5225,7 +7344,9 @@ components:
       properties:
         action:
           type: string
-          enum: [start, stop, restart, logs]
+          description: >-
+            `update` runs the StackKit upgrade of the owning stack to the pinned release; it is accepted only while `allowed_actions` advertises it.
+          enum: [start, stop, restart, logs, update]
         expected_inventory_revision:
           type: integer
           format: int64
@@ -5264,7 +7385,7 @@ components:
           description: >-
             Durable job of an agent-executed action. Empty for freeze and unfreeze, which the control plane applies without a job.
         service_id: {type: string}
-        action: {type: string, enum: [start, stop, restart, logs, freeze, unfreeze]}
+        action: {type: string, enum: [start, stop, restart, logs, update, freeze, unfreeze]}
         status: {type: string, enum: [queued, running, completed, failed, cancelled, canceled]}
     AvailabilityReport:
       type: object
@@ -5641,10 +7762,17 @@ components:
           type: string
         inventory_url:
           type: string
-        control_urls:
-          type: array
-          items:
-            type: string
+        identity_token_url:
+          type: string
+          description: Host-identity token exchange endpoint (kombify Guard).
+        identity_bind_url:
+          type: string
+        identity_rotate_url:
+          type: string
+        identity:
+          type: object
+          description: Present when the registration bound a host key.
+          additionalProperties: true
         channel_bootstrap:
           type: object
           additionalProperties: true
@@ -6249,6 +8377,138 @@ components:
         external_domain_id:
           type: string
           description: Optional external product-domain reference for provenance.
+    StackRoutingExpectations:
+      type: object
+      additionalProperties: false
+      properties:
+        dns:
+          type: array
+          maxItems: 64
+          items:
+            type: object
+            required: [type, values]
+            additionalProperties: false
+            properties:
+              name:
+                type: string
+                description: Exact routing domain or child name; defaults to the routing domain. Wildcards are rejected.
+              type: {type: string, enum: [A, AAAA, CNAME, NS, TXT]}
+              values:
+                type: array
+                minItems: 1
+                maxItems: 32
+                items: {type: string}
+              proxied:
+                type: boolean
+                default: false
+                description: Public edge addresses cannot verify this origin value; valid for A, AAAA or CNAME only.
+        tls:
+          type: object
+          additionalProperties: false
+          properties:
+            hostname:
+              type: string
+              description: Additional expected hostname; defaults to the endpoint domain, which is always independently verified.
+            issuer: {type: string, maxLength: 512}
+            fingerprint_sha256:
+              type: string
+              description: Optional SHA-256 leaf certificate pin, normalized to 64 hexadecimal characters.
+    DomainExpiryEvidence:
+      type: object
+      required: [state, freshness]
+      properties:
+        state: {type: string, enum: [known, unknown]}
+        source: {type: string}
+        observed_at: {type: string, format: date-time}
+        last_attempt_at: {type: string, format: date-time}
+        fresh_until: {type: string, format: date-time}
+        freshness: {type: string, enum: [fresh, stale, unknown]}
+        expires_at:
+          type: string
+          format: date-time
+          description: An unknown fact may retain its last recorded date as historical evidence.
+        remaining_seconds: {type: integer, format: int64}
+        reason_code: {type: string}
+    DomainDriftEvidence:
+      type: object
+      required: [state, freshness, differences]
+      properties:
+        state: {type: string, enum: [matching, drifted, unknown]}
+        source: {type: string}
+        expected_source: {type: string, enum: [stack_routing_desired, inventory_endpoint]}
+        observed_at: {type: string, format: date-time}
+        last_attempt_at: {type: string, format: date-time}
+        fresh_until: {type: string, format: date-time}
+        detected_at: {type: string, format: date-time}
+        freshness: {type: string, enum: [fresh, stale, unknown]}
+        reason_code: {type: string}
+        differences:
+          type: array
+          items:
+            type: object
+            required: [field, expected, observed]
+            properties:
+              field: {type: string}
+              expected: {type: array, items: {type: string}}
+              observed: {type: array, items: {type: string}}
+              state: {type: string, enum: [matching, drifted, unknown]}
+              reason_code: {type: string}
+    DomainMonitoringReport:
+      type: object
+      required: [generated_at, domains]
+      properties:
+        generated_at: {type: string, format: date-time}
+        domains:
+          type: array
+          items:
+            type: object
+            required: [id, stack_id, server_id, domain, registered_domain, services, registration, tls, dns, tls_drift, conditions]
+            properties:
+              id: {type: string}
+              stack_id: {type: string}
+              server_id: {type: string}
+              domain: {type: string}
+              registered_domain: {type: string}
+              routing_revision: {type: integer, format: int64}
+              tls_port: {type: integer, minimum: 1, maximum: 65535}
+              tls_disabled: {type: boolean}
+              check_started_at: {type: string, format: date-time}
+              services:
+                type: array
+                items:
+                  type: object
+                  required: [id, name]
+                  properties:
+                    id: {type: string}
+                    name: {type: string}
+              registration: {$ref: "#/components/schemas/DomainExpiryEvidence"}
+              tls:
+                allOf:
+                  - $ref: "#/components/schemas/DomainExpiryEvidence"
+                  - type: object
+                    properties:
+                      subject: {type: string}
+                      issuer: {type: string}
+                      fingerprint_sha256: {type: string}
+                      valid: {type: boolean}
+              dns: {$ref: "#/components/schemas/DomainDriftEvidence"}
+              tls_drift: {$ref: "#/components/schemas/DomainDriftEvidence"}
+              conditions:
+                type: array
+                items:
+                  type: object
+                  required: [id, kind, state, severity, first_detected_at, last_observed_at, freshness, episode]
+                  properties:
+                    id: {type: string}
+                    kind: {type: string}
+                    state: {type: string, enum: [active, resolved]}
+                    severity: {type: string, enum: [warning, critical]}
+                    first_detected_at: {type: string, format: date-time}
+                    last_observed_at: {type: string, format: date-time}
+                    resolved_at: {type: string, format: date-time}
+                    freshness: {type: string, enum: [fresh, stale, unknown]}
+                    evidence_ref: {type: string}
+                    episode: {type: integer, format: int64, minimum: 1}
     StackRoutingPutRequest:
       type: object
       required: [server_id, mode, domain, provenance]
@@ -6274,6 +8534,9 @@ components:
           example: example.com
         provenance:
           $ref: "#/components/schemas/StackRoutingProvenance"
+        expectations:
+          $ref: "#/components/schemas/StackRoutingExpectations"
+          description: Omission preserves expectations for the same domain/server/lease. An explicit empty object clears optional DNS and TLS pins.
         ensure_rollout:
           type: boolean
           default: false
@@ -6292,6 +8555,8 @@ components:
         domain: {type: string}
         provenance:
           $ref: "#/components/schemas/StackRoutingProvenance"
+        expectations:
+          $ref: "#/components/schemas/StackRoutingExpectations"
         rollout_status:
           type: string
           enum: [not_requested, pending, completed, failed]
@@ -6713,6 +8978,12 @@ components:
         resume_available:
           type: boolean
           description: True only when the server-side recovery grace has elapsed.
+        superseded_by_job_id:
+          type: string
+          description: |
+            Present when exact-target recovery (enrollment resume or rollout
+            retry) handed this job over to a deterministic replacement job.
+            Clients follow it to keep tracking the live work.
         result:
           type: object
           additionalProperties: true
@@ -6775,6 +9046,9 @@ components:
           type: string
         error_details:
           type: string
+        superseded_by_job_id:
+          type: string
+          description: Replacement job that took over this job through exact-target recovery.
     JobEnvelope:
       type: object
       required: [data]
@@ -6887,6 +9161,58 @@ components:
           $ref: "#/components/schemas/EnrollmentResumeResponse"
         meta:
           $ref: "#/components/schemas/ResponseMeta"
+    StackKitLifecycleRequest:
+      type: object
+      additionalProperties: false
+      required: [agent_id, operation]
+      properties:
+        agent_id: {type: string, minLength: 1}
+        operation:
+          type: string
+          enum: [plan, apply, verify, upgrade, drift_detect, drift_reconcile, advanced_change_set, rollback, restore_drill, backup_run, backup_configure, backup_status, backup_restore, backup_restore_activate, backup_restore_recover, ai_provider]
+        owner_approved: {type: boolean}
+        target_release: {type: string}
+        dry_run:
+          type: boolean
+        offline: {type: boolean}
+        stackkit:
+          type: string
+          description: Optional execution binding; normally derived from the stack's managed rollout.
+        candidate_spec:
+          type: object
+          additionalProperties: true
+          description: Canonical candidate StackSpec validated by the pinned node executor; required for advanced_change_set.
+        rollback_target_ref:
+          type: string
+          pattern: '^sha256:[a-f0-9]{64}$'
+          description: Exact executor-state snapshot or change-set digest.
+        snapshot_anchor_id: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        restore_result_id: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        activation_operation_id: {type: string}
+        restore_plan_hash: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        ai_provider_base_url:
+          type: string
+          maxLength: 512
+          description: https base URL of the OpenAI-compatible provider API for ai_provider.
+        wallet_item_id:
+          type: string
+          pattern: '^itm_[a-z2-7]{26}$'
+          description: kombify Wallet item holding the provider's API key for ai_provider.
+        wallet_item_rotate:
+          type: boolean
+          description: Deliver a rotated item that replaces the version the node holds.
+        ai_provider_disable:
+          type: boolean
+          description: Remove the external provider instead of setting it.
+    StackKitLifecycleAccepted:
+      type: object
+      required: [job_id, kit_deployment_id, agent_id, operation, status]
+      properties:
+        job_id: {type: string}
+        kit_deployment_id: {type: string}
+        agent_id: {type: string}
+        operation: {type: string}
+        status: {type: string}
     ExactRolloutRetryRequest:
       type: object
       additionalProperties: false
@@ -6900,6 +9226,17 @@ components:
           type: string
           minLength: 1
           description: Exact active managed foundation lease bound to the failed job.
+        owner_approved:
+          type: boolean
+          description: Required true when supplying a canonical initial-rollout repair candidate.
+        candidate_spec:
+          type: object
+          additionalProperties: true
+          description: Optional canonical StackSpec repairing missing route, access and data dependencies of already admitted modules. The pinned CLI validates it; revision CAS and candidate digest bind retries. Applied installations must use their existing change-set authority.
+        current_spec_hash:
+          type: string
+          pattern: '^sha256:[a-f0-9]{64}$'
+          description: Normalized current node intent hash for an exact failed INIT whose immutable retry lineage proves a prior failed APPLY on this runtime. Required only for that partial INIT recovery; rejected on other paths. This is solely the CLI atomic CAS precondition, never authorization. Obtain through the pinned CLI resolve on the same current canonical node document. The durable receipt seals this value and lineage against changed replay.
     ExactRolloutRetryResponse:
       type: object
       additionalProperties: false
@@ -6945,6 +9282,36 @@ components:
           type: array
           items:
             type: string
+    StackComponentRepairRequest:
+      type: object
+      additionalProperties: false
+      required: [component]
+      properties:
+        component:
+          type: string
+          enum: [public_tls]
+    StackComponentRepairResponse:
+      type: object
+      required: [job_id, stack_id, component, status]
+      properties:
+        job_id:
+          type: string
+        stack_id:
+          type: string
+        component:
+          type: string
+          enum: [public_tls]
+        status:
+          type: string
+          enum: [queued]
+    StackComponentRepairEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/StackComponentRepairResponse"
+        meta:
+          $ref: "#/components/schemas/ResponseMeta"
     ExactRolloutRetryEnvelope:
       type: object
       required: [data]

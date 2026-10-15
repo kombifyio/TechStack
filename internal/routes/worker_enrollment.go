@@ -3,15 +3,18 @@ package routes
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/grpcserver"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/privatechannel"
 	"github.com/kombifyio/techstack/pkg/runtimeidentity"
+	"github.com/kombifyio/techstack/pkg/trustedproxy"
 	"github.com/kombifyio/techstack/pkg/workerauth"
 )
 
@@ -28,6 +31,16 @@ type workerEnrollmentContext struct {
 	AgentToken           string
 	CredentialGeneration int64
 	GRPCIdentity         *grpcserver.IssuedIdentity
+	// GuardIdentity is set for a registration that bound a host key.
+	GuardIdentity *guardEnrollmentIdentity
+}
+
+// guardEnrollmentIdentity describes the host-key binding a registration
+// created; the credential is confirmed by the first proof-authenticated request.
+type guardEnrollmentIdentity struct {
+	State      string
+	AttemptID  string
+	Thumbprint string
 }
 
 // issueRuntimeAgentToken creates the persistent per-worker credential returned
@@ -51,10 +64,15 @@ func (h workerRouteHandlers) workerEnrollmentResponse(e *httpx.Event, ctx worker
 	baseURL := requestPublicBaseURL(e)
 	heartbeatPath := "/api/v1/workers/" + ctx.RuntimeAgentID + "/heartbeat"
 	inventoryPath := "/api/v1/workers/" + ctx.RuntimeAgentID + "/inventory"
-	controlPath := "/api/v1/workers/" + ctx.RuntimeAgentID + "/control/ws"
 	commandPath := "/api/v1/workers/" + ctx.RuntimeAgentID + "/commands/next"
 	commandResultPath := "/api/v1/workers/" + ctx.RuntimeAgentID + "/commands/result"
 	stackKitReleasePath := "/api/v1/agent/stackkit-release/linux/amd64"
+	identityTokenPath := "/api/v1/workers/" + ctx.RuntimeAgentID + workerIdentityTokenSuffix
+	identityBindPath := "/api/v1/workers/" + ctx.RuntimeAgentID + workerIdentityBindSuffix
+	identityRotatePath := "/api/v1/workers/" + ctx.RuntimeAgentID + workerIdentityRotateSuffix
+	// Only channels with a served handler are advertised: the outbound HTTPS
+	// poll endpoints below and, when an mTLS identity was issued, gRPC. The
+	// identity_* URLs belong to the host-key protocol (workers_identity.go).
 	resp := map[string]any{
 		"guard_role":            ctx.GuardRole,
 		"worker_id":             ctx.WorkerID,
@@ -68,7 +86,9 @@ func (h workerRouteHandlers) workerEnrollmentResponse(e *httpx.Event, ctx worker
 		"command_url":           absoluteRouteURL(baseURL, commandPath),
 		"command_result_url":    absoluteRouteURL(baseURL, commandResultPath),
 		"stackkit_release_url":  absoluteRouteURL(baseURL, stackKitReleasePath),
-		"control_urls":          []string{absoluteRouteURL(websocketBaseURL(baseURL), controlPath)},
+		"identity_token_url":    absoluteRouteURL(baseURL, identityTokenPath),
+		"identity_bind_url":     absoluteRouteURL(baseURL, identityBindPath),
+		"identity_rotate_url":   absoluteRouteURL(baseURL, identityRotatePath),
 		"channel_bootstrap": map[string]any{
 			"tenant_id":            ctx.TenantID,
 			"owner_id":             ctx.OwnerID,
@@ -81,21 +101,43 @@ func (h workerRouteHandlers) workerEnrollmentResponse(e *httpx.Event, ctx worker
 			"command_url":          absoluteRouteURL(baseURL, commandPath),
 			"command_result_url":   absoluteRouteURL(baseURL, commandResultPath),
 			"stackkit_release_url": absoluteRouteURL(baseURL, stackKitReleasePath),
-			"websocket_url":        absoluteRouteURL(websocketBaseURL(baseURL), controlPath),
+			"identity_token_url":   absoluteRouteURL(baseURL, identityTokenPath),
+			"identity_bind_url":    absoluteRouteURL(baseURL, identityBindPath),
+			"identity_rotate_url":  absoluteRouteURL(baseURL, identityRotatePath),
 			"grpc_hint":            "mtls-if-http2-network-allows",
 			"ssh_liveness_role":    "bootstrap-diagnostics-only",
 		},
 	}
-	if privateOrigin, ok := requestPrivateLANHTTPOrigin(e); ok {
-		resp["allow_private_lan_http"] = true
-		resp["private_lan_http_origin"] = privateOrigin
-		resp["transport_security"] = "private-lan-http"
-		resp["channel_bootstrap"].(map[string]any)["allow_private_lan_http"] = true
-		resp["channel_bootstrap"].(map[string]any)["private_lan_http_origin"] = privateOrigin
-		resp["channel_bootstrap"].(map[string]any)["transport_security"] = "private-lan-http"
+	if bridge, ok := requestPrivateLANBridge(e); ok {
+		// The Guard pinned this key for the redemption itself, so the pin it
+		// stores here is the one its connection already proved.
+		for _, target := range []map[string]any{resp, resp["channel_bootstrap"].(map[string]any)} {
+			target["private_lan_origin"] = bridge.origin
+			target["private_lan_pin"] = bridge.pin
+			target["transport_security"] = "private-lan-tls-pinned"
+		}
 	}
 	if strings.TrimSpace(ctx.AgentToken) != "" {
 		resp["agent_token"] = strings.TrimSpace(ctx.AgentToken)
+		// Only the Guard that receives this worker's credential learns its
+		// binding key. Without it the Guard stays unpinned, as before signing.
+		signer, err := h.bindingSignerFor(ctx.TenantID, ctx.RuntimeAgentID)
+		if err != nil {
+			slog.Error("guard_binding_key_unavailable", "tenant_id", ctx.TenantID, "runtime_agent_id", ctx.RuntimeAgentID, "error", err)
+		} else if keys := signer.PublicKeys(); len(keys) > 0 {
+			resp["binding_signing_keys"] = keys
+		}
+	}
+	if ctx.GuardIdentity != nil {
+		resp["identity"] = map[string]any{
+			"binding":        controlplane.IdentityBindingHostKey,
+			"state":          ctx.GuardIdentity.State,
+			"attempt_id":     ctx.GuardIdentity.AttemptID,
+			"key_thumbprint": ctx.GuardIdentity.Thumbprint,
+			// The credential is active for the token exchange immediately and
+			// confirmed by its first successful, proof-authenticated use.
+			"confirmation": "first-proof-authenticated-request",
+		}
 	}
 	if ctx.GRPCIdentity != nil {
 		resp["grpc_mtls"] = map[string]any{
@@ -112,29 +154,49 @@ func (h workerRouteHandlers) workerEnrollmentResponse(e *httpx.Event, ctx worker
 	return resp
 }
 
-func requestPrivateLANHTTPOrigin(e *httpx.Event) (string, bool) {
-	if e == nil || e.Request == nil || e.Request.TLS != nil || e.Request.Header.Get("X-Techstack-LAN-Bridge") != "1" {
-		return "", false
+// requestPrivateLANBridge reports the bridge a TLS request arrived through.
+func requestPrivateLANBridge(e *httpx.Event) (localLANBridgeRequest, bool) {
+	if e == nil || e.Request == nil || e.Request.TLS == nil {
+		return localLANBridgeRequest{}, false
 	}
-	origin, err := privatechannel.NormalizeLANOrigin("http://" + strings.TrimSpace(e.Request.Host))
-	return origin, err == nil
+	bridge, ok := localLANBridgeFrom(e.Request.Context())
+	if !ok {
+		return localLANBridgeRequest{}, false
+	}
+	if _, err := privatechannel.NormalizeLANOrigin(bridge.origin); err != nil {
+		return localLANBridgeRequest{}, false
+	}
+	return bridge, true
 }
 
+// requestPublicBaseURL is the origin this control plane tells a Guard to use
+// and the origin a proof's htu may name. A request never chooses it: the
+// configured public origin wins, a LAN bridge request keeps its own private
+// origin, and only without either does the URL fall back to the Host header,
+// with forwarded protocol and host honored solely from a trusted proxy
+// (trustedproxy, TECHSTACK_TRUSTED_PROXIES).
 func requestPublicBaseURL(e *httpx.Event) string {
 	if e == nil || e.Request == nil {
 		return ""
 	}
-	req := e.Request
-	proto := strings.TrimSpace(req.Header.Get("X-Forwarded-Proto"))
-	if proto == "" {
-		proto = "http"
-		if req.TLS != nil {
-			proto = "https"
-		}
+	if bridge, ok := requestPrivateLANBridge(e); ok {
+		return bridge.origin
 	}
-	host := strings.TrimSpace(req.Header.Get("X-Forwarded-Host"))
-	if host == "" {
-		host = strings.TrimSpace(req.Host)
+	if origin := config.PublicOriginFromEnv(); origin != "" {
+		return origin
+	}
+	req := e.Request
+	proto, host := "http", strings.TrimSpace(req.Host)
+	if req.TLS != nil {
+		proto = "https"
+	}
+	if forwardedProto, forwardedHost, ok := trustedproxy.FromEnv().ForwardedOrigin(req); ok {
+		if forwardedProto == "http" || forwardedProto == "https" {
+			proto = forwardedProto
+		}
+		if forwardedHost != "" {
+			host = forwardedHost
+		}
 	}
 	if host == "" {
 		return ""
@@ -148,17 +210,6 @@ func absoluteRouteURL(baseURL, path string) string {
 		return path
 	}
 	return strings.TrimRight(baseURL, "/") + path
-}
-
-func websocketBaseURL(baseURL string) string {
-	switch {
-	case strings.HasPrefix(baseURL, "https://"):
-		return "wss://" + strings.TrimPrefix(baseURL, "https://")
-	case strings.HasPrefix(baseURL, "http://"):
-		return "ws://" + strings.TrimPrefix(baseURL, "http://")
-	default:
-		return baseURL
-	}
 }
 
 func bearerToken(r *http.Request) string {

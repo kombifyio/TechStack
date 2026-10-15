@@ -78,6 +78,18 @@ func (s *PostgresStore) admitServerMaintenanceJob(ctx context.Context, job Serve
 			if err := lockNodeAdmissionTx(ctx, tx, job.TenantID, job.AgentID, job.StackID); err != nil {
 				return err
 			}
+			if job.Action != ServerMaintenanceActionPlan {
+				impact, err := serverMaintenanceImpactTx(ctx, tx, job.TenantID, job.ServerID, job.Action, time.Now().UTC())
+				if errors.Is(err, ErrNotFound) {
+					return ErrServerMaintenanceImpactChanged
+				}
+				if err != nil {
+					return err
+				}
+				if err := checkServerMaintenanceImpact(job, impact); err != nil {
+					return err
+				}
+			}
 			if err := refuseBusyNodeTx(ctx, tx, job.TenantID, job.AgentID, job.StackID); err != nil {
 				return err
 			}
@@ -113,6 +125,26 @@ func (s *PostgresStore) ClaimServerMaintenanceJob(ctx context.Context, tenantID,
 		}
 		if err := lockNodeAdmissionTx(ctx, tx, tenantID, agentID, stackID); err != nil {
 			return err
+		}
+		job, err := scanServerMaintenanceJob(tx.QueryRowContext(ctx, `SELECT `+serverMaintenanceColumns+`
+			FROM server_maintenance_jobs WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, tenantID, jobID))
+		if err != nil {
+			return err
+		}
+		if job.State != ServerMaintenanceStateQueued {
+			return ErrConflict
+		}
+		if job.Action != ServerMaintenanceActionPlan {
+			impact, err := serverMaintenanceImpactTx(ctx, tx, tenantID, job.ServerID, job.Action, at.UTC())
+			if errors.Is(err, ErrNotFound) {
+				return ErrServerMaintenanceImpactChanged
+			}
+			if err != nil {
+				return err
+			}
+			if err := checkServerMaintenanceImpact(*job, impact); err != nil {
+				return err
+			}
 		}
 		if err := refuseBusyNodeTx(ctx, tx, tenantID, agentID, stackID); err != nil {
 			return err

@@ -28,8 +28,8 @@ func TestPostgresSCRAMVerifierNeverContainsOrRepeatsRawSecret(t *testing.T) {
 
 func TestProviderControlRuntimeGrantAllowlistMatchesBootPosture(t *testing.T) {
 	for _, grant := range providerControlRuntimeTableGrants {
-		for _, privilege := range strings.Split(grant.privileges, ",") {
-			needle := fmt.Sprintf("('%s', '%s')", grant.table, privilege)
+		for _, privilege := range strings.Split(grant.Privileges, ",") {
+			needle := fmt.Sprintf("('%s', '%s')", grant.Table, privilege)
 			if count := strings.Count(providerControlRuntimeRolePostureQuery, needle); count != 1 {
 				t.Errorf("posture capability %s appears %d times", needle, count)
 			}
@@ -59,7 +59,7 @@ func TestProviderControlRuntimeGrantAllowlistCoversIncidentWorkflowPersistence(t
 	for table, privileges := range want {
 		found := false
 		for _, grant := range providerControlRuntimeTableGrants {
-			if grant.table == table && grant.privileges == privileges {
+			if grant.Table == table && grant.Privileges == privileges {
 				found = true
 				break
 			}
@@ -72,9 +72,9 @@ func TestProviderControlRuntimeGrantAllowlistCoversIncidentWorkflowPersistence(t
 
 func TestProviderControlRuntimeGrantExcludesAdvisoryAndWorkflowMutationAuthority(t *testing.T) {
 	for _, grant := range providerControlRuntimeTableGrants {
-		if grant.table == "provider_incident_advisory_attempts" ||
-			(grant.table == "ril_workflow_runs" && grant.privileges != "SELECT,INSERT") ||
-			grant.table == "ril_workflow_steps" || grant.table == "ril_workflow_timers" {
+		if grant.Table == "provider_incident_advisory_attempts" ||
+			(grant.Table == "ril_workflow_runs" && grant.Privileges != "SELECT,INSERT") ||
+			grant.Table == "ril_workflow_steps" || grant.Table == "ril_workflow_timers" {
 			t.Fatalf("runtime grant retains control-plane authority: %+v", grant)
 		}
 	}
@@ -93,7 +93,7 @@ func TestProviderControlRuntimeGrantIncludesCapacityPolicyDigest(t *testing.T) {
 func TestProviderControlRuntimeGrantAllowlistExcludesAdminAndDirectoryTables(t *testing.T) {
 	joined := make([]string, 0, len(providerControlRuntimeTableGrants))
 	for _, grant := range providerControlRuntimeTableGrants {
-		joined = append(joined, grant.table)
+		joined = append(joined, grant.Table)
 	}
 	all := strings.Join(joined, "\n")
 	for _, forbidden := range []string{

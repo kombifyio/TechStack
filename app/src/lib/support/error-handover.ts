@@ -30,6 +30,33 @@ export interface ErrorAiHandoverContext {
   capability?: string;
   missingFeatures?: string[];
   requiredFeatures?: string[];
+  /** Structured operation context; optional so v1 consumers stay compatible. */
+  operation?: ErrorAiOperationContext;
+}
+
+/**
+ * The long-running operation behind the error: identifiers, the step it
+ * stopped at or the components it completed without, and reason codes. Only
+ * plain identifiers and codes; never credentials, certificates or raw output.
+ */
+export interface ErrorAiOperationContext {
+  outcome?: "failed" | "completed_degraded";
+  jobId?: string;
+  stackId?: string;
+  leaseId?: string;
+  serverId?: string;
+  agentId?: string;
+  failedStep?: string;
+  reasonCodes?: string[];
+  degradedComponents?: ErrorAiDegradedComponent[];
+}
+
+export interface ErrorAiDegradedComponent {
+  component: string;
+  reasonCode?: string;
+  stage?: string;
+  retryable?: boolean;
+  repairStatus?: string;
 }
 
 interface CreateErrorAiHandoverContextInput extends Partial<
@@ -81,6 +108,59 @@ function cleanStringArray(value: unknown): string[] | undefined {
   return cleaned.length > 0 ? cleaned : undefined;
 }
 
+const MAX_DEGRADED_COMPONENTS = 10;
+
+function cleanDegradedComponents(
+  value: unknown,
+): ErrorAiDegradedComponent[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const cleaned = value
+    .slice(0, MAX_DEGRADED_COMPONENTS)
+    .flatMap((item): ErrorAiDegradedComponent[] => {
+      if (!item || typeof item !== "object") return [];
+      const record = item as Record<string, unknown>;
+      const component = cleanOptionalText(record.component);
+      if (!component) return [];
+      return [
+        {
+          component,
+          reasonCode: cleanOptionalText(record.reasonCode),
+          stage: cleanOptionalText(record.stage),
+          retryable:
+            typeof record.retryable === "boolean"
+              ? record.retryable
+              : undefined,
+          repairStatus: cleanOptionalText(record.repairStatus),
+        },
+      ];
+    });
+  return cleaned.length > 0 ? cleaned : undefined;
+}
+
+function cleanOperationContext(
+  value: unknown,
+): ErrorAiOperationContext | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const input = value as Record<string, unknown>;
+  const operation: ErrorAiOperationContext = {
+    outcome:
+      input.outcome === "failed" || input.outcome === "completed_degraded"
+        ? input.outcome
+        : undefined,
+    jobId: cleanOptionalText(input.jobId),
+    stackId: cleanOptionalText(input.stackId),
+    leaseId: cleanOptionalText(input.leaseId),
+    serverId: cleanOptionalText(input.serverId),
+    agentId: cleanOptionalText(input.agentId),
+    failedStep: cleanOptionalText(input.failedStep),
+    reasonCodes: cleanStringArray(input.reasonCodes),
+    degradedComponents: cleanDegradedComponents(input.degradedComponents),
+  };
+  return Object.values(operation).some((field) => field !== undefined)
+    ? operation
+    : undefined;
+}
+
 export function createErrorAiHandoverContext(
   input: CreateErrorAiHandoverContextInput,
 ): ErrorAiHandoverContext {
@@ -124,7 +204,42 @@ export function normalizeErrorAiHandoverContext(
     capability: cleanOptionalText(input.capability),
     missingFeatures: cleanStringArray(input.missingFeatures),
     requiredFeatures: cleanStringArray(input.requiredFeatures),
+    operation: cleanOperationContext(input.operation),
   };
+}
+
+/** Fact lines for the operation context, shared by every handover prompt. */
+export function buildOperationContextLines(
+  operation: ErrorAiOperationContext | undefined,
+): string[] {
+  const context = cleanOperationContext(operation);
+  if (!context) return [];
+  const lines: string[] = [];
+  const facts: Array<[string, string | undefined]> = [
+    ["Operation outcome", context.outcome],
+    ["Job ID", context.jobId],
+    ["Stack ID", context.stackId],
+    ["Lease ID", context.leaseId],
+    ["Server ID", context.serverId],
+    ["Runtime agent ID", context.agentId],
+    ["Failed step", context.failedStep],
+    ["Reason codes", context.reasonCodes?.join(", ")],
+  ];
+  for (const [label, value] of facts) {
+    if (value) lines.push(`${label}: ${value}`);
+  }
+  for (const component of context.degradedComponents ?? []) {
+    const parts = [
+      component.reasonCode && `reason ${component.reasonCode}`,
+      component.stage && `stage ${component.stage}`,
+      component.retryable !== undefined && `retryable ${component.retryable}`,
+      component.repairStatus && `repair ${component.repairStatus}`,
+    ].filter(Boolean);
+    lines.push(
+      `Degraded component: ${component.component}${parts.length ? ` (${parts.join(", ")})` : ""}`,
+    );
+  }
+  return lines;
 }
 
 export function buildErrorAiHandoverPrompt(
@@ -170,6 +285,7 @@ export function buildErrorAiHandoverPrompt(
   if (context.requiredFeatures?.length) {
     lines.push(`Required features: ${context.requiredFeatures.join(", ")}`);
   }
+  lines.push(...buildOperationContextLines(context.operation));
 
   return lines.join("\n");
 }

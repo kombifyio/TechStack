@@ -22,18 +22,16 @@ describe("wizard identity service decisions", () => {
     expect(payload.options.owner_display_name).toBe("Our household");
   });
 
-  it("recomputes optional workloads from the current goals", () => {
+  it("passes the current goals to release authoring", () => {
     const config = createDefaultConfig();
     deriveServicesFromGoals(config);
     expect(buildPayload(config).options.use_cases).toEqual([]);
-    expect(buildPayload(config).services).not.toContain("vaultwarden");
     config.goals!.photos = true;
     deriveServicesFromGoals(config);
-    expect(buildPayload(config).services).toContain("immich-server");
+    expect(buildPayload(config).options.use_cases).toEqual(["photos"]);
     config.goals!.photos = false;
     deriveServicesFromGoals(config);
-    expect(buildPayload(config).services).not.toContain("immich-server");
-    expect(buildPayload(config).services).toContain("pocket-id");
+    expect(buildPayload(config).options.use_cases).toEqual([]);
   });
 
   it("defaults to Pocket ID without enabling PocketBase", () => {
@@ -53,10 +51,6 @@ describe("wizard identity service decisions", () => {
     const payload = buildPayload(config);
 
     expect(payload.provider).toBe("local");
-    expect(payload.services).toEqual(
-      expect.arrayContaining(["pocket-id", "traefik", "otel-collector"]),
-    );
-    expect(payload.services).not.toContain("monitoring");
     expect(payload.options.server_mode).toBe("user-owned");
     expect(payload.options.server_provisioning_mode).toBe("install-command");
     expect(payload.options.server_connection_mode).toBe("agent-oneliner");
@@ -75,8 +69,6 @@ describe("wizard identity service decisions", () => {
     expect(payload.options.stackkit_catalog_ref).toBe("basement-kit");
     expect(payload.options.use_cases).toEqual([]);
     expect(payload.options.verification_status).toBe("pending");
-    expect(payload.services).toContain("pocket-id");
-    expect(payload.services).not.toContain("pocketbase");
     expect(payload.options.enable_pocket_id).toBe(true);
     expect(payload.options.enable_pocketbase).toBe(false);
     expect(payload.options.enable_pocketbase_backend).toBe(false);
@@ -93,34 +85,18 @@ describe("wizard identity service decisions", () => {
     expect(payload.options.identity_backend_capability).toBe("passkeys");
   });
 
-  it("expands the all-use-cases preset into canonical StackKits slugs", () => {
+  it("preserves explicit selected goals when the all-use-cases template is active", () => {
     const config = createDefaultConfig();
-    config.goals = {
-      "smart-home": false,
-      photos: false,
-      media: false,
-      vault: false,
-      files: false,
-      ai: false,
-      dev: false,
-      mail: false,
-      game: false,
-      everything: true,
-    };
-
+    config.goals!.photos = true;
+    config.goals!.everything = true;
+    deriveServicesFromGoals(config);
     const payload = buildPayload(config);
+    expect(payload.options.use_cases).toEqual(["photos"]);
 
-    expect(payload.options.use_cases).toEqual([
-      "photos",
-      "media",
-      "vault",
-      "files",
-      "smart-home",
-      "ai",
-      "dev",
-      "mail",
-      "game",
-    ]);
+    config.goals!.photos = false;
+    deriveServicesFromGoals(config);
+    const deselected = buildPayload(config);
+    expect(deselected.options.use_cases).toEqual([]);
   });
 
   it("carries registry foundation and server role through the payload contract", () => {
@@ -274,9 +250,6 @@ describe("wizard identity service decisions", () => {
 
     expect(config.services.pocketId).toBe(true);
     expect(config.services.pocketbase).toBe(true);
-    expect(payload.services).toEqual(
-      expect.arrayContaining(["pocket-id", "pocketbase"]),
-    );
     expect(payload.options.enable_pocket_id).toBe(true);
     expect(payload.options.enable_pocketbase).toBe(true);
     expect(payload.options.enable_pocketbase_backend).toBe(true);
@@ -293,8 +266,6 @@ describe("wizard identity service decisions", () => {
 
     expect(config.services.pocketId).toBe(true);
     expect(config.services.pocketbase).toBe(false);
-    expect(payload.services).toContain("pocket-id");
-    expect(payload.services).not.toContain("pocketbase");
     expect(payload.options.enable_pocketbase_backend).toBe(false);
     expect(payload.options.identity_head).toBe("pocket_id");
     expect(payload.options.requires_passkeys).toBe(true);
@@ -311,9 +282,6 @@ describe("wizard identity service decisions", () => {
 
     expect(config.services.pocketId).toBe(true);
     expect(config.services.pocketbase).toBe(true);
-    expect(payload.services).toEqual(
-      expect.arrayContaining(["pocket-id", "pocketbase"]),
-    );
     expect(payload.options.enable_pocketbase_backend).toBe(true);
     expect(payload.options.identity_head).toBe("pocketbase");
     expect(payload.options.requires_passkeys).toBe(true);

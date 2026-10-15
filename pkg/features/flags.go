@@ -206,6 +206,29 @@ var betaFeatures = map[string]FeatureDefinition{
 		Description:     "Enables Cloud Kit deployments on TechStack Monthly Runtime.",
 		Category:        CategoryBeta,
 	},
+	// Backup entitlements ride the signed edge chain like the monthly runtime
+	// keys (pkg/monthlyruntime/backup.go). Without a definition every check
+	// errored before reading that chain, so entitled accounts were denied.
+	"backup_config": {
+		Key:             edgeFlagTechStackBackupConfig,
+		Name:            "Backups: Configuration",
+		DefaultValue:    false,
+		RequiresConsent: false,
+		RequiresAdmin:   false,
+		RiskLevel:       RiskLevelMedium,
+		Description:     "Enables configuration backups for managed stacks.",
+		Category:        CategoryBeta,
+	},
+	"backup_content": {
+		Key:             edgeFlagTechStackBackupContent,
+		Name:            "Backups: Content",
+		DefaultValue:    false,
+		RequiresConsent: false,
+		RequiresAdmin:   false,
+		RiskLevel:       RiskLevelMedium,
+		Description:     "Enables content backups (photos and app data) for managed stacks.",
+		Category:        CategoryBeta,
+	},
 }
 
 // uxFeatures defines user experience features (Default: ON).
@@ -367,6 +390,8 @@ const (
 	edgeFlagTechStackManagedRuntimeBaseKit = "techstack.managed.runtime.basekit"
 	edgeFlagTechStackManagedRuntimeCentron = "techstack.managed.runtime.centron"
 	edgeFlagTechStackManagedRuntimeIONOS   = "techstack.managed.runtime.ionos"
+	edgeFlagTechStackBackupConfig          = "techstack.backup.config"
+	edgeFlagTechStackBackupContent         = "techstack.backup.content"
 	edgeFlagMonthlyRuntimeStandard         = "sim.monthly.runtime.standard"
 	edgeFlagMonthlyRuntimePremium          = "sim.monthly.runtime.premium"
 	edgeFlagManagedPVMCentron              = "sim.provider.cloud.managed.pvm.centron"

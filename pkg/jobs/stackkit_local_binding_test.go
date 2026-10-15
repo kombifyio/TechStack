@@ -140,11 +140,37 @@ func TestStackKitLifecyclePayloadRoundTripsInitAuthority(t *testing.T) {
 // Inheriting the basement binding for an unrecognised kit is exactly the defect
 // this replaced, so the typed command must fail closed rather than default.
 func TestStackKitLifecycleCommandFailsClosedForUnknownKits(t *testing.T) {
-	for _, kit := range []string{"", "modern-homelab", "not-a-kit"} {
+	for _, kit := range []string{"", "not-a-kit"} {
 		if _, err := stackKitLifecycleCommand("cmd-1", StackKitLifecycleRequest{
 			StackID: "stack-1", AgentID: "agent-1", Operation: "apply", StackKit: kit,
 		}, stackkitrelease.Release{}); err == nil {
 			t.Fatalf("stackKitLifecycleCommand accepted unknown kit %q", kit)
+		}
+	}
+}
+
+// A Modern Homelab command carries the Site, node and channel of the node its
+// agent owns, and an agent that owns none of the kit's nodes dispatches nothing.
+func TestStackKitLifecycleCommandBindsTheAddressedModernNode(t *testing.T) {
+	for node, want := range map[string][3]string{
+		"home-main":  {"home", "home-main", "local-home-main"},
+		"cloud-edge": {"cloud", "cloud-edge", "local-cloud-edge"},
+	} {
+		command, err := stackKitLifecycleCommand("cmd-1", StackKitLifecycleRequest{
+			StackID: "stack-1", AgentID: "agent-" + node, Operation: "plan", StackKit: "modern-homelab", NodeRef: node,
+		}, stackkitrelease.Release{})
+		if err != nil {
+			t.Fatalf("node %s: %v", node, err)
+		}
+		if got := [3]string{command.LocalSiteRef, command.LocalNodeRef, command.LocalExecutionChannelRef}; got != want {
+			t.Fatalf("node %s bound %v, want %v", node, got, want)
+		}
+	}
+	for _, node := range []string{"", "main", "cloud-main"} {
+		if _, err := stackKitLifecycleCommand("cmd-1", StackKitLifecycleRequest{
+			StackID: "stack-1", AgentID: "agent-1", Operation: "apply", StackKit: "modern-homelab", NodeRef: node,
+		}, stackkitrelease.Release{}); err == nil {
+			t.Fatalf("modern-homelab dispatched to unbound node %q", node)
 		}
 	}
 }

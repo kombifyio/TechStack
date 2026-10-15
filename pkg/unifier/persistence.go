@@ -2,12 +2,15 @@
 package unifier
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -16,6 +19,7 @@ import (
 )
 
 var safeStackIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+var stackSpecSnapshotPattern = regexp.MustCompile(`^stack-spec\.snapshot-[a-f0-9]{64}\.v2\.json$`)
 
 const (
 	// RequirementsSpecFilename is the default filename for persisted requirements.
@@ -29,6 +33,9 @@ const (
 
 	// StackSpecFilename is the canonical StackKits CLI spec handoff.
 	StackSpecFilename = "stack-spec.yaml"
+
+	// BoundStackSpecFilename is the pinned renderer's canonical node handoff.
+	BoundStackSpecFilename = "stack-spec.address-bound.v2.json"
 
 	unifierAPIVersion = "techstack/v1"
 )
@@ -113,6 +120,86 @@ func (p *SpecPersister) SaveStackSpecBytes(data []byte) (string, string, error) 
 	}
 
 	return path, ComputeDataHash(data), nil
+}
+
+// SaveStackSpecSnapshotBytes keeps a dispatch's native document separate from
+// the mutable preparation handoff. The content-derived name cannot replace a
+// different job's document, and uses the same confined path authority.
+func (p *SpecPersister) SaveStackSpecSnapshotBytes(data []byte) (string, error) {
+	if len(data) == 0 {
+		return "", fmt.Errorf("stack spec snapshot is empty")
+	}
+	sum := sha256.Sum256(data)
+	return p.saveImmutableManagedBytes("stack-spec.snapshot-"+hex.EncodeToString(sum[:])+".v2.json", data)
+}
+
+// SaveBoundStackSpecSnapshotBytes preserves an already validated and registered
+// zone document under the renderer's fixed node basename without rebinding it.
+// Existing differing bytes are never overwritten, including dispatch replay.
+func (p *SpecPersister) SaveBoundStackSpecSnapshotBytes(data []byte) (string, error) {
+	if len(data) == 0 {
+		return "", fmt.Errorf("bound stack spec snapshot is empty")
+	}
+	return p.saveImmutableManagedBytes(BoundStackSpecFilename, data)
+}
+
+func (p *SpecPersister) saveImmutableManagedBytes(filename string, data []byte) (string, error) {
+	path, err := p.managedPath(filename)
+	if err != nil {
+		return "", err
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if errors.Is(err, os.ErrExist) {
+		existing, readErr := os.ReadFile(path)
+		if readErr != nil || !bytes.Equal(existing, data) {
+			return "", fmt.Errorf("existing native snapshot does not match its immutable document")
+		}
+		return path, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("create native snapshot: %w", err)
+	}
+	_, writeErr := file.Write(data)
+	closeErr := file.Close()
+	if writeErr != nil || closeErr != nil {
+		return "", fmt.Errorf("persist native snapshot: %w", errors.Join(writeErr, closeErr))
+	}
+	return path, nil
+}
+
+// SaveStackSpecSnapshotForDispatch isolates a retry's derived preparation
+// artifacts from the stack's earlier bound intent, plan and bundle. The
+// immutable snapshot keeps the same managed filename contract; the pinned
+// renderer owns every output beneath this dispatch's workspace.
+func (p *SpecPersister) SaveStackSpecSnapshotForDispatch(data []byte, dispatchID string) (string, error) {
+	if strings.TrimSpace(dispatchID) == "" {
+		return "", fmt.Errorf("snapshot preparation requires an exact dispatch identity")
+	}
+	anchor, err := p.managedPath(StackSpecFilename)
+	if err != nil {
+		return "", err
+	}
+	base := filepath.Dir(anchor)
+	resolvedBase, err := filepath.EvalSymlinks(base)
+	if err != nil {
+		return "", fmt.Errorf("resolve snapshot preparation root: %w", err)
+	}
+	sum := sha256.Sum256([]byte(dispatchID))
+	namespace := "preparation-" + hex.EncodeToString(sum[:])
+	child := filepath.Join(base, namespace)
+	rel, err := filepath.Rel(base, child)
+	if err != nil || rel != namespace || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("snapshot preparation escapes its managed root")
+	}
+	preparation, err := NewSpecPersisterWithPath(child)
+	if err != nil {
+		return "", err
+	}
+	resolvedChild, err := filepath.EvalSymlinks(child)
+	if err != nil || resolvedChild != filepath.Join(resolvedBase, namespace) {
+		return "", fmt.Errorf("snapshot preparation does not resolve inside its managed root")
+	}
+	return preparation.SaveStackSpecSnapshotBytes(data)
 }
 
 // LoadIntentBytes loads the persisted kombination.yaml bytes.
@@ -309,9 +396,11 @@ func (p *SpecPersister) writeManagedFile(filename string, data []byte) (string, 
 
 func (p *SpecPersister) managedPath(filename string) (string, error) {
 	switch filename {
-	case IntentSpecFilename, StackSpecFilename, RequirementsSpecFilename, UnifiedSpecFilename:
+	case IntentSpecFilename, StackSpecFilename, BoundStackSpecFilename, RequirementsSpecFilename, UnifiedSpecFilename:
 	default:
-		return "", fmt.Errorf("unsupported managed spec filename %q", filename)
+		if !stackSpecSnapshotPattern.MatchString(filename) {
+			return "", fmt.Errorf("unsupported managed spec filename %q", filename)
+		}
 	}
 	if p.BaseDir == "" {
 		return "", fmt.Errorf("base directory is required")

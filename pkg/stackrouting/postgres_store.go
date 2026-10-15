@@ -129,6 +129,9 @@ func persistNextRoutingState(ctx context.Context, tx *sql.Tx, req PutRequest, cu
 		return DesiredState{}, ErrRevisionConflict
 	}
 	next := req.DesiredState
+	if current != nil && req.PreserveExpectations && current.Domain == next.Domain && current.ServerID == next.ServerID && current.LeaseID == next.LeaseID {
+		next.Expectations = CloneExpectations(current.Expectations)
+	}
 	if current != nil && current.RolloutStatus == RolloutPending && !sameDesiredRouting(*current, next) {
 		return DesiredState{}, ErrRolloutInProgress
 	}
@@ -144,12 +147,16 @@ func insertRoutingDesiredState(ctx context.Context, tx *sql.Tx, next DesiredStat
 	if err != nil {
 		return DesiredState{}, err
 	}
+	expectationsJSON, err := json.Marshal(next.Expectations)
+	if err != nil {
+		return DesiredState{}, err
+	}
 	return scanDesiredStateValue(tx.QueryRowContext(ctx, `
 		INSERT INTO stack_routing_desired (
 			tenant_id, stack_id, owner_subject_id, server_id, lease_id,
 			revision, mode, domain, provenance_json, rollout_status,
-			rollout_job_id, reason_code
-		) VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8, $9::jsonb, $10, NULLIF($11, ''), NULLIF($12, ''))
+			rollout_job_id, reason_code, expectations_json
+		) VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8, $9::jsonb, $10, NULLIF($11, ''), NULLIF($12, ''), $13::jsonb)
 		ON CONFLICT (tenant_id, stack_id) DO UPDATE SET
 			owner_subject_id = EXCLUDED.owner_subject_id,
 			server_id = EXCLUDED.server_id,
@@ -158,16 +165,17 @@ func insertRoutingDesiredState(ctx context.Context, tx *sql.Tx, next DesiredStat
 			mode = EXCLUDED.mode,
 			domain = EXCLUDED.domain,
 			provenance_json = EXCLUDED.provenance_json,
+			expectations_json = EXCLUDED.expectations_json,
 			rollout_status = EXCLUDED.rollout_status,
 			rollout_job_id = EXCLUDED.rollout_job_id,
 			reason_code = EXCLUDED.reason_code,
 			updated_at = now()
 		RETURNING tenant_id, stack_id, owner_subject_id, server_id, lease_id,
 			revision, mode, domain, provenance_json::text, rollout_status,
-			COALESCE(rollout_job_id, ''), COALESCE(reason_code, ''), created_at, updated_at
+			COALESCE(rollout_job_id, ''), COALESCE(reason_code, ''), created_at, updated_at, expectations_json::text
 	`, next.TenantID, next.StackID, next.OwnerSubjectID, next.ServerID, next.LeaseID,
 		next.Revision, next.Mode, next.Domain, provenanceJSON, next.RolloutStatus,
-		next.RolloutJobID, next.ReasonCode))
+		next.RolloutJobID, next.ReasonCode, expectationsJSON))
 }
 
 func insertRoutingIdempotencyReceipt(ctx context.Context, tx *sql.Tx, req PutRequest, state DesiredState) error {
@@ -213,7 +221,7 @@ func markRolloutDispatchedTx(ctx context.Context, tx *sql.Tx, tenantID, stackID 
 		  AND rollout_status IN ('not_requested', 'failed')
 		RETURNING tenant_id, stack_id, owner_subject_id, server_id, lease_id,
 			revision, mode, domain, provenance_json::text, rollout_status,
-			COALESCE(rollout_job_id, ''), COALESCE(reason_code, ''), created_at, updated_at
+			COALESCE(rollout_job_id, ''), COALESCE(reason_code, ''), created_at, updated_at, expectations_json::text
 	`, tenantID, stackID, expectedRevision, RolloutPending, jobID))
 	if errors.Is(err, sql.ErrNoRows) {
 		state, err = loadDispatchedRolloutReplay(ctx, tx, tenantID, stackID, expectedRevision, jobID)
@@ -278,7 +286,7 @@ func markRolloutFinishedTx(ctx context.Context, tx *sql.Tx, tenantID, stackID st
 		    OR (rollout_job_id IS NULL AND rollout_status = 'not_requested'))
 		RETURNING tenant_id, stack_id, owner_subject_id, server_id, lease_id,
 			revision, mode, domain, provenance_json::text, rollout_status,
-			COALESCE(rollout_job_id, ''), COALESCE(reason_code, ''), created_at, updated_at
+			COALESCE(rollout_job_id, ''), COALESCE(reason_code, ''), created_at, updated_at, expectations_json::text
 	`, tenantID, stackID, expectedRevision, jobID, RolloutPending, terminalStatus, reasonCode))
 	if errors.Is(err, sql.ErrNoRows) {
 		state, err = loadFinishedRolloutReplay(ctx, tx, tenantID, stackID, expectedRevision, jobID, terminalStatus)
@@ -328,7 +336,7 @@ func updateRoutingIdempotencyReceipts(ctx context.Context, tx *sql.Tx, tenantID,
 const routingSelect = `
 	SELECT tenant_id, stack_id, owner_subject_id, server_id, lease_id,
 		revision, mode, domain, provenance_json::text, rollout_status,
-		COALESCE(rollout_job_id, ''), COALESCE(reason_code, ''), created_at, updated_at
+		COALESCE(rollout_job_id, ''), COALESCE(reason_code, ''), created_at, updated_at, expectations_json::text
 	FROM stack_routing_desired`
 
 type routingRowScanner interface {
@@ -346,17 +354,24 @@ func scanDesiredState(row routingRowScanner) (*DesiredState, error) {
 func scanDesiredStateValue(row routingRowScanner) (DesiredState, error) {
 	var state DesiredState
 	var leaseID sql.NullString
-	var provenanceJSON []byte
+	var provenanceJSON, expectationsJSON []byte
 	err := row.Scan(
 		&state.TenantID, &state.StackID, &state.OwnerSubjectID, &state.ServerID, &leaseID,
 		&state.Revision, &state.Mode, &state.Domain, &provenanceJSON, &state.RolloutStatus,
-		&state.RolloutJobID, &state.ReasonCode, &state.CreatedAt, &state.UpdatedAt,
+		&state.RolloutJobID, &state.ReasonCode, &state.CreatedAt, &state.UpdatedAt, &expectationsJSON,
 	)
 	if err != nil {
 		return DesiredState{}, err
 	}
 	state.LeaseID = leaseID.String
 	if err := json.Unmarshal(provenanceJSON, &state.Provenance); err != nil {
+		return DesiredState{}, err
+	}
+	if err := json.Unmarshal(expectationsJSON, &state.Expectations); err != nil {
+		return DesiredState{}, err
+	}
+	state.Expectations, err = NormalizeExpectations(state.Expectations, state.Domain)
+	if err != nil {
 		return DesiredState{}, err
 	}
 	return state, nil

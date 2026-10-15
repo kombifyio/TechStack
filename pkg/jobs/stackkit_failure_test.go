@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kombifyio/techstack/internal/stackkitrelease"
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
 	"github.com/kombifyio/techstack/pkg/outcome"
 )
@@ -34,7 +33,7 @@ func (sender *rateLimitedApplySender) SendStackKitCommand(ctx context.Context, a
 // had named when issuance would be possible again. The job outcome must carry
 // that reason and time so neither the owner nor a retry guesses.
 func TestManagedRolloutCarriesCertificateAuthorityRetryAfterIntoTheJobOutcome(t *testing.T) {
-	_, applyErr := runTypedStackKitApplySequence(context.Background(), &rateLimitedApplySender{}, "job-1", typedStackKitApplyRequest(), stackkitrelease.Release{})
+	_, applyErr := runTypedStackKitApplySequence(context.Background(), &rateLimitedApplySender{}, "job-1", typedStackKitApplyRequest(), releaseWithAdvancedCatalog(t))
 	if applyErr == nil {
 		t.Fatal("rate-limited Apply reported success")
 	}

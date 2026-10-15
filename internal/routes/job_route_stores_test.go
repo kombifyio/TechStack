@@ -369,3 +369,30 @@ func jobStoreEventWithRecorder(userID, orgID string, rec *httptest.ResponseRecor
 		Response: rec,
 	}
 }
+
+func TestClaimedCanonicalGuardWaitStaysRecoverableAndPointsAtItsReplacement(t *testing.T) {
+	nextResumeAt := time.Now().UTC().Add(-3 * time.Minute).Format(time.RFC3339Nano)
+	details := jobDetailsFromStore(controlplane.Job{
+		ID: "job-guard-source", Type: "provision", State: "cancelled", StackID: "stack-guard",
+		Result: map[string]any{
+			"lease_id": "lease-guard",
+			"job_wait": map[string]any{
+				"state": "waiting", "reason": jobs.WaitReasonCanonicalGuardEvidence, "next_resume_at": nextResumeAt,
+			},
+			"enrollment_resume_kind":               jobs.WaitReasonCanonicalGuardEvidence,
+			"enrollment_resume_key":                "resume-guard",
+			"enrollment_resume_source_job_id":      "job-guard-source",
+			"enrollment_resume_lease_id":           "lease-guard",
+			"enrollment_resume_server_id":          "server-guard",
+			"enrollment_resume_scheduled_at":       nextResumeAt,
+			"enrollment_resume_replacement_job_id": "job-enrollment-guard",
+		},
+	})
+	if details["state"] != "waiting" || details["wait_reason"] != jobs.WaitReasonCanonicalGuardEvidence ||
+		details["resume_available"] != true {
+		t.Fatalf("claimed Guard wait is not recoverable: %#v", details)
+	}
+	if details["superseded_by_job_id"] != "job-enrollment-guard" {
+		t.Fatalf("superseded_by_job_id = %v, want the deterministic replacement", details["superseded_by_job_id"])
+	}
+}

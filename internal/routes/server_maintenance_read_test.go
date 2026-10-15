@@ -64,7 +64,7 @@ func (f *maintenanceFixture) get(ownerID, jobID string) (int, serverMaintenanceJ
 // the boot id changed.
 func TestServerMaintenanceJobReadShowsTheOwnersRebootProgress(t *testing.T) {
 	f := newMaintenanceFixture(t, inertMaintenanceDispatcher{})
-	status, receipt, reason := f.post(fullyAuthorizedCaller, "reboot-1", reboot(7))
+	status, receipt, reason := f.post(fullyAuthorizedCaller, "reboot-1", f.reboot(7))
 	if status != http.StatusAccepted {
 		t.Fatalf("reboot status=%d reason=%q", status, reason)
 	}
@@ -84,7 +84,7 @@ func TestServerMaintenanceJobReadShowsTheOwnersRebootProgress(t *testing.T) {
 
 func TestServerMaintenanceJobReadHidesAnotherOwnersJob(t *testing.T) {
 	f := newMaintenanceFixture(t, inertMaintenanceDispatcher{})
-	_, receipt, _ := f.post(fullyAuthorizedCaller, "reboot-1", reboot(7))
+	_, receipt, _ := f.post(fullyAuthorizedCaller, "reboot-1", f.reboot(7))
 	if receipt.JobID == "" {
 		t.Fatal("reboot was not accepted")
 	}

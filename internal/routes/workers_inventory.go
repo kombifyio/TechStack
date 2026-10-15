@@ -66,6 +66,7 @@ type workerInventoryRequest struct {
 	// see" from "discovery produced no evidence at all", which an empty
 	// services array cannot express on its own.
 	DiscoveryObserved bool `json:"discovery_observed"`
+	DiscoveryComplete bool `json:"discovery_complete"`
 	// DiscoveredServiceCount is how many unmanaged services the Guard
 	// enumerated before any control-plane filtering.
 	DiscoveredServiceCount int `json:"discovered_service_count"`
@@ -98,6 +99,9 @@ type workerInventoryHost struct {
 	DiskTotalBytes   int64    `json:"disk_total_bytes"`
 	UptimeSeconds    float64  `json:"uptime_seconds"`
 	SSHHostKeys      []string `json:"ssh_host_keys"`
+	// Network is the optional observed network position; a changed fingerprint
+	// is how a home network move is detected.
+	Network *workerInventoryNetwork `json:"network,omitempty"`
 }
 
 type workerInventoryService struct {
@@ -117,6 +121,7 @@ type workerInventoryService struct {
 	PlatformID             string                    `json:"platform_id"`
 	PlatformType           string                    `json:"platform_type"`
 	Image                  string                    `json:"image"`
+	ImageVersion           string                    `json:"image_version"`
 	Description            string                    `json:"description"`
 	Instance               string                    `json:"instance"`
 	StackKit               string                    `json:"stackkit_version"`
@@ -161,6 +166,12 @@ type runtimeAgentAuthContext struct {
 	ServerID       string
 	RuntimeAgentID string
 	Worker         *controlplane.Worker
+	// IdentityBinding reports how this request proved the worker's identity:
+	// host_key (key-bound access token plus proof) or legacy_bearer.
+	IdentityBinding string
+	// ProofThumbprint is the thumbprint of the key that signed the request's
+	// proof; empty for bearer requests.
+	ProofThumbprint string
 }
 
 type committedWorkerInventory struct {
@@ -208,6 +219,12 @@ func (h workerRouteHandlers) inventory(e *httpx.Event) error {
 	}
 	if portsErr := h.recordInventoryPorts(e, authCtx, id, req, position, committed); portsErr != nil {
 		return portsErr
+	}
+	if move := detectNetworkMove(previousHostFacts(authCtx.Worker), req.Host, observedAt); move != nil {
+		h.queueNetworkRebind(e.Request.Context(), committed.worker, move)
+	}
+	if h.connectorReconciler != nil && committed.worker.Capabilities["identity_binding"] == controlplane.IdentityBindingHostKey {
+		h.connectorReconciler.ReconcileApplicationConnectors(e.Request.Context(), committed.worker.TenantID, committed.worker.OwnerSubjectID, committed.worker.StackID, nodeID)
 	}
 	return httpx.Success(e, http.StatusOK, map[string]any{
 		workerFieldServerID:              nodeID,
@@ -339,6 +356,9 @@ func (req *workerInventoryRequest) normalize(runtimeAgentID string) error {
 	req.Host.OSVersion = strings.TrimSpace(req.Host.OSVersion)
 	req.Host.Arch = firstNonEmpty(req.Host.Arch, req.Arch)
 	req.Host.DockerVersion = strings.TrimSpace(req.Host.DockerVersion)
+	if req.Host.Network != nil {
+		req.Host.Network.normalize()
+	}
 	for i := range req.Services {
 		req.Services[i].normalize()
 	}
@@ -365,6 +385,7 @@ func (svc *workerInventoryService) normalize() {
 	svc.PlatformID = strings.TrimSpace(svc.PlatformID)
 	svc.PlatformType = strings.TrimSpace(svc.PlatformType)
 	svc.Image = strings.TrimSpace(svc.Image)
+	svc.ImageVersion = strings.TrimSpace(svc.ImageVersion)
 	svc.Description = strings.TrimSpace(svc.Description)
 	svc.Instance = firstNonEmpty(strings.TrimSpace(svc.Instance), "default")
 	svc.StackKit = strings.TrimSpace(svc.StackKit)
@@ -400,14 +421,18 @@ func (channel *workerInventoryChannel) normalize() {
 	channel.Provenance = strings.TrimSpace(channel.Provenance)
 }
 
-func (h workerRouteHandlers) authenticateRuntimeAgent(e *httpx.Event, id string, req workerInventoryRequest) (runtimeAgentAuthContext, bool) {
+// authenticateRuntimeAgentCredential authenticates the worker's bearer
+// credential only. It does not apply the host-key policy: callers that serve
+// normal worker endpoints use authenticateRuntimeAgent, and only the identity
+// token and bind endpoints authenticate the credential on its own.
+func (h workerRouteHandlers) authenticateRuntimeAgentCredential(e *httpx.Event, id string, req workerInventoryRequest) (runtimeAgentAuthContext, bool) {
 	var out runtimeAgentAuthContext
 	token := bearerToken(e.Request)
 	if token == "" {
 		_ = httpx.Unauthorized(e, "Missing runtime agent token")
 		return out, false
 	}
-	if claims, err := workerauth.Verify(workerauth.SecretFromEnv(), token, time.Now().UTC()); err == nil {
+	if claims, err := workerauth.VerifyRotating(token, time.Now().UTC()); err == nil {
 		return h.authenticateSignedRuntimeAgent(e, id, req, token, claims)
 	}
 	return h.authenticateOpaqueOrLegacyRuntimeAgent(e, id, req, token)
@@ -423,8 +448,11 @@ func (h workerRouteHandlers) authenticateSignedRuntimeAgent(e *httpx.Event, id s
 		return out, false
 	}
 	worker, getErr := h.wst.GetWorker(e.Request.Context(), claims.TenantID, id)
-	if getErr != nil || worker == nil || strings.EqualFold(worker.Status, managedRuntimeStatusRejected) {
+	if getErr != nil || worker == nil {
 		_ = httpx.Unauthorized(e, "Invalid runtime agent token")
+		return out, false
+	}
+	if !h.workerStatusAllowsAuthentication(e, *worker) {
 		return out, false
 	}
 	if !validateRuntimeAgentWorkerBinding(e, *worker, claims, workerauth.SHA256Hex(token)) {
@@ -467,13 +495,16 @@ func (h workerRouteHandlers) authenticateOpaqueOrLegacyRuntimeAgent(e *httpx.Eve
 		return out, false
 	}
 	worker, err := h.wst.GetWorker(e.Request.Context(), tenantID, id)
-	if err != nil || worker == nil || strings.EqualFold(worker.Status, managedRuntimeStatusRejected) {
+	if err != nil || worker == nil {
 		_ = httpx.Unauthorized(e, "Invalid runtime agent token")
 		return out, false
 	}
 	tokenHash := workerauth.SHA256Hex(token)
 	if !workerAcceptsRuntimeAgentToken(*worker, tokenHash) {
 		_ = httpx.Unauthorized(e, "Invalid runtime agent token")
+		return out, false
+	}
+	if !h.workerStatusAllowsAuthentication(e, *worker) {
 		return out, false
 	}
 	return runtimeAgentAuthContext{
@@ -630,6 +661,9 @@ func inventoryWorker(authCtx runtimeAgentAuthContext, req workerInventoryRequest
 	if authCtx.LeaseID != "" {
 		capabilities[runtimeLeaseIDKey] = authCtx.LeaseID
 	}
+	if authCtx.IdentityBinding != "" {
+		capabilities[workerCapabilityIdentityBinding] = authCtx.IdentityBinding
+	}
 	worker := &controlplane.Worker{
 		ID:             authCtx.RuntimeAgentID,
 		TenantID:       authCtx.TenantID,
@@ -665,6 +699,11 @@ func inventoryWorker(authCtx runtimeAgentAuthContext, req workerInventoryRequest
 		worker.ApprovedAt = existing.ApprovedAt
 		worker.Capabilities = mergeAnyMaps(existing.Capabilities, worker.Capabilities)
 		worker.Resources = mergeAnyMaps(existing.Resources, worker.Resources)
+		// A changed network fingerprint is recorded once; the same fingerprint on
+		// the next inventory finds the new host facts already stored.
+		if move := detectNetworkMove(previousHostFacts(existing), req.Host, observedAt); move != nil {
+			worker.Resources = mergeAnyMaps(worker.Resources, map[string]any{workerNetworkMoveKey: move})
+		}
 	} else {
 		// A valid stack-scoped signed token carries the owner's placement
 		// approval. An unscoped token must remain pending until /approve.
@@ -817,6 +856,9 @@ func buildInventoryRegistryProjection(worker controlplane.Worker, nodeID string,
 		workerInventoryChannelsKey:   inventoryChannels(req.Channels),
 		workerInventoryEndpointsKey:  inventoryEndpoints(req.Endpoints),
 	}, inventoryDeploymentMetadata(req))
+	if req.DiscoveryComplete {
+		nodeMetadata["discovery_complete"] = true
+	}
 	if inventoryRevision > 0 {
 		nodeMetadata["inventory_revision"] = inventoryRevision
 	}
@@ -863,6 +905,9 @@ func buildInventoryRegistryProjection(worker controlplane.Worker, nodeID string,
 		}
 		if svc.Image != "" {
 			serviceMetadata["image"] = svc.Image
+		}
+		if svc.ImageVersion != "" {
+			serviceMetadata["image_version"] = svc.ImageVersion
 		}
 		if svc.Description != "" {
 			serviceMetadata["description"] = svc.Description
@@ -1036,7 +1081,7 @@ func inventoryEndpointCount(req workerInventoryRequest) int {
 }
 
 func inventoryHostMap(host workerInventoryHost) map[string]any {
-	return map[string]any{
+	out := map[string]any{
 		workerFieldHostname:              host.Hostname,
 		"os":                             host.OS,
 		"os_version":                     host.OSVersion,
@@ -1056,6 +1101,10 @@ func inventoryHostMap(host workerInventoryHost) map[string]any {
 		workerInventoryUptimeSecondsKey:  host.UptimeSeconds,
 		"ssh_host_keys":                  boundedSSHHostKeys(host.SSHHostKeys),
 	}
+	if network := networkMap(host.Network); network != nil {
+		out[workerNetworkKey] = network
+	}
+	return out
 }
 
 func boundedSSHHostKeys(values []string) []string {
@@ -1109,6 +1158,7 @@ func inventoryServices(services []workerInventoryService) []map[string]any {
 			"platform_id":               svc.PlatformID,
 			"platform_type":             svc.PlatformType,
 			"image":                     svc.Image,
+			"image_version":             svc.ImageVersion,
 			"description":               svc.Description,
 			"instance":                  svc.Instance,
 			"stackkit_version":          svc.StackKit,

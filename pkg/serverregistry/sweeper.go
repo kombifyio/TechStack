@@ -360,13 +360,15 @@ func (s *Sweeper) reportError(err error) {
 	s.logger.Error("server_registry_sweep_error", "error", err)
 }
 
-// DemotionCommand derives the sweeper's write for one aggregate head. It
-// returns false when the server carries no demotable Guard evidence, when the
-// heartbeat is still fresh, or when the persisted state already matches the
-// derived state (change-only: no no-op transitions).
-func DemotionCommand(now time.Time, server Aggregate) (Command, bool) {
+// EffectiveDemotion is the demotion the heartbeat age already earns an
+// aggregate head, whether or not the sweeper has persisted it yet. Read paths
+// apply it so the documented freshness windows hold exactly instead of lagging
+// by the sweep interval; the sweeper persists the same answer. It only ever
+// demotes: it reports due=false for a server without demotable Guard evidence,
+// with a fresh heartbeat, or whose persisted state already matches.
+func EffectiveDemotion(now time.Time, server Aggregate) (ConnectionState, HealthState, string, bool) {
 	if server.LastHeartbeatAt == nil || server.LastHeartbeatAt.IsZero() {
-		return Command{}, false
+		return "", "", "", false
 	}
 	// Only Guard-checkpointed rows carry authenticated heartbeat evidence the
 	// sweeper is allowed to age out. Legacy projections and freshly fenced
@@ -375,18 +377,18 @@ func DemotionCommand(now time.Time, server Aggregate) (Command, bool) {
 		strings.TrimSpace(server.SourceEpoch) == "" ||
 		server.SourceAuthority != AuthorityGuard ||
 		strings.TrimSpace(server.SourceID) != strings.TrimSpace(server.WorkerID) {
-		return Command{}, false
+		return "", "", "", false
 	}
 	switch LifecycleState(strings.TrimSpace(server.LifecycleState)) {
 	case LifecycleDecommissioning, LifecycleDecommissioned:
-		return Command{}, false
+		return "", "", "", false
 	}
 	switch ConnectionState(strings.TrimSpace(server.ConnectionState)) {
 	case ConnectionConnected, ConnectionDegraded, ConnectionStale:
 	default:
 		// pending/connecting carry no heartbeat promise; revoked and offline
 		// are already terminal observations.
-		return Command{}, false
+		return "", "", "", false
 	}
 
 	observedHostState := ""
@@ -395,14 +397,26 @@ func DemotionCommand(now time.Time, server Aggregate) (Command, bool) {
 	}
 	connection, health := DeriveObservedState(now, server.LastHeartbeatAt, observedHostState)
 	if connection != ConnectionStale && connection != ConnectionOffline {
-		return Command{}, false
+		return "", "", "", false
 	}
 	if server.ConnectionState == string(connection) && server.HealthState == string(health) {
-		return Command{}, false
+		return "", "", "", false
 	}
 	reason := ReasonHeartbeatStale
 	if connection == ConnectionOffline {
 		reason = ReasonHeartbeatExpired
+	}
+	return connection, health, reason, true
+}
+
+// DemotionCommand derives the sweeper's write for one aggregate head. It
+// returns false when the server carries no demotable Guard evidence, when the
+// heartbeat is still fresh, or when the persisted state already matches the
+// derived state (change-only: no no-op transitions).
+func DemotionCommand(now time.Time, server Aggregate) (Command, bool) {
+	connection, health, reason, due := EffectiveDemotion(now, server)
+	if !due {
+		return Command{}, false
 	}
 	heartbeatAge := now.Sub(server.LastHeartbeatAt.UTC())
 	return Command{

@@ -66,12 +66,15 @@ func BuildDecisionTrace(spec *core.KombinationSpec, ctx *core.DecisionContext, r
 	}
 
 	trace := &core.DecisionTrace{
-		SelectedStackKit:    stackKit,
-		Foundation:          metadataValue(spec, "stackkit_foundation", stackKit),
-		Addons:              append([]string(nil), addons...),
-		DeploymentMode:      resolveDeploymentMode(spec, stackKit),
+		SelectedStackKit: stackKit,
+		Foundation:       metadataValue(spec, "stackkit_foundation", stackKit),
+		Addons:           append([]string(nil), addons...),
+		// Every Techstack-managed deployment runs StackKits Advanced Mode.
+		DeploymentMode:      deploymentModeAdvanced,
 		ComputeTier:         resolveComputeTier(spec, ctx),
-		PAAS:                metadataValue(spec, "paas", "coolify"),
+		// No PaaS unless the spec names one: the default core has none
+		// (StackKits ADR-0049).
+		PAAS:                metadataValue(spec, "paas", ""),
 		DecisionContextHash: HashDecisionContext(ctx),
 	}
 	trace.StackKitProfile = resolveStackKitProfile(spec, ctx, trace)
@@ -557,15 +560,9 @@ func resolveStackKitProfile(spec *core.KombinationSpec, ctx *core.DecisionContex
 	return "guided-default"
 }
 
-func resolveDeploymentMode(spec *core.KombinationSpec, stackKit string) string {
-	if mode := metadataValue(spec, "stackkit_mode", ""); mode != "" {
-		return mode
-	}
-	if isHAStackKit(stackKit) {
-		return "advanced"
-	}
-	return "simple"
-}
+// deploymentModeAdvanced is the only mode Techstack decides: Standard Mode
+// belongs to the standalone StackKits CLI and installer.
+const deploymentModeAdvanced = "advanced"
 
 func resolveComputeTier(spec *core.KombinationSpec, ctx *core.DecisionContext) string {
 	if tier := metadataValue(spec, "compute_tier", ""); tier != "" {

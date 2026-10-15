@@ -17,7 +17,7 @@ var ErrWorkflowExecutionUnavailable = errors.New("governed action workflow execu
 
 type remediationEngine interface {
 	StartOrResumeRun(context.Context, *workflow.Run) (string, error)
-	GetRun(string) (*workflow.Run, error)
+	GetRun(context.Context, string) (*workflow.Run, error)
 }
 
 // RemediationLauncher is the HTTP-facing adapter for one complete durable
@@ -55,6 +55,7 @@ func (l *RemediationLauncher) Execute(ctx context.Context, input actions.BeginEx
 		}
 	}
 
+	ctx = workflow.WithTenant(ctx, input.TenantID)
 	runInput := map[string]any{
 		workflows.InputTenantID:       input.TenantID,
 		workflows.InputOwnerSubjectID: input.OwnerSubjectID,
@@ -75,7 +76,7 @@ func (l *RemediationLauncher) Execute(ctx context.Context, input actions.BeginEx
 		return nil, err
 	}
 	_, err = l.Engine.StartOrResumeRun(ctx, &workflow.Run{
-		RunID: runID, Type: workflow.TypeActionCardRemediation,
+		TenantID: input.TenantID, RunID: runID, Type: workflow.TypeActionCardRemediation,
 		OwnerID: input.OwnerSubjectID, ServerID: card.ServerID, CardID: input.CardID,
 		Input: runInput,
 	})
@@ -86,7 +87,7 @@ func (l *RemediationLauncher) Execute(ctx context.Context, input actions.BeginEx
 	if err != nil {
 		return nil, err
 	}
-	run, runErr := l.Engine.GetRun(runID)
+	run, runErr := l.Engine.GetRun(ctx, runID)
 	if runErr != nil {
 		return nil, runErr
 	}

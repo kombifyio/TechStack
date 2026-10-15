@@ -3,8 +3,7 @@ package stackkitrelease
 // The StackKits use-case catalog published beside the exact release artifact.
 // StackKits owns the CUE authority (foundation/use_case_catalog.cue); this
 // reads its release projection and nothing else. Techstack must never grow a
-// second, hand-written map of what a use case is built from - the existing
-// goalServiceMap is a payload service-flag map and is not that.
+// second, hand-written map of what a use case is built from.
 
 import (
 	_ "embed"
@@ -42,12 +41,31 @@ type UseCaseComponent struct {
 	// Realization is set on alternative components: "install" when the
 	// pinned release can install it, "recorded" when it only keeps the choice.
 	Realization string `json:"realization,omitempty"`
+	// Maturity is the release's maturity of the application's own
+	// Architecture v2 alternative (see ApplicationMaturity); empty when the
+	// release has no executable alternative for it.
+	Maturity string `json:"maturity,omitempty"`
+}
+
+// UseCaseProfileFacts is StackKits' declared fact set of one module compute
+// profile. Sizing remains release-owned, including the distinction between a
+// supported host floor, the workload's reservation and recommended headroom.
+type UseCaseProfileFacts struct {
+	Maturity    string                               `json:"maturity,omitempty"`
+	Executable  bool                                 `json:"executable"`
+	Realization string                               `json:"realization,omitempty"`
+	HostFloor   *UseCaseHostFloor                    `json:"hostFloor,omitempty"`
+	Reservation *UseCaseResources                    `json:"reservation,omitempty"`
+	Recommended *UseCaseResources                    `json:"recommended,omitempty"`
+	Provenance  map[string]UseCaseResourceProvenance `json:"provenance,omitempty"`
 }
 
 // UseCaseModule is one module an Architecture v2 alternative is built from.
 type UseCaseModule struct {
-	ID              string   `json:"id"`
-	ComputeProfiles []string `json:"computeProfiles,omitempty"`
+	ID                      string                             `json:"id"`
+	ComputeProfiles         []string                           `json:"computeProfiles,omitempty"`
+	ComputeProfileFacts     map[string]UseCaseProfileFacts     `json:"computeProfileFacts,omitempty"`
+	AcceleratorProfileFacts map[string]UseCaseAcceleratorFacts `json:"acceleratorProfileFacts,omitempty"`
 }
 
 // UseCaseAlternative is one Architecture v2 alternative of a workload.
@@ -90,6 +108,10 @@ type UseCaseSettingOption struct {
 	// Realization overrides the setting's realization for this option, so a
 	// service choice can mix installing and recorded alternatives.
 	Realization string `json:"realization,omitempty"`
+	// MinMemoryGB is the server memory this option needs to run well.
+	MinMemoryGB int `json:"minMemoryGb,omitempty"`
+	// NeedsAccelerator marks an option that needs a GPU in practice.
+	NeedsAccelerator bool `json:"needsAccelerator,omitempty"`
 }
 
 // UseCaseSetting is a decision an operator makes about a use case before it
@@ -115,6 +137,90 @@ type UseCaseSetting struct {
 	WorkloadRef string `json:"workloadRef,omitempty"`
 }
 
+// UseCaseCapabilityOption is one realization of a capability module: the
+// default, or its single alternative. Realization is "install" when the pinned
+// release can install it and "recorded" when it only keeps the choice.
+type UseCaseCapabilityOption struct {
+	ID              string   `json:"id"`
+	Name            string   `json:"name"`
+	Note            string   `json:"note,omitempty"`
+	Realization     string   `json:"realization"`
+	Pending         string   `json:"pending,omitempty"`
+	WorkloadRef     string   `json:"workloadRef,omitempty"`
+	AlternativeRef  string   `json:"alternativeRef,omitempty"`
+	AlternativeRefs []string `json:"alternativeRefs,omitempty"`
+}
+
+// UseCaseCapability is one independently selectable capability module of a
+// use case (StackKits #UseCaseCapability). "off" is a legal selection unless
+// the capability is Required.
+type UseCaseCapability struct {
+	ID                  string                   `json:"id"`
+	Name                string                   `json:"name"`
+	Help                string                   `json:"help,omitempty"`
+	Required            bool                     `json:"required"`
+	EnabledByDefault    bool                     `json:"enabledByDefault"`
+	Requires            []string                 `json:"requires,omitempty"`
+	RequiresAccelerator bool                     `json:"requiresAccelerator"`
+	Default             UseCaseCapabilityOption  `json:"default"`
+	Alternative         *UseCaseCapabilityOption `json:"alternative,omitempty"`
+}
+
+// AcceptsSelection reports whether value is a legal selection for the
+// capability and, when not, why. "off" is refused for a required capability
+// and a recorded option is refused because the release cannot install it.
+func (capability UseCaseCapability) AcceptsSelection(value string) error {
+	if value == "off" {
+		if capability.Required {
+			return fmt.Errorf("capability %q is required and cannot be turned off", capability.ID)
+		}
+		return nil
+	}
+	options := []UseCaseCapabilityOption{capability.Default}
+	if capability.Alternative != nil {
+		options = append(options, *capability.Alternative)
+	}
+	for _, option := range options {
+		if option.ID != value {
+			continue
+		}
+		if option.Realization == "recorded" {
+			return fmt.Errorf("capability %q option %q is only recorded by this release and cannot be installed", capability.ID, value)
+		}
+		return nil
+	}
+	return fmt.Errorf("capability %q declares no option %q", capability.ID, value)
+}
+
+// UseCaseBundle groups capability modules of one use case under one
+// customer-facing goal (StackKits #UseCaseBundle). It is catalog grouping
+// only: turning a bundle on selects its Defaults through the same capability
+// selection, so authoring never sees a bundle. A module several bundles need
+// appears in each and installs once.
+type UseCaseBundle struct {
+	ID                    string   `json:"id"`
+	Name                  string   `json:"name"`
+	Help                  string   `json:"help,omitempty"`
+	Examples              []string `json:"examples,omitempty"`
+	Capabilities          []string `json:"capabilities"`
+	Defaults              []string `json:"defaults"`
+	Required              bool     `json:"required"`
+	EnabledByDefault      bool     `json:"enabledByDefault"`
+	Advanced              bool     `json:"advanced"`
+	RecommendsAccelerator bool     `json:"recommendsAccelerator"`
+	RequiresSandbox       bool     `json:"requiresSandbox"`
+}
+
+// FindCapability returns a capability module of a use case.
+func (useCase UseCase) FindCapability(id string) (UseCaseCapability, bool) {
+	for _, capability := range useCase.Capabilities {
+		if capability.ID == id {
+			return capability, true
+		}
+	}
+	return UseCaseCapability{}, false
+}
+
 // UseCase is one catalog entry. The ID is the use-case slug the Wizard already
 // speaks, so no translation table is needed on either side.
 type UseCase struct {
@@ -124,12 +230,18 @@ type UseCase struct {
 	Components   []UseCaseComponent            `json:"components"`
 	ComputeTiers map[string]UseCaseComputeTier `json:"computeTiers,omitempty"`
 	Settings     []UseCaseSetting              `json:"settings,omitempty"`
+	// Capabilities are the use case's independently selectable modules.
+	Capabilities []UseCaseCapability `json:"capabilities,omitempty"`
+	// Bundles group the capability modules by customer goal. A module in no
+	// bundle stays selectable by id but the guided setup does not offer it.
+	Bundles []UseCaseBundle `json:"bundles,omitempty"`
 	// Docs is the path of the use case's guide on docs.kombify.io, when the
 	// catalog names one. Empty means "no guide yet", never "guess one".
 	Docs               string               `json:"docs,omitempty"`
 	DefaultAlternative string               `json:"defaultAlternative,omitempty"`
 	Alternatives       []UseCaseAlternative `json:"alternatives,omitempty"`
 	AddOns             []UseCaseAddOn       `json:"addOns,omitempty"`
+	AgentSurface       json.RawMessage      `json:"agentSurface,omitempty"`
 }
 
 // AcceptsSettingValue reports whether value is a legal value for setting:
@@ -157,6 +269,44 @@ func (setting UseCaseSetting) AcceptsSettingValue(value any) bool {
 	default:
 		return false
 	}
+}
+
+// maturityRank orders StackKits' module maturity vocabulary from least to
+// most mature; an unknown value ranks lowest so it never reads as supported.
+var maturityRank = map[string]int{"deprecated": 1, "experimental": 2, "beta": 3, "supported": 4}
+
+// ApplicationMaturity is the maturity the pinned release declares for the
+// application whose Architecture v2 alternative has id: the least mature
+// executable compute profile of its modules. Runtime acceptance controls tier
+// inclusion separately; it does not erase a released application's maturity.
+// It is empty when the release has no executable alternative (a recorded choice).
+func (useCase UseCase) ApplicationMaturity(id string) string {
+	weakest := ""
+	for _, alternative := range useCase.Alternatives {
+		if alternative.ID != id {
+			continue
+		}
+		for _, module := range alternative.Modules {
+			for _, facts := range module.ComputeProfileFacts {
+				if !facts.Executable {
+					continue
+				}
+				maturity := strings.TrimSpace(facts.Maturity)
+				if maturity == "" {
+					continue
+				}
+				if weakest == "" || maturityRank[maturity] < maturityRank[weakest] {
+					weakest = maturity
+				}
+			}
+		}
+	}
+	return weakest
+}
+
+// Maturity is the use case's maturity: that of its default application.
+func (useCase UseCase) Maturity() string {
+	return useCase.ApplicationMaturity(useCase.DefaultAlternative)
 }
 
 // FindUseCase returns the catalog entry for a use-case slug.
@@ -310,8 +460,11 @@ func (useCase UseCase) ConfigurationSettings() []UseCaseSetting {
 // UseCaseCatalogRelease carries the provenance of the projection so a caller
 // can show, and a reader can check, which release these components came from.
 type UseCaseCatalogRelease struct {
-	Tag     string `json:"tag"`
-	Version string `json:"version"`
+	Tag             string `json:"tag"`
+	Version         string `json:"version"`
+	SourceSHA       string `json:"sourceSha,omitempty"`
+	PublicSourceSHA string `json:"publicSourceSha,omitempty"`
+	ReleaseURL      string `json:"releaseUrl,omitempty"`
 }
 
 // UseCaseCatalog is the decoded release projection.
@@ -369,8 +522,9 @@ func UseCaseCatalogFromEnv() (UseCaseCatalog, bool, error) {
 	return catalog, true, nil
 }
 
-// PinnedUseCaseCatalog returns the catalog generated from the StackKits
-// module pin (currently v0.24.83). It does not read a source checkout.
+// PinnedUseCaseCatalog returns the embedded copy of the pinned release's
+// catalog asset, which the StackKits repin writes beside the Dockerfile pin.
+// It does not read a source checkout.
 func PinnedUseCaseCatalog() (UseCaseCatalog, error) {
 	return DecodeUseCaseCatalog(pinnedUseCaseCatalogJSON)
 }
@@ -485,11 +639,35 @@ func DecodeUseCaseCatalog(data []byte) (UseCaseCatalog, error) {
 			}
 			entry.Settings = append(entry.Settings, setting)
 		}
+		for _, capability := range useCase.Capabilities {
+			if strings.TrimSpace(capability.ID) == "" {
+				continue
+			}
+			entry.Capabilities = append(entry.Capabilities, capability)
+		}
+		for _, bundle := range useCase.Bundles {
+			if strings.TrimSpace(bundle.ID) == "" {
+				continue
+			}
+			entry.Bundles = append(entry.Bundles, bundle)
+		}
 		entry.Docs = strings.TrimSpace(useCase.Docs)
 		entry.DefaultAlternative = strings.TrimSpace(useCase.DefaultAlternative)
 		entry.Alternatives = useCase.Alternatives
 		entry.AddOns = useCase.AddOns
+		for index := range entry.Components {
+			entry.Components[index].Maturity = entry.ApplicationMaturity(entry.Components[index].ID)
+		}
 		catalog.UseCases = append(catalog.UseCases, entry)
+	}
+	agentCatalog, err := pinnedAgentSurfaces()
+	if err != nil {
+		return UseCaseCatalog{}, err
+	}
+	if agentCatalog.Source.MatchesCatalog(catalog.Release) {
+		for i := range catalog.UseCases {
+			catalog.UseCases[i].AgentSurface = append(json.RawMessage(nil), agentCatalog.Surfaces[catalog.UseCases[i].ID]...)
+		}
 	}
 	return catalog, nil
 }

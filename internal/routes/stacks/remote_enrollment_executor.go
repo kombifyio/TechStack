@@ -75,8 +75,10 @@ func (x *RemoteEnrollmentExecutor) ExecuteRemoteEnrollment(
 	}
 	creds, credErr := h.credentialsFromStackConfig(ctx, tenantID, ownerID, stack)
 	if credErr != nil {
-		// Missing custody is actionable, never retryable.
-		return jobs.RemoteEnrollmentOutcome{}, credErr
+		// Missing custody is actionable, never retryable. A kombify Wallet that
+		// cannot answer is the one exception: it retries, and it never falls
+		// back to a stored copy.
+		return jobs.RemoteEnrollmentOutcome{}, remoteEnrollmentCredentialFailure(credErr)
 	}
 
 	plannedServerID := strings.TrimSpace(req.PlannedServerID)

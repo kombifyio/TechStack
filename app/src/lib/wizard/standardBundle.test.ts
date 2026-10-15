@@ -1,14 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ACTIVE_STANDARD_BUNDLE,
-  ADVANCED_USE_CASE_GOALS,
-  CANONICAL_USE_CASE_GOALS,
-  PRIMARY_USE_CASE_GOALS,
-  USE_CASE_FEATURE_FLAGS,
-  buildStackKitServicesFromBundle,
-  buildStackSpecServiceTogglesFromBundle,
   isDiscoveryEnabledForWizard,
-  serviceConfigKeysFromBundle,
   selectedCanonicalUseCasesFromGoals,
 } from "./standardBundle";
 import { createDefaultConfig } from "./types";
@@ -24,55 +17,22 @@ describe("active StandardBundle wizard definition", () => {
     expect(config.services.immich).toBe(false);
   });
 
-  it("uses bundle service definitions for StackKit service specs", () => {
+  it("keeps the template marker out of explicit canonical selection", () => {
     const config = createDefaultConfig();
-    const services = buildStackKitServicesFromBundle(config.services);
-    const toggles = buildStackSpecServiceTogglesFromBundle(config.services);
-
-    expect(serviceConfigKeysFromBundle()).toEqual(
-      expect.arrayContaining(["pocketId", "traefik", "vaultwarden", "immich"]),
-    );
-    expect(services.map((service) => service.name)).toEqual(
-      expect.arrayContaining(["pocket-id", "traefik", "otel-collector"]),
-    );
-    expect(toggles).toMatchObject({
-      homepage: true,
-      whoami: true,
-      tinyauth: true,
-      pocketid: true,
-      traefik: true,
-      "uptime-kuma": true,
-      vaultwarden: false,
-      immich: false,
-      pocketbase: false,
-      files: false,
-    });
-  });
-
-  it("exposes the canonical StackKits use cases and expands the everything preset", () => {
-    const config = createDefaultConfig();
-
-    expect(
-      ACTIVE_STANDARD_BUNDLE.wizard.goals.map((goal) => goal.configKey),
-    ).toEqual([
-      ...PRIMARY_USE_CASE_GOALS,
-      "everything",
-      ...ADVANCED_USE_CASE_GOALS,
-    ]);
-    expect(CANONICAL_USE_CASE_GOALS).not.toContain("remote");
-    expect(
-      ACTIVE_STANDARD_BUNDLE.wizard.goals
-        .filter((goal) => goal.surface === "advanced")
-        .map((goal) => goal.configKey),
-    ).toEqual(ADVANCED_USE_CASE_GOALS);
-    expect(USE_CASE_FEATURE_FLAGS.mail).toBe("use_case_mail");
     expect(selectedCanonicalUseCasesFromGoals(config.goals)).toEqual([]);
     expect(
       selectedCanonicalUseCasesFromGoals({
         ...config.goals,
         everything: true,
       }),
-    ).toEqual(CANONICAL_USE_CASE_GOALS);
+    ).toEqual([]);
+    expect(
+      selectedCanonicalUseCasesFromGoals({
+        ...config.goals,
+        photos: true,
+        everything: true,
+      }),
+    ).toEqual(["photos"]);
   });
 
   // The invariant is that Discovery never became a wizard step. The catalog

@@ -35,16 +35,12 @@ func configuredPinnedStackKitRelease() (*stackkitrelease.Release, error) {
 }
 
 // configuredTargetStackKitRelease resolves the release identity expected on
-// the managed Linux Agent. Windows clients carry that identity inside the
-// exact bundle they serve, while Linux controllers use their normal local pin.
+// the managed Linux Agent. The served bundle carries that identity independently
+// of the controller's compiler pin, which may have advanced since publication.
 func configuredTargetStackKitRelease() (*stackkitrelease.Release, error) {
-	release, err := configuredPinnedStackKitRelease()
-	if err != nil || release != nil {
-		return release, err
-	}
 	bundlePath := strings.TrimSpace(os.Getenv(stackKitReleaseBundleEnv))
 	if bundlePath == "" {
-		return nil, nil
+		return configuredPinnedStackKitRelease()
 	}
 	bundled, err := stackkitrelease.ResolveLinuxRuntimeBundle(bundlePath)
 	if err != nil {
@@ -54,7 +50,7 @@ func configuredTargetStackKitRelease() (*stackkitrelease.Release, error) {
 }
 
 // ConfiguredPinnedStackKitRelease resolves and verifies the exact published
-// StackKits release admitted for product-facing runtime actions.
+// StackKits release admitted for controller-local compilation and execution.
 func ConfiguredPinnedStackKitRelease() (*stackkitrelease.Release, error) {
 	return configuredPinnedStackKitRelease()
 }

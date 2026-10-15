@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/monitoring"
 )
@@ -67,7 +68,13 @@ func (h stackOperationsRouteHandlers) operationAlerts(stackID string, servers []
 	if h.alerts == nil {
 		return nil, 0
 	}
-	return stackScopedAlertsFromStates(h.alerts.ActiveAlerts(), stackID, servers)
+	alerts, unscoped := stackScopedAlertsFromStates(h.alerts.ActiveAlerts(), stackID, servers)
+	if tenantguard.Active() {
+		// The unscoped tally counts fleet-wide firing alerts, which in hosted
+		// mode belong to other tenants' hosts.
+		unscoped = 0
+	}
+	return alerts, unscoped
 }
 
 func stackScopedAlertsFromStates(active []monitoring.AlertState, stackID string, servers []stackOperationServer) ([]stackOperationAlertState, int) {
@@ -188,7 +195,10 @@ func (h stackOperationsRouteHandlers) monitoringSummary(ctx context.Context) sta
 	summary.Status = "ok"
 	summary.Message = "metrics backend reachable"
 	if health.stats != nil {
-		summary.SeriesCount = health.stats.NumSeries
+		// The series count is the whole store's, not the caller's tenant's.
+		if !tenantguard.Active() {
+			summary.SeriesCount = health.stats.NumSeries
+		}
 		if health.stats.NumSeries > 0 {
 			summary.QueryProof = "vector:non-empty"
 			summary.RangeProof = "matrix:non-empty"

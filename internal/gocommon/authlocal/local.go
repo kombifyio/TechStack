@@ -45,12 +45,14 @@ const DefaultProviderID = "breakglass"
 
 // Errors.
 var (
-	ErrInvalidConfig    = errors.New("authlocal: invalid configuration")
-	ErrInvalidCreds     = errors.New("authlocal: invalid credentials")
-	ErrAlreadyClaimed   = errors.New("authlocal: break-glass admin already claimed")
-	ErrNotFound         = errors.New("authlocal: break-glass admin not initialized")
-	ErrPasswordExpired  = errors.New("authlocal: break-glass password no longer available")
-	ErrLockedByOperator = errors.New("authlocal: break-glass claim is locked")
+	ErrInvalidConfig       = errors.New("authlocal: invalid configuration")
+	ErrInvalidCreds        = errors.New("authlocal: invalid credentials")
+	ErrAlreadyClaimed      = errors.New("authlocal: break-glass admin already claimed")
+	ErrNotFound            = errors.New("authlocal: break-glass admin not initialized")
+	ErrPasswordExpired     = errors.New("authlocal: break-glass password no longer available")
+	ErrLockedByOperator    = errors.New("authlocal: break-glass claim is locked")
+	ErrAtomicStoreRequired = errors.New("authlocal: atomic bootstrap store required")
+	ErrConcurrentUpdate    = errors.New("authlocal: bootstrap record changed concurrently")
 )
 
 // Config configures a [Service].

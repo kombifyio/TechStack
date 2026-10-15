@@ -22,6 +22,7 @@ import (
 
 	"github.com/kombifyio/techstack/internal/portinventory"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/runtimeaction"
+	"github.com/kombifyio/techstack/pkg/originca"
 	"github.com/kombifyio/techstack/pkg/secrets"
 	"github.com/kombifyio/techstack/pkg/stackrouting"
 	"github.com/kombifyio/techstack/pkg/unifier"
@@ -94,8 +95,6 @@ const (
 type ProvisionConfig struct {
 	// WorkDir is the base directory for OpenTofu workspaces
 	WorkDir string
-	// StackKitsDir is the directory containing StackKit templates
-	StackKitsDir string
 	// SpecBaseDir overrides where persisted specs are written.
 	// When empty, defaults to ~/.techstack/stacks/<stack-id>/.
 	// Primarily used for tests.
@@ -110,12 +109,17 @@ type ProvisionConfig struct {
 	// custody and the exact node-side Operations process. Cloud-kit apply is
 	// unavailable when this authority is absent.
 	ManagedStackKitInventory ManagedStackKitInventoryBuilder
+	// StackKitNodeAgents resolves the enrolled agent that owns one node of a
+	// multi-node kit. The managed Modern rollout drives its Cloud node through
+	// it; without it a Modern rollout stops before init.
+	StackKitNodeAgents StackKitNodeAgentResolver
+	// FederationFabric issues the external inter-site link binding. Without it
+	// a Modern rollout still completes the Cloud node's custody and stops at
+	// the Apply readiness blocker `external-federation-link-binding-missing`.
+	FederationFabric FederationFabric
 	// PortInventory is the provider-neutral host-listener authority. It resolves
 	// the current RuntimeServer generation internally; jobs never supply one.
 	PortInventory portinventory.LifecycleAuthority
-	// RuntimeActionTimeout bounds a single StackKits runtime action.
-	// Empty defaults to the production HTTP action budget; tests may lower it.
-	RuntimeActionTimeout time.Duration
 	// ManagedRuntimeTargetWaitTimeout bounds the cumulative enrollment wait.
 	// Each observation has a smaller bounded attempt timeout; a pending target
 	// yields the worker and resumes through the queue instead of polling inside
@@ -134,6 +138,14 @@ type ProvisionConfig struct {
 	// BackupAgentResolver resolves the enrolled agent that owns a stack's
 	// runtime, at dispatch time rather than at scan time.
 	BackupAgentResolver BackupAgentResolver
+	// BackupDecommissioner revokes the stack's off-site backup token and starts
+	// its retention clock when the stack is destroyed. Nil when no managed
+	// backup provider is configured; such a runtime holds no off-site store.
+	BackupDecommissioner BackupDecommissioner
+	// OriginCertificates issues the managed kombify.me origin certificate of a
+	// rollout (ADR-0047) and revokes it when the stack is destroyed. Nil when
+	// custody is not configured; a managed kombify.me rollout then fails closed.
+	OriginCertificates *originca.Service
 	// AutoDeployAdmission is the canonical control-plane gate used before a
 	// provision job may chain into DeployHandler. The hook must prove the exact
 	// tenant/owner/stack/lease binding and a fresh Guard runtime. A missing hook
@@ -154,12 +166,18 @@ type ProvisionConfig struct {
 }
 
 type ManagedStackKitInventoryRequest struct {
-	TenantID         string
-	StackID          string
-	ResolvedPlan     []byte
-	StackKitsVersion string
-	CandidateDigest  string
-	ValidFor         time.Duration
+	TenantID     string
+	StackID      string
+	ResolvedPlan []byte
+	// Nodes is set for a multi-node kit and selects one channel per node.
+	Nodes []ManagedStackKitNodeChannel
+}
+
+// ManagedStackKitNodeChannel is the Site, node and channel one node owns.
+type ManagedStackKitNodeChannel struct {
+	ChannelRef string
+	SiteRef    string
+	NodeRef    string
 }
 
 type ManagedStackKitInventoryBuilder interface {
@@ -179,6 +197,9 @@ type AutoDeployAdmissionRequest struct {
 // to hand to DeployHandler. Implementations must be read-only.
 type AutoDeployAdmission func(context.Context, AutoDeployAdmissionRequest) error
 
+// BackupDecommissioner must be idempotent: a retried destroy calls it again.
+type BackupDecommissioner func(ctx context.Context, tenantID, stackID string) error
+
 // NoWorkspaceDestroyReconcileRequest is the immutable ownership envelope for
 // retiring a no-workspace destroy projection. The handler derives every field
 // from the durable job; callers cannot substitute a different stack.
@@ -196,9 +217,8 @@ type NoWorkspaceDestroyReconciler func(context.Context, NoWorkspaceDestroyReconc
 // DefaultProvisionConfig returns a default configuration.
 func DefaultProvisionConfig() *ProvisionConfig {
 	return &ProvisionConfig{
-		WorkDir:      filepath.Join(os.TempDir(), "techstack-provision"),
-		StackKitsDir: unifier.DefaultStackKitsDir(),
-		SpecBaseDir:  defaultSpecBaseDir(),
+		WorkDir:     filepath.Join(os.TempDir(), "techstack-provision"),
+		SpecBaseDir: defaultSpecBaseDir(),
 	}
 }
 
@@ -210,9 +230,6 @@ func normalizeProvisionConfig(cfg *ProvisionConfig) *ProvisionConfig {
 	normalized := *cfg
 	if normalized.WorkDir == "" {
 		normalized.WorkDir = filepath.Join(os.TempDir(), "techstack-provision")
-	}
-	if normalized.StackKitsDir == "" {
-		normalized.StackKitsDir = unifier.DefaultStackKitsDir()
 	}
 	if normalized.SpecBaseDir == "" {
 		normalized.SpecBaseDir = defaultSpecBaseDir()
@@ -645,6 +662,25 @@ func DestroyHandler(cfg *ProvisionConfig) JobHandler {
 		if err := deregisterStackManagedAddresses(ctx, job, q); err != nil {
 			return wrapProvisionCause(StepFinalize, err,
 				"Could not remove this stack's kombify.me addresses. The decommission stays incomplete so no address keeps routing to a released server; retry the destroy.")
+		}
+		// The backup token goes next, before the server: a decommissioned
+		// stack must not keep a live credential to its off-site bucket.
+		if cfg.BackupDecommissioner != nil {
+			snapshot := job.Snapshot()
+			if err := cfg.BackupDecommissioner(ctx, payloadString(snapshot.Payload, tenantIDField), snapshot.TargetID); err != nil {
+				return wrapProvisionCause(StepFinalize, err,
+					"Could not revoke this stack's off-site backup token. The decommission stays incomplete so no credential outlives the stack; retry the destroy.")
+			}
+		}
+		// The origin certificate is revoked beside the backup token: no
+		// certificate for a decommissioned stack's hostnames outlives it. A
+		// failure is surfaced; an already revoked certificate is success.
+		if cfg.OriginCertificates != nil {
+			snapshot := job.Snapshot()
+			if err := cfg.OriginCertificates.Decommission(ctx, payloadString(snapshot.Payload, tenantIDField), snapshot.TargetID); err != nil {
+				return wrapProvisionCause(StepFinalize, err,
+					"Could not revoke this stack's origin certificate. The decommission stays incomplete so no certificate outlives the stack; retry the destroy.")
+			}
 		}
 		if _, err := destroyManagedRuntimeLeases(ctx, cfg, job, q); err != nil {
 			if isJobWaitError(err) {

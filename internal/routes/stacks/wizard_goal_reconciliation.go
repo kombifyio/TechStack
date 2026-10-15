@@ -38,7 +38,11 @@ func (h wizardRunHandlers) loadStoredWizardGoals(ctx context.Context, run *wizar
 // unmapped backlog. Only a goal that the exact pinned release stopped
 // returning as unmapped is considered newly activated.
 func (run *wizardRunState) captureGoalActivations(projection *specv2.Projection) {
-	if projection == nil || len(run.priorUnmappedGoals) == 0 {
+	if projection == nil {
+		return
+	}
+	run.evaluatedGoals = mergeWizardGoals(run.request.Intent.Goals)
+	if len(run.priorUnmappedGoals) == 0 {
 		return
 	}
 	stillUnmapped := make(map[string]struct{}, len(projection.UnmappedGoals))

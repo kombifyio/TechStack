@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/kombifyio/techstack/internal/gocommon/internal/httpsecurity"
 )
 
 // Errors returned by code exchange.
@@ -96,7 +98,7 @@ func (h *HTTPCodeExchanger) ExchangeCode(ctx context.Context, p *Provider, req C
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
 	}
-	resp, err := client.Do(httpReq)
+	resp, err := httpsecurity.WithoutRedirects(client).Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrTokenExchange, err)
 	}

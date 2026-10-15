@@ -27,11 +27,13 @@ type operationEnvelope struct {
 	ExecutionProfile        ExecutionProfileSnapshot `json:"execution_profile"`
 	RuntimeServerGeneration int64                    `json:"runtime_server_generation,omitempty"`
 	Command                 providerexecutor.Command `json:"command"`
+	CreateRegion            *string                  `json:"create_region,omitempty"`
 }
 
 // PostgresLedger persists commands, the append-only receipt chain, resource
 // custody, and immutable evidence in tenant-RLS-scoped tables.
 type PostgresLedger struct {
+	createRegions     *Registry
 	db                *sql.DB
 	verifier          providerexecutor.EvidenceVerifier
 	claimCredentials  claimCredentialAuthorizer
@@ -94,6 +96,31 @@ func (l *PostgresLedger) beginOperationInTx(
 	if validationErr := validateBeginOperation(ctx, authority, profile, provisionDispatch, command, initial, desiredSpec); validationErr != nil {
 		return OperationRecord{}, false, validationErr
 	}
+	var createRegion *string
+	if command.Operation == providerexecutor.OperationProvision {
+		var region, custodyClass string
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(lease_json->'resource'->>'region',''),COALESCE(lease_json->>'custody_class','') FROM techstack_vm_leases WHERE tenant_id=$1 AND id=$2`, command.TenantID, command.LeaseID).Scan(&region, &custodyClass); err != nil {
+			return OperationRecord{}, false, err
+		}
+		if custodyClass != "customer_substrate" && l.createRegions != nil {
+			var err error
+			region, err = l.createRegions.CanonicalCreateRegion(command.ProviderID, profile.OfferingID, region)
+			if err != nil {
+				return OperationRecord{}, false, err
+			}
+		}
+		region = strings.ToLower(strings.TrimSpace(region))
+		createRegion = &region
+		var exists bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM provider_operations WHERE tenant_id=$1 AND operation_id=$2)`, command.TenantID, command.OperationID).Scan(&exists); err != nil {
+			return OperationRecord{}, false, err
+		}
+		if !exists && custodyClass != "customer_substrate" {
+			if err := requireCreateProtectionTx(ctx, tx, command.TenantID, command.ProviderID, region); err != nil {
+				return OperationRecord{}, false, err
+			}
+		}
+	}
 	fence, fenceErr := loadLeaseExecutionFenceTx(ctx, tx, command)
 	if fenceErr != nil {
 		return OperationRecord{}, false, fenceErr
@@ -115,7 +142,8 @@ func (l *PostgresLedger) beginOperationInTx(
 	envelope := operationEnvelope{
 		SchemaVersion: operationEnvelopeVersion, ExecutionAuthority: authority,
 		ExecutionProfile: profile, RuntimeServerGeneration: fence.ServerGeneration,
-		Command: command,
+		Command:      command,
+		CreateRegion: createRegion,
 	}
 	commandJSON, err := json.Marshal(envelope)
 	if err != nil {
@@ -1442,7 +1470,7 @@ func withTenantDatabase(ctx context.Context, database *sql.DB, tenantID string, 
 	if database == nil {
 		return fmt.Errorf("%w: database is required", ErrInvalidRequest)
 	}
-	tx, err := database.BeginTx(ctx, nil)
+	tx, err := database.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return err
 	}

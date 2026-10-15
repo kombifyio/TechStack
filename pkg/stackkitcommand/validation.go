@@ -16,10 +16,28 @@ import (
 )
 
 const (
-	CommandResultVersion        = "stackkit.command-result/v1"
-	RolloutEventVersion         = "stackkit.rollout-event/v1"
-	ExpectedPlanHashCapability  = "stackkit.apply.expected-plan-hash.v1"
-	WorkspaceInstanceCapability = "stackkit.workspace-instance-binding.v1"
+	CommandResultVersion              = "stackkit.command-result/v1"
+	RolloutEventVersion               = "stackkit.rollout-event/v1"
+	ExpectedPlanHashCapability        = "stackkit.apply.expected-plan-hash.v1"
+	WorkspaceInstanceCapability       = "stackkit.workspace-instance-binding.v1"
+	RestoreActivationCapability       = "stackkit.restore-activation.v1"
+	OriginalRecoveryReleaseCapability = "stackkit.restore-original-release.v1"
+	// Pending publication/adoption of the producer carrying exact historical
+	// delegation. The currently published v0.52.5 lacks this contract.
+	MinOriginalRecoveryRelease = "v0.52.6"
+	// Pending supporting producer publication and adoption. Older artifacts
+	// lack the pre-effect expected-plan flag; this floor alone grants no
+	// availability without the exact signed release and Guard capability.
+	MinRestoreActivationRelease          = "v0.52.5"
+	SourceGenerationInspectionCapability = "stackkit.source-generation-inspection.v1"
+	// Publication and signed runtime adoption must establish this supporting
+	// release before the preparation transport can be used.
+	MinSourceGenerationInspectionRelease       = "v0.51.3"
+	SourceGenerationCachePreparationCapability = "stackkit.source-generation-cache-preparation.v1"
+	// The supporting source must be published and adopted with a compatible
+	// Guard before this preparation operation is admitted. Older pins retain
+	// their existing strict preparation; a denial never selects another mode.
+	MinSourceGenerationCachePreparationRelease = "v0.51.5"
 	// AdvancedTrustImportCapability marks an agent that can run
 	// ADVANCED_TRUST_IMPORT with the bundle from advanced_trust_bundle.
 	AdvancedTrustImportCapability = "stackkit.advanced-trust-import.v1"
@@ -27,6 +45,10 @@ const (
 	// maintenance operations: it executes the pinned StackKits CLI as root
 	// without NoNewPrivileges, and that release ships `stackkit host`.
 	HostMaintenanceCapability = "stackkit.host-maintenance.v1"
+	// HostSecurityCapability marks an agent whose privileged executor runs a
+	// pinned StackKits release that ships `stackkit host security` and that can
+	// therefore verify the host baseline and run HOST_SECURITY_REPAIR.
+	HostSecurityCapability = "stackkit.host-security.v1"
 	// MinHostUpdateRelease is the first release whose Plan observes active
 	// update units before package work, so it can safely poll an Apply.
 	MinHostUpdateRelease = "v0.48.9"
@@ -64,15 +86,43 @@ func ValidateCommand(command *agentpb.StackKitCommand) error {
 	if command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_UPDATE_APPLY && strings.TrimSpace(command.HostPlanDigest) != "" {
 		return fmt.Errorf("StackKit host_plan_digest is only valid for host update apply")
 	}
+	if command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_SECURITY_REPAIR && len(command.HostSecurityControls) != 0 {
+		return fmt.Errorf("StackKit host_security_controls are only valid for host security repair")
+	}
 	if command.TimeoutSeconds < 0 || command.TimeoutSeconds > int32((2*time.Hour)/time.Second) {
 		return fmt.Errorf("StackKit timeout_seconds must be between 0 and 7200")
 	}
 	if err := ValidateReleasePin(command.Release); err != nil {
 		return err
 	}
+	if original := command.OriginalRecoveryRelease; original != nil {
+		if command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE_RECOVER {
+			return fmt.Errorf("original release authority is only valid for restore recovery")
+		}
+		if err := ValidateReleasePin(original); err != nil {
+			return err
+		}
+		if original.PlatformOs != command.Release.PlatformOs || original.PlatformArch != command.Release.PlatformArch ||
+			!ReleaseAtLeast(original.Version, MinRestoreActivationRelease) || !ReleaseAtLeast(command.Release.Version, original.Version) ||
+			!ReleaseAtLeast(command.Release.Version, MinOriginalRecoveryRelease) {
+			return fmt.Errorf("original recovery requires a supporting current executor and exact prior platform/release")
+		}
+	}
+	if !IsRestoreActivationOperation(command.Operation) && (command.RestoreResultId != "" || command.ActivationOperationId != "") {
+		return fmt.Errorf("restore activation identity requires an activation or recovery operation")
+	}
+	if command.SourceGenerationInspection {
+		if (command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_PLAN && command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_TARGET_RECIPIENT) || command.Stackkit != "cloud-kit" || command.LocalSiteRef != "cloud" || command.StackkitInstanceId == "" || len(command.InventoryJson) != 0 || len(command.CandidateSpecJson) != 0 || command.DryRun || command.Offline {
+			return fmt.Errorf("source generation inspection is only valid for canonical managed Cloud preparation")
+		}
+		if !ReleaseAtLeast(command.Release.Version, MinSourceGenerationInspectionRelease) {
+			return fmt.Errorf("source generation inspection requires a supporting StackKits release")
+		}
+	}
 	if command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_INVITE &&
+		command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_REMOVE &&
 		(strings.TrimSpace(command.HouseholdUsername) != "" || strings.TrimSpace(command.HouseholdEmail) != "" || strings.TrimSpace(command.HouseholdDisplayName) != "") {
-		return fmt.Errorf("StackKit household identity fields are only valid for household invite")
+		return fmt.Errorf("StackKit household identity fields are only valid for household invite or removal")
 	}
 	if command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_INIT && strings.TrimSpace(command.OwnerEmail) != "" {
 		return fmt.Errorf("StackKit owner_email is only valid for init")
@@ -83,7 +133,38 @@ func ValidateCommand(command *agentpb.StackKitCommand) error {
 	if err := validateAdvancedFields(command); err != nil {
 		return err
 	}
+	if err := validateBackupTargetDeliveryFields(command); err != nil {
+		return err
+	}
+	if err := validateWalletItemDeliveryFields(command); err != nil {
+		return err
+	}
+	if err := validateApplicationFields(command); err != nil {
+		return err
+	}
+	if !IsApplicationConnectorOperation(command.Operation) && len(command.ApplicationConnectorRequestJson) != 0 {
+		return fmt.Errorf("connector metadata requires a connector operation")
+	}
+	if IsApplicationConnectorOperation(command.Operation) {
+		return validateApplicationConnectorCommand(command)
+	}
+	if IsApplicationOperation(command.Operation) {
+		return validateApplicationCommand(command)
+	}
+	if !IsHandoffOperation(command.Operation) && handoffFieldsPresent(command) {
+		return fmt.Errorf("StackKit federation hand-off fields are only valid for federation hand-off")
+	}
 	switch command.Operation {
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_PREPARE_SOURCE_GENERATION:
+		if command.Stackkit != "cloud-kit" || command.LocalSiteRef != "cloud" || command.StackkitInstanceId == "" || len(command.InventoryJson) != 0 || len(command.CandidateSpecJson) != 0 || command.DryRun || command.Offline || command.TargetRelease != "" || command.ExpectedPlanHash != "" {
+			return fmt.Errorf("source cache preparation requires canonical managed Cloud custody without replacement intent")
+		}
+		if !ReleaseAtLeast(command.Release.Version, MinSourceGenerationCachePreparationRelease) {
+			return fmt.Errorf("source cache preparation requires a supporting StackKits release")
+		}
+		return validateLocalExecutionPlacement(command, "source cache preparation")
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_FEDERATION_HANDOFF:
+		return validateHandoffCommand(command)
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_INIT:
 		return validateInitCommand(command)
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADDRESS_BIND:
@@ -114,6 +195,17 @@ func ValidateCommand(command *agentpb.StackKitCommand) error {
 		return validateBackupReadOrRunCommand(command)
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE:
 		return validateBackupRestoreCommand(command)
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE_ACTIVATE,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE_RECOVER:
+		return validateRestoreActivationCommand(command)
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_TARGET_RECIPIENT,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_TARGET_IMPORT,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_TARGET_REBIND:
+		return validateBackupTargetDeliveryCommand(command)
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_DELIVERY_RECIPIENT,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_WALLET_ITEM_IMPORT,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_AI_PROVIDER_SETUP:
+		return validateWalletItemDeliveryCommand(command)
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_OWNER_ACTIVATION_STATUS,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_LIST:
 		if command.OwnerApproved {
@@ -127,19 +219,27 @@ func ValidateCommand(command *agentpb.StackKitCommand) error {
 		return nil
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_INVITE:
 		return validateHouseholdInviteCommand(command)
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_REMOVE:
+		return validateHouseholdRemoveCommand(command)
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_TRUST_IMPORT:
 		return validateAdvancedTrustImportCommand(command)
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_CHANGE_SET_CREATE,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_CHANGE_SET_APPLY,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_DRIFT_RECONCILE,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_ROLLBACK,
-		agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_RESTORE_DRILL:
+		agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_RESTORE_DRILL,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_ORIGIN_CERTIFICATE_REQUEST,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_ORIGIN_CERTIFICATE_INSTALL:
 		// validateAdvancedFields admitted the capability and references.
 		return nil
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_UPDATE_PLAN,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_UPDATE_APPLY,
-		agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_REBOOT:
+		agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_REBOOT,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_SECURITY_REPAIR:
 		return validateHostCommand(command)
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_NETWORK_REBIND,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_NETWORK_STATUS:
+		return validateNetworkCommand(command)
 	default:
 		return fmt.Errorf("unsupported StackKit operation %s", command.Operation.String())
 	}
@@ -214,6 +314,22 @@ func validateHouseholdInviteCommand(command *agentpb.StackKitCommand) error {
 	return nil
 }
 
+// validateHouseholdRemoveCommand admits only the closed removal: one Owner
+// approved username. StackKits refuses owner and admin identities itself.
+func validateHouseholdRemoveCommand(command *agentpb.StackKitCommand) error {
+	if !command.OwnerApproved {
+		return fmt.Errorf("StackKit household removal requires Owner approval")
+	}
+	command.HouseholdUsername = strings.TrimSpace(command.HouseholdUsername)
+	if !householdUserPattern.MatchString(command.HouseholdUsername) {
+		return fmt.Errorf("StackKit household username is invalid")
+	}
+	if strings.TrimSpace(command.HouseholdEmail) != "" || strings.TrimSpace(command.HouseholdDisplayName) != "" {
+		return fmt.Errorf("StackKit household removal carries only the username")
+	}
+	return nil
+}
+
 func validateBackupReadOrRunCommand(command *agentpb.StackKitCommand) error {
 	instanceID := strings.TrimSpace(command.StackkitInstanceId)
 	planHash := strings.TrimSpace(command.ExpectedPlanHash)
@@ -240,6 +356,25 @@ func validateBackupRestoreCommand(command *agentpb.StackKitCommand) error {
 		return fmt.Errorf("StackKit backup restore requires a snapshot_anchor_id")
 	}
 	return nil
+}
+
+func IsRestoreActivationOperation(operation agentpb.StackKitOperation) bool {
+	return operation == agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE_ACTIVATE || operation == agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE_RECOVER
+}
+
+var restoreActivationIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{7,127}$`)
+
+func ValidRestoreActivationID(id string) bool { return restoreActivationIDPattern.MatchString(id) }
+
+func validateRestoreActivationCommand(command *agentpb.StackKitCommand) error {
+	if !command.OwnerApproved || command.Stackkit != "basement-kit" || command.StackkitInstanceId == "" ||
+		!specHashPattern.MatchString(command.ExpectedPlanHash) || !specHashPattern.MatchString(command.RestoreResultId) ||
+		!restoreActivationIDPattern.MatchString(command.ActivationOperationId) ||
+		command.DryRun || command.Offline || command.SnapshotAnchorId != "" ||
+		!ReleaseAtLeast(command.Release.Version, MinRestoreActivationRelease) {
+		return fmt.Errorf("restore activation requires approved Basement workspace, exact result/plan/original operation and supporting release")
+	}
+	return validateLocalExecutionPlacement(command, "restore activation")
 }
 
 func validateInitCommand(command *agentpb.StackKitCommand) error {
@@ -376,11 +511,42 @@ func IsHostOperation(operation agentpb.StackKitOperation) bool {
 	switch operation {
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_UPDATE_PLAN,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_UPDATE_APPLY,
-		agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_REBOOT:
+		agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_REBOOT,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_SECURITY_REPAIR:
 		return true
 	default:
 		return false
 	}
+}
+
+// HostSecurityControlIDs is the closed control set of
+// stackkit.host-security-evidence/v1. It is the only vocabulary a repair may
+// name, so a typed command can never carry a free-form argument. The last two
+// judge the SSH certificate access delivered to the node and appear in the
+// evidence only once node custody records SSH access (or StackKits SSH access
+// files exist without such a record); they must stay known here, or the whole
+// evidence of such a node is rejected.
+var HostSecurityControlIDs = []string{
+	"firewall.default_inbound", "ssh.password_authentication", "ssh.root_login", "ssh.port",
+	"bruteforce.fail2ban", "updates.unattended_upgrades", "updates.pending_security", "updates.reboot_required",
+	"kernel.sysctl", "exposure.listeners", "exposure.published_ports", "tls.certificate_expiry",
+	"ssh.user_ca_trust", "ssh.host_certificate",
+}
+
+// MaxHostSecurityRepairControls bounds the controls one repair may name. It is
+// the ceiling of the repair journal (guard_posture_repairs.controls, migration
+// 135), not the size of HostSecurityControlIDs: a repair is admitted only for
+// drifted, automatically repairable controls, which are fewer than that.
+const MaxHostSecurityRepairControls = 12
+
+// ValidHostSecurityControl reports whether id is a known control id.
+func ValidHostSecurityControl(id string) bool {
+	for _, known := range HostSecurityControlIDs {
+		if known == id {
+			return true
+		}
+	}
+	return false
 }
 
 // ValidHostPlanDigest reports a StackKits host update plan digest.
@@ -393,6 +559,7 @@ func ValidHostPlanDigest(digest string) bool {
 // command can never smuggle workspace, spec or capability inputs.
 func validateHostCommand(command *agentpb.StackKitCommand) error {
 	if command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_REBOOT &&
+		command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_SECURITY_REPAIR &&
 		!ReleaseAtLeast(command.Release.Version, MinHostUpdateRelease) {
 		return fmt.Errorf("host updates require StackKits %s or newer; upgrade the configured release pin or Linux runtime bundle", MinHostUpdateRelease)
 	}
@@ -404,6 +571,8 @@ func validateHostCommand(command *agentpb.StackKitCommand) error {
 	switch command.Operation {
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_UPDATE_PLAN:
 		return nil
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_SECURITY_REPAIR:
+		return validateHostSecurityRepair(command)
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_UPDATE_APPLY:
 		if !command.OwnerApproved {
 			return fmt.Errorf("StackKit host update apply requires Owner approval")
@@ -420,6 +589,26 @@ func validateHostCommand(command *agentpb.StackKitCommand) error {
 	}
 }
 
+// validateHostSecurityRepair admits only named controls from the closed set and
+// requires the approval the admission flow recorded.
+func validateHostSecurityRepair(command *agentpb.StackKitCommand) error {
+	if !command.OwnerApproved {
+		return fmt.Errorf("StackKit host security repair requires Owner approval")
+	}
+	controls := command.HostSecurityControls
+	if len(controls) == 0 || len(controls) > MaxHostSecurityRepairControls {
+		return fmt.Errorf("StackKit host security repair needs between one and %d controls", MaxHostSecurityRepairControls)
+	}
+	seen := map[string]bool{}
+	for _, control := range controls {
+		if !ValidHostSecurityControl(control) || seen[control] {
+			return fmt.Errorf("StackKit host security repair control %q is unknown or repeated", control)
+		}
+		seen[control] = true
+	}
+	return nil
+}
+
 func validateLocalExecutionPlacement(command *agentpb.StackKitCommand, operation string) error {
 	if strings.TrimSpace(command.LocalSiteRef) == "" || strings.TrimSpace(command.LocalNodeRef) == "" ||
 		strings.TrimSpace(command.LocalExecutionChannelRef) == "" {
@@ -432,13 +621,21 @@ func RequiresWorkspaceInstanceBinding(command *agentpb.StackKitCommand) bool {
 	if command == nil {
 		return false
 	}
+	if IsApplicationOperation(command.Operation) || IsApplicationConnectorOperation(command.Operation) {
+		return true
+	}
 	switch command.Operation {
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_PREPARE_SOURCE_GENERATION:
+		return true
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_SERVICE_START,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_SERVICE_STOP,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_SERVICE_RESTART,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_SERVICE_LOGS,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_REMOVE,
-		agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE:
+		agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE_ACTIVATE,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE_RECOVER,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_NETWORK_REBIND:
 		return true
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RUN,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_STATUS,
@@ -451,6 +648,24 @@ func RequiresWorkspaceInstanceBinding(command *agentpb.StackKitCommand) bool {
 
 func RequiredAgentCapabilities(command *agentpb.StackKitCommand) []string {
 	required := make([]string, 0, 2)
+	if command != nil && IsRestoreActivationOperation(command.Operation) {
+		required = append(required, RestoreActivationCapability)
+	}
+	if command != nil && command.OriginalRecoveryRelease != nil {
+		required = append(required, OriginalRecoveryReleaseCapability)
+	}
+	if command != nil && command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_PREPARE_SOURCE_GENERATION {
+		required = append(required, SourceGenerationCachePreparationCapability)
+	}
+	if command != nil && command.SourceGenerationInspection {
+		required = append(required, SourceGenerationInspectionCapability)
+	}
+	if command != nil && IsApplicationOperation(command.Operation) {
+		required = append(required, ApplicationAdoptionCapability)
+	}
+	if command != nil && IsApplicationConnectorOperation(command.Operation) {
+		required = append(required, ApplicationConnectorCapability)
+	}
 	if command != nil && command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_APPLY {
 		required = append(required, ExpectedPlanHashCapability)
 	}
@@ -463,8 +678,18 @@ func RequiredAgentCapabilities(command *agentpb.StackKitCommand) []string {
 	if command != nil && IsAdvancedOperation(command.Operation) {
 		required = append(required, AdvancedOperationsCapability)
 	}
+	if command != nil && IsHandoffOperation(command.Operation) {
+		required = append(required, FederationHandoffCapability)
+	}
+	if command != nil && IsNetworkOperation(command.Operation) {
+		required = append(required, NetworkCapability)
+	}
 	if command != nil && IsHostOperation(command.Operation) {
-		required = append(required, HostMaintenanceCapability)
+		if command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_SECURITY_REPAIR {
+			required = append(required, HostSecurityCapability)
+		} else {
+			required = append(required, HostMaintenanceCapability)
+		}
 	}
 	return required
 }
@@ -508,6 +733,16 @@ func ValidateResult(result *agentpb.StackKitResult, command *agentpb.StackKitCom
 		return err
 	}
 	if result.Success {
+		if IsApplicationConnectorOperation(command.Operation) {
+			if _, _, err := ParseApplicationConnectorEvidence(command, result); err != nil {
+				return err
+			}
+		}
+		if IsApplicationOperation(command.Operation) {
+			if _, err := ParseApplicationEvidence(command, result); err != nil {
+				return err
+			}
+		}
 		switch command.Operation {
 		case agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RUN:
 			if _, err := ParseBackupRunEvidence(command, result); err != nil {
@@ -515,6 +750,11 @@ func ValidateResult(result *agentpb.StackKitResult, command *agentpb.StackKitCom
 			}
 		case agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE:
 			if _, err := ParseBackupRestoreEvidence(command, result); err != nil {
+				return err
+			}
+		case agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE_ACTIVATE,
+			agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE_RECOVER:
+			if _, err := ParseRestoreActivationEvidence(command, result); err != nil {
 				return err
 			}
 		case agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_CONFIGURE:
@@ -525,6 +765,25 @@ func ValidateResult(result *agentpb.StackKitResult, command *agentpb.StackKitCom
 			if _, err := ParseAdvancedTrustImportEvidence(command, result); err != nil {
 				return err
 			}
+		case agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_TARGET_RECIPIENT:
+			if _, err := ParseBackupTargetRecipientEvidence(command, result); err != nil {
+				return err
+			}
+		case agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_TARGET_IMPORT,
+			agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_TARGET_REBIND:
+			if _, err := ParseBackupTargetImportEvidence(command, result); err != nil {
+				return err
+			}
+		case agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_DELIVERY_RECIPIENT,
+			agentpb.StackKitOperation_STACKKIT_OPERATION_WALLET_ITEM_IMPORT,
+			agentpb.StackKitOperation_STACKKIT_OPERATION_AI_PROVIDER_SETUP:
+			if err := validateWalletItemDeliveryResult(command, result); err != nil {
+				return err
+			}
+		case agentpb.StackKitOperation_STACKKIT_OPERATION_FEDERATION_HANDOFF:
+			if _, err := ParseHandoffResult(command, result); err != nil {
+				return err
+			}
 		default:
 			if IsAdvancedOperation(command.Operation) {
 				if _, err := ParseAdvancedOperationResult(command, result); err != nil {
@@ -532,6 +791,9 @@ func ValidateResult(result *agentpb.StackKitResult, command *agentpb.StackKitCom
 				}
 			}
 		}
+	}
+	if !IsHandoffOperation(command.Operation) && len(result.HandoffDocument) != 0 {
+		return fmt.Errorf("StackKit handoff_document is only valid for federation hand-off")
 	}
 	if command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_CHANGE_SET_CREATE && result.AdvancedChangeSetSha256 != "" {
 		return fmt.Errorf("StackKit advanced_change_set_sha256 is only valid for change-set create")
@@ -619,6 +881,15 @@ func validateRolloutEvents(events [][]byte) error {
 // stackkit.command-result/v1. The Agent and every accepting transport share
 // this mapping so evidence for one operation cannot satisfy another.
 func ResultCommandName(operation agentpb.StackKitOperation) string {
+	if IsApplicationConnectorOperation(operation) {
+		return "stackkit setup connector"
+	}
+	if name := applicationCommandName(operation); name != "" {
+		return name
+	}
+	if name := walletItemDeliveryCommandName(operation); name != "" {
+		return name
+	}
 	switch operation {
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_INIT:
 		return "stackkit init"
@@ -628,6 +899,8 @@ func ResultCommandName(operation agentpb.StackKitOperation) string {
 		return "stackkit generate"
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_PLAN:
 		return "stackkit plan"
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_PREPARE_SOURCE_GENERATION:
+		return "stackkit kit prepare-source-generation"
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_APPLY:
 		return "stackkit apply"
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_VERIFY:
@@ -655,6 +928,15 @@ func ResultCommandName(operation agentpb.StackKitOperation) string {
 		return "stackkit backup configure"
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE:
 		return "stackkit backup restore"
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE_ACTIVATE:
+		return "stackkit backup restore activate"
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE_RECOVER:
+		return "stackkit backup restore recover"
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_TARGET_RECIPIENT:
+		return "stackkit backup target recipient"
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_TARGET_IMPORT,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_TARGET_REBIND:
+		return "stackkit backup target import"
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_OWNER_ACTIVATION_STATUS:
 		return "stackkit user owner status"
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_OWNER_ACTIVATION_ISSUE:
@@ -663,8 +945,12 @@ func ResultCommandName(operation agentpb.StackKitOperation) string {
 		return "stackkit user list"
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_INVITE:
 		return "stackkit user add"
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_REMOVE:
+		return "stackkit user remove"
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_TRUST_IMPORT:
 		return "stackkit advanced trust import"
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_FEDERATION_HANDOFF:
+		return "stackkit federation handoff"
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_CHANGE_SET_CREATE:
 		return "stackkit advanced change-set create"
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_CHANGE_SET_APPLY:
@@ -675,12 +961,22 @@ func ResultCommandName(operation agentpb.StackKitOperation) string {
 		return "stackkit advanced rollback run"
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_RESTORE_DRILL:
 		return "stackkit advanced restore-drill run"
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_ORIGIN_CERTIFICATE_REQUEST:
+		return "stackkit advanced origin-certificate request"
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_ORIGIN_CERTIFICATE_INSTALL:
+		return "stackkit advanced origin-certificate install"
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_UPDATE_PLAN:
 		return "stackkit host updates plan"
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_UPDATE_APPLY:
 		return "stackkit host updates apply"
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_REBOOT:
 		return "stackkit host reboot"
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_SECURITY_REPAIR:
+		return "stackkit host security repair"
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_NETWORK_REBIND:
+		return "stackkit network rebind"
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_NETWORK_STATUS:
+		return "stackkit network status"
 	default:
 		return ""
 	}
@@ -866,6 +1162,97 @@ func ParseBackupRestoreEvidence(command *agentpb.StackKitCommand, result *agentp
 	return evidence, nil
 }
 
+// RestoreActivationEvidence projects only a terminal result verified by the
+// pinned node CLI. Owner custody and its signature stay on the node.
+type RestoreActivationEvidence struct {
+	OperationID          string
+	RestoreResultID      string
+	SafetySnapshotID     string
+	PlanHash             string
+	ManagedVolumeSetHash string
+	OwnerRef             string
+	Status               string
+	VerifiedAt           time.Time
+}
+
+func ParseRestoreActivationEvidence(command *agentpb.StackKitCommand, result *agentpb.StackKitResult) (RestoreActivationEvidence, error) {
+	if command == nil || result == nil || !result.Success || !IsRestoreActivationOperation(command.Operation) {
+		return RestoreActivationEvidence{}, fmt.Errorf("successful restore activation evidence is required")
+	}
+	if result.CommandId != command.CommandId || result.ExitCode != 0 {
+		return RestoreActivationEvidence{}, fmt.Errorf("restore activation receipt differs from dispatched command")
+	}
+	if err := requireMatchingRelease(result.Release, command.Release); err != nil {
+		return RestoreActivationEvidence{}, err
+	}
+	if err := requirePinnedCLIEvidenceAttestation(result); err != nil {
+		return RestoreActivationEvidence{}, err
+	}
+	var envelope struct {
+		SchemaVersion string `json:"schemaVersion"`
+		Command       string `json:"command"`
+		Status        string `json:"status"`
+		Data          struct {
+			APIVersion              string `json:"apiVersion"`
+			OriginalRecoveryRelease *struct {
+				Version  string `json:"version"`
+				Platform struct {
+					OS   string `json:"os"`
+					Arch string `json:"arch"`
+				} `json:"platform"`
+				ArchiveSHA256      string `json:"archiveSha256"`
+				ReleaseIndexSHA256 string `json:"releaseIndexSha256"`
+			} `json:"originalRecoveryRelease"`
+			OperationID          string `json:"operationId"`
+			RestoreResultID      string `json:"restoreResultId"`
+			SafetySnapshotID     string `json:"safetySnapshotId"`
+			PlanHash             string `json:"planHash"`
+			ManagedVolumeSetHash string `json:"managedVolumeSetHash"`
+			Status               string `json:"status"`
+			Verification         struct {
+				APIVersion         string    `json:"apiVersion"`
+				OwnerRef           string    `json:"ownerRef"`
+				OwnerBindingDigest string    `json:"ownerBindingDigest"`
+				PocketIDSubject    string    `json:"pocketIdSubject"`
+				PlanHash           string    `json:"planHash"`
+				ServicesVerified   bool      `json:"servicesVerified"`
+				VerifiedAt         time.Time `json:"verifiedAt"`
+			} `json:"verification"`
+			Signature struct {
+				OwnerRef string `json:"ownerRef"`
+				KeyID    string `json:"keyId"`
+				Value    string `json:"value"`
+			} `json:"signature"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(result.CommandResultJson, &envelope); err != nil {
+		return RestoreActivationEvidence{}, err
+	}
+	d := envelope.Data
+	if original := command.OriginalRecoveryRelease; original != nil {
+		proof := d.OriginalRecoveryRelease
+		if proof == nil || proof.Version != original.Version || proof.Platform.OS != original.PlatformOs || proof.Platform.Arch != original.PlatformArch ||
+			proof.ArchiveSHA256 != original.ArchiveSha256 || proof.ReleaseIndexSHA256 != original.ReleaseIndexSha256 {
+			return RestoreActivationEvidence{}, fmt.Errorf("recovery evidence differs from the original verified release")
+		}
+	} else if d.OriginalRecoveryRelease != nil {
+		return RestoreActivationEvidence{}, fmt.Errorf("unexpected historical release recovery evidence")
+	}
+	if envelope.SchemaVersion != CommandResultVersion || envelope.Command != ResultCommandName(command.Operation) || envelope.Status != "success" ||
+		d.APIVersion != "stackkit.restore-activation-result/v1" || d.OperationID != command.ActivationOperationId ||
+		d.RestoreResultID != command.RestoreResultId || !specHashPattern.MatchString(d.RestoreResultID) ||
+		d.PlanHash != command.ExpectedPlanHash || !specHashPattern.MatchString(d.PlanHash) ||
+		!specHashPattern.MatchString(d.SafetySnapshotID) || !specHashPattern.MatchString(d.ManagedVolumeSetHash) ||
+		(d.Status != "activated" && d.Status != "recovered") ||
+		d.Verification.APIVersion != "stackkit.local-backup-restore-verification/v1" || d.Verification.OwnerRef == "" ||
+		d.Signature.OwnerRef != d.Verification.OwnerRef || d.Signature.KeyID == "" || d.Signature.Value == "" ||
+		!specHashPattern.MatchString(d.Verification.OwnerBindingDigest) || d.Verification.PocketIDSubject == "" ||
+		d.Verification.PlanHash != d.PlanHash || !d.Verification.ServicesVerified || d.Verification.VerifiedAt.IsZero() {
+		return RestoreActivationEvidence{}, fmt.Errorf("restore activation evidence differs from original operation, result, plan or verified owner")
+	}
+	return RestoreActivationEvidence{OperationID: d.OperationID, RestoreResultID: d.RestoreResultID, SafetySnapshotID: d.SafetySnapshotID, PlanHash: d.PlanHash, ManagedVolumeSetHash: d.ManagedVolumeSetHash, OwnerRef: d.Verification.OwnerRef, Status: d.Status, VerifiedAt: d.Verification.VerifiedAt}, nil
+}
+
 func serviceResultCommandName(operation agentpb.StackKitOperation) string {
 	switch operation {
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_SERVICE_START:
@@ -901,5 +1288,28 @@ func validRolloutStatus(status string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// IsMutatingOperation reports whether an operation can change the host, its
+// workloads or StackKits state. Only operations that observe are read-only;
+// every other value, including one added later, is treated as mutating so a
+// new operation fails closed under the Guard execution fence.
+func IsMutatingOperation(operation agentpb.StackKitOperation) bool {
+	switch operation {
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_VALIDATE,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_APPLICATION_CONNECTOR_VERIFY,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_VERIFY,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_DRIFT_DETECT,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_PLAN,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_SERVICE_LOGS,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_STATUS,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_OWNER_ACTIVATION_STATUS,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_LIST,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_NETWORK_STATUS,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_UPDATE_PLAN:
+		return false
+	default:
+		return true
 	}
 }

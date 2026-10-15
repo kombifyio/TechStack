@@ -359,6 +359,7 @@ func attachEdgeFlags(e *httpx.Event, cfg EdgeIdentityConfig) error {
 				EdgeAuthKeyID:      firstNonEmpty(cfg.EdgeAuthKeyID, os.Getenv("EDGE_AUTH_KEY_ID"), defaultEdgeKeyID),
 				EdgeAuthNextKeyID:  firstNonEmpty(cfg.EdgeAuthNextKeyID, os.Getenv("EDGE_AUTH_KEY_ID_NEXT"), defaultEdgeNextKeyID),
 				SignatureWindow:    cfg.EdgeSignatureWindow,
+				ExpectedServices:   edgeExpectedServices,
 			},
 		})
 		if err != nil {
@@ -419,6 +420,21 @@ func hasAnyEdgeFlagHeader(r *http.Request) bool {
 	return false
 }
 
+// edgeExpectedServices lists the X-Kombify-Edge-Service values the Gateway
+// signs for routes that reach this origin (see kombify-Gateway
+// cloudflare-edge router.ts).
+var edgeExpectedServices = []string{
+	"techstack", "capabilities", "capability-catalog", "supply-dock-catalog",
+	"capability-activations", "connector-vault", "harness-policy", "ril",
+}
+
+// edgeReplayGuard is the single process-wide nonce guard (2x the default 5m
+// signature window). It is set only on verifyEdgeSignature's Middleware call,
+// the one verification per request that consumes the nonce; the decision-header
+// identity verification in attachEdgeFlags re-checks the same envelope and must
+// not carry it.
+var edgeReplayGuard = commonedgeauth.NewMemoryReplayGuard(10*time.Minute, 0)
+
 // verifyEdgeSignature delegates HMAC envelope verification to the shared
 // go-common edgeauth verifier, which accepts v1, v2 and v7 signatures. The v2
 // payload additionally binds X-Kombify-Entitlements + X-Kombify-Knowledge-Tier
@@ -440,6 +456,8 @@ func verifyEdgeSignature(r *http.Request, cfg EdgeIdentityConfig) (stepUp common
 		EdgeAuthKeyID:      firstNonEmpty(cfg.EdgeAuthKeyID, os.Getenv("EDGE_AUTH_KEY_ID"), defaultEdgeKeyID),
 		EdgeAuthNextKeyID:  firstNonEmpty(cfg.EdgeAuthNextKeyID, os.Getenv("EDGE_AUTH_KEY_ID_NEXT"), defaultEdgeNextKeyID),
 		SignatureWindow:    cfg.EdgeSignatureWindow,
+		ExpectedServices:   edgeExpectedServices,
+		ReplayGuard:        edgeReplayGuard,
 	}
 
 	verified := false

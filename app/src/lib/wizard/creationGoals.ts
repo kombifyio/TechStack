@@ -1,6 +1,6 @@
-import type {
-  UseCaseCatalogView,
-  UseCaseCatalogComponent,
+import {
+  installsService,
+  type UseCaseCatalogView,
 } from "#lib/api/useCaseCatalog.js";
 import type {
   BundleQuestionDefinition,
@@ -11,12 +11,12 @@ export type CreationVariant = "discover" | "focus";
 
 /** Intent presentation only. Never use this to decide deployment eligibility.
  * Runtime facts come from the released catalog; the preview has its own snapshot.
- * Target choices: StackKits docs/use-case-expansion/portfolio.md (eleven main
- * use cases). Owner correction, 2026-09-19: Documents/Files together; Paperless
- * is an add-on. Remote belongs to Dev. A twelfth main intent is still unresolved.
- * Owner decision, 2026-09-24: Game and Mail are active; AI still needs its
- * target planning, so it stays Coming soon with Network and Automation.
- * Owner decision, 2026-09-26: Dev is active (Gitea, Forgejo alternative).
+ * Target choices: StackKits docs/use-case-expansion/portfolio.md.
+ * Documents/Files stay together; Paperless is an add-on and Remote belongs
+ * to Dev. Marketplace is optional and uses the released catalog.
+ * Availability follows the pinned release catalog (owner decision 2026-10-07):
+ * an intent without a Wizard question or a released application (Network,
+ * Automation) stays Coming soon.
  */
 export const CREATION_PORTFOLIO = [
   "photos",
@@ -30,10 +30,9 @@ export const CREATION_PORTFOLIO = [
   "network",
   "automation",
   "ai",
+  "marketplace",
 ] as const;
 export type CreationGoalId = (typeof CREATION_PORTFOLIO)[number];
-
-const COMING_SOON: readonly CreationGoalId[] = ["network", "automation", "ai"];
 
 export interface CreationGoal {
   id: CreationGoalId;
@@ -42,71 +41,33 @@ export interface CreationGoal {
   availability: "available" | "coming-soon";
 }
 
-/** Recovered product targets are display-only until the runtime advertises them.
- * Source: StackKits use-case-expansion plan e29d4561 and owner decision 2026-09-19.
- * Keep the original runtime catalog for every eligibility/setting decision.
- */
-export function withCreationTargets(
-  source: Map<string, UseCaseCatalogView>,
-  preview = false,
-) {
-  const result = new Map(source);
-  const component = (
-    id: string,
-    name: string,
-    role: UseCaseCatalogComponent["role"],
-  ): UseCaseCatalogComponent => ({ id, name, role, kind: "application" });
-  const files = source.get("files");
-  if (
-    files &&
-    !files.components.some((entry) => entry.id === "paperless-ngx")
-  ) {
-    result.set("files", {
-      ...files,
-      components: [
-        ...files.components,
-        component("paperless-ngx", "Paperless-ngx", "supporting"),
-      ],
-    });
-  }
-  const targets = new Map<string, UseCaseCatalogComponent[]>([
-    [
-      "mail",
-      [
-        component("paperwork", "kombify Paperwork", "primary"),
-        component("roundcube", "Roundcube", "alternative"),
-        component("stalwart", "Stalwart", "supporting"),
-        component("mailcow", "mailcow", "supporting"),
-      ],
-    ],
-    ["game", [component("pterodactyl", "Pterodactyl", "primary")]],
-  ]);
-  for (const [id, components] of targets) {
-    const released = source.get(id);
-    if (preview || released?.deliverable === false)
-      result.set(id, {
-        ...released,
-        components,
-        computeTiers: released?.computeTiers ?? {},
-        settings: released?.settings ?? [],
-      });
-  }
-  return result;
-}
-
+/** A portfolio intent is available when the Wizard asks for it and the
+ * release catalog builds it from an installing application with a native
+ * alternative (its catalog maturity is present); everything else is
+ * Coming soon. Beta and experimental use cases stay available and carry a
+ * label (owner decision 2026-10-07), so a new release shows up on its own. */
 export function creationGoals(
   questions: BundleQuestionDefinition<GoalConfigKey>[],
   catalog: Map<string, UseCaseCatalogView>,
 ): CreationGoal[] {
+  // Intent alone cannot advertise a released application. A missing catalog
+  // leaves Marketplace and other cards unavailable.
+  const released = (id: CreationGoalId) =>
+    backendChoices(catalog.get(id)).some(
+      (component) =>
+        component.kind === "application" &&
+        component.maturity !== undefined &&
+        component.realization !== "recorded" &&
+        installsService(component),
+    );
   return CREATION_PORTFOLIO.map((id) => ({
     id,
     question: questions.find((entry) => entry.configKey === id),
     catalog: catalog.get(id),
     availability:
-      COMING_SOON.includes(id) ||
-      !questions.some((question) => question.configKey === id)
-        ? "coming-soon"
-        : "available",
+      questions.some((question) => question.configKey === id) && released(id)
+        ? "available"
+        : "coming-soon",
   }));
 }
 

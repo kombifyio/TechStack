@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -16,18 +17,18 @@ type workflowAuditReaderFake struct {
 	events []workflow.AuditEvent
 }
 
-func (f workflowAuditReaderFake) GetRun(runID string) (*workflow.Run, error) {
+func (f workflowAuditReaderFake) GetRun(_ context.Context, runID string) (*workflow.Run, error) {
 	if f.run == nil || f.run.RunID != runID {
 		return nil, workflow.ErrNotFound
 	}
 	return f.run, nil
 }
 
-func (f workflowAuditReaderFake) ListSteps(string) ([]*workflow.Step, error) {
+func (f workflowAuditReaderFake) ListSteps(context.Context, string) ([]*workflow.Step, error) {
 	return f.steps, nil
 }
 
-func (f workflowAuditReaderFake) ListAudit(tenantID, _ string, _ int) ([]workflow.AuditEvent, error) {
+func (f workflowAuditReaderFake) ListAudit(_ context.Context, tenantID, _ string, _ int) ([]workflow.AuditEvent, error) {
 	if tenantID != "tenant-1" {
 		return nil, errors.New("unexpected tenant")
 	}
@@ -38,7 +39,7 @@ func TestWorkflowAuditIsOwnerScopedAndSanitized(t *testing.T) {
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
 	reader := workflowAuditReaderFake{
 		run: &workflow.Run{
-			RunID: "run-1", Type: workflow.TypeActionCardRemediation, Status: workflow.RunCompleted,
+			TenantID: "tenant-1", RunID: "run-1", Type: workflow.TypeActionCardRemediation, Status: workflow.RunCompleted,
 			OwnerID: "owner-1", ServerID: "server-1", CardID: "card-1",
 			Input:   map[string]any{"tenant_id": "tenant-1", "secret": "never-return"},
 			Context: map[string]any{"connector_token": "never-return"}, Created: now, Updated: now,

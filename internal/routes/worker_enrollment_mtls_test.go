@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -70,11 +71,24 @@ func TestWorkerEnrollmentResponseOmitsMTLSIdentityWhenGRPCIsDisabled(t *testing.
 	}
 }
 
-func TestWorkerEnrollmentResponseMarksExplicitPrivateLANHTTP(t *testing.T) {
-	event := &httpx.Event{Request: httptest.NewRequest(http.MethodPost, "http://192.168.10.2:5264/api/v1/workers/register", nil), Response: httptest.NewRecorder()}
-	event.Request.Header.Set("X-Techstack-LAN-Bridge", "1")
-	response := (workerRouteHandlers{}).workerEnrollmentResponse(event, workerEnrollmentContext{WorkerID: "agent-1"})
-	if response["allow_private_lan_http"] != true || response["private_lan_http_origin"] != "http://192.168.10.2:5264" || response["transport_security"] != "private-lan-http" {
-		t.Fatalf("private-LAN enrollment capability missing: %#v", response)
+// Only a request the LAN bridge itself received names its origin and key pin;
+// a client cannot claim the bridge with a header or Host value.
+func TestWorkerEnrollmentResponseNamesOnlyTheBridgeItArrivedThrough(t *testing.T) {
+	const origin, pin = "https://192.168.10.2:5264", "sha256//47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
+	bridged := httptest.NewRequest(http.MethodPost, origin+"/api/v1/workers/register", nil)
+	bridged = bridged.WithContext(WithLocalLANBridge(bridged.Context(), origin, pin))
+	response := (workerRouteHandlers{}).workerEnrollmentResponse(&httpx.Event{Request: bridged, Response: httptest.NewRecorder()}, workerEnrollmentContext{WorkerID: "agent-1"})
+	if response["private_lan_origin"] != origin || response["private_lan_pin"] != pin || response["heartbeat_url"] == nil {
+		t.Fatalf("bridge enrollment lacks its origin and pin: %#v", response)
+	}
+	if heartbeat, _ := response["heartbeat_url"].(string); !strings.HasPrefix(heartbeat, origin+"/") {
+		t.Fatalf("bridge enrollment points the Guard at %q, not the bridge", heartbeat)
+	}
+
+	forged := httptest.NewRequest(http.MethodPost, origin+"/api/v1/workers/register", nil)
+	forged.Header.Set("X-Techstack-LAN-Bridge", "1")
+	response = (workerRouteHandlers{}).workerEnrollmentResponse(&httpx.Event{Request: forged, Response: httptest.NewRecorder()}, workerEnrollmentContext{WorkerID: "agent-1"})
+	if _, ok := response["private_lan_pin"]; ok {
+		t.Fatalf("a request outside the bridge was given a LAN pin: %#v", response)
 	}
 }

@@ -23,6 +23,10 @@ type PostgresStore struct {
 	tenantID string
 }
 
+type atomicAuthStore interface {
+	CompareAndSwapBreakglassAdmin(context.Context, *controlplane.BreakglassAdmin, *controlplane.BreakglassAdmin) (bool, error)
+}
+
 func NewPostgres(store controlplane.AuthStore, tenantID string) *PostgresStore {
 	return &PostgresStore{
 		store:    store,
@@ -74,12 +78,42 @@ func (s *PostgresStore) Save(ctx context.Context, r *authlocal.Record) error {
 		TenantID:     tenantID,
 		Email:        r.Email,
 		PasswordHash: r.PasswordHash,
+		Locked:       r.Locked,
 		Metadata:     metadata,
 	})
 	if err != nil {
 		return fmt.Errorf("save breakglass admin: %w", err)
 	}
 	return nil
+}
+
+func (s *PostgresStore) CompareAndSwap(ctx context.Context, expected, next *authlocal.Record) (bool, error) {
+	if s == nil || s.store == nil || s.tenantID == "" || next == nil {
+		return false, errors.New("breakglass: store, tenant and record required")
+	}
+	store, ok := s.store.(atomicAuthStore)
+	if !ok {
+		return false, authlocal.ErrAtomicStoreRequired
+	}
+	return store.CompareAndSwapBreakglassAdmin(ctx, s.localRecordToAdmin(expected), s.localRecordToAdmin(next))
+}
+
+func (s *PostgresStore) localRecordToAdmin(r *authlocal.Record) *controlplane.BreakglassAdmin {
+	if r == nil {
+		return nil
+	}
+	metadata := map[string]any{
+		breakglassMetadataClaimed:      r.Claimed,
+		breakglassMetadataShowPassword: r.ShowPassword,
+	}
+	if !r.ShowUntil.IsZero() {
+		metadata[breakglassMetadataShowUntil] = r.ShowUntil.UTC().Format(time.RFC3339)
+	}
+	return &controlplane.BreakglassAdmin{
+		ID: authlocal.BreakGlassRecordID, TenantID: s.tenantID,
+		Email: r.Email, PasswordHash: r.PasswordHash, Locked: r.Locked,
+		Metadata: metadata, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+	}
 }
 
 func breakglassAdminToLocalRecord(admin *controlplane.BreakglassAdmin) *authlocal.Record {
@@ -90,6 +124,7 @@ func breakglassAdminToLocalRecord(admin *controlplane.BreakglassAdmin) *authloca
 		Email:        admin.Email,
 		PasswordHash: admin.PasswordHash,
 		Claimed:      boolMetadata(admin.Metadata[breakglassMetadataClaimed]),
+		Locked:       admin.Locked,
 		ShowPassword: stringMetadata(admin.Metadata[breakglassMetadataShowPassword]),
 		CreatedAt:    admin.CreatedAt,
 		UpdatedAt:    admin.UpdatedAt,
@@ -140,3 +175,4 @@ func timeMetadata(value any) (time.Time, bool) {
 }
 
 var _ authlocal.Store = (*PostgresStore)(nil)
+var _ authlocal.AtomicStore = (*PostgresStore)(nil)

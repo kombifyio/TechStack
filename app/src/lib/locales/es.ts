@@ -1,4 +1,44 @@
 export const es: Record<string, string> = {
+  "ui.clientLocal.bootstrapPassword": "Contraseña de arranque",
+  "ui.clientLocal.bootstrapGuidance":
+    "Ejecuta {command} en un terminal del host de esta instalación para obtener la contraseña de arranque. Si una contraseña anterior se consumió o caducó, el comando la sustituye y la contraseña anterior deja de funcionar.",
+  "setupReplay.restart": "Repetir configuración",
+  "setupReplay.title": "Tu conexión actual",
+  "setupReplay.body":
+    "Revisa cómo se conecta este dispositivo y vuelve a la introducción. Tu borrador de ajustes permanece aquí.",
+  "setupReplay.edition": "Edición del instalador",
+  "setupReplay.localEdition": "Techstack Local",
+  "setupReplay.cloudEdition": "Techstack Cloud",
+  "setupReplay.connection": "Conexión",
+  "setupReplay.address": "Dirección",
+  "setupReplay.browser": "Navegador web",
+  "setupReplay.unavailable":
+    "No se pudo leer la conexión de escritorio. Puedes pasar a la introducción.",
+  "setupReplay.skip": "Omitir configuración",
+  "setupReplay.keep": "Mantener conexión",
+  "ui.services.stackIt": "Stack it",
+  "ui.services.approveStackIt": "Aprobar esta adopción",
+  "ui.services.releaseBinding": "Liberar la gestión del ciclo de vida",
+  "ui.services.adoptionScope":
+    "Revisa este contenedor existente de Home Assistant para gestionar su ciclo de vida donde está. Este perfil no admite otras aplicaciones ni trasladarlas a otro Node.",
+  "ui.services.adoptionSource": "Contenedor existente",
+  "ui.services.adoptionData": "Configuración conservada",
+  "ui.services.adoptionPreserves":
+    "Las cuentas, la configuración y los datos persistentes permanecen en esta aplicación. No se recrea el entorno de ejecución ni se inicializa ninguna cuenta.",
+  "ui.services.adoptionOperations":
+    "La vinculación aprobada permite verificar, iniciar, detener y reiniciar. Actualizar o recrear la aplicación requiere otro plan compatible.",
+  "ui.services.adoptionProgress": "Ver el progreso de la operación",
+  "ui.services.adoptionChecking": "Comprobando la operación guardada",
+  "ui.services.adoptionFailed":
+    "La operación no se completó. Revisa sus evidencias antes de volver a intentarlo.",
+  "ui.services.adoptionUnavailable":
+    "Para evaluar la adopción, este origen necesita una identidad exacta del contenedor y una versión publicada de StackKits compatible en su Guard conectado.",
+  "ui.services.adoptionVerified":
+    "Vinculación del ciclo de vida verificada. Esta aplicación ahora está Stacked.",
+  "ui.services.releasePreservesRuntime":
+    "Libera la vinculación del ciclo de vida. El contenedor existente, las cuentas, la configuración y los datos permanecen donde están y conservan su estado actual.",
+  "ui.services.bindingReleased":
+    "Vinculación del ciclo de vida liberada. La aplicación sigue visible como Unstacked.",
   "wizard.identity.eyebrow": "Una última llave",
   "wizard.identity.title": "Haz tuya esta casa.",
   "wizard.identity.ready": "Tu inicio de sesión está listo.",
@@ -309,6 +349,8 @@ export const es: Record<string, string> = {
   "ui.dashboard.alerts": "Alertas",
   "ui.common.importExport": "Importar / Exportar",
   "ui.dashboard.sections": "Secciones del homelab",
+  "ui.dashboard.failureDetails": "Detalles",
+  "ui.dashboard.hideFailureDetails": "Ocultar detalles",
   "ui.dashboard.inventoryUnavailable":
     "El estado canónico de los Nodes y los servicios no está disponible. La telemetría conservada de abajo es de diagnóstico y no se trata como un inventario vacío.",
   "ui.dashboard.noNodes": "Aún no hay Nodes registrados para este homelab.",
@@ -393,6 +435,10 @@ export const es: Record<string, string> = {
   "ui.theme.toggle": "Cambiar entre tema oscuro y claro",
   "ui.layout.toggleMenu": "Mostrar u ocultar el menú",
   "ui.layout.closeMenu": "Cerrar menú",
+  "ui.layout.collapseSidebar": "Contraer la barra lateral",
+  "ui.layout.expandSidebar": "Expandir la barra lateral",
+  "ui.layout.resizeSidebar": "Cambiar el tamaño de la barra lateral",
+  "ui.layout.sidebarCollapsed": "Contraída",
   "ui.redirect.homelab": "Redirigiendo a tu homelab...",
   "ui.redirect.generic": "Redirigiendo...",
   "ui.sso.signingIn": "Iniciando tu sesión...",
@@ -455,7 +501,14 @@ export const es: Record<string, string> = {
   "wizard.preview.game.description":
     "Un mundo de Minecraft para ti y tus amigos.",
   "wizard.preview.game.help":
-    "La experiencia de Juegos prevista usa Pterodactyl para gestionar un mundo de Minecraft persistente. Elige Java o Bedrock según tus jugadores. El alojamiento local y un VPS gestionado son opciones de ubicación distintas; las invitaciones y la recuperación del mundo forman parte de la configuración.",
+    "Los juegos se ejecutan en un panel de juegos que gestiona un mundo de Minecraft persistente: Calagopus por defecto, con Pelican y Pterodactyl como alternativas. Elige Java o Bedrock según tus jugadores. El alojamiento local y un VPS gestionado son opciones de ubicación distintas; las invitaciones y la recuperación del mundo forman parte de la configuración.",
+  "wizard.status.beta": "Beta",
+  "wizard.status.experimental": "Experimental",
+  "wizard.status.deprecated": "Obsoleto",
+  "wizard.status.supported": "Compatible",
+  "wizard.status.hint":
+    "Estado de la versión de StackKits fijada. Los casos de uso beta se instalan y todavía se están validando.",
+  "wizard.preview.release": "StackKits {tag}",
   "wizard.preview.game.edition": "Edición de Minecraft",
   "wizard.preview.dev.description":
     "Tus proyectos y tu espacio de trabajo remoto, juntos.",
@@ -494,8 +547,6 @@ export const es: Record<string, string> = {
   "wizard.preview.title": "Haz sitio para lo que importa.",
   "wizard.preview.subtitle":
     "Elige lo que quieres hacer tuyo. Empieza con el servicio sugerido o elige una alternativa. Los detalles están ahí cuando los necesites.",
-  "wizard.preview.available": "Elige tus casos de uso",
-  "wizard.preview.availableHint": "Elige un caso de uso. Hazlo tuyo.",
   "wizard.preview.defaultService": "Sugerido",
   "wizard.preview.alternative": "Alternativa",
   "wizard.preview.savedForLater": "Guardado para más tarde",
@@ -599,7 +650,7 @@ export const es: Record<string, string> = {
   "wizard.server.hypervisor.help":
     "Usa tu Proxmox conectado y su almacenamiento y red existentes.",
   "wizard.server.hypervisor.standard":
-    "Ubuntu 24.04 LTS ejecuta el núcleo de tus StackKits en una VM aparte. Techstack prepara y conecta el invitado automáticamente.",
+    "Ubuntu LTS ejecuta el núcleo de tus StackKits en una VM aparte. Techstack prepara y conecta el invitado automáticamente.",
   "wizard.server.hypervisor.appliance":
     "Home Assistant OS usa una VM appliance aparte. El invitado Ubuntu sigue ejecutando el núcleo y los demás servicios.",
   "wizard.server.hypervisor.host": "Servidor Proxmox conectado",
@@ -632,12 +683,15 @@ export const es: Record<string, string> = {
   "nav.dashboard": "Panel",
   "nav.monitoring": "Monitorización",
   "nav.services": "Servicios",
+  "nav.apps": "Apps",
   "nav.wallet": "Wallet",
   "nav.help": "Ayuda",
   "nav.settings": "Ajustes",
   "nav.logout": "Cerrar sesión",
   "nav.theme": "Tema",
   "appearance.inherit": "Seguir el valor por defecto",
+  "appearance.sessionHint":
+    "Solo para esta sesión. El valor predeterminado se cambia en los ajustes de kombify Cloud.",
   "appearance.dark": "Oscuro",
   "appearance.light": "Claro",
   "appearance.system": "Sistema",
@@ -751,12 +805,51 @@ export const es: Record<string, string> = {
   "common.moreInfo": "Más sobre esta opción",
   "common.recommended": "recomendado",
   "wizard.title": "Crear kombify-Techstack",
-  "wizard.selfDisclosure.applying":
-    "Aplicando lo que nos contaste en kombify Cloud…",
+  "wizard.selfDisclosure.review.title": "¿Usar las respuestas de este enlace?",
+  "wizard.selfDisclosure.review.body":
+    "El enlace que has abierto contiene estas respuestas sobre ti. Techstack las guarda en tu perfil y las usa para tus recomendaciones solo si eliges «Usar estas respuestas». Todavía no se ha guardado nada.",
+  "wizard.selfDisclosure.review.notes": "¿Algo más? (opcional)",
+  "wizard.selfDisclosure.review.notesHint":
+    "Detalles del hardware, deseos especiales o lo que te preocupa, con tus propias palabras.",
+  "wizard.selfDisclosure.review.use": "Usar estas respuestas",
+  "wizard.selfDisclosure.review.discard": "Descartar",
+  "wizard.selfDisclosure.applying": "Guardando tus respuestas…",
   "wizard.selfDisclosure.applied":
-    "Hemos usado lo que nos contaste en kombify Cloud. Todo sigue siendo editable.",
+    "Tus respuestas están guardadas en tu perfil. Todo sigue siendo editable.",
   "wizard.selfDisclosure.failed":
-    "No se pudieron guardar tus respuestas de kombify Cloud. Puedes continuar; el asistente funciona sin ellas.",
+    "No se pudieron guardar tus respuestas. Puedes continuar; el asistente funciona sin ellas.",
+  "wizard.selfDisclosure.question.experience": "¿Cuánto quieres implicarte?",
+  "wizard.selfDisclosure.question.goals": "¿Qué debería hacer tu homelab?",
+  "wizard.selfDisclosure.question.placement": "¿Dónde debería ejecutarse?",
+  "wizard.selfDisclosure.question.hardware": "¿Qué hardware tienes?",
+  "wizard.selfDisclosure.question.household": "¿Quién lo usará?",
+  "wizard.selfDisclosure.question.motivations":
+    "¿Por qué lo estás construyendo?",
+  "wizard.selfDisclosure.experience.hands-off": "Que simplemente funcione",
+  "wizard.selfDisclosure.experience.guided": "Guíame",
+  "wizard.selfDisclosure.experience.curious": "Administrador curioso",
+  "wizard.selfDisclosure.experience.techie": "Aficionado a la tecnología",
+  "wizard.selfDisclosure.experience.expert": "Experto",
+  "wizard.selfDisclosure.placement.home": "En casa",
+  "wizard.selfDisclosure.placement.rented": "En un servidor alquilado",
+  "wizard.selfDisclosure.placement.both": "Ambos",
+  "wizard.selfDisclosure.placement.unsure": "Aún no lo sé",
+  "wizard.selfDisclosure.hardware.none-yet": "Todavía nada",
+  "wizard.selfDisclosure.hardware.old-pc": "Un PC o portátil antiguo",
+  "wizard.selfDisclosure.hardware.mini-pc": "Un mini PC",
+  "wizard.selfDisclosure.hardware.nas": "Un NAS",
+  "wizard.selfDisclosure.hardware.raspberry-pi": "Una Raspberry Pi",
+  "wizard.selfDisclosure.hardware.rented-server": "Un servidor alquilado",
+  "wizard.selfDisclosure.household.just-me": "Solo yo",
+  "wizard.selfDisclosure.household.household": "Mi hogar",
+  "wizard.selfDisclosure.household.friends-family": "Familia y amigos",
+  "wizard.selfDisclosure.household.small-team": "Un equipo pequeño",
+  "wizard.selfDisclosure.motivation.privacy": "Privacidad y control",
+  "wizard.selfDisclosure.motivation.replace-subscriptions":
+    "Sustituir suscripciones de pago",
+  "wizard.selfDisclosure.motivation.learning": "Aprender y trastear",
+  "wizard.selfDisclosure.motivation.family": "Algo para mi familia",
+  "wizard.selfDisclosure.motivation.projects": "Trabajo o proyectos personales",
   "wizard.step.goals": "Objetivos",
   "wizard.step.server": "Node",
   "wizard.step.access": "Acceso",
@@ -859,11 +952,11 @@ export const es: Record<string, string> = {
     "Recomendación: usa un proxy inverso (Traefik) para SSL. El alojamiento de correo requiere una buena protección contra el spam.",
   "wizard.goals.everything.title": "¡Hasta el infinito y más allá!",
   "wizard.goals.everything.description":
-    "La solución completa para la máxima independencia. Hazlo todo a la vez y aún más.",
+    "El homelab completo con un clic: todo lo que encaja contigo y tus dispositivos.",
   "wizard.goals.everything.help":
     "Activa almacenamiento, alojamiento web, monitorización y más.",
   "wizard.goals.everything.tip":
-    "Recomendación: ideal para usuarios con experiencia o si tienes hardware dedicado preparado.",
+    "Elegimos lo que encaja con tu experiencia y tu hardware. Puedes desmarcar lo que quieras.",
   "wizard.goals.tipText":
     "Si no estás seguro, elige solo un objetivo. kombify-Techstack sigue siendo un único sistema y puedes añadir más servicios después. ¿Necesitas más ajustes? Prueba los ajustes avanzados de abajo.",
   "wizard.goals.advancedTitle": "Casos de uso avanzados",
@@ -1032,6 +1125,44 @@ export const es: Record<string, string> = {
   "wizard.step.inherited": "Ya definido para tu Homelab",
   "wizard.step.existingOwner":
     "El propietario de tu Homelab sigue siendo el mismo",
+  "wizard.addApp.title": "Añadir aplicación",
+  "wizard.addApp.intro":
+    "Elige una aplicación y el Node en el que se ejecuta. El acceso, las personas y el inicio de sesión siguen como los tiene tu Homelab.",
+  "wizard.addApp.catalogEmpty":
+    "El catálogo aún no ofrece ninguna aplicación para este Homelab.",
+  "wizard.addApp.recommended": "Recomendado",
+  "wizard.addApp.about": "Acerca de",
+  "wizard.addApp.nodeTitle": "¿Dónde debe ejecutarse {name}?",
+  "wizard.addApp.nodeUnsupported": "El StackKit de este Node no ofrece {name}.",
+  "wizard.addApp.nodeNotReady": "Aún no está listo para despliegues",
+  "wizard.addApp.submit": "Añadir aplicación",
+  "wizard.addApp.result": "{name} se añadió a {node}.",
+  "wizard.addApp.resultStatus": "Estado: {status}",
+  "wizard.addApp.done": "Listo",
+  "wizard.settings.title": "Ajustes del Homelab",
+  "wizard.settings.intro":
+    "Cambia quién usa tu Homelab y cómo inicias sesión. Cada paso actúa al instante sobre tu Homelab en ejecución.",
+  "wizard.settings.entry":
+    "Personas e inicio de sesión de tu Homelab, en los pasos conocidos del asistente.",
+  "wizard.settings.open": "Editar ajustes del Homelab",
+  "wizard.settings.loadError": "No se pudo cargar tu Homelab.",
+  "wizard.settings.empty": "Todavía no hay ningún Homelab configurado.",
+  "wizard.settings.deployment": "Despliegue de StackKit",
+  "wizard.settings.goalsElsewhere": "Añade aplicaciones con Añadir aplicación.",
+  "wizard.settings.serverElsewhere": "Añade servidores con Añadir Node.",
+  "wizard.settings.accessUnsupported":
+    "El acceso aún no se puede cambiar en un Homelab en ejecución.",
+  "wizard.settings.openAddApplication": "Añadir aplicación",
+  "wizard.settings.openAddNode": "Añadir Node",
+  "wizard.settings.usersTitle": "Personas",
+  "wizard.settings.usersIntro":
+    "Invita a las personas que planificaste para este Homelab. Cada una recibe un enlace de inicio de sesión personal.",
+  "wizard.settings.loginTitle": "Inicio de sesión",
+  "wizard.settings.loginIntro":
+    "Activa tu inicio de sesión con passkey o emite un enlace nuevo si el último caducó.",
+  "wizard.settings.noPlannedPeople":
+    "No se planificaron personas para este Homelab. Aún no se pueden añadir personas nuevas aquí.",
+  "wizard.settings.members": "Miembros",
   "wizard.server.cloud.title": "VPS de kombify",
   "wizard.server.cloud.description":
     "Tu propio servidor virtual, proporcionado y conectado por kombify.",
@@ -1614,6 +1745,10 @@ export const es: Record<string, string> = {
   "ui.footerModern.madeWith": "Hecho con",
   "ui.footerModern.privacy": "Privacidad",
   "ui.footerModern.terms": "Términos",
+  "ui.groupedTaskList.aboutMinutes": "~{count} min",
+  "ui.groupedTaskList.aboutSeconds": "~{count} s",
+  "ui.groupedTaskList.longerThanUsual": "tarda un poco más de lo habitual",
+  "ui.groupedTaskList.usually": "normalmente {duration}",
   "ui.groupedTaskList.done": "Hecho",
   "ui.homelab.agentVersions.one": "Versión de Agent notificada: {versions}.",
   "ui.homelab.agentVersions.other":
@@ -1977,10 +2112,43 @@ export const es: Record<string, string> = {
   "ui.nodeActions.canonicalManagedAccessIsNot":
     "El acceso gestionado canónico aún no está disponible.",
   "ui.nodeActions.connection": "Conexión del Node: {state}",
-  "ui.nodeRow.hideSystemServices": "Ocultar servicios del sistema",
-  "ui.nodeRow.showFewerApps": "Mostrar menos apps",
   "ui.nodeRow.systemServices.one": "{count} servicio del sistema",
   "ui.nodeRow.systemServices.other": "{count} servicios del sistema",
+  "ui.nodeActions.menu": "Acciones de {node}",
+  "ui.nodeMessage.idle": "Sin mensajes abiertos",
+  "ui.nodeMessage.needsAttention": "Este Node requiere atención",
+  "ui.nodeMessage.panel": "Mensajes de {node}",
+  "ui.nodeMessage.listPanel": "Mensajes sobre la lista de Nodes",
+  "ui.nodeRow.moreServices": "+ {count} más",
+  "ui.apps.description":
+    "Todo lo que abres con una interfaz en tus servidores. Servicios muestra cada servicio con sus ajustes.",
+  "ui.apps.view": "Vista",
+  "ui.apps.viewList": "Lista",
+  "ui.apps.viewLogos": "Logotipos",
+  "ui.apps.viewCards": "Tarjetas",
+  "ui.apps.loading": "Cargando aplicaciones…",
+  "ui.apps.unavailable":
+    "No se pudieron cargar las aplicaciones. Inténtalo de nuevo en un momento.",
+  "ui.apps.empty":
+    "Aún no se encontraron aplicaciones con interfaz en tus servidores.",
+  "ui.nodeRow.openApp": "Abrir {app}",
+  "ui.nodeRow.appDetails": "Detalles de {app}",
+  "ui.nodeRow.appLogs": "Registros de {app}",
+  "ui.nodeRow.copyAddress": "Copiar la dirección de {app}",
+  "ui.nodeRow.addressCopied": "Dirección copiada",
+  "ui.nodeRow.placementManaged": "Gestionado",
+  "ui.nodeRow.stackIt": "Integrar en el stack",
+  "ui.nodeRow.copyFailed": "No se pudo copiar la dirección",
+  "ui.nodeRow.moreActions": "Más acciones para {app}",
+  "ui.nodeRow.update": "Actualizar",
+  "ui.nodeRow.backupNow": "Hacer copia ahora",
+  "ui.appSheet.guide": "Guía de {app}",
+  "ui.appSheet.downloadFor": "Descargar para {platform}",
+  "ui.appSheet.donate": "Donar",
+  "ui.appSheet.sponsor": "Patrocinar",
+  "ui.appSheet.purchase": "Comprar licencia",
+  "ui.appSheet.fullDetails": "Abrir detalles del servicio",
+  "ui.nodeRow.moreLabel": "Más apps y servicios en {node}",
   "ui.ownerState.connectYourKombifyCloudProfile":
     "Conecta tu perfil de kombify Cloud (con un correo verificado) para usarlo como propietario",
   "ui.ownerState.couldNotHashTheRecovery":
@@ -2221,6 +2389,22 @@ export const es: Record<string, string> = {
   "ui.providerErrors.stackkitCliGenerateFailed":
     "falló el generate de la CLI de StackKit",
   "ui.providerErrors.stackkitFilesMissing": "Faltan archivos de StackKit",
+  "ui.providerErrors.originCertificateFailed":
+    "No se pudo configurar el certificado HTTPS de este servidor",
+  "ui.providerErrors.originCertificateFailedDetails":
+    "El servidor está listo y conectado. Falló la emisión o la instalación del certificado HTTPS de su dirección administrada.",
+  "ui.providerErrors.originCertificateIfItRepeats":
+    "Si el certificado vuelve a fallar, revisa los detalles del error de la última ejecución.",
+  "ui.providerErrors.originCertificateRestartReusesServer":
+    "Reinicia el despliegue. Reutiliza el mismo servidor y no crea uno nuevo.",
+  "ui.providerErrors.setupStoppedResponding":
+    "La configuración dejó de responder",
+  "ui.providerErrors.setupStoppedRespondingDetails":
+    "El servidor es accesible, pero la configuración en él dejó de informar su progreso y se finalizó. Puede estar configurado parcialmente.",
+  "ui.providerErrors.setupStoppedRespondingRepeats":
+    "Si vuelve a dejar de responder, revisa los detalles del error de la última ejecución.",
+  "ui.providerErrors.setupStoppedRespondingRestart":
+    "Reinicia la configuración. Continúa en el mismo servidor y no crea uno nuevo.",
   "ui.providerErrors.stackkitRolloutCouldNotBe":
     "No se pudo aplicar el despliegue de StackKit",
   "ui.providerErrors.stackkitsArtifactGenerationFailed":
@@ -2396,6 +2580,8 @@ export const es: Record<string, string> = {
   "ui.serverAccessActions.installPublicKey": "Instalar clave pública",
   "ui.serverAccessActions.noSshKeyInThe":
     "Aún no hay ninguna clave SSH en la Wallet.",
+  "ui.serverAccessActions.stepUpBody":
+    "Autorizar una clave SSH requiere una confirmación de inicio de sesión reciente. Se abre en una ventana nueva y tarda unos segundos.",
   "ui.serverAccessActions.openTerminal": "Abrir terminal",
   "ui.serverAccessActions.sshCommandIsUnavailable":
     "El comando SSH no está disponible",
@@ -2471,6 +2657,20 @@ export const es: Record<string, string> = {
     "Estas selecciones alimentan el mismo contrato del Service Registry que usa la gestión de servicios.",
   "ui.serverRegistryPanel.thisNodeJoinsTheExisting":
     "Este Node se une al StackKit existente. La base ya está vinculada.",
+  "ui.serverTerminalModal.stepUpBody":
+    "Abrir un terminal requiere una confirmación de inicio de sesión reciente. Se abre en una ventana nueva y tarda unos segundos.",
+  "ui.stepUp.blocked": "Tu navegador bloqueó la nueva ventana.",
+  "ui.stepUp.blockedLink": "Abrir la confirmación de inicio de sesión",
+  "ui.stepUp.checking": "Comprobando…",
+  "ui.stepUp.confirm": "Confirmar inicio de sesión",
+  "ui.stepUp.doneBody":
+    "Puedes cerrar esta ventana y volver a kombify Techstack.",
+  "ui.stepUp.doneTitle": "Inicio de sesión confirmado",
+  "ui.stepUp.notConfirmed":
+    "La confirmación aún no ha llegado. Termínala en la otra ventana o inténtalo de nuevo.",
+  "ui.stepUp.reopen": "Abrir de nuevo la ventana de inicio de sesión",
+  "ui.stepUp.title": "Confirma que eres tú",
+  "ui.stepUp.waiting": "Esperando la confirmación en la otra ventana.",
   "ui.serverTerminalModal.invalidTerminalStreamResponse":
     "Respuesta de flujo de terminal no válida",
   "ui.serverTerminalModal.terminalConnectionFailed":
@@ -2625,6 +2825,8 @@ export const es: Record<string, string> = {
   "ui.services.nodeCapabilities": "Capacidades del Node",
   "ui.services.nodeColumn": "Columna del Node {name}",
   "ui.services.observed": "Observado",
+  "ui.services.stacked": "Stacked",
+  "ui.services.unstacked": "Unstacked",
   "ui.services.observedTechnicalComponentsWithoutApplication":
     "Componentes técnicos observados sin controles a nivel de aplicación",
   "ui.services.observedUnmanagedApplicationsMustBe":
@@ -2830,7 +3032,6 @@ export const es: Record<string, string> = {
   "ui.shortcutsHelp.esc": "Esc",
   "ui.shortcutsHelp.listNavigation": "Navegación por listas",
   "ui.shortcutsHelp.pageNavigation": "Navegación por páginas",
-  "ui.sidebarNav.kombifyTechstack": "kombify-Techstack",
   "ui.sshKeygen.ed25519NotSupportedInThis":
     "Ed25519 no es compatible con este navegador. Prueba con RSA.",
   "ui.sshKeygen.unsupportedAlgorithm": "Algoritmo no compatible: {algorithm}",
@@ -2892,9 +3093,38 @@ export const es: Record<string, string> = {
     "En breve se te redirigirá a la página de configuración.",
   "ui.stacksCreating.creatingStackkitDeploymentKombifyTechstack":
     "Creando el despliegue de StackKit | kombify-Techstack",
+  "ui.stacksCreating.leanBackBody":
+    "Ya hiciste tu parte. Estamos preparando todo para ti ahora mismo y pronto verás algo genial.",
+  "ui.stacksCreating.leanBackTitle": "Relájate: estamos haciendo magia",
   "ui.stacksCreating.openOperations": "Abrir operaciones",
   "ui.stacksCreating.reviewAndStartStackkitRollout":
     "Revisar e iniciar el despliegue de StackKit",
+  "ui.stacksCreating.tips.codeBody":
+    "StackKits genera tu configuración a partir de planos validados, así cada cambio es repetible y trazable.",
+  "ui.stacksCreating.tips.codeEyebrow": "Infraestructura como código",
+  "ui.stacksCreating.tips.codeTitle": "Tu stack, escrito como código",
+  "ui.stacksCreating.tips.growBody":
+    "Añade otro nodo a este stack cuando lo necesites. Techstack coordina tus servidores y cada uno sigue funcionando por sí mismo.",
+  "ui.stacksCreating.tips.growEyebrow": "Escalado",
+  "ui.stacksCreating.tips.growTitle": "Espacio para crecer",
+  "ui.stacksCreating.tips.label": "Bueno saber",
+  "ui.stacksCreating.tips.next": "Siguiente consejo",
+  "ui.stacksCreating.tips.nextTitle": "Qué pasa después",
+  "ui.stacksCreating.tips.ownBody":
+    "El StackKit ejecuta copias de seguridad y restauraciones directamente en tu servidor y guarda allí sus claves.",
+  "ui.stacksCreating.tips.ownEyebrow": "Autonomía",
+  "ui.stacksCreating.tips.ownTitle": "Tu servidor hace el trabajo",
+  "ui.stacksCreating.tips.previous": "Consejo anterior",
+  "ui.stacksCreating.tips.reachBody":
+    "Cada instalación recibe su propia dirección, tu dominio o un nombre *.kombify.me, para que llegues a ella desde cualquier lugar, también en tu propio hardware.",
+  "ui.stacksCreating.tips.reachEyebrow": "Acceso",
+  "ui.stacksCreating.tips.reachTitle": "Accesible desde cualquier lugar",
+  "ui.stacksCreating.tips.restoreBody":
+    "La última fase revisa tus servicios y ensaya una restauración, para que sepas que tus copias de seguridad realmente vuelven.",
+  "ui.stacksCreating.tips.restoreEyebrow": "Copias de seguridad",
+  "ui.stacksCreating.tips.restoreTitle":
+    "La restauración se comprueba, no se promete",
+  "ui.stacksCreating.tips.show": "Mostrar consejo {number} de {total}",
   "ui.stacksCreatingCreation-controller.additionalNode": "Node adicional",
   "ui.stacksCreatingCreation-controller.afterFailedAttemptsTheBackend":
     "Tras {MAX_POLL_ERRORS} intentos fallidos, no se pudo acceder al backend. La página sigue reintentando con espera progresiva; también puedes comprobar tu conexión de red y recargar para continuar.",
@@ -3051,6 +3281,36 @@ export const es: Record<string, string> = {
   "ui.stacksCreatingCreationCompletion.theOwnerSeedIsPrepared":
     "La semilla del propietario está preparada.",
   "ui.stacksCreatingCreationCompletion.yourNode": "Tu Node",
+  "ui.groupedTaskList.needsAttention": "Requiere atención",
+  "ui.stacksCreatingCreationDegraded.titleOne":
+    "Listo: una parte requiere atención",
+  "ui.stacksCreatingCreationDegraded.titleMany":
+    "Listo: {count} partes requieren atención",
+  "ui.stacksCreatingCreationDegraded.subtitle":
+    "Tu servidor y tus apps están instalados y en funcionamiento.",
+  "ui.stacksCreatingCreationDegraded.publicTlsTitle": "Acceso público seguro",
+  "ui.stacksCreatingCreationDegraded.publicTlsMeaning":
+    "Tu dirección kombify.me aún no está protegida. kombify lo repara automáticamente.",
+  "ui.stacksCreatingCreationDegraded.genericTitle": "Parte de la instalación",
+  "ui.stacksCreatingCreationDegraded.genericMeaning":
+    "Esta parte no se pudo completar.",
+  "ui.stacksCreatingCreationDegraded.genericMeaningRepair":
+    "Esta parte aún no se pudo completar. kombify la repara automáticamente.",
+  "ui.stacksCreatingCreationDegraded.reasonAcmeRateLimited":
+    "La autoridad de certificación pidió esperar. kombify lo reintenta automáticamente.",
+  "ui.stacksCreatingCreationDegraded.repairScheduled":
+    "Reparación automática programada",
+  "ui.stacksCreatingCreationDegraded.repairScheduledAt":
+    "Reparación automática a las {time}",
+  "ui.stacksCreatingCreationDegraded.repairRunning": "Reparando…",
+  "ui.stacksCreatingCreationDegraded.repairDone": "Reparado",
+  "ui.stacksCreatingCreationDegraded.repairFailed":
+    "La reparación automática falló",
+  "ui.stacksCreatingCreationDegraded.repairNow": "Reparar ahora",
+  "ui.stacksCreatingCreationDegraded.repairNotAccepted":
+    "La reparación no fue aceptada.",
+  "ui.stacksCreatingCreationDegraded.askCompanionPrompt":
+    'La creación de "{operation}" terminó, pero estas partes requieren atención: {components}. ¿Qué significa esto para mí y qué debo hacer a continuación?',
   "ui.stacksCreatingCreationFailure.anErrorOccurred":
     "Se ha producido un error",
   "ui.stacksCreatingCreationFailure.checkYourNetworkConnection":
@@ -3067,6 +3327,9 @@ export const es: Record<string, string> = {
   "ui.stacksCreatingCreationFailure.nodeConnectionSucceeded":
     "Conexión del Node correcta",
   "ui.stacksCreatingCreationFailure.operations": "Operaciones",
+  "ui.stacksCreatingCreationFailure.askCompanion": "Pregunta a kombify",
+  "ui.stacksCreatingCreationFailure.askCompanionPrompt":
+    'La creación de "{operation}" falló en el paso "{step}" con este error:\n\n{error}\n\n¿Qué salió mal y qué debo hacer ahora?',
   "ui.stacksCreatingCreationFailure.possibleSolutions": "Posibles soluciones:",
   "ui.stacksCreatingCreationFailure.resumePreviousAttempt":
     "Reanudar el intento anterior",
@@ -3144,10 +3407,15 @@ export const es: Record<string, string> = {
     "Tu comando de instalación está listo. kombify-simulate se usa como vista previa de demostración temporal cuando está disponible y se limita a una hora.",
   "ui.stacksCreatingCreationProgress.backToSetupWizard":
     "Volver al asistente de configuración →",
+  "ui.stacksCreatingCreationProgress.checkAgain": "Comprobar de nuevo",
   "ui.stacksCreatingCreationProgress.creationFailed": "Error en la creación",
   "ui.stacksCreatingCreationProgress.nodeProvisioningIsStillIn":
     "El aprovisionamiento del Node sigue en curso",
   "ui.stacksCreatingCreationProgress.pleaseWaitWhileWeRe": "Espera mientras",
+  "ui.stacksCreatingCreationProgress.morphCompleting": "completamos",
+  "ui.stacksCreatingCreationProgress.morphConfiguring": "configuramos",
+  "ui.stacksCreatingCreationProgress.morphDeploying": "desplegamos",
+  "ui.stacksCreatingCreationProgress.morphValidating": "validamos",
   "ui.stacksCreatingCreationProgress.progress": "Progreso",
   "ui.stacksCreatingCreationProgress.rolloutIncomplete":
     "Despliegue incompleto",
@@ -3188,7 +3456,6 @@ export const es: Record<string, string> = {
   "ui.stacksCreatingCreationRunStatus.awaitingHeartbeat": "Esperando el latido",
   "ui.stacksCreatingCreationRunStatus.checkSshHostCredentialsAnd":
     "Comprueba el host SSH, las credenciales y que el servidor pueda llegar a Techstack.",
-  "ui.stacksCreatingCreationRunStatus.completed": "Completado",
   "ui.stacksCreatingCreationRunStatus.connectMyNode": "Conectar mi Node",
   "ui.stacksCreatingCreationRunStatus.connectingToYourNodeOver":
     "Conectando con tu Node por SSH…",
@@ -3674,6 +3941,9 @@ export const es: Record<string, string> = {
     "Reservando la VM de suscripción, conectando el runtime y preparando la telemetría",
   "ui.taskStatus.rollOutCloudKit": "Desplegar Cloud Kit",
   "ui.taskStatus.rollingOutCloudKit": "Desplegando Cloud Kit",
+  "ui.taskStatus.settingUpPart": "Configurando la parte {position} de {total}",
+  "ui.taskStatus.settingUpPartNamed":
+    "Configurando la parte {position} de {total}: {name}",
   "ui.taskStatus.runningRestoreDrill":
     "Ejecutando el simulacro de restauración",
   "ui.taskStatus.runningSimulatedUpdateGate":

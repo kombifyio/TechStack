@@ -16,6 +16,13 @@ const (
 	durableProviderProvisionResumeBatch   = 50
 	durableProviderProvisionRecoveryBatch = 32
 	durableProviderProvisionRecoveryPoll  = time.Second
+
+	// durableGuardWaitRecoveryPoll paces the orphaned Guard-wait pass. The
+	// provider-operation index only carries provider waits, so a Guard wait is
+	// found through the pending-job directory, which is coarser and slower.
+	durableGuardWaitRecoveryPoll = 15 * time.Second
+	// durableGuardWaitRecoveryTenantPages bounds one Guard-wait pass.
+	durableGuardWaitRecoveryTenantPages = 5
 )
 
 func init() {
@@ -95,17 +102,84 @@ func (o *Orchestrator) RunProviderProvisionRecovery(
 			o.log.Warn("provider_provision_wait_recovery_failed", "error", err)
 		}
 	}
+	runGuard := func() {
+		if err := o.resumeOrphanedCanonicalGuardWaits(ctx); err != nil {
+			o.log.Warn("canonical_guard_wait_recovery_failed", "error", err)
+		}
+	}
 	run()
+	runGuard()
 	ticker := time.NewTicker(durableProviderProvisionRecoveryPoll)
 	defer ticker.Stop()
+	guardTicker := time.NewTicker(durableGuardWaitRecoveryPoll)
+	defer guardTicker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			run()
+		case <-guardTicker.C:
+			runGuard()
 		}
 	}
+}
+
+// resumeOrphanedCanonicalGuardWaits re-offers provision jobs that yielded for
+// canonical Guard evidence but whose process is gone. A live owner claims its
+// row when the scheduled resume fires, so a Guard wait that is still pending
+// a full recovery grace after that time has no process behind it. The row must
+// hold the exact lease-ready checkpoint; rehydration then replays the
+// existing lease and never re-enters provider creation.
+func (o *Orchestrator) resumeOrphanedCanonicalGuardWaits(ctx context.Context) error {
+	if o == nil || o.jobStore == nil || o.queue == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = o.ctx
+	}
+	now := o.durableRecoveryNow()
+	afterTenant := ""
+	var recoveryErrors []error
+	for page := 0; page < durableGuardWaitRecoveryTenantPages; page++ {
+		tenantIDs, err := o.jobStore.ListPendingJobTenants(ctx, afterTenant, pendingJobTenantPage)
+		if err != nil {
+			return errors.Join(append(recoveryErrors, fmt.Errorf("list pending job tenants: %w", err))...)
+		}
+		for _, tenantID := range tenantIDs {
+			afterTenant = tenantID
+			rows, listErr := o.jobStore.ListPendingJobs(ctx, tenantID, pendingJobPage)
+			if listErr != nil {
+				recoveryErrors = append(recoveryErrors, fmt.Errorf("list pending jobs for %s: %w", tenantID, listErr))
+				continue
+			}
+			for _, row := range rows {
+				if !isOrphanedCanonicalGuardWait(row, tenantID, now) {
+					continue
+				}
+				if err := o.rehydrateHostedProviderProvisionWait(ctx, tenantID, row); err != nil {
+					recoveryErrors = append(recoveryErrors, fmt.Errorf("rehydrate Guard wait %s/%s: %w", tenantID, row.ID, err))
+				}
+			}
+		}
+		if len(tenantIDs) < pendingJobTenantPage {
+			break
+		}
+	}
+	return errors.Join(recoveryErrors...)
+}
+
+func isOrphanedCanonicalGuardWait(job controlplane.Job, tenantID string, now time.Time) bool {
+	if strings.TrimSpace(job.TenantID) != strings.TrimSpace(tenantID) ||
+		strings.TrimSpace(job.Type) != persistentJobTypeProvision ||
+		canonicalEnrollmentJobState(job.State) != persistentStatePending ||
+		strings.TrimSpace(job.ID) == "" || strings.TrimSpace(job.StackID) == "" ||
+		!staleJobHasSafeRecoveryBoundary(job) {
+		return false
+	}
+	wait, _ := job.Result["job_wait"].(map[string]any)
+	nextResumeAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(stringFromAny(wait["next_resume_at"])))
+	return err == nil && !now.Before(nextResumeAt.Add(jobs.ManagedRuntimeEnrollmentRecoveryGrace))
 }
 
 func (o *Orchestrator) resumeProviderProvisionWaitPage(
@@ -167,7 +241,11 @@ func isHostedManagedProviderProvisionRecovery(job controlplane.Job) bool {
 	}
 	wait, ok := job.Result["job_wait"].(map[string]any)
 	if !ok || strings.TrimSpace(stringFromAny(wait["state"])) != string(jobs.JobStateWaiting) {
-		return false
+		// A replay of the wait is running: the projection strips job_wait then,
+		// and only the durable checkpoint for the exact lease and operation
+		// still proves the job never left its wait.
+		_, replaying := jobs.ManagedProvisionWaitCheckpoint(job.Result)
+		return replaying
 	}
 	reason := strings.TrimSpace(stringFromAny(wait["reason"]))
 	return reason == jobs.WaitReasonManagedRuntimeProvider || reason == jobs.WaitReasonCanonicalGuardEvidence
@@ -222,6 +300,14 @@ func (o *Orchestrator) rehydrateHostedProviderProvisionWait(
 	if guest := persisted.Result[jobs.CustomerGuestResultKey]; guest != nil {
 		payload[jobs.CustomerGuestResultKey] = guest
 	}
+	// The durable result, position and log are the job's checkpoint. The first
+	// progress sync of the new process replaces the row, so start from them
+	// instead of an empty job; the wait itself is rebuilt by the replay.
+	result := make(map[string]any, len(persisted.Result))
+	for key, value := range persisted.Result {
+		result[key] = value
+	}
+	delete(result, "job_wait")
 	rehydrated := &jobs.Job{
 		ID:          persisted.ID,
 		Type:        jobs.JobTypeProvision,
@@ -231,6 +317,11 @@ func (o *Orchestrator) rehydrateHostedProviderProvisionWait(
 		Priority:    persisted.Priority,
 		MaxAttempts: 3,
 		Payload:     payload,
+		Result:      result,
+		Step:        persisted.Step,
+		Progress:    persisted.Progress,
+		Message:     persisted.Message,
+		Logs:        rehydratedJobLogs(persisted.Logs),
 	}
 	if err := rehydrated.BindTenantID(tenantID); err != nil {
 		return fmt.Errorf("rehydrate provider-provision job %s: bind tenant: %w", persisted.ID, err)
@@ -255,6 +346,26 @@ func (o *Orchestrator) rehydrateHostedProviderProvisionWait(
 	}
 	o.startRehydratedJobProgressSync(rehydrated.Snapshot().ID, tenantID)
 	return nil
+}
+
+func rehydratedJobLogs(logs []map[string]any) []jobs.LogEntry {
+	out := make([]jobs.LogEntry, 0, len(logs))
+	for _, entry := range logs {
+		message := strings.TrimSpace(stringFromAny(entry["message"]))
+		if message == "" {
+			continue
+		}
+		timestamp, err := time.Parse(time.RFC3339, strings.TrimSpace(stringFromAny(entry["timestamp"])))
+		if err != nil {
+			timestamp = time.Time{}
+		}
+		out = append(out, jobs.LogEntry{
+			Timestamp: timestamp,
+			Level:     strings.TrimSpace(stringFromAny(entry["level"])),
+			Message:   message,
+		})
+	}
+	return out
 }
 
 func providerProvisionRecoverySpec(stack *orchestratorStack) (map[string]interface{}, string, error) {

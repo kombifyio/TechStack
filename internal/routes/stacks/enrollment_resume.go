@@ -97,6 +97,9 @@ func (h crudRouteHandlers) requireRecoveryStack(
 	if h.jobStore == nil || h.orch == nil {
 		return nil, unavailable(e, message)
 	}
+	if walletErr := h.requireWalletCreateRight(e, stack.OwnerSubjectID); walletErr != nil {
+		return nil, walletErr
+	}
 	return stack, nil
 }
 

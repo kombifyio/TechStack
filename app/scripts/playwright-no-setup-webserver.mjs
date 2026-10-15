@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -51,6 +51,18 @@ function handlerKey(method, pathname) {
 }
 
 const handlers = new Map([
+  [
+    handlerKey("GET", "/api/v1/stackkits/use-cases"),
+    (_req, res) =>
+      sendJSON(res, 200, {
+        data: JSON.parse(
+          readFileSync(
+            path.join(rootDir, "static/preview-catalogs/latest.json"),
+            "utf8",
+          ),
+        ),
+      }),
+  ],
   [
     handlerKey("GET", "/api/v1/client/bootstrap"),
     (_req, res) =>

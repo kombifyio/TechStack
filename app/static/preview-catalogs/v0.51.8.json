@@ -1,0 +1,1754 @@
+{
+  "configured": true,
+  "deliverability_known": true,
+  "release": {
+    "tag": "v0.51.8",
+    "version": "0.51.8"
+  },
+  "use_cases": [
+    {
+      "components": [
+        {
+          "id": "anythingllm",
+          "name": "AnythingLLM",
+          "role": "alternative",
+          "kind": "application",
+          "realization": "install",
+          "maturity": "beta"
+        },
+        {
+          "id": "comfyui",
+          "name": "ComfyUI",
+          "role": "supporting",
+          "kind": "application"
+        },
+        {
+          "id": "docling",
+          "name": "Docling",
+          "role": "supporting",
+          "kind": "application"
+        },
+        {
+          "id": "hermes",
+          "name": "Hermes Agent",
+          "role": "supporting",
+          "kind": "application"
+        },
+        {
+          "id": "ollama",
+          "name": "Ollama",
+          "role": "primary",
+          "kind": "application"
+        },
+        {
+          "id": "open-webui",
+          "name": "Open WebUI",
+          "role": "supporting",
+          "kind": "application"
+        },
+        {
+          "id": "searxng",
+          "name": "SearXNG",
+          "role": "supporting",
+          "kind": "application"
+        },
+        {
+          "id": "speechkit",
+          "name": "kombify SpeechKit",
+          "role": "supporting",
+          "kind": "application"
+        },
+        {
+          "id": "tika",
+          "name": "Apache Tika",
+          "role": "supporting",
+          "kind": "application"
+        }
+      ],
+      "compute_tiers": {
+        "high": {
+          "included": true,
+          "moduleSlug": "ollama",
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          }
+        },
+        "low": {
+          "included": false,
+          "reason": "CPU inference needs the explicit standard hardware floor."
+        },
+        "standard": {
+          "included": true,
+          "moduleSlug": "ollama",
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          }
+        }
+      },
+      "default_alternative": "private-ai",
+      "deliverable": true,
+      "delivery_status": "supported",
+      "description": "Private AI workloads, local model serving, and user-facing AI workbench intent.",
+      "docs": "/guides/stackkits/use-cases/personal-ai",
+      "id": "ai",
+      "maturity": "beta",
+      "settings": [
+        {
+          "id": "accelerator",
+          "name": "Accelerator",
+          "kind": "choice",
+          "group": "hardware",
+          "depth": "summary",
+          "help": "Local models run far faster on a GPU.",
+          "options": [
+            {
+              "id": "cpu",
+              "name": "CPU only",
+              "note": "Works everywhere; small models only"
+            },
+            {
+              "id": "nvidia",
+              "name": "NVIDIA GPU",
+              "note": "Needs the NVIDIA driver 550 or newer; StackKits sets up the NVIDIA Container Toolkit"
+            },
+            {
+              "id": "amd",
+              "name": "AMD GPU",
+              "note": "ROCm-capable card with the amdgpu driver; amd64 only"
+            }
+          ],
+          "default": "cpu",
+          "realization": "install"
+        },
+        {
+          "id": "model-size",
+          "name": "Model size",
+          "kind": "choice",
+          "group": "features",
+          "depth": "advanced",
+          "help": "Larger models answer better and need more memory.",
+          "options": [
+            {
+              "id": "small",
+              "name": "Small",
+              "note": "Around 4 GB of memory"
+            },
+            {
+              "id": "medium",
+              "name": "Medium",
+              "note": "Around 8 GB of memory"
+            },
+            {
+              "id": "large",
+              "name": "Large",
+              "note": "16 GB of memory or more"
+            }
+          ],
+          "default": "small",
+          "realization": "recorded"
+        },
+        {
+          "id": "backend",
+          "name": "Service",
+          "kind": "choice",
+          "group": "backend",
+          "depth": "summary",
+          "help": "Preferred service from this StackKits release.",
+          "options": [
+            {
+              "id": "anythingllm",
+              "name": "AnythingLLM",
+              "realization": "install"
+            },
+            {
+              "id": "ollama",
+              "name": "Ollama",
+              "realization": "install"
+            }
+          ],
+          "default": "ollama",
+          "realization": "install"
+        },
+        {
+          "id": "profile",
+          "name": "Compute profile",
+          "kind": "choice",
+          "group": "profile",
+          "depth": "summary",
+          "help": "Preferred compute tier included by this StackKits release.",
+          "options": [
+            {
+              "id": "standard",
+              "name": "Standard"
+            },
+            {
+              "id": "high",
+              "name": "High"
+            }
+          ],
+          "default": "standard",
+          "realization": "recorded"
+        }
+      ],
+      "title": "Private AI"
+    },
+    {
+      "components": [
+        {
+          "id": "workpaths",
+          "name": "kombify Workpaths",
+          "role": "primary",
+          "kind": "application",
+          "maturity": "beta"
+        }
+      ],
+      "compute_tiers": {
+        "high": {
+          "included": true,
+          "moduleSlug": "workpaths",
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          }
+        },
+        "low": {
+          "included": true,
+          "moduleSlug": "workpaths",
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          }
+        },
+        "standard": {
+          "included": true,
+          "moduleSlug": "workpaths",
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          }
+        }
+      },
+      "default_alternative": "workpaths",
+      "deliverable": true,
+      "delivery_status": "beta",
+      "description": "Scheduled and event-driven automations on your own node through kombify Workpaths, a headless engine with a private owner-token API. Runs without a kombify plan.",
+      "docs": "/guides/stackkits/use-cases/automation",
+      "id": "automation",
+      "maturity": "beta",
+      "settings": [
+        {
+          "id": "backend",
+          "name": "Service",
+          "kind": "choice",
+          "group": "backend",
+          "depth": "summary",
+          "help": "Preferred service from this StackKits release.",
+          "options": [
+            {
+              "id": "workpaths",
+              "name": "kombify Workpaths",
+              "realization": "install"
+            }
+          ],
+          "default": "workpaths",
+          "realization": "recorded"
+        },
+        {
+          "id": "profile",
+          "name": "Compute profile",
+          "kind": "choice",
+          "group": "profile",
+          "depth": "summary",
+          "help": "Preferred compute tier included by this StackKits release.",
+          "options": [
+            {
+              "id": "low",
+              "name": "Low"
+            },
+            {
+              "id": "standard",
+              "name": "Standard"
+            },
+            {
+              "id": "high",
+              "name": "High"
+            }
+          ],
+          "default": "standard",
+          "realization": "recorded"
+        }
+      ],
+      "title": "Automation"
+    },
+    {
+      "components": [
+        {
+          "id": "forgejo",
+          "name": "Forgejo",
+          "role": "alternative",
+          "kind": "application",
+          "realization": "install",
+          "maturity": "beta"
+        },
+        {
+          "id": "gitea",
+          "name": "Gitea",
+          "role": "primary",
+          "kind": "application",
+          "maturity": "beta"
+        }
+      ],
+      "compute_tiers": {
+        "high": {
+          "included": true,
+          "moduleSlug": "gitea",
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          }
+        },
+        "low": {
+          "included": false,
+          "reason": "The first Git hosting path uses the standard profile."
+        },
+        "standard": {
+          "included": true,
+          "moduleSlug": "gitea",
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          }
+        }
+      },
+      "default_alternative": "gitea",
+      "deliverable": true,
+      "delivery_status": "supported",
+      "description": "Private source control, developer collaboration, and delivery-platform intent.",
+      "docs": "/guides/stackkits/use-cases/development",
+      "id": "dev",
+      "maturity": "beta",
+      "settings": [
+        {
+          "id": "ci-runners",
+          "name": "CI runners",
+          "kind": "toggle",
+          "group": "features",
+          "depth": "summary",
+          "help": "Run build and test pipelines on this Node.",
+          "default": false,
+          "realization": "recorded"
+        },
+        {
+          "id": "backend",
+          "name": "Service",
+          "kind": "choice",
+          "group": "backend",
+          "depth": "summary",
+          "help": "Preferred service from this StackKits release.",
+          "options": [
+            {
+              "id": "forgejo",
+              "name": "Forgejo",
+              "realization": "install"
+            },
+            {
+              "id": "gitea",
+              "name": "Gitea",
+              "realization": "install"
+            }
+          ],
+          "default": "gitea",
+          "realization": "install"
+        },
+        {
+          "id": "profile",
+          "name": "Compute profile",
+          "kind": "choice",
+          "group": "profile",
+          "depth": "summary",
+          "help": "Preferred compute tier included by this StackKits release.",
+          "options": [
+            {
+              "id": "standard",
+              "name": "Standard"
+            },
+            {
+              "id": "high",
+              "name": "High"
+            }
+          ],
+          "default": "standard",
+          "realization": "recorded"
+        }
+      ],
+      "title": "Developer Platform"
+    },
+    {
+      "components": [
+        {
+          "id": "paperless-ngx",
+          "name": "Paperless-ngx",
+          "role": "primary",
+          "kind": "application",
+          "maturity": "beta"
+        }
+      ],
+      "compute_tiers": {
+        "high": {
+          "included": true,
+          "moduleSlug": "paperless-ngx",
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "ingest"
+          }
+        },
+        "low": {
+          "included": false,
+          "reason": "The first Paperless-ngx path uses the standard profile."
+        },
+        "standard": {
+          "included": true,
+          "moduleSlug": "paperless-ngx",
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "ingest"
+          }
+        }
+      },
+      "default_alternative": "paperless-ngx",
+      "deliverable": true,
+      "delivery_status": "beta",
+      "description": "Private document ingestion, OCR, indexing and search through Paperless-ngx.",
+      "docs": "/guides/stackkits/use-cases/documents-and-files",
+      "id": "documents",
+      "maturity": "beta",
+      "settings": [
+        {
+          "id": "backend",
+          "name": "Service",
+          "kind": "choice",
+          "group": "backend",
+          "depth": "summary",
+          "help": "Preferred service from this StackKits release.",
+          "options": [
+            {
+              "id": "paperless-ngx",
+              "name": "Paperless-ngx",
+              "realization": "install"
+            }
+          ],
+          "default": "paperless-ngx",
+          "realization": "recorded"
+        },
+        {
+          "id": "profile",
+          "name": "Compute profile",
+          "kind": "choice",
+          "group": "profile",
+          "depth": "summary",
+          "help": "Preferred compute tier included by this StackKits release.",
+          "options": [
+            {
+              "id": "standard",
+              "name": "Standard"
+            },
+            {
+              "id": "high",
+              "name": "High"
+            }
+          ],
+          "default": "standard",
+          "realization": "recorded"
+        }
+      ],
+      "title": "Documents"
+    },
+    {
+      "components": [
+        {
+          "id": "cloudreve",
+          "name": "Cloudreve",
+          "role": "primary",
+          "kind": "application",
+          "maturity": "supported"
+        },
+        {
+          "id": "euro-office",
+          "name": "Euro-Office",
+          "role": "supporting",
+          "kind": "application"
+        },
+        {
+          "id": "nextcloud",
+          "name": "Nextcloud",
+          "role": "alternative",
+          "kind": "application",
+          "realization": "install",
+          "maturity": "beta"
+        },
+        {
+          "id": "paperless-ngx",
+          "name": "Paperless-ngx",
+          "role": "supporting",
+          "kind": "application"
+        },
+        {
+          "id": "paperwork",
+          "name": "kombify Paperwork",
+          "role": "alternative",
+          "kind": "connector",
+          "realization": "recorded"
+        }
+      ],
+      "compute_tiers": {
+        "high": {
+          "included": true,
+          "moduleSlug": "cloudreve",
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          }
+        },
+        "low": {
+          "included": true,
+          "moduleSlug": "cloudreve",
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          }
+        },
+        "standard": {
+          "included": true,
+          "moduleSlug": "cloudreve",
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          }
+        }
+      },
+      "default_alternative": "cloudreve",
+      "deliverable": true,
+      "delivery_status": "supported",
+      "description": "Private file storage and sharing: Cloudreve by default, Nextcloud or kombify Paperwork as alternatives, with optional office editing and a document archive.",
+      "docs": "/guides/stackkits/use-cases/documents-and-files",
+      "id": "files",
+      "maturity": "supported",
+      "settings": [
+        {
+          "id": "paperless",
+          "name": "Document archive",
+          "kind": "toggle",
+          "group": "features",
+          "depth": "summary",
+          "help": "Add Paperless-ngx to scan, read (OCR) and search your paper documents next to your files.",
+          "default": false,
+          "realization": "install",
+          "workloadRef": "documents"
+        },
+        {
+          "id": "office-editing",
+          "name": "Office editing",
+          "kind": "toggle",
+          "group": "features",
+          "depth": "summary",
+          "help": "Add Euro-Office to edit documents, spreadsheets and presentations in the browser. It connects to Nextcloud through the Euro-Office app.",
+          "default": false,
+          "realization": "install",
+          "workloadRef": "files-office"
+        },
+        {
+          "id": "library-volume",
+          "name": "Where files are stored",
+          "kind": "choice",
+          "group": "storage",
+          "depth": "advanced",
+          "help": "A dedicated disk keeps your files off the system disk.",
+          "options": [
+            {
+              "id": "kit-storage",
+              "name": "Kit storage",
+              "note": "Shared data volume of this StackKit"
+            },
+            {
+              "id": "dedicated-disk",
+              "name": "Dedicated disk",
+              "note": "An extra disk on the Node, just for files"
+            }
+          ],
+          "default": "kit-storage",
+          "realization": "recorded"
+        },
+        {
+          "id": "backend",
+          "name": "Service",
+          "kind": "choice",
+          "group": "backend",
+          "depth": "summary",
+          "help": "Preferred service from this StackKits release.",
+          "options": [
+            {
+              "id": "cloudreve",
+              "name": "Cloudreve",
+              "realization": "install"
+            },
+            {
+              "id": "nextcloud",
+              "name": "Nextcloud",
+              "realization": "install"
+            },
+            {
+              "id": "paperwork",
+              "name": "kombify Paperwork",
+              "realization": "recorded"
+            }
+          ],
+          "default": "cloudreve",
+          "realization": "install"
+        },
+        {
+          "id": "profile",
+          "name": "Compute profile",
+          "kind": "choice",
+          "group": "profile",
+          "depth": "summary",
+          "help": "Preferred compute tier included by this StackKits release.",
+          "options": [
+            {
+              "id": "low",
+              "name": "Low"
+            },
+            {
+              "id": "standard",
+              "name": "Standard"
+            },
+            {
+              "id": "high",
+              "name": "High"
+            }
+          ],
+          "default": "standard",
+          "realization": "recorded"
+        }
+      ],
+      "title": "File Storage and Documents"
+    },
+    {
+      "components": [
+        {
+          "id": "pelican",
+          "name": "Pelican Panel",
+          "role": "alternative",
+          "kind": "application",
+          "realization": "recorded"
+        },
+        {
+          "id": "pterodactyl",
+          "name": "Pterodactyl",
+          "role": "primary",
+          "kind": "application",
+          "maturity": "beta"
+        }
+      ],
+      "compute_tiers": {
+        "high": {
+          "included": true,
+          "moduleSlug": "pterodactyl",
+          "load": {
+            "residency": "on-demand",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          }
+        },
+        "low": {
+          "included": false,
+          "reason": "Game servers need the standard profile and their own memory budget."
+        },
+        "standard": {
+          "included": true,
+          "moduleSlug": "pterodactyl",
+          "load": {
+            "residency": "on-demand",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          }
+        }
+      },
+      "default_alternative": "pterodactyl",
+      "deliverable": true,
+      "delivery_status": "beta",
+      "description": "Self-hosted game servers for friends and family through Pterodactyl, with curated Minecraft Java, Paper and Bedrock, Terraria and Valheim profiles.",
+      "docs": "/guides/stackkits/use-cases/game",
+      "id": "game",
+      "maturity": "beta",
+      "settings": [
+        {
+          "id": "edition",
+          "name": "Minecraft edition",
+          "kind": "choice",
+          "group": "profile",
+          "depth": "summary",
+          "help": "Java and Bedrock players cannot join each other's worlds; choose the edition your players use.",
+          "options": [
+            {
+              "id": "java",
+              "name": "Minecraft Java",
+              "note": "PC and Mac players"
+            },
+            {
+              "id": "bedrock",
+              "name": "Minecraft Bedrock",
+              "note": "Console, phone, tablet and Windows players"
+            }
+          ],
+          "default": "java",
+          "realization": "recorded"
+        },
+        {
+          "id": "backend",
+          "name": "Service",
+          "kind": "choice",
+          "group": "backend",
+          "depth": "summary",
+          "help": "Preferred service from this StackKits release.",
+          "options": [
+            {
+              "id": "pelican",
+              "name": "Pelican Panel",
+              "realization": "recorded"
+            },
+            {
+              "id": "pterodactyl",
+              "name": "Pterodactyl",
+              "realization": "install"
+            }
+          ],
+          "default": "pterodactyl",
+          "realization": "recorded"
+        },
+        {
+          "id": "profile",
+          "name": "Compute profile",
+          "kind": "choice",
+          "group": "profile",
+          "depth": "summary",
+          "help": "Preferred compute tier included by this StackKits release.",
+          "options": [
+            {
+              "id": "standard",
+              "name": "Standard"
+            },
+            {
+              "id": "high",
+              "name": "High"
+            }
+          ],
+          "default": "standard",
+          "realization": "recorded"
+        }
+      ],
+      "title": "Game Server"
+    },
+    {
+      "components": [
+        {
+          "id": "paperwork",
+          "name": "kombify Paperwork",
+          "role": "alternative",
+          "kind": "connector",
+          "realization": "recorded"
+        },
+        {
+          "id": "roundcube",
+          "name": "Roundcube Webmail",
+          "role": "primary",
+          "kind": "application",
+          "maturity": "beta"
+        }
+      ],
+      "compute_tiers": {
+        "high": {
+          "included": true,
+          "moduleSlug": "roundcube",
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          }
+        },
+        "low": {
+          "included": true,
+          "moduleSlug": "roundcube",
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          }
+        },
+        "standard": {
+          "included": true,
+          "moduleSlug": "roundcube",
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          }
+        }
+      },
+      "default_alternative": "roundcube",
+      "deliverable": true,
+      "delivery_status": "beta",
+      "description": "Private webmail through Roundcube for a mailbox you already have at an external provider. No mail server, DNS or MX record is created.",
+      "docs": "/guides/stackkits/use-cases/mail",
+      "id": "mail",
+      "maturity": "beta",
+      "settings": [
+        {
+          "id": "hosting",
+          "name": "Mail hosting",
+          "kind": "choice",
+          "group": "backend",
+          "depth": "summary",
+          "help": "Keep your mailbox at your current provider, or run your own mail server on a dedicated Cloud node.",
+          "options": [
+            {
+              "id": "existing",
+              "name": "Existing provider",
+              "note": "No mail server, DNS or MX change"
+            },
+            {
+              "id": "stalwart",
+              "name": "Stalwart",
+              "note": "Own mail server: SMTP, IMAP and JMAP in one service"
+            },
+            {
+              "id": "mailcow",
+              "name": "mailcow",
+              "note": "Own mail suite with SOGo webmail, calendar and contacts"
+            }
+          ],
+          "default": "existing",
+          "realization": "recorded"
+        },
+        {
+          "id": "mail-domain",
+          "name": "Mail domain",
+          "kind": "text",
+          "group": "access",
+          "depth": "summary",
+          "help": "The domain your addresses end in, e.g. example.com. You need to own it.",
+          "default": "",
+          "placeholder": "example.com",
+          "realization": "recorded"
+        },
+        {
+          "id": "backend",
+          "name": "Service",
+          "kind": "choice",
+          "group": "backend",
+          "depth": "summary",
+          "help": "Preferred service from this StackKits release.",
+          "options": [
+            {
+              "id": "paperwork",
+              "name": "kombify Paperwork",
+              "realization": "recorded"
+            },
+            {
+              "id": "roundcube",
+              "name": "Roundcube Webmail",
+              "realization": "install"
+            }
+          ],
+          "default": "roundcube",
+          "realization": "recorded"
+        },
+        {
+          "id": "profile",
+          "name": "Compute profile",
+          "kind": "choice",
+          "group": "profile",
+          "depth": "summary",
+          "help": "Preferred compute tier included by this StackKits release.",
+          "options": [
+            {
+              "id": "low",
+              "name": "Low"
+            },
+            {
+              "id": "standard",
+              "name": "Standard"
+            },
+            {
+              "id": "high",
+              "name": "High"
+            }
+          ],
+          "default": "standard",
+          "realization": "recorded"
+        }
+      ],
+      "title": "Private Mail"
+    },
+    {
+      "components": [
+        {
+          "id": "mailcow",
+          "name": "mailcow",
+          "role": "alternative",
+          "kind": "application",
+          "realization": "recorded"
+        },
+        {
+          "id": "stalwart",
+          "name": "Stalwart Mail Server",
+          "role": "primary",
+          "kind": "application",
+          "maturity": "experimental"
+        }
+      ],
+      "compute_tiers": {
+        "high": {
+          "included": true,
+          "moduleSlug": "stalwart",
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          }
+        },
+        "low": {
+          "included": true,
+          "moduleSlug": "stalwart",
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          }
+        },
+        "standard": {
+          "included": true,
+          "moduleSlug": "stalwart",
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          }
+        }
+      },
+      "default_alternative": "stalwart",
+      "deliverable": true,
+      "delivery_status": "beta",
+      "description": "Your own mail server on a dedicated Cloud node through Stalwart: mailboxes for your domain with SMTP, IMAP and submission. StackKits prints the DNS records you publish; it never changes DNS.",
+      "docs": "/guides/stackkits/use-cases/mail",
+      "id": "mail-server",
+      "maturity": "experimental",
+      "settings": [
+        {
+          "id": "backend",
+          "name": "Service",
+          "kind": "choice",
+          "group": "backend",
+          "depth": "summary",
+          "help": "Preferred service from this StackKits release.",
+          "options": [
+            {
+              "id": "mailcow",
+              "name": "mailcow",
+              "realization": "recorded"
+            },
+            {
+              "id": "stalwart",
+              "name": "Stalwart Mail Server",
+              "realization": "install"
+            }
+          ],
+          "default": "stalwart",
+          "realization": "recorded"
+        },
+        {
+          "id": "profile",
+          "name": "Compute profile",
+          "kind": "choice",
+          "group": "profile",
+          "depth": "summary",
+          "help": "Preferred compute tier included by this StackKits release.",
+          "options": [
+            {
+              "id": "low",
+              "name": "Low"
+            },
+            {
+              "id": "standard",
+              "name": "Standard"
+            },
+            {
+              "id": "high",
+              "name": "High"
+            }
+          ],
+          "default": "standard",
+          "realization": "recorded"
+        }
+      ],
+      "title": "Own Mail Server"
+    },
+    {
+      "components": [
+        {
+          "id": "audiobookshelf",
+          "name": "Audiobookshelf",
+          "role": "supporting",
+          "kind": "application"
+        },
+        {
+          "id": "emby",
+          "name": "Emby",
+          "role": "alternative",
+          "kind": "application",
+          "realization": "install",
+          "maturity": "beta"
+        },
+        {
+          "id": "jellyfin",
+          "name": "Jellyfin",
+          "role": "primary",
+          "kind": "application",
+          "maturity": "supported"
+        },
+        {
+          "id": "navidrome",
+          "name": "Navidrome",
+          "role": "supporting",
+          "kind": "application"
+        }
+      ],
+      "compute_tiers": {
+        "high": {
+          "included": true,
+          "moduleSlug": "jellyfin",
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          }
+        },
+        "low": {
+          "included": false,
+          "reason": "Jellyfin library + transcode is not on the Basement low graph. Needs a lite substitution before it can be included."
+        },
+        "standard": {
+          "included": true,
+          "moduleSlug": "jellyfin",
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          }
+        }
+      },
+      "default_alternative": "jellyfin",
+      "deliverable": true,
+      "delivery_status": "supported",
+      "description": "Private media library and streaming intent for household media collections.",
+      "docs": "/guides/stackkits/use-cases/media",
+      "id": "media",
+      "maturity": "supported",
+      "settings": [
+        {
+          "id": "hardware-transcoding",
+          "name": "Hardware transcoding",
+          "kind": "choice",
+          "group": "hardware",
+          "depth": "summary",
+          "help": "Use the Node's GPU to convert video for phones and TVs.",
+          "options": [
+            {
+              "id": "auto",
+              "name": "Automatic",
+              "note": "Use a GPU when the Node has one"
+            },
+            {
+              "id": "off",
+              "name": "Off",
+              "note": "Software only; fine for one stream at a time"
+            },
+            {
+              "id": "on",
+              "name": "Always",
+              "note": "Requires a supported GPU"
+            }
+          ],
+          "default": "auto",
+          "realization": "recorded"
+        },
+        {
+          "id": "library-volume",
+          "name": "Where media is stored",
+          "kind": "choice",
+          "group": "storage",
+          "depth": "advanced",
+          "help": "A dedicated disk keeps a large library off the system disk.",
+          "options": [
+            {
+              "id": "kit-storage",
+              "name": "Kit storage",
+              "note": "Shared data volume of this StackKit"
+            },
+            {
+              "id": "dedicated-disk",
+              "name": "Dedicated disk",
+              "note": "An extra disk on the Node, just for media"
+            }
+          ],
+          "default": "kit-storage",
+          "realization": "recorded"
+        },
+        {
+          "id": "music-server",
+          "name": "Music streaming",
+          "kind": "toggle",
+          "group": "features",
+          "depth": "summary",
+          "help": "Add Navidrome to stream your music library to Subsonic-compatible apps.",
+          "default": false,
+          "realization": "install",
+          "workloadRef": "media-music"
+        },
+        {
+          "id": "audiobooks",
+          "name": "Audiobooks and podcasts",
+          "kind": "toggle",
+          "group": "features",
+          "depth": "advanced",
+          "help": "Add Audiobookshelf for audiobooks and podcasts with progress sync on your phone.",
+          "default": false,
+          "realization": "install",
+          "workloadRef": "media-audiobooks"
+        },
+        {
+          "id": "backend",
+          "name": "Service",
+          "kind": "choice",
+          "group": "backend",
+          "depth": "summary",
+          "help": "Preferred service from this StackKits release.",
+          "options": [
+            {
+              "id": "emby",
+              "name": "Emby",
+              "realization": "install"
+            },
+            {
+              "id": "jellyfin",
+              "name": "Jellyfin",
+              "realization": "install"
+            }
+          ],
+          "default": "jellyfin",
+          "realization": "install"
+        },
+        {
+          "id": "profile",
+          "name": "Compute profile",
+          "kind": "choice",
+          "group": "profile",
+          "depth": "summary",
+          "help": "Preferred compute tier included by this StackKits release.",
+          "options": [
+            {
+              "id": "standard",
+              "name": "Standard"
+            },
+            {
+              "id": "high",
+              "name": "High"
+            }
+          ],
+          "default": "standard",
+          "realization": "recorded"
+        }
+      ],
+      "title": "Media Library"
+    },
+    {
+      "components": [
+        {
+          "id": "ente-photos",
+          "name": "Ente Photos",
+          "role": "alternative",
+          "kind": "application",
+          "realization": "recorded"
+        },
+        {
+          "id": "immich",
+          "name": "Immich",
+          "role": "primary",
+          "kind": "application",
+          "maturity": "supported"
+        },
+        {
+          "id": "immich-kiosk",
+          "name": "Immich Kiosk",
+          "role": "supporting",
+          "kind": "application"
+        },
+        {
+          "id": "immich-lite",
+          "name": "Immich Lite (no smart search)",
+          "role": "alternative",
+          "kind": "application",
+          "realization": "install",
+          "maturity": "supported"
+        },
+        {
+          "id": "immich-power-tools",
+          "name": "Immich Power Tools",
+          "role": "supporting",
+          "kind": "application"
+        },
+        {
+          "id": "immich-public-proxy",
+          "name": "Immich Public Proxy",
+          "role": "supporting",
+          "kind": "application"
+        }
+      ],
+      "compute_tiers": {
+        "high": {
+          "included": true,
+          "moduleSlug": "immich",
+          "load": {
+            "residency": "always-on",
+            "baseline": "active-resident",
+            "burst": "ingest"
+          }
+        },
+        "low": {
+          "included": true,
+          "moduleSlug": "immich-lite",
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "ingest"
+          }
+        },
+        "standard": {
+          "included": true,
+          "moduleSlug": "immich",
+          "load": {
+            "residency": "always-on",
+            "baseline": "active-resident",
+            "burst": "ingest"
+          }
+        }
+      },
+      "default_alternative": "immich",
+      "deliverable": true,
+      "delivery_status": "supported",
+      "description": "Family photo and video vault with mobile backup, search, and shared memories.",
+      "docs": "/guides/stackkits/use-cases/photos",
+      "id": "photos",
+      "maturity": "supported",
+      "settings": [
+        {
+          "id": "machine-learning",
+          "name": "Smart search and faces",
+          "kind": "toggle",
+          "group": "features",
+          "depth": "summary",
+          "help": "Recognise faces and search photos by what is in them. Needs more memory on the Node.",
+          "default": true,
+          "realization": "recorded"
+        },
+        {
+          "id": "library-volume",
+          "name": "Where photos are stored",
+          "kind": "choice",
+          "group": "storage",
+          "depth": "advanced",
+          "help": "A dedicated disk keeps a growing library off the system disk.",
+          "options": [
+            {
+              "id": "kit-storage",
+              "name": "Kit storage",
+              "note": "Shared data volume of this StackKit"
+            },
+            {
+              "id": "dedicated-disk",
+              "name": "Dedicated disk",
+              "note": "An extra disk on the Node, just for photos"
+            }
+          ],
+          "default": "kit-storage",
+          "realization": "recorded"
+        },
+        {
+          "id": "public-sharing",
+          "name": "Public share links",
+          "kind": "toggle",
+          "group": "access",
+          "depth": "summary",
+          "help": "Add Immich Public Proxy so people without an account can open the albums you share, while Immich itself stays private.",
+          "default": false,
+          "realization": "install",
+          "workloadRef": "photos-share"
+        },
+        {
+          "id": "kiosk",
+          "name": "Photo frame and TV slideshow",
+          "kind": "toggle",
+          "group": "features",
+          "depth": "advanced",
+          "help": "Add Immich Kiosk to show albums or people as a slideshow on a photo frame, TV or tablet.",
+          "default": false,
+          "realization": "install",
+          "workloadRef": "photos-kiosk"
+        },
+        {
+          "id": "power-tools",
+          "name": "Library power tools",
+          "kind": "toggle",
+          "group": "features",
+          "depth": "advanced",
+          "help": "Add Immich Power Tools for bulk work: merge people, fix missing locations and tidy albums.",
+          "default": false,
+          "realization": "install",
+          "workloadRef": "photos-tools"
+        },
+        {
+          "id": "backend",
+          "name": "Service",
+          "kind": "choice",
+          "group": "backend",
+          "depth": "summary",
+          "help": "Preferred service from this StackKits release.",
+          "options": [
+            {
+              "id": "ente-photos",
+              "name": "Ente Photos",
+              "realization": "recorded"
+            },
+            {
+              "id": "immich",
+              "name": "Immich",
+              "realization": "install"
+            },
+            {
+              "id": "immich-lite",
+              "name": "Immich Lite (no smart search)",
+              "realization": "install"
+            }
+          ],
+          "default": "immich",
+          "realization": "install"
+        },
+        {
+          "id": "profile",
+          "name": "Compute profile",
+          "kind": "choice",
+          "group": "profile",
+          "depth": "summary",
+          "help": "Preferred compute tier included by this StackKits release.",
+          "options": [
+            {
+              "id": "low",
+              "name": "Low"
+            },
+            {
+              "id": "standard",
+              "name": "Standard"
+            },
+            {
+              "id": "high",
+              "name": "High"
+            }
+          ],
+          "default": "standard",
+          "realization": "recorded"
+        }
+      ],
+      "title": "Photos and Memories"
+    },
+    {
+      "components": [
+        {
+          "id": "guacamole",
+          "name": "Apache Guacamole",
+          "role": "primary",
+          "kind": "application"
+        }
+      ],
+      "compute_tiers": {
+        "high": {
+          "included": false,
+          "reason": "Same as standard until SK-M5."
+        },
+        "low": {
+          "included": false,
+          "reason": "Guacamole is SK-M5 and not on the low graph."
+        },
+        "standard": {
+          "included": false,
+          "reason": "SK-M5: no executable module. Intended load is always-on idle gateway with interactive session bursts."
+        }
+      },
+      "deliverable": false,
+      "description": "Private remote desktop and browser-accessible workspace intent.",
+      "docs": "/guides/stackkits/use-cases/development",
+      "id": "remote",
+      "settings": [
+        {
+          "id": "backend",
+          "name": "Service",
+          "kind": "choice",
+          "group": "backend",
+          "depth": "summary",
+          "help": "Preferred service from this StackKits release.",
+          "options": [
+            {
+              "id": "guacamole",
+              "name": "Apache Guacamole",
+              "realization": "install"
+            }
+          ],
+          "default": "guacamole",
+          "realization": "recorded"
+        }
+      ],
+      "title": "Remote Desktop"
+    },
+    {
+      "components": [
+        {
+          "id": "esphome",
+          "name": "ESPHome",
+          "role": "supporting",
+          "kind": "application"
+        },
+        {
+          "id": "home-assistant",
+          "name": "Home Assistant",
+          "role": "primary",
+          "kind": "application",
+          "maturity": "supported"
+        },
+        {
+          "id": "mosquitto",
+          "name": "Eclipse Mosquitto",
+          "role": "supporting",
+          "kind": "service"
+        },
+        {
+          "id": "zigbee2mqtt",
+          "name": "Zigbee2MQTT",
+          "role": "supporting",
+          "kind": "application"
+        }
+      ],
+      "compute_tiers": {
+        "high": {
+          "included": true,
+          "moduleSlug": "home-assistant",
+          "load": {
+            "residency": "always-on",
+            "baseline": "active-resident",
+            "burst": "interactive"
+          }
+        },
+        "low": {
+          "included": true,
+          "moduleSlug": "home-assistant",
+          "load": {
+            "residency": "always-on",
+            "baseline": "active-resident",
+            "burst": "interactive"
+          }
+        },
+        "standard": {
+          "included": true,
+          "moduleSlug": "home-assistant",
+          "load": {
+            "residency": "always-on",
+            "baseline": "active-resident",
+            "burst": "interactive"
+          }
+        }
+      },
+      "default_alternative": "home-assistant",
+      "deliverable": true,
+      "delivery_status": "supported",
+      "description": "Home automation centered on Home Assistant, native product interfaces, and optional local device adjacency.",
+      "docs": "/guides/stackkits/use-cases/smart-home",
+      "id": "smart-home",
+      "maturity": "supported",
+      "settings": [
+        {
+          "id": "operating-form",
+          "name": "Home Assistant installation",
+          "kind": "choice",
+          "group": "profile",
+          "depth": "summary",
+          "help": "Choose Container or a dedicated Home Assistant OS appliance. OS requires a separately admitted appliance target.",
+          "options": [
+            {
+              "id": "container",
+              "name": "Container",
+              "note": "Home Assistant Core with operator-managed host services; no Supervisor or Apps."
+            },
+            {
+              "id": "haos",
+              "name": "Home Assistant OS",
+              "note": "Dedicated appliance with Supervisor, Apps and native system maintenance."
+            }
+          ],
+          "default": "container",
+          "realization": "install"
+        },
+        {
+          "id": "instance-origin",
+          "name": "Existing installation",
+          "kind": "choice",
+          "group": "profile",
+          "depth": "summary",
+          "help": "An existing instance is observed without changing accounts, integrations or configuration. Migration is a separate backup-protected operation.",
+          "options": [
+            {
+              "id": "new",
+              "name": "Create new"
+            },
+            {
+              "id": "existing",
+              "name": "Connect existing",
+              "note": "Preserve the original configuration; management requires a separate grant."
+            }
+          ],
+          "default": "new",
+          "realization": "install"
+        },
+        {
+          "id": "device-passthrough",
+          "name": "USB devices",
+          "kind": "toggle",
+          "group": "hardware",
+          "depth": "summary",
+          "help": "Let Home Assistant use a Zigbee, Z-Wave or other USB stick plugged into this Node.",
+          "default": false,
+          "realization": "recorded"
+        },
+        {
+          "id": "network-discovery",
+          "name": "Find devices on your network",
+          "kind": "toggle",
+          "group": "access",
+          "depth": "advanced",
+          "help": "Discover lights, speakers and hubs on the home network automatically.",
+          "default": true,
+          "realization": "recorded"
+        },
+        {
+          "id": "mqtt-broker",
+          "name": "MQTT broker",
+          "kind": "toggle",
+          "group": "features",
+          "depth": "advanced",
+          "help": "Add Eclipse Mosquitto so MQTT devices, Zigbee2MQTT and ESPHome can talk to Home Assistant.",
+          "default": false,
+          "realization": "install",
+          "workloadRef": "smart-home-mqtt"
+        },
+        {
+          "id": "zigbee-bridge",
+          "name": "Zigbee devices",
+          "kind": "toggle",
+          "group": "features",
+          "depth": "summary",
+          "help": "Add Zigbee2MQTT to use Zigbee lights and sensors without vendor hubs. You choose the Zigbee USB adapter and the MQTT broker address.",
+          "default": false,
+          "realization": "install",
+          "workloadRef": "smart-home-zigbee"
+        },
+        {
+          "id": "esphome",
+          "name": "ESPHome devices",
+          "kind": "toggle",
+          "group": "features",
+          "depth": "advanced",
+          "help": "Add ESPHome to build and update firmware for your own ESP32 sensors and switches.",
+          "default": false,
+          "realization": "install",
+          "workloadRef": "smart-home-esphome"
+        },
+        {
+          "id": "backend",
+          "name": "Service",
+          "kind": "choice",
+          "group": "backend",
+          "depth": "summary",
+          "help": "Preferred service from this StackKits release.",
+          "options": [
+            {
+              "id": "home-assistant",
+              "name": "Home Assistant",
+              "realization": "install"
+            }
+          ],
+          "default": "home-assistant",
+          "realization": "recorded"
+        },
+        {
+          "id": "profile",
+          "name": "Compute profile",
+          "kind": "choice",
+          "group": "profile",
+          "depth": "summary",
+          "help": "Preferred compute tier included by this StackKits release.",
+          "options": [
+            {
+              "id": "low",
+              "name": "Low"
+            },
+            {
+              "id": "standard",
+              "name": "Standard"
+            },
+            {
+              "id": "high",
+              "name": "High"
+            }
+          ],
+          "default": "standard",
+          "realization": "recorded"
+        }
+      ],
+      "title": "Smart Home"
+    },
+    {
+      "components": [
+        {
+          "id": "passbolt",
+          "name": "Passbolt CE",
+          "role": "alternative",
+          "kind": "application",
+          "realization": "install",
+          "maturity": "beta"
+        },
+        {
+          "id": "vaultwarden",
+          "name": "Vaultwarden",
+          "role": "primary",
+          "kind": "application",
+          "maturity": "supported"
+        }
+      ],
+      "compute_tiers": {
+        "high": {
+          "included": true,
+          "moduleSlug": "vaultwarden",
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          }
+        },
+        "low": {
+          "included": true,
+          "moduleSlug": "vaultwarden",
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          }
+        },
+        "standard": {
+          "included": true,
+          "moduleSlug": "vaultwarden",
+          "load": {
+            "residency": "always-on",
+            "baseline": "idle-resident",
+            "burst": "interactive"
+          }
+        }
+      },
+      "default_alternative": "vaultwarden",
+      "deliverable": true,
+      "delivery_status": "supported",
+      "description": "Private password and secure-note vault with owner-controlled lifecycle and recovery.",
+      "docs": "/guides/stackkits/use-cases/vault",
+      "id": "vault",
+      "maturity": "supported",
+      "settings": [
+        {
+          "id": "open-signups",
+          "name": "Open sign-ups",
+          "kind": "toggle",
+          "group": "access",
+          "depth": "advanced",
+          "help": "Let people create their own vault account. Off means the owner invites them.",
+          "default": false,
+          "realization": "recorded"
+        },
+        {
+          "id": "backend",
+          "name": "Service",
+          "kind": "choice",
+          "group": "backend",
+          "depth": "summary",
+          "help": "Preferred service from this StackKits release.",
+          "options": [
+            {
+              "id": "passbolt",
+              "name": "Passbolt CE",
+              "realization": "install"
+            },
+            {
+              "id": "vaultwarden",
+              "name": "Vaultwarden",
+              "realization": "install"
+            }
+          ],
+          "default": "vaultwarden",
+          "realization": "install"
+        },
+        {
+          "id": "profile",
+          "name": "Compute profile",
+          "kind": "choice",
+          "group": "profile",
+          "depth": "summary",
+          "help": "Preferred compute tier included by this StackKits release.",
+          "options": [
+            {
+              "id": "low",
+              "name": "Low"
+            },
+            {
+              "id": "standard",
+              "name": "Standard"
+            },
+            {
+              "id": "high",
+              "name": "High"
+            }
+          ],
+          "default": "standard",
+          "realization": "recorded"
+        }
+      ],
+      "title": "Password Vault"
+    }
+  ]
+}

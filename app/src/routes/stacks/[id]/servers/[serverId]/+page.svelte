@@ -9,6 +9,7 @@
     isGatewayAuthFailure,
   } from "#lib/auth/session-recovery.js";
   import { authHandler } from "#lib/stores/authHandler.svelte.js";
+  import { useViewContextOverlay } from "#lib/stores/viewContext.svelte.js";
   import SessionRenewalPanel from "#lib/components/SessionRenewalPanel.svelte";
   import {
     getServerPortInventory,
@@ -31,19 +32,12 @@
     getMonthlyRuntimeSSHInfo,
     reconnectMonthlyRuntime,
     resolveMonthlyRuntimeCustody,
-    runStackKitLifecycleOperation,
     type MonthlyRuntimeStatus,
-    type StackKitLifecycleAcceptedResponse,
-    type StackKitLifecycleOperation,
     type StackMetricValue,
     type StackServerAddress,
     type StackServerDetailsPayload,
     type StackServerEndpoint,
   } from "#lib/api/stacks.js";
-  import {
-    serverLifecycleActions,
-    type ServerLifecycleAction,
-  } from "#lib/server-lifecycle-actions.js";
   import { isLegacyOrUnboundCustody } from "#lib/custody/server-custody.js";
   import {
     mergeServerDetailsPayload,
@@ -64,6 +58,12 @@
   import Button from "#lib/components/ui/Button.svelte";
   import ServerAccessActions from "#lib/components/server-access/ServerAccessActions.svelte";
   import ManagedRuntimeRecreatePanel from "#lib/components/managed-runtime/ManagedRuntimeRecreatePanel.svelte";
+  import GuardPanel from "#lib/components/guard/GuardPanel.svelte";
+  import GuardBadge from "#lib/components/guard/GuardBadge.svelte";
+  import ServerNetworkCard from "#lib/components/server-network/ServerNetworkCard.svelte";
+  import StackKitOperatorPanel from "#lib/components/stackkit/StackKitOperatorPanel.svelte";
+  import ServerMaintenanceCard from "#lib/components/server-maintenance/ServerMaintenanceCard.svelte";
+  import DriveHealth from "#lib/components/monitoring/DriveHealth.svelte";
   import {
     Activity,
     ArrowLeft,
@@ -89,6 +89,7 @@
   let portInventoryError = $state<string | null>(null);
   let loading = $state(true);
   let refreshing = $state(false);
+  let driveRefreshKey = $state(0);
   let loadGeneration = 0;
   let loadedIdentity = "";
   let error = $state<string | null>(null);
@@ -100,25 +101,13 @@
   let actionLoading = $state<
     "ssh" | "reconnect" | "decommission" | "detach" | "resolve-custody" | null
   >(null);
-  let lifecycleLoading = $state<StackKitLifecycleOperation | null>(null);
-  let lifecycleConfirmation = $state<StackKitLifecycleOperation | null>(null);
-  let lifecycleAccepted = $state<StackKitLifecycleAcceptedResponse | null>(
-    null,
-  );
+  let lifecycleBusy = $state(false);
   let runtimeStatus = $state<MonthlyRuntimeStatus | null>(null);
   let runtimeLogs = $state<RuntimeLogEntry[]>([]);
   let runtimeLogsError = $state<string | null>(null);
   let activeTab = $state<
     "overview" | "services" | "ports" | "checks" | "logs" | "settings"
   >("overview");
-  let availableLifecycleActions = $derived.by(() =>
-    serverLifecycleActions(canonicalServer ?? undefined),
-  );
-  let pendingLifecycleAction = $derived(
-    availableLifecycleActions.find(
-      (action) => action.operation === lifecycleConfirmation,
-    ) ?? null,
-  );
   let canDetachSelfOwnedServer = $derived(
     canonicalServer?.operations_owner === "customer" &&
       !canonicalServer.provider?.lease_id &&
@@ -143,6 +132,23 @@
       ),
     ),
   );
+
+  // The server this page shows, for kombify Cloud's Companion: the canonical
+  // id once known (the route can carry the agent's worker id), the name as a
+  // label only.
+  useViewContextOverlay(() => {
+    const canonicalId =
+      canonicalServer?.id || details?.server.server_id || serverId;
+    if (!canonicalId) return null;
+    return {
+      subject: {
+        resourceType: "server",
+        resourceId: canonicalId,
+        label: details?.server.hostname || canonicalServer?.name,
+      },
+      facts: { serverId: canonicalId, stackId },
+    };
+  });
 
   $effect(() => {
     if (stackId && serverId) {
@@ -190,6 +196,7 @@
 
   async function load() {
     if (!stackId || !serverId) return;
+    driveRefreshKey++;
     const identity = serverDetailsIdentity(stackId, serverId);
     const mine = ++loadGeneration;
     const retain = retainServerDetailsSnapshot(
@@ -380,41 +387,6 @@
       actionError = parsed.message || tr("ui.stacksIdServersServerId.custodyResolutionFailed");
     } finally {
       actionLoading = null;
-    }
-  }
-
-  function requestLifecycleAction(action: ServerLifecycleAction) {
-    actionError = null;
-    lifecycleAccepted = null;
-    if (action.mutates) {
-      lifecycleConfirmation = action.operation;
-      return;
-    }
-    void executeLifecycleAction(action);
-  }
-
-  async function executeLifecycleAction(action: ServerLifecycleAction) {
-    const currentStackId = stackId;
-    if (!currentStackId || !details?.server.agent_id || lifecycleLoading)
-      return;
-    lifecycleLoading = action.operation;
-    lifecycleConfirmation = null;
-    actionError = null;
-    lifecycleAccepted = null;
-    try {
-      lifecycleAccepted = await runStackKitLifecycleOperation(currentStackId, {
-        operation: action.operation,
-        agent_id: details.server.agent_id,
-        target_release: action.operation === "upgrade" ? "latest" : undefined,
-        owner_approved: action.mutates ? true : undefined,
-      });
-      await load();
-    } catch (err) {
-      const parsed = parseApiError(err);
-      actionError =
-        parsed.message || tr("ui.serverDetail.actionNotStarted", { action: action.label });
-    } finally {
-      lifecycleLoading = null;
     }
   }
 
@@ -644,6 +616,10 @@
               >
                 {details.server.assignment}
               </span>
+              <GuardBadge
+                server={canonicalServer}
+                capabilities={details.server.capabilities}
+              />
             </div>
             <h1 class="truncate text-2xl font-semibold text-foreground">
               {details.server.hostname}
@@ -739,6 +715,45 @@
     {/if}
 
     {#if activeTab === "overview"}
+      <DriveHealth
+        serverId={serverId || ""}
+        refreshKey={driveRefreshKey}
+        disconnected={canonicalServer?.connection.state === "offline" ||
+          canonicalServer?.connection.state === "revoked"}
+      />
+      <GuardPanel
+        server={canonicalServer}
+        capabilities={details.server.capabilities}
+        serverName={details.server.hostname}
+        stackId={stackId}
+        agentId={details.server.agent_id}
+        canDetach={canDetachSelfOwnedServer}
+        onChanged={() => load()}
+        onDetached={() => goto(`/stacks/${encodeURIComponent(stackId ?? "")}`)}
+      />
+      <div class="mb-6">
+        <ServerNetworkCard
+          serverId={serverId || ""}
+          unreachable={canonicalServer?.connection.state === "stale" ||
+            canonicalServer?.connection.state === "offline"}
+        />
+      </div>
+    {/if}
+
+    {#if activeTab === "overview"}
+      {#if canonicalServer}
+        <div class="mb-6">
+          {#key canonicalServer.id}
+            <ServerMaintenanceCard
+              serverId={canonicalServer.id}
+              serverName={canonicalServer.name || details.server.hostname}
+              allowedActions={canonicalServer.allowed_actions || []}
+              disabled={actionLoading !== null || lifecycleBusy}
+              onChanged={() => void load()}
+            />
+          {/key}
+        </div>
+      {/if}
       {@const access = persistedAccessContext()}
       <section class="grid gap-6 lg:grid-cols-2">
         <div data-kx="plate" class="p-5">
@@ -845,95 +860,7 @@
           </dl>
         </div>
 
-        <div data-kx="plate" class="p-5" data-testid="server-lifecycle-actions">
-          <div class="flex items-start gap-3">
-            <ListChecks class="mt-0.5 h-5 w-5 shrink-0 text-primary" />
-            <div class="min-w-0 flex-1">
-              <h2 class="text-lg font-semibold text-foreground">
-                {tr("ui.stacksIdServersServerId.stackkitActions")}
-              </h2>
-              <p class="mt-2 max-w-3xl text-sm text-muted-foreground">
-                {tr("ui.serverDetail.actionsTarget", { name: details.server.hostname })}
-              </p>
-
-              {#if availableLifecycleActions.length === 0}
-                <p
-                  class="mt-4 rounded-lg bg-muted/40 p-3 text-sm text-muted-foreground"
-                  data-testid="server-lifecycle-unavailable"
-                >
-                  {tr("ui.stacksIdServersServerId.lifecycleActionsBecomeAvailableWhen")}
-                </p>
-              {:else}
-                <div class="mt-4 grid gap-3 sm:grid-cols-2">
-                  {#each availableLifecycleActions as action (action.operation)}
-                    <button
-                      type="button"
-                      data-kx="control"
-                      class="inline-flex h-auto items-center justify-start gap-2 whitespace-nowrap rounded-lg px-4 py-3 text-left text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
-                      data-testid={`server-lifecycle-${action.operation}`}
-                      onclick={() => requestLifecycleAction(action)}
-                      disabled={lifecycleLoading !== null ||
-                        actionLoading !== null}
-                    >
-                      <span>
-                        <span class="block font-medium">
-                          {lifecycleLoading === action.operation
-                            ? tr("ui.homelabDashboardPage.starting")
-                            : action.label}
-                        </span>
-                        <span class="mt-1 block text-xs font-normal opacity-75">
-                          {action.description}
-                        </span>
-                      </span>
-                    </button>
-                  {/each}
-                </div>
-              {/if}
-
-              {#if pendingLifecycleAction}
-                <div
-                  class="mt-4 rounded-lg border border-warning/40 bg-warning/10 p-4"
-                  data-testid="server-lifecycle-confirmation"
-                >
-                  <p class="text-sm font-medium text-foreground">
-                    {tr("ui.serverDetail.confirmActionFor", { action: pendingLifecycleAction.label, name: details.server.hostname })}
-                  </p>
-                  <p class="mt-1 text-sm text-muted-foreground">
-                    {tr("ui.stacksIdServersServerId.thisChangesTheSelectedServer")}
-                  </p>
-                  <div class="mt-4 flex flex-wrap gap-2">
-                    <Button
-                      variant="primary"
-                      testId="server-lifecycle-confirm-button"
-                      onclick={() =>
-                        executeLifecycleAction(pendingLifecycleAction)}
-                      disabled={lifecycleLoading !== null}
-                    >
-                      {tr("ui.stacksIdServersServerId.confirmAction")}
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      onclick={() => (lifecycleConfirmation = null)}
-                      disabled={lifecycleLoading !== null}
-                    >
-                      {tr("ui.importExportModal.cancel")}
-                    </Button>
-                  </div>
-                </div>
-              {/if}
-
-              {#if lifecycleAccepted}
-                <div
-                  class="mt-4 rounded-lg border border-success/30 bg-success/10 p-3 text-sm"
-                  role="status"
-                  data-testid="server-lifecycle-accepted"
-                >
-                  {tr("ui.serverDetail.jobAccepted", { id: lifecycleAccepted.job_id })}
-                </div>
-              {/if}
-            </div>
-          </div>
-        </div>
+        <StackKitOperatorPanel server={canonicalServer} stackId={stackId || ""} agentId={details.server.agent_id || ""} disabled={actionLoading !== null} onBusy={(busy) => lifecycleBusy = busy} onChanged={() => load()} />
 
         <div data-kx="plate" class="p-5" data-testid="server-stackkit-details">
           <div class="mb-4 flex items-center justify-between gap-2">

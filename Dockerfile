@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.27
+# syntax=docker/dockerfile:1.28
 
 FROM node:24-slim AS frontend
 WORKDIR /build/app
@@ -14,7 +14,7 @@ COPY app/ .
 ENV PUBLIC_KOMBIFY_EDITION=selfhost-oss
 RUN pnpm build
 
-FROM golang:1.27.1-alpine AS backend
+FROM golang:1.27.2-alpine AS backend
 WORKDIR /build
 ENV GOTOOLCHAIN=local
 COPY go.mod go.sum ./
@@ -31,18 +31,99 @@ RUN set -eu; \
     CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -trimpath \
       -tags techstack_static_ui \
       -ldflags="-s -w -X main.version=${version} -X main.buildRevision=${revision}" \
-      -o /out/techstack ./cmd/techstack
+      -o /out/techstack ./cmd/techstack; \
+    CGO_ENABLED=0 go build -mod=readonly -buildvcs=false -trimpath \
+      -o /out/guard-release-tool ./cmd/guard-release-tool
+
+# Pre-sign source CI stops at backend. Only the numeric product release builds
+# this complete runtime, after Guard has been published from that public main SHA.
+FROM alpine:3.24 AS signed-runtime
+RUN apk add --no-cache bash ca-certificates curl jq tar
+WORKDIR /build
+COPY VERSION ./VERSION
+COPY --from=backend /out/guard-release-tool /usr/local/bin/guard-release-tool
+COPY scripts/new-linux-stackkit-spec-templates.sh ./scripts/new-linux-stackkit-spec-templates.sh
+COPY Dockerfile ./Dockerfile
+ARG STACKKIT_RELEASE_TAG="v0.53.8"
+ARG STACKKIT_RELEASE_KIT="cloud-kit"
+ARG STACKKIT_RELEASE_BOOTSTRAP_KIT="basement-kit"
+ARG STACKKIT_RELEASE_REPO="kombifyio/StackKits"
+ARG STACKKIT_RELEASE_ARCHIVE_SHA256="1282d175292d0d05150501b1ad3785e513c8e66652bd99e36a700b617d61636a"
+ARG STACKKIT_RELEASE_INDEX_SHA256="42f20c73b5ab04003831c58b8417810bc2dff2e61c7ff0ac79a2abcb1bfb9fad"
+ARG STACKKIT_RELEASE_COMPATIBILITY_SHA256="bf30be6ca8d4f7dde734c15c3e81213eeb0e452d856a5bb75ce4d04b036fcad9"
+ARG STACKKIT_RELEASE_USE_CASE_CATALOG_SHA256="179c09510fdfe8792d309c0281067d1709dd54d90628e722fba19c4588bb110e"
+ARG GIT_COMMIT=""
+ARG TECHSTACK_PRODUCT_VERSION=""
+RUN set -eu; \
+    version="${TECHSTACK_PRODUCT_VERSION:-$(tr -d '[:space:]' < VERSION)}"; \
+    test "$version" = "$(tr -d '[:space:]' < VERSION)"; \
+    printf '%s' "$GIT_COMMIT" | grep -Eq '^[0-9a-f]{40}$'; \
+    base="https://github.com/kombifyio/TechStack/releases/download/guard-v${version}"; \
+    mkdir -p /app/guard-release; \
+    for asset in release-manifest.json release-manifest.sigstore.json \
+      techstack-linux-amd64 techstack-linux-amd64.sigstore.json \
+      techstack-linux-arm64 techstack-linux-arm64.sigstore.json \
+      stackkit-runtime-linux-amd64.tar.gz stackkit-runtime-linux-arm64.tar.gz; do \
+      curl --fail --silent --show-error --location "${base}/${asset}" --output "/app/guard-release/${asset}"; \
+    done; \
+    guard-release-tool verify /app/guard-release --expected-source "$GIT_COMMIT" --require-runtime-bundles; \
+    jq -e --arg version "$version" --arg stackkits "$STACKKIT_RELEASE_TAG" \
+      '.version == $version and .stackkits.version == $stackkits' /app/guard-release/release-manifest.json >/dev/null; \
+    tar --extract --gzip --file /app/guard-release/stackkit-runtime-linux-amd64.tar.gz --directory /app; \
+    test "$(jq -er '.version' /app/.stackkit/stackkits-release-pin.json)" = "$STACKKIT_RELEASE_TAG"
+
+# Catalog and authoring templates belong to the controller. They never modify
+# the immutable signed archive/tree served to a Guard.
+RUN set -eu; \
+    base="https://github.com/${STACKKIT_RELEASE_REPO}/releases/download/${STACKKIT_RELEASE_TAG}"; \
+    curl --fail --silent --show-error --location "${base}/stackkits-release-index-v1.json" --output /tmp/index.json; \
+    echo "${STACKKIT_RELEASE_INDEX_SHA256}  /tmp/index.json" | sha256sum -c -; \
+    mkdir -p /app/stackkits; \
+    for kit in basement-kit cloud-kit modern-homelab; do \
+      entry="$(jq -er --arg kit "$kit" --arg version "$STACKKIT_RELEASE_TAG" \
+        '[.assets[] | select(.kit == $kit and .version == $version and .platform.os == "linux" and .platform.arch == "amd64") | .archive] | if length == 1 then .[0].name + " " + .[0].sha256 else error("ambiguous or missing archive") end' /tmp/index.json)"; \
+      set -- $entry; \
+      curl --fail --silent --show-error --location "${base}/$1" --output /tmp/catalog.tar.gz; \
+      echo "$2  /tmp/catalog.tar.gz" | sha256sum -c -; \
+      tar --extract --gzip --file /tmp/catalog.tar.gz --directory /app/stackkits \
+        --exclude=stackkit --exclude=stackkit-server --exclude=stackkit-mcp --exclude=stackkit-content-bridge \
+        --exclude=tofu --exclude=terramate --exclude=providers; \
+      test -s "/app/stackkits/$kit/stackkit.yaml"; \
+    done; \
+    bash scripts/new-linux-stackkit-spec-templates.sh; \
+    cp -R dist/spec-templates /app/stackkits/spec-templates
 
 FROM alpine:3.24
+ARG GIT_COMMIT=""
+ARG TECHSTACK_PRODUCT_VERSION=""
+LABEL org.opencontainers.image.revision="${GIT_COMMIT}" \
+      org.opencontainers.image.version="${TECHSTACK_PRODUCT_VERSION}" \
+      org.opencontainers.image.source="https://github.com/kombifyio/TechStack"
 RUN apk upgrade --no-cache && apk add --no-cache ca-certificates curl docker-cli docker-cli-compose git jq openssh-client
 RUN addgroup -S techstack && adduser -S -G techstack techstack && mkdir -p /data && chown techstack:techstack /data
 COPY --from=backend /out/techstack /app/techstack
+COPY --from=signed-runtime /app/.stackkit /app/.stackkit
+COPY --from=signed-runtime /app/stackkits /app/stackkits
+COPY --from=signed-runtime /app/guard-release /app/guard-release
 ENV KOMBIFY_EDITION=selfhost-oss
 ENV TECHSTACK_AUTH_MODE=local
 ENV TECHSTACK_DATA_DIR=/data
+ENV TECHSTACK_TSDB_DIR=/data/pb_data/monitoring/tsdb
+ENV TECHSTACK_STACKKITS_DIR=/app/stackkits
+ENV TECHSTACK_STACKKIT_CLI=/app/.stackkit/bin/stackkit
+ENV TECHSTACK_STACKKIT_ARTIFACTS_MODE=cli
+ENV TECHSTACK_STACKKIT_RELEASE_CACHE=/app/.stackkit/releases
+ENV TECHSTACK_STACKKIT_RELEASE_PIN=/app/.stackkit/stackkits-release-pin.json
+ENV TECHSTACK_STACKKIT_COMPATIBILITY_MANIFEST=/app/.stackkit/stackkits-compatibility-v1.json
+ENV TECHSTACK_STACKKIT_USE_CASE_CATALOG=/app/.stackkit/stackkits-use-case-catalog-v1.json
+ENV TECHSTACK_STACKKIT_SPEC_TEMPLATES=/app/stackkits/spec-templates
+ENV TECHSTACK_STACKKIT_RELEASE_BUNDLE=/app/guard-release/stackkit-runtime-linux-amd64.tar.gz
+ENV TECHSTACK_GUARD_RELEASE_DIR=/app/guard-release
+ENV TECHSTACK_GUARD_RELEASE_SOURCE=kombifyio/TechStack
 ENV PORT=5260
 ENV TECHSTACK_PORT=5260
 EXPOSE 5260 5263
+WORKDIR /app
 VOLUME ["/data"]
 USER techstack
 ENTRYPOINT ["/app/techstack"]

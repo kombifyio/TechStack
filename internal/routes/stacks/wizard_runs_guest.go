@@ -82,7 +82,7 @@ func (h wizardRunHandlers) validateWizardGuestRequest(e *httpx.Event, request wi
 		return false
 	}
 	g := request.Substrate
-	if g == nil || g.ProfileID != "ubuntu-24.04" || strings.TrimSpace(g.ServerID) == "" || strings.TrimSpace(g.Storage) == "" || strings.TrimSpace(g.Bridge) == "" || g.CPU < 2 || g.MemoryMiB < 2048 || g.DiskGiB < 32 || request.Remote != nil || request.Managed != nil {
+	if g == nil || !substrate.IsUbuntuProfile(g.ProfileID) || strings.TrimSpace(g.ServerID) == "" || strings.TrimSpace(g.Storage) == "" || strings.TrimSpace(g.Bridge) == "" || g.CPU < 2 || g.MemoryMiB < 2048 || g.DiskGiB < 32 || request.Remote != nil || request.Managed != nil {
 		_ = httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeValidation, "Select a connected hypervisor and valid Ubuntu guest resources", nil)
 		return false
 	}

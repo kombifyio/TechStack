@@ -2,6 +2,7 @@ package routes
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"os"
@@ -43,6 +44,8 @@ const (
 	demoResetSecretHeader   = "X-Kombify-Demo-Reset-Secret" //nolint:gosec // header NAME, not a credential value
 )
 
+var errDemoResetNotResettable = errors.New("lease is not marked as the resettable demo slot")
+
 type demoResetHandlers struct {
 	leases     stackLifecycleLeaseService
 	reconciler monthlyruntime.ReconciliationEnqueuer
@@ -64,17 +67,59 @@ type demoResetCustodyResolution struct {
 	Reason   string `json:"reason"`
 }
 
+// Receipt decisions. A lease is only ever admitted for decommission when its
+// demo slot is explicitly marked resettable.
+const (
+	demoResetDecisionAdmitted           = "admitted"
+	demoResetDecisionCandidate          = "candidate"
+	demoResetDecisionSkippedUnmarked    = "skipped_unmarked"
+	demoResetDecisionSkippedSlot        = "skipped_slot"
+	demoResetDecisionSkippedProtected   = "skipped_protected"
+	demoResetDecisionSkippedGrace       = "skipped_grace"
+	demoResetDecisionSkippedCap         = "skipped_cap"
+	demoResetDecisionResolutionRequired = "resolution_required"
+	demoResetDecisionAdmissionFailed    = "admission_failed"
+	demoResetPolicyAllowlist            = "allowlist"
+)
+
+// demoResetLeaseReceipt records what the reset decided for one active demo
+// tenant lease and the demo slot that decision was based on.
+type demoResetLeaseReceipt struct {
+	LeaseID  string `json:"lease_id"`
+	Slot     string `json:"slot"`
+	Decision string `json:"decision"`
+}
+
 type demoResetResponse struct {
-	Message            string                       `json:"message"`
+	Message string `json:"message"`
+	// Policy names the selection rule. "allowlist" means only leases marked
+	// resettable can be decommissioned; everything else is left in place.
+	Policy             string                       `json:"policy"`
 	DryRun             bool                         `json:"dry_run"`
 	Candidates         []string                     `json:"candidates"`
 	Admitted           []string                     `json:"admitted"`
+	Leases             []demoResetLeaseReceipt      `json:"leases"`
 	PrunedStacks       int                          `json:"pruned_stacks"`
+	SkippedUnmarked    int                          `json:"skipped_unmarked"`
+	SkippedSlot        int                          `json:"skipped_slot"`
 	SkippedProtected   int                          `json:"skipped_protected"`
 	SkippedGrace       int                          `json:"skipped_grace"`
 	SkippedCap         int                          `json:"skipped_cap"`
 	ResolutionRequired []demoResetCustodyResolution `json:"resolution_required,omitempty"`
 	Warnings           []string                     `json:"warnings,omitempty"`
+}
+
+func (r *demoResetResponse) recordLease(leaseID, slot, decision string) {
+	r.Leases = append(r.Leases, demoResetLeaseReceipt{LeaseID: leaseID, Slot: slot, Decision: decision})
+}
+
+func (r *demoResetResponse) setDecision(leaseID, decision string) {
+	for i := range r.Leases {
+		if r.Leases[i].LeaseID == leaseID {
+			r.Leases[i].Decision = decision
+			return
+		}
+	}
 }
 
 // RegisterDemoResetRoutes wires the internal demo-slot reset used by the
@@ -109,9 +154,11 @@ func (h demoResetHandlers) reset(e *httpx.Event) error {
 	ctx := e.Request.Context()
 	resp := demoResetResponse{
 		Message:    "Demo cleanup admission",
+		Policy:     demoResetPolicyAllowlist,
 		DryRun:     dryRun,
 		Candidates: []string{},
 		Admitted:   []string{},
+		Leases:     []demoResetLeaseReceipt{},
 		Warnings:   []string{},
 	}
 
@@ -126,12 +173,14 @@ func (h demoResetHandlers) reset(e *httpx.Event) error {
 	for _, lease := range victims {
 		resp.Candidates = append(resp.Candidates, string(lease.ID))
 		if inventoryErr != nil {
+			resp.setDecision(string(lease.ID), demoResetDecisionResolutionRequired)
 			resp.ResolutionRequired = append(resp.ResolutionRequired,
 				demoResetCustodyReviewFor(lease, "authority-aware lease inventory is unavailable"))
 			continue
 		}
 		record, ok := inventory[lease.ID]
 		if !ok {
+			resp.setDecision(string(lease.ID), demoResetDecisionResolutionRequired)
 			resp.ResolutionRequired = append(resp.ResolutionRequired,
 				demoResetCustodyReviewFor(lease, "lease authority record is missing; provider absence cannot be inferred"))
 			continue
@@ -141,6 +190,7 @@ func (h demoResetHandlers) reset(e *httpx.Event) error {
 			// intentionally not auto-archived: a missing native row is not proof
 			// that a billable provider resource is absent. The normal operations
 			// surface already exposes the exact owner-confirmed resolution action.
+			resp.setDecision(string(lease.ID), demoResetDecisionResolutionRequired)
 			resp.ResolutionRequired = append(resp.ResolutionRequired,
 				demoResetCustodyResolutionFor(lease, "legacy or unbound custody requires provider-removal confirmation"))
 			continue
@@ -150,9 +200,11 @@ func (h demoResetHandlers) reset(e *httpx.Event) error {
 		}
 		admissionErr := h.admitDemoLeaseCleanup(ctx, tenantID, lease)
 		if admissionErr != nil {
+			resp.setDecision(string(lease.ID), demoResetDecisionAdmissionFailed)
 			resp.Warnings = append(resp.Warnings, string(lease.ID)+": "+admissionErr.Error())
 			continue
 		}
+		resp.setDecision(string(lease.ID), demoResetDecisionAdmitted)
 		resp.Admitted = append(resp.Admitted, string(lease.ID))
 	}
 
@@ -222,10 +274,13 @@ func demoResetDryRunRequested(e *httpx.Event) bool {
 	return err == nil && v
 }
 
-// selectDemoResetVictims filters the tenant's leases down to the reapable set:
-// active monthly-runtime leases that are neither explicitly protected nor
-// inside the grace window. It rotates a bounded batch across stable lease-id
-// order so failed admissions at the head of the list cannot starve the tail.
+// selectDemoResetVictims filters the tenant's leases down to the reapable set
+// with an allowlist: an active monthly-runtime lease is reapable only when its
+// demo slot is explicitly marked resettable, it is not in the belt-and-braces
+// protected list and it is outside the grace window. Unmarked leases and every
+// other slot, such as showcase, are never selected. It rotates a bounded batch
+// across stable lease-id order so failed admissions at the head of the list
+// cannot starve the tail.
 func selectDemoResetVictims(leases []vmlease.Lease, resp *demoResetResponse) []vmlease.Lease {
 	return selectDemoResetVictimsAt(leases, resp, time.Now().UTC(), demoResetBatchSize())
 }
@@ -246,12 +301,25 @@ func selectDemoResetVictimsAt(
 		if !monthlyruntime.IsMonthlyRuntimeMetadata(lease.Metadata) || !monthlyruntime.LeaseActive(lease) {
 			continue
 		}
-		if demoguard.IsProtectedLease(string(lease.ID)) {
+		leaseID := string(lease.ID)
+		slot := demoguard.LeaseSlot(lease.Metadata)
+		switch {
+		case demoguard.IsProtectedLease(leaseID):
 			resp.SkippedProtected++
+			resp.recordLease(leaseID, slot, demoResetDecisionSkippedProtected)
+			continue
+		case slot == demoguard.SlotUnmarked:
+			resp.SkippedUnmarked++
+			resp.recordLease(leaseID, slot, demoResetDecisionSkippedUnmarked)
+			continue
+		case slot != demoguard.SlotResettable:
+			resp.SkippedSlot++
+			resp.recordLease(leaseID, slot, demoResetDecisionSkippedSlot)
 			continue
 		}
 		if age := now.Sub(demoResetLeaseCreatedAt(lease, now)); age < grace {
 			resp.SkippedGrace++
+			resp.recordLease(leaseID, slot, demoResetDecisionSkippedGrace)
 			continue
 		}
 		eligible = append(eligible, lease)
@@ -260,12 +328,24 @@ func selectDemoResetVictimsAt(
 		return string(eligible[i].ID) < string(eligible[j].ID)
 	})
 	if len(eligible) <= batchSize {
+		for _, lease := range eligible {
+			resp.recordLease(string(lease.ID), demoguard.SlotResettable, demoResetDecisionCandidate)
+		}
 		return eligible
 	}
 	start := demoResetRotationStart(len(eligible), batchSize, now)
 	victims := make([]vmlease.Lease, batchSize)
+	chosen := make(map[vmlease.LeaseID]bool, batchSize)
 	for i := range victims {
 		victims[i] = eligible[(start+i)%len(eligible)]
+		chosen[victims[i].ID] = true
+	}
+	for _, lease := range eligible {
+		decision := demoResetDecisionCandidate
+		if !chosen[lease.ID] {
+			decision = demoResetDecisionSkippedCap
+		}
+		resp.recordLease(string(lease.ID), demoguard.SlotResettable, decision)
 	}
 	resp.SkippedCap += len(eligible) - len(victims)
 	return victims
@@ -331,6 +411,11 @@ func (h demoResetHandlers) admitDemoLeaseCleanup(
 	tenantID string,
 	lease vmlease.Lease,
 ) error {
+	// Last line of the allowlist: admission itself refuses any lease that is
+	// not explicitly marked resettable, whatever selected it.
+	if !demoguard.IsResettableSlot(lease.Metadata) || demoguard.IsProtectedLease(string(lease.ID)) {
+		return errDemoResetNotResettable
+	}
 	stackID := strings.TrimSpace(lease.Metadata["stack_id"])
 	ownerID := strings.TrimSpace(lease.Subject.ID)
 	if stackID == "" || ownerID == "" {

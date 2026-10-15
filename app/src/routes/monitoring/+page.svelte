@@ -27,11 +27,17 @@
   import { PageHeader } from "@kombiverselabs/ui/shell";
   import Button from "#lib/components/ui/Button.svelte";
   import StateRibbon from "#lib/components/monitoring/StateRibbon.svelte";
+  import StorageForecast from "#lib/components/monitoring/StorageForecast.svelte";
+  import DomainMonitoring from "#lib/components/monitoring/DomainMonitoring.svelte";
+  import GuardBadge from "#lib/components/guard/GuardBadge.svelte";
 
   const REFRESH_INTERVAL_MS = 30_000;
 
   let inventoryServers = $state<CanonicalServer[]>([]);
   let canonicalServices = $state<CanonicalService[]>([]);
+  let servicesUnavailable = $state(false);
+  let storageRefreshKey = $state(0);
+  let refreshInFlight = false;
   let inventoryUnavailable = $state(false);
   let inventoryStale = $state(false);
   let availability = $state<AvailabilityReport | null>(null);
@@ -85,8 +91,9 @@
       inventoryUnavailable = inventoryServers.length === 0;
       inventoryStale = inventoryServers.length > 0;
     }
-    canonicalServices =
-      serviceResult.status === "fulfilled" ? serviceResult.value : [];
+    servicesUnavailable = serviceResult.status !== "fulfilled";
+    if (serviceResult.status === "fulfilled")
+      canonicalServices = serviceResult.value;
   }
 
   async function refreshAvailability() {
@@ -103,11 +110,15 @@
   }
 
   async function refresh() {
+    if (refreshInFlight) return;
+    refreshInFlight = true;
     loading = true;
     error = null;
     await refreshInventory();
     await refreshAvailability();
+    refreshInFlight = false;
     if (!pageActive) return;
+    storageRefreshKey++;
     if (inventoryUnavailable && availabilityUnavailable) {
       error = tr("ui.monitoring.monitoringDataCouldNotBe");
     }
@@ -122,7 +133,8 @@
 
   /** Null ratio means no observed time — never render it as 0 %. */
   function formatRatio(ratio: number | null | undefined): string {
-    if (ratio === null || ratio === undefined) return tr("ui.monitoring.noData");
+    if (ratio === null || ratio === undefined)
+      return tr("ui.monitoring.noData");
     return `${(ratio * 100).toFixed(ratio >= 0.9995 ? 0 : 2)} %`;
   }
 
@@ -156,7 +168,9 @@
       pendingDetach = null;
       await refresh();
     } catch (err) {
-      detachError = parseApiError(err).message || tr("ui.monitoring.serverCouldNotBeRemoved");
+      detachError =
+        parseApiError(err).message ||
+        tr("ui.monitoring.serverCouldNotBeRemoved");
     } finally {
       detaching = false;
     }
@@ -204,7 +218,9 @@
     );
     return rows.sort((a, b) => {
       if (a.ongoing !== b.ongoing) return a.ongoing ? -1 : 1;
-      return new Date(b.started_at).getTime() - new Date(a.started_at).getTime();
+      return (
+        new Date(b.started_at).getTime() - new Date(a.started_at).getTime()
+      );
     });
   });
 
@@ -241,9 +257,15 @@
   <PageHeader title={tr("ui.monitoring.monitoring")}>
     {#snippet actions()}
       <div class="flex flex-wrap items-center gap-2">
-        <Button variant="secondary" onclick={() => refresh()} disabled={loading}>
+        <Button
+          variant="secondary"
+          onclick={() => refresh()}
+          disabled={loading}
+        >
           <RefreshCw class="h-4 w-4" />
-          {loading ? tr("ui.monitoring.refreshing") : tr("ui.homelabDashboardPage.refresh")}
+          {loading
+            ? tr("ui.monitoring.refreshing")
+            : tr("ui.homelabDashboardPage.refresh")}
         </Button>
       </div>
     {/snippet}
@@ -270,7 +292,10 @@
         {tr("ui.monitoring.thisRevokesTheBoundGuard")}
       </p>
       {#if detachError}
-        <p class="mt-2 text-sm text-destructive" data-testid="monitoring-detach-error">
+        <p
+          class="mt-2 text-sm text-destructive"
+          data-testid="monitoring-detach-error"
+        >
           {detachError}
         </p>
       {/if}
@@ -282,7 +307,9 @@
           disabled={detaching}
         >
           <Trash2 class="h-4 w-4" />
-          {detaching ? tr("ui.monitoring.removing") : tr("ui.monitoringServerId.removeFromView")}
+          {detaching
+            ? tr("ui.monitoring.removing")
+            : tr("ui.monitoringServerId.removeFromView")}
         </Button>
         <Button
           variant="secondary"
@@ -309,7 +336,9 @@
   >
     <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
       <div class="flex items-center gap-2.5">
-        <h2 class="text-sm font-semibold text-foreground">{tr("ui.monitoring.rightNow")}</h2>
+        <h2 class="text-sm font-semibold text-foreground">
+          {tr("ui.monitoring.rightNow")}
+        </h2>
         {#if offlineCount > 0}
           <span
             class="inline-flex h-[22px] items-center gap-1.5 rounded-full px-2.5 text-[11px] font-semibold"
@@ -339,7 +368,10 @@
     </div>
 
     {#if inventoryUnavailable}
-      <p class="text-sm text-muted-foreground" data-testid="monitoring-inventory-unavailable">
+      <p
+        class="text-sm text-muted-foreground"
+        data-testid="monitoring-inventory-unavailable"
+      >
         {tr("ui.monitoring.theCanonicalServerInventoryIs")}
       </p>
     {:else if inventoryServers.length === 0}
@@ -363,7 +395,9 @@
                 <span class="truncate text-[13px] font-semibold text-foreground"
                   >{server.name}</span
                 >
-                <ArrowRight class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <ArrowRight
+                  class="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                />
               </div>
               <span class="truncate text-[10.5px] text-muted-foreground">
                 {canonicalServerMeta(server)}
@@ -388,6 +422,9 @@
               >
                 {serviceLabel(serviceCountByServer[server.id] ?? 0)}
               </span>
+              <span class="self-start">
+                <GuardBadge {server} />
+              </span>
             </a>
             {#if serverAllowsDetach(server)}
               <div class="flex justify-end border-t border-border px-3 py-2">
@@ -395,7 +432,9 @@
                   variant="ghost"
                   size="sm"
                   testId="monitoring-node-detach"
-                  ariaLabel={tr("ui.monitoring.removeFromAria", { name: server.name })}
+                  ariaLabel={tr("ui.monitoring.removeFromAria", {
+                    name: server.name,
+                  })}
                   onclick={() => requestDetach(server)}
                   disabled={detaching}
                 >
@@ -409,6 +448,16 @@
       </div>
     {/if}
   </section>
+
+  <StorageForecast
+    servers={inventoryServers}
+    services={canonicalServices}
+    {servicesUnavailable}
+    {inventoryStale}
+    refreshKey={storageRefreshKey}
+  />
+
+  <DomainMonitoring refreshKey={storageRefreshKey} />
 
   <!--
     Availability, downtime and recovery are a projection over the recorded
@@ -427,9 +476,13 @@
       class="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"
       data-testid="monitoring-section-availability"
     >
-      <section class="flex flex-col gap-2 rounded-lg border border-border bg-card p-4">
+      <section
+        class="flex flex-col gap-2 rounded-lg border border-border bg-card p-4"
+      >
         <span class="text-xs text-muted-foreground"
-          >{tr("ui.monitoring.availabilityWindow", { window: availability.window })}</span
+          >{tr("ui.monitoring.availabilityWindow", {
+            window: availability.window,
+          })}</span
         >
         <span
           class="text-[32px] font-semibold leading-none tracking-tight text-foreground"
@@ -437,12 +490,18 @@
           >{formatRatio(availability.uptime_ratio)}</span
         >
         <span class="font-mono text-[11px] text-muted-foreground">
-          {tr("ui.monitoring.overObserved", { duration: formatDuration(availability.observed_seconds) })}
+          {tr("ui.monitoring.overObserved", {
+            duration: formatDuration(availability.observed_seconds),
+          })}
         </span>
       </section>
 
-      <section class="flex flex-col gap-2 rounded-lg border border-border bg-card p-4">
-        <span class="text-xs text-muted-foreground">{tr("ui.monitoring.totalDowntime")}</span>
+      <section
+        class="flex flex-col gap-2 rounded-lg border border-border bg-card p-4"
+      >
+        <span class="text-xs text-muted-foreground"
+          >{tr("ui.monitoring.totalDowntime")}</span
+        >
         <span
           class="text-[32px] font-semibold leading-none tracking-tight text-foreground"
           >{formatDuration(availability.down_seconds)}</span
@@ -452,19 +511,29 @@
         </span>
       </section>
 
-      <section class="flex flex-col gap-2 rounded-lg border border-border bg-card p-4">
-        <span class="text-xs text-muted-foreground">{tr("ui.monitoring.meanTimeToRecover")}</span>
+      <section
+        class="flex flex-col gap-2 rounded-lg border border-border bg-card p-4"
+      >
+        <span class="text-xs text-muted-foreground"
+          >{tr("ui.monitoring.meanTimeToRecover")}</span
+        >
         <span
           class="text-[32px] font-semibold leading-none tracking-tight text-foreground"
           >{formatDuration(availability.mttr_seconds)}</span
         >
         <span class="font-mono text-[11px] text-muted-foreground">
-          {tr("ui.monitoring.recoveredOngoingExcluded", { count: availability.closed_episodes })}
+          {tr("ui.monitoring.recoveredOngoingExcluded", {
+            count: availability.closed_episodes,
+          })}
         </span>
       </section>
 
-      <section class="flex flex-col gap-2.5 rounded-lg border border-border bg-card p-4">
-        <span class="text-xs text-muted-foreground">{tr("ui.monitoring.downtimeByCause")}</span>
+      <section
+        class="flex flex-col gap-2.5 rounded-lg border border-border bg-card p-4"
+      >
+        <span class="text-xs text-muted-foreground"
+          >{tr("ui.monitoring.downtimeByCause")}</span
+        >
         {#if availability.by_cause.length === 0}
           <span class="text-[11.5px] text-muted-foreground"
             >{tr("ui.monitoring.noDowntimeInThisWindow")}</span
@@ -501,7 +570,9 @@
     >
       <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div class="flex items-baseline gap-3">
-          <h2 class="text-[15px] font-semibold text-foreground">{tr("ui.monitoring.dailyState")}</h2>
+          <h2 class="text-[15px] font-semibold text-foreground">
+            {tr("ui.monitoring.dailyState")}
+          </h2>
           <span class="text-[11.5px] text-muted-foreground"
             >{tr("ui.monitoring.selectNodeHint")}</span
           >
@@ -517,7 +588,8 @@
                 class:text-muted-foreground={availabilityWindow !== option}
                 aria-pressed={availabilityWindow === option}
                 data-testid="monitoring-window-option"
-                onclick={() => selectAvailabilityWindow(option)}>{option}</button
+                onclick={() => selectAvailabilityWindow(option)}
+                >{option}</button
               >
             {/each}
           </div>
@@ -537,7 +609,9 @@
       </div>
 
       {#if availability.servers.length === 0}
-        <p class="text-sm text-muted-foreground">{tr("ui.monitoring.noServersInThisWindow")}</p>
+        <p class="text-sm text-muted-foreground">
+          {tr("ui.monitoring.noServersInThisWindow")}
+        </p>
       {:else}
         <div class="flex flex-col gap-1.5">
           {#each availability.servers as server (server.server_id)}
@@ -551,7 +625,8 @@
                 class="grid min-w-0 flex-1 grid-cols-[176px_minmax(0,1fr)_112px] items-center gap-4"
               >
                 <div class="flex min-w-0 flex-col gap-0.5">
-                  <span class="truncate text-[12.5px] font-semibold text-foreground"
+                  <span
+                    class="truncate text-[12.5px] font-semibold text-foreground"
                     >{server.name || server.server_id}</span
                   >
                   <span class="font-mono text-[10.5px] text-muted-foreground">
@@ -560,14 +635,19 @@
                 </div>
                 <StateRibbon
                   days={server.days}
-                  label={tr("ui.monitoring.dailyStateLabel", { name: server.name || server.server_id })}
+                  label={tr("ui.monitoring.dailyStateLabel", {
+                    name: server.name || server.server_id,
+                  })}
                 />
                 <div class="flex flex-col items-end gap-0.5">
-                  <span class="font-mono text-[13px] font-semibold text-foreground"
+                  <span
+                    class="font-mono text-[13px] font-semibold text-foreground"
                     >{formatRatio(server.uptime_ratio)}</span
                   >
                   <span class="font-mono text-[10.5px] text-muted-foreground"
-                    >{tr("ui.monitoring.downFor", { duration: formatDuration(server.down_seconds) })}</span
+                    >{tr("ui.monitoring.downFor", {
+                      duration: formatDuration(server.down_seconds),
+                    })}</span
                   >
                 </div>
               </a>
@@ -640,7 +720,8 @@
               >
               <span class="truncate text-[12.5px] text-foreground">
                 <span class="font-mono"
-                  >{episode.trigger_reason || tr("ui.monitoringServer.unrecorded")}</span
+                  >{episode.trigger_reason ||
+                    tr("ui.monitoringServer.unrecorded")}</span
                 >
                 {#if episode.ongoing}
                   <span class="text-muted-foreground"
@@ -648,8 +729,8 @@
                   >
                 {:else if episode.recovery_reason}
                   <span class="text-muted-foreground"
-                    >{tr("ui.monitoring.recoveredBy")} <span class="font-mono"
-                      >{episode.recovery_reason}</span
+                    >{tr("ui.monitoring.recoveredBy")}
+                    <span class="font-mono">{episode.recovery_reason}</span
                     ></span
                   >
                 {/if}

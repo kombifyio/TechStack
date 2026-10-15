@@ -78,7 +78,7 @@ const (
 	serverProvisionModeInstall      = "install-command"
 	serverConnectionManagedSub      = "managed-subscription"
 	defaultLeaseRegion              = "de-fra"
-	defaultLeaseImage               = "ubuntu-24.04"
+	defaultLeaseImage               = "ubuntu-26.04"
 )
 
 var (
@@ -375,7 +375,6 @@ type RuntimeActionRequest struct {
 	StackID             string               `json:"stack_id"`
 	StackName           string               `json:"stack_name,omitempty"`
 	StackKit            string               `json:"stackkit,omitempty"`
-	Mode                string               `json:"mode,omitempty"`
 	TenantID            string               `json:"tenant_id,omitempty"`
 	OwnerID             string               `json:"owner_id,omitempty"`
 	StackSpec           json.RawMessage      `json:"stack_spec,omitempty"`
@@ -400,7 +399,6 @@ type TechStackEnrollment struct {
 	AgentToken       string         `json:"agent_token,omitempty"`
 	HeartbeatURL     string         `json:"heartbeat_url,omitempty"`
 	InventoryURL     string         `json:"inventory_url,omitempty"`
-	ControlURLs      []string       `json:"control_urls,omitempty"`
 	ChannelBootstrap map[string]any `json:"channel_bootstrap,omitempty"`
 }
 
@@ -495,18 +493,7 @@ type RuntimeActions struct {
 	TargetBootstrapper    RuntimeTargetBootstrapper
 	StackKitGenerator     StackKitArtifactGenerator
 	SimulationGate        RuntimeActionRunner
-	RolloutRunner         RuntimeActionRunner
-	RolloutVerifier       RuntimeActionRunner
-	RestoreDrill          RuntimeActionRunner
-	// BackupRunner dispatches one backup_run to the node. It is separate from
-	// RestoreDrill because a drill proves a repository can be restored while a
-	// run is the cost-bearing action the entitlement gate guards.
-	BackupRunner RuntimeActionRunner
-	// BackupStatus reads the node's view of the repository. It never admits or
-	// denies: the billing meter is the control-plane object-store sum, and the
-	// node reports the customer-facing protected-data figure only.
-	BackupStatus         RuntimeActionRunner
-	DiagnosticsCollector RuntimeDiagnosticsCollector
+	DiagnosticsCollector  RuntimeDiagnosticsCollector
 }
 
 type ManagedLeaseMetadataUpdater interface {

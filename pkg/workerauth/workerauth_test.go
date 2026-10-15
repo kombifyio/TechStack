@@ -60,3 +60,35 @@ func TestTokenKindClassification(t *testing.T) {
 		}
 	}
 }
+
+func TestVerifyRotatingAcceptsSuccessorSecretOnlyWhileSharedKeyRotates(t *testing.T) {
+	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	claims := Claims{TenantID: "tenant-1", ServerID: "server-1", RuntimeAgentID: "agent-1"}
+	mint := func(secret string) string {
+		token, err := Issue([]byte(secret), claims, now, time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return token
+	}
+	t.Setenv("TECHSTACK_WORKER_AGENT_TOKEN_SECRET", "")
+	t.Setenv("TECHSTACK_WORKER_TOKEN_SECRET", "")
+	t.Setenv("TECHSTACK_WORKER_SECRET_STRICT", "")
+	t.Setenv("SERVICE_AUTH_SECRET", "primary-secret")
+	t.Setenv("SERVICE_AUTH_SECRET_NEXT", "next-secret")
+
+	for _, secret := range []string{"primary-secret", "next-secret"} {
+		if _, err := VerifyRotating(mint(secret), now); err != nil {
+			t.Fatalf("token signed with %s: %v", secret, err)
+		}
+	}
+	if _, err := VerifyRotating(mint("unknown-secret"), now); !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("token signed with an unknown key = %v, want ErrInvalidToken", err)
+	}
+
+	// A dedicated worker secret has its own rotation: the service successor is not a key.
+	t.Setenv("TECHSTACK_WORKER_AGENT_TOKEN_SECRET", "dedicated-secret")
+	if _, err := VerifyRotating(mint("next-secret"), now); !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("successor accepted despite a dedicated worker secret: %v", err)
+	}
+}

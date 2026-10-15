@@ -12,6 +12,7 @@ import (
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/discovery"
 	"github.com/kombifyio/techstack/pkg/httpx"
+	"github.com/kombifyio/techstack/pkg/kombifywallet"
 )
 
 type wizardRemoteSSHTester interface {
@@ -27,6 +28,10 @@ type wizardRemoteSSHTestRequest struct {
 	Password    string `json:"password,omitempty"`
 	SSHKeyLabel string `json:"ssh_key_label,omitempty"`
 	PrivateKey  string `json:"private_key,omitempty"`
+	// SSHWalletItemID names the kombify Wallet node access item to test with.
+	// A deployment that reads the kombify Wallet requires it and refuses
+	// Password, SSHKeyLabel and PrivateKey; a legacy deployment refuses it.
+	SSHWalletItemID string `json:"ssh_wallet_item_id,omitempty"`
 }
 
 func (h wizardRouteHandlers) testRemoteSSH(e *httpx.Event) error {
@@ -65,6 +70,24 @@ func (h wizardRouteHandlers) testRemoteSSH(e *httpx.Event) error {
 	password := strings.TrimSpace(req.Password)
 	privateKey := strings.TrimSpace(req.PrivateKey)
 	authMethod := normalizeWizardRemoteAuthMethod(req.AuthMethod)
+
+	if h.cfg.KombifyWallet != nil {
+		access, denial := h.walletNodeAccess(e.Request.Context(), ownerID, req, authMethod)
+		if denial != nil {
+			return denial.Write(e)
+		}
+		defer access.Wipe()
+		if authMethod == "password" {
+			password = access.Password.Reveal()
+		} else {
+			privateKey = access.PrivateKey.Reveal()
+		}
+		// The test runs below with the delivered secret; the plain-string copy
+		// lives for this request only.
+		req.SSHKeyLabel = ""
+	} else if strings.TrimSpace(req.SSHWalletItemID) != "" {
+		return kombifywallet.ItemUnsupported().Write(e)
+	}
 
 	switch authMethod {
 	case "password":
@@ -120,6 +143,36 @@ func (h wizardRouteHandlers) testRemoteSSH(e *httpx.Event) error {
 		routeSuccessField: true,
 		routeMessageField: "SSH connection successful",
 	})
+}
+
+// walletNodeAccess resolves the kombify Wallet item a connection test names. A
+// deployment that reads the kombify Wallet accepts no label and no secret typed
+// into the request, and uses the item only for the host it is saved for.
+func (h wizardRouteHandlers) walletNodeAccess(ctx context.Context, ownerID string, req wizardRemoteSSHTestRequest, authMethod string) (*kombifywallet.NodeAccess, *kombifywallet.Denial) {
+	itemID := strings.TrimSpace(req.SSHWalletItemID)
+	if itemID == "" || strings.TrimSpace(req.SSHKeyLabel) != "" || strings.TrimSpace(req.Password) != "" || strings.TrimSpace(req.PrivateKey) != "" {
+		return nil, kombifywallet.ItemRequired()
+	}
+	if !kombifywallet.IsItemID(itemID) {
+		return nil, kombifywallet.ItemInvalid()
+	}
+	access, err := h.cfg.KombifyWallet.NodeAccess(ctx, ownerID, itemID)
+	if err != nil {
+		return nil, kombifywallet.Denied(err)
+	}
+	check := access.RequirePrivateKey
+	if authMethod == "password" {
+		check = access.RequirePassword
+	}
+	if err := check(); err != nil {
+		access.Wipe()
+		return nil, kombifywallet.Denied(err)
+	}
+	if err := access.RequireHost(req.Host); err != nil {
+		access.Wipe()
+		return nil, kombifywallet.Denied(err)
+	}
+	return access, nil
 }
 
 func decodeWizardRemoteSSHTestRequest(body io.Reader) (wizardRemoteSSHTestRequest, error) {

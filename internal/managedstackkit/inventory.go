@@ -8,9 +8,7 @@ import (
 	"io"
 	"path"
 	"strings"
-	"time"
 
-	"github.com/kombifyio/techstack/pkg/backupstore"
 	"github.com/kombifyio/stackkits/pkg/backupbinding"
 )
 
@@ -18,8 +16,6 @@ const (
 	maxResolvedPlanBytes = 32 << 20
 	apiVersionField      = "apiVersion"
 )
-
-type CustodyReceipt = backupstore.CustodyEvidence
 
 type OperationsProcess struct {
 	ChannelRef       string
@@ -29,14 +25,13 @@ type OperationsProcess struct {
 	ExecutableSHA256 string
 }
 
-type Candidate struct {
-	StackKitsVersion string
-	Digest           string
-	ValidFor         time.Duration
-}
-
-func BuildInventory(resolvedPlan []byte, custody CustodyReceipt, process OperationsProcess, candidate Candidate) ([]byte, error) {
-	requirement, siteRef, nodeRef, err := validateInventoryAuthority(resolvedPlan, process, candidate)
+// BuildInventory binds the managed Cloud rollout to the enrolled Operations
+// process and nothing else. It carries no backup-target binding even when the
+// plan selects the off-site capability: the node issues its own binding when it
+// opens the sealed delivery of the backup credentials, and Core only compares
+// against the references the node returns.
+func BuildInventory(resolvedPlan []byte, process OperationsProcess) ([]byte, error) {
+	_, siteRef, nodeRef, err := validateInventoryAuthority(resolvedPlan, process)
 	if err != nil {
 		return nil, err
 	}
@@ -50,35 +45,6 @@ func BuildInventory(resolvedPlan []byte, custody CustodyReceipt, process Operati
 			},
 		},
 	}
-	if requirement != nil {
-		issuedAt := custody.ObservedAt.UTC()
-		if custody.ObservedAt.IsZero() || len(custody.BindingEvidence) == 0 || len(custody.TargetEvidence) == 0 || len(custody.AttestationEvidence) == 0 {
-			return nil, errors.New("managed backup custody receipt is incomplete")
-		}
-		bindingRef, referenceErr := backupbinding.OpaqueReference("backup-target-binding", custody.BindingEvidence)
-		if referenceErr != nil {
-			return nil, referenceErr
-		}
-		targetRef, referenceErr := backupbinding.OpaqueReference("backup-target", custody.TargetEvidence)
-		if referenceErr != nil {
-			return nil, referenceErr
-		}
-		attestationRef, referenceErr := backupbinding.OpaqueReference("backup-custody-attestation", custody.AttestationEvidence)
-		if referenceErr != nil {
-			return nil, referenceErr
-		}
-		binding, buildErr := backupbinding.Build(backupbinding.Document(requirement), backupbinding.Input{
-			BindingRef: bindingRef, BackupTargetRef: targetRef, CustodyAttestationRef: attestationRef,
-			StackKitsVersion: candidate.StackKitsVersion, CandidateDigest: candidate.Digest,
-			IssuedAt: issuedAt, ValidUntil: issuedAt.Add(candidate.ValidFor),
-		})
-		if buildErr != nil {
-			return nil, fmt.Errorf("build managed backup target binding: %w", buildErr)
-		}
-		inventory["externalBackupTargetBindings"] = map[string]any{
-			siteRef: map[string]any{backupbinding.Capability: binding},
-		}
-	}
 	encoded, err := json.Marshal(inventory)
 	if err != nil {
 		return nil, fmt.Errorf("encode managed StackKits Inventory: %w", err)
@@ -86,7 +52,7 @@ func BuildInventory(resolvedPlan []byte, custody CustodyReceipt, process Operati
 	return append(encoded, '\n'), nil
 }
 
-func validateInventoryAuthority(resolvedPlan []byte, process OperationsProcess, candidate Candidate) (map[string]any, string, string, error) {
+func validateInventoryAuthority(resolvedPlan []byte, process OperationsProcess) (map[string]any, string, string, error) {
 	if len(resolvedPlan) == 0 || len(resolvedPlan) > maxResolvedPlanBytes {
 		return nil, "", "", errors.New("managed StackKits Inventory requires a bounded ResolvedPlan")
 	}
@@ -107,9 +73,6 @@ func validateInventoryAuthority(resolvedPlan []byte, process OperationsProcess, 
 	if processErr := validateOperationsProcess(process, siteRef, nodeRef); processErr != nil {
 		return nil, "", "", processErr
 	}
-	if candidateErr := validateCandidate(candidate); candidateErr != nil {
-		return nil, "", "", candidateErr
-	}
 	return requirement, siteRef, nodeRef, nil
 }
 
@@ -120,14 +83,6 @@ func validateOperationsProcess(process OperationsProcess, siteRef, nodeRef strin
 		process.SiteRef != siteRef || process.NodeRef != nodeRef || !path.IsAbs(process.Executable) ||
 		process.Executable != path.Clean(process.Executable) || !validDigest(process.ExecutableSHA256) {
 		return errors.New("managed StackKits operations process does not exactly match the managed Site/node/channel contract")
-	}
-	return nil
-}
-
-func validateCandidate(candidate Candidate) error {
-	if candidate.ValidFor <= 0 || candidate.ValidFor > backupbinding.MaxValidity ||
-		strings.TrimSpace(candidate.StackKitsVersion) == "" || !validDigest(candidate.Digest) {
-		return errors.New("managed StackKits candidate identity or binding validity is invalid")
 	}
 	return nil
 }

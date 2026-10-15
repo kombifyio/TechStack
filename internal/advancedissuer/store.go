@@ -35,6 +35,7 @@ var ErrTrustBindingMissing = errors.New("advanced trust binding is not recorded 
 // bindings under tenant RLS.
 type PostgresStore struct {
 	db        *db.DB
+	keyDB     *db.DB
 	encryptor *auth.SecretEncryptor
 }
 
@@ -45,7 +46,21 @@ func NewPostgresStore(database *db.DB, encryptor *auth.SecretEncryptor) (*Postgr
 	if encryptor == nil {
 		return nil, auth.ErrNoEncryptionKey
 	}
-	return &PostgresStore{db: database, encryptor: encryptor}, nil
+	return &PostgresStore{db: database, keyDB: database, encryptor: encryptor}, nil
+}
+
+// NewPostgresStoreWithKeyCustody keeps tenant operation records on the app
+// connection and installation key material on its purpose-bound connection.
+func NewPostgresStoreWithKeyCustody(database, keyDatabase *db.DB, encryptor *auth.SecretEncryptor) (*PostgresStore, error) {
+	store, err := NewPostgresStore(database, encryptor)
+	if err != nil {
+		return nil, err
+	}
+	if keyDatabase == nil || keyDatabase.DB == nil || keyDatabase == database || keyDatabase.DB == database.DB {
+		return nil, errors.New("advanced issuer requires a separate signing custody connection")
+	}
+	store.keyDB = keyDatabase
+	return store, nil
 }
 
 // LoadOrCreateKey returns the installation issuer, creating it exactly once.
@@ -65,7 +80,7 @@ func (store *PostgresStore) LoadOrCreateKey(ctx context.Context) (string, ed2551
 		return "", nil, fmt.Errorf("encrypt advanced issuer key: %w", err)
 	}
 	issuerID := "techstack." + uuid.NewString()
-	if _, err := store.db.ExecContext(ctx, `
+	if _, err := store.keyDB.ExecContext(ctx, `
 		INSERT INTO advanced_issuer_keys (singleton, issuer_id, key_id, public_key, private_key_enc)
 		VALUES (true, $1, $2, $3, $4)
 		ON CONFLICT (singleton) DO NOTHING`,
@@ -76,9 +91,15 @@ func (store *PostgresStore) LoadOrCreateKey(ctx context.Context) (string, ed2551
 	return store.loadKey(ctx)
 }
 
+// LoadExistingKey verifies retained wrapping custody without initializing or
+// rotating installation identity. Governed runtime preparation uses this path.
+func (store *PostgresStore) LoadExistingKey(ctx context.Context) (string, ed25519.PrivateKey, error) {
+	return store.loadKey(ctx)
+}
+
 func (store *PostgresStore) loadKey(ctx context.Context) (string, ed25519.PrivateKey, error) {
 	var issuerID, keyID, encrypted string
-	err := store.db.QueryRowContext(ctx, `
+	err := store.keyDB.QueryRowContext(ctx, `
 		SELECT issuer_id, key_id, private_key_enc FROM advanced_issuer_keys WHERE singleton`,
 	).Scan(&issuerID, &keyID, &encrypted)
 	if err != nil {
@@ -154,6 +175,25 @@ func (store *PostgresStore) LookupTrustBinding(ctx context.Context, tenantID, de
 // and test runtimes; production keys live only in encrypted storage.
 func Open(ctx context.Context, database *db.DB, encryptor *auth.SecretEncryptor) (*Issuer, error) {
 	store, err := NewPostgresStore(database, encryptor)
+	return openStore(ctx, store, err)
+}
+
+// OpenWithKeyCustody uses the existing issuer and recorder with separate
+// signing custody. Only governed preparation may create installation identity;
+// runtime never retries key access through the customer application pool.
+func OpenWithKeyCustody(ctx context.Context, database, keyDatabase *db.DB, encryptor *auth.SecretEncryptor) (*Issuer, error) {
+	store, err := NewPostgresStoreWithKeyCustody(database, keyDatabase, encryptor)
+	if err != nil {
+		return nil, err
+	}
+	issuerID, key, err := store.LoadExistingKey(ctx)
+	if err != nil {
+		return nil, errors.New("advanced issuer requires retained signing identity from governed preparation")
+	}
+	return New(Config{IssuerID: issuerID, PrivateKey: key, Recorder: store, Now: time.Now})
+}
+
+func openStore(ctx context.Context, store *PostgresStore, err error) (*Issuer, error) {
 	if err != nil {
 		return nil, err
 	}

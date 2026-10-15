@@ -6,19 +6,24 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
+
+	"github.com/kombifyio/techstack/pkg/db"
 
 	"github.com/google/uuid"
 )
 
 // PgStore is the Postgres-backed RunStore. run_id is the stable key, status
 // changes are validated against the run/step state machines, and JSON map
-// fields round-trip as jsonb. The workflow tables are global (no tenant RLS) so
-// the worker can poll runnable runs and due timers across all tenants.
+// fields round-trip as jsonb. Each operation is tenant-bound before SQL; worker
+// discovery uses only the protected secret-free tenant directory.
 //
-// Schema: pkg/db/migrations/008_ril_workflows.sql.
+// Schema: migrations008 plus the governed forward tenant-scope migration151.
 type PgStore struct {
-	db *sql.DB
+	db       *sql.DB
+	ctx      context.Context
+	tenantID string
 }
 
 var _ RunStore = (*PgStore)(nil)
@@ -26,7 +31,7 @@ var _ RunStore = (*PgStore)(nil)
 // NewPgStore builds a Postgres-backed workflow store over the given *sql.DB.
 func NewPgStore(db *sql.DB) *PgStore { return &PgStore{db: db} }
 
-const runColumns = `run_id, type, status, current_step, input, context, ` +
+const runColumns = `tenant_id, run_id, type, status, current_step, input, context, ` +
 	`owner_id, server_id, card_id, awaiting_signal, error, started_at, finished_at, created, updated`
 
 const stepColumns = `id, run_id, step_index, name, status, attempt, input, output, ` +
@@ -37,6 +42,12 @@ const stepColumns = `id, run_id, step_index, name, status, attempt, input, outpu
 // ---------------------------------------------------------------------------
 
 func (s *PgStore) CreateRun(run *Run) error {
+	if s == nil || run == nil || run.TenantID != s.tenantID {
+		return fmt.Errorf("workflow: tenant conflict")
+	}
+	if id, ok := run.Input["tenant_id"].(string); ok && id != s.tenantID {
+		return fmt.Errorf("workflow: tenant input conflict")
+	}
 	if s == nil || s.db == nil {
 		return errors.New("workflow: postgres store not configured")
 	}
@@ -44,21 +55,21 @@ func (s *PgStore) CreateRun(run *Run) error {
 		run.RunID = uuid.New().String()
 	}
 	run.Status = RunPending
-	ctx := context.Background()
-	tx, err := s.db.BeginTx(ctx, nil)
+	ctx := s.ctx
+	tx, err := s.beginTenant()
 	if err != nil {
 		return fmt.Errorf("create run transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	const q = `INSERT INTO ril_workflow_runs
-		(run_id, type, status, current_step, input, context, owner_id, server_id,
+		(tenant_id, run_id, type, status, current_step, input, context, owner_id, server_id,
 		 card_id, awaiting_signal, error, created, updated)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, now(), now())
+		VALUES ($12,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, now(), now())
 		RETURNING created, updated`
 	if err := tx.QueryRowContext(ctx, q,
 		run.RunID, string(run.Type), string(run.Status), run.CurrentStep,
 		marshalJSONMap(run.Input), marshalJSONMap(run.Context),
-		run.OwnerID, run.ServerID, run.CardID, run.AwaitingSignal, run.Error,
+		run.OwnerID, run.ServerID, run.CardID, run.AwaitingSignal, run.Error, s.tenantID,
 	).Scan(&run.Created, &run.Updated); err != nil {
 		return fmt.Errorf("create run: %w", err)
 	}
@@ -75,7 +86,13 @@ func (s *PgStore) CreateRun(run *Run) error {
 }
 
 func (s *PgStore) GetRun(runID string) (*Run, error) {
-	row := s.db.QueryRowContext(context.Background(),
+	ctx := s.ctx
+	tx, err := s.beginTenant()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	row := tx.QueryRowContext(ctx,
 		`SELECT `+runColumns+` FROM ril_workflow_runs WHERE run_id = $1`, runID)
 	run, err := scanRun(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -88,15 +105,29 @@ func (s *PgStore) GetRun(runID string) (*Run, error) {
 }
 
 func (s *PgStore) UpdateRun(run *Run) error {
-	ctx := context.Background()
-	tx, err := s.db.BeginTx(ctx, nil)
+	if s == nil || run == nil || run.TenantID != s.tenantID {
+		return fmt.Errorf("workflow: tenant conflict")
+	}
+	tx, err := s.beginTenant()
 	if err != nil {
 		return fmt.Errorf("update run transaction: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer tx.Rollback()
+	updated := *run
+	if err := s.updateRunTx(s.ctx, tx, &updated); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("update run commit: %w", err)
+	}
+	run.Updated = updated.Updated
+	return nil
+}
+
+func (s *PgStore) updateRunTx(ctx context.Context, tx *sql.Tx, run *Run) error {
 	var currentStatus, currentSignal, currentError string
 	var currentStep int
-	err = tx.QueryRowContext(ctx,
+	err := tx.QueryRowContext(ctx,
 		`SELECT status, current_step, awaiting_signal, error FROM ril_workflow_runs WHERE run_id = $1 FOR UPDATE`, run.RunID,
 	).Scan(&currentStatus, &currentStep, &currentSignal, &currentError)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -132,15 +163,18 @@ func (s *PgStore) UpdateRun(run *Run) error {
 			return err
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("update run commit: %w", err)
-	}
 	return nil
 }
 
 func (s *PgStore) ListRunsByStatus(status RunStatus, limit int) ([]*Run, error) {
+	ctx := s.ctx
+	tx, err := s.beginTenant()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
 	const q = `SELECT ` + runColumns + ` FROM ril_workflow_runs WHERE status = $1 ORDER BY updated ASC LIMIT $2`
-	rows, err := s.db.QueryContext(context.Background(), q, string(status), limitArg(limit))
+	rows, err := tx.QueryContext(ctx, q, string(status), limitArg(limit))
 	if err != nil {
 		return nil, fmt.Errorf("list runs by status: %w", err)
 	}
@@ -149,7 +183,13 @@ func (s *PgStore) ListRunsByStatus(status RunStatus, limit int) ([]*Run, error) 
 }
 
 func (s *PgStore) FindSuspendedBySignal(signalKey string) (*Run, error) {
-	row := s.db.QueryRowContext(context.Background(),
+	ctx := s.ctx
+	tx, err := s.beginTenant()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	row := tx.QueryRowContext(ctx,
 		`SELECT `+runColumns+` FROM ril_workflow_runs
 		 WHERE status = $1 AND awaiting_signal = $2 ORDER BY updated ASC LIMIT 1`,
 		string(RunSuspended), signalKey)
@@ -174,20 +214,20 @@ func (s *PgStore) CreateStep(step *Step) error {
 	if step.Status == "" {
 		step.Status = StepPending
 	}
-	ctx := context.Background()
-	tx, err := s.db.BeginTx(ctx, nil)
+	ctx := s.ctx
+	tx, err := s.beginTenant()
 	if err != nil {
 		return fmt.Errorf("create step transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	const q = `INSERT INTO ril_workflow_steps
-		(id, run_id, step_index, name, status, attempt, input, output, error,
+		(tenant_id, id, run_id, step_index, name, status, attempt, input, output, error,
 		 idempotency_key, created, updated)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now(), now())`
+		VALUES ($11,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now(), now())`
 	if _, err := tx.ExecContext(ctx, q,
 		step.ID, step.RunID, step.StepIndex, step.Name, string(step.Status),
 		step.Attempt, marshalJSONMap(step.Input), marshalJSONMap(step.Output),
-		step.Error, step.IdempotencyKey,
+		step.Error, step.IdempotencyKey, s.tenantID,
 	); err != nil {
 		return fmt.Errorf("create step: %w", err)
 	}
@@ -203,8 +243,8 @@ func (s *PgStore) CreateStep(step *Step) error {
 }
 
 func (s *PgStore) UpdateStep(step *Step) error {
-	ctx := context.Background()
-	tx, err := s.db.BeginTx(ctx, nil)
+	ctx := s.ctx
+	tx, err := s.beginTenant()
 	if err != nil {
 		return fmt.Errorf("update step transaction: %w", err)
 	}
@@ -252,7 +292,13 @@ func (s *PgStore) UpdateStep(step *Step) error {
 }
 
 func (s *PgStore) GetStep(runID string, idx int) (*Step, error) {
-	row := s.db.QueryRowContext(context.Background(),
+	ctx := s.ctx
+	tx, err := s.beginTenant()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	row := tx.QueryRowContext(ctx,
 		`SELECT `+stepColumns+` FROM ril_workflow_steps WHERE run_id = $1 AND step_index = $2`,
 		runID, idx)
 	step, err := scanStep(row)
@@ -266,7 +312,13 @@ func (s *PgStore) GetStep(runID string, idx int) (*Step, error) {
 }
 
 func (s *PgStore) ListSteps(runID string) ([]*Step, error) {
-	rows, err := s.db.QueryContext(context.Background(),
+	ctx := s.ctx
+	tx, err := s.beginTenant()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	rows, err := tx.QueryContext(ctx,
 		`SELECT `+stepColumns+` FROM ril_workflow_steps WHERE run_id = $1 ORDER BY step_index ASC`,
 		runID)
 	if err != nil {
@@ -289,27 +341,18 @@ func (s *PgStore) ListSteps(runID string) ([]*Step, error) {
 // ---------------------------------------------------------------------------
 
 func (s *PgStore) CreateTimer(timer *Timer) error {
-	if timer.ID == "" {
-		timer.ID = uuid.New().String()
+	if timer == nil {
+		return fmt.Errorf("workflow: timer required")
 	}
-	ctx := context.Background()
-	tx, err := s.db.BeginTx(ctx, nil)
+	if timer.ID == "" {
+		timer.ID = uuid.NewString()
+	}
+	tx, err := s.beginTenant()
 	if err != nil {
 		return fmt.Errorf("create timer transaction: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
-	const q = `INSERT INTO ril_workflow_timers
-		(id, run_id, kind, fire_at, fired, signal_key, created)
-		VALUES ($1,$2,$3,$4,$5,$6, now())`
-	if _, err := tx.ExecContext(ctx, q,
-		timer.ID, timer.RunID, string(timer.Kind), timer.FireAt.UTC(),
-		timer.Fired, timer.SignalKey,
-	); err != nil {
-		return fmt.Errorf("create timer: %w", err)
-	}
-	if err := appendWorkflowAudit(ctx, tx, timer.RunID, "ril.workflow.timer.created", map[string]any{
-		"timer_id": timer.ID, "kind": string(timer.Kind), "fire_at": timer.FireAt.UTC(),
-	}); err != nil {
+	defer tx.Rollback()
+	if err := s.createTimerTx(s.ctx, tx, timer); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -318,10 +361,34 @@ func (s *PgStore) CreateTimer(timer *Timer) error {
 	return nil
 }
 
+func (s *PgStore) createTimerTx(ctx context.Context, tx *sql.Tx, timer *Timer) error {
+	const q = `INSERT INTO ril_workflow_timers
+		(tenant_id, id, run_id, kind, fire_at, fired, signal_key, created)
+		VALUES ($7,$1,$2,$3,$4,$5,$6, now())`
+	if _, err := tx.ExecContext(ctx, q,
+		timer.ID, timer.RunID, string(timer.Kind), timer.FireAt.UTC(),
+		timer.Fired, timer.SignalKey, s.tenantID,
+	); err != nil {
+		return fmt.Errorf("create timer: %w", err)
+	}
+	if err := appendWorkflowAudit(ctx, tx, timer.RunID, "ril.workflow.timer.created", map[string]any{
+		"timer_id": timer.ID, "kind": string(timer.Kind), "fire_at": timer.FireAt.UTC(),
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (s *PgStore) ListDueTimers(now time.Time, limit int) ([]*Timer, error) {
+	ctx := s.ctx
+	tx, err := s.beginTenant()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
 	const q = `SELECT id, run_id, kind, fire_at, fired, signal_key
 		FROM ril_workflow_timers WHERE fired = false AND fire_at <= $1 ORDER BY fire_at ASC LIMIT $2`
-	rows, err := s.db.QueryContext(context.Background(), q, now.UTC(), limitArg(limit))
+	rows, err := tx.QueryContext(ctx, q, now.UTC(), limitArg(limit))
 	if err != nil {
 		return nil, fmt.Errorf("list due timers: %w", err)
 	}
@@ -341,9 +408,29 @@ func (s *PgStore) ListDueTimers(now time.Time, limit int) ([]*Timer, error) {
 	return out, rows.Err()
 }
 
+// GetTimer reads one exact timer through the same tenant-bound transaction.
+func (s *PgStore) GetTimer(timerID string) (*Timer, error) {
+	tx, err := s.beginTenant()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	var timer Timer
+	var kind string
+	err = tx.QueryRowContext(s.ctx, `SELECT id,run_id,kind,fire_at,fired,signal_key FROM ril_workflow_timers WHERE id=$1`, timerID).Scan(&timer.ID, &timer.RunID, &kind, &timer.FireAt, &timer.Fired, &timer.SignalKey)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get timer: %w", err)
+	}
+	timer.Kind = TimerKind(kind)
+	return &timer, nil
+}
+
 func (s *PgStore) MarkTimerFired(timerID string) error {
-	ctx := context.Background()
-	tx, err := s.db.BeginTx(ctx, nil)
+	ctx := s.ctx
+	tx, err := s.beginTenant()
 	if err != nil {
 		return fmt.Errorf("mark timer transaction: %w", err)
 	}
@@ -377,12 +464,21 @@ func (s *PgStore) MarkTimerFired(timerID string) error {
 // ListAudit returns one run's append-only workflow events from the central
 // tenant-scoped audit authority. Callers must first authorize the run itself.
 func (s *PgStore) ListAudit(tenantID, runID string, limit int) ([]AuditEvent, error) {
+	if tenantID != s.tenantID {
+		return nil, fmt.Errorf("workflow: tenant conflict")
+	}
+	ctx := s.ctx
+	tx, err := s.beginTenant()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
 	const q = `SELECT id, action, resource_type, resource_id, details_json, created_at
 		FROM audit_events
 		WHERE tenant_id = $1 AND resource_type = 'ril_workflow_run'
 		  AND resource_id = $2 AND action LIKE 'ril.workflow.%'
 		ORDER BY id ASC LIMIT $3`
-	rows, err := s.db.QueryContext(context.Background(), q, tenantID, runID, limitArg(limit))
+	rows, err := tx.QueryContext(ctx, q, tenantID, runID, limitArg(limit))
 	if err != nil {
 		return nil, fmt.Errorf("list workflow audit: %w", err)
 	}
@@ -404,7 +500,7 @@ func appendWorkflowAudit(ctx context.Context, tx *sql.Tx, runID, action string, 
 	var id int64
 	err := tx.QueryRowContext(ctx, `INSERT INTO audit_events
 		(tenant_id, actor_subject_id, action, resource_type, resource_id, details_json)
-		SELECT COALESCE(NULLIF(input->>'tenant_id',''), NULLIF(owner_id,''), 'system'),
+		SELECT tenant_id,
 		       NULLIF(owner_id,''), $2, 'ril_workflow_run', run_id, $3::jsonb
 		FROM ril_workflow_runs WHERE run_id = $1 RETURNING id`,
 		runID, action, marshalJSONMap(details),
@@ -435,7 +531,7 @@ func scanRun(sc rowScanner) (*Run, error) {
 		finishedAt  sql.NullTime
 	)
 	if err := sc.Scan(
-		&run.RunID, &typ, &status, &run.CurrentStep, &input, &ctx,
+		&run.TenantID, &run.RunID, &typ, &status, &run.CurrentStep, &input, &ctx,
 		&run.OwnerID, &run.ServerID, &run.CardID, &run.AwaitingSignal, &run.Error,
 		&startedAt, &finishedAt, &run.Created, &run.Updated,
 	); err != nil {
@@ -534,4 +630,80 @@ func unmarshalJSONMap(b []byte) map[string]any {
 		return nil
 	}
 	return m
+}
+
+// ForTenant returns a request/worker-bound view over the same central pool.
+func (s *PgStore) ForTenant(ctx context.Context, tenantID string) (RunStore, error) {
+	if ctx == nil || strings.TrimSpace(tenantID) == "" {
+		return nil, db.ErrNoTenant
+	}
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("workflow: postgres store unavailable")
+	}
+	return &PgStore{db: s.db, ctx: ctx, tenantID: tenantID}, nil
+}
+func (s *PgStore) beginTenant() (*sql.Tx, error) {
+	if s == nil {
+		return nil, db.ErrNoTenant
+	}
+	return db.BeginTenantTransaction(s.ctx, s.db, s.tenantID)
+}
+
+// ListWorkerTenants returns no workflow payload, owner, token or signal material.
+func (s *PgStore) ListWorkerTenants(ctx context.Context, after string, limit int) ([]string, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("workflow: postgres store unavailable")
+	}
+	if limit < 1 || limit > 500 {
+		return nil, fmt.Errorf("workflow: bounded tenant limit required")
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT tenant_id FROM techstack_list_ril_workflow_tenants($1,$2)`, after, limit)
+	if err != nil {
+		return nil, fmt.Errorf("workflow worker tenants: %w", err)
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// SuspendRun commits the checkpoint and its optional timer as one tenant-bound
+// effect. A failed timer or audit insertion rolls the whole checkpoint back.
+func (s *PgStore) SuspendRun(run *Run, timer *Timer) error {
+	if s == nil || run == nil || run.TenantID != s.tenantID || run.Status != RunSuspended {
+		return fmt.Errorf("workflow: invalid scoped suspension")
+	}
+	if timer != nil {
+		if timer.RunID != run.RunID || timer.SignalKey != run.AwaitingSignal || timer.Fired {
+			return fmt.Errorf("workflow: suspension timer custody differs")
+		}
+		if timer.ID == "" {
+			timer.ID = uuid.NewString()
+		}
+	}
+	tx, err := s.beginTenant()
+	if err != nil {
+		return fmt.Errorf("suspend run transaction: %w", err)
+	}
+	defer tx.Rollback()
+	updated := *run
+	if err := s.updateRunTx(s.ctx, tx, &updated); err != nil {
+		return err
+	}
+	if timer != nil {
+		if err := s.createTimerTx(s.ctx, tx, timer); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("suspend run commit: %w", err)
+	}
+	run.Updated = updated.Updated
+	return nil
 }

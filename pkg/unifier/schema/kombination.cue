@@ -49,10 +49,10 @@ import (
 // #DNSName enforces DNS-compatible naming (RFC 1123)
 #DNSName: =~"^[a-z][a-z0-9-]{0,61}[a-z0-9]$"
 
-// #StackKitRef is a reference to a StackKit template
-// Directory names use -kit suffix: basement-kit, cloud-kit, or modern-homelab
-// Empty string allowed for Easy-Path auto-selection
-#StackKitRef: "" | "basement-kit" | "cloud-kit" | "modern-homelab"
+// #StackKitRef validates input syntax only. Released metadata admits a kit;
+// this Techstack input schema does not declare StackKits availability.
+// Empty string allows automatic selection.
+#StackKitRef: "" | =~"^[a-z][a-z0-9-]*$"
 
 // =============================================================================
 // NODE DEFINITIONS

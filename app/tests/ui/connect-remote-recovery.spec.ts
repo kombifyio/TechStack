@@ -268,7 +268,7 @@ test.describe("connect-remote decoupled recovery", () => {
       result: {
         stack_id: stackId,
         server_provisioning_mode: "connect-remote",
-        server_remote_host: "82.165.251.178",
+        server_remote_host: "203.0.113.81",
       },
     });
     await mockJob(context, "job-provision-failed", {
@@ -398,8 +398,11 @@ test.describe("connect-remote decoupled recovery", () => {
     );
 
     await page.goto(`/stacks?stack_id=${stackId}&creation=1`);
+    const notice = page.getByTestId("latest-failure-notice");
+    await notice.getByTestId("failure-notice-details").click();
+    // The details open as an overlay above the page, not inside the notice.
     await page
-      .getByTestId("latest-failure-notice")
+      .getByTestId("latest-failure-notice-details")
       .getByRole("button", { name: "Retry SSH connection" })
       .click();
 

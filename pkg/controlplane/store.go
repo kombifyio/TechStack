@@ -279,11 +279,35 @@ type ReclaimStaleManagedDestroyRecoveryRequest struct {
 // newer execution attempt. AttemptStartedAt is the durable execution
 // generation written by StartJob; implementations must compare it in the same
 // update as the state transition.
+// An acknowledged RestoreActivationAdmissionResultKey is immutable: older
+// observations must retain it, and conflicting admission replacements deny.
 type SyncJobSnapshotRequest struct {
 	Job              UpsertJobRequest
 	ObservedState    string
 	AttemptStartedAt *time.Time
 	CompletedAt      *time.Time
+}
+
+// RestoreActivationAdmissionResultKey binds the original node, plan, staged
+// result and release admitted before a restore effect. It is retained by the
+// existing job store even when an older same-generation observation arrives.
+const RestoreActivationAdmissionResultKey = "restore_activation_admission"
+
+// RestoreActivationRequestResultKey retains the exact accepted caller intent
+// before node admission, so an uncertain HTTP acceptance can be rediscovered.
+const RestoreActivationRequestResultKey = "restore_activation_request"
+
+type OriginalRestoreActivation struct {
+	JobID            string
+	TenantID         string
+	StackID          string
+	WorkingDirectory string
+	Admission        map[string]any
+}
+
+type OriginalRestoreActivationStore interface {
+	// Internal exact-row recovery read; no general job payload is exposed.
+	GetOriginalRestoreActivation(ctx context.Context, tenantID, stackID, jobID string) (*OriginalRestoreActivation, error)
 }
 
 func validJobSnapshotProjection(observedState, persistedState string) bool {
@@ -455,6 +479,12 @@ type RegistryStore interface {
 	GetService(ctx context.Context, tenantID, serviceID string) (*Service, error)
 	ListNodesByStack(ctx context.Context, tenantID, stackID string) ([]Node, error)
 	ListServicesByStack(ctx context.Context, tenantID, stackID string) ([]Service, error)
+	// ListNodesByTenant and ListServicesByTenant return what the per-stack
+	// lists return for every stack of the tenant in one read, in the same
+	// created-at order, so a caller that needs several stacks does not query
+	// once per stack.
+	ListNodesByTenant(ctx context.Context, tenantID string) ([]Node, error)
+	ListServicesByTenant(ctx context.Context, tenantID string) ([]Service, error)
 	DeleteService(ctx context.Context, tenantID, serviceID string) error
 }
 
@@ -507,6 +537,8 @@ func (l ServiceMutationLock) Locked() bool {
 }
 
 type ServiceRuntime struct {
+	// Revision is the aggregate CAS fence, separate from host inventory revision.
+	Revision   int64
 	ID         string
 	TenantID   string
 	InstanceID string
@@ -559,10 +591,13 @@ type WalletItem struct {
 }
 
 type WalletStore interface {
+	CreateWalletItem(ctx context.Context, item WalletItem) (*WalletItem, error)
+	UpdateWalletItem(ctx context.Context, item WalletItem) (*WalletItem, error)
 	UpsertWalletItem(ctx context.Context, item WalletItem) (*WalletItem, error)
 	GetWalletItem(ctx context.Context, tenantID, itemID string) (*WalletItem, error)
 	ListWalletItems(ctx context.Context, tenantID, stackID string) ([]WalletItem, error)
 	DeleteWalletItem(ctx context.Context, tenantID, itemID string) error
+	DeleteWalletItemForOwner(ctx context.Context, tenantID, itemID, ownerID, itemType string) error
 }
 
 // OwnerSpecToken is the short-lived, one-use handoff that lets a freshly

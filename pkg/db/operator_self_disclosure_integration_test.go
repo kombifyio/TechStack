@@ -34,7 +34,7 @@ func TestIntegrationOperatorSelfDisclosureIsPrincipalScoped(t *testing.T) {
 		t.Helper()
 		if _, err := store.UpsertOperatorSelfDisclosure(ctx, controlplane.OperatorSelfDisclosure{
 			ID: uuid.NewString(), TenantID: tenantID, OwnerSubjectID: "owner-1",
-			Source:     controlplane.OperatorSelfDisclosureSourceCloud,
+			Source:     controlplane.OperatorSelfDisclosureSourceLink,
 			Disclosure: core.OperatorSelfDisclosure{Experience: experience, Goals: []string{"photos"}, Placement: "home"},
 		}); err != nil {
 			t.Fatalf("UpsertOperatorSelfDisclosure(%s): %v", experience, err)

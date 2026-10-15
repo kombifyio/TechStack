@@ -5,6 +5,7 @@ interface CreateLocalOwnerAccountInput {
   email: string;
   password: string;
   passwordConfirm: string;
+  currentPassword: string;
   isFirstRun: boolean;
 }
 
@@ -16,6 +17,7 @@ export async function createLocalOwnerAccount({
   email,
   password,
   passwordConfirm,
+  currentPassword,
   isFirstRun,
 }: CreateLocalOwnerAccountInput): Promise<string> {
   const normalizedEmail = email.trim();
@@ -29,6 +31,7 @@ export async function createLocalOwnerAccount({
         name: derivedOwnerName,
         email: normalizedEmail,
         password,
+        current_password: currentPassword,
       }),
     });
 

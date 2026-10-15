@@ -100,6 +100,8 @@ func NormalizeStackKitRef(value string) string {
 		return "basement-kit"
 	case "cloud", "cloudkit", "kombify-cloud-kit", "cloud-kit":
 		return "cloud-kit"
+	case "modern", "modern-kit", "homelab-advanced", "modern-homelab":
+		return "modern-homelab"
 	default:
 		return strings.TrimSpace(value)
 	}

@@ -118,6 +118,12 @@ func TestServeLinuxInstallScriptSkipsIncompleteArtifact(t *testing.T) {
 }
 
 func TestLinuxInstallerReusesExistingRuntimeEnrollmentWithoutRegistration(t *testing.T) {
+	t.Run("privilege split unavailable installs the root service", func(t *testing.T) { runExistingEnrollmentInstaller(t, "fail") })
+	t.Run("privilege split applied installs no root service", func(t *testing.T) { runExistingEnrollmentInstaller(t, "ok") })
+	t.Run("a control plane without a signed release keeps the root service", func(t *testing.T) { runExistingEnrollmentInstaller(t, "no-release") })
+}
+
+func runExistingEnrollmentInstaller(t *testing.T, layout string) {
 	shell := "sh"
 	if runtime.GOOS == "windows" {
 		shell = `C:\Program Files\Git\bin\sh.exe`
@@ -161,6 +167,10 @@ func TestLinuxInstallerReusesExistingRuntimeEnrollmentWithoutRegistration(t *tes
 printf '%s\n' "$@" >> "$STUB_LOG_DIR/curl.args"
 headers_file=""
 output_file=""
+for last_arg in "$@"; do :; done
+if [ "$STUB_LAYOUT" = no-release ]; then
+  case "$last_arg" in */release-evidence/*) printf '404'; exit 0 ;; esac
+fi
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -D) headers_file=$2; shift 2 ;;
@@ -183,6 +193,17 @@ shift
 if [ "$command_name" = "systemctl" ]; then
   exit 0
 fi
+# The privilege-split layout command of the installed Guard binary.
+case "$command_name" in
+  */techstack)
+    printf '%s\n' "$*" >> "$STUB_LOG_DIR/layout.calls"
+    if [ "$STUB_LAYOUT" = ok ]; then
+      echo 'GUARD_LAYOUT switched=true migrated=false'
+      exit 0
+    fi
+    exit 1
+    ;;
+esac
 # The StackKits rollout probes an already-present container runtime before it
 # would install one; the stub reports a ready daemon so the installer takes the
 # no-package-manager path.
@@ -245,6 +266,7 @@ sh install.sh
 		"STUB_BIN_DIR="+stubDir,
 		"STUB_LOG_DIR="+logDir,
 		"STUB_ETC_DIR="+etcDir,
+		"STUB_LAYOUT="+layout,
 		"STUB_BINARY_FIXTURE="+binaryFixture,
 		"STUB_BINARY_SHA256="+hex.EncodeToString(binaryDigest[:]),
 		"INSTALL_DIR="+installDir,
@@ -281,12 +303,27 @@ sh install.sh
 	if !strings.Contains(sudoActions, "install -m 0600") {
 		t.Fatalf("runtime token was not installed with mode 0600: %q", sudoActions)
 	}
-	unit := readFixture(t, filepath.Join(etcDir, "techstack-agent.service"))
-	for _, want := range []string{
-		"--enrollment-file=/etc/techstack/agent-enrollment.json",
-	} {
-		if !strings.Contains(unit, want) {
-			t.Fatalf("systemd unit missing %q", want)
+	layoutCalls, _ := os.ReadFile(filepath.Join(logDir, "layout.calls"))
+	if layout == "no-release" {
+		if len(layoutCalls) != 0 {
+			t.Fatalf("the privilege-split layout was applied without a signed Guard release: %q", layoutCalls)
+		}
+	} else if !strings.Contains(string(layoutCalls), "guard layout apply") {
+		t.Fatalf("the installer did not try the privilege-split layout: %q", layoutCalls)
+	}
+	unitPath := filepath.Join(etcDir, "techstack-agent.service")
+	if layout == "ok" {
+		if _, err := os.Stat(unitPath); err == nil {
+			t.Fatal("a root service unit was installed although the privilege-split layout was applied")
+		}
+	} else {
+		unit := readFixture(t, unitPath)
+		for _, want := range []string{
+			"--enrollment-file=/etc/techstack/agent-enrollment.json",
+		} {
+			if !strings.Contains(unit, want) {
+				t.Fatalf("systemd unit missing %q", want)
+			}
 		}
 	}
 	enrollment := readFixture(t, filepath.Join(etcDir, "agent-enrollment.json"))

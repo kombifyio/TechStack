@@ -2,6 +2,7 @@
 package stacks
 
 import (
+	"github.com/kombifyio/techstack/internal/routes/auth"
 	"github.com/pocketbase/pocketbase/core"
 
 	productnotifications "github.com/kombifyio/techstack/internal/notifications"
@@ -12,12 +13,16 @@ import (
 )
 
 func RegisterCRUDRoutesWithModeAndFeatures(r *httpx.Router, app core.App, orch *orchestrator.Orchestrator, mode config.DeploymentMode, featureChecker managedRuntimeFeatureChecker, managedLeases jobs.ManagedLeaseManager, notificationOutbox productnotifications.ProductEventEnqueuer) {
+	RegisterCRUDRuntimeRoutes(r, auth.RuntimeStore{}, orch, mode, featureChecker, managedLeases, notificationOutbox)
+}
+
+func RegisterCRUDRuntimeRoutes(r *httpx.Router, runtime auth.RuntimeStore, orch *orchestrator.Orchestrator, mode config.DeploymentMode, featureChecker managedRuntimeFeatureChecker, managedLeases jobs.ManagedLeaseManager, notificationOutbox productnotifications.ProductEventEnqueuer) {
 	if !mode.IsValid() {
 		mode = config.ModeSelfHosted
 	}
 	stores := currentControlPlaneStores()
 	h := crudRouteHandlers{
-		app:                app,
+		authRuntime:        runtime,
 		orch:               orch,
 		deploymentMode:     mode,
 		stackStore:         stores.Stacks,
@@ -31,6 +36,7 @@ func RegisterCRUDRoutesWithModeAndFeatures(r *httpx.Router, app core.App, orch *
 		runtimeFeatures:    featureChecker,
 		managedLeases:      managedLeases,
 		notificationOutbox: notificationOutbox,
+		kombifyWallet:      currentKombifyWallet(),
 	}
 
 	// GET /api/v1/stacks - List stacks owned by the authenticated user.
@@ -80,6 +86,10 @@ func RegisterCRUDRoutesWithModeAndFeatures(r *httpx.Router, app core.App, orch *
 	// POST /api/v1/stacks/{id}/retry-rollout - Retry only the failed rollout
 	// on its exact already-active managed runtime target.
 	r.POST("/api/v1/stacks/{id}/retry-rollout", h.retryStackRollout)
+
+	// POST /api/v1/stacks/{id}/repair - Repair one degraded component of a
+	// completed rollout on the stack's existing server.
+	r.POST("/api/v1/stacks/{id}/repair", h.repairStackComponent)
 
 	// POST /api/v1/stacks/{id}/jobs/{jobId}/abandon - Retire one rollout that
 	// is still marked running but has stopped reporting, so the stack becomes

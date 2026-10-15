@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -597,98 +598,43 @@ func wizardRunJoinIntent(deploymentID string) specv2.WizardIntent {
 	}
 }
 
-func TestWizardRunFoundKeepsKitWhenGoalValidationFails(t *testing.T) {
-	store := controlplane.NewMemoryStore()
+// Protect the no-silent-intent-drop boundary without a database substitute:
+// neither lane may pass a rejected projection to its persistence/dispatch leg.
+func TestWizardProjectionRejectsGoalsWithoutDroppingIntent(t *testing.T) {
 	validator := &wizardRunJoinGoalConflictValidator{}
-	h := newWizardRunTestHandlers(store, validator)
-
+	h := wizardRunHandlers{cfg: WizardRunRouteConfig{
+		Projector: specv2.NewReleaseProjector(wizardRunFakeGoalAuthor{}),
+		Validator: validator,
+	}}
 	intent := wizardRunTestIntent(specv2.RunKindFirstRun)
-	intent.Goals = []string{"photos"}
-	e, rec := wizardRunTestEvent(t, wizardRunRequest{Intent: intent}, "found-goal-conflict")
-	if err := h.createWizardRun(e); err != nil {
-		t.Fatalf("createWizardRun: %v", err)
+	intent.Goals = []string{"photos", "future-goal"}
+	seed := wizardRunTestSeed(specv2.KitSlugBasement)
+	e, rec := wizardRunTestEvent(t, wizardRunRequest{Intent: intent}, "goal-review")
+	projection, handled := h.projectAndValidate(e, seed, intent, "")
+	if !handled || projection != nil || rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("rejected installation passed the persistence gate: %v, %d; %s", handled, rec.Code, rec.Body.String())
 	}
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	_, details := decodeWizardRunError(t, rec)
+	encoded, _ := json.Marshal(details["requested_intent"])
+	var desired specv2.WizardIntent
+	if err := json.Unmarshal(encoded, &desired); err != nil {
+		t.Fatal(err)
 	}
-	data := decodeWizardRunSuccess(t, rec)
-	if data["stack_id"] == nil || data["stack_id"] == "" {
-		t.Fatalf("found must still persist the kit: %#v", data)
+	if !slices.Equal(desired.Goals, intent.Goals) {
+		t.Fatalf("denial lost the requested goals: %#v", desired.Goals)
 	}
-	unmapped, _ := data["unmapped_goals"].([]any)
-	hasPhotos := false
-	for _, goal := range unmapped {
-		if goal == "photos" {
-			hasPhotos = true
-		}
+	unfulfilled, _ := details["unfulfilled_goals"].([]any)
+	recorded, _ := details["recorded_goals"].([]any)
+	if !slices.Equal(unfulfilled, []any{"photos"}) || !slices.Equal(recorded, []any{"future-goal"}) {
+		t.Fatalf("executable and recorded intent were conflated: %#v", details)
 	}
-	if !hasPhotos {
-		t.Fatalf("conflicting goal must stay unmapped: %#v", data)
-	}
-
-	stacks, err := store.ListStacksByTenant(t.Context(), "tenant-1")
-	if err != nil {
-		t.Fatalf("ListStacksByTenant: %v", err)
-	}
-	if len(stacks) != 1 {
-		t.Fatalf("found must persist one kit, got %d", len(stacks))
-	}
-	spec, _ := stacks[0].Config[stackConfigKeySpecV2].(map[string]any)
-	workloads, _ := spec["workloads"].(map[string]any)
-	if _, hasWorkload := workloads["photos"]; hasWorkload {
-		t.Fatal("conflicting goal must not persist a new workload")
-	}
-}
-
-func TestWizardRunJoinKeepsNodeWhenGoalValidationFails(t *testing.T) {
-	store := controlplane.NewMemoryStore()
-	validator := &wizardRunJoinGoalConflictValidator{}
-	h := newWizardRunTestHandlers(store, validator)
-
-	base := wizardRunTestSeed(specv2.KitSlugBasement)
-	wizardRunSeedV2Stack(t, store, "stack-join-goals", "auth0|user-1", map[string]any{
-		stackConfigKeySpecV2: base,
-	})
-
-	intent := wizardRunJoinIntent("stack-join-goals")
-	intent.Goals = []string{"photos"}
-	e, rec := wizardRunTestEvent(t, wizardRunRequest{Intent: intent}, "join-goal-conflict")
-	if err := h.createWizardRun(e); err != nil {
-		t.Fatalf("createWizardRun: %v", err)
-	}
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body.String())
-	}
-	data := decodeWizardRunSuccess(t, rec)
-	if data["node_id"] != "worker-1" {
-		t.Fatalf("join must still add the node: %#v", data)
-	}
-	unmapped, _ := data["unmapped_goals"].([]any)
-	hasPhotos := false
-	for _, goal := range unmapped {
-		if goal == "photos" {
-			hasPhotos = true
-		}
-	}
-	if !hasPhotos {
-		t.Fatalf("conflicting goal must stay unmapped: %#v", data)
-	}
-
-	stack, err := store.GetStack(t.Context(), "tenant-1", "stack-join-goals")
-	if err != nil {
-		t.Fatalf("GetStack: %v", err)
-	}
-	spec, _ := stack.Config[stackConfigKeySpecV2].(map[string]any)
-	workloads, _ := spec["workloads"].(map[string]any)
-	if _, hasWorkload := workloads["photos"]; hasWorkload {
-		t.Fatal("conflicting goal must not persist a new workload")
-	}
-	nodes, _ := spec["nodes"].([]any)
-	if len(nodes) != 2 {
-		t.Fatalf("joined spec must carry the new node, got %d nodes", len(nodes))
-	}
-	if validator.calls < 2 {
-		t.Fatalf("must retry validate without goals, calls=%d", validator.calls)
+	// A corrected selection with the same attempt key can pass; recorded-only
+	// preferences remain honest without becoming an executable workload.
+	intent.Goals = []string{"future-goal"}
+	retry, retryRec := wizardRunTestEvent(t, wizardRunRequest{Intent: intent}, "goal-review")
+	projection, handled = h.projectAndValidate(retry, seed, intent, "")
+	if handled || projection == nil || !slices.Equal(projection.UnmappedGoals, intent.Goals) {
+		t.Fatalf("corrected intent could not resume: %v; %s", handled, retryRec.Body.String())
 	}
 }
 

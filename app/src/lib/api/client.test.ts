@@ -4,6 +4,7 @@ import {
   parseApiErrorResponse,
   resolveGatewayUrl,
 } from "./client";
+import { walletPrompt } from "../kombify-wallet/denials.svelte";
 
 function requestPath(input: unknown): string {
   const raw = input instanceof Request ? input.url : String(input);
@@ -64,6 +65,58 @@ describe("parseApiErrorResponse", () => {
     expect(err.code).toBe("BAD_REQUEST");
     expect(err.requestId).toBe("req-123");
     expect(err.details).toBeTruthy();
+  });
+
+  it("explains Wallet refusals in the owner's language and offers the one grant that resolves them", async () => {
+    const refuse = (status: number, error: Record<string, unknown>) =>
+      parseApiErrorResponse(
+        new Response(JSON.stringify({ error }), {
+          status,
+          headers: { "content-type": "application/json" },
+        }),
+        { method: "POST" },
+      );
+
+    walletPrompt.dismiss();
+    // Not Wallet refusals: no prompt, the backend's own wording stays.
+    const other = await refuse(409, {
+      code: "stack_conflict",
+      message: "busy",
+    });
+    expect(other.message).toBe("busy");
+    expect(walletPrompt.request).toBeNull();
+
+    // A rollout needs the right to save credentials.
+    const create = await refuse(409, {
+      code: "wallet_create_right_missing",
+      message: "Allow Techstack to save credentials",
+      required_right: "create",
+    });
+    expect(walletPrompt.request).toEqual({ kind: "create" });
+    expect(create.message).toMatch(/Wallet/);
+    walletPrompt.dismiss();
+
+    // A missing use right on one item is offered for exactly that item.
+    await refuse(403, {
+      code: "wallet_right_missing",
+      message: "no",
+      details: { required_right: "use" },
+    });
+    expect(walletPrompt.request).toBeNull();
+    const item = "itm_abcdefghijklmnopqrstuvwxyz";
+    await parseApiErrorResponse(
+      new Response(
+        JSON.stringify({
+          error_code: "WALLET_OPERATION_DENIED",
+          reason_code: "wallet_right_missing",
+          required_right: "use",
+          item_id: item,
+        }),
+        { status: 403, headers: { "content-type": "application/json" } },
+      ),
+    );
+    expect(walletPrompt.request).toEqual({ kind: "use", itemId: item });
+    walletPrompt.dismiss();
   });
 
   it("falls back to PocketBase-style { message, data } shape", async () => {
@@ -615,7 +668,7 @@ describe("resolveGatewayUrl", () => {
     ).toBeNull();
   });
 
-  it("keeps reauthentication-bound server mutations on the session origin", () => {
+  it("keeps reauthentication-bound mutations on the session origin", () => {
     expect(
       resolveGatewayUrl("/api/v1/servers/server-1/terminal-sessions", {
         mode: "saas-embedded",
@@ -625,6 +678,13 @@ describe("resolveGatewayUrl", () => {
     ).toBeNull();
     expect(
       resolveGatewayUrl("/api/v1/servers/server-1/access/authorized-key", {
+        mode: "saas-embedded",
+        gatewayBase: base,
+        method: "POST",
+      }),
+    ).toBeNull();
+    expect(
+      resolveGatewayUrl("/api/v1/wallet/item-1/reauth-proof", {
         mode: "saas-embedded",
         gatewayBase: base,
         method: "POST",

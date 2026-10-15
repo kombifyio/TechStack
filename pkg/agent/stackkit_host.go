@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -43,9 +44,47 @@ func stackKitHostArgs(command *agentpb.StackKitCommand) ([]string, error) {
 			return nil, fmt.Errorf("StackKit host reboot requires Owner approval")
 		}
 		return []string{"host", "reboot", "--yes", "--delay", hostRebootDelay, "--json"}, nil
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_SECURITY_REPAIR:
+		if !command.OwnerApproved {
+			return nil, fmt.Errorf("StackKit host security repair requires Owner approval")
+		}
+		if err := stackkitcommand.ValidateCommand(command); err != nil {
+			return nil, err
+		}
+		// Advanced mode: a Techstack-managed host. Every argument is either a
+		// constant or a control id of the closed evidence vocabulary.
+		args := []string{"host", "security", "repair", "--apply", "--mode", "advanced", "--json", "--no-record"}
+		if workspace := HostSecurityWorkspace(); workspace != "" {
+			args = append(args, "--chdir", workspace)
+		}
+		for _, control := range command.HostSecurityControls {
+			args = append(args, "--control", control)
+		}
+		return args, nil
 	default:
 		return nil, fmt.Errorf("unsupported StackKit host operation %s", command.Operation.String())
 	}
+}
+
+// hostSecurityWorkspaceEnv overrides the node's StackKits workspace.
+const hostSecurityWorkspaceEnv = "TECHSTACK_STACKKIT_WORKSPACE"
+
+// defaultHostSecurityWorkspace is where a Techstack-managed node keeps its
+// StackKits workspace; the kit it holds decides which site expectations apply.
+const defaultHostSecurityWorkspace = "/opt/stackkit"
+
+// HostSecurityWorkspace is the node's StackKits workspace when it exists as a
+// real directory, else "" (the baseline is then judged for an unknown site).
+func HostSecurityWorkspace() string {
+	path := strings.TrimSpace(os.Getenv(hostSecurityWorkspaceEnv))
+	if path == "" {
+		path = defaultHostSecurityWorkspace
+	}
+	info, err := os.Lstat(path)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || !filepath.IsAbs(path) {
+		return ""
+	}
+	return path
 }
 
 // HostMaintenanceCapabilities returns the host maintenance capability when
@@ -56,14 +95,22 @@ func stackKitHostArgs(command *agentpb.StackKitCommand) ([]string, error) {
 // NoNewPrivileges=no; the hardened packaging/techstack-agent.service runs as
 // User=techstack with NoNewPrivileges=yes and therefore never advertises it.
 func (executor *StackKitExecutor) HostMaintenanceCapabilities() []string {
-	if !executor.Available() || !hostMaintenancePrivileged() {
+	if !executor.Available() {
 		return nil
 	}
 	pin, err := stackkitrelease.LoadPin(executor.pinPath)
-	if err != nil || !stackkitcommand.ReleaseAtLeast(pin.Version, minHostMaintenanceStackKitsVersion) {
+	if err != nil {
 		return nil
 	}
-	return []string{stackkitcommand.HostMaintenanceCapability}
+	var capabilities []string
+	// The home network move commands act on the workspace and need no root.
+	if stackkitcommand.ReleaseAtLeast(pin.Version, stackkitcommand.MinNetworkRelease) {
+		capabilities = append(capabilities, stackkitcommand.NetworkCapability)
+	}
+	if hostMaintenancePrivileged() && stackkitcommand.ReleaseAtLeast(pin.Version, minHostMaintenanceStackKitsVersion) {
+		capabilities = append(capabilities, stackkitcommand.HostMaintenanceCapability)
+	}
+	return capabilities
 }
 
 func hostMaintenancePrivileged() bool {

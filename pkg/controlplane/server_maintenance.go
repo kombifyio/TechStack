@@ -337,6 +337,18 @@ func (s *MemoryStore) AdmitServerMaintenanceJob(_ context.Context, job ServerMai
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if job.Action != ServerMaintenanceActionPlan {
+		impact, err := s.serverMaintenanceImpactLocked(job.TenantID, job.ServerID, job.Action, s.now().UTC())
+		if errors.Is(err, ErrNotFound) {
+			return nil, ErrServerMaintenanceImpactChanged
+		}
+		if err != nil {
+			return nil, err
+		}
+		if err := checkServerMaintenanceImpact(job, impact); err != nil {
+			return nil, err
+		}
+	}
 	if busy := s.activeNodeJobLocked(job.TenantID, job.AgentID, job.StackID); busy != nil {
 		return nil, &NodeBusyError{JobID: busy.ID}
 	}
@@ -353,6 +365,18 @@ func (s *MemoryStore) ClaimServerMaintenanceJob(_ context.Context, tenantID, job
 	}
 	if job.State != ServerMaintenanceStateQueued {
 		return nil, ErrConflict
+	}
+	if job.Action != ServerMaintenanceActionPlan {
+		impact, err := s.serverMaintenanceImpactLocked(job.TenantID, job.ServerID, job.Action, at.UTC())
+		if errors.Is(err, ErrNotFound) {
+			return nil, ErrServerMaintenanceImpactChanged
+		}
+		if err != nil {
+			return nil, err
+		}
+		if err := checkServerMaintenanceImpact(job, impact); err != nil {
+			return nil, err
+		}
 	}
 	if busy := s.activeNodeJobLocked(job.TenantID, job.AgentID, job.StackID); busy != nil {
 		return nil, &NodeBusyError{JobID: busy.ID}

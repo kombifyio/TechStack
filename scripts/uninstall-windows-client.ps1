@@ -96,14 +96,8 @@ foreach ($shortcutPath in $shortcutPaths) {
     }
 }
 
-if (Test-Path -LiteralPath $resolvedInstall) {
-    if ($WhatIf) {
-        Write-Host "Would remove Windows client binaries from $resolvedInstall"
-    } else {
-        Remove-Item -LiteralPath $resolvedInstall -Recurse -Force
-    }
-}
-
+# The shipped reset helper lives inside the installation. Run it while it is
+# still available; deleting the binaries first strands explicit state removal.
 if ($RemoveState) {
     $resetScript = Join-Path $PSScriptRoot "reset-windows-client-state.ps1"
     if (!(Test-Path -LiteralPath $resetScript)) {
@@ -118,6 +112,17 @@ if ($RemoveState) {
             Remove-Item -LiteralPath $resolvedState -Recurse -Force
         }
     }
+}
+
+if (Test-Path -LiteralPath $resolvedInstall) {
+    if ($WhatIf) {
+        Write-Host "Would remove Windows client binaries from $resolvedInstall"
+    } else {
+        Remove-Item -LiteralPath $resolvedInstall -Recurse -Force
+    }
+}
+
+if ($RemoveState) {
     Write-Host "kombify TechStack Client uninstalled with state removal."
 } else {
     Write-Host "kombify TechStack Client uninstalled; state and Credential Manager entries preserved at $resolvedState"

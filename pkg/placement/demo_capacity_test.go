@@ -7,10 +7,8 @@ import (
 	"github.com/kombifyio/techstack/pkg/core"
 )
 
-// twoCoreHost is the smallest machine homelab kits promise to run on: a true
-// 2 vCPU / 4GB VPS as Guard reports it (3858MB usable, 76GB disk). This is
-// deliberately smaller than the live demo host so the invariant holds for the
-// weakest supported hardware, not just for one rented VM.
+// twoCoreHost models a 2 vCPU / 4GB VPS as Guard reports it (3858MB usable).
+// Released workload profiles, rather than a local kit promise, own their floors.
 func twoCoreHost() core.Worker {
 	w := core.Worker{ID: "worker-2core", Name: "basement", Status: "online"}
 	w.Capabilities.CPU = 2
@@ -19,22 +17,6 @@ func twoCoreHost() core.Worker {
 	w.Capabilities.Arch = "amd64"
 	w.Capabilities.OS = "ubuntu"
 	return w
-}
-
-// wizardDefaultKitServices mirrors defaultBaseKitVerifiedServices in pkg/jobs:
-// the wizard emits generic types (media/auth/cache) with specific names, which
-// is exactly the shape the estimator has to understand.
-func wizardDefaultKitServices() []core.ServiceSpec {
-	return []core.ServiceSpec{
-		{Name: "traefik", Type: "reverse-proxy"},
-		{Name: "pocket-id", Type: "auth"},
-		{Name: "vaultwarden", Type: "auth"},
-		{Name: "immich-server", Type: "media"},
-		{Name: "immich-ml", Type: "media"},
-		{Name: "immich-postgres", Type: "database"},
-		{Name: "immich-redis", Type: "cache"},
-		{Name: "otel-collector", Type: "monitoring"},
-	}
 }
 
 // cloudKitDefaultServices is the broader cloud-kit shape including the extra
@@ -50,30 +32,6 @@ func cloudKitDefaultServices() []core.ServiceSpec {
 		{Name: "immich-ml", Type: ServiceTypeImmichML},
 		{Name: "immich-db", Type: "postgres"},
 		{Name: "files", Type: "cloudreve"},
-	}
-}
-
-// The product decision this test pins (2026-07-31): homelab kits are for
-// homelab hardware, and lots of homelab hardware has two cores. The full
-// default service set must place on a genuine 2 vCPU / 4GB / 76GB machine.
-// Reservations model steady-state usage; burst load time-shares.
-func TestFullDefaultKitFitsA2Core4GBHost(t *testing.T) {
-	engine := NewPlacementEngine().WithProvisionedContainerRuntime()
-
-	for name, services := range map[string][]core.ServiceSpec{
-		"wizard_default": wizardDefaultKitServices(),
-		"cloud_kit":      cloudKitDefaultServices(),
-	} {
-		placements, quality, err := engine.PlaceServices(&core.RequirementsSpec{}, []core.Worker{twoCoreHost()}, services)
-		if err != nil {
-			t.Fatalf("%s does not fit a 2-core/4GB host: %v", name, err)
-		}
-		if len(placements) != len(services) {
-			t.Fatalf("%s: placed %d services, want %d", name, len(placements), len(services))
-		}
-		if quality <= 0 {
-			t.Fatalf("%s: quality = %d, want a positive score", name, quality)
-		}
 	}
 }
 

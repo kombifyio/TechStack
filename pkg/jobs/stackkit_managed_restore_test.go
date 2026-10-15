@@ -13,20 +13,44 @@ import (
 	"github.com/kombifyio/techstack/pkg/stackkitcommand"
 )
 
+// renewalInventory is the control plane's managed authority as the drill sees
+// it: no Inventory of its own, and a delivery authority that knows the binding
+// the node issued.
 type renewalInventory struct {
-	plan   []byte
-	failed bool
+	issuedTarget string
+	failed       bool
 }
 
 func (*renewalInventory) Build(context.Context, ManagedStackKitInventoryRequest) ([]byte, error) {
 	return nil, fmt.Errorf("drill must never replace rollout Inventory")
 }
-func (builder *renewalInventory) AttestBackupRenewal(_ context.Context, req ManagedStackKitInventoryRequest) ([]byte, error) {
-	if builder.failed {
-		return nil, fmt.Errorf("attestation denied")
+
+func (builder *renewalInventory) BackupDelivery() ManagedBackupTargetDelivery {
+	return renewalDelivery{builder}
+}
+
+type renewalDelivery struct{ builder *renewalInventory }
+
+func (renewalDelivery) NewChallenge() (string, error) {
+	return "", fmt.Errorf("drill delivers nothing")
+}
+func (renewalDelivery) AdmitRecipient(context.Context, string, string, string, []byte) (ManagedBackupRecipient, error) {
+	return ManagedBackupRecipient{}, fmt.Errorf("drill delivers nothing")
+}
+func (renewalDelivery) Seal(context.Context, string, string, ManagedBackupRecipient, string) ([]byte, error) {
+	return nil, fmt.Errorf("drill delivers nothing")
+}
+func (renewalDelivery) RecordNodeBinding(context.Context, string, string, ManagedBackupNodeBinding) error {
+	return fmt.Errorf("drill delivers nothing")
+}
+func (delivery renewalDelivery) NodeBinding(context.Context, string, string) (ManagedBackupNodeBinding, error) {
+	return ManagedBackupNodeBinding{BackupTargetRef: delivery.builder.issuedTarget, CustodyAttestationRef: "backup-custody-attestation://sha256/" + strings.Repeat("b", 64)}, nil
+}
+func (delivery renewalDelivery) AttestTarget(context.Context, string, string) (string, error) {
+	if delivery.builder.failed {
+		return "", fmt.Errorf("attestation denied")
 	}
-	builder.plan = append([]byte(nil), req.ResolvedPlan...)
-	return []byte(`{"externalBackupTargetBindings":{"cloud":{"offsite-object-backup":{"bindingRef":"backup-target-binding://sha256/` + strings.Repeat("b", 64) + `","backupTargetRef":"backup-target://sha256/` + strings.Repeat("b", 64) + `","custodyAttestationRef":"backup-custody-attestation://sha256/` + strings.Repeat("c", 64) + `"}}}}`), nil
+	return "backup-custody-attestation://sha256/" + strings.Repeat("c", 64), nil
 }
 
 type renewedDrillSender struct {
@@ -74,10 +98,13 @@ func (sender *renewedDrillSender) SendStackKitCommand(_ context.Context, _ strin
 }
 
 func TestManagedDrillRenewsOnlyTheCurrentAppliedOperation(t *testing.T) {
-	for _, scenario := range []string{"admitted", "other-plan", "unhealthy-target", "stale-receipt"} {
+	for _, scenario := range []string{"admitted", "other-plan", "unhealthy-target", "stale-receipt", "binding-the-node-did-not-issue"} {
 		t.Run(scenario, func(t *testing.T) {
 			sender := &renewedDrillSender{t: t, wrongPlan: scenario == "other-plan"}
-			builder := &renewalInventory{failed: scenario == "unhealthy-target"}
+			builder := &renewalInventory{failed: scenario == "unhealthy-target", issuedTarget: "backup-target://sha256/" + strings.Repeat("b", 64)}
+			if scenario == "binding-the-node-did-not-issue" {
+				builder.issuedTarget = "backup-target://sha256/" + strings.Repeat("9", 64)
+			}
 			issuer := &recordingAdvancedIssuer{}
 			sender.issuer = issuer
 			sender.staleReceipt = scenario == "stale-receipt"

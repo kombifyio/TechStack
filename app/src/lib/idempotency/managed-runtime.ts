@@ -1,4 +1,7 @@
-import type { AddManagedRuntimeServerRequest } from "#lib/api/stacks.js";
+import type {
+  AddManagedRuntimeServerRequest,
+  StackKitRestoreBinding,
+} from "#lib/api/stacks.js";
 
 const RECORD_VERSION = "techstack/add-managed-runtime-browser-key/v1";
 const STORAGE_PREFIX = "creating:add-server:";
@@ -324,4 +327,116 @@ export function settleStackActionIdempotency(
   if (storage.getItem(attempt.storageKey) === attempt.key) {
     storage.removeItem(attempt.storageKey);
   }
+}
+
+export interface RestoreActivationBrowserScope {
+  actorId: string;
+  tenantId: string;
+  stackId: string;
+  nodeId: string;
+}
+
+export interface RestoreActivationBrowserIntent extends RestoreActivationBrowserScope {
+  version: "techstack/restore-activation-browser-intent/v1";
+  key: string;
+  binding: StackKitRestoreBinding;
+  jobId?: string;
+  keySHA256?: string;
+  requestDigest?: string;
+  observationJobId?: string;
+  observationOperation?: "backup_restore_activate" | "backup_restore_recover";
+}
+
+function restoreIntentKey(scope: RestoreActivationBrowserScope): string {
+  if (!scope.actorId || !scope.stackId || !scope.nodeId)
+    throw new Error(
+      "Original restore request requires its signed-in owner and node",
+    );
+  return `${STACK_ACTION_STORAGE_PREFIX}${encodeURIComponent(JSON.stringify([scope.actorId, scope.tenantId, scope.stackId, scope.nodeId]))}:restore-activate:pending`;
+}
+
+/** Nonsecret browser correlation; all mutation authority remains server-owned. */
+export function readRestoreActivationIntent(
+  storage: Storage,
+  scope: RestoreActivationBrowserScope,
+): RestoreActivationBrowserIntent | undefined {
+  const raw = storage.getItem(restoreIntentKey(scope));
+  if (!raw) return;
+  let value: RestoreActivationBrowserIntent;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    throw new Error("Original restore request correlation is unreadable");
+  }
+  const digest = (candidate: unknown) =>
+    typeof candidate === "string" && /^sha256:[a-f0-9]{64}$/.test(candidate);
+  if (
+    !value ||
+    value.version !== "techstack/restore-activation-browser-intent/v1" ||
+    !validOpaqueKey(value.key) ||
+    value.key.length > 128 ||
+    value.actorId !== scope.actorId ||
+    value.tenantId !== scope.tenantId ||
+    value.stackId !== scope.stackId ||
+    value.nodeId !== scope.nodeId ||
+    !value.binding ||
+    value.binding.stackId !== scope.stackId ||
+    value.binding.nodeId !== scope.nodeId ||
+    !value.binding.agentId ||
+    !value.binding.instanceId ||
+    !value.binding.ownerRef ||
+    !digest(value.binding.restoreResultId) ||
+    !digest(value.binding.planHash) ||
+    !digest(value.binding.anchorId)
+  )
+    throw new Error(
+      "Original restore request correlation does not match this owner and node",
+    );
+  return value;
+}
+
+export function retainRestoreActivationIntent(
+  storage: Storage,
+  scope: RestoreActivationBrowserScope,
+  binding: StackKitRestoreBinding,
+): RestoreActivationBrowserIntent {
+  if (readRestoreActivationIntent(storage, scope))
+    throw new Error(
+      "Resolve the original restore request before starting another",
+    );
+  const value: RestoreActivationBrowserIntent = {
+    ...scope,
+    version: "techstack/restore-activation-browser-intent/v1",
+    key: browserGeneratedKey(),
+    binding: { ...binding },
+  };
+  storage.setItem(restoreIntentKey(scope), JSON.stringify(value));
+  return value;
+}
+
+export function updateRestoreActivationIntent(
+  storage: Storage,
+  value: RestoreActivationBrowserIntent,
+): void {
+  const current = readRestoreActivationIntent(storage, value);
+  if (
+    !current ||
+    current.key !== value.key ||
+    JSON.stringify(current.binding) !== JSON.stringify(value.binding)
+  )
+    throw new Error("Original restore request correlation changed");
+  storage.setItem(restoreIntentKey(value), JSON.stringify(value));
+}
+
+export function settleRestoreActivationIntent(
+  storage: Storage,
+  value: RestoreActivationBrowserIntent,
+): void {
+  const current = readRestoreActivationIntent(storage, value);
+  if (
+    current?.key === value.key &&
+    current.jobId === value.jobId &&
+    current.requestDigest === value.requestDigest
+  )
+    storage.removeItem(restoreIntentKey(value));
 }

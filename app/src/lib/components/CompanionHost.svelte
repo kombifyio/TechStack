@@ -35,6 +35,7 @@
     resolveCompanionFinish,
   } from "#lib/companion/options.js";
   import { companionStackIdentityFromAccount } from "#lib/companion/stack-identity.js";
+  import { registerCompanion } from "#lib/companion/ask.svelte.js";
   import { getGatewayToken } from "#lib/auth/gateway-auth.js";
   import {
     stackIdentity,
@@ -104,6 +105,7 @@
       controller.setDesign({ finish: currentFinish() });
     });
     const unsubscribeIdentity = stackIdentity.subscribe(syncStackIdentity);
+    const unregisterCompanion = registerCompanion(controller);
 
     /* The app's own "close transient panels" signal — the same one the nav
      * flyouts and the notification bell answer. A floating Companion is a
@@ -115,6 +117,7 @@
       unsubscribeTheme();
       unsubscribeFinish();
       unsubscribeIdentity();
+      unregisterCompanion();
       window.removeEventListener(TRANSIENT_PANEL_DISMISS_EVENT, closeOnDismiss);
       controller.destroy();
     };

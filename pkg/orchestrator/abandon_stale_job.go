@@ -56,8 +56,13 @@ func staleJobHasSafeRecoveryBoundary(job controlplane.Job) bool {
 			return false
 		}
 		wait, ok := job.Result["job_wait"].(map[string]any)
-		return ok &&
-			strings.TrimSpace(stringFromAny(wait["state"])) == string(jobs.JobStateWaiting) &&
+		if !ok {
+			// A running replay of the Guard wait carries no job_wait; its
+			// durable checkpoint for the exact lease and operation stands in.
+			reason, replaying := jobs.ManagedProvisionWaitCheckpoint(job.Result)
+			return replaying && reason == jobs.WaitReasonCanonicalGuardEvidence
+		}
+		return strings.TrimSpace(stringFromAny(wait["state"])) == string(jobs.JobStateWaiting) &&
 			strings.TrimSpace(stringFromAny(wait["reason"])) == jobs.WaitReasonCanonicalGuardEvidence &&
 			strings.TrimSpace(stringFromAny(wait["next_resume_at"])) != ""
 	default:

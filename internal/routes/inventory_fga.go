@@ -112,6 +112,12 @@ func inventorySignedEntitlementAllows(ctx context.Context, action InventoryActio
 	if (action == InventoryActionWrite || action == InventoryActionProvision) && source != middleware.EntitlementSourceSignedEdge {
 		return false
 	}
+	// The customer MCP baseline includes secret-free inventory reads. The
+	// signed grant still requires the same tenant surface FGA decision and
+	// does not admit any write, provision, operate or RIL-only action.
+	if action == InventoryActionRead && source == middleware.EntitlementSourceSignedEdge && entitlements.Has("mcp.customer.access") {
+		return true
+	}
 	required := inventoryEntitlementForAction(action)
 	return required != "" && (entitlements.Has(required) || entitlements.Has(InventoryEntitlementAdmin))
 }

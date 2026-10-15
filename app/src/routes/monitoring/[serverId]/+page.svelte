@@ -1,7 +1,7 @@
 <script lang="ts">
   import { formatDuration } from "#lib/dashboard/time.js";
   import { tr, stateLabel, formatDateTime } from "#lib/i18n.svelte.js";
-  import { onDestroy, onMount } from "svelte";
+  import { onDestroy, onMount, untrack } from "svelte";
   import { page } from "$app/state";
   import { goto } from "$app/navigation";
   import { ArrowLeft, Trash2 } from "@lucide/svelte";
@@ -26,12 +26,25 @@
   import Button from "#lib/components/ui/Button.svelte";
   import MetricSparkline from "#lib/components/monitoring/MetricSparkline.svelte";
   import StateRibbon from "#lib/components/monitoring/StateRibbon.svelte";
+  import StorageForecast from "#lib/components/monitoring/StorageForecast.svelte";
+  import DriveHealth from "#lib/components/monitoring/DriveHealth.svelte";
+  import DomainMonitoring from "#lib/components/monitoring/DomainMonitoring.svelte";
+  import {
+    listCanonicalServices,
+    type CanonicalService,
+  } from "#lib/api/services.js";
 
   const REFRESH_INTERVAL_MS = 30_000;
 
   const serverId = $derived(page.params.serverId ?? "");
 
   let server = $state<CanonicalServer | null>(null);
+  let canonicalServices = $state<CanonicalService[]>([]);
+  let servicesUnavailable = $state(false);
+  let storageRefreshKey = $state(0);
+  let mounted = $state(false);
+  let loadRequest = 0;
+  let loadedServerId = "";
   let availability = $state<AvailabilityReport | null>(null);
   let alerts = $state<AlertState[]>([]);
   let panels = $state<Record<string, PromQLPoint[]>>({});
@@ -59,7 +72,9 @@
       showDetachConfirmation = false;
       await goto("/monitoring");
     } catch (err) {
-      detachError = parseApiError(err).message || tr("ui.monitoring.serverCouldNotBeRemoved");
+      detachError =
+        parseApiError(err).message ||
+        tr("ui.monitoring.serverCouldNotBeRemoved");
     } finally {
       detaching = false;
     }
@@ -123,12 +138,15 @@
   }
 
   function peak(points: PromQLPoint[]): number | null {
-    return points.length ? Math.max(...points.map((point) => point.value)) : null;
+    return points.length
+      ? Math.max(...points.map((point) => point.value))
+      : null;
   }
 
   function formatValue(value: number | null, unit: string): string {
     if (value === null) return "—";
-    const rounded = Math.abs(value) >= 100 ? Math.round(value) : Number(value.toFixed(1));
+    const rounded =
+      Math.abs(value) >= 100 ? Math.round(value) : Number(value.toFixed(1));
     return unit ? `${rounded} ${unit}` : String(rounded);
   }
 
@@ -170,15 +188,20 @@
     ),
   );
 
-  async function loadMetrics(id: string) {
+  async function loadMetrics(id: string, request: number) {
     const end = new Date();
     const start = new Date(end.getTime() - 24 * 60 * 60 * 1000);
     const results = await Promise.allSettled(
       PANELS.map((panel) =>
-        rangeQuery(panel.query(id), start.toISOString(), end.toISOString(), "2m"),
+        rangeQuery(
+          panel.query(id),
+          start.toISOString(),
+          end.toISOString(),
+          "2m",
+        ),
       ),
     );
-    if (!pageActive) return;
+    if (!pageActive || request !== loadRequest || id !== serverId) return;
 
     const next: Record<string, PromQLPoint[]> = {};
     let anySucceeded = false;
@@ -207,22 +230,42 @@
   async function load() {
     const id = serverId;
     if (!id) return;
+    const request = ++loadRequest;
+    if (loadedServerId !== id) {
+      server = null;
+      availability = null;
+      panels = {};
+      alerts = [];
+      canonicalServices = [];
+      servicesUnavailable = false;
+      loadedServerId = id;
+    }
     loading = true;
     error = null;
     try {
-      server = await getCanonicalServer(id);
+      const current = await getCanonicalServer(id);
+      if (!pageActive || request !== loadRequest || id !== serverId) return;
+      server = current;
     } catch (err) {
+      if (!pageActive || request !== loadRequest || id !== serverId) return;
       error =
-        err instanceof Error ? err.message : tr("ui.monitoringServerId.thisServerCouldNotBe");
+        err instanceof Error
+          ? err.message
+          : tr("ui.monitoringServerId.thisServerCouldNotBe");
       loading = false;
       return;
     }
 
-    const [availabilityResult, alertResult] = await Promise.allSettled([
-      getAvailabilityReport("30d" satisfies AvailabilityWindow, id),
-      getAlertRules(),
-    ]);
-    if (!pageActive) return;
+    const [availabilityResult, alertResult, serviceResult] =
+      await Promise.allSettled([
+        getAvailabilityReport("30d" satisfies AvailabilityWindow, id),
+        getAlertRules(),
+        listCanonicalServices(),
+      ]);
+    if (!pageActive || request !== loadRequest || id !== serverId) return;
+    servicesUnavailable = serviceResult.status !== "fulfilled";
+    if (serviceResult.status === "fulfilled")
+      canonicalServices = serviceResult.value;
     if (availabilityResult.status === "fulfilled") {
       availability = availabilityResult.value;
       availabilityUnavailable = false;
@@ -231,24 +274,37 @@
     }
     alerts = alertResult.status === "fulfilled" ? alertResult.value : [];
 
-    await loadMetrics(id);
+    await loadMetrics(id, request);
+    if (!pageActive || request !== loadRequest || id !== serverId) return;
+    storageRefreshKey++;
     loading = false;
   }
 
+  $effect(() => {
+    if (!mounted) return;
+    void serverId;
+    untrack(() => void load());
+  });
+
   onMount(() => {
     pageActive = true;
-    void load();
+    mounted = true;
     refreshInterval = setInterval(() => void load(), REFRESH_INTERVAL_MS);
   });
 
   onDestroy(() => {
     pageActive = false;
+    loadRequest++;
     if (refreshInterval) clearInterval(refreshInterval);
   });
 </script>
 
 <svelte:head>
-  <title>{tr("ui.monitoringServer.pageTitle", { name: server?.name ?? tr("ui.monitoringServer.server") })}</title>
+  <title
+    >{tr("ui.monitoringServer.pageTitle", {
+      name: server?.name ?? tr("ui.monitoringServer.server"),
+    })}</title
+  >
 </svelte:head>
 
 <div class="mx-auto max-w-7xl p-4 md:p-6" data-testid="server-monitoring-page">
@@ -268,9 +324,13 @@
       {error}
     </div>
   {:else if !server}
-    <div class="h-32 animate-pulse rounded-lg border border-border bg-card/40"></div>
+    <div
+      class="h-32 animate-pulse rounded-lg border border-border bg-card/40"
+    ></div>
   {:else}
-    <section class="mb-4 flex flex-wrap items-start justify-between gap-6 rounded-lg border border-border bg-card p-5">
+    <section
+      class="mb-4 flex flex-wrap items-start justify-between gap-6 rounded-lg border border-border bg-card p-5"
+    >
       <div class="flex min-w-0 flex-col gap-2.5">
         <h1 class="text-xl font-semibold tracking-tight text-foreground">
           {server.name}
@@ -281,7 +341,8 @@
               class="inline-flex h-[26px] items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-[11.5px] text-foreground"
               data-testid="server-monitoring-axis"
             >
-              <span class="font-mono text-[10px] uppercase tracking-wide text-muted-foreground"
+              <span
+                class="font-mono text-[10px] uppercase tracking-wide text-muted-foreground"
                 >{axis.key}</span
               >
               <span
@@ -308,10 +369,14 @@
       </div>
       <div class="flex flex-col items-end gap-2">
         <span class="font-mono text-[11.5px] text-muted-foreground">
-          {tr("ui.monitoringServer.inventoryRevision", { revision: server.inventory_revision })}
+          {tr("ui.monitoringServer.inventoryRevision", {
+            revision: server.inventory_revision,
+          })}
         </span>
         {#if loading}
-          <span class="text-[11.5px] text-muted-foreground">{tr("ui.monitoringServerId.refreshing")}</span>
+          <span class="text-[11.5px] text-muted-foreground"
+            >{tr("ui.monitoringServerId.refreshing")}</span
+          >
         {/if}
         {#if serverAllowsDetach(server)}
           {#if showDetachConfirmation}
@@ -337,7 +402,9 @@
                   disabled={detaching}
                 >
                   <Trash2 class="h-3.5 w-3.5" />
-                  {detaching ? tr("ui.monitoring.removing") : tr("ui.monitoringServerId.removeFromView")}
+                  {detaching
+                    ? tr("ui.monitoring.removing")
+                    : tr("ui.monitoringServerId.removeFromView")}
                 </Button>
                 <Button
                   variant="secondary"
@@ -368,8 +435,27 @@
       </div>
     </section>
 
+    <DriveHealth
+      {serverId}
+      refreshKey={storageRefreshKey}
+      disconnected={server.connection.state === "offline" ||
+        server.connection.state === "revoked"}
+    />
+
+    <StorageForecast
+      servers={[server]}
+      services={canonicalServices}
+      {servicesUnavailable}
+      {serverId}
+      refreshKey={storageRefreshKey}
+    />
+
+    <DomainMonitoring {serverId} refreshKey={storageRefreshKey} />
+
     <div class="mb-3 flex items-center justify-between gap-4">
-      <h2 class="text-[15px] font-semibold text-foreground">{tr("ui.monitoringServerId.metricsLast24H")}</h2>
+      <h2 class="text-[15px] font-semibold text-foreground">
+        {tr("ui.monitoringServerId.metricsLast24H")}
+      </h2>
       <span class="font-mono text-[11px] text-muted-foreground">
         {tr("ui.monitoringServer.rangeQueryHint", { id: serverId })}
       </span>
@@ -401,19 +487,28 @@
                 >
               </div>
               <div class="flex shrink-0 flex-col items-end gap-0.5">
-                <span class="text-lg font-semibold leading-none text-foreground">
+                <span
+                  class="text-lg font-semibold leading-none text-foreground"
+                >
                   {formatValue(latest(panels[panel.id] ?? []), panel.unit)}
                 </span>
                 {#if peak(panels[panel.id] ?? []) !== null}
                   <span class="font-mono text-[10.5px] text-muted-foreground">
-                    {tr("ui.monitoringServer.peak", { value: formatValue(peak(panels[panel.id] ?? []), panel.unit) })}
+                    {tr("ui.monitoringServer.peak", {
+                      value: formatValue(
+                        peak(panels[panel.id] ?? []),
+                        panel.unit,
+                      ),
+                    })}
                   </span>
                 {/if}
               </div>
             </div>
             <MetricSparkline
               points={panels[panel.id] ?? []}
-              label={tr("ui.monitoringServer.panelLast24h", { title: panel.title })}
+              label={tr("ui.monitoringServer.panelLast24h", {
+                title: panel.title,
+              })}
               threshold={"threshold" in panel ? panel.threshold : undefined}
               max={"max" in panel ? panel.max : undefined}
             />
@@ -423,15 +518,24 @@
     {/if}
 
     <div class="grid gap-3 lg:grid-cols-[minmax(0,1fr)_400px]">
-      <section class="rounded-lg border border-border bg-card p-4" data-testid="server-monitoring-alerts">
+      <section
+        class="rounded-lg border border-border bg-card p-4"
+        data-testid="server-monitoring-alerts"
+      >
         <div class="mb-3 flex items-center justify-between gap-3">
-          <h2 class="text-[15px] font-semibold text-foreground">{tr("ui.monitoringServerId.alertRules")}</h2>
+          <h2 class="text-[15px] font-semibold text-foreground">
+            {tr("ui.monitoringServerId.alertRules")}
+          </h2>
           <span class="text-[11.5px] text-muted-foreground"
-            >{tr("ui.monitoringServer.alertsInScope", { count: relevantAlerts.length })}</span
+            >{tr("ui.monitoringServer.alertsInScope", {
+              count: relevantAlerts.length,
+            })}</span
           >
         </div>
         {#if relevantAlerts.length === 0}
-          <p class="text-sm text-muted-foreground">{tr("ui.monitoringServerId.noAlertRulesApplyHere")}</p>
+          <p class="text-sm text-muted-foreground">
+            {tr("ui.monitoringServerId.noAlertRulesApplyHere")}
+          </p>
         {:else}
           <div class="flex flex-col">
             {#each relevantAlerts as alert (alert.rule.name)}
@@ -460,7 +564,9 @@
                 >
                   {alert.active
                     ? tr("ui.monitoringServer.firingSince", {
-                        time: formatStamp(alert.fired_at ?? alert.active_since ?? undefined),
+                        time: formatStamp(
+                          alert.fired_at ?? alert.active_since ?? undefined,
+                        ),
                       })
                     : tr("ui.monitoringServer.inactive")}
                 </span>
@@ -470,12 +576,17 @@
         {/if}
       </section>
 
-      <section class="rounded-lg border border-border bg-card p-4" data-testid="server-monitoring-history">
+      <section
+        class="rounded-lg border border-border bg-card p-4"
+        data-testid="server-monitoring-history"
+      >
         <div class="mb-3 flex items-center justify-between gap-3">
           <h2 class="text-[15px] font-semibold text-foreground">
             {tr("ui.monitoringServerId.thisNodeSHistory")}
           </h2>
-          <a href="/monitoring" class="text-[11.5px] font-medium text-primary hover:underline"
+          <a
+            href="/monitoring"
+            class="text-[11.5px] font-medium text-primary hover:underline"
             >{tr("ui.monitoringServer.allEpisodes")}</a
           >
         </div>
@@ -487,7 +598,9 @@
         {:else if serverReport}
           <div class="mb-3 flex flex-col gap-2">
             <div class="flex items-baseline justify-between">
-              <span class="text-xs text-muted-foreground">{tr("ui.monitoringServerId.availability30D")}</span>
+              <span class="text-xs text-muted-foreground"
+                >{tr("ui.monitoringServerId.availability30D")}</span
+              >
               <span
                 class="font-mono text-[13px] font-semibold text-foreground"
                 data-testid="server-monitoring-uptime"
@@ -497,7 +610,9 @@
             <StateRibbon
               days={serverReport.days}
               height={22}
-              label={tr("ui.monitoringServer.dailyState30", { name: server.name })}
+              label={tr("ui.monitoringServer.dailyState30", {
+                name: server.name,
+              })}
             />
           </div>
 
@@ -527,10 +642,12 @@
                     >
                   </div>
                   <span class="pl-4 text-xs text-muted-foreground">
-                    <span class="font-mono">{episode.trigger_reason || tr("ui.monitoringServer.unrecorded")}</span
+                    <span class="font-mono"
+                      >{episode.trigger_reason ||
+                        tr("ui.monitoringServer.unrecorded")}</span
                     >{#if !episode.ongoing && episode.recovery_reason}
-                      {tr("ui.monitoring.recoveredBy")} <span class="font-mono"
-                        >{episode.recovery_reason}</span
+                      {tr("ui.monitoring.recoveredBy")}
+                      <span class="font-mono">{episode.recovery_reason}</span
                       >{/if}
                   </span>
                 </div>
@@ -538,7 +655,9 @@
             </div>
           {/if}
         {:else}
-          <p class="text-sm text-muted-foreground">{tr("ui.monitoringServerId.noHistoryForThisNode")}</p>
+          <p class="text-sm text-muted-foreground">
+            {tr("ui.monitoringServerId.noHistoryForThisNode")}
+          </p>
         {/if}
       </section>
     </div>

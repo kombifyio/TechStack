@@ -2,7 +2,7 @@
 set -e
 
 # kombify Techstack Server Preparation Script
-# Supported OS: Ubuntu 20.04, 22.04, 24.04
+# Supported OS: Ubuntu 20.04, 22.04, 24.04, 26.04
 # Installs: Docker, OpenTofu, Terramate (optional)
 
 LOG_FILE="/var/log/techstack-prepare.log"
@@ -29,7 +29,7 @@ check_os() {
         if [ "$ID" != "ubuntu" ]; then
             error "This script currently supports Ubuntu only. Detected: $ID"
         fi
-        if [[ "$VERSION_ID" != "20.04" && "$VERSION_ID" != "22.04" && "$VERSION_ID" != "24.04" ]]; then
+        if [[ "$VERSION_ID" != "20.04" && "$VERSION_ID" != "22.04" && "$VERSION_ID" != "24.04" && "$VERSION_ID" != "26.04" ]]; then
              log "Warning: Untested Ubuntu version: $VERSION_ID. Proceeding..."
         fi
     else

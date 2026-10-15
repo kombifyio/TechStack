@@ -5,6 +5,7 @@
   import { brandDomainForTool } from "#lib/brand-logo.js";
   import {
     installsService,
+    maturityLabelled,
     type UseCaseCatalogComponent,
   } from "#lib/api/useCaseCatalog.js";
   import { tr } from "#lib/i18n.svelte.js";
@@ -16,6 +17,8 @@
     disabledIds = [],
     label,
     compact = false,
+    summary = false,
+    describe,
     savedForLater = {},
     openLabel = "",
     onopen,
@@ -29,6 +32,14 @@
     label: string;
     /** The closed card's app stack instead of the full picker. */
     compact?: boolean;
+    /**
+     * The expanded card with a guided setup: the chosen app with its
+     * description, and the apps to switch to as one compact column, so the
+     * setup steps below keep the full card width.
+     */
+    summary?: boolean;
+    /** The chosen app's description in the summary. */
+    describe?: (component: UseCaseCatalogComponent) => string;
     /** Tooltip per component id for apps that are recorded but not installed yet. */
     savedForLater?: Record<string, string>;
     /** Accessible action of the compact stack (it opens the expanded card). */
@@ -60,11 +71,14 @@
   }
 
   function roleLabel(component: UseCaseCatalogComponent) {
+    const status = maturityLabelled(component.maturity)
+      ? ` · ${tr(`wizard.status.${component.maturity}`)}`
+      : "";
     if (component.role === "primary")
-      return tr("wizard.preview.defaultService");
+      return `${tr("wizard.preview.defaultService")}${status}`;
     const role = tr("wizard.preview.alternative");
     return installsService(component)
-      ? role
+      ? `${role}${status}`
       : `${role} · ${tr("wizard.preview.savedForLater")}`;
   }
 </script>
@@ -104,6 +118,71 @@
     {#if others > 0}<span class="stack-more" aria-hidden="true">+{others}</span
       >{/if}
   </button>
+{:else if summary && chosen}
+  <div class="service-summary">
+    <div class="summary-chosen">
+      <span class="summary-mark"
+        ><BrandLogoScope domain={brandDomainForTool(chosen.id, chosen.name)}
+          ><BrandLogoIcon
+            class="h-7 w-7"
+            fallbackLabel={chosen.name}
+          /></BrandLogoScope
+        ></span
+      >
+      <div class="summary-copy">
+        <p class="summary-name">
+          <strong>{chosen.name}</strong><small>{roleLabel(chosen)}</small>
+        </p>
+        {#if describe}<p class="summary-desc">{describe(chosen)}</p>{/if}
+      </div>
+      <button
+        type="button"
+        class="service-info"
+        aria-label={`${tr("wizard.preview.aboutService")} ${chosen.name}`}
+        onclick={(event) => oninfo(chosen, event.currentTarget)}
+        title={`${tr("wizard.preview.aboutService")} ${chosen.name}`}
+      >
+        <Info size={16} aria-hidden="true" />
+      </button>
+    </div>
+    {#if components.length > 1}
+      <div class="summary-switch" role="group" aria-label={label}>
+        {#each components as component (component.id)}
+          <button
+            type="button"
+            class="switch-option"
+            class:chosen={component.id === chosen.id}
+            disabled={disabled || disabledIds.includes(component.id)}
+            aria-pressed={component.id === chosen.id}
+            aria-label={`${component.name} ${roleLabel(component)}`}
+            title={`${component.name} · ${roleLabel(component)}`}
+            onclick={() => onselect(component.id)}
+          >
+            <span class="switch-mark"
+              ><BrandLogoScope
+                domain={brandDomainForTool(component.id, component.name)}
+                ><BrandLogoIcon
+                  class="h-4 w-4"
+                  fallbackLabel={component.name}
+                /></BrandLogoScope
+              ></span
+            >
+            <span class="switch-name">{component.name}</span>
+            {#if laterLabel(component)}<Clock
+                size={12}
+                class="switch-later"
+                aria-hidden="true"
+              />{/if}
+            {#if component.id === chosen.id}<Check
+                size={14}
+                class="service-check"
+                aria-hidden="true"
+              />{/if}
+          </button>
+        {/each}
+      </div>
+    {/if}
+  </div>
 {:else}
   <div class="service-picker" role="group" aria-label={label}>
     {#each components as component (component.id)}
@@ -126,6 +205,8 @@
           >
           <span class="service-identity"
             ><strong>{component.name}</strong><small
+              data-testid={`service-status-${component.id}`}
+              data-maturity={component.maturity ?? "unknown"}
               >{roleLabel(component)}</small
             ></span
           >
@@ -219,6 +300,113 @@
     color: var(--muted-foreground);
     font-weight: 500;
     font-variant-numeric: tabular-nums;
+  }
+  .service-summary {
+    display: grid;
+    grid-template-columns: minmax(0, 1.3fr) minmax(150px, 1fr);
+    gap: 14px;
+    align-items: start;
+    min-width: 0;
+  }
+  .service-summary:not(:has(.summary-switch)) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .summary-chosen {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    min-width: 0;
+  }
+  .summary-mark {
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
+    background: var(--background);
+    border: 1px solid var(--border);
+    border-radius: 11px;
+  }
+  .summary-copy {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+  }
+  .summary-name {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px 8px;
+    margin: 0;
+  }
+  .summary-name strong {
+    font-size: 15px;
+  }
+  .summary-desc {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
+    margin: 0;
+    font-size: 12.5px;
+    line-height: 1.45;
+    color: var(--muted-foreground);
+  }
+  .service-summary .service-info {
+    min-height: 26px;
+    height: 26px;
+  }
+  .summary-switch {
+    display: flex;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    gap: 5px;
+    min-width: 0;
+  }
+  .switch-option {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    max-width: 100%;
+    height: 27px;
+    padding: 0 8px 0 3px;
+    text-align: start;
+    font-size: 12px;
+    font-weight: 600;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--card);
+  }
+  .switch-option.chosen {
+    border-color: color-mix(in oklch, var(--primary) 45%, var(--border));
+    background: color-mix(in oklch, var(--primary) 6%, var(--card));
+  }
+  .switch-mark {
+    display: grid;
+    place-items: center;
+    width: 21px;
+    height: 21px;
+    flex-shrink: 0;
+    background: var(--background);
+    border-radius: 50%;
+  }
+  .switch-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  :global(.switch-later) {
+    flex-shrink: 0;
+    color: var(--muted-foreground);
+  }
+  @container creation-goals (max-width: 620px) {
+    .service-summary {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 10px;
+    }
   }
   .service-picker {
     display: flex;

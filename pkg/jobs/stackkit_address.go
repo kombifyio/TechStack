@@ -21,12 +21,15 @@ const stackKitAddressPlanV1 = "stackkit.address-plan/v1"
 const ManagedAddressDeregistrationResultField = "kombify_me_deregistration"
 
 type stackKitAddressPlan struct {
-	APIVersion      string                       `json:"api_version"`
-	Provider        string                       `json:"provider"`
-	StackName       string                       `json:"stack_name"`
-	Domain          string                       `json:"domain"`
-	SubdomainPrefix string                       `json:"subdomain_prefix,omitempty"`
-	Services        []stackKitAddressPlanService `json:"services"`
+	APIVersion      string `json:"api_version"`
+	Provider        string `json:"provider"`
+	StackName       string `json:"stack_name"`
+	Domain          string `json:"domain"`
+	SubdomainPrefix string `json:"subdomain_prefix,omitempty"`
+	// RegisteredZone is derived from a validated candidate's install domain,
+	// then checked against the existing owner/stack registry before allocation.
+	RegisteredZone string                       `json:"-"`
+	Services       []stackKitAddressPlanService `json:"services"`
 }
 
 type stackKitAddressPlanService struct {
@@ -108,6 +111,12 @@ func allocateManagedAddressPlan(ctx context.Context, plan stackKitAddressPlan, t
 	// An install keeps the layout kombify.me already holds for it; the switch
 	// only decides for an install without services (D-72).
 	layout := managedAddressLayoutFlat
+	if plan.RegisteredZone != "" {
+		if plan.RegisteredZone != baseName+"."+addressModeKombifyMeDomain || (responseString(baseResponse, "layout") != "" && responseString(baseResponse, "layout") != managedAddressLayoutZone) {
+			return managedAddressBinding{}, fmt.Errorf("registered installation zone differs from its current binding")
+		}
+		layout = managedAddressLayoutZone
+	}
 	if boundPrefix == "" {
 		switch responseString(baseResponse, "layout") {
 		case managedAddressLayoutZone:

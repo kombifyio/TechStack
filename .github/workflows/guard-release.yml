@@ -1,0 +1,591 @@
+name: Guard release
+
+# Builds, signs and publishes the kombify Guard artifacts the control plane
+# serves. Signing is Sigstore keyless: the certificate identity of every
+# signature is this workflow file on the main branch of this repository, run on a
+# GitHub-hosted runner by a dispatch or the nightly schedule, which is exactly
+# what each Guard's privileged executor pins (pkg/guardrelease.DefaultIdentity).
+# There is no signing key to custody.
+#
+#   workflow_dispatch  mode "publish": builds and signs the binaries of a
+#                      version once from the exact commit it runs on, publishes
+#                      them as assets of the release guard-v<version> and signs a
+#                      fresh manifest. Runs in the GitHub Environment
+#                      guard-release; stable releases require reviewers,
+#                      while fast pre-1.0 publication is automatic.
+#   schedule           mode "refresh": re-signs the manifest of the Guard version
+#                      pinned in the Dockerfile from its published binaries, so
+#                      the freshness window never lapses and revocations in
+#                      guard-release-policy.json reach the control plane within a
+#                      day. It never builds or publishes a binary. Runs in the
+#                      Environment guard-release-refresh (branch-restricted, no
+#                      reviewers, so the nightly run is not blocked on a person).
+#
+# Both Environments must exist and be restricted to the main branch; the first
+# step of the job verifies this and fails the run before anything is signed
+# (docs/DEPLOYMENT.md, "Release prerequisites"). An unprotected Environment that
+# GitHub creates on first use does not pass.
+#
+# A release becomes live only when the control plane image is built with
+# GUARD_RELEASE_VERSION=<version> (see Dockerfile, stage guard-release); the
+# running control plane then refreshes the manifest of that version from this
+# release (internal/routes/workers_release_refresh.go). Merging or publishing
+# here changes nothing on a server.
+#
+# Never interpolate an expression into a shell script: untrusted or
+# operator-supplied values reach a step only through `env:` and are validated
+# before use.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Declared Guard product version X.Y.Z (must match the exact source)"
+        required: false
+        type: string
+      expected_source_sha:
+        description: "Exact prepared source admitted by Delivery (required for publication; historical private sources may only reuse verified assets)"
+        required: false
+        type: string
+      deliver_after_publish:
+        description: "After a fresh publication of the prepared release, dispatch Delivery v2 (set only by guard-release-on-release.yml)"
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    - cron: "41 4 * * *"
+
+permissions: {}
+
+# One lane per prepared source: a publication of one release never queues behind
+# a run of another release (a run parked at its Environment gate held the single
+# shared lane and starved every later release). The nightly refresh keeps its
+# own lane. Same-source dispatches still serialise.
+concurrency:
+  group: guard-release-${{ github.event_name == 'workflow_dispatch' && (inputs.expected_source_sha || inputs.version || github.run_id) || 'refresh' }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # A run from any ref other than main cannot produce evidence Guards accept;
+    # do not start it at all.
+    if: github.ref == 'refs/heads/main' && (github.repository == 'kombifyio/TechStack' || github.repository == 'kombifyio/TechStack')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: ${{ github.event_name == 'workflow_dispatch' && 'guard-release' || 'guard-release-refresh' }}
+    permissions:
+      contents: write
+      id-token: write
+      actions: read
+    env:
+      RELEASE_MODE: ${{ github.event_name == 'workflow_dispatch' && 'publish' || 'refresh' }}
+      RELEASE_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && 'guard-release' || 'guard-release-refresh' }}
+      # cosign is built from source at this exact version; the Go module
+      # checksum database authenticates the source. Bump it in a reviewed pull
+      # request (the dependency automation proposes it).
+      COSIGN_VERSION: v3.1.3
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      # Resolve maturity from the exact product source, never a caller-selected
+      # lower version. Environment restrictions remain required for both profiles.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve declared product version
+        id: version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+        run: |
+          set -euo pipefail
+          source_sha="$GITHUB_SHA"
+          reuse_private=false
+          if [ "$RELEASE_MODE" = publish ]; then
+            [[ "${EXPECTED_SOURCE_SHA:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$GITHUB_SHA" = "$(git rev-parse HEAD)" ] || {
+              echo '::error::Guard publication requires an exact admitted source and authenticated main checkout.' >&2
+              exit 1
+            }
+            source_sha="$EXPECTED_SOURCE_SHA"
+            if [ "$source_sha" != "$GITHUB_SHA" ]; then
+              # A later main run cannot sign or rebuild an older prepared source.
+              # It may only authenticate that source's already-published bytes.
+              test ! -f .techstack-public-export.json
+              git cat-file -e "${source_sha}:.kombify/version-policy.json"
+              history="$(git rev-list --first-parent --max-count=10001 "$GITHUB_SHA" --not "${source_sha}^@")"
+              test "$(printf '%s\n' "$history" | wc -l)" -le 10000
+              grep -qx "$source_sha" <<<"$history"
+              test -z "$(git rev-list --first-parent "${source_sha}..${GITHUB_SHA}" -- '.kombify/VERSION' '.kombify/version-policy.json')"
+              source_version="$(node scripts/release-version.mjs resolve "$source_sha")"
+              test "${source_version%%.*}" = 0
+              reuse_private=true
+            fi
+          fi
+          if [ -f .techstack-public-export.json ]; then
+            # The receipt is checked before any generated files or downloads.
+            node scripts/verify-public-export.mjs
+            version="$(tr -d '[:space:]' < VERSION)"
+            echo 'public=true' >> "$GITHUB_OUTPUT"
+          else
+            version="$(node scripts/release-version.mjs resolve "$source_sha")"
+            echo 'public=false' >> "$GITHUB_OUTPUT"
+          fi
+          [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          if [ -n "${INPUT_VERSION:-}" ] && [ "$INPUT_VERSION" != "$version" ]; then
+            echo '::error::The Guard version must match the declared version of this exact source.' >&2
+            exit 1
+          fi
+          if [ "$RELEASE_MODE" = refresh ]; then
+            if [ -f .techstack-public-export.json ]; then
+              # Untagged public main may be newer than the product users run.
+              # Refresh the already-published numeric product, never manufacture
+              # a seed for an unreleased source/version during a schedule.
+              product_tag="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+              [[ "$product_tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+              version="${product_tag#v}"
+            else
+              version=$(sed -n 's/^ARG GUARD_RELEASE_VERSION="\([^"]*\)"$/\1/p' Dockerfile)
+            fi
+            [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
+              echo '::error::Manifest refresh requires the served Guard release pin in Dockerfile.' >&2
+              exit 1
+            }
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "source-sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "reuse-private=$reuse_private" >> "$GITHUB_OUTPUT"
+
+      - name: Require the protected release Environment
+        shell: bash
+        env:
+          PRODUCT_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error title=Unprotected release environment::$1" >&2; exit 1; }
+          api="repos/${GITHUB_REPOSITORY}/environments/${RELEASE_ENVIRONMENT}"
+          environment="$(gh api "$api")" || fail "Environment '${RELEASE_ENVIRONMENT}' cannot be read. Create it and restrict it as described in docs/DEPLOYMENT.md (Release prerequisites)."
+          jq -e --arg name "$RELEASE_ENVIRONMENT" '.name == $name' <<<"$environment" >/dev/null \
+            || fail "The release did not run in Environment '${RELEASE_ENVIRONMENT}'."
+          jq -e '.deployment_branch_policy.custom_branch_policies == true' <<<"$environment" >/dev/null \
+            || fail "Environment '${RELEASE_ENVIRONMENT}' must restrict deployments to selected branches (custom branch policy: main only)."
+          branches="$(gh api "${api}/deployment-branch-policies" --jq '[.branch_policies[] | select((.type // "branch") == "branch") | .name] | sort | join(",")')"
+          tags="$(gh api "${api}/deployment-branch-policies" --jq '[.branch_policies[] | select(.type == "tag")] | length')"
+          [ "$branches" = "main" ] && [ "$tags" = "0" ] \
+            || fail "Environment '${RELEASE_ENVIRONMENT}' must allow exactly the branch 'main' and no tag (found branches '${branches}', ${tags} tag policies)."
+          if [ "$RELEASE_MODE" = "publish" ] && [ "${PRODUCT_VERSION%%.*}" != "0" ]; then
+            jq -e '[.protection_rules[]? | select(.type == "required_reviewers")] | length > 0' <<<"$environment" >/dev/null \
+              || fail "Environment '${RELEASE_ENVIRONMENT}' must require reviewers before a stable release is published."
+          fi
+
+      # No build or module cache may flow into a job that holds a signing token.
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      # The token lives only in this step's environment and a temporary git
+      # config the script removes; later steps build from the verified cache.
+      - name: Download Go modules
+        shell: bash
+        env:
+          # Use the existing dependency-release credential first: the legacy
+          # read token does not cover the newer private runtime-contracts repo.
+          GITHUB_TOKEN: ${{ secrets.GH_PAT || secrets.KOMBIFY_CROSS_REPO_READ_TOKEN }}
+          PUBLIC_PROFILE: ${{ steps.version.outputs.public }}
+        run: |
+          set -euo pipefail
+          if [ "$PUBLIC_PROFILE" = true ]; then
+            # Projected public modules are source in this tree; no private
+            # credential, helper or package feed is required in this profile.
+            unset GITHUB_TOKEN GOPRIVATE GONOSUMDB GONOPROXY
+            go mod download
+          else
+            test -n "${GITHUB_TOKEN:-}" || { echo "::error::Existing cross-repo read credential is required" >&2; exit 1; }
+            export GOPRIVATE=github.com/kombifyio/*
+            node scripts/go-mod-download.mjs
+          fi
+          git diff --exit-code -- go.mod go.sum
+
+      - name: Install cosign and the release tool
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="${RUNNER_TEMP}/guard-release-bin"
+          mkdir -p "$bin"
+          # Built from source at a pinned version: no unpinned action and no
+          # unverified download runs in this job.
+          GOBIN="$bin" CGO_ENABLED=0 go install -trimpath -buildvcs=false "github.com/sigstore/cosign/v3/cmd/cosign@${COSIGN_VERSION}"
+          CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -o "$bin/guard-release-tool" ./cmd/guard-release-tool
+          echo "$bin" >> "$GITHUB_PATH"
+
+      # A version's binaries are signed once. Published binaries are reused
+      # byte for byte, and a release whose binaries cannot all be fetched is an
+      # error: nothing is ever rebuilt under a published version.
+      - name: Fetch published binaries or build them
+        id: binaries
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SOURCE_SHA: ${{ steps.version.outputs.source-sha }}
+          REUSE_PRIVATE: ${{ steps.version.outputs.reuse-private }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          tag="guard-v${VERSION}"
+          binary_assets="techstack-linux-amd64 techstack-linux-amd64.sigstore.json techstack-linux-arm64 techstack-linux-arm64.sigstore.json"
+          release_state=absent
+          if out="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" 2>&1)"; then
+            release_state=present
+            names="$(jq -r '.assets[].name' <<<"$out")"
+          elif ! grep -q 'HTTP 404' <<<"$out"; then
+            echo "::error::cannot read release ${tag}: ${out}" >&2
+            exit 1
+          fi
+          have=0
+          if [ "$release_state" = present ]; then
+            for asset in $binary_assets; do
+              if grep -qx "$asset" <<<"$names"; then have=$((have + 1)); fi
+            done
+          fi
+          if [ "$REUSE_PRIVATE" = true ]; then
+            [ "$release_state" = present ] && [ "$have" -eq 4 ] || {
+              echo '::error::The exact historical private Guard release is missing or partial; fresh signing must run while its source is current main.' >&2
+              exit 1
+            }
+            ref="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}")"
+            jq -e --arg source "$SOURCE_SHA" '.object.type == "commit" and .object.sha == $source' <<<"$ref" >/dev/null
+          fi
+          if [ "$have" -eq 4 ]; then
+            gh release download "$tag" --dir dist --pattern 'techstack-linux-*'
+            for asset in $binary_assets; do
+              [ -s "dist/$asset" ] || { echo "::error::release ${tag} lists ${asset} but it could not be downloaded" >&2; exit 1; }
+            done
+            gh release download "$tag" --dir dist --pattern 'release-manifest*'
+            runtime_assets=0
+            for arch in amd64 arm64; do
+              asset="stackkit-runtime-linux-${arch}.tar.gz"
+              if grep -qx "$asset" <<<"$names"; then
+                gh release download "$tag" --dir dist --pattern "$asset"
+                runtime_assets=$((runtime_assets + 1))
+              fi
+            done
+            [ "$runtime_assets" -ne 1 ] || { echo '::error::Published runtime archive pair is incomplete.' >&2; exit 1; }
+            # Authenticate the old manifest and any paired payload BEFORE its
+            # immutable runtime identity is carried into a refreshed manifest.
+            if [ "$REUSE_PRIVATE" = true ]; then
+              [ "$runtime_assets" -eq 2 ] || { echo '::error::Historical private Guard reuse requires both runtime archives.' >&2; exit 1; }
+              guard-release-tool verify dist --expected-source "$SOURCE_SHA" --require-runtime-bundles --require-current-policy
+              source_docker="$(git show "${SOURCE_SHA}:Dockerfile")"
+              source_arg() { sed -n "s/^ARG $1=\"\([^\"]*\)\"\$/\1/p" <<<"$source_docker"; }
+              sk_version="$(source_arg STACKKIT_RELEASE_TAG)"
+              sk_kit="$(source_arg STACKKIT_RELEASE_KIT)"
+              sk_archive="$(source_arg STACKKIT_RELEASE_ARCHIVE_SHA256)"
+              sk_index="$(source_arg STACKKIT_RELEASE_INDEX_SHA256)"
+              sk_compat="$(source_arg STACKKIT_RELEASE_COMPATIBILITY_SHA256)"
+              sk_catalog="$(source_arg STACKKIT_RELEASE_USE_CASE_CATALOG_SHA256)"
+              for value in "$sk_version" "$sk_kit" "$sk_archive" "$sk_index" "$sk_compat" "$sk_catalog"; do test -n "$value"; done
+              jq -e --arg version "$VERSION" --arg sk "$sk_version" --arg archive "$sk_archive" \
+                '.version == $version and .stackkits.version == $sk and .stackkits.archiveSha256 == $archive' dist/release-manifest.json >/dev/null
+              for arch in amd64 arm64; do
+                archive="dist/stackkit-runtime-linux-${arch}.tar.gz"
+                tar -xOf "$archive" .stackkit/stackkits-release-pin.json | jq -e \
+                  --arg version "$sk_version" --arg kit "$sk_kit" --arg index "$sk_index" --arg arch "$arch" \
+                  --slurpfile manifest dist/release-manifest.json \
+                  '($manifest[0].stackkits | if $arch == "arm64" then .linuxArm64 else . end) as $runtime |
+                   .schemaVersion == "techstack.stackkit-release-pin/v2" and .kit == $kit and .version == $version and
+                   .platform.os == "linux" and .platform.arch == $arch and .indexSha256 == $index and
+                   .archiveSha256 == $runtime.archiveSha256 and .binarySha256 == $runtime.binarySha256' >/dev/null
+                test "$(tar -xOf "$archive" .stackkit/stackkits-compatibility-v1.json | sha256sum | cut -d' ' -f1)" = "$sk_compat"
+                test "$(tar -xOf "$archive" .stackkit/stackkits-use-case-catalog-v1.json | sha256sum | cut -d' ' -f1)" = "$sk_catalog"
+              done
+            elif [ "$RELEASE_MODE" = publish ]; then
+              guard-release-tool verify dist --refresh-published --expected-source "$GITHUB_SHA"
+            else
+              guard-release-tool verify dist --refresh-published
+            fi
+            jq -e --arg version "$VERSION" '.version == $version' dist/release-manifest.json >/dev/null
+            echo "built=false" >> "$GITHUB_OUTPUT"
+            echo "runtime_assets=$runtime_assets" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$have" -ne 0 ]; then
+            echo "::error::release ${tag} holds only some of its signed binaries; it is never rebuilt. Remove the incomplete release and its tag by hand, then run again." >&2
+            exit 1
+          fi
+          if [ "$RELEASE_MODE" != "publish" ]; then
+            echo "::error::the scheduled refresh only re-signs a manifest for a release that already holds signed binaries; release ${tag} has none. Dispatch the release first." >&2
+            exit 1
+          fi
+          if [ "$release_state" = present ]; then
+            # An empty leftover release: its tag must point at this very commit.
+            tag_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" --jq '.object.sha')"
+            if [ "$tag_sha" != "$GITHUB_SHA" ]; then
+              echo "::error::release ${tag} exists without binaries and its tag points at ${tag_sha}, not at ${GITHUB_SHA}. Remove it by hand, then run again." >&2
+              exit 1
+            fi
+          fi
+          rm -rf dist && mkdir dist
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build \
+              -mod=readonly -buildvcs=false -trimpath \
+              -ldflags="-s -w -X main.version=${VERSION} -X main.buildRevision=${GITHUB_SHA}" \
+              -o "dist/techstack-linux-${arch}" ./cmd/techstack
+            # A release Guard carries no build tags: the guardqualification tag
+            # links a harness-only signer identity (pkg/guardrelease).
+            if go version -m "dist/techstack-linux-${arch}" | grep -Eq '^[[:space:]]+build[[:space:]]+-tags='; then
+              echo "::error::dist/techstack-linux-${arch} was built with build tags; a release Guard is built without any." >&2
+              exit 1
+            fi
+          done
+          echo "built=true" >> "$GITHUB_OUTPUT"
+          echo "runtime_assets=2" >> "$GITHUB_OUTPUT"
+
+      - name: Sign new binaries
+        if: steps.binaries.outputs.built == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            cosign sign-blob --yes \
+              --bundle "dist/techstack-linux-${arch}.sigstore.json" \
+              "dist/techstack-linux-${arch}"
+          done
+
+      - name: Build the release manifest
+        if: steps.version.outputs.reuse-private != 'true'
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILT: ${{ steps.binaries.outputs.built }}
+        run: |
+          set -euo pipefail
+          # The policy file carries the minimum admitted version and the
+          # revocations; changing it and letting this workflow run is how a bad
+          # Guard release is revoked fleet-wide.
+          policy=guard-release-policy.json
+          jq -e '.minimumAdmittedVersion and (.revokedVersions | type == "array") and (.revokedDigests | type == "array")' "$policy" >/dev/null
+          artifacts="[]"
+          for arch in amd64 arm64; do
+            file="dist/techstack-linux-${arch}"
+            artifacts="$(jq -c --arg arch "$arch" --arg sha "$(sha256sum "$file" | cut -d' ' -f1)" --argjson size "$(stat -c %s "$file")" \
+              '. + [{os:"linux",arch:$arch,sha256:$sha,size:$size}]' <<<"$artifacts")"
+          done
+
+          if [ "$BUILT" = false ]; then
+            # The verified published identity is immutable. In particular a
+            # historical release without paired assets must not acquire a new
+            # runtime identity from today's compiler pins during refresh.
+            stackkits="$(jq -c '.stackkits // null' dist/release-manifest.json)"
+          else
+          # The StackKits runtime the control plane image pins (Dockerfile stage
+          # stackkit-release-cache), for both architectures. Its files run as
+          # root on the node, so the signed manifest names the digest of the
+          # WHOLE runtime bundle tree, not only the executables; the privileged
+          # executor installs a runtime bundle only when its tree matches. The
+          # tree is assembled by the same script the image build uses.
+          dockerfile_arg() { sed -n "s/^ARG $1=\"\(.*\)\"\$/\1/p" Dockerfile | head -n 1; }
+          sk_tag="$(dockerfile_arg STACKKIT_RELEASE_TAG)"
+          sk_kit="$(dockerfile_arg STACKKIT_RELEASE_KIT)"
+          sk_bootstrap_kit="$(dockerfile_arg STACKKIT_RELEASE_BOOTSTRAP_KIT)"
+          sk_repo="$(dockerfile_arg STACKKIT_RELEASE_REPO)"
+          sk_index_sha="$(dockerfile_arg STACKKIT_RELEASE_INDEX_SHA256)"
+          sk_compat_sha="$(dockerfile_arg STACKKIT_RELEASE_COMPATIBILITY_SHA256)"
+          sk_catalog_sha="$(dockerfile_arg STACKKIT_RELEASE_USE_CASE_CATALOG_SHA256)"
+          sk_amd64_sha="$(dockerfile_arg STACKKIT_RELEASE_ARCHIVE_SHA256)"
+          for value in "$sk_tag" "$sk_kit" "$sk_bootstrap_kit" "$sk_repo" "$sk_index_sha" "$sk_compat_sha" "$sk_catalog_sha" "$sk_amd64_sha"; do
+            test -n "$value"
+          done
+          base="https://github.com/${sk_repo}/releases/download/${sk_tag}"
+          work="$(mktemp -d)"
+          # The arm64 archive digest comes from the release index, whose own
+          # digest is pinned in the Dockerfile (and repinned with it), so no
+          # second pin can go stale. The amd64 entry must equal the Dockerfile pin.
+          curl --fail --silent --show-error --location "${base}/stackkits-release-index-v1.json" --output "$work/index.json"
+          echo "${sk_index_sha}  $work/index.json" | sha256sum -c -
+          index_archive_sha() {
+            jq -er --arg kit "$sk_bootstrap_kit" --arg version "$sk_tag" --arg arch "$1" \
+              '[.assets[] | select(.kit == $kit and .version == $version and .platform.os == "linux" and .platform.arch == $arch)] | if length == 1 then .[0].archive.sha256 else error("not exactly one asset") end' \
+              "$work/index.json"
+          }
+          declare -A sk_archive_sha=([amd64]="$(index_archive_sha amd64)" [arm64]="$(index_archive_sha arm64)")
+          test "${sk_archive_sha[amd64]}" = "$sk_amd64_sha"
+          printf '%s' "${sk_archive_sha[arm64]}" | grep -Eq '^[0-9a-f]{64}$'
+          curl --fail --silent --show-error --location "${base}/stackkits-compatibility-v1.json" --output "$work/compat.json"
+          echo "${sk_compat_sha}  $work/compat.json" | sha256sum -c -
+          curl --fail --silent --show-error --location "${base}/stackkits-use-case-catalog-v1.json" --output "$work/catalog.json"
+          echo "${sk_catalog_sha}  $work/catalog.json" | sha256sum -c -
+
+          runtime_for_arch() {
+            local arch="$1" dir="$work/$1"
+            mkdir -p "$dir/release" "$dir/out"
+            curl --fail --silent --show-error --location \
+              "${base}/stackkits-${sk_bootstrap_kit}_${sk_tag#v}_linux_${arch}.tar.gz" --output "$dir/release.tar.gz"
+            echo "${sk_archive_sha[$arch]}  $dir/release.tar.gz" | sha256sum -c - >&2
+            tar --extract --gzip --file "$dir/release.tar.gz" --directory "$dir/release" stackkit stackkit-server stackkit-mcp tofu terramate
+            listing="$(tar --list --gzip --file "$dir/release.tar.gz")"
+            # Some release archives contain only individual provider entries,
+            # without a providers/ directory header. Extract the entire mirror
+            # by its bounded prefix rather than assuming a directory entry.
+            tar --extract --gzip --file "$dir/release.tar.gz" --directory "$dir/release" --wildcards 'providers/*'
+            if grep -qx 'docs/data/advanced-operations/latest.json' <<<"$listing"; then
+              tar --extract --gzip --file "$dir/release.tar.gz" --directory "$dir/release" docs/data/advanced-operations/latest.json
+            fi
+            STACKKIT_RELEASE_KIT="$sk_kit" STACKKIT_RELEASE_TAG="$sk_tag" \
+              STACKKIT_RELEASE_ARCHIVE_SHA256="${sk_archive_sha[$arch]}" STACKKIT_RELEASE_INDEX_SHA256="$sk_index_sha" \
+              sh scripts/stackkit-runtime-tree.sh "$arch" "$dir/release" "$work/compat.json" "$work/catalog.json" "$dir/out" >&2
+            local tree archive
+            tree="$(guard-release-tool tree-digest "$dir/out/.stackkit")"
+            # The image ships the same tree as a tar.gz; its archive digest must
+            # be the tree digest, or the executor would refuse the bundle.
+            tar --create --gzip --file "dist/stackkit-runtime-linux-${arch}.tar.gz" --directory "$dir/out" .stackkit
+            archive="$(guard-release-tool archive-digest "dist/stackkit-runtime-linux-${arch}.tar.gz")"
+            test "$tree" = "$archive"
+            jq -cn --arg archive "${sk_archive_sha[$arch]}" \
+              --arg binary "$(sha256sum "$dir/out/.stackkit/bin/stackkit" | cut -d' ' -f1)" \
+              --arg server "$(sha256sum "$dir/out/.stackkit/bin/stackkit-server" | cut -d' ' -f1)" \
+              --arg bundle "$tree" \
+              '{archiveSha256:$archive,binarySha256:$binary,serverSha256:$server,bundleSha256:$bundle}'
+          }
+          amd64_runtime="$(runtime_for_arch amd64)"
+          arm64_runtime="$(runtime_for_arch arm64)"
+          stackkits="$(jq -cn --arg version "$sk_tag" --argjson amd64 "$amd64_runtime" --argjson arm64 "$arm64_runtime" \
+            '{version:$version} + $amd64 + {linuxArm64:$arm64}')"
+          fi
+
+          now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          expires="$(date -u -d '+14 days' +%Y-%m-%dT%H:%M:%SZ)"
+          jq -n --arg version "$VERSION" --arg issued "$now" --arg expires "$expires" \
+            --slurpfile policy "$policy" --argjson artifacts "$artifacts" --argjson stackkits "$stackkits" \
+            '{schemaVersion:"guard.release-manifest/v1",version:$version,
+              minimumAdmittedVersion:$policy[0].minimumAdmittedVersion,
+              revokedVersions:$policy[0].revokedVersions,revokedDigests:$policy[0].revokedDigests,
+              artifacts:$artifacts,stackkits:$stackkits,issuedAt:$issued,expiresAt:$expires}' > dist/release-manifest.json
+
+      - name: Sign the manifest
+        if: steps.version.outputs.reuse-private != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cosign sign-blob --yes --bundle dist/release-manifest.sigstore.json dist/release-manifest.json
+
+      # The Guard's own verifier, with the pinned trusted root and signer
+      # identity, decides: a release a Guard would refuse is never published.
+      - name: Verify what will be published as a Guard does
+        if: steps.version.outputs.reuse-private != 'true'
+        shell: bash
+        env:
+          RUNTIME_ASSETS: ${{ steps.binaries.outputs.runtime_assets }}
+        run: |
+          set -euo pipefail
+          expected=()
+          if [ "$RELEASE_MODE" = publish ]; then expected=(--expected-source "$GITHUB_SHA"); fi
+          if [ "$RUNTIME_ASSETS" = 2 ]; then
+            guard-release-tool verify dist --require-runtime-bundles "${expected[@]}"
+          else
+            guard-release-tool verify dist "${expected[@]}"
+          fi
+
+      - name: Publish
+        if: steps.version.outputs.reuse-private != 'true'
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="guard-v${VERSION}"
+          if ! gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" >/dev/null 2>&1; then
+            gh release create "$tag" --target "$GITHUB_SHA" --prerelease \
+              --title "kombify Guard ${VERSION}" \
+              --notes "Signed kombify Guard artifacts. Verify with the pinned release identity; the control plane serves these bytes once built with GUARD_RELEASE_VERSION=${VERSION}."
+          fi
+          names="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" --jq '.assets[].name')"
+          # Binaries and their bundles are immutable: an asset that exists must
+          # be byte-identical to what this run holds, never replaced.
+          for asset in techstack-linux-amd64 techstack-linux-amd64.sigstore.json techstack-linux-arm64 techstack-linux-arm64.sigstore.json; do
+            if grep -qx "$asset" <<<"$names"; then
+              check="$(mktemp -d)"
+              gh release download "$tag" --dir "$check" --pattern "$asset"
+              cmp -s "$check/$asset" "dist/$asset" || { echo "::error::${asset} of ${tag} exists with different bytes; published binaries are immutable" >&2; exit 1; }
+            else
+              gh release upload "$tag" "dist/$asset"
+            fi
+          done
+          # The runtime archive is paired with the manifest's signed whole-tree
+          # identity. Refresh reuses it; compiler repins never replace it.
+          for arch in amd64 arm64; do
+            asset="stackkit-runtime-linux-${arch}.tar.gz"
+            if [ ! -f "dist/$asset" ]; then continue; fi
+            if grep -qx "$asset" <<<"$names"; then
+              check="$(mktemp -d)"
+              gh release download "$tag" --dir "$check" --pattern "$asset"
+              cmp -s "$check/$asset" "dist/$asset" || { echo "::error::${asset} of ${tag} exists with different bytes; published runtime archives are immutable" >&2; exit 1; }
+            else
+              gh release upload "$tag" "dist/$asset"
+            fi
+          done
+          # Only the manifest pair is replaced: a fresh window is the point of a
+          # nightly run, and the Guard accepts only a manifest newer than the
+          # newest it has seen.
+          gh release upload "$tag" --clobber dist/release-manifest.json dist/release-manifest.sigstore.json
+
+  # Continuous delivery of a prepared pre-1.0 release. Only the dispatch from
+  # guard-release-on-release.yml asks for it, so a Delivery that later reuses
+  # the published Guard never starts another Delivery. The job only requests the
+  # normal Delivery v2 run on main; every source, version, image, environment
+  # and activation gate stays in that run. Stable 1.0+ keeps its explicit
+  # approval. TECHSTACK_AUTO_DELIVERY=off pauses it; TECHSTACK_AUTO_DELIVERY_SCOPE
+  # selects all, service (default) or public-oss.
+  deliver:
+    needs: release
+    if: >-
+      github.repository == 'kombifyio/TechStack' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.deliver_after_publish &&
+      vars.TECHSTACK_AUTO_DELIVERY != 'off'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Dispatch Delivery v2 for the prepared release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ inputs.expected_source_sha }}
+          SCOPE: ${{ vars.TECHSTACK_AUTO_DELIVERY_SCOPE || 'service' }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] && [ "$RELEASE_SHA" = "$GITHUB_SHA" ] || {
+            echo "::error::Automatic Delivery follows only a fresh publication of the prepared release commit." >&2
+            exit 1
+          }
+          case "$SCOPE" in all|service|public-oss) ;; *) echo "::error::Unsupported TECHSTACK_AUTO_DELIVERY_SCOPE ${SCOPE}" >&2; exit 1 ;; esac
+          gh api "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_SHA}" --jq '.files[].filename' | grep -qx '.kombify/VERSION' || {
+            echo "::error::${RELEASE_SHA} is not a prepared release commit." >&2
+            exit 1
+          }
+          version="$(gh api "repos/${GITHUB_REPOSITORY}/contents/.kombify/VERSION?ref=${RELEASE_SHA}" --jq '.content' | base64 -d | tr -d '[:space:]')"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          if [ "${version%%.*}" != 0 ]; then
+            echo "::notice::${version} is stable; its Delivery keeps the explicit approval and is not dispatched automatically."
+            exit 0
+          fi
+          # One execution per prepared release: an active or successful run is
+          # inspected and retried as a full parent rerun, never replaced by a
+          # second dispatch. A failed run of another scope (public-oss is
+          # refused while its group is blocked) does not count.
+          existing="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/delivery.yml/runs?event=workflow_dispatch&branch=main&head_sha=${RELEASE_SHA}&per_page=100" \
+            --jq '[.workflow_runs[] | select(.conclusion == null or .conclusion == "success")] | length')"
+          if [ "$existing" != 0 ]; then
+            echo "::notice::A Delivery run for main already exists since release ${version}; not dispatching another."
+            exit 0
+          fi
+          gh workflow run delivery.yml --repo "$GITHUB_REPOSITORY" --ref main -f scope="$SCOPE" -f execute=true
+          {
+            echo "Requested Delivery v2 (scope=${SCOPE}, execute=true) for Techstack ${version} at ${RELEASE_SHA}."
+            echo "Dispatch acceptance is not deployment evidence; inspect the resulting Delivery run."
+          } >> "$GITHUB_STEP_SUMMARY"

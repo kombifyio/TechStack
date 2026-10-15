@@ -237,27 +237,12 @@ func (failingGoalAuthor) AuthorGoals(context.Context, string, string, string, st
 	return GoalAuthoring{}, context.DeadlineExceeded
 }
 
-func TestProjectFoundRecordsUnmappedWhenAuthorFails(t *testing.T) {
+func TestProjectFoundRefusesFailedReleaseAuthoring(t *testing.T) {
 	projection, err := NewReleaseProjector(failingGoalAuthor{}).Project(
 		context.Background(), basementSeed(), foundIntent("My Homelab", "photos"), "hl-1",
 	)
-	if err != nil {
-		t.Fatalf("offered goals must not fail found: %v", err)
-	}
-	if projection.NodeID != "main" {
-		t.Fatalf("NodeID = %q, want main", projection.NodeID)
-	}
-	hasPhotos := false
-	for _, goal := range projection.UnmappedGoals {
-		if goal == "photos" {
-			hasPhotos = true
-		}
-	}
-	if !hasPhotos {
-		t.Fatalf("UnmappedGoals = %#v, want photos recorded as intent", projection.UnmappedGoals)
-	}
-	if _, hasWorkloads := projection.Spec["workloads"]; hasWorkloads {
-		t.Fatalf("failed author must not persist workloads: %#v", projection.Spec["workloads"])
+	if err == nil || projection != nil {
+		t.Fatalf("failed release authoring must not return a node-only projection: %v, %#v", err, projection)
 	}
 }
 
@@ -466,5 +451,42 @@ func TestWizardIntentValidateContract(t *testing.T) {
 				t.Fatal("expected validation error")
 			}
 		})
+	}
+}
+
+// Off-site backup is the owner's explicit Cloud Kit choice: it reaches the
+// spec only when selected, keeps the seed's own capabilities, and no other
+// kit can request it.
+func TestProjectOffsiteBackupIsAnExplicitCloudKitChoice(t *testing.T) {
+	seed := basementSeed()
+	seed["kit"] = map[string]any{"slug": KitSlugCloud}
+	seedDomainConsumers(seed, KitSlugCloud)
+	seed["capabilities"] = map[string]any{"enable": []any{"private-admin-mesh"}, "disable": []any{}}
+	intent := foundIntent("offsite")
+	intent.KitAssignment.KitSlug = KitSlugCloud
+	intent.Server.Transport = TransportKombifyCloud
+
+	enabled := func(projection *Projection) []any {
+		return projection.Spec["capabilities"].(map[string]any)["enable"].([]any)
+	}
+	plain, err := project(seed, intent, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := enabled(plain); len(got) != 1 || got[0] != "private-admin-mesh" {
+		t.Fatalf("off-site backup enabled without the owner's choice: %v", got)
+	}
+	intent.Backup.Offsite = true
+	chosen, err := project(seed, intent, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := enabled(chosen); len(got) != 2 || got[0] != "private-admin-mesh" || got[1] != OffsiteBackupCapability {
+		t.Fatalf("chosen off-site backup = %v, want the seed capability plus %s", got, OffsiteBackupCapability)
+	}
+	basement := foundIntent("offsite")
+	basement.Backup.Offsite = true
+	if _, err := project(basementSeed(), basement, ""); err == nil {
+		t.Fatal("a Basement Kit run accepted the Cloud Kit off-site backup choice")
 	}
 }

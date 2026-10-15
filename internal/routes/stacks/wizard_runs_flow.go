@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -51,6 +52,10 @@ func (h wizardRunHandlers) runWizardFound(e *httpx.Event, run *wizardRunState) e
 	normalized.HomelabID = run.homelab.ID
 	normalized.StackSpecV2 = projection.Spec
 
+	if walletErr := h.crud.requireWalletForCreate(e, run.ownerID, normalized); walletErr != nil {
+		return walletErr
+	}
+
 	// The wire-request hash keeps a byte-identical retry replayable: the
 	// normalized request is mutated by owner-bootstrap resolution (fresh
 	// generated recovery material) and would never hash stably.
@@ -64,6 +69,9 @@ func (h wizardRunHandlers) runWizardFound(e *httpx.Event, run *wizardRunState) e
 		// row-facing fields and accept the spec's contract id divergence for
 		// that race (documented in the bead).
 		normalized.Name = stack.Name
+	}
+	if intentErr := h.persistWizardHomelabIntent(e.Request.Context(), run, stack.Id, projection); intentErr != nil {
+		return h.failWizardIntentProjection(e, run, stack.Id, projection, intentErr)
 	}
 	serverID, preparedLease, admissionHandled, admissionErr := h.crud.admitManagedCreate(e, run.ownerID, run.tenantID, stack, normalized)
 	if admissionHandled || admissionErr != nil {
@@ -201,8 +209,6 @@ func (h wizardRunHandlers) finishWizardFound(e *httpx.Event, run *wizardRunState
 		}
 	}
 
-	h.persistWizardHomelabIntent(e.Request.Context(), run, outcome.stack.Id, outcome.projection)
-
 	data := map[string]any{
 		"run_kind":                 run.effectiveKind,
 		"requested_run_kind":       run.request.Intent.RunKind,
@@ -299,6 +305,7 @@ func (h wizardRunHandlers) projectAndValidate(e *httpx.Event, seed map[string]an
 			"The wizard intent cannot be projected onto the kit spec.",
 		)
 		details["projection_error"] = projErr.Error()
+		addWizardRejectedIntent(details, intent, nil, h.cfg.ReleaseVersion)
 		_ = httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeValidation,
 			"Wizard projection rejected: "+projErr.Error(), details)
 		return nil, true
@@ -313,15 +320,13 @@ func (h wizardRunHandlers) projectAndValidate(e *httpx.Event, seed map[string]an
 		return nil, true
 	}
 	if validateErr := h.cfg.Validator.ValidateSpec(e.Request.Context(), projection.Spec); validateErr != nil {
-		if recovered := h.recoverGoalValidation(e.Request.Context(), seed, intent, homelabID, validateErr); recovered != nil {
-			return recovered, false
-		}
 		details := wizardRunDetails(
 			"wizard_spec_rejected", false,
 			"Spec rejected by StackKits",
-			"The projected spec failed the pinned `stackkit validate`; nothing was persisted.",
+			"The selected configuration was rejected by the pinned StackKits release. Your choices are retained; review them and submit again. Nothing was persisted or applied.",
 		)
 		details["validate_error"] = validateErr.Error()
+		addWizardRejectedIntent(details, intent, projection.UnmappedGoals, h.cfg.ReleaseVersion)
 		_ = httpx.Error(e, http.StatusUnprocessableEntity, ksapi.ErrCodeValidation,
 			"Projected spec failed StackKits validation", details)
 		return nil, true
@@ -329,26 +334,24 @@ func (h wizardRunHandlers) projectAndValidate(e *httpx.Event, seed map[string]an
 	return projection, false
 }
 
-// recoverGoalValidation keeps a wizard run going when selected goals (or the
-// stored homelab backlog folded into them) fail `stackkit validate`. The kit
-// or Node still persists; those goals stay honest UnmappedGoals instead of
-// blocking the creation screen. A seed or Node that still fails without
-// goals remains fail-closed.
-func (h wizardRunHandlers) recoverGoalValidation(ctx context.Context, seed map[string]any, intent specv2.WizardIntent, homelabID string, validateErr error) *specv2.Projection {
-	if validateErr == nil || len(intent.Goals) == 0 {
-		return nil
+// addWizardRejectedIntent returns the desired, secret-free intent for review.
+// Unfulfilled goals describe the rejected creation as a whole, not a guess at
+// which individual workload caused the CLI error. Release-declared recorded
+// goals remain separate; a validation failure never turns an installation
+// request into a recorded preference or consumes its idempotency key.
+func addWizardRejectedIntent(details map[string]any, intent specv2.WizardIntent, recorded []string, releaseVersion string) {
+	unfulfilled := make([]string, 0, len(intent.Goals))
+	for _, goal := range intent.Goals {
+		if !slices.Contains(recorded, goal) {
+			unfulfilled = append(unfulfilled, goal)
+		}
 	}
-	stripped := intent
-	stripped.Goals = nil
-	nodeOnly, projErr := h.cfg.Projector.Project(ctx, seed, stripped, homelabID)
-	if projErr != nil {
-		return nil
-	}
-	if err := h.cfg.Validator.ValidateSpec(ctx, nodeOnly.Spec); err != nil {
-		return nil
-	}
-	nodeOnly.UnmappedGoals = mergeWizardGoals(nodeOnly.UnmappedGoals, intent.Goals)
-	return nodeOnly
+	details["requested_intent"] = intent
+	details["unfulfilled_goals"] = unfulfilled
+	details["recorded_goals"] = recorded
+	details["release_version"] = releaseVersion
+	details["creation_started"] = false
+	details["remediation"] = "review_configuration_and_resubmit"
 }
 
 // normalizeFoundRequest synthesizes the create-stack request from the wizard
@@ -558,7 +561,13 @@ func (h wizardRunHandlers) mintWizardPairing(e *httpx.Event, run *wizardRunState
 		params.ServerRemoteSSHKeyLabel = remote.SSHKeyLabel
 		params.ServerRemoteUseSudo = remote.UseSudo
 	}
-	minted, err := trust.MintStackPairingToken(e.Request.Context(), h.cfg.Trust, run.tenantID, run.ownerID, stack, params)
+	var minted trust.MintedStackPairing
+	var err error
+	if run.key != "" {
+		minted, err = h.prepareKeyedWizardPairing(e.Request.Context(), run, stack, params)
+	} else {
+		minted, err = trust.MintStackPairingToken(e.Request.Context(), h.cfg.Trust, run.tenantID, run.ownerID, stack, params)
+	}
 	if err != nil || minted.JobID == "" {
 		details := wizardRunDetails(
 			"wizard_pairing_failed", true,
@@ -636,6 +645,23 @@ func (h wizardRunHandlers) runWizardJoin(e *httpx.Event, run *wizardRunState) er
 		return nil
 	}
 	if !persisted {
+		if run.key == "" {
+			return httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeValidation,
+				"Joining a Node requires an Idempotency-Key", wizardRunDetails(
+					"wizard_projection_identity_requires_key", false, "Retry this creation attempt",
+					"Submit the attempt with its Idempotency-Key; no Node was added."))
+		}
+		store, ok := h.crud.stackStore.(controlplane.AtomicWizardProjectionStore)
+		if !ok {
+			return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+				"Atomic Wizard projection persistence is unavailable", nil)
+		}
+		pending := map[string]any{}
+		addWizardProjectionFields(pending, projection, h.cfg.ReleaseVersion)
+		pending["unmapped_goals"] = append([]string{}, projection.UnmappedGoals...)
+		entry := h.wizardRunLedgerEntry(run, controlplane.WizardRun{
+			StackID: stack.ID, NodeID: projection.NodeID, Status: "failed", ErrorReason: "projection_pending",
+		}, pending)
 		newConfig := map[string]any{}
 		for key, value := range stack.Config {
 			newConfig[key] = value
@@ -644,10 +670,12 @@ func (h wizardRunHandlers) runWizardJoin(e *httpx.Event, run *wizardRunState) er
 		if migrated {
 			newConfig[stackConfigKeySpecV1State] = stackConfigSpecV1Archived
 		}
-		_, updateErr := h.crud.stackStore.CompareAndSwapStackConfig(e.Request.Context(), controlplane.StackConfigCAS{
+		// CAS and the run-to-node identity commit together. Neither a cancelled
+		// later request nor a concurrent CAS loser can claim another run's Node.
+		_, storedRun, updateErr := store.CommitWizardJoinProjection(e.Request.Context(), controlplane.StackConfigCAS{
 			TenantID: run.tenantID, StackID: stack.ID,
 			ExpectedUpdatedAt: stack.UpdatedAt, Config: newConfig,
-		})
+		}, entry)
 		if errors.Is(updateErr, controlplane.ErrConflict) {
 			return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict,
 				"The StackKit deployment changed while this Node was being added", wizardRunDetails(
@@ -660,11 +688,15 @@ func (h wizardRunHandlers) runWizardJoin(e *httpx.Event, run *wizardRunState) er
 			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal,
 				"Failed to persist the joined node", nil)
 		}
+		run.runID = storedRun.ID
+		run.priorFailed = storedRun
 	}
 	// Persist goal reconciliation before pairing. A pairing failure records a
 	// resumable run after the projected spec already became authoritative; the
 	// goal state and its idempotent outbox event must cross that same boundary.
-	h.persistWizardHomelabIntent(e.Request.Context(), run, stack.ID, projection)
+	if intentErr := h.persistWizardHomelabIntent(e.Request.Context(), run, stack.ID, projection); intentErr != nil {
+		return h.failWizardIntentProjection(e, run, stack.ID, projection, intentErr)
+	}
 	if stack.HomelabID == "" {
 		// Heal the homelab link on legacy stacks; the composite FK guards
 		// cross-tenant writes, so a failure here is logged, not fatal.
@@ -993,9 +1025,20 @@ func (h wizardRunHandlers) captureWizardJoinServerBaseline(e *httpx.Event, run *
 // sibling; otherwise the node is projected and CLI-validated normally.
 func (h wizardRunHandlers) resolveJoinProjection(e *httpx.Event, run *wizardRunState, stack *controlplane.Stack, base map[string]any) (*specv2.Projection, bool, bool) {
 	if prior := run.priorFailed; prior != nil && prior.StackID == stack.ID && prior.NodeID != "" && specHasNode(base, prior.NodeID) {
+		// Reusing the committed spec also reuses what that projection evaluated.
+		// A newly loaded retry backlog must never expand the old scope.
+		run.evaluatedGoals = nil
+		if raw, ok := prior.Result["evaluated_goals"]; ok {
+			run.evaluatedGoals = wizardStringValues(raw)
+		}
+		unmapped := run.priorUnmappedGoals
+		if raw, ok := prior.Result["unmapped_goals"]; ok {
+			unmapped = wizardStringValues(raw)
+		}
+		purpose, _ := prior.Result["unmapped_purpose"].(string)
 		return &specv2.Projection{
 			Spec: base, NodeID: prior.NodeID,
-			UnmappedGoals: append([]string(nil), run.priorUnmappedGoals...),
+			UnmappedGoals: append([]string(nil), unmapped...), UnmappedPurpose: purpose,
 		}, true, false
 	}
 	intent := run.request.Intent
@@ -1026,67 +1069,106 @@ func specHasNode(spec map[string]any, nodeID string) bool {
 	return false
 }
 
-// persistWizardHomelabIntent merges this run's goal, access and household
-// intent into the homelab's intent_json (D6b: unmapped goals stay honest
-// intent, never spec). Best
-// effort: the run's persisted side effects stay authoritative even if the
-// intent write fails.
-func (h wizardRunHandlers) persistWizardHomelabIntent(ctx context.Context, run *wizardRunState, stackID string, projection *specv2.Projection) {
-	intentDoc := map[string]any{}
-	for key, value := range run.homelab.Intent {
-		intentDoc[key] = value
+// persistWizardHomelabIntent applies only this run's decisions to the latest
+// canonical intent under the existing store transaction. Explicit off and empty
+// answers remain writes; unrelated fields are never reconstructed from a snapshot.
+func (h wizardRunHandlers) persistWizardHomelabIntent(ctx context.Context, run *wizardRunState, stackID string, projection *specv2.Projection) error {
+	store, ok := h.crud.homelabStore.(controlplane.AtomicHomelabIntentStore)
+	if !ok {
+		return errors.New("atomic homelab intent persistence is unavailable")
 	}
-	wizard, _ := intentDoc["wizard"].(map[string]any)
-	if wizard == nil {
-		wizard = map[string]any{}
-	}
-	if len(run.request.Intent.Goals) > 0 {
-		wizard["goals"] = run.request.Intent.Goals
-	}
-	// Decisions ride beside the goals they belong to, merged per use case so a
-	// later run that mentions one use case does not erase the others' choices.
-	if len(run.request.Intent.UseCaseSettings) > 0 {
-		stored, _ := wizard["use_case_settings"].(map[string]any)
-		if stored == nil {
-			stored = map[string]any{}
+	updated, err := store.MutateHomelabIntent(ctx, run.tenantID, run.homelab.ID, func(intentDoc map[string]any) error {
+		wizard, _ := intentDoc["wizard"].(map[string]any)
+		if wizard == nil {
+			wizard = map[string]any{}
 		}
-		for slug, values := range run.request.Intent.UseCaseSettings {
-			merged, _ := stored[slug].(map[string]any)
-			if merged == nil {
-				merged = map[string]any{}
+		wizard["goals"] = mergeWizardGoals(wizardStringValues(wizard["goals"]), run.request.Intent.Goals)
+		// Decisions ride beside the goals they belong to, merged per use case so a
+		// later run that mentions one use case does not erase the others' choices.
+		if len(run.request.Intent.UseCaseSettings) > 0 {
+			stored, _ := wizard["use_case_settings"].(map[string]any)
+			if stored == nil {
+				stored = map[string]any{}
 			}
-			for id, value := range values {
-				merged[id] = value
+			for slug, values := range run.request.Intent.UseCaseSettings {
+				merged, _ := stored[slug].(map[string]any)
+				if merged == nil {
+					merged = map[string]any{}
+				}
+				for id, value := range values {
+					merged[id] = value
+				}
+				stored[slug] = merged
 			}
-			stored[slug] = merged
+			wizard["use_case_settings"] = stored
 		}
-		wizard["use_case_settings"] = stored
-	}
-	if run.request.Intent.Access.Mode != "" || len(run.request.Intent.Access.Publications) > 0 {
-		wizard["access"] = run.request.Intent.Access
-	}
-	if run.request.Intent.Household.Profile != "" || len(run.request.Intent.Household.PlannedPeople) > 0 {
-		wizard["household"] = run.request.Intent.Household
-	}
-	if len(projection.UnmappedGoals) > 0 {
-		wizard["unmapped_goals"] = projection.UnmappedGoals
-	} else {
-		delete(wizard, "unmapped_goals")
-	}
-	if projection.UnmappedPurpose != "" {
-		wizard["unmapped_purpose"] = projection.UnmappedPurpose
-	}
-	wizard["last_run_id"] = run.runID
-	wizard["last_run_kind"] = run.effectiveKind
-	wizard["last_goal_projection_release"] = strings.TrimSpace(h.cfg.ReleaseVersion)
-	intentDoc["wizard"] = wizard
-	updated, err := h.crud.homelabStore.UpdateHomelabIntent(ctx, run.tenantID, run.homelab.ID, intentDoc)
+		if len(run.request.Intent.UseCaseCapabilities) > 0 {
+			stored, _ := wizard["use_case_capabilities"].(map[string]any)
+			if stored == nil {
+				stored = map[string]any{}
+			}
+			for slug, values := range run.request.Intent.UseCaseCapabilities {
+				merged, _ := stored[slug].(map[string]any)
+				if merged == nil {
+					merged = map[string]any{}
+				}
+				for id, value := range values {
+					merged[id] = value
+				}
+				stored[slug] = merged
+			}
+			wizard["use_case_capabilities"] = stored
+		}
+		mergeWizardSetupAnswers(wizard, run.request.Intent.UseCaseSetupAnswers)
+		if run.request.Intent.Access.Mode != "" || len(run.request.Intent.Access.Publications) > 0 {
+			wizard["access"] = run.request.Intent.Access
+		}
+		if run.request.Intent.Household.Profile != "" || len(run.request.Intent.Household.PlannedPeople) > 0 {
+			wizard["household"] = run.request.Intent.Household
+		}
+		// Clear only backlog entries this projection actually reconsidered. A
+		// concurrent expansion's new goal was not evaluated by this run.
+		unmapped := projection.UnmappedGoals
+		for _, goal := range wizardStringValues(wizard["unmapped_goals"]) {
+			if !slices.Contains(run.evaluatedGoals, goal) {
+				unmapped = append(unmapped, goal)
+			}
+		}
+		unmapped = mergeWizardGoals(unmapped)
+		if len(unmapped) > 0 {
+			wizard["unmapped_goals"] = unmapped
+		} else {
+			delete(wizard, "unmapped_goals")
+		}
+		if projection.UnmappedPurpose != "" {
+			wizard["unmapped_purpose"] = projection.UnmappedPurpose
+		}
+		wizard["last_run_id"] = run.runID
+		wizard["last_run_kind"] = run.effectiveKind
+		wizard["last_goal_projection_release"] = strings.TrimSpace(h.cfg.ReleaseVersion)
+		intentDoc["wizard"] = wizard
+		return nil
+	})
 	if err != nil {
-		logger.Default().Warn("wizard_homelab_intent_update_failed", "error", err, "homelab_id", run.homelab.ID)
-		return
+		return err
 	}
 	run.homelab = updated
 	h.enqueueWizardGoalActivationNotifications(ctx, run, stackID)
+	return nil
+}
+
+// A projection failure precedes dispatch/pairing, so the existing same-key
+// stack/node resume repairs intent without creating a second provider operation.
+func (h wizardRunHandlers) failWizardIntentProjection(e *httpx.Event, run *wizardRunState, stackID string, projection *specv2.Projection, err error) error {
+	logger.Default().Warn("wizard_homelab_intent_update_failed", "error", err, "homelab_id", run.homelab.ID)
+	result := map[string]any{}
+	addWizardProjectionFields(result, projection, h.cfg.ReleaseVersion)
+	result["unmapped_goals"] = append([]string{}, projection.UnmappedGoals...)
+	h.writeWizardRunLedger(e.Request.Context(), run, controlplane.WizardRun{StackID: stackID, NodeID: projection.NodeID}, "failed", "intent_projection_failed", result)
+	details := wizardRunDetails("wizard_intent_projection_failed", true, "Decisions not saved", "Retry with the same Idempotency-Key to save the decisions on the existing deployment and Node.")
+	details["run_id"], details["stack_id"], details["node_id"] = run.runID, stackID, projection.NodeID
+	details["intent_projection_status"] = "failed"
+	return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Failed to persist wizard decisions", details)
 }
 
 // recordWizardRun writes the completed ledger entry. Ledger failures are
@@ -1103,11 +1185,35 @@ func (h wizardRunHandlers) recordWizardRunFailure(ctx context.Context, run *wiza
 	h.writeWizardRunLedger(ctx, run, outcome, "failed", reason, map[string]any{})
 }
 
-func (h wizardRunHandlers) writeWizardRunLedger(ctx context.Context, run *wizardRunState, outcome controlplane.WizardRun, status, reason string, result map[string]any) {
+func (h wizardRunHandlers) writeWizardRunLedger(ctx context.Context, run *wizardRunState, outcome controlplane.WizardRun, status, reason string, result map[string]any) error {
+	outcome.Status, outcome.ErrorReason = status, reason
+	entry := h.wizardRunLedgerEntry(run, outcome, result)
+	stored, err := h.wizardRuns.UpsertWizardRun(ctx, entry)
+	if err != nil {
+		logger.Default().Warn("wizard_run_ledger_write_failed", "error", err, "run_id", run.runID)
+		return err
+	}
+	run.runID = stored.ID
+	run.pairingJobID = stored.PairingJobID
+	return nil
+}
+
+func (h wizardRunHandlers) wizardRunLedgerEntry(run *wizardRunState, outcome controlplane.WizardRun, result map[string]any) controlplane.WizardRun {
 	addWizardResumeContext(result, run.request, run.effectiveKind)
+	if _, ok := result["unmapped_goals"]; !ok && run.priorFailed != nil {
+		if raw, present := run.priorFailed.Result["unmapped_goals"]; present {
+			result["unmapped_goals"] = raw
+		}
+	}
+	if run.evaluatedGoals != nil {
+		result["evaluated_goals"] = append([]string{}, run.evaluatedGoals...)
+	}
 	if len(run.intentAdjustments) > 0 {
 		result["intent_adjustments"] = append([]specv2.IntentAdjustment(nil), run.intentAdjustments...)
 		result["effective_intent"] = run.request.Intent
+	}
+	if outcome.PairingJobID == "" {
+		outcome.PairingJobID = run.pairingJobID
 	}
 	ledgerRequest := wizardRunRequestWithIntent(run.request, run.requestedIntent)
 	entry := controlplane.WizardRun{
@@ -1123,14 +1229,12 @@ func (h wizardRunHandlers) writeWizardRunLedger(ctx context.Context, run *wizard
 		NodeID:           outcome.NodeID,
 		JobID:            outcome.JobID,
 		PairingJobID:     outcome.PairingJobID,
-		Status:           status,
-		ErrorReason:      reason,
+		Status:           outcome.Status,
+		ErrorReason:      outcome.ErrorReason,
 		Intent:           wizardRunIntentDocument(ledgerRequest),
 		Result:           result,
 	}
-	if _, err := h.wizardRuns.UpsertWizardRun(ctx, entry); err != nil {
-		logger.Default().Warn("wizard_run_ledger_write_failed", "error", err, "run_id", run.runID)
-	}
+	return entry
 }
 
 // addWizardResumeContext keeps the owner-scoped run ledger authoritative for
@@ -1158,6 +1262,9 @@ func addWizardResumeContext(result map[string]any, request wizardRunRequest, run
 		}
 		if ref := strings.TrimSpace(request.Remote.SSHKeyLabel); ref != "" {
 			resume["remote_server_credential_ref"] = ref
+		}
+		if itemID := strings.TrimSpace(request.Remote.SSHWalletItemID); itemID != "" {
+			resume["remote_server_credential_item_id"] = itemID
 		}
 	}
 	if _, ok := resume["expected_device_name"]; !ok {
@@ -1237,4 +1344,29 @@ func addWizardProjectionFields(data map[string]any, projection *specv2.Projectio
 	if releaseVersion != "" {
 		data["release_version"] = releaseVersion
 	}
+}
+
+// mergeWizardSetupAnswers projects desired decisions into the existing intent
+// document. Empty arrays are explicit "none/off", never absence or defaults.
+func mergeWizardSetupAnswers(wizard map[string]any, answers map[string]map[string][]string) {
+	if len(answers) == 0 {
+		return
+	}
+	stored, _ := wizard["use_case_setup_answers"].(map[string]any)
+	if stored == nil {
+		stored = map[string]any{}
+	}
+	for slug, values := range answers {
+		merged, _ := stored[slug].(map[string]any)
+		if merged == nil {
+			merged = map[string]any{}
+		}
+		for id, choices := range values {
+			kept := make([]string, len(choices))
+			copy(kept, choices)
+			merged[id] = kept
+		}
+		stored[slug] = merged
+	}
+	wizard["use_case_setup_answers"] = stored
 }

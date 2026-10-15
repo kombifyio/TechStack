@@ -192,7 +192,11 @@ export function writeGettingStartedMinimized(
   }
 }
 
-export function requestIntroductionStart(): void {
+export function requestIntroductionStart(options?: {
+  tourOnly?: boolean;
+}): void {
   if (typeof window === "undefined") return;
-  window.dispatchEvent(new CustomEvent(INTRODUCTION_START_EVENT));
+  window.dispatchEvent(
+    new CustomEvent(INTRODUCTION_START_EVENT, { detail: options }),
+  );
 }

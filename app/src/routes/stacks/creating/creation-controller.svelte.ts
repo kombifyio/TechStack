@@ -4,13 +4,16 @@ import { page } from "$app/state";
 import { getClientBootstrap } from "#lib/client/bootstrap.js";
 import * as Sentry from "@sentry/sveltekit";
 import { sanitizeSensitiveText } from "#lib/security/sensitive-data.js";
+import { companion } from "#lib/companion/ask.svelte.js";
 import { getJob, streamJobProgress } from "#lib/api/jobs.js";
+import { getRuntimeLogs } from "#lib/api/runtime-logs.js";
 import { renewNodePairing } from "#lib/api/pairing.js";
 import { getBestPublicServerUrl } from "#lib/api/client.js";
 import {
   deployStack,
   provisionStack,
   retryStackRollout,
+  repairStackComponent,
   resumeStackEnrollment,
   resumeRemoteEnrollment,
   type StackJobAcceptedResponse,
@@ -32,7 +35,17 @@ import {
 } from "#lib/api/registry.js";
 import { getNetworks } from "#lib/discovery/api.js";
 import { getWorkerRegistryUrl } from "#lib/api/tunnel.js";
-import { retryDispatchFor } from "#lib/support/server-outcome.js";
+import {
+  resolveGuidance,
+  retryDispatchFor,
+} from "#lib/support/server-outcome.js";
+import {
+  buildOperationContextLines,
+  createErrorAiHandoverContext,
+  type ErrorAiHandoverContext,
+  type ErrorAiOperationContext,
+} from "#lib/support/error-handover.js";
+import type { ViewContextDetails } from "#lib/view-context.js";
 import {
   requiresGuardConnection,
   readApplianceReceipt,
@@ -68,6 +81,14 @@ import {
   RUNTIME_TASKS,
   isPostLeaseRuntimeTask,
   isStackKitArtifactOrRoutingTask,
+  computeGroupStatuses,
+  computeOverallProgress,
+  stampTaskTimeline,
+  latestOwnerProgress,
+  rolloutPaceShare,
+  withOwnerProgress,
+  type OwnerProgress,
+  type TaskTimeline,
 } from "#lib/wizard/index.js";
 import {
   clearJoinWizardIdempotencyKeys,
@@ -83,7 +104,12 @@ import {
   asRecord,
   buildFailureDetails,
   buildFailureFallback,
+  degradedComponentTitle,
+  effectiveRepairStatus,
+  extractDegradedCompletion,
   extractLeaseSummary,
+  extractOperationReferences,
+  markDegradedTasks,
   extractStackKitIdentityHandoff,
   formatNextResumeAt,
   getBoolean,
@@ -97,10 +123,26 @@ import {
   sanitizeSentrySummary,
 } from "./creation-results.js";
 import type {
+  DegradedCompletion,
+  DegradedComponent,
+  DegradedRepairStatus,
   LeaseSummary,
+  OperationReferences,
   RuntimeProofEntry,
   StackKitIdentityHandoff,
 } from "./creation-results.js";
+
+type RepairTracker = {
+  status: DegradedRepairStatus | "requesting" | "denied";
+  jobId?: string;
+  message?: string;
+};
+
+export type DegradedComponentView = DegradedComponent & {
+  repairStatus?: DegradedRepairStatus;
+  repairRequesting: boolean;
+  repairMessage?: string;
+};
 
 type WizardRunSubmission = {
   request: WizardRunRequest;
@@ -140,6 +182,9 @@ let remoteServerHost = $state("");
 let remoteServerUser = $state("");
 let remoteServerPort = $state<number | null>(null);
 let serverUrl = $state("");
+// The private-LAN bridge pin applies only while serverUrl is that bridge.
+let lanBridge = $state<{ url: string; pin: string } | null>(null);
+let lanPin = $derived(lanBridge && lanBridge.url === serverUrl ? lanBridge.pin : "");
 let copiedCommand = $state<string | null>(null);
 let copiedErrorDetails = $state(false);
 let showAllCommands = $state(false);
@@ -152,12 +197,21 @@ let oneLinerPreviewRequired = $derived(
 );
 let backendCompleted = $state(false);
 let jobType = $state("");
+// A completed rollout whose core applied while an independent component could
+// not be finished. It is a completion with attention, never a failure.
+let degradedCompletion = $state<DegradedCompletion | null>(null);
+let operationRefs = $state<OperationReferences>({ reasonCodes: [] });
+let repairTrackers = $state<Record<string, RepairTracker>>({});
+const REPAIR_POLL_INTERVAL = 5_000;
+const repairPollTimers = new Map<string, ReturnType<typeof setTimeout>>();
 let waitingForProviderProvision = $derived(
   jobState === "waiting" && jobWaitReason === "waiting_provider_provision",
 );
 let waitingForManagedRuntime = $derived(
   jobState === "waiting" &&
-    (jobWaitReason === "waiting_enrollment" || waitingForProviderProvision),
+    (jobWaitReason === "waiting_enrollment" ||
+      jobWaitReason === "waiting_canonical_guard" ||
+      waitingForProviderProvision),
 );
 let nextResumeLabel = $derived(formatNextResumeAt(jobNextResumeAt));
 let resumeAvailableLabel = $derived(formatNextResumeAt(jobResumeAvailableAt));
@@ -216,6 +270,10 @@ let ownerSeedSummary = $state<{
   source?: string;
 } | null>(null);
 let pollErrorCount = $state(0);
+// A poll the browser could not complete (network, gateway token, expired
+// session) says nothing about the job: it is shown as a banner and polling
+// continues, the task list stays as the backend last reported it.
+let connectionIssue = $state<"" | "offline" | "auth">("");
 const MAX_POLL_ERRORS = 5;
 const BASE_POLL_INTERVAL = 3000;
 // Transient poll failures back off up to a minute instead of stopping the
@@ -248,19 +306,118 @@ let waitingRecoveryAvailable = $derived(
 let retryingRollout = $state(false);
 let retryError = $state("");
 let wizardIdempotencyConflictFailed = $state(false);
+let replayableWizardSubmission: WizardRunSubmission | null = null;
 let jobRetryable = $state<boolean | undefined>(undefined);
+// Ticks once per second so the phase timers and the time-weighted progress
+// bar keep moving between backend updates.
+let progressClock = $state(Date.now());
+let progressClockTimer: ReturnType<typeof setInterval> | null = null;
+let taskTimelineMemo: TaskTimeline = {};
+// Phase timers survive a reload of this tab: the observed times are kept per
+// job in sessionStorage.
+const TASK_TIMELINE_STORAGE_PREFIX = "techstack.creation.timeline.";
+
+function restoreTaskTimeline() {
+  if (Object.keys(taskTimelineMemo).length > 0) return;
+  try {
+    const stored = sessionStorage.getItem(TASK_TIMELINE_STORAGE_PREFIX + jobId);
+    const parsed: unknown = stored ? JSON.parse(stored) : null;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      taskTimelineMemo = parsed as TaskTimeline;
+    }
+  } catch {
+    // Storage unavailable or corrupt: timers start from this observation.
+  }
+}
+
+function persistTaskTimeline() {
+  try {
+    sessionStorage.setItem(
+      TASK_TIMELINE_STORAGE_PREFIX + jobId,
+      JSON.stringify(taskTimeline),
+    );
+  } catch {
+    // Storage unavailable: timers fall back to this tab's memory.
+  }
+}
+let taskTimeline = $derived.by(() => {
+  taskTimelineMemo = stampTaskTimeline(tasks, taskTimelineMemo, Date.now());
+  return taskTimelineMemo;
+});
+// Where the apply stands among its runtime owners, as the pinned StackKits CLI
+// reports them on the job's live log. It belongs to one job: a retry or a
+// replacement job starts without it, and a StackKits release that reports no
+// owners leaves the time-based pacing in place.
+let reportedOwnerProgress = $state<{
+  jobId: string;
+  progress: OwnerProgress;
+} | null>(null);
+let ownerProgress = $derived(
+  reportedOwnerProgress?.jobId === jobId
+    ? reportedOwnerProgress.progress
+    : null,
+);
+let ownerProgressRefreshing = false;
+// An owner reports every 15 seconds; the newest records of the job hold it.
+const OWNER_PROGRESS_LOG_WINDOW = 200;
+
+async function refreshOwnerProgress(forJobId: string) {
+  const applying = tasks.some(
+    (task) => task.id === "stackkit_rollout" && task.status === "running",
+  );
+  if (!applying || ownerProgressRefreshing) return;
+  ownerProgressRefreshing = true;
+  try {
+    const progress = latestOwnerProgress(
+      await getRuntimeLogs({ jobId: forJobId }, OWNER_PROGRESS_LOG_WINDOW),
+    );
+    if (forJobId !== jobId || pageDestroyed || !progress) return;
+    // Owner pacing continues from the share the time-paced bar had reached when
+    // the owners first reported for this job.
+    const floor =
+      reportedOwnerProgress?.jobId === forJobId
+        ? reportedOwnerProgress.progress.floor
+        : rolloutPaceShare(tasks, taskTimeline, Date.now());
+    reportedOwnerProgress = {
+      jobId: forJobId,
+      progress: { ...progress, floor },
+    };
+    tasks = withOwnerProgress(tasks, progress);
+  } catch {
+    // Owner progress is an addition to the job state: without it the page
+    // keeps its time-based pacing.
+  } finally {
+    ownerProgressRefreshing = false;
+  }
+}
+// Once owner pacing is in use the bar only moves forward within the job.
+let shownProgress: { jobId: string; value: number } | null = null;
+let taskProgress = $derived.by(() => {
+  const computed = computeOverallProgress(
+    tasks,
+    taskTimeline,
+    progressClock,
+    ownerProgress,
+  );
+  if (!ownerProgress) return computed;
+  const held = shownProgress?.jobId === jobId ? shownProgress.value : 0;
+  shownProgress = { jobId, value: Math.max(held, computed) };
+  return shownProgress.value;
+});
 let overallProgress = $derived(
   agentPairingRequired
     ? Math.round(
-        ((tasks.filter((t) => t.status === "completed").length +
-          (connectedServer ? 1 : 0)) /
-          (tasks.length + 1)) *
-          100,
+        (taskProgress * tasks.length + (connectedServer ? 100 : 0)) /
+          (tasks.length + 1),
       )
-    : Math.round(
-        (tasks.filter((t) => t.status === "completed").length / tasks.length) *
-          100,
-      ),
+    : taskProgress,
+);
+let groupStatuses = $derived(computeGroupStatuses(tasks));
+let currentPhaseIndex = $derived(
+  groupStatuses.findIndex((gs) => gs.status !== "completed"),
+);
+let currentPhase = $derived(
+  currentPhaseIndex >= 0 ? groupStatuses[currentPhaseIndex] : undefined,
 );
 let hasStackKitIdentityHandoff = $derived(
   Boolean(
@@ -287,7 +444,23 @@ let handoffMissingFailure = $derived(
   backendCompleted &&
     creationOperation === "stack" &&
     serverProvisioningMode === "kombify-cloud" &&
-    !hasVerifiedRuntimeProof,
+    !hasVerifiedRuntimeProof &&
+    !degradedCompletion,
+);
+let degradedComponents = $derived<DegradedComponentView[]>(
+  (degradedCompletion?.components ?? []).map((component) => {
+    const tracker = repairTrackers[component.component];
+    const tracked =
+      tracker && tracker.status !== "requesting" && tracker.status !== "denied"
+        ? tracker.status
+        : undefined;
+    return {
+      ...component,
+      repairStatus: effectiveRepairStatus(component, tracked),
+      repairRequesting: tracker?.status === "requesting",
+      repairMessage: tracker?.message,
+    };
+  }),
 );
 let isComplete = $derived(
   backendCompleted &&
@@ -365,49 +538,57 @@ let failurePrimaryActionAvailable = $derived(
   wizardIdempotencyConflictFailed || jobRetryable !== false,
 );
 let completionTitle = $derived(
-  creationOperation === "add-server"
-    ? agentPairingRequired
-      ? tr("ui.stacksCreatingCreation-controller.nodeConnected")
-      : serverProvisioningMode === "kombify-cloud"
-        ? tr("ui.stacksCreatingCreationLease.managedNodeRequested")
-        : tr("ui.stacksCreatingCreation-controller.nodeRegistrationReady")
-    : serverProvisioningMode === "hypervisor"
-      ? tr("wizard.server.hypervisor.connected")
-      : serverProvisioningMode === "kombify-cloud"
-        ? tr("wizard.identity.installationComplete")
-        : serverProvisioningMode === "connect-remote"
-          ? tr("ui.stacksCreatingCreation-controller.configurationPrepared")
-          : tr("ui.stacksCreatingCreation-controller.nodeConnectionReady"),
+  degradedCompletion
+    ? degradedCompletion.components.length > 1
+      ? tr("ui.stacksCreatingCreationDegraded.titleMany", {
+          count: degradedCompletion.components.length,
+        })
+      : tr("ui.stacksCreatingCreationDegraded.titleOne")
+    : creationOperation === "add-server"
+      ? agentPairingRequired
+        ? tr("ui.stacksCreatingCreation-controller.nodeConnected")
+        : serverProvisioningMode === "kombify-cloud"
+          ? tr("ui.stacksCreatingCreationLease.managedNodeRequested")
+          : tr("ui.stacksCreatingCreation-controller.nodeRegistrationReady")
+      : serverProvisioningMode === "hypervisor"
+        ? tr("wizard.server.hypervisor.connected")
+        : serverProvisioningMode === "kombify-cloud"
+          ? tr("wizard.identity.installationComplete")
+          : serverProvisioningMode === "connect-remote"
+            ? tr("ui.stacksCreatingCreation-controller.configurationPrepared")
+            : tr("ui.stacksCreatingCreation-controller.nodeConnectionReady"),
 );
 let completionSubtitle = $derived(
-  creationOperation === "add-server"
-    ? agentPairingRequired
-      ? tr(
-          "ui.stacksCreatingCreation-controller.reportedAFreshGuardHeartbeat",
-          {
-            name:
-              connectedServer?.name ||
-              tr("ui.creationController.theAdditionalNode"),
-          },
-        )
-      : serverProvisioningMode === "kombify-cloud"
+  degradedCompletion
+    ? tr("ui.stacksCreatingCreationDegraded.subtitle")
+    : creationOperation === "add-server"
+      ? agentPairingRequired
         ? tr(
-            "ui.stacksCreatingCreation-controller.kombifyRequestedTheAdditionalManaged",
+            "ui.stacksCreatingCreation-controller.reportedAFreshGuardHeartbeat",
+            {
+              name:
+                connectedServer?.name ||
+                tr("ui.creationController.theAdditionalNode"),
+            },
           )
-        : tr(
-            "ui.stacksCreatingCreation-controller.theAdditionalNodeRegistrationIs",
-          )
-    : serverProvisioningMode === "kombify-cloud"
-      ? tr("wizard.identity.installationDescription")
-      : serverProvisioningMode === "connect-remote"
-        ? tr(
-            "ui.stacksCreatingCreation-controller.yourRemoteNodeConfigurationIs",
-          )
-        : serverProvisioningMode === "hypervisor"
-          ? tr("wizard.server.hypervisor.connectedDetail")
+        : serverProvisioningMode === "kombify-cloud"
+          ? tr(
+              "ui.stacksCreatingCreation-controller.kombifyRequestedTheAdditionalManaged",
+            )
           : tr(
-              "ui.stacksCreatingCreation-controller.connectYourNodeToContinue",
-            ),
+              "ui.stacksCreatingCreation-controller.theAdditionalNodeRegistrationIs",
+            )
+      : serverProvisioningMode === "kombify-cloud"
+        ? tr("wizard.identity.installationDescription")
+        : serverProvisioningMode === "connect-remote"
+          ? tr(
+              "ui.stacksCreatingCreation-controller.yourRemoteNodeConfigurationIs",
+            )
+          : serverProvisioningMode === "hypervisor"
+            ? tr("wizard.server.hypervisor.connectedDetail")
+            : tr(
+                "ui.stacksCreatingCreation-controller.connectYourNodeToContinue",
+              ),
 );
 let dashboardHref = $derived(() => {
   const params = ["phase=review"];
@@ -442,7 +623,7 @@ let proofRows = $derived(
     }))
     .filter((row) => row.status !== "missing" || backendCompleted),
 );
-// Current step info for the right-side detail panel
+// Current step info for the active phase of the progress reel
 let currentTask = $derived(
   tasks.find((t) => t.status === "running") ??
     tasks.find((t) => t.status === "pending"),
@@ -452,9 +633,6 @@ let currentStepInfo = $derived(
 );
 let currentStepMessage = $derived(
   currentTask?.message || latestJobMessage || "",
-);
-let completedCount = $derived(
-  tasks.filter((t) => t.status === "completed").length,
 );
 
 // If we can't derive a job id, the page must not pretend success.
@@ -498,12 +676,12 @@ function syncTaskListForOperation() {
 // Generate install command
 let installCommand = $derived(
   showInstallCommand && registrationToken && serverUrl
-    ? generateInstallCommand(serverUrl, registrationToken)
+    ? generateInstallCommand(serverUrl, registrationToken, lanPin)
     : "",
 );
 let allInstallCommands = $derived(
   showInstallCommand && registrationToken && serverUrl
-    ? generateInstallCommands(serverUrl, registrationToken)
+    ? generateInstallCommands(serverUrl, registrationToken, lanPin)
     : [],
 );
 
@@ -705,10 +883,21 @@ async function pollJobStatus() {
   pollingInProgress = true;
   connectionClock = Date.now();
 
+  const polledJobId = jobId;
   try {
-    const job = await getJob(jobId);
+    const job = await getJob(polledJobId);
+    // The page switched to another job (retry, resume, replacement) while
+    // this request was in flight: its answer belongs to the old job.
+    if (polledJobId !== jobId || pageDestroyed) return;
     pollErrorCount = 0; // Reset on success
     nextPollAttemptAt = 0;
+    connectionIssue = "";
+
+    const replacementJobId = job?.superseded_by_job_id?.trim() || "";
+    if (replacementJobId && replacementJobId !== polledJobId) {
+      await followReplacementJob(replacementJobId);
+      return;
+    }
 
     if (job) {
       jobType = job.type || jobType;
@@ -730,6 +919,7 @@ async function pollJobStatus() {
       if (result) {
         applyJobResult(result);
       }
+      operationRefs = extractOperationReferences(job, result);
       syncTaskListForOperation();
       if (
         creationOperation !== "add-server" &&
@@ -773,7 +963,9 @@ async function pollJobStatus() {
 
       // Reflect the backend's reported step transitions on the visible task
       // list - never fabricate progress past what the backend has emitted.
-      tasks = updateTasksFromJob(tasks, job);
+      tasks = withOwnerProgress(updateTasksFromJob(tasks, job), ownerProgress);
+      persistTaskTimeline();
+      void refreshOwnerProgress(polledJobId);
 
       await pollRemoteEnrollmentJob();
 
@@ -782,10 +974,16 @@ async function pollJobStatus() {
         const resultRecord = result || {};
         const verifiedRuntime = hasVerifiedRuntimeResult(resultRecord);
         const identityHandoff = extractStackKitIdentityHandoff(resultRecord);
+        degradedCompletion = extractDegradedCompletion(jobStatus, result);
+        if (degradedCompletion) {
+          tasks = markDegradedTasks(tasks, degradedCompletion);
+          trackAutomaticRepairs(degradedCompletion);
+        }
         const missingCloudHandoff =
           creationOperation === "stack" &&
           serverProvisioningMode === "kombify-cloud" &&
-          !verifiedRuntime;
+          !verifiedRuntime &&
+          !degradedCompletion;
         if (missingCloudHandoff) {
           tasks = updateTasksWithError(tasks, {
             step: "verify_rollout",
@@ -857,20 +1055,16 @@ async function pollJobStatus() {
   } catch (e) {
     console.error("Failed to poll job status:", e);
 
-    // Session expiry is not a network problem: stop and say so instead of
-    // telling the user to check their connection.
+    if (polledJobId !== jobId || pageDestroyed) return;
+
+    // Session expiry is not a network problem: say so instead of telling the
+    // user to check their connection. A failed gateway token fetch is a
+    // transient 401 the client creates itself and counts as a network blip.
     const authFailure =
-      e instanceof ApiRequestError && (e.status === 401 || e.status === 403);
-    if (authFailure) {
-      tasks = updateTasksWithError(tasks, {
-        error: tr("ui.stacksCreatingCreation-controller.sessionExpired"),
-        error_details: tr(
-          "ui.stacksCreatingCreation-controller.yourSessionIsNoLonger",
-        ),
-      });
-      stopPolling();
-      return;
-    }
+      e instanceof ApiRequestError &&
+      (e.status === 401 || e.status === 403) &&
+      e.code !== "gateway_auth_unavailable";
+    if (authFailure) connectionIssue = "auth";
 
     pollErrorCount += 1;
     // Keep trying with bounded exponential backoff; only tell the user after
@@ -881,19 +1075,12 @@ async function pollJobStatus() {
         BASE_POLL_INTERVAL * 2 ** (pollErrorCount - 1),
         MAX_POLL_BACKOFF_MS,
       );
-    if (pollErrorCount >= MAX_POLL_ERRORS) {
-      tasks = updateTasksWithError(tasks, {
-        error: tr(
-          "ui.stacksCreatingCreation-controller.connectionToServerLost",
-        ),
-        error_details: tr(
-          "ui.stacksCreatingCreation-controller.afterFailedAttemptsTheBackend",
-          { MAX_POLL_ERRORS },
-        ),
-      });
+    if (!authFailure && pollErrorCount >= MAX_POLL_ERRORS) {
+      connectionIssue = "offline";
     }
   } finally {
-    pollingInProgress = false;
+    // A switch to another job already restarted tracking for that job.
+    if (polledJobId === jobId) pollingInProgress = false;
   }
 }
 
@@ -1405,7 +1592,8 @@ async function clearWizardSubmissionState(run?: WizardRunResponse) {
 }
 
 function beginJobTracking() {
-  if (!jobId) return;
+  if (!jobId || pageDestroyed) return;
+  restoreTaskTimeline();
   stopPolling();
   pollErrorCount = 0;
   nextPollAttemptAt = 0;
@@ -1467,11 +1655,10 @@ async function submitPendingWizardRun(
     syncTaskListForOperation();
   }
   markWizardSubmissionRunning();
+  replayableWizardSubmission = null;
+  let run: WizardRunResponse | undefined;
   try {
-    const run = await createWizardRun(
-      submission.request,
-      submission.idempotencyKey,
-    );
+    run = await createWizardRun(submission.request, submission.idempotencyKey);
     if (!run.job_id && !run.pairing_job_id) {
       throw new Error(
         tr("ui.stacksCreatingCreation-controller.nodeRegistrationDidNotReturn"),
@@ -1492,6 +1679,15 @@ async function submitPendingWizardRun(
         return true;
       }
       wizardIdempotencyConflictFailed = true;
+    }
+    // No answer (network, timeout) or a gateway answer (502/503/504, e.g.
+    // during a deploy) leaves the server outcome unknown: the run may already
+    // be persisted, so only a replay under the same key is a safe retry.
+    if (
+      !run &&
+      (!(error instanceof ApiRequestError) || error.retryable === true)
+    ) {
+      replayableWizardSubmission = submission;
     }
     const parsed = parseApiError(error);
     jobState = "failed";
@@ -1540,10 +1736,12 @@ function resetCreationState() {
   remoteServerUser = "";
   remoteServerPort = null;
   serverUrl = "";
+  lanBridge = null;
   copiedCommand = null;
   copiedErrorDetails = false;
   showAllCommands = false;
   backendCompleted = false;
+  resetDegradedCompletion();
   jobType = "";
   pairingTokenExpiresAt = "";
   pairingStartedAt = "";
@@ -1561,6 +1759,8 @@ function resetCreationState() {
   ownerSeedExpected = false;
   ownerSeedSummary = null;
   pollErrorCount = 0;
+  connectionIssue = "";
+  taskTimelineMemo = {};
   pairingJobId = "";
   pairingTokenIssued = false;
   pairingRecoveryBusy = false;
@@ -1573,13 +1773,27 @@ function resetCreationState() {
   retryError = "";
   jobRetryable = undefined;
   wizardIdempotencyConflictFailed = false;
+  replayableWizardSubmission = null;
   initError = null;
   capturedCreationFailureJobIds.clear();
   capturedRolloutResultKeys.clear();
 }
 
+function pollWhenVisible() {
+  if (document.visibilityState !== "visible" || !jobId || !pollingInterval) {
+    return;
+  }
+  nextPollAttemptAt = 0;
+  void pollJobStatus();
+}
+
 async function mount() {
   resetCreationState();
+  document.addEventListener("visibilitychange", pollWhenVisible);
+  progressClock = Date.now();
+  progressClockTimer ??= setInterval(() => {
+    progressClock = Date.now();
+  }, 1000);
 
   // URL identifies the immediate handoff; the ledger supplies durable
   // context and is also sufficient for dashboard/cross-device resume.
@@ -1598,6 +1812,7 @@ async function mount() {
   } else {
     await adoptActiveWizardRun(jobId);
   }
+  if (pageDestroyed) return;
   pairingJobId = pairingJobId || params.get("pairing_job_id") || "";
   syncTaskListForOperation();
 
@@ -1667,11 +1882,13 @@ async function mount() {
     try {
       const registry = await getWorkerRegistryUrl();
       if (registry.url) bestUrl = registry.url;
+      lanBridge = registry.url && registry.lan_pin ? { url: registry.url, pin: registry.lan_pin } : null;
     } catch (e) {
       console.warn("Failed to resolve the private-LAN enrollment URL:", e);
     }
   }
   serverUrl = bestUrl || window.location.origin;
+  if (pageDestroyed) return;
 
   if (jobId) {
     beginJobTracking();
@@ -1688,7 +1905,11 @@ async function mount() {
 
 function unmount() {
   pageDestroyed = true;
+  document.removeEventListener("visibilitychange", pollWhenVisible);
+  if (progressClockTimer) clearInterval(progressClockTimer);
+  progressClockTimer = null;
   stopPolling();
+  stopRepairPolling();
   stopRemoteEnrollmentPolling();
   stopConnectionPolling();
 }
@@ -1698,6 +1919,242 @@ function goToStack() {
   if (stackId) params.set("stack", stackId);
   params.set("phase", "review");
   goto(`/dashboard?${params.toString()}`);
+}
+
+// Structured operation context for a Companion handoff: identifiers, the
+// step it stopped at or the components it completed without, reason codes.
+// Only identifiers and codes; the visible error text is sanitized separately.
+function operationContext(): ErrorAiOperationContext {
+  const degraded = degradedCompletion !== null;
+  return {
+    outcome: degraded ? "completed_degraded" : "failed",
+    jobId: jobId || undefined,
+    stackId: stackId || undefined,
+    leaseId: lease?.id || undefined,
+    serverId: operationRefs.serverId || connectedServer?.id || undefined,
+    agentId: operationRefs.agentId,
+    failedStep: degraded ? undefined : failedTaskId || undefined,
+    reasonCodes: [
+      ...operationRefs.reasonCodes,
+      ...degradedComponents.map((component) => component.reasonCode),
+    ].filter((code, index, all) => code && all.indexOf(code) === index),
+    degradedComponents: degradedComponents.map((component) => ({
+      component: component.component,
+      reasonCode: component.reasonCode || undefined,
+      stage: component.stage,
+      retryable: component.retryable,
+      repairStatus: component.repairStatus,
+    })),
+  };
+}
+
+// What kombify Cloud's Companion is told about this page while it is embedded:
+// the deployment, where the run stands and the ids an agent needs to look it
+// up. Ids and codes only; the visible error text stays on the page.
+let viewContext = $derived.by<ViewContextDetails>(() => {
+  const degraded = degradedCompletion !== null;
+  const state = isComplete
+    ? degraded
+      ? "creation_degraded"
+      : "creation_completed"
+    : hasFailed
+      ? "creation_failed"
+      : jobState === "waiting"
+        ? "creation_waiting"
+        : "creation_running";
+  const context = operationContext();
+  return {
+    state,
+    subject: stackId
+      ? {
+          resourceType: "stackkit_deployment",
+          resourceId: stackId,
+          label: stackName,
+        }
+      : undefined,
+    facts: {
+      stackId: context.stackId,
+      jobId: context.jobId,
+      jobType: jobType || undefined,
+      leaseId: context.leaseId,
+      serverId: context.serverId,
+      failedStep: context.failedStep,
+      reasonCode: context.reasonCodes?.[0],
+      outcome:
+        state === "creation_failed"
+          ? "failed"
+          : state === "creation_degraded"
+            ? "completed_degraded"
+            : state === "creation_completed"
+              ? "completed"
+              : undefined,
+    },
+  };
+});
+
+function askCompanionWith(question: string) {
+  const facts = buildOperationContextLines(operationContext());
+  companion.ask(facts.length ? `${question}\n\n${facts.join("\n")}` : question);
+}
+
+// The error the user reads on a failed task, scrubbed of secrets and capped.
+function failureErrorText(task: Task): string {
+  const error = [task.errorMessage, task.errorDetails]
+    .map((part) => part?.trim() ?? "")
+    .filter((part, index, parts) => part && parts.indexOf(part) === index)
+    .join("\n\n");
+  return sanitizeSensitiveText(error).slice(0, 2_000);
+}
+
+// The failure as the user sees it, handed to the Companion: a failure that
+// never reached the backend has no job its tools could read.
+function askCompanionAboutFailure() {
+  const task = failedTask;
+  if (!task) return;
+  askCompanionWith(
+    tr("ui.stacksCreatingCreationFailure.askCompanionPrompt", {
+      operation: creationHeaderLabel,
+      step: task.label,
+      error: failureErrorText(task),
+    }),
+  );
+}
+
+// The same failure for the host's Companion when this page is embedded in
+// kombify Cloud (Techstack's own Companion is not mounted there).
+let failureHandoverContext = $derived.by<ErrorAiHandoverContext | null>(() => {
+  const task = failedTask;
+  if (!task) return null;
+  const operation = operationContext();
+  return createErrorAiHandoverContext({
+    surface: "stacks.creating",
+    title: handoffMissingFailure
+      ? tr("ui.stacksCreatingCreationProgress.rolloutIncomplete")
+      : tr("ui.stacksCreatingCreationProgress.creationFailed"),
+    userMessage: failureErrorText(task),
+    phase: failedTaskId || undefined,
+    phaseLabel: task.label,
+    resourceId: stackId || undefined,
+    resourceName: stackName || undefined,
+    route: window.location.pathname,
+    appVersion,
+    retryable: jobRetryable,
+    reasonCode: operation.reasonCodes?.[0],
+    operation,
+  });
+});
+
+function askCompanionAboutDegraded() {
+  if (!degradedCompletion) return;
+  askCompanionWith(
+    tr("ui.stacksCreatingCreationDegraded.askCompanionPrompt", {
+      operation: creationHeaderLabel,
+      components: degradedComponents
+        .map((component) => degradedComponentTitle(component.component))
+        .join(", "),
+    }),
+  );
+}
+
+function resetDegradedCompletion() {
+  stopRepairPolling();
+  degradedCompletion = null;
+  repairTrackers = {};
+  operationRefs = { reasonCodes: [] };
+}
+
+function stopRepairPolling() {
+  for (const timer of repairPollTimers.values()) clearTimeout(timer);
+  repairPollTimers.clear();
+}
+
+function setRepairTracker(component: string, tracker: RepairTracker) {
+  repairTrackers = { ...repairTrackers, [component]: tracker };
+}
+
+// Automatic repairs already running on the server are followed through their
+// own job, so the row reflects the repair rather than the finished rollout.
+function trackAutomaticRepairs(degraded: DegradedCompletion) {
+  for (const component of degraded.components) {
+    const repair = component.repair;
+    if (
+      repair?.jobId &&
+      (repair.status === "scheduled" || repair.status === "running") &&
+      !repairTrackers[component.component]
+    ) {
+      setRepairTracker(component.component, {
+        status: repair.status,
+        jobId: repair.jobId,
+      });
+      scheduleRepairPoll(component.component, repair.jobId);
+    }
+  }
+}
+
+function scheduleRepairPoll(component: string, repairJobId: string) {
+  if (pageDestroyed) return;
+  clearTimeout(repairPollTimers.get(component));
+  repairPollTimers.set(
+    component,
+    setTimeout(
+      () => void pollRepairJob(component, repairJobId),
+      REPAIR_POLL_INTERVAL,
+    ),
+  );
+}
+
+async function pollRepairJob(component: string, repairJobId: string) {
+  repairPollTimers.delete(component);
+  if (pageDestroyed || repairTrackers[component]?.jobId !== repairJobId) return;
+  try {
+    const job = await getJob(repairJobId);
+    if (repairTrackers[component]?.jobId !== repairJobId) return;
+    const state = job.state || "pending";
+    if (state === "completed" || state === "success") {
+      setRepairTracker(component, { status: "repaired", jobId: repairJobId });
+      return;
+    }
+    if (state === "failed" || state === "error" || state === "canceled") {
+      setRepairTracker(component, {
+        status: "failed",
+        jobId: repairJobId,
+        message: job.user_guidance?.title || undefined,
+      });
+      return;
+    }
+    // A queued automatic repair stays "scheduled" until its job runs.
+    if (isRunningJobStatus(state)) {
+      setRepairTracker(component, { status: "running", jobId: repairJobId });
+    }
+  } catch (error) {
+    console.warn("Repair job lookup failed:", error);
+  }
+  scheduleRepairPoll(component, repairJobId);
+}
+
+async function repairDegradedComponent(component: string) {
+  if (!stackId || repairTrackers[component]?.status === "requesting") return;
+  setRepairTracker(component, { status: "requesting" });
+  try {
+    const response = await repairStackComponent(stackId, { component });
+    if (!response.job_id) {
+      throw new Error(
+        tr("ui.stacksCreatingCreationDegraded.repairNotAccepted"),
+      );
+    }
+    setRepairTracker(component, { status: "running", jobId: response.job_id });
+    scheduleRepairPoll(component, response.job_id);
+  } catch (error) {
+    const parsed = parseApiError(error);
+    const guidance = parsed.outcome ? resolveGuidance(parsed.outcome) : null;
+    setRepairTracker(component, {
+      status: "denied",
+      message: sanitizeSensitiveText(guidance?.title || parsed.message).slice(
+        0,
+        300,
+      ),
+    });
+  }
 }
 
 function retryFromStart() {
@@ -1734,7 +2191,25 @@ async function resumePreviousWizardAttempt() {
   }
 }
 
+async function replayWizardSubmission(submission: WizardRunSubmission) {
+  if (retryingRollout) return;
+  retryError = "";
+  retryingRollout = true;
+  try {
+    if (await submitPendingWizardRun(submission)) {
+      beginJobTracking();
+      startRemoteEnrollmentPolling();
+    }
+  } finally {
+    retryingRollout = false;
+  }
+}
+
 async function handleFailurePrimaryAction() {
+  if (replayableWizardSubmission) {
+    await replayWizardSubmission(replayableWizardSubmission);
+    return;
+  }
   if (wizardIdempotencyConflictFailed) {
     retryFromStart();
     return;
@@ -1864,7 +2339,8 @@ async function resumeOverdueManagedRuntime() {
   }
 }
 
-async function retryRemoteSSHEnrollment() {
+/** `walletItemId` rebinds the stack to another Wallet server access item. */
+async function retryRemoteSSHEnrollment(walletItemId?: string) {
   if (!stackId || retryingRollout) return;
   retryError = "";
   pairingRecoveryError = "";
@@ -1877,6 +2353,7 @@ async function retryRemoteSSHEnrollment() {
   try {
     const response = await resumeRemoteEnrollment(stackId, {
       pairing_job_id: pairingJobId || undefined,
+      ...(walletItemId ? { ssh_wallet_item_id: walletItemId } : {}),
     });
     const nextPairingJobId = response.pairing_job_id?.trim() || "";
     if (nextPairingJobId) {
@@ -1925,6 +2402,7 @@ async function continueWithAcceptedRollout(
   stopPolling();
   jobId = response.job_id;
   backendCompleted = false;
+  resetDegradedCompletion();
   pollErrorCount = 0;
   pollingInProgress = false;
   jobState = "";
@@ -1948,8 +2426,41 @@ async function continueWithAcceptedRollout(
     reset: false,
   });
 
-  pollJobStatus();
-  pollingInterval = setInterval(pollJobStatus, BASE_POLL_INTERVAL);
+  beginJobTracking();
+}
+
+// Another tab, a reload or the backend recovery handed this run to a new job.
+// The run continues there: a failed view is reset to the retry position, a
+// running one keeps its reached progress.
+async function followReplacementJob(replacementJobId: string) {
+  stopPolling();
+  jobId = replacementJobId;
+  backendCompleted = false;
+  resetDegradedCompletion();
+  jobState = "";
+  jobRetryable = undefined;
+  jobWaitReason = "";
+  jobNextResumeAt = "";
+  jobResumeAvailableAt = "";
+  jobResumeAvailable = false;
+  if (tasks.some((task) => task.status === "failed")) {
+    tasks = resetTasksForRolloutRetry();
+  }
+  const params = new URLSearchParams(window.location.search);
+  params.set("job_id", replacementJobId);
+  params.delete("job");
+  await goto(`/stacks/creating?${params.toString()}`, {
+    replaceState: true,
+    reset: false,
+  });
+  if (pageDestroyed || jobId !== replacementJobId) return;
+  beginJobTracking();
+}
+
+// Retry the job read now instead of waiting for the backoff.
+function reconnect() {
+  if (!jobId) return;
+  beginJobTracking();
 }
 
 function copyToken() {
@@ -2360,6 +2871,28 @@ export const creation = {
   get overallProgress() {
     return overallProgress;
   },
+  get connectionIssue() {
+    return connectionIssue;
+  },
+  maxPollErrors: MAX_POLL_ERRORS,
+  reconnect,
+  get taskTimeline() {
+    return taskTimeline;
+  },
+  get progressClock() {
+    return progressClock;
+  },
+  get phaseStep() {
+    return currentPhaseIndex >= 0
+      ? currentPhaseIndex + 1
+      : groupStatuses.length;
+  },
+  get phaseCount() {
+    return groupStatuses.length;
+  },
+  get currentPhaseLabel() {
+    return currentPhase?.group.label ?? "";
+  },
   get hasStackKitIdentityHandoff() {
     return hasStackKitIdentityHandoff;
   },
@@ -2444,9 +2977,6 @@ export const creation = {
   get currentStepMessage() {
     return currentStepMessage;
   },
-  get completedCount() {
-    return completedCount;
-  },
   get installCommand() {
     return installCommand;
   },
@@ -2491,6 +3021,24 @@ export const creation = {
   retryFromStart,
   resumePreviousWizardAttempt,
   handleFailurePrimaryAction,
+  askCompanionAboutFailure,
+  askCompanionAboutDegraded,
+  repairDegradedComponent,
+  get degradedCompletion() {
+    return degradedCompletion;
+  },
+  get degradedComponents() {
+    return degradedComponents;
+  },
+  get companionAvailable() {
+    return companion.available;
+  },
+  get viewContext() {
+    return viewContext;
+  },
+  get failureHandoverContext() {
+    return failureHandoverContext;
+  },
   retryStackLifecycle,
   resetTasksForRolloutRetry,
   retryStackKitRollout,

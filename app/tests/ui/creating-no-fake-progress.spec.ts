@@ -200,6 +200,61 @@ test.describe("creation flow honesty", () => {
     await expect(page.locator('[data-status="running"]').first()).toBeVisible();
   });
 
+  test("a lost connection to the job API never fails the running creation", async ({
+    context,
+    baseURL,
+  }) => {
+    const origin = requireAppBase(baseURL);
+    await mockLoggedInContext(context, { allowMockAuth: true });
+    await mockDiscovery(context);
+    let apiDown = false;
+    await context.route("**/api/v1/jobs/job-flaky-network", async (route) => {
+      if (apiDown) {
+        await route.fulfill({ status: 503, body: "unavailable" });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          data: {
+            id: "job-flaky-network",
+            type: "provision",
+            state: "running",
+            progress: 40,
+            step: "create_lease",
+            message: "Requesting managed cloud Node",
+            created_at: "2026-10-06T08:00:00Z",
+            updated_at: "2026-10-06T08:01:00Z",
+          },
+        }),
+      });
+    });
+
+    const page = await context.newPage();
+    await page.clock.install({ time: new Date("2026-10-06T08:01:00Z") });
+    await page.goto(
+      `${origin}/stacks/creating?name=Flaky&job_id=job-flaky-network`,
+    );
+    await expect(
+      page.getByText("Requesting managed cloud Node").first(),
+    ).toBeVisible();
+
+    apiDown = true;
+    await page.clock.runFor(180_000);
+    await expect(page.getByTestId("creation-connection-issue")).toBeVisible();
+    await expect(
+      page.getByRole("heading", { level: 3, name: "Creation failed" }),
+    ).toHaveCount(0);
+
+    apiDown = false;
+    await page.getByTestId("creation-reconnect").click();
+    await expect(page.getByTestId("creation-connection-issue")).toHaveCount(0);
+    await expect(
+      page.locator('[data-task-id="create_lease"][data-status="running"]'),
+    ).toBeVisible();
+  });
+
   test("keeps enrollment waits non-terminal and access disabled beyond the pending timeout", async ({
     context,
     baseURL,

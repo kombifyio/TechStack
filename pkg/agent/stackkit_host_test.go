@@ -37,3 +37,44 @@ func TestStackKitHostArgsAreFixedAndOnlyTakeAPlanDigest(t *testing.T) {
 		}
 	}
 }
+
+// A host security repair names only controls of the closed evidence vocabulary:
+// a free-form argument, an unapproved request or a repeated control never reaches
+// the CLI, and the argv around the controls is constant.
+func TestStackKitHostSecurityRepairTakesOnlyClosedControlIDs(t *testing.T) {
+	digest := strings.Repeat("a", 64)
+	repair := func(approved bool, controls ...string) *agentpb.StackKitCommand {
+		return &agentpb.StackKitCommand{
+			CommandId: "guard-sec-repair:1", Operation: agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_SECURITY_REPAIR,
+			OwnerApproved: approved, HostSecurityControls: controls,
+			Release: &agentpb.StackKitReleasePin{Version: "v0.50.0", PlatformOs: "linux", PlatformArch: "amd64", ArchiveSha256: digest, ReleaseIndexSha256: digest},
+		}
+	}
+	got, err := stackKitHostArgs(repair(true, "bruteforce.fail2ban", "firewall.default_inbound"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0] != "host" || got[1] != "security" || got[2] != "repair" || got[3] != "--apply" {
+		t.Fatalf("argv = %q", got)
+	}
+	controlArgs := []string{}
+	for i, arg := range got {
+		if arg == "--control" {
+			controlArgs = append(controlArgs, got[i+1])
+		}
+	}
+	if !reflect.DeepEqual(controlArgs, []string{"bruteforce.fail2ban", "firewall.default_inbound"}) {
+		t.Fatalf("controls in argv = %q", controlArgs)
+	}
+	for name, command := range map[string]*agentpb.StackKitCommand{
+		"a flag smuggled as a control": repair(true, "firewall.default_inbound --management-source 0.0.0.0/1"),
+		"an unknown control":           repair(true, "ssh.everything"),
+		"a repeated control":           repair(true, "kernel.sysctl", "kernel.sysctl"),
+		"no control":                   repair(true),
+		"no owner approval":            repair(false, "kernel.sysctl"),
+	} {
+		if args, err := stackKitHostArgs(command); err == nil {
+			t.Errorf("%s rendered %q, want a refusal", name, args)
+		}
+	}
+}

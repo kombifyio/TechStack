@@ -99,7 +99,7 @@ func TestPostgresStoreGetServiceRuntimeFallsBackToUnknownLegacyProjection(t *tes
 			"legacy-service-1", "tenant-1", nil, "stack-1", "server-1", "server",
 			nil, nil, nil, nil, nil, nil, nil,
 			"vaultwarden", "default", "Vaultwarden",
-			"running", "unknown", "unknown", "observed", "unlocked", nil, nil, nil, nil, nil,
+			"running", "unknown", "unknown", "observed", "locked", "owner_locked", "owner-1", now, nil, nil,
 			`{"mode":"unavailable","reason_code":"legacy_backfill_requires_observation"}`, `[]`,
 			legacyServiceRuntimeBackfillSource, `{"backfill":true,"legacy_source":"legacy-registry","legacy_status":"healthy"}`, now, now,
 		))
@@ -109,7 +109,7 @@ func TestPostgresStoreGetServiceRuntimeFallsBackToUnknownLegacyProjection(t *tes
 	if err != nil {
 		t.Fatalf("GetServiceRuntime: %v", err)
 	}
-	if got.ServerID != "server-1" || got.HealthState != legacyServiceRuntimeUnknown || got.ObservedAt != nil || got.Access[legacyServiceAccessModeKey] != legacyServiceRuntimeUnavailable {
+	if got.ServerID != "server-1" || got.HealthState != legacyServiceRuntimeUnknown || got.ObservedAt != nil || got.Access[legacyServiceAccessModeKey] != legacyServiceRuntimeUnavailable || !got.MutationLock.Locked() || got.MutationLock.Actor != "owner-1" {
 		t.Fatalf("unsafe legacy projection: %#v", got)
 	}
 	if got.Metadata["backfill"] != true || got.Source != legacyServiceRuntimeBackfillSource {

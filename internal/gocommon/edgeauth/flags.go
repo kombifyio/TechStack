@@ -555,15 +555,9 @@ func verifyFlagHeaders(r *http.Request, cfg FlagVerifyConfig, rejectDuplicateIDs
 	if r == nil {
 		return FlagSet{}, fmt.Errorf("edge_flags_request_missing")
 	}
-	primary := strings.TrimSpace(cfg.PrimarySecret)
-	next := strings.TrimSpace(cfg.NextSecret)
-	primaryKeyID := strings.TrimSpace(firstNonEmpty(cfg.PrimaryKeyID, defaultEdgeKeyID))
-	nextKeyID := strings.TrimSpace(firstNonEmpty(cfg.NextKeyID, defaultEdgeNextKeyID))
-	if rejectDuplicateIDs && primary != "" && next != "" && primaryKeyID == nextKeyID {
-		return FlagSet{}, fmt.Errorf("edge_flags_rotation_key_id_conflict")
-	}
-	if primary == "" && next == "" {
-		return FlagSet{}, fmt.Errorf("edge_flags_secret_missing")
+	keys, keyErr := flagVerificationKeys(cfg, rejectDuplicateIDs)
+	if keyErr != nil {
+		return FlagSet{}, keyErr
 	}
 
 	flagsJSON := r.Header.Get(HeaderFlags)
@@ -586,19 +580,7 @@ func verifyFlagHeaders(r *http.Request, cfg FlagVerifyConfig, rejectDuplicateIDs
 
 	presented := strings.TrimPrefix(signature, edgeSignatureVersion+"=")
 	payload := flagsPayload(keyID, timestamp, flagsJSON, budgetsJSON)
-	verified := false
-	for _, candidate := range []struct{ keyID, secret string }{
-		{primaryKeyID, primary},
-		{nextKeyID, next},
-	} {
-		if candidate.secret == "" || keyID != candidate.keyID {
-			continue
-		}
-		if hmac.Equal([]byte(presented), []byte(signPayload(candidate.secret, payload))) {
-			verified = true
-			break
-		}
-	}
+	verified := verifyFlagSignature(presented, payload, keyID, keys)
 	if !verified {
 		return FlagSet{}, fmt.Errorf("edge_flags_signature_invalid")
 	}
@@ -611,4 +593,34 @@ func verifyFlagHeaders(r *http.Request, cfg FlagVerifyConfig, rejectDuplicateIDs
 		return FlagSet{}, fmt.Errorf("edge_budgets_payload_invalid")
 	}
 	return fs, nil
+}
+
+type flagSigningKey struct{ keyID, secret string }
+
+func flagVerificationKeys(cfg FlagVerifyConfig, rejectDuplicateIDs bool) ([]flagSigningKey, error) {
+	primary := strings.TrimSpace(cfg.PrimarySecret)
+	next := strings.TrimSpace(cfg.NextSecret)
+	primaryKeyID := strings.TrimSpace(firstNonEmpty(cfg.PrimaryKeyID, defaultEdgeKeyID))
+	nextKeyID := strings.TrimSpace(firstNonEmpty(cfg.NextKeyID, defaultEdgeNextKeyID))
+	if rejectDuplicateIDs && primary != "" && next != "" && primaryKeyID == nextKeyID {
+		return nil, fmt.Errorf("edge_flags_rotation_key_id_conflict")
+	}
+	if primary == "" && next == "" {
+		return nil, fmt.Errorf("edge_flags_secret_missing")
+	}
+	return []flagSigningKey{{primaryKeyID, primary}, {nextKeyID, next}}, nil
+}
+
+func verifyFlagSignature(presented, payload, keyID string, keys []flagSigningKey) bool {
+	verified := false
+	for _, candidate := range keys {
+		if candidate.secret == "" || keyID != candidate.keyID {
+			continue
+		}
+		if hmac.Equal([]byte(presented), []byte(signPayload(candidate.secret, payload))) {
+			verified = true
+			break
+		}
+	}
+	return verified
 }

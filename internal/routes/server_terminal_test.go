@@ -253,6 +253,9 @@ func TestTerminalSessionRequiresFreshBoundReauthAndAllowsOnlyOneActiveSession(t 
 	if deniedRecorder.Code != http.StatusForbidden {
 		t.Fatalf("invalid reauth status = %d", deniedRecorder.Code)
 	}
+	if got := stepUpReasonOf(t, deniedRecorder); got != serverAccessStepUpReason {
+		t.Fatalf("refusal reason = %q, want %q", got, serverAccessStepUpReason)
+	}
 	staleClaims := *claims
 	staleClaims.AuthenticatedAt = now.Add(-walletReauthWindow - time.Minute).Unix()
 	stale, staleRecorder := registryRouteStoreTestEvent(http.MethodPost, "/api/v1/servers/server-1/terminal-sessions", "owner-1", "tenant-1", nil)
@@ -355,5 +358,15 @@ func TestServerSSHKeyAuthorizationUsesOwnedWalletPublicKeyOnly(t *testing.T) {
 	}
 	if foreignRecorder.Code != http.StatusNotFound {
 		t.Fatalf("foreign authorization status=%d", foreignRecorder.Code)
+	}
+}
+
+// A proxy chain that drops X-Forwarded-Proto must not turn an https page's
+// terminal stream into a ws:// URL that the browser blocks as mixed content.
+func TestTerminalStreamURLFollowsPageSchemeWhenForwardedProtoIsMissing(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "http://techstack.kombify.io/api/v1/servers/s/terminal-sessions", nil)
+	request.Header.Set("Origin", "https://techstack.kombify.io")
+	if got := terminalStreamURL(request, "abc"); got != "wss://techstack.kombify.io/api/v1/terminal-sessions/abc/stream" {
+		t.Fatalf("stream URL = %q, want a wss URL for an https page", got)
 	}
 }

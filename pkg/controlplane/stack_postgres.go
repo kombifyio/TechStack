@@ -230,34 +230,39 @@ func (s *PostgresStore) CompareAndSwapStackConfig(ctx context.Context, command S
 
 	var out *Stack
 	err = s.withTenant(ctx, prepared.TenantID, func(tx *sql.Tx) error {
-		configJSON, marshalErr := marshalObject(prepared.Config)
-		if marshalErr != nil {
-			return marshalErr
-		}
-		stack, queryErr := scanStack(tx.QueryRowContext(ctx, `
-			UPDATE stacks
-			SET config_json = $3::jsonb,
-				updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 microsecond')
-			WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
-				AND updated_at = $4
-			RETURNING id, tenant_id, instance_id, owner_subject_id, homelab_id, stackkit_instance_id, name, description,
-				mode, status, config_json::text, services_json::text,
-				runtime_summary_json::text, drift_status, drift_checked_at,
-				created_at, updated_at, deleted_at
-		`, prepared.TenantID, prepared.StackID, configJSON, prepared.ExpectedUpdatedAt))
-		if queryErr == sql.ErrNoRows {
-			return ErrConflict
-		}
-		if queryErr != nil {
-			return queryErr
-		}
-		out = stack
-		return nil
+		var err error
+		out, err = compareAndSwapStackConfigTx(ctx, tx, prepared)
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+func compareAndSwapStackConfigTx(ctx context.Context, tx *sql.Tx, prepared StackConfigCAS) (*Stack, error) {
+	configJSON, marshalErr := marshalObject(prepared.Config)
+	if marshalErr != nil {
+		return nil, marshalErr
+	}
+	stack, queryErr := scanStack(tx.QueryRowContext(ctx, `
+		UPDATE stacks
+		SET config_json = $3::jsonb,
+			updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 microsecond')
+		WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
+			AND updated_at = $4
+		RETURNING id, tenant_id, instance_id, owner_subject_id, homelab_id, stackkit_instance_id, name, description,
+			mode, status, config_json::text, services_json::text,
+			runtime_summary_json::text, drift_status, drift_checked_at,
+			created_at, updated_at, deleted_at
+	`, prepared.TenantID, prepared.StackID, configJSON, prepared.ExpectedUpdatedAt))
+	if queryErr == sql.ErrNoRows {
+		return nil, ErrConflict
+	}
+	if queryErr != nil {
+		return nil, queryErr
+	}
+	return stack, nil
 }
 
 func (s *PostgresStore) SetStackHomelab(ctx context.Context, tenantID, stackID, homelabID string) (*Stack, error) {

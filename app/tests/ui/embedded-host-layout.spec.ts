@@ -153,6 +153,11 @@ test("the Cloud-embedded dashboard fills the frame", async ({
   const node = page.getByTestId("node-row").filter({ hasText: "embedded-box" });
   await expect(node).toBeVisible();
 
-  const box = await page.getByTestId("stacks-dashboard").boundingBox();
-  expect(box?.height ?? 0).toBeGreaterThan(720 * 0.9);
+  // Inventory can render before auth initialization installs the hosted shell.
+  await expect
+    .poll(async () => {
+      const box = await page.getByTestId("stacks-dashboard").boundingBox();
+      return box?.height ?? 0;
+    })
+    .toBeGreaterThan(720 * 0.9);
 });

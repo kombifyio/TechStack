@@ -5,4 +5,12 @@
   <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
   <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
   <data name="IdentityVerificationFailed" xml:space="preserve"><value>Windows 客户端无法验证本地运行环境。请关闭占用其端口的其他应用程序，然后重新打开客户端。</value></data>
+  <data name="RecoveryIncomplete" xml:space="preserve"><value>本地 Techstack 恢复尚未完成。</value></data>
+  <data name="RecoveryDatabaseRunning" xml:space="preserve"><value>本地运行时或数据库仍在运行。请关闭其他 Techstack 窗口，然后重新打开客户端以完成恢复。恢复数据已保留。</value></data>
+  <data name="RecoverySnapshotMissing" xml:space="preserve"><value>更新前的数据备份缺失。请先还原客户端恢复数据，再重新打开 Techstack。当前数据已保留。</value></data>
+  <data name="RecoveryRestoreFailed" xml:space="preserve"><value>客户端无法还原更新前的数据。请关闭正在使用本地数据的应用，然后重新打开客户端。恢复仍待完成。</value></data>
+  <data name="RecoveryInstallationPending" xml:space="preserve"><value>尚未还原之前的 Techstack 版本。请先修复 Windows 安装，再重新打开客户端。恢复数据已保留。</value></data>
+  <data name="WalletRevealTitle" xml:space="preserve"><value>显示凭据</value></data>
+  <data name="WalletRevealPrompt" xml:space="preserve"><value>显示 {0} 的凭据？该值将在此本地 Techstack 窗口中显示。</value></data>
+  <data name="WalletRevealFailed" xml:space="preserve"><value>无法验证本地凭据显示请求。请重试。</value></data>
 </root>

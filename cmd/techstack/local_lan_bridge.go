@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
@@ -15,12 +16,16 @@ import (
 	"github.com/kombifyio/techstack/internal/routes"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/logger"
+	"github.com/kombifyio/techstack/pkg/privatechannel"
 	"github.com/kombifyio/techstack/pkg/tunnel"
 )
 
 const (
 	localLANBridgePort = 5264
-	localLANBridgeMode = "private-lan-http-alpha"
+	localLANBridgeMode = "private-lan-tls-pinned"
+	// localLANBridgeKeyDir holds the bridge's self-signed key. Its pin is
+	// what every LAN-paired Guard trusts, so it survives restarts.
+	localLANBridgeKeyDir = "lan-bridge"
 )
 
 type localLANBridge struct {
@@ -29,6 +34,7 @@ type localLANBridge struct {
 	resolver *tunnel.RegistryURLResolver
 	log      *logger.Logger
 	state    string
+	certPath string
 	server   *http.Server
 	listener net.Listener
 	status   routes.LocalLANBridgeStatus
@@ -37,8 +43,9 @@ type localLANBridge struct {
 func newLocalLANBridge(router *httpx.Router, dataDir string, resolver *tunnel.RegistryURLResolver, log *logger.Logger) *localLANBridge {
 	return &localLANBridge{
 		router: router, resolver: resolver, log: log,
-		state:  filepath.Join(dataDir, "lan-bridge-enabled"),
-		status: routes.LocalLANBridgeStatus{Port: localLANBridgePort, Mode: localLANBridgeMode},
+		state:    filepath.Join(dataDir, "lan-bridge-enabled"),
+		certPath: filepath.Join(dataDir, localLANBridgeKeyDir),
+		status:   routes.LocalLANBridgeStatus{Port: localLANBridgePort, Mode: localLANBridgeMode},
 	}
 }
 
@@ -54,24 +61,30 @@ func (b *localLANBridge) Enable(_ context.Context) (routes.LocalLANBridgeStatus,
 	if b.status.Enabled {
 		return b.status, nil
 	}
+	cert, pin, err := privatechannel.LoadOrCreateCertificate(b.certPath)
+	if err != nil {
+		b.status.Error = err.Error()
+		return b.status, err
+	}
 	privateIP, err := outboundPrivateIPv4()
 	if err != nil {
 		b.status.Error = err.Error()
 		return b.status, err
 	}
-	listener, err := net.Listen("tcp4", fmt.Sprintf("0.0.0.0:%d", localLANBridgePort))
+	tcpListener, err := net.Listen("tcp4", fmt.Sprintf("0.0.0.0:%d", localLANBridgePort))
 	if err != nil {
 		b.status.Error = err.Error()
 		return b.status, err
 	}
-	origin := fmt.Sprintf("http://%s:%d", privateIP, localLANBridgePort)
-	if err := b.resolver.SetLocalBridgeURL(origin); err != nil {
+	listener := tls.NewListener(tcpListener, &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}})
+	origin := fmt.Sprintf("https://%s:%d", privateIP, localLANBridgePort)
+	if err := b.resolver.SetLocalBridge(origin, pin); err != nil {
 		_ = listener.Close()
 		b.status.Error = err.Error()
 		return b.status, err
 	}
 	server := &http.Server{
-		Handler:           localLANBridgeHandler{next: b.router.BuildMux()},
+		Handler:           localLANBridgeHandler{next: b.router.BuildMux(), origin: origin, pin: pin},
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,
@@ -88,8 +101,8 @@ func (b *localLANBridge) Enable(_ context.Context) (routes.LocalLANBridgeStatus,
 		return b.status, err
 	}
 	b.server, b.listener = server, listener
-	b.status = routes.LocalLANBridgeStatus{Enabled: true, Origin: origin, Address: privateIP, Port: localLANBridgePort, Mode: localLANBridgeMode}
-	b.log.Info("local_lan_bridge_started", "origin", origin, "routes", "guard-only")
+	b.status = routes.LocalLANBridgeStatus{Enabled: true, Origin: origin, Pin: pin, Address: privateIP, Port: localLANBridgePort, Mode: localLANBridgeMode}
+	b.log.Info("local_lan_bridge_started", "origin", origin, "pin", pin, "routes", "guard-only")
 	go b.serve(server, listener)
 	return b.status, nil
 }
@@ -159,7 +172,10 @@ func (b *localLANBridge) serve(server *http.Server, listener net.Listener) {
 	b.log.Error("local_lan_bridge_failed", "error", err)
 }
 
-type localLANBridgeHandler struct{ next http.Handler }
+type localLANBridgeHandler struct {
+	next        http.Handler
+	origin, pin string
+}
 
 func (h localLANBridgeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !privateRemoteAddress(r.RemoteAddr) || !allowedLocalLANBridgeRoute(r.Method, r.URL.Path) {
@@ -168,8 +184,7 @@ func (h localLANBridgeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	}
 	r.Header.Del("X-Forwarded-Host")
 	r.Header.Del("X-Forwarded-Proto")
-	r.Header.Set("X-Techstack-LAN-Bridge", "1")
-	h.next.ServeHTTP(w, r)
+	h.next.ServeHTTP(w, r.WithContext(routes.WithLocalLANBridge(r.Context(), h.origin, h.pin)))
 }
 
 func allowedLocalLANBridgeRoute(method, path string) bool {
@@ -191,7 +206,8 @@ func allowedLocalLANBridgeRoute(method, path string) bool {
 		return false
 	}
 	switch workerPath[separator+1:] {
-	case "heartbeat", "inventory", "commands/next", "commands/result", "stackkit/operations", "runtime/logs":
+	case "heartbeat", "inventory", "commands/next", "commands/result", "stackkit/operations", "runtime/logs",
+		"identity/token", "identity/bind", "identity/rotate", "reach":
 		return true
 	default:
 		return false

@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
-	"github.com/kombifyio/techstack/pkg/privatechannel"
+	"github.com/kombifyio/techstack/pkg/guardbinding"
 	"github.com/kombifyio/techstack/pkg/runtimeconvergence"
 	"github.com/kombifyio/techstack/pkg/stackkitcommand"
 )
@@ -94,11 +94,18 @@ type Config struct {
 	// when this agent can run the StackKits host commands; nil or empty
 	// advertises nothing.
 	HostMaintenanceCapabilities func() []string
-	OnFirstHeartbeat            func()
-	Logger                      *slog.Logger
-	// PrivateLANHTTPOrigin is the exact alpha-only clear-text capability. It
-	// permits one literal RFC1918 :5264 origin, never DNS or public targets.
-	PrivateLANHTTPOrigin string
+	ApplicationCapabilities     func() []string
+	// Posture reports the Guard's isolation and update state; nil omits it.
+	Posture          func() *guardbinding.Posture
+	OnFirstHeartbeat func()
+	// OnProgress is called whenever the publish loop advances: each cycle,
+	// each request attempt and each wait tick. A service watchdog uses it to
+	// tell a hung loop from one that is merely waiting for the control plane.
+	OnProgress func()
+	Logger     *slog.Logger
+	// BindingSigningKeys are the control-plane keys this Guard pins for command
+	// bindings. Empty accepts unsigned bindings, as before signing existed.
+	BindingSigningKeys []guardbinding.PinnedKey
 }
 
 // Client continuously publishes authenticated heartbeat and inventory
@@ -110,6 +117,9 @@ type Client struct {
 	sourceEpoch    string
 	sequence       atomic.Int64
 	firstHeartbeat sync.Once
+	// durable is set by EnableDurableOperations and selects the journaled typed
+	// command path.
+	durable *durableOps
 }
 
 type controlRequest struct {
@@ -138,10 +148,10 @@ func New(cfg Config) (*Client, error) {
 		if cfg.CommandExecutor != nil {
 			return nil, errors.New("a substrate Guard cannot execute StackKit commands")
 		}
-		if err := validateEndpointURL(cfg.WorkerCommandURL, cfg.PrivateLANHTTPOrigin); err != nil {
+		if err := validateEndpointURL(cfg.WorkerCommandURL); err != nil {
 			return nil, err
 		}
-		if err := validateEndpointURL(cfg.WorkerResultURL, cfg.PrivateLANHTTPOrigin); err != nil {
+		if err := validateEndpointURL(cfg.WorkerResultURL); err != nil {
 			return nil, err
 		}
 	}
@@ -153,17 +163,17 @@ func New(cfg Config) (*Client, error) {
 	cfg.AgentToken = strings.TrimSpace(cfg.AgentToken)
 	cfg.RuntimeAgentID = strings.TrimSpace(cfg.RuntimeAgentID)
 	cfg.SourceEpoch = strings.TrimSpace(cfg.SourceEpoch)
-	if err := validateEndpointURL(cfg.HeartbeatURL, cfg.PrivateLANHTTPOrigin); err != nil {
+	if err := validateEndpointURL(cfg.HeartbeatURL); err != nil {
 		return nil, fmt.Errorf("heartbeat URL: %w", err)
 	}
-	if err := validateEndpointURL(cfg.InventoryURL, cfg.PrivateLANHTTPOrigin); err != nil {
+	if err := validateEndpointURL(cfg.InventoryURL); err != nil {
 		return nil, fmt.Errorf("inventory URL: %w", err)
 	}
 	if cfg.CommandURL != "" || cfg.CommandResultURL != "" {
-		if err := validateEndpointURL(cfg.CommandURL, cfg.PrivateLANHTTPOrigin); err != nil {
+		if err := validateEndpointURL(cfg.CommandURL); err != nil {
 			return nil, fmt.Errorf("command URL: %w", err)
 		}
-		if err := validateEndpointURL(cfg.CommandResultURL, cfg.PrivateLANHTTPOrigin); err != nil {
+		if err := validateEndpointURL(cfg.CommandResultURL); err != nil {
 			return nil, fmt.Errorf("command result URL: %w", err)
 		}
 		if cfg.CommandExecutor == nil {
@@ -172,7 +182,7 @@ func New(cfg Config) (*Client, error) {
 		if cfg.RuntimeLogURL == "" {
 			cfg.RuntimeLogURL = strings.TrimSuffix(cfg.CommandResultURL, "/commands/result") + "/runtime/logs"
 		}
-		if err := validateEndpointURL(cfg.RuntimeLogURL, cfg.PrivateLANHTTPOrigin); err != nil {
+		if err := validateEndpointURL(cfg.RuntimeLogURL); err != nil {
 			return nil, fmt.Errorf("runtime log URL: %w", err)
 		}
 	}
@@ -235,10 +245,12 @@ func (c *Client) Run(ctx context.Context) error {
 	}
 	backoff := newRetryBackoff(time.Second, 30*time.Second)
 	for {
+		c.progress()
 		err := c.sendCycle(ctx)
 		if ctx.Err() != nil {
 			return nil
 		}
+		c.progress()
 		delay := c.cfg.Interval
 		if err != nil {
 			delay = backoff.Next()
@@ -247,13 +259,37 @@ func (c *Client) Run(ctx context.Context) error {
 			backoff.Reset()
 			c.log.Debug("guard_publish_succeeded", "runtime_agent_id", c.cfg.RuntimeAgentID)
 		}
-		if err := waitContext(ctx, delay); err != nil {
+		if err := c.waitWithProgress(ctx, delay); err != nil {
 			return nil
 		}
 	}
 }
 
+func (c *Client) progress() {
+	if c.cfg.OnProgress != nil {
+		c.cfg.OnProgress()
+	}
+}
+
+// waitWithProgress waits for delay and reports progress while it does.
+func (c *Client) waitWithProgress(ctx context.Context, delay time.Duration) error {
+	const tick = 10 * time.Second
+	for delay > 0 {
+		step := min(delay, tick)
+		if err := waitContext(ctx, step); err != nil {
+			return err
+		}
+		delay -= step
+		c.progress()
+	}
+	return ctx.Err()
+}
+
 func (c *Client) runControlLoop(ctx context.Context) {
+	if c.durable != nil {
+		c.runDurableControlLoop(ctx)
+		return
+	}
 	backoff := newRetryBackoff(time.Second, 30*time.Second)
 	for ctx.Err() == nil {
 		command, err := c.pollTypedCommand(ctx)
@@ -304,6 +340,10 @@ func (c *Client) runControlLoop(ctx context.Context) {
 }
 
 func (c *Client) controlIdentity() controlRequest {
+	capabilities := c.hostMaintenanceCapabilities()
+	if c.cfg.ApplicationCapabilities != nil {
+		capabilities = append(capabilities, c.cfg.ApplicationCapabilities()...)
+	}
 	return controlRequest{
 		RuntimeAgentID: c.cfg.RuntimeAgentID, TenantID: c.cfg.TenantID, OwnerID: c.cfg.OwnerID,
 		StackID: c.cfg.StackID, LeaseID: c.cfg.LeaseID, ServerID: c.cfg.ServerID,
@@ -311,9 +351,14 @@ func (c *Client) controlIdentity() controlRequest {
 			"stackkit",
 			stackkitcommand.ExpectedPlanHashCapability,
 			stackkitcommand.WorkspaceInstanceCapability,
+			stackkitcommand.RestoreActivationCapability,
+			stackkitcommand.OriginalRecoveryReleaseCapability,
+			stackkitcommand.SourceGenerationInspectionCapability,
+			stackkitcommand.SourceGenerationCachePreparationCapability,
 			stackkitcommand.AdvancedTrustImportCapability,
 			stackkitcommand.AdvancedOperationsCapability,
-		}, c.hostMaintenanceCapabilities()...),
+			stackkitcommand.FederationHandoffCapability,
+		}, capabilities...),
 	}
 }
 
@@ -419,7 +464,7 @@ func (c *Client) sendCycle(ctx context.Context) error {
 			return fmt.Errorf("collect host heartbeat: %w", err)
 		}
 		c.prepareObservation(&snapshot)
-		if publishErr := c.postJSON(ctx, c.cfg.HeartbeatURL, heartbeatFromSnapshot(snapshot)); publishErr != nil {
+		if publishErr := c.postJSON(ctx, c.cfg.HeartbeatURL, c.heartbeat(snapshot)); publishErr != nil {
 			return fmt.Errorf("publish heartbeat: %w", publishErr)
 		}
 		c.firstHeartbeat.Do(func() {
@@ -443,7 +488,7 @@ func (c *Client) sendCycle(ctx context.Context) error {
 		return fmt.Errorf("collect inventory: %w", err)
 	}
 	c.prepareObservation(&snapshot)
-	if publishErr := c.postJSON(ctx, c.cfg.HeartbeatURL, heartbeatFromSnapshot(snapshot)); publishErr != nil {
+	if publishErr := c.postJSON(ctx, c.cfg.HeartbeatURL, c.heartbeat(snapshot)); publishErr != nil {
 		return fmt.Errorf("publish heartbeat: %w", publishErr)
 	}
 	c.firstHeartbeat.Do(func() {
@@ -461,6 +506,15 @@ func (c *Client) sendCycle(ctx context.Context) error {
 func (c *Client) prepareObservation(snapshot *Snapshot) {
 	c.applyIdentity(snapshot)
 	snapshot.RuntimeConvergence = c.runtimeConvergenceSnapshot()
+	snapshot.StackKitCapabilities = nil
+	for _, capability := range c.controlIdentity().Capabilities {
+		switch capability {
+		case "stackkit", stackkitcommand.ExpectedPlanHashCapability, stackkitcommand.WorkspaceInstanceCapability, stackkitcommand.RestoreActivationCapability, stackkitcommand.OriginalRecoveryReleaseCapability, stackkitcommand.AdvancedOperationsCapability:
+			if !slices.Contains(snapshot.StackKitCapabilities, capability) {
+				snapshot.StackKitCapabilities = append(snapshot.StackKitCapabilities, capability)
+			}
+		}
+	}
 	snapshot.HostMaintenance = slices.Contains(c.hostMaintenanceCapabilities(), stackkitcommand.HostMaintenanceCapability)
 	snapshot.SourceEpoch = c.sourceEpoch
 	snapshot.SourceSequence = c.sequence.Add(1)
@@ -504,6 +558,7 @@ func heartbeatFromSnapshot(snapshot Snapshot) Heartbeat {
 		UptimeSeconds:        snapshot.Host.UptimeSeconds,
 		RuntimeConvergence:   snapshot.RuntimeConvergence,
 		HostMaintenanceFacts: snapshot.HostMaintenanceFacts,
+		StackKitCapabilities: append([]string(nil), snapshot.StackKitCapabilities...),
 	}
 }
 
@@ -522,6 +577,7 @@ func (c *Client) postJSON(ctx context.Context, endpoint string, payload any) err
 	}
 	var lastErr error
 	for attempt := 0; attempt < c.cfg.RetryAttempts; attempt++ {
+		c.progress()
 		if attempt > 0 {
 			delay := time.Duration(1<<uint(attempt-1)) * 250 * time.Millisecond
 			if err := waitContext(ctx, delay); err != nil {
@@ -601,7 +657,7 @@ func compactResponseDetail(payload []byte) string {
 	return detail
 }
 
-func validateEndpointURL(raw, privateLANHTTPOrigin string) error {
+func validateEndpointURL(raw string) error {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Host == "" {
 		return errors.New("absolute URL is required")
@@ -614,9 +670,6 @@ func validateEndpointURL(raw, privateLANHTTPOrigin string) error {
 	}
 	host := parsed.Hostname()
 	if parsed.Scheme == "http" && (strings.EqualFold(host, "localhost") || net.ParseIP(host).IsLoopback()) {
-		return nil
-	}
-	if privatechannel.MatchesLANOrigin(raw, privateLANHTTPOrigin) {
 		return nil
 	}
 	return errors.New("HTTPS is required for non-loopback runtime channels")

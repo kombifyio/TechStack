@@ -8,11 +8,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/kombifyio/techstack/internal/stackkitrelease"
 	"github.com/kombifyio/techstack/pkg/kombifyme"
+	"github.com/kombifyio/techstack/pkg/unifier"
 )
 
 const (
@@ -220,6 +222,14 @@ func (g *StackKitCLIGenerator) stackKitCLIMetadata(
 		if host := managedAddress.Hosts[managedLoginGatewayServiceKey]; host != "" {
 			metadata[metadataKeyKombifyMeLoginHost] = host
 		}
+		if len(managedAddress.Hosts) > 0 {
+			routeHosts := make([]string, 0, len(managedAddress.Hosts))
+			for _, host := range managedAddress.Hosts {
+				routeHosts = append(routeHosts, host)
+			}
+			sort.Strings(routeHosts)
+			metadata[metadataKeyKombifyMeRouteHosts] = strings.Join(routeHosts, ",")
+		}
 	}
 	if !canonicalV2 {
 		metadata["validation_authority"] = "compatibility-fixture"
@@ -305,6 +315,15 @@ func prepareCanonicalStackKitCLI(
 	if err := json.Unmarshal(addressPlanOutput, &addressPlan); err != nil {
 		return "", nil, managedAddressBinding{}, fmt.Errorf("decode StackKits address plan: %w", err)
 	}
+	zone := ""
+	if addressPlan.Provider == "external" && strings.HasSuffix(addressPlan.Domain, "."+addressModeKombifyMeDomain) {
+		zone = addressPlan.Domain
+		var zoneErr error
+		addressPlan, zoneErr = normalizeRegisteredZonePlan(addressPlan, zone)
+		if zoneErr != nil {
+			return "", nil, managedAddressBinding{}, zoneErr
+		}
+	}
 	if addressPlan.Provider != addressModeKombifyMe {
 		return executedSpecPath, commonArgs, managedAddressBinding{}, nil
 	}
@@ -312,9 +331,44 @@ func prepareCanonicalStackKitCLI(
 	if identityErr != nil {
 		return "", nil, managedAddressBinding{}, identityErr
 	}
+	if zone != "" {
+		origin, err := managedAddressOrigin(req.RuntimeTarget)
+		if err != nil {
+			return "", nil, managedAddressBinding{}, err
+		}
+		if err := verifyExistingManagedAddress(runCtx, addressPlan, address, origin); err != nil {
+			return "", nil, managedAddressBinding{}, err
+		}
+	}
 	binding, bindErr := allocateManagedAddressPlan(runCtx, addressPlan, req.RuntimeTarget, address)
 	if bindErr != nil {
 		return "", nil, managedAddressBinding{}, bindErr
+	}
+	if zone != "" && (binding.Zone != zone || binding.Prefix != addressPlan.SubdomainPrefix) {
+		return "", nil, managedAddressBinding{}, fmt.Errorf("recovery changed its installation address binding")
+	}
+	if zone != "" {
+		// The released BindZone operation allocates a zone beneath the input
+		// domain. This candidate already names that exact owned zone; binding
+		// again would change PocketID's immutable origin to a nested zone.
+		for _, service := range addressPlan.Services {
+			if binding.Hosts[service.ServiceKey] != service.Host {
+				return "", nil, managedAddressBinding{}, fmt.Errorf("registered service differs from its bound candidate host")
+			}
+		}
+		raw, err := os.ReadFile(executedSpecPath) // #nosec G304 -- validated candidate is confined to the renderer workspace.
+		if err != nil {
+			return "", nil, managedAddressBinding{}, err
+		}
+		persister, err := unifier.NewSpecPersisterWithPath(workDir)
+		if err != nil {
+			return "", nil, managedAddressBinding{}, err
+		}
+		boundSpecPath, err := persister.SaveBoundStackSpecSnapshotBytes(raw)
+		if err != nil {
+			return "", nil, managedAddressBinding{}, err
+		}
+		return boundSpecPath, []string{"--no-log", "--chdir", workDir, "--spec", filepath.Base(boundSpecPath)}, binding, nil
 	}
 	boundSpecPath := filepath.Join(workDir, "stack-spec.address-bound.v2.json")
 	bindFlag := "--prefix"
@@ -433,19 +487,6 @@ func ensureStackKitCLIWorkspace(workDir, stackKitsDir, stackKit string) error {
 		}
 	}
 	return nil
-}
-
-func stackKitCLIWorkspaceReady(stackKitsDir, stackKit string) bool {
-	root, err := cleanRequiredDir(stackKitsDir, "StackKits source directory")
-	if err != nil {
-		return false
-	}
-	for _, name := range []string{stackKit, "modules", "base"} {
-		if _, err := os.Stat(filepath.Join(root, name)); err != nil {
-			return false
-		}
-	}
-	return true
 }
 
 func ensureWorkspaceSymlink(workDir, name, target string) error {

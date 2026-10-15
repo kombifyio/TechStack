@@ -1074,7 +1074,7 @@ func ownerSpecCanonicalFixture(t *testing.T) (crudRouteHandlers, ownerSpecBootst
 		t.Fatalf("CreateStack: %v", err)
 	}
 	if _, err := store.UpsertWalletItem(t.Context(), controlplane.WalletItem{
-		ID: "stack-1:" + recoveryWalletServiceID, TenantID: "owner-1", StackID: "stack-1", Metadata: map[string]any{"secret": testRecoveryPassphraseHash},
+		ID: "stack-1:" + recoveryWalletServiceID, TenantID: "owner-1", StackID: "stack-1", Metadata: map[string]any{"owner_id": "owner-1", "secret": testRecoveryPassphraseHash},
 	}); err != nil {
 		t.Fatalf("UpsertWalletItem: %v", err)
 	}

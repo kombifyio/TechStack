@@ -66,7 +66,9 @@
     {tr("ui.substrateEnrollment.theHypervisorHostsYourNodes")}
   </p>
   <button
-    class="rounded-lg bg-primary px-4 py-2 text-primary-foreground disabled:opacity-50"
+    data-kx="control"
+    data-variant="primary"
+    class="rounded-lg px-4 py-2 disabled:opacity-50"
     disabled={pending}
     onclick={prepare}
   >

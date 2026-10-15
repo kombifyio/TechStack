@@ -15,12 +15,13 @@ import (
 )
 
 type putStackRoutingRequest struct {
-	ServerID      string                  `json:"server_id"`
-	LeaseID       string                  `json:"lease_id,omitempty"`
-	Mode          string                  `json:"mode"`
-	Domain        string                  `json:"domain"`
-	Provenance    stackrouting.Provenance `json:"provenance"`
-	EnsureRollout bool                    `json:"ensure_rollout"`
+	ServerID      string                     `json:"server_id"`
+	LeaseID       string                     `json:"lease_id,omitempty"`
+	Mode          string                     `json:"mode"`
+	Domain        string                     `json:"domain"`
+	Provenance    stackrouting.Provenance    `json:"provenance"`
+	Expectations  *stackrouting.Expectations `json:"expectations,omitempty"`
+	EnsureRollout bool                       `json:"ensure_rollout"`
 }
 
 func (h crudRouteHandlers) getStackRouting(e *httpx.Event) error {
@@ -68,6 +69,7 @@ func (h crudRouteHandlers) putStackRouting(e *httpx.Event) error {
 		Mode:          req.Mode,
 		Domain:        req.Domain,
 		Provenance:    req.Provenance,
+		Expectations:  req.Expectations,
 		EnsureRollout: req.EnsureRollout,
 	}, stackrouting.MutationOptions{
 		IdempotencyKey:   e.Request.Header.Get("Idempotency-Key"),

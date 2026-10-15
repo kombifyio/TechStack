@@ -26,20 +26,24 @@ const (
 //
 // Pipeline: Pre-Validation → StackKit Resolution → Add-On Detection → Unifier Engine
 type StackKitResolver struct {
-	availableKits map[string]bool // Set of available kit names
-	kitList       []string        // Ordered list for iteration
+	availableKits  map[string]bool // Set of available kit names
+	kitList        []string        // Ordered list for iteration
+	authorityError error
 }
 
 // NewStackKitResolver creates a new StackKit resolver.
 func NewStackKitResolver(availableKits []string) *StackKitResolver {
+	var authorityError error
 	if availableKits == nil {
-		availableKits = DiscoverAvailableStackKits(DefaultStackKitsDir())
+		availableKits, authorityError = releasedStackKitNames()
 	}
-	availableKits = append(availableKits, DefaultKnownStackKits()...)
 
 	kitSet := make(map[string]bool, len(availableKits))
 	kitList := make([]string, 0, len(availableKits))
 	for _, kit := range availableKits {
+		if kit == "" {
+			continue
+		}
 		kit = CanonicalStackKitName(kit)
 		if kit == "" || !IsSupportedProductStackKit(kit) {
 			continue
@@ -50,16 +54,10 @@ func NewStackKitResolver(availableKits []string) *StackKitResolver {
 		kitSet[kit] = true
 		kitList = append(kitList, kit)
 	}
-	if len(kitList) == 0 {
-		for _, kit := range DefaultKnownStackKits() {
-			kitSet[kit] = true
-			kitList = append(kitList, kit)
-		}
-	}
-
 	return &StackKitResolver{
-		availableKits: kitSet,
-		kitList:       kitList,
+		availableKits:  kitSet,
+		kitList:        kitList,
+		authorityError: authorityError,
 	}
 }
 
@@ -78,6 +76,9 @@ type ResolveResult struct {
 // If spec.Kit is already set (Techie-Path), it validates and returns it.
 // If spec.Kit is empty (Easy-Path), it auto-selects based on spec content.
 func (r *StackKitResolver) Resolve(spec *core.KombinationSpec) *ResolveResult {
+	if r.authorityError != nil {
+		return &ResolveResult{Reason: "StackKits metadata could not be read", Warnings: []string{r.authorityError.Error()}}
+	}
 	// Techie-Path: User already selected a StackKit
 	if spec.Kit != "" {
 		return r.validateUserSelection(spec.Kit)

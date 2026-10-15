@@ -1,4 +1,44 @@
 export const ar: Record<string, string> = {
+  "ui.clientLocal.bootstrapPassword": "كلمة مرور التهيئة",
+  "ui.clientLocal.bootstrapGuidance":
+    "شغّل {command} في طرفية على مضيف هذا التثبيت للحصول على كلمة مرور التهيئة. إذا استُخدمت كلمة مرور سابقة أو انتهت صلاحيتها، يستبدلها الأمر وتتوقف كلمة المرور القديمة عن العمل.",
+  "setupReplay.restart": "إعادة الإعداد",
+  "setupReplay.title": "اتصالك الحالي",
+  "setupReplay.body":
+    "راجع طريقة اتصال هذا الجهاز ثم أعد مشاهدة المقدمة. تبقى مسودة إعداداتك هنا.",
+  "setupReplay.edition": "إصدار المثبّت",
+  "setupReplay.localEdition": "Techstack Local",
+  "setupReplay.cloudEdition": "Techstack Cloud",
+  "setupReplay.connection": "الاتصال",
+  "setupReplay.address": "العنوان",
+  "setupReplay.browser": "متصفح الويب",
+  "setupReplay.unavailable":
+    "تعذرت قراءة اتصال سطح المكتب. يمكنك الانتقال إلى المقدمة.",
+  "setupReplay.skip": "تخطي الإعداد",
+  "setupReplay.keep": "الاحتفاظ بالاتصال",
+  "ui.services.stackIt": "Stack it",
+  "ui.services.approveStackIt": "الموافقة على هذا التبنّي",
+  "ui.services.releaseBinding": "إلغاء إدارة دورة الحياة",
+  "ui.services.adoptionScope":
+    "راجع حاوية Home Assistant الحالية لإدارة دورة حياتها في مكانها. لا يدعم هذا الملف تطبيقات أخرى أو النقل إلى Node آخر.",
+  "ui.services.adoptionSource": "الحاوية الحالية",
+  "ui.services.adoptionData": "الإعدادات المحفوظة",
+  "ui.services.adoptionPreserves":
+    "تبقى الحسابات والإعدادات والبيانات الدائمة مع هذا التطبيق. لا تُعاد إنشاء بيئة التشغيل ولا يُهيّأ أي حساب.",
+  "ui.services.adoptionOperations":
+    "يتيح الربط المعتمد التحقق والتشغيل والإيقاف وإعادة التشغيل. يتطلب تحديث التطبيق أو إعادة إنشائه خطة أخرى مدعومة.",
+  "ui.services.adoptionProgress": "عرض تقدم العملية",
+  "ui.services.adoptionChecking": "جارٍ التحقق من العملية المحفوظة",
+  "ui.services.adoptionFailed":
+    "لم تكتمل العملية. راجع أدلتها قبل المحاولة مجددًا.",
+  "ui.services.adoptionUnavailable":
+    "لتقييم التبنّي، يحتاج هذا المصدر إلى هوية دقيقة للحاوية وإصدار منشور ومتوافق من StackKits على Guard المتصل به.",
+  "ui.services.adoptionVerified":
+    "تم التحقق من ربط دورة الحياة. أصبح التطبيق الآن Stacked.",
+  "ui.services.releasePreservesRuntime":
+    "ألغِ ربط دورة الحياة. تبقى الحاوية الحالية والحسابات والإعدادات والبيانات في مكانها وبحالتها الحالية.",
+  "ui.services.bindingReleased":
+    "تم إلغاء ربط دورة الحياة. يظل التطبيق ظاهرًا بوصفه Unstacked.",
   "wizard.identity.eyebrow": "مفتاح أخير",
   "wizard.identity.title": "اجعل هذا المنزل منزلك.",
   "wizard.identity.ready": "تسجيل الدخول جاهز.",
@@ -294,6 +334,8 @@ export const ar: Record<string, string> = {
   "ui.dashboard.alerts": "التنبيهات",
   "ui.common.importExport": "استيراد / تصدير",
   "ui.dashboard.sections": "أقسام Homelab",
+  "ui.dashboard.failureDetails": "التفاصيل",
+  "ui.dashboard.hideFailureDetails": "إخفاء التفاصيل",
   "ui.dashboard.inventoryUnavailable":
     "حالة Node والخدمات المعتمدة غير متاحة. بيانات القياس المحفوظة أدناه للتشخيص ولا تُعامل كجرد فارغ.",
   "ui.dashboard.noNodes": "لا توجد Nodes مسجلة لهذا الـ Homelab بعد.",
@@ -373,6 +415,10 @@ export const ar: Record<string, string> = {
   "ui.theme.toggle": "تبديل السمة الداكنة/الفاتحة",
   "ui.layout.toggleMenu": "تبديل القائمة",
   "ui.layout.closeMenu": "إغلاق القائمة",
+  "ui.layout.collapseSidebar": "طي الشريط الجانبي",
+  "ui.layout.expandSidebar": "توسيع الشريط الجانبي",
+  "ui.layout.resizeSidebar": "تغيير حجم الشريط الجانبي",
+  "ui.layout.sidebarCollapsed": "مطوي",
   "ui.redirect.homelab": "جارٍ التوجيه إلى Homelab الخاص بك...",
   "ui.redirect.generic": "جارٍ التوجيه...",
   "ui.sso.signingIn": "جارٍ تسجيل دخولك...",
@@ -432,7 +478,14 @@ export const ar: Record<string, string> = {
   "wizard.preview.mail.existing": "الإبقاء على مزوّدي الحالي",
   "wizard.preview.game.description": "عالم Minecraft لك ولأصدقائك.",
   "wizard.preview.game.help":
-    "تستخدم تجربة الألعاب المخططة Pterodactyl لإدارة عالم Minecraft دائم. اختر Java أو Bedrock بما يناسب لاعبيك. الاستضافة المحلية وVPS المُدار خياران منفصلان للموضع؛ والدعوات واستعادة العالم جزء من الإعداد.",
+    "تعمل الألعاب على لوحة ألعاب تدير عالم Minecraft دائمًا: Calagopus افتراضيًا، مع Pelican وPterodactyl كبديلين. اختر Java أو Bedrock بما يناسب لاعبيك. الاستضافة المحلية وVPS المُدار خياران منفصلان للموضع؛ والدعوات واستعادة العالم جزء من الإعداد.",
+  "wizard.status.beta": "تجريبي",
+  "wizard.status.experimental": "اختباري",
+  "wizard.status.deprecated": "مهمل",
+  "wizard.status.supported": "مدعوم",
+  "wizard.status.hint":
+    "حالة الإصدار من إصدار StackKits المثبت. حالات الاستخدام التجريبية قابلة للتثبيت ولا تزال قيد التحقق.",
+  "wizard.preview.release": "StackKits {tag}",
   "wizard.preview.game.edition": "إصدار Minecraft",
   "wizard.preview.dev.description": "مشاريعك ومساحة عملك عن بُعد، معًا.",
   "wizard.preview.dev.help":
@@ -470,8 +523,6 @@ export const ar: Record<string, string> = {
   "wizard.preview.title": "افسح مكانًا لما يهم.",
   "wizard.preview.subtitle":
     "اختر ما تريد أن تجعله لك. ابدأ بالخدمة المقترحة أو اختر بديلًا. التفاصيل موجودة عندما تحتاج إليها.",
-  "wizard.preview.available": "اختر حالات الاستخدام",
-  "wizard.preview.availableHint": "اختر حالة استخدام. واجعلها لك.",
   "wizard.preview.defaultService": "مقترح",
   "wizard.preview.alternative": "بديل",
   "wizard.preview.savedForLater": "محفوظ لوقت لاحق",
@@ -574,7 +625,7 @@ export const ar: Record<string, string> = {
   "wizard.server.hypervisor.help":
     "يستخدم Proxmox المتصل لديك وتخزينه وشبكته الحاليين.",
   "wizard.server.hypervisor.standard":
-    "يشغّل Ubuntu 24.04 LTS نواة StackKits لديك في جهاز افتراضي منفصل. يجهّز Techstack الضيف ويربطه تلقائيًا.",
+    "يشغّل Ubuntu LTS نواة StackKits لديك في جهاز افتراضي منفصل. يجهّز Techstack الضيف ويربطه تلقائيًا.",
   "wizard.server.hypervisor.appliance":
     "يستخدم Home Assistant OS جهازًا افتراضيًا منفصلًا. يواصل ضيف Ubuntu تشغيل النواة والخدمات الأخرى.",
   "wizard.server.hypervisor.host": "خادم Proxmox المتصل",
@@ -607,12 +658,15 @@ export const ar: Record<string, string> = {
   "nav.dashboard": "لوحة التحكم",
   "nav.monitoring": "المراقبة",
   "nav.services": "الخدمات",
+  "nav.apps": "التطبيقات",
   "nav.wallet": "Wallet",
   "nav.help": "المساعدة",
   "nav.settings": "الإعدادات",
   "nav.logout": "تسجيل الخروج",
   "nav.theme": "السمة",
   "appearance.inherit": "اتباع الافتراضي",
+  "appearance.sessionHint":
+    "لهذه الجلسة فقط. غيّر الإعداد الافتراضي في إعدادات kombify Cloud.",
   "appearance.dark": "داكن",
   "appearance.light": "فاتح",
   "appearance.system": "النظام",
@@ -722,12 +776,52 @@ export const ar: Record<string, string> = {
   "common.moreInfo": "المزيد عن هذا الخيار",
   "common.recommended": "موصى به",
   "wizard.title": "إنشاء kombify-Techstack",
-  "wizard.selfDisclosure.applying":
-    "جارٍ تطبيق ما أخبرتنا به في kombify Cloud…",
+  "wizard.selfDisclosure.review.title":
+    "هل تريد استخدام الإجابات الواردة في هذا الرابط؟",
+  "wizard.selfDisclosure.review.body":
+    "يحتوي الرابط الذي فتحته على هذه الإجابات عنك. لا يحفظها Techstack في ملفك الشخصي ولا يستخدمها في توصياتك إلا إذا اخترت «استخدام هذه الإجابات». لم يُحفظ أي شيء بعد.",
+  "wizard.selfDisclosure.review.notes": "هل هناك شيء آخر؟ (اختياري)",
+  "wizard.selfDisclosure.review.notesHint":
+    "تفاصيل الأجهزة أو رغبات خاصة أو ما يقلقك، بكلماتك الخاصة.",
+  "wizard.selfDisclosure.review.use": "استخدام هذه الإجابات",
+  "wizard.selfDisclosure.review.discard": "تجاهل",
+  "wizard.selfDisclosure.applying": "جارٍ حفظ إجاباتك…",
   "wizard.selfDisclosure.applied":
-    "استخدمنا ما أخبرتنا به في kombify Cloud. يبقى كل شيء قابلًا للتعديل.",
+    "حُفظت إجاباتك في ملفك الشخصي. يبقى كل شيء قابلًا للتعديل.",
   "wizard.selfDisclosure.failed":
-    "تعذّر حفظ إجاباتك من kombify Cloud. يمكنك المتابعة؛ يعمل المعالج بدونها.",
+    "تعذّر حفظ إجاباتك. يمكنك المتابعة؛ يعمل المعالج بدونها.",
+  "wizard.selfDisclosure.question.experience":
+    "إلى أي مدى تريد أن تتدخل بنفسك؟",
+  "wizard.selfDisclosure.question.goals": "ماذا يجب أن يفعل مختبرك المنزلي؟",
+  "wizard.selfDisclosure.question.placement": "أين يجب أن يعمل؟",
+  "wizard.selfDisclosure.question.hardware": "ما الأجهزة التي تملكها؟",
+  "wizard.selfDisclosure.question.household": "من سيستخدمه؟",
+  "wizard.selfDisclosure.question.motivations": "لماذا تبنيه؟",
+  "wizard.selfDisclosure.experience.hands-off": "فقط اجعله يعمل",
+  "wizard.selfDisclosure.experience.guided": "أرشدني",
+  "wizard.selfDisclosure.experience.curious": "مدير فضولي",
+  "wizard.selfDisclosure.experience.techie": "مهتم بالتقنية",
+  "wizard.selfDisclosure.experience.expert": "خبير",
+  "wizard.selfDisclosure.placement.home": "في المنزل",
+  "wizard.selfDisclosure.placement.rented": "على خادم مستأجر",
+  "wizard.selfDisclosure.placement.both": "كلاهما",
+  "wizard.selfDisclosure.placement.unsure": "لست متأكدًا بعد",
+  "wizard.selfDisclosure.hardware.none-yet": "لا شيء بعد",
+  "wizard.selfDisclosure.hardware.old-pc": "حاسوب أو لابتوب قديم",
+  "wizard.selfDisclosure.hardware.mini-pc": "حاسوب مصغّر (Mini PC)",
+  "wizard.selfDisclosure.hardware.nas": "جهاز NAS",
+  "wizard.selfDisclosure.hardware.raspberry-pi": "جهاز Raspberry Pi",
+  "wizard.selfDisclosure.hardware.rented-server": "خادم مستأجر",
+  "wizard.selfDisclosure.household.just-me": "أنا فقط",
+  "wizard.selfDisclosure.household.household": "أسرتي",
+  "wizard.selfDisclosure.household.friends-family": "العائلة والأصدقاء",
+  "wizard.selfDisclosure.household.small-team": "فريق صغير",
+  "wizard.selfDisclosure.motivation.privacy": "الخصوصية والتحكم",
+  "wizard.selfDisclosure.motivation.replace-subscriptions":
+    "استبدال الاشتراكات المدفوعة",
+  "wizard.selfDisclosure.motivation.learning": "التعلّم والتجريب",
+  "wizard.selfDisclosure.motivation.family": "شيء لعائلتي",
+  "wizard.selfDisclosure.motivation.projects": "العمل أو المشاريع الجانبية",
   "wizard.step.goals": "الأهداف",
   "wizard.step.server": "Node",
   "wizard.step.access": "الوصول",
@@ -826,11 +920,11 @@ export const ar: Record<string, string> = {
     "توصية: استخدم وكيلًا عكسيًا (Traefik) لـ SSL. تتطلب استضافة البريد حماية جيدة من الرسائل المزعجة.",
   "wizard.goals.everything.title": "إلى اللانهاية وما بعدها!",
   "wizard.goals.everything.description":
-    "الحل الكامل لأقصى استقلالية. افعل كل شيء دفعة واحدة وأكثر.",
+    "المختبر المنزلي الكامل بنقرة واحدة: كل ما يناسبك ويناسب أجهزتك.",
   "wizard.goals.everything.help":
     "يفعّل التخزين واستضافة الويب والمراقبة وغيرها.",
   "wizard.goals.everything.tip":
-    "توصية: الأنسب للمستخدمين ذوي الخبرة أو إن كان لديك عتاد مخصص جاهز.",
+    "نختار ما يناسب خبرتك وعتادك. يمكنك إلغاء أي اختيار.",
   "wizard.goals.tipText":
     "إن لم تكن متأكدًا، اختر هدفًا واحدًا فقط. يبقى kombify-Techstack نظامًا واحدًا ويمكنك إضافة المزيد من الخدمات لاحقًا. تحتاج إلى مزيد من الإعدادات؟ جرّب الإعدادات المتقدمة أدناه.",
   "wizard.goals.advancedTitle": "حالات استخدام متقدمة",
@@ -985,6 +1079,45 @@ export const ar: Record<string, string> = {
     "اختر كيف يتصل هذا الجهاز. يبقى وصول Homelab والأشخاص وتسجيل الدخول كما هي.",
   "wizard.step.inherited": "مضبوط مسبقًا لـ Homelab الخاص بك",
   "wizard.step.existingOwner": "يبقى مالك Homelab كما هو",
+  "wizard.addApp.title": "إضافة تطبيق",
+  "wizard.addApp.intro":
+    "اختر تطبيقًا والـ Node الذي يعمل عليه. يبقى الوصول والأشخاص وتسجيل الدخول كما هي في Homelab الخاص بك.",
+  "wizard.addApp.catalogEmpty":
+    "لا يقدم الكتالوج أي تطبيق لهذا الـ Homelab بعد.",
+  "wizard.addApp.recommended": "موصى به",
+  "wizard.addApp.about": "نبذة",
+  "wizard.addApp.nodeTitle": "أين يجب أن يعمل {name}؟",
+  "wizard.addApp.nodeUnsupported":
+    "لا يوفر StackKit الخاص بهذا الـ Node التطبيق {name}.",
+  "wizard.addApp.nodeNotReady": "غير جاهز للنشر بعد",
+  "wizard.addApp.submit": "إضافة تطبيق",
+  "wizard.addApp.result": "تمت إضافة {name} إلى {node}.",
+  "wizard.addApp.resultStatus": "الحالة: {status}",
+  "wizard.addApp.done": "تم",
+  "wizard.settings.title": "إعدادات Homelab",
+  "wizard.settings.intro":
+    "غيّر من يستخدم Homelab الخاص بك وكيف تسجّل الدخول. كل خطوة تؤثر فورًا على Homelab الذي يعمل.",
+  "wizard.settings.entry":
+    "الأشخاص وتسجيل الدخول في Homelab الخاص بك، في خطوات المعالج المعروفة.",
+  "wizard.settings.open": "تعديل إعدادات Homelab",
+  "wizard.settings.loadError": "تعذّر تحميل Homelab الخاص بك.",
+  "wizard.settings.empty": "لم يتم إعداد أي Homelab بعد.",
+  "wizard.settings.deployment": "نشر StackKit",
+  "wizard.settings.goalsElsewhere": "أضف التطبيقات عبر إضافة تطبيق.",
+  "wizard.settings.serverElsewhere": "أضف الخوادم عبر إضافة Node.",
+  "wizard.settings.accessUnsupported":
+    "لا يمكن تغيير الوصول لـ Homelab يعمل بعد.",
+  "wizard.settings.openAddApplication": "إضافة تطبيق",
+  "wizard.settings.openAddNode": "إضافة Node",
+  "wizard.settings.usersTitle": "الأشخاص",
+  "wizard.settings.usersIntro":
+    "ادعُ الأشخاص الذين خططت لهم لهذا الـ Homelab. يحصل كل منهم على رابط تسجيل دخول شخصي.",
+  "wizard.settings.loginTitle": "تسجيل الدخول",
+  "wizard.settings.loginIntro":
+    "فعّل تسجيل الدخول بمفتاح المرور، أو أصدر رابطًا جديدًا إذا انتهت صلاحية الرابط الأخير.",
+  "wizard.settings.noPlannedPeople":
+    "لم يتم التخطيط لأي أشخاص لهذا الـ Homelab. إضافة أشخاص جدد هنا غير مدعومة بعد.",
+  "wizard.settings.members": "الأعضاء",
   "wizard.server.cloud.title": "kombify VPS",
   "wizard.server.cloud.description":
     "خادمك الافتراضي الخاص، يوفّره kombify ويربطه.",
@@ -1529,6 +1662,10 @@ export const ar: Record<string, string> = {
   "ui.footerModern.madeWith": "صُنع بـ",
   "ui.footerModern.privacy": "الخصوصية",
   "ui.footerModern.terms": "الشروط",
+  "ui.groupedTaskList.aboutMinutes": "~{count} د",
+  "ui.groupedTaskList.aboutSeconds": "~{count} ث",
+  "ui.groupedTaskList.longerThanUsual": "يستغرق وقتًا أطول قليلًا من المعتاد",
+  "ui.groupedTaskList.usually": "عادةً {duration}",
   "ui.groupedTaskList.done": "تم",
   "ui.homelab.agentVersions.one": "إصدار Agent المُبلَّغ عنه: {versions}.",
   "ui.homelab.agentVersions.other": "إصدارات Agent المُبلَّغ عنها: {versions}.",
@@ -1876,10 +2013,41 @@ export const ar: Record<string, string> = {
   "ui.nodeActions.canonicalManagedAccessIsNot":
     "الوصول المُدار المرجعي غير متاح بعد.",
   "ui.nodeActions.connection": "اتصال Node: {state}",
-  "ui.nodeRow.hideSystemServices": "إخفاء خدمات النظام",
-  "ui.nodeRow.showFewerApps": "عرض تطبيقات أقل",
   "ui.nodeRow.systemServices.one": "عدد خدمات النظام: {count}",
   "ui.nodeRow.systemServices.other": "عدد خدمات النظام: {count}",
+  "ui.nodeActions.menu": "إجراءات {node}",
+  "ui.nodeMessage.idle": "لا توجد رسائل مفتوحة",
+  "ui.nodeMessage.needsAttention": "هذا الـ Node يحتاج إلى انتباه",
+  "ui.nodeMessage.panel": "رسائل {node}",
+  "ui.nodeMessage.listPanel": "رسائل حول قائمة Node",
+  "ui.nodeRow.moreServices": "+ {count} أخرى",
+  "ui.apps.description":
+    "كل ما تفتحه عبر واجهة على خوادمك. تعرض صفحة الخدمات كل خدمة مع إعداداتها.",
+  "ui.apps.view": "العرض",
+  "ui.apps.viewList": "قائمة",
+  "ui.apps.viewLogos": "الشعارات",
+  "ui.apps.viewCards": "بطاقات",
+  "ui.apps.loading": "جارٍ تحميل التطبيقات…",
+  "ui.apps.unavailable": "تعذّر تحميل التطبيقات. حاول مرة أخرى بعد قليل.",
+  "ui.apps.empty": "لم يُعثر بعد على تطبيقات ذات واجهة على خوادمك.",
+  "ui.nodeRow.openApp": "فتح {app}",
+  "ui.nodeRow.appDetails": "تفاصيل {app}",
+  "ui.nodeRow.appLogs": "سجلات {app}",
+  "ui.nodeRow.copyAddress": "نسخ عنوان {app}",
+  "ui.nodeRow.addressCopied": "تم نسخ العنوان",
+  "ui.nodeRow.placementManaged": "مُدار",
+  "ui.nodeRow.stackIt": "إضافة إلى الحزمة",
+  "ui.nodeRow.copyFailed": "تعذّر نسخ العنوان",
+  "ui.nodeRow.moreActions": "إجراءات أخرى لـ {app}",
+  "ui.nodeRow.update": "تحديث",
+  "ui.nodeRow.backupNow": "إنشاء نسخة احتياطية الآن",
+  "ui.appSheet.guide": "دليل {app}",
+  "ui.appSheet.downloadFor": "تنزيل لنظام {platform}",
+  "ui.appSheet.donate": "تبرع",
+  "ui.appSheet.sponsor": "رعاية",
+  "ui.appSheet.purchase": "شراء ترخيص",
+  "ui.appSheet.fullDetails": "فتح تفاصيل الخدمة",
+  "ui.nodeRow.moreLabel": "مزيد من التطبيقات والخدمات على {node}",
   "ui.ownerState.connectYourKombifyCloudProfile":
     "اربط ملف kombify Cloud الشخصي (ببريد إلكتروني موثّق) لاستخدامه كمالك",
   "ui.ownerState.couldNotHashTheRecovery":
@@ -2104,6 +2272,21 @@ export const ar: Record<string, string> = {
   "ui.providerErrors.stackkitCliGenerateFailed":
     "فشل أمر generate في StackKit CLI",
   "ui.providerErrors.stackkitFilesMissing": "ملفات StackKit مفقودة",
+  "ui.providerErrors.originCertificateFailed":
+    "تعذّر إعداد شهادة HTTPS لهذا الخادم",
+  "ui.providerErrors.originCertificateFailedDetails":
+    "الخادم جاهز ومتصل. فشل إصدار شهادة HTTPS لعنوانه المُدار أو تثبيتها.",
+  "ui.providerErrors.originCertificateIfItRepeats":
+    "إذا فشلت الشهادة مرة أخرى، فراجع تفاصيل الخطأ في آخر تشغيل.",
+  "ui.providerErrors.originCertificateRestartReusesServer":
+    "أعد تشغيل الطرح. يعيد استخدام الخادم نفسه ولا ينشئ خادمًا جديدًا.",
+  "ui.providerErrors.setupStoppedResponding": "توقف الإعداد عن الاستجابة",
+  "ui.providerErrors.setupStoppedRespondingDetails":
+    "الخادم متاح، لكن الإعداد عليه توقف عن الإبلاغ عن التقدم وتم إنهاؤه. قد يكون الإعداد مكتملًا جزئيًا.",
+  "ui.providerErrors.setupStoppedRespondingRepeats":
+    "إذا توقف عن الاستجابة مرة أخرى، فراجع تفاصيل الخطأ في آخر تشغيل.",
+  "ui.providerErrors.setupStoppedRespondingRestart":
+    "أعد تشغيل الإعداد. سيتابع على الخادم نفسه ولا ينشئ خادمًا جديدًا.",
   "ui.providerErrors.stackkitRolloutCouldNotBe": "تعذّر تطبيق طرح StackKit",
   "ui.providerErrors.stackkitsArtifactGenerationFailed":
     "فشل إنشاء نواتج StackKits",
@@ -2270,6 +2453,8 @@ export const ar: Record<string, string> = {
   "ui.serverAccessActions.copySshCommand": "نسخ أمر SSH",
   "ui.serverAccessActions.installPublicKey": "تثبيت المفتاح العام",
   "ui.serverAccessActions.noSshKeyInThe": "لا يوجد مفتاح SSH في Wallet بعد.",
+  "ui.serverAccessActions.stepUpBody":
+    "يتطلب التصريح بمفتاح SSH تأكيدًا جديدًا لتسجيل الدخول. يُفتح في نافذة جديدة ويستغرق ثوانيَ قليلة.",
   "ui.serverAccessActions.openTerminal": "فتح الطرفية",
   "ui.serverAccessActions.sshCommandIsUnavailable": "أمر SSH غير متاح",
   "ui.serverAccessActions.terminalAccessIsUnavailable":
@@ -2341,6 +2526,20 @@ export const ar: Record<string, string> = {
     "تغذي هذه الاختيارات عقد Service Registry نفسه الذي تستخدمه إدارة الخدمات.",
   "ui.serverRegistryPanel.thisNodeJoinsTheExisting":
     "ينضم Node هذا إلى StackKit الحالي. الأساس مرتبط بالفعل.",
+  "ui.serverTerminalModal.stepUpBody":
+    "يتطلب فتح الطرفية تأكيدًا جديدًا لتسجيل الدخول. يُفتح في نافذة جديدة ويستغرق ثوانيَ قليلة.",
+  "ui.stepUp.blocked": "حظر المتصفح النافذة الجديدة.",
+  "ui.stepUp.blockedLink": "فتح تأكيد تسجيل الدخول",
+  "ui.stepUp.checking": "جارٍ التحقق…",
+  "ui.stepUp.confirm": "تأكيد تسجيل الدخول",
+  "ui.stepUp.doneBody":
+    "يمكنك إغلاق هذه النافذة والعودة إلى kombify Techstack.",
+  "ui.stepUp.doneTitle": "تم تأكيد تسجيل الدخول",
+  "ui.stepUp.notConfirmed":
+    "لم يصل التأكيد بعد. أنهِه في النافذة الأخرى أو حاول مرة أخرى.",
+  "ui.stepUp.reopen": "فتح نافذة تسجيل الدخول مرة أخرى",
+  "ui.stepUp.title": "أكّد أنك أنت",
+  "ui.stepUp.waiting": "في انتظار التأكيد في النافذة الأخرى.",
   "ui.serverTerminalModal.invalidTerminalStreamResponse":
     "استجابة بث الطرفية غير صالحة",
   "ui.serverTerminalModal.terminalConnectionFailed": "فشل اتصال الطرفية",
@@ -2487,6 +2686,8 @@ export const ar: Record<string, string> = {
   "ui.services.nodeCapabilities": "إمكانات Node",
   "ui.services.nodeColumn": "عمود Node {name}",
   "ui.services.observed": "مُلاحَظ",
+  "ui.services.stacked": "Stacked",
+  "ui.services.unstacked": "Unstacked",
   "ui.services.observedTechnicalComponentsWithoutApplication":
     "مكوّنات تقنية مُلاحَظة بدون عناصر تحكم على مستوى التطبيق",
   "ui.services.observedUnmanagedApplicationsMustBe":
@@ -2669,7 +2870,6 @@ export const ar: Record<string, string> = {
   "ui.shortcutsHelp.esc": "Esc",
   "ui.shortcutsHelp.listNavigation": "التنقل في القوائم",
   "ui.shortcutsHelp.pageNavigation": "التنقل بين الصفحات",
-  "ui.sidebarNav.kombifyTechstack": "kombify-Techstack",
   "ui.sshKeygen.ed25519NotSupportedInThis":
     "Ed25519 غير مدعوم في هذا المتصفح. جرّب RSA بدلًا منه.",
   "ui.sshKeygen.unsupportedAlgorithm": "خوارزمية غير مدعومة: {algorithm}",
@@ -2725,9 +2925,37 @@ export const ar: Record<string, string> = {
     "ستتم إعادة توجيهك إلى صفحة الإعداد خلال لحظات.",
   "ui.stacksCreating.creatingStackkitDeploymentKombifyTechstack":
     "جارٍ إنشاء نشر StackKit | kombify-Techstack",
+  "ui.stacksCreating.leanBackBody":
+    "لقد أنجزت دورك. نحن نجهّز كل شيء لك الآن، وشيء رائع في الطريق.",
+  "ui.stacksCreating.leanBackTitle": "استرخِ، فنحن نصنع السحر من أجلك",
   "ui.stacksCreating.openOperations": "فتح العمليات",
   "ui.stacksCreating.reviewAndStartStackkitRollout":
     "مراجعة طرح StackKit وبدؤه",
+  "ui.stacksCreating.tips.codeBody":
+    "يُنشئ StackKits إعدادك من مخططات مُتحقق منها، فيصبح كل تغيير قابلًا للتكرار والتتبع.",
+  "ui.stacksCreating.tips.codeEyebrow": "البنية التحتية كشيفرة",
+  "ui.stacksCreating.tips.codeTitle": "مكدسك مكتوب كشيفرة",
+  "ui.stacksCreating.tips.growBody":
+    "أضف عقدة أخرى إلى هذا المكدس متى احتجت. ينسق Techstack خوادمك، ويواصل كل خادم العمل بشكل مستقل.",
+  "ui.stacksCreating.tips.growEyebrow": "التوسع",
+  "ui.stacksCreating.tips.growTitle": "مساحة للنمو",
+  "ui.stacksCreating.tips.label": "معلومة مفيدة",
+  "ui.stacksCreating.tips.next": "النصيحة التالية",
+  "ui.stacksCreating.tips.nextTitle": "ما الذي سيحدث بعد ذلك",
+  "ui.stacksCreating.tips.ownBody":
+    "يُشغّل StackKit النسخ الاحتياطي والاستعادة مباشرة على خادمك ويحتفظ بمفاتيحها هناك.",
+  "ui.stacksCreating.tips.ownEyebrow": "الاستقلالية",
+  "ui.stacksCreating.tips.ownTitle": "خادمك يقوم بالعمل",
+  "ui.stacksCreating.tips.previous": "النصيحة السابقة",
+  "ui.stacksCreating.tips.reachBody":
+    "تحصل كل عملية تثبيت على عنوانها الخاص – نطاقك أو اسم *.kombify.me – لتصل إليها من أي مكان، حتى على أجهزتك المحلية.",
+  "ui.stacksCreating.tips.reachEyebrow": "الوصول",
+  "ui.stacksCreating.tips.reachTitle": "متاح من أي مكان",
+  "ui.stacksCreating.tips.restoreBody":
+    "تتحقق المرحلة الأخيرة من خدماتك وتُجري تمرين استعادة، لتعرف أن نسخك الاحتياطية تعود فعلًا.",
+  "ui.stacksCreating.tips.restoreEyebrow": "النسخ الاحتياطي",
+  "ui.stacksCreating.tips.restoreTitle": "الاستعادة مُختبَرة لا مجرد وعد",
+  "ui.stacksCreating.tips.show": "عرض النصيحة {number} من {total}",
   "ui.stacksCreatingCreation-controller.additionalNode": "Node إضافي",
   "ui.stacksCreatingCreation-controller.afterFailedAttemptsTheBackend":
     "بعد {MAX_POLL_ERRORS} من المحاولات الفاشلة تعذّر الوصول إلى الخادم الخلفي. تواصل الصفحة المحاولة مع التراجع التدريجي؛ ويمكنك أيضًا التحقق من اتصال الشبكة وإعادة التحميل للمتابعة.",
@@ -2870,6 +3098,32 @@ export const ar: Record<string, string> = {
   "ui.stacksCreatingCreationCompletion.theOwnerSeedIsPrepared":
     "تم تجهيز بذرة المالك.",
   "ui.stacksCreatingCreationCompletion.yourNode": "Node الخاص بك",
+  "ui.groupedTaskList.needsAttention": "يحتاج إلى انتباه",
+  "ui.stacksCreatingCreationDegraded.titleOne":
+    "جاهز — جزء واحد يحتاج إلى انتباه",
+  "ui.stacksCreatingCreationDegraded.titleMany":
+    "جاهز — {count} أجزاء تحتاج إلى انتباه",
+  "ui.stacksCreatingCreationDegraded.subtitle":
+    "تم تثبيت الخادم والتطبيقات وهي تعمل.",
+  "ui.stacksCreatingCreationDegraded.publicTlsTitle": "وصول عام آمن",
+  "ui.stacksCreatingCreationDegraded.publicTlsMeaning":
+    "عنوان kombify.me الخاص بك غير مؤمَّن بعد. يصلحه kombify تلقائيًا.",
+  "ui.stacksCreatingCreationDegraded.genericTitle": "جزء من التثبيت",
+  "ui.stacksCreatingCreationDegraded.genericMeaning": "تعذّر إكمال هذا الجزء.",
+  "ui.stacksCreatingCreationDegraded.genericMeaningRepair":
+    "تعذّر إكمال هذا الجزء بعد. يصلحه kombify تلقائيًا.",
+  "ui.stacksCreatingCreationDegraded.reasonAcmeRateLimited":
+    "طلبت جهة إصدار الشهادات الانتظار. يعيد kombify المحاولة تلقائيًا.",
+  "ui.stacksCreatingCreationDegraded.repairScheduled": "تمت جدولة إصلاح تلقائي",
+  "ui.stacksCreatingCreationDegraded.repairScheduledAt":
+    "إصلاح تلقائي في {time}",
+  "ui.stacksCreatingCreationDegraded.repairRunning": "جارٍ الإصلاح…",
+  "ui.stacksCreatingCreationDegraded.repairDone": "تم الإصلاح",
+  "ui.stacksCreatingCreationDegraded.repairFailed": "فشل الإصلاح التلقائي",
+  "ui.stacksCreatingCreationDegraded.repairNow": "إصلاح الآن",
+  "ui.stacksCreatingCreationDegraded.repairNotAccepted": "لم يتم قبول الإصلاح.",
+  "ui.stacksCreatingCreationDegraded.askCompanionPrompt":
+    'انتهى إنشاء "{operation}"، لكن هذه الأجزاء تحتاج إلى انتباه: {components}. ماذا يعني هذا بالنسبة لي، وما الذي يجب أن أفعله بعد ذلك؟',
   "ui.stacksCreatingCreationFailure.anErrorOccurred": "حدث خطأ",
   "ui.stacksCreatingCreationFailure.checkYourNetworkConnection":
     "تحقق من اتصال الشبكة لديك",
@@ -2883,6 +3137,9 @@ export const ar: Record<string, string> = {
     "تأكد من أن خادم الواجهة الخلفية يعمل",
   "ui.stacksCreatingCreationFailure.nodeConnectionSucceeded": "نجح اتصال Node",
   "ui.stacksCreatingCreationFailure.operations": "العمليات",
+  "ui.stacksCreatingCreationFailure.askCompanion": "اسأل kombify",
+  "ui.stacksCreatingCreationFailure.askCompanionPrompt":
+    'فشل إنشاء "{operation}" في الخطوة "{step}" بهذا الخطأ:\n\n{error}\n\nما الذي حدث، وما الذي يجب أن أفعله بعد ذلك؟',
   "ui.stacksCreatingCreationFailure.possibleSolutions": "الحلول الممكنة:",
   "ui.stacksCreatingCreationFailure.resumePreviousAttempt":
     "استئناف المحاولة السابقة",
@@ -2958,11 +3215,16 @@ export const ar: Record<string, string> = {
     "أمر التثبيت الخاص بك جاهز. يُستخدم kombify-simulate كمعاينة تجريبية مؤقتة عند توفره، وهو محدود بساعة واحدة.",
   "ui.stacksCreatingCreationProgress.backToSetupWizard":
     "العودة إلى معالج الإعداد →",
+  "ui.stacksCreatingCreationProgress.checkAgain": "تحقق مرة أخرى",
   "ui.stacksCreatingCreationProgress.creationFailed": "فشل الإنشاء",
   "ui.stacksCreatingCreationProgress.nodeProvisioningIsStillIn":
     "لا يزال تجهيز Node قيد التنفيذ",
   "ui.stacksCreatingCreationProgress.pleaseWaitWhileWeRe":
     "يُرجى الانتظار بينما",
+  "ui.stacksCreatingCreationProgress.morphCompleting": "نُكمل",
+  "ui.stacksCreatingCreationProgress.morphConfiguring": "نُهيّئ",
+  "ui.stacksCreatingCreationProgress.morphDeploying": "ننشر",
+  "ui.stacksCreatingCreationProgress.morphValidating": "نتحقق",
   "ui.stacksCreatingCreationProgress.progress": "التقدم",
   "ui.stacksCreatingCreationProgress.rolloutIncomplete": "الطرح غير مكتمل",
   "ui.stacksCreatingCreationProgress.runThePairingCommand": "شغّل أمر الاقتران",
@@ -3001,7 +3263,6 @@ export const ar: Record<string, string> = {
   "ui.stacksCreatingCreationRunStatus.awaitingHeartbeat": "بانتظار النبض",
   "ui.stacksCreatingCreationRunStatus.checkSshHostCredentialsAnd":
     "تحقق من مضيف SSH وبيانات الاعتماد ومن قدرة الخادم على الوصول إلى Techstack.",
-  "ui.stacksCreatingCreationRunStatus.completed": "مكتمل",
   "ui.stacksCreatingCreationRunStatus.connectMyNode": "ربط Node الخاص بي",
   "ui.stacksCreatingCreationRunStatus.connectingToYourNodeOver":
     "جارٍ الاتصال بـ Node الخاص بك عبر SSH…",
@@ -3456,6 +3717,9 @@ export const ar: Record<string, string> = {
     "جارٍ حجز VM الاشتراك وربط بيئة التشغيل وتحضير القياس عن بُعد",
   "ui.taskStatus.rollOutCloudKit": "طرح Cloud Kit",
   "ui.taskStatus.rollingOutCloudKit": "جارٍ طرح Cloud Kit",
+  "ui.taskStatus.settingUpPart": "جارٍ إعداد الجزء {position} من {total}",
+  "ui.taskStatus.settingUpPartNamed":
+    "جارٍ إعداد الجزء {position} من {total}: {name}",
   "ui.taskStatus.runningRestoreDrill": "جارٍ تشغيل تدريب الاستعادة",
   "ui.taskStatus.runningSimulatedUpdateGate":
     "جارٍ تشغيل بوابة التحديث المحاكاة",

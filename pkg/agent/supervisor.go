@@ -30,6 +30,7 @@ type Supervisor struct {
 	pusher    *MetricsPusher
 	prechecks *PreCheckRunner
 	router    CommandRouter
+	progress  func()
 }
 
 // CommandRouter executes a queued command and returns its result. The default
@@ -46,7 +47,7 @@ type SupervisorConfig struct {
 	Logger *slog.Logger
 
 	// Backoff paces reconnect attempts. Defaults to NewBackoff()
-	// (1s base, factor 2, 5min cap, full jitter).
+	// (1s base, factor 2, 30s cap, full jitter).
 	Backoff *Backoff
 
 	// HeartbeatInterval overrides the Core-provided interval (0 = use config).
@@ -69,6 +70,12 @@ type SupervisorConfig struct {
 	// Router executes queued commands. Defaults to a diagnostics-only router
 	// backed by CommandExecutor.
 	Router CommandRouter
+
+	// Progress, when set, is called whenever the supervised loops advance:
+	// each supervisor iteration, each reconnect wait tick and each heartbeat
+	// attempt. A service watchdog uses it to tell a hung Guard from one that
+	// is merely disconnected.
+	Progress func()
 }
 
 // NewSupervisor validates the config and applies defaults.
@@ -109,7 +116,33 @@ func NewSupervisor(cfg SupervisorConfig) (*Supervisor, error) {
 		pusher:            cfg.Pusher,
 		prechecks:         cfg.PreChecks,
 		router:            router,
+		progress:          cfg.Progress,
 	}, nil
+}
+
+func (s *Supervisor) reportProgress() {
+	if s.progress != nil {
+		s.progress()
+	}
+}
+
+// waitReconnect waits for delay while reporting progress, so a long backoff is
+// not mistaken for a hang. It reports false when ctx ended.
+func (s *Supervisor) waitReconnect(ctx context.Context, delay time.Duration) bool {
+	deadline := time.NewTimer(delay)
+	defer deadline.Stop()
+	tick := time.NewTicker(10 * time.Second)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-deadline.C:
+			return true
+		case <-tick.C:
+			s.reportProgress()
+		}
+	}
 }
 
 // Run supervises the agent until the context is canceled. It never returns on
@@ -119,11 +152,13 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		s.client.SetResourceProvider(s.sampler.Snapshot)
 		go s.sampler.Run(ctx)
 	}
+	s.client.SetProgress(s.progress)
 
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		s.reportProgress()
 
 		started := time.Now()
 		err := s.runSession(ctx)
@@ -144,10 +179,8 @@ func (s *Supervisor) Run(ctx context.Context) error {
 			"attempt", s.backoff.Attempt(),
 		)
 
-		select {
-		case <-ctx.Done():
+		if !s.waitReconnect(ctx, delay) {
 			return ctx.Err()
-		case <-time.After(delay):
 		}
 	}
 }

@@ -2,28 +2,40 @@
   import { creation } from "./creation-controller.svelte.js";
   import HostBaselineSummary from "#lib/components/HostBaselineSummary.svelte";
   import IdentitySetup from "#lib/components/wizard/owner/IdentitySetup.svelte";
+  import GuardReadinessLadder from "#lib/components/guard/GuardReadinessLadder.svelte";
   import { tr } from "#lib/i18n.svelte.js";
+  import { TriangleAlert } from "@lucide/svelte";
+  import CreationDegraded from "./CreationDegraded.svelte";
 </script>
 
 <div class="mb-6">
   <div class="flex items-center gap-3 mb-2">
-    <div
-      class="w-12 h-12 rounded-full bg-success/20 flex items-center justify-center"
-    >
-      <svg
-        class="w-6 h-6 text-success"
-        fill="none"
-        viewBox="0 0 24 24"
-        stroke="currentColor"
+    {#if creation.degradedCompletion}
+      <div
+        class="w-12 h-12 rounded-full bg-warning/15 flex items-center justify-center"
+        data-testid="creation-degraded-outcome"
       >
-        <path
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          stroke-width="2"
-          d="M5 13l4 4L19 7"
-        />
-      </svg>
-    </div>
+        <TriangleAlert class="w-6 h-6 text-warning" aria-hidden="true" />
+      </div>
+    {:else}
+      <div
+        class="w-12 h-12 rounded-full bg-success/20 flex items-center justify-center"
+      >
+        <svg
+          class="w-6 h-6 text-success"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M5 13l4 4L19 7"
+          />
+        </svg>
+      </div>
+    {/if}
     <div>
       <h2 class="text-xl font-semibold text-foreground">
         {creation.completionTitle}
@@ -34,6 +46,10 @@
     </div>
   </div>
 </div>
+
+{#if creation.degradedCompletion}
+  <CreationDegraded />
+{/if}
 
 {#if creation.agentPairingRequired && creation.connectedServer}
   <section
@@ -58,6 +74,16 @@
       </p>
     {/if}
   </section>
+{/if}
+
+{#if creation.agentPairingRequired}
+  <div class="mb-6">
+    <GuardReadinessLadder
+      server={creation.connectedServer}
+      stackId={creation.stackId}
+      pairingError={creation.connectionPollError}
+    />
+  </div>
 {/if}
 
 {#if creation.connectedServer}

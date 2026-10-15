@@ -78,6 +78,7 @@ type RegistryURLResolver struct {
 	config         Config
 	tunnel         *CloudflareTunnel
 	localBridgeURL string
+	localBridgePin string
 	currentURL     string
 	currentMode    NetworkMode
 	lastValidated  time.Time
@@ -92,23 +93,21 @@ func NewRegistryURLResolver(config Config, log *logger.Logger) *RegistryURLResol
 	}
 }
 
-// SetLocalBridgeURL makes the explicit private-LAN listener the worker
-// registry authority. It is called only after that listener has bound.
-func (r *RegistryURLResolver) SetLocalBridgeURL(rawURL string) error {
-	if err := ValidateURL(rawURL); err != nil {
+// SetLocalBridge makes the explicit private-LAN listener the worker registry
+// authority and remembers the pin of its certificate for the install
+// command. It is called only after that listener has bound.
+func (r *RegistryURLResolver) SetLocalBridge(rawURL, pin string) error {
+	origin, err := privatechannel.NormalizeLANOrigin(rawURL)
+	if err != nil {
 		return err
 	}
-	parsed, err := url.Parse(rawURL)
-	if err != nil || parsed.Scheme != "http" {
-		return errors.New("local bridge URL must use HTTP")
-	}
-	ip := net.ParseIP(parsed.Hostname())
-	if ip == nil || !ip.IsPrivate() {
-		return errors.New("local bridge URL must use a literal private IP")
+	if _, err := privatechannel.ParsePin(pin); err != nil {
+		return err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.localBridgeURL = strings.TrimRight(rawURL, "/")
+	r.localBridgeURL = origin
+	r.localBridgePin = pin
 	r.currentURL = r.localBridgeURL
 	r.currentMode = NetworkModeLocal
 	r.lastValidated = time.Now()
@@ -122,6 +121,7 @@ func (r *RegistryURLResolver) ClearLocalBridgeURL() {
 		return
 	}
 	r.localBridgeURL = ""
+	r.localBridgePin = ""
 	r.currentURL = ""
 	r.currentMode = ""
 	r.lastValidated = time.Time{}
@@ -499,14 +499,24 @@ func (r *RegistryURLResolver) GenerateInstallCommand(ctx context.Context, token 
 		return "", fmt.Errorf("cannot generate install command: %w", err)
 	}
 
-	// Generate a one-liner that works on Linux
-	privateLANEnv := ""
-	if origin, originErr := privatechannel.NormalizeLANOrigin(url); originErr == nil {
-		privateLANEnv = " KOMBI_PRIVATE_LAN_HTTP_ORIGIN=" + shQuote(origin)
+	// A LAN bridge presents a self-signed certificate: curl and the installer
+	// trust it only by the pin carried in this command, which the user pastes.
+	if pin := r.LocalBridgePin(url); pin != "" {
+		return fmt.Sprintf(`curl -fsSL --insecure --pinnedpubkey %s %s | KOMBI_SERVER=%s KOMBI_TOKEN=%s KOMBI_PRIVATE_LAN_PIN=%s bash`,
+			shQuote(pin), shQuote(url+"/install.sh"), shQuote(url), shQuote(token), shQuote(pin)), nil
 	}
-	cmd := fmt.Sprintf(`curl -fsSL %s | KOMBI_SERVER=%s KOMBI_TOKEN=%s%s bash`, shQuote(url+"/install.sh"), shQuote(url), shQuote(token), privateLANEnv)
+	return fmt.Sprintf(`curl -fsSL %s | KOMBI_SERVER=%s KOMBI_TOKEN=%s bash`, shQuote(url+"/install.sh"), shQuote(url), shQuote(token)), nil
+}
 
-	return cmd, nil
+// LocalBridgePin returns the certificate pin when url is the enabled LAN
+// bridge, and "" otherwise.
+func (r *RegistryURLResolver) LocalBridgePin(url string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.localBridgeURL == "" || strings.TrimRight(url, "/") != r.localBridgeURL {
+		return ""
+	}
+	return r.localBridgePin
 }
 
 // GenerateInstallCommandPS generates a Windows PowerShell installation command.
@@ -519,15 +529,18 @@ func (r *RegistryURLResolver) GenerateInstallCommandPS(ctx context.Context, toke
 		return "", fmt.Errorf("cannot generate install command: %w", err)
 	}
 
-	// Generate PowerShell one-liner
-	privateLANEnv := ""
-	if origin, originErr := privatechannel.NormalizeLANOrigin(url); originErr == nil {
-		privateLANEnv = fmt.Sprintf(`; $env:KOMBI_PRIVATE_LAN_HTTP_ORIGIN=%s`, psQuote(origin))
+	// install.ps1 cannot pin the LAN bridge's self-signed key, and the Guard
+	// is a Linux service, so the LAN bridge offers no PowerShell command.
+	if r.LocalBridgePin(url) != "" {
+		return "", ErrLANBridgeLinuxOnly
 	}
-	cmd := fmt.Sprintf(`$env:KOMBI_SERVER=%s; $env:KOMBI_TOKEN=%s%s; irm %s | iex`, psQuote(url), psQuote(token), privateLANEnv, psQuote(url+"/install.ps1"))
+	cmd := fmt.Sprintf(`$env:KOMBI_SERVER=%s; $env:KOMBI_TOKEN=%s; irm %s | iex`, psQuote(url), psQuote(token), psQuote(url+"/install.ps1"))
 
 	return cmd, nil
 }
+
+// ErrLANBridgeLinuxOnly means the LAN bridge enrolls only Linux servers.
+var ErrLANBridgeLinuxOnly = errors.New("the private LAN bridge enrolls Linux servers only")
 
 func validateInstallToken(token string) error {
 	if token == "" {

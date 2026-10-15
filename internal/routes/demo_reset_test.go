@@ -51,14 +51,16 @@ func (f *demoResetJobEnqueuer) EnqueueProviderReconciliation(
 
 func (f *demoResetJobEnqueuer) DurableReconciliationReady() bool { return f != nil && f.ready }
 
-func seedDemoResetLease(t *testing.T, leases *vmleases.Service, id, stackID string, enrolledAt time.Time, protected bool) {
+func seedDemoResetLease(t *testing.T, leases *vmleases.Service, id, stackID string, enrolledAt time.Time, slot string) {
 	t.Helper()
 	metadata := monthlyruntime.NormalizeMetadata(map[string]string{
 		"stack_id":                  stackID,
 		"runtime_enrollment_status": "enrolled",
 		"enrollment_started_at":     enrolledAt.UTC().Format(time.RFC3339),
 	}, serverruntime.RuntimeOfferingStandard)
-	_ = protected // protection rides in the env var, not the lease record
+	if slot != "" {
+		metadata[demoguard.MetadataKeySlot] = slot
+	}
 	lease := vmlease.Lease{
 		ID:             vmlease.LeaseID(id),
 		Subject:        vmlease.Subject{Kind: vmlease.SubjectUser, ID: "demo-user", OrgID: demoResetTestTenant},
@@ -167,7 +169,7 @@ func TestDemoResetSurfacesLegacyCustodyResolutionWithoutEnqueueing(t *testing.T)
 
 	now := time.Now().UTC()
 	base := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{SnapshotSecret: []byte("s")})
-	seedDemoResetLease(t, base, "lease-legacy", "stack-legacy", now.Add(-2*time.Hour), false)
+	seedDemoResetLease(t, base, "lease-legacy", "stack-legacy", now.Add(-2*time.Hour), demoguard.SlotResettable)
 	lease, err := base.Get(context.Background(), demoResetTestTenant, "lease-legacy")
 	if err != nil {
 		t.Fatalf("Get lease: %v", err)
@@ -220,10 +222,10 @@ func TestDemoResetDecommissionsOnlyUnprotectedPastGrace(t *testing.T) {
 
 	now := time.Now().UTC()
 	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{SnapshotSecret: []byte("s")})
-	seedDemoResetLease(t, leases, "lease-anchor-main", "stack-demo", now.Add(-48*time.Hour), true)
-	seedDemoResetLease(t, leases, "lease-anchor-worker", "stack-demo", now.Add(-48*time.Hour), true)
-	seedDemoResetLease(t, leases, "lease-visitor-old", "stack-visitor", now.Add(-2*time.Hour), false)
-	seedDemoResetLease(t, leases, "lease-visitor-young", "stack-young", now.Add(-5*time.Minute), false)
+	seedDemoResetLease(t, leases, "lease-anchor-main", "stack-demo", now.Add(-48*time.Hour), demoguard.SlotResettable)
+	seedDemoResetLease(t, leases, "lease-anchor-worker", "stack-demo", now.Add(-48*time.Hour), demoguard.SlotResettable)
+	seedDemoResetLease(t, leases, "lease-visitor-old", "stack-visitor", now.Add(-2*time.Hour), demoguard.SlotResettable)
+	seedDemoResetLease(t, leases, "lease-visitor-young", "stack-young", now.Add(-5*time.Minute), demoguard.SlotResettable)
 
 	stacks := controlplane.NewMemoryStore()
 	for _, id := range []string{"stack-demo", "stack-visitor", "stack-young"} {
@@ -291,6 +293,64 @@ func TestDemoResetDecommissionsOnlyUnprotectedPastGrace(t *testing.T) {
 	}
 }
 
+// Regression: the nightly reset once decommissioned every demo server because
+// protection was an opt-in list that nobody had set. Only an explicitly marked
+// resettable lease may be admitted, with no protected-lease list configured.
+func TestDemoResetNeverAdmitsALeaseThatIsNotMarkedResettable(t *testing.T) {
+	t.Setenv(envDemoResetSecret, "topsecret")
+	t.Setenv(demoguard.EnvDemoTenantID, demoResetTestTenant)
+	t.Setenv(demoguard.EnvDemoProtectedLeaseIDs, "")
+
+	now := time.Now().UTC()
+	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{SnapshotSecret: []byte("s")})
+	seedDemoResetLease(t, leases, "lease-unmarked", "stack-unmarked", now.Add(-72*time.Hour), "")
+	seedDemoResetLease(t, leases, "lease-showcase", "stack-showcase", now.Add(-72*time.Hour), demoguard.SlotShowcase)
+	seedDemoResetLease(t, leases, "lease-persistent", "stack-persistent", now.Add(-72*time.Hour), "Persistent")
+	seedDemoResetLease(t, leases, "lease-resettable", "stack-resettable", now.Add(-72*time.Hour), demoguard.SlotResettable)
+
+	enqueuer := &demoResetJobEnqueuer{ready: true}
+	h := demoResetTestHandlers(t, leases, enqueuer, nil, nil)
+	event, recorder := stackLifecycleRouteTestEvent(http.MethodPost, "/api/internal/demo/reset", "", "", "")
+	event.Request.Header.Set(demoResetSecretHeader, "topsecret")
+	if err := h.reset(event); err != nil {
+		t.Fatalf("reset returned router error: %v", err)
+	}
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	resp := decodeDemoResetResponse(t, recorder.Body.Bytes())
+	if !reflect.DeepEqual(resp.Admitted, []string{"lease-resettable"}) {
+		t.Fatalf("admitted = %v, want only the resettable lease", resp.Admitted)
+	}
+	for _, request := range enqueuer.requests {
+		if request.LeaseID != "lease-resettable" {
+			t.Fatalf("provider reconciliation was requested for %s, which is not resettable", request.LeaseID)
+		}
+	}
+	slots := map[string]string{}
+	for _, receipt := range resp.Leases {
+		slots[receipt.LeaseID] = receipt.Slot + ":" + receipt.Decision
+	}
+	for id, want := range map[string]string{
+		"lease-unmarked":   demoguard.SlotUnmarked + ":" + demoResetDecisionSkippedUnmarked,
+		"lease-showcase":   demoguard.SlotShowcase + ":" + demoResetDecisionSkippedSlot,
+		"lease-persistent": "persistent:" + demoResetDecisionSkippedSlot,
+	} {
+		if slots[id] != want {
+			t.Fatalf("receipt for %s = %q, want %q", id, slots[id], want)
+		}
+	}
+	for _, id := range []string{"lease-unmarked", "lease-showcase", "lease-persistent"} {
+		stored, err := leases.Get(context.Background(), demoResetTestTenant, vmlease.LeaseID(id))
+		if err != nil {
+			t.Fatalf("Get %s: %v", id, err)
+		}
+		if stored.CancelledAt != nil {
+			t.Fatalf("lease %s was canceled but must survive the reset", id)
+		}
+	}
+}
+
 func TestDemoResetReportsDurableAdmissionFailureWithoutCancelling(t *testing.T) {
 	t.Setenv(envDemoResetSecret, "topsecret")
 	t.Setenv(demoguard.EnvDemoTenantID, demoResetTestTenant)
@@ -298,7 +358,7 @@ func TestDemoResetReportsDurableAdmissionFailureWithoutCancelling(t *testing.T) 
 
 	now := time.Now().UTC()
 	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{SnapshotSecret: []byte("s")})
-	seedDemoResetLease(t, leases, "lease-halfdone", "stack-halfdone", now.Add(-2*time.Hour), false)
+	seedDemoResetLease(t, leases, "lease-halfdone", "stack-halfdone", now.Add(-2*time.Hour), demoguard.SlotResettable)
 
 	enqueuer := &demoResetJobEnqueuer{ready: true, err: errors.New("durable queue unavailable")}
 	h := demoResetTestHandlers(t, leases, enqueuer, nil, nil)
@@ -330,7 +390,7 @@ func TestDemoResetDryRunMutatesNothing(t *testing.T) {
 
 	now := time.Now().UTC()
 	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{SnapshotSecret: []byte("s")})
-	seedDemoResetLease(t, leases, "lease-visitor-old", "stack-visitor", now.Add(-2*time.Hour), false)
+	seedDemoResetLease(t, leases, "lease-visitor-old", "stack-visitor", now.Add(-2*time.Hour), demoguard.SlotResettable)
 
 	enqueuer := &demoResetJobEnqueuer{ready: true}
 	h := demoResetTestHandlers(t, leases, enqueuer, nil, nil)
@@ -370,7 +430,7 @@ func TestDemoResetAdmitsAllEligibleWithinDefaultBatch(t *testing.T) {
 	leases := vmleases.NewService(vmleases.NewMemoryStore(), vmleases.ServiceConfig{SnapshotSecret: []byte("s")})
 	ids := []string{"l1", "l2", "l3", "l4", "l5", "l6", "l7"}
 	for _, id := range ids {
-		seedDemoResetLease(t, leases, id, "stack-"+id, now.Add(-3*time.Hour), false)
+		seedDemoResetLease(t, leases, id, "stack-"+id, now.Add(-3*time.Hour), demoguard.SlotResettable)
 	}
 
 	enqueuer := &demoResetJobEnqueuer{ready: true}
@@ -403,6 +463,7 @@ func TestDemoResetRotatesBoundedBatchAcrossStableLeasePopulation(t *testing.T) {
 			DesiredState: vmlease.DesiredStateRunning,
 			Metadata: monthlyruntime.NormalizeMetadata(map[string]string{
 				"runtime_offering":          string(serverruntime.RuntimeOfferingStandard),
+				demoguard.MetadataKeySlot:   demoguard.SlotResettable,
 				"runtime_enrollment_status": "enrolled",
 				"enrollment_started_at":     now.Add(-2 * time.Hour).Format(time.RFC3339),
 			}, serverruntime.RuntimeOfferingStandard),

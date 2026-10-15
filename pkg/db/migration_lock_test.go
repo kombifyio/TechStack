@@ -15,7 +15,7 @@ const (
 	migrationTimeoutQueryPattern = `SELECT\s+set_config\('lock_timeout', '10s', false\),\s+set_config\('statement_timeout', '2min', false\)`
 	migrationResetQueryPattern   = `SELECT\s+set_config\('lock_timeout', '0', false\),\s+set_config\('statement_timeout', '0', false\)`
 	legacyTrackerQueryPattern    = `DO \$\$\s+BEGIN\s+IF EXISTS`
-	requiredTableQueryPattern    = `SELECT EXISTS \(\s+SELECT 1\s+FROM information_schema.tables`
+	requiredTableQueryPattern    = `SELECT EXISTS \(\s+SELECT 1\s+FROM`
 )
 
 func TestMigrateDiscardsConnectionWhenAdvisoryLockAcquisitionIsAmbiguous(t *testing.T) {

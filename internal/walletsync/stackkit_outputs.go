@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -186,7 +187,7 @@ func upsertWalletStoreItem(ctx context.Context, store controlplane.WalletStore, 
 	if err != nil {
 		return err
 	}
-	_, err = store.UpsertWalletItem(ctx, controlplane.WalletItem{
+	proposed := controlplane.WalletItem{
 		ID:          itemID,
 		TenantID:    tenantID,
 		StackID:     req.StackID,
@@ -194,7 +195,12 @@ func upsertWalletStoreItem(ctx context.Context, store controlplane.WalletStore, 
 		Provider:    item.SourceType,
 		ExternalRef: item.SourceRef,
 		Metadata:    metadata,
-	})
+	}
+	if existing != nil {
+		_, err = store.UpdateWalletItem(ctx, proposed)
+	} else {
+		_, err = store.CreateWalletItem(ctx, proposed)
+	}
 	return err
 }
 
@@ -204,19 +210,55 @@ func findExistingWalletStoreItem(ctx context.Context, store controlplane.WalletS
 		return nil, err
 	}
 	for i := range items {
-		metadata := items[i].Metadata
-		if firstNonEmpty(walletStoreString(metadata["owner_id"]), req.OwnerID) != req.OwnerID {
+		stored := &items[i]
+		if controlplane.WalletOwnerID(stored.Metadata) != strings.TrimSpace(req.OwnerID) {
 			continue
 		}
-		if walletStoreString(metadata["service_id"]) != item.ServiceID {
+		if stored.InstanceID != "" {
 			continue
 		}
-		if item.SourceRef != "" && walletStoreString(metadata["source_ref"]) != item.SourceRef {
+		if !walletStoreItemTypeMatches(*stored, firstNonEmpty(item.Kind, "other")) {
 			continue
 		}
-		return &items[i], nil
+		if walletStoreString(stored.Metadata["service_id"]) != item.ServiceID {
+			continue
+		}
+		if item.SourceRef != "" && walletStoreString(stored.Metadata["source_ref"]) != item.SourceRef {
+			continue
+		}
+		return stored, nil
+	}
+	// A legacy row may occupy the canonical ID without carrying the identity
+	// needed to update it. Inspect only that row and fail closed if it exists.
+	_, err = store.GetWalletItem(ctx, tenantID, walletStoreItemID(tenantID, req, item))
+	if err == nil {
+		return nil, controlplane.ErrConflict
+	}
+	if !errors.Is(err, controlplane.ErrNotFound) {
+		return nil, err
 	}
 	return nil, nil
+}
+
+func walletStoreItemTypeMatches(item controlplane.WalletItem, expected string) bool {
+	if firstNonEmpty(strings.TrimSpace(item.ItemType), "other") != expected {
+		return false
+	}
+	for _, key := range []string{"kind", "item_type"} {
+		value := item.Metadata[key]
+		if value == nil {
+			continue
+		}
+		alias, ok := value.(string)
+		if !ok {
+			return false
+		}
+		alias = strings.TrimSpace(alias)
+		if alias != "" && alias != expected {
+			return false
+		}
+	}
+	return true
 }
 
 func walletStoreMetadata(req SyncRequest, item WalletItem) (map[string]any, error) {

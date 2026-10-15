@@ -84,6 +84,31 @@ func (s *MemoryStore) UpdateHomelabIntent(_ context.Context, tenantID, homelabID
 	return cloneHomelab(homelab), nil
 }
 
+// MutateHomelabIntent keeps the existing ephemeral adapter's atomic contract;
+// managed PostgreSQL is the development and verification boundary.
+func (s *MemoryStore) MutateHomelabIntent(_ context.Context, tenantID, homelabID string, mutate func(map[string]any) error) (*Homelab, error) {
+	if strings.TrimSpace(tenantID) == "" || strings.TrimSpace(homelabID) == "" || mutate == nil {
+		return nil, fmt.Errorf("controlplane: tenant, homelab and intent mutation required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	homelab, ok := s.homelabs[homelabID]
+	if !ok || homelab.TenantID != tenantID || homelab.DeletedAt != nil {
+		return nil, ErrNotFound
+	}
+	intent := deepCloneIntent(homelab.Intent)
+	if intent == nil {
+		intent = map[string]any{}
+	}
+	if err := mutate(intent); err != nil {
+		return nil, err
+	}
+	homelab.Intent = deepCloneIntent(intent)
+	homelab.UpdatedAt = s.now()
+	s.homelabs[homelab.ID] = homelab
+	return cloneHomelab(homelab), nil
+}
+
 func (s *MemoryStore) UpdateHomelabName(_ context.Context, tenantID, homelabID, name string) (*Homelab, error) {
 	tenantID = strings.TrimSpace(tenantID)
 	if tenantID == "" {

@@ -222,7 +222,7 @@ func TestAccessManifestV3BindsMeasuredRuntimeComponentWithoutDuplicateDiscovery(
 		t.Fatalf("v3 runtime binding produced duplicate rows: %#v", snapshot.Services)
 	}
 	service := snapshot.Services[0]
-	if service.ApplicationKey != "coolify" || service.ApplicationDisplayName != "Coolify" || service.Status != "running" || service.OperationalImpact != "critical" {
+	if service.ApplicationKey != "coolify" || service.ApplicationDisplayName != "Coolify" || service.Status != "running" || service.OperationalImpact != "critical" || service.RuntimeIdentity["container_name"] != "stackkit-cloud-core-coolify-1" {
 		t.Fatalf("v3 runtime projection = %#v", service)
 	}
 }

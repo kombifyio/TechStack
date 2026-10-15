@@ -19,6 +19,13 @@ import {
   reconnectMonthlyRuntime,
   resolveMonthlyRuntimeCustody,
   runStackKitLifecycleOperation,
+  stackKitRecoveryPoints,
+  stackKitRestoreWasStaged,
+  stackKitStagedRestore,
+  stackKitRestoreAdmission,
+  stackKitRestoreOutcome,
+  stackKitRestoreRequestDigest,
+  stackKitRestoreNotAdmitted,
   resumeStackEnrollment,
   retryStackRollout,
 } from "./stacks";
@@ -26,6 +33,272 @@ import {
 describe("stacks api", () => {
   const originalFetch = globalThis.fetch;
   let fetchMock: ReturnType<typeof vi.fn>;
+
+  it("selects only the current node's valid recorded points and requires matching staged evidence", () => {
+    const node = "node-history-fixture";
+    const stack = "stack-history-fixture";
+    const older = `sha256:${"a".repeat(64)}`;
+    const newer = `sha256:${"b".repeat(64)}`;
+    const status = {
+      schema_version: "techstack.stackkit-lifecycle-result/v1",
+      techstack_id: stack,
+      operation: "backup_status",
+      agent_id: node,
+      success: true,
+      command_result: {
+        schemaVersion: "stackkit.command-result/v1",
+        command: "stackkit backup status",
+        status: "success",
+        data: {
+          history: {
+            snapshot: { evidenceId: newer },
+            recoveryPoints: [
+              {
+                evidenceId: newer,
+                recordedAt: "2026-10-08T12:00:00Z",
+                currentPlan: true,
+                state: "recorded",
+              },
+              {
+                evidenceId: "--untrusted",
+                recordedAt: "2026-10-07T12:00:00Z",
+                currentPlan: false,
+                state: "recorded",
+              },
+              {
+                evidenceId: older,
+                recordedAt: "2026-10-07T12:00:00Z",
+                currentPlan: false,
+                state: "recorded",
+              },
+            ],
+          },
+        },
+      },
+    };
+    const selected = stackKitRecoveryPoints(status, node, stack).find(
+      (point) => !point.currentPlan,
+    );
+    expect(selected?.evidenceId).toBe(older);
+    expect(
+      stackKitRecoveryPoints(status, "another-node", stack).find(
+        (point) => point.evidenceId === older,
+      ),
+    ).toBeUndefined();
+    expect(
+      stackKitRecoveryPoints(status, node, "another-stack").find(
+        (point) => point.evidenceId === older,
+      ),
+    ).toBeUndefined();
+    const legacy = structuredClone(status);
+    delete (legacy.command_result.data.history as { recoveryPoints?: unknown })
+      .recoveryPoints;
+    expect(
+      stackKitRecoveryPoints(legacy, node, stack).find(
+        (point) => point.evidenceId === newer,
+      ),
+    ).toBeUndefined();
+    const completed = {
+      schema_version: "techstack.stackkit-lifecycle-result/v1",
+      techstack_id: stack,
+      operation: "backup_restore",
+      agent_id: node,
+      success: true,
+    };
+    expect(stackKitRestoreWasStaged(completed, node, older, stack)).toBe(false);
+    const staged = {
+      ...completed,
+      stackkit_instance_id: "home",
+      backup: {
+        mode: "staged",
+        snapshot_anchor_id: older,
+        restore_result_id: `sha256:${"c".repeat(64)}`,
+        plan_hash: `sha256:${"d".repeat(64)}`,
+        owner_ref: "owner/node",
+      },
+    };
+    expect(
+      stackKitRestoreWasStaged(staged, node, selected!.evidenceId, stack),
+    ).toBe(true);
+    expect(stackKitRestoreWasStaged(staged, node, newer, stack)).toBe(false);
+    expect(stackKitRestoreWasStaged(staged, "another-node", older, stack)).toBe(
+      false,
+    );
+    expect(stackKitRestoreWasStaged(staged, node, older, "another-stack")).toBe(
+      false,
+    );
+    const binding = {
+      ...stackKitStagedRestore(staged, node, older, stack)!,
+      stackId: stack,
+      agentId: node,
+      nodeId: "server-fixture",
+    };
+    const admissionData = {
+      stack_id: stack,
+      agent_id: node,
+      node_id: binding.nodeId,
+      stackkit_instance_id: "home",
+      restore_result_id: binding.restoreResultId,
+      activation_operation_id: "restore-job-original",
+      plan_hash: binding.planHash,
+    };
+    const request = {
+      schema_version: "techstack.restore-activation-request/v1",
+      tenant_id: "tenant-local",
+      owner_id: "local-owner",
+      techstack_id: stack,
+      agent_id: node,
+      node_id: binding.nodeId,
+      stackkit_instance_id: "home",
+      restore_result_id: binding.restoreResultId,
+      owner_approved: true,
+      key_sha256: "a".repeat(64),
+      request_digest: "e".repeat(64),
+    };
+    const result = {
+      ...staged,
+      operation: "backup_restore_activate",
+      success: false,
+      restore_activation_admission: admissionData,
+      restore_activation_request: request,
+      backup: {
+        mode: "recovered",
+        restore_result_id: binding.restoreResultId,
+        activation_operation_id: admissionData.activation_operation_id,
+        plan_hash: binding.planHash,
+      },
+      command_result: {
+        schemaVersion: "stackkit.command-result/v1",
+        command: "stackkit backup restore recover",
+        status: "success",
+        data: {
+          apiVersion: "stackkit.restore-activation-result/v1",
+          status: "recovered",
+          operationId: admissionData.activation_operation_id,
+          restoreResultId: binding.restoreResultId,
+          planHash: binding.planHash,
+          safetySnapshotId: older,
+          managedVolumeSetHash: newer,
+          verification: {
+            apiVersion: "stackkit.local-backup-restore-verification/v1",
+            ownerRef: "owner/node",
+            ownerBindingDigest: older,
+            pocketIdSubject: "local-owner",
+            planHash: binding.planHash,
+            servicesVerified: true,
+            verifiedAt: "2026-10-09T01:00:00Z",
+          },
+          signature: {
+            ownerRef: "owner/node",
+            keyId: "owner-key",
+            value: "verified-by-node",
+          },
+        },
+      },
+    };
+    const admission = stackKitRestoreAdmission(result, binding)!;
+    expect(
+      stackKitRestoreOutcome(
+        result,
+        binding,
+        "backup_restore_activate",
+        admission,
+      )?.mode,
+    ).toBe("recovered");
+    expect(
+      stackKitRestoreRequestDigest(
+        result,
+        binding,
+        "local-owner",
+        "tenant-local",
+        "a".repeat(64),
+      ),
+    ).toBe(request.request_digest);
+    expect(
+      stackKitRestoreRequestDigest(
+        result,
+        binding,
+        "other-owner",
+        "tenant-local",
+        "a".repeat(64),
+      ),
+    ).toBeUndefined();
+    expect(
+      stackKitRestoreRequestDigest(
+        result,
+        binding,
+        "local-owner",
+        "tenant-local",
+        "b".repeat(64),
+      ),
+    ).toBeUndefined();
+    expect(
+      stackKitRestoreAdmission(result, { ...binding, nodeId: "other-server" }),
+    ).toBeUndefined();
+    expect(
+      stackKitRestoreOutcome(
+        result,
+        { ...binding, instanceId: "foreign-instance" },
+        "backup_restore_activate",
+        admission,
+      ),
+    ).toBeUndefined();
+    expect(
+      stackKitRestoreOutcome(
+        result,
+        { ...binding, ownerRef: "foreign-owner" },
+        "backup_restore_activate",
+        admission,
+      ),
+    ).toBeUndefined();
+    const denied = {
+      restore_activation_request: request,
+      backup: {
+        mode: "not-admitted",
+        job_id: "job-original",
+        attempt_started_at: "2026-10-09T01:00:00.123456Z",
+        restore_result_id: binding.restoreResultId,
+        key_sha256: request.key_sha256,
+        request_digest: request.request_digest,
+      },
+    };
+    expect(
+      stackKitRestoreNotAdmitted(
+        denied,
+        binding,
+        "local-owner",
+        "tenant-local",
+        request.key_sha256,
+        request.request_digest,
+        "job-original",
+        "2026-10-09T03:00:00.123456789+02:00",
+      ),
+    ).toBe(true);
+    expect(
+      stackKitRestoreNotAdmitted(
+        denied,
+        binding,
+        "local-owner",
+        "tenant-local",
+        request.key_sha256,
+        request.request_digest,
+        "job-original",
+        "2026-10-09T01:00:00.123457Z",
+      ),
+    ).toBe(false);
+    expect(
+      stackKitRestoreNotAdmitted(
+        { ...denied, restore_activation_admission: admissionData },
+        binding,
+        "local-owner",
+        "tenant-local",
+        request.key_sha256,
+        request.request_digest,
+        "job-original",
+        "2026-10-09T01:00:00.123456Z",
+      ),
+    ).toBe(false);
+  });
 
   beforeEach(() => {
     fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

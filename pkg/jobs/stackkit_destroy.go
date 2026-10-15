@@ -28,7 +28,10 @@ func destroyStackKitWorkspace(ctx context.Context, workDir, workload string) err
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	binary := firstNonEmpty(strings.TrimSpace(os.Getenv(stackKitCLIEnv)), defaultStackKitCLIBinary)
+	binary, err := pinnedStackKitRemoveBinary()
+	if err != nil {
+		return err
+	}
 	args := []string{
 		"--no-log",
 		"--chdir", workDir,
@@ -37,7 +40,7 @@ func destroyStackKitWorkspace(ctx context.Context, workDir, workload string) err
 		"--json",
 		"--workload", workload,
 	}
-	cmd := exec.CommandContext(runCtx, binary, args...) // #nosec G702 -- the operator-owned process environment selects the executable; arguments are passed without a shell.
+	cmd := exec.CommandContext(runCtx, binary, args...) // #nosec G702 -- the executable is the admitted pinned release or the Windows bundle's pinned CLI; arguments are passed without a shell.
 	cmd.Dir = workDir
 	cmd.Env = os.Environ()
 	output, err := cmd.CombinedOutput()
@@ -48,4 +51,21 @@ func destroyStackKitWorkspace(ctx context.Context, workDir, workload string) err
 		return fmt.Errorf("StackKits remove failed: %w: %s", err, tailText(string(output), 4000))
 	}
 	return nil
+}
+
+// pinnedStackKitRemoveBinary resolves the executable for StackKits remove:
+// the Windows client's bundled pinned CLI (TECHSTACK_STACKKIT_CLI) or the
+// admitted pinned release. A PATH lookup or source-built CLI is never used.
+func pinnedStackKitRemoveBinary() (string, error) {
+	if bundled := strings.TrimSpace(os.Getenv(stackKitCLIEnv)); bundled != "" {
+		return bundled, nil
+	}
+	release, err := configuredPinnedStackKitRelease()
+	if err != nil {
+		return "", err
+	}
+	if release == nil {
+		return "", fmt.Errorf("StackKits remove requires the pinned published release (%s and %s)", stackKitReleasePinEnv, stackKitReleaseCacheEnv)
+	}
+	return release.BinaryPath(), nil
 }

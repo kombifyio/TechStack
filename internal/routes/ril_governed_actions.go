@@ -21,6 +21,10 @@ type GovernedActionWorkflow interface {
 	Execute(context.Context, actions.BeginExecution) (*actions.GovernedCard, error)
 }
 
+type GovernedOperationWorkflow interface {
+	ExecuteOperation(context.Context, actions.BeginExecution, string) (*actions.GovernedCard, error)
+}
+
 type GovernedActionRouteConfig struct {
 	Authority actions.Authority
 	Workflow  GovernedActionWorkflow
@@ -126,9 +130,10 @@ func (h governedActionHandler) decision(e *httpx.Event, approve bool) error {
 }
 
 type executeGovernedActionRequest struct {
-	ExecutionID    string `json:"execution_id"`
-	TraceID        string `json:"trace_id"`
-	IdempotencyKey string `json:"idempotency_key"`
+	CompensationCardID string `json:"compensation_card_id,omitempty"`
+	ExecutionID        string `json:"execution_id"`
+	TraceID            string `json:"trace_id"`
+	IdempotencyKey     string `json:"idempotency_key"`
 }
 
 func (h governedActionHandler) execute(e *httpx.Event) error {
@@ -148,7 +153,19 @@ func (h governedActionHandler) execute(e *httpx.Event) error {
 	if decodeErr := decodeGovernedActionJSON(e, &body); decodeErr != nil {
 		return writeGovernedActionError(e, decodeErr)
 	}
-	card, err = h.config.Workflow.Execute(e.Request.Context(), actions.BeginExecution{TenantID: scope.tenantID, OwnerSubjectID: scope.ownerID, CardID: cardID, ExecutionID: body.ExecutionID, TraceID: body.TraceID, IdempotencyKey: body.IdempotencyKey, Now: h.config.Now(), ConnectorProjection: connectorProjectionFromEvent(e)})
+	input := actions.BeginExecution{TenantID: scope.tenantID, OwnerSubjectID: scope.ownerID, CardID: cardID, ExecutionID: body.ExecutionID, TraceID: body.TraceID, IdempotencyKey: body.IdempotencyKey, Now: h.config.Now(), ConnectorProjection: connectorProjectionFromEvent(e)}
+	if card.Template.Primitive.OperationClass == "drift-correction" {
+		operational, ok := h.config.Workflow.(GovernedOperationWorkflow)
+		if !ok || strings.TrimSpace(body.CompensationCardID) == "" {
+			return writeGovernedActionError(e, actions.ErrApprovalRequired)
+		}
+		card, err = operational.ExecuteOperation(e.Request.Context(), input, body.CompensationCardID)
+	} else {
+		if body.CompensationCardID != "" {
+			return writeGovernedActionError(e, errGovernedActionRequest)
+		}
+		card, err = h.config.Workflow.Execute(e.Request.Context(), input)
+	}
 	if err != nil {
 		return writeGovernedActionError(e, err)
 	}

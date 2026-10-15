@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Kind enumerates the supported provider flavors. The kind drives default
@@ -39,16 +40,17 @@ var (
 
 // ProviderConfig describes a single identity provider entry.
 type ProviderConfig struct {
-	ID               string   // logical id (per org/tenant), e.g. "primary", "auth0-saas"
-	Kind             Kind     // provider flavor (drives default URL composition)
-	Issuer           string   // required
-	Audience         string   // optional; defaults to ClientID
-	ClientID         string   // required for auth code login
-	ClientSecret     string   // optional for public clients (use PKCE instead)
-	AuthorizationURL string   // optional; derived from issuer when empty
-	TokenURL         string   // optional; derived from issuer when empty
-	JWKSURL          string   // optional; derived from issuer when empty
-	Scopes           []string // optional; defaults to openid/profile/email
+	ID               string        // logical id (per org/tenant), e.g. "primary", "auth0-saas"
+	Kind             Kind          // provider flavor (drives default URL composition)
+	Issuer           string        // required
+	Audience         string        // optional; defaults to ClientID
+	ClientID         string        // required for auth code login
+	ClientSecret     string        // optional for public clients (use PKCE instead)
+	AuthorizationURL string        // optional; derived from issuer when empty
+	TokenURL         string        // optional; derived from issuer when empty
+	JWKSURL          string        // optional; derived from issuer when empty
+	Scopes           []string      // optional; defaults to openid/profile/email
+	ClockSkew        time.Duration // explicit token date tolerance; zero keeps strict verification
 }
 
 // Provider is a verified-OIDC bridge for a single identity provider config.
@@ -169,9 +171,10 @@ func NewProvider(cfg ProviderConfig) (*Provider, error) {
 		scopes = []string{"openid", "profile", "email"}
 	}
 	v, err := NewVerifier(VerifierConfig{
-		Issuer:   issuer,
-		Audience: audience,
-		JWKSURL:  jwks,
+		Issuer:    issuer,
+		Audience:  audience,
+		JWKSURL:   jwks,
+		ClockSkew: cfg.ClockSkew,
 	})
 	if err != nil {
 		return nil, err
@@ -187,6 +190,7 @@ func NewProvider(cfg ProviderConfig) (*Provider, error) {
 		TokenURL:         tokenURL,
 		JWKSURL:          jwks,
 		Scopes:           scopes,
+		ClockSkew:        cfg.ClockSkew,
 	}, verifier: v}, nil
 }
 

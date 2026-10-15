@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -21,7 +22,6 @@ import (
 	"github.com/kombifyio/techstack/pkg/middleware"
 	session "github.com/kombifyio/techstack/pkg/v2/auth/session"
 	"github.com/pocketbase/pocketbase/core"
-	"github.com/pocketbase/pocketbase/tools/security"
 )
 
 // PortalVerifyRequest is the request body for POST /api/v1/auth/portal-verify
@@ -67,8 +67,12 @@ type PortalSession struct {
 }
 
 func RegisterSSORoutes(r *httpx.Router, app core.App, ps PortalSession) {
+	RegisterRuntimeSSORoutes(r, ps)
+}
+
+func RegisterRuntimeSSORoutes(r *httpx.Router, ps PortalSession) {
 	// Portal verify endpoint validates SSO and establishes the V2 session.
-	r.POST("/api/v1/auth/portal-verify", handlePortalVerify(app, ps))
+	r.POST("/api/v1/auth/portal-verify", handleRuntimePortalVerify(ps))
 
 	// NOTE: GET /auth/sso is intentionally NOT registered here.
 	// The SvelteKit frontend owns /auth/sso. It extracts the JWT token from the
@@ -88,6 +92,10 @@ func RegisterSSORoutes(r *httpx.Router, app core.App, ps PortalSession) {
 // A successful response contains the cloud identity and sets the authoritative
 // V2 browser-session cookie.
 func handlePortalVerify(app core.App, ps PortalSession) func(e *httpx.Event) error {
+	return handleRuntimePortalVerify(ps)
+}
+
+func handleRuntimePortalVerify(ps PortalSession) func(e *httpx.Event) error {
 	replay := sso.NewReplayGuard()
 	return func(e *httpx.Event) error {
 		// Parse request body
@@ -151,30 +159,18 @@ func handlePortalVerify(app core.App, ps PortalSession) func(e *httpx.Event) err
 		// portal-verify is only a successful login when it can establish the
 		// same V2 browser session consumed by /api/v2/whoami. Do this preflight
 		// before mutating legacy compatibility records, and do not report the
-		// PocketBase payload as an authenticated browser session without it.
+		// identity payload as an authenticated browser session without it.
 		portalSessionToken, err := mintPortalSessionToken(ps, payload)
 		if err != nil {
-			app.Logger().Warn("Portal SSO: failed to prepare session cookie", "error", err)
+			slog.Warn("Portal SSO: failed to prepare session cookie", "error", err)
 			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal,
 				"Failed to establish browser session", nil)
 		}
 		membership, err := provisionSSOControlPlaneUser(e.Request.Context(), ps, payload)
 		if err != nil {
-			app.Logger().Error("Portal SSO: canonical identity projection failed", "error", err)
+			slog.Error("Portal SSO: canonical identity projection failed", "error", err)
 			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal,
 				"Failed to establish canonical identity", nil)
-		}
-
-		// Find or create PocketBase user based on external_id
-		_, err = findOrCreateUserFromSSO(app, payload)
-		if err != nil {
-			app.Logger().Error("Portal SSO: user lookup failed",
-				"sub", payload.Sub,
-				"email", payload.Email,
-				"error", err,
-			)
-			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal,
-				"Failed to create or find user", nil)
 		}
 
 		// The launch token's Stack Identity is only echoed for the first paint.
@@ -184,7 +180,7 @@ func handlePortalVerify(app core.App, ps PortalSession) func(e *httpx.Event) err
 		// The V2 cookie is the authoritative browser-session proof. It is issued
 		// only after every fallible portal-verify step above has completed.
 		if err := setPortalSessionCookies(e.Response, ps, portalSessionToken, req.PortalOrigin); err != nil {
-			app.Logger().Error("Portal SSO: failed to issue browser session", "error", err)
+			slog.Error("Portal SSO: failed to issue browser session", "error", err)
 			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal,
 				"Failed to establish browser session", nil)
 		}
@@ -289,6 +285,7 @@ func provisionSSOControlPlaneUser(ctx context.Context, ps PortalSession, payload
 		ID:           sub,
 		PrimaryEmail: strings.TrimSpace(payload.Email),
 		DisplayName:  strings.TrimSpace(payload.Name),
+		Metadata:     map[string]any{"email_verified": true},
 	}); err != nil {
 		return nil, fmt.Errorf("upsert user: %w", err)
 	}
@@ -375,120 +372,6 @@ func portalSessionHeldBy(r *http.Request, ps PortalSession, subject string) bool
 	}
 	claims, err := ps.Manager.Verify(cookie.Value)
 	return err == nil && claims != nil && strings.TrimSpace(claims.Subject) == strings.TrimSpace(subject)
-}
-
-// findOrCreateUserFromSSO finds or creates a PocketBase user based on SSO payload.
-// It uses the user_links collection to map external IDs to PB users.
-func findOrCreateUserFromSSO(app core.App, payload *sso.SSOTokenPayload) (*core.Record, error) {
-	// Try to find existing user_link by external_id
-	userLink, err := app.FindFirstRecordByFilter(
-		"user_links",
-		"external_id = {:external_id} && provider = 'cloud'",
-		map[string]any{
-			"external_id": payload.Sub,
-		},
-	)
-
-	if err == nil && userLink != nil {
-		// Found existing link, get the PB user
-		userID := userLink.GetString("user")
-		pbUser, err := app.FindRecordById("users", userID)
-		if err != nil {
-			return nil, errors.New("linked user not found")
-		}
-		updateCloudUserLinkFromSSO(userLink, payload)
-		if err := app.Save(userLink); err != nil {
-			return nil, err
-		}
-		return pbUser, nil
-	}
-
-	// Auth0/Cloud subjects can rotate while the verified email remains stable.
-	// Re-link the existing cloud identity instead of creating a duplicate link
-	// that violates the user+provider uniqueness constraint.
-	userLink, err = app.FindFirstRecordByFilter(
-		"user_links",
-		"external_email = {:email} && provider = 'cloud'",
-		map[string]any{
-			"email": payload.Email,
-		},
-	)
-	if err == nil && userLink != nil {
-		pbUser, err := app.FindRecordById("users", userLink.GetString("user"))
-		if err != nil {
-			return nil, errors.New("email-linked user not found")
-		}
-		updateCloudUserLinkFromSSO(userLink, payload)
-		if err := app.Save(userLink); err != nil {
-			return nil, err
-		}
-		return pbUser, nil
-	}
-
-	// No existing link found, check if user with this email exists
-	pbUser, err := app.FindFirstRecordByFilter(
-		"users",
-		"email = {:email}",
-		map[string]any{
-			"email": payload.Email,
-		},
-	)
-
-	if err != nil {
-		// Create new PB user
-		usersCollection, err := app.FindCollectionByNameOrId("users")
-		if err != nil {
-			return nil, err
-		}
-
-		pbUser = core.NewRecord(usersCollection)
-		pbUser.SetEmail(payload.Email)
-		pbUser.Set("name", payload.Name)
-		pbUser.SetVerified(true) // SSO users are pre-verified
-		// Generate a random password since SSO users won't use it
-		pbUser.SetPassword(security.RandomString(32))
-
-		if err := app.Save(pbUser); err != nil {
-			return nil, err
-		}
-	}
-
-	userLink, err = app.FindFirstRecordByFilter(
-		"user_links",
-		"user = {:user} && provider = 'cloud'",
-		map[string]any{
-			"user": pbUser.Id,
-		},
-	)
-	if err == nil && userLink != nil {
-		updateCloudUserLinkFromSSO(userLink, payload)
-		if err := app.Save(userLink); err != nil {
-			return nil, err
-		}
-		return pbUser, nil
-	}
-
-	// Create user_link to connect PB user with external ID
-	userLinksCollection, err := app.FindCollectionByNameOrId("user_links")
-	if err != nil {
-		return nil, err
-	}
-
-	userLink = core.NewRecord(userLinksCollection)
-	userLink.Set("user", pbUser.Id)
-	userLink.Set("provider", "cloud")
-	updateCloudUserLinkFromSSO(userLink, payload)
-	if err := app.Save(userLink); err != nil {
-		return nil, err
-	}
-
-	return pbUser, nil
-}
-
-func updateCloudUserLinkFromSSO(userLink *core.Record, payload *sso.SSOTokenPayload) {
-	userLink.Set("external_id", payload.Sub)
-	userLink.Set("external_email", payload.Email)
-	userLink.Set("external_name", payload.Name)
 }
 
 // handleSSOError maps SSO verification errors to appropriate HTTP responses.

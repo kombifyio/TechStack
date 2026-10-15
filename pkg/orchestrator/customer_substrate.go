@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/vmlease"
+	"github.com/kombifyio/techstack/internal/substrate"
 	"github.com/kombifyio/techstack/pkg/jobs"
 	"github.com/kombifyio/techstack/pkg/runtimeidentity"
 )
@@ -31,7 +32,7 @@ func (o *Orchestrator) ProvisionCustomerGuest(stackID string, binding jobs.Custo
 func customerUbuntuLease(lease vmlease.Lease) bool {
 	return lease.CustodyClass == vmlease.CustodyCustomerSubstrate && lease.Resource.ProviderID == "proxmox" &&
 		lease.BillingMode == vmlease.BillingModeLocal && lease.RecreatePolicy == vmlease.RecreatePolicyNever &&
-		lease.Metadata["runtime_offering_id"] == "ubuntu-24.04" && lease.Metadata["node_id"] != ""
+		substrate.IsUbuntuProfile(lease.Metadata["runtime_offering_id"]) && lease.Metadata["node_id"] != ""
 }
 
 func (o *Orchestrator) requireCustomerGuestLease(ctx context.Context, stack *orchestratorStack, binding jobs.CustomerGuestBinding) error {

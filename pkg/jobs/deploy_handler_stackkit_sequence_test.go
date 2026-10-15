@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/kombifyio/techstack/internal/advancedissuer"
-	"github.com/kombifyio/techstack/internal/stackkitrelease"
+	"github.com/kombifyio/techstack/pkg/agentcontrol"
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
 	"github.com/kombifyio/techstack/pkg/core"
 	"github.com/kombifyio/techstack/pkg/logger"
@@ -66,10 +66,12 @@ type recordingManagedStackKitInventoryBuilder struct {
 	called    bool
 	err       error
 	inventory []byte
+	request   ManagedStackKitInventoryRequest
 }
 
-func (builder *recordingManagedStackKitInventoryBuilder) Build(_ context.Context, _ ManagedStackKitInventoryRequest) ([]byte, error) {
+func (builder *recordingManagedStackKitInventoryBuilder) Build(_ context.Context, request ManagedStackKitInventoryRequest) ([]byte, error) {
 	builder.called = true
+	builder.request = request
 	if builder.err != nil {
 		return nil, builder.err
 	}
@@ -151,7 +153,7 @@ func typedStackKitApplyRequest() StackKitLifecycleRequest {
 func TestTypedStackKitApplyPreservesCompletedDegradedStatus(t *testing.T) {
 	sender := &recordingStackKitCommandSender{applyStatus: "completed_degraded"}
 	request := typedStackKitApplyRequest()
-	result, err := runTypedStackKitApplySequence(context.Background(), sender, "job-1", request, stackkitrelease.Release{})
+	result, err := runTypedStackKitApplySequence(context.Background(), sender, "job-1", request, releaseWithAdvancedCatalog(t))
 	if err != nil {
 		t.Fatalf("runTypedStackKitApplySequence: %v", err)
 	}
@@ -165,7 +167,7 @@ func TestTypedStackKitApplySequenceHonorsParentCancellation(t *testing.T) {
 	defer cancel()
 	request := typedStackKitApplyRequest()
 	started := time.Now()
-	_, err := runTypedStackKitApplySequence(ctx, contextBoundStackKitCommandSender{}, "job-1", request, stackkitrelease.Release{})
+	_, err := runTypedStackKitApplySequence(ctx, contextBoundStackKitCommandSender{}, "job-1", request, releaseWithAdvancedCatalog(t))
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("runTypedStackKitApplySequence error = %v, want deadline exceeded", err)
 	}
@@ -177,7 +179,7 @@ func TestTypedStackKitApplySequenceHonorsParentCancellation(t *testing.T) {
 func TestTypedStackKitApplySequenceClassifiesOperationTimeouts(t *testing.T) {
 	assertTimeout := func(sender StackKitCommandSender) {
 		t.Helper()
-		_, err := runTypedStackKitApplySequence(context.Background(), sender, "job-1", typedStackKitApplyRequest(), stackkitrelease.Release{})
+		_, err := runTypedStackKitApplySequence(context.Background(), sender, "job-1", typedStackKitApplyRequest(), releaseWithAdvancedCatalog(t))
 		var operationErr *typedStackKitOperationError
 		if !errors.As(err, &operationErr) || !operationErr.TimedOut() || operationErr.Operation != StackKitLifecycleGenerate || operationErr.CommandID != "job-1-generate" {
 			t.Fatalf("%T error = %v, want typed generate timeout for job-1-generate", sender, err)
@@ -192,16 +194,94 @@ func TestTypedStackKitApplySequenceClassifiesOperationTimeouts(t *testing.T) {
 	assertTimeout(&agentTimeoutResultSender{failOn: agentpb.StackKitOperation_STACKKIT_OPERATION_GENERATE})
 }
 
-func TestTypedStackKitApplySequenceShrinksAgentBudgetToJobDeadline(t *testing.T) {
-	sender := &failingStackKitCommandSender{failOn: agentpb.StackKitOperation_STACKKIT_OPERATION_APPLY}
-	request := typedStackKitApplyRequest()
-	_, _ = runTypedStackKitApplySequenceWithBudget(context.Background(), sender, "job-1", request, stackkitrelease.Release{}, 160*time.Second, nil)
-	if len(sender.commands) != 5 {
-		t.Fatalf("commands = %d, want five", len(sender.commands))
+// pacedStackKitCommandSender answers like failingStackKitCommandSender after
+// spending real time on chosen operations, so a pre-apply phase can use up its
+// shared deadline without a fake clock.
+type pacedStackKitCommandSender struct {
+	failingStackKitCommandSender
+	pace map[agentpb.StackKitOperation]time.Duration
+}
+
+func (sender *pacedStackKitCommandSender) SendStackKitCommand(ctx context.Context, agentID string, command *agentpb.StackKitCommand) (*agentpb.StackKitResult, error) {
+	time.Sleep(sender.pace[command.Operation])
+	return sender.failingStackKitCommandSender.SendStackKitCommand(ctx, agentID, command)
+}
+
+// A first apply on a cold node pulls images and waits for readiness for far
+// longer than the pre-apply commands need, and the sequence killed it at seven
+// minutes mid-change. Everything before apply shares ONE deadline, convergence
+// waits included, and apply keeps its own write budget inside its command
+// authority window whatever that phase used; only a closer job deadline still
+// shrinks it.
+func TestTypedStackKitApplyKeepsItsOwnBudgetWhateverThePreApplyPhaseUsed(t *testing.T) {
+	// A shared deadline whose usable part, after the result grace every command
+	// keeps back, is small enough to exhaust in real time.
+	usable := 300 * time.Millisecond
+	sequenceBudget := managedStackKitApplyAllowance + managedStackKitResultGrace + usable
+
+	run := func(t *testing.T, ctx context.Context, budget time.Duration, pace map[agentpb.StackKitOperation]time.Duration) (*pacedStackKitCommandSender, error) {
+		t.Helper()
+		sender := &pacedStackKitCommandSender{
+			failingStackKitCommandSender: failingStackKitCommandSender{failOn: agentpb.StackKitOperation_STACKKIT_OPERATION_APPLY},
+			pace:                         pace,
+		}
+		_, err := runTypedStackKitApplySequenceWithBudget(ctx, sender, "job-1", typedStackKitApplyRequest(), releaseWithAdvancedCatalog(t), budget, nil)
+		return sender, err
 	}
-	if got := time.Duration(sender.commands[4].TimeoutSeconds) * time.Second; got >= managedStackKitApplyTimeout || got > 150*time.Second {
-		t.Fatalf("apply agent timeout = %s, want remaining job budget", got)
+	reachedApply := func(sender *pacedStackKitCommandSender) *agentpb.StackKitCommand {
+		for _, command := range sender.commands {
+			if command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_APPLY {
+				return command
+			}
+		}
+		return nil
 	}
+
+	t.Run("apply keeps its whole write budget after pre-apply used its shared deadline", func(t *testing.T) {
+		sender, _ := run(t, context.Background(), sequenceBudget, map[agentpb.StackKitOperation]time.Duration{
+			agentpb.StackKitOperation_STACKKIT_OPERATION_INIT: usable / 2,
+			agentpb.StackKitOperation_STACKKIT_OPERATION_PLAN: usable / 3,
+		})
+		apply := reachedApply(sender)
+		if apply == nil {
+			t.Fatalf("the sequence never reached apply: %d commands", len(sender.commands))
+		}
+		got := time.Duration(apply.TimeoutSeconds) * time.Second
+		if got != stackKitWriteCommandTimeout {
+			t.Fatalf("apply agent timeout = %s, want the write budget %s", got, stackKitWriteCommandTimeout)
+		}
+		if got+managedStackKitResultGrace >= agentcontrol.CommandAuthorityLifetime {
+			t.Fatalf("apply %s plus result grace outlives its command authority %s", got, agentcontrol.CommandAuthorityLifetime)
+		}
+	})
+
+	t.Run("a pre-apply command cannot overrun the shared deadline into apply", func(t *testing.T) {
+		sender, err := run(t, context.Background(), sequenceBudget, map[agentpb.StackKitOperation]time.Duration{
+			agentpb.StackKitOperation_STACKKIT_OPERATION_INIT: 2 * usable,
+		})
+		var operationErr *typedStackKitOperationError
+		if !errors.As(err, &operationErr) || !operationErr.TimedOut() || operationErr.Operation == StackKitLifecycleApply {
+			t.Fatalf("error = %v, want a pre-apply timeout", err)
+		}
+		if reachedApply(sender) != nil {
+			t.Fatalf("apply was dispatched after pre-apply ran out of its shared deadline")
+		}
+	})
+
+	t.Run("a closer job deadline still shrinks apply", func(t *testing.T) {
+		jobDeadline := 160 * time.Second
+		ctx, cancel := context.WithTimeout(context.Background(), jobDeadline)
+		defer cancel()
+		sender, _ := run(t, ctx, 0, nil)
+		apply := reachedApply(sender)
+		if apply == nil {
+			t.Fatalf("the sequence never reached apply: %d commands", len(sender.commands))
+		}
+		got := time.Duration(apply.TimeoutSeconds) * time.Second
+		if got >= stackKitWriteCommandTimeout || got+managedStackKitResultGrace > jobDeadline {
+			t.Fatalf("apply agent timeout = %s, want the remaining job deadline of %s", got, jobDeadline)
+		}
+	})
 }
 
 func TestTypedStackKitApplyWaitsWhenGuardRuntimeIsStillConverging(t *testing.T) {
@@ -211,7 +291,7 @@ func TestTypedStackKitApplyWaitsWhenGuardRuntimeIsStillConverging(t *testing.T) 
 
 	sender := &pendingThenReadyStackKitCommandSender{}
 	request := typedStackKitApplyRequest()
-	if _, err := runTypedStackKitApplySequence(context.Background(), sender, "job-1", request, stackkitrelease.Release{}); err != nil {
+	if _, err := runTypedStackKitApplySequence(context.Background(), sender, "job-1", request, releaseWithAdvancedCatalog(t)); err != nil {
 		t.Fatalf("sequence should continue after Guard runtime readiness: %v", err)
 	}
 	if sender.initAttempts < 2 {
@@ -295,7 +375,7 @@ func TestTypedStackKitApplyBindsManagedAddressBeforeNodeGeneration(t *testing.T)
 	request := typedStackKitApplyRequest()
 	request.AddressPrefix = "sh-demo-ab12"
 	request.BoundSpecPath = "stack-spec.address-bound.v2.json"
-	if _, err := runTypedStackKitApplySequence(context.Background(), sender, "job-1", request, stackkitrelease.Release{}); err != nil {
+	if _, err := runTypedStackKitApplySequence(context.Background(), sender, "job-1", request, releaseWithAdvancedCatalog(t)); err != nil {
 		t.Fatalf("runTypedStackKitApplySequence: %v", err)
 	}
 	want := []agentpb.StackKitOperation{
@@ -320,7 +400,7 @@ func TestTypedManagedRolloutCompletesOwnerHandoffFromTechstackFacts(t *testing.T
 	// Wizard's automatic cloud Owner failed because the v2 apply result
 	// carries no identity outputs.
 	sender := &recordingStackKitCommandSender{applyStatus: "applied"}
-	applyResult, err := runTypedStackKitApplySequence(context.Background(), sender, "job-owner-handoff", typedStackKitApplyRequest(), stackkitrelease.Release{})
+	applyResult, err := runTypedStackKitApplySequence(context.Background(), sender, "job-owner-handoff", typedStackKitApplyRequest(), releaseWithAdvancedCatalog(t))
 	if err != nil {
 		t.Fatalf("runTypedStackKitApplySequence: %v", err)
 	}
@@ -366,13 +446,15 @@ func TestManagedStackKitInventorySkipsUnselectedOptionalBackupAndContinuesCoreAp
 		actionReq: RuntimeActionRequest{TenantID: "tenant-1"},
 	}
 
-	inventory, err := rollout.buildManagedStackKitInventory(
+	inventory, delivery, err := rollout.buildManagedStackKitInventory(
 		context.Background(),
 		[]byte(`{"apiVersion":"stackkit.resolved-plan/v1","backupTargetRequirements":{}}`),
-		"v0.16.1", "sha256:"+strings.Repeat("b", 64),
 	)
 	if err != nil {
 		t.Fatalf("an unselected optional backup must not block core rollout: %v", err)
+	}
+	if delivery != nil {
+		t.Fatal("an unselected optional backup scheduled a backup delivery")
 	}
 	if !builder.called {
 		t.Fatal("unselected optional backup did not reach the channel-only Inventory builder")
@@ -388,7 +470,7 @@ func TestManagedStackKitInventorySkipsUnselectedOptionalBackupAndContinuesCoreAp
 	sender := &recordingStackKitCommandSender{}
 	request := typedStackKitApplyRequest()
 	request.InventoryJSON = inventory
-	if _, err := runTypedStackKitApplySequence(context.Background(), sender, job.ID, request, stackkitrelease.Release{}); err != nil {
+	if _, err := runTypedStackKitApplySequence(context.Background(), sender, job.ID, request, releaseWithAdvancedCatalog(t)); err != nil {
 		t.Fatalf("core apply did not continue without an optional backup Inventory: %v", err)
 	}
 	if len(sender.commands) == 0 || sender.commands[len(sender.commands)-1].Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_APPLY {
@@ -400,47 +482,35 @@ func TestManagedStackKitInventorySkipsUnselectedOptionalBackupAndContinuesCoreAp
 }
 
 func TestManagedStackKitInventoryFailsClosedWithObservableReceipt(t *testing.T) {
-	attestationErr := errors.New("write managed backup target sentinel: S3 PutObject returned 401 Unauthorized")
 	tests := []struct {
 		name, resolvedPlan, wantReason string
-		authorityErr                   error
+		builder                        ManagedStackKitInventoryBuilder
 	}{
 		{
-			name:         "explicit backup attestation failure",
+			name:         "selected backup without a delivery authority",
 			resolvedPlan: `{"apiVersion":"stackkit.resolved-plan/v1","backupTargetRequirements":{"cloud":{"offsite-object-backup":{"requirementsHash":"sha256:required"}}}}`,
-			authorityErr: attestationErr,
-			wantReason:   "backup_target_attestation_failed",
+			builder:      &recordingManagedStackKitInventoryBuilder{},
+			wantReason:   "managed_backup_delivery_unavailable",
 		},
 		{
 			name:         "malformed backup requirements",
 			resolvedPlan: `{"apiVersion":"stackkit.resolved-plan/v1","backupTargetRequirements":["cloud"]}`,
+			builder:      &recordingManagedStackKitInventoryBuilder{},
 			wantReason:   "backup_target_requirements_invalid",
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			builder := &recordingManagedStackKitInventoryBuilder{err: test.authorityErr}
 			job := &Job{ID: "job-backup-failure", Result: map[string]interface{}{}}
 			rollout := &deployRollout{
-				cfg:       &ProvisionConfig{ManagedStackKitInventory: builder},
+				cfg:       &ProvisionConfig{ManagedStackKitInventory: test.builder},
 				job:       job,
 				actionReq: RuntimeActionRequest{TenantID: "tenant-1"},
 			}
 
-			_, err := rollout.buildManagedStackKitInventory(
-				context.Background(), []byte(test.resolvedPlan),
-				"v0.16.1", "sha256:"+strings.Repeat("b", 64),
-			)
-			if err == nil {
+			if _, _, err := rollout.buildManagedStackKitInventory(context.Background(), []byte(test.resolvedPlan)); err == nil {
 				t.Fatal("expected fail-closed backup inventory error")
-			}
-			if test.authorityErr != nil && !errors.Is(err, test.authorityErr) {
-				t.Fatalf("backup inventory error = %v, want wrapped authority cause", err)
-			}
-			wantBuilderCalled := test.authorityErr != nil
-			if builder.called != wantBuilderCalled {
-				t.Fatalf("inventory authority called = %v, want %v", builder.called, wantBuilderCalled)
 			}
 			receipt, ok := job.Result["managed_backup_target_inventory"].(map[string]interface{})
 			if !ok || receipt["status"] != "failed" || receipt["reason_code"] != test.wantReason || receipt["retryable"] != false {
@@ -462,4 +532,25 @@ func typedPlanCommandResult(planHash string) []byte {
 		"data": map[string]interface{}{"output": string(inspection)},
 	})
 	return receipt
+}
+
+func TestModernRolloutInventoryNamesAChannelForEveryNode(t *testing.T) {
+	builder := &recordingManagedStackKitInventoryBuilder{}
+	rollout := &deployRollout{
+		cfg:         &ProvisionConfig{ManagedStackKitInventory: builder},
+		job:         &Job{ID: "job-modern", Result: map[string]interface{}{}},
+		unifiedSpec: &core.UnifiedSpec{StackKit: "modern-homelab"},
+		actionReq:   RuntimeActionRequest{TenantID: "tenant-1"},
+	}
+	if _, _, err := rollout.buildManagedStackKitInventory(context.Background(),
+		[]byte(`{"apiVersion":"stackkit.resolved-plan/v1","backupTargetRequirements":{}}`)); err != nil {
+		t.Fatal(err)
+	}
+	channels := map[string]string{}
+	for _, node := range builder.request.Nodes {
+		channels[node.SiteRef+"/"+node.NodeRef] = node.ChannelRef
+	}
+	if channels["home/home-main"] != "local-home-main" || channels["cloud/cloud-edge"] != "local-cloud-edge" || len(channels) != 2 {
+		t.Fatalf("Home's Apply needs a channel for the Cloud node too, got %v", channels)
+	}
 }

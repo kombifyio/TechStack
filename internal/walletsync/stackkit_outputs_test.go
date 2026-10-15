@@ -2,6 +2,7 @@ package walletsync
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 
@@ -116,6 +117,92 @@ func TestSyncStackKitOutputsToStoreUpsertsWalletItemsIdempotently(t *testing.T) 
 	if login == nil || login.ExternalRef == "" || login.Metadata["url"] != "https://login.example.com" {
 		t.Fatalf("login wallet item = %+v", login)
 	}
+}
+
+func TestSyncDoesNotClaimIneligibleWalletItems(t *testing.T) {
+	req := SyncRequest{
+		TenantID: "tenant-1",
+		OwnerID:  "owner-1",
+		StackID:  "stack-1",
+		Result: map[string]interface{}{
+			"stackkit_outputs": map[string]interface{}{
+				"identity": map[string]interface{}{
+					"owner": map[string]interface{}{"email": "owner@example.com"},
+				},
+			},
+		},
+	}
+	walletItem := WalletItemsFromResult(req)[0]
+	legacy := []controlplane.WalletItem{
+		{
+			ID: walletStoreItemID(req.TenantID, req, walletItem), TenantID: req.TenantID,
+			StackID: req.StackID, ItemType: "other",
+			Metadata: map[string]any{"service_id": walletItem.ServiceID, "source_ref": walletItem.SourceRef, "secret": "legacy-ownerless"},
+		},
+		{
+			ID: "wallet-conflicting-owner", TenantID: req.TenantID, StackID: req.StackID, ItemType: "other",
+			Metadata: map[string]any{"owner_id": "owner-1", "user_id": "owner-2", "service_id": walletItem.ServiceID, "source_ref": walletItem.SourceRef, "secret": "legacy-conflict"},
+		},
+		{
+			ID: "wallet-wrong-type", TenantID: req.TenantID, StackID: req.StackID, ItemType: "password",
+			Metadata: map[string]any{"owner_id": "owner-1", "service_id": walletItem.ServiceID, "source_ref": walletItem.SourceRef, "secret": "legacy-type"},
+		},
+		{
+			ID: "wallet-other-instance", TenantID: req.TenantID, InstanceID: "instance-2", StackID: req.StackID, ItemType: "other",
+			Metadata: map[string]any{"owner_id": "owner-1", "service_id": walletItem.ServiceID, "source_ref": walletItem.SourceRef, "secret": "other-instance"},
+		},
+	}
+	store := &legacySeedWalletStore{WalletStore: controlplane.NewMemoryStore(), legacy: legacy}
+
+	for attempt := 0; attempt < 2; attempt++ {
+		if _, err := SyncStackKitOutputsToStore(context.Background(), store, req); !errors.Is(err, controlplane.ErrConflict) {
+			t.Fatalf("sync did not fail closed on an occupied canonical ID: %v", err)
+		}
+	}
+
+	items, err := store.ListWalletItems(context.Background(), req.TenantID, req.StackID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, original := range legacy {
+		preserved := false
+		for _, got := range items {
+			if got.ID == original.ID && got.Metadata["secret"] == original.Metadata["secret"] {
+				preserved = true
+				break
+			}
+		}
+		if !preserved {
+			t.Fatalf("sync changed or discarded an ineligible wallet item: %s", original.ID)
+		}
+	}
+}
+
+type legacySeedWalletStore struct {
+	controlplane.WalletStore
+	legacy []controlplane.WalletItem
+}
+
+func (s *legacySeedWalletStore) ListWalletItems(ctx context.Context, tenantID, stackID string) ([]controlplane.WalletItem, error) {
+	items, err := s.WalletStore.ListWalletItems(ctx, tenantID, stackID)
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range s.legacy {
+		if item.TenantID == tenantID && (stackID == "" || item.StackID == stackID) {
+			items = append(items, item)
+		}
+	}
+	return items, nil
+}
+
+func (s *legacySeedWalletStore) GetWalletItem(ctx context.Context, tenantID, itemID string) (*controlplane.WalletItem, error) {
+	for _, legacy := range s.legacy {
+		if legacy.TenantID == tenantID && legacy.ID == itemID {
+			return &legacy, nil
+		}
+	}
+	return s.WalletStore.GetWalletItem(ctx, tenantID, itemID)
 }
 
 func findStoreWalletItemByService(items []controlplane.WalletItem, serviceID string) *controlplane.WalletItem {

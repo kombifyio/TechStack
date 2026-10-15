@@ -4,99 +4,46 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-	"time"
 )
 
-func TestBuildInventoryProjectsOnlyOpaqueCustodyAndExactProcessBinding(t *testing.T) {
-	plan := testResolvedPlan(t)
-	inventory, err := BuildInventory(plan, CustodyReceipt{
-		BindingEvidence: []byte("tenant/stack/binding"), TargetEvidence: []byte("r2-target-observation"),
-		AttestationEvidence: []byte("verified read-write-delete restore sentinel"),
-		ObservedAt:          time.Date(2026, 8, 6, 9, 0, 0, 0, time.UTC),
-	}, OperationsProcess{
+// The Inventory the control plane hands the node binds the Operations process
+// and its channel, and nothing else, even when the plan selects the off-site
+// backup capability: the node issues its own backup-target binding.
+func TestBuildInventoryNeverCarriesABackupBindingEvenForASelectedCapability(t *testing.T) {
+	process := OperationsProcess{
 		ChannelRef: "host-channel-cloud-main", SiteRef: "cloud", NodeRef: "cloud-main",
 		Executable: "/usr/local/libexec/techstack-stackkit-operations", ExecutableSHA256: testDigest("e"),
-	}, Candidate{StackKitsVersion: "v0.14.13", Digest: testDigest("f"), ValidFor: time.Hour})
-	if err != nil {
-		t.Fatal(err)
 	}
-	var document map[string]any
-	if err := json.Unmarshal(inventory, &document); err != nil {
-		t.Fatal(err)
-	}
-	encoded := string(inventory)
-	for _, forbidden := range []string{"bucket", "endpoint", "credential", "account", "region", "secret"} {
-		if strings.Contains(strings.ToLower(encoded), forbidden) {
-			t.Fatalf("Inventory leaked forbidden provider/custody detail %q: %s", forbidden, encoded)
+	for name, plan := range map[string][]byte{"selected": testResolvedPlan(t), "not selected": testResolvedPlanWithoutBackup(t)} {
+		inventory, err := BuildInventory(plan, process)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		var document map[string]any
+		if err := json.Unmarshal(inventory, &document); err != nil {
+			t.Fatal(err)
+		}
+		if _, exists := document["externalBackupTargetBindings"]; exists {
+			t.Fatalf("%s: the control plane built a backup binding: %s", name, inventory)
+		}
+		channels, ok := document["executionChannels"].(map[string]any)
+		if !ok || len(channels) != 1 || channels["host-channel-cloud-main"] == nil {
+			t.Fatalf("%s: execution channels = %#v", name, document["executionChannels"])
 		}
 	}
-	bindings := document["externalBackupTargetBindings"].(map[string]any)
-	binding := bindings["cloud"].(map[string]any)["offsite-object-backup"].(map[string]any)
-	if binding["requirementsHash"] != testDigest("c") || binding["siteRef"] != "cloud" {
-		t.Fatalf("binding lost exact requirement identity: %#v", binding)
-	}
-	channels := document["executionChannels"].(map[string]any)
-	if len(channels) != 1 || channels["host-channel-cloud-main"] == nil {
-		t.Fatalf("execution channels = %#v", channels)
-	}
 }
 
-func TestBuildInventoryWithoutBackupProjectsOnlyExecutionChannel(t *testing.T) {
-	inventory, err := BuildInventory(testResolvedPlanWithoutBackup(t), CustodyReceipt{}, OperationsProcess{
-		ChannelRef: "host-channel-cloud-main", SiteRef: "cloud", NodeRef: "cloud-main",
-		Executable: "/usr/local/libexec/techstack-stackkit-operations", ExecutableSHA256: testDigest("e"),
-	}, Candidate{StackKitsVersion: "v0.14.13", Digest: testDigest("f"), ValidFor: time.Hour})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var document map[string]any
-	if err := json.Unmarshal(inventory, &document); err != nil {
-		t.Fatal(err)
-	}
-	if _, exists := document["externalBackupTargetBindings"]; exists {
-		t.Fatalf("channel-only Inventory carried a backup binding: %#v", document)
-	}
-	channels, ok := document["executionChannels"].(map[string]any)
-	if !ok || channels["host-channel-cloud-main"] == nil {
-		t.Fatalf("execution channels = %#v", document["executionChannels"])
-	}
-}
-
-func TestBuildInventoryFailsClosedOnProcessOrCustodyDrift(t *testing.T) {
-	baseCustody := CustodyReceipt{
-		BindingEvidence: []byte("binding"), TargetEvidence: []byte("target"), AttestationEvidence: []byte("attestation"),
-		ObservedAt: time.Date(2026, 8, 6, 9, 0, 0, 0, time.UTC),
-	}
-	baseProcess := OperationsProcess{ChannelRef: "host-channel-cloud-main", SiteRef: "cloud", NodeRef: "cloud-main", Executable: "/opt/operations", ExecutableSHA256: testDigest("e")}
-	baseCandidate := Candidate{StackKitsVersion: "v0.14.13", Digest: testDigest("f"), ValidFor: time.Hour}
-	for name, execute := range map[string]func() error{
-		"wrong-node": func() error {
-			process := baseProcess
-			process.NodeRef = "other"
-			_, err := BuildInventory(testResolvedPlan(t), baseCustody, process, baseCandidate)
-			return err
-		},
-		"relative-executable": func() error {
-			process := baseProcess
-			process.Executable = "operations"
-			_, err := BuildInventory(testResolvedPlan(t), baseCustody, process, baseCandidate)
-			return err
-		},
-		"missing-attestation": func() error {
-			custody := baseCustody
-			custody.AttestationEvidence = nil
-			_, err := BuildInventory(testResolvedPlan(t), custody, baseProcess, baseCandidate)
-			return err
-		},
-		"long-validity": func() error {
-			candidate := baseCandidate
-			candidate.ValidFor = 25 * time.Hour
-			_, err := BuildInventory(testResolvedPlan(t), baseCustody, baseProcess, candidate)
-			return err
-		},
+func TestBuildInventoryFailsClosedOnProcessDrift(t *testing.T) {
+	base := OperationsProcess{ChannelRef: "host-channel-cloud-main", SiteRef: "cloud", NodeRef: "cloud-main", Executable: "/opt/operations", ExecutableSHA256: testDigest("e")}
+	for name, mutate := range map[string]func(*OperationsProcess){
+		"wrong-node":          func(p *OperationsProcess) { p.NodeRef = "other" },
+		"relative-executable": func(p *OperationsProcess) { p.Executable = "operations" },
+		"unpinned-executable": func(p *OperationsProcess) { p.ExecutableSHA256 = "latest" },
 	} {
 		t.Run(name, func(t *testing.T) {
-			if err := execute(); err == nil {
+			process := base
+			mutate(&process)
+			if _, err := BuildInventory(testResolvedPlan(t), process); err == nil {
 				t.Fatal("invalid managed Inventory input was accepted")
 			}
 		})

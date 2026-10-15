@@ -4,15 +4,24 @@
   import ConfigurationFlow from "#lib/components/hub/ConfigurationFlow.svelte";
   import { tr } from "#lib/i18n.svelte.js";
   import {
+    creationUseCaseHandoffKey,
+    creationUseCaseWizardConfig,
     readSelfDisclosureHandoff,
     withoutSelfDisclosureParams,
   } from "#lib/wizard/self-disclosure-handoff.js";
 
   // Answers handed over from the kombify Cloud capture surface. Read once:
   // after they are stored, the URL drops them so a reload does not resend.
-  const selfDisclosure = readSelfDisclosureHandoff(page.url.searchParams);
+  let selfDisclosure = $state(readSelfDisclosureHandoff(page.url.searchParams));
+  const creationUseCase = $derived(
+    creationUseCaseHandoffKey(page.url.searchParams),
+  );
+  const initialConfig = $derived(
+    creationUseCaseWizardConfig(page.url.searchParams),
+  );
 
   function clearHandoffParams() {
+    selfDisclosure = null;
     replaceState(withoutSelfDisclosureParams(page.url), page.state);
   }
 </script>
@@ -21,7 +30,10 @@
   <title>{tr("wizard.title")} | kombify-Techstack</title>
 </svelte:head>
 
-<ConfigurationFlow
-  {selfDisclosure}
-  onSelfDisclosureSettled={clearHandoffParams}
-/>
+{#key creationUseCase}
+  <ConfigurationFlow
+    {initialConfig}
+    {selfDisclosure}
+    onSelfDisclosureSettled={clearHandoffParams}
+  />
+{/key}

@@ -1,4 +1,4 @@
-export type JobObservationPhase = "preparation" | "rollout";
+export type JobObservationPhase = "preparation" | "rollout" | "verification";
 
 export interface JobObservationSnapshot {
   phase: JobObservationPhase;
@@ -8,6 +8,7 @@ export interface JobObservationSnapshot {
   terminal_observed: boolean;
   last_job?: Record<string, unknown>;
   rollout_started_at_ms?: number;
+  verification_started_at_ms?: number;
 }
 
 export interface JobObservation {
@@ -20,6 +21,7 @@ export interface ManagedRuntimeObservationBudgets {
   setupMs: number;
   preparationMs: number;
   rolloutMs: number;
+  backendVerificationMs: number;
   verificationMs: number;
   cleanupMs: number;
   totalMs: number;
@@ -75,6 +77,7 @@ export function createJobObservation(
   preparationTimeoutMs: number,
   rolloutTimeoutMs?: number,
   startedAtMs = Date.now(),
+  verificationTimeoutMs?: number,
 ): JobObservation {
   const preparationTimeout = requirePositiveTimeout(
     preparationTimeoutMs,
@@ -85,6 +88,10 @@ export function createJobObservation(
       ? undefined
       : requirePositiveTimeout(rolloutTimeoutMs, "rolloutTimeoutMs");
   const startedAt = requireFiniteTime(startedAtMs, "startedAtMs");
+  const verificationTimeout =
+    verificationTimeoutMs === undefined
+      ? undefined
+      : requirePositiveTimeout(verificationTimeoutMs, "verificationTimeoutMs");
 
   let phase: JobObservationPhase = "preparation";
   let deadlineMs = startedAt + preparationTimeout;
@@ -92,6 +99,7 @@ export function createJobObservation(
   let terminalObserved = false;
   let lastJob: Record<string, unknown> | undefined;
   let rolloutStartedAtMs: number | undefined;
+  let verificationStartedAtMs: number | undefined;
 
   function markExpired(nowMs: number) {
     if (nowMs >= deadlineMs) expired = true;
@@ -116,6 +124,9 @@ export function createJobObservation(
       ...(rolloutStartedAtMs === undefined
         ? {}
         : { rollout_started_at_ms: rolloutStartedAtMs }),
+      ...(verificationStartedAtMs === undefined
+        ? {}
+        : { verification_started_at_ms: verificationStartedAtMs }),
     };
   }
 
@@ -129,6 +140,18 @@ export function createJobObservation(
     const now = requireFiniteTime(nowMs, "nowMs");
 
     if (
+      !expired &&
+      phase !== "verification" &&
+      verificationTimeout !== undefined &&
+      (jobStep(job) === "verify_rollout" || jobStep(job) === "restore_drill") &&
+      now < deadlineMs
+    ) {
+      // Polling may miss verify_rollout. Restore still proves Apply finished;
+      // neither repeated steps nor a backstep may renew this deadline.
+      phase = "verification";
+      verificationStartedAtMs = now;
+      deadlineMs = now + verificationTimeout;
+    } else if (
       !expired &&
       phase === "preparation" &&
       rolloutTimeout !== undefined &&
@@ -163,14 +186,27 @@ export function managedRuntimeObservationBudgets(
     5_400_000,
   );
   const rolloutMs = 450_000;
+  // Existing typed product limits after Apply: Verify (300 + 30 grace),
+  // node Plan (300 + 30), backup configure (900 + 30), Advanced restore
+  // drill (900 + 30), plus 30 seconds for polling and result persistence.
+  // See pkg/jobs/stackkit_lifecycle.go and deploy_handler.go's native drill.
+  // This is separate from the UI/evidence checks after the job is terminal.
+  const backendVerificationMs = (300 + 300 + 900 + 900 + 4 * 30 + 30) * 1_000;
   const verificationMs = 840_000;
   const cleanupMs = 450_000;
   return {
     setupMs,
     preparationMs,
     rolloutMs,
+    backendVerificationMs,
     verificationMs,
     cleanupMs,
-    totalMs: setupMs + preparationMs + rolloutMs + verificationMs + cleanupMs,
+    totalMs:
+      setupMs +
+      preparationMs +
+      rolloutMs +
+      backendVerificationMs +
+      verificationMs +
+      cleanupMs,
   };
 }

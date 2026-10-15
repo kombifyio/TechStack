@@ -1,8 +1,12 @@
 package stackkitcommand
 
 import (
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
 	"google.golang.org/protobuf/proto"
@@ -14,6 +18,89 @@ func validationCommand() *agentpb.StackKitCommand {
 		CommandId: "service-command-1", Operation: agentpb.StackKitOperation_STACKKIT_OPERATION_SERVICE_RESTART,
 		WorkingDirectory: "/srv/stack", OwnerApproved: true, ServiceKey: "coolify", StackkitInstanceId: "cloud-main",
 		Release: &agentpb.StackKitReleasePin{Version: "v0.16.0", PlatformOs: "linux", PlatformArch: "amd64", ArchiveSha256: digest, ReleaseIndexSha256: digest},
+	}
+}
+
+func TestRestoreActivationReceiptBindsOriginalResultPlanAndOwner(t *testing.T) {
+	command := validationCommand()
+	command.Operation = agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE_RECOVER
+	command.Release.Version = MinRestoreActivationRelease
+	command.Stackkit = "basement-kit"
+	command.LocalSiteRef, command.LocalNodeRef, command.LocalExecutionChannelRef = "home", "node-a", "channel-a"
+	command.RestoreResultId = "sha256:" + strings.Repeat("b", 64)
+	command.ExpectedPlanHash = "sha256:" + strings.Repeat("c", 64)
+	command.ActivationOperationId = "restore-original-job"
+	if err := ValidateCommand(command); err != nil {
+		t.Fatal(err)
+	}
+	data := map[string]any{"apiVersion": "stackkit.restore-activation-result/v1", "operationId": command.ActivationOperationId, "restoreResultId": command.RestoreResultId, "safetySnapshotId": "sha256:" + strings.Repeat("d", 64), "planHash": command.ExpectedPlanHash, "managedVolumeSetHash": "sha256:" + strings.Repeat("e", 64), "status": "recovered",
+		"verification": map[string]any{"apiVersion": "stackkit.local-backup-restore-verification/v1", "ownerRef": "owner/node", "ownerBindingDigest": "sha256:" + strings.Repeat("f", 64), "pocketIdSubject": "owner-subject", "planHash": command.ExpectedPlanHash, "servicesVerified": true, "verifiedAt": time.Now().UTC()},
+		"signature":    map[string]any{"ownerRef": "owner/node", "keyId": "node-key", "value": "node-verified-signature"}}
+	for _, scenario := range []string{"recovered", "activated", "result", "operation", "plan", "owner", "unattested", "foreign-release", "foreign-command", "unsupported-pin", "published-old-pin", "no-approval", "managed-kit", "original-release", "original-foreign-index", "original-missing-proof", "original-unsupported-A", "original-unsupported-B", "original-new-activation"} {
+		t.Run(scenario, func(t *testing.T) {
+			c := proto.Clone(command).(*agentpb.StackKitCommand)
+			raw, _ := json.Marshal(data)
+			var d map[string]any
+			_ = json.Unmarshal(raw, &d)
+			if strings.HasPrefix(scenario, "original-") {
+				c.Release.Version = MinOriginalRecoveryRelease
+				c.OriginalRecoveryRelease = proto.Clone(c.Release).(*agentpb.StackKitReleasePin)
+				c.OriginalRecoveryRelease.Version = "v0.52.5"
+				d["originalRecoveryRelease"] = map[string]any{"version": "v0.52.5", "platform": map[string]any{"os": c.Release.PlatformOs, "arch": c.Release.PlatformArch}, "archiveSha256": c.OriginalRecoveryRelease.ArchiveSha256, "releaseIndexSha256": c.OriginalRecoveryRelease.ReleaseIndexSha256}
+			}
+			switch scenario {
+			case "original-foreign-index":
+				d["originalRecoveryRelease"].(map[string]any)["releaseIndexSha256"] = strings.Repeat("e", 64)
+			case "original-missing-proof":
+				delete(d, "originalRecoveryRelease")
+			case "original-unsupported-A":
+				c.OriginalRecoveryRelease.Version = "v0.52.4"
+			case "original-unsupported-B":
+				c.Release.Version = "v0.52.5"
+			case "original-new-activation":
+				c.Operation = agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_RESTORE_ACTIVATE
+			case "activated":
+				d["status"] = "activated"
+			case "result":
+				d["restoreResultId"] = "sha256:" + strings.Repeat("a", 64)
+			case "operation":
+				d["operationId"] = "restore-foreign-job"
+			case "plan":
+				d["planHash"] = "sha256:" + strings.Repeat("a", 64)
+			case "owner":
+				d["signature"].(map[string]any)["ownerRef"] = "owner/foreign"
+			case "unsupported-pin":
+				c.Release.Version = "v0.51.7"
+			case "published-old-pin":
+				c.Release.Version = "v0.51.8"
+			case "no-approval":
+				c.OwnerApproved = false
+			case "managed-kit":
+				c.Stackkit = "cloud-kit"
+			}
+			body, _ := json.Marshal(map[string]any{"schemaVersion": CommandResultVersion, "command": ResultCommandName(c.Operation), "status": "success", "data": d})
+			r := validationResult(c)
+			r.CommandResultJson = body
+			r.PinnedCliEvidenceVerified = true
+			r.PinnedCliEvidenceSha256 = fmt.Sprintf("sha256:%x", sha256.Sum256(body))
+			if scenario == "unattested" {
+				r.PinnedCliEvidenceVerified = false
+			}
+			if scenario == "foreign-release" {
+				r.Release.ArchiveSha256 = strings.Repeat("c", 64)
+			}
+			if scenario == "foreign-command" {
+				r.CommandId = "other-command"
+			}
+			err := ValidateCommand(c)
+			if err == nil {
+				err = ValidateResult(r, c)
+			}
+			allowed := scenario == "activated" || scenario == "recovered" || scenario == "original-release"
+			if allowed != (err == nil) {
+				t.Fatalf("receipt admission=%v error=%v", allowed, err)
+			}
+		})
 	}
 }
 
@@ -91,6 +178,10 @@ func TestValidateCommandRequiresExpectedPlanHashForApply(t *testing.T) {
 	command.ExpectedPlanHash = "sha256:" + strings.Repeat("b", 64)
 	if err := ValidateCommand(command); err != nil {
 		t.Fatalf("ValidateCommand() hash-bound Apply error = %v", err)
+	}
+	command.SourceGenerationInspection = true
+	if err := ValidateCommand(command); err == nil {
+		t.Fatal("Apply admitted historical preparation authority")
 	}
 }
 

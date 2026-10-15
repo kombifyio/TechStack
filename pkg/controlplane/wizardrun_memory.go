@@ -69,6 +69,10 @@ func (s *MemoryStore) UpsertWizardRun(_ context.Context, run WizardRun) (*Wizard
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	return s.upsertWizardRunLocked(run)
+}
+
+func (s *MemoryStore) upsertWizardRunLocked(run WizardRun) (*WizardRun, error) {
 	normalized := run
 	normalized.ID = strings.TrimSpace(run.ID)
 	normalized.TenantID = strings.TrimSpace(run.TenantID)
@@ -81,6 +85,9 @@ func (s *MemoryStore) UpsertWizardRun(_ context.Context, run WizardRun) (*Wizard
 	if normalized.IdempotencyKey != "" {
 		if existing := s.wizardRunByKeyLocked(normalized.TenantID, normalized.OwnerSubjectID, normalized.IdempotencyKey); existing != nil {
 			normalized.ID = existing.ID
+			if existing.PairingJobID != "" {
+				normalized.PairingJobID = existing.PairingJobID
+			}
 			normalized.CreatedAt = existing.CreatedAt
 			normalized.UpdatedAt = now
 			s.wizardRuns[normalized.ID] = normalized
@@ -135,3 +142,31 @@ func cloneWizardRun(run WizardRun) *WizardRun {
 }
 
 var _ WizardRunStore = (*MemoryStore)(nil)
+
+func (s *MemoryStore) CommitWizardJoinProjection(_ context.Context, command StackConfigCAS, run WizardRun) (*Stack, *WizardRun, error) {
+	prepared, err := normalizeStackConfigCAS(command)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err = validateWizardProjectionRun(prepared, run); err != nil {
+		return nil, nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, ok := s.stacks[prepared.StackID]
+	if !ok || current.TenantID != prepared.TenantID || current.DeletedAt != nil || current.OwnerSubjectID != run.OwnerSubjectID || !current.UpdatedAt.Equal(prepared.ExpectedUpdatedAt) {
+		return nil, nil, ErrConflict
+	}
+	if existing := s.wizardRunByKeyLocked(run.TenantID, run.OwnerSubjectID, run.IdempotencyKey); existing != nil && !sameWizardProjectionAttempt(existing, run) {
+		return nil, nil, ErrConflict
+	}
+	stored, err := s.upsertWizardRunLocked(run)
+	if err != nil {
+		return nil, nil, err
+	}
+	stack, err := s.compareAndSwapStackConfigLocked(prepared)
+	if err != nil {
+		return nil, nil, err
+	}
+	return stack, stored, nil
+}

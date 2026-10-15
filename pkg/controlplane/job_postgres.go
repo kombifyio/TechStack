@@ -11,6 +11,17 @@ import (
 )
 
 func (s *PostgresStore) CreateJob(ctx context.Context, req UpsertJobRequest) (*Job, error) {
+	return s.createJob(ctx, req, "")
+}
+
+func (s *PostgresStore) CreateServiceOperationJob(ctx context.Context, req UpsertJobRequest, serviceID string) (*Job, error) {
+	if err := serviceJobReservation(req, serviceID); err != nil {
+		return nil, err
+	}
+	return s.createJob(ctx, req, serviceID)
+}
+
+func (s *PostgresStore) createJob(ctx context.Context, req UpsertJobRequest, serviceID string) (*Job, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("controlplane: database not configured")
 	}
@@ -40,6 +51,21 @@ func (s *PostgresStore) CreateJob(ctx context.Context, req UpsertJobRequest) (*J
 
 	var out *Job
 	err = s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		if serviceID != "" {
+			// Reuse StartJob's transaction-scoped stack lock and READ COMMITTED
+			// visibility; a concurrent reservation must see the preceding commit.
+			lockKey := fmt.Sprintf("%d:%s%s", len(tenantID), tenantID, req.StackID)
+			if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", lockKey); err != nil {
+				return err
+			}
+			var competing string
+			if err := tx.QueryRowContext(ctx, unresolvedServiceJobSQL, tenantID, req.StackID, serviceID, req.ID).Scan(&competing); err != nil {
+				return err
+			}
+			if competing != "" {
+				return ErrServiceOperationBusy
+			}
+		}
 		job, scanErr := scanJob(tx.QueryRowContext(ctx, `
 			INSERT INTO jobs (
 				id, tenant_id, instance_id, stack_id, type, state, priority,
@@ -120,6 +146,7 @@ func (s *PostgresStore) UpsertJob(ctx context.Context, req UpsertJobRequest) (*J
 				scheduled_for = EXCLUDED.scheduled_for,
 				updated_at = now()
 			WHERE jobs.tenant_id = EXCLUDED.tenant_id AND jobs.state <> 'running'
+				AND NOT (COALESCE(jobs.result_json, '{}'::jsonb) ? '`+RestoreActivationAdmissionResultKey+`')
 			RETURNING id, tenant_id, instance_id, stack_id, type, state, priority,
 				progress, step, message, error, error_details, logs_json::text,
 				result_json::text, scheduled_for, started_at, completed_at,
@@ -174,6 +201,9 @@ func (s *PostgresStore) SyncJobSnapshot(ctx context.Context, syncReq SyncJobSnap
 	if !validJobSnapshotProjection(observedState, req.State) {
 		return nil, fmt.Errorf("%w: observed state %q cannot project as %q", ErrConflict, observedState, req.State)
 	}
+	if !restoreDenialMatchesExecution(syncReq) {
+		return nil, ErrConflict
+	}
 	logsJSON, err := marshalArray(req.Logs)
 	if err != nil {
 		return nil, err
@@ -196,7 +226,13 @@ func (s *PostgresStore) SyncJobSnapshot(ctx context.Context, syncReq SyncJobSnap
 				type = $5, state = $6, priority = $7, progress = $8,
 				step = NULLIF($9, ''), message = NULLIF($10, ''),
 				error = NULLIF($11, ''), error_details = NULLIF($12, ''),
-				logs_json = $13::jsonb, result_json = $14::jsonb,
+				logs_json = $13::jsonb, result_json = $14::jsonb ||
+					CASE WHEN COALESCE(result_json, '{}'::jsonb) ? '`+RestoreActivationAdmissionResultKey+`'
+					THEN jsonb_build_object('`+RestoreActivationAdmissionResultKey+`', result_json -> '`+RestoreActivationAdmissionResultKey+`')
+					ELSE '{}'::jsonb END ||
+					CASE WHEN COALESCE(result_json, '{}'::jsonb) ? '`+RestoreActivationRequestResultKey+`'
+					THEN jsonb_build_object('`+RestoreActivationRequestResultKey+`', result_json -> '`+RestoreActivationRequestResultKey+`')
+					ELSE '{}'::jsonb END,
 				scheduled_for = $15, completed_at = $18, updated_at = $19,
 				execution_owner_id = CASE WHEN $6 = 'running' THEN execution_owner_id ELSE NULL END,
 				execution_lease_expires_at = CASE WHEN $6 = 'running'
@@ -207,11 +243,36 @@ func (s *PostgresStore) SyncJobSnapshot(ctx context.Context, syncReq SyncJobSnap
 				AND (type = $5 OR (type = 'provision' AND $5 = 'deploy'))
 				AND state IN ('pending', 'running')
 				AND started_at IS NOT DISTINCT FROM $17
+				AND (COALESCE($14::jsonb #>> '{backup,mode}', '') <> 'not-admitted' OR
+					(NOT (COALESCE(result_json, '{}'::jsonb) ? '`+RestoreActivationAdmissionResultKey+`')
+					AND NOT ($14::jsonb ? '`+RestoreActivationAdmissionResultKey+`')))
+				AND (NOT ($14::jsonb ? '`+RestoreActivationAdmissionResultKey+`') OR
+					(jsonb_typeof($14::jsonb -> '`+RestoreActivationAdmissionResultKey+`') = 'object'
+					AND $14::jsonb -> '`+RestoreActivationAdmissionResultKey+`' <> '{}'::jsonb))
+				AND (NOT (COALESCE($14::jsonb -> '`+RestoreActivationAdmissionResultKey+`', '{}'::jsonb) ? 'working_directory') OR
+					(jsonb_typeof($14::jsonb #> '{`+RestoreActivationAdmissionResultKey+`,working_directory}') = 'string'
+					AND $14::jsonb #>> '{`+RestoreActivationAdmissionResultKey+`,working_directory}' <> ''
+					AND $14::jsonb #> '{`+RestoreActivationAdmissionResultKey+`,working_directory}' = payload_json -> 'working_directory'))
+				AND (NOT (COALESCE(result_json, '{}'::jsonb) ? '`+RestoreActivationAdmissionResultKey+`') OR
+					(jsonb_typeof(result_json -> '`+RestoreActivationAdmissionResultKey+`') = 'object'
+					AND result_json -> '`+RestoreActivationAdmissionResultKey+`' <> '{}'::jsonb
+					AND (NOT ($14::jsonb ? '`+RestoreActivationAdmissionResultKey+`') OR
+						result_json -> '`+RestoreActivationAdmissionResultKey+`' = $14::jsonb -> '`+RestoreActivationAdmissionResultKey+`'
+						OR (NOT ((result_json -> '`+RestoreActivationAdmissionResultKey+`') ? 'working_directory')
+							AND ($14::jsonb -> '`+RestoreActivationAdmissionResultKey+`') - 'working_directory' = result_json -> '`+RestoreActivationAdmissionResultKey+`'))))
 				AND (
 					($16 = 'pending' AND (state = 'pending' OR (state = 'running' AND $17 IS NOT NULL))) OR
 					($16 = 'running' AND state = 'running') OR
 					$16 IN ('waiting', 'completed', 'failed', 'canceled', 'cancelled')
 				)
+				AND (NOT ($14::jsonb ? '`+RestoreActivationRequestResultKey+`') OR
+					(jsonb_typeof($14::jsonb -> '`+RestoreActivationRequestResultKey+`') = 'object'
+					AND $14::jsonb -> '`+RestoreActivationRequestResultKey+`' <> '{}'::jsonb))
+				AND (NOT (COALESCE(result_json, '{}'::jsonb) ? '`+RestoreActivationRequestResultKey+`') OR
+					(jsonb_typeof(result_json -> '`+RestoreActivationRequestResultKey+`') = 'object'
+					AND result_json -> '`+RestoreActivationRequestResultKey+`' <> '{}'::jsonb
+					AND (NOT ($14::jsonb ? '`+RestoreActivationRequestResultKey+`') OR
+						result_json -> '`+RestoreActivationRequestResultKey+`' = $14::jsonb -> '`+RestoreActivationRequestResultKey+`')))
 			RETURNING id, tenant_id, instance_id, stack_id, type, state, priority,
 				progress, step, message, error, error_details, logs_json::text,
 				result_json::text, scheduled_for, started_at, completed_at,
@@ -450,6 +511,50 @@ func (s *PostgresStore) GetJob(ctx context.Context, tenantID, jobID string) (*Jo
 	`, tenantID, jobID)
 }
 
+// GetJobForRecovery reads the same exact job with its non-public recovery
+// payload. Admission needs its recorded owner/server binding even after the
+// operation leaves pending state; public GetJob responses keep omitting payload.
+func (s *PostgresStore) GetJobForRecovery(ctx context.Context, tenantID, jobID string) (*Job, error) {
+	return queryOneTenantRow(ctx, s, tenantID, `
+  SELECT id, tenant_id, instance_id, stack_id, type, state, priority,
+   progress, step, message, error, error_details, logs_json::text,
+   result_json::text, payload_json::text, scheduled_for, started_at, completed_at,
+   created_at, updated_at
+  FROM jobs WHERE tenant_id = $1 AND id = $2
+ `, scanJobWithPayload, jobID)
+}
+
+func (s *PostgresStore) GetOriginalRestoreActivation(ctx context.Context, tenantID, stackID, jobID string) (*OriginalRestoreActivation, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("controlplane: database not configured")
+	}
+	var out *OriginalRestoreActivation
+	err := s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		var job Job
+		var admissionJSON, directoryJSON []byte
+		err := tx.QueryRowContext(ctx, `SELECT id, tenant_id, COALESCE(stack_id, ''), type,
+			jsonb_build_object('`+RestoreActivationAdmissionResultKey+`', result_json -> '`+RestoreActivationAdmissionResultKey+`')::text,
+			jsonb_build_object('working_directory', payload_json -> 'working_directory', 'operation', payload_json -> 'operation')::text
+			FROM jobs WHERE tenant_id = $1 AND stack_id = $2 AND id = $3`, tenantID, stackID, jobID).
+			Scan(&job.ID, &job.TenantID, &job.StackID, &job.Type, &admissionJSON, &directoryJSON)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if err = decodeObject(admissionJSON, &job.Result); err != nil {
+			return err
+		}
+		if err = decodeObject(directoryJSON, &job.Payload); err != nil {
+			return err
+		}
+		out, err = originalRestoreActivationFromJob(job)
+		return err
+	})
+	return out, err
+}
+
 func (s *PostgresStore) ListJobsByTenant(ctx context.Context, tenantID string, limit int) ([]Job, error) {
 	if limit <= 0 {
 		limit = 50
@@ -586,11 +691,7 @@ func (s *PostgresStore) ListPendingJobTenants(ctx context.Context, afterTenantID
 		return nil, fmt.Errorf("controlplane: pending job tenant limit from 1 to 100 is required")
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT tenant_id
-		FROM pending_job_tenants
-		WHERE tenant_id > $1
-		ORDER BY tenant_id ASC
-		LIMIT $2
+		SELECT tenant_id FROM public.techstack_list_pending_job_tenants($1,$2)
 	`, strings.TrimSpace(afterTenantID), limit)
 	if err != nil {
 		return nil, fmt.Errorf("controlplane: list pending job tenants: %w", err)
@@ -609,17 +710,8 @@ func (s *PostgresStore) CompactPendingJobTenant(ctx context.Context, tenantID st
 		return fmt.Errorf("controlplane: pending job tenant id required")
 	}
 	return s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
-		var remaining int
-		if err := tx.QueryRowContext(ctx, `
-			SELECT COUNT(*) FROM jobs WHERE tenant_id = $1 AND state = 'pending'
-		`, tenantID).Scan(&remaining); err != nil {
-			return fmt.Errorf("controlplane: compact pending job tenant: %w", err)
-		}
-		if remaining > 0 {
-			return nil
-		}
 		_, err := tx.ExecContext(ctx, `
-			DELETE FROM pending_job_tenants WHERE tenant_id = $1
+			SELECT public.techstack_compact_pending_job_tenant($1)
 		`, tenantID)
 		return err
 	})
@@ -647,6 +739,13 @@ func (s *PostgresStore) SetJobPayload(ctx context.Context, tenantID, jobID strin
 			UPDATE jobs
 			SET payload_json = $3::jsonb, updated_at = now()
 			WHERE tenant_id = $1 AND id = $2 AND state = 'pending'
+				AND (NOT (result_json ? '`+RestoreActivationAdmissionResultKey+`') OR
+					(jsonb_typeof(payload_json -> 'working_directory') = 'string'
+					AND payload_json ->> 'working_directory' <> ''
+					AND payload_json -> 'working_directory' = $3::jsonb -> 'working_directory'
+					AND payload_json -> 'operation' = $3::jsonb -> 'operation'
+					AND (NOT ((result_json -> '`+RestoreActivationAdmissionResultKey+`') ? 'working_directory')
+						OR result_json #> '{`+RestoreActivationAdmissionResultKey+`,working_directory}' = payload_json -> 'working_directory')))
 		`, tenantID, jobID, payloadJSON)
 		if err != nil {
 			return err
@@ -759,6 +858,7 @@ func (s *PostgresStore) CompleteJob(ctx context.Context, tenantID, jobID string,
 			completed_at = $4, updated_at = $4,
 			execution_owner_id = NULL, execution_lease_expires_at = NULL
 		WHERE tenant_id = $1 AND id = $2 AND state = 'running'
+			AND NOT (COALESCE(result_json, '{}'::jsonb) ? '`+RestoreActivationAdmissionResultKey+`')
 		RETURNING id, tenant_id, instance_id, stack_id, type, state, priority,
 			progress, step, message, error, error_details, logs_json::text,
 			result_json::text, scheduled_for, started_at, completed_at,
@@ -851,7 +951,7 @@ func scanJob(row rowScanner) (*Job, error) {
 }
 
 // scanJobWithPayload scans the payload-inclusive projection used by the
-// pending-job list; every other query keeps the original column set.
+// pending-job list and exact internal service recovery; public reads omit it.
 func scanJobWithPayload(row rowScanner) (*Job, error) {
 	return scanJobProjection(row, true)
 }
@@ -949,3 +1049,41 @@ func (s *PostgresStore) listJobsWithPayload(ctx context.Context, tenantID, query
 }
 
 var _ JobStore = (*PostgresStore)(nil)
+
+// The aggregate is over the complete scoped predicate, not a history page.
+const unresolvedServiceJobSQL = `
+ SELECT COALESCE(min(id), '') FROM jobs
+ WHERE tenant_id = $1 AND stack_id = $2 AND id <> $4
+ AND ((jsonb_typeof(result_json->'service_action_receipt'->'service_id') = 'string' AND result_json->'service_action_receipt'->>'service_id' = $3)
+   OR (jsonb_typeof(payload_json->'service_id') = 'string' AND payload_json->>'service_id' = $3))
+ AND (lower(btrim(state)) IN ('pending', 'running', 'waiting') OR result_json->'connector_outcome_unresolved' = 'true'::jsonb)
+`
+
+func (s *PostgresStore) FindUnresolvedServiceJob(ctx context.Context, tenantID, stackID, serviceID, excludeJobID string) (string, error) {
+	if s == nil || s.db == nil {
+		return "", fmt.Errorf("controlplane: database not configured")
+	}
+	if err := serviceJobScope(tenantID, stackID, serviceID); err != nil {
+		return "", err
+	}
+	var id string
+	err := s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, unresolvedServiceJobSQL, tenantID, stackID, serviceID, excludeJobID).Scan(&id)
+	})
+	return id, err
+}
+
+func (s *PostgresStore) GetServiceOperationJob(ctx context.Context, tenantID, stackID, serviceID, jobID string) (*Job, error) {
+	if err := serviceJobScope(tenantID, stackID, serviceID); err != nil {
+		return nil, err
+	}
+	return queryOneTenantRow(ctx, s, tenantID, `
+  SELECT id, tenant_id, instance_id, stack_id, type, state, priority,
+   progress, step, message, error, error_details, logs_json::text,
+   result_json::text, payload_json::text, scheduled_for, started_at, completed_at,
+   created_at, updated_at
+  FROM jobs WHERE tenant_id = $1 AND stack_id = $2 AND id = $4
+  AND ((jsonb_typeof(result_json->'service_action_receipt'->'service_id') = 'string' AND result_json->'service_action_receipt'->>'service_id' = $3)
+   OR (jsonb_typeof(payload_json->'service_id') = 'string' AND payload_json->>'service_id' = $3))
+ `, scanJobWithPayload, stackID, serviceID, jobID)
+}

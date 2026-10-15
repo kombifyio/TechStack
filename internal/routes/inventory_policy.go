@@ -71,7 +71,9 @@ type InventoryDecision struct {
 
 // InventoryPolicy is the shared authorization seam used by both REST and MCP.
 // Hosted deployments compose signed entitlements with relational FGA; the
-// owner-only implementation is reserved for self-hosted deployments.
+// owner-only implementation is reserved for self-hosted deployments, with one
+// deliberate exception: the membership-verified Cloud Overview summary reads
+// the owner's own collections (ownerInventoryReadPolicy).
 type InventoryPolicy interface {
 	AuthorizeInventory(ctx context.Context, authorization InventoryAuthorization) (InventoryDecision, error)
 }
@@ -87,7 +89,9 @@ func (fn InventoryPolicyFunc) AuthorizeInventory(ctx context.Context, authorizat
 type selfHostedInventoryPolicy struct{}
 
 // NewSelfHostedInventoryPolicy returns the owner-scoped policy for an explicit
-// self-hosted deployment. It must not be used as a hosted FGA fallback.
+// self-hosted deployment. It must not be used as a hosted FGA fallback (the
+// Cloud Overview's owner read is a separate, collection-only policy behind a
+// verified membership).
 func NewSelfHostedInventoryPolicy() InventoryPolicy {
 	return selfHostedInventoryPolicy{}
 }

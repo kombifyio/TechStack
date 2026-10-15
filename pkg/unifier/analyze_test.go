@@ -184,6 +184,8 @@ func TestAnalyze_ServiceRequirementsPreferKnownTypeForCustomNames(t *testing.T) 
 		Name: "custom-named-database",
 		Services: []core.ServiceSpec{
 			{Name: "primary", Type: "postgres"},
+			{Name: "replica", Type: "postgres"},
+			{Name: "analytics", Type: "postgres"},
 		},
 	}
 
@@ -191,11 +193,15 @@ func TestAnalyze_ServiceRequirementsPreferKnownTypeForCustomNames(t *testing.T) 
 	if err != nil {
 		t.Fatalf("Analyze should never error, got: %v", err)
 	}
-	if result.RequiredWorkers.MinCPU < 4 {
-		t.Fatalf("MinCPU = %d, want database type requirements to apply despite custom service name", result.RequiredWorkers.MinCPU)
+	for index := range spec.Services {
+		spec.Services[index].Type = ""
 	}
-	if result.RequiredWorkers.MinRAM < 3072 {
-		t.Fatalf("MinRAM = %dMB, want database type requirements to apply despite custom service name", result.RequiredWorkers.MinRAM)
+	untyped, err := engine.Analyze(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RequiredWorkers.MinCPU <= untyped.RequiredWorkers.MinCPU || result.RequiredWorkers.MinRAM <= untyped.RequiredWorkers.MinRAM {
+		t.Fatalf("database types did not raise demand over unnamed generic services: typed=%+v, untyped=%+v", result.RequiredWorkers, untyped.RequiredWorkers)
 	}
 }
 

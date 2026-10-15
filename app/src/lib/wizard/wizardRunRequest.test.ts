@@ -8,6 +8,9 @@ import {
   wizardRunRequestCarriesSecret,
 } from "./wizardRunRequest";
 import { WIZARD_INTENT_SCHEMA } from "#lib/api/wizardRuns.js";
+import { authStore } from "#lib/stores/auth.svelte.js";
+import { buildPayload } from "./payload";
+import { buildStackKitSpecFromStackConfig } from "./spec";
 
 it("provisions a separate appliance only for an explicitly new HAOS installation", () => {
   const config = createDefaultConfig();
@@ -54,7 +57,7 @@ it("carries the same bounded Ubuntu guest intent for found and join without SSH 
   expect(joined.substrate).toEqual(found.substrate);
   expect(found.substrate).toMatchObject({
     server_id: "substrate-1",
-    profile_id: "ubuntu-24.04",
+    profile_id: "ubuntu-26.04",
     storage: "local",
     bridge: "vmbr0",
   });
@@ -65,6 +68,14 @@ it("carries the same bounded Ubuntu guest intent for found and join without SSH 
   config.serverProvisioning.substrate!.profileId = "haos" as "ubuntu-24.04";
   expect(() => buildFoundRunRequest(config)).toThrow();
   config.serverProvisioning.substrate!.profileId = "ubuntu-24.04";
+  applyServerProvisioningMode(config, "hypervisor");
+  expect(buildFoundRunRequest(config).substrate?.profile_id).toBe(
+    "ubuntu-24.04",
+  );
+  expect(
+    buildJoinRunRequest(config, "deployment-1", "Home", []).substrate
+      ?.profile_id,
+  ).toBe("ubuntu-24.04");
   config.serverProvisioning.substrate!.cpu = Number.NaN;
   expect(() =>
     buildJoinRunRequest(config, "deployment-1", "Home", []),
@@ -156,15 +167,14 @@ describe("buildFoundRunRequest", () => {
     });
     expect(request.managed).toBeUndefined();
     expect(request.remote).toBeUndefined();
-    // First runs send the payload wire names (same vocabulary as the legacy
-    // create request).
-    expect(request.services).toContain("pocket-id");
   });
 
-  it("defaults the name and expands the everything goal", () => {
+  it("defaults the name and preserves template-selected goals", () => {
     const config = createDefaultConfig();
     config.name = "";
     config.goals!.everything = true;
+    config.goals!.photos = true;
+    config.goals!.game = true;
 
     const request = buildFoundRunRequest(config);
 
@@ -237,6 +247,52 @@ describe("buildFoundRunRequest", () => {
     });
   });
 
+  it("sends only the Wallet item id when the SSH credential lives in the kombify Wallet", () => {
+    const config = createDefaultConfig();
+    config.serverProvisioning.mode = "connect-remote";
+    config.serverProvisioning.remote.host = "10.0.0.5";
+    config.serverProvisioning.remote.sshUser = "ubuntu";
+    config.serverProvisioning.remote.sshWalletItemId =
+      "itm_abcdefghijklmnopqrstuvwxyz";
+    // Left over from before the Wallet item was chosen: none of it may be sent.
+    config.serverProvisioning.remote.authMethod = "ssh-key";
+    config.serverProvisioning.remote.sshPassword = "stale-secret";
+    config.serverProvisioning.remote.sshKeyLabel = "stale-label";
+
+    const request = buildFoundRunRequest(config);
+
+    expect(request.remote).toEqual({
+      host: "10.0.0.5",
+      port: 22,
+      user: "ubuntu",
+      auth_method: "ssh-key",
+      ssh_wallet_item_id: "itm_abcdefghijklmnopqrstuvwxyz",
+    });
+    expect(wizardRunRequestCarriesSecret(request)).toBe(false);
+  });
+
+  it("never sends an SSH key label in kombify Wallet mode, where the backend refuses it", () => {
+    const config = createDefaultConfig();
+    config.serverProvisioning.mode = "connect-remote";
+    config.serverProvisioning.remote.host = "10.0.0.5";
+    config.serverProvisioning.remote.authMethod = "ssh-key";
+    // A label from an earlier self-hosted draft; no Wallet item chosen yet.
+    config.serverProvisioning.remote.sshKeyLabel = "stale-label";
+    const before = authStore.walletSource;
+    authStore.walletSource = "kombify";
+    try {
+      for (const sent of [
+        buildFoundRunRequest(config),
+        buildPayload(config),
+        buildStackKitSpecFromStackConfig(config),
+      ]) {
+        expect(JSON.stringify(sent)).not.toContain("stale-label");
+      }
+    } finally {
+      authStore.walletSource = before;
+    }
+  });
+
   it("maps connect-remote password auth for enrollment", () => {
     const config = createDefaultConfig();
     config.serverProvisioning.mode = "connect-remote";
@@ -289,6 +345,19 @@ describe("use-case settings on the intent", () => {
     const request = buildFoundRunRequest(config);
     expect(request.intent.use_case_settings).toEqual({
       photos: { "machine-learning": false, "library-volume": "dedicated-disk" },
+    });
+  });
+
+  it("carries capability selections for selected goals only", () => {
+    const config = createDefaultConfig();
+    config.goals!.photos = true;
+    config.goals!.media = false;
+    config.useCaseCapabilities = {
+      photos: { search: "off" },
+      media: { transcode: "on" },
+    };
+    expect(buildFoundRunRequest(config).intent.use_case_capabilities).toEqual({
+      photos: { search: "off" },
     });
   });
 

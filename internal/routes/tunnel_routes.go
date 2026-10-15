@@ -4,6 +4,7 @@ package routes
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
@@ -32,10 +33,14 @@ func RegisterTunnelRoutes(r *httpx.Router, resolver *tunnel.RegistryURLResolver)
 			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, err.Error(), nil)
 		}
 
-		return httpx.Success(e, http.StatusOK, map[string]any{
+		response := map[string]any{
 			"url":  url,
 			"mode": string(resolver.GetCurrentMode()),
-		})
+		}
+		if pin := resolver.LocalBridgePin(url); pin != "" {
+			response["lan_pin"] = pin
+		}
+		return httpx.Success(e, http.StatusOK, response)
 	})
 
 	r.GET("/api/v1/tunnel/status", func(e *httpx.Event) error {
@@ -69,10 +74,14 @@ func RegisterTunnelRoutes(r *httpx.Router, resolver *tunnel.RegistryURLResolver)
 			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, err.Error(), nil)
 		}
 
-		return httpx.Success(e, http.StatusOK, map[string]any{
+		response := map[string]any{
 			"url":  url,
 			"mode": string(resolver.GetCurrentMode()),
-		})
+		}
+		if pin := resolver.LocalBridgePin(url); pin != "" {
+			response["lan_pin"] = pin
+		}
+		return httpx.Success(e, http.StatusOK, response)
 	})
 
 	r.POST("/api/v1/tunnel/stop", func(e *httpx.Event) error {
@@ -177,15 +186,22 @@ func tunnelInstallCommand(e *httpx.Event, resolver *tunnel.RegistryURLResolver) 
 	}
 
 	windowsCmd, err := resolver.GenerateInstallCommandPS(ctx, req.Token)
+	if errors.Is(err, tunnel.ErrLANBridgeLinuxOnly) {
+		windowsCmd, err = "", nil
+	}
 	if err != nil {
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, err.Error(), nil)
 	}
 
 	registryURL, _ := resolver.GetRegistryURL(ctx)
 
-	return httpx.Success(e, http.StatusOK, map[string]any{
+	response := map[string]any{
 		"linux":        linuxCmd,
-		"windows":      windowsCmd,
 		"registry_url": registryURL,
-	})
+	}
+	// The LAN bridge has no Windows command; the key is then absent.
+	if windowsCmd != "" {
+		response["windows"] = windowsCmd
+	}
+	return httpx.Success(e, http.StatusOK, response)
 }

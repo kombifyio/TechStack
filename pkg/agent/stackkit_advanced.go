@@ -58,6 +58,18 @@ func stackKitAdvancedOperationArgs(release stackkitrelease.Release, workDir, spe
 		values["anchorId"] = strings.TrimSpace(command.SnapshotAnchorId)
 		values["operationId"] = strings.TrimSpace(command.CommandId)
 	}
+	switch command.Operation {
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_ORIGIN_CERTIFICATE_REQUEST:
+		values["hostsCsv"] = strings.Join(command.OriginHosts, ",")
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_ORIGIN_CERTIFICATE_INSTALL:
+		// The certificate is public data; the key never leaves the node.
+		certificatePath, writeErr := writeStackKitPrivateFile(workDir, ".techstack-origin-certificate-*.pem", command.OriginCertificatePem)
+		if writeErr != nil {
+			return fail(fmt.Errorf("write origin certificate: %w", writeErr))
+		}
+		files = append(files, certificatePath)
+		values["certificateFile"] = relativeStackKitPath(workDir, certificatePath)
+	}
 	if len(command.CandidateSpecJson) > 0 {
 		candidatePath, writeErr := writeStackKitPrivateFile(workDir, ".techstack-candidate-*.json", command.CandidateSpecJson)
 		if writeErr != nil {

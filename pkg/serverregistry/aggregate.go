@@ -167,6 +167,9 @@ type Result struct {
 	Inventory   *InventorySnapshot
 	Outbox      *OutboxItem
 	Applied     bool
+	// InventoryRefreshed marks an observation that only refreshed the snapshot
+	// of the unchanged inventory revision: nothing material changed.
+	InventoryRefreshed bool
 }
 
 // Repository is the authoritative transactional command boundary. One

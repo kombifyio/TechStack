@@ -27,7 +27,10 @@ export interface Job {
   next_resume_at?: string;
   resume_available_at?: string;
   resume_available?: boolean;
+  /** Replacement job that continues this run after a resume or retry. */
+  superseded_by_job_id?: string;
   created_at: string;
+  started_at?: string;
   updated_at: string;
 }
 
@@ -58,6 +61,7 @@ export interface JobDetail extends Job {
 
 interface JobDetailApiResponse {
   id: string;
+  started_at?: string;
   type?: string;
   state?: string;
   progress?: number;
@@ -81,6 +85,8 @@ interface JobDetailApiResponse {
   next_resume_at?: string;
   resume_available_at?: string;
   resume_available?: boolean;
+  /** Replacement job that continues this run after a resume or retry. */
+  superseded_by_job_id?: string;
   created?: string;
   updated?: string;
   created_at?: string;
@@ -152,7 +158,9 @@ function normalizeJobDetail(job: JobDetailApiResponse): JobDetail {
     next_resume_at: job.next_resume_at,
     resume_available_at: job.resume_available_at,
     resume_available: job.resume_available,
+    superseded_by_job_id: job.superseded_by_job_id,
     created_at: job.created_at ?? job.created ?? "",
+    started_at: job.started_at,
     updated_at: job.updated_at ?? job.updated ?? "",
   };
 }

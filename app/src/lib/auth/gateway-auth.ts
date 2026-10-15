@@ -218,7 +218,7 @@ export async function getGatewayToken(): Promise<string> {
 
 async function acquireGatewayToken(): Promise<string> {
   const c = await getClient();
-  let token: string;
+  let token: string | undefined;
   try {
     token = await c.getTokenSilently({
       authorizationParams: {

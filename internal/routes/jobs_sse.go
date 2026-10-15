@@ -35,6 +35,7 @@ type JobProgress struct {
 	Message           string `json:"message,omitempty"`
 	Error             string `json:"error,omitempty"`
 	ErrorDetails      string `json:"error_details,omitempty"`
+	SupersededByJobID string `json:"superseded_by_job_id,omitempty"`
 }
 
 type JobRouteStores struct {
@@ -120,12 +121,13 @@ func RegisterJobsSSERoutes(r *httpx.Router, stores JobRouteStores) {
 }
 
 type jobListQuery struct {
-	Page    int
-	PerPage int
-	StackID string
-	State   string
-	Type    string
-	Search  string
+	Page      int
+	PerPage   int
+	StackID   string
+	ServiceID string
+	State     string
+	Type      string
+	Search    string
 }
 
 type jobListPayload struct {
@@ -165,6 +167,7 @@ func jobDetailsFromStore(job controlplane.Job) map[string]any {
 		"updated":       job.UpdatedAt,
 		"created_at":    job.CreatedAt,
 		"updated_at":    job.UpdatedAt,
+		"started_at":    job.StartedAt,
 	}
 	if waitReason != "" {
 		details["wait_reason"] = waitReason
@@ -175,6 +178,9 @@ func jobDetailsFromStore(job controlplane.Job) map[string]any {
 	if resumeAvailableAt != "" {
 		details["resume_available_at"] = resumeAvailableAt
 		details["resume_available"] = resumeAvailable
+	}
+	if replacement := jobs.SupersededByJobID(job.ID, job.Result); replacement != "" {
+		details["superseded_by_job_id"] = replacement
 	}
 	return details
 }
@@ -285,7 +291,7 @@ func claimedManagedRolloutRecoveryWait(result map[string]interface{}) (reason, n
 		return "", "", false
 	}
 	reason = jobWaitString(wait, "reason")
-	if reason != jobs.WaitReasonManagedRuntimeEnrollment && reason != jobs.WaitReasonManagedRuntimeProvider {
+	if !managedRolloutRecoveryWaitReason(reason) {
 		return "", "", false
 	}
 	nextResumeAt = jobWaitString(wait, "next_resume_at")
@@ -307,8 +313,7 @@ func claimedManagedRolloutRecoveryWait(result map[string]interface{}) (reason, n
 }
 
 func apiJobResumeAvailability(reason, nextResumeAt string, now time.Time) (string, bool) {
-	reason = strings.TrimSpace(reason)
-	if reason != jobs.WaitReasonManagedRuntimeEnrollment && reason != jobs.WaitReasonManagedRuntimeProvider {
+	if !managedRolloutRecoveryWaitReason(reason) {
 		return "", false
 	}
 	scheduledAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(nextResumeAt))
@@ -317,6 +322,17 @@ func apiJobResumeAvailability(reason, nextResumeAt string, now time.Time) (strin
 	}
 	availableAt := scheduledAt.UTC().Add(jobs.ManagedRuntimeEnrollmentRecoveryGrace)
 	return availableAt.Format(time.RFC3339Nano), !now.Before(availableAt)
+}
+
+// managedRolloutRecoveryWaitReason lists the waits ResumeEnrollment can hand
+// over to an exact-target replacement.
+func managedRolloutRecoveryWaitReason(reason string) bool {
+	switch strings.TrimSpace(reason) {
+	case jobs.WaitReasonManagedRuntimeEnrollment, jobs.WaitReasonManagedRuntimeProvider, jobs.WaitReasonCanonicalGuardEvidence:
+		return true
+	default:
+		return false
+	}
 }
 
 func jobWaitString(wait map[string]interface{}, key string) string {
@@ -332,12 +348,13 @@ func parseJobListQuery(r *http.Request) jobListQuery {
 		perPage = parseBoundedPositiveInt(values.Get("limit"), 1, 200, perPage)
 	}
 	return jobListQuery{
-		Page:    page,
-		PerPage: perPage,
-		StackID: strings.TrimSpace(values.Get("stack_id")),
-		State:   strings.TrimSpace(values.Get("state")),
-		Type:    strings.TrimSpace(firstNonEmptyString(values.Get("type"), values.Get("job_type"))),
-		Search:  strings.ToLower(strings.TrimSpace(values.Get("search"))),
+		Page:      page,
+		PerPage:   perPage,
+		StackID:   strings.TrimSpace(values.Get("stack_id")),
+		ServiceID: strings.TrimSpace(values.Get("service_id")),
+		State:     strings.TrimSpace(values.Get("state")),
+		Type:      strings.TrimSpace(firstNonEmptyString(values.Get("type"), values.Get("job_type"))),
+		Search:    strings.ToLower(strings.TrimSpace(values.Get("search"))),
 	}
 }
 
@@ -369,6 +386,14 @@ func listOwnedJobsFromStore(e *httpx.Event, stores JobRouteStores, tenantID, own
 		if stack.OwnerSubjectID != ownerID {
 			return jobListPayload{}, httpx.Forbidden(e, "Not allowed")
 		}
+	}
+	if query.ServiceID != "" {
+		reader, ok := stores.Jobs.(controlplane.ServiceJobLister)
+		if !ok {
+			return jobListPayload{}, httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Service activity is unavailable", nil)
+		}
+		jobs, err = reader.ListJobsByService(e.Request.Context(), tenantID, query.StackID, query.ServiceID, 1000)
+	} else if query.StackID != "" {
 		jobs, err = stores.Jobs.ListJobsByStack(e.Request.Context(), tenantID, query.StackID, 1000)
 	} else {
 		jobs, err = stores.Jobs.ListJobsByTenant(e.Request.Context(), tenantID, 1000)
@@ -381,6 +406,9 @@ func listOwnedJobsFromStore(e *httpx.Event, stores JobRouteStores, tenantID, own
 	ownedStacks := map[string]bool{}
 	for _, job := range jobs {
 		if query.StackID != "" && job.StackID != query.StackID {
+			continue
+		}
+		if query.ServiceID != "" && !jobTargetsService(job, query.ServiceID) {
 			continue
 		}
 		projectedState, _, _ := apiJobWaitProjection(job.State, job.Result)
@@ -403,6 +431,14 @@ func listOwnedJobsFromStore(e *httpx.Event, stores JobRouteStores, tenantID, own
 		filtered = append(filtered, job)
 	}
 	return jobListResponseFromStore(filtered, query), nil
+}
+
+func jobTargetsService(job controlplane.Job, serviceID string) bool {
+	if stringFromAnyMap(job.Result, "service_id") == serviceID {
+		return true
+	}
+	receipt, _ := mapFromJSONAny(job.Result["service_action_receipt"])
+	return stringFromAnyMap(receipt, "service_id") == serviceID
 }
 
 func jobMatchesSearchFromStore(job controlplane.Job, search string) bool {
@@ -480,16 +516,27 @@ func stackForJobAuthorization(ctx context.Context, stacks controlplane.StackStor
 	return reader.GetStackIncludingDeleted(ctx, tenantID, stackID)
 }
 
-// streamJobWriteBudget bounds the write deadline extension for one SSE
-// progress stream; the handler closes the stream after 10 minutes regardless.
+// jobStreamWriteBudget bounds the write deadline extension for one SSE
+// progress stream; the handler closes the stream after jobStreamMaxDuration
+// regardless.
 const jobStreamWriteBudget = 2 * time.Minute
+
+// jobStreamMaxDuration is the longest one SSE progress stream lives. A managed
+// single-node rollout runs about 22 minutes in the worst case (bootstrap plus
+// the typed sequence: a shared pre-apply deadline, the origin certificate and
+// the 12-minute apply), so the stream outlives it and the page is not pushed
+// onto its polling fallback mid-rollout. A longer job (a Modern rollout) still
+// ends with the documented "timeout" event, which the client answers by
+// polling.
+const jobStreamMaxDuration = 25 * time.Minute
 
 // jobStreamKeepaliveInterval is the idle-cadence for SSE keepalive comments.
 const jobStreamKeepaliveInterval = 25 * time.Second
 
 func streamJobFromStore(e *httpx.Event, stores JobRouteStores, tenantID, jobID, ownerID string) error {
-	// The event stream lives up to its own 10-minute budget, well past the
-	// server-wide write timeout, so every write extends the deadline first.
+	// The event stream lives up to its own jobStreamMaxDuration budget, well
+	// past the server-wide write timeout, so every write extends the deadline
+	// first.
 	_ = httpx.ExtendWriteDeadline(e.Response, jobStreamWriteBudget)
 	job, err := findJobAndAuthorizeFromStore(e, stores, tenantID, jobID, ownerID)
 	if err != nil || job == nil {
@@ -521,7 +568,7 @@ func streamJobFromStore(e *httpx.Event, stores JobRouteStores, tenantID, jobID, 
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
-	timeout := time.After(10 * time.Minute)
+	timeout := time.After(jobStreamMaxDuration)
 	lastKeepalive := time.Now()
 
 	for {
@@ -530,7 +577,7 @@ func streamJobFromStore(e *httpx.Event, stores JobRouteStores, tenantID, jobID, 
 			return nil
 		case <-timeout:
 			sendSSEEvent(e.Response, "timeout", map[string]string{
-				"message": "Connection timeout after 10 minutes",
+				"message": fmt.Sprintf("Connection timeout after %d minutes", int(jobStreamMaxDuration/time.Minute)),
 			})
 			flusher.Flush()
 			return nil
@@ -589,6 +636,7 @@ func jobProgressFromStore(job controlplane.Job) JobProgress {
 		Message:           secrets.Redact(job.Message),
 		Error:             secrets.Redact(job.Error),
 		ErrorDetails:      secrets.Redact(job.ErrorDetails),
+		SupersededByJobID: jobs.SupersededByJobID(job.ID, job.Result),
 	}
 }
 
@@ -603,7 +651,8 @@ func jobProgressChanged(previous, current JobProgress) bool {
 		current.CurrentStep != previous.CurrentStep ||
 		current.Message != previous.Message ||
 		current.Error != previous.Error ||
-		current.ErrorDetails != previous.ErrorDetails
+		current.ErrorDetails != previous.ErrorDetails ||
+		current.SupersededByJobID != previous.SupersededByJobID
 }
 
 // sendSSEEvent sends a single SSE event.

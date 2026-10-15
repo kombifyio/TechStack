@@ -162,6 +162,47 @@ func (s *PostgresStore) UpdateHomelabIntent(ctx context.Context, tenantID, homel
 	return out, nil
 }
 
+// MutateHomelabIntent reads and changes the canonical document in one existing
+// tenant-scoped transaction. READ COMMITTED waits for the prior row writer and
+// then supplies its committed intent to the mutation, avoiding stale snapshots.
+func (s *PostgresStore) MutateHomelabIntent(ctx context.Context, tenantID, homelabID string, mutate func(map[string]any) error) (*Homelab, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("controlplane: database not configured")
+	}
+	tenantID, homelabID = strings.TrimSpace(tenantID), strings.TrimSpace(homelabID)
+	if tenantID == "" || homelabID == "" || mutate == nil {
+		return nil, fmt.Errorf("controlplane: tenant, homelab and intent mutation required")
+	}
+	var out *Homelab
+	err := s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		current, err := scanHomelab(tx.QueryRowContext(ctx, `SELECT `+homelabColumns+`
+   FROM homelabs WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE`, tenantID, homelabID))
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if current.Intent == nil {
+			current.Intent = map[string]any{}
+		}
+		if err := mutate(current.Intent); err != nil {
+			return err
+		}
+		raw, err := marshalObject(current.Intent)
+		if err != nil {
+			return err
+		}
+		out, err = scanHomelab(tx.QueryRowContext(ctx, `UPDATE homelabs SET intent_json=$3::jsonb, updated_at=now()
+   WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL RETURNING `+homelabColumns, tenantID, homelabID, raw))
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // wizard-run reader; each owns its own table and SQL, so collapsing them would
 // hide the statement rather than remove duplication.
 //

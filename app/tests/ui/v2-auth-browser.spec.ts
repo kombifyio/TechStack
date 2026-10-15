@@ -357,6 +357,10 @@ test.describe.serial("V2 auth browser flow", () => {
     await page
       .getByTestId("windows-local-admin-password")
       .fill("supersecret123");
+    await expect(page.getByTestId("windows-local-setup-submit")).toBeDisabled();
+    await page
+      .locator("#bootstrap-password")
+      .fill("mock-operator-bootstrap-proof");
     await page.getByTestId("windows-local-setup-submit").click();
 
     await expect(page.getByText("mocked setup failure")).toBeVisible();
@@ -365,6 +369,7 @@ test.describe.serial("V2 auth browser flow", () => {
       name: "owner",
       email: "owner@example.com",
       password: "supersecret123",
+      current_password: "mock-operator-bootstrap-proof",
     });
   });
 

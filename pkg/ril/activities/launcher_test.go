@@ -53,7 +53,7 @@ func (e *recordingRemediationEngine) StartOrResumeRun(context.Context, *workflow
 	return "run-1", nil
 }
 
-func (e *recordingRemediationEngine) GetRun(string) (*workflow.Run, error) {
+func (e *recordingRemediationEngine) GetRun(context.Context, string) (*workflow.Run, error) {
 	return &workflow.Run{RunID: "run-1", Status: workflow.RunCompleted}, nil
 }
 

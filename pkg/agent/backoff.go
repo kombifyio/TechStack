@@ -10,7 +10,8 @@ import (
 // Backoff implements capped exponential backoff with full jitter, used by the
 // Supervisor to pace reconnect attempts against Core. Full jitter (delay drawn
 // uniformly from [0, ceiling]) avoids reconnect stampedes when many agents lose
-// the same Core at once.
+// the same Core at once. The default cap keeps recovery within the 60 second
+// reconnect target after a dependency returns (a 30 second wait plus dial).
 type Backoff struct {
 	// Base is the ceiling of the first attempt's delay.
 	Base time.Duration
@@ -24,13 +25,16 @@ type Backoff struct {
 	rng     *rand.Rand
 }
 
+// DefaultBackoffCap bounds every reconnect wait of the Guard.
+const DefaultBackoffCap = 30 * time.Second
+
 // NewBackoff returns a Backoff with the agent defaults: base 1s, factor 2,
-// cap 5min.
+// cap DefaultBackoffCap.
 func NewBackoff() *Backoff {
 	return &Backoff{
 		Base:   time.Second,
 		Factor: 2,
-		Cap:    5 * time.Minute,
+		Cap:    DefaultBackoffCap,
 		// #nosec G404 -- jitter for reconnect pacing, not security-sensitive.
 		rng: rand.New(rand.NewSource(time.Now().UnixNano())),
 	}

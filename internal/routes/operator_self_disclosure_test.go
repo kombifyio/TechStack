@@ -18,7 +18,7 @@ import (
 func TestSelfDisclosureDrivesOnlyTheOwnersRecommendationProfile(t *testing.T) {
 	store := controlplane.NewMemoryStore()
 	put := selfDisclosureCall(t, store, http.MethodPut, "owner-1",
-		`{"source":"cloud","disclosure":{"experience":"guided","goals":["photos"],"placement":"home","household":"household"}}`)
+		`{"source":"link","disclosure":{"experience":"guided","goals":["photos"],"placement":"home","household":"household"}}`)
 	if put.Code != http.StatusOK {
 		t.Fatalf("PUT status = %d body=%s", put.Code, put.Body.String())
 	}
@@ -48,8 +48,8 @@ func TestSelfDisclosureDrivesOnlyTheOwnersRecommendationProfile(t *testing.T) {
 func TestSelfDisclosureRejectsClientScoresAndUnknownAnswers(t *testing.T) {
 	store := controlplane.NewMemoryStore()
 	for _, body := range []string{
-		`{"source":"cloud","disclosure":{"experience":"expert"},"score":10}`,
-		`{"source":"cloud","disclosure":{"experience":"wizard-level-11"}}`,
+		`{"source":"link","disclosure":{"experience":"expert"},"score":10}`,
+		`{"source":"link","disclosure":{"experience":"wizard-level-11"}}`,
 	} {
 		if recorder := selfDisclosureCall(t, store, http.MethodPut, "owner-1", body); recorder.Code != http.StatusBadRequest {
 			t.Fatalf("PUT %s status = %d, want 400", body, recorder.Code)

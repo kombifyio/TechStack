@@ -3,7 +3,13 @@ import { describe, expect, it } from "vitest";
 import type { CanonicalService } from "#lib/api/services.js";
 import type { HomelabIdentityStatus } from "#lib/api/homelabIdentity.js";
 import type { ConnectDevice } from "#lib/api/connectDevices.js";
-import { nodeApps, serviceState } from "./homelab-model";
+import {
+  applicationOpenUrl,
+  nodeApps,
+  oldestFirst,
+  serviceState,
+  stackedAppsOnly,
+} from "./homelab-model";
 import { devicesFromConnect, peopleFromIdentity } from "./people";
 
 function service(
@@ -35,17 +41,98 @@ function service(
 }
 
 describe("nodeApps", () => {
-  it("places services by server_id, folds platform services and puts selected use cases first", () => {
+  it("shows one tile per application with a UI and leaves the rest to the server", () => {
+    const app = (
+      id: string,
+      key: string,
+      extra: Partial<CanonicalService> = {},
+    ): CanonicalService => ({
+      ...service(id, "node-1", key),
+      application_key: key,
+      ...extra,
+    });
     const services = [
-      service("a", "node-1", "vaultwarden"),
-      service("b", "node-1", "traefik"),
-      service("c", "node-1", "immich"),
-      service("d", "node-2", "jellyfin"),
-      service("e", undefined, "nextcloud"),
+      // Hermes: web UI with an address plus its backend, one application.
+      app("hermes-ui", "hermes", {
+        access: { url: "https://hermes.home.example" },
+      }),
+      app("hermes-api", "hermes"),
+      app("pocket", "pocket-id", {
+        catalog: {
+          id: "pocket-id",
+          display_name: "Pocket ID",
+          category: "security",
+        },
+      }),
+      app("proxy", "traefik"),
+      app("db", "kombify-db-local", {
+        catalog: {
+          id: "postgres",
+          display_name: "PostgreSQL",
+          category: "database",
+        },
+      }),
+      app("elsewhere", "jellyfin", { server_id: "node-2" }),
     ];
-    const result = nodeApps(services, new Set(["node-1"]), new Set(["immich"]));
-    expect(result.apps.map((item) => item.id)).toEqual(["c", "a"]);
-    expect(result.system.map((item) => item.id)).toEqual(["b"]);
+    const result = nodeApps(
+      services,
+      new Set(["node-1"]),
+      new Set(["pocket-id"]),
+    );
+    expect(result.apps.map((item) => item.id)).toEqual(["pocket", "hermes-ui"]);
+    expect(result.members["hermes-ui"]?.map((item) => item.id)).toEqual([
+      "hermes-ui",
+      "hermes-api",
+    ]);
+    expect(applicationOpenUrl(result.members["hermes-ui"] ?? [])).toBe(
+      "https://hermes.home.example",
+    );
+    expect(result.system.map((item) => item.id).sort()).toEqual([
+      "db",
+      "proxy",
+    ]);
+  });
+});
+
+describe("stackedAppsOnly", () => {
+  it("shows found unstacked apps until the StackKit is rolled out, then only stacked ones", () => {
+    const app = (
+      id: string,
+      management: CanonicalService["management_state"],
+    ): CanonicalService => ({
+      ...service(id, "node-1", id),
+      application_key: id,
+      management_state: management,
+      access: { url: `https://${id}.home.example` },
+    });
+    const found = nodeApps(
+      [app("immich", "managed"), app("hermes", "observed")],
+      new Set(["node-1"]),
+      new Set(),
+    );
+    const ids = (manifest: boolean) =>
+      stackedAppsOnly(found, manifest).apps.map((item) => item.id);
+
+    expect(ids(false)).toEqual(["hermes", "immich"]);
+    expect(ids(true)).toEqual(["immich"]);
+    expect(
+      stackedAppsOnly(found, true).system.map((item) => item.id),
+    ).toContain("hermes");
+  });
+});
+
+describe("oldestFirst", () => {
+  it("lists a newly joined Node after the running ones", () => {
+    const nodes = [
+      { key: "new", addedAt: "2026-10-07T10:00:00Z" },
+      { key: "undated", addedAt: "" },
+      { key: "first", addedAt: "2026-09-01T10:00:00Z" },
+    ];
+    expect(oldestFirst(nodes).map((node) => node.key)).toEqual([
+      "first",
+      "new",
+      "undated",
+    ]);
   });
 });
 
@@ -109,13 +196,13 @@ describe("devicesFromConnect", () => {
     const result = devicesFromConnect({
       state: "ready",
       devices: [
-        device("i1", "installation", "DeskMarcel", [
+        device("i1", "installation", "DeskAlex", [
           install("i1", "workbench-desktop", "2026-09-26T08:00:00Z"),
         ]),
-        device("i2", "installation", "deskmarcel ", [
+        device("i2", "installation", "deskalex ", [
           install("i2", "workbench-desktop", "2026-09-26T09:00:00Z"),
         ]),
-        device("ref-1", "device_ref", "DeskMarcel", [
+        device("ref-1", "device_ref", "DeskAlex", [
           install("c1", "companion", "2026-09-26T07:00:00Z"),
         ]),
         device("ref-2", "device_ref", "Laptop", [
@@ -124,9 +211,9 @@ describe("devicesFromConnect", () => {
       ],
     });
     if (result.state !== "ready") throw new Error(result.state);
-    const desk = result.items.find((item) => item.name === "DeskMarcel");
+    const desk = result.items.find((item) => item.name === "DeskAlex");
     expect(result.items.map((item) => item.name).sort()).toEqual([
-      "DeskMarcel",
+      "DeskAlex",
       "Laptop",
     ]);
     expect(desk?.clients.sort()).toEqual(["Companion", "Workbench ×2"]);

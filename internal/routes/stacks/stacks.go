@@ -3,6 +3,7 @@
 package stacks
 
 import (
+	"github.com/kombifyio/techstack/internal/routes/auth"
 	"github.com/pocketbase/pocketbase/core"
 
 	productnotifications "github.com/kombifyio/techstack/internal/notifications"
@@ -13,13 +14,17 @@ import (
 )
 
 func RegisterRoutesWithModeAndFeatures(r *httpx.Router, app core.App, orch *orchestrator.Orchestrator, mode config.DeploymentMode, featureChecker managedRuntimeFeatureChecker, managedLeases jobs.ManagedLeaseManager, notificationOutbox productnotifications.ProductEventEnqueuer) {
+	RegisterRuntimeRoutesWithModeAndFeatures(r, auth.RuntimeStore{}, orch, mode, featureChecker, managedLeases, notificationOutbox)
+}
+
+func RegisterRuntimeRoutesWithModeAndFeatures(r *httpx.Router, runtime auth.RuntimeStore, orch *orchestrator.Orchestrator, mode config.DeploymentMode, featureChecker managedRuntimeFeatureChecker, managedLeases jobs.ManagedLeaseManager, notificationOutbox productnotifications.ProductEventEnqueuer) {
 	// Register CRUD routes for stack management
 	// Handles: POST /api/v1/stacks, POST /api/v1/stacks/{id}/provision, etc.
-	RegisterCRUDRoutesWithModeAndFeatures(r, app, orch, mode, featureChecker, managedLeases, notificationOutbox)
+	RegisterCRUDRuntimeRoutes(r, runtime, orch, mode, featureChecker, managedLeases, notificationOutbox)
 
 	// Register import/export routes for configuration management
 	// Handles: GET /api/v1/stacks/{id}/export, POST /api/v1/stacks/import
-	RegisterImportExportRoutesWithModeAndFeatures(r, app, orch, mode, featureChecker)
+	RegisterImportExportRuntimeRoutes(r, runtime, orch, mode, featureChecker)
 
 	// Register spec access routes for persisted specs
 	// Handles: GET /api/v1/stacks/{id}/requirements, GET /api/v1/stacks/{id}/unified, etc.

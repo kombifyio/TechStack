@@ -2,7 +2,6 @@ package jobs
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -17,7 +16,8 @@ import (
 const ManagedBackupAdmissionField = "managed_backup_admission"
 
 // prepareManagedRestore refreshes only the exact admitted stack's backup
-// authority. No Inventory or credential document is persisted in the job.
+// authority against the binding the node itself issued. No Inventory or
+// credential document is persisted in the job.
 func prepareManagedRestore(ctx context.Context, cfg StackKitLifecycleConfig, job *Job, req StackKitLifecycleRequest, release stackkitrelease.Release) (StackKitLifecycleRequest, map[string]interface{}, error) {
 	admission, ok := job.Payload[ManagedBackupAdmissionField].(map[string]interface{})
 	if !ok || cfg.ManagedStackKitInventory == nil || admission["tenant_id"] != req.TenantID || admission["stack_id"] != req.StackID || admission["owner_id"] != req.OwnerID || admission["agent_id"] != req.AgentID {
@@ -47,29 +47,32 @@ func prepareManagedRestore(ctx context.Context, cfg StackKitLifecycleConfig, job
 		return req, nil, fmt.Errorf("current backup policy differs from admitted schedule")
 	}
 
-	builder, ok := cfg.ManagedStackKitInventory.(interface {
-		AttestBackupRenewal(context.Context, ManagedStackKitInventoryRequest) ([]byte, error)
-	})
-	if !ok {
+	delivery := managedBackupDeliveryOf(cfg.ManagedStackKitInventory)
+	if delivery == nil {
 		return req, nil, fmt.Errorf("managed backup renewal authority unavailable")
 	}
-	receipt := release.Receipt()
-	inventory, err := builder.AttestBackupRenewal(ctx, ManagedStackKitInventoryRequest{TenantID: req.TenantID, StackID: req.StackID, ResolvedPlan: plan, StackKitsVersion: receipt.Version, CandidateDigest: "sha256:" + receipt.ArchiveSHA256, ValidFor: 15 * time.Minute})
+	var original struct {
+		Bindings map[string]map[string]map[string]string `json:"externalBackupTargetBindings"`
+	}
+	if json.Unmarshal(plan, &original) != nil {
+		return req, nil, fmt.Errorf("managed backup renewal projection invalid")
+	}
+	// The applied binding is the one the node issued. Core compares it with the
+	// references the node returned when it opened the delivery; it cannot derive
+	// them, so a binding that is not the node's own is refused.
+	prior := original.Bindings["cloud"]["offsite-object-backup"]
+	issued, err := delivery.NodeBinding(ctx, req.TenantID, req.StackID)
 	if err != nil {
 		return req, nil, err
 	}
-	var original, renewed struct {
-		Bindings map[string]map[string]map[string]string `json:"externalBackupTargetBindings"`
+	if prior["bindingRef"] == "" || prior["backupTargetRef"] == "" || prior["backupTargetRef"] != issued.BackupTargetRef || prior["custodyAttestationRef"] != issued.CustodyAttestationRef {
+		return req, nil, fmt.Errorf("managed backup renewal target differs from the node-issued binding")
 	}
-	if json.Unmarshal(plan, &original) != nil || json.Unmarshal(inventory, &renewed) != nil {
-		return req, nil, fmt.Errorf("managed backup renewal projection invalid")
+	fresh, err := delivery.AttestTarget(ctx, req.TenantID, req.StackID)
+	if err != nil {
+		return req, nil, err
 	}
-	prior := original.Bindings["cloud"]["offsite-object-backup"]
-	fresh := renewed.Bindings["cloud"]["offsite-object-backup"]
-	if prior["bindingRef"] == "" || prior["backupTargetRef"] == "" || prior["bindingRef"] != fresh["bindingRef"] || prior["backupTargetRef"] != fresh["backupTargetRef"] {
-		return req, nil, fmt.Errorf("managed backup renewal target differs")
-	}
-	req.BackupRenewal = &advancedissuer.BackupRenewal{AgentID: req.AgentID, BindingHash: prior["bindingHash"], CustodyAttestationRef: prior["custodyAttestationRef"], DeploymentID: req.StackID, FreshAttestationRef: fresh["custodyAttestationRef"], JobID: job.ID, MeasuredAt: stringFromInterface(admission["measured_at"]), PlanHash: planHash, QuotaBytes: admittedBackupBytes(admission["quota_bytes"]), RepositoryID: "kopia:local:cloud", TargetRef: prior["backupTargetRef"], TenantID: req.TenantID, UsedBytes: admittedBackupBytes(admission["used_bytes"])}
+	req.BackupRenewal = &advancedissuer.BackupRenewal{AgentID: req.AgentID, BindingHash: prior["bindingHash"], CustodyAttestationRef: prior["custodyAttestationRef"], DeploymentID: req.StackID, FreshAttestationRef: fresh, JobID: job.ID, MeasuredAt: stringFromInterface(admission["measured_at"]), PlanHash: planHash, QuotaBytes: admittedBackupBytes(admission["quota_bytes"]), RepositoryID: "kopia:local:cloud", TargetRef: prior["backupTargetRef"], TenantID: req.TenantID, UsedBytes: admittedBackupBytes(admission["used_bytes"])}
 	if err := req.BackupRenewal.Validate(time.Now().UTC()); err != nil {
 		return req, nil, err
 	}
@@ -79,7 +82,6 @@ func prepareManagedRestore(ctx context.Context, cfg StackKitLifecycleConfig, job
 	}
 	proof["source_plan_hash"] = planHash
 	proof["plan_hash"] = planHash
-	proof["renewal_inventory_sha256"] = fmt.Sprintf("sha256:%x", sha256.Sum256(inventory))
 	proof["spec_path"] = req.SpecPath
 	proof["stackkit_instance_id"] = req.StackKitInstanceID
 	proof["repository_id"] = "kopia:local:cloud"
@@ -89,7 +91,7 @@ func prepareManagedRestore(ctx context.Context, cfg StackKitLifecycleConfig, job
 	proof["target_ref"] = req.BackupRenewal.TargetRef
 	proof["prior_attestation_ref"] = req.BackupRenewal.CustodyAttestationRef
 	proof["fresh_attestation_ref"] = req.BackupRenewal.FreshAttestationRef
-	// Neither fresh Inventory nor a capability is placed in the durable payload.
+	// No Inventory, credential or capability is placed in the durable payload.
 	return req, proof, nil
 }
 

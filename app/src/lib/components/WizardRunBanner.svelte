@@ -5,12 +5,24 @@
   source, so it survives cleared sessionStorage and other devices. The owner
   can resume, cancel the rollout (confirmed) or dismiss it server-side.
 -->
+<script module lang="ts">
+  import type { ActiveWizardRun } from "#lib/api/wizardRuns.js";
+
+  /** The banner's headline message key; the compact status line reuses it. */
+  export function wizardRunTitleKey(run: ActiveWizardRun): string {
+    if (run.status === "failed") return "wizard.run.banner.failedTitle";
+    return typeof run.result?.state === "string" &&
+      run.result.state === "awaiting_pairing"
+      ? "wizard.run.banner.pairingTitle"
+      : "wizard.run.banner.inProgressTitle";
+  }
+</script>
+
 <script lang="ts">
   import { tr } from "#lib/i18n.svelte.js";
   import {
     cancelWizardRunRollout,
     dismissWizardRun,
-    type ActiveWizardRun,
   } from "#lib/api/wizardRuns.js";
   import { confirmInApp } from "#lib/dialogs/in-app-dialog.js";
   import { Loader2, TriangleAlert, Cable } from "@lucide/svelte";
@@ -82,13 +94,7 @@
   const progress = $derived(run.job?.progress ?? 0);
   const jobMessage = $derived(run.job?.message ?? "");
 
-  const titleKey = $derived(
-    failed
-      ? "wizard.run.banner.failedTitle"
-      : awaitingPairing
-        ? "wizard.run.banner.pairingTitle"
-        : "wizard.run.banner.inProgressTitle",
-  );
+  const titleKey = $derived(wizardRunTitleKey(run));
   const bodyKey = $derived(
     failed
       ? "wizard.run.banner.failedBody"

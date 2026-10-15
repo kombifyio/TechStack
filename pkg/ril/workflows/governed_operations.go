@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/kombifyio/techstack/pkg/ril/workflow"
 )
@@ -96,22 +97,42 @@ func (w *governedOperationWorkflow) verify(ctx context.Context, rc *workflow.Run
 	if err != nil {
 		return workflow.StepResult{}, err
 	}
+	if pending, _ := out["pending"].(bool); pending {
+		return workflow.StepResult{Output: out, Suspend: &workflow.SuspendDirective{
+			SignalKey: "governed-operation:" + rc.Run.RunID,
+			Timeout:   30 * time.Second, TimerKind: workflow.TimerRetry,
+		}}, nil
+	}
 	if verified, ok := out["verified"].(bool); !ok || !verified {
 		return workflow.StepResult{}, fmt.Errorf("%s verification failed", w.operation)
 	}
+	setContext(rc, "verification_result", out)
 	return workflow.StepResult{Output: out}, nil
 }
 
 func (w *governedOperationWorkflow) audit(ctx context.Context, rc *workflow.RunContext) (workflow.StepResult, error) {
 	input := w.activityInput(rc)
 	input["outcome"] = "completed"
+	input["operation_result"] = contextMap(rc, "operation_result")
+	input["verification_result"] = contextMap(rc, "verification_result")
 	return activityResult(rc.Activities.Run(ctx, ActRecordGovernedOperationAudit, input, idemKey(rc, "audit")))
 }
 
 func (w *governedOperationWorkflow) compensate(ctx context.Context, rc *workflow.RunContext) (workflow.StepResult, error) {
 	input := w.activityInput(rc)
 	input["operation_result"] = contextMap(rc, "operation_result")
-	return activityResult(rc.Activities.Run(ctx, ActExecuteGovernedCompensation, input, idemKey(rc, "compensate")))
+	input["compensation_result"] = contextMap(rc, "compensation_result")
+	out, err := rc.Activities.Run(ctx, ActExecuteGovernedCompensation, input, idemKey(rc, "compensate"))
+	if out != nil {
+		setContext(rc, "compensation_result", out)
+	}
+	pending, _ := out["pending"].(bool)
+	if err == nil && !pending {
+		if compensated, _ := out["compensated"].(bool); !compensated {
+			err = errors.New("governed compensation has no confirmed recovery result")
+		}
+	}
+	return workflow.StepResult{Output: out, Pending: pending}, err
 }
 
 func (w *governedOperationWorkflow) validateInput(rc *workflow.RunContext) error {

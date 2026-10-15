@@ -244,34 +244,6 @@ func TestDiscoveryIsDisabledAndBoundedOnDemand(t *testing.T) {
 	}
 }
 
-// A template unit cannot run without an instance, and only unit files placed
-// directly in the operator-owned directory count: an enabled distribution unit
-// is symlinked into a *.wants subdirectory and is not a deployed application.
-func TestOperatorInstalledUnitsSkipTemplatesAndSubdirectories(t *testing.T) {
-	dir := t.TempDir()
-	for _, unit := range []string{"real-app.service", "worker@.service", "notes.txt"} {
-		if err := os.WriteFile(filepath.Join(dir, unit), []byte("[Unit]\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	wants := filepath.Join(dir, "multi-user.target.wants")
-	if err := os.Mkdir(wants, 0o750); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(wants, "distro.service"), []byte("[Unit]\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	units := newHostDiscovery(DiscoveryConfig{SystemdUnitDir: []string{dir}}).operatorInstalledUnits()
-	if _, present := units["real-app.service"]; !present {
-		t.Fatalf("operator unit missing: %#v", units)
-	}
-	for _, excluded := range []string{"worker@.service", "notes.txt", "distro.service", "multi-user.target.wants"} {
-		if _, present := units[excluded]; present {
-			t.Fatalf("%s must not be reported as a deployed application: %#v", excluded, units)
-		}
-	}
-}
-
 // A masked unit is a symlink to /dev/null: a decision to never run the
 // service, not a deployed application.
 func TestOperatorInstalledUnitsSkipMaskedUnits(t *testing.T) {

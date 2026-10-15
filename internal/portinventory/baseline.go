@@ -19,11 +19,11 @@ func EvaluateHostBaseline(inventory Inventory, requirements []Requirement, kitDe
 		if err != nil {
 			return err
 		}
-		activeOwner := false
+		admittedOwner := false
 		for _, allocation := range inventory.Allocations {
 			address, err := normalizeBindAddress(allocation.BindAddress)
-			if err == nil && allocation.Desired && allocation.StackID == kitDeploymentID && allocation.ClaimState == ClaimStateActive && allocation.Transport == requirement.Transport && allocation.Port == requirement.Port && addressesOverlap(address, requirement.BindAddress) {
-				activeOwner = true
+			if err == nil && allocation.Desired && allocation.StackID == kitDeploymentID && (allocation.ClaimState == ClaimStateActive || allocation.ClaimState == ClaimStateUncertain) && allocation.Transport == requirement.Transport && allocation.Port == requirement.Port && addressesOverlap(address, requirement.BindAddress) {
+				admittedOwner = true
 			}
 		}
 		for _, allocation := range inventory.Allocations {
@@ -40,8 +40,11 @@ func EvaluateHostBaseline(inventory Inventory, requirements []Requirement, kitDe
 			if allocation.ObservedState == EvidenceUnknown || allocation.ObservedState == EvidenceStale {
 				return baselineConflict(requirement, "host_baseline_unverified", true, "Refresh the affected listener evidence before changing this Node.")
 			}
-			if allocation.Desired && allocation.StackID == kitDeploymentID && activeOwner {
-				continue // Current lifecycle claim; local StackKits must still prove the actual owner.
+			if allocation.Desired && allocation.StackID == kitDeploymentID && admittedOwner {
+				// Serialized admission can reuse this stack's active or uncertain
+				// generation. StackKits must still reconcile the actual local owner;
+				// this neither activates nor releases the retained claim.
+				continue
 			}
 			return baselineConflict(requirement, "host_listener_occupied", false,
 				"An existing service uses this binding. Preserve it and choose a supported alternative binding or another Node, then regenerate and review the plan. Reuse requires verified ownership; changing another owner requires an explicit migration.")

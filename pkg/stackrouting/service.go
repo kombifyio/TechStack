@@ -156,6 +156,10 @@ func (s Service) validateManagedRoutingTarget(ctx context.Context, principal Pri
 }
 
 func (s Service) persistDesiredRouting(ctx context.Context, principal Principal, stackID string, input EnsureInput, idempotencyKey string, expectedRevision *int64) (*PutResult, error) {
+	expected, _ := NormalizeExpectations(Expectations{}, input.Domain)
+	if input.Expectations != nil {
+		expected = *input.Expectations
+	}
 	state := DesiredState{
 		TenantID:       principal.TenantID,
 		StackID:        stackID,
@@ -165,15 +169,17 @@ func (s Service) persistDesiredRouting(ctx context.Context, principal Principal,
 		Mode:           input.Mode,
 		Domain:         input.Domain,
 		Provenance:     input.Provenance,
+		Expectations:   expected,
 		RolloutStatus:  RolloutNotRequested,
 	}
-	hash, err := requestHash(state, input.EnsureRollout)
+	hash, err := requestHash(state, input.EnsureRollout, input.Expectations != nil)
 	if err != nil {
 		return nil, fmt.Errorf("%w: hash routing request: %v", ErrUnavailable, err)
 	}
 	result, err := s.requireStore().Put(ctx, PutRequest{
 		DesiredState: state, IdempotencyKey: idempotencyKey,
 		RequestHash: hash, ExpectedRevision: expectedRevision,
+		PreserveExpectations: input.Expectations == nil,
 	})
 	if err != nil {
 		return nil, err
@@ -540,6 +546,13 @@ func normalizeEnsureInput(input EnsureInput) (EnsureInput, error) {
 	if err := validateDomain(input.Domain); err != nil {
 		return input, err
 	}
+	if input.Expectations != nil {
+		expected, expectationsErr := NormalizeExpectations(*input.Expectations, input.Domain)
+		if expectationsErr != nil {
+			return input, expectationsErr
+		}
+		input.Expectations = &expected
+	}
 	if input.Provenance.Source == "" || input.Provenance.DNSProvider == "" {
 		return input, fmt.Errorf("%w: provenance.source and provenance.dns_provider are required", ErrInvalid)
 	}
@@ -601,17 +614,22 @@ func validateDomain(domain string) error {
 	return nil
 }
 
-func requestHash(state DesiredState, ensureRollout bool) (string, error) {
+func requestHash(state DesiredState, ensureRollout bool, includeExpectations ...bool) (string, error) {
+	var expected *Expectations
+	if len(includeExpectations) == 0 || includeExpectations[0] {
+		expected = &state.Expectations
+	}
 	payload := struct {
-		StackID        string     `json:"stack_id"`
-		OwnerSubjectID string     `json:"owner_subject_id"`
-		ServerID       string     `json:"server_id"`
-		LeaseID        string     `json:"lease_id"`
-		Mode           string     `json:"mode"`
-		Domain         string     `json:"domain"`
-		Provenance     Provenance `json:"provenance"`
-		EnsureRollout  bool       `json:"ensure_rollout"`
-	}{state.StackID, state.OwnerSubjectID, state.ServerID, state.LeaseID, state.Mode, state.Domain, state.Provenance, ensureRollout}
+		StackID        string        `json:"stack_id"`
+		OwnerSubjectID string        `json:"owner_subject_id"`
+		ServerID       string        `json:"server_id"`
+		LeaseID        string        `json:"lease_id"`
+		Mode           string        `json:"mode"`
+		Domain         string        `json:"domain"`
+		Provenance     Provenance    `json:"provenance"`
+		EnsureRollout  bool          `json:"ensure_rollout"`
+		Expectations   *Expectations `json:"expectations,omitempty"`
+	}{state.StackID, state.OwnerSubjectID, state.ServerID, state.LeaseID, state.Mode, state.Domain, state.Provenance, ensureRollout, expected}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return "", err
@@ -644,5 +662,6 @@ func cloneDesiredState(in *DesiredState) *DesiredState {
 		return nil
 	}
 	out := *in
+	out.Expectations = CloneExpectations(in.Expectations)
 	return &out
 }

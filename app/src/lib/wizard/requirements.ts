@@ -200,8 +200,24 @@ export function calculateRequirements(config: {
 export function generateInstallCommand(
   serverUrl: string,
   registrationToken: string,
+  lanPin = "",
 ): string {
   const baseUrl = normalizeWorkerInstallBaseUrl(serverUrl);
+  return linuxInstallCommand(baseUrl, registrationToken, lanPin);
+}
+
+/**
+ * A private-LAN bridge presents a self-signed key. curl and the installer
+ * trust it only by the pin carried in the pasted command.
+ */
+function linuxInstallCommand(
+  baseUrl: string,
+  registrationToken: string,
+  lanPin: string,
+): string {
+  if (lanPin) {
+    return `curl -fsSL --insecure --pinnedpubkey "${lanPin}" ${baseUrl}/install.sh | KOMBI_SERVER="${baseUrl}" KOMBI_TOKEN="${registrationToken}" KOMBI_PRIVATE_LAN_PIN="${lanPin}" TECHSTACK_AS_SERVICE=1 bash`;
+  }
   return `curl -fsSL ${baseUrl}/install.sh | KOMBI_SERVER="${baseUrl}" KOMBI_TOKEN="${registrationToken}" TECHSTACK_AS_SERVICE=1 bash`;
 }
 
@@ -224,15 +240,19 @@ export function normalizeWorkerInstallBaseUrl(serverUrl: string): string {
 export function generateInstallCommands(
   serverUrl: string,
   registrationToken: string,
+  lanPin = "",
 ): { platform: string; command: string; description: string }[] {
   const baseUrl = normalizeWorkerInstallBaseUrl(serverUrl);
+  const linux = {
+    platform: "linux",
+    command: linuxInstallCommand(baseUrl, registrationToken, lanPin),
+    description: tr("ui.requirements.linuxRecommendedInstallsThePersistent"),
+  };
+  // The other paths cannot pin the bridge key, so a LAN bridge offers none.
+  if (lanPin) return [linux];
 
   return [
-    {
-      platform: "linux",
-      command: `curl -fsSL ${baseUrl}/install.sh | KOMBI_SERVER="${baseUrl}" KOMBI_TOKEN="${registrationToken}" TECHSTACK_AS_SERVICE=1 bash`,
-      description: tr("ui.requirements.linuxRecommendedInstallsThePersistent"),
-    },
+    linux,
     {
       platform: "docker",
       command: `docker run -d --name techstack-agent -e KOMBI_SERVER="${baseUrl}" -e KOMBI_TOKEN="${registrationToken}" techstack/agent:latest`,

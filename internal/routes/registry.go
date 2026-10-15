@@ -4,16 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"math"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
+	"github.com/kombifyio/techstack/pkg/appcatalog"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
+	"github.com/kombifyio/techstack/pkg/jobs"
 	"github.com/kombifyio/techstack/pkg/runtimehealth"
 	"github.com/kombifyio/techstack/pkg/runtimeidentity"
 	"github.com/kombifyio/techstack/pkg/serverregistry"
@@ -70,16 +74,23 @@ type RegistryRouteStores struct {
 	// Servers is the canonical serverregistry read model. The Registry Services
 	// BFF sources Node lifecycle, connection, health, and last-heartbeat from it
 	// instead of composing runtime state from `nodes` + `workers`.
-	Servers controlplane.ServerRuntimeStore
+	Servers  controlplane.ServerRuntimeStore
+	Services controlplane.ServiceRuntimeStore
 }
 
 func RegisterRegistryRoutesWithStores(r *httpx.Router, stores RegistryRouteStores) {
 	h := registryRouteHandlers{
-		stackStore:              stores.Stacks,
-		workerStore:             stores.Workers,
-		registryStore:           stores.Registry,
-		jobStore:                stores.Jobs,
-		serverStore:             stores.Servers,
+		stackStore:    stores.Stacks,
+		workerStore:   stores.Workers,
+		registryStore: stores.Registry,
+		jobStore:      stores.Jobs,
+		serverStore:   stores.Servers,
+		serviceStore:  stores.Services,
+		serviceProjector: &serviceRuntimeHandlers{
+			store: stores.Services, stacks: stores.Stacks, servers: stores.Servers, jobs: stores.Jobs,
+			now: func() time.Time { return time.Now().UTC() }, applicationAdmission: jobs.ApplicationAdoptionRelease,
+			updates: appcatalog.NewUpdateChecker(), stackKitRelease: pinnedStackKitRelease(),
+		},
 		allowLocalHomeAssistant: stores.AllowLocalHomeAssistant,
 	}
 	r.GET("/api/v1/registry/services", h.services)
@@ -98,6 +109,8 @@ type registryRouteHandlers struct {
 	registryStore           controlplane.RegistryStore
 	jobStore                controlplane.JobStore
 	serverStore             controlplane.ServerRuntimeStore
+	serviceStore            controlplane.ServiceRuntimeStore
+	serviceProjector        *serviceRuntimeHandlers
 }
 
 type registryPayload struct {
@@ -143,26 +156,35 @@ type registryServer struct {
 }
 
 type registryService struct {
-	ID                string `json:"id,omitempty"`
-	Name              string `json:"name"`
-	DisplayName       string `json:"display_name"`
-	ApplicationKey    string `json:"application_key"`
-	ApplicationName   string `json:"application_name"`
-	Type              string `json:"type"`
-	Status            string `json:"status"`
-	HealthState       string `json:"health_state,omitempty"`
-	ObservedAt        string `json:"observed_at,omitempty"`
-	ManagementState   string `json:"management_state"`
-	MigrationStatus   string `json:"migration_status,omitempty"`
-	PlacementScope    string `json:"placement_scope"`
-	MoveAllowed       bool   `json:"move_allowed"`
-	MoveBlockedReason string `json:"move_blocked_reason,omitempty"`
-	KitDeploymentID   string `json:"kit_deployment_id"`
-	StackName         string `json:"stack_name"`
-	ServerID          string `json:"server_id"`
-	ServerName        string `json:"server_name"`
-	Port              int    `json:"port,omitempty"`
-	URL               string `json:"url,omitempty"`
+	AllowedActions    []string                   `json:"allowed_actions"`
+	InventoryRevision int64                      `json:"inventory_revision"`
+	DesiredState      string                     `json:"desired_state"`
+	ObservedState     string                     `json:"observed_state"`
+	Version           *serviceVersion            `json:"version"`
+	Catalog           *appcatalog.Entry          `json:"catalog"`
+	MutationLock      serviceRuntimeMutationLock `json:"mutation_lock"`
+	Provenance        map[string]interface{}     `json:"provenance,omitempty"`
+	ActionGuard       map[string]any             `json:"action_guard,omitempty"`
+	ID                string                     `json:"id,omitempty"`
+	Name              string                     `json:"name"`
+	DisplayName       string                     `json:"display_name"`
+	ApplicationKey    string                     `json:"application_key"`
+	ApplicationName   string                     `json:"application_name"`
+	Type              string                     `json:"type"`
+	Status            string                     `json:"status"`
+	HealthState       string                     `json:"health_state,omitempty"`
+	ObservedAt        string                     `json:"observed_at,omitempty"`
+	ManagementState   string                     `json:"management_state"`
+	MigrationStatus   string                     `json:"migration_status,omitempty"`
+	PlacementScope    string                     `json:"placement_scope"`
+	MoveAllowed       bool                       `json:"move_allowed"`
+	MoveBlockedReason string                     `json:"move_blocked_reason,omitempty"`
+	KitDeploymentID   string                     `json:"kit_deployment_id"`
+	StackName         string                     `json:"stack_name"`
+	ServerID          string                     `json:"server_id"`
+	ServerName        string                     `json:"server_name"`
+	Port              int                        `json:"port,omitempty"`
+	URL               string                     `json:"url,omitempty"`
 	// EnvironmentClass is the hosting class of the server this service runs on,
 	// resolved through the same canonical-server match as `servers`, so a
 	// legacy node's services carry their server's class. It is omitted when the
@@ -171,6 +193,7 @@ type registryService struct {
 }
 
 type registryCatalogService struct {
+	IconURL     string   `json:"icon_url"`
 	ID          string   `json:"id"`
 	DisplayName string   `json:"display_name"`
 	Type        string   `json:"type"`
@@ -196,7 +219,7 @@ func (h registryRouteHandlers) services(e *httpx.Event) error {
 	if err != nil {
 		return err
 	}
-	return httpx.Success(e, http.StatusOK, payload)
+	return httpx.ConditionalSuccess(e, payload, nil)
 }
 
 func (h registryRouteHandlers) attachService(e *httpx.Event) error {
@@ -330,16 +353,27 @@ func (h registryRouteHandlers) registryPayloadFromStore(e *httpx.Event, tenantID
 	}
 	now := time.Now().UTC()
 	canonicalServers := h.canonicalServersByStack(e.Request.Context(), tenantID, ownerID)
+	projectRuntime := h.registryRuntimeProjectionForRequest(now)
+	ownedStacks := make([]controlplane.Stack, 0, len(stacks))
 	for _, stack := range stacks {
-		if stack.OwnerSubjectID != ownerID {
-			continue
+		if stack.OwnerSubjectID == ownerID {
+			ownedStacks = append(ownedStacks, stack)
 		}
+	}
+	var rows registryStackRows
+	if len(ownedStacks) > 0 {
+		var rowsErr error
+		if rows, rowsErr = h.loadRegistryStackRows(e.Request.Context(), tenantID); rowsErr != nil {
+			return registryPayload{}, rowsErr
+		}
+	}
+	// Worker order only matters for the node-less fallback below; map order
+	// would make two reads of the same state differ.
+	workerIDs := slices.Sorted(maps.Keys(workersByID))
+	for _, stack := range ownedStacks {
 		payload.Stacks = append(payload.Stacks, stackRegistryRecordFromStore(stack))
 
-		nodes, err := h.registryStore.ListNodesByStack(e.Request.Context(), tenantID, stack.ID)
-		if err != nil && !errors.Is(err, controlplane.ErrNotFound) {
-			return registryPayload{}, httpx.NewInternalServerError("Failed to fetch servers", nil)
-		}
+		nodes := rows.nodes[stack.ID]
 		nodesByID := make(map[string]controlplane.Node, len(nodes))
 		for _, node := range nodes {
 			nodesByID[node.ID] = node
@@ -347,7 +381,8 @@ func (h registryRouteHandlers) registryPayloadFromStore(e *httpx.Event, tenantID
 		stackServers, classByServerRef := registryServersForStack(canonicalServers[stack.ID], nodes, workersByID, now)
 		payload.Servers = append(payload.Servers, stackServers...)
 		if len(nodesByID) == 0 && len(canonicalServers[stack.ID]) == 0 && h.workerStore != nil {
-			for _, worker := range workersByID {
+			for _, workerID := range workerIDs {
+				worker := workersByID[workerID]
 				if worker.OwnerSubjectID != ownerID || strings.TrimSpace(worker.StackID) != stack.ID {
 					continue
 				}
@@ -358,10 +393,7 @@ func (h registryRouteHandlers) registryPayloadFromStore(e *httpx.Event, tenantID
 			}
 		}
 
-		services, err := h.registryStore.ListServicesByStack(e.Request.Context(), tenantID, stack.ID)
-		if err != nil && !errors.Is(err, controlplane.ErrNotFound) {
-			return registryPayload{}, httpx.NewInternalServerError("Failed to fetch services", nil)
-		}
+		services := rows.services[stack.ID]
 		stackServices := make([]registryService, 0, len(services))
 		for _, service := range services {
 			node := nodesByID[service.NodeID]
@@ -372,6 +404,9 @@ func (h registryRouteHandlers) registryPayloadFromStore(e *httpx.Event, tenantID
 		if len(stackServices) == 0 {
 			outputs := stackKitOutputsFromLatestDeployJob(e.Request.Context(), h.jobStore, tenantID, stack.ID)
 			stackServices = registryServicesFromStackKitOutputs(outputs, stack, stackServers)
+		}
+		if h.serviceStore != nil {
+			stackServices = h.projectRegistryRuntimeServices(stack, rows.runtimes[stack.ID], canonicalServers[stack.ID], stackServices, projectRuntime)
 		}
 		payload.Services = append(payload.Services, stackServices...)
 	}
@@ -389,6 +424,49 @@ func (h registryRouteHandlers) registryPayloadFromStore(e *httpx.Event, tenantID
 		return strings.ToLower(payload.Services[i].DisplayName) < strings.ToLower(payload.Services[j].DisplayName)
 	})
 	return payload, nil
+}
+
+// registryStackRows holds the per-stack rows of one Registry read. Each kind is
+// read once for the whole tenant and grouped by stack, so the read issues the
+// same number of queries for one stack as for fifty.
+type registryStackRows struct {
+	nodes    map[string][]controlplane.Node
+	services map[string][]controlplane.Service
+	runtimes map[string][]controlplane.ServiceRuntime
+}
+
+func (h registryRouteHandlers) loadRegistryStackRows(ctx context.Context, tenantID string) (registryStackRows, error) {
+	nodes, err := h.registryStore.ListNodesByTenant(ctx, tenantID)
+	if err != nil && !errors.Is(err, controlplane.ErrNotFound) {
+		return registryStackRows{}, httpx.NewInternalServerError("Failed to fetch servers", nil)
+	}
+	services, err := h.registryStore.ListServicesByTenant(ctx, tenantID)
+	if err != nil && !errors.Is(err, controlplane.ErrNotFound) {
+		return registryStackRows{}, httpx.NewInternalServerError("Failed to fetch services", nil)
+	}
+	rows := registryStackRows{
+		nodes:    groupByStack(nodes, func(node controlplane.Node) string { return node.StackID }),
+		services: groupByStack(services, func(service controlplane.Service) string { return service.StackID }),
+	}
+	if h.serviceStore != nil {
+		runtimes, runtimeErr := h.serviceStore.ListServiceRuntimes(ctx, tenantID, "", "")
+		if runtimeErr != nil {
+			return registryStackRows{}, httpx.NewInternalServerError("Failed to fetch service inventory", nil)
+		}
+		rows.runtimes = groupByStack(runtimes, func(runtime controlplane.ServiceRuntime) string { return runtime.StackID })
+	}
+	return rows, nil
+}
+
+// groupByStack keeps the relative order of the input inside each stack, so a
+// grouped tenant-wide read yields exactly what the per-stack read would.
+func groupByStack[T any](items []T, stackID func(T) string) map[string][]T {
+	grouped := make(map[string][]T)
+	for _, item := range items {
+		id := stackID(item)
+		grouped[id] = append(grouped[id], item)
+	}
+	return grouped
 }
 
 func (h registryRouteHandlers) ownedRegistryNode(e *httpx.Event, tenantID, ownerID, stackID, nodeID string) (*controlplane.Stack, *controlplane.Node, bool, error) {
@@ -829,6 +907,17 @@ func registryServicesFromStackKitOutputs(outputs map[string]any, stack controlpl
 			EnvironmentClass:  server.EnvironmentClass,
 		})
 	}
+	// A name alone cannot identify two placements. Keep old stack:name IDs
+	// where unambiguous and use the existing server-bound identity otherwise.
+	counts := make(map[string]int, len(services))
+	for _, service := range services {
+		counts[service.ID]++
+	}
+	for i := range services {
+		if counts[services[i].ID] > 1 && services[i].ServerID != "" {
+			services[i].ID = runtimeidentity.ServiceID(stack.ID, services[i].ServerID, services[i].Name, "default")
+		}
+	}
 	return services
 }
 
@@ -839,7 +928,7 @@ func registryServerForStackKitOutput(item map[string]any, servers []registryServ
 			return server
 		}
 	}
-	if len(servers) == 1 || target == "" && len(servers) > 0 {
+	if len(servers) == 1 && target == "" {
 		return servers[0]
 	}
 	return registryServer{}
@@ -908,7 +997,7 @@ func registryRoleLabel(role string) string {
 }
 
 func registryServiceCatalog() []registryCatalogService {
-	return []registryCatalogService{
+	catalog := []registryCatalogService{
 		{ID: registryServicePocketID, DisplayName: "Pocket ID", Type: registryServiceTypeAuth, Description: "Identity head for StackKit login and owner activation.", Required: true, Foundations: []string{registryBaseKit}},
 		{ID: registryServiceTraefik, DisplayName: "Traefik", Type: "reverse-proxy", Description: "Ingress and routing layer for StackKit services.", Required: true, Foundations: []string{registryBaseKit}},
 		{ID: registryServiceMonitor, DisplayName: "Monitoring", Type: registryServiceMonitor, Description: "OTLP collector and service health baseline.", Recommended: true, Foundations: []string{registryBaseKit}},
@@ -916,6 +1005,10 @@ func registryServiceCatalog() []registryCatalogService {
 		{ID: registryServiceImmich, DisplayName: "Immich", Type: "media", Description: "Photo and video service with supporting database/cache services.", Recommended: true, Foundations: []string{registryBaseKit}},
 		{ID: registryServiceFiles, DisplayName: "Files", Type: "storage", Description: "File storage service slot for the StackKit storage module.", Foundations: []string{registryBaseKit}},
 	}
+	for i := range catalog {
+		catalog[i].IconURL = appcatalog.IconURL(catalog[i].ID)
+	}
+	return catalog
 }
 
 func registryCatalogServiceByID(id string) (registryCatalogService, bool) {

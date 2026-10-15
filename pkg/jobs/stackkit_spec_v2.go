@@ -188,7 +188,11 @@ func canonicalFromProjected(stackSpecPath string, handoff map[string]interface{}
 	if domain, domainErr := stackSpecDomainBase(handoff); domainErr == nil && strings.TrimSpace(domain) != "" {
 		network := mapFromInterface(projected["network"])
 		networkDomain := mapFromInterface(network["domain"])
-		if len(network) > 0 && len(networkDomain) > 0 {
+		// A canonical repair retains its already registered installation zone.
+		// The legacy cloud handoff's generic kombify.me default is not a request
+		// to replace that binding; generation verifies exact registry custody.
+		boundZone := strings.HasSuffix(stringFromInterface(networkDomain["base"]), "."+addressModeKombifyMeDomain) && domain == addressModeKombifyMeDomain
+		if len(network) > 0 && len(networkDomain) > 0 && !boundZone {
 			networkDomain["base"] = domain
 			network["domain"] = networkDomain
 			projected["network"] = network

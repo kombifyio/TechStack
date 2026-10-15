@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kombifyio/techstack/internal/gocommon/identity"
+	"github.com/kombifyio/techstack/internal/gocommon/internal/httpsecurity"
 )
 
 // Client is an HTTP client that attaches service-call tokens to outbound
@@ -36,14 +37,14 @@ func NewClient(cfg Config) (*Client, error) {
 	}
 	return &Client{
 		cfg:  cfg,
-		http: &http.Client{Timeout: 30 * time.Second},
+		http: httpsecurity.WithoutRedirects(&http.Client{Timeout: 30 * time.Second}),
 	}, nil
 }
 
 // WithHTTPClient swaps the underlying http.Client. Returns c for chaining.
 func (c *Client) WithHTTPClient(h *http.Client) *Client {
 	if h != nil {
-		c.http = h
+		c.http = httpsecurity.WithoutRedirects(h)
 	}
 	return c
 }
@@ -132,7 +133,8 @@ func (c *Client) PostStream(ctx context.Context, url string, body interface{}, o
 	}
 	req.Header.Set(HeaderServiceAuth, token)
 
-	streamHTTP := &http.Client{Timeout: 0}
+	streamHTTP := httpsecurity.WithoutRedirects(c.http)
+	streamHTTP.Timeout = 0
 	return streamHTTP.Do(req.WithContext(ctx))
 }
 

@@ -30,6 +30,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -38,6 +39,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/kombifyio/techstack/pkg/serviceregistry"
 )
@@ -76,6 +78,10 @@ type DiscoveryConfig struct {
 	Budget         time.Duration
 	MaxServices    int
 	SystemdUnitDir []string
+	// Probe runs the container probes for an unprivileged Guard through the
+	// privileged executor. The docker socket is root-equivalent, so the daemon
+	// never gets access to it; nil runs the probe locally.
+	Probe func(ctx context.Context, name string, args ...string) ([]byte, error)
 	// run and readUnitDir are unexported test seams. Production always uses the
 	// real host probes.
 	run         commandRunner
@@ -93,6 +99,7 @@ type discoveryOutcome struct {
 	Services      []Service
 	DockerVersion string
 	Probed        bool
+	Complete      bool
 }
 
 func newHostDiscovery(cfg DiscoveryConfig) *hostDiscovery {
@@ -107,6 +114,14 @@ func newHostDiscovery(cfg DiscoveryConfig) *hostDiscovery {
 	}
 	if cfg.run == nil {
 		cfg.run = execCommandRunner
+		if probe := cfg.Probe; probe != nil {
+			cfg.run = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+				if name == discoveryPlatformDocker {
+					return probe(ctx, name, args...)
+				}
+				return execCommandRunner(ctx, name, args...)
+			}
+		}
 	}
 	if cfg.readUnitDir == nil {
 		cfg.readUnitDir = os.ReadDir
@@ -124,19 +139,22 @@ func (d *hostDiscovery) discover(ctx context.Context) discoveryOutcome {
 	budgetCtx, cancel := context.WithTimeout(ctx, d.cfg.Budget)
 	defer cancel()
 
-	outcome := discoveryOutcome{}
+	outcome := discoveryOutcome{Complete: true}
 	collected := make([]Service, 0, d.cfg.MaxServices)
-	for _, probe := range []func(context.Context) ([]Service, bool){
-		d.discoverDockerContainers,
-		d.discoverSystemdUnits,
+	for _, probe := range []func(context.Context) ([]Service, bool, bool){
+		d.discoverDockerContainersCoverage,
+		d.discoverSystemdUnitsCoverage,
 	} {
-		services, probed := probe(budgetCtx)
+		services, probed, complete := probe(budgetCtx)
+		outcome.Complete = outcome.Complete && complete
 		if probed {
 			outcome.Probed = true
 		}
 		collected = append(collected, services...)
 	}
-	outcome.Services = boundedUniqueServices(collected, d.cfg.MaxServices)
+	unique := boundedUniqueServices(collected, len(collected)+1)
+	outcome.Complete = outcome.Complete && len(unique) <= d.cfg.MaxServices && budgetCtx.Err() == nil
+	outcome.Services = boundedUniqueServices(unique, d.cfg.MaxServices)
 	outcome.DockerVersion = d.observeDockerVersion(budgetCtx)
 	return outcome
 }
@@ -159,14 +177,24 @@ type dockerContainer struct {
 	State  string `json:"State"`
 	Status string `json:"Status"`
 	Labels string `json:"Labels"`
+	// Ports is the human port summary, e.g. "0.0.0.0:8080->80/tcp, 5432/tcp".
+	Ports string `json:"Ports"`
 }
 
 func (d *hostDiscovery) discoverDockerContainers(ctx context.Context) ([]Service, bool) {
+	services, probed, _ := d.discoverDockerContainersCoverage(ctx)
+	return services, probed
+}
+
+func (d *hostDiscovery) discoverDockerContainersCoverage(ctx context.Context) ([]Service, bool, bool) {
 	output, err := d.cfg.run(ctx, discoveryPlatformDocker,
 		"ps", "--all", "--no-trunc", "--format", "{{json .}}")
 	if err != nil {
-		return nil, false
+		// A verified missing executable is not applicable. A denied daemon,
+		// timeout or failed command remains missing evidence.
+		return nil, false, errors.Is(err, exec.ErrNotFound) || errors.Is(err, os.ErrNotExist)
 	}
+	complete := true
 	services := make([]Service, 0, 8)
 	for _, line := range strings.Split(string(output), "\n") {
 		line = strings.TrimSpace(line)
@@ -175,15 +203,17 @@ func (d *hostDiscovery) discoverDockerContainers(ctx context.Context) ([]Service
 		}
 		var container dockerContainer
 		if err := json.Unmarshal([]byte(line), &container); err != nil {
+			complete = false
 			continue
 		}
 		service, ok := dockerContainerService(container)
 		if !ok {
+			complete = false
 			continue
 		}
 		services = append(services, service)
 	}
-	return services, true
+	return services, true, complete
 }
 
 func dockerContainerService(container dockerContainer) (Service, bool) {
@@ -200,7 +230,7 @@ func dockerContainerService(container dockerContainer) (Service, bool) {
 		health[discoveryHealthKeyDocker] = reported
 	}
 	labels := dockerLabelMap(container.Labels)
-	runtimeIdentity := map[string]string{}
+	runtimeIdentity := map[string]string{"container_name": name}
 	if project := labels["com.docker.compose.project"]; project != "" {
 		runtimeIdentity["kind"] = "docker_compose_service"
 		runtimeIdentity["project"] = project
@@ -219,9 +249,21 @@ func dockerContainerService(container dockerContainer) (Service, bool) {
 		PlatformID:      strings.TrimSpace(container.ID),
 		PlatformType:    discoveryPlatformDocker,
 		Image:           strings.TrimSpace(container.Image),
+		ImageVersion:    boundedImageVersionLabel(labels[ociImageVersionLabel]),
 		Health:          health,
 		RuntimeIdentity: runtimeIdentity,
+		publishedPorts:  parsePublishedPorts(container.Ports),
 	}, true
+}
+
+const ociImageVersionLabel = "org.opencontainers.image.version"
+
+func boundedImageVersionLabel(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) > 64 || strings.ContainsFunc(value, unicode.IsSpace) {
+		return ""
+	}
+	return value
 }
 
 func dockerLabelMap(raw string) map[string]string {
@@ -297,30 +339,59 @@ type systemdUnit struct {
 }
 
 func (d *hostDiscovery) discoverSystemdUnits(ctx context.Context) ([]Service, bool) {
-	installed := d.operatorInstalledUnits()
+	services, probed, _ := d.discoverSystemdUnitsCoverage(ctx)
+	return services, probed
+}
+
+func (d *hostDiscovery) discoverSystemdUnitsCoverage(ctx context.Context) ([]Service, bool, bool) {
+	installed, complete := d.operatorInstalledUnitsCoverage()
 	if len(installed) == 0 {
 		// Nothing an operator installed locally: there is nothing to enumerate,
 		// and listing the distribution's own units would be noise, not evidence.
-		return nil, false
+		return nil, false, complete
 	}
 	output, err := d.cfg.run(ctx, "systemctl",
 		"list-units", "--type=service", "--all", "--output=json", "--no-pager")
 	if err != nil {
-		return nil, false
+		return nil, false, false
 	}
 	var units []systemdUnit
 	if err := json.Unmarshal(output, &units); err != nil {
-		return nil, false
+		return nil, false, false
 	}
 	services := make([]Service, 0, len(installed))
+	seen := map[string]bool{}
 	for _, unit := range units {
 		name := strings.TrimSpace(unit.Unit)
-		if _, operatorInstalled := installed[strings.ToLower(name)]; !operatorInstalled {
+		key := strings.ToLower(name)
+		_, operatorInstalled := installed[key]
+		_, installedTemplate := installed[systemdTemplateName(key)]
+		if !operatorInstalled && !installedTemplate {
+			continue
+		}
+		if key == systemdTemplateName(key) && strings.Contains(key, "@") {
 			continue
 		}
 		services = append(services, systemdUnitService(unit, name))
+		seen[key] = true
 	}
-	return services, true
+	for name := range installed {
+		// A bare template is not runnable; only its enumerated instances run.
+		if strings.Contains(name, "@.service") {
+			continue
+		}
+		if !seen[name] {
+			complete = false
+		}
+	}
+	return services, true, complete
+}
+
+func systemdTemplateName(name string) string {
+	if at := strings.Index(name, "@"); at >= 0 && strings.HasSuffix(name, discoverySystemdUnitSufix) {
+		return name[:at+1] + discoverySystemdUnitSufix
+	}
+	return ""
 }
 
 func systemdUnitService(unit systemdUnit, name string) Service {
@@ -364,22 +435,43 @@ func systemdObservedState(active, sub string) string {
 
 // operatorInstalledUnits lists the service units an operator installed on this
 // host. A masked unit (a symlink to /dev/null) is excluded: it is a decision to
-// never run the service, not a deployed application. Template units (`foo@`)
-// are excluded because they are not runnable without an instance.
+// never run the service, not a deployed application. Templates and enabled
+// instance links are retained so loaded instances can be observed too.
 func (d *hostDiscovery) operatorInstalledUnits() map[string]struct{} {
+	installed, _ := d.operatorInstalledUnitsCoverage()
+	return installed
+}
+
+func (d *hostDiscovery) operatorInstalledUnitsCoverage() (map[string]struct{}, bool) {
 	installed := map[string]struct{}{}
-	for _, dir := range d.cfg.SystemdUnitDir {
+	complete := len(d.cfg.SystemdUnitDir) > 0
+	dirs := append([]string(nil), d.cfg.SystemdUnitDir...)
+	for index := 0; index < len(dirs); index++ {
+		dir := dirs[index]
 		if strings.TrimSpace(dir) == "" {
 			continue
 		}
 		entries, err := d.cfg.readUnitDir(dir)
 		if err != nil {
+			if !os.IsNotExist(err) {
+				complete = false
+			}
 			continue
 		}
 		for _, entry := range entries {
 			name := entry.Name()
-			if entry.IsDir() || !strings.HasSuffix(name, discoverySystemdUnitSufix) ||
-				strings.Contains(name, "@"+discoverySystemdUnitSufix) {
+			if strings.HasSuffix(name, ".wants") || strings.HasSuffix(name, ".requires") {
+				if index < len(d.cfg.SystemdUnitDir) {
+					dirs = append(dirs, filepath.Join(dir, name))
+				} else {
+					complete = false
+				}
+				continue
+			}
+			if entry.IsDir() {
+				continue
+			}
+			if !strings.HasSuffix(name, discoverySystemdUnitSufix) {
 				continue
 			}
 			if maskedSystemdUnit(filepath.Join(dir, name)) {
@@ -388,7 +480,7 @@ func (d *hostDiscovery) operatorInstalledUnits() map[string]struct{} {
 			installed[strings.ToLower(name)] = struct{}{}
 		}
 	}
-	return installed
+	return installed, complete
 }
 
 func maskedSystemdUnit(path string) bool {
@@ -452,17 +544,22 @@ func execCommandRunner(ctx context.Context, name string, args ...string) ([]byte
 	command := exec.CommandContext(ctx, path, args...)
 	command.Env = append(os.Environ(), "LC_ALL=C")
 	var stdout bytes.Buffer
-	command.Stdout = &boundedWriter{buffer: &stdout, limit: discoveryMaxProbeOutput}
+	writer := &boundedWriter{buffer: &stdout, limit: discoveryMaxProbeOutput}
+	command.Stdout = writer
 	command.Stderr = io.Discard
 	if err := command.Run(); err != nil {
 		return nil, fmt.Errorf("discovery probe %q failed: %w", name, err)
+	}
+	if writer.truncated {
+		return nil, fmt.Errorf("discovery probe %q output truncated", name)
 	}
 	return stdout.Bytes(), nil
 }
 
 type boundedWriter struct {
-	buffer *bytes.Buffer
-	limit  int
+	buffer    *bytes.Buffer
+	limit     int
+	truncated bool
 }
 
 // Write keeps the io.Writer contract while discarding everything past the
@@ -472,9 +569,11 @@ func (w *boundedWriter) Write(payload []byte) (int, error) {
 	accepted := len(payload)
 	remaining := w.limit - w.buffer.Len()
 	if remaining <= 0 {
+		w.truncated = w.truncated || len(payload) > 0
 		return accepted, nil
 	}
 	if len(payload) > remaining {
+		w.truncated = true
 		payload = payload[:remaining]
 	}
 	if written, err := w.buffer.Write(payload); err != nil {

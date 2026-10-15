@@ -15,6 +15,7 @@ import (
 	"github.com/kombifyio/techstack/internal/selfhostcontracts/runtimeinventory"
 	"github.com/kombifyio/techstack/api/toolmanifest"
 	"github.com/kombifyio/techstack/internal/portinventory"
+	"github.com/kombifyio/techstack/internal/providercontrol"
 	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/controlplane"
@@ -46,12 +47,25 @@ type InventoryRouteConfig struct {
 	ServiceAuthSecret string
 	ServiceAuthNext   string
 	// Stored authorization resolved only after verifying the Cloud OBO signature.
-	RuntimeSummaryContext func(context.Context, string, string) (context.Context, error)
+	// RuntimeSummaryContext authorizes the signed Cloud principal and returns
+	// the tenant whose inventory it may read (the signed one, or for the
+	// personal tenant the subject's preferred membership).
+	RuntimeSummaryContext func(context.Context, string, string) (context.Context, string, error)
 	// ManagedServersHeld backs the private Cloud budget-usage read. Nil makes
 	// that route answer 503 rather than report an unknown count as zero.
 	ManagedServersHeld ManagedServersHeldFunc
+	CreateProtection   func(context.Context, string, string, string) (providercontrol.CreateProtection, error)
+	// Posture joins the Guard-observed backup freshness into the private Cloud
+	// backup read. Nil leaves each server's backup state unknown with reason
+	// posture_unavailable; it never reports a missing source as a good one.
+	Posture ServerPosture
 	// Homelabs backs the rename_homelab MCP tool; nil keeps it fail-closed (503).
-	Homelabs controlplane.HomelabStore
+	Homelabs          controlplane.HomelabStore
+	MaintenanceOrigin MaintenanceOriginConfig
+	// MaintenanceAction is the canonical leaf returned by RegisterServerRuntimeRoutes.
+	// Nil leaves the maintenance MCP operation unavailable.
+	MaintenanceAction httpx.HandlerFunc
+	MaintenanceImpact httpx.HandlerFunc
 }
 
 type inventoryHandlers struct {
@@ -59,8 +73,13 @@ type inventoryHandlers struct {
 	version               string
 	serviceAuthSecret     string
 	serviceAuthNext       string
-	runtimeSummaryContext func(context.Context, string, string) (context.Context, error)
+	runtimeSummaryContext func(context.Context, string, string) (context.Context, string, error)
 	managedServersHeld    ManagedServersHeldFunc
+	createProtection      func(context.Context, string, string, string) (providercontrol.CreateProtection, error)
+	posture               ServerPosture
+	maintenanceOrigin     MaintenanceOriginConfig
+	maintenanceAction     httpx.HandlerFunc
+	maintenanceImpact     httpx.HandlerFunc
 }
 
 type inventoryApplication struct {
@@ -102,6 +121,10 @@ type inventoryStackKit = runtimeinventory.StackKit
 
 type inventoryObservedState = runtimeinventory.ObservedState
 
+type inventoryResourceMetric = runtimeinventory.ResourceMetric
+
+type inventoryResourceMetrics = runtimeinventory.ResourceMetrics
+
 type inventoryLifecycleProjection = runtimeinventory.LifecycleProjection
 
 type inventoryDesiredProjection = runtimeinventory.DesiredProjection
@@ -126,31 +149,9 @@ type inventoryServiceLink = runtimeinventory.ServiceLink
 
 // inventoryService is the neutral contract service projection plus the
 // Techstack-owned management dimension.
-//
-// `runtimeinventory.Service` is generated/mirrored in the separate
-// kombify-runtime-contracts-go repository and cannot carry `management_state`
-// without a cross-repo release, so the canonical read model exposes it here at
-// the response layer instead of losing the distinction. The embedded contract
-// struct keeps the wire shape strictly additive: every existing field is
-// emitted unchanged and `management_state` is appended.
-// Follow-up: promote the field into the contract release
-// (kombify-Techstack-nzy1.15 PR body + follow-up bead).
-type inventoryService struct {
-	runtimeinventory.Service
-	ManagementState string `json:"management_state"`
-}
+type inventoryService = runtimeinventory.Service
 
-// inventoryServiceList mirrors runtimeinventory.ServiceList field for field and
-// only widens the element type to the projection above.
-type inventoryServiceList struct {
-	ObservedAt        time.Time          `json:"observed_at"`
-	Freshness         inventoryFreshness `json:"freshness"`
-	InventoryRevision int64              `json:"inventory_revision"`
-	CollectionCursor  string             `json:"collection_cursor"`
-	NextCursor        string             `json:"next_cursor,omitempty"`
-	PageSize          int                `json:"page_size"`
-	Services          []inventoryService `json:"services"`
-}
+type inventoryServiceList = runtimeinventory.ServiceList
 
 type inventoryChannel = runtimeinventory.Channel
 
@@ -183,6 +184,11 @@ func RegisterInventoryRoutes(r *httpx.Router, cfg InventoryRouteConfig) {
 		serviceAuthNext:       strings.TrimSpace(cfg.ServiceAuthNext),
 		runtimeSummaryContext: cfg.RuntimeSummaryContext,
 		managedServersHeld:    cfg.ManagedServersHeld,
+		createProtection:      cfg.CreateProtection,
+		posture:               cfg.Posture,
+		maintenanceOrigin:     cfg.MaintenanceOrigin,
+		maintenanceAction:     cfg.MaintenanceAction,
+		maintenanceImpact:     cfg.MaintenanceImpact,
 	}
 	r.GET("/api/v1/inventory/servers", h.httpListServers)
 	// Public RIL is a compatibility view over the canonical inventory read
@@ -199,6 +205,14 @@ func RegisterInventoryRoutes(r *httpx.Router, cfg InventoryRouteConfig) {
 	// Private Cloud servicecall read for the dashboard Overview (servers +
 	// services of the on_behalf_of owner); see inventory_internal_summary.go.
 	r.GET("/api/v1/internal/runtime/summary", h.httpInternalRuntimeSummary)
+	r.GET("/internal/v1/runtime/creation-pauses", h.httpInternalCreateProtection)
+	// Private Cloud monitoring reads next to the summary, behind the same
+	// servicecall guard and owner-scoped authorization; see
+	// inventory_internal_monitoring.go.
+	r.GET("/api/v1/internal/runtime/history", h.httpInternalRuntimeHistory)
+	r.GET("/api/v1/internal/runtime/events", h.httpInternalRuntimeEvents)
+	r.GET("/api/v1/internal/runtime/ports", h.httpInternalRuntimePorts)
+	r.GET("/api/v1/internal/runtime/backups", h.httpInternalRuntimeBackups)
 	// Private Cloud servicecall read for the budget panel (managed servers
 	// held by the on_behalf_of owner); see inventory_internal_usage.go.
 	r.GET("/api/v1/internal/usage/budgets", h.httpInternalUsageBudgets)
@@ -243,7 +257,16 @@ func (h inventoryHandlers) httpListServers(e *httpx.Event) error {
 	if err != nil {
 		return writeInventoryHTTPError(e, err)
 	}
-	result, err := h.app.listServers(e.Request.Context(), scope, page)
+	// The public RIL roster is the named companion of /v1/ril/servers/summary:
+	// a principal that may read the RIL availability view (techstack.ril.read)
+	// must also be able to name its own servers. Gating it on the broader
+	// inventory-read entitlement left RIL-only principals with a count they
+	// could not resolve to a server, so the Companion could never act.
+	action := InventoryActionRead
+	if e.Request.URL.Path == "/v1/ril/servers" {
+		action = InventoryActionRILRead
+	}
+	result, err := h.app.listServersAs(e.Request.Context(), scope, page, action)
 	if err != nil {
 		return writeInventoryHTTPError(e, err)
 	}
@@ -386,7 +409,11 @@ func writeInventoryHTTPError(e *httpx.Event, err error) error {
 }
 
 func (a *inventoryApplication) listServers(ctx context.Context, scope inventoryScope, options inventoryPageOptions) (inventoryServerList, error) {
-	readScope, err := a.authorize(ctx, scope, InventoryActionRead, controlplane.InventoryReadTargetServerCollection, "")
+	return a.listServersAs(ctx, scope, options, InventoryActionRead)
+}
+
+func (a *inventoryApplication) listServersAs(ctx context.Context, scope inventoryScope, options inventoryPageOptions, action InventoryAction) (inventoryServerList, error) {
+	readScope, err := a.authorize(ctx, scope, action, controlplane.InventoryReadTargetServerCollection, "")
 	if err != nil {
 		return inventoryServerList{}, err
 	}
@@ -401,6 +428,7 @@ func (a *inventoryApplication) listServers(ctx context.Context, scope inventoryS
 	}
 	now := a.now().UTC()
 	servers := make([]inventoryServer, 0, len(page.Servers))
+	qualifiers := make([]string, 0, len(page.Servers))
 	for _, row := range page.Servers {
 		rowScope, scopeErr := readScope.RestrictToServer(row.ID)
 		if scopeErr != nil {
@@ -414,6 +442,17 @@ func (a *inventoryApplication) listServers(ctx context.Context, scope inventoryS
 			}
 		}
 		servers = append(servers, a.projectServer(row, stack, now))
+		target := servedRuntimeTarget(row)
+		qualifiers = append(qualifiers, serverregistry.DisplayQualifier(target.ProviderID, string(target.Offering), row.ID))
+	}
+	// Same disambiguation as /api/v1/servers: two servers named alike (a
+	// cloned hostname) stay distinguishable for agents, e.g. "· hostinger".
+	names := make([]string, len(servers))
+	for i := range servers {
+		names[i] = servers[i].Name
+	}
+	for i, name := range qualifyCollidingServerNames(names, qualifiers) {
+		servers[i].Name = safeLabel(name, 256)
 	}
 	freshness, revision := aggregateServerFreshness(servers)
 	return inventoryServerList{
@@ -450,7 +489,7 @@ func (a *inventoryApplication) serverHealth(ctx context.Context, scope inventory
 		return inventoryServerHealth{}, err
 	}
 	projected := a.projectServer(*server, nil, a.now().UTC())
-	return inventoryServerHealth{ServerID: projected.ID, ObservedAt: projected.ObservedAt, Freshness: projected.Freshness, InventoryRevision: projected.InventoryRevision, Connection: projected.Connection, Health: projected.Health}, nil
+	return inventoryServerHealth{ServerID: projected.ID, ObservedAt: projected.ObservedAt, Freshness: projected.Freshness, InventoryRevision: projected.InventoryRevision, Connection: projected.Connection, Health: projected.Health, Metrics: projected.Metrics}, nil
 }
 
 func (a *inventoryApplication) serverPorts(ctx context.Context, scope inventoryScope, serverID string) (portinventory.Inventory, error) {
@@ -686,13 +725,36 @@ func (a *inventoryApplication) projectServer(server controlplane.ServerRuntime, 
 	}
 	cleanup := inventoryCleanupFromServer(server, metadata)
 	return inventoryServer{
-		ID: safeLabel(server.ID, 256), StackID: safeLabel(server.StackID, 256), Name: safeLabel(firstNonEmptyString(server.DisplayName, server.Name, server.ID), 256),
+		ID: safeLabel(server.ID, 256), StackID: safeLabel(server.StackID, 256), Name: safeLabel(base.Name, 256),
 		ObservedAt: server.LastHeartbeatAt, Freshness: freshness, InventoryRevision: maxInt64(server.InventoryRevision, 0), Addresses: addresses,
 		Platform: inventoryPlatform{OS: safeLabel(firstNonEmptyString(stringFromAnyMap(host, "os"), stringFromAnyMap(metadata, "os")), 96), OSVersion: safeLabel(firstNonEmptyString(stringFromAnyMap(host, "os_version"), stringFromAnyMap(metadata, "os_version")), 128), Arch: safeLabel(firstNonEmptyString(stringFromAnyMap(host, "arch"), stringFromAnyMap(metadata, "arch")), 64)},
-		StackKit: stackKit, Provider: safeProviderLabel(firstNonEmptyString(stringFromAnyMap(metadata, "provider_id"), stringFromAnyMap(metadata, "provider"))),
+		StackKit: stackKit, Provider: safeProviderLabel(firstNonEmptyString(base.ProviderID, stringFromAnyMap(metadata, "provider_id"), stringFromAnyMap(metadata, "provider"))),
 		Lifecycle: lifecycle, Desired: desired, Lease: lease, Cleanup: cleanup,
 		Connection: inventoryObservedState{State: safeState(base.Connection.State, monitoringStatusUnknown), ReasonCode: connectionReason, ChangedAt: inventoryDimensionChangedAt(server.ConnectionChangedAt), ObservedAt: server.LastHeartbeatAt},
 		Health:     inventoryObservedState{State: safeState(base.Health.State, monitoringStatusUnknown), ReasonCode: healthReason, ChangedAt: inventoryDimensionChangedAt(server.HealthChangedAt), ObservedAt: server.LastHeartbeatAt},
+		Metrics:    inventoryMetricsFromHost(host, freshness),
+	}
+}
+
+// inventoryMetricsFromHost projects the heartbeat host figures with the same
+// derivation the stack-operations view uses, so list_servers and
+// get_stack_operations never disagree. A figure outside the freshness window is
+// reported as stale without its value rather than as a current reading.
+func inventoryMetricsFromHost(host map[string]any, freshness inventoryFreshness) inventoryResourceMetrics {
+	qualify := func(metric stackMetricValue) inventoryResourceMetric {
+		if freshness.State != inventoryFresh {
+			if metric.Status == "ok" {
+				return inventoryResourceMetric{Status: inventoryStale, Unit: metric.Unit}
+			}
+			return inventoryResourceMetric{Status: monitoringStatusUnknown, Unit: metric.Unit}
+		}
+		return inventoryResourceMetric{Status: metric.Status, Value: metric.Value, Unit: metric.Unit}
+	}
+	return inventoryResourceMetrics{
+		CPUPercent:    qualify(metricFromAnyMaps("%", []string{"cpu_percent"}, host)),
+		MemoryPercent: qualify(metricPercentFromInventory(host, nil, []string{"memory_percent"}, "memory_used_bytes", "memory_total_bytes")),
+		DiskPercent:   qualify(metricPercentFromInventory(host, nil, []string{"disk_percent"}, "disk_used_bytes", "disk_total_bytes")),
+		UptimeSeconds: qualify(metricFromAnyMaps("s", []string{"uptime_seconds"}, host)),
 	}
 }
 
@@ -788,14 +850,12 @@ func (a *inventoryApplication) projectService(service controlplane.ServiceRuntim
 		reason = firstNonEmptyString(freshness.ReasonCode, "health_unknown")
 	}
 	return inventoryService{
-		Service: runtimeinventory.Service{
-			ID: safeLabel(service.ID, 256), StackID: safeLabel(service.StackID, 256), ServerID: safeLabel(service.ServerID, 256), Key: safeLabel(service.ServiceKey, 128), Name: safeLabel(firstNonEmptyString(service.Name, service.ServiceKey, service.ID), 256),
-			DesiredState:  safeState(base.DesiredState, monitoringStatusUnknown),
-			ObservedState: safeState(base.ObservedState, monitoringStatusUnknown), ObservedAt: service.ObservedAt, Freshness: freshness, InventoryRevision: revision,
-			Health:   inventoryObservedState{State: safeState(base.Health.State, monitoringStatusUnknown), ReasonCode: reason, ObservedAt: service.ObservedAt},
-			StackKit: inventoryStackKit{Version: safeLabel(service.StackKitVersion, 96)}, Links: links,
-			AllowedActions: append([]string(nil), base.AllowedActions...), EvidenceRef: safeEvidenceRef(base.EvidenceRef), Source: safeLabel(service.Source, 96),
-		},
+		ID: safeLabel(service.ID, 256), StackID: safeLabel(service.StackID, 256), ServerID: safeLabel(service.ServerID, 256), Key: safeLabel(service.ServiceKey, 128), Name: safeLabel(firstNonEmptyString(service.Name, service.ServiceKey, service.ID), 256),
+		DesiredState:  safeState(base.DesiredState, monitoringStatusUnknown),
+		ObservedState: safeState(base.ObservedState, monitoringStatusUnknown), ObservedAt: service.ObservedAt, Freshness: freshness, InventoryRevision: revision,
+		Health:   inventoryObservedState{State: safeState(base.Health.State, monitoringStatusUnknown), ReasonCode: reason, ObservedAt: service.ObservedAt},
+		StackKit: inventoryStackKit{Version: safeLabel(service.StackKitVersion, 96)}, Links: links,
+		AllowedActions: append([]string(nil), base.AllowedActions...), EvidenceRef: safeEvidenceRef(base.EvidenceRef), Source: safeLabel(service.Source, 96),
 		// Read straight from the persisted aggregate dimension. Nothing here
 		// re-derives ownership from source, status, or service type.
 		ManagementState: base.ManagementState,

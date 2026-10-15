@@ -108,7 +108,6 @@ describe("wizard StackKit spec", () => {
     const config = createDefaultConfig("saas");
 
     const spec = buildStackKitSpecFromStackConfig(config) as {
-      mode: string;
       context: string;
       network: { mode: string };
       email?: string;
@@ -124,7 +123,6 @@ describe("wizard StackKit spec", () => {
     };
 
     expect(spec.context).toBe("cloud");
-    expect(spec.mode).toBe("bootstrapped");
     expect(spec.network.mode).toBe("public");
     expect((spec as unknown as { domain: string }).domain).toBe("kombify.me");
     expect(spec.email).toBeUndefined();
@@ -152,19 +150,18 @@ describe("wizard StackKit spec", () => {
     expect(spec.metadata.recovery_material_ref_present).toBe("true");
   });
 
-  it("keeps managed Cloud Kit on Coolify and propagates the selected IONOS provider", () => {
+  it("names no PaaS for managed Cloud Kit and propagates the selected IONOS provider", () => {
     const config = createDefaultConfig();
     applyServerProvisioningMode(config, "kombify-cloud");
     config.providerId = "ionos";
     config.ionosDatacenter = "us/ewr";
 
     const spec = buildStackKitSpecFromStackConfig(config) as {
-      mode: string;
       context: string;
       domain: string;
       network: { mode: string };
       subdomainPrefix?: string;
-      paas: string;
+      paas?: string;
       services: Record<string, { enabled: boolean }>;
       metadata: Record<string, string>;
       owner: {
@@ -175,16 +172,13 @@ describe("wizard StackKit spec", () => {
     };
 
     expect(spec.context).toBe("cloud");
-    expect(spec.mode).toBe("bootstrapped");
     expect((spec as unknown as { stackkit: string }).stackkit).toBe(
       "cloud-kit",
     );
     expect(spec.domain).toBe("kombify.me");
     expect(spec.network.mode).toBe("public");
     expect(spec.subdomainPrefix).toBeUndefined();
-    expect(spec.paas).toBe("coolify");
-    expect(spec.services.dokploy).toEqual({ enabled: false });
-    expect(spec.services.coolify).toEqual({ enabled: true });
+    expect(spec.paas).toBeUndefined();
     expect(spec.metadata.runtime_lane).toBe("monthly-runtime");
     expect(spec.metadata.runtime_offering_id).toBe("monthly-runtime-standard");
     expect(spec.metadata.address_mode).toBe("kombify-me");

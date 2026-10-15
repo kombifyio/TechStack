@@ -1,4 +1,44 @@
 export const hi: Record<string, string> = {
+  "ui.clientLocal.bootstrapPassword": "प्रारंभिक पासवर्ड",
+  "ui.clientLocal.bootstrapGuidance":
+    "प्रारंभिक पासवर्ड पाने के लिए इस इंस्टॉलेशन के होस्ट पर टर्मिनल में {command} चलाएँ। अगर पिछला पासवर्ड इस्तेमाल हो चुका है या उसकी अवधि समाप्त हो गई है, तो कमांड उसे बदल देती है और पुराना पासवर्ड काम नहीं करता।",
+  "setupReplay.restart": "सेटअप दोहराएँ",
+  "setupReplay.title": "आपका वर्तमान कनेक्शन",
+  "setupReplay.body":
+    "इस डिवाइस का कनेक्शन देखें, फिर परिचय दोहराएँ। आपकी सेटिंग्स का मसौदा यहीं रहेगा।",
+  "setupReplay.edition": "इंस्टॉलर संस्करण",
+  "setupReplay.localEdition": "Techstack Local",
+  "setupReplay.cloudEdition": "Techstack Cloud",
+  "setupReplay.connection": "कनेक्शन",
+  "setupReplay.address": "पता",
+  "setupReplay.browser": "वेब ब्राउज़र",
+  "setupReplay.unavailable":
+    "डेस्कटॉप कनेक्शन पढ़ा नहीं जा सका। आप फिर भी सीधे परिचय पर जा सकते हैं।",
+  "setupReplay.skip": "सेटअप छोड़ें",
+  "setupReplay.keep": "कनेक्शन बनाए रखें",
+  "ui.services.stackIt": "Stack it",
+  "ui.services.approveStackIt": "इस अपनाने को मंज़ूरी दें",
+  "ui.services.releaseBinding": "जीवनचक्र प्रबंधन हटाएँ",
+  "ui.services.adoptionScope":
+    "इस मौजूदा Home Assistant कंटेनर का जीवनचक्र उसी स्थान पर प्रबंधित करने के लिए समीक्षा करें। यह प्रोफ़ाइल अन्य ऐप या दूसरे Node पर स्थानांतरण का समर्थन नहीं करती।",
+  "ui.services.adoptionSource": "मौजूदा कंटेनर",
+  "ui.services.adoptionData": "सुरक्षित रखी गई कॉन्फ़िगरेशन",
+  "ui.services.adoptionPreserves":
+    "खाते, कॉन्फ़िगरेशन और स्थायी डेटा इसी ऐप में रहते हैं। रनटाइम दोबारा नहीं बनाया जाता और कोई खाता शुरू नहीं किया जाता।",
+  "ui.services.adoptionOperations":
+    "मंज़ूर किया गया बंधन जाँचने, शुरू करने, रोकने और फिर शुरू करने की अनुमति देता है। ऐप को अपडेट या दोबारा बनाने के लिए अलग समर्थित योजना चाहिए।",
+  "ui.services.adoptionProgress": "ऑपरेशन की प्रगति देखें",
+  "ui.services.adoptionChecking": "सहेजे गए ऑपरेशन की जाँच हो रही है",
+  "ui.services.adoptionFailed":
+    "ऑपरेशन पूरा नहीं हुआ। दोबारा कोशिश करने से पहले उसके प्रमाण देखें।",
+  "ui.services.adoptionUnavailable":
+    "अपनाने का आकलन करने के लिए इस स्रोत को कंटेनर की सटीक पहचान और जुड़े Guard पर StackKits का समर्थित प्रकाशित संस्करण चाहिए।",
+  "ui.services.adoptionVerified":
+    "जीवनचक्र बंधन की पुष्टि हो गई। यह ऐप अब Stacked है।",
+  "ui.services.releasePreservesRuntime":
+    "जीवनचक्र बंधन हटाएँ। मौजूदा कंटेनर, खाते, कॉन्फ़िगरेशन और डेटा अपनी जगह और वर्तमान स्थिति में बने रहते हैं।",
+  "ui.services.bindingReleased":
+    "जीवनचक्र बंधन हटा दिया गया। ऐप Unstacked के रूप में दिखाई देता रहता है।",
   "wizard.identity.eyebrow": "आखिरी चाबी",
   "wizard.identity.title": "इस घर को अपना बनाइए।",
   "wizard.identity.ready": "आपका साइन-इन तैयार है।",
@@ -299,6 +339,8 @@ export const hi: Record<string, string> = {
   "ui.dashboard.alerts": "अलर्ट",
   "ui.common.importExport": "इम्पोर्ट / एक्सपोर्ट",
   "ui.dashboard.sections": "Homelab अनुभाग",
+  "ui.dashboard.failureDetails": "विवरण",
+  "ui.dashboard.hideFailureDetails": "विवरण छिपाएँ",
   "ui.dashboard.inventoryUnavailable":
     "Node और सेवा की प्रामाणिक स्थिति उपलब्ध नहीं है। नीचे दिया गया सहेजा हुआ टेलीमेट्री डेटा निदान के लिए है और इसे शून्य इन्वेंटरी नहीं माना जाता।",
   "ui.dashboard.noNodes": "इस Homelab के लिए अभी कोई Node पंजीकृत नहीं है।",
@@ -378,6 +420,10 @@ export const hi: Record<string, string> = {
   "ui.theme.toggle": "डार्क/लाइट थीम बदलें",
   "ui.layout.toggleMenu": "मेनू खोलें/बंद करें",
   "ui.layout.closeMenu": "मेनू बंद करें",
+  "ui.layout.collapseSidebar": "साइडबार संक्षिप्त करें",
+  "ui.layout.expandSidebar": "साइडबार विस्तृत करें",
+  "ui.layout.resizeSidebar": "साइडबार का आकार बदलें",
+  "ui.layout.sidebarCollapsed": "संक्षिप्त",
   "ui.redirect.homelab": "आपके Homelab में भेजा जा रहा है...",
   "ui.redirect.generic": "भेजा जा रहा है...",
   "ui.sso.signingIn": "आपको साइन-इन किया जा रहा है...",
@@ -439,7 +485,14 @@ export const hi: Record<string, string> = {
   "wizard.preview.game.description":
     "आपके और आपके दोस्तों के लिए एक Minecraft दुनिया।",
   "wizard.preview.game.help":
-    "नियोजित गेम अनुभव एक स्थायी Minecraft दुनिया को प्रबंधित करने के लिए Pterodactyl इस्तेमाल करता है। अपने खिलाड़ियों के हिसाब से Java या Bedrock चुनिए। स्थानीय होस्टिंग और प्रबंधित VPS अलग-अलग जगह के विकल्प हैं; आमंत्रण और दुनिया की रिकवरी सेटअप का हिस्सा हैं।",
+    "गेम एक गेम पैनल पर चलते हैं जो एक स्थायी Minecraft दुनिया को प्रबंधित करता है: डिफ़ॉल्ट रूप से Calagopus, विकल्प के रूप में Pelican और Pterodactyl। अपने खिलाड़ियों के हिसाब से Java या Bedrock चुनिए। स्थानीय होस्टिंग और प्रबंधित VPS अलग-अलग जगह के विकल्प हैं; आमंत्रण और दुनिया की रिकवरी सेटअप का हिस्सा हैं।",
+  "wizard.status.beta": "बीटा",
+  "wizard.status.experimental": "प्रायोगिक",
+  "wizard.status.deprecated": "अप्रचलित",
+  "wizard.status.supported": "समर्थित",
+  "wizard.status.hint":
+    "पिन किए गए StackKits रिलीज़ की रिलीज़ स्थिति। बीटा उपयोग-मामले इंस्टॉल होते हैं और अभी परखे जा रहे हैं।",
+  "wizard.preview.release": "StackKits {tag}",
   "wizard.preview.game.edition": "Minecraft संस्करण",
   "wizard.preview.dev.description":
     "आपके प्रोजेक्ट और रिमोट वर्कस्पेस, एक साथ।",
@@ -478,8 +531,6 @@ export const hi: Record<string, string> = {
   "wizard.preview.title": "जो मायने रखता है, उसके लिए जगह बनाइए।",
   "wizard.preview.subtitle":
     "चुनिए कि आप क्या अपना बनाना चाहते हैं। सुझाई गई सेवा से शुरू कीजिए, या कोई विकल्प चुनिए। ब्योरा तब मौजूद है जब आपको चाहिए।",
-  "wizard.preview.available": "अपने उपयोग चुनिए",
-  "wizard.preview.availableHint": "कोई उपयोग चुनिए। उसे अपना बनाइए।",
   "wizard.preview.defaultService": "सुझाया गया",
   "wizard.preview.alternative": "विकल्प",
   "wizard.preview.savedForLater": "बाद के लिए सहेजा गया",
@@ -582,7 +633,7 @@ export const hi: Record<string, string> = {
   "wizard.server.hypervisor.help":
     "आपके जुड़े हुए Proxmox और उसके मौजूदा स्टोरेज और नेटवर्क का उपयोग करता है।",
   "wizard.server.hypervisor.standard":
-    "Ubuntu 24.04 LTS आपके StackKits कोर को अलग VM में चलाता है। Techstack गेस्ट को अपने आप तैयार करता और जोड़ता है।",
+    "Ubuntu LTS आपके StackKits कोर को अलग VM में चलाता है। Techstack गेस्ट को अपने आप तैयार करता और जोड़ता है।",
   "wizard.server.hypervisor.appliance":
     "Home Assistant OS अलग अप्लायंस VM इस्तेमाल करता है। Ubuntu गेस्ट कोर और बाकी सेवाएँ चलाता रहता है।",
   "wizard.server.hypervisor.host": "जुड़ा हुआ Proxmox सर्वर",
@@ -615,12 +666,15 @@ export const hi: Record<string, string> = {
   "nav.dashboard": "डैशबोर्ड",
   "nav.monitoring": "मॉनिटरिंग",
   "nav.services": "सेवाएँ",
+  "nav.apps": "ऐप्स",
   "nav.wallet": "Wallet",
   "nav.help": "सहायता",
   "nav.settings": "सेटिंग्स",
   "nav.logout": "लॉग आउट",
   "nav.theme": "थीम",
   "appearance.inherit": "डिफ़ॉल्ट का पालन करें",
+  "appearance.sessionHint":
+    "केवल इस सत्र के लिए। डिफ़ॉल्ट kombify Cloud सेटिंग्स में बदलें।",
   "appearance.dark": "डार्क",
   "appearance.light": "लाइट",
   "appearance.system": "सिस्टम",
@@ -733,12 +787,50 @@ export const hi: Record<string, string> = {
   "common.moreInfo": "इस विकल्प के बारे में और जानें",
   "common.recommended": "अनुशंसित",
   "wizard.title": "kombify-Techstack बनाएँ",
-  "wizard.selfDisclosure.applying":
-    "kombify Cloud में आपकी बताई बातें लागू की जा रही हैं…",
+  "wizard.selfDisclosure.review.title": "क्या इस लिंक के जवाब इस्तेमाल करें?",
+  "wizard.selfDisclosure.review.body":
+    "आपने जो लिंक खोला है, उसमें आपके बारे में ये जवाब हैं। Techstack इन्हें आपकी प्रोफ़ाइल में तभी सेव करता है और आपकी सिफ़ारिशों के लिए तभी इस्तेमाल करता है, जब आप “ये जवाब इस्तेमाल करें” चुनते हैं। अभी कुछ भी सेव नहीं हुआ है।",
+  "wizard.selfDisclosure.review.notes": "कुछ और? (वैकल्पिक)",
+  "wizard.selfDisclosure.review.notesHint":
+    "हार्डवेयर की जानकारी, ख़ास इच्छाएँ या आपकी चिंताएँ, अपने शब्दों में।",
+  "wizard.selfDisclosure.review.use": "ये जवाब इस्तेमाल करें",
+  "wizard.selfDisclosure.review.discard": "हटाएँ",
+  "wizard.selfDisclosure.applying": "आपके जवाब सेव हो रहे हैं…",
   "wizard.selfDisclosure.applied":
-    "हमने kombify Cloud में आपकी बताई बातें इस्तेमाल कीं। सब कुछ संपादन योग्य रहता है।",
+    "आपके जवाब आपकी प्रोफ़ाइल में सेव हो गए हैं। सब कुछ बदला जा सकता है।",
   "wizard.selfDisclosure.failed":
-    "kombify Cloud से आपके जवाब सहेजे नहीं जा सके। आप आगे बढ़ सकते हैं; विज़ार्ड उनके बिना भी काम करता है।",
+    "आपके जवाब सेव नहीं हो सके। आप जारी रख सकते हैं; विज़ार्ड उनके बिना भी काम करता है।",
+  "wizard.selfDisclosure.question.experience": "आप कितना खुद करना चाहते हैं?",
+  "wizard.selfDisclosure.question.goals": "आपके होमलेब को क्या करना चाहिए?",
+  "wizard.selfDisclosure.question.placement": "इसे कहाँ चलना चाहिए?",
+  "wizard.selfDisclosure.question.hardware": "आपके पास कौन-सा हार्डवेयर है?",
+  "wizard.selfDisclosure.question.household": "इसे कौन इस्तेमाल करेगा?",
+  "wizard.selfDisclosure.question.motivations": "आप इसे क्यों बना रहे हैं?",
+  "wizard.selfDisclosure.experience.hands-off": "बस चला दो",
+  "wizard.selfDisclosure.experience.guided": "मुझे रास्ता दिखाओ",
+  "wizard.selfDisclosure.experience.curious": "जिज्ञासु एडमिन",
+  "wizard.selfDisclosure.experience.techie": "टेकी",
+  "wizard.selfDisclosure.experience.expert": "विशेषज्ञ",
+  "wizard.selfDisclosure.placement.home": "घर पर",
+  "wizard.selfDisclosure.placement.rented": "किराये के सर्वर पर",
+  "wizard.selfDisclosure.placement.both": "दोनों",
+  "wizard.selfDisclosure.placement.unsure": "अभी पक्का नहीं",
+  "wizard.selfDisclosure.hardware.none-yet": "अभी कुछ नहीं",
+  "wizard.selfDisclosure.hardware.old-pc": "एक पुराना PC या लैपटॉप",
+  "wizard.selfDisclosure.hardware.mini-pc": "एक मिनी PC",
+  "wizard.selfDisclosure.hardware.nas": "एक NAS",
+  "wizard.selfDisclosure.hardware.raspberry-pi": "एक Raspberry Pi",
+  "wizard.selfDisclosure.hardware.rented-server": "एक किराये का सर्वर",
+  "wizard.selfDisclosure.household.just-me": "सिर्फ़ मैं",
+  "wizard.selfDisclosure.household.household": "मेरा घर",
+  "wizard.selfDisclosure.household.friends-family": "परिवार और दोस्त",
+  "wizard.selfDisclosure.household.small-team": "एक छोटी टीम",
+  "wizard.selfDisclosure.motivation.privacy": "निजता और नियंत्रण",
+  "wizard.selfDisclosure.motivation.replace-subscriptions":
+    "सशुल्क सब्सक्रिप्शन बदलना",
+  "wizard.selfDisclosure.motivation.learning": "सीखना और छेड़छाड़ करना",
+  "wizard.selfDisclosure.motivation.family": "मेरे परिवार के लिए कुछ",
+  "wizard.selfDisclosure.motivation.projects": "काम या साइड प्रोजेक्ट",
   "wizard.step.goals": "लक्ष्य",
   "wizard.step.server": "Node",
   "wizard.step.access": "पहुँच",
@@ -840,11 +932,11 @@ export const hi: Record<string, string> = {
     "सिफ़ारिश: SSL के लिए रिवर्स प्रॉक्सी (Traefik) इस्तेमाल कीजिए। ईमेल होस्टिंग के लिए अच्छी स्पैम सुरक्षा चाहिए।",
   "wizard.goals.everything.title": "अनंत और उससे भी आगे!",
   "wizard.goals.everything.description":
-    "अधिकतम आज़ादी के लिए संपूर्ण समाधान। सब कुछ एक साथ कीजिए, और उससे भी ज़्यादा।",
+    "एक क्लिक में पूरा होमलैब: वह सब जो आपके और आपके डिवाइस के लिए सही है।",
   "wizard.goals.everything.help":
     "स्टोरेज, वेब होस्टिंग, मॉनिटरिंग और बहुत कुछ चालू करता है।",
   "wizard.goals.everything.tip":
-    "सिफ़ारिश: अनुभवी उपयोगकर्ताओं के लिए सबसे अच्छा, या तब जब आपके पास समर्पित हार्डवेयर तैयार हो।",
+    "हम वही चुनते हैं जो आपके अनुभव और हार्डवेयर के अनुकूल हो। आप कुछ भी हटा सकते हैं।",
   "wizard.goals.tipText":
     "अगर आप निश्चित नहीं हैं, तो सिर्फ़ एक लक्ष्य चुनिए। kombify-Techstack एक ही सिस्टम रहता है और आप बाद में और सेवाएँ जोड़ सकते हैं। और सेटिंग्स चाहिए? नीचे उन्नत सेटिंग्स आज़माइए।",
   "wizard.goals.advancedTitle": "उन्नत उपयोग",
@@ -1010,6 +1102,45 @@ export const hi: Record<string, string> = {
     "चुनिए कि यह डिवाइस कैसे जुड़े। आपके Homelab की पहुँच, लोग और साइन-इन जैसे हैं वैसे रहते हैं।",
   "wizard.step.inherited": "आपके Homelab के लिए पहले से सेट",
   "wizard.step.existingOwner": "आपका Homelab मालिक वही रहता है",
+  "wizard.addApp.title": "एप्लिकेशन जोड़ें",
+  "wizard.addApp.intro":
+    "एक एप्लिकेशन और वह Node चुनें जिस पर यह चलेगा। एक्सेस, लोग और साइन-इन वैसे ही रहते हैं जैसे आपके Homelab में हैं।",
+  "wizard.addApp.catalogEmpty":
+    "कैटलॉग में इस Homelab के लिए अभी कोई एप्लिकेशन नहीं है।",
+  "wizard.addApp.recommended": "अनुशंसित",
+  "wizard.addApp.about": "विवरण",
+  "wizard.addApp.nodeTitle": "{name} कहाँ चलना चाहिए?",
+  "wizard.addApp.nodeUnsupported":
+    "इस Node का StackKit {name} प्रदान नहीं करता।",
+  "wizard.addApp.nodeNotReady": "अभी रोलआउट के लिए तैयार नहीं",
+  "wizard.addApp.submit": "एप्लिकेशन जोड़ें",
+  "wizard.addApp.result": "{name} को {node} में जोड़ा गया।",
+  "wizard.addApp.resultStatus": "स्थिति: {status}",
+  "wizard.addApp.done": "हो गया",
+  "wizard.settings.title": "Homelab सेटिंग्स",
+  "wizard.settings.intro":
+    "बदलें कि आपका Homelab कौन उपयोग करता है और आप कैसे साइन इन करते हैं। हर चरण आपके चल रहे Homelab पर तुरंत लागू होता है।",
+  "wizard.settings.entry":
+    "आपके Homelab के लोग और साइन-इन, जाने-पहचाने विज़ार्ड चरणों में।",
+  "wizard.settings.open": "Homelab सेटिंग्स संपादित करें",
+  "wizard.settings.loadError": "आपका Homelab लोड नहीं हो सका।",
+  "wizard.settings.empty": "अभी कोई Homelab सेट अप नहीं है।",
+  "wizard.settings.deployment": "StackKit डिप्लॉयमेंट",
+  "wizard.settings.goalsElsewhere": "एप्लिकेशन “एप्लिकेशन जोड़ें” से जोड़ें।",
+  "wizard.settings.serverElsewhere": "सर्वर “Node जोड़ें” से जोड़ें।",
+  "wizard.settings.accessUnsupported":
+    "चल रहे Homelab के लिए एक्सेस अभी बदला नहीं जा सकता।",
+  "wizard.settings.openAddApplication": "एप्लिकेशन जोड़ें",
+  "wizard.settings.openAddNode": "Node जोड़ें",
+  "wizard.settings.usersTitle": "लोग",
+  "wizard.settings.usersIntro":
+    "इस Homelab के लिए नियोजित लोगों को आमंत्रित करें। हर व्यक्ति को एक निजी साइन-इन लिंक मिलता है।",
+  "wizard.settings.loginTitle": "साइन-इन",
+  "wizard.settings.loginIntro":
+    "अपना पासकी साइन-इन सक्रिय करें, या पिछला लिंक समाप्त होने पर नया लिंक जारी करें।",
+  "wizard.settings.noPlannedPeople":
+    "इस Homelab के लिए कोई लोग नियोजित नहीं थे। यहाँ नए लोग जोड़ना अभी समर्थित नहीं है।",
+  "wizard.settings.members": "सदस्य",
   "wizard.server.cloud.title": "kombify VPS",
   "wizard.server.cloud.description":
     "आपका अपना वर्चुअल सर्वर, जिसे kombify देता और जोड़ता है।",
@@ -1575,6 +1706,10 @@ export const hi: Record<string, string> = {
   "ui.footerModern.madeWith": "बनाया गया",
   "ui.footerModern.privacy": "गोपनीयता",
   "ui.footerModern.terms": "शर्तें",
+  "ui.groupedTaskList.aboutMinutes": "~{count} मिनट",
+  "ui.groupedTaskList.aboutSeconds": "~{count} सेकंड",
+  "ui.groupedTaskList.longerThanUsual": "सामान्य से थोड़ा अधिक समय लग रहा है",
+  "ui.groupedTaskList.usually": "आमतौर पर {duration}",
   "ui.groupedTaskList.done": "पूरा हुआ",
   "ui.homelab.agentVersions.one": "रिपोर्ट किया गया Agent वर्शन: {versions}।",
   "ui.homelab.agentVersions.other": "रिपोर्ट किए गए Agent वर्शन: {versions}।",
@@ -1929,10 +2064,42 @@ export const hi: Record<string, string> = {
   "ui.nodeActions.canonicalManagedAccessIsNot":
     "मानक प्रबंधित एक्सेस अभी उपलब्ध नहीं है।",
   "ui.nodeActions.connection": "Node कनेक्शन: {state}",
-  "ui.nodeRow.hideSystemServices": "सिस्टम सेवाएँ छिपाएँ",
-  "ui.nodeRow.showFewerApps": "कम ऐप्स दिखाएँ",
   "ui.nodeRow.systemServices.one": "सिस्टम सेवाएँ: {count}",
   "ui.nodeRow.systemServices.other": "सिस्टम सेवाएँ: {count}",
+  "ui.nodeActions.menu": "{node} की क्रियाएँ",
+  "ui.nodeMessage.idle": "कोई खुला संदेश नहीं",
+  "ui.nodeMessage.needsAttention": "इस Node पर ध्यान देने की आवश्यकता है",
+  "ui.nodeMessage.panel": "{node} के संदेश",
+  "ui.nodeMessage.listPanel": "Node सूची के बारे में संदेश",
+  "ui.nodeRow.moreServices": "+ {count} और",
+  "ui.apps.description":
+    "आपके सर्वर पर UI से खुलने वाली हर चीज़। सेवाएँ पेज हर सेवा को उसकी सेटिंग्स के साथ दिखाता है।",
+  "ui.apps.view": "दृश्य",
+  "ui.apps.viewList": "सूची",
+  "ui.apps.viewLogos": "लोगो",
+  "ui.apps.viewCards": "कार्ड",
+  "ui.apps.loading": "ऐप्लिकेशन लोड हो रहे हैं…",
+  "ui.apps.unavailable":
+    "ऐप्लिकेशन लोड नहीं हो सके। थोड़ी देर बाद फिर कोशिश करें।",
+  "ui.apps.empty": "आपके सर्वर पर अभी तक UI वाले कोई ऐप्लिकेशन नहीं मिले।",
+  "ui.nodeRow.openApp": "{app} खोलें",
+  "ui.nodeRow.appDetails": "{app} का विवरण",
+  "ui.nodeRow.appLogs": "{app} के लॉग",
+  "ui.nodeRow.copyAddress": "{app} का पता कॉपी करें",
+  "ui.nodeRow.addressCopied": "पता कॉपी हो गया",
+  "ui.nodeRow.placementManaged": "मैनेज्ड",
+  "ui.nodeRow.stackIt": "स्टैक करें",
+  "ui.nodeRow.copyFailed": "पता कॉपी नहीं हो सका",
+  "ui.nodeRow.moreActions": "{app} के लिए और कार्रवाइयाँ",
+  "ui.nodeRow.update": "अपडेट करें",
+  "ui.nodeRow.backupNow": "अभी बैकअप लें",
+  "ui.appSheet.guide": "{app} के लिए गाइड",
+  "ui.appSheet.downloadFor": "{platform} के लिए डाउनलोड",
+  "ui.appSheet.donate": "दान करें",
+  "ui.appSheet.sponsor": "प्रायोजित करें",
+  "ui.appSheet.purchase": "लाइसेंस खरीदें",
+  "ui.appSheet.fullDetails": "सेवा विवरण खोलें",
+  "ui.nodeRow.moreLabel": "{node} पर और ऐप्स और सेवाएँ",
   "ui.ownerState.connectYourKombifyCloudProfile":
     "अपनी kombify Cloud प्रोफ़ाइल (सत्यापित ईमेल के साथ) जोड़िए ताकि उसे ओनर के रूप में इस्तेमाल किया जा सके",
   "ui.ownerState.couldNotHashTheRecovery":
@@ -2167,6 +2334,21 @@ export const hi: Record<string, string> = {
   "ui.providerErrors.stackkitCliGenerateFailed":
     "StackKit CLI generate विफल रहा",
   "ui.providerErrors.stackkitFilesMissing": "StackKit फ़ाइलें गायब हैं",
+  "ui.providerErrors.originCertificateFailed":
+    "इस सर्वर के लिए HTTPS प्रमाणपत्र सेट नहीं हो सका",
+  "ui.providerErrors.originCertificateFailedDetails":
+    "सर्वर तैयार है और जुड़ा हुआ है। उसके प्रबंधित पते के लिए HTTPS प्रमाणपत्र जारी करना या इंस्टॉल करना विफल रहा।",
+  "ui.providerErrors.originCertificateIfItRepeats":
+    "अगर प्रमाणपत्र फिर विफल हो, तो सबसे हाल की रन के त्रुटि विवरण देखें।",
+  "ui.providerErrors.originCertificateRestartReusesServer":
+    "रोलआउट फिर से शुरू करें। यह उसी सर्वर का उपयोग करता है और नया सर्वर नहीं बनाता।",
+  "ui.providerErrors.setupStoppedResponding": "सेटअप ने जवाब देना बंद कर दिया",
+  "ui.providerErrors.setupStoppedRespondingDetails":
+    "सर्वर पहुँच में है, लेकिन उस पर सेटअप ने प्रगति बताना बंद कर दिया और उसे समाप्त कर दिया गया। हो सकता है वह आंशिक रूप से सेट अप हो।",
+  "ui.providerErrors.setupStoppedRespondingRepeats":
+    "अगर वह फिर से जवाब देना बंद कर दे, तो पिछले रन के त्रुटि विवरण देखें।",
+  "ui.providerErrors.setupStoppedRespondingRestart":
+    "सेटअप फिर से शुरू करें। यह उसी सर्वर पर आगे बढ़ता है और नया सर्वर नहीं बनाता।",
   "ui.providerErrors.stackkitRolloutCouldNotBe":
     "StackKit रोलआउट लागू नहीं हो सका",
   "ui.providerErrors.stackkitsArtifactGenerationFailed":
@@ -2340,6 +2522,8 @@ export const hi: Record<string, string> = {
   "ui.serverAccessActions.installPublicKey": "सार्वजनिक कुंजी इंस्टॉल करें",
   "ui.serverAccessActions.noSshKeyInThe":
     "Wallet में अभी कोई SSH कुंजी नहीं है।",
+  "ui.serverAccessActions.stepUpBody":
+    "SSH कुंजी को अधिकृत करने के लिए साइन-इन की नई पुष्टि ज़रूरी है। यह नई विंडो में खुलती है और कुछ ही सेकंड लेती है।",
   "ui.serverAccessActions.openTerminal": "टर्मिनल खोलें",
   "ui.serverAccessActions.sshCommandIsUnavailable": "SSH कमांड उपलब्ध नहीं है",
   "ui.serverAccessActions.terminalAccessIsUnavailable":
@@ -2412,6 +2596,20 @@ export const hi: Record<string, string> = {
     "ये चयन उसी Service Registry कॉन्ट्रैक्ट को फ़ीड करते हैं जिसे सेवा प्रबंधन इस्तेमाल करता है।",
   "ui.serverRegistryPanel.thisNodeJoinsTheExisting":
     "यह Node मौजूदा StackKit से जुड़ता है। फ़ाउंडेशन पहले से जुड़ा हुआ है।",
+  "ui.serverTerminalModal.stepUpBody":
+    "टर्मिनल खोलने के लिए साइन-इन की नई पुष्टि ज़रूरी है। यह नई विंडो में खुलती है और कुछ ही सेकंड लेती है।",
+  "ui.stepUp.blocked": "आपके ब्राउज़र ने नई विंडो को रोक दिया।",
+  "ui.stepUp.blockedLink": "साइन-इन की पुष्टि खोलें",
+  "ui.stepUp.checking": "जाँच हो रही है…",
+  "ui.stepUp.confirm": "साइन-इन की पुष्टि करें",
+  "ui.stepUp.doneBody":
+    "आप इस विंडो को बंद करके kombify Techstack पर लौट सकते हैं।",
+  "ui.stepUp.doneTitle": "साइन-इन की पुष्टि हो गई",
+  "ui.stepUp.notConfirmed":
+    "पुष्टि अभी तक नहीं मिली है। इसे दूसरी विंडो में पूरा करें या फिर से कोशिश करें।",
+  "ui.stepUp.reopen": "साइन-इन विंडो फिर से खोलें",
+  "ui.stepUp.title": "पुष्टि करें कि यह आप हैं",
+  "ui.stepUp.waiting": "दूसरी विंडो में पुष्टि का इंतज़ार है।",
   "ui.serverTerminalModal.invalidTerminalStreamResponse":
     "टर्मिनल स्ट्रीम का जवाब अमान्य है",
   "ui.serverTerminalModal.terminalConnectionFailed": "टर्मिनल कनेक्शन विफल रहा",
@@ -2561,6 +2759,8 @@ export const hi: Record<string, string> = {
   "ui.services.nodeCapabilities": "Node की क्षमताएँ",
   "ui.services.nodeColumn": "Node {name} कॉलम",
   "ui.services.observed": "देखा गया",
+  "ui.services.stacked": "Stacked",
+  "ui.services.unstacked": "Unstacked",
   "ui.services.observedTechnicalComponentsWithoutApplication":
     "देखे गए तकनीकी कॉम्पोनेंट, जिनमें एप्लिकेशन-स्तर के कंट्रोल नहीं हैं",
   "ui.services.observedUnmanagedApplicationsMustBe":
@@ -2750,7 +2950,6 @@ export const hi: Record<string, string> = {
   "ui.shortcutsHelp.esc": "Esc",
   "ui.shortcutsHelp.listNavigation": "सूची नेविगेशन",
   "ui.shortcutsHelp.pageNavigation": "पेज नेविगेशन",
-  "ui.sidebarNav.kombifyTechstack": "kombify-Techstack",
   "ui.sshKeygen.ed25519NotSupportedInThis":
     "इस ब्राउज़र में Ed25519 समर्थित नहीं है। इसके बजाय RSA आज़माइए।",
   "ui.sshKeygen.unsupportedAlgorithm": "असमर्थित एल्गोरिदम: {algorithm}",
@@ -2810,9 +3009,38 @@ export const hi: Record<string, string> = {
     "आपको जल्द ही सेटअप पेज पर भेज दिया जाएगा।",
   "ui.stacksCreating.creatingStackkitDeploymentKombifyTechstack":
     "StackKit डिप्लॉयमेंट बनाया जा रहा है | kombify-Techstack",
+  "ui.stacksCreating.leanBackBody":
+    "आपका काम पूरा हो गया। हम अभी आपके लिए सब कुछ तैयार कर रहे हैं, और जल्द ही कुछ शानदार सामने आएगा।",
+  "ui.stacksCreating.leanBackTitle":
+    "आराम से बैठिए – हम आपके लिए जादू कर रहे हैं",
   "ui.stacksCreating.openOperations": "ऑपरेशन खोलें",
   "ui.stacksCreating.reviewAndStartStackkitRollout":
     "StackKit रोलआउट की समीक्षा करें और शुरू करें",
+  "ui.stacksCreating.tips.codeBody":
+    "StackKits आपका सेटअप जाँचे गए ब्लूप्रिंट से बनाता है, इसलिए हर बदलाव दोहराने योग्य और ट्रेस करने योग्य है।",
+  "ui.stacksCreating.tips.codeEyebrow": "इंफ्रास्ट्रक्चर ऐज़ कोड",
+  "ui.stacksCreating.tips.codeTitle": "आपका स्टैक, कोड के रूप में",
+  "ui.stacksCreating.tips.growBody":
+    "जब चाहें इस स्टैक में एक और नोड जोड़ें। Techstack आपके सर्वरों का समन्वय करता है और हर सर्वर अपने आप चलता रहता है।",
+  "ui.stacksCreating.tips.growEyebrow": "स्केलिंग",
+  "ui.stacksCreating.tips.growTitle": "बढ़ने की जगह",
+  "ui.stacksCreating.tips.label": "जानने योग्य",
+  "ui.stacksCreating.tips.next": "अगला सुझाव",
+  "ui.stacksCreating.tips.nextTitle": "आगे क्या होगा",
+  "ui.stacksCreating.tips.ownBody":
+    "StackKit बैकअप और रीस्टोर सीधे आपके सर्वर पर चलाता है और उनकी कुंजियाँ वहीं रखता है।",
+  "ui.stacksCreating.tips.ownEyebrow": "स्वायत्तता",
+  "ui.stacksCreating.tips.ownTitle": "काम आपका सर्वर करता है",
+  "ui.stacksCreating.tips.previous": "पिछला सुझाव",
+  "ui.stacksCreating.tips.reachBody":
+    "हर इंस्टॉलेशन को अपना पता मिलता है – आपका डोमेन या एक *.kombify.me नाम – ताकि आप उसे कहीं से भी खोल सकें, अपने हार्डवेयर पर भी।",
+  "ui.stacksCreating.tips.reachEyebrow": "पहुँच",
+  "ui.stacksCreating.tips.reachTitle": "कहीं से भी पहुँचें",
+  "ui.stacksCreating.tips.restoreBody":
+    "आख़िरी चरण आपकी सेवाओं की जाँच करता है और रीस्टोर का अभ्यास करता है, ताकि आप जानें कि आपके बैकअप सच में वापस आते हैं।",
+  "ui.stacksCreating.tips.restoreEyebrow": "बैकअप",
+  "ui.stacksCreating.tips.restoreTitle": "रीस्टोर जाँचा गया, सिर्फ़ वादा नहीं",
+  "ui.stacksCreating.tips.show": "सुझाव {number} / {total} दिखाएँ",
   "ui.stacksCreatingCreation-controller.additionalNode": "अतिरिक्त Node",
   "ui.stacksCreatingCreation-controller.afterFailedAttemptsTheBackend":
     "{MAX_POLL_ERRORS} असफल प्रयासों के बाद बैकएंड तक नहीं पहुँचा जा सका। पेज बैकऑफ़ के साथ कोशिश करता रहता है; आप नेटवर्क कनेक्शन जाँचकर और रीलोड करके भी जारी रख सकते हैं।",
@@ -2961,6 +3189,36 @@ export const hi: Record<string, string> = {
   "ui.stacksCreatingCreationCompletion.theOwnerSeedIsPrepared":
     "मालिक का सीड तैयार है।",
   "ui.stacksCreatingCreationCompletion.yourNode": "आपका Node",
+  "ui.groupedTaskList.needsAttention": "ध्यान देने की ज़रूरत है",
+  "ui.stacksCreatingCreationDegraded.titleOne":
+    "तैयार — एक हिस्से पर ध्यान देने की ज़रूरत है",
+  "ui.stacksCreatingCreationDegraded.titleMany":
+    "तैयार — {count} हिस्सों पर ध्यान देने की ज़रूरत है",
+  "ui.stacksCreatingCreationDegraded.subtitle":
+    "आपका सर्वर और ऐप्स इंस्टॉल हैं और चल रहे हैं।",
+  "ui.stacksCreatingCreationDegraded.publicTlsTitle":
+    "सुरक्षित सार्वजनिक पहुँच",
+  "ui.stacksCreatingCreationDegraded.publicTlsMeaning":
+    "आपका kombify.me पता अभी सुरक्षित नहीं है। kombify इसे अपने आप ठीक करता है।",
+  "ui.stacksCreatingCreationDegraded.genericTitle": "इंस्टॉलेशन का हिस्सा",
+  "ui.stacksCreatingCreationDegraded.genericMeaning":
+    "यह हिस्सा पूरा नहीं हो सका।",
+  "ui.stacksCreatingCreationDegraded.genericMeaningRepair":
+    "यह हिस्सा अभी पूरा नहीं हो सका। kombify इसे अपने आप ठीक करता है।",
+  "ui.stacksCreatingCreationDegraded.reasonAcmeRateLimited":
+    "प्रमाणपत्र प्राधिकरण ने प्रतीक्षा करने को कहा। kombify अपने आप फिर से कोशिश करता है।",
+  "ui.stacksCreatingCreationDegraded.repairScheduled":
+    "स्वचालित मरम्मत निर्धारित",
+  "ui.stacksCreatingCreationDegraded.repairScheduledAt":
+    "{time} पर स्वचालित मरम्मत",
+  "ui.stacksCreatingCreationDegraded.repairRunning": "मरम्मत हो रही है…",
+  "ui.stacksCreatingCreationDegraded.repairDone": "ठीक हो गया",
+  "ui.stacksCreatingCreationDegraded.repairFailed": "स्वचालित मरम्मत विफल रही",
+  "ui.stacksCreatingCreationDegraded.repairNow": "अभी ठीक करें",
+  "ui.stacksCreatingCreationDegraded.repairNotAccepted":
+    "मरम्मत स्वीकार नहीं की गई।",
+  "ui.stacksCreatingCreationDegraded.askCompanionPrompt":
+    '"{operation}" बनाना पूरा हुआ, लेकिन इन हिस्सों पर ध्यान देने की ज़रूरत है: {components}। इसका मेरे लिए क्या मतलब है, और मुझे आगे क्या करना चाहिए?',
   "ui.stacksCreatingCreationFailure.anErrorOccurred": "एक त्रुटि हुई",
   "ui.stacksCreatingCreationFailure.checkYourNetworkConnection":
     "अपना नेटवर्क कनेक्शन जाँचें",
@@ -2975,6 +3233,9 @@ export const hi: Record<string, string> = {
   "ui.stacksCreatingCreationFailure.nodeConnectionSucceeded":
     "Node कनेक्शन सफल रहा",
   "ui.stacksCreatingCreationFailure.operations": "ऑपरेशन",
+  "ui.stacksCreatingCreationFailure.askCompanion": "kombify से पूछें",
+  "ui.stacksCreatingCreationFailure.askCompanionPrompt":
+    '"{operation}" बनाना "{step}" चरण पर इस त्रुटि के साथ विफल हुआ:\n\n{error}\n\nक्या गलत हुआ, और मुझे आगे क्या करना चाहिए?',
   "ui.stacksCreatingCreationFailure.possibleSolutions": "संभावित समाधान:",
   "ui.stacksCreatingCreationFailure.resumePreviousAttempt":
     "पिछला प्रयास फिर शुरू करें",
@@ -3049,11 +3310,16 @@ export const hi: Record<string, string> = {
     "आपका इंस्टॉलेशन कमांड तैयार है। उपलब्ध होने पर kombify-simulate अस्थायी डेमो पूर्वावलोकन के रूप में इस्तेमाल होता है और एक घंटे तक सीमित है।",
   "ui.stacksCreatingCreationProgress.backToSetupWizard":
     "सेटअप विज़ार्ड पर वापस जाएँ →",
+  "ui.stacksCreatingCreationProgress.checkAgain": "फिर से जाँचें",
   "ui.stacksCreatingCreationProgress.creationFailed": "निर्माण विफल रहा",
   "ui.stacksCreatingCreationProgress.nodeProvisioningIsStillIn":
     "Node प्रोविज़निंग अभी जारी है",
   "ui.stacksCreatingCreationProgress.pleaseWaitWhileWeRe":
     "कृपया प्रतीक्षा करें, हम",
+  "ui.stacksCreatingCreationProgress.morphCompleting": "पूरा कर रहे हैं",
+  "ui.stacksCreatingCreationProgress.morphConfiguring": "कॉन्फ़िगर कर रहे हैं",
+  "ui.stacksCreatingCreationProgress.morphDeploying": "डिप्लॉय कर रहे हैं",
+  "ui.stacksCreatingCreationProgress.morphValidating": "जाँच रहे हैं",
   "ui.stacksCreatingCreationProgress.progress": "प्रगति",
   "ui.stacksCreatingCreationProgress.rolloutIncomplete": "रोलआउट अधूरा",
   "ui.stacksCreatingCreationProgress.runThePairingCommand":
@@ -3094,7 +3360,6 @@ export const hi: Record<string, string> = {
     "हार्टबीट की प्रतीक्षा",
   "ui.stacksCreatingCreationRunStatus.checkSshHostCredentialsAnd":
     "SSH होस्ट, क्रेडेंशियल और यह जाँचें कि सर्वर Techstack तक पहुँच सकता है।",
-  "ui.stacksCreatingCreationRunStatus.completed": "पूर्ण",
   "ui.stacksCreatingCreationRunStatus.connectMyNode": "मेरा Node जोड़ें",
   "ui.stacksCreatingCreationRunStatus.connectingToYourNodeOver":
     "SSH के ज़रिए आपके Node से कनेक्ट हो रहा है…",
@@ -3564,6 +3829,9 @@ export const hi: Record<string, string> = {
     "सब्सक्रिप्शन VM आरक्षित हो रही है, रनटाइम कनेक्ट हो रहा है और टेलीमेट्री तैयार हो रही है",
   "ui.taskStatus.rollOutCloudKit": "Cloud Kit रोल आउट करें",
   "ui.taskStatus.rollingOutCloudKit": "Cloud Kit रोल आउट हो रहा है",
+  "ui.taskStatus.settingUpPart": "भाग {position} / {total} सेट अप हो रहा है",
+  "ui.taskStatus.settingUpPartNamed":
+    "भाग {position} / {total} सेट अप हो रहा है: {name}",
   "ui.taskStatus.runningRestoreDrill": "रिस्टोर ड्रिल चल रही है",
   "ui.taskStatus.runningSimulatedUpdateGate": "सिम्युलेटेड अपडेट गेट चल रहा है",
   "ui.taskStatus.runningSimulationGate": "सिमुलेशन गेट चल रहा है",

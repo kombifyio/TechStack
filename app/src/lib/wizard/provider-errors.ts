@@ -140,6 +140,34 @@ export const ERROR_TROUBLESHOOTING: Record<
       ];
     },
   },
+  stackkit_origin_certificate_failed: {
+    get message() {
+      return tr("ui.providerErrors.originCertificateFailed");
+    },
+    get details() {
+      return tr("ui.providerErrors.originCertificateFailedDetails");
+    },
+    get steps() {
+      return [
+        tr("ui.providerErrors.originCertificateRestartReusesServer"),
+        tr("ui.providerErrors.originCertificateIfItRepeats"),
+      ];
+    },
+  },
+  stackkit_apply_stalled: {
+    get message() {
+      return tr("ui.providerErrors.setupStoppedResponding");
+    },
+    get details() {
+      return tr("ui.providerErrors.setupStoppedRespondingDetails");
+    },
+    get steps() {
+      return [
+        tr("ui.providerErrors.setupStoppedRespondingRestart"),
+        tr("ui.providerErrors.setupStoppedRespondingRepeats"),
+      ];
+    },
+  },
   stackkit_rollout_failed: {
     get message() {
       return tr("ui.providerErrors.stackkitRolloutCouldNotBe");
@@ -560,6 +588,23 @@ export const TROUBLESHOOTING_RULES: TroubleshootingRule[] = [
     ],
     entry: "managed_runtime_decommission_failed",
   },
+  // The managed kombify.me certificate step failed on a server that is up and
+  // connected. It must precede the generic rollout rules below: their needles
+  // ("stackkit_rollout", "api error 429") also appear in this failure's text,
+  // and their SSH/Docker advice does not apply to it.
+  {
+    any: [
+      "typed_stackkit_origin_certificate_",
+      "origin_certificate",
+      "origin-certificate",
+    ],
+    entry: "stackkit_origin_certificate_failed",
+  },
+  // The node ended an apply that stopped reporting progress (the reason the
+  // node writes is pkg/stackkitcommand ApplyStalledReason). Like the rule above
+  // it must precede the generic rollout rules: the failure text always begins
+  // "StackKits rollout failed".
+  { any: ["stackkit_apply_stalled"], entry: "stackkit_apply_stalled" },
   {
     get any() {
       return [

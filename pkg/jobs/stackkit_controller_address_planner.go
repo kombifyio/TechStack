@@ -28,11 +28,30 @@ func controllerAddressPlannerRelease(target stackkitrelease.Release) (stackkitre
 	if filepath.IsAbs(target.BinaryPath()) {
 		return target, nil
 	}
+	// A bundled Linux runtime names a path inside the Agent bundle, which the
+	// controller cannot execute. A Linux controller (the hosted Core image, a
+	// Linux lab Core) holds that very archive as its own pinned release and
+	// plans with it; a Windows controller has no such release and needs the
+	// bundle sidecar below.
+	if own, err := configuredPinnedStackKitRelease(); err == nil && own != nil && runsTargetArchive(*own, target) {
+		return *own, nil
+	}
 	dir := strings.TrimSpace(os.Getenv("TECHSTACK_STACKKITS_DIR"))
 	if !filepath.IsAbs(dir) {
 		return stackkitrelease.Release{}, fmt.Errorf("managed address planning requires an admitted controller bundle")
 	}
 	return admitControllerAddressPlanner(dir, target.Receipt())
+}
+
+// runsTargetArchive reports whether the controller's own pinned release is the
+// exact published archive the target runtime was built from: same kit, version,
+// release index, platform and archive digest, with an executable the controller
+// resolved to an absolute path. The pin loader already requires its platform to
+// be the controller's.
+func runsTargetArchive(own, target stackkitrelease.Release) bool {
+	have, want := own.Receipt(), target.Receipt()
+	return filepath.IsAbs(own.BinaryPath()) && have.Kit == want.Kit && have.Version == want.Version &&
+		have.Platform == want.Platform && have.ArchiveSHA256 == want.ArchiveSHA256 && have.IndexSHA256 == want.IndexSHA256
 }
 
 func admitControllerAddressPlanner(dir string, target stackkitrelease.Receipt) (stackkitrelease.Release, error) {

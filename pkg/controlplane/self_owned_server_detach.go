@@ -14,7 +14,7 @@ import (
 var (
 	ErrServerDetachConfirmation = errors.New("controlplane: exact server detach confirmation required")
 	ErrServerDetachUnsupported  = errors.New("controlplane: server is not customer-operated BYO infrastructure")
-	ErrServerAgentCustody       = errors.New("controlplane: exact server agent enrollment is unavailable")
+	ErrServerAgentCustody       = errors.New("controlplane: exact server agent is unavailable")
 )
 
 const selfOwnedServerDetachSource = "owner-byo-detach"
@@ -44,8 +44,9 @@ type SelfOwnedServerDetacher interface {
 	DetachSelfOwnedServer(context.Context, SelfOwnedServerDetachRequest) (*SelfOwnedServerDetachReceipt, error)
 }
 
-// DetachSelfOwnedServer atomically revokes the exact Guard enrollment and
-// advances a customer-operated BYO RuntimeServer to its terminal tombstone.
+// DetachSelfOwnedServer atomically revokes the exact Guard custody (worker
+// credential, host-key identity, reach, and the gRPC enrollment when one
+// exists) and advances a customer-operated BYO RuntimeServer to its terminal tombstone.
 // It performs no provider I/O and never deletes the canonical aggregate.
 func (s *PostgresStore) DetachSelfOwnedServer(ctx context.Context, request SelfOwnedServerDetachRequest) (*SelfOwnedServerDetachReceipt, error) {
 	request.TenantID = strings.TrimSpace(request.TenantID)
@@ -63,6 +64,7 @@ func (s *PostgresStore) DetachSelfOwnedServer(ctx context.Context, request SelfO
 	}
 
 	var receipt *SelfOwnedServerDetachReceipt
+	var detachEvents []*ServerEventResult
 	err := s.withTenant(ctx, request.TenantID, func(tx *sql.Tx) error {
 		var now time.Time
 		if err := tx.QueryRowContext(ctx, "SELECT clock_timestamp()").Scan(&now); err != nil {
@@ -91,17 +93,23 @@ func (s *PostgresStore) DetachSelfOwnedServer(ctx context.Context, request SelfO
 			return ErrServerAgentCustody
 		}
 
-		var revokedAt time.Time
+		// A gRPC enrollment exists only for a Guard that paired before hosted
+		// editions stopped issuing gRPC identities; an HTTPS Guard is bound by
+		// its worker row, credential and host-key identity alone. The
+		// enrollment is therefore revoked when present, never required.
+		revokedAt := now
+		var enrollmentRevokedAt time.Time
 		err = tx.QueryRowContext(ctx, `
 			UPDATE techstack_agent_enrollments
 			SET revoked_at = COALESCE(revoked_at, $3)
 			WHERE tenant_id = $1 AND agent_id = $2
 			RETURNING revoked_at
-		`, request.TenantID, agentID, now).Scan(&revokedAt)
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrServerAgentCustody
-		}
-		if err != nil {
+		`, request.TenantID, agentID, now).Scan(&enrollmentRevokedAt)
+		switch {
+		case err == nil:
+			revokedAt = enrollmentRevokedAt
+		case errors.Is(err, sql.ErrNoRows):
+		default:
 			return fmt.Errorf("controlplane: revoke server agent enrollment: %w", err)
 		}
 		workerResult, err := tx.ExecContext(ctx, `
@@ -114,6 +122,11 @@ func (s *PostgresStore) DetachSelfOwnedServer(ctx context.Context, request SelfO
 		}
 		if affected, _ := workerResult.RowsAffected(); affected != 1 {
 			return ErrServerAgentCustody
+		}
+		// Detach also ends the Guard host-key binding in the same transaction,
+		// so neither the credential nor the key can authenticate afterwards.
+		if err := revokeWorkerIdentityTx(ctx, tx, request.TenantID, agentID, now); err != nil {
+			return fmt.Errorf("controlplane: revoke server worker identity: %w", err)
 		}
 
 		replay := current.LifecycleState == string(serverregistry.LifecycleDecommissioned) &&
@@ -137,6 +150,7 @@ func (s *PostgresStore) DetachSelfOwnedServer(ctx context.Context, request SelfO
 				if applyErr != nil {
 					return applyErr
 				}
+				detachEvents = append(detachEvents, started)
 				terminal = started.Server
 			}
 			completed, applyErr := applyServerEventTx(ctx, tx, ServerEvent{
@@ -156,6 +170,7 @@ func (s *PostgresStore) DetachSelfOwnedServer(ctx context.Context, request SelfO
 			if applyErr != nil {
 				return applyErr
 			}
+			detachEvents = append(detachEvents, completed)
 			terminal = completed.Server
 		}
 		detachedAt := revokedAt.UTC()
@@ -168,6 +183,9 @@ func (s *PostgresStore) DetachSelfOwnedServer(ctx context.Context, request SelfO
 		}
 		return nil
 	})
+	if err == nil {
+		s.announceServerEvents(detachEvents...)
+	}
 	return receipt, err
 }
 

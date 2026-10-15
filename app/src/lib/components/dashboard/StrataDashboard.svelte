@@ -5,7 +5,9 @@
 
   import type { StackIdentity } from "@kombiverselabs/ui/identity";
   import HomelabTitle from "#lib/components/dashboard/HomelabTitle.svelte";
+  import NodeMessageLine from "#lib/components/dashboard/NodeMessageLine.svelte";
   import ServiceLogo from "#lib/components/dashboard/ServiceLogo.svelte";
+  import type { NodeMessage } from "#lib/dashboard/node-messages.js";
   import {
     groupNodesByDeployment,
     meterTone,
@@ -58,8 +60,10 @@
     people: SectionState<PersonEntry>;
     devices: SectionState<DeviceEntry>;
     actions?: Snippet;
-    /** Per-Node notice (e.g. the wizard run's rollout) under its band. */
-    nodeNotice?: Snippet<[NodeView]>;
+    /** What one Node has to say (e.g. the wizard run's rollout), as one line under its band. */
+    nodeMessages?: (node: NodeView) => NodeMessage[];
+    /** The details of one message; they open as an overlay on click. */
+    nodeMessageDetails?: Snippet<[NodeView, NodeMessage]>;
   }
 
   let {
@@ -76,7 +80,8 @@
     people,
     devices,
     actions,
-    nodeNotice,
+    nodeMessages,
+    nodeMessageDetails,
   }: Props = $props();
 
   const groups = $derived(groupNodesByDeployment(nodes, deploymentName));
@@ -515,10 +520,10 @@
                     onclick={() => onOpenService(service.id)}
                   >
                     <span
-                      class="strata-bead-logo flex h-8 w-8 items-center justify-center rounded-full"
+                      class="strata-bead-logo flex h-8 w-8 items-center justify-center rounded-[23%] p-[10%]"
                       style={`--bead-ring:${state.tone === "ok" ? "var(--color-border)" : toneVar[state.tone]}`}
                     >
-                      <ServiceLogo {service} class="h-6 w-6" />
+                      <ServiceLogo {service} class="h-full w-full" />
                     </span>
                     <span
                       class="strata-bead-name max-w-full truncate text-[11px] text-muted-foreground"
@@ -592,9 +597,18 @@
                 </svg>
               </a>
             </article>
-            {#if nodeNotice}
+            {@const messages = nodeMessages?.(node) ?? []}
+            {#if messages.length > 0}
               <div class="pb-2.5" data-testid="strata-node-notice">
-                {@render nodeNotice(node)}
+                <NodeMessageLine
+                  class="rounded-lg border"
+                  {messages}
+                  label={tr("ui.nodeMessage.panel", { node: node.name })}
+                >
+                  {#snippet details(message)}
+                    {@render nodeMessageDetails?.(node, message)}
+                  {/snippet}
+                </NodeMessageLine>
               </div>
             {/if}
           {/each}
@@ -875,6 +889,7 @@
   .strata-bead:hover .strata-bead-name {
     color: var(--color-foreground);
   }
+  /* App-icon frame (Brand entity cards): 23 % squircle, 10 % inset. */
   .strata-bead-logo {
     background: oklch(0.975 0.003 250);
     box-shadow:

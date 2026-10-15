@@ -98,6 +98,14 @@ type CreateHomelabRequest struct {
 	Intent         map[string]any
 }
 
+// AtomicHomelabIntentStore applies a current-run mutation to the latest intent
+// while holding the existing homelab row lock. Disjoint fields survive; writes
+// to the same field are ordered by the transaction lock. A callback failure
+// commits nothing. The callback must not perform external side effects.
+type AtomicHomelabIntentStore interface {
+	MutateHomelabIntent(context.Context, string, string, func(map[string]any) error) (*Homelab, error)
+}
+
 // HomelabStore persists the homelab umbrella. GetOrCreateHomelabForOwner is
 // the wizard-run entry point and stays idempotent per (tenant, owner): a
 // concurrent create loses against the active-owner singleton and receives the

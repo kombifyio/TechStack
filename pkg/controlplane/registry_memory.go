@@ -2,6 +2,9 @@ package controlplane
 
 import (
 	"context"
+	"sort"
+	"sync"
+	"time"
 )
 
 func (s *MemoryStore) UpsertNode(_ context.Context, node Node) (*Node, error) {
@@ -47,16 +50,40 @@ func (s *MemoryStore) UpsertService(_ context.Context, service Service) (*Servic
 }
 
 func (s *MemoryStore) ListNodesByStack(_ context.Context, tenantID, stackID string) ([]Node, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	return listOldestFirst(&s.mu, s.nodes, cloneNode, nodeAge, func(node Node) bool {
+		return node.TenantID == tenantID && node.StackID == stackID
+	}), nil
+}
 
-	out := make([]Node, 0)
-	for _, node := range s.nodes {
-		if node.TenantID == tenantID && node.StackID == stackID {
-			out = append(out, *cloneNode(node))
+func (s *MemoryStore) ListNodesByTenant(_ context.Context, tenantID string) ([]Node, error) {
+	return listOldestFirst(&s.mu, s.nodes, cloneNode, nodeAge, func(node Node) bool { return node.TenantID == tenantID }), nil
+}
+
+func nodeAge(node Node) (time.Time, string) { return node.CreatedAt, node.ID }
+
+func serviceAge(service Service) (time.Time, string) { return service.CreatedAt, service.ID }
+
+// listOldestFirst copies the matching entries of a store map oldest first, ties
+// by id: the order the durable store reads them in.
+func listOldestFirst[T any](mu *sync.RWMutex, entries map[string]T, clone func(T) *T, age func(T) (time.Time, string), match func(T) bool) []T {
+	mu.RLock()
+	defer mu.RUnlock()
+
+	out := make([]T, 0)
+	for _, entry := range entries {
+		if match(entry) {
+			out = append(out, *clone(entry))
 		}
 	}
-	return out, nil
+	sort.Slice(out, func(i, j int) bool {
+		createdI, idI := age(out[i])
+		createdJ, idJ := age(out[j])
+		if !createdI.Equal(createdJ) {
+			return createdI.Before(createdJ)
+		}
+		return idI < idJ
+	})
+	return out
 }
 
 func (s *MemoryStore) GetNode(_ context.Context, tenantID, nodeID string) (*Node, error) {
@@ -82,16 +109,13 @@ func (s *MemoryStore) GetService(_ context.Context, tenantID, serviceID string) 
 }
 
 func (s *MemoryStore) ListServicesByStack(_ context.Context, tenantID, stackID string) ([]Service, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	return listOldestFirst(&s.mu, s.svcs, cloneService, serviceAge, func(service Service) bool {
+		return service.TenantID == tenantID && service.StackID == stackID
+	}), nil
+}
 
-	out := make([]Service, 0)
-	for _, service := range s.svcs {
-		if service.TenantID == tenantID && service.StackID == stackID {
-			out = append(out, *cloneService(service))
-		}
-	}
-	return out, nil
+func (s *MemoryStore) ListServicesByTenant(_ context.Context, tenantID string) ([]Service, error) {
+	return listOldestFirst(&s.mu, s.svcs, cloneService, serviceAge, func(service Service) bool { return service.TenantID == tenantID }), nil
 }
 
 func (s *MemoryStore) DeleteService(_ context.Context, tenantID, serviceID string) error {

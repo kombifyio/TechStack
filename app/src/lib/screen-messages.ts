@@ -2,6 +2,9 @@
 // Merged into the main dictionary by i18n.ts (en, de) and locales/*.ts.
 export const screenMessages = {
   en: {
+    "ui.clientLocal.bootstrapPassword": "Bootstrap password",
+    "ui.clientLocal.bootstrapGuidance":
+      "Run {command} in a terminal on this installation's host to obtain the bootstrap password. If an earlier password was consumed or expired, the command replaces it and the old password stops working.",
     "state.active": "active",
     "state.adopting": "adopting",
     "state.archived": "archived",
@@ -351,6 +354,10 @@ export const screenMessages = {
     "ui.footerModern.madeWith": "Made with",
     "ui.footerModern.privacy": "Privacy",
     "ui.footerModern.terms": "Terms",
+    "ui.groupedTaskList.aboutMinutes": "~{count} min",
+    "ui.groupedTaskList.aboutSeconds": "~{count} s",
+    "ui.groupedTaskList.longerThanUsual": "a bit longer than usual",
+    "ui.groupedTaskList.usually": "usually {duration}",
     "ui.groupedTaskList.done": "Done",
     "ui.homelab.agentVersions.one": "Reported agent version: {versions}.",
     "ui.homelab.agentVersions.other": "Reported agent versions: {versions}.",
@@ -706,10 +713,43 @@ export const screenMessages = {
     "ui.nodeActions.canonicalManagedAccessIsNot":
       "Canonical managed access is not available yet.",
     "ui.nodeActions.connection": "Node connection: {state}",
-    "ui.nodeRow.hideSystemServices": "Hide system services",
-    "ui.nodeRow.showFewerApps": "Show fewer apps",
     "ui.nodeRow.systemServices.one": "{count} system service",
     "ui.nodeRow.systemServices.other": "{count} system services",
+    "ui.nodeActions.menu": "Actions for {node}",
+    "ui.nodeMessage.idle": "No open messages",
+    "ui.nodeMessage.needsAttention": "This Node needs attention",
+    "ui.nodeMessage.panel": "Messages for {node}",
+    "ui.nodeMessage.listPanel": "Messages about the Node list",
+    "ui.nodeRow.moreServices": "+ {count} more",
+    "ui.apps.description":
+      "Everything you open through a UI on your servers. Services lists every service with its settings.",
+    "ui.apps.view": "View",
+    "ui.apps.viewList": "List",
+    "ui.apps.viewLogos": "Logos",
+    "ui.apps.viewCards": "Cards",
+    "ui.apps.loading": "Loading applications…",
+    "ui.apps.unavailable":
+      "The applications could not be loaded. Try again shortly.",
+    "ui.apps.empty":
+      "No applications with a UI were found on your servers yet.",
+    "ui.nodeRow.openApp": "Open {app}",
+    "ui.nodeRow.appDetails": "Details for {app}",
+    "ui.nodeRow.appLogs": "Logs for {app}",
+    "ui.nodeRow.copyAddress": "Copy address of {app}",
+    "ui.nodeRow.addressCopied": "Address copied",
+    "ui.nodeRow.placementManaged": "Managed",
+    "ui.nodeRow.stackIt": "Stack it",
+    "ui.nodeRow.copyFailed": "The address could not be copied",
+    "ui.nodeRow.moreActions": "More actions for {app}",
+    "ui.nodeRow.update": "Update",
+    "ui.nodeRow.backupNow": "Back up now",
+    "ui.appSheet.guide": "Guide for {app}",
+    "ui.appSheet.downloadFor": "Download for {platform}",
+    "ui.appSheet.donate": "Donate",
+    "ui.appSheet.sponsor": "Sponsor",
+    "ui.appSheet.purchase": "Buy a licence",
+    "ui.appSheet.fullDetails": "Open service details",
+    "ui.nodeRow.moreLabel": "More apps and services on {node}",
     "ui.ownerState.connectYourKombifyCloudProfile":
       "Connect your kombify Cloud profile (with a verified email) to use it as the owner",
     "ui.ownerState.couldNotHashTheRecovery":
@@ -944,6 +984,21 @@ export const screenMessages = {
     "ui.providerErrors.stackkitCliGenerateFailed":
       "stackkit cli generate failed",
     "ui.providerErrors.stackkitFilesMissing": "StackKit files missing",
+    "ui.providerErrors.originCertificateFailed":
+      "The HTTPS certificate for this server could not be set up",
+    "ui.providerErrors.originCertificateFailedDetails":
+      "The server is ready and connected. Issuing or installing the HTTPS certificate for its managed address failed.",
+    "ui.providerErrors.originCertificateIfItRepeats":
+      "If the certificate fails again, check the error details of the latest run.",
+    "ui.providerErrors.originCertificateRestartReusesServer":
+      "Restart the rollout. It reuses the same server and creates no new one.",
+    "ui.providerErrors.setupStoppedResponding": "The setup stopped responding",
+    "ui.providerErrors.setupStoppedRespondingDetails":
+      "The server is reachable, but the setup on it stopped reporting progress and was ended. It may be partly set up.",
+    "ui.providerErrors.setupStoppedRespondingRepeats":
+      "If it stops responding again, check the error details of the latest run.",
+    "ui.providerErrors.setupStoppedRespondingRestart":
+      "Restart the setup. It continues on the same server and creates no new one.",
     "ui.providerErrors.stackkitRolloutCouldNotBe":
       "StackKit rollout could not be applied",
     "ui.providerErrors.stackkitsArtifactGenerationFailed":
@@ -1116,6 +1171,8 @@ export const screenMessages = {
     "ui.serverAccessActions.copySshCommand": "Copy SSH command",
     "ui.serverAccessActions.installPublicKey": "Install public key",
     "ui.serverAccessActions.noSshKeyInThe": "No SSH key in the Wallet yet.",
+    "ui.serverAccessActions.stepUpBody":
+      "Authorizing an SSH key needs a fresh sign-in confirmation. It opens in a new window and takes a few seconds.",
     "ui.serverAccessActions.openTerminal": "Open terminal",
     "ui.serverAccessActions.sshCommandIsUnavailable":
       "SSH command is unavailable",
@@ -1190,6 +1247,20 @@ export const screenMessages = {
       "These selections feed the same Service Registry contract used by Service Management.",
     "ui.serverRegistryPanel.thisNodeJoinsTheExisting":
       "This Node joins the existing StackKit. The foundation is already bound.",
+    "ui.serverTerminalModal.stepUpBody":
+      "Opening a terminal needs a fresh sign-in confirmation. It opens in a new window and takes a few seconds.",
+    "ui.stepUp.blocked": "Your browser blocked the new window.",
+    "ui.stepUp.blockedLink": "Open the sign-in confirmation",
+    "ui.stepUp.checking": "Checking…",
+    "ui.stepUp.confirm": "Confirm sign-in",
+    "ui.stepUp.doneBody":
+      "You can close this window and return to kombify Techstack.",
+    "ui.stepUp.doneTitle": "Sign-in confirmed",
+    "ui.stepUp.notConfirmed":
+      "The confirmation has not arrived yet. Finish it in the other window, or try again.",
+    "ui.stepUp.reopen": "Open the sign-in window again",
+    "ui.stepUp.title": "Confirm it is you",
+    "ui.stepUp.waiting": "Waiting for the confirmation in the other window.",
     "ui.serverTerminalModal.invalidTerminalStreamResponse":
       "Invalid terminal stream response",
     "ui.serverTerminalModal.terminalConnectionFailed":
@@ -1340,6 +1411,8 @@ export const screenMessages = {
     "ui.services.nodeCapabilities": "Node capabilities",
     "ui.services.nodeColumn": "Node {name} column",
     "ui.services.observed": "Observed",
+    "ui.services.stacked": "Stacked",
+    "ui.services.unstacked": "Unstacked",
     "ui.services.observedTechnicalComponentsWithoutApplication":
       "Observed technical components without application-level controls",
     "ui.services.observedUnmanagedApplicationsMustBe":
@@ -1535,7 +1608,6 @@ export const screenMessages = {
     "ui.shortcutsHelp.esc": "Esc",
     "ui.shortcutsHelp.listNavigation": "List Navigation",
     "ui.shortcutsHelp.pageNavigation": "Page Navigation",
-    "ui.sidebarNav.kombifyTechstack": "kombify-Techstack",
     "ui.sshKeygen.ed25519NotSupportedInThis":
       "Ed25519 not supported in this browser. Try RSA instead.",
     "ui.sshKeygen.unsupportedAlgorithm": "Unsupported algorithm: {algorithm}",
@@ -1593,9 +1665,37 @@ export const screenMessages = {
       "You will be redirected to the setup page shortly.",
     "ui.stacksCreating.creatingStackkitDeploymentKombifyTechstack":
       "Creating StackKit deployment | kombify-Techstack",
+    "ui.stacksCreating.leanBackBody":
+      "You did your part. We're setting everything up for you right now, and something great is on its way.",
+    "ui.stacksCreating.leanBackTitle": "Lean back – we're doing the magic",
     "ui.stacksCreating.openOperations": "Open operations",
     "ui.stacksCreating.reviewAndStartStackkitRollout":
       "Review and start StackKit rollout",
+    "ui.stacksCreating.tips.codeBody":
+      "StackKits renders your setup from validated blueprints, so every change is repeatable and traceable.",
+    "ui.stacksCreating.tips.codeEyebrow": "Infrastructure as code",
+    "ui.stacksCreating.tips.codeTitle": "Your stack, written as code",
+    "ui.stacksCreating.tips.growBody":
+      "Add another node to this stack whenever you need it. Techstack coordinates your servers, and each one keeps running on its own.",
+    "ui.stacksCreating.tips.growEyebrow": "Scaling",
+    "ui.stacksCreating.tips.growTitle": "Room to grow",
+    "ui.stacksCreating.tips.label": "Good to know",
+    "ui.stacksCreating.tips.next": "Next tip",
+    "ui.stacksCreating.tips.nextTitle": "What happens next",
+    "ui.stacksCreating.tips.ownBody":
+      "The StackKit runs backups and restores directly on your server and keeps the keys for them there.",
+    "ui.stacksCreating.tips.ownEyebrow": "Independence",
+    "ui.stacksCreating.tips.ownTitle": "Your server does the work",
+    "ui.stacksCreating.tips.previous": "Previous tip",
+    "ui.stacksCreating.tips.reachBody":
+      "Every installation gets its own address – your domain or a *.kombify.me name – so you reach it from anywhere, local hardware included.",
+    "ui.stacksCreating.tips.reachEyebrow": "Access",
+    "ui.stacksCreating.tips.reachTitle": "Reachable from anywhere",
+    "ui.stacksCreating.tips.restoreBody":
+      "The last phase checks your services and runs a restore drill, so you know your backups really come back.",
+    "ui.stacksCreating.tips.restoreEyebrow": "Backups",
+    "ui.stacksCreating.tips.restoreTitle": "Restore is proven, not promised",
+    "ui.stacksCreating.tips.show": "Show tip {number} of {total}",
     "ui.stacksCreatingCreation-controller.additionalNode": "Additional Node",
     "ui.stacksCreatingCreation-controller.afterFailedAttemptsTheBackend":
       "After {MAX_POLL_ERRORS} failed attempts, the backend could not be reached. The page keeps retrying with backoff; you can also check your network connection and reload to resume.",
@@ -1743,6 +1843,36 @@ export const screenMessages = {
     "ui.stacksCreatingCreationCompletion.theOwnerSeedIsPrepared":
       "The owner seed is prepared.",
     "ui.stacksCreatingCreationCompletion.yourNode": "Your Node",
+    "ui.groupedTaskList.needsAttention": "Needs attention",
+    "ui.stacksCreatingCreationDegraded.titleOne":
+      "Ready — one part needs attention",
+    "ui.stacksCreatingCreationDegraded.titleMany":
+      "Ready — {count} parts need attention",
+    "ui.stacksCreatingCreationDegraded.subtitle":
+      "Your server and apps are installed and running.",
+    "ui.stacksCreatingCreationDegraded.publicTlsTitle": "Secure public access",
+    "ui.stacksCreatingCreationDegraded.publicTlsMeaning":
+      "Your kombify.me address is not secured yet. kombify repairs it automatically.",
+    "ui.stacksCreatingCreationDegraded.genericTitle":
+      "Part of the installation",
+    "ui.stacksCreatingCreationDegraded.genericMeaning":
+      "This part could not be completed.",
+    "ui.stacksCreatingCreationDegraded.genericMeaningRepair":
+      "This part could not be completed yet. kombify repairs it automatically.",
+    "ui.stacksCreatingCreationDegraded.reasonAcmeRateLimited":
+      "The certificate authority asked to wait. kombify retries automatically.",
+    "ui.stacksCreatingCreationDegraded.repairScheduled":
+      "Automatic repair scheduled",
+    "ui.stacksCreatingCreationDegraded.repairScheduledAt":
+      "Automatic repair at {time}",
+    "ui.stacksCreatingCreationDegraded.repairRunning": "Repairing…",
+    "ui.stacksCreatingCreationDegraded.repairDone": "Repaired",
+    "ui.stacksCreatingCreationDegraded.repairFailed": "Automatic repair failed",
+    "ui.stacksCreatingCreationDegraded.repairNow": "Repair now",
+    "ui.stacksCreatingCreationDegraded.repairNotAccepted":
+      "The repair was not accepted.",
+    "ui.stacksCreatingCreationDegraded.askCompanionPrompt":
+      'Creating "{operation}" finished, but these parts need attention: {components}. What does this mean for me, and what should I do next?',
     "ui.stacksCreatingCreationFailure.anErrorOccurred": "An error occurred",
     "ui.stacksCreatingCreationFailure.checkYourNetworkConnection":
       "Check your network connection",
@@ -1757,6 +1887,9 @@ export const screenMessages = {
     "ui.stacksCreatingCreationFailure.nodeConnectionSucceeded":
       "Node connection succeeded",
     "ui.stacksCreatingCreationFailure.operations": "Operations",
+    "ui.stacksCreatingCreationFailure.askCompanion": "Ask kombify",
+    "ui.stacksCreatingCreationFailure.askCompanionPrompt":
+      'Creating "{operation}" failed at the step "{step}" with this error:\n\n{error}\n\nWhat went wrong, and what should I do next?',
     "ui.stacksCreatingCreationFailure.possibleSolutions": "Possible solutions:",
     "ui.stacksCreatingCreationFailure.resumePreviousAttempt":
       "Resume previous attempt",
@@ -1832,11 +1965,16 @@ export const screenMessages = {
       "Your install command is ready. kombify-simulate is used as a temporary demo preview when available and is limited to one hour.",
     "ui.stacksCreatingCreationProgress.backToSetupWizard":
       "Back to setup wizard →",
+    "ui.stacksCreatingCreationProgress.checkAgain": "Check again",
     "ui.stacksCreatingCreationProgress.creationFailed": "Creation failed",
     "ui.stacksCreatingCreationProgress.nodeProvisioningIsStillIn":
       "Node provisioning is still in progress",
     "ui.stacksCreatingCreationProgress.pleaseWaitWhileWeRe":
       "Please wait while we're",
+    "ui.stacksCreatingCreationProgress.morphCompleting": "completing",
+    "ui.stacksCreatingCreationProgress.morphConfiguring": "configuring",
+    "ui.stacksCreatingCreationProgress.morphDeploying": "deploying",
+    "ui.stacksCreatingCreationProgress.morphValidating": "validating",
     "ui.stacksCreatingCreationProgress.progress": "Progress",
     "ui.stacksCreatingCreationProgress.rolloutIncomplete": "Rollout incomplete",
     "ui.stacksCreatingCreationProgress.runThePairingCommand":
@@ -1877,7 +2015,6 @@ export const screenMessages = {
       "Awaiting heartbeat",
     "ui.stacksCreatingCreationRunStatus.checkSshHostCredentialsAnd":
       "Check SSH host, credentials, and that the server can reach Techstack.",
-    "ui.stacksCreatingCreationRunStatus.completed": "Completed",
     "ui.stacksCreatingCreationRunStatus.connectMyNode": "Connect my Node",
     "ui.stacksCreatingCreationRunStatus.connectingToYourNodeOver":
       "Connecting to your Node over SSH…",
@@ -2344,6 +2481,9 @@ export const screenMessages = {
       "Reserving the subscription VM, connecting runtime, and preparing telemetry",
     "ui.taskStatus.rollOutCloudKit": "Roll out Cloud Kit",
     "ui.taskStatus.rollingOutCloudKit": "Rolling out Cloud Kit",
+    "ui.taskStatus.settingUpPart": "Setting up part {position} of {total}",
+    "ui.taskStatus.settingUpPartNamed":
+      "Setting up part {position} of {total}: {name}",
     "ui.taskStatus.runningRestoreDrill": "Running restore drill",
     "ui.taskStatus.runningSimulatedUpdateGate": "Running simulated update gate",
     "ui.taskStatus.runningSimulationGate": "Running simulation gate",
@@ -2588,6 +2728,9 @@ export const screenMessages = {
       "Workers connected (verified)",
   },
   de: {
+    "ui.clientLocal.bootstrapPassword": "Bootstrap-Passwort",
+    "ui.clientLocal.bootstrapGuidance":
+      "Führe {command} im Terminal auf dem Host dieser Installation aus, um das Bootstrap-Passwort zu erhalten. Wurde ein früheres Passwort verbraucht oder ist es abgelaufen, ersetzt der Befehl es und das alte Passwort funktioniert nicht mehr.",
     "state.active": "aktiv",
     "state.adopting": "wird übernommen",
     "state.archived": "archiviert",
@@ -2952,6 +3095,10 @@ export const screenMessages = {
     "ui.footerModern.madeWith": "Gemacht mit",
     "ui.footerModern.privacy": "Datenschutz",
     "ui.footerModern.terms": "Bedingungen",
+    "ui.groupedTaskList.aboutMinutes": "ca. {count} Min.",
+    "ui.groupedTaskList.aboutSeconds": "ca. {count} s",
+    "ui.groupedTaskList.longerThanUsual": "dauert etwas länger als üblich",
+    "ui.groupedTaskList.usually": "meist {duration}",
     "ui.groupedTaskList.done": "Erledigt",
     "ui.homelab.agentVersions.one": "Gemeldete Agent-Version: {versions}.",
     "ui.homelab.agentVersions.other": "Gemeldete Agent-Versionen: {versions}.",
@@ -3323,10 +3470,43 @@ export const screenMessages = {
     "ui.nodeActions.canonicalManagedAccessIsNot":
       "Der kanonische verwaltete Zugriff ist noch nicht verfügbar.",
     "ui.nodeActions.connection": "Node-Verbindung: {state}",
-    "ui.nodeRow.hideSystemServices": "System-Services ausblenden",
-    "ui.nodeRow.showFewerApps": "Weniger Apps anzeigen",
     "ui.nodeRow.systemServices.one": "{count} System-Service",
     "ui.nodeRow.systemServices.other": "{count} System-Services",
+    "ui.nodeActions.menu": "Aktionen für {node}",
+    "ui.nodeMessage.idle": "Keine offenen Meldungen",
+    "ui.nodeMessage.needsAttention": "Dieser Node braucht Aufmerksamkeit",
+    "ui.nodeMessage.panel": "Meldungen für {node}",
+    "ui.nodeMessage.listPanel": "Meldungen zur Node-Liste",
+    "ui.nodeRow.moreServices": "+ {count} weitere",
+    "ui.apps.description":
+      "Alles, was du auf deinen Servern über eine Oberfläche öffnest. Unter Dienste stehen alle Dienste mit ihren Einstellungen.",
+    "ui.apps.view": "Ansicht",
+    "ui.apps.viewList": "Liste",
+    "ui.apps.viewLogos": "Logos",
+    "ui.apps.viewCards": "Karten",
+    "ui.apps.loading": "Anwendungen werden geladen…",
+    "ui.apps.unavailable":
+      "Die Anwendungen konnten nicht geladen werden. Versuche es gleich noch einmal.",
+    "ui.apps.empty":
+      "Auf deinen Servern wurden noch keine Anwendungen mit Oberfläche gefunden.",
+    "ui.nodeRow.openApp": "{app} öffnen",
+    "ui.nodeRow.appDetails": "Details zu {app}",
+    "ui.nodeRow.appLogs": "Logs von {app}",
+    "ui.nodeRow.copyAddress": "Adresse von {app} kopieren",
+    "ui.nodeRow.addressCopied": "Adresse kopiert",
+    "ui.nodeRow.placementManaged": "Managed",
+    "ui.nodeRow.stackIt": "Stacken",
+    "ui.nodeRow.copyFailed": "Die Adresse konnte nicht kopiert werden",
+    "ui.nodeRow.moreActions": "Weitere Aktionen für {app}",
+    "ui.nodeRow.update": "Aktualisieren",
+    "ui.nodeRow.backupNow": "Jetzt sichern",
+    "ui.appSheet.guide": "Anleitung für {app}",
+    "ui.appSheet.downloadFor": "Download für {platform}",
+    "ui.appSheet.donate": "Spenden",
+    "ui.appSheet.sponsor": "Unterstützen",
+    "ui.appSheet.purchase": "Lizenz kaufen",
+    "ui.appSheet.fullDetails": "Service-Details öffnen",
+    "ui.nodeRow.moreLabel": "Weitere Apps und Services auf {node}",
     "ui.ownerState.connectYourKombifyCloudProfile":
       "Verbinde dein kombify-Cloud-Profil (mit verifizierter E-Mail), um es als Owner zu verwenden",
     "ui.ownerState.couldNotHashTheRecovery":
@@ -3567,6 +3747,22 @@ export const screenMessages = {
     "ui.providerErrors.stackkitCliGenerateFailed":
       "StackKit-CLI-generate fehlgeschlagen",
     "ui.providerErrors.stackkitFilesMissing": "StackKit-Dateien fehlen",
+    "ui.providerErrors.originCertificateFailed":
+      "Das HTTPS-Zertifikat für diesen Server konnte nicht eingerichtet werden",
+    "ui.providerErrors.originCertificateFailedDetails":
+      "Der Server ist bereit und verbunden. Das Ausstellen oder Installieren des HTTPS-Zertifikats für seine verwaltete Adresse ist fehlgeschlagen.",
+    "ui.providerErrors.originCertificateIfItRepeats":
+      "Schlägt das Zertifikat erneut fehl, prüfe die Fehlerdetails des letzten Durchlaufs.",
+    "ui.providerErrors.originCertificateRestartReusesServer":
+      "Starte den Rollout neu. Er nutzt denselben Server und erstellt keinen neuen.",
+    "ui.providerErrors.setupStoppedResponding":
+      "Die Einrichtung reagiert nicht mehr",
+    "ui.providerErrors.setupStoppedRespondingDetails":
+      "Der Server ist erreichbar, aber die Einrichtung darauf hat keinen Fortschritt mehr gemeldet und wurde beendet. Er ist möglicherweise teilweise eingerichtet.",
+    "ui.providerErrors.setupStoppedRespondingRepeats":
+      "Reagiert sie erneut nicht mehr, prüfe die Fehlerdetails des letzten Durchlaufs.",
+    "ui.providerErrors.setupStoppedRespondingRestart":
+      "Starte die Einrichtung neu. Sie läuft auf demselben Server weiter und erstellt keinen neuen.",
     "ui.providerErrors.stackkitRolloutCouldNotBe":
       "StackKit-Rollout konnte nicht angewendet werden",
     "ui.providerErrors.stackkitsArtifactGenerationFailed":
@@ -3749,6 +3945,8 @@ export const screenMessages = {
       "Öffentlichen Schlüssel installieren",
     "ui.serverAccessActions.noSshKeyInThe":
       "Noch kein SSH-Schlüssel in der Wallet.",
+    "ui.serverAccessActions.stepUpBody":
+      "Zum Autorisieren eines SSH-Schlüssels ist eine frische Anmeldebestätigung nötig. Sie öffnet sich in einem neuen Fenster und dauert nur wenige Sekunden.",
     "ui.serverAccessActions.openTerminal": "Terminal öffnen",
     "ui.serverAccessActions.sshCommandIsUnavailable":
       "SSH-Befehl nicht verfügbar",
@@ -3827,6 +4025,20 @@ export const screenMessages = {
       "Diese Auswahl speist denselben Service-Registry-Vertrag, den auch das Service-Management verwendet.",
     "ui.serverRegistryPanel.thisNodeJoinsTheExisting":
       "Dieser Node tritt dem bestehenden StackKit bei. Die Grundlage ist bereits gebunden.",
+    "ui.serverTerminalModal.stepUpBody":
+      "Zum Öffnen eines Terminals ist eine frische Anmeldebestätigung nötig. Sie öffnet sich in einem neuen Fenster und dauert nur wenige Sekunden.",
+    "ui.stepUp.blocked": "Dein Browser hat das neue Fenster blockiert.",
+    "ui.stepUp.blockedLink": "Anmeldebestätigung öffnen",
+    "ui.stepUp.checking": "Wird geprüft…",
+    "ui.stepUp.confirm": "Anmeldung bestätigen",
+    "ui.stepUp.doneBody":
+      "Du kannst dieses Fenster schließen und zu kombify Techstack zurückkehren.",
+    "ui.stepUp.doneTitle": "Anmeldung bestätigt",
+    "ui.stepUp.notConfirmed":
+      "Die Bestätigung ist noch nicht angekommen. Schließe sie im anderen Fenster ab oder versuche es erneut.",
+    "ui.stepUp.reopen": "Anmeldefenster erneut öffnen",
+    "ui.stepUp.title": "Bestätige, dass du es bist",
+    "ui.stepUp.waiting": "Warte auf die Bestätigung im anderen Fenster.",
     "ui.serverTerminalModal.invalidTerminalStreamResponse":
       "Ungültige Antwort des Terminal-Streams",
     "ui.serverTerminalModal.terminalConnectionFailed":
@@ -3985,6 +4197,8 @@ export const screenMessages = {
     "ui.services.nodeCapabilities": "Node-Fähigkeiten",
     "ui.services.nodeColumn": "Spalte für Node {name}",
     "ui.services.observed": "Beobachtet",
+    "ui.services.stacked": "Stacked",
+    "ui.services.unstacked": "Unstacked",
     "ui.services.observedTechnicalComponentsWithoutApplication":
       "Beobachtete technische Komponenten ohne Steuerung auf Anwendungsebene",
     "ui.services.observedUnmanagedApplicationsMustBe":
@@ -4186,7 +4400,6 @@ export const screenMessages = {
     "ui.shortcutsHelp.esc": "Esc",
     "ui.shortcutsHelp.listNavigation": "Listennavigation",
     "ui.shortcutsHelp.pageNavigation": "Seitennavigation",
-    "ui.sidebarNav.kombifyTechstack": "kombify-Techstack",
     "ui.sshKeygen.ed25519NotSupportedInThis":
       "Ed25519 wird in diesem Browser nicht unterstützt. Versuche stattdessen RSA.",
     "ui.sshKeygen.unsupportedAlgorithm":
@@ -4250,9 +4463,39 @@ export const screenMessages = {
       "Du wirst in Kürze zur Einrichtungsseite weitergeleitet.",
     "ui.stacksCreating.creatingStackkitDeploymentKombifyTechstack":
       "StackKit-Deployment wird erstellt | kombify-Techstack",
+    "ui.stacksCreating.leanBackBody":
+      "Deinen Teil hast du geschafft. Wir richten gerade alles für dich ein – gleich gibt es etwas richtig Schönes zu sehen.",
+    "ui.stacksCreating.leanBackTitle":
+      "Lehn dich zurück – wir zaubern für dich",
     "ui.stacksCreating.openOperations": "Vorgänge öffnen",
     "ui.stacksCreating.reviewAndStartStackkitRollout":
       "StackKit-Rollout prüfen und starten",
+    "ui.stacksCreating.tips.codeBody":
+      "StackKits erzeugt dein Setup aus geprüften Bauplänen. Dadurch ist jede Änderung wiederholbar und nachvollziehbar.",
+    "ui.stacksCreating.tips.codeEyebrow": "Infrastructure as Code",
+    "ui.stacksCreating.tips.codeTitle": "Dein Stack als Code",
+    "ui.stacksCreating.tips.growBody":
+      "Füge diesem Stack jederzeit einen weiteren Node hinzu. Techstack koordiniert deine Server, und jeder läuft trotzdem eigenständig.",
+    "ui.stacksCreating.tips.growEyebrow": "Skalierung",
+    "ui.stacksCreating.tips.growTitle": "Platz zum Wachsen",
+    "ui.stacksCreating.tips.label": "Gut zu wissen",
+    "ui.stacksCreating.tips.next": "Nächster Tipp",
+    "ui.stacksCreating.tips.nextTitle": "So geht es weiter",
+    "ui.stacksCreating.tips.ownBody":
+      "Das StackKit führt Backups und Wiederherstellungen direkt auf deinem Server aus und verwahrt die Schlüssel dafür dort.",
+    "ui.stacksCreating.tips.ownEyebrow": "Eigenständigkeit",
+    "ui.stacksCreating.tips.ownTitle": "Dein Server macht die Arbeit",
+    "ui.stacksCreating.tips.previous": "Vorheriger Tipp",
+    "ui.stacksCreating.tips.reachBody":
+      "Jede Installation bekommt ihre eigene Adresse – deine Domain oder einen *.kombify.me-Namen. So erreichst du sie von überall, auch auf eigener Hardware.",
+    "ui.stacksCreating.tips.reachEyebrow": "Zugriff",
+    "ui.stacksCreating.tips.reachTitle": "Von überall erreichbar",
+    "ui.stacksCreating.tips.restoreBody":
+      "Die letzte Phase prüft deine Dienste und probt eine Wiederherstellung. So weißt du, dass deine Backups wirklich zurückkommen.",
+    "ui.stacksCreating.tips.restoreEyebrow": "Backups",
+    "ui.stacksCreating.tips.restoreTitle":
+      "Wiederherstellung geprüft, nicht nur versprochen",
+    "ui.stacksCreating.tips.show": "Tipp {number} von {total} anzeigen",
     "ui.stacksCreatingCreation-controller.additionalNode": "Zusätzlicher Node",
     "ui.stacksCreatingCreation-controller.afterFailedAttemptsTheBackend":
       "Nach {MAX_POLL_ERRORS} fehlgeschlagenen Versuchen war das Backend nicht erreichbar. Die Seite versucht es mit Backoff weiter; du kannst auch deine Netzwerkverbindung prüfen und neu laden, um fortzufahren.",
@@ -4407,6 +4650,37 @@ export const screenMessages = {
     "ui.stacksCreatingCreationCompletion.theOwnerSeedIsPrepared":
       "Der Eigentümer-Seed ist vorbereitet.",
     "ui.stacksCreatingCreationCompletion.yourNode": "Dein Node",
+    "ui.groupedTaskList.needsAttention": "Braucht Aufmerksamkeit",
+    "ui.stacksCreatingCreationDegraded.titleOne":
+      "Bereit – ein Teil braucht Aufmerksamkeit",
+    "ui.stacksCreatingCreationDegraded.titleMany":
+      "Bereit – {count} Teile brauchen Aufmerksamkeit",
+    "ui.stacksCreatingCreationDegraded.subtitle":
+      "Dein Server und deine Apps sind installiert und laufen.",
+    "ui.stacksCreatingCreationDegraded.publicTlsTitle":
+      "Sicherer öffentlicher Zugang",
+    "ui.stacksCreatingCreationDegraded.publicTlsMeaning":
+      "Deine kombify.me-Adresse ist noch nicht abgesichert. kombify repariert das automatisch.",
+    "ui.stacksCreatingCreationDegraded.genericTitle": "Teil der Installation",
+    "ui.stacksCreatingCreationDegraded.genericMeaning":
+      "Dieser Teil konnte nicht abgeschlossen werden.",
+    "ui.stacksCreatingCreationDegraded.genericMeaningRepair":
+      "Dieser Teil konnte noch nicht abgeschlossen werden. kombify repariert das automatisch.",
+    "ui.stacksCreatingCreationDegraded.reasonAcmeRateLimited":
+      "Die Zertifizierungsstelle bittet um eine Pause. kombify versucht es automatisch erneut.",
+    "ui.stacksCreatingCreationDegraded.repairScheduled":
+      "Automatische Reparatur geplant",
+    "ui.stacksCreatingCreationDegraded.repairScheduledAt":
+      "Automatische Reparatur um {time}",
+    "ui.stacksCreatingCreationDegraded.repairRunning": "Wird repariert …",
+    "ui.stacksCreatingCreationDegraded.repairDone": "Repariert",
+    "ui.stacksCreatingCreationDegraded.repairFailed":
+      "Automatische Reparatur fehlgeschlagen",
+    "ui.stacksCreatingCreationDegraded.repairNow": "Jetzt reparieren",
+    "ui.stacksCreatingCreationDegraded.repairNotAccepted":
+      "Die Reparatur wurde nicht angenommen.",
+    "ui.stacksCreatingCreationDegraded.askCompanionPrompt":
+      'Das Erstellen von "{operation}" ist abgeschlossen, aber diese Teile brauchen Aufmerksamkeit: {components}. Was bedeutet das für mich, und was soll ich als Nächstes tun?',
     "ui.stacksCreatingCreationFailure.anErrorOccurred":
       "Ein Fehler ist aufgetreten",
     "ui.stacksCreatingCreationFailure.checkYourNetworkConnection":
@@ -4423,6 +4697,9 @@ export const screenMessages = {
     "ui.stacksCreatingCreationFailure.nodeConnectionSucceeded":
       "Node-Verbindung erfolgreich",
     "ui.stacksCreatingCreationFailure.operations": "Vorgänge",
+    "ui.stacksCreatingCreationFailure.askCompanion": "kombify fragen",
+    "ui.stacksCreatingCreationFailure.askCompanionPrompt":
+      'Das Erstellen von "{operation}" ist im Schritt "{step}" mit diesem Fehler fehlgeschlagen:\n\n{error}\n\nWas ist schiefgelaufen, und was soll ich als Nächstes tun?',
     "ui.stacksCreatingCreationFailure.possibleSolutions": "Mögliche Lösungen:",
     "ui.stacksCreatingCreationFailure.resumePreviousAttempt":
       "Vorherigen Versuch fortsetzen",
@@ -4499,12 +4776,17 @@ export const screenMessages = {
       "Dein Installationsbefehl ist bereit. kombify-simulate dient, wenn verfügbar, als temporäre Demovorschau und ist auf eine Stunde begrenzt.",
     "ui.stacksCreatingCreationProgress.backToSetupWizard":
       "Zurück zum Einrichtungsassistenten →",
+    "ui.stacksCreatingCreationProgress.checkAgain": "Erneut prüfen",
     "ui.stacksCreatingCreationProgress.creationFailed":
       "Erstellung fehlgeschlagen",
     "ui.stacksCreatingCreationProgress.nodeProvisioningIsStillIn":
       "Die Node-Bereitstellung läuft noch",
     "ui.stacksCreatingCreationProgress.pleaseWaitWhileWeRe":
       "Bitte warte, während wir",
+    "ui.stacksCreatingCreationProgress.morphCompleting": "abschließen",
+    "ui.stacksCreatingCreationProgress.morphConfiguring": "konfigurieren",
+    "ui.stacksCreatingCreationProgress.morphDeploying": "bereitstellen",
+    "ui.stacksCreatingCreationProgress.morphValidating": "prüfen",
     "ui.stacksCreatingCreationProgress.progress": "Fortschritt",
     "ui.stacksCreatingCreationProgress.rolloutIncomplete":
       "Rollout unvollständig",
@@ -4546,7 +4828,6 @@ export const screenMessages = {
       "Warte auf Heartbeat",
     "ui.stacksCreatingCreationRunStatus.checkSshHostCredentialsAnd":
       "Prüfe SSH-Host, Zugangsdaten und ob der Server Techstack erreichen kann.",
-    "ui.stacksCreatingCreationRunStatus.completed": "Abgeschlossen",
     "ui.stacksCreatingCreationRunStatus.connectMyNode": "Meinen Node verbinden",
     "ui.stacksCreatingCreationRunStatus.connectingToYourNodeOver":
       "Verbindung zu deinem Node über SSH wird hergestellt…",
@@ -5043,6 +5324,10 @@ export const screenMessages = {
       "Abo-VM wird reserviert, Runtime verbunden und Telemetrie vorbereitet",
     "ui.taskStatus.rollOutCloudKit": "Cloud Kit ausrollen",
     "ui.taskStatus.rollingOutCloudKit": "Cloud Kit wird ausgerollt",
+    "ui.taskStatus.settingUpPart":
+      "Teil {position} von {total} wird eingerichtet",
+    "ui.taskStatus.settingUpPartNamed":
+      "Teil {position} von {total} wird eingerichtet: {name}",
     "ui.taskStatus.runningRestoreDrill": "Wiederherstellungsübung läuft",
     "ui.taskStatus.runningSimulatedUpdateGate":
       "Simulierte Update-Schranke läuft",

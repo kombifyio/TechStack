@@ -10,6 +10,8 @@ import (
 
 	"github.com/kombifyio/techstack/internal/routes"
 	"github.com/kombifyio/techstack/pkg/config"
+	"github.com/kombifyio/techstack/pkg/controlplane"
+	"github.com/kombifyio/techstack/pkg/middleware"
 )
 
 type inventoryPolicyTestChecker struct {
@@ -127,5 +129,48 @@ func TestPreferStrictInventoryRelationshipCheckerPreservesBackendErrors(t *testi
 	}
 	if checker.strictCalls != 1 || checker.legacyCalls != 0 {
 		t.Fatalf("calls = strict:%d legacy:%d, want strict only", checker.strictCalls, checker.legacyCalls)
+	}
+}
+
+// A historical signed grant cannot hide current backend withdrawal. The same
+// callback is used at automatic scheduling, execution and projection.
+func TestConnectorRefreshAuthorizationRequiresCurrentMembershipAndResourcePolicy(t *testing.T) {
+	store := &stubAuthStore{membership: &controlplane.Membership{TenantID: "tenant-1", UserID: "owner-1", Status: "active", Metadata: map[string]any{"entitlements": []string{routes.InventoryEntitlementRead}}}}
+	checker := &inventoryPolicyTestChecker{allowed: true}
+	authorize := applicationConnectorRefreshAuthorization(store, routes.NewInventoryFGAPolicy(preferStrictInventoryRelationshipChecker(checker)), true)
+	ctx := middleware.WithSignedEntitlements(t.Context(), routes.InventoryEntitlementAdmin)
+	if err := authorize(ctx, "tenant-1", "owner-1", "server-1"); err != nil {
+		t.Fatal(err)
+	}
+	store.membership.Status = "revoked"
+	if err := authorize(ctx, "tenant-1", "owner-1", "server-1"); err == nil {
+		t.Fatal("revoked backend membership borrowed historical grant")
+	}
+	store.membership.Status = "active"
+	store.membership.Metadata["entitlements"] = []string{}
+	if err := authorize(ctx, "tenant-1", "owner-1", "server-1"); err == nil {
+		t.Fatal("backend grant downgrade borrowed historical grant")
+	}
+	store.membership.Metadata["entitlements"] = []string{routes.InventoryEntitlementRead}
+	checker.allowed = false
+	if err := authorize(ctx, "tenant-1", "owner-1", "server-1"); err == nil {
+		t.Fatal("withdrawn resource relationship admitted refresh")
+	}
+	checker.allowed = true
+	checker.strictErr = errors.New("synthetic current FGA unavailable")
+	if err := authorize(ctx, "tenant-1", "owner-1", "server-1"); err == nil {
+		t.Fatal("missing current resource decision admitted refresh")
+	}
+	checker.strictErr = nil
+	if err := authorize(ctx, "tenant-2", "owner-1", "server-1"); err == nil {
+		t.Fatal("foreign membership admitted refresh")
+	}
+	// Explicit self-hosted owner policy keeps its existing local authority.
+	local := applicationConnectorRefreshAuthorization(nil, routes.NewSelfHostedInventoryPolicy(), false)
+	if err := local(t.Context(), "tenant-1", "owner-1", "server-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := local(t.Context(), "tenant-1", "", "server-1"); err == nil {
+		t.Fatal("self-hosted refresh lacks owner authority")
 	}
 }

@@ -1,0 +1,133 @@
+/* Shared form and dialog styling of the kombify Wallet surfaces. Class names are
+   prefixed `kw-` and use the app's design tokens only. */
+.kw-stack {
+  display: grid;
+  gap: 1rem;
+}
+.kw-fields {
+  display: grid;
+  gap: 0.85rem;
+}
+.kw-label {
+  display: block;
+  margin-bottom: 0.25rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+.kw-input {
+  width: 100%;
+  min-width: 0;
+  padding: 0.6rem 0.75rem;
+  color: var(--foreground);
+  background: var(--input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control, 10px);
+  font-size: 0.875rem;
+}
+.kw-input:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.kw-input[aria-invalid="true"] {
+  border-color: var(--destructive);
+}
+.kw-input:disabled {
+  opacity: 0.6;
+}
+.kw-mono {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.82rem;
+}
+.kw-hint {
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+.kw-error {
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--destructive);
+}
+.kw-notice {
+  font-size: 0.85rem;
+}
+.kw-notice[data-tone="ok"] {
+  color: var(--success, var(--foreground));
+}
+.kw-notice[data-tone="warn"] {
+  color: var(--warning, var(--foreground));
+}
+.kw-notice[data-tone="error"] {
+  color: var(--destructive);
+}
+.kw-muted {
+  color: var(--muted-foreground);
+}
+.kw-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+.kw-choice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.kw-choice label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control, 10px);
+  cursor: pointer;
+}
+.kw-choice label:has(:checked) {
+  border-color: var(--primary);
+  color: var(--foreground);
+}
+.kw-choice label:has(:focus-visible) {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.kw-secret {
+  display: block;
+  padding: 0.5rem 0.6rem;
+  background: var(--muted, transparent);
+  border-radius: var(--radius-control, 10px);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.kw-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.8rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  border-radius: var(--radius-control, 10px);
+  white-space: nowrap;
+}
+.kw-btn:disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+.kw-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+.kw-block {
+  display: block;
+}
+.kw-scroll {
+  max-height: 18rem;
+  overflow: auto;
+}

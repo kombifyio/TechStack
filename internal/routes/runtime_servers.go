@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,8 @@ import (
 	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/controlplane"
+	"github.com/kombifyio/techstack/pkg/guardposture"
+	"github.com/kombifyio/techstack/pkg/guardreach"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/outcome"
 	"github.com/kombifyio/techstack/pkg/serverregistry"
@@ -28,6 +31,32 @@ type ServerRuntimeRouteConfig struct {
 	Now             func() time.Time
 	// Maintenance registers POST /api/v1/servers/{serverId}/actions when set.
 	Maintenance *ServerMaintenanceRouteConfig
+	// Reach adds the kombify Guard reach state to the server read model. Nil in
+	// editions without a Cloud connection; the field is then absent.
+	Reach ServerReachReader
+	// Posture adds the kombify Guard security, recovery and update posture to
+	// the server read model and serves the security routes. Nil in editions
+	// without posture; the fields are then absent.
+	Posture ServerPosture
+	// Workers adds the Guard's reported capabilities (identity binding, durable
+	// operations, isolation and update posture, credential generation) to the
+	// server read model. Nil leaves the section absent.
+	Workers ServerWorkerReader
+	// CurrentMTLSCapabilities distinguishes a present transport with no ABI
+	// grant from an absent transport. HTTPS reports are considered only absent it.
+	CurrentMTLSCapabilities func(controlplane.ServerRuntime) ([]string, bool)
+	// PostureEntitlements gates the repair routes; nil is the fail-closed hosted
+	// gate.
+	PostureEntitlements EntitlementGate
+	// Network serves the owner's home network move routes
+	// (GET /servers/{id}/network and POST /servers/{id}/network/rebind). Nil
+	// leaves them unregistered.
+	Network *ServerNetworkRouteConfig
+}
+
+// ServerReachReader reads the persisted kombify Guard reach rows of a tenant.
+type ServerReachReader interface {
+	ListByTenant(ctx context.Context, tenantID string) ([]guardreach.Row, error)
 }
 
 type serverRuntimeHandlers struct {
@@ -38,6 +67,13 @@ type serverRuntimeHandlers struct {
 	agentDisconnect func(string) error
 	now             func() time.Time
 	maintenance     *serverMaintenanceHandlers
+	reach           ServerReachReader
+
+	posture                 ServerPosture
+	postureEntitlements     EntitlementGate
+	workers                 ServerWorkerReader
+	currentMTLSCapabilities func(controlplane.ServerRuntime) ([]string, bool)
+	network                 *ServerNetworkRouteConfig
 }
 
 type serverRuntimeResponse struct {
@@ -78,10 +114,24 @@ type serverRuntimeResponse struct {
 	// exists. StackActions is the separate StackKit-deployment scope. They are
 	// never merged - a node operation and a kit operation have different blast
 	// radius, different authority and different failure modes.
-	AllowedActions []string  `json:"allowed_actions"`
-	StackActions   []string  `json:"stack_actions"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	AllowedActions []string `json:"allowed_actions"`
+	StackActions   []string `json:"stack_actions"`
+	// Reach is the persisted kombify Guard reach state: whether kombify.me
+	// answers for this server and whether Connect lists it. It is never derived
+	// client-side, and it never blocks or changes Guard enrollment.
+	Reach *guardreach.View `json:"reach,omitempty"`
+	// Security, Recovery and Updates are the persisted kombify Guard posture.
+	// Nothing in them is derived from the heartbeat: a connected, healthy server
+	// without fresh evidence is unknown, and a snapshot's age never says that a
+	// restore works.
+	Security *guardposture.Security `json:"security,omitempty"`
+	Recovery *guardposture.Recovery `json:"recovery,omitempty"`
+	Updates  *guardposture.Updates  `json:"updates,omitempty"`
+	// Capabilities are the Guard facts the control plane persisted for this
+	// server's worker; see serverRuntimeCapabilities.
+	Capabilities *serverRuntimeCapabilities `json:"capabilities,omitempty"`
+	CreatedAt    time.Time                  `json:"created_at"`
+	UpdatedAt    time.Time                  `json:"updated_at"`
 }
 
 type serverRuntimeLifecycle struct {
@@ -121,19 +171,31 @@ type serverRuntimeTargetFreshness struct {
 	AgeSeconds *int64 `json:"age_seconds,omitempty"`
 }
 
-func RegisterServerRuntimeRoutes(r *httpx.Router, cfg ServerRuntimeRouteConfig) {
+// ServerMaintenanceRoutes exposes only the canonical maintenance leaves that
+// MCP can invoke with its already verified request context.
+type ServerMaintenanceRoutes struct {
+	Action httpx.HandlerFunc
+	Impact httpx.HandlerFunc
+}
+
+// RegisterServerRuntimeRoutes returns disabled maintenance leaves as nil.
+func RegisterServerRuntimeRoutes(r *httpx.Router, cfg ServerRuntimeRouteConfig) ServerMaintenanceRoutes {
 	if cfg.Store == nil {
 		panic("RegisterServerRuntimeRoutes: server runtime store required")
 	}
 	if cfg.Now == nil {
 		cfg.Now = func() time.Time { return time.Now().UTC() }
 	}
-	if (cfg.Detacher != nil || cfg.Maintenance != nil) && cfg.Policy == nil {
-		panic("RegisterServerRuntimeRoutes: inventory policy required for server detach and maintenance")
+	_, reachControl := cfg.Reach.(ServerReachControl)
+	if (cfg.Detacher != nil || cfg.Maintenance != nil || cfg.Posture != nil || reachControl || cfg.Network != nil) && cfg.Policy == nil {
+		panic("RegisterServerRuntimeRoutes: inventory policy required for server detach, maintenance, security repair and reach")
 	}
 	h := serverRuntimeHandlers{
 		store: cfg.Store, ports: cfg.PortInventory, detacher: cfg.Detacher, policy: cfg.Policy,
 		agentDisconnect: cfg.AgentDisconnect, now: cfg.Now, maintenance: newServerMaintenanceHandlers(cfg.Maintenance),
+		reach: cfg.Reach, posture: cfg.Posture, postureEntitlements: cfg.PostureEntitlements, workers: cfg.Workers,
+		network:                 cfg.Network,
+		currentMTLSCapabilities: cfg.CurrentMTLSCapabilities,
 	}
 	r.GET("/api/v1/servers", h.list)
 	r.GET("/api/v1/servers/{serverId}", h.get)
@@ -142,10 +204,29 @@ func RegisterServerRuntimeRoutes(r *httpx.Router, cfg ServerRuntimeRouteConfig) 
 	if cfg.Detacher != nil {
 		r.POST("/api/v1/servers/{serverId}/detach", h.detach)
 	}
+	if _, ok := h.reach.(ServerReachControl); ok {
+		r.PUT("/api/v1/servers/{serverId}/reach", h.reachSetPublic)
+	}
+	if h.network != nil && h.network.Workers != nil {
+		r.GET("/api/v1/servers/{serverId}/network", h.networkRead)
+		r.POST("/api/v1/servers/{serverId}/network/rebind", h.networkRebind)
+	}
+	if h.posture != nil {
+		r.POST("/api/v1/servers/{serverId}/security/verify", h.postureVerify)
+		r.GET("/api/v1/servers/{serverId}/security/findings", h.postureFindings)
+		r.GET("/api/v1/servers/{serverId}/security/repairs", h.postureRepairs)
+		r.POST("/api/v1/servers/{serverId}/security/repairs", h.postureRequestRepair)
+		r.GET("/api/v1/servers/{serverId}/security/auto-repair", h.postureAutoRepair)
+		r.PUT("/api/v1/servers/{serverId}/security/auto-repair", h.postureSetAutoRepair)
+	}
 	if h.maintenance != nil {
+		r.GET("/api/v1/servers/{serverId}/maintenance-impact", h.maintenanceImpact)
 		r.POST("/api/v1/servers/{serverId}/actions", h.maintenanceAction)
 		r.GET("/api/v1/servers/{serverId}/actions/{jobId}", h.maintenanceJob)
+		r.POST("/api/v1/servers/{serverId}/actions/{jobId}/cancel", h.cancelMaintenanceJob)
+		return ServerMaintenanceRoutes{Action: h.maintenanceAction, Impact: h.maintenanceImpact}
 	}
+	return ServerMaintenanceRoutes{}
 }
 
 type selfOwnedServerDetachBody struct {
@@ -189,7 +270,7 @@ func (h serverRuntimeHandlers) detach(e *httpx.Event) error {
 	case errors.Is(err, controlplane.ErrServerDetachUnsupported):
 		return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "Only customer-operated BYO servers can be detached", nil)
 	case errors.Is(err, controlplane.ErrServerAgentCustody):
-		return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "The exact server Agent enrollment is unavailable", nil)
+		return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "The exact server Agent is unavailable", nil)
 	case err != nil:
 		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Server detach is unavailable", nil)
 	default:
@@ -220,18 +301,42 @@ func (h serverRuntimeHandlers) list(e *httpx.Event) error {
 	if err != nil {
 		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Server inventory is unavailable", nil)
 	}
+	reach := h.reachByWorker(e.Request.Context(), tenantID)
+	postureViews := h.postureViews(e.Request.Context(), tenantID)
+	capabilities := h.capabilitiesByWorker(e.Request.Context(), tenantID)
 	items := make([]serverRuntimeResponse, 0, len(rows))
 	for _, row := range rows {
 		if !serverRuntimeOwnedBy(row, ownerID) || serverRuntimeHiddenFromCurrentInventory(row) {
 			continue
 		}
-		items = append(items, h.response(row))
+		item := h.response(row)
+		item.Reach = reach[strings.TrimSpace(row.WorkerID)]
+		h.applyPosture(&item, row.WorkerID, postureViews)
+		item.Capabilities = capabilities[strings.TrimSpace(row.WorkerID)]
+		h.applyStackKitActions(&item, row)
+		items = append(items, item)
 	}
 	qualifyServerRuntimeDisplayNames(items)
 	sort.SliceStable(items, func(i, j int) bool {
 		return serverRuntimeDisplayPriority(items[i]) < serverRuntimeDisplayPriority(items[j])
 	})
-	return httpx.Success(e, http.StatusOK, items)
+	validator := make([]serverRuntimeResponse, len(items))
+	for i, item := range items {
+		validator[i] = item.withoutElapsedCounters()
+	}
+	return httpx.ConditionalSuccess(e, items, validator)
+}
+
+// withoutElapsedCounters clears the two fields that are only the clock minus a
+// timestamp the response also carries (`connection.last_heartbeat_at` and
+// `target_evidence.observed_at`). They are served as-is but excluded from the
+// response validator: they change every second, so hashing them would make a
+// conditional read of an unchanged server never match. Every state they feed
+// (stale and offline demotion, freshness state) stays in the validator.
+func (r serverRuntimeResponse) withoutElapsedCounters() serverRuntimeResponse {
+	r.Connection.StalenessSeconds = nil
+	r.TargetEvidence.Freshness.AgeSeconds = nil
+	return r
 }
 
 func qualifyServerRuntimeDisplayNames(items []serverRuntimeResponse) {
@@ -294,7 +399,31 @@ func (h serverRuntimeHandlers) get(e *httpx.Event) error {
 	if err != nil || server == nil {
 		return err
 	}
-	return httpx.Success(e, http.StatusOK, h.response(*server))
+	item := h.response(*server)
+	item.Reach = h.reachByWorker(e.Request.Context(), server.TenantID)[strings.TrimSpace(server.WorkerID)]
+	h.applyPosture(&item, server.WorkerID, h.postureViews(e.Request.Context(), server.TenantID))
+	item.Capabilities = h.capabilitiesForWorker(e.Request.Context(), server.TenantID, server.WorkerID)
+	h.applyStackKitActions(&item, *server)
+	return httpx.ConditionalSuccess(e, item, item.withoutElapsedCounters())
+}
+
+// reachByWorker reads the tenant's reach rows once. A read failure leaves the
+// reach section absent instead of failing the inventory, which never depends
+// on reach.
+func (h serverRuntimeHandlers) reachByWorker(ctx context.Context, tenantID string) map[string]*guardreach.View {
+	if h.reach == nil {
+		return nil
+	}
+	rows, err := h.reach.ListByTenant(ctx, tenantID)
+	if err != nil {
+		return nil
+	}
+	out := make(map[string]*guardreach.View, len(rows))
+	for _, row := range rows {
+		view := guardreach.ViewOf(row)
+		out[row.WorkerID] = &view
+	}
+	return out
 }
 
 func (h serverRuntimeHandlers) portInventory(e *httpx.Event) error {
@@ -356,14 +485,34 @@ func (h serverRuntimeHandlers) ownedServer(e *httpx.Event, capability string) (*
 	return server, nil
 }
 
-// response returns the persisted observed state. The registry sweeper is the
-// demotion authority (heartbeat freshness becomes durable connection/health
-// writes through ApplyServerEvent); read-time recompute overrides are gone so
-// API responses, transitions, and the aggregate head always agree.
-// DeriveObservedState remains a test-only cross-check for fresh heartbeats.
+// response returns the persisted observed state. The registry sweeper stays
+// the writer of durable demotions (heartbeat freshness becomes connection and
+// health writes through ApplyServerEvent). Between sweeps the response applies
+// the same demotion the heartbeat age already earns, so the documented 90 s
+// stale and 5 min offline windows hold exactly at the API instead of lagging by
+// the sweep interval. The overlay only demotes, never promotes, and never
+// writes; a fresh Guard heartbeat is still the only way back to connected.
 func (h serverRuntimeHandlers) response(server controlplane.ServerRuntime) serverRuntimeResponse {
 	now := h.now().UTC()
 	connection, health := server.ConnectionState, server.HealthState
+	if demotedConnection, demotedHealth, reason, due := serverregistry.EffectiveDemotion(now, server); due {
+		connection, health = string(demotedConnection), string(demotedHealth)
+		// Derived actions below read the same effective state.
+		server.ConnectionState, server.HealthState, server.ReasonCode = connection, health, reason
+	}
+	// A detached or retiring server is no longer served by its Guard: its
+	// credential and host identity are revoked in the detach transaction. The
+	// control plane may not write Guard observation state, so the owner-facing
+	// read derives it: such a server never reads as Connected (finding Q-9).
+	switch serverregistry.LifecycleState(strings.TrimSpace(server.LifecycleState)) {
+	case serverregistry.LifecycleDecommissioning, serverregistry.LifecycleDecommissioned:
+		switch serverregistry.ConnectionState(strings.TrimSpace(server.ConnectionState)) {
+		case serverregistry.ConnectionRevoked, serverregistry.ConnectionOffline:
+		default:
+			connection = string(serverregistry.ConnectionRevoked)
+			server.ConnectionState = connection
+		}
+	}
 	var staleness *int64
 	if server.LastHeartbeatAt != nil {
 		seconds := int64(now.Sub(server.LastHeartbeatAt.UTC()).Seconds())

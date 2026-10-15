@@ -17,7 +17,9 @@ import (
 	"time"
 
 	"github.com/kombifyio/techstack/internal/gocommon/denial"
-	"github.com/kombifyio/techstack/internal/gocommon/runtimeexecutor"
+	"github.com/kombifyio/techstack/internal/selfhostcontracts/runtimeexecutor"
+
+	"github.com/kombifyio/techstack/pkg/agent/hostidentity"
 )
 
 const (
@@ -55,13 +57,59 @@ func isStackKitOperationsProcessMode(args []string) bool {
 }
 
 func runStackKitOperationsProcess(ctx context.Context) error {
+	// In the privilege-split layout this process runs as a child of the root
+	// executor and must not see the Guard's credential: it hands the request to
+	// the unprivileged daemon, which owns the enrollment and the host key.
+	if socket := stackKitOperationsSocket(); socket != "" {
+		return proxyStackKitOperationsProcess(ctx, os.Stdin, os.Stdout, socket)
+	}
+	enrollmentPath := hostidentity.LocateEnrollment(stackKitOperationsEnrollmentPath, resolveGuardStateDir(""))
+	if enrollment, err := loadAgentEnrollment(enrollmentPath); err == nil {
+		if err := pinPrivateLAN(enrollment); err != nil {
+			return fmt.Errorf("pin the private LAN bridge: %w", err)
+		}
+	}
 	client := &http.Client{
 		Timeout: 2 * time.Minute,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return errors.New("StackKits operations endpoint redirects are forbidden")
 		},
 	}
-	return executeStackKitOperationsProcess(ctx, os.Stdin, os.Stdout, stackKitOperationsEnrollmentPath, client)
+	if identity := stackKitOperationsIdentity(enrollmentPath); identity != nil {
+		client.Transport = identity.Transport(http.DefaultTransport)
+	}
+	return executeStackKitOperationsProcess(ctx, os.Stdin, os.Stdout, enrollmentPath, client)
+}
+
+// stackKitOperationsIdentity returns the host-key identity of the Guard that
+// spawned this process, or nil while the Guard is still on the bearer
+// credential. The main Guard process establishes and maintains the identity;
+// this short-lived helper only signs its own request with the same key.
+func stackKitOperationsIdentity(enrollmentPath string) *hostidentity.Client {
+	manager, err := hostidentity.Open(resolveGuardStateDir(""))
+	if err != nil || manager.Record().State != hostidentity.StateBound {
+		return nil
+	}
+	enrollment, err := loadAgentEnrollment(enrollmentPath)
+	if err != nil {
+		return nil
+	}
+	endpoints := hostidentity.Endpoints{
+		TokenURL:  firstCLIValue(enrollment.IdentityTokenURL, enrollment.ChannelBootstrap.IdentityTokenURL),
+		BindURL:   firstCLIValue(enrollment.IdentityBindURL, enrollment.ChannelBootstrap.IdentityBindURL),
+		RotateURL: firstCLIValue(enrollment.IdentityRotateURL, enrollment.ChannelBootstrap.IdentityRotateURL),
+	}
+	if endpoints.TokenURL == "" {
+		endpoints = hostidentity.DeriveEndpoints(enrollment.HeartbeatURL)
+	}
+	client, err := hostidentity.NewClient(hostidentity.ClientConfig{
+		Manager: manager, Endpoints: endpoints, AgentToken: enrollment.AgentToken,
+		TenantID: firstCLIValue(enrollment.TenantID, enrollment.ChannelBootstrap.TenantID),
+	})
+	if err != nil || client.UseHostKey() != nil {
+		return nil
+	}
+	return client
 }
 
 func executeStackKitOperationsProcess(ctx context.Context, input io.Reader, output io.Writer, enrollmentPath string, client *http.Client) error {
@@ -75,50 +123,11 @@ func executeStackKitOperationsProcess(ctx context.Context, input io.Reader, outp
 	if len(payload) == 0 || len(payload) > maxStackKitOperationsPayload {
 		return errors.New("StackKits operations request is empty or exceeds the closed limit")
 	}
-	request, err := decodeStackKitOperationsRequest(payload)
-	if err != nil {
-		return err
-	}
 	enrollment, err := loadAgentEnrollment(enrollmentPath)
 	if err != nil {
 		return fmt.Errorf("load StackKits operations enrollment: %w", err)
 	}
-	if err := validateStackKitOperationsBinding(request, enrollment); err != nil {
-		return err
-	}
-	endpoint, err := stackKitOperationsEndpoint(enrollment)
-	if err != nil {
-		return err
-	}
-	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
-	if err != nil {
-		return fmt.Errorf("create StackKits operations request: %w", err)
-	}
-	httpRequest.Header.Set("Authorization", "Bearer "+enrollment.AgentToken)
-	httpRequest.Header.Set("Content-Type", "application/json")
-	httpRequest.Header.Set("Accept", "application/json")
-	httpRequest.Header.Set("X-Kombify-Runtime-Agent-ID", enrollment.RuntimeAgentID)
-	httpRequest.Header.Set("X-Kombify-Tenant-ID", enrollment.TenantID)
-
-	response, err := client.Do(httpRequest)
-	if err != nil {
-		return fmt.Errorf("execute authenticated StackKits operations request: %w", err)
-	}
-	defer response.Body.Close()
-	responsePayload, err := io.ReadAll(io.LimitReader(response.Body, maxStackKitOperationsPayload+1))
-	if err != nil {
-		return fmt.Errorf("read StackKits operations response: %w", err)
-	}
-	if len(responsePayload) > maxStackKitOperationsPayload {
-		return errors.New("StackKits operations response exceeds the closed limit")
-	}
-	if response.StatusCode != http.StatusOK {
-		return stackKitOperationsHTTPError(response.StatusCode, responsePayload)
-	}
-	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(response.Header.Get("Content-Type"))), "application/json") {
-		return errors.New("StackKits operations endpoint returned an unsupported content type")
-	}
-	result, err := decodeStackKitOperationsResponse(responsePayload, request.ChannelRef)
+	result, err := executeStackKitOperationsRequest(ctx, payload, enrollment, client)
 	if err != nil {
 		return err
 	}
@@ -128,6 +137,57 @@ func executeStackKitOperationsProcess(ctx context.Context, input io.Reader, outp
 		return fmt.Errorf("write StackKits operations result: %w", err)
 	}
 	return nil
+}
+
+// executeStackKitOperationsRequest validates one operations request against the
+// enrolled stack and channel, sends it to the control plane with the Guard's
+// credential and returns the decoded outcome. It is the only code that holds the
+// credential for this seam.
+func executeStackKitOperationsRequest(ctx context.Context, payload []byte, enrollment agentEnrollment, client *http.Client) (stackKitOperationsResponseEnvelope, error) {
+	request, err := decodeStackKitOperationsRequest(payload)
+	if err != nil {
+		return stackKitOperationsResponseEnvelope{}, err
+	}
+	if err := validateStackKitOperationsBinding(request, enrollment); err != nil {
+		return stackKitOperationsResponseEnvelope{}, err
+	}
+	endpoint, err := stackKitOperationsEndpoint(enrollment)
+	if err != nil {
+		return stackKitOperationsResponseEnvelope{}, err
+	}
+	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return stackKitOperationsResponseEnvelope{}, fmt.Errorf("create StackKits operations request: %w", err)
+	}
+	httpRequest.Header.Set("Authorization", "Bearer "+enrollment.AgentToken)
+	httpRequest.Header.Set("Content-Type", "application/json")
+	httpRequest.Header.Set("Accept", "application/json")
+	httpRequest.Header.Set("X-Kombify-Runtime-Agent-ID", enrollment.RuntimeAgentID)
+	httpRequest.Header.Set("X-Kombify-Tenant-ID", enrollment.TenantID)
+
+	response, err := client.Do(httpRequest)
+	if err != nil {
+		return stackKitOperationsResponseEnvelope{}, fmt.Errorf("execute authenticated StackKits operations request: %w", err)
+	}
+	defer response.Body.Close()
+	responsePayload, err := io.ReadAll(io.LimitReader(response.Body, maxStackKitOperationsPayload+1))
+	if err != nil {
+		return stackKitOperationsResponseEnvelope{}, fmt.Errorf("read StackKits operations response: %w", err)
+	}
+	if len(responsePayload) > maxStackKitOperationsPayload {
+		return stackKitOperationsResponseEnvelope{}, errors.New("StackKits operations response exceeds the closed limit")
+	}
+	if response.StatusCode != http.StatusOK {
+		return stackKitOperationsResponseEnvelope{}, stackKitOperationsHTTPError(response.StatusCode, responsePayload)
+	}
+	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(response.Header.Get("Content-Type"))), "application/json") {
+		return stackKitOperationsResponseEnvelope{}, errors.New("StackKits operations endpoint returned an unsupported content type")
+	}
+	result, err := decodeStackKitOperationsResponse(responsePayload, request.ChannelRef)
+	if err != nil {
+		return stackKitOperationsResponseEnvelope{}, err
+	}
+	return result, nil
 }
 
 func stackKitOperationsHTTPError(status int, payload []byte) error {

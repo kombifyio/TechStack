@@ -159,7 +159,9 @@ func applyInputMetadata(metadata map[string]string, input *core.InputSpec) {
 			metadata[key] = *value
 		}
 	}
-	setIfPresent("stackkit_mode", input.Mode)
+	// The legacy input mode (simple, bootstrapped, advanced) is not carried
+	// into metadata: every Techstack-managed deployment runs Advanced Mode,
+	// and the rollout records stackkit_mode itself.
 	setIfPresent("runtime", input.Runtime)
 	setIfPresent("context", input.Context)
 	setIfPresent("paas", input.PAAS)

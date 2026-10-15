@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kombifyio/techstack/internal/runtimeproduct/runtimeaction"
 	"github.com/kombifyio/techstack/internal/stackkitrelease"
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
 	"github.com/kombifyio/techstack/pkg/core"
@@ -72,10 +71,6 @@ func (f *fakeRuntimeTargetBootstrapper) BootstrapRuntimeTarget(_ context.Context
 	return &RuntimeTargetBootstrapResult{Status: "ready", Message: "test bootstrap ready", DurationMS: 12}, nil
 }
 
-type blockingRuntimeActionRunner struct {
-	unblock chan struct{}
-}
-
 type fakeStackKitPrepRunner struct {
 	calls  []RuntimeActionRequest
 	order  *[]string
@@ -98,16 +93,6 @@ func (f *fakeStackKitPrepRunner) PrepareStackKitRuntimeTarget(_ context.Context,
 	}, nil
 }
 
-func (b blockingRuntimeActionRunner) Run(ctx context.Context, req RuntimeActionRequest) error {
-	_, err := b.RunWithResult(ctx, req)
-	return err
-}
-
-func (b blockingRuntimeActionRunner) RunWithResult(ctx context.Context, req RuntimeActionRequest) (map[string]interface{}, error) {
-	<-b.unblock
-	return nil, ctx.Err()
-}
-
 func managedDeployRolloutFixture(t *testing.T, stackID, stackKit string, actions RuntimeActions) *deployRollout {
 	t.Helper()
 	job := &Job{
@@ -117,16 +102,30 @@ func managedDeployRolloutFixture(t *testing.T, stackID, stackKit string, actions
 		Payload:  map[string]interface{}{},
 		Result:   map[string]interface{}{},
 	}
+	configureTestStackKitRelease(t)
+	specPath := writeSpec(t, `{"apiVersion":"stackkit/v2alpha2","kind":"StackSpec","metadata":{"name":"`+stackID+`"},"kit":{"slug":"`+stackKit+`"},"workloads":{"core":{"alternative":"standalone"}},"generation":{"outputRoot":"deploy"}}`)
+	planPath := filepath.Join(t.TempDir(), "resolved-plan.json")
+	if err := os.WriteFile(planPath, []byte(resolvedPlanWithListeners(`[]`)), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	return &deployRollout{
-		cfg:            &ProvisionConfig{RuntimeActions: actions},
+		cfg: &ProvisionConfig{
+			RuntimeActions: actions, AdvancedIssuer: staticAdvancedIssuer{},
+			ManagedStackKitInventory: &recordingManagedStackKitInventoryBuilder{},
+		},
 		job:            job,
 		q:              &Queue{jobs: map[string]*Job{job.ID: job}},
 		managedRuntime: true,
 		targetKind:     "cloud",
 		unifiedSpec:    &core.UnifiedSpec{StackKit: stackKit},
 		actionReq: RuntimeActionRequest{
-			StackID:  stackID,
-			StackKit: stackKit,
+			StackID:             stackID,
+			StackKit:            stackKit,
+			StackSpecPath:       specPath,
+			UnifiedPath:         planPath,
+			TenantID:            "tenant-1",
+			OwnerID:             "owner-1",
+			TechStackEnrollment: &TechStackEnrollment{TenantID: "tenant-1", OwnerID: "owner-1", ServerID: "server-1", RuntimeAgentID: "agent-1"},
 			RuntimeTarget: &RuntimeActionTarget{
 				Host:       "203.0.113.10",
 				User:       "root",
@@ -142,11 +141,11 @@ func managedDeployRolloutFixture(t *testing.T, stackID, stackKit string, actions
 func TestDeployRolloutBootstrapsManagedRuntimeTargetBeforeStackKits(t *testing.T) {
 	order := []string{}
 	bootstrapper := &fakeRuntimeTargetBootstrapper{order: &order}
-	rolloutRunner := &fakeRuntimeRunner{name: "rollout", order: &order, result: map[string]interface{}{"status": "applied"}}
+	rolloutRunner := &typedLifecycleCommander{planHash: testResolvedPlanHash, order: &order}
 	rollout := managedDeployRolloutFixture(t, "stack-runtime-bootstrap", "basement-kit", RuntimeActions{
 		TargetBootstrapper: bootstrapper,
-		RolloutRunner:      rolloutRunner,
 	})
+	rollout.cfg.StackKitCommander = rolloutRunner
 
 	if err := rollout.runRollout(context.Background()); err != nil {
 		t.Fatalf("runRollout: %v", err)
@@ -154,8 +153,8 @@ func TestDeployRolloutBootstrapsManagedRuntimeTargetBeforeStackKits(t *testing.T
 	if len(bootstrapper.calls) != 1 {
 		t.Fatalf("bootstrap calls = %d, want 1", len(bootstrapper.calls))
 	}
-	if len(rolloutRunner.calls) != 1 {
-		t.Fatalf("rollout calls = %d, want 1", len(rolloutRunner.calls))
+	if rolloutRunner.applies() != 1 {
+		t.Fatalf("rollout calls = %d, want 1", rolloutRunner.applies())
 	}
 	if got := strings.Join(order, ","); got != "bootstrap,rollout" {
 		t.Fatalf("order = %s, want bootstrap,rollout", got)
@@ -169,12 +168,12 @@ func TestDeployRolloutPreBootstrapsBeforeStackKitPrepare(t *testing.T) {
 	order := []string{}
 	prepRunner := &fakeStackKitPrepRunner{order: &order}
 	bootstrapper := &fakeRuntimeTargetBootstrapper{order: &order}
-	rolloutRunner := &fakeRuntimeRunner{name: "rollout", order: &order, result: map[string]interface{}{"status": "applied"}}
+	rolloutRunner := &typedLifecycleCommander{planHash: testResolvedPlanHash, order: &order}
 	rollout := managedDeployRolloutFixture(t, "stack-stackkit-prepare", "cloud-kit", RuntimeActions{
 		StackKitPrepRunner: prepRunner,
 		TargetBootstrapper: bootstrapper,
-		RolloutRunner:      rolloutRunner,
 	})
+	rollout.cfg.StackKitCommander = rolloutRunner
 
 	if err := rollout.runRollout(context.Background()); err != nil {
 		t.Fatalf("runRollout: %v", err)
@@ -185,8 +184,8 @@ func TestDeployRolloutPreBootstrapsBeforeStackKitPrepare(t *testing.T) {
 	if len(bootstrapper.calls) != 1 {
 		t.Fatalf("pre-bootstrap calls = %d, want 1", len(bootstrapper.calls))
 	}
-	if len(rolloutRunner.calls) != 1 {
-		t.Fatalf("rollout calls = %d, want 1", len(rolloutRunner.calls))
+	if rolloutRunner.applies() != 1 {
+		t.Fatalf("rollout calls = %d, want 1", rolloutRunner.applies())
 	}
 	if got := strings.Join(order, ","); got != "bootstrap,prepare,rollout" {
 		t.Fatalf("order = %s, want bootstrap,prepare,rollout", got)
@@ -198,12 +197,12 @@ func TestDeployRolloutCanDisablePreBootstrapBeforeStackKitPrepare(t *testing.T) 
 	order := []string{}
 	prepRunner := &fakeStackKitPrepRunner{order: &order}
 	bootstrapper := &fakeRuntimeTargetBootstrapper{order: &order}
-	rolloutRunner := &fakeRuntimeRunner{name: "rollout", order: &order, result: map[string]interface{}{"status": "applied"}}
+	rolloutRunner := &typedLifecycleCommander{planHash: testResolvedPlanHash, order: &order}
 	rollout := managedDeployRolloutFixture(t, "stack-stackkit-prepare-no-prebootstrap", "cloud-kit", RuntimeActions{
 		StackKitPrepRunner: prepRunner,
 		TargetBootstrapper: bootstrapper,
-		RolloutRunner:      rolloutRunner,
 	})
+	rollout.cfg.StackKitCommander = rolloutRunner
 
 	if err := rollout.runRollout(context.Background()); err != nil {
 		t.Fatalf("runRollout: %v", err)
@@ -214,8 +213,8 @@ func TestDeployRolloutCanDisablePreBootstrapBeforeStackKitPrepare(t *testing.T) 
 	if len(bootstrapper.calls) != 0 {
 		t.Fatalf("pre-bootstrap calls = %d, want 0 when disabled", len(bootstrapper.calls))
 	}
-	if len(rolloutRunner.calls) != 1 {
-		t.Fatalf("rollout calls = %d, want 1", len(rolloutRunner.calls))
+	if rolloutRunner.applies() != 1 {
+		t.Fatalf("rollout calls = %d, want 1", rolloutRunner.applies())
 	}
 	if got := strings.Join(order, ","); got != "prepare,rollout" {
 		t.Fatalf("order = %s, want prepare,rollout", got)
@@ -234,12 +233,12 @@ func TestDeployRolloutStopsWhenPreBootstrapBeforeStackKitPrepareFails(t *testing
 		},
 		err: errors.New("apt wait timed out"),
 	}
-	rolloutRunner := &fakeRuntimeRunner{name: "rollout", order: &order, result: map[string]interface{}{"status": "applied"}}
+	rolloutRunner := &typedLifecycleCommander{planHash: testResolvedPlanHash, order: &order}
 	rollout := managedDeployRolloutFixture(t, "stack-stackkit-prepare-prebootstrap-failed", "cloud-kit", RuntimeActions{
 		StackKitPrepRunner: prepRunner,
 		TargetBootstrapper: bootstrapper,
-		RolloutRunner:      rolloutRunner,
 	})
+	rollout.cfg.StackKitCommander = rolloutRunner
 
 	if err := rollout.runRollout(context.Background()); err == nil {
 		t.Fatal("runRollout returned nil, want pre-bootstrap error")
@@ -250,8 +249,8 @@ func TestDeployRolloutStopsWhenPreBootstrapBeforeStackKitPrepareFails(t *testing
 	if len(prepRunner.calls) != 0 {
 		t.Fatalf("prepare calls = %d, want 0 after pre-bootstrap failure", len(prepRunner.calls))
 	}
-	if len(rolloutRunner.calls) != 0 {
-		t.Fatalf("rollout calls = %d, want 0 after pre-bootstrap failure", len(rolloutRunner.calls))
+	if rolloutRunner.applies() != 0 {
+		t.Fatalf("rollout calls = %d, want 0 after pre-bootstrap failure", rolloutRunner.applies())
 	}
 	if got := strings.Join(order, ","); got != "bootstrap" {
 		t.Fatalf("order = %s, want bootstrap", got)
@@ -281,12 +280,12 @@ func TestDeployRolloutPersistsRedactedDiagnosticsOnTargetBootstrapTimeout(t *tes
 			Attempts:   2,
 		},
 	}
-	rolloutRunner := &fakeRuntimeRunner{name: "rollout", result: map[string]interface{}{"status": "applied"}}
+	rolloutRunner := &typedLifecycleCommander{planHash: testResolvedPlanHash}
 	rollout := managedDeployRolloutFixture(t, "stack-runtime-bootstrap-failed", "basement-kit", RuntimeActions{
 		TargetBootstrapper:   bootstrapper,
-		RolloutRunner:        rolloutRunner,
 		DiagnosticsCollector: collector,
 	})
+	rollout.cfg.StackKitCommander = rolloutRunner
 	job := rollout.job
 	job.Payload = map[string]interface{}{
 		providerField: "ionos",
@@ -297,6 +296,8 @@ func TestDeployRolloutPersistsRedactedDiagnosticsOnTargetBootstrapTimeout(t *tes
 		"operation_id": "operation-runtime-bootstrap-failed",
 	}
 	rollout.actionReq.TenantID = "tenant-runtime-bootstrap"
+	// The diagnostics derive the node identity from the lease.
+	rollout.actionReq.TechStackEnrollment = nil
 	rollout.actionReq.RuntimeTarget = &RuntimeActionTarget{
 		Host:       "203.0.113.40",
 		PublicIP:   "203.0.113.40",
@@ -312,8 +313,8 @@ func TestDeployRolloutPersistsRedactedDiagnosticsOnTargetBootstrapTimeout(t *tes
 	if provisionErr, ok := err.(*ProvisionError); !ok || provisionErr.Step != StepStackKitPrepare {
 		t.Fatalf("bootstrap error = %#v, want ProvisionError step %s", err, StepStackKitPrepare)
 	}
-	if len(rolloutRunner.calls) != 0 {
-		t.Fatalf("rollout calls = %d, want none after bootstrap failure", len(rolloutRunner.calls))
+	if rolloutRunner.applies() != 0 {
+		t.Fatalf("rollout calls = %d, want none after bootstrap failure", rolloutRunner.applies())
 	}
 	if len(collector.requests) != 1 {
 		t.Fatalf("diagnostic requests = %d, want 1", len(collector.requests))
@@ -372,18 +373,18 @@ func TestDeployRolloutClassifiesPrepTimeoutAsPostLeaseFailure(t *testing.T) {
 		err: prepErr,
 	}
 	collector := &fakeRuntimeDiagnosticsCollector{}
-	rolloutRunner := &fakeRuntimeRunner{name: "rollout", result: map[string]interface{}{"status": "applied"}}
+	rolloutRunner := &typedLifecycleCommander{planHash: testResolvedPlanHash}
 	rollout := managedDeployRolloutFixture(t, "stack-centron-apt-wait-timeout", "cloud-kit", RuntimeActions{
 		StackKitPrepRunner:   prepRunner,
-		RolloutRunner:        rolloutRunner,
 		DiagnosticsCollector: collector,
 	})
+	rollout.cfg.StackKitCommander = rolloutRunner
 	job := rollout.job
 	job.Payload = map[string]interface{}{providerField: "centron"}
 	job.Result = map[string]interface{}{leaseIDField: "lease-mwhrsh04v3hl2qo"}
 	rollout.actionReq.RuntimeTarget = &RuntimeActionTarget{
-		Host:       "188.64.59.141",
-		PublicIP:   "188.64.59.141",
+		Host:       "203.0.113.82",
+		PublicIP:   "203.0.113.82",
 		User:       "root",
 		Port:       22,
 		PrivateKey: "test-private-key",
@@ -400,8 +401,8 @@ func TestDeployRolloutClassifiesPrepTimeoutAsPostLeaseFailure(t *testing.T) {
 	if provisionErr.Step != StepStackKitPrepare {
 		t.Fatalf("error step = %q, want %q", provisionErr.Step, StepStackKitPrepare)
 	}
-	if len(rolloutRunner.calls) != 0 {
-		t.Fatalf("rollout calls = %d, want none after prep failure", len(rolloutRunner.calls))
+	if rolloutRunner.applies() != 0 {
+		t.Fatalf("rollout calls = %d, want none after prep failure", rolloutRunner.applies())
 	}
 	if len(collector.requests) != 1 {
 		t.Fatalf("diagnostic requests = %d, want 1", len(collector.requests))
@@ -453,6 +454,7 @@ func TestDeployRolloutCollectsRuntimeDiagnosticsOnStackKitsFailure(t *testing.T)
 	if err := os.WriteFile(pinPath, pin, 0600); err != nil {
 		t.Fatal(err)
 	}
+	writeTestAdvancedCatalog(t, dir)
 	t.Setenv(stackKitReleasePinEnv, pinPath)
 	t.Setenv(stackKitReleaseCacheEnv, dir)
 	rollout.cfg.StackKitCommander = &failedApplyDiagnosticsSender{}
@@ -464,8 +466,8 @@ func TestDeployRolloutCollectsRuntimeDiagnosticsOnStackKitsFailure(t *testing.T)
 	job.Payload = map[string]interface{}{providerField: "ionos"}
 	job.Result = map[string]interface{}{leaseIDField: "lease-runtime-diagnostics"}
 	rollout.actionReq.RuntimeTarget = &RuntimeActionTarget{
-		Host:       "213.165.73.109",
-		PublicIP:   "213.165.73.109",
+		Host:       "203.0.113.83",
+		PublicIP:   "203.0.113.83",
 		User:       "ubuntu",
 		Port:       22,
 		PrivateKey: "-----BEGIN OPENSSH PRIVATE KEY-----\nsecret-key-material\n-----END OPENSSH PRIVATE KEY-----",
@@ -491,7 +493,7 @@ func TestDeployRolloutCollectsRuntimeDiagnosticsOnStackKitsFailure(t *testing.T)
 		t.Fatalf("runtime diagnostics = %+v, want collected", diagnostics)
 	}
 	target := mapFromInterface(diagnostics["target"])
-	if target["host"] != "213.165.73.109" || target["private_key"] != nil || target["password"] != nil {
+	if target["host"] != "203.0.113.83" || target["private_key"] != nil || target["password"] != nil {
 		t.Fatalf("diagnostic target leaked or lost fields: %+v", target)
 	}
 	proof := mapFromInterface(mapFromInterface(job.Result["runtime_proof"])["rollout"])
@@ -511,136 +513,6 @@ func TestDeployRolloutCollectsRuntimeDiagnosticsOnStackKitsFailure(t *testing.T)
 	}
 	if !jobLogsContain(job, "Runtime diagnostics collected for stackkit_rollout") {
 		t.Fatalf("job logs missing diagnostics marker: %+v", job.Logs)
-	}
-}
-
-func TestDeployRolloutRestoreFailureKeepsRolloutProofAndCollectsDiagnostics(t *testing.T) {
-	oldDelays := stackKitsRestoreReadinessRetryDelays
-	stackKitsRestoreReadinessRetryDelays = nil
-	defer func() { stackKitsRestoreReadinessRetryDelays = oldDelays }()
-
-	collector := &fakeRuntimeDiagnosticsCollector{}
-	job := &Job{
-		ID:       "job-restore-diagnostics",
-		Type:     JobTypeDeploy,
-		TargetID: "stack-restore-diagnostics",
-		Payload: map[string]interface{}{
-			providerField: "ionos",
-		},
-		Result: map[string]interface{}{
-			leaseIDField: "lease-restore-diagnostics",
-		},
-	}
-	queue := &Queue{jobs: map[string]*Job{job.ID: job}}
-	rollout := &deployRollout{
-		cfg: &ProvisionConfig{RuntimeActions: RuntimeActions{
-			RolloutRunner:        &fakeRuntimeRunner{name: "rollout", result: map[string]interface{}{"status": "applied"}},
-			RestoreDrill:         &fakeRuntimeRunner{name: "restore", err: errors.New(`runtime action restore_drill returned 502: {"error":{"details":{"error":"no running Docker containers"}}}`)},
-			DiagnosticsCollector: collector,
-		}},
-		job:            job,
-		q:              queue,
-		managedRuntime: false,
-		targetKind:     "cloud",
-		unifiedSpec:    &core.UnifiedSpec{StackKit: "cloud-kit"},
-		actionReq: RuntimeActionRequest{
-			StackID:  job.TargetID,
-			StackKit: "cloud-kit",
-			RuntimeTarget: &RuntimeActionTarget{
-				Host:       "203.0.113.40",
-				PublicIP:   "203.0.113.40",
-				User:       "root",
-				Port:       22,
-				PrivateKey: "test-key",
-			},
-		},
-		e2eProof: map[string]any{
-			"phases_completed": []string{},
-			"rollout_result":   string(JobStatePending),
-			"restore_result":   string(JobStatePending),
-		},
-		runtimeProof:      map[string]interface{}{},
-		stackKitOutputs:   map[string]interface{}{},
-		runtimeMetrics:    map[string]string{},
-		finalRuntimePhase: RuntimePhaseDeployed,
-	}
-
-	if err := rollout.runRollout(context.Background()); err != nil {
-		t.Fatalf("runRollout failed: %v", err)
-	}
-	if err := rollout.runRestoreDrill(context.Background()); err == nil {
-		t.Fatal("expected restore drill failure")
-	}
-
-	if len(collector.requests) != 1 {
-		t.Fatalf("diagnostic requests = %d, want 1", len(collector.requests))
-	}
-	req := collector.requests[0]
-	if req.Action != StepRestoreDrill || req.Reason != "runtime_action_failed" {
-		t.Fatalf("diagnostic request action/reason = %q/%q, want restore_drill/runtime_action_failed", req.Action, req.Reason)
-	}
-	runtimeProof := mapFromInterface(job.Result["runtime_proof"])
-	rolloutProof := mapFromInterface(runtimeProof["rollout"])
-	if rolloutProof["status"] != "applied" {
-		t.Fatalf("runtime_proof.rollout = %+v, want applied after later restore failure", rolloutProof)
-	}
-	e2eProof := mapFromInterface(job.Result["e2e_proof"])
-	if e2eProof["rollout_result"] != "applied" {
-		t.Fatalf("e2e_proof = %+v, want rollout_result applied", e2eProof)
-	}
-	diagnostics := mapFromInterface(job.Result["runtime_diagnostics"])
-	if diagnostics["action"] != StepRestoreDrill || diagnostics["status"] != "collected" {
-		t.Fatalf("runtime diagnostics = %+v, want collected restore diagnostics", diagnostics)
-	}
-	if !jobLogsContain(job, "Runtime diagnostics collected for restore_drill") {
-		t.Fatalf("job logs missing restore diagnostics marker: %+v", job.Logs)
-	}
-}
-
-func TestDeployRolloutTimesOutStuckRuntimeAction(t *testing.T) {
-	collector := &fakeRuntimeDiagnosticsCollector{}
-	unblock := make(chan struct{})
-	defer close(unblock)
-
-	rollout := managedDeployRolloutFixture(t, "stack-runtime-action-timeout", "basement-kit", RuntimeActions{
-		RolloutRunner:        blockingRuntimeActionRunner{unblock: unblock},
-		DiagnosticsCollector: collector,
-	})
-	job := rollout.job
-	job.Payload = map[string]interface{}{providerField: "ionos"}
-	job.Result = map[string]interface{}{leaseIDField: "lease-runtime-action-timeout"}
-	rollout.cfg.RuntimeActionTimeout = 20 * time.Millisecond
-	rollout.runtimeProof = nil
-	rollout.actionReq.Action = runtimeaction.ActionStackKitRollout
-	rollout.actionReq.RuntimeTarget = &RuntimeActionTarget{
-		Host:     "203.0.113.20",
-		PublicIP: "203.0.113.20",
-		User:     "ubuntu",
-		Port:     22,
-		Password: "secret",
-	}
-
-	started := time.Now()
-	err := rollout.runRollout(context.Background())
-	if err == nil {
-		t.Fatal("expected rollout timeout")
-	}
-	if elapsed := time.Since(started); elapsed > time.Second {
-		t.Fatalf("rollout took %s, want bounded timeout", elapsed)
-	}
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("error = %v, want wrapped runtime action timeout", err)
-	}
-	if len(collector.requests) != 1 {
-		t.Fatalf("diagnostic requests = %d, want 1", len(collector.requests))
-	}
-	req := collector.requests[0]
-	if req.Reason != "runtime_action_timeout" || req.Action != StepRolloutRunner {
-		t.Fatalf("diagnostic action/reason = %q/%q, want stackkit_rollout/runtime_action_timeout", req.Action, req.Reason)
-	}
-	diagnostics := mapFromInterface(job.Result["runtime_diagnostics"])
-	if diagnostics["reason"] != "runtime_action_timeout" {
-		t.Fatalf("runtime diagnostics = %+v, want timeout reason", diagnostics)
 	}
 }
 

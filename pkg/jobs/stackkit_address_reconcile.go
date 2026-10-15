@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -19,6 +20,9 @@ import (
 )
 
 const ManagedAddressReconciliationResultField = "kombify_me_address_reconciliation"
+
+// Match the existing RFC1123 hostname boundary used by provider admission.
+var managedAddressLabel = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 
 // ManagedAddressAuthority reloads the approved runtime and rollout at execution
 // time. It returns only a public address, never provider or SSH credentials.
@@ -43,9 +47,15 @@ func reconcileManagedChangeSetAddresses(ctx context.Context, authority ManagedAd
 	if json.Unmarshal(req.CandidateSpecJSON, &candidate) != nil {
 		return nil, fmt.Errorf("candidate address intent is invalid")
 	}
-	// A zone-bound installation is an external-domain plan, just as at rollout.
-	// This path does not enable install zones or change their edge/TLS policy.
-	if candidate.Network.Domain.Base != addressModeKombifyMeDomain {
+	domain := candidate.Network.Domain.Base
+	zone := ""
+	if strings.HasSuffix(domain, "."+addressModeKombifyMeDomain) {
+		label := strings.TrimSuffix(domain, "."+addressModeKombifyMeDomain)
+		if !managedAddressLabel.MatchString(label) {
+			return nil, fmt.Errorf("managed installation zone must be one registered label")
+		}
+		zone = domain
+	} else if domain != addressModeKombifyMeDomain {
 		return map[string]interface{}{"status": "not_applicable"}, nil
 	}
 	if authority == nil {
@@ -55,14 +65,25 @@ func reconcileManagedChangeSetAddresses(ctx context.Context, authority ManagedAd
 	if err != nil {
 		return nil, err
 	}
+	if zone != "" {
+		// The released CLI treats an installation zone like an own domain.
+		// Preserve that plan, deriving only its existing registry lookup label.
+		plan, err = normalizeRegisteredZonePlan(plan, zone)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if plan.APIVersion != stackKitAddressPlanV1 || plan.Provider != addressModeKombifyMe || plan.Domain != addressModeKombifyMeDomain || req.StackKitInstanceID == "" || plan.StackName != req.StackKitInstanceID || plan.SubdomainPrefix == "" || len(plan.Services) == 0 {
-		return nil, fmt.Errorf("managed change set requires its existing flat address binding")
+		return nil, fmt.Errorf("managed change set requires its existing managed address binding")
 	}
 	seen := map[string]bool{}
 	hosts := make([]string, 0, len(plan.Services))
 	for _, service := range plan.Services {
 		want := plan.SubdomainPrefix + "-" + service.ServiceKey + "." + addressModeKombifyMeDomain
-		if service.ServiceKey == "" || seen[service.ServiceKey] || service.Host != want {
+		if zone != "" {
+			want = service.ServiceKey + "." + zone
+		}
+		if !managedAddressLabel.MatchString(service.ServiceKey) || seen[service.ServiceKey] || service.Host != want {
 			return nil, fmt.Errorf("candidate service differs from its managed address binding")
 		}
 		seen[service.ServiceKey] = true
@@ -104,7 +125,7 @@ func reconcileManagedChangeSetAddresses(ctx context.Context, authority ManagedAd
 	if err != nil {
 		return nil, err
 	}
-	if bound.Prefix != plan.SubdomainPrefix || bound.Zone != "" {
+	if bound.Prefix != plan.SubdomainPrefix || bound.Zone != zone {
 		return nil, fmt.Errorf("managed change set changed its address layout")
 	}
 	for _, service := range plan.Services {
@@ -123,6 +144,26 @@ func reconcileManagedChangeSetAddresses(ctx context.Context, authority ManagedAd
 		"candidate_sha256": fmt.Sprintf("sha256:%x", sha256.Sum256(req.CandidateSpecJSON)),
 		"verified_at":      time.Now().UTC().Format(time.RFC3339),
 	}, nil
+}
+
+// The CLI deliberately represents an existing installation zone as external.
+// Both initial recovery and applied change sets must verify that exact zone
+// against the owner's registry before registering any additional route.
+func normalizeRegisteredZonePlan(plan stackKitAddressPlan, zone string) (stackKitAddressPlan, error) {
+	label := strings.TrimSuffix(zone, "."+addressModeKombifyMeDomain)
+	if !managedAddressLabel.MatchString(label) || plan.APIVersion != stackKitAddressPlanV1 || plan.Provider != "external" || plan.Domain != zone || plan.SubdomainPrefix != "" || len(plan.Services) == 0 {
+		return plan, fmt.Errorf("candidate differs from its installation zone plan")
+	}
+	seen := map[string]bool{}
+	for _, service := range plan.Services {
+		if !managedAddressLabel.MatchString(service.ServiceKey) || seen[service.ServiceKey] || service.Host != service.ServiceKey+"."+zone {
+			return plan, fmt.Errorf("candidate service escapes its installation zone")
+		}
+		seen[service.ServiceKey] = true
+	}
+	plan.Provider, plan.Domain = addressModeKombifyMe, addressModeKombifyMeDomain
+	plan.SubdomainPrefix, plan.RegisteredZone = label, zone
+	return plan, nil
 }
 
 func pinnedCandidateAddressPlan(ctx context.Context, release stackkitrelease.Release, candidate []byte) (stackKitAddressPlan, error) {
@@ -174,6 +215,10 @@ func verifyExistingManagedAddress(ctx context.Context, plan stackKitAddressPlan,
 		return fmt.Errorf("managed address registry returned no route list")
 	}
 	baseID := ""
+	layout := managedAddressLayoutFlat
+	if plan.RegisteredZone != "" {
+		layout = managedAddressLayoutZone
+	}
 	services := make([]map[string]any, 0)
 	for _, raw := range routes {
 		route, ok := raw.(map[string]any)
@@ -182,7 +227,7 @@ func verifyExistingManagedAddress(ctx context.Context, plan stackKitAddressPlan,
 		}
 		switch route["subdomain_kind"] {
 		case "base":
-			if baseID != "" || route["name"] != plan.SubdomainPrefix || route["fqdn"] != plan.SubdomainPrefix+"."+addressModeKombifyMeDomain || (route["layout"] != nil && route["layout"] != "" && route["layout"] != managedAddressLayoutFlat) {
+			if baseID != "" || route["name"] != plan.SubdomainPrefix || route["fqdn"] != plan.SubdomainPrefix+"."+addressModeKombifyMeDomain || (route["layout"] != nil && route["layout"] != "" && route["layout"] != layout) {
 				return fmt.Errorf("candidate differs from its registered managed base")
 			}
 			baseID, _ = route["id"].(string)
@@ -200,7 +245,11 @@ func verifyExistingManagedAddress(ctx context.Context, plan stackKitAddressPlan,
 	}
 	for _, service := range services {
 		name, _ := service["name"].(string)
-		if service["parent_id"] != baseID || service["target_type"] != "proxy" || (origin != "" && service["target_addr"] != origin) || service["fqdn"] != name+"."+addressModeKombifyMeDomain || !strings.HasPrefix(name, plan.SubdomainPrefix+"-") {
+		key := strings.TrimPrefix(name, plan.SubdomainPrefix+"-")
+		if plan.RegisteredZone != "" {
+			key = strings.TrimSuffix(name, "."+plan.SubdomainPrefix)
+		}
+		if service["parent_id"] != baseID || service["target_type"] != "proxy" || (origin != "" && service["target_addr"] != origin) || service["fqdn"] != name+"."+addressModeKombifyMeDomain || key == name || !managedAddressLabel.MatchString(key) {
 			return fmt.Errorf("existing managed service differs from the current runtime")
 		}
 	}

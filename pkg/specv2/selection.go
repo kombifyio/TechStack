@@ -19,6 +19,9 @@ type GoalSelection struct {
 	// AddOns are separate application workloads selected by installing
 	// settings through their workloadRef.
 	AddOns []WorkloadChoice
+	// Capabilities maps a goal to its capability selections (option id or
+	// "off"), passed to the release init as --use-case-capability.
+	Capabilities map[string]map[string]string
 }
 
 // WorkloadChoice is one release-declared workload binding. Goal is the use
@@ -31,7 +34,33 @@ type WorkloadChoice struct {
 }
 
 func (selection GoalSelection) hasInstallChoices() bool {
-	return len(selection.Alternatives) > 0 || len(selection.AddOns) > 0
+	return len(selection.Alternatives) > 0 || len(selection.AddOns) > 0 || len(selection.Capabilities) > 0
+}
+
+// GoalSelectionFromIntent shares the release-authoring choices with planning
+// consumers. Both use the same installing settings and workload bindings.
+func GoalSelectionFromIntent(intent WizardIntent, catalog stackkitrelease.UseCaseCatalog) (GoalSelection, error) {
+	return goalSelectionFromIntent(intent, catalog)
+}
+
+// capabilityArgs renders the capability selections of shipped goals as
+// `--use-case-capability <goal>.<capability>=<value>` in sorted order.
+func (selection GoalSelection) capabilityArgs(mappedGoals []string) []string {
+	var args []string
+	goals := append([]string(nil), mappedGoals...)
+	sort.Strings(goals)
+	for _, goal := range goals {
+		values := selection.Capabilities[goal]
+		ids := make([]string, 0, len(values))
+		for id := range values {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		for _, id := range ids {
+			args = append(args, "--use-case-capability", goal+"."+id+"="+values[id])
+		}
+	}
+	return args
 }
 
 // goalSelectionFromIntent turns the operator's use-case settings into release
@@ -39,6 +68,17 @@ func (selection GoalSelection) hasInstallChoices() bool {
 // same catalog; this only decides which of them the release installs.
 func goalSelectionFromIntent(intent WizardIntent, catalog stackkitrelease.UseCaseCatalog) (GoalSelection, error) {
 	selection := GoalSelection{Goals: intent.Goals}
+	for slug, values := range intent.UseCaseCapabilities {
+		for id, value := range values {
+			if selection.Capabilities == nil {
+				selection.Capabilities = map[string]map[string]string{}
+			}
+			if selection.Capabilities[slug] == nil {
+				selection.Capabilities[slug] = map[string]string{}
+			}
+			selection.Capabilities[slug][id] = value
+		}
+	}
 	slugs := make([]string, 0, len(intent.UseCaseSettings))
 	for slug := range intent.UseCaseSettings {
 		slugs = append(slugs, slug)

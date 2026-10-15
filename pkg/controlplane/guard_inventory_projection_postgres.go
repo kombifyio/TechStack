@@ -40,6 +40,9 @@ func (s *PostgresStore) ApplyGuardInventoryProjection(
 		}
 		return nil, err
 	}
+	// The host figures of an accepted observation feed the metric history after
+	// the registry commit; the history never gates the observation itself.
+	s.recordGuardHostMetrics(ctx, result, prepared.command.Event)
 	return result, nil
 }
 
@@ -54,6 +57,9 @@ func (s *PostgresStore) applyGuardInventoryProjection(
 		result, applyErr = applyGuardInventoryProjectionTx(ctx, tx, prepared, tenantID, s.serverEventProjector)
 		return applyErr
 	})
+	if err == nil && result != nil {
+		s.announceServerEvents(result.ServerEvent)
+	}
 	return result, err
 }
 

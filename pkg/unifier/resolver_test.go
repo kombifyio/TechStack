@@ -1,10 +1,37 @@
 package unifier
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/kombifyio/techstack/pkg/core"
 )
+
+// Availability must not be invented when the configured release authority
+// fails or a consumer supplies an explicit empty catalog.
+func TestStackKitResolverRejectsUnavailableCatalog(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		kits             []string
+		missingAuthority bool
+	}{
+		{name: "explicit empty", kits: []string{}},
+		{name: "empty name", kits: []string{""}},
+		{name: "cloud only", kits: []string{StackKitCloud}},
+		{name: "broken override", missingAuthority: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.missingAuthority {
+				t.Setenv("TECHSTACK_STACKKITS_DIR", filepath.Join(t.TempDir(), "missing"))
+				t.Setenv("STACKKITS_REPO", t.TempDir())
+			}
+			result := NewStackKitResolver(tc.kits).Resolve(&core.KombinationSpec{Kit: StackKitBasement})
+			if result.Valid {
+				t.Fatalf("unavailable catalog admitted a kit: %+v", result)
+			}
+		})
+	}
+}
 
 func TestStackKitResolver_Resolve_NilSpecDefaultsToBasement(t *testing.T) {
 	resolver := NewStackKitResolver(nil)

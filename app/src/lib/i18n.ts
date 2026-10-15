@@ -11,6 +11,24 @@ import { accessUsersMessages } from "./wizard/access-users-messages";
 import { nodeGuidanceMessages } from "./wizard/node-guidance-messages";
 import { uiMessages } from "./ui-messages";
 import { screenMessages } from "./screen-messages";
+import { serviceCardMessages } from "./service-card-messages";
+import { networkMessages } from "./network-messages";
+import { storageMessages } from "./monitoring/storage-messages";
+import { domainMessages } from "./monitoring/domain-messages";
+import { maintenanceMessages } from "./maintenance-messages";
+import { guardMessages } from "./guard/guard-messages";
+import { guardMessagesEs } from "./guard/guard-messages-es";
+import { guardMessagesZhHans } from "./guard/guard-messages-zh-hans";
+import { guardMessagesHi } from "./guard/guard-messages-hi";
+import { guardMessagesAr } from "./guard/guard-messages-ar";
+import { walletMessages } from "./kombify-wallet/wallet-messages";
+import { actorsMessages } from "./actors/actors-messages";
+import { nodesMessages } from "./nodes/nodes-messages";
+import { creationTemplateMessages } from "./wizard/creation-template-messages";
+import { marketplaceMessages } from "./wizard/marketplace-messages";
+import { setupFlowMessages } from "./wizard/setup-flow-messages";
+import { connectDevicesMessages } from "./dashboard/connect-devices-messages";
+import { experienceMessages } from "./wizard/experience-messages";
 import { es } from "./locales/es";
 import { zhHans } from "./locales/zh-Hans";
 import { hi } from "./locales/hi";
@@ -28,6 +46,20 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...nodeGuidanceMessages.en,
     ...uiMessages.en,
     ...screenMessages.en,
+    ...guardMessages.en,
+    ...serviceCardMessages.en,
+    ...networkMessages.en,
+    ...storageMessages.en,
+    ...domainMessages.en,
+    ...maintenanceMessages.en,
+    ...walletMessages.en,
+    ...actorsMessages.en,
+    ...nodesMessages.en,
+    ...creationTemplateMessages.en,
+    ...marketplaceMessages.en,
+    ...setupFlowMessages.en,
+    ...connectDevicesMessages.en,
+    ...experienceMessages.en,
     "wizard.creation.preferenceOnly":
       "Preference saved. This release installs the suggested service; the alternative is not applied yet.",
     "wizard.preview.mail.title": "Mail",
@@ -58,7 +90,14 @@ export const translations: Record<Locale, Record<string, string>> = {
     "wizard.preview.game.description":
       "A Minecraft world for you and your friends.",
     "wizard.preview.game.help":
-      "The planned Games experience uses Pterodactyl to manage a persistent Minecraft world. Choose Java or Bedrock to match your players. Local hosting and a managed VPS are separate placement options; invitations and world recovery belong to the setup.",
+      "Games run on a game panel that manages a persistent Minecraft world: Calagopus by default, with Pelican and Pterodactyl as alternatives. Choose Java or Bedrock to match your players. Local hosting and a managed VPS are separate placement options; invitations and world recovery belong to the setup.",
+    "wizard.status.beta": "Beta",
+    "wizard.status.experimental": "Experimental",
+    "wizard.status.deprecated": "Deprecated",
+    "wizard.status.supported": "Supported",
+    "wizard.status.hint":
+      "Release status from the pinned StackKits release. Beta use cases install and are still being proven.",
+    "wizard.preview.release": "StackKits {tag}",
     "wizard.preview.game.edition": "Minecraft edition",
     "wizard.preview.dev.description":
       "Your projects and remote workspace, together.",
@@ -97,8 +136,6 @@ export const translations: Record<Locale, Record<string, string>> = {
     "wizard.preview.title": "Make room for what matters.",
     "wizard.preview.subtitle":
       "Choose what you want to make your own. Start with the suggested service, or pick an alternative. The details are there when you need them.",
-    "wizard.preview.available": "Choose your use cases",
-    "wizard.preview.availableHint": "Pick a use case. Make it yours.",
     "wizard.preview.defaultService": "Suggested",
     "wizard.preview.alternative": "Alternative",
     "wizard.preview.savedForLater": "Saved for later",
@@ -204,7 +241,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     "wizard.server.hypervisor.help":
       "Uses your connected Proxmox and its existing storage and network.",
     "wizard.server.hypervisor.standard":
-      "Ubuntu 24.04 LTS runs your StackKits core in a separate VM. Techstack prepares and connects the guest automatically.",
+      "Ubuntu LTS runs your StackKits core in a separate VM. Techstack prepares and connects the guest automatically.",
     "wizard.server.hypervisor.appliance":
       "Home Assistant OS uses a separate appliance VM. The Ubuntu guest continues to run the core and other services.",
     "wizard.server.hypervisor.host": "Connected Proxmox server",
@@ -238,12 +275,15 @@ export const translations: Record<Locale, Record<string, string>> = {
     "nav.dashboard": "Dashboard",
     "nav.monitoring": "Monitoring",
     "nav.services": "Services",
+    "nav.apps": "Apps",
     "nav.wallet": "Wallet",
     "nav.help": "Help",
     "nav.settings": "Settings",
     "nav.logout": "Logout",
     "nav.theme": "Theme",
     "appearance.inherit": "Follow default",
+    "appearance.sessionHint":
+      "Applies to this session only. Change the default in kombify Cloud Settings.",
     "appearance.dark": "Dark",
     "appearance.light": "Light",
     "appearance.system": "System",
@@ -364,12 +404,51 @@ export const translations: Record<Locale, Record<string, string>> = {
 
     // Wizard
     "wizard.title": "Create kombify-Techstack",
-    "wizard.selfDisclosure.applying":
-      "Applying what you told us in kombify Cloud…",
+    "wizard.selfDisclosure.review.title": "Use the answers from this link?",
+    "wizard.selfDisclosure.review.body":
+      "The link you opened carries these answers about you. Techstack saves them to your profile and uses them for your recommendations only when you choose “Use these answers”. Nothing is saved yet.",
+    "wizard.selfDisclosure.review.notes": "Anything else? (optional)",
+    "wizard.selfDisclosure.review.notesHint":
+      "Hardware details, special wishes or what worries you, in your own words.",
+    "wizard.selfDisclosure.review.use": "Use these answers",
+    "wizard.selfDisclosure.review.discard": "Discard",
+    "wizard.selfDisclosure.applying": "Saving your answers…",
     "wizard.selfDisclosure.applied":
-      "We used what you told us in kombify Cloud. Everything stays editable.",
+      "Your answers are saved to your profile. Everything stays editable.",
     "wizard.selfDisclosure.failed":
-      "Your answers from kombify Cloud could not be saved. You can continue; the wizard works without them.",
+      "Your answers could not be saved. You can continue; the wizard works without them.",
+    "wizard.selfDisclosure.question.experience":
+      "How hands-on do you want to be?",
+    "wizard.selfDisclosure.question.goals": "What should your homelab do?",
+    "wizard.selfDisclosure.question.placement": "Where should it run?",
+    "wizard.selfDisclosure.question.hardware": "What hardware do you have?",
+    "wizard.selfDisclosure.question.household": "Who will use it?",
+    "wizard.selfDisclosure.question.motivations": "Why are you building it?",
+    "wizard.selfDisclosure.experience.hands-off": "Just make it work",
+    "wizard.selfDisclosure.experience.guided": "Guide me",
+    "wizard.selfDisclosure.experience.curious": "Curious admin",
+    "wizard.selfDisclosure.experience.techie": "Techie",
+    "wizard.selfDisclosure.experience.expert": "Expert",
+    "wizard.selfDisclosure.placement.home": "At home",
+    "wizard.selfDisclosure.placement.rented": "On a rented server",
+    "wizard.selfDisclosure.placement.both": "Both",
+    "wizard.selfDisclosure.placement.unsure": "Not sure yet",
+    "wizard.selfDisclosure.hardware.none-yet": "Nothing yet",
+    "wizard.selfDisclosure.hardware.old-pc": "An old PC or laptop",
+    "wizard.selfDisclosure.hardware.mini-pc": "A mini PC",
+    "wizard.selfDisclosure.hardware.nas": "A NAS",
+    "wizard.selfDisclosure.hardware.raspberry-pi": "A Raspberry Pi",
+    "wizard.selfDisclosure.hardware.rented-server": "A rented server",
+    "wizard.selfDisclosure.household.just-me": "Just me",
+    "wizard.selfDisclosure.household.household": "My household",
+    "wizard.selfDisclosure.household.friends-family": "Family and friends",
+    "wizard.selfDisclosure.household.small-team": "A small team",
+    "wizard.selfDisclosure.motivation.privacy": "Privacy and control",
+    "wizard.selfDisclosure.motivation.replace-subscriptions":
+      "Replace paid subscriptions",
+    "wizard.selfDisclosure.motivation.learning": "Learning and tinkering",
+    "wizard.selfDisclosure.motivation.family": "Something for my family",
+    "wizard.selfDisclosure.motivation.projects": "Work or side projects",
     "wizard.step.goals": "Goals",
     "wizard.step.server": "Node",
     "wizard.step.access": "Access",
@@ -473,11 +552,11 @@ export const translations: Record<Locale, Record<string, string>> = {
       "Recommendation: Use reverse proxy (Traefik) for SSL. Email hosting requires good spam protection.",
     "wizard.goals.everything.title": "To infinity and beyond!",
     "wizard.goals.everything.description":
-      "The complete solution for maximum independence. Do all at once and even more.",
+      "The full homelab in one click: everything that fits you and your devices.",
     "wizard.goals.everything.help":
       "Enables storage, web hosting, monitoring, and more.",
     "wizard.goals.everything.tip":
-      "Recommendation: Best for experienced users or if you have dedicated hardware ready.",
+      "We pick what suits your experience and hardware. You can untick anything.",
     "wizard.goals.tipText":
       "If you're unsure, pick just one goal. kombify-Techstack stays a single system and you can add more services later. Need more settings? Try advanced settings below.",
     "wizard.goals.advancedTitle": "Advanced use cases",
@@ -645,6 +724,45 @@ export const translations: Record<Locale, Record<string, string>> = {
       "Choose how this device connects. Your Homelab access, people and sign-in stay as they are.",
     "wizard.step.inherited": "Already set for your Homelab",
     "wizard.step.existingOwner": "Your Homelab owner stays the same",
+    "wizard.addApp.title": "Add application",
+    "wizard.addApp.intro":
+      "Choose an application and the Node it runs on. Access, people and sign-in stay as your Homelab has them.",
+    "wizard.addApp.catalogEmpty":
+      "The catalog offers no application for this Homelab yet.",
+    "wizard.addApp.recommended": "Recommended",
+    "wizard.addApp.about": "About",
+    "wizard.addApp.nodeTitle": "Where should {name} run?",
+    "wizard.addApp.nodeUnsupported":
+      "This Node's StackKit does not offer {name}.",
+    "wizard.addApp.nodeNotReady": "Not ready for rollouts yet",
+    "wizard.addApp.submit": "Add application",
+    "wizard.addApp.result": "{name} was added to {node}.",
+    "wizard.addApp.resultStatus": "Status: {status}",
+    "wizard.addApp.done": "Done",
+    "wizard.settings.title": "Homelab settings",
+    "wizard.settings.intro":
+      "Change who uses your Homelab and how you sign in. Each step acts on your running Homelab right away.",
+    "wizard.settings.entry":
+      "People and sign-in of your Homelab, in the familiar wizard steps.",
+    "wizard.settings.open": "Edit Homelab settings",
+    "wizard.settings.loadError": "Your Homelab could not be loaded.",
+    "wizard.settings.empty": "No Homelab is set up yet.",
+    "wizard.settings.deployment": "StackKit deployment",
+    "wizard.settings.goalsElsewhere": "Add applications with Add application.",
+    "wizard.settings.serverElsewhere": "Add servers with Add Node.",
+    "wizard.settings.accessUnsupported":
+      "Access cannot be changed for a running Homelab yet.",
+    "wizard.settings.openAddApplication": "Add application",
+    "wizard.settings.openAddNode": "Add Node",
+    "wizard.settings.usersTitle": "People",
+    "wizard.settings.usersIntro":
+      "Invite the people you planned for this Homelab. Each one gets a personal sign-in link.",
+    "wizard.settings.loginTitle": "Sign-in",
+    "wizard.settings.loginIntro":
+      "Activate your passkey sign-in, or issue a new link if the last one expired.",
+    "wizard.settings.noPlannedPeople":
+      "No people were planned for this Homelab. Adding new people here is not supported yet.",
+    "wizard.settings.members": "Members",
     "wizard.server.cloud.title": "kombify VPS",
     "wizard.server.cloud.description":
       "Your own virtual server, provided and connected by kombify.",
@@ -890,6 +1008,20 @@ export const translations: Record<Locale, Record<string, string>> = {
   de: {
     ...uiMessages.de,
     ...screenMessages.de,
+    ...guardMessages.de,
+    ...serviceCardMessages.de,
+    ...networkMessages.de,
+    ...storageMessages.de,
+    ...domainMessages.de,
+    ...maintenanceMessages.de,
+    ...walletMessages.de,
+    ...actorsMessages.de,
+    ...nodesMessages.de,
+    ...creationTemplateMessages.de,
+    ...marketplaceMessages.de,
+    ...setupFlowMessages.de,
+    ...connectDevicesMessages.de,
+    ...experienceMessages.de,
     ...loginMessages.de,
     ...accessUsersMessages.de,
     ...nodeGuidanceMessages.de,
@@ -923,7 +1055,14 @@ export const translations: Record<Locale, Record<string, string>> = {
     "wizard.preview.game.description":
       "Eine Minecraft-Welt für dich und deine Freunde.",
     "wizard.preview.game.help":
-      "Der geplante Games-Use-Case nutzt Pterodactyl für eine dauerhafte Minecraft-Welt. Wähle Java oder Bedrock passend zu deinen Spielern. Lokales Hosting und ein Managed-VPS sind getrennte Optionen; Einladungen und die Wiederherstellung der Welt gehören zur Einrichtung.",
+      "Games laufen auf einem Game-Panel, das eine dauerhafte Minecraft-Welt verwaltet: standardmäßig Calagopus, alternativ Pelican oder Pterodactyl. Wähle Java oder Bedrock passend zu deinen Spielern. Lokales Hosting und ein Managed-VPS sind getrennte Optionen; Einladungen und die Wiederherstellung der Welt gehören zur Einrichtung.",
+    "wizard.status.beta": "Beta",
+    "wizard.status.experimental": "Experimentell",
+    "wizard.status.deprecated": "Veraltet",
+    "wizard.status.supported": "Unterstützt",
+    "wizard.status.hint":
+      "Release-Status aus dem gepinnten StackKits-Release. Beta-Use-Cases sind installierbar und werden noch erprobt.",
+    "wizard.preview.release": "StackKits {tag}",
     "wizard.preview.game.edition": "Minecraft-Edition",
     "wizard.preview.dev.description":
       "Deine Projekte und dein Remote-Arbeitsplatz.",
@@ -962,9 +1101,6 @@ export const translations: Record<Locale, Record<string, string>> = {
     "wizard.preview.title": "Platz für das, was dir wichtig ist.",
     "wizard.preview.subtitle":
       "Wähle, was zu deinem digitalen Zuhause gehört. Starte mit dem vorgeschlagenen Dienst oder wähle eine Alternative. Die Details öffnest du, wenn du sie brauchst.",
-    "wizard.preview.available": "Wähle deine Use Cases",
-    "wizard.preview.availableHint":
-      "Use Case auswählen. Nach deinen Wünschen anpassen.",
     "wizard.preview.defaultService": "Vorgeschlagen",
     "wizard.preview.alternative": "Alternative",
     "wizard.preview.savedForLater": "Für später gespeichert",
@@ -1071,7 +1207,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     "wizard.server.hypervisor.help":
       "Nutzt dein verbundenes Proxmox mit vorhandenem Speicher und Netzwerk.",
     "wizard.server.hypervisor.standard":
-      "Ubuntu 24.04 LTS betreibt den StackKits-Core in einer eigenen VM. Techstack bereitet den Gast vor und verbindet ihn automatisch.",
+      "Ubuntu LTS betreibt den StackKits-Core in einer eigenen VM. Techstack bereitet den Gast vor und verbindet ihn automatisch.",
     "wizard.server.hypervisor.appliance":
       "Home Assistant OS bekommt eine separate Appliance-VM. Der Ubuntu-Gast betreibt weiterhin den Core und weitere Dienste.",
     "wizard.server.hypervisor.host": "Verbundener Proxmox-Server",
@@ -1105,12 +1241,15 @@ export const translations: Record<Locale, Record<string, string>> = {
     "nav.dashboard": "Dashboard",
     "nav.monitoring": "Monitoring",
     "nav.services": "Dienste",
+    "nav.apps": "Apps",
     "nav.wallet": "Wallet",
     "nav.help": "Hilfe",
     "nav.settings": "Einstellungen",
     "nav.logout": "Abmelden",
     "nav.theme": "Darstellung",
     "appearance.inherit": "Standard übernehmen",
+    "appearance.sessionHint":
+      "Gilt nur für diese Sitzung. Den Standard änderst du in den kombify Cloud Einstellungen.",
     "appearance.dark": "Dunkel",
     "appearance.light": "Hell",
     "appearance.system": "System",
@@ -1232,12 +1371,52 @@ export const translations: Record<Locale, Record<string, string>> = {
 
     // Wizard
     "wizard.title": "kombify-Techstack erstellen",
-    "wizard.selfDisclosure.applying":
-      "Deine Angaben aus kombify Cloud werden übernommen…",
+    "wizard.selfDisclosure.review.title":
+      "Die Angaben aus diesem Link übernehmen?",
+    "wizard.selfDisclosure.review.body":
+      "Der Link, den du geöffnet hast, enthält diese Angaben über dich. Techstack speichert sie in deinem Profil und nutzt sie für deine Empfehlungen nur, wenn du „Angaben übernehmen“ wählst. Noch ist nichts gespeichert.",
+    "wizard.selfDisclosure.review.notes": "Sonst noch etwas? (optional)",
+    "wizard.selfDisclosure.review.notesHint":
+      "Hardware-Details, besondere Wünsche oder was dir Sorgen macht, in deinen eigenen Worten.",
+    "wizard.selfDisclosure.review.use": "Angaben übernehmen",
+    "wizard.selfDisclosure.review.discard": "Verwerfen",
+    "wizard.selfDisclosure.applying": "Deine Angaben werden gespeichert…",
     "wizard.selfDisclosure.applied":
-      "Wir haben deine Angaben aus kombify Cloud übernommen. Alles bleibt änderbar.",
+      "Deine Angaben sind in deinem Profil gespeichert. Alles bleibt änderbar.",
     "wizard.selfDisclosure.failed":
-      "Deine Angaben aus kombify Cloud konnten nicht gespeichert werden. Du kannst trotzdem weitermachen; der Assistent funktioniert auch ohne sie.",
+      "Deine Angaben konnten nicht gespeichert werden. Du kannst trotzdem weitermachen; der Assistent funktioniert auch ohne sie.",
+    "wizard.selfDisclosure.question.experience":
+      "Wie praktisch möchtest du selbst mitarbeiten?",
+    "wizard.selfDisclosure.question.goals": "Was soll dein Homelab können?",
+    "wizard.selfDisclosure.question.placement": "Wo soll es laufen?",
+    "wizard.selfDisclosure.question.hardware": "Welche Hardware hast du?",
+    "wizard.selfDisclosure.question.household": "Wer wird es nutzen?",
+    "wizard.selfDisclosure.question.motivations": "Warum baust du es auf?",
+    "wizard.selfDisclosure.experience.hands-off": "Es soll einfach laufen",
+    "wizard.selfDisclosure.experience.guided": "Führ mich",
+    "wizard.selfDisclosure.experience.curious": "Neugieriger Admin",
+    "wizard.selfDisclosure.experience.techie": "Technikfan",
+    "wizard.selfDisclosure.experience.expert": "Profi",
+    "wizard.selfDisclosure.placement.home": "Zu Hause",
+    "wizard.selfDisclosure.placement.rented": "Auf einem gemieteten Server",
+    "wizard.selfDisclosure.placement.both": "Beides",
+    "wizard.selfDisclosure.placement.unsure": "Noch unsicher",
+    "wizard.selfDisclosure.hardware.none-yet": "Noch nichts",
+    "wizard.selfDisclosure.hardware.old-pc": "Einen alten PC oder Laptop",
+    "wizard.selfDisclosure.hardware.mini-pc": "Einen Mini-PC",
+    "wizard.selfDisclosure.hardware.nas": "Ein NAS",
+    "wizard.selfDisclosure.hardware.raspberry-pi": "Einen Raspberry Pi",
+    "wizard.selfDisclosure.hardware.rented-server": "Einen gemieteten Server",
+    "wizard.selfDisclosure.household.just-me": "Nur ich",
+    "wizard.selfDisclosure.household.household": "Mein Haushalt",
+    "wizard.selfDisclosure.household.friends-family": "Familie und Freunde",
+    "wizard.selfDisclosure.household.small-team": "Ein kleines Team",
+    "wizard.selfDisclosure.motivation.privacy": "Privatsphäre und Kontrolle",
+    "wizard.selfDisclosure.motivation.replace-subscriptions":
+      "Kostenpflichtige Abos ersetzen",
+    "wizard.selfDisclosure.motivation.learning": "Lernen und Tüfteln",
+    "wizard.selfDisclosure.motivation.family": "Etwas für meine Familie",
+    "wizard.selfDisclosure.motivation.projects": "Arbeit oder Nebenprojekte",
     "wizard.step.goals": "Ziele",
     "wizard.step.server": "Node",
     "wizard.step.access": "Zugriff",
@@ -1341,13 +1520,14 @@ export const translations: Record<Locale, Record<string, string>> = {
       "Volle Kontrolle über deine Online-Präsenz. Keine monatlichen Gebühren.",
     "wizard.goals.website.tip":
       "Empfehlung: Nutze Reverse Proxy (Traefik) für SSL. E-Mail-Hosting erfordert guten Spam-Schutz.",
-    "wizard.goals.everything.title": "Bis zur Unendlichkeit und noch weiter!",
+    "wizard.goals.everything.title":
+      "Bis zur Unendlichkeit und noch viel weiter!",
     "wizard.goals.everything.description":
-      "Die komplette Lösung für maximale Unabhängigkeit. Alles auf einmal und noch mehr.",
+      "Das volle Homelab mit einem Klick: alles, was zu dir und deinen Geräten passt.",
     "wizard.goals.everything.help":
       "Aktiviert Speicher, Webhosting, Monitoring und mehr.",
     "wizard.goals.everything.tip":
-      "Empfehlung: Am besten für erfahrene Nutzer oder wenn du dedizierte Hardware bereit hast.",
+      "Wir wählen, was zu deiner Erfahrung und deiner Hardware passt. Abwählen geht jederzeit.",
     "wizard.goals.tipText":
       "Wenn du unsicher bist, wähle nur ein Ziel. kombify-Techstack bleibt ein einzelnes System und du kannst später weitere Dienste hinzufügen. Mehr Einstellungen? Probiere die erweiterten Einstellungen unten.",
     "wizard.goals.advancedTitle": "Erweiterte Use Cases",
@@ -1518,6 +1698,47 @@ export const translations: Record<Locale, Record<string, string>> = {
       "Wähle, wie sich das Gerät verbindet. Zugriff, Personen und Anmeldung deines Homelabs bleiben bestehen.",
     "wizard.step.inherited": "Für dein Homelab bereits festgelegt",
     "wizard.step.existingOwner": "Der Owner deines Homelabs bleibt gleich",
+    "wizard.addApp.title": "Anwendung hinzufügen",
+    "wizard.addApp.intro":
+      "Wähle eine Anwendung und den Node, auf dem sie läuft. Zugriff, Personen und Anmeldung bleiben, wie dein Homelab sie hat.",
+    "wizard.addApp.catalogEmpty":
+      "Der Katalog bietet für dieses Homelab noch keine Anwendung an.",
+    "wizard.addApp.recommended": "Empfohlen",
+    "wizard.addApp.about": "Worum es geht",
+    "wizard.addApp.nodeTitle": "Wo soll {name} laufen?",
+    "wizard.addApp.nodeUnsupported":
+      "Das StackKit dieses Nodes bietet {name} nicht an.",
+    "wizard.addApp.nodeNotReady": "Noch nicht bereit für Rollouts",
+    "wizard.addApp.submit": "Anwendung hinzufügen",
+    "wizard.addApp.result": "{name} wurde zu {node} hinzugefügt.",
+    "wizard.addApp.resultStatus": "Status: {status}",
+    "wizard.addApp.done": "Fertig",
+    "wizard.settings.title": "Homelab-Einstellungen",
+    "wizard.settings.intro":
+      "Ändere, wer dein Homelab nutzt und wie du dich anmeldest. Jeder Schritt wirkt sofort auf dein laufendes Homelab.",
+    "wizard.settings.entry":
+      "Personen und Anmeldung deines Homelabs, in den bekannten Wizard-Schritten.",
+    "wizard.settings.open": "Homelab-Einstellungen bearbeiten",
+    "wizard.settings.loadError": "Dein Homelab konnte nicht geladen werden.",
+    "wizard.settings.empty": "Es ist noch kein Homelab eingerichtet.",
+    "wizard.settings.deployment": "StackKit-Deployment",
+    "wizard.settings.goalsElsewhere":
+      "Anwendungen fügst du mit „Anwendung hinzufügen“ hinzu.",
+    "wizard.settings.serverElsewhere":
+      "Server fügst du mit „Node hinzufügen“ hinzu.",
+    "wizard.settings.accessUnsupported":
+      "Der Zugriff lässt sich für ein laufendes Homelab noch nicht ändern.",
+    "wizard.settings.openAddApplication": "Anwendung hinzufügen",
+    "wizard.settings.openAddNode": "Node hinzufügen",
+    "wizard.settings.usersTitle": "Personen",
+    "wizard.settings.usersIntro":
+      "Lade die Personen ein, die du für dieses Homelab geplant hast. Jede bekommt einen persönlichen Anmeldelink.",
+    "wizard.settings.loginTitle": "Anmeldung",
+    "wizard.settings.loginIntro":
+      "Aktiviere deine Passkey-Anmeldung oder stelle einen neuen Link aus, wenn der letzte abgelaufen ist.",
+    "wizard.settings.noPlannedPeople":
+      "Für dieses Homelab wurden keine Personen geplant. Neue Personen lassen sich hier noch nicht hinzufügen.",
+    "wizard.settings.members": "Mitglieder",
     "wizard.server.cloud.title": "kombify VPS",
     "wizard.server.cloud.description":
       "Dein eigener virtueller Server, von kombify bereitgestellt und verbunden.",
@@ -1762,10 +1983,74 @@ export const translations: Record<Locale, Record<string, string>> = {
     "companion.startVoiceAgent": "Sprachassistent starten",
     "companion.launcherLabel": "kombify fragen",
   },
-  es,
-  "zh-Hans": zhHans,
-  hi,
-  ar,
+  es: {
+    ...es,
+    ...guardMessagesEs,
+    ...serviceCardMessages.es,
+    ...networkMessages.es,
+    ...storageMessages.es,
+    ...domainMessages.es,
+    ...maintenanceMessages.es,
+    ...walletMessages.es,
+    ...actorsMessages.es,
+    ...nodesMessages.es,
+    ...creationTemplateMessages.es,
+    ...marketplaceMessages.es,
+    ...setupFlowMessages.es,
+    ...connectDevicesMessages.es,
+    ...experienceMessages.es,
+  },
+  "zh-Hans": {
+    ...zhHans,
+    ...guardMessagesZhHans,
+    ...serviceCardMessages["zh-Hans"],
+    ...networkMessages["zh-Hans"],
+    ...storageMessages["zh-Hans"],
+    ...domainMessages["zh-Hans"],
+    ...maintenanceMessages["zh-Hans"],
+    ...walletMessages["zh-Hans"],
+    ...actorsMessages["zh-Hans"],
+    ...nodesMessages["zh-Hans"],
+    ...creationTemplateMessages["zh-Hans"],
+    ...marketplaceMessages["zh-Hans"],
+    ...setupFlowMessages["zh-Hans"],
+    ...connectDevicesMessages["zh-Hans"],
+    ...experienceMessages["zh-Hans"],
+  },
+  hi: {
+    ...hi,
+    ...guardMessagesHi,
+    ...serviceCardMessages.hi,
+    ...networkMessages.hi,
+    ...storageMessages.hi,
+    ...domainMessages.hi,
+    ...maintenanceMessages.hi,
+    ...walletMessages.hi,
+    ...actorsMessages.hi,
+    ...nodesMessages.hi,
+    ...creationTemplateMessages.hi,
+    ...marketplaceMessages.hi,
+    ...setupFlowMessages.hi,
+    ...connectDevicesMessages.hi,
+    ...experienceMessages.hi,
+  },
+  ar: {
+    ...ar,
+    ...guardMessagesAr,
+    ...serviceCardMessages.ar,
+    ...networkMessages.ar,
+    ...storageMessages.ar,
+    ...domainMessages.ar,
+    ...maintenanceMessages.ar,
+    ...walletMessages.ar,
+    ...actorsMessages.ar,
+    ...nodesMessages.ar,
+    ...creationTemplateMessages.ar,
+    ...marketplaceMessages.ar,
+    ...setupFlowMessages.ar,
+    ...connectDevicesMessages.ar,
+    ...experienceMessages.ar,
+  },
 };
 
 export interface LocaleInfo {

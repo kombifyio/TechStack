@@ -52,7 +52,7 @@ func Catalog() []Offering {
 			ID:             serverruntime.RuntimeOfferingStandard,
 			Name:           "Monthly Runtime Standard",
 			BillingCadence: serverruntime.BillingCadenceMonthly,
-			Image:          "ubuntu-24.04",
+			Image:          "ubuntu-26.04",
 			// StackKits declares the Cloud Kit minimum as 2 vCPU / 4 GB / 20 GB
 			// (PROVIDER-CATALOG §11). IONOS Standard is Basic Cube S, exactly
 			// that floor; a live Cloud Kit lane on Cube S must confirm it
@@ -67,7 +67,7 @@ func Catalog() []Offering {
 			ID:             serverruntime.RuntimeOfferingPremium,
 			Name:           "Monthly Runtime Premium",
 			BillingCadence: serverruntime.BillingCadenceMonthly,
-			Image:          "ubuntu-24.04",
+			Image:          "ubuntu-26.04",
 			VCPUs:          4,
 			MemoryMB:       8192,
 			DiskGB:         320,

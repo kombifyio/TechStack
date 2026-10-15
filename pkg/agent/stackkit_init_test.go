@@ -69,3 +69,20 @@ func TestStackKitAddressBindArgsAreTypedAndPathBound(t *testing.T) {
 		t.Fatalf("args = %q", got)
 	}
 }
+
+// Modern Homelab is a managed kit: its Home node is initialized by the same
+// typed operation, from the approved candidate and without a source checkout.
+func TestStackKitInitArgsAdmitModernHomelab(t *testing.T) {
+	command := &agentpb.StackKitCommand{
+		Operation: agentpb.StackKitOperation_STACKKIT_OPERATION_INIT, OwnerApproved: true,
+		Stackkit: "modern-homelab", StackName: "modern", OwnerEmail: "owner@example.com",
+		CandidateSpecJson: []byte(`{"metadata":{"name":"modern"},"kit":{"slug":"modern-homelab"}}`),
+	}
+	args, err := stackKitOperationArgs(command)
+	if err != nil {
+		t.Fatalf("Modern init was refused: %v", err)
+	}
+	if !slices.Contains(args, "modern-homelab") {
+		t.Fatalf("args = %v, want the Modern kit", args)
+	}
+}

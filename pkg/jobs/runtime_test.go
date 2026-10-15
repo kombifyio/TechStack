@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -253,8 +252,8 @@ func TestMonthlyRuntimeTargetResolverOverlaysGuardPublicIPWhenLeaseSSHHostIsStal
 			metadataKeyRuntimeLane:        serverModeMonthlyRuntime,
 			metadataKeyRuntimeOfferingID:  defaultRuntimeOfferingID,
 			metadataKeyRuntimeEnrollState: runtimeEnrollmentStatusPending,
-			metadataKeyRuntimeSSHHost:     "212.132.94.66",
-			metadataKeyRuntimePublicIP:    "212.132.94.66",
+			metadataKeyRuntimeSSHHost:     "198.51.100.86",
+			metadataKeyRuntimePublicIP:    "198.51.100.86",
 			metadataKeyRuntimeSSHUser:     "root",
 			metadataKeyRuntimeSSHPort:     "22",
 			"runtime_docker_host":         "tcp://techstack-local-runtime:2375",
@@ -273,7 +272,7 @@ func TestMonthlyRuntimeTargetResolverOverlaysGuardPublicIPWhenLeaseSSHHostIsStal
 		Metadata: map[string]any{
 			"inventory_source": "guard-inventory",
 			"host": map[string]any{
-				"public_ip": "85.215.64.233",
+				"public_ip": "198.51.100.84",
 			},
 		},
 	}})
@@ -287,7 +286,7 @@ func TestMonthlyRuntimeTargetResolverOverlaysGuardPublicIPWhenLeaseSSHHostIsStal
 	if err != nil {
 		t.Fatalf("ResolveManagedRuntimeTarget: %v", err)
 	}
-	if target.Host != "85.215.64.233" || target.PublicIP != "85.215.64.233" {
+	if target.Host != "198.51.100.84" || target.PublicIP != "198.51.100.84" {
 		t.Fatalf("target host/ip = %+v, want Guard public IP", target)
 	}
 	if target.SSHUser != "root" || target.SSHPort != 22 || target.DockerHost == "" {
@@ -685,9 +684,6 @@ func TestRuntimeActionTargetFromManagedRuntimeTargetDropsProviderLocalKeyPathWhe
 }
 
 func TestRuntimeActionContractUsesSharedActionsAndPaths(t *testing.T) {
-	if runtimeActionTargetStackKits != runtimeaction.TargetStackKits {
-		t.Fatalf("StackKits target = %q, want shared %q", runtimeActionTargetStackKits, runtimeaction.TargetStackKits)
-	}
 	if runtimeActionTargetSimulate != runtimeaction.TargetSimulate {
 		t.Fatalf("Simulate target = %q, want shared %q", runtimeActionTargetSimulate, runtimeaction.TargetSimulate)
 	}
@@ -697,10 +693,7 @@ func TestRuntimeActionContractUsesSharedActionsAndPaths(t *testing.T) {
 		StepRestoreDrill != string(runtimeaction.ActionRestoreDrill) {
 		t.Fatalf("job step actions drifted from shared runtimeaction constants")
 	}
-	if defaultSimulationGatePath != runtimeaction.PathSimulateUpdate ||
-		defaultStackKitsRolloutPath != runtimeaction.ArchitectureV2PathStackKitRollout ||
-		defaultStackKitsVerifyPath != runtimeaction.ArchitectureV2PathStackKitVerify ||
-		defaultRestoreDrillPath != runtimeaction.PathRestoreDrill {
+	if defaultSimulationGatePath != runtimeaction.PathSimulateUpdate {
 		t.Fatalf("runtime action default paths drifted from shared runtimeaction constants")
 	}
 }
@@ -788,220 +781,6 @@ func captureRuntimeActionPayload(t *testing.T, target, action, path string, requ
 	return got
 }
 
-func TestHTTPRuntimeActionRunnerSerializesPlatformNodes(t *testing.T) {
-	got := captureRuntimeActionPayload(t, "stackkits", string(StepRolloutRunner), "/api/v1/internal/runtime-actions/stackkit-rollout", RuntimeActionRequest{
-		StackID: "stack-1",
-		PlatformNodes: []PlatformNode{{
-			Name:     "worker-1",
-			Role:     "worker",
-			IP:       "203.0.113.11",
-			Services: []string{"immich"},
-			Platform: NodePlatformTarget{
-				ServerID:        "server-worker",
-				DestinationUUID: "destination-worker",
-			},
-			Bootstrap: &NodeBootstrap{
-				KomodoCoreAddress:   "https://komodo.example.test",
-				KomodoOnboardingKey: "test-onboarding-key",
-				SSH: &SSHBootstrap{
-					Host:             "203.0.113.11",
-					User:             "root",
-					ClientPrivateKey: "test-worker-key",
-				},
-			},
-		}},
-	})
-	nodes, ok := got["platform_nodes"].([]any)
-	if !ok || len(nodes) != 1 {
-		t.Fatalf("platform_nodes missing from payload: %+v", got)
-	}
-	node, ok := nodes[0].(map[string]any)
-	if !ok {
-		t.Fatalf("platform node = %#v", nodes[0])
-	}
-	platform, ok := node["platform"].(map[string]any)
-	if !ok {
-		t.Fatalf("platform target missing from payload: %+v", node)
-	}
-	services, ok := node["services"].([]any)
-	if !ok || !slices.Contains(services, any("immich")) {
-		t.Fatalf("platform services = %#v", node["services"])
-	}
-	bootstrap, ok := node["bootstrap"].(map[string]any)
-	if !ok {
-		t.Fatalf("bootstrap missing from payload: %+v", node)
-	}
-	ssh, ok := bootstrap["ssh"].(map[string]any)
-	if !ok {
-		t.Fatalf("SSH bootstrap missing from payload: %+v", bootstrap)
-	}
-	if node["name"] != "worker-1" || node["role"] != "worker" || node["ip"] != "203.0.113.11" ||
-		platform["serverId"] != "server-worker" || platform["destinationUuid"] != "destination-worker" ||
-		bootstrap["komodo_core_address"] != "https://komodo.example.test" || bootstrap["komodo_onboarding_key"] != "test-onboarding-key" ||
-		ssh["host"] != "203.0.113.11" || ssh["user"] != "root" || ssh["client_private_key"] != "test-worker-key" {
-		t.Fatalf("platform_nodes[0] = %+v", node)
-	}
-}
-
-func TestHTTPRuntimeActionRunnerPostsServicecallRequest(t *testing.T) {
-	var got runtimeaction.Request
-	server := httptest.NewServer(servicecall.RequireServiceAuth(servicecall.Config{
-		ServiceName:    "stackkits",
-		Secret:         "auth-secret",
-		AllowedCallers: []string{"techstack"},
-		Enabled:        true,
-	})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Fatalf("method = %q, want POST", r.Method)
-		}
-		if r.URL.Path != "/api/v1/internal/runtime-actions/stackkit-rollout" {
-			t.Fatalf("path = %q", r.URL.Path)
-		}
-		caller := servicecall.FromContext(r.Context())
-		if caller == nil || caller.Service != "techstack" {
-			t.Fatalf("caller = %+v, want techstack", caller)
-		}
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})))
-	defer server.Close()
-
-	runner, err := NewHTTPRuntimeActionRunner(HTTPRuntimeActionRunnerConfig{
-		BaseURL:           server.URL,
-		Target:            "stackkits",
-		Action:            string(StepRolloutRunner),
-		Path:              "/api/v1/internal/runtime-actions/stackkit-rollout",
-		ServiceAuthSecret: "auth-secret",
-	})
-	if err != nil {
-		t.Fatalf("NewHTTPRuntimeActionRunner: %v", err)
-	}
-
-	err = runner.Run(t.Context(), RuntimeActionRequest{
-		StackID:     "stack-1",
-		StackName:   "Demo Stack",
-		StackKit:    DefaultBasementKitRef,
-		TofuDir:     "/work/tofu",
-		UnifiedPath: "/work/unified.yaml",
-	})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if got.Action != runtimeaction.ActionStackKitRollout ||
-		got.StackID != "stack-1" ||
-		got.StackName != "Demo Stack" ||
-		got.StackKit != DefaultBasementKitRef ||
-		got.TofuDir != "/work/tofu" ||
-		got.UnifiedPath != "/work/unified.yaml" {
-		t.Fatalf("payload = %+v", got)
-	}
-}
-
-func TestHTTPRuntimeActionRunnerSerializesOwnerSpecContract(t *testing.T) {
-	got := captureRuntimeActionPayload(t, "stackkits", string(StepRolloutRunner), "/api/v1/internal/runtime-actions/stackkit-rollout", RuntimeActionRequest{
-		StackID: "stack-1",
-		OwnerSpecBootstrap: &OwnerSpecBootstrap{
-			Endpoint:  "/api/v1/stacks/stack-1/owner-spec",
-			Token:     "bootstrap-token",
-			ExpiresAt: "2026-05-14T10:15:00Z",
-			Scopes:    []string{"read:owner-spec"},
-		},
-	})
-	bootstrap, ok := got["owner_spec_bootstrap"].(map[string]any)
-	if !ok {
-		t.Fatalf("owner_spec_bootstrap missing from payload: %+v", got)
-	}
-	scopes, ok := bootstrap["scopes"].([]any)
-	if !ok || !slices.Contains(scopes, any("read:owner-spec")) {
-		t.Fatalf("owner_spec_bootstrap scopes = %#v", bootstrap["scopes"])
-	}
-	if bootstrap["endpoint"] != "/api/v1/stacks/stack-1/owner-spec" || bootstrap["token"] != "bootstrap-token" || bootstrap["expires_at"] != "2026-05-14T10:15:00Z" {
-		t.Fatalf("owner_spec_bootstrap = %+v", bootstrap)
-	}
-	if _, leaked := bootstrap["passphrase"]; leaked {
-		t.Fatalf("owner bootstrap runtime action contains recovery material: %+v", bootstrap)
-	}
-}
-
-func TestHTTPRuntimeActionRunnerSerializesTechStackEnrollment(t *testing.T) {
-	got := captureRuntimeActionPayload(t, "stackkits", string(StepRolloutRunner), "/api/v1/internal/runtime-actions/stackkit-rollout", RuntimeActionRequest{
-		StackID:  "stack-1",
-		Mode:     "advanced",
-		TenantID: "tenant-1",
-		OwnerID:  "owner-1",
-		TechStackEnrollment: &TechStackEnrollment{
-			TenantID:       "tenant-1",
-			OwnerID:        "owner-1",
-			StackID:        "stack-1",
-			ServerURL:      "https://techstack.example",
-			ServerID:       "server-1",
-			RuntimeAgentID: "runtime-1",
-			AgentToken:     "runtime-token",
-			InventoryURL:   "https://techstack.example/api/v1/workers/runtime-1/inventory",
-			ControlURLs:    []string{"wss://techstack.example/api/v1/workers/runtime-1/control/ws"},
-			ChannelBootstrap: map[string]any{
-				"grpc_hint": "mtls-if-http2-network-allows",
-			},
-		},
-	})
-	if got["mode"] != "advanced" || got["tenant_id"] != "tenant-1" || got["owner_id"] != "owner-1" {
-		t.Fatalf("top-level handoff fields missing: %+v", got)
-	}
-	enrollment, ok := got["techstack_enrollment"].(map[string]any)
-	if !ok {
-		t.Fatalf("techstack_enrollment missing from payload: %+v", got)
-	}
-	if enrollment["server_id"] != "server-1" || enrollment["runtime_agent_id"] != "runtime-1" || enrollment["agent_token"] != "runtime-token" {
-		t.Fatalf("techstack_enrollment = %+v", enrollment)
-	}
-}
-
-func TestHTTPRuntimeActionRunnerPreservesPartialTechStackEnrollmentForStackKitsValidation(t *testing.T) {
-	got := captureRuntimeActionPayload(t, "stackkits", string(StepRolloutRunner), "/api/v1/internal/runtime-actions/stackkit-rollout", RuntimeActionRequest{
-		StackID: "stack-1",
-		TechStackEnrollment: &TechStackEnrollment{
-			ServerURL: "https://techstack.example",
-			ServerID:  "server-1",
-		},
-	})
-	enrollment, ok := got["techstack_enrollment"].(map[string]any)
-	if !ok {
-		t.Fatalf("techstack_enrollment missing from payload: %+v", got)
-	}
-	if enrollment["server_url"] != "https://techstack.example" || enrollment["server_id"] != "server-1" {
-		t.Fatalf("techstack_enrollment = %+v", enrollment)
-	}
-	if enrollment["runtime_agent_id"] != "" {
-		t.Fatalf("partial enrollment should remain partial for StackKits validation: %+v", enrollment)
-	}
-}
-
-func TestHTTPRuntimeActionRunnerSerializesRuntimeTarget(t *testing.T) {
-	got := captureRuntimeActionPayload(t, "stackkits", string(StepRolloutRunner), "/api/v1/internal/runtime-actions/stackkit-rollout", RuntimeActionRequest{
-		StackID: "stack-1",
-		RuntimeTarget: &RuntimeActionTarget{
-			Host:       "203.0.113.10",
-			User:       "ubuntu",
-			Port:       2222,
-			DockerHost: "tcp://techstack-local-runtime:2375",
-			PrivateKey: "test-private-key",
-		},
-	})
-	target, ok := got["runtime_target"].(map[string]any)
-	if !ok {
-		t.Fatalf("runtime_target missing from payload: %+v", got)
-	}
-	if target["host"] != "203.0.113.10" ||
-		target["user"] != "ubuntu" ||
-		target["port"] != float64(2222) ||
-		target["docker_host"] != "tcp://techstack-local-runtime:2375" ||
-		target["private_key"] != "test-private-key" {
-		t.Fatalf("runtime_target = %+v", target)
-	}
-}
-
 func TestHTTPRuntimeActionRunnerSerializesSimulationPreviewPolicy(t *testing.T) {
 	got := captureRuntimeActionPayload(t, "simulate", runtimeActionSimulateUpdate, "/api/v1/internal/runtime-actions/simulate-update", RuntimeActionRequest{
 		StackID:       "stack-1",
@@ -1030,7 +809,7 @@ func TestHTTPRuntimeActionRunnerSerializesSimulationPreviewPolicy(t *testing.T) 
 
 func TestHTTPRuntimeActionRunnerReturnsStructuredResult(t *testing.T) {
 	server := httptest.NewServer(servicecall.RequireServiceAuth(servicecall.Config{
-		ServiceName:    "stackkits",
+		ServiceName:    "simulate",
 		Secret:         "auth-secret",
 		AllowedCallers: []string{"techstack"},
 		Enabled:        true,
@@ -1049,9 +828,9 @@ func TestHTTPRuntimeActionRunnerReturnsStructuredResult(t *testing.T) {
 
 	runner, err := NewHTTPRuntimeActionRunner(HTTPRuntimeActionRunnerConfig{
 		BaseURL:           server.URL,
-		Target:            "stackkits",
-		Action:            string(StepRolloutRunner),
-		Path:              "/api/v1/internal/runtime-actions/stackkit-rollout",
+		Target:            "simulate",
+		Action:            runtimeActionSimulateUpdate,
+		Path:              "/api/v1/internal/runtime-actions/simulate-update",
 		ServiceAuthSecret: "auth-secret",
 	})
 	if err != nil {
@@ -1104,11 +883,12 @@ func TestHTTPRuntimeActionRunnerReturnsStatusDiagnostics(t *testing.T) {
 	}
 }
 
-func TestRuntimeActionsFromEnvWiresConfiguredRunners(t *testing.T) {
+// StackKits has no HTTP action service any more: the StackKits URLs configure
+// nothing, and only the Simulate gate is wired from the environment.
+func TestRuntimeActionsFromEnvWiresOnlyTheSimulationGate(t *testing.T) {
 	tests := []struct {
 		name              string
 		environment       map[string]string
-		stackKitsBaseURL  string
 		simulationBaseURL string
 	}{
 		{
@@ -1117,7 +897,6 @@ func TestRuntimeActionsFromEnvWiresConfiguredRunners(t *testing.T) {
 				"TECHSTACK_STACKKITS_ACTIONS_URL": "http://stackkits.internal",
 				"TECHSTACK_SIMULATE_ACTIONS_URL":  "http://simulate.internal",
 			},
-			stackKitsBaseURL:  "http://stackkits.internal",
 			simulationBaseURL: "http://simulate.internal",
 		},
 		{
@@ -1126,15 +905,12 @@ func TestRuntimeActionsFromEnvWiresConfiguredRunners(t *testing.T) {
 				"KOMBIFY_URL_INTERNAL_STACKKITS": "http://kombify-stackkits:5240",
 				"KOMBIFY_URL_VPS_SIMULATE":       "https://simulate.kombify.io",
 			},
-			stackKitsBaseURL:  "http://kombify-stackkits:5240",
 			simulationBaseURL: "https://simulate.kombify.io",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			for _, key := range []string{
-				"TECHSTACK_STACKKITS_ACTIONS_URL", "TECHSTACK_STACKKITS_INTERNAL_URL",
-				"KOMBIFY_URL_INTERNAL_STACKKITS", "STACKKITS_INTERNAL_URL", "STACKKITS_API_URL",
 				"TECHSTACK_SIMULATE_ACTIONS_URL", "TECHSTACK_KOMBISIM_URL",
 				"KOMBIFY_URL_VPS_SIMULATE", "KOMBIFY_URL_PUBLIC_SIMULATE", "KOMBISIM_URL",
 			} {
@@ -1151,14 +927,8 @@ func TestRuntimeActionsFromEnvWiresConfiguredRunners(t *testing.T) {
 			if len(diagnostics.Warnings) != 0 {
 				t.Fatalf("warnings = %v, want none", diagnostics.Warnings)
 			}
-			if actions.SimulationGate == nil || actions.RolloutRunner == nil || actions.RolloutVerifier == nil ||
-				actions.RestoreDrill == nil || actions.TargetBootstrapper == nil {
+			if actions.TargetBootstrapper == nil {
 				t.Fatalf("actions not fully wired: %+v", actions)
-			}
-			rollout, ok := actions.RolloutRunner.(*HTTPRuntimeActionRunner)
-			if !ok || rollout.baseURL != tt.stackKitsBaseURL || rollout.path != defaultStackKitsRolloutPath ||
-				rollout.action != string(runtimeaction.ActionStackKitRollout) {
-				t.Fatalf("rollout runner = %+v", actions.RolloutRunner)
 			}
 			simulation, ok := actions.SimulationGate.(*HTTPRuntimeActionRunner)
 			if !ok || simulation.baseURL != tt.simulationBaseURL || simulation.path != defaultSimulationGatePath ||
@@ -1177,17 +947,14 @@ func TestRuntimeActionsFromEnvReportsMissingServiceAuthSecret(t *testing.T) {
 	// other jobs in the same workflow context.
 	t.Setenv("SERVICE_AUTH_SECRET", "")
 	t.Setenv("SERVICE_AUTH_SECRET_NEXT", "")
-	t.Setenv("TECHSTACK_STACKKITS_ACTIONS_URL", "http://stackkits.internal")
 	t.Setenv("TECHSTACK_SIMULATE_ACTIONS_URL", "http://simulate.internal")
 
 	actions, diagnostics := RuntimeActionsFromEnv(RuntimeActions{})
-	if actions.SimulationGate != nil || actions.RolloutRunner != nil || actions.RolloutVerifier != nil || actions.RestoreDrill != nil {
-		t.Fatalf("actions = %+v, want no servicecall runners without SERVICE_AUTH_SECRET", actions)
+	if actions.SimulationGate != nil {
+		t.Fatalf("actions = %+v, want no servicecall runner without SERVICE_AUTH_SECRET", actions)
 	}
 	got := strings.Join(diagnostics.Warnings, "\n")
-	if !strings.Contains(got, "SERVICE_AUTH_SECRET") ||
-		!strings.Contains(got, "StackKits") ||
-		!strings.Contains(got, "Simulate") {
+	if !strings.Contains(got, "SERVICE_AUTH_SECRET") || !strings.Contains(got, "Simulate") {
 		t.Fatalf("warnings = %v, want clear missing-secret diagnostics", diagnostics.Warnings)
 	}
 }
@@ -1211,31 +978,5 @@ func TestRuntimeActionsFromEnvAllowsExplicitLocalSimulationGate(t *testing.T) {
 	got := strings.Join(diagnostics.Configured, "\n")
 	if !strings.Contains(got, "Local simulation gate") {
 		t.Fatalf("configured = %v, want local simulation gate diagnostic", diagnostics.Configured)
-	}
-}
-
-// TestRuntimeActionsFromEnvDoesNotUseStackKitsPublicURL covers the production
-// static-site URL case: STACKKITS_PUBLIC_URL is public documentation, not the
-// runtime-action API.
-func TestRuntimeActionsFromEnvDoesNotUseStackKitsPublicURL(t *testing.T) {
-	t.Setenv("TECHSTACK_STACKKITS_ACTIONS_URL", "")
-	t.Setenv("TECHSTACK_STACKKITS_INTERNAL_URL", "")
-	t.Setenv("KOMBIFY_URL_INTERNAL_STACKKITS", "")
-	t.Setenv("STACKKITS_INTERNAL_URL", "")
-	t.Setenv("STACKKITS_API_URL", "")
-	t.Setenv("STACKKITS_PUBLIC_URL", "https://stackkits.kombify.io")
-	t.Setenv("TECHSTACK_SIMULATE_ACTIONS_URL", "http://simulate.internal")
-	t.Setenv("SERVICE_AUTH_SECRET", "auth-secret")
-
-	actions, diagnostics := RuntimeActionsFromEnv(RuntimeActions{})
-	if actions.RolloutRunner != nil || actions.RolloutVerifier != nil || actions.RestoreDrill != nil {
-		t.Fatalf("StackKits actions = %+v, want disabled without an internal/action API URL", actions)
-	}
-	if actions.SimulationGate == nil {
-		t.Fatalf("SimulationGate = nil, want simulate runner still configured")
-	}
-	got := strings.Join(diagnostics.Warnings, "\n")
-	if !strings.Contains(got, "TECHSTACK_STACKKITS_ACTIONS_URL") {
-		t.Fatalf("warnings = %v, want missing StackKits action URL warning", diagnostics.Warnings)
 	}
 }

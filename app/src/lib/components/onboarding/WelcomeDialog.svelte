@@ -25,6 +25,8 @@
      */
     nameEditable?: boolean;
     saving?: boolean;
+    ready?: boolean;
+    loading?: boolean;
     error?: string;
     /** Carries the chosen name, already trimmed and defaulted. */
     onStart: (name: string) => void;
@@ -37,6 +39,8 @@
     name = "",
     nameEditable = true,
     saving = false,
+    ready = true,
+    loading = false,
     error = "",
     onStart,
     onDismiss,
@@ -55,7 +59,7 @@
       primed = false;
       return;
     }
-    if (primed) return;
+    if (!ready || primed) return;
     primed = true;
     value = name;
     requestAnimationFrame(() => {
@@ -65,12 +69,12 @@
   });
 
   function submit() {
-    if (saving) return;
+    if (saving || !ready) return;
     onStart(value.trim() || fallbackName);
   }
 
   function onKeydown(event: KeyboardEvent) {
-    if (event.key === "Escape") onDismiss();
+    if (event.key === "Escape" && !saving) onDismiss();
   }
 </script>
 
@@ -101,6 +105,7 @@
           data-kx="control"
           class="grid h-8 w-8 shrink-0 place-items-center rounded-lg"
           aria-label={tr("onboarding.ui.introduction.close")}
+          disabled={saving}
           onclick={onDismiss}
         >
           <X class="h-4 w-4" />
@@ -111,7 +116,7 @@
         {tr("introduction.welcome.body")}
       </p>
 
-      {#if nameEditable}
+      {#if ready && nameEditable}
         <div class="mt-6">
           <label
             class="block text-base font-medium text-foreground"
@@ -156,6 +161,7 @@
           type="button"
           data-kx="control"
           class="mr-auto rounded-lg px-3 py-2 text-sm text-muted-foreground"
+          disabled={saving}
           onclick={onDismiss}
         >
           {tr("onboarding.ui.introduction.skip")}
@@ -166,10 +172,10 @@
           data-variant="primary"
           class="rounded-lg px-4 py-2 text-sm"
           data-testid="introduction-welcome-start"
-          disabled={saving}
+          disabled={saving || !ready}
           onclick={submit}
         >
-          {#if saving}
+          {#if saving || loading}
             {tr("common.loading")}
           {:else}
             {nameEditable

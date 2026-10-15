@@ -57,8 +57,57 @@ type agentRouteHandler struct {
 	grpcServer *grpcserver.Server
 }
 
+// agentTenantScope resolves the tenant a hosted caller may see agents of. The
+// connected-agent table is process-wide, so in hosted mode every agent read and
+// write is narrowed to agents whose enrollment pinned the caller's tenant;
+// self-hosted keeps the single-tenant view (enforce false).
+func agentTenantScope(e *httpx.Event, capability string) (tenantID string, enforce bool, err error) {
+	ownerID, authErr := requireAuth(e)
+	if authErr != nil {
+		return "", false, authErr
+	}
+	if !tenantguard.Active() {
+		return "", false, nil
+	}
+	tenantID, err = tenantguard.TenantScope(requestExplicitTenantID(e), ownerID, capability)
+	if err != nil {
+		return "", false, err
+	}
+	return tenantID, true, nil
+}
+
+func agentVisible(agent *grpcserver.ConnectedAgent, tenantID string, enforce bool) bool {
+	if agent == nil {
+		return false
+	}
+	return !enforce || (tenantID != "" && agent.Tenant == tenantID)
+}
+
+// visibleAgent loads one agent for the caller. A foreign agent is reported as
+// not found, never as forbidden, so agent ids cannot be probed across tenants.
+func (h agentRouteHandler) visibleAgent(e *httpx.Event, capability string) (*grpcserver.Server, string, error) {
+	tenantID, enforce, err := agentTenantScope(e, capability)
+	if err != nil {
+		return nil, "", err
+	}
+	agentID, err := agentIDFromRequest(e)
+	if err != nil {
+		return nil, "", err
+	}
+	server, err := h.requireGRPCServer(e)
+	if err != nil {
+		return nil, "", err
+	}
+	agent, found := server.GetAgent(agentID)
+	if !found || !agentVisible(agent, tenantID, enforce) {
+		return nil, "", httpx.Reject(e, http.StatusNotFound, ksapi.ErrCodeNotFound, "Agent not found", nil)
+	}
+	return server, agentID, nil
+}
+
 func (h agentRouteHandler) listAgents(e *httpx.Event) error {
-	if _, err := requireAuth(e); err != nil {
+	tenantID, enforce, err := agentTenantScope(e, "techstack.agents.list")
+	if err != nil {
 		return err
 	}
 
@@ -66,7 +115,9 @@ func (h agentRouteHandler) listAgents(e *httpx.Event) error {
 	allAgents := []AgentResponse{}
 	if h.grpcServer != nil {
 		for _, agent := range h.grpcServer.GetAgents() {
-			allAgents = append(allAgents, agentResponse(agent))
+			if agentVisible(agent, tenantID, enforce) {
+				allAgents = append(allAgents, agentResponse(agent))
+			}
 		}
 	}
 
@@ -76,18 +127,10 @@ func (h agentRouteHandler) listAgents(e *httpx.Event) error {
 }
 
 func (h agentRouteHandler) getAgent(e *httpx.Event) error {
-	if _, err := requireAuth(e); err != nil {
-		return err
-	}
-	agentID, err := agentIDFromRequest(e)
+	server, agentID, err := h.visibleAgent(e, "techstack.agents.read")
 	if err != nil {
 		return err
 	}
-	server, err := h.requireGRPCServer(e)
-	if err != nil {
-		return err
-	}
-
 	agent, found := server.GetAgent(agentID)
 	if !found {
 		return httpx.NotFound(e, "Agent not found")
@@ -100,11 +143,7 @@ func (h agentRouteHandler) sendCommand(e *httpx.Event) error {
 	if err != nil {
 		return err
 	}
-	agentID, err := agentIDFromRequest(e)
-	if err != nil {
-		return err
-	}
-	server, err := h.requireGRPCServer(e)
+	server, agentID, err := h.visibleAgent(e, "techstack.agents.command")
 	if err != nil {
 		return err
 	}
@@ -147,19 +186,9 @@ func (h agentRouteHandler) sendCommand(e *httpx.Event) error {
 }
 
 func (h agentRouteHandler) removeAgent(e *httpx.Event) error {
-	if _, err := requireAuth(e); err != nil {
-		return err
-	}
-	agentID, err := agentIDFromRequest(e)
+	server, agentID, err := h.visibleAgent(e, "techstack.agents.remove")
 	if err != nil {
 		return err
-	}
-	server, err := h.requireGRPCServer(e)
-	if err != nil {
-		return err
-	}
-	if _, found := server.GetAgent(agentID); !found {
-		return httpx.NotFound(e, "Agent not found")
 	}
 	if err := server.RemoveAgent(agentID); err != nil {
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, err.Error(), nil)
@@ -168,14 +197,7 @@ func (h agentRouteHandler) removeAgent(e *httpx.Event) error {
 }
 
 func (h agentRouteHandler) getAgentLogs(e *httpx.Event) error {
-	if _, err := requireAuth(e); err != nil {
-		return err
-	}
-	agentID, err := agentIDFromRequest(e)
-	if err != nil {
-		return err
-	}
-	server, err := h.requireGRPCServer(e)
+	server, agentID, err := h.visibleAgent(e, "techstack.agents.logs")
 	if err != nil {
 		return err
 	}
@@ -188,19 +210,9 @@ func (h agentRouteHandler) getAgentLogs(e *httpx.Event) error {
 }
 
 func (h agentRouteHandler) streamAgentLogs(e *httpx.Event) error {
-	if _, err := requireAuth(e); err != nil {
-		return err
-	}
-	agentID, err := agentIDFromRequest(e)
+	server, agentID, err := h.visibleAgent(e, "techstack.agents.logs.stream")
 	if err != nil {
 		return err
-	}
-	server, err := h.requireGRPCServer(e)
-	if err != nil {
-		return err
-	}
-	if _, found := server.GetAgent(agentID); !found {
-		return httpx.NotFound(e, "Agent not found")
 	}
 
 	e.Response.Header().Set("Content-Type", "text/event-stream")
@@ -283,7 +295,9 @@ func (h agentRouteHandler) streamRuntimeLogs(e *httpx.Event) error {
 
 func (h agentRouteHandler) requireGRPCServer(e *httpx.Event) (*grpcserver.Server, error) {
 	if h.grpcServer == nil {
-		return nil, httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "gRPC server not available", nil)
+		// Reject, not Error: the callers stop on a non-nil error, and a nil one
+		// here sent them on to dereference the missing server.
+		return nil, httpx.Reject(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "gRPC server not available", nil)
 	}
 	return h.grpcServer, nil
 }
@@ -291,7 +305,7 @@ func (h agentRouteHandler) requireGRPCServer(e *httpx.Event) (*grpcserver.Server
 func agentIDFromRequest(e *httpx.Event) (string, error) {
 	agentID := e.Request.PathValue("id")
 	if agentID == "" {
-		return "", httpx.BadRequest(e, "Agent ID is required", nil)
+		return "", httpx.Reject(e, http.StatusBadRequest, ksapi.ErrCodeBadRequest, "Agent ID is required", nil)
 	}
 	return agentID, nil
 }

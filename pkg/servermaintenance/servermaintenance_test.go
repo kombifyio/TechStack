@@ -2,6 +2,7 @@ package servermaintenance
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -25,12 +26,57 @@ func (d *recordingDispatcher) Reboot(_ context.Context, _ Target, _ time.Duratio
 	return RebootResult{BootIDBefore: "boot-a", ScheduledAt: time.Date(2026, 9, 25, 12, 1, 0, 0, time.UTC)}, nil
 }
 
-func queuedReboot(t *testing.T, store *controlplane.MemoryStore, id string, deadline time.Time) controlplane.ServerMaintenanceJob {
+// seedMaintenanceImpact supplies the existing runner fixtures with the same
+// complete canonical observation that execution now requires.
+func seedMaintenanceImpact(t *testing.T, store *controlplane.MemoryStore, action string, at time.Time) *controlplane.ServerMaintenanceImpact {
 	t.Helper()
+	if _, err := store.GetStack(t.Context(), "tenant-1", "stack-1"); errors.Is(err, controlplane.ErrNotFound) {
+		if _, err := store.CreateStack(t.Context(), controlplane.CreateStackRequest{
+			ID: "stack-1", TenantID: "tenant-1", OwnerSubjectID: "owner-1", Name: "Home",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	server, err := store.GetServerRuntime(t.Context(), "tenant-1", "server-1")
+	if errors.Is(err, controlplane.ErrNotFound) {
+		server = &controlplane.ServerRuntime{ID: "server-1", TenantID: "tenant-1", WorkerID: "agent-1", OwnerSubjectID: "owner-1", StackID: "stack-1"}
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	server.LastHeartbeatAt = &at
+	if server.Metadata == nil {
+		server.Metadata = map[string]any{}
+	}
+	server.Metadata["service_projection_expected"] = int64(0)
+	if _, err := store.UpsertServerRuntime(t.Context(), *server); err != nil {
+		t.Fatal(err)
+	}
+	revision := max(int64(7), server.InventoryRevision+1)
+	if _, err := store.RecordServerInventory(t.Context(), controlplane.ServerInventorySnapshot{
+		TenantID: "tenant-1", ServerID: "server-1", Revision: revision, Source: "guard-inventory", ObservedAt: at,
+		Inventory: map[string]any{"services": []any{}, "deployment": map[string]any{
+			"_guard_projection": map[string]any{"schema": "guard-inventory-projection/v1", "discovery_complete": true},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	impact, err := store.GetServerMaintenanceImpact(t.Context(), "tenant-1", "server-1", action, at)
+	if err != nil || impact == nil || !impact.Confirmable {
+		t.Fatalf("maintenance impact fixture: impact=%+v err=%v", impact, err)
+	}
+	return impact
+}
+
+func queuedReboot(t *testing.T, store *controlplane.MemoryStore, id string, deadline, at time.Time) controlplane.ServerMaintenanceJob {
+	t.Helper()
+	impact := seedMaintenanceImpact(t, store, controlplane.ServerMaintenanceActionReboot, at)
 	job, err := store.CreateServerMaintenanceJob(t.Context(), controlplane.ServerMaintenanceJob{
 		ID: id, TenantID: "tenant-1", ServerID: "server-1", AgentID: "agent-1", StackID: "stack-1",
 		OwnerSubjectID: "owner-1", Action: controlplane.ServerMaintenanceActionReboot, RequestDigest: "digest-" + id,
-		State: controlplane.ServerMaintenanceStateQueued, InventoryRevision: 7, DeadlineAt: &deadline,
+		State: controlplane.ServerMaintenanceStateQueued, InventoryRevision: impact.InventoryRevision, DeadlineAt: &deadline,
+		Result: map[string]any{controlplane.ServerMaintenanceImpactDigestKey: impact.SnapshotDigest},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +90,7 @@ func queuedReboot(t *testing.T, store *controlplane.MemoryStore, id string, dead
 func TestRunnerExpiresAbandonedJobAndReleasesTheFence(t *testing.T) {
 	store := controlplane.NewMemoryStore()
 	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
-	queuedReboot(t, store, "reboot-1", now.Add(QueueTimeout))
+	queuedReboot(t, store, "reboot-1", now.Add(QueueTimeout), now)
 	claimDeadline := now.Add(ExecutionTimeout(controlplane.ServerMaintenanceActionReboot))
 	abandoned, err := store.UpdateServerMaintenanceJob(t.Context(), "tenant-1", "reboot-1", controlplane.ServerMaintenanceUpdate{
 		ExpectedState: controlplane.ServerMaintenanceStateQueued, State: controlplane.ServerMaintenanceStateRunning, DeadlineAt: &claimDeadline, At: now,
@@ -62,7 +108,7 @@ func TestRunnerExpiresAbandonedJobAndReleasesTheFence(t *testing.T) {
 	if err != nil || job.State != controlplane.ServerMaintenanceStateFailed || job.ReasonCode != ReasonDeadlineExceeded {
 		t.Fatalf("at the deadline: job=%+v err=%v, want failed %s", job, err, ReasonDeadlineExceeded)
 	}
-	queuedReboot(t, store, "reboot-2", at.Add(QueueTimeout))
+	queuedReboot(t, store, "reboot-2", at.Add(QueueTimeout), at)
 }
 
 // The runner re-checks the node at dispatch: stack or service work that
@@ -77,7 +123,7 @@ func TestRunnerDefersDispatchWhileTheNodeIsBusy(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	reboot := queuedReboot(t, store, "reboot-1", now.Add(QueueTimeout))
+	reboot := queuedReboot(t, store, "reboot-1", now.Add(QueueTimeout), now)
 	dispatcher := &recordingDispatcher{}
 	runner := Runner{Jobs: store, Dispatcher: dispatcher, Now: func() time.Time { return now }}
 	if job, err := runner.Advance(t.Context(), reboot); err != nil || job.State != controlplane.ServerMaintenanceStateQueued || dispatcher.reboots != 0 {
@@ -98,17 +144,24 @@ func TestRunnerDefersDispatchWhileTheNodeIsBusy(t *testing.T) {
 func TestRunnerFailsRebootWhenTheServerIsRemoved(t *testing.T) {
 	store := controlplane.NewMemoryStore()
 	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
-	reboot := queuedReboot(t, store, "reboot-1", now.Add(QueueTimeout))
+	reboot := queuedReboot(t, store, "reboot-1", now.Add(QueueTimeout), now)
 	runner := Runner{Jobs: store, Servers: store, Dispatcher: &recordingDispatcher{}, Now: func() time.Time { return now }}
 	awaiting, err := runner.Advance(t.Context(), reboot)
 	if err != nil || awaiting.State != controlplane.ServerMaintenanceStateAwaitingNodeReturn {
 		t.Fatalf("dispatch: job=%+v err=%v", awaiting, err)
 	}
+	runner.Servers = removedMaintenanceServerReader{}
 	job, err := runner.Advance(t.Context(), *awaiting)
 	if err != nil || job.State != controlplane.ServerMaintenanceStateFailed || job.ReasonCode != ReasonServerRemoved {
 		t.Fatalf("removed server: job=%+v err=%v, want failed %s", job, err, ReasonServerRemoved)
 	}
-	queuedReboot(t, store, "reboot-2", now.Add(QueueTimeout))
+	queuedReboot(t, store, "reboot-2", now.Add(QueueTimeout), now)
+}
+
+type removedMaintenanceServerReader struct{}
+
+func (removedMaintenanceServerReader) GetServerRuntime(context.Context, string, string) (*controlplane.ServerRuntime, error) {
+	return nil, controlplane.ErrNotFound
 }
 
 // rebootServer stores server-1 as its agent last reported it.
@@ -168,7 +221,7 @@ func TestRebootCompletesOnlyOnANewBootIDWithinTheWindow(t *testing.T) {
 			rebootServer(t, store, "boot-a", true, scheduled.Add(-time.Hour))
 			now := scheduled.Add(-time.Minute)
 			runner := Runner{Jobs: store, Servers: store, Events: store, Dispatcher: &recordingDispatcher{}, Now: func() time.Time { return now }}
-			job, err := runner.Advance(t.Context(), queuedReboot(t, store, "reboot-1", now.Add(QueueTimeout)))
+			job, err := runner.Advance(t.Context(), queuedReboot(t, store, "reboot-1", now.Add(QueueTimeout), now))
 			if err != nil || job.State != controlplane.ServerMaintenanceStateAwaitingNodeReturn {
 				t.Fatalf("dispatch: job=%+v err=%v, want awaiting_node_return", job, err)
 			}
@@ -222,12 +275,14 @@ func (*scriptedApplyDispatcher) Reboot(context.Context, Target, time.Duration) (
 func TestApplyStillRunningIsPolledNotFailed(t *testing.T) {
 	store := controlplane.NewMemoryStore()
 	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	impact := seedMaintenanceImpact(t, store, controlplane.ServerMaintenanceActionUpdate, now)
 	store.SetNow(func() time.Time { return now.Add(-MaxApplyDuration + 25*time.Minute) })
 	planDigest := "sha256:" + strings.Repeat("1", 64)
 	job, err := store.CreateServerMaintenanceJob(t.Context(), controlplane.ServerMaintenanceJob{
-		ID: "update-1", TenantID: "tenant-1", ServerID: "server-1", AgentID: "agent-1", OwnerSubjectID: "owner-1",
+		ID: "update-1", TenantID: "tenant-1", ServerID: "server-1", AgentID: "agent-1", StackID: "stack-1", OwnerSubjectID: "owner-1",
 		Action: controlplane.ServerMaintenanceActionUpdate, RequestDigest: "digest", State: controlplane.ServerMaintenanceStateQueued,
 		InventoryRevision: 7, PlanDigest: planDigest,
+		Result: map[string]any{controlplane.ServerMaintenanceImpactDigestKey: impact.SnapshotDigest},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -320,7 +375,7 @@ func (d *blockingRebootDispatcher) Reboot(ctx context.Context, target Target, _ 
 func TestLoopShutdownKeepsADispatchedRebootAndReattaches(t *testing.T) {
 	store := controlplane.NewMemoryStore()
 	scheduled := time.Now().UTC().Add(30 * time.Second)
-	job := queuedReboot(t, store, "reboot-1", time.Now().UTC().Add(QueueTimeout))
+	job := queuedReboot(t, store, "reboot-1", time.Now().UTC().Add(QueueTimeout), time.Now().UTC())
 	dispatcher := &blockingRebootDispatcher{sent: make(chan Target, 1), reattach: RebootResult{BootIDBefore: "boot-a", ScheduledAt: scheduled}}
 	runner := Runner{Jobs: store, Dispatcher: dispatcher}
 	loop := NewLoop(store, runner, time.Hour, nil)
@@ -346,7 +401,7 @@ func TestLoopShutdownKeepsADispatchedRebootAndReattaches(t *testing.T) {
 // host_command_failed.
 func TestRunnerStoresOnlyBoundedHostCodes(t *testing.T) {
 	store := controlplane.NewMemoryStore()
-	job := queuedReboot(t, store, "reboot-1", time.Date(2026, 9, 25, 13, 0, 0, 0, time.UTC))
+	job := queuedReboot(t, store, "reboot-1", time.Date(2026, 9, 25, 13, 0, 0, 0, time.UTC), time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC))
 	runner := Runner{
 		Jobs: store, Now: func() time.Time { return time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC) },
 		Dispatcher: refusingRebootDispatcher{code: strings.Repeat("Refused Because ", 20)},
@@ -412,7 +467,7 @@ func TestExpiryWithdrawsTheRecordedCommandBeforeReleasingTheNode(t *testing.T) {
 			store := controlplane.NewMemoryStore()
 			now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
 			store.SetNow(func() time.Time { return now })
-			queuedReboot(t, store, "reboot-1", now.Add(QueueTimeout))
+			queuedReboot(t, store, "reboot-1", now.Add(QueueTimeout), now)
 			claimed, err := store.ClaimServerMaintenanceJob(t.Context(), "tenant-1", "reboot-1", "cmd-reboot-1", now.Add(time.Minute), now)
 			if err != nil {
 				t.Fatal(err)
@@ -448,6 +503,7 @@ func TestExpiryWithdrawsTheRecordedCommandBeforeReleasingTheNode(t *testing.T) {
 func TestApplyAfterWaitIsPartialWhenApprovedPackagesArePending(t *testing.T) {
 	store := controlplane.NewMemoryStore()
 	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	impact := seedMaintenanceImpact(t, store, controlplane.ServerMaintenanceActionUpdate, now)
 	store.SetNow(func() time.Time { return now })
 	planDigest := "sha256:" + strings.Repeat("1", 64)
 	if _, err := store.CreateServerMaintenanceJob(t.Context(), controlplane.ServerMaintenanceJob{
@@ -466,9 +522,10 @@ func TestApplyAfterWaitIsPartialWhenApprovedPackagesArePending(t *testing.T) {
 		t.Fatal(err)
 	}
 	job, err := store.CreateServerMaintenanceJob(t.Context(), controlplane.ServerMaintenanceJob{
-		ID: "update-1", TenantID: "tenant-1", ServerID: "server-1", AgentID: "agent-1", OwnerSubjectID: "owner-1",
+		ID: "update-1", TenantID: "tenant-1", ServerID: "server-1", AgentID: "agent-1", StackID: "stack-1", OwnerSubjectID: "owner-1",
 		Action: controlplane.ServerMaintenanceActionUpdate, RequestDigest: "digest", State: controlplane.ServerMaintenanceStateQueued,
 		InventoryRevision: 7, PlanDigest: planDigest,
+		Result: map[string]any{controlplane.ServerMaintenanceImpactDigestKey: impact.SnapshotDigest},
 	})
 	if err != nil {
 		t.Fatal(err)

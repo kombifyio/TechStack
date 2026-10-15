@@ -119,6 +119,10 @@ func assertRuntimeInventoryOpenAPIBase(t *testing.T, name, base string, shape ma
 		if shape["type"] != "integer" || shape["format"] != "int64" {
 			t.Errorf("%s type = %#v, want integer/int64", name, shape)
 		}
+	case "float64":
+		if shape["type"] != "number" {
+			t.Errorf("%s type = %#v, want number", name, shape)
+		}
 	case "bool":
 		if shape["type"] != "boolean" {
 			t.Errorf("%s type = %#v, want boolean", name, shape)

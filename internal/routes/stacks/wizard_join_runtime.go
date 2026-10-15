@@ -46,6 +46,11 @@ func (h crudRouteHandlers) persistJoinServerIntent(
 		return "", fmt.Errorf("load join server intent: %w", err)
 	}
 
+	projectionStore, ok := h.serverStore.(controlplane.ServerRuntimeProjectionStore)
+	if !ok {
+		return "", fmt.Errorf("race-safe join server projection is unavailable")
+	}
+
 	remoteHost = strings.TrimSpace(remoteHost)
 	displayName := strings.TrimSpace(stack.Name + " " + nodeID)
 	if remoteHost != "" {
@@ -63,9 +68,11 @@ func (h crudRouteHandlers) persistJoinServerIntent(
 		metadata[nodehandoff.KeyServerRemoteHost] = remoteHost
 	}
 
-	server, err := h.serverStore.UpsertServerRuntime(ctx, controlplane.ServerRuntime{
+	server, created, err := projectionStore.EnsureServerRuntimeProjection(ctx, controlplane.ServerRuntime{
 		ID: serverID, TenantID: tenantID, StackID: stack.ID, OwnerSubjectID: ownerID,
-		NodeID: nodeID, Name: displayName,
+		// The spec-local Node reference is not a registered nodes.id. Enrollment
+		// establishes the physical binding; spec_node_id above retains this intent.
+		Name:                displayName,
 		LifecycleState:      string(serverregistry.LifecyclePlanned),
 		DesiredState:        string(serverregistry.DesiredRunning),
 		ConnectionState:     string(serverregistry.ConnectionPending),
@@ -76,6 +83,9 @@ func (h crudRouteHandlers) persistJoinServerIntent(
 	})
 	if err != nil {
 		return "", fmt.Errorf("persist join server intent: %w", err)
+	}
+	if !created {
+		return server.ID, nil
 	}
 	for _, dimension := range []struct{ name, state string }{
 		{"lifecycle", server.LifecycleState},

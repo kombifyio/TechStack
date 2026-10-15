@@ -36,7 +36,13 @@ The engine:
    `Timer` resumes it. A delivery failure leaves the timer due and retryable;
    only a successful delivery or an already-resolved signal marks it fired.
 5. On unrecoverable step failure, the engine runs each completed step's
-   `Compensate` in reverse order (saga), then marks the run `failed`.
+   `Compensate` in reverse order (saga). Pending or unsuccessful compensation
+   remains `compensating` and is polled by the existing worker, including after
+   a restart. The run context checkpoints the recovery job before returning;
+   stable activity keys and canonical durable job reservations close the gap
+   before that checkpoint. Only confirmed recovery marks the step compensated;
+   after all rollbacks finish, the original run becomes `failed` with its
+   original cause. This process-local engine does not claim fleet fencing.
 
 ## Reused existing infrastructure (do NOT duplicate)
 

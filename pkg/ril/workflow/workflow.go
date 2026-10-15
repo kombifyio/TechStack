@@ -73,6 +73,7 @@ const (
 // single source of truth for the run's state (current mutable state, NOT an
 // event log to replay).
 type Run struct {
+	TenantID       string         `json:"tenant_id"`
 	ID             string         `json:"id"`     // legacy compatibility id; Postgres keys RunID
 	RunID          string         `json:"run_id"` // stable external id (uuid)
 	Type           RunType        `json:"type"`
@@ -147,6 +148,9 @@ type SuspendDirective struct {
 type StepResult struct {
 	Output  map[string]any
 	Suspend *SuspendDirective
+	// Pending keeps saga compensation runnable without completing its step.
+	// The existing worker polls the durable compensating run after a restart.
+	Pending bool
 }
 
 // Activities is the side-effecting activity registry a step calls into. The

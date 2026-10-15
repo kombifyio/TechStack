@@ -60,19 +60,31 @@ type CloudInitInput struct {
 type HostPrepProfile string
 
 const (
+	HostPrepProfileStackKitReadyUbuntu2604V1 HostPrepProfile = "stackkit-ready-ubuntu-26.04-v1"
 	// HostPrepProfileIONOSUbuntu2404DockerV1 is the IONOS Ubuntu image
 	// contract. It now prepares the same StackKit-ready host as
 	// HostPrepProfileStackKitReadyUbuntu2404V1 so Cloud host-security can
 	// enable nftables, fail2ban, and unattended-upgrades.
 	HostPrepProfileIONOSUbuntu2404DockerV1 HostPrepProfile = "ionos-ubuntu-24.04-docker-v1"
 	// HostPrepProfileStackKitReadyUbuntu2404V1 is the provider-neutral
-	// Ubuntu 24.04 contract used by Centron (and any later Ubuntu image)
+	// Ubuntu 24.04 compatibility contract used by existing explicit image choices
 	// so apply does not start without host-security packages.
 	HostPrepProfileStackKitReadyUbuntu2404V1 HostPrepProfile = "stackkit-ready-ubuntu-24.04-v1"
 )
 
 func (p HostPrepProfile) stackKitReady() bool {
-	return p == HostPrepProfileIONOSUbuntu2404DockerV1 || p == HostPrepProfileStackKitReadyUbuntu2404V1
+	return p == HostPrepProfileIONOSUbuntu2404DockerV1 || p == HostPrepProfileStackKitReadyUbuntu2404V1 || p == HostPrepProfileStackKitReadyUbuntu2604V1
+}
+
+// UbuntuHostPrepProfile preserves the OS version of an explicit image choice.
+func UbuntuHostPrepProfile(version string) HostPrepProfile {
+	if version == "26.04" {
+		return HostPrepProfileStackKitReadyUbuntu2604V1
+	}
+	if version == "24.04" {
+		return HostPrepProfileStackKitReadyUbuntu2404V1
+	}
+	return ""
 }
 
 // ExecutionChannelUser is the login the control plane keeps on a managed node.
@@ -137,6 +149,15 @@ func guardInstallerCommand(readinessCommand, installerCommand, failureReport str
 	return "set -o pipefail; " + pipeline + " || { " + failureReport + "; }"
 }
 
+// GuardBootstrapScriptPath is the root-only first-boot script that carries the
+// pairing capability on a managed node. The capability is never part of a
+// process argument list (cloud-init runs the script by path, and the failure
+// report reads its header from standard input), so another local user cannot
+// read it from /proc/<pid>/cmdline while the installer runs. The script removes
+// itself when the run ends; bootstrap residue redaction covers an interrupted
+// run.
+const GuardBootstrapScriptPath = "/usr/local/lib/kombify/guard-bootstrap"
+
 // RenderCloudInit returns the #cloud-config document that installs and enrols
 // the Guard on first boot.
 //
@@ -157,14 +178,15 @@ func RenderCloudInit(in CloudInitInput) ([]byte, error) {
 		return nil, ErrInvalidPairingToken
 	}
 
+	// KOMBI_TOKEN is exported by the script below; it reaches the installer as
+	// environment, never as an argument.
 	installerCommand := fmt.Sprintf(
-		"curl -fsSL --retry 5 --retry-connrefused --retry-delay 10 %s | KOMBI_SERVER=%s KOMBI_TOKEN=%s bash",
-		shellQuote(origin+"/install.sh"), shellQuote(origin), shellQuote(token),
+		"curl -fsSL --retry 5 --retry-connrefused --retry-delay 10 %s | KOMBI_SERVER=%s bash",
+		shellQuote(origin+"/install.sh"), shellQuote(origin),
 	)
 	failureReport := fmt.Sprintf(
-		"status=$?; curl -sS --max-time 5 --connect-timeout 2 -X POST %s -H %s -H %s -H %s --data-binary %s >/dev/null 2>&1 || true; exit $status",
+		"status=$?; printf 'Authorization: Bearer %%s\\n' \"$KOMBI_TOKEN\" | curl -sS --max-time 5 --connect-timeout 2 -X POST %s -H @- -H %s -H %s --data-binary %s >/dev/null 2>&1 || true; exit $status",
 		shellQuote(origin+"/api/v1/workers/bootstrap/logs"),
-		shellQuote("Authorization: Bearer "+token),
 		shellQuote("X-Kombify-Log-Level: error"),
 		shellQuote("X-Kombify-Log-Phase: cloud-init"),
 		shellQuote("Cloud-init could not establish the execution channel or execute the Techstack installer."),
@@ -174,13 +196,18 @@ func RenderCloudInit(in CloudInitInput) ([]byte, error) {
 		readinessCommand = executionChannelBootstrapPath
 	}
 	command := guardInstallerCommand(readinessCommand, installerCommand, failureReport)
-	// The command is embedded in a YAML double-quoted scalar below. Shell
-	// quoting uses single quotes only, and both the origin and the token are
-	// already restricted to characters that exclude these, so a hit here means
-	// an upstream validator regressed rather than an input needing escaping.
-	if strings.ContainsAny(command, "\"\\\n\r") {
+	// The script is embedded in a YAML block scalar below, one line per line.
+	// Shell quoting uses single quotes only, and both the origin and the token
+	// are already restricted to characters that exclude these, so a hit here
+	// means an upstream validator regressed rather than an input needing
+	// escaping.
+	if strings.ContainsAny(command, "\n\r") || strings.ContainsAny(origin+token, "\"\\\n\r'") {
 		return nil, ErrUnrenderablePayload
 	}
+	script := "#!/bin/bash\n" +
+		"trap 'rm -f \"$0\"' EXIT\n" +
+		"export KOMBI_TOKEN=" + shellQuote(token) + "\n" +
+		command + "\n"
 
 	hostname := strings.TrimSpace(in.Hostname)
 	if hostname != "" && !validHostnameLabel(hostname) {
@@ -196,8 +223,16 @@ func RenderCloudInit(in CloudInitInput) ([]byte, error) {
 	document.WriteString("package_update: true\n")
 	document.WriteString("packages:\n")
 	document.WriteString("  - ufw\n")
+	document.WriteString("write_files:\n")
+	// The capability file is root-only; it is created before anything runs.
+	document.WriteString("  - path: " + GuardBootstrapScriptPath + "\n")
+	document.WriteString("    owner: root:root\n")
+	document.WriteString("    permissions: '0700'\n")
+	document.WriteString("    content: |\n")
+	for _, line := range strings.Split(strings.TrimRight(script, "\n"), "\n") {
+		document.WriteString("      " + line + "\n")
+	}
 	if in.HostPrepProfile.stackKitReady() {
-		document.WriteString("write_files:\n")
 		document.WriteString("  - path: /var/lib/kombify/host-prep/v2.status\n")
 		document.WriteString("    permissions: '0644'\n")
 		document.WriteString("    content: |\n      status=pending\n")
@@ -226,74 +261,21 @@ func RenderCloudInit(in CloudInitInput) ([]byte, error) {
 	// Provider NICs are not a sufficient host policy. Establish an SSH-only
 	// first-boot baseline before downloading or running the Guard installer;
 	// StackKit rollout must explicitly open any later published service ports.
-	document.WriteString("  - [\"/usr/sbin/ufw\", \"default\", \"deny\", \"incoming\"]\n")
-	document.WriteString("  - [\"/usr/sbin/ufw\", \"default\", \"allow\", \"outgoing\"]\n")
-	document.WriteString("  - [\"/usr/sbin/ufw\", \"allow\", \"22/tcp\"]\n")
-	document.WriteString("  - [\"/usr/sbin/ufw\", \"--force\", \"enable\"]\n")
+	for _, command := range ubuntuSSHFirewallCommands() {
+		quoted := make([]string, len(command))
+		for i, argument := range command {
+			quoted[i] = fmt.Sprintf("%q", argument)
+		}
+		document.WriteString("  - [" + strings.Join(quoted, ", ") + "]\n")
+	}
 	if in.HostPrepProfile.stackKitReady() {
 		document.WriteString("  - [\"" + executionChannelBootstrapPath + "\"]\n")
 		document.WriteString("  - [\"/bin/systemctl\", \"enable\", \"--now\", \"--no-block\", \"kombify-host-prep-v2.service\"]\n")
 	}
 	// List form: cloud-init execs the argv directly, so no second shell parses
 	// the document and YAML cannot be escaped out of.
-	document.WriteString("  - [\"/bin/bash\", \"-c\", \"" + command + "\"]\n")
+	document.WriteString("  - [\"" + GuardBootstrapScriptPath + "\"]\n")
 	return []byte(document.String()), nil
-}
-
-func stackKitReadyUbuntuHostPrepV2() string {
-	return `#!/bin/bash
-set -euo pipefail
-state_dir=/var/lib/kombify/host-prep
-status_file=$state_dir/v2.status
-mkdir -p "$state_dir"
-exec 9>"$state_dir/v2.lock"
-flock -n 9 || exit 0
-stackkit_ready() {
-  docker info >/dev/null 2>&1 &&
-    command -v nft >/dev/null 2>&1 &&
-    systemctl is-enabled --quiet fail2ban &&
-    systemctl is-enabled --quiet unattended-upgrades &&
-    sshd -t >/dev/null 2>&1 &&
-    { ! command -v ufw >/dev/null 2>&1 || ! ufw status 2>/dev/null | grep -q '^Status: active' || { ! systemctl is-active --quiet nftables && ! systemctl is-enabled --quiet nftables; }; } &&
-    ` + RenderExecutionChannelUserReadyTest("") + `
-}
-if grep -qx 'status=ready' "$status_file" 2>/dev/null && stackkit_ready; then exit 0; fi
-printf 'status=pending\n' >"$status_file.tmp"
-mv -f "$status_file.tmp" "$status_file"
-failed() { printf 'status=failed\n' >"$status_file.tmp"; mv -f "$status_file.tmp" "$status_file"; }
-trap failed ERR
-export DEBIAN_FRONTEND=noninteractive
-for _ in $(seq 1 15); do
-  if ! pgrep -x apt >/dev/null && ! pgrep -x apt-get >/dev/null && ! pgrep -x dpkg >/dev/null && ! pgrep -f unattended-upgrade >/dev/null; then break; fi
-  sleep 2
-done
-timeout 40 apt-get -o DPkg::Lock::Timeout=20 -o Acquire::Retries=1 -o Acquire::http::Timeout=10 -o Acquire::https::Timeout=10 update
-timeout 90 apt-get install -y -o DPkg::Lock::Timeout=20 -o Acquire::Retries=1 -o Acquire::http::Timeout=10 -o Acquire::https::Timeout=10 ca-certificates curl docker.io docker-compose-v2 nftables fail2ban unattended-upgrades openssh-server
-systemctl enable --now docker
-# Install nftables for the nft binary. Do not start that service: Ubuntu
-# cloud-init already owns incoming with ufw (allow 22). Starting the
-# service flushes that ruleset and can make 22/443/ICMP silent.
-if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
-  ufw allow 22/tcp || true
-  # apt install nftables enables the unit even though we never start it.
-  # That flushes the ufw SSH-only baseline and breaks Docker Compose Apply.
-  systemctl disable --now nftables >/dev/null 2>&1 || true
-fi
-systemctl enable --now fail2ban
-systemctl enable --now unattended-upgrades
-mkdir -p /etc/ssh/sshd_config.d /run/sshd
-chmod 0755 /run/sshd
-# Establish the execution channel before sshd -t. Ubuntu's sshd refuses
-# to test its config until the privilege-separation directory exists, and
-# a first-boot that dies there never copies the provider key onto kombify.
-` + RenderExecutionChannelUserProvisioning("") + `
-printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\n' >/etc/ssh/sshd_config.d/zz-kombify-host-prep.conf
-sshd -t
-systemctl reload ssh || systemctl reload sshd || true
-stackkit_ready
-printf 'status=ready\n' >"$status_file.tmp"
-mv -f "$status_file.tmp" "$status_file"
-trap - ERR`
 }
 
 // normalizeOrigin accepts only a scheme+host https origin and strips any path,

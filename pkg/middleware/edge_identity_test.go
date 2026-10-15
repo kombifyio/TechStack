@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,6 +20,10 @@ import (
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/httpx"
 )
+
+// testNonceSeq keeps every signed test envelope nonce unique: the edge replay
+// guard rejects a repeated nonce.
+var testNonceSeq atomic.Int64
 
 const testEdgeAuthSecret = "test-edge-auth-secret"
 const testEdgeFlagsSecret = "test-edge-flags-secret"
@@ -35,8 +40,11 @@ func signEdgeRequest(t *testing.T, e *httpx.Event, secret string) {
 	t.Helper()
 
 	ts := strconv.FormatInt(time.Now().Unix(), 10)
-	nonce := "test-nonce"
+	nonce := "test-nonce-" + strconv.FormatInt(testNonceSeq.Add(1), 10)
 	signedPath := e.Request.URL.RequestURI()
+	if e.Request.Header.Get(headerEdgeService) == "" {
+		e.Request.Header.Set(headerEdgeService, "capabilities")
+	}
 	service := e.Request.Header.Get(headerEdgeService)
 	publicPrefix := e.Request.Header.Get(headerPublicPrefix)
 
@@ -849,7 +857,10 @@ func signEdgeRequestV2At(t *testing.T, e *httpx.Event, secret string, issuedAt t
 	t.Helper()
 
 	ts := strconv.FormatInt(issuedAt.Unix(), 10)
-	nonce := "test-nonce-v2"
+	nonce := "test-nonce-v2-" + strconv.FormatInt(testNonceSeq.Add(1), 10)
+	if e.Request.Header.Get(headerEdgeService) == "" {
+		e.Request.Header.Set(headerEdgeService, "capabilities")
+	}
 	signedPath := e.Request.URL.RequestURI()
 
 	payload := strings.Join([]string{
@@ -1047,5 +1058,19 @@ func TestEdgeIdentityMiddleware_EdgeAuth_V2Signature_TamperedEntitlements_Return
 	}
 	if id := identity.FromContext(e.Request.Context()); id != nil {
 		t.Fatalf("expected no identity for tampered v2 request, got %#v", id)
+	}
+}
+
+func TestEdgeIdentityMiddleware_EdgeAuth_RejectsEnvelopeSignedForAnotherService(t *testing.T) {
+	e := newTestEvent("GET", "/v1/techstack/probe")
+	e.Request.Header.Set(headerEdgeAuth, edgeAuthValueJWT)
+	e.Request.Header.Set(headerEdgeService, "kombify-ai")
+	e.Request.Header.Set("X-User-ID", "user-1")
+	signEdgeRequest(t, e, testEdgeAuthSecret)
+
+	mw := EdgeIdentityMiddlewareWithConfig(EdgeIdentityConfig{Mode: config.ModeSaaS, EdgeAuthSecret: testEdgeAuthSecret})
+	_ = mw(e)
+	if rec := e.Response.(*httptest.ResponseRecorder); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d want 401", rec.Code)
 	}
 }

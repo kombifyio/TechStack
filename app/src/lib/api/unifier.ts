@@ -152,6 +152,20 @@ export interface WizardRecommendationRequest {
   deployment_lane: "saas" | "self-hosted";
   provider_id?: string;
   surface: "easy";
+  /** "all" asks which of `available_goals` the full-homelab template preselects. */
+  selection_intent?: "all";
+  available_goals?: string[];
+  compute_profile?: string;
+  use_case_settings?: Record<string, Record<string, string | boolean>>;
+  use_case_capabilities?: Record<string, Record<string, string>>;
+}
+
+/** Server guidance for a selection; never blocks one. */
+export interface WizardSelectionGuidance {
+  preselect?: string[];
+  withheld?: Array<{ goal: string; code: string }>;
+  context: string[];
+  tip?: { code: string; params?: Record<string, number> };
 }
 
 export interface WizardRecommendation {
@@ -178,6 +192,7 @@ export interface WizardRecommendationResult {
   missing_inputs: string[];
   stale_inputs: string[];
   recommendations: WizardRecommendation[];
+  selection?: WizardSelectionGuidance;
 }
 
 export interface SmartHomeContext {

@@ -14,7 +14,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 
 	commonauthflow "github.com/kombifyio/techstack/internal/gocommon/authflow"
@@ -25,12 +24,11 @@ import (
 	commonrole "github.com/kombifyio/techstack/internal/gocommon/role"
 
 	"github.com/kombifyio/techstack/internal/frontend"
-	"github.com/kombifyio/techstack/internal/hooks"
 	"github.com/kombifyio/techstack/internal/notifications"
-	pbmigration "github.com/kombifyio/techstack/internal/pocketbase_migration"
 	"github.com/kombifyio/techstack/internal/portinventory"
 	"github.com/kombifyio/techstack/internal/routes"
 	"github.com/kombifyio/techstack/internal/routes/sessionreauth"
+	stackroutes "github.com/kombifyio/techstack/internal/routes/stacks"
 	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	"github.com/kombifyio/techstack/internal/systemwallet"
 	"github.com/kombifyio/techstack/pkg/agentcontrol"
@@ -44,16 +42,20 @@ import (
 	"github.com/kombifyio/techstack/pkg/enrollment"
 	"github.com/kombifyio/techstack/pkg/features"
 	"github.com/kombifyio/techstack/pkg/grpcserver"
+	"github.com/kombifyio/techstack/pkg/guardposture"
+	"github.com/kombifyio/techstack/pkg/guardreach"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/identity"
 	"github.com/kombifyio/techstack/pkg/instance"
 	"github.com/kombifyio/techstack/pkg/jobs"
+	"github.com/kombifyio/techstack/pkg/kombifywallet"
 	"github.com/kombifyio/techstack/pkg/logger"
 	"github.com/kombifyio/techstack/pkg/middleware"
 	"github.com/kombifyio/techstack/pkg/monitoring"
 	"github.com/kombifyio/techstack/pkg/monthlyruntime"
 	"github.com/kombifyio/techstack/pkg/orchestrator"
 	"github.com/kombifyio/techstack/pkg/ril/workflow"
+	"github.com/kombifyio/techstack/pkg/stackrouting"
 	"github.com/kombifyio/techstack/pkg/telemetry"
 	"github.com/kombifyio/techstack/pkg/tunnel"
 	v2 "github.com/kombifyio/techstack/pkg/v2"
@@ -70,16 +72,17 @@ type startupContext struct {
 }
 
 type v2Boot struct {
-	db                   *db.DB
-	server               *v2.Server
-	session              *session.Manager
-	browserSessions      *sessionpolicy.Browser
-	registry             *providers.Registry
-	authStore            controlplane.AuthStore
-	serverEventProjector controlplane.ServerEventProjector
-	cookieName           string
-	defaultTenant        string
-	saasMode             bool
+	db                    *db.DB
+	advancedIssuerCustody *db.DB
+	server                *v2.Server
+	session               *session.Manager
+	browserSessions       *sessionpolicy.Browser
+	registry              *providers.Registry
+	authStore             controlplane.AuthStore
+	serverEventProjector  controlplane.ServerEventProjector
+	cookieName            string
+	defaultTenant         string
+	saasMode              bool
 }
 
 type grpcBoot struct {
@@ -89,17 +92,19 @@ type grpcBoot struct {
 }
 
 type monitoringBoot struct {
-	tsdb         *monitoring.MonitorTSDB
-	queryBackend monitoring.MetricsQueryBackend
-	remote       *monitoring.HTTPPromQLBackend
-	status       routes.MonitoringStatusMetadata
-	alertEngine  *monitoring.AlertEngine
-	notifyOutbox *notifications.Outbox
-	dataDir      string
+	tsdb          *monitoring.MonitorTSDB
+	queryBackend  monitoring.MetricsQueryBackend
+	remote        *monitoring.HTTPPromQLBackend
+	status        routes.MonitoringStatusMetadata
+	alertEngine   *monitoring.AlertEngine
+	alertNotifier monitoring.Notifier
+	driveHealth   *monitoring.DriveHealthService
+	notifyOutbox  *notifications.Outbox
+	domainMonitor *stackrouting.DomainMonitor
+	dataDir       string
 }
 
 type routeDeps struct {
-	app                     *pocketbase.PocketBase
 	startup                 *startupContext
 	orch                    *orchestrator.Orchestrator
 	grpc                    *grpcBoot
@@ -120,6 +125,17 @@ type routeDeps struct {
 	providerControlDB *sql.DB
 	typedControl      *agentcontrol.Hub
 	portInventory     *portinventory.PostgresAuthority
+	// guardReach is nil unless kombify Guard reach is enabled for a connected
+	// edition.
+	guardReach *guardreach.Service
+	// guardPosture is nil when posture is switched off.
+	guardPosture *guardposture.Service
+	// feed is nil without the Postgres control plane.
+	feed *companionFeedBoot
+	// wallet is the central kombify Wallet client, nil while the deployment
+	// keeps credentials in the legacy wallet (walletSource).
+	wallet       *kombifywallet.Client
+	walletSource kombifywallet.Source
 }
 
 func providerControlSQL(database *db.DB) *sql.DB {
@@ -172,6 +188,15 @@ func runTechstack(ctx context.Context) error {
 	if isStackKitOperationsProcessMode(os.Args) {
 		return runStackKitOperationsProcess(ctx)
 	}
+	if isGuardExecutorMode(os.Args) {
+		return runGuardExecutor(ctx, os.Args[2:])
+	}
+	if isGuardLayoutMode(os.Args) {
+		return runGuardLayout(ctx, os.Args[3:])
+	}
+	if isGuardHostBaselineMode(os.Args) {
+		return runGuardHostBaseline(ctx, os.Args[3:])
+	}
 
 	// Agent/worker mode: the same binary runs as the node-side daemon
 	// (kombify Guard) instead of the control plane.
@@ -212,7 +237,6 @@ func runTechstack(ctx context.Context) error {
 		return err
 	}
 
-	app := newTechstackApp()
 	otelShutdown, otelErr := telemetry.Init(ctx, "kombify-techstack", version)
 	if otelErr != nil {
 		return fmt.Errorf("initialize telemetry: %w", otelErr)
@@ -231,6 +255,19 @@ func runTechstack(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Where credentials live is decided once, before anything else boots. A
+	// kombify source with an incomplete configuration refuses to start; there
+	// is no fallback to the legacy wallet.
+	walletClient, walletSource, err := kombifywallet.Boot(startup.cfg.DeploymentMode, os.Getenv)
+	if err != nil {
+		log.Error("wallet_source_invalid", "error", err)
+		return err
+	}
+	stackroutes.ConfigureKombifyWallet(walletClient)
+	log.Info("wallet_source_ready", "source", string(walletSource))
+	if strings.TrimSpace(os.Getenv(db.EnvDatabaseURL)) == "" {
+		return fmt.Errorf("canonical PostgreSQL database is required: configure %s before starting the supported runtime", db.EnvDatabaseURL)
+	}
 	localPostgres, err := maybeStartEmbeddedPostgres(startup.cfg, log)
 	if err != nil {
 		return fmt.Errorf("start embedded postgres: %w", err)
@@ -246,7 +283,7 @@ func runTechstack(ctx context.Context) error {
 	// Control-plane Postgres is the source of truth (PB retirement). Connect and
 	// run pkg/db migrations fail-closed: without DATABASE_URL the runtime cannot
 	// serve the control-plane API.
-	v2Boot := bootV2(ctx, app, startup.cfg, log)
+	v2Boot := bootCanonicalV2(ctx, startup.cfg, log)
 	if v2Boot.db == nil || v2Boot.db.DB == nil {
 		return fmt.Errorf("control-plane database is required: set %s with a Postgres DSN (PocketBase control-plane fallback removed)", db.EnvDatabaseURL)
 	}
@@ -255,20 +292,18 @@ func runTechstack(ctx context.Context) error {
 		return fmt.Errorf("bootstrap control-plane tenant: %w", tenantErr)
 	}
 
-	// Bootstrap the bounded PocketBase auth-compatibility store (no HTTP
-	// serving). Control-plane state, including wallet custody, is Postgres-owned;
-	// PocketBase remains only for the local auth records and OAuth configuration
-	// that have not yet moved behind the canonical auth boundary.
-	if err := app.Bootstrap(); err != nil {
-		return fmt.Errorf("bootstrap pocketbase data layer: %w", err)
-	}
-
 	controlStores := stackControlPlaneStores(v2Boot)
 	orchCfg := orchestrator.DefaultConfig()
 	orchCfg.StackStore = controlStores.Stacks
 	orchCfg.JobStore = controlStores.Jobs
 	orchCfg.WorkerStore = workerControlPlaneStore(v2Boot)
 	orchCfg.WalletStore = walletControlPlaneStore(v2Boot)
+	orchCfg.KombifyWallet = walletClient
+	if authority, ok, authorityErr := kombifywallet.HostAuthorityFromEnv(os.Getenv); authorityErr != nil {
+		log.Error("wallet_host_delivery_authority_invalid", "error", authorityErr)
+	} else if ok {
+		orchCfg.WalletHostAuthority = &authority
+	}
 	orchCfg.DriftStore = controlStores.Drift
 	orchCfg.ActivityStore = controlStores.Activity
 	orchCfg.RegistryStore = registryControlPlaneStore(v2Boot)
@@ -276,9 +311,17 @@ func runTechstack(ctx context.Context) error {
 	portInventory := portinventory.NewPostgresAuthority(v2Boot.db.DB)
 	orchCfg.PortInventory = portInventory
 	orchCfg.BackupScheduleProjector = backupScheduleProjector(v2Boot, log)
+	backupRetention := composeBackupRetention(v2Boot, log)
+	orchCfg.BackupDecommissioner = backupRetention.decommissioner()
 	orchCfg.AdvancedIssuer = advancedCapabilityIssuer(ctx, v2Boot, log)
+	orchCfg.OriginCertificates = composeOriginCertificates(v2Boot, log)
 	orch := orchestrator.New(orchCfg, log)
 	typedControl := agentcontrol.NewHub(v2Boot.db.DB)
+	// An unresolved Guard outcome is shown as needing an operator after this
+	// time; it is never released by the clock.
+	if after, parseErr := time.ParseDuration(strings.TrimSpace(os.Getenv("TECHSTACK_GUARD_OUTCOME_NEEDS_OPERATOR_AFTER"))); parseErr == nil {
+		typedControl.SetNeedsOperatorAfter(after)
+	}
 	tunnelResolver := bootTunnelResolver(log)
 	if monthlyruntime.LocalManagedRuntimeE2EAllowed() {
 		log.Warn("local_managed_runtime_e2e_gate_open",
@@ -292,12 +335,24 @@ func runTechstack(ctx context.Context) error {
 	}
 	notificationOutbox := bootProductNotificationOutbox(v2Boot, startup.cfg.Edition, log)
 	if notificationOutbox != nil {
-		v2Boot.serverEventProjector = nodeLifecycleNotificationProjector{outbox: notificationOutbox}
+		// Change hints reuse the engine destination of the notification outbox;
+		// they are best-effort and fire only after the change is committed.
+		changeHints := notifications.NewHintAnnouncer(notifications.NewEngineFromEnv(), log.Logger)
+		v2Boot.serverEventProjector = serverEventHintProjector{
+			nodeLifecycleNotificationProjector: nodeLifecycleNotificationProjector{outbox: notificationOutbox},
+			hints:                              changeHints,
+		}
 		orch.AddTerminalJobObserver(stackKitLifecycleNotifier{outbox: notificationOutbox})
 		orch.AddTerminalJobObserver(destroyJobFailureNotifier{outbox: notificationOutbox})
+		orch.AddTerminalJobObserver(terminalJobHintObserver{hints: changeHints})
 	}
 	rilSignalOutbox, rilSignalWorker := bootRILSignalRuntime(v2Boot, startup.cfg.Edition, buildRevision, log)
+	guardReach := bootGuardReach(v2Boot, startup.cfg.Edition, log)
+	guardPosture := bootGuardPosture(ctx, v2Boot, orch, notificationOutbox, log)
+	routes.StartGuardReleaseRefresher(ctx)
 	monitorState := bootMonitoring(startup.cfg, grpcState.server, log, notificationOutbox, rilSignalOutbox)
+	monitorState.domainMonitor = bootDomainMonitor(v2Boot, notificationOutbox, log)
+	feed := bootCompanionFeed(v2Boot, orch, notificationOutbox, grpcState.server, guardPosture, log)
 	workflowEngine := bootWorkflowEngine(v2Boot, log)
 	providerState, err := composeHostedProviderRuntime(
 		ctx,
@@ -321,7 +376,6 @@ func runTechstack(ctx context.Context) error {
 	}()
 
 	deps := routeDeps{
-		app:                     app,
 		startup:                 startup,
 		orch:                    orch,
 		grpc:                    grpcState,
@@ -339,8 +393,15 @@ func runTechstack(ctx context.Context) error {
 		providerControlDB:       providerControlSQL(providerDatabase),
 		typedControl:            typedControl,
 		portInventory:           portInventory,
+		guardReach:              guardReach,
+		guardPosture:            guardPosture,
+		feed:                    feed,
+		wallet:                  walletClient,
+		walletSource:            walletSource,
 	}
 
+	// One feature service serves the routes and the backup admission below.
+	deps.sharedFeatureService()
 	router, err := buildRouter(deps)
 	if err != nil {
 		return err
@@ -360,7 +421,7 @@ func runTechstack(ctx context.Context) error {
 		log.Error("wallet_custody_invalid", "error", err)
 		return err
 	}
-	if err := registerPocketBaseBootstrap(ctx, app, walletControlPlaneStore(v2Boot), v2Boot.defaultTenant); err != nil {
+	if err := bootstrapCanonicalAuth(ctx, deps); err != nil {
 		return err
 	}
 
@@ -370,9 +431,13 @@ func runTechstack(ctx context.Context) error {
 	if observer := jobExecutionDeferObserver(monitorState); observer != nil {
 		orch.Queue().SetExecutionDeferObserver(observer)
 	}
-	backupScanner := composeBackupScanner(v2Boot, deps.featureSvc, orch, log)
+	backupScanner := composeBackupScanner(&deps, auth.GetEncryptor())
 	serverMaintenance := bootServerMaintenanceLoop(v2Boot, orch, log)
-	handles := startRuntimeLifecycle(ctx, startup.cfg, orch, grpcState, monitorState, workflowEngine, rilSignalWorker, providerState.runner, registrySweeper, platformProjector, jobReclaimer, backupScanner, serverMaintenance, log)
+	driftScheduler := bootDriftScheduler(v2Boot, startup.cfg, orch, log)
+	handles := startRuntimeLifecycle(ctx, startup.cfg, orch, grpcState, monitorState, workflowEngine, rilSignalWorker, guardReach, providerState.runner, registrySweeper, platformProjector, jobReclaimer, backupScanner, backupRetention, serverMaintenance, driftScheduler, log)
+	if feed != nil && feed.digest != nil {
+		handles.background.run(feed.digest.Run)
+	}
 
 	addr := startup.cfg.Server.ListenAddr
 	if addr == "" {
@@ -438,32 +503,32 @@ func handleEarlyCommand(ctx context.Context, args []string) (bool, error) {
 		return false, nil
 	}
 	switch args[1] {
+	case "owner":
+		return true, runOwnerBootstrap(ctx, args[2:])
 	case "version":
 		fmt.Printf("kombifyTechstack v%s\n", version)
 		fmt.Println("The Hybrid Infrastructure Unifier")
 		fmt.Printf("Go: %s\n", runtime.Version())
 		return true, nil
+	case "advanced-issuer-bootstrap":
+		return true, runAdvancedIssuerBootstrap(ctx)
 	case "provider-control-bootstrap":
 		if err := runHostedProviderControlBootstrap(ctx); err != nil {
 			return true, err
 		}
 		fmt.Println("provider-control runtime authority installed and verified")
 		return true, nil
+	case "managed-test-bootstrap":
+		return true, runManagedTestBootstrap(ctx, args[2:])
 	case "operator-qualification-fixture":
 		return true, runOperatorQualificationFixture(ctx, args[2:])
+	case "wallet-migration":
+		return true, runWalletMigration(ctx, args[2:])
+	case "wallet":
+		return true, runWallet(args[2:])
 	default:
 		return false, nil
 	}
-}
-
-func newTechstackApp() *pocketbase.PocketBase {
-	return pocketbase.NewWithConfig(pocketbase.Config{
-		DefaultDataDir:       techstackPBDataDirFromEnv(),
-		DefaultEncryptionEnv: "TECHSTACK_ENCRYPTION_KEY",
-		DefaultDev:           os.Getenv("TECHSTACK_ENV") == "development",
-		DefaultQueryTimeout:  30,
-		HideStartBanner:      true,
-	})
 }
 
 func techstackPBDataDirFromEnv() string {
@@ -530,6 +595,10 @@ func loadStartupContext(log *logger.Logger) (*startupContext, error) {
 }
 
 func bootV2(ctx context.Context, app core.App, cfg *config.Config, log *logger.Logger) *v2Boot {
+	return bootCanonicalV2(ctx, cfg, log)
+}
+
+func bootCanonicalV2(ctx context.Context, cfg *config.Config, log *logger.Logger) *v2Boot {
 	boot := &v2Boot{}
 	if !v2EnabledFromEnv() {
 		return boot
@@ -541,6 +610,7 @@ func bootV2(ctx context.Context, app core.App, cfg *config.Config, log *logger.L
 	boot.db = openV2DB(ctx, cfg, log)
 	if boot.db != nil {
 		options = append(options, v2.WithDB(boot.db))
+		boot.authStore = controlplane.NewPostgresStore(boot.db.DB)
 	}
 
 	boot.cookieName = v2SessionCookieNameFromEnv()
@@ -563,6 +633,17 @@ func openV2DB(ctx context.Context, cfg *config.Config, log *logger.Logger) *db.D
 	if err != nil {
 		log.Error("v2_db_open_failed", "error", err)
 		return nil
+	}
+	if os.Getenv(db.EnvManagedTestAssignment) != "" {
+		a, err := db.LoadManagedTestAssignment()
+		if err == nil {
+			err = db.VerifyManagedTestSession(ctx, opened.DB, *a, db.ManagedTestApp)
+		}
+		if err != nil {
+			log.Error("v2_assigned_runtime_invalid", "error", err)
+			_ = opened.Close()
+			return nil
+		}
 	}
 	if err := opened.Migrate(ctx); err != nil {
 		log.Error("v2_db_migrate_failed", "error", err)
@@ -655,6 +736,7 @@ func configureV2Auth(ctx context.Context, cfg *config.Config, log *logger.Logger
 		tenantResolver = v2CloudTenantResolver(authStore, orgLister)
 	}
 	authFlow, err := commonauthflow.NewService(commonauthflow.Config{
+		PublicBaseURL:       config.PublicOriginFromEnv(),
 		Providers:           sharedRegistry,
 		Sessions:            mgr,
 		StateSecret:         []byte(secret),
@@ -875,7 +957,10 @@ func bootAgentGRPC(cfg *config.Config, boot *v2Boot, log *logger.Logger) (*grpcB
 		grpcSrv.SetCertManager(selfManagedCM)
 	}
 	enrollmentStoreWired := wireAgentEnrollmentStore(grpcSrv, boot, log)
-	state.identityIssuer = configuredAgentIdentityIssuer(grpcSrv, selfManagedCM, enrollmentStoreWired)
+	state.identityIssuer = editionAgentIdentityIssuer(cfg.Edition, grpcSrv, selfManagedCM, enrollmentStoreWired)
+	if state.identityIssuer == nil && selfManagedCM != nil && cfg.Edition != config.EditionSelfHostOSS {
+		log.Warn("agent_grpc_identity_issuance_disabled_hosted", "edition", string(cfg.Edition))
+	}
 	return state, nil
 }
 
@@ -897,6 +982,24 @@ func wireAgentEnrollmentStore(grpcSrv *grpcserver.Server, boot *v2Boot, log *log
 // listener has transport certificates but no agent-signing CA. Passing that
 // partially configured server to worker registration makes the optional mTLS
 // bundle fail the otherwise valid HTTPS enrollment.
+// editionAgentIdentityIssuer returns the gRPC agent identity issuer for an
+// edition. Hosted Guards authenticate only through the host-key path: a gRPC
+// client certificate is not bound to that key and its hub carries the older
+// stackkit command class, so a copied certificate would bypass the Guard
+// binding and journal (Guard finding F-14). Only a self-hosted edition issues
+// one, and only with complete minting authority.
+func editionAgentIdentityIssuer(
+	edition config.Edition,
+	grpcSrv *grpcserver.Server,
+	certManager *auth.CertManager,
+	enrollmentStoreWired bool,
+) routes.WorkerAgentIdentityIssuer {
+	if edition != config.EditionSelfHostOSS {
+		return nil
+	}
+	return configuredAgentIdentityIssuer(grpcSrv, certManager, enrollmentStoreWired)
+}
+
 func configuredAgentIdentityIssuer(
 	grpcSrv *grpcserver.Server,
 	certManager *auth.CertManager,
@@ -918,12 +1021,7 @@ func buildRouter(deps routeDeps) (*httpx.Router, error) {
 	}
 	router := httpx.NewRouter()
 	bindGlobalMiddleware(router, deps)
-	featureSvc, featureErr := initFeatureService(deps)
-	if featureErr != nil {
-		deps.log.Error("feature_routes_init_failed", "error", featureErr)
-	} else {
-		deps.featureSvc = featureSvc
-	}
+	deps.sharedFeatureService()
 	state, err := registerVMLeaseRoutes(router, deps)
 	if err != nil {
 		return nil, err
@@ -1445,6 +1543,7 @@ func v2CloudUserUpsert(authStore controlplane.AuthStore, saasMode bool) commonau
 			ID:           subject,
 			PrimaryEmail: email,
 			DisplayName:  strings.TrimSpace(claims.Name),
+			Metadata:     map[string]any{"email_verified": claims.Raw["email_verified"] == true},
 		}); err != nil {
 			return fmt.Errorf("upsert cloud user: %w", err)
 		}
@@ -1761,14 +1860,4 @@ func printStartup(addr string, deps routeDeps) {
 	fmt.Printf("   Features:       http://%s/api/v1/features\n", addr)
 	fmt.Printf("   Monitoring:     http://%s/api/v1/monitor/\n", addr)
 	fmt.Printf("   Tunnel:         http://%s/api/v1/tunnel/\n", addr)
-}
-
-func registerPocketBaseBootstrap(ctx context.Context, app *pocketbase.PocketBase, walletStore controlplane.WalletStore, tenantID string) error {
-	if err := pbmigration.EnsureSaaSAuthCollections(app); err != nil {
-		fmt.Printf("⚠️  SaaS auth collection bootstrap warning: %v\n", err)
-	}
-	if err := hooks.BootstrapUsers(ctx, app, walletStore, tenantID); err != nil {
-		return fmt.Errorf("bootstrap auth users and canonical recovery credentials: %w", err)
-	}
-	return nil
 }

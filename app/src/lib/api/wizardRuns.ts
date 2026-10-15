@@ -31,6 +31,10 @@ export interface WizardIntent {
   };
   /** Decisions per selected use case (slug -> setting id -> value). */
   use_case_settings?: Record<string, Record<string, string | boolean>>;
+  /** Capability selections per use case: an option id or "off". */
+  use_case_capabilities?: Record<string, Record<string, string>>;
+  /** Desired setup answers, including pending/off; never executable authority. */
+  use_case_setup_answers?: Record<string, Record<string, string[]>>;
   access?: {
     mode: "local" | "remote-private";
     publications?: { service_id: string; exposure: "public" }[];
@@ -54,6 +58,8 @@ export interface WizardRunRemoteParams {
   user?: string;
   auth_method?: string;
   ssh_key_label?: string;
+  /** Hosted: the Wallet item with the SSH credential; replaces label and password. */
+  ssh_wallet_item_id?: string;
   use_sudo?: boolean;
   /** Enrollment-only SSH password; never persisted server-side beyond the run. */
   password?: string;
@@ -84,7 +90,7 @@ export interface WizardRunSubstrateParams {
     disk_gib: number;
   };
   server_id: string;
-  profile_id: "ubuntu-24.04";
+  profile_id: "ubuntu-26.04" | "ubuntu-24.04";
   storage: string;
   bridge: string;
   cpu: number;

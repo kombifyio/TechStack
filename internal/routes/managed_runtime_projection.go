@@ -262,6 +262,8 @@ func managedRuntimeInventoryItemFromLease(record vmleases.LeaseInventoryRecord) 
 	if record.NativeActive() {
 		status = managedRuntimeHealthState(lease, enrollmentStatus, runtimeTarget, managedRuntimeEnrollmentAge(metadata))
 	}
+	// Leases do not carry observed image evidence. Keep Image unknown;
+	// the mutable allocation default cannot describe an existing resource.
 	return managedRuntimeInventoryItem{
 		ID:                 managedRuntimeServerID(lease.ID),
 		LeaseID:            string(lease.ID),
@@ -281,7 +283,6 @@ func managedRuntimeInventoryItemFromLease(record vmleases.LeaseInventoryRecord) 
 		PrivateIP:          privateIP,
 		IP:                 firstNonEmptyString(publicIP, privateIP),
 		Region:             firstNonEmptyString(lease.Resource.Region, offering.Region),
-		Image:              offering.Image,
 		VCPUs:              managedRuntimeKnownInt(size.VCPUs, targetReady),
 		MemoryMB:           managedRuntimeKnownInt(size.MemoryMB, targetReady),
 		DiskGB:             managedRuntimeKnownInt(size.DiskGB, targetReady),

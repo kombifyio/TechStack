@@ -32,6 +32,14 @@ type RelayConfig struct {
 	Version string
 	Logger  *slog.Logger
 	Dialer  *websocket.Dialer
+	// ProofProvider switches the relay to a kombify Guard host proof: it is
+	// called once per connection and must return a fresh, single-use proof
+	// (Authorization: KombifyGuard <proof>). No static key is involved; the
+	// proof names the server, so neither APIKey nor AgentID is needed.
+	ProofProvider func(context.Context) (string, error)
+	// OnConnected, when set, runs once per session after the relay accepted the
+	// connection.
+	OnConnected func()
 }
 
 type Relay struct {
@@ -45,6 +53,31 @@ type Relay struct {
 type RelaySessionError struct {
 	Err          error
 	ConnectedFor time.Duration
+	// Denial is set when the relay refused the connection itself (HTTP status
+	// before the WebSocket upgrade); nil for network and session failures.
+	Denial *RelayDenial
+}
+
+// RelayDenial is the relay's structured refusal of a connection.
+type RelayDenial struct {
+	Status     int
+	ReasonCode string
+	Retryable  bool
+}
+
+// Permanent reports whether retrying the same credential cannot succeed until
+// the control plane changes the binding: the relay does not know this server
+// or key, the binding was revoked, or the proof was refused as malformed or
+// mis-signed. A caller must stop and report instead of reconnecting in a loop.
+func (d *RelayDenial) Permanent() bool { return d != nil && !d.Retryable }
+
+// AsRelayDenial extracts the relay's refusal from a session error.
+func AsRelayDenial(err error) *RelayDenial {
+	var sessionErr *RelaySessionError
+	if errors.As(err, &sessionErr) {
+		return sessionErr.Denial
+	}
+	return nil
 }
 
 func (e *RelaySessionError) Error() string { return e.Err.Error() }
@@ -79,11 +112,13 @@ func NewRelay(cfg RelayConfig) (*Relay, error) {
 	if err != nil || (parsed.Scheme != "wss" && parsed.Scheme != "ws") || parsed.Host == "" {
 		return nil, errors.New("kombify.me relay URL must be a ws:// or wss:// URL")
 	}
-	if !strings.HasPrefix(cfg.APIKey, "kbi_") {
-		return nil, errors.New("kombify.me relay requires a kbi_ API key")
-	}
-	if cfg.AgentID == "" {
-		return nil, errors.New("kombify.me relay requires an agent ID")
+	if cfg.ProofProvider == nil {
+		if !strings.HasPrefix(cfg.APIKey, "kbi_") {
+			return nil, errors.New("kombify.me relay requires a kbi_ API key")
+		}
+		if cfg.AgentID == "" {
+			return nil, errors.New("kombify.me relay requires an agent ID")
+		}
 	}
 	if cfg.Version == "" {
 		cfg.Version = "unknown"
@@ -94,7 +129,7 @@ func NewRelay(cfg RelayConfig) (*Relay, error) {
 		copy := *websocket.DefaultDialer
 		dialer = &copy
 	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport := relayBaseTransport()
 	transport.Proxy = nil
 	transport.DialContext = dialRelayTarget
 	httpClient := &http.Client{
@@ -124,6 +159,9 @@ func (r *Relay) RunSession(ctx context.Context) error {
 	}()
 	conn.SetReadLimit(relayMaxBodySize*2 + 64*1024)
 	r.log.Info("kombify_me_relay_connected", "url", relayURL.Redacted(), "agent_id", r.cfg.AgentID)
+	if r.cfg.OnConnected != nil {
+		r.cfg.OnConnected()
+	}
 
 	stopWorkers := r.startSessionWorkers(ctx, conn)
 	defer stopWorkers()
@@ -136,22 +174,51 @@ func (r *Relay) connect(ctx context.Context) (*websocket.Conn, *url.URL, error) 
 		return nil, nil, &RelaySessionError{Err: err}
 	}
 	query := relayURL.Query()
-	query.Set("agent_id", r.cfg.AgentID)
+	headers := http.Header{}
+	if r.cfg.ProofProvider != nil {
+		proof, proofErr := r.cfg.ProofProvider(ctx)
+		if proofErr != nil {
+			return nil, nil, &RelaySessionError{Err: fmt.Errorf("mint relay host proof: %w", proofErr)}
+		}
+		headers.Set("Authorization", "KombifyGuard "+proof)
+	} else {
+		query.Set("agent_id", r.cfg.AgentID)
+		headers.Set("X-Kombify-API-Key", r.cfg.APIKey)
+	}
 	query.Set("version", r.cfg.Version)
 	relayURL.RawQuery = query.Encode()
 
-	headers := http.Header{}
-	headers.Set("X-Kombify-API-Key", r.cfg.APIKey)
 	conn, response, err := r.dialer.DialContext(ctx, relayURL.String(), headers)
 	if err != nil {
 		if response != nil {
 			defer func() { _ = response.Body.Close() }()
 			body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-			return nil, nil, &RelaySessionError{Err: fmt.Errorf("relay connect returned %d: %s", response.StatusCode, strings.TrimSpace(string(body)))}
+			return nil, nil, &RelaySessionError{
+				Err:    fmt.Errorf("relay connect returned %d: %s", response.StatusCode, strings.TrimSpace(string(body))),
+				Denial: parseRelayDenial(response.StatusCode, body),
+			}
 		}
 		return nil, nil, &RelaySessionError{Err: fmt.Errorf("relay connect: %w", err)}
 	}
 	return conn, relayURL, nil
+}
+
+// parseRelayDenial reads the platform reason envelope of a refused connect. A
+// refusal without an envelope is retryable only for server errors, so a proxy
+// or an outage never reads as a permanent revocation.
+func parseRelayDenial(status int, body []byte) *RelayDenial {
+	denial := &RelayDenial{Status: status, Retryable: status >= 500 || status == http.StatusTooManyRequests}
+	var envelope struct {
+		ReasonCode string `json:"reason_code"`
+		Retryable  *bool  `json:"retryable"`
+	}
+	if json.Unmarshal(body, &envelope) == nil {
+		denial.ReasonCode = envelope.ReasonCode
+		if envelope.Retryable != nil {
+			denial.Retryable = *envelope.Retryable
+		}
+	}
+	return denial
 }
 
 func (r *Relay) startSessionWorkers(ctx context.Context, conn *websocket.Conn) func() {
@@ -422,4 +489,20 @@ func decodeRelayBody(body string) ([]byte, error) {
 		return nil, err
 	}
 	return decoded, nil
+}
+
+// relayBaseTransport clones the default transport's settings. A LAN-paired
+// Guard wraps http.DefaultTransport in its pinning router, which is not an
+// *http.Transport; the relay dials its own target and needs none of it.
+func relayBaseTransport() *http.Transport {
+	if base, ok := http.DefaultTransport.(*http.Transport); ok {
+		return base.Clone()
+	}
+	return &http.Transport{
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: time.Second,
+	}
 }

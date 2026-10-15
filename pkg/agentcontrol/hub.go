@@ -15,6 +15,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
+	"github.com/kombifyio/techstack/pkg/guardbinding"
 	"github.com/kombifyio/techstack/pkg/stackkitcommand"
 )
 
@@ -25,6 +26,12 @@ var (
 	// gave up before any agent received it: nothing ran on the host.
 	ErrCommandCancelledBeforeDispatch = errors.New("agent control command was cancelled before an agent received it")
 )
+
+// CommandAuthorityLifetime is how long a durable typed command stays
+// dispatchable. Each command carries its own window from its enqueue, and the
+// Guard checks it when the effect starts, so a caller's per-command execution
+// budget plus its result grace must end well inside it.
+const CommandAuthorityLifetime = 15 * time.Minute
 
 // cancelledBeforeDispatchPrefix marks the stored error of a command failed
 // while still queued, so a re-attaching reader can tell it from a real
@@ -62,6 +69,9 @@ type Hub struct {
 	pending map[string][]*pendingCommand
 	notify  map[string]chan struct{}
 	db      *sql.DB
+	// needsOperatorAfter is the policy time after which an unresolved outcome is
+	// shown as needing an operator; zero selects DefaultNeedsOperatorAfter.
+	needsOperatorAfter time.Duration
 }
 
 func NewHub(databases ...*sql.DB) *Hub {
@@ -139,17 +149,20 @@ func (h *Hub) Poll(ctx context.Context, agentID string, capabilities []string) (
 	if h != nil && h.db != nil {
 		return nil, false, fmt.Errorf("typed HTTPS StackKits poll requires tenant scope")
 	}
-	return h.pollInMemory(ctx, agentID, capabilities)
+	return h.pollInMemory(ctx, agentID, capabilities, false)
 }
 
 func (h *Hub) PollForTenant(ctx context.Context, tenantID, agentID string, capabilities []string) (*agentpb.StackKitCommand, bool, error) {
 	if h == nil || h.db == nil {
-		return h.pollInMemory(ctx, agentID, capabilities)
+		return h.pollInMemory(ctx, agentID, capabilities, false)
 	}
 	return h.pollDurable(ctx, tenantID, agentID, capabilities)
 }
 
-func (h *Hub) pollInMemory(ctx context.Context, agentID string, capabilities []string) (*agentpb.StackKitCommand, bool, error) {
+// pollInMemory hands out the next command. observeOnly withholds every
+// mutating command: a worker that authenticates with a bearer credential alone
+// may observe but never be made to change its host.
+func (h *Hub) pollInMemory(ctx context.Context, agentID string, capabilities []string, observeOnly bool) (*agentpb.StackKitCommand, bool, error) {
 	if h == nil {
 		return nil, false, nil
 	}
@@ -157,7 +170,7 @@ func (h *Hub) pollInMemory(ctx context.Context, agentID string, capabilities []s
 	for {
 		h.mu.Lock()
 		for _, entry := range h.pending[agentID] {
-			if entry.dispatched {
+			if entry.dispatched || (observeOnly && stackkitcommand.IsMutatingOperation(entry.command.GetOperation())) {
 				continue
 			}
 			for _, capability := range stackkitcommand.RequiredAgentCapabilities(entry.command) {
@@ -266,12 +279,12 @@ func (h *Hub) sendDurable(ctx context.Context, tenantID, agentID string, command
 	result, err := tx.ExecContext(ctx, `
 		WITH cleanup AS (
 			DELETE FROM typed_agent_commands
-			WHERE tenant_id = $2 AND command_family = 'stackkit' AND expires_at < now() - interval '1 day'
+			WHERE tenant_id = $2 AND command_family = 'stackkit' AND state IN ('completed', 'failed') AND expires_at < now() - interval '1 day'
 		)
 		INSERT INTO typed_agent_commands (command_id, tenant_id, agent_id, command_json, expires_at)
-		VALUES ($1, $2, $3, $4::jsonb, now() + interval '15 minutes')
+		VALUES ($1, $2, $3, $4::jsonb, now() + make_interval(secs => $5))
 		ON CONFLICT (command_id) DO NOTHING
-	`, command.GetCommandId(), tenantID, agentID, payload)
+	`, command.GetCommandId(), tenantID, agentID, payload, CommandAuthorityLifetime.Seconds())
 	if err == nil {
 		var inserted int64
 		inserted, err = result.RowsAffected()
@@ -341,58 +354,19 @@ func (h *Hub) awaitDurable(ctx context.Context, tenantID, commandID string) (*ag
 }
 
 func (h *Hub) pollDurable(ctx context.Context, tenantID, agentID string, capabilities []string) (*agentpb.StackKitCommand, bool, error) {
-	return h.pollDurableOnce(ctx, tenantID, agentID, capabilities)
-}
-
-func (h *Hub) pollDurableOnce(ctx context.Context, tenantID, agentID string, capabilities []string) (*agentpb.StackKitCommand, bool, error) {
-	tenantID = strings.TrimSpace(tenantID)
-	agentID = strings.TrimSpace(agentID)
-	if tenantID == "" || agentID == "" {
-		return nil, false, ErrCommandNotPending
-	}
-	tx, err := h.tenantTx(ctx, tenantID)
-	if err != nil {
-		return nil, false, err
-	}
-	var commandID string
-	var payload []byte
-	err = tx.QueryRowContext(ctx, `
-		SELECT command_id, command_json
-		FROM typed_agent_commands
-		WHERE tenant_id = $1 AND agent_id = $2 AND command_family = 'stackkit' AND state = 'queued' AND expires_at > now()
-		ORDER BY created_at
-		FOR UPDATE SKIP LOCKED
-		LIMIT 1
-	`, tenantID, agentID).Scan(&commandID, &payload)
-	if errors.Is(err, sql.ErrNoRows) {
-		_ = tx.Rollback()
-		return nil, false, nil
-	}
-	if err != nil {
-		_ = tx.Rollback()
-		return nil, false, err
-	}
-	command := &agentpb.StackKitCommand{}
-	if err := protojson.Unmarshal(payload, command); err != nil {
-		_ = tx.Rollback()
-		return nil, false, err
-	}
-	for _, capability := range stackkitcommand.RequiredAgentCapabilities(command) {
-		if !containsCapability(capabilities, capability) {
-			message := fmt.Sprintf("agent %q does not advertise %s", agentID, capability)
-			_, _ = tx.ExecContext(ctx, `UPDATE typed_agent_commands SET state = 'failed', error = $2, completed_at = now() WHERE command_id = $1`, commandID, message)
-			_ = tx.Commit()
-			return nil, false, errors.New(message)
+	// A caller that goes through the plain poll cannot carry a binding: it is a
+	// legacy dispatch, flagged as such in the durable record.
+	legacy := make([]string, 0, len(capabilities))
+	for _, capability := range capabilities {
+		if !strings.EqualFold(strings.TrimSpace(capability), guardbinding.Capability) {
+			legacy = append(legacy, capability)
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE typed_agent_commands SET state = 'dispatched', dispatched_at = now() WHERE command_id = $1`, commandID); err != nil {
-		_ = tx.Rollback()
+	offer, found, err := h.PollBoundForTenant(ctx, PollOptions{TenantID: tenantID, AgentID: agentID, Capabilities: legacy})
+	if err != nil || !found {
 		return nil, false, err
 	}
-	if err := tx.Commit(); err != nil {
-		return nil, false, err
-	}
-	return command, true, nil
+	return offer.Command, true, nil
 }
 
 func (h *Hub) submitResultDurable(ctx context.Context, tenantID, agentID string, result *agentpb.StackKitResult) error {
@@ -411,11 +385,12 @@ func (h *Hub) submitResultDurable(ctx context.Context, tenantID, agentID string,
 	}
 	var payload []byte
 	var state string
+	var contract sql.NullString
 	err = tx.QueryRowContext(ctx, `
-		SELECT command_json, state FROM typed_agent_commands
+		SELECT command_json, state, contract_version FROM typed_agent_commands
 		WHERE tenant_id = $1 AND agent_id = $2 AND command_id = $3
 		FOR UPDATE
-	`, tenantID, agentID, commandID).Scan(&payload, &state)
+	`, tenantID, agentID, commandID).Scan(&payload, &state, &contract)
 	if errors.Is(err, sql.ErrNoRows) || state != "dispatched" {
 		_ = tx.Rollback()
 		return ErrCommandNotPending
@@ -423,6 +398,12 @@ func (h *Hub) submitResultDurable(ctx context.Context, tenantID, agentID string,
 	if err != nil {
 		_ = tx.Rollback()
 		return err
+	}
+	if contract.String == guardbinding.ContractVersion {
+		// A bound command is settled only by a revisioned, digest-checked
+		// report; a bare result would bypass the idempotency and ack contract.
+		_ = tx.Rollback()
+		return guardbinding.Denyf(guardbinding.CodeResultRejected, "command was dispatched under the binding contract and requires a revisioned report")
 	}
 	command := &agentpb.StackKitCommand{}
 	if err := protojson.Unmarshal(payload, command); err != nil {
@@ -545,7 +526,7 @@ func (h *Hub) WithdrawQueuedStackKitCommandForTenant(ctx context.Context, tenant
 	if err != nil {
 		return CommandWithdrawal{}, err
 	}
-	return CommandWithdrawal{InFlight: state == "dispatched"}, nil
+	return CommandWithdrawal{InFlight: state == "dispatched" || state == "outcome_unknown"}, nil
 }
 
 func (h *Hub) withdrawInMemory(commandID string) CommandWithdrawal {
@@ -638,4 +619,23 @@ func (h *Hub) signalLocked(agentID string) {
 	ch := h.notifyChannelLocked(agentID)
 	close(ch)
 	h.notify[agentID] = make(chan struct{})
+}
+
+// rejectInMemory ends a dispatched in-memory command that the Guard refused to
+// run, so its caller gets the refusal instead of waiting for its deadline.
+func (h *Hub) rejectInMemory(agentID, commandID, reason string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, entry := range h.pending[agentID] {
+		if entry.command.GetCommandId() != commandID || !entry.dispatched {
+			continue
+		}
+		select {
+		case entry.outcome <- commandOutcome{err: fmt.Errorf("%w: the Guard refused the command: %s", ErrResultRejected, reason)}:
+			return nil
+		default:
+			return ErrResultRejected
+		}
+	}
+	return ErrCommandNotPending
 }

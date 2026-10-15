@@ -99,6 +99,12 @@ func (s *PostgresCustodyStore) Upsert(ctx context.Context, credentials Credentia
 				kopia_repo_password_enc = EXCLUDED.kopia_repo_password_enc,
 				custody_attestation_evidence = NULL,
 				attested_at = NULL,
+				node_backup_target_ref = NULL,
+				node_custody_attestation_ref = NULL,
+				node_binding_recorded_at = NULL,
+				wipe_after = NULL,
+				token_revoked_at = NULL,
+				wiped_at = NULL,
 				updated_at = now()
 			RETURNING tenant_id, stack_id, bucket, endpoint, token_id, access_key_id,
 				secret_access_key_enc, kopia_repo_password_enc, updated_at,
@@ -152,7 +158,7 @@ func (s *PostgresCustodyStore) loadRow(ctx context.Context, tenantID, stackID st
 				secret_access_key_enc, kopia_repo_password_enc, updated_at,
 				custody_attestation_evidence, attested_at
 			FROM stack_backup_stores
-			WHERE tenant_id = $1 AND stack_id = $2
+			WHERE tenant_id = $1 AND stack_id = $2 AND token_revoked_at IS NULL
 		`, tenantID, stackID), &stored)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrCustodyNotFound

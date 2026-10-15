@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/stackkitrelease"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/db"
@@ -97,6 +98,12 @@ func RegisterHealthRoutesWithDeps(r *httpx.Router, version string, buildRevision
 		}
 		if revision := normalizedBuildRevision(buildRevision); revision != "" {
 			payload["revision"] = revision
+		}
+		// The StackKits release this image executes, read from the catalog
+		// asset the image verified at build. The StackKits release train
+		// reads it back to prove a repin is live, not only merged.
+		if catalog, configured, err := stackkitrelease.UseCaseCatalogFromEnv(); configured && err == nil && catalog.Release.Tag != "" {
+			payload["stackkits_release"] = catalog.Release.Tag
 		}
 		return httpx.Success(e, http.StatusOK, payload)
 	})

@@ -5,4 +5,12 @@
   <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
   <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
   <data name="IdentityVerificationFailed" xml:space="preserve"><value>El cliente de Windows no pudo verificar el entorno de ejecución local. Cierra las demás aplicaciones que usen su puerto y vuelve a abrir el cliente.</value></data>
+  <data name="RecoveryIncomplete" xml:space="preserve"><value>La recuperación de Techstack local no se ha completado.</value></data>
+  <data name="RecoveryDatabaseRunning" xml:space="preserve"><value>El entorno local o la base de datos siguen en ejecución. Cierra otras ventanas de Techstack y vuelve a abrir el cliente para completar la recuperación. Los datos de recuperación se han conservado.</value></data>
+  <data name="RecoverySnapshotMissing" xml:space="preserve"><value>Falta la copia de los datos anterior a la actualización. Restaura los datos de recuperación del cliente antes de volver a abrir Techstack. Los datos actuales se han conservado.</value></data>
+  <data name="RecoveryRestoreFailed" xml:space="preserve"><value>El cliente no pudo restaurar los datos anteriores a la actualización. Cierra las aplicaciones que usan los datos locales y vuelve a abrir el cliente. La recuperación sigue pendiente.</value></data>
+  <data name="RecoveryInstallationPending" xml:space="preserve"><value>La versión anterior de Techstack no se ha restaurado. Repara la instalación de Windows antes de volver a abrir el cliente. Los datos de recuperación se han conservado.</value></data>
+  <data name="WalletRevealTitle" xml:space="preserve"><value>Mostrar credencial</value></data>
+  <data name="WalletRevealPrompt" xml:space="preserve"><value>¿Mostrar la credencial de {0}? El valor se mostrará en esta ventana local de Techstack.</value></data>
+  <data name="WalletRevealFailed" xml:space="preserve"><value>No se pudo verificar la revelación local. Inténtalo de nuevo.</value></data>
 </root>

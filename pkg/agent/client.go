@@ -16,6 +16,7 @@ import (
 	"github.com/kombifyio/techstack/internal/gocommon/servertls"
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
 	"github.com/kombifyio/techstack/pkg/stackkitcommand"
+	"github.com/kombifyio/techstack/pkg/usernotice"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
@@ -56,6 +57,9 @@ type Client struct {
 	stackKitResults  chan *agentpb.StackKitResult
 	stackKitLogs     chan *agentpb.LogEntry
 	stackKitExecutor *StackKitExecutor
+
+	// progress, when set, is called at every heartbeat attempt.
+	progress func()
 
 	// resourceProvider, when set, supplies real host resource usage for
 	// heartbeats (see ResourceSampler). Without it the heartbeat falls back
@@ -251,12 +255,18 @@ func (c *Client) Register(ctx context.Context) error {
 		"status_report",
 	}
 	if c.stackKitExecutor.Available() {
+		capabilities = append(capabilities, c.stackKitExecutor.ApplicationCapabilities()...)
 		capabilities = append(capabilities,
 			StackKitAgentCapability,
 			stackkitcommand.ExpectedPlanHashCapability,
 			stackkitcommand.WorkspaceInstanceCapability,
+			stackkitcommand.RestoreActivationCapability,
+			stackkitcommand.OriginalRecoveryReleaseCapability,
+			stackkitcommand.SourceGenerationInspectionCapability,
+			stackkitcommand.SourceGenerationCachePreparationCapability,
 			stackkitcommand.AdvancedTrustImportCapability,
 			stackkitcommand.AdvancedOperationsCapability,
+			stackkitcommand.FederationHandoffCapability,
 		)
 		// Host maintenance is not advertised on the mTLS registration path:
 		// its heartbeat does not report host_boot_id or the machine-id
@@ -315,6 +325,22 @@ func (c *Client) SetResourceProvider(fn func() *agentpb.ResourceUsage) {
 // stream usually notices first; this is the backstop for half-open links.
 const maxConsecutiveHeartbeatFailures = 5
 
+// SetProgress installs the hook called at every heartbeat attempt.
+func (c *Client) SetProgress(progress func()) {
+	c.mu.Lock()
+	c.progress = progress
+	c.mu.Unlock()
+}
+
+func (c *Client) reportProgress() {
+	c.mu.RLock()
+	progress := c.progress
+	c.mu.RUnlock()
+	if progress != nil {
+		progress()
+	}
+}
+
 // StartHeartbeat begins sending periodic heartbeats to Core.
 // Uses the interval from config or defaults to 30 seconds.
 // Returns an error once maxConsecutiveHeartbeatFailures heartbeats in a row
@@ -340,6 +366,7 @@ func (c *Client) StartHeartbeat(ctx context.Context, interval time.Duration) err
 	consecutiveFailures := 0
 
 	// Send initial heartbeat immediately
+	c.reportProgress()
 	if err := c.sendHeartbeat(ctx); err != nil {
 		c.logger().Warn("initial_heartbeat_failed", "error", err.Error())
 		consecutiveFailures++
@@ -351,6 +378,7 @@ func (c *Client) StartHeartbeat(ctx context.Context, interval time.Duration) err
 			c.logger().Info("heartbeat_stopped", "reason", ctx.Err().Error())
 			return ctx.Err()
 		case <-ticker.C:
+			c.reportProgress()
 			if err := c.sendHeartbeat(ctx); err != nil {
 				consecutiveFailures++
 				c.logger().Warn("heartbeat_failed",
@@ -780,4 +808,33 @@ func (c *Client) RunAndReportPreChecks(ctx context.Context, runner *PreCheckRunn
 	}
 
 	return results, nil
+}
+
+// ReportUserNotification forwards one user-authored smart-home notice to Core.
+// A refusal (text over the bound, rate limit, unknown audience) is a structured
+// result, not an error.
+func (c *Client) ReportUserNotification(ctx context.Context, notice usernotice.Notice) (usernotice.Result, error) {
+	c.mu.RLock()
+	client := c.client
+	agentID := c.agentID
+	c.mu.RUnlock()
+	if client == nil {
+		return usernotice.Result{}, fmt.Errorf("not connected to core")
+	}
+	ack, err := client.ReportUserNotification(ctx, &agentpb.UserNotification{
+		AgentId: agentID, AutomationId: notice.AutomationID, Text: notice.Text, Audience: notice.Audience,
+		MemberUsername: notice.MemberUsername, Source: notice.Source,
+	})
+	if err != nil {
+		return usernotice.Result{}, fmt.Errorf("report user notification failed: %w", err)
+	}
+	return usernotice.Result{
+		Accepted: ack.GetAccepted(), RefusalCode: ack.GetRefusalCode(),
+		RetryAfter: time.Duration(ack.GetRetryAfterSeconds()) * time.Second, Recipients: int(ack.GetRecipients()),
+	}, nil
+}
+
+// Forward lets the client be the listener's Forwarder on the gRPC channel.
+func (c *Client) Forward(ctx context.Context, notice usernotice.Notice) (usernotice.Result, error) {
+	return c.ReportUserNotification(ctx, notice)
 }

@@ -7,8 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/kombifyio/techstack/pkg/controlplane"
-	"github.com/kombifyio/techstack/pkg/core"
+	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/identity"
 )
@@ -59,42 +58,32 @@ func TestUseCaseCatalogHTTPServesPinnedCatalogWithoutCheckout(t *testing.T) {
 	}
 }
 
-func TestAnalyzeHTTPOmitsMediaOnLowWithoutCheckout(t *testing.T) {
-	t.Setenv("STACKKITS_REPO", "")
-	t.Setenv("TECHSTACK_STACKKITS_DIR", "")
-	t.Setenv("STACKKITS_PATH", "")
-	t.Setenv("TECHSTACK_STACKKIT_USE_CASE_CATALOG", "")
-
+func TestAnalyzeHTTPRejectsMediaOnLowWithoutCheckout(t *testing.T) {
+	for _, name := range []string{"STACKKITS_REPO", "TECHSTACK_STACKKITS_DIR", "STACKKITS_PATH", "TECHSTACK_STACKKIT_USE_CASE_CATALOG"} {
+		t.Setenv(name, "")
+	}
 	body := `{"name":"catalog-pin","metadata":{"compute_tier":"low","use_cases":"media"},"services":[{"name":"jellyfin","type":"media"}]}`
 	recorder := unifierCatalogRequest(t, http.MethodPost, "/api/v1/unifier/analyze", body)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("omitted workload was not rejected: status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 	var envelope struct {
-		Data core.RequirementsSpec `json:"data"`
+		Error struct {
+			Code ksapi.ErrorCode `json:"code"`
+		} `json:"error"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
 		t.Fatal(err)
 	}
-	if envelope.Data.DecisionTrace == nil {
-		t.Fatal("analyze omitted decision trace")
-	}
-	found := false
-	for _, gap := range envelope.Data.DecisionTrace.BlockingGaps {
-		if gap.Code == "use_case_omitted_on_compute_tier" && gap.Blocking {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("analyze did not block media on low from the pinned catalog: %#v", envelope.Data.DecisionTrace.BlockingGaps)
+	if envelope.Error.Code != ksapi.ErrCodeBadRequest {
+		t.Fatalf("omitted workload did not return structured denial: %s", recorder.Body.String())
 	}
 }
 
 func unifierCatalogRequest(t *testing.T, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	router := httpx.NewRouter()
-	if err := RegisterUnifierRoutes(router, controlplane.NewMemoryStore()); err != nil {
+	if err := RegisterUnifierRoutes(router, nil); err != nil {
 		t.Fatal(err)
 	}
 	var request *http.Request

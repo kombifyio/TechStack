@@ -27,6 +27,8 @@ func bootMonitoring(cfg *config.Config, grpcSrv *grpcserver.Server, log *logger.
 		},
 	}
 	boot.tsdb = newMonitorTSDB(cfg, grpcSrv, log)
+	boot.notifyOutbox = notificationOutbox
+	boot.alertNotifier = buildAlertNotifier(notificationOutbox, rilSignalOutbox)
 	boot.queryBackend = monitoring.MetricsQueryBackend(boot.tsdb)
 	configureRemoteMonitoringBackend(cfg, log, boot)
 	if boot.tsdb == nil || grpcSrv == nil {
@@ -34,8 +36,7 @@ func bootMonitoring(cfg *config.Config, grpcSrv *grpcserver.Server, log *logger.
 		boot.status.CompatibilityMode = "query-only"
 	}
 	if boot.queryBackend != nil {
-		boot.notifyOutbox = notificationOutbox
-		boot.alertEngine = monitoring.NewAlertEngine(boot.queryBackend, buildAlertNotifier(notificationOutbox, rilSignalOutbox), monitoring.DefaultAlertRules(), monitoring.AlertEngineConfig{
+		boot.alertEngine = monitoring.NewAlertEngine(boot.queryBackend, boot.alertNotifier, monitoring.DefaultAlertRules(), monitoring.AlertEngineConfig{
 			Interval: cfg.Monitoring.AlertIntervalDuration(),
 			Logger:   log.Logger,
 		})

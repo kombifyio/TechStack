@@ -134,6 +134,37 @@ func DeliverableGoals() (map[string]string, bool, error) {
 	return goals, true, nil
 }
 
+// GoalDeliveryStatuses reports the pinned release's own delivery status of
+// every use case on the wizard's runtime adapter ("supported", "beta",
+// "preview", "unsupported"), keyed by use-case slug, so a surface labels a
+// beta use case as such instead of guessing. Same manifest and the same
+// (nil, false, nil) contract as DeliverableGoals.
+func GoalDeliveryStatuses() (map[string]string, bool, error) {
+	path := strings.TrimSpace(os.Getenv(CompatibilityManifestEnv))
+	if path == "" {
+		return nil, false, nil
+	}
+	manifest, err := readCompatibilityManifest(path)
+	if err != nil {
+		return nil, true, err
+	}
+	statuses := map[string]string{}
+	for _, delivery := range manifest.Compatibility.ApplicationDelivery {
+		goal := strings.TrimSpace(delivery.UseCaseRef)
+		if delivery.AdapterRef == wizardRuntimeAdapter && goal != "" {
+			statuses[goal] = strings.TrimSpace(delivery.Status)
+		}
+	}
+	return statuses, true, nil
+}
+
+// deliverableStatus admits a use case the pinned release delivers on the
+// wizard's adapter. Beta deliveries install and carry a Beta label in the
+// Wizard (owner decision 2026-10-07); preview and unsupported stay recorded.
+func deliverableStatus(status string) bool {
+	return status == "supported" || status == "beta"
+}
+
 func loadGoalWorkloads(path, releaseVersion string) (map[string]string, error) {
 	workloads, _, err := loadGoalMetadata(path, releaseVersion)
 	return workloads, err
@@ -161,7 +192,7 @@ func loadGoalMetadata(path, releaseVersion string) (map[string]string, map[strin
 	for _, delivery := range manifest.Compatibility.ApplicationDelivery {
 		goal := strings.TrimSpace(delivery.UseCaseRef)
 		workload := strings.TrimSpace(delivery.WorkloadRef)
-		if delivery.AdapterRef != wizardRuntimeAdapter || delivery.Status != "supported" {
+		if delivery.AdapterRef != wizardRuntimeAdapter || !deliverableStatus(delivery.Status) {
 			continue
 		}
 		if goal == "" || workload == "" || contractID(goal) != goal || contractID(workload) != workload {
@@ -265,8 +296,8 @@ func (v *CLIValidator) AuthorGoals(ctx context.Context, kitSlug, name, domainBas
 		"--non-interactive", "--name", contractID(name),
 		"--owner-source", "local",
 		// Init refuses a local owner without an email (StackKits v0.32.1+).
-		// The scratch workspace and its custody are discarded; only workload
-		// and module entries leave it, so the image seeds' owner is reused.
+		// The scratch owner and its custody are discarded. Only workload/module
+		// entries and their declared access/data intent leave this workspace.
 		"--owner-email", authoringOwnerEmail,
 		"--owner-username", "owner",
 		"--use-case", strings.Join(useCases, ","),
@@ -326,6 +357,7 @@ func (v *CLIValidator) installChoices(apiVersion string, mappedGoals []string, w
 		args = append(args, "--use-case-alternative", goal+"="+choice.Alternative)
 		bindings[v.goalWorkloads[goal]] = workloadModuleBinding{AlternativeRef: choice.Alternative, ModuleRef: choice.Module}
 	}
+	args = append(args, selection.capabilityArgs(mappedGoals)...)
 	for _, addOn := range selection.AddOns {
 		workload := addOn.Workload
 		if !slices.Contains(mappedGoals, addOn.Goal) || workloadIDs[workload] ||
@@ -378,12 +410,47 @@ func goalAuthoringFromDocument(document []byte, kitSlug string, mappedGoals, unm
 	selected := make(map[string]any, len(workloadIDs))
 	modules, _ := authoredSpec["modules"].(map[string]any)
 	profiles := map[string]map[string]any{}
+	routes := map[string]map[string]any{}
+	policies := map[string]map[string]any{}
+	authoredRoutes, _ := authoredSpec["routes"].(map[string]any)
+	authoredAccess, _ := authoredSpec["access"].(map[string]any)
+	data, _ := authoredSpec["data"].(map[string]any)
+	dataBindings, _ := data["bindings"].(map[string]any)
+	selectedData := map[string]map[string]any{}
 	for workloadID := range workloadIDs {
 		entry, exists := authoredWorkloads[workloadID]
 		if !exists {
 			return GoalAuthoring{}, fmt.Errorf("StackKits CLI omitted compatibility workload %q", workloadID)
 		}
 		selected[workloadID] = entry
+		binding := bindings[workloadID]
+		if binding.ModuleRef != "" {
+			for ref, raw := range authoredRoutes {
+				route, _ := raw.(map[string]any)
+				if route["moduleRef"] != binding.ModuleRef {
+					continue
+				}
+				policyRef, _ := route["accessPolicyRef"].(string)
+				policy, found := authoredAccess[policyRef]
+				if policyRef == "" || !found {
+					return GoalAuthoring{}, fmt.Errorf("StackKits-authored workload %q route has no declared access policy", workloadID)
+				}
+				if routes[workloadID] == nil {
+					routes[workloadID], policies[workloadID] = map[string]any{}, map[string]any{}
+				}
+				routes[workloadID][ref], policies[workloadID][policyRef] = raw, policy
+				// The published endpoint contract constrains data.bindingRef to
+				// serviceRef. Optional stateless endpoints have no data binding;
+				// the pinned validator enforces required declared dependencies.
+				serviceRef, _ := route["serviceRef"].(string)
+				if value, found := dataBindings[serviceRef]; serviceRef != "" && found {
+					if selectedData[workloadID] == nil {
+						selectedData[workloadID] = map[string]any{}
+					}
+					selectedData[workloadID][serviceRef] = value
+				}
+			}
+		}
 		if authoredSpec["apiVersion"] == NativeSpecAPIVersion {
 			binding, exists := bindings[workloadID]
 			workload, _ := entry.(map[string]any)
@@ -398,6 +465,9 @@ func goalAuthoringFromDocument(document []byte, kitSlug string, mappedGoals, unm
 		UseCases:       authoredUseCases(authoredSpec, mappedGoals),
 		Workloads:      selected,
 		ModuleProfiles: profiles,
+		Routes:         routes,
+		AccessPolicies: policies,
+		DataBindings:   selectedData,
 		UnmappedGoals:  unmapped,
 	}, nil
 }

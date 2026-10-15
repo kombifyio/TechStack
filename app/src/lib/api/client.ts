@@ -19,6 +19,11 @@ import {
 } from "#lib/api/session-reprojection.js";
 
 import { tr } from "#lib/i18n.svelte.js";
+import {
+  promptForWalletDenial,
+  walletDenialMessage,
+  walletDenialOf,
+} from "#lib/kombify-wallet/denials.svelte.js";
 // IMPORTANT:
 // - In the browser we prefer relative URLs so the deployment can decide routing
 //   (reverse proxy, same-origin, etc.) without hardcoding any host/port.
@@ -206,14 +211,59 @@ async function getParentBridgeGatewayToken(): Promise<string> {
   return token;
 }
 
+/**
+ * The signed-in user's Auth0 access token for the kombify API
+ * (`https://api.kombify.io`): the SPA's own token first, then the parent
+ * portal's when this app runs embedded. Used for every gateway call, including
+ * the Wallet owner API. Fails closed: it never returns an empty or anonymous
+ * token, and a login redirect already under way is passed through.
+ */
+export async function resolveGatewayBearer(
+  url: string,
+  method = "GET",
+): Promise<string> {
+  try {
+    const token = await getGatewayToken();
+    noteGatewayTokenSuccess();
+    return token;
+  } catch (err) {
+    if (isGatewayLoginRedirecting(err)) {
+      throw err;
+    }
+    try {
+      return await getParentBridgeGatewayToken();
+    } catch (bridgeErr) {
+      throw new ApiRequestError(
+        tr("ui.client.gatewayAuthenticationUnavailableSignIn"),
+        {
+          status: 401,
+          code: "gateway_auth_unavailable",
+          url,
+          method,
+          details: {
+            auth0: err instanceof Error ? err.message : "gateway token failed",
+            parentBridge:
+              bridgeErr instanceof Error
+                ? bridgeErr.message
+                : tr("ui.client.parentGatewayTokenFailed"),
+          },
+        },
+      );
+    }
+  }
+}
+
 function mustStaySameOrigin(endpoint: string, method?: string): boolean {
   const path = endpoint.split(/[?#]/, 1)[0] || endpoint;
-  const reauthBoundServerMutation =
+  // These check the session's own re-authentication, which only a request
+  // carrying the session cookie reaches the control plane with.
+  const reauthBoundMutation =
     (method || "GET").toUpperCase() === "POST" &&
     (/^\/api\/v1\/servers\/[^/]+\/terminal-sessions$/.test(path) ||
-      /^\/api\/v1\/servers\/[^/]+\/access\/authorized-key$/.test(path));
+      /^\/api\/v1\/servers\/[^/]+\/access\/authorized-key$/.test(path) ||
+      /^\/api\/v1\/wallet\/[^/]+\/reauth-proof$/.test(path));
   return (
-    reauthBoundServerMutation ||
+    reauthBoundMutation ||
     path === "/api/v1/csrf" ||
     path === "/api/v1/info" ||
     path === "/api/v1/health" ||
@@ -424,6 +474,19 @@ export async function parseApiErrorResponse(
     message = `${basePrefix}${safeTruncate(bodyText.trim(), 180)}`;
   }
 
+  // A refusal about the kombify Wallet reads the same wherever it surfaces, and
+  // one the owner can resolve with a single grant is offered right here.
+  const walletDenial = walletDenialOf({
+    status: response.status,
+    code,
+    details,
+  });
+  if (walletDenial) {
+    code ??= walletDenial.reason;
+    message = walletDenialMessage(walletDenial);
+    promptForWalletDenial(walletDenial);
+  }
+
   return new ApiRequestError(message, {
     status: response.status,
     code,
@@ -520,38 +583,9 @@ export async function fetchApi<T>(
   // SaaS data-plane calls must go through the Cloudflare gateway with a real
   // Auth0 API token so the edge signs identity and entitlement flags.
   const gatewayUrl = gatewayUrlFor(endpoint, method);
-  let gatewayToken = "";
-  if (gatewayUrl) {
-    try {
-      gatewayToken = await getGatewayToken();
-      noteGatewayTokenSuccess();
-    } catch (err) {
-      if (isGatewayLoginRedirecting(err)) {
-        throw err;
-      }
-      try {
-        gatewayToken = await getParentBridgeGatewayToken();
-      } catch (bridgeErr) {
-        throw new ApiRequestError(
-          tr("ui.client.gatewayAuthenticationUnavailableSignIn"),
-          {
-            status: 401,
-            code: "gateway_auth_unavailable",
-            url: gatewayUrl,
-            method,
-            details: {
-              auth0:
-                err instanceof Error ? err.message : "gateway token failed",
-              parentBridge:
-                bridgeErr instanceof Error
-                  ? bridgeErr.message
-                  : tr("ui.client.parentGatewayTokenFailed"),
-            },
-          },
-        );
-      }
-    }
-  }
+  const gatewayToken = gatewayUrl
+    ? await resolveGatewayBearer(gatewayUrl, method)
+    : "";
 
   const url = gatewayUrl ? gatewayUrl : sameOriginUrl;
   const authHeader: Record<string, string> = gatewayUrl

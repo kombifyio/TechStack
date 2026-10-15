@@ -38,12 +38,6 @@
     providers: ProviderInfo[];
     breakglass: BreakGlassStatus;
   }
-  interface RevealResponse {
-    email: string;
-    password: string;
-    expires_at: string;
-    claimed: boolean;
-  }
 
   let methods = $state<MethodsResponse | null>(null);
   let loading = $state(true);
@@ -59,9 +53,6 @@
 
   let emergencyPassword = $state("");
   let emergencyBusy = $state(false);
-  let revealedPwd = $state<RevealResponse | null>(null);
-  let revealError = $state("");
-  let revealBusy = $state(false);
 
   const cloudProviders = $derived(
     (methods?.providers ?? []).filter(
@@ -90,9 +81,7 @@
   const localOwnerEnabled = $derived(
     authStore.deploymentMode !== "saas" || authStore.allowLocalLogin,
   );
-  const emergencyEmail = $derived(
-    revealedPwd?.email || bg?.email || "breakglass@techstack.local",
-  );
+  const emergencyEmail = $derived(bg?.email || "breakglass@techstack.local");
   const windowsBrowserCloudLoginUrl = $derived(
     primaryCloudProvider?.auth_url
       ? buildWindowsBrowserCloudLoginUrl(primaryCloudProvider.auth_url)
@@ -175,8 +164,7 @@
       return;
     }
 
-    error =
-      tr("ui.authSso.yourKombifyCloudSessionCould");
+    error = tr("ui.authSso.yourKombifyCloudSessionCould");
     loading = false;
   }
 
@@ -210,16 +198,6 @@
     }
   }
 
-  async function safeJson(
-    response: Response,
-  ): Promise<{ error?: { message?: string } } | null> {
-    try {
-      return (await response.json()) as { error?: { message?: string } };
-    } catch {
-      return null;
-    }
-  }
-
   function startCloudLogin() {
     if (embedded) {
       void recoverEmbeddedSession();
@@ -246,36 +224,6 @@
     url.searchParams.set("client", "windows");
     url.searchParams.set("open_browser", "1");
     return url.toString();
-  }
-
-  async function onRevealEmergency() {
-    revealError = "";
-    revealBusy = true;
-    try {
-      const r = await fetch("/api/v1/auth/breakglass/reveal", {
-        credentials: "include",
-      });
-      if (r.status === 410) {
-        revealError =
-          tr("ui.login.theBootstrapPasswordHasExpired");
-        return;
-      }
-      if (r.status === 404) {
-        revealError = tr("ui.login.breakGlassAdminIsNot");
-        return;
-      }
-      if (!r.ok) {
-        const data = await safeJson(r);
-        revealError = data?.error?.message || `HTTP ${r.status}`;
-        return;
-      }
-      revealedPwd = (await r.json()) as RevealResponse;
-      emergencyPassword = revealedPwd.password;
-    } catch (err) {
-      revealError = err instanceof Error ? err.message : tr("ui.login.revealFailed");
-    } finally {
-      revealBusy = false;
-    }
   }
 
   async function onEmergencyLogin(e: Event) {
@@ -367,7 +315,9 @@
     {/if}
 
     {#if loading}
-      <div class="text-center text-sm text-muted-foreground">{tr("ui.login.loading")}</div>
+      <div class="text-center text-sm text-muted-foreground">
+        {tr("ui.login.loading")}
+      </div>
     {:else if embedded}
       <div class="space-y-4">
         <Button
@@ -385,39 +335,27 @@
       <div class="space-y-4 rounded-xl border border-border bg-card p-6">
         <h2 class="text-base font-semibold">{tr("ui.login.emergencyAdmin")}</h2>
         {#if bg?.initialized}
-          {#if revealError}
-            <div
-              class="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
-            >
-              {revealError}
-            </div>
-          {/if}
           <div class="space-y-2 text-xs">
             <div>
-              <span class="text-muted-foreground">{tr("ui.login.emergencyEmail")}</span>
+              <span class="text-muted-foreground"
+                >{tr("ui.login.emergencyEmail")}</span
+              >
               <code class="ml-2 font-mono">{emergencyEmail}</code>
             </div>
-            {#if revealedPwd}
-              <div>
-                <span class="text-muted-foreground">{tr("ui.login.bootstrapPassword")}</span>
-                <code class="ml-2 font-mono break-all"
-                  >{revealedPwd.password}</code
-                >
-              </div>
-            {/if}
           </div>
-          <Button
-            variant="secondary"
-            class="w-full"
-            disabled={revealBusy || !bg.has_pending_reveal}
-            onclick={onRevealEmergency}
-          >
-            {revealBusy
-              ? tr("ui.login.revealing")
-              : bg.has_pending_reveal
-                ? tr("ui.login.revealBootstrapPassword")
-                : tr("ui.login.useTheStoredEmergencyPassword")}
-          </Button>
+          {#if !bg.claimed && !bg.locked}
+            <p class="text-sm leading-6 text-muted-foreground">
+              {tr("ui.clientLocal.bootstrapGuidance", {
+                command: "techstack owner bootstrap",
+              })}
+            </p>
+            <a
+              href={localOwnerHref}
+              class="text-sm font-semibold text-primary underline"
+            >
+              {tr("ui.clientLocal.localTechstackSetup")}
+            </a>
+          {/if}
           <form class="space-y-3" onsubmit={onEmergencyLogin}>
             <label
               class="block space-y-1 text-xs font-medium"
@@ -439,7 +377,9 @@
               class="w-full"
               disabled={emergencyBusy}
             >
-              {emergencyBusy ? tr("ui.clientLocal.signingIn") : tr("ui.login.signInAsEmergencyAdmin")}
+              {emergencyBusy
+                ? tr("ui.clientLocal.signingIn")
+                : tr("ui.login.signInAsEmergencyAdmin")}
             </Button>
           </form>
         {:else}

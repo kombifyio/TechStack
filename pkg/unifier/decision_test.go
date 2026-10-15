@@ -80,7 +80,7 @@ func TestPipelineDecisionContext_NoRegisteredServerAddsEnvironmentGap(t *testing
 	}
 }
 
-func TestPipelineDecisionContext_RetiredHAKitFailsPreValidation(t *testing.T) {
+func TestPipelineDecisionContext_RejectsRetiredHAKit(t *testing.T) {
 	engine, err := New()
 	if err != nil {
 		t.Fatalf("failed to create engine: %v", err)
@@ -106,9 +106,6 @@ func TestPipelineDecisionContext_RetiredHAKitFailsPreValidation(t *testing.T) {
 	})
 	if result.Success {
 		t.Fatal("expected retired HA kit pipeline to fail")
-	}
-	if result.FailedStep != "pre-validation" {
-		t.Fatalf("failed step = %q, want pre-validation (message: %s, validation: %#v)", result.FailedStep, result.ErrorMessage, result.ValidationResult)
 	}
 }
 

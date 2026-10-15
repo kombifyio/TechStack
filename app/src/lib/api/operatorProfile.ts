@@ -20,6 +20,12 @@ export interface OperatorSelfDisclosure {
   notes?: string;
 }
 
+/**
+ * How the answers reached the store: `link` answers arrived as URL state and
+ * were confirmed by the operator, `techstack` answers were typed in Techstack.
+ */
+export type SelfDisclosureWriteSource = "link" | "techstack";
+
 export interface OperatorSelfDisclosureRecord {
   disclosure: OperatorSelfDisclosure;
   profile?: {
@@ -28,7 +34,8 @@ export interface OperatorSelfDisclosureRecord {
     confidence?: number;
     source?: string;
   };
-  source?: "cloud" | "techstack";
+  /** `cloud` marks rows stored from a link before confirmation was required. */
+  source?: SelfDisclosureWriteSource | "cloud";
   updated_at?: string;
 }
 
@@ -41,7 +48,7 @@ export async function getOperatorSelfDisclosure(): Promise<OperatorSelfDisclosur
 
 export async function putOperatorSelfDisclosure(
   disclosure: OperatorSelfDisclosure,
-  source: "cloud" | "techstack",
+  source: SelfDisclosureWriteSource,
 ): Promise<OperatorSelfDisclosureRecord> {
   const res = await fetchApi<OperatorSelfDisclosureRecord>(
     "/api/v1/operator/self-disclosure",

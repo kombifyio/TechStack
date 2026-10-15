@@ -198,6 +198,10 @@ func (h *Handlers) handleReveal(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusNotFound, "not_initialized", "break-glass not initialized")
 		case errors.Is(err, ErrPasswordExpired):
 			writeJSONError(w, http.StatusGone, "envelope_expired", "break-glass password no longer available")
+		case errors.Is(err, ErrLockedByOperator):
+			writeJSONError(w, http.StatusForbidden, "locked", err.Error())
+		case errors.Is(err, ErrConcurrentUpdate):
+			writeJSONError(w, http.StatusConflict, "bootstrap_changed", err.Error())
 		default:
 			writeJSONError(w, http.StatusInternalServerError, "reveal_failed", err.Error())
 		}
@@ -228,6 +232,8 @@ func (h *Handlers) handleClaim(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, ErrAlreadyClaimed):
 			writeJSONError(w, http.StatusConflict, "already_claimed", err.Error())
+		case errors.Is(err, ErrConcurrentUpdate):
+			writeJSONError(w, http.StatusConflict, "bootstrap_changed", err.Error())
 		case errors.Is(err, ErrLockedByOperator):
 			writeJSONError(w, http.StatusForbidden, "locked", err.Error())
 		case errors.Is(err, ErrNotFound):
