@@ -22,7 +22,7 @@
 <div class="min-h-0 p-4 md:p-6">
   <NotificationCenter
     apiBase="/api/v1/notifications"
-    settingsHref="/settings#notification-preferences"
+    settingsHref="/settings?tab=notifications"
     locale={getLocale()}
     {selectedId}
     onSelect={selectNotification}

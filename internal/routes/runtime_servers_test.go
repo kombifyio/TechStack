@@ -12,6 +12,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/identity"
+	"github.com/kombifyio/techstack/pkg/kombifywallet"
 	"github.com/kombifyio/techstack/pkg/outcome"
 	"github.com/kombifyio/techstack/pkg/serverregistry"
 )
@@ -55,6 +56,53 @@ func TestSelfOwnedServerDetachRouteBindsOwnerConfirmationAndDisconnect(t *testin
 	}
 	if disconnected != "agent-1" {
 		t.Fatalf("disconnected agent = %q, want agent-1", disconnected)
+	}
+}
+
+type recordingWalletWithdrawer struct {
+	owner, agent string
+	err          error
+}
+
+func (w *recordingWalletWithdrawer) HostWithdraw(_ context.Context, owner, agentID string) (kombifywallet.HostWithdrawal, error) {
+	w.owner, w.agent = owner, agentID
+	if w.err != nil {
+		return kombifywallet.HostWithdrawal{}, w.err
+	}
+	return kombifywallet.HostWithdrawal{OperationID: "op-1", TargetsRemoved: 2, NeedsRotation: 1}, nil
+}
+
+func TestSelfOwnedServerDetachWithdrawsTheDetachedAgentFromTheCallersWallet(t *testing.T) {
+	for _, failing := range []bool{false, true} {
+		wallet := &recordingWalletWithdrawer{}
+		if failing {
+			wallet.err = &kombifywallet.Denial{Reason: "wallet_unavailable", Retryable: true}
+		}
+		h := serverRuntimeHandlers{detacher: &recordingSelfOwnedServerDetacher{}, policy: NewSelfHostedInventoryPolicy(), walletWithdraw: wallet}
+		event, recorder := registryRouteStoreTestEvent(http.MethodPost, "/api/v1/servers/server-1/detach", "owner-1", "tenant-1", map[string]any{"confirm_server_id": "server-1"})
+		event.Request.SetPathValue("serverId", "server-1")
+		if err := h.detach(event); err != nil {
+			t.Fatalf("detach: %v", err)
+		}
+		var envelope struct {
+			Data struct {
+				ServerID         string                  `json:"server_id"`
+				WalletWithdrawal *serverWalletWithdrawal `json:"wallet_withdrawal"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil || recorder.Code != http.StatusOK || envelope.Data.ServerID != "server-1" {
+			t.Fatalf("a committed detach must answer its receipt whatever the Wallet says: status=%d body=%s", recorder.Code, recorder.Body.String())
+		}
+		if wallet.owner != "owner-1" || wallet.agent != "agent-1" {
+			t.Fatalf("the Wallet must be told the detached agent for the caller: owner=%q agent=%q", wallet.owner, wallet.agent)
+		}
+		got := envelope.Data.WalletWithdrawal
+		if failing && (got == nil || got.State != "failed" || got.ReasonCode != "wallet_unavailable" || !got.Retryable) {
+			t.Fatalf("a Wallet failure must be visible and retryable: %+v", got)
+		}
+		if !failing && (got == nil || got.State != "recorded" || got.ItemsNeedRotation != 1) {
+			t.Fatalf("the Wallet's bookkeeping must be reported: %+v", got)
+		}
 	}
 }
 

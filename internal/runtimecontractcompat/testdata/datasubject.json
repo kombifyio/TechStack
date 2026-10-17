@@ -1,0 +1,50 @@
+{
+  "erasureReceipt": {
+    "request_id": "0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d",
+    "service": "paperwork",
+    "kind": "erase",
+    "state": "erased",
+    "completed_at": "2026-09-01T11:00:00Z",
+    "datasets": [
+      {
+        "id": "mail",
+        "action": "erased",
+        "rows": 12,
+        "store": "postgres"
+      }
+    ],
+    "retained": [
+      {
+        "id": "invoice-ledger",
+        "reason": "statutory retention",
+        "retained_until": "2036-09-01T10:00:00Z"
+      }
+    ],
+    "processors": [],
+    "reason_code": null,
+    "signature": "CL7Tl9XmSDjetfnSvJXOSIu20F+cBVl2XjZOQNGrtsz6BLl5WlJGjMuxuSZUlHPdhHJc/HXKmIdSybipHvrrAg=="
+  },
+  "exportReceipt": {
+    "request_id": "1b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d",
+    "service": "paperwork",
+    "kind": "export",
+    "state": "exported",
+    "completed_at": "2026-09-01T11:00:00Z",
+    "datasets": [],
+    "retained": [],
+    "processors": [],
+    "reason_code": null,
+    "signature": "nUpJKrTK80dKyeTh0FGdlyZBKP2Kr/p59HTgzKLFIIw/6e1V+Zyx/0L4F6Y45k3+a5DiBjRHUG0BbBEJivNiDw=="
+  },
+  "participants": [
+    "paperwork"
+  ],
+  "publicKey": "PLGAfLf7Wy2CdXyE2B2wiBPceBZQeeqJqRaLMjkCJeM=",
+  "request": {
+    "request_id": "0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d",
+    "kind": "erase",
+    "subject_ref": "subject-opaque-0001",
+    "requested_at": "2026-09-01T10:00:00Z",
+    "deadline": "2026-09-04T10:00:00Z"
+  }
+}

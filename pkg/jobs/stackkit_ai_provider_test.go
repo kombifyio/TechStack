@@ -104,7 +104,7 @@ func TestAIProviderDeliversTheWalletItemSealedAndReconciles(t *testing.T) {
 			wallet.statement, wallet.challenge, wallet.item, recipient.DeliveryAuthorityKeyId, recipient.RecipientChallenge)
 	}
 	tenant := stackkitcommand.DeliveryTenantRef("tenant-1")
-	if wallet.target != (WalletHostTarget{SiteRef: "home", NodeRef: "home-main", TenantRef: tenant, OwnerPublicKey: "owner-public"}) {
+	if wallet.target != (WalletHostTarget{SiteRef: "home", NodeRef: "home-main", TenantRef: tenant, OwnerPublicKey: "owner-public", AgentID: "agent-1"}) {
 		t.Fatalf("host target = %+v", wallet.target)
 	}
 	if !strings.Contains(string(imported.SealedDelivery), "sealed-host-delivery") || imported.DeliveryTenantRef != tenant {

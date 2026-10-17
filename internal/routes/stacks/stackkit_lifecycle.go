@@ -33,7 +33,8 @@ type stackKitLifecycleRequest struct {
 	ActivationOperationID string `json:"activation_operation_id,omitempty"`
 	RestorePlanHash       string `json:"restore_plan_hash,omitempty"`
 	// CandidateSpec is the proposed canonical StackSpec an
-	// advanced_change_set creates and applies (optional for drift_reconcile,
+	// advanced_change_set creates and applies; an apply that carries one runs
+	// as that change set (optional for drift_reconcile,
 	// which otherwise reconciles to the workspace StackSpec).
 	CandidateSpec json.RawMessage `json:"candidate_spec,omitempty"`
 	// RollbackTargetRef is the executor-state snapshot id or change-set id a
@@ -185,6 +186,12 @@ func (h crudRouteHandlers) startStackKitLifecycle(e *httpx.Event) error {
 		WalletItemID:          request.WalletItemID,
 		WalletItemRotate:      request.WalletItemRotate,
 		AIProviderDisable:     request.AIProviderDisable,
+	}
+	// A changed StackSpec is applied as an Owner-approved Advanced change set
+	// (every managed deployment is Advanced). The typed apply never reads a
+	// candidate, so it must not be accepted alongside one and silently ignore it.
+	if operation := strings.ToLower(strings.TrimSpace(input.Operation)); operation == jobs.StackKitLifecycleApply && len(input.CandidateSpecJSON) > 0 {
+		input.Operation = jobs.StackKitLifecycleAdvancedChangeSet
 	}
 	if strings.ToLower(strings.TrimSpace(input.Operation)) == jobs.StackKitLifecycleBackupRestoreActivate {
 		if len(e.Request.Header.Values("Idempotency-Key")) != 1 {

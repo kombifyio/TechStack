@@ -62,6 +62,7 @@ func (h workerRouteHandlers) agentStackKitRelease(e *httpx.Event) error {
 	}
 	release, allowed := guard.acquire("stackkit:"+authorization.tokenHash, authorization.resetAt, now, artifact.size)
 	if !allowed {
+		e.Response.Header().Set("Retry-After", "900")
 		return httpx.Error(e, http.StatusTooManyRequests, ksapi.ErrCodeRateLimited, "StackKits release download is rate limited", nil)
 	}
 	defer release()

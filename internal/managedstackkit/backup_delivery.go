@@ -56,13 +56,27 @@ type BackupDelivery struct {
 	custody   DeliveryCustody
 	attest    targetAttestor
 	now       func() time.Time
+	// walletMode routes every delivery through the kombify Wallet; wallet is
+	// nil when that mode lacks its client or delivering key, and then every
+	// delivery fails closed. Techstack never seals itself in Wallet mode.
+	walletMode bool
+	wallet     BackupWallet
 }
 
-func NewBackupDelivery(custodian rolloutCustodian, custody DeliveryCustody) (*BackupDelivery, error) {
+// BackupDeliveryOption configures a BackupDelivery.
+type BackupDeliveryOption func(*BackupDelivery)
+
+// WithWallet selects Wallet host delivery (TECHSTACK_WALLET_SOURCE=kombify).
+// A nil wallet keeps the mode and fails every delivery closed.
+func WithWallet(wallet BackupWallet) BackupDeliveryOption {
+	return func(d *BackupDelivery) { d.walletMode, d.wallet = true, wallet }
+}
+
+func NewBackupDelivery(custodian rolloutCustodian, custody DeliveryCustody, options ...BackupDeliveryOption) (*BackupDelivery, error) {
 	if custodian == nil || custody == nil {
 		return nil, errors.New("managed backup delivery requires provider custody and the durable delivery state")
 	}
-	return &BackupDelivery{
+	delivery := &BackupDelivery{
 		custodian: custodian, custody: custody, now: time.Now,
 		attest: func(ctx context.Context, credentials backupstore.Credentials, evidence backupstore.CustodyEvidence) (backupstore.CustodyEvidence, error) {
 			verifier, err := backupstore.NewTargetVerifier(ctx, credentials)
@@ -72,23 +86,36 @@ func NewBackupDelivery(custodian rolloutCustodian, custody DeliveryCustody) (*Ba
 			evidence.AttestationEvidence = nil
 			return verifier.Verify(ctx, credentials, evidence)
 		},
-	}, nil
+	}
+	for _, option := range options {
+		option(delivery)
+	}
+	return delivery, nil
 }
 
 // DeliveryScope names the stack a delivery is for. The Site and node are the
-// managed Cloud node the rollout initializes.
+// managed Cloud node the rollout initializes. OwnerID is the stack owner whose
+// Wallet holds the backup target in Wallet mode.
 type DeliveryScope struct {
 	TenantID string
 	StackID  string
+	OwnerID  string
 }
 
-// Recipient is a node recipient key admitted for sealing.
+// Recipient is a node recipient key admitted for sealing. Statement and
+// Challenge are the node's owner-signed statement and the challenge it
+// answers; the Wallet verifies them again before it seals.
 type Recipient struct {
 	Public      []byte
 	Fingerprint string
 	Generation  uint64
 	SiteRef     string
 	NodeRef     string
+	Statement   json.RawMessage
+	Challenge   string
+	// PlacementRef names the server in the Wallet's delivery record (Wallet
+	// mode only).
+	PlacementRef string
 }
 
 // NewChallenge returns the fresh value the node must echo in its statement.
@@ -148,11 +175,16 @@ func (d *BackupDelivery) AdmitRecipient(ctx context.Context, scope DeliveryScope
 	if err != nil {
 		return Recipient{}, errors.New("managed backup recipient key is invalid")
 	}
-	return Recipient{Public: public, Fingerprint: statement.Fingerprint, Generation: statement.Generation, SiteRef: statement.SiteRef, NodeRef: statement.NodeRef}, nil
+	return Recipient{
+		Public: public, Fingerprint: statement.Fingerprint, Generation: statement.Generation, SiteRef: statement.SiteRef, NodeRef: statement.NodeRef,
+		Statement: append(json.RawMessage(nil), statementJSON...), Challenge: challenge,
+	}, nil
 }
 
 // Seal verifies the provisioned target is usable, then seals its credentials to
 // the admitted recipient for one operation (backup-target-import or -rebind).
+// In Wallet mode the credentials are stored as the stack's Wallet item and the
+// Wallet seals and signs the delivery; otherwise Techstack seals it itself.
 // The result is ciphertext: it is the only form that leaves this process.
 func (d *BackupDelivery) Seal(ctx context.Context, scope DeliveryScope, recipient Recipient, operation string) ([]byte, error) {
 	if d == nil || len(recipient.Public) == 0 {
@@ -160,6 +192,9 @@ func (d *BackupDelivery) Seal(ctx context.Context, scope DeliveryScope, recipien
 	}
 	if operation != hostdelivery.OperationBackupTargetImport && operation != hostdelivery.OperationBackupTargetRebind {
 		return nil, errors.New("managed backup delivery supports only target import and rebind")
+	}
+	if d.walletMode && d.wallet == nil {
+		return nil, ErrBackupWalletUnavailable
 	}
 	credentials, err := d.custody.Get(ctx, scope.TenantID, scope.StackID)
 	if err != nil {
@@ -182,6 +217,10 @@ func (d *BackupDelivery) Seal(ctx context.Context, scope DeliveryScope, recipien
 	})
 	if err != nil {
 		return nil, errors.New("encode managed backup target material")
+	}
+	defer clear(payload)
+	if d.walletMode {
+		return d.deliverThroughWallet(ctx, scope, recipient, operation, payload)
 	}
 	now := d.now().UTC()
 	random := make([]byte, 16)

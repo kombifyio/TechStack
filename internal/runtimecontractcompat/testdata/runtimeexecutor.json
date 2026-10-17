@@ -1,0 +1,169 @@
+{
+  "api_version": "runtimeexecutor/v1beta1",
+  "executor": {
+    "id": "parent",
+    "version": "0.3.0",
+    "digest": "sha256:e47125968b3b71049fbc4802d1e40a71ea1359decfabacf70b34588037d4ff0c"
+  },
+  "plan_hash": "sha256:64879f7d6b960a01909762d911a32d4582c20010c5641ee90278b644a9e3b525",
+  "manifest_hash": "sha256:05b3abf2579a5eb66403cd78be557fd860633a1fe2103c7642030defe32c657f",
+  "generation_receipt_hash": "sha256:6f32860910ca0fb2a20c7fda143666b09dbf8db5238195c90a586fb542ff0cad",
+  "requirements_hash": "sha256:10762e1094dbeeaba59c58cec8a91b71b99f2063f7f1f20e5c0e3e635f42b2df",
+  "evidence_bundle_hash": "sha256:ee8250fb76e094b34b471f13a73dbbe51d1ae142e9df59d7c0d31ec20f0a0a8e",
+  "artifact_set_hash": "sha256:a1bf7f59b835e505118a41cf3ae1ddf09283805ddf909478c04cbae2cfaca6a7",
+  "runtime_targets": [
+    {
+      "requirement_id": "runtime-a",
+      "owner_kind": "module",
+      "owner_ref": "module-a",
+      "owner_contract_hash": "sha256:3ce7d581095184d695bf1965775076d66ae4b3ddc2560aef4d8d09b338a001ed",
+      "provider_ref": "provider-core",
+      "provider_contract_hash": "sha256:34b407421d516c0c0017a8769f4b4c7e47bccebef31dd28916602a7e8264e16e",
+      "module_ref": "module-a",
+      "module_contract_hash": "sha256:3ce7d581095184d695bf1965775076d66ae4b3ddc2560aef4d8d09b338a001ed",
+      "unit_ref": "unit-a",
+      "unit_contract_hash": "sha256:d7bce2267437426dece2603fe6c695dd7058e837c860a6c414dd829d57339b67",
+      "runtime_kind": "host",
+      "runtime_delivery": "stackkit",
+      "instance_ref": "instance-a",
+      "execution_channel_ref": "execution-channel://sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "site_refs": [
+        "site-a"
+      ],
+      "node_refs": [
+        "node-a"
+      ],
+      "daemon_bindings": null,
+      "artifact_refs": [
+        "artifact-a"
+      ]
+    },
+    {
+      "requirement_id": "runtime-b",
+      "owner_kind": "module",
+      "owner_ref": "module-b",
+      "owner_contract_hash": "sha256:6944d43721fcff36a601abeb0f009c53d1d261e38ff75c12a39031180635eb84",
+      "provider_ref": "provider-core",
+      "provider_contract_hash": "sha256:34b407421d516c0c0017a8769f4b4c7e47bccebef31dd28916602a7e8264e16e",
+      "module_ref": "module-b",
+      "module_contract_hash": "sha256:6944d43721fcff36a601abeb0f009c53d1d261e38ff75c12a39031180635eb84",
+      "unit_ref": "unit-b",
+      "unit_contract_hash": "sha256:edd0170e7056c67dca190479167db885434b0296cac5c210b3bb164e3952d0c6",
+      "runtime_kind": "host",
+      "runtime_delivery": "stackkit",
+      "instance_ref": "instance-b",
+      "execution_channel_ref": "execution-channel://sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "site_refs": [
+        "site-a"
+      ],
+      "node_refs": [
+        "node-a"
+      ],
+      "daemon_bindings": null,
+      "artifact_refs": [
+        "artifact-b"
+      ]
+    }
+  ],
+  "health_targets": [
+    {
+      "requirement_id": "health-a",
+      "source_ref": "health-source-a",
+      "contract_hash": "sha256:54210015eab5262e4a8ca9823ad6ee4bc8298c78c09ebb3bc0847a7d32bbbaa6",
+      "phase": "post-apply",
+      "kind": "contract",
+      "target_kind": "module",
+      "target_ref": "module-a",
+      "site_refs": [
+        "site-a"
+      ],
+      "node_refs": [
+        "node-a"
+      ]
+    },
+    {
+      "requirement_id": "health-b",
+      "source_ref": "health-source-b",
+      "contract_hash": "sha256:51d2077a3cdf0d9ecee4674ae9bb4d9c59fa2e75c7939bdf3e8975647994d39e",
+      "phase": "post-apply",
+      "kind": "contract",
+      "target_kind": "module",
+      "target_ref": "module-b",
+      "site_refs": [
+        "site-a"
+      ],
+      "node_refs": [
+        "node-a"
+      ]
+    }
+  ],
+  "artifacts": [
+    {
+      "id": "artifact-a",
+      "kind": "native-config",
+      "format": "json",
+      "mode": "0600",
+      "execution_class": "executable",
+      "owner_kind": "render-instance",
+      "owner_ref": "instance-a",
+      "owner_contract_hash": "sha256:d7bce2267437426dece2603fe6c695dd7058e837c860a6c414dd829d57339b67",
+      "provider_ref": "provider-core",
+      "provider_contract_hash": "sha256:34b407421d516c0c0017a8769f4b4c7e47bccebef31dd28916602a7e8264e16e",
+      "module_ref": "module-a",
+      "module_contract_hash": "sha256:3ce7d581095184d695bf1965775076d66ae4b3ddc2560aef4d8d09b338a001ed",
+      "unit_ref": "unit-a",
+      "unit_contract_hash": "sha256:d7bce2267437426dece2603fe6c695dd7058e837c860a6c414dd829d57339b67",
+      "instance_ref": "instance-a",
+      "output_ref": "owner-a.json",
+      "site_refs": [
+        "site-a"
+      ],
+      "node_refs": [
+        "node-a"
+      ],
+      "digest": "sha256:e8eced5b7c085768671af9e62c1b800770703b0fc2c1a54ae84d1954a8fc4492",
+      "content": "eyJvd25lciI6ImEifQo="
+    },
+    {
+      "id": "artifact-b",
+      "kind": "native-config",
+      "format": "json",
+      "mode": "0600",
+      "execution_class": "executable",
+      "owner_kind": "render-instance",
+      "owner_ref": "instance-b",
+      "owner_contract_hash": "sha256:edd0170e7056c67dca190479167db885434b0296cac5c210b3bb164e3952d0c6",
+      "provider_ref": "provider-core",
+      "provider_contract_hash": "sha256:34b407421d516c0c0017a8769f4b4c7e47bccebef31dd28916602a7e8264e16e",
+      "module_ref": "module-b",
+      "module_contract_hash": "sha256:6944d43721fcff36a601abeb0f009c53d1d261e38ff75c12a39031180635eb84",
+      "unit_ref": "unit-b",
+      "unit_contract_hash": "sha256:edd0170e7056c67dca190479167db885434b0296cac5c210b3bb164e3952d0c6",
+      "instance_ref": "instance-b",
+      "output_ref": "owner-b.json",
+      "site_refs": [
+        "site-a"
+      ],
+      "node_refs": [
+        "node-a"
+      ],
+      "digest": "sha256:3627ba6803cb0f15d0cf4c288540680d88e2a52d993f45ef11c1f0314de85cbf",
+      "content": "eyJvd25lciI6ImIifQo="
+    },
+    {
+      "id": "resolved-plan",
+      "kind": "metadata",
+      "format": "json",
+      "mode": "0600",
+      "execution_class": "plan",
+      "owner_kind": "plan",
+      "owner_ref": "sha256:64879f7d6b960a01909762d911a32d4582c20010c5641ee90278b644a9e3b525",
+      "owner_contract_hash": "sha256:64879f7d6b960a01909762d911a32d4582c20010c5641ee90278b644a9e3b525",
+      "site_refs": null,
+      "node_refs": null,
+      "digest": "sha256:ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+      "content": "e30K"
+    }
+  ],
+  "request_digest": "sha256:1d0d02dac3540284dbf3433620c77600dfbdf943f5ffd0d8056c7e896b017ad6"
+}

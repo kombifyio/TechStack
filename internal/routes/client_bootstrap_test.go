@@ -133,3 +133,12 @@ func TestClientBootstrapFallsBackToBackendTelemetryEnv(t *testing.T) {
 		t.Fatalf("sentry.release = %v, want RENDER_GIT_COMMIT fallback", sentry["release"])
 	}
 }
+
+func TestClientBootstrapReportsNightlyChannelWithWayBack(t *testing.T) {
+	t.Setenv("TECHSTACK_RELEASE_CHANNEL", "preview")
+	t.Setenv("TECHSTACK_STABLE_ORIGIN", "https://techstack.example.test")
+	data := fetchClientBootstrap(t)
+	if data["release_channel"] != "preview" || data["stable_origin"] != "https://techstack.example.test" {
+		t.Fatalf("channel = %v, stable = %v", data["release_channel"], data["stable_origin"])
+	}
+}

@@ -115,6 +115,11 @@ func (a *PostgresAuthority) AdmitCurrent(ctx context.Context, request CurrentAdm
 	if err != nil {
 		return CurrentAdmission{}, err
 	}
+	if err = supersedeOrphanedStackGenerations(ctx, tx, GenerationRef{
+		ServerRef: serverRef, StackID: request.StackID, ResolvedPlanHash: request.ResolvedPlanHash,
+	}); err != nil {
+		return CurrentAdmission{}, err
+	}
 	admission, err := admitAndPersist(ctx, tx, admissionRequest)
 	if err != nil {
 		return CurrentAdmission{}, err
@@ -129,6 +134,28 @@ func (a *PostgresAuthority) AdmitCurrent(ctx context.Context, request CurrentAdm
 		return CurrentAdmission{}, err
 	}
 	return currentAdmissionResult(admissionRequest, generationState, admission), nil
+}
+
+// supersedeOrphanedStackGenerations settles this stack's other plan
+// generations that a dead rollout left pending or mutating. AdmitCurrent runs
+// only inside a deploy job that holds the stack's exclusive running claim
+// (controlplane StartJob), so no live job owns them. A pending generation never
+// touched the host and is released; a mutating one may have, so it becomes
+// uncertain: its reservations stay with this stack, the new plan may reuse
+// them, and Activate releases them once the new plan is live.
+func supersedeOrphanedStackGenerations(ctx context.Context, tx *sql.Tx, ref GenerationRef) error {
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE server_port_claim_generations
+		SET state = CASE state WHEN 'pending' THEN 'released' ELSE 'uncertain' END,
+		    released_at = CASE state WHEN 'pending' THEN COALESCE(released_at, clock_timestamp()) ELSE released_at END,
+		    uncertain_at = CASE state WHEN 'mutating' THEN COALESCE(uncertain_at, clock_timestamp()) ELSE uncertain_at END,
+		    updated_at = clock_timestamp()
+		WHERE tenant_id = $1 AND server_id = $2 AND server_generation = $3
+		  AND stack_id = $4 AND resolved_plan_hash <> $5 AND state IN ('pending', 'mutating')
+	`, ref.TenantID, ref.ServerID, ref.ServerGeneration, ref.StackID, ref.ResolvedPlanHash); err != nil {
+		return err
+	}
+	return releaseUnusedReservations(ctx, tx, ref.ServerRef)
 }
 
 // SnapshotForTeardown captures every non-released generation for one exact

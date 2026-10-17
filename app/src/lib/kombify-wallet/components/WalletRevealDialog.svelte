@@ -9,7 +9,12 @@
   import Dialog from "./WalletDialog.svelte";
   import { tr as t } from "#lib/i18n.svelte.js";
   import { revealedParts, type RevealedPart } from "../item-types.js";
-  import { revealItem, type WalletItem } from "../wallet-api.js";
+  import {
+    isStepUpRequired,
+    revealItem,
+    type WalletItem,
+  } from "../wallet-api.js";
+  import WalletStepUp from "./WalletStepUp.svelte";
   import { fieldLabel, walletErrorMessage } from "../wallet-text.js";
 
   /** How long a revealed value stays in memory. */
@@ -23,7 +28,10 @@
 
   let { item, ownerSubject, onclose }: Props = $props();
 
-  let phase = $state<"loading" | "shown" | "cleared" | "error">("loading");
+  let phase = $state<"loading" | "shown" | "cleared" | "error" | "stepup">(
+    "loading",
+  );
+  let stepUpAge = $state<number | null>(null);
   let parts = $state<RevealedPart[] | null>(null);
   let version = $state("");
   let visible = $state(false);
@@ -74,6 +82,11 @@
       }, 1000);
     } catch (error) {
       if (closed || current !== attempt) return;
+      if (isStepUpRequired(error)) {
+        stepUpAge = error.stepUpMaxAgeSeconds;
+        phase = "stepup";
+        return;
+      }
       failure = walletErrorMessage(error);
       phase = "error";
     }
@@ -118,6 +131,11 @@
       <p role="status" class="text-muted-foreground text-sm">
         {t("kwallet.reveal.loading")}
       </p>
+    {:else if phase === "stepup"}
+      <WalletStepUp
+        resume={{ action: "reveal", itemId: item.itemId }}
+        maxAgeSeconds={stepUpAge}
+      />
     {:else if phase === "error"}
       <p
         role="alert"

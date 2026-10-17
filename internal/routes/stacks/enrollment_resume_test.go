@@ -39,7 +39,6 @@ func TestResumeStackEnrollmentRouteUsesRealExactRecoveryService(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	app := newOwnerSpecTestApp(t)
 	orch := orchestrator.New(&orchestrator.Config{
 		Workers: 1, StackStore: store, JobStore: store, WorkerStore: store,
 		LeaseLister: routingTestLeaseLister{leases: []vmlease.Lease{
@@ -48,7 +47,7 @@ func TestResumeStackEnrollmentRouteUsesRealExactRecoveryService(t *testing.T) {
 	}, nil)
 
 	defer orch.Stop()
-	h := crudRouteHandlers{app: app, orch: orch, stackStore: store, jobStore: store}
+	h := crudRouteHandlers{orch: orch, stackStore: store, jobStore: store}
 
 	blocked, blockedRec := enrollmentResumeEvent("auth0|user-1", `{"job_id":"job-waiting","lease_id":"lease-waiting"}`)
 	if err := h.resumeStackEnrollment(blocked); err != nil {

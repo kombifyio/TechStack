@@ -178,6 +178,48 @@ export async function startGatewayLogin(options?: {
 }
 
 /**
+ * Wallet step-up: the Gateway refused a value release for a missing fresh
+ * second factor (`wallet_step_up_required`). Starts the same Auth0 SPA login
+ * that mints the API token, with the multi-factor acr, `max_age=0` and
+ * `prompt=login`, so the new token's `auth_time` is this sign-in and its `amr`
+ * carries the factor. The completed login replaces the cached token family, so
+ * the next Gateway call sends the refreshed token. Returns false, without
+ * navigating, where this build has no SPA client or the page is embedded
+ * (Auth0 is not frameable; the parent portal owns the sign-in there).
+ */
+export async function startGatewayStepUp(options: {
+  returnTo: string;
+}): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  if (!isGatewayAuthConfigured() && !testClient) return false;
+  if (window.parent !== window) return false;
+
+  // Always navigate: an earlier login that never left the page must not
+  // swallow the step-up.
+  const c = await getClient();
+  if (typeof c.loginWithRedirect !== "function") return false;
+
+  loginRedirectStarted = true;
+  try {
+    await c.loginWithRedirect({
+      authorizationParams: {
+        audience: AUDIENCE,
+        scope: "openid profile email offline_access",
+        redirect_uri: window.location.origin,
+        acr_values: MFA_STEP_UP_ACR_VALUES,
+        max_age: 0,
+        prompt: "login",
+      },
+      appState: { returnTo: sanitizeAuthReturnTo(options.returnTo) },
+    });
+    return true;
+  } catch (err) {
+    loginRedirectStarted = false;
+    throw err;
+  }
+}
+
+/**
  * User-initiated session renewal ("Sign in again"). Tries the silent
  * refresh-token/iframe acquisition once and only redirects to Auth0 when that
  * fails. Returns "renewed" when a fresh token is cached (no navigation),

@@ -28,6 +28,9 @@ type WalletHostTarget struct {
 	NodeRef        string
 	TenantRef      string
 	OwnerPublicKey string
+	// AgentID is the server's Agent; the Wallet records the delivery under
+	// it so a detach withdraws the node. It is not part of the host target.
+	AgentID string
 }
 
 // WalletHostEnvelope is the Wallet's sealed delivery of one item version. It
@@ -190,10 +193,11 @@ func deliverWalletItem(ctx context.Context, cfg StackKitLifecycleConfig, job *Jo
 	target := WalletHostTarget{
 		SiteRef: statement.SiteRef, NodeRef: statement.NodeRef,
 		TenantRef: stackkitcommand.DeliveryTenantRef(req.TenantID), OwnerPublicKey: statement.OwnerPublicKey,
+		AgentID: req.AgentID,
 	}
 
 	job.setStep("wallet_host_delivery")
-	q.UpdateProgress(job.ID, 30, "Having the kombify Wallet seal the provider key to the node")
+	q.UpdateProgress(job.ID, 30, "Having the kombify Wallet seal the item to the node")
 	sealed, err := cfg.WalletHostDelivery.DeliverItem(ctx, req.OwnerID, req.WalletItemID, req.WalletItemRotate, target, statement.Statement, challenge, time.Now().Add(walletHostDeliveryLifetime))
 	if err != nil {
 		// The Wallet names its reason; the host target is what the owner
@@ -203,7 +207,7 @@ func deliverWalletItem(ctx context.Context, cfg StackKitLifecycleConfig, job *Jo
 	}
 
 	job.setStep("stackkit_" + stackKitStepWalletItemImport)
-	q.UpdateProgress(job.ID, 45, "Opening the sealed provider key on the node")
+	q.UpdateProgress(job.ID, 45, "Opening the sealed Wallet item on the node")
 	imported := walletDeliveryStep(req, stackKitStepWalletItemImport)
 	imported.SealedDelivery, imported.DeliveryTenantRef = sealed.Envelope, target.TenantRef
 	var importCommand *agentpb.StackKitCommand

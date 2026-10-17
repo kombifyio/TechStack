@@ -3,7 +3,7 @@
   "product": "techstack",
   "source": {
     "path": "api/openapi/techstack-v1.yaml",
-    "sha256": "9dbd312c8306f5919a16c10f7b3bc75592b17a29fb205ee90c8afa235619373e"
+    "sha256": "66aad1d0a9445aaaba633a684d3c0a96fcf95e438e3f894ffb0b34e5e21403b6"
   },
   "envelope": "data",
   "cli": {
@@ -7772,8 +7772,7 @@
           "destructiveHint": false,
           "idempotentHint": true,
           "openWorldHint": false
-        },
-        "derived": true
+        }
       }
     },
     {
@@ -10300,135 +10299,6 @@
       "mcpExcluded": true
     },
     {
-      "operationId": "getPreCheckByRequest",
-      "method": "GET",
-      "path": "/api/v1/prechecks/request/{id}",
-      "summary": "Get pre-check results by request ID",
-      "tags": [
-        "Pre-Checks"
-      ],
-      "arguments": [
-        {
-          "name": "id",
-          "in": "path",
-          "wireName": "id",
-          "required": true,
-          "description": "Resource ID",
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
-      "output": {
-        "contentType": "application/json",
-        "schema": {
-          "properties": {
-            "all_blocking_passed": {
-              "type": "boolean"
-            },
-            "request_id": {
-              "type": "string"
-            },
-            "results": {
-              "items": {
-                "type": "object"
-              },
-              "type": "array"
-            }
-          },
-          "type": "object"
-        }
-      },
-      "cli": {
-        "command": [
-          "prechecks",
-          "get-by-request"
-        ],
-        "args": [
-          "id"
-        ]
-      },
-      "mcpExcluded": true
-    },
-    {
-      "operationId": "updatePreCheckResult",
-      "method": "POST",
-      "path": "/api/v1/prechecks/{id}/result",
-      "summary": "Update pre-check result (called by agent)",
-      "tags": [
-        "Pre-Checks"
-      ],
-      "mutating": true,
-      "arguments": [
-        {
-          "name": "id",
-          "in": "path",
-          "wireName": "id",
-          "required": true,
-          "description": "Resource ID",
-          "schema": {
-            "type": "string"
-          }
-        },
-        {
-          "name": "details",
-          "in": "body",
-          "wireName": "details",
-          "schema": {
-            "type": "object"
-          }
-        },
-        {
-          "name": "duration_ms",
-          "in": "body",
-          "wireName": "duration_ms",
-          "schema": {
-            "type": "integer"
-          }
-        },
-        {
-          "name": "error",
-          "in": "body",
-          "wireName": "error",
-          "schema": {
-            "type": "string"
-          }
-        },
-        {
-          "name": "message",
-          "in": "body",
-          "wireName": "message",
-          "schema": {
-            "type": "string"
-          }
-        },
-        {
-          "name": "status",
-          "in": "body",
-          "wireName": "status",
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
-      "body": {
-        "contentType": "application/json",
-        "required": true,
-        "mode": "properties"
-      },
-      "cli": {
-        "command": [
-          "prechecks",
-          "report"
-        ],
-        "args": [
-          "id"
-        ],
-        "hidden": true
-      },
-      "mcpExcluded": true
-    },
-    {
       "operationId": "listRegistryServices",
       "method": "GET",
       "path": "/api/v1/registry/services",
@@ -12150,8 +12020,7 @@
           "destructiveHint": false,
           "idempotentHint": true,
           "openWorldHint": false
-        },
-        "derived": true
+        }
       }
     },
     {
@@ -13916,6 +13785,38 @@
             },
             "server_id": {
               "type": "string"
+            },
+            "wallet_withdrawal": {
+              "description": "Present when a kombify Wallet is configured. For the items Techstack delivered to the server, the Wallet drops its node from their host targets and marks those it holds as needing rotation. A failure never undoes the detach; detaching again retries it.",
+              "properties": {
+                "items_need_rotation": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "reason_code": {
+                  "type": "string"
+                },
+                "retryable": {
+                  "type": "boolean"
+                },
+                "state": {
+                  "enum": [
+                    "recorded",
+                    "failed"
+                  ],
+                  "type": "string"
+                },
+                "targets_removed": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "state",
+                "targets_removed",
+                "items_need_rotation"
+              ],
+              "type": "object"
             }
           },
           "required": [
@@ -24778,213 +24679,6 @@
           "id"
         ],
         "hidden": true
-      },
-      "mcpExcluded": true
-    },
-    {
-      "operationId": "getWorkerPreChecks",
-      "method": "GET",
-      "path": "/api/v1/workers/{id}/prechecks",
-      "summary": "Get pre-check results for worker",
-      "tags": [
-        "Pre-Checks"
-      ],
-      "arguments": [
-        {
-          "name": "id",
-          "in": "path",
-          "wireName": "id",
-          "required": true,
-          "description": "Resource ID",
-          "schema": {
-            "type": "string"
-          }
-        },
-        {
-          "name": "page",
-          "in": "query",
-          "wireName": "page",
-          "description": "Page number (default 1)",
-          "schema": {
-            "default": 1,
-            "minimum": 1,
-            "type": "integer"
-          }
-        },
-        {
-          "name": "per_page",
-          "in": "query",
-          "wireName": "per_page",
-          "description": "Items per page (default 20, max 100)",
-          "schema": {
-            "default": 20,
-            "maximum": 100,
-            "minimum": 1,
-            "type": "integer"
-          }
-        }
-      ],
-      "output": {
-        "contentType": "application/json",
-        "envelope": "data",
-        "schema": {
-          "description": "Response payload"
-        }
-      },
-      "cli": {
-        "command": [
-          "workers",
-          "prechecks",
-          "list"
-        ],
-        "args": [
-          "id"
-        ]
-      },
-      "mcpExcluded": true
-    },
-    {
-      "operationId": "runPreChecks",
-      "method": "POST",
-      "path": "/api/v1/workers/{id}/prechecks",
-      "summary": "Run pre-checks on worker",
-      "tags": [
-        "Pre-Checks"
-      ],
-      "mutating": true,
-      "arguments": [
-        {
-          "name": "id",
-          "in": "path",
-          "wireName": "id",
-          "required": true,
-          "description": "Resource ID",
-          "schema": {
-            "type": "string"
-          }
-        },
-        {
-          "name": "checks",
-          "in": "body",
-          "wireName": "checks",
-          "required": true,
-          "schema": {
-            "items": {
-              "properties": {
-                "blocking": {
-                  "type": "boolean"
-                },
-                "description": {
-                  "type": "string"
-                },
-                "min_version": {
-                  "type": "string"
-                },
-                "type": {
-                  "enum": [
-                    "docker_version",
-                    "gpu_available",
-                    "disk_space",
-                    "ram_available",
-                    "port_available"
-                  ],
-                  "type": "string"
-                }
-              },
-              "type": "object"
-            },
-            "type": "array"
-          }
-        },
-        {
-          "name": "stack_id",
-          "in": "body",
-          "wireName": "stack_id",
-          "schema": {
-            "type": "string"
-          }
-        },
-        {
-          "name": "timeout_seconds",
-          "in": "body",
-          "wireName": "timeout_seconds",
-          "schema": {
-            "default": 30,
-            "type": "integer"
-          }
-        },
-        {
-          "name": "worker_id",
-          "in": "body",
-          "wireName": "worker_id",
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
-      "body": {
-        "contentType": "application/json",
-        "required": true,
-        "mode": "properties"
-      },
-      "output": {
-        "contentType": "application/json",
-        "schema": {
-          "properties": {
-            "message": {
-              "type": "string"
-            },
-            "request_id": {
-              "type": "string"
-            },
-            "results": {
-              "items": {
-                "properties": {
-                  "blocking": {
-                    "type": "boolean"
-                  },
-                  "check_type": {
-                    "type": "string"
-                  },
-                  "description": {
-                    "type": "string"
-                  },
-                  "id": {
-                    "type": "string"
-                  },
-                  "request_id": {
-                    "type": "string"
-                  },
-                  "stack_id": {
-                    "type": "string"
-                  },
-                  "status": {
-                    "type": "string"
-                  },
-                  "worker_id": {
-                    "type": "string"
-                  }
-                },
-                "type": "object"
-              },
-              "type": "array"
-            },
-            "worker_id": {
-              "type": "string"
-            }
-          },
-          "type": "object"
-        }
-      },
-      "cli": {
-        "command": [
-          "workers",
-          "prechecks",
-          "run"
-        ],
-        "args": [
-          "id"
-        ]
       },
       "mcpExcluded": true
     },

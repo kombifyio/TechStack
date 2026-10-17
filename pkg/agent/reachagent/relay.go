@@ -131,6 +131,7 @@ func (c *relayController) run(ctx context.Context, key relayKey) {
 		URL: key.url, Version: c.cfg.Version, Logger: c.log,
 		ProofProvider: func(context.Context) (string, error) { return mintRelayProof(c.cfg.Manager, c.cfg.Now, key) },
 		OnConnected:   func() { c.setStatus(key.generation, relayConnected, "") },
+		LoopbackOnly:  true,
 	})
 	if err != nil {
 		c.setStatus(key.generation, relayDenied, "relay_not_configured")

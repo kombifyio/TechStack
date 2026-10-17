@@ -2,11 +2,11 @@
   "configured": true,
   "deliverability_known": true,
   "release": {
-    "tag": "v0.53.8",
-    "version": "0.53.8",
-    "sourceSha": "bcfa561ea9becb844036d4e1e6264fe77d5d25f9",
-    "publicSourceSha": "f49db60bdfd6409b51382bb2731635c2a7340420",
-    "releaseUrl": "https://github.com/kombifyio/StackKits/releases/tag/v0.53.8"
+    "tag": "v0.53.9",
+    "version": "0.53.9",
+    "sourceSha": "9269667320ff3eb66be23837d427f697efc9b9f8",
+    "publicSourceSha": "38ce554603e515c717695c435e588e617f476b95",
+    "releaseUrl": "https://github.com/kombifyio/StackKits/releases/tag/v0.53.9"
   },
   "use_cases": [
     {
@@ -3924,6 +3924,18 @@
             "protocol": "rest",
             "purpose": "HTTP health and library access. Jellyfin has no native product MCP.",
             "auth": "jellyfin-auth"
+          },
+          {
+            "id": "navidrome",
+            "protocol": "rest",
+            "purpose": "Native administrator/library setup and Subsonic-compatible music playback. No native product MCP.",
+            "auth": "navidrome-self-auth"
+          },
+          {
+            "id": "audiobookshelf",
+            "protocol": "rest",
+            "purpose": "Native administrator/library setup, audiobook streaming and per-user listening progress. No native product MCP.",
+            "auth": "audiobookshelf-self-auth"
           }
         ],
         "skills": [
@@ -3932,6 +3944,18 @@
             "audience": "product-user",
             "source": "stackkits",
             "path": "use-cases/media/agent/owner-setup/SKILL.md"
+          },
+          {
+            "id": "music-library",
+            "audience": "stack-operator",
+            "source": "stackkits",
+            "path": "use-cases/media/agent/music-library/SKILL.md"
+          },
+          {
+            "id": "audiobook-library",
+            "audience": "stack-operator",
+            "source": "stackkits",
+            "path": "use-cases/media/agent/audiobook-library/SKILL.md"
           }
         ],
         "cliHelpers": [
@@ -5139,11 +5163,11 @@
                     "minStorageGB": 20
                   },
                   "reservation": {
-                    "cpuCores": 0.05,
+                    "cpuCores": 0.2,
                     "ramGB": 0.3125
                   },
                   "recommended": {
-                    "cpuCores": 0.25,
+                    "cpuCores": 1.25,
                     "ramGB": 0.25
                   },
                   "provenance": {
@@ -5161,7 +5185,7 @@
                     },
                     "reservation": {
                       "source": "measured",
-                      "ref": "docs/data/resource-evidence/stackkits-guacamole-runtime/standard.json"
+                      "ref": "docs/plans/2026-10-11-stream-a/a6-remote-cold-latency-observation.json"
                     }
                   }
                 },
@@ -5175,11 +5199,11 @@
                     "minStorageGB": 20
                   },
                   "reservation": {
-                    "cpuCores": 0.05,
+                    "cpuCores": 0.1,
                     "ramGB": 0.3125
                   },
                   "recommended": {
-                    "cpuCores": 0.25,
+                    "cpuCores": 0.5,
                     "ramGB": 0.25
                   },
                   "provenance": {
@@ -5197,7 +5221,7 @@
                     },
                     "reservation": {
                       "source": "measured",
-                      "ref": "docs/data/resource-evidence/stackkits-guacamole-runtime/standard.json"
+                      "ref": "docs/plans/2026-10-11-stream-a/a6-remote-cold-latency-observation.json"
                     }
                   }
                 },

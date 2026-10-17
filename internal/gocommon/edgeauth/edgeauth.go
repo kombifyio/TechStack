@@ -43,6 +43,10 @@ const (
 	HeaderEdgeAuth      = "X-Kombify-Edge-Auth"
 	EdgeAuthValueJWT    = "auth0-jwt"
 	EdgeAuthValueAPIKey = "api-key"
+	// EdgeAuthValueServiceAuth marks machine callers the edge admitted by a
+	// verified service identity (for example CI OIDC). The signed envelope is
+	// still verified; the marker alone grants nothing.
+	EdgeAuthValueServiceAuth = "service-auth"
 )
 
 // Headers forwarded from the edge (same names as Kong used).
@@ -524,7 +528,8 @@ func firstNonEmpty(values ...string) string {
 }
 
 func isSupportedEdgeAuthValue(value string) bool {
-	return strings.EqualFold(value, EdgeAuthValueJWT) || strings.EqualFold(value, EdgeAuthValueAPIKey)
+	return strings.EqualFold(value, EdgeAuthValueJWT) || strings.EqualFold(value, EdgeAuthValueAPIKey) ||
+		strings.EqualFold(value, EdgeAuthValueServiceAuth)
 }
 
 func hasUnsignedIdentityHeaders(r *http.Request) bool {

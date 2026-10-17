@@ -17,7 +17,7 @@ import (
 func TestGetAuthModeDoesNotRequireFirstRunStoreInSaaS(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	event := &httpx.Event{Request: httptest.NewRequest(http.MethodGet, "/api/v1/auth/mode", nil), Response: recorder}
-	require.NoError(t, getAuthMode(nil, config.ModeSaaS, config.EditionSaaSStandalone, nil)(event))
+	require.NoError(t, getRuntimeAuthMode(RuntimeStore{}, config.ModeSaaS, config.EditionSaaSStandalone, nil)(event))
 	var response struct {
 		Data AuthModeResponse `json:"data"`
 	}
@@ -39,7 +39,7 @@ func TestGetAuthModeReportsWhereCredentialsAreKept(t *testing.T) {
 	} {
 		recorder := httptest.NewRecorder()
 		event := &httpx.Event{Request: httptest.NewRequest(http.MethodGet, "/api/v1/auth/mode", nil), Response: recorder}
-		require.NoError(t, withWalletSource(source, getAuthMode(nil, config.ModeSaaS, config.EditionSaaSStandalone, nil))(event))
+		require.NoError(t, withWalletSource(source, getRuntimeAuthMode(RuntimeStore{}, config.ModeSaaS, config.EditionSaaSStandalone, nil))(event))
 		var response struct {
 			Data AuthModeResponse `json:"data"`
 		}

@@ -18,6 +18,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/guardposture"
 	"github.com/kombifyio/techstack/pkg/guardreach"
 	"github.com/kombifyio/techstack/pkg/httpx"
+	"github.com/kombifyio/techstack/pkg/kombifywallet"
 	"github.com/kombifyio/techstack/pkg/outcome"
 	"github.com/kombifyio/techstack/pkg/serverregistry"
 )
@@ -29,6 +30,11 @@ type ServerRuntimeRouteConfig struct {
 	Policy          InventoryPolicy
 	AgentDisconnect func(string) error
 	Now             func() time.Time
+	// WalletWithdraw tells the owner's kombify Wallet that a detached server
+	// is gone, so the Wallet stops delivering to its node and marks the items
+	// it held for rotation. Nil (no Wallet) leaves the detach answer without
+	// a wallet_withdrawal member.
+	WalletWithdraw ServerWalletWithdrawer
 	// Maintenance registers POST /api/v1/servers/{serverId}/actions when set.
 	Maintenance *ServerMaintenanceRouteConfig
 	// Reach adds the kombify Guard reach state to the server read model. Nil in
@@ -54,6 +60,34 @@ type ServerRuntimeRouteConfig struct {
 	Network *ServerNetworkRouteConfig
 }
 
+// ServerWalletWithdrawer withdraws a detached server's node from the owner's
+// kombify Wallet by the server's Agent id. Repeating it is harmless.
+type ServerWalletWithdrawer interface {
+	HostWithdraw(ctx context.Context, owner, agentID string) (kombifywallet.HostWithdrawal, error)
+}
+
+// serverWalletWithdrawalTimeout bounds the Wallet call after a detach that
+// has already committed; the detach never waits longer for it.
+const serverWalletWithdrawalTimeout = 10 * time.Second
+
+// selfOwnedServerDetachResponse is the detach receipt and, with a Wallet,
+// what the Wallet recorded for the server.
+type selfOwnedServerDetachResponse struct {
+	*controlplane.SelfOwnedServerDetachReceipt
+	WalletWithdrawal *serverWalletWithdrawal `json:"wallet_withdrawal,omitempty"`
+}
+
+// serverWalletWithdrawal reports the Wallet bookkeeping of a detach: state
+// "recorded" with the item counts, or "failed" with the Wallet's reason. A
+// failure leaves the detach in place; repeating the detach retries it.
+type serverWalletWithdrawal struct {
+	State             string `json:"state"`
+	TargetsRemoved    int    `json:"targets_removed"`
+	ItemsNeedRotation int    `json:"items_need_rotation"`
+	ReasonCode        string `json:"reason_code,omitempty"`
+	Retryable         bool   `json:"retryable,omitempty"`
+}
+
 // ServerReachReader reads the persisted kombify Guard reach rows of a tenant.
 type ServerReachReader interface {
 	ListByTenant(ctx context.Context, tenantID string) ([]guardreach.Row, error)
@@ -68,6 +102,7 @@ type serverRuntimeHandlers struct {
 	now             func() time.Time
 	maintenance     *serverMaintenanceHandlers
 	reach           ServerReachReader
+	walletWithdraw  ServerWalletWithdrawer
 
 	posture                 ServerPosture
 	postureEntitlements     EntitlementGate
@@ -196,6 +231,7 @@ func RegisterServerRuntimeRoutes(r *httpx.Router, cfg ServerRuntimeRouteConfig) 
 		reach: cfg.Reach, posture: cfg.Posture, postureEntitlements: cfg.PostureEntitlements, workers: cfg.Workers,
 		network:                 cfg.Network,
 		currentMTLSCapabilities: cfg.CurrentMTLSCapabilities,
+		walletWithdraw:          cfg.WalletWithdraw,
 	}
 	r.GET("/api/v1/servers", h.list)
 	r.GET("/api/v1/servers/{serverId}", h.get)
@@ -277,8 +313,38 @@ func (h serverRuntimeHandlers) detach(e *httpx.Event) error {
 		if h.agentDisconnect != nil {
 			_ = h.agentDisconnect(receipt.AgentID)
 		}
-		return httpx.Success(e, http.StatusOK, receipt)
+		return httpx.Success(e, http.StatusOK, selfOwnedServerDetachResponse{
+			SelfOwnedServerDetachReceipt: receipt,
+			WalletWithdrawal:             h.withdrawFromWallet(e.Request.Context(), ownerID, receipt.AgentID),
+		})
 	}
+}
+
+// withdrawFromWallet runs after the detach committed, also on a replay, so a
+// failed earlier attempt is retried by detaching again.
+//
+// The Wallet owner is the server's recorded owner: DetachSelfOwnedServer
+// refuses anyone but the server's OwnerSubjectID, so ownerID is that owner,
+// not merely whoever is signed in. Techstack does not record which Wallet
+// owner each delivery to the server was made for (deliveries use the stack
+// owner); a delivery made from another owner's Wallet, such as a stack owned
+// by someone else in the tenant, is not withdrawn here, and that owner
+// withdraws the server in their own Wallet.
+func (h serverRuntimeHandlers) withdrawFromWallet(ctx context.Context, ownerID, agentID string) *serverWalletWithdrawal {
+	if h.walletWithdraw == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), serverWalletWithdrawalTimeout)
+	defer cancel()
+	withdrawn, err := h.walletWithdraw.HostWithdraw(ctx, ownerID, agentID)
+	if err != nil {
+		failed := &serverWalletWithdrawal{State: "failed", ReasonCode: "wallet_unavailable", Retryable: true}
+		if denial, ok := kombifywallet.AsDenial(err); ok {
+			failed.ReasonCode, failed.Retryable = denial.Reason, denial.Retryable
+		}
+		return failed
+	}
+	return &serverWalletWithdrawal{State: "recorded", TargetsRemoved: withdrawn.TargetsRemoved, ItemsNeedRotation: withdrawn.NeedsRotation}
 }
 
 // list returns the caller's own servers. The store read is tenant-scoped, and a

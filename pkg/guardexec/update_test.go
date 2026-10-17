@@ -289,3 +289,15 @@ func digestHex(content string) string {
 	sum := sha256.Sum256([]byte(content))
 	return hex.EncodeToString(sum[:])
 }
+
+// An unsigned local build is admitted only as an upgrade: it never rolls the
+// host back below the Guard that is running.
+func TestUnsignedReleaseCannotDowngradeTheRunningGuard(t *testing.T) {
+	h := newHost(t, true, nil)
+	if _, err := h.updater.Stage(t.Context(), h.offer(t, "guard-0.49.0", "0.49.0")); !IsDenial(err, CodeNotAllowed) {
+		t.Fatalf("unsigned downgrade err = %v, want %s", err, CodeNotAllowed)
+	}
+	if got := h.installed(t); got != "guard-0.50.0" {
+		t.Fatalf("installed = %q after refused downgrade", got)
+	}
+}

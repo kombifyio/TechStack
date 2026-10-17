@@ -138,6 +138,10 @@ func TestPostgresAuthorityAdmitCurrentResolvesAndPersistsCanonicalGenerationAtom
 	mock.ExpectQuery("SELECT server.generation, server.lifecycle_state, stack.status[[:space:]]+FROM servers AS server").
 		WithArgs("tenant-a", "server-a", "stack-a", "owner-a").WillReturnRows(sqlmock.NewRows([]string{"generation", "lifecycle_state", "status"}).AddRow(int64(9), "active", "running"))
 	serverRef := ServerRef{TenantID: "tenant-a", ServerID: "server-a", ServerGeneration: 9}
+	mock.ExpectExec("UPDATE server_port_claim_generations").
+		WithArgs("tenant-a", "server-a", int64(9), "stack-a", "plan-a").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("UPDATE server_port_reservations AS reservation").
+		WithArgs("tenant-a", "server-a", int64(9)).WillReturnResult(sqlmock.NewResult(0, 0))
 	expectEmptyInventory(mock, serverRef)
 	normalized := mustNormalizeAdmission(t, AdmissionRequest{ServerRef: serverRef, StackID: request.StackID, ResolvedPlanHash: request.ResolvedPlanHash, Requirements: request.Requirements})
 	mock.ExpectExec("INSERT INTO server_port_claim_generations").

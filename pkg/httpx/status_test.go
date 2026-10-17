@@ -4,8 +4,6 @@ import (
 	"errors"
 	"net/http"
 	"testing"
-
-	"github.com/pocketbase/pocketbase/tools/router"
 )
 
 func TestStatusOf(t *testing.T) {
@@ -19,8 +17,6 @@ func TestStatusOf(t *testing.T) {
 		{"httpx 404", NewNotFoundError("missing", nil), http.StatusNotFound},
 		{"httpx 400", NewBadRequestError("bad", nil), http.StatusBadRequest},
 		{"httpx 500", NewInternalServerError("oops", nil), http.StatusInternalServerError},
-		{"router 404", &router.ApiError{Status: http.StatusNotFound}, http.StatusNotFound},
-		{"router 500", &router.ApiError{Status: http.StatusInternalServerError}, http.StatusInternalServerError},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -35,7 +31,6 @@ func TestIsServerError(t *testing.T) {
 	serverErrors := []error{
 		errors.New("boom"),
 		NewInternalServerError("oops", nil),
-		&router.ApiError{Status: http.StatusBadGateway},
 	}
 	for _, err := range serverErrors {
 		if !IsServerError(err) {
@@ -48,7 +43,6 @@ func TestIsServerError(t *testing.T) {
 		NewNotFoundError("missing", nil),
 		NewBadRequestError("bad", nil),
 		NewUnauthorizedError("", nil),
-		&router.ApiError{Status: http.StatusNotFound},
 	}
 	for _, err := range clientErrors {
 		if IsServerError(err) {

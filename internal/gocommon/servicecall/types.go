@@ -27,6 +27,7 @@ package servicecall
 
 import (
 	"context"
+	"crypto/ed25519"
 	"time"
 )
 
@@ -110,6 +111,20 @@ type Config struct {
 
 	// SecretNext is the optional "next" secret active during rotation.
 	SecretNext string
+
+	// SigningKey, when set, signs outbound tokens with EdDSA under
+	// SigningKeyID instead of HS256 with Secret. Client-side only.
+	SigningKey   ed25519.PrivateKey
+	SigningKeyID string
+
+	// CallerPublicKeys verifies EdDSA tokens by kid. Each key is bound to one
+	// caller service and verifies only tokens whose svc is that service.
+	// Middleware-side only.
+	CallerPublicKeys map[string]CallerPublicKey
+
+	// RequireEd25519 rejects HS256 tokens, completing a receiver's cutover
+	// from the shared secret. Middleware-side only.
+	RequireEd25519 bool
 
 	// TokenTTL overrides DefaultTokenTTL. Client-side only.
 	TokenTTL time.Duration

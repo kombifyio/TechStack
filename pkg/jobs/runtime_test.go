@@ -954,7 +954,7 @@ func TestRuntimeActionsFromEnvReportsMissingServiceAuthSecret(t *testing.T) {
 		t.Fatalf("actions = %+v, want no servicecall runner without SERVICE_AUTH_SECRET", actions)
 	}
 	got := strings.Join(diagnostics.Warnings, "\n")
-	if !strings.Contains(got, "SERVICE_AUTH_SECRET") || !strings.Contains(got, "Simulate") {
+	if !strings.Contains(got, "Simulate") || !strings.Contains(got, "required") {
 		t.Fatalf("warnings = %v, want clear missing-secret diagnostics", diagnostics.Warnings)
 	}
 }

@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/kombifyio/techstack/pkg/httpx"
-	"github.com/pocketbase/pocketbase/core"
 )
 
 // oidcHTTPClient is a pooled client for OIDC provider calls.
@@ -195,10 +194,6 @@ func fetchUserInfo(reqCtx *http.Request, issuer, accessToken string) (*oidcUserI
 // In SaaS/Auth0 mode this clears the upstream Auth0 session and returns the
 // browser to the Techstack login entrypoint. If cloud logout is not configured,
 // it falls back to the local login page instead of returning a 404.
-func handleOIDCLogout(app core.App) func(e *httpx.Event) error {
-	return handleRuntimeOIDCLogout()
-}
-
 func handleRuntimeOIDCLogout() func(e *httpx.Event) error {
 	return func(e *httpx.Event) error {
 		if logoutURL := resolveCloudLogoutURL(e.Request); logoutURL != nil {

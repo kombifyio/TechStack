@@ -1,0 +1,28 @@
+{
+  "schema": "techstack.database-forward-batch/v1",
+  "migrations": [
+    {
+      "version": "153_drift_schedule_authority.sql",
+      "sha256": "17e1fa43a5940c2d7f91bceaa3e0f6cd852b14acc265f8560aaaf0bc377e0d11"
+    },
+    {
+      "version": "154_pending_job_directory_authority.sql",
+      "sha256": "787097585627909a6691f283a8822a8dd3742e25029e91052b03ecafc7cb4c2c"
+    },
+    {
+      "version": "155_job_execution_reclaim_authority.sql",
+      "sha256": "ec0791d2272f216ec97fa7ec6b75f82d89c9acda9803dab18948efaed5580e24"
+    },
+    {
+      "version": "156_subject_directory.sql",
+      "sha256": "a04c7739ace2ef68d312b3e94829695547b34306e6c182674d84213a1068730d"
+    },
+    {
+      "version": "157_subject_ref_execute_posture.sql",
+      "sha256": "6777f7f17156c0d1d5cda70efd55974b62db60a8041a2f8cb6e820c1a9bf014b"
+    }
+  ],
+  "provider_resource": "clickhouse-postgres:b6140b1d-3833-455a-b515-729055d3140d:f9301db0-e99d-8ad0-bec2-efb56642a37e:migrations",
+  "hostname": "kombify-prd-pg-runtime-52af3c33.pgz4r1vc79kp5qv1ezdb68ahqx.c0.eu-central-1.aws.pg.clickhouse.cloud",
+  "provider_ca_sha256": "4041ffb7103e68baab38035bec72ff4119fc4f0cc4be4ff972e6451c0d317074"
+}

@@ -311,6 +311,7 @@ func (h workerRouteHandlers) agentBinary(e *httpx.Event) error {
 	defer func() { _ = file.Close() }()
 
 	filename := fmt.Sprintf("techstack-%s-%s", artifact.os, artifact.arch)
+	e.Response.Header().Set("X-Content-Type-Options", "nosniff")
 	e.Response.Header().Set("Content-Type", "application/octet-stream")
 	e.Response.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
 	e.Response.Header().Set("Cache-Control", "private, no-store")

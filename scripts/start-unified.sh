@@ -4,7 +4,16 @@ set -euo pipefail
 
 public_port="${PORT:-5260}"
 data_dir="${TECHSTACK_DATA_DIR:-/data}"
-pb_data_dir="${TECHSTACK_PB_DATA_DIR:-${data_dir}/pb_data}"
+# An existing legacy state directory keeps being used; new installs get state/.
+if [[ -n "${TECHSTACK_STATE_DIR:-}" ]]; then
+  pb_data_dir="${TECHSTACK_STATE_DIR}"
+elif [[ -n "${TECHSTACK_PB_DATA_DIR:-}" ]]; then # pocketbase-migration-compat
+  pb_data_dir="${TECHSTACK_PB_DATA_DIR}" # pocketbase-migration-compat
+elif [[ -d "${data_dir}/pb_data" ]]; then # pocketbase-migration-compat
+  pb_data_dir="${data_dir}/pb_data" # pocketbase-migration-compat
+else
+  pb_data_dir="${data_dir}/state"
+fi
 stackkits_log_dir="${STACKKITS_LOG_DIR:-${pb_data_dir}/stackkits/logs}"
 
 if [[ "$(id -u)" == "0" && "${TECHSTACK_RUN_AS_ROOT:-}" != "1" ]]; then

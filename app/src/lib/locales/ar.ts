@@ -1,4 +1,7 @@
 export const ar: Record<string, string> = {
+  "ui.releaseChannel.badge": "Nightly",
+  "ui.releaseChannel.hint": "أنت على قناة Nightly: أحدث التغييرات على بياناتك الفعلية.",
+  "ui.releaseChannel.backToStable": "العودة إلى Stable",
   "ui.clientLocal.bootstrapPassword": "كلمة مرور التهيئة",
   "ui.clientLocal.bootstrapGuidance":
     "شغّل {command} في طرفية على مضيف هذا التثبيت للحصول على كلمة مرور التهيئة. إذا استُخدمت كلمة مرور سابقة أو انتهت صلاحيتها، يستبدلها الأمر وتتوقف كلمة المرور القديمة عن العمل.",
@@ -3961,4 +3964,6 @@ export const ar: Record<string, string> = {
     "يلزم توفر أدلة العمليات قبل تأكيد Nodes المتصلة.",
   "ui.workerRegistrationCard.workersConnectedVerified":
     "Workers المتصلة (مُتحقَّق منها)",
+  "wizard.leave.confirm":
+    "هل تريد مغادرة هذه الصفحة؟ الإجابات التي أدخلتها غير محفوظة.",
 };

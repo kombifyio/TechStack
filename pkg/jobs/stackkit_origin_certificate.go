@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kombifyio/techstack/internal/advancedissuer"
+	"github.com/kombifyio/techstack/internal/runtimeproduct/runtimeaction"
 	"github.com/kombifyio/techstack/internal/stackkitrelease"
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
 	"github.com/kombifyio/techstack/pkg/originca"
@@ -247,7 +248,7 @@ func reissueOriginCertificateForRoutes(ctx context.Context, service *originca.Se
 // install. The router serves it as soon as it lands (Traefik file provider,
 // watch=true). Its result replaces the stack's degraded components: empty on
 // success, the still-degraded component with the failing stage otherwise.
-func repairPublicTLS(ctx context.Context, cfg StackKitLifecycleConfig, d *advancedDispatcher, jobID string, request StackKitLifecycleRequest) (map[string]interface{}, error) {
+func repairPublicTLS(ctx context.Context, cfg StackKitLifecycleConfig, d *advancedDispatcher, jobID string, request StackKitLifecycleRequest, release stackkitrelease.Release) (map[string]interface{}, error) {
 	summary := map[string]interface{}{
 		"schema_version": "techstack.stackkit-lifecycle-result/v1", "techstack_id": request.StackID,
 		advancedOperationField: request.Operation, "agent_id": request.AgentID, StackKitModeField: StackKitModeAdvanced,
@@ -263,10 +264,66 @@ func repairPublicTLS(ctx context.Context, cfg StackKitLifecycleConfig, d *advanc
 		summary[DegradedComponentsResultField] = []interface{}{publicTLSDegradedComponent(err, request.OriginHosts, repairStatus)}
 		return summary, err
 	}
-	summary["success"] = true
 	summary[OriginCertificateResultField] = certificate
-	summary[DegradedComponentsResultField] = []interface{}{}
+	// The install only writes the certificate. The node's Apply stays unsealed
+	// completed_degraded until apply is dispatched again for the same plan and
+	// binding: completed steps replay, the public TLS step re-observes and the
+	// result is sealed.
+	applied, applyErr := resumeApplyAfterOriginCertificate(ctx, cfg, jobID, request, release)
+	if applied != nil {
+		summary["apply"] = applied
+	}
+	if applyErr != nil {
+		summary["success"] = false
+		summary[DegradedComponentsResultField] = []interface{}{publicTLSDegradedComponent(&OriginCertificateError{Stage: "apply", Err: applyErr}, request.OriginHosts, publicTLSRepairScheduled)}
+		return summary, applyErr
+	}
+	summary["success"] = true
+	remaining := appendApplyDegradedComponents(nil, applied, request.OriginHosts)
+	if remaining == nil {
+		remaining = []interface{}{}
+	}
+	summary[DegradedComponentsResultField] = remaining
 	return summary, nil
+}
+
+// resumeApplyAfterOriginCertificate re-plans the node's current generation and
+// dispatches apply bound to that plan hash, with the stack's recorded rollout
+// binding (kit and StackSpec path) the repair request already carries. A
+// ledger that still says completed_degraded for other units is not a repair
+// failure: those units are returned for the projection.
+func resumeApplyAfterOriginCertificate(ctx context.Context, cfg StackKitLifecycleConfig, jobID string, request StackKitLifecycleRequest, release stackkitrelease.Release) (map[string]interface{}, error) {
+	apply := request
+	apply.Operation, apply.OwnerApproved, apply.OriginHosts = StackKitLifecycleApply, true, nil
+	apply.InventoryJSON, apply.CandidateSpecJSON, apply.ExpectedSpecHash = nil, nil, ""
+	apply, err := NormalizeStackKitLifecycleRequest(apply)
+	if err != nil {
+		return nil, err
+	}
+	planHash, err := planStackKitLifecycleApply(ctx, cfg.Sender, jobID, apply, release)
+	if err != nil {
+		return nil, err
+	}
+	result, _, dispatchErr := dispatchTypedStackKitOperation(ctx, cfg.Sender, jobID, apply, release, func(command *agentpb.StackKitCommand) {
+		command.ExpectedPlanHash = planHash
+	})
+	if result == nil {
+		if dispatchErr != nil {
+			return nil, dispatchErr
+		}
+		return nil, fmt.Errorf("typed StackKits apply result is missing")
+	}
+	normalized, err := normalizeStackKitLifecycleResult(apply, result)
+	if err != nil {
+		if dispatchErr != nil {
+			return nil, dispatchErr
+		}
+		return nil, err
+	}
+	if dispatchErr != nil && strings.TrimSpace(stringFromInterface(normalized["status"])) != string(runtimeaction.StatusCompletedDegraded) {
+		return normalized, dispatchErr
+	}
+	return normalized, nil
 }
 
 // stringListFromInterface reads a string list from a job map that may have

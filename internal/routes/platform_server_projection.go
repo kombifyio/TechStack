@@ -13,6 +13,7 @@ import (
 	"github.com/kombifyio/techstack/internal/gocommon/servicecall"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/serverregistry"
+	"github.com/kombifyio/techstack/pkg/serviceauth"
 )
 
 // The registry side of the platform server list: it reads what this service
@@ -137,11 +138,10 @@ type PlatformPublisherConfig struct {
 }
 
 type platformHTTPPublisher struct {
-	origin  string
-	service string
-	target  string
-	secret  string
-	client  *http.Client
+	origin string
+	auth   servicecall.Config
+	target string
+	client *http.Client
 }
 
 // NewPlatformPublisher returns nil when the projection is not configured, which
@@ -151,8 +151,8 @@ func NewPlatformPublisher(cfg PlatformPublisherConfig) (serverregistry.PlatformP
 	if origin == "" {
 		return nil, nil
 	}
-	if strings.TrimSpace(cfg.Secret) == "" {
-		return nil, fmt.Errorf("routes: platform projection requires a service auth secret")
+	if !serviceauth.CanSign(cfg.Secret) {
+		return nil, fmt.Errorf("routes: platform projection requires a service auth secret or Ed25519 key")
 	}
 	timeout := cfg.Timeout
 	if timeout <= 0 {
@@ -162,12 +162,20 @@ func NewPlatformPublisher(cfg PlatformPublisherConfig) (serverregistry.PlatformP
 	if client == nil {
 		client = &http.Client{Timeout: timeout}
 	}
+	target := firstNonEmptyString(strings.TrimSpace(cfg.TargetName), "cloud")
+	auth, err := serviceauth.Apply(servicecall.Config{
+		ServiceName: firstNonEmptyString(strings.TrimSpace(cfg.ServiceName), "techstack"),
+		Target:      target,
+		Secret:      strings.TrimSpace(cfg.Secret),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("routes: platform projection service auth: %w", err)
+	}
 	return &platformHTTPPublisher{
-		origin:  origin,
-		service: firstNonEmptyString(strings.TrimSpace(cfg.ServiceName), "techstack"),
-		target:  firstNonEmptyString(strings.TrimSpace(cfg.TargetName), "cloud"),
-		secret:  strings.TrimSpace(cfg.Secret),
-		client:  client,
+		origin: origin,
+		auth:   auth,
+		target: target,
+		client: client,
 	}, nil
 }
 
@@ -185,11 +193,7 @@ func (p *platformHTTPPublisher) PublishServers(ctx context.Context, tenantID str
 	if err != nil {
 		return fmt.Errorf("encode servers: %w", err)
 	}
-	token, err := servicecall.IssueToken(servicecall.Config{
-		ServiceName: p.service,
-		Target:      p.target,
-		Secret:      p.secret,
-	}, p.target, nil, "")
+	token, err := servicecall.IssueToken(p.auth, p.target, nil, "")
 	if err != nil {
 		return fmt.Errorf("issue service token: %w", err)
 	}

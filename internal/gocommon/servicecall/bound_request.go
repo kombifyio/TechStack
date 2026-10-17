@@ -34,7 +34,7 @@ func RequireBoundServiceAuth(cfg BoundRequestConfig) func(http.Handler) http.Han
 				respondAuthError(w, http.StatusUnauthorized, "service_auth_required", "missing_service_auth_header")
 				return
 			}
-			claims, err := VerifyToken(token, cfg.Secret, cfg.SecretNext)
+			claims, err := verifyWithConfig(token, cfg.Config)
 			if err != nil {
 				respondAuthError(w, http.StatusUnauthorized, "service_auth_invalid", err.Error())
 				return
@@ -93,7 +93,7 @@ var errBoundBodyTooLarge = fmt.Errorf("servicecall: request body too large")
 
 func boundRouteConfigured(cfg BoundRequestConfig, allowedCallers map[string]struct{}) bool {
 	return cfg.Enabled && strings.TrimSpace(cfg.ServiceName) != "" &&
-		(strings.TrimSpace(cfg.Secret) != "" || strings.TrimSpace(cfg.SecretNext) != "") &&
+		(strings.TrimSpace(cfg.Secret) != "" || strings.TrimSpace(cfg.SecretNext) != "" || len(cfg.CallerPublicKeys) > 0) &&
 		len(allowedCallers) > 0 && validScopeToken(cfg.RequiredScope) && cfg.MaxBodyBytes > 0
 }
 

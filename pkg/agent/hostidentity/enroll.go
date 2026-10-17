@@ -398,6 +398,15 @@ func redeem(ctx context.Context, client *http.Client, m *Manager, b Bootstrap, a
 			return nil, reqErr
 		}
 		req.Header.Set("Content-Type", "application/json")
+		// Proof of possession of the host key, bound to this capability, so a
+		// stolen capability cannot enrol a key its thief does not hold.
+		proof, proofErr := guardidentity.SignProof(key, guardidentity.ProofInput{
+			Method: http.MethodPost, URL: endpoint, AccessToken: strings.TrimSpace(b.Token),
+		})
+		if proofErr != nil {
+			return nil, proofErr
+		}
+		req.Header.Set(guardidentity.ProofHeader, proof)
 		response, doErr := client.Do(req)
 		if doErr == nil {
 			data, readErr := io.ReadAll(io.LimitReader(response.Body, 1<<20))

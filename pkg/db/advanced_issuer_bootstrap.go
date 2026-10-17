@@ -29,16 +29,26 @@ func prepareAdvancedIssuerKeyLogin(ctx context.Context, tx *sql.Tx, role, passwo
 	if role == "" || len(password) < 32 || !PostgresSCRAMSecretMatches(password, verifier) {
 		return errors.New("advanced issuer preparation requires its bound SCRAM credential")
 	}
-	var existing string
-	err := tx.QueryRowContext(ctx, `SELECT COALESCE(rolpassword,'') FROM pg_catalog.pg_authid WHERE rolname=$1`, role).Scan(&existing)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	// Managed Postgres runs without a superuser, so pg_authid is unreadable.
+	// There an existing login's credential is proven by the caller's
+	// authenticated readback after commit instead of a stored-verifier match.
+	var exists, credentialReadable bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_roles WHERE rolname=$1),
+	 has_table_privilege('pg_catalog.pg_authid','SELECT')`, role).Scan(&exists, &credentialReadable); err != nil {
 		return issuerPreparationError("inspect-existing-credential", err)
 	}
-	if err == nil && !PostgresSCRAMSecretMatches(password, existing) {
-		return errors.New("advanced issuer existing credential differs; no change")
+	if exists && credentialReadable {
+		var existing string
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(rolpassword,'') FROM pg_catalog.pg_authid WHERE rolname=$1`, role).Scan(&existing); err != nil {
+			return issuerPreparationError("inspect-existing-credential", err)
+		}
+		if !PostgresSCRAMSecretMatches(password, existing) {
+			return errors.New("advanced issuer existing credential differs; no change")
+		}
 	}
 	quoted := pgx.Identifier{role}.Sanitize()
-	if errors.Is(err, sql.ErrNoRows) {
+	var err error
+	if !exists {
 		statement := "CREATE ROLE " + quoted + " LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD '" + strings.ReplaceAll(verifier, "'", "''") + "'"
 		if _, err = tx.ExecContext(ctx, statement); err != nil {
 			return issuerPreparationError("create-login", err)

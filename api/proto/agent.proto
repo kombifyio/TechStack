@@ -234,6 +234,29 @@ enum StackKitOperation {
   // delivered Wallet item wallet_item_ref, or remove it (ai_provider_disable).
   // The StackSpec and bundle carry only the URL and an opaque key reference.
   STACKKIT_OPERATION_AI_PROVIDER_SETUP = 55;
+  // `stackkit user apps <household_username>`: replace the node apps a
+  // household member may sign into with household_apps (empty = none) or, when
+  // household_apps_set is false, open all apps. Owner approval required.
+  STACKKIT_OPERATION_HOUSEHOLD_UPDATE_APPS = 56;
+  // PaaS workload relocation (StackKits `stackkit relocate`, Coolify engine).
+  // Each acts only on the node it runs on; Core carries the secret-free plan
+  // between source and destination and never a transfer secret: send and
+  // receive read it from the move's Wallet item (wallet_item_ref,
+  // delivery_tenant_ref) that the Wallet delivered to both nodes.
+  // `relocate plan --project ... --json` on the source (read-only).
+  STACKKIT_OPERATION_RELOCATE_PLAN = 57;
+  // `relocate check --plan - --json` on the destination (read-only).
+  STACKKIT_OPERATION_RELOCATE_CHECK = 58;
+  // `relocate drain --plan - --owner-approve --json` on the source: stops the
+  // plan's applications and services; databases keep running.
+  STACKKIT_OPERATION_RELOCATE_DRAIN = 59;
+  // `relocate drain --undo --owner-approve --json`: the rollback of a move.
+  STACKKIT_OPERATION_RELOCATE_UNDRAIN = 60;
+  // `relocate send`: back up and share once with the destination.
+  STACKKIT_OPERATION_RELOCATE_SEND = 61;
+  // `relocate receive`: download from relocation_source_address and restore,
+  // with optional relocation_set_domains switches.
+  STACKKIT_OPERATION_RELOCATE_RECEIVE = 62;
 }
 
 enum StackKitDriftMode {
@@ -629,6 +652,23 @@ message StackKitCommand {
   string ai_provider_base_url = 62;
   string wallet_item_ref = 63;
   bool ai_provider_disable = 64;
+  // HOUSEHOLD_INVITE and HOUSEHOLD_UPDATE_APPS only: the grantable node app
+  // ids (ai, automation, dev, documents, files, game, mail, marketplace,
+  // media, network, photos, remote, smart-home) passed as one --app each.
+  // household_apps_set distinguishes an explicit empty list (none) from no
+  // restriction (all apps).
+  repeated string household_apps = 65;
+  bool household_apps_set = 66;
+  // RELOCATE_PLAN and RELOCATE_SEND only: the Coolify projects to move.
+  repeated string relocation_projects = 67;
+  // RELOCATE_CHECK and RELOCATE_DRAIN only: the secret-free plan
+  // RELOCATE_PLAN returned (at most 1 MiB), handed to the CLI on stdin.
+  bytes relocation_plan_json = 68;
+  // RELOCATE_SEND and RELOCATE_RECEIVE only: the bare host or IP address the
+  // destination reaches the source's share on.
+  string relocation_source_address = 69;
+  // RELOCATE_RECEIVE only: OLD=NEW domain switches of the restored resources.
+  repeated string relocation_set_domains = 70;
 }
 
 // StackKitResult transports the normalized stackkit.command-result/v1 JSON

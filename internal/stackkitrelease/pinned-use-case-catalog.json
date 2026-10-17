@@ -1,14 +1,14 @@
 {
   "schemaVersion": "stackkits-use-case-catalog/v1",
   "release": {
-    "tag": "v0.53.8",
-    "version": "0.53.8",
-    "sourceSha": "bcfa561ea9becb844036d4e1e6264fe77d5d25f9",
-    "publicSourceSha": "f49db60bdfd6409b51382bb2731635c2a7340420",
-    "releaseUrl": "https://github.com/kombifyio/StackKits/releases/tag/v0.53.8"
+    "tag": "v0.53.9",
+    "version": "0.53.9",
+    "sourceSha": "9269667320ff3eb66be23837d427f697efc9b9f8",
+    "publicSourceSha": "38ce554603e515c717695c435e588e617f476b95",
+    "releaseUrl": "https://github.com/kombifyio/StackKits/releases/tag/v0.53.9"
   },
-  "generatedAt": "2026-10-14T19:43:51Z",
-  "generatorVersion": "0.53.8",
+  "generatedAt": "2026-10-16T07:18:33Z",
+  "generatorVersion": "0.53.9",
   "catalog": {
     "useCases": [
       {
@@ -4373,7 +4373,7 @@
             },
             "moduleSlug": "guacamole",
             "notes": [
-              "Same normal remote-session recipe with a larger aggregate policy envelope. No named measured high benefit or physical/V1 support is inferred."
+              "Same normal remote-session recipe with a larger aggregate policy envelope. Faster container-cold startup than Low was observed on one development host; client capacity, physical/V1 support and whole-case qualification remain pending."
             ]
           },
           "low": {
@@ -4434,15 +4434,15 @@
                       "minStorageGB": 20
                     },
                     "reservation": {
-                      "cpuCores": 0.05,
+                      "cpuCores": 0.2,
                       "ramGB": 0.3125
                     },
                     "recommended": {
-                      "cpuCores": 0.25,
+                      "cpuCores": 1.25,
                       "ramGB": 0.25
                     },
                     "headroom": {
-                      "cpuCores": 1.95,
+                      "cpuCores": 1.8,
                       "ramGB": 1.1875
                     },
                     "provenance": {
@@ -4459,7 +4459,7 @@
                         "source": "measured"
                       },
                       "reservation": {
-                        "ref": "docs/data/resource-evidence/stackkits-guacamole-runtime/standard.json",
+                        "ref": "docs/plans/2026-10-11-stream-a/a6-remote-cold-latency-observation.json",
                         "source": "measured"
                       }
                     }
@@ -4474,15 +4474,15 @@
                       "minStorageGB": 20
                     },
                     "reservation": {
-                      "cpuCores": 0.05,
+                      "cpuCores": 0.1,
                       "ramGB": 0.3125
                     },
                     "recommended": {
-                      "cpuCores": 0.25,
+                      "cpuCores": 0.5,
                       "ramGB": 0.25
                     },
                     "headroom": {
-                      "cpuCores": 0.45,
+                      "cpuCores": 0.4,
                       "ramGB": 0.1875
                     },
                     "provenance": {
@@ -4499,7 +4499,7 @@
                         "source": "measured"
                       },
                       "reservation": {
-                        "ref": "docs/data/resource-evidence/stackkits-guacamole-runtime/standard.json",
+                        "ref": "docs/plans/2026-10-11-stream-a/a6-remote-cold-latency-observation.json",
                         "source": "measured"
                       }
                     }
@@ -5817,5 +5817,5 @@
       }
     ]
   },
-  "contentDigest": "sha256:3e0722adea8f8991c282dba9ed659881ee088ee796a9fca44845130d07775629"
+  "contentDigest": "sha256:71b045ce0d58afd8a108c11fba2a5b6a74f8628e7aea73e2d77945ca730063db"
 }

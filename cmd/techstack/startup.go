@@ -14,8 +14,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/pocketbase/pocketbase/core"
-
 	commonauthflow "github.com/kombifyio/techstack/internal/gocommon/authflow"
 	"github.com/kombifyio/techstack/internal/gocommon/authsession"
 	commonedgeauth "github.com/kombifyio/techstack/internal/gocommon/edgeauth"
@@ -55,6 +53,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/monthlyruntime"
 	"github.com/kombifyio/techstack/pkg/orchestrator"
 	"github.com/kombifyio/techstack/pkg/ril/workflow"
+	"github.com/kombifyio/techstack/pkg/serviceauth"
 	"github.com/kombifyio/techstack/pkg/stackrouting"
 	"github.com/kombifyio/techstack/pkg/telemetry"
 	"github.com/kombifyio/techstack/pkg/tunnel"
@@ -134,8 +133,9 @@ type routeDeps struct {
 	feed *companionFeedBoot
 	// wallet is the central kombify Wallet client, nil while the deployment
 	// keeps credentials in the legacy wallet (walletSource).
-	wallet       *kombifywallet.Client
-	walletSource kombifywallet.Source
+	wallet           *kombifywallet.Client
+	walletSource     kombifywallet.Source
+	previewExecution *config.PreviewExecution
 }
 
 func providerControlSQL(database *db.DB) *sql.DB {
@@ -255,6 +255,13 @@ func runTechstack(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// A malformed Ed25519 service key stops the control plane here; it never
+	// degrades to the shared HS256 secret.
+	if err := serviceauth.Check(); err != nil {
+		log.Error("service_auth_ed25519_invalid", "error", err)
+		return fmt.Errorf("service auth: %w", err)
+	}
+	previewExecution := config.NewPreviewExecution()
 	// Where credentials live is decided once, before anything else boots. A
 	// kombify source with an incomplete configuration refuses to start; there
 	// is no fallback to the legacy wallet.
@@ -313,7 +320,7 @@ func runTechstack(ctx context.Context) error {
 	orchCfg.BackupScheduleProjector = backupScheduleProjector(v2Boot, log)
 	backupRetention := composeBackupRetention(v2Boot, log)
 	orchCfg.BackupDecommissioner = backupRetention.decommissioner()
-	orchCfg.AdvancedIssuer = advancedCapabilityIssuer(ctx, v2Boot, log)
+	orchCfg.AdvancedIssuer = stableBootComponent(func() jobs.AdvancedIssuer { return advancedCapabilityIssuer(ctx, v2Boot, log) })
 	orchCfg.OriginCertificates = composeOriginCertificates(v2Boot, log)
 	orch := orchestrator.New(orchCfg, log)
 	typedControl := agentcontrol.NewHub(v2Boot.db.DB)
@@ -328,10 +335,13 @@ func runTechstack(ctx context.Context) error {
 			"message", "managed monthly runtimes can be created without SaaS entitlements; test lanes only",
 			"environment", startup.cfg.Server.Environment)
 	}
-	grpcState, err := bootAgentGRPC(startup.cfg, v2Boot, log)
-	if err != nil {
-		log.Error("agent_mtls_config_invalid", "error", err)
-		return err
+	grpcState := &grpcBoot{}
+	if config.BackgroundExecutionEnabled() {
+		grpcState, err = bootAgentGRPC(startup.cfg, v2Boot, log)
+		if err != nil {
+			log.Error("agent_mtls_config_invalid", "error", err)
+			return err
+		}
 	}
 	notificationOutbox := bootProductNotificationOutbox(v2Boot, startup.cfg.Edition, log)
 	if notificationOutbox != nil {
@@ -346,25 +356,38 @@ func runTechstack(ctx context.Context) error {
 		orch.AddTerminalJobObserver(destroyJobFailureNotifier{outbox: notificationOutbox})
 		orch.AddTerminalJobObserver(terminalJobHintObserver{hints: changeHints})
 	}
+	if store := controlPlanePostgresStore(v2Boot); store != nil {
+		orch.AddTerminalJobObserver(guardHeartbeatTimeoutProjector{store: store})
+	}
 	rilSignalOutbox, rilSignalWorker := bootRILSignalRuntime(v2Boot, startup.cfg.Edition, buildRevision, log)
 	guardReach := bootGuardReach(v2Boot, startup.cfg.Edition, log)
-	guardPosture := bootGuardPosture(ctx, v2Boot, orch, notificationOutbox, log)
-	routes.StartGuardReleaseRefresher(ctx)
-	monitorState := bootMonitoring(startup.cfg, grpcState.server, log, notificationOutbox, rilSignalOutbox)
+	guardPosture := stableBootComponent(func() *guardposture.Service { return bootGuardPosture(ctx, v2Boot, orch, notificationOutbox, log) })
+	if config.BackgroundExecutionEnabled() {
+		routes.StartGuardReleaseRefresher(ctx)
+	}
+	monitorState := stableBootComponent(func() *monitoringBoot {
+		return bootMonitoring(startup.cfg, grpcState.server, log, notificationOutbox, rilSignalOutbox)
+	})
+	if monitorState == nil {
+		monitorState = &monitoringBoot{}
+	}
 	monitorState.domainMonitor = bootDomainMonitor(v2Boot, notificationOutbox, log)
 	feed := bootCompanionFeed(v2Boot, orch, notificationOutbox, grpcState.server, guardPosture, log)
 	workflowEngine := bootWorkflowEngine(v2Boot, log)
-	providerState, err := composeHostedProviderRuntime(
-		ctx,
-		v2Boot.db.DB,
-		startup.cfg.Edition,
-		log,
-		notificationOutbox,
-		orch,
-		workflowEngine,
-	)
-	if err != nil {
-		return err
+	providerState := providerRuntimeState{}
+	if config.BackgroundExecutionEnabled() {
+		providerState, err = composeHostedProviderRuntime(
+			ctx,
+			v2Boot.db.DB,
+			startup.cfg.Edition,
+			log,
+			notificationOutbox,
+			orch,
+			workflowEngine,
+		)
+		if err != nil {
+			return err
+		}
 	}
 	providerDatabase := providerState.database
 	// Until ownership transfers to the shutdown lifecycle below, every later
@@ -398,6 +421,7 @@ func runTechstack(ctx context.Context) error {
 		feed:                    feed,
 		wallet:                  walletClient,
 		walletSource:            walletSource,
+		previewExecution:        previewExecution,
 	}
 
 	// One feature service serves the routes and the backup admission below.
@@ -421,9 +445,12 @@ func runTechstack(ctx context.Context) error {
 		log.Error("wallet_custody_invalid", "error", err)
 		return err
 	}
-	if err := bootstrapCanonicalAuth(ctx, deps); err != nil {
-		return err
+	if config.BackgroundExecutionEnabled() {
+		if err := bootstrapCanonicalAuth(ctx, deps); err != nil {
+			return err
+		}
 	}
+	previewExecution.StartupSuppressed()
 
 	registrySweeper := bootServerRegistrySweeper(v2Boot, monitorState, log)
 	platformProjector := bootPlatformServerProjector(v2Boot, log)
@@ -434,7 +461,7 @@ func runTechstack(ctx context.Context) error {
 	backupScanner := composeBackupScanner(&deps, auth.GetEncryptor())
 	serverMaintenance := bootServerMaintenanceLoop(v2Boot, orch, log)
 	driftScheduler := bootDriftScheduler(v2Boot, startup.cfg, orch, log)
-	handles := startRuntimeLifecycle(ctx, startup.cfg, orch, grpcState, monitorState, workflowEngine, rilSignalWorker, guardReach, providerState.runner, registrySweeper, platformProjector, jobReclaimer, backupScanner, backupRetention, serverMaintenance, driftScheduler, log)
+	handles := startRuntimeLifecycle(ctx, startup.cfg, orch, grpcState, monitorState, workflowEngine, rilSignalWorker, guardReach, providerState.runner, registrySweeper, platformProjector, jobReclaimer, backupScanner, backupRetention, serverMaintenance, driftScheduler, log, previewExecution)
 	if feed != nil && feed.digest != nil {
 		handles.background.run(feed.digest.Run)
 	}
@@ -512,6 +539,8 @@ func handleEarlyCommand(ctx context.Context, args []string) (bool, error) {
 		return true, nil
 	case "advanced-issuer-bootstrap":
 		return true, runAdvancedIssuerBootstrap(ctx)
+	case "database-delivery":
+		return true, runDatabaseDelivery(ctx, args[2:])
 	case "provider-control-bootstrap":
 		if err := runHostedProviderControlBootstrap(ctx); err != nil {
 			return true, err
@@ -531,14 +560,11 @@ func handleEarlyCommand(ctx context.Context, args []string) (bool, error) {
 	}
 }
 
+// techstackPBDataDirFromEnv returns the runtime state directory (agent CA,
+// agent gRPC TLS): an existing legacy pb_data directory is kept, a fresh
+// install uses the neutral state directory and never creates pb_data.
 func techstackPBDataDirFromEnv() string {
-	if dataDir := strings.TrimSpace(os.Getenv("TECHSTACK_PB_DATA_DIR")); dataDir != "" {
-		return dataDir
-	}
-	if dataDir := strings.TrimSpace(os.Getenv("TECHSTACK_DATA_DIR")); dataDir != "" {
-		return filepath.Join(dataDir, "pb_data")
-	}
-	return "pb_data"
+	return config.StateDirFromEnv()
 }
 
 func techstackSentryEnvironment() string {
@@ -592,10 +618,6 @@ func loadStartupContext(log *logger.Logger) (*startupContext, error) {
 		enrollmentResolver: resolver,
 		enrollment:         record,
 	}, nil
-}
-
-func bootV2(ctx context.Context, app core.App, cfg *config.Config, log *logger.Logger) *v2Boot {
-	return bootCanonicalV2(ctx, cfg, log)
 }
 
 func bootCanonicalV2(ctx context.Context, cfg *config.Config, log *logger.Logger) *v2Boot {
@@ -671,6 +693,10 @@ func ensureDefaultControlPlaneTenant(ctx context.Context, cfg *config.Config, bo
 	tenantKind := selfHostedTenantKind
 	if cfg != nil && cfg.DeploymentMode.IsSaaS() {
 		tenantKind = saasTenantKind
+	}
+	if !config.BackgroundExecutionEnabled() {
+		_, err := controlplane.NewPostgresStore(boot.db.DB).GetTenant(ctx, tenantID)
+		return err
 	}
 	_, err := controlplane.NewPostgresStore(boot.db.DB).EnsureTenant(ctx, controlplane.Tenant{
 		ID: tenantID, DisplayName: tenantID, Kind: tenantKind, Status: activeStatus,
@@ -1098,17 +1124,26 @@ func bindGlobalMiddleware(router *httpx.Router, deps routeDeps) {
 	router.BindFunc(middleware.RequestIDMiddleware)
 	bindCORS(router, cfg)
 	router.BindFunc(middleware.EdgeIdentityMiddlewareFromConfig(cfg))
+	router.BindFunc(previewTransportAdmission)
 	router.BindFunc(v2SessionIdentityMiddleware(deps.v2))
+	router.BindFunc(previewHTTPAdmission)
+	deps.previewExecution.HTTPInstalled()
 	bindRateLimiter(router, cfg)
 	bindCSRF(router, cfg)
 }
 
 func v2SessionIdentityMiddleware(boot *v2Boot) func(*httpx.Event) error {
 	return func(e *httpx.Event) error {
+		if config.ReleaseChannel() == "preview" && previewPublicPath(e.Request.URL.Path) {
+			return e.Next()
+		}
 		if boot == nil || boot.session == nil || e == nil || e.Request == nil {
 			return e.Next()
 		}
 		if id := identity.FromContext(e.Request.Context()); id != nil && id.IsAuthenticated() {
+			if err := admitPreviewPrincipal(e, id.UserID); err != nil {
+				return err
+			}
 			membership := enrichIdentityFromMembership(e.Request.Context(), boot.authStore, id, id.OrgID, boot.defaultTenant, "default")
 			// Edge-signed tenants are authoritative per request: never rebind
 			// them to another tenant; an unrecoverable projection failure is
@@ -1134,6 +1169,9 @@ func v2SessionIdentityMiddleware(boot *v2Boot) func(*httpx.Event) error {
 			return e.Next()
 		}
 		id := identityFromV2SessionClaims(claims)
+		if err := admitPreviewPrincipal(e, id.UserID); err != nil {
+			return err
+		}
 		membership := enrichV2SessionIdentityFromMembership(e.Request.Context(), boot.authStore, boot.defaultTenant, boot.saasMode, claims, id)
 		// Session claims are login-time snapshots, not per-request authority:
 		// when their tenant no longer projects, the recovery ladder may rebind
@@ -1186,6 +1224,12 @@ func resolveIdentityTenantProjection(
 ) (*controlplane.Membership, error) {
 	hydrateIdentityTenantFromMembership(id, membership)
 	applyOwnerTenantFallback(id, boot.saasMode)
+	if config.ReleaseChannel() == "preview" {
+		if !membershipMatchesPrincipal(membership, id.OrgID, id.UserID) {
+			return nil, fmt.Errorf("preview requires an existing canonical membership; sign in on stable to repair it")
+		}
+		return membership, nil
+	}
 	projected, err := ensureIdentityTenantProjection(e.Request.Context(), boot.authStore, id, membership)
 	if err == nil {
 		hydrateIdentityTenantFromMembership(id, projected)
@@ -1379,6 +1423,21 @@ func enrichV2SessionIdentityFromMembership(ctx context.Context, store controlpla
 	return enrichIdentityFromMembership(ctx, store, id, v2SessionTenantID(claims), claims.TenantID, claims.OrgID, defaultTenant, "default")
 }
 
+// Preserve the established membership semantics for stable and preview:
+// blank status is active, otherwise compare active case-insensitively.
+func activeMembership(membership *controlplane.Membership) bool {
+	if membership == nil {
+		return false
+	}
+	status := strings.TrimSpace(membership.Status)
+	return status == "" || strings.EqualFold(status, "active")
+}
+
+func membershipMatchesPrincipal(membership *controlplane.Membership, tenantID, subject string) bool {
+	return activeMembership(membership) && strings.TrimSpace(membership.TenantID) == strings.TrimSpace(tenantID) &&
+		strings.TrimSpace(membership.UserID) == strings.TrimSpace(subject)
+}
+
 func enrichIdentityFromMembership(ctx context.Context, store controlplane.AuthStore, id *identity.Identity, tenantIDs ...string) *controlplane.Membership {
 	if store == nil || id == nil || !id.IsAuthenticated() || strings.TrimSpace(id.UserID) == "" {
 		return nil
@@ -1392,8 +1451,7 @@ func enrichIdentityFromMembership(ctx context.Context, store controlplane.AuthSt
 		if err != nil || membership == nil {
 			continue
 		}
-		status := strings.TrimSpace(membership.Status)
-		if status != "" && !strings.EqualFold(status, "active") {
+		if !activeMembership(membership) {
 			continue
 		}
 		appendIdentityRole(id, membership.RoleKey)
@@ -1518,6 +1576,9 @@ func v2CloudUserUpsert(authStore controlplane.AuthStore, saasMode bool) commonau
 		if subject == "" {
 			return fmt.Errorf("cloud user subject is required")
 		}
+		if !config.PreviewSubjectAdmitted(subject) {
+			return fmt.Errorf("preview_subject_not_admitted")
+		}
 		email := strings.TrimSpace(claims.Email)
 		if email == "" {
 			return fmt.Errorf("cloud user email is required")
@@ -1525,6 +1586,16 @@ func v2CloudUserUpsert(authStore controlplane.AuthStore, saasMode bool) commonau
 		tenantID := strings.TrimSpace(resolvedTenant)
 		if tenantID == "" {
 			return fmt.Errorf("resolved cloud tenant is required")
+		}
+		if config.ReleaseChannel() == "preview" {
+			membership, err := authStore.GetMembership(ctx, tenantID, subject)
+			if err != nil {
+				return err
+			}
+			if !membershipMatchesPrincipal(membership, tenantID, subject) {
+				return fmt.Errorf("preview membership is not prepared")
+			}
+			return nil
 		}
 		const activeStatus = "active"
 		tenantRecord := controlplane.Tenant{ID: tenantID}

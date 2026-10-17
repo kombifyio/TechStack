@@ -80,6 +80,7 @@
   import WalletItemDialog, {
     type WalletItemDialogResult,
   } from "./WalletItemDialog.svelte";
+  import { resumeFromUrl, withoutResume, type WalletResume } from "../step-up.js";
   import WalletRevealDialog from "./WalletRevealDialog.svelte";
   import WalletSettingsDialog from "./WalletSettingsDialog.svelte";
   import WalletSshCaKey from "./WalletSshCaKey.svelte";
@@ -143,6 +144,9 @@
   let revealOf = $state<WalletItem | null>(null);
   let settingsOf = $state<WalletItem | null>(null);
   let signOf = $state<WalletItem | null>(null);
+  let signResumed = $state(false);
+  // The action a returned step-up may reopen, read once from the address.
+  let pendingResume: WalletResume | null = null;
   let stackNames = $state<Map<string, string>>(new Map());
 
   let search = $state("");
@@ -162,6 +166,7 @@
     try {
       items = await listItems();
       loadState = "ready";
+      reopenAfterStepUp();
     } catch (error) {
       if (
         error instanceof WalletApiError &&
@@ -175,6 +180,31 @@
         return;
       loadError = walletErrorMessage(error);
       loadState = "error";
+    }
+  }
+
+  /** Take the step-up resume out of the address; only a step-up this browser
+   * started (one-shot marker) leaves an action to reopen. */
+  function takeResumeFromAddress() {
+    const url = new URL(window.location.href);
+    pendingResume = resumeFromUrl(url);
+    const clean = withoutResume(url);
+    if (clean) void replaceState(clean, page.state).catch(() => undefined);
+  }
+
+  function reopenAfterStepUp() {
+    const resume = pendingResume;
+    pendingResume = null;
+    if (!resume) return;
+    const item = items.find(
+      (candidate) =>
+        candidate.itemId === resume.itemId && candidate.state === "active",
+    );
+    if (!item) return;
+    if (resume.action === "reveal") revealOf = item;
+    else if (isSshCa(item.itemType)) {
+      signResumed = true;
+      signOf = item;
     }
   }
 
@@ -298,6 +328,7 @@
   }
 
   onMount(() => {
+    takeResumeFromAddress();
     void load();
     void loadOwner();
     if (!fixedScope) {
@@ -1072,7 +1103,14 @@
 {/if}
 
 {#if signOf}
-  <WalletSshCertificateDialog item={signOf} onclose={() => (signOf = null)} />
+  <WalletSshCertificateDialog
+    item={signOf}
+    resumed={signResumed}
+    onclose={() => {
+      signOf = null;
+      signResumed = false;
+    }}
+  />
 {/if}
 
 {#if importing && owner}

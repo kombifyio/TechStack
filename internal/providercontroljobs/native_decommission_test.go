@@ -149,3 +149,39 @@ func TestResourceFreeConvergenceResolvesCertifiedAbsenceBeforeFinalizing(t *test
 		t.Fatalf("finalizer calls=%d resolution=%+v", finalizer.calls, resolution.requests)
 	}
 }
+
+type inFlightProvisionApplication struct {
+	providercontrol.OperationApplication
+	provision providercontrol.OperationRecord
+	started   int
+}
+
+func (a *inFlightProvisionApplication) Get(context.Context, string, string) (providercontrol.OperationRecord, error) {
+	return a.provision, nil
+}
+
+func (a *inFlightProvisionApplication) Start(context.Context, providercontrol.StartRequest) (providercontrol.OperationRecord, bool, error) {
+	a.started++
+	return providercontrol.OperationRecord{}, false, errors.New("decommission opened during an in-flight provision")
+}
+
+func TestDecommissionWaitsForInFlightProvisionWithoutSpendingAttempts(t *testing.T) {
+	app := &inFlightProvisionApplication{provision: providercontrol.OperationRecord{
+		Command: providerexecutor.Command{
+			TenantID: "tenant", OperationID: "op-provision", Operation: providerexecutor.OperationProvision,
+		},
+		Head: providerexecutor.Receipt{
+			Status:    providerexecutor.StatusPending,
+			Phase:     providerexecutor.PhaseResourcesBound,
+			Resources: []providerexecutor.ResourceBinding{{BindingID: "server"}},
+		},
+	}}
+	d := &NativeDecommissioner{application: app}
+	_, terminal, durable, err := d.convergeCandidate(t.Context(), nativeDecommissionCandidate{
+		TenantID: "tenant", LeaseID: "lease", ProvisionOperation: "op-provision",
+		Targets: []providerexecutor.ResourceTarget{{BindingID: "server"}},
+	})
+	if err != nil || terminal || durable || app.started != 0 {
+		t.Fatalf("terminal=%v durable=%v started=%d err=%v", terminal, durable, app.started, err)
+	}
+}

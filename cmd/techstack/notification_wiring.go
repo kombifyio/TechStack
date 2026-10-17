@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"github.com/kombifyio/techstack/pkg/serviceauth"
 	"os"
 	"strings"
 	"time"
@@ -141,8 +142,8 @@ func bootProductNotificationOutbox(v2 *v2Boot, edition config.Edition, log *logg
 		return nil
 	}
 	secret := strings.TrimSpace(os.Getenv("SERVICE_AUTH_SECRET"))
-	if secret == "" {
-		log.Warn("notification_outbox_disabled", "reason", "SERVICE_AUTH_SECRET missing")
+	if !serviceauth.CanSign(secret) {
+		log.Warn("notification_outbox_disabled", "reason", "service auth secret or Ed25519 key missing")
 		return nil
 	}
 	if edition == config.EditionSelfHostOSS && strings.TrimSpace(os.Getenv("NOTIFICATIONS_ENGINE_URL")) == "" {

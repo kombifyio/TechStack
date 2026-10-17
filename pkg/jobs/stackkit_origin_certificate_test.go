@@ -363,3 +363,34 @@ func TestManagedRolloutCompletesDegradedWhenStackKitsReportsADegradedApply(t *te
 		t.Fatalf("status=%q public TLS hosts=%v, want completed_degraded with public TLS named for repair", resultString(result, "status"), DegradedPublicTLSHosts(result))
 	}
 }
+
+// The origin certificate install only writes the certificate: the repair must
+// dispatch apply again, bound to the node's re-planned generation and the
+// stack's recorded StackSpec, so the node seals its degraded Apply.
+func TestPublicTLSRepairRedispatchesApplyAfterTheCertificateInstall(t *testing.T) {
+	inner := &recordingStackKitCommandSender{applyStatus: "applied"}
+	sender, service := newOriginAwareSender(inner)
+	cfg := StackKitLifecycleConfig{Sender: sender, AdvancedIssuer: staticAdvancedIssuer{}, OriginCertificates: service}
+	request := originBase()
+	request.Operation = StackKitLifecyclePublicTLSRepair
+	request.OriginHosts = []string{"app-auth.kombify.me", "o-203-0-113-10-443.origin.kombify.me"}
+	request.OwnerApproved = true
+	request.StackKit, request.SpecPath, request.WorkingDirectory = "cloud-kit", "stack-spec.bound.yaml", "/opt/stackkit"
+
+	result, err := runAdvancedStackKitLifecycle(context.Background(), cfg, releaseWithAdvancedCatalog(t), "job-1-a1", request)
+	if err != nil {
+		t.Fatalf("repair: %v", err)
+	}
+	if result["success"] != true || len(result[DegradedComponentsResultField].([]interface{})) != 0 {
+		t.Fatalf("result = %v, want a sealed repair without degraded components", result)
+	}
+	var apply *agentpb.StackKitCommand
+	for _, command := range inner.commands {
+		if command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_APPLY {
+			apply = command
+		}
+	}
+	if apply == nil || apply.ExpectedPlanHash == "" || apply.SpecPath != "stack-spec.bound.yaml" {
+		t.Fatalf("apply = %+v, want it dispatched with the planned hash and the bound StackSpec", apply)
+	}
+}

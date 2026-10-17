@@ -25,18 +25,19 @@ type providerControlLifecycle struct {
 }
 
 type backgroundRuntimeLifecycle struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	ctx      context.Context
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
+	disabled bool
 }
 
 func newBackgroundRuntimeLifecycle(parent context.Context) *backgroundRuntimeLifecycle {
 	ctx, cancel := context.WithCancel(parent)
-	return &backgroundRuntimeLifecycle{ctx: ctx, cancel: cancel}
+	return &backgroundRuntimeLifecycle{ctx: ctx, cancel: cancel, disabled: !config.BackgroundExecutionEnabled()}
 }
 
 func (lifecycle *backgroundRuntimeLifecycle) run(run func(context.Context)) {
-	if lifecycle == nil || run == nil {
+	if lifecycle == nil || lifecycle.disabled || run == nil {
 		return
 	}
 	lifecycle.wg.Add(1)
@@ -105,9 +106,17 @@ func startRuntimeLifecycle(
 	serverMaintenance *servermaintenance.Loop,
 	driftScheduler *orchestrator.DriftScheduler,
 	log *logger.Logger,
+	previewExecution ...*config.PreviewExecution,
 ) *shutdownHandles {
 	background := newBackgroundRuntimeLifecycle(ctx)
 	handles := &shutdownHandles{background: background}
+	if background.disabled {
+		for _, execution := range previewExecution {
+			execution.BackgroundSuppressed()
+		}
+		log.Info("preview_background_execution_disabled", "scope", "shared-test-identities")
+		return handles
+	}
 
 	if grpcState.server != nil {
 		background.run(func(ctx context.Context) {

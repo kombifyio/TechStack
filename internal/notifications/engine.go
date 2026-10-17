@@ -9,9 +9,6 @@ package notifications
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,7 +20,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/gocommon/servicecall"
 	"github.com/kombifyio/techstack/pkg/config"
+	"github.com/kombifyio/techstack/pkg/serviceauth"
 )
 
 const (
@@ -66,8 +65,10 @@ func NewEngineFromEnv() *Engine {
 	}
 }
 
-// Configured reports whether a signing secret is present.
-func (e *Engine) Configured() bool { return e != nil && e.secret != "" && e.baseURL != "" }
+// Configured reports whether a signing secret or Ed25519 key is present.
+func (e *Engine) Configured() bool {
+	return e != nil && serviceauth.CanSign(e.secret) && e.baseURL != ""
+}
 
 // Result is a passthrough of the engine's HTTP response.
 type Result struct {
@@ -75,31 +76,25 @@ type Result struct {
 	Body   []byte
 }
 
-func b64(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
-
-// signToken mints an HS256 service JWT the engine accepts on the Authorization
+// signToken mints the service JWT the engine accepts on the Authorization
 // header: iss/aud in its allowlists, exp required, scope enforced per route.
+// It is HS256 with the shared secret until the process holds an Ed25519
+// service key, then EdDSA under that key.
 func (e *Engine) signToken(scope string) (string, error) {
-	if e.secret == "" {
+	if !serviceauth.CanSign(e.secret) {
 		return "", ErrNotConfigured
 	}
-	now := time.Now()
-	header := b64([]byte(`{"alg":"HS256","typ":"JWT"}`))
-	claims, err := json.Marshal(map[string]any{
-		"iss":   issuer,
-		"aud":   audience,
-		"iat":   now.Unix(),
-		"exp":   now.Add(tokenTTL).Unix(),
-		"svc":   "techstack",
-		"scope": scope,
+	cfg, err := serviceauth.Apply(servicecall.Config{
+		ServiceName: "techstack",
+		Target:      "notifications",
+		Scope:       scope,
+		Secret:      e.secret,
+		TokenTTL:    tokenTTL,
 	})
 	if err != nil {
 		return "", err
 	}
-	signingInput := header + "." + b64(claims)
-	mac := hmac.New(sha256.New, []byte(e.secret))
-	mac.Write([]byte(signingInput))
-	return signingInput + "." + b64(mac.Sum(nil)), nil
+	return servicecall.IssueToken(cfg, "notifications", nil, "")
 }
 
 func (e *Engine) do(ctx context.Context, method, path, scope string, body []byte) (*Result, error) {

@@ -8,6 +8,7 @@ import (
 	storageauth "github.com/kombifyio/techstack/pkg/auth"
 	"github.com/kombifyio/techstack/pkg/backupstore"
 	"github.com/kombifyio/techstack/pkg/jobs"
+	"github.com/kombifyio/techstack/pkg/kombifywallet"
 	"github.com/kombifyio/stackkits/pkg/hostdelivery"
 )
 
@@ -65,7 +66,13 @@ func managedStackKitInventoryBuilder(deps routeDeps) jobs.ManagedStackKitInvento
 		deps.log.Warn("managed_stackkit_backup_inventory_unavailable", "reason", "custodian_not_configured", "error", err)
 		return channelOnly
 	}
-	delivery, err := managedstackkit.NewBackupDelivery(custodian, repository)
+	var options []managedstackkit.BackupDeliveryOption
+	if deps.walletSource.IsKombify() {
+		// Wallet mode: the Wallet seals and signs every backup delivery; without
+		// its client or delivering key every delivery fails closed.
+		options = append(options, managedstackkit.WithWallet(managedBackupWallet(deps.wallet, deps.log)))
+	}
+	delivery, err := managedstackkit.NewBackupDelivery(custodian, repository, options...)
 	if err != nil {
 		deps.log.Warn("managed_stackkit_backup_inventory_unavailable", "reason", "backup_delivery_invalid", "error", err)
 		return channelOnly
@@ -97,16 +104,25 @@ func (adapter managedBackupDeliveryAdapter) AdmitRecipient(ctx context.Context, 
 	if err != nil {
 		return jobs.ManagedBackupRecipient{}, err
 	}
-	return jobs.ManagedBackupRecipient{Public: recipient.Public, Fingerprint: recipient.Fingerprint, Generation: recipient.Generation, SiteRef: recipient.SiteRef, NodeRef: recipient.NodeRef}, nil
+	return jobs.ManagedBackupRecipient{
+		Public: recipient.Public, Fingerprint: recipient.Fingerprint, Generation: recipient.Generation, SiteRef: recipient.SiteRef, NodeRef: recipient.NodeRef,
+		Statement: recipient.Statement, Challenge: recipient.Challenge,
+	}, nil
 }
 
-func (adapter managedBackupDeliveryAdapter) Seal(ctx context.Context, tenantID, stackID string, recipient jobs.ManagedBackupRecipient, operation string) ([]byte, error) {
+func (adapter managedBackupDeliveryAdapter) DeliveryAuthority() (string, string, error) {
+	key, keyID, _, err := adapter.delivery.WalletAuthority()
+	return key, keyID, err
+}
+
+func (adapter managedBackupDeliveryAdapter) Seal(ctx context.Context, tenantID, stackID, ownerID string, recipient jobs.ManagedBackupRecipient, operation string) ([]byte, error) {
 	sealOperation := hostdelivery.OperationBackupTargetImport
 	if operation == jobs.StackKitLifecycleBackupTargetRebind {
 		sealOperation = hostdelivery.OperationBackupTargetRebind
 	}
-	return adapter.delivery.Seal(ctx, managedstackkit.DeliveryScope{TenantID: tenantID, StackID: stackID}, managedstackkit.Recipient{
+	return adapter.delivery.Seal(ctx, managedstackkit.DeliveryScope{TenantID: tenantID, StackID: stackID, OwnerID: ownerID}, managedstackkit.Recipient{
 		Public: recipient.Public, Fingerprint: recipient.Fingerprint, Generation: recipient.Generation, SiteRef: recipient.SiteRef, NodeRef: recipient.NodeRef,
+		Statement: recipient.Statement, Challenge: recipient.Challenge, PlacementRef: kombifywallet.PlacementRef(recipient.AgentID),
 	}, sealOperation)
 }
 

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kombifyio/techstack/internal/gocommon/servicecall"
+	"github.com/kombifyio/techstack/pkg/serviceauth"
 
 	"github.com/kombifyio/techstack/internal/household"
 	"github.com/kombifyio/techstack/pkg/controlplane"
@@ -65,14 +66,19 @@ func RegisterHouseholdInternalRoutes(r *httpx.Router, cfg HouseholdRouteConfig) 
 // then runs fn with the verified caller. Inside the servicecall middleware the
 // router never sees a returned error, so every branch writes its own response.
 func (h householdHandlers) serve(e *httpx.Event, scope string, fn func(e *httpx.Event, caller *servicecall.Caller)) error {
-	if h.secret == "" || h.svc == nil {
+	if !serviceauth.CanVerify(h.secret) || h.svc == nil {
 		return householdSurface.deny(e, http.StatusServiceUnavailable, householdSurface.unavailableReason, true,
 			"Retry after Techstack service authentication is configured.")
 	}
-	auth := servicecall.RequireServiceAuth(servicecall.Config{
+	authCfg, err := serviceauth.Apply(servicecall.Config{
 		ServiceName: runtimeSummaryService, Secret: h.secret, SecretNext: h.next,
 		AllowedCallers: []string{runtimeSummaryCallerCloud}, Enabled: true,
 	})
+	if err != nil {
+		return householdSurface.deny(e, http.StatusServiceUnavailable, householdSurface.unavailableReason, true,
+			"Retry after Techstack service authentication is configured.")
+	}
+	auth := servicecall.RequireServiceAuth(authCfg)
 	auth(servicecall.RequireScope(scope)(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
 		e.Request = request
 		caller := servicecall.FromContext(request.Context())
@@ -115,6 +121,9 @@ type householdProjectionBody struct {
 		Subject     string `json:"subject"`
 		Email       string `json:"email"`
 		DisplayName string `json:"display_name"`
+		// NodeApps are Cloud catalog ids (homelab.app.<id>). Absent or null
+		// means all apps; an empty list means none.
+		NodeApps *[]string `json:"node_apps"`
 	} `json:"member"`
 	Action string `json:"action"`
 }
@@ -127,26 +136,53 @@ func (h householdHandlers) projection(e *httpx.Event) error {
 		}
 		body.OwnerSubject = strings.TrimSpace(body.OwnerSubject)
 		body.Member.Subject = strings.TrimSpace(body.Member.Subject)
-		if body.OwnerSubject == "" || body.Member.Subject == "" || (body.Action != household.ActionAdd && body.Action != household.ActionRemove) {
-			_ = householdSurface.deny(e, http.StatusBadRequest, "projection_invalid", false, "Name the owner, the member and the action add or remove.")
+		if body.OwnerSubject == "" || body.Member.Subject == "" || (body.Action != household.ActionAdd && body.Action != household.ActionRemove && body.Action != household.ActionUpdateApps) {
+			_ = householdSurface.deny(e, http.StatusBadRequest, "projection_invalid", false, "Name the owner, the member and the action add, update_apps or remove.")
+			return
+		}
+		var apps household.AppGrant
+		if body.Member.NodeApps != nil {
+			parsed, err := household.ParseNodeApps(*body.Member.NodeApps)
+			if err != nil {
+				_ = householdSurface.deny(e, http.StatusBadRequest, "node_apps_invalid", false, "Send node_apps as homelab.app.<id> catalog ids of grantable apps.")
+				return
+			}
+			apps = household.AppGrant{Set: true, Apps: parsed}
+		}
+		if body.Action == household.ActionRemove && body.Member.NodeApps != nil {
+			_ = householdSurface.deny(e, http.StatusBadRequest, "projection_invalid", false, "A removal carries no node_apps.")
 			return
 		}
 		// The projection runs on behalf of the person who acts: the owner who
 		// invites or removes. A member may also remove themselves.
 		sub, org := onBehalfOf(caller)
 		memberLeaves := body.Action == household.ActionRemove && sub == body.Member.Subject
+		if body.Action == household.ActionUpdateApps && sub != body.OwnerSubject {
+			_ = householdSurface.deny(e, http.StatusForbidden, "principal_mismatch", false,
+				"Only the homelab owner changes the apps of a household member.")
+			return
+		}
 		if sub == "" || (sub != body.OwnerSubject && !memberLeaves) {
 			_ = householdSurface.deny(e, http.StatusForbidden, "principal_mismatch", false,
 				"Project a household member on behalf of the homelab owner who invites or removes them.")
 			return
 		}
 		result, err := h.svc.Project(e.Request.Context(), household.ProjectionRequest{
-			HintTenant: org, OwnerSubject: body.OwnerSubject, Action: body.Action,
+			HintTenant: org, OwnerSubject: body.OwnerSubject, Action: body.Action, Apps: apps,
 			Member: household.Member{Subject: body.Member.Subject, Email: body.Member.Email, DisplayName: body.Member.DisplayName},
 		})
 		if errors.Is(err, household.ErrNodeUnreachable) {
 			// The node cannot take the command now. Techstack keeps no queue;
-			// Cloud holds the pending projection and re-sends it.
+			// Cloud holds the pending projection and re-sends it. The cause is
+			// logged (bounded, no member data) so a stopped identity stack or a
+			// refused command can be told apart from a disconnected agent.
+			cause := err.Error()
+			if len(cause) > 300 {
+				cause = cause[:300]
+			}
+			logger.Default().Warn("household_projection_pending",
+				"request_id", e.Request.Header.Get("X-Request-ID"),
+				"action", string(body.Action), "cause", cause)
 			_ = e.JSON(http.StatusAccepted, map[string]any{
 				"status": household.StatusPending, "reason_code": "identity_unavailable", "retryable": true,
 			})
@@ -286,6 +322,8 @@ func (h householdHandlers) writeError(e *httpx.Event, err error) {
 	switch {
 	case errors.Is(err, household.ErrMemberInvalid):
 		_ = householdSurface.deny(e, http.StatusBadRequest, "member_invalid", false, "Send a member with a subject, an e-mail address and a name.")
+	case errors.Is(err, household.ErrAppInvalid):
+		_ = householdSurface.deny(e, http.StatusBadRequest, "node_apps_invalid", false, "Send node_apps as homelab.app.<id> catalog ids of grantable apps.")
 	case errors.Is(err, household.ErrOwnerMember):
 		_ = householdSurface.deny(e, http.StatusBadRequest, "owner_not_member", false, "The homelab owner is not a projected household member.")
 	case errors.Is(err, household.ErrOwnerNotAuthorized), errors.Is(err, ErrInventoryAccessDenied):

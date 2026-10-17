@@ -12,6 +12,7 @@ import (
 
 	"github.com/kombifyio/techstack/internal/runtimeproduct/vmlease"
 	"github.com/kombifyio/techstack/pkg/controlplane"
+	"github.com/kombifyio/techstack/pkg/jobs"
 	"github.com/kombifyio/techstack/pkg/nodehandoff"
 	"github.com/kombifyio/techstack/pkg/outcome"
 	"github.com/kombifyio/techstack/pkg/runtimeidentity"
@@ -507,6 +508,25 @@ func (h workerRouteHandlers) promoteObservedEnrollment(ctx context.Context, obse
 	}
 	switch serverregistry.LifecycleState(server.LifecycleState) {
 	case serverregistry.LifecycleEnrolling, serverregistry.LifecycleProvisioning, serverregistry.LifecycleActive:
+	case serverregistry.LifecycleFailed:
+		// Only a missed enrollment window is undone by a late Guard; every
+		// other failure keeps its own recovery path.
+		if strings.TrimSpace(server.LifecycleReasonCode) != jobs.GuardHeartbeatTimeoutReason {
+			return nil
+		}
+		reopened, err := h.applyServerEvent(ctx, controlplane.ServerEvent{
+			TenantID: server.TenantID, ServerID: server.ID,
+			Authority: controlplane.ServerEventAuthorityControlPlane,
+			Source:    "enrollment-controller", SourceID: "enrollment-controller", ObservedAt: now,
+			ClearLifecycleReason: true, ClearOutcome: true, OutcomeResetReason: "guard_connected_after_timeout",
+			Runtime: controlplane.ServerRuntime{LifecycleState: string(serverregistry.LifecycleEnrolling)},
+		})
+		if err != nil {
+			return err
+		}
+		if reopened != nil && reopened.Server != nil {
+			server = reopened.Server
+		}
 	default:
 		return nil
 	}

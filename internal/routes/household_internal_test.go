@@ -17,11 +17,21 @@ import (
 
 const householdTestSecret = "household-servicecall-test-secret"
 
-type countingIdentity struct{ calls int }
+type countingIdentity struct {
+	calls int
+	apps  household.AppGrant
+}
 
-func (c *countingIdentity) Invite(context.Context, household.Target, string, string, string) (household.Invitation, error) {
+func (c *countingIdentity) Invite(_ context.Context, _ household.Target, _, _, _ string, apps household.AppGrant) (household.Invitation, error) {
 	c.calls++
+	c.apps = apps
 	return household.Invitation{}, nil
+}
+
+func (c *countingIdentity) UpdateApps(_ context.Context, _ household.Target, _ string, apps household.AppGrant) error {
+	c.calls++
+	c.apps = apps
+	return nil
 }
 
 func (c *countingIdentity) Remove(context.Context, household.Target, string) error {
@@ -90,5 +100,56 @@ func TestHouseholdProjectionRefusesCallersWithoutTheCloudCredential(t *testing.T
 	// so it ends as "none", not as a refusal).
 	if code := post(token(runtimeSummaryCallerCloud, HouseholdProjectionScope, owner)); code != http.StatusAccepted {
 		t.Fatalf("the Cloud call on behalf of the owner must be accepted, got %d", code)
+	}
+}
+
+// Sensitive boundary: the owner's per-member app grants decide which node apps
+// a member signs into. The projection hands exactly the granted, de-duplicated
+// node app ids to the node and refuses an id outside the grantable catalog
+// before the node is touched.
+func TestHouseholdProjectionPassesExactlyTheGrantedApps(t *testing.T) {
+	ctx := context.Background()
+	store := controlplane.NewMemoryStore()
+	homelab, err := store.CreateHomelab(ctx, controlplane.CreateHomelabRequest{ID: "hl-1", TenantID: "tenant-1", OwnerSubjectID: "auth0|owner", Name: "Home"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateStack(ctx, controlplane.CreateStackRequest{
+		ID: "stack-1", TenantID: "tenant-1", OwnerSubjectID: "auth0|owner", HomelabID: homelab.ID, Name: "Home", Mode: "standard",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	identity := &countingIdentity{}
+	router := httpx.NewRouter()
+	RegisterHouseholdInternalRoutes(router, HouseholdRouteConfig{
+		ServiceAuthSecret: householdTestSecret,
+		Service: &household.Service{
+			Tenants: fixedTenant{}, Homelabs: store, Stacks: store,
+			Links: controlplane.NewMemoryHouseholdLinkStore(), Identity: identity,
+		},
+	})
+	issued, err := servicecall.IssueToken(
+		servicecall.Config{ServiceName: runtimeSummaryCallerCloud, Secret: householdTestSecret, TokenTTL: time.Minute, Scope: HouseholdProjectionScope},
+		runtimeSummaryService, &servicecall.OnBehalfOf{Sub: "auth0|owner"}, "household-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	post := func(apps string) int {
+		body := `{"owner_subject":"auth0|owner","member":{"subject":"auth0|lena","email":"lena@example.com","display_name":"Lena","node_apps":` + apps + `},"action":"add"}`
+		req := httptest.NewRequest(http.MethodPost, householdProjectionPath, strings.NewReader(body))
+		req.Header.Set(servicecall.HeaderServiceAuth, issued)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if code := post(`["homelab.app.photos","homelab.app.smart-home","homelab.app.photos"]`); code != http.StatusAccepted {
+		t.Fatalf("granted apps must be accepted, got %d", code)
+	}
+	if !identity.apps.Set || strings.Join(identity.apps.Apps, ",") != "photos,smart-home" {
+		t.Fatalf("node received %+v, want exactly photos and smart-home", identity.apps)
+	}
+	identity.calls = 0
+	if code := post(`["homelab.app.photos","homelab.app.vault"]`); code != http.StatusBadRequest || identity.calls != 0 {
+		t.Fatalf("an ungrantable app must be refused before the node, got %d with %d node calls", code, identity.calls)
 	}
 }

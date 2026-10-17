@@ -15,7 +15,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/kombifywallet"
 )
 
-const walletUsage = "usage: techstack wallet recipient-key generate [--generation N] [--private-out FILE]\n" +
+const walletUsage = "usage: techstack wallet recipient-key generate --private-out FILE [--generation N]\n" +
 	"       techstack wallet recipient-key verify"
 
 // runWallet dispatches `techstack wallet ...`.
@@ -41,19 +41,22 @@ func runWalletWith(args []string, stdout, stderr io.Writer, getenv func(string) 
 }
 
 // runRecipientKeyGenerate creates the recipient key pair Techstack opens
-// Wallet deliveries with. The private JWK goes to --private-out (0600, never
-// overwritten) or, without it, to stdout; the public half and its thumbprint
+// Wallet deliveries with. The private JWK requires --private-out (0600, never
+// overwritten); only the public half, generation and thumbprint
 // are printed for the Wallet's WALLET_SERVICE_RECIPIENTS enrolment.
 func runRecipientKeyGenerate(args []string, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("wallet recipient-key generate", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	generation := flags.String("generation", "1", "recipient key generation (decimal)")
-	privateOut := flags.String("private-out", "", "write the private key to this new 0600 file instead of stdout")
+	privateOut := flags.String("private-out", "", "required: write the private key to this new 0600 file")
 	if err := flags.Parse(args); err != nil {
 		return fmt.Errorf("%w\n%s", err, walletUsage)
 	}
 	if flags.NArg() != 0 {
 		return errors.New(walletUsage)
+	}
+	if strings.TrimSpace(*privateOut) == "" {
+		return errors.New("--private-out is required; private recipient keys are never written to stdout")
 	}
 	if n, err := strconv.ParseUint(*generation, 10, 32); err != nil || n == 0 {
 		return errors.New("--generation must be a positive decimal number")
@@ -68,24 +71,18 @@ func runRecipientKeyGenerate(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if *privateOut != "" {
-		file, err := os.OpenFile(*privateOut, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-		if err != nil {
-			return fmt.Errorf("create private key file: %w", err)
-		}
-		_, werr := file.WriteString(private + "\n")
-		if cerr := file.Close(); werr == nil {
-			werr = cerr
-		}
-		if werr != nil {
-			return fmt.Errorf("write private key file: %w", werr)
-		}
-		fmt.Fprintf(stdout, "%s=<contents of %s>\n", kombifywallet.EnvRecipientKey, *privateOut)
-		fmt.Fprintln(stderr, "Move the private key file into company secret custody, then delete it.")
-	} else {
-		fmt.Fprintf(stdout, "%s=%s\n", kombifywallet.EnvRecipientKey, private)
-		fmt.Fprintln(stderr, "The private key was printed to stdout: store it in company secret custody and clear the terminal transcript.")
+	file, err := os.OpenFile(*privateOut, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("create private key file: %w", err)
 	}
+	_, werr := file.WriteString(private + "\n")
+	if cerr := file.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		return fmt.Errorf("write private key file: %w", werr)
+	}
+	fmt.Fprintln(stderr, "Move the private key file into company secret custody, then delete it.")
 	fmt.Fprintf(stdout, "%s=%s\n", kombifywallet.EnvRecipientGeneration, *generation)
 	fmt.Fprintf(stdout, "public_thumbprint=%s\n", public.Thumbprint())
 	fmt.Fprintf(stdout, "WALLET_SERVICE_RECIPIENTS=%s\n", enrolment)

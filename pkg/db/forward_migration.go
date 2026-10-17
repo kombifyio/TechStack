@@ -12,6 +12,7 @@ import (
 type forwardMigration struct {
 	version, digest string
 	verify          func(context.Context, *sql.Tx) error
+	batch           []ForwardMigrationArtifact
 }
 
 // Called only after the existing runner holds its migration advisory lock,

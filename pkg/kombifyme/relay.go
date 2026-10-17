@@ -40,6 +40,11 @@ type RelayConfig struct {
 	// OnConnected, when set, runs once per session after the relay accepted the
 	// connection.
 	OnConnected func()
+	// LoopbackOnly pins every relayed request to this host's loopback
+	// interface. Guard reach publishes services of the Guard host only, so a
+	// relay-supplied target_addr naming anything else (RFC1918, another
+	// machine, a public host) is refused instead of dialed.
+	LoopbackOnly bool
 }
 
 type Relay struct {
@@ -132,6 +137,9 @@ func NewRelay(cfg RelayConfig) (*Relay, error) {
 	transport := relayBaseTransport()
 	transport.Proxy = nil
 	transport.DialContext = dialRelayTarget
+	if cfg.LoopbackOnly {
+		transport.DialContext = dialRelayLoopbackTarget
+	}
 	httpClient := &http.Client{
 		Transport: transport,
 		Timeout:   relayHTTPTimeout,
@@ -289,7 +297,9 @@ func (r *Relay) handleHTTPRequest(parent context.Context, conn *websocket.Conn, 
 
 	status, headers, body, err := r.forwardHTTPRequest(parent, payload)
 	if err != nil {
-		response.Body = encodeRelayBody([]byte(fmt.Sprintf(`{"error":%q}`, err.Error())))
+		// Guard threat-model F10: never echo internal error text to the peer.
+		r.log.Warn("kombify_me_relay_forward_failed", "request_id", message.RequestID, "error", err.Error())
+		response.Body = encodeRelayBody([]byte(`{"error":"relay forward failed"}`))
 	} else {
 		response.StatusCode = status
 		response.Headers = headers
@@ -299,6 +309,11 @@ func (r *Relay) handleHTTPRequest(parent context.Context, conn *websocket.Conn, 
 }
 
 func (r *Relay) forwardHTTPRequest(parent context.Context, payload relayHTTPRequest) (int, map[string]string, []byte, error) {
+	if r.cfg.LoopbackOnly {
+		if err := requireLoopbackTarget(payload.TargetAddr); err != nil {
+			return 0, nil, nil, err
+		}
+	}
 	req, cancel, err := buildRelayTargetRequest(parent, payload)
 	if err != nil {
 		return 0, nil, nil, err
@@ -415,6 +430,49 @@ func resolveRelayTarget(baseAddress, requestPath string) (*url.URL, error) {
 	base.RawPath = ""
 	base.RawQuery = relative.RawQuery
 	return base, nil
+}
+
+var errRelayTargetNotLoopback = errors.New("relay target is not on this host's loopback interface")
+
+// requireLoopbackTarget refuses a relay target whose host is not a loopback
+// literal or localhost. The dial-time check repeats it on resolved addresses.
+func requireLoopbackTarget(baseAddress string) error {
+	base, err := url.Parse(baseAddress)
+	if err != nil || base.Hostname() == "" {
+		return errors.New("invalid authorized tunnel target")
+	}
+	host := strings.ToLower(strings.TrimSuffix(base.Hostname(), "."))
+	if host == "localhost" {
+		return nil
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return nil
+	}
+	return errRelayTargetNotLoopback
+}
+
+func dialRelayLoopbackTarget(ctx context.Context, network, address string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, err
+	}
+	addresses, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	dialer := &net.Dialer{Timeout: relayHTTPTimeout, KeepAlive: 30 * time.Second}
+	var lastErr error = errors.New("tunnel target resolved to no addresses")
+	for _, resolved := range addresses {
+		if !resolved.IP.IsLoopback() {
+			return nil, errRelayTargetNotLoopback
+		}
+		conn, dialErr := dialer.DialContext(ctx, network, net.JoinHostPort(resolved.IP.String(), port))
+		if dialErr == nil {
+			return conn, nil
+		}
+		lastErr = dialErr
+	}
+	return nil, lastErr
 }
 
 func isMetadataHost(host string) bool {

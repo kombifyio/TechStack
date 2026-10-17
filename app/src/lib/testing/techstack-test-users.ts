@@ -118,6 +118,10 @@ const ROLE_SECRET_CANDIDATES: Record<
   ],
   cloud: [
     {
+      email: "TEST_RIL_PRO_USER_EMAIL",
+      password: "TEST_RIL_PRO_USER_PASSWORD",
+    },
+    {
       email: "TECHSTACK_E2E_CLOUD_EMAIL",
       password: "TECHSTACK_E2E_CLOUD_PASSWORD",
     },
@@ -172,10 +176,16 @@ function candidateUsers(
   role: TechStackTestUserRole,
   env: EnvSource,
 ): TechStackTestUser[] {
-  return ROLE_SECRET_CANDIDATES[role].map((candidate) => ({
+  const users = ROLE_SECRET_CANDIDATES[role].map((candidate) => ({
     email: readSecret(env, candidate.email),
     password: readSecret(env, candidate.password),
   }));
+  // Explicit canonical custody must be complete. Never silently select a
+  // different identity when only half of that pair reached the consumer.
+  if (role === "cloud" && (users[0].email || users[0].password)) {
+    return users.slice(0, 1);
+  }
+  return users;
 }
 
 export function getTechStackTestUser(

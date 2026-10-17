@@ -107,17 +107,11 @@ func (api *UnifierAPI) handleUseCaseCatalog(e *httpx.Event) error {
 	// them with nothing said, and a selected undeliverable goal is stored as
 	// an unmapped goal and activated later by design - so this reports the
 	// fact rather than removing the choice.
-	deliverable, deliverabilityKnown, deliverErr := specv2.DeliverableGoals()
+	delivery, deliverErr := specv2.CatalogDeliveryForRelease(catalog.Release)
 	if deliverErr != nil {
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal,
 			"StackKits delivery compatibility could not be read", deliverErr.Error())
 	}
-	deliveryStatuses, _, statusErr := specv2.GoalDeliveryStatuses()
-	if statusErr != nil {
-		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal,
-			"StackKits delivery compatibility could not be read", statusErr.Error())
-	}
-
 	return httpx.Success(e, http.StatusOK,
-		stackkitrelease.CreationCatalogPayload(catalog, deliverable, deliverabilityKnown, deliveryStatuses))
+		stackkitrelease.CreationCatalogPayload(catalog, delivery.Goals, delivery.Known, delivery.Statuses))
 }

@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/pocketbase/pocketbase/core"
 	"gopkg.in/yaml.v3"
 
 	"github.com/kombifyio/techstack/internal/routes/tenantguard"
@@ -28,10 +27,6 @@ const (
 	importValidationErrorPathKey    = "path"
 	importValidationErrorMessageKey = "message"
 )
-
-func RegisterImportExportRoutesWithModeAndFeatures(r *httpx.Router, app core.App, orch *orchestrator.Orchestrator, mode config.DeploymentMode, featureChecker managedRuntimeFeatureChecker) {
-	RegisterImportExportRuntimeRoutes(r, auth.RuntimeStore{}, orch, mode, featureChecker)
-}
 
 func RegisterImportExportRuntimeRoutes(r *httpx.Router, runtime auth.RuntimeStore, orch *orchestrator.Orchestrator, mode config.DeploymentMode, featureChecker managedRuntimeFeatureChecker) {
 	if !mode.IsValid() {
@@ -68,7 +63,6 @@ func RegisterImportExportRuntimeRoutes(r *httpx.Router, runtime auth.RuntimeStor
 }
 
 type importExportRouteHandlers struct {
-	app    core.App
 	create crudRouteHandlers
 }
 

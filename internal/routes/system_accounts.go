@@ -4,10 +4,8 @@ import (
 	"net/http"
 
 	ksapi "github.com/kombifyio/techstack/pkg/api"
-	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/kombifywallet"
-	"github.com/pocketbase/pocketbase/core"
 )
 
 // The supported runtime has one canonical local owner and Auth0 cloud users.
@@ -27,10 +25,6 @@ func RegisterRuntimeSystemAccountRoutes(r *httpx.Router) {
 
 // RegisterSystemAccountRoutes preserves the old signature without retaining
 // its retired password and wallet mutation path.
-func RegisterSystemAccountRoutes(r *httpx.Router, _ core.App, _ controlplane.WalletStore) {
-	RegisterRuntimeSystemAccountRoutes(r)
-}
-
 // RegisterSystemAccountRefusal answers the reset route of a deployment that
 // keeps credentials in the kombify Wallet. The system accounts are the
 // PocketBase operator accounts of one Techstack instance (superuser, admin,

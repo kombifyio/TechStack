@@ -1,3 +1,161 @@
+---
+lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    configDependencies: {}
+    packageManagerDependencies:
+      pnpm:
+        specifier: 12.10.1
+        version: 12.10.1
+
+packages:
+
+  '@pnpm/exe.android-arm64@12.10.1':
+    resolution: {integrity: sha512-CVTlHPwNvadQCJD9bGSMzWIhFX8QpjtqC2c27dhdnn/9iKzEjZ3qL62o3gHpKbIuo6qn4WxTKRoaokgNdReBig==}
+    cpu: [arm64]
+    os: [android]
+
+  '@pnpm/exe.android-x64@12.10.1':
+    resolution: {integrity: sha512-NFiYLIaodY7da0XIebwcU3JoP7IK/lzF7zgKSSP+9H+QcFnQ1GDfBkuBKCYJzZ+Xu0WH54neIPLBBCaOjaaauA==}
+    cpu: [x64]
+    os: [android]
+
+  '@pnpm/exe.darwin-arm64@12.10.1':
+    resolution: {integrity: sha512-0O8tdQ8ijlPJudXspLMTcitMkdBEz6uUflazL5uQE0WMs85oQIp0U+5hfEktMFB64QqEhjqlvvujTwbzdr9oMg==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@pnpm/exe.darwin-x64@12.10.1':
+    resolution: {integrity: sha512-ud+1/uZOKEo8P/AsPynOJc/LNwfI0j6WwCElibj71rU9l4nIBnsSn+wWTIPZPkZ4BBSH5+82azSnAARMyJ1lNA==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@pnpm/exe.freebsd-x64@12.10.1':
+    resolution: {integrity: sha512-mj9PE5rf8uAfQQ2K66HSATMSut+lNiB4eSqFd5+azFVCMnxNSy/32xpZQJT21PhnN3Y4qbK+iKHe5nWAxSuRhw==}
+    cpu: [x64]
+    os: [freebsd]
+
+  '@pnpm/exe.linux-arm64-musl@12.10.1':
+    resolution: {integrity: sha512-xba+00wZJ8Um6rBJJjWl88uJj0tydB8dtomvjlCLvi0uL32vpa9CRP8Vv26FIXvbiZ1bo2RCzYt/eChxJVV52w==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  '@pnpm/exe.linux-arm64@12.10.1':
+    resolution: {integrity: sha512-oBdMp69ScC9UnniG4qZAQVr2fBDSXjm4yk/72vkEVyrlwS23yMxcRQl7Qdo3sgXPAygY6TWnPRKm4rXzjoyW7w==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@pnpm/exe.linux-ppc64@12.10.1':
+    resolution: {integrity: sha512-Yyb3wu09h3c7mLme270uHFiVaAIUHC411Ru9LIU2BKUIstrGlXa9OqqVWoXaRgYRdFdOFknkwG7GNn6ygwLbnw==}
+    cpu: [ppc64]
+    os: [linux]
+    libc: [glibc]
+
+  '@pnpm/exe.linux-riscv64@12.10.1':
+    resolution: {integrity: sha512-PdkeUFFkybknnGkWP0H22eMpIiS4OZXL5BcQzF4lh+vmrW3IaC2HOkbANKgot/PKO0Kl77pzA/6PKFxgbgfXIQ==}
+    cpu: [riscv64]
+    os: [linux]
+    libc: [glibc]
+
+  '@pnpm/exe.linux-s390x@12.10.1':
+    resolution: {integrity: sha512-1okKuHKJwJPAbofDxfhZWAUxEWtee4ZSf7Pah8kcvocaJkf2WxFJ5KVTiNIvDml5GLidDQsgf7Pcf/WHbCak7Q==}
+    cpu: [s390x]
+    os: [linux]
+    libc: [glibc]
+
+  '@pnpm/exe.linux-x64-musl@12.10.1':
+    resolution: {integrity: sha512-e6IqzVNkPa7srFKJKnY23uWJ+qz0LaRWiTUo/sHfFXRRMRzB5uNOr6qWWip/jqhdGwU91n9J7LrEYZ6e0tRczw==}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@pnpm/exe.linux-x64@12.10.1':
+    resolution: {integrity: sha512-ZByV0DRgWzGaDSjT5ddRBASdwz+r/qPMYh7o6RGmPQjtRGNFbSl94xY2DcAM8mqCOZJUUDtAXQ+wpBXcdpKlkg==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@pnpm/exe.win32-arm64@12.10.1':
+    resolution: {integrity: sha512-I7QZHcjioG7orFeCRUFUHByJ1G0zFPnAlaGGyrUvb6MGkv5oeNwNPl7t+Gp+7zHfnMcgLGJ1a+Wfim0IDw3lOw==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@pnpm/exe.win32-x64@12.10.1':
+    resolution: {integrity: sha512-4WJFdp58EKlCj0zLobrXU0vpszSZIr4X/3y/uNbAQqGW0zE+VdruZB0gFc3L2kzsUzVwTYbaCn+XEhnCYSAlTg==}
+    cpu: [x64]
+    os: [win32]
+
+  pnpm@12.10.1:
+    resolution: {integrity: sha512-ukCjfrGjcNYP6oxM8dNkwTvMzvUY6YrSvO6VT1OdONo3RY5YJho/pV4GUjRQ6g//+fSXsTW+QfLBXBZCusrObA==}
+    engines: {node: '>=18.*'}
+    hasBin: true
+
+snapshots:
+
+  '@pnpm/exe.android-arm64@12.10.1':
+    optional: true
+
+  '@pnpm/exe.android-x64@12.10.1':
+    optional: true
+
+  '@pnpm/exe.darwin-arm64@12.10.1':
+    optional: true
+
+  '@pnpm/exe.darwin-x64@12.10.1':
+    optional: true
+
+  '@pnpm/exe.freebsd-x64@12.10.1':
+    optional: true
+
+  '@pnpm/exe.linux-arm64-musl@12.10.1':
+    optional: true
+
+  '@pnpm/exe.linux-arm64@12.10.1':
+    optional: true
+
+  '@pnpm/exe.linux-ppc64@12.10.1':
+    optional: true
+
+  '@pnpm/exe.linux-riscv64@12.10.1':
+    optional: true
+
+  '@pnpm/exe.linux-s390x@12.10.1':
+    optional: true
+
+  '@pnpm/exe.linux-x64-musl@12.10.1':
+    optional: true
+
+  '@pnpm/exe.linux-x64@12.10.1':
+    optional: true
+
+  '@pnpm/exe.win32-arm64@12.10.1':
+    optional: true
+
+  '@pnpm/exe.win32-x64@12.10.1':
+    optional: true
+
+  pnpm@12.10.1:
+    optionalDependencies:
+      '@pnpm/exe.android-arm64': 12.10.1
+      '@pnpm/exe.android-x64': 12.10.1
+      '@pnpm/exe.darwin-arm64': 12.10.1
+      '@pnpm/exe.darwin-x64': 12.10.1
+      '@pnpm/exe.freebsd-x64': 12.10.1
+      '@pnpm/exe.linux-arm64': 12.10.1
+      '@pnpm/exe.linux-arm64-musl': 12.10.1
+      '@pnpm/exe.linux-ppc64': 12.10.1
+      '@pnpm/exe.linux-riscv64': 12.10.1
+      '@pnpm/exe.linux-s390x': 12.10.1
+      '@pnpm/exe.linux-x64': 12.10.1
+      '@pnpm/exe.linux-x64-musl': 12.10.1
+      '@pnpm/exe.win32-arm64': 12.10.1
+      '@pnpm/exe.win32-x64': 12.10.1
+
+---
 lockfileVersion: '9.0'
 
 settings:
@@ -5,13 +163,13 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  '@kombify/notifications': file:third_party/npm/cloud-notifications-0.3.118.tgz
-  '@kombiverselabs/ai-sdk': file:third_party/npm/ai-sdk-0.10.3043.tgz
-  '@kombiverselabs/cloud-notifications': file:third_party/npm/cloud-notifications-0.3.118.tgz
-  '@kombiverselabs/design': file:third_party/npm/design-0.10.535.tgz
-  '@kombiverselabs/embed': file:third_party/npm/embed-0.10.3043.tgz
-  '@kombiverselabs/execution-contracts': file:third_party/npm/execution-contracts-0.12.4.tgz
-  '@kombiverselabs/onboarding-core': file:third_party/npm/onboarding-core-0.10.535.tgz
+  '@kombify/notifications': file:third_party/npm/cloud-notifications-0.3.120.tgz
+  '@kombiverselabs/ai-sdk': file:third_party/npm/ai-sdk-0.12.11.tgz
+  '@kombiverselabs/cloud-notifications': file:third_party/npm/cloud-notifications-0.3.120.tgz
+  '@kombiverselabs/design': file:third_party/npm/design-0.10.543.tgz
+  '@kombiverselabs/embed': file:third_party/npm/embed-0.12.11.tgz
+  '@kombiverselabs/execution-contracts': file:third_party/npm/execution-contracts-0.12.11.tgz
+  '@kombiverselabs/onboarding-core': file:third_party/npm/onboarding-core-0.10.543.tgz
   '@kombiverselabs/speechkit-voiceagent-client': file:third_party/npm/speechkit-voiceagent-client-0.76.4.tgz
   '@kombiverselabs/ui': file:third_party/npm/ui-0.10.543.tgz
   cookie@<0.7.0: '>=0.7.2'
@@ -32,17 +190,17 @@ importers:
         specifier: ^2.28.2
         version: 2.28.2
       '@kombiverselabs/design':
-        specifier: file:third_party/npm/design-0.10.535.tgz
-        version: file:third_party/npm/design-0.10.535.tgz
+        specifier: file:third_party/npm/design-0.10.543.tgz
+        version: file:third_party/npm/design-0.10.543.tgz
       '@kombiverselabs/embed':
-        specifier: file:third_party/npm/embed-0.10.3043.tgz
-        version: file:third_party/npm/embed-0.10.3043.tgz(ws@8.22.0)
+        specifier: file:third_party/npm/embed-0.12.11.tgz
+        version: file:third_party/npm/embed-0.12.11.tgz(ws@8.22.0)
       '@kombiverselabs/onboarding-core':
-        specifier: file:third_party/npm/onboarding-core-0.10.535.tgz
-        version: file:third_party/npm/onboarding-core-0.10.535.tgz
+        specifier: file:third_party/npm/onboarding-core-0.10.543.tgz
+        version: file:third_party/npm/onboarding-core-0.10.543.tgz
       '@kombiverselabs/ui':
         specifier: file:third_party/npm/ui-0.10.543.tgz
-        version: file:third_party/npm/ui-0.10.543.tgz(@kombiverselabs/design@file:third_party/npm/design-0.10.535.tgz)(@kombiverselabs/onboarding-core@file:third_party/npm/onboarding-core-0.10.535.tgz)(lucide-react@1.53.0(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(svelte@5.57.2(@typescript-eslint/types@8.71.1))
+        version: file:third_party/npm/ui-0.10.543.tgz(@kombiverselabs/design@file:third_party/npm/design-0.10.543.tgz)(@kombiverselabs/onboarding-core@file:third_party/npm/onboarding-core-0.10.543.tgz)(lucide-react@1.53.0(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(svelte@5.57.2(@typescript-eslint/types@8.71.1))
       '@lucide/svelte':
         specifier: 1.53.0
         version: 1.53.0(svelte@5.57.2(@typescript-eslint/types@8.71.1))
@@ -87,11 +245,11 @@ importers:
         specifier: ^9.39.5
         version: 9.39.5
       '@kombify/notifications':
-        specifier: file:third_party/npm/cloud-notifications-0.3.118.tgz
-        version: '@kombiverselabs/cloud-notifications@file:third_party/npm/cloud-notifications-0.3.118.tgz'
+        specifier: file:third_party/npm/cloud-notifications-0.3.120.tgz
+        version: '@kombiverselabs/cloud-notifications@file:third_party/npm/cloud-notifications-0.3.120.tgz'
       '@kombiverselabs/execution-contracts':
-        specifier: file:third_party/npm/execution-contracts-0.12.4.tgz
-        version: file:third_party/npm/execution-contracts-0.12.4.tgz
+        specifier: file:third_party/npm/execution-contracts-0.12.11.tgz
+        version: file:third_party/npm/execution-contracts-0.12.11.tgz
       '@kombiverselabs/speechkit-voiceagent-client':
         specifier: file:third_party/npm/speechkit-voiceagent-client-0.76.4.tgz
         version: file:third_party/npm/speechkit-voiceagent-client-0.76.4.tgz(ws@8.22.0)
@@ -373,29 +531,29 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@kombiverselabs/ai-sdk@file:third_party/npm/ai-sdk-0.10.3043.tgz':
-    resolution: {integrity: sha512-RsXp/25R0EZf8/yQuYsX5oKWd0yXpvuinFAALepyZ7peQtvKhvxaFbY8vWvsNYYmONL7nibH0af2IOe4yjnLcQ==, tarball: file:third_party/npm/ai-sdk-0.10.3043.tgz}
-    version: 0.10.3043
+  '@kombiverselabs/ai-sdk@file:third_party/npm/ai-sdk-0.12.11.tgz':
+    resolution: {integrity: sha512-y99NoG74ZydpuHHGTx5Z9Arwxkk/vtrNr0Jv1SzUALg0KG0WvvLteHA1+b4fv/UQxH/L9V8UuqQTN7b2/majDA==, tarball: file:third_party/npm/ai-sdk-0.12.11.tgz}
+    version: 0.12.11
 
-  '@kombiverselabs/cloud-notifications@file:third_party/npm/cloud-notifications-0.3.118.tgz':
-    resolution: {integrity: sha512-tsnXjIyYIeN4T5QqY5eylReU9HeAA5CbYCOnsRMdVdbjYbhsvmGky9bG+eDjVzKp6Ghw0YbsjZrU5AWg6yDiDw==, tarball: file:third_party/npm/cloud-notifications-0.3.118.tgz}
-    version: 0.3.118
+  '@kombiverselabs/cloud-notifications@file:third_party/npm/cloud-notifications-0.3.120.tgz':
+    resolution: {integrity: sha512-q+k+Un5dZJZ6twfDSSWmLhgohchbTGuetRM+6p9XctVhzaaGaNznpLqlf6dsJDlwPkNr21C9xYkyAytLdN0UnQ==, tarball: file:third_party/npm/cloud-notifications-0.3.120.tgz}
+    version: 0.3.120
 
-  '@kombiverselabs/design@file:third_party/npm/design-0.10.535.tgz':
-    resolution: {integrity: sha512-dvYGK23dr+vKsF0ko1h5gGthtbRQxAoj5gbfYEXmDw5+Y/3Y42FBFTgrp40iQREwLgL61MSvpdT2tQEY003JJA==, tarball: file:third_party/npm/design-0.10.535.tgz}
-    version: 0.10.535
+  '@kombiverselabs/design@file:third_party/npm/design-0.10.543.tgz':
+    resolution: {integrity: sha512-A58kjFb45CnegAGGeaR0bMwn6Ko1m3dAfzI8NB7H7qz8c9gv8AUXo/6o0mbjQU1PDJ/EaJH9JWBbRgnNNeDNOw==, tarball: file:third_party/npm/design-0.10.543.tgz}
+    version: 0.10.543
 
-  '@kombiverselabs/embed@file:third_party/npm/embed-0.10.3043.tgz':
-    resolution: {integrity: sha512-oGGi/c8ttKEkntEPM4HFkRAt4PV7hrUOjRX/NHu6DIIPH/fS0aC9TfiOc3iJPh7Kcb3RfHFse4wJASgoSq2egQ==, tarball: file:third_party/npm/embed-0.10.3043.tgz}
-    version: 0.10.3043
+  '@kombiverselabs/embed@file:third_party/npm/embed-0.12.11.tgz':
+    resolution: {integrity: sha512-Iz7lzPmVP+eqBb8iJH8uCSu7zcOSDH7WVMX/Wl+GlORQMmQOssdnX2IZaZRq+MHo+jSu0IxPvPM32JkvrNcV4w==, tarball: file:third_party/npm/embed-0.12.11.tgz}
+    version: 0.12.11
 
-  '@kombiverselabs/execution-contracts@file:third_party/npm/execution-contracts-0.12.4.tgz':
-    resolution: {integrity: sha512-vv+fvDV2iibTqyMV4Grxaz6LvRNpG35OtewcRM3y6EJMcOh1SF1AhXz6kvIWrbAXqfbkoSpOUpqDy/cRsZt7ZA==, tarball: file:third_party/npm/execution-contracts-0.12.4.tgz}
-    version: 0.12.4
+  '@kombiverselabs/execution-contracts@file:third_party/npm/execution-contracts-0.12.11.tgz':
+    resolution: {integrity: sha512-4ckc6C3CDiNSa/MgvQKCvT/YTljE3abGuSRSUzOfRndMQ/yLf7vb/HLoIiXNWBEiKUPFbSDg5hVRAETSVR/qGg==, tarball: file:third_party/npm/execution-contracts-0.12.11.tgz}
+    version: 0.12.11
 
-  '@kombiverselabs/onboarding-core@file:third_party/npm/onboarding-core-0.10.535.tgz':
-    resolution: {integrity: sha512-BEsJAi8qky55uUwtxrpymAx7CxpxQ7sfVjL2DGUjQnSIxpCyfwg4Jzfqd/VWhyk4sDuqj/XAf5yjEr35mctTOw==, tarball: file:third_party/npm/onboarding-core-0.10.535.tgz}
-    version: 0.10.535
+  '@kombiverselabs/onboarding-core@file:third_party/npm/onboarding-core-0.10.543.tgz':
+    resolution: {integrity: sha512-x4nhZob2GVlnodGJ3lsVw72ttgCa8P9tYFMw/J554uv/mEjnGxjFolxvoylXXzpkLH9mSA+EyPBja4zrPYnz7w==, tarball: file:third_party/npm/onboarding-core-0.10.543.tgz}
+    version: 0.10.543
 
   '@kombiverselabs/speechkit-voiceagent-client@file:third_party/npm/speechkit-voiceagent-client-0.76.4.tgz':
     resolution: {integrity: sha512-7jbMuYPb0XfTCxQ5jtVGHQmY/lcyVB5+bZmP8jZ1tuifCg7dyvlMXpPd4jECwlEM4OvfyoYL0stKdW86NkGPIg==, tarball: file:third_party/npm/speechkit-voiceagent-client-0.76.4.tgz}
@@ -2469,40 +2627,40 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.6.0
 
-  '@kombiverselabs/ai-sdk@file:third_party/npm/ai-sdk-0.10.3043.tgz(ws@8.22.0)':
+  '@kombiverselabs/ai-sdk@file:third_party/npm/ai-sdk-0.12.11.tgz(ws@8.22.0)':
     dependencies:
       '@ag-ui/core': 0.0.59
-      '@kombiverselabs/execution-contracts': file:third_party/npm/execution-contracts-0.12.4.tgz
+      '@kombiverselabs/execution-contracts': file:third_party/npm/execution-contracts-0.12.11.tgz
       '@kombiverselabs/speechkit-voiceagent-client': file:third_party/npm/speechkit-voiceagent-client-0.76.4.tgz(ws@8.22.0)
     transitivePeerDependencies:
       - ws
 
-  '@kombiverselabs/cloud-notifications@file:third_party/npm/cloud-notifications-0.3.118.tgz': {}
+  '@kombiverselabs/cloud-notifications@file:third_party/npm/cloud-notifications-0.3.120.tgz': {}
 
-  '@kombiverselabs/design@file:third_party/npm/design-0.10.535.tgz': {}
+  '@kombiverselabs/design@file:third_party/npm/design-0.10.543.tgz': {}
 
-  '@kombiverselabs/embed@file:third_party/npm/embed-0.10.3043.tgz(ws@8.22.0)':
+  '@kombiverselabs/embed@file:third_party/npm/embed-0.12.11.tgz(ws@8.22.0)':
     dependencies:
-      '@kombiverselabs/ai-sdk': file:third_party/npm/ai-sdk-0.10.3043.tgz(ws@8.22.0)
+      '@kombiverselabs/ai-sdk': file:third_party/npm/ai-sdk-0.12.11.tgz(ws@8.22.0)
     transitivePeerDependencies:
       - ws
 
-  '@kombiverselabs/execution-contracts@file:third_party/npm/execution-contracts-0.12.4.tgz':
+  '@kombiverselabs/execution-contracts@file:third_party/npm/execution-contracts-0.12.11.tgz':
     dependencies:
       '@noble/curves': 1.9.7
       '@noble/hashes': 1.8.0
 
-  '@kombiverselabs/onboarding-core@file:third_party/npm/onboarding-core-0.10.535.tgz': {}
+  '@kombiverselabs/onboarding-core@file:third_party/npm/onboarding-core-0.10.543.tgz': {}
 
   '@kombiverselabs/speechkit-voiceagent-client@file:third_party/npm/speechkit-voiceagent-client-0.76.4.tgz(ws@8.22.0)':
     optionalDependencies:
       ws: 8.22.0
 
-  '@kombiverselabs/ui@file:third_party/npm/ui-0.10.543.tgz(@kombiverselabs/design@file:third_party/npm/design-0.10.535.tgz)(@kombiverselabs/onboarding-core@file:third_party/npm/onboarding-core-0.10.535.tgz)(lucide-react@1.53.0(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(svelte@5.57.2(@typescript-eslint/types@8.71.1))':
+  '@kombiverselabs/ui@file:third_party/npm/ui-0.10.543.tgz(@kombiverselabs/design@file:third_party/npm/design-0.10.543.tgz)(@kombiverselabs/onboarding-core@file:third_party/npm/onboarding-core-0.10.543.tgz)(lucide-react@1.53.0(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(svelte@5.57.2(@typescript-eslint/types@8.71.1))':
     dependencies:
-      '@kombify/notifications': '@kombiverselabs/cloud-notifications@file:third_party/npm/cloud-notifications-0.3.118.tgz'
-      '@kombiverselabs/design': file:third_party/npm/design-0.10.535.tgz
-      '@kombiverselabs/onboarding-core': file:third_party/npm/onboarding-core-0.10.535.tgz
+      '@kombify/notifications': '@kombiverselabs/cloud-notifications@file:third_party/npm/cloud-notifications-0.3.120.tgz'
+      '@kombiverselabs/design': file:third_party/npm/design-0.10.543.tgz
+      '@kombiverselabs/onboarding-core': file:third_party/npm/onboarding-core-0.10.543.tgz
       '@lucide/svelte': 0.577.0(svelte@5.57.2(@typescript-eslint/types@8.71.1))
       svelte: 5.57.2(@typescript-eslint/types@8.71.1)
     optionalDependencies:

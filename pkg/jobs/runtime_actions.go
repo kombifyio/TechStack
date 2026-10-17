@@ -15,6 +15,7 @@ import (
 	"github.com/kombifyio/techstack/internal/gocommon/identity"
 	"github.com/kombifyio/techstack/internal/gocommon/servicecall"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/runtimeaction"
+	"github.com/kombifyio/techstack/pkg/serviceauth"
 )
 
 const (
@@ -85,12 +86,16 @@ func NewHTTPRuntimeActionRunner(cfg HTTPRuntimeActionRunnerConfig) (*HTTPRuntime
 	if path == "" {
 		return nil, fmt.Errorf("runtime action path required")
 	}
-	client, err := servicecall.NewClient(servicecall.Config{
+	authCfg, err := serviceauth.Apply(servicecall.Config{
 		ServiceName: runtimeActionServiceName,
 		Target:      target,
 		Secret:      cfg.ServiceAuthSecret,
 		SecretNext:  cfg.ServiceAuthNext,
 	})
+	if err != nil {
+		return nil, fmt.Errorf("runtime action service auth: %w", err)
+	}
+	client, err := servicecall.NewClient(authCfg)
 	if err != nil {
 		return nil, err
 	}
@@ -326,8 +331,8 @@ func RuntimeActionsFromEnv(base RuntimeActions) (RuntimeActions, RuntimeActionsE
 			} else {
 				diagnostics.Warnings = append(diagnostics.Warnings, "Simulate runtime action disabled: set TECHSTACK_SIMULATE_ACTIONS_URL or TECHSTACK_KOMBISIM_URL and SERVICE_AUTH_SECRET to enable the simulation gate")
 			}
-		} else if secret == "" {
-			diagnostics.Warnings = append(diagnostics.Warnings, "Simulate runtime action disabled: SERVICE_AUTH_SECRET is required for servicecall authentication")
+		} else if !serviceauth.CanSign(secret) {
+			diagnostics.Warnings = append(diagnostics.Warnings, "Simulate runtime action disabled: a service auth secret or Ed25519 key is required for servicecall authentication")
 		} else {
 			runner, err := NewHTTPRuntimeActionRunner(HTTPRuntimeActionRunnerConfig{
 				BaseURL:           simulateURL,

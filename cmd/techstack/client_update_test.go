@@ -103,6 +103,7 @@ func TestStagedInstallerHandoffRequiresSignedBoundPackage(t *testing.T) {
 	keys := updatemanifest.Keyring{Ed25519: map[string]ed25519.PublicKey{clientUpdateKeyID: publicKey}}
 	for _, scenario := range []struct {
 		name, expected, installed, purpose, channel, signedVersion string
+		edition, signedChannel, packageURL                         string
 		tamper, allowed                                            bool
 	}{
 		{name: "normal signed upgrade", expected: "99.0.0", installed: version, purpose: "update", channel: "stable", allowed: true},
@@ -114,8 +115,20 @@ func TestStagedInstallerHandoffRequiresSignedBoundPackage(t *testing.T) {
 		{name: "recovery requires exact metadata", expected: version + "+other", installed: version, purpose: "recovery", channel: "stable"},
 		{name: "normal downgrade refused", expected: version, installed: "99.0.0", purpose: "update", channel: "stable"},
 		{name: "tampered package and unsigned descriptor", expected: "99.0.0", installed: version, purpose: "update", channel: "stable", tamper: true},
+		{name: "Cloud signed upgrade", expected: "99.0.0", installed: version, purpose: "update", channel: "beta", edition: "cloud", signedChannel: "beta", allowed: true},
+		{name: "Cloud exact recovery", expected: version, installed: version, purpose: "recovery", channel: "beta", edition: "cloud", signedChannel: "beta", allowed: true},
+		{name: "Cloud rejects Local installer even on beta", expected: "99.0.0", installed: version, purpose: "update", channel: "beta", edition: "cloud", signedChannel: "beta", packageURL: "https://github.com/kombifyio/TechStack/releases/download/v99.0.0/kombify-Techstack-Setup.exe"},
+		{name: "Cloud rejects foreign product", expected: "99.0.0", installed: version, purpose: "update", channel: "beta", edition: "cloud", signedChannel: "beta", packageURL: "https://github.com/kombifyio/Paperwork/releases/download/windows-cloud-v99.0.0/kombify-Techstack-Cloud-Setup.exe"},
+		{name: "Cloud rejects stable signed installer", expected: "99.0.0", installed: version, purpose: "update", channel: "stable", edition: "cloud"},
+		{name: "Local rejects Cloud signed installer", expected: "99.0.0", installed: version, purpose: "update", channel: "stable", packageURL: "https://github.com/kombifyio/TechStack/releases/download/windows-cloud-v99.0.0/kombify-Techstack-Cloud-Setup.exe"},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
+			previousEdition := clientUpdateEdition
+			t.Cleanup(func() { clientUpdateEdition = previousEdition })
+			clientUpdateEdition = scenario.edition
+			if clientUpdateEdition == "" {
+				clientUpdateEdition = "local"
+			}
 			root := t.TempDir()
 			directory := filepath.Join(root, scenario.expected)
 			if err := os.MkdirAll(directory, 0o700); err != nil {
@@ -135,6 +148,15 @@ func TestStagedInstallerHandoffRequiresSignedBoundPackage(t *testing.T) {
 				PackageURL:    "https://github.com/kombifyio/TechStack/releases/download/v" + signedVersion + "/kombify-Techstack-Setup.exe",
 				PackageSHA256: hex.EncodeToString(digest[:]), PackageSize: int64(len(original)), PublishedAt: "2026-10-08T00:00:00Z",
 				Signature: updatemanifest.Signature{Algorithm: "Ed25519", KeyID: clientUpdateKeyID}}
+			if clientUpdateEdition == "cloud" {
+				m.PackageURL = "https://github.com/kombifyio/TechStack/releases/download/windows-cloud-v" + signedVersion + "/kombify-Techstack-Cloud-Setup.exe"
+			}
+			if scenario.signedChannel != "" {
+				m.Channel = scenario.signedChannel
+			}
+			if scenario.packageURL != "" {
+				m.PackageURL = scenario.packageURL
+			}
 			payload := "kombify.windows-update.v1\n" + m.Version + "\n" + m.Channel + "\n" + m.PackageURL + "\n" +
 				m.PackageSHA256 + "\n" + strconv.Itoa(len(original)) + "\n" + m.PublishedAt + "\n" + clientUpdateKeyID + "\n"
 			m.Signature.Value = base64.RawURLEncoding.EncodeToString(ed25519.Sign(privateKey, []byte(payload)))

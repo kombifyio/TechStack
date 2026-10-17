@@ -3,7 +3,6 @@ package stacks
 
 import (
 	"github.com/kombifyio/techstack/internal/routes/auth"
-	"github.com/pocketbase/pocketbase/core"
 
 	productnotifications "github.com/kombifyio/techstack/internal/notifications"
 	"github.com/kombifyio/techstack/pkg/config"
@@ -11,10 +10,6 @@ import (
 	"github.com/kombifyio/techstack/pkg/jobs"
 	"github.com/kombifyio/techstack/pkg/orchestrator"
 )
-
-func RegisterCRUDRoutesWithModeAndFeatures(r *httpx.Router, app core.App, orch *orchestrator.Orchestrator, mode config.DeploymentMode, featureChecker managedRuntimeFeatureChecker, managedLeases jobs.ManagedLeaseManager, notificationOutbox productnotifications.ProductEventEnqueuer) {
-	RegisterCRUDRuntimeRoutes(r, auth.RuntimeStore{}, orch, mode, featureChecker, managedLeases, notificationOutbox)
-}
 
 func RegisterCRUDRuntimeRoutes(r *httpx.Router, runtime auth.RuntimeStore, orch *orchestrator.Orchestrator, mode config.DeploymentMode, featureChecker managedRuntimeFeatureChecker, managedLeases jobs.ManagedLeaseManager, notificationOutbox productnotifications.ProductEventEnqueuer) {
 	if !mode.IsValid() {

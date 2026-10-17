@@ -40,6 +40,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/grpcserver"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/jobs"
+	"github.com/kombifyio/techstack/pkg/kombifywallet"
 	"github.com/kombifyio/techstack/pkg/logger"
 	"github.com/kombifyio/techstack/pkg/monthlyruntime"
 	"github.com/kombifyio/techstack/pkg/ril/actions"
@@ -166,6 +167,9 @@ func registerCoreRoutes(router *httpx.Router, deps routeDeps, managedLeases jobs
 		database = deps.v2.db
 	}
 	healthDeps := coreHealthDependencies(cfg, grpcSrv, database)
+	if deps.previewExecution != nil {
+		healthDeps.ExecutionScope = deps.previewExecution.Snapshot
+	}
 	routes.RegisterHealthRoutesWithDeps(router, deps.version, deps.revision, deps.started, healthDeps)
 	routes.RegisterInfoRoutes(router, database, deps.version, deps.revision, deps.started, cfg.Edition, cfg.DeploymentMode, cfg.Server.Environment)
 	routes.RegisterInstanceRoutes(router, deps.startup.identity, deps.version)
@@ -266,6 +270,7 @@ func registerCoreRoutes(router *httpx.Router, deps routeDeps, managedLeases jobs
 	routes.RegisterInternalRoutes(router, cfg.DeploymentMode)
 	routes.RegisterNotificationsRoutes(router)
 	registerHouseholdRoutes(router, deps)
+	registerDataSubjectRoute(router, deps)
 	if deps.v2 != nil && deps.v2.db != nil {
 		registerProviderIncidentRoutes(router, deps.v2.db.DB)
 	}
@@ -567,8 +572,9 @@ func registerRuntimeInventoryRoutes(router *httpx.Router, deps routeDeps, state 
 	maintenanceRoutes := routes.RegisterServerRuntimeRoutes(router, routes.ServerRuntimeRouteConfig{
 		Store: serverRuntimeStore, PortInventory: deps.portInventory, Detacher: serverRuntimeStore,
 		Policy: inventoryPolicy, AgentDisconnect: deps.grpc.server.RemoveAgent,
-		Reach:   serverReachReader(deps),
-		Posture: serverPosture(deps), Workers: workerStore, PostureEntitlements: routes.EntitlementGateForDeployment(deps.startup.cfg.DeploymentMode.IsSaaS()),
+		WalletWithdraw: serverWalletWithdrawer(deps.wallet),
+		Reach:          serverReachReader(deps),
+		Posture:        serverPosture(deps), Workers: workerStore, PostureEntitlements: routes.EntitlementGateForDeployment(deps.startup.cfg.DeploymentMode.IsSaaS()),
 		CurrentMTLSCapabilities: currentMTLSStackKitCapabilities(deps.grpc),
 		Network: &routes.ServerNetworkRouteConfig{
 			Rebinder: deps.orch, Workers: workerStore, Jobs: stackStores.Jobs,
@@ -1055,6 +1061,9 @@ func registerV2Routes(router *httpx.Router, deps routeDeps) {
 }
 
 func mergeLocalAuthHandlers(deps routeDeps) {
+	if !config.BackgroundExecutionEnabled() {
+		return
+	}
 	localSvc, err := newLocalAuthService(deps)
 	if err != nil {
 		deps.log.Error("v2_local_auth_invalid", "error", err)
@@ -1432,4 +1441,13 @@ func applicationConnectorRefreshAuthorization(store controlplane.AuthStore, poli
 		}
 		return nil
 	}
+}
+
+// serverWalletWithdrawer is the Wallet's withdraw of a detached server, or
+// nil without a configured kombify Wallet.
+func serverWalletWithdrawer(wallet *kombifywallet.Client) routes.ServerWalletWithdrawer {
+	if !wallet.Enabled() {
+		return nil
+	}
+	return wallet
 }

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
+  import { page } from "$app/state";
   import { onMount } from "svelte";
   import { getLocale, tr, trParts } from "#lib/i18n.svelte.js";
   import {
@@ -34,7 +35,16 @@
     NAV_FLYOUT_PREFERENCES,
     type Finish,
   } from "@kombiverselabs/design/contract";
-  import { PageHeader } from "@kombiverselabs/ui/shell";
+  import {
+    SettingsSection,
+    SettingsShell,
+    type SettingsTab,
+  } from "@kombiverselabs/ui/settings";
+  import {
+    resolveSettingsTab,
+    settingsTabHref,
+    type SettingsTabSlug,
+  } from "#lib/settings/tabs.js";
   import Button from "#lib/components/ui/Button.svelte";
   import LanguageSwitcher from "#lib/components/ui/LanguageSwitcher.svelte";
   import {
@@ -42,6 +52,16 @@
     saveStackIdentityToBackend,
     type StackIdentity,
   } from "#lib/stores/stackIdentity.js";
+
+  const activeTab = $derived(resolveSettingsTab(page.url.searchParams.get("tab")));
+  const settingsTabs: readonly SettingsTab[] = $derived([
+    { slug: "account", label: tr("ui.settings.account"), scope: "shared" },
+    { slug: "identity", label: tr("ui.settings.homelabIdentity"), scope: "shared" },
+    { slug: "design", label: tr("ui.settings.appearance"), scope: "shared" },
+    { slug: "notifications", label: tr("nav.notifications"), scope: "shared" },
+    { slug: "homelab", label: tr("wizard.settings.title"), scope: "tool" },
+  ]);
+  const hrefForTab = (slug: string) => settingsTabHref(slug as SettingsTabSlug);
 
   let replaySetup = $state(false);
   function continueSetupReplay() {
@@ -278,89 +298,88 @@
 {/if}
 
 <main class="mx-auto max-w-4xl p-6 md:p-8">
-  <PageHeader title={tr("ui.settings.settings")} />
-
-  <div class="space-y-6">
-    <section data-kx="plate">
-      <div class="p-6">
-        <div
-          class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"
+  <SettingsShell
+    title={tr("ui.settings.settings")}
+    tabs={settingsTabs}
+    current={activeTab}
+    hrefFor={hrefForTab}
+    tabsLabel={tr("ui.settings.settings")}
+  >
+    <div class="space-y-6">
+      {#if activeTab === "account"}
+    <SettingsSection
+      id="account"
+      title={tr("ui.settings.account")}
+      lead={authStore.userEmail || tr("ui.settings.signedIn")}
+    >
+      <div class="flex flex-wrap gap-2">
+        <Button variant="secondary" onclick={() => (replaySetup = true)}>
+          {tr("setupReplay.restart")}
+        </Button>
+        <Button
+          variant="secondary"
+          onclick={() => requestIntroductionStart({ tourOnly: true })}
         >
-          <div class="min-w-0">
-            <h2 class="text-lg font-semibold text-foreground">{tr("ui.settings.account")}</h2>
-            <p class="mt-1 truncate text-sm text-muted-foreground">
-              {authStore.userEmail || tr("ui.settings.signedIn")}
-            </p>
-          </div>
-          <div class="flex shrink-0 flex-wrap gap-2">
-            <Button variant="secondary" onclick={() => (replaySetup = true)}>
-              {tr("setupReplay.restart")}
-            </Button>
-            <Button
-              variant="secondary"
-              onclick={() => requestIntroductionStart({ tourOnly: true })}
-            >
-              {tr("introduction.restart")}
-            </Button>
-            <Button variant="secondary" onclick={handleLogout}>
-              {tr("ui.settings.logout")}
-            </Button>
-          </div>
-        </div>
+          {tr("introduction.restart")}
+        </Button>
+        <Button variant="secondary" onclick={handleLogout}>
+          {tr("ui.settings.logout")}
+        </Button>
       </div>
-    </section>
+    </SettingsSection>
 
-    <section id="homelab-settings" class="scroll-mt-6" data-kx="plate">
-      <div class="p-6">
-        <div
-          class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"
-        >
-          <div class="min-w-0">
-            <h2 class="text-lg font-semibold text-foreground">
-              {tr("wizard.settings.title")}
-            </h2>
-            <p class="mt-1 text-sm text-muted-foreground">
-              {tr("wizard.settings.entry")}
-            </p>
-          </div>
-          <Button
-            variant="secondary"
-            testId="open-homelab-settings"
-            onclick={() => goto("/settings/homelab")}
-          >
-            {tr("wizard.settings.open")}
-          </Button>
+    <SettingsSection
+      id="language"
+      title={tr("settings.language")}
+      lead={tr("settings.language.description")}
+    >
+      <LanguageSwitcher
+        class="rounded-lg border border-border bg-card px-3 py-1.5 text-sm text-foreground"
+      />
+    </SettingsSection>
+      {:else if activeTab === "identity"}
+    <section>
+      <div>
+        <div class="mb-4">
+          <h2 class="text-lg font-semibold text-foreground">
+            {tr("ui.settings.homelabIdentity")}
+          </h2>
         </div>
-      </div>
-    </section>
 
-    <section id="language" class="scroll-mt-6" data-kx="plate">
-      <div class="p-6">
-        <div
-          class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"
-        >
-          <div class="min-w-0">
-            <h2 class="text-lg font-semibold text-foreground">
-              {tr("settings.language")}
-            </h2>
-            <p class="mt-1 text-sm text-muted-foreground">
-              {tr("settings.language.description")}
-            </p>
-          </div>
-          <LanguageSwitcher
-            class="rounded-lg border border-border bg-card px-3 py-1.5 text-sm text-foreground"
+        {#if stackIdentityLoading}
+          <p class="text-sm text-muted-foreground">{tr("ui.login.loading")}</p>
+        {:else if stackIdentityEditable && stackIdentityLoaded}
+          <StackIdentityEditor
+            identity={stackIdentityValue ?? fallbackIdentity}
+            onSave={handleIdentitySave}
           />
-        </div>
+        {:else if stackIdentityLoaded && stackIdentityValue}
+          <StackIdentityDisplay identity={stackIdentityValue} />
+          <p
+            class="mt-4 rounded-lg border border-border bg-muted/40 p-3 text-sm text-muted-foreground"
+          >
+            {tr("ui.settings.managedByKombifyCloud")}
+          </p>
+        {:else if stackIdentityLoaded}
+          <p class="text-sm text-muted-foreground">
+            {tr("ui.settings.noHomelabIdentityConfigured")}
+          </p>
+        {/if}
+
+        {#if stackIdentityError}
+          <p class="mt-3 text-sm text-destructive">{stackIdentityError}</p>
+        {/if}
       </div>
     </section>
 
+      {:else if activeTab === "design"}
     <section
       id="appearance"
       class="scroll-mt-6"
-      data-kx="plate"
+     
       data-testid="settings-appearance-card"
     >
-      <div class="p-6">
+      <div>
         <h2 class="text-lg font-semibold text-foreground">{tr("ui.settings.appearance")}</h2>
         <p class="mt-1 text-sm text-muted-foreground">
           {tr("ui.settings.lightOrDarkAndThe")}
@@ -449,7 +468,7 @@
                   >
                     <span class="finish-swatch-scene"></span>
                     <span class="finish-swatch-frame">
-                      <span class="finish-swatch-plate" data-kx="plate">
+                      <span class="finish-swatch-plate">
                         <span
                           class="finish-swatch-pill"
                           data-kx="control selection"
@@ -524,42 +543,9 @@
       </div>
     </section>
 
-    <section data-kx="plate">
-      <div class="p-6">
-        <div class="mb-4">
-          <h2 class="text-lg font-semibold text-foreground">
-            {tr("ui.settings.homelabIdentity")}
-          </h2>
-        </div>
-
-        {#if stackIdentityLoading}
-          <p class="text-sm text-muted-foreground">{tr("ui.login.loading")}</p>
-        {:else if stackIdentityEditable && stackIdentityLoaded}
-          <StackIdentityEditor
-            identity={stackIdentityValue ?? fallbackIdentity}
-            onSave={handleIdentitySave}
-          />
-        {:else if stackIdentityLoaded && stackIdentityValue}
-          <StackIdentityDisplay identity={stackIdentityValue} />
-          <p
-            class="mt-4 rounded-lg border border-border bg-muted/40 p-3 text-sm text-muted-foreground"
-          >
-            {tr("ui.settings.managedByKombifyCloud")}
-          </p>
-        {:else if stackIdentityLoaded}
-          <p class="text-sm text-muted-foreground">
-            {tr("ui.settings.noHomelabIdentityConfigured")}
-          </p>
-        {/if}
-
-        {#if stackIdentityError}
-          <p class="mt-3 text-sm text-destructive">{stackIdentityError}</p>
-        {/if}
-      </div>
-    </section>
-
-    <section id="notification-preferences" data-kx="plate">
-      <div class="p-6">
+      {:else if activeTab === "notifications"}
+    <section id="notification-preferences">
+      <div>
         <NotificationPreferences
           apiBase="/api/v1/notifications"
           locale={getLocale()}
@@ -567,8 +553,33 @@
       </div>
     </section>
 
-    <section class="rounded-xl border border-destructive/30 bg-destructive/5">
-      <div class="p-6">
+      {:else if activeTab === "homelab"}
+    <section id="homelab-settings" class="scroll-mt-6">
+      <div>
+        <div
+          class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div class="min-w-0">
+            <h2 class="text-lg font-semibold text-foreground">
+              {tr("wizard.settings.title")}
+            </h2>
+            <p class="mt-1 text-sm text-muted-foreground">
+              {tr("wizard.settings.entry")}
+            </p>
+          </div>
+          <Button
+            variant="secondary"
+            testId="open-homelab-settings"
+            onclick={() => goto("/settings/homelab")}
+          >
+            {tr("wizard.settings.open")}
+          </Button>
+        </div>
+      </div>
+    </section>
+
+    <section id="danger-zone" class="scroll-mt-6">
+      <div>
         <h2 class="mb-4 text-lg font-semibold text-destructive">{tr("ui.settings.dangerZone")}</h2>
 
         <div
@@ -660,7 +671,9 @@
         </div>
       </div>
     </section>
-  </div>
+      {/if}
+    </div>
+  </SettingsShell>
 </main>
 
 {#if deleteCandidate}

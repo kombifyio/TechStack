@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "license": "MIT",
-  "packageManager": "pnpm@11.28.5",
+  "packageManager": "pnpm@12.10.1",
   "engines": {
     "node": "24.21.0"
   },
@@ -18,15 +18,12 @@
     "check:i18n": "node scripts/check-i18n.mjs",
     "lint": "prettier --check . && eslint .",
     "format": "prettier --write .",
-    "test:unit": "vitest run",
-    "test:ui": "node ./scripts/run-ui-gate.mjs",
-    "test:e2e:embedded": "playwright test --config=playwright.embedded.config.ts",
-    "test:e2e:nosetup": "node ./scripts/run-playwright-nosetup.mjs"
+    "test:unit": "vitest run"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
-    "@kombify/notifications": "npm:@kombiverselabs/cloud-notifications@0.3.118",
-    "@kombiverselabs/execution-contracts": "0.12.4",
+    "@kombify/notifications": "npm:@kombiverselabs/cloud-notifications@0.3.120",
+    "@kombiverselabs/execution-contracts": "0.12.11",
     "@kombiverselabs/speechkit-voiceagent-client": "0.76.4",
     "@playwright/test": "^1.64.0",
     "@sveltejs/adapter-static": "4.0.0",
@@ -50,9 +47,9 @@
   },
   "dependencies": {
     "@auth0/auth0-spa-js": "^2.28.2",
-    "@kombiverselabs/design": "0.10.535",
-    "@kombiverselabs/embed": "0.10.3043",
-    "@kombiverselabs/onboarding-core": "0.10.535",
+    "@kombiverselabs/design": "0.10.543",
+    "@kombiverselabs/embed": "0.12.11",
+    "@kombiverselabs/onboarding-core": "0.10.543",
     "@kombiverselabs/ui": "0.10.543",
     "@lucide/svelte": "1.53.0",
     "@sentry/sveltekit": "^10.76.1",

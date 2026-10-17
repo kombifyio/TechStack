@@ -1,23 +1,29 @@
 # Bundled package licenses
 
-This generated Open-Core tree includes the following source and release
-tarballs. The npm tarballs in `app/third_party/npm/` are unmodified and do not
-contain license files. Their licenses are documented here alongside them.
+This generated Open-Core tree includes the following source modules and
+unmodified npm release tarballs (`app/third_party/npm/`). The export generates
+this table from the projected modules and the vendored tarballs it actually
+ships, so versions and rows match this release.
 
 | Bundled package | Version | License in this distribution |
 | --- | --- | --- |
-| `internal/gocommon` | `v0.7.1` | Apache-2.0; see `internal/gocommon/LICENSE` |
-| `internal/selfhostcontracts` | `v0.2.0` | Apache-2.0; see `internal/selfhostcontracts/LICENSE` |
-| `@kombiverselabs/ai-sdk` | `0.10.2419` | MIT; see `BUNDLED-MIT-LICENSE.txt` |
-| `@kombiverselabs/design` | `0.10.302` | Dual Apache-2.0 / GPL-3.0-or-later; see `LICENSE` |
-| `@kombiverselabs/embed` | `0.10.2419` | MIT; see `BUNDLED-MIT-LICENSE.txt` |
-| `@kombiverselabs/cloud-notifications` | `0.3.115` | MIT; see `BUNDLED-MIT-LICENSE.txt` |
-| `@kombiverselabs/onboarding-core` | `0.10.302` | MIT; see `BUNDLED-MIT-LICENSE.txt` |
-| `@kombiverselabs/ui` | `0.10.302` | MIT; see `BUNDLED-MIT-LICENSE.txt` |
+| `internal/gocommon` | `v0.8.0` | Apache-2.0; see `internal/gocommon/LICENSE` |
+| `internal/selfhostcontracts` | `v0.2.7` | Apache-2.0; see `internal/selfhostcontracts/LICENSE` |
+| `@kombiverselabs/ai-sdk` | `0.12.11` | MIT; see `BUNDLED-MIT-LICENSE.txt` |
+| `@kombiverselabs/cloud-notifications` | `0.3.120` | MIT; see `BUNDLED-MIT-LICENSE.txt` |
+| `@kombiverselabs/design` | `0.10.543` | No license field; see the note below |
+| `@kombiverselabs/embed` | `0.12.11` | MIT; see `BUNDLED-MIT-LICENSE.txt` |
+| `@kombiverselabs/execution-contracts` | `0.12.11` | MIT; see `BUNDLED-MIT-LICENSE.txt` |
+| `@kombiverselabs/onboarding-core` | `0.10.543` | MIT; see `BUNDLED-MIT-LICENSE.txt` |
+| `@kombiverselabs/speechkit-voiceagent-client` | `0.76.4` | Apache-2.0; see `package/LICENSE` inside the tarball |
+| `@kombiverselabs/ui` | `0.10.543` | MIT; see `BUNDLED-MIT-LICENSE.txt` |
 
-The five MIT packages declare `MIT` in their bundled `package.json`. The
-design package's bundled `package.json` omits a license field; its upstream
-source repository carries the same dual-license text as this tree's `LICENSE`.
-The absence of a tarball license file does not change these terms. Check the
-lockfile and `.techstack-public-export.json` for the exact tarball integrity
-and source commit of this release.
+The MIT packages declare `MIT` in their bundled `package.json` and ship no
+license file; their terms are in `BUNDLED-MIT-LICENSE.txt`. A package whose
+tarball carries its own license file keeps that file. The
+`@kombiverselabs/design` package's bundled `package.json` omits a license
+field; its upstream source repository carries the same dual-license text as
+this tree's `LICENSE`, which applies to it. The absence of a tarball license
+file does not change these terms. Check the lockfile and
+`.techstack-public-export.json` for the exact tarball integrity and source
+commit of this release.

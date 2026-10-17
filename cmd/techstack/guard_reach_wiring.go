@@ -10,6 +10,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/guardreach"
 	"github.com/kombifyio/techstack/pkg/kombifyme"
 	"github.com/kombifyio/techstack/pkg/logger"
+	"github.com/kombifyio/techstack/pkg/serviceauth"
 )
 
 const (
@@ -27,7 +28,7 @@ const (
 // kombify.me credential. Missing dedicated custody keeps delegated tools closed.
 func bootMaintenanceOriginGateway(log *logger.Logger) *guardreach.Gateway {
 	secret := strings.TrimSpace(os.Getenv(guardReachSecretEnv))
-	if secret == "" || secret == strings.TrimSpace(os.Getenv("SERVICE_AUTH_SECRET")) {
+	if (secret == "" && !serviceauth.CanSign("")) || (secret != "" && secret == strings.TrimSpace(os.Getenv("SERVICE_AUTH_SECRET"))) {
 		log.Warn("maintenance_origin_disabled", "reason", "dedicated_service_custody_unavailable")
 		return nil
 	}
@@ -57,10 +58,10 @@ func bootGuardReach(v2 *v2Boot, edition config.Edition, log *logger.Logger) *gua
 	secret := strings.TrimSpace(os.Getenv(guardReachSecretEnv))
 	meConfig := kombifyme.DefaultConfigFromEnv()
 	switch {
-	case secret == "":
-		log.Warn("guard_reach_disabled", "reason", guardReachSecretEnv+" missing")
+	case secret == "" && !serviceauth.CanSign(""):
+		log.Warn("guard_reach_disabled", "reason", guardReachSecretEnv+" and the Ed25519 service key missing")
 		return nil
-	case secret == strings.TrimSpace(os.Getenv("SERVICE_AUTH_SECRET")):
+	case secret != "" && secret == strings.TrimSpace(os.Getenv("SERVICE_AUTH_SECRET")):
 		log.Warn("guard_reach_disabled", "reason", guardReachSecretEnv+" must differ from SERVICE_AUTH_SECRET")
 		return nil
 	case !strings.HasPrefix(strings.TrimSpace(meConfig.APIKey), "kbi_"):

@@ -298,6 +298,29 @@ const (
 	// delivered Wallet item wallet_item_ref, or remove it (ai_provider_disable).
 	// The StackSpec and bundle carry only the URL and an opaque key reference.
 	StackKitOperation_STACKKIT_OPERATION_AI_PROVIDER_SETUP StackKitOperation = 55
+	// `stackkit user apps <household_username>`: replace the node apps a
+	// household member may sign into with household_apps (empty = none) or, when
+	// household_apps_set is false, open all apps. Owner approval required.
+	StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_UPDATE_APPS StackKitOperation = 56
+	// PaaS workload relocation (StackKits `stackkit relocate`, Coolify engine).
+	// Each acts only on the node it runs on; Core carries the secret-free plan
+	// between source and destination and never a transfer secret: send and
+	// receive read it from the move's Wallet item (wallet_item_ref,
+	// delivery_tenant_ref) that the Wallet delivered to both nodes.
+	// `relocate plan --project ... --json` on the source (read-only).
+	StackKitOperation_STACKKIT_OPERATION_RELOCATE_PLAN StackKitOperation = 57
+	// `relocate check --plan - --json` on the destination (read-only).
+	StackKitOperation_STACKKIT_OPERATION_RELOCATE_CHECK StackKitOperation = 58
+	// `relocate drain --plan - --owner-approve --json` on the source: stops the
+	// plan's applications and services; databases keep running.
+	StackKitOperation_STACKKIT_OPERATION_RELOCATE_DRAIN StackKitOperation = 59
+	// `relocate drain --undo --owner-approve --json`: the rollback of a move.
+	StackKitOperation_STACKKIT_OPERATION_RELOCATE_UNDRAIN StackKitOperation = 60
+	// `relocate send`: back up and share once with the destination.
+	StackKitOperation_STACKKIT_OPERATION_RELOCATE_SEND StackKitOperation = 61
+	// `relocate receive`: download from relocation_source_address and restore,
+	// with optional relocation_set_domains switches.
+	StackKitOperation_STACKKIT_OPERATION_RELOCATE_RECEIVE StackKitOperation = 62
 )
 
 // Enum value maps for StackKitOperation.
@@ -359,6 +382,13 @@ var (
 		53: "STACKKIT_OPERATION_HOST_DELIVERY_RECIPIENT",
 		54: "STACKKIT_OPERATION_WALLET_ITEM_IMPORT",
 		55: "STACKKIT_OPERATION_AI_PROVIDER_SETUP",
+		56: "STACKKIT_OPERATION_HOUSEHOLD_UPDATE_APPS",
+		57: "STACKKIT_OPERATION_RELOCATE_PLAN",
+		58: "STACKKIT_OPERATION_RELOCATE_CHECK",
+		59: "STACKKIT_OPERATION_RELOCATE_DRAIN",
+		60: "STACKKIT_OPERATION_RELOCATE_UNDRAIN",
+		61: "STACKKIT_OPERATION_RELOCATE_SEND",
+		62: "STACKKIT_OPERATION_RELOCATE_RECEIVE",
 	}
 	StackKitOperation_value = map[string]int32{
 		"STACKKIT_OPERATION_UNSPECIFIED":                         0,
@@ -417,6 +447,13 @@ var (
 		"STACKKIT_OPERATION_HOST_DELIVERY_RECIPIENT":             53,
 		"STACKKIT_OPERATION_WALLET_ITEM_IMPORT":                  54,
 		"STACKKIT_OPERATION_AI_PROVIDER_SETUP":                   55,
+		"STACKKIT_OPERATION_HOUSEHOLD_UPDATE_APPS":               56,
+		"STACKKIT_OPERATION_RELOCATE_PLAN":                       57,
+		"STACKKIT_OPERATION_RELOCATE_CHECK":                      58,
+		"STACKKIT_OPERATION_RELOCATE_DRAIN":                      59,
+		"STACKKIT_OPERATION_RELOCATE_UNDRAIN":                    60,
+		"STACKKIT_OPERATION_RELOCATE_SEND":                       61,
+		"STACKKIT_OPERATION_RELOCATE_RECEIVE":                    62,
 	}
 )
 
@@ -2964,8 +3001,25 @@ type StackKitCommand struct {
 	AiProviderBaseUrl string `protobuf:"bytes,62,opt,name=ai_provider_base_url,json=aiProviderBaseUrl,proto3" json:"ai_provider_base_url,omitempty"`
 	WalletItemRef     string `protobuf:"bytes,63,opt,name=wallet_item_ref,json=walletItemRef,proto3" json:"wallet_item_ref,omitempty"`
 	AiProviderDisable bool   `protobuf:"varint,64,opt,name=ai_provider_disable,json=aiProviderDisable,proto3" json:"ai_provider_disable,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// HOUSEHOLD_INVITE and HOUSEHOLD_UPDATE_APPS only: the grantable node app
+	// ids (ai, automation, dev, documents, files, game, mail, marketplace,
+	// media, network, photos, remote, smart-home) passed as one --app each.
+	// household_apps_set distinguishes an explicit empty list (none) from no
+	// restriction (all apps).
+	HouseholdApps    []string `protobuf:"bytes,65,rep,name=household_apps,json=householdApps,proto3" json:"household_apps,omitempty"`
+	HouseholdAppsSet bool     `protobuf:"varint,66,opt,name=household_apps_set,json=householdAppsSet,proto3" json:"household_apps_set,omitempty"`
+	// RELOCATE_PLAN and RELOCATE_SEND only: the Coolify projects to move.
+	RelocationProjects []string `protobuf:"bytes,67,rep,name=relocation_projects,json=relocationProjects,proto3" json:"relocation_projects,omitempty"`
+	// RELOCATE_CHECK and RELOCATE_DRAIN only: the secret-free plan
+	// RELOCATE_PLAN returned (at most 1 MiB), handed to the CLI on stdin.
+	RelocationPlanJson []byte `protobuf:"bytes,68,opt,name=relocation_plan_json,json=relocationPlanJson,proto3" json:"relocation_plan_json,omitempty"`
+	// RELOCATE_SEND and RELOCATE_RECEIVE only: the bare host or IP address the
+	// destination reaches the source's share on.
+	RelocationSourceAddress string `protobuf:"bytes,69,opt,name=relocation_source_address,json=relocationSourceAddress,proto3" json:"relocation_source_address,omitempty"`
+	// RELOCATE_RECEIVE only: OLD=NEW domain switches of the restored resources.
+	RelocationSetDomains []string `protobuf:"bytes,70,rep,name=relocation_set_domains,json=relocationSetDomains,proto3" json:"relocation_set_domains,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *StackKitCommand) Reset() {
@@ -3444,6 +3498,48 @@ func (x *StackKitCommand) GetAiProviderDisable() bool {
 		return x.AiProviderDisable
 	}
 	return false
+}
+
+func (x *StackKitCommand) GetHouseholdApps() []string {
+	if x != nil {
+		return x.HouseholdApps
+	}
+	return nil
+}
+
+func (x *StackKitCommand) GetHouseholdAppsSet() bool {
+	if x != nil {
+		return x.HouseholdAppsSet
+	}
+	return false
+}
+
+func (x *StackKitCommand) GetRelocationProjects() []string {
+	if x != nil {
+		return x.RelocationProjects
+	}
+	return nil
+}
+
+func (x *StackKitCommand) GetRelocationPlanJson() []byte {
+	if x != nil {
+		return x.RelocationPlanJson
+	}
+	return nil
+}
+
+func (x *StackKitCommand) GetRelocationSourceAddress() string {
+	if x != nil {
+		return x.RelocationSourceAddress
+	}
+	return ""
+}
+
+func (x *StackKitCommand) GetRelocationSetDomains() []string {
+	if x != nil {
+		return x.RelocationSetDomains
+	}
+	return nil
 }
 
 // StackKitResult transports the normalized stackkit.command-result/v1 JSON
@@ -5556,7 +5652,7 @@ const file_api_proto_agent_proto_rawDesc = "" +
 	"platformOs\x12#\n" +
 	"\rplatform_arch\x18\x03 \x01(\tR\fplatformArch\x12%\n" +
 	"\x0earchive_sha256\x18\x04 \x01(\tR\rarchiveSha256\x120\n" +
-	"\x14release_index_sha256\x18\x05 \x01(\tR\x12releaseIndexSha256\"\xef\x16\n" +
+	"\x14release_index_sha256\x18\x05 \x01(\tR\x12releaseIndexSha256\"\x99\x19\n" +
 	"\x0fStackKitCommand\x12\x1d\n" +
 	"\n" +
 	"command_id\x18\x01 \x01(\tR\tcommandId\x12C\n" +
@@ -5629,7 +5725,13 @@ const file_api_proto_agent_proto_rawDesc = "" +
 	"\x19delivery_authority_key_id\x18= \x01(\tR\x16deliveryAuthorityKeyId\x12/\n" +
 	"\x14ai_provider_base_url\x18> \x01(\tR\x11aiProviderBaseUrl\x12&\n" +
 	"\x0fwallet_item_ref\x18? \x01(\tR\rwalletItemRef\x12.\n" +
-	"\x13ai_provider_disable\x18@ \x01(\bR\x11aiProviderDisable\"\xf6\x05\n" +
+	"\x13ai_provider_disable\x18@ \x01(\bR\x11aiProviderDisable\x12%\n" +
+	"\x0ehousehold_apps\x18A \x03(\tR\rhouseholdApps\x12,\n" +
+	"\x12household_apps_set\x18B \x01(\bR\x10householdAppsSet\x12/\n" +
+	"\x13relocation_projects\x18C \x03(\tR\x12relocationProjects\x120\n" +
+	"\x14relocation_plan_json\x18D \x01(\fR\x12relocationPlanJson\x12:\n" +
+	"\x19relocation_source_address\x18E \x01(\tR\x17relocationSourceAddress\x124\n" +
+	"\x16relocation_set_domains\x18F \x03(\tR\x14relocationSetDomains\"\xf6\x05\n" +
 	"\x0eStackKitResult\x12\x1d\n" +
 	"\n" +
 	"command_id\x18\x01 \x01(\tR\tcommandId\x12\x18\n" +
@@ -5824,7 +5926,7 @@ const file_api_proto_agent_proto_rawDesc = "" +
 	"\x1fTERRAMATE_OPERATION_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17TERRAMATE_OPERATION_RUN\x10\x01\x12\"\n" +
 	"\x1eTERRAMATE_OPERATION_SYNC_DRIFT\x10\x02\x12$\n" +
-	" TERRAMATE_OPERATION_LIST_CHANGED\x10\x03*\xb8\x12\n" +
+	" TERRAMATE_OPERATION_LIST_CHANGED\x10\x03*\xd2\x14\n" +
 	"\x11StackKitOperation\x12\"\n" +
 	"\x1eSTACKKIT_OPERATION_UNSPECIFIED\x10\x00\x12\x1f\n" +
 	"\x1bSTACKKIT_OPERATION_VALIDATE\x10\x01\x12\x1f\n" +
@@ -5882,7 +5984,14 @@ const file_api_proto_agent_proto_rawDesc = "" +
 	"#STACKKIT_OPERATION_HOUSEHOLD_REMOVE\x104\x12.\n" +
 	"*STACKKIT_OPERATION_HOST_DELIVERY_RECIPIENT\x105\x12)\n" +
 	"%STACKKIT_OPERATION_WALLET_ITEM_IMPORT\x106\x12(\n" +
-	"$STACKKIT_OPERATION_AI_PROVIDER_SETUP\x107*|\n" +
+	"$STACKKIT_OPERATION_AI_PROVIDER_SETUP\x107\x12,\n" +
+	"(STACKKIT_OPERATION_HOUSEHOLD_UPDATE_APPS\x108\x12$\n" +
+	" STACKKIT_OPERATION_RELOCATE_PLAN\x109\x12%\n" +
+	"!STACKKIT_OPERATION_RELOCATE_CHECK\x10:\x12%\n" +
+	"!STACKKIT_OPERATION_RELOCATE_DRAIN\x10;\x12'\n" +
+	"#STACKKIT_OPERATION_RELOCATE_UNDRAIN\x10<\x12$\n" +
+	" STACKKIT_OPERATION_RELOCATE_SEND\x10=\x12'\n" +
+	"#STACKKIT_OPERATION_RELOCATE_RECEIVE\x10>*|\n" +
 	"\x11StackKitDriftMode\x12#\n" +
 	"\x1fSTACKKIT_DRIFT_MODE_UNSPECIFIED\x10\x00\x12 \n" +
 	"\x1cSTACKKIT_DRIFT_MODE_STANDARD\x10\x01\x12 \n" +

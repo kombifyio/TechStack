@@ -1,14 +1,9 @@
 package httpx
 
-import (
-	"errors"
-
-	"github.com/pocketbase/pocketbase/tools/router"
-)
+import "errors"
 
 // StatusOf maps a returned handler/middleware error to the HTTP status the
-// router renders for it: the carried *APIError or pocketbase *router.ApiError
-// status, otherwise 500 (a plain error renders the INTERNAL_ERROR envelope).
+// router renders for it: the carried *APIError status, otherwise 500 (a plain error renders the INTERNAL_ERROR envelope).
 func StatusOf(err error) int {
 	if err == nil {
 		return 0
@@ -16,10 +11,6 @@ func StatusOf(err error) int {
 	var apiErr *APIError
 	if errors.As(err, &apiErr) {
 		return apiErr.Status
-	}
-	var routerErr *router.ApiError
-	if errors.As(err, &routerErr) {
-		return routerErr.Status
 	}
 	return 500
 }

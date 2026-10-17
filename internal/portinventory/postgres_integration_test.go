@@ -112,6 +112,50 @@ func TestPostgresAuthorityReleasesOnlyAnExactTeardownSnapshot(t *testing.T) {
 	assertExactTeardownSnapshotLifecycle(t, database)
 }
 
+// Regression (platform-f4ine): a rollout whose process died left its plan
+// generation mutating, and every redeploy of the same stack was refused by
+// its own port claims.
+func TestPostgresAuthorityRedeploySupersedesOrphanedRolloutOfSameStack(t *testing.T) {
+	database, _, _, _ := openPortInventoryIntegrationDatabase(t)
+	authority := NewPostgresAuthority(database)
+	current := func(planHash string) CurrentAdmissionRequest {
+		request := postgresIntegrationAdmission("tenant-a", "server-a", 3, "stack-a", planHash, "127.0.0.1")
+		return CurrentAdmissionRequest{
+			TenantID: "tenant-a", ServerID: "server-a", OwnerSubjectID: "owner-a",
+			StackID: "stack-a", ResolvedPlanHash: planHash, Requirements: request.Requirements,
+		}
+	}
+
+	orphaned, err := authority.AdmitCurrent(t.Context(), current("plan-orphaned"))
+	if err != nil {
+		t.Fatalf("AdmitCurrent(orphaned) error = %v", err)
+	}
+	if err = authority.MarkMutationStarted(t.Context(), orphaned.GenerationRef); err != nil {
+		t.Fatalf("MarkMutationStarted(orphaned) error = %v", err)
+	}
+
+	redeploy, err := authority.AdmitCurrent(t.Context(), current("plan-redeploy"))
+	if err != nil {
+		t.Fatalf("redeploy of the same stack was refused by its orphaned claims: %v", err)
+	}
+	if err = authority.MarkMutationStarted(t.Context(), redeploy.GenerationRef); err != nil {
+		t.Fatalf("MarkMutationStarted(redeploy) error = %v", err)
+	}
+	if err = authority.Activate(t.Context(), redeploy.GenerationRef); err != nil {
+		t.Fatalf("Activate(redeploy) error = %v", err)
+	}
+	var orphanedState ClaimState
+	if err = database.QueryRowContext(t.Context(), `
+		SELECT state FROM server_port_claim_generations
+		WHERE tenant_id = 'tenant-a' AND server_id = 'server-a' AND resolved_plan_hash = 'plan-orphaned'
+	`).Scan(&orphanedState); err != nil {
+		t.Fatalf("read orphaned generation: %v", err)
+	}
+	if orphanedState != ClaimStateReleased {
+		t.Fatalf("orphaned generation state after redeploy activation = %s, want released", orphanedState)
+	}
+}
+
 func TestPostgresAuthorityProjectsMonotoneGuardListenerDrift(t *testing.T) {
 	database, _, _, _ := openPortInventoryIntegrationDatabase(t)
 	authority := NewPostgresAuthority(database)

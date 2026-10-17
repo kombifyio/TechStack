@@ -40,10 +40,10 @@ The transitional surface does **not** own:
 - User / Org / Subscription / Billing (central Prisma DB repo + Admin API)
 - Feature flags / tier (Admin API via `go-common/featureflags`)
 - Product-scope decisions; those live in the pillar docs and the active
-  sub-plans under [`../../docs/plans/`](../../docs/plans/)
+  sub-plans in Beads
 - VM-lease authority logic; that lives in
   [`../vmleases/`](../vmleases/) with its contract in
-  `kombify-runtime-contracts-go/runtimelease` at pinned release `v0.1.5`
+  `kombify-runtime-contracts-go/runtimelease` at the release pinned in `go.mod`
 
 ## Running locally
 

@@ -11,13 +11,20 @@ import (
 )
 
 // ManagedBackupRecipient is a node recipient key the control plane admitted for
-// sealing. It is opaque to the job layer.
+// sealing. It is opaque to the job layer. Statement and Challenge are the
+// node's statement and the challenge it answers, which the kombify Wallet
+// verifies again before it seals in Wallet mode.
 type ManagedBackupRecipient struct {
 	Public      []byte
 	Fingerprint string
 	Generation  uint64
 	SiteRef     string
 	NodeRef     string
+	Statement   []byte
+	Challenge   string
+	// AgentID is the server's Agent, under which the Wallet records the
+	// delivery so a detach withdraws the node.
+	AgentID string
 }
 
 // ManagedBackupNodeBinding holds the references the node issued for its own
@@ -34,9 +41,16 @@ type ManagedBackupNodeBinding struct {
 // clear: everything it dispatches is ciphertext or public.
 type ManagedBackupTargetDelivery interface {
 	NewChallenge() (string, error)
+	// DeliveryAuthority is the kombify Wallet's public delivering key the node
+	// pins before a delivery when the Wallet delivers (Wallet mode); both are
+	// empty when Techstack seals itself. In Wallet mode without a configured
+	// Wallet it fails closed.
+	DeliveryAuthority() (key, keyID string, err error)
 	AdmitRecipient(ctx context.Context, tenantID, stackID, challenge string, statement []byte) (ManagedBackupRecipient, error)
-	// Seal returns the sealed envelope for backup_target_import or backup_target_rebind.
-	Seal(ctx context.Context, tenantID, stackID string, recipient ManagedBackupRecipient, operation string) ([]byte, error)
+	// Seal returns the sealed envelope for backup_target_import or
+	// backup_target_rebind; ownerID is the stack owner whose Wallet holds the
+	// target in Wallet mode.
+	Seal(ctx context.Context, tenantID, stackID, ownerID string, recipient ManagedBackupRecipient, operation string) ([]byte, error)
 	RecordNodeBinding(ctx context.Context, tenantID, stackID string, binding ManagedBackupNodeBinding) error
 	NodeBinding(ctx context.Context, tenantID, stackID string) (ManagedBackupNodeBinding, error)
 	// AttestTarget verifies the provisioned target read/write/delete with the
@@ -77,6 +91,28 @@ func deliverManagedBackupTarget(ctx context.Context, sender StackKitCommandSende
 	if err != nil {
 		return ManagedBackupNodeBinding{}, err
 	}
+	authorityKey, authorityKeyID, err := delivery.DeliveryAuthority()
+	if err != nil {
+		return ManagedBackupNodeBinding{}, &typedStackKitOperationError{Operation: operation, CommandID: jobID + "-" + operation, Err: err}
+	}
+	if authorityKey != "" {
+		// The Wallet signs what it delivers and seals only to a node that
+		// pinned its key. Pinning the same key again is a no-op on the node.
+		if version := release.Receipt().Version; !stackkitcommand.ReleaseAtLeast(version, stackkitcommand.MinWalletAIProviderRelease) {
+			return ManagedBackupNodeBinding{}, &typedStackKitOperationError{Operation: operation, CommandID: jobID + "-" + operation,
+				Err: fmt.Errorf("managed backup delivery through the kombify Wallet needs StackKits %s or newer; this installation pins %s", stackkitcommand.MinWalletAIProviderRelease, version)}
+		}
+		pin := deliveryRequest(base, stackKitStepHostDeliveryRecipient)
+		pin.RecipientChallenge, pin.DeliveryAuthorityKey, pin.DeliveryAuthorityKeyID = challenge, authorityKey, authorityKeyID
+		var pinCommand *agentpb.StackKitCommand
+		pinResult, pinCommandID, err := dispatchManagedDelivery(ctx, sender, jobID, pin, release, &pinCommand)
+		if err != nil {
+			return ManagedBackupNodeBinding{}, err
+		}
+		if _, err := stackkitcommand.ParseHostDeliveryStatement(pinCommand, pinResult); err != nil {
+			return ManagedBackupNodeBinding{}, &typedStackKitOperationError{Operation: stackKitStepHostDeliveryRecipient, CommandID: pinCommandID, Err: err}
+		}
+	}
 	recipientRequest := deliveryRequest(base, StackKitLifecycleBackupTargetRecipient)
 	recipientRequest.RecipientChallenge = challenge
 	var recipientCommand *agentpb.StackKitCommand
@@ -92,7 +128,8 @@ func deliverManagedBackupTarget(ctx context.Context, sender StackKitCommandSende
 	if err != nil {
 		return ManagedBackupNodeBinding{}, &typedStackKitOperationError{Operation: StackKitLifecycleBackupTargetRecipient, CommandID: commandID, Err: err}
 	}
-	sealed, err := delivery.Seal(ctx, base.TenantID, base.StackID, recipient, operation)
+	recipient.AgentID = base.AgentID
+	sealed, err := delivery.Seal(ctx, base.TenantID, base.StackID, base.OwnerID, recipient, operation)
 	if err != nil {
 		return ManagedBackupNodeBinding{}, &typedStackKitOperationError{Operation: operation, CommandID: jobID + "-" + operation, Err: err}
 	}

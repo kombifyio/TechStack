@@ -114,7 +114,10 @@ The focused PostgreSQL artifact probe is `mise run test:windows:postgres:offline
 It prepares the pinned archive, then starts the production local store with a
 fresh data directory and an unavailable download endpoint, checks SQL state
 across restart, and verifies that a missing bundle cannot trigger a download.
-This probe does not establish full installed-client or backup/restore acceptance.
+It then runs the Wave 1 backup procedure on that store (copy the stopped state
+directory, change the state, copy it back, start again) and requires a store
+written by a newer PostgreSQL major to be refused with its files unchanged.
+This probe does not establish full installed-client acceptance.
 
 ```powershell
 node app/scripts/install-deps.mjs --frozen-lockfile
@@ -181,6 +184,24 @@ Signed updates (NATIVE-CLIENT-PLATFORM-STANDARD section 7):
   manifest. An interrupted upload is reconciled by readback, never repeated
   blindly. Historical versions need their own verified recovery manifest;
   publishing a newer manifest does not supply one for an older release.
+
+- Cloud machine installations use `%ProgramFiles%\kombify\techstack-cloud`
+  and `kombify-techstack-cloud-updater.exe`. The packager builds that helper
+  from the same `client_update.go` consumer, without linking the local product
+  runtime, database or provider entry point. The embedded update key is unchanged.
+  The helper accepts only the `windows-cloud-beta` feed, channel `beta`, and
+  the exact `windows-cloud-v<VERSION>/kombify-Techstack-Cloud-Setup.exe` asset.
+  Signed Local or foreign-product installers are refused before handoff.
+- Cloud rollback snapshots the edition/channel's client state, including its
+  operator cache, while excluding the updates directory that holds recovery
+  packages and the cursor. Recovery restores that state before WebView starts.
+  An update is acknowledged after successful navigation to the Cloud product;
+  WebView creation alone, an error response or an unavailable service does not
+  acknowledge it. A failed WebView process or startup enters signed recovery.
+  Portable Cloud installations still opt out, and saved opt-out choices remain.
+- Cloud feed publication and installed update/rollback acceptance are separate
+  release evidence. Source/module checks do not establish them. On 2026-10-15
+  the public beta feed returned HTTP 404; no Cloud release is claimed here.
 
 Windows packaging and publication do not depend on Authenticode. The existing
 update-manifest signature verifies update origin and integrity and does not

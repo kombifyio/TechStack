@@ -71,14 +71,12 @@ internal sealed record ClientConfig
     public int RuntimeStartupTimeoutSeconds { get; init; } = 120;
     public bool AutoStartRuntime { get; init; } = true;
     // Signed update channel (NATIVE-CLIENT-PLATFORM-STANDARD section 7). The
-    // manifest location may change; the trusted signing key is embedded in
-    // techstack.exe and cannot be configured. AutoUpdate=false opts out.
-    public string UpdateManifestUrl { get; init; } = DesktopEdition.IsLocal
-        ? "https://github.com/kombifyio/TechStack/releases/latest/download/kombify-techstack-windows-update.json"
-        : "";
+    // The verifier's trusted signing key and edition cannot be configured.
+    // AutoUpdate=false opts out; Cloud always uses its own signed beta feed.
+    public string UpdateManifestUrl { get; init; } = DesktopEdition.UpdateManifestUrl;
     public string UpdateChannel { get; init; } = DesktopEdition.Channel;
     public string UpdateMinSupportedVersion { get; init; } = "";
-    public bool AutoUpdate { get; init; } = DesktopEdition.IsLocal;
+    public bool AutoUpdate { get; init; } = true;
 #if CLOUD_DESKTOP
     // kombify Connect installation enrollment (CONNECT-CONTRACT-STANDARD section 5).
     // ConnectAuth0ClientId is the public Auth0 native application
@@ -92,6 +90,8 @@ internal sealed record ClientConfig
     public static ClientConfig Load(string[] args)
     {
         var config = Read(ConfigPath()) ?? new ClientConfig();
+        if (!DesktopEdition.IsLocal && string.IsNullOrWhiteSpace(config.UpdateManifestUrl))
+            config = config with { UpdateManifestUrl = DesktopEdition.UpdateManifestUrl };
         if (config.LocalOnboardingUrl.Equals(LegacyLocalOnboardingUrl, StringComparison.OrdinalIgnoreCase))
         {
             config = config with { LocalOnboardingUrl = DefaultLocalOnboardingUrl };
@@ -436,6 +436,23 @@ internal sealed partial class ClientWindow : Form
             var env = await CoreWebView2Environment.CreateAsync(null, userData);
             await _webView.EnsureCoreWebView2Async(env);
             _webView.CoreWebView2.NavigationStarting += OnNavigationStarting;
+            if (!DesktopEdition.IsLocal)
+            {
+                _webView.CoreWebView2.NavigationCompleted += (_, navigation) =>
+                {
+                    // WebView construction alone does not acknowledge a Cloud
+                    // update. An unavailable service leaves its cursor pending.
+                    if (navigation.IsSuccess && navigation.HttpStatusCode is >= 200 and < 400 &&
+                        _webView.CoreWebView2.Source is { } source &&
+                        Uri.TryCreate(source, UriKind.Absolute, out var document) &&
+                        ClientAuthority.AllowsProductNavigation(document, _config.InitialUrl()))
+                        ClientUpdater.CompletePendingUpdate(_config, true, () => { });
+                };
+                _webView.CoreWebView2.ProcessFailed += (_, _) =>
+                {
+                    if (ClientUpdater.CompletePendingUpdate(_config, false, () => { })) Close();
+                };
+            }
             RegisterDeviceContextBridge();
 
             if (IsLocalMode())
@@ -467,7 +484,7 @@ internal sealed partial class ClientWindow : Form
                     return;
                 }
             }
-            else if (ClientUpdater.CompletePendingUpdate(_config, true, () => { }))
+            else if (DesktopEdition.IsLocal && ClientUpdater.CompletePendingUpdate(_config, true, () => { }))
             {
                 Close();
                 return;
@@ -488,6 +505,11 @@ internal sealed partial class ClientWindow : Form
         }
         catch (Exception ex)
         {
+            if (!DesktopEdition.IsLocal && ClientUpdater.CompletePendingUpdate(_config, false, () => { }))
+            {
+                Close();
+                return;
+            }
             Controls.Clear();
             Controls.Add(new Label
             {
@@ -605,7 +627,6 @@ internal sealed partial class ClientWindow : Form
             start.Environment["TECHSTACK_LISTEN_ADDR"] = RuntimeListenAddr();
             start.Environment["TECHSTACK_GRPC_ADDR"] = RuntimeGrpcAddr();
             start.Environment["TECHSTACK_DATA_DIR"] = _config.RuntimeDataDir;
-            start.Environment["TECHSTACK_PB_DATA_DIR"] = Path.Combine(_config.RuntimeDataDir, "pb_data");
             start.Environment["TECHSTACK_RUNTIME_LOG_PATH"] = Path.Combine(_config.RuntimeDataDir, "runtime-logs.jsonl");
             start.Environment["TECHSTACK_PUBLIC_ORIGIN"] = _config.LocalOrigin();
             start.Environment["TECHSTACK_CORS_ORIGINS"] = _config.LocalOrigin();

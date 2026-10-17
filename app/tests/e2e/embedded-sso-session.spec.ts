@@ -4,11 +4,11 @@ import { expect, test } from "@playwright/test";
 
 // Mock-free regression guard for the embedded-SSO 401 loop.
 //
-// The mock-backed embedded-saas-create.spec.ts stubs /api/v1/auth/portal-verify,
-// so it can only prove the iframe *calls* portal-verify — never that the real
-// backend establishes a usable session. That blind spot is exactly how the
-// 401-loop shipped: portal-verify returned a body token but issued no
-// techstack_session, so every subsequent API call 401'd.
+// A spec that stubs /api/v1/auth/portal-verify can only prove the iframe *calls*
+// portal-verify — never that the real backend establishes a usable session.
+// That blind spot is exactly how the 401-loop shipped: portal-verify returned a
+// body token but issued no techstack_session, so every subsequent API call
+// 401'd.
 //
 // This spec runs against the live SaaS product / Render Preview (no mocks): the
 // parent-minted SSO token is exchanged at the REAL portal-verify, and the

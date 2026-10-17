@@ -38,7 +38,7 @@ func Middleware(cfg Config) func(next http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			claims, err := VerifyToken(token, cfg.Secret, cfg.SecretNext)
+			claims, err := verifyWithConfig(token, cfg)
 			if err != nil {
 				respondAuthError(w, http.StatusUnauthorized, "service_auth_invalid", err.Error())
 				return

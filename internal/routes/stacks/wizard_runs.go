@@ -32,7 +32,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/pocketbase/pocketbase/core"
 
 	productnotifications "github.com/kombifyio/techstack/internal/notifications"
 	"github.com/kombifyio/techstack/internal/routes/tenantguard"
@@ -92,7 +91,6 @@ const (
 // pairing mint stores.
 type WizardRunRouteConfig struct {
 	AuthRuntime        auth.RuntimeStore
-	App                core.App
 	Orch               *orchestrator.Orchestrator
 	DeploymentMode     config.DeploymentMode
 	Features           managedRuntimeFeatureChecker

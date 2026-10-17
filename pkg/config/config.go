@@ -75,7 +75,7 @@ type ServerConfig struct {
 	// enforces budget/replicas to keep the aggregate near the configured
 	// total. Set TECHSTACK_REPLICAS when scaling out.
 	Replicas int    `yaml:"replicas"`
-	DataDir  string `yaml:"data_dir"` // Path to data directory (default: pb_data)
+	DataDir  string `yaml:"data_dir"` // Path to data directory (default: state; an existing legacy directory is kept)
 
 	// gRPC Queue Backpressure Settings (S7)
 	GRPCQueueMaxSize          int    `yaml:"grpc_queue_max_size"`          // Max commands in queue (default: 1000)
@@ -157,7 +157,7 @@ func DefaultConfig() *Config {
 			RateLimitRPS:   10, // 10 requests per second
 			RateLimitBurst: 20, // burst of 20 requests
 			Replicas:       1,  // in-process rate budgets are divided across this many replicas
-			DataDir:        "pb_data",
+			DataDir:        ResolveStateDir(""),
 			// gRPC Queue Backpressure defaults (S7)
 			GRPCQueueMaxSize:          1000,     // 1000 commands max
 			GRPCQueueOverflowStrategy: "reject", // reject new commands when full
@@ -172,7 +172,7 @@ func DefaultConfig() *Config {
 			Format: "json",
 		},
 		Monitoring: MonitoringConfig{
-			TSDBDir:                   "pb_data/monitoring/tsdb",
+			TSDBDir:                   filepath.Join(ResolveStateDir(""), "monitoring", "tsdb"),
 			CollectorMode:             "direct",
 			AlertInterval:             "30s",
 			IngestFreshnessTTL:        "90s",
@@ -324,6 +324,13 @@ func (c *Config) loadFromEnv() error {
 	c.Logging.Format = envStr("TECHSTACK_LOG_FORMAT", c.Logging.Format)
 
 	// Monitoring settings
+	if os.Getenv("TECHSTACK_TSDB_DIR") == "" && strings.TrimSpace(os.Getenv("TECHSTACK_DATA_DIR")) != "" {
+		// A legacy relative TSDB keeps being used; otherwise it lives in the
+		// state directory below the configured data root.
+		if _, err := os.Stat(c.Monitoring.TSDBDir); err != nil {
+			c.Monitoring.TSDBDir = filepath.Join(StateDirFromEnv(), "monitoring", "tsdb")
+		}
+	}
 	c.Monitoring.TSDBDir = envStr("TECHSTACK_TSDB_DIR", c.Monitoring.TSDBDir)
 	c.Monitoring.QueryBackendURL = envStr("TECHSTACK_MONITOR_QUERY_BACKEND_URL", c.Monitoring.QueryBackendURL)
 	c.Monitoring.CollectorMode = envStr("TECHSTACK_MONITOR_COLLECTOR_MODE", c.Monitoring.CollectorMode)

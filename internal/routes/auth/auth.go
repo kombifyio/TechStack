@@ -5,7 +5,6 @@ import (
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/kombifywallet"
-	"github.com/pocketbase/pocketbase/core"
 )
 
 // RouteConfig carries optional auth route dependencies that are only available
@@ -22,10 +21,6 @@ type RouteConfig struct {
 
 // RegisterRoutesWithConfig registers all auth-related API routes with optional
 // runtime dependencies.
-func RegisterRoutesWithConfig(r *httpx.Router, app core.App, mode config.DeploymentMode, edition config.Edition, cfg RouteConfig) {
-	RegisterRuntimeRoutesWithConfig(r, mode, edition, cfg)
-}
-
 func RegisterRuntimeRoutesWithConfig(r *httpx.Router, mode config.DeploymentMode, edition config.Edition, cfg RouteConfig) {
 	// Auth mode detection - returns current auth mode and related config
 	r.GET("/api/v1/auth/mode", withWalletSource(cfg.WalletSource, getRuntimeAuthMode(cfg.Runtime, mode, edition, cfg.LocalOwnerStore)))

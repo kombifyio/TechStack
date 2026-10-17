@@ -24,11 +24,25 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+// PinEnv names the deployment-supplied instance identity. A deployment without
+// a persistent data directory (no Render /data disk) sets it so the identity
+// survives redeploys: a fresh data directory adopts the pinned ID instead of
+// generating a new one, and a data directory holding a different ID fails closed.
+const PinEnv = "TECHSTACK_INSTANCE_ID"
+
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
 
 // fileName is the canonical instance identity file relative to the data dir.
 const fileName = "instance.json"
@@ -84,6 +98,13 @@ func (r *Resolver) Load() (Identity, error) {
 		return Identity{}, fmt.Errorf("instance: ensure data dir: %w", err)
 	}
 
+	pinned := strings.TrimSpace(os.Getenv(PinEnv))
+	if pinned != "" {
+		if _, parseErr := uuid.Parse(pinned); parseErr != nil {
+			return Identity{}, fmt.Errorf("instance: %s is not a UUID: %w", PinEnv, parseErr)
+		}
+	}
+
 	path := r.Path()
 	raw, err := os.ReadFile(path)
 	if err == nil {
@@ -94,6 +115,9 @@ func (r *Resolver) Load() (Identity, error) {
 		if existing.ID == "" {
 			return Identity{}, fmt.Errorf("instance: %s has empty id", path)
 		}
+		if pinned != "" && existing.ID != pinned {
+			return Identity{}, fmt.Errorf("instance: %s holds %q but %s pins %q", path, existing.ID, PinEnv, pinned)
+		}
 		return existing, nil
 	}
 	if !errors.Is(err, fs.ErrNotExist) {
@@ -101,7 +125,7 @@ func (r *Resolver) Load() (Identity, error) {
 	}
 
 	created := Identity{
-		ID:        newID(),
+		ID:        firstNonEmpty(pinned, newID()),
 		CreatedAt: time.Now().UTC().Truncate(time.Second),
 		Hostname:  hostname(),
 	}

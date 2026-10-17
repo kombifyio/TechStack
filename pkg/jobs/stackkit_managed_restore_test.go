@@ -34,10 +34,11 @@ type renewalDelivery struct{ builder *renewalInventory }
 func (renewalDelivery) NewChallenge() (string, error) {
 	return "", fmt.Errorf("drill delivers nothing")
 }
+func (renewalDelivery) DeliveryAuthority() (string, string, error) { return "", "", nil }
 func (renewalDelivery) AdmitRecipient(context.Context, string, string, string, []byte) (ManagedBackupRecipient, error) {
 	return ManagedBackupRecipient{}, fmt.Errorf("drill delivers nothing")
 }
-func (renewalDelivery) Seal(context.Context, string, string, ManagedBackupRecipient, string) ([]byte, error) {
+func (renewalDelivery) Seal(context.Context, string, string, string, ManagedBackupRecipient, string) ([]byte, error) {
 	return nil, fmt.Errorf("drill delivers nothing")
 }
 func (renewalDelivery) RecordNodeBinding(context.Context, string, string, ManagedBackupNodeBinding) error {

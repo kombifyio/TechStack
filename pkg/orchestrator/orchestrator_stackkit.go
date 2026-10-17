@@ -37,6 +37,7 @@ func (o *Orchestrator) ConfigureStackKitCommander(sender jobs.StackKitCommandSen
 		controlplane.ServiceEventReader
 	})
 	jobs.RegisterStackKitLifecycleHandler(o.queue, config)
+	jobs.RegisterWorkloadRelocationHandler(o.queue, config)
 	jobs.RegisterDefaultHandlers(o.queue, o.provisionConfig(o.cfg.RuntimeActions))
 }
 

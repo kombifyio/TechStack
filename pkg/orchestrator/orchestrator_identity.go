@@ -26,6 +26,9 @@ type StackKitIdentityCommandRequest struct {
 	HouseholdUsername    string
 	HouseholdEmail       string
 	HouseholdDisplayName string
+	// HouseholdApps are node app ids; HouseholdAppsSet false means all apps.
+	HouseholdApps    []string
+	HouseholdAppsSet bool
 }
 
 type tenantIdentityCommandSender interface {
@@ -75,6 +78,7 @@ func (o *Orchestrator) RunStackKitIdentityCommand(ctx context.Context, request S
 		OwnerApproved: request.OwnerApproved, StackkitInstanceId: stack.stackKitInstanceID,
 		HouseholdUsername: strings.TrimSpace(request.HouseholdUsername), HouseholdEmail: strings.TrimSpace(request.HouseholdEmail),
 		HouseholdDisplayName: strings.TrimSpace(request.HouseholdDisplayName),
+		HouseholdApps:        request.HouseholdApps, HouseholdAppsSet: request.HouseholdAppsSet,
 	}
 	if err := stackkitcommand.ValidateCommand(command); err != nil {
 		return nil, err

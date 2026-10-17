@@ -1025,6 +1025,38 @@
           },
           "server_id": {
             "type": "string"
+          },
+          "wallet_withdrawal": {
+            "description": "Present when a kombify Wallet is configured. For the items Techstack delivered to the server, the Wallet drops its node from their host targets and marks those it holds as needing rotation. A failure never undoes the detach; detaching again retries it.",
+            "properties": {
+              "items_need_rotation": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "reason_code": {
+                "type": "string"
+              },
+              "retryable": {
+                "type": "boolean"
+              },
+              "state": {
+                "enum": [
+                  "recorded",
+                  "failed"
+                ],
+                "type": "string"
+              },
+              "targets_removed": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "state",
+              "targets_removed",
+              "items_need_rotation"
+            ],
+            "type": "object"
           }
         },
         "required": [
