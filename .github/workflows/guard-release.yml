@@ -27,7 +27,8 @@ name: Guard release
 # GitHub creates on first use does not pass.
 #
 # A release becomes live only when the control plane image is built with
-# GUARD_RELEASE_VERSION=<version> (see Dockerfile, stage guard-release); the
+# GUARD_RELEASE_VERSION=<version> or its default, the source's .kombify/VERSION
+# (see Dockerfile, stage guard-release); the
 # running control plane then refreshes the manifest of that version from this
 # release (internal/routes/workers_release_refresh.go). Merging or publishing
 # here changes nothing on a server.
@@ -147,10 +148,10 @@ jobs:
               [[ "$product_tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
               version="${product_tag#v}"
             else
-              version=$(sed -n 's/^ARG GUARD_RELEASE_VERSION="\([^"]*\)"$/\1/p' Dockerfile)
+              version="$(tr -d '[:space:]' < .kombify/VERSION)"
             fi
             [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
-              echo '::error::Manifest refresh requires the served Guard release pin in Dockerfile.' >&2
+              echo '::error::Manifest refresh requires a numeric product version in .kombify/VERSION.' >&2
               exit 1
             }
           fi

@@ -56,8 +56,8 @@ func validateBackupTargetDeliveryFields(command *agentpb.StackKitCommand) error 
 	if !isSealedImport(command.Operation) && !walletImport && len(command.SealedDelivery) != 0 {
 		return fmt.Errorf("StackKit sealed_delivery is only valid for a sealed backup target or Wallet item import")
 	}
-	if !isSealedImport(command.Operation) && !walletImport && command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_AI_PROVIDER_SETUP && strings.TrimSpace(command.DeliveryTenantRef) != "" {
-		return fmt.Errorf("StackKit delivery_tenant_ref is only valid for a sealed import or AI provider setup")
+	if !isSealedImport(command.Operation) && !walletImport && command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_AI_PROVIDER_SETUP && !IsWorkloadRelocationOperation(command.Operation) && strings.TrimSpace(command.DeliveryTenantRef) != "" {
+		return fmt.Errorf("StackKit delivery_tenant_ref is only valid for a sealed import, AI provider setup or a relocation transfer")
 	}
 	if command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_BACKUP_TARGET_RECIPIENT && command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_DELIVERY_RECIPIENT && strings.TrimSpace(command.RecipientChallenge) != "" {
 		return fmt.Errorf("StackKit recipient_challenge is only valid for a recipient statement")

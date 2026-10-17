@@ -1,4 +1,7 @@
 export const hi: Record<string, string> = {
+  "ui.releaseChannel.badge": "Nightly",
+  "ui.releaseChannel.hint": "आप Nightly चैनल पर हैं: सबसे नए बदलाव, आपके वास्तविक डेटा पर।",
+  "ui.releaseChannel.backToStable": "Stable पर वापस जाएँ",
   "ui.clientLocal.bootstrapPassword": "प्रारंभिक पासवर्ड",
   "ui.clientLocal.bootstrapGuidance":
     "प्रारंभिक पासवर्ड पाने के लिए इस इंस्टॉलेशन के होस्ट पर टर्मिनल में {command} चलाएँ। अगर पिछला पासवर्ड इस्तेमाल हो चुका है या उसकी अवधि समाप्त हो गई है, तो कमांड उसे बदल देती है और पुराना पासवर्ड काम नहीं करता।",
@@ -4076,4 +4079,6 @@ export const hi: Record<string, string> = {
     "जुड़े हुए Nodes की पुष्टि से पहले ऑपरेशन साक्ष्य आवश्यक है।",
   "ui.workerRegistrationCard.workersConnectedVerified":
     "जुड़े हुए वर्कर (सत्यापित)",
+  "wizard.leave.confirm":
+    "क्या आप इस पेज को छोड़ना चाहते हैं? आपके दर्ज किए गए उत्तर सहेजे नहीं गए हैं।",
 };

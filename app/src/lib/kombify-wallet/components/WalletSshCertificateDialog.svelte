@@ -25,18 +25,23 @@
     type SignErrors,
   } from "../ssh-ca.js";
   import {
+    isStepUpRequired,
     signCertificate,
     type IssuedCertificate,
     type WalletItem,
   } from "../wallet-api.js";
+  import { stashSign, takeSignStash } from "../step-up.js";
+  import WalletStepUp from "./WalletStepUp.svelte";
   import { walletErrorMessage } from "../wallet-text.js";
 
   interface Props {
     item: WalletItem;
     onclose: () => void;
+    /** Reopened by the return of a step-up this browser started. */
+    resumed?: boolean;
   }
 
-  let { item, onclose }: Props = $props();
+  let { item, onclose, resumed = false }: Props = $props();
 
   const uid = $props.id();
   const idPrefix = `wallet-sign-${uid}`;
@@ -45,7 +50,17 @@
   // The dialog mounts fresh for every open, so the policy it opened with is fixed.
   const policy = (() => itemSignPolicy(item))();
 
-  let draft = $state<SignDraft>(policy ? emptySignDraft(policy) : blank());
+  // A step-up return refills the public request it interrupted, once.
+  const kept = (() => (resumed ? takeSignStash(item.itemId) : null))();
+  let draft = $state<SignDraft>(
+    kept && policy && (policy.kinds as string[]).includes(kept.kind)
+      ? { ...kept, kind: kept.kind as CertificateKind }
+      : policy
+        ? emptySignDraft(policy)
+        : blank(),
+  );
+  let stepUpAge = $state<number | null>(null);
+  let stepUp = $state(false);
   let errors = $state<SignErrors>({});
   let submitting = $state(false);
   let failure = $state<string | null>(null);
@@ -95,6 +110,7 @@
     event.preventDefault();
     if (submitting || !policy) return;
     failure = null;
+    stepUp = false;
     const composed = composeSignRequest(policy, draft);
     if (!composed.ok) {
       errors = composed.errors;
@@ -118,7 +134,10 @@
       copyFailed = false;
       saveFailed = false;
     } catch (error) {
-      failure = walletErrorMessage(error);
+      if (isStepUpRequired(error)) {
+        stepUpAge = error.stepUpMaxAgeSeconds;
+        stepUp = true;
+      } else failure = walletErrorMessage(error);
     } finally {
       submitting = false;
     }
@@ -436,6 +455,14 @@
             </p>
           {/if}
         </div>
+      {/if}
+
+      {#if stepUp}
+        <WalletStepUp
+          resume={{ action: "sign", itemId: item.itemId }}
+          maxAgeSeconds={stepUpAge}
+          beforeStart={() => stashSign(item.itemId, { ...draft })}
+        />
       {/if}
 
       {#if failure}

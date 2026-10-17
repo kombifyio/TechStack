@@ -96,11 +96,8 @@ func NewCLIValidatorFromEnv() (*CLIValidator, error) {
 }
 
 type compatibilityManifest struct {
-	SchemaVersion string `json:"schemaVersion"`
-	Release       struct {
-		Tag     string `json:"tag"`
-		Version string `json:"version"`
-	} `json:"release"`
+	SchemaVersion string                                `json:"schemaVersion"`
+	Release       stackkitrelease.UseCaseCatalogRelease `json:"release"`
 	Compatibility struct {
 		ApplicationDelivery []struct {
 			UseCaseRef            string `json:"useCaseRef"`
@@ -148,6 +145,10 @@ func GoalDeliveryStatuses() (map[string]string, bool, error) {
 	if err != nil {
 		return nil, true, err
 	}
+	return goalDeliveryStatuses(manifest), true, nil
+}
+
+func goalDeliveryStatuses(manifest compatibilityManifest) map[string]string {
 	statuses := map[string]string{}
 	for _, delivery := range manifest.Compatibility.ApplicationDelivery {
 		goal := strings.TrimSpace(delivery.UseCaseRef)
@@ -155,7 +156,7 @@ func GoalDeliveryStatuses() (map[string]string, bool, error) {
 			statuses[goal] = strings.TrimSpace(delivery.Status)
 		}
 	}
-	return statuses, true, nil
+	return statuses
 }
 
 // deliverableStatus admits a use case the pinned release delivers on the
@@ -180,6 +181,10 @@ func loadGoalMetadata(path, releaseVersion string) (map[string]string, map[strin
 	if err != nil {
 		return nil, nil, err
 	}
+	return goalMetadata(manifest, releaseVersion)
+}
+
+func goalMetadata(manifest compatibilityManifest, releaseVersion string) (map[string]string, map[string]workloadModuleBinding, error) {
 	manifestVersion := strings.TrimPrefix(strings.TrimSpace(manifest.Release.Version), "v")
 	if manifestVersion == "" || strings.TrimSpace(manifest.Release.Tag) != "v"+manifestVersion {
 		return nil, nil, fmt.Errorf("specv2: StackKits compatibility manifest has inconsistent release identity")

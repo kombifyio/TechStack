@@ -21,7 +21,6 @@ import (
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/middleware"
 	session "github.com/kombifyio/techstack/pkg/v2/auth/session"
-	"github.com/pocketbase/pocketbase/core"
 )
 
 // PortalVerifyRequest is the request body for POST /api/v1/auth/portal-verify
@@ -47,11 +46,6 @@ type CloudUserInfo struct {
 	IsAdmin bool   `json:"is_admin"`
 }
 
-// RegisterSSORoutes registers SSO-related API routes.
-// It registers the following routes:
-//   - POST /api/v1/auth/portal-verify - Verify SSO token from kombify Cloud Portal
-//   - GET /auth/sso - SSO landing page (served by SvelteKit frontend)
-//
 // PortalSession carries the V2 browser-session manager and cookie settings
 // so the embedded SSO exchange (portal-verify) mints the same
 // techstack_session session that the interactive OIDC login issues. Without
@@ -66,10 +60,8 @@ type PortalSession struct {
 	AuthStore  controlplane.AuthStore
 }
 
-func RegisterSSORoutes(r *httpx.Router, app core.App, ps PortalSession) {
-	RegisterRuntimeSSORoutes(r, ps)
-}
-
+// RegisterRuntimeSSORoutes registers POST /api/v1/auth/portal-verify, which
+// verifies the SSO token from the kombify Cloud Portal.
 func RegisterRuntimeSSORoutes(r *httpx.Router, ps PortalSession) {
 	// Portal verify endpoint validates SSO and establishes the V2 session.
 	r.POST("/api/v1/auth/portal-verify", handleRuntimePortalVerify(ps))
@@ -91,10 +83,6 @@ func RegisterRuntimeSSORoutes(r *httpx.Router, ps PortalSession) {
 //
 // A successful response contains the cloud identity and sets the authoritative
 // V2 browser-session cookie.
-func handlePortalVerify(app core.App, ps PortalSession) func(e *httpx.Event) error {
-	return handleRuntimePortalVerify(ps)
-}
-
 func handleRuntimePortalVerify(ps PortalSession) func(e *httpx.Event) error {
 	replay := sso.NewReplayGuard()
 	return func(e *httpx.Event) error {

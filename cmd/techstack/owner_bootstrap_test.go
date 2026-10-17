@@ -18,7 +18,6 @@ import (
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
-	"github.com/pocketbase/pocketbase/tests"
 )
 
 // This is the production provisioner, exercised through the public setup and
@@ -26,11 +25,6 @@ import (
 func TestOperatorBootstrapCompletesPublicOwnerSetup(t *testing.T) {
 	for _, scenario := range []string{"expired", "consumed", "missing marker"} {
 		t.Run(scenario, func(t *testing.T) {
-			app, err := tests.NewTestApp()
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer app.Cleanup()
 			store := &memoryBreakglassStore{}
 			manager, err := authsession.NewManager(authsession.Config{Audience: "operator-owner-test", Secret: []byte(strings.Repeat("s", 32))})
 			if err != nil {
@@ -66,7 +60,7 @@ func TestOperatorBootstrapCompletesPublicOwnerSetup(t *testing.T) {
 			persistence := &setupMarkerStore{}
 			runtime := auth.RuntimeStore{Persistence: persistence, Identities: ownerProjection{}, TenantID: "owner-fixture", InstanceID: "owner-instance"}
 			router := httpx.NewRouter()
-			routes.RegisterAuthRoutesWithConfig(router, app, config.ModeSelfHosted, config.EditionSelfHostOSS, routes.AuthRouteConfig{Runtime: runtime, LocalOwnerStore: store, LocalSetupProvisioner: localSetupProvisionerWithService(service)})
+			routes.RegisterRuntimeAuthRoutesWithConfig(router, config.ModeSelfHosted, config.EditionSelfHostOSS, routes.AuthRouteConfig{Runtime: runtime, LocalOwnerStore: store, LocalSetupProvisioner: localSetupProvisionerWithService(service)})
 			router.POST("/api/v2/auth/local/login", func(e *httpx.Event) error {
 				authlocal.NewHandlers(service, nil).LoginHandler().ServeHTTP(e.Response, e.Request)
 				return nil

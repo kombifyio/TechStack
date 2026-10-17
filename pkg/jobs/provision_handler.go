@@ -922,6 +922,9 @@ func autoDeployGuardWaitError(cfg *ProvisionConfig, job *Job, q *Queue, cause er
 		setAutoDeployGuardWaitStart(job, now)
 	}
 	if timeout <= 0 || now.Sub(startedAt) >= timeout {
+		job.mutateResult(func(result map[string]interface{}) {
+			result[GuardHeartbeatTimeoutReason] = true
+		})
 		return wrapProvisionCause(StepPrepareRollout, fmt.Errorf("%w after %s: %v", ErrAutoDeployAdmissionTimeout, timeout, cause),
 			"The managed server was created, but its Guard did not report a fresh heartbeat in time. Retry the rollout once the server is reachable.")
 	}

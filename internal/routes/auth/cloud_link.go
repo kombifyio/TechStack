@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/kombifyio/techstack/pkg/controlplane"
-	"github.com/pocketbase/pocketbase/core"
 
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	tsauth "github.com/kombifyio/techstack/pkg/auth"
@@ -58,10 +57,6 @@ type cloudLinkStatusResponse struct {
 
 // handleCloudLinkStart mints a single-use PKCE state and returns the hosted
 // authorization URL the frontend opens in a popup (or full-page redirect).
-func handleCloudLinkStart(app core.App, mode config.DeploymentMode) func(e *httpx.Event) error {
-	return handleRuntimeCloudLinkStart(RuntimeStore{}, mode)
-}
-
 func handleRuntimeCloudLinkStart(runtime RuntimeStore, mode config.DeploymentMode) func(e *httpx.Event) error {
 	return func(e *httpx.Event) error {
 		if mode.IsSaaS() {
@@ -115,10 +110,6 @@ func handleRuntimeCloudLinkStart(runtime RuntimeStore, mode config.DeploymentMod
 // link for the user who initiated the flow (never a new user). All failures
 // land on the completion page as fragment reasons so the popup can report
 // them without leaking details into server logs users cannot see.
-func handleCloudLinkCallback(app core.App, mode config.DeploymentMode) func(e *httpx.Event) error {
-	return handleRuntimeCloudLinkCallback(RuntimeStore{}, mode)
-}
-
 func handleRuntimeCloudLinkCallback(runtime RuntimeStore, mode config.DeploymentMode) func(e *httpx.Event) error {
 	return func(e *httpx.Event) error {
 		if mode.IsSaaS() {
@@ -181,10 +172,6 @@ func handleRuntimeCloudLinkCallback(runtime RuntimeStore, mode config.Deployment
 
 // getCloudLinkStatus reports the operator's current cloud link; the wizard
 // polls it while the popup flow runs.
-func getCloudLinkStatus(app core.App) func(e *httpx.Event) error {
-	return getRuntimeCloudLinkStatus(RuntimeStore{})
-}
-
 func getRuntimeCloudLinkStatus(runtime RuntimeStore) func(e *httpx.Event) error {
 	return func(e *httpx.Event) error {
 		if err := CheckAuth(e); err != nil {
@@ -204,10 +191,6 @@ func getRuntimeCloudLinkStatus(runtime RuntimeStore) func(e *httpx.Event) error 
 		link := profile.Link
 		return httpx.Success(e, http.StatusOK, cloudLinkStatusResponse{Linked: true, ExternalEmail: link.Email, ExternalName: link.DisplayName, EmailVerified: link.EmailVerified, LinkedAt: link.LinkedAt})
 	}
-}
-
-func deleteCloudLink(app core.App) func(e *httpx.Event) error {
-	return deleteRuntimeCloudLink(RuntimeStore{})
 }
 
 func deleteRuntimeCloudLink(runtime RuntimeStore) func(e *httpx.Event) error {

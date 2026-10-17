@@ -66,7 +66,7 @@
     data-kx="menu-item"
     class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm"
   >
-    <a href="/settings#appearance" class="flex flex-1 items-center gap-3">
+    <a href="/settings?tab=design" class="flex flex-1 items-center gap-3">
       <Sun class="h-4 w-4" />{tr("nav.theme")}
     </a>
     <ThemeToggle />

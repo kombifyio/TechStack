@@ -95,3 +95,6 @@ qemu-backend/
 *.iso
 *.qcow2
 *.vmdk
+
+# Render BuildKit mounts this declared read credential; exclude its context copy.
+GITHUB_TOKEN

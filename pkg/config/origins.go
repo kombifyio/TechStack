@@ -10,9 +10,13 @@ import (
 
 const AllowedFrameOriginsEnv = "ALLOWED_FRAME_ORIGINS"
 
+// https://preview.kombify.io is kombify Cloud's Nightly (preview) channel. It
+// embeds this stable Techstack exactly as https://kombify.io does, so the
+// preview channel's tool pages render signed in (same site, Lax session).
 var productionPortalFrameOrigins = []string{
 	"https://kombify.io",
 	"https://app.kombify.io",
+	"https://preview.kombify.io",
 }
 
 var devPortalFrameOrigins = []string{

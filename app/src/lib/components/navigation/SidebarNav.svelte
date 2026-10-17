@@ -151,7 +151,7 @@
       variant="rail"
       label={railCollapsed ? undefined : tr("nav.notifications")}
       centerHref="/notifications"
-      settingsHref="/settings#notification-preferences"
+      settingsHref="/settings?tab=notifications"
       locale={getLocale()}
       {...ownerChannelOptions()}
     />

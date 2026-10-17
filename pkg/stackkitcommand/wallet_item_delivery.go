@@ -73,7 +73,11 @@ func validateWalletItemDeliveryFields(command *agentpb.StackKitCommand) error {
 		return fmt.Errorf("StackKit delivery authority is only valid for host delivery recipient")
 	}
 	if command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_AI_PROVIDER_SETUP &&
-		(command.AiProviderBaseUrl != "" || command.WalletItemRef != "" || command.AiProviderDisable) {
+		(command.AiProviderBaseUrl != "" || command.AiProviderDisable) {
+		return fmt.Errorf("StackKit AI provider fields are only valid for AI provider setup")
+	}
+	if command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_AI_PROVIDER_SETUP && !IsWorkloadRelocationOperation(command.Operation) &&
+		command.WalletItemRef != "" {
 		return fmt.Errorf("StackKit AI provider fields are only valid for AI provider setup")
 	}
 	return nil

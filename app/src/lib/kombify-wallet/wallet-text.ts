@@ -35,6 +35,7 @@ const REASONS: Record<string, string> = {
   ssh_ca_invalid: "kwallet.denied.ssh_ca_invalid",
   item_action_unsupported: "kwallet.denied.item_action_unsupported",
   sign_response_invalid: "kwallet.denied.sign_mismatch",
+  wallet_step_up_required: "kwallet.denied.step_up_required",
 };
 
 const TRANSPORT: Record<string, string> = {

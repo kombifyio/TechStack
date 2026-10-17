@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
@@ -363,16 +364,30 @@ func (executor *StackKitExecutor) persistentReleaseCache() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	for _, replaced := range []string{root, root + ".previous"} {
-		rel, err := filepath.Rel(replaced, cache)
-		if err != nil || rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)) {
+	if !outsideReplacedStackKitRuntime(root, cache) {
+		// Guards laid out before the persistent cache existed keep the cache
+		// inside the runtime tree, and executor.env is written only at layout
+		// time. Their runtime could never converge again, so they retain into
+		// the host default the current layout configures.
+		if runtime.GOOS != "linux" || !outsideReplacedStackKitRuntime(root, defaultStackKitPersistentReleaseCache) {
 			return "", fmt.Errorf("StackKits public artifact cache must be outside the replaced runtime")
 		}
+		cache = defaultStackKitPersistentReleaseCache
 	}
 	if err := stackKitTrustedDirectoryPath(cache); err != nil {
 		return "", err
 	}
 	return cache, nil
+}
+
+func outsideReplacedStackKitRuntime(root, cache string) bool {
+	for _, replaced := range []string{root, root + ".previous"} {
+		rel, err := filepath.Rel(replaced, cache)
+		if err != nil || rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)) {
+			return false
+		}
+	}
+	return true
 }
 
 func stackKitTrustedDirectoryPath(leaf string) error {

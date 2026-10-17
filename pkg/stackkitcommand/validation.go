@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -121,8 +122,9 @@ func ValidateCommand(command *agentpb.StackKitCommand) error {
 	}
 	if command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_INVITE &&
 		command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_REMOVE &&
-		(strings.TrimSpace(command.HouseholdUsername) != "" || strings.TrimSpace(command.HouseholdEmail) != "" || strings.TrimSpace(command.HouseholdDisplayName) != "") {
-		return fmt.Errorf("StackKit household identity fields are only valid for household invite or removal")
+		command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_UPDATE_APPS &&
+		(strings.TrimSpace(command.HouseholdUsername) != "" || strings.TrimSpace(command.HouseholdEmail) != "" || strings.TrimSpace(command.HouseholdDisplayName) != "" || command.HouseholdAppsSet || len(command.HouseholdApps) != 0) {
+		return fmt.Errorf("StackKit household identity fields are only valid for household operations")
 	}
 	if command.Operation != agentpb.StackKitOperation_STACKKIT_OPERATION_INIT && strings.TrimSpace(command.OwnerEmail) != "" {
 		return fmt.Errorf("StackKit owner_email is only valid for init")
@@ -137,6 +139,9 @@ func ValidateCommand(command *agentpb.StackKitCommand) error {
 		return err
 	}
 	if err := validateWalletItemDeliveryFields(command); err != nil {
+		return err
+	}
+	if err := validateWorkloadRelocationFields(command); err != nil {
 		return err
 	}
 	if err := validateApplicationFields(command); err != nil {
@@ -221,6 +226,8 @@ func ValidateCommand(command *agentpb.StackKitCommand) error {
 		return validateHouseholdInviteCommand(command)
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_REMOVE:
 		return validateHouseholdRemoveCommand(command)
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_UPDATE_APPS:
+		return validateHouseholdUpdateAppsCommand(command)
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_TRUST_IMPORT:
 		return validateAdvancedTrustImportCommand(command)
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_CHANGE_SET_CREATE,
@@ -240,6 +247,13 @@ func ValidateCommand(command *agentpb.StackKitCommand) error {
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_NETWORK_REBIND,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_NETWORK_STATUS:
 		return validateNetworkCommand(command)
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_PLAN,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_CHECK,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_DRAIN,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_UNDRAIN,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_SEND,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_RECEIVE:
+		return validateWorkloadRelocationCommand(command)
 	default:
 		return fmt.Errorf("unsupported StackKit operation %s", command.Operation.String())
 	}
@@ -311,7 +325,45 @@ func validateHouseholdInviteCommand(command *agentpb.StackKitCommand) error {
 	if len(command.HouseholdDisplayName) > 128 || strings.ContainsAny(command.HouseholdDisplayName, "\r\n") {
 		return fmt.Errorf("StackKit household display name is invalid")
 	}
+	return validateHouseholdApps(command)
+}
+
+// HouseholdGrantableApps are the node app ids an owner may grant a household
+// member (StackKits per-app household access groups). Vault, admin tiers and
+// the kombify account link are never grantable.
+var HouseholdGrantableApps = []string{
+	"ai", "automation", "dev", "documents", "files", "game", "mail",
+	"marketplace", "media", "network", "photos", "remote", "smart-home",
+}
+
+func validateHouseholdApps(command *agentpb.StackKitCommand) error {
+	if !command.HouseholdAppsSet && len(command.HouseholdApps) != 0 {
+		return fmt.Errorf("StackKit household apps need household_apps_set")
+	}
+	seen := map[string]bool{}
+	for _, app := range command.HouseholdApps {
+		if !slices.Contains(HouseholdGrantableApps, app) || seen[app] {
+			return fmt.Errorf("StackKit household app %q is not grantable or repeated", app)
+		}
+		seen[app] = true
+	}
 	return nil
+}
+
+// validateHouseholdUpdateAppsCommand admits one Owner approved username and the
+// app list (empty = none; unset = all apps).
+func validateHouseholdUpdateAppsCommand(command *agentpb.StackKitCommand) error {
+	if !command.OwnerApproved {
+		return fmt.Errorf("StackKit household app update requires Owner approval")
+	}
+	command.HouseholdUsername = strings.TrimSpace(command.HouseholdUsername)
+	if !householdUserPattern.MatchString(command.HouseholdUsername) {
+		return fmt.Errorf("StackKit household username is invalid")
+	}
+	if strings.TrimSpace(command.HouseholdEmail) != "" || strings.TrimSpace(command.HouseholdDisplayName) != "" {
+		return fmt.Errorf("StackKit household app update carries only the username and apps")
+	}
+	return validateHouseholdApps(command)
 }
 
 // validateHouseholdRemoveCommand admits only the closed removal: one Owner
@@ -326,6 +378,9 @@ func validateHouseholdRemoveCommand(command *agentpb.StackKitCommand) error {
 	}
 	if strings.TrimSpace(command.HouseholdEmail) != "" || strings.TrimSpace(command.HouseholdDisplayName) != "" {
 		return fmt.Errorf("StackKit household removal carries only the username")
+	}
+	if command.HouseholdAppsSet || len(command.HouseholdApps) != 0 {
+		return fmt.Errorf("StackKit household removal carries no apps")
 	}
 	return nil
 }
@@ -784,6 +839,15 @@ func ValidateResult(result *agentpb.StackKitResult, command *agentpb.StackKitCom
 			if _, err := ParseHandoffResult(command, result); err != nil {
 				return err
 			}
+		case agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_PLAN,
+			agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_CHECK,
+			agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_DRAIN,
+			agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_UNDRAIN,
+			agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_SEND,
+			agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_RECEIVE:
+			if err := validateWorkloadRelocationResult(command, result); err != nil {
+				return err
+			}
 		default:
 			if IsAdvancedOperation(command.Operation) {
 				if _, err := ParseAdvancedOperationResult(command, result); err != nil {
@@ -890,6 +954,9 @@ func ResultCommandName(operation agentpb.StackKitOperation) string {
 	if name := walletItemDeliveryCommandName(operation); name != "" {
 		return name
 	}
+	if name := workloadRelocationCommandName(operation); name != "" {
+		return name
+	}
 	switch operation {
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_INIT:
 		return "stackkit init"
@@ -947,6 +1014,8 @@ func ResultCommandName(operation agentpb.StackKitOperation) string {
 		return "stackkit user add"
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_REMOVE:
 		return "stackkit user remove"
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_UPDATE_APPS:
+		return "stackkit user apps"
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_ADVANCED_TRUST_IMPORT:
 		return "stackkit advanced trust import"
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_FEDERATION_HANDOFF:

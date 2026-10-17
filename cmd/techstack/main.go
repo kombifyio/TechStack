@@ -17,13 +17,12 @@ import (
 	"github.com/kombifyio/techstack/pkg/v2/auth/providers"
 )
 
-// defaultProductVersion is the canonical compiled-in product version. It MUST
-// stay declared in this file: the release version-sync tooling
-// (scripts/release-version.mjs check/set, mise deploy:versioned) reads and
-// rewrites this constant here by exact file path + regex. Keep the declaration
-// on its own line below. Version parsing/normalization helpers live in
-// version.go.
-const defaultProductVersion = "0.41.3" // x-release-please-version
+// defaultProductVersion is the product version of an unversioned development
+// build (go run, mise build, test binaries). It is never a release identity:
+// the canonical product version is .kombify/VERSION, and every build that ships
+// (Dockerfile, Guard release, Windows packager, public self-host publication)
+// injects it with -X main.version. Nothing stamps this constant at release time.
+const defaultProductVersion = "0.0.0-dev"
 
 func hasAnyAgentMTLSConfig(certFile, keyFile, caFile string) bool {
 	return certFile != "" || keyFile != "" || caFile != ""

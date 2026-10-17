@@ -106,11 +106,12 @@ func (o feedOwnerTenants) ResolveOwnerTenant(ctx context.Context, hint, owner st
 // the node through the orchestrator's typed command channel.
 type feedIdentityRuntime struct{ orch *orchestrator.Orchestrator }
 
-func (r feedIdentityRuntime) Invite(ctx context.Context, target household.Target, username, email, displayName string) (household.Invitation, error) {
+func (r feedIdentityRuntime) Invite(ctx context.Context, target household.Target, username, email, displayName string, apps household.AppGrant) (household.Invitation, error) {
 	result, err := r.orch.RunStackKitIdentityCommand(ctx, orchestrator.StackKitIdentityCommandRequest{
 		TenantID: target.TenantID, OwnerID: target.OwnerID, DeploymentID: target.StackID,
 		Operation:     agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_INVITE,
 		OwnerApproved: true, HouseholdUsername: username, HouseholdEmail: email, HouseholdDisplayName: displayName,
+		HouseholdApps: apps.Apps, HouseholdAppsSet: apps.Set,
 	})
 	if err != nil {
 		return household.Invitation{}, err
@@ -143,6 +144,15 @@ func (r feedIdentityRuntime) Remove(ctx context.Context, target household.Target
 		TenantID: target.TenantID, OwnerID: target.OwnerID, DeploymentID: target.StackID,
 		Operation:     agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_REMOVE,
 		OwnerApproved: true, HouseholdUsername: username,
+	})
+	return err
+}
+
+func (r feedIdentityRuntime) UpdateApps(ctx context.Context, target household.Target, username string, apps household.AppGrant) error {
+	_, err := r.orch.RunStackKitIdentityCommand(ctx, orchestrator.StackKitIdentityCommandRequest{
+		TenantID: target.TenantID, OwnerID: target.OwnerID, DeploymentID: target.StackID,
+		Operation:     agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_UPDATE_APPS,
+		OwnerApproved: true, HouseholdUsername: username, HouseholdApps: apps.Apps, HouseholdAppsSet: apps.Set,
 	})
 	return err
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/kombifyio/techstack/internal/gocommon/servicecall"
 	"github.com/kombifyio/techstack/internal/onboarding"
 	"github.com/kombifyio/techstack/pkg/httpx"
+	"github.com/kombifyio/techstack/pkg/serviceauth"
 )
 
 const (
@@ -32,18 +33,23 @@ type ownerFactsSnapshot struct {
 // verified before the conditional response is considered, so a guessed ETag
 // never becomes an authentication oracle.
 func (h onboardingHandlers) getOwnerFacts(e *httpx.Event) error {
-	if h.serviceAuthSecret == "" {
+	if !serviceauth.CanVerify(h.serviceAuthSecret) {
 		return writeOwnerFactsDenial(e, http.StatusServiceUnavailable, ownerFactsUnavailable, true,
 			"Retry after Techstack service authentication is configured.")
 	}
 
-	auth := servicecall.RequireServiceAuth(servicecall.Config{
+	authCfg, err := serviceauth.Apply(servicecall.Config{
 		ServiceName:    ownerFactsAuthority,
 		Secret:         h.serviceAuthSecret,
 		SecretNext:     h.serviceAuthNext,
 		AllowedCallers: []string{ownerFactsCallerCloud},
 		Enabled:        true,
 	})
+	if err != nil {
+		return writeOwnerFactsDenial(e, http.StatusServiceUnavailable, ownerFactsUnavailable, true,
+			"Retry after Techstack service authentication is configured.")
+	}
+	auth := servicecall.RequireServiceAuth(authCfg)
 	auth(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
 		e.Request = request
 		h.serveOwnerFacts(e)

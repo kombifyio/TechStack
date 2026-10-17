@@ -355,8 +355,8 @@ func applyFoundRoles(spec map[string]any, roles []string) (string, error) {
 }
 
 // appendJoinNode adds the run's server as a new node on the existing kit
-// deployment, placed on the controller's site (single-site kits; multi-site
-// placement arrives with the federation work).
+// deployment. It lands on the site the intent names (a Modern two-site kit
+// declares "home" and "cloud"), otherwise on the controller's site.
 func appendJoinNode(spec map[string]any, server ServerIntent) (string, error) {
 	nodes, err := specNodes(spec)
 	if err != nil {
@@ -367,6 +367,12 @@ func appendJoinNode(spec map[string]any, server ServerIntent) (string, error) {
 		return "", fmt.Errorf("specv2: existing spec has no controller node")
 	}
 	siteRef, _ := primary["siteRef"].(string)
+	if requested := strings.TrimSpace(server.SiteRef); requested != "" {
+		if !specDeclaresSite(spec, requested) {
+			return "", fmt.Errorf("specv2: server.site_ref %q is not a site of this kit deployment", requested)
+		}
+		siteRef = requested
+	}
 
 	roles := normalizeRoles(server.Roles)
 	if slices.Contains(roles, RoleController) {
@@ -402,6 +408,17 @@ func appendJoinNode(spec map[string]any, server ServerIntent) (string, error) {
 	}
 	spec["nodes"] = append(nodes, node)
 	return nodeID, nil
+}
+
+// specDeclaresSite reports whether the spec's sites list declares the id.
+func specDeclaresSite(spec map[string]any, id string) bool {
+	sites, _ := spec["sites"].([]any)
+	for _, raw := range sites {
+		if site, ok := raw.(map[string]any); ok && site["id"] == id {
+			return true
+		}
+	}
+	return false
 }
 
 // applyAuthoredWorkloads adds release-authored workload selections that the

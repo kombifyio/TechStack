@@ -694,7 +694,7 @@ func TestWizardRunJoinAppendsNodeAndMintsPairing(t *testing.T) {
 		stackConfigKeySpecV2: base,
 	})
 
-	e, rec := wizardRunTestEvent(t, wizardRunRequest{Intent: wizardRunJoinIntent("stack-v2")}, "")
+	e, rec := wizardRunTestEvent(t, wizardRunRequest{Intent: wizardRunJoinIntent("stack-v2")}, "join-append")
 	if err := h.createWizardRun(e); err != nil {
 		t.Fatalf("createWizardRun join: %v", err)
 	}
@@ -810,6 +810,10 @@ func (store wizardRunStackConfigConflictStore) CompareAndSwapStackConfig(context
 	return nil, controlplane.ErrConflict
 }
 
+func (wizardRunStackConfigConflictStore) CommitWizardJoinProjection(context.Context, controlplane.StackConfigCAS, controlplane.WizardRun) (*controlplane.Stack, *controlplane.WizardRun, error) {
+	return nil, nil, controlplane.ErrConflict
+}
+
 func TestWizardRunJoinRejectsConcurrentStackConfigChangeBeforePairing(t *testing.T) {
 	store := controlplane.NewMemoryStore()
 	h := newWizardRunTestHandlers(store, &wizardRunFakeValidator{})
@@ -877,7 +881,7 @@ func TestWizardRunExpansionReconcilesStoredGoalsAgainstPinnedRelease(t *testing.
 	}})
 	h.cfg.ReleaseVersion = "v0.10.0-test"
 	h.cfg.NotificationOutbox = notifications
-	h.cfg.Trust.Workers = failingWorkerStore{WorkerStore: store}
+	h.wizardRuns = pairingFailingStore{store}
 
 	e, rec := wizardRunTestEvent(t, wizardRunRequest{Intent: wizardRunJoinIntent("stack-reconcile")}, "reconcile-goals")
 	if err := h.createWizardRun(e); err != nil {
@@ -923,7 +927,7 @@ func TestWizardRunExpansionReconcilesStoredGoalsAgainstPinnedRelease(t *testing.
 	// A same-key retry resumes the already-persisted node after pairing
 	// recovers. It preserves the still-unmapped backlog and cannot enqueue a
 	// second activation event.
-	h.cfg.Trust.Workers = store
+	h.wizardRuns = store
 	replay, replayRec := wizardRunTestEvent(t, wizardRunRequest{Intent: wizardRunJoinIntent("stack-reconcile")}, "reconcile-goals")
 	if err := h.createWizardRun(replay); err != nil || replayRec.Code != http.StatusAccepted {
 		t.Fatalf("replay status=%d err=%v body=%s", replayRec.Code, err, replayRec.Body.String())
@@ -1166,10 +1170,20 @@ func (failingWorkerStore) UpsertPairingToken(context.Context, controlplane.Pairi
 	return nil, fmt.Errorf("worker store unavailable")
 }
 
+// pairingFailingStore hands the keyed pairing preparation a worker store whose
+// token write fails, the way a transaction-bound writer would.
+type pairingFailingStore struct{ *controlplane.MemoryStore }
+
+func (p pairingFailingStore) PrepareWizardPairing(ctx context.Context, run controlplane.WizardRun, req controlplane.UpsertJobRequest, prepare func(controlplane.WorkerStore) (map[string]any, error)) (*controlplane.Job, bool, error) {
+	return p.MemoryStore.PrepareWizardPairing(ctx, run, req, func(controlplane.WorkerStore) (map[string]any, error) {
+		return prepare(failingWorkerStore{WorkerStore: p.MemoryStore})
+	})
+}
+
 func TestWizardRunFirstRunSameKeyRetryResumesAfterPairingFailure(t *testing.T) {
 	store := controlplane.NewMemoryStore()
 	h := newWizardRunTestHandlers(store, &wizardRunFakeValidator{})
-	h.cfg.Trust.Workers = failingWorkerStore{WorkerStore: store}
+	h.wizardRuns = pairingFailingStore{store}
 
 	first, firstRec := wizardRunTestEvent(t, wizardRunRequest{Intent: wizardRunTestIntent(specv2.RunKindFirstRun)}, "resume-key-1")
 	if err := h.createWizardRun(first); err != nil {
@@ -1196,7 +1210,7 @@ func TestWizardRunFirstRunSameKeyRetryResumesAfterPairingFailure(t *testing.T) {
 
 	// Retry with the SAME key and a working pairing store: must resume the
 	// SAME stack (no duplicate, no 409) and deliver a pairing job.
-	h.cfg.Trust.Workers = store
+	h.wizardRuns = store
 	retry, retryRec := wizardRunTestEvent(t, wizardRunRequest{Intent: wizardRunTestIntent(specv2.RunKindFirstRun)}, "resume-key-1")
 	if retryErr := h.createWizardRun(retry); retryErr != nil {
 		t.Fatalf("retry: %v", retryErr)
@@ -1232,7 +1246,7 @@ func TestWizardRunFirstRunSameKeyRetryResumesAfterPairingFailure(t *testing.T) {
 func TestWizardRunJoinSameKeyRetryReusesPersistedNode(t *testing.T) {
 	store := controlplane.NewMemoryStore()
 	h := newWizardRunTestHandlers(store, &wizardRunFakeValidator{})
-	h.cfg.Trust.Workers = failingWorkerStore{WorkerStore: store}
+	h.wizardRuns = pairingFailingStore{store}
 
 	base := wizardRunTestSeed(specv2.KitSlugBasement)
 	base["metadata"] = map[string]any{"name": "my-homelab"}
@@ -1258,7 +1272,7 @@ func TestWizardRunJoinSameKeyRetryReusesPersistedNode(t *testing.T) {
 		t.Fatalf("first attempt must persist the joined node, got %d nodes", len(firstNodes))
 	}
 
-	h.cfg.Trust.Workers = store
+	h.wizardRuns = store
 	retry, retryRec := wizardRunTestEvent(t, wizardRunRequest{Intent: wizardRunJoinIntent("stack-join-resume")}, "join-key-1")
 	if retryErr := h.createWizardRun(retry); retryErr != nil {
 		t.Fatalf("join retry: %v", retryErr)

@@ -13,6 +13,7 @@ import (
 	"github.com/kombifyio/techstack/internal/gocommon/servicecall"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
+	"github.com/kombifyio/techstack/pkg/serviceauth"
 )
 
 const (
@@ -103,17 +104,22 @@ func (h inventoryHandlers) serveCloudRead(
 	surface cloudReadSurface,
 	serve func(e *httpx.Event, ctx context.Context, scope inventoryScope),
 ) error {
-	if h.serviceAuthSecret == "" {
+	if !serviceauth.CanVerify(h.serviceAuthSecret) {
 		return surface.deny(e, http.StatusServiceUnavailable, surface.unavailableReason, true,
 			"Retry after Techstack service authentication is configured.")
 	}
-	auth := servicecall.RequireServiceAuth(servicecall.Config{
+	authCfg, err := serviceauth.Apply(servicecall.Config{
 		ServiceName:    runtimeSummaryService,
 		Secret:         h.serviceAuthSecret,
 		SecretNext:     h.serviceAuthNext,
 		AllowedCallers: []string{runtimeSummaryCallerCloud},
 		Enabled:        true,
 	})
+	if err != nil {
+		return surface.deny(e, http.StatusServiceUnavailable, surface.unavailableReason, true,
+			"Retry after Techstack service authentication is configured.")
+	}
+	auth := servicecall.RequireServiceAuth(authCfg)
 	auth(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
 		e.Request = request
 		caller := servicecall.FromContext(request.Context())

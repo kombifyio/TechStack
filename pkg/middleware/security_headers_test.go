@@ -38,7 +38,7 @@ func TestApplyRequestSecurityHeaders_SaaSKeepsConfiguredOriginsAndAllowsCanonica
 	}
 
 	csp := rr.Header().Get("Content-Security-Policy")
-	want := "frame-ancestors 'self' https://kombify.io https://app.kombify.io"
+	want := "frame-ancestors 'self' https://kombify.io https://app.kombify.io https://preview.kombify.io"
 	if csp != want {
 		t.Fatalf("expected CSP %q, got %q", want, csp)
 	}
@@ -60,7 +60,7 @@ func TestApplyRequestSecurityHeaders_SaaSAllowsCloudPreviewReferer(t *testing.T)
 		ApplyRequestSecurityHeaders(rr.Header(), req, config.ModeSaaS)
 
 		csp := rr.Header().Get("Content-Security-Policy")
-		want := "frame-ancestors 'self' https://kombify.io https://app.kombify.io " + preview
+		want := "frame-ancestors 'self' https://kombify.io https://app.kombify.io https://preview.kombify.io " + preview
 		if csp != want {
 			t.Fatalf("referer %q: expected CSP %q, got %q", preview, want, csp)
 		}
@@ -87,7 +87,7 @@ func TestApplyRequestSecurityHeaders_SaaSIgnoresLookalikeReferers(t *testing.T) 
 		ApplyRequestSecurityHeaders(rr.Header(), req, config.ModeSaaS)
 
 		csp := rr.Header().Get("Content-Security-Policy")
-		want := "frame-ancestors 'self' https://kombify.io https://app.kombify.io"
+		want := "frame-ancestors 'self' https://kombify.io https://app.kombify.io https://preview.kombify.io"
 		if csp != want {
 			t.Fatalf("referer %q: expected CSP %q, got %q", referer, want, csp)
 		}
@@ -108,7 +108,7 @@ func TestApplyRequestSecurityHeaders_SaaSAllowsCanonicalPortalWithoutEnvAllowlis
 	}
 
 	csp := rr.Header().Get("Content-Security-Policy")
-	want := "frame-ancestors 'self' https://kombify.io https://app.kombify.io"
+	want := "frame-ancestors 'self' https://kombify.io https://app.kombify.io https://preview.kombify.io"
 	if csp != want {
 		t.Fatalf("expected CSP %q, got %q", want, csp)
 	}

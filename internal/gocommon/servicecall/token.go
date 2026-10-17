@@ -1,6 +1,7 @@
 package servicecall
 
 import (
+	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -63,7 +64,7 @@ func IssueBoundToken(cfg Config, target string, binding RequestBinding, requestI
 }
 
 func issueToken(cfg Config, target string, obo *OnBehalfOf, requestID string, binding *RequestBinding) (string, error) {
-	if cfg.Secret == "" {
+	if cfg.SigningKey == nil && cfg.Secret == "" {
 		return "", ErrEmptySecret
 	}
 	ttl := cfg.TokenTTL
@@ -84,6 +85,12 @@ func issueToken(cfg Config, target string, obo *OnBehalfOf, requestID string, bi
 		OnBehalfOf:     obo,
 		RequestID:      requestID,
 		RequestBinding: binding,
+	}
+	if cfg.SigningKey != nil {
+		if len(cfg.SigningKey) != ed25519.PrivateKeySize || !validKeyID(cfg.SigningKeyID) {
+			return "", ErrInvalidKeyMaterial
+		}
+		return signEd25519(claims, cfg.SigningKeyID, cfg.SigningKey)
 	}
 	return signClaims(claims, cfg.Secret)
 }

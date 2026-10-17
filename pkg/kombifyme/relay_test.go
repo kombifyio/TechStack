@@ -210,3 +210,31 @@ func TestRelayHostProofModeSendsAFreshProofAndClassifiesRefusals(t *testing.T) {
 		t.Fatalf("Authorization headers = %v, want a fresh KombifyGuard proof per connection", proofs)
 	}
 }
+
+func TestLoopbackOnlyRelayRefusesNonLoopbackTargets(t *testing.T) {
+	hit := make(chan struct{}, 1)
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hit <- struct{}{}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer target.Close()
+
+	relay, err := NewRelay(RelayConfig{
+		URL:           "wss://relay.example/ws",
+		ProofProvider: func(context.Context) (string, error) { return "proof", nil },
+		LoopbackOnly:  true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, addr := range []string{"http://10.0.0.5:9000", "http://192.168.1.10", "http://relay.example", "http://[fd00::1]:80"} {
+		if _, _, _, err := relay.forwardHTTPRequest(context.Background(), relayHTTPRequest{Method: "GET", Path: "/", TargetAddr: addr}); err == nil {
+			t.Fatalf("non-loopback target dialed: %s", addr)
+		}
+	}
+	status, _, _, err := relay.forwardHTTPRequest(context.Background(), relayHTTPRequest{Method: "GET", Path: "/", TargetAddr: target.URL})
+	if err != nil || status != http.StatusNoContent {
+		t.Fatalf("loopback target = %d, %v", status, err)
+	}
+	<-hit
+}

@@ -92,6 +92,14 @@ const (
 	stackKitStepHostDeliveryRecipient = "host_delivery_recipient"
 	stackKitStepWalletItemImport      = "wallet_item_import"
 	stackKitStepAIProviderSetup       = "ai_provider_setup"
+	// The steps of a workload relocation (JobTypeWorkloadRelocation). Each
+	// runs on one of the move's two nodes; never an operator input.
+	stackKitStepRelocatePlan    = "relocate_plan"
+	stackKitStepRelocateCheck   = "relocate_check"
+	stackKitStepRelocateDrain   = "relocate_drain"
+	stackKitStepRelocateUndrain = "relocate_undrain"
+	stackKitStepRelocateSend    = "relocate_send"
+	stackKitStepRelocateReceive = "relocate_receive"
 
 	defaultStackKitNodeWorkspace = "/opt/stackkit"
 	stackKitReadCommandTimeout   = 5 * time.Minute
@@ -191,6 +199,12 @@ func managedStackKitOperationTimeout(operation string) time.Duration {
 		// cache. Each is bounded by what is left of the shared pre-apply
 		// deadline, so a slow one cannot eat the apply allowance.
 		return managedStackKitPreApplyTimeout
+	case stackKitStepRelocatePlan, stackKitStepRelocateCheck:
+		return stackKitReadCommandTimeout
+	case stackKitStepRelocateDrain, stackKitStepRelocateUndrain:
+		return stackKitRelocationDrainTimeout
+	case stackKitStepRelocateSend, stackKitStepRelocateReceive:
+		return stackKitRelocationTransferTimeout
 	default:
 		return 0
 	}
@@ -318,6 +332,13 @@ type StackKitLifecycleRequest struct {
 	HandoffRef      string
 	HandoffRef2     string
 	HandoffDocument []byte
+	// Relocation* carry one step of a workload relocation: the Coolify
+	// projects, the secret-free plan, the source's share address and the
+	// destination's domain switches. Set by the relocation job only.
+	RelocationProjects      []string
+	RelocationPlanJSON      []byte
+	RelocationSourceAddress string
+	RelocationSetDomains    []string
 }
 
 // AdvancedIssuer is the installation's Advanced capability issuer as seen by
@@ -462,7 +483,11 @@ type StackKitLifecycleConfig struct {
 	// WalletHostDelivery seals a kombify Wallet item to a node for
 	// ai_provider. Nil fails that operation closed.
 	WalletHostDelivery WalletHostDelivery
-	releaseResolver    func() (*stackkitrelease.Release, error)
+	// RelocationTestDomainSuffixes are the domains a workload relocation may
+	// switch restored resources to; empty keeps the reserved test and lab
+	// suffixes. Production domains wait for real-host acceptance.
+	RelocationTestDomainSuffixes []string
+	releaseResolver              func() (*stackkitrelease.Release, error)
 }
 
 func NormalizeStackKitLifecycleRequest(req StackKitLifecycleRequest) (StackKitLifecycleRequest, error) {
@@ -534,8 +559,14 @@ func validateStackKitLifecycleOperation(req *StackKitLifecycleRequest) error {
 		return validateApplicationLifecycleRequest(req)
 	}
 	if req.Operation != StackKitLifecycleAIProvider && req.Operation != stackKitStepAIProviderSetup &&
-		(req.AIProviderBaseURL != "" || req.WalletItemID != "" || req.WalletItemRotate || req.AIProviderDisable) {
+		(req.AIProviderBaseURL != "" || req.AIProviderDisable || ((req.WalletItemID != "" || req.WalletItemRotate) && !isRelocationTransferStep(req.Operation))) {
 		return fmt.Errorf("AI provider inputs require ai_provider")
+	}
+	if isRelocationStep(req.Operation) {
+		return validateRelocationStepRequest(req)
+	}
+	if len(req.RelocationProjects) != 0 || len(req.RelocationPlanJSON) != 0 || req.RelocationSourceAddress != "" || len(req.RelocationSetDomains) != 0 {
+		return fmt.Errorf("relocation inputs require a relocation step")
 	}
 	switch req.Operation {
 	case StackKitLifecycleGenerate, StackKitLifecyclePlan, StackKitLifecycleVerify, StackKitLifecycleDriftDetect:
@@ -1372,6 +1403,19 @@ func stackKitLifecycleCommand(commandID string, req StackKitLifecycleRequest, re
 		}
 		return command, nil
 	}
+	if stackkitcommand.IsWorkloadRelocationOperation(operation) {
+		// The plan is public; the transfer secret stays in the node's Wallet
+		// item custody, so only the item and its tenant are named.
+		command.RelocationProjects = append([]string(nil), req.RelocationProjects...)
+		command.RelocationPlanJson = append([]byte(nil), req.RelocationPlanJSON...)
+		command.RelocationSourceAddress = req.RelocationSourceAddress
+		command.RelocationSetDomains = append([]string(nil), req.RelocationSetDomains...)
+		if operation == agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_SEND || operation == agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_RECEIVE {
+			command.WalletItemRef = req.WalletItemID
+			command.DeliveryTenantRef = stackkitcommand.DeliveryTenantRef(req.TenantID)
+		}
+		return command, nil
+	}
 	if stackkitcommand.IsBackupTargetDeliveryOperation(operation) {
 		// The node issues its own binding: no Inventory, only the sealed
 		// ciphertext (import, rebind) or the public challenge (recipient).
@@ -1505,6 +1549,18 @@ func stackKitLifecycleAgentOperation(operation string) (agentpb.StackKitOperatio
 		return agentpb.StackKitOperation_STACKKIT_OPERATION_WALLET_ITEM_IMPORT, nil
 	case stackKitStepAIProviderSetup:
 		return agentpb.StackKitOperation_STACKKIT_OPERATION_AI_PROVIDER_SETUP, nil
+	case stackKitStepRelocatePlan:
+		return agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_PLAN, nil
+	case stackKitStepRelocateCheck:
+		return agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_CHECK, nil
+	case stackKitStepRelocateDrain:
+		return agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_DRAIN, nil
+	case stackKitStepRelocateUndrain:
+		return agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_UNDRAIN, nil
+	case stackKitStepRelocateSend:
+		return agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_SEND, nil
+	case stackKitStepRelocateReceive:
+		return agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_RECEIVE, nil
 	default:
 		return agentpb.StackKitOperation_STACKKIT_OPERATION_UNSPECIFIED, fmt.Errorf("unsupported StackKits lifecycle operation %q", operation)
 	}

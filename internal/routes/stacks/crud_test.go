@@ -7,17 +7,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os/exec"
-	"path"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/kombifyio/techstack/internal/runtimeproduct/vmlease"
-	"github.com/pocketbase/pocketbase/core"
-	"github.com/pocketbase/pocketbase/tests"
 
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/controlplane"
@@ -1206,23 +1201,15 @@ func TestValidateDeploymentLaneManagedRuntimeModes(t *testing.T) {
 func TestCreateStackRejectsManagedRuntimeEntitlementBeforePersist(t *testing.T) {
 	t.Setenv("TECHSTACK_ENV", "production")
 
-	app := newOwnerSpecTestApp(t)
-	defer app.Cleanup()
-
 	body, err := json.Marshal(managedRuntimeCreateRequest("centron"))
 	if err != nil {
 		t.Fatalf("marshal request: %v", err)
-	}
-	before, err := app.FindRecordsByFilter("stacks", "owner_id = {:ownerId}", "", 100, 0, map[string]any{"ownerId": "owner-1"})
-	if err != nil {
-		t.Fatalf("list stacks before create: %v", err)
 	}
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/stacks", strings.NewReader(string(body)))
 	req = req.WithContext(identity.NewContext(req.Context(), &identity.Identity{UserID: "owner-1", OrgID: "org-1"}))
 	rec := httptest.NewRecorder()
 	event := &httpx.Event{Request: req, Response: rec}
 	h := crudRouteHandlers{
-		app:             app,
 		deploymentMode:  config.ModeSaaS,
 		runtimeFeatures: &entitlementFeatureChecker{enabled: false},
 	}
@@ -1258,13 +1245,6 @@ func TestCreateStackRejectsManagedRuntimeEntitlementBeforePersist(t *testing.T) 
 	guidance, ok := details["user_guidance"].(map[string]any)
 	if !ok || guidance["body"] == "" {
 		t.Fatalf("user_guidance = %#v, want user-facing body", details["user_guidance"])
-	}
-	stacks, err := app.FindRecordsByFilter("stacks", "owner_id = {:ownerId}", "", 100, 0, map[string]any{"ownerId": "owner-1"})
-	if err != nil {
-		t.Fatalf("list stacks: %v", err)
-	}
-	if len(stacks) != len(before) {
-		t.Fatalf("persisted stacks changed from %d to %d after entitlement rejection", len(before), len(stacks))
 	}
 }
 
@@ -1586,95 +1566,4 @@ func ownerSpecRequestEvent(stackID, token string) (*httpx.Event, *httptest.Respo
 	}
 	rec := httptest.NewRecorder()
 	return &httpx.Event{Request: req, Response: rec}, rec
-}
-
-func newOwnerSpecTestApp(t *testing.T) *tests.TestApp {
-	t.Helper()
-
-	app, err := tests.NewTestApp(pocketBaseTestDataDir(t))
-	if err != nil {
-		t.Fatalf("new test app: %v", err)
-	}
-	ensureOwnerSpecTestCollections(t, app)
-	return app
-}
-
-func ensureOwnerSpecTestCollections(t *testing.T, app core.App) {
-	t.Helper()
-
-	ensureOwnerSpecTestCollection(t, app, "stacks",
-		&core.TextField{Name: "name"},
-		&core.TextField{Name: "owner_id"},
-		&core.JSONField{Name: "user_config"},
-	)
-	ensureOwnerSpecTestCollection(t, app, "wallet",
-		&core.TextField{Name: "owner_id"},
-		&core.TextField{Name: "stack_id"},
-		&core.TextField{Name: "service_id"},
-		&core.TextField{Name: "secret", Max: 2000},
-	)
-	ensureOwnerSpecTestCollection(t, app, "activity_log",
-		&core.SelectField{Name: "action", Required: true, Values: []string{
-			ownerSpecActionTokenIssued,
-			ownerSpecActionRead,
-			ownerSpecActionDenied,
-		}},
-		&core.TextField{Name: "details", Max: 2000},
-		&core.JSONField{Name: "metadata"},
-		&core.TextField{Name: "stack_id"},
-		&core.TextField{Name: "user_id"},
-		&core.SelectField{Name: "status", Values: []string{"success", "warning", "error", "info"}},
-	)
-}
-
-func ensureOwnerSpecTestCollection(t *testing.T, app core.App, name string, fields ...core.Field) *core.Collection {
-	t.Helper()
-
-	collection, err := app.FindCollectionByNameOrId(name)
-	if err != nil {
-		collection = core.NewBaseCollection(name)
-	}
-	for _, field := range fields {
-		if collection.Fields.GetByName(field.GetName()) == nil {
-			collection.Fields.Add(field)
-		}
-	}
-	if err := app.Save(collection); err != nil {
-		t.Fatalf("save %s collection: %v", name, err)
-	}
-	return collection
-}
-
-func pocketBaseTestDataDir(t *testing.T) string {
-	t.Helper()
-
-	cmd := exec.Command("go", "env", "GOMODCACHE")
-	output, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("resolve go module cache: %v", err)
-	}
-
-	modCache := strings.TrimSpace(string(output))
-	if modCache == "" {
-		t.Fatal("resolve go module cache: empty result")
-	}
-
-	matches, err := filepath.Glob(filepath.Join(modCache, "github.com", "pocketbase", "pocketbase@*", "tests", "data"))
-	if err != nil {
-		t.Fatalf("resolve pocketbase test data: %v", err)
-	}
-	if len(matches) == 0 {
-		matches, err = filepath.Glob(filepath.Join(modCache, "github.com", "*", "pocketbase@*", "tests", "data"))
-		if err != nil {
-			t.Fatalf("resolve pocketbase test data fallback: %v", err)
-		}
-	}
-	for _, match := range matches {
-		if strings.Contains(filepath.ToSlash(match), path.Join("github.com", "pocketbase", "pocketbase@")) {
-			return match
-		}
-	}
-
-	t.Fatal("resolve pocketbase test data: no matching data directory found")
-	return ""
 }

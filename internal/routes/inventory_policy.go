@@ -56,11 +56,14 @@ var ErrInventoryAccessDenied = errors.New("inventory access denied")
 // InventoryAuthorization is the normalized subject, resource, and action sent
 // to the injected policy for both REST and MCP calls.
 type InventoryAuthorization struct {
-	TenantID     string
-	SubjectID    string
-	ResourceType string
-	ResourceID   string
-	Action       InventoryAction
+	TenantID  string
+	SubjectID string
+	// HouseholdOwnerID names the owner whose homelab a household member acts
+	// on; TenantID is that owner's personal tenant. Empty for everyone else.
+	HouseholdOwnerID string
+	ResourceType     string
+	ResourceID       string
+	Action           InventoryAction
 }
 
 // InventoryDecision carries the immutable store scope produced by the policy.
@@ -100,7 +103,7 @@ func (selfHostedInventoryPolicy) AuthorizeInventory(_ context.Context, authoriza
 	if strings.TrimSpace(authorization.TenantID) == "" || strings.TrimSpace(authorization.SubjectID) == "" {
 		return InventoryDecision{}, ErrInventoryAccessDenied
 	}
-	if inventoryEntitlementForAction(authorization.Action) == "" {
+	if inventoryEntitlementForAction(authorization.Action) == "" || authorization.HouseholdOwnerID != "" {
 		return InventoryDecision{}, ErrInventoryAccessDenied
 	}
 	readScope, err := controlplane.NewOwnerInventoryReadScope(authorization.TenantID, authorization.SubjectID)

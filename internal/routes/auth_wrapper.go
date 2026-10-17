@@ -3,8 +3,6 @@
 package routes
 
 import (
-	"github.com/pocketbase/pocketbase/core"
-
 	"github.com/kombifyio/techstack/internal/routes/auth"
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/httpx"
@@ -24,10 +22,6 @@ type AuthRouteConfig struct {
 
 // RegisterAuthRoutesWithConfig registers auth routes with runtime-only
 // dependencies such as the V2 local setup provisioner.
-func RegisterAuthRoutesWithConfig(r *httpx.Router, app core.App, mode config.DeploymentMode, edition config.Edition, cfg AuthRouteConfig) {
-	RegisterRuntimeAuthRoutesWithConfig(r, mode, edition, cfg)
-}
-
 func RegisterRuntimeAuthRoutesWithConfig(r *httpx.Router, mode config.DeploymentMode, edition config.Edition, cfg AuthRouteConfig) {
 	auth.RegisterRuntimeRoutesWithConfig(r, mode, edition, auth.RouteConfig{
 		Runtime:               cfg.Runtime,

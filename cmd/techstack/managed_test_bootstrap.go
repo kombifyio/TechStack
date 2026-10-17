@@ -135,7 +135,14 @@ func runManagedTestBootstrap(parent context.Context, args []string) error {
 		forwardDigest := os.Getenv("TECHSTACK_MANAGED_TEST_DRIFT_FORWARD_SHA256")
 		pendingDigest := os.Getenv("TECHSTACK_MANAGED_TEST_PENDING_FORWARD_SHA256")
 		executionDigest := os.Getenv("TECHSTACK_MANAGED_TEST_EXECUTION_FORWARD_SHA256")
-		if (forwardDigest != "" && pendingDigest != "") || (executionDigest != "" && (forwardDigest != "" || pendingDigest != "")) {
+		directoryDigest := os.Getenv("TECHSTACK_MANAGED_TEST_SUBJECT_DIRECTORY_FORWARD_SHA256")
+		purposes := 0
+		for _, d := range []string{forwardDigest, pendingDigest, executionDigest, directoryDigest} {
+			if d != "" {
+				purposes++
+			}
+		}
+		if purposes > 1 {
 			return fmt.Errorf("one exact managed forward purpose is required")
 		}
 		selectedDigest := forwardDigest
@@ -144,6 +151,9 @@ func runManagedTestBootstrap(parent context.Context, args []string) error {
 		}
 		if executionDigest != "" {
 			selectedDigest = executionDigest
+		}
+		if directoryDigest != "" {
+			selectedDigest = directoryDigest
 		}
 		if os.Getenv(db.EnvDatabaseMigrationMode) != "apply" ||
 			(selectedDigest == "" && os.Getenv(db.EnvAllowDBGenesis) != "true") ||
@@ -161,6 +171,9 @@ func runManagedTestBootstrap(parent context.Context, args []string) error {
 		defer owner.Close()
 		if err := db.VerifyManagedTestSession(ctx, owner.DB, *a, db.ManagedTestOwner); err != nil {
 			return err
+		}
+		if directoryDigest != "" {
+			return runManagedTestSubjectDirectoryForward(ctx, *a, owner, directoryDigest)
 		}
 		if executionDigest != "" {
 			return runManagedTestExecutionForward(ctx, *a, owner, executionDigest)

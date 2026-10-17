@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kombifyio/techstack/internal/runtimeproduct/vmlease"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/guardidentity"
-	"github.com/kombifyio/techstack/internal/runtimeproduct/vmlease"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/pairingtoken"
 	"github.com/kombifyio/techstack/pkg/workerauth"
@@ -105,11 +105,43 @@ func (g *guardHarness) register(rawToken, attempt string, key ed25519.PrivateKey
 	g.t.Helper()
 	jwk, _ := json.Marshal(guardidentity.PublicJWK(key))
 	body := `{"token":"` + rawToken + `","hostname":"node-1","os":"linux","arch":"amd64","guard_public_key":` + string(jwk) + `,"attempt_id":"` + attempt + `"}`
-	reply := g.call(g.handler.register, http.MethodPost, "/api/v1/workers/register", body, nil)
+	reply := g.registerWithProof(rawToken, body, guardProof(g.t, key, http.MethodPost, "/api/v1/workers/register", rawToken, time.Now()))
 	if reply.Code != http.StatusOK {
 		return "", "", reply
 	}
 	return reply.Data["worker_id"].(string), reply.Data["agent_token"].(string), reply
+}
+
+func (g *guardHarness) registerWithProof(rawToken, body, proof string) guardReply {
+	g.t.Helper()
+	headers := map[string]string{}
+	if proof != "" {
+		headers["DPoP"] = proof
+	}
+	return g.call(g.handler.register, http.MethodPost, "/api/v1/workers/register", body, headers)
+}
+
+// A stolen capability cannot enrol a host key its thief does not hold: the
+// registration must carry a proof from that key, bound to this capability.
+func TestGuardRegistrationRequiresProofOfHostKeyPossessionForThisCapability(t *testing.T) {
+	g := newGuardHarness(t)
+	victim, thief := newGuardKey(t), newGuardKey(t)
+	raw := g.pairing()
+	jwk, _ := json.Marshal(guardidentity.PublicJWK(victim))
+	body := `{"token":"` + raw + `","hostname":"node-1","os":"linux","arch":"amd64","guard_public_key":` + string(jwk) + `,"attempt_id":"attempt-0123456789ab"}`
+
+	for name, proof := range map[string]string{
+		"no proof":         "",
+		"other key":        guardProof(t, thief, http.MethodPost, "/api/v1/workers/register", raw, time.Now()),
+		"other capability": guardProof(t, victim, http.MethodPost, "/api/v1/workers/register", g.pairing(), time.Now()),
+	} {
+		if reply := g.registerWithProof(raw, body, proof); reply.Code != http.StatusUnauthorized {
+			t.Fatalf("%s: registration answered %d, want 401", name, reply.Code)
+		}
+	}
+	if _, _, reply := g.register(raw, "attempt-0123456789ab", victim); reply.Code != http.StatusOK {
+		t.Fatalf("the capability must stay redeemable by the key holder after refused attempts, got %d", reply.Code)
+	}
 }
 
 func (g *guardHarness) pairing() string {

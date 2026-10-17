@@ -126,6 +126,8 @@ func RegisterWorkerRoutesWithStore(r *httpx.Router, cfg WorkerRouteConfig) {
 	var bindingKeyBase []byte
 	if auth.GetEncryptor() != nil {
 		bindingKeyBase = []byte(os.Getenv(auth.EncryptionKeyEnvVar))
+	} else if err := requireBindingKey(workerauth.Strict(), false); err != nil {
+		panic("RegisterWorkerRoutesWithStore: " + err.Error())
 	} else {
 		logger.Default().Warn("guard_binding_signing_disabled",
 			"guidance", "set "+auth.EncryptionKeyEnvVar+" so each paired Guard gets its own command-binding signing key")
@@ -160,7 +162,8 @@ func RegisterWorkerRoutesWithStore(r *httpx.Router, cfg WorkerRouteConfig) {
 		bindingKeyBase:       bindingKeyBase,
 	}
 	r.GET("/api/v1/workers", h.list)
-	r.POST("/api/v1/workers/register", h.register).BindFunc(workerBodyBound(workerRegistrationMaxBodyBytes))
+	registerLimiter := newWorkerRegisterLimiter()
+	r.POST("/api/v1/workers/register", h.register).BindFunc(registerLimiter.middleware()).BindFunc(workerBodyBound(workerRegistrationMaxBodyBytes))
 	r.POST("/v1/ril/servers/connect", h.connectServer).BindFunc(workerBodyBound(workerSmallBodyLimit))
 	r.POST("/v1/ril/servers/{id}/credential/rotate", h.rotateServerCredential).BindFunc(workerBodyBound(workerSmallBodyLimit))
 	r.POST("/api/v1/workers/{id}/approve", h.approve).BindFunc(workerBodyBound(workerSmallBodyLimit))
@@ -744,6 +747,12 @@ func (h workerRouteHandlers) registerWithStore(e *httpx.Event, req workerRegistr
 			denyGuard(e, guardidentity.CodeIdentityUnavailable, "")
 			return nil
 		}
+		// The key is bound only after its holder proves possession of it for
+		// exactly this capability: a stolen capability cannot enrol a key the
+		// thief does not hold the private half of (threat model F3).
+		if !verifyGuardRegistrationProof(e, req.Token, guard, now) {
+			return nil
+		}
 		// The same capability, attempt and key repeat a redemption whose
 		// response was lost: replace the unconfirmed credential atomically.
 		if handled, err := h.repeatGuardRegistration(e, req, *guard, now); handled {
@@ -1238,4 +1247,14 @@ func requireWorkerOwner(e *httpx.Event) (string, error) {
 		return "", err
 	}
 	return ownerID, nil
+}
+
+// requireBindingKey is the strict-mode boot gate for Guard command-binding
+// signing (threat model F1): the posture that forbids the shared service
+// secret also forbids a control plane that would send unsigned bindings.
+func requireBindingKey(strict, haveKey bool) error {
+	if strict && !haveKey {
+		return errors.New(workerauth.StrictSecretEnv + " requires " + auth.EncryptionKeyEnvVar + " so Guard command bindings are signed")
+	}
+	return nil
 }

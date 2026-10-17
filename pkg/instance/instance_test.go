@@ -86,3 +86,30 @@ func fileExists(p string) bool {
 	_, err := os.Stat(p)
 	return err == nil
 }
+
+func TestPinnedIdentitySurvivesFreshDataDir(t *testing.T) {
+	const pinned = "7b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d"
+	t.Setenv(PinEnv, pinned)
+
+	first, err := NewResolver(t.TempDir()).Load()
+	if err != nil {
+		t.Fatalf("first Load: %v", err)
+	}
+	redeployed, err := NewResolver(t.TempDir()).Load()
+	if err != nil {
+		t.Fatalf("redeployed Load: %v", err)
+	}
+	if first.ID != pinned || redeployed.ID != pinned {
+		t.Fatalf("identity not preserved across fresh data dirs: %q, %q", first.ID, redeployed.ID)
+	}
+
+	dir := t.TempDir()
+	t.Setenv(PinEnv, "")
+	if _, err := NewResolver(dir).Load(); err != nil {
+		t.Fatalf("unpinned Load: %v", err)
+	}
+	t.Setenv(PinEnv, pinned)
+	if _, err := NewResolver(dir).Load(); err == nil {
+		t.Fatal("expected a data dir holding a different identity to fail closed")
+	}
+}

@@ -22,6 +22,7 @@ internal static class ClientAuthority
     internal static void Validate(ClientConfig config)
     {
 #if CLOUD_DESKTOP
+        RequireEndpoint(config.UpdateManifestUrl, DesktopEdition.UpdateManifestUrl);
         RequireOrigin(config.CloudUiUrl, CloudOrigin);
         RequireOrigin(config.CloudUrl, "https://kombify.io/", "https://app.kombify.io/");
         RequireOrigin(config.CloudDeviceUrl, "https://kombify.io/", "https://app.kombify.io/");

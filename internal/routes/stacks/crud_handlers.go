@@ -14,7 +14,6 @@ import (
 
 	"github.com/kombifyio/techstack/internal/gocommon/denial"
 	"github.com/google/uuid"
-	"github.com/pocketbase/pocketbase/core"
 
 	productnotifications "github.com/kombifyio/techstack/internal/notifications"
 	"github.com/kombifyio/techstack/internal/providercontrol"
@@ -48,7 +47,6 @@ const (
 
 type crudRouteHandlers struct {
 	authRuntime        auth.RuntimeStore
-	app                core.App
 	orch               *orchestrator.Orchestrator
 	deploymentMode     config.DeploymentMode
 	stackStore         controlplane.StackStore

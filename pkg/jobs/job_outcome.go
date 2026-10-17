@@ -140,6 +140,18 @@ func jobFailedOutcome(job *Job, reasonCode string, retryable bool, extra map[str
 // new server for the same address would request the same certificate again.
 func provisionFailureOutcome(job *Job, provisionErr *ProvisionError) outcome.Decision {
 	extra := map[string]any{"failed_step": provisionErr.Step}
+	if errors.Is(provisionErr, ErrAutoDeployAdmissionTimeout) {
+		decision := jobFailedOutcome(job, GuardHeartbeatTimeoutReason, true, extra)
+		decision.UserGuidance = &outcome.Guidance{
+			Title: "The server was created but its Guard never connected",
+			Body:  "The provider created the server, but its kombify Guard sent no authenticated heartbeat within the enrollment window, so nothing was rolled out.",
+			NextSteps: []outcome.Step{
+				{ID: "retry-rollout", Label: "Retry the rollout once the server is reachable", Kind: "retry"},
+				{ID: "decommission-server", Label: "Or decommission the server so it stops running", Kind: "handoff"},
+			},
+		}
+		return decision
+	}
 	var operationErr *typedStackKitOperationError
 	if !errors.As(provisionErr, &operationErr) || operationErr.Failure.ReasonCode == "" {
 		return jobFailedOutcome(job, "provision_failed", false, extra)

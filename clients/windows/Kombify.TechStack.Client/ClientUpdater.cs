@@ -20,7 +20,8 @@ namespace Kombify.TechStack.Client;
 // rollback recovery must finish before a runtime can use retained data.
 internal static class ClientUpdater
 {
-    private const string SetupFileName = "kombify-Techstack-Setup.exe";
+    private const string SetupFileName = DesktopEdition.InstallerFileName;
+    private static string VerifierExecutable() => Path.Combine(AppContext.BaseDirectory, DesktopEdition.VerifierFileName);
     private const string PhaseApplying = "applying";
     private const string PhaseRollingBack = "rolling-back";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
@@ -41,7 +42,7 @@ internal static class ClientUpdater
     internal static bool IsMachineInstallation()
     {
         var expected = Path.GetFullPath(Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "kombify", "techstack"))
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "kombify", DesktopEdition.InstallDirectoryName))
             .TrimEnd(Path.DirectorySeparatorChar);
         var actual = Path.GetFullPath(AppContext.BaseDirectory).TrimEnd(Path.DirectorySeparatorChar);
         return actual.Equals(expected, StringComparison.OrdinalIgnoreCase);
@@ -52,9 +53,6 @@ internal static class ClientUpdater
     internal static bool TryApplyStagedUpdate(ClientConfig config, out string? startupBlockReason)
     {
         startupBlockReason = null;
-        // The current signed descriptor and runtime verifier belong to the
-        // Local payload. Cloud needs its own edition-bound update feed first.
-        if (!DesktopEdition.IsLocal) return false;
         try
         {
             if (ResumePendingRollback(config, out startupBlockReason)) return true;
@@ -72,7 +70,7 @@ internal static class ClientUpdater
             {
                 return false;
             }
-            if (LocalRuntimePortInUse(config) || EmbeddedPostgresRunning(config))
+            if (DesktopEdition.IsLocal && (LocalRuntimePortInUse(config) || EmbeddedPostgresRunning(config)))
             {
                 Log(config, $"client update {staged.Version} is staged; the local runtime or database is still running, so it applies at the next start");
                 return false;
@@ -89,7 +87,7 @@ internal static class ClientUpdater
             var installer = Path.Combine(stageDir, SetupFileName);
             var verified = VerifyStagedPackage(UpdatesDirectory(), staged.Version, config.UpdateChannel, "update", config.UpdateMinSupportedVersion);
             VerifiedUpdateHandoff.CopyVerified(verified.PackagePath, installer, verified.PackageSha256, verified.PackageSize);
-            ReplaceDirectory(config.RuntimeDataDir, SnapshotDirectory());
+            CaptureUpdateSnapshot(config);
             var pending = new PendingUpdate
             {
                 From = current,
@@ -121,7 +119,6 @@ internal static class ClientUpdater
     // was launched and this process must exit.
     internal static bool CompletePendingUpdate(ClientConfig config, bool runtimeHealthy, Action stopRuntime)
     {
-        if (!DesktopEdition.IsLocal) return false;
         var recoveryCommitted = false;
         try
         {
@@ -171,7 +168,7 @@ internal static class ClientUpdater
     // Stages a newer signed installer through the runtime binary. Never throws.
     internal static async Task CheckAndStageAsync(ClientConfig config, string runtimeExe)
     {
-        if (!DesktopEdition.IsLocal) return;
+        runtimeExe = VerifierExecutable();
         if (!config.AutoUpdate || !IsMachineInstallation() ||
             string.IsNullOrWhiteSpace(config.UpdateManifestUrl) || !File.Exists(runtimeExe))
         {
@@ -182,7 +179,6 @@ internal static class ClientUpdater
         {
             // Installer authority always belongs to the installed binary,
             // never a user-configured runtime-executable override.
-            runtimeExe = Path.Combine(AppContext.BaseDirectory, "techstack.exe");
             var current = CurrentVersion();
             if (CaptureRollbackInstaller(current, config.UpdateChannel) is null)
             {
@@ -205,7 +201,7 @@ internal static class ClientUpdater
     private static VerifiedPackage VerifyStagedPackage(string root, string version, string channel, string purpose,
         string minimumVersion = "")
     {
-        var start = new ProcessStartInfo(Path.Combine(AppContext.BaseDirectory, "techstack.exe"))
+        var start = new ProcessStartInfo(VerifierExecutable())
         {
             UseShellExecute = false, CreateNoWindow = true,
             RedirectStandardOutput = true, RedirectStandardError = true,
@@ -278,14 +274,14 @@ internal static class ClientUpdater
         }
     }
 
-    private static VerifiedPackage ResolveSignedRollbackPackage(ClientConfig config, string root, string version)
+    internal static VerifiedPackage ResolveSignedRollbackPackage(ClientConfig config, string root, string version)
     {
         try { return VerifyStagedPackage(root, version, config.UpdateChannel, "rollback"); }
         catch (Exception ex) when (ex is IOException or InvalidDataException or System.ComponentModel.Win32Exception)
         {
             var manifest = RecoveryManifestUrl(config.UpdateManifestUrl, version)
                 ?? throw new InvalidOperationException("The update feed has no supported exact-version rollback manifest URL.");
-            var runtime = Path.Combine(AppContext.BaseDirectory, "techstack.exe");
+            var runtime = VerifierExecutable();
             if (!StagePackageAsync(config, runtime, manifest, root, version, rollback: true)
                     .GetAwaiter().GetResult())
                 throw new InvalidDataException($"No signed rollback package for exact version {version} is available.");
@@ -300,7 +296,7 @@ internal static class ClientUpdater
             throw new InvalidDataException("The rollback does not belong to this installation.");
         if (!Directory.Exists(SnapshotDirectory()))
             throw new InvalidDataException("The pre-update snapshot is missing; rollback data was not changed.");
-        if (LocalRuntimePortInUse(config) || EmbeddedPostgresRunning(config))
+        if (DesktopEdition.IsLocal && (LocalRuntimePortInUse(config) || EmbeddedPostgresRunning(config)))
             throw new InvalidOperationException("The local runtime or PostgreSQL must stop before rollback.");
         var legacy = pending.InstallerSha256.Length == 0 && pending.RollbackSha256.Length == 0 &&
                      pending.InstallerSize == 0 && pending.RollbackSize == 0;
@@ -325,8 +321,12 @@ internal static class ClientUpdater
             new InstallerHandoff(oldInstaller, recovery.PackageSha256, recovery.PackageSize, "/passive /norestart")];
     }
 
-    private static string? RecoveryManifestUrl(string feed, string version)
+    internal static string? RecoveryManifestUrl(string feed, string version)
     {
+        if (!DesktopEdition.IsLocal)
+            return feed == DesktopEdition.UpdateManifestUrl && CompareVersions(version, version) is not null
+                ? $"https://github.com/kombifyio/TechStack/releases/download/windows-cloud-v{version}/kombify-techstack-windows-cloud-beta.json"
+                : null;
         if (!Uri.TryCreate(feed, UriKind.Absolute, out var url) || url.Scheme != "https" ||
             !url.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase) ||
             url.UserInfo.Length != 0 || url.Query.Length != 0 || url.Fragment.Length != 0 ||
@@ -392,7 +392,7 @@ internal static class ClientUpdater
                 Log(config, "client update rollback waits: the previous installation has not been restored");
                 return LocalRuntimeMessages.RecoveryInstallationPending;
             }
-            if (LocalRuntimePortInUse(config) || EmbeddedPostgresRunning(config))
+            if (DesktopEdition.IsLocal && (LocalRuntimePortInUse(config) || EmbeddedPostgresRunning(config)))
             {
                 Log(config, "client update rollback waits: the local runtime or embedded PostgreSQL is still running");
                 return LocalRuntimeMessages.RecoveryDatabaseRunning;
@@ -403,7 +403,7 @@ internal static class ClientUpdater
                 Log(config, "client update rollback waits: the pre-update data snapshot is missing");
                 return LocalRuntimeMessages.RecoverySnapshotMissing;
             }
-            RestoreDirectory(snapshot, config.RuntimeDataDir);
+            RestoreUpdateSnapshot(config);
             MarkFailed(pending.To);
             File.Delete(PendingPath());
             // Recovery is committed once the data is restored and its cursor
@@ -624,20 +624,29 @@ internal static class ClientUpdater
         }
     }
 
-    private static void ReplaceDirectory(string source, string destination)
+    internal static void CaptureUpdateSnapshot(ClientConfig config)
     {
+        var source = DesktopEdition.IsLocal ? config.RuntimeDataDir : ClientConfig.StateDirectory();
+        var destination = SnapshotDirectory();
         DeleteDirectory(destination);
+        Directory.CreateDirectory(destination);
         if (Directory.Exists(source))
         {
-            CopyDirectory(source, destination);
+            CopyDirectory(source, destination, DesktopEdition.IsLocal ? null : UpdatesDirectory());
         }
     }
 
-    private static void RestoreDirectory(string snapshot, string target)
+    internal static void RestoreUpdateSnapshot(ClientConfig config) =>
+        RestoreDirectory(SnapshotDirectory(), DesktopEdition.IsLocal ? config.RuntimeDataDir : ClientConfig.StateDirectory(),
+            DesktopEdition.IsLocal ? null : UpdatesDirectory());
+
+    private static void RestoreDirectory(string snapshot, string target, string? excludedDirectory = null)
     {
         Directory.CreateDirectory(target);
         foreach (var entry in Directory.EnumerateFileSystemEntries(target))
         {
+            if (excludedDirectory is not null && Path.GetFullPath(entry).Equals(
+                    Path.GetFullPath(excludedDirectory), StringComparison.OrdinalIgnoreCase)) continue;
             if (Directory.Exists(entry))
             {
                 Directory.Delete(entry, recursive: true);
@@ -651,7 +660,7 @@ internal static class ClientUpdater
     }
 
     // Logs stay in place so a failed update remains diagnosable.
-    private static void CopyDirectory(string source, string destination)
+    private static void CopyDirectory(string source, string destination, string? excludedDirectory = null)
     {
         Directory.CreateDirectory(destination);
         foreach (var file in Directory.EnumerateFiles(source))
@@ -663,13 +672,15 @@ internal static class ClientUpdater
         }
         foreach (var directory in Directory.EnumerateDirectories(source))
         {
+            if (excludedDirectory is not null && Path.GetFullPath(directory).Equals(
+                    Path.GetFullPath(excludedDirectory), StringComparison.OrdinalIgnoreCase)) continue;
             // Extracted PostgreSQL binaries are recreated from the installed
             // bundle at start; they are not data.
             var extractedBinaries = Path.GetFileName(directory).Equals("runtime", StringComparison.OrdinalIgnoreCase) &&
                 Path.GetFileName(source).Equals("postgres", StringComparison.OrdinalIgnoreCase);
             if (!extractedBinaries && (File.GetAttributes(directory) & FileAttributes.ReparsePoint) == 0)
             {
-                CopyDirectory(directory, Path.Combine(destination, Path.GetFileName(directory)));
+                CopyDirectory(directory, Path.Combine(destination, Path.GetFileName(directory)), excludedDirectory);
             }
         }
     }

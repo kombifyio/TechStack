@@ -33,7 +33,7 @@ func (a walletHostDeliveryAdapter) Authority() (string, string, error) {
 }
 
 func (a walletHostDeliveryAdapter) DeliverItem(ctx context.Context, owner, itemID string, rotate bool, target jobs.WalletHostTarget, statement []byte, challenge string, expiresAt time.Time) (jobs.WalletHostEnvelope, error) {
-	sealed, err := a.wallet.HostDeliver(ctx, owner, itemID, rotate, target.SiteRef, target.NodeRef, statement, challenge, expiresAt)
+	sealed, err := a.wallet.HostDeliver(ctx, owner, itemID, rotate, target.SiteRef, target.NodeRef, kombifywallet.PlacementRef(target.AgentID), statement, challenge, expiresAt)
 	if err != nil {
 		return jobs.WalletHostEnvelope{}, err
 	}

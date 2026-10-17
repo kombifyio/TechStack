@@ -446,3 +446,14 @@ func agentBinaryTestCredential() string {
 func runtimeAgentBinaryTestCredential() string {
 	return "tsra.opaque." + base64.RawURLEncoding.EncodeToString(make([]byte, 32))
 }
+
+// Strict mode must not boot a control plane that cannot sign Guard command
+// bindings (threat model F1).
+func TestStrictModeRequiresBindingKey(t *testing.T) {
+	if requireBindingKey(true, false) == nil {
+		t.Fatal("strict mode without an encryption key must refuse to boot")
+	}
+	if requireBindingKey(true, true) != nil || requireBindingKey(false, false) != nil {
+		t.Fatal("strict mode with a key, or non-strict mode, must boot")
+	}
+}

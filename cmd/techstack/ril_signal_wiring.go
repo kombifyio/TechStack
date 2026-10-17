@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/kombifyio/techstack/pkg/serviceauth"
 	"net/http"
 	"os"
 	"strings"
@@ -19,8 +20,8 @@ func bootRILSignalRuntime(v2 *v2Boot, edition config.Edition, revision string, l
 	}
 	outbox := signals.NewPostgresOutbox(v2.db.DB)
 	secret := strings.TrimSpace(os.Getenv("SERVICE_AUTH_SECRET"))
-	if secret == "" {
-		log.Warn("ril_signal_publisher_disabled", "reason", "SERVICE_AUTH_SECRET missing")
+	if !serviceauth.CanSign(secret) {
+		log.Warn("ril_signal_publisher_disabled", "reason", "service auth secret or Ed25519 key missing")
 		return outbox, nil
 	}
 	gatewayURL := resolveRILSignalGatewayURL(edition, os.Getenv(rilSignalGatewayURLEnv))

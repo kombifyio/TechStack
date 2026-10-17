@@ -6,6 +6,7 @@
   import { getInfo } from "#lib/api/health.js";
   import { getInstance } from "#lib/api/instance.js";
   import { appDeployLabel, productIdentityLabel } from "#lib/config.js";
+  import NightlyBadge from "#lib/components/NightlyBadge.svelte";
   import ReloginModal from "#lib/components/ReloginModal.svelte";
   import InAppDialogHost from "#lib/components/InAppDialogHost.svelte";
   import WalletPromptHost from "#lib/kombify-wallet/components/WalletPromptHost.svelte";
@@ -380,6 +381,7 @@
 
 <InAppDialogHost />
 <WalletPromptHost />
+<NightlyBadge />
 
 <!--
   Standalone owns Companion. Inside Cloud the portal already mounts one;

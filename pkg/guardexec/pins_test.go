@@ -72,3 +72,23 @@ func TestPinnedExecutorRunsOnlyASignedBindingOnce(t *testing.T) {
 		t.Fatalf("the privileged backend ran %v; only the signed binding may reach it", backend.executed)
 	}
 }
+
+// A host that pinned no binding key cannot tell a forged binding from a real
+// one, so its privileged executor refuses to run a mutating command at all.
+func TestExecutorWithoutPinnedKeyRefusesMutation(t *testing.T) {
+	backend := &fakeBackend{}
+	self := uint32(os.Getuid())
+	client := serveTest(t, &Server{
+		Backend: backend, Replay: &memoryReplay{}, AllowPeer: func(uid uint32) bool { return uid == self },
+		Pins: func() ([]guardbinding.PinnedKey, error) { return nil, nil },
+	})
+	_, err := client.Call(context.Background(), OpStackKitExecute, admitted(t, "cmd-unpinned", nil), nil)
+	if !IsCode(err, CodeBindingMismatch) {
+		t.Fatalf("unpinned mutation err = %v", err)
+	}
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	if len(backend.executed) != 0 {
+		t.Fatalf("the privileged backend ran %v without a pinned key", backend.executed)
+	}
+}

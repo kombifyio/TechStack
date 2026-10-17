@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/kombifyio/techstack/pkg/config"
+	"github.com/kombifyio/techstack/pkg/db"
 	"github.com/kombifyio/techstack/pkg/httpx"
 )
 
@@ -36,6 +37,8 @@ type clientBootstrapResponse struct {
 	KombifyEdition       string                   `json:"kombify_edition"`
 	Version              string                   `json:"version"`
 	PublicOrigin         string                   `json:"public_origin"`
+	ReleaseChannel       string                   `json:"release_channel"`
+	StableOrigin         string                   `json:"stable_origin"`
 	ContextDevLogolinkID string                   `json:"context_dev_logolink_id"`
 	Telemetry            clientBootstrapTelemetry `json:"telemetry"`
 }
@@ -60,6 +63,8 @@ func RegisterClientBootstrapRoutes(r *httpx.Router, version string, edition conf
 			KombifyEdition:       firstNonEmptyEnv("PUBLIC_KOMBIFY_EDITION", "KOMBIFY_EDITION"),
 			Version:              version,
 			PublicOrigin:         config.PublicOriginFromEnv(),
+			ReleaseChannel:       db.ReleaseChannel(),
+			StableOrigin:         stableOriginFromEnv(),
 			ContextDevLogolinkID: firstNonEmptyEnv("PUBLIC_CONTEXT_DEV_LOGOLINK_ID", "CONTEXT_DEV_LOGOLINK_ID"),
 			Telemetry: clientBootstrapTelemetry{
 				Sentry: clientBootstrapSentry{
@@ -84,4 +89,13 @@ func firstNonEmptyEnv(keys ...string) string {
 		}
 	}
 	return ""
+}
+
+// stableOriginFromEnv is where the Nightly badge links back to; empty unless
+// the preview deployment declares it.
+func stableOriginFromEnv() string {
+	if db.ReleaseChannel() != "preview" {
+		return ""
+	}
+	return firstNonEmptyEnv("TECHSTACK_STABLE_ORIGIN")
 }

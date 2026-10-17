@@ -68,8 +68,6 @@ tags:
     description: Canonical server lifecycle, connection, and health state
   - name: Inventory
     description: Owner-scoped sanitized server and service read models for UI, API, and MCP clients
-  - name: Pre-Checks
-    description: Pre-deployment hardware and software validation
   - name: Agents
     description: Connected gRPC agent management and commands
   - name: Jobs
@@ -3240,91 +3238,6 @@ paths:
             text/plain:
               schema:
                 type: string
-  /api/v1/workers/{id}/prechecks:
-    post:
-      operationId: runPreChecks
-      tags: [Pre-Checks]
-      summary: Run pre-checks on worker
-      parameters:
-        - $ref: "#/components/parameters/resourceId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/PreCheckRequest"
-      responses:
-        "202":
-          description: Pre-checks started
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PreCheckResponse"
-    get:
-      operationId: getWorkerPreChecks
-      tags: [Pre-Checks]
-      summary: Get pre-check results for worker
-      parameters:
-        - $ref: "#/components/parameters/resourceId"
-        - $ref: "#/components/parameters/page"
-        - $ref: "#/components/parameters/perPage"
-      responses:
-        "200":
-          description: Pre-check results
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SuccessEnvelope"
-  /api/v1/prechecks/request/{id}:
-    get:
-      operationId: getPreCheckByRequest
-      tags: [Pre-Checks]
-      summary: Get pre-check results by request ID
-      parameters:
-        - $ref: "#/components/parameters/resourceId"
-      responses:
-        "200":
-          description: Pre-check results with pass/fail summary
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  request_id:
-                    type: string
-                  results:
-                    type: array
-                    items:
-                      type: object
-                  all_blocking_passed:
-                    type: boolean
-  /api/v1/prechecks/{id}/result:
-    post:
-      operationId: updatePreCheckResult
-      tags: [Pre-Checks]
-      summary: Update pre-check result (called by agent)
-      parameters:
-        - $ref: "#/components/parameters/resourceId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                status:
-                  type: string
-                message:
-                  type: string
-                details:
-                  type: object
-                error:
-                  type: string
-                duration_ms:
-                  type: integer
-      responses:
-        "200":
-          description: Result updated
   /api/v1/agents:
     get:
       operationId: listAgents
@@ -7098,6 +7011,17 @@ components:
           format: date-time
         replay:
           type: boolean
+        wallet_withdrawal:
+          type: object
+          description: >-
+            Present when a kombify Wallet is configured. For the items Techstack delivered to the server, the Wallet drops its node from their host targets and marks those it holds as needing rotation. A failure never undoes the detach; detaching again retries it.
+          required: [state, targets_removed, items_need_rotation]
+          properties:
+            state: {type: string, enum: [recorded, failed]}
+            targets_removed: {type: integer, minimum: 0}
+            items_need_rotation: {type: integer, minimum: 0}
+            reason_code: {type: string}
+            retryable: {type: boolean}
     RegistryServices:
       type: object
       required: [catalog, kit_deployments, servers, services, migration_available]
@@ -9453,67 +9377,6 @@ components:
           type: integer
         per_page:
           type: integer
-    PreCheckRequest:
-      type: object
-      required: [checks]
-      properties:
-        worker_id:
-          type: string
-        stack_id:
-          type: string
-        checks:
-          type: array
-          items:
-            type: object
-            properties:
-              type:
-                type: string
-                enum:
-                  - docker_version
-                  - gpu_available
-                  - disk_space
-                  - ram_available
-                  - port_available
-              description:
-                type: string
-              min_version:
-                type: string
-              blocking:
-                type: boolean
-        timeout_seconds:
-          type: integer
-          default: 30
-    PreCheckResponse:
-      type: object
-      properties:
-        request_id:
-          type: string
-        worker_id:
-          type: string
-        results:
-          type: array
-          items:
-            type: object
-            properties:
-              id:
-                type: string
-              worker_id:
-                type: string
-              stack_id:
-                type: string
-              check_type:
-                type: string
-              description:
-                type: string
-              blocking:
-                type: boolean
-              status:
-                type: string
-                example: pending
-              request_id:
-                type: string
-        message:
-          type: string
     ScanRequest:
       type: object
       properties:

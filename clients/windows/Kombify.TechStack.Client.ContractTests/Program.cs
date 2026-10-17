@@ -1,6 +1,20 @@
 using Kombify.TechStack.Client;
 using Kombify.Client.Shell;
 
+// The process substitute belongs only to this test executable. Shipping clients
+// retain the embedded-key Go verifier; no production trust override is added.
+if (args.FirstOrDefault() == "client-update" &&
+    Environment.GetEnvironmentVariable("KOMBIFY_TEST_UPDATE_VERIFIER_ROOT") is { } verifierRoot)
+    return RunRecoveryVerifierProcessProbe(args, verifierRoot);
+
+if (args.Contains("--cloud-updater-only", StringComparer.Ordinal))
+{
+    AssertCloudUpdateRetainsRecoveryCursor();
+    AssertCloudRecoveryReacquiresMissingCache();
+    AssertLegacyRollbackResumesWithVerifierEvidence();
+    return 0;
+}
+
 if (args.Contains("--wallet-live-probe", StringComparer.Ordinal))
 {
     if (!DesktopEdition.IsLocal) throw new InvalidOperationException("Wallet device proof belongs to the Local installer.");
@@ -31,6 +45,9 @@ Console.WriteLine("PASS device context stays inside the current product document
 await AssertCredentialRedirectRejected();
 Console.WriteLine("PASS credential requests do not follow redirects");
 #if CLOUD_DESKTOP
+AssertCloudUpdateRetainsRecoveryCursor();
+AssertCloudRecoveryReacquiresMissingCache();
+AssertLegacyRollbackResumesWithVerifierEvidence();
 await AssertConnectAccountMismatchDenied();
 Console.WriteLine("PASS Connect rejects an account mismatch before custody or request effects");
 #endif
@@ -215,8 +232,11 @@ static async Task ObserveInstallerHandoffAsync()
 static void AssertLegacyRollbackResumesWithVerifierEvidence()
 {
     var previous = Environment.GetEnvironmentVariable("TECHSTACK_CLIENT_STATE_DIR");
-    var state = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "kombify", $"techstack-client-contract-{Guid.NewGuid():N}");
+    var state = DesktopEdition.IsLocal
+        ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "kombify", $"techstack-client-contract-{Guid.NewGuid():N}")
+        : Path.Combine(new ClientStatePaths("techstack", "cloud", "beta").DefaultDirectory,
+            $"contract-recovery-{Guid.NewGuid():N}");
     var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
     try
     {
@@ -284,20 +304,134 @@ static void AssertLegacyRollbackResumesWithVerifierEvidence()
         listener.Start();
         approved = true;
         verifierReached = false;
-        if (ClientUpdater.ResumePendingRollback(config, out blocked, Resolve, Launch) || blocked is null || verifierReached || launched)
-            throw new InvalidOperationException("Legacy migration crossed the running-runtime boundary.");
-        listener.Stop();
-        if (!ClientUpdater.ResumePendingRollback(config, out blocked, Resolve, Launch) || blocked is not null || !launched)
-            throw new InvalidOperationException("Available verifier evidence did not resume legacy recovery.");
+        var resumedWithLocalPort = ClientUpdater.ResumePendingRollback(config, out blocked, Resolve, Launch);
+        if (DesktopEdition.IsLocal)
+        {
+            if (resumedWithLocalPort || blocked is null || verifierReached || launched)
+                throw new InvalidOperationException("Local recovery crossed the running-runtime boundary.");
+            listener.Stop();
+            if (!ClientUpdater.ResumePendingRollback(config, out blocked, Resolve, Launch) || blocked is not null || !launched)
+                throw new InvalidOperationException("Available verifier evidence did not resume Local recovery.");
+        }
+        else if (!resumedWithLocalPort || blocked is not null || !verifierReached || !launched)
+            throw new InvalidOperationException("A coexisting Local listener blocked Cloud recovery.");
         if (!File.ReadAllBytes(untrusted).SequenceEqual(untrustedBytes) ||
             !File.ReadAllBytes(Path.Combine(snapshot, "operator-data")).SequenceEqual(originalData) ||
             !File.ReadAllBytes(Path.Combine(config.RuntimeDataDir, "operator-data")).SequenceEqual(migratedData))
             throw new InvalidOperationException("Artifact migration changed retained data before installation recovery.");
-        Console.WriteLine("Observed legacy rollback: missing signatures retained recovery; later verifier evidence durably bound canonical packages and resumed handoff.");
+        Console.WriteLine($"Observed {DesktopEdition.Name} rollback: missing signatures retained recovery; approved packages durably bound before handoff; occupied Local endpoint=127.0.0.1:{port}; Local listener protection={DesktopEdition.IsLocal}.");
     }
     finally
     {
         listener.Stop();
+        Environment.SetEnvironmentVariable("TECHSTACK_CLIENT_STATE_DIR", previous);
+        if (Directory.Exists(state)) Directory.Delete(state, recursive: true);
+    }
+}
+
+static int RunRecoveryVerifierProcessProbe(string[] arguments, string fixtureRoot)
+{
+    string Value(string flag) => arguments[Array.IndexOf(arguments, flag) + 1];
+    var root = Path.GetFullPath(Value("--staging-dir"));
+    if (!root.StartsWith(Path.GetFullPath(fixtureRoot) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+        throw new InvalidOperationException("The verifier probe escaped its owned state.");
+    var staging = arguments.Contains("--rollback-version", StringComparer.Ordinal);
+    var version = Value(staging ? "--rollback-version" : "--verify-staged-version");
+    if (Path.GetFileName(version) != version) throw new InvalidDataException("Unsafe probe version.");
+    var package = Path.Combine(root, version, "package");
+    if (staging)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(package)!);
+        File.Copy(Path.Combine(fixtureRoot, "approved-package"), package);
+        Console.WriteLine("{\"status\":\"rollback-staged\"}");
+        return 0;
+    }
+    if (!File.Exists(package)) return 1;
+    var bytes = File.ReadAllBytes(package);
+    Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(new
+    {
+        status = "verified-rollback", version, package_path = package,
+        package_sha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)),
+        package_size = bytes.Length,
+    }));
+    return 0;
+}
+
+static void AssertCloudRecoveryReacquiresMissingCache()
+{
+    if (DesktopEdition.IsLocal) throw new InvalidOperationException("Cloud recovery proof requires the Cloud build.");
+    var previousState = Environment.GetEnvironmentVariable("TECHSTACK_CLIENT_STATE_DIR");
+    var previousProbe = Environment.GetEnvironmentVariable("KOMBIFY_TEST_UPDATE_VERIFIER_ROOT");
+    var paths = new ClientStatePaths("techstack", "cloud", "beta");
+    var state = Path.Combine(paths.DefaultDirectory, $"contract-recovery-{Guid.NewGuid():N}");
+    if (paths.ResolveDirectory(state) != state) throw new InvalidOperationException("Unsafe isolated recovery root.");
+    var helper = Path.Combine(AppContext.BaseDirectory, DesktopEdition.VerifierFileName);
+    if (File.Exists(helper)) throw new InvalidOperationException("The probe cannot replace an existing verifier.");
+    var helperCreated = false;
+    try
+    {
+        Environment.SetEnvironmentVariable("TECHSTACK_CLIENT_STATE_DIR", state);
+        Environment.SetEnvironmentVariable("KOMBIFY_TEST_UPDATE_VERIFIER_ROOT", state);
+        Directory.CreateDirectory(state);
+        var approved = System.Security.Cryptography.RandomNumberGenerator.GetBytes(64);
+        File.WriteAllBytes(Path.Combine(state, "approved-package"), approved);
+        // Renaming the compiled test apphost exercises real process selection,
+        // cache miss, acquisition and re-verification without an installer or key.
+        File.Copy(Path.Combine(AppContext.BaseDirectory, "Kombify.TechStack.Client.ContractTests.exe"), helper);
+        helperCreated = true;
+        var result = ClientUpdater.ResolveSignedRollbackPackage(new ClientConfig(),
+            Path.Combine(ClientUpdater.UpdatesDirectory(), "rollback"), "0.0.0-0");
+        if (!File.ReadAllBytes(result.PackagePath).SequenceEqual(approved) || result.PackageSize != approved.Length ||
+            !result.PackageSha256.Equals(Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(approved)),
+                StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("Cloud recovery did not reacquire and reverify its approved package.");
+        Console.WriteLine("PASS real Cloud recovery path reacquired a missing cache through the edition helper process; verifier boundary substituted, no production signature claim");
+    }
+    finally
+    {
+        Environment.SetEnvironmentVariable("TECHSTACK_CLIENT_STATE_DIR", previousState);
+        Environment.SetEnvironmentVariable("KOMBIFY_TEST_UPDATE_VERIFIER_ROOT", previousProbe);
+        if (helperCreated) File.Delete(helper);
+        if (Directory.Exists(state)) Directory.Delete(state, recursive: true);
+    }
+}
+
+static void AssertCloudUpdateRetainsRecoveryCursor()
+{
+    if (DesktopEdition.IsLocal) throw new InvalidOperationException("Cloud update proof requires the Cloud build.");
+    var previous = Environment.GetEnvironmentVariable("TECHSTACK_CLIENT_STATE_DIR");
+    var paths = new ClientStatePaths("techstack", "cloud", "beta");
+    var state = Path.Combine(paths.DefaultDirectory, $"contract-update-{Guid.NewGuid():N}");
+    if (paths.ResolveDirectory(state) != state) throw new InvalidOperationException("Unsafe isolated state root.");
+    try
+    {
+        Environment.SetEnvironmentVariable("TECHSTACK_CLIENT_STATE_DIR", state);
+        var config = new ClientConfig();
+        ClientAuthority.Validate(config);
+        try
+        {
+            ClientAuthority.Validate(config with { UpdateManifestUrl = "https://github.com/kombifyio/TechStack/releases/latest/download/kombify-techstack-windows-update.json" });
+            throw new InvalidDataException("Cloud accepted the Local update feed.");
+        }
+        catch (InvalidOperationException) { }
+        var cache = Path.Combine(state, "profiles", "offline-state.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(cache)!);
+        File.WriteAllText(cache, "pre-update-operator-state");
+        var cursor = Path.Combine(ClientUpdater.UpdatesDirectory(), "pending.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(cursor)!);
+        File.WriteAllText(cursor, "retained-recovery-cursor");
+        ClientUpdater.CaptureUpdateSnapshot(config);
+        File.WriteAllText(cache, "changed-by-new-client");
+        var newCache = Path.Combine(state, "new-client-cache.json");
+        File.WriteAllText(newCache, "new-client-state");
+        ClientUpdater.RestoreUpdateSnapshot(config);
+        if (File.ReadAllText(cache) != "pre-update-operator-state" || File.Exists(newCache) ||
+            File.ReadAllText(cursor) != "retained-recovery-cursor")
+            throw new InvalidDataException("Cloud rollback lost operator data or its durable recovery cursor.");
+        Console.WriteLine("PASS Cloud rollback restores operator cache and retains its recovery cursor; Local feed refused");
+    }
+    finally
+    {
         Environment.SetEnvironmentVariable("TECHSTACK_CLIENT_STATE_DIR", previous);
         if (Directory.Exists(state)) Directory.Delete(state, recursive: true);
     }
@@ -811,7 +945,6 @@ static async Task WindowsLocalWalletDeviceRevealBoundary(string[] arguments)
             start.Environment["TECHSTACK_LISTEN_ADDR"] = origin.Authority;
             start.Environment["TECHSTACK_GRPC_ADDR"] = "127.0.0.1:" + WalletProbePort();
             start.Environment["TECHSTACK_DATA_DIR"] = dataDirectory;
-            start.Environment["TECHSTACK_PB_DATA_DIR"] = Path.Combine(dataDirectory, "pb_data");
             start.Environment["TECHSTACK_RUNTIME_LOG_PATH"] = Path.Combine(dataDirectory, "runtime-logs.jsonl");
             start.Environment["TECHSTACK_PUBLIC_ORIGIN"] = origin.GetLeftPart(UriPartial.Authority);
             start.Environment["TECHSTACK_CORS_ORIGINS"] = origin.GetLeftPart(UriPartial.Authority);

@@ -33,6 +33,11 @@ var (
 	ErrAutoDeployAdmissionTimeout = errors.New("auto-deploy canonical Guard admission timed out")
 )
 
+// GuardHeartbeatTimeoutReason names a provision that ended because the created
+// server's Guard never sent a heartbeat. It is the job's failure reason and the
+// result marker the server projection reads.
+const GuardHeartbeatTimeoutReason = "guard_heartbeat_timeout"
+
 // JobWaitError asks the in-process queue to suspend a job without consuming an
 // attempt and resume that same job after ResumeAfter. It is deliberately
 // generic so later asynchronous dependencies can use the same honest state.

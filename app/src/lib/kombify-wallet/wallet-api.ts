@@ -33,6 +33,7 @@ import {
   type SubjectKey,
 } from "./ssh-ca.js";
 import type { ItemPolicy } from "./item-settings.js";
+import { WALLET_STEP_UP_REQUIRED } from "./step-up.js";
 
 const GATEWAY_ORIGIN = (() => {
   const configured = (
@@ -99,10 +100,21 @@ export class WalletApiError extends Error {
     readonly reason: string,
     readonly retryable: boolean,
     readonly guidance: string | null,
+    /** The freshness window of a `wallet_step_up_required` refusal. */
+    readonly stepUpMaxAgeSeconds: number | null = null,
   ) {
     super(reason);
     this.name = "WalletApiError";
   }
+}
+
+/** The Gateway wants a fresh second factor before it releases this. */
+export function isStepUpRequired(error: unknown): error is WalletApiError {
+  return (
+    error instanceof WalletApiError &&
+    error.status === 403 &&
+    error.reason === WALLET_STEP_UP_REQUIRED
+  );
 }
 
 async function readJson(response: Response): Promise<Record<string, unknown>> {
@@ -175,6 +187,9 @@ async function request(
       typeof body.reason_code === "string" ? body.reason_code : "unknown",
       body.retryable === true || response.status >= 500,
       guidanceOf(body),
+      typeof body.step_up_max_age_seconds === "number"
+        ? body.step_up_max_age_seconds
+        : null,
     );
   }
   return body;

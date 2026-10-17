@@ -1,4 +1,7 @@
 export const es: Record<string, string> = {
+  "ui.releaseChannel.badge": "Nightly",
+  "ui.releaseChannel.hint": "Estás en el canal Nightly: los cambios más recientes, sobre tus datos reales.",
+  "ui.releaseChannel.backToStable": "Volver a Stable",
   "ui.clientLocal.bootstrapPassword": "Contraseña de arranque",
   "ui.clientLocal.bootstrapGuidance":
     "Ejecuta {command} en un terminal del host de esta instalación para obtener la contraseña de arranque. Si una contraseña anterior se consumió o caducó, el comando la sustituye y la contraseña anterior deja de funcionar.",
@@ -4195,4 +4198,6 @@ export const es: Record<string, string> = {
     "Se necesita evidencia de operaciones antes de poder confirmar los Nodes conectados.",
   "ui.workerRegistrationCard.workersConnectedVerified":
     "Workers conectados (verificados)",
+  "wizard.leave.confirm":
+    "¿Salir de esta página? Las respuestas que introdujiste no están guardadas.",
 };

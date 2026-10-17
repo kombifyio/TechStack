@@ -20,7 +20,7 @@ func TestHostBaselinePreservesForeignListenerAndScopesUnknownExposure(t *testing
 	if err := EvaluateHostBaseline(inventory, []Requirement{requirement}, "deployment", now); err != nil {
 		t.Fatalf("unrelated transport or unknown exposure blocked an available binding: %v", err)
 	}
-	for _, retainedState := range []ClaimState{ClaimStateActive, ClaimStateUncertain} {
+	for _, retainedState := range []ClaimState{ClaimStateActive, ClaimStateMutating, ClaimStateUncertain} {
 		inventory.Allocations = []Allocation{
 			{Transport: TransportTCP, BindAddress: "127.0.0.1", Port: 5353, ObservedState: EvidencePresent, Desired: true, StackID: "deployment", ClaimState: retainedState},
 			{Transport: TransportTCP, BindAddress: "127.0.0.1", Port: 5353, ObservedState: EvidencePresent, Desired: true, StackID: "deployment", ClaimState: ClaimStatePending},

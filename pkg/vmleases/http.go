@@ -9,6 +9,7 @@ import (
 
 	"github.com/kombifyio/techstack/internal/gocommon/servicecall"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/vmlease"
+	"github.com/kombifyio/techstack/pkg/serviceauth"
 )
 
 const (
@@ -34,16 +35,20 @@ func NewHandler(service *Service, cfg HandlerConfig) *Handler {
 // retrieval, and executor callbacks have no HTTP entry point in this handler.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	serviceAuthSecret := strings.TrimSpace(h.cfg.ServiceAuthSecret)
-	if serviceAuthSecret == "" {
+	if !serviceauth.CanVerify(serviceAuthSecret) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "service_auth_not_configured"})
 		return
 	}
-	authCfg := servicecall.Config{
+	authCfg, err := serviceauth.Apply(servicecall.Config{
 		ServiceName:    "techstack",
 		Secret:         serviceAuthSecret,
 		SecretNext:     strings.TrimSpace(h.cfg.ServiceAuthNext),
 		AllowedCallers: []string{serviceCallerCloud},
 		Enabled:        true,
+	})
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "service_auth_not_configured"})
+		return
 	}
 	servicecall.RequireServiceAuth(authCfg)(http.HandlerFunc(h.serveAuthed)).ServeHTTP(w, r)
 }

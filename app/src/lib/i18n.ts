@@ -718,6 +718,8 @@ export const translations: Record<Locale, Record<string, string>> = {
     "wizard.server.command.join.review": "Confirm this Node",
     "wizard.server.command.join.reviewBody":
       "Choose how this device connects. Your Homelab access, people and sign-in stay as they are.",
+    "wizard.leave.confirm":
+      "Leave this page? The answers you entered are not saved.",
     "wizard.step.inherited": "Already set for your Homelab",
     "wizard.step.existingOwner": "Your Homelab owner stays the same",
     "wizard.addApp.title": "Add application",
@@ -1690,6 +1692,8 @@ export const translations: Record<Locale, Record<string, string>> = {
     "wizard.server.command.join.review": "Diesen Node bestätigen",
     "wizard.server.command.join.reviewBody":
       "Wähle, wie sich das Gerät verbindet. Zugriff, Personen und Anmeldung deines Homelabs bleiben bestehen.",
+    "wizard.leave.confirm":
+      "Diese Seite verlassen? Deine Eingaben sind nicht gespeichert.",
     "wizard.step.inherited": "Für dein Homelab bereits festgelegt",
     "wizard.step.existingOwner": "Der Owner deines Homelabs bleibt gleich",
     "wizard.addApp.title": "Anwendung hinzufügen",

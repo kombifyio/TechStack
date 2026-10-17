@@ -208,6 +208,9 @@ func (db *DB) MigrateForward(ctx context.Context, version, digest string, verify
 }
 
 func (db *DB) migrate(ctx context.Context, forward *forwardMigration) error {
+	if err := refusePreviewMigration(); err != nil {
+		return err
+	}
 	if forward != nil && os.Getenv(EnvDatabaseMigrationMode) != "apply" {
 		return fmt.Errorf("forward migration requires explicit apply mode")
 	}
@@ -277,6 +280,9 @@ func (db *DB) migrate(ctx context.Context, forward *forwardMigration) error {
 		return err
 	}
 	if forward != nil {
+		if len(forward.batch) != 0 {
+			return applyForwardBatch(ctx, lockConn, forward.batch, forward.verify)
+		}
 		if err := verifyForwardMigration(ctx, lockConn, *forward); err != nil {
 			return err
 		}

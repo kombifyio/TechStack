@@ -36,6 +36,10 @@ import (
 // have the client install its own package.
 const clientUpdateKeyID = "kombify-desktop-update-2026-v1"
 
+// The Cloud-only helper selects this at build time. Neither client exposes a
+// command-line or configuration switch that can change its installer edition.
+var clientUpdateEdition = "local"
+
 const clientUpdatePublicKeyPEM = `-----BEGIN PUBLIC KEY-----
 MCowBQYDK2VwAyEAOLkR9JyjFiPmnm11tQ1f2ghRR7tMZlxBkSJhP1MxQ2w=
 -----END PUBLIC KEY-----
@@ -127,6 +131,9 @@ func runClientUpdateMode(ctx context.Context, args []string) error {
 }
 
 func stageClientUpdate(ctx context.Context, manifestURL, channel, stagingDir, minSupported string, timeout time.Duration, httpClient *http.Client, result *clientUpdateResult) error {
+	if err := validateClientUpdateFeed(manifestURL, channel, ""); err != nil {
+		return err
+	}
 	if !strings.HasPrefix(strings.TrimSpace(manifestURL), "https://") {
 		return errors.New("--manifest-url must be an HTTPS URL")
 	}
@@ -155,6 +162,9 @@ func stageClientUpdate(ctx context.Context, manifestURL, channel, stagingDir, mi
 	if !decision.UpdateAvailable {
 		result.Status = "current"
 		return nil
+	}
+	if err := validateClientUpdatePackage(decision.Manifest); err != nil {
+		return err
 	}
 	descriptor, err := client.Download(ctx, decision.Manifest)
 	if err != nil {
@@ -190,6 +200,9 @@ func stageClientRollback(ctx context.Context, manifestURL, channel, stagingDir, 
 }
 
 func stageSignedExactClientPackage(ctx context.Context, manifestURL, channel, stagingDir, expectedVersion, status string, timeout time.Duration, httpClient *http.Client, result *clientUpdateResult) error {
+	if err := validateClientUpdateFeed(manifestURL, channel, expectedVersion); err != nil {
+		return err
+	}
 	if !strings.HasPrefix(strings.TrimSpace(manifestURL), "https://") {
 		return errors.New("--manifest-url must be an HTTPS URL")
 	}
@@ -235,6 +248,9 @@ func stageSignedExactClientPackage(ctx context.Context, manifestURL, channel, st
 	}
 	if m.Version != expectedVersion || m.Channel != strings.TrimSpace(channel) {
 		return errors.New("signed package manifest does not match the requested exact version and installed channel")
+	}
+	if err := validateClientUpdatePackage(m); err != nil {
+		return err
 	}
 	descriptor, err := client.Download(ctx, m)
 	if err != nil {
@@ -321,6 +337,9 @@ func verifyStagedClientPackage(root, expectedVersion, channel, installedVersion,
 	if m.Version != expectedVersion || m.Channel != channel {
 		return errors.New("signed package does not match the requested version and channel")
 	}
+	if err := validateClientUpdatePackage(m); err != nil {
+		return err
+	}
 	packagePath := filepath.Join(stage, "package")
 	file, err := os.Open(packagePath)
 	if err != nil {
@@ -340,5 +359,35 @@ func verifyStagedClientPackage(root, expectedVersion, channel, installedVersion,
 	result.PackagePath = packagePath
 	result.PackageSHA256 = m.PackageSHA256
 	result.PackageSize = m.PackageSize
+	return nil
+}
+
+func validateClientUpdateFeed(rawURL, channel, exactVersion string) error {
+	if clientUpdateEdition != "cloud" {
+		return nil
+	}
+	expected := "https://github.com/kombifyio/TechStack/releases/download/windows-cloud-beta/kombify-techstack-windows-cloud-beta.json"
+	if exactVersion != "" {
+		expected = "https://github.com/kombifyio/TechStack/releases/download/windows-cloud-v" + exactVersion + "/kombify-techstack-windows-cloud-beta.json"
+	}
+	if channel != "beta" || rawURL != expected {
+		return errors.New("the Cloud updater requires its installed beta feed and exact Cloud recovery release")
+	}
+	return nil
+}
+
+func validateClientUpdatePackage(m *manifest.Manifest) error {
+	prefix, installer := "v", "kombify-Techstack-Setup.exe"
+	if clientUpdateEdition == "cloud" {
+		prefix, installer = "windows-cloud-v", "kombify-Techstack-Cloud-Setup.exe"
+		if m.Channel != "beta" {
+			return errors.New("the Cloud installer is bound to the beta channel")
+		}
+	} else if clientUpdateEdition != "local" {
+		return errors.New("unsupported Windows installer edition")
+	}
+	if m.PackageURL != "https://github.com/kombifyio/TechStack/releases/download/"+prefix+m.Version+"/"+installer {
+		return errors.New("the signed installer does not belong to this product, edition and exact release")
+	}
 	return nil
 }

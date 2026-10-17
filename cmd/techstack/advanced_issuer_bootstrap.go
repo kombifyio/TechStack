@@ -106,6 +106,9 @@ func runAdvancedIssuerBootstrap(ctx context.Context) error {
 	if os.Getenv("TECHSTACK_ADVANCED_ISSUER_PREPARATION_MODE") == "verify" {
 		return verifyAdvancedIssuerRuntime(ctx)
 	}
+	if os.Getenv("TECHSTACK_ADVANCED_ISSUER_PREPARATION_MODE") == "prepare-existing-roles" {
+		return prepareExistingPurposeRoles(ctx)
+	}
 	if mode := os.Getenv("TECHSTACK_ADVANCED_ISSUER_PREPARATION_MODE"); mode != "" && mode != "prepare" {
 		return errors.New("unknown advanced issuer preparation mode")
 	}

@@ -25,14 +25,15 @@ type fakeBackupDelivery struct {
 	sealed      bool
 }
 
-func (*fakeBackupDelivery) NewChallenge() (string, error) { return "challenge-1", nil }
+func (*fakeBackupDelivery) NewChallenge() (string, error)              { return "challenge-1", nil }
+func (*fakeBackupDelivery) DeliveryAuthority() (string, string, error) { return "", "", nil }
 func (d *fakeBackupDelivery) AdmitRecipient(context.Context, string, string, string, []byte) (ManagedBackupRecipient, error) {
 	if d.substituted {
 		return ManagedBackupRecipient{}, errors.New("managed backup recipient differs from the pinned enrollment")
 	}
 	return ManagedBackupRecipient{Public: []byte("recipient-public"), Fingerprint: "sha256:" + strings.Repeat("a", 64), Generation: 1, SiteRef: "cloud", NodeRef: "cloud-main"}, nil
 }
-func (d *fakeBackupDelivery) Seal(_ context.Context, _, _ string, _ ManagedBackupRecipient, operation string) ([]byte, error) {
+func (d *fakeBackupDelivery) Seal(_ context.Context, _, _, _ string, _ ManagedBackupRecipient, operation string) ([]byte, error) {
 	d.sealedFor = append(d.sealedFor, operation)
 	d.sealed = true
 	_ = deliverySecretMarker // sealed: only ciphertext leaves the control plane

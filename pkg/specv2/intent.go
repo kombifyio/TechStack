@@ -180,6 +180,11 @@ type ServerIntent struct {
 	// Empty remains unclassified; managed provider custody supplies its own
 	// cloud evidence independently of this declaration.
 	EnvironmentClass string `json:"environment_class,omitempty"`
+	// SiteRef places a joined server on one of the kit deployment's sites
+	// (a Modern two-site target has "home" and "cloud"). Empty keeps the
+	// controller's site. It must name a site the spec already declares;
+	// Techstack never creates sites, the kit seed owns them.
+	SiteRef string `json:"site_ref,omitempty"`
 }
 
 // KitAssignment selects between founding a new kit deployment and joining an

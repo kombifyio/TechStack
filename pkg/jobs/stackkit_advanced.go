@@ -277,7 +277,7 @@ func runAdvancedStackKitLifecycle(ctx context.Context, cfg StackKitLifecycleConf
 		return nil, err
 	}
 	if request.Operation == StackKitLifecyclePublicTLSRepair {
-		return repairPublicTLS(ctx, cfg, dispatcher, jobID, request)
+		return repairPublicTLS(ctx, cfg, dispatcher, jobID, request, release)
 	}
 	steps := map[string][]string{
 		StackKitLifecycleAdvancedChangeSet: {stackKitStepChangeSetCreate, stackKitStepChangeSetApply},

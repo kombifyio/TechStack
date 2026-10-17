@@ -646,11 +646,24 @@ func (d *NativeDecommissioner) convergeCandidate(
 			return proof, terminal, terminal, err
 		}
 	}
-	if candidate.ResourceFree {
-		source, err := d.application.Get(ctx, candidate.TenantID, candidate.ProvisionOperation)
+	var source providercontrol.OperationRecord
+	if candidate.ProvisionOperation != "" {
+		var err error
+		source, err = d.application.Get(ctx, candidate.TenantID, candidate.ProvisionOperation)
 		if err != nil {
 			return jobs.ManagedLeaseDecommissionProof{}, false, false, err
 		}
+	}
+	if provisionInFlight(source) {
+		// A destroy that overlaps a provision still settling has no
+		// authoritative resources to target yet: a decommission opened now
+		// fails custody validation ("covers 1 of 0 authoritative generation
+		// resources"), terminalizes, and burns the attempt budget. Wait without
+		// opening an operation; once the provision settles, the decommission
+		// targets exactly what it bound.
+		return jobs.ManagedLeaseDecommissionProof{}, false, false, nil
+	}
+	if candidate.ResourceFree {
 		// Only a still-pending resource-free provision can be finalized by
 		// adopt-resolution. A terminal failed provision has no in-flight
 		// create to adopt; calling Resolve on it 502s the owner decommission
@@ -737,6 +750,15 @@ func positiveRevision(value int64) (uint64, bool) {
 	}
 	// #nosec G115 -- positive int64 revisions are representable by uint64.
 	return uint64(value), true
+}
+
+// provisionInFlight reports a provision that has not settled and cannot be
+// fenced by resource-free finalization. Resource-free requested/accepted
+// provisions are not in flight for this purpose: adopt-resolution fences them.
+func provisionInFlight(record providercontrol.OperationRecord) bool {
+	return record.Command.Operation == providerexecutor.OperationProvision &&
+		record.Head.Status == providerexecutor.StatusPending &&
+		!(len(record.Head.Resources) == 0 && resourceFreeProvisionCanFinalize(record))
 }
 
 func resourceFreeProvisionCanFinalize(record providercontrol.OperationRecord) bool {

@@ -29,18 +29,21 @@ import (
 )
 
 const (
-	StackKitAgentCapability         = "stackkit"
-	stackKitReleasePinEnv           = "TECHSTACK_STACKKIT_RELEASE_PIN"
-	stackKitReleaseCacheEnv         = "TECHSTACK_STACKKIT_RELEASE_CACHE"
-	stackKitCommandResultVersion    = "stackkit.command-result/v1"
-	stackKitRolloutEventVersion     = "stackkit.rollout-event/v1"
-	defaultStackKitCommandTimeout   = 30 * time.Minute
-	maxStackKitCommandOutputBytes   = 16 << 20
-	maxStackKitCommandEventBytes    = 16 << 20
-	maxStackKitCommandEventLine     = 1 << 20
-	maxStackKitCommandEventCount    = 10_000
-	maxStackKitInventoryBytes       = 2 << 20
-	stackKitOutputTruncationMessage = "\n<output truncated by Techstack agent>"
+	StackKitAgentCapability = "stackkit"
+	stackKitReleasePinEnv   = "TECHSTACK_STACKKIT_RELEASE_PIN"
+	stackKitReleaseCacheEnv = "TECHSTACK_STACKKIT_RELEASE_CACHE"
+	// defaultStackKitPersistentReleaseCache lies outside the runtime tree a
+	// replacement deletes; guardlayout writes the same path into executor.env.
+	defaultStackKitPersistentReleaseCache = "/var/lib/techstack/.stackkit/releases"
+	stackKitCommandResultVersion          = "stackkit.command-result/v1"
+	stackKitRolloutEventVersion           = "stackkit.rollout-event/v1"
+	defaultStackKitCommandTimeout         = 30 * time.Minute
+	maxStackKitCommandOutputBytes         = 16 << 20
+	maxStackKitCommandEventBytes          = 16 << 20
+	maxStackKitCommandEventLine           = 1 << 20
+	maxStackKitCommandEventCount          = 10_000
+	maxStackKitInventoryBytes             = 2 << 20
+	stackKitOutputTruncationMessage       = "\n<output truncated by Techstack agent>"
 	// stackKitAdvancedTrustBundlePath is the workspace-relative file the
 	// agent hands to `stackkit advanced trust import --bundle`; the CLI reads
 	// the bundle from a file only. It is removed after the command.
@@ -84,7 +87,7 @@ func NewStackKitExecutorFromConfig(pinPath, cacheRoot string) *StackKitExecutor 
 			pinPath = "/app/.stackkit/stackkits-release-pin.json"
 		}
 		if cacheRoot == "" {
-			cacheRoot = "/var/lib/techstack/.stackkit/releases"
+			cacheRoot = defaultStackKitPersistentReleaseCache
 		}
 	}
 	return &StackKitExecutor{
@@ -186,6 +189,10 @@ func (executor *StackKitExecutor) execute(ctx context.Context, command *agentpb.
 	if (stackkitcommand.IsBackupTargetDeliveryOperation(command.Operation) || command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_WALLET_ITEM_IMPORT) && len(command.SealedDelivery) != 0 {
 		// Ciphertext only: the pinned CLI opens it with the node's own key.
 		process.Stdin = bytes.NewReader(command.SealedDelivery)
+	}
+	if stackkitcommand.RelocationPlanOnStdin(command.Operation) {
+		// The secret-free plan from the source; argv names only "-".
+		process.Stdin = bytes.NewReader(command.RelocationPlanJson)
 	}
 	process.Env = stackKitChildEnvironment(os.Environ())
 	if command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_INIT {
@@ -752,6 +759,13 @@ func stackKitOperationArgs(command *agentpb.StackKitCommand) ([]string, error) {
 		agentpb.StackKitOperation_STACKKIT_OPERATION_WALLET_ITEM_IMPORT,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_AI_PROVIDER_SETUP:
 		return stackkitcommand.WalletItemDeliveryArgs(command)
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_PLAN,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_CHECK,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_DRAIN,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_UNDRAIN,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_SEND,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_RECEIVE:
+		return stackkitcommand.WorkloadRelocationArgs(command)
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_NETWORK_REBIND:
 		if !command.OwnerApproved {
 			return nil, fmt.Errorf("StackKit network rebind requires Owner approval")
@@ -771,6 +785,25 @@ func stackKitOperationArgs(command *agentpb.StackKitCommand) ([]string, error) {
 		args := []string{"user", "add", command.HouseholdUsername, "--email", command.HouseholdEmail}
 		if command.HouseholdDisplayName != "" {
 			args = append(args, "--display-name", command.HouseholdDisplayName)
+		}
+		for _, app := range command.HouseholdApps {
+			args = append(args, "--app", app)
+		}
+		return append(args, "--owner-approve", "--json"), nil
+	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_UPDATE_APPS:
+		if !command.OwnerApproved || strings.TrimSpace(command.HouseholdUsername) == "" {
+			return nil, fmt.Errorf("StackKit household app update requires Owner approval and a username")
+		}
+		args := []string{"user", "apps", command.HouseholdUsername}
+		switch {
+		case !command.HouseholdAppsSet:
+			args = append(args, "--all")
+		case len(command.HouseholdApps) == 0:
+			args = append(args, "--none")
+		default:
+			for _, app := range command.HouseholdApps {
+				args = append(args, "--app", app)
+			}
 		}
 		return append(args, "--owner-approve", "--json"), nil
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_REMOVE:

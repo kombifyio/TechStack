@@ -30,7 +30,8 @@ type HealthDependencies struct {
 	// DB is the control-plane Postgres connection. When set, readiness and
 	// startup probes report Postgres connectivity, schema version, and applied
 	// migration count (PocketBase retirement: Postgres is the source of truth).
-	DB *db.DB
+	DB             *db.DB
+	ExecutionScope func() map[string]string
 }
 
 // dbHealthStatus captures control-plane Postgres connectivity and schema state.
@@ -95,9 +96,15 @@ func RegisterHealthRoutesWithDeps(r *httpx.Router, version string, buildRevision
 			"time":            now, // backwards compat
 			"edition":         string(edition),
 			"deployment_mode": string(mode),
+			"release_channel": db.ReleaseChannel(),
 		}
 		if revision := normalizedBuildRevision(buildRevision); revision != "" {
 			payload["revision"] = revision
+		}
+		if deps != nil && deps.ExecutionScope != nil {
+			if scope := deps.ExecutionScope(); scope != nil {
+				payload["execution_scope"] = scope
+			}
 		}
 		// The StackKits release this image executes, read from the catalog
 		// asset the image verified at build. The StackKits release train

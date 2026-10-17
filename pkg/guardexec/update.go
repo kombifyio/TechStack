@@ -283,6 +283,19 @@ func (u *Updater) authenticate(params StageParams, artifact, digest string) (str
 		if _, ok := guardrelease.CompareVersions(params.Version, params.Version); !ok {
 			return "", deny(CodeInvalidRequest, "an unsigned release needs an explicit X.Y.Z version")
 		}
+		// Unsigned local builds still obey the downgrade guard and the floor: an
+		// unsigned artifact must not roll the host back below what it runs or
+		// what it has ever revoked.
+		if order, ok := guardrelease.CompareVersions(params.Version, u.cfg.CurrentVersion); ok && order < 0 {
+			return "", deny(CodeNotAllowed, "an unsigned release cannot be older than the running Guard %s", u.cfg.CurrentVersion)
+		}
+		floor, err := u.loadFloor()
+		if err != nil {
+			return "", err
+		}
+		if denial := floor.Admit(params.Version, digest); denial != nil {
+			return "", &Denial{Code: denial.Code, Message: denial.Message}
+		}
 		u.cfg.Log.Warn("guard_unsigned_update_admitted", "version", params.Version, "sha256", digest)
 		return params.Version, nil
 	}

@@ -287,6 +287,12 @@ func (s *Server) execute(ctx context.Context, raw json.RawMessage, out *frameWri
 		if pinErr != nil {
 			return deny(CodeUnavailable, "the executor cannot read its pinned binding keys: %v", pinErr)
 		}
+		// Without a pinned key an unsigned binding verifies, so a process
+		// that can reach the socket could forge one. Observations stay
+		// admissible; a mutation needs a pinned control-plane key.
+		if mutating && len(pins) == 0 {
+			return deny(CodeBindingMismatch, "this host pinned no binding signing key; re-pair kombify Guard before running mutating commands")
+		}
 		if denial := binding.VerifySignature(pins); denial != nil {
 			return deny(CodeBindingMismatch, "%s", denial.Message)
 		}

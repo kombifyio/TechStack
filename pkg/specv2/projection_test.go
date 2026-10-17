@@ -490,3 +490,23 @@ func TestProjectOffsiteBackupIsAnExplicitCloudKitChoice(t *testing.T) {
 		t.Fatal("a Basement Kit run accepted the Cloud Kit off-site backup choice")
 	}
 }
+
+// A Modern two-site deployment places a joined server on the site the intent
+// names; an undeclared site is refused instead of guessed.
+func TestProjectJoinPlacesServerOnTheRequestedSite(t *testing.T) {
+	intent := joinIntent()
+	intent.Server.SiteRef = "cloud"
+	projection, err := project(modernSeed(), intent, "hl-1")
+	if err != nil {
+		t.Fatalf("Project: %v", err)
+	}
+	nodes := projection.Spec["nodes"].([]any)
+	if joined := nodes[len(nodes)-1].(map[string]any); joined["siteRef"] != "cloud" {
+		t.Fatalf("joined node = %#v, want it on the cloud site", joined)
+	}
+
+	intent.Server.SiteRef = "office"
+	if _, err := project(modernSeed(), intent, "hl-1"); err == nil {
+		t.Fatal("a site the kit does not declare must be refused")
+	}
+}

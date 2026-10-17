@@ -15,7 +15,6 @@ import (
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/kombifywallet"
-	"github.com/pocketbase/pocketbase/core"
 )
 
 const v2CloudLoginPath = "/api/v2/auth/login"
@@ -45,10 +44,6 @@ type AuthModeResponse struct {
 //	    "allow_local_login": true
 //	  }
 //	}
-func getAuthMode(app core.App, mode config.DeploymentMode, edition config.Edition, owners LocalOwnerLookup) func(e *httpx.Event) error {
-	return getRuntimeAuthMode(RuntimeStore{}, mode, edition, owners)
-}
-
 func getRuntimeAuthMode(runtime RuntimeStore, mode config.DeploymentMode, edition config.Edition, owners LocalOwnerLookup) func(e *httpx.Event) error {
 	return func(e *httpx.Event) error {
 		var record *controlplane.AuthConfig

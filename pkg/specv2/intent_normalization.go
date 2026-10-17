@@ -87,6 +87,8 @@ func NormalizeCreationIntent(intent WizardIntent) (WizardIntent, []IntentAdjustm
 		})
 	}
 
+	normalized.Server.SiteRef = strings.TrimSpace(normalized.Server.SiteRef)
+
 	normalized.Access.Mode = strings.ToLower(strings.TrimSpace(normalized.Access.Mode))
 	for index := range normalized.Access.Publications {
 		normalized.Access.Publications[index].ServiceID = strings.TrimSpace(normalized.Access.Publications[index].ServiceID)

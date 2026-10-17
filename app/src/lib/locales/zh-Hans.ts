@@ -1,4 +1,7 @@
 export const zhHans: Record<string, string> = {
+  "ui.releaseChannel.badge": "Nightly",
+  "ui.releaseChannel.hint": "你正在使用 Nightly 渠道：最新的更改，使用你的真实数据。",
+  "ui.releaseChannel.backToStable": "返回 Stable",
   "ui.clientLocal.bootstrapPassword": "初始化密码",
   "ui.clientLocal.bootstrapGuidance":
     "在此安装的主机终端上运行 {command}，获取初始化密码。如果以前的密码已被使用或已过期，该命令会替换它，旧密码将不再有效。",
@@ -3744,4 +3747,5 @@ export const zhHans: Record<string, string> = {
     "在确认已连接的 Nodes 之前，需要操作证据。",
   "ui.workerRegistrationCard.workersConnectedVerified":
     "已连接的 Worker（已验证）",
+  "wizard.leave.confirm": "要离开此页面吗？你输入的答案尚未保存。",
 };

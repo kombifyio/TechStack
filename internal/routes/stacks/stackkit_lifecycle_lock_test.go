@@ -194,3 +194,33 @@ func TestStackLifecycleRefusesToOverrideAServiceLock(t *testing.T) {
 		t.Fatal("later service lock stranded original journal recovery")
 	}
 }
+
+// An apply that carries a candidate StackSpec is an Advanced change set: the
+// typed apply never reads a candidate, so the operator route must not accept
+// it and silently apply the node's old generation.
+func TestStackKitLifecycleApplyWithCandidateRunsAsAdvancedChangeSet(t *testing.T) {
+	store := controlplane.NewMemoryStore()
+	rollout := jobs.StackKitRolloutBinding{StackKit: "basement-kit", SpecPath: "stack-spec.v2.json"}
+	if _, err := store.CreateStack(t.Context(), controlplane.CreateStackRequest{ID: "apply-stack", TenantID: "tenant-1", OwnerSubjectID: "auth0|user-1", StackKitInstanceID: "home", Name: "Home", Status: "running", Config: map[string]any{jobs.StackKitRolloutBindingResultField: rollout.Map()}}); err != nil {
+		t.Fatal(err)
+	}
+	seedApprovedWorker(t, store, "worker-1", "tenant-1", "auth0|user-1", "apply-stack", "192.0.2.10")
+	orch := orchestrator.New(&orchestrator.Config{Workers: 0, StackStore: store, JobStore: store, WorkerStore: store, LeaseLister: routingTestLeaseLister{}}, nil)
+	defer orch.Stop()
+	h := crudRouteHandlers{orch: orch, stackStore: store, jobStore: store, serviceStore: store, serverStore: store}
+
+	event, recorder := stackStoreRequestEvent("auth0|user-1", "tenant-1")
+	event.Request.SetPathValue("id", "apply-stack")
+	body, _ := json.Marshal(map[string]any{"agent_id": "worker-1", "operation": "apply", "owner_approved": true, "candidate_spec": map[string]any{"apiVersion": "stackkit/v2alpha2"}})
+	event.Request.Body = io.NopCloser(bytes.NewReader(body))
+	if err := h.startStackKitLifecycle(event); err != nil {
+		t.Fatal(err)
+	}
+	var envelope struct {
+		Data stackKitLifecycleResponse `json:"data"`
+	}
+	_ = json.Unmarshal(recorder.Body.Bytes(), &envelope)
+	if recorder.Code != http.StatusAccepted || envelope.Data.Operation != jobs.StackKitLifecycleAdvancedChangeSet {
+		t.Fatalf("response = %d %s, want an accepted advanced_change_set", recorder.Code, recorder.Body.String())
+	}
+}

@@ -350,6 +350,33 @@ paths:
           $ref: "#/components/responses/RuntimeLeaseDenied"
         "503":
           $ref: "#/components/responses/RuntimeLeaseDenied"
+  /api/v1/internal/runtime/updates:
+    get:
+      operationId: getInternalRuntimeUpdates
+      tags: [RuntimeSummary]
+      summary: Read the signed caller owner's pending updates per server
+      description: >-
+        Private Cloud monitoring read. `os` projects the operating-system
+        update facts from the security evidence the server's Guard already
+        reports: `pending_security_updates`, `reboot_required` and
+        `last_unattended_run` are present only when that evidence states them;
+        otherwise `state` is `unknown` with a reason code. `services` counts
+        the services whose version was compared with a published release and
+        lists those with a newer one; a service that was not compared is
+        counted in `not_compared`, never as up to date.
+      responses:
+        "200":
+          description: Owner-scoped update facts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RuntimeUpdates"
+        "401":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+        "403":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
+        "503":
+          $ref: "#/components/responses/RuntimeLeaseDenied"
   /api/v1/internal/usage/budgets:
     get:
       operationId: getInternalUsageBudgets
@@ -716,6 +743,44 @@ components:
                       properties:
                         date: { type: string, format: date }
                         state: { type: string, enum: ["completed", "failed"] }
+    RuntimeUpdates:
+      allOf:
+        - $ref: "#/components/schemas/RuntimeMonitoringEnvelope"
+        - type: object
+          required: [servers]
+          properties:
+            servers:
+              type: array
+              items:
+                type: object
+                required: [server_id, os, services]
+                properties:
+                  server_id: { type: string }
+                  os:
+                    type: object
+                    required: [state]
+                    properties:
+                      state: { type: string, enum: ["reported", "unknown"] }
+                      reason_code: { type: string }
+                      pending_security_updates: { type: integer, minimum: 0 }
+                      reboot_required: { type: boolean }
+                      last_unattended_run: { type: string, format: date-time }
+                  services:
+                    type: object
+                    required: [compared, not_compared, available]
+                    properties:
+                      compared: { type: integer, minimum: 0 }
+                      not_compared: { type: integer, minimum: 0 }
+                      available:
+                        type: array
+                        items:
+                          type: object
+                          required: [service_id, name, latest]
+                          properties:
+                            service_id: { type: string }
+                            name: { type: string }
+                            current: { type: string }
+                            latest: { type: string }
     UsageBudgets:
       type: object
       required: [budgets]

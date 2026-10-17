@@ -4,7 +4,7 @@ import {
   parseApiErrorResponse,
   resolveGatewayUrl,
 } from "./client";
-import { walletPrompt } from "../kombify-wallet/denials.svelte";
+import { walletPrompt } from "#lib/kombify-wallet/denials.svelte.js";
 
 function requestPath(input: unknown): string {
   const raw = input instanceof Request ? input.url : String(input);

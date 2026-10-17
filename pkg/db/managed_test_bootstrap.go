@@ -346,6 +346,11 @@ func VerifyManagedTestExecutionForwardSession(ctx context.Context, database *sql
 	return verifyManagedTestSession(ctx, database, a, ManagedTestApp, "execution-reclaim")
 }
 
+// Only all absent 156 routines and its absent ledger admit this prospective purpose.
+func VerifyManagedTestSubjectDirectoryForwardSession(ctx context.Context, database *sql.DB, a ManagedTestAssignment) error {
+	return verifyManagedTestSession(ctx, database, a, ManagedTestApp, "subject-directory")
+}
+
 func verifyManagedTestSession(ctx context.Context, database *sql.DB, a ManagedTestAssignment, role string, pendingForward string) error {
 	if err := a.Validate(); err != nil {
 		return err
@@ -383,6 +388,8 @@ func verifyManagedTestSession(ctx context.Context, database *sql.DB, a ManagedTe
 				version, list, compact = "154_pending_job_directory_authority.sql", ManagedTestPendingJobListFunction, ManagedTestPendingJobCompactFunction
 			} else if pendingForward == "execution-reclaim" {
 				version, list, compact = "155_job_execution_reclaim_authority.sql", ManagedTestExecutionReclaimListFunction, ManagedTestExecutionReclaimCompactFunction
+			} else if pendingForward == "subject-directory" {
+				version, list, compact = "156_subject_directory.sql", ManagedTestSubjectDirectoryLookupFunction, ManagedTestSubjectDirectoryForgetFunction
 			} else if pendingForward != "drift" {
 				return fmt.Errorf("unknown managed forward purpose")
 			}

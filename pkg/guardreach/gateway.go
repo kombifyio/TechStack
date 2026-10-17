@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/kombifyio/techstack/internal/gocommon/servicecall"
+	"github.com/kombifyio/techstack/pkg/serviceauth"
 )
 
 const (
@@ -39,8 +40,9 @@ const (
 )
 
 // Gateway is the Connect registration client of the Techstack control plane.
-// Every call carries its own HS256 service token (caller techstack, audience
-// kombify-gateway) signed with the Techstack-only Connect secret, never the
+// Every call carries its own service token (caller techstack, audience
+// kombify-gateway): EdDSA under the process Ed25519 service key when one is
+// configured, otherwise HS256 with the Techstack-only Connect secret, never the
 // shared service-auth secret: the exact scope of the operation, the owner as
 // on_behalf_of, a lifetime under 60 seconds, a random one-use jti and a
 // request_binding over the exact method, request target and body bytes sent.
@@ -70,8 +72,8 @@ func NewGateway(cfg GatewayConfig) (*Gateway, error) {
 		return nil, errors.New("guardreach: Gateway URL must use HTTPS outside localhost")
 	}
 	secret := strings.TrimSpace(cfg.Secret)
-	if secret == "" {
-		return nil, errors.New("guardreach: the dedicated Gateway Connect service secret is required for Connect registration")
+	if secret == "" && !serviceauth.CanSign("") {
+		return nil, errors.New("guardreach: the dedicated Gateway Connect service secret or the Ed25519 service key is required for Connect registration")
 	}
 	httpClient := cfg.HTTPClient
 	if httpClient == nil {
@@ -107,6 +109,12 @@ func (g *Gateway) mintToken(scope string, obo *servicecall.OnBehalfOf, binding s
 	})
 	if err != nil {
 		return "", err
+	}
+	if token, ok, err := serviceauth.SignEdDSA(payload); err != nil || ok {
+		return token, err
+	}
+	if g.secret == "" {
+		return "", errors.New("guardreach: no Gateway Connect signing credential")
 	}
 	enc := base64.RawURLEncoding
 	signingInput := enc.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`)) + "." + enc.EncodeToString(payload)

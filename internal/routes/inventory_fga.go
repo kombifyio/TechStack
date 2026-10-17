@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/kombifyio/techstack/pkg/controlplane"
+	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/middleware"
 )
 
@@ -41,6 +42,10 @@ func (p fgaInventoryPolicy) AuthorizeInventory(ctx context.Context, authorizatio
 	if strings.TrimSpace(authorization.TenantID) == "" || strings.TrimSpace(authorization.SubjectID) == "" {
 		return InventoryDecision{}, ErrInventoryAccessDenied
 	}
+	household := strings.TrimSpace(authorization.HouseholdOwnerID)
+	if household != "" && !householdActionAllowed(authorization, household) {
+		return InventoryDecision{}, ErrInventoryAccessDenied
+	}
 	relation := inventoryFGARelationForAuthorization(authorization)
 	object, err := inventoryFGAObject(authorization)
 	if relation == "" || err != nil {
@@ -63,6 +68,15 @@ func (p fgaInventoryPolicy) AuthorizeInventory(ctx context.Context, authorizatio
 	}
 	if !allowed {
 		return InventoryDecision{}, ErrInventoryAccessDenied
+	}
+	if household != "" {
+		// FGA confirmed the member's grant on the owner's objects; the rows
+		// stay predicate-bound to that one owner.
+		readScope, err := controlplane.NewOwnerInventoryReadScope(authorization.TenantID, household)
+		if err != nil || !readScope.AuthorizesTarget(authorization.ResourceType, authorization.ResourceID) {
+			return InventoryDecision{}, ErrInventoryAccessDenied
+		}
+		return InventoryDecision{ReadScope: readScope}, nil
 	}
 	readScope, err := inventoryReadScopeForAuthorization(authorization)
 	if err != nil {
@@ -204,4 +218,51 @@ func inventoryFGATenantSegment(tenantID string) string {
 		return tenantID
 	}
 	return "b64_" + base64.RawURLEncoding.EncodeToString([]byte(tenantID))
+}
+
+// householdOwnerHeader names the owner whose homelab a household member
+// views or operates. It is a selector only: access still requires the FGA
+// grant Administration projects for the member on that owner's objects.
+const householdOwnerHeader = "X-Kombify-Household-Owner"
+
+func householdOwnerFromEvent(e *httpx.Event) string {
+	if e == nil || e.Request == nil {
+		return ""
+	}
+	return strings.TrimSpace(e.Request.Header.Get(householdOwnerHeader))
+}
+
+func validHouseholdOwnerSubject(subject string) bool {
+	if subject == "" || len(subject) > 255 {
+		return false
+	}
+	for _, r := range subject {
+		if r <= ' ' || r == 0x7f || r == '#' {
+			return false
+		}
+	}
+	return true
+}
+
+// householdOwnerTenantID is the owner's personal tenant (the Gateway "usr:"
+// namespace), the same id the owner's own requests resolve to.
+func householdOwnerTenantID(ownerSubject string) string {
+	return "usr:" + strings.TrimSpace(ownerSubject)
+}
+
+// householdActionAllowed limits delegation to seeing the owner's servers and
+// operating one named server; provisioning, writes, admin and RIL stay
+// owner-only, and the tenant must be exactly the named owner's personal one.
+func householdActionAllowed(authorization InventoryAuthorization, household string) bool {
+	if strings.TrimSpace(authorization.TenantID) != householdOwnerTenantID(household) {
+		return false
+	}
+	switch authorization.Action {
+	case InventoryActionRead:
+		return strings.TrimSpace(authorization.ResourceType) != controlplane.InventoryReadTargetTools
+	case InventoryActionOperate:
+		return strings.TrimSpace(authorization.ResourceType) == controlplane.InventoryReadTargetServer
+	default:
+		return false
+	}
 }

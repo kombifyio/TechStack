@@ -5,6 +5,16 @@
 // dictionary by i18n.ts for every locale.
 export const walletMessages = {
   en: {
+    "kwallet.denied.step_up_required":
+      "A fresh second factor is needed. Confirm it and try again.",
+    "kwallet.step_up.body":
+      "Revealing a value or signing a certificate needs your second factor. Confirm it to continue.",
+    "kwallet.step_up.body_minutes":
+      "Revealing a value or signing a certificate needs your second factor from the last {minutes} minutes. Confirm it to continue.",
+    "kwallet.step_up.confirm": "Confirm with second factor",
+    "kwallet.step_up.unavailable":
+      "Confirming a second factor is not possible in this window. Open Techstack in its own browser tab and try again.",
+    "kwallet.step_up.working": "Opening sign-in…",
     "kwallet.action.delete": "Delete",
     "kwallet.action.delete_named": "Delete {name}",
     "kwallet.action.new_version": "New version",
@@ -64,7 +74,8 @@ export const walletMessages = {
     "kwallet.detail.item": "Item",
     "kwallet.detail.use": "Use",
     "kwallet.detail.history": "History",
-    "kwallet.detail.item_missing": "This item is not in your Wallet. It may have been deleted, or it belongs to another account.",
+    "kwallet.detail.item_missing":
+      "This item is not in your Wallet. It may have been deleted, or it belongs to another account.",
     "kwallet.fact.version": "Version",
     "kwallet.fact.use_targets": "Use targets",
     "kwallet.fact.none": "None",
@@ -74,9 +85,11 @@ export const walletMessages = {
     "kwallet.tag.rotate": "Rotate",
     "kwallet.tag.no_policy": "No sign policy",
     "kwallet.preset.access": "Access: logins and server access",
-    "kwallet.preset.access_hint": "Logins, server access and SSH certificate authorities: what lets people and Techstack into your stacks' servers and apps.",
+    "kwallet.preset.access_hint":
+      "Logins, server access and SSH certificate authorities: what lets people and Techstack into your stacks' servers and apps.",
     "kwallet.preset.recovery": "Recovery: secrets and configurations",
-    "kwallet.preset.recovery_hint": "Secrets and configurations: where recovery material and break-glass credentials belong.",
+    "kwallet.preset.recovery_hint":
+      "Secrets and configurations: where recovery material and break-glass credentials belong.",
     "kwallet.col.scope": "Scope",
     "kwallet.col.state": "State",
     "kwallet.col.techstack": "Techstack",
@@ -473,6 +486,16 @@ export const walletMessages = {
     "kwallet.working": "Working…",
   },
   de: {
+    "kwallet.denied.step_up_required":
+      "Ein frischer zweiter Faktor ist nötig. Bestätige ihn und versuche es erneut.",
+    "kwallet.step_up.body":
+      "Zum Anzeigen eines Werts oder Signieren eines Zertifikats brauchst du deinen zweiten Faktor. Bestätige ihn, um fortzufahren.",
+    "kwallet.step_up.body_minutes":
+      "Zum Anzeigen eines Werts oder Signieren eines Zertifikats brauchst du deinen zweiten Faktor aus den letzten {minutes} Minuten. Bestätige ihn, um fortzufahren.",
+    "kwallet.step_up.confirm": "Mit zweitem Faktor bestätigen",
+    "kwallet.step_up.unavailable":
+      "In diesem Fenster lässt sich kein zweiter Faktor bestätigen. Öffne Techstack in einem eigenen Browser-Tab und versuche es erneut.",
+    "kwallet.step_up.working": "Anmeldung wird geöffnet…",
     "kwallet.action.delete": "Löschen",
     "kwallet.action.delete_named": "{name} löschen",
     "kwallet.action.new_version": "Neue Version",
@@ -532,7 +555,8 @@ export const walletMessages = {
     "kwallet.detail.item": "Eintrag",
     "kwallet.detail.use": "Nutzung",
     "kwallet.detail.history": "Verlauf",
-    "kwallet.detail.item_missing": "Dieser Eintrag ist nicht in deiner Wallet. Er wurde vielleicht gelöscht oder gehört zu einem anderen Konto.",
+    "kwallet.detail.item_missing":
+      "Dieser Eintrag ist nicht in deiner Wallet. Er wurde vielleicht gelöscht oder gehört zu einem anderen Konto.",
     "kwallet.fact.version": "Version",
     "kwallet.fact.use_targets": "Einsatzziele",
     "kwallet.fact.none": "Keine",
@@ -542,9 +566,12 @@ export const walletMessages = {
     "kwallet.tag.rotate": "Erneuern",
     "kwallet.tag.no_policy": "Keine Signierregel",
     "kwallet.preset.access": "Zugang: Logins und Serverzugänge",
-    "kwallet.preset.access_hint": "Logins, Serverzugänge und SSH-Zertifizierungsstellen: alles, womit Menschen und Techstack auf die Server und Apps deiner Stacks kommen.",
-    "kwallet.preset.recovery": "Wiederherstellung: Geheimnisse und Konfigurationen",
-    "kwallet.preset.recovery_hint": "Geheimnisse und Konfigurationen: der Ort für Wiederherstellungsmaterial und Notfallzugänge.",
+    "kwallet.preset.access_hint":
+      "Logins, Serverzugänge und SSH-Zertifizierungsstellen: alles, womit Menschen und Techstack auf die Server und Apps deiner Stacks kommen.",
+    "kwallet.preset.recovery":
+      "Wiederherstellung: Geheimnisse und Konfigurationen",
+    "kwallet.preset.recovery_hint":
+      "Geheimnisse und Konfigurationen: der Ort für Wiederherstellungsmaterial und Notfallzugänge.",
     "kwallet.col.scope": "Geltungsbereich",
     "kwallet.col.state": "Status",
     "kwallet.col.techstack": "Techstack",
@@ -959,6 +986,16 @@ export const walletMessages = {
     "kwallet.working": "Wird ausgeführt …",
   },
   es: {
+    "kwallet.denied.step_up_required":
+      "Se necesita un segundo factor reciente. Confírmalo e inténtalo de nuevo.",
+    "kwallet.step_up.body":
+      "Mostrar un valor o firmar un certificado requiere tu segundo factor. Confírmalo para continuar.",
+    "kwallet.step_up.body_minutes":
+      "Mostrar un valor o firmar un certificado requiere tu segundo factor de los últimos {minutes} minutos. Confírmalo para continuar.",
+    "kwallet.step_up.confirm": "Confirmar con el segundo factor",
+    "kwallet.step_up.unavailable":
+      "No se puede confirmar un segundo factor en esta ventana. Abre Techstack en su propia pestaña e inténtalo de nuevo.",
+    "kwallet.step_up.working": "Abriendo el inicio de sesión…",
     "kwallet.action.delete": "Eliminar",
     "kwallet.action.delete_named": "Eliminar {name}",
     "kwallet.action.new_version": "Nueva versión",
@@ -1018,7 +1055,8 @@ export const walletMessages = {
     "kwallet.detail.item": "Elemento",
     "kwallet.detail.use": "Uso",
     "kwallet.detail.history": "Historial",
-    "kwallet.detail.item_missing": "Este elemento no está en tu Wallet. Puede que se haya eliminado o que pertenezca a otra cuenta.",
+    "kwallet.detail.item_missing":
+      "Este elemento no está en tu Wallet. Puede que se haya eliminado o que pertenezca a otra cuenta.",
     "kwallet.fact.version": "Versión",
     "kwallet.fact.use_targets": "Destinos de uso",
     "kwallet.fact.none": "Ninguno",
@@ -1028,9 +1066,11 @@ export const walletMessages = {
     "kwallet.tag.rotate": "Rotar",
     "kwallet.tag.no_policy": "Sin política de firma",
     "kwallet.preset.access": "Acceso: inicios de sesión y acceso a servidores",
-    "kwallet.preset.access_hint": "Inicios de sesión, acceso a servidores y autoridades de certificación SSH: lo que permite a las personas y a Techstack entrar en los servidores y apps de tus stacks.",
+    "kwallet.preset.access_hint":
+      "Inicios de sesión, acceso a servidores y autoridades de certificación SSH: lo que permite a las personas y a Techstack entrar en los servidores y apps de tus stacks.",
     "kwallet.preset.recovery": "Recuperación: secretos y configuraciones",
-    "kwallet.preset.recovery_hint": "Secretos y configuraciones: el lugar para el material de recuperación y las credenciales de emergencia.",
+    "kwallet.preset.recovery_hint":
+      "Secretos y configuraciones: el lugar para el material de recuperación y las credenciales de emergencia.",
     "kwallet.col.scope": "Ámbito",
     "kwallet.col.state": "Estado",
     "kwallet.col.techstack": "Techstack",
@@ -1434,6 +1474,15 @@ export const walletMessages = {
     "kwallet.working": "Procesando…",
   },
   "zh-Hans": {
+    "kwallet.denied.step_up_required": "需要新的第二重验证。请确认后重试。",
+    "kwallet.step_up.body":
+      "查看值或签发证书需要你的第二重验证。请确认后继续。",
+    "kwallet.step_up.body_minutes":
+      "查看值或签发证书需要你在最近 {minutes} 分钟内完成的第二重验证。请确认后继续。",
+    "kwallet.step_up.confirm": "使用第二重验证确认",
+    "kwallet.step_up.unavailable":
+      "无法在此窗口中确认第二重验证。请在单独的浏览器标签页中打开 Techstack 后重试。",
+    "kwallet.step_up.working": "正在打开登录…",
     "kwallet.action.delete": "删除",
     "kwallet.action.delete_named": "删除 {name}",
     "kwallet.action.new_version": "新版本",
@@ -1492,7 +1541,8 @@ export const walletMessages = {
     "kwallet.detail.item": "条目",
     "kwallet.detail.use": "使用",
     "kwallet.detail.history": "历史",
-    "kwallet.detail.item_missing": "此条目不在你的 Wallet 中。它可能已被删除，或属于另一个账户。",
+    "kwallet.detail.item_missing":
+      "此条目不在你的 Wallet 中。它可能已被删除，或属于另一个账户。",
     "kwallet.fact.version": "版本",
     "kwallet.fact.use_targets": "使用目标",
     "kwallet.fact.none": "无",
@@ -1502,9 +1552,11 @@ export const walletMessages = {
     "kwallet.tag.rotate": "需轮换",
     "kwallet.tag.no_policy": "无签名策略",
     "kwallet.preset.access": "访问：登录和服务器访问",
-    "kwallet.preset.access_hint": "登录、服务器访问和 SSH 证书颁发机构：让人员和 Techstack 进入你的堆栈服务器和应用的凭据。",
+    "kwallet.preset.access_hint":
+      "登录、服务器访问和 SSH 证书颁发机构：让人员和 Techstack 进入你的堆栈服务器和应用的凭据。",
     "kwallet.preset.recovery": "恢复：机密和配置",
-    "kwallet.preset.recovery_hint": "机密和配置：存放恢复材料和紧急访问凭据的地方。",
+    "kwallet.preset.recovery_hint":
+      "机密和配置：存放恢复材料和紧急访问凭据的地方。",
     "kwallet.col.scope": "范围",
     "kwallet.col.state": "状态",
     "kwallet.col.techstack": "Techstack",
@@ -1874,6 +1926,16 @@ export const walletMessages = {
     "kwallet.working": "处理中…",
   },
   hi: {
+    "kwallet.denied.step_up_required":
+      "ताज़ा दूसरे फ़ैक्टर की ज़रूरत है। उसे पुष्ट करें और दोबारा कोशिश करें।",
+    "kwallet.step_up.body":
+      "किसी मान को दिखाने या प्रमाणपत्र पर हस्ताक्षर करने के लिए आपके दूसरे फ़ैक्टर की ज़रूरत है। जारी रखने के लिए उसे पुष्ट करें।",
+    "kwallet.step_up.body_minutes":
+      "किसी मान को दिखाने या प्रमाणपत्र पर हस्ताक्षर करने के लिए पिछले {minutes} मिनट के भीतर का आपका दूसरा फ़ैक्टर चाहिए। जारी रखने के लिए उसे पुष्ट करें।",
+    "kwallet.step_up.confirm": "दूसरे फ़ैक्टर से पुष्टि करें",
+    "kwallet.step_up.unavailable":
+      "इस विंडो में दूसरे फ़ैक्टर की पुष्टि संभव नहीं है। Techstack को अपने ब्राउज़र टैब में खोलकर दोबारा कोशिश करें।",
+    "kwallet.step_up.working": "साइन-इन खुल रहा है…",
     "kwallet.action.delete": "हटाएँ",
     "kwallet.action.delete_named": "{name} हटाएँ",
     "kwallet.action.new_version": "नया संस्करण",
@@ -1933,7 +1995,8 @@ export const walletMessages = {
     "kwallet.detail.item": "आइटम",
     "kwallet.detail.use": "उपयोग",
     "kwallet.detail.history": "इतिहास",
-    "kwallet.detail.item_missing": "यह आइटम आपके Wallet में नहीं है। हो सकता है इसे हटा दिया गया हो या यह किसी दूसरे खाते का हो।",
+    "kwallet.detail.item_missing":
+      "यह आइटम आपके Wallet में नहीं है। हो सकता है इसे हटा दिया गया हो या यह किसी दूसरे खाते का हो।",
     "kwallet.fact.version": "संस्करण",
     "kwallet.fact.use_targets": "उपयोग लक्ष्य",
     "kwallet.fact.none": "कोई नहीं",
@@ -1943,9 +2006,11 @@ export const walletMessages = {
     "kwallet.tag.rotate": "बदलें",
     "kwallet.tag.no_policy": "कोई साइन नीति नहीं",
     "kwallet.preset.access": "पहुँच: लॉगिन और सर्वर पहुँच",
-    "kwallet.preset.access_hint": "लॉगिन, सर्वर पहुँच और SSH प्रमाणपत्र प्राधिकरण: जिनसे लोग और Techstack आपके स्टैक के सर्वर और ऐप तक पहुँचते हैं।",
+    "kwallet.preset.access_hint":
+      "लॉगिन, सर्वर पहुँच और SSH प्रमाणपत्र प्राधिकरण: जिनसे लोग और Techstack आपके स्टैक के सर्वर और ऐप तक पहुँचते हैं।",
     "kwallet.preset.recovery": "पुनर्प्राप्ति: सीक्रेट और कॉन्फ़िगरेशन",
-    "kwallet.preset.recovery_hint": "सीक्रेट और कॉन्फ़िगरेशन: पुनर्प्राप्ति सामग्री और आपातकालीन पहुँच के क्रेडेंशियल के लिए जगह।",
+    "kwallet.preset.recovery_hint":
+      "सीक्रेट और कॉन्फ़िगरेशन: पुनर्प्राप्ति सामग्री और आपातकालीन पहुँच के क्रेडेंशियल के लिए जगह।",
     "kwallet.col.scope": "दायरा",
     "kwallet.col.state": "स्थिति",
     "kwallet.col.techstack": "Techstack",
@@ -2348,6 +2413,16 @@ export const walletMessages = {
     "kwallet.working": "प्रक्रिया जारी है…",
   },
   ar: {
+    "kwallet.denied.step_up_required":
+      "يلزم عامل تحقق ثانٍ حديث. أكّده وحاول مرة أخرى.",
+    "kwallet.step_up.body":
+      "يتطلب إظهار قيمة أو توقيع شهادة عامل التحقق الثاني. أكّده للمتابعة.",
+    "kwallet.step_up.body_minutes":
+      "يتطلب إظهار قيمة أو توقيع شهادة عامل التحقق الثاني خلال آخر {minutes} دقيقة. أكّده للمتابعة.",
+    "kwallet.step_up.confirm": "التأكيد بعامل التحقق الثاني",
+    "kwallet.step_up.unavailable":
+      "لا يمكن تأكيد عامل التحقق الثاني في هذه النافذة. افتح Techstack في تبويب متصفح مستقل وحاول مرة أخرى.",
+    "kwallet.step_up.working": "جارٍ فتح تسجيل الدخول…",
     "kwallet.action.delete": "حذف",
     "kwallet.action.delete_named": "حذف {name}",
     "kwallet.action.new_version": "إصدار جديد",
@@ -2407,7 +2482,8 @@ export const walletMessages = {
     "kwallet.detail.item": "العنصر",
     "kwallet.detail.use": "الاستخدام",
     "kwallet.detail.history": "السجل",
-    "kwallet.detail.item_missing": "هذا العنصر ليس في Wallet الخاصة بك. ربما حُذف أو يخص حسابًا آخر.",
+    "kwallet.detail.item_missing":
+      "هذا العنصر ليس في Wallet الخاصة بك. ربما حُذف أو يخص حسابًا آخر.",
     "kwallet.fact.version": "الإصدار",
     "kwallet.fact.use_targets": "أهداف الاستخدام",
     "kwallet.fact.none": "لا شيء",
@@ -2417,9 +2493,11 @@ export const walletMessages = {
     "kwallet.tag.rotate": "يحتاج تدويرًا",
     "kwallet.tag.no_policy": "لا توجد سياسة توقيع",
     "kwallet.preset.access": "الوصول: بيانات الدخول والوصول إلى الخوادم",
-    "kwallet.preset.access_hint": "بيانات الدخول والوصول إلى الخوادم وجهات إصدار شهادات SSH: ما يتيح للأشخاص ولـ Techstack الدخول إلى خوادم وتطبيقات حزمك.",
+    "kwallet.preset.access_hint":
+      "بيانات الدخول والوصول إلى الخوادم وجهات إصدار شهادات SSH: ما يتيح للأشخاص ولـ Techstack الدخول إلى خوادم وتطبيقات حزمك.",
     "kwallet.preset.recovery": "الاسترداد: الأسرار والإعدادات",
-    "kwallet.preset.recovery_hint": "الأسرار والإعدادات: مكان مواد الاسترداد وبيانات اعتماد الطوارئ.",
+    "kwallet.preset.recovery_hint":
+      "الأسرار والإعدادات: مكان مواد الاسترداد وبيانات اعتماد الطوارئ.",
     "kwallet.col.scope": "النطاق",
     "kwallet.col.state": "الحالة",
     "kwallet.col.techstack": "Techstack",

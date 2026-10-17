@@ -383,8 +383,13 @@ func TestValidateCORSOriginsClearsProductionWildcardButKeepsFrameOrigins(t *test
 
 func TestInferredSaaSFrameOriginsByHost(t *testing.T) {
 	got := InferredSaaSFrameOrigins("techstack.kombify.io:443", ModeSaaS)
-	if len(got) != 2 || got[0] != "https://kombify.io" || got[1] != "https://app.kombify.io" {
-		t.Fatalf("InferredSaaSFrameOrigins(io) = %#v", got)
+	for _, want := range []string{"https://kombify.io", "https://app.kombify.io", "https://preview.kombify.io"} {
+		if !containsString(got, want) {
+			t.Fatalf("InferredSaaSFrameOrigins(io) = %#v, missing %q", got, want)
+		}
+	}
+	if containsString(got, "https://kombify.dev") {
+		t.Fatalf("InferredSaaSFrameOrigins(io) = %#v, admits a dev portal", got)
 	}
 
 	got = InferredSaaSFrameOrigins("techstack.kombify.dev", ModeSaaS)

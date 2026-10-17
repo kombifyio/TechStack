@@ -41,7 +41,11 @@ const ManagedTestPendingJobCompactFunction = "techstack_compact_pending_job_tena
 const ManagedTestExecutionReclaimListFunction = "techstack_list_job_execution_reclaim_tenants(text,timestamp with time zone,integer)"
 const ManagedTestExecutionReclaimCompactFunction = "techstack_compact_job_execution_reclaim_tenant(text)"
 
+const ManagedTestSubjectDirectoryLookupFunction = "techstack_lookup_subject_directory(text)"
+const ManagedTestSubjectDirectoryForgetFunction = "techstack_forget_subject_directory(text,text)"
+
 var applicationCapabilityFunctions = []string{
+	ManagedTestSubjectDirectoryLookupFunction, ManagedTestSubjectDirectoryForgetFunction,
 	ManagedTestExecutionReclaimListFunction, ManagedTestExecutionReclaimCompactFunction,
 	ManagedTestPendingJobListFunction, ManagedTestPendingJobCompactFunction,
 	ManagedTestDriftScheduleListFunction, ManagedTestDriftScheduleCompactFunction,
@@ -149,7 +153,7 @@ func loadApplicationPolicy(ctx context.Context, q ManagedTestPrivilegeQuerier, r
 			return p, err
 		}
 		if !oid.Valid {
-			if requireFunctions && !((pendingForward == "drift" && (signature == ManagedTestDriftScheduleListFunction || signature == ManagedTestDriftScheduleCompactFunction)) || (pendingForward == "pending-jobs" && (signature == ManagedTestPendingJobListFunction || signature == ManagedTestPendingJobCompactFunction)) || (pendingForward == "execution-reclaim" && (signature == ManagedTestExecutionReclaimListFunction || signature == ManagedTestExecutionReclaimCompactFunction))) {
+			if requireFunctions && !((pendingForward == "drift" && (signature == ManagedTestDriftScheduleListFunction || signature == ManagedTestDriftScheduleCompactFunction)) || (pendingForward == "pending-jobs" && (signature == ManagedTestPendingJobListFunction || signature == ManagedTestPendingJobCompactFunction)) || (pendingForward == "execution-reclaim" && (signature == ManagedTestExecutionReclaimListFunction || signature == ManagedTestExecutionReclaimCompactFunction)) || (pendingForward == "subject-directory" && (signature == ManagedTestSubjectDirectoryLookupFunction || signature == ManagedTestSubjectDirectoryForgetFunction))) {
 				return p, fmt.Errorf("assigned application authority is absent: %s", signature)
 			}
 			continue
@@ -187,12 +191,18 @@ func verifyApplicationPrivileges(ctx context.Context, q ManagedTestPrivilegeQuer
 	var unsafe bool
 	if err := q.QueryRowContext(ctx, `SELECT has_database_privilege($1,current_database(),'CREATE') OR has_database_privilege($1,current_database(),'TEMP')
 	 OR has_database_privilege($1,current_database(),'CONNECT WITH GRANT OPTION')
-	 OR EXISTS(SELECT 1 FROM pg_database d WHERE d.datallowconn AND d.datname<>current_database()
-	 AND (has_database_privilege($1,d.oid,'CONNECT') OR has_database_privilege($1,d.oid,'TEMP')))
+	 OR ($2 AND EXISTS(SELECT 1 FROM pg_database d WHERE d.datallowconn AND d.datname<>current_database()
+	 AND (has_database_privilege($1,d.oid,'CONNECT') OR has_database_privilege($1,d.oid,'TEMP'))))
 	 OR EXISTS(SELECT 1 FROM pg_namespace n WHERE n.nspname<>'information_schema' AND n.nspname NOT LIKE 'pg_%'
 	 AND (has_schema_privilege($1,n.oid,'CREATE') OR has_schema_privilege($1,n.oid,'USAGE WITH GRANT OPTION')
-	 OR (n.nspname<>'public' AND has_schema_privilege($1,n.oid,'USAGE'))))`, principal.Role).Scan(&unsafe); err != nil {
+	 OR (n.nspname<>'public' AND has_schema_privilege($1,n.oid,'USAGE'))))`, principal.Role, managed).Scan(&unsafe); err != nil {
 		return err
+	}
+	if !unsafe && !managed {
+		unsafe, err = applicationHasOtherDatabaseAuthority(ctx, q, principal.Role)
+		if err != nil {
+			return err
+		}
 	}
 	if unsafe {
 		return fmt.Errorf("managed test app has excess database/schema authority")
@@ -363,4 +373,50 @@ func ApplicationAuthorityOwner(ctx context.Context, q ManagedTestPrivilegeQuerie
 	var owner string
 	err := q.QueryRowContext(ctx, "SELECT pg_get_userbyid(nspowner) FROM pg_catalog.pg_namespace WHERE nspname='public'").Scan(&owner)
 	return owner, err
+}
+
+// otherDatabaseGrant is one CONNECT/TEMPORARY ACL entry of another connectable
+// database, resolved against the application role.
+type otherDatabaseGrant struct {
+	OwnedByRole   bool // the role is, or is a member of, the database owner
+	PublicGrantee bool // the entry is the PUBLIC pseudo-role
+	RoleGrantee   bool // the role is, or is a member of, the named grantee
+}
+
+// otherDatabaseAuthorityExcess judges the role's own authority on other
+// databases. Managed Postgres keeps PUBLIC CONNECT/TEMPORARY on its provider
+// databases (postgres, template1, ubi_admin), which no tenant role can revoke;
+// that inheritance is not the role's authority. Ownership and explicit grants,
+// directly or through a membership, remain excess.
+func otherDatabaseAuthorityExcess(grants []otherDatabaseGrant) bool {
+	for _, grant := range grants {
+		if grant.OwnedByRole || (!grant.PublicGrantee && grant.RoleGrantee) {
+			return true
+		}
+	}
+	return false
+}
+
+func applicationHasOtherDatabaseAuthority(ctx context.Context, q ManagedTestPrivilegeQuerier, role string) (bool, error) {
+	rows, err := q.QueryContext(ctx, `SELECT pg_has_role($1,d.datdba,'MEMBER'), COALESCE(a.grantee=0,false),
+	 COALESCE(a.grantee<>0 AND pg_has_role($1,a.grantee,'MEMBER'),false)
+	 FROM pg_database d LEFT JOIN LATERAL aclexplode(COALESCE(d.datacl,acldefault('d',d.datdba))) a
+	 ON a.privilege_type IN ('CONNECT','TEMPORARY')
+	 WHERE d.datallowconn AND d.datname<>current_database()`, role)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	var grants []otherDatabaseGrant
+	for rows.Next() {
+		var grant otherDatabaseGrant
+		if err := rows.Scan(&grant.OwnedByRole, &grant.PublicGrantee, &grant.RoleGrantee); err != nil {
+			return false, err
+		}
+		grants = append(grants, grant)
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	return otherDatabaseAuthorityExcess(grants), nil
 }

@@ -22,7 +22,6 @@ func TestRetryStackRolloutRouteUsesExactFailedJobAndNeverRequestsVM(t *testing.T
 	}); err != nil {
 		t.Fatal(err)
 	}
-	app := newOwnerSpecTestApp(t)
 	orch := orchestrator.New(&orchestrator.Config{
 		Workers: 1, StackStore: store, JobStore: store, WorkerStore: store,
 		LeaseLister: routingTestLeaseLister{leases: []vmlease.Lease{
@@ -31,7 +30,7 @@ func TestRetryStackRolloutRouteUsesExactFailedJobAndNeverRequestsVM(t *testing.T
 	}, nil)
 
 	defer orch.Stop()
-	h := crudRouteHandlers{app: app, orch: orch, stackStore: store, jobStore: store}
+	h := crudRouteHandlers{orch: orch, stackStore: store, jobStore: store}
 
 	blocked, blockedRec := enrollmentResumeEvent("auth0|user-1", `{"source_job_id":"job-failed","lease_id":"lease-existing"}`)
 	blocked.Request.URL.Path = "/api/v1/stacks/stack-waiting/retry-rollout"
@@ -95,7 +94,7 @@ func TestRetryStackRolloutRefusesRetryBeforeCertificateAuthorityRetryAfter(t *te
 	}, nil)
 	defer orch.Stop()
 	seedRecoveryGuardRuntime(t, store, "tenant-1", "auth0|user-1", "stack-waiting", "lease-existing", time.Now().UTC())
-	h := crudRouteHandlers{app: newOwnerSpecTestApp(t), orch: orch, stackStore: store, jobStore: store}
+	h := crudRouteHandlers{orch: orch, stackStore: store, jobStore: store}
 
 	e, rec := enrollmentResumeEvent("auth0|user-1", `{"source_job_id":"job-failed","lease_id":"lease-existing"}`)
 	e.Request.URL.Path = "/api/v1/stacks/stack-waiting/retry-rollout"

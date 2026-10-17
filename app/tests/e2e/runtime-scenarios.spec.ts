@@ -1122,9 +1122,22 @@ async function runManagedServiceActionEvidence(args: {
       candidate.allowed_actions.includes("logs"),
   );
   if (!service?.id || !service.inventory_revision) {
-    throw new Error(
-      `Managed runtime did not declare a restart+logs capable service: ${JSON.stringify(args.services)}`,
-    );
+    // Decision (kombify-Techstack-j7fd.5, reversible): Techstack only mirrors
+    // the capabilities StackKits declares in the inventory, so a Guard-managed
+    // Cloud Kit that declares none cannot prove service Day-2. The lane records
+    // that explicitly as not proven instead of failing every managed run; once
+    // StackKits declares restart+logs the branch below proves them again.
+    const notDeclared = {
+      status: "not_declared" as const,
+      reason:
+        "no managed service declared both restart and logs; service Day-2 is not proven for this kit",
+      services: args.services.map((candidate) => ({
+        service_key: candidate.name,
+        declared_actions: candidate.allowed_actions ?? [],
+      })),
+    };
+    await attachJson("kombify-cloud-managed-service-actions.json", notDeclared);
+    return notDeclared;
   }
 
   const invoke = async (
@@ -2736,9 +2749,13 @@ test.describe.serial("Runtime E2E scenarios", () => {
             "managed-runtime workers inventory projection",
             "managed-runtime stack operations projection",
             "monthly runtime management actions",
-            "declared service restart with idempotent replay",
-            "post-action inventory convergence",
-            "bounded redacted service logs",
+            ...("status" in managedServiceEvidence
+              ? []
+              : [
+                  "declared service restart with idempotent replay",
+                  "post-action inventory convergence",
+                  "bounded redacted service logs",
+                ]),
             "stack dashboard",
             "monitoring dashboard",
             "managed Day-2 stop, start, reconnect and SSH grant",

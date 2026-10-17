@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -24,13 +25,45 @@ import (
 	"github.com/kombifyio/techstack/internal/gocommon/oidcclient"
 
 	"github.com/kombifyio/techstack/pkg/controlplane"
+	"github.com/kombifyio/techstack/pkg/stackkitcommand"
 )
 
 // Projection actions.
 const (
 	ActionAdd    = "add"
 	ActionRemove = "remove"
+	// ActionUpdateApps replaces the node apps a member may sign into.
+	ActionUpdateApps = "update_apps"
 )
+
+// NodeAppCatalogPrefix prefixes a node app id in the Cloud catalog.
+const NodeAppCatalogPrefix = "homelab.app."
+
+// ErrAppInvalid means a node app id is not a grantable Cloud catalog id.
+var ErrAppInvalid = errors.New("household: node app is not a grantable homelab app")
+
+// AppGrant is the node apps a member may sign into. Set false means all apps.
+// Set true with no apps means none.
+type AppGrant struct {
+	Set  bool
+	Apps []string
+}
+
+// ParseNodeApps maps Cloud catalog ids (homelab.app.<id>) to de-duplicated node
+// app ids, keeping first-seen order. Unknown ids are refused.
+func ParseNodeApps(catalogIDs []string) ([]string, error) {
+	apps := make([]string, 0, len(catalogIDs))
+	for _, raw := range catalogIDs {
+		id, ok := strings.CutPrefix(strings.TrimSpace(raw), NodeAppCatalogPrefix)
+		if !ok || !slices.Contains(stackkitcommand.HouseholdGrantableApps, id) {
+			return nil, fmt.Errorf("%w: %q", ErrAppInvalid, raw)
+		}
+		if !slices.Contains(apps, id) {
+			apps = append(apps, id)
+		}
+	}
+	return apps, nil
+}
 
 // Projection statuses, the values Cloud reads (Cloud household service):
 // projected means the invite or removal was issued to the node, none means the
@@ -93,8 +126,9 @@ type Invitation struct {
 // IdentityRuntime runs the owner-approved StackKit identity operations on a
 // node. The owner approved them by sending the invitation or the removal.
 type IdentityRuntime interface {
-	Invite(ctx context.Context, target Target, username, email, displayName string) (Invitation, error)
+	Invite(ctx context.Context, target Target, username, email, displayName string, apps AppGrant) (Invitation, error)
 	Remove(ctx context.Context, target Target, username string) error
+	UpdateApps(ctx context.Context, target Target, username string, apps AppGrant) error
 }
 
 // Homelabs reads the owner's homelab.
@@ -150,6 +184,8 @@ type ProjectionRequest struct {
 	OwnerSubject string
 	Member       Member
 	Action       string
+	// Apps are the node app ids of add and update_apps (see AppGrant).
+	Apps AppGrant
 }
 
 // ProjectionResult is the outcome of a projection.
@@ -185,7 +221,9 @@ func (s *Service) Project(ctx context.Context, req ProjectionRequest) (Projectio
 	}
 	switch req.Action {
 	case ActionAdd:
-		return s.add(ctx, tenantID, owner, req.Member)
+		return s.add(ctx, tenantID, owner, req.Member, req.Apps)
+	case ActionUpdateApps:
+		return s.updateApps(ctx, tenantID, owner, subject, req.Apps)
 	case ActionRemove:
 		return s.remove(ctx, tenantID, owner, subject)
 	default:
@@ -193,7 +231,7 @@ func (s *Service) Project(ctx context.Context, req ProjectionRequest) (Projectio
 	}
 }
 
-func (s *Service) add(ctx context.Context, tenantID, owner string, member Member) (ProjectionResult, error) {
+func (s *Service) add(ctx context.Context, tenantID, owner string, member Member, apps AppGrant) (ProjectionResult, error) {
 	member.Subject, member.Email, member.DisplayName = strings.TrimSpace(member.Subject), strings.TrimSpace(member.Email), strings.TrimSpace(member.DisplayName)
 	if member.Email == "" || !strings.Contains(member.Email, "@") || len(member.Email) > 254 ||
 		strings.ContainsAny(member.Email, "\r\n") || len(member.DisplayName) > 128 || strings.ContainsAny(member.DisplayName, "\r\n") {
@@ -221,10 +259,22 @@ func (s *Service) add(ctx context.Context, tenantID, owner string, member Member
 	for _, stack := range stacks {
 		username := s.usernameFor(existing, stack.ID, member)
 		target := Target{TenantID: tenantID, OwnerID: owner, StackID: stack.ID}
-		invitation, inviteErr := s.Identity.Invite(ctx, target, username, member.Email, member.DisplayName)
+		invitation, inviteErr := s.Identity.Invite(ctx, target, username, member.Email, member.DisplayName, apps)
 		if inviteErr != nil {
 			lastErr = inviteErr
 			continue
+		}
+		if apps.Set && len(apps.Apps) == 0 {
+			// The invite command cannot express "none"; close the member's
+			// apps right after the invite. A failure is retried by Cloud.
+			granted := strings.TrimSpace(invitation.Username)
+			if granted == "" {
+				granted = username
+			}
+			if noneErr := s.Identity.UpdateApps(ctx, target, granted, apps); noneErr != nil {
+				lastErr = noneErr
+				continue
+			}
 		}
 		if strings.TrimSpace(invitation.Username) != "" {
 			username = strings.TrimSpace(invitation.Username)
@@ -311,6 +361,37 @@ func (s *Service) usernameFor(existing []controlplane.HomelabIdentityRef, stackI
 		candidate = "member-" + hex.EncodeToString(digest[:])[:8]
 	}
 	return candidate
+}
+
+// updateApps replaces the node apps of a member who already has a household
+// identity on the owner's stack. It is idempotent. A member without one is
+// pending (Cloud re-sends after the add); an owner without a homelab is none.
+func (s *Service) updateApps(ctx context.Context, tenantID, owner, subject string, apps AppGrant) (ProjectionResult, error) {
+	homelab, err := s.Homelabs.GetHomelabByOwner(ctx, tenantID, owner)
+	if errors.Is(err, controlplane.ErrNotFound) || (err == nil && homelab == nil) {
+		return ProjectionResult{Status: StatusNone}, nil
+	}
+	if err != nil {
+		return ProjectionResult{}, err
+	}
+	refs, err := s.Links.ListHouseholdRefsByOwner(ctx, tenantID, owner)
+	if err != nil {
+		return ProjectionResult{}, err
+	}
+	result := ProjectionResult{Status: StatusPending}
+	for _, ref := range refs {
+		if ref.CloudSubject != subject {
+			continue
+		}
+		target := Target{TenantID: tenantID, OwnerID: owner, StackID: ref.StackID}
+		if err := s.Identity.UpdateApps(ctx, target, ref.Username, apps); err != nil {
+			return ProjectionResult{}, fmt.Errorf("%w: %v", ErrNodeUnreachable, err)
+		}
+		if result.Status != StatusProjected {
+			result = ProjectionResult{Status: StatusProjected, StackID: ref.StackID, Username: ref.Username, LinkStatus: ref.Status}
+		}
+	}
+	return result, nil
 }
 
 func (s *Service) remove(ctx context.Context, tenantID, owner, subject string) (ProjectionResult, error) {

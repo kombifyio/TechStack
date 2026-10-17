@@ -386,6 +386,15 @@ func prepareAbsentProviderReceiptProjectionTx(
 			"provider_absent",
 			&databaseNow,
 		)
+		// The same transaction holds the definitive absence observation and the
+		// capacity release, so the server records verified cleanup the owner
+		// can see instead of an unverified tombstone.
+		prepared.serverEvent.Runtime.Metadata = map[string]any{
+			"cleanup_state":                "absent",
+			"provider_absence_verified":    true,
+			"provider_absence_verified_at": databaseNow.UTC().Format(time.RFC3339Nano),
+			"cleanup_complete":             true,
+		}
 	}
 	return prepared, nil
 }

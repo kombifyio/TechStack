@@ -21,7 +21,7 @@ type Client struct {
 }
 
 // NewClient builds a service-call client. cfg.ServiceName, cfg.Target and
-// cfg.Secret are required; a zero TokenTTL falls back to DefaultTokenTTL.
+// cfg.Secret or cfg.SigningKey are required; a zero TokenTTL falls back to DefaultTokenTTL.
 func NewClient(cfg Config) (*Client, error) {
 	if cfg.ServiceName == "" {
 		return nil, errors.New("servicecall: ServiceName required")
@@ -29,7 +29,7 @@ func NewClient(cfg Config) (*Client, error) {
 	if cfg.Target == "" {
 		return nil, errors.New("servicecall: Target required")
 	}
-	if cfg.Secret == "" {
+	if cfg.Secret == "" && cfg.SigningKey == nil {
 		return nil, ErrEmptySecret
 	}
 	if cfg.TokenTTL <= 0 {

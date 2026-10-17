@@ -30,6 +30,10 @@ export interface ClientBootstrap {
   kombifyEdition: string;
   version: string;
   publicOrigin: string;
+  /** "preview" on the Nightly deployment, otherwise "stable". */
+  releaseChannel: string;
+  /** Where the Nightly badge links back to; empty on stable. */
+  stableOrigin: string;
   /** Public context.dev Logo Link client id. Empty disables brand logos. */
   contextDevLogolinkId: string;
   telemetry: {
@@ -47,6 +51,8 @@ export function emptyClientBootstrap(): ClientBootstrap {
     kombifyEdition: "",
     version: "",
     publicOrigin: "",
+    releaseChannel: "",
+    stableOrigin: "",
     contextDevLogolinkId: "",
     telemetry: {
       sentry: { dsn: "", environment: "", release: "" },
@@ -83,6 +89,8 @@ export function parseClientBootstrap(body: unknown): ClientBootstrap {
     kombifyEdition: asString(data.kombify_edition),
     version: asString(data.version),
     publicOrigin: asString(data.public_origin),
+    releaseChannel: asString(data.release_channel),
+    stableOrigin: asString(data.stable_origin),
     contextDevLogolinkId: asString(data.context_dev_logolink_id),
     telemetry: {
       sentry: {

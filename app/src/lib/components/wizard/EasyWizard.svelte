@@ -7,6 +7,7 @@
 -->
 <script lang="ts">
   import { tick, type Snippet } from "svelte";
+  import { beforeNavigate } from "$app/navigation";
   import { Stepper } from "./index";
   import GoalsStep from "./steps/GoalsStep.svelte";
   import ServerStep from "./steps/ServerStep.svelte";
@@ -92,6 +93,28 @@
   }
   let config = $state<StackConfig>(initialWizardConfig());
   let step = $state(1);
+  // Entered answers live only in this component. Protect them against
+  // accidental departure (reload, tab close, in-app navigation) without
+  // persisting them: the config carries SSH passwords and recovery material,
+  // so a draft store is deliberately not added here. Protection ends once the
+  // submission is accepted (isDeploying) and stays in place after a failed one.
+  let userEdited = $state(false);
+  const hasUnsavedAnswers = $derived((userEdited || step > 1) && !isDeploying);
+
+  beforeNavigate(({ cancel, willUnload }) => {
+    if (!hasUnsavedAnswers || willUnload) return;
+    if (!window.confirm(tr("wizard.leave.confirm"))) cancel();
+  });
+
+  $effect(() => {
+    if (!hasUnsavedAnswers) return;
+    const guard = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", guard);
+    return () => window.removeEventListener("beforeunload", guard);
+  });
   let deploymentLaneApplied = $state(false);
   let initialConfigApplied = $state(false);
   let recommendationState = $state<WizardPreviewState>({ phase: "idle" });
@@ -549,6 +572,8 @@
 <div
   class="w-full min-w-0"
   data-testid="easy-wizard"
+  oninput={() => (userEdited = true)}
+  onchange={() => (userEdited = true)}
   data-standard-bundle-id={standardBundle.id}
   data-standard-bundle-version={standardBundle.version}
 >

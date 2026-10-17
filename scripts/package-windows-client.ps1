@@ -82,6 +82,13 @@ dotnet publish $project -c $Configuration -r $Runtime --self-contained true -o $
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit code $LASTEXITCODE" }
 Copy-Item -Recurse -Force -Path (Join-Path $publishDir "*") -Destination $stageDir
 
+if ($DesktopEdition -eq "Cloud") {
+    & (Join-Path $PSScriptRoot "build-windows-cloud-updater.ps1") -Version $Version `
+        -OutputPath (Join-Path $stageDir "kombify-techstack-cloud-updater.exe")
+    if ($LASTEXITCODE -ne 0) { throw "Cloud update verifier packaging failed with exit code $LASTEXITCODE" }
+    Copy-Item -LiteralPath (Join-Path $root "THIRD-PARTY-NOTICES.md") -Destination $stageDir
+}
+
 if ($DesktopEdition -eq "Local") {
 $runtimeDestination = Join-Path $stageDir "techstack.exe"
 $linuxRuntimeDestination = Join-Path $stageDir "techstack-linux-amd64"

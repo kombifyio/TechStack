@@ -657,3 +657,19 @@ func parseGuardRegistration(req workerRegistrationRequest) (*guardRegistration, 
 	canonical, _ := jwk.Canonical()
 	return &guardRegistration{attemptID: req.AttemptID, thumbprint: thumbprint, publicKeyJWK: canonical}, "", true
 }
+
+// verifyGuardRegistrationProof requires a DPoP proof, signed by the registering
+// host key and bound to the redeemed capability, before that key is enrolled.
+// It writes the denial and returns false when the proof does not hold.
+func verifyGuardRegistrationProof(e *httpx.Event, token string, guard *guardRegistration, now time.Time) bool {
+	proof, err := verifyGuardProof(e, strings.TrimSpace(token), now)
+	if err != nil {
+		denyGuardError(e, err)
+		return false
+	}
+	if proof.Thumbprint != guard.thumbprint {
+		denyGuard(e, guardidentity.CodeProofInvalid, guardidentity.ReasonProofSignature)
+		return false
+	}
+	return true
+}

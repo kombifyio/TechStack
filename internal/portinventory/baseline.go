@@ -22,7 +22,7 @@ func EvaluateHostBaseline(inventory Inventory, requirements []Requirement, kitDe
 		admittedOwner := false
 		for _, allocation := range inventory.Allocations {
 			address, err := normalizeBindAddress(allocation.BindAddress)
-			if err == nil && allocation.Desired && allocation.StackID == kitDeploymentID && (allocation.ClaimState == ClaimStateActive || allocation.ClaimState == ClaimStateUncertain) && allocation.Transport == requirement.Transport && allocation.Port == requirement.Port && addressesOverlap(address, requirement.BindAddress) {
+			if err == nil && allocation.Desired && allocation.StackID == kitDeploymentID && (allocation.ClaimState == ClaimStateActive || allocation.ClaimState == ClaimStateMutating || allocation.ClaimState == ClaimStateUncertain) && allocation.Transport == requirement.Transport && allocation.Port == requirement.Port && addressesOverlap(address, requirement.BindAddress) {
 				admittedOwner = true
 			}
 		}
@@ -42,7 +42,8 @@ func EvaluateHostBaseline(inventory Inventory, requirements []Requirement, kitDe
 			}
 			if allocation.Desired && allocation.StackID == kitDeploymentID && admittedOwner {
 				// Serialized admission can reuse this stack's active or uncertain
-				// generation. StackKits must still reconcile the actual local owner;
+				// generation; a mutating one belongs to a dead rollout, because only
+				// the job holding the stack's running claim reaches this check. StackKits must still reconcile the actual local owner;
 				// this neither activates nor releases the retained claim.
 				continue
 			}

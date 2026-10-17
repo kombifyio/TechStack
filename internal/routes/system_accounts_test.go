@@ -13,7 +13,7 @@ import (
 // including for a signed caller. No database or wallet fixture is involved.
 func TestRetiredSystemAccountsCannotResetCredentials(t *testing.T) {
 	router := httpx.NewRouter()
-	RegisterSystemAccountRoutes(router, nil, nil)
+	RegisterRuntimeSystemAccountRoutes(router)
 	for _, authenticated := range []bool{false, true} {
 		request := httptest.NewRequest(http.MethodPost, "/api/v1/system-accounts/admin/reset", nil)
 		want := http.StatusUnauthorized

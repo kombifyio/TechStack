@@ -18,6 +18,7 @@ import (
 	"github.com/kombifyio/techstack/internal/providercontrol"
 	"github.com/kombifyio/techstack/internal/routes/tenantguard"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
+	"github.com/kombifyio/techstack/pkg/appcatalog"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/runtimehealth"
@@ -59,6 +60,10 @@ type InventoryRouteConfig struct {
 	// backup read. Nil leaves each server's backup state unknown with reason
 	// posture_unavailable; it never reports a missing source as a good one.
 	Posture ServerPosture
+	// UpdateChecker answers the service version comparisons of the private
+	// Cloud updates read; nil uses the public-registry checker, the same
+	// default as the services view.
+	UpdateChecker *appcatalog.UpdateChecker
 	// Homelabs backs the rename_homelab MCP tool; nil keeps it fail-closed (503).
 	Homelabs          controlplane.HomelabStore
 	MaintenanceOrigin MaintenanceOriginConfig
@@ -77,6 +82,7 @@ type inventoryHandlers struct {
 	managedServersHeld    ManagedServersHeldFunc
 	createProtection      func(context.Context, string, string, string) (providercontrol.CreateProtection, error)
 	posture               ServerPosture
+	updates               *appcatalog.UpdateChecker
 	maintenanceOrigin     MaintenanceOriginConfig
 	maintenanceAction     httpx.HandlerFunc
 	maintenanceImpact     httpx.HandlerFunc
@@ -94,6 +100,11 @@ type inventoryApplication struct {
 type inventoryScope struct {
 	tenantID string
 	ownerID  string
+	// householdOwnerID is set only when a household member names the owner
+	// whose homelab they act on. tenantID is then that owner's personal
+	// tenant and ownerID stays the authenticated member; the policy must
+	// confirm the member's FGA grant before any owner row is readable.
+	householdOwnerID string
 }
 
 type inventoryError struct {
@@ -171,6 +182,9 @@ func RegisterInventoryRoutes(r *httpx.Router, cfg InventoryRouteConfig) {
 	if cfg.Policy == nil {
 		cfg.Policy = denyInventoryPolicy{}
 	}
+	if cfg.UpdateChecker == nil {
+		cfg.UpdateChecker = appcatalog.NewUpdateChecker()
+	}
 	// The rename write is optional on the read store; without it the route
 	// stays registered and fails closed (503).
 	renamer, _ := cfg.ReadStore.(controlplane.InventoryServerRenamer)
@@ -186,6 +200,7 @@ func RegisterInventoryRoutes(r *httpx.Router, cfg InventoryRouteConfig) {
 		managedServersHeld:    cfg.ManagedServersHeld,
 		createProtection:      cfg.CreateProtection,
 		posture:               cfg.Posture,
+		updates:               cfg.UpdateChecker,
 		maintenanceOrigin:     cfg.MaintenanceOrigin,
 		maintenanceAction:     cfg.MaintenanceAction,
 		maintenanceImpact:     cfg.MaintenanceImpact,
@@ -213,6 +228,7 @@ func RegisterInventoryRoutes(r *httpx.Router, cfg InventoryRouteConfig) {
 	r.GET("/api/v1/internal/runtime/events", h.httpInternalRuntimeEvents)
 	r.GET("/api/v1/internal/runtime/ports", h.httpInternalRuntimePorts)
 	r.GET("/api/v1/internal/runtime/backups", h.httpInternalRuntimeBackups)
+	r.GET("/api/v1/internal/runtime/updates", h.httpInternalRuntimeUpdates)
 	// Private Cloud servicecall read for the budget panel (managed servers
 	// held by the on_behalf_of owner); see inventory_internal_usage.go.
 	r.GET("/api/v1/internal/usage/budgets", h.httpInternalUsageBudgets)
@@ -347,7 +363,17 @@ func inventoryScopeFromEvent(e *httpx.Event) (inventoryScope, error) {
 	if tenantErr != nil || strings.TrimSpace(tenantID) == "" {
 		return inventoryScope{}, &inventoryError{status: http.StatusForbidden, reasonCode: "tenant_context_missing", message: "Tenant context required"}
 	}
-	return inventoryScope{tenantID: strings.TrimSpace(tenantID), ownerID: strings.TrimSpace(ownerID)}, nil
+	scope := inventoryScope{tenantID: strings.TrimSpace(tenantID), ownerID: strings.TrimSpace(ownerID)}
+	if tenantguard.Active() {
+		if household := householdOwnerFromEvent(e); household != "" && household != scope.ownerID {
+			if !validHouseholdOwnerSubject(household) {
+				return inventoryScope{}, &inventoryError{status: http.StatusBadRequest, reasonCode: "household_owner_invalid", message: "Household owner is invalid"}
+			}
+			scope.householdOwnerID = household
+			scope.tenantID = householdOwnerTenantID(household)
+		}
+	}
+	return scope, nil
 }
 
 // authorizeInventoryServerOperate is the shared fail-closed operate gate for
@@ -642,11 +668,16 @@ func (a *inventoryApplication) authorizedServer(ctx context.Context, readScope c
 func (a *inventoryApplication) authorize(ctx context.Context, scope inventoryScope, action InventoryAction, resourceType, resourceID string) (controlplane.InventoryReadScope, error) {
 	resourceID = strings.TrimSpace(resourceID)
 	decision, err := a.policy.AuthorizeInventory(ctx, InventoryAuthorization{
-		TenantID: scope.tenantID, SubjectID: scope.ownerID,
+		TenantID: scope.tenantID, SubjectID: scope.ownerID, HouseholdOwnerID: scope.householdOwnerID,
 		ResourceType: resourceType, ResourceID: resourceID, Action: action,
 	})
+	rowOwner := strings.TrimSpace(scope.ownerID)
+	if scope.householdOwnerID != "" {
+		rowOwner = scope.householdOwnerID
+	}
 	principalScopeMatches := decision.ReadScope.TenantID() == strings.TrimSpace(scope.tenantID) &&
-		(!decision.ReadScope.IsOwnerScoped() || decision.ReadScope.OwnerSubjectID() == strings.TrimSpace(scope.ownerID))
+		(!decision.ReadScope.IsOwnerScoped() || decision.ReadScope.OwnerSubjectID() == rowOwner) &&
+		(scope.householdOwnerID == "" || decision.ReadScope.IsOwnerScoped())
 	if err == nil && principalScopeMatches && decision.ReadScope.AuthorizesTarget(resourceType, resourceID) {
 		return decision.ReadScope, nil
 	}
