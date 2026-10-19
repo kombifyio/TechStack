@@ -268,3 +268,34 @@ func TestPortGovernedLifecycleRefusesStaleHostBaselineBeforeSideEffects(t *testi
 		t.Fatal("actionable baseline denial was lost")
 	}
 }
+
+// Regression (platform-f4ine): the node's inventory write can stall while its
+// own rollout runs, so the pre-mutation re-check saw the observation that
+// already passed admission as expired and failed every redeploy.
+func TestHostBaselineRecheckKeepsAdmissionProofButNotNewerContradiction(t *testing.T) {
+	order := []string{}
+	authority := newRecordingCurrentPortAuthority(&order)
+	rollout := testPortGovernedRollout(t, authority, &typedLifecycleCommander{planHash: testResolvedPlanHash, order: &order})
+	rollout.portRequirements = []portinventory.Requirement{{ID: "https", NodeRef: "cloud-main", Transport: portinventory.TransportTCP, BindAddress: "0.0.0.0", Port: 8443, Sharing: portinventory.SharingExclusive, Exposure: portinventory.ExposurePublic}}
+	generation := portinventory.GenerationRef{ServerRef: portinventory.ServerRef{TenantID: "tenant-a", ServerID: "server-a"}, StackID: "stack-a"}
+
+	observed := time.Now().UTC()
+	expires := observed.Add(100 * time.Millisecond)
+	authority.baseline = &portinventory.Inventory{ServerID: "server-a", ServerGeneration: 7, InventoryRevision: 41, ObservedAt: &observed, ExpiresAt: &expires, ListenersComplete: true}
+	if err := rollout.checkHostBaseline(t.Context(), generation); err != nil {
+		t.Fatalf("admission baseline refused fresh evidence: %v", err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	generation.ServerGeneration = 7
+	if err := rollout.checkHostBaseline(t.Context(), generation); err != nil {
+		t.Fatalf("re-check refused the observation admission already verified: %v", err)
+	}
+
+	newer := time.Now().UTC()
+	newerExpires := newer.Add(time.Minute)
+	authority.baseline = &portinventory.Inventory{ServerID: "server-a", ServerGeneration: 7, InventoryRevision: 42, ObservedAt: &newer, ExpiresAt: &newerExpires, ListenersComplete: true,
+		Allocations: []portinventory.Allocation{{Transport: portinventory.TransportTCP, BindAddress: "0.0.0.0", Port: 8443, ObservedState: portinventory.EvidencePresent}}}
+	if err := rollout.checkHostBaseline(t.Context(), generation); err == nil {
+		t.Fatal("a newer observation of a foreign listener was overridden by the admission proof")
+	}
+}

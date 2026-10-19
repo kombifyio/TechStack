@@ -166,12 +166,12 @@ overrides:
   '@kombify/notifications': file:third_party/npm/cloud-notifications-0.3.120.tgz
   '@kombiverselabs/ai-sdk': file:third_party/npm/ai-sdk-0.13.7.tgz
   '@kombiverselabs/cloud-notifications': file:third_party/npm/cloud-notifications-0.3.120.tgz
-  '@kombiverselabs/design': file:third_party/npm/design-0.11.1.tgz
+  '@kombiverselabs/design': file:third_party/npm/design-0.10.551.tgz
   '@kombiverselabs/embed': file:third_party/npm/embed-0.13.7.tgz
   '@kombiverselabs/execution-contracts': file:third_party/npm/execution-contracts-0.13.7.tgz
-  '@kombiverselabs/onboarding-core': file:third_party/npm/onboarding-core-0.11.1.tgz
+  '@kombiverselabs/onboarding-core': file:third_party/npm/onboarding-core-0.11.2.tgz
   '@kombiverselabs/speechkit-voiceagent-client': file:third_party/npm/speechkit-voiceagent-client-0.77.7.tgz
-  '@kombiverselabs/ui': file:third_party/npm/ui-0.11.1.tgz
+  '@kombiverselabs/ui': file:third_party/npm/ui-0.11.2.tgz
   cookie@<0.7.0: '>=0.7.2'
   ws@>=8.0.0 <8.21.0: '>=8.22.0'
   undici@>=7.0.0 <7.28.0: '>=7.30.0'
@@ -190,17 +190,17 @@ importers:
         specifier: ^2.28.2
         version: 2.28.2
       '@kombiverselabs/design':
-        specifier: file:third_party/npm/design-0.11.1.tgz
-        version: file:third_party/npm/design-0.11.1.tgz
+        specifier: file:third_party/npm/design-0.10.551.tgz
+        version: file:third_party/npm/design-0.10.551.tgz
       '@kombiverselabs/embed':
         specifier: file:third_party/npm/embed-0.13.7.tgz
         version: file:third_party/npm/embed-0.13.7.tgz(ws@8.22.0)
       '@kombiverselabs/onboarding-core':
-        specifier: file:third_party/npm/onboarding-core-0.11.1.tgz
-        version: file:third_party/npm/onboarding-core-0.11.1.tgz
+        specifier: file:third_party/npm/onboarding-core-0.11.2.tgz
+        version: file:third_party/npm/onboarding-core-0.11.2.tgz
       '@kombiverselabs/ui':
-        specifier: file:third_party/npm/ui-0.11.1.tgz
-        version: file:third_party/npm/ui-0.11.1.tgz(@kombiverselabs/design@file:third_party/npm/design-0.11.1.tgz)(@kombiverselabs/onboarding-core@file:third_party/npm/onboarding-core-0.11.1.tgz)(lucide-react@1.53.0(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(svelte@5.57.2(@typescript-eslint/types@8.71.1))
+        specifier: file:third_party/npm/ui-0.11.2.tgz
+        version: file:third_party/npm/ui-0.11.2.tgz(@kombiverselabs/design@file:third_party/npm/design-0.10.551.tgz)(@kombiverselabs/onboarding-core@file:third_party/npm/onboarding-core-0.11.2.tgz)(lucide-react@1.53.0(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(svelte@5.57.2(@typescript-eslint/types@8.71.1))
       '@lucide/svelte':
         specifier: 1.53.0
         version: 1.53.0(svelte@5.57.2(@typescript-eslint/types@8.71.1))
@@ -539,9 +539,9 @@ packages:
     resolution: {integrity: sha512-q+k+Un5dZJZ6twfDSSWmLhgohchbTGuetRM+6p9XctVhzaaGaNznpLqlf6dsJDlwPkNr21C9xYkyAytLdN0UnQ==, tarball: file:third_party/npm/cloud-notifications-0.3.120.tgz}
     version: 0.3.120
 
-  '@kombiverselabs/design@file:third_party/npm/design-0.11.1.tgz':
-    resolution: {integrity: sha512-yp55wH9rl+pz7Iv0XZ8hkTs58T0S4yGl+kSNJ6xUadIAtn9noulRwmNDt9z5qb3EW0HDt7PSXZU6mY1uCZl0xw==, tarball: file:third_party/npm/design-0.11.1.tgz}
-    version: 0.11.1
+  '@kombiverselabs/design@file:third_party/npm/design-0.10.551.tgz':
+    resolution: {integrity: sha512-B3ZAaKa8sJ/Nz1Ne1SXIdPsPmiC6nfGreolhxuoYi8YciZwCZJPmABmg/MJf8UKY9OhUwqICQ9NerQ8kKM6NEQ==, tarball: file:third_party/npm/design-0.10.551.tgz}
+    version: 0.10.551
 
   '@kombiverselabs/embed@file:third_party/npm/embed-0.13.7.tgz':
     resolution: {integrity: sha512-3fjbKRgBwfAKs6L/o0KGgVfz7bY3iB8WPgcdTZnS1n5sZ6pEmHnyOavuXer2RllQQo+8YigdeAiIDPVfG6rYmQ==, tarball: file:third_party/npm/embed-0.13.7.tgz}
@@ -551,9 +551,9 @@ packages:
     resolution: {integrity: sha512-mWnvTXN3CxU7V0n/P7PIwm2NOz41qZRghWHwKdPMxjLrV7fWyD0mrl3r/Uuwx0PkLsjcdFb2zULWnTfBOMlMVA==, tarball: file:third_party/npm/execution-contracts-0.13.7.tgz}
     version: 0.13.7
 
-  '@kombiverselabs/onboarding-core@file:third_party/npm/onboarding-core-0.11.1.tgz':
-    resolution: {integrity: sha512-vxP1sVg4lzu+DIUXvpe3VnnnrEJIv9V4XKa1w+T07ihs3DdHPGBSXXR1ZSHauoslRX8RTxW+3VCUWPFgJpUHZw==, tarball: file:third_party/npm/onboarding-core-0.11.1.tgz}
-    version: 0.11.1
+  '@kombiverselabs/onboarding-core@file:third_party/npm/onboarding-core-0.11.2.tgz':
+    resolution: {integrity: sha512-hHmaVmzOof1gsvrhcuMYvv9nIJzK1WusgGoNhZBQ89SAsuY9jfX2XvJPGVQY2eBIia9BVqQxCVRT6nw3NiDoKg==, tarball: file:third_party/npm/onboarding-core-0.11.2.tgz}
+    version: 0.11.2
 
   '@kombiverselabs/speechkit-voiceagent-client@file:third_party/npm/speechkit-voiceagent-client-0.77.7.tgz':
     resolution: {integrity: sha512-7eow7Fb5XFz+wY60IBZ5EBzlf/GMD8upfR/FqWsY1WEWtF5pRiF2fhQK0WMwTYfK9fDd8iLpilPI0/qIWiPwnQ==, tarball: file:third_party/npm/speechkit-voiceagent-client-0.77.7.tgz}
@@ -565,12 +565,12 @@ packages:
       ws:
         optional: true
 
-  '@kombiverselabs/ui@file:third_party/npm/ui-0.11.1.tgz':
-    resolution: {integrity: sha512-Udu/LiJZi7ePNBFTBgdNqr45GL5ML5XsREe/SYDTspd+HMrklysWArBzi8gW8QsyyK4qPWmRMlJTAk7wiMZlPQ==, tarball: file:third_party/npm/ui-0.11.1.tgz}
-    version: 0.11.1
+  '@kombiverselabs/ui@file:third_party/npm/ui-0.11.2.tgz':
+    resolution: {integrity: sha512-bHzVDOtPBrhHiNiRW66est4Kv+wH/907ZGlFTITe3ocGR5ileURtz3p+31Kr17/PcY9WybZd4T0Fe0g9wGL5oQ==, tarball: file:third_party/npm/ui-0.11.2.tgz}
+    version: 0.11.2
     peerDependencies:
       '@kombiverselabs/design': ^0.10.0
-      '@kombiverselabs/onboarding-core': 0.11.1
+      '@kombiverselabs/onboarding-core': 0.11.2
       lucide-react: ^1.53.0
       react: ^19.3.0
       react-dom: ^19.3.0
@@ -2637,7 +2637,7 @@ snapshots:
 
   '@kombiverselabs/cloud-notifications@file:third_party/npm/cloud-notifications-0.3.120.tgz': {}
 
-  '@kombiverselabs/design@file:third_party/npm/design-0.11.1.tgz': {}
+  '@kombiverselabs/design@file:third_party/npm/design-0.10.551.tgz': {}
 
   '@kombiverselabs/embed@file:third_party/npm/embed-0.13.7.tgz(ws@8.22.0)':
     dependencies:
@@ -2650,17 +2650,17 @@ snapshots:
       '@noble/curves': 1.9.7
       '@noble/hashes': 1.8.0
 
-  '@kombiverselabs/onboarding-core@file:third_party/npm/onboarding-core-0.11.1.tgz': {}
+  '@kombiverselabs/onboarding-core@file:third_party/npm/onboarding-core-0.11.2.tgz': {}
 
   '@kombiverselabs/speechkit-voiceagent-client@file:third_party/npm/speechkit-voiceagent-client-0.77.7.tgz(ws@8.22.0)':
     optionalDependencies:
       ws: 8.22.0
 
-  '@kombiverselabs/ui@file:third_party/npm/ui-0.11.1.tgz(@kombiverselabs/design@file:third_party/npm/design-0.11.1.tgz)(@kombiverselabs/onboarding-core@file:third_party/npm/onboarding-core-0.11.1.tgz)(lucide-react@1.53.0(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(svelte@5.57.2(@typescript-eslint/types@8.71.1))':
+  '@kombiverselabs/ui@file:third_party/npm/ui-0.11.2.tgz(@kombiverselabs/design@file:third_party/npm/design-0.10.551.tgz)(@kombiverselabs/onboarding-core@file:third_party/npm/onboarding-core-0.11.2.tgz)(lucide-react@1.53.0(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(svelte@5.57.2(@typescript-eslint/types@8.71.1))':
     dependencies:
       '@kombify/notifications': '@kombiverselabs/cloud-notifications@file:third_party/npm/cloud-notifications-0.3.120.tgz'
-      '@kombiverselabs/design': file:third_party/npm/design-0.11.1.tgz
-      '@kombiverselabs/onboarding-core': file:third_party/npm/onboarding-core-0.11.1.tgz
+      '@kombiverselabs/design': file:third_party/npm/design-0.10.551.tgz
+      '@kombiverselabs/onboarding-core': file:third_party/npm/onboarding-core-0.11.2.tgz
       '@lucide/svelte': 0.577.0(svelte@5.57.2(@typescript-eslint/types@8.71.1))
       svelte: 5.57.2(@typescript-eslint/types@8.71.1)
     optionalDependencies:

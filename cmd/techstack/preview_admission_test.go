@@ -128,6 +128,40 @@ func TestPreviewHTTPCannotSubmitStableWorkOrAdmitAnotherSubject(t *testing.T) {
 
 // The Nightly login page reads its sign-in methods and the Windows handoff
 // returns to /stacks; both must reach Nightly without admitting new work.
+// The app's static brand marks and logos load on Nightly for every visitor,
+// but only as files from the frontend fallback: a dynamic handler registered
+// at the same path, or a look-alike prefix, is still refused.
+func TestPreviewServesStaticAssetsOnlyThroughFallback(t *testing.T) {
+	t.Setenv(config.EnvReleaseChannel, "preview")
+	for _, tc := range []struct {
+		path    string
+		dynamic bool
+		want    bool
+	}{
+		{"/brand/techstack-rosette-128.webp", false, true},
+		{"/brand-logos/pocket-id.svg", false, true},
+		{"/preview-catalogs/use-cases.json", false, true},
+		{"/kombify-navy.png", false, true},
+		{"/brand/techstack-rosette-128.webp", true, false},
+		{"/brandx/secret", false, false},
+	} {
+		router := httpx.NewRouter()
+		bindGlobalMiddleware(router, routeDeps{startup: &startupContext{cfg: config.DefaultConfig()}, previewExecution: config.NewPreviewExecution(), log: logger.Default()})
+		reached := false
+		serve := func(e *httpx.Event) error { reached = true; return e.NoContent(http.StatusOK) }
+		if tc.dynamic {
+			router.GET(tc.path, serve)
+		} else {
+			router.SetNotFound(serve)
+		}
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
+		if reached != tc.want {
+			t.Fatalf("%s (dynamic handler=%v): status=%d reached=%v", tc.path, tc.dynamic, rec.Code, reached)
+		}
+	}
+}
+
 func TestPreviewLoginReachesCloudSignIn(t *testing.T) {
 	t.Setenv(config.EnvReleaseChannel, "preview")
 	for _, dynamic := range []bool{false, true} {

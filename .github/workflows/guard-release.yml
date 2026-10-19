@@ -500,10 +500,11 @@ jobs:
       # Guard release 39018813777). GITHUB_TOKEN can never hold workflows, so
       # the private repository publishes with a short-lived kombify-ci
       # installation token scoped to this repository; the public mirror keeps
-      # github.token.
+      # github.token. The test uses the workflow's own public-profile output, not a
+      # repository or owner literal: the public export rewrites or rejects those.
       - name: Mint the release publication token
         id: publish-token
-        if: steps.version.outputs.reuse-private != 'true' && github.repository == 'kombifyio/TechStack'
+        if: steps.version.outputs.reuse-private != 'true' && steps.version.outputs.public != 'true'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           app-id: ${{ vars.KOMBIFY_CI_APP_ID }}
