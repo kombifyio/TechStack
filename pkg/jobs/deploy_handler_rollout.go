@@ -44,6 +44,9 @@ type deployRollout struct {
 	routeHosts          []string
 	portMutationStarted bool
 	portActivated       bool
+	// baselineProof is the listener observation that passed the host baseline
+	// at admission and when it passed.
+	baselineProof *hostBaselineProof
 }
 
 // newDeployRollout builds the runtime-action request and the initial e2e proof

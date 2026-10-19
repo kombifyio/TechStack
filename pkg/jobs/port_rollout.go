@@ -276,5 +276,31 @@ func (r *deployRollout) checkHostBaseline(ctx context.Context, generation portin
 	r.job.mutateResult(func(result map[string]interface{}) {
 		result["host_baseline"] = map[string]interface{}{"server_id": inventory.ServerID, "server_generation": inventory.ServerGeneration, "inventory_revision": inventory.InventoryRevision, "observed_at": inventory.ObservedAt, "expires_at": inventory.ExpiresAt, "listeners_complete": inventory.ListenersComplete}
 	})
-	return r.portAdmissionError(portinventory.EvaluateHostBaseline(inventory, r.portRequirements, generation.StackID, time.Now().UTC()))
+	now := time.Now().UTC()
+	evaluation := portinventory.EvaluateHostBaseline(inventory, r.portRequirements, generation.StackID, now)
+	if evaluation != nil && r.baselineProof.covers(inventory) {
+		// The node published nothing since the observation admission already
+		// verified (a rollout can delay the node's own inventory write). No
+		// newer evidence contradicts it, so judge that same observation at the
+		// time it was verified instead of failing on its age.
+		proven, readErr := reader.ReadCurrent(ctx, portinventory.InventoryRequest{TenantID: generation.TenantID, ServerID: generation.ServerID}, r.baselineProof.verifiedAt)
+		if readErr == nil && r.baselineProof.covers(proven) {
+			evaluation = portinventory.EvaluateHostBaseline(proven, r.portRequirements, generation.StackID, r.baselineProof.verifiedAt)
+		}
+	}
+	if evaluation == nil && r.baselineProof == nil && inventory.ObservedAt != nil {
+		r.baselineProof = &hostBaselineProof{observedAt: inventory.ObservedAt.UTC(), revision: inventory.InventoryRevision, verifiedAt: now}
+	}
+	return r.portAdmissionError(evaluation)
+}
+
+type hostBaselineProof struct {
+	observedAt time.Time
+	revision   int64
+	verifiedAt time.Time
+}
+
+func (proof *hostBaselineProof) covers(inventory portinventory.Inventory) bool {
+	return proof != nil && inventory.ObservedAt != nil && inventory.ObservedAt.UTC().Equal(proof.observedAt) &&
+		inventory.InventoryRevision == proof.revision
 }

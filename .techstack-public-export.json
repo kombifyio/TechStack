@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "public_repository": "kombifyio/TechStack",
-  "source_commit": "b5b268760b34ada8a17c3c2f06ee031f242ec22e",
-  "candidate_digest": "d46cc7dd404b46cbacce49684052ef578d64725d51d2aa8043cfdc080e547033",
-  "candidate_file_count": 3044,
+  "source_commit": "eb694bf652cca757aa3b06688cd01fa30864d303",
+  "candidate_digest": "d3e86b0537f666f95f473a4c58cef185a4ce3c71da19d8ea87b8092d8a79891c",
+  "candidate_file_count": 3046,
   "digest_scope": "sha256 over every exported file except this receipt, in code-unit path order, as path NUL content NUL",
   "projected_go_sources": [
     {
@@ -74,10 +74,10 @@
     },
     {
       "name": "@kombiverselabs/design",
-      "version": "0.11.1",
-      "integrity": "sha512-yp55wH9rl+pz7Iv0XZ8hkTs58T0S4yGl+kSNJ6xUadIAtn9noulRwmNDt9z5qb3EW0HDt7PSXZU6mY1uCZl0xw==",
+      "version": "0.10.551",
+      "integrity": "sha512-B3ZAaKa8sJ/Nz1Ne1SXIdPsPmiC6nfGreolhxuoYi8YciZwCZJPmABmg/MJf8UKY9OhUwqICQ9NerQ8kKM6NEQ==",
       "license": null,
-      "path": "app/third_party/npm/design-0.11.1.tgz"
+      "path": "app/third_party/npm/design-0.10.551.tgz"
     },
     {
       "name": "@kombiverselabs/embed",
@@ -95,10 +95,10 @@
     },
     {
       "name": "@kombiverselabs/onboarding-core",
-      "version": "0.11.1",
-      "integrity": "sha512-vxP1sVg4lzu+DIUXvpe3VnnnrEJIv9V4XKa1w+T07ihs3DdHPGBSXXR1ZSHauoslRX8RTxW+3VCUWPFgJpUHZw==",
+      "version": "0.11.2",
+      "integrity": "sha512-hHmaVmzOof1gsvrhcuMYvv9nIJzK1WusgGoNhZBQ89SAsuY9jfX2XvJPGVQY2eBIia9BVqQxCVRT6nw3NiDoKg==",
       "license": "MIT",
-      "path": "app/third_party/npm/onboarding-core-0.11.1.tgz"
+      "path": "app/third_party/npm/onboarding-core-0.11.2.tgz"
     },
     {
       "name": "@kombiverselabs/speechkit-voiceagent-client",
@@ -109,10 +109,10 @@
     },
     {
       "name": "@kombiverselabs/ui",
-      "version": "0.11.1",
-      "integrity": "sha512-Udu/LiJZi7ePNBFTBgdNqr45GL5ML5XsREe/SYDTspd+HMrklysWArBzi8gW8QsyyK4qPWmRMlJTAk7wiMZlPQ==",
+      "version": "0.11.2",
+      "integrity": "sha512-bHzVDOtPBrhHiNiRW66est4Kv+wH/907ZGlFTITe3ocGR5ileURtz3p+31Kr17/PcY9WybZd4T0Fe0g9wGL5oQ==",
       "license": "MIT",
-      "path": "app/third_party/npm/ui-0.11.1.tgz"
+      "path": "app/third_party/npm/ui-0.11.2.tgz"
     }
   ]
 }
