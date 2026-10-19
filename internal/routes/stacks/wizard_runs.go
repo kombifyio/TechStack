@@ -7,8 +7,10 @@
 // dispatch) unexported here; the read-only preview sibling stays in package
 // routes (internal/routes/wizard_api.go).
 //
-// Contract inversions vs. preview: the pinned CLI validates BEFORE anything
-// persists (an invalid projection is a 422 and leaves no state), and a second
+// Executable projections are validated by the pinned CLI before runtime state
+// persists. Valid desired choices that a pin cannot realize are saved in the
+// canonical intent and keyed ledger as blocked, without generating a plan.
+// A second
 // first-run against an existing homelab is structurally coerced to an
 // expansion instead of minting a parallel homelab (bead kombify-Techstack-4jhr).
 package stacks
@@ -324,6 +326,7 @@ func (h wizardRunHandlers) createWizardRun(e *httpx.Event) error {
 		tenantID:          tenantID,
 		ownerID:           ownerID,
 		request:           request,
+		explicitIntent:    request.Intent,
 		requestedIntent:   requestedIntent,
 		intentAdjustments: intentAdjustments,
 		requestHash:       wizardRunRequestHash(wizardRunRequestWithIntent(request, requestedIntent)),
@@ -339,6 +342,12 @@ func (h wizardRunHandlers) createWizardRun(e *httpx.Event) error {
 	}
 	if handled := h.prepareWizardRun(e, &run); handled {
 		return nil
+	}
+	if handled := h.reserveWizardRun(e, &run); handled {
+		return nil
+	}
+	if len(run.blockedCapabilities) > 0 {
+		return h.persistBlockedWizardRun(e, &run)
 	}
 	switch request.Intent.KitAssignment.Mode {
 	case wizardRunKindJoin:
@@ -378,6 +387,7 @@ func (h wizardRunHandlers) getActiveWizardRun(e *httpx.Event) error {
 		if errors.Is(err, controlplane.ErrNotFound) {
 			return httpx.Success(e, http.StatusOK, map[string]any{"run": nil})
 		}
+		httpx.RecordDependencyFailure(e, "wizard_runs.active.latest", err)
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal,
 			"Failed to read the wizard-run ledger", nil)
 	}
@@ -453,10 +463,14 @@ func wizardRunJobSnapshot(job *controlplane.Job) map[string]any {
 
 // wizardRunState threads the per-run facts through the flow helpers.
 type wizardRunState struct {
-	runID             string
-	tenantID          string
-	ownerID           string
-	request           wizardRunRequest
+	blockedCapabilities []wizardBlockedCapability
+	runID               string
+	tenantID            string
+	ownerID             string
+	request             wizardRunRequest
+	// Only these normalized incoming decisions may be written back. Inherited
+	// values are for admission/projection, never a stale replacement delta.
+	explicitIntent    specv2.WizardIntent
 	requestedIntent   specv2.WizardIntent
 	intentAdjustments []specv2.IntentAdjustment
 	requestHash       string
@@ -579,7 +593,7 @@ func (h wizardRunHandlers) replayWizardRunFromLedger(e *httpx.Event, run *wizard
 		return true
 	}
 	if stored.Status != "completed" {
-		if (wizardRunTransport(run.request) == specv2.TransportHypervisor || stored.ErrorReason == "projection_pending" || stored.ErrorReason == "intent_projection_failed") && stored.RequestSHA256 != run.requestHash {
+		if (wizardRunTransport(run.request) == specv2.TransportHypervisor || stored.ErrorReason == "projection_pending" || stored.ErrorReason == "intent_projection_failed" || stored.ErrorReason == controlplane.WizardIntentProjectionPending || stored.ErrorReason == controlplane.WizardDesiredProjectionBlocked) && stored.RequestSHA256 != run.requestHash {
 			_ = httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "Idempotency-Key already identifies a different projection request", nil)
 			return true
 		}
@@ -603,6 +617,50 @@ func (h wizardRunHandlers) replayWizardRunFromLedger(e *httpx.Event, run *wizard
 	return true
 }
 
+// Every keyed lane crosses this same ledger boundary before mutation. A late
+// writer cannot bypass a blocked reservation just because it has no Stack row.
+func (h wizardRunHandlers) reserveWizardRun(e *httpx.Event, run *wizardRunState) bool {
+	if run.key == "" {
+		return false
+	}
+	entry := h.wizardRunLedgerEntry(run, controlplane.WizardRun{
+		Status: "failed", ErrorReason: controlplane.WizardIntentProjectionPending,
+	}, map[string]any{})
+	stored, err := h.wizardRuns.ReserveWizardRun(e.Request.Context(), entry)
+	if errors.Is(err, controlplane.ErrConflict) {
+		_ = httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict,
+			"Idempotency-Key already identifies a different projection request", wizardRunConflictDetails(nil))
+		return true
+	}
+	if err != nil {
+		_ = httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+			"Wizard run reservation unavailable; retry with the same Idempotency-Key", nil)
+		return true
+	}
+	if stored.Status == "completed" {
+		return h.replayWizardRunFromLedger(e, run)
+	}
+	run.runID, run.pairingJobID, run.priorFailed = stored.ID, stored.PairingJobID, stored
+	if stored.StackID != "" && run.resumeStack == nil {
+		stack, err := h.crud.stackStore.GetStack(e.Request.Context(), run.tenantID, stored.StackID)
+		if err != nil || stack.OwnerSubjectID != run.ownerID {
+			_ = httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Reserved Wizard deployment unavailable; retry with the same Idempotency-Key", nil)
+			return true
+		}
+		if run.request.Intent.KitAssignment.Mode == wizardRunKindJoin {
+			// A join's target predates this attempt. It is not a created Stack
+			// to resume; actual Node/job/pairing refs remain recovery guards.
+			if stack.ID != run.request.Intent.KitAssignment.KitDeploymentID {
+				_ = httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "Reserved Wizard target differs from the requested join target", wizardRunConflictDetails(stored))
+				return true
+			}
+		} else {
+			run.resumeStack = stack
+		}
+	}
+	return false
+}
+
 // prepareWizardRun computes the deterministic homelab id, detects a same-key
 // resume, and decides the effective run kind: a first-run against a homelab
 // that already operates kit deployments is coerced to an expansion (never a
@@ -613,7 +671,7 @@ func (h wizardRunHandlers) prepareWizardRun(e *httpx.Event, run *wizardRunState)
 	ctx := e.Request.Context()
 	run.homelabID = deterministicHomelabID(run.tenantID, run.ownerID)
 
-	if run.key != "" {
+	if run.key != "" && run.request.Intent.KitAssignment.Mode != wizardRunKindJoin {
 		keyed, err := h.crud.stackStore.GetStack(ctx, run.tenantID, deterministicStackID(run.tenantID, run.ownerID, run.key))
 		if err == nil && keyed.OwnerSubjectID == run.ownerID {
 			run.resumeStack = keyed
@@ -626,26 +684,6 @@ func (h wizardRunHandlers) prepareWizardRun(e *httpx.Event, run *wizardRunState)
 				))
 			return true
 		}
-	}
-
-	if err := validateUseCaseSettingsAgainstCatalog(run.request.Intent); err != nil {
-		_ = httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeValidation,
-			"Wizard use-case settings rejected", wizardRunDetails(
-				"wizard_use_case_setting_rejected", false,
-				"Change the setting",
-				err.Error(),
-			))
-		return true
-	}
-
-	if err := validateUseCaseCapabilitiesAgainstCatalog(run.request.Intent); err != nil {
-		_ = httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeValidation,
-			"Wizard use-case capabilities rejected", wizardRunDetails(
-				"wizard_use_case_capability_rejected", false,
-				"Change the capability",
-				err.Error(),
-			))
-		return true
 	}
 
 	run.effectiveKind = run.request.Intent.RunKind
@@ -667,16 +705,33 @@ func (h wizardRunHandlers) prepareWizardRun(e *httpx.Event, run *wizardRunState)
 	if run.effectiveKind == specv2.RunKindExpansion {
 		// The owner already exists; expansion runs never re-bootstrap it.
 		run.request.Owner = nil
-		if err := h.loadStoredWizardGoals(ctx, run); err != nil {
-			_ = httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
-				"Stored Wizard goals could not be reconciled", wizardRunDetails(
-					"wizard_goal_reconciliation_unavailable", true,
-					"Try again",
-					"The owner's stored Wizard goals could not be read; no projection was attempted.",
-				))
-			return true
-		}
 	}
+	// A saved blocked first run may have no deployment yet. Reconcile it too;
+	// admission must always see inherited decisions, not only inherited names.
+	if err := h.loadStoredWizardGoals(ctx, run); err != nil {
+		_ = httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+			"Stored Wizard goals could not be reconciled", wizardRunDetails(
+				"wizard_goal_reconciliation_unavailable", true,
+				"Try again",
+				"The owner's stored Wizard goals could not be read; no projection was attempted.",
+			))
+		return true
+	}
+	if err := validateUseCaseSettingsAgainstCatalog(run.request.Intent); err != nil {
+		_ = httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeValidation,
+			"Wizard use-case settings rejected", wizardRunDetails(
+				"wizard_use_case_setting_rejected", false, "Change the setting", err.Error()))
+		return true
+	}
+	effectiveIntent, blocked, admissionErr := admitWizardDesiredCapabilities(run.request.Intent)
+	if admissionErr != nil {
+		_ = httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeValidation,
+			"Wizard use-case capabilities rejected", wizardRunDetails(
+				"wizard_use_case_capability_rejected", false, "Change the capability", admissionErr.Error()))
+		return true
+	}
+	run.request.Intent = effectiveIntent
+	run.blockedCapabilities = blocked
 	return false
 }
 

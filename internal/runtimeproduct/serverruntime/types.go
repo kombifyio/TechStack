@@ -24,6 +24,7 @@ type RuntimeOfferingID string
 const (
 	RuntimeOfferingStandard RuntimeOfferingID = "monthly-runtime-standard"
 	RuntimeOfferingPremium  RuntimeOfferingID = "monthly-runtime-premium"
+	RuntimeOfferingLarge    RuntimeOfferingID = "monthly-runtime-large"
 )
 
 type RuntimeAction string

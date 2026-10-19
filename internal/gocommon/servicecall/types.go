@@ -1,7 +1,7 @@
 // Package servicecall provides authenticated service-to-service HTTP calls
 // within the kombify Render Private Network.
 //
-// Standards reference: kombify Core/standards/API-COMMUNICATION-ARCHITECTURE.md §4.
+// Standards reference: kombify-Core/standards/API-FIRST-STANDARD.md §10.4.
 //
 // Why HS256 shared-secret and not Auth0 M2M:
 //   - Render Private Network is already isolated; auth here is for caller
@@ -43,7 +43,7 @@ const DefaultTokenTTL = 5 * time.Minute
 
 // MaxTokenTTL is the maximum accepted token lifetime. Verifiers reject any
 // token whose exp - iat exceeds it, and IssueToken clamps to it. The
-// SERVICE-TO-SERVICE-AUTH-STANDARD requires exp of five minutes or less.
+// AUTHENTICATION.md §8 requires exp of five minutes or less.
 const MaxTokenTTL = 5 * time.Minute
 
 // clockSkewTolerance is the tolerated difference between issuer and
@@ -53,11 +53,13 @@ const clockSkewTolerance = 30 * time.Second
 // OnBehalfOf carries end-user context when a service call is made on a
 // user's behalf. Promoted into identity.Identity at the receiving side.
 type OnBehalfOf struct {
-	Sub   string   `json:"sub,omitempty"`
-	OrgID string   `json:"org_id,omitempty"`
-	Email string   `json:"email,omitempty"`
-	Tier  string   `json:"tier,omitempty"`
-	Roles []string `json:"roles,omitempty"`
+	Sub   string `json:"sub,omitempty"`
+	OrgID string `json:"org_id,omitempty"`
+	Email string `json:"email,omitempty"`
+	// EmailVerified carries the issuer's email_verified assertion; absent means false.
+	EmailVerified bool     `json:"email_verified,omitempty"`
+	Tier          string   `json:"tier,omitempty"`
+	Roles         []string `json:"roles,omitempty"`
 }
 
 // Claims are the JWT claims carried in a service-call token.

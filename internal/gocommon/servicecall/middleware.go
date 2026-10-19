@@ -74,10 +74,11 @@ func Middleware(cfg Config) func(next http.Handler) http.Handler {
 
 			if obo := claims.OnBehalfOf; obo != nil && obo.Sub != "" {
 				ctx = identity.NewContext(ctx, &identity.Identity{
-					UserID: obo.Sub,
-					OrgID:  obo.OrgID,
-					Email:  obo.Email,
-					Roles:  obo.Roles,
+					UserID:        obo.Sub,
+					OrgID:         obo.OrgID,
+					Email:         obo.Email,
+					EmailVerified: obo.EmailVerified,
+					Roles:         obo.Roles,
 				})
 			}
 

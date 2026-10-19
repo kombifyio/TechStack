@@ -47,7 +47,7 @@ func RegisterCRUDRuntimeRoutes(r *httpx.Router, runtime auth.RuntimeStore, orch 
 
 	// The homelab name is the Stack Identity name: these routes read and write
 	// the same homelab row, and /sync applies one kombify Cloud sync step
-	// (STACK-IDENTITY-CUSTOMIZATION-STANDARD §8).
+	// (STACKKITS-PRODUCT-BOUNDARY-STANDARD.md §10.8).
 	r.GET("/api/v1/auth/stack-identity", h.getStackIdentity)
 	r.PUT("/api/v1/auth/stack-identity", h.updateStackIdentity)
 	r.PUT("/api/v1/auth/stack-identity/conditional", h.updateStackIdentityConditional)

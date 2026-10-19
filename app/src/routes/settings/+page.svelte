@@ -2,7 +2,7 @@
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import { onMount } from "svelte";
-  import { getLocale, tr, trParts } from "#lib/i18n.svelte.js";
+  import { getLocale, stateLabel, tr, trParts } from "#lib/i18n.svelte.js";
   import {
     defaultIdentity,
     StackIdentityDisplay,
@@ -36,6 +36,7 @@
     type Finish,
   } from "@kombiverselabs/design/contract";
   import {
+    SettingsRow,
     SettingsSection,
     SettingsShell,
     type SettingsTab,
@@ -46,6 +47,15 @@
     type SettingsTabSlug,
   } from "#lib/settings/tabs.js";
   import Button from "#lib/components/ui/Button.svelte";
+  import ErrorCallout from "#lib/components/ui/ErrorCallout.svelte";
+  import Modal from "#lib/components/Modal.svelte";
+  import Switch from "#lib/components/ui/Switch.svelte";
+  import HomelabSettingsPanel from "#lib/components/settings/HomelabSettingsPanel.svelte";
+  import { toast } from "#lib/stores/toast.js";
+  import {
+    shortcutsStore,
+    shortcutsEnabled,
+  } from "#lib/stores/shortcuts.js";
   import LanguageSwitcher from "#lib/components/ui/LanguageSwitcher.svelte";
   import {
     hydrateStackIdentityFromBackend,
@@ -62,6 +72,15 @@
     { slug: "homelab", label: tr("wizard.settings.title"), scope: "tool" },
   ]);
   const hrefForTab = (slug: string) => settingsTabHref(slug as SettingsTabSlug);
+
+  // The QA clean-up tool is for kombify staff. The session carries one role
+  // signal for that: `admin`. `is_admin` is not used on purpose, because the
+  // v2 session also sets it for the homelab `owner`. The portal-SSO session
+  // still maps an owner to `admin`, so there owners see the tool too; the
+  // backend scopes it to the owner's own tenant either way.
+  const isStaff = $derived(
+    authStore.cloudUser?.roles?.includes("admin") === true,
+  );
 
   let replaySetup = $state(false);
   function continueSetupReplay() {
@@ -157,6 +176,7 @@
       const response = await saveStackIdentityToBackend(updated);
       stackIdentityValue = response.stack_identity ?? updated;
       stackIdentityEditable = response.editable;
+      toast.success(tr("settings.saved"));
     } catch (err) {
       stackIdentityError =
         err instanceof Error ? err.message : tr("ui.settings.failedToSaveHomelabIdentity");
@@ -164,6 +184,7 @@
   }
 
   async function openOrphanPruneConfirm() {
+    if (!isStaff) return;
     pruningOrphans = true;
     orphanPruneError = null;
     orphanPruneSuccess = false;
@@ -256,8 +277,10 @@
       } else {
         await destroyStack(target.id);
       }
+      const removedName = target.name;
       deleteCandidate = null;
       deleteConfirmName = "";
+      toast.success(tr("settings.homelabRemoved", { name: removedName }));
       await loadDeployments();
     } catch (err) {
       deleteError = parseApiError(err).message || tr("ui.settings.deletionFailed");
@@ -297,7 +320,7 @@
   />
 {/if}
 
-<main class="mx-auto max-w-4xl p-6 md:p-8">
+<div class="mx-auto max-w-4xl p-4 md:p-8" data-testid="settings-page">
   <SettingsShell
     title={tr("ui.settings.settings")}
     tabs={settingsTabs}
@@ -337,6 +360,26 @@
         class="rounded-lg border border-border bg-card px-3 py-1.5 text-sm text-foreground"
       />
     </SettingsSection>
+    <SettingsSection
+      id="keyboard"
+      title={tr("shortcuts.settingsTitle")}
+      lead={tr("shortcuts.settingsLead")}
+    >
+      <SettingsRow
+        label={tr("shortcuts.switchLabel")}
+        description={tr("shortcuts.switchHint")}
+        for="settings-shortcuts-switch"
+      >
+        <Switch
+          id="settings-shortcuts-switch"
+          testId="settings-shortcuts-switch"
+          checked={$shortcutsEnabled}
+          onchange={(next) => shortcutsStore.setEnabled(next)}
+          onText={tr("switch.on")}
+          offText={tr("switch.off")}
+        />
+      </SettingsRow>
+    </SettingsSection>
       {:else if activeTab === "identity"}
     <section>
       <div>
@@ -367,7 +410,7 @@
         {/if}
 
         {#if stackIdentityError}
-          <p class="mt-3 text-sm text-destructive">{stackIdentityError}</p>
+          <ErrorCallout class="mt-3" message={stackIdentityError} />
         {/if}
       </div>
     </section>
@@ -404,7 +447,7 @@
                 onclick={() => theme.followDefaultTheme()}
                 >{tr("appearance.inherit")}</button
               >
-              {#each APPEARANCE_MODES as mode}
+              {#each APPEARANCE_MODES as mode (mode)}
                 <button
                   type="button"
                   role="radio"
@@ -444,7 +487,7 @@
               aria-label={tr("ui.settings.surfaceFinish")}
               data-testid="settings-finish"
             >
-              {#each FINISHES as finishOption}
+              {#each FINISHES as finishOption (finishOption)}
                 <button
                   type="button"
                   role="radio"
@@ -554,34 +597,20 @@
     </section>
 
       {:else if activeTab === "homelab"}
-    <section id="homelab-settings" class="scroll-mt-6">
-      <div>
-        <div
-          class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"
-        >
-          <div class="min-w-0">
-            <h2 class="text-lg font-semibold text-foreground">
-              {tr("wizard.settings.title")}
-            </h2>
-            <p class="mt-1 text-sm text-muted-foreground">
-              {tr("wizard.settings.entry")}
-            </p>
-          </div>
-          <Button
-            variant="secondary"
-            testId="open-homelab-settings"
-            onclick={() => goto("/settings/homelab")}
-          >
-            {tr("wizard.settings.open")}
-          </Button>
-        </div>
-      </div>
-    </section>
+    <SettingsSection
+      id="homelab-settings"
+      title={tr("wizard.settings.title")}
+      lead={tr("wizard.settings.intro")}
+    >
+      <HomelabSettingsPanel />
+    </SettingsSection>
 
-    <section id="danger-zone" class="scroll-mt-6">
-      <div>
-        <h2 class="mb-4 text-lg font-semibold text-destructive">{tr("ui.settings.dangerZone")}</h2>
-
+    <SettingsSection
+      id="danger-zone"
+      title={tr("ui.settings.dangerZone")}
+      tone="danger"
+    >
+      {#if isStaff}
         <div
           class="rounded-lg border border-destructive/30 bg-destructive/5 p-4"
           data-testid="settings-prune-orphans-card"
@@ -607,7 +636,7 @@
           </div>
 
           {#if orphanPruneError}
-            <p class="mt-3 text-sm text-destructive">{orphanPruneError}</p>
+            <ErrorCallout class="mt-3" message={orphanPruneError} />
           {/if}
           {#if orphanPruneSuccess}
             <p class="mt-3 text-sm text-success">
@@ -615,201 +644,180 @@
             </p>
           {/if}
         </div>
-
-        <div
-          class="mt-4 rounded-lg border border-destructive/30 bg-destructive/5 p-4"
-          data-testid="settings-delete-deployment-card"
-        >
-          <div class="min-w-0">
-            <h3 class="font-medium text-foreground">{tr("ui.settings.deleteADeployment")}</h3>
-            <p class="mt-1 text-sm text-muted-foreground">
-              {tr("ui.settings.decommissionsTheDeploymentSManaged")}
-            </p>
-          </div>
-
-          {#if deploymentsLoading}
-            <p class="mt-3 text-sm text-muted-foreground">
-              {tr("ui.settings.loadingDeployments")}
-            </p>
-          {:else if deploymentsError}
-            <p class="mt-3 text-sm text-destructive">{deploymentsError}</p>
-          {:else if deployments.length === 0}
-            <p class="mt-3 text-sm text-muted-foreground">
-              {tr("ui.settings.noDeploymentsToDelete")}
-            </p>
-          {:else}
-            <ul class="mt-3 space-y-2">
-              {#each deployments as deployment (deployment.id)}
-                <li
-                  class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card p-3"
-                  data-testid="settings-deployment-row"
-                >
-                  <div class="min-w-0">
-                    <p class="truncate font-medium text-foreground">
-                      {deployment.name}
-                    </p>
-                    <p class="text-xs text-muted-foreground">
-                      {deployment.state || deployment.status || "unknown"}
-                    </p>
-                  </div>
-                  <Button
-                    variant="secondary"
-                    class="shrink-0"
-                    testId="settings-delete-deployment-button"
-                    onclick={() => openDeleteConfirm(deployment)}
-                    disabled={deployment.demo_anchor || deletingDeployment}
-                    ariaLabel={deployment.demo_anchor
-                      ? tr("ui.settings.theDemoDeploymentIsProtected")
-                      : tr("ui.settings.deleteThisDeployment")}
-                  >
-                    {tr("ui.settings.delete")}
-                  </Button>
-                </li>
-              {/each}
-            </ul>
-          {/if}
-        </div>
-      </div>
-    </section>
       {/if}
-    </div>
-  </SettingsShell>
-</main>
 
-{#if deleteCandidate}
-  <div
-    class="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
-    role="dialog"
-    aria-modal="true"
-    data-testid="settings-delete-deployment-modal"
-  >
-    <div data-kx="plate" class="w-full max-w-md shadow-2xl">
-      <div class="p-6">
-        <div class="mb-4">
-          <h2 class="text-lg font-semibold text-destructive">
-            {tr("ui.settings.deleteNamed", { name: deleteCandidate.name })}
-          </h2>
+      <div
+        class="mt-4 rounded-lg border border-destructive/30 bg-destructive/5 p-4"
+        data-testid="settings-delete-deployment-card"
+      >
+        <div class="min-w-0">
+          <h3 class="font-medium text-foreground">{tr("ui.settings.deleteADeployment")}</h3>
           <p class="mt-1 text-sm text-muted-foreground">
-            {tr("ui.settings.thisDecommissionsTheManagedRuntime")}
+            {tr("ui.settings.decommissionsTheDeploymentSManaged")}
           </p>
         </div>
 
-        <label
-          class="mb-1 block text-sm text-muted-foreground"
-          for="settings-delete-deployment-name"
-        >
-          {trParts("ui.settings.typeToConfirm")[0]}<span class="font-medium text-foreground"
-            >{deleteCandidate.name}</span
-          >{trParts("ui.settings.typeToConfirm")[1]}
-        </label>
-        <input
-          id="settings-delete-deployment-name"
-          class="mb-4 w-full rounded-lg border border-border bg-input px-3 py-2 text-foreground"
-          data-testid="settings-delete-deployment-input"
-          bind:value={deleteConfirmName}
-          autocomplete="off"
-        />
-
-        {#if deleteError}
-          <p class="mb-4 text-sm text-destructive">{deleteError}</p>
-        {/if}
-
-        <div class="flex gap-3">
-          <Button
-            variant="secondary"
-            class="flex-1"
-            onclick={cancelDelete}
-            disabled={deletingDeployment}
-          >
-            {tr("ui.importExportModal.cancel")}
-          </Button>
-          <Button
-            variant="destructive"
-            class="flex-1"
-            testId="settings-delete-deployment-confirm"
-            onclick={confirmDelete}
-            disabled={deletingDeployment || !deleteConfirmed}
-          >
-            {deletingDeployment ? tr("ui.settings.deleting") : tr("ui.settings.delete")}
-          </Button>
-        </div>
-      </div>
-    </div>
-  </div>
-{/if}
-
-{#if showOrphanPruneConfirm}
-  <div
-    class="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
-    role="dialog"
-    aria-modal="true"
-    data-testid="settings-prune-orphans-modal"
-  >
-    <div data-kx="plate" class="w-full max-w-md shadow-2xl">
-      <div class="p-6">
-        <div class="mb-4">
-          <h2 class="text-lg font-semibold text-foreground">
-            {tr("ui.settings.reviewVerifiedTestResidue")}
-          </h2>
-          <p class="mt-1 text-sm text-muted-foreground">
-            {tr("ui.settings.thisExactPlanIsBound")}
+        {#if deploymentsLoading}
+          <p class="mt-3 text-sm text-muted-foreground">
+            {tr("ui.settings.loadingDeployments")}
           </p>
-        </div>
-
-        <div class="mb-4 rounded-lg border border-border bg-muted/40 p-3">
-          <p class="text-sm text-foreground">
-            {tr("ui.settings.pruneQualifies", { owner: "e2e-*", strict: "runtime-cloud-<provider>-<timestamp>" })}
+        {:else if deploymentsError}
+          <ErrorCallout
+            class="mt-3"
+            message={deploymentsError}
+            onRetry={() => void loadDeployments()}
+          />
+        {:else if deployments.length === 0}
+          <p class="mt-3 text-sm text-muted-foreground">
+            {tr("ui.settings.noDeploymentsToDelete")}
           </p>
-        </div>
-
-        {#if orphanPrunePlan?.candidates.length}
-          <ul class="mb-4 space-y-2" data-testid="settings-prune-orphans-plan">
-            {#each orphanPrunePlan.candidates as candidate (candidate.resource_type + candidate.id)}
-              <li class="rounded-lg border border-border bg-card p-3">
-                <p class="font-medium text-foreground">{candidate.name}</p>
-                <p class="mt-1 break-all text-xs text-muted-foreground">
-                  {candidate.resource_type} · {candidate.id} · {candidate.class}
-                </p>
+        {:else}
+          <ul class="mt-3 space-y-2">
+            {#each deployments as deployment (deployment.id)}
+              <li
+                class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card p-3"
+                data-testid="settings-deployment-row"
+              >
+                <div class="min-w-0">
+                  <p class="truncate font-medium text-foreground">
+                    {deployment.name}
+                  </p>
+                  <p class="text-xs text-muted-foreground">
+                    {stateLabel(deployment.state || deployment.status || "unknown")}
+                  </p>
+                </div>
+                <Button
+                  variant="secondary"
+                  class="shrink-0"
+                  testId="settings-delete-deployment-button"
+                  onclick={() => openDeleteConfirm(deployment)}
+                  disabled={deployment.demo_anchor || deletingDeployment}
+                  ariaLabel={deployment.demo_anchor
+                    ? tr("ui.settings.theDemoDeploymentIsProtected")
+                    : tr("ui.settings.deleteThisDeployment")}
+                >
+                  {tr("settings.remove")}
+                </Button>
               </li>
             {/each}
           </ul>
-        {:else}
-          <p
-            class="mb-4 text-sm text-success"
-            data-testid="settings-prune-orphans-empty"
-          >
-            {tr("ui.settings.noVerifiedTestResidueWas")}
-          </p>
         {/if}
-
-        {#if orphanPruneError}
-          <p class="mb-4 text-sm text-destructive">{orphanPruneError}</p>
-        {/if}
-
-        <div class="flex gap-3">
-          <Button
-            variant="secondary"
-            class="flex-1"
-            onclick={cancelOrphanPrune}
-            disabled={pruningOrphans}
-          >
-            {orphanPrunePlan?.candidates.length ? tr("ui.importExportModal.cancel") : tr("ui.groupedTaskList.done")}
-          </Button>
-          {#if orphanPrunePlan?.candidates.length}
-            <Button
-              variant="primary"
-              class="flex-1"
-              testId="settings-prune-orphans-confirm"
-              onclick={confirmOrphanPrune}
-              disabled={pruningOrphans}
-            >
-              {pruningOrphans ? tr("ui.settings.applying") : tr("ui.settings.applyExactPlan")}
-            </Button>
-          {/if}
-        </div>
       </div>
+    </SettingsSection>
+      {/if}
     </div>
-  </div>
+  </SettingsShell>
+</div>
+
+{#if deleteCandidate}
+  <Modal
+    title={tr("ui.settings.deleteNamed", { name: deleteCandidate.name })}
+    description={tr("ui.settings.thisDecommissionsTheManagedRuntime")}
+    onClose={cancelDelete}
+    maxWidth="md"
+    role="alertdialog"
+    tone="danger"
+    testId="settings-delete-deployment-modal"
+  >
+    <label
+      class="mb-1 block text-sm text-muted-foreground"
+      for="settings-delete-deployment-name"
+    >
+      {trParts("ui.settings.typeToConfirm")[0]}<span class="font-medium text-foreground"
+        >{deleteCandidate.name}</span
+      >{trParts("ui.settings.typeToConfirm")[1]}
+    </label>
+    <input
+      id="settings-delete-deployment-name"
+      class="mb-4 w-full rounded-lg border border-border bg-input px-3 py-2 text-foreground"
+      data-testid="settings-delete-deployment-input"
+      bind:value={deleteConfirmName}
+      autocomplete="off"
+      data-autofocus
+    />
+
+    {#if deleteError}
+      <ErrorCallout message={deleteError} />
+    {/if}
+
+    {#snippet footer()}
+      <Button
+        variant="secondary"
+        onclick={cancelDelete}
+        disabled={deletingDeployment}
+      >
+        {tr("ui.importExportModal.cancel")}
+      </Button>
+      <Button
+        variant="destructive"
+        testId="settings-delete-deployment-confirm"
+        onclick={confirmDelete}
+        disabled={deletingDeployment || !deleteConfirmed}
+      >
+        {deletingDeployment ? tr("ui.settings.deleting") : tr("settings.remove")}
+      </Button>
+    {/snippet}
+  </Modal>
+{/if}
+
+{#if showOrphanPruneConfirm && isStaff}
+  <Modal
+    title={tr("ui.settings.reviewVerifiedTestResidue")}
+    description={tr("ui.settings.thisExactPlanIsBound")}
+    onClose={cancelOrphanPrune}
+    maxWidth="md"
+    testId="settings-prune-orphans-modal"
+  >
+    <div class="mb-4 rounded-lg border border-border bg-muted/40 p-3">
+      <p class="text-sm text-foreground">
+        {tr("ui.settings.pruneQualifies", { owner: "e2e-*", strict: "runtime-cloud-<provider>-<timestamp>" })}
+      </p>
+    </div>
+
+    {#if orphanPrunePlan?.candidates.length}
+      <ul class="space-y-2" data-testid="settings-prune-orphans-plan">
+        {#each orphanPrunePlan.candidates as candidate (candidate.resource_type + candidate.id)}
+          <li class="rounded-lg border border-border bg-card p-3">
+            <p class="font-medium text-foreground">{candidate.name}</p>
+            <p class="mt-1 break-all text-xs text-muted-foreground">
+              {candidate.resource_type} · {candidate.id} · {candidate.class}
+            </p>
+          </li>
+        {/each}
+      </ul>
+    {:else}
+      <p
+        class="text-sm text-success"
+        data-testid="settings-prune-orphans-empty"
+      >
+        {tr("ui.settings.noVerifiedTestResidueWas")}
+      </p>
+    {/if}
+
+    {#if orphanPruneError}
+      <ErrorCallout class="mt-4" message={orphanPruneError} />
+    {/if}
+
+    {#snippet footer()}
+      <Button
+        variant="secondary"
+        onclick={cancelOrphanPrune}
+        disabled={pruningOrphans}
+      >
+        {orphanPrunePlan?.candidates.length ? tr("ui.importExportModal.cancel") : tr("ui.groupedTaskList.done")}
+      </Button>
+      {#if orphanPrunePlan?.candidates.length}
+        <Button
+          variant="primary"
+          testId="settings-prune-orphans-confirm"
+          onclick={confirmOrphanPrune}
+          disabled={pruningOrphans}
+        >
+          {pruningOrphans ? tr("ui.settings.applying") : tr("ui.settings.applyExactPlan")}
+        </Button>
+      {/if}
+    {/snippet}
+  </Modal>
 {/if}
 
 <style>

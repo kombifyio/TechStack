@@ -346,6 +346,16 @@ func (r *JobExecutionReclaimer) reclaimOne(
 		},
 	}
 
+	if jobs.JobType(strings.ToLower(strings.TrimSpace(lease.Type))) == jobs.JobTypeDeploy && providerEffect == ProviderEffectRecoverable {
+		interrupted, err := jobs.InterruptedRolloutResult(lease.JobID, now)
+		if err != nil {
+			return reclaimOutcomeNone, fmt.Errorf("reclaim orphaned job %s: %w", lease.JobID, err)
+		}
+		for key, value := range interrupted {
+			patch[key] = value
+		}
+	}
+
 	failed, err := r.store.ReclaimExpiredJobExecution(ctx, controlplane.ReclaimExpiredJobExecutionRequest{
 		TenantID:           lease.TenantID,
 		JobID:              lease.JobID,

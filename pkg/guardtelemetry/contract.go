@@ -1,7 +1,6 @@
 // Package guardtelemetry is kombify Guard's telemetry on the managed transport.
 //
-// What a Guard may send is the data contract of SERVER-CONNECTION-STANDARD.md
-// section 9: host resources (CPU, memory, swap, load, disk per mount, uptime)
+// What a Guard may send is the data contract of STACKKITS-PRODUCT-BOUNDARY-STANDARD.md §14.9: host resources (CPU, memory, swap, load, disk per mount, uptime)
 // and container resource usage, plus structured hardware drive observations.
 // Drive health is independent of capacity gauges. The contract is code here: a
 // metric name and its label keys are on an allowlist, every label value is

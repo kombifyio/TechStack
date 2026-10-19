@@ -2,7 +2,7 @@
 // the homelab. Merged into the main dictionary by i18n.ts for every locale.
 export const nodesMessages = {
   en: {
-    "nav.nodes": "Nodes",
+    "nav.nodes": "Servers",
     "nodes.description":
       "Every server and device of your homelab in one place: local hardware, cloud servers and the devices that connect to them.",
     "nodes.servers": "Servers",
@@ -33,7 +33,7 @@ export const nodesMessages = {
     "nodes.summary": "{servers} servers · {devices} devices",
   },
   de: {
-    "nav.nodes": "Nodes",
+    "nav.nodes": "Server",
     "nodes.description":
       "Alle Server und Geräte deines Homelabs an einem Ort: lokale Hardware, Cloud-Server und die Geräte, die sich mit ihnen verbinden.",
     "nodes.servers": "Server",
@@ -64,7 +64,7 @@ export const nodesMessages = {
     "nodes.summary": "{servers} Server · {devices} Geräte",
   },
   es: {
-    "nav.nodes": "Nodos",
+    "nav.nodes": "Servidores",
     "nodes.description":
       "Todos los servidores y dispositivos de tu homelab en un solo lugar: hardware local, servidores en la nube y los dispositivos que se conectan a ellos.",
     "nodes.servers": "Servidores",
@@ -96,7 +96,7 @@ export const nodesMessages = {
     "nodes.summary": "{servers} servidores · {devices} dispositivos",
   },
   "zh-Hans": {
-    "nav.nodes": "节点",
+    "nav.nodes": "服务器",
     "nodes.description":
       "家庭实验室的所有服务器和设备集中在一处：本地硬件、云服务器以及连接它们的设备。",
     "nodes.servers": "服务器",
@@ -126,7 +126,7 @@ export const nodesMessages = {
     "nodes.summary": "{servers} 台服务器 · {devices} 台设备",
   },
   hi: {
-    "nav.nodes": "नोड्स",
+    "nav.nodes": "सर्वर",
     "nodes.description":
       "आपके होमलैब के सभी सर्वर और डिवाइस एक जगह: लोकल हार्डवेयर, क्लाउड सर्वर और उनसे जुड़ने वाले डिवाइस।",
     "nodes.servers": "सर्वर",
@@ -157,7 +157,7 @@ export const nodesMessages = {
     "nodes.summary": "{servers} सर्वर · {devices} डिवाइस",
   },
   ar: {
-    "nav.nodes": "العُقد",
+    "nav.nodes": "الخوادم",
     "nodes.description":
       "كل خوادم وأجهزة مختبرك المنزلي في مكان واحد: العتاد المحلي وخوادم السحابة والأجهزة المتصلة بها.",
     "nodes.servers": "الخوادم",

@@ -14,6 +14,46 @@ const wizardRunColumns = `id, tenant_id, owner_subject_id, idempotency_key, requ
 		pairing_job_id, status, intent_json::text, result_json::text, error_reason,
 		created_at, updated_at, dismissed_at`
 
+func (s *PostgresStore) ReserveWizardRun(ctx context.Context, run WizardRun) (*WizardRun, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("controlplane: database not configured")
+	}
+	if err := validateWizardRun(run); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(run.IdempotencyKey) == "" {
+		return nil, fmt.Errorf("controlplane: reservation requires idempotency key")
+	}
+	var out *WizardRun
+	err := s.withTenant(ctx, run.TenantID, func(tx *sql.Tx) error {
+		var err error
+		out, err = reserveWizardRunTx(ctx, tx, run)
+		return err
+	})
+	return out, err
+}
+
+func reserveWizardRunTx(ctx context.Context, tx *sql.Tx, run WizardRun) (*WizardRun, error) {
+	out, err := upsertWizardRunTx(ctx, tx, run, false)
+	if errors.Is(err, ErrConflict) {
+		// The unique key waits for the first writer. Read its committed
+		// identity without rewriting a partial or completed result.
+		out, err = scanWizardRun(tx.QueryRowContext(ctx, `SELECT `+wizardRunColumns+`
+			FROM wizard_runs WHERE tenant_id=$1 AND owner_subject_id=$2 AND idempotency_key=$3`,
+			strings.TrimSpace(run.TenantID), strings.TrimSpace(run.OwnerSubjectID), strings.TrimSpace(run.IdempotencyKey)))
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrConflict
+	}
+	if err != nil {
+		return nil, err
+	}
+	if out.RequestSHA256 != strings.TrimSpace(run.RequestSHA256) {
+		return nil, ErrConflict
+	}
+	return out, nil
+}
+
 func (s *PostgresStore) GetWizardRunByKey(ctx context.Context, tenantID, ownerSubjectID, idempotencyKey string) (*WizardRun, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("controlplane: database not configured")
@@ -169,7 +209,11 @@ func upsertWizardRunTx(ctx context.Context, tx *sql.Tx, run WizardRun, replaceEx
 			intent_json = EXCLUDED.intent_json,
 			result_json = EXCLUDED.result_json,
 			error_reason = EXCLUDED.error_reason,
-			dismissed_at = NULL`
+			dismissed_at = NULL
+		WHERE (wizard_runs.request_sha256 = EXCLUDED.request_sha256
+			OR (wizard_runs.status <> 'completed' AND COALESCE(wizard_runs.error_reason, '') <> ALL($17::text[])))
+			AND (wizard_runs.status <> 'completed' OR EXCLUDED.status = 'completed')`
+		args = append(args, wizardRunBoundRequestReasons())
 	}
 	if !replaceExisting {
 		query += ` ON CONFLICT DO NOTHING`

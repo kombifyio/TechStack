@@ -97,7 +97,7 @@ func issueToken(cfg Config, target string, obo *OnBehalfOf, requestID string, bi
 
 // VerifyToken parses and validates token against primary (and optionally
 // secretNext during rotation). Returns the decoded claims on success.
-// Enforces the SERVICE-TO-SERVICE-AUTH-STANDARD claim rules: exp and iat are
+// Enforces the AUTHENTICATION.md §8 claim rules: exp and iat are
 // required, the lifetime is capped at MaxTokenTTL, iat may not be in the
 // future beyond the clock skew, and iss must be "kombify-" + svc.
 // Does NOT enforce audience or caller policy — that is the middleware's job.

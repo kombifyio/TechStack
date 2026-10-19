@@ -24,6 +24,7 @@
     CANONICAL_USE_CASE_GOALS,
     createDefaultConfig,
     normalizeIonosDatacenter,
+    readRuntimeOfferingID,
     type StackConfig,
   } from "#lib/wizard/index.js";
   import { EasyWizard } from "#lib/components/wizard/index.js";
@@ -118,6 +119,7 @@
   let preparing = $state(false);
   let error = $state<string | null>(null);
   let requiresProviderReselection = $state(false);
+  let offeringReadbackFailed = $state(false);
   let stackDefaultsApplied = false;
 
   onMount(() => {
@@ -148,11 +150,13 @@
       config.ionosDatacenter = normalizeIonosDatacenter(
         deployment.ionos_datacenter || deployment.provider_region,
       );
-      if (
-        deployment.runtime_offering_id === "monthly-runtime-standard" ||
-        deployment.runtime_offering_id === "monthly-runtime-premium"
-      ) {
-        config.runtimeOfferingId = deployment.runtime_offering_id;
+      try {
+        config.runtimeOfferingId = readRuntimeOfferingID(
+          deployment.runtime_offering_id,
+        );
+      } catch {
+        offeringReadbackFailed = true;
+        error = tr("wizard.server.managed.specsUnavailable");
       }
     }
   });
@@ -237,6 +241,9 @@
     error = null;
     try {
       if (wizardConfig.serverProvisioning.mode === "kombify-cloud") {
+        if (offeringReadbackFailed) {
+          throw new Error(tr("wizard.server.managed.specsUnavailable"));
+        }
         if (requiresProviderReselection) {
           throw new Error(
             tr("ui.managedCreationFlow.selectCentronOrIonosExplicitly"),

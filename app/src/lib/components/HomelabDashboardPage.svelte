@@ -100,6 +100,12 @@
   import { dashboardPreset } from "#lib/stores/dashboardPreset.svelte.js";
   import { Surface } from "@kombiverselabs/ui/primitives";
   import Button from "#lib/components/ui/Button.svelte";
+  import ErrorCallout from "#lib/components/ui/ErrorCallout.svelte";
+  import { SERVERS_HREF } from "#lib/navigation.js";
+  import {
+    addServerHref as addServerRoute,
+    serverDetailHref,
+  } from "#lib/server-links.js";
   import {
     AlertTriangle,
     HeartPulse,
@@ -153,6 +159,23 @@
   let dataStale = $state(false);
   let loadRetryAttempt = 0;
   let loadRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  // When the page will try again on its own, and the seconds left, so the
+  // automatic retry is a visible "Trying again in 5 s" and never a silent one.
+  let loadRetryAt = $state<number | null>(null);
+  let loadRetrySeconds = $state<number | null>(null);
+  $effect(() => {
+    const at = loadRetryAt;
+    if (at === null) {
+      loadRetrySeconds = null;
+      return;
+    }
+    const tick = () => {
+      loadRetrySeconds = Math.max(0, Math.ceil((at - Date.now()) / 1000));
+    };
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  });
   let sessionRenewalRequired = $state(false);
   let sessionRenewalBodyKey = $state<string | undefined>(undefined);
   let showImportExport = $state(false);
@@ -1288,6 +1311,7 @@
       clearTimeout(loadRetryTimer);
       loadRetryTimer = null;
     }
+    loadRetryAt = null;
     loading = true;
     error = null;
     sessionRenewalRequired = false;
@@ -1443,6 +1467,7 @@
     if (loadRetryTimer) return;
     const delayMs = Math.min(5_000 * 2 ** loadRetryAttempt, 30_000);
     loadRetryAttempt += 1;
+    loadRetryAt = Date.now() + delayMs;
     loadRetryTimer = setTimeout(() => {
       loadRetryTimer = null;
       void load();
@@ -1513,6 +1538,7 @@
         clearTimeout(loadRetryTimer);
         loadRetryTimer = null;
       }
+      loadRetryAt = null;
     };
   });
 
@@ -1731,25 +1757,30 @@
     }
   }
 
+  // One detail route per server, shared with the server list and Monitoring.
   function serverDetailsHref(
     serverId: string,
     kitDeploymentId = singleDeployment?.id,
   ): string {
-    return kitDeploymentId
-      ? `/stacks/${encodeURIComponent(
-          kitDeploymentId,
-        )}/servers/${encodeURIComponent(serverId)}`
-      : "#";
+    return (
+      serverDetailHref({ serverId, deploymentId: kitDeploymentId }) ?? "#"
+    );
   }
 
   /**
-   * The monitoring page answers node state and availability history; services
-   * live on their own page. `?focus=` is gone with the blocks it scrolled to,
-   * so each tile links to the surface that actually reports its number.
+   * Each tile links to the surface that actually reports its number: the
+   * server list for server counts, the alerts section of Monitoring for
+   * alerts, the services page for services.
    */
-  function monitoringHref(focus: string): string {
-    if (focus === "services") return servicesHref("services");
-    return focus === "history" ? "/monitoring#history" : "/monitoring";
+  function tileHref(tile: "servers" | "health" | "services" | "alerts"): string {
+    switch (tile) {
+      case "services":
+        return servicesHref("services");
+      case "alerts":
+        return "/monitoring#alerts";
+      default:
+        return SERVERS_HREF;
+    }
   }
 
   function servicesHref(tab = "services"): string {
@@ -1757,9 +1788,7 @@
   }
 
   function addServerHref(): string {
-    return singleDeployment
-      ? `/stacks/${encodeURIComponent(singleDeployment.id)}/servers/new`
-      : "/stacks/new";
+    return addServerRoute(singleDeployment?.id);
   }
 
   function hasManagedRuntimeLease(item: StackDashboardItem | null): boolean {
@@ -1778,7 +1807,7 @@
       item.lease_provider ||
       item.simulate_provider_id ||
       item.provider ||
-      "managed-runtime"
+      tr("ui.homelabDashboardPage.managedRuntime")
     );
   }
 
@@ -2061,11 +2090,13 @@
           label:
             currentRuntimePhase?.message ||
             operations?.currentJob?.message ||
-            `StackKit rollout · ${statusLabel(
-              operations?.runtimeLifecycle?.current_phase ||
-                operations?.currentJob?.step ||
-                "pending",
-            )}`,
+            tr("dashboard.rollout.label", {
+              phase: statusLabel(
+                operations?.runtimeLifecycle?.current_phase ||
+                  operations?.currentJob?.step ||
+                  "pending",
+              ),
+            }),
           progress: Math.max(
             0,
             Math.min(100, operations?.currentJob?.progress ?? 0),
@@ -2151,21 +2182,15 @@
   {#snippet reconnectOutcomeBanner()}
     {#if reconnectOutcome}
       <div
-        class="mt-4 rounded-lg border p-3 {reconnectOutcome.tone === 'error'
-          ? 'border-destructive/30 bg-destructive/10'
-          : reconnectOutcome.tone === 'warning'
-            ? 'border-warning/40 bg-warning/10'
-            : 'border-success/40 bg-success/10'}"
+        class="mt-4"
         data-testid="reconnect-outcome"
         data-tone={reconnectOutcome.tone}
-        role="status"
       >
-        <p class="text-sm font-semibold text-foreground">
-          {reconnectOutcome.title}
-        </p>
-        <p class="mt-1 text-sm text-muted-foreground">
-          {reconnectOutcome.body}
-        </p>
+        <ErrorCallout
+          tone={reconnectOutcome.tone}
+          title={reconnectOutcome.title}
+          message={reconnectOutcome.body}
+        />
       </div>
     {/if}
   {/snippet}
@@ -2310,9 +2335,19 @@
         {message.summary}
       </p>
     {:else if message.kind === "evidence-stale"}
-      <p class="text-sm text-foreground/90" data-testid="operations-evidence-stale">
-        {tr("ui.homelab.evidenceStaleBody")} {operationsError}
-      </p>
+      <div data-testid="operations-evidence-stale" class="space-y-1">
+        <p class="text-sm text-foreground/90">
+          {tr("ui.homelab.evidenceStaleBody")}
+        </p>
+        {#if operationsError}
+          <details class="text-xs text-muted-foreground">
+            <summary class="cursor-pointer select-none">
+              {tr("errorCallout.details")}
+            </summary>
+            <p class="mt-1 font-mono break-words">{operationsError}</p>
+          </details>
+        {/if}
+      </div>
     {:else if message.kind === "reconfirming"}
       <p class="text-sm text-foreground/90" data-testid="operations-evidence-reconfirming">
         {tr("ui.homelab.reconfirming")}
@@ -2339,16 +2374,17 @@
         {reconnectOutcome.body}
       </p>
     {:else if message.kind === "decommission-error"}
-      <p class="text-sm text-destructive">{decommissionError}</p>
+      <ErrorCallout message={decommissionError} />
     {/if}
   {/snippet}
 
   {#snippet headerActions()}
-    {#if deployments.length > 0 && homelabResolved}
+    {#if (deployments.length > 0 && homelabResolved) || error || dataStale}
       <div
         class="flex flex-wrap items-center gap-2"
         data-testid="stack-action-bar"
       >
+        {#if deployments.length > 0 && homelabResolved}
         <Button
           variant="primary"
           testId="add-server-button"
@@ -2358,7 +2394,8 @@
           <Plus class="h-4 w-4" />
           {tr("ui.homelab.newNode")}
         </Button>
-        {#if showReviewStart}
+        {/if}
+        {#if deployments.length > 0 && showReviewStart}
           <Button
             variant="primary"
             testId="review-start-button"
@@ -2369,7 +2406,7 @@
             {rolloutLoading ? tr("ui.homelabDashboardPage.starting") : tr("ui.homelabDashboardPage.reviewStart")}
           </Button>
         {/if}
-        {#if singleDeployment}
+        {#if singleDeployment && homelabResolved}
           <Button
             variant="secondary"
             onclick={() => {
@@ -2380,6 +2417,8 @@
             {tr("ui.common.importExport")}
           </Button>
         {/if}
+        <!-- Not tied to the deployment list: it is exactly the control a
+             failed load needs, and a failed load leaves that list empty. -->
         <Button
           variant="secondary"
           testId="dashboard-refresh-button"
@@ -2430,12 +2469,10 @@
       <header
         class="flex flex-col items-start justify-between gap-4 py-4 sm:flex-row"
       >
-        <!-- Below 48rem the fixed menu toggle sits top-left: the title moves
-             beside it and the eyebrow is dropped. -->
-        <div class="min-w-0 pl-14 min-[48rem]:pl-0">
+        <div class="min-w-0">
           {#if homelabName}
             <p
-              class="mb-1 hidden text-[0.72rem] font-bold tracking-[0.08em] text-primary uppercase min-[48rem]:block"
+              class="mb-1 text-[0.72rem] font-bold tracking-[0.08em] text-primary uppercase"
             >
               {tr("ui.dashboard.yourHomelab")}
             </p>
@@ -2468,7 +2505,7 @@
         >
           <a
             class="flex min-w-0 flex-1 items-center gap-1.5 px-3 py-2 transition-colors hover:bg-muted/30"
-            href={monitoringHref("servers")}
+            href={tileHref("servers")}
           >
             <Server class="h-4 w-4 shrink-0 text-primary" />
             <span class="truncate text-xs text-muted-foreground">{tr("ui.dashboard.nodes")}</span>
@@ -2483,7 +2520,7 @@
           </a>
           <a
             class="flex min-w-0 flex-1 items-center gap-1.5 px-3 py-2 transition-colors hover:bg-muted/30"
-            href={monitoringHref("health")}
+            href={tileHref("health")}
             title={tr("ui.homelab.heartbeat")}
           >
             <HeartPulse class="h-4 w-4 shrink-0 text-success" />
@@ -2494,7 +2531,7 @@
           </a>
           <a
             class="flex min-w-0 flex-1 items-center gap-1.5 px-3 py-2 transition-colors hover:bg-muted/30"
-            href={monitoringHref("services")}
+            href={tileHref("services")}
             data-testid="stack-running-services-kpi"
           >
             <Waypoints class="h-4 w-4 shrink-0 text-info" />
@@ -2527,7 +2564,7 @@
           {/if}
           <a
             class="flex min-w-0 flex-1 items-center gap-1.5 px-3 py-2 transition-colors hover:bg-muted/30"
-            href={monitoringHref("alerts")}
+            href={tileHref("alerts")}
             title={statusLabel(operations.monitoring.status)}
           >
             <AlertTriangle class="h-4 w-4 shrink-0 text-warning" />
@@ -2558,20 +2595,26 @@
       <SessionRenewalPanel bodyKey={sessionRenewalBodyKey} />
     </div>
   {:else if error}
-    <Surface class="mb-6 p-4">
-      <div data-testid="stacks-error-panel">
-        <p class="text-foreground">{error}</p>
-      </div>
-    </Surface>
+    <div class="mb-6" data-testid="stacks-error-panel">
+      <ErrorCallout
+        title={tr("dashboard.error.title")}
+        message={tr("dashboard.error.body")}
+        details={error}
+        onRetry={() => void load()}
+        retrying={loading}
+        retryInSeconds={loadRetrySeconds}
+      />
+    </div>
   {:else if dataStale && !completeListShown}
-    <Surface class="mb-6 p-3">
-      <p
-        class="text-sm text-muted-foreground"
-        data-testid="stacks-stale-notice"
-      >
-        {tr("ui.homelabDashboardPage.lastVerifiedStateRetainedThe")}
-      </p>
-    </Surface>
+    <div class="mb-6" data-testid="stacks-stale-notice">
+      <ErrorCallout
+        tone="warning"
+        message={tr("ui.homelabDashboardPage.lastVerifiedStateRetainedThe")}
+        onRetry={() => void load()}
+        retrying={loading}
+        retryInSeconds={loadRetrySeconds}
+      />
+    </div>
   {/if}
 
   {#if deployments.length > 0 && operationsUnavailableOutcome && !completeListShown}
@@ -2632,18 +2675,15 @@
       {/if}
 
       {#if operationsError && !completeListShown}
-        <div
-          class="rounded-lg border border-warning/40 bg-warning/10 p-4"
-          data-testid="operations-evidence-stale"
-          role="status"
-        >
-          <p class="font-medium text-foreground">
-            {tr("ui.homelab.evidenceStale")}
-          </p>
-          <p class="mt-1 text-sm text-muted-foreground">
-            {tr("ui.homelab.evidenceStaleBody")} {operationsError}
-          </p>
-        </div>
+        <ErrorCallout
+          tone="warning"
+          testId="operations-evidence-stale"
+          title={tr("ui.homelab.evidenceStale")}
+          message={tr("ui.homelab.evidenceStaleBody")}
+          details={operationsError}
+          onRetry={() => void load()}
+          retrying={loading}
+        />
       {/if}
 
       {#if showReviewStart && canRollout && !completeListShown}
@@ -2697,13 +2737,15 @@
             stats={{
               apps: dashboardServiceCount,
               appsNote: showRuntimeProgress
-                ? "1 rolling out"
+                ? tr("dashboard.apps.rollingOut")
                 : dashboardRunningServiceCount > 0 ||
                     canonicalServices.some(
                       (service) => serviceState(service).label,
                     )
-                  ? `${dashboardRunningServiceCount} running`
-                  : "no health reported",
+                  ? tr("dashboard.apps.running", {
+                      count: dashboardRunningServiceCount,
+                    })
+                  : tr("dashboard.apps.noHealth"),
               alerts: operations.kpis.active_alerts,
               connected: dashboardConnectedServerCount,
             }}
@@ -2753,11 +2795,7 @@
         {#if showStrata}
           {@render reconnectOutcomeBanner()}
           {#if decommissionError}
-            <div
-              class="mt-4 rounded-lg border border-destructive/30 bg-destructive/10 p-3"
-            >
-              <p class="text-sm text-destructive">{decommissionError}</p>
-            </div>
+            <ErrorCallout class="mt-4" message={decommissionError} />
           {/if}
         {/if}
       {/if}
@@ -2833,9 +2871,9 @@
             hostname={tr("ui.homelabDashboardPage.managedRuntime")}
             meta={[
               managedRuntimeProviderLabel(singleDeployment),
-              "managed runtime",
+              tr("ui.homelabDashboardPage.managedRuntime"),
               singleDeployment.lease_id
-                ? `lease ${singleDeployment.lease_id}`
+                ? tr("dashboard.referenceId", { id: singleDeployment.lease_id })
                 : "",
             ]
               .filter(Boolean)
@@ -2891,11 +2929,7 @@
           </ServerCard>
           {@render reconnectOutcomeBanner()}
           {#if decommissionError}
-            <div
-              class="mt-4 rounded-lg border border-destructive/30 bg-destructive/10 p-3"
-            >
-              <p class="text-sm text-destructive">{decommissionError}</p>
-            </div>
+            <ErrorCallout class="mt-4" message={decommissionError} />
           {/if}
         </section>
       {/if}

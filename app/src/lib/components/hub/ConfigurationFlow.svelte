@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { tick, untrack } from "svelte";
   import { goto as svelteGoto } from "$app/navigation";
   import { getClientBootstrap } from "#lib/client/bootstrap.js";
   import { API_BASE } from "#lib/api/client.js";
@@ -10,10 +10,17 @@
   import SessionRenewalPanel from "#lib/components/SessionRenewalPanel.svelte";
   import { loadFeatures } from "#lib/stores/features.js";
   import { createWizardRun } from "#lib/api/wizardRuns.js";
-  import { buildFoundRunRequest } from "#lib/wizard/wizardRunRequest.js";
+  import { getHomelab } from "#lib/api/homelab.js";
+  import { storedBlockedWizardConfig } from "#lib/wizard/stored-decisions.js";
+  import {
+    WizardInputError,
+    buildFoundRunRequest,
+  } from "#lib/wizard/wizardRunRequest.js";
   import { refreshEmbeddedCloudSession } from "#lib/auth/embedded-session.js";
-  import { ExternalLink } from "@lucide/svelte";
-  import ErrorAiHandoverButton from "#lib/components/support/ErrorAiHandoverButton.svelte";
+  import { CircleAlert, ExternalLink, Lock } from "@lucide/svelte";
+  import Button from "#lib/components/ui/Button.svelte";
+  import ErrorCallout from "#lib/components/ui/ErrorCallout.svelte";
+  import LoadingNote from "#lib/components/ui/LoadingNote.svelte";
   import { EasyWizard } from "#lib/components/wizard/index.js";
   import {
     createErrorAiHandoverContext,
@@ -67,9 +74,36 @@
   let selfDisclosureState = $state<
     "none" | "review" | "applying" | "applied" | "failed" | "discarded"
   >(handedOver ? "review" : "none");
+  let savedConfig = $state<StackConfig>();
+  let savedDecisionsLoading = $state(true);
+  let savedDecisionsError = $state(false);
+  let savedDecisionsRequested = $state(false);
+  $effect(() => {
+    if (authStore.loading || !authStore.modeDetected || savedDecisionsRequested)
+      return;
+    savedDecisionsRequested = true;
+    if (initialConfig || handedOver || !authStore.isAuthenticated) {
+      savedDecisionsLoading = false;
+      return;
+    }
+    void getHomelab()
+      .then((view) => {
+        savedConfig = storedBlockedWizardConfig(view?.homelab);
+        savedDecisionsLoading = false;
+      })
+      .catch(() => {
+        savedDecisionsError = true;
+        savedDecisionsLoading = false;
+      });
+  });
+  function retrySavedDecisions() {
+    savedDecisionsRequested = false;
+    savedDecisionsError = false;
+    savedDecisionsLoading = true;
+  }
   const wizardPrefill = $derived.by(() => {
     if (!handedOver || selfDisclosureState === "discarded")
-      return initialConfig;
+      return initialConfig ?? savedConfig;
     const prefill = selfDisclosureWizardConfig(handedOver);
     // A profile import must not replace an explicit creation selection.
     return initialConfig ? { ...prefill, goals: initialConfig.goals } : prefill;
@@ -142,12 +176,22 @@
 
   let isDeploying = $state(false);
   let sessionRenewalRequired = $state(false);
+
+  // A failed creation is told in three layers: a headline and an explanation
+  // in plain language, what the person can do next, and, collapsed, the raw
+  // codes and diagnostics that support needs.
   let deployError = $state<string | null>(null);
-  let deployErrorDetails = $state<string | null>(null);
+  let deployErrorMessage = $state<string | null>(null);
+  let deployErrorSteps = $state<string[]>([]);
+  let deployErrorTechnical = $state<string | null>(null);
+  let deployErrorRetryable = $state(false);
   let deployErrorHandover = $state<ErrorAiHandoverContext | null>(null);
   let conflictStackId = $state<string | null>(null);
   let conflictStackName = $state<string | null>(null);
   let showLoginHint = $state(false);
+  let lastAttempt: StackConfig | null = null;
+  let errorRegion = $state<HTMLDivElement>();
+  let renewalRegion = $state<HTMLDivElement>();
 
   let validationStage = $state<string>("");
 
@@ -224,37 +268,27 @@
     };
   }
 
-  function formatAvailabilityLead(
-    details: ReturnType<typeof createErrorDetails>,
-    fallback: string,
-  ) {
-    const lines: string[] = [];
-    lines.push(details.guidanceBody || fallback);
-    if (details.nextSteps.length > 0) {
-      lines.push(
-        `${tr("ui.configFlow.nextSteps")}\n${details.nextSteps.map((step) => `- ${step}`).join("\n")}`,
-      );
-    } else if (details.remediation) {
-      lines.push(tr("ui.configFlow.nextStep", { value: details.remediation }));
-    }
-    return lines.join("\n\n");
+  /** What the server told the person to do next, as a short list. */
+  function nextStepsOf(details: ReturnType<typeof createErrorDetails>) {
+    if (details.nextSteps.length > 0) return details.nextSteps;
+    return details.remediation ? [details.remediation] : [];
   }
 
-  function formatCreateErrorDetails(parsed: ParsedApiError, lead?: string) {
+  /**
+   * The raw codes and diagnostics for the collapsed technical details, one per
+   * line. `extra` leads (the backend's own wording, a field list).
+   */
+  function technicalLines(
+    parsed: ParsedApiError,
+    ...extra: (string | null | undefined)[]
+  ): string[] {
     const details = createErrorDetails(parsed.details);
-    const lines: string[] = [];
-
+    const lines = extra.flatMap((line) => (line?.trim() ? [line.trim()] : []));
     if (details.phaseLabel) {
       lines.push(tr("ui.configFlow.step", { value: details.phaseLabel }));
     }
-    if (lead && lead.trim()) {
-      lines.push(lead);
-    } else if (parsed.message) {
-      lines.push(parsed.message);
-    }
-    const code = details.errorCode;
-    if (code) {
-      lines.push(tr("ui.configFlow.errorCode", { value: code }));
+    if (details.errorCode) {
+      lines.push(tr("ui.configFlow.errorCode", { value: details.errorCode }));
     }
     if (details.reasonCode) {
       lines.push(tr("ui.configFlow.reason", { value: details.reasonCode }));
@@ -285,17 +319,8 @@
     if (details.requestId) {
       lines.push(tr("ui.configFlow.requestId", { value: details.requestId }));
     }
-    if (details.retryable === true) {
-      lines.push(
-        tr("ui.configurationFlow.youCanRetryIfThis"),
-      );
-    } else if (details.retryable === false && parsed.status >= 500) {
-      lines.push(
-        tr("ui.configurationFlow.retryingIsUnlikelyToHelp"),
-      );
-    }
-
-    return lines.join("\n") || parsed.message;
+    if (parsed.status > 0) lines.push(`HTTP ${parsed.status}`);
+    return lines;
   }
 
   function currentRoute() {
@@ -307,13 +332,15 @@
     parsed: ParsedApiError,
     attemptedStackName: string,
   ) {
-    if (!deployError || !deployErrorDetails || showLoginHint) return null;
+    if (!deployError || showLoginHint) return null;
 
     const details = createErrorDetails(parsed.details);
     return createErrorAiHandoverContext({
       surface: "stacks.create",
       title: deployError,
-      userMessage: deployErrorDetails,
+      userMessage: [deployErrorMessage, deployErrorTechnical]
+        .filter(Boolean)
+        .join("\n"),
       status: parsed.status,
       code: details.errorCode ?? undefined,
       errorCode: details.errorCode ?? undefined,
@@ -389,11 +416,48 @@
 
   function clearCreateError() {
     deployError = null;
-    deployErrorDetails = null;
+    deployErrorMessage = null;
+    deployErrorSteps = [];
+    deployErrorTechnical = null;
+    deployErrorRetryable = false;
     deployErrorHandover = null;
     conflictStackId = null;
     conflictStackName = null;
     showLoginHint = false;
+  }
+
+  function showCreateError(failure: {
+    title: string;
+    message?: string | null;
+    steps?: string[];
+    technical?: string[];
+    retryable?: boolean;
+  }) {
+    deployError = failure.title;
+    deployErrorMessage = failure.message?.trim() || null;
+    deployErrorSteps = failure.steps ?? [];
+    deployErrorTechnical = failure.technical?.length
+      ? failure.technical.join("\n")
+      : null;
+    deployErrorRetryable = failure.retryable === true;
+  }
+
+  // The error appears where the person pressed "Create", not at the top of
+  // the page: bring it into view and hand it the focus so it is also heard.
+  async function revealCreateError() {
+    await tick();
+    const region = errorRegion ?? renewalRegion;
+    region?.focus({ preventScroll: true });
+    region?.scrollIntoView({
+      block: "center",
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "auto"
+        : "smooth",
+    });
+  }
+
+  function retryCreate() {
+    if (lastAttempt && !isDeploying) void handleCreate(lastAttempt);
   }
 
   const creationIdempotencyStorageKey = "stackCreationIdempotencyKey";
@@ -417,7 +481,7 @@
 
   // The Wizard run is the single creation authority: projection, pinned
   // StackKits validation, persistence, and dispatch happen server-side. A
-  // rejected run is a structured error and leaves no state behind.
+  // A blocked run may save desired decisions without dispatching a runtime.
   async function createViaWizardRun(config: StackConfig) {
     validationStage = tr("ui.configurationFlow.validatingWithStackkits");
     const request = buildFoundRunRequest(config);
@@ -449,6 +513,7 @@
     isDeploying = true;
     sessionRenewalRequired = false;
     clearCreateError();
+    lastAttempt = config;
     validationStage = tr("ui.configurationFlow.validatingConfiguration");
     let attemptedStackName = config.name;
 
@@ -512,18 +577,27 @@
           error.message.includes("NetworkError") ||
           error.message.includes("net::ERR_CONNECTION_REFUSED"));
 
-      if (isNetworkError) {
+      if (error instanceof WizardInputError) {
+        // An answer that cannot become a run; its text is already for people.
+        showCreateError({
+          title: tr("wizard.error.input.title"),
+          message: error.message,
+        });
+      } else if (isNetworkError) {
         const apiBase = API_BASE;
-        deployError = tr("ui.configurationFlow.cannotConnectToBackend");
-        deployErrorDetails = [
-          apiBase
-            ? tr("ui.configFlow.apiUnreachableAt", { base: apiBase })
-            : tr("ui.configFlow.apiUnreachable"),
-          tr("ui.configFlow.corsHint"),
-          tr("ui.configFlow.technicalDetails", {
-            value: error instanceof Error ? error.message : String(error),
-          }),
-        ].join("\n\n");
+        showCreateError({
+          title: tr("ui.configurationFlow.cannotConnectToBackend"),
+          message: tr("wizard.error.network.body"),
+          technical: [
+            apiBase
+              ? tr("ui.configFlow.apiUnreachableAt", { base: apiBase })
+              : tr("ui.configFlow.apiUnreachable"),
+            tr("ui.configFlow.technicalDetails", {
+              value: error instanceof Error ? error.message : String(error),
+            }),
+          ],
+          retryable: true,
+        });
       } else if (parsed.isAuthError) {
         // Use global auth handler for 401 errors. Auto-redirect is disabled
         // here: a full-page bounce would destroy the in-memory wizard config.
@@ -539,48 +613,65 @@
         );
         if (outcome === "reauth_required") {
           sessionRenewalRequired = true;
+          void revealCreateError();
         }
         return; // Don't show error UI, auth handler manages the flow
       } else if (!authStore.isAuthenticated) {
         showLoginHint = true;
-        deployError = tr("ui.configurationFlow.authenticationRequired");
-        deployErrorDetails =
-          tr("ui.configurationFlow.youMustBeLoggedIn2");
+        showCreateError({
+          title: tr("ui.configurationFlow.authenticationRequired"),
+          message: tr("ui.configurationFlow.youMustBeLoggedIn2"),
+        });
       } else if (parsed.isForbidden) {
         const details = createErrorDetails(parsed.details);
         if (details.errorCode === "managed_runtime_feature_disabled") {
-          deployError = details.guidanceTitle || tr("ui.configurationFlow.managedServerIsNotActive");
-          deployErrorDetails = formatCreateErrorDetails(
-            parsed,
-            formatAvailabilityLead(details, parsed.message),
-          );
+          showCreateError({
+            title:
+              details.guidanceTitle ||
+              tr("ui.configurationFlow.managedServerIsNotActive"),
+            message: details.guidanceBody ?? undefined,
+            steps: nextStepsOf(details),
+            technical: technicalLines(parsed, parsed.message),
+          });
         } else if (details.guidanceTitle || details.guidanceBody) {
           // Structured denial with user_guidance (e.g. owner_bootstrap_denied):
           // lead with the actionable guidance instead of a generic headline.
-          deployError = details.guidanceTitle || tr("ui.configurationFlow.permissionDenied");
-          deployErrorDetails = formatCreateErrorDetails(
-            parsed,
-            formatAvailabilityLead(details, parsed.message),
-          );
+          showCreateError({
+            title:
+              details.guidanceTitle ||
+              tr("ui.configurationFlow.permissionDenied"),
+            message: details.guidanceBody ?? undefined,
+            steps: nextStepsOf(details),
+            technical: technicalLines(parsed, parsed.message),
+          });
         } else {
-          deployError = tr("ui.configurationFlow.permissionDenied");
-          // Surface the real backend/upstream reason (status, message,
-          // error_code, reason_code, missing/required features) instead of a
-          // generic string. Required by FEATURE-ENTITLEMENT-UX-STANDARD, and
-          // essential for diagnosing which gate denied the request: passing no
-          // lead lets formatCreateErrorDetails fall through to parsed.message +
-          // the structured codes. Only fall back to generic text when the
-          // server gave no message at all.
-          deployErrorDetails = formatCreateErrorDetails(
-            parsed,
-            parsed.message?.trim()
-              ? undefined
-              : tr("ui.configurationFlow.youDonTHavePermission"),
-          );
+          // The backend's own wording and every code stay available, collapsed,
+          // to diagnose which gate denied the request (ENTITLEMENTS-
+          // ARCHITECTURE.md §13); the explanation itself is in plain language.
+          showCreateError({
+            title: tr("ui.configurationFlow.permissionDenied"),
+            message: tr("ui.configurationFlow.youDonTHavePermission"),
+            steps: nextStepsOf(details),
+            technical: technicalLines(parsed, parsed.message),
+          });
         }
       } else if (parsed.status === 409 || (error as any)?.status === 409) {
         const conflictDetails = createErrorDetails(parsed.details);
-        if (
+        if (conflictDetails.reasonCode === "wizard_desired_projection_blocked") {
+          // The owner decisions are durably saved. A later edited decision is
+          // a new request, while this saved request keeps its original key.
+          sessionStorage.removeItem(creationIdempotencyStorageKey);
+          conflictStackId = null;
+          conflictStackName = null;
+          showCreateError({
+            title:
+              conflictDetails.guidanceTitle || tr("wizard.error.blocked.title"),
+            message:
+              conflictDetails.guidanceBody ?? tr("wizard.error.blocked.body"),
+            steps: nextStepsOf(conflictDetails),
+            technical: technicalLines(parsed, parsed.message),
+          });
+        } else if (
           conflictDetails.reasonCode === "wizard_idempotency_conflict" ||
           conflictDetails.reasonCode === "idempotency_conflict"
         ) {
@@ -590,76 +681,89 @@
           sessionStorage.removeItem(creationIdempotencyStorageKey);
           conflictStackId = conflictDetails.stackId || null;
           conflictStackName = null;
-          deployError = tr("ui.configurationFlow.aPreviousSubmissionAlreadyCompleted");
-          deployErrorDetails = formatCreateErrorDetails(
-            parsed,
-            tr("ui.configurationFlow.anEarlierSubmissionFromThis"),
-          );
+          showCreateError({
+            title: tr("ui.configurationFlow.aPreviousSubmissionAlreadyCompleted"),
+            message: tr("ui.configurationFlow.anEarlierSubmissionFromThis"),
+            technical: technicalLines(parsed, parsed.message),
+            retryable: true,
+          });
         } else {
           const conflict = extractConflictDetails(error, parsed.details);
           conflictStackId = conflict.stackId;
           conflictStackName = conflict.name || attemptedStackName;
-          deployError = tr("ui.configurationFlow.stackkitDeploymentNameAlreadyExists");
-          const lead = conflictStackName
-            ? tr("ui.configFlow.deploymentNameExists", { name: conflictStackName })
-            : parsed.message ||
-              tr("ui.configurationFlow.theBackendRejectedThisStackkit");
-          deployErrorDetails = formatCreateErrorDetails(parsed, lead);
+          showCreateError({
+            title: tr("ui.configurationFlow.stackkitDeploymentNameAlreadyExists"),
+            message: conflictStackName
+              ? tr("ui.configFlow.deploymentNameExists", {
+                  name: conflictStackName,
+                })
+              : tr("ui.configurationFlow.theBackendRejectedThisStackkit"),
+            technical: technicalLines(parsed, parsed.message),
+          });
         }
       } else if (parsed.isValidationError) {
         const validationDetails = createErrorDetails(parsed.details);
-        deployError = validationDetails.guidanceTitle || tr("ui.stackImportExportModal.validationFailed");
-        // Show field-specific errors if available
-        if (Object.keys(parsed.fieldErrors).length > 0) {
-          const fieldMessages = Object.entries(parsed.fieldErrors)
-            .map(([field, { message }]) => `• ${field}: ${message}`)
-            .join("\n");
-          deployErrorDetails = formatCreateErrorDetails(
-            parsed,
-            `${tr("ui.configFlow.pleaseFix")}\n${fieldMessages}`,
+        // Field names and the release's own refusal are backend vocabulary:
+        // they help support, so they sit in the technical details.
+        const fieldMessages = Object.entries(parsed.fieldErrors).map(
+          ([field, { message }]) => `${field}: ${message}`,
+        );
+        const validateError =
+          stringField(recordFrom(parsed.details), "validate_error") ||
+          stringField(
+            recordFrom(recordFrom(parsed.details)?.details),
+            "validate_error",
           );
-        } else {
-          // Keep the configured goals and attempt key for a corrected submit.
-          // The release's refusal is never a successful node-only creation.
-          const validateError =
-            stringField(recordFrom(parsed.details), "validate_error") ||
-            stringField(
-              recordFrom(recordFrom(parsed.details)?.details),
-              "validate_error",
-            );
-          deployErrorDetails = formatCreateErrorDetails(
+        // Keep the configured goals and attempt key for a corrected submit.
+        // The release's refusal is never a successful node-only creation.
+        showCreateError({
+          title:
+            validationDetails.guidanceTitle ||
+            tr("wizard.error.validation.title"),
+          message:
+            validationDetails.guidanceBody ?? tr("wizard.error.validation.body"),
+          steps: nextStepsOf(validationDetails),
+          technical: technicalLines(
             parsed,
-            [
-              formatAvailabilityLead(validationDetails, parsed.message),
-              validationDetails.unfulfilledGoals.length > 0
-                ? `${tr("ui.configFlow.pleaseFix")}\n${validationDetails.unfulfilledGoals.map((goal) => `- ${goal}`).join("\n")}`
-                : "",
-              validateError
-                ? `${tr("ui.configFlow.stackkitsValidation")}\n${validateError}`
-                : "",
-            ].filter(Boolean).join("\n\n"),
-          );
-        }
+            parsed.message,
+            ...fieldMessages,
+            validationDetails.unfulfilledGoals.length > 0
+              ? `${tr("ui.configFlow.pleaseFix")} ${validationDetails.unfulfilledGoals.join(", ")}`
+              : "",
+            validateError
+              ? `${tr("ui.configFlow.stackkitsValidation")} ${validateError}`
+              : "",
+          ),
+        });
       } else if (parsed.status >= 500) {
         const details = createErrorDetails(parsed.details);
-        deployError = details.phaseLabel
-          ? tr("ui.configFlow.createFailedAt", { phase: details.phaseLabel })
-          : tr("ui.configurationFlow.serverError");
-        deployErrorDetails = formatCreateErrorDetails(
-          parsed,
-          tr("ui.configFlow.serverEncountered", {
-            status: parsed.status,
-            message: parsed.message,
-          }),
-        );
+        showCreateError({
+          title: details.phaseLabel
+            ? tr("ui.configFlow.createFailedAt", { phase: details.phaseLabel })
+            : tr("ui.configurationFlow.serverError"),
+          message:
+            details.retryable === false
+              ? tr("ui.configurationFlow.retryingIsUnlikelyToHelp")
+              : tr("ui.configurationFlow.youCanRetryIfThis"),
+          steps: nextStepsOf(details),
+          technical: technicalLines(
+            parsed,
+            tr("ui.configFlow.serverEncountered", {
+              status: parsed.status,
+              message: parsed.message,
+            }),
+          ),
+          retryable: details.retryable !== false,
+        });
       } else {
-        // Fallback for other errors
-        deployError =
-          error instanceof Error ? error.message : tr("ui.configurationFlow.deploymentFailed");
-        deployErrorDetails =
-          parsed.message !== deployError
-            ? parsed.message
-            : tr("ui.configurationFlow.anUnexpectedErrorOccurredPlease");
+        // Anything else is unexpected: say so plainly, keep the original text
+        // for support.
+        showCreateError({
+          title: tr("ui.configurationFlow.deploymentFailed"),
+          message: tr("ui.configurationFlow.anUnexpectedErrorOccurredPlease"),
+          technical: technicalLines(parsed, parsed.message),
+          retryable: true,
+        });
       }
 
       deployErrorHandover = buildCreateErrorHandover(
@@ -667,6 +771,7 @@
         attemptedStackName,
       );
       isDeploying = false;
+      void revealCreateError();
     }
   }
 </script>
@@ -680,138 +785,6 @@
 >
   {#if isHydrated}
     <span class="hidden" aria-hidden="true" data-testid="hydrated"></span>
-  {/if}
-
-  {#if isDeploying && validationStage}
-    <div
-      class="mb-6 p-4 rounded-lg border border-primary/30 bg-primary/10"
-      data-testid="validation-progress"
-    >
-      <div class="flex items-center gap-3">
-        <svg
-          class="w-5 h-5 text-primary animate-spin"
-          fill="none"
-          viewBox="0 0 24 24"
-        >
-          <circle
-            class="opacity-25"
-            cx="12"
-            cy="12"
-            r="10"
-            stroke="currentColor"
-            stroke-width="4"
-          ></circle>
-          <path
-            class="opacity-75"
-            fill="currentColor"
-            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-          ></path>
-        </svg>
-        <div>
-          <p class="font-medium text-foreground">{validationStage}</p>
-        </div>
-      </div>
-    </div>
-  {/if}
-
-  {#if sessionRenewalRequired}
-    <div class="mb-6">
-      <SessionRenewalPanel {returnTo} />
-    </div>
-  {/if}
-
-  {#if deployError}
-    <div
-      class="mb-6 p-4 rounded-lg border {showLoginHint
-        ? 'border-warning/30 bg-warning/10'
-        : 'border-destructive/30 bg-destructive/10'}"
-      data-testid="deploy-error"
-    >
-      <div class="flex items-start gap-3">
-        <svg
-          class="w-5 h-5 shrink-0 mt-0.5 {showLoginHint
-            ? 'text-warning'
-            : 'text-destructive'}"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          {#if showLoginHint}
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
-            />
-          {:else}
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-            />
-          {/if}
-        </svg>
-        <div class="flex-1">
-          <p
-            class="font-medium {showLoginHint
-              ? 'text-warning'
-              : 'text-destructive'}"
-          >
-            {deployError}
-          </p>
-          {#if deployErrorDetails}
-            <p
-              class="text-sm {showLoginHint
-                ? 'text-warning/80'
-                : 'text-destructive/80'} mt-1 whitespace-pre-line break-words"
-            >
-              {deployErrorDetails}
-            </p>
-          {/if}
-          <ErrorAiHandoverButton context={deployErrorHandover} />
-          {#if showLoginHint}
-            <div class="mt-3 p-3 bg-muted/50 rounded-lg border border-border">
-              <p class="text-sm text-muted-foreground mb-2">
-                {tr("ui.configFlow.defaultCredentials")}
-              </p>
-              <div class="font-mono text-xs space-y-1">
-                <p class="text-primary">admin@techstack.local</p>
-                <p class="text-muted-foreground">
-                  {tr("ui.configurationFlow.useTheAdminPasswordConfigured")}
-                </p>
-              </div>
-              <a
-                href="/login"
-                data-kx="control"
-                data-variant="primary"
-                class="mt-3 inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
-              >
-                {tr("ui.configFlow.continueSetup")}
-              </a>
-            </div>
-          {/if}
-          <button
-            onclick={clearCreateError}
-            class="mt-2 text-sm {showLoginHint
-              ? 'text-warning hover:text-warning/80'
-              : 'text-destructive hover:text-destructive/80'} underline"
-          >
-            {tr("ui.common.dismiss")}
-          </button>
-          {#if conflictStackId}
-            <button
-              type="button"
-              onclick={openConflictStack}
-              class="ml-3 mt-2 inline-flex items-center gap-1.5 rounded-md border border-destructive/40 px-3 py-1.5 text-sm font-medium text-destructive hover:bg-destructive/10"
-            >
-              <ExternalLink class="h-4 w-4" aria-hidden="true" />
-              {tr("ui.configFlow.openExisting")}
-            </button>
-          {/if}
-        </div>
-      </div>
-    </div>
   {/if}
 
   {#if reviewSelfDisclosure && handedOver}
@@ -837,11 +810,162 @@
   {/if}
 
   <!-- Wizard Content -->
-  {#if !holdWizardForSelfDisclosure}
+  {#if savedDecisionsLoading}
+    <LoadingNote label={tr("common.loading")} />
+  {:else if savedDecisionsError}
+    <ErrorCallout testId="homelab-load-error">
+      <div
+        class="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-3"
+      >
+        <p class="text-foreground">{tr("wizard.settings.loadError")}</p>
+        <Button variant="secondary" onclick={retrySavedDecisions}>
+          {tr("common.retry")}
+        </Button>
+      </div>
+    </ErrorCallout>
+  {:else if !holdWizardForSelfDisclosure}
     <EasyWizard
       oncreate={handleCreate}
       {isDeploying}
       initialConfig={wizardPrefill}
-    />
+      draftKey="stack-create"
+    >
+      {#snippet footerNotice()}
+        {#if isDeploying && validationStage}
+          <div
+            class="flex items-center gap-3 rounded-lg border border-primary/30 bg-primary/10 p-4"
+            role="status"
+            data-testid="validation-progress"
+          >
+            <svg
+              class="h-5 w-5 shrink-0 animate-spin text-primary"
+              fill="none"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <circle
+                class="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                stroke-width="4"
+              ></circle>
+              <path
+                class="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+              ></path>
+            </svg>
+            <p class="font-medium text-foreground">{validationStage}</p>
+          </div>
+        {/if}
+
+        {#if sessionRenewalRequired}
+          <div
+            bind:this={renewalRegion}
+            tabindex="-1"
+            class="scroll-mt-6 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <SessionRenewalPanel {returnTo} />
+          </div>
+        {/if}
+
+        {#if deployError}
+          <div
+            bind:this={errorRegion}
+            tabindex="-1"
+            class="scroll-mt-6 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            data-testid="deploy-error-region"
+          >
+            <ErrorCallout
+              tone={showLoginHint ? "warning" : "error"}
+              testId="deploy-error"
+              aiHandoverContext={deployErrorHandover}
+              onRetry={deployErrorRetryable ? retryCreate : null}
+              retryLabel={tr("common.retry")}
+              retrying={isDeploying}
+            >
+              {#if showLoginHint}
+                <Lock class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+              {:else}
+                <CircleAlert class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+              {/if}
+              <div class="min-w-0 flex-1 space-y-2">
+                <p class="font-semibold text-foreground">{deployError}</p>
+                {#if deployErrorMessage}
+                  <p
+                    class="whitespace-pre-line break-words text-sm text-foreground/90"
+                  >
+                    {deployErrorMessage}
+                  </p>
+                {/if}
+                {#if deployErrorSteps.length > 0}
+                  <div class="text-sm text-foreground/90">
+                    <p class="font-medium">{tr("ui.configFlow.nextSteps")}</p>
+                    <ul class="mt-1 list-disc space-y-0.5 ps-5">
+                      {#each deployErrorSteps as step (step)}
+                        <li>{step}</li>
+                      {/each}
+                    </ul>
+                  </div>
+                {/if}
+                {#if showLoginHint}
+                  <div class="rounded-lg border border-border bg-muted/50 p-3">
+                    <p class="mb-2 text-sm text-muted-foreground">
+                      {tr("ui.configFlow.defaultCredentials")}
+                    </p>
+                    <div class="space-y-1 font-mono text-xs">
+                      <p class="text-primary">admin@techstack.local</p>
+                      <p class="text-muted-foreground">
+                        {tr("ui.configurationFlow.useTheAdminPasswordConfigured")}
+                      </p>
+                    </div>
+                    <a
+                      href="/login"
+                      data-kx="control"
+                      data-variant="primary"
+                      class="mt-3 inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium"
+                    >
+                      {tr("ui.configFlow.continueSetup")}
+                    </a>
+                  </div>
+                {/if}
+                {#if deployErrorTechnical}
+                  <details
+                    class="text-xs text-muted-foreground"
+                    data-testid="deploy-error-details"
+                  >
+                    <summary class="cursor-pointer select-none">
+                      {tr("wizard.error.technicalDetails")}
+                    </summary>
+                    <p
+                      class="mt-1 whitespace-pre-line break-words font-mono text-foreground/80"
+                    >
+                      {deployErrorTechnical}
+                    </p>
+                  </details>
+                {/if}
+                <div class="flex flex-wrap items-center gap-3">
+                  {#if conflictStackId}
+                    <Button variant="secondary" onclick={openConflictStack}>
+                      <ExternalLink class="h-4 w-4" aria-hidden="true" />
+                      {tr("ui.configFlow.openExisting")}
+                    </Button>
+                  {/if}
+                  <button
+                    type="button"
+                    class="text-sm text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                    onclick={clearCreateError}
+                  >
+                    {tr("ui.common.dismiss")}
+                  </button>
+                </div>
+              </div>
+            </ErrorCallout>
+          </div>
+        {/if}
+      {/snippet}
+    </EasyWizard>
   {/if}
 </div>

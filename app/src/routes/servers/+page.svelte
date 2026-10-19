@@ -1,16 +1,27 @@
 <script lang="ts">
   /**
-   * Nodes: every server and device of the homelab on one page, across all
-   * StackKit deployments (owner direction 2026-10-10). Servers group by where
-   * they run (Local, Cloud) and open their server page; devices are the
-   * kombify clients linked to the account and open the card family's detail
-   * sheet. Each source keeps its own honest state, so one outage never empties
-   * the other.
+   * Servers: every server and device of the homelab on one page, across all
+   * StackKit deployments (owner direction 2026-10-10). This is the one place
+   * the homelab's servers are listed; the dashboard, Monitoring and Services
+   * link here and every card opens the same server detail route
+   * (`serverDetailHref`). Servers group by where they run (Local, Cloud);
+   * devices are the kombify clients linked to the account and open the card
+   * family's detail sheet. Each source keeps its own honest state, so one
+   * outage never empties the other, and every failed source can be retried
+   * from where it failed.
    */
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
-  import { Cloud, HardDrive, Laptop, Monitor, Server, Smartphone } from "@lucide/svelte";
+  import {
+    Cloud,
+    HardDrive,
+    Laptop,
+    Monitor,
+    Plus,
+    Server,
+    Smartphone,
+  } from "@lucide/svelte";
   import { PageHeader } from "@kombiverselabs/ui/shell";
   import { SegmentedControl } from "@kombiverselabs/ui/primitives";
   import {
@@ -32,6 +43,10 @@
     type EntityPresence,
   } from "@kombiverselabs/ui/entity";
   import { tr } from "#lib/i18n.svelte.js";
+  import Button from "#lib/components/ui/Button.svelte";
+  import ErrorCallout from "#lib/components/ui/ErrorCallout.svelte";
+  import LoadingNote from "#lib/components/ui/LoadingNote.svelte";
+  import { addServerHref, serverDetailHref } from "#lib/server-links.js";
   import { listCanonicalServers } from "#lib/api/registry.js";
   import { listWorkers } from "#lib/api/workers.js";
   import { getHomelab } from "#lib/api/homelab.js";
@@ -57,6 +72,12 @@
   let servers = $state<SectionState<ServerNode>>({ state: "loading" });
   let devices = $state<SectionState<DeviceEntry>>({ state: "loading" });
   let stackNames = $state(new Map<string, string>());
+  // The homelab's deployment when there is exactly one: "Add server" goes
+  // straight to its add-server route; otherwise to the creation flow.
+  let addDeploymentId = $state<string | null>(null);
+  let addTargetResolved = $state(false);
+  let retryingServers = $state(false);
+  let retryingDevices = $state(false);
   let view = $state<ServerView>("compact");
   let deviceView = $state<EntityCardSize>("row");
 
@@ -114,9 +135,14 @@
 
   // --- server card content -------------------------------------------------
   function serverHref(node: ServerNode): string | undefined {
-    return node.serverId
-      ? `/monitoring/${encodeURIComponent(node.serverId)}`
-      : undefined;
+    return serverDetailHref({
+      serverId: node.serverId,
+      deploymentId: node.deploymentId,
+    });
+  }
+
+  function addServer() {
+    void goto(addServerHref(addDeploymentId));
   }
 
   function serverMeta(node: ServerNode, withAddress = true): string {
@@ -187,15 +213,32 @@
       servers = { state: "ready", items: buildServerNodes(canonical, workers) };
     } catch {
       servers = { state: "error", message: tr("nodes.serversError") };
+    } finally {
+      retryingServers = false;
     }
     try {
       const homelab = await getHomelab();
-      stackNames = new Map(
-        (homelab?.kit_deployments ?? []).map((item) => [item.id, item.name]),
-      );
+      const deployments = homelab?.kit_deployments ?? [];
+      stackNames = new Map(deployments.map((item) => [item.id, item.name]));
+      addDeploymentId = deployments.length === 1 ? deployments[0]!.id : null;
     } catch {
       // Stack names only label the cards; the list stands without them.
+    } finally {
+      addTargetResolved = true;
     }
+  }
+
+  async function retryServers() {
+    retryingServers = true;
+    servers = { state: "loading" };
+    await loadServers();
+  }
+
+  async function retryDevices() {
+    retryingDevices = true;
+    devices = { state: "loading" };
+    devices = await loadDevices();
+    retryingDevices = false;
   }
 
   onMount(() => {
@@ -211,36 +254,66 @@
   });
 </script>
 
-{#snippet sectionState(state: SectionState<unknown>, empty: string, testId: string)}
+{#snippet sectionState(
+  state: SectionState<unknown>,
+  empty: string,
+  testId: string,
+  onRetry: () => void,
+  retrying: boolean,
+  emptyAction?: () => void,
+)}
   {#if state.state === "loading"}
-    <p role="status" class="text-sm text-muted-foreground">
-      {tr("nodes.loading")}
-    </p>
+    <LoadingNote label={tr("nodes.loading")} />
   {:else if state.state === "unavailable"}
     <p class="text-sm text-muted-foreground" data-testid={testId}>
       {state.message}
     </p>
   {:else if state.state === "error"}
-    <p role="alert" class="text-sm text-destructive" data-testid={testId}>
-      {state.message}
-    </p>
+    <ErrorCallout
+      message={state.message}
+      {onRetry}
+      {retrying}
+      testId={testId}
+    />
   {:else if state.items.length === 0}
-    <p class="text-sm text-muted-foreground" data-testid={testId}>{empty}</p>
+    <div
+      class="flex flex-col items-start gap-3 rounded-xl border border-dashed border-border p-5"
+      data-testid={testId}
+    >
+      <p class="text-sm text-muted-foreground">{empty}</p>
+      {#if emptyAction}
+        <Button variant="primary" onclick={emptyAction}>
+          <Plus class="h-4 w-4" />
+          {tr("servers.add")}
+        </Button>
+      {/if}
+    </div>
   {/if}
 {/snippet}
 
 <div class="space-y-8 p-4 md:p-6" data-testid="nodes-page">
-  <PageHeader title={tr("nav.nodes")} description={tr("nodes.description")}>
+  <PageHeader title={tr("nav.servers")} description={tr("nodes.description")}>
     {#snippet actions()}
-      <SegmentedControl
-        items={VIEWS.map((value) => ({
-          value,
-          label: tr(`nodes.view.${value}`),
-        }))}
-        value={view}
-        label={tr("nodes.view.label")}
-        onchange={setView}
-      />
+      <div class="flex flex-wrap items-center gap-2">
+        <Button
+          variant="primary"
+          testId="servers-add"
+          onclick={addServer}
+          disabled={!addTargetResolved}
+        >
+          <Plus class="h-4 w-4" />
+          {tr("servers.add")}
+        </Button>
+        <SegmentedControl
+          items={VIEWS.map((value) => ({
+            value,
+            label: tr(`nodes.view.${value}`),
+          }))}
+          value={view}
+          label={tr("nodes.view.label")}
+          onchange={setView}
+        />
+      </div>
     {/snippet}
   </PageHeader>
 
@@ -254,7 +327,14 @@
     <h2 id="nodes-servers" class="text-base font-semibold">
       {tr("nodes.servers")}
     </h2>
-    {@render sectionState(servers, tr("nodes.serversEmpty"), "nodes-servers-state")}
+    {@render sectionState(
+      servers,
+      tr("nodes.serversEmpty"),
+      "nodes-servers-state",
+      retryServers,
+      retryingServers,
+      addServer,
+    )}
     {#each groups as group (group.placement)}
       {@const Icon = placementIcon[group.placement]}
       <div class="space-y-2" data-testid={`nodes-group-${group.placement}`}>
@@ -304,7 +384,13 @@
     <h2 id="nodes-devices" class="text-base font-semibold">
       {tr("nodes.devices")}
     </h2>
-    {@render sectionState(devices, tr("nodes.devicesEmpty"), "nodes-devices-state")}
+    {@render sectionState(
+      devices,
+      tr("nodes.devicesEmpty"),
+      "nodes-devices-state",
+      retryDevices,
+      retryingDevices,
+    )}
     {#if devices.state === "ready" && devices.items.length}
       <EntityCollection
         items={devices.items}

@@ -227,7 +227,7 @@ func TestHubWithholdsMutatingCommandsFromObserveOnlyWorkers(t *testing.T) {
 	apply.ServiceKey, apply.LogTail = "", 0
 	apply.LocalSiteRef, apply.LocalNodeRef, apply.LocalExecutionChannelRef = "cloud", "cloud-main", "host-channel-cloud-main"
 	apply.ExpectedPlanHash = "sha256:" + strings.Repeat("b", 64)
-	capabilities := append(stackkitcommand.RequiredAgentCapabilities(apply), stackkitcommand.WorkspaceInstanceCapability)
+	capabilities := append(stackkitcommand.RequiredAgentCapabilities(apply), stackkitcommand.WorkspaceInstanceCapability, guardbinding.Capability)
 	go func() { _, _ = hub.SendStackKitCommand(ctx, "agent-1", apply) }()
 	go func() { _, _ = hub.SendStackKitCommand(ctx, "agent-1", validHubCommand("logs-1")) }()
 	time.Sleep(100 * time.Millisecond)
@@ -299,5 +299,44 @@ func TestInMemoryHubBindsOffersAndHonoursGuardRefusal(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("the caller is still waiting after the Guard refused the command")
+	}
+}
+
+// The in-memory hub applies the same mixed-version rule: a Guard without the
+// binding contract still receives read-only work, while the sender of a
+// mutating command is refused with the observe-only denial instead of waiting.
+func TestInMemoryHubRefusesMutationsToGuardWithoutBindingContract(t *testing.T) {
+	hub := NewHub()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	restart := validHubCommand("restart-1")
+	restart.Operation = agentpb.StackKitOperation_STACKKIT_OPERATION_SERVICE_RESTART
+	restart.OwnerApproved, restart.LogTail = true, 0
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := hub.SendStackKitCommand(ctx, "agent-1", restart)
+		errCh <- err
+	}()
+	go func() { _, _ = hub.SendStackKitCommand(ctx, "agent-1", validHubCommand("logs-1")) }()
+	time.Sleep(100 * time.Millisecond)
+
+	poll := func(wait time.Duration) string {
+		pollCtx, stop := context.WithTimeout(ctx, wait)
+		defer stop()
+		offer, found, err := hub.PollBoundForTenant(pollCtx, PollOptions{AgentID: "agent-1", Capabilities: []string{stackkitcommand.WorkspaceInstanceCapability}})
+		if err != nil || !found {
+			return ""
+		}
+		return offer.Command.GetCommandId()
+	}
+	if got := poll(time.Second); got != "logs-1" {
+		t.Fatalf("pre-contract poll = %q, want the read-only command", got)
+	}
+	if got := poll(300 * time.Millisecond); got != "" {
+		t.Fatalf("pre-contract poll was handed %q", got)
+	}
+	var denial *guardbinding.Denial
+	if err := <-errCh; !errors.As(err, &denial) || denial.Code != guardbinding.CodeObserveOnlyContract {
+		t.Fatalf("SendStackKitCommand() error = %v, want the observe-only refusal", err)
 	}
 }

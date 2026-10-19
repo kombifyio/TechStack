@@ -6,7 +6,7 @@
 // When server-side re-projection (claims re-derivation, owner-tenant
 // fallback, owner/demo bootstrap) cannot recover the session, every surface
 // answers with ONE signal: 401 + reason_code=session_reprojection_required +
-// retryable=true + user_guidance (FEATURE-ENTITLEMENT-UX-STANDARD envelope)
+// retryable=true + user_guidance (ENTITLEMENTS-ARCHITECTURE.md §13 envelope)
 // and clears the v2 session cookie so the client's central interceptor can
 // silently re-enter SSO. No route may hand-roll its own dead-end 500/403 for
 // this class.

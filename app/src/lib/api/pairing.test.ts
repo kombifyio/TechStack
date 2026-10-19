@@ -41,7 +41,7 @@ describe("renewNodePairing", () => {
     expect(init?.method).toBe("POST");
     expect(JSON.parse(String(init?.body))).toEqual({
       stack_id: "deployment-1",
-      name: "Node connection",
+      name: "Server connection",
       server_provisioning_mode: "install-command",
       node_role: "worker",
       stackkit: "basement-kit",

@@ -7,9 +7,9 @@ export const guardMessagesEs: Record<keyof typeof guardMessages.en, string> = {
   "guard.backup.load": "Consultar puntos de recuperación",
   "guard.backup.loading": "Consultando…",
   "guard.backup.recorded":
-    "Este nodo ha registrado estos puntos. El contenido histórico se comprueba al preparar una restauración.",
+    "Este servidor ha registrado estos puntos. El contenido histórico se comprueba al preparar una restauración.",
   "guard.backup.empty":
-    "Este nodo no informa de puntos históricos seleccionables.",
+    "Este servidor no informa de puntos históricos seleccionables.",
   "guard.backup.choose": "Punto de recuperación",
   "guard.backup.placeholder": "Selecciona un punto registrado",
   "guard.backup.currentPlan": "Plan actual",
@@ -19,7 +19,8 @@ export const guardMessagesEs: Record<keyof typeof guardMessages.en, string> = {
   "guard.backup.confirm":
     "¿Preparar el punto registrado de {when} en un área aislada? No se sustituirán los datos activos.",
   "guard.backup.confirmAction": "Preparar esta restauración",
-  "guard.backup.running": "El nodo está preparando una restauración aislada.",
+  "guard.backup.running":
+    "El servidor está preparando una restauración aislada.",
   "guard.backup.staged":
     "Restauración preparada en un área aislada. No se han sustituido los datos activos.",
   "guard.backup.unverified":
@@ -35,18 +36,18 @@ export const guardMessagesEs: Record<keyof typeof guardMessages.en, string> = {
   "guard.backup.historicalOperation":
     "Esta operación pertenece a una instalación anterior. Su resultado registrado no describe la instalación actual.",
   "guard.backup.activateConfirm":
-    "¿Activar esta restauración en {name}? Sustituye los datos activos. El nodo conserva una copia de seguridad y verifica los servicios y el acceso del propietario.",
+    "¿Activar esta restauración en {name}? Sustituye los datos activos. El servidor conserva una copia de seguridad y verifica los servicios y el acceso del propietario.",
   "guard.backup.activateAction": "Confirmar restauración activa",
   "guard.backup.activationUnavailable":
-    "La activación no está disponible con la versión publicada actual de este nodo. Los datos preparados permanecen aislados.",
+    "La activación no está disponible con la versión publicada actual de este servidor. Los datos preparados permanecen aislados.",
   "guard.backup.activating":
-    "El nodo está conciliando la restauración aprobada.",
+    "El servidor está conciliando la restauración aprobada.",
   "guard.backup.activated":
-    "El nodo activó y verificó la restauración seleccionada.",
+    "El servidor activó y verificó la restauración seleccionada.",
   "guard.backup.recovered":
     "Se recuperó el estado anterior de la aplicación. La restauración seleccionada no se activó.",
   "guard.backup.accessVerified":
-    "El nodo verificó los servicios y el acceso del propietario el {when}.",
+    "El servidor verificó los servicios y el acceso del propietario el {when}.",
   "guard.backup.recoveryRequired":
     "El resultado sigue sin confirmar. Resuelve la operación original antes de iniciar otra restauración.",
   "guard.backup.outcomeUnknown":
@@ -55,7 +56,7 @@ export const guardMessagesEs: Record<keyof typeof guardMessages.en, string> = {
   "guard.backup.resumeRequest": "Continuar solicitud original",
   "guard.backup.recover": "Recuperar operación original",
   "guard.backup.recoverConfirm":
-    "¿Conciliar la operación original? Si está incompleta, el nodo recupera el estado anterior de la aplicación.",
+    "¿Conciliar la operación original? Si está incompleta, el servidor recupera el estado anterior de la aplicación.",
   "guard.backup.recoverAction": "Confirmar recuperación original",
   "guard.promise":
     "Diseñado para mantener este servidor vinculado a ti, comprobado de forma continua, accesible desde cualquier lugar y recuperable por diseño. Los hechos de abajo muestran lo que está acreditado ahora mismo.",

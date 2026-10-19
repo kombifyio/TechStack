@@ -19,6 +19,7 @@ import {
   type StackKitFoundationValue,
 } from "./standardBundle";
 import type { HouseholdDraft } from "./household-draft";
+import type { WizardIntent } from "#lib/api/wizardRuns.js";
 
 /**
  * Authentication method configuration
@@ -56,6 +57,8 @@ export interface OwnerConfig {
  * Network and access configuration
  */
 export interface NetworkConfig {
+  /** Canonical recorded publications, carried unchanged when reopening. */
+  publications?: NonNullable<WizardIntent["access"]>["publications"];
   domainBase?: string;
   accessModeSelected?: boolean;
   accessMode: "home" | "anywhere";
@@ -88,7 +91,21 @@ export type ServerMode =
   | "self-hosted";
 export type ManagedProviderID = "centron" | "ionos";
 export type RuntimeOfferingID =
-  "monthly-runtime-standard" | "monthly-runtime-premium";
+  | "monthly-runtime-standard"
+  | "monthly-runtime-premium"
+  | "monthly-runtime-large";
+
+/** Read an explicit catalog identity without changing the ordered resources. */
+export function readRuntimeOfferingID(value: unknown): RuntimeOfferingID {
+  switch (value) {
+    case "monthly-runtime-standard":
+    case "monthly-runtime-premium":
+    case "monthly-runtime-large":
+      return value;
+    default:
+      throw new Error("Unsupported managed runtime offering");
+  }
+}
 export type IonosDatacenter = IonosDatacenterValue;
 export type StackKitFoundation = StackKitFoundationValue;
 export type RegistryNodeRole = RegistryNodeRoleValue;

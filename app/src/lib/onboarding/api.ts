@@ -1,5 +1,5 @@
 /**
- * The onboarding wire (ONBOARDING-JOURNEY-STANDARD §7, §8).
+ * The onboarding wire (KOMBIFY-DESIGN-SYSTEM-STANDARD.md §12.7, §12.8).
  *
  * The server owns state and availability; this module only carries them. It
  * deliberately cannot push a state record: the endpoint takes actions, so a

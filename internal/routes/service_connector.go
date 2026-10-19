@@ -83,7 +83,7 @@ func (h *serviceRuntimeHandlers) setupConnector(e *httpx.Event) error {
 	if err != nil {
 		return err
 	}
-	if err = authorizeInventoryServerOperate(e.Request.Context(), h.policy, inventoryScope{tenantID: t.tenant, ownerID: t.owner}, t.server.ID); err != nil {
+	if err = authorizeOwnerServerOperate(e.Request.Context(), h.policy, h.servers, inventoryScope{tenantID: t.tenant, ownerID: t.owner}, t.server.ID); err != nil {
 		return writeInventoryHTTPError(e, err)
 	}
 	key := strings.TrimSpace(e.Request.Header.Get("Idempotency-Key"))

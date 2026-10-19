@@ -2,12 +2,10 @@ package stacks
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -39,31 +37,6 @@ func (s stackIdentityReadInterleaver) ApplyStackIdentityMutation(ctx context.Con
 	return s.conditional.ApplyStackIdentityMutation(ctx, input)
 }
 
-// nonBypassMigrationOwnerDSN returns a DSN for a non-superuser role that owns
-// the schema, because migrations refuse to run as a superuser or bypass-RLS role.
-func nonBypassMigrationOwnerDSN(t *testing.T, adminDSN string) string {
-	t.Helper()
-	admin, err := sql.Open(pgkdb.PostgresDriverName, adminDSN)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer admin.Close()
-	for _, stmt := range []string{
-		`CREATE ROLE stack_identity_migrator LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD 'migrator'`,
-		`ALTER SCHEMA public OWNER TO stack_identity_migrator`,
-	} {
-		if _, err := admin.ExecContext(t.Context(), stmt); err != nil {
-			t.Fatalf("%s: %v", stmt, err)
-		}
-	}
-	parsed, err := url.Parse(adminDSN)
-	if err != nil {
-		t.Fatal(err)
-	}
-	parsed.User = url.UserPassword("stack_identity_migrator", "migrator")
-	return parsed.String()
-}
-
 // The HTTP boundary runs against a disposable real PostgreSQL in the normal
 // focused package gate. CI supplies the embedded PostgreSQL binaries.
 func TestConditionalStackIdentityIsDurableAndOwnerScoped(t *testing.T) {
@@ -80,7 +53,7 @@ func TestConditionalStackIdentityIsDurableAndOwnerScoped(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	database, err := pgkdb.Open(pgkdb.Config{Backend: pgkdb.StoreBackendPostgres, DSN: nonBypassMigrationOwnerDSN(t, embedded.DSN()), DriverName: pgkdb.PostgresDriverName})
+	database, err := pgkdb.Open(pgkdb.Config{Backend: pgkdb.StoreBackendPostgres, DSN: embedded.DSN(), DriverName: pgkdb.PostgresDriverName})
 	if err != nil {
 		t.Fatal(err)
 	}

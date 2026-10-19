@@ -289,8 +289,46 @@ func (executor *StackKitExecutor) retainInstalledRelease(ctx context.Context, st
 	}
 	ctx, cancel := context.WithTimeout(ctx, defaultStackKitCommandTimeout)
 	defer cancel()
+	// Runtime bundles built before the pin named the kit of its own archive
+	// label the bootstrap archive with the image's catalog kit. The CLI binds
+	// archive, index and CLI digests exactly and verifies attestations, so the
+	// kit is only a lookup key: try the pinned kit, then the other product
+	// kits, and accept only an exact attested match.
+	var refusal error
+	for _, kit := range stackKitRetentionKits(installed.Kit) {
+		mismatch, err := retainStackKitSourceRelease(ctx, stagedCLI, cache, kit, installed, cliDigest)
+		if err == nil {
+			return nil
+		}
+		if !mismatch {
+			return err
+		}
+		if refusal == nil {
+			refusal = err
+		}
+	}
+	return refusal
+}
+
+// stackKitRetentionProductKits are the product kits whose archive a runtime
+// bundle can carry.
+var stackKitRetentionProductKits = []string{"basement-kit", "cloud-kit", "modern-homelab"}
+
+func stackKitRetentionKits(pinned string) []string {
+	kits := []string{pinned}
+	for _, kit := range stackKitRetentionProductKits {
+		if kit != pinned {
+			kits = append(kits, kit)
+		}
+	}
+	return kits
+}
+
+// retainStackKitSourceRelease reports mismatch when the CLI refused only
+// because the published release of kit carries a different archive.
+func retainStackKitSourceRelease(ctx context.Context, stagedCLI, cache, kit string, installed stackkitrelease.Pin, cliDigest string) (bool, error) {
 	process := newStackKitProcess(ctx, stagedCLI, "--no-log", "kit", "prepare-source-generation", "--cache-only", "--release-cache", cache,
-		"--source-kit", installed.Kit, "--source-release", installed.Version,
+		"--source-kit", kit, "--source-release", installed.Version,
 		"--source-os", installed.Platform.OS, "--source-arch", installed.Platform.Arch,
 		"--source-archive-sha256", installed.ArchiveSHA256, "--source-index-sha256", installed.IndexSHA256,
 		"--source-cli-sha256", cliDigest, "--json") // #nosec G204 -- fixed CLI beneath the authenticated private stage; arguments bind the installed pin and host cache.
@@ -298,7 +336,8 @@ func (executor *StackKitExecutor) retainInstalledRelease(ctx context.Context, st
 	stdout, stderr := newBoundedStackKitBuffer(maxStackKitCommandOutputBytes), newBoundedStackKitBuffer(maxStackKitCommandOutputBytes)
 	process.Stdout, process.Stderr = stdout, stderr
 	if err := process.Run(); err != nil {
-		return fmt.Errorf("public artifact retention failed: %w: %s", err, errorString(fmt.Errorf("%s", stderr.String())))
+		return strings.Contains(stderr.String(), "published source release differs from the installed admission"),
+			fmt.Errorf("public artifact retention failed: %w: %s", err, errorString(fmt.Errorf("%s", stderr.String())))
 	}
 	var result struct {
 		SchemaVersion string `json:"schemaVersion"`
@@ -311,18 +350,18 @@ func (executor *StackKitExecutor) retainInstalledRelease(ctx context.Context, st
 		} `json:"data"`
 	}
 	if stdout.truncated || json.Unmarshal(stdout.buffer.Bytes(), &result) != nil {
-		return fmt.Errorf("public artifact retention returned invalid evidence")
+		return false, fmt.Errorf("public artifact retention returned invalid evidence")
 	}
 	proof := result.Data.SourceRelease
 	if result.SchemaVersion != stackKitCommandResultVersion || result.Command != "stackkit kit prepare-source-generation" || result.Status != "success" ||
 		!result.Data.Prepared || result.Data.CLISHA256 != cliDigest || proof.SchemaVersion != stackkitrelease.ReceiptSchemaVersion ||
-		proof.Kit != installed.Kit || proof.Version != installed.Version || proof.Platform != installed.Platform ||
+		proof.Kit != kit || proof.Version != installed.Version || proof.Platform != installed.Platform ||
 		proof.ArchiveSHA256 != installed.ArchiveSHA256 || proof.IndexSHA256 != installed.IndexSHA256 ||
 		!stackKitSHA256HexPattern.MatchString(proof.AttestationSHA256) || !stackKitSHA256HexPattern.MatchString(proof.IndexAttestationSHA256) ||
 		!stackKitSHA256HexPattern.MatchString(proof.TrustedRootSHA256) {
-		return fmt.Errorf("public artifact retention does not bind the installed StackKits artifact and CLI")
+		return false, fmt.Errorf("public artifact retention does not bind the installed StackKits artifact and CLI")
 	}
-	return nil
+	return false, nil
 }
 
 var stackKitSHA256HexPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)

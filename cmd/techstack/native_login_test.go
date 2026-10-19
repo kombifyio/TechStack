@@ -40,7 +40,7 @@ func TestNativeCloudLoginHandoffBoundary(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	pgConfig, err := pgx.ParseConfig(pg.DSN())
+	pgConfig, err := pgx.ParseConfig(pg.BootstrapDSN())
 	if err != nil {
 		t.Fatal(err)
 	}

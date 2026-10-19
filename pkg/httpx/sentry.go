@@ -41,6 +41,10 @@ func captureInternalServerError(e *Event, message string, details any) {
 	if e == nil || e.Request == nil || SentryCaptured(e.Request.Context()) {
 		return
 	}
+	if ClientGone(e.Request.Context()) {
+		// The caller left before the answer; there is no server fault to report.
+		return
+	}
 	hub := sentry.GetHubFromContext(e.Request.Context())
 	if hub == nil {
 		hub = sentry.CurrentHub()
@@ -61,10 +65,23 @@ func captureInternalServerError(e *Event, message string, details any) {
 			"message": message,
 			"details": redactSentryDetails(details),
 		})
+		AttachDependencyFailure(scope, e.Request.Context())
 		hub.CaptureException(errors.New(message))
 	})
 	MarkSentryCaptured(e)
 	hub.Flush(sentryServerErrorFlushTimeout)
+}
+
+// AttachDependencyFailure adds the recorded dependency failure to a Sentry
+// scope: the operation and cause class as tags, the redacted error as context.
+func AttachDependencyFailure(scope *sentry.Scope, ctx context.Context) {
+	failure, ok := DependencyFailureFrom(ctx)
+	if !ok {
+		return
+	}
+	scope.SetTag("dependency_operation", failure.Operation)
+	scope.SetTag("cause_class", failure.Class)
+	scope.SetContext("dependency_failure", sentry.Context{"error": failure.Message})
 }
 
 func redactSentryDetails(details any) any {

@@ -3,11 +3,16 @@
 
   Five recognizable modules; each operation visits only the ones it can change.
 
-  Dispatches 'oncreate' event with StackConfig when user clicks Create.
+  Dispatches 'oncreate' event with StackConfig when the person creates the
+  homelab on the last step.
+
+  Answers survive a reload (draftKey): the non-secret part of the config is
+  kept in sessionStorage for this tab and ends when the creation is accepted
+  or the person chooses to leave. Passwords and passphrases are never stored.
 -->
 <script lang="ts">
-  import { tick, type Snippet } from "svelte";
-  import { beforeNavigate } from "$app/navigation";
+  import { onDestroy, tick, untrack, type Snippet } from "svelte";
+  import { beforeNavigate, goto } from "$app/navigation";
   import { Stepper } from "./index";
   import GoalsStep from "./steps/GoalsStep.svelte";
   import ServerStep from "./steps/ServerStep.svelte";
@@ -52,13 +57,35 @@
   } from "#lib/api/useCaseCatalog.js";
   import { creationGoals } from "#lib/wizard/creationGoals.js";
   import { features, getDefaultEnabled } from "#lib/stores/features.js";
+  import { confirmInApp } from "#lib/dialogs/in-app-dialog.js";
+  import {
+    clearWizardDraft,
+    loadWizardDraft,
+    mergeOverDefaults,
+    saveWizardDraft,
+  } from "#lib/wizard/draft-storage.js";
+  import {
+    provideWizardValidation,
+    type WizardIssue,
+  } from "#lib/wizard/validation-context.js";
 
   interface Props {
     oncreate?: (config: StackConfig) => void;
     initialConfig?: StackConfig;
     isDeploying?: boolean;
+    /** Text of the final button; the catalog's "Create homelab" when omitted. */
     submitLabel?: string;
     submittingLabel?: string;
+    /**
+     * Keeps the entered answers across a reload under this name. Without it
+     * nothing is stored (surfaces that join an existing homelab).
+     */
+    draftKey?: string;
+    /**
+     * Feedback about the submission (progress, errors). It renders directly
+     * above the footer navigation, where the person pressed the button.
+     */
+    footerNotice?: Snippet;
     showServerRole?: boolean;
     showServerServices?: boolean;
     applyDeploymentLaneDefaults?: boolean;
@@ -73,8 +100,10 @@
     oncreate,
     initialConfig,
     isDeploying = false,
-    submitLabel = "Create",
-    submittingLabel = "Creating...",
+    submitLabel,
+    submittingLabel,
+    draftKey,
+    footerNotice,
     showServerRole = false,
     showServerServices = false,
     applyDeploymentLaneDefaults = true,
@@ -85,25 +114,85 @@
     nodeAlternative,
   }: Props = $props();
 
+  // A reload restores the answers of this tab (secrets excluded).
+  const restoredDraft = untrack(() =>
+    draftKey ? loadWizardDraft(draftKey) : null,
+  );
+
   // Initialize config with defaults
   function initialWizardConfig() {
+    if (restoredDraft) {
+      const restored = mergeOverDefaults(
+        createDefaultConfig(),
+        restoredDraft.config,
+      );
+      applyPasskeyFirstOwnerLogin(restored);
+      return restored;
+    }
+    const stored = cloneConfig(initialConfig);
+    if (stored) {
+      applyPasskeyFirstOwnerLogin(stored);
+      return stored;
+    }
     const value = createDefaultConfig();
     if (value.goals) value.goals.files = true;
     return value;
   }
-  let config = $state<StackConfig>(initialWizardConfig());
-  let step = $state(1);
-  // Entered answers live only in this component. Protect them against
-  // accidental departure (reload, tab close, in-app navigation) without
-  // persisting them: the config carries SSH passwords and recovery material,
-  // so a draft store is deliberately not added here. Protection ends once the
+  let config = $state<StackConfig>(untrack(initialWizardConfig));
+  let step = $state(restoredDraft?.step ?? 1);
+  let draftRestored = $state(Boolean(restoredDraft));
+  // Protect entered answers against accidental departure (reload, tab close,
+  // in-app navigation). The config carries SSH passwords and recovery
+  // material, so only its non-secret part is kept (draftKey); a reload brings
+  // that back and asks for the secrets again. Protection ends once the
   // submission is accepted (isDeploying) and stays in place after a failed one.
   let userEdited = $state(false);
   const hasUnsavedAnswers = $derived((userEdited || step > 1) && !isDeploying);
 
-  beforeNavigate(({ cancel, willUnload }) => {
-    if (!hasUnsavedAnswers || willUnload) return;
-    if (!window.confirm(tr("wizard.leave.confirm"))) cancel();
+  // The app's own dialog replaces window.confirm. It answers later than the
+  // navigation asks, so the navigation is cancelled first and repeated once
+  // the person agreed to leave.
+  let leaveConfirmed = false;
+  beforeNavigate((navigation) => {
+    if (!hasUnsavedAnswers || navigation.willUnload || leaveConfirmed) return;
+    const target = navigation.to;
+    if (!target) return;
+    navigation.cancel();
+    void confirmInApp({
+      title: tr("wizard.leave.title"),
+      message: tr("wizard.leave.confirm"),
+      confirmText: tr("wizard.leave.confirmAction"),
+      cancelText: tr("wizard.leave.stay"),
+      tone: "warning",
+    }).then(async (leave) => {
+      if (!leave) return;
+      leaveConfirmed = true;
+      if (draftKey) clearWizardDraft(draftKey);
+      try {
+        await goto(target.url);
+      } finally {
+        leaveConfirmed = false;
+      }
+    });
+  });
+
+  // Keep the non-secret answers for this tab while the person works.
+  $effect(() => {
+    if (!draftKey || isDeploying) return;
+    if (!userEdited && step === 1 && !restoredDraft) return;
+    const key = draftKey;
+    const answers = $state.snapshot(config) as StackConfig;
+    const position = step;
+    const timer = setTimeout(
+      () => saveWizardDraft(key, { step: position, config: answers }),
+      300,
+    );
+    return () => clearTimeout(timer);
+  });
+
+  // An accepted submission ends the draft; a failed one keeps it.
+  onDestroy(() => {
+    if (draftKey && isDeploying) clearWizardDraft(draftKey);
   });
 
   $effect(() => {
@@ -115,8 +204,10 @@
     window.addEventListener("beforeunload", guard);
     return () => window.removeEventListener("beforeunload", guard);
   });
-  let deploymentLaneApplied = $state(false);
-  let initialConfigApplied = $state(false);
+  let deploymentLaneApplied = $state(Boolean(restoredDraft));
+  let initialConfigApplied = $state(
+    Boolean(untrack(() => initialConfig)) || Boolean(restoredDraft),
+  );
   let recommendationState = $state<WizardPreviewState>({ phase: "idle" });
   const recommendationController = new WizardPreviewController((state) => {
     recommendationState = state;
@@ -290,12 +381,8 @@
 
   $effect(() => {
     if (!config.goals) return;
-    for (const goal of goalQuestions) {
-      if (!isCanonicalUseCaseGoal(goal.configKey)) continue;
-      if (!availableCanonicalUseCaseGoals.includes(goal.configKey)) {
-        config.goals[goal.configKey] = false;
-      }
-    }
+    // Catalog loading or a temporarily unavailable release must not erase
+    // saved wishes. Runtime admission still validates every submitted goal.
     const allAvailableSelected =
       availableCanonicalUseCaseGoals.length > 0 &&
       availableCanonicalUseCaseGoals.every((goal) => config.goals?.[goal]);
@@ -332,47 +419,123 @@
       config.audience.public,
   );
 
-  // Validation error messages for better feedback
-  const validationErrors = $derived(() => {
-    const errors: string[] = [];
+  // What stands in the way on the current step, blockers first. Each sentence
+  // says what to do, not what is wrong in code; a blocked "Next" shows the
+  // first one right beside it, and the field it belongs to is marked invalid.
+  const ownerFieldByMessage = $derived(
+    new Map<string, WizardIssue["field"]>([
+      [tr("wizard.login.profile.emailRequired"), "owner-email"],
+      [tr("ui.ownerState.emailIsRequiredForPasswordless"), "owner-email"],
+      [tr("ui.ownerState.recoveryPassphrasesDoNotMatch"), "owner-recovery"],
+    ]),
+  );
+  const stepIssues = $derived.by((): WizardIssue[] => {
+    const blockers: WizardIssue[] = [];
+    const hints: WizardIssue[] = [];
+    const server = config.serverProvisioning;
 
-    if (
-      currentStepKey === "server" &&
-      config.serverProvisioning.mode === "connect-remote" &&
-      !config.serverProvisioning.remote.host.trim()
-    ) {
-      errors.push(tr("ui.easyWizard.serverHostOrIpIs"));
+    if (currentStepKey === "goals") {
+      if (useCaseCatalogState === "loading") {
+        blockers.push({
+          field: "catalog",
+          message: tr("wizard.catalog.blockedLoading"),
+        });
+      } else if (useCaseCatalogState === "error") {
+        blockers.push({
+          field: "catalog",
+          message: tr("wizard.catalog.blockedError"),
+        });
+      }
     }
 
-    if (
-      currentStepKey === "server" &&
-      config.serverProvisioning.mode === "connect-remote" &&
-      authStore.walletSource === "kombify" &&
-      !config.serverProvisioning.remote.sshWalletItemId
-    ) {
-      errors.push(tr("kwallet.wizard.item_required"));
+    if (currentStepKey === "server") {
+      if (!serverSelectionReady) {
+        blockers.push({
+          field: "server-selection",
+          message: tr("wizard.validation.serverSelection"),
+        });
+      }
+      if (
+        server.mode === "hypervisor" &&
+        !isValidSubstrateGuest(server.substrate)
+      ) {
+        blockers.push({
+          field: "hypervisor-guest",
+          message: tr("wizard.validation.hypervisorGuest"),
+        });
+      }
+      if (server.mode === "connect-remote" && !server.remote.host.trim()) {
+        blockers.push({
+          field: "server-host",
+          message: tr("ui.easyWizard.serverHostOrIpIs"),
+        });
+      }
+      if (
+        server.mode === "connect-remote" &&
+        authStore.walletSource === "kombify" &&
+        !server.remote.sshWalletItemId
+      ) {
+        blockers.push({
+          field: "server-wallet",
+          message: tr("kwallet.wizard.item_required"),
+        });
+      }
     }
 
-    if (currentStepKey === "access" && !config.network.accessMode) {
-      errors.push(tr("ui.easyWizard.pleaseSelectAnAccessMode"));
-    }
-    if (
-      currentStepKey === "access" &&
-      config.serverProvisioning.mode === "kombify-cloud" &&
-      config.network.accessMode === "home"
-    ) {
-      errors.push(tr("wizard.access.home.managedReason"));
+    if (currentStepKey === "access") {
+      if (!config.network.accessMode) {
+        hints.push({
+          field: "access-mode",
+          message: tr("ui.easyWizard.pleaseSelectAnAccessMode"),
+        });
+      }
+      if (
+        server.mode === "kombify-cloud" &&
+        config.network.accessMode === "home"
+      ) {
+        blockers.push({
+          field: "access-mode",
+          message: tr("wizard.access.home.managedReason"),
+        });
+      }
     }
 
-    if (currentStepKey === "users" && !hasUsers) {
-      errors.push(tr("ui.easyWizard.pleaseSelectWhoWillUse"));
+    if (currentStepKey === "users") {
+      if (!joinExistingDeployment && config.network.publicAccess) {
+        blockers.push({
+          field: "public-access",
+          message: tr("wizard.validation.publicUsers"),
+        });
+      }
+      if (!hasUsers) {
+        hints.push({
+          field: "audience",
+          message: tr("ui.easyWizard.pleaseSelectWhoWillUse"),
+        });
+      }
     }
 
     if (currentStepKey === "login") {
-      errors.push(...ownerState.ownerValidationErrors());
+      const target = ownerState.adminIsValid() ? hints : blockers;
+      for (const message of ownerState.ownerValidationErrors()) {
+        target.push({
+          field: ownerFieldByMessage.get(message) ?? "step",
+          message,
+        });
+      }
     }
 
-    return errors;
+    return [...blockers, ...hints];
+  });
+
+  // The banner lists everything once the person tried to continue.
+  provideWizardValidation({
+    get attempted() {
+      return hasAttemptedNext;
+    },
+    get issues() {
+      return stepIssues;
+    },
   });
 
   // Robustness principle: defaults keep navigation available; validation errors
@@ -380,6 +543,8 @@
   let serverSelectionReady = $state(true);
   let stepContent = $state<HTMLDivElement>();
   const canGoNext = $derived(() => {
+    // A failed or unfinished catalog read must not read as "nothing to install".
+    if (currentStepKey === "goals") return useCaseCatalogState === "ready";
     if (currentStepKey === "server") {
       if (!serverSelectionReady) return false;
       if (config.serverProvisioning.mode === "hypervisor") {
@@ -414,6 +579,27 @@
         isValidSubstrateGuest(config.serverProvisioning.substrate)),
   );
 
+  // The first thing in the way, shown beside the blocked forward button.
+  const blockedReason = $derived(
+    (step === lastActiveStep ? !canDeploy() : !canGoNext())
+      ? (stepIssues[0]?.message ?? tr("wizard.validation.stepIncomplete"))
+      : "",
+  );
+
+  // A blocked attempt moves to the list of what is missing, so a press on a
+  // button at the foot of a long step never seems to do nothing.
+  let validationSummary = $state<HTMLDivElement>();
+  async function revealIssues() {
+    await tick();
+    validationSummary?.focus({ preventScroll: true });
+    validationSummary?.scrollIntoView({
+      block: "center",
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "instant"
+        : "smooth",
+    });
+  }
+
   // Navigation records attempted progress so guidance appears at the right time.
   async function revealStep() {
     await tick();
@@ -431,7 +617,12 @@
     const next = activeStepIds.find((id) => id > step);
     if (next && canGoNext()) {
       step = next;
+      // The next step starts calm; its hints appear after its own attempt.
+      hasAttemptedNext = false;
+      draftRestored = false;
       await revealStep();
+    } else if (next && stepIssues.length > 0) {
+      await revealIssues();
     }
   }
 
@@ -439,6 +630,7 @@
     const previous = activeStepIds.findLast((id) => id < step);
     if (previous) {
       step = previous;
+      hasAttemptedNext = false;
       await revealStep();
     }
   }
@@ -456,10 +648,14 @@
   async function handleCreate() {
     hasAttemptedNext = true;
     enforceExistingOwnerReuse();
-    if (!canDeploy()) return;
+    if (!canDeploy()) {
+      if (stepIssues.length > 0) await revealIssues();
+      return;
+    }
 
     const recoveryReady = await ownerState.syncRecoveryHash();
     if (!recoveryReady || !ownerState.adminIsValid()) {
+      await revealIssues();
       return;
     }
 
@@ -474,15 +670,31 @@
    * this pinned catalog advertises their applications.
    */
   let useCaseCatalog = $state<Map<string, UseCaseCatalogView>>(new Map());
+  // Loading, failed and ready are different answers. A failed read is never
+  // shown as "Coming soon" and never lets the person continue without it.
+  let useCaseCatalogState = $state<"loading" | "ready" | "error">("loading");
+  let catalogAttempt = $state(0);
   $effect(() => {
+    void catalogAttempt;
     let cancelled = false;
-    void loadUseCaseCatalog().then((catalog) => {
-      if (!cancelled) useCaseCatalog = catalog;
-    });
+    useCaseCatalogState = "loading";
+    loadUseCaseCatalog().then(
+      (catalog) => {
+        if (cancelled) return;
+        useCaseCatalog = catalog;
+        useCaseCatalogState = "ready";
+      },
+      () => {
+        if (!cancelled) useCaseCatalogState = "error";
+      },
+    );
     return () => {
       cancelled = true;
     };
   });
+  function reloadUseCaseCatalog() {
+    catalogAttempt += 1;
+  }
 
   /*
    * The Goals step emits raw disclosure observations (§3 rule 5), and nothing
@@ -504,6 +716,7 @@
     settingId: string,
     value: string | boolean,
   ) {
+    userEdited = true;
     config.useCaseSettings ??= {};
     config.useCaseSettings[goal] = {
       ...(config.useCaseSettings[goal] ?? {}),
@@ -512,6 +725,7 @@
   }
 
   function setGoal(goal: GoalConfigKey, value: boolean) {
+    userEdited = true;
     if (config.goals) {
       config.goals[goal] = value;
       // If "everything" is selected, toggle all currently available use cases.
@@ -540,22 +754,26 @@
   }
 
   function setAccessMode(value: AccessModeValue) {
+    userEdited = true;
     config.network.accessMode = value;
     config.network.accessModeSelected = true;
   }
 
   function setAudience(audience: AudienceConfigKey, value: boolean) {
+    userEdited = true;
     config.audience[audience] = value;
     if (audience === "public") config.network.publicAccess = value;
   }
 
   function setHouseholdProfile(profile: HouseholdProfile) {
+    userEdited = true;
     config.household = { profile, people: config.household?.people ?? [] };
     config.audience.onlyMe = profile === "solo";
     config.audience.familyFriends = profile !== "solo";
   }
 
   function setHouseholdPeople(people: HouseholdPersonDraft[]) {
+    userEdited = true;
     config.household = {
       profile:
         config.household?.profile ??
@@ -566,6 +784,7 @@
 
   function openRecommendation(_recommendation: WizardRecommendation) {
     step = 2;
+    hasAttemptedNext = false;
   }
 </script>
 
@@ -577,15 +796,40 @@
   data-standard-bundle-id={standardBundle.id}
   data-standard-bundle-version={standardBundle.version}
 >
-  <!-- Validation Hints Banner - nur bei Step 4 Auth-Problemen (sanft, informativ) -->
-  {#if (currentStepKey === "server" || currentStepKey === "login") && validationErrors().length > 0 && hasAttemptedNext}
-    <div class="mb-6 p-4 rounded-lg border border-warning/30 bg-warning/10">
+  {#if draftRestored}
+    <p
+      class="mb-6 flex items-start justify-between gap-3 rounded-lg border border-info/30 bg-info/10 px-4 py-3 text-sm text-foreground"
+      role="status"
+      data-testid="wizard-draft-restored"
+    >
+      <span>{tr("wizard.draft.restored")}</span>
+      <button
+        type="button"
+        class="shrink-0 text-sm underline underline-offset-2"
+        onclick={() => (draftRestored = false)}
+      >
+        {tr("ui.common.dismiss")}
+      </button>
+    </p>
+  {/if}
+
+  <!-- What is missing on this step, once the person tried to continue. -->
+  {#if stepIssues.length > 0 && hasAttemptedNext}
+    <div
+      bind:this={validationSummary}
+      id="wizard-validation-summary"
+      tabindex="-1"
+      role="alert"
+      class="mb-6 scroll-mt-6 rounded-lg border border-warning/30 bg-warning/10 p-4 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      data-testid="wizard-validation-summary"
+    >
       <div class="flex items-start gap-3">
         <svg
-          class="w-5 h-5 flex-shrink-0 mt-0.5 text-warning"
+          class="mt-0.5 h-5 w-5 shrink-0 text-warning"
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
+          aria-hidden="true"
         >
           <path
             stroke-linecap="round"
@@ -598,9 +842,9 @@
           <p class="font-medium text-foreground">
             {tr("wizard.validation.completeFields")}
           </p>
-          <ul class="mt-1 text-sm text-muted-foreground space-y-1">
-            {#each validationErrors() as error, index (index)}
-              <li>• {error}</li>
+          <ul class="mt-1 space-y-1 text-sm text-muted-foreground">
+            {#each stepIssues as issue, index (index)}
+              <li>• {issue.message}</li>
             {/each}
           </ul>
         </div>
@@ -618,6 +862,7 @@
     {isDeploying}
     deployLabel={submitLabel}
     deployingLabel={submittingLabel}
+    blockedReason={nodeAlternative ? "" : blockedReason}
     onprev={goPrev}
     onnext={goNext}
     ondeploy={handleCreate}
@@ -641,6 +886,8 @@
         {recommendationState}
         onRecommendationOpen={openRecommendation}
         {useCaseCatalog}
+        catalogState={useCaseCatalogState}
+        onCatalogReload={reloadUseCaseCatalog}
       />
     {/if}
 
@@ -685,6 +932,14 @@
       <LoginStep {config} owner={ownerState} lane={wizardDeploymentLane} />
     {/if}
   </div>
+  {#if footerNotice}
+    <!-- Takes no room while the notice has nothing to show. -->
+    <div
+      class="mx-auto mt-8 hidden w-full min-w-0 max-w-4xl space-y-4 has-[*]:block"
+    >
+      {@render footerNotice()}
+    </div>
+  {/if}
   <Stepper
     navigationOnly
     steps={surfaceSteps}
@@ -696,6 +951,7 @@
     {isDeploying}
     deployLabel={submitLabel}
     deployingLabel={submittingLabel}
+    blockedReason={nodeAlternative ? "" : blockedReason}
     onprev={goPrev}
     onnext={goNext}
     ondeploy={handleCreate}

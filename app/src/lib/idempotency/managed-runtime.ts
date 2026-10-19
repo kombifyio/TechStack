@@ -114,6 +114,8 @@ function canonicalOffering(value: string | undefined): string {
       return "monthly-runtime-standard";
     case "monthly-runtime-premium":
       return "monthly-runtime-premium";
+    case "monthly-runtime-large":
+      return "monthly-runtime-large";
     default:
       return trimmed;
   }

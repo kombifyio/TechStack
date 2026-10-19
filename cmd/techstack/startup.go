@@ -221,7 +221,7 @@ func runTechstack(ctx context.Context) error {
 
 	// Native cloud auth mode: `techstack login` / `techstack logout` run the
 	// interactive RFC 8628/8252 flows (ADR-033 D1 CLI-first,
-	// NATIVE-CLIENT-PLATFORM-STANDARD section 4) and exit.
+	// DESKTOP-FOUNDATION-STANDARD.md §5.4) and exit.
 	if isLoginMode(os.Args) {
 		return runLoginMode(ctx, os.Args[1:])
 	}
@@ -272,9 +272,8 @@ func runTechstack(ctx context.Context) error {
 	}
 	stackroutes.ConfigureKombifyWallet(walletClient)
 	log.Info("wallet_source_ready", "source", string(walletSource))
-	if strings.TrimSpace(os.Getenv(db.EnvDatabaseURL)) == "" {
-		return fmt.Errorf("canonical PostgreSQL database is required: configure %s before starting the supported runtime", db.EnvDatabaseURL)
-	}
+	// The installed Windows client starts the runtime with TECHSTACK_EMBEDDED_POSTGRES=1 and no
+	// DATABASE_URL: the embedded server started here supplies it.
 	localPostgres, err := maybeStartEmbeddedPostgres(startup.cfg, log)
 	if err != nil {
 		return fmt.Errorf("start embedded postgres: %w", err)
@@ -286,6 +285,10 @@ func runTechstack(ctx context.Context) error {
 			}
 		}
 	}()
+	// The database requirement is judged after the embedded server had its chance to supply the URL.
+	if strings.TrimSpace(os.Getenv(db.EnvDatabaseURL)) == "" {
+		return fmt.Errorf("canonical PostgreSQL database is required: configure %s before starting the supported runtime", db.EnvDatabaseURL)
+	}
 
 	// Control-plane Postgres is the source of truth (PB retirement). Connect and
 	// run pkg/db migrations fail-closed: without DATABASE_URL the runtime cannot

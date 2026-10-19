@@ -23,7 +23,7 @@ const (
 	PredicateServiceRunning      = "techstack.service_running"
 	// PredicateJourneyCompleted tells Cloud's onboarding hub that this
 	// principal finished Techstack's own getting-started journey, so the hub
-	// never repeats a Techstack step (ONBOARDING-JOURNEY-STANDARD v1.3 §1).
+	// never repeats a Techstack step (KOMBIFY-DESIGN-SYSTEM-STANDARD.md §12.1).
 	PredicateJourneyCompleted = "techstack.journey_completed"
 )
 
@@ -234,7 +234,7 @@ func serverRegistered(ctx context.Context, store controlplane.ServerRuntimeStore
 // owner. In B2C a tenant is one person, so the projection is exact there; in a
 // shared tenant a colleague's running service can complete this step. That is
 // deliberate — the step is not cost-bearing and completing it grants nothing
-// (ONBOARDING-JOURNEY-STANDARD §3).
+// (KOMBIFY-DESIGN-SYSTEM-STANDARD.md §12.3).
 func serviceRunning(ctx context.Context, store controlplane.ServiceRuntimeStore, tenantID string) bool {
 	if store == nil {
 		return false

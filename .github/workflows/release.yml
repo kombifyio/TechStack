@@ -55,11 +55,14 @@ jobs:
     runs-on: windows-2025
     timeout-minutes: 15
     steps:
-      # The export digest covers the exact bytes; Git for Windows would convert
-      # text files to CRLF and break the receipt check.
+      # The export digest covers the exact bytes. `* text=auto` in the export's
+      # .gitattributes still checks text files out with the native CRLF on
+      # Windows even when autocrlf is off, so pin the checkout eol to LF too.
       - name: Keep exported line endings
         shell: pwsh
-        run: git config --global core.autocrlf false
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           fetch-depth: 0

@@ -8,6 +8,7 @@
   import { getPortalOrigin } from "#lib/stores/postMessageBridge.js";
   import { tr } from "#lib/i18n.svelte.js";
   import Button from "#lib/components/ui/Button.svelte";
+  import ErrorCallout from "#lib/components/ui/ErrorCallout.svelte";
 
   let error = $state<string | null>(null);
   let isLoading = $state(false);
@@ -108,11 +109,7 @@
         {/if}
 
         {#if error}
-          <div
-            class="mb-4 p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-foreground text-sm"
-          >
-            {error}
-          </div>
+          <ErrorCallout class="mb-4" message={error} />
         {/if}
 
         {#if loginExperience === "saas-auth0"}

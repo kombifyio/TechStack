@@ -15,6 +15,9 @@ type Admission struct {
 	Binding Binding
 	// Raw is the exact command JSON whose canonical digest the binding names.
 	Raw []byte
+	// Window is the authority this process received with the offer; the Guard
+	// checks it again immediately before the effect (see CheckBeforeEffect).
+	Window AuthorityWindow
 }
 
 type admissionKey struct{}

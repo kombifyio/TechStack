@@ -1,0 +1,73 @@
+{
+  "contract": "guard.command-binding/v1",
+  "notes": "Guard G01 contract vectors. Digests are frozen: a change that alters one is a wire break between control-plane and Guard releases. deny is the stable denial code, empty for admission. A report digest of <computed> is filled by the test because the vector exercises a check that runs before the digest matters.",
+  "command_raw": "{\"commandId\":\"cmd-vec-1\",\"operation\":\"STACKKIT_OPERATION_SERVICE_RESTART\",\"workingDirectory\":\"/srv/stack\",\"serviceKey\":\"base\",\"ownerApproved\":true}",
+  "base_binding": {
+    "command_id": "cmd-vec-1",
+    "tenant_id": "tenant-vec",
+    "worker_id": "worker-vec",
+    "server_id": "server-vec",
+    "operation": "STACKKIT_OPERATION_SERVICE_RESTART",
+    "payload_digest": "d3ee477776da87ee4ad0dda59b2b1065aa4f2e92e7aaa1060bc56cfd3c0cbeba",
+    "worker_generation": 3,
+    "current_generation": 3,
+    "authority_expires_at": "2026-09-27T12:15:00Z",
+    "contract_version": "guard.command-binding/v1"
+  },
+  "guard_expectation": {
+    "tenant_id": "tenant-vec",
+    "worker_id": "worker-vec",
+    "server_id": "server-vec",
+    "highest_generation": 3
+  },
+  "now": "2026-09-27T12:00:00Z",
+  "admission": [
+    {"name": "valid exchange", "deny": ""},
+    {"name": "canonical form ignores key order and whitespace", "raw": "{ \"ownerApproved\": true, \"serviceKey\": \"base\", \"workingDirectory\": \"/srv/stack\", \"operation\": \"STACKKIT_OPERATION_SERVICE_RESTART\", \"commandId\": \"cmd-vec-1\" }", "deny": ""},
+    {"name": "journaled command is recovered after its authority expired", "known": true, "now": "2026-09-27T13:00:00Z", "deny": ""},
+    {"name": "newer contract version is refused", "binding": {"contract_version": "guard.command-binding/v2"}, "deny": "contract_unsupported"},
+    {"name": "legacy contract version is refused", "binding": {"contract_version": "legacy"}, "deny": "contract_unsupported"},
+    {"name": "incomplete binding", "binding": {"command_id": ""}, "deny": "binding_mismatch"},
+    {"name": "other tenant", "binding": {"tenant_id": "tenant-other"}, "deny": "binding_mismatch"},
+    {"name": "other worker", "binding": {"worker_id": "worker-other"}, "deny": "binding_mismatch"},
+    {"name": "other server", "binding": {"server_id": "server-other"}, "deny": "binding_mismatch"},
+    {"name": "action differs from binding", "operation": "STACKKIT_OPERATION_APPLY", "deny": "binding_mismatch"},
+    {"name": "altered payload", "raw": "{\"commandId\":\"cmd-vec-1\",\"operation\":\"STACKKIT_OPERATION_SERVICE_RESTART\",\"workingDirectory\":\"/srv/other\",\"serviceKey\":\"base\",\"ownerApproved\":true}", "deny": "payload_digest_mismatch"},
+    {"name": "older generation than already seen", "binding": {"worker_generation": 2, "current_generation": 2}, "deny": "stale_generation"},
+    {"name": "binding generation newer than credential", "binding": {"worker_generation": 4}, "deny": "stale_generation"},
+    {"name": "authority expired at its instant", "now": "2026-09-27T12:15:00Z", "deny": "authority_expired"}
+  ],
+  "mixed_version": [
+    {"name": "binding-capable Guard may receive mutations", "capabilities": ["stackkit", "guard.command-binding.v1"], "deny": ""},
+    {"name": "Guard without the contract stays observe-only", "capabilities": ["stackkit"], "deny": "observe_only_contract"},
+    {"name": "Guard speaking only a newer contract stays observe-only", "capabilities": ["stackkit", "guard.command-binding.v2"], "deny": "observe_only_contract"}
+  ],
+  "reports": [
+    {"name": "terminal result", "report": {"revision": 1, "state": "terminal", "digest": "6ed12eff8cd6db1eac37494f68aeded6a6a3b801720579b692a6e67fed08c964"}, "result": {"command_id": "cmd-vec-1", "success": true, "started_at_unix": 1790000000}, "deny": ""},
+    {"name": "terminal result altered after digest", "report": {"revision": 1, "state": "terminal", "digest": "6ed12eff8cd6db1eac37494f68aeded6a6a3b801720579b692a6e67fed08c964"}, "result": {"command_id": "cmd-vec-1", "success": false, "started_at_unix": 1790000000}, "deny": "result_digest_mismatch"},
+    {"name": "terminal without result", "report": {"revision": 1, "state": "terminal", "digest": "6ed12eff8cd6db1eac37494f68aeded6a6a3b801720579b692a6e67fed08c964"}, "deny": "result_rejected"},
+    {"name": "outcome unknown", "report": {"revision": 1, "state": "outcome_unknown", "reason": "executor lost after dispatch", "digest": "73741033aa58abf91f2cbbd974d656b24346920f0b64ffd75ad899e5d5b97667"}, "deny": ""},
+    {"name": "resolution of the unknown outcome", "report": {"revision": 2, "state": "resolved", "resolution": "not_applied", "reason": "verify shows prior state", "prior_digest": "73741033aa58abf91f2cbbd974d656b24346920f0b64ffd75ad899e5d5b97667", "digest": "737d8f649459e428b8716f1d56a435f30cecf25da4a1adb629edb323f3b87f70"}, "deny": ""},
+    {"name": "refusal before effect", "report": {"revision": 1, "state": "rejected", "reason": "binding_mismatch", "digest": "d59a844f4d8407c4ce9b9be9ddb92aaec90613883cb4e57b655848620cc4e6fa"}, "deny": ""},
+    {"name": "unknown state", "report": {"revision": 1, "state": "done", "digest": "<computed>"}, "deny": "result_rejected"},
+    {"name": "revision zero", "report": {"revision": 0, "state": "outcome_unknown", "digest": "<computed>"}, "deny": "result_revision_out_of_order"},
+    {"name": "revision past the contract bound", "report": {"revision": 1001, "state": "outcome_unknown", "digest": "<computed>"}, "deny": "result_revision_out_of_order"},
+    {"name": "unknown resolution", "report": {"revision": 2, "state": "resolved", "resolution": "probably_fine", "digest": "<computed>"}, "deny": "result_rejected"}
+  ],
+  "revisions": [
+    {"name": "first outcome of a dispatched command", "stored": {"state": "dispatched", "dispatch_generation": 3, "authority_expires_at": "2026-09-21T14:20:00Z"}, "submission": {"report": {"revision": 1, "state": "terminal", "digest": "r1"}, "generation": 3, "started_at": "2026-09-21T14:13:20Z"}, "duplicate": false, "deny": ""},
+    {"name": "lost acknowledgement: identical repeat is acknowledged again", "stored": {"state": "completed", "revision": 1, "digest": "r1", "same_revision_digest": "r1"}, "submission": {"report": {"revision": 1, "state": "terminal", "digest": "r1"}, "generation": 3}, "duplicate": true, "deny": ""},
+    {"name": "conflicting record for a committed revision", "stored": {"state": "completed", "revision": 1, "digest": "r1", "same_revision_digest": "r1"}, "submission": {"report": {"revision": 1, "state": "terminal", "digest": "r1-other"}, "generation": 3}, "deny": "result_revision_conflict"},
+    {"name": "revision gap", "stored": {"state": "outcome_unknown", "revision": 1, "digest": "u1"}, "submission": {"report": {"revision": 3, "state": "resolved", "resolution": "not_applied", "prior_digest": "u1", "digest": "r3"}, "generation": 3}, "deny": "result_revision_out_of_order"},
+    {"name": "first outcome for a settled command", "stored": {"state": "failed"}, "submission": {"report": {"revision": 1, "state": "terminal", "digest": "r1"}, "generation": 3}, "deny": "command_not_pending"},
+    {"name": "first revision cannot resolve", "stored": {"state": "dispatched"}, "submission": {"report": {"revision": 1, "state": "resolved", "resolution": "not_applied", "digest": "r1"}, "generation": 3}, "deny": "result_revision_conflict"},
+    {"name": "recovery: resolution supersedes the unknown evidence", "stored": {"state": "outcome_unknown", "revision": 1, "digest": "u1", "dispatch_generation": 3}, "submission": {"report": {"revision": 2, "state": "resolved", "resolution": "observed_converged", "prior_digest": "u1", "digest": "r2"}, "generation": 4}, "deny": ""},
+    {"name": "resolution naming other evidence", "stored": {"state": "outcome_unknown", "revision": 1, "digest": "u1"}, "submission": {"report": {"revision": 2, "state": "resolved", "resolution": "not_applied", "prior_digest": "u0", "digest": "r2"}, "generation": 3}, "deny": "result_revision_conflict"},
+    {"name": "late refusal cannot settle an unknown outcome", "stored": {"state": "outcome_unknown", "revision": 1, "digest": "u1"}, "submission": {"report": {"revision": 2, "state": "rejected", "prior_digest": "u1", "digest": "r2"}, "generation": 3}, "deny": "result_revision_conflict"},
+    {"name": "resolution after the outcome was settled", "stored": {"state": "completed", "revision": 1, "digest": "r1"}, "submission": {"report": {"revision": 2, "state": "resolved", "resolution": "not_applied", "prior_digest": "r1", "digest": "r2"}, "generation": 3}, "deny": "command_not_pending"},
+    {"name": "report from an older credential generation", "stored": {"state": "dispatched", "dispatch_generation": 3}, "submission": {"report": {"revision": 1, "state": "outcome_unknown", "digest": "u1"}, "generation": 2}, "deny": "stale_generation"},
+    {"name": "refusal from an older credential generation is still recorded", "stored": {"state": "dispatched", "dispatch_generation": 3}, "submission": {"report": {"revision": 1, "state": "rejected", "digest": "x1"}, "generation": 2}, "deny": ""},
+    {"name": "effect started after authority plus clock margin", "stored": {"state": "dispatched", "dispatch_generation": 3, "authority_expires_at": "2026-09-21T14:00:00Z"}, "submission": {"report": {"revision": 1, "state": "terminal", "digest": "r1"}, "generation": 3, "started_at": "2026-09-21T14:13:20Z"}, "deny": "authority_expired"},
+    {"name": "effect started within the clock margin", "stored": {"state": "dispatched", "dispatch_generation": 3, "authority_expires_at": "2026-09-21T14:10:00Z"}, "submission": {"report": {"revision": 1, "state": "terminal", "digest": "r1"}, "generation": 3, "started_at": "2026-09-21T14:13:20Z"}, "deny": ""}
+  ]
+}

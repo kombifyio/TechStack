@@ -25,6 +25,10 @@
   import { canonicalServerAxes } from "#lib/server-card-adapter.js";
   import { serverStatusAxes } from "@kombiverselabs/ui/server";
   import Button from "#lib/components/ui/Button.svelte";
+  import ErrorCallout from "#lib/components/ui/ErrorCallout.svelte";
+  import { toast } from "#lib/stores/toast.js";
+  import { SERVERS_HREF } from "#lib/navigation.js";
+  import { serverDetailHref } from "#lib/server-links.js";
   import MetricSparkline from "#lib/components/monitoring/MetricSparkline.svelte";
   import StateRibbon from "#lib/components/monitoring/StateRibbon.svelte";
   import StorageForecast from "#lib/components/monitoring/StorageForecast.svelte";
@@ -71,7 +75,8 @@
     try {
       await detachSelfOwnedServer(current.id);
       showDetachConfirmation = false;
-      await goto("/monitoring");
+      toast.success(tr("monitoring.serverRemoved", { name: current.name }));
+      await goto(SERVERS_HREF);
     } catch (err) {
       detachError =
         parseApiError(err).message ||
@@ -152,7 +157,8 @@
   }
 
   function formatRatio(ratio: number | null | undefined): string {
-    if (ratio === null || ratio === undefined) return "no data";
+    if (ratio === null || ratio === undefined)
+      return tr("ui.monitoring.noData");
     return `${(ratio * 100).toFixed(ratio >= 0.9995 ? 0 : 2)} %`;
   }
 
@@ -309,21 +315,40 @@
 </svelte:head>
 
 <div class="mx-auto max-w-7xl p-4 md:p-6" data-testid="server-monitoring-page">
-  <a
-    href="/monitoring"
-    class="mb-4 inline-flex items-center gap-2 text-[12.5px] font-medium text-primary hover:underline"
-  >
-    <ArrowLeft class="h-3.5 w-3.5" />
-    {tr("ui.monitoring.monitoring")}
-  </a>
+  <div class="mb-4 flex flex-wrap items-center gap-x-5 gap-y-2">
+    <a
+      href="/monitoring"
+      class="inline-flex items-center gap-2 text-[12.5px] font-medium text-primary hover:underline"
+    >
+      <ArrowLeft class="h-3.5 w-3.5" />
+      {tr("ui.monitoring.monitoring")}
+    </a>
+    {#if server}
+      <!-- This page is the history of one server; its detail, with
+           services, ports, checks and logs, is the canonical server page. -->
+      {@const detailHref = serverDetailHref({
+        serverId: server.id,
+        deploymentId: server.kit_deployment_id,
+      })}
+      {#if detailHref && !detailHref.startsWith("/monitoring/")}
+        <a
+          href={detailHref}
+          class="inline-flex items-center gap-2 text-[12.5px] font-medium text-primary hover:underline"
+          data-testid="server-monitoring-open-server"
+        >
+          {tr("monitoring.openServer", { name: server.name })}
+        </a>
+      {/if}
+    {/if}
+  </div>
 
   {#if error}
-    <div
-      class="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-foreground"
-      data-testid="server-monitoring-error"
-    >
-      {error}
-    </div>
+    <ErrorCallout
+      testId="server-monitoring-error"
+      message={error}
+      onRetry={() => void load()}
+      retrying={loading}
+    />
   {:else if !server}
     <LoadingNote label={tr("common.loading")} />
   {:else}
@@ -390,7 +415,7 @@
                 {tr("ui.monitoringServerId.guardIsRevokedImmediatelyThe")}
               </p>
               {#if detachError}
-                <p class="mt-2 text-xs text-destructive">{detachError}</p>
+                <ErrorCallout class="mt-2 p-2 text-xs" message={detachError} />
               {/if}
               <div class="mt-3 flex flex-wrap gap-2">
                 <Button

@@ -314,7 +314,7 @@ const HEALTH_STATES: ReadonlySet<ServerHealthState> = new Set([
 
 /**
  * Map the canonical aggregate onto the card's three status axes — the axes
- * render together and never collapse (SERVER-CONNECTION-STANDARD §5). A value
+ * render together and never collapse (STACKKITS-PRODUCT-BOUNDARY-STANDARD.md §14.5). A value
  * outside the closed contract vocabulary falls back to the earliest/unknown
  * state of its axis: visibly "not yet real" instead of silently optimistic.
  */

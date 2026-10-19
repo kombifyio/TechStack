@@ -1,6 +1,6 @@
 export const hi: Record<string, string> = {
-  "ui.releaseChannel.badge": "Nightly",
-  "ui.releaseChannel.hint": "आप Nightly चैनल पर हैं: सबसे नए बदलाव, आपके वास्तविक डेटा पर।",
+  "ui.releaseChannel.badge": "Preview",
+  "ui.releaseChannel.hint": "आप Preview चैनल पर हैं: सबसे नए बदलाव, आपके वास्तविक डेटा पर।",
   "ui.releaseChannel.backToStable": "Stable पर वापस जाएँ",
   "ui.clientLocal.bootstrapPassword": "प्रारंभिक पासवर्ड",
   "ui.clientLocal.bootstrapGuidance":
@@ -22,8 +22,7 @@ export const hi: Record<string, string> = {
   "ui.services.stackIt": "Stack it",
   "ui.services.approveStackIt": "इस अपनाने को मंज़ूरी दें",
   "ui.services.releaseBinding": "जीवनचक्र प्रबंधन हटाएँ",
-  "ui.services.adoptionScope":
-    "इस मौजूदा Home Assistant कंटेनर का जीवनचक्र उसी स्थान पर प्रबंधित करने के लिए समीक्षा करें। यह प्रोफ़ाइल अन्य ऐप या दूसरे Node पर स्थानांतरण का समर्थन नहीं करती।",
+  "ui.services.adoptionScope": "इस मौजूदा Home Assistant कंटेनर का जीवनचक्र उसी स्थान पर प्रबंधित करने के लिए समीक्षा करें। यह प्रोफ़ाइल अन्य ऐप या दूसरे सर्वर पर स्थानांतरण का समर्थन नहीं करती।",
   "ui.services.adoptionSource": "मौजूदा कंटेनर",
   "ui.services.adoptionData": "सुरक्षित रखी गई कॉन्फ़िगरेशन",
   "ui.services.adoptionPreserves":
@@ -111,7 +110,7 @@ export const hi: Record<string, string> = {
     "सुरक्षित साइन-इन विंडो के ज़रिए kombify प्रोफ़ाइल जोड़िए। आप स्थानीय उपयोगकर्ता के साथ भी आगे बढ़ सकते हैं।",
   "wizard.login.profile.existing": "आपका मौजूदा लॉगिन आपके साथ आता है।",
   "wizard.login.profile.existingHint":
-    "यह Node आपके Homelab से जुड़ता है। आपके मालिक और साइन-इन सेटिंग्स जैसी हैं वैसी रहती हैं।",
+    "यह सर्वर आपके Homelab से जुड़ता है। आपके मालिक और साइन-इन सेटिंग्स जैसी हैं वैसी रहती हैं।",
   "wizard.login.passkey.title": "Pocket ID passkey",
   "wizard.login.passkey.label": "Passkey",
   "wizard.login.passkey.recommended": "अनुशंसित",
@@ -219,7 +218,7 @@ export const hi: Record<string, string> = {
   "wizard.access.details.publication": "प्रकाशन",
   "wizard.access.connection.homeTitle": "आपके घर के सेटअप में उपलब्ध",
   "wizard.access.connection.homeBody":
-    "यह चुनाव रास्ते को चुने हुए Node द्वारा समर्थित पहुँच के भीतर रखता है। यह क्लाउड Node के लिए स्थानीय नेटवर्क का वादा नहीं करता।",
+    "यह चुनाव रास्ते को चुने हुए सर्वर द्वारा समर्थित पहुँच के भीतर रखता है। यह क्लाउड सर्वर के लिए स्थानीय नेटवर्क का वादा नहीं करता।",
   "wizard.access.connection.anywhereTitle": "पहुँच का इरादा दर्ज किया गया",
   "wizard.access.connection.anywhereBody":
     "रोलआउट केवल वही रास्ता इस्तेमाल कर सकता है जिसे चुना हुआ रनटाइम स्वीकार करे। निजी क्लाइंट या प्रबंधित रास्ता तब दिखाया जाता है जब वह क्षमता ज्ञात हो जाती है।",
@@ -303,7 +302,7 @@ export const hi: Record<string, string> = {
   "wizard.tip.nodeJoin":
     "डिवाइस इस StackKit से जुड़ता है और उसे ज़्यादा कंप्यूटिंग शक्ति या स्टोरेज देता है। पहुँच, लोग और साइन-इन जैसे हैं वैसे रहते हैं।",
   "wizard.tip.nodeFound":
-    "इस डिवाइस को मुख्य Node बनाकर एक अलग StackKit शुरू करता है, जैसे दूसरी साइट या आपके Homelab का क्लाउड हिस्सा।",
+    "इस डिवाइस को मुख्य सर्वर बनाकर एक अलग StackKit शुरू करता है, जैसे दूसरी साइट या आपके Homelab का क्लाउड हिस्सा।",
   "wizard.tip.nodeSubstrate":
     "Proxmox होस्ट को खुद पंजीकृत करता है। फिर kombify इस Homelab के लिए उस पर VM बना और प्रबंधित कर सकता है।",
   "wizard.tip.foundationBasement":
@@ -311,7 +310,7 @@ export const hi: Record<string, string> = {
   "wizard.tip.foundationCloud":
     "ऐसे वर्चुअल सर्वर के लिए जिसे kombify आपके लिए देता और प्रबंधित करता है।",
   "wizard.tip.foundationLocked":
-    "StackKit से जुड़ने वाला Node हमेशा उसी StackKit की नींव इस्तेमाल करता है, इसलिए यहाँ चुनने को कुछ नहीं है।",
+    "StackKit से जुड़ने वाला सर्वर हमेशा उसी StackKit की नींव इस्तेमाल करता है, इसलिए यहाँ चुनने को कुछ नहीं है।",
   "wizard.tip.roleFoundation":
     "StackKit का पहला और केंद्रीय Node। यह वे मुख्य सेवाएँ चलाता है जिन पर बाकी Node निर्भर करते हैं।",
   "wizard.tip.roleWorker":
@@ -325,12 +324,11 @@ export const hi: Record<string, string> = {
   "language.switch": "भाषा",
   "settings.language.description":
     "इस डिवाइस पर इस इंटरफ़ेस की भाषा। जब तक आप कोई भाषा नहीं चुनते, आपके ब्राउज़र की भाषा इस्तेमाल होती है, और वह न हो तो अंग्रेज़ी।",
-  "ui.dashboard.nodes": "Nodes",
+  "ui.dashboard.nodes": "सर्वर",
   "ui.dashboard.devicesPeople": "डिवाइस और लोग",
   "ui.dashboard.last24h": "पिछले 24 घंटे",
   "ui.worker.readyLead": "तैयार!",
-  "ui.worker.readyBody":
-    "सभी ज़रूरी वर्कर जुड़ गए हैं। अब आप Homelab को deploy कर सकते हैं।",
+  "ui.worker.readyBody": "सभी ज़रूरी सर्वर जुड़ गए हैं। अब आप Homelab को deploy कर सकते हैं।",
   "ui.footer.product": "उत्पाद",
   "ui.footer.company": "कंपनी",
   "ui.footer.legal": "कानूनी",
@@ -344,20 +342,18 @@ export const hi: Record<string, string> = {
   "ui.dashboard.sections": "Homelab अनुभाग",
   "ui.dashboard.failureDetails": "विवरण",
   "ui.dashboard.hideFailureDetails": "विवरण छिपाएँ",
-  "ui.dashboard.inventoryUnavailable":
-    "Node और सेवा की प्रामाणिक स्थिति उपलब्ध नहीं है। नीचे दिया गया सहेजा हुआ टेलीमेट्री डेटा निदान के लिए है और इसे शून्य इन्वेंटरी नहीं माना जाता।",
-  "ui.dashboard.noNodes": "इस Homelab के लिए अभी कोई Node पंजीकृत नहीं है।",
-  "ui.custody.explainer":
-    "ये लीज़ अब भी संरक्षण में हैं और इनका बिल अब भी बन सकता है, लेकिन इनके पीछे कोई मशीन नहीं है। इन्हें Node के रूप में नहीं दिखाया जाता।",
+  "ui.dashboard.inventoryUnavailable": "आपके सर्वर और सेवाओं की मौजूदा स्थिति पढ़ी नहीं जा सकी। नीचे सहेजा गया टेलीमेट्री केवल निदान के लिए है और इसका मतलब यह नहीं कि आपका Homelab खाली है।",
+  "ui.dashboard.noNodes": "इस Homelab के लिए अभी कोई सर्वर पंजीकृत नहीं है।",
+  "ui.custody.explainer": "ये लीज़ अब भी संरक्षण में हैं और इनका बिल अब भी बन सकता है, लेकिन इनके पीछे कोई मशीन नहीं है। इन्हें सर्वर के रूप में नहीं दिखाया जाता।",
   "ui.custody.lastKnownAddress": "आखिरी ज्ञात पता; मशीन अब नहीं है",
   "ui.dashboard.service.noAddress":
     "इस सेवा के लिए अभी कोई पहुँच योग्य पता दर्ज नहीं है।",
   "ui.dashboard.service.openApp": "ऐप खोलें",
   "ui.dashboard.service.actionsAndLogs": "सेवाएँ पेज पर कार्रवाइयाँ और लॉग",
-  "ui.node.precheckFailed": "Node की पूर्व-जाँच विफल रही",
-  "ui.node.noTelemetry": "इस Node के लिए मौजूदा टेलीमेट्री उपलब्ध नहीं है।",
-  "ui.node.openDetails": "Node का ब्योरा खोलें",
-  "ui.node.noApps": "इस Node पर अभी तक कोई ऐप रिपोर्ट नहीं हुआ।",
+  "ui.node.precheckFailed": "सर्वर की पूर्व-जाँच विफल रही",
+  "ui.node.noTelemetry": "इस सर्वर के लिए मौजूदा टेलीमेट्री उपलब्ध नहीं है।",
+  "ui.node.openDetails": "सर्वर का ब्योरा खोलें",
+  "ui.node.noApps": "इस सर्वर पर अभी तक कोई ऐप रिपोर्ट नहीं हुआ।",
   "common.loadingShort": "लोड हो रहा है…",
   "ui.dashboard.filterDevicesPeople": "डिवाइस और लोग फ़िल्टर करें",
   "ui.dashboard.people": "लोग",
@@ -365,11 +361,11 @@ export const hi: Record<string, string> = {
   "ui.dashboard.devices": "डिवाइस",
   "ui.dashboard.loadingDevicesPeople": "डिवाइस और लोग लोड हो रहे हैं…",
   "ui.dashboard.eventHistoryUnavailable": "इवेंट इतिहास उपलब्ध नहीं है।",
-  "ui.dashboard.servicesOnNode": "इस Node पर सेवाएँ",
+  "ui.dashboard.servicesOnNode": "इस सर्वर पर सेवाएँ",
   "ui.worker.statusUnavailable": "कनेक्शन की स्थिति उपलब्ध नहीं है",
-  "ui.worker.connect": "वर्कर जोड़ें",
-  "ui.worker.connectNodes": "अपने Node को इस Homelab से जोड़ें",
-  "ui.worker.approved": "स्वीकृत वर्कर:",
+  "ui.worker.connect": "सर्वर जोड़ें",
+  "ui.worker.connectNodes": "अपने सर्वर को इस Homelab से जोड़ें",
+  "ui.worker.approved": "स्वीकृत सर्वर:",
   "ui.worker.unverified": "कनेक्शन असत्यापित",
   "ui.worker.startingRollout": "रोलआउट शुरू हो रहा है...",
   "ui.worker.deployHomelab": "Homelab deploy करें",
@@ -389,7 +385,7 @@ export const hi: Record<string, string> = {
   "ui.substrate.title": "Proxmox हाइपरवाइज़र जोड़ें",
   "ui.substrate.runCommand":
     "कनेक्शन कमांड को Proxmox होस्ट के शेल में एडमिनिस्ट्रेटर के रूप में चलाइए। इसका Guard आउटबाउंड कनेक्शन के ज़रिए आपके Homelab को स्वास्थ्य की रिपोर्ट भेजता है।",
-  "ui.substrate.viewNodes": "जुड़े हुए Node देखें",
+  "ui.substrate.viewNodes": "जुड़े हुए सर्वर देखें",
   "ui.shortcuts.waiting": "कुंजी की प्रतीक्षा है:",
   "ui.recreate.title": "सर्वर दोबारा बनाएँ",
   "ui.recreate.checking": "टर्मिनल प्रदाता क्लीनअप जाँचा जा रहा है…",
@@ -439,24 +435,19 @@ export const hi: Record<string, string> = {
   "ui.cloudLink.incomplete": "लिंकिंग पूरी नहीं हुई",
   "ui.homelab.rolloutProgress": "रनटाइम रोलआउट की प्रगति",
   "ui.homelab.runtimeRollout": "रनटाइम रोलआउट",
-  "ui.homelab.newNode": "नया Node",
+  "ui.homelab.newNode": "सर्वर जोड़ें",
   "ui.homelab.heartbeat": "हार्टबीट और मेट्रिक्स",
   "ui.homelab.loading": "Homelab लोड हो रहा है",
   "ui.homelab.loadingOperations": "Homelab ऑपरेशन लोड हो रहे हैं",
   "ui.homelab.operations": "Homelab ऑपरेशन",
-  "ui.homelab.reconfirming":
-    "दोबारा पुष्टि होने तक आखिरी ज्ञात स्थिति दिखाई जा रही है। पुष्टि होते ही Node कार्रवाइयाँ खुल जाती हैं।",
-  "ui.homelab.evidenceStale": "ऑपरेशन का प्रमाण पुराना है",
-  "ui.homelab.nodeConnected":
-    "आपका Node जुड़ गया है। StackKit रोलआउट के साथ आगे बढ़िए।",
-  "ui.homelab.reviewHint":
-    "चुने हुए StackKit, सेवाओं और Node की जगह की समीक्षा कीजिए, फिर समीक्षा + शुरू करें इस्तेमाल कीजिए। किसी एक एप्लिकेशन के विफल होने से इस डिप्लॉयमेंट के बाकी हिस्से की समीक्षा या दोबारा शुरुआत नहीं रुकती।",
-  "ui.homelab.noInventory":
-    "अभी तक प्रबंधन योग्य Node या सेवा की कोई इन्वेंटरी रिपोर्ट नहीं हुई है।",
-  "ui.homelab.partialRollout": "आंशिक रोलआउट वाला प्रबंधित रनटाइम",
+  "ui.homelab.reconfirming": "दोबारा पुष्टि होने तक आखिरी ज्ञात स्थिति दिखाई जा रही है। पुष्टि होते ही सर्वर कार्रवाइयाँ खुल जाती हैं।",
+  "ui.homelab.evidenceStale": "आख़िरी ज्ञात स्थिति दिखाई जा रही है",
+  "ui.homelab.nodeConnected": "आपका सर्वर जुड़ गया है। StackKit रोलआउट के साथ आगे बढ़िए।",
+  "ui.homelab.reviewHint": "चुने हुए StackKit, सेवाओं और सर्वर की जगह की समीक्षा कीजिए, फिर समीक्षा + शुरू करें इस्तेमाल कीजिए। किसी एक एप्लिकेशन के विफल होने से इस Homelab के बाकी हिस्से की समीक्षा या दोबारा शुरुआत नहीं रुकती।",
+  "ui.homelab.noInventory": "अभी तक प्रबंधन योग्य सर्वर या सेवा की कोई इन्वेंटरी रिपोर्ट नहीं हुई है।",
+  "ui.homelab.partialRollout": "अधूरे सेटअप वाला प्रबंधित सर्वर",
   "ui.homelab.start": "अपना Homelab शुरू करें",
-  "ui.homelab.evidenceStaleBody":
-    "आखिरी सत्यापित स्नैपशॉट दिखता रहता है, लेकिन रीफ़्रेश सफल होने तक Node में बदलाव बंद हैं।",
+  "ui.homelab.evidenceStaleBody": "ताज़ा जाँच पूरी नहीं हो सकी। जाँच सफल होने तक कुछ बदलने वाली कार्रवाइयाँ रुकी रहेंगी।",
   "ui.homelab.startHint":
     "विज़ार्ड से शुरू कीजिए या मौजूदा StackKit स्पेक इम्पोर्ट कीजिए।",
   "ui.homelab.getStarted": "शुरू करें",
@@ -592,9 +583,8 @@ export const hi: Record<string, string> = {
     "हम आपका सेटअप नहीं खोल सके। आपके सहेजे हुए चुनाव बने हुए हैं। फिर कोशिश कीजिए, या पहले घूमकर देखिए।",
   "onboarding.ui.continue": "आपका अगला कदम",
   "hostBaseline.title": "मौजूदा सेवाएँ और पोर्ट",
-  "hostBaseline.preserve":
-    "यह इन्वेंटरी जाँच मौजूदा सेवाओं और डेटा को जैसा है वैसा रखती है। StackKit जोड़ने से पहले इस Node की समीक्षा कीजिए।",
-  "hostBaseline.loading": "Node की इन्वेंटरी पढ़ी जा रही है…",
+  "hostBaseline.preserve": "यह इन्वेंटरी जाँच मौजूदा सेवाओं और डेटा को जैसा है वैसा रखती है। StackKit जोड़ने से पहले इस सर्वर की समीक्षा कीजिए।",
+  "hostBaseline.loading": "सर्वर की इन्वेंटरी पढ़ी जा रही है…",
   "hostBaseline.current": "मौजूदा लिसनर इन्वेंटरी मिल गई",
   "hostBaseline.incomplete":
     "लिसनर इन्वेंटरी अधूरी या पुरानी है। पोर्ट की उपलब्धता अभी सत्यापित नहीं है।",
@@ -603,8 +593,7 @@ export const hi: Record<string, string> = {
   "hostBaseline.existing": "मौजूदा लिसनर",
   "hostBaseline.noListeners":
     "देखे गए दायरे में कोई लिसनर रिपोर्ट नहीं हुआ। रुके हुए एप्लिकेशन और दूसरे नेमस्पेस अब भी बाइंडिंग आरक्षित रख सकते हैं।",
-  "hostBaseline.recheck":
-    "निष्पादन से पहले Techstack और StackKits ज़रूरी बाइंडिंग फिर से जाँचते हैं। टकराव के लिए समर्थित कॉन्फ़िगरेशन बदलाव, दूसरा Node या समीक्षा किया हुआ माइग्रेशन चाहिए; खुला पोर्ट सार्वजनिक पहुँच का प्रमाण नहीं है।",
+  "hostBaseline.recheck": "निष्पादन से पहले Techstack और StackKits ज़रूरी बाइंडिंग फिर से जाँचते हैं। टकराव के लिए समर्थित कॉन्फ़िगरेशन बदलाव, दूसरा सर्वर या समीक्षा किया हुआ माइग्रेशन चाहिए; खुला पोर्ट सार्वजनिक पहुँच का प्रमाण नहीं है।",
   "hostBaseline.refresh": "इन्वेंटरी रीफ़्रेश करें",
   "hostBaseline.review": "सभी पोर्ट और सेवाएँ देखें",
   "wizard.smartHome.applianceRetained":
@@ -750,32 +739,23 @@ export const hi: Record<string, string> = {
     "विज़ार्ड खोलें",
   "onboarding.techstack_platform.techstack_deploy_stackkit.title":
     "अपना StackKit deploy करें",
-  "onboarding.techstack_platform.techstack_deploy_stackkit.body":
-    "योजना की पुष्टि कीजिए और kombify को StackKit आपके Homelab पर deploy करने दीजिए। डिप्लॉयमेंट बनते ही यह कदम अपने आप टिक हो जाता है।",
-  "onboarding.techstack_platform.techstack_deploy_stackkit.cta":
-    "डिप्लॉयमेंट जारी रखें",
-  "onboarding.techstack_platform.techstack_add_server.title": "Node जोड़ें",
-  "onboarding.techstack_platform.techstack_add_server.body":
-    "अपना Node जोड़िए, या kombify को आपके लिए एक चलाने दीजिए। आपकी सेवाओं को रहने के लिए कोई जगह चाहिए।",
-  "onboarding.techstack_platform.techstack_add_server.cta": "Node जोड़ें",
+  "onboarding.techstack_platform.techstack_deploy_stackkit.body": "योजना की पुष्टि कीजिए और kombify को StackKit आपके Homelab पर deploy करने दीजिए। आपका Homelab सेट हो जाते ही यह कदम अपने आप टिक हो जाता है।",
+  "onboarding.techstack_platform.techstack_deploy_stackkit.cta": "सेटअप जारी रखें",
+  "onboarding.techstack_platform.techstack_add_server.title": "सर्वर जोड़ें",
+  "onboarding.techstack_platform.techstack_add_server.body": "अपना सर्वर जोड़िए, या kombify को आपके लिए एक चलाने दीजिए। आपकी सेवाओं को रहने के लिए कोई जगह चाहिए।",
+  "onboarding.techstack_platform.techstack_add_server.cta": "सर्वर जोड़ें",
   "onboarding.techstack_platform.techstack_deploy_service.title":
     "अपनी पहली सेवा खोलें",
   "onboarding.techstack_platform.techstack_deploy_service.body":
     "सेवा चालू होने के बाद आप उस तक सेवाओं की सूची से पहुँच सकते हैं। यही इस सबका मकसद है।",
   "onboarding.techstack_platform.techstack_deploy_service.cta":
     "सेवाओं पर जाएँ",
-  "onboarding.denied.policy_selfhost_byos.title":
-    "kombify-प्रबंधित Node एक Cloud सुविधा हैं",
-  "onboarding.denied.policy_selfhost_byos.body":
-    "यह इंस्टॉलेशन सेल्फ-होस्टेड चलता है, इसलिए kombify इसके लिए Node प्रोविज़न नहीं करता। अपना Node जोड़िए और बाकी सब वैसे ही काम करता है।",
-  "onboarding.denied.policy_selfhost_byos.next_step":
-    "ऐसा Node जोड़िए जो आप पहले से चलाते हैं।",
-  "onboarding.denied.required_feature_disabled.title":
-    "इस खाते के लिए प्रबंधित Node सक्रिय नहीं हैं",
-  "onboarding.denied.required_feature_disabled.body":
-    "इस खाते को अभी kombify-प्रबंधित Node का अधिकार नहीं है। आप अब भी अपना Node जोड़ सकते हैं।",
-  "onboarding.denied.required_feature_disabled.next_step":
-    "अपना Node जोड़िए, या kombify सपोर्ट से प्रबंधित रनटाइम चालू करने को कहिए।",
+  "onboarding.denied.policy_selfhost_byos.title": "kombify-प्रबंधित सर्वर एक Cloud सुविधा हैं",
+  "onboarding.denied.policy_selfhost_byos.body": "यह इंस्टॉलेशन सेल्फ-होस्टेड चलता है, इसलिए kombify इसके लिए सर्वर प्रोविज़न नहीं करता। अपना सर्वर जोड़िए और बाकी सब वैसे ही काम करता है।",
+  "onboarding.denied.policy_selfhost_byos.next_step": "ऐसा सर्वर जोड़िए जो आप पहले से चलाते हैं।",
+  "onboarding.denied.required_feature_disabled.title": "इस खाते के लिए प्रबंधित सर्वर सक्रिय नहीं हैं",
+  "onboarding.denied.required_feature_disabled.body": "इस खाते को अभी kombify-प्रबंधित सर्वर का अधिकार नहीं है। आप अब भी अपना सर्वर जोड़ सकते हैं।",
+  "onboarding.denied.required_feature_disabled.next_step": "अपना सर्वर जोड़िए, या kombify सपोर्ट से प्रबंधित रनटाइम चालू करने को कहिए।",
   "common.loading": "लोड हो रहा है...",
   "common.error": "त्रुटि",
   "common.save": "सहेजें",
@@ -835,7 +815,7 @@ export const hi: Record<string, string> = {
   "wizard.selfDisclosure.motivation.family": "मेरे परिवार के लिए कुछ",
   "wizard.selfDisclosure.motivation.projects": "काम या साइड प्रोजेक्ट",
   "wizard.step.goals": "लक्ष्य",
-  "wizard.step.server": "Node",
+  "wizard.step.server": "सर्वर",
   "wizard.step.access": "पहुँच",
   "wizard.step.users": "उपयोगकर्ता",
   "wizard.step.login": "लॉगिन",
@@ -857,23 +837,23 @@ export const hi: Record<string, string> = {
   "wizard.hints.evaluating": "आपका सबसे अच्छा समर्थित रास्ता तैयार हो रहा है…",
   "wizard.goals.smartHome.title": "स्मार्ट होम",
   "wizard.goals.smartHome.description":
-    "आपके अपने Node पर Home Assistant: ऑटोमेशन जो इंटरनेट बंद होने पर भी चलते रहते हैं।",
+    "आपके अपने सर्वर पर Home Assistant: ऑटोमेशन जो इंटरनेट बंद होने पर भी चलते रहते हैं।",
   "wizard.goals.smartHome.help":
-    "इसे चालू कीजिए और Home Assistant घर पर चलता है, और लाइट, हीटिंग और सेंसर को वेंडर क्लाउड के बजाय स्थानीय रूप से नियंत्रित करता है। आप तय करते हैं कि Node में लगी Zigbee या Z-Wave स्टिक इस्तेमाल हो या नहीं, और आपके नेटवर्क के डिवाइस अपने आप खोजे जाएँ या नहीं।",
+    "इसे चालू कीजिए और Home Assistant घर पर चलता है, और लाइट, हीटिंग और सेंसर को वेंडर क्लाउड के बजाय स्थानीय रूप से नियंत्रित करता है। आप तय करते हैं कि सर्वर में लगी Zigbee या Z-Wave स्टिक इस्तेमाल हो या नहीं, और आपके नेटवर्क के डिवाइस अपने आप खोजे जाएँ या नहीं।",
   "wizard.goals.smartHome.tip":
     "आपका इंटरनेट कनेक्शन न होने पर भी ऑटोमेशन चलते रहते हैं।",
   "wizard.goals.photos.title": "फ़ोटो यादें",
   "wizard.goals.photos.description":
     "आपकी अपनी फ़ोटो और वीडियो लाइब्रेरी, घर के हर फ़ोन से बैकअप के साथ।",
   "wizard.goals.photos.help":
-    "इसे चालू कीजिए और आपका Node वह जगह बन जाता है जहाँ आपकी तस्वीरें रहती हैं: फ़ोन अपने आप बैकअप करते हैं, आप चेहरों और जगहों से खोज सकते हैं, और क्लाउड सब्सक्रिप्शन के बिना एल्बम परिवार के साथ साझा हो सकते हैं। आप तय करते हैं कि स्मार्ट खोज Node पर चले या नहीं और लाइब्रेरी कहाँ रखी जाए।",
+    "इसे चालू कीजिए और आपका सर्वर वह जगह बन जाता है जहाँ आपकी तस्वीरें रहती हैं: फ़ोन अपने आप बैकअप करते हैं, आप चेहरों और जगहों से खोज सकते हैं, और क्लाउड सब्सक्रिप्शन के बिना एल्बम परिवार के साथ साझा हो सकते हैं। आप तय करते हैं कि स्मार्ट खोज सर्वर पर चले या नहीं और लाइब्रेरी कहाँ रखी जाए।",
   "wizard.goals.photos.tip":
     "ज़्यादातर Homelab के लिए सबसे आसान दिखने वाली जीत: एक और क्लाउड सब्सक्रिप्शन के बिना निजी यादें।",
   "wizard.goals.media.title": "मीडिया स्ट्रीमिंग",
   "wizard.goals.media.description":
     "अपनी फ़िल्में, सीरीज़ और संगीत घर के किसी भी टीवी, फ़ोन या लैपटॉप पर स्ट्रीम कीजिए।",
   "wizard.goals.media.help":
-    "इसे चालू कीजिए और आपका Node आपका अपना मीडिया संग्रह घर की हर स्क्रीन पर परोसता है, और अगर आप रिमोट पहुँच की अनुमति दें तो सफर में भी। आप तय करते हैं कि Node का ग्राफ़िक्स कार्ड छोटी स्क्रीन के लिए वीडियो बदलने में मदद करे या नहीं और लाइब्रेरी कहाँ रखी जाए।",
+    "इसे चालू कीजिए और आपका सर्वर आपका अपना मीडिया संग्रह घर की हर स्क्रीन पर परोसता है, और अगर आप रिमोट पहुँच की अनुमति दें तो सफर में भी। आप तय करते हैं कि सर्वर का ग्राफ़िक्स कार्ड छोटी स्क्रीन के लिए वीडियो बदलने में मदद करे या नहीं और लाइब्रेरी कहाँ रखी जाए।",
   "wizard.goals.media.tip":
     "सबसे सहज अनुभव के लिए पर्याप्त डिस्क और वैकल्पिक हार्डवेयर ट्रांसकोडिंग वाला सर्वर इस्तेमाल कीजिए।",
   "wizard.goals.vault.title": "पासवर्ड वॉल्ट",
@@ -894,30 +874,30 @@ export const hi: Record<string, string> = {
   "wizard.goals.ai.description":
     "एक निजी सहायक जो आपके अपने हार्डवेयर पर चलता है और आपका डेटा कभी बाहर नहीं भेजता।",
   "wizard.goals.ai.help":
-    "इसे चालू कीजिए और आपको ऐसा चैट सहायक मिलता है जो पूरी तरह आपके Node पर चलता है। यह आपके अपने दस्तावेज़ों के साथ काम कर सकता है। आप तय करते हैं कि वह कौन-सा एक्सेलरेटर इस्तेमाल करे और कितना बड़ा मॉडल लोड करे; GPU से बहुत फ़र्क पड़ता है।",
+    "इसे चालू कीजिए और आपको ऐसा चैट सहायक मिलता है जो पूरी तरह आपके सर्वर पर चलता है। यह आपके अपने दस्तावेज़ों के साथ काम कर सकता है। आप तय करते हैं कि वह कौन-सा एक्सेलरेटर इस्तेमाल करे और कितना बड़ा मॉडल लोड करे; GPU से बहुत फ़र्क पड़ता है।",
   "wizard.goals.ai.tip":
-    "मज़बूत हार्डवेयर पर सबसे अच्छा चलता है; कम क्षमता वाले Node की योजना भी पहले बनाई जा सकती है।",
+    "मज़बूत हार्डवेयर पर सबसे अच्छा चलता है; कम क्षमता वाले सर्वर की योजना भी पहले बनाई जा सकती है।",
   "wizard.goals.dev.title": "Dev प्लेटफ़ॉर्म",
   "wizard.goals.dev.description":
     "आपकी अपनी Git होस्टिंग, जब चाहें बिल्ड और टेस्ट पाइपलाइन के साथ।",
   "wizard.goals.dev.help":
-    "इसे चालू कीजिए और आपका कोड आपके Node पर Gitea सर्वर के साथ रहता है जिसे पूरा परिवार या टीम इस्तेमाल कर सकती है। आप तय करते हैं कि CI रनर Node पर भी बिल्ड और टेस्ट करें या नहीं।",
+    "इसे चालू कीजिए और आपका कोड आपके सर्वर पर Gitea सर्वर के साथ रहता है जिसे पूरा परिवार या टीम इस्तेमाल कर सकती है। आप तय करते हैं कि CI रनर सर्वर पर भी बिल्ड और टेस्ट करें या नहीं।",
   "wizard.goals.dev.tip":
     "तब उपयोगी जब आपका लैपटॉप हल्का रहे और दोहराए जा सकने वाले एनवायरनमेंट सर्वर पर रहें।",
   "wizard.goals.mail.title": "मेल सर्वर",
   "wizard.goals.mail.description":
-    "अपने डोमेन पर, अपने Node से ईमेल पाइए और भेजिए।",
+    "अपने डोमेन पर, अपने सर्वर से ईमेल पाइए और भेजिए।",
   "wizard.goals.mail.help":
-    "इसे चालू कीजिए और आपका Node आपके अपने डोमेन के लिए पूरा मेल सर्वर चलाता है। ईमेल को सही DNS रिकॉर्ड और अच्छी भेजने की साख चाहिए, इसलिए यह रास्ता पहले आपका इरादा दर्ज करता है और मार्गदर्शन के साथ रोलआउट होता है। मेल डोमेन आप तय करते हैं।",
+    "इसे चालू कीजिए और आपका सर्वर आपके अपने डोमेन के लिए पूरा मेल सर्वर चलाता है। ईमेल को सही DNS रिकॉर्ड और अच्छी भेजने की साख चाहिए, इसलिए यह रास्ता पहले आपका इरादा दर्ज करता है और मार्गदर्शन के साथ रोलआउट होता है। मेल डोमेन आप तय करते हैं।",
   "wizard.goals.mail.tip":
     "मेल की DNS और साख संबंधी ज़रूरतें होती हैं; विज़ार्ड इरादा दर्ज करता है और रोलआउट को नियंत्रित रखता है।",
   "wizard.goals.game.title": "गेम सर्वर",
   "wizard.goals.game.description":
     "दोस्तों के लिए स्थायी गेम दुनिया, घर पर होस्ट की हुई, बिना आपका नेटवर्क खोले।",
   "wizard.goals.game.help":
-    "इसे चालू कीजिए और आपका Node ऐसे गेम सर्वर होस्ट करता है जिनसे आपके दोस्त किट की सुरक्षित पहुँच के ज़रिए जुड़ते हैं, बिना आपके होम नेटवर्क को सीधे उजागर किए। कौन-से गेम उपलब्ध हैं, यह रिलीज़ पर निर्भर करता है।",
+    "इसे चालू कीजिए और आपका सर्वर ऐसे गेम सर्वर होस्ट करता है जिनसे आपके दोस्त किट की सुरक्षित पहुँच के ज़रिए जुड़ते हैं, बिना आपके होम नेटवर्क को सीधे उजागर किए। कौन-से गेम उपलब्ध हैं, यह रिलीज़ पर निर्भर करता है।",
   "wizard.goals.game.tip":
-    "सत्र-आधारित लोड: दोस्तों के खेलते समय Node खूब मेहनत करता है और बीच में खाली रहता है।",
+    "सत्र-आधारित लोड: दोस्तों के खेलते समय सर्वर खूब मेहनत करता है और बीच में खाली रहता है।",
   "wizard.goals.storage.title":
     "तस्वीरों और दस्तावेज़ों के लिए मेरा अपना स्थानीय स्टोरेज हो",
   "wizard.goals.storage.description":
@@ -993,7 +973,7 @@ export const hi: Record<string, string> = {
   "wizard.goals.backend.help":
     "कौन-सा उत्पाद काम करता है। डिफ़ॉल्ट वह है जिसे StackKits सबसे ज़्यादा परखता है।",
   "wizard.goals.profile.help":
-    "यह उपयोग Node का कितना हिस्सा इस्तेमाल कर सकता है। मानक ज़्यादातर घरों के लिए ठीक है।",
+    "यह उपयोग सर्वर का कितना हिस्सा इस्तेमाल कर सकता है। मानक ज़्यादातर घरों के लिए ठीक है।",
   "wizard.goals.setting.on": "चालू",
   "wizard.goals.setting.off": "बंद",
   "wizard.goals.setting.recorded":
@@ -1097,24 +1077,24 @@ export const hi: Record<string, string> = {
   "wizard.server.title": "अपने टूल को एक घर दीजिए।",
   "wizard.server.subtitle":
     "जो आपके पास है उससे शुरू कीजिए। हम आपको सही कनेक्शन तक ले जाएँगे।",
-  "wizard.server.join.title": "आपका Homelab, एक और Node।",
+  "wizard.server.join.title": "आपका Homelab, एक और सर्वर।",
   "wizard.server.join.description":
-    "यह Node आपके मौजूदा सेटअप से जुड़ता है। आपकी पहुँच, लोग और साइन-इन जैसे हैं वैसे रहते हैं, इसलिए आप डिवाइस पर ध्यान दे सकते हैं।",
-  "wizard.server.command.join.review": "इस Node की पुष्टि करें",
+    "यह सर्वर आपके मौजूदा सेटअप से जुड़ता है। आपकी पहुँच, लोग और साइन-इन जैसे हैं वैसे रहते हैं, इसलिए आप डिवाइस पर ध्यान दे सकते हैं।",
+  "wizard.server.command.join.review": "इस सर्वर की पुष्टि करें",
   "wizard.server.command.join.reviewBody":
     "चुनिए कि यह डिवाइस कैसे जुड़े। आपके Homelab की पहुँच, लोग और साइन-इन जैसे हैं वैसे रहते हैं।",
   "wizard.step.inherited": "आपके Homelab के लिए पहले से सेट",
   "wizard.step.existingOwner": "आपका Homelab मालिक वही रहता है",
   "wizard.addApp.title": "एप्लिकेशन जोड़ें",
   "wizard.addApp.intro":
-    "एक एप्लिकेशन और वह Node चुनें जिस पर यह चलेगा। एक्सेस, लोग और साइन-इन वैसे ही रहते हैं जैसे आपके Homelab में हैं।",
+    "एक एप्लिकेशन और वह सर्वर चुनें जिस पर यह चलेगा। एक्सेस, लोग और साइन-इन वैसे ही रहते हैं जैसे आपके Homelab में हैं।",
   "wizard.addApp.catalogEmpty":
     "कैटलॉग में इस Homelab के लिए अभी कोई एप्लिकेशन नहीं है।",
   "wizard.addApp.recommended": "अनुशंसित",
   "wizard.addApp.about": "विवरण",
   "wizard.addApp.nodeTitle": "{name} कहाँ चलना चाहिए?",
   "wizard.addApp.nodeUnsupported":
-    "इस Node का StackKit {name} प्रदान नहीं करता।",
+    "इस सर्वर का StackKit {name} प्रदान नहीं करता।",
   "wizard.addApp.nodeNotReady": "अभी रोलआउट के लिए तैयार नहीं",
   "wizard.addApp.submit": "एप्लिकेशन जोड़ें",
   "wizard.addApp.result": "{name} को {node} में जोड़ा गया।",
@@ -1128,13 +1108,13 @@ export const hi: Record<string, string> = {
   "wizard.settings.open": "Homelab सेटिंग्स संपादित करें",
   "wizard.settings.loadError": "आपका Homelab लोड नहीं हो सका।",
   "wizard.settings.empty": "अभी कोई Homelab सेट अप नहीं है।",
-  "wizard.settings.deployment": "StackKit डिप्लॉयमेंट",
+  "wizard.settings.deployment": "Homelab सेटअप",
   "wizard.settings.goalsElsewhere": "एप्लिकेशन “एप्लिकेशन जोड़ें” से जोड़ें।",
-  "wizard.settings.serverElsewhere": "सर्वर “Node जोड़ें” से जोड़ें।",
+  "wizard.settings.serverElsewhere": "सर्वर “सर्वर जोड़ें” से जोड़ें।",
   "wizard.settings.accessUnsupported":
     "चल रहे Homelab के लिए एक्सेस अभी बदला नहीं जा सकता।",
   "wizard.settings.openAddApplication": "एप्लिकेशन जोड़ें",
-  "wizard.settings.openAddNode": "Node जोड़ें",
+  "wizard.settings.openAddNode": "सर्वर जोड़ें",
   "wizard.settings.usersTitle": "लोग",
   "wizard.settings.usersIntro":
     "इस Homelab के लिए नियोजित लोगों को आमंत्रित करें। हर व्यक्ति को एक निजी साइन-इन लिंक मिलता है।",
@@ -1157,7 +1137,7 @@ export const hi: Record<string, string> = {
     "पहले से सर्वर है? उसे SSH कुंजी या पासवर्ड से जोड़िए।",
   "wizard.server.remote.help":
     "पहुँच योग्य सर्वर का पता दर्ज कीजिए। जुड़ने के लिए सहेजी हुई SSH कुंजी या अपना SSH पासवर्ड इस्तेमाल कीजिए।",
-  "wizard.server.remote.host": "Node होस्ट या IP",
+  "wizard.server.remote.host": "सर्वर होस्ट या IP",
   "wizard.server.remote.port": "SSH पोर्ट",
   "wizard.server.remote.user": "SSH उपयोगकर्ता",
   "wizard.server.remote.auth": "प्रमाणीकरण",
@@ -1323,17 +1303,15 @@ export const hi: Record<string, string> = {
   "wizard.run.banner.inProgressTitle": "आपका Homelab सेट हो रहा है",
   "wizard.run.banner.inProgressBody":
     "सेटअप अभी चल रहा है। आप प्रगति देख सकते हैं या बाद में लौट सकते हैं।",
-  "wizard.run.banner.pairingTitle": "एक Node के जुड़ने की प्रतीक्षा है",
-  "wizard.run.banner.pairingBody":
-    "उसे जोड़ना पूरा करने के लिए अपने Node पर इंस्टॉल कमांड चलाइए।",
+  "wizard.run.banner.pairingTitle": "एक सर्वर के जुड़ने की प्रतीक्षा है",
+  "wizard.run.banner.pairingBody": "उसे जोड़ना पूरा करने के लिए अपने सर्वर पर इंस्टॉल कमांड चलाइए।",
   "wizard.run.banner.failedTitle": "आपके Homelab सेटअप पर ध्यान चाहिए",
   "wizard.run.banner.failedBody":
     "पिछला सेटअप रन पूरा नहीं हुआ। जहाँ छोड़ा था वहीं से जारी रखिए।",
   "wizard.run.banner.resume": "सेटअप जारी रखें",
   "wizard.run.banner.cancel": "रोलआउट रद्द करें",
   "wizard.run.banner.cancelTitle": "इस रोलआउट को रद्द करें?",
-  "wizard.run.banner.cancelBody":
-    "रोलआउट रुक जाता है और विफल के रूप में चिह्नित होता है। Node जैसा है वैसा रहता है, और आप रोलआउट बाद में फिर शुरू कर सकते हैं।",
+  "wizard.run.banner.cancelBody": "रोलआउट रुक जाता है और विफल के रूप में चिह्नित होता है। सर्वर जैसा है वैसा रहता है, और आप रोलआउट बाद में फिर शुरू कर सकते हैं।",
   "wizard.run.banner.cancelFailed": "रोलआउट रद्द नहीं हो सका",
   "wizard.run.banner.dismiss": "बंद करें",
   "wizard.run.banner.dismissFailed": "सूचना बंद नहीं हो सकी",
@@ -1371,8 +1349,8 @@ export const hi: Record<string, string> = {
   "state.connected": "जुड़ा हुआ",
   "state.connecting": "जुड़ रहा है",
   "state.consistent": "सुसंगत",
-  "state.decommissioned": "डीकमीशन किया गया",
-  "state.decommissioning": "डीकमीशन हो रहा है",
+  "state.decommissioned": "हटाया गया",
+  "state.decommissioning": "हटाया जा रहा है",
   "state.degraded": "प्रदर्शन घटा हुआ",
   "state.deploying": "डिप्लॉय हो रहा है",
   "state.enrolling": "एनरोल हो रहा है",
@@ -1517,20 +1495,17 @@ export const hi: Record<string, string> = {
   "ui.common.sourceValue": "स्रोत: {value}",
   "ui.common.unknown": "अज्ञात",
   "ui.completeDashboard.allServices": "सभी सेवाएँ →",
-  "ui.completeDashboard.nodesApps": "Node और ऐप्स",
+  "ui.completeDashboard.nodesApps": "सर्वर और ऐप्स",
   "ui.configFlow.apiUnreachable":
     "API सर्वर आपके ब्राउज़र से पहुँच में नहीं है।",
   "ui.configFlow.apiUnreachableAt":
     "{base} पर मौजूद API सर्वर आपके ब्राउज़र से पहुँच में नहीं है।",
   "ui.configFlow.capability": "क्षमता: {value}",
-  "ui.configFlow.corsHint":
-    "अगर बैकएंड चल रहा है लेकिन ब्राउज़र अनुरोध को रोक रहा है (CORS), तो DevTools → Console खोलिए और CORS त्रुटि खोजिए।",
   "ui.configFlow.createFailedAt": "निर्माण यहाँ विफल हुआ: {phase}",
   "ui.configFlow.deploymentNameExists":
-    'आपके Homelab में "{name}" नाम की StackKit डिप्लॉयमेंट पहले से है। मौजूदा डिप्लॉयमेंट खोलिए या कोई दूसरा नाम चुनिए।',
+    "“{name}” नाम का Homelab पहले से मौजूद है। इसके बजाय मौजूदा खोलें।",
   "ui.configFlow.errorCode": "त्रुटि कोड: {value}",
   "ui.configFlow.missingFeatures": "अनुपलब्ध सुविधाएँ: {value}",
-  "ui.configFlow.nextStep": "अगला चरण: {value}",
   "ui.configFlow.nextSteps": "अगले चरण:",
   "ui.configFlow.pleaseFix": "कृपया ये ठीक कीजिए:",
   "ui.configFlow.provider": "प्रदाता: {value}",
@@ -1544,24 +1519,24 @@ export const hi: Record<string, string> = {
   "ui.configFlow.step": "चरण: {value}",
   "ui.configFlow.technicalDetails": "तकनीकी विवरण: {value}",
   "ui.configurationFlow.aPreviousSubmissionAlreadyCompleted":
-    "पिछला सबमिशन पहले ही पूरा हो चुका है",
+    "यह पहले ही सबमिट हो चुका है",
   "ui.configurationFlow.anEarlierSubmissionFromThis":
-    "इस ब्राउज़र सेशन का पिछला सबमिशन अलग जवाबों के साथ पहले ही पूरा हो चुका है। नई प्रयास कुंजी बनाई गई है — दोबारा सबमिट कीजिए या मौजूदा डिप्लॉयमेंट खोलिए।",
+    "इस ब्राउज़र टैब से पहले की गई एक सबमिशन अलग जवाबों के साथ पूरी हो चुकी है। अपने मौजूदा जवाब सबमिट करने के लिए फिर से बनाएँ, या मौजूदा Homelab खोलें।",
   "ui.configurationFlow.anUnexpectedErrorOccurredPlease":
-    "एक अप्रत्याशित त्रुटि हुई। विवरण के लिए ब्राउज़र कंसोल देखिए।",
+    "कुछ अप्रत्याशित गड़बड़ हो गई। फिर से कोशिश करें। अगर यह बार-बार हो, तो सहायता से संपर्क करें और तकनीकी विवरण साझा करें।",
   "ui.configurationFlow.authenticationRequired": "प्रमाणीकरण आवश्यक है",
-  "ui.configurationFlow.cannotConnectToBackend": "बैकएंड से कनेक्ट नहीं हो सका",
-  "ui.configurationFlow.deploymentFailed": "डिप्लॉयमेंट विफल रहा",
+  "ui.configurationFlow.cannotConnectToBackend": "kombify Techstack से कनेक्ट नहीं हो पा रहा",
+  "ui.configurationFlow.deploymentFailed": "आपका Homelab नहीं बनाया जा सका",
   "ui.configurationFlow.managedServerIsNotActive":
     "प्रबंधित सर्वर सक्रिय नहीं है",
   "ui.configurationFlow.permissionDenied": "अनुमति अस्वीकृत",
   "ui.configurationFlow.retryingIsUnlikelyToHelp":
-    "जब तक सर्वर-साइड समस्या ठीक नहीं होती, दोबारा कोशिश से शायद ही मदद मिले।",
-  "ui.configurationFlow.serverError": "सर्वर त्रुटि",
+    "जब तक हम अपनी ओर की समस्या ठीक नहीं करते, दोबारा कोशिश करने से मदद नहीं मिलेगी।",
+  "ui.configurationFlow.serverError": "हमारी ओर से कुछ गड़बड़ हो गई",
   "ui.configurationFlow.stackkitDeploymentNameAlreadyExists":
-    "StackKit डिप्लॉयमेंट का नाम पहले से मौजूद है",
+    "इस नाम का Homelab पहले से मौजूद है",
   "ui.configurationFlow.theBackendRejectedThisStackkit":
-    "बैकएंड ने टकराव के कारण इस StackKit डिप्लॉयमेंट अनुरोध को अस्वीकार कर दिया।",
+    "ऐसा Homelab पहले से मौजूद है, इसलिए उसे दोबारा बनाने से मना कर दिया गया। इसके बजाय मौजूदा खोलें।",
   "ui.configurationFlow.useTheAdminPasswordConfigured":
     "(इस इंस्टेंस के लिए कॉन्फ़िगर किया गया एडमिन पासवर्ड इस्तेमाल कीजिए)",
   "ui.configurationFlow.validatingConfiguration":
@@ -1569,16 +1544,16 @@ export const hi: Record<string, string> = {
   "ui.configurationFlow.validatingWithStackkits":
     "StackKits के साथ सत्यापन हो रहा है...",
   "ui.configurationFlow.youCanRetryIfThis":
-    "आप दोबारा कोशिश कर सकते हैं। अगर फिर ऐसा हो, तो त्रुटि कोड और अनुरोध ID सपोर्ट के साथ साझा कीजिए।",
+    "फिर से कोशिश करें। अगर यह बार-बार हो, तो सहायता से संपर्क करें और तकनीकी विवरण साझा करें।",
   "ui.configurationFlow.youDonTHavePermission":
-    "आपके पास StackKits डिप्लॉय करने की अनुमति नहीं है, और सर्वर ने कोई विशेष कारण नहीं बताया। कृपया यह सपोर्ट के साथ साझा कीजिए।",
+    "आपके पास यहाँ Homelab बनाने की अनुमति नहीं है। अगर आपको लगता है कि यह गलत है, तो सहायता से संपर्क करें और तकनीकी विवरण साझा करें।",
   "ui.configurationFlow.youMustBeLoggedIn":
-    "StackKit डिप्लॉय करने के लिए आपको लॉग इन होना ज़रूरी है।",
+    "अपना Homelab बनाने के लिए साइन इन करें।",
   "ui.configurationFlow.youMustBeLoggedIn2":
-    "StackKit डिप्लॉय करने के लिए आपको लॉग इन होना ज़रूरी है। पहले लॉग इन कीजिए।",
+    "अपना Homelab बनाने के लिए आपको साइन इन होना होगा। कृपया पहले साइन इन करें।",
   "ui.connectDevices.techstackClient": "Techstack क्लाइंट",
-  "ui.creationCompletion.ownerSeedFor": "{email} के लिए ओनर सीड तैयार है।",
-  "ui.creationController.theAdditionalNode": "अतिरिक्त Node",
+  "ui.creationCompletion.ownerSeedFor": "{email} के लिए आपका मालिक खाता तैयार है।",
+  "ui.creationController.theAdditionalNode": "अतिरिक्त सर्वर",
   "ui.creationFailure.lease": "लीज़",
   "ui.creationInstall.previewExpires": "प्रीव्यू {time} पर समाप्त होगा",
   "ui.creationLease.sshHost":
@@ -1592,7 +1567,7 @@ export const hi: Record<string, string> = {
   "ui.creationRequirements.minVersion": "न्यूनतम: {version}",
   "ui.creationRun.notConnectedYet": "अभी जुड़ा नहीं है",
   "ui.creationRun.notReachableYet": "अभी पहुँच में नहीं है",
-  "ui.creationRun.pairingTokenExpires": "पेयरिंग टोकन {slot} पर समाप्त होगा।",
+  "ui.creationRun.pairingTokenExpires": "यह कमांड {slot} तक मान्य है।",
   "ui.creationRun.resumeStartingAt":
     "{time} से सर्वर उसी VM पर सुरक्षित रूप से दोबारा शुरू करने की अनुमति दे सकता है।",
   "ui.creationRun.stepOf": "चरण {step} / {total}",
@@ -1647,17 +1622,16 @@ export const hi: Record<string, string> = {
     "यह टूल किस काम का है, कौन इस्तेमाल करता है और लॉन्च से जुड़ा कोई संदर्भ...",
   "ui.crypto.decryptionFailedWrongPassword":
     "डिक्रिप्शन विफल रहा। क्या पासवर्ड गलत है?",
-  "ui.custody.leasesWithoutNode.one": "Node के बिना लीज़: {count}",
-  "ui.custody.leasesWithoutNode.other": "Node के बिना लीज़: {count}",
+  "ui.custody.leasesWithoutNode.one": "सर्वर के बिना लीज़: {count}",
+  "ui.custody.leasesWithoutNode.other": "सर्वर के बिना लीज़: {count}",
   "ui.custody.wasAddress": "पहले {ip} था",
-  "ui.custodyLeasesPanel.decommissioning": "डीकमीशन हो रहा है...",
+  "ui.custodyLeasesPanel.decommissioning": "हटाया जा रहा है...",
   "ui.custodyLeasesPanel.leaseArchived": "लीज़ संग्रहीत हो गई",
   "ui.custodyLeasesPanel.leaseCancelled": "लीज़ रद्द हो गई",
   "ui.custodyLeasesPanel.neverObserved": "कभी देखा नहीं गया",
   "ui.custodyLeasesPanel.noExecutionAuthorityLegacyOr":
     "कोई निष्पादन अधिकार नहीं (पुरानी या अनबाउंड लीज़)",
-  "ui.custodyLeasesPanel.nodeNeverFinishedEnrolling":
-    "Node ने एनरोलमेंट कभी पूरा नहीं किया",
+  "ui.custodyLeasesPanel.nodeNeverFinishedEnrolling": "सर्वर ने एनरोलमेंट कभी पूरा नहीं किया",
   "ui.custodyLeasesPanel.resolving": "समाधान हो रहा है...",
   "ui.custodyLeasesPanel.vmNoLongerExistsAt":
     "VM अब प्रदाता के पास मौजूद नहीं है",
@@ -1721,24 +1695,19 @@ export const hi: Record<string, string> = {
   "ui.homelab.noSourceObserved":
     "सेवाएँ दो स्रोतों से आती हैं: पूरा हो चुका StackKit रोलआउट, और वे कंटेनर व यूनिट जो Agent होस्ट पर खोजता है। अभी तक किसी भी स्रोत को देखा नहीं गया है: कोई StackKit मैनिफ़ेस्ट नहीं मिला और Agent ने कोई सेवा खोज नहीं चलाई।",
   "ui.homelab.onlineCount": "{count} ऑनलाइन",
-  "ui.homelab.operationsNotLoaded.one":
-    "{count} StackKit डिप्लॉयमेंट ऑपरेशन लोड नहीं हो सका।",
-  "ui.homelab.operationsNotLoaded.other":
-    "{count} StackKit डिप्लॉयमेंट ऑपरेशन लोड नहीं हो सके।",
-  "ui.homelab.partialRolloutBadge": "आंशिक रोलआउट",
+  "ui.homelab.operationsNotLoaded.one": "{count} Homelab ऑपरेशन लोड नहीं हो सका।",
+  "ui.homelab.operationsNotLoaded.other": "{count} Homelab ऑपरेशन लोड नहीं हो सके।",
+  "ui.homelab.partialRolloutBadge": "सेटअप अधूरा",
   "ui.homelab.phase": "चरण: {phase}",
-  "ui.homelab.preparationFailed":
-    "जुड़े Node पर StackKit की तैयारी विफल रही — {detail}",
+  "ui.homelab.preparationFailed": "जुड़े सर्वर पर StackKit की तैयारी विफल रही — {detail}",
   "ui.homelab.probeAnswered":
     "रनटाइम ने प्रोब का जवाब दिया और Guard हार्टबीट ताज़ा है ({state})।",
-  "ui.homelab.probeOffline":
-    'प्रदाता मशीन की स्थिति "{machineState}" और एनरोलमेंट की स्थिति "{enrollment}" बता रहा है। दोबारा कनेक्ट सिर्फ़ वही प्रोब फिर चला सकता है — यह मशीन पर kombify Agent को रीस्टार्ट नहीं कर सकता। जब तक Agent फिर से हार्टबीट नहीं भेजता, Node ऑफ़लाइन रहेगा, इसलिए Node विवरण में आगे बढ़िए, जहाँ एनरोलमेंट कमांड और आख़िरी संपर्क दिखता है।',
+  "ui.homelab.probeOffline": 'प्रदाता मशीन की स्थिति "{machineState}" और एनरोलमेंट की स्थिति "{enrollment}" बता रहा है। दोबारा कनेक्ट सिर्फ़ वही प्रोब फिर चला सकता है — यह मशीन पर kombify Agent को रीस्टार्ट नहीं कर सकता। जब तक Agent फिर से हार्टबीट नहीं भेजता, सर्वर ऑफ़लाइन रहेगा, इसलिए सर्वर विवरण में आगे बढ़िए, जहाँ एनरोलमेंट कमांड और आख़िरी संपर्क दिखता है।',
   "ui.homelab.recorded": "{count} दर्ज",
   "ui.homelab.retryFailed": "रोलआउट दोबारा नहीं चलाया जा सका: {message}",
   "ui.homelab.rolloutFailed": "रोलआउट विफल रहा: {message}",
-  "ui.homelab.sshFailed": "आपके Node से SSH कनेक्शन विफल रहा — {detail}",
-  "ui.homelabDashboardPage.0VerifiedConnectedOperationsEvidence":
-    "0 सत्यापित रूप से जुड़े · ऑपरेशन प्रमाण उपलब्ध नहीं",
+  "ui.homelab.sshFailed": "आपके सर्वर से SSH कनेक्शन विफल रहा — {detail}",
+  "ui.homelabDashboardPage.0VerifiedConnectedOperationsEvidence": "कनेक्शन सत्यापित नहीं है",
   "ui.homelabDashboardPage.agentDiscoveryReportedNoRunning":
     "Agent खोज ने कोई चलता हुआ कंटेनर या यूनिट रिपोर्ट नहीं किया। कोई StackKit मैनिफ़ेस्ट नहीं देखा गया, इसलिए घोषित StackKit सेवाएँ अभी भी अज्ञात हैं।",
   "ui.homelabDashboardPage.bothServiceSourcesReportedAn":
@@ -1748,19 +1717,15 @@ export const hi: Record<string, string> = {
   "ui.homelabDashboardPage.custodyRecordUnchangedTheTechstack":
     "कस्टडी रिकॉर्ड में कोई बदलाव नहीं: Techstack गेटवे बैकएंड तक नहीं पहुँच सका। सेवा उपलब्ध होने पर इसी रिकॉर्ड को फिर आज़माइए।",
   "ui.homelabDashboardPage.custodyResolutionFailed": "कस्टडी समाधान विफल रहा",
-  "ui.homelabDashboardPage.decommissionFailed": "डीकमीशन विफल रहा",
-  "ui.homelabDashboardPage.deployStackkit": "StackKit डिप्लॉय करें",
+  "ui.homelabDashboardPage.decommissionFailed": "हटाना विफल रहा",
+  "ui.homelabDashboardPage.deployStackkit": "समीक्षा करें और बनाएँ",
   "ui.homelabDashboardPage.lastVerifiedStateRetainedThe":
     "आख़िरी सत्यापित स्थिति रखी गई है — रिफ़्रेश विफल रहा और अपने आप दोबारा कोशिश होगी।",
-  "ui.homelabDashboardPage.managedRuntime": "प्रबंधित रनटाइम",
-  "ui.homelabDashboardPage.managedRuntimeLeaseAllocationMetadata":
-    "प्रबंधित रनटाइम का लीज़/आवंटन मेटाडेटा मौजूद है, लेकिन प्रदाता और Guard की मौजूदा स्थिति सत्यापित नहीं हो सकी।",
-  "ui.homelabDashboardPage.noNodeHasReportedAn":
-    "अभी तक किसी Node ने इन्वेंटरी रिपोर्ट नहीं की है।",
-  "ui.homelabDashboardPage.nodeIsReportingAgain":
-    "Node फिर से रिपोर्ट कर रहा है",
-  "ui.homelabDashboardPage.openTheNodeDetailsTo":
-    "Agent और आख़िरी रोलआउट जाँचने के लिए Node विवरण खोलिए।",
+  "ui.homelabDashboardPage.managedRuntime": "प्रबंधित सर्वर",
+  "ui.homelabDashboardPage.managedRuntimeLeaseAllocationMetadata": "आपका प्रबंधित सर्वर सेट हो चुका है, लेकिन उसकी मौजूदा स्थिति अभी जाँची नहीं जा सकी।",
+  "ui.homelabDashboardPage.noNodeHasReportedAn": "अभी तक किसी सर्वर ने इन्वेंटरी रिपोर्ट नहीं की है।",
+  "ui.homelabDashboardPage.nodeIsReportingAgain": "सर्वर फिर से रिपोर्ट कर रहा है",
+  "ui.homelabDashboardPage.openTheNodeDetailsTo": "Agent और आख़िरी रोलआउट जाँचने के लिए सर्वर विवरण खोलिए।",
   "ui.homelabDashboardPage.operationsDataIsNotAvailable":
     "इस Homelab के लिए ऑपरेशन डेटा अभी उपलब्ध नहीं है।",
   "ui.homelabDashboardPage.operationsDataIsNotAvailable2":
@@ -1776,23 +1741,20 @@ export const hi: Record<string, string> = {
   "ui.homelabDashboardPage.retry": "फिर कोशिश करें",
   "ui.homelabDashboardPage.retryExactCleanup": "सटीक क्लीनअप फिर आज़माएँ",
   "ui.homelabDashboardPage.review": "समीक्षा करें",
-  "ui.homelabDashboardPage.reviewStart": "समीक्षा करें + शुरू करें",
+  "ui.homelabDashboardPage.reviewStart": "समीक्षा करें और बनाएँ",
   "ui.homelabDashboardPage.rolloutReadinessIsUnavailableRefresh":
     "रोलआउट की तैयारी की स्थिति उपलब्ध नहीं है। शुरू करने से पहले ऑपरेशन डेटा रिफ़्रेश कीजिए।",
-  "ui.homelabDashboardPage.runtimeAnsweredButTheNode":
-    "रनटाइम ने जवाब दिया, लेकिन Node अब भी ऑफ़लाइन है",
-  "ui.homelabDashboardPage.stackkitDeployment": "StackKit डिप्लॉयमेंट",
+  "ui.homelabDashboardPage.runtimeAnsweredButTheNode": "रनटाइम ने जवाब दिया, लेकिन सर्वर अब भी ऑफ़लाइन है",
+  "ui.homelabDashboardPage.stackkitDeployment": "Homelab",
   "ui.homelabDashboardPage.starting": "शुरू हो रहा है...",
   "ui.homelabDashboardPage.theAgentVersionWasNot":
     "Agent वर्शन रिपोर्ट नहीं किया गया।",
   "ui.homelabDashboardPage.theFailedCleanupIsNot":
     "विफल क्लीनअप किसी कार्रवाई-योग्य लीज़ से जुड़ा नहीं है। लाइफ़साइकल प्रमाण रिफ़्रेश कीजिए और सटीक कस्टडी रिकॉर्ड पर दी गई कार्रवाई इस्तेमाल कीजिए।",
-  "ui.homelabDashboardPage.theFailedStackkitDeploymentIs":
-    "विफल StackKit डिप्लॉयमेंट अब इस Homelab का हिस्सा नहीं है। Homelab रिफ़्रेश कीजिए और उसी डिप्लॉयमेंट को दोबारा आज़माइए।",
+  "ui.homelabDashboardPage.theFailedStackkitDeploymentIs": "आपके Homelab का जो हिस्सा विफल हुआ था, वह अब मौजूद नहीं है। Homelab रिफ़्रेश कीजिए और दोबारा कोशिश कीजिए।",
   "ui.homelabDashboardPage.thePersistedRolloutIsWaiting":
     "सहेजा गया रोलआउट अपने अगले चेकपॉइंट की प्रतीक्षा में है।",
-  "ui.homelabDashboardPage.theRuntimeProbeReturnedNo":
-    "रनटाइम प्रोब ने कोई कारण नहीं बताया। फिर कोशिश कीजिए, या पूरे रनटाइम रिकॉर्ड के लिए Node विवरण खोलिए।",
+  "ui.homelabDashboardPage.theRuntimeProbeReturnedNo": "रनटाइम प्रोब ने कोई कारण नहीं बताया। फिर कोशिश कीजिए, या पूरे रनटाइम रिकॉर्ड के लिए सर्वर विवरण खोलिए।",
   "ui.homelabDashboardPage.theStackkitManifestSourceReported":
     "StackKit मैनिफ़ेस्ट स्रोत ने कोई सेवा रिपोर्ट नहीं की। सेवा खोज नहीं देखी गई है, इसलिए कंटेनर और यूनिट अभी भी अज्ञात हैं।",
   "ui.homelabDashboardPage.thisFailedRunCannotBe":
@@ -1910,12 +1872,12 @@ export const hi: Record<string, string> = {
   "ui.integration.pocketbaseAdminDashboardCredentials":
     "PocketBase एडमिन डैशबोर्ड क्रेडेंशियल",
   "ui.integration.traefikDashboardBasicAuth": "Traefik डैशबोर्ड बेसिक ऑथ",
-  "ui.inventory.nodeCount.one": "Node: {count}",
-  "ui.inventory.nodeCount.other": "Node: {count}",
+  "ui.inventory.nodeCount.one": "सर्वर: {count}",
+  "ui.inventory.nodeCount.other": "सर्वर: {count}",
   "ui.inventory.serviceCount.one": "सेवाएँ: {count}",
   "ui.inventory.serviceCount.other": "सेवाएँ: {count}",
-  "ui.inventory.telemetryNodes.one": "टेलीमेट्री Node: {count}",
-  "ui.inventory.telemetryNodes.other": "टेलीमेट्री Node: {count}",
+  "ui.inventory.telemetryNodes.one": "टेलीमेट्री सर्वर: {count}",
+  "ui.inventory.telemetryNodes.other": "टेलीमेट्री सर्वर: {count}",
   "ui.localOwner.localOwnerCreationIsOnly":
     "स्थानीय ओनर सिर्फ़ पहली बार के सेटअप के दौरान बनाया जा सकता है।",
   "ui.login.bootstrapPassword": "बूटस्ट्रैप पासवर्ड:",
@@ -1980,8 +1942,7 @@ export const hi: Record<string, string> = {
     "इससे प्रबंधित सर्वर की एक नई पीढ़ी प्रोविज़न होगी और उसका बिल बनेगा। Techstack सामान्य निर्माण प्रवाह के ज़रिए एनरोलमेंट, एंडपॉइंट, Guard प्रमाण और StackKit रोलआउट फिर से स्थापित करेगा।",
   "ui.monitoring.acrossEpisodes.one": "कुल {count} घटनाओं में",
   "ui.monitoring.acrossEpisodes.other": "कुल {count} घटनाओं में",
-  "ui.monitoring.availabilityHistoryIsUnavailableOn":
-    "इस डिप्लॉयमेंट पर उपलब्धता इतिहास उपलब्ध नहीं है।",
+  "ui.monitoring.availabilityHistoryIsUnavailableOn": "इस इंस्टॉलेशन पर उपलब्धता इतिहास उपलब्ध नहीं है।",
   "ui.monitoring.availabilityWindow": "उपलब्धता · {window}",
   "ui.monitoring.dailyState": "दैनिक स्थिति",
   "ui.monitoring.dailyStateLabel": "{name}: दैनिक कनेक्शन स्थिति",
@@ -1998,8 +1959,7 @@ export const hi: Record<string, string> = {
   "ui.monitoring.monitoringDataCouldNotBe": "मॉनिटरिंग डेटा लोड नहीं हो सका।",
   "ui.monitoring.noData": "कोई डेटा नहीं",
   "ui.monitoring.noDowntimeInThisWindow": "इस अवधि में कोई डाउनटाइम नहीं।",
-  "ui.monitoring.noNodesHaveReportedYet":
-    "अभी तक किसी Node ने रिपोर्ट नहीं की है। एक Node एनरोल कीजिए और उसकी स्थिति यहाँ दिखेगी।",
+  "ui.monitoring.noNodesHaveReportedYet": "अभी तक किसी सर्वर ने रिपोर्ट नहीं की है। एक सर्वर एनरोल कीजिए और उसकी स्थिति यहाँ दिखेगी।",
   "ui.monitoring.noRecordedDowntimeInThis":
     "इस अवधि में कोई दर्ज डाउनटाइम नहीं।",
   "ui.monitoring.noServersInThisWindow": "इस अवधि में कोई सर्वर नहीं।",
@@ -2017,17 +1977,14 @@ export const hi: Record<string, string> = {
   "ui.monitoring.removeFromAria": "{name} को मॉनिटरिंग से हटाएँ",
   "ui.monitoring.removing": "हटाया जा रहा है...",
   "ui.monitoring.rightNow": "अभी",
-  "ui.monitoring.selectNodeHint":
-    "किसी Node को चुनिए ताकि उसके मेट्रिक्स और उसका अपना इतिहास दिखे",
+  "ui.monitoring.selectNodeHint": "किसी सर्वर को चुनिए ताकि उसके मेट्रिक्स और उसका अपना इतिहास दिखे",
   "ui.monitoring.serverCouldNotBeRemoved": "सर्वर हटाया नहीं जा सका।",
   "ui.monitoring.staleCountsAsDowntime":
     "पुराना डेटा डाउनटाइम गिना जाता है — सेवा की पुष्टि नहीं हो सकती",
-  "ui.monitoring.theCanonicalServerInventoryIs":
-    "मानक सर्वर इन्वेंटरी उपलब्ध नहीं है।",
-  "ui.monitoring.thisRevokesTheBoundGuard":
-    "इससे जुड़ा Guard Agent रद्द हो जाएगा और Node मौजूदा फ़्लीट से छिप जाएगा। भौतिक सर्वर और उसका प्रदाता खाता अछूते रहते हैं।",
+  "ui.monitoring.theCanonicalServerInventoryIs": "सर्वरों की सूची अभी पढ़ी नहीं जा सकी।",
+  "ui.monitoring.thisRevokesTheBoundGuard": "इससे जुड़ा Guard Agent रद्द हो जाएगा और सर्वर मौजूदा फ़्लीट से छिप जाएगा। भौतिक सर्वर और उसका प्रदाता खाता अछूते रहते हैं।",
   "ui.monitoring.totalDowntime": "कुल डाउनटाइम",
-  "ui.monitoringServer.alertsInScope": "{count} इस Node पर लागू",
+  "ui.monitoringServer.alertsInScope": "{count} इस सर्वर पर लागू",
   "ui.monitoringServer.allEpisodes": "सभी घटनाएँ →",
   "ui.monitoringServer.dailyState30":
     "{name}: 30 दिनों की दैनिक कनेक्शन स्थिति",
@@ -2052,28 +2009,25 @@ export const hi: Record<string, string> = {
   "ui.monitoringServerId.metricsLast24H": "मेट्रिक्स · पिछले 24 घंटे",
   "ui.monitoringServerId.noAlertRulesApplyHere":
     "यहाँ कोई अलर्ट नियम लागू नहीं है।",
-  "ui.monitoringServerId.noHistoryForThisNode":
-    "इस Node का अभी कोई इतिहास नहीं है।",
-  "ui.monitoringServerId.noMetricsBackendAnsweredFor":
-    "इस Node के लिए किसी मेट्रिक्स बैकएंड ने जवाब नहीं दिया। नीचे की उपलब्धता ट्रांज़िशन टाइमलाइन से निकाली गई है और उस पर निर्भर नहीं है।",
+  "ui.monitoringServerId.noHistoryForThisNode": "इस सर्वर का अभी कोई इतिहास नहीं है।",
+  "ui.monitoringServerId.noMetricsBackendAnsweredFor": "इस सर्वर के लिए किसी मेट्रिक्स बैकएंड ने जवाब नहीं दिया। नीचे की उपलब्धता ट्रांज़िशन टाइमलाइन से निकाली गई है और उस पर निर्भर नहीं है।",
   "ui.monitoringServerId.refreshing": "रिफ़्रेश हो रहा है…",
   "ui.monitoringServerId.removeFromView": "व्यू से हटाएँ",
-  "ui.monitoringServerId.thisNodeSHistory": "इस Node का इतिहास",
+  "ui.monitoringServerId.thisNodeSHistory": "इस सर्वर का इतिहास",
   "ui.monitoringServerId.thisServerCouldNotBe": "यह सर्वर लोड नहीं हो सका।",
   "ui.navItems.noServicesRegisteredYet": "अभी कोई सेवा पंजीकृत नहीं है।",
-  "ui.nodeActions.assignToThisStackkitDeployment":
-    "इस StackKit डिप्लॉयमेंट को असाइन करें",
+  "ui.nodeActions.assignToThisStackkitDeployment": "इस Homelab में असाइन करें",
   "ui.nodeActions.assigning": "असाइन हो रहा है...",
   "ui.nodeActions.canonicalManagedAccessIsNot":
     "मानक प्रबंधित एक्सेस अभी उपलब्ध नहीं है।",
-  "ui.nodeActions.connection": "Node कनेक्शन: {state}",
+  "ui.nodeActions.connection": "सर्वर कनेक्शन: {state}",
   "ui.nodeRow.systemServices.one": "सिस्टम सेवाएँ: {count}",
   "ui.nodeRow.systemServices.other": "सिस्टम सेवाएँ: {count}",
   "ui.nodeActions.menu": "{node} की क्रियाएँ",
   "ui.nodeMessage.idle": "कोई खुला संदेश नहीं",
-  "ui.nodeMessage.needsAttention": "इस Node पर ध्यान देने की आवश्यकता है",
+  "ui.nodeMessage.needsAttention": "इस सर्वर पर ध्यान देने की आवश्यकता है",
   "ui.nodeMessage.panel": "{node} के संदेश",
-  "ui.nodeMessage.listPanel": "Node सूची के बारे में संदेश",
+  "ui.nodeMessage.listPanel": "सर्वर सूची के बारे में संदेश",
   "ui.nodeRow.moreServices": "+ {count} और",
   "ui.apps.description":
     "आपके सर्वर पर UI से खुलने वाली हर चीज़। सेवाएँ पेज हर सेवा को उसकी सेटिंग्स के साथ दिखाता है।",
@@ -2131,11 +2085,10 @@ export const hi: Record<string, string> = {
     "चुना गया ओनर स्रोत अब समर्थित नहीं है। स्थानीय ओनर चुनिए या अपनी kombify Cloud प्रोफ़ाइल लिंक कीजिए।",
   "ui.ownerState.thisInstanceHasNoKombify":
     "इस इंस्टेंस पर kombify Cloud लॉगिन कॉन्फ़िगर नहीं है।",
-  "ui.pairing.nodeConnection": "Node कनेक्शन",
+  "ui.pairing.nodeConnection": "सर्वर कनेक्शन",
   "ui.pairing.theConnectionCommandCouldNot":
     "कनेक्शन कमांड तैयार नहीं हो सका। फिर कोशिश कीजिए।",
-  "ui.pairing.theOriginalNodeConfigurationIs":
-    "मूल Node कॉन्फ़िगरेशन उपलब्ध नहीं है। कनेक्शन तैयार करने के लिए “Node जोड़ें” पर लौटिए।",
+  "ui.pairing.theOriginalNodeConfigurationIs": "मूल सर्वर कॉन्फ़िगरेशन उपलब्ध नहीं है। कनेक्शन तैयार करने के लिए “सर्वर जोड़ें” पर लौटिए।",
   "ui.people.activationExpired": "सक्रियण की समय-सीमा समाप्त",
   "ui.people.activationPending": "सक्रियण लंबित",
   "ui.people.appCount.one": "ऐप्स: {count}",
@@ -2144,14 +2097,12 @@ export const hi: Record<string, string> = {
     "kombify Connect डिवाइस प्रबंधन उपलब्ध होते ही जुड़े क्लाइंट यहाँ दिखेंगे।",
   "ui.people.deviceListUnavailable": "डिवाइस सूची उपलब्ध नहीं है।",
   "ui.people.homelabOwner": "Homelab ओनर",
-  "ui.people.householdListUnavailableTheHomelab":
-    "परिवार की सूची उपलब्ध नहीं: Homelab के आइडेंटिटी प्रोवाइडर ने जवाब नहीं दिया।",
-  "ui.people.identityProviderNotReady": "आइडेंटिटी प्रोवाइडर तैयार नहीं है",
-  "ui.people.identityStatusUnavailable": "आइडेंटिटी स्थिति उपलब्ध नहीं",
+  "ui.people.householdListUnavailableTheHomelab": "लोगों की सूची अभी उपलब्ध नहीं है। थोड़ी देर में फिर कोशिश कीजिए।",
+  "ui.people.identityProviderNotReady": "साइन-इन सेवा तैयार नहीं है",
+  "ui.people.identityStatusUnavailable": "साइन-इन स्थिति उपलब्ध नहीं है",
   "ui.people.member": "सदस्य",
   "ui.people.notInvitedYet": "अभी आमंत्रित नहीं",
-  "ui.people.ownerAndHouseholdAppearOnce":
-    "जब Homelab का आइडेंटिटी प्रोवाइडर (Pocket ID या TinyAuth) Guard के ज़रिए रिपोर्ट करेगा, तब ओनर और परिवार यहाँ दिखेंगे।",
+  "ui.people.ownerAndHouseholdAppearOnce": "आपके Homelab की साइन-इन सेवा तैयार होते ही आप और आपके आमंत्रित लोग यहाँ दिखेंगे।",
   "ui.people.plannedInTheWizard": "विज़ार्ड में नियोजित",
   "ui.people.plannedMember": "नियोजित सदस्य",
   "ui.people.signedInToTheHomelab": "Homelab में साइन इन",
@@ -2182,11 +2133,9 @@ export const hi: Record<string, string> = {
     "Gateway टोकन अनुरोध का समय समाप्त",
   "ui.postMessageBridge.kombifyAIDidNotConfirm":
     "kombify AI ने सपोर्ट सेशन की समय पर पुष्टि नहीं की।",
-  "ui.presets.aCalmOverviewOneBand":
-    "एक शांत ओवरव्यू: हर Node के लिए एक पट्टी, उसके 24 घंटे के कर्व के साथ।",
+  "ui.presets.aCalmOverviewOneBand": "एक शांत ओवरव्यू: हर सर्वर के लिए एक पट्टी, उसके 24 घंटे के कर्व के साथ।",
   "ui.presets.complete": "पूर्ण",
-  "ui.presets.nodeRowsWithTheirApps":
-    "Node की पंक्तियाँ, जिनके साथ उनके ऐप्स, डिवाइस और लोग दिखते हैं।",
+  "ui.presets.nodeRowsWithTheirApps": "सर्वर की पंक्तियाँ, जिनके साथ उनके ऐप्स, डिवाइस और लोग दिखते हैं।",
   "ui.providerErrors.aStackKitWasSelectedE":
     "एक StackKit चुना गया (जैसे basement-kit या cloud-kit), लेकिन StackKit फ़ाइलें सर्वर पर उपलब्ध नहीं हैं।",
   "ui.providerErrors.anUnknownErrorOccurred": "एक अज्ञात त्रुटि हुई।",
@@ -2518,8 +2467,7 @@ export const hi: Record<string, string> = {
     'क्या सार्वजनिक कुंजी "{key}" को {server} पर एक बार इंस्टॉल करें? निजी कुंजी Wallet से कभी बाहर नहीं जाती।',
   "ui.serverAccess.sshKey": "SSH कुंजी",
   "ui.serverAccessActions.addOneInTheWallet": "Wallet में एक जोड़िए",
-  "ui.serverAccessActions.authorizeOneOfYourPublic":
-    "पहले इस Node पर अपनी किसी सार्वजनिक कुंजी को अधिकृत कीजिए।",
+  "ui.serverAccessActions.authorizeOneOfYourPublic": "पहले इस सर्वर पर अपनी किसी सार्वजनिक कुंजी को अधिकृत कीजिए।",
   "ui.serverAccessActions.authorizeSshKey": "SSH कुंजी को अधिकृत करें",
   "ui.serverAccessActions.copySshCommand": "SSH कमांड कॉपी करें",
   "ui.serverAccessActions.installPublicKey": "सार्वजनिक कुंजी इंस्टॉल करें",
@@ -2536,13 +2484,12 @@ export const hi: Record<string, string> = {
   "ui.serverAccessActions.walletPublicKey": "Wallet सार्वजनिक कुंजी",
   "ui.serverCard.archUnknown": "आर्किटेक्चर अज्ञात",
   "ui.serverCard.osUnknown": "OS अज्ञात",
-  "ui.serverCardAdapter.anotherNodeActionIsRunning":
-    "एक और Node कार्रवाई चल रही है",
+  "ui.serverCardAdapter.anotherNodeActionIsRunning": "एक और सर्वर कार्रवाई चल रही है",
   "ui.serverDetail.actionNotStarted": "{action} शुरू नहीं हो सका।",
   "ui.serverDetail.actionsTarget":
     "ये कार्रवाइयाँ सीधे {name} पर लागू होती हैं। उपलब्ध कंट्रोल उसके मौजूदा कनेक्शन और StackKit स्थिति पर निर्भर करते हैं; कोई सर्वर या लाइफ़साइकल स्थिति चुनने की ज़रूरत नहीं है।",
   "ui.serverDetail.confirmActionFor": "{name} के लिए “{action}” की पुष्टि करें",
-  "ui.serverDetail.confirmDecommissionFor": "{name} के डीकमीशन की पुष्टि करें",
+  "ui.serverDetail.confirmDecommissionFor": "{name} को हटाने की पुष्टि करें",
   "ui.serverDetail.confirmDetachFor": "{name} को अलग करने की पुष्टि करें",
   "ui.serverDetail.confirmProviderRemoval":
     "{name} को प्रदाता से हटाने की पुष्टि करें",
@@ -2579,9 +2526,8 @@ export const hi: Record<string, string> = {
   "ui.serverList.inventoryUnavailable": "इन्वेंटरी उपलब्ध नहीं",
   "ui.serverList.theCanonicalInventoryIsUnavailable":
     "मानक इन्वेंटरी उपलब्ध नहीं है। सिर्फ़ वही टेलीमेट्री दिखाई जा रही है जो अभी अधिकृत है।",
-  "ui.serverOutcome.continueOnConnected": "जुड़े Node पर StackKit जारी रखें",
-  "ui.serverOutcome.continuePrepOnConnected":
-    "जुड़े Node पर StackKit की तैयारी जारी रखें",
+  "ui.serverOutcome.continueOnConnected": "जुड़े सर्वर पर StackKit जारी रखें",
+  "ui.serverOutcome.continuePrepOnConnected": "जुड़े सर्वर पर StackKit की तैयारी जारी रखें",
   "ui.serverOutcome.restartRollout": "रोलआउट फिर से शुरू करें",
   "ui.serverOutcome.retrySsh": "SSH कनेक्शन फिर आज़माएँ",
   "ui.serverProvisioningStep.cloudKitRollout": "Cloud Kit रोलआउट",
@@ -2640,7 +2586,7 @@ export const hi: Record<string, string> = {
   "ui.serviceList.servicesByRuntimeTarget": "रनटाइम लक्ष्य के अनुसार सेवाएँ",
   "ui.serviceRegistry.selected.one": "{count} सेवाएँ चुनी गईं",
   "ui.serviceRegistry.selected.other": "{count} सेवाएँ चुनी गईं",
-  "ui.serviceSheet.node": "Node: {node}",
+  "ui.serviceSheet.node": "सर्वर: {node}",
   "ui.serviceSheet.notPlaced": "प्लेस नहीं किया गया",
   "ui.serviceSheet.ownership": "स्वामित्व: {value}",
   "ui.serviceSheet.stackkit": "StackKit {version}",
@@ -2661,8 +2607,7 @@ export const hi: Record<string, string> = {
   "ui.services.actionCompletedInventoryIsRefreshing":
     "कार्रवाई पूरी हुई; इन्वेंटरी रिफ़्रेश हो रही है।",
   "ui.services.actionTitle": "{action} {name}",
-  "ui.services.addACatalogApplicationOr":
-    "कैटलॉग से कोई एप्लिकेशन जोड़िए या अप्रबंधित Node इन्वेंटरी इम्पोर्ट कीजिए।",
+  "ui.services.addACatalogApplicationOr": "कैटलॉग से कोई एप्लिकेशन जोड़िए या अप्रबंधित सर्वर इन्वेंटरी इम्पोर्ट कीजिए।",
   "ui.services.addANewApplication": "नया एप्लिकेशन जोड़ें",
   "ui.services.addService": "सेवा जोड़ें",
   "ui.services.adoptIntoManagement": "प्रबंधन में शामिल करें…",
@@ -2707,16 +2652,14 @@ export const hi: Record<string, string> = {
     "क्या {name} को लॉक करें? लॉक रहने तक स्टार्ट, स्टॉप और रीस्टार्ट अस्वीकार किए जाते हैं, stack apply के ज़रिए भी। सेवा चलती रहती है।",
   "ui.services.confirmUnlock":
     "क्या {name} को अनलॉक करें? नियंत्रित बदलाव फिर से उपलब्ध हो जाएँगे।",
-  "ui.services.connectNodesToYourHomelab":
-    "एप्लिकेशन प्लेसमेंट प्रबंधित करने के लिए अपने Homelab से Nodes जोड़िए।",
+  "ui.services.connectNodesToYourHomelab": "एप्लिकेशन प्लेसमेंट प्रबंधित करने के लिए अपने Homelab से सर्वर जोड़िए।",
   "ui.services.deleteArchivedService": "संग्रहीत सेवा हटाएँ?",
   "ui.services.desired": "वांछित",
   "ui.services.desiredObserved": "वांछित {desired} · देखा गया {observed}",
   "ui.services.discoveredOn":
     "{name} पर खोजा गया — kombify द्वारा प्रबंधित नहीं",
   "ui.services.displayName": "प्रदर्शित नाम",
-  "ui.services.dragAndDropStaysDisabled":
-    "जब तक डिप्लॉयमेंट, हेल्थ सत्यापन, कटओवर और सोर्स ड्रेन को असली रनटाइम एक्ज़ीक्यूटर नहीं संभालता, ड्रैग-एंड-ड्रॉप बंद रहेगा।",
+  "ui.services.dragAndDropStaysDisabled": "ड्रैग-एंड-ड्रॉप अभी उपलब्ध नहीं है। किसी ऐप को सुरक्षित रूप से ले जाने के लिए इंस्टॉल, हेल्थ चेक, स्विच-ओवर और पुरानी कॉपी की सफ़ाई का स्वचालित होना ज़रूरी है।",
   "ui.services.dropManagedApplicationsHere": "प्रबंधित एप्लिकेशन यहाँ छोड़ें",
   "ui.services.error": "त्रुटि",
   "ui.services.failedToDeleteArchivedService": "संग्रहीत सेवा हटाने में विफल।",
@@ -2727,19 +2670,18 @@ export const hi: Record<string, string> = {
   "ui.services.health": "हेल्थ",
   "ui.services.importAsObserved": "ऑब्ज़र्व्ड के रूप में इम्पोर्ट करें",
   "ui.services.importUnmanaged": "अप्रबंधित इम्पोर्ट करें",
-  "ui.services.internalAddressOnlyOpenIt":
-    "केवल आंतरिक पता; इसे Node के नेटवर्क से खोलिए।",
+  "ui.services.internalAddressOnlyOpenIt": "केवल आंतरिक पता; इसे सर्वर के नेटवर्क से खोलिए।",
   "ui.services.jobId": "जॉब {id}",
   "ui.services.loadOlderLogs": "पुराने लॉग लोड करें",
   "ui.services.loadingCanonicalServiceInventory":
     "मानक सेवा इन्वेंटरी लोड हो रही है",
-  "ui.services.localNode": "स्थानीय Node",
+  "ui.services.localNode": "स्थानीय सर्वर",
   "ui.services.managedProviderTarget": "प्रबंधित प्रदाता लक्ष्य",
   "ui.services.migrationJobIsActive": "माइग्रेशन जॉब सक्रिय है।",
   "ui.services.moveApplication": "एप्लिकेशन मूव करें",
   "ui.services.moveHere": "{name} को यहाँ मूव करें",
   "ui.services.moveSteps": "मूव के चरण:",
-  "ui.services.moveToAnotherNode": "दूसरे Node पर मूव करें…",
+  "ui.services.moveToAnotherNode": "दूसरे सर्वर पर मूव करें…",
   "ui.services.mutationsRequireOwnerApprovalA":
     "बदलावों के लिए ओनर की मंज़ूरी चाहिए; मापी गई स्थिति बदलने से पहले StackKits सत्यापन चलता है।",
   "ui.services.newApplication": "नया एप्लिकेशन",
@@ -2747,20 +2689,19 @@ export const hi: Record<string, string> = {
   "ui.services.noApplicationsMatching":
     "{status} स्थिति वाला कोई एप्लिकेशन नहीं",
   "ui.services.noApplicationsReported": "किसी एप्लिकेशन की रिपोर्ट नहीं मिली",
-  "ui.services.noAvailableTargetNodeFor":
-    "इस एप्लिकेशन के लिए कोई उपलब्ध लक्ष्य Node नहीं है।",
+  "ui.services.noAvailableTargetNodeFor": "इस एप्लिकेशन के लिए कोई उपलब्ध लक्ष्य सर्वर नहीं है।",
   "ui.services.noCanonicalRuntimeObservationYet":
     "अभी कोई मानक रनटाइम ऑब्ज़र्वेशन नहीं — रजिस्ट्री प्रोजेक्शन दिखाया जा रहा है।",
   "ui.services.noGovernedActionHasRun":
     "इस सेशन में कोई नियंत्रित कार्रवाई नहीं चली है।",
   "ui.services.noHostname": "कोई होस्टनेम नहीं",
-  "ui.services.noNodesRegistered": "कोई Node पंजीकृत नहीं",
+  "ui.services.noNodesRegistered": "कोई सर्वर पंजीकृत नहीं",
   "ui.services.noOperationsAvailable": "कोई ऑपरेशन उपलब्ध नहीं है।",
   "ui.services.noSystemServices": "कोई सिस्टम सेवा नहीं",
-  "ui.services.node": "Node",
-  "ui.services.nodeBoundApplications": "Node से बंधे एप्लिकेशन",
-  "ui.services.nodeCapabilities": "Node की क्षमताएँ",
-  "ui.services.nodeColumn": "Node {name} कॉलम",
+  "ui.services.node": "सर्वर",
+  "ui.services.nodeBoundApplications": "सर्वर से बंधे एप्लिकेशन",
+  "ui.services.nodeCapabilities": "सर्वर की क्षमताएँ",
+  "ui.services.nodeColumn": "सर्वर {name} कॉलम",
   "ui.services.observed": "देखा गया",
   "ui.services.stacked": "Stacked",
   "ui.services.unstacked": "Unstacked",
@@ -2791,12 +2732,10 @@ export const hi: Record<string, string> = {
   "ui.services.runtimeMigrationIsNotEnabled":
     "रनटाइम माइग्रेशन अभी चालू नहीं है",
   "ui.services.runtimeMigrationUnavailable": "रनटाइम माइग्रेशन उपलब्ध नहीं",
-  "ui.services.runtimeServiceMigrationIsNot":
-    "इस डिप्लॉयमेंट पर रनटाइम सेवा माइग्रेशन चालू नहीं है।",
+  "ui.services.runtimeServiceMigrationIsNot": "इस इंस्टॉलेशन पर ऐप्स को सर्वरों के बीच ले जाना चालू नहीं है।",
   "ui.services.runtimeTarget": "रनटाइम लक्ष्य",
-  "ui.services.selectANodeAndCatalog": "एक Node और एक कैटलॉग सेवा चुनिए।",
-  "ui.services.selectANodeThenEnter":
-    "एक Node चुनिए, फिर सेवा का नाम दर्ज कीजिए।",
+  "ui.services.selectANodeAndCatalog": "एक सर्वर और एक कैटलॉग सेवा चुनिए।",
+  "ui.services.selectANodeThenEnter": "एक सर्वर चुनिए, फिर सेवा का नाम दर्ज कीजिए।",
   "ui.services.selected": "चुना गया: {name}",
   "ui.services.service": "सेवा",
   "ui.services.serviceActionDidNotComplete": "सेवा की कार्रवाई पूरी नहीं हुई।",
@@ -2821,19 +2760,16 @@ export const hi: Record<string, string> = {
   "ui.services.storageFreeOf": "{free} GB खाली / {total} GB",
   "ui.services.systemServices": "सिस्टम सेवाएँ",
   "ui.services.targetIsReadyForVerification": "लक्ष्य सत्यापन के लिए तैयार है।",
-  "ui.services.targetNode": "लक्ष्य Node",
+  "ui.services.targetNode": "लक्ष्य सर्वर",
   "ui.services.targetValue": "लक्ष्य: {value}",
   "ui.services.telemetryPending": "टेलीमेट्री लंबित",
   "ui.services.temporaryInstance":
     "{slot} पर एक अस्थायी इंस्टेंस डिप्लॉय किया जाएगा।",
-  "ui.services.theApplicationConfigWillBe":
-    "एप्लिकेशन कॉन्फ़िग की प्रति लक्ष्य Node पर बनाई जाएगी।",
+  "ui.services.theApplicationConfigWillBe": "एप्लिकेशन कॉन्फ़िग की प्रति लक्ष्य सर्वर पर बनाई जाएगी।",
   "ui.services.theLastLogPageWas": "आख़िरी लॉग पेज खाली था।",
-  "ui.services.theLastSuccessfulSnapshotRemains":
-    "आख़िरी सफल स्नैपशॉट तब तक दिखता रहता है जब तक यह StackKit डिप्लॉयमेंट उसका प्रतिस्थापन या स्पष्ट डाउन प्रमाण रिपोर्ट नहीं करता।",
+  "ui.services.theLastSuccessfulSnapshotRemains": "आख़िरी सफल स्नैपशॉट तब तक दिखता रहता है जब तक यह Homelab उसका प्रतिस्थापन या ऐप के डाउन होने का स्पष्ट प्रमाण रिपोर्ट नहीं करता।",
   "ui.services.thisHomelab": "यह Homelab",
-  "ui.services.thisPermanentlyDeletesTheArchived":
-    "इससे संग्रहीत सेवा उसके स्रोत Node से स्थायी रूप से हट जाएगी।",
+  "ui.services.thisPermanentlyDeletesTheArchived": "इससे संग्रहीत सेवा उसके स्रोत सर्वर से स्थायी रूप से हट जाएगी।",
   "ui.services.type": "प्रकार:",
   "ui.services.type2": "प्रकार",
   "ui.services.unclassifiedRuntimeComponentsAppearHere":
@@ -2845,8 +2781,7 @@ export const hi: Record<string, string> = {
   "ui.services.url": "URL",
   "ui.services.verifyFinish": "सत्यापित करें और पूरा करें",
   "ui.services.verifying": "· सत्यापित हो रहा है",
-  "ui.services.waitingForRuntimeDeployment":
-    "रनटाइम डिप्लॉयमेंट की प्रतीक्षा है...",
+  "ui.services.waitingForRuntimeDeployment": "इंस्टॉलेशन की प्रतीक्षा है...",
   "ui.services.youCanTestTheNew":
     "पुराना इंस्टेंस सक्रिय रहते हुए आप नए इंस्टेंस को टेस्ट कर सकते हैं।",
   "ui.servicesApplicationId.addressClass": "पता श्रेणी",
@@ -2857,7 +2792,7 @@ export const hi: Record<string, string> = {
   "ui.servicesApplicationId.backToApplications": "एप्लिकेशन पर वापस जाएँ",
   "ui.servicesApplicationId.freshness": "ताज़गी",
   "ui.servicesApplicationId.impact": "प्रभाव",
-  "ui.servicesApplicationId.kitDeployment": "Kit डिप्लॉयमेंट",
+  "ui.servicesApplicationId.kitDeployment": "Homelab",
   "ui.servicesApplicationId.lifecycle": "जीवनचक्र",
   "ui.servicesApplicationId.management": "प्रबंधन",
   "ui.servicesApplicationId.noReachableAddressReported":
@@ -2878,15 +2813,14 @@ export const hi: Record<string, string> = {
   "ui.settings.dangerZone": "खतरनाक क्षेत्र",
   "ui.settings.dashboard": "डैशबोर्ड",
   "ui.settings.dashboardLayout": "डैशबोर्ड लेआउट",
-  "ui.settings.decommissionsTheDeploymentSManaged":
-    "यह डिप्लॉयमेंट के प्रबंधित रनटाइम को बंद करता है और उसकी प्रविष्टि हटाता है। इसकी जगह किसी एक सर्वर को हटाना हो तो सर्वर पर उसकी डिकमीशन कार्रवाई का उपयोग करें।",
+  "ui.settings.decommissionsTheDeploymentSManaged": "यह Homelab के प्रबंधित सर्वर और उसकी प्रविष्टि को हटाता है। केवल किसी एक सर्वर को हटाना हो तो उस सर्वर पर “सर्वर हटाएँ” का उपयोग करें।",
   "ui.settings.delete": "हटाएँ",
-  "ui.settings.deleteADeployment": "डिप्लॉयमेंट हटाएँ",
-  "ui.settings.deleteNamed": '"{name}" हटाएँ?',
-  "ui.settings.deleteThisDeployment": "यह डिप्लॉयमेंट हटाएँ",
+  "ui.settings.deleteADeployment": "Homelab हटाएँ",
+  "ui.settings.deleteNamed": "“{name}” को हटाएँ?",
+  "ui.settings.deleteThisDeployment": "यह Homelab हटाएँ",
   "ui.settings.deleting": "हटाया जा रहा है...",
   "ui.settings.deletionFailed": "हटाना विफल रहा",
-  "ui.settings.failedToLoadDeployments": "डिप्लॉयमेंट लोड नहीं हो सके",
+  "ui.settings.failedToLoadDeployments": "Homelab लोड नहीं हो सके",
   "ui.settings.failedToLoadHomelabIdentity": "Homelab पहचान लोड नहीं हो सकी",
   "ui.settings.failedToSaveHomelabIdentity": "Homelab पहचान सहेजी नहीं जा सकी",
   "ui.settings.flag": "Flag",
@@ -2896,13 +2830,13 @@ export const hi: Record<string, string> = {
   "ui.settings.homelabIdentity": "Homelab पहचान",
   "ui.settings.lightOrDarkAndThe":
     "लाइट या डार्क, और सतह की फ़िनिश। जब तक यह डिवाइस अपनी फ़िनिश नहीं चुनता, फ़िनिश आपके kombify खाते के डिफ़ॉल्ट का अनुसरण करती है।",
-  "ui.settings.loadingDeployments": "डिप्लॉयमेंट लोड हो रहे हैं...",
+  "ui.settings.loadingDeployments": "Homelab लोड हो रहे हैं...",
   "ui.settings.logout": "लॉग आउट",
   "ui.settings.managedByKombifyCloud": "kombify Cloud द्वारा प्रबंधित।",
   "ui.settings.mode": "मोड",
   "ui.settings.navigationPreview": "नेविगेशन पूर्वावलोकन",
   "ui.settings.navigationPreviewShape": "नेविगेशन पूर्वावलोकन का आकार",
-  "ui.settings.noDeploymentsToDelete": "हटाने के लिए कोई डिप्लॉयमेंट नहीं है।",
+  "ui.settings.noDeploymentsToDelete": "हटाने के लिए कोई Homelab नहीं है।",
   "ui.settings.noHomelabIdentityConfigured":
     "कोई Homelab पहचान कॉन्फ़िगर नहीं है।",
   "ui.settings.noVerifiedTestResidueRemains":
@@ -2910,28 +2844,23 @@ export const hi: Record<string, string> = {
   "ui.settings.noVerifiedTestResidueWas":
     "कोई सत्यापित परीक्षण अवशेष नहीं मिला।",
   "ui.settings.overlap": "ओवरलैप",
-  "ui.settings.pruneQualifies":
-    "केवल प्रमाणित मालिक {owner} और सख्त {strict} प्रोजेक्शन ही पात्र हैं। सक्रिय प्रबंधित रनटाइम, प्रदाता संसाधन, हाल के Nodes, डेमो डेटा और सामान्य Homelab डेटा अपरिवर्तित रहते हैं।",
+  "ui.settings.pruneQualifies": "केवल प्रमाणित मालिक {owner} और सख्त {strict} प्रोजेक्शन ही पात्र हैं। सक्रिय प्रबंधित रनटाइम, प्रदाता संसाधन, हाल के सर्वर, डेमो डेटा और सामान्य Homelab डेटा अपरिवर्तित रहते हैं।",
   "ui.settings.reviewCleanup": "क्लीनअप की समीक्षा करें",
   "ui.settings.reviewVerifiedTestResidue":
     "सत्यापित परीक्षण अवशेषों की समीक्षा करें",
   "ui.settings.reviewing": "समीक्षा हो रही है...",
-  "ui.settings.reviewsExactOwnerScopedE2e":
-    "यह मालिक-स्कोप वाले सटीक E2E और विफल रनटाइम प्रोजेक्शन की समीक्षा करता है। प्रदाता संसाधन, सक्रिय लीज़, हाल के Nodes और सामान्य Homelab डेटा अपरिवर्तित रहते हैं।",
+  "ui.settings.reviewsExactOwnerScopedE2e": "यह मालिक-स्कोप वाले सटीक E2E और विफल रनटाइम प्रोजेक्शन की समीक्षा करता है। प्रदाता संसाधन, सक्रिय लीज़, हाल के सर्वर और सामान्य Homelab डेटा अपरिवर्तित रहते हैं।",
   "ui.settings.savedOnDevice": "आपके खाते के लिए इस डिवाइस पर सहेजा गया।",
   "ui.settings.settings": "सेटिंग्स",
   "ui.settings.signedIn": "साइन इन किया हुआ",
   "ui.settings.surface": "सतह",
   "ui.settings.surfaceFinish": "सतह की फ़िनिश",
   "ui.settings.tether": "Tether",
-  "ui.settings.theDemoDeploymentIsProtected":
-    "डेमो डिप्लॉयमेंट सुरक्षित है और हटाया नहीं जा सकता।",
-  "ui.settings.thisDecommissionsTheManagedRuntime":
-    "यह प्रबंधित रनटाइम को बंद करता है और डिप्लॉयमेंट प्रविष्टि हटाता है। इसे पूर्ववत नहीं किया जा सकता।",
+  "ui.settings.theDemoDeploymentIsProtected": "डेमो Homelab सुरक्षित है और हटाया नहीं जा सकता।",
+  "ui.settings.thisDecommissionsTheManagedRuntime": "यह प्रबंधित सर्वर को बंद करता है, प्रदाता पर उसे उसके डेटा सहित हटा देता है और Homelab प्रविष्टि हटाता है। इसे पूर्ववत नहीं किया जा सकता।",
   "ui.settings.thisEntryIsNotVerified":
     "यह प्रविष्टि सत्यापित परीक्षण अवशेष नहीं है और प्रोजेक्शन क्लीनअप से हटाई नहीं जा सकती।",
-  "ui.settings.thisExactPlanIsBound":
-    "यह सटीक योजना नीचे दिए गए डाइजेस्ट से बंधी है। किसी भी इन्फ्रास्ट्रक्चर को नष्ट नहीं किया जाता।",
+  "ui.settings.thisExactPlanIsBound": "यह सटीक योजना नीचे दिए गए डाइजेस्ट से बंधी है। कोई सर्वर या प्रदाता संसाधन नहीं हटाया जाता।",
   "ui.settings.typeToConfirm": "पुष्टि के लिए {slot} टाइप करें",
   "ui.shortcuts.closeDialogDeselect": "डायलॉग बंद करें/चयन हटाएँ",
   "ui.shortcuts.focusSearchInput": "सर्च इनपुट पर फ़ोकस करें",
@@ -2956,10 +2885,8 @@ export const hi: Record<string, string> = {
   "ui.sshKeygen.ed25519NotSupportedInThis":
     "इस ब्राउज़र में Ed25519 समर्थित नहीं है। इसके बजाय RSA आज़माइए।",
   "ui.sshKeygen.unsupportedAlgorithm": "असमर्थित एल्गोरिदम: {algorithm}",
-  "ui.stackImport.exportIntro":
-    "इस StackKit डिप्लॉयमेंट कॉन्फ़िगरेशन को {file} के रूप में एक्सपोर्ट करें। आप फ़ाइल को संपादित कर सकते हैं और बाद में दोबारा इम्पोर्ट कर सकते हैं।",
-  "ui.stackImport.intro":
-    "अपने Homelab में StackKit डिप्लॉयमेंट सेट करने के लिए {file} फ़ाइल इम्पोर्ट करें। पुरानी {legacy} फ़ाइलें अब भी स्वीकार की जाती हैं।",
+  "ui.stackImport.exportIntro": "इस Homelab के कॉन्फ़िगरेशन को {file} के रूप में एक्सपोर्ट करें। आप फ़ाइल को संपादित कर सकते हैं और बाद में दोबारा इम्पोर्ट कर सकते हैं।",
+  "ui.stackImport.intro": "Homelab सेट करने के लिए {file} फ़ाइल इम्पोर्ट करें। पुरानी {legacy} फ़ाइलें अब भी स्वीकार की जाती हैं।",
   "ui.stackImport.orPaste": "या पेस्ट करें",
   "ui.stackImport.validating": "सत्यापित किया जा रहा है...",
   "ui.stackImportExportModal.allRequiredFieldsArePresent":
@@ -2971,12 +2898,10 @@ export const hi: Record<string, string> = {
     "डायग्नोस्टिक्स कॉपी करें (डेवलपर्स के लिए)",
   "ui.stackImportExportModal.couldNotReadFile": "फ़ाइल पढ़ी नहीं जा सकी",
   "ui.stackImportExportModal.dragFileHereOr": "फ़ाइल यहाँ खींचें या",
-  "ui.stackImportExportModal.exportStackkitDeploymentSpec":
-    "StackKit डिप्लॉयमेंट स्पेक एक्सपोर्ट करें",
+  "ui.stackImportExportModal.exportStackkitDeploymentSpec": "Homelab स्पेक एक्सपोर्ट करें",
   "ui.stackImportExportModal.ifTheProblemPersistsCopy":
     "अगर समस्या बनी रहे: डायग्नोस्टिक्स कॉपी करें और डेवलपर्स के साथ साझा करें।",
-  "ui.stackImportExportModal.importStackkitDeploymentSpec":
-    "StackKit डिप्लॉयमेंट स्पेक इम्पोर्ट करें",
+  "ui.stackImportExportModal.importStackkitDeploymentSpec": "Homelab स्पेक इम्पोर्ट करें",
   "ui.stackImportExportModal.importStartSetup":
     "इम्पोर्ट करें और सेटअप शुरू करें",
   "ui.stackImportExportModal.importingConfiguration":
@@ -2985,10 +2910,8 @@ export const hi: Record<string, string> = {
   "ui.stackImportExportModal.noContentFound": "कोई सामग्री नहीं मिली",
   "ui.stackImportExportModal.noContentToImport":
     "इम्पोर्ट करने के लिए कोई सामग्री नहीं है",
-  "ui.stackImportExportModal.noStackkitDeploymentIsAvailable":
-    "एक्सपोर्ट के लिए कोई StackKit डिप्लॉयमेंट उपलब्ध नहीं है",
-  "ui.stackImportExportModal.nodeDefinitionsWithoutCredentials":
-    "• Node परिभाषाएँ (क्रेडेंशियल के बिना)",
+  "ui.stackImportExportModal.noStackkitDeploymentIsAvailable": "एक्सपोर्ट के लिए कोई Homelab उपलब्ध नहीं है",
+  "ui.stackImportExportModal.nodeDefinitionsWithoutCredentials": "• सर्वर परिभाषाएँ (क्रेडेंशियल के बिना)",
   "ui.stackImportExportModal.pasteYourStackSpecYaml":
     "# अपनी stack-spec.yaml यहाँ पेस्ट करें...",
   "ui.stackImportExportModal.recommended": "(अनुशंसित)",
@@ -3011,20 +2934,18 @@ export const hi: Record<string, string> = {
   "ui.stackImportExportModal.youWillBeRedirectedTo":
     "आपको जल्द ही सेटअप पेज पर भेज दिया जाएगा।",
   "ui.stacksCreating.creatingStackkitDeploymentKombifyTechstack":
-    "StackKit डिप्लॉयमेंट बनाया जा रहा है | kombify-Techstack",
+    "आपका Homelab बनाया जा रहा है | kombify Techstack",
   "ui.stacksCreating.leanBackBody":
     "आपका काम पूरा हो गया। हम अभी आपके लिए सब कुछ तैयार कर रहे हैं, और जल्द ही कुछ शानदार सामने आएगा।",
   "ui.stacksCreating.leanBackTitle":
     "आराम से बैठिए – हम आपके लिए जादू कर रहे हैं",
   "ui.stacksCreating.openOperations": "ऑपरेशन खोलें",
-  "ui.stacksCreating.reviewAndStartStackkitRollout":
-    "StackKit रोलआउट की समीक्षा करें और शुरू करें",
   "ui.stacksCreating.tips.codeBody":
     "StackKits आपका सेटअप जाँचे गए ब्लूप्रिंट से बनाता है, इसलिए हर बदलाव दोहराने योग्य और ट्रेस करने योग्य है।",
   "ui.stacksCreating.tips.codeEyebrow": "इंफ्रास्ट्रक्चर ऐज़ कोड",
   "ui.stacksCreating.tips.codeTitle": "आपका स्टैक, कोड के रूप में",
   "ui.stacksCreating.tips.growBody":
-    "जब चाहें इस स्टैक में एक और नोड जोड़ें। Techstack आपके सर्वरों का समन्वय करता है और हर सर्वर अपने आप चलता रहता है।",
+    "जब चाहें इस स्टैक में एक और सर्वर जोड़ें। Techstack आपके सर्वरों का समन्वय करता है और हर सर्वर अपने आप चलता रहता है।",
   "ui.stacksCreating.tips.growEyebrow": "स्केलिंग",
   "ui.stacksCreating.tips.growTitle": "बढ़ने की जगह",
   "ui.stacksCreating.tips.label": "जानने योग्य",
@@ -3044,21 +2965,21 @@ export const hi: Record<string, string> = {
   "ui.stacksCreating.tips.restoreEyebrow": "बैकअप",
   "ui.stacksCreating.tips.restoreTitle": "रीस्टोर जाँचा गया, सिर्फ़ वादा नहीं",
   "ui.stacksCreating.tips.show": "सुझाव {number} / {total} दिखाएँ",
-  "ui.stacksCreatingCreation-controller.additionalNode": "अतिरिक्त Node",
+  "ui.stacksCreatingCreation-controller.additionalNode": "अतिरिक्त सर्वर",
   "ui.stacksCreatingCreation-controller.afterFailedAttemptsTheBackend":
     "{MAX_POLL_ERRORS} असफल प्रयासों के बाद बैकएंड तक नहीं पहुँचा जा सका। पेज बैकऑफ़ के साथ कोशिश करता रहता है; आप नेटवर्क कनेक्शन जाँचकर और रीलोड करके भी जारी रख सकते हैं।",
   "ui.stacksCreatingCreation-controller.configurationPrepared":
     "कॉन्फ़िगरेशन तैयार",
   "ui.stacksCreatingCreation-controller.connectYourNodeToContinue":
-    "रोलआउट जारी रखने के लिए अपना Node जोड़िए",
+    "रोलआउट जारी रखने के लिए अपना सर्वर जोड़िए",
   "ui.stacksCreatingCreation-controller.connectionToServerLost":
     "सर्वर से कनेक्शन टूट गया",
   "ui.stacksCreatingCreation-controller.continueStackKitDeploymentOnConnected":
-    "जुड़े Node पर StackKit डिप्लॉयमेंट जारी रखें",
+    "जुड़े सर्वर पर StackKit डिप्लॉयमेंट जारी रखें",
   "ui.stacksCreatingCreation-controller.continueStackKitOnConnectedNode":
-    "जुड़े Node पर StackKit जारी रखें",
+    "जुड़े सर्वर पर StackKit जारी रखें",
   "ui.stacksCreatingCreation-controller.continueStackKitRolloutOnConnected":
-    "जुड़े Node पर StackKit रोलआउट जारी रखें",
+    "जुड़े सर्वर पर StackKit रोलआउट जारी रखें",
   "ui.stacksCreatingCreation-controller.couldNotCheckRemoteSSH":
     "रिमोट SSH एनरोलमेंट की प्रगति जाँची नहीं जा सकी।",
   "ui.stacksCreatingCreation-controller.couldNotPrepareTheConnection":
@@ -3076,14 +2997,14 @@ export const hi: Record<string, string> = {
   "ui.stacksCreatingCreation-controller.creatingStackKitDeployment":
     "StackKit डिप्लॉयमेंट बनाया जा रहा है",
   "ui.stacksCreatingCreation-controller.guardHasNotReportedA":
-    "Guard ने अभी तक इस Node के लिए ताज़ा हार्टबीट रिपोर्ट नहीं की है। सहेजे गए कनेक्शन पर SSH एनरोलमेंट दोबारा आज़माएँ, या जाँचें कि सर्वर पर Agent चल रहा है।",
+    "आपके सर्वर ने अभी संपर्क नहीं किया है। सहेजे गए विवरण से SSH कनेक्शन फिर आज़माएँ या जाँचें कि kombify एजेंट सर्वर पर चल रहा है।",
   "ui.stacksCreatingCreation-controller.jobIsNotBeingProcessed":
     "जॉब प्रोसेस नहीं हो रहा है",
   "ui.stacksCreatingCreation-controller.jobWasCanceled": "जॉब रद्द कर दिया गया",
   "ui.stacksCreatingCreation-controller.kombifyRequestedTheAdditionalManaged":
-    "kombify ने अतिरिक्त प्रबंधित Node का अनुरोध किया है। एनरोलमेंट पूरा होने तक आप डैशबोर्ड से आगे बढ़ सकते हैं।",
+    "kombify ने अतिरिक्त प्रबंधित सर्वर का अनुरोध किया है। एनरोलमेंट पूरा होने तक आप डैशबोर्ड से आगे बढ़ सकते हैं।",
   "ui.stacksCreatingCreation-controller.managedNodeRequestIsStill":
-    "प्रबंधित Node का अनुरोध अभी जारी है",
+    "प्रबंधित सर्वर का अनुरोध अभी जारी है",
   "ui.stacksCreatingCreation-controller.managedRolloutRecoveryWasNot":
     "प्रबंधित रोलआउट की रिकवरी शुरू नहीं हुई क्योंकि प्रतीक्षारत जॉब के पास सटीक लीज़ संदर्भ नहीं है।",
   "ui.stacksCreatingCreation-controller.missingJobReferencePleaseStart":
@@ -3091,22 +3012,22 @@ export const hi: Record<string, string> = {
   "ui.stacksCreatingCreation-controller.newStackKitDeployment":
     "नया StackKit डिप्लॉयमेंट",
   "ui.stacksCreatingCreation-controller.noJobFound": "कोई जॉब नहीं मिला",
-  "ui.stacksCreatingCreation-controller.nodeConnected": "Node जुड़ गया",
+  "ui.stacksCreatingCreation-controller.nodeConnected": "सर्वर जुड़ गया",
   "ui.stacksCreatingCreation-controller.nodeConnectionReady":
-    "Node कनेक्शन तैयार",
+    "सर्वर कनेक्शन तैयार",
   "ui.stacksCreatingCreation-controller.nodeRegistrationDidNotReturn":
-    "Node पंजीकरण ने कोई निर्माण जॉब नहीं लौटाया।",
+    "सर्वर पंजीकरण ने कोई निर्माण जॉब नहीं लौटाया।",
   "ui.stacksCreatingCreation-controller.nodeRegistrationReady":
-    "Node पंजीकरण तैयार",
+    "सर्वर पंजीकरण तैयार",
   "ui.stacksCreatingCreation-controller.recoveringRolloutOnTheExact":
     "सटीक मौजूदा प्रबंधित VM पर रोलआउट पुनर्प्राप्त किया जा रहा है...",
   "ui.stacksCreatingCreation-controller.remoteSSHEnrollmentFailed":
     "रिमोट SSH एनरोलमेंट विफल रहा।",
   "ui.stacksCreatingCreation-controller.reportedAFreshGuardHeartbeat":
-    "{name} ने ताज़ा Guard हार्टबीट रिपोर्ट की और Node प्रोजेक्शन में दिख रहा है।",
+    "{name} ने संपर्क कर लिया है और अब आपके Homelab का हिस्सा है।",
   "ui.stacksCreatingCreation-controller.restoreDrill": "रिस्टोर ड्रिल",
   "ui.stacksCreatingCreation-controller.resumingTheEarlierNodeRegistration":
-    "पिछला Node पंजीकरण प्रयास फिर शुरू हो रहा है…",
+    "पिछला सर्वर पंजीकरण प्रयास फिर शुरू हो रहा है…",
   "ui.stacksCreatingCreation-controller.retryDeployment":
     "डिप्लॉयमेंट दोबारा आज़माएँ",
   "ui.stacksCreatingCreation-controller.retryRollout": "रोलआउट दोबारा आज़माएँ",
@@ -3135,27 +3056,27 @@ export const hi: Record<string, string> = {
   "ui.stacksCreatingCreation-controller.startFreshAttempt":
     "नया प्रयास शुरू करें",
   "ui.stacksCreatingCreation-controller.theAddNodeRequestHas":
-    "Node जोड़ने का अनुरोध 2 मिनट से ज़्यादा समय से चल रहा है। इस मार्ग को केवल अतिरिक्त Node का अनुरोध या तैयारी करनी चाहिए, पूरा StackKit रोलआउट नहीं चलाना चाहिए। ऑपरेशन खोलकर जाँचें कि Node अनुरोध बना या नहीं, और अगर कोई नया Node न दिखे तो Node जोड़ना दोबारा आज़माएँ।",
+    "सर्वर जोड़ने का अनुरोध 2 मिनट से ज़्यादा समय से चल रहा है। इस मार्ग को केवल अतिरिक्त सर्वर का अनुरोध या तैयारी करनी चाहिए, पूरा StackKit रोलआउट नहीं चलाना चाहिए। ऑपरेशन खोलकर जाँचें कि सर्वर अनुरोध बना या नहीं, और अगर कोई नया सर्वर न दिखे तो सर्वर जोड़ना दोबारा आज़माएँ।",
   "ui.stacksCreatingCreation-controller.theAdditionalNodeRegistrationIs":
-    "अतिरिक्त Node का पंजीकरण मौजूदा Homelab के लिए तैयार है।",
+    "अतिरिक्त सर्वर का पंजीकरण मौजूदा Homelab के लिए तैयार है।",
   "ui.stacksCreatingCreation-controller.theBackendCanceledThisJob":
     "बैकएंड ने इस जॉब को पूरा होने से पहले रद्द कर दिया। आख़िरी सुरक्षित चेकपॉइंट से आगे बढ़ने के लिए दोबारा आज़माएँ।",
   "ui.stacksCreatingCreation-controller.theCompletedRuntimeJobDid":
     "पूरे हुए रनटाइम जॉब ने सत्यापित रनटाइम साक्ष्य नहीं लौटाया। इंस्टॉलेशन सत्यापित करने के लिए रोलआउट दोबारा आज़माएँ।",
   "ui.stacksCreatingCreation-controller.theNodeProjectionCouldNot":
-    "Node प्रोजेक्शन की जाँच नहीं हो सकी। पेयरिंग कमांड उपलब्ध रहता है, लेकिन ताज़ा Guard हार्टबीट के बिना यह पेज कनेक्शन का दावा नहीं करेगा।",
+    "हम यह नहीं जाँच सके कि आपके सर्वर ने संपर्क किया या नहीं। कमांड उपलब्ध रहती है; यह पेज तभी कनेक्शन दिखाएगा जब आपके सर्वर ने सच में संपर्क कर लिया हो।",
   "ui.stacksCreatingCreation-controller.thePreviouslyVerifiedGuardHeartbeat":
-    "पहले सत्यापित Guard हार्टबीट अब ताज़ा नहीं है। वर्तमान कनेक्शन साक्ष्य की प्रतीक्षा है।",
+    "आपके सर्वर ने संपर्क करना बंद कर दिया है। उसके फिर से संपर्क करने की प्रतीक्षा है।",
   "ui.stacksCreatingCreation-controller.theProvisioningJobHasBeen":
     "प्रोविज़निंग जॉब 2 मिनट से ज़्यादा समय से बिना प्रगति के लंबित है। आमतौर पर इसका मतलब है कि ऑर्केस्ट्रेटर नहीं चल रहा या क्रैश हो गया है।\n\nसर्वर लॉग जाँचें: docker compose logs techstack\nरीस्टार्ट करके देखें: docker compose restart techstack",
   "ui.stacksCreatingCreation-controller.theReservedNodeCouldNot":
-    "आरक्षित Node की जाँच नहीं हो सकी। सर्वर इन्वेंटरी फिर उपलब्ध होने पर सहेजे गए कनेक्शन पर SSH एनरोलमेंट दोबारा आज़माएँ।",
+    "आरक्षित सर्वर की जाँच नहीं हो सकी। सर्वर इन्वेंटरी फिर उपलब्ध होने पर सहेजे गए कनेक्शन पर SSH एनरोलमेंट दोबारा आज़माएँ।",
   "ui.stacksCreatingCreation-controller.thisPageRequiresAJob":
     "इस पेज को सेटअप विज़ार्ड से job_id चाहिए। कृपया /stacks/new से सेटअप दोबारा शुरू करें।",
   "ui.stacksCreatingCreation-controller.validatingTheSelectedStackKitAnd":
-    "चुने गए StackKit को सत्यापित किया जा रहा है और Node तैयार हो रहा है...",
+    "चुने गए StackKit को सत्यापित किया जा रहा है और सर्वर तैयार हो रहा है...",
   "ui.stacksCreatingCreation-controller.yourRemoteNodeConfigurationIs":
-    "आपकी रिमोट Node कॉन्फ़िगरेशन रोलआउट के लिए तैयार है",
+    "आपकी रिमोट सर्वर कॉन्फ़िगरेशन रोलआउट के लिए तैयार है",
   "ui.stacksCreatingCreation-controller.yourSessionIsNoLonger":
     "आपका सेशन अब मान्य नहीं है, इसलिए निर्माण की प्रगति जाँची नहीं जा सकती। निगरानी जारी रखने के लिए दोबारा साइन इन करें और इस निर्माण को फिर खोलें।",
   "ui.stacksCreatingCreation-results.backendError":
@@ -3167,31 +3088,31 @@ export const hi: Record<string, string> = {
   "ui.stacksCreatingCreation-results.stackID": "स्टैक ID: {stackId}",
   "ui.stacksCreatingCreation-results.targetBootstrap": "लक्ष्य बूटस्ट्रैप:",
   "ui.stacksCreatingCreationCompletion.guardHeartbeatVerified":
-    "Guard हार्टबीट सत्यापित",
-  "ui.stacksCreatingCreationCompletion.hashPresent": "हैश मौजूद है",
+    "आपका सर्वर जुड़ गया है",
+  "ui.stacksCreatingCreationCompletion.hashPresent": "रिकवरी पासफ़्रेज़ सेट है",
   "ui.stacksCreatingCreationCompletion.lastGuardHeartbeat":
     "अंतिम Guard हार्टबीट:",
   "ui.stacksCreatingCreationCompletion.managedProvisioningComplete":
-    "प्रबंधित प्रोविज़निंग पूरी हुई",
-  "ui.stacksCreatingCreationCompletion.materialLinked": "सामग्री जोड़ी गई",
+    "आपका प्रबंधित सर्वर तैयार है",
+  "ui.stacksCreatingCreationCompletion.materialLinked": "रिकवरी सहेजी गई",
   "ui.stacksCreatingCreationCompletion.openHomelab": "Homelab खोलें",
   "ui.stacksCreatingCreationCompletion.owner": "मालिक",
-  "ui.stacksCreatingCreationCompletion.ownerPrepared": "मालिक तैयार किया गया",
+  "ui.stacksCreatingCreationCompletion.ownerPrepared": "मालिक खाता तैयार किया गया",
   "ui.stacksCreatingCreationCompletion.ownerReady": "मालिक तैयार है",
-  "ui.stacksCreatingCreationCompletion.ownerSeedReady": "मालिक का सीड तैयार है",
+  "ui.stacksCreatingCreationCompletion.ownerSeedReady": "मालिक खाता तैयार है",
   "ui.stacksCreatingCreationCompletion.recovery": "पुनर्प्राप्ति",
-  "ui.stacksCreatingCreationCompletion.rolloutComplete": "रोलआउट पूरा हुआ",
+  "ui.stacksCreatingCreationCompletion.rolloutComplete": "सेटअप पूरा हुआ",
   "ui.stacksCreatingCreationCompletion.selfHostedRollout":
-    "सेल्फ-होस्टेड रोलआउट",
+    "स्व-होस्टेड",
   "ui.stacksCreatingCreationCompletion.techstackNowSeesThisNode":
-    "Techstack अब वास्तविक Node प्रोजेक्शन में इस Node को स्वस्थ और रोलआउट के लिए तैयार देखता है। यह स्थिति केवल पेयरिंग की तैयारी से पैदा नहीं हुई।",
+    "आपके सर्वर ने संपर्क कर लिया है और वह ठीक से चल रहा है। वह अगले चरण के लिए तैयार है।",
   "ui.stacksCreatingCreationCompletion.theFirstLoginGatewayAnd":
-    'पहला लॉगिन गेटवे और रिकवरी संदर्भ StackKit रोलआउट ("Review + Start") के साथ आते हैं।',
+    "आपका पहला साइन-इन और रिकवरी विवरण आपका Homelab सेट होने के बाद मिलेगा (“समीक्षा करें और बनाएँ”)।",
   "ui.stacksCreatingCreationCompletion.theOwnerIdentityDerivesFrom":
     "मालिक की पहचान आपके लिंक किए गए kombify Cloud प्रोफ़ाइल से ली जाती है।",
   "ui.stacksCreatingCreationCompletion.theOwnerSeedIsPrepared":
-    "मालिक का सीड तैयार है।",
-  "ui.stacksCreatingCreationCompletion.yourNode": "आपका Node",
+    "आपका मालिक खाता तैयार है।",
+  "ui.stacksCreatingCreationCompletion.yourNode": "आपका सर्वर",
   "ui.groupedTaskList.needsAttention": "ध्यान देने की ज़रूरत है",
   "ui.stacksCreatingCreationDegraded.titleOne":
     "तैयार — एक हिस्से पर ध्यान देने की ज़रूरत है",
@@ -3231,10 +3152,8 @@ export const hi: Record<string, string> = {
   "ui.stacksCreatingCreationFailure.errorDetails": "त्रुटि विवरण",
   "ui.stacksCreatingCreationFailure.existingManagedVmLeaseReferenced":
     "मौजूदा प्रबंधित VM लीज़ का संदर्भ दिया गया",
-  "ui.stacksCreatingCreationFailure.makeSureTheBackendServer":
-    "सुनिश्चित करें कि बैकएंड सर्वर चल रहा है",
   "ui.stacksCreatingCreationFailure.nodeConnectionSucceeded":
-    "Node कनेक्शन सफल रहा",
+    "सर्वर कनेक्शन सफल रहा",
   "ui.stacksCreatingCreationFailure.operations": "ऑपरेशन",
   "ui.stacksCreatingCreationFailure.askCompanion": "kombify से पूछें",
   "ui.stacksCreatingCreationFailure.askCompanionPrompt":
@@ -3242,16 +3161,14 @@ export const hi: Record<string, string> = {
   "ui.stacksCreatingCreationFailure.possibleSolutions": "संभावित समाधान:",
   "ui.stacksCreatingCreationFailure.resumePreviousAttempt":
     "पिछला प्रयास फिर शुरू करें",
-  "ui.stacksCreatingCreationFailure.reviewYourConfigurationSettings":
-    "अपनी कॉन्फ़िगरेशन सेटिंग्स की समीक्षा करें",
   "ui.stacksCreatingCreationFailure.sshEnrollmentCompletedAndThe":
-    "SSH एनरोलमेंट पूरा हो गया और Node आपके Homelab में दिख रहा है। केवल StackKit की तैयारी या रोलआउट विफल हुआ। दोबारा कोशिश जुड़े हुए Node पर आगे बढ़ती है, SSH एनरोलमेंट दोहराए बिना।",
+    "SSH एनरोलमेंट पूरा हो गया और सर्वर आपके Homelab में दिख रहा है। केवल StackKit की तैयारी या रोलआउट विफल हुआ। दोबारा कोशिश जुड़े हुए सर्वर पर आगे बढ़ती है, SSH एनरोलमेंट दोहराए बिना।",
   "ui.stacksCreatingCreationFailure.theExactRetryEndpointValidates":
     "सटीक रीट्राई एंडपॉइंट मौजूदा सर्वर पर आगे बढ़ने से पहले इस विफल जॉब और लीज़ को सत्यापित करता है।",
   "ui.stacksCreatingCreationFailure.theRolloutReachedTheExisting":
     "रोलआउट मौजूदा प्रबंधित VM तक पहुँच गया।",
   "ui.stacksCreatingCreationFailure.thisBrowserReusedAnAttempt":
-    "इस ब्राउज़र ने किसी दूसरे सबमिशन की प्रयास कुंजी दोबारा इस्तेमाल की। पिछले रन ने शायद पहले ही Node पंजीकरण बना दिया हो। उस प्रयास को फिर शुरू करें, या नई कुंजी के साथ नए सिरे से शुरू करें।",
+    "इस ब्राउज़र ने किसी दूसरे सबमिशन की प्रयास कुंजी दोबारा इस्तेमाल की। पिछले रन ने शायद पहले ही सर्वर पंजीकरण बना दिया हो। उस प्रयास को फिर शुरू करें, या नई कुंजी के साथ नए सिरे से शुरू करें।",
   "ui.stacksCreatingCreationFailure.troubleshooting": "समस्या निवारण",
   "ui.stacksCreatingCreationFailure.vpsProvisioningCompletedOnlyStackkit":
     "VPS प्रोविज़निंग पूरी हो गई। केवल StackKit आर्टिफ़ैक्ट, डोमेन रूटिंग या बाद का रोलआउट कार्य विफल हुआ।",
@@ -3260,9 +3177,8 @@ export const hi: Record<string, string> = {
   "ui.stacksCreatingCreationInstallCommand.copy": "कॉपी करें",
   "ui.stacksCreatingCreationInstallCommand.copyInstallationCommandToClipboard":
     "इंस्टॉलेशन कमांड क्लिपबोर्ड पर कॉपी करें",
-  "ui.stacksCreatingCreationInstallCommand.installWorker": "वर्कर इंस्टॉल करें",
   "ui.stacksCreatingCreationInstallCommand.kombifyTechstackServerUrlReachable":
-    "kombify-Techstack सर्वर URL (वर्कर द्वारा पहुँच योग्य):",
+    "kombify Techstack का पता (आपके सर्वर से पहुँचने योग्य):",
   "ui.stacksCreatingCreationInstallCommand.openOneHourSimulateDemo":
     "एक घंटे का Simulate डेमो पूर्वावलोकन खोलें",
   "ui.stacksCreatingCreationInstallCommand.previewLifetimeIsLimitedTo":
@@ -3283,7 +3199,7 @@ export const hi: Record<string, string> = {
   "ui.stacksCreatingCreationLease.live": "लाइव",
   "ui.stacksCreatingCreationLease.loginGateway": "लॉगिन गेटवे",
   "ui.stacksCreatingCreationLease.managedNodeRequested":
-    "प्रबंधित Node का अनुरोध किया गया",
+    "प्रबंधित सर्वर का अनुरोध किया गया",
   "ui.stacksCreatingCreationLease.managedRuntimeReady": "प्रबंधित रनटाइम तैयार",
   "ui.stacksCreatingCreationLease.offering": "ऑफ़र",
   "ui.stacksCreatingCreationLease.openFirstLogin": "पहला लॉगिन खोलें",
@@ -3298,14 +3214,14 @@ export const hi: Record<string, string> = {
   "ui.stacksCreatingCreationLease.stackkitDeployedOnTheLeased":
     "StackKit को लीज़ पर ली गई सब्सक्रिप्शन VM पर डिप्लॉय किया गया। नीचे के मान रनटाइम जॉब से लौटे हैं - डेमो डेटा नहीं।",
   "ui.stacksCreatingCreationLease.stackkitIdentityHandoffIsMissing":
-    "StackKit पहचान हैंडऑफ़ गायब है",
+    "आपका पहला साइन-इन विवरण गायब है",
   "ui.stacksCreatingCreationLease.stackkitReturnedTheOwnerLogin":
     "StackKit ने इस सत्यापित Cloud Kit रोलआउट के लिए मालिक लॉगिन, लॉगिन गेटवे और रिकवरी संदर्भ लौटाए।",
   "ui.stacksCreatingCreationLease.status": "स्थिति:",
   "ui.stacksCreatingCreationLease.theAdditionalSubscriptionVmRequest":
     "अतिरिक्त सब्सक्रिप्शन VM का अनुरोध दर्ज हो गया है। एनरोलमेंट की रिपोर्ट आने पर यह ऑपरेशन में दिखाई देगा।",
   "ui.stacksCreatingCreationLease.theRolloutCompletedButThe":
-    "रोलआउट पूरा हुआ, लेकिन StackKit ने मालिक लॉगिन, लॉगिन गेटवे और रिकवरी आउटपुट नहीं लौटाए। जब तक रनटाइम एक्शन रिस्पॉन्स में ये शामिल न हों, इसे रिलीज़ ब्लॉकर मानें:",
+    "आपका Homelab सेट हो गया, लेकिन पहला साइन-इन और रिकवरी विवरण नहीं पहुँचा। सहायता से संपर्क करें और तकनीकी विवरण साझा करें।",
   "ui.stacksCreatingCreationLease.theseStatusesComeFromRuntime":
     "ये स्थितियाँ रनटाइम एक्शन रिस्पॉन्स और अंतिम e2e प्रमाण से आती हैं।",
   "ui.stacksCreatingCreationLease.wallet": "Wallet",
@@ -3316,7 +3232,7 @@ export const hi: Record<string, string> = {
   "ui.stacksCreatingCreationProgress.checkAgain": "फिर से जाँचें",
   "ui.stacksCreatingCreationProgress.creationFailed": "निर्माण विफल रहा",
   "ui.stacksCreatingCreationProgress.nodeProvisioningIsStillIn":
-    "Node प्रोविज़निंग अभी जारी है",
+    "सर्वर प्रोविज़निंग अभी जारी है",
   "ui.stacksCreatingCreationProgress.pleaseWaitWhileWeRe":
     "कृपया प्रतीक्षा करें, हम",
   "ui.stacksCreatingCreationProgress.morphCompleting": "पूरा कर रहे हैं",
@@ -3326,21 +3242,21 @@ export const hi: Record<string, string> = {
   "ui.stacksCreatingCreationProgress.progress": "प्रगति",
   "ui.stacksCreatingCreationProgress.rolloutIncomplete": "रोलआउट अधूरा",
   "ui.stacksCreatingCreationProgress.runThePairingCommand":
-    "पेयरिंग कमांड चलाएँ",
+    "अपने सर्वर पर कमांड चलाएँ",
   "ui.stacksCreatingCreationProgress.setupCannotContinue":
     "सेटअप आगे नहीं बढ़ सकता",
   "ui.stacksCreatingCreationProgress.theNextCheckIsScheduled":
-    "अगली जाँच निर्धारित है। एनरोलमेंट की पुष्टि होने तक डैशबोर्ड, सेवाएँ और Node पहुँच बंद रहती हैं; देरी से चल रही जाँच को यहाँ सुरक्षित रूप से फिर शुरू किया जा सकता है।",
+    "अगली जाँच निर्धारित है। एनरोलमेंट की पुष्टि होने तक डैशबोर्ड, सेवाएँ और सर्वर पहुँच बंद रहती हैं; देरी से चल रही जाँच को यहाँ सुरक्षित रूप से फिर शुरू किया जा सकता है।",
   "ui.stacksCreatingCreationProgress.theNextManagedRuntimeCheck":
-    "इस ऑपरेशन के लिए अगली प्रबंधित-रनटाइम जाँच निर्धारित है। अगर रेप्लिका हैंडओवर या रीस्टार्ट के बाद भी यह देरी में रहे, तो Techstack उसी सटीक Node के लिए फिर शुरू करने की कार्रवाई देता है।",
+    "आपके प्रबंधित सर्वर की अगली जाँच निर्धारित है। रीस्टार्ट के बाद भी वह लंबित रहे तो आप उसे यहाँ से जारी रख सकते हैं।",
   "ui.stacksCreatingCreationProgress.theRegistrationRequestIsReady":
-    "पंजीकरण अनुरोध तैयार है, लेकिन जब तक Node प्रोजेक्शन में ताज़ा Guard हार्टबीट नहीं दिखती, Node जुड़ा हुआ नहीं माना जाता।",
+    "आपके सर्वर ने अभी संपर्क नहीं किया है। उस पर नीचे दी गई कमांड चलाएँ; यह पेज अपने आप आगे बढ़ेगा।",
   "ui.stacksCreatingCreationProgress.thisCanTakeAFew":
-    "इसमें कुछ मिनट लग सकते हैं। कृपया इस पेज को बंद न करें।",
+    "इसमें कुछ मिनट लगते हैं। आप इस पेज पर रुक सकते हैं या बाद में लौट सकते हैं; आपका Homelab सेट होता रहेगा।",
   "ui.stacksCreatingCreationProgress.thisMayTakeAFew":
-    "इसमें कुछ मिनट लग सकते हैं। आप नीचे प्रगति देख सकते हैं।",
+    "इसमें कुछ मिनट लगते हैं। आप इस पेज पर रुक सकते हैं या बाद में लौट सकते हैं; आपका Homelab सेट होता रहेगा।",
   "ui.stacksCreatingCreationProgress.thisPageChecksTheReal":
-    "यह पेज हर कुछ सेकंड में वास्तविक Node प्रोजेक्शन जाँचता है।",
+    "यह पेज हर कुछ सेकंड में जाँचता है कि आपके सर्वर ने संपर्क किया या नहीं।",
   "ui.stacksCreatingCreationRequirements.backendRequirementsAreUnavailable":
     "बैकएंड आवश्यकताएँ उपलब्ध नहीं हैं",
   "ui.stacksCreatingCreationRequirements.guide": "गाइड →",
@@ -3358,14 +3274,14 @@ export const hi: Record<string, string> = {
     "मैन्युअल रूप से फिर शुरू करना केवल सर्वर-साइड सत्यापन के बाद चालू होता है।",
   "ui.stacksCreatingCreationRunStatus.afterCreation": "निर्माण के बाद",
   "ui.stacksCreatingCreationRunStatus.afterYouRunTheOne":
-    "वन-लाइनर चलाने के बाद आउटबाउंड Guard इस Homelab में एनरोल होता है। डैशबोर्ड Node को तभी जुड़ा हुआ दिखाता है जब Node प्रोजेक्शन में ताज़ा हार्टबीट मौजूद हो।",
+    "कमांड चलाने के बाद आपका सर्वर आपके Homelab से जुड़ जाता है। संपर्क करते ही वह जुड़ा हुआ दिखता है।",
   "ui.stacksCreatingCreationRunStatus.awaitingHeartbeat":
-    "हार्टबीट की प्रतीक्षा",
+    "आपके सर्वर की प्रतीक्षा",
   "ui.stacksCreatingCreationRunStatus.checkSshHostCredentialsAnd":
     "SSH होस्ट, क्रेडेंशियल और यह जाँचें कि सर्वर Techstack तक पहुँच सकता है।",
-  "ui.stacksCreatingCreationRunStatus.connectMyNode": "मेरा Node जोड़ें",
+  "ui.stacksCreatingCreationRunStatus.connectMyNode": "मेरा सर्वर जोड़ें",
   "ui.stacksCreatingCreationRunStatus.connectingToYourNodeOver":
-    "SSH के ज़रिए आपके Node से कनेक्ट हो रहा है…",
+    "SSH के ज़रिए आपके सर्वर से कनेक्ट हो रहा है…",
   "ui.stacksCreatingCreationRunStatus.connectingViaSsh":
     "SSH के ज़रिए कनेक्ट हो रहा है…",
   "ui.stacksCreatingCreationRunStatus.continueRolloutOnTheExisting":
@@ -3373,19 +3289,19 @@ export const hi: Record<string, string> = {
   "ui.stacksCreatingCreationRunStatus.copyFailedSelectTheCommand":
     "कॉपी विफल रहा — ऊपर का कमांड चुनें",
   "ui.stacksCreatingCreationRunStatus.copyPairingCommand":
-    "पेयरिंग कमांड कॉपी करें",
+    "कमांड कॉपी करें",
   "ui.stacksCreatingCreationRunStatus.currentStatus": "वर्तमान स्थिति",
   "ui.stacksCreatingCreationRunStatus.enrolling": "एनरोल हो रहा है",
   "ui.stacksCreatingCreationRunStatus.enrollmentOverSshFinishedThis":
-    "SSH के ज़रिए एनरोलमेंट पूरा हो गया। Guard के ताज़ा हार्टबीट की रिपोर्ट करते ही यह पेज “Node जुड़ गया” दिखाएगा।",
+    "SSH के ज़रिए पंजीकरण पूरा हो गया। आपके सर्वर के संपर्क करते ही यह पेज “सर्वर जुड़ गया” दिखाएगा।",
   "ui.stacksCreatingCreationRunStatus.failed": "विफल",
   "ui.stacksCreatingCreationRunStatus.generateAFreshCommandTo":
-    "इस Node को जोड़ना जारी रखने के लिए नया कमांड बनाएँ।",
+    "इस सर्वर को जोड़ना जारी रखने के लिए नया कमांड बनाएँ।",
   "ui.stacksCreatingCreationRunStatus.generateAShortLivedCommand":
-    "इस Node के लिए अल्पकालिक कमांड बनाएँ। कनेक्शन क्रेडेंशियल जॉब रिपोर्ट में नहीं रखे जाते।",
+    "इस सर्वर के लिए अल्पकालिक कमांड बनाएँ। कनेक्शन क्रेडेंशियल जॉब रिपोर्ट में नहीं रखे जाते।",
   "ui.stacksCreatingCreationRunStatus.generateNewCommand": "नया कमांड बनाएँ",
   "ui.stacksCreatingCreationRunStatus.generatePairingCommand":
-    "पेयरिंग कमांड बनाएँ",
+    "कमांड बनाएँ",
   "ui.stacksCreatingCreationRunStatus.kombifyIsInstallingAndEnrolling":
     "kombify SSH के ज़रिए आपके सर्वर पर Guard इंस्टॉल और एनरोल कर रहा है। आपको कोई कमांड मैन्युअल रूप से चलाने की ज़रूरत नहीं है।",
   "ui.stacksCreatingCreationRunStatus.kombifyWillProvisionTheSubscription":
@@ -3394,13 +3310,13 @@ export const hi: Record<string, string> = {
     "kombify विज़ार्ड में दर्ज की गई रिमोट SSH कॉन्फ़िगरेशन का उपयोग करेगा।",
   "ui.stacksCreatingCreationRunStatus.nextScheduledCheck":
     "अगली निर्धारित जाँच:",
-  "ui.stacksCreatingCreationRunStatus.nodeAccess": "Node पहुँच",
+  "ui.stacksCreatingCreationRunStatus.nodeAccess": "सर्वर पहुँच",
   "ui.stacksCreatingCreationRunStatus.pairingCommandCopied":
-    "पेयरिंग कमांड कॉपी हो गया",
+    "कमांड कॉपी हो गई",
   "ui.stacksCreatingCreationRunStatus.pairingCommandReady":
-    "पेयरिंग कमांड तैयार",
+    "कमांड तैयार है",
   "ui.stacksCreatingCreationRunStatus.pairingCommandUnavailable":
-    "पेयरिंग कमांड उपलब्ध नहीं",
+    "कमांड उपलब्ध नहीं है",
   "ui.stacksCreatingCreationRunStatus.plannedRemoteTarget":
     "नियोजित रिमोट लक्ष्य",
   "ui.stacksCreatingCreationRunStatus.preparingCommand":
@@ -3417,13 +3333,13 @@ export const hi: Record<string, string> = {
   "ui.stacksCreatingCreationRunStatus.retryingSshConnection":
     "SSH कनेक्शन दोबारा आज़माया जा रहा है…",
   "ui.stacksCreatingCreationRunStatus.runThisOneLinerOn":
-    "इस वन-लाइनर को अतिरिक्त Node पर चलाएँ। पूरा हुआ पंजीकरण जॉब केवल पेयरिंग टोकन बनाता है; Techstack “Node जुड़ गया” तभी दिखाएगा जब आउटबाउंड Guard ताज़ा हार्टबीट की रिपोर्ट करे और Node प्रोजेक्शन स्वस्थ हो।",
+    "यह कमांड अतिरिक्त सर्वर पर चलाएँ। संपर्क करने और ठीक से चलने पर वह जुड़ा हुआ दिखेगा।",
   "ui.stacksCreatingCreationRunStatus.techstackUrlReachableFromThe":
     "सर्वर से पहुँच योग्य Techstack URL",
   "ui.stacksCreatingCreationRunStatus.theAdditionalManagedNodeIs":
-    "अतिरिक्त प्रबंधित Node इस Homelab में जोड़ा जाता है और एनरोलमेंट की रिपोर्ट आने पर Node डैशबोर्ड में दिखाई देगा।",
+    "अतिरिक्त प्रबंधित सर्वर इस Homelab में जोड़ा जाता है और एनरोलमेंट की रिपोर्ट आने पर सर्वर डैशबोर्ड में दिखाई देगा।",
   "ui.stacksCreatingCreationRunStatus.theAdditionalNodeIsRegistered":
-    "अतिरिक्त Node इस Homelab में पंजीकृत है और इसके बाद इस StackKit डिप्लॉयमेंट की सेवाएँ प्राप्त कर सकता है।",
+    "अतिरिक्त सर्वर इस Homelab में पंजीकृत है और इसके बाद इस StackKit डिप्लॉयमेंट की सेवाएँ प्राप्त कर सकता है।",
   "ui.stacksCreatingCreationRunStatus.theManagedRuntimeIsNot":
     "प्रबंधित रनटाइम अभी रोलआउट के लिए पूरी तरह पहुँच योग्य नहीं है। लंबित संकेत इसका पता, क्रेडेंशियल या एनरोलमेंट हो सकता है। Techstack ने अगली जाँच निर्धारित कर दी है।",
   "ui.stacksCreatingCreationRunStatus.theProviderOperationHasNot":
@@ -3437,15 +3353,15 @@ export const hi: Record<string, string> = {
   "ui.stacksCreatingCreationRunStatus.thisDoesNotCreateAnother":
     "इससे कोई और VM नहीं बनती।",
   "ui.stacksCreatingCreationRunStatus.thisPairingTokenHasExpired":
-    "यह पेयरिंग टोकन समाप्त हो चुका है।",
+    "इस कमांड की अवधि समाप्त हो गई है।",
   "ui.stacksCreatingCreationRunStatus.validatingTheExistingVm":
     "मौजूदा VM सत्यापित हो रही है...",
   "ui.stacksCreatingCreationRunStatus.waitingForGuardHeartbeat":
-    "Guard हार्टबीट की प्रतीक्षा…",
+    "आपके सर्वर के संपर्क करने की प्रतीक्षा…",
   "ui.stacksCreatingCreationRunStatus.waitingForRealConnection":
-    "वास्तविक कनेक्शन की प्रतीक्षा",
+    "कनेक्शन की प्रतीक्षा",
   "ui.stacksCreatingCreationRunStatus.youWillReceiveAWorker":
-    "आपको अपने Nodes को इस StackKit डिप्लॉयमेंट से जोड़ने के लिए वर्कर इंस्टॉलेशन कमांड मिलेगा।",
+    "आपको अपने सर्वर इस StackKit डिप्लॉयमेंट से जोड़ने के लिए एक कमांड मिलेगी।",
   "ui.stacksId.actionPending": "{action} लंबित",
   "ui.stacksId.actions": "कार्रवाइयाँ",
   "ui.stacksId.add": "+ जोड़ें",
@@ -3458,34 +3374,30 @@ export const hi: Record<string, string> = {
     "कॉन्फ़िगर किए गए क्रेडेंशियल: {count}",
   "ui.stacksId.credentialsConfigured.other":
     "कॉन्फ़िगर किए गए क्रेडेंशियल: {count}",
-  "ui.stacksId.decommission": "डिकमीशन करें",
-  "ui.stacksId.decommissionManagedRuntime": "प्रबंधित रनटाइम डिकमीशन करें?",
+  "ui.stacksId.decommission": "सर्वर हटाएँ",
+  "ui.stacksId.decommissionManagedRuntime": "इस प्रबंधित सर्वर को हटाएँ?",
   "ui.stacksId.deleteCredential": "क्रेडेंशियल हटाएँ?",
-  "ui.stacksId.deploymentFallback": "StackKit डिप्लॉयमेंट",
+  "ui.stacksId.deploymentFallback": "Homelab",
   "ui.stacksId.edit": "संपादित करें",
   "ui.stacksId.editCredential": "क्रेडेंशियल संपादित करें",
   "ui.stacksId.enrollment": "एनरोलमेंट",
   "ui.stacksId.failedToAddCredential": "क्रेडेंशियल जोड़ा नहीं जा सका",
   "ui.stacksId.failedToDeleteCredential": "क्रेडेंशियल हटाया नहीं जा सका",
   "ui.stacksId.failedToLoadRuntimeStatus": "रनटाइम स्थिति लोड नहीं हो सकी",
-  "ui.stacksId.failedToLoadStackkitDeployment":
-    "StackKit डिप्लॉयमेंट लोड नहीं हो सका",
+  "ui.stacksId.failedToLoadStackkitDeployment": "Homelab लोड नहीं हो सका",
   "ui.stacksId.ingest": "इनजेस्ट",
   "ui.stacksId.latestOperationsSnapshot": "ऑपरेशन का नवीनतम स्नैपशॉट",
-  "ui.stacksId.manageCredentialsForThisStackkit":
-    "इस StackKit डिप्लॉयमेंट के क्रेडेंशियल प्रबंधित करें",
+  "ui.stacksId.manageCredentialsForThisStackkit": "सर्वर को नियंत्रित कीजिए, उसकी सेवाएँ देखिए और क्रेडेंशियल प्रबंधित कीजिए।",
   "ui.stacksId.missingCredentialsDetected": "गायब क्रेडेंशियल पाए गए",
   "ui.stacksId.missingSecret": "सीक्रेट गायब है",
   "ui.stacksId.monitoringEvidence": "मॉनिटरिंग साक्ष्य",
   "ui.stacksId.monthlyRuntime": "मासिक रनटाइम",
   "ui.stacksId.monthlyRuntimeActionFailed": "मासिक रनटाइम की कार्रवाई विफल रही",
-  "ui.stacksId.noCredentialsConfiguredForThis":
-    "इस StackKit डिप्लॉयमेंट के लिए कोई क्रेडेंशियल कॉन्फ़िगर नहीं है।",
+  "ui.stacksId.noCredentialsConfiguredForThis": "इस Homelab के लिए कोई क्रेडेंशियल कॉन्फ़िगर नहीं है।",
   "ui.stacksId.noLeaseAttached": "कोई लीज़ जुड़ी नहीं है",
-  "ui.stacksId.noStackkitDeploymentIdProvided":
-    "कोई StackKit डिप्लॉयमेंट ID नहीं दी गई",
+  "ui.stacksId.noStackkitDeploymentIdProvided": "कोई Homelab ID नहीं दी गई",
   "ui.stacksId.offeringSpec": "{vcpus} vCPU · {memory} GB RAM",
-  "ui.stacksId.pageTitle": "{name} - क्रेडेंशियल | kombify-Techstack",
+  "ui.stacksId.pageTitle": "{name} | kombify-Techstack",
   "ui.stacksId.query": "क्वेरी",
   "ui.stacksId.runtime": "रनटाइम",
   "ui.stacksId.series": "श्रृंखला",
@@ -3494,15 +3406,14 @@ export const hi: Record<string, string> = {
   "ui.stacksId.sshInfo": "SSH जानकारी",
   "ui.stacksId.sshOff": "SSH बंद",
   "ui.stacksId.sshOn": "SSH चालू",
-  "ui.stacksId.stackkitDeploymentServices": "StackKit डिप्लॉयमेंट सेवाएँ",
+  "ui.stacksId.stackkitDeploymentServices": "इस Homelab की सेवाएँ",
   "ui.stacksId.stackkitService": "StackKit सेवा",
   "ui.stacksId.start": "शुरू करें",
   "ui.stacksId.status": "स्थिति",
   "ui.stacksId.stop": "रोकें",
   "ui.stacksId.stopManagedServer": "प्रबंधित सर्वर रोकें?",
   "ui.stacksId.storedCredentials": "सहेजे गए क्रेडेंशियल",
-  "ui.stacksId.techstackWillBeginProviderCleanup":
-    "Techstack इस प्रबंधित रनटाइम के लिए प्रदाता क्लीनअप शुरू करेगा।",
+  "ui.stacksId.techstackWillBeginProviderCleanup": "Techstack इस प्रबंधित सर्वर को प्रदाता पर उसके डेटा सहित हटा देगा।",
   "ui.stacksId.theFollowingServicesNeedCredentials":
     "इन सेवाओं के लिए क्रेडेंशियल कॉन्फ़िगर करने होंगे:",
   "ui.stacksId.theServerShutsDownAnd":
@@ -3510,8 +3421,7 @@ export const hi: Record<string, string> = {
   "ui.stacksId.thisPermanentlyRemovesTheSelected":
     "यह चुने गए क्रेडेंशियल को स्थायी रूप से हटा देता है।",
   "ui.stacksId.username": "उपयोगकर्ता नाम",
-  "ui.stacksIdServersNew.addNodeKombifyTechstack":
-    "Node जोड़ें | kombify-Techstack",
+  "ui.stacksIdServersNew.addNodeKombifyTechstack": "सर्वर जोड़ें | kombify-Techstack",
   "ui.stacksIdServersServerId.activityHistory": "गतिविधि इतिहास",
   "ui.stacksIdServersServerId.addressesDomains": "पते और डोमेन",
   "ui.stacksIdServersServerId.agentId": "Agent ID",
@@ -3522,17 +3432,16 @@ export const hi: Record<string, string> = {
   "ui.stacksIdServersServerId.checking": "जाँच हो रही है...",
   "ui.stacksIdServersServerId.checks": "जाँचें",
   "ui.stacksIdServersServerId.confirmAction": "कार्रवाई की पुष्टि करें",
-  "ui.stacksIdServersServerId.confirmDecommission": "डिकमीशन की पुष्टि करें",
+  "ui.stacksIdServersServerId.confirmDecommission": "हटाने की पुष्टि करें",
   "ui.stacksIdServersServerId.confirmDetach": "अलग करने की पुष्टि करें",
   "ui.stacksIdServersServerId.couldNotLoadServerAccess":
     "सर्वर पहुँच संदर्भ लोड नहीं हो सका।",
   "ui.stacksIdServersServerId.cpuCores": "CPU कोर",
   "ui.stacksIdServersServerId.custodyResolutionFailed":
     "कस्टडी का समाधान विफल रहा।",
-  "ui.stacksIdServersServerId.decommissionFailed": "डिकमीशन विफल रहा।",
-  "ui.stacksIdServersServerId.decommissionServer": "सर्वर डिकमीशन करें",
-  "ui.stacksIdServersServerId.desiredListenersDurableReservationsAnd":
-    "इस Node के लिए वांछित लिस्नर, स्थायी आरक्षण और रनटाइम साक्ष्य।",
+  "ui.stacksIdServersServerId.decommissionFailed": "हटाना विफल रहा।",
+  "ui.stacksIdServersServerId.decommissionServer": "सर्वर हटाएँ",
+  "ui.stacksIdServersServerId.desiredListenersDurableReservationsAnd": "इस सर्वर के लिए वांछित लिस्नर, स्थायी आरक्षण और रनटाइम साक्ष्य।",
   "ui.stacksIdServersServerId.detachSelfOwnedServer":
     "स्वयं के स्वामित्व वाला सर्वर अलग करें",
   "ui.stacksIdServersServerId.detachServer": "सर्वर अलग करें",
@@ -3560,8 +3469,7 @@ export const hi: Record<string, string> = {
     "नवीनतम पूर्ण Guard स्नैपशॉट में कंपाइलर द्वारा घोषित कोई आरक्षण या बाउंड रनटाइम लिस्नर मौजूद नहीं था।",
   "ui.stacksIdServersServerId.noDesiredListenerIsReserved":
     "कोई वांछित लिस्नर आरक्षित नहीं है, और Guard अपना लिस्नर स्नैपशॉट पूरा नहीं कर सका, इसलिए रनटाइम लिस्नर अज्ञात बने हुए हैं।",
-  "ui.stacksIdServersServerId.noDesiredListenerIsReserved2":
-    "कोई वांछित लिस्नर आरक्षित नहीं है, और Guard ने अभी तक इस Node के लिए लिस्नर स्नैपशॉट रिपोर्ट नहीं किया है।",
+  "ui.stacksIdServersServerId.noDesiredListenerIsReserved2": "कोई वांछित लिस्नर आरक्षित नहीं है, और Guard ने अभी तक इस सर्वर के लिए लिस्नर स्नैपशॉट रिपोर्ट नहीं किया है।",
   "ui.stacksIdServersServerId.noHostAddressHasBeen":
     "कोई होस्ट पता रिपोर्ट नहीं हुआ।",
   "ui.stacksIdServersServerId.noObservedServiceEndpointsHave":
@@ -3578,8 +3486,7 @@ export const hi: Record<string, string> = {
     "कोई सेवा डोमेन रिपोर्ट नहीं हुआ।",
   "ui.stacksIdServersServerId.noServicePlacementIsRecorded":
     "इस सर्वर के लिए कोई सेवा प्लेसमेंट दर्ज नहीं है।",
-  "ui.stacksIdServersServerId.noStackkitDeploymentEvidenceHas":
-    "इस सर्वर ने कोई StackKit डिप्लॉयमेंट साक्ष्य रिपोर्ट नहीं किया है।",
+  "ui.stacksIdServersServerId.noStackkitDeploymentEvidenceHas": "इस सर्वर ने StackKit इंस्टॉलेशन का कोई साक्ष्य रिपोर्ट नहीं किया है।",
   "ui.stacksIdServersServerId.notDeclared": "घोषित नहीं",
   "ui.stacksIdServersServerId.operatingSystem": "ऑपरेटिंग सिस्टम",
   "ui.stacksIdServersServerId.portAllocations": "पोर्ट आवंटन",
@@ -3599,8 +3506,7 @@ export const hi: Record<string, string> = {
   "ui.stacksIdServersServerId.serverDetailSections": "सर्वर विवरण अनुभाग",
   "ui.stacksIdServersServerId.serverDetailsKombifyTechstack":
     "सर्वर विवरण | kombify-Techstack",
-  "ui.stacksIdServersServerId.serverGenerationDecommissioned":
-    "सर्वर जनरेशन डिकमीशन हो गई",
+  "ui.stacksIdServersServerId.serverGenerationDecommissioned": "सर्वर जनरेशन हटा दी गई",
   "ui.stacksIdServersServerId.serverSettings": "सर्वर सेटिंग्स",
   "ui.stacksIdServersServerId.serviceEndpoints": "सेवा एंडपॉइंट",
   "ui.stacksIdServersServerId.servicesOnThisServerMay":
@@ -3612,16 +3518,13 @@ export const hi: Record<string, string> = {
     "पुरानी प्रदाता जनरेशन को दोबारा शुरू नहीं किया जा सकता। प्रदाता के पास सटीक अनुपस्थिति और क्षमता की मुक्ति सत्यापित होने के बाद ऊपर दिए गए दोबारा बनाएँ का उपयोग करें।",
   "ui.stacksIdServersServerId.thisChangesTheSelectedServer":
     "यह चुने गए सर्वर को उसके एनरोल किए गए StackKit Agent के ज़रिए बदलता है।",
-  "ui.stacksIdServersServerId.thisIsConfiguredStackkitIntent":
-    "यह कॉन्फ़िगर किया गया StackKit इंटेंट है; Guard ने अभी तक मेल खाता डिप्लॉयमेंट साक्ष्य रिपोर्ट नहीं किया है।",
+  "ui.stacksIdServersServerId.thisIsConfiguredStackkitIntent": "यह कॉन्फ़िगर किया गया StackKit इंटेंट है; Guard ने अभी तक मेल खाता इंस्टॉलेशन साक्ष्य रिपोर्ट नहीं किया है।",
   "ui.stacksIdServersServerId.thisOnlyArchivesTheStale":
     "यह केवल पुराने Techstack कस्टडी रिकॉर्ड को संग्रहीत करता है। प्रदाता के पास कुछ भी नहीं हटाता।",
-  "ui.stacksIdServersServerId.thisServerHasNoManaged":
-    "इस सर्वर के पास कोई प्रबंधित प्रदाता लीज़ नहीं है। इसकी दर्ज कस्टडी फ़िलहाल न तो प्रबंधित डिकमीशन की अनुमति देती है और न ही स्वयं के स्वामित्व वाले सर्वर को अलग करने की।",
+  "ui.stacksIdServersServerId.thisServerHasNoManaged": "इस सर्वर के पास कोई प्रबंधित प्रदाता लीज़ नहीं है। इसकी दर्ज कस्टडी फ़िलहाल न तो प्रबंधित सर्वर को हटाने की अनुमति देती है और न ही स्वयं के स्वामित्व वाले सर्वर को अलग करने की।",
   "ui.stacksIdServersServerId.thisServerIsALegacy":
     "यह सर्वर एक लेगेसी या अनबाउंड कस्टडी रिकॉर्ड है। पुष्टि करें कि प्रदाता संसाधन पहले ही हटाया जा चुका है; Techstack केवल इस रिकॉर्ड को संग्रहीत करेगा और किसी प्रदाता संसाधन को न कॉल करेगा, न हटाएगा।",
-  "ui.stacksIdServersServerId.thisServerIsRegisteredThrough":
-    "यह सर्वर वर्कर इन्वेंटरी के ज़रिए पंजीकृत है; प्रबंधित रनटाइम पहुँच कार्रवाइयाँ जुड़ी हुई नहीं हैं।",
+  "ui.stacksIdServersServerId.thisServerIsRegisteredThrough": "यह सर्वर सर्वर इन्वेंटरी के ज़रिए पंजीकृत है; प्रबंधित रनटाइम पहुँच कार्रवाइयाँ जुड़ी हुई नहीं हैं।",
   "ui.standardBundle.additionalComputeNodeForStackKit":
     "StackKit सेवाओं की प्लेसमेंट के लिए अतिरिक्त कंप्यूट Node।",
   "ui.standardBundle.additionalNodeIntendedForStorage":
@@ -3684,11 +3587,9 @@ export const hi: Record<string, string> = {
     "{name}: CPU {cpu} प्रतिशत, मेमोरी {ram} प्रतिशत, डिस्क {disk} प्रतिशत, {services} सेवाएँ",
   "ui.strata.job": "जॉब",
   "ui.strata.noCpuCurve": "{name}: पिछले 24 घंटों का कोई CPU डेटा नहीं",
-  "ui.strata.noNodeHasReportedYet": "अभी तक किसी Node ने रिपोर्ट नहीं की।",
-  "ui.strata.nodesNeedAttention.one":
-    "{total} Nodes में से {count} पर ध्यान देने की ज़रूरत है।",
-  "ui.strata.nodesNeedAttention.other":
-    "{total} Nodes में से {count} पर ध्यान देने की ज़रूरत है।",
+  "ui.strata.noNodeHasReportedYet": "अभी तक किसी सर्वर ने रिपोर्ट नहीं की।",
+  "ui.strata.nodesNeedAttention.one": "{total} सर्वर में से {count} पर ध्यान देने की ज़रूरत है।",
+  "ui.strata.nodesNeedAttention.other": "{total} सर्वर में से {count} पर ध्यान देने की ज़रूरत है।",
   "ui.strata.notShown": "नहीं दिखाया गया: {items} पढ़े नहीं जा सके।",
   "ui.strata.provisioning": "प्रोविज़निंग",
   "ui.strata.quiet": "शांत",
@@ -3708,7 +3609,7 @@ export const hi: Record<string, string> = {
   "ui.strataDashboard.middleRing": "मध्य रिंग",
   "ui.strataDashboard.monitoring": "मॉनिटरिंग →",
   "ui.strataDashboard.noCpuDataInThe": "पिछले 24 घंटों में कोई CPU डेटा नहीं",
-  "ui.strataDashboard.nodes": "Nodes",
+  "ui.strataDashboard.nodes": "सर्वर",
   "ui.strataDashboard.nothingHappenedNoRolloutsRestores":
     "कुछ नहीं हुआ: कोई रोलआउट, रिस्टोर, अलर्ट या आउटेज नहीं।",
   "ui.strataDashboard.outerRing": "बाहरी रिंग",
@@ -3723,8 +3624,7 @@ export const hi: Record<string, string> = {
   "ui.substrateEnrollment.preparing": "तैयार हो रहा है...",
   "ui.substrateEnrollment.proxmoxHypervisorConnection":
     "Proxmox हाइपरवाइज़र कनेक्शन",
-  "ui.substrateEnrollment.theHypervisorHostsYourNodes":
-    "हाइपरवाइज़र आपके Nodes को होस्ट करता है। StackKits Ubuntu गेस्ट के अंदर चलते हैं। गेस्ट प्रबंधन तब चालू होता है जब उसका स्थानीय Proxmox क्लाइंट कॉन्फ़िगर हो जाए और आप कनेक्शन को अधिकृत करें। मौजूदा गेस्ट हटाने की कस्टडी से बाहर रहते हैं।",
+  "ui.substrateEnrollment.theHypervisorHostsYourNodes": "हाइपरवाइज़र आपके सर्वर को होस्ट करता है। StackKits Ubuntu गेस्ट के अंदर चलते हैं। गेस्ट प्रबंधन तब चालू होता है जब उसका स्थानीय Proxmox क्लाइंट कॉन्फ़िगर हो जाए और आप कनेक्शन को अधिकृत करें। मौजूदा गेस्ट हटाने की कस्टडी से बाहर रहते हैं।",
   "ui.substrates.theRuntimeDidNotReturn":
     "रनटाइम ने अनुरोधित डेटा नहीं लौटाया।",
   "ui.taskStatus.aVerifiedStackKitDeploymentMust":
@@ -3738,13 +3638,13 @@ export const hi: Record<string, string> = {
   "ui.taskStatus.buildingServiceList": "सेवा सूची बनाई जा रही है",
   "ui.taskStatus.callingTheStackKitsRuntimeAction":
     "जनरेट की गई Cloud Kit विनिर्देशिका लागू करने वाली StackKits रनटाइम कार्रवाई को कॉल किया जा रहा है।",
-  "ui.taskStatus.checkingOpenTofu": "OpenTofu की जाँच हो रही है",
-  "ui.taskStatus.checkingRolloutTarget": "रोलआउट लक्ष्य की जाँच हो रही है",
-  "ui.taskStatus.checkingTerramate": "Terramate की जाँच हो रही है",
+  "ui.taskStatus.checkingOpenTofu": "सेटअप टूल जाँचे जा रहे हैं",
+  "ui.taskStatus.checkingRolloutTarget": "आपका सर्वर जाँचा जा रहा है",
+  "ui.taskStatus.checkingTerramate": "अपडेट टूल जाँचे जा रहे हैं",
   "ui.taskStatus.checkingThatLoginProtectedServices":
     "जाँच हो रही है कि रोलआउट के बाद लॉगिन-सुरक्षित सेवाएँ और मॉनिटरिंग संकेत उपलब्ध हैं।",
   "ui.taskStatus.checkingTheTerramateToolchainWhen":
-    "जब चुने गए StackKit जीवनचक्र को ज़रूरत हो, तब Terramate टूलचेन की जाँच हो रही है।",
+    "आपके सेटअप को ज़रूरत होने पर, आपके Homelab को अपडेट रखने वाले टूल जाँचे जा रहे हैं।",
   "ui.taskStatus.checkingYourChoices": "आपके चुनाव जाँचे जा रहे हैं",
   "ui.taskStatus.collectingServiceMetadataExposedBy":
     "StackKits रोलआउट द्वारा उपलब्ध कराया गया सेवा मेटाडेटा एकत्र किया जा रहा है।",
@@ -3778,7 +3678,7 @@ export const hi: Record<string, string> = {
   "ui.taskStatus.eachServiceGetsScopedPermissions":
     "हर सेवा को सीमित दायरे की अनुमतियाँ मिलती हैं। जहाँ संभव हो TLS अपने-आप चालू होता है, और सेवाएँ डिफ़ॉल्ट रूप से आइसोलेट रहती हैं।",
   "ui.taskStatus.ensuringTheDeploymentTargetSatisfies":
-    "सुनिश्चित किया जा रहा है कि डिप्लॉयमेंट लक्ष्य StackKit रनटाइम की आवश्यकताएँ पूरी करता है।",
+    "यह सुनिश्चित किया जा रहा है कि आपका सर्वर आपके Homelab की आवश्यकताएँ पूरी करता है।",
   "ui.taskStatus.findingTheBestStackKitFor":
     "आपके लिए सबसे अच्छा StackKit खोजा जा रहा है",
   "ui.taskStatus.generateDeploymentArtifacts":
@@ -3802,7 +3702,7 @@ export const hi: Record<string, string> = {
   "ui.taskStatus.networkSettingsAreDerivedFrom":
     "नेटवर्क सेटिंग्स आपके एक्सेस मोड से तय होती हैं। केवल-स्थानीय आंतरिक Docker नेटवर्किंग इस्तेमाल करता है; रिमोट एक्सेस लेन के अनुरूप निजी मेश या प्रबंधित एज रूट जोड़ता है।",
   "ui.taskStatus.onceThisSucceedsTheNode":
-    "एक बार यह सफल होने पर, भले ही तैयारी या रोलआउट बाद में विफल हो जाए, Node प्रोजेक्शन Techstack में दिखता रहता है।",
+    "इसके सफल होने के बाद, तैयारी या रोलआउट बाद में विफल हो जाए तब भी आपका सर्वर Techstack में दिखता रहेगा।",
   "ui.taskStatus.opentofuReadinessIsPartOf":
     "OpenTofu की तैयारी StackKits CLI प्रिप कॉन्ट्रैक्ट का हिस्सा है, Techstack के स्वामित्व वाला अलग बूटस्ट्रैप मार्ग नहीं।",
   "ui.taskStatus.persistingConfiguration":
@@ -3810,13 +3710,13 @@ export const hi: Record<string, string> = {
   "ui.taskStatus.persistingRolloutSpec":
     "रोलआउट स्पेक स्थायी रूप से सहेजा जा रहा है",
   "ui.taskStatus.preparingDocker": "Docker तैयार हो रहा है",
-  "ui.taskStatus.preparingNodeRegistration": "Node पंजीकरण तैयार हो रहा है",
+  "ui.taskStatus.preparingNodeRegistration": "सर्वर पंजीकरण तैयार हो रहा है",
   "ui.taskStatus.preparingOpenTelemetryHandoffDataFor":
-    "मॉनिटरिंग और ऑपरेशन के लिए OpenTelemetry हैंडऑफ़ डेटा तैयार हो रहा है।",
-  "ui.taskStatus.preparingStackKitsRuntime": "StackKits रनटाइम तैयार हो रहा है",
-  "ui.taskStatus.preparingTelemetry": "टेलीमेट्री तैयार हो रही है",
+    "मॉनिटरिंग तैयार की जा रही है ताकि आप देख सकें कि आपका Homelab कैसा चल रहा है।",
+  "ui.taskStatus.preparingStackKitsRuntime": "आपका सर्वर तैयार किया जा रहा है",
+  "ui.taskStatus.preparingTelemetry": "मॉनिटरिंग तैयार की जा रही है",
   "ui.taskStatus.preparingTheRuntimeMetadataUsed":
-    "मॉनिटरिंग, ऑपरेशन और Runtime Intelligence Layer द्वारा उपयोग किया जाने वाला रनटाइम मेटाडेटा तैयार हो रहा है।",
+    "वह जानकारी तैयार की जा रही है जिस पर मॉनिटरिंग और आपके Homelab की रोज़मर्रा की देखभाल निर्भर है।",
   "ui.taskStatus.preparingToolsApplyingTheStackKit":
     "टूल तैयार हो रहे हैं, StackKit लागू हो रहा है और सेवाएँ पढ़ी जा रही हैं",
   "ui.taskStatus.provisionManagedRuntime": "प्रबंधित रनटाइम प्रोविज़न करें",
@@ -3826,8 +3726,8 @@ export const hi: Record<string, string> = {
   "ui.taskStatus.renderingTheStackKitInfrastructureFiles":
     "रोलआउट एडाप्टर के लिए ज़रूरी StackKit इन्फ्रास्ट्रक्चर फ़ाइलें रेंडर हो रही हैं।",
   "ui.taskStatus.requestingManagedCloudNode":
-    "प्रबंधित क्लाउड Node का अनुरोध हो रहा है",
-  "ui.taskStatus.requestingManagedNode": "प्रबंधित Node का अनुरोध हो रहा है",
+    "प्रबंधित क्लाउड सर्वर का अनुरोध हो रहा है",
+  "ui.taskStatus.requestingManagedNode": "प्रबंधित सर्वर का अनुरोध हो रहा है",
   "ui.taskStatus.reservingTheSubscriptionVMConnecting":
     "सब्सक्रिप्शन VM आरक्षित हो रही है, रनटाइम कनेक्ट हो रहा है और टेलीमेट्री तैयार हो रही है",
   "ui.taskStatus.rollOutCloudKit": "Cloud Kit रोल आउट करें",
@@ -3836,10 +3736,10 @@ export const hi: Record<string, string> = {
   "ui.taskStatus.settingUpPartNamed":
     "भाग {position} / {total} सेट अप हो रहा है: {name}",
   "ui.taskStatus.runningRestoreDrill": "रिस्टोर ड्रिल चल रही है",
-  "ui.taskStatus.runningSimulatedUpdateGate": "सिम्युलेटेड अपडेट गेट चल रहा है",
-  "ui.taskStatus.runningSimulationGate": "सिमुलेशन गेट चल रहा है",
+  "ui.taskStatus.runningSimulatedUpdateGate": "पहले अपडेट का परीक्षण",
+  "ui.taskStatus.runningSimulationGate": "पहले अपडेट का परीक्षण",
   "ui.taskStatus.runningTheStackKitsCLIPrepare":
-    "प्रबंधित VPS पर StackKits CLI प्रिपेयर कॉन्ट्रैक्ट चलाया जा रहा है।",
+    "आपका Homelab सेट होने से पहले आपके सर्वर को जो चाहिए, उसे इंस्टॉल और जाँचा जा रहा है।",
   "ui.taskStatus.savingUnifiedSpecYamlSo":
     "unified-spec.yaml सहेजी जा रही है ताकि रोलआउट दोहराने योग्य और ऑडिट योग्य रहे।",
   "ui.taskStatus.savingYourChoicesToThe":
@@ -3851,7 +3751,7 @@ export const hi: Record<string, string> = {
     "सुरक्षा कॉन्फ़िगरेशन सेट हो रहा है",
   "ui.taskStatus.stackkitsAreCuratedInfrastructureTemplates":
     "StackKits चुने हुए इन्फ्रास्ट्रक्चर टेम्पलेट हैं। सिस्टम ऐसा टेम्पलेट चुनता है जो न्यूनतम ओवरहेड के साथ आपकी चुनी हुई सुविधाओं को कवर करे।",
-  "ui.taskStatus.startingTelemetryHandoff": "टेलीमेट्री हैंडऑफ़ शुरू हो रहा है",
+  "ui.taskStatus.startingTelemetryHandoff": "मॉनिटरिंग शुरू हो रही है",
   "ui.taskStatus.techstackConsumesStackKitArtifactsHere":
     "Techstack यहाँ StackKit आर्टिफ़ैक्ट का उपयोग करता है; उन्हें लागू करने की ज़िम्मेदारी StackKits की ही रहती है।",
   "ui.taskStatus.techstackRecordsTheManagedTarget":
@@ -3869,7 +3769,7 @@ export const hi: Record<string, string> = {
   "ui.taskStatus.theSimulationGateProtectsThe":
     "सिमुलेशन गेट पहले रोलआउट और बाद के अपडेट फ़्लो को असुरक्षित बदलावों से बचाता है।",
   "ui.taskStatus.theSpecContainsAllConfiguration":
-    "स्पेक में आपके Homelab को डिप्लॉय करने के लिए ज़रूरी सारा कॉन्फ़िगरेशन है। इसे वर्ज़न कंट्रोल में रखा जा सकता है और किसी भी संगत Node पर दोहराया जा सकता है।",
+    "स्पेक में आपके Homelab को डिप्लॉय करने के लिए ज़रूरी सारा कॉन्फ़िगरेशन है। इसे वर्ज़न कंट्रोल में रखा जा सकता है और किसी भी संगत सर्वर पर दोहराया जा सकता है।",
   "ui.taskStatus.theUnifiedSpecIsThe":
     "एकीकृत स्पेक StackKits और रनटाइम सत्यापन का मानक इनपुट है।",
   "ui.taskStatus.thisChecksFeatureSelectionsAccess":
@@ -3888,7 +3788,7 @@ export const hi: Record<string, string> = {
   "ui.taskStatus.validatingTheBackupAndRestore":
     "StackKit डिप्लॉयमेंट को सत्यापित चिह्नित करने से पहले बैकअप और रिस्टोर मार्ग सत्यापित हो रहा है।",
   "ui.taskStatus.validatingTheUpdatePathBefore":
-    "प्रबंधित रनटाइम पर रोलआउट लागू करने से पहले अपडेट मार्ग सत्यापित हो रहा है।",
+    "अपडेट को आपके सर्वर पर लागू करने से पहले जाँचा जा रहा है कि वह काम करता है।",
   "ui.taskStatus.verificationConfirmsThatTheStackKit":
     "सत्यापन पुष्टि करता है कि StackKit डिप्लॉयमेंट उपयोग योग्य है, सिर्फ़ यह नहीं कि फ़ाइलें जनरेट हो गईं।",
   "ui.taskStatus.verifyRollout": "रोलआउट सत्यापित करें",
@@ -3898,7 +3798,7 @@ export const hi: Record<string, string> = {
   "ui.taskStatus.verifyingThatAllSelectedOptions":
     "जाँच हो रही है कि सभी चुने गए विकल्प मान्य हैं और एक-दूसरे के साथ संगत हैं।",
   "ui.taskStatus.verifyingTheInfrastructureToolchainNeeded":
-    "StackKits को चाहिए वाली इन्फ्रास्ट्रक्चर टूलचेन सत्यापित हो रही है।",
+    "यह सुनिश्चित किया जा रहा है कि आपके सर्वर पर आपका Homelab सेट करने के लिए ज़रूरी टूल मौजूद हैं।",
   "ui.taskStatus.yourChosenAuthMethodIs":
     "आपका चुना हुआ ऑथ तरीका सभी सेवाओं पर लागू होता है। मल्टी-यूज़र सेटअप को अपने-आप ग्रुप-आधारित अनुमतियाँ मिलती हैं।",
   "ui.taskUpdates.anUnexpectedErrorOccurred": "एक अप्रत्याशित त्रुटि हुई",
@@ -4062,23 +3962,17 @@ export const hi: Record<string, string> = {
     "अलग Home Assistant OS गेस्ट संसाधन चुनें।",
   "ui.wizardRuns.thisRunHasNoRollout":
     "इस रन में रद्द करने के लिए कोई रोलआउट नहीं है।",
-  "ui.worker.registryLink": "वर्कर रजिस्ट्री लिंक",
+  "ui.worker.registryLink": "सर्वर रजिस्ट्री लिंक",
   "ui.worker.registryUrlError": "रजिस्ट्री URL अपने-आप तय नहीं हो सका: {error}",
-  "ui.worker.runInstallMany":
-    "ऊपर का इंस्टॉल कमांड कम से कम {count} Nodes पर चलाएँ, फिर ऑपरेशन साक्ष्य द्वारा कनेक्शन की पुष्टि होने का इंतज़ार करें।",
-  "ui.worker.runInstallOne":
-    "ऊपर का इंस्टॉल कमांड अपने Node पर चलाएँ, फिर ऑपरेशन साक्ष्य द्वारा कनेक्शन की पुष्टि होने का इंतज़ार करें।",
+  "ui.worker.runInstallMany": "ऊपर का इंस्टॉल कमांड कम से कम {count} सर्वर पर चलाएँ, फिर ऑपरेशन साक्ष्य द्वारा कनेक्शन की पुष्टि होने का इंतज़ार करें।",
+  "ui.worker.runInstallOne": "ऊपर का इंस्टॉल कमांड अपने सर्वर पर चलाएँ, फिर ऑपरेशन साक्ष्य द्वारा कनेक्शन की पुष्टि होने का इंतज़ार करें।",
   "ui.worker.verifiedConnected": "सत्यापित रूप से जुड़े: {count}",
-  "ui.worker.waitingVerified":
-    "सत्यापित वर्कर की प्रतीक्षा ({connected}/{required})",
+  "ui.worker.waitingVerified": "सत्यापित सर्वर की प्रतीक्षा ({connected}/{required})",
   "ui.workerRegistrationCard.installCommand": "इंस्टॉल कमांड:",
-  "ui.workerRegistrationCard.installCommandForNewWorkers":
-    "नए वर्कर के लिए इंस्टॉल कमांड:",
+  "ui.workerRegistrationCard.installCommandForNewWorkers": "नए सर्वर के लिए इंस्टॉल कमांड:",
   "ui.workerRegistrationCard.nextStep": "अगला चरण:",
-  "ui.workerRegistrationCard.operationsEvidenceIsRequiredBefore":
-    "जुड़े हुए Nodes की पुष्टि से पहले ऑपरेशन साक्ष्य आवश्यक है।",
-  "ui.workerRegistrationCard.workersConnectedVerified":
-    "जुड़े हुए वर्कर (सत्यापित)",
+  "ui.workerRegistrationCard.operationsEvidenceIsRequiredBefore": "जुड़े हुए सर्वर की पुष्टि से पहले ऑपरेशन साक्ष्य आवश्यक है।",
+  "ui.workerRegistrationCard.workersConnectedVerified": "जुड़े हुए सर्वर (सत्यापित)",
   "wizard.leave.confirm":
-    "क्या आप इस पेज को छोड़ना चाहते हैं? आपके दर्ज किए गए उत्तर सहेजे नहीं गए हैं।",
+    "आपके दर्ज किए गए जवाब खो जाएँगे।",
 };

@@ -18,12 +18,13 @@ type MemoryStore struct {
 	findings []FindingRecord
 	repairs  []Repair
 	policies map[string]AutoRepairPolicy
+	versions map[string][]PolicyVersion
 	sink     AlertSink
 }
 
 // NewMemoryStore returns an empty store. sink may be nil.
 func NewMemoryStore(sink AlertSink) *MemoryStore {
-	return &MemoryStore{postures: map[string]*Posture{}, policies: map[string]AutoRepairPolicy{}, sink: sink}
+	return &MemoryStore{postures: map[string]*Posture{}, policies: map[string]AutoRepairPolicy{}, versions: map[string][]PolicyVersion{}, sink: sink}
 }
 
 func key(tenantID, workerID string) string { return tenantID + "\x00" + workerID }
@@ -234,9 +235,60 @@ func (s *MemoryStore) GetAutoRepair(_ context.Context, tenantID, workerID string
 	return &policy, nil
 }
 
-func (s *MemoryStore) SetAutoRepair(_ context.Context, policy AutoRepairPolicy) error {
+func (s *MemoryStore) SetAutoRepair(_ context.Context, policy AutoRepairPolicy) (*AutoRepairPolicy, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.policies[key(policy.TenantID, policy.WorkerID)] = policy
+	k := key(policy.TenantID, policy.WorkerID)
+	previous, ok := s.policies[k]
+	policy.PolicyID, policy.Version = uuid.NewString(), 1
+	if ok && previous.PolicyID != "" {
+		policy.PolicyID, policy.Version = previous.PolicyID, previous.Version+1
+	}
+	at := policy.UpdatedAt
+	for i := range s.versions[k] {
+		if s.versions[k][i].SupersededAt == nil {
+			s.versions[k][i].SupersededAt = &at
+		}
+	}
+	s.versions[k] = append(s.versions[k], versionOf(policy))
+	s.policies[k] = policy
+	copied := policy
+	return &copied, nil
+}
+
+func versionOf(policy AutoRepairPolicy) PolicyVersion {
+	return PolicyVersion{PolicyID: policy.PolicyID, Version: policy.Version, Enabled: policy.Enabled,
+		Controls: append([]string(nil), policy.Controls...), ExpiresAt: policy.ExpiresAt, ApprovedAt: policy.ApprovedAt}
+}
+
+func (s *MemoryStore) AcceptLocalOperation(_ context.Context, tenantID, workerID string, ref LocalRef, decide func(LocalState) (*Repair, error)) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state := LocalState{History: s.history(tenantID, workerID)}
+	existing := -1
+	for i := range s.repairs {
+		r := s.repairs[i]
+		if r.TenantID == tenantID && r.WorkerID == workerID && r.Local != nil && r.Local.OperationID == ref.OperationID {
+			existing = i
+			copied := r
+			state.Existing = &copied
+		}
+	}
+	for _, version := range s.versions[key(tenantID, workerID)] {
+		if version.PolicyID == ref.PolicyID && version.Version == ref.PolicyVersion {
+			copied := version
+			state.Version = &copied
+		}
+	}
+	record, err := decide(state)
+	if err != nil || record == nil {
+		return err
+	}
+	record.TenantID, record.WorkerID = tenantID, workerID
+	if existing >= 0 {
+		s.repairs[existing] = *record
+		return nil
+	}
+	s.repairs = append(s.repairs, *record)
 	return nil
 }

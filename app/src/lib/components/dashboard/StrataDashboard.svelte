@@ -286,7 +286,7 @@
     >
       <!-- Below 48rem the fixed menu toggle sits top-left: the title moves
            beside it and the date line is dropped. -->
-      <div class="flex min-w-0 flex-col gap-1.5 pl-12 min-[48rem]:pl-0">
+      <div class="flex min-w-0 flex-col gap-1.5">
         <div
           class="hidden items-center gap-3.5 font-mono text-[11px] tracking-[0.18em] text-muted-foreground uppercase min-[48rem]:flex"
         >

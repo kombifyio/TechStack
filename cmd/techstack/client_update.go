@@ -22,7 +22,7 @@ import (
 )
 
 // `techstack client-update` is the Go half of the Windows client update
-// consumer (NATIVE-CLIENT-PLATFORM-STANDARD section 7). It fetches the channel
+// consumer (DESKTOP-FOUNDATION-STANDARD.md §5.7). It fetches the channel
 // manifest, verifies its signature against the key embedded below, refuses
 // downgrades and channels below the supported floor, downloads the package,
 // checks its size and SHA-256, and stages it with a descriptor. It never
@@ -30,7 +30,7 @@ import (
 // before it spawns the runtime.
 
 // clientUpdateKeyID and clientUpdatePublicKeyPEM identify the production
-// update-signing key (DESKTOP-CLIENT-DISTRIBUTION-STANDARD section 4). Only
+// update-signing key (DESKTOP-FOUNDATION-STANDARD.md §6.4). Only
 // manifests signed by an embedded key are accepted; there is no runtime
 // override, because a user-writable trust setting would let any local process
 // have the client install its own package.

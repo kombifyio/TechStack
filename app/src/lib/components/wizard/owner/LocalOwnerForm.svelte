@@ -1,7 +1,9 @@
 <script lang="ts">
   import type { StackConfig } from "#lib/wizard/index.js";
   import { tr } from "#lib/i18n.svelte.js";
+  import { useWizardField } from "#lib/wizard/validation-context.js";
   let { config }: { config: StackConfig } = $props();
+  const emailField = useWizardField("owner-email");
 </script>
 
 <div class="owner-fields">
@@ -13,10 +15,16 @@
       bind:value={config.owner.email}
       autocomplete="email"
       required
-      aria-describedby="owner-email-guidance"
+      aria-invalid={emailField.invalid ? "true" : undefined}
+      aria-describedby={emailField.describedBy("owner-email-guidance")}
       placeholder="you@example.com"
     />
   </label>
+  {#if emailField.invalid}
+    <p id={emailField.errorId} class="field-error" data-testid="owner-email-error">
+      {emailField.message}
+    </p>
+  {/if}
   <label for="owner-display-name"
     ><span>{tr("wizard.login.profile.name")}</span>
     <input
@@ -58,6 +66,9 @@
   input:focus-visible {
     outline: 2px solid var(--ring);
     outline-offset: 2px;
+  }
+  .field-error {
+    color: var(--destructive);
   }
   p {
     grid-column: 1 / -1;

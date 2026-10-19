@@ -23,8 +23,13 @@ import (
 // development only and is refused unless TECHSTACK_ENV names one of them.
 const EnvIssuerKey = "TECHSTACK_ADVANCED_ISSUER_KEY"
 
-// envOverrideIssuerID names the issuer of an env-provided test key.
-const envOverrideIssuerID = "techstack.env-override"
+// TrustedIssuerID is the only Advanced issuer id StackKits accepts
+// (advancedcapability.TrustedIssuerID). The stored issuer_id
+// ("techstack.<uuid>") stays the installation label that governed preparation
+// and Delivery attest; it is never presented on the wire, or every signed
+// Advanced operation is denied as advanced_capability_untrusted_key. The key id
+// derives from the public key alone, so both name the same identity.
+const TrustedIssuerID = "techstack"
 
 // ErrTrustBindingMissing reports that a deployment's host has not imported
 // this installation's trust bundle yet.
@@ -186,11 +191,11 @@ func OpenWithKeyCustody(ctx context.Context, database, keyDatabase *db.DB, encry
 	if err != nil {
 		return nil, err
 	}
-	issuerID, key, err := store.LoadExistingKey(ctx)
+	_, key, err := store.LoadExistingKey(ctx)
 	if err != nil {
 		return nil, errors.New("advanced issuer requires retained signing identity from governed preparation")
 	}
-	return New(Config{IssuerID: issuerID, PrivateKey: key, Recorder: store, Now: time.Now})
+	return New(Config{IssuerID: TrustedIssuerID, PrivateKey: key, Recorder: store, Now: time.Now})
 }
 
 func openStore(ctx context.Context, store *PostgresStore, err error) (*Issuer, error) {
@@ -205,13 +210,13 @@ func openStore(ctx context.Context, store *PostgresStore, err error) (*Issuer, e
 		if seedErr != nil {
 			return nil, fmt.Errorf("%s: %w", EnvIssuerKey, seedErr)
 		}
-		return New(Config{IssuerID: envOverrideIssuerID, PrivateKey: key, Recorder: store})
+		return New(Config{IssuerID: TrustedIssuerID, PrivateKey: key, Recorder: store})
 	}
-	issuerID, key, err := store.LoadOrCreateKey(ctx)
+	_, key, err := store.LoadOrCreateKey(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return New(Config{IssuerID: issuerID, PrivateKey: key, Recorder: store, Now: time.Now})
+	return New(Config{IssuerID: TrustedIssuerID, PrivateKey: key, Recorder: store, Now: time.Now})
 }
 
 func envOverrideAllowed(environment string) bool {

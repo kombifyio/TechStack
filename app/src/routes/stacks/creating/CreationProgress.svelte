@@ -2,6 +2,7 @@
   import { creation } from "./creation-controller.svelte.js";
   import { tr } from "#lib/i18n.svelte.js";
   import GroupedTaskList from "#lib/components/ui/GroupedTaskList.svelte";
+  import ErrorCallout from "#lib/components/ui/ErrorCallout.svelte";
 
   interface Props {
     /** While the run works the list is a reel centred on the active phase. */
@@ -40,26 +41,31 @@
     </div>
   {/if}
   {#if creation.currentStepInfo?.detail}
-    <p class="mt-3 text-xs leading-relaxed text-muted-foreground/70">
-      {creation.currentStepInfo.detail}
-    </p>
+    <!-- How it works is for people who ask; the lines above are enough to
+         follow along. -->
+    <details class="mt-3 text-xs text-muted-foreground">
+      <summary class="cursor-pointer select-none">
+        {tr("creation.technical.summary")}
+      </summary>
+      <p class="mt-1 leading-relaxed">
+        {creation.currentStepInfo.detail}
+      </p>
+    </details>
   {/if}
 {/snippet}
 
 <!-- Progress card with the phase list -->
 <div data-kx="plate" class="p-6">
   {#if creation.initError}
-    <div
-      class="mb-6 p-4 rounded-xl border border-destructive/30 bg-destructive/10"
-      data-testid="init-error"
-    >
-      <p class="text-destructive font-medium">{tr("ui.stacksCreatingCreationProgress.setupCannotContinue")}</p>
-      <p class="text-sm text-destructive/80 mt-1">
-        {creation.initError}
-      </p>
+    <div class="mb-6">
+      <ErrorCallout
+        title={tr("ui.stacksCreatingCreationProgress.setupCannotContinue")}
+        message={creation.initError}
+        testId="init-error"
+      />
       <a
         href="/stacks/new"
-        class="inline-block mt-3 text-sm text-primary hover:text-primary/80 underline"
+        class="mt-3 inline-block text-sm text-primary hover:text-primary/80 underline"
       >
         {tr("ui.stacksCreatingCreationProgress.backToSetupWizard")}
       </a>

@@ -2,6 +2,7 @@
   import { tr } from "#lib/i18n.svelte.js";
   import { Sparkles } from "@lucide/svelte";
   import ErrorAiHandoverButton from "#lib/components/support/ErrorAiHandoverButton.svelte";
+  import ErrorCallout from "#lib/components/ui/ErrorCallout.svelte";
   import { creation } from "./creation-controller.svelte.js";
 </script>
 
@@ -107,20 +108,25 @@
           {/if}
 
           {#if creation.retryError}
-            <div class="bg-destructive/10 rounded-xl p-3 mb-6">
-              <p class="text-sm text-destructive">{creation.retryError}</p>
-            </div>
+            <ErrorCallout
+              class="mb-6"
+              message={creation.retryError}
+              testId="creation-retry-error"
+            />
           {/if}
 
-          <!-- Detailed error info -->
+          <!-- Raw diagnostics are for support: collapsed, with a copy button. -->
           {#if creation.failedTask?.errorDetails}
-            <div
+            <details
               class="bg-destructive/10 border border-destructive/30 rounded-xl p-4 mb-6"
+              data-testid="creation-failure-technical-details"
             >
-              <div class="flex items-center justify-between gap-3">
-                <p class="text-destructive text-sm font-medium">
-                  {tr("ui.stacksCreatingCreationFailure.errorDetails")}
-                </p>
+              <summary
+                class="cursor-pointer select-none text-destructive text-sm font-medium"
+              >
+                {tr("creation.technical.summary")}
+              </summary>
+              <div class="mt-3 flex items-center justify-end gap-3">
                 <button
                   type="button"
                   data-kx="control"
@@ -128,13 +134,21 @@
                   data-testid="copy-error-details-button"
                   onclick={creation.copyErrorDetails}
                 >
-                  {creation.copiedErrorDetails ? "Copied" : tr("ui.stacksCreatingCreationFailure.copyErrorDetails")}
+                  {creation.copiedErrorDetails
+                    ? tr("ui.common.copiedCheck")
+                    : tr("ui.stacksCreatingCreationFailure.copyErrorDetails")}
                 </button>
               </div>
+              <!-- A scrollable code block must be reachable by keyboard. -->
+              <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
               <pre
                 data-testid="error-details-text"
+                tabindex="0"
                 class="mt-3 max-h-48 overflow-x-auto overflow-y-auto whitespace-pre-wrap rounded border border-destructive/20 bg-background p-3 text-xs text-foreground">{creation.failedTask.errorDetails}</pre>
-            </div>
+              <p class="sr-only" role="status">
+                {creation.copiedErrorDetails ? tr("ui.common.copiedCheck") : ""}
+              </p>
+            </details>
           {/if}
 
           <!-- Intelligent troubleshooting from failed task -->
@@ -182,11 +196,11 @@
                 </li>
                 <li class="flex items-start gap-2">
                   <span class="text-primary">•</span>
-                  <span>{tr("ui.stacksCreatingCreationFailure.makeSureTheBackendServer")}</span>
+                  <span>{tr("creation.failure.tryAgain")}</span>
                 </li>
                 <li class="flex items-start gap-2">
                   <span class="text-primary">•</span>
-                  <span>{tr("ui.stacksCreatingCreationFailure.reviewYourConfigurationSettings")}</span>
+                  <span>{tr("creation.failure.contactSupport")}</span>
                 </li>
               </ul>
             </div>

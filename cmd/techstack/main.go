@@ -201,7 +201,13 @@ func shouldRequireAgentMTLS(cfg *config.Config, certFile, keyFile, caFile string
 }
 
 func main() {
-	if err := runTechstack(context.Background()); err != nil {
+	ctx := context.Background()
+	if os.Getenv(parentPipeShutdownEnv) == "1" {
+		var cancel context.CancelFunc
+		ctx, cancel = parentPipeContext(ctx, os.Stdin)
+		defer cancel()
+	}
+	if err := runTechstack(ctx); err != nil {
 		stdlog.Fatal(err)
 	}
 }

@@ -24,12 +24,13 @@ import (
 
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
 	"github.com/kombifyio/techstack/pkg/guardbinding"
+	"github.com/kombifyio/techstack/pkg/guardcompat"
 	"github.com/kombifyio/techstack/pkg/runtimeconvergence"
 	"github.com/kombifyio/techstack/pkg/stackkitcommand"
 )
 
 const (
-	defaultInterval       = 30 * time.Second
+	defaultInterval       = guardcompat.HeartbeatInterval
 	defaultRequestTimeout = 15 * time.Second
 	defaultRetryAttempts  = 3
 	maxResponseBody       = 64 << 10
@@ -106,6 +107,10 @@ type Config struct {
 	// BindingSigningKeys are the control-plane keys this Guard pins for command
 	// bindings. Empty accepts unsigned bindings, as before signing existed.
 	BindingSigningKeys []guardbinding.PinnedKey
+	// AuthorityRevoked reports whether this Guard has observed that the control
+	// plane revoked its identity. Once true, no further effect is admitted,
+	// including one already admitted but not yet started. Nil observes none.
+	AuthorityRevoked func() bool
 }
 
 // Client continuously publishes authenticated heartbeat and inventory
@@ -719,4 +724,9 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// revocationObserved reports an observed revocation of this Guard's identity.
+func (c *Client) revocationObserved() bool {
+	return c.cfg.AuthorityRevoked != nil && c.cfg.AuthorityRevoked()
 }

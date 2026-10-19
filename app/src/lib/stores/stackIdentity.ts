@@ -113,7 +113,7 @@ export async function saveStackIdentityToBackend(
 let syncInFlight: Promise<StackIdentitySettingsResponse | null> | null = null;
 
 /**
- * One kombify Cloud sync (STACK-IDENTITY-CUSTOMIZATION-STANDARD §8): read
+ * One kombify Cloud sync (STACKKITS-PRODUCT-BOUNDARY-STANDARD.md §10.8): read
  * Cloud's record through the Gateway with the user's token, let the backend
  * apply the rules to the homelab row, and push the local copy when it says
  * so. A stale If-Match (both sides changed meanwhile) re-reads once. Without

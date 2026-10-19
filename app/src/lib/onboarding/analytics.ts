@@ -1,6 +1,6 @@
 /**
  * The `activation:*` telemetry of the onboarding journey
- * (ONBOARDING-JOURNEY-STANDARD §9).
+ * (KOMBIFY-DESIGN-SYSTEM-STANDARD.md §12.9).
  *
  * Every event literal lives in THIS file so the workspace catalog audit can
  * find them by reading one place. The property sets are exactly the catalog's

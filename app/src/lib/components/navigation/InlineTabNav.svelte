@@ -4,7 +4,8 @@
    * Full App action. Cloud owns account and site-level navigation around it.
    */
   import { page } from "$app/state";
-  import { embeddedNavItems } from "#lib/navigation.js";
+  import { embeddedNavItems, visibleNavItems } from "#lib/navigation.js";
+  import { features } from "#lib/stores/features.js";
   import { toPackageNavItems } from "./nav-items.js";
   import { HOST_NAVIGATION_QUERY } from "#lib/embedded-navigation.js";
   import {
@@ -21,7 +22,14 @@
   let { onOpenFullApp, class: className = "" }: Props = $props();
   const currentPath = $derived(page.url.pathname);
 
-  const packageItems = $derived<NavItem[]>(toPackageNavItems(embeddedNavItems));
+  const packageItems = $derived.by<NavItem[]>(() => {
+    void $features;
+    return toPackageNavItems(
+      visibleNavItems(embeddedNavItems, (feature) =>
+        features.isEnabled(feature),
+      ),
+    );
+  });
 
   function handleOpenFullApp() {
     if (onOpenFullApp) {

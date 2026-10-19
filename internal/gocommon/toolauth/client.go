@@ -25,7 +25,7 @@ type Config struct {
 	// ToolVersion is the semantic version of the tool (e.g. "0.1.0").
 	ToolVersion string
 	// TokenStore provides persistent token storage. If nil, the platform
-	// default is used (Windows Credential Manager or encrypted file).
+	// default is used (Windows Credential Manager or machine-bound obfuscated file).
 	TokenStore TokenStore
 	// HTTPClient is an optional custom HTTP client. If nil, a default
 	// client with a 30-second timeout is used.

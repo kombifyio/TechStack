@@ -10,6 +10,7 @@
   import { tr } from "#lib/i18n.svelte.js";
   import "../substep-rail.css";
   import { revealWizardDetails } from "#lib/wizard/reveal-details.js";
+  import { useWizardField } from "#lib/wizard/validation-context.js";
 
   interface Props {
     config: StackConfig;
@@ -20,6 +21,7 @@
   }
 
   let { config, onAccessModeSelect, onDomainBaseChange }: Props = $props();
+  const accessField = useWizardField("access-mode");
   let detailsOpen = $state(false);
   let activeTab = $state<"address" | "connection" | "publication">("address");
   let detailsElement = $state<HTMLElement>();
@@ -108,7 +110,12 @@
   </aside>
 
   <div class="substep-group" data-substep>
-  <fieldset class="choice-grid">
+  <fieldset
+    class="choice-grid"
+    role="radiogroup"
+    aria-invalid={accessField.invalid ? "true" : undefined}
+    aria-describedby={accessField.describedBy()}
+  >
     <legend class="sr-only">{tr("wizard.access.heading")}</legend>
     {#each choices as mode (mode)}
       <label
@@ -148,6 +155,15 @@
       </label>
     {/each}
   </fieldset>
+  {#if accessField.invalid}
+    <p
+      id={accessField.errorId}
+      class="field-error"
+      data-testid="access-mode-error"
+    >
+      {accessField.message}
+    </p>
+  {/if}
 
   <section class="route-summary" aria-labelledby="access-route-title">
     <div class="route-visual">
@@ -414,6 +430,11 @@
   .choice-title,
   .choice-body {
     display: block;
+  }
+  .field-error {
+    margin-top: 10px;
+    font-size: 13px;
+    color: var(--destructive);
   }
   .choice-reason {
     display: block;

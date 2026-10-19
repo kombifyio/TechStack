@@ -7,9 +7,9 @@ export const guardMessagesAr: Record<keyof typeof guardMessages.en, string> = {
   "guard.backup.load": "قراءة نقاط الاستعادة",
   "guard.backup.loading": "جارٍ القراءة…",
   "guard.backup.recorded":
-    "سجلت هذه العقدة هذه النقاط. يتم التحقق من محتويات النسخ السابقة عند تحضير الاستعادة.",
+    "سجّل هذا الخادم هذه النقاط. يتم التحقق من محتويات النسخ السابقة عند تحضير الاستعادة.",
   "guard.backup.empty":
-    "لا تبلغ هذه العقدة عن نقاط استعادة سابقة قابلة للاختيار.",
+    "لا يبلغ هذا الخادم عن نقاط استعادة سابقة قابلة للاختيار.",
   "guard.backup.choose": "نقطة الاستعادة",
   "guard.backup.placeholder": "اختر نقطة مسجلة",
   "guard.backup.currentPlan": "الخطة الحالية",
@@ -19,7 +19,7 @@ export const guardMessagesAr: Record<keyof typeof guardMessages.en, string> = {
   "guard.backup.confirm":
     "هل تريد تحضير النقطة المسجلة بتاريخ {when} في مساحة معزولة؟ لن يتم استبدال بيانات التطبيق الحالية.",
   "guard.backup.confirmAction": "تحضير هذه الاستعادة",
-  "guard.backup.running": "تقوم العقدة بتحضير استعادة معزولة.",
+  "guard.backup.running": "يقوم الخادم بتحضير استعادة معزولة.",
   "guard.backup.staged":
     "تم تحضير الاستعادة في مساحة معزولة. لم يتم استبدال بيانات التطبيق الحالية.",
   "guard.backup.unverified":
@@ -34,16 +34,16 @@ export const guardMessagesAr: Record<keyof typeof guardMessages.en, string> = {
   "guard.backup.historicalOperation":
     "تخص هذه العملية تثبيتًا سابقًا. نتيجتها المسجّلة لا تصف التثبيت الحالي.",
   "guard.backup.activateConfirm":
-    "هل تريد تفعيل هذه الاستعادة على {name}؟ ستستبدل بيانات التطبيق الحالية. تحتفظ العقدة بلقطة أمان وتتحقق من الخدمات ووصول المالك.",
+    "هل تريد تفعيل هذه الاستعادة على {name}؟ ستستبدل بيانات التطبيق الحالية. يحتفظ الخادم بلقطة أمان ويتحقق من الخدمات ووصول المالك.",
   "guard.backup.activateAction": "تأكيد استعادة البيانات الحالية",
   "guard.backup.activationUnavailable":
-    "التفعيل غير متاح مع إصدار التشغيل المنشور الحالي لهذه العقدة. تبقى البيانات المُعدّة معزولة.",
-  "guard.backup.activating": "تراجع العقدة عملية الاستعادة المعتمدة.",
-  "guard.backup.activated": "فعّلت العقدة الاستعادة المختارة وتحققت منها.",
+    "التفعيل غير متاح مع إصدار التشغيل المنشور الحالي لهذا الخادم. تبقى البيانات المُعدّة معزولة.",
+  "guard.backup.activating": "يراجع الخادم عملية الاستعادة المعتمدة.",
+  "guard.backup.activated": "فعّل الخادم الاستعادة المختارة وتحقق منها.",
   "guard.backup.recovered":
     "استُعيدت حالة التطبيق السابقة. لم تُفعّل الاستعادة المختارة.",
   "guard.backup.accessVerified":
-    "تحققت العقدة من الخدمات ووصول المالك في {when}.",
+    "تحقق الخادم من الخدمات ووصول المالك في {when}.",
   "guard.backup.recoveryRequired":
     "لم تُؤكّد نتيجة الاستعادة بعد. عالج العملية الأصلية قبل بدء استعادة أخرى.",
   "guard.backup.outcomeUnknown": "لا يوجد حتى الآن دليل نهائي مطابق للاستعادة.",
@@ -51,7 +51,7 @@ export const guardMessagesAr: Record<keyof typeof guardMessages.en, string> = {
   "guard.backup.resumeRequest": "متابعة الطلب الأصلي",
   "guard.backup.recover": "استرداد العملية الأصلية",
   "guard.backup.recoverConfirm":
-    "هل تريد مراجعة العملية الأصلية؟ إذا كانت غير مكتملة، تستعيد العقدة حالة التطبيق السابقة.",
+    "هل تريد مراجعة العملية الأصلية؟ إذا كانت غير مكتملة، يستعيد الخادم حالة التطبيق السابقة.",
   "guard.backup.recoverAction": "تأكيد الاسترداد الأصلي",
   "guard.promise":
     "مصمَّم ليبقي هذا الخادم مرتبطًا بك، ويُفحص باستمرار، ويمكن الوصول إليه من أي مكان، ويمكن استعادته بحكم التصميم. تعرض الحقائق أدناه ما هو مثبت الآن.",

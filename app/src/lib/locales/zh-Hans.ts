@@ -1,6 +1,6 @@
 export const zhHans: Record<string, string> = {
-  "ui.releaseChannel.badge": "Nightly",
-  "ui.releaseChannel.hint": "你正在使用 Nightly 渠道：最新的更改，使用你的真实数据。",
+  "ui.releaseChannel.badge": "Preview",
+  "ui.releaseChannel.hint": "你正在使用 Preview 渠道：最新的更改，使用你的真实数据。",
   "ui.releaseChannel.backToStable": "返回 Stable",
   "ui.clientLocal.bootstrapPassword": "初始化密码",
   "ui.clientLocal.bootstrapGuidance":
@@ -22,8 +22,7 @@ export const zhHans: Record<string, string> = {
   "ui.services.stackIt": "Stack it",
   "ui.services.approveStackIt": "批准此次接管",
   "ui.services.releaseBinding": "解除生命周期管理",
-  "ui.services.adoptionScope":
-    "审核此现有 Home Assistant 容器，以在原位置管理其生命周期。此配置不支持其他应用，也不支持迁移到另一个 Node。",
+  "ui.services.adoptionScope": "审核此现有 Home Assistant 容器，以在原位置管理其生命周期。此配置不支持其他应用，也不支持迁移到另一个服务器。",
   "ui.services.adoptionSource": "现有容器",
   "ui.services.adoptionData": "保留的配置",
   "ui.services.adoptionPreserves":
@@ -105,7 +104,7 @@ export const zhHans: Record<string, string> = {
     "通过安全登录窗口连接 kombify 个人资料。你也可以继续使用本地用户。",
   "wizard.login.profile.existing": "你现有的登录会一并保留。",
   "wizard.login.profile.existingHint":
-    "这个 Node 将加入你的 Homelab。你的所有者和登录设置保持不变。",
+    "这个服务器将加入你的 Homelab。你的所有者和登录设置保持不变。",
   "wizard.login.passkey.title": "Pocket ID Passkey",
   "wizard.login.passkey.label": "Passkey",
   "wizard.login.passkey.recommended": "推荐",
@@ -206,7 +205,7 @@ export const zhHans: Record<string, string> = {
   "wizard.access.details.publication": "发布",
   "wizard.access.connection.homeTitle": "在你的家庭设置中可用",
   "wizard.access.connection.homeBody":
-    "此选择会让路径保持在所选 Node 支持的访问范围内。它不保证云端 Node 拥有本地网络。",
+    "此选择会让路径保持在所选服务器支持的访问范围内。它不保证云端服务器拥有本地网络。",
   "wizard.access.connection.anywhereTitle": "已记录可达性意图",
   "wizard.access.connection.anywhereBody":
     "部署只能使用所选运行环境允许的路径。待确认该能力后，会显示私有客户端或托管路径。",
@@ -289,14 +288,14 @@ export const zhHans: Record<string, string> = {
   "wizard.tip.nodeJoin":
     "设备加入此 StackKit，为其提供更多计算能力或存储。访问权限、成员和登录保持不变。",
   "wizard.tip.nodeFound":
-    "以此设备为主 Node 启动一个独立的 StackKit，例如第二个站点或你的 Homelab 的云端部分。",
+    "以此设备为主服务器启动一个独立的 StackKit，例如第二个站点或你的 Homelab 的云端部分。",
   "wizard.tip.nodeSubstrate":
     "注册 Proxmox 主机本身。之后 kombify 可以在其上为这个 Homelab 创建和管理虚拟机。",
   "wizard.tip.foundationBasement":
     "适用于你掌控的硬件：在家里、办公室，或你自己租用的服务器。",
   "wizard.tip.foundationCloud": "适用于由 kombify 为你提供并管理的虚拟服务器。",
   "wizard.tip.foundationLocked":
-    "加入 StackKit 的 Node 始终使用该 StackKit 的基础，因此这里无需选择。",
+    "加入 StackKit 的服务器始终使用该 StackKit 的基础，因此这里无需选择。",
   "wizard.tip.roleFoundation":
     "StackKit 的第一个也是核心 Node。它运行其他 Node 所依赖的核心服务。",
   "wizard.tip.roleWorker":
@@ -310,12 +309,11 @@ export const zhHans: Record<string, string> = {
   "language.switch": "语言",
   "settings.language.description":
     "此设备上本界面的语言。在你选择之前，会使用浏览器语言，否则使用英语。",
-  "ui.dashboard.nodes": "Node",
+  "ui.dashboard.nodes": "服务器",
   "ui.dashboard.devicesPeople": "设备与成员",
   "ui.dashboard.last24h": "最近 24 小时",
   "ui.worker.readyLead": "已就绪！",
-  "ui.worker.readyBody":
-    "所有必需的 Worker 均已连接。现在可以部署 Homelab 了。",
+  "ui.worker.readyBody": "所有必需的服务器均已连接。现在可以部署 Homelab 了。",
   "ui.footer.product": "产品",
   "ui.footer.company": "公司",
   "ui.footer.legal": "法律信息",
@@ -328,19 +326,17 @@ export const zhHans: Record<string, string> = {
   "ui.dashboard.sections": "Homelab 分区",
   "ui.dashboard.failureDetails": "详情",
   "ui.dashboard.hideFailureDetails": "隐藏详情",
-  "ui.dashboard.inventoryUnavailable":
-    "无法获取 Node 和服务的标准状态。下方保留的遥测数据仅供诊断，不会被视为零库存。",
-  "ui.dashboard.noNodes": "此 Homelab 尚未注册任何 Node。",
-  "ui.custody.explainer":
-    "这些租约仍持有托管权，可能仍会计费，但没有任何机器与之对应。它们不会显示为 Node。",
+  "ui.dashboard.inventoryUnavailable": "无法读取服务器和服务的当前状态。下方保存的遥测数据仅用于诊断，并不表示你的 Homelab 是空的。",
+  "ui.dashboard.noNodes": "此 Homelab 尚未注册任何服务器。",
+  "ui.custody.explainer": "这些租约仍持有托管权，可能仍会计费，但没有任何机器与之对应。它们不会显示为服务器。",
   "ui.custody.lastKnownAddress": "最后已知地址；该机器已不存在",
   "ui.dashboard.service.noAddress": "此服务尚未记录任何可访问的地址。",
   "ui.dashboard.service.openApp": "打开应用",
   "ui.dashboard.service.actionsAndLogs": "在“服务”页面查看操作和日志",
-  "ui.node.precheckFailed": "Node 预检查失败",
-  "ui.node.noTelemetry": "此 Node 暂无当前遥测数据。",
-  "ui.node.openDetails": "打开 Node 详情",
-  "ui.node.noApps": "此 Node 尚未报告任何应用。",
+  "ui.node.precheckFailed": "服务器预检查失败",
+  "ui.node.noTelemetry": "此服务器暂无当前遥测数据。",
+  "ui.node.openDetails": "打开服务器详情",
+  "ui.node.noApps": "此服务器尚未报告任何应用。",
   "common.loadingShort": "加载中…",
   "ui.dashboard.filterDevicesPeople": "筛选设备和成员",
   "ui.dashboard.people": "成员",
@@ -348,11 +344,11 @@ export const zhHans: Record<string, string> = {
   "ui.dashboard.devices": "设备",
   "ui.dashboard.loadingDevicesPeople": "正在加载设备和成员…",
   "ui.dashboard.eventHistoryUnavailable": "无法获取事件历史。",
-  "ui.dashboard.servicesOnNode": "此 Node 上的服务",
+  "ui.dashboard.servicesOnNode": "此服务器上的服务",
   "ui.worker.statusUnavailable": "无法获取连接状态",
-  "ui.worker.connect": "连接 Worker",
-  "ui.worker.connectNodes": "将你的 Node 连接到这个 Homelab",
-  "ui.worker.approved": "已批准的 Worker：",
+  "ui.worker.connect": "连接服务器",
+  "ui.worker.connectNodes": "将你的服务器连接到这个 Homelab",
+  "ui.worker.approved": "已批准的服务器：",
   "ui.worker.unverified": "连接未验证",
   "ui.worker.startingRollout": "正在开始推出...",
   "ui.worker.deployHomelab": "部署 Homelab",
@@ -372,7 +368,7 @@ export const zhHans: Record<string, string> = {
   "ui.substrate.title": "连接 Proxmox 虚拟化平台",
   "ui.substrate.runCommand":
     "以管理员身份在 Proxmox 主机的 shell 中运行连接命令。它的 Guard 会通过出站连接向你的 Homelab 报告健康状况。",
-  "ui.substrate.viewNodes": "查看已连接的 Node",
+  "ui.substrate.viewNodes": "查看已连接的服务器",
   "ui.shortcuts.waiting": "等待按键：",
   "ui.recreate.title": "重新创建服务器",
   "ui.recreate.checking": "正在检查提供商的最终清理状态…",
@@ -420,22 +416,19 @@ export const zhHans: Record<string, string> = {
   "ui.cloudLink.incomplete": "关联未完成",
   "ui.homelab.rolloutProgress": "运行时推出进度",
   "ui.homelab.runtimeRollout": "运行时推出",
-  "ui.homelab.newNode": "新建 Node",
+  "ui.homelab.newNode": "添加服务器",
   "ui.homelab.heartbeat": "心跳与指标",
   "ui.homelab.loading": "正在加载 Homelab",
   "ui.homelab.loadingOperations": "正在加载 Homelab 运维信息",
   "ui.homelab.operations": "Homelab 运维",
-  "ui.homelab.reconfirming":
-    "正在重新确认，期间显示最后已知的状态。确认后 Node 操作将解锁。",
-  "ui.homelab.evidenceStale": "运维证据已过期",
-  "ui.homelab.nodeConnected": "你的 Node 已连接。请继续进行 StackKit 的推出。",
-  "ui.homelab.reviewHint":
-    "检查所选的 StackKit、服务和 Node 分配，然后使用“检查并开始”。某个应用失败不会妨碍此部署的其余部分被检查或再次启动。",
-  "ui.homelab.noInventory": "尚未报告任何可管理的 Node 或服务清单。",
-  "ui.homelab.partialRollout": "部分推出的托管运行时",
+  "ui.homelab.reconfirming": "正在重新确认，期间显示最后已知的状态。确认后服务器操作将解锁。",
+  "ui.homelab.evidenceStale": "显示的是最后已知的状态",
+  "ui.homelab.nodeConnected": "你的服务器已连接。请继续进行 StackKit 的推出。",
+  "ui.homelab.reviewHint": "检查所选的 StackKit、服务和服务器分配，然后使用“检查并开始”。某个应用失败不会妨碍此 Homelab 的其余部分被检查或再次启动。",
+  "ui.homelab.noInventory": "尚未报告任何可管理的服务器或服务清单。",
+  "ui.homelab.partialRollout": "设置未完成的托管服务器",
   "ui.homelab.start": "启动你的 Homelab",
-  "ui.homelab.evidenceStaleBody":
-    "最后一次验证的快照仍然可见，但在刷新成功之前，Node 的变更操作会被禁用。",
+  "ui.homelab.evidenceStaleBody": "最近一次检查未能完成。在检查成功之前，会更改内容的操作将暂停。",
   "ui.homelab.startHint": "从向导开始，或导入现有的 StackKit 规范。",
   "ui.homelab.getStarted": "开始使用",
   "wizard.creation.preferenceOnly":
@@ -564,9 +557,8 @@ export const zhHans: Record<string, string> = {
     "我们无法打开你的设置。你已保存的选择仍然保留。请重试，或先随便看看。",
   "onboarding.ui.continue": "你的下一步",
   "hostBaseline.title": "现有的服务和端口",
-  "hostBaseline.preserve":
-    "此清单检查不会更改现有的服务和数据。添加 StackKit 之前，请先查看这个 Node。",
-  "hostBaseline.loading": "正在读取 Node 清单…",
+  "hostBaseline.preserve": "此清单检查不会更改现有的服务和数据。添加 StackKit 之前，请先查看这个服务器。",
+  "hostBaseline.loading": "正在读取服务器清单…",
   "hostBaseline.current": "已收到当前的监听端口清单",
   "hostBaseline.incomplete": "监听端口清单不完整或已过期。端口可用性尚未验证。",
   "hostBaseline.observed": "已观察到",
@@ -574,8 +566,7 @@ export const zhHans: Record<string, string> = {
   "hostBaseline.existing": "现有监听端口",
   "hostBaseline.noListeners":
     "在观察范围内没有报告任何监听端口。已停止的应用和其他命名空间仍可能占用绑定。",
-  "hostBaseline.recheck":
-    "执行之前，Techstack 和 StackKits 会再次检查所需的绑定。出现冲突时，需要进行受支持的配置更改、改用其他 Node，或经过审核的迁移；端口开放并不能证明可从公网访问。",
+  "hostBaseline.recheck": "执行之前，Techstack 和 StackKits 会再次检查所需的绑定。出现冲突时，需要进行受支持的配置更改、改用其他服务器，或经过审核的迁移；端口开放并不能证明可从公网访问。",
   "hostBaseline.refresh": "刷新清单",
   "hostBaseline.review": "查看所有端口和服务",
   "wizard.smartHome.applianceRetained":
@@ -717,28 +708,22 @@ export const zhHans: Record<string, string> = {
   "onboarding.techstack_platform.techstack_configure_intent.cta": "打开向导",
   "onboarding.techstack_platform.techstack_deploy_stackkit.title":
     "部署你的 StackKit",
-  "onboarding.techstack_platform.techstack_deploy_stackkit.body":
-    "确认方案，让 kombify 把 StackKit 部署到你的 Homelab。部署创建后，此步骤会自动打勾。",
-  "onboarding.techstack_platform.techstack_deploy_stackkit.cta": "继续部署",
-  "onboarding.techstack_platform.techstack_add_server.title": "添加 Node",
-  "onboarding.techstack_platform.techstack_add_server.body":
-    "连接你自己的 Node，或让 kombify 为你运行一个。你的服务需要有地方安家。",
-  "onboarding.techstack_platform.techstack_add_server.cta": "添加 Node",
+  "onboarding.techstack_platform.techstack_deploy_stackkit.body": "确认方案，让 kombify 把 StackKit 部署到你的 Homelab。你的 Homelab 设置完成后，此步骤会自动打勾。",
+  "onboarding.techstack_platform.techstack_deploy_stackkit.cta": "继续设置",
+  "onboarding.techstack_platform.techstack_add_server.title": "添加服务器",
+  "onboarding.techstack_platform.techstack_add_server.body": "连接你自己的服务器，或让 kombify 为你运行一个。你的服务需要有地方安家。",
+  "onboarding.techstack_platform.techstack_add_server.cta": "添加服务器",
   "onboarding.techstack_platform.techstack_deploy_service.title":
     "打开你的第一个服务",
   "onboarding.techstack_platform.techstack_deploy_service.body":
     "服务运行起来后，你可以从服务列表中访问它。这就是这一切的意义所在。",
   "onboarding.techstack_platform.techstack_deploy_service.cta": "前往服务",
-  "onboarding.denied.policy_selfhost_byos.title":
-    "由 kombify 托管的 Node 是 Cloud 功能",
-  "onboarding.denied.policy_selfhost_byos.body":
-    "此安装为自托管，因此 kombify 不会为其配置 Node。连接你自己的 Node，其余功能都一样。",
-  "onboarding.denied.policy_selfhost_byos.next_step": "连接你已在运行的 Node。",
-  "onboarding.denied.required_feature_disabled.title": "此账户未启用托管 Node",
-  "onboarding.denied.required_feature_disabled.body":
-    "此账户尚无权使用由 kombify 托管的 Node。你仍然可以连接自己的 Node。",
-  "onboarding.denied.required_feature_disabled.next_step":
-    "连接你自己的 Node，或请 kombify 支持团队启用托管运行时。",
+  "onboarding.denied.policy_selfhost_byos.title": "由 kombify 托管的服务器是 Cloud 功能",
+  "onboarding.denied.policy_selfhost_byos.body": "此安装为自托管，因此 kombify 不会为其配置服务器。连接你自己的服务器，其余功能都一样。",
+  "onboarding.denied.policy_selfhost_byos.next_step": "连接你已在运行的服务器。",
+  "onboarding.denied.required_feature_disabled.title": "此账户未启用托管服务器",
+  "onboarding.denied.required_feature_disabled.body": "此账户尚无权使用由 kombify 托管的服务器。你仍然可以连接自己的服务器。",
+  "onboarding.denied.required_feature_disabled.next_step": "连接你自己的服务器，或请 kombify 支持团队启用托管运行时。",
   "common.loading": "加载中...",
   "common.error": "错误",
   "common.save": "保存",
@@ -797,7 +782,7 @@ export const zhHans: Record<string, string> = {
   "wizard.selfDisclosure.motivation.family": "为家人做点什么",
   "wizard.selfDisclosure.motivation.projects": "工作或个人项目",
   "wizard.step.goals": "目标",
-  "wizard.step.server": "Node",
+  "wizard.step.server": "服务器",
   "wizard.step.access": "访问",
   "wizard.step.users": "用户",
   "wizard.step.login": "登录",
@@ -819,22 +804,22 @@ export const zhHans: Record<string, string> = {
   "wizard.hints.evaluating": "正在为你规划最佳的受支持路径…",
   "wizard.goals.smartHome.title": "智能家居",
   "wizard.goals.smartHome.description":
-    "在你自己的 Node 上运行 Home Assistant：断网时自动化依然照常工作。",
+    "在你自己的服务器上运行 Home Assistant：断网时自动化依然照常工作。",
   "wizard.goals.smartHome.help":
-    "开启后，Home Assistant 会在家中运行，通过本地而不是厂商云来控制灯光、供暖和传感器。你可以决定是否使用插在 Node 上的 Zigbee 或 Z-Wave 棒，以及是否自动发现网络中的设备。",
+    "开启后，Home Assistant 会在家中运行，通过本地而不是厂商云来控制灯光、供暖和传感器。你可以决定是否使用插在服务器上的 Zigbee 或 Z-Wave 棒，以及是否自动发现网络中的设备。",
   "wizard.goals.smartHome.tip": "即使你的网络连接中断，自动化也会继续运行。",
   "wizard.goals.photos.title": "照片回忆",
   "wizard.goals.photos.description":
     "你自己的照片和视频库，家里每部手机都能备份。",
   "wizard.goals.photos.help":
-    "开启后，你的 Node 就成为照片的存放地：手机自动备份，你可以按人脸和地点搜索，相册也能与家人分享，无需云订阅。你可以决定智能搜索是否在 Node 上运行，以及照片库存放在哪里。",
+    "开启后，你的服务器就成为照片的存放地：手机自动备份，你可以按人脸和地点搜索，相册也能与家人分享，无需云订阅。你可以决定智能搜索是否在服务器上运行，以及照片库存放在哪里。",
   "wizard.goals.photos.tip":
     "对大多数 Homelab 来说，这是最容易看到成效的一项：无需再多一份云订阅的私密回忆。",
   "wizard.goals.media.title": "媒体串流",
   "wizard.goals.media.description":
     "把你的电影、剧集和音乐串流到家里的任何电视、手机或笔记本电脑。",
   "wizard.goals.media.help":
-    "开启后，你的 Node 会向家中每块屏幕提供你自己的媒体收藏；如果你允许远程访问，外出时也可以观看。你可以决定是否让 Node 的显卡帮助为小屏幕转换视频，以及媒体库存放在哪里。",
+    "开启后，你的服务器会向家中每块屏幕提供你自己的媒体收藏；如果你允许远程访问，外出时也可以观看。你可以决定是否让服务器的显卡帮助为小屏幕转换视频，以及媒体库存放在哪里。",
   "wizard.goals.media.tip":
     "使用磁盘足够大、并可选硬件转码的服务器，体验最流畅。",
   "wizard.goals.vault.title": "密码保险库",
@@ -854,30 +839,30 @@ export const zhHans: Record<string, string> = {
   "wizard.goals.ai.description":
     "运行在你自己硬件上的私人助手，绝不会把你的数据发送出去。",
   "wizard.goals.ai.help":
-    "开启后，你会得到一个完全在你的 Node 上运行的聊天助手。它可以处理你自己的文档。你可以决定它使用哪种加速器、加载多大的模型；有 GPU 会带来很大差别。",
+    "开启后，你会得到一个完全在你的服务器上运行的聊天助手。它可以处理你自己的文档。你可以决定它使用哪种加速器、加载多大的模型；有 GPU 会带来很大差别。",
   "wizard.goals.ai.tip":
-    "在性能更强的硬件上效果最好；低配 Node 也仍然可以先做规划。",
+    "在性能更强的硬件上效果最好；低配服务器也仍然可以先做规划。",
   "wizard.goals.dev.title": "开发平台",
   "wizard.goals.dev.description":
     "你自己的 Git 托管，需要时还有构建和测试流水线。",
   "wizard.goals.dev.help":
-    "开启后，你的代码会放在你的 Node 上，由全家或整个团队都能使用的 Gitea 服务器托管。你可以决定 CI runner 是否也在 Node 上构建和测试。",
+    "开启后，你的代码会放在你的服务器上，由全家或整个团队都能使用的 Gitea 服务器托管。你可以决定 CI runner 是否也在服务器上构建和测试。",
   "wizard.goals.dev.tip":
     "当你希望笔记本电脑保持轻量、可重复的环境放在服务器上时很有用。",
   "wizard.goals.mail.title": "邮件服务器",
   "wizard.goals.mail.description":
-    "在你自己的域名上，通过你自己的 Node 收发电子邮件。",
+    "在你自己的域名上，通过你自己的服务器收发电子邮件。",
   "wizard.goals.mail.help":
-    "开启后，你的 Node 会为你拥有的域名运行一个完整的邮件服务器。电子邮件需要正确的 DNS 记录和良好的发送信誉，因此这一路径会先记录你的意图，并在指引下推出。你来决定邮件域名。",
+    "开启后，你的服务器会为你拥有的域名运行一个完整的邮件服务器。电子邮件需要正确的 DNS 记录和良好的发送信誉，因此这一路径会先记录你的意图，并在指引下推出。你来决定邮件域名。",
   "wizard.goals.mail.tip":
     "邮件对 DNS 和信誉有要求；向导会记录意图，并让推出保持受控。",
   "wizard.goals.game.title": "游戏服务器",
   "wizard.goals.game.description":
     "为朋友准备的持久游戏世界，托管在家里，无需开放你的网络。",
   "wizard.goals.game.help":
-    "开启后，你的 Node 会托管游戏服务器，朋友通过套件的安全访问加入，无需直接暴露你的家庭网络。具体有哪些游戏取决于版本。",
+    "开启后，你的服务器会托管游戏服务器，朋友通过套件的安全访问加入，无需直接暴露你的家庭网络。具体有哪些游戏取决于版本。",
   "wizard.goals.game.tip":
-    "按会话计的负载：朋友玩的时候 Node 全力工作，其余时间处于空闲。",
+    "按会话计的负载：朋友玩的时候服务器全力工作，其余时间处于空闲。",
   "wizard.goals.storage.title": "拥有自己的本地照片和文档存储",
   "wizard.goals.storage.description": "安全私密，仅你可访问",
   "wizard.goals.storage.help": "私有云存储，可在设备间自动同步。",
@@ -943,7 +928,7 @@ export const zhHans: Record<string, string> = {
   "wizard.goals.backend.help":
     "由哪个产品来完成这项工作。默认选项是 StackKits 测试最充分的。",
   "wizard.goals.profile.help":
-    "此使用场景可以使用 Node 的多少资源。标准档适合大多数家庭。",
+    "此使用场景可以使用服务器的多少资源。标准档适合大多数家庭。",
   "wizard.goals.setting.on": "开",
   "wizard.goals.setting.off": "关",
   "wizard.goals.setting.recorded": "现已保存，将在后续版本中应用。",
@@ -1032,22 +1017,22 @@ export const zhHans: Record<string, string> = {
   "wizard.server.preview.node": "2 · 你的服务器",
   "wizard.server.title": "给你的工具一个家。",
   "wizard.server.subtitle": "从你已有的开始。我们会引导你找到合适的连接方式。",
-  "wizard.server.join.title": "你的 Homelab，再添一个 Node。",
+  "wizard.server.join.title": "你的 Homelab，再添一个服务器。",
   "wizard.server.join.description":
-    "这个 Node 会加入你现有的设置。你的访问权限、成员和登录保持不变，你只需专注于设备本身。",
-  "wizard.server.command.join.review": "确认这个 Node",
+    "这个服务器会加入你现有的设置。你的访问权限、成员和登录保持不变，你只需专注于设备本身。",
+  "wizard.server.command.join.review": "确认这个服务器",
   "wizard.server.command.join.reviewBody":
     "选择此设备的连接方式。你的 Homelab 访问权限、成员和登录保持不变。",
   "wizard.step.inherited": "已为你的 Homelab 设置好",
   "wizard.step.existingOwner": "你的 Homelab 所有者保持不变",
   "wizard.addApp.title": "添加应用",
   "wizard.addApp.intro":
-    "选择一个应用以及运行它的 Node。访问、人员和登录保持你的 Homelab 现有设置。",
+    "选择一个应用以及运行它的服务器。访问、人员和登录保持你的 Homelab 现有设置。",
   "wizard.addApp.catalogEmpty": "目录中暂时没有适用于此 Homelab 的应用。",
   "wizard.addApp.recommended": "推荐",
   "wizard.addApp.about": "简介",
   "wizard.addApp.nodeTitle": "{name} 应在哪里运行？",
-  "wizard.addApp.nodeUnsupported": "此 Node 的 StackKit 不提供 {name}。",
+  "wizard.addApp.nodeUnsupported": "此服务器的 StackKit 不提供 {name}。",
   "wizard.addApp.nodeNotReady": "尚未准备好部署",
   "wizard.addApp.submit": "添加应用",
   "wizard.addApp.result": "{name} 已添加到 {node}。",
@@ -1060,13 +1045,13 @@ export const zhHans: Record<string, string> = {
   "wizard.settings.open": "编辑 Homelab 设置",
   "wizard.settings.loadError": "无法加载你的 Homelab。",
   "wizard.settings.empty": "尚未设置任何 Homelab。",
-  "wizard.settings.deployment": "StackKit 部署",
+  "wizard.settings.deployment": "Homelab 配置",
   "wizard.settings.goalsElsewhere": "通过“添加应用”添加应用。",
-  "wizard.settings.serverElsewhere": "通过“添加 Node”添加服务器。",
+  "wizard.settings.serverElsewhere": "通过“添加服务器”添加服务器。",
   "wizard.settings.accessUnsupported":
     "正在运行的 Homelab 暂时无法更改访问方式。",
   "wizard.settings.openAddApplication": "添加应用",
-  "wizard.settings.openAddNode": "添加 Node",
+  "wizard.settings.openAddNode": "添加服务器",
   "wizard.settings.usersTitle": "人员",
   "wizard.settings.usersIntro":
     "邀请你为此 Homelab 计划的人员。每人都会收到一个个人登录链接。",
@@ -1089,7 +1074,7 @@ export const zhHans: Record<string, string> = {
     "已经有服务器了？用 SSH 密钥或密码连接它。",
   "wizard.server.remote.help":
     "输入可访问的服务器地址。使用已保存的 SSH 密钥或你的 SSH 密码进行连接。",
-  "wizard.server.remote.host": "Node 主机或 IP",
+  "wizard.server.remote.host": "服务器主机或 IP",
   "wizard.server.remote.port": "SSH 端口",
   "wizard.server.remote.user": "SSH 用户",
   "wizard.server.remote.auth": "身份验证",
@@ -1236,16 +1221,15 @@ export const zhHans: Record<string, string> = {
   "wizard.run.banner.inProgressTitle": "你的 Homelab 正在设置中",
   "wizard.run.banner.inProgressBody":
     "设置仍在运行。你可以查看进度，也可以稍后再回来。",
-  "wizard.run.banner.pairingTitle": "有一个 Node 正等待连接",
-  "wizard.run.banner.pairingBody": "在你的 Node 上运行安装命令以完成添加。",
+  "wizard.run.banner.pairingTitle": "有一个服务器正等待连接",
+  "wizard.run.banner.pairingBody": "在你的服务器上运行安装命令以完成添加。",
   "wizard.run.banner.failedTitle": "你的 Homelab 设置需要处理",
   "wizard.run.banner.failedBody":
     "上一次设置运行未能完成。请从中断的地方继续。",
   "wizard.run.banner.resume": "继续设置",
   "wizard.run.banner.cancel": "取消推出",
   "wizard.run.banner.cancelTitle": "要取消这次推出吗？",
-  "wizard.run.banner.cancelBody":
-    "推出将停止并标记为失败。Node 保持原样，你之后可以重新开始推出。",
+  "wizard.run.banner.cancelBody": "推出将停止并标记为失败。服务器保持原样，你之后可以重新开始推出。",
   "wizard.run.banner.cancelFailed": "无法取消推出",
   "wizard.run.banner.dismiss": "忽略",
   "wizard.run.banner.dismissFailed": "无法忽略此通知",
@@ -1282,8 +1266,8 @@ export const zhHans: Record<string, string> = {
   "state.connected": "已连接",
   "state.connecting": "连接中",
   "state.consistent": "一致",
-  "state.decommissioned": "已停用",
-  "state.decommissioning": "停用中",
+  "state.decommissioned": "已移除",
+  "state.decommissioning": "正在移除",
   "state.degraded": "性能下降",
   "state.deploying": "部署中",
   "state.enrolling": "注册中",
@@ -1413,19 +1397,16 @@ export const zhHans: Record<string, string> = {
   "ui.common.sourceValue": "来源：{value}",
   "ui.common.unknown": "未知",
   "ui.completeDashboard.allServices": "所有服务 →",
-  "ui.completeDashboard.nodesApps": "Node 和应用",
+  "ui.completeDashboard.nodesApps": "服务器和应用",
   "ui.configFlow.apiUnreachable": "你的浏览器无法访问 API 服务器。",
   "ui.configFlow.apiUnreachableAt":
     "你的浏览器无法访问位于 {base} 的 API 服务器。",
   "ui.configFlow.capability": "能力：{value}",
-  "ui.configFlow.corsHint":
-    "如果后端正在运行但浏览器拦截了请求（CORS），请打开 DevTools → 控制台，查找 CORS 错误。",
   "ui.configFlow.createFailedAt": "创建失败于：{phase}",
   "ui.configFlow.deploymentNameExists":
-    "你的 Homelab 中已存在名为“{name}”的 StackKit 部署。请打开现有部署，或选择其他名称。",
+    "已存在名为“{name}”的 Homelab。请改为打开现有的。",
   "ui.configFlow.errorCode": "错误代码：{value}",
   "ui.configFlow.missingFeatures": "缺少的功能：{value}",
-  "ui.configFlow.nextStep": "下一步：{value}",
   "ui.configFlow.nextSteps": "后续步骤：",
   "ui.configFlow.pleaseFix": "请修复以下问题：",
   "ui.configFlow.provider": "提供商：{value}",
@@ -1438,37 +1419,37 @@ export const zhHans: Record<string, string> = {
   "ui.configFlow.step": "步骤：{value}",
   "ui.configFlow.technicalDetails": "技术详情：{value}",
   "ui.configurationFlow.aPreviousSubmissionAlreadyCompleted":
-    "之前的提交已完成",
+    "此内容已提交过",
   "ui.configurationFlow.anEarlierSubmissionFromThis":
-    "此浏览器会话中较早的一次提交已使用不同的答案完成。系统已生成新的尝试密钥——请重新提交，或打开现有部署。",
+    "此浏览器标签页中较早的一次提交已使用不同的答案完成。请重新创建以提交你当前的答案，或打开现有的 Homelab。",
   "ui.configurationFlow.anUnexpectedErrorOccurredPlease":
-    "发生意外错误。请查看浏览器控制台了解详情。",
+    "发生了意外错误。请重试。如果问题持续，请联系支持并提供技术详情。",
   "ui.configurationFlow.authenticationRequired": "需要身份验证",
-  "ui.configurationFlow.cannotConnectToBackend": "无法连接到后端",
-  "ui.configurationFlow.deploymentFailed": "部署失败",
+  "ui.configurationFlow.cannotConnectToBackend": "无法连接到 kombify Techstack",
+  "ui.configurationFlow.deploymentFailed": "无法创建你的 Homelab",
   "ui.configurationFlow.managedServerIsNotActive": "托管服务器未处于活动状态",
   "ui.configurationFlow.permissionDenied": "权限被拒绝",
   "ui.configurationFlow.retryingIsUnlikelyToHelp":
-    "在服务器端问题解决之前，重试很可能无济于事。",
-  "ui.configurationFlow.serverError": "服务器错误",
+    "在我们修复问题之前，重试不会有帮助。",
+  "ui.configurationFlow.serverError": "我们这边出了点问题",
   "ui.configurationFlow.stackkitDeploymentNameAlreadyExists":
-    "StackKit 部署名称已存在",
+    "已存在同名的 Homelab",
   "ui.configurationFlow.theBackendRejectedThisStackkit":
-    "后端因冲突拒绝了此 StackKit 部署请求。",
+    "已存在这样的 Homelab，因此重复创建被拒绝。请改为打开现有的 Homelab。",
   "ui.configurationFlow.useTheAdminPasswordConfigured":
     "（使用为此实例配置的管理员密码）",
   "ui.configurationFlow.validatingConfiguration": "正在验证配置...",
   "ui.configurationFlow.validatingWithStackkits": "正在通过 StackKits 验证...",
   "ui.configurationFlow.youCanRetryIfThis":
-    "你可以重试。如果再次发生，请将错误代码和请求 ID 提供给支持团队。",
+    "请重试。如果问题持续，请联系支持并提供技术详情。",
   "ui.configurationFlow.youDonTHavePermission":
-    "你没有部署 StackKits 的权限，服务器也没有给出具体原因。请将此情况告知支持团队。",
-  "ui.configurationFlow.youMustBeLoggedIn": "你必须登录后才能部署 StackKit。",
+    "你没有在此创建 Homelab 的权限。如果你认为这有误，请联系支持并提供技术详情。",
+  "ui.configurationFlow.youMustBeLoggedIn": "请登录以创建你的 Homelab。",
   "ui.configurationFlow.youMustBeLoggedIn2":
-    "你必须登录后才能部署 StackKit。请先登录。",
+    "你需要先登录才能创建 Homelab。请先登录。",
   "ui.connectDevices.techstackClient": "Techstack 客户端",
-  "ui.creationCompletion.ownerSeedFor": "已为 {email} 准备好所有者种子。",
-  "ui.creationController.theAdditionalNode": "额外的 Node",
+  "ui.creationCompletion.ownerSeedFor": "已为 {email} 准备好你的所有者账户。",
+  "ui.creationController.theAdditionalNode": "额外的服务器",
   "ui.creationFailure.lease": "租约",
   "ui.creationInstall.previewExpires": "预览将于 {time} 过期",
   "ui.creationLease.sshHost":
@@ -1482,7 +1463,7 @@ export const zhHans: Record<string, string> = {
   "ui.creationRequirements.minVersion": "最低：{version}",
   "ui.creationRun.notConnectedYet": "尚未连接",
   "ui.creationRun.notReachableYet": "尚不可达",
-  "ui.creationRun.pairingTokenExpires": "配对令牌将于 {slot} 过期。",
+  "ui.creationRun.pairingTokenExpires": "此命令有效期至 {slot}。",
   "ui.creationRun.resumeStartingAt":
     "从 {time} 起，服务器可以授权在同一台 VM 上安全恢复。",
   "ui.creationRun.stepOf": "第 {step} 步，共 {total} 步",
@@ -1534,16 +1515,16 @@ export const zhHans: Record<string, string> = {
   "ui.credentialForm.whatThisToolIsFor":
     "此工具的用途、使用者以及任何启动相关的背景信息...",
   "ui.crypto.decryptionFailedWrongPassword": "解密失败。密码是否错误？",
-  "ui.custody.leasesWithoutNode.one": "{count} 个没有 Node 的租约",
-  "ui.custody.leasesWithoutNode.other": "{count} 个没有 Node 的租约",
+  "ui.custody.leasesWithoutNode.one": "{count} 个没有服务器的租约",
+  "ui.custody.leasesWithoutNode.other": "{count} 个没有服务器的租约",
   "ui.custody.wasAddress": "原为 {ip}",
-  "ui.custodyLeasesPanel.decommissioning": "正在停用...",
+  "ui.custodyLeasesPanel.decommissioning": "正在移除...",
   "ui.custodyLeasesPanel.leaseArchived": "租约已归档",
   "ui.custodyLeasesPanel.leaseCancelled": "租约已取消",
   "ui.custodyLeasesPanel.neverObserved": "从未观测到",
   "ui.custodyLeasesPanel.noExecutionAuthorityLegacyOr":
     "没有执行权限（旧版或未绑定的租约）",
-  "ui.custodyLeasesPanel.nodeNeverFinishedEnrolling": "Node 从未完成注册",
+  "ui.custodyLeasesPanel.nodeNeverFinishedEnrolling": "服务器从未完成注册",
   "ui.custodyLeasesPanel.resolving": "正在处理...",
   "ui.custodyLeasesPanel.vmNoLongerExistsAt": "VM 在提供商处已不存在",
   "ui.dashboardServiceSheet.noHealthReported": "未报告健康状态",
@@ -1598,24 +1579,19 @@ export const zhHans: Record<string, string> = {
   "ui.homelab.noSourceObserved":
     "服务来自两个来源：已完成的 StackKit 部署，以及 Agent 在主机上发现的容器和单元。目前两个来源都尚未观测到：未找到 StackKit 清单，Agent 也未执行服务发现。",
   "ui.homelab.onlineCount": "{count} 个在线",
-  "ui.homelab.operationsNotLoaded.one":
-    "有 {count} 个 StackKit 部署操作无法加载。",
-  "ui.homelab.operationsNotLoaded.other":
-    "有 {count} 个 StackKit 部署操作无法加载。",
-  "ui.homelab.partialRolloutBadge": "部分部署",
+  "ui.homelab.operationsNotLoaded.one": "有 {count} 个 Homelab 操作无法加载。",
+  "ui.homelab.operationsNotLoaded.other": "有 {count} 个 Homelab 操作无法加载。",
+  "ui.homelab.partialRolloutBadge": "设置未完成",
   "ui.homelab.phase": "阶段：{phase}",
-  "ui.homelab.preparationFailed":
-    "已连接 Node 上的 StackKit 准备失败 — {detail}",
+  "ui.homelab.preparationFailed": "已连接服务器上的 StackKit 准备失败 — {detail}",
   "ui.homelab.probeAnswered":
     "运行时已响应探测，Guard 心跳为最新状态（{state}）。",
-  "ui.homelab.probeOffline":
-    "提供商报告该机器状态为“{machineState}”，注册状态为“{enrollment}”。重新连接只能重新执行该探测，无法重启机器上的 kombify Agent。在 Agent 再次发送心跳之前，Node 会保持离线，请前往 Node 详情继续操作，那里会显示注册命令和最后一次联系时间。",
+  "ui.homelab.probeOffline": "提供商报告该机器状态为“{machineState}”，注册状态为“{enrollment}”。重新连接只能重新执行该探测，无法重启机器上的 kombify Agent。在 Agent 再次发送心跳之前，服务器会保持离线，请前往服务器详情继续操作，那里会显示注册命令和最后一次联系时间。",
   "ui.homelab.recorded": "已记录 {count} 项",
   "ui.homelab.retryFailed": "无法重试部署：{message}",
   "ui.homelab.rolloutFailed": "部署失败：{message}",
-  "ui.homelab.sshFailed": "与你的 Node 的 SSH 连接失败 — {detail}",
-  "ui.homelabDashboardPage.0VerifiedConnectedOperationsEvidence":
-    "0 个已验证连接 · 运维证据不可用",
+  "ui.homelab.sshFailed": "与你的服务器的 SSH 连接失败 — {detail}",
+  "ui.homelabDashboardPage.0VerifiedConnectedOperationsEvidence": "连接未验证",
   "ui.homelabDashboardPage.agentDiscoveryReportedNoRunning":
     "Agent 发现未报告任何正在运行的容器或单元。尚未观测到 StackKit 清单，因此已声明的 StackKit 服务仍然未知。",
   "ui.homelabDashboardPage.bothServiceSourcesReportedAn":
@@ -1625,17 +1601,15 @@ export const zhHans: Record<string, string> = {
   "ui.homelabDashboardPage.custodyRecordUnchangedTheTechstack":
     "托管记录未更改：Techstack 网关无法连接后端。服务恢复后，请对这条记录重试。",
   "ui.homelabDashboardPage.custodyResolutionFailed": "托管处理失败",
-  "ui.homelabDashboardPage.decommissionFailed": "停用失败",
-  "ui.homelabDashboardPage.deployStackkit": "部署 StackKit",
+  "ui.homelabDashboardPage.decommissionFailed": "移除失败",
+  "ui.homelabDashboardPage.deployStackkit": "查看并创建",
   "ui.homelabDashboardPage.lastVerifiedStateRetainedThe":
     "已保留最近一次验证的状态 — 刷新失败，将自动重试。",
-  "ui.homelabDashboardPage.managedRuntime": "托管运行时",
-  "ui.homelabDashboardPage.managedRuntimeLeaseAllocationMetadata":
-    "存在托管运行时的租约/分配元数据，但无法验证当前提供商和 Guard 的状态。",
-  "ui.homelabDashboardPage.noNodeHasReportedAn": "还没有 Node 报告过清单。",
-  "ui.homelabDashboardPage.nodeIsReportingAgain": "Node 已恢复上报",
-  "ui.homelabDashboardPage.openTheNodeDetailsTo":
-    "打开 Node 详情，检查 Agent 和最近一次部署。",
+  "ui.homelabDashboardPage.managedRuntime": "托管服务器",
+  "ui.homelabDashboardPage.managedRuntimeLeaseAllocationMetadata": "你的托管服务器已设置完成，但暂时无法检查其当前状态。",
+  "ui.homelabDashboardPage.noNodeHasReportedAn": "还没有服务器报告过清单。",
+  "ui.homelabDashboardPage.nodeIsReportingAgain": "服务器已恢复上报",
+  "ui.homelabDashboardPage.openTheNodeDetailsTo": "打开服务器详情，检查 Agent 和最近一次部署。",
   "ui.homelabDashboardPage.operationsDataIsNotAvailable":
     "此 Homelab 暂无运维数据。",
   "ui.homelabDashboardPage.operationsDataIsNotAvailable2": "运维数据暂不可用",
@@ -1649,22 +1623,19 @@ export const zhHans: Record<string, string> = {
   "ui.homelabDashboardPage.retry": "重试",
   "ui.homelabDashboardPage.retryExactCleanup": "重试该确切清理",
   "ui.homelabDashboardPage.review": "查看",
-  "ui.homelabDashboardPage.reviewStart": "查看并启动",
+  "ui.homelabDashboardPage.reviewStart": "查看并创建",
   "ui.homelabDashboardPage.rolloutReadinessIsUnavailableRefresh":
     "无法获取部署就绪状态。启动前请先刷新运维数据。",
-  "ui.homelabDashboardPage.runtimeAnsweredButTheNode":
-    "运行时已响应，但 Node 仍然离线",
-  "ui.homelabDashboardPage.stackkitDeployment": "StackKit 部署",
+  "ui.homelabDashboardPage.runtimeAnsweredButTheNode": "运行时已响应，但服务器仍然离线",
+  "ui.homelabDashboardPage.stackkitDeployment": "Homelab",
   "ui.homelabDashboardPage.starting": "正在启动...",
   "ui.homelabDashboardPage.theAgentVersionWasNot": "Agent 版本未被报告。",
   "ui.homelabDashboardPage.theFailedCleanupIsNot":
     "失败的清理未绑定到可操作的租约。请刷新生命周期证据，并在对应的托管记录上执行操作。",
-  "ui.homelabDashboardPage.theFailedStackkitDeploymentIs":
-    "失败的 StackKit 部署已不再属于此 Homelab。请刷新 Homelab，并重试该确切部署。",
+  "ui.homelabDashboardPage.theFailedStackkitDeploymentIs": "你的 Homelab 中失败的部分已不存在。请刷新 Homelab 后重试。",
   "ui.homelabDashboardPage.thePersistedRolloutIsWaiting":
     "已保存的部署正在等待下一个检查点。",
-  "ui.homelabDashboardPage.theRuntimeProbeReturnedNo":
-    "运行时探测没有返回原因。请重试，或打开 Node 详情查看完整的运行时记录。",
+  "ui.homelabDashboardPage.theRuntimeProbeReturnedNo": "运行时探测没有返回原因。请重试，或打开服务器详情查看完整的运行时记录。",
   "ui.homelabDashboardPage.theStackkitManifestSourceReported":
     "StackKit 清单来源未报告任何服务。尚未观测到服务发现，因此容器和单元仍然未知。",
   "ui.homelabDashboardPage.thisFailedRunCannotBe":
@@ -1771,12 +1742,12 @@ export const zhHans: Record<string, string> = {
   "ui.integration.pocketbaseAdminDashboardCredentials":
     "PocketBase 管理仪表板凭据",
   "ui.integration.traefikDashboardBasicAuth": "Traefik 仪表板基本认证",
-  "ui.inventory.nodeCount.one": "{count} 个 Node",
-  "ui.inventory.nodeCount.other": "{count} 个 Node",
+  "ui.inventory.nodeCount.one": "{count} 个服务器",
+  "ui.inventory.nodeCount.other": "{count} 个服务器",
   "ui.inventory.serviceCount.one": "{count} 个服务",
   "ui.inventory.serviceCount.other": "{count} 个服务",
-  "ui.inventory.telemetryNodes.one": "{count} 个遥测 Node",
-  "ui.inventory.telemetryNodes.other": "{count} 个遥测 Node",
+  "ui.inventory.telemetryNodes.one": "{count} 个遥测服务器",
+  "ui.inventory.telemetryNodes.other": "{count} 个遥测服务器",
   "ui.localOwner.localOwnerCreationIsOnly":
     "只有在首次运行设置期间才能创建本地所有者。",
   "ui.login.bootstrapPassword": "引导密码：",
@@ -1833,8 +1804,7 @@ export const zhHans: Record<string, string> = {
     "这将预配并计费一个新一代的托管服务器。Techstack 会通过常规创建流程重新建立注册、端点、Guard 证据和 StackKit 部署。",
   "ui.monitoring.acrossEpisodes.one": "共 {count} 次事件",
   "ui.monitoring.acrossEpisodes.other": "共 {count} 次事件",
-  "ui.monitoring.availabilityHistoryIsUnavailableOn":
-    "此部署不提供可用性历史记录。",
+  "ui.monitoring.availabilityHistoryIsUnavailableOn": "此安装不提供可用性历史记录。",
   "ui.monitoring.availabilityWindow": "可用性 · {window}",
   "ui.monitoring.dailyState": "每日状态",
   "ui.monitoring.dailyStateLabel": "{name}：每日连接状态",
@@ -1851,8 +1821,7 @@ export const zhHans: Record<string, string> = {
   "ui.monitoring.monitoringDataCouldNotBe": "无法加载监控数据。",
   "ui.monitoring.noData": "无数据",
   "ui.monitoring.noDowntimeInThisWindow": "此时间段内没有停机。",
-  "ui.monitoring.noNodesHaveReportedYet":
-    "还没有 Node 上报数据。注册一个 Node 后，其状态会显示在这里。",
+  "ui.monitoring.noNodesHaveReportedYet": "还没有服务器上报数据。注册一个服务器后，其状态会显示在这里。",
   "ui.monitoring.noRecordedDowntimeInThis": "此时间段内没有记录到停机。",
   "ui.monitoring.noServersInThisWindow": "此时间段内没有服务器。",
   "ui.monitoring.notReporting": "{count} 个未上报",
@@ -1868,15 +1837,14 @@ export const zhHans: Record<string, string> = {
   "ui.monitoring.removeFromAria": "从监控中移除 {name}",
   "ui.monitoring.removing": "正在移除...",
   "ui.monitoring.rightNow": "此刻",
-  "ui.monitoring.selectNodeHint": "选择一个 Node 以查看其指标和历史记录",
+  "ui.monitoring.selectNodeHint": "选择一个服务器以查看其指标和历史记录",
   "ui.monitoring.serverCouldNotBeRemoved": "无法移除服务器。",
   "ui.monitoring.staleCountsAsDowntime":
     "数据过期按停机计算 — 无法确认服务状态",
-  "ui.monitoring.theCanonicalServerInventoryIs": "权威服务器清单不可用。",
-  "ui.monitoring.thisRevokesTheBoundGuard":
-    "这将撤销已绑定的 Guard Agent，并从当前集群中隐藏该 Node。物理服务器及其提供商账户不受影响。",
+  "ui.monitoring.theCanonicalServerInventoryIs": "暂时无法读取服务器列表。",
+  "ui.monitoring.thisRevokesTheBoundGuard": "这将撤销已绑定的 Guard Agent，并从当前集群中隐藏该服务器。物理服务器及其提供商账户不受影响。",
   "ui.monitoring.totalDowntime": "总停机时间",
-  "ui.monitoringServer.alertsInScope": "{count} 条适用于此 Node",
+  "ui.monitoringServer.alertsInScope": "{count} 条适用于此服务器",
   "ui.monitoringServer.allEpisodes": "所有事件 →",
   "ui.monitoringServer.dailyState30": "{name}：30 天的每日连接状态",
   "ui.monitoringServer.firingSince": "自 {time} 起触发",
@@ -1899,25 +1867,24 @@ export const zhHans: Record<string, string> = {
   "ui.monitoringServerId.memoryUsed": "已用内存",
   "ui.monitoringServerId.metricsLast24H": "指标 · 最近 24 小时",
   "ui.monitoringServerId.noAlertRulesApplyHere": "此处没有适用的告警规则。",
-  "ui.monitoringServerId.noHistoryForThisNode": "此 Node 暂无历史记录。",
-  "ui.monitoringServerId.noMetricsBackendAnsweredFor":
-    "没有指标后端对此 Node 作出响应。下方的可用性由状态转换时间线推导而来，不依赖指标后端。",
+  "ui.monitoringServerId.noHistoryForThisNode": "此服务器暂无历史记录。",
+  "ui.monitoringServerId.noMetricsBackendAnsweredFor": "没有指标后端对此服务器作出响应。下方的可用性由状态转换时间线推导而来，不依赖指标后端。",
   "ui.monitoringServerId.refreshing": "正在刷新…",
   "ui.monitoringServerId.removeFromView": "从视图中移除",
-  "ui.monitoringServerId.thisNodeSHistory": "此 Node 的历史记录",
+  "ui.monitoringServerId.thisNodeSHistory": "此服务器的历史记录",
   "ui.monitoringServerId.thisServerCouldNotBe": "无法加载此服务器。",
   "ui.navItems.noServicesRegisteredYet": "尚未注册任何服务。",
-  "ui.nodeActions.assignToThisStackkitDeployment": "分配到此 StackKit 部署",
+  "ui.nodeActions.assignToThisStackkitDeployment": "分配到此 Homelab",
   "ui.nodeActions.assigning": "正在分配...",
   "ui.nodeActions.canonicalManagedAccessIsNot": "标准托管访问暂不可用。",
-  "ui.nodeActions.connection": "Node 连接：{state}",
+  "ui.nodeActions.connection": "服务器连接：{state}",
   "ui.nodeRow.systemServices.one": "{count} 个系统服务",
   "ui.nodeRow.systemServices.other": "{count} 个系统服务",
   "ui.nodeActions.menu": "{node} 的操作",
   "ui.nodeMessage.idle": "没有未处理的消息",
-  "ui.nodeMessage.needsAttention": "此 Node 需要关注",
+  "ui.nodeMessage.needsAttention": "此服务器需要关注",
   "ui.nodeMessage.panel": "{node} 的消息",
-  "ui.nodeMessage.listPanel": "关于 Node 列表的消息",
+  "ui.nodeMessage.listPanel": "关于服务器列表的消息",
   "ui.nodeRow.moreServices": "另外 {count} 个",
   "ui.apps.description":
     "你在服务器上通过界面打开的一切。“服务”页面列出所有服务及其设置。",
@@ -1969,10 +1936,9 @@ export const zhHans: Record<string, string> = {
   "ui.ownerState.theSelectedOwnerSourceIs":
     "所选的所有者来源已不再受支持。请选择本地所有者，或关联你的 kombify Cloud 个人资料。",
   "ui.ownerState.thisInstanceHasNoKombify": "此实例未配置 kombify Cloud 登录。",
-  "ui.pairing.nodeConnection": "Node 连接",
+  "ui.pairing.nodeConnection": "服务器连接",
   "ui.pairing.theConnectionCommandCouldNot": "无法准备连接命令。请重试。",
-  "ui.pairing.theOriginalNodeConfigurationIs":
-    "原始 Node 配置不可用。请返回“添加 Node”以准备连接。",
+  "ui.pairing.theOriginalNodeConfigurationIs": "原始服务器配置不可用。请返回“添加服务器”以准备连接。",
   "ui.people.activationExpired": "激活已过期",
   "ui.people.activationPending": "等待激活",
   "ui.people.appCount.one": "{count} 个应用",
@@ -1981,14 +1947,12 @@ export const zhHans: Record<string, string> = {
     "kombify Connect 设备管理可用后，已连接的客户端会显示在这里。",
   "ui.people.deviceListUnavailable": "设备列表不可用。",
   "ui.people.homelabOwner": "Homelab 所有者",
-  "ui.people.householdListUnavailableTheHomelab":
-    "家庭成员列表不可用：Homelab 的身份提供商没有响应。",
-  "ui.people.identityProviderNotReady": "身份提供商未就绪",
-  "ui.people.identityStatusUnavailable": "身份状态不可用",
+  "ui.people.householdListUnavailableTheHomelab": "人员列表暂时不可用，请稍后再试。",
+  "ui.people.identityProviderNotReady": "登录服务尚未就绪",
+  "ui.people.identityStatusUnavailable": "登录状态不可用",
   "ui.people.member": "成员",
   "ui.people.notInvitedYet": "尚未邀请",
-  "ui.people.ownerAndHouseholdAppearOnce":
-    "Homelab 的身份提供商（Pocket ID 或 TinyAuth）通过 Guard 上报后，所有者和家庭成员就会显示在这里。",
+  "ui.people.ownerAndHouseholdAppearOnce": "你的 Homelab 登录服务就绪后，你和你邀请的人员会显示在这里。",
   "ui.people.plannedInTheWizard": "已在向导中规划",
   "ui.people.plannedMember": "计划中的成员",
   "ui.people.signedInToTheHomelab": "已登录 Homelab",
@@ -2016,10 +1980,9 @@ export const zhHans: Record<string, string> = {
   "ui.postMessageBridge.gatewayTokenRequestTimedOut": "Gateway 令牌请求超时",
   "ui.postMessageBridge.kombifyAIDidNotConfirm":
     "kombify AI 未在规定时间内确认支持会话。",
-  "ui.presets.aCalmOverviewOneBand":
-    "简洁概览：每个 Node 一条带状图，显示其 24 小时曲线。",
+  "ui.presets.aCalmOverviewOneBand": "简洁概览：每个服务器一条带状图，显示其 24 小时曲线。",
   "ui.presets.complete": "完整",
-  "ui.presets.nodeRowsWithTheirApps": "Node 行，旁边显示其应用、设备和人员。",
+  "ui.presets.nodeRowsWithTheirApps": "服务器行，旁边显示其应用、设备和人员。",
   "ui.providerErrors.aStackKitWasSelectedE":
     "已选择某个 StackKit（例如 basement-kit 或 cloud-kit），但服务器上没有该 StackKit 的文件。",
   "ui.providerErrors.anUnknownErrorOccurred": "发生未知错误。",
@@ -2312,8 +2275,7 @@ export const zhHans: Record<string, string> = {
     "在 {server} 上一次性安装公钥“{key}”？私钥永远不会离开 Wallet。",
   "ui.serverAccess.sshKey": "SSH 密钥",
   "ui.serverAccessActions.addOneInTheWallet": "在 Wallet 中添加一个",
-  "ui.serverAccessActions.authorizeOneOfYourPublic":
-    "请先在此 Node 上授权你的一个公钥。",
+  "ui.serverAccessActions.authorizeOneOfYourPublic": "请先在此服务器上授权你的一个公钥。",
   "ui.serverAccessActions.authorizeSshKey": "授权 SSH 密钥",
   "ui.serverAccessActions.copySshCommand": "复制 SSH 命令",
   "ui.serverAccessActions.installPublicKey": "安装公钥",
@@ -2328,12 +2290,12 @@ export const zhHans: Record<string, string> = {
   "ui.serverAccessActions.walletPublicKey": "Wallet 公钥",
   "ui.serverCard.archUnknown": "架构未知",
   "ui.serverCard.osUnknown": "操作系统未知",
-  "ui.serverCardAdapter.anotherNodeActionIsRunning": "另一个 Node 操作正在运行",
+  "ui.serverCardAdapter.anotherNodeActionIsRunning": "另一个服务器操作正在运行",
   "ui.serverDetail.actionNotStarted": "无法启动{action}。",
   "ui.serverDetail.actionsTarget":
     "这些操作直接针对 {name}。可用的控件取决于其当前的连接和 StackKit 状态；无需选择任何服务器或生命周期状态。",
   "ui.serverDetail.confirmActionFor": "确认对 {name} 执行“{action}”",
-  "ui.serverDetail.confirmDecommissionFor": "确认停用 {name}",
+  "ui.serverDetail.confirmDecommissionFor": "确认移除 {name}",
   "ui.serverDetail.confirmDetachFor": "确认分离 {name}",
   "ui.serverDetail.confirmProviderRemoval": "确认在提供商处移除 {name}",
   "ui.serverDetail.connectionState": "服务器连接：{state}",
@@ -2368,9 +2330,8 @@ export const zhHans: Record<string, string> = {
   "ui.serverList.inventoryUnavailable": "清单不可用",
   "ui.serverList.theCanonicalInventoryIsUnavailable":
     "权威清单不可用。仅显示当前已授权的遥测数据。",
-  "ui.serverOutcome.continueOnConnected": "在已连接的 Node 上继续 StackKit",
-  "ui.serverOutcome.continuePrepOnConnected":
-    "在已连接的 Node 上继续 StackKit 准备",
+  "ui.serverOutcome.continueOnConnected": "在已连接的服务器上继续 StackKit",
+  "ui.serverOutcome.continuePrepOnConnected": "在已连接的服务器上继续 StackKit 准备",
   "ui.serverOutcome.restartRollout": "重新启动部署",
   "ui.serverOutcome.retrySsh": "重试 SSH 连接",
   "ui.serverProvisioningStep.cloudKitRollout": "Cloud Kit 部署",
@@ -2427,7 +2388,7 @@ export const zhHans: Record<string, string> = {
   "ui.serviceList.servicesByRuntimeTarget": "按运行时目标划分的服务",
   "ui.serviceRegistry.selected.one": "已选择 {count} 个服务",
   "ui.serviceRegistry.selected.other": "已选择 {count} 个服务",
-  "ui.serviceSheet.node": "Node：{node}",
+  "ui.serviceSheet.node": "服务器：{node}",
   "ui.serviceSheet.notPlaced": "未放置",
   "ui.serviceSheet.ownership": "归属：{value}",
   "ui.serviceSheet.stackkit": "StackKit {version}",
@@ -2447,8 +2408,7 @@ export const zhHans: Record<string, string> = {
   "ui.services.actionCompletedInventoryIsRefreshing":
     "操作已完成；清单正在刷新。",
   "ui.services.actionTitle": "{action} {name}",
-  "ui.services.addACatalogApplicationOr":
-    "添加目录中的应用，或导入未托管的 Node 清单。",
+  "ui.services.addACatalogApplicationOr": "添加目录中的应用，或导入未托管的服务器清单。",
   "ui.services.addANewApplication": "添加新应用",
   "ui.services.addService": "添加服务",
   "ui.services.adoptIntoManagement": "纳入管理…",
@@ -2487,15 +2447,13 @@ export const zhHans: Record<string, string> = {
   "ui.services.confirmLock":
     "锁定 {name}？锁定期间，启动、停止和重启都会被拒绝，包括通过 stack apply 触发的操作。服务会继续运行。",
   "ui.services.confirmUnlock": "解锁 {name}？受管控的变更将再次可用。",
-  "ui.services.connectNodesToYourHomelab":
-    "将 Node 连接到你的 Homelab，即可管理应用的放置位置。",
+  "ui.services.connectNodesToYourHomelab": "将服务器连接到你的 Homelab，即可管理应用的放置位置。",
   "ui.services.deleteArchivedService": "删除已归档的服务？",
   "ui.services.desired": "期望",
   "ui.services.desiredObserved": "期望 {desired} · 观测 {observed}",
   "ui.services.discoveredOn": "在 {name} 上发现 — 不由 kombify 管理",
   "ui.services.displayName": "显示名称",
-  "ui.services.dragAndDropStaysDisabled":
-    "在部署、健康验证、切换和源端排空由真实的运行时执行器处理之前，拖放将保持禁用。",
+  "ui.services.dragAndDropStaysDisabled": "拖放暂不可用。要安全地迁移应用，需要将安装、健康检查、切换以及旧副本的清理实现自动化。",
   "ui.services.dropManagedApplicationsHere": "将托管应用拖放到此处",
   "ui.services.error": "错误",
   "ui.services.failedToDeleteArchivedService": "删除已归档的服务失败。",
@@ -2506,36 +2464,35 @@ export const zhHans: Record<string, string> = {
   "ui.services.health": "健康状态",
   "ui.services.importAsObserved": "作为已观测项导入",
   "ui.services.importUnmanaged": "导入未托管项",
-  "ui.services.internalAddressOnlyOpenIt":
-    "仅限内部地址；请从 Node 所在网络中打开。",
+  "ui.services.internalAddressOnlyOpenIt": "仅限内部地址；请从服务器所在网络中打开。",
   "ui.services.jobId": "任务 {id}",
   "ui.services.loadOlderLogs": "加载更早的日志",
   "ui.services.loadingCanonicalServiceInventory": "正在加载权威服务清单",
-  "ui.services.localNode": "本地 Node",
+  "ui.services.localNode": "本地服务器",
   "ui.services.managedProviderTarget": "托管提供商目标",
   "ui.services.migrationJobIsActive": "迁移任务正在进行。",
   "ui.services.moveApplication": "迁移应用",
   "ui.services.moveHere": "将 {name} 迁移到此处",
   "ui.services.moveSteps": "迁移步骤：",
-  "ui.services.moveToAnotherNode": "迁移到其他 Node…",
+  "ui.services.moveToAnotherNode": "迁移到其他服务器…",
   "ui.services.mutationsRequireOwnerApprovalA":
     "变更需要所有者批准；在测得状态改变之前会先运行一次 StackKits 验证。",
   "ui.services.newApplication": "新建应用",
   "ui.services.noApplicationsDeployed": "尚未部署任何应用",
   "ui.services.noApplicationsMatching": "没有状态为 {status} 的应用",
   "ui.services.noApplicationsReported": "未报告任何应用",
-  "ui.services.noAvailableTargetNodeFor": "此应用没有可用的目标 Node。",
+  "ui.services.noAvailableTargetNodeFor": "此应用没有可用的目标服务器。",
   "ui.services.noCanonicalRuntimeObservationYet":
     "尚无权威运行时观测 — 显示的是注册表投影。",
   "ui.services.noGovernedActionHasRun": "本次会话中尚未执行任何受管控的操作。",
   "ui.services.noHostname": "无主机名",
-  "ui.services.noNodesRegistered": "没有已注册的 Node",
+  "ui.services.noNodesRegistered": "没有已注册的服务器",
   "ui.services.noOperationsAvailable": "没有可用的操作。",
   "ui.services.noSystemServices": "没有系统服务",
-  "ui.services.node": "Node",
-  "ui.services.nodeBoundApplications": "绑定到 Node 的应用",
-  "ui.services.nodeCapabilities": "Node 能力",
-  "ui.services.nodeColumn": "Node {name} 列",
+  "ui.services.node": "服务器",
+  "ui.services.nodeBoundApplications": "绑定到服务器的应用",
+  "ui.services.nodeCapabilities": "服务器能力",
+  "ui.services.nodeColumn": "服务器{name} 列",
   "ui.services.observed": "已观测",
   "ui.services.stacked": "Stacked",
   "ui.services.unstacked": "Unstacked",
@@ -2565,10 +2522,10 @@ export const zhHans: Record<string, string> = {
   "ui.services.runtimeInventoryCouldNotBe": "无法加载运行时清单。",
   "ui.services.runtimeMigrationIsNotEnabled": "运行时迁移尚未启用",
   "ui.services.runtimeMigrationUnavailable": "运行时迁移不可用",
-  "ui.services.runtimeServiceMigrationIsNot": "此部署未启用运行时服务迁移。",
+  "ui.services.runtimeServiceMigrationIsNot": "此安装未启用在服务器之间迁移应用的功能。",
   "ui.services.runtimeTarget": "运行时目标",
-  "ui.services.selectANodeAndCatalog": "请选择一个 Node 和一个目录服务。",
-  "ui.services.selectANodeThenEnter": "请先选择一个 Node，然后输入服务名称。",
+  "ui.services.selectANodeAndCatalog": "请选择一个服务器和一个目录服务。",
+  "ui.services.selectANodeThenEnter": "请先选择一个服务器，然后输入服务名称。",
   "ui.services.selected": "已选择：{name}",
   "ui.services.service": "服务",
   "ui.services.serviceActionDidNotComplete": "服务操作未完成。",
@@ -2591,17 +2548,15 @@ export const zhHans: Record<string, string> = {
   "ui.services.storageFreeOf": "可用 {free} GB / 共 {total} GB",
   "ui.services.systemServices": "系统服务",
   "ui.services.targetIsReadyForVerification": "目标已就绪，可以验证。",
-  "ui.services.targetNode": "目标 Node",
+  "ui.services.targetNode": "目标服务器",
   "ui.services.targetValue": "目标：{value}",
   "ui.services.telemetryPending": "遥测数据待处理",
   "ui.services.temporaryInstance": "将在 {slot} 上部署一个临时实例。",
-  "ui.services.theApplicationConfigWillBe": "应用配置将被复制到目标 Node。",
+  "ui.services.theApplicationConfigWillBe": "应用配置将被复制到目标服务器。",
   "ui.services.theLastLogPageWas": "最后一页日志为空。",
-  "ui.services.theLastSuccessfulSnapshotRemains":
-    "最近一次成功的快照会一直保留显示，直到此 StackKit 部署报告替代快照或明确的宕机证据。",
+  "ui.services.theLastSuccessfulSnapshotRemains": "最近一次成功的快照会一直保留显示，直到此 Homelab 报告替代快照或明确的应用宕机证据。",
   "ui.services.thisHomelab": "此 Homelab",
-  "ui.services.thisPermanentlyDeletesTheArchived":
-    "这将从源 Node 上永久删除已归档的服务。",
+  "ui.services.thisPermanentlyDeletesTheArchived": "这将从源服务器上永久删除已归档的服务。",
   "ui.services.type": "类型：",
   "ui.services.type2": "类型",
   "ui.services.unclassifiedRuntimeComponentsAppearHere":
@@ -2612,7 +2567,7 @@ export const zhHans: Record<string, string> = {
   "ui.services.url": "URL",
   "ui.services.verifyFinish": "验证并完成",
   "ui.services.verifying": "· 正在验证",
-  "ui.services.waitingForRuntimeDeployment": "正在等待运行时部署...",
+  "ui.services.waitingForRuntimeDeployment": "正在等待安装...",
   "ui.services.youCanTestTheNew": "在旧实例保持运行的同时，你可以测试新实例。",
   "ui.servicesApplicationId.addressClass": "地址类别",
   "ui.servicesApplicationId.applicationDetails": "应用详情",
@@ -2621,7 +2576,7 @@ export const zhHans: Record<string, string> = {
   "ui.servicesApplicationId.backToApplications": "返回应用列表",
   "ui.servicesApplicationId.freshness": "新鲜度",
   "ui.servicesApplicationId.impact": "影响",
-  "ui.servicesApplicationId.kitDeployment": "Kit 部署",
+  "ui.servicesApplicationId.kitDeployment": "Homelab",
   "ui.servicesApplicationId.lifecycle": "生命周期",
   "ui.servicesApplicationId.management": "管理",
   "ui.servicesApplicationId.noReachableAddressReported": "未报告可访问的地址",
@@ -2641,15 +2596,14 @@ export const zhHans: Record<string, string> = {
   "ui.settings.dangerZone": "危险区域",
   "ui.settings.dashboard": "仪表板",
   "ui.settings.dashboardLayout": "仪表板布局",
-  "ui.settings.decommissionsTheDeploymentSManaged":
-    "停用该部署的托管运行时并移除其条目。如只想移除单个服务器，请在该服务器上使用其停用操作。",
+  "ui.settings.decommissionsTheDeploymentSManaged": "删除该 Homelab 的托管服务器及其条目。如只想删除单个服务器，请在该服务器上使用“删除服务器”。",
   "ui.settings.delete": "删除",
-  "ui.settings.deleteADeployment": "删除部署",
+  "ui.settings.deleteADeployment": "删除 Homelab",
   "ui.settings.deleteNamed": "删除“{name}”？",
-  "ui.settings.deleteThisDeployment": "删除此部署",
+  "ui.settings.deleteThisDeployment": "删除此 Homelab",
   "ui.settings.deleting": "正在删除...",
   "ui.settings.deletionFailed": "删除失败",
-  "ui.settings.failedToLoadDeployments": "无法加载部署",
+  "ui.settings.failedToLoadDeployments": "无法加载 Homelab",
   "ui.settings.failedToLoadHomelabIdentity": "无法加载 Homelab 身份",
   "ui.settings.failedToSaveHomelabIdentity": "无法保存 Homelab 身份",
   "ui.settings.flag": "Flag",
@@ -2659,37 +2613,33 @@ export const zhHans: Record<string, string> = {
   "ui.settings.homelabIdentity": "Homelab 身份",
   "ui.settings.lightOrDarkAndThe":
     "浅色或深色，以及界面质感。在此设备选择自己的质感之前，质感会跟随你的 kombify 账户默认设置。",
-  "ui.settings.loadingDeployments": "正在加载部署...",
+  "ui.settings.loadingDeployments": "正在加载 Homelab...",
   "ui.settings.logout": "退出登录",
   "ui.settings.managedByKombifyCloud": "由 kombify Cloud 托管。",
   "ui.settings.mode": "模式",
   "ui.settings.navigationPreview": "导航预览",
   "ui.settings.navigationPreviewShape": "导航预览形状",
-  "ui.settings.noDeploymentsToDelete": "没有可删除的部署。",
+  "ui.settings.noDeploymentsToDelete": "没有可移除的 Homelab。",
   "ui.settings.noHomelabIdentityConfigured": "尚未配置 Homelab 身份。",
   "ui.settings.noVerifiedTestResidueRemains": "不再有已验证的测试残留。",
   "ui.settings.noVerifiedTestResidueWas": "未发现已验证的测试残留。",
   "ui.settings.overlap": "重叠",
-  "ui.settings.pruneQualifies":
-    "只有已认证所有者 {owner} 和严格 {strict} 的投影才符合条件。活跃的托管运行时、提供商资源、最近的 Nodes、演示数据以及正常的 Homelab 数据保持不变。",
+  "ui.settings.pruneQualifies": "只有已认证所有者 {owner} 和严格 {strict} 的投影才符合条件。活跃的托管运行时、提供商资源、最近的服务器、演示数据以及正常的 Homelab 数据保持不变。",
   "ui.settings.reviewCleanup": "审查清理",
   "ui.settings.reviewVerifiedTestResidue": "审查已验证的测试残留",
   "ui.settings.reviewing": "正在审查...",
-  "ui.settings.reviewsExactOwnerScopedE2e":
-    "审查按所有者精确限定的 E2E 投影和失败的运行时投影。提供商资源、活跃租约、最近的 Nodes 以及正常的 Homelab 数据保持不变。",
+  "ui.settings.reviewsExactOwnerScopedE2e": "审查按所有者精确限定的 E2E 投影和失败的运行时投影。提供商资源、活跃租约、最近的服务器以及正常的 Homelab 数据保持不变。",
   "ui.settings.savedOnDevice": "已为你的账户保存在此设备上。",
   "ui.settings.settings": "设置",
   "ui.settings.signedIn": "已登录",
   "ui.settings.surface": "界面",
   "ui.settings.surfaceFinish": "界面质感",
   "ui.settings.tether": "Tether",
-  "ui.settings.theDemoDeploymentIsProtected": "演示部署受到保护，无法删除。",
-  "ui.settings.thisDecommissionsTheManagedRuntime":
-    "这会停用托管运行时并移除部署条目。此操作无法撤销。",
+  "ui.settings.theDemoDeploymentIsProtected": "演示 Homelab 受到保护，无法删除。",
+  "ui.settings.thisDecommissionsTheManagedRuntime": "这会关闭托管服务器，在提供商处连同数据一并删除，并移除该 Homelab 条目。此操作无法撤销。",
   "ui.settings.thisEntryIsNotVerified":
     "此条目不是已验证的测试残留，无法通过投影清理移除。",
-  "ui.settings.thisExactPlanIsBound":
-    "此确切方案已绑定到下方的摘要。不会销毁任何基础设施。",
+  "ui.settings.thisExactPlanIsBound": "此确切方案已绑定到下方的摘要。不会移除任何服务器或提供商资源。",
   "ui.settings.typeToConfirm": "输入 {slot} 以确认",
   "ui.shortcuts.closeDialogDeselect": "关闭对话框/取消选择",
   "ui.shortcuts.focusSearchInput": "聚焦搜索框",
@@ -2714,10 +2664,8 @@ export const zhHans: Record<string, string> = {
   "ui.sshKeygen.ed25519NotSupportedInThis":
     "此浏览器不支持 Ed25519。请改用 RSA。",
   "ui.sshKeygen.unsupportedAlgorithm": "不支持的算法：{algorithm}",
-  "ui.stackImport.exportIntro":
-    "将此 StackKit 部署配置导出为 {file}。你可以编辑该文件，之后再重新导入。",
-  "ui.stackImport.intro":
-    "导入 {file} 文件，即可在你的 Homelab 中设置 StackKit 部署。仍然支持旧版 {legacy} 文件。",
+  "ui.stackImport.exportIntro": "将此 Homelab 的配置导出为 {file}。你可以编辑该文件，之后再重新导入。",
+  "ui.stackImport.intro": "导入 {file} 文件即可设置 Homelab。仍然支持旧版 {legacy} 文件。",
   "ui.stackImport.orPaste": "或粘贴",
   "ui.stackImport.validating": "正在验证...",
   "ui.stackImportExportModal.allRequiredFieldsArePresent":
@@ -2729,21 +2677,17 @@ export const zhHans: Record<string, string> = {
     "复制诊断信息（供开发者使用）",
   "ui.stackImportExportModal.couldNotReadFile": "无法读取文件",
   "ui.stackImportExportModal.dragFileHereOr": "将文件拖到此处，或",
-  "ui.stackImportExportModal.exportStackkitDeploymentSpec":
-    "导出 StackKit 部署规范",
+  "ui.stackImportExportModal.exportStackkitDeploymentSpec": "导出 Homelab 规范",
   "ui.stackImportExportModal.ifTheProblemPersistsCopy":
     "如果问题仍然存在：请复制诊断信息并分享给开发者。",
-  "ui.stackImportExportModal.importStackkitDeploymentSpec":
-    "导入 StackKit 部署规范",
+  "ui.stackImportExportModal.importStackkitDeploymentSpec": "导入 Homelab 规范",
   "ui.stackImportExportModal.importStartSetup": "导入并开始设置",
   "ui.stackImportExportModal.importingConfiguration": "正在导入配置...",
   "ui.stackImportExportModal.metadataAndIntents": "• 元数据和意图",
   "ui.stackImportExportModal.noContentFound": "未找到内容",
   "ui.stackImportExportModal.noContentToImport": "没有可导入的内容",
-  "ui.stackImportExportModal.noStackkitDeploymentIsAvailable":
-    "没有可导出的 StackKit 部署",
-  "ui.stackImportExportModal.nodeDefinitionsWithoutCredentials":
-    "• Node 定义（不含凭据）",
+  "ui.stackImportExportModal.noStackkitDeploymentIsAvailable": "没有可导出的 Homelab",
+  "ui.stackImportExportModal.nodeDefinitionsWithoutCredentials": "•服务器定义（不含凭据）",
   "ui.stackImportExportModal.pasteYourStackSpecYaml":
     "# 在此粘贴你的 stack-spec.yaml...",
   "ui.stackImportExportModal.recommended": "（推荐）",
@@ -2763,18 +2707,17 @@ export const zhHans: Record<string, string> = {
   "ui.stackImportExportModal.youWillBeRedirectedTo":
     "你很快将被重定向到设置页面。",
   "ui.stacksCreating.creatingStackkitDeploymentKombifyTechstack":
-    "正在创建 StackKit 部署 | kombify-Techstack",
+    "正在创建你的 Homelab | kombify Techstack",
   "ui.stacksCreating.leanBackBody":
     "你的部分已经完成。我们正在为你准备一切，精彩马上就来。",
   "ui.stacksCreating.leanBackTitle": "放松一下，我们正在为你施展魔法",
   "ui.stacksCreating.openOperations": "打开操作",
-  "ui.stacksCreating.reviewAndStartStackkitRollout": "审查并开始 StackKit 推出",
   "ui.stacksCreating.tips.codeBody":
     "StackKits 根据经过验证的蓝图生成你的配置，因此每次变更都可重复、可追溯。",
   "ui.stacksCreating.tips.codeEyebrow": "基础设施即代码",
   "ui.stacksCreating.tips.codeTitle": "你的技术栈即代码",
   "ui.stacksCreating.tips.growBody":
-    "随时为此技术栈添加新节点。Techstack 协调你的服务器，每台服务器仍可独立运行。",
+    "随时为此技术栈添加新的服务器。Techstack 协调你的服务器，每台服务器仍可独立运行。",
   "ui.stacksCreating.tips.growEyebrow": "扩展",
   "ui.stacksCreating.tips.growTitle": "成长空间",
   "ui.stacksCreating.tips.label": "小知识",
@@ -2794,20 +2737,20 @@ export const zhHans: Record<string, string> = {
   "ui.stacksCreating.tips.restoreEyebrow": "备份",
   "ui.stacksCreating.tips.restoreTitle": "恢复经过验证，而不只是承诺",
   "ui.stacksCreating.tips.show": "显示第 {number} 条提示，共 {total} 条",
-  "ui.stacksCreatingCreation-controller.additionalNode": "额外 Node",
+  "ui.stacksCreatingCreation-controller.additionalNode": "额外服务器",
   "ui.stacksCreatingCreation-controller.afterFailedAttemptsTheBackend":
     "经过 {MAX_POLL_ERRORS} 次失败尝试后，仍无法连接后端。页面会以退避方式继续重试；你也可以检查网络连接并重新加载以继续。",
   "ui.stacksCreatingCreation-controller.configurationPrepared": "配置已准备好",
   "ui.stacksCreatingCreation-controller.connectYourNodeToContinue":
-    "连接你的 Node 以继续部署",
+    "连接你的服务器以继续部署",
   "ui.stacksCreatingCreation-controller.connectionToServerLost":
     "与服务器的连接已断开",
   "ui.stacksCreatingCreation-controller.continueStackKitDeploymentOnConnected":
-    "在已连接的 Node 上继续 StackKit 部署",
+    "在已连接的服务器上继续 StackKit 部署",
   "ui.stacksCreatingCreation-controller.continueStackKitOnConnectedNode":
-    "在已连接的 Node 上继续 StackKit",
+    "在已连接的服务器上继续 StackKit",
   "ui.stacksCreatingCreation-controller.continueStackKitRolloutOnConnected":
-    "在已连接的 Node 上继续 StackKit 部署",
+    "在已连接的服务器上继续 StackKit 部署",
   "ui.stacksCreatingCreation-controller.couldNotCheckRemoteSSH":
     "无法检查远程 SSH 注册进度。",
   "ui.stacksCreatingCreation-controller.couldNotPrepareTheConnection":
@@ -2825,14 +2768,14 @@ export const zhHans: Record<string, string> = {
   "ui.stacksCreatingCreation-controller.creatingStackKitDeployment":
     "正在创建 StackKit 部署",
   "ui.stacksCreatingCreation-controller.guardHasNotReportedA":
-    "Guard 尚未报告此 Node 的新心跳。请在已保存的连接上重试 SSH 注册，或确认 Agent 正在服务器上运行。",
+    "你的服务器还没有报到。请使用已保存的信息重试 SSH 连接，或检查 kombify 代理是否正在服务器上运行。",
   "ui.stacksCreatingCreation-controller.jobIsNotBeingProcessed":
     "作业未在处理中",
   "ui.stacksCreatingCreation-controller.jobWasCanceled": "作业已取消",
   "ui.stacksCreatingCreation-controller.kombifyRequestedTheAdditionalManaged":
-    "kombify 已请求额外的托管 Node。注册完成期间，你可以从仪表板继续操作。",
+    "kombify 已请求额外的托管服务器。注册完成期间，你可以从仪表板继续操作。",
   "ui.stacksCreatingCreation-controller.managedNodeRequestIsStill":
-    "托管 Node 请求仍在进行中",
+    "托管服务器请求仍在进行中",
   "ui.stacksCreatingCreation-controller.managedRolloutRecoveryWasNot":
     "未启动托管推出恢复，因为等待中的作业没有确切的租约引用。",
   "ui.stacksCreatingCreation-controller.missingJobReferencePleaseStart":
@@ -2840,21 +2783,21 @@ export const zhHans: Record<string, string> = {
   "ui.stacksCreatingCreation-controller.newStackKitDeployment":
     "新建 StackKit 部署",
   "ui.stacksCreatingCreation-controller.noJobFound": "未找到作业",
-  "ui.stacksCreatingCreation-controller.nodeConnected": "Node 已连接",
-  "ui.stacksCreatingCreation-controller.nodeConnectionReady": "Node 连接已就绪",
+  "ui.stacksCreatingCreation-controller.nodeConnected": "服务器已连接",
+  "ui.stacksCreatingCreation-controller.nodeConnectionReady": "服务器连接已就绪",
   "ui.stacksCreatingCreation-controller.nodeRegistrationDidNotReturn":
-    "Node 注册未返回创建作业。",
+    "服务器注册未返回创建作业。",
   "ui.stacksCreatingCreation-controller.nodeRegistrationReady":
-    "Node 注册已就绪",
+    "服务器注册已就绪",
   "ui.stacksCreatingCreation-controller.recoveringRolloutOnTheExact":
     "正在确切的现有托管 VM 上恢复推出...",
   "ui.stacksCreatingCreation-controller.remoteSSHEnrollmentFailed":
     "远程 SSH 注册失败。",
   "ui.stacksCreatingCreation-controller.reportedAFreshGuardHeartbeat":
-    "{name} 已报告新的 Guard 心跳，并在 Node 投影中可见。",
+    "{name} 已报到，现已加入你的 Homelab。",
   "ui.stacksCreatingCreation-controller.restoreDrill": "恢复演练",
   "ui.stacksCreatingCreation-controller.resumingTheEarlierNodeRegistration":
-    "正在继续之前的 Node 注册尝试…",
+    "正在继续之前的服务器注册尝试…",
   "ui.stacksCreatingCreation-controller.retryDeployment": "重试部署",
   "ui.stacksCreatingCreation-controller.retryRollout": "重试推出",
   "ui.stacksCreatingCreation-controller.retryServerRequest": "重试服务器请求",
@@ -2878,27 +2821,27 @@ export const zhHans: Record<string, string> = {
     "缺少 StackKit 运行时验证",
   "ui.stacksCreatingCreation-controller.startFreshAttempt": "开始新的尝试",
   "ui.stacksCreatingCreation-controller.theAddNodeRequestHas":
-    "“添加 Node”请求已运行超过 2 分钟。此路径只应请求或准备额外的 Node，而不应执行完整的 StackKit 推出。请打开“操作”查看 Node 请求是否已创建；如果没有出现新的 Node，请重试“添加 Node”。",
+    "“添加服务器”请求已运行超过 2 分钟。此路径只应请求或准备额外的服务器，而不应执行完整的 StackKit 推出。请打开“操作”查看服务器请求是否已创建；如果没有出现新的服务器，请重试“添加服务器”。",
   "ui.stacksCreatingCreation-controller.theAdditionalNodeRegistrationIs":
-    "额外 Node 的注册已为现有 Homelab 准备就绪。",
+    "额外服务器的注册已为现有 Homelab 准备就绪。",
   "ui.stacksCreatingCreation-controller.theBackendCanceledThisJob":
     "后端在此作业完成前将其取消。请重试，以便从最近的安全检查点继续。",
   "ui.stacksCreatingCreation-controller.theCompletedRuntimeJobDid":
     "已完成的运行时作业未返回经过验证的运行时证据。请重试推出以验证安装。",
   "ui.stacksCreatingCreation-controller.theNodeProjectionCouldNot":
-    "无法检查 Node 投影。配对命令仍然可用，但没有新的 Guard 心跳时，此页面不会声称已连接。",
+    "我们无法检查你的服务器是否已报到。命令仍然可用；只有在服务器真正报到后，本页面才会显示已连接。",
   "ui.stacksCreatingCreation-controller.thePreviouslyVerifiedGuardHeartbeat":
-    "先前已验证的 Guard 心跳已不再是最新的。正在等待当前的连接证据。",
+    "你的服务器已停止报到。正在等待它重新报到。",
   "ui.stacksCreatingCreation-controller.theProvisioningJobHasBeen":
     "配置作业已挂起超过 2 分钟且没有进展。这通常意味着编排器没有运行或已崩溃。\n\n请检查服务器日志：docker compose logs techstack\n尝试重启：docker compose restart techstack",
   "ui.stacksCreatingCreation-controller.theReservedNodeCouldNot":
-    "无法检查已预留的 Node。服务器清单再次可用后，请在已保存的连接上重试 SSH 注册。",
+    "无法检查已预留的服务器。服务器清单再次可用后，请在已保存的连接上重试 SSH 注册。",
   "ui.stacksCreatingCreation-controller.thisPageRequiresAJob":
     "此页面需要来自设置向导的 job_id。请通过 /stacks/new 重新开始设置。",
   "ui.stacksCreatingCreation-controller.validatingTheSelectedStackKitAnd":
-    "正在验证所选 StackKit 并准备 Node...",
+    "正在验证所选 StackKit 并准备服务器...",
   "ui.stacksCreatingCreation-controller.yourRemoteNodeConfigurationIs":
-    "你的远程 Node 配置已可用于推出",
+    "你的远程服务器配置已可用于推出",
   "ui.stacksCreatingCreation-controller.yourSessionIsNoLonger":
     "你的会话已失效，因此无法检查创建进度。请重新登录并再次打开此创建任务以继续监控。",
   "ui.stacksCreatingCreation-results.backendError":
@@ -2909,30 +2852,30 @@ export const zhHans: Record<string, string> = {
   "ui.stacksCreatingCreation-results.stackID": "Stack ID：{stackId}",
   "ui.stacksCreatingCreation-results.targetBootstrap": "目标引导：",
   "ui.stacksCreatingCreationCompletion.guardHeartbeatVerified":
-    "Guard 心跳已验证",
-  "ui.stacksCreatingCreationCompletion.hashPresent": "哈希存在",
+    "你的服务器已连接",
+  "ui.stacksCreatingCreationCompletion.hashPresent": "已设置恢复口令",
   "ui.stacksCreatingCreationCompletion.lastGuardHeartbeat":
     "最近一次 Guard 心跳：",
   "ui.stacksCreatingCreationCompletion.managedProvisioningComplete":
-    "托管配置已完成",
-  "ui.stacksCreatingCreationCompletion.materialLinked": "材料已关联",
+    "你的托管服务器已就绪",
+  "ui.stacksCreatingCreationCompletion.materialLinked": "已保存恢复信息",
   "ui.stacksCreatingCreationCompletion.openHomelab": "打开 Homelab",
   "ui.stacksCreatingCreationCompletion.owner": "所有者",
-  "ui.stacksCreatingCreationCompletion.ownerPrepared": "所有者已准备",
+  "ui.stacksCreatingCreationCompletion.ownerPrepared": "所有者账户已准备",
   "ui.stacksCreatingCreationCompletion.ownerReady": "所有者已就绪",
-  "ui.stacksCreatingCreationCompletion.ownerSeedReady": "所有者种子已就绪",
+  "ui.stacksCreatingCreationCompletion.ownerSeedReady": "所有者账户已就绪",
   "ui.stacksCreatingCreationCompletion.recovery": "恢复",
-  "ui.stacksCreatingCreationCompletion.rolloutComplete": "推出已完成",
-  "ui.stacksCreatingCreationCompletion.selfHostedRollout": "自托管推出",
+  "ui.stacksCreatingCreationCompletion.rolloutComplete": "设置完成",
+  "ui.stacksCreatingCreationCompletion.selfHostedRollout": "自托管",
   "ui.stacksCreatingCreationCompletion.techstackNowSeesThisNode":
-    "在真实的 Node 投影中，Techstack 现在将此 Node 视为健康且可推出。仅靠配对准备并不会触发此状态。",
+    "你的服务器已报到，运行正常，可以进行下一步。",
   "ui.stacksCreatingCreationCompletion.theFirstLoginGatewayAnd":
-    "首个登录网关和恢复引用会随 StackKit 推出（“Review + Start”）一起提供。",
+    "你的首次登录信息和恢复信息会在 Homelab 设置完成后提供（“查看并创建”）。",
   "ui.stacksCreatingCreationCompletion.theOwnerIdentityDerivesFrom":
     "所有者身份来自你已关联的 kombify Cloud 个人资料。",
   "ui.stacksCreatingCreationCompletion.theOwnerSeedIsPrepared":
-    "所有者种子已准备好。",
-  "ui.stacksCreatingCreationCompletion.yourNode": "你的 Node",
+    "你的所有者账户已准备好。",
+  "ui.stacksCreatingCreationCompletion.yourNode": "你的服务器",
   "ui.groupedTaskList.needsAttention": "需要关注",
   "ui.stacksCreatingCreationDegraded.titleOne": "已就绪 — 有一部分需要关注",
   "ui.stacksCreatingCreationDegraded.titleMany":
@@ -2966,25 +2909,21 @@ export const zhHans: Record<string, string> = {
   "ui.stacksCreatingCreationFailure.errorDetails": "错误详情",
   "ui.stacksCreatingCreationFailure.existingManagedVmLeaseReferenced":
     "已引用现有的托管 VM 租约",
-  "ui.stacksCreatingCreationFailure.makeSureTheBackendServer":
-    "确保后端服务器正在运行",
-  "ui.stacksCreatingCreationFailure.nodeConnectionSucceeded": "Node 连接成功",
+  "ui.stacksCreatingCreationFailure.nodeConnectionSucceeded": "服务器连接成功",
   "ui.stacksCreatingCreationFailure.operations": "操作",
   "ui.stacksCreatingCreationFailure.askCompanion": "询问 kombify",
   "ui.stacksCreatingCreationFailure.askCompanionPrompt":
     "创建“{operation}”在步骤“{step}”失败，错误如下：\n\n{error}\n\n出了什么问题？我下一步该怎么做？",
   "ui.stacksCreatingCreationFailure.possibleSolutions": "可能的解决方法：",
   "ui.stacksCreatingCreationFailure.resumePreviousAttempt": "继续上一次尝试",
-  "ui.stacksCreatingCreationFailure.reviewYourConfigurationSettings":
-    "检查你的配置设置",
   "ui.stacksCreatingCreationFailure.sshEnrollmentCompletedAndThe":
-    "SSH 注册已完成，Node 已在你的 Homelab 中可见。仅 StackKit 准备或推出失败。重试将在已连接的 Node 上继续，无需重复 SSH 注册。",
+    "SSH 注册已完成，服务器已在你的 Homelab 中可见。仅 StackKit 准备或推出失败。重试将在已连接的服务器上继续，无需重复 SSH 注册。",
   "ui.stacksCreatingCreationFailure.theExactRetryEndpointValidates":
     "精确的重试端点会先验证此失败的作业和租约，然后在现有服务器上继续。",
   "ui.stacksCreatingCreationFailure.theRolloutReachedTheExisting":
     "推出已到达现有的托管 VM。",
   "ui.stacksCreatingCreationFailure.thisBrowserReusedAnAttempt":
-    "此浏览器复用了来自另一次提交的尝试密钥。之前的运行可能已经创建了 Node 注册。请继续该次尝试，或使用新密钥重新开始。",
+    "此浏览器复用了来自另一次提交的尝试密钥。之前的运行可能已经创建了服务器注册。请继续该次尝试，或使用新密钥重新开始。",
   "ui.stacksCreatingCreationFailure.troubleshooting": "故障排查",
   "ui.stacksCreatingCreationFailure.vpsProvisioningCompletedOnlyStackkit":
     "VPS 配置已完成。仅 StackKit 制品、域名路由或后续推出工作失败。",
@@ -2993,9 +2932,8 @@ export const zhHans: Record<string, string> = {
   "ui.stacksCreatingCreationInstallCommand.copy": "复制",
   "ui.stacksCreatingCreationInstallCommand.copyInstallationCommandToClipboard":
     "将安装命令复制到剪贴板",
-  "ui.stacksCreatingCreationInstallCommand.installWorker": "安装 Worker",
   "ui.stacksCreatingCreationInstallCommand.kombifyTechstackServerUrlReachable":
-    "kombify-Techstack 服务器 URL（Worker 可访问）：",
+    "kombify Techstack 地址（你的服务器可访问）：",
   "ui.stacksCreatingCreationInstallCommand.openOneHourSimulateDemo":
     "打开一小时的 Simulate 演示预览",
   "ui.stacksCreatingCreationInstallCommand.previewLifetimeIsLimitedTo":
@@ -3014,7 +2952,7 @@ export const zhHans: Record<string, string> = {
   "ui.stacksCreatingCreationLease.leaseId": "租约 ID",
   "ui.stacksCreatingCreationLease.live": "运行中",
   "ui.stacksCreatingCreationLease.loginGateway": "登录网关",
-  "ui.stacksCreatingCreationLease.managedNodeRequested": "已请求托管 Node",
+  "ui.stacksCreatingCreationLease.managedNodeRequested": "已请求托管服务器",
   "ui.stacksCreatingCreationLease.managedRuntimeReady": "托管运行时已就绪",
   "ui.stacksCreatingCreationLease.offering": "产品",
   "ui.stacksCreatingCreationLease.openFirstLogin": "打开首次登录",
@@ -3027,14 +2965,14 @@ export const zhHans: Record<string, string> = {
   "ui.stacksCreatingCreationLease.stackkitDeployedOnTheLeased":
     "StackKit 已部署在租用的订阅 VM 上。以下数值由运行时作业返回，并非演示数据。",
   "ui.stacksCreatingCreationLease.stackkitIdentityHandoffIsMissing":
-    "缺少 StackKit 身份交接",
+    "缺少你的首次登录信息",
   "ui.stacksCreatingCreationLease.stackkitReturnedTheOwnerLogin":
     "StackKit 已为此经过验证的 Cloud Kit 推出返回所有者登录、登录网关和恢复引用。",
   "ui.stacksCreatingCreationLease.status": "状态：",
   "ui.stacksCreatingCreationLease.theAdditionalSubscriptionVmRequest":
     "额外订阅 VM 的请求已记录。注册回报后，它将显示在“操作”中。",
   "ui.stacksCreatingCreationLease.theRolloutCompletedButThe":
-    "推出已完成，但 StackKit 未返回所有者登录、登录网关和恢复输出。在运行时操作响应包含以下内容之前，请将其视为发布阻塞项",
+    "你的 Homelab 已设置完成，但首次登录信息和恢复信息没有送达。请联系支持并提供技术详情。",
   "ui.stacksCreatingCreationLease.theseStatusesComeFromRuntime":
     "这些状态来自运行时操作响应和最终的 e2e 证明。",
   "ui.stacksCreatingCreationLease.wallet": "Wallet",
@@ -3044,7 +2982,7 @@ export const zhHans: Record<string, string> = {
   "ui.stacksCreatingCreationProgress.checkAgain": "重新检查",
   "ui.stacksCreatingCreationProgress.creationFailed": "创建失败",
   "ui.stacksCreatingCreationProgress.nodeProvisioningIsStillIn":
-    "Node 配置仍在进行中",
+    "服务器配置仍在进行中",
   "ui.stacksCreatingCreationProgress.pleaseWaitWhileWeRe": "请稍候，我们正在",
   "ui.stacksCreatingCreationProgress.morphCompleting": "完成",
   "ui.stacksCreatingCreationProgress.morphConfiguring": "配置",
@@ -3052,20 +2990,20 @@ export const zhHans: Record<string, string> = {
   "ui.stacksCreatingCreationProgress.morphValidating": "验证",
   "ui.stacksCreatingCreationProgress.progress": "进度",
   "ui.stacksCreatingCreationProgress.rolloutIncomplete": "推出未完成",
-  "ui.stacksCreatingCreationProgress.runThePairingCommand": "运行配对命令",
+  "ui.stacksCreatingCreationProgress.runThePairingCommand": "在你的服务器上运行命令",
   "ui.stacksCreatingCreationProgress.setupCannotContinue": "设置无法继续",
   "ui.stacksCreatingCreationProgress.theNextCheckIsScheduled":
-    "下一次检查已安排。在注册被确认之前，仪表板、服务和 Node 访问保持锁定；逾期的检查可以在此安全地继续。",
+    "下一次检查已安排。在注册被确认之前，仪表板、服务和服务器访问保持锁定；逾期的检查可以在此安全地继续。",
   "ui.stacksCreatingCreationProgress.theNextManagedRuntimeCheck":
-    "此操作的下一次托管运行时检查已安排。如果在副本切换或重启后仍然逾期，Techstack 会为该确切的 Node 提供继续操作。",
+    "你的托管服务器的下一次检查已安排。如果重启后仍未完成，你可以在此继续。",
   "ui.stacksCreatingCreationProgress.theRegistrationRequestIsReady":
-    "注册请求已就绪，但在 Node 投影中出现新的 Guard 心跳之前，该 Node 不会显示为已连接。",
+    "你的服务器还没有报到。请在它上面运行下方的命令，本页面会自动继续。",
   "ui.stacksCreatingCreationProgress.thisCanTakeAFew":
-    "这可能需要几分钟。请不要关闭此页面。",
+    "这需要几分钟。你可以留在本页面，也可以稍后回来；你的 Homelab 会继续设置。",
   "ui.stacksCreatingCreationProgress.thisMayTakeAFew":
-    "这可能需要几分钟。你可以在下方跟踪进度。",
+    "这需要几分钟。你可以留在本页面，也可以稍后回来；你的 Homelab 会继续设置。",
   "ui.stacksCreatingCreationProgress.thisPageChecksTheReal":
-    "此页面每隔几秒检查一次真实的 Node 投影。",
+    "本页面每隔几秒会检查你的服务器是否已报到。",
   "ui.stacksCreatingCreationRequirements.backendRequirementsAreUnavailable":
     "后端要求不可用",
   "ui.stacksCreatingCreationRequirements.guide": "指南 →",
@@ -3082,30 +3020,30 @@ export const zhHans: Record<string, string> = {
     "只有在服务器端验证之后才会启用手动继续。",
   "ui.stacksCreatingCreationRunStatus.afterCreation": "创建之后",
   "ui.stacksCreatingCreationRunStatus.afterYouRunTheOne":
-    "运行该单行命令后，出站 Guard 会向此 Homelab 注册。只有当 Node 投影中出现新的心跳时，仪表板才会将该 Node 标记为已连接。",
-  "ui.stacksCreatingCreationRunStatus.awaitingHeartbeat": "等待心跳",
+    "运行该命令后，你的服务器会连接到你的 Homelab，并在报到后显示为已连接。",
+  "ui.stacksCreatingCreationRunStatus.awaitingHeartbeat": "等待你的服务器",
   "ui.stacksCreatingCreationRunStatus.checkSshHostCredentialsAnd":
     "检查 SSH 主机、凭据，以及服务器能否访问 Techstack。",
-  "ui.stacksCreatingCreationRunStatus.connectMyNode": "连接我的 Node",
+  "ui.stacksCreatingCreationRunStatus.connectMyNode": "连接我的服务器",
   "ui.stacksCreatingCreationRunStatus.connectingToYourNodeOver":
-    "正在通过 SSH 连接你的 Node…",
+    "正在通过 SSH 连接你的服务器…",
   "ui.stacksCreatingCreationRunStatus.connectingViaSsh": "正在通过 SSH 连接…",
   "ui.stacksCreatingCreationRunStatus.continueRolloutOnTheExisting":
     "在现有 VM 上继续推出",
   "ui.stacksCreatingCreationRunStatus.copyFailedSelectTheCommand":
     "复制失败 — 请选中上方的命令",
-  "ui.stacksCreatingCreationRunStatus.copyPairingCommand": "复制配对命令",
+  "ui.stacksCreatingCreationRunStatus.copyPairingCommand": "复制命令",
   "ui.stacksCreatingCreationRunStatus.currentStatus": "当前状态",
   "ui.stacksCreatingCreationRunStatus.enrolling": "注册中",
   "ui.stacksCreatingCreationRunStatus.enrollmentOverSshFinishedThis":
-    "通过 SSH 的注册已完成。Guard 报告新的心跳后，此页面将显示“Node 已连接”。",
+    "SSH 注册已完成。服务器报到后，本页面将显示“服务器已连接”。",
   "ui.stacksCreatingCreationRunStatus.failed": "失败",
   "ui.stacksCreatingCreationRunStatus.generateAFreshCommandTo":
-    "生成新的命令以继续连接此 Node。",
+    "生成新的命令以继续连接此服务器。",
   "ui.stacksCreatingCreationRunStatus.generateAShortLivedCommand":
-    "为此 Node 生成一个短期有效的命令。连接凭据不会保留在作业报告中。",
+    "为此服务器生成一个短期有效的命令。连接凭据不会保留在作业报告中。",
   "ui.stacksCreatingCreationRunStatus.generateNewCommand": "生成新命令",
-  "ui.stacksCreatingCreationRunStatus.generatePairingCommand": "生成配对命令",
+  "ui.stacksCreatingCreationRunStatus.generatePairingCommand": "生成命令",
   "ui.stacksCreatingCreationRunStatus.kombifyIsInstallingAndEnrolling":
     "kombify 正在通过 SSH 在你的服务器上安装并注册 Guard。你无需手动运行任何命令。",
   "ui.stacksCreatingCreationRunStatus.kombifyWillProvisionTheSubscription":
@@ -3113,11 +3051,11 @@ export const zhHans: Record<string, string> = {
   "ui.stacksCreatingCreationRunStatus.kombifyWillUseTheRemote":
     "kombify 将使用向导中记录的远程 SSH 配置。",
   "ui.stacksCreatingCreationRunStatus.nextScheduledCheck": "下一次计划检查：",
-  "ui.stacksCreatingCreationRunStatus.nodeAccess": "Node 访问",
-  "ui.stacksCreatingCreationRunStatus.pairingCommandCopied": "配对命令已复制",
-  "ui.stacksCreatingCreationRunStatus.pairingCommandReady": "配对命令已就绪",
+  "ui.stacksCreatingCreationRunStatus.nodeAccess": "服务器访问",
+  "ui.stacksCreatingCreationRunStatus.pairingCommandCopied": "命令已复制",
+  "ui.stacksCreatingCreationRunStatus.pairingCommandReady": "命令已就绪",
   "ui.stacksCreatingCreationRunStatus.pairingCommandUnavailable":
-    "配对命令不可用",
+    "命令不可用",
   "ui.stacksCreatingCreationRunStatus.plannedRemoteTarget": "计划的远程目标",
   "ui.stacksCreatingCreationRunStatus.preparingCommand": "正在准备命令…",
   "ui.stacksCreatingCreationRunStatus.provisioningInProgress": "正在配置",
@@ -3131,13 +3069,13 @@ export const zhHans: Record<string, string> = {
   "ui.stacksCreatingCreationRunStatus.retryingSshConnection":
     "正在重试 SSH 连接…",
   "ui.stacksCreatingCreationRunStatus.runThisOneLinerOn":
-    "在额外的 Node 上运行此单行命令。已完成的注册作业只创建了配对令牌；只有当出站 Guard 报告新的心跳且 Node 投影健康后，Techstack 才会显示“Node 已连接”。",
+    "在新增的服务器上运行此命令。服务器报到且运行正常后会显示为已连接。",
   "ui.stacksCreatingCreationRunStatus.techstackUrlReachableFromThe":
     "服务器可访问的 Techstack URL",
   "ui.stacksCreatingCreationRunStatus.theAdditionalManagedNodeIs":
-    "额外的托管 Node 会被添加到此 Homelab，注册回报后将显示在 Node 仪表板中。",
+    "额外的托管服务器会被添加到此 Homelab，注册回报后将显示在服务器仪表板中。",
   "ui.stacksCreatingCreationRunStatus.theAdditionalNodeIsRegistered":
-    "额外的 Node 已注册到此 Homelab，之后可以接收此 StackKit 部署中的服务。",
+    "额外的服务器已注册到此 Homelab，之后可以接收此 StackKit 部署中的服务。",
   "ui.stacksCreatingCreationRunStatus.theManagedRuntimeIsNot":
     "托管运行时尚不能完全用于推出。待确认的信号可能是其地址、凭据或注册。Techstack 已安排下一次检查。",
   "ui.stacksCreatingCreationRunStatus.theProviderOperationHasNot":
@@ -3151,15 +3089,15 @@ export const zhHans: Record<string, string> = {
   "ui.stacksCreatingCreationRunStatus.thisDoesNotCreateAnother":
     "这不会创建另一个 VM。",
   "ui.stacksCreatingCreationRunStatus.thisPairingTokenHasExpired":
-    "此配对令牌已过期。",
+    "此命令已过期。",
   "ui.stacksCreatingCreationRunStatus.validatingTheExistingVm":
     "正在验证现有 VM...",
   "ui.stacksCreatingCreationRunStatus.waitingForGuardHeartbeat":
-    "正在等待 Guard 心跳…",
+    "正在等待你的服务器报到…",
   "ui.stacksCreatingCreationRunStatus.waitingForRealConnection":
-    "正在等待真实连接",
+    "等待连接",
   "ui.stacksCreatingCreationRunStatus.youWillReceiveAWorker":
-    "你将收到一条 Worker 安装命令，用于将你的 Nodes 连接到此 StackKit 部署。",
+    "你将收到一条命令，用于把你的服务器连接到此 StackKit 部署。",
   "ui.stacksId.actionPending": "{action} 待处理",
   "ui.stacksId.actions": "操作",
   "ui.stacksId.add": "+ 添加",
@@ -3170,31 +3108,30 @@ export const zhHans: Record<string, string> = {
   "ui.stacksId.configured": "已配置",
   "ui.stacksId.credentialsConfigured.one": "已配置的凭据：{count}",
   "ui.stacksId.credentialsConfigured.other": "已配置的凭据：{count}",
-  "ui.stacksId.decommission": "停用",
-  "ui.stacksId.decommissionManagedRuntime": "停用托管运行时？",
+  "ui.stacksId.decommission": "删除服务器",
+  "ui.stacksId.decommissionManagedRuntime": "删除此托管服务器？",
   "ui.stacksId.deleteCredential": "删除凭据？",
-  "ui.stacksId.deploymentFallback": "StackKit 部署",
+  "ui.stacksId.deploymentFallback": "Homelab",
   "ui.stacksId.edit": "编辑",
   "ui.stacksId.editCredential": "编辑凭据",
   "ui.stacksId.enrollment": "注册",
   "ui.stacksId.failedToAddCredential": "无法添加凭据",
   "ui.stacksId.failedToDeleteCredential": "无法删除凭据",
   "ui.stacksId.failedToLoadRuntimeStatus": "无法加载运行时状态",
-  "ui.stacksId.failedToLoadStackkitDeployment": "无法加载 StackKit 部署",
+  "ui.stacksId.failedToLoadStackkitDeployment": "无法加载 Homelab",
   "ui.stacksId.ingest": "摄取",
   "ui.stacksId.latestOperationsSnapshot": "最新的操作快照",
-  "ui.stacksId.manageCredentialsForThisStackkit": "管理此 StackKit 部署的凭据",
+  "ui.stacksId.manageCredentialsForThisStackkit": "控制服务器、查看其服务并管理凭据。",
   "ui.stacksId.missingCredentialsDetected": "检测到缺少凭据",
   "ui.stacksId.missingSecret": "缺少机密信息",
   "ui.stacksId.monitoringEvidence": "监控证据",
   "ui.stacksId.monthlyRuntime": "按月运行时",
   "ui.stacksId.monthlyRuntimeActionFailed": "按月运行时操作失败",
-  "ui.stacksId.noCredentialsConfiguredForThis":
-    "此 StackKit 部署尚未配置凭据。",
+  "ui.stacksId.noCredentialsConfiguredForThis": "此 Homelab 尚未配置凭据。",
   "ui.stacksId.noLeaseAttached": "未关联租约",
-  "ui.stacksId.noStackkitDeploymentIdProvided": "未提供 StackKit 部署 ID",
+  "ui.stacksId.noStackkitDeploymentIdProvided": "未提供 Homelab ID",
   "ui.stacksId.offeringSpec": "{vcpus} vCPU · {memory} GB RAM",
-  "ui.stacksId.pageTitle": "{name} - 凭据 | kombify-Techstack",
+  "ui.stacksId.pageTitle": "{name} | kombify-Techstack",
   "ui.stacksId.query": "查询",
   "ui.stacksId.runtime": "运行时",
   "ui.stacksId.series": "系列",
@@ -3203,22 +3140,20 @@ export const zhHans: Record<string, string> = {
   "ui.stacksId.sshInfo": "SSH 信息",
   "ui.stacksId.sshOff": "SSH 关闭",
   "ui.stacksId.sshOn": "SSH 开启",
-  "ui.stacksId.stackkitDeploymentServices": "StackKit 部署服务",
+  "ui.stacksId.stackkitDeploymentServices": "此 Homelab 的服务",
   "ui.stacksId.stackkitService": "StackKit 服务",
   "ui.stacksId.start": "启动",
   "ui.stacksId.status": "状态",
   "ui.stacksId.stop": "停止",
   "ui.stacksId.stopManagedServer": "停止托管服务器？",
   "ui.stacksId.storedCredentials": "已保存的凭据",
-  "ui.stacksId.techstackWillBeginProviderCleanup":
-    "Techstack 将开始对此托管运行时进行提供商清理。",
+  "ui.stacksId.techstackWillBeginProviderCleanup": "Techstack 将在提供商处删除此托管服务器及其数据。",
   "ui.stacksId.theFollowingServicesNeedCredentials": "以下服务需要配置凭据：",
   "ui.stacksId.theServerShutsDownAnd":
     "服务器将关闭，并保留其磁盘、地址和月度套餐。你可以随时重新启动。",
   "ui.stacksId.thisPermanentlyRemovesTheSelected": "这将永久移除所选凭据。",
   "ui.stacksId.username": "用户名",
-  "ui.stacksIdServersNew.addNodeKombifyTechstack":
-    "添加 Node | kombify-Techstack",
+  "ui.stacksIdServersNew.addNodeKombifyTechstack": "添加服务器| kombify-Techstack",
   "ui.stacksIdServersServerId.activityHistory": "活动历史",
   "ui.stacksIdServersServerId.addressesDomains": "地址和域名",
   "ui.stacksIdServersServerId.agentId": "Agent ID",
@@ -3229,16 +3164,15 @@ export const zhHans: Record<string, string> = {
   "ui.stacksIdServersServerId.checking": "正在检查...",
   "ui.stacksIdServersServerId.checks": "检查",
   "ui.stacksIdServersServerId.confirmAction": "确认操作",
-  "ui.stacksIdServersServerId.confirmDecommission": "确认停用",
+  "ui.stacksIdServersServerId.confirmDecommission": "确认移除",
   "ui.stacksIdServersServerId.confirmDetach": "确认分离",
   "ui.stacksIdServersServerId.couldNotLoadServerAccess":
     "无法加载服务器访问上下文。",
   "ui.stacksIdServersServerId.cpuCores": "CPU 核心",
   "ui.stacksIdServersServerId.custodyResolutionFailed": "托管记录处理失败。",
-  "ui.stacksIdServersServerId.decommissionFailed": "停用失败。",
-  "ui.stacksIdServersServerId.decommissionServer": "停用服务器",
-  "ui.stacksIdServersServerId.desiredListenersDurableReservationsAnd":
-    "此 Node 的期望监听器、持久预留和运行时证据。",
+  "ui.stacksIdServersServerId.decommissionFailed": "移除失败。",
+  "ui.stacksIdServersServerId.decommissionServer": "移除服务器",
+  "ui.stacksIdServersServerId.desiredListenersDurableReservationsAnd": "此服务器的期望监听器、持久预留和运行时证据。",
   "ui.stacksIdServersServerId.detachSelfOwnedServer": "分离自有服务器",
   "ui.stacksIdServersServerId.detachServer": "分离服务器",
   "ui.stacksIdServersServerId.detaching": "正在分离...",
@@ -3263,8 +3197,7 @@ export const zhHans: Record<string, string> = {
     "在最新的完整 Guard 快照中，没有编译器声明的预留或已绑定的运行时监听器。",
   "ui.stacksIdServersServerId.noDesiredListenerIsReserved":
     "没有预留任何期望的监听器，且 Guard 未能完成其监听器快照，因此运行时监听器仍然未知。",
-  "ui.stacksIdServersServerId.noDesiredListenerIsReserved2":
-    "没有预留任何期望的监听器，且 Guard 尚未报告此 Node 的监听器快照。",
+  "ui.stacksIdServersServerId.noDesiredListenerIsReserved2": "没有预留任何期望的监听器，且 Guard 尚未报告此服务器的监听器快照。",
   "ui.stacksIdServersServerId.noHostAddressHasBeen": "未报告主机地址。",
   "ui.stacksIdServersServerId.noObservedServiceEndpointsHave":
     "此服务器未报告任何观测到的服务端点。",
@@ -3276,8 +3209,7 @@ export const zhHans: Record<string, string> = {
   "ui.stacksIdServersServerId.noServiceDomainsReported": "未报告服务域名。",
   "ui.stacksIdServersServerId.noServicePlacementIsRecorded":
     "此服务器没有记录服务部署位置。",
-  "ui.stacksIdServersServerId.noStackkitDeploymentEvidenceHas":
-    "此服务器未报告任何 StackKit 部署证据。",
+  "ui.stacksIdServersServerId.noStackkitDeploymentEvidenceHas": "此服务器未报告任何 StackKit 安装证据。",
   "ui.stacksIdServersServerId.notDeclared": "未声明",
   "ui.stacksIdServersServerId.operatingSystem": "操作系统",
   "ui.stacksIdServersServerId.portAllocations": "端口分配",
@@ -3295,8 +3227,7 @@ export const zhHans: Record<string, string> = {
   "ui.stacksIdServersServerId.serverDetailSections": "服务器详情分区",
   "ui.stacksIdServersServerId.serverDetailsKombifyTechstack":
     "服务器详情 | kombify-Techstack",
-  "ui.stacksIdServersServerId.serverGenerationDecommissioned":
-    "服务器世代已停用",
+  "ui.stacksIdServersServerId.serverGenerationDecommissioned": "服务器世代已移除",
   "ui.stacksIdServersServerId.serverSettings": "服务器设置",
   "ui.stacksIdServersServerId.serviceEndpoints": "服务端点",
   "ui.stacksIdServersServerId.servicesOnThisServerMay":
@@ -3308,16 +3239,13 @@ export const zhHans: Record<string, string> = {
     "旧的提供商世代无法再次启动。在确认提供商侧确已无该资源且容量已释放后，请使用上方的“重新创建”。",
   "ui.stacksIdServersServerId.thisChangesTheSelectedServer":
     "这将通过其已注册的 StackKit Agent 更改所选服务器。",
-  "ui.stacksIdServersServerId.thisIsConfiguredStackkitIntent":
-    "这是已配置的 StackKit 意图；Guard 尚未报告与之匹配的部署证据。",
+  "ui.stacksIdServersServerId.thisIsConfiguredStackkitIntent": "这是已配置的 StackKit 意图；Guard 尚未报告与之匹配的安装证据。",
   "ui.stacksIdServersServerId.thisOnlyArchivesTheStale":
     "这只会归档过期的 Techstack 托管记录，不会删除提供商侧的任何内容。",
-  "ui.stacksIdServersServerId.thisServerHasNoManaged":
-    "此服务器没有托管的提供商租约。其记录的托管状态目前既不允许托管停用，也不允许自有服务器分离。",
+  "ui.stacksIdServersServerId.thisServerHasNoManaged": "此服务器没有托管的提供商租约。其记录的托管状态目前既不允许移除托管服务器，也不允许分离自有服务器。",
   "ui.stacksIdServersServerId.thisServerIsALegacy":
     "此服务器是旧版或未绑定的托管记录。请确认提供商资源已被移除；Techstack 只会归档此记录，不会调用或删除任何提供商资源。",
-  "ui.stacksIdServersServerId.thisServerIsRegisteredThrough":
-    "此服务器通过 Worker 清单注册；未附加托管运行时访问操作。",
+  "ui.stacksIdServersServerId.thisServerIsRegisteredThrough": "此服务器通过服务器清单注册；未附加托管运行时访问操作。",
   "ui.standardBundle.additionalComputeNodeForStackKit":
     "用于放置 StackKit 服务的额外计算 Node。",
   "ui.standardBundle.additionalNodeIntendedForStorage":
@@ -3378,11 +3306,9 @@ export const zhHans: Record<string, string> = {
     "{name}：CPU {cpu}%，内存 {ram}%，磁盘 {disk}%，{services} 个服务",
   "ui.strata.job": "作业",
   "ui.strata.noCpuCurve": "{name}：过去 24 小时没有 CPU 数据",
-  "ui.strata.noNodeHasReportedYet": "尚无 Node 报告。",
-  "ui.strata.nodesNeedAttention.one":
-    "{total} 个 Nodes 中有 {count} 个需要关注。",
-  "ui.strata.nodesNeedAttention.other":
-    "{total} 个 Nodes 中有 {count} 个需要关注。",
+  "ui.strata.noNodeHasReportedYet": "尚无服务器报告。",
+  "ui.strata.nodesNeedAttention.one": "{total} 个服务器中有 {count} 个需要关注。",
+  "ui.strata.nodesNeedAttention.other": "{total} 个服务器中有 {count} 个需要关注。",
   "ui.strata.notShown": "未显示：无法读取 {items}。",
   "ui.strata.provisioning": "配置",
   "ui.strata.quiet": "平静",
@@ -3402,7 +3328,7 @@ export const zhHans: Record<string, string> = {
   "ui.strataDashboard.middleRing": "中环",
   "ui.strataDashboard.monitoring": "监控 →",
   "ui.strataDashboard.noCpuDataInThe": "过去 24 小时没有 CPU 数据",
-  "ui.strataDashboard.nodes": "Nodes",
+  "ui.strataDashboard.nodes": "服务器",
   "ui.strataDashboard.nothingHappenedNoRolloutsRestores":
     "一切平静：没有推出、恢复、警报或故障。",
   "ui.strataDashboard.outerRing": "外环",
@@ -3415,8 +3341,7 @@ export const zhHans: Record<string, string> = {
   "ui.substrateEnrollment.preparing": "正在准备...",
   "ui.substrateEnrollment.proxmoxHypervisorConnection":
     "Proxmox 虚拟机监控程序连接",
-  "ui.substrateEnrollment.theHypervisorHostsYourNodes":
-    "虚拟机监控程序托管你的 Nodes。StackKits 在 Ubuntu 客户机内运行。在本地 Proxmox 客户端配置完成并且你授权连接后，才会启用客户机管理。现有客户机不在删除托管范围内。",
+  "ui.substrateEnrollment.theHypervisorHostsYourNodes": "虚拟机监控程序托管你的服务器。StackKits 在 Ubuntu 客户机内运行。在本地 Proxmox 客户端配置完成并且你授权连接后，才会启用客户机管理。现有客户机不在删除托管范围内。",
   "ui.substrates.theRuntimeDidNotReturn": "运行时未返回所请求的数据。",
   "ui.taskStatus.aVerifiedStackKitDeploymentMust":
     "经过验证的 StackKit 部署必须为默认服务提供经过测试的恢复路径。",
@@ -3428,13 +3353,13 @@ export const zhHans: Record<string, string> = {
   "ui.taskStatus.buildingServiceList": "正在构建服务列表",
   "ui.taskStatus.callingTheStackKitsRuntimeAction":
     "正在调用应用所生成 Cloud Kit 规范的 StackKits 运行时操作。",
-  "ui.taskStatus.checkingOpenTofu": "正在检查 OpenTofu",
-  "ui.taskStatus.checkingRolloutTarget": "正在检查推出目标",
-  "ui.taskStatus.checkingTerramate": "正在检查 Terramate",
+  "ui.taskStatus.checkingOpenTofu": "正在检查设置工具",
+  "ui.taskStatus.checkingRolloutTarget": "正在检查你的服务器",
+  "ui.taskStatus.checkingTerramate": "正在检查更新工具",
   "ui.taskStatus.checkingThatLoginProtectedServices":
     "正在检查推出后受登录保护的服务和监控信号是否可用。",
   "ui.taskStatus.checkingTheTerramateToolchainWhen":
-    "当所选 StackKit 生命周期需要时，检查 Terramate 工具链。",
+    "如果你的设置需要，会检查用于保持 Homelab 更新的工具。",
   "ui.taskStatus.checkingYourChoices": "正在检查你的选择",
   "ui.taskStatus.collectingServiceMetadataExposedBy":
     "正在收集 StackKits 推出所暴露的服务元数据。",
@@ -3465,7 +3390,7 @@ export const zhHans: Record<string, string> = {
   "ui.taskStatus.eachServiceGetsScopedPermissions":
     "每个服务都会获得限定范围的权限。在可能的情况下会自动启用 TLS，并且服务默认相互隔离。",
   "ui.taskStatus.ensuringTheDeploymentTargetSatisfies":
-    "正在确保部署目标满足 StackKit 运行时的要求。",
+    "确认你的服务器满足 Homelab 的要求。",
   "ui.taskStatus.findingTheBestStackKitFor": "正在为你寻找最合适的 StackKit",
   "ui.taskStatus.generateDeploymentArtifacts": "生成部署制品",
   "ui.taskStatus.generatingDeploymentSpec": "正在生成部署规范",
@@ -3485,19 +3410,19 @@ export const zhHans: Record<string, string> = {
   "ui.taskStatus.networkSettingsAreDerivedFrom":
     "网络设置由你的访问模式决定。仅本地使用内部 Docker 网络；远程访问会添加与通道相匹配的私有网状网络或托管边缘路由。",
   "ui.taskStatus.onceThisSucceedsTheNode":
-    "一旦成功，即使之后准备或推出失败，Node 投影仍会保留在 Techstack 中可见。",
+    "此步骤成功后，即使之后的准备或设置失败，你的服务器仍会在 Techstack 中保持可见。",
   "ui.taskStatus.opentofuReadinessIsPartOf":
     "OpenTofu 就绪属于 StackKits CLI 准备契约的一部分，而不是由 Techstack 负责的独立引导路径。",
   "ui.taskStatus.persistingConfiguration": "正在持久化配置",
   "ui.taskStatus.persistingRolloutSpec": "正在持久化推出规范",
   "ui.taskStatus.preparingDocker": "正在准备 Docker",
-  "ui.taskStatus.preparingNodeRegistration": "正在准备 Node 注册",
+  "ui.taskStatus.preparingNodeRegistration": "正在准备服务器注册",
   "ui.taskStatus.preparingOpenTelemetryHandoffDataFor":
-    "正在为监控和运维准备 OpenTelemetry 交接数据。",
-  "ui.taskStatus.preparingStackKitsRuntime": "正在准备 StackKits 运行时",
-  "ui.taskStatus.preparingTelemetry": "正在准备遥测",
+    "正在准备监控，让你随时了解 Homelab 的状态。",
+  "ui.taskStatus.preparingStackKitsRuntime": "正在准备你的服务器",
+  "ui.taskStatus.preparingTelemetry": "正在准备监控",
   "ui.taskStatus.preparingTheRuntimeMetadataUsed":
-    "正在准备监控、运维和 Runtime Intelligence Layer 所使用的运行时元数据。",
+    "正在准备监控和 Homelab 日常维护所依赖的信息。",
   "ui.taskStatus.preparingToolsApplyingTheStackKit":
     "正在准备工具、应用 StackKit 并读取服务",
   "ui.taskStatus.provisionManagedRuntime": "配置托管运行时",
@@ -3506,8 +3431,8 @@ export const zhHans: Record<string, string> = {
     "在 VPS 就绪后渲染 StackKits 制品",
   "ui.taskStatus.renderingTheStackKitInfrastructureFiles":
     "正在渲染推出适配器所需的 StackKit 基础设施文件。",
-  "ui.taskStatus.requestingManagedCloudNode": "正在请求托管云 Node",
-  "ui.taskStatus.requestingManagedNode": "正在请求托管 Node",
+  "ui.taskStatus.requestingManagedCloudNode": "正在请求托管云服务器",
+  "ui.taskStatus.requestingManagedNode": "正在请求托管服务器",
   "ui.taskStatus.reservingTheSubscriptionVMConnecting":
     "正在预留订阅 VM、连接运行时并准备遥测",
   "ui.taskStatus.rollOutCloudKit": "推出 Cloud Kit",
@@ -3516,10 +3441,10 @@ export const zhHans: Record<string, string> = {
   "ui.taskStatus.settingUpPartNamed":
     "正在设置第 {position} 部分，共 {total} 部分：{name}",
   "ui.taskStatus.runningRestoreDrill": "正在运行恢复演练",
-  "ui.taskStatus.runningSimulatedUpdateGate": "正在运行模拟更新关卡",
-  "ui.taskStatus.runningSimulationGate": "正在运行模拟关卡",
+  "ui.taskStatus.runningSimulatedUpdateGate": "先测试更新",
+  "ui.taskStatus.runningSimulationGate": "先测试更新",
   "ui.taskStatus.runningTheStackKitsCLIPrepare":
-    "正在托管 VPS 上运行 StackKits CLI 准备契约。",
+    "在设置 Homelab 之前，安装并检查你的服务器所需的内容。",
   "ui.taskStatus.savingUnifiedSpecYamlSo":
     "正在保存 unified-spec.yaml，使推出可复现、可审计。",
   "ui.taskStatus.savingYourChoicesToThe":
@@ -3530,7 +3455,7 @@ export const zhHans: Record<string, string> = {
   "ui.taskStatus.settingUpSecurityConfiguration": "正在设置安全配置",
   "ui.taskStatus.stackkitsAreCuratedInfrastructureTemplates":
     "StackKits 是精选的基础设施模板。系统会选出以最小开销覆盖你所选功能的那一个。",
-  "ui.taskStatus.startingTelemetryHandoff": "正在启动遥测交接",
+  "ui.taskStatus.startingTelemetryHandoff": "正在启动监控",
   "ui.taskStatus.techstackConsumesStackKitArtifactsHere":
     "Techstack 在此使用 StackKit 制品；应用这些制品仍由 StackKits 负责。",
   "ui.taskStatus.techstackRecordsTheManagedTarget":
@@ -3548,7 +3473,7 @@ export const zhHans: Record<string, string> = {
   "ui.taskStatus.theSimulationGateProtectsThe":
     "模拟关卡保护首次推出和之后的更新流程免受不安全变更的影响。",
   "ui.taskStatus.theSpecContainsAllConfiguration":
-    "该规范包含部署你的 Homelab 所需的全部配置。它可以纳入版本控制，并在任何兼容的 Node 上复现。",
+    "该规范包含部署你的 Homelab 所需的全部配置。它可以纳入版本控制，并在任何兼容的服务器上复现。",
   "ui.taskStatus.theUnifiedSpecIsThe":
     "统一规范是 StackKits 和运行时验证的规范输入。",
   "ui.taskStatus.thisChecksFeatureSelectionsAccess":
@@ -3566,7 +3491,7 @@ export const zhHans: Record<string, string> = {
   "ui.taskStatus.validatingTheBackupAndRestore":
     "在将 StackKit 部署标记为已验证之前，正在验证备份和恢复路径。",
   "ui.taskStatus.validatingTheUpdatePathBefore":
-    "在将推出应用到托管运行时之前，正在验证更新路径。",
+    "在应用到你的服务器之前，先检查更新是否可行。",
   "ui.taskStatus.verificationConfirmsThatTheStackKit":
     "验证确认 StackKit 部署确实可用，而不仅仅是文件已生成。",
   "ui.taskStatus.verifyRollout": "验证推出",
@@ -3575,7 +3500,7 @@ export const zhHans: Record<string, string> = {
   "ui.taskStatus.verifyingThatAllSelectedOptions":
     "正在验证所有所选选项是否有效且彼此兼容。",
   "ui.taskStatus.verifyingTheInfrastructureToolchainNeeded":
-    "正在验证 StackKits 所需的基础设施工具链。",
+    "确认你的服务器具备设置 Homelab 所需的工具。",
   "ui.taskStatus.yourChosenAuthMethodIs":
     "你选择的认证方式会应用于所有服务。多用户配置会自动获得基于组的权限。",
   "ui.taskUpdates.anUnexpectedErrorOccurred": "发生意外错误",
@@ -3730,22 +3655,16 @@ export const zhHans: Record<string, string> = {
   "ui.wizardRunRequest.selectSeparateHomeAssistantOS":
     "请选择单独的 Home Assistant OS 客户机资源。",
   "ui.wizardRuns.thisRunHasNoRollout": "此次运行没有可取消的推出。",
-  "ui.worker.registryLink": "Worker 注册表链接",
+  "ui.worker.registryLink": "服务器注册表链接",
   "ui.worker.registryUrlError": "无法自动确定注册表 URL：{error}",
-  "ui.worker.runInstallMany":
-    "在至少 {count} 个 Nodes 上运行上方的安装命令，然后等待操作证据确认连接。",
-  "ui.worker.runInstallOne":
-    "在你的 Node 上运行上方的安装命令，然后等待操作证据确认连接。",
+  "ui.worker.runInstallMany": "在至少 {count} 个服务器上运行上方的安装命令，然后等待操作证据确认连接。",
+  "ui.worker.runInstallOne": "在你的服务器上运行上方的安装命令，然后等待操作证据确认连接。",
   "ui.worker.verifiedConnected": "已验证连接：{count}",
-  "ui.worker.waitingVerified":
-    "正在等待已验证的 Worker（{connected}/{required}）",
+  "ui.worker.waitingVerified": "正在等待已验证的服务器（{connected}/{required}）",
   "ui.workerRegistrationCard.installCommand": "安装命令：",
-  "ui.workerRegistrationCard.installCommandForNewWorkers":
-    "新 Worker 的安装命令：",
+  "ui.workerRegistrationCard.installCommandForNewWorkers": "新服务器的安装命令：",
   "ui.workerRegistrationCard.nextStep": "下一步：",
-  "ui.workerRegistrationCard.operationsEvidenceIsRequiredBefore":
-    "在确认已连接的 Nodes 之前，需要操作证据。",
-  "ui.workerRegistrationCard.workersConnectedVerified":
-    "已连接的 Worker（已验证）",
-  "wizard.leave.confirm": "要离开此页面吗？你输入的答案尚未保存。",
+  "ui.workerRegistrationCard.operationsEvidenceIsRequiredBefore": "在确认已连接的服务器之前，需要操作证据。",
+  "ui.workerRegistrationCard.workersConnectedVerified": "已连接的服务器（已验证）",
+  "wizard.leave.confirm": "你输入的答案将会丢失。",
 };

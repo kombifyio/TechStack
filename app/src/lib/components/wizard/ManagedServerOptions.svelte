@@ -80,9 +80,7 @@
       {/if}
       <div>
         <h4>
-          {config.runtimeOfferingId === "monthly-runtime-premium"
-            ? tr("wizard.server.managed.premium")
-            : tr("wizard.server.managed.standard")}
+          {offering?.name || config.runtimeOfferingId}
         </h4>
         {#if provider}<a
             href={provider.website}

@@ -351,7 +351,7 @@ export const ACTIVE_STANDARD_BUNDLE: StandardBundleDefinition = {
           id: 2,
           key: "server",
           get label() {
-            return tr("ui.services.node");
+            return tr("wizard.step.server");
           },
           labelKey: "wizard.step.server",
         },

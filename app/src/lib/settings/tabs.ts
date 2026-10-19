@@ -1,4 +1,4 @@
-// Techstack settings tabs on SETTINGS-STANDARD §2.1: shared tabs in the fixed
+// Techstack settings tabs on KOMBIFY-DESIGN-SYSTEM-STANDARD.md §10.2.1: shared tabs in the fixed
 // order account, identity, design, notifications; the tool tab (homelab)
 // follows. The slug is the deep-link contract (`/settings?tab=<slug>`).
 

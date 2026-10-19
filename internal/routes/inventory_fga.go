@@ -54,6 +54,15 @@ func (p fgaInventoryPolicy) AuthorizeInventory(ctx context.Context, authorizatio
 	if !inventorySignedEntitlementAllows(ctx, authorization.Action) {
 		return InventoryDecision{}, ErrInventoryAccessDenied
 	}
+	if authorization.OwnerVerified && household == "" && authorization.Action == InventoryActionOperate &&
+		strings.TrimSpace(authorization.ResourceType) == controlplane.InventoryReadTargetServer && strings.TrimSpace(authorization.ResourceID) != "" {
+		// The owner of the server operates it on the signed grant alone.
+		readScope, scopeErr := inventoryReadScopeForAuthorization(authorization)
+		if scopeErr != nil {
+			return InventoryDecision{}, ErrInventoryAccessDenied
+		}
+		return InventoryDecision{ReadScope: readScope}, nil
+	}
 	if p.checker == nil {
 		return InventoryDecision{}, errInventoryPolicyUnavailable
 	}

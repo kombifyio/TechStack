@@ -16,6 +16,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/agent/procfence"
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
 	"github.com/kombifyio/techstack/pkg/guardbinding"
+	"github.com/kombifyio/techstack/pkg/guardcompat"
 	"github.com/kombifyio/techstack/pkg/stackkitcommand"
 )
 
@@ -29,7 +30,7 @@ const (
 	ephemeralDeliveryRetries = 6
 	// legacyAuthority is the execution window granted to a command from a
 	// control plane that predates the binding contract.
-	legacyAuthority = 10 * time.Minute
+	legacyAuthority = guardcompat.LegacyAuthorityLifetime
 )
 
 // Reconciler is the observation oracle for a command whose outcome is unknown.
@@ -93,6 +94,10 @@ type DurableOptions struct {
 	// process group right after it starts.
 	ObserveProcess func(ctx context.Context, record func(ProcessRecord)) context.Context
 	Now            func() time.Time
+	// Monotonic reads a process-monotonic clock; it bounds a command's
+	// authority independently of the wall clock. Nil uses time.Since of the
+	// process-local start of durable operations.
+	Monotonic func() time.Duration
 }
 
 type offeredCommand struct {
@@ -140,6 +145,10 @@ type deliveryBackoff struct {
 func (c *Client) EnableDurableOperations(opts DurableOptions) {
 	if opts.Now == nil {
 		opts.Now = func() time.Time { return time.Now().UTC() }
+	}
+	if opts.Monotonic == nil {
+		anchor := time.Now()
+		opts.Monotonic = func() time.Duration { return time.Since(anchor) }
 	}
 	d := &durableOps{
 		c: c, opts: opts, sensitive: map[string][]byte{}, cleared: map[string]bool{},
@@ -310,7 +319,7 @@ func (d *durableOps) knownCommands() []string {
 	entries := store.Entries(func(e journal.Entry) bool {
 		// An intent alone started nothing: the command is offered again and
 		// continues from its intent.
-		return e.State != journal.StateAcked && e.State != journal.StateIntent
+		return e.State != journal.StateAcked && e.State != journal.StateIntent && d.c.ownsBinding(e.Intent)
 	})
 	known := make([]string, 0, len(entries))
 	for i := len(entries) - 1; i >= 0 && len(known) < guardbinding.MaxKnownCommands; i-- {
@@ -357,7 +366,13 @@ func (d *durableOps) handleOffered(ctx context.Context, offered *offeredCommand)
 	c := d.c
 	command := offered.command
 	id := strings.TrimSpace(command.GetCommandId())
+	// The authority clock starts when this process received the offer online.
+	receivedAt, receivedMono := d.opts.Now(), d.opts.Monotonic()
 	mutating := stackkitcommand.IsMutatingOperation(command.Operation)
+	if c.revocationObserved() {
+		d.rejectUnjournaled(ctx, id, guardbinding.Denyf(guardbinding.CodeAuthorityRevoked, "this Guard observed that its identity was revoked"))
+		return
+	}
 	readable := d.readable()
 	known := false
 	if readable != nil {
@@ -373,7 +388,10 @@ func (d *durableOps) handleOffered(ctx context.Context, offered *offeredCommand)
 		_ = readable.NoteGeneration(binding.CurrentGeneration)
 	}
 	// The executor re-checks this exact evidence at the side-effect boundary.
-	ctx = guardbinding.WithAdmission(ctx, guardbinding.Admission{Binding: binding, Raw: offered.raw})
+	ctx = guardbinding.WithAdmission(ctx, guardbinding.Admission{
+		Binding: binding, Raw: offered.raw,
+		Window: guardbinding.AuthorityWindow{ExpiresAt: binding.AuthorityExpiresAt, ReceivedAt: receivedAt, ReceivedMono: receivedMono},
+	})
 	store, unavailable := d.writable()
 	if store == nil {
 		if mutating {
@@ -472,25 +490,27 @@ func (d *durableOps) intentFor(command *agentpb.StackKitCommand, binding guardbi
 	}
 }
 
-// execute crosses the effect boundary: fence, authority, process exclusion, the
-// dispatched marker, the executor, then the durable result.
+// execute crosses the effect boundary: fence, process exclusion, the
+// pre-effect authority check, the dispatched marker, the executor, then the
+// durable result.
 func (d *durableOps) execute(ctx context.Context, store *journal.Store, entry journal.Entry, command *agentpb.StackKitCommand) {
 	id := entry.Intent.CommandID
 	if entry.Intent.Mutating {
-		if fenced := store.Fenced(entry.Intent.ResourceKey, id); len(fenced) > 0 {
+		if fenced := unsettledMutations(store, id); len(fenced) > 0 {
 			d.finishRejected(ctx, store, id, guardbinding.Denyf(guardbinding.CodeResourceFenced, "command %s on this server has no settled outcome", fenced[0].Intent.CommandID))
 			return
 		}
-	}
-	if !d.opts.Now().Before(entry.Intent.AuthorityExpiresAt) {
-		d.finishRejected(ctx, store, id, guardbinding.Denyf(guardbinding.CodeAuthorityExpired, "command authority expired before it started"))
-		return
-	}
-	if entry.Intent.Mutating {
 		if err := d.clearPreviousExecutors(store); err != nil {
 			d.finishRejected(ctx, store, id, guardbinding.Denyf(guardbinding.CodeResourceFenced, "%v", err))
 			return
 		}
+	}
+	// Everything admitted at dispatch is checked again here, as close to the
+	// effect as the journal allows: a revocation observed or authority spent
+	// since admission denies this effect.
+	if denial := d.checkBeforeEffect(ctx, store, entry); denial != nil {
+		d.finishRejected(ctx, store, id, denial)
+		return
 	}
 	if err := store.MarkDispatched(id); err != nil {
 		d.finishRejected(ctx, store, id, guardbinding.Denyf(guardbinding.CodeJournalUnavailable, "cannot record the dispatched marker: %v", err))
@@ -516,6 +536,51 @@ func (d *durableOps) execute(ctx context.Context, store *journal.Store, entry jo
 		return
 	}
 	d.recordOutcome(ctx, store, entry, result)
+}
+
+func (d *durableOps) checkBeforeEffect(ctx context.Context, store *journal.Store, entry journal.Entry) *guardbinding.Denial {
+	admission, ok := guardbinding.AdmissionFrom(ctx)
+	if !ok {
+		return guardbinding.Denyf(guardbinding.CodeRevalidationRequired, "the command has no admission received by this process")
+	}
+	c := d.c
+	return admission.CheckBeforeEffect(guardbinding.JournaledIntent{
+		CommandID: entry.Intent.CommandID, TenantID: entry.Intent.TenantID,
+		WorkerID: entry.Intent.WorkerID, PayloadDigest: entry.Intent.PayloadDigest,
+	}, guardbinding.EffectState{
+		Expect: guardbinding.Expectation{
+			TenantID: c.cfg.TenantID, WorkerID: c.cfg.RuntimeAgentID, ServerID: c.cfg.ServerID,
+			HighestGeneration: store.HighestGeneration(),
+		},
+		Revoked: c.revocationObserved(), Now: d.opts.Now(), Mono: d.opts.Monotonic(),
+	})
+}
+
+// ownsBinding reports whether a journaled command was admitted under this
+// Guard's current tenant and worker. Only such a command is listed to, or
+// reported to, the control plane under the current credential. A command of a
+// predecessor binding (the server was rebound to another tenant or worker)
+// keeps its unacknowledged evidence in the journal: posting it under the new
+// identity would hand a prior tenant's payload to the new binding, and the
+// refusal that follows would be recorded as permanent and let the evidence be
+// pruned. It stays held, and still fences conflicting work, until a governed
+// predecessor recovery or handoff takes it. An older credential generation of
+// the same tenant and worker is not a predecessor: its reports converge under
+// the current credential.
+func (c *Client) ownsBinding(intent journal.Intent) bool {
+	return intent.TenantID == c.cfg.TenantID && intent.WorkerID == c.cfg.RuntimeAgentID
+}
+
+// unsettledMutations is the execution fence of this server: every mutation
+// whose outcome is not settled, including one admitted under a predecessor
+// binding (another tenant, worker or generation). A rebind or a newer
+// generation cannot make an in-flight effect disappear; it blocks conflicting
+// work until reconciliation or a governed handoff settles it.
+func unsettledMutations(store *journal.Store, exceptID string) []journal.Entry {
+	return store.Entries(func(e journal.Entry) bool {
+		return e.Intent.Mutating && e.Intent.CommandID != exceptID &&
+			(e.State == journal.StateDispatched || e.State == journal.StateOutcomeUnknown)
+	})
 }
 
 func (d *durableOps) recordUnknownOutcome(store *journal.Store, id, reason string) {
@@ -905,7 +970,10 @@ func (d *durableOps) redeliverDue(ctx context.Context) {
 		d.lastCompact = time.Now()
 		d.mu.Unlock()
 	}
-	for _, e := range store.Entries(func(e journal.Entry) bool { _, ok := e.NextUnacked(); return ok }) {
+	for _, e := range store.Entries(func(e journal.Entry) bool {
+		_, ok := e.NextUnacked()
+		return ok && d.c.ownsBinding(e.Intent)
+	}) {
 		if ctx.Err() != nil {
 			return
 		}

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { creation } from "./creation-controller.svelte.js";
-  import { tr, trParts } from "#lib/i18n.svelte.js";
+  import { formatDateTime, tr, trParts } from "#lib/i18n.svelte.js";
   import GuardReadinessLadder from "#lib/components/guard/GuardReadinessLadder.svelte";
   import { authStore } from "#lib/stores/auth.svelte.js";
   import WalletServerAccessPicker from "#lib/kombify-wallet/components/WalletServerAccessPicker.svelte";
@@ -396,7 +396,10 @@
       </button>
       {#if creation.pairingTokenExpiresAt}
         <p class="mt-3 text-xs text-muted-foreground">
-          {trParts("ui.creationRun.pairingTokenExpires")[0]}<span class="font-mono">{creation.pairingTokenExpiresAt}</span>{trParts("ui.creationRun.pairingTokenExpires")[1]}
+          {trParts("ui.creationRun.pairingTokenExpires")[0]}<time
+            datetime={creation.pairingTokenExpiresAt}
+            >{formatDateTime(creation.pairingTokenExpiresAt)}</time
+          >{trParts("ui.creationRun.pairingTokenExpires")[1]}
         </p>
       {/if}
       {#if creation.pairingTokenExpired}

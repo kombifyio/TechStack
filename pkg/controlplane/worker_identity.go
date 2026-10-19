@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/kombifyio/techstack/pkg/guardcompat"
 )
 
 // Worker identity states. A redeemed enrollment starts issued_unconfirmed and
@@ -32,18 +34,18 @@ const (
 	// WorkerIdentityRedemptionWindow bounds how long after the first issue the
 	// same pairing capability and attempt may still replace an unconfirmed
 	// credential. The pairing token's own expiry may close it sooner.
-	WorkerIdentityRedemptionWindow = 30 * time.Minute
+	WorkerIdentityRedemptionWindow = guardcompat.BootstrapRedemptionWindow
 	// WorkerIdentityRotationOverlap bounds how long the predecessor key stays
 	// valid after a proven key rotation. It only has to cover requests already in
 	// flight when the Guard switches keys; an emergency rotation uses no overlap.
-	WorkerIdentityRotationOverlap = 2 * time.Minute
+	WorkerIdentityRotationOverlap = guardcompat.KeyRotationOverlap
 	// WorkerProofPruneSkew is the clock-skew allowance between verifying replicas
 	// and the database before a replay-ledger entry may be dropped.
 	WorkerProofPruneSkew = 10 * time.Minute
 	// WorkerIdentityUpgradeWindow is how long a pending key bind of a legacy
 	// worker waits for the owner; afterwards it is replaceable and cannot be
 	// approved.
-	WorkerIdentityUpgradeWindow = 24 * time.Hour
+	WorkerIdentityUpgradeWindow = guardcompat.LegacyKeyUpgradeWindow
 )
 
 var (

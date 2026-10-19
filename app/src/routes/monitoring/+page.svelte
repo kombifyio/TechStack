@@ -2,11 +2,13 @@
   import { formatDuration } from "#lib/dashboard/time.js";
   import { tr, trn, formatDateTime, stateLabel } from "#lib/i18n.svelte.js";
   import { onDestroy, onMount } from "svelte";
-  import { ArrowRight, RefreshCw, Trash2 } from "@lucide/svelte";
+  import { AlertTriangle, ArrowRight, RefreshCw, Trash2 } from "@lucide/svelte";
 
   import { parseApiError } from "#lib/api/errors.js";
   import {
+    getActiveAlerts,
     getAvailabilityReport,
+    type AlertState,
     type AvailabilityReport,
     type AvailabilityWindow,
   } from "#lib/api/monitoring.js";
@@ -26,6 +28,11 @@
   import { serverStatusAxes } from "@kombiverselabs/ui/server";
   import { PageHeader } from "@kombiverselabs/ui/shell";
   import Button from "#lib/components/ui/Button.svelte";
+  import ErrorCallout from "#lib/components/ui/ErrorCallout.svelte";
+  import Modal from "#lib/components/Modal.svelte";
+  import { toast } from "#lib/stores/toast.js";
+  import { SERVERS_HREF } from "#lib/navigation.js";
+  import { serverDetailHref } from "#lib/server-links.js";
   import StateRibbon from "#lib/components/monitoring/StateRibbon.svelte";
   import StorageForecast from "#lib/components/monitoring/StorageForecast.svelte";
   import DomainMonitoring from "#lib/components/monitoring/DomainMonitoring.svelte";
@@ -43,6 +50,8 @@
   let availability = $state<AvailabilityReport | null>(null);
   let availabilityUnavailable = $state(false);
   let availabilityWindow = $state<AvailabilityWindow>("30d");
+  let alerts = $state<AlertState[]>([]);
+  let alertsUnavailable = $state(false);
   let loading = $state(true);
   let error = $state<string | null>(null);
   let pendingDetach = $state<CanonicalServer | null>(null);
@@ -109,6 +118,18 @@
     }
   }
 
+  async function refreshAlerts() {
+    try {
+      const firing = await getActiveAlerts();
+      if (!pageActive) return;
+      alerts = firing.filter((alert) => alert.active);
+      alertsUnavailable = false;
+    } catch {
+      // Keep the last list on screen and say it could not be refreshed.
+      if (pageActive) alertsUnavailable = true;
+    }
+  }
+
   async function refresh() {
     if (refreshInFlight) return;
     refreshInFlight = true;
@@ -116,6 +137,7 @@
     error = null;
     await refreshInventory();
     await refreshAvailability();
+    await refreshAlerts();
     refreshInFlight = false;
     if (!pageActive) return;
     storageRefreshKey++;
@@ -166,6 +188,7 @@
     try {
       await detachSelfOwnedServer(server.id);
       pendingDetach = null;
+      toast.success(tr("monitoring.serverRemoved", { name: server.name }));
       await refresh();
     } catch (err) {
       detachError =
@@ -232,14 +255,28 @@
    */
   let hashHandled = false;
   $effect(() => {
-    if (hashHandled || !availability) return;
-    if (typeof window === "undefined" || window.location.hash !== "#history")
-      return;
-    const target = document.getElementById("history");
+    // `availability` gates the history section; the others are on the page
+    // from the first render, so this only has to wait for that one.
+    void availability;
+    void availabilityUnavailable;
+    if (hashHandled) return;
+    if (typeof window === "undefined") return;
+    const id = window.location.hash.slice(1);
+    if (!["now", "alerts", "history"].includes(id)) return;
+    const target = document.getElementById(id);
     if (!target) return;
     hashHandled = true;
     target.scrollIntoView({ behavior: "smooth", block: "start" });
   });
+
+  /** The server an alert is about, from its rule labels or expression. */
+  function alertServer(alert: AlertState): CanonicalServer | undefined {
+    const id =
+      alert.rule.labels?.node_id ??
+      alert.rule.labels?.server_id ??
+      /node_id="([^"]+)"/.exec(alert.rule.expr)?.[1];
+    return id ? inventoryById[id] : undefined;
+  }
 
   onMount(() => {
     pageActive = true;
@@ -272,34 +309,45 @@
   </PageHeader>
 
   {#if error}
-    <div
-      class="mb-6 rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-foreground"
-      data-testid="monitoring-error"
-    >
-      {error}
-    </div>
+    <ErrorCallout
+      class="mb-6"
+      testId="monitoring-error"
+      message={error}
+      onRetry={() => void refresh()}
+      retrying={loading}
+    />
   {/if}
 
   {#if pendingDetach}
-    <div
-      class="mb-4 rounded-lg border border-destructive/40 bg-destructive/10 p-4"
-      data-testid="monitoring-detach-confirmation"
+    <!-- A question about one server, asked in a dialog in front of the page
+         rather than as a banner far from the row that raised it. -->
+    <Modal
+      title={tr("ui.monitoring.removeFrom", { name: pendingDetach.name })}
+      description={tr("ui.monitoring.thisRevokesTheBoundGuard")}
+      onClose={() => {
+        if (detaching) return;
+        pendingDetach = null;
+        detachError = null;
+      }}
+      maxWidth="md"
+      role="alertdialog"
+      tone="danger"
+      testId="monitoring-detach-confirmation"
     >
-      <p class="text-sm font-medium text-foreground">
-        {tr("ui.monitoring.removeFrom", { name: pendingDetach.name })}
-      </p>
-      <p class="mt-1 text-sm text-muted-foreground">
-        {tr("ui.monitoring.thisRevokesTheBoundGuard")}
-      </p>
       {#if detachError}
-        <p
-          class="mt-2 text-sm text-destructive"
-          data-testid="monitoring-detach-error"
-        >
-          {detachError}
-        </p>
+        <ErrorCallout message={detachError} testId="monitoring-detach-error" />
       {/if}
-      <div class="mt-4 flex flex-wrap gap-2">
+      {#snippet footer()}
+        <Button
+          variant="secondary"
+          onclick={() => {
+            pendingDetach = null;
+            detachError = null;
+          }}
+          disabled={detaching}
+        >
+          {tr("ui.importExportModal.cancel")}
+        </Button>
         <Button
           variant="destructive"
           testId="monitoring-detach-confirm"
@@ -311,18 +359,8 @@
             ? tr("ui.monitoring.removing")
             : tr("ui.monitoringServerId.removeFromView")}
         </Button>
-        <Button
-          variant="secondary"
-          onclick={() => {
-            pendingDetach = null;
-            detachError = null;
-          }}
-          disabled={detaching}
-        >
-          {tr("ui.importExportModal.cancel")}
-        </Button>
-      </div>
-    </div>
+      {/snippet}
+    </Modal>
   {/if}
 
   <!--
@@ -331,12 +369,17 @@
     so current state comes before history.
   -->
   <section
-    class="mb-4 rounded-lg border border-border bg-card p-4"
+    id="now"
+    class="mb-4 scroll-mt-4 rounded-lg border border-border bg-card p-4"
     data-testid="monitoring-section-right-now"
+    aria-labelledby="monitoring-now-title"
   >
     <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
       <div class="flex items-center gap-2.5">
-        <h2 class="text-sm font-semibold text-foreground">
+        <h2
+          id="monitoring-now-title"
+          class="text-sm font-semibold text-foreground"
+        >
           {tr("ui.monitoring.rightNow")}
         </h2>
         {#if offlineCount > 0}
@@ -353,18 +396,27 @@
           </span>
         {/if}
       </div>
-      {#if inventoryStale}
-        <span
-          class="text-[11.5px] font-medium text-warning"
-          data-testid="monitoring-inventory-stale"
+      <div class="flex flex-wrap items-center gap-x-4 gap-y-1">
+        {#if inventoryStale}
+          <span
+            class="text-[11.5px] font-medium text-warning"
+            data-testid="monitoring-inventory-stale"
+          >
+            {tr("ui.monitoring.lastVerifiedCountRetainedThe")}
+          </span>
+        {:else}
+          <span class="text-[11.5px] text-muted-foreground">
+            {tr("ui.monitoring.lifecycleConnectionAndHealthAre")}
+          </span>
+        {/if}
+        <a
+          href={SERVERS_HREF}
+          class="text-[12px] font-medium text-primary hover:underline"
+          data-testid="monitoring-all-servers"
         >
-          {tr("ui.monitoring.lastVerifiedCountRetainedThe")}
-        </span>
-      {:else}
-        <span class="text-[11.5px] text-muted-foreground">
-          {tr("ui.monitoring.lifecycleConnectionAndHealthAre")}
-        </span>
-      {/if}
+          {tr("monitoring.allServers")}
+        </a>
+      </div>
     </div>
 
     {#if inventoryUnavailable}
@@ -388,7 +440,10 @@
             data-connection={server.connection?.state ?? "unknown"}
           >
             <a
-              href={`/monitoring/${encodeURIComponent(server.id)}`}
+              href={serverDetailHref({
+                serverId: server.id,
+                deploymentId: server.kit_deployment_id,
+              })}
               class="flex flex-col gap-2.5 p-3.5"
             >
               <div class="flex items-center justify-between gap-2">
@@ -449,6 +504,94 @@
     {/if}
   </section>
 
+  <!-- Alerts: what is firing right now, from the monitor's alert states. The
+       rail flyout and the dashboard's Alerts tile land here. -->
+  <section
+    id="alerts"
+    class="mb-4 scroll-mt-4 rounded-lg border border-border bg-card p-4"
+    data-testid="monitoring-section-alerts"
+    aria-labelledby="monitoring-alerts-title"
+  >
+    <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+      <h2
+        id="monitoring-alerts-title"
+        class="text-sm font-semibold text-foreground"
+      >
+        {tr("nav.monitoring.alerts")}
+      </h2>
+      <span class="text-[11.5px] text-muted-foreground">
+        {tr("monitoring.alertsHint")}
+      </span>
+    </div>
+    {#if alertsUnavailable}
+      <ErrorCallout
+        tone="warning"
+        class="mb-3"
+        message={tr("monitoring.alertsUnavailable")}
+        onRetry={() => void refreshAlerts()}
+        testId="monitoring-alerts-unavailable"
+      />
+    {/if}
+    {#if alerts.length === 0}
+      {#if !alertsUnavailable}
+        <p
+          class="text-sm text-muted-foreground"
+          data-testid="monitoring-no-alerts"
+        >
+          {tr("monitoring.noAlerts")}
+        </p>
+      {/if}
+    {:else}
+      <ul class="flex flex-col divide-y divide-border">
+        {#each alerts as alert (alert.rule.name + alert.rule.expr)}
+          {@const affected = alertServer(alert)}
+          <li
+            class="flex flex-wrap items-start gap-x-3 gap-y-1 py-2.5 first:pt-0 last:pb-0"
+            data-testid="monitoring-alert-row"
+            data-severity={alert.rule.severity}
+          >
+            <AlertTriangle
+              class="mt-0.5 h-4 w-4 shrink-0 {alert.rule.severity === 'critical'
+                ? 'text-destructive'
+                : 'text-warning'}"
+              aria-hidden="true"
+            />
+            <div class="min-w-0 flex-1">
+              <p class="text-[13px] font-medium text-foreground">
+                {alert.rule.message || alert.rule.name}
+              </p>
+              <p class="text-[11.5px] text-muted-foreground">
+                {#if affected}
+                  <a
+                    class="text-primary hover:underline"
+                    href={serverDetailHref({
+                      serverId: affected.id,
+                      deploymentId: affected.kit_deployment_id,
+                    })}>{affected.name}</a
+                  >
+                  ·
+                {/if}
+                {tr("monitoring.alertSince", {
+                  time: formatStamp(
+                    alert.active_since ?? alert.fired_at ?? undefined,
+                  ),
+                })}
+              </p>
+            </div>
+            <span
+              data-kx="status"
+              data-status={alert.rule.severity === "critical"
+                ? "error"
+                : "warn"}
+              class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
+              >{alert.rule.severity}</span
+            >
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  </section>
+
   <StorageForecast
     servers={inventoryServers}
     services={canonicalServices}
@@ -466,7 +609,8 @@
   -->
   {#if availabilityUnavailable}
     <section
-      class="mb-4 rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground"
+      id="history"
+      class="mb-4 scroll-mt-4 rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground"
       data-testid="monitoring-availability-unavailable"
     >
       {tr("ui.monitoring.availabilityHistoryIsUnavailableOn")}
@@ -562,7 +706,7 @@
       </section>
     </div>
 
-    <!-- Anchor target for tr("ui.monitoring.openHistory") on the dashboard. -->
+    <!-- Anchor target for the history link on the dashboard and the rail. -->
     <section
       id="history"
       class="mb-4 scroll-mt-4 rounded-lg border border-border bg-card p-4"
@@ -621,7 +765,11 @@
               data-server-id={server.server_id}
             >
               <a
-                href={`/monitoring/${encodeURIComponent(server.server_id)}`}
+                href={serverDetailHref({
+                  serverId: server.server_id,
+                  deploymentId:
+                    inventoryById[server.server_id]?.kit_deployment_id,
+                })}
                 class="grid min-w-0 flex-1 grid-cols-[176px_minmax(0,1fr)_112px] items-center gap-4"
               >
                 <div class="flex min-w-0 flex-col gap-0.5">

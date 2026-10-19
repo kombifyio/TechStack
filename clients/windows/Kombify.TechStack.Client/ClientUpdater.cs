@@ -10,8 +10,7 @@ using Kombify.Client.Shell;
 
 namespace Kombify.TechStack.Client;
 
-// Shell half of the signed update consumer (NATIVE-CLIENT-PLATFORM-STANDARD
-// section 7). The installed runtime (`techstack client-update`) verifies the
+// Shell half of the signed update consumer (DESKTOP-FOUNDATION-STANDARD.md §5.7). The installed runtime (`techstack client-update`) verifies the
 // channel manifest against the embedded key and stages the installer. This
 // class applies a staged installer at start, before the runtime is spawned,
 // verifies the result on the next start and rolls back when the updated

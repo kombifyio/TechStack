@@ -64,6 +64,12 @@ type InventoryAuthorization struct {
 	ResourceType     string
 	ResourceID       string
 	Action           InventoryAction
+	// OwnerVerified is set only by the server side, after an owner-scoped store
+	// read confirmed that SubjectID owns the server in TenantID. A SaaS policy
+	// then needs no per-server relationship grant for the owner's own server:
+	// nothing provisions one, and ownership is the owner's right. Delegated
+	// callers (household members, agents) never carry it and keep the grant.
+	OwnerVerified bool
 }
 
 // InventoryDecision carries the immutable store scope produced by the policy.

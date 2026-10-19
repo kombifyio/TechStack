@@ -3,7 +3,7 @@
  * in the kombify Cloud account setup; Techstack only reads it and shows more
  * or fewer guided setup steps by it (`experienceLevel` in `@kombiverselabs/ui/usecase`). A Techstack
  * without Cloud falls back to the experience of its own self-description
- * (CREATION-EXPERIENCE-STANDARD §4).
+ * (KOMBIFY-DESIGN-SYSTEM-STANDARD.md §9.4).
  */
 import { readCloudExperienceLevel } from "#lib/api/cloudProfile.js";
 import {

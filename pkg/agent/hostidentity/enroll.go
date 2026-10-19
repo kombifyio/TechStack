@@ -313,6 +313,13 @@ func Enroll(ctx context.Context, opt EnrollOptions) (EnrollResult, error) {
 	}
 	mode, err := confirm(ctx, client, backoff, logger)
 	if err != nil {
+		if confirmationEndsCapability(err, m) {
+			// The redemption was answered and then definitively refused at
+			// confirmation (identity revoked, host key lost or bound to another
+			// key): the capability cannot bind this host any more, so neither
+			// its local copy nor its cloud-init residue may outlive it.
+			removeEnrollmentBootstrap(m, opt, logger)
+		}
 		return result, err
 	}
 	result.Mode = mode
@@ -336,6 +343,19 @@ func removeEnrollmentBootstrap(m *Manager, opt EnrollOptions, logger *slog.Logge
 	if redacted := RedactBootstrapResidue(opt.Bootstrap.Token, paths); redacted > 0 {
 		logger.Info("guard_bootstrap_residue_redacted", "files", redacted)
 	}
+}
+
+// confirmationEndsCapability reports a confirmation failure after which the
+// pairing capability can never complete this host's binding. A bare credential
+// rejection is excluded: a concurrent same-attempt retry may have superseded
+// this process's credential, and that retry still needs the capability until
+// its own response is persisted. The next start turns a really dead capability
+// into a definitive redemption rejection, which discards it.
+func confirmationEndsCapability(err error, m *Manager) bool {
+	if errors.Is(err, ErrRevoked) {
+		return true
+	}
+	return errors.Is(err, ErrRecoveryNeeded) && m.Record().Reason != reasonCredentialRejected
 }
 
 func confirm(ctx context.Context, client *Client, backoff []time.Duration, logger *slog.Logger) (Mode, error) {

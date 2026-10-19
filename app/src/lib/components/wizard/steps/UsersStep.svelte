@@ -20,6 +20,7 @@
     type HouseholdProfile,
   } from "#lib/wizard/household-draft.js";
   import { tr } from "#lib/i18n.svelte.js";
+  import { useWizardField } from "#lib/wizard/validation-context.js";
   import "../substep-rail.css";
 
   interface Props {
@@ -40,6 +41,8 @@
     onHouseholdProfileChange,
     onPeopleDraftsChange,
   }: Props = $props();
+  const audienceField = useWizardField("audience");
+  const publicField = useWizardField("public-access");
   let accessOpen = $state(false);
   let peopleOpen = $state(false);
   const profiles: HouseholdProfile[] = ["solo", "shared"];
@@ -79,7 +82,12 @@
   </header>
 
   <div class="household-layout" data-substep>
-    <fieldset class="profiles">
+    <fieldset
+      class="profiles"
+      role="radiogroup"
+      aria-invalid={audienceField.invalid ? "true" : undefined}
+      aria-describedby={audienceField.describedBy()}
+    >
       <legend class="sr-only">{tr("wizard.users.profile.label")}</legend>
       {#each profiles as profile (profile)}
         <label
@@ -110,6 +118,15 @@
       />
     </div>
   </div>
+  {#if audienceField.invalid}
+    <p
+      id={audienceField.errorId}
+      class="field-error"
+      data-testid="audience-error"
+    >
+      {audienceField.message}
+    </p>
+  {/if}
 
   <section
     class="publication"
@@ -127,6 +144,10 @@
       ><input
         type="checkbox"
         checked={config.network.publicAccess}
+        aria-invalid={publicField.invalid ? "true" : undefined}
+        aria-describedby={config.network.publicAccess
+          ? publicField.errorId
+          : undefined}
         onchange={(event) =>
           onAudienceChange?.("public", event.currentTarget.checked)}
       /><span>{tr("wizard.users.public.choice")}</span></label
@@ -134,7 +155,7 @@
     {#if config.network.publicAccess}
       <div class="publication-consequence" role="status">
         <strong>{tr("wizard.users.public.consequence")}</strong>
-        <p>{tr("wizard.users.public.pending")}</p>
+        <p id={publicField.errorId}>{tr("wizard.users.public.pending")}</p>
       </div>
     {:else}<p class="privacy-note">
         <LockKeyhole size={15} aria-hidden="true" />{tr(
@@ -271,6 +292,11 @@
 </div>
 
 <style>
+  .field-error {
+    margin-top: 10px;
+    font-size: 13px;
+    color: var(--destructive);
+  }
   .publication {
     --substep-top: 24px;
     border-block: 1px solid var(--border);

@@ -43,7 +43,11 @@ type serverReachRequest struct {
 // the owner enables it here with an explicit service name and port: the relay
 // authenticates the Guard, not the visitor, so the owner decides what answers on
 // that port. Enabling needs the maintenance entitlement and a fresh second
-// factor; withdrawing is never gated.
+// factor; withdrawing is never gated. Ownership of the server in the tenant
+// (ownedServer) plus the signed entitlement is the whole authorization, as for
+// owner maintenance: no inventory FGA `caller` tuple is required, because no
+// writer provisions one for an owner's own server (live 2026-10-18: every
+// owner got 403 inventory_access_denied before the step-up was reached).
 func (h serverRuntimeHandlers) reachSetPublic(e *httpx.Event) error {
 	server, err := h.ownedServer(e, "techstack.servers.reach.set")
 	if err != nil || server == nil {
@@ -57,9 +61,6 @@ func (h serverRuntimeHandlers) reachSetPublic(e *httpx.Event) error {
 		return httpx.Error(e, http.StatusConflict, ksapi.ErrCodeConflict, "This server has no kombify Guard", map[string]any{"reason": postureReasonNotReady})
 	}
 	ownerID, _, _ := authenticatedUser(e)
-	if err := authorizeInventoryServerOperate(e.Request.Context(), h.policy, inventoryScope{tenantID: server.TenantID, ownerID: ownerID}, server.ID); err != nil {
-		return writeInventoryHTTPError(e, err)
-	}
 	raw, readErr := io.ReadAll(io.LimitReader(e.Request.Body, 4097))
 	if readErr != nil || len(raw) > 4096 {
 		return httpx.BadRequest(e, "Invalid request body", nil)

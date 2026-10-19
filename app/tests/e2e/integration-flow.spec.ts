@@ -318,7 +318,10 @@ test.describe.serial("Integration Flow (Real Docker Backend)", () => {
         .or(sharedPage.getByText("Server connection ready"))
         .first(),
     ).toBeVisible();
-    await expect(sharedPage.getByText("track the progress")).toBeVisible();
+    // One waiting message, shown in the header and again under the phase list.
+    await expect(
+      sharedPage.getByText("This takes a few minutes").first(),
+    ).toBeVisible();
 
     // -- Semantic: no init error --
     const initError = sharedPage.getByTestId("init-error");

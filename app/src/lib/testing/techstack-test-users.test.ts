@@ -16,8 +16,8 @@ describe("TechStack E2E test users", () => {
     const env = {
       TECHSTACK_E2E_ADMIN_EMAIL: "techstack-admin@kombify.io",
       TECHSTACK_E2E_ADMIN_PASSWORD: "techstack-secret",
-      TEST_PRO_PLUS_USER_EMAIL: "shared-techstack@kombify.io",
-      TEST_PRO_PLUS_USER_PASSWORD: "shared-secret",
+      TEST_PRO_USER_EMAIL: "shared-techstack@kombify.io",
+      TEST_PRO_USER_PASSWORD: "shared-secret",
     };
 
     expect(requireTechStackTestUser("admin", env)).toEqual({
@@ -40,7 +40,7 @@ describe("TechStack E2E test users", () => {
 
   it("does not combine credentials from different aliases", () => {
     const env = {
-      TEST_PRO_PLUS_USER_EMAIL: "shared-techstack@kombify.io",
+      TEST_PRO_USER_EMAIL: "shared-techstack@kombify.io",
       TECHSTACK_E2E_ADMIN_PASSWORD: "techstack-secret",
     };
 

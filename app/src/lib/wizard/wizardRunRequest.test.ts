@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { applyServerProvisioningMode, createDefaultConfig } from "./types";
+import {
+  applyServerProvisioningMode,
+  createDefaultConfig,
+  readRuntimeOfferingID,
+} from "./types";
 import { CANONICAL_USE_CASE_GOALS } from "./standardBundle";
 import {
   buildFoundRunRequest,
@@ -452,5 +456,24 @@ describe("buildJoinRunRequest", () => {
       roles: ["storage"],
     });
     expect(request.intent.kit_assignment.kit_slug).toBe("cloud-kit");
+  });
+
+  it("round-trips a Large deployment into a join and rejects unknown offering readback", () => {
+    const config = createDefaultConfig();
+    applyServerProvisioningMode(config, "kombify-cloud");
+    config.providerId = "ionos";
+    config.runtimeOfferingId = readRuntimeOfferingID("monthly-runtime-large");
+
+    expect(
+      buildJoinRunRequest(config, "stack-1", "my-homelab", []).managed
+        ?.runtime_offering_id,
+    ).toBe("monthly-runtime-large");
+    expect(() => readRuntimeOfferingID("future-unknown-offering")).toThrow(
+      "Unsupported managed runtime offering",
+    );
+    Object.assign(config, { runtimeOfferingId: "future-unknown-offering" });
+    expect(() =>
+      buildJoinRunRequest(config, "stack-1", "my-homelab", []),
+    ).toThrow("Unsupported managed runtime offering");
   });
 });

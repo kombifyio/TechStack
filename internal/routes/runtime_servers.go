@@ -282,7 +282,7 @@ func (h serverRuntimeHandlers) detach(e *httpx.Event) error {
 	if serverID == "" {
 		return httpx.BadRequest(e, "Server ID is required", nil)
 	}
-	if err := authorizeInventoryServerOperate(e.Request.Context(), h.policy, inventoryScope{tenantID: tenantID, ownerID: ownerID}, serverID); err != nil {
+	if err := authorizeOwnerServerOperate(e.Request.Context(), h.policy, h.store, inventoryScope{tenantID: tenantID, ownerID: ownerID}, serverID); err != nil {
 		return writeInventoryHTTPError(e, err)
 	}
 	var body selfOwnedServerDetachBody
@@ -365,6 +365,7 @@ func (h serverRuntimeHandlers) list(e *httpx.Event) error {
 	kitDeploymentID := strings.TrimSpace(e.Request.URL.Query().Get("kit_deployment_id"))
 	rows, err := h.store.ListServerRuntimesByTenant(e.Request.Context(), tenantID, kitDeploymentID)
 	if err != nil {
+		httpx.RecordDependencyFailure(e, "servers.list.runtimes", err)
 		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Server inventory is unavailable", nil)
 	}
 	reach := h.reachByWorker(e.Request.Context(), tenantID)
@@ -543,6 +544,7 @@ func (h serverRuntimeHandlers) ownedServer(e *httpx.Event, capability string) (*
 		return nil, httpx.NotFound(e, "Server not found")
 	}
 	if err != nil {
+		httpx.RecordDependencyFailure(e, "servers.get.runtime", err)
 		return nil, httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Server inventory is unavailable", nil)
 	}
 	if !serverRuntimeOwnedBy(*server, ownerID) {

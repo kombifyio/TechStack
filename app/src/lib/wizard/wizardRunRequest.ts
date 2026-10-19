@@ -18,7 +18,11 @@ import {
   type WizardRunSubstrateParams,
   type WizardRunRequest,
 } from "#lib/api/wizardRuns.js";
-import { isValidSubstrateGuest, type StackConfig } from "./types";
+import {
+  isValidSubstrateGuest,
+  readRuntimeOfferingID,
+  type StackConfig,
+} from "./types";
 import {
   selectedCanonicalUseCasesFromGoals,
   normalizeInstallableKitSlug,
@@ -26,6 +30,18 @@ import {
 
 import { tr } from "#lib/i18n.svelte.js";
 import { remoteSshKeyLabel } from "./remote-credential";
+/**
+ * An answer that cannot become a run. Its message is already written for the
+ * person (catalog text), unlike an unexpected error, so the creation screen
+ * shows it as the explanation instead of hiding it in technical details.
+ */
+export class WizardInputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WizardInputError";
+  }
+}
+
 /** The wizard's fallback deployment name (EasyWizard has no name input). */
 const DEFAULT_RUN_NAME = "homelab";
 
@@ -187,9 +203,7 @@ function buildRunManagedParams(
   const managed: WizardRunManagedParams = {
     provider_id: config.providerId || "",
   };
-  if (config.runtimeOfferingId) {
-    managed.runtime_offering_id = config.runtimeOfferingId;
-  }
+  managed.runtime_offering_id = readRuntimeOfferingID(config.runtimeOfferingId);
   if (config.providerId === "ionos" && config.ionosDatacenter) {
     managed.ionos_datacenter = config.ionosDatacenter;
     managed.provider_region = config.ionosDatacenter;
@@ -233,7 +247,9 @@ function buildRunSubstrateParams(
   if (config.serverProvisioning.mode !== "hypervisor") return undefined;
   const guest = config.serverProvisioning.substrate;
   if (!isValidSubstrateGuest(guest) || !guest)
-    throw new Error(tr("ui.wizardRunRequest.selectAConnectedHypervisorAnd"));
+    throw new WizardInputError(
+      tr("ui.wizardRunRequest.selectAConnectedHypervisorAnd"),
+    );
   const wantsAppliance =
     config.goals?.["smart-home"] &&
     config.useCaseSettings?.["smart-home"]?.["operating-form"] === "haos" &&
@@ -248,7 +264,9 @@ function buildRunSubstrateParams(
       !Number.isInteger(appliance.memoryMiB) ||
       !Number.isInteger(appliance.diskGiB))
   )
-    throw new Error(tr("ui.wizardRunRequest.selectSeparateHomeAssistantOS"));
+    throw new WizardInputError(
+      tr("ui.wizardRunRequest.selectSeparateHomeAssistantOS"),
+    );
   return {
     ...(appliance
       ? {
@@ -279,7 +297,7 @@ function buildRunSubstrateParams(
  */
 export function buildFoundRunRequest(config: StackConfig): WizardRunRequest {
   if (config.network.publicAccess) {
-    throw new Error("wizard.users.public.pending");
+    throw new WizardInputError(tr("wizard.users.public.pending"));
   }
   const intent: WizardIntent = {
     schema: WIZARD_INTENT_SCHEMA,
@@ -290,6 +308,13 @@ export function buildFoundRunRequest(config: StackConfig): WizardRunRequest {
       : {}),
     access: {
       mode: config.network.accessMode === "home" ? "local" : "remote-private",
+      ...(config.network.publications
+        ? {
+            publications: config.network.publications.map((publication) => ({
+              ...publication,
+            })),
+          }
+        : {}),
     },
     household: {
       profile:

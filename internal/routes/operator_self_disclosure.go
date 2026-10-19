@@ -19,7 +19,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// The operator self-disclosure surface (CREATION-EXPERIENCE-STANDARD §4).
+// The operator self-disclosure surface (KOMBIFY-DESIGN-SYSTEM-STANDARD.md §9.4).
 //
 // A signed-in operator may tell Techstack about themselves: how hands-on they
 // want to be, what the homelab is for, where it runs and who uses it. The

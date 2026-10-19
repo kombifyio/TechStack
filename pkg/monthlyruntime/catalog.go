@@ -54,7 +54,7 @@ func Catalog() []Offering {
 			BillingCadence: serverruntime.BillingCadenceMonthly,
 			Image:          "ubuntu-26.04",
 			// StackKits declares the Cloud Kit minimum as 2 vCPU / 4 GB / 20 GB
-			// (PROVIDER-CATALOG §11). IONOS Standard is Basic Cube S, exactly
+			// (STACKKITS-PRODUCT-BOUNDARY-STANDARD.md §13.11). IONOS Standard is Basic Cube S, exactly
 			// that floor; a live Cloud Kit lane on Cube S must confirm it
 			// before customers get Standard. The custom 4 vCPU / 8 GiB size
 			// below stays for Centron until its package mapping is recorded.
@@ -71,6 +71,16 @@ func Catalog() []Offering {
 			VCPUs:          4,
 			MemoryMB:       8192,
 			DiskGB:         320,
+			Region:         "de-fra",
+		},
+		{
+			ID:             serverruntime.RuntimeOfferingLarge,
+			Name:           "Monthly Runtime Large",
+			BillingCadence: serverruntime.BillingCadenceMonthly,
+			Image:          "ubuntu-26.04",
+			VCPUs:          8,
+			MemoryMB:       16384,
+			DiskGB:         480,
 			Region:         "de-fra",
 		},
 	}
@@ -97,7 +107,7 @@ type ProviderPackage struct {
 // (frankfurt-east) lists "cube" in GET /locations (verified 2026-09-24).
 const IONOSCubeDatacenter = "de/fra/2"
 
-// ionosBasicCubes is the owner decision of 2026-09-24 (PROVIDER-CATALOG §11):
+// ionosBasicCubes is the owner decision of 2026-09-24 (STACKKITS-PRODUCT-BOUNDARY-STANDARD.md §13.11):
 // IONOS provisions only Basic Cubes, never a custom VCPU size.
 var ionosBasicCubes = map[serverruntime.RuntimeOfferingID]ProviderPackage{
 	serverruntime.RuntimeOfferingStandard: {
@@ -107,6 +117,10 @@ var ionosBasicCubes = map[serverruntime.RuntimeOfferingID]ProviderPackage{
 	serverruntime.RuntimeOfferingPremium: {
 		ProviderID: ProviderIONOS, OfferingID: serverruntime.RuntimeOfferingPremium,
 		Template: "Basic Cube M", Location: IONOSCubeDatacenter, VCPUs: 4, MemoryMB: 8192, DiskGB: 240,
+	},
+	serverruntime.RuntimeOfferingLarge: {
+		ProviderID: ProviderIONOS, OfferingID: serverruntime.RuntimeOfferingLarge,
+		Template: "Basic Cube L", Location: IONOSCubeDatacenter, VCPUs: 8, MemoryMB: 16384, DiskGB: 480,
 	},
 }
 
@@ -125,6 +139,11 @@ func PackageForProvider(providerID, offeringID string) (ProviderPackage, error) 
 		}
 		return pkg, nil
 	case ProviderCentron:
+		// Large is admitted only as the fixed IONOS Basic Cube L. Extending
+		// Centron's legacy custom sizes would invent an unqualified package.
+		if offering.ID == serverruntime.RuntimeOfferingLarge {
+			return ProviderPackage{}, fmt.Errorf("monthlyruntime: offering %q has no Centron package", offering.ID)
+		}
 		return ProviderPackage{
 			ProviderID: ProviderCentron, OfferingID: offering.ID,
 			VCPUs: offering.VCPUs, MemoryMB: offering.MemoryMB, DiskGB: offering.DiskGB,

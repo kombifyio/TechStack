@@ -2,7 +2,7 @@
 //
 // Desktop tools (SpeechKit, etc.) use this package to authenticate against the
 // kombify Cloud platform via API key or device code flow. It handles token
-// storage (OS credential store or encrypted file fallback), automatic token
+// storage (OS credential store or machine-bound obfuscated file fallback), automatic token
 // refresh, entitlement checking with caching, and batched usage reporting.
 package toolauth
 

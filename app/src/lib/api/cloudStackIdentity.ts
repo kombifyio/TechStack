@@ -6,7 +6,7 @@
  *
  * Without a Gateway token (self-hosted Techstack without kombify Cloud, or a
  * signed-out session) Cloud is "unavailable" and Techstack stays the only
- * authority (STACK-IDENTITY-CUSTOMIZATION-STANDARD §8).
+ * authority (STACKKITS-PRODUCT-BOUNDARY-STANDARD.md §10.8).
  */
 import { getGatewayToken } from "#lib/auth/gateway-auth.js";
 import { connectGatewayOrigin } from "./connectDevices";

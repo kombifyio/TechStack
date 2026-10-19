@@ -10,8 +10,8 @@ export const guardMessagesZhHans: Record<
   "guard.backup.load": "读取恢复点",
   "guard.backup.loading": "正在读取…",
   "guard.backup.recorded":
-    "这些恢复点由此节点记录。准备恢复时会检查历史备份内容。",
-  "guard.backup.empty": "此节点未报告可选择的历史恢复点。",
+    "这些恢复点由此服务器记录。准备恢复时会检查历史备份内容。",
+  "guard.backup.empty": "此服务器未报告可选择的历史恢复点。",
   "guard.backup.choose": "恢复点",
   "guard.backup.placeholder": "选择一个已记录的恢复点",
   "guard.backup.currentPlan": "当前方案",
@@ -21,7 +21,7 @@ export const guardMessagesZhHans: Record<
   "guard.backup.confirm":
     "将 {when} 的恢复点准备到隔离暂存区？不会替换正在使用的应用数据。",
   "guard.backup.confirmAction": "准备此恢复",
-  "guard.backup.running": "节点正在准备隔离恢复。",
+  "guard.backup.running": "服务器正在准备隔离恢复。",
   "guard.backup.staged": "已在隔离暂存区准备恢复。正在使用的应用数据未被替换。",
   "guard.backup.unverified":
     "任务已完成，但没有匹配的暂存恢复证据。应用恢复尚未验证。",
@@ -34,14 +34,14 @@ export const guardMessagesZhHans: Record<
   "guard.backup.historicalOperation":
     "此操作属于先前的安装。其记录的结果不代表当前安装的状态。",
   "guard.backup.activateConfirm":
-    "在 {name} 上启用此恢复？这会替换应用的现有数据。节点将保留安全快照，并验证服务和所有者访问权限。",
+    "在 {name} 上启用此恢复？这会替换应用的现有数据。服务器将保留安全快照，并验证服务和所有者访问权限。",
   "guard.backup.activateAction": "确认恢复现有数据",
   "guard.backup.activationUnavailable":
-    "此节点当前已发布的运行时不支持启用恢复。已准备的数据仍保持隔离。",
-  "guard.backup.activating": "节点正在核对已批准的恢复操作。",
-  "guard.backup.activated": "节点已启用并验证所选恢复。",
+    "此服务器当前已发布的运行时不支持启用恢复。已准备的数据仍保持隔离。",
+  "guard.backup.activating": "服务器正在核对已批准的恢复操作。",
+  "guard.backup.activated": "服务器已启用并验证所选恢复。",
   "guard.backup.recovered": "已恢复应用先前的状态。所选恢复未启用。",
-  "guard.backup.accessVerified": "节点于 {when} 验证了服务和所有者访问权限。",
+  "guard.backup.accessVerified": "服务器于 {when} 验证了服务和所有者访问权限。",
   "guard.backup.recoveryRequired":
     "恢复结果尚未确认。请先处理原始操作，再开始其他恢复。",
   "guard.backup.outcomeUnknown": "尚无匹配的最终恢复证据。",
@@ -49,7 +49,7 @@ export const guardMessagesZhHans: Record<
   "guard.backup.resumeRequest": "继续原始请求",
   "guard.backup.recover": "恢复原始操作",
   "guard.backup.recoverConfirm":
-    "核对原始操作？若操作尚未完成，节点将恢复应用先前的状态。",
+    "核对原始操作？若操作尚未完成，服务器将恢复应用先前的状态。",
   "guard.backup.recoverAction": "确认原始恢复",
   "guard.promise":
     "旨在让这台服务器与你绑定、持续受到检查、可从任何地方访问,并在设计上可恢复。下方的事实显示当前有证据支持的内容。",

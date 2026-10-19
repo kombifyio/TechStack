@@ -374,7 +374,7 @@ const capitalize = (value: string) => {
 
 /**
  * One status element for a Node that still carries all three axes
- * (SERVER-CONNECTION-STANDARD §5): health and connection are always named,
+ * (STACKKITS-PRODUCT-BOUNDARY-STANDARD.md §14.5): health and connection are always named,
  * lifecycle only when it is not the steady `active`, and an unmeasured health
  * stays out of the short label. `detail` always lists every axis.
  */

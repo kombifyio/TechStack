@@ -310,7 +310,7 @@ func RuntimeActionsFromEnv(base RuntimeActions) (RuntimeActions, RuntimeActionsE
 	// StackKits has no HTTP action service: every StackKits operation is a
 	// typed command the enrolled node runs with the pinned CLI.
 	// Simulate fallback chain (Simulate runs on IONOS Coolify, NOT Render —
-	// see PLATFORM-ARCHITECTURE.md §1 and SERVICE-URL-REGISTRY.md §5). The
+	// see PLATFORM-ARCHITECTURE.md §1 and API-FIRST-STANDARD.md §15.5). The
 	// canonical key is KOMBIFY_URL_VPS_SIMULATE; KOMBIFY_URL_INTERNAL_SIMULATE
 	// is deliberately NOT in this chain because that key is forbidden for
 	// IONOS-hosted services and resolves to a stale Render-pattern hostname

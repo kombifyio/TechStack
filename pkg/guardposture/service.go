@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/kombifyio/techstack/pkg/guardbinding"
 )
 
 // RepairTarget addresses one repair command to a Guard.
@@ -441,10 +443,52 @@ func (s *Service) SetAutoRepair(ctx context.Context, tenantID, workerID, actor s
 		expiry := expiresAt.UTC()
 		policy.Enabled, policy.Controls, policy.ExpiresAt, policy.ApprovedBy, policy.ApprovedAt = true, sorted, &expiry, actor, &now
 	}
-	if err := s.store.SetAutoRepair(ctx, policy); err != nil {
-		return nil, err
+	return s.store.SetAutoRepair(ctx, policy)
+}
+
+// localOperationNamespace derives a record ID from a Guard-generated operation
+// ID that is unique per tenant and worker, so two Guards cannot collide.
+var localOperationNamespace = uuid.MustParse("6f1d7b0e-3b8a-4d55-9c1e-5a0f2a7c9e41")
+
+// LocalRepairCommandID is the journal identity of one local-policy operation.
+func LocalRepairCommandID(repairID string) string { return "guard-local-repair:" + repairID }
+
+// AcceptLocalOperation commits one revision of evidence a Guard reports for a
+// repair it ran under a registered local policy version, and acknowledges it
+// only after the commit. An identical repeat is acknowledged again without a
+// write; evidence without registered, current authority, out of the policy's
+// scope or beyond the persisted repair bounds is refused with a structured
+// denial. generation is the credential generation that authenticated the
+// report. The accepted operation counts toward the same cooldown, attempt
+// budget and circuit breaker as an online repair.
+func (s *Service) AcceptLocalOperation(ctx context.Context, identity Identity, displayName string, generation int64, evidence LocalOperationEvidence) (guardbinding.Acknowledgement, error) {
+	now := s.now()
+	submission := LocalSubmission{Identity: identity, Generation: generation, Evidence: evidence}
+	ref := LocalRef{OperationID: evidence.OperationID, PolicyID: evidence.PolicyID, PolicyVersion: evidence.PolicyVersion}
+	duplicate := false
+	err := s.store.AcceptLocalOperation(ctx, identity.TenantID, identity.WorkerID, ref, func(state LocalState) (*Repair, error) {
+		record, dup, denial := s.policy.AcceptLocalOperation(submission, state, now)
+		if denial != nil {
+			return nil, denial
+		}
+		duplicate = dup
+		if record != nil && record.ID == "" {
+			record.ID = uuid.NewSHA1(localOperationNamespace, []byte(identity.TenantID+"\x00"+identity.WorkerID+"\x00"+evidence.OperationID)).String()
+			record.CommandID = LocalRepairCommandID(record.ID)
+		}
+		return record, nil
+	})
+	if err != nil {
+		return guardbinding.Acknowledgement{}, err
 	}
-	return &policy, nil
+	if !duplicate {
+		// Whatever the Guard did, observe the host again.
+		if verifyErr := s.store.RequestVerify(ctx, identity, displayName, uuid.NewString(), now); verifyErr != nil {
+			s.log.Warn("guard_local_repair_verify_request_failed", "operation_id", evidence.OperationID, "error", verifyErr.Error())
+		}
+	}
+	return guardbinding.Acknowledgement{CommandID: evidence.OperationID, Revision: evidence.Report.Revision, Digest: evidence.Report.Digest,
+		Accepted: true, Acknowledged: true, Duplicate: duplicate}, nil
 }
 
 // autoRepair repairs the controls an active owner approval covers. Missing,

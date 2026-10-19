@@ -5,9 +5,9 @@
   import { useViewContextOverlay } from "#lib/stores/viewContext.svelte.js";
   import CreationProgress from "./CreationProgress.svelte";
   import CreationCompletion from "./CreationCompletion.svelte";
+  import CreationNextStep from "./CreationNextStep.svelte";
   import CreationRequirements from "./CreationRequirements.svelte";
   import CreationLease from "./CreationLease.svelte";
-  import CreationInstallCommand from "./CreationInstallCommand.svelte";
   import CreationFailure from "./CreationFailure.svelte";
   import CreationRunStatus from "./CreationRunStatus.svelte";
   import CreationLeanBack from "./CreationLeanBack.svelte";
@@ -36,7 +36,7 @@
 <div class="min-h-full w-full bg-background p-6 lg:p-8 overflow-x-hidden">
   <div class="mx-auto w-full max-w-7xl min-w-0">
     <div
-      class="mt-12 mb-8 flex flex-col-reverse gap-6 lg:mt-0 lg:flex-row lg:items-start lg:justify-between"
+      class="mb-8 flex flex-col-reverse gap-6 lg:flex-row lg:items-start lg:justify-between"
     >
       <CreationHeader />
       {#if running}
@@ -63,22 +63,30 @@
           <!-- Boxless section (operator direction 2026-08-19): the completion
                content sits directly on the page ground; only genuine content
                cards inside keep a surface. -->
-          <div>
-            <CreationCompletion />
-            <CreationRequirements />
-            <CreationLease />
-            <CreationInstallCommand />
-            <button
-              onclick={creation.goToStack}
-              data-kx="control"
-              data-variant="primary"
-              class="inline-flex w-full items-center justify-center gap-2 whitespace-nowrap rounded-xl px-4 py-3 text-sm font-medium disabled:pointer-events-none disabled:opacity-50"
-              data-testid="continue-to-stackkit-rollout"
+          <div class="flex flex-col gap-6">
+            <CreationNextStep />
+            <div>
+              <CreationCompletion />
+              <CreationLease part="handoff" />
+            </div>
+            <!-- The cards below are for people who want the evidence: what the
+                 release requires and what was provisioned. They stay one
+                 click away instead of stacking up between the person and
+                 their next step. -->
+            <details
+              class="rounded-2xl border border-border bg-card/50"
+              data-testid="creation-technical-details"
             >
-              {creation.serverProvisioningMode === "kombify-cloud"
-                ? tr("ui.stacksCreating.openOperations")
-                : tr("ui.stacksCreating.reviewAndStartStackkitRollout")}
-            </button>
+              <summary
+                class="cursor-pointer select-none px-5 py-4 text-sm font-medium text-foreground"
+              >
+                {tr("creation.technical.summary")}
+              </summary>
+              <div class="border-t border-border/60 p-5">
+                <CreationRequirements />
+                <CreationLease part="technical" />
+              </div>
+            </details>
           </div>
         {:else if creation.hasFailed}
           <CreationFailure />

@@ -1,5 +1,5 @@
 // Package interactiveauth implements the two human-interactive native OAuth
-// flows of NATIVE-CLIENT-PLATFORM-STANDARD.md section 4, composed on the
+// flows of DESKTOP-FOUNDATION-STANDARD.md §5.4, composed on the
 // transport-pure [oidcclient] package:
 //
 //   - Flow A: loopback redirect with PKCE (RFC 8252) for desktops that can

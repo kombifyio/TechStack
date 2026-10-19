@@ -41,7 +41,7 @@ The beyond-IaC operational layer that manages infrastructure after provisioning.
 
 - `ReportUserNotification(UserNotification) returns (UserNotificationAck)` is the
   opt-in `user_notification` agent-channel class
-  (`SERVER-CONNECTION-STANDARD.md` section 9). The agent is authenticated like
+  (`STACKKITS-PRODUCT-BOUNDARY-STANDARD.md` §14.9). The agent is authenticated like
   every other RPC; the node identity (tenant, stack, owner) comes from that
   authentication, never from the message. Core bounds the text (280
   characters), rate-limits the node (30 per hour), collapses by

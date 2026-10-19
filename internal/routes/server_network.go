@@ -174,7 +174,7 @@ func (h serverRuntimeHandlers) networkServer(e *httpx.Event, capability string, 
 	}
 	if mutating {
 		ownerID, _, _ := authenticatedUser(e)
-		if authErr := authorizeInventoryServerOperate(e.Request.Context(), h.policy, inventoryScope{tenantID: server.TenantID, ownerID: ownerID}, server.ID); authErr != nil {
+		if authErr := authorizeOwnerServerOperate(e.Request.Context(), h.policy, h.store, inventoryScope{tenantID: server.TenantID, ownerID: ownerID}, server.ID); authErr != nil {
 			return nil, nil, writeInventoryHTTPError(e, authErr)
 		}
 	}

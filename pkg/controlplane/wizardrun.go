@@ -5,11 +5,37 @@ import (
 	"time"
 )
 
+const WizardIntentProjectionPending = "intent_projection_pending"
+const WizardDesiredProjectionBlocked = "desired_projection_blocked"
+
+func wizardRunBoundRequestReasons() []string {
+	return []string{"projection_pending", "intent_projection_failed", WizardIntentProjectionPending, WizardDesiredProjectionBlocked}
+}
+
+func wizardRunCanReplace(existing, next WizardRun) bool {
+	if existing.Status == "completed" && next.Status != "completed" {
+		return false
+	}
+	if existing.RequestSHA256 == next.RequestSHA256 {
+		return true
+	}
+	if existing.Status == "completed" {
+		return false
+	}
+	for _, reason := range wizardRunBoundRequestReasons() {
+		if existing.ErrorReason == reason {
+			return false
+		}
+	}
+	return true
+}
+
 // WizardRun is one ledger entry of the wizard-run facade (ADR-0036 phase 3).
 // A row exists only for runs that reached persistence: completed runs replay
 // their Result on an Idempotency-Key re-submit, failed rows record partial
-// side effects and never block a retry. Pre-persist rejections (validation,
-// entitlement, projection) never write a row, so a rejected key stays usable.
+// side effects or a desired-intent save and permit a same-request retry.
+// Invalid requests and entitlement denials never consume a key. Valid desired
+// choices can be recorded as blocked without creating runtime resources.
 type WizardRun struct {
 	ID             string
 	TenantID       string
@@ -44,6 +70,9 @@ type WizardRun struct {
 // (tenant, owner, idempotency key) when a key is present — a failed row is
 // overwritten by the retry's outcome — and plain-inserts keyless runs.
 type WizardRunStore interface {
+	// ReserveWizardRun atomically binds the key before effects. An existing
+	// matching row is returned unchanged, including completed/partial outcomes.
+	ReserveWizardRun(ctx context.Context, run WizardRun) (*WizardRun, error)
 	GetWizardRunByKey(ctx context.Context, tenantID, ownerSubjectID, idempotencyKey string) (*WizardRun, error)
 	// GetLatestWizardRunByOwner returns the owner's most recently written run
 	// (by updated_at, so a keyed retry surfaces as the latest activity) —

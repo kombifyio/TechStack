@@ -40,46 +40,36 @@ type ownerBootstrapDenial struct {
 	Message    string
 	ReasonCode string
 	Retryable  bool
-	Guidance   map[string]any
+	Guidance   ksapi.UserGuidance
+}
+
+func (d *ownerBootstrapDenial) structured() ksapi.StructuredError {
+	return ksapi.StructuredError{
+		Status:     d.Status,
+		Message:    d.Message,
+		ErrorCode:  ownerBootstrapDeniedErrorCode,
+		ReasonCode: d.ReasonCode,
+		Phase:      ownerBootstrapPhase,
+		PhaseLabel: ownerBootstrapPhaseLabel,
+		Retryable:  d.Retryable,
+		Guidance:   d.Guidance,
+	}
 }
 
 // Details builds the canonical structured error envelope for the denial.
 func (d *ownerBootstrapDenial) Details() map[string]any {
-	return map[string]any{
-		"phase":              ownerBootstrapPhase,
-		"phase_label":        ownerBootstrapPhaseLabel,
-		"error_code":         ownerBootstrapDeniedErrorCode,
-		detailsKeyReasonCode: d.ReasonCode,
-		"required_features":  []string{},
-		"missing_features":   []string{},
-		"retryable":          d.Retryable,
-		"user_guidance":      d.Guidance,
-	}
+	return d.structured().Details()
 }
 
 // write emits the denial as the HTTP response for the create/import request.
 func (d *ownerBootstrapDenial) write(e *httpx.Event) error {
-	code := ksapi.ErrCodeBadRequest
-	switch d.Status {
-	case http.StatusForbidden:
-		code = ksapi.ErrCodeForbidden
-	case http.StatusConflict:
-		code = ksapi.ErrCodeConflict
-	case http.StatusInternalServerError:
-		code = ksapi.ErrCodeInternal
-	}
-	return httpx.Error(e, d.Status, code, d.Message, d.Details())
+	denial := d.structured()
+	return httpx.Error(e, denial.Status, denial.Code(), denial.Message, denial.Details())
 }
 
-// ownerGuidance builds the user_guidance envelope. Centralizing the map keys
-// keeps the denial constructors free of repeated literals and guarantees a
-// uniform guidance shape.
-func ownerGuidance(title, body string, nextSteps ...string) map[string]any {
-	return map[string]any{
-		"title":      title,
-		"body":       body,
-		"next_steps": nextSteps,
-	}
+// ownerGuidance builds the user_guidance envelope.
+func ownerGuidance(title, body string, nextSteps ...string) ksapi.UserGuidance {
+	return ksapi.UserGuidance{Title: title, Body: body, NextSteps: nextSteps}
 }
 
 func denyCloudLinkMissing() *ownerBootstrapDenial {

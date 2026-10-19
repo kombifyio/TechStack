@@ -400,13 +400,24 @@ func (s *PostgresStore) findings(ctx context.Context, tenantID, workerID string,
 const repairColumns = `id, tenant_id, worker_id, server_id, mode, requested_by, controls, status, reason_code, command_id, steps,
 	requested_at, expires_at, dispatched_at, finished_at`
 
+// repairSelectColumns adds the local-policy binding (migration 159) to what a
+// read returns; an online repair leaves it NULL.
+const repairSelectColumns = repairColumns + `, operation_id, policy_id, policy_version, worker_generation, evidence_revision, evidence_digest`
+
 func scanRepair(row scanner) (Repair, error) {
 	var r Repair
 	var controls, steps []byte
 	var dispatched, finished sql.NullTime
+	var operationID, policyID, digest sql.NullString
+	var policyVersion, generation, revision sql.NullInt64
 	if err := row.Scan(&r.ID, &r.TenantID, &r.WorkerID, &r.ServerID, &r.Mode, &r.RequestedBy, &controls, &r.Status, &r.ReasonCode,
-		&r.CommandID, &steps, &r.RequestedAt, &r.ExpiresAt, &dispatched, &finished); err != nil {
+		&r.CommandID, &steps, &r.RequestedAt, &r.ExpiresAt, &dispatched, &finished,
+		&operationID, &policyID, &policyVersion, &generation, &revision, &digest); err != nil {
 		return r, err
+	}
+	if operationID.Valid {
+		r.Local = &LocalBinding{OperationID: operationID.String, PolicyID: policyID.String, PolicyVersion: policyVersion.Int64,
+			Generation: generation.Int64, Revision: revision.Int64, Digest: digest.String}
 	}
 	if err := json.Unmarshal(controls, &r.Controls); err != nil {
 		return r, err
@@ -420,7 +431,7 @@ func scanRepair(row scanner) (Repair, error) {
 }
 
 func repairsTx(ctx context.Context, tx *sql.Tx, tenantID, workerID string, limit int, forUpdate bool) ([]Repair, error) {
-	query := `SELECT ` + repairColumns + ` FROM guard_posture_repairs WHERE tenant_id = $1 AND worker_id = $2 ORDER BY requested_at DESC LIMIT $3`
+	query := `SELECT ` + repairSelectColumns + ` FROM guard_posture_repairs WHERE tenant_id = $1 AND worker_id = $2 ORDER BY requested_at DESC LIMIT $3`
 	rows, err := tx.QueryContext(ctx, query, tenantID, workerID, limit)
 	if err != nil {
 		return nil, err
@@ -446,7 +457,7 @@ func (s *PostgresStore) AdmitRepair(ctx context.Context, tenantID, workerID stri
 	err = s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
 		// One admission per server at a time: the bounds are a check then an
 		// insert, and two requests must not both pass the same check.
-		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "guard-repair:"+tenantID+":"+workerID); err != nil {
+		if err := lockServerRepairs(ctx, tx, tenantID, workerID); err != nil {
 			return err
 		}
 		history, err := repairsTx(ctx, tx, tenantID, workerID, maxRepairHistory, false)
@@ -493,7 +504,7 @@ func (s *PostgresStore) UpdateRepair(ctx context.Context, tenantID, repairID str
 	var out *Repair
 	err := s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
 		repair, err := scanRepair(tx.QueryRowContext(ctx,
-			`SELECT `+repairColumns+` FROM guard_posture_repairs WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, tenantID, repairID))
+			`SELECT `+repairSelectColumns+` FROM guard_posture_repairs WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, tenantID, repairID))
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -541,9 +552,9 @@ func (s *PostgresStore) GetAutoRepair(ctx context.Context, tenantID, workerID st
 		var policy AutoRepairPolicy
 		var controls []byte
 		var expires, approved sql.NullTime
-		queryErr := tx.QueryRowContext(ctx, `SELECT enabled, controls, expires_at, approved_by, approved_at, updated_at
+		queryErr := tx.QueryRowContext(ctx, `SELECT policy_id, version, enabled, controls, expires_at, approved_by, approved_at, updated_at
 			FROM guard_repair_policies WHERE tenant_id = $1 AND worker_id = $2`, tenantID, workerID).
-			Scan(&policy.Enabled, &controls, &expires, &policy.ApprovedBy, &approved, &policy.UpdatedAt)
+			Scan(&policy.PolicyID, &policy.Version, &policy.Enabled, &controls, &expires, &policy.ApprovedBy, &approved, &policy.UpdatedAt)
 		if errors.Is(queryErr, sql.ErrNoRows) {
 			return nil
 		}
@@ -558,19 +569,131 @@ func (s *PostgresStore) GetAutoRepair(ctx context.Context, tenantID, workerID st
 	return out, err
 }
 
-func (s *PostgresStore) SetAutoRepair(ctx context.Context, policy AutoRepairPolicy) error {
+// lockServerRepairs serializes every repair admission, policy registration and
+// local evidence acceptance of one server.
+func lockServerRepairs(ctx context.Context, tx *sql.Tx, tenantID, workerID string) error {
+	_, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "guard-repair:"+tenantID+":"+workerID)
+	return err
+}
+
+func (s *PostgresStore) SetAutoRepair(ctx context.Context, policy AutoRepairPolicy) (*AutoRepairPolicy, error) {
 	tenantID, workerID, err := scope(policy.TenantID, policy.WorkerID)
+	if err != nil {
+		return nil, err
+	}
+	controls, _ := json.Marshal(nonNilControls(policy.Controls))
+	var out *AutoRepairPolicy
+	err = s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		if err := lockServerRepairs(ctx, tx, tenantID, workerID); err != nil {
+			return err
+		}
+		var policyID string
+		var version int64
+		queryErr := tx.QueryRowContext(ctx, `SELECT policy_id, version FROM guard_repair_policies WHERE tenant_id = $1 AND worker_id = $2`,
+			tenantID, workerID).Scan(&policyID, &version)
+		if queryErr != nil && !errors.Is(queryErr, sql.ErrNoRows) {
+			return queryErr
+		}
+		if policyID == "" {
+			policyID, version = uuid.NewString(), 0
+		}
+		version++
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE guard_repair_policy_versions SET superseded_at = now()
+			WHERE tenant_id = $1 AND worker_id = $2 AND superseded_at IS NULL
+		`, tenantID, workerID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO guard_repair_policy_versions (tenant_id, worker_id, policy_id, version, enabled, controls, expires_at, approved_by, approved_at)
+			VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9)
+		`, tenantID, workerID, policyID, version, policy.Enabled, string(controls), policy.ExpiresAt, policy.ApprovedBy, policy.ApprovedAt); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO guard_repair_policies (tenant_id, worker_id, enabled, controls, expires_at, approved_by, approved_at, updated_at, policy_id, version)
+			VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, now(), $8, $9)
+			ON CONFLICT (tenant_id, worker_id) DO UPDATE SET enabled = EXCLUDED.enabled, controls = EXCLUDED.controls,
+				expires_at = EXCLUDED.expires_at, approved_by = EXCLUDED.approved_by, approved_at = EXCLUDED.approved_at, updated_at = now(),
+				policy_id = EXCLUDED.policy_id, version = EXCLUDED.version
+		`, tenantID, workerID, policy.Enabled, string(controls), policy.ExpiresAt, policy.ApprovedBy, policy.ApprovedAt, policyID, version); err != nil {
+			return err
+		}
+		stored := policy
+		stored.TenantID, stored.WorkerID, stored.PolicyID, stored.Version = tenantID, workerID, policyID, version
+		out = &stored
+		return nil
+	})
+	return out, err
+}
+
+func nonNilControls(controls []string) []string {
+	if controls == nil {
+		return []string{}
+	}
+	return controls
+}
+
+func (s *PostgresStore) AcceptLocalOperation(ctx context.Context, tenantID, workerID string, ref LocalRef, decide func(LocalState) (*Repair, error)) error {
+	tenantID, workerID, err := scope(tenantID, workerID)
 	if err != nil {
 		return err
 	}
-	controls, _ := json.Marshal(policy.Controls)
 	return s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
-		_, execErr := tx.ExecContext(ctx, `
-			INSERT INTO guard_repair_policies (tenant_id, worker_id, enabled, controls, expires_at, approved_by, approved_at, updated_at)
-			VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, now())
-			ON CONFLICT (tenant_id, worker_id) DO UPDATE SET enabled = EXCLUDED.enabled, controls = EXCLUDED.controls,
-				expires_at = EXCLUDED.expires_at, approved_by = EXCLUDED.approved_by, approved_at = EXCLUDED.approved_at, updated_at = now()
-		`, tenantID, workerID, policy.Enabled, string(controls), policy.ExpiresAt, policy.ApprovedBy, policy.ApprovedAt)
-		return execErr
+		if err := lockServerRepairs(ctx, tx, tenantID, workerID); err != nil {
+			return err
+		}
+		var state LocalState
+		existing, err := scanRepair(tx.QueryRowContext(ctx, `SELECT `+repairSelectColumns+` FROM guard_posture_repairs
+			WHERE tenant_id = $1 AND worker_id = $2 AND operation_id = $3`, tenantID, workerID, ref.OperationID))
+		switch {
+		case err == nil:
+			state.Existing = &existing
+		case !errors.Is(err, sql.ErrNoRows):
+			return err
+		}
+		var version PolicyVersion
+		var controls []byte
+		var expires, approved, superseded sql.NullTime
+		err = tx.QueryRowContext(ctx, `
+			SELECT policy_id, version, enabled, controls, expires_at, approved_at, superseded_at
+			FROM guard_repair_policy_versions WHERE tenant_id = $1 AND worker_id = $2 AND policy_id = $3 AND version = $4
+		`, tenantID, workerID, ref.PolicyID, ref.PolicyVersion).Scan(&version.PolicyID, &version.Version, &version.Enabled, &controls, &expires, &approved, &superseded)
+		switch {
+		case err == nil:
+			_ = json.Unmarshal(controls, &version.Controls)
+			version.ExpiresAt, version.ApprovedAt, version.SupersededAt = timePtr(expires), timePtr(approved), timePtr(superseded)
+			state.Version = &version
+		case !errors.Is(err, sql.ErrNoRows):
+			return err
+		}
+		if state.History, err = repairsTx(ctx, tx, tenantID, workerID, maxRepairHistory, false); err != nil {
+			return err
+		}
+		record, err := decide(state)
+		if err != nil || record == nil {
+			return err
+		}
+		b := record.Local
+		if b == nil {
+			return errors.New("guardposture: local evidence without its binding")
+		}
+		controlsJSON, _ := json.Marshal(record.Controls)
+		steps, _ := json.Marshal(nonNilSteps(record.Steps))
+		if state.Existing != nil {
+			_, err = tx.ExecContext(ctx, `
+				UPDATE guard_posture_repairs SET status = $3, reason_code = $4, steps = $5::jsonb, finished_at = $6,
+					evidence_revision = $7, evidence_digest = $8
+				WHERE tenant_id = $1 AND id = $2
+			`, tenantID, record.ID, record.Status, record.ReasonCode, string(steps), record.FinishedAt, b.Revision, b.Digest)
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO guard_posture_repairs (`+repairColumns+`, operation_id, policy_id, policy_version, worker_generation, evidence_revision, evidence_digest)
+			VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+		`, record.ID, tenantID, workerID, record.ServerID, record.Mode, record.RequestedBy, string(controlsJSON), record.Status,
+			record.ReasonCode, record.CommandID, string(steps), record.RequestedAt, record.ExpiresAt, record.DispatchedAt, record.FinishedAt,
+			b.OperationID, b.PolicyID, b.PolicyVersion, b.Generation, b.Revision, b.Digest)
+		return err
 	})
 }

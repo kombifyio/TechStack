@@ -53,6 +53,11 @@ on:
         required: false
         type: boolean
         default: false
+      database_gate:
+        description: "Database leg of this release (set only by guard-release-on-release.yml): none, refused, or the database Delivery run ID the service leg waits for"
+        required: false
+        type: string
+        default: ""
   schedule:
     - cron: "41 4 * * *"
 
@@ -489,11 +494,29 @@ jobs:
             guard-release-tool verify dist "${expected[@]}"
           fi
 
+      # Creating the guard-v<version> release creates its tag, and the
+      # repository now refuses a tag from any token without the workflows
+      # permission (HTTP 403 "Resource not accessible by integration";
+      # Guard release 39018813777). GITHUB_TOKEN can never hold workflows, so
+      # the private repository publishes with a short-lived kombify-ci
+      # installation token scoped to this repository; the public mirror keeps
+      # github.token.
+      - name: Mint the release publication token
+        id: publish-token
+        if: steps.version.outputs.reuse-private != 'true' && github.repository == 'kombifyio/TechStack'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.KOMBIFY_CI_APP_ID }}
+          private-key: ${{ secrets.KOMBIFY_CI_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-workflows: write
+
       - name: Publish
         if: steps.version.outputs.reuse-private != 'true'
         shell: bash
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          GH_TOKEN: ${{ steps.publish-token.outputs.token || github.token }}
         run: |
           set -euo pipefail
           tag="guard-v${VERSION}"
@@ -538,7 +561,12 @@ jobs:
   # normal Delivery v2 run on main; every source, version, image, environment
   # and activation gate stays in that run. Stable 1.0+ keeps its explicit
   # approval. TECHSTACK_AUTO_DELIVERY=off pauses it; TECHSTACK_AUTO_DELIVERY_SCOPE
-  # selects all, service (default) or public-oss.
+  # selects all (default), service or public-oss.
+  # Database leg first (CI-CD-PLATFORM-STANDARD.md §4.6): database_gate names
+  # the database Delivery that guard-release-on-release.yml dispatched for this
+  # release. The service leg is dispatched only after that run succeeded and
+  # published the techstack-database group; `refused`, a missing gate, a failed
+  # or foreign run, or a run that does not finish in time stops it.
   deliver:
     needs: release
     if: >-
@@ -547,7 +575,7 @@ jobs:
       inputs.deliver_after_publish &&
       vars.TECHSTACK_AUTO_DELIVERY != 'off'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 80
     permissions:
       actions: write
       contents: read
@@ -557,14 +585,60 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_SHA: ${{ inputs.expected_source_sha }}
-          SCOPE: ${{ vars.TECHSTACK_AUTO_DELIVERY_SCOPE || 'service' }}
+          SCOPE: ${{ vars.TECHSTACK_AUTO_DELIVERY_SCOPE || 'all' }}
+          DATABASE_GATE: ${{ inputs.database_gate }}
         run: |
           set -euo pipefail
           [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] && [ "$RELEASE_SHA" = "$GITHUB_SHA" ] || {
             echo "::error::Automatic Delivery follows only a fresh publication of the prepared release commit." >&2
             exit 1
           }
+          # Only the chain's own dispatch (guard-release-on-release.yml, job
+          # token) carries a trustworthy database gate.
+          [ "$GITHUB_ACTOR" = "github-actions[bot]" ] || {
+            echo "::error::Automatic Delivery follows only the dispatch of guard-release-on-release.yml, not one by ${GITHUB_ACTOR}." >&2
+            exit 1
+          }
           case "$SCOPE" in all|service|public-oss) ;; *) echo "::error::Unsupported TECHSTACK_AUTO_DELIVERY_SCOPE ${SCOPE}" >&2; exit 1 ;; esac
+          # Database leg first: never dispatch the service leg ahead of an
+          # unapplied forward batch.
+          database_run=0
+          case "$DATABASE_GATE" in
+            none) ;;
+            refused|"")
+              echo "::error::The database leg of release ${RELEASE_SHA} is ${DATABASE_GATE:-missing}; the service leg is not dispatched (guard-release-on-release.yml decides the database leg)." >&2
+              exit 1
+              ;;
+            *)
+              [[ "$DATABASE_GATE" =~ ^[1-9][0-9]*$ ]] || { echo "::error::database_gate must be none, refused or a Delivery run ID." >&2; exit 1; }
+              database_run="$DATABASE_GATE"
+              deadline=$(( $(date +%s) + 75 * 60 ))
+              while :; do
+                state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${database_run}" --jq '[(.path // "-"), (.event // "-"), (.head_sha // "-"), (.actor.login // "-"), ((.run_attempt // 0) | tostring), (.status // "-"), (.conclusion // "-")] | @tsv')" || state=""
+                IFS=$'\t' read -r run_path run_event run_head run_actor run_attempt run_status run_conclusion <<<"$state" || true
+                [ "${run_status:-}" = completed ] && break
+                if [ "$(date +%s)" -ge "$deadline" ]; then
+                  echo "::error::Database Delivery ${database_run} did not complete within 75 minutes; the service leg is not dispatched." >&2
+                  exit 1
+                fi
+                echo "Waiting for database Delivery ${database_run}: ${run_status:-unreadable}."
+                sleep 30
+              done
+              if [[ "$run_path" != .github/workflows/delivery.yml* ]] || [ "$run_event" != workflow_dispatch ] || \
+                 [ "$run_head" != "$RELEASE_SHA" ] || [ "$run_actor" != "kombify-ci[bot]" ] || [ "$run_attempt" != 1 ] || \
+                 [ "$run_conclusion" != success ]; then
+                echo "::error::Database Delivery ${database_run} (${run_path} ${run_event} at ${run_head} by ${run_actor}, attempt ${run_attempt}) concluded ${run_conclusion:-unknown}; the service leg is not dispatched." >&2
+                exit 1
+              fi
+              published="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${database_run}/jobs?per_page=100" \
+                --jq '.jobs[] | select((.name | startswith("delivery / Publish")) and (.name | contains("techstack-database")) and .conclusion == "success") | .id' | wc -l | tr -d '[:space:]')"
+              if [ "$published" = 0 ]; then
+                echo "::error::Database Delivery ${database_run} succeeded without publishing the techstack-database group; the service leg is not dispatched." >&2
+                exit 1
+              fi
+              echo "Database Delivery ${database_run} applied the forward batch of ${RELEASE_SHA}." >> "$GITHUB_STEP_SUMMARY"
+              ;;
+          esac
           gh api "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_SHA}" --jq '.files[].filename' | grep -qx '.kombify/VERSION' || {
             echo "::error::${RELEASE_SHA} is not a prepared release commit." >&2
             exit 1
@@ -578,9 +652,10 @@ jobs:
           # One execution per prepared release: an active or successful run is
           # inspected and retried as a full parent rerun, never replaced by a
           # second dispatch. A failed run of another scope (public-oss is
-          # refused while its group is blocked) does not count.
+          # refused while its group is blocked) does not count, nor does the
+          # database leg awaited above.
           existing="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/delivery.yml/runs?event=workflow_dispatch&branch=main&head_sha=${RELEASE_SHA}&per_page=100" \
-            --jq '[.workflow_runs[] | select(.conclusion == null or .conclusion == "success")] | length')"
+            --jq "[.workflow_runs[] | select(.id != ${database_run}) | select(.conclusion == null or .conclusion == \"success\")] | length")"
           if [ "$existing" != 0 ]; then
             echo "::notice::A Delivery run for main already exists since release ${version}; not dispatching another."
             exit 0

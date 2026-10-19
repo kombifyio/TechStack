@@ -1,6 +1,6 @@
 export const es: Record<string, string> = {
-  "ui.releaseChannel.badge": "Nightly",
-  "ui.releaseChannel.hint": "Estás en el canal Nightly: los cambios más recientes, sobre tus datos reales.",
+  "ui.releaseChannel.badge": "Preview",
+  "ui.releaseChannel.hint": "Estás en el canal Preview: los cambios más recientes, sobre tus datos reales.",
   "ui.releaseChannel.backToStable": "Volver a Stable",
   "ui.clientLocal.bootstrapPassword": "Contraseña de arranque",
   "ui.clientLocal.bootstrapGuidance":
@@ -22,8 +22,7 @@ export const es: Record<string, string> = {
   "ui.services.stackIt": "Stack it",
   "ui.services.approveStackIt": "Aprobar esta adopción",
   "ui.services.releaseBinding": "Liberar la gestión del ciclo de vida",
-  "ui.services.adoptionScope":
-    "Revisa este contenedor existente de Home Assistant para gestionar su ciclo de vida donde está. Este perfil no admite otras aplicaciones ni trasladarlas a otro Node.",
+  "ui.services.adoptionScope": "Revisa este contenedor existente de Home Assistant para gestionar su ciclo de vida donde está. Este perfil no admite otras aplicaciones ni trasladarlas a otro servidor.",
   "ui.services.adoptionSource": "Contenedor existente",
   "ui.services.adoptionData": "Configuración conservada",
   "ui.services.adoptionPreserves":
@@ -113,7 +112,7 @@ export const es: Record<string, string> = {
     "Conecta un perfil de kombify mediante la ventana de inicio de sesión segura. También puedes continuar con un usuario local.",
   "wizard.login.profile.existing": "Tu inicio de sesión actual te acompaña.",
   "wizard.login.profile.existingHint":
-    "Este Node se une a tu Homelab. Tu propietario y los ajustes de inicio de sesión se mantienen.",
+    "Este servidor se une a tu Homelab. Tu propietario y los ajustes de inicio de sesión se mantienen.",
   "wizard.login.passkey.title": "Passkey de Pocket ID",
   "wizard.login.passkey.label": "Passkey",
   "wizard.login.passkey.recommended": "Recomendado",
@@ -227,7 +226,7 @@ export const es: Record<string, string> = {
   "wizard.access.connection.homeTitle":
     "Disponible en tu configuración doméstica",
   "wizard.access.connection.homeBody":
-    "Esta opción mantiene la ruta dentro del acceso compatible con el Node seleccionado. No promete una red local para un Node en la nube.",
+    "Esta opción mantiene la ruta dentro del acceso compatible con el servidor seleccionado. No promete una red local para un servidor en la nube.",
   "wizard.access.connection.anywhereTitle":
     "Intención de accesibilidad registrada",
   "wizard.access.connection.anywhereBody":
@@ -313,7 +312,7 @@ export const es: Record<string, string> = {
   "wizard.tip.nodeJoin":
     "El dispositivo se une a este StackKit y le da más potencia de cálculo o almacenamiento. El acceso, las personas y el inicio de sesión se quedan como están.",
   "wizard.tip.nodeFound":
-    "Inicia un StackKit aparte con este dispositivo como su Node principal, por ejemplo una segunda sede o una parte en la nube de tu Homelab.",
+    "Inicia un StackKit aparte con este dispositivo como su servidor principal, por ejemplo una segunda sede o una parte en la nube de tu Homelab.",
   "wizard.tip.nodeSubstrate":
     "Registra un host Proxmox en sí. kombify puede entonces crear y gestionar VMs en él para este Homelab.",
   "wizard.tip.foundationBasement":
@@ -321,7 +320,7 @@ export const es: Record<string, string> = {
   "wizard.tip.foundationCloud":
     "Para un servidor virtual que kombify proporciona y gestiona por ti.",
   "wizard.tip.foundationLocked":
-    "Un Node que se une a un StackKit siempre usa la base de ese StackKit, así que aquí no hay nada que elegir.",
+    "Un servidor que se une a un StackKit siempre usa la base de ese StackKit, así que aquí no hay nada que elegir.",
   "wizard.tip.roleFoundation":
     "El primer Node y el central de un StackKit. Ejecuta los servicios básicos de los que dependen los demás Nodes.",
   "wizard.tip.roleWorker":
@@ -335,12 +334,11 @@ export const es: Record<string, string> = {
   "language.switch": "Idioma",
   "settings.language.description":
     "El idioma de esta interfaz en este dispositivo. Hasta que elijas uno, se usa el idioma de tu navegador y, si no, inglés.",
-  "ui.dashboard.nodes": "Nodes",
+  "ui.dashboard.nodes": "Servidores",
   "ui.dashboard.devicesPeople": "Dispositivos y personas",
   "ui.dashboard.last24h": "Últimas 24 horas",
   "ui.worker.readyLead": "¡Listo!",
-  "ui.worker.readyBody":
-    "Todos los workers necesarios están conectados. Ya puedes desplegar el homelab.",
+  "ui.worker.readyBody": "Todos los servidores necesarios están conectados. Ya puedes desplegar el homelab.",
   "ui.footer.product": "Producto",
   "ui.footer.company": "Empresa",
   "ui.footer.legal": "Legal",
@@ -354,11 +352,9 @@ export const es: Record<string, string> = {
   "ui.dashboard.sections": "Secciones del homelab",
   "ui.dashboard.failureDetails": "Detalles",
   "ui.dashboard.hideFailureDetails": "Ocultar detalles",
-  "ui.dashboard.inventoryUnavailable":
-    "El estado canónico de los Nodes y los servicios no está disponible. La telemetría conservada de abajo es de diagnóstico y no se trata como un inventario vacío.",
-  "ui.dashboard.noNodes": "Aún no hay Nodes registrados para este homelab.",
-  "ui.custody.explainer":
-    "Estos arrendamientos siguen teniendo la custodia y aún pueden facturarse, pero ninguna máquina los respalda. No se muestran como Nodes.",
+  "ui.dashboard.inventoryUnavailable": "No se pudo leer el estado actual de tus servidores y servicios. La telemetría guardada de abajo es solo de diagnóstico y no significa que tu homelab esté vacío.",
+  "ui.dashboard.noNodes": "Aún no hay servidores registrados para este homelab.",
+  "ui.custody.explainer": "Estos arrendamientos siguen teniendo la custodia y aún pueden facturarse, pero ninguna máquina los respalda. No se muestran como servidores.",
   "ui.custody.lastKnownAddress":
     "Última dirección conocida; la máquina ya no existe",
   "ui.dashboard.service.noAddress":
@@ -366,11 +362,10 @@ export const es: Record<string, string> = {
   "ui.dashboard.service.openApp": "Abrir aplicación",
   "ui.dashboard.service.actionsAndLogs":
     "Acciones y registros en la página de Servicios",
-  "ui.node.precheckFailed": "Fallaron las comprobaciones previas del Node",
-  "ui.node.noTelemetry":
-    "La telemetría actual no está disponible para este Node.",
-  "ui.node.openDetails": "Abrir detalles del Node",
-  "ui.node.noApps": "Este Node aún no ha informado de ninguna aplicación.",
+  "ui.node.precheckFailed": "Fallaron las comprobaciones previas del servidor",
+  "ui.node.noTelemetry": "La telemetría actual no está disponible para este servidor.",
+  "ui.node.openDetails": "Abrir detalles del servidor",
+  "ui.node.noApps": "Este servidor aún no ha informado de ninguna aplicación.",
   "common.loadingShort": "Cargando…",
   "ui.dashboard.filterDevicesPeople": "Filtrar dispositivos y personas",
   "ui.dashboard.people": "Personas",
@@ -378,11 +373,11 @@ export const es: Record<string, string> = {
   "ui.dashboard.devices": "Dispositivos",
   "ui.dashboard.loadingDevicesPeople": "Cargando dispositivos y personas…",
   "ui.dashboard.eventHistoryUnavailable": "Historial de eventos no disponible.",
-  "ui.dashboard.servicesOnNode": "Servicios en este Node",
+  "ui.dashboard.servicesOnNode": "Servicios en este servidor",
   "ui.worker.statusUnavailable": "Estado de la conexión no disponible",
-  "ui.worker.connect": "Conectar worker",
-  "ui.worker.connectNodes": "Conecta tus Nodes a este Homelab",
-  "ui.worker.approved": "Workers aprobados:",
+  "ui.worker.connect": "Conectar servidor",
+  "ui.worker.connectNodes": "Conecta tus servidores a este Homelab",
+  "ui.worker.approved": "Servidores aprobados:",
   "ui.worker.unverified": "Conexión sin verificar",
   "ui.worker.startingRollout": "Iniciando el despliegue...",
   "ui.worker.deployHomelab": "Desplegar homelab",
@@ -403,7 +398,7 @@ export const es: Record<string, string> = {
   "ui.substrate.title": "Conectar un hipervisor Proxmox",
   "ui.substrate.runCommand":
     "Ejecuta el comando de conexión en la shell del host Proxmox como administrador. Su Guard informa del estado a tu Homelab mediante una conexión saliente.",
-  "ui.substrate.viewNodes": "Ver Nodes conectados",
+  "ui.substrate.viewNodes": "Ver servidores conectados",
   "ui.shortcuts.waiting": "Esperando una tecla:",
   "ui.recreate.title": "Recrear servidor",
   "ui.recreate.checking": "Comprobando la limpieza terminal del proveedor…",
@@ -454,24 +449,19 @@ export const es: Record<string, string> = {
   "ui.cloudLink.incomplete": "La vinculación no se completó",
   "ui.homelab.rolloutProgress": "Progreso del despliegue del runtime",
   "ui.homelab.runtimeRollout": "Despliegue del runtime",
-  "ui.homelab.newNode": "Nuevo Node",
+  "ui.homelab.newNode": "Añadir servidor",
   "ui.homelab.heartbeat": "Latido y métricas",
   "ui.homelab.loading": "Cargando homelab",
   "ui.homelab.loadingOperations": "Cargando operaciones del homelab",
   "ui.homelab.operations": "Operaciones del homelab",
-  "ui.homelab.reconfirming":
-    "Mostrando el último estado conocido mientras se reconfirma. Las acciones de los Nodes se desbloquean cuando lo esté.",
-  "ui.homelab.evidenceStale": "La evidencia de operaciones está obsoleta",
-  "ui.homelab.nodeConnected":
-    "Tu Node está conectado. Continúa con el despliegue del StackKit.",
-  "ui.homelab.reviewHint":
-    "Revisa el StackKit seleccionado, los servicios y la ubicación de los Nodes, y luego usa Revisar + Iniciar. Una aplicación fallida no impide que el resto de este despliegue se revise o se inicie de nuevo.",
-  "ui.homelab.noInventory":
-    "Aún no se ha informado de ningún inventario de Nodes o servicios gestionables.",
-  "ui.homelab.partialRollout": "Runtime gestionado con despliegue parcial",
+  "ui.homelab.reconfirming": "Mostrando el último estado conocido mientras se reconfirma. Las acciones de los servidores se desbloquean cuando lo esté.",
+  "ui.homelab.evidenceStale": "Se muestra el último estado conocido",
+  "ui.homelab.nodeConnected": "Tu servidor está conectado. Continúa con el despliegue del StackKit.",
+  "ui.homelab.reviewHint": "Revisa el StackKit seleccionado, los servicios y la ubicación de los servidores, y luego usa Revisar + Iniciar. Una aplicación fallida no impide que el resto de este homelab se revise o se inicie de nuevo.",
+  "ui.homelab.noInventory": "Aún no se ha informado de ningún inventario de servidores o servicios gestionables.",
+  "ui.homelab.partialRollout": "Servidor administrado con configuración incompleta",
   "ui.homelab.start": "Inicia tu Homelab",
-  "ui.homelab.evidenceStaleBody":
-    "La última instantánea verificada sigue visible, pero las modificaciones de los Nodes están desactivadas hasta que la actualización se complete con éxito.",
+  "ui.homelab.evidenceStaleBody": "No se pudo completar la última comprobación. Las acciones que cambian algo están en pausa hasta que se complete.",
   "ui.homelab.startHint":
     "Empieza con el asistente o importa una especificación de StackKit existente.",
   "ui.homelab.getStarted": "Empezar",
@@ -609,9 +599,8 @@ export const es: Record<string, string> = {
     "No hemos podido abrir tu configuración. Tus elecciones guardadas se conservan. Inténtalo de nuevo o explora primero.",
   "onboarding.ui.continue": "Tu siguiente paso",
   "hostBaseline.title": "Servicios y puertos existentes",
-  "hostBaseline.preserve":
-    "Esta comprobación del inventario deja sin cambios los servicios y datos existentes. Revisa este Node antes de añadir un StackKit.",
-  "hostBaseline.loading": "Leyendo el inventario del Node…",
+  "hostBaseline.preserve": "Esta comprobación del inventario deja sin cambios los servicios y datos existentes. Revisa este servidor antes de añadir un StackKit.",
+  "hostBaseline.loading": "Leyendo el inventario del servidor…",
   "hostBaseline.current": "Inventario de puertos en escucha actual recibido",
   "hostBaseline.incomplete":
     "El inventario de puertos en escucha está incompleto o desactualizado. La disponibilidad de los puertos aún no está verificada.",
@@ -620,8 +609,7 @@ export const es: Record<string, string> = {
   "hostBaseline.existing": "Puerto en escucha existente",
   "hostBaseline.noListeners":
     "No se informó de ningún puerto en escucha en el ámbito observado. Las aplicaciones detenidas y otros espacios de nombres aún pueden reservar enlaces.",
-  "hostBaseline.recheck":
-    "Antes de la ejecución, Techstack y StackKits vuelven a comprobar los enlaces necesarios. Un conflicto requiere un cambio de configuración compatible, otro Node o una migración revisada; un puerto abierto no demuestra accesibilidad pública.",
+  "hostBaseline.recheck": "Antes de la ejecución, Techstack y StackKits vuelven a comprobar los enlaces necesarios. Un conflicto requiere un cambio de configuración compatible, otro servidor o una migración revisada; un puerto abierto no demuestra accesibilidad pública.",
   "hostBaseline.refresh": "Actualizar inventario",
   "hostBaseline.review": "Revisar todos los puertos y servicios",
   "wizard.smartHome.applianceRetained":
@@ -768,32 +756,23 @@ export const es: Record<string, string> = {
     "Abrir el asistente",
   "onboarding.techstack_platform.techstack_deploy_stackkit.title":
     "Despliega tu StackKit",
-  "onboarding.techstack_platform.techstack_deploy_stackkit.body":
-    "Confirma el plan y deja que kombify despliegue el StackKit en tu Homelab. Este paso se marca solo cuando el despliegue existe.",
-  "onboarding.techstack_platform.techstack_deploy_stackkit.cta":
-    "Continuar el despliegue",
-  "onboarding.techstack_platform.techstack_add_server.title": "Añade un Node",
-  "onboarding.techstack_platform.techstack_add_server.body":
-    "Conecta un Node que ya tengas, o deja que kombify ejecute uno por ti. Tus servicios necesitan un lugar donde vivir.",
-  "onboarding.techstack_platform.techstack_add_server.cta": "Añadir un Node",
+  "onboarding.techstack_platform.techstack_deploy_stackkit.body": "Confirma el plan y deja que kombify despliegue el StackKit en tu Homelab. Este paso se marca solo cuando tu Homelab está configurado.",
+  "onboarding.techstack_platform.techstack_deploy_stackkit.cta": "Continuar la configuración",
+  "onboarding.techstack_platform.techstack_add_server.title": "Añade un servidor",
+  "onboarding.techstack_platform.techstack_add_server.body": "Conecta un servidor que ya tengas, o deja que kombify ejecute uno por ti. Tus servicios necesitan un lugar donde vivir.",
+  "onboarding.techstack_platform.techstack_add_server.cta": "Añadir un servidor",
   "onboarding.techstack_platform.techstack_deploy_service.title":
     "Abre tu primer servicio",
   "onboarding.techstack_platform.techstack_deploy_service.body":
     "Cuando un servicio está en marcha puedes acceder a él desde la lista de servicios. De eso trata todo esto.",
   "onboarding.techstack_platform.techstack_deploy_service.cta":
     "Ir a servicios",
-  "onboarding.denied.policy_selfhost_byos.title":
-    "Los Nodes gestionados por kombify son una función de Cloud",
-  "onboarding.denied.policy_selfhost_byos.body":
-    "Esta instalación funciona autoalojada, así que kombify no aprovisiona Nodes para ella. Conecta un Node que ya tengas y el resto funciona igual.",
-  "onboarding.denied.policy_selfhost_byos.next_step":
-    "Conecta un Node que ya uses.",
-  "onboarding.denied.required_feature_disabled.title":
-    "Los Nodes gestionados no están activos para esta cuenta",
-  "onboarding.denied.required_feature_disabled.body":
-    "Esta cuenta aún no tiene derecho a Nodes gestionados por kombify. Aun así, puedes conectar un Node que ya tengas.",
-  "onboarding.denied.required_feature_disabled.next_step":
-    "Conecta tu propio Node, o pide al soporte de kombify que active el runtime gestionado.",
+  "onboarding.denied.policy_selfhost_byos.title": "Los servidores gestionados por kombify son una función de Cloud",
+  "onboarding.denied.policy_selfhost_byos.body": "Esta instalación funciona autoalojada, así que kombify no aprovisiona servidores para ella. Conecta un servidor que ya tengas y el resto funciona igual.",
+  "onboarding.denied.policy_selfhost_byos.next_step": "Conecta un servidor que ya uses.",
+  "onboarding.denied.required_feature_disabled.title": "Los servidores gestionados no están activos para esta cuenta",
+  "onboarding.denied.required_feature_disabled.body": "Esta cuenta aún no tiene derecho a servidores gestionados por kombify. Aun así, puedes conectar un servidor que ya tengas.",
+  "onboarding.denied.required_feature_disabled.next_step": "Conecta tu propio servidor, o pide al soporte de kombify que active el runtime gestionado.",
   "common.loading": "Cargando...",
   "common.error": "Error",
   "common.save": "Guardar",
@@ -854,7 +833,7 @@ export const es: Record<string, string> = {
   "wizard.selfDisclosure.motivation.family": "Algo para mi familia",
   "wizard.selfDisclosure.motivation.projects": "Trabajo o proyectos personales",
   "wizard.step.goals": "Objetivos",
-  "wizard.step.server": "Node",
+  "wizard.step.server": "Servidor",
   "wizard.step.access": "Acceso",
   "wizard.step.users": "Usuarios",
   "wizard.step.login": "Inicio de sesión",
@@ -876,23 +855,23 @@ export const es: Record<string, string> = {
   "wizard.hints.evaluating": "Dando forma a tu mejor camino compatible…",
   "wizard.goals.smartHome.title": "Casa inteligente",
   "wizard.goals.smartHome.description":
-    "Home Assistant en tu propio Node: automatizaciones que siguen funcionando cuando no hay internet.",
+    "Home Assistant en tu propio servidor: automatizaciones que siguen funcionando cuando no hay internet.",
   "wizard.goals.smartHome.help":
-    "Actívalo y Home Assistant se ejecuta en casa, controlando luces, calefacción y sensores de forma local en lugar de a través de la nube de un fabricante. Tú decides si se usa una llave Zigbee o Z-Wave conectada al Node y si los dispositivos de tu red se detectan automáticamente.",
+    "Actívalo y Home Assistant se ejecuta en casa, controlando luces, calefacción y sensores de forma local en lugar de a través de la nube de un fabricante. Tú decides si se usa una llave Zigbee o Z-Wave conectada al servidor y si los dispositivos de tu red se detectan automáticamente.",
   "wizard.goals.smartHome.tip":
     "Las automatizaciones siguen funcionando aunque tu conexión a internet no.",
   "wizard.goals.photos.title": "Recuerdos en fotos",
   "wizard.goals.photos.description":
     "Tu propia biblioteca de fotos y vídeos, con copia de seguridad desde todos los móviles de casa.",
   "wizard.goals.photos.help":
-    "Actívalo y tu Node se convierte en el lugar donde viven tus fotos: los móviles hacen copia automática, puedes buscar por caras y lugares, y los álbumes se pueden compartir con la familia sin suscripción a la nube. Tú decides si la búsqueda inteligente se ejecuta en el Node y dónde se guarda la biblioteca.",
+    "Actívalo y tu servidor se convierte en el lugar donde viven tus fotos: los móviles hacen copia automática, puedes buscar por caras y lugares, y los álbumes se pueden compartir con la familia sin suscripción a la nube. Tú decides si la búsqueda inteligente se ejecuta en el servidor y dónde se guarda la biblioteca.",
   "wizard.goals.photos.tip":
     "La victoria visible más fácil para la mayoría de los homelabs: recuerdos privados sin otra suscripción a la nube.",
   "wizard.goals.media.title": "Streaming multimedia",
   "wizard.goals.media.description":
     "Emite tus películas, series y música a cualquier tele, móvil o portátil en casa.",
   "wizard.goals.media.help":
-    "Actívalo y tu Node sirve tu propia colección multimedia a todas las pantallas de la casa y, si permites el acceso remoto, también fuera. Tú decides si la tarjeta gráfica del Node ayuda a convertir el vídeo para pantallas más pequeñas y dónde se guarda la biblioteca.",
+    "Actívalo y tu servidor sirve tu propia colección multimedia a todas las pantallas de la casa y, si permites el acceso remoto, también fuera. Tú decides si la tarjeta gráfica del servidor ayuda a convertir el vídeo para pantallas más pequeñas y dónde se guarda la biblioteca.",
   "wizard.goals.media.tip":
     "Usa un servidor con suficiente disco y transcodificación por hardware opcional para la experiencia más fluida.",
   "wizard.goals.vault.title": "Caja fuerte de contraseñas",
@@ -913,30 +892,30 @@ export const es: Record<string, string> = {
   "wizard.goals.ai.description":
     "Un asistente privado que se ejecuta en tu propio hardware y nunca envía tus datos fuera.",
   "wizard.goals.ai.help":
-    "Actívalo y tienes un asistente de chat que se ejecuta por completo en tu Node. Puede trabajar con tus propios documentos. Tú decides qué acelerador usa y qué tamaño de modelo carga; una GPU marca una gran diferencia.",
+    "Actívalo y tienes un asistente de chat que se ejecuta por completo en tu servidor. Puede trabajar con tus propios documentos. Tú decides qué acelerador usa y qué tamaño de modelo carga; una GPU marca una gran diferencia.",
   "wizard.goals.ai.tip":
-    "Funciona mejor con hardware más potente; los Nodes de gama baja aún se pueden planificar primero.",
+    "Funciona mejor con hardware más potente; los servidores de gama baja aún se pueden planificar primero.",
   "wizard.goals.dev.title": "Plataforma de desarrollo",
   "wizard.goals.dev.description":
     "Tu propio alojamiento Git, con compilaciones y pipelines de pruebas cuando los quieras.",
   "wizard.goals.dev.help":
-    "Actívalo y tu código vive en tu Node con un servidor Gitea que puede usar todo el hogar o el equipo. Tú decides si los runners de CI también compilan y prueban en el Node.",
+    "Actívalo y tu código vive en tu servidor con un servidor Gitea que puede usar todo el hogar o el equipo. Tú decides si los runners de CI también compilan y prueban en el servidor.",
   "wizard.goals.dev.tip":
     "Útil cuando tu portátil debe seguir ligero y los entornos repetibles viven en el servidor.",
   "wizard.goals.mail.title": "Servidor de correo",
   "wizard.goals.mail.description":
-    "Recibe y envía correo en tu propio dominio, desde tu propio Node.",
+    "Recibe y envía correo en tu propio dominio, desde tu propio servidor.",
   "wizard.goals.mail.help":
-    "Actívalo y tu Node ejecuta un servidor de correo completo para un dominio que tienes. El correo necesita registros DNS correctos y una buena reputación de envío, así que esta vía registra primero tu intención y se despliega con guía. Tú decides el dominio de correo.",
+    "Actívalo y tu servidor ejecuta un servidor de correo completo para un dominio que tienes. El correo necesita registros DNS correctos y una buena reputación de envío, así que esta vía registra primero tu intención y se despliega con guía. Tú decides el dominio de correo.",
   "wizard.goals.mail.tip":
     "El correo tiene requisitos de DNS y reputación; el asistente registra la intención y mantiene el despliegue controlado.",
   "wizard.goals.game.title": "Servidor de juegos",
   "wizard.goals.game.description":
     "Mundos de juego persistentes para tus amigos, alojados en casa sin abrir tu red.",
   "wizard.goals.game.help":
-    "Actívalo y tu Node aloja servidores de juegos a los que tus amigos se unen mediante el acceso seguro del kit, sin exponer directamente tu red doméstica. Qué juegos hay disponibles depende de la versión.",
+    "Actívalo y tu servidor aloja servidores de juegos a los que tus amigos se unen mediante el acceso seguro del kit, sin exponer directamente tu red doméstica. Qué juegos hay disponibles depende de la versión.",
   "wizard.goals.game.tip":
-    "Carga por sesiones: el Node trabaja a fondo mientras tus amigos juegan y descansa entre partidas.",
+    "Carga por sesiones: el servidor trabaja a fondo mientras tus amigos juegan y descansa entre partidas.",
   "wizard.goals.storage.title":
     "Tener mi propio almacenamiento local para fotos y documentos",
   "wizard.goals.storage.description":
@@ -1014,7 +993,7 @@ export const es: Record<string, string> = {
   "wizard.goals.backend.help":
     "Qué producto hace el trabajo. El predeterminado es el que más prueba StackKits.",
   "wizard.goals.profile.help":
-    "Cuánto del Node puede usar este caso de uso. Estándar encaja en la mayoría de los hogares.",
+    "Cuánto del servidor puede usar este caso de uso. Estándar encaja en la mayoría de los hogares.",
   "wizard.goals.setting.on": "activado",
   "wizard.goals.setting.off": "desactivado",
   "wizard.goals.setting.recorded":
@@ -1119,10 +1098,10 @@ export const es: Record<string, string> = {
   "wizard.server.title": "Dale un hogar a tus herramientas.",
   "wizard.server.subtitle":
     "Empieza con lo que tienes. Te guiaremos hasta la conexión adecuada.",
-  "wizard.server.join.title": "Tu Homelab, un Node más.",
+  "wizard.server.join.title": "Tu Homelab, un servidor más.",
   "wizard.server.join.description":
-    "Este Node se une a tu configuración existente. Tu acceso, las personas y el inicio de sesión se mantienen, así que puedes centrarte en el dispositivo.",
-  "wizard.server.command.join.review": "Confirma este Node",
+    "Este servidor se une a tu configuración existente. Tu acceso, las personas y el inicio de sesión se mantienen, así que puedes centrarte en el dispositivo.",
+  "wizard.server.command.join.review": "Confirma este servidor",
   "wizard.server.command.join.reviewBody":
     "Elige cómo se conecta este dispositivo. El acceso a tu Homelab, las personas y el inicio de sesión se quedan como están.",
   "wizard.step.inherited": "Ya definido para tu Homelab",
@@ -1130,13 +1109,13 @@ export const es: Record<string, string> = {
     "El propietario de tu Homelab sigue siendo el mismo",
   "wizard.addApp.title": "Añadir aplicación",
   "wizard.addApp.intro":
-    "Elige una aplicación y el Node en el que se ejecuta. El acceso, las personas y el inicio de sesión siguen como los tiene tu Homelab.",
+    "Elige una aplicación y el servidor en el que se ejecuta. El acceso, las personas y el inicio de sesión siguen como los tiene tu Homelab.",
   "wizard.addApp.catalogEmpty":
     "El catálogo aún no ofrece ninguna aplicación para este Homelab.",
   "wizard.addApp.recommended": "Recomendado",
   "wizard.addApp.about": "Acerca de",
   "wizard.addApp.nodeTitle": "¿Dónde debe ejecutarse {name}?",
-  "wizard.addApp.nodeUnsupported": "El StackKit de este Node no ofrece {name}.",
+  "wizard.addApp.nodeUnsupported": "El StackKit de este servidor no ofrece {name}.",
   "wizard.addApp.nodeNotReady": "Aún no está listo para despliegues",
   "wizard.addApp.submit": "Añadir aplicación",
   "wizard.addApp.result": "{name} se añadió a {node}.",
@@ -1150,13 +1129,13 @@ export const es: Record<string, string> = {
   "wizard.settings.open": "Editar ajustes del Homelab",
   "wizard.settings.loadError": "No se pudo cargar tu Homelab.",
   "wizard.settings.empty": "Todavía no hay ningún Homelab configurado.",
-  "wizard.settings.deployment": "Despliegue de StackKit",
+  "wizard.settings.deployment": "Configuración del homelab",
   "wizard.settings.goalsElsewhere": "Añade aplicaciones con Añadir aplicación.",
-  "wizard.settings.serverElsewhere": "Añade servidores con Añadir Node.",
+  "wizard.settings.serverElsewhere": "Añade servidores con Añadir servidor.",
   "wizard.settings.accessUnsupported":
     "El acceso aún no se puede cambiar en un Homelab en ejecución.",
   "wizard.settings.openAddApplication": "Añadir aplicación",
-  "wizard.settings.openAddNode": "Añadir Node",
+  "wizard.settings.openAddNode": "Añadir servidor",
   "wizard.settings.usersTitle": "Personas",
   "wizard.settings.usersIntro":
     "Invita a las personas que planificaste para este Homelab. Cada una recibe un enlace de inicio de sesión personal.",
@@ -1179,7 +1158,7 @@ export const es: Record<string, string> = {
     "¿Ya tienes un servidor? Conéctalo con una clave SSH o una contraseña.",
   "wizard.server.remote.help":
     "Introduce la dirección de un servidor accesible. Usa una clave SSH guardada o tu contraseña SSH para conectarte.",
-  "wizard.server.remote.host": "Host o IP del Node",
+  "wizard.server.remote.host": "Host o IP del servidor",
   "wizard.server.remote.port": "Puerto SSH",
   "wizard.server.remote.user": "Usuario SSH",
   "wizard.server.remote.auth": "Autenticación",
@@ -1350,9 +1329,8 @@ export const es: Record<string, string> = {
   "wizard.run.banner.inProgressTitle": "Tu homelab se está configurando",
   "wizard.run.banner.inProgressBody":
     "La configuración sigue en curso. Puedes ver el progreso o volver más tarde.",
-  "wizard.run.banner.pairingTitle": "Un Node está esperando a que lo conecten",
-  "wizard.run.banner.pairingBody":
-    "Ejecuta el comando de instalación en tu Node para terminar de añadirlo.",
+  "wizard.run.banner.pairingTitle": "Un servidor está esperando a que lo conecten",
+  "wizard.run.banner.pairingBody": "Ejecuta el comando de instalación en tu servidor para terminar de añadirlo.",
   "wizard.run.banner.failedTitle":
     "La configuración de tu homelab necesita atención",
   "wizard.run.banner.failedBody":
@@ -1360,8 +1338,7 @@ export const es: Record<string, string> = {
   "wizard.run.banner.resume": "Continuar la configuración",
   "wizard.run.banner.cancel": "Cancelar despliegue",
   "wizard.run.banner.cancelTitle": "¿Cancelar este despliegue?",
-  "wizard.run.banner.cancelBody":
-    "El despliegue se detiene y se marca como fallido. El Node se queda como está y puedes iniciar el despliegue de nuevo más tarde.",
+  "wizard.run.banner.cancelBody": "El despliegue se detiene y se marca como fallido. El servidor se queda como está y puedes iniciar el despliegue de nuevo más tarde.",
   "wizard.run.banner.cancelFailed": "No se pudo cancelar el despliegue",
   "wizard.run.banner.dismiss": "Descartar",
   "wizard.run.banner.dismissFailed": "No se pudo descartar el aviso",
@@ -1399,8 +1376,8 @@ export const es: Record<string, string> = {
   "state.connected": "conectado",
   "state.connecting": "conectando",
   "state.consistent": "coherente",
-  "state.decommissioned": "dado de baja",
-  "state.decommissioning": "dando de baja",
+  "state.decommissioned": "quitado",
+  "state.decommissioning": "quitándose",
   "state.degraded": "degradado",
   "state.deploying": "desplegando",
   "state.enrolling": "registrando",
@@ -1549,20 +1526,17 @@ export const es: Record<string, string> = {
   "ui.common.sourceValue": "Origen: {value}",
   "ui.common.unknown": "desconocido",
   "ui.completeDashboard.allServices": "Todos los servicios →",
-  "ui.completeDashboard.nodesApps": "Nodes y apps",
+  "ui.completeDashboard.nodesApps": "Servidores y apps",
   "ui.configFlow.apiUnreachable":
     "El servidor de la API no es accesible desde tu navegador.",
   "ui.configFlow.apiUnreachableAt":
     "El servidor de la API en {base} no es accesible desde tu navegador.",
   "ui.configFlow.capability": "Capacidad: {value}",
-  "ui.configFlow.corsHint":
-    "Si el backend está en marcha pero el navegador bloquea la petición (CORS), abre DevTools → Consola y busca un error de CORS.",
   "ui.configFlow.createFailedAt": "La creación falló en: {phase}",
   "ui.configFlow.deploymentNameExists":
-    'Ya existe un despliegue de StackKit llamado "{name}" en tu Homelab. Abre el despliegue existente o elige otro nombre.',
+    "Ya existe un Homelab llamado «{name}». Abre el existente.",
   "ui.configFlow.errorCode": "Código de error: {value}",
   "ui.configFlow.missingFeatures": "Funciones que faltan: {value}",
-  "ui.configFlow.nextStep": "Siguiente paso: {value}",
   "ui.configFlow.nextSteps": "Siguientes pasos:",
   "ui.configFlow.pleaseFix": "Corrige lo siguiente:",
   "ui.configFlow.provider": "Proveedor: {value}",
@@ -1576,42 +1550,42 @@ export const es: Record<string, string> = {
   "ui.configFlow.step": "Paso: {value}",
   "ui.configFlow.technicalDetails": "Detalles técnicos: {value}",
   "ui.configurationFlow.aPreviousSubmissionAlreadyCompleted":
-    "Un envío anterior ya se completó",
+    "Esto ya se envió",
   "ui.configurationFlow.anEarlierSubmissionFromThis":
-    "Un envío anterior de esta sesión del navegador ya se completó con respuestas distintas. Se generó una nueva clave de intento: vuelve a enviar o abre el despliegue existente.",
+    "Un envío anterior desde esta pestaña del navegador ya se completó con otras respuestas. Vuelve a crear para enviar tus respuestas actuales o abre el Homelab existente.",
   "ui.configurationFlow.anUnexpectedErrorOccurredPlease":
-    "Se produjo un error inesperado. Consulta la consola del navegador para ver los detalles.",
+    "Algo inesperado salió mal. Inténtalo de nuevo. Si sigue ocurriendo, ponte en contacto con el soporte y comparte los detalles técnicos.",
   "ui.configurationFlow.authenticationRequired": "Se requiere autenticación",
   "ui.configurationFlow.cannotConnectToBackend":
-    "No se puede conectar con el backend",
-  "ui.configurationFlow.deploymentFailed": "Falló el despliegue",
+    "No se puede conectar con kombify Techstack",
+  "ui.configurationFlow.deploymentFailed": "No se pudo crear tu Homelab",
   "ui.configurationFlow.managedServerIsNotActive":
     "El servidor gestionado no está activo",
   "ui.configurationFlow.permissionDenied": "Permiso denegado",
   "ui.configurationFlow.retryingIsUnlikelyToHelp":
-    "Es poco probable que reintentar ayude hasta que se resuelva el problema del servidor.",
-  "ui.configurationFlow.serverError": "Error del servidor",
+    "Volver a intentarlo no ayudará hasta que solucionemos el problema por nuestra parte.",
+  "ui.configurationFlow.serverError": "Algo salió mal por nuestra parte",
   "ui.configurationFlow.stackkitDeploymentNameAlreadyExists":
-    "El nombre del despliegue de StackKit ya existe",
+    "Ya existe un Homelab con este nombre",
   "ui.configurationFlow.theBackendRejectedThisStackkit":
-    "El backend rechazó esta solicitud de despliegue de StackKit por un conflicto.",
+    "Ya existe un Homelab como este, así que se rechazó crearlo de nuevo. Abre el existente.",
   "ui.configurationFlow.useTheAdminPasswordConfigured":
     "(usa la contraseña de administrador configurada para esta instancia)",
   "ui.configurationFlow.validatingConfiguration":
     "Validando la configuración...",
   "ui.configurationFlow.validatingWithStackkits": "Validando con StackKits...",
   "ui.configurationFlow.youCanRetryIfThis":
-    "Puedes reintentarlo. Si vuelve a ocurrir, comparte el código de error y el ID de solicitud con soporte.",
+    "Inténtalo de nuevo. Si sigue ocurriendo, ponte en contacto con el soporte y comparte los detalles técnicos.",
   "ui.configurationFlow.youDonTHavePermission":
-    "No tienes permiso para desplegar StackKits y el servidor no indicó un motivo concreto. Compártelo con soporte.",
+    "No tienes permiso para crear un Homelab aquí. Si crees que es un error, ponte en contacto con el soporte y comparte los detalles técnicos.",
   "ui.configurationFlow.youMustBeLoggedIn":
-    "Debes haber iniciado sesión para desplegar un StackKit.",
+    "Inicia sesión para crear tu Homelab.",
   "ui.configurationFlow.youMustBeLoggedIn2":
-    "Debes haber iniciado sesión para desplegar un StackKit. Inicia sesión primero.",
+    "Debes iniciar sesión para crear tu Homelab. Inicia sesión primero.",
   "ui.connectDevices.techstackClient": "Cliente de Techstack",
   "ui.creationCompletion.ownerSeedFor":
-    "La semilla del propietario para {email} está preparada.",
-  "ui.creationController.theAdditionalNode": "El Node adicional",
+    "Tu cuenta de propietario para {email} está preparada.",
+  "ui.creationController.theAdditionalNode": "El servidor adicional",
   "ui.creationFailure.lease": "Lease",
   "ui.creationInstall.previewExpires": "La vista previa caduca a las {time}",
   "ui.creationLease.sshHost":
@@ -1626,7 +1600,7 @@ export const es: Record<string, string> = {
   "ui.creationRun.notConnectedYet": "Aún no conectado",
   "ui.creationRun.notReachableYet": "Aún no accesible",
   "ui.creationRun.pairingTokenExpires":
-    "El token de emparejamiento caduca a las {slot}.",
+    "Este comando es válido hasta {slot}.",
   "ui.creationRun.resumeStartingAt":
     "A partir de las {time}, el servidor puede autorizar una reanudación segura en la misma VM.",
   "ui.creationRun.stepOf": "Paso {step} de {total}",
@@ -1685,17 +1659,16 @@ export const es: Record<string, string> = {
     "Para qué sirve esta herramienta, quién la usa y cualquier contexto de inicio...",
   "ui.crypto.decryptionFailedWrongPassword":
     "Falló el descifrado. ¿Contraseña incorrecta?",
-  "ui.custody.leasesWithoutNode.one": "{count} lease sin Node",
-  "ui.custody.leasesWithoutNode.other": "{count} leases sin Node",
+  "ui.custody.leasesWithoutNode.one": "{count} lease sin servidor",
+  "ui.custody.leasesWithoutNode.other": "{count} leases sin servidor",
   "ui.custody.wasAddress": "era {ip}",
-  "ui.custodyLeasesPanel.decommissioning": "Dando de baja...",
+  "ui.custodyLeasesPanel.decommissioning": "Quitando...",
   "ui.custodyLeasesPanel.leaseArchived": "Lease archivado",
   "ui.custodyLeasesPanel.leaseCancelled": "Lease cancelado",
   "ui.custodyLeasesPanel.neverObserved": "Nunca observado",
   "ui.custodyLeasesPanel.noExecutionAuthorityLegacyOr":
     "Sin autoridad de ejecución (lease heredado o sin vincular)",
-  "ui.custodyLeasesPanel.nodeNeverFinishedEnrolling":
-    "El Node nunca terminó de registrarse",
+  "ui.custodyLeasesPanel.nodeNeverFinishedEnrolling": "El servidor nunca terminó de registrarse",
   "ui.custodyLeasesPanel.resolving": "Resolviendo...",
   "ui.custodyLeasesPanel.vmNoLongerExistsAt":
     "La VM ya no existe en el proveedor",
@@ -1761,24 +1734,19 @@ export const es: Record<string, string> = {
   "ui.homelab.noSourceObserved":
     "Los servicios provienen de dos fuentes: un despliegue de StackKit completado y los contenedores y unidades que el Agent descubre en el host. Todavía no se ha observado ninguna de las dos: no se encontró ningún manifiesto de StackKit y el Agent no ejecutó ningún descubrimiento de servicios.",
   "ui.homelab.onlineCount": "{count} en línea",
-  "ui.homelab.operationsNotLoaded.one":
-    "No se pudo cargar {count} operación de despliegue de StackKit.",
-  "ui.homelab.operationsNotLoaded.other":
-    "No se pudieron cargar {count} operaciones de despliegue de StackKit.",
-  "ui.homelab.partialRolloutBadge": "despliegue parcial",
+  "ui.homelab.operationsNotLoaded.one": "No se pudo cargar {count} operación del homelab.",
+  "ui.homelab.operationsNotLoaded.other": "No se pudieron cargar {count} operaciones del homelab.",
+  "ui.homelab.partialRolloutBadge": "configuración incompleta",
   "ui.homelab.phase": "Fase: {phase}",
-  "ui.homelab.preparationFailed":
-    "Falló la preparación de StackKit en el Node conectado — {detail}",
+  "ui.homelab.preparationFailed": "Falló la preparación de StackKit en el servidor conectado — {detail}",
   "ui.homelab.probeAnswered":
     "El runtime respondió a la sonda y el latido de Guard está al día ({state}).",
-  "ui.homelab.probeOffline":
-    'El proveedor indica que la máquina está "{machineState}" y el registro "{enrollment}". Reconectar solo puede repetir esa sonda; no puede reiniciar el kombify Agent en la máquina. El Node seguirá sin conexión hasta que el Agent vuelva a enviar un latido, así que continúa en los detalles del Node, donde se muestran el comando de registro y el último contacto.',
+  "ui.homelab.probeOffline": 'El proveedor indica que la máquina está "{machineState}" y el registro "{enrollment}". Reconectar solo puede repetir esa sonda; no puede reiniciar el kombify Agent en la máquina. El servidor seguirá sin conexión hasta que el Agent vuelva a enviar un latido, así que continúa en los detalles del servidor, donde se muestran el comando de registro y el último contacto.',
   "ui.homelab.recorded": "{count} registrados",
   "ui.homelab.retryFailed": "No se pudo reintentar el despliegue: {message}",
   "ui.homelab.rolloutFailed": "Falló el despliegue: {message}",
-  "ui.homelab.sshFailed": "Falló la conexión SSH con tu Node — {detail}",
-  "ui.homelabDashboardPage.0VerifiedConnectedOperationsEvidence":
-    "0 conectados verificados · evidencia de operaciones no disponible",
+  "ui.homelab.sshFailed": "Falló la conexión SSH con tu servidor — {detail}",
+  "ui.homelabDashboardPage.0VerifiedConnectedOperationsEvidence": "Conexión no verificada",
   "ui.homelabDashboardPage.agentDiscoveryReportedNoRunning":
     "El descubrimiento del Agent no informó de contenedores ni unidades en ejecución. No se ha observado ningún manifiesto de StackKit, por lo que los servicios de StackKit declarados siguen siendo desconocidos.",
   "ui.homelabDashboardPage.bothServiceSourcesReportedAn":
@@ -1789,18 +1757,15 @@ export const es: Record<string, string> = {
     "Registro de custodia sin cambios: la pasarela de Techstack no pudo alcanzar el backend. Reintenta este mismo registro cuando el servicio esté disponible.",
   "ui.homelabDashboardPage.custodyResolutionFailed":
     "Falló la resolución de la custodia",
-  "ui.homelabDashboardPage.decommissionFailed": "Falló la baja",
-  "ui.homelabDashboardPage.deployStackkit": "Desplegar StackKit",
+  "ui.homelabDashboardPage.decommissionFailed": "No se pudo quitar",
+  "ui.homelabDashboardPage.deployStackkit": "Revisar y crear",
   "ui.homelabDashboardPage.lastVerifiedStateRetainedThe":
     "Se conserva el último estado verificado: la actualización falló y se reintenta automáticamente.",
-  "ui.homelabDashboardPage.managedRuntime": "Runtime gestionado",
-  "ui.homelabDashboardPage.managedRuntimeLeaseAllocationMetadata":
-    "Existen metadatos de lease/asignación del runtime gestionado, pero no se pudo verificar el estado actual del proveedor y de Guard.",
-  "ui.homelabDashboardPage.noNodeHasReportedAn":
-    "Ningún Node ha informado de un inventario todavía.",
-  "ui.homelabDashboardPage.nodeIsReportingAgain": "El Node vuelve a informar",
-  "ui.homelabDashboardPage.openTheNodeDetailsTo":
-    "Abre los detalles del Node para comprobar el Agent y el último despliegue.",
+  "ui.homelabDashboardPage.managedRuntime": "Servidor administrado",
+  "ui.homelabDashboardPage.managedRuntimeLeaseAllocationMetadata": "Tu servidor administrado está configurado, pero ahora no se pudo comprobar su estado actual.",
+  "ui.homelabDashboardPage.noNodeHasReportedAn": "Ningún servidor ha informado de un inventario todavía.",
+  "ui.homelabDashboardPage.nodeIsReportingAgain": "El servidor vuelve a informar",
+  "ui.homelabDashboardPage.openTheNodeDetailsTo": "Abre los detalles del servidor para comprobar el Agent y el último despliegue.",
   "ui.homelabDashboardPage.operationsDataIsNotAvailable":
     "Aún no hay datos de operaciones disponibles para este Homelab.",
   "ui.homelabDashboardPage.operationsDataIsNotAvailable2":
@@ -1816,23 +1781,20 @@ export const es: Record<string, string> = {
   "ui.homelabDashboardPage.retry": "Reintentar",
   "ui.homelabDashboardPage.retryExactCleanup": "Reintentar la limpieza exacta",
   "ui.homelabDashboardPage.review": "Revisar",
-  "ui.homelabDashboardPage.reviewStart": "Revisar + Iniciar",
+  "ui.homelabDashboardPage.reviewStart": "Revisar y crear",
   "ui.homelabDashboardPage.rolloutReadinessIsUnavailableRefresh":
     "La disponibilidad del despliegue no está disponible. Actualiza los datos de operaciones antes de iniciar.",
-  "ui.homelabDashboardPage.runtimeAnsweredButTheNode":
-    "El runtime respondió, pero el Node sigue sin conexión",
-  "ui.homelabDashboardPage.stackkitDeployment": "Despliegue de StackKit",
+  "ui.homelabDashboardPage.runtimeAnsweredButTheNode": "El runtime respondió, pero el servidor sigue sin conexión",
+  "ui.homelabDashboardPage.stackkitDeployment": "Homelab",
   "ui.homelabDashboardPage.starting": "Iniciando...",
   "ui.homelabDashboardPage.theAgentVersionWasNot":
     "No se notificó la versión del Agent.",
   "ui.homelabDashboardPage.theFailedCleanupIsNot":
     "La limpieza fallida no está vinculada a un lease accionable. Actualiza la evidencia del ciclo de vida y usa la acción del registro de custodia exacto.",
-  "ui.homelabDashboardPage.theFailedStackkitDeploymentIs":
-    "El despliegue de StackKit fallido ya no forma parte de este Homelab. Actualiza el Homelab y reintenta ese despliegue exacto.",
+  "ui.homelabDashboardPage.theFailedStackkitDeploymentIs": "La parte de tu homelab que falló ya no existe. Actualiza el homelab e inténtalo de nuevo.",
   "ui.homelabDashboardPage.thePersistedRolloutIsWaiting":
     "El despliegue guardado está esperando su siguiente punto de control.",
-  "ui.homelabDashboardPage.theRuntimeProbeReturnedNo":
-    "La sonda del runtime no devolvió ningún motivo. Reintenta o abre los detalles del Node para ver el registro completo del runtime.",
+  "ui.homelabDashboardPage.theRuntimeProbeReturnedNo": "La sonda del runtime no devolvió ningún motivo. Reintenta o abre los detalles del servidor para ver el registro completo del runtime.",
   "ui.homelabDashboardPage.theStackkitManifestSourceReported":
     "La fuente del manifiesto de StackKit no informó de servicios. No se ha observado el descubrimiento de servicios, por lo que los contenedores y unidades siguen siendo desconocidos.",
   "ui.homelabDashboardPage.thisFailedRunCannotBe":
@@ -1951,12 +1913,12 @@ export const es: Record<string, string> = {
     "Credenciales del panel de administración de PocketBase",
   "ui.integration.traefikDashboardBasicAuth":
     "Autenticación básica del panel de Traefik",
-  "ui.inventory.nodeCount.one": "{count} Node",
-  "ui.inventory.nodeCount.other": "{count} Nodes",
+  "ui.inventory.nodeCount.one": "{count} servidor",
+  "ui.inventory.nodeCount.other": "{count} servidores",
   "ui.inventory.serviceCount.one": "{count} servicio",
   "ui.inventory.serviceCount.other": "{count} servicios",
-  "ui.inventory.telemetryNodes.one": "{count} Node de telemetría",
-  "ui.inventory.telemetryNodes.other": "{count} Nodes de telemetría",
+  "ui.inventory.telemetryNodes.one": "{count} servidor de telemetría",
+  "ui.inventory.telemetryNodes.other": "{count} servidores de telemetría",
   "ui.localOwner.localOwnerCreationIsOnly":
     "El propietario local solo se puede crear durante la configuración inicial.",
   "ui.login.bootstrapPassword": "Contraseña de arranque:",
@@ -2025,8 +1987,7 @@ export const es: Record<string, string> = {
     "Esto aprovisiona y factura una nueva generación del servidor gestionado. Techstack volverá a establecer el registro, los endpoints, la evidencia de Guard y el despliegue de StackKit mediante el flujo de creación normal.",
   "ui.monitoring.acrossEpisodes.one": "en {count} episodio",
   "ui.monitoring.acrossEpisodes.other": "en {count} episodios",
-  "ui.monitoring.availabilityHistoryIsUnavailableOn":
-    "El historial de disponibilidad no está disponible en este despliegue.",
+  "ui.monitoring.availabilityHistoryIsUnavailableOn": "El historial de disponibilidad no está disponible en esta instalación.",
   "ui.monitoring.availabilityWindow": "Disponibilidad · {window}",
   "ui.monitoring.dailyState": "Estado diario",
   "ui.monitoring.dailyStateLabel": "{name}: estado de conexión diario",
@@ -2045,8 +2006,7 @@ export const es: Record<string, string> = {
   "ui.monitoring.noData": "sin datos",
   "ui.monitoring.noDowntimeInThisWindow":
     "Sin tiempo de inactividad en este periodo.",
-  "ui.monitoring.noNodesHaveReportedYet":
-    "Ningún Node ha informado todavía. Registra un Node y su estado aparecerá aquí.",
+  "ui.monitoring.noNodesHaveReportedYet": "Ningún servidor ha informado todavía. Registra un servidor y su estado aparecerá aquí.",
   "ui.monitoring.noRecordedDowntimeInThis":
     "Sin tiempo de inactividad registrado en este periodo.",
   "ui.monitoring.noServersInThisWindow": "Sin servidores en este periodo.",
@@ -2064,17 +2024,14 @@ export const es: Record<string, string> = {
   "ui.monitoring.removeFromAria": "Quitar {name} de la monitorización",
   "ui.monitoring.removing": "Quitando...",
   "ui.monitoring.rightNow": "Ahora mismo",
-  "ui.monitoring.selectNodeHint":
-    "selecciona un Node para ver sus métricas y su propio historial",
+  "ui.monitoring.selectNodeHint": "selecciona un servidor para ver sus métricas y su propio historial",
   "ui.monitoring.serverCouldNotBeRemoved": "No se pudo quitar el servidor.",
   "ui.monitoring.staleCountsAsDowntime":
     "lo obsoleto cuenta como inactividad: no se puede confirmar el servicio",
-  "ui.monitoring.theCanonicalServerInventoryIs":
-    "El inventario canónico de servidores no está disponible.",
-  "ui.monitoring.thisRevokesTheBoundGuard":
-    "Esto revoca el Guard Agent vinculado y oculta el Node de la flota actual. El servidor físico y tu cuenta del proveedor no se tocan.",
+  "ui.monitoring.theCanonicalServerInventoryIs": "No se pudo leer la lista de servidores en este momento.",
+  "ui.monitoring.thisRevokesTheBoundGuard": "Esto revoca el Guard Agent vinculado y oculta el servidor de la flota actual. El servidor físico y tu cuenta del proveedor no se tocan.",
   "ui.monitoring.totalDowntime": "Tiempo de inactividad total",
-  "ui.monitoringServer.alertsInScope": "{count} aplican a este Node",
+  "ui.monitoringServer.alertsInScope": "{count} aplican a este servidor",
   "ui.monitoringServer.allEpisodes": "Todos los episodios →",
   "ui.monitoringServer.dailyState30":
     "{name}: estado de conexión diario durante 30 días",
@@ -2099,29 +2056,26 @@ export const es: Record<string, string> = {
   "ui.monitoringServerId.metricsLast24H": "Métricas · últimas 24 h",
   "ui.monitoringServerId.noAlertRulesApplyHere":
     "Aquí no se aplica ninguna regla de alerta.",
-  "ui.monitoringServerId.noHistoryForThisNode":
-    "Todavía no hay historial de este Node.",
-  "ui.monitoringServerId.noMetricsBackendAnsweredFor":
-    "Ningún backend de métricas respondió para este Node. La disponibilidad de abajo se deriva de la línea de tiempo de transiciones y no depende de él.",
+  "ui.monitoringServerId.noHistoryForThisNode": "Todavía no hay historial de este servidor.",
+  "ui.monitoringServerId.noMetricsBackendAnsweredFor": "Ningún backend de métricas respondió para este servidor. La disponibilidad de abajo se deriva de la línea de tiempo de transiciones y no depende de él.",
   "ui.monitoringServerId.refreshing": "Actualizando…",
   "ui.monitoringServerId.removeFromView": "Quitar de la vista",
-  "ui.monitoringServerId.thisNodeSHistory": "Historial de este Node",
+  "ui.monitoringServerId.thisNodeSHistory": "Historial de este servidor",
   "ui.monitoringServerId.thisServerCouldNotBe":
     "No se pudo cargar este servidor.",
   "ui.navItems.noServicesRegisteredYet": "Aún no hay servicios registrados.",
-  "ui.nodeActions.assignToThisStackkitDeployment":
-    "Asignar a este despliegue de StackKit",
+  "ui.nodeActions.assignToThisStackkitDeployment": "Asignar a este homelab",
   "ui.nodeActions.assigning": "Asignando...",
   "ui.nodeActions.canonicalManagedAccessIsNot":
     "El acceso gestionado canónico aún no está disponible.",
-  "ui.nodeActions.connection": "Conexión del Node: {state}",
+  "ui.nodeActions.connection": "Conexión del servidor: {state}",
   "ui.nodeRow.systemServices.one": "{count} servicio del sistema",
   "ui.nodeRow.systemServices.other": "{count} servicios del sistema",
   "ui.nodeActions.menu": "Acciones de {node}",
   "ui.nodeMessage.idle": "Sin mensajes abiertos",
-  "ui.nodeMessage.needsAttention": "Este Node requiere atención",
+  "ui.nodeMessage.needsAttention": "Este servidor requiere atención",
   "ui.nodeMessage.panel": "Mensajes de {node}",
-  "ui.nodeMessage.listPanel": "Mensajes sobre la lista de Nodes",
+  "ui.nodeMessage.listPanel": "Mensajes sobre la lista de servidores",
   "ui.nodeRow.moreServices": "+ {count} más",
   "ui.apps.description":
     "Todo lo que abres con una interfaz en tus servidores. Servicios muestra cada servicio con sus ajustes.",
@@ -2180,11 +2134,10 @@ export const es: Record<string, string> = {
     "La fuente de propietario seleccionada ya no es compatible. Elige un propietario local o vincula tu perfil de kombify Cloud.",
   "ui.ownerState.thisInstanceHasNoKombify":
     "Esta instancia no tiene configurado el inicio de sesión de kombify Cloud.",
-  "ui.pairing.nodeConnection": "Conexión del Node",
+  "ui.pairing.nodeConnection": "Conexión del servidor",
   "ui.pairing.theConnectionCommandCouldNot":
     "No se pudo preparar el comando de conexión. Inténtalo de nuevo.",
-  "ui.pairing.theOriginalNodeConfigurationIs":
-    "La configuración original del Node no está disponible. Vuelve a «Añadir Node» para preparar la conexión.",
+  "ui.pairing.theOriginalNodeConfigurationIs": "La configuración original del servidor no está disponible. Vuelve a «Añadir servidor» para preparar la conexión.",
   "ui.people.activationExpired": "Activación caducada",
   "ui.people.activationPending": "Activación pendiente",
   "ui.people.appCount.one": "{count} app",
@@ -2193,14 +2146,12 @@ export const es: Record<string, string> = {
     "Los clientes conectados aparecerán aquí cuando la gestión de dispositivos de kombify Connect esté disponible.",
   "ui.people.deviceListUnavailable": "Lista de dispositivos no disponible.",
   "ui.people.homelabOwner": "Propietario del Homelab",
-  "ui.people.householdListUnavailableTheHomelab":
-    "Lista del hogar no disponible: el proveedor de identidad del Homelab no respondió.",
-  "ui.people.identityProviderNotReady": "Proveedor de identidad no listo",
-  "ui.people.identityStatusUnavailable": "Estado de identidad no disponible",
+  "ui.people.householdListUnavailableTheHomelab": "La lista de personas no está disponible ahora mismo. Inténtalo de nuevo en un momento.",
+  "ui.people.identityProviderNotReady": "Servicio de inicio de sesión no listo",
+  "ui.people.identityStatusUnavailable": "Estado del inicio de sesión no disponible",
   "ui.people.member": "Miembro",
   "ui.people.notInvitedYet": "Aún no invitado",
-  "ui.people.ownerAndHouseholdAppearOnce":
-    "El propietario y el hogar aparecerán cuando el proveedor de identidad del Homelab (Pocket ID o TinyAuth) informe a través de Guard.",
+  "ui.people.ownerAndHouseholdAppearOnce": "Tú y las personas a las que invites aparecerán aquí cuando el servicio de inicio de sesión de tu homelab esté listo.",
   "ui.people.plannedInTheWizard": "Planificado en el asistente",
   "ui.people.plannedMember": "Miembro planificado",
   "ui.people.signedInToTheHomelab": "Con sesión iniciada en el Homelab",
@@ -2231,11 +2182,9 @@ export const es: Record<string, string> = {
     "Se agotó el tiempo de la solicitud del token de Gateway",
   "ui.postMessageBridge.kombifyAIDidNotConfirm":
     "kombify AI no confirmó la sesión de soporte a tiempo.",
-  "ui.presets.aCalmOverviewOneBand":
-    "Una vista tranquila: una banda por Node con su curva de 24 horas.",
+  "ui.presets.aCalmOverviewOneBand": "Una vista tranquila: una banda por servidor con su curva de 24 horas.",
   "ui.presets.complete": "Completa",
-  "ui.presets.nodeRowsWithTheirApps":
-    "Filas de Nodes con sus apps, dispositivos y personas al lado.",
+  "ui.presets.nodeRowsWithTheirApps": "Filas de servidores con sus apps, dispositivos y personas al lado.",
   "ui.providerErrors.aStackKitWasSelectedE":
     "Se seleccionó un StackKit (p. ej., basement-kit o cloud-kit), pero los archivos del StackKit no están disponibles en el servidor.",
   "ui.providerErrors.anUnknownErrorOccurred":
@@ -2576,8 +2525,7 @@ export const es: Record<string, string> = {
     '¿Instalar la clave pública "{key}" una vez en {server}? La clave privada nunca sale de la Wallet.',
   "ui.serverAccess.sshKey": "Clave SSH",
   "ui.serverAccessActions.addOneInTheWallet": "Añade uno en la Wallet",
-  "ui.serverAccessActions.authorizeOneOfYourPublic":
-    "Autoriza primero una de tus claves públicas en este Node.",
+  "ui.serverAccessActions.authorizeOneOfYourPublic": "Autoriza primero una de tus claves públicas en este servidor.",
   "ui.serverAccessActions.authorizeSshKey": "Autorizar clave SSH",
   "ui.serverAccessActions.copySshCommand": "Copiar comando SSH",
   "ui.serverAccessActions.installPublicKey": "Instalar clave pública",
@@ -2595,13 +2543,12 @@ export const es: Record<string, string> = {
   "ui.serverAccessActions.walletPublicKey": "Clave pública de la Wallet",
   "ui.serverCard.archUnknown": "arquitectura desconocida",
   "ui.serverCard.osUnknown": "SO desconocido",
-  "ui.serverCardAdapter.anotherNodeActionIsRunning":
-    "Se está ejecutando otra acción del Node",
+  "ui.serverCardAdapter.anotherNodeActionIsRunning": "Se está ejecutando otra acción del servidor",
   "ui.serverDetail.actionNotStarted": "No se pudo iniciar {action}.",
   "ui.serverDetail.actionsTarget":
     "Estas acciones se dirigen directamente a {name}. Los controles disponibles dependen de su estado actual de conexión y de StackKit; no hace falta seleccionar ningún estado de servidor ni de ciclo de vida.",
   "ui.serverDetail.confirmActionFor": "Confirmar “{action}” para {name}",
-  "ui.serverDetail.confirmDecommissionFor": "Confirmar la baja de {name}",
+  "ui.serverDetail.confirmDecommissionFor": "Confirmar que se quita {name}",
   "ui.serverDetail.confirmDetachFor": "Confirmar la desvinculación de {name}",
   "ui.serverDetail.confirmProviderRemoval":
     "Confirmar la eliminación de {name} en el proveedor",
@@ -2639,10 +2586,8 @@ export const es: Record<string, string> = {
   "ui.serverList.inventoryUnavailable": "Inventario no disponible",
   "ui.serverList.theCanonicalInventoryIsUnavailable":
     "El inventario canónico no está disponible. Solo se muestra la telemetría actualmente autorizada.",
-  "ui.serverOutcome.continueOnConnected":
-    "Continuar StackKit en el Node conectado",
-  "ui.serverOutcome.continuePrepOnConnected":
-    "Continuar la preparación de StackKit en el Node conectado",
+  "ui.serverOutcome.continueOnConnected": "Continuar StackKit en el servidor conectado",
+  "ui.serverOutcome.continuePrepOnConnected": "Continuar la preparación de StackKit en el servidor conectado",
   "ui.serverOutcome.restartRollout": "Reiniciar el despliegue",
   "ui.serverOutcome.retrySsh": "Reintentar la conexión SSH",
   "ui.serverProvisioningStep.cloudKitRollout": "Despliegue de Cloud Kit",
@@ -2705,7 +2650,7 @@ export const es: Record<string, string> = {
   "ui.serviceList.servicesByRuntimeTarget": "Servicios por destino de runtime",
   "ui.serviceRegistry.selected.one": "{count} servicio seleccionado",
   "ui.serviceRegistry.selected.other": "{count} servicios seleccionados",
-  "ui.serviceSheet.node": "Node: {node}",
+  "ui.serviceSheet.node": "Servidor: {node}",
   "ui.serviceSheet.notPlaced": "sin ubicar",
   "ui.serviceSheet.ownership": "Propiedad: {value}",
   "ui.serviceSheet.stackkit": "StackKit {version}",
@@ -2725,8 +2670,7 @@ export const es: Record<string, string> = {
   "ui.services.actionCompletedInventoryIsRefreshing":
     "Acción completada; el inventario se está actualizando.",
   "ui.services.actionTitle": "{action} {name}",
-  "ui.services.addACatalogApplicationOr":
-    "Añade una aplicación del catálogo o importa inventario de Node no gestionado.",
+  "ui.services.addACatalogApplicationOr": "Añade una aplicación del catálogo o importa inventario de servidor no gestionado.",
   "ui.services.addANewApplication": "Añadir una aplicación nueva",
   "ui.services.addService": "Añadir servicio",
   "ui.services.adoptIntoManagement": "Adoptar en la gestión…",
@@ -2771,16 +2715,14 @@ export const es: Record<string, string> = {
     "¿Bloquear {name}? Mientras esté bloqueado se rechazan iniciar, detener y reiniciar, incluso mediante un stack apply. El servicio sigue en ejecución.",
   "ui.services.confirmUnlock":
     "¿Desbloquear {name}? Las modificaciones gobernadas vuelven a estar disponibles.",
-  "ui.services.connectNodesToYourHomelab":
-    "Conecta Nodes a tu Homelab para gestionar la ubicación de las aplicaciones.",
+  "ui.services.connectNodesToYourHomelab": "Conecta servidores a tu Homelab para gestionar la ubicación de las aplicaciones.",
   "ui.services.deleteArchivedService": "¿Eliminar el servicio archivado?",
   "ui.services.desired": "Deseado",
   "ui.services.desiredObserved": "Deseado {desired} · Observado {observed}",
   "ui.services.discoveredOn":
     "Descubierto en {name}: no gestionado por kombify",
   "ui.services.displayName": "Nombre para mostrar",
-  "ui.services.dragAndDropStaysDisabled":
-    "El arrastrar y soltar permanece desactivado hasta que un ejecutor de runtime real se encargue del despliegue, la verificación de salud, el cambio de tráfico y el drenaje del origen.",
+  "ui.services.dragAndDropStaysDisabled": "Arrastrar y soltar aún no está disponible. Mover una app de forma segura requiere automatizar la instalación, la comprobación de estado, el cambio y la limpieza de la copia antigua.",
   "ui.services.dropManagedApplicationsHere":
     "Suelta aquí las aplicaciones gestionadas",
   "ui.services.error": "Error",
@@ -2793,19 +2735,18 @@ export const es: Record<string, string> = {
   "ui.services.health": "Salud",
   "ui.services.importAsObserved": "Importar como observado",
   "ui.services.importUnmanaged": "Importar no gestionados",
-  "ui.services.internalAddressOnlyOpenIt":
-    "Solo dirección interna; ábrela desde la red del Node.",
+  "ui.services.internalAddressOnlyOpenIt": "Solo dirección interna; ábrela desde la red del servidor.",
   "ui.services.jobId": "trabajo {id}",
   "ui.services.loadOlderLogs": "Cargar registros anteriores",
   "ui.services.loadingCanonicalServiceInventory":
     "Cargando el inventario canónico de servicios",
-  "ui.services.localNode": "Node local",
+  "ui.services.localNode": "Servidor local",
   "ui.services.managedProviderTarget": "Destino de proveedor gestionado",
   "ui.services.migrationJobIsActive": "El trabajo de migración está activo.",
   "ui.services.moveApplication": "Mover aplicación",
   "ui.services.moveHere": "Mover {name} aquí",
   "ui.services.moveSteps": "Pasos del traslado:",
-  "ui.services.moveToAnotherNode": "Mover a otro Node…",
+  "ui.services.moveToAnotherNode": "Mover a otro servidor…",
   "ui.services.mutationsRequireOwnerApprovalA":
     "Las modificaciones requieren la aprobación del propietario; se ejecuta una verificación de StackKits antes de que cambie el estado medido.",
   "ui.services.newApplication": "Nueva aplicación",
@@ -2813,20 +2754,19 @@ export const es: Record<string, string> = {
   "ui.services.noApplicationsMatching":
     "No hay aplicaciones con estado {status}",
   "ui.services.noApplicationsReported": "No se notificaron aplicaciones",
-  "ui.services.noAvailableTargetNodeFor":
-    "No hay ningún Node de destino disponible para esta aplicación.",
+  "ui.services.noAvailableTargetNodeFor": "No hay ningún servidor de destino disponible para esta aplicación.",
   "ui.services.noCanonicalRuntimeObservationYet":
     "Aún no hay observación canónica del runtime: se muestra la proyección del registro.",
   "ui.services.noGovernedActionHasRun":
     "No se ha ejecutado ninguna acción gobernada en esta sesión.",
   "ui.services.noHostname": "Sin nombre de host",
-  "ui.services.noNodesRegistered": "No hay Nodes registrados",
+  "ui.services.noNodesRegistered": "No hay servidores registrados",
   "ui.services.noOperationsAvailable": "No hay operaciones disponibles.",
   "ui.services.noSystemServices": "Sin servicios del sistema",
-  "ui.services.node": "Node",
-  "ui.services.nodeBoundApplications": "Aplicaciones vinculadas a un Node",
-  "ui.services.nodeCapabilities": "Capacidades del Node",
-  "ui.services.nodeColumn": "Columna del Node {name}",
+  "ui.services.node": "Servidor",
+  "ui.services.nodeBoundApplications": "Aplicaciones vinculadas a un servidor",
+  "ui.services.nodeCapabilities": "Capacidades del servidor",
+  "ui.services.nodeColumn": "Columna del servidor {name}",
   "ui.services.observed": "Observado",
   "ui.services.stacked": "Stacked",
   "ui.services.unstacked": "Unstacked",
@@ -2859,13 +2799,10 @@ export const es: Record<string, string> = {
     "La migración de runtime aún no está habilitada",
   "ui.services.runtimeMigrationUnavailable":
     "Migración de runtime no disponible",
-  "ui.services.runtimeServiceMigrationIsNot":
-    "La migración de servicios de runtime no está habilitada en este despliegue.",
+  "ui.services.runtimeServiceMigrationIsNot": "Mover apps entre servidores no está habilitado en esta instalación.",
   "ui.services.runtimeTarget": "Destino de runtime",
-  "ui.services.selectANodeAndCatalog":
-    "Selecciona un Node y un servicio del catálogo.",
-  "ui.services.selectANodeThenEnter":
-    "Selecciona un Node y luego introduce un nombre de servicio.",
+  "ui.services.selectANodeAndCatalog": "Selecciona un servidor y un servicio del catálogo.",
+  "ui.services.selectANodeThenEnter": "Selecciona un servidor y luego introduce un nombre de servicio.",
   "ui.services.selected": "Seleccionado: {name}",
   "ui.services.service": "Servicio",
   "ui.services.serviceActionDidNotComplete":
@@ -2896,20 +2833,17 @@ export const es: Record<string, string> = {
   "ui.services.systemServices": "Servicios del sistema",
   "ui.services.targetIsReadyForVerification":
     "El destino está listo para la verificación.",
-  "ui.services.targetNode": "Node de destino",
+  "ui.services.targetNode": "Servidor de destino",
   "ui.services.targetValue": "Destino: {value}",
   "ui.services.telemetryPending": "telemetría pendiente",
   "ui.services.temporaryInstance":
     "Se desplegará una instancia temporal en {slot}.",
-  "ui.services.theApplicationConfigWillBe":
-    "La configuración de la aplicación se duplicará en el Node de destino.",
+  "ui.services.theApplicationConfigWillBe": "La configuración de la aplicación se duplicará en el servidor de destino.",
   "ui.services.theLastLogPageWas":
     "La última página de registros estaba vacía.",
-  "ui.services.theLastSuccessfulSnapshotRemains":
-    "La última instantánea correcta sigue visible hasta que este despliegue de StackKit informe de un reemplazo o de evidencia explícita de caída.",
+  "ui.services.theLastSuccessfulSnapshotRemains": "La última instantánea correcta sigue visible hasta que este homelab informe de un reemplazo o de una prueba clara de que la app está caída.",
   "ui.services.thisHomelab": "este Homelab",
-  "ui.services.thisPermanentlyDeletesTheArchived":
-    "Esto elimina permanentemente el servicio archivado de su Node de origen.",
+  "ui.services.thisPermanentlyDeletesTheArchived": "Esto elimina permanentemente el servicio archivado de su servidor de origen.",
   "ui.services.type": "Tipo:",
   "ui.services.type2": "Tipo",
   "ui.services.unclassifiedRuntimeComponentsAppearHere":
@@ -2921,8 +2855,7 @@ export const es: Record<string, string> = {
   "ui.services.url": "URL",
   "ui.services.verifyFinish": "Verificar y finalizar",
   "ui.services.verifying": "· verificando",
-  "ui.services.waitingForRuntimeDeployment":
-    "Esperando el despliegue del runtime...",
+  "ui.services.waitingForRuntimeDeployment": "Esperando la instalación...",
   "ui.services.youCanTestTheNew":
     "Puedes probar la nueva instancia mientras la antigua sigue activa.",
   "ui.servicesApplicationId.addressClass": "Clase de dirección",
@@ -2933,7 +2866,7 @@ export const es: Record<string, string> = {
   "ui.servicesApplicationId.backToApplications": "Volver a las aplicaciones",
   "ui.servicesApplicationId.freshness": "Frescura",
   "ui.servicesApplicationId.impact": "Impacto",
-  "ui.servicesApplicationId.kitDeployment": "Despliegue del Kit",
+  "ui.servicesApplicationId.kitDeployment": "Homelab",
   "ui.servicesApplicationId.lifecycle": "Ciclo de vida",
   "ui.servicesApplicationId.management": "Gestión",
   "ui.servicesApplicationId.noReachableAddressReported":
@@ -2954,16 +2887,14 @@ export const es: Record<string, string> = {
   "ui.settings.dangerZone": "Zona de peligro",
   "ui.settings.dashboard": "Panel",
   "ui.settings.dashboardLayout": "Diseño del panel",
-  "ui.settings.decommissionsTheDeploymentSManaged":
-    "Da de baja el runtime gestionado del despliegue y elimina su entrada. Para eliminar un solo servidor, usa su acción de baja en el servidor.",
+  "ui.settings.decommissionsTheDeploymentSManaged": "Elimina el servidor administrado del homelab y su entrada. Para eliminar un solo servidor, usa «Eliminar servidor» en ese servidor.",
   "ui.settings.delete": "Eliminar",
-  "ui.settings.deleteADeployment": "Eliminar un despliegue",
-  "ui.settings.deleteNamed": '¿Eliminar "{name}"?',
-  "ui.settings.deleteThisDeployment": "Eliminar este despliegue",
+  "ui.settings.deleteADeployment": "Eliminar un homelab",
+  "ui.settings.deleteNamed": "¿Eliminar «{name}»?",
+  "ui.settings.deleteThisDeployment": "Eliminar este homelab",
   "ui.settings.deleting": "Eliminando...",
-  "ui.settings.deletionFailed": "Error al eliminar",
-  "ui.settings.failedToLoadDeployments":
-    "No se han podido cargar los despliegues",
+  "ui.settings.deletionFailed": "No se pudo eliminar",
+  "ui.settings.failedToLoadDeployments": "No se pudieron cargar los homelabs",
   "ui.settings.failedToLoadHomelabIdentity":
     "No se ha podido cargar la identidad del Homelab",
   "ui.settings.failedToSaveHomelabIdentity":
@@ -2975,14 +2906,14 @@ export const es: Record<string, string> = {
   "ui.settings.homelabIdentity": "Identidad del Homelab",
   "ui.settings.lightOrDarkAndThe":
     "Claro u oscuro, y el acabado de la superficie. El acabado sigue el valor predeterminado de tu cuenta de kombify hasta que este dispositivo elija el suyo.",
-  "ui.settings.loadingDeployments": "Cargando despliegues...",
+  "ui.settings.loadingDeployments": "Cargando homelabs...",
   "ui.settings.logout": "Cerrar sesión",
   "ui.settings.managedByKombifyCloud": "Gestionado por kombify Cloud.",
   "ui.settings.mode": "Modo",
   "ui.settings.navigationPreview": "Vista previa de la navegación",
   "ui.settings.navigationPreviewShape":
     "Forma de la vista previa de la navegación",
-  "ui.settings.noDeploymentsToDelete": "No hay despliegues que eliminar.",
+  "ui.settings.noDeploymentsToDelete": "No hay homelabs que quitar.",
   "ui.settings.noHomelabIdentityConfigured":
     "No hay ninguna identidad de Homelab configurada.",
   "ui.settings.noVerifiedTestResidueRemains":
@@ -2990,28 +2921,23 @@ export const es: Record<string, string> = {
   "ui.settings.noVerifiedTestResidueWas":
     "No se ha encontrado ningún residuo de pruebas verificado.",
   "ui.settings.overlap": "Superposición",
-  "ui.settings.pruneQualifies":
-    "Solo cumplen los requisitos las proyecciones con propietario autenticado {owner} y coincidencia estricta {strict}. Los runtimes gestionados activos, los recursos del proveedor, los Nodes recientes, los datos de demostración y los datos normales del Homelab no cambian.",
+  "ui.settings.pruneQualifies": "Solo cumplen los requisitos las proyecciones con propietario autenticado {owner} y coincidencia estricta {strict}. Los runtimes gestionados activos, los recursos del proveedor, los servidores recientes, los datos de demostración y los datos normales del Homelab no cambian.",
   "ui.settings.reviewCleanup": "Revisar la limpieza",
   "ui.settings.reviewVerifiedTestResidue":
     "Revisar los residuos de pruebas verificados",
   "ui.settings.reviewing": "Revisando...",
-  "ui.settings.reviewsExactOwnerScopedE2e":
-    "Revisa las proyecciones E2E exactas del propietario y las proyecciones de runtime fallidas. Los recursos del proveedor, los arrendamientos activos, los Nodes recientes y los datos normales del Homelab no cambian.",
+  "ui.settings.reviewsExactOwnerScopedE2e": "Revisa las proyecciones E2E exactas del propietario y las proyecciones de runtime fallidas. Los recursos del proveedor, los arrendamientos activos, los servidores recientes y los datos normales del Homelab no cambian.",
   "ui.settings.savedOnDevice": "Guardado en este dispositivo para tu cuenta.",
   "ui.settings.settings": "Ajustes",
   "ui.settings.signedIn": "Sesión iniciada",
   "ui.settings.surface": "Superficie",
   "ui.settings.surfaceFinish": "Acabado de la superficie",
   "ui.settings.tether": "Tether",
-  "ui.settings.theDemoDeploymentIsProtected":
-    "El despliegue de demostración está protegido y no se puede eliminar.",
-  "ui.settings.thisDecommissionsTheManagedRuntime":
-    "Esto da de baja el runtime gestionado y elimina la entrada del despliegue. No se puede deshacer.",
+  "ui.settings.theDemoDeploymentIsProtected": "El homelab de demostración está protegido y no se puede eliminar.",
+  "ui.settings.thisDecommissionsTheManagedRuntime": "Esto apaga el servidor administrado, lo elimina junto con sus datos en el proveedor y quita la entrada del homelab. No se puede deshacer.",
   "ui.settings.thisEntryIsNotVerified":
     "Esta entrada no es un residuo de pruebas verificado y no se puede eliminar con la limpieza de proyecciones.",
-  "ui.settings.thisExactPlanIsBound":
-    "Este plan exacto está vinculado al digest de abajo. No se destruye ninguna infraestructura.",
+  "ui.settings.thisExactPlanIsBound": "Este plan exacto está vinculado al digest de abajo. No se quita ningún servidor ni recurso del proveedor.",
   "ui.settings.typeToConfirm": "Escribe {slot} para confirmar",
   "ui.shortcuts.closeDialogDeselect": "Cerrar diálogo/deseleccionar",
   "ui.shortcuts.focusSearchInput": "Enfocar el campo de búsqueda",
@@ -3038,10 +2964,8 @@ export const es: Record<string, string> = {
   "ui.sshKeygen.ed25519NotSupportedInThis":
     "Ed25519 no es compatible con este navegador. Prueba con RSA.",
   "ui.sshKeygen.unsupportedAlgorithm": "Algoritmo no compatible: {algorithm}",
-  "ui.stackImport.exportIntro":
-    "Exporta esta configuración del despliegue de StackKit como {file}. Puedes editar el archivo e importarlo de nuevo más tarde.",
-  "ui.stackImport.intro":
-    "Importa un archivo {file} para configurar un despliegue de StackKit en tu Homelab. Los archivos {legacy} antiguos se siguen aceptando.",
+  "ui.stackImport.exportIntro": "Exporta la configuración de este homelab como {file}. Puedes editar el archivo e importarlo de nuevo más tarde.",
+  "ui.stackImport.intro": "Importa un archivo {file} para configurar un homelab. Los archivos {legacy} antiguos se siguen aceptando.",
   "ui.stackImport.orPaste": "o pega",
   "ui.stackImport.validating": "Validando...",
   "ui.stackImportExportModal.allRequiredFieldsArePresent":
@@ -3055,12 +2979,10 @@ export const es: Record<string, string> = {
   "ui.stackImportExportModal.couldNotReadFile":
     "No se ha podido leer el archivo",
   "ui.stackImportExportModal.dragFileHereOr": "Arrastra un archivo aquí o",
-  "ui.stackImportExportModal.exportStackkitDeploymentSpec":
-    "Exportar la especificación del despliegue de StackKit",
+  "ui.stackImportExportModal.exportStackkitDeploymentSpec": "Exportar la especificación del homelab",
   "ui.stackImportExportModal.ifTheProblemPersistsCopy":
     "Si el problema persiste: copia el diagnóstico y compártelo con los desarrolladores.",
-  "ui.stackImportExportModal.importStackkitDeploymentSpec":
-    "Importar la especificación del despliegue de StackKit",
+  "ui.stackImportExportModal.importStackkitDeploymentSpec": "Importar la especificación del homelab",
   "ui.stackImportExportModal.importStartSetup":
     "Importar e iniciar la configuración",
   "ui.stackImportExportModal.importingConfiguration":
@@ -3069,10 +2991,8 @@ export const es: Record<string, string> = {
   "ui.stackImportExportModal.noContentFound": "No se ha encontrado contenido",
   "ui.stackImportExportModal.noContentToImport":
     "No hay contenido que importar",
-  "ui.stackImportExportModal.noStackkitDeploymentIsAvailable":
-    "No hay ningún despliegue de StackKit disponible para exportar",
-  "ui.stackImportExportModal.nodeDefinitionsWithoutCredentials":
-    "• Definiciones de Nodes (sin credenciales)",
+  "ui.stackImportExportModal.noStackkitDeploymentIsAvailable": "No hay ningún homelab disponible para exportar",
+  "ui.stackImportExportModal.nodeDefinitionsWithoutCredentials": "• Definiciones de servidores (sin credenciales)",
   "ui.stackImportExportModal.pasteYourStackSpecYaml":
     "# Pega aquí tu stack-spec.yaml...",
   "ui.stackImportExportModal.recommended": "(recomendado)",
@@ -3095,19 +3015,17 @@ export const es: Record<string, string> = {
   "ui.stackImportExportModal.youWillBeRedirectedTo":
     "En breve se te redirigirá a la página de configuración.",
   "ui.stacksCreating.creatingStackkitDeploymentKombifyTechstack":
-    "Creando el despliegue de StackKit | kombify-Techstack",
+    "Creando tu Homelab | kombify Techstack",
   "ui.stacksCreating.leanBackBody":
     "Ya hiciste tu parte. Estamos preparando todo para ti ahora mismo y pronto verás algo genial.",
   "ui.stacksCreating.leanBackTitle": "Relájate: estamos haciendo magia",
   "ui.stacksCreating.openOperations": "Abrir operaciones",
-  "ui.stacksCreating.reviewAndStartStackkitRollout":
-    "Revisar e iniciar el despliegue de StackKit",
   "ui.stacksCreating.tips.codeBody":
     "StackKits genera tu configuración a partir de planos validados, así cada cambio es repetible y trazable.",
   "ui.stacksCreating.tips.codeEyebrow": "Infraestructura como código",
   "ui.stacksCreating.tips.codeTitle": "Tu stack, escrito como código",
   "ui.stacksCreating.tips.growBody":
-    "Añade otro nodo a este stack cuando lo necesites. Techstack coordina tus servidores y cada uno sigue funcionando por sí mismo.",
+    "Añade otro servidor a este stack cuando lo necesites. Techstack coordina tus servidores y cada uno sigue funcionando por sí mismo.",
   "ui.stacksCreating.tips.growEyebrow": "Escalado",
   "ui.stacksCreating.tips.growTitle": "Espacio para crecer",
   "ui.stacksCreating.tips.label": "Bueno saber",
@@ -3128,21 +3046,21 @@ export const es: Record<string, string> = {
   "ui.stacksCreating.tips.restoreTitle":
     "La restauración se comprueba, no se promete",
   "ui.stacksCreating.tips.show": "Mostrar consejo {number} de {total}",
-  "ui.stacksCreatingCreation-controller.additionalNode": "Node adicional",
+  "ui.stacksCreatingCreation-controller.additionalNode": "Servidor adicional",
   "ui.stacksCreatingCreation-controller.afterFailedAttemptsTheBackend":
     "Tras {MAX_POLL_ERRORS} intentos fallidos, no se pudo acceder al backend. La página sigue reintentando con espera progresiva; también puedes comprobar tu conexión de red y recargar para continuar.",
   "ui.stacksCreatingCreation-controller.configurationPrepared":
     "Configuración preparada",
   "ui.stacksCreatingCreation-controller.connectYourNodeToContinue":
-    "Conecta tu Node para continuar con el despliegue",
+    "Conecta tu servidor para continuar con el despliegue",
   "ui.stacksCreatingCreation-controller.connectionToServerLost":
     "Se perdió la conexión con el servidor",
   "ui.stacksCreatingCreation-controller.continueStackKitDeploymentOnConnected":
-    "Continuar el despliegue de StackKit en el Node conectado",
+    "Continuar el despliegue de StackKit en el servidor conectado",
   "ui.stacksCreatingCreation-controller.continueStackKitOnConnectedNode":
-    "Continuar StackKit en el Node conectado",
+    "Continuar StackKit en el servidor conectado",
   "ui.stacksCreatingCreation-controller.continueStackKitRolloutOnConnected":
-    "Continuar el despliegue de StackKit en el Node conectado",
+    "Continuar el despliegue de StackKit en el servidor conectado",
   "ui.stacksCreatingCreation-controller.couldNotCheckRemoteSSH":
     "No se pudo comprobar el progreso del registro SSH remoto.",
   "ui.stacksCreatingCreation-controller.couldNotPrepareTheConnection":
@@ -3160,15 +3078,15 @@ export const es: Record<string, string> = {
   "ui.stacksCreatingCreation-controller.creatingStackKitDeployment":
     "Creando el despliegue de StackKit",
   "ui.stacksCreatingCreation-controller.guardHasNotReportedA":
-    "El Guard aún no ha informado de un latido reciente para este Node. Reintenta la inscripción por SSH en la conexión guardada o comprueba que el agent se esté ejecutando en el servidor.",
+    "Tu servidor aún no se ha comunicado. Reintenta la conexión SSH con los datos guardados o comprueba que el agente de kombify se esté ejecutando en el servidor.",
   "ui.stacksCreatingCreation-controller.jobIsNotBeingProcessed":
     "El trabajo no se está procesando",
   "ui.stacksCreatingCreation-controller.jobWasCanceled":
     "El trabajo se canceló",
   "ui.stacksCreatingCreation-controller.kombifyRequestedTheAdditionalManaged":
-    "kombify ha solicitado el Node gestionado adicional. Puedes continuar desde el panel mientras finaliza la inscripción.",
+    "kombify ha solicitado el servidor gestionado adicional. Puedes continuar desde el panel mientras finaliza la inscripción.",
   "ui.stacksCreatingCreation-controller.managedNodeRequestIsStill":
-    "La solicitud del Node gestionado sigue en curso",
+    "La solicitud del servidor gestionado sigue en curso",
   "ui.stacksCreatingCreation-controller.managedRolloutRecoveryWasNot":
     "No se inició la recuperación del despliegue gestionado porque el trabajo en espera no tiene una referencia exacta de arrendamiento.",
   "ui.stacksCreatingCreation-controller.missingJobReferencePleaseStart":
@@ -3177,23 +3095,23 @@ export const es: Record<string, string> = {
     "Nuevo despliegue de StackKit",
   "ui.stacksCreatingCreation-controller.noJobFound":
     "No se ha encontrado ningún trabajo",
-  "ui.stacksCreatingCreation-controller.nodeConnected": "Node conectado",
+  "ui.stacksCreatingCreation-controller.nodeConnected": "Servidor conectado",
   "ui.stacksCreatingCreation-controller.nodeConnectionReady":
-    "Conexión del Node lista",
+    "Conexión del servidor lista",
   "ui.stacksCreatingCreation-controller.nodeRegistrationDidNotReturn":
-    "El registro del Node no devolvió ningún trabajo de creación.",
+    "El registro del servidor no devolvió ningún trabajo de creación.",
   "ui.stacksCreatingCreation-controller.nodeRegistrationReady":
-    "Registro del Node listo",
+    "Registro del servidor listo",
   "ui.stacksCreatingCreation-controller.recoveringRolloutOnTheExact":
     "Recuperando el despliegue en la VM gestionada existente exacta...",
   "ui.stacksCreatingCreation-controller.remoteSSHEnrollmentFailed":
     "Error en la inscripción SSH remota.",
   "ui.stacksCreatingCreation-controller.reportedAFreshGuardHeartbeat":
-    "{name} informó de un latido reciente del Guard y es visible en la proyección de Nodes.",
+    "{name} se ha comunicado y ya forma parte de tu Homelab.",
   "ui.stacksCreatingCreation-controller.restoreDrill":
     "Simulacro de restauración",
   "ui.stacksCreatingCreation-controller.resumingTheEarlierNodeRegistration":
-    "Reanudando el intento anterior de registro del Node…",
+    "Reanudando el intento anterior de registro del servidor…",
   "ui.stacksCreatingCreation-controller.retryDeployment":
     "Reintentar el despliegue",
   "ui.stacksCreatingCreation-controller.retryRollout":
@@ -3224,27 +3142,27 @@ export const es: Record<string, string> = {
   "ui.stacksCreatingCreation-controller.startFreshAttempt":
     "Empezar un intento nuevo",
   "ui.stacksCreatingCreation-controller.theAddNodeRequestHas":
-    "La solicitud de añadir Node lleva más de 2 minutos en ejecución. Esta ruta solo debería solicitar o preparar el Node adicional, no ejecutar el despliegue completo de StackKit. Abre Operaciones para comprobar si se creó la solicitud del Node y vuelve a intentar Añadir Node si no aparece ningún Node nuevo.",
+    "La solicitud de añadir servidor lleva más de 2 minutos en ejecución. Esta ruta solo debería solicitar o preparar el servidor adicional, no ejecutar el despliegue completo de StackKit. Abre Operaciones para comprobar si se creó la solicitud del servidor y vuelve a intentar Añadir servidor si no aparece ningún servidor nuevo.",
   "ui.stacksCreatingCreation-controller.theAdditionalNodeRegistrationIs":
-    "El registro del Node adicional está listo para el Homelab existente.",
+    "El registro del servidor adicional está listo para el Homelab existente.",
   "ui.stacksCreatingCreation-controller.theBackendCanceledThisJob":
     "El backend canceló este trabajo antes de que terminara. Reintenta para continuar desde el último punto de control seguro.",
   "ui.stacksCreatingCreation-controller.theCompletedRuntimeJobDid":
     "El trabajo del runtime completado no devolvió evidencia verificada del runtime. Reintenta el despliegue para verificar la instalación.",
   "ui.stacksCreatingCreation-controller.theNodeProjectionCouldNot":
-    "No se pudo comprobar la proyección de Nodes. El comando de emparejamiento sigue disponible, pero esta página no dará por hecha una conexión sin un latido reciente del Guard.",
+    "No pudimos comprobar si tu servidor se ha comunicado. El comando sigue disponible; esta página solo muestra una conexión cuando tu servidor realmente se ha comunicado.",
   "ui.stacksCreatingCreation-controller.thePreviouslyVerifiedGuardHeartbeat":
-    "El latido del Guard verificado anteriormente ya no es reciente. Esperando pruebas de conexión actuales.",
+    "Tu servidor dejó de comunicarse. Esperando a que vuelva a comunicarse.",
   "ui.stacksCreatingCreation-controller.theProvisioningJobHasBeen":
     "El trabajo de aprovisionamiento lleva más de 2 minutos pendiente sin avanzar. Normalmente significa que el orquestador no se está ejecutando o ha fallado.\n\nRevisa los logs del servidor: docker compose logs techstack\nPrueba a reiniciar: docker compose restart techstack",
   "ui.stacksCreatingCreation-controller.theReservedNodeCouldNot":
-    "No se pudo comprobar el Node reservado. Reintenta la inscripción por SSH en la conexión guardada cuando el inventario de servidores vuelva a estar disponible.",
+    "No se pudo comprobar el servidor reservado. Reintenta la inscripción por SSH en la conexión guardada cuando el inventario de servidores vuelva a estar disponible.",
   "ui.stacksCreatingCreation-controller.thisPageRequiresAJob":
     "Esta página requiere un job_id del asistente de configuración. Reinicia la configuración desde /stacks/new.",
   "ui.stacksCreatingCreation-controller.validatingTheSelectedStackKitAnd":
-    "Validando el StackKit seleccionado y preparando el Node...",
+    "Validando el StackKit seleccionado y preparando el servidor...",
   "ui.stacksCreatingCreation-controller.yourRemoteNodeConfigurationIs":
-    "La configuración de tu Node remoto está lista para el despliegue",
+    "La configuración de tu servidor remoto está lista para el despliegue",
   "ui.stacksCreatingCreation-controller.yourSessionIsNoLonger":
     "Tu sesión ya no es válida, por lo que no se puede comprobar el progreso de la creación. Inicia sesión de nuevo y vuelve a abrir esta creación para seguir supervisándola.",
   "ui.stacksCreatingCreation-results.backendError":
@@ -3257,33 +3175,33 @@ export const es: Record<string, string> = {
   "ui.stacksCreatingCreation-results.stackID": "ID del stack: {stackId}",
   "ui.stacksCreatingCreation-results.targetBootstrap": "Bootstrap del destino:",
   "ui.stacksCreatingCreationCompletion.guardHeartbeatVerified":
-    "Latido del Guard verificado",
-  "ui.stacksCreatingCreationCompletion.hashPresent": "Hash presente",
+    "Tu servidor está conectado",
+  "ui.stacksCreatingCreationCompletion.hashPresent": "Frase de recuperación definida",
   "ui.stacksCreatingCreationCompletion.lastGuardHeartbeat":
     "Último latido del Guard:",
   "ui.stacksCreatingCreationCompletion.managedProvisioningComplete":
-    "Aprovisionamiento gestionado completado",
-  "ui.stacksCreatingCreationCompletion.materialLinked": "Material vinculado",
+    "Tu servidor gestionado está listo",
+  "ui.stacksCreatingCreationCompletion.materialLinked": "Recuperación guardada",
   "ui.stacksCreatingCreationCompletion.openHomelab": "Abrir Homelab",
   "ui.stacksCreatingCreationCompletion.owner": "Propietario",
-  "ui.stacksCreatingCreationCompletion.ownerPrepared": "Propietario preparado",
+  "ui.stacksCreatingCreationCompletion.ownerPrepared": "Cuenta de propietario preparada",
   "ui.stacksCreatingCreationCompletion.ownerReady": "Propietario listo",
   "ui.stacksCreatingCreationCompletion.ownerSeedReady":
-    "Semilla del propietario lista",
+    "Cuenta de propietario lista",
   "ui.stacksCreatingCreationCompletion.recovery": "Recuperación",
   "ui.stacksCreatingCreationCompletion.rolloutComplete":
-    "Despliegue completado",
+    "Configuración completada",
   "ui.stacksCreatingCreationCompletion.selfHostedRollout":
-    "Despliegue autoalojado",
+    "Autoalojado",
   "ui.stacksCreatingCreationCompletion.techstackNowSeesThisNode":
-    "Techstack ahora ve este Node como en buen estado y listo para el despliegue en la proyección real de Nodes. La preparación del emparejamiento por sí sola no provocó este estado.",
+    "Tu servidor se ha comunicado y funciona correctamente. Está listo para el siguiente paso.",
   "ui.stacksCreatingCreationCompletion.theFirstLoginGatewayAnd":
-    'La primera puerta de enlace de inicio de sesión y la referencia de recuperación llegan con el despliegue de StackKit ("Review + Start").',
+    "Tu primer inicio de sesión y los datos de recuperación llegan cuando tu Homelab está configurado («Revisar y crear»).",
   "ui.stacksCreatingCreationCompletion.theOwnerIdentityDerivesFrom":
     "La identidad del propietario se deriva de tu perfil de kombify Cloud vinculado.",
   "ui.stacksCreatingCreationCompletion.theOwnerSeedIsPrepared":
-    "La semilla del propietario está preparada.",
-  "ui.stacksCreatingCreationCompletion.yourNode": "Tu Node",
+    "Tu cuenta de propietario está preparada.",
+  "ui.stacksCreatingCreationCompletion.yourNode": "Tu servidor",
   "ui.groupedTaskList.needsAttention": "Requiere atención",
   "ui.stacksCreatingCreationDegraded.titleOne":
     "Listo: una parte requiere atención",
@@ -3325,10 +3243,8 @@ export const es: Record<string, string> = {
   "ui.stacksCreatingCreationFailure.errorDetails": "Detalles del error",
   "ui.stacksCreatingCreationFailure.existingManagedVmLeaseReferenced":
     "Se hace referencia a un arrendamiento de VM gestionada existente",
-  "ui.stacksCreatingCreationFailure.makeSureTheBackendServer":
-    "Asegúrate de que el servidor del backend esté en ejecución",
   "ui.stacksCreatingCreationFailure.nodeConnectionSucceeded":
-    "Conexión del Node correcta",
+    "Conexión del servidor correcta",
   "ui.stacksCreatingCreationFailure.operations": "Operaciones",
   "ui.stacksCreatingCreationFailure.askCompanion": "Pregunta a kombify",
   "ui.stacksCreatingCreationFailure.askCompanionPrompt":
@@ -3336,16 +3252,14 @@ export const es: Record<string, string> = {
   "ui.stacksCreatingCreationFailure.possibleSolutions": "Posibles soluciones:",
   "ui.stacksCreatingCreationFailure.resumePreviousAttempt":
     "Reanudar el intento anterior",
-  "ui.stacksCreatingCreationFailure.reviewYourConfigurationSettings":
-    "Revisa los ajustes de tu configuración",
   "ui.stacksCreatingCreationFailure.sshEnrollmentCompletedAndThe":
-    "La inscripción por SSH se completó y el Node es visible en tu Homelab. Solo falló la preparación o el despliegue del StackKit. El reintento continúa en el Node conectado sin repetir la inscripción por SSH.",
+    "La inscripción por SSH se completó y el servidor es visible en tu Homelab. Solo falló la preparación o el despliegue del StackKit. El reintento continúa en el servidor conectado sin repetir la inscripción por SSH.",
   "ui.stacksCreatingCreationFailure.theExactRetryEndpointValidates":
     "El endpoint de reintento exacto valida este trabajo fallido y el arrendamiento antes de continuar en el servidor existente.",
   "ui.stacksCreatingCreationFailure.theRolloutReachedTheExisting":
     "El despliegue llegó a la VM gestionada existente.",
   "ui.stacksCreatingCreationFailure.thisBrowserReusedAnAttempt":
-    "Este navegador reutilizó una clave de intento de otro envío. Es posible que la ejecución anterior ya haya creado un registro de Node. Reanuda ese intento o empieza de cero con una clave nueva.",
+    "Este navegador reutilizó una clave de intento de otro envío. Es posible que la ejecución anterior ya haya creado un registro de servidor. Reanuda ese intento o empieza de cero con una clave nueva.",
   "ui.stacksCreatingCreationFailure.troubleshooting": "Solución de problemas",
   "ui.stacksCreatingCreationFailure.vpsProvisioningCompletedOnlyStackkit":
     "El aprovisionamiento del VPS se completó. Solo fallaron el artefacto de StackKit, el enrutamiento de dominios o el trabajo de despliegue posterior.",
@@ -3354,9 +3268,8 @@ export const es: Record<string, string> = {
   "ui.stacksCreatingCreationInstallCommand.copy": "Copiar",
   "ui.stacksCreatingCreationInstallCommand.copyInstallationCommandToClipboard":
     "Copiar el comando de instalación al portapapeles",
-  "ui.stacksCreatingCreationInstallCommand.installWorker": "Instalar el worker",
   "ui.stacksCreatingCreationInstallCommand.kombifyTechstackServerUrlReachable":
-    "URL del servidor de kombify-Techstack (accesible para los workers):",
+    "Dirección de kombify Techstack (accesible desde tu servidor):",
   "ui.stacksCreatingCreationInstallCommand.openOneHourSimulateDemo":
     "Abrir la vista previa de demostración de Simulate de una hora",
   "ui.stacksCreatingCreationInstallCommand.previewLifetimeIsLimitedTo":
@@ -3378,7 +3291,7 @@ export const es: Record<string, string> = {
   "ui.stacksCreatingCreationLease.loginGateway":
     "Puerta de enlace de inicio de sesión",
   "ui.stacksCreatingCreationLease.managedNodeRequested":
-    "Node gestionado solicitado",
+    "Servidor gestionado solicitado",
   "ui.stacksCreatingCreationLease.managedRuntimeReady":
     "Runtime gestionado listo",
   "ui.stacksCreatingCreationLease.offering": "Oferta",
@@ -3395,14 +3308,14 @@ export const es: Record<string, string> = {
   "ui.stacksCreatingCreationLease.stackkitDeployedOnTheLeased":
     "StackKit desplegado en la VM de suscripción arrendada. Los valores de abajo los devuelve el trabajo del runtime; no son datos de demostración.",
   "ui.stacksCreatingCreationLease.stackkitIdentityHandoffIsMissing":
-    "Falta el traspaso de identidad de StackKit",
+    "Faltan los datos de tu primer inicio de sesión",
   "ui.stacksCreatingCreationLease.stackkitReturnedTheOwnerLogin":
     "StackKit devolvió el inicio de sesión del propietario, la puerta de enlace de inicio de sesión y las referencias de recuperación de este despliegue verificado de Cloud Kit.",
   "ui.stacksCreatingCreationLease.status": "Estado:",
   "ui.stacksCreatingCreationLease.theAdditionalSubscriptionVmRequest":
     "Se ha registrado la solicitud de la VM de suscripción adicional. Aparecerá en Operaciones cuando la inscripción informe de vuelta.",
   "ui.stacksCreatingCreationLease.theRolloutCompletedButThe":
-    "El despliegue se completó, pero StackKit no devolvió el inicio de sesión del propietario, la puerta de enlace de inicio de sesión ni las salidas de recuperación. Trátalo como un bloqueo de la versión hasta que la respuesta de la acción del runtime incluya",
+    "Tu Homelab se configuró, pero los datos de primer inicio de sesión y de recuperación no llegaron. Ponte en contacto con el soporte y comparte los detalles técnicos.",
   "ui.stacksCreatingCreationLease.theseStatusesComeFromRuntime":
     "Estos estados proceden de las respuestas de las acciones del runtime y de la prueba e2e final.",
   "ui.stacksCreatingCreationLease.wallet": "Wallet",
@@ -3413,7 +3326,7 @@ export const es: Record<string, string> = {
   "ui.stacksCreatingCreationProgress.checkAgain": "Comprobar de nuevo",
   "ui.stacksCreatingCreationProgress.creationFailed": "Error en la creación",
   "ui.stacksCreatingCreationProgress.nodeProvisioningIsStillIn":
-    "El aprovisionamiento del Node sigue en curso",
+    "El aprovisionamiento del servidor sigue en curso",
   "ui.stacksCreatingCreationProgress.pleaseWaitWhileWeRe": "Espera mientras",
   "ui.stacksCreatingCreationProgress.morphCompleting": "completamos",
   "ui.stacksCreatingCreationProgress.morphConfiguring": "configuramos",
@@ -3423,21 +3336,21 @@ export const es: Record<string, string> = {
   "ui.stacksCreatingCreationProgress.rolloutIncomplete":
     "Despliegue incompleto",
   "ui.stacksCreatingCreationProgress.runThePairingCommand":
-    "Ejecuta el comando de emparejamiento",
+    "Ejecuta el comando en tu servidor",
   "ui.stacksCreatingCreationProgress.setupCannotContinue":
     "La configuración no puede continuar",
   "ui.stacksCreatingCreationProgress.theNextCheckIsScheduled":
-    "La siguiente comprobación está programada. El panel, los servicios y el acceso al Node permanecen bloqueados hasta que se confirme la inscripción; aquí se puede reanudar con seguridad una comprobación atrasada.",
+    "La siguiente comprobación está programada. El panel, los servicios y el acceso al servidor permanecen bloqueados hasta que se confirme la inscripción; aquí se puede reanudar con seguridad una comprobación atrasada.",
   "ui.stacksCreatingCreationProgress.theNextManagedRuntimeCheck":
-    "La siguiente comprobación del runtime gestionado está programada para esta operación. Si sigue atrasada tras un traspaso de réplica o un reinicio, Techstack ofrece una acción de reanudación para ese Node exacto.",
+    "La próxima comprobación de tu servidor gestionado está programada. Si sigue pendiente tras un reinicio, puedes reanudarla aquí.",
   "ui.stacksCreatingCreationProgress.theRegistrationRequestIsReady":
-    "La solicitud de registro está lista, pero el Node no estará conectado hasta que aparezca un latido reciente del Guard en la proyección de Nodes.",
+    "Tu servidor aún no se ha comunicado. Ejecuta en él el comando de abajo; esta página continúa por sí sola.",
   "ui.stacksCreatingCreationProgress.thisCanTakeAFew":
-    "Esto puede tardar unos minutos. No cierres esta página.",
+    "Esto tarda unos minutos. Puedes quedarte en esta página o volver más tarde; tu Homelab sigue configurándose.",
   "ui.stacksCreatingCreationProgress.thisMayTakeAFew":
-    "Esto puede tardar unos minutos. Puedes seguir el progreso más abajo.",
+    "Esto tarda unos minutos. Puedes quedarte en esta página o volver más tarde; tu Homelab sigue configurándose.",
   "ui.stacksCreatingCreationProgress.thisPageChecksTheReal":
-    "Esta página comprueba la proyección real de Nodes cada pocos segundos.",
+    "Esta página comprueba cada pocos segundos si tu servidor se ha comunicado.",
   "ui.stacksCreatingCreationRequirements.backendRequirementsAreUnavailable":
     "Los requisitos del backend no están disponibles",
   "ui.stacksCreatingCreationRequirements.guide": "Guía →",
@@ -3455,33 +3368,33 @@ export const es: Record<string, string> = {
     "La reanudación manual solo se habilita tras la validación en el servidor.",
   "ui.stacksCreatingCreationRunStatus.afterCreation": "Después de la creación",
   "ui.stacksCreatingCreationRunStatus.afterYouRunTheOne":
-    "Después de ejecutar el comando de una línea, el Guard saliente se inscribe en este Homelab. El panel solo marca el Node como conectado cuando hay un latido reciente en la proyección de Nodes.",
-  "ui.stacksCreatingCreationRunStatus.awaitingHeartbeat": "Esperando el latido",
+    "Después de ejecutar el comando, tu servidor se conecta a tu Homelab. Aparece como conectado en cuanto se ha comunicado.",
+  "ui.stacksCreatingCreationRunStatus.awaitingHeartbeat": "Esperando a tu servidor",
   "ui.stacksCreatingCreationRunStatus.checkSshHostCredentialsAnd":
     "Comprueba el host SSH, las credenciales y que el servidor pueda llegar a Techstack.",
-  "ui.stacksCreatingCreationRunStatus.connectMyNode": "Conectar mi Node",
+  "ui.stacksCreatingCreationRunStatus.connectMyNode": "Conectar mi servidor",
   "ui.stacksCreatingCreationRunStatus.connectingToYourNodeOver":
-    "Conectando con tu Node por SSH…",
+    "Conectando con tu servidor por SSH…",
   "ui.stacksCreatingCreationRunStatus.connectingViaSsh": "Conectando por SSH…",
   "ui.stacksCreatingCreationRunStatus.continueRolloutOnTheExisting":
     "Continuar el despliegue en la VM existente",
   "ui.stacksCreatingCreationRunStatus.copyFailedSelectTheCommand":
     "Error al copiar: selecciona el comando de arriba",
   "ui.stacksCreatingCreationRunStatus.copyPairingCommand":
-    "Copiar el comando de emparejamiento",
+    "Copiar comando",
   "ui.stacksCreatingCreationRunStatus.currentStatus": "Estado actual",
   "ui.stacksCreatingCreationRunStatus.enrolling": "Inscribiendo",
   "ui.stacksCreatingCreationRunStatus.enrollmentOverSshFinishedThis":
-    "La inscripción por SSH ha terminado. Esta página mostrará “Node conectado” cuando el Guard informe de un latido reciente.",
+    "El registro por SSH ha terminado. Esta página mostrará «Servidor conectado» cuando tu servidor se haya comunicado.",
   "ui.stacksCreatingCreationRunStatus.failed": "Fallido",
   "ui.stacksCreatingCreationRunStatus.generateAFreshCommandTo":
-    "Genera un comando nuevo para seguir conectando este Node.",
+    "Genera un comando nuevo para seguir conectando este servidor.",
   "ui.stacksCreatingCreationRunStatus.generateAShortLivedCommand":
-    "Genera un comando de corta duración para este Node. Las credenciales de conexión no se conservan en los informes de los trabajos.",
+    "Genera un comando de corta duración para este servidor. Las credenciales de conexión no se conservan en los informes de los trabajos.",
   "ui.stacksCreatingCreationRunStatus.generateNewCommand":
     "Generar comando nuevo",
   "ui.stacksCreatingCreationRunStatus.generatePairingCommand":
-    "Generar comando de emparejamiento",
+    "Generar comando",
   "ui.stacksCreatingCreationRunStatus.kombifyIsInstallingAndEnrolling":
     "kombify está instalando e inscribiendo el Guard en tu servidor por SSH. No necesitas ejecutar ningún comando manualmente.",
   "ui.stacksCreatingCreationRunStatus.kombifyWillProvisionTheSubscription":
@@ -3490,13 +3403,13 @@ export const es: Record<string, string> = {
     "kombify usará la configuración SSH remota capturada en el asistente.",
   "ui.stacksCreatingCreationRunStatus.nextScheduledCheck":
     "Próxima comprobación programada:",
-  "ui.stacksCreatingCreationRunStatus.nodeAccess": "Acceso al Node",
+  "ui.stacksCreatingCreationRunStatus.nodeAccess": "Acceso al servidor",
   "ui.stacksCreatingCreationRunStatus.pairingCommandCopied":
-    "Comando de emparejamiento copiado",
+    "Comando copiado",
   "ui.stacksCreatingCreationRunStatus.pairingCommandReady":
-    "Comando de emparejamiento listo",
+    "Comando listo",
   "ui.stacksCreatingCreationRunStatus.pairingCommandUnavailable":
-    "Comando de emparejamiento no disponible",
+    "Comando no disponible",
   "ui.stacksCreatingCreationRunStatus.plannedRemoteTarget":
     "Destino remoto planificado",
   "ui.stacksCreatingCreationRunStatus.preparingCommand":
@@ -3513,13 +3426,13 @@ export const es: Record<string, string> = {
   "ui.stacksCreatingCreationRunStatus.retryingSshConnection":
     "Reintentando la conexión SSH…",
   "ui.stacksCreatingCreationRunStatus.runThisOneLinerOn":
-    "Ejecuta este comando de una línea en el Node adicional. El trabajo de registro completado solo creó el token de emparejamiento; Techstack mostrará “Node conectado” únicamente cuando el Guard saliente informe de un latido reciente y la proyección de Nodes esté en buen estado.",
+    "Ejecuta este comando en el servidor adicional. Aparece como conectado cuando se ha comunicado y funciona correctamente.",
   "ui.stacksCreatingCreationRunStatus.techstackUrlReachableFromThe":
     "URL de Techstack accesible desde el servidor",
   "ui.stacksCreatingCreationRunStatus.theAdditionalManagedNodeIs":
-    "El Node gestionado adicional se añade a este Homelab y aparecerá en el panel de Nodes cuando la inscripción informe de vuelta.",
+    "El servidor gestionado adicional se añade a este Homelab y aparecerá en el panel de servidores cuando la inscripción informe de vuelta.",
   "ui.stacksCreatingCreationRunStatus.theAdditionalNodeIsRegistered":
-    "El Node adicional está registrado en este Homelab y después podrá recibir servicios de este despliegue de StackKit.",
+    "El servidor adicional está registrado en este Homelab y después podrá recibir servicios de este despliegue de StackKit.",
   "ui.stacksCreatingCreationRunStatus.theManagedRuntimeIsNot":
     "El runtime gestionado aún no es totalmente accesible para el despliegue. La señal pendiente puede ser su dirección, sus credenciales o la inscripción. Techstack ha programado la siguiente comprobación.",
   "ui.stacksCreatingCreationRunStatus.theProviderOperationHasNot":
@@ -3533,15 +3446,15 @@ export const es: Record<string, string> = {
   "ui.stacksCreatingCreationRunStatus.thisDoesNotCreateAnother":
     "Esto no crea otra VM.",
   "ui.stacksCreatingCreationRunStatus.thisPairingTokenHasExpired":
-    "Este token de emparejamiento ha caducado.",
+    "Este comando ha caducado.",
   "ui.stacksCreatingCreationRunStatus.validatingTheExistingVm":
     "Validando la VM existente...",
   "ui.stacksCreatingCreationRunStatus.waitingForGuardHeartbeat":
-    "Esperando el latido del Guard…",
+    "Esperando a que tu servidor se comunique…",
   "ui.stacksCreatingCreationRunStatus.waitingForRealConnection":
-    "Esperando una conexión real",
+    "Esperando conexión",
   "ui.stacksCreatingCreationRunStatus.youWillReceiveAWorker":
-    "Recibirás un comando de instalación del worker para conectar tus Nodes a este despliegue de StackKit.",
+    "Recibirás un comando para conectar tus servidores a este despliegue de StackKit.",
   "ui.stacksId.actionPending": "{action} pendiente",
   "ui.stacksId.actions": "Acciones",
   "ui.stacksId.add": "+ Añadir",
@@ -3553,11 +3466,10 @@ export const es: Record<string, string> = {
   "ui.stacksId.credentialsConfigured.one": "{count} credencial configurada",
   "ui.stacksId.credentialsConfigured.other":
     "{count} credenciales configuradas",
-  "ui.stacksId.decommission": "Dar de baja",
-  "ui.stacksId.decommissionManagedRuntime":
-    "¿Dar de baja el runtime gestionado?",
+  "ui.stacksId.decommission": "Eliminar servidor",
+  "ui.stacksId.decommissionManagedRuntime": "¿Eliminar este servidor administrado?",
   "ui.stacksId.deleteCredential": "¿Eliminar la credencial?",
-  "ui.stacksId.deploymentFallback": "Despliegue de StackKit",
+  "ui.stacksId.deploymentFallback": "Homelab",
   "ui.stacksId.edit": "Editar",
   "ui.stacksId.editCredential": "Editar credencial",
   "ui.stacksId.enrollment": "Inscripción",
@@ -3566,12 +3478,10 @@ export const es: Record<string, string> = {
     "No se ha podido eliminar la credencial",
   "ui.stacksId.failedToLoadRuntimeStatus":
     "No se ha podido cargar el estado del runtime",
-  "ui.stacksId.failedToLoadStackkitDeployment":
-    "No se ha podido cargar el despliegue de StackKit",
+  "ui.stacksId.failedToLoadStackkitDeployment": "No se pudo cargar el homelab",
   "ui.stacksId.ingest": "Ingesta",
   "ui.stacksId.latestOperationsSnapshot": "Última instantánea de operaciones",
-  "ui.stacksId.manageCredentialsForThisStackkit":
-    "Gestiona las credenciales de este despliegue de StackKit",
+  "ui.stacksId.manageCredentialsForThisStackkit": "Controla el servidor, consulta sus servicios y gestiona las credenciales.",
   "ui.stacksId.missingCredentialsDetected":
     "Se han detectado credenciales que faltan",
   "ui.stacksId.missingSecret": "Falta el secreto",
@@ -3579,13 +3489,11 @@ export const es: Record<string, string> = {
   "ui.stacksId.monthlyRuntime": "Runtime mensual",
   "ui.stacksId.monthlyRuntimeActionFailed":
     "Error en la acción del runtime mensual",
-  "ui.stacksId.noCredentialsConfiguredForThis":
-    "No hay credenciales configuradas para este despliegue de StackKit.",
+  "ui.stacksId.noCredentialsConfiguredForThis": "No hay credenciales configuradas para este homelab.",
   "ui.stacksId.noLeaseAttached": "Sin arrendamiento asociado",
-  "ui.stacksId.noStackkitDeploymentIdProvided":
-    "No se ha proporcionado ningún ID de despliegue de StackKit",
+  "ui.stacksId.noStackkitDeploymentIdProvided": "No se ha proporcionado ningún ID de homelab",
   "ui.stacksId.offeringSpec": "{vcpus} vCPU · {memory} GB de RAM",
-  "ui.stacksId.pageTitle": "{name}: credenciales | kombify-Techstack",
+  "ui.stacksId.pageTitle": "{name} | kombify-Techstack",
   "ui.stacksId.query": "Consulta",
   "ui.stacksId.runtime": "Runtime",
   "ui.stacksId.series": "Serie",
@@ -3594,16 +3502,14 @@ export const es: Record<string, string> = {
   "ui.stacksId.sshInfo": "Información de SSH",
   "ui.stacksId.sshOff": "SSH desactivado",
   "ui.stacksId.sshOn": "SSH activado",
-  "ui.stacksId.stackkitDeploymentServices":
-    "Servicios del despliegue de StackKit",
+  "ui.stacksId.stackkitDeploymentServices": "Servicios de este homelab",
   "ui.stacksId.stackkitService": "Servicio de StackKit",
   "ui.stacksId.start": "Iniciar",
   "ui.stacksId.status": "Estado",
   "ui.stacksId.stop": "Detener",
   "ui.stacksId.stopManagedServer": "¿Detener el servidor gestionado?",
   "ui.stacksId.storedCredentials": "Credenciales guardadas",
-  "ui.stacksId.techstackWillBeginProviderCleanup":
-    "Techstack iniciará la limpieza del proveedor para este runtime gestionado.",
+  "ui.stacksId.techstackWillBeginProviderCleanup": "Techstack eliminará este servidor administrado en el proveedor, junto con sus datos.",
   "ui.stacksId.theFollowingServicesNeedCredentials":
     "Hay que configurar credenciales para los siguientes servicios:",
   "ui.stacksId.theServerShutsDownAnd":
@@ -3611,8 +3517,7 @@ export const es: Record<string, string> = {
   "ui.stacksId.thisPermanentlyRemovesTheSelected":
     "Esto elimina de forma permanente la credencial seleccionada.",
   "ui.stacksId.username": "Nombre de usuario",
-  "ui.stacksIdServersNew.addNodeKombifyTechstack":
-    "Añadir Node | kombify-Techstack",
+  "ui.stacksIdServersNew.addNodeKombifyTechstack": "Añadir servidor | kombify-Techstack",
   "ui.stacksIdServersServerId.activityHistory": "Historial de actividad",
   "ui.stacksIdServersServerId.addressesDomains": "Direcciones y dominios",
   "ui.stacksIdServersServerId.agentId": "ID del Agent",
@@ -3623,17 +3528,16 @@ export const es: Record<string, string> = {
   "ui.stacksIdServersServerId.checking": "Comprobando...",
   "ui.stacksIdServersServerId.checks": "Comprobaciones",
   "ui.stacksIdServersServerId.confirmAction": "Confirmar acción",
-  "ui.stacksIdServersServerId.confirmDecommission": "Confirmar la baja",
+  "ui.stacksIdServersServerId.confirmDecommission": "Confirmar y quitar",
   "ui.stacksIdServersServerId.confirmDetach": "Confirmar la desvinculación",
   "ui.stacksIdServersServerId.couldNotLoadServerAccess":
     "No se ha podido cargar el contexto de acceso al servidor.",
   "ui.stacksIdServersServerId.cpuCores": "Núcleos de CPU",
   "ui.stacksIdServersServerId.custodyResolutionFailed":
     "Error al resolver la custodia.",
-  "ui.stacksIdServersServerId.decommissionFailed": "Error al dar de baja.",
-  "ui.stacksIdServersServerId.decommissionServer": "Dar de baja el servidor",
-  "ui.stacksIdServersServerId.desiredListenersDurableReservationsAnd":
-    "Listeners deseados, reservas duraderas y evidencia del runtime para este Node.",
+  "ui.stacksIdServersServerId.decommissionFailed": "No se pudo quitar.",
+  "ui.stacksIdServersServerId.decommissionServer": "Quitar servidor",
+  "ui.stacksIdServersServerId.desiredListenersDurableReservationsAnd": "Listeners deseados, reservas duraderas y evidencia del runtime para este servidor.",
   "ui.stacksIdServersServerId.detachSelfOwnedServer":
     "Desvincular servidor propio",
   "ui.stacksIdServersServerId.detachServer": "Desvincular servidor",
@@ -3661,8 +3565,7 @@ export const es: Record<string, string> = {
     "En la última instantánea completa del Guard no había ninguna reserva declarada por el compilador ni ningún listener del runtime enlazado.",
   "ui.stacksIdServersServerId.noDesiredListenerIsReserved":
     "No hay ningún listener deseado reservado y el Guard no pudo completar su instantánea de listeners, por lo que los listeners del runtime siguen sin conocerse.",
-  "ui.stacksIdServersServerId.noDesiredListenerIsReserved2":
-    "No hay ningún listener deseado reservado y el Guard aún no ha informado de una instantánea de listeners para este Node.",
+  "ui.stacksIdServersServerId.noDesiredListenerIsReserved2": "No hay ningún listener deseado reservado y el Guard aún no ha informado de una instantánea de listeners para este servidor.",
   "ui.stacksIdServersServerId.noHostAddressHasBeen":
     "No se ha informado ninguna dirección de host.",
   "ui.stacksIdServersServerId.noObservedServiceEndpointsHave":
@@ -3679,8 +3582,7 @@ export const es: Record<string, string> = {
     "No se han informado dominios de servicios.",
   "ui.stacksIdServersServerId.noServicePlacementIsRecorded":
     "No hay ninguna ubicación de servicios registrada para este servidor.",
-  "ui.stacksIdServersServerId.noStackkitDeploymentEvidenceHas":
-    "Este servidor no ha informado de ninguna evidencia de despliegue de StackKit.",
+  "ui.stacksIdServersServerId.noStackkitDeploymentEvidenceHas": "Este servidor no ha informado de ninguna evidencia de la instalación de StackKit.",
   "ui.stacksIdServersServerId.notDeclared": "No declarado",
   "ui.stacksIdServersServerId.operatingSystem": "Sistema operativo",
   "ui.stacksIdServersServerId.portAllocations": "Asignaciones de puertos",
@@ -3704,8 +3606,7 @@ export const es: Record<string, string> = {
     "Secciones de detalles del servidor",
   "ui.stacksIdServersServerId.serverDetailsKombifyTechstack":
     "Detalles del servidor | kombify-Techstack",
-  "ui.stacksIdServersServerId.serverGenerationDecommissioned":
-    "Generación del servidor dada de baja",
+  "ui.stacksIdServersServerId.serverGenerationDecommissioned": "Generación del servidor quitada",
   "ui.stacksIdServersServerId.serverSettings": "Ajustes del servidor",
   "ui.stacksIdServersServerId.serviceEndpoints": "Endpoints de servicios",
   "ui.stacksIdServersServerId.servicesOnThisServerMay":
@@ -3717,16 +3618,13 @@ export const es: Record<string, string> = {
     "La generación anterior del proveedor no se puede volver a iniciar. Usa Recrear más arriba cuando se haya verificado la ausencia exacta en el proveedor y la liberación de capacidad.",
   "ui.stacksIdServersServerId.thisChangesTheSelectedServer":
     "Esto modifica el servidor seleccionado a través de su agente de StackKit inscrito.",
-  "ui.stacksIdServersServerId.thisIsConfiguredStackkitIntent":
-    "Esta es la intención de StackKit configurada; el Guard aún no ha informado de evidencia de despliegue que coincida.",
+  "ui.stacksIdServersServerId.thisIsConfiguredStackkitIntent": "Esta es la intención de StackKit configurada; el Guard aún no ha informado de evidencia de instalación que coincida.",
   "ui.stacksIdServersServerId.thisOnlyArchivesTheStale":
     "Esto solo archiva el registro de custodia obsoleto de Techstack. No elimina nada en el proveedor.",
-  "ui.stacksIdServersServerId.thisServerHasNoManaged":
-    "Este servidor no tiene ningún arrendamiento gestionado con un proveedor. Su custodia registrada no autoriza actualmente ni la baja gestionada ni la desvinculación de un servidor propio.",
+  "ui.stacksIdServersServerId.thisServerHasNoManaged": "Este servidor no tiene ningún arrendamiento gestionado con un proveedor. Su custodia registrada no autoriza actualmente ni quitar un servidor administrado ni desvincular uno propio.",
   "ui.stacksIdServersServerId.thisServerIsALegacy":
     "Este servidor es un registro de custodia heredado o sin vincular. Confirma que el recurso del proveedor ya se ha eliminado; Techstack solo archivará este registro y no llamará ni eliminará ningún recurso del proveedor.",
-  "ui.stacksIdServersServerId.thisServerIsRegisteredThrough":
-    "Este servidor está registrado a través del inventario de workers; las acciones de acceso al runtime gestionado no están asociadas.",
+  "ui.stacksIdServersServerId.thisServerIsRegisteredThrough": "Este servidor está registrado a través del inventario de servidores; las acciones de acceso al runtime gestionado no están asociadas.",
   "ui.standardBundle.additionalComputeNodeForStackKit":
     "Node de cómputo adicional para la ubicación de servicios de StackKit.",
   "ui.standardBundle.additionalNodeIntendedForStorage":
@@ -3793,11 +3691,9 @@ export const es: Record<string, string> = {
     "{name}: CPU {cpu} por ciento, memoria {ram} por ciento, disco {disk} por ciento, {services} servicios",
   "ui.strata.job": "Trabajo",
   "ui.strata.noCpuCurve": "{name}: sin datos de CPU de las últimas 24 horas",
-  "ui.strata.noNodeHasReportedYet": "Ningún Node ha informado todavía.",
-  "ui.strata.nodesNeedAttention.one":
-    "{count} de {total} Nodes necesita atención.",
-  "ui.strata.nodesNeedAttention.other":
-    "{count} de {total} Nodes necesitan atención.",
+  "ui.strata.noNodeHasReportedYet": "Ningún servidor ha informado todavía.",
+  "ui.strata.nodesNeedAttention.one": "{count} de {total} servidores necesita atención.",
+  "ui.strata.nodesNeedAttention.other": "{count} de {total} servidores necesitan atención.",
   "ui.strata.notShown": "No se muestra: no se pudo leer {items}.",
   "ui.strata.provisioning": "Aprovisionamiento",
   "ui.strata.quiet": "tranquilo",
@@ -3818,7 +3714,7 @@ export const es: Record<string, string> = {
   "ui.strataDashboard.middleRing": "Anillo intermedio",
   "ui.strataDashboard.monitoring": "Monitorización →",
   "ui.strataDashboard.noCpuDataInThe": "Sin datos de CPU en las últimas 24 h",
-  "ui.strataDashboard.nodes": "Nodes",
+  "ui.strataDashboard.nodes": "Servidores",
   "ui.strataDashboard.nothingHappenedNoRolloutsRestores":
     "No ha pasado nada: ni despliegues, ni restauraciones, ni alertas, ni interrupciones.",
   "ui.strataDashboard.outerRing": "Anillo exterior",
@@ -3834,8 +3730,7 @@ export const es: Record<string, string> = {
   "ui.substrateEnrollment.preparing": "Preparando...",
   "ui.substrateEnrollment.proxmoxHypervisorConnection":
     "Conexión con el hipervisor Proxmox",
-  "ui.substrateEnrollment.theHypervisorHostsYourNodes":
-    "El hipervisor aloja tus Nodes. Los StackKits se ejecutan dentro de invitados Ubuntu. La gestión de invitados se habilita cuando su cliente Proxmox local está configurado y autorizas la conexión. Los invitados existentes quedan fuera de la custodia de eliminación.",
+  "ui.substrateEnrollment.theHypervisorHostsYourNodes": "El hipervisor aloja tus servidores. Los StackKits se ejecutan dentro de invitados Ubuntu. La gestión de invitados se habilita cuando su cliente Proxmox local está configurado y autorizas la conexión. Los invitados existentes quedan fuera de la custodia de eliminación.",
   "ui.substrates.theRuntimeDidNotReturn":
     "El runtime no devolvió los datos solicitados.",
   "ui.taskStatus.aVerifiedStackKitDeploymentMust":
@@ -3848,14 +3743,14 @@ export const es: Record<string, string> = {
   "ui.taskStatus.buildingServiceList": "Creando la lista de servicios",
   "ui.taskStatus.callingTheStackKitsRuntimeAction":
     "Llamando a la acción del runtime de StackKits que aplica la especificación de Cloud Kit generada.",
-  "ui.taskStatus.checkingOpenTofu": "Comprobando OpenTofu",
+  "ui.taskStatus.checkingOpenTofu": "Comprobando las herramientas de configuración",
   "ui.taskStatus.checkingRolloutTarget":
-    "Comprobando el destino del despliegue",
-  "ui.taskStatus.checkingTerramate": "Comprobando Terramate",
+    "Comprobando tu servidor",
+  "ui.taskStatus.checkingTerramate": "Comprobando las herramientas de actualización",
   "ui.taskStatus.checkingThatLoginProtectedServices":
     "Comprobando que los servicios protegidos con inicio de sesión y las señales de monitorización estén disponibles tras el despliegue.",
   "ui.taskStatus.checkingTheTerramateToolchainWhen":
-    "Comprobando la cadena de herramientas de Terramate cuando el ciclo de vida del StackKit seleccionado la necesita.",
+    "Comprobando las herramientas que mantienen tu Homelab al día, cuando tu configuración las necesita.",
   "ui.taskStatus.checkingYourChoices": "Comprobando tus elecciones",
   "ui.taskStatus.collectingServiceMetadataExposedBy":
     "Recopilando los metadatos de servicios expuestos por el despliegue de StackKits.",
@@ -3888,7 +3783,7 @@ export const es: Record<string, string> = {
   "ui.taskStatus.eachServiceGetsScopedPermissions":
     "Cada servicio recibe permisos acotados. TLS se activa automáticamente cuando es posible y los servicios están aislados de forma predeterminada.",
   "ui.taskStatus.ensuringTheDeploymentTargetSatisfies":
-    "Comprobando que el destino del despliegue cumple los requisitos del runtime de StackKit.",
+    "Comprobando que tu servidor cumple los requisitos de tu Homelab.",
   "ui.taskStatus.findingTheBestStackKitFor":
     "Buscando el mejor StackKit para ti",
   "ui.taskStatus.generateDeploymentArtifacts":
@@ -3914,21 +3809,21 @@ export const es: Record<string, string> = {
   "ui.taskStatus.networkSettingsAreDerivedFrom":
     "Los ajustes de red se derivan de tu modo de acceso. Solo local usa la red interna de Docker; el acceso remoto añade la malla privada o la ruta edge gestionada adecuada al carril.",
   "ui.taskStatus.onceThisSucceedsTheNode":
-    "Cuando esto se complete correctamente, la proyección del Node permanece visible en Techstack aunque la preparación o el despliegue fallen más tarde.",
+    "Cuando esto se complete, tu servidor seguirá visible en Techstack aunque la preparación o el despliegue fallen más tarde.",
   "ui.taskStatus.opentofuReadinessIsPartOf":
     "La disponibilidad de OpenTofu forma parte del contrato de preparación de la CLI de StackKits, no de una ruta de bootstrap independiente propiedad de Techstack.",
   "ui.taskStatus.persistingConfiguration": "Guardando la configuración",
   "ui.taskStatus.persistingRolloutSpec":
     "Guardando la especificación del despliegue",
   "ui.taskStatus.preparingDocker": "Preparando Docker",
-  "ui.taskStatus.preparingNodeRegistration": "Preparando el registro del Node",
+  "ui.taskStatus.preparingNodeRegistration": "Preparando el registro del servidor",
   "ui.taskStatus.preparingOpenTelemetryHandoffDataFor":
-    "Preparando los datos de traspaso de OpenTelemetry para monitorización y operaciones.",
+    "Preparando la monitorización para que veas cómo está tu Homelab.",
   "ui.taskStatus.preparingStackKitsRuntime":
-    "Preparando el runtime de StackKits",
-  "ui.taskStatus.preparingTelemetry": "Preparando la telemetría",
+    "Preparando tu servidor",
+  "ui.taskStatus.preparingTelemetry": "Preparando la monitorización",
   "ui.taskStatus.preparingTheRuntimeMetadataUsed":
-    "Preparando los metadatos del runtime que usan la monitorización, las operaciones y la Runtime Intelligence Layer.",
+    "Preparando la información en la que se basan la monitorización y el mantenimiento diario de tu Homelab.",
   "ui.taskStatus.preparingToolsApplyingTheStackKit":
     "Preparando herramientas, aplicando el StackKit y leyendo servicios",
   "ui.taskStatus.provisionManagedRuntime": "Aprovisionar el runtime gestionado",
@@ -3938,8 +3833,8 @@ export const es: Record<string, string> = {
   "ui.taskStatus.renderingTheStackKitInfrastructureFiles":
     "Renderizando los archivos de infraestructura de StackKit que necesita el adaptador de despliegue.",
   "ui.taskStatus.requestingManagedCloudNode":
-    "Solicitando un Node de nube gestionado",
-  "ui.taskStatus.requestingManagedNode": "Solicitando un Node gestionado",
+    "Solicitando un servidor de nube gestionado",
+  "ui.taskStatus.requestingManagedNode": "Solicitando un servidor gestionado",
   "ui.taskStatus.reservingTheSubscriptionVMConnecting":
     "Reservando la VM de suscripción, conectando el runtime y preparando la telemetría",
   "ui.taskStatus.rollOutCloudKit": "Desplegar Cloud Kit",
@@ -3950,10 +3845,10 @@ export const es: Record<string, string> = {
   "ui.taskStatus.runningRestoreDrill":
     "Ejecutando el simulacro de restauración",
   "ui.taskStatus.runningSimulatedUpdateGate":
-    "Ejecutando la puerta de actualización simulada",
-  "ui.taskStatus.runningSimulationGate": "Ejecutando la puerta de simulación",
+    "Probando primero la actualización",
+  "ui.taskStatus.runningSimulationGate": "Probando primero la actualización",
   "ui.taskStatus.runningTheStackKitsCLIPrepare":
-    "Ejecutando el contrato de preparación de la CLI de StackKits en el VPS gestionado.",
+    "Instalando y comprobando lo que tu servidor necesita antes de configurar tu Homelab.",
   "ui.taskStatus.savingUnifiedSpecYamlSo":
     "Guardando unified-spec.yaml para que el despliegue sea reproducible y auditable.",
   "ui.taskStatus.savingYourChoicesToThe":
@@ -3965,7 +3860,7 @@ export const es: Record<string, string> = {
   "ui.taskStatus.stackkitsAreCuratedInfrastructureTemplates":
     "Los StackKits son plantillas de infraestructura seleccionadas. El sistema elige la que cubre tus funciones elegidas con la mínima sobrecarga.",
   "ui.taskStatus.startingTelemetryHandoff":
-    "Iniciando el traspaso de telemetría",
+    "Iniciando la monitorización",
   "ui.taskStatus.techstackConsumesStackKitArtifactsHere":
     "Techstack consume aquí los artefactos de StackKit; StackKits sigue siendo responsable de aplicarlos.",
   "ui.taskStatus.techstackRecordsTheManagedTarget":
@@ -3983,7 +3878,7 @@ export const es: Record<string, string> = {
   "ui.taskStatus.theSimulationGateProtectsThe":
     "La puerta de simulación protege el primer despliegue y los flujos de actualización posteriores frente a cambios inseguros.",
   "ui.taskStatus.theSpecContainsAllConfiguration":
-    "La especificación contiene toda la configuración necesaria para desplegar tu Homelab. Se puede versionar y reproducir en cualquier Node compatible.",
+    "La especificación contiene toda la configuración necesaria para desplegar tu Homelab. Se puede versionar y reproducir en cualquier servidor compatible.",
   "ui.taskStatus.theUnifiedSpecIsThe":
     "La especificación unificada es la entrada canónica para StackKits y la verificación del runtime.",
   "ui.taskStatus.thisChecksFeatureSelectionsAccess":
@@ -4002,7 +3897,7 @@ export const es: Record<string, string> = {
   "ui.taskStatus.validatingTheBackupAndRestore":
     "Validando la ruta de copia de seguridad y restauración antes de marcar el despliegue de StackKit como verificado.",
   "ui.taskStatus.validatingTheUpdatePathBefore":
-    "Validando la ruta de actualización antes de aplicar el despliegue al runtime gestionado.",
+    "Comprobando que la actualización funciona antes de aplicarla a tu servidor.",
   "ui.taskStatus.verificationConfirmsThatTheStackKit":
     "La verificación confirma que el despliegue de StackKit es utilizable, no solo que se generaron archivos.",
   "ui.taskStatus.verifyRollout": "Verificar el despliegue",
@@ -4012,7 +3907,7 @@ export const es: Record<string, string> = {
   "ui.taskStatus.verifyingThatAllSelectedOptions":
     "Comprobando que todas las opciones seleccionadas son válidas y compatibles entre sí.",
   "ui.taskStatus.verifyingTheInfrastructureToolchainNeeded":
-    "Verificando la cadena de herramientas de infraestructura que necesita StackKits.",
+    "Comprobando que tu servidor tiene las herramientas necesarias para configurar tu Homelab.",
   "ui.taskStatus.yourChosenAuthMethodIs":
     "El método de autenticación que elegiste se aplica a todos los servicios. Las configuraciones multiusuario reciben permisos basados en grupos automáticamente.",
   "ui.taskUpdates.anUnexpectedErrorOccurred":
@@ -4180,24 +4075,18 @@ export const es: Record<string, string> = {
     "Selecciona recursos de invitado independientes para Home Assistant OS.",
   "ui.wizardRuns.thisRunHasNoRollout":
     "Esta ejecución no tiene ningún despliegue que cancelar.",
-  "ui.worker.registryLink": "Enlace del registro de workers",
+  "ui.worker.registryLink": "Enlace del registro de servidores",
   "ui.worker.registryUrlError":
     "No se ha podido determinar automáticamente la URL del registro: {error}",
-  "ui.worker.runInstallMany":
-    "Ejecuta el comando de instalación de arriba en al menos {count} Nodes y espera a que la evidencia de operaciones confirme la conexión.",
-  "ui.worker.runInstallOne":
-    "Ejecuta el comando de instalación de arriba en tu Node y espera a que la evidencia de operaciones confirme la conexión.",
+  "ui.worker.runInstallMany": "Ejecuta el comando de instalación de arriba en al menos {count} servidores y espera a que la evidencia de operaciones confirme la conexión.",
+  "ui.worker.runInstallOne": "Ejecuta el comando de instalación de arriba en tu servidor y espera a que la evidencia de operaciones confirme la conexión.",
   "ui.worker.verifiedConnected": "{count} conectados y verificados",
-  "ui.worker.waitingVerified":
-    "Esperando workers verificados ({connected}/{required})",
+  "ui.worker.waitingVerified": "Esperando servidores verificados ({connected}/{required})",
   "ui.workerRegistrationCard.installCommand": "Comando de instalación:",
-  "ui.workerRegistrationCard.installCommandForNewWorkers":
-    "Comando de instalación para nuevos workers:",
+  "ui.workerRegistrationCard.installCommandForNewWorkers": "Comando de instalación para nuevos servidores:",
   "ui.workerRegistrationCard.nextStep": "Siguiente paso:",
-  "ui.workerRegistrationCard.operationsEvidenceIsRequiredBefore":
-    "Se necesita evidencia de operaciones antes de poder confirmar los Nodes conectados.",
-  "ui.workerRegistrationCard.workersConnectedVerified":
-    "Workers conectados (verificados)",
+  "ui.workerRegistrationCard.operationsEvidenceIsRequiredBefore": "Se necesita evidencia de operaciones antes de poder confirmar los servidores conectados.",
+  "ui.workerRegistrationCard.workersConnectedVerified": "Servidores conectados (verificados)",
   "wizard.leave.confirm":
-    "¿Salir de esta página? Las respuestas que introdujiste no están guardadas.",
+    "Las respuestas que has introducido se perderán.",
 };

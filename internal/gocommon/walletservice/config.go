@@ -3,6 +3,7 @@ package walletservice
 import (
 	"bytes"
 	"crypto/ecdh"
+	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -28,8 +29,9 @@ var serviceIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 
 // Config is everything a product needs to use the Wallet's product-service
 // routes (`/v1/wallet/service/*` on the Gateway). Origin, ServiceID,
-// ServiceSecret, RecipientKey and RecipientGeneration are required together;
-// with any of them missing or invalid the client is disabled.
+// ServiceSecret (or SigningKey) and RecipientGeneration are required together.
+// RecipientKey is required only for Deliver and Mint, which open service-sealed
+// values. An invalid supplied key disables the client.
 type Config struct {
 	// Origin is the Gateway origin, for example https://api.kombify.io. It must
 	// be https (or http on a loopback IP for local development) and carry no
@@ -45,9 +47,17 @@ type Config struct {
 	// `SERVICE_AUTH_SECRET` never admits these routes and must not be passed;
 	// this package never reads the environment.
 	ServiceSecret string
+	// SigningKey and SigningKeyID are the product's per-caller Ed25519 identity
+	// (`servicecall.LoadEd25519FromEnv`). When set, the service token is signed
+	// EdDSA under SigningKeyID and ServiceSecret is not used; the Gateway's
+	// public set for this caller must carry the key. Same claims and header as
+	// the HS256 token.
+	SigningKey   ed25519.PrivateKey
+	SigningKeyID string
 	// RecipientKey is the product's private P-256 JWK (JSON). The Wallet Store
 	// seals every delivered value to its public half, enrolled in
-	// WALLET_SERVICE_RECIPIENTS.
+	// WALLET_SERVICE_RECIPIENTS. Required for Deliver and Mint; omit it when the
+	// service only transports node-sealed envelopes or uses other operations.
 	RecipientKey string
 	// RecipientGeneration is the generation the Wallet pins for that key (a
 	// positive decimal).
@@ -79,6 +89,8 @@ type Client struct {
 	origin        string
 	serviceID     string
 	secret        string
+	signingKey    ed25519.PrivateKey
+	signingKeyID  string
 	audience      string
 	pin           string
 	recipient     *keyPair
@@ -107,7 +119,11 @@ func (c *Client) configure(cfg Config) string {
 	serviceID, secret, key := strings.TrimSpace(cfg.ServiceID), strings.TrimSpace(cfg.ServiceSecret), strings.TrimSpace(cfg.RecipientKey)
 	generation, pin := strings.TrimSpace(cfg.RecipientGeneration), strings.TrimSpace(cfg.CaptureKeyThumbprint)
 	origin, originOK := parseOrigin(cfg.Origin)
-	recipient, keyOK := parseRecipient(key, serviceID, generation)
+	var recipient *keyPair
+	keyOK := true
+	if key != "" {
+		recipient, keyOK = parseRecipient(key, serviceID, generation)
+	}
 	switch {
 	case !serviceIDPattern.MatchString(serviceID):
 		return "service_id_invalid"
@@ -125,6 +141,7 @@ func (c *Client) configure(cfg Config) string {
 		httpClient = &http.Client{}
 	}
 	c.origin, c.serviceID, c.secret, c.pin, c.recipient = origin, serviceID, secret, pin, recipient
+	c.signingKey, c.signingKeyID = cfg.SigningKey, cfg.SigningKeyID
 	c.audience = "urn:kombify:wallet:service:" + serviceID
 	c.http = httpsecurity.WithoutRedirects(httpClient)
 	c.timeout, c.brokerTimeout, c.now = orDefault(cfg.Timeout, defaultTimeout), orDefault(cfg.BrokerTimeout, defaultBrokerTimeout), cfg.Now
@@ -145,6 +162,9 @@ func orDefault(value, fallback time.Duration) time.Duration {
 // person fills them in; all four absent is simply not configured.
 func missing(cfg Config) string {
 	origin, id, secret, key := strings.TrimSpace(cfg.Origin), strings.TrimSpace(cfg.ServiceID), strings.TrimSpace(cfg.ServiceSecret), strings.TrimSpace(cfg.RecipientKey)
+	if secret == "" && cfg.SigningKey != nil {
+		secret = "ed25519"
+	}
 	switch {
 	case origin == "" && id == "" && secret == "" && key == "":
 		return reasonNotConfigured
@@ -152,8 +172,6 @@ func missing(cfg Config) string {
 		return "origin_missing"
 	case secret == "":
 		return "service_secret_missing"
-	case key == "":
-		return "recipient_key_missing"
 	}
 	return ""
 }
@@ -161,8 +179,9 @@ func missing(cfg Config) string {
 // Disabled is a client that refuses every call with ErrUnavailable.
 func Disabled() *Client { return &Client{disabled: "disabled"} }
 
-// Enabled reports whether calls reach the Wallet.
-func (c *Client) Enabled() bool { return c != nil && c.disabled == "" && c.recipient != nil }
+// Enabled reports whether authenticated calls can reach the Wallet. Deliver
+// and Mint additionally require a configured RecipientKey before any call.
+func (c *Client) Enabled() bool { return c != nil && c.disabled == "" && c.http != nil }
 
 // DisabledReason names what is missing or wrong, never a value. Empty when the
 // client is enabled.
@@ -172,7 +191,7 @@ func (c *Client) DisabledReason() string {
 		return reasonNotConfigured
 	case c.disabled != "":
 		return c.disabled
-	case c.recipient == nil:
+	case c.http == nil:
 		return reasonNotConfigured
 	}
 	return ""
@@ -180,9 +199,9 @@ func (c *Client) DisabledReason() string {
 
 // RecipientPublicJWK is the public half of the configured recipient key, as it
 // is enrolled in the Wallet's WALLET_SERVICE_RECIPIENTS. It is the zero value
-// for a disabled client.
+// for a disabled client or one without a recipient key.
 func (c *Client) RecipientPublicJWK() PublicJWK {
-	if !c.Enabled() {
+	if !c.Enabled() || c.recipient == nil {
 		return PublicJWK{}
 	}
 	return publicJWKOf(c.recipient.private.PublicKey())
@@ -191,6 +210,16 @@ func (c *Client) RecipientPublicJWK() PublicJWK {
 func (c *Client) gate() error {
 	if !c.Enabled() {
 		return errUnavailable(c.DisabledReason())
+	}
+	return nil
+}
+
+func (c *Client) gateRecipient() error {
+	if err := c.gate(); err != nil {
+		return err
+	}
+	if c.recipient == nil {
+		return errUnavailable("recipient_key_missing")
 	}
 	return nil
 }

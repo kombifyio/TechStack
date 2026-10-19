@@ -9,7 +9,7 @@ import (
 )
 
 // UserGuidance is the explain-don't-hide payload of an unavailable step
-// (FEATURE-ENTITLEMENT-UX-STANDARD 1.6; ONBOARDING-JOURNEY-STANDARD §7). It
+// (ENTITLEMENTS-ARCHITECTURE.md §13.1.6; KOMBIFY-DESIGN-SYSTEM-STANDARD.md §12.7). It
 // is the client's `StepAvailability.user_guidance` verbatim.
 type UserGuidance struct {
 	Title     string   `json:"title"`

@@ -1,4 +1,4 @@
-// Package onboarding is Techstack's half of ONBOARDING-JOURNEY-STANDARD: the
+// Package onboarding is Techstack's half of KOMBIFY-DESIGN-SYSTEM-STANDARD.md §12: the
 // journey descriptor it owns, the server-side state transitions, the derived
 // completion signals and the availability resolution. The render model is
 // NOT computed here — GET hands the client the raw descriptor, state and

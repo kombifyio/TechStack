@@ -87,7 +87,7 @@ func TestMain(m *testing.M) {
 			_ = os.RemoveAll(tempDir)
 			os.Exit(1)
 		}
-		if setEnvErr := os.Setenv("TECHSTACK_TEST_POSTGRES_URL", embedded.DSN()); setEnvErr != nil {
+		if setEnvErr := os.Setenv("TECHSTACK_TEST_POSTGRES_URL", embedded.BootstrapDSN()); setEnvErr != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "configure PostgreSQL integration DSN: %v\n", setEnvErr)
 			_ = embedded.Stop()
 			_ = os.RemoveAll(tempDir)

@@ -4,6 +4,16 @@
   import { authStore } from "#lib/stores/auth.svelte.js";
   import { WALLET_ITEM_ID } from "#lib/kombify-wallet/item-types.js";
 
+  interface Props {
+    /**
+     * "handoff" is the first sign-in and recovery card the person needs; the
+     * rest ("technical") is evidence of what was provisioned and sits in the
+     * collapsed technical details of the finished page.
+     */
+    part?: "handoff" | "technical";
+  }
+  let { part = "technical" }: Props = $props();
+
   // The kombify Wallet opens an item by id; a recovery reference that names
   // one lands on that item, anything else on the Wallet's recovery preset.
   const recoveryHref = $derived.by(() => {
@@ -14,6 +24,7 @@
   });
 </script>
 
+          {#if part === "technical"}
           {#if creation.serverProvisioningMode === "kombify-cloud" && creation.lease}
             <div
               class="bg-success/10 border border-success/30 rounded-xl p-5 mb-6"
@@ -143,7 +154,9 @@
               </p>
             </div>
           {/if}
+          {/if}
 
+          {#if part === "technical"}
           {#if creation.creationOperation === "stack" && creation.serverProvisioningMode === "kombify-cloud" && creation.proofRows.length > 0}
             <div
               data-kx="plate"
@@ -190,7 +203,9 @@
               </div>
             </div>
           {/if}
+          {/if}
 
+          {#if part === "handoff"}
           {#if creation.creationOperation === "stack" && creation.serverProvisioningMode === "kombify-cloud"}
             {#if creation.hasStackKitIdentityHandoff && creation.stackKitHandoff}
               <div
@@ -291,13 +306,22 @@
                 </h3>
                 <p class="text-sm text-warning/80">
                   {tr("ui.stacksCreatingCreationLease.theRolloutCompletedButThe")}
-                  <span class="font-mono text-foreground">stackkit_outputs</span
-                  >.
                 </p>
+                <details class="mt-3 text-xs text-muted-foreground">
+                  <summary class="cursor-pointer select-none">
+                    {tr("creation.technical.summary")}
+                  </summary>
+                  <p class="mt-1">
+                    {tr("creation.technical.handoffMissing")}
+                    <span class="font-mono text-foreground">stackkit_outputs</span>
+                  </p>
+                </details>
               </div>
             {/if}
           {/if}
+          {/if}
 
+          {#if part === "technical"}
           {#if creation.oneLinerPreviewRequired && !creation.simulationPreviewUrl}
             <div
               class="bg-info/10 border border-info/30 rounded-xl p-5 mb-6"
@@ -317,4 +341,5 @@
                 </p>
               {/if}
             </div>
+          {/if}
           {/if}

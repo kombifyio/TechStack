@@ -321,6 +321,9 @@ func runEnrolledHTTPAgentMode(runCtx context.Context, stop context.CancelFunc, c
 		// Once the control plane's key is pinned, a command binding without
 		// its signature is refused.
 		BindingSigningKeys: enrollment.BindingSigningKeys,
+		// A revocation the identity transport observed denies the next effect
+		// at once, without waiting for the revocation watcher to stop the loop.
+		AuthorityRevoked: func() bool { return guardIdentityRevoked(manager) },
 		// Only a privileged executor without NoNewPrivileges whose pinned
 		// StackKits ships `stackkit host` advertises host maintenance.
 		HostMaintenanceCapabilities: stackKitExecutor.HostMaintenanceCapabilities,

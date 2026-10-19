@@ -22,7 +22,7 @@ type UsageReader interface {
 // single decision the scanner and the routes both resolve.
 //
 // Backups are retention-limited, never gigabyte-limited
-// (BILLING-ENTITLEMENT-STANDARD §2.4, owner decision 2026-09-28): the meter
+// (ENTITLEMENTS-ARCHITECTURE.md §12.2.4, owner decision 2026-09-28): the meter
 // only records the measured basis a restore-drill renewal receipt signs, and
 // no measured size, missing measurement or unreadable meter denies a backup.
 type AdmissionConfig struct {

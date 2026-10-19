@@ -24,8 +24,10 @@ import { guardMessagesAr } from "./guard/guard-messages-ar";
 import { walletMessages } from "./kombify-wallet/wallet-messages";
 import { actorsMessages } from "./actors/actors-messages";
 import { nodesMessages } from "./nodes/nodes-messages";
+import { shellMessages } from "./shell-messages";
 import { creationTemplateMessages } from "./wizard/creation-template-messages";
 import { marketplaceMessages } from "./wizard/marketplace-messages";
+import { creationFlowMessages } from "./wizard/creation-flow-messages";
 import { connectDevicesMessages } from "./dashboard/connect-devices-messages";
 import { es } from "./locales/es";
 import { zhHans } from "./locales/zh-Hans";
@@ -53,8 +55,10 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...walletMessages.en,
     ...actorsMessages.en,
     ...nodesMessages.en,
+    ...shellMessages.en,
     ...creationTemplateMessages.en,
     ...marketplaceMessages.en,
+    ...creationFlowMessages.en,
     ...connectDevicesMessages.en,
     "wizard.creation.preferenceOnly":
       "Preference saved. This release installs the suggested service; the alternative is not applied yet.",
@@ -192,8 +196,8 @@ export const translations: Record<Locale, Record<string, string>> = {
     "onboarding.ui.continue": "Your next step",
     "hostBaseline.title": "Existing services and ports",
     "hostBaseline.preserve":
-      "This inventory check leaves existing services and data unchanged. Review this Node before adding a StackKit.",
-    "hostBaseline.loading": "Reading the Node inventory…",
+      "This inventory check leaves existing services and data unchanged. Review this server before adding a StackKit.",
+    "hostBaseline.loading": "Reading the server inventory…",
     "hostBaseline.current": "Current listener inventory received",
     "hostBaseline.incomplete":
       "Listener inventory is incomplete or out of date. Port availability is not yet verified.",
@@ -203,7 +207,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     "hostBaseline.noListeners":
       "No listeners were reported in the observed scope. Stopped applications and other namespaces may still reserve bindings.",
     "hostBaseline.recheck":
-      "Before execution, Techstack and StackKits check the required bindings again. A conflict needs a supported configuration change, another Node, or a reviewed migration; an open port does not prove public reachability.",
+      "Before execution, Techstack and StackKits check the required bindings again. A conflict needs a supported configuration change, another server, or a reviewed migration; an open port does not prove public reachability.",
     "hostBaseline.refresh": "Refresh inventory",
     "hostBaseline.review": "Review all ports and services",
 
@@ -357,13 +361,13 @@ export const translations: Record<Locale, Record<string, string>> = {
     "onboarding.techstack_platform.techstack_deploy_stackkit.title":
       "Deploy your StackKit",
     "onboarding.techstack_platform.techstack_deploy_stackkit.body":
-      "Confirm the plan and let kombify deploy the StackKit to your Homelab. This step ticks itself off once the deployment exists.",
+      "Confirm the plan and let kombify deploy the StackKit to your Homelab. This step ticks itself off once your Homelab is set up.",
     "onboarding.techstack_platform.techstack_deploy_stackkit.cta":
-      "Continue deployment",
-    "onboarding.techstack_platform.techstack_add_server.title": "Add a Node",
+      "Continue setup",
+    "onboarding.techstack_platform.techstack_add_server.title": "Add a server",
     "onboarding.techstack_platform.techstack_add_server.body":
-      "Connect a Node you own, or let kombify run one for you. Your services need somewhere to live.",
-    "onboarding.techstack_platform.techstack_add_server.cta": "Add a Node",
+      "Connect a server you own, or let kombify run one for you. Your services need somewhere to live.",
+    "onboarding.techstack_platform.techstack_add_server.cta": "Add a server",
     "onboarding.techstack_platform.techstack_deploy_service.title":
       "Open your first service",
     "onboarding.techstack_platform.techstack_deploy_service.body":
@@ -371,17 +375,17 @@ export const translations: Record<Locale, Record<string, string>> = {
     "onboarding.techstack_platform.techstack_deploy_service.cta":
       "Go to services",
     "onboarding.denied.policy_selfhost_byos.title":
-      "kombify-managed Nodes are a Cloud feature",
+      "kombify-managed servers are a Cloud feature",
     "onboarding.denied.policy_selfhost_byos.body":
-      "This installation runs self-hosted, so kombify does not provision Nodes for it. Connect a Node you own and the rest works the same.",
+      "This installation runs self-hosted, so kombify does not provision servers for it. Connect a server you own and the rest works the same.",
     "onboarding.denied.policy_selfhost_byos.next_step":
-      "Connect a Node you already run.",
+      "Connect a server you already run.",
     "onboarding.denied.required_feature_disabled.title":
-      "Managed Nodes are not active for this account",
+      "Managed servers are not active for this account",
     "onboarding.denied.required_feature_disabled.body":
-      "This account is not entitled to kombify-managed Nodes yet. You can still connect a Node you own.",
+      "This account is not entitled to kombify-managed servers yet. You can still connect a server you own.",
     "onboarding.denied.required_feature_disabled.next_step":
-      "Connect your own Node, or ask kombify support to enable managed runtime.",
+      "Connect your own server, or ask kombify support to enable managed runtime.",
 
     // Common
     "common.loading": "Loading...",
@@ -446,7 +450,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     "wizard.selfDisclosure.motivation.family": "Something for my family",
     "wizard.selfDisclosure.motivation.projects": "Work or side projects",
     "wizard.step.goals": "Goals",
-    "wizard.step.server": "Node",
+    "wizard.step.server": "Server",
     "wizard.step.access": "Access",
     "wizard.step.users": "Users",
     "wizard.step.login": "Login",
@@ -470,23 +474,23 @@ export const translations: Record<Locale, Record<string, string>> = {
     "wizard.hints.evaluating": "Shaping your best supported path…",
     "wizard.goals.smartHome.title": "Smart Home",
     "wizard.goals.smartHome.description":
-      "Home Assistant on your own Node: automations that keep working when the internet is down.",
+      "Home Assistant on your own server: automations that keep working when the internet is down.",
     "wizard.goals.smartHome.help":
-      "Turn this on and Home Assistant runs at home, controlling lights, heating and sensors locally instead of through a vendor cloud. You decide whether a Zigbee or Z-Wave stick plugged into the Node is used and whether devices on your network are discovered automatically.",
+      "Turn this on and Home Assistant runs at home, controlling lights, heating and sensors locally instead of through a vendor cloud. You decide whether a Zigbee or Z-Wave stick plugged into the server is used and whether devices on your network are discovered automatically.",
     "wizard.goals.smartHome.tip":
       "Automations keep running when your internet connection does not.",
     "wizard.goals.photos.title": "Photo Memories",
     "wizard.goals.photos.description":
       "Your own photo and video library, with backup from every phone in the household.",
     "wizard.goals.photos.help":
-      "Turn this on and your Node becomes the place your photos live: phones back up automatically, you can search by faces and places, and albums can be shared with the family without a cloud subscription. You decide whether smart search runs on the Node and where the library is stored.",
+      "Turn this on and your server becomes the place your photos live: phones back up automatically, you can search by faces and places, and albums can be shared with the family without a cloud subscription. You decide whether smart search runs on the server and where the library is stored.",
     "wizard.goals.photos.tip":
       "The easiest visible win for most homelabs: private memories without another cloud subscription.",
     "wizard.goals.media.title": "Media Streaming",
     "wizard.goals.media.description":
       "Stream your films, series and music to any TV, phone or laptop at home.",
     "wizard.goals.media.help":
-      "Turn this on and your Node serves your own media collection to every screen in the house and, if you allow remote access, on the road. You decide whether the Node's graphics card helps convert video for smaller screens and where the library is stored.",
+      "Turn this on and your server serves your own media collection to every screen in the house and, if you allow remote access, on the road. You decide whether the server's graphics card helps convert video for smaller screens and where the library is stored.",
     "wizard.goals.media.tip":
       "Use a server with enough disk and optional hardware transcoding for the smoothest experience.",
     "wizard.goals.vault.title": "Password Vault",
@@ -507,30 +511,30 @@ export const translations: Record<Locale, Record<string, string>> = {
     "wizard.goals.ai.description":
       "A private assistant that runs on your own hardware and never sends your data away.",
     "wizard.goals.ai.help":
-      "Turn this on and you get a chat assistant that runs entirely on your Node. It can work with your own documents. You decide which accelerator it uses and how large a model it loads; a GPU makes a big difference.",
+      "Turn this on and you get a chat assistant that runs entirely on your server. It can work with your own documents. You decide which accelerator it uses and how large a model it loads; a GPU makes a big difference.",
     "wizard.goals.ai.tip":
-      "Works best on stronger hardware; low-tier nodes can still be planned first.",
+      "Works best on stronger hardware; low-tier servers can still be planned first.",
     "wizard.goals.dev.title": "Dev Platform",
     "wizard.goals.dev.description":
       "Your own Git hosting, with builds and test pipelines when you want them.",
     "wizard.goals.dev.help":
-      "Turn this on and your code lives on your Node with a Gitea server the whole household or team can use. You decide whether CI runners build and test on the Node too.",
+      "Turn this on and your code lives on your server with a Gitea server the whole household or team can use. You decide whether CI runners build and test on the server too.",
     "wizard.goals.dev.tip":
       "Useful when your laptop should stay thin and repeatable environments live on the server.",
     "wizard.goals.mail.title": "Mail Server",
     "wizard.goals.mail.description":
-      "Receive and send email on your own domain, from your own Node.",
+      "Receive and send email on your own domain, from your own server.",
     "wizard.goals.mail.help":
-      "Turn this on and your Node runs a complete mail server for a domain you own. Email needs correct DNS records and a good sending reputation, so this lane records your intent first and rolls out with guidance. You decide the mail domain.",
+      "Turn this on and your server runs a complete mail server for a domain you own. Email needs correct DNS records and a good sending reputation, so this lane records your intent first and rolls out with guidance. You decide the mail domain.",
     "wizard.goals.mail.tip":
       "Mail has DNS and reputation requirements; the wizard records intent and keeps rollout gated.",
     "wizard.goals.game.title": "Game Server",
     "wizard.goals.game.description":
       "Persistent game worlds for friends, hosted at home without opening your network.",
     "wizard.goals.game.help":
-      "Turn this on and your Node hosts game servers your friends join through the kit's secure access, without exposing your home network directly. Which games are available depends on the release.",
+      "Turn this on and your server hosts game servers your friends join through the kit's secure access, without exposing your home network directly. Which games are available depends on the release.",
     "wizard.goals.game.tip":
-      "Session-based load: the Node works hard while friends play and idles in between.",
+      "Session-based load: the server works hard while friends play and idles in between.",
     "wizard.goals.storage.title":
       "Have my own local storage for photos and documents",
     "wizard.goals.storage.description":
@@ -607,7 +611,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     "wizard.goals.backend.help":
       "Which product does the job. The default is what StackKits tests most.",
     "wizard.goals.profile.help":
-      "How much of the Node this use case may use. Standard fits most homes.",
+      "How much of the server this use case may use. Standard fits most homes.",
     "wizard.goals.setting.on": "on",
     "wizard.goals.setting.off": "off",
     "wizard.goals.setting.recorded": "Saved now, applied by a later release.",
@@ -712,26 +716,25 @@ export const translations: Record<Locale, Record<string, string>> = {
     "wizard.server.title": "Give your tools a home.",
     "wizard.server.subtitle":
       "Start with what you have. We’ll guide you to the right connection.",
-    "wizard.server.join.title": "Your Homelab, one more Node.",
+    "wizard.server.join.title": "Your Homelab, one more server.",
     "wizard.server.join.description":
-      "This Node joins your existing setup. Your access, people and sign-in stay in place, so you can focus on the device.",
-    "wizard.server.command.join.review": "Confirm this Node",
+      "This server joins your existing setup. Your access, people and sign-in stay in place, so you can focus on the device.",
+    "wizard.server.command.join.review": "Confirm this server",
     "wizard.server.command.join.reviewBody":
       "Choose how this device connects. Your Homelab access, people and sign-in stay as they are.",
-    "wizard.leave.confirm":
-      "Leave this page? The answers you entered are not saved.",
+    "wizard.leave.confirm": "The answers you entered will be lost.",
     "wizard.step.inherited": "Already set for your Homelab",
     "wizard.step.existingOwner": "Your Homelab owner stays the same",
     "wizard.addApp.title": "Add application",
     "wizard.addApp.intro":
-      "Choose an application and the Node it runs on. Access, people and sign-in stay as your Homelab has them.",
+      "Choose an application and the server it runs on. Access, people and sign-in stay as your Homelab has them.",
     "wizard.addApp.catalogEmpty":
       "The catalog offers no application for this Homelab yet.",
     "wizard.addApp.recommended": "Recommended",
     "wizard.addApp.about": "About",
     "wizard.addApp.nodeTitle": "Where should {name} run?",
     "wizard.addApp.nodeUnsupported":
-      "This Node's StackKit does not offer {name}.",
+      "This server's StackKit does not offer {name}.",
     "wizard.addApp.nodeNotReady": "Not ready for rollouts yet",
     "wizard.addApp.submit": "Add application",
     "wizard.addApp.result": "{name} was added to {node}.",
@@ -745,13 +748,13 @@ export const translations: Record<Locale, Record<string, string>> = {
     "wizard.settings.open": "Edit Homelab settings",
     "wizard.settings.loadError": "Your Homelab could not be loaded.",
     "wizard.settings.empty": "No Homelab is set up yet.",
-    "wizard.settings.deployment": "StackKit deployment",
+    "wizard.settings.deployment": "Homelab setup",
     "wizard.settings.goalsElsewhere": "Add applications with Add application.",
-    "wizard.settings.serverElsewhere": "Add servers with Add Node.",
+    "wizard.settings.serverElsewhere": "Add servers with Add server.",
     "wizard.settings.accessUnsupported":
       "Access cannot be changed for a running Homelab yet.",
     "wizard.settings.openAddApplication": "Add application",
-    "wizard.settings.openAddNode": "Add Node",
+    "wizard.settings.openAddNode": "Add server",
     "wizard.settings.usersTitle": "People",
     "wizard.settings.usersIntro":
       "Invite the people you planned for this Homelab. Each one gets a personal sign-in link.",
@@ -774,7 +777,7 @@ export const translations: Record<Locale, Record<string, string>> = {
       "Have a server already? Connect it with an SSH key or password.",
     "wizard.server.remote.help":
       "Enter the address of a reachable server. Use a saved SSH key or your SSH password to connect.",
-    "wizard.server.remote.host": "Node host or IP",
+    "wizard.server.remote.host": "Server host or IP",
     "wizard.server.remote.port": "SSH port",
     "wizard.server.remote.user": "SSH user",
     "wizard.server.remote.auth": "Authentication",
@@ -960,9 +963,9 @@ export const translations: Record<Locale, Record<string, string>> = {
     "wizard.run.banner.inProgressTitle": "Your homelab is being set up",
     "wizard.run.banner.inProgressBody":
       "Setup is still running. You can watch the progress or come back later.",
-    "wizard.run.banner.pairingTitle": "A Node is waiting to be connected",
+    "wizard.run.banner.pairingTitle": "A server is waiting to be connected",
     "wizard.run.banner.pairingBody":
-      "Run the install command on your Node to finish adding it.",
+      "Run the install command on your server to finish adding it.",
     "wizard.run.banner.failedTitle": "Your homelab setup needs attention",
     "wizard.run.banner.failedBody":
       "The last setup run did not finish. Continue where you left off.",
@@ -970,7 +973,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     "wizard.run.banner.cancel": "Cancel rollout",
     "wizard.run.banner.cancelTitle": "Cancel this rollout?",
     "wizard.run.banner.cancelBody":
-      "The rollout stops and is marked as failed. The Node stays as it is, and you can start the rollout again later.",
+      "The rollout stops and is marked as failed. The server stays as it is, and you can start the rollout again later.",
     "wizard.run.banner.cancelFailed": "The rollout could not be cancelled",
     "wizard.run.banner.dismiss": "Dismiss",
     "wizard.run.banner.dismissFailed": "The notice could not be dismissed",
@@ -1015,8 +1018,10 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...walletMessages.de,
     ...actorsMessages.de,
     ...nodesMessages.de,
+    ...shellMessages.de,
     ...creationTemplateMessages.de,
     ...marketplaceMessages.de,
+    ...creationFlowMessages.de,
     ...connectDevicesMessages.de,
     ...loginMessages.de,
     ...accessUsersMessages.de,
@@ -1158,8 +1163,8 @@ export const translations: Record<Locale, Record<string, string>> = {
     "onboarding.ui.continue": "Dein nächster Schritt",
     "hostBaseline.title": "Bestehende Dienste und Ports",
     "hostBaseline.preserve":
-      "Diese Bestandsprüfung verändert bestehende Dienste und Daten nicht. Prüfe diesen Node, bevor du ein StackKit hinzufügst.",
-    "hostBaseline.loading": "Bestand des Nodes wird geladen…",
+      "Diese Bestandsprüfung verändert bestehende Dienste und Daten nicht. Prüfe diesen Server, bevor du ein StackKit hinzufügst.",
+    "hostBaseline.loading": "Bestand des Servers wird geladen…",
     "hostBaseline.current": "Aktueller Listener-Bestand empfangen",
     "hostBaseline.incomplete":
       "Der Listener-Bestand ist unvollständig oder veraltet. Die Portverfügbarkeit ist noch nicht bestätigt.",
@@ -1169,7 +1174,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     "hostBaseline.noListeners":
       "Im erfassten Bereich wurden keine Listener gemeldet. Gestoppte Anwendungen und andere Namespaces können weiterhin Bindungen beanspruchen.",
     "hostBaseline.recheck":
-      "Vor der Ausführung prüfen Techstack und StackKits die benötigten Bindungen erneut. Bei Konflikten braucht es eine unterstützte Konfigurationsänderung, einen anderen Node oder eine geprüfte Migration. Ein offener Port bestätigt keine öffentliche Erreichbarkeit.",
+      "Vor der Ausführung prüfen Techstack und StackKits die benötigten Bindungen erneut. Bei Konflikten braucht es eine unterstützte Konfigurationsänderung, einen anderen Server oder eine geprüfte Migration. Ein offener Port bestätigt keine öffentliche Erreichbarkeit.",
     "hostBaseline.refresh": "Bestand aktualisieren",
     "hostBaseline.review": "Alle Ports und Dienste prüfen",
 
@@ -1254,14 +1259,14 @@ export const translations: Record<Locale, Record<string, string>> = {
     "nav.allServices": "Alle Dienste",
     "nav.servers": "Server",
     "nav.monitoring.servers": "Server",
-    "nav.monitoring.alerts": "Alarme",
+    "nav.monitoring.alerts": "Warnungen",
     "nav.monitoring.history": "Verlauf",
     "nav.preview.services": "Dienste",
     "nav.preview.noServices": "Noch keine Dienste registriert.",
     "nav.preview.openServices": "Dienste öffnen",
     "nav.preview.monitoring": "Monitoring",
-    "nav.preview.activeAlerts": "aktive Alarme",
-    "nav.preview.noAlerts": "Keine aktiven Alarme.",
+    "nav.preview.activeAlerts": "aktive Warnungen",
+    "nav.preview.noAlerts": "Keine aktiven Warnungen.",
     "nav.preview.openMonitoring": "Monitoring öffnen",
 
     // Onboarding
@@ -1323,14 +1328,15 @@ export const translations: Record<Locale, Record<string, string>> = {
     "onboarding.techstack_platform.techstack_deploy_stackkit.title":
       "Bereitstellung fortsetzen",
     "onboarding.techstack_platform.techstack_deploy_stackkit.body":
-      "Bestätige den Plan und lass kombify das StackKit in dein Homelab ausrollen. Dieser Schritt hakt sich selbst ab, sobald die Bereitstellung existiert.",
+      "Bestätige den Plan und lass kombify das StackKit in dein Homelab ausrollen. Dieser Schritt hakt sich selbst ab, sobald dein Homelab eingerichtet ist.",
     "onboarding.techstack_platform.techstack_deploy_stackkit.cta":
-      "Bereitstellung fortsetzen",
+      "Einrichtung fortsetzen",
     "onboarding.techstack_platform.techstack_add_server.title":
-      "Node hinzufügen",
+      "Server hinzufügen",
     "onboarding.techstack_platform.techstack_add_server.body":
-      "Verbinde einen eigenen Node oder lass kombify einen betreiben. Deine Dienste brauchen einen Ort.",
-    "onboarding.techstack_platform.techstack_add_server.cta": "Node hinzufügen",
+      "Verbinde einen eigenen Server oder lass kombify einen betreiben. Deine Dienste brauchen einen Ort.",
+    "onboarding.techstack_platform.techstack_add_server.cta":
+      "Server hinzufügen",
     "onboarding.techstack_platform.techstack_deploy_service.title":
       "Ersten Dienst öffnen",
     "onboarding.techstack_platform.techstack_deploy_service.body":
@@ -1338,17 +1344,17 @@ export const translations: Record<Locale, Record<string, string>> = {
     "onboarding.techstack_platform.techstack_deploy_service.cta":
       "Zu den Diensten",
     "onboarding.denied.policy_selfhost_byos.title":
-      "Von kombify betriebene Nodes gibt es nur in der Cloud",
+      "Von kombify betriebene Server gibt es nur in der Cloud",
     "onboarding.denied.policy_selfhost_byos.body":
-      "Diese Installation läuft selbst gehostet, kombify stellt dafür keine Nodes bereit. Verbinde einen eigenen Node — der Rest funktioniert genauso.",
+      "Diese Installation läuft selbst gehostet, kombify stellt dafür keine Server bereit. Verbinde einen eigenen Server — der Rest funktioniert genauso.",
     "onboarding.denied.policy_selfhost_byos.next_step":
-      "Verbinde einen Node, den du bereits betreibst.",
+      "Verbinde einen Server, den du bereits betreibst.",
     "onboarding.denied.required_feature_disabled.title":
-      "Verwaltete Nodes sind für dieses Konto nicht aktiv",
+      "Verwaltete Server sind für dieses Konto nicht aktiv",
     "onboarding.denied.required_feature_disabled.body":
-      "Dieses Konto ist noch nicht für von kombify betriebene Nodes freigeschaltet. Ein eigener Node lässt sich trotzdem verbinden.",
+      "Dieses Konto ist noch nicht für von kombify betriebene Server freigeschaltet. Ein eigener Server lässt sich trotzdem verbinden.",
     "onboarding.denied.required_feature_disabled.next_step":
-      "Verbinde einen eigenen Node oder lass die verwaltete Laufzeit freischalten.",
+      "Verbinde einen eigenen Server oder lass die verwaltete Laufzeit freischalten.",
 
     // Common
     "common.loading": "Lädt...",
@@ -1414,7 +1420,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     "wizard.selfDisclosure.motivation.family": "Etwas für meine Familie",
     "wizard.selfDisclosure.motivation.projects": "Arbeit oder Nebenprojekte",
     "wizard.step.goals": "Ziele",
-    "wizard.step.server": "Node",
+    "wizard.step.server": "Server",
     "wizard.step.access": "Zugriff",
     "wizard.step.users": "Nutzer",
     "wizard.step.login": "Login",
@@ -1440,23 +1446,23 @@ export const translations: Record<Locale, Record<string, string>> = {
       "Dein bester unterstützter Weg wird zusammengestellt…",
     "wizard.goals.smartHome.title": "Smart Home",
     "wizard.goals.smartHome.description":
-      "Home Assistant auf deinem eigenen Node: Automationen, die auch ohne Internet weiterlaufen.",
+      "Home Assistant auf deinem eigenen Server: Automationen, die auch ohne Internet weiterlaufen.",
     "wizard.goals.smartHome.help":
-      "Ist das an, läuft Home Assistant zu Hause und steuert Licht, Heizung und Sensoren lokal statt über eine Hersteller-Cloud. Du entscheidest, ob ein am Node eingesteckter Zigbee- oder Z-Wave-Stick genutzt wird und ob Geräte im Netzwerk automatisch gefunden werden.",
+      "Ist das an, läuft Home Assistant zu Hause und steuert Licht, Heizung und Sensoren lokal statt über eine Hersteller-Cloud. Du entscheidest, ob ein am Server eingesteckter Zigbee- oder Z-Wave-Stick genutzt wird und ob Geräte im Netzwerk automatisch gefunden werden.",
     "wizard.goals.smartHome.tip":
       "Automationen laufen weiter, wenn die Internetverbindung ausfällt.",
     "wizard.goals.photos.title": "Fotoerinnerungen",
     "wizard.goals.photos.description":
       "Deine eigene Foto- und Videosammlung, mit Backup von jedem Handy im Haushalt.",
     "wizard.goals.photos.help":
-      "Ist das an, wird dein Node der Ort, an dem deine Fotos wohnen: Handys sichern automatisch, du suchst nach Gesichtern und Orten, und Alben lassen sich ohne Cloud-Abo mit der Familie teilen. Du entscheidest, ob die smarte Suche auf dem Node läuft und wo die Bibliothek liegt.",
+      "Ist das an, wird dein Server der Ort, an dem deine Fotos wohnen: Handys sichern automatisch, du suchst nach Gesichtern und Orten, und Alben lassen sich ohne Cloud-Abo mit der Familie teilen. Du entscheidest, ob die smarte Suche auf dem Server läuft und wo die Bibliothek liegt.",
     "wizard.goals.photos.tip":
       "Der sichtbarste Gewinn für die meisten Homelabs: private Erinnerungen ohne weiteres Cloud-Abo.",
     "wizard.goals.media.title": "Medien-Streaming",
     "wizard.goals.media.description":
       "Filme, Serien und Musik auf jeden Fernseher, jedes Handy und jeden Laptop zu Hause streamen.",
     "wizard.goals.media.help":
-      "Ist das an, liefert dein Node deine eigene Mediensammlung an jeden Bildschirm im Haus und – wenn du Fernzugriff erlaubst – auch unterwegs. Du entscheidest, ob die Grafikkarte des Nodes beim Umwandeln für kleine Bildschirme hilft und wo die Bibliothek liegt.",
+      "Ist das an, liefert dein Server deine eigene Mediensammlung an jeden Bildschirm im Haus und – wenn du Fernzugriff erlaubst – auch unterwegs. Du entscheidest, ob die Grafikkarte des Servers beim Umwandeln für kleine Bildschirme hilft und wo die Bibliothek liegt.",
     "wizard.goals.media.tip":
       "Ein Server mit genug Speicher und optionalem Hardware-Transcoding sorgt für das flüssigste Erlebnis.",
     "wizard.goals.vault.title": "Passwort-Tresor",
@@ -1477,30 +1483,30 @@ export const translations: Record<Locale, Record<string, string>> = {
     "wizard.goals.ai.description":
       "Ein privater Assistent auf deiner eigenen Hardware, der deine Daten nie nach draußen schickt.",
     "wizard.goals.ai.help":
-      "Ist das an, bekommst du einen Chat-Assistenten, der komplett auf deinem Node läuft und mit deinen eigenen Dokumenten arbeiten kann. Du entscheidest, welchen Beschleuniger er nutzt und wie groß das Modell ist; eine GPU macht einen großen Unterschied.",
+      "Ist das an, bekommst du einen Chat-Assistenten, der komplett auf deinem Server läuft und mit deinen eigenen Dokumenten arbeiten kann. Du entscheidest, welchen Beschleuniger er nutzt und wie groß das Modell ist; eine GPU macht einen großen Unterschied.",
     "wizard.goals.ai.tip":
-      "Läuft am besten auf stärkerer Hardware; kleine Nodes lassen sich trotzdem schon planen.",
+      "Läuft am besten auf stärkerer Hardware; kleine Server lassen sich trotzdem schon planen.",
     "wizard.goals.dev.title": "Entwicklungsplattform",
     "wizard.goals.dev.description":
       "Dein eigenes Git-Hosting, mit Builds und Test-Pipelines, wenn du sie willst.",
     "wizard.goals.dev.help":
-      "Ist das an, liegt dein Code auf deinem Node, mit einem Gitea-Server für den ganzen Haushalt oder das Team. Du entscheidest, ob CI-Runner auf dem Node auch bauen und testen.",
+      "Ist das an, liegt dein Code auf deinem Server, mit einem Gitea-Server für den ganzen Haushalt oder das Team. Du entscheidest, ob CI-Runner auf dem Server auch bauen und testen.",
     "wizard.goals.dev.tip":
       "Nützlich, wenn der Laptop schlank bleiben soll und reproduzierbare Umgebungen auf dem Server leben.",
     "wizard.goals.mail.title": "Mailserver",
     "wizard.goals.mail.description":
-      "E-Mail auf deiner eigenen Domain empfangen und senden – von deinem eigenen Node.",
+      "E-Mail auf deiner eigenen Domain empfangen und senden – von deinem eigenen Server.",
     "wizard.goals.mail.help":
-      "Ist das an, betreibt dein Node einen kompletten Mailserver für eine Domain, die dir gehört. E-Mail braucht korrekte DNS-Einträge und einen guten Versand-Ruf, deshalb hält diese Lane zuerst deine Absicht fest und rollt mit Anleitung aus. Du entscheidest die Mail-Domain.",
+      "Ist das an, betreibt dein Server einen kompletten Mailserver für eine Domain, die dir gehört. E-Mail braucht korrekte DNS-Einträge und einen guten Versand-Ruf, deshalb hält diese Lane zuerst deine Absicht fest und rollt mit Anleitung aus. Du entscheidest die Mail-Domain.",
     "wizard.goals.mail.tip":
       "E-Mail hat DNS- und Reputationsanforderungen; der Wizard hält die Absicht fest und schaltet den Rollout bewusst frei.",
     "wizard.goals.game.title": "Gameserver",
     "wizard.goals.game.description":
       "Dauerhafte Spielwelten für Freunde, zu Hause gehostet, ohne dein Netzwerk zu öffnen.",
     "wizard.goals.game.help":
-      "Ist das an, hostet dein Node Spielserver, denen Freunde über den sicheren Zugang des Kits beitreten – ohne dein Heimnetz direkt freizugeben. Welche Spiele verfügbar sind, hängt vom Release ab.",
+      "Ist das an, hostet dein Server Spielserver, denen Freunde über den sicheren Zugang des Kits beitreten – ohne dein Heimnetz direkt freizugeben. Welche Spiele verfügbar sind, hängt vom Release ab.",
     "wizard.goals.game.tip":
-      "Sitzungsbasierte Last: der Node arbeitet, während Freunde spielen, und ruht dazwischen.",
+      "Sitzungsbasierte Last: der Server arbeitet, während Freunde spielen, und ruht dazwischen.",
     "wizard.goals.storage.title":
       "Eigener lokaler Speicher für Fotos und Dokumente",
     "wizard.goals.storage.description":
@@ -1579,7 +1585,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     "wizard.goals.backend.help":
       "Welches Produkt die Arbeit macht. Der Standard ist das, was StackKits am meisten testet.",
     "wizard.goals.profile.help":
-      "Wie viel vom Node dieser Use Case nutzen darf. Standard passt für die meisten Haushalte.",
+      "Wie viel vom Server dieser Use Case nutzen darf. Standard passt für die meisten Haushalte.",
     "wizard.goals.setting.on": "an",
     "wizard.goals.setting.off": "aus",
     "wizard.goals.setting.recorded":
@@ -1686,26 +1692,25 @@ export const translations: Record<Locale, Record<string, string>> = {
     "wizard.server.title": "Gib deinen Tools ein Zuhause.",
     "wizard.server.subtitle":
       "Starte mit dem, was du hast. Wir führen dich zur passenden Verbindung.",
-    "wizard.server.join.title": "Dein Homelab bekommt einen weiteren Node.",
+    "wizard.server.join.title": "Dein Homelab bekommt einen weiteren Server.",
     "wizard.server.join.description":
-      "Dieser Node ergänzt dein bestehendes Setup. Zugriff, Personen und Anmeldung bleiben erhalten – du kümmerst dich nur um das Gerät.",
-    "wizard.server.command.join.review": "Diesen Node bestätigen",
+      "Dieser Server ergänzt dein bestehendes Setup. Zugriff, Personen und Anmeldung bleiben erhalten – du kümmerst dich nur um das Gerät.",
+    "wizard.server.command.join.review": "Diesen Server bestätigen",
     "wizard.server.command.join.reviewBody":
       "Wähle, wie sich das Gerät verbindet. Zugriff, Personen und Anmeldung deines Homelabs bleiben bestehen.",
-    "wizard.leave.confirm":
-      "Diese Seite verlassen? Deine Eingaben sind nicht gespeichert.",
+    "wizard.leave.confirm": "Deine Eingaben gehen verloren.",
     "wizard.step.inherited": "Für dein Homelab bereits festgelegt",
     "wizard.step.existingOwner": "Der Owner deines Homelabs bleibt gleich",
     "wizard.addApp.title": "Anwendung hinzufügen",
     "wizard.addApp.intro":
-      "Wähle eine Anwendung und den Node, auf dem sie läuft. Zugriff, Personen und Anmeldung bleiben, wie dein Homelab sie hat.",
+      "Wähle eine Anwendung und den Server, auf dem sie läuft. Zugriff, Personen und Anmeldung bleiben, wie dein Homelab sie hat.",
     "wizard.addApp.catalogEmpty":
       "Der Katalog bietet für dieses Homelab noch keine Anwendung an.",
     "wizard.addApp.recommended": "Empfohlen",
     "wizard.addApp.about": "Worum es geht",
     "wizard.addApp.nodeTitle": "Wo soll {name} laufen?",
     "wizard.addApp.nodeUnsupported":
-      "Das StackKit dieses Nodes bietet {name} nicht an.",
+      "Das StackKit dieses Servers bietet {name} nicht an.",
     "wizard.addApp.nodeNotReady": "Noch nicht bereit für Rollouts",
     "wizard.addApp.submit": "Anwendung hinzufügen",
     "wizard.addApp.result": "{name} wurde zu {node} hinzugefügt.",
@@ -1719,15 +1724,15 @@ export const translations: Record<Locale, Record<string, string>> = {
     "wizard.settings.open": "Homelab-Einstellungen bearbeiten",
     "wizard.settings.loadError": "Dein Homelab konnte nicht geladen werden.",
     "wizard.settings.empty": "Es ist noch kein Homelab eingerichtet.",
-    "wizard.settings.deployment": "StackKit-Deployment",
+    "wizard.settings.deployment": "Homelab-Einrichtung",
     "wizard.settings.goalsElsewhere":
       "Anwendungen fügst du mit „Anwendung hinzufügen“ hinzu.",
     "wizard.settings.serverElsewhere":
-      "Server fügst du mit „Node hinzufügen“ hinzu.",
+      "Server fügst du mit „Server hinzufügen“ hinzu.",
     "wizard.settings.accessUnsupported":
       "Der Zugriff lässt sich für ein laufendes Homelab noch nicht ändern.",
     "wizard.settings.openAddApplication": "Anwendung hinzufügen",
-    "wizard.settings.openAddNode": "Node hinzufügen",
+    "wizard.settings.openAddNode": "Server hinzufügen",
     "wizard.settings.usersTitle": "Personen",
     "wizard.settings.usersIntro":
       "Lade die Personen ein, die du für dieses Homelab geplant hast. Jede bekommt einen persönlichen Anmeldelink.",
@@ -1750,7 +1755,7 @@ export const translations: Record<Locale, Record<string, string>> = {
       "Du hast schon einen Server? Verbinde ihn mit SSH-Schlüssel oder Passwort.",
     "wizard.server.remote.help":
       "Gib die Adresse deines erreichbaren Servers ein. Verbinde ihn mit einem gespeicherten SSH-Schlüssel oder deinem SSH-Passwort.",
-    "wizard.server.remote.host": "Node-Host oder IP",
+    "wizard.server.remote.host": "Server-Host oder IP",
     "wizard.server.remote.port": "SSH-Port",
     "wizard.server.remote.user": "SSH-Benutzer",
     "wizard.server.remote.auth": "Authentifizierung",
@@ -1937,9 +1942,9 @@ export const translations: Record<Locale, Record<string, string>> = {
     "wizard.run.banner.inProgressTitle": "Dein Homelab wird eingerichtet",
     "wizard.run.banner.inProgressBody":
       "Die Einrichtung läuft noch. Du kannst den Fortschritt ansehen oder später zurückkommen.",
-    "wizard.run.banner.pairingTitle": "Ein Node wartet auf die Verbindung",
+    "wizard.run.banner.pairingTitle": "Ein Server wartet auf die Verbindung",
     "wizard.run.banner.pairingBody":
-      "Führe den Installationsbefehl auf deinem Node aus, um ihn fertig hinzuzufügen.",
+      "Führe den Installationsbefehl auf deinem Server aus, um ihn fertig hinzuzufügen.",
     "wizard.run.banner.failedTitle":
       "Deine Homelab-Einrichtung braucht Aufmerksamkeit",
     "wizard.run.banner.failedBody":
@@ -1948,7 +1953,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     "wizard.run.banner.cancel": "Rollout abbrechen",
     "wizard.run.banner.cancelTitle": "Diesen Rollout abbrechen?",
     "wizard.run.banner.cancelBody":
-      "Der Rollout stoppt und wird als fehlgeschlagen markiert. Der Node bleibt, wie er ist, und du kannst den Rollout später erneut starten.",
+      "Der Rollout stoppt und wird als fehlgeschlagen markiert. Der Server bleibt, wie er ist, und du kannst den Rollout später erneut starten.",
     "wizard.run.banner.cancelFailed":
       "Der Rollout konnte nicht abgebrochen werden",
     "wizard.run.banner.dismiss": "Ausblenden",
@@ -1992,8 +1997,10 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...walletMessages.es,
     ...actorsMessages.es,
     ...nodesMessages.es,
+    ...shellMessages.es,
     ...creationTemplateMessages.es,
     ...marketplaceMessages.es,
+    ...creationFlowMessages.es,
     ...connectDevicesMessages.es,
   },
   "zh-Hans": {
@@ -2007,8 +2014,10 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...walletMessages["zh-Hans"],
     ...actorsMessages["zh-Hans"],
     ...nodesMessages["zh-Hans"],
+    ...shellMessages["zh-Hans"],
     ...creationTemplateMessages["zh-Hans"],
     ...marketplaceMessages["zh-Hans"],
+    ...creationFlowMessages["zh-Hans"],
     ...connectDevicesMessages["zh-Hans"],
   },
   hi: {
@@ -2022,8 +2031,10 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...walletMessages.hi,
     ...actorsMessages.hi,
     ...nodesMessages.hi,
+    ...shellMessages.hi,
     ...creationTemplateMessages.hi,
     ...marketplaceMessages.hi,
+    ...creationFlowMessages.hi,
     ...connectDevicesMessages.hi,
   },
   ar: {
@@ -2037,8 +2048,10 @@ export const translations: Record<Locale, Record<string, string>> = {
     ...walletMessages.ar,
     ...actorsMessages.ar,
     ...nodesMessages.ar,
+    ...shellMessages.ar,
     ...creationTemplateMessages.ar,
     ...marketplaceMessages.ar,
+    ...creationFlowMessages.ar,
     ...connectDevicesMessages.ar,
   },
 };

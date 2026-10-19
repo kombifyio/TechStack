@@ -45,10 +45,15 @@ func SentryMiddleware(e *httpx.Event) (err error) {
 		// capturing them floods Sentry with noise (e.g. 404 router.ApiError,
 		// KOMBIFY-TECHSTACK-1). The response envelope is still rendered by the
 		// router regardless of capture.
-		configureSentryScope(hub, e)
-		hub.CaptureException(err)
-		httpx.MarkSentryCaptured(e)
-		hub.Flush(sentryServerErrorFlushTimeout)
+		if !httpx.ClientGone(e.Request.Context()) {
+			configureSentryScope(hub, e)
+			hub.WithScope(func(scope *sentry.Scope) {
+				httpx.AttachDependencyFailure(scope, e.Request.Context())
+				hub.CaptureException(err)
+			})
+			httpx.MarkSentryCaptured(e)
+			hub.Flush(sentryServerErrorFlushTimeout)
+		}
 	}
 	return err
 }

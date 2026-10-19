@@ -65,7 +65,7 @@ func providerControlBootstrapTestDSN(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = embedded.Stop() })
-	return embedded.DSN()
+	return embedded.BootstrapDSN()
 }
 
 func TestIntegrationProviderControlRuntimeBootstrapIsIdempotentAndLeastPrivilege(t *testing.T) {

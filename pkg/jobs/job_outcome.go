@@ -238,3 +238,30 @@ func jobCompletionOutcomeIsActionable(job *Job) bool {
 		return false
 	}
 }
+
+// RolloutInterruptedReason marks a rollout whose control-plane process died
+// mid-run. Re-driving it through retry-rollout is the product contract.
+const RolloutInterruptedReason = "rollout_interrupted"
+
+// InterruptedRolloutResult is the job result a reclaimer stores for such a
+// rollout: the same outcome keys a failing job records, with the retry the
+// product offers instead of a generic failure.
+func InterruptedRolloutResult(jobID string, now time.Time) (map[string]any, error) {
+	decision, err := outcome.Normalize(outcome.Decision{
+		Status: outcome.StatusFailed, ErrorCode: "JOB_EXECUTION_FAILED", ReasonCode: RolloutInterruptedReason,
+		Capability: jobOutcomeCapability(JobTypeDeploy), Retryable: true,
+		UserGuidance: &outcome.Guidance{
+			Title:     "The rollout was interrupted",
+			Body:      "Techstack restarted while this rollout was running, so it stopped before finishing. Nothing is left half-reserved; retrying starts a fresh attempt from the same plan.",
+			NextSteps: []outcome.Step{{ID: "retry-rollout", Label: "Retry the rollout", Kind: "retry"}},
+		},
+		SupportContext: map[string]any{"job_id": jobID},
+	}, now)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"last_outcome": decision, "retryable": true, "error_code": decision.ErrorCode,
+		"reason_code": decision.ReasonCode, "capability": decision.Capability, "user_guidance": decision.UserGuidance,
+	}, nil
+}

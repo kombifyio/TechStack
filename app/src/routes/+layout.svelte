@@ -53,6 +53,7 @@
     initStackIdentity,
   } from "#lib/stores/stackIdentity.js";
   import { Menu, X } from "@lucide/svelte";
+  import TechstackBrandLogo from "#lib/components/TechstackBrandLogo.svelte";
 
   let { children } = $props();
   let productIdentity = $state("");
@@ -215,8 +216,50 @@
   // former `derived(page, …)` store becomes a plain `$derived` rune.
   const isAuthPage = $derived(page.url.pathname === "/login");
 
+  let menuButton = $state<HTMLButtonElement | null>(null);
+
   function toggleSidebar() {
     sidebarOpen = !sidebarOpen;
+  }
+
+  function closeSidebar(restoreFocus = false) {
+    if (!sidebarOpen) return;
+    sidebarOpen = false;
+    if (restoreFocus) menuButton?.focus();
+  }
+
+  // Opening the drawer moves focus to its first link, so keyboard and screen
+  // reader users land in the menu they just asked for.
+  $effect(() => {
+    if (!sidebarOpen) return;
+    const frame = requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLElement>("#app-navigation a[href]")
+        ?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  });
+
+  /** Escape closes the mobile drawer and hands focus back to its button. */
+  function handleWindowKeydown(event: KeyboardEvent) {
+    // A modal dialog owns Escape while it is open; the drawer waits for it.
+    if (
+      event.key === "Escape" &&
+      sidebarOpen &&
+      !event.defaultPrevented &&
+      !document.querySelector("dialog[open]")
+    ) {
+      closeSidebar(true);
+    }
+  }
+
+  /** Skip link: move focus into the content so the next Tab starts there. */
+  function skipToContent(event: MouseEvent) {
+    const target = document.getElementById(CONTENT_PANE_ID);
+    if (!target) return;
+    event.preventDefault();
+    target.focus({ preventScroll: true });
+    target.scrollIntoView({ block: "start" });
   }
 
   /*
@@ -251,32 +294,68 @@
   <meta name="description" content="Hybrid Infrastructure Control Plane" />
 </svelte:head>
 
+<svelte:window onkeydown={handleWindowKeydown} />
+
 {#if authInitialized && isLoggedIn && !isAuthPage}
   <!-- Authenticated Layout -->
 
+  <!-- Skip link: first stop of the tab order, visible only while focused. -->
+  <a
+    href={"#" + CONTENT_PANE_ID}
+    class="skip-link"
+    data-testid="skip-to-content"
+    onclick={skipToContent}
+  >
+    {tr("shell.skipToContent")}
+  </a>
+
   {#if $showSidebar}
     <!-- Self-Hosted Mode: Full Sidebar Layout -->
-    <div data-kx="app" class="flex h-screen overflow-hidden">
-      <!-- Mobile menu button -->
-      <button
-        data-kx="control"
-        onclick={toggleSidebar}
-        class="min-[48rem]:hidden fixed top-4 left-4 z-50 rounded-lg border border-border bg-card p-2 text-foreground shadow-lg transition-colors hover:bg-accent"
-        aria-label={tr("ui.layout.toggleMenu")}
+    <div
+      data-kx="app"
+      class="flex h-screen flex-col overflow-hidden min-[48rem]:flex-row"
+    >
+      <!-- Mobile top bar: the menu button and the product mark live in a bar
+           of their own, so the page content starts below it instead of
+           running underneath a floating button. -->
+      <header
+        class="relative z-[45] flex h-14 shrink-0 items-center gap-3 border-b border-border bg-card px-4 min-[48rem]:hidden"
+        data-testid="mobile-top-bar"
       >
-        {#if sidebarOpen}
-          <X class="w-6 h-6" />
-        {:else}
-          <Menu class="w-6 h-6" />
-        {/if}
-      </button>
+        <button
+          bind:this={menuButton}
+          type="button"
+          data-kx="control"
+          onclick={toggleSidebar}
+          class="rounded-lg border border-border bg-card p-2 text-foreground transition-colors hover:bg-accent"
+          aria-label={tr("ui.layout.toggleMenu")}
+          aria-expanded={sidebarOpen}
+          aria-controls="app-navigation"
+        >
+          {#if sidebarOpen}
+            <X class="w-6 h-6" />
+          {:else}
+            <Menu class="w-6 h-6" />
+          {/if}
+        </button>
+        <a
+          href="/dashboard"
+          class="flex items-center"
+          aria-label={tr("shell.homeLink")}
+        >
+          <TechstackBrandLogo
+            collapsed
+            class="h-8 w-8 shrink-0 object-contain"
+          />
+        </a>
+      </header>
 
       <!-- Sidebar overlay for mobile -->
       {#if sidebarOpen}
         <button
           type="button"
-          class="min-[48rem]:hidden fixed inset-0 z-30 bg-black/65 backdrop-blur-[1px]"
-          onclick={toggleSidebar}
+          class="min-[48rem]:hidden fixed inset-x-0 top-14 bottom-0 z-30 bg-black/65 backdrop-blur-[1px]"
+          onclick={() => closeSidebar(true)}
           aria-label={tr("ui.layout.closeMenu")}
         ></button>
       {/if}
@@ -286,8 +365,9 @@
            desktop it remains visible in its compact 76px form; only true
            mobile uses the drawer. -->
       <div
+        id="app-navigation"
         data-onboarding-anchor="techstack-nav"
-        class="fixed inset-y-0 left-0 z-40 h-full max-w-[86vw] overflow-visible shadow-2xl transition-transform duration-300 min-[48rem]:relative min-[48rem]:max-w-none min-[48rem]:shadow-none {sidebarOpen
+        class="fixed top-14 bottom-0 left-0 z-40 max-w-[86vw] overflow-visible shadow-2xl transition-transform duration-300 motion-reduce:transition-none min-[48rem]:relative min-[48rem]:top-auto min-[48rem]:bottom-auto min-[48rem]:h-full min-[48rem]:max-w-none min-[48rem]:shadow-none {sidebarOpen
           ? 'translate-x-0'
           : '-translate-x-full min-[48rem]:translate-x-0'}"
       >
@@ -309,7 +389,9 @@
       <!-- Main content -->
       <main
         id={CONTENT_PANE_ID}
-        class="flex-1 min-w-0 overflow-auto overflow-x-hidden flex flex-col"
+        tabindex="-1"
+        inert={isMobileViewport && sidebarOpen}
+        class="flex-1 min-h-0 min-w-0 overflow-auto overflow-x-hidden flex flex-col outline-none"
       >
         <ReloginModal />
         <IntroductionHost />
@@ -322,6 +404,7 @@
           apiVersion={productIdentity}
           {instanceId}
           showLegal={authStore.deploymentMode === "saas"}
+          reserveLauncher={$deploymentMode.mode !== "saas-embedded"}
         />
       </main>
     </div>
@@ -338,7 +421,9 @@
       class="flex h-screen flex-col overflow-hidden"
     >
       <main
-        class="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto overflow-x-hidden"
+        id={CONTENT_PANE_ID}
+        tabindex="-1"
+        class="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto overflow-x-hidden outline-none"
       >
         <ReloginModal />
         <div class="min-w-0 flex-1">
@@ -356,7 +441,9 @@
 
       <!-- Main content -->
       <main
-        class="flex-1 min-w-0 overflow-auto overflow-x-hidden flex flex-col"
+        id={CONTENT_PANE_ID}
+        tabindex="-1"
+        class="flex-1 min-w-0 overflow-auto overflow-x-hidden flex flex-col outline-none"
       >
         <ReloginModal />
         <IntroductionHost />
@@ -400,3 +487,26 @@
 
 <!-- Global Keyboard Shortcuts Handler -->
 <KeyboardShortcuts />
+
+<style>
+  /* Skip link: off-screen until it has focus, then the first thing on screen. */
+  .skip-link {
+    position: fixed;
+    inset-block-start: -4rem;
+    inset-inline-start: 0.75rem;
+    z-index: 200;
+    border-radius: 0.5rem;
+    border: 1px solid var(--border);
+    background: var(--card);
+    padding: 0.5rem 0.875rem;
+    color: var(--foreground);
+    font-size: 0.875rem;
+    font-weight: 500;
+    box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+  }
+  .skip-link:focus {
+    inset-block-start: 0.75rem;
+    outline: 2px solid var(--ring, var(--primary));
+    outline-offset: 2px;
+  }
+</style>

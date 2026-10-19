@@ -16,6 +16,7 @@ import (
 
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
 	"github.com/kombifyio/techstack/pkg/guardbinding"
+	"github.com/kombifyio/techstack/pkg/guardcompat"
 	"github.com/kombifyio/techstack/pkg/stackkitcommand"
 )
 
@@ -31,7 +32,7 @@ var (
 // dispatchable. Each command carries its own window from its enqueue, and the
 // Guard checks it when the effect starts, so a caller's per-command execution
 // budget plus its result grace must end well inside it.
-const CommandAuthorityLifetime = 15 * time.Minute
+const CommandAuthorityLifetime = guardcompat.CommandAuthorityLifetime
 
 // cancelledBeforeDispatchPrefix marks the stored error of a command failed
 // while still queued, so a re-attaching reader can tell it from a real
@@ -161,7 +162,8 @@ func (h *Hub) PollForTenant(ctx context.Context, tenantID, agentID string, capab
 
 // pollInMemory hands out the next command. observeOnly withholds every
 // mutating command: a worker that authenticates with a bearer credential alone
-// may observe but never be made to change its host.
+// may observe but never be made to change its host. A mutating command is
+// refused to a worker that does not advertise the binding contract.
 func (h *Hub) pollInMemory(ctx context.Context, agentID string, capabilities []string, observeOnly bool) (*agentpb.StackKitCommand, bool, error) {
 	if h == nil {
 		return nil, false, nil
@@ -180,6 +182,17 @@ func (h *Hub) pollInMemory(ctx context.Context, agentID string, capabilities []s
 					err := &MissingCapabilityError{AgentID: agentID, Capability: capability}
 					entry.outcome <- commandOutcome{err: err}
 					return nil, false, err
+				}
+			}
+			if stackkitcommand.IsMutatingOperation(entry.command.GetOperation()) {
+				if denial := guardbinding.AdmitMutatingDispatch(capabilities); denial != nil {
+					// Mixed versions fail closed: no unbound mutation path.
+					entry.dispatched = true
+					select {
+					case entry.outcome <- commandOutcome{err: denial}:
+					default:
+					}
+					continue
 				}
 			}
 			entry.dispatched = true
@@ -279,12 +292,12 @@ func (h *Hub) sendDurable(ctx context.Context, tenantID, agentID string, command
 	result, err := tx.ExecContext(ctx, `
 		WITH cleanup AS (
 			DELETE FROM typed_agent_commands
-			WHERE tenant_id = $2 AND command_family = 'stackkit' AND state IN ('completed', 'failed') AND expires_at < now() - interval '1 day'
+			WHERE tenant_id = $2 AND command_family = 'stackkit' AND state IN ('completed', 'failed') AND expires_at < now() - make_interval(secs => $6)
 		)
 		INSERT INTO typed_agent_commands (command_id, tenant_id, agent_id, command_json, expires_at)
 		VALUES ($1, $2, $3, $4::jsonb, now() + make_interval(secs => $5))
 		ON CONFLICT (command_id) DO NOTHING
-	`, command.GetCommandId(), tenantID, agentID, payload, CommandAuthorityLifetime.Seconds())
+	`, command.GetCommandId(), tenantID, agentID, payload, CommandAuthorityLifetime.Seconds(), guardcompat.SettledCommandRetention.Seconds())
 	if err == nil {
 		var inserted int64
 		inserted, err = result.RowsAffected()

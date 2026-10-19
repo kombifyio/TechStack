@@ -3,7 +3,7 @@
   are active: both act through the Homelab identity runtime
   (/api/v1/stacks/{id}/identity), the same supported path the creation finish
   uses. Goals, Server and Access stay inactive with their reason: applications
-  and Nodes have their own operations, and access has no supported change path
+  and servers have their own operations, and access has no supported change path
   for an existing Homelab, so nothing here claims to change it.
 -->
 <script lang="ts">
@@ -12,6 +12,7 @@
   import IdentitySetup from "./owner/IdentitySetup.svelte";
   import { tr } from "#lib/i18n.svelte.js";
   import { EASY_STEPS } from "#lib/wizard/index.js";
+  import { addServerHref } from "#lib/server-links.js";
   import { operationStepPlan } from "#lib/wizard/operation-steps.js";
 
   interface Props {
@@ -55,7 +56,10 @@
     <li class="rounded-lg border border-border/70 bg-muted/20 p-3">
       <p class="font-medium text-foreground">{steps[1].label}</p>
       <p class="mt-1 text-muted-foreground">{inactiveReasons[2]}</p>
-      <a class="mt-2 inline-flex items-center gap-1 text-primary" href="/stacks/new"
+      <a
+        class="mt-2 inline-flex items-center gap-1 text-primary"
+        href={addServerHref(deploymentId)}
+        data-testid="homelab-settings-add-server"
         >{tr("wizard.settings.openAddNode")}<ArrowUpRight
           size={13}
           aria-hidden="true"

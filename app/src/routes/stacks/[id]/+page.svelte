@@ -16,6 +16,10 @@
   import StackWalletCredentials from "#lib/kombify-wallet/components/StackWalletCredentials.svelte";
   import { authStore } from "#lib/stores/auth.svelte.js";
   import Modal from "#lib/components/Modal.svelte";
+  import Button from "#lib/components/ui/Button.svelte";
+  import ErrorCallout from "#lib/components/ui/ErrorCallout.svelte";
+  import Switch from "#lib/components/ui/Switch.svelte";
+  import { toast } from "#lib/stores/toast.js";
   import { discoverServiceCredentials, type DiscoveredCredential } from "#lib/wallet/integration.js";
 
   import {
@@ -72,7 +76,11 @@
   let runtimeOfferings = $state<MonthlyRuntimeOffering[]>([]);
   let runtimeOperations = $state<MonthlyRuntimeOperation[]>([]);
   let runtimeLoading = $state(false);
-  let runtimeError = $state<string | null>(null);
+  // A runtime failure is told in plain words; the raw error text is kept
+  // aside as collapsed details.
+  let runtimeFailure = $state<{ message: string; details?: string } | null>(
+    null,
+  );
   let runtimeBusyAction = $state<string | null>(null);
   let runtimeDecommissionRequested = $state(false);
 
@@ -122,6 +130,49 @@
       (server) => server.lease_id && server.lease_id !== stack?.lease_id,
     ),
   );
+
+  // The power state this page can act on. Unknown stays actionable both ways:
+  // a state the API did not report must never lock the person out.
+  const powerState = $derived.by<"running" | "stopped" | "busy" | "unknown">(
+    () => {
+      if (runtimeBusyAction === "start" || runtimeBusyAction === "stop")
+        return "busy";
+      if (runtimeStatus?.power?.status === "pending") return "busy";
+      const raw = (
+        runtimeStatus?.status?.state ||
+        runtimeStatus?.observed_state ||
+        runtimeStatus?.desired_state ||
+        stack?.desired_state ||
+        ""
+      )
+        .trim()
+        .toLowerCase();
+      if (["running", "active", "started", "on", "ready"].includes(raw))
+        return "running";
+      if (["stopped", "off", "shutoff", "shutdown", "halted"].includes(raw))
+        return "stopped";
+      return "unknown";
+    },
+  );
+  const runtimeActionsLocked = $derived(
+    !stack?.lease_id || runtimeLoading || Boolean(runtimeBusyAction),
+  );
+  const canStart = $derived(
+    !runtimeActionsLocked &&
+      (powerState === "stopped" || powerState === "unknown"),
+  );
+  const canStop = $derived(
+    !runtimeActionsLocked &&
+      (powerState === "running" || powerState === "unknown"),
+  );
+  const sshEnabled = $derived.by<boolean | null>(() => {
+    const enabled =
+      runtimeStatus?.ssh_access?.enabled ??
+      runtimeStatus?.ssh_enabled ??
+      runtimeStatus?.ssh?.enabled ??
+      runtimeStatus?.status?.ssh_enabled;
+    return typeof enabled === "boolean" ? enabled : null;
+  });
 
   onMount(() => {
     loadData();
@@ -245,7 +296,7 @@
   ) {
     runtimeStatus = null;
     runtimeOperations = [];
-    runtimeError = null;
+    runtimeFailure = null;
     if (!currentStack?.lease_id) {
       return;
     }
@@ -261,8 +312,10 @@
       runtimeStatus = status;
       runtimeOperations = operations;
     } catch (err) {
-      runtimeError =
-        err instanceof Error ? err.message : tr("ui.stacksId.failedToLoadRuntimeStatus");
+      runtimeFailure = {
+        message: tr("ui.stacksId.failedToLoadRuntimeStatus"),
+        details: err instanceof Error ? err.message : undefined,
+      };
     } finally {
       runtimeLoading = false;
     }
@@ -299,26 +352,31 @@
       return;
     }
     runtimeBusyAction = action;
-    runtimeError = null;
+    runtimeFailure = null;
     try {
       switch (action) {
         case "start":
           runtimeStatus = await startMonthlyRuntime(leaseID);
+          toast.success(tr("stackDetail.toast.starting"));
           break;
         case "stop":
           runtimeStatus = await stopMonthlyRuntime(leaseID);
+          toast.success(tr("stackDetail.toast.stopping"));
           break;
         case "enable-ssh":
           runtimeStatus = await enableMonthlyRuntimeSSH(leaseID);
+          toast.success(tr("stackDetail.toast.sshOn"));
           break;
         case "disable-ssh":
           runtimeStatus = await disableMonthlyRuntimeSSH(leaseID);
+          toast.success(tr("stackDetail.toast.sshOff"));
           break;
         case "ssh":
           runtimeStatus = await getMonthlyRuntimeSSHInfo(leaseID);
           break;
         case "decommission":
           runtimeStatus = await decommissionMonthlyRuntime(leaseID);
+          toast.info(tr("stackDetail.toast.removing"));
           runtimeDecommissionRequested = true;
           stack = { ...stack, desired_state: "stopped" };
           stackOperations = await getStackOperations(stackId || stack.id);
@@ -326,8 +384,10 @@
       }
       runtimeOperations = await getMonthlyRuntimeOperations(leaseID);
     } catch (err) {
-      runtimeError =
-        err instanceof Error ? err.message : tr("ui.stacksId.monthlyRuntimeActionFailed");
+      runtimeFailure = {
+        message: tr("ui.stacksId.monthlyRuntimeActionFailed"),
+        details: err instanceof Error ? err.message : undefined,
+      };
     } finally {
       runtimeBusyAction = null;
     }
@@ -472,14 +532,9 @@
   }
 
   function sshStateLabel(): string {
-    const enabled =
-      runtimeStatus?.ssh_access?.enabled ??
-      runtimeStatus?.ssh_enabled ??
-      runtimeStatus?.ssh?.enabled ??
-      runtimeStatus?.status?.ssh_enabled;
-    if (enabled === true) return "enabled";
-    if (enabled === false) return "disabled";
-    return "unknown";
+    if (sshEnabled === true) return tr("switch.on");
+    if (sshEnabled === false) return tr("switch.off");
+    return stateLabel("unknown");
   }
 
   function formatRuntimeTimestamp(value?: string): string {
@@ -499,7 +554,7 @@
 <div class="bg-background min-h-full">
   <div class="container mx-auto px-4 py-8 max-w-6xl">
     <!-- Header -->
-    <div class="flex items-center justify-between mb-8">
+    <div class="flex flex-wrap items-center justify-between gap-4 mb-8">
       <div>
         <a
           href="/dashboard"
@@ -546,11 +601,12 @@
         ></div>
       </div>
     {:else if error}
-      <div
-        class="bg-destructive/10 border border-destructive/30 rounded-xl p-4 text-destructive"
-      >
-        {error}
-      </div>
+      <ErrorCallout
+        testId="stack-detail-error"
+        message={tr("stackDetail.loadError")}
+        details={error}
+        onRetry={() => void loadData()}
+      />
     {:else}
       {#each stackOperations?.servers || [] as server (server.id)}
         <ServerOperationsDetail stackId={stackId || ""} serverId={server.id} serverName={server.hostname || server.id} />
@@ -572,67 +628,50 @@
                 {stack?.lease_id || tr("ui.stacksId.noLeaseAttached")}
               </p>
             </div>
-            <div class="flex flex-wrap gap-2">
-              <button
-                data-testid="monthly-runtime-action-start"
+            <!-- Power and access: only what the current state allows is
+                 enabled, and SSH is one switch, not three buttons. -->
+            <div class="flex flex-wrap items-center gap-2">
+              <Button
+                variant="secondary"
+                testId="monthly-runtime-action-start"
                 onclick={() => runRuntimeAction("start")}
-                disabled={!stack?.lease_id ||
-                  runtimeLoading ||
-                  Boolean(runtimeBusyAction)}
-                class="px-3 py-2 text-sm rounded-lg bg-muted text-foreground hover:bg-muted/80 disabled:opacity-50"
+                disabled={!canStart}
               >
                 {tr("ui.stacksId.start")}
-              </button>
-              <button
-                data-testid="monthly-runtime-action-stop"
+              </Button>
+              <Button
+                variant="secondary"
+                testId="monthly-runtime-action-stop"
                 onclick={() => runRuntimeAction("stop")}
-                disabled={!stack?.lease_id ||
-                  runtimeLoading ||
-                  Boolean(runtimeBusyAction)}
-                class="px-3 py-2 text-sm rounded-lg bg-muted text-foreground hover:bg-muted/80 disabled:opacity-50"
+                disabled={!canStop}
               >
                 {tr("ui.stacksId.stop")}
-              </button>
-              <button
-                data-testid="monthly-runtime-action-enable-ssh"
-                onclick={() => runRuntimeAction("enable-ssh")}
-                disabled={!stack?.lease_id ||
-                  runtimeLoading ||
-                  Boolean(runtimeBusyAction)}
-                class="px-3 py-2 text-sm rounded-lg bg-muted text-foreground hover:bg-muted/80 disabled:opacity-50"
+              </Button>
+              <span
+                class="mx-1 hidden h-6 w-px bg-border sm:inline-block"
+                aria-hidden="true"
+              ></span>
+              <span id="runtime-ssh-label" class="text-sm text-muted-foreground"
+                >{tr("stackDetail.ssh.label")}</span
               >
-                {tr("ui.stacksId.sshOn")}
-              </button>
-              <button
-                data-testid="monthly-runtime-action-disable-ssh"
-                onclick={() => runRuntimeAction("disable-ssh")}
-                disabled={!stack?.lease_id ||
-                  runtimeLoading ||
-                  Boolean(runtimeBusyAction)}
-                class="px-3 py-2 text-sm rounded-lg bg-muted text-foreground hover:bg-muted/80 disabled:opacity-50"
-              >
-                {tr("ui.stacksId.sshOff")}
-              </button>
-              <button
-                data-testid="monthly-runtime-action-ssh"
+              <Switch
+                testId="monthly-runtime-ssh-switch"
+                checked={sshEnabled === true}
+                disabled={runtimeActionsLocked || sshEnabled === null}
+                label={tr("stackDetail.ssh.label")}
+                onText={tr("switch.on")}
+                offText={tr("switch.off")}
+                onchange={(next) =>
+                  runRuntimeAction(next ? "enable-ssh" : "disable-ssh")}
+              />
+              <Button
+                variant="ghost"
+                testId="monthly-runtime-action-ssh"
                 onclick={() => runRuntimeAction("ssh")}
-                disabled={!stack?.lease_id ||
-                  runtimeLoading ||
-                  Boolean(runtimeBusyAction)}
-                class="px-3 py-2 text-sm rounded-lg bg-muted text-foreground hover:bg-muted/80 disabled:opacity-50"
+                disabled={runtimeActionsLocked}
               >
-                {tr("ui.stacksId.sshInfo")}
-              </button>
-              <button
-                data-testid="monthly-runtime-action-decommission"
-                onclick={() => runRuntimeAction("decommission")}
-                disabled={!stack?.lease_id ||
-                  runtimeLoading ||
-                  Boolean(runtimeBusyAction)}
-                class="px-3 py-2 text-sm rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20 disabled:opacity-50"
-              >
-                {tr("ui.stacksId.decommission")}
-              </button>
+                {tr("stackDetail.ssh.details")}
+              </Button>
             </div>
           </div>
 
@@ -645,7 +684,7 @@
                 {selectedRuntimeOffering?.name ||
                   stack?.runtime_offering_id ||
                   runtimeStatus?.runtime_offering_id ||
-                  "unknown"}
+                  stateLabel("unknown")}
               </p>
               {#if selectedRuntimeOffering}
                 <p class="text-sm text-muted-foreground">
@@ -671,7 +710,7 @@
                 {tr("ui.stacksId.runtime")}
               </p>
               <p class="mt-1 font-medium text-foreground">
-                {runtimeLoading ? "loading" : runtimeStateLabel()}
+                {runtimeLoading ? tr("common.loadingShort") : runtimeStateLabel()}
               </p>
             </div>
             <div data-testid="monthly-runtime-ssh">
@@ -687,9 +726,16 @@
               {tr("ui.stacksId.actionPending", { action: runtimeLabel(runtimeBusyAction) })}
             </div>
           {/if}
-          {#if runtimeError}
-            <div class="px-6 pb-4 text-sm text-destructive">
-              {runtimeError}
+          {#if runtimeFailure}
+            <div class="px-6 pb-4">
+              <ErrorCallout
+                testId="monthly-runtime-error"
+                message={runtimeFailure.message}
+                details={runtimeFailure.details}
+                onRetry={stack?.lease_id && !runtimeStatus
+                  ? () => void loadMonthlyRuntimePanel()
+                  : undefined}
+              />
             </div>
           {/if}
 
@@ -735,12 +781,47 @@
         </div>
       {/if}
 
+      {#if isMonthlyRuntimeStack && !primaryRuntimeCleanupStarted}
+        <!-- The destructive action is set apart from the everyday controls
+             and always asks for confirmation. -->
+        <section
+          class="mb-6 rounded-xl border border-destructive/30 bg-destructive/5 p-5"
+          data-testid="monthly-runtime-danger-zone"
+          aria-labelledby="runtime-danger-title"
+        >
+          <div
+            class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"
+          >
+            <div class="min-w-0">
+              <h2
+                id="runtime-danger-title"
+                class="text-base font-semibold text-destructive"
+              >
+                {tr("stackDetail.remove.title")}
+              </h2>
+              <p class="mt-1 text-sm text-muted-foreground">
+                {tr("stackDetail.remove.body")}
+              </p>
+            </div>
+            <Button
+              variant="destructive"
+              class="shrink-0"
+              testId="monthly-runtime-action-decommission"
+              onclick={() => runRuntimeAction("decommission")}
+              disabled={runtimeActionsLocked}
+            >
+              {tr("ui.stacksId.decommission")}
+            </Button>
+          </div>
+        </section>
+      {/if}
+
       {#if primaryRuntimeCleanupStarted && stack?.lease_id}
         <div class="mb-6">
           <ManagedRuntimeRecreatePanel
             stackId={stackId || ""}
             leaseId={stack.lease_id}
-            serverName={stack.name || "managed server"}
+            serverName={stack.name || tr("stackDetail.managedServer")}
           />
         </div>
       {/if}
@@ -750,7 +831,7 @@
           <ManagedRuntimeRecreatePanel
             stackId={stackId || ""}
             leaseId={retired.lease_id || ""}
-            serverName={retired.hostname || "managed server"}
+            serverName={retired.hostname || tr("stackDetail.managedServer")}
           />
         </div>
       {/each}

@@ -9,7 +9,7 @@ import (
 )
 
 // EnvReleaseChannel names the release channel a deployment serves
-// (CI-CD-PLATFORM-STANDARD §4.6). Only the value "preview" (Nightly) changes
+// (CI-CD-PLATFORM-STANDARD §4.6). Only the value "preview" (Preview) changes
 // behavior; every other value, including unset, is stable.
 const EnvReleaseChannel = config.EnvReleaseChannel
 
@@ -18,7 +18,7 @@ func ReleaseChannel() string {
 	return config.ReleaseChannel()
 }
 
-// refusePreviewMigration keeps the Nightly deployment read-only against the
+// refusePreviewMigration keeps the Preview deployment read-only against the
 // shared live schema: it runs newer code on the stable database and never
 // applies migrations or genesis. Schema changes ship only through the
 // governed database delivery, code first and backward compatible. Fail closed:

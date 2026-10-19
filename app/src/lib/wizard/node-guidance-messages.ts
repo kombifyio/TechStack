@@ -37,7 +37,7 @@ export const nodeGuidanceMessages = {
     "wizard.tip.nodeJoin":
       "The device joins this StackKit and gives it more computing power or storage. Access, people and sign-in stay as they are.",
     "wizard.tip.nodeFound":
-      "Starts a separate StackKit with this device as its main Node, for example a second site or a cloud part of your Homelab.",
+      "Starts a separate StackKit with this device as its main server, for example a second site or a cloud part of your Homelab.",
     "wizard.tip.nodeSubstrate":
       "Registers a Proxmox host itself. kombify can then create and manage VMs on it for this Homelab.",
     "wizard.tip.foundationBasement":
@@ -45,7 +45,7 @@ export const nodeGuidanceMessages = {
     "wizard.tip.foundationCloud":
       "For a virtual server that kombify provides and manages for you.",
     "wizard.tip.foundationLocked":
-      "A Node that joins a StackKit always uses that StackKit’s foundation, so there is nothing to choose here.",
+      "A server that joins a StackKit always uses that StackKit’s foundation, so there is nothing to choose here.",
     "wizard.tip.roleFoundation":
       "The first and central Node of a StackKit. It runs the core services the other Nodes rely on.",
     "wizard.tip.roleWorker":
@@ -93,7 +93,7 @@ export const nodeGuidanceMessages = {
     "wizard.tip.nodeJoin":
       "Das Gerät tritt diesem StackKit bei und bringt mehr Rechenleistung oder Speicher. Zugang, Personen und Anmeldung bleiben, wie sie sind.",
     "wizard.tip.nodeFound":
-      "Startet ein eigenes StackKit mit diesem Gerät als Haupt-Node, zum Beispiel für einen zweiten Standort oder einen Cloud-Teil deines Homelabs.",
+      "Startet ein eigenes StackKit mit diesem Gerät als Haupt-Server, zum Beispiel für einen zweiten Standort oder einen Cloud-Teil deines Homelabs.",
     "wizard.tip.nodeSubstrate":
       "Registriert einen Proxmox-Host selbst. kombify kann dann VMs darauf für dieses Homelab anlegen und verwalten.",
     "wizard.tip.foundationBasement":
@@ -101,7 +101,7 @@ export const nodeGuidanceMessages = {
     "wizard.tip.foundationCloud":
       "Für einen virtuellen Server, den kombify für dich bereitstellt und verwaltet.",
     "wizard.tip.foundationLocked":
-      "Ein Node, der einem StackKit beitritt, nutzt immer dessen Grundlage. Hier gibt es daher nichts auszuwählen.",
+      "Ein Server, der einem StackKit beitritt, nutzt immer dessen Grundlage. Hier gibt es daher nichts auszuwählen.",
     "wizard.tip.roleFoundation":
       "Der erste und zentrale Node eines StackKits. Er betreibt die Kerndienste, auf die sich die anderen Nodes stützen.",
     "wizard.tip.roleWorker":

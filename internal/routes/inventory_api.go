@@ -105,6 +105,9 @@ type inventoryScope struct {
 	// tenant and ownerID stays the authenticated member; the policy must
 	// confirm the member's FGA grant before any owner row is readable.
 	householdOwnerID string
+	// ownerVerified marks that a server-side owner-scoped read confirmed the
+	// authenticated subject owns the named server (see authorizeOwnerServerOperate).
+	ownerVerified bool
 }
 
 type inventoryError struct {
@@ -347,7 +350,8 @@ func (h inventoryHandlers) httpServerAccessContext(e *httpx.Event) error {
 	if err != nil {
 		return writeInventoryHTTPError(e, err)
 	}
-	result, err := h.app.serverAccessContext(e.Request.Context(), scope, e.Request.PathValue("serverId"))
+	serverID := e.Request.PathValue("serverId")
+	result, err := h.app.serverAccessContext(e.Request.Context(), h.app.verifyServerOwner(e.Request.Context(), scope, serverID), serverID)
 	if err != nil {
 		return writeInventoryHTTPError(e, err)
 	}
@@ -386,6 +390,23 @@ func authorizeInventoryServerOperate(ctx context.Context, policy InventoryPolicy
 	return err
 }
 
+// authorizeOwnerServerOperate is the operate gate for the server's own owner:
+// when the owner-scoped store read confirms the authenticated subject owns the
+// server in the tenant, the policy authorizes without a per-server relationship
+// grant. Anyone else, including a household member naming an owner, takes the
+// policy's grant path unchanged, and a server that is not the caller's is
+// denied by that path.
+func authorizeOwnerServerOperate(ctx context.Context, policy InventoryPolicy, servers interface {
+	GetServerRuntime(ctx context.Context, tenantID, serverID string) (*controlplane.ServerRuntime, error)
+}, scope inventoryScope, serverID string) error {
+	if servers != nil && scope.householdOwnerID == "" {
+		if server, err := servers.GetServerRuntime(ctx, scope.tenantID, strings.TrimSpace(serverID)); err == nil && server != nil && serverRuntimeOwnedBy(*server, scope.ownerID) {
+			scope.ownerVerified = true
+		}
+	}
+	return authorizeInventoryServerOperate(ctx, policy, scope, serverID)
+}
+
 func rejectInventoryScopeOverrides(e *httpx.Event, allowed map[string]bool) error {
 	for key := range e.Request.URL.Query() {
 		if allowed != nil && allowed[key] {
@@ -410,6 +431,11 @@ func rejectInventorySummaryScopeOverrides(e *httpx.Event) error {
 
 func writeInventoryHTTPError(e *httpx.Event, err error) error {
 	var inventoryErr *inventoryError
+	if errors.As(err, &inventoryErr) && inventoryErr.cause != nil && inventoryErr.status >= http.StatusInternalServerError {
+		// The answer is a deliberately generic "unavailable"; keep the cause the
+		// store or the policy returned next to it.
+		httpx.RecordDependencyFailure(e, "inventory."+inventoryErr.reasonCode, inventoryErr.cause)
+	}
 	if !errors.As(err, &inventoryErr) {
 		return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Inventory unavailable", map[string]any{inventoryReasonCodeField: "inventory_unavailable"})
 	}
@@ -590,6 +616,28 @@ func (a *inventoryApplication) listServices(ctx context.Context, scope inventory
 	}, nil
 }
 
+// verifyServerOwner marks the scope as the server's owner when an owner-scoped
+// store read finds the server. Only the REST routes call it: MCP and agent
+// callers keep the policy's per-server grant.
+func (a *inventoryApplication) verifyServerOwner(ctx context.Context, scope inventoryScope, serverID string) inventoryScope {
+	serverID = strings.TrimSpace(serverID)
+	if scope.householdOwnerID != "" || a.read == nil {
+		return scope
+	}
+	ownerScope, err := controlplane.NewOwnerInventoryReadScope(scope.tenantID, scope.ownerID)
+	if err != nil {
+		return scope
+	}
+	restricted, err := ownerScope.RestrictToServer(serverID)
+	if err != nil {
+		return scope
+	}
+	if owned, err := a.read.GetInventoryServer(ctx, restricted, serverID); err == nil && owned != nil {
+		scope.ownerVerified = true
+	}
+	return scope
+}
+
 func (a *inventoryApplication) serverAccessContext(ctx context.Context, scope inventoryScope, serverID string) (inventoryServerAccessContext, error) {
 	serverID = strings.TrimSpace(serverID)
 	readScope, err := a.authorize(ctx, scope, InventoryActionOperate, controlplane.InventoryReadTargetServer, serverID)
@@ -670,6 +718,7 @@ func (a *inventoryApplication) authorize(ctx context.Context, scope inventorySco
 	decision, err := a.policy.AuthorizeInventory(ctx, InventoryAuthorization{
 		TenantID: scope.tenantID, SubjectID: scope.ownerID, HouseholdOwnerID: scope.householdOwnerID,
 		ResourceType: resourceType, ResourceID: resourceID, Action: action,
+		OwnerVerified: scope.ownerVerified,
 	})
 	rowOwner := strings.TrimSpace(scope.ownerID)
 	if scope.householdOwnerID != "" {

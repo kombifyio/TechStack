@@ -13,13 +13,14 @@ import (
 
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
 	"github.com/kombifyio/techstack/pkg/guardbinding"
+	"github.com/kombifyio/techstack/pkg/guardcompat"
 	"github.com/kombifyio/techstack/pkg/stackkitcommand"
 )
 
 const (
 	// reofferAfter throttles re-offering a dispatched command that the Guard did
 	// not list as known.
-	reofferAfter = 10 * time.Second
+	reofferAfter = guardcompat.ReofferAfter
 	// maxPollCandidates bounds the queued commands examined in one poll.
 	maxPollCandidates = 16
 )
@@ -190,6 +191,22 @@ func (h *Hub) pollBoundOnce(ctx context.Context, opts PollOptions, bound bool) (
 			continue
 		}
 		if mutating {
+			if denial := guardbinding.AdmitMutatingDispatch(opts.Capabilities); denial != nil {
+				// Mixed versions fail closed: a Guard that does not speak the binding
+				// contract stays observe-only, and the sender learns why at once.
+				if _, err := tx.ExecContext(ctx, `
+					UPDATE typed_agent_commands SET state = 'failed', error = $2, completed_at = now()
+					WHERE command_id = $1 AND state = 'queued'
+				`, c.id, denial.Error()+". "+denial.Guidance); err != nil {
+					return nil, false, err
+				}
+				if err := tx.Commit(); err != nil {
+					return nil, false, err
+				}
+				return nil, true, nil
+			}
+		}
+		if mutating {
 			var fenced bool
 			if err := tx.QueryRowContext(ctx, `
 				SELECT EXISTS (
@@ -337,31 +354,12 @@ func (h *Hub) submitReportDurable(ctx context.Context, req ReportRequest) (guard
 	if req.Result != nil && strings.TrimSpace(req.Result.GetCommandId()) != commandID {
 		return guardbinding.Acknowledgement{}, guardbinding.Denyf(guardbinding.CodeBindingMismatch, "result names another command")
 	}
-	switch report.State {
-	case guardbinding.ReportTerminal, guardbinding.ReportOutcomeUnknown, guardbinding.ReportRejected, guardbinding.ReportResolved:
-	default:
-		return guardbinding.Acknowledgement{}, guardbinding.Denyf(guardbinding.CodeResultRejected, "unknown report state %q", report.State)
-	}
-	if report.Revision < 1 || report.Revision > 1_000 {
-		return guardbinding.Acknowledgement{}, guardbinding.Denyf(guardbinding.CodeRevisionOutOfOrder, "invalid revision %d", report.Revision)
-	}
 	var result *agentpb.StackKitResult
 	if report.State == guardbinding.ReportTerminal {
 		result = req.Result
 	}
-	expected, err := report.ComputeDigest(commandID, result)
-	if err != nil {
-		return guardbinding.Acknowledgement{}, guardbinding.Denyf(guardbinding.CodeResultRejected, "terminal report without a result")
-	}
-	if expected != report.Digest {
-		return guardbinding.Acknowledgement{}, guardbinding.Denyf(guardbinding.CodeResultDigestMismatch, "report digest does not match its content")
-	}
-	if report.State == guardbinding.ReportResolved {
-		switch report.Resolution {
-		case guardbinding.ResolutionObservedConverged, guardbinding.ResolutionNotApplied, guardbinding.ResolutionEscalated:
-		default:
-			return guardbinding.Acknowledgement{}, guardbinding.Denyf(guardbinding.CodeResultRejected, "unknown resolution %q", report.Resolution)
-		}
+	if denial := report.Check(commandID, result); denial != nil {
+		return guardbinding.Acknowledgement{}, denial
 	}
 
 	tx, err := h.tenantTx(ctx, req.TenantID)
@@ -392,42 +390,30 @@ func (h *Hub) submitReportDurable(ctx context.Context, req ReportRequest) (guard
 	}
 
 	// Identical repeat: acknowledged again. Conflicting record: refused.
-	var existingDigest string
-	err = tx.QueryRowContext(ctx, `SELECT digest FROM typed_agent_command_revisions WHERE command_id = $1 AND revision = $2`, commandID, report.Revision).Scan(&existingDigest)
-	switch {
-	case err == nil && existingDigest == report.Digest:
-		return guardbinding.Acknowledgement{CommandID: commandID, Revision: report.Revision, Digest: report.Digest, Accepted: true, Acknowledged: true, Duplicate: true}, nil
-	case err == nil:
-		return guardbinding.Acknowledgement{}, guardbinding.Denyf(guardbinding.CodeRevisionConflict, "revision %d of this command is already committed with different content", report.Revision)
-	case !errors.Is(err, sql.ErrNoRows):
+	var sameRevision string
+	err = tx.QueryRowContext(ctx, `SELECT digest FROM typed_agent_command_revisions WHERE command_id = $1 AND revision = $2`, commandID, report.Revision).Scan(&sameRevision)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return guardbinding.Acknowledgement{}, err
 	}
-	if report.Revision != int64(currentRevision)+1 {
-		return guardbinding.Acknowledgement{}, guardbinding.Denyf(guardbinding.CodeRevisionOutOfOrder, "revision %d follows committed revision %d", report.Revision, currentRevision)
+	stored := guardbinding.Committed{State: state, Revision: int64(currentRevision), Digest: priorDigest.String, SameRevisionDigest: sameRevision}
+	if dispatchGeneration.Valid {
+		stored.DispatchGeneration = dispatchGeneration.Int64
 	}
-	if report.Revision == 1 {
-		if state != "dispatched" {
-			return guardbinding.Acknowledgement{}, ErrCommandNotPending
-		}
-		if report.State == guardbinding.ReportResolved {
-			return guardbinding.Acknowledgement{}, guardbinding.Denyf(guardbinding.CodeRevisionConflict, "a first revision cannot resolve an outcome")
-		}
-	} else {
-		if state != "outcome_unknown" {
-			return guardbinding.Acknowledgement{}, ErrCommandNotPending
-		}
-		if report.State == guardbinding.ReportRejected || report.PriorDigest == "" || report.PriorDigest != priorDigest.String {
-			return guardbinding.Acknowledgement{}, guardbinding.Denyf(guardbinding.CodeRevisionConflict, "a resolution must reference the evidence it supersedes")
-		}
+	if authority.Valid {
+		stored.AuthorityExpiresAt = authority.Time
 	}
-	if report.State != guardbinding.ReportRejected {
-		if dispatchGeneration.Valid && req.Generation < dispatchGeneration.Int64 {
-			return guardbinding.Acknowledgement{}, guardbinding.Denyf(guardbinding.CodeStaleGeneration, "report generation %d is older than dispatch generation %d", req.Generation, dispatchGeneration.Int64)
-		}
-		if report.State == guardbinding.ReportTerminal && authority.Valid && req.Result.GetStartedAtUnix() > 0 &&
-			time.Unix(req.Result.GetStartedAtUnix(), 0).After(authority.Time.Add(guardbinding.ResultClockMargin)) {
-			return guardbinding.Acknowledgement{}, guardbinding.Denyf(guardbinding.CodeAuthorityExpired, "the effect started after the command authority expired")
-		}
+	submission := guardbinding.Submission{Report: report, Generation: req.Generation}
+	if started := req.Result.GetStartedAtUnix(); report.State == guardbinding.ReportTerminal && started > 0 {
+		submission.StartedAt = time.Unix(started, 0)
+	}
+	duplicate, denial := guardbinding.AcceptRevision(stored, submission)
+	switch {
+	case duplicate:
+		return guardbinding.Acknowledgement{CommandID: commandID, Revision: report.Revision, Digest: report.Digest, Accepted: true, Acknowledged: true, Duplicate: true}, nil
+	case denial != nil && denial.Code == guardbinding.CodeCommandNotPending:
+		return guardbinding.Acknowledgement{}, ErrCommandNotPending
+	case denial != nil:
+		return guardbinding.Acknowledgement{}, denial
 	}
 
 	command := &agentpb.StackKitCommand{}

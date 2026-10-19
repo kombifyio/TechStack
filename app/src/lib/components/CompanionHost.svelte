@@ -4,7 +4,7 @@
    *
    * There is no Techstack panel to build. AI Platform serves the only panel
    * renderer and hosts mount it through `mountCompanion()`
-   * (AI-FLOATING-PANEL-V2-PLAN, decision 1) — so this component is a mount
+   * (internal/plans/AI-FLOATING-PANEL-V2-PLAN.md, decision 1) — so this component is a mount
    * point and a settings bridge, not a chat UI. It is deliberately small: every
    * line of local chrome here is a line that drifts from the other hosts.
    *

@@ -4,8 +4,8 @@
 // X-User-Roles headers. This package makes those values available throughout
 // the request lifecycle via context.
 //
-// Use edgeauth.Middleware (CF Edge Router) or kong.Middleware (Kong) to
-// populate the identity into context before calling FromContext().
+// Use edgeauth.Middleware to populate the identity into context before
+// calling FromContext().
 package identity
 
 import (
@@ -18,11 +18,15 @@ type contextKey struct{}
 // Identity holds the user identity injected by the Cloudflare Edge Router
 // (formerly Kong Gateway) after Auth0 JWT validation.
 type Identity struct {
-	UserID string   `json:"user_id,omitempty"`
-	OrgID  string   `json:"org_id,omitempty"`
-	Email  string   `json:"email,omitempty"`
-	Tier   string   `json:"tier,omitempty"`
-	Roles  []string `json:"roles,omitempty"`
+	UserID string `json:"user_id,omitempty"`
+	OrgID  string `json:"org_id,omitempty"`
+	Email  string `json:"email,omitempty"`
+	// EmailVerified is true only when a verified source (an OIDC ID token
+	// or a verified service-call token) asserted email_verified=true. It
+	// defaults to false: a missing or unverified claim never counts as verified.
+	EmailVerified bool     `json:"email_verified,omitempty"`
+	Tier          string   `json:"tier,omitempty"`
+	Roles         []string `json:"roles,omitempty"`
 }
 
 // IsAuthenticated returns true if at least a UserID is present.

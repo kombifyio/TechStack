@@ -31,6 +31,7 @@ func (h *serviceRuntimeHandlers) serviceMetrics(e *httpx.Event) error {
 		return httpx.NotFound(e, "Service not found")
 	}
 	if err != nil {
+		httpx.RecordDependencyFailure(e, "service_metrics.runtime", err)
 		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Service inventory is unavailable", nil)
 	}
 	stack, err := h.stacks.GetStack(e.Request.Context(), tenantID, service.StackID)
@@ -38,6 +39,7 @@ func (h *serviceRuntimeHandlers) serviceMetrics(e *httpx.Event) error {
 		return httpx.NotFound(e, "Service not found")
 	}
 	if err != nil {
+		httpx.RecordDependencyFailure(e, "service_metrics.stack", err)
 		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Service authorization is unavailable", nil)
 	}
 	if h.metrics == nil {

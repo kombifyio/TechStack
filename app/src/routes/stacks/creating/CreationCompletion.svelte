@@ -3,7 +3,7 @@
   import HostBaselineSummary from "#lib/components/HostBaselineSummary.svelte";
   import IdentitySetup from "#lib/components/wizard/owner/IdentitySetup.svelte";
   import GuardReadinessLadder from "#lib/components/guard/GuardReadinessLadder.svelte";
-  import { tr } from "#lib/i18n.svelte.js";
+  import { formatDateTime, tr } from "#lib/i18n.svelte.js";
   import { TriangleAlert } from "@lucide/svelte";
   import CreationDegraded from "./CreationDegraded.svelte";
 </script>
@@ -36,14 +36,10 @@
         </svg>
       </div>
     {/if}
-    <div>
-      <h2 class="text-xl font-semibold text-foreground">
-        {creation.completionTitle}
-      </h2>
-      <p class="text-muted-foreground text-sm">
-        {creation.completionSubtitle}
-      </p>
-    </div>
+    <!-- The page's h1 already states the outcome; this says what it means. -->
+    <p class="text-muted-foreground text-sm">
+      {creation.completionSubtitle}
+    </p>
   </div>
 </div>
 
@@ -59,19 +55,28 @@
     <p class="text-xs font-semibold uppercase tracking-wide text-success">
       {tr("ui.stacksCreatingCreationCompletion.guardHeartbeatVerified")}
     </p>
-    <h3 class="mt-1 text-lg font-semibold text-foreground">
+    <h2 class="mt-1 text-lg font-semibold text-foreground">
       {creation.connectedServer.name}
-    </h3>
+    </h2>
     <p class="mt-2 text-sm text-muted-foreground">
       {tr("ui.stacksCreatingCreationCompletion.techstackNowSeesThisNode")}
     </p>
     {#if creation.connectedServer.connection.last_heartbeat_at}
-      <p class="mt-3 text-xs text-muted-foreground">
-        {tr("ui.stacksCreatingCreationCompletion.lastGuardHeartbeat")}
-        <span class="font-mono"
-          >{creation.connectedServer.connection.last_heartbeat_at}</span
-        >
-      </p>
+      <details class="mt-3 text-xs text-muted-foreground">
+        <summary class="cursor-pointer select-none">
+          {tr("creation.technical.summary")}
+        </summary>
+        <p class="mt-1">
+          {tr("ui.stacksCreatingCreationCompletion.lastGuardHeartbeat")}
+          <time
+            class="font-mono"
+            datetime={creation.connectedServer.connection.last_heartbeat_at}
+            >{formatDateTime(
+              creation.connectedServer.connection.last_heartbeat_at,
+            )}</time
+          >
+        </p>
+      </details>
     {/if}
   </section>
 {/if}
@@ -111,9 +116,9 @@
               ? tr("ui.stacksCreatingCreationCompletion.managedProvisioningComplete")
               : tr("ui.stacksCreatingCreationCompletion.rolloutComplete")}
           </p>
-          <h3 class="mt-1 text-2xl font-semibold text-foreground">
+          <h2 class="mt-1 text-2xl font-semibold text-foreground">
             {tr("wizard.identity.installationComplete")}
-          </h3>
+          </h2>
           <p class="mt-2 max-w-2xl text-sm text-muted-foreground">
             {tr("wizard.identity.installationDescription")}
           </p>
@@ -148,7 +153,9 @@
           {/if}
         </div>
         <div data-kx="plate" class="p-3">
-          <p class="text-xs text-muted-foreground">{tr("ui.services.node")}</p>
+          <p class="text-xs text-muted-foreground">
+            {tr("creation.complete.server")}
+          </p>
           <p class="mt-1 truncate text-sm font-semibold text-foreground">
             {creation.lease?.host ||
               creation.lease?.publicIp ||
@@ -217,12 +224,12 @@
     <p class="text-xs font-semibold uppercase tracking-wide text-info">
       {tr("ui.stacksCreatingCreationCompletion.ownerPrepared")}
     </p>
-    <h3 class="mt-1 text-lg font-semibold text-foreground">
+    <h2 class="mt-1 text-lg font-semibold text-foreground">
       {creation.ownerSeedSummary?.displayName ||
         creation.ownerSeedSummary?.username ||
         creation.ownerSeedSummary?.email ||
         tr("ui.stacksCreatingCreationCompletion.ownerSeedReady")}
-    </h3>
+    </h2>
     <p class="mt-2 max-w-2xl text-sm text-muted-foreground">
       {#if creation.ownerSeedSummary?.source === "cloud-linked"}
         {tr("ui.stacksCreatingCreationCompletion.theOwnerIdentityDerivesFrom")}

@@ -16,8 +16,8 @@ export const screenMessages = {
     "state.connected": "connected",
     "state.connecting": "connecting",
     "state.consistent": "consistent",
-    "state.decommissioned": "decommissioned",
-    "state.decommissioning": "decommissioning",
+    "state.decommissioned": "removed",
+    "state.decommissioning": "being removed",
     "state.degraded": "degraded",
     "state.deploying": "deploying",
     "state.enrolling": "enrolling",
@@ -161,20 +161,17 @@ export const screenMessages = {
     "ui.common.sourceValue": "Source: {value}",
     "ui.common.unknown": "unknown",
     "ui.completeDashboard.allServices": "All services →",
-    "ui.completeDashboard.nodesApps": "Nodes & apps",
+    "ui.completeDashboard.nodesApps": "Servers & apps",
     "ui.configFlow.apiUnreachable":
       "The API server is not reachable from your browser.",
     "ui.configFlow.apiUnreachableAt":
       "The API server at {base} is not reachable from your browser.",
     "ui.configFlow.capability": "Capability: {value}",
-    "ui.configFlow.corsHint":
-      "If the backend is running but the browser blocks the request (CORS), open DevTools → Console and look for a CORS error.",
     "ui.configFlow.createFailedAt": "Create failed at: {phase}",
     "ui.configFlow.deploymentNameExists":
-      'A StackKit deployment named "{name}" already exists in your Homelab. Open the existing deployment or choose a different name.',
+      "A Homelab named “{name}” already exists. Open the existing one instead.",
     "ui.configFlow.errorCode": "Error code: {value}",
     "ui.configFlow.missingFeatures": "Missing features: {value}",
-    "ui.configFlow.nextStep": "Next step: {value}",
     "ui.configFlow.nextSteps": "Next steps:",
     "ui.configFlow.pleaseFix": "Please fix the following:",
     "ui.configFlow.provider": "Provider: {value}",
@@ -188,24 +185,25 @@ export const screenMessages = {
     "ui.configFlow.step": "Step: {value}",
     "ui.configFlow.technicalDetails": "Technical details: {value}",
     "ui.configurationFlow.aPreviousSubmissionAlreadyCompleted":
-      "A previous submission already completed",
+      "This was already submitted",
     "ui.configurationFlow.anEarlierSubmissionFromThis":
-      "An earlier submission from this browser session already completed with different answers. A fresh attempt key was generated — submit again, or open the existing deployment.",
+      "An earlier submission from this browser tab already went through with different answers. Create again to submit your current answers, or open the existing Homelab.",
     "ui.configurationFlow.anUnexpectedErrorOccurredPlease":
-      "An unexpected error occurred. Please check the browser console for details.",
+      "Something unexpected went wrong. Try again. If it keeps happening, contact support and share the technical details.",
     "ui.configurationFlow.authenticationRequired": "Authentication required",
-    "ui.configurationFlow.cannotConnectToBackend": "Cannot connect to backend",
-    "ui.configurationFlow.deploymentFailed": "Deployment failed",
+    "ui.configurationFlow.cannotConnectToBackend":
+      "kombify Techstack can't be reached",
+    "ui.configurationFlow.deploymentFailed": "Your Homelab couldn't be created",
     "ui.configurationFlow.managedServerIsNotActive":
       "Managed server is not active",
     "ui.configurationFlow.permissionDenied": "Permission denied",
     "ui.configurationFlow.retryingIsUnlikelyToHelp":
-      "Retrying is unlikely to help until the server-side issue is fixed.",
-    "ui.configurationFlow.serverError": "Server error",
+      "Trying again won't help until we've fixed the problem on our side.",
+    "ui.configurationFlow.serverError": "Something went wrong on our side",
     "ui.configurationFlow.stackkitDeploymentNameAlreadyExists":
-      "StackKit deployment name already exists",
+      "A Homelab with this name already exists",
     "ui.configurationFlow.theBackendRejectedThisStackkit":
-      "The backend rejected this StackKit deployment request with a conflict.",
+      "A Homelab like this already exists, so creating it again was refused. Open the existing one instead.",
     "ui.configurationFlow.useTheAdminPasswordConfigured":
       "(use the admin password configured for this instance)",
     "ui.configurationFlow.validatingConfiguration":
@@ -213,17 +211,17 @@ export const screenMessages = {
     "ui.configurationFlow.validatingWithStackkits":
       "Validating with StackKits...",
     "ui.configurationFlow.youCanRetryIfThis":
-      "You can retry. If this happens again, share the error code and request ID with support.",
+      "Try again. If it keeps happening, contact support and share the technical details.",
     "ui.configurationFlow.youDonTHavePermission":
-      "You don't have permission to deploy StackKits, and the server did not provide a specific reason. Please share this with support.",
+      "You don't have permission to create a Homelab here. If you think that's wrong, contact support and share the technical details.",
     "ui.configurationFlow.youMustBeLoggedIn":
-      "You must be logged in to deploy a StackKit.",
+      "Please sign in to create your Homelab.",
     "ui.configurationFlow.youMustBeLoggedIn2":
-      "You must be logged in to deploy a StackKit. Please log in first.",
+      "You need to be signed in to create your Homelab. Please sign in first.",
     "ui.connectDevices.techstackClient": "Techstack client",
     "ui.creationCompletion.ownerSeedFor":
-      "The owner seed is prepared for {email}.",
-    "ui.creationController.theAdditionalNode": "The additional Node",
+      "Your owner account is prepared for {email}.",
+    "ui.creationController.theAdditionalNode": "The additional server",
     "ui.creationFailure.lease": "Lease",
     "ui.creationInstall.previewExpires": "Preview expires at {time}",
     "ui.creationLease.sshHost":
@@ -237,7 +235,7 @@ export const screenMessages = {
     "ui.creationRequirements.minVersion": "min: {version}",
     "ui.creationRun.notConnectedYet": "Not connected yet",
     "ui.creationRun.notReachableYet": "Not reachable yet",
-    "ui.creationRun.pairingTokenExpires": "Pairing token expires at {slot}.",
+    "ui.creationRun.pairingTokenExpires": "This command works until {slot}.",
     "ui.creationRun.resumeStartingAt":
       "Starting at {time}, the server can authorize a safe resume on the same VM.",
     "ui.creationRun.stepOf": "Step {step} of {total}",
@@ -292,17 +290,17 @@ export const screenMessages = {
       "What this tool is for, who uses it, and any launch context...",
     "ui.crypto.decryptionFailedWrongPassword":
       "Decryption failed. Wrong password?",
-    "ui.custody.leasesWithoutNode.one": "{count} lease without a Node",
-    "ui.custody.leasesWithoutNode.other": "{count} leases without a Node",
+    "ui.custody.leasesWithoutNode.one": "{count} lease without a server",
+    "ui.custody.leasesWithoutNode.other": "{count} leases without a server",
     "ui.custody.wasAddress": "was {ip}",
-    "ui.custodyLeasesPanel.decommissioning": "Decommissioning...",
+    "ui.custodyLeasesPanel.decommissioning": "Removing...",
     "ui.custodyLeasesPanel.leaseArchived": "Lease archived",
     "ui.custodyLeasesPanel.leaseCancelled": "Lease cancelled",
     "ui.custodyLeasesPanel.neverObserved": "Never observed",
     "ui.custodyLeasesPanel.noExecutionAuthorityLegacyOr":
       "No execution authority (legacy or unbound lease)",
     "ui.custodyLeasesPanel.nodeNeverFinishedEnrolling":
-      "Node never finished enrolling",
+      "Server never finished enrolling",
     "ui.custodyLeasesPanel.resolving": "Resolving...",
     "ui.custodyLeasesPanel.vmNoLongerExistsAt":
       "VM no longer exists at the provider",
@@ -367,23 +365,23 @@ export const screenMessages = {
       "Services come from two sources: a completed StackKit rollout, and the containers and units the Agent discovers on the host. Neither source has been observed yet: no StackKit manifest was found and the agent ran no service discovery.",
     "ui.homelab.onlineCount": "{count} online",
     "ui.homelab.operationsNotLoaded.one":
-      "{count} StackKit deployment operation could not be loaded.",
+      "{count} homelab operation could not be loaded.",
     "ui.homelab.operationsNotLoaded.other":
-      "{count} StackKit deployment operations could not be loaded.",
-    "ui.homelab.partialRolloutBadge": "partial rollout",
+      "{count} homelab operations could not be loaded.",
+    "ui.homelab.partialRolloutBadge": "setup incomplete",
     "ui.homelab.phase": "Phase: {phase}",
     "ui.homelab.preparationFailed":
-      "StackKit preparation failed on connected Node — {detail}",
+      "StackKit preparation failed on connected server — {detail}",
     "ui.homelab.probeAnswered":
       "The runtime answered the probe and the Guard heartbeat is current ({state}).",
     "ui.homelab.probeOffline":
-      'The provider reports the machine as "{machineState}" and enrollment as "{enrollment}". Reconnect can only re-run that probe — it cannot restart the kombify Agent on the machine. The Node stays offline until the Agent sends a heartbeat again, so continue in the Node details, where the enrollment command and the last contact are shown.',
+      'The provider reports the machine as "{machineState}" and enrollment as "{enrollment}". Reconnect can only re-run that probe — it cannot restart the kombify Agent on the machine. The server stays offline until the Agent sends a heartbeat again, so continue in the server details, where the enrollment command and the last contact are shown.',
     "ui.homelab.recorded": "{count} recorded",
     "ui.homelab.retryFailed": "Rollout could not be retried: {message}",
     "ui.homelab.rolloutFailed": "Rollout failed: {message}",
-    "ui.homelab.sshFailed": "SSH connection to your Node failed — {detail}",
+    "ui.homelab.sshFailed": "SSH connection to your server failed — {detail}",
     "ui.homelabDashboardPage.0VerifiedConnectedOperationsEvidence":
-      "0 verified connected · operations evidence unavailable",
+      "Connection not verified",
     "ui.homelabDashboardPage.agentDiscoveryReportedNoRunning":
       "Agent discovery reported no running containers or units. No StackKit manifest has been observed, so declared StackKit services are still unknown.",
     "ui.homelabDashboardPage.bothServiceSourcesReportedAn":
@@ -394,18 +392,18 @@ export const screenMessages = {
       "Custody record unchanged: the Techstack gateway could not reach the backend. Retry this exact record when the service is available.",
     "ui.homelabDashboardPage.custodyResolutionFailed":
       "Custody resolution failed",
-    "ui.homelabDashboardPage.decommissionFailed": "Decommission failed",
-    "ui.homelabDashboardPage.deployStackkit": "Deploy StackKit",
+    "ui.homelabDashboardPage.decommissionFailed": "Removal failed",
+    "ui.homelabDashboardPage.deployStackkit": "Review and create",
     "ui.homelabDashboardPage.lastVerifiedStateRetainedThe":
       "Last verified state retained — the refresh failed and retries automatically.",
-    "ui.homelabDashboardPage.managedRuntime": "Managed runtime",
+    "ui.homelabDashboardPage.managedRuntime": "Managed server",
     "ui.homelabDashboardPage.managedRuntimeLeaseAllocationMetadata":
-      "Managed-runtime lease/allocation metadata exists, but the current provider and Guard state could not be verified.",
+      "Your managed server is set up, but its current state could not be checked right now.",
     "ui.homelabDashboardPage.noNodeHasReportedAn":
-      "No Node has reported an inventory yet.",
-    "ui.homelabDashboardPage.nodeIsReportingAgain": "Node is reporting again",
+      "No server has reported an inventory yet.",
+    "ui.homelabDashboardPage.nodeIsReportingAgain": "Server is reporting again",
     "ui.homelabDashboardPage.openTheNodeDetailsTo":
-      "Open the Node details to check the Agent and the last rollout.",
+      "Open the server details to check the Agent and the last rollout.",
     "ui.homelabDashboardPage.operationsDataIsNotAvailable":
       "Operations data is not available for this homelab yet.",
     "ui.homelabDashboardPage.operationsDataIsNotAvailable2":
@@ -421,23 +419,23 @@ export const screenMessages = {
     "ui.homelabDashboardPage.retry": "Retry",
     "ui.homelabDashboardPage.retryExactCleanup": "Retry exact cleanup",
     "ui.homelabDashboardPage.review": "Review",
-    "ui.homelabDashboardPage.reviewStart": "Review + Start",
+    "ui.homelabDashboardPage.reviewStart": "Review and create",
     "ui.homelabDashboardPage.rolloutReadinessIsUnavailableRefresh":
       "Rollout readiness is unavailable. Refresh the operations data before starting.",
     "ui.homelabDashboardPage.runtimeAnsweredButTheNode":
-      "Runtime answered, but the Node is still offline",
-    "ui.homelabDashboardPage.stackkitDeployment": "StackKit deployment",
+      "Runtime answered, but the server is still offline",
+    "ui.homelabDashboardPage.stackkitDeployment": "Homelab",
     "ui.homelabDashboardPage.starting": "Starting...",
     "ui.homelabDashboardPage.theAgentVersionWasNot":
       "The agent version was not reported.",
     "ui.homelabDashboardPage.theFailedCleanupIsNot":
       "The failed cleanup is not bound to an actionable lease. Refresh the lifecycle evidence and use the action on the exact custody record.",
     "ui.homelabDashboardPage.theFailedStackkitDeploymentIs":
-      "The failed StackKit deployment is no longer part of this homelab. Refresh the homelab and retry the exact deployment.",
+      "The part of your homelab that failed is no longer there. Refresh the homelab and try again.",
     "ui.homelabDashboardPage.thePersistedRolloutIsWaiting":
       "The persisted rollout is waiting for its next checkpoint.",
     "ui.homelabDashboardPage.theRuntimeProbeReturnedNo":
-      "The runtime probe returned no reason. Retry, or open the Node details for the full runtime record.",
+      "The runtime probe returned no reason. Retry, or open the server details for the full runtime record.",
     "ui.homelabDashboardPage.theStackkitManifestSourceReported":
       "The StackKit manifest source reported no services. Service discovery has not been observed, so containers and units are still unknown.",
     "ui.homelabDashboardPage.thisFailedRunCannotBe":
@@ -554,12 +552,12 @@ export const screenMessages = {
     "ui.integration.pocketbaseAdminDashboardCredentials":
       "PocketBase admin dashboard credentials",
     "ui.integration.traefikDashboardBasicAuth": "Traefik dashboard basic auth",
-    "ui.inventory.nodeCount.one": "{count} Node",
-    "ui.inventory.nodeCount.other": "{count} Nodes",
+    "ui.inventory.nodeCount.one": "{count} server",
+    "ui.inventory.nodeCount.other": "{count} servers",
     "ui.inventory.serviceCount.one": "{count} service",
     "ui.inventory.serviceCount.other": "{count} services",
-    "ui.inventory.telemetryNodes.one": "{count} telemetry Node",
-    "ui.inventory.telemetryNodes.other": "{count} telemetry Nodes",
+    "ui.inventory.telemetryNodes.one": "{count} telemetry server",
+    "ui.inventory.telemetryNodes.other": "{count} telemetry servers",
     "ui.localOwner.localOwnerCreationIsOnly":
       "Local owner creation is only available during first-run setup.",
     "ui.login.bootstrapPassword": "Bootstrap password:",
@@ -626,7 +624,7 @@ export const screenMessages = {
     "ui.monitoring.acrossEpisodes.one": "across {count} episode",
     "ui.monitoring.acrossEpisodes.other": "across {count} episodes",
     "ui.monitoring.availabilityHistoryIsUnavailableOn":
-      "Availability history is unavailable on this deployment.",
+      "Availability history is unavailable on this installation.",
     "ui.monitoring.availabilityWindow": "Availability · {window}",
     "ui.monitoring.dailyState": "Daily state",
     "ui.monitoring.dailyStateLabel": "{name}: daily connection state",
@@ -645,7 +643,7 @@ export const screenMessages = {
     "ui.monitoring.noData": "no data",
     "ui.monitoring.noDowntimeInThisWindow": "No downtime in this window.",
     "ui.monitoring.noNodesHaveReportedYet":
-      "No nodes have reported yet. Enroll a node and its state appears here.",
+      "No servers have reported yet. Enroll a server and its state appears here.",
     "ui.monitoring.noRecordedDowntimeInThis":
       "No recorded downtime in this window.",
     "ui.monitoring.noServersInThisWindow": "No servers in this window.",
@@ -664,16 +662,16 @@ export const screenMessages = {
     "ui.monitoring.removing": "Removing...",
     "ui.monitoring.rightNow": "Right now",
     "ui.monitoring.selectNodeHint":
-      "select a node for its metrics and its own history",
+      "select a server for its metrics and its own history",
     "ui.monitoring.serverCouldNotBeRemoved": "Server could not be removed.",
     "ui.monitoring.staleCountsAsDowntime":
       "stale counts as downtime — service cannot be confirmed",
     "ui.monitoring.theCanonicalServerInventoryIs":
-      "The canonical server inventory is unavailable.",
+      "The list of servers could not be read right now.",
     "ui.monitoring.thisRevokesTheBoundGuard":
-      "This revokes the bound Guard Agent and hides the node from the current fleet. The physical server and its provider account stay untouched.",
+      "This revokes the bound Guard Agent and hides the server from the current fleet. The physical server and its provider account stay untouched.",
     "ui.monitoring.totalDowntime": "Total downtime",
-    "ui.monitoringServer.alertsInScope": "{count} in scope for this node",
+    "ui.monitoringServer.alertsInScope": "{count} in scope for this server",
     "ui.monitoringServer.allEpisodes": "All episodes →",
     "ui.monitoringServer.dailyState30":
       "{name}: daily connection state over 30 days",
@@ -698,28 +696,27 @@ export const screenMessages = {
     "ui.monitoringServerId.metricsLast24H": "Metrics · last 24 h",
     "ui.monitoringServerId.noAlertRulesApplyHere": "No alert rules apply here.",
     "ui.monitoringServerId.noHistoryForThisNode":
-      "No history for this node yet.",
+      "No history for this server yet.",
     "ui.monitoringServerId.noMetricsBackendAnsweredFor":
-      "No metrics backend answered for this node. Availability below is derived from the transition timeline and does not depend on it.",
+      "No metrics backend answered for this server. Availability below is derived from the transition timeline and does not depend on it.",
     "ui.monitoringServerId.refreshing": "Refreshing…",
     "ui.monitoringServerId.removeFromView": "Remove from view",
-    "ui.monitoringServerId.thisNodeSHistory": "This node’s history",
+    "ui.monitoringServerId.thisNodeSHistory": "This server’s history",
     "ui.monitoringServerId.thisServerCouldNotBe":
       "This server could not be loaded.",
     "ui.navItems.noServicesRegisteredYet": "No services registered yet.",
-    "ui.nodeActions.assignToThisStackkitDeployment":
-      "Assign to this StackKit deployment",
+    "ui.nodeActions.assignToThisStackkitDeployment": "Assign to this homelab",
     "ui.nodeActions.assigning": "Assigning...",
     "ui.nodeActions.canonicalManagedAccessIsNot":
       "Canonical managed access is not available yet.",
-    "ui.nodeActions.connection": "Node connection: {state}",
+    "ui.nodeActions.connection": "Server connection: {state}",
     "ui.nodeRow.systemServices.one": "{count} system service",
     "ui.nodeRow.systemServices.other": "{count} system services",
     "ui.nodeActions.menu": "Actions for {node}",
     "ui.nodeMessage.idle": "No open messages",
-    "ui.nodeMessage.needsAttention": "This Node needs attention",
+    "ui.nodeMessage.needsAttention": "This server needs attention",
     "ui.nodeMessage.panel": "Messages for {node}",
-    "ui.nodeMessage.listPanel": "Messages about the Node list",
+    "ui.nodeMessage.listPanel": "Messages about the server list",
     "ui.nodeRow.moreServices": "+ {count} more",
     "ui.apps.description":
       "Everything you open through a UI on your servers. Services lists every service with its settings.",
@@ -778,11 +775,11 @@ export const screenMessages = {
       "The selected owner source is no longer supported. Choose a local owner or link your kombify Cloud profile.",
     "ui.ownerState.thisInstanceHasNoKombify":
       "This instance has no kombify Cloud login configured.",
-    "ui.pairing.nodeConnection": "Node connection",
+    "ui.pairing.nodeConnection": "Server connection",
     "ui.pairing.theConnectionCommandCouldNot":
       "The connection command could not be prepared. Try again.",
     "ui.pairing.theOriginalNodeConfigurationIs":
-      "The original Node configuration is unavailable. Return to Add Node to prepare the connection.",
+      "The original server configuration is unavailable. Return to Add server to prepare the connection.",
     "ui.people.activationExpired": "Activation expired",
     "ui.people.activationPending": "Activation pending",
     "ui.people.appCount.one": "{count} app",
@@ -792,13 +789,13 @@ export const screenMessages = {
     "ui.people.deviceListUnavailable": "Device list unavailable.",
     "ui.people.homelabOwner": "Homelab owner",
     "ui.people.householdListUnavailableTheHomelab":
-      "Household list unavailable: the homelab identity provider did not answer.",
-    "ui.people.identityProviderNotReady": "Identity provider not ready",
-    "ui.people.identityStatusUnavailable": "Identity status unavailable",
+      "The list of people is unavailable right now. Try again in a moment.",
+    "ui.people.identityProviderNotReady": "Sign-in service not ready",
+    "ui.people.identityStatusUnavailable": "Sign-in status unavailable",
     "ui.people.member": "Member",
     "ui.people.notInvitedYet": "Not invited yet",
     "ui.people.ownerAndHouseholdAppearOnce":
-      "Owner and household appear once the homelab identity provider (Pocket ID or TinyAuth) reports through the Guard.",
+      "You and the people you invite appear here once your homelab's sign-in service is ready.",
     "ui.people.plannedInTheWizard": "Planned in the Wizard",
     "ui.people.plannedMember": "Planned member",
     "ui.people.signedInToTheHomelab": "Signed in to the homelab",
@@ -830,10 +827,10 @@ export const screenMessages = {
     "ui.postMessageBridge.kombifyAIDidNotConfirm":
       "kombify AI did not confirm the support session in time.",
     "ui.presets.aCalmOverviewOneBand":
-      "A calm overview: one band per Node with its 24-hour curve.",
+      "A calm overview: one band per server with its 24-hour curve.",
     "ui.presets.complete": "Complete",
     "ui.presets.nodeRowsWithTheirApps":
-      "Node rows with their apps, devices and people beside them.",
+      "Server rows with their apps, devices and people beside them.",
     "ui.providerErrors.aStackKitWasSelectedE":
       "A StackKit was selected (e.g. basement-kit or cloud-kit), but the StackKit files are not available on the server.",
     "ui.providerErrors.anUnknownErrorOccurred": "An unknown error occurred.",
@@ -1166,7 +1163,7 @@ export const screenMessages = {
     "ui.serverAccess.sshKey": "SSH key",
     "ui.serverAccessActions.addOneInTheWallet": "Add one in the Wallet",
     "ui.serverAccessActions.authorizeOneOfYourPublic":
-      "Authorize one of your public keys on this Node first.",
+      "Authorize one of your public keys on this server first.",
     "ui.serverAccessActions.authorizeSshKey": "Authorize SSH key",
     "ui.serverAccessActions.copySshCommand": "Copy SSH command",
     "ui.serverAccessActions.installPublicKey": "Install public key",
@@ -1184,12 +1181,12 @@ export const screenMessages = {
     "ui.serverCard.archUnknown": "arch unknown",
     "ui.serverCard.osUnknown": "os unknown",
     "ui.serverCardAdapter.anotherNodeActionIsRunning":
-      "Another node action is running",
+      "Another server action is running",
     "ui.serverDetail.actionNotStarted": "{action} could not be started.",
     "ui.serverDetail.actionsTarget":
       "These actions target {name} directly. The available controls follow its current connection and StackKit state; no server or lifecycle status needs to be selected.",
     "ui.serverDetail.confirmActionFor": "Confirm “{action}” for {name}",
-    "ui.serverDetail.confirmDecommissionFor": "Confirm decommission for {name}",
+    "ui.serverDetail.confirmDecommissionFor": "Confirm removing {name}",
     "ui.serverDetail.confirmDetachFor": "Confirm detach for {name}",
     "ui.serverDetail.confirmProviderRemoval":
       "Confirm provider removal for {name}",
@@ -1227,9 +1224,9 @@ export const screenMessages = {
     "ui.serverList.theCanonicalInventoryIsUnavailable":
       "The canonical inventory is unavailable. Showing only telemetry that is currently authorized.",
     "ui.serverOutcome.continueOnConnected":
-      "Continue StackKit on connected Node",
+      "Continue StackKit on connected server",
     "ui.serverOutcome.continuePrepOnConnected":
-      "Continue StackKit preparation on connected Node",
+      "Continue StackKit preparation on connected server",
     "ui.serverOutcome.restartRollout": "Restart rollout",
     "ui.serverOutcome.retrySsh": "Retry SSH connection",
     "ui.serverProvisioningStep.cloudKitRollout": "Cloud Kit rollout",
@@ -1290,7 +1287,7 @@ export const screenMessages = {
     "ui.serviceList.servicesByRuntimeTarget": "Services by runtime target",
     "ui.serviceRegistry.selected.one": "{count} service selected",
     "ui.serviceRegistry.selected.other": "{count} services selected",
-    "ui.serviceSheet.node": "Node: {node}",
+    "ui.serviceSheet.node": "Server: {node}",
     "ui.serviceSheet.notPlaced": "not placed",
     "ui.serviceSheet.ownership": "Ownership: {value}",
     "ui.serviceSheet.stackkit": "StackKit {version}",
@@ -1312,7 +1309,7 @@ export const screenMessages = {
       "Action completed; inventory is refreshing.",
     "ui.services.actionTitle": "{action} {name}",
     "ui.services.addACatalogApplicationOr":
-      "Add a catalog application or import unmanaged Node inventory.",
+      "Add a catalog application or import unmanaged server inventory.",
     "ui.services.addANewApplication": "Add a new application",
     "ui.services.addService": "Add Service",
     "ui.services.adoptIntoManagement": "Adopt into management…",
@@ -1358,14 +1355,14 @@ export const screenMessages = {
     "ui.services.confirmUnlock":
       "Unlock {name}? Governed mutations become available again.",
     "ui.services.connectNodesToYourHomelab":
-      "Connect Nodes to your Homelab to manage application placement.",
+      "Connect servers to your Homelab to manage application placement.",
     "ui.services.deleteArchivedService": "Delete archived service?",
     "ui.services.desired": "Desired",
     "ui.services.desiredObserved": "Desired {desired} · Observed {observed}",
     "ui.services.discoveredOn": "Discovered on {name} — not managed by kombify",
     "ui.services.displayName": "Display name",
     "ui.services.dragAndDropStaysDisabled":
-      "Drag-and-drop stays disabled until deployment, health verification, cutover, and source drain are handled by a real runtime executor.",
+      "Drag and drop is not available yet. Moving an app safely needs the install, the health check, the switch-over and the cleanup of the old copy to be automated.",
     "ui.services.dropManagedApplicationsHere": "Drop managed applications here",
     "ui.services.error": "Error",
     "ui.services.failedToDeleteArchivedService":
@@ -1378,18 +1375,18 @@ export const screenMessages = {
     "ui.services.importAsObserved": "Import as Observed",
     "ui.services.importUnmanaged": "Import unmanaged",
     "ui.services.internalAddressOnlyOpenIt":
-      "Internal address only; open it from the Node network.",
+      "Internal address only; open it from the server network.",
     "ui.services.jobId": "job {id}",
     "ui.services.loadOlderLogs": "Load older logs",
     "ui.services.loadingCanonicalServiceInventory":
       "Loading canonical service inventory",
-    "ui.services.localNode": "Local Node",
+    "ui.services.localNode": "Local server",
     "ui.services.managedProviderTarget": "Managed provider target",
     "ui.services.migrationJobIsActive": "Migration job is active.",
     "ui.services.moveApplication": "Move Application",
     "ui.services.moveHere": "Move {name} here",
     "ui.services.moveSteps": "Move Steps:",
-    "ui.services.moveToAnotherNode": "Move to another Node…",
+    "ui.services.moveToAnotherNode": "Move to another server…",
     "ui.services.mutationsRequireOwnerApprovalA":
       "Mutations require owner approval; a StackKits verify pass runs before measured state changes.",
     "ui.services.newApplication": "New Application",
@@ -1397,19 +1394,19 @@ export const screenMessages = {
     "ui.services.noApplicationsMatching": "No applications matching {status}",
     "ui.services.noApplicationsReported": "No applications reported",
     "ui.services.noAvailableTargetNodeFor":
-      "No available target Node for this application.",
+      "No available target server for this application.",
     "ui.services.noCanonicalRuntimeObservationYet":
       "No canonical runtime observation yet — registry projection shown.",
     "ui.services.noGovernedActionHasRun":
       "No governed action has run in this session.",
     "ui.services.noHostname": "No hostname",
-    "ui.services.noNodesRegistered": "No Nodes registered",
+    "ui.services.noNodesRegistered": "No servers registered",
     "ui.services.noOperationsAvailable": "No operations available.",
     "ui.services.noSystemServices": "No system services",
-    "ui.services.node": "Node",
-    "ui.services.nodeBoundApplications": "Node-bound applications",
-    "ui.services.nodeCapabilities": "Node capabilities",
-    "ui.services.nodeColumn": "Node {name} column",
+    "ui.services.node": "Server",
+    "ui.services.nodeBoundApplications": "Server-bound applications",
+    "ui.services.nodeCapabilities": "Server capabilities",
+    "ui.services.nodeColumn": "Server {name} column",
     "ui.services.observed": "Observed",
     "ui.services.stacked": "Stacked",
     "ui.services.unstacked": "Unstacked",
@@ -1442,11 +1439,11 @@ export const screenMessages = {
       "Runtime migration is not enabled yet",
     "ui.services.runtimeMigrationUnavailable": "Runtime migration unavailable",
     "ui.services.runtimeServiceMigrationIsNot":
-      "Runtime service migration is not enabled on this deployment.",
+      "Moving apps between servers is not enabled on this installation.",
     "ui.services.runtimeTarget": "Runtime target",
-    "ui.services.selectANodeAndCatalog": "Select a node and catalog service.",
+    "ui.services.selectANodeAndCatalog": "Select a server and catalog service.",
     "ui.services.selectANodeThenEnter":
-      "Select a node, then enter a service name.",
+      "Select a server, then enter a service name.",
     "ui.services.selected": "Selected: {name}",
     "ui.services.service": "Service",
     "ui.services.serviceActionDidNotComplete":
@@ -1475,19 +1472,19 @@ export const screenMessages = {
     "ui.services.systemServices": "System Services",
     "ui.services.targetIsReadyForVerification":
       "Target is ready for verification.",
-    "ui.services.targetNode": "Target Node",
+    "ui.services.targetNode": "Target server",
     "ui.services.targetValue": "Target: {value}",
     "ui.services.telemetryPending": "telemetry pending",
     "ui.services.temporaryInstance":
       "A temporary instance will be deployed on {slot}.",
     "ui.services.theApplicationConfigWillBe":
-      "The application config will be duplicated on the target Node.",
+      "The application config will be duplicated on the target server.",
     "ui.services.theLastLogPageWas": "The last log page was empty.",
     "ui.services.theLastSuccessfulSnapshotRemains":
-      "The last successful snapshot remains visible until this StackKit deployment reports replacement or explicit down evidence.",
+      "The last successful snapshot stays visible until this homelab reports a replacement or clear evidence that the app is down.",
     "ui.services.thisHomelab": "this homelab",
     "ui.services.thisPermanentlyDeletesTheArchived":
-      "This permanently deletes the archived service from its source Node.",
+      "This permanently deletes the archived service from its source server.",
     "ui.services.type": "Type:",
     "ui.services.type2": "Type",
     "ui.services.unclassifiedRuntimeComponentsAppearHere":
@@ -1500,7 +1497,7 @@ export const screenMessages = {
     "ui.services.verifyFinish": "Verify & Finish",
     "ui.services.verifying": "· verifying",
     "ui.services.waitingForRuntimeDeployment":
-      "Waiting for runtime deployment...",
+      "Waiting for the installation...",
     "ui.services.youCanTestTheNew":
       "You can test the new instance while the old one remains active.",
     "ui.servicesApplicationId.addressClass": "Address class",
@@ -1511,7 +1508,7 @@ export const screenMessages = {
     "ui.servicesApplicationId.backToApplications": "Back to applications",
     "ui.servicesApplicationId.freshness": "Freshness",
     "ui.servicesApplicationId.impact": "Impact",
-    "ui.servicesApplicationId.kitDeployment": "Kit deployment",
+    "ui.servicesApplicationId.kitDeployment": "Homelab",
     "ui.servicesApplicationId.lifecycle": "Lifecycle",
     "ui.servicesApplicationId.management": "Management",
     "ui.servicesApplicationId.noReachableAddressReported":
@@ -1533,14 +1530,14 @@ export const screenMessages = {
     "ui.settings.dashboard": "Dashboard",
     "ui.settings.dashboardLayout": "Dashboard layout",
     "ui.settings.decommissionsTheDeploymentSManaged":
-      "Decommissions the deployment's managed runtime and removes its entry. To remove a single server instead, use its decommission action on the server.",
+      "Deletes the homelab's managed server and its entry. To delete a single server instead, use Delete server on that server.",
     "ui.settings.delete": "Delete",
-    "ui.settings.deleteADeployment": "Delete a deployment",
+    "ui.settings.deleteADeployment": "Delete a homelab",
     "ui.settings.deleteNamed": 'Delete "{name}"?',
-    "ui.settings.deleteThisDeployment": "Delete this deployment",
+    "ui.settings.deleteThisDeployment": "Delete this homelab",
     "ui.settings.deleting": "Deleting...",
     "ui.settings.deletionFailed": "Deletion failed",
-    "ui.settings.failedToLoadDeployments": "Failed to load deployments",
+    "ui.settings.failedToLoadDeployments": "Failed to load homelabs",
     "ui.settings.failedToLoadHomelabIdentity":
       "Failed to load Homelab identity",
     "ui.settings.failedToSaveHomelabIdentity":
@@ -1552,13 +1549,13 @@ export const screenMessages = {
     "ui.settings.homelabIdentity": "Homelab Identity",
     "ui.settings.lightOrDarkAndThe":
       "Light or dark, and the surface finish. The finish follows your kombify account default until this device picks its own.",
-    "ui.settings.loadingDeployments": "Loading deployments...",
+    "ui.settings.loadingDeployments": "Loading homelabs...",
     "ui.settings.logout": "Logout",
     "ui.settings.managedByKombifyCloud": "Managed by kombify Cloud.",
     "ui.settings.mode": "Mode",
     "ui.settings.navigationPreview": "Navigation preview",
     "ui.settings.navigationPreviewShape": "Navigation preview shape",
-    "ui.settings.noDeploymentsToDelete": "No deployments to delete.",
+    "ui.settings.noDeploymentsToDelete": "No homelabs to remove.",
     "ui.settings.noHomelabIdentityConfigured":
       "No Homelab identity configured.",
     "ui.settings.noVerifiedTestResidueRemains":
@@ -1567,12 +1564,12 @@ export const screenMessages = {
       "No verified test residue was found.",
     "ui.settings.overlap": "Overlap",
     "ui.settings.pruneQualifies":
-      "Only authenticated-owner {owner} and strict {strict} projections qualify. Active Managed Runtimes, provider resources, recent Nodes, demo data, and normal Homelab data remain unchanged.",
+      "Only authenticated-owner {owner} and strict {strict} projections qualify. Active Managed Runtimes, provider resources, recent servers, demo data, and normal Homelab data remain unchanged.",
     "ui.settings.reviewCleanup": "Review cleanup",
     "ui.settings.reviewVerifiedTestResidue": "Review verified test residue",
     "ui.settings.reviewing": "Reviewing...",
     "ui.settings.reviewsExactOwnerScopedE2e":
-      "Reviews exact owner-scoped E2E and failed runtime projections. Provider resources, active leases, recent Nodes, and normal Homelab data remain unchanged.",
+      "Reviews exact owner-scoped E2E and failed runtime projections. Provider resources, active leases, recent servers, and normal Homelab data remain unchanged.",
     "ui.settings.savedOnDevice": "Saved on this device for your account.",
     "ui.settings.settings": "Settings",
     "ui.settings.signedIn": "Signed in",
@@ -1580,13 +1577,13 @@ export const screenMessages = {
     "ui.settings.surfaceFinish": "Surface finish",
     "ui.settings.tether": "Tether",
     "ui.settings.theDemoDeploymentIsProtected":
-      "The demo deployment is protected and cannot be deleted.",
+      "The demo homelab is protected and cannot be deleted.",
     "ui.settings.thisDecommissionsTheManagedRuntime":
-      "This decommissions the managed runtime and removes the deployment entry. It cannot be undone.",
+      "This shuts down the managed server, deletes it and its data at the provider and removes the homelab entry. It cannot be undone.",
     "ui.settings.thisEntryIsNotVerified":
       "This entry is not verified test residue and cannot be removed by projection cleanup.",
     "ui.settings.thisExactPlanIsBound":
-      "This exact plan is bound to the digest below. No infrastructure is destroyed.",
+      "This exact plan is bound to the digest below. No servers or provider resources are removed.",
     "ui.settings.typeToConfirm": "Type {slot} to confirm",
     "ui.shortcuts.closeDialogDeselect": "Close dialog/deselect",
     "ui.shortcuts.focusSearchInput": "Focus search input",
@@ -1612,9 +1609,9 @@ export const screenMessages = {
       "Ed25519 not supported in this browser. Try RSA instead.",
     "ui.sshKeygen.unsupportedAlgorithm": "Unsupported algorithm: {algorithm}",
     "ui.stackImport.exportIntro":
-      "Export this StackKit deployment configuration as {file}. You can edit the file and import it again later.",
+      "Export the configuration of this homelab as {file}. You can edit the file and import it again later.",
     "ui.stackImport.intro":
-      "Import a {file} file to set up a StackKit deployment in your Homelab. Legacy {legacy} files are still accepted.",
+      "Import a {file} file to set up a homelab. Legacy {legacy} files are still accepted.",
     "ui.stackImport.orPaste": "or paste",
     "ui.stackImport.validating": "Validating...",
     "ui.stackImportExportModal.allRequiredFieldsArePresent":
@@ -1627,11 +1624,11 @@ export const screenMessages = {
     "ui.stackImportExportModal.couldNotReadFile": "Could not read file",
     "ui.stackImportExportModal.dragFileHereOr": "Drag file here or",
     "ui.stackImportExportModal.exportStackkitDeploymentSpec":
-      "Export StackKit deployment spec",
+      "Export homelab spec",
     "ui.stackImportExportModal.ifTheProblemPersistsCopy":
       "If the problem persists: copy the diagnostics and share them with developers.",
     "ui.stackImportExportModal.importStackkitDeploymentSpec":
-      "Import StackKit deployment spec",
+      "Import homelab spec",
     "ui.stackImportExportModal.importStartSetup": "Import & Start Setup",
     "ui.stackImportExportModal.importingConfiguration":
       "Importing configuration...",
@@ -1639,9 +1636,9 @@ export const screenMessages = {
     "ui.stackImportExportModal.noContentFound": "No content found",
     "ui.stackImportExportModal.noContentToImport": "No content to import",
     "ui.stackImportExportModal.noStackkitDeploymentIsAvailable":
-      "No StackKit deployment is available to export",
+      "No homelab is available to export",
     "ui.stackImportExportModal.nodeDefinitionsWithoutCredentials":
-      "• Node definitions (without credentials)",
+      "• Server definitions (without credentials)",
     "ui.stackImportExportModal.pasteYourStackSpecYaml":
       "# Paste your stack-spec.yaml here...",
     "ui.stackImportExportModal.recommended": "(recommended)",
@@ -1664,19 +1661,17 @@ export const screenMessages = {
     "ui.stackImportExportModal.youWillBeRedirectedTo":
       "You will be redirected to the setup page shortly.",
     "ui.stacksCreating.creatingStackkitDeploymentKombifyTechstack":
-      "Creating StackKit deployment | kombify-Techstack",
+      "Creating your Homelab | kombify Techstack",
     "ui.stacksCreating.leanBackBody":
       "You did your part. We're setting everything up for you right now, and something great is on its way.",
     "ui.stacksCreating.leanBackTitle": "Lean back – we're doing the magic",
     "ui.stacksCreating.openOperations": "Open operations",
-    "ui.stacksCreating.reviewAndStartStackkitRollout":
-      "Review and start StackKit rollout",
     "ui.stacksCreating.tips.codeBody":
       "StackKits renders your setup from validated blueprints, so every change is repeatable and traceable.",
     "ui.stacksCreating.tips.codeEyebrow": "Infrastructure as code",
     "ui.stacksCreating.tips.codeTitle": "Your stack, written as code",
     "ui.stacksCreating.tips.growBody":
-      "Add another node to this stack whenever you need it. Techstack coordinates your servers, and each one keeps running on its own.",
+      "Add another server to this stack whenever you need it. Techstack coordinates your servers, and each one keeps running on its own.",
     "ui.stacksCreating.tips.growEyebrow": "Scaling",
     "ui.stacksCreating.tips.growTitle": "Room to grow",
     "ui.stacksCreating.tips.label": "Good to know",
@@ -1696,21 +1691,21 @@ export const screenMessages = {
     "ui.stacksCreating.tips.restoreEyebrow": "Backups",
     "ui.stacksCreating.tips.restoreTitle": "Restore is proven, not promised",
     "ui.stacksCreating.tips.show": "Show tip {number} of {total}",
-    "ui.stacksCreatingCreation-controller.additionalNode": "Additional Node",
+    "ui.stacksCreatingCreation-controller.additionalNode": "Additional server",
     "ui.stacksCreatingCreation-controller.afterFailedAttemptsTheBackend":
       "After {MAX_POLL_ERRORS} failed attempts, the backend could not be reached. The page keeps retrying with backoff; you can also check your network connection and reload to resume.",
     "ui.stacksCreatingCreation-controller.configurationPrepared":
       "Configuration prepared",
     "ui.stacksCreatingCreation-controller.connectYourNodeToContinue":
-      "Connect your Node to continue the rollout",
+      "Connect your server to continue the rollout",
     "ui.stacksCreatingCreation-controller.connectionToServerLost":
       "Connection to server lost",
     "ui.stacksCreatingCreation-controller.continueStackKitDeploymentOnConnected":
-      "Continue StackKit deployment on connected Node",
+      "Continue StackKit deployment on connected server",
     "ui.stacksCreatingCreation-controller.continueStackKitOnConnectedNode":
-      "Continue StackKit on connected Node",
+      "Continue StackKit on connected server",
     "ui.stacksCreatingCreation-controller.continueStackKitRolloutOnConnected":
-      "Continue StackKit rollout on connected Node",
+      "Continue StackKit rollout on connected server",
     "ui.stacksCreatingCreation-controller.couldNotCheckRemoteSSH":
       "Could not check remote SSH enrollment progress.",
     "ui.stacksCreatingCreation-controller.couldNotPrepareTheConnection":
@@ -1728,14 +1723,14 @@ export const screenMessages = {
     "ui.stacksCreatingCreation-controller.creatingStackKitDeployment":
       "Creating StackKit deployment",
     "ui.stacksCreatingCreation-controller.guardHasNotReportedA":
-      "Guard has not reported a fresh heartbeat for this Node yet. Retry SSH enrollment on the saved connection, or verify the agent is running on the server.",
+      "Your server has not checked in yet. Retry the SSH connection with the saved details, or check that the kombify agent is running on the server.",
     "ui.stacksCreatingCreation-controller.jobIsNotBeingProcessed":
       "Job is not being processed",
     "ui.stacksCreatingCreation-controller.jobWasCanceled": "Job was canceled",
     "ui.stacksCreatingCreation-controller.kombifyRequestedTheAdditionalManaged":
-      "kombify requested the additional managed Node. You can continue from the dashboard while enrollment finishes.",
+      "kombify requested the additional managed server. You can continue from the dashboard while enrollment finishes.",
     "ui.stacksCreatingCreation-controller.managedNodeRequestIsStill":
-      "Managed Node request is still running",
+      "Managed server request is still running",
     "ui.stacksCreatingCreation-controller.managedRolloutRecoveryWasNot":
       "Managed rollout recovery was not started because the waiting job has no exact lease reference.",
     "ui.stacksCreatingCreation-controller.missingJobReferencePleaseStart":
@@ -1743,22 +1738,22 @@ export const screenMessages = {
     "ui.stacksCreatingCreation-controller.newStackKitDeployment":
       "New StackKit deployment",
     "ui.stacksCreatingCreation-controller.noJobFound": "No job found",
-    "ui.stacksCreatingCreation-controller.nodeConnected": "Node connected",
+    "ui.stacksCreatingCreation-controller.nodeConnected": "Server connected",
     "ui.stacksCreatingCreation-controller.nodeConnectionReady":
-      "Node connection ready",
+      "Server connection ready",
     "ui.stacksCreatingCreation-controller.nodeRegistrationDidNotReturn":
-      "Node registration did not return a creation job.",
+      "Server registration did not return a creation job.",
     "ui.stacksCreatingCreation-controller.nodeRegistrationReady":
-      "Node registration ready",
+      "Server registration ready",
     "ui.stacksCreatingCreation-controller.recoveringRolloutOnTheExact":
       "Recovering rollout on the exact existing managed VM...",
     "ui.stacksCreatingCreation-controller.remoteSSHEnrollmentFailed":
       "Remote SSH enrollment failed.",
     "ui.stacksCreatingCreation-controller.reportedAFreshGuardHeartbeat":
-      "{name} reported a fresh Guard heartbeat and is visible in the Node projection.",
+      "{name} has checked in and is part of your Homelab.",
     "ui.stacksCreatingCreation-controller.restoreDrill": "Restore drill",
     "ui.stacksCreatingCreation-controller.resumingTheEarlierNodeRegistration":
-      "Resuming the earlier Node registration attempt…",
+      "Resuming the earlier server registration attempt…",
     "ui.stacksCreatingCreation-controller.retryDeployment": "Retry deployment",
     "ui.stacksCreatingCreation-controller.retryRollout": "Retry rollout",
     "ui.stacksCreatingCreation-controller.retryServerRequest":
@@ -1786,27 +1781,27 @@ export const screenMessages = {
     "ui.stacksCreatingCreation-controller.startFreshAttempt":
       "Start fresh attempt",
     "ui.stacksCreatingCreation-controller.theAddNodeRequestHas":
-      "The Add Node request has been running for over 2 minutes. This path should only request or prepare the additional Node, not run the full StackKit rollout. Open Operations to check whether the Node request was created, then retry Add Node if no new Node appears.",
+      "The Add server request has been running for over 2 minutes. This path should only request or prepare the additional server, not run the full StackKit rollout. Open Operations to check whether the server request was created, then retry Add server if no new server appears.",
     "ui.stacksCreatingCreation-controller.theAdditionalNodeRegistrationIs":
-      "The additional Node registration is ready for the existing Homelab.",
+      "The additional server registration is ready for the existing Homelab.",
     "ui.stacksCreatingCreation-controller.theBackendCanceledThisJob":
       "The backend canceled this job before it completed. Retry to continue from the last safe checkpoint.",
     "ui.stacksCreatingCreation-controller.theCompletedRuntimeJobDid":
       "The completed runtime job did not return verified runtime evidence. Retry the rollout to verify the installation.",
     "ui.stacksCreatingCreation-controller.theNodeProjectionCouldNot":
-      "The Node projection could not be checked. The pairing command remains available, but this page will not claim a connection without a fresh Guard heartbeat.",
+      "We couldn't check whether your server has checked in. The command stays available; this page only shows a connection once your server has really checked in.",
     "ui.stacksCreatingCreation-controller.thePreviouslyVerifiedGuardHeartbeat":
-      "The previously verified Guard heartbeat is no longer fresh. Waiting for current connection evidence.",
+      "Your server stopped checking in. Waiting for it to check in again.",
     "ui.stacksCreatingCreation-controller.theProvisioningJobHasBeen":
       "The provisioning job has been pending for over 2 minutes without progress. This usually means the orchestrator is not running or has crashed.\n\nCheck the server logs: docker compose logs techstack\nTry restarting: docker compose restart techstack",
     "ui.stacksCreatingCreation-controller.theReservedNodeCouldNot":
-      "The reserved Node could not be checked. Retry SSH enrollment on the saved connection once the server inventory is available again.",
+      "The reserved server could not be checked. Retry SSH enrollment on the saved connection once the server inventory is available again.",
     "ui.stacksCreatingCreation-controller.thisPageRequiresAJob":
       "This page requires a job_id from the setup wizard. Please restart setup via /stacks/new.",
     "ui.stacksCreatingCreation-controller.validatingTheSelectedStackKitAnd":
-      "Validating the selected StackKit and preparing the Node...",
+      "Validating the selected StackKit and preparing the server...",
     "ui.stacksCreatingCreation-controller.yourRemoteNodeConfigurationIs":
-      "Your remote Node configuration is ready for rollout",
+      "Your remote server configuration is ready for rollout",
     "ui.stacksCreatingCreation-controller.yourSessionIsNoLonger":
       "Your session is no longer valid, so the creation progress cannot be checked. Sign in again and reopen this creation to continue monitoring it.",
     "ui.stacksCreatingCreation-results.backendError":
@@ -1818,31 +1813,32 @@ export const screenMessages = {
     "ui.stacksCreatingCreation-results.stackID": "Stack ID: {stackId}",
     "ui.stacksCreatingCreation-results.targetBootstrap": "Target bootstrap:",
     "ui.stacksCreatingCreationCompletion.guardHeartbeatVerified":
-      "Guard heartbeat verified",
-    "ui.stacksCreatingCreationCompletion.hashPresent": "Hash present",
+      "Your server is connected",
+    "ui.stacksCreatingCreationCompletion.hashPresent":
+      "Recovery passphrase set",
     "ui.stacksCreatingCreationCompletion.lastGuardHeartbeat":
       "Last Guard heartbeat:",
     "ui.stacksCreatingCreationCompletion.managedProvisioningComplete":
-      "Managed provisioning complete",
-    "ui.stacksCreatingCreationCompletion.materialLinked": "Material linked",
+      "Your managed server is ready",
+    "ui.stacksCreatingCreationCompletion.materialLinked": "Recovery saved",
     "ui.stacksCreatingCreationCompletion.openHomelab": "Open Homelab",
     "ui.stacksCreatingCreationCompletion.owner": "Owner",
-    "ui.stacksCreatingCreationCompletion.ownerPrepared": "Owner prepared",
+    "ui.stacksCreatingCreationCompletion.ownerPrepared":
+      "Owner account prepared",
     "ui.stacksCreatingCreationCompletion.ownerReady": "Owner ready",
-    "ui.stacksCreatingCreationCompletion.ownerSeedReady": "Owner seed ready",
+    "ui.stacksCreatingCreationCompletion.ownerSeedReady": "Owner account ready",
     "ui.stacksCreatingCreationCompletion.recovery": "Recovery",
-    "ui.stacksCreatingCreationCompletion.rolloutComplete": "Rollout complete",
-    "ui.stacksCreatingCreationCompletion.selfHostedRollout":
-      "Self-hosted rollout",
+    "ui.stacksCreatingCreationCompletion.rolloutComplete": "Setup complete",
+    "ui.stacksCreatingCreationCompletion.selfHostedRollout": "Self-hosted",
     "ui.stacksCreatingCreationCompletion.techstackNowSeesThisNode":
-      "Techstack now sees this Node as healthy and rollout-ready in the real Node projection. Pairing preparation alone did not trigger this state.",
+      "Your server has checked in and is healthy. It is ready for the next step.",
     "ui.stacksCreatingCreationCompletion.theFirstLoginGatewayAnd":
-      'The first login gateway and recovery reference arrive with the StackKit rollout ("Review + Start").',
+      "Your first sign-in and recovery details arrive once your Homelab is set up (“Review and create”).",
     "ui.stacksCreatingCreationCompletion.theOwnerIdentityDerivesFrom":
       "The owner identity derives from your linked kombify Cloud profile.",
     "ui.stacksCreatingCreationCompletion.theOwnerSeedIsPrepared":
-      "The owner seed is prepared.",
-    "ui.stacksCreatingCreationCompletion.yourNode": "Your Node",
+      "Your owner account is prepared.",
+    "ui.stacksCreatingCreationCompletion.yourNode": "Your server",
     "ui.groupedTaskList.needsAttention": "Needs attention",
     "ui.stacksCreatingCreationDegraded.titleOne":
       "Ready — one part needs attention",
@@ -1882,10 +1878,8 @@ export const screenMessages = {
     "ui.stacksCreatingCreationFailure.errorDetails": "Error details",
     "ui.stacksCreatingCreationFailure.existingManagedVmLeaseReferenced":
       "Existing managed VM lease referenced",
-    "ui.stacksCreatingCreationFailure.makeSureTheBackendServer":
-      "Make sure the backend server is running",
     "ui.stacksCreatingCreationFailure.nodeConnectionSucceeded":
-      "Node connection succeeded",
+      "Server connection succeeded",
     "ui.stacksCreatingCreationFailure.operations": "Operations",
     "ui.stacksCreatingCreationFailure.askCompanion": "Ask kombify",
     "ui.stacksCreatingCreationFailure.askCompanionPrompt":
@@ -1893,16 +1887,14 @@ export const screenMessages = {
     "ui.stacksCreatingCreationFailure.possibleSolutions": "Possible solutions:",
     "ui.stacksCreatingCreationFailure.resumePreviousAttempt":
       "Resume previous attempt",
-    "ui.stacksCreatingCreationFailure.reviewYourConfigurationSettings":
-      "Review your configuration settings",
     "ui.stacksCreatingCreationFailure.sshEnrollmentCompletedAndThe":
-      "SSH enrollment completed and the Node is visible in your homelab. Only StackKit preparation or rollout failed. Retry continues on the connected Node without repeating SSH enrollment.",
+      "SSH enrollment completed and the server is visible in your homelab. Only StackKit preparation or rollout failed. Retry continues on the connected server without repeating SSH enrollment.",
     "ui.stacksCreatingCreationFailure.theExactRetryEndpointValidates":
       "The exact retry endpoint validates this failed job and lease before continuing on the existing server.",
     "ui.stacksCreatingCreationFailure.theRolloutReachedTheExisting":
       "The rollout reached the existing managed VM.",
     "ui.stacksCreatingCreationFailure.thisBrowserReusedAnAttempt":
-      "This browser reused an attempt key from a different submission. The earlier run may already have created a Node registration. Resume that attempt, or start fresh with a new key.",
+      "This browser reused an attempt key from a different submission. The earlier run may already have created a server registration. Resume that attempt, or start fresh with a new key.",
     "ui.stacksCreatingCreationFailure.troubleshooting": "Troubleshooting",
     "ui.stacksCreatingCreationFailure.vpsProvisioningCompletedOnlyStackkit":
       "VPS provisioning completed. Only StackKit artifact, domain routing, or later rollout work failed.",
@@ -1911,9 +1903,8 @@ export const screenMessages = {
     "ui.stacksCreatingCreationInstallCommand.copy": "Copy",
     "ui.stacksCreatingCreationInstallCommand.copyInstallationCommandToClipboard":
       "Copy installation command to clipboard",
-    "ui.stacksCreatingCreationInstallCommand.installWorker": "Install worker",
     "ui.stacksCreatingCreationInstallCommand.kombifyTechstackServerUrlReachable":
-      "kombify-Techstack server URL (reachable by workers):",
+      "kombify Techstack address (reachable from your server):",
     "ui.stacksCreatingCreationInstallCommand.openOneHourSimulateDemo":
       "Open one-hour Simulate demo preview",
     "ui.stacksCreatingCreationInstallCommand.previewLifetimeIsLimitedTo":
@@ -1934,7 +1925,7 @@ export const screenMessages = {
     "ui.stacksCreatingCreationLease.live": "Live",
     "ui.stacksCreatingCreationLease.loginGateway": "Login gateway",
     "ui.stacksCreatingCreationLease.managedNodeRequested":
-      "Managed Node requested",
+      "Managed server requested",
     "ui.stacksCreatingCreationLease.managedRuntimeReady":
       "Managed runtime ready",
     "ui.stacksCreatingCreationLease.offering": "Offering",
@@ -1950,14 +1941,14 @@ export const screenMessages = {
     "ui.stacksCreatingCreationLease.stackkitDeployedOnTheLeased":
       "StackKit deployed on the leased subscription VM. Values below are returned by the runtime job - no demo data.",
     "ui.stacksCreatingCreationLease.stackkitIdentityHandoffIsMissing":
-      "StackKit identity handoff is missing",
+      "Your first sign-in details are missing",
     "ui.stacksCreatingCreationLease.stackkitReturnedTheOwnerLogin":
       "StackKit returned the owner login, login gateway, and recovery references for this verified Cloud Kit rollout.",
     "ui.stacksCreatingCreationLease.status": "Status:",
     "ui.stacksCreatingCreationLease.theAdditionalSubscriptionVmRequest":
       "The additional subscription VM request is recorded. It will appear in Operations as enrollment reports back.",
     "ui.stacksCreatingCreationLease.theRolloutCompletedButThe":
-      "The rollout completed, but the StackKit did not return owner login, login gateway, and recovery outputs. Treat this as a release blocker until the runtime action response includes",
+      "Your Homelab was set up, but its first sign-in and recovery details did not come through. Contact support and share the technical details.",
     "ui.stacksCreatingCreationLease.theseStatusesComeFromRuntime":
       "These statuses come from Runtime Action responses and the final e2e proof.",
     "ui.stacksCreatingCreationLease.wallet": "Wallet",
@@ -1968,7 +1959,7 @@ export const screenMessages = {
     "ui.stacksCreatingCreationProgress.checkAgain": "Check again",
     "ui.stacksCreatingCreationProgress.creationFailed": "Creation failed",
     "ui.stacksCreatingCreationProgress.nodeProvisioningIsStillIn":
-      "Node provisioning is still in progress",
+      "Server provisioning is still in progress",
     "ui.stacksCreatingCreationProgress.pleaseWaitWhileWeRe":
       "Please wait while we're",
     "ui.stacksCreatingCreationProgress.morphCompleting": "completing",
@@ -1978,21 +1969,21 @@ export const screenMessages = {
     "ui.stacksCreatingCreationProgress.progress": "Progress",
     "ui.stacksCreatingCreationProgress.rolloutIncomplete": "Rollout incomplete",
     "ui.stacksCreatingCreationProgress.runThePairingCommand":
-      "Run the pairing command",
+      "Run the command on your server",
     "ui.stacksCreatingCreationProgress.setupCannotContinue":
       "Setup cannot continue",
     "ui.stacksCreatingCreationProgress.theNextCheckIsScheduled":
-      "The next check is scheduled. Dashboard, services, and Node access remain locked until enrollment is confirmed; an overdue check can be resumed safely here.",
+      "The next check is scheduled. Dashboard, services, and server access remain locked until enrollment is confirmed; an overdue check can be resumed safely here.",
     "ui.stacksCreatingCreationProgress.theNextManagedRuntimeCheck":
-      "The next managed-runtime check is scheduled for this operation. If it remains overdue after a replica handover or restart, Techstack offers a resume action for that exact Node.",
+      "The next check of your managed server is scheduled. If it stays overdue after a restart, you can resume it here.",
     "ui.stacksCreatingCreationProgress.theRegistrationRequestIsReady":
-      "The registration request is ready, but the Node is not connected until a fresh Guard heartbeat appears in the Node projection.",
+      "Your server has not checked in yet. Run the command below on it; this page continues on its own.",
     "ui.stacksCreatingCreationProgress.thisCanTakeAFew":
-      "This can take a few minutes. Please do not close this page.",
+      "This takes a few minutes. You can stay on this page or come back later; your Homelab keeps being set up.",
     "ui.stacksCreatingCreationProgress.thisMayTakeAFew":
-      "This may take a few minutes. You can track the progress below.",
+      "This takes a few minutes. You can stay on this page or come back later; your Homelab keeps being set up.",
     "ui.stacksCreatingCreationProgress.thisPageChecksTheReal":
-      "This page checks the real Node projection every few seconds.",
+      "This page checks every few seconds whether your server has checked in.",
     "ui.stacksCreatingCreationRequirements.backendRequirementsAreUnavailable":
       "Backend requirements are unavailable",
     "ui.stacksCreatingCreationRequirements.guide": "Guide →",
@@ -2010,35 +2001,34 @@ export const screenMessages = {
       "A manual resume is enabled only after server-side validation.",
     "ui.stacksCreatingCreationRunStatus.afterCreation": "After creation",
     "ui.stacksCreatingCreationRunStatus.afterYouRunTheOne":
-      "After you run the one-liner, the outbound Guard enrolls with this Homelab. The dashboard only marks the Node connected after a fresh heartbeat is present in the Node projection.",
+      "After you run the command, your server connects to your Homelab. It shows as connected as soon as it has checked in.",
     "ui.stacksCreatingCreationRunStatus.awaitingHeartbeat":
-      "Awaiting heartbeat",
+      "Waiting for your server",
     "ui.stacksCreatingCreationRunStatus.checkSshHostCredentialsAnd":
       "Check SSH host, credentials, and that the server can reach Techstack.",
-    "ui.stacksCreatingCreationRunStatus.connectMyNode": "Connect my Node",
+    "ui.stacksCreatingCreationRunStatus.connectMyNode": "Connect my server",
     "ui.stacksCreatingCreationRunStatus.connectingToYourNodeOver":
-      "Connecting to your Node over SSH…",
+      "Connecting to your server over SSH…",
     "ui.stacksCreatingCreationRunStatus.connectingViaSsh":
       "Connecting via SSH…",
     "ui.stacksCreatingCreationRunStatus.continueRolloutOnTheExisting":
       "Continue rollout on the existing VM",
     "ui.stacksCreatingCreationRunStatus.copyFailedSelectTheCommand":
       "Copy failed — select the command above",
-    "ui.stacksCreatingCreationRunStatus.copyPairingCommand":
-      "Copy pairing command",
+    "ui.stacksCreatingCreationRunStatus.copyPairingCommand": "Copy command",
     "ui.stacksCreatingCreationRunStatus.currentStatus": "Current status",
     "ui.stacksCreatingCreationRunStatus.enrolling": "Enrolling",
     "ui.stacksCreatingCreationRunStatus.enrollmentOverSshFinishedThis":
-      "Enrollment over SSH finished. This page will show “Node connected” once the Guard reports a fresh heartbeat.",
+      "Enrollment over SSH finished. This page will show “Server connected” once your server has checked in.",
     "ui.stacksCreatingCreationRunStatus.failed": "Failed",
     "ui.stacksCreatingCreationRunStatus.generateAFreshCommandTo":
-      "Generate a fresh command to continue connecting this Node.",
+      "Generate a fresh command to continue connecting this server.",
     "ui.stacksCreatingCreationRunStatus.generateAShortLivedCommand":
-      "Generate a short-lived command for this Node. Connection credentials are not retained in job reports.",
+      "Generate a short-lived command for this server. Connection credentials are not retained in job reports.",
     "ui.stacksCreatingCreationRunStatus.generateNewCommand":
       "Generate new command",
     "ui.stacksCreatingCreationRunStatus.generatePairingCommand":
-      "Generate pairing command",
+      "Generate command",
     "ui.stacksCreatingCreationRunStatus.kombifyIsInstallingAndEnrolling":
       "kombify is installing and enrolling the Guard on your server over SSH. You do not need to run a command manually.",
     "ui.stacksCreatingCreationRunStatus.kombifyWillProvisionTheSubscription":
@@ -2047,13 +2037,11 @@ export const screenMessages = {
       "kombify will use the remote SSH configuration captured in the wizard.",
     "ui.stacksCreatingCreationRunStatus.nextScheduledCheck":
       "Next scheduled check:",
-    "ui.stacksCreatingCreationRunStatus.nodeAccess": "Node access",
-    "ui.stacksCreatingCreationRunStatus.pairingCommandCopied":
-      "Pairing command copied",
-    "ui.stacksCreatingCreationRunStatus.pairingCommandReady":
-      "Pairing command ready",
+    "ui.stacksCreatingCreationRunStatus.nodeAccess": "Server access",
+    "ui.stacksCreatingCreationRunStatus.pairingCommandCopied": "Command copied",
+    "ui.stacksCreatingCreationRunStatus.pairingCommandReady": "Command ready",
     "ui.stacksCreatingCreationRunStatus.pairingCommandUnavailable":
-      "Pairing command unavailable",
+      "Command unavailable",
     "ui.stacksCreatingCreationRunStatus.plannedRemoteTarget":
       "Planned remote target",
     "ui.stacksCreatingCreationRunStatus.preparingCommand": "Preparing command…",
@@ -2069,13 +2057,13 @@ export const screenMessages = {
     "ui.stacksCreatingCreationRunStatus.retryingSshConnection":
       "Retrying SSH connection…",
     "ui.stacksCreatingCreationRunStatus.runThisOneLinerOn":
-      "Run this one-liner on the additional Node. The completed registration job only created the pairing token; Techstack will show “Node connected” only after the outbound Guard reports a fresh heartbeat and the Node projection is healthy.",
+      "Run this command on the additional server. It shows as connected once it has checked in and is healthy.",
     "ui.stacksCreatingCreationRunStatus.techstackUrlReachableFromThe":
       "Techstack URL reachable from the server",
     "ui.stacksCreatingCreationRunStatus.theAdditionalManagedNodeIs":
-      "The additional managed Node is added to this Homelab and will appear in the Node dashboard once enrollment reports back.",
+      "The additional managed server is added to this Homelab and will appear in the server dashboard once enrollment reports back.",
     "ui.stacksCreatingCreationRunStatus.theAdditionalNodeIsRegistered":
-      "The additional Node is registered with this Homelab and can then receive services from this StackKit deployment.",
+      "The additional server is registered with this Homelab and can then receive services from this StackKit deployment.",
     "ui.stacksCreatingCreationRunStatus.theManagedRuntimeIsNot":
       "The Managed Runtime is not fully reachable for rollout yet. The pending signal may be its address, credentials, or enrollment. Techstack scheduled the next check.",
     "ui.stacksCreatingCreationRunStatus.theProviderOperationHasNot":
@@ -2089,15 +2077,15 @@ export const screenMessages = {
     "ui.stacksCreatingCreationRunStatus.thisDoesNotCreateAnother":
       "This does not create another VM.",
     "ui.stacksCreatingCreationRunStatus.thisPairingTokenHasExpired":
-      "This pairing token has expired.",
+      "This command has expired.",
     "ui.stacksCreatingCreationRunStatus.validatingTheExistingVm":
       "Validating the existing VM...",
     "ui.stacksCreatingCreationRunStatus.waitingForGuardHeartbeat":
-      "Waiting for Guard heartbeat…",
+      "Waiting for your server to check in…",
     "ui.stacksCreatingCreationRunStatus.waitingForRealConnection":
-      "Waiting for real connection",
+      "Waiting for connection",
     "ui.stacksCreatingCreationRunStatus.youWillReceiveAWorker":
-      "You will receive a worker installation command to connect your Nodes to this StackKit deployment.",
+      "You will receive a command to connect your servers to this StackKit deployment.",
     "ui.stacksId.actionPending": "{action} pending",
     "ui.stacksId.actions": "Actions",
     "ui.stacksId.add": "+ Add",
@@ -2108,34 +2096,32 @@ export const screenMessages = {
     "ui.stacksId.configured": "Configured",
     "ui.stacksId.credentialsConfigured.one": "{count} credential configured",
     "ui.stacksId.credentialsConfigured.other": "{count} credentials configured",
-    "ui.stacksId.decommission": "Decommission",
-    "ui.stacksId.decommissionManagedRuntime": "Decommission managed runtime?",
+    "ui.stacksId.decommission": "Delete server",
+    "ui.stacksId.decommissionManagedRuntime": "Delete this managed server?",
     "ui.stacksId.deleteCredential": "Delete credential?",
-    "ui.stacksId.deploymentFallback": "StackKit Deployment",
+    "ui.stacksId.deploymentFallback": "Homelab",
     "ui.stacksId.edit": "Edit",
     "ui.stacksId.editCredential": "Edit Credential",
     "ui.stacksId.enrollment": "Enrollment",
     "ui.stacksId.failedToAddCredential": "Failed to add credential",
     "ui.stacksId.failedToDeleteCredential": "Failed to delete credential",
     "ui.stacksId.failedToLoadRuntimeStatus": "Failed to load runtime status",
-    "ui.stacksId.failedToLoadStackkitDeployment":
-      "Failed to load StackKit deployment",
+    "ui.stacksId.failedToLoadStackkitDeployment": "Failed to load homelab",
     "ui.stacksId.ingest": "Ingest",
     "ui.stacksId.latestOperationsSnapshot": "Latest operations snapshot",
     "ui.stacksId.manageCredentialsForThisStackkit":
-      "Manage credentials for this StackKit deployment",
+      "Control the server, see its services and manage credentials.",
     "ui.stacksId.missingCredentialsDetected": "Missing Credentials Detected",
     "ui.stacksId.missingSecret": "Missing Secret",
     "ui.stacksId.monitoringEvidence": "Monitoring Evidence",
     "ui.stacksId.monthlyRuntime": "Monthly Runtime",
     "ui.stacksId.monthlyRuntimeActionFailed": "Monthly Runtime action failed",
     "ui.stacksId.noCredentialsConfiguredForThis":
-      "No credentials configured for this StackKit deployment.",
+      "No credentials configured for this homelab.",
     "ui.stacksId.noLeaseAttached": "No lease attached",
-    "ui.stacksId.noStackkitDeploymentIdProvided":
-      "No StackKit deployment ID provided",
+    "ui.stacksId.noStackkitDeploymentIdProvided": "No homelab ID provided",
     "ui.stacksId.offeringSpec": "{vcpus} vCPU · {memory} GB RAM",
-    "ui.stacksId.pageTitle": "{name} - Credentials | kombify-Techstack",
+    "ui.stacksId.pageTitle": "{name} | kombify-Techstack",
     "ui.stacksId.query": "Query",
     "ui.stacksId.runtime": "Runtime",
     "ui.stacksId.series": "Series",
@@ -2144,7 +2130,7 @@ export const screenMessages = {
     "ui.stacksId.sshInfo": "SSH Info",
     "ui.stacksId.sshOff": "SSH Off",
     "ui.stacksId.sshOn": "SSH On",
-    "ui.stacksId.stackkitDeploymentServices": "StackKit Deployment Services",
+    "ui.stacksId.stackkitDeploymentServices": "Services of this homelab",
     "ui.stacksId.stackkitService": "StackKit service",
     "ui.stacksId.start": "Start",
     "ui.stacksId.status": "Status",
@@ -2152,7 +2138,7 @@ export const screenMessages = {
     "ui.stacksId.stopManagedServer": "Stop managed server?",
     "ui.stacksId.storedCredentials": "Stored Credentials",
     "ui.stacksId.techstackWillBeginProviderCleanup":
-      "Techstack will begin provider cleanup for this managed runtime.",
+      "Techstack will delete this managed server at the provider, including its data.",
     "ui.stacksId.theFollowingServicesNeedCredentials":
       "The following services need credentials to be configured:",
     "ui.stacksId.theServerShutsDownAnd":
@@ -2161,7 +2147,7 @@ export const screenMessages = {
       "This permanently removes the selected credential.",
     "ui.stacksId.username": "Username",
     "ui.stacksIdServersNew.addNodeKombifyTechstack":
-      "Add Node | kombify-Techstack",
+      "Add server | kombify-Techstack",
     "ui.stacksIdServersServerId.activityHistory": "Activity history",
     "ui.stacksIdServersServerId.addressesDomains": "Addresses & domains",
     "ui.stacksIdServersServerId.agentId": "Agent ID",
@@ -2172,17 +2158,17 @@ export const screenMessages = {
     "ui.stacksIdServersServerId.checking": "Checking...",
     "ui.stacksIdServersServerId.checks": "Checks",
     "ui.stacksIdServersServerId.confirmAction": "Confirm action",
-    "ui.stacksIdServersServerId.confirmDecommission": "Confirm decommission",
+    "ui.stacksIdServersServerId.confirmDecommission": "Confirm removal",
     "ui.stacksIdServersServerId.confirmDetach": "Confirm detach",
     "ui.stacksIdServersServerId.couldNotLoadServerAccess":
       "Could not load server access context.",
     "ui.stacksIdServersServerId.cpuCores": "CPU cores",
     "ui.stacksIdServersServerId.custodyResolutionFailed":
       "Custody resolution failed.",
-    "ui.stacksIdServersServerId.decommissionFailed": "Decommission failed.",
-    "ui.stacksIdServersServerId.decommissionServer": "Decommission server",
+    "ui.stacksIdServersServerId.decommissionFailed": "Removal failed.",
+    "ui.stacksIdServersServerId.decommissionServer": "Remove server",
     "ui.stacksIdServersServerId.desiredListenersDurableReservationsAnd":
-      "Desired listeners, durable reservations, and runtime evidence for this Node.",
+      "Desired listeners, durable reservations, and runtime evidence for this server.",
     "ui.stacksIdServersServerId.detachSelfOwnedServer":
       "Detach self-owned server",
     "ui.stacksIdServersServerId.detachServer": "Detach server",
@@ -2210,7 +2196,7 @@ export const screenMessages = {
     "ui.stacksIdServersServerId.noDesiredListenerIsReserved":
       "No desired listener is reserved, and the Guard could not complete its listener snapshot, so runtime listeners remain unknown.",
     "ui.stacksIdServersServerId.noDesiredListenerIsReserved2":
-      "No desired listener is reserved, and the Guard has not reported a listener snapshot for this Node yet.",
+      "No desired listener is reserved, and the Guard has not reported a listener snapshot for this server yet.",
     "ui.stacksIdServersServerId.noHostAddressHasBeen":
       "No host address has been reported.",
     "ui.stacksIdServersServerId.noObservedServiceEndpointsHave":
@@ -2227,7 +2213,7 @@ export const screenMessages = {
     "ui.stacksIdServersServerId.noServicePlacementIsRecorded":
       "No service placement is recorded for this server.",
     "ui.stacksIdServersServerId.noStackkitDeploymentEvidenceHas":
-      "No StackKit deployment evidence has been reported by this server.",
+      "This server has not reported any StackKit installation evidence.",
     "ui.stacksIdServersServerId.notDeclared": "Not declared",
     "ui.stacksIdServersServerId.operatingSystem": "Operating system",
     "ui.stacksIdServersServerId.portAllocations": "Port allocations",
@@ -2250,7 +2236,7 @@ export const screenMessages = {
     "ui.stacksIdServersServerId.serverDetailsKombifyTechstack":
       "Server Details | kombify-Techstack",
     "ui.stacksIdServersServerId.serverGenerationDecommissioned":
-      "Server generation decommissioned",
+      "Server generation removed",
     "ui.stacksIdServersServerId.serverSettings": "Server settings",
     "ui.stacksIdServersServerId.serviceEndpoints": "Service endpoints",
     "ui.stacksIdServersServerId.servicesOnThisServerMay":
@@ -2263,15 +2249,15 @@ export const screenMessages = {
     "ui.stacksIdServersServerId.thisChangesTheSelectedServer":
       "This changes the selected server through its enrolled StackKit agent.",
     "ui.stacksIdServersServerId.thisIsConfiguredStackkitIntent":
-      "This is configured StackKit intent; the Guard has not reported matching deployment evidence yet.",
+      "This is the configured StackKit intent; the Guard has not reported matching installation evidence yet.",
     "ui.stacksIdServersServerId.thisOnlyArchivesTheStale":
       "This only archives the stale Techstack custody record. It does not delete anything at the provider.",
     "ui.stacksIdServersServerId.thisServerHasNoManaged":
-      "This server has no managed provider lease. Its recorded custody does not currently authorize either managed decommission or self-owned detach.",
+      "This server has no managed provider lease. Its recorded custody does not currently authorize either removing a managed server or detaching a self-owned one.",
     "ui.stacksIdServersServerId.thisServerIsALegacy":
       "This server is a legacy or unbound custody record. Confirm that the provider resource has already been removed; Techstack will archive only this record and will not call or delete a provider resource.",
     "ui.stacksIdServersServerId.thisServerIsRegisteredThrough":
-      "This server is registered through the worker inventory; managed runtime access actions are not attached.",
+      "This server is registered through the server inventory; managed runtime access actions are not attached.",
     "ui.standardBundle.additionalComputeNodeForStackKit":
       "Additional compute Node for StackKit service placement.",
     "ui.standardBundle.additionalNodeIntendedForStorage":
@@ -2337,11 +2323,11 @@ export const screenMessages = {
       "{name}: CPU {cpu} percent, memory {ram} percent, disk {disk} percent, {services} services",
     "ui.strata.job": "Job",
     "ui.strata.noCpuCurve": "{name}: no CPU data for the last 24 hours",
-    "ui.strata.noNodeHasReportedYet": "No Node has reported yet.",
+    "ui.strata.noNodeHasReportedYet": "No server has reported yet.",
     "ui.strata.nodesNeedAttention.one":
-      "{count} of {total} Nodes needs attention.",
+      "{count} of {total} servers needs attention.",
     "ui.strata.nodesNeedAttention.other":
-      "{count} of {total} Nodes need attention.",
+      "{count} of {total} servers need attention.",
     "ui.strata.notShown": "Not shown: {items} could not be read.",
     "ui.strata.provisioning": "Provisioning",
     "ui.strata.quiet": "quiet",
@@ -2362,7 +2348,7 @@ export const screenMessages = {
     "ui.strataDashboard.middleRing": "Middle ring",
     "ui.strataDashboard.monitoring": "Monitoring →",
     "ui.strataDashboard.noCpuDataInThe": "No CPU data in the last 24 h",
-    "ui.strataDashboard.nodes": "Nodes",
+    "ui.strataDashboard.nodes": "Servers",
     "ui.strataDashboard.nothingHappenedNoRolloutsRestores":
       "Nothing happened: no rollouts, restores, alerts or outages.",
     "ui.strataDashboard.outerRing": "Outer ring",
@@ -2379,7 +2365,7 @@ export const screenMessages = {
     "ui.substrateEnrollment.proxmoxHypervisorConnection":
       "Proxmox hypervisor connection",
     "ui.substrateEnrollment.theHypervisorHostsYourNodes":
-      "The hypervisor hosts your Nodes. StackKits run inside Ubuntu guests. Guest management is enabled after its local Proxmox client is configured and you authorize the connection. Existing guests stay outside deletion custody.",
+      "The hypervisor hosts your servers. StackKits run inside Ubuntu guests. Guest management is enabled after its local Proxmox client is configured and you authorize the connection. Existing guests stay outside deletion custody.",
     "ui.substrates.theRuntimeDidNotReturn":
       "The runtime did not return the requested data.",
     "ui.taskStatus.aVerifiedStackKitDeploymentMust":
@@ -2392,13 +2378,13 @@ export const screenMessages = {
     "ui.taskStatus.buildingServiceList": "Building service list",
     "ui.taskStatus.callingTheStackKitsRuntimeAction":
       "Calling the StackKits runtime action that applies the generated Cloud Kit specification.",
-    "ui.taskStatus.checkingOpenTofu": "Checking OpenTofu",
-    "ui.taskStatus.checkingRolloutTarget": "Checking rollout target",
-    "ui.taskStatus.checkingTerramate": "Checking Terramate",
+    "ui.taskStatus.checkingOpenTofu": "Checking the setup tools",
+    "ui.taskStatus.checkingRolloutTarget": "Checking your server",
+    "ui.taskStatus.checkingTerramate": "Checking the update tools",
     "ui.taskStatus.checkingThatLoginProtectedServices":
       "Checking that login-protected services and monitoring signals are available after rollout.",
     "ui.taskStatus.checkingTheTerramateToolchainWhen":
-      "Checking the Terramate toolchain when the selected StackKit lifecycle needs it.",
+      "Checking the tools that keep your Homelab up to date, when your setup needs them.",
     "ui.taskStatus.checkingYourChoices": "Checking your choices",
     "ui.taskStatus.collectingServiceMetadataExposedBy":
       "Collecting service metadata exposed by the StackKits rollout.",
@@ -2430,7 +2416,7 @@ export const screenMessages = {
     "ui.taskStatus.eachServiceGetsScopedPermissions":
       "Each service gets scoped permissions. TLS is enabled automatically where possible, and services are isolated by default.",
     "ui.taskStatus.ensuringTheDeploymentTargetSatisfies":
-      "Ensuring the deployment target satisfies the StackKit runtime requirements.",
+      "Making sure your server meets the requirements for your Homelab.",
     "ui.taskStatus.findingTheBestStackKitFor":
       "Finding the best StackKit for you",
     "ui.taskStatus.generateDeploymentArtifacts":
@@ -2454,19 +2440,19 @@ export const screenMessages = {
     "ui.taskStatus.networkSettingsAreDerivedFrom":
       "Network settings are derived from your access mode. Local-only uses internal Docker networking; remote access adds the lane-appropriate private mesh or managed edge route.",
     "ui.taskStatus.onceThisSucceedsTheNode":
-      "Once this succeeds, the Node projection is kept visible in Techstack even if preparation or rollout fails later.",
+      "Once this succeeds, your server stays visible in Techstack even if preparation or rollout fails later.",
     "ui.taskStatus.opentofuReadinessIsPartOf":
       "OpenTofu readiness is part of the StackKits CLI prep contract, not a separate Techstack-owned bootstrap path.",
     "ui.taskStatus.persistingConfiguration": "Persisting configuration",
     "ui.taskStatus.persistingRolloutSpec": "Persisting rollout spec",
     "ui.taskStatus.preparingDocker": "Preparing Docker",
-    "ui.taskStatus.preparingNodeRegistration": "Preparing Node registration",
+    "ui.taskStatus.preparingNodeRegistration": "Preparing server registration",
     "ui.taskStatus.preparingOpenTelemetryHandoffDataFor":
-      "Preparing OpenTelemetry handoff data for monitoring and operations.",
-    "ui.taskStatus.preparingStackKitsRuntime": "Preparing StackKits runtime",
-    "ui.taskStatus.preparingTelemetry": "Preparing telemetry",
+      "Getting monitoring ready so you can see how your Homelab is doing.",
+    "ui.taskStatus.preparingStackKitsRuntime": "Preparing your server",
+    "ui.taskStatus.preparingTelemetry": "Preparing monitoring",
     "ui.taskStatus.preparingTheRuntimeMetadataUsed":
-      "Preparing the runtime metadata used by monitoring, operations, and the Runtime Intelligence Layer.",
+      "Preparing the information that monitoring and the day-to-day care of your Homelab rely on.",
     "ui.taskStatus.preparingToolsApplyingTheStackKit":
       "Preparing tools, applying the StackKit, and reading services",
     "ui.taskStatus.provisionManagedRuntime": "Provision managed runtime",
@@ -2475,8 +2461,9 @@ export const screenMessages = {
       "Rendering StackKits artifacts after VPS readiness",
     "ui.taskStatus.renderingTheStackKitInfrastructureFiles":
       "Rendering the StackKit infrastructure files needed by the rollout adapter.",
-    "ui.taskStatus.requestingManagedCloudNode": "Requesting managed cloud Node",
-    "ui.taskStatus.requestingManagedNode": "Requesting managed Node",
+    "ui.taskStatus.requestingManagedCloudNode":
+      "Requesting managed cloud server",
+    "ui.taskStatus.requestingManagedNode": "Requesting managed server",
     "ui.taskStatus.reservingTheSubscriptionVMConnecting":
       "Reserving the subscription VM, connecting runtime, and preparing telemetry",
     "ui.taskStatus.rollOutCloudKit": "Roll out Cloud Kit",
@@ -2485,10 +2472,10 @@ export const screenMessages = {
     "ui.taskStatus.settingUpPartNamed":
       "Setting up part {position} of {total}: {name}",
     "ui.taskStatus.runningRestoreDrill": "Running restore drill",
-    "ui.taskStatus.runningSimulatedUpdateGate": "Running simulated update gate",
-    "ui.taskStatus.runningSimulationGate": "Running simulation gate",
+    "ui.taskStatus.runningSimulatedUpdateGate": "Testing the update first",
+    "ui.taskStatus.runningSimulationGate": "Testing the update first",
     "ui.taskStatus.runningTheStackKitsCLIPrepare":
-      "Running the StackKits CLI prepare contract on the managed VPS.",
+      "Installing and checking what your server needs before your Homelab is set up.",
     "ui.taskStatus.savingUnifiedSpecYamlSo":
       "Saving unified-spec.yaml so the rollout is reproducible and auditable.",
     "ui.taskStatus.savingYourChoicesToThe":
@@ -2500,7 +2487,7 @@ export const screenMessages = {
       "Setting up security configuration",
     "ui.taskStatus.stackkitsAreCuratedInfrastructureTemplates":
       "StackKits are curated infrastructure templates. The system picks one that covers your selected features with minimal overhead.",
-    "ui.taskStatus.startingTelemetryHandoff": "Starting telemetry handoff",
+    "ui.taskStatus.startingTelemetryHandoff": "Starting monitoring",
     "ui.taskStatus.techstackConsumesStackKitArtifactsHere":
       "Techstack consumes StackKit artifacts here; StackKits remains responsible for applying them.",
     "ui.taskStatus.techstackRecordsTheManagedTarget":
@@ -2518,7 +2505,7 @@ export const screenMessages = {
     "ui.taskStatus.theSimulationGateProtectsThe":
       "The simulation gate protects the first rollout and later update flows from unsafe changes.",
     "ui.taskStatus.theSpecContainsAllConfiguration":
-      "The spec contains all configuration needed to deploy your Homelab. It can be version-controlled and reproduced on any compatible Node.",
+      "The spec contains all configuration needed to deploy your Homelab. It can be version-controlled and reproduced on any compatible server.",
     "ui.taskStatus.theUnifiedSpecIsThe":
       "The unified spec is the canonical input for StackKits and runtime verification.",
     "ui.taskStatus.thisChecksFeatureSelectionsAccess":
@@ -2537,7 +2524,7 @@ export const screenMessages = {
     "ui.taskStatus.validatingTheBackupAndRestore":
       "Validating the backup and restore path before the StackKit deployment is marked verified.",
     "ui.taskStatus.validatingTheUpdatePathBefore":
-      "Validating the update path before applying the rollout to the managed runtime.",
+      "Checking that the update works before it is applied to your server.",
     "ui.taskStatus.verificationConfirmsThatTheStackKit":
       "Verification confirms that the StackKit deployment is usable, not only that files were generated.",
     "ui.taskStatus.verifyRollout": "Verify rollout",
@@ -2547,7 +2534,7 @@ export const screenMessages = {
     "ui.taskStatus.verifyingThatAllSelectedOptions":
       "Verifying that all selected options are valid and compatible with each other.",
     "ui.taskStatus.verifyingTheInfrastructureToolchainNeeded":
-      "Verifying the infrastructure toolchain needed by StackKits.",
+      "Making sure your server has the tools it needs to set up your Homelab.",
     "ui.taskStatus.yourChosenAuthMethodIs":
       "Your chosen auth method is applied across all services. Multi-user setups get group-based permissions automatically.",
     "ui.taskUpdates.anUnexpectedErrorOccurred": "An unexpected error occurred",
@@ -2708,24 +2695,24 @@ export const screenMessages = {
     "ui.wizardRunRequest.selectSeparateHomeAssistantOS":
       "Select separate Home Assistant OS guest resources.",
     "ui.wizardRuns.thisRunHasNoRollout": "This run has no rollout to cancel.",
-    "ui.worker.registryLink": "Worker-Registry Link",
+    "ui.worker.registryLink": "Server registry link",
     "ui.worker.registryUrlError":
       "Could not automatically determine registry URL: {error}",
     "ui.worker.runInstallMany":
-      "Run the install command above on at least {count} Nodes, then wait for operations evidence to confirm the connection.",
+      "Run the install command above on at least {count} servers, then wait for operations evidence to confirm the connection.",
     "ui.worker.runInstallOne":
-      "Run the install command above on your Node, then wait for operations evidence to confirm the connection.",
+      "Run the install command above on your server, then wait for operations evidence to confirm the connection.",
     "ui.worker.verifiedConnected": "{count} verified connected",
     "ui.worker.waitingVerified":
-      "Waiting for verified workers ({connected}/{required})",
+      "Waiting for verified servers ({connected}/{required})",
     "ui.workerRegistrationCard.installCommand": "Install command:",
     "ui.workerRegistrationCard.installCommandForNewWorkers":
-      "Install command for new workers:",
+      "Install command for new servers:",
     "ui.workerRegistrationCard.nextStep": "Next step:",
     "ui.workerRegistrationCard.operationsEvidenceIsRequiredBefore":
-      "Operations evidence is required before connected Nodes can be confirmed.",
+      "Operations evidence is required before connected servers can be confirmed.",
     "ui.workerRegistrationCard.workersConnectedVerified":
-      "Workers connected (verified)",
+      "Servers connected (verified)",
   },
   de: {
     "ui.clientLocal.bootstrapPassword": "Bootstrap-Passwort",
@@ -2742,8 +2729,8 @@ export const screenMessages = {
     "state.connected": "verbunden",
     "state.connecting": "verbindet",
     "state.consistent": "konsistent",
-    "state.decommissioned": "außer Betrieb genommen",
-    "state.decommissioning": "wird außer Betrieb genommen",
+    "state.decommissioned": "entfernt",
+    "state.decommissioning": "wird entfernt",
     "state.degraded": "beeinträchtigt",
     "state.deploying": "wird deployt",
     "state.enrolling": "wird registriert",
@@ -2893,20 +2880,17 @@ export const screenMessages = {
     "ui.common.sourceValue": "Quelle: {value}",
     "ui.common.unknown": "unbekannt",
     "ui.completeDashboard.allServices": "Alle Services →",
-    "ui.completeDashboard.nodesApps": "Nodes & Apps",
+    "ui.completeDashboard.nodesApps": "Server & Apps",
     "ui.configFlow.apiUnreachable":
       "Der API-Server ist von deinem Browser aus nicht erreichbar.",
     "ui.configFlow.apiUnreachableAt":
       "Der API-Server unter {base} ist von deinem Browser aus nicht erreichbar.",
     "ui.configFlow.capability": "Fähigkeit: {value}",
-    "ui.configFlow.corsHint":
-      "Wenn das Backend läuft, der Browser die Anfrage aber blockiert (CORS), öffne DevTools → Konsole und suche nach einem CORS-Fehler.",
     "ui.configFlow.createFailedAt": "Erstellen fehlgeschlagen bei: {phase}",
     "ui.configFlow.deploymentNameExists":
-      'In deinem Homelab existiert bereits ein StackKit-Deployment mit dem Namen "{name}". Öffne das bestehende Deployment oder wähle einen anderen Namen.',
+      "Ein Homelab mit dem Namen „{name}“ existiert bereits. Öffne stattdessen das bestehende.",
     "ui.configFlow.errorCode": "Fehlercode: {value}",
     "ui.configFlow.missingFeatures": "Fehlende Funktionen: {value}",
-    "ui.configFlow.nextStep": "Nächster Schritt: {value}",
     "ui.configFlow.nextSteps": "Nächste Schritte:",
     "ui.configFlow.pleaseFix": "Bitte behebe Folgendes:",
     "ui.configFlow.provider": "Anbieter: {value}",
@@ -2920,26 +2904,27 @@ export const screenMessages = {
     "ui.configFlow.step": "Schritt: {value}",
     "ui.configFlow.technicalDetails": "Technische Details: {value}",
     "ui.configurationFlow.aPreviousSubmissionAlreadyCompleted":
-      "Eine frühere Übermittlung wurde bereits abgeschlossen",
+      "Das wurde bereits abgeschickt",
     "ui.configurationFlow.anEarlierSubmissionFromThis":
-      "Eine frühere Übermittlung aus dieser Browsersitzung wurde bereits mit anderen Antworten abgeschlossen. Es wurde ein neuer Versuchsschlüssel erzeugt – sende erneut ab oder öffne das bestehende Deployment.",
+      "Eine frühere Übermittlung aus diesem Browser-Tab wurde bereits mit anderen Antworten abgeschlossen. Erstelle erneut, um deine aktuellen Antworten abzuschicken, oder öffne das bestehende Homelab.",
     "ui.configurationFlow.anUnexpectedErrorOccurredPlease":
-      "Ein unerwarteter Fehler ist aufgetreten. Details findest du in der Browserkonsole.",
+      "Es ist etwas Unerwartetes schiefgelaufen. Versuche es erneut. Falls es wieder passiert, wende dich an den Support und nenne die technischen Details.",
     "ui.configurationFlow.authenticationRequired":
       "Authentifizierung erforderlich",
     "ui.configurationFlow.cannotConnectToBackend":
-      "Keine Verbindung zum Backend",
-    "ui.configurationFlow.deploymentFailed": "Deployment fehlgeschlagen",
+      "kombify Techstack ist nicht erreichbar",
+    "ui.configurationFlow.deploymentFailed":
+      "Dein Homelab konnte nicht erstellt werden",
     "ui.configurationFlow.managedServerIsNotActive":
       "Verwalteter Server ist nicht aktiv",
     "ui.configurationFlow.permissionDenied": "Zugriff verweigert",
     "ui.configurationFlow.retryingIsUnlikelyToHelp":
-      "Ein erneuter Versuch hilft voraussichtlich erst, wenn das serverseitige Problem behoben ist.",
-    "ui.configurationFlow.serverError": "Serverfehler",
+      "Ein erneuter Versuch hilft erst, wenn wir das Problem auf unserer Seite behoben haben.",
+    "ui.configurationFlow.serverError": "Bei uns ist etwas schiefgelaufen",
     "ui.configurationFlow.stackkitDeploymentNameAlreadyExists":
-      "Name des StackKit-Deployments existiert bereits",
+      "Ein Homelab mit diesem Namen existiert bereits",
     "ui.configurationFlow.theBackendRejectedThisStackkit":
-      "Das Backend hat diese StackKit-Deployment-Anfrage wegen eines Konflikts abgelehnt.",
+      "Ein solches Homelab existiert bereits, deshalb wurde das erneute Erstellen abgelehnt. Öffne stattdessen das bestehende.",
     "ui.configurationFlow.useTheAdminPasswordConfigured":
       "(verwende das für diese Instanz konfigurierte Admin-Passwort)",
     "ui.configurationFlow.validatingConfiguration":
@@ -2947,17 +2932,17 @@ export const screenMessages = {
     "ui.configurationFlow.validatingWithStackkits":
       "Validierung mit StackKits...",
     "ui.configurationFlow.youCanRetryIfThis":
-      "Du kannst es erneut versuchen. Falls es wieder passiert, teile dem Support den Fehlercode und die Request-ID mit.",
+      "Versuche es erneut. Falls es wieder passiert, wende dich an den Support und nenne die technischen Details.",
     "ui.configurationFlow.youDonTHavePermission":
-      "Du hast keine Berechtigung, StackKits zu deployen, und der Server hat keinen konkreten Grund genannt. Bitte teile das dem Support mit.",
+      "Du hast hier keine Berechtigung, ein Homelab zu erstellen. Falls das nicht stimmt, wende dich an den Support und nenne die technischen Details.",
     "ui.configurationFlow.youMustBeLoggedIn":
-      "Du musst angemeldet sein, um ein StackKit zu deployen.",
+      "Melde dich an, um dein Homelab zu erstellen.",
     "ui.configurationFlow.youMustBeLoggedIn2":
-      "Du musst angemeldet sein, um ein StackKit zu deployen. Bitte melde dich zuerst an.",
+      "Du musst angemeldet sein, um dein Homelab zu erstellen. Bitte melde dich zuerst an.",
     "ui.connectDevices.techstackClient": "Techstack-Client",
     "ui.creationCompletion.ownerSeedFor":
-      "Der Owner-Seed für {email} ist vorbereitet.",
-    "ui.creationController.theAdditionalNode": "Der zusätzliche Node",
+      "Dein Eigentümer-Konto für {email} ist vorbereitet.",
+    "ui.creationController.theAdditionalNode": "Der zusätzliche Server",
     "ui.creationFailure.lease": "Lease",
     "ui.creationInstall.previewExpires": "Vorschau läuft um {time} ab",
     "ui.creationLease.sshHost":
@@ -2972,7 +2957,7 @@ export const screenMessages = {
     "ui.creationRun.notConnectedYet": "Noch nicht verbunden",
     "ui.creationRun.notReachableYet": "Noch nicht erreichbar",
     "ui.creationRun.pairingTokenExpires":
-      "Das Pairing-Token läuft um {slot} ab.",
+      "Dieser Befehl funktioniert bis {slot}.",
     "ui.creationRun.resumeStartingAt":
       "Ab {time} kann der Server eine sichere Wiederaufnahme auf derselben VM autorisieren.",
     "ui.creationRun.stepOf": "Schritt {step} von {total}",
@@ -3029,17 +3014,17 @@ export const screenMessages = {
       "Wofür dieses Tool dient, wer es nutzt und Hinweise zum Start...",
     "ui.crypto.decryptionFailedWrongPassword":
       "Entschlüsselung fehlgeschlagen. Falsches Passwort?",
-    "ui.custody.leasesWithoutNode.one": "{count} Lease ohne Node",
-    "ui.custody.leasesWithoutNode.other": "{count} Leases ohne Node",
+    "ui.custody.leasesWithoutNode.one": "{count} Lease ohne Server",
+    "ui.custody.leasesWithoutNode.other": "{count} Leases ohne Server",
     "ui.custody.wasAddress": "war {ip}",
-    "ui.custodyLeasesPanel.decommissioning": "Außerbetriebnahme läuft...",
+    "ui.custodyLeasesPanel.decommissioning": "Wird entfernt...",
     "ui.custodyLeasesPanel.leaseArchived": "Lease archiviert",
     "ui.custodyLeasesPanel.leaseCancelled": "Lease storniert",
     "ui.custodyLeasesPanel.neverObserved": "Nie beobachtet",
     "ui.custodyLeasesPanel.noExecutionAuthorityLegacyOr":
       "Keine Ausführungsberechtigung (veraltetes oder ungebundenes Lease)",
     "ui.custodyLeasesPanel.nodeNeverFinishedEnrolling":
-      "Node hat die Registrierung nie abgeschlossen",
+      "Server hat die Registrierung nie abgeschlossen",
     "ui.custodyLeasesPanel.resolving": "Wird aufgelöst...",
     "ui.custodyLeasesPanel.vmNoLongerExistsAt":
       "VM existiert beim Anbieter nicht mehr",
@@ -3108,25 +3093,25 @@ export const screenMessages = {
       "Services stammen aus zwei Quellen: einem abgeschlossenen StackKit-Rollout sowie den Containern und Units, die der Agent auf dem Host erkennt. Bisher wurde keine der beiden Quellen beobachtet: Es wurde kein StackKit-Manifest gefunden und der Agent hat keine Service-Erkennung ausgeführt.",
     "ui.homelab.onlineCount": "{count} online",
     "ui.homelab.operationsNotLoaded.one":
-      "{count} StackKit-Deployment-Vorgang konnte nicht geladen werden.",
+      "{count} Homelab-Vorgang konnte nicht geladen werden.",
     "ui.homelab.operationsNotLoaded.other":
-      "{count} StackKit-Deployment-Vorgänge konnten nicht geladen werden.",
-    "ui.homelab.partialRolloutBadge": "teilweiser Rollout",
+      "{count} Homelab-Vorgänge konnten nicht geladen werden.",
+    "ui.homelab.partialRolloutBadge": "Einrichtung unvollständig",
     "ui.homelab.phase": "Phase: {phase}",
     "ui.homelab.preparationFailed":
-      "StackKit-Vorbereitung auf verbundenem Node fehlgeschlagen — {detail}",
+      "StackKit-Vorbereitung auf verbundenem Server fehlgeschlagen — {detail}",
     "ui.homelab.probeAnswered":
       "Die Runtime hat auf die Prüfung geantwortet und der Guard-Heartbeat ist aktuell ({state}).",
     "ui.homelab.probeOffline":
-      'Der Anbieter meldet die Maschine als "{machineState}" und die Registrierung als "{enrollment}". Erneut verbinden kann nur diese Prüfung wiederholen – den kombify Agent auf der Maschine kann es nicht neu starten. Der Node bleibt offline, bis der Agent wieder einen Heartbeat sendet. Fahre daher in den Node-Details fort, dort werden der Enrollment-Befehl und der letzte Kontakt angezeigt.',
+      'Der Anbieter meldet die Maschine als "{machineState}" und die Registrierung als "{enrollment}". Erneut verbinden kann nur diese Prüfung wiederholen – den kombify Agent auf der Maschine kann es nicht neu starten. Der Server bleibt offline, bis der Agent wieder einen Heartbeat sendet. Fahre daher in den Serverdetails fort, dort werden der Enrollment-Befehl und der letzte Kontakt angezeigt.',
     "ui.homelab.recorded": "{count} erfasst",
     "ui.homelab.retryFailed":
       "Rollout konnte nicht wiederholt werden: {message}",
     "ui.homelab.rolloutFailed": "Rollout fehlgeschlagen: {message}",
     "ui.homelab.sshFailed":
-      "SSH-Verbindung zu deinem Node fehlgeschlagen — {detail}",
+      "SSH-Verbindung zu deinem Server fehlgeschlagen — {detail}",
     "ui.homelabDashboardPage.0VerifiedConnectedOperationsEvidence":
-      "0 verifiziert verbunden · keine Betriebsnachweise verfügbar",
+      "Verbindung nicht bestätigt",
     "ui.homelabDashboardPage.agentDiscoveryReportedNoRunning":
       "Die Agent-Erkennung hat keine laufenden Container oder Units gemeldet. Es wurde kein StackKit-Manifest beobachtet, daher sind deklarierte StackKit-Services weiterhin unbekannt.",
     "ui.homelabDashboardPage.bothServiceSourcesReportedAn":
@@ -3137,19 +3122,18 @@ export const screenMessages = {
       "Custody-Eintrag unverändert: Das Techstack-Gateway konnte das Backend nicht erreichen. Wiederhole genau diesen Eintrag, sobald der Dienst verfügbar ist.",
     "ui.homelabDashboardPage.custodyResolutionFailed":
       "Custody-Auflösung fehlgeschlagen",
-    "ui.homelabDashboardPage.decommissionFailed":
-      "Außerbetriebnahme fehlgeschlagen",
-    "ui.homelabDashboardPage.deployStackkit": "StackKit deployen",
+    "ui.homelabDashboardPage.decommissionFailed": "Entfernen fehlgeschlagen",
+    "ui.homelabDashboardPage.deployStackkit": "Prüfen und erstellen",
     "ui.homelabDashboardPage.lastVerifiedStateRetainedThe":
       "Letzter verifizierter Stand beibehalten — die Aktualisierung ist fehlgeschlagen und wird automatisch wiederholt.",
-    "ui.homelabDashboardPage.managedRuntime": "Verwaltete Runtime",
+    "ui.homelabDashboardPage.managedRuntime": "Verwalteter Server",
     "ui.homelabDashboardPage.managedRuntimeLeaseAllocationMetadata":
-      "Lease-/Zuteilungs-Metadaten der verwalteten Runtime sind vorhanden, aber der aktuelle Anbieter- und Guard-Status konnte nicht verifiziert werden.",
+      "Dein verwalteter Server ist eingerichtet, sein aktueller Zustand konnte aber gerade nicht geprüft werden.",
     "ui.homelabDashboardPage.noNodeHasReportedAn":
-      "Noch kein Node hat ein Inventar gemeldet.",
-    "ui.homelabDashboardPage.nodeIsReportingAgain": "Node meldet sich wieder",
+      "Noch kein Server hat ein Inventar gemeldet.",
+    "ui.homelabDashboardPage.nodeIsReportingAgain": "Server meldet sich wieder",
     "ui.homelabDashboardPage.openTheNodeDetailsTo":
-      "Öffne die Node-Details, um den Agent und den letzten Rollout zu prüfen.",
+      "Öffne die Serverdetails, um den Agent und den letzten Rollout zu prüfen.",
     "ui.homelabDashboardPage.operationsDataIsNotAvailable":
       "Für dieses Homelab sind noch keine Betriebsdaten verfügbar.",
     "ui.homelabDashboardPage.operationsDataIsNotAvailable2":
@@ -3168,23 +3152,23 @@ export const screenMessages = {
     "ui.homelabDashboardPage.retryExactCleanup":
       "Genaue Bereinigung wiederholen",
     "ui.homelabDashboardPage.review": "Prüfen",
-    "ui.homelabDashboardPage.reviewStart": "Prüfen + Starten",
+    "ui.homelabDashboardPage.reviewStart": "Prüfen und erstellen",
     "ui.homelabDashboardPage.rolloutReadinessIsUnavailableRefresh":
       "Die Rollout-Bereitschaft ist nicht verfügbar. Aktualisiere die Betriebsdaten, bevor du startest.",
     "ui.homelabDashboardPage.runtimeAnsweredButTheNode":
-      "Runtime hat geantwortet, aber der Node ist weiterhin offline",
-    "ui.homelabDashboardPage.stackkitDeployment": "StackKit-Deployment",
+      "Runtime hat geantwortet, aber der Server ist weiterhin offline",
+    "ui.homelabDashboardPage.stackkitDeployment": "Homelab",
     "ui.homelabDashboardPage.starting": "Wird gestartet...",
     "ui.homelabDashboardPage.theAgentVersionWasNot":
       "Die Agent-Version wurde nicht gemeldet.",
     "ui.homelabDashboardPage.theFailedCleanupIsNot":
       "Die fehlgeschlagene Bereinigung ist an kein aktionsfähiges Lease gebunden. Aktualisiere die Lifecycle-Nachweise und nutze die Aktion am genauen Custody-Eintrag.",
     "ui.homelabDashboardPage.theFailedStackkitDeploymentIs":
-      "Das fehlgeschlagene StackKit-Deployment gehört nicht mehr zu diesem Homelab. Aktualisiere das Homelab und wiederhole genau dieses Deployment.",
+      "Der fehlgeschlagene Teil deines Homelabs existiert nicht mehr. Aktualisiere das Homelab und versuche es noch einmal.",
     "ui.homelabDashboardPage.thePersistedRolloutIsWaiting":
       "Der gespeicherte Rollout wartet auf seinen nächsten Checkpoint.",
     "ui.homelabDashboardPage.theRuntimeProbeReturnedNo":
-      "Die Runtime-Prüfung hat keinen Grund geliefert. Versuche es erneut oder öffne die Node-Details für den vollständigen Runtime-Eintrag.",
+      "Die Runtime-Prüfung hat keinen Grund geliefert. Versuche es erneut oder öffne die Serverdetails für den vollständigen Runtime-Eintrag.",
     "ui.homelabDashboardPage.theStackkitManifestSourceReported":
       "Die StackKit-Manifest-Quelle hat keine Services gemeldet. Die Service-Erkennung wurde nicht beobachtet, daher sind Container und Units weiterhin unbekannt.",
     "ui.homelabDashboardPage.thisFailedRunCannotBe":
@@ -3307,12 +3291,12 @@ export const screenMessages = {
       "Zugangsdaten für das PocketBase-Admin-Dashboard",
     "ui.integration.traefikDashboardBasicAuth":
       "Basic Auth für das Traefik-Dashboard",
-    "ui.inventory.nodeCount.one": "{count} Node",
-    "ui.inventory.nodeCount.other": "{count} Nodes",
+    "ui.inventory.nodeCount.one": "{count} Server",
+    "ui.inventory.nodeCount.other": "{count} Server",
     "ui.inventory.serviceCount.one": "{count} Service",
     "ui.inventory.serviceCount.other": "{count} Services",
-    "ui.inventory.telemetryNodes.one": "{count} Telemetrie-Node",
-    "ui.inventory.telemetryNodes.other": "{count} Telemetrie-Nodes",
+    "ui.inventory.telemetryNodes.one": "{count} Telemetrie-Server",
+    "ui.inventory.telemetryNodes.other": "{count} Telemetrie-Server",
     "ui.localOwner.localOwnerCreationIsOnly":
       "Der lokale Owner kann nur bei der Ersteinrichtung erstellt werden.",
     "ui.login.bootstrapPassword": "Bootstrap-Passwort:",
@@ -3380,7 +3364,7 @@ export const screenMessages = {
     "ui.monitoring.acrossEpisodes.one": "über {count} Episode",
     "ui.monitoring.acrossEpisodes.other": "über {count} Episoden",
     "ui.monitoring.availabilityHistoryIsUnavailableOn":
-      "Der Verfügbarkeitsverlauf ist in diesem Deployment nicht verfügbar.",
+      "Der Verfügbarkeitsverlauf ist in dieser Installation nicht verfügbar.",
     "ui.monitoring.availabilityWindow": "Verfügbarkeit · {window}",
     "ui.monitoring.dailyState": "Tagesstatus",
     "ui.monitoring.dailyStateLabel": "{name}: täglicher Verbindungsstatus",
@@ -3400,7 +3384,7 @@ export const screenMessages = {
     "ui.monitoring.noDowntimeInThisWindow":
       "Keine Ausfallzeit in diesem Zeitraum.",
     "ui.monitoring.noNodesHaveReportedYet":
-      "Noch hat kein Node etwas gemeldet. Registriere einen Node, dann erscheint sein Status hier.",
+      "Noch hat kein Server etwas gemeldet. Registriere einen Server, dann erscheint sein Status hier.",
     "ui.monitoring.noRecordedDowntimeInThis":
       "Keine erfasste Ausfallzeit in diesem Zeitraum.",
     "ui.monitoring.noServersInThisWindow": "Keine Server in diesem Zeitraum.",
@@ -3419,17 +3403,17 @@ export const screenMessages = {
     "ui.monitoring.removing": "Wird entfernt...",
     "ui.monitoring.rightNow": "Gerade jetzt",
     "ui.monitoring.selectNodeHint":
-      "wähle einen Node für seine Metriken und seinen eigenen Verlauf",
+      "wähle einen Server für seine Metriken und seinen eigenen Verlauf",
     "ui.monitoring.serverCouldNotBeRemoved":
       "Server konnte nicht entfernt werden.",
     "ui.monitoring.staleCountsAsDowntime":
       "veraltet zählt als Ausfallzeit — der Service kann nicht bestätigt werden",
     "ui.monitoring.theCanonicalServerInventoryIs":
-      "Das kanonische Server-Inventar ist nicht verfügbar.",
+      "Die Serverliste konnte gerade nicht gelesen werden.",
     "ui.monitoring.thisRevokesTheBoundGuard":
-      "Dadurch wird der gebundene Guard Agent widerrufen und der Node aus der aktuellen Flotte ausgeblendet. Der physische Server und dein Anbieterkonto bleiben unberührt.",
+      "Dadurch wird der gebundene Guard Agent widerrufen und der Server aus der aktuellen Flotte ausgeblendet. Der physische Server und dein Anbieterkonto bleiben unberührt.",
     "ui.monitoring.totalDowntime": "Gesamte Ausfallzeit",
-    "ui.monitoringServer.alertsInScope": "{count} für diesen Node relevant",
+    "ui.monitoringServer.alertsInScope": "{count} für diesen Server relevant",
     "ui.monitoringServer.allEpisodes": "Alle Episoden →",
     "ui.monitoringServer.dailyState30":
       "{name}: täglicher Verbindungsstatus über 30 Tage",
@@ -3455,28 +3439,27 @@ export const screenMessages = {
     "ui.monitoringServerId.noAlertRulesApplyHere":
       "Hier gelten keine Alarmregeln.",
     "ui.monitoringServerId.noHistoryForThisNode":
-      "Noch kein Verlauf für diesen Node.",
+      "Noch kein Verlauf für diesen Server.",
     "ui.monitoringServerId.noMetricsBackendAnsweredFor":
-      "Für diesen Node hat kein Metrik-Backend geantwortet. Die Verfügbarkeit unten wird aus der Übergangs-Timeline abgeleitet und hängt nicht davon ab.",
+      "Für diesen Server hat kein Metrik-Backend geantwortet. Die Verfügbarkeit unten wird aus der Übergangs-Timeline abgeleitet und hängt nicht davon ab.",
     "ui.monitoringServerId.refreshing": "Wird aktualisiert…",
     "ui.monitoringServerId.removeFromView": "Aus der Ansicht entfernen",
-    "ui.monitoringServerId.thisNodeSHistory": "Verlauf dieses Nodes",
+    "ui.monitoringServerId.thisNodeSHistory": "Verlauf dieses Servers",
     "ui.monitoringServerId.thisServerCouldNotBe":
       "Dieser Server konnte nicht geladen werden.",
     "ui.navItems.noServicesRegisteredYet": "Noch keine Services registriert.",
-    "ui.nodeActions.assignToThisStackkitDeployment":
-      "Diesem StackKit-Deployment zuweisen",
+    "ui.nodeActions.assignToThisStackkitDeployment": "Diesem Homelab zuweisen",
     "ui.nodeActions.assigning": "Wird zugewiesen...",
     "ui.nodeActions.canonicalManagedAccessIsNot":
       "Der kanonische verwaltete Zugriff ist noch nicht verfügbar.",
-    "ui.nodeActions.connection": "Node-Verbindung: {state}",
+    "ui.nodeActions.connection": "Serververbindung: {state}",
     "ui.nodeRow.systemServices.one": "{count} System-Service",
     "ui.nodeRow.systemServices.other": "{count} System-Services",
     "ui.nodeActions.menu": "Aktionen für {node}",
     "ui.nodeMessage.idle": "Keine offenen Meldungen",
-    "ui.nodeMessage.needsAttention": "Dieser Node braucht Aufmerksamkeit",
+    "ui.nodeMessage.needsAttention": "Dieser Server braucht Aufmerksamkeit",
     "ui.nodeMessage.panel": "Meldungen für {node}",
-    "ui.nodeMessage.listPanel": "Meldungen zur Node-Liste",
+    "ui.nodeMessage.listPanel": "Meldungen zur Serverliste",
     "ui.nodeRow.moreServices": "+ {count} weitere",
     "ui.apps.description":
       "Alles, was du auf deinen Servern über eine Oberfläche öffnest. Unter Dienste stehen alle Dienste mit ihren Einstellungen.",
@@ -3535,11 +3518,11 @@ export const screenMessages = {
       "Die gewählte Owner-Quelle wird nicht mehr unterstützt. Wähle einen lokalen Owner oder verknüpfe dein kombify-Cloud-Profil.",
     "ui.ownerState.thisInstanceHasNoKombify":
       "Für diese Instanz ist keine kombify-Cloud-Anmeldung konfiguriert.",
-    "ui.pairing.nodeConnection": "Node-Verbindung",
+    "ui.pairing.nodeConnection": "Serververbindung",
     "ui.pairing.theConnectionCommandCouldNot":
       "Der Verbindungsbefehl konnte nicht vorbereitet werden. Versuche es erneut.",
     "ui.pairing.theOriginalNodeConfigurationIs":
-      "Die ursprüngliche Node-Konfiguration ist nicht verfügbar. Gehe zurück zu „Node hinzufügen“, um die Verbindung vorzubereiten.",
+      "Die ursprüngliche Serverkonfiguration ist nicht verfügbar. Gehe zurück zu „Server hinzufügen“, um die Verbindung vorzubereiten.",
     "ui.people.activationExpired": "Aktivierung abgelaufen",
     "ui.people.activationPending": "Aktivierung ausstehend",
     "ui.people.appCount.one": "{count} App",
@@ -3549,13 +3532,13 @@ export const screenMessages = {
     "ui.people.deviceListUnavailable": "Geräteliste nicht verfügbar.",
     "ui.people.homelabOwner": "Homelab-Owner",
     "ui.people.householdListUnavailableTheHomelab":
-      "Haushaltsliste nicht verfügbar: Der Identity Provider des Homelabs hat nicht geantwortet.",
-    "ui.people.identityProviderNotReady": "Identity Provider nicht bereit",
-    "ui.people.identityStatusUnavailable": "Identitätsstatus nicht verfügbar",
+      "Die Personenliste ist gerade nicht verfügbar. Versuche es gleich noch einmal.",
+    "ui.people.identityProviderNotReady": "Anmeldedienst nicht bereit",
+    "ui.people.identityStatusUnavailable": "Anmeldestatus nicht verfügbar",
     "ui.people.member": "Mitglied",
     "ui.people.notInvitedYet": "Noch nicht eingeladen",
     "ui.people.ownerAndHouseholdAppearOnce":
-      "Owner und Haushalt erscheinen, sobald der Identity Provider des Homelabs (Pocket ID oder TinyAuth) über den Guard Bericht erstattet.",
+      "Du und die Personen, die du einlädst, erscheinen hier, sobald der Anmeldedienst deines Homelabs bereit ist.",
     "ui.people.plannedInTheWizard": "Im Assistenten geplant",
     "ui.people.plannedMember": "Geplantes Mitglied",
     "ui.people.signedInToTheHomelab": "Am Homelab angemeldet",
@@ -3588,10 +3571,10 @@ export const screenMessages = {
     "ui.postMessageBridge.kombifyAIDidNotConfirm":
       "kombify AI hat die Support-Sitzung nicht rechtzeitig bestätigt.",
     "ui.presets.aCalmOverviewOneBand":
-      "Ein ruhiger Überblick: ein Band pro Node mit seiner 24-Stunden-Kurve.",
+      "Ein ruhiger Überblick: ein Band pro Server mit seiner 24-Stunden-Kurve.",
     "ui.presets.complete": "Vollständig",
     "ui.presets.nodeRowsWithTheirApps":
-      "Node-Zeilen mit ihren Apps, Geräten und Personen daneben.",
+      "Serverzeilen mit ihren Apps, Geräten und Personen daneben.",
     "ui.providerErrors.aStackKitWasSelectedE":
       "Es wurde ein StackKit ausgewählt (z. B. basement-kit oder cloud-kit), aber die StackKit-Dateien sind auf dem Server nicht verfügbar.",
     "ui.providerErrors.anUnknownErrorOccurred":
@@ -3938,7 +3921,7 @@ export const screenMessages = {
     "ui.serverAccessActions.addOneInTheWallet":
       "Füge in der Wallet einen hinzu",
     "ui.serverAccessActions.authorizeOneOfYourPublic":
-      "Autorisiere zuerst einen deiner öffentlichen Schlüssel auf diesem Node.",
+      "Autorisiere zuerst einen deiner öffentlichen Schlüssel auf diesem Server.",
     "ui.serverAccessActions.authorizeSshKey": "SSH-Schlüssel autorisieren",
     "ui.serverAccessActions.copySshCommand": "SSH-Befehl kopieren",
     "ui.serverAccessActions.installPublicKey":
@@ -3958,14 +3941,13 @@ export const screenMessages = {
     "ui.serverCard.archUnknown": "Architektur unbekannt",
     "ui.serverCard.osUnknown": "Betriebssystem unbekannt",
     "ui.serverCardAdapter.anotherNodeActionIsRunning":
-      "Eine andere Node-Aktion läuft gerade",
+      "Eine andere Serveraktion läuft gerade",
     "ui.serverDetail.actionNotStarted":
       "{action} konnte nicht gestartet werden.",
     "ui.serverDetail.actionsTarget":
       "Diese Aktionen richten sich direkt an {name}. Die verfügbaren Steuerelemente richten sich nach dem aktuellen Verbindungs- und StackKit-Status; ein Server- oder Lifecycle-Status muss nicht ausgewählt werden.",
     "ui.serverDetail.confirmActionFor": "„{action}“ für {name} bestätigen",
-    "ui.serverDetail.confirmDecommissionFor":
-      "Außerbetriebnahme von {name} bestätigen",
+    "ui.serverDetail.confirmDecommissionFor": "Entfernen von {name} bestätigen",
     "ui.serverDetail.confirmDetachFor": "Trennen von {name} bestätigen",
     "ui.serverDetail.confirmProviderRemoval":
       "Entfernung von {name} beim Anbieter bestätigen",
@@ -4005,9 +3987,9 @@ export const screenMessages = {
     "ui.serverList.theCanonicalInventoryIsUnavailable":
       "Das kanonische Inventar ist nicht verfügbar. Es wird nur Telemetrie angezeigt, die aktuell autorisiert ist.",
     "ui.serverOutcome.continueOnConnected":
-      "StackKit auf verbundenem Node fortsetzen",
+      "StackKit auf verbundenem Server fortsetzen",
     "ui.serverOutcome.continuePrepOnConnected":
-      "StackKit-Vorbereitung auf verbundenem Node fortsetzen",
+      "StackKit-Vorbereitung auf verbundenem Server fortsetzen",
     "ui.serverOutcome.restartRollout": "Rollout neu starten",
     "ui.serverOutcome.retrySsh": "SSH-Verbindung erneut versuchen",
     "ui.serverProvisioningStep.cloudKitRollout": "Cloud-Kit-Rollout",
@@ -4070,7 +4052,7 @@ export const screenMessages = {
     "ui.serviceList.servicesByRuntimeTarget": "Services nach Runtime-Ziel",
     "ui.serviceRegistry.selected.one": "{count} Service ausgewählt",
     "ui.serviceRegistry.selected.other": "{count} Services ausgewählt",
-    "ui.serviceSheet.node": "Node: {node}",
+    "ui.serviceSheet.node": "Server: {node}",
     "ui.serviceSheet.notPlaced": "nicht platziert",
     "ui.serviceSheet.ownership": "Eigentümer: {value}",
     "ui.serviceSheet.stackkit": "StackKit {version}",
@@ -4092,7 +4074,7 @@ export const screenMessages = {
       "Aktion abgeschlossen; das Inventar wird aktualisiert.",
     "ui.services.actionTitle": "{action} {name}",
     "ui.services.addACatalogApplicationOr":
-      "Füge eine Katalog-Anwendung hinzu oder importiere nicht verwaltetes Node-Inventar.",
+      "Füge eine Katalog-Anwendung hinzu oder importiere nicht verwaltetes Serverinventar.",
     "ui.services.addANewApplication": "Neue Anwendung hinzufügen",
     "ui.services.addService": "Service hinzufügen",
     "ui.services.adoptIntoManagement": "In die Verwaltung übernehmen…",
@@ -4139,7 +4121,7 @@ export const screenMessages = {
     "ui.services.confirmUnlock":
       "{name} entsperren? Gesteuerte Änderungen sind dann wieder möglich.",
     "ui.services.connectNodesToYourHomelab":
-      "Verbinde Nodes mit deinem Homelab, um die Anwendungsplatzierung zu verwalten.",
+      "Verbinde Server mit deinem Homelab, um die Anwendungsplatzierung zu verwalten.",
     "ui.services.deleteArchivedService": "Archivierten Service löschen?",
     "ui.services.desired": "Soll",
     "ui.services.desiredObserved": "Soll {desired} · Beobachtet {observed}",
@@ -4147,7 +4129,7 @@ export const screenMessages = {
       "Auf {name} erkannt — nicht von kombify verwaltet",
     "ui.services.displayName": "Anzeigename",
     "ui.services.dragAndDropStaysDisabled":
-      "Drag-and-drop bleibt deaktiviert, bis Deployment, Health-Verifizierung, Umschaltung und Quell-Drain von einem echten Runtime-Executor übernommen werden.",
+      "Drag-and-drop ist noch nicht verfügbar. Eine App sicher zu verschieben setzt voraus, dass Installation, Gesundheitsprüfung, Umschaltung und Aufräumen der alten Kopie automatisiert ablaufen.",
     "ui.services.dropManagedApplicationsHere":
       "Verwaltete Anwendungen hier ablegen",
     "ui.services.error": "Fehler",
@@ -4163,18 +4145,18 @@ export const screenMessages = {
     "ui.services.importAsObserved": "Als beobachtet importieren",
     "ui.services.importUnmanaged": "Nicht Verwaltetes importieren",
     "ui.services.internalAddressOnlyOpenIt":
-      "Nur interne Adresse; öffne sie aus dem Netzwerk des Nodes.",
+      "Nur interne Adresse; öffne sie aus dem Netzwerk des Servers.",
     "ui.services.jobId": "Job {id}",
     "ui.services.loadOlderLogs": "Ältere Logs laden",
     "ui.services.loadingCanonicalServiceInventory":
       "Kanonisches Service-Inventar wird geladen",
-    "ui.services.localNode": "Lokaler Node",
+    "ui.services.localNode": "Lokaler Server",
     "ui.services.managedProviderTarget": "Verwaltetes Anbieterziel",
     "ui.services.migrationJobIsActive": "Der Migrations-Job ist aktiv.",
     "ui.services.moveApplication": "Anwendung verschieben",
     "ui.services.moveHere": "{name} hierher verschieben",
     "ui.services.moveSteps": "Schritte des Verschiebens:",
-    "ui.services.moveToAnotherNode": "Auf anderen Node verschieben…",
+    "ui.services.moveToAnotherNode": "Auf anderen Server verschieben…",
     "ui.services.mutationsRequireOwnerApprovalA":
       "Änderungen erfordern die Freigabe des Owners; vor jeder Änderung des gemessenen Zustands läuft ein StackKits-Verifizierungsdurchlauf.",
     "ui.services.newApplication": "Neue Anwendung",
@@ -4183,19 +4165,20 @@ export const screenMessages = {
       "Keine Anwendungen mit Status {status}",
     "ui.services.noApplicationsReported": "Keine Anwendungen gemeldet",
     "ui.services.noAvailableTargetNodeFor":
-      "Kein verfügbarer Ziel-Node für diese Anwendung.",
+      "Kein verfügbarer Ziel-Server für diese Anwendung.",
     "ui.services.noCanonicalRuntimeObservationYet":
       "Noch keine kanonische Runtime-Beobachtung — Registry-Projektion wird angezeigt.",
     "ui.services.noGovernedActionHasRun":
       "In dieser Sitzung wurde noch keine gesteuerte Aktion ausgeführt.",
     "ui.services.noHostname": "Kein Hostname",
-    "ui.services.noNodesRegistered": "Keine Nodes registriert",
+    "ui.services.noNodesRegistered": "Keine Server registriert",
     "ui.services.noOperationsAvailable": "Keine Vorgänge verfügbar.",
     "ui.services.noSystemServices": "Keine System-Services",
-    "ui.services.node": "Node",
-    "ui.services.nodeBoundApplications": "An einen Node gebundene Anwendungen",
-    "ui.services.nodeCapabilities": "Node-Fähigkeiten",
-    "ui.services.nodeColumn": "Spalte für Node {name}",
+    "ui.services.node": "Server",
+    "ui.services.nodeBoundApplications":
+      "An einen Server gebundene Anwendungen",
+    "ui.services.nodeCapabilities": "Serverfähigkeiten",
+    "ui.services.nodeColumn": "Spalte für Server {name}",
     "ui.services.observed": "Beobachtet",
     "ui.services.stacked": "Stacked",
     "ui.services.unstacked": "Unstacked",
@@ -4229,12 +4212,12 @@ export const screenMessages = {
     "ui.services.runtimeMigrationUnavailable":
       "Runtime-Migration nicht verfügbar",
     "ui.services.runtimeServiceMigrationIsNot":
-      "Die Runtime-Service-Migration ist in diesem Deployment nicht aktiviert.",
+      "Das Verschieben von Apps zwischen Servern ist in dieser Installation nicht aktiviert.",
     "ui.services.runtimeTarget": "Runtime-Ziel",
     "ui.services.selectANodeAndCatalog":
-      "Wähle einen Node und einen Katalog-Service aus.",
+      "Wähle einen Server und einen Katalog-Service aus.",
     "ui.services.selectANodeThenEnter":
-      "Wähle einen Node aus und gib dann einen Service-Namen ein.",
+      "Wähle einen Server aus und gib dann einen Service-Namen ein.",
     "ui.services.selected": "Ausgewählt: {name}",
     "ui.services.service": "Service",
     "ui.services.serviceActionDidNotComplete":
@@ -4264,19 +4247,19 @@ export const screenMessages = {
     "ui.services.systemServices": "System-Services",
     "ui.services.targetIsReadyForVerification":
       "Das Ziel ist bereit zur Verifizierung.",
-    "ui.services.targetNode": "Ziel-Node",
+    "ui.services.targetNode": "Ziel-Server",
     "ui.services.targetValue": "Ziel: {value}",
     "ui.services.telemetryPending": "Telemetrie ausstehend",
     "ui.services.temporaryInstance":
       "Auf {slot} wird eine temporäre Instanz deployt.",
     "ui.services.theApplicationConfigWillBe":
-      "Die Anwendungskonfiguration wird auf den Ziel-Node dupliziert.",
+      "Die Anwendungskonfiguration wird auf den Ziel-Server dupliziert.",
     "ui.services.theLastLogPageWas": "Die letzte Log-Seite war leer.",
     "ui.services.theLastSuccessfulSnapshotRemains":
-      "Der letzte erfolgreiche Snapshot bleibt sichtbar, bis dieses StackKit-Deployment einen Ersatz oder einen expliziten Ausfallnachweis meldet.",
+      "Der letzte erfolgreiche Stand bleibt sichtbar, bis dieses Homelab einen Ersatz oder einen klaren Nachweis meldet, dass die App ausgefallen ist.",
     "ui.services.thisHomelab": "dieses Homelab",
     "ui.services.thisPermanentlyDeletesTheArchived":
-      "Dadurch wird der archivierte Service dauerhaft von seinem Quell-Node gelöscht.",
+      "Dadurch wird der archivierte Service dauerhaft von seinem Quell-Server gelöscht.",
     "ui.services.type": "Typ:",
     "ui.services.type2": "Typ",
     "ui.services.unclassifiedRuntimeComponentsAppearHere":
@@ -4288,8 +4271,7 @@ export const screenMessages = {
     "ui.services.url": "URL",
     "ui.services.verifyFinish": "Verifizieren & Abschließen",
     "ui.services.verifying": "· wird verifiziert",
-    "ui.services.waitingForRuntimeDeployment":
-      "Warte auf Runtime-Deployment...",
+    "ui.services.waitingForRuntimeDeployment": "Warte auf die Installation...",
     "ui.services.youCanTestTheNew":
       "Du kannst die neue Instanz testen, während die alte aktiv bleibt.",
     "ui.servicesApplicationId.addressClass": "Adressklasse",
@@ -4300,7 +4282,7 @@ export const screenMessages = {
     "ui.servicesApplicationId.backToApplications": "Zurück zu den Anwendungen",
     "ui.servicesApplicationId.freshness": "Aktualität",
     "ui.servicesApplicationId.impact": "Auswirkung",
-    "ui.servicesApplicationId.kitDeployment": "Kit-Deployment",
+    "ui.servicesApplicationId.kitDeployment": "Homelab",
     "ui.servicesApplicationId.lifecycle": "Lebenszyklus",
     "ui.servicesApplicationId.management": "Verwaltung",
     "ui.servicesApplicationId.noReachableAddressReported":
@@ -4322,15 +4304,15 @@ export const screenMessages = {
     "ui.settings.dashboard": "Dashboard",
     "ui.settings.dashboardLayout": "Dashboard-Layout",
     "ui.settings.decommissionsTheDeploymentSManaged":
-      "Nimmt die verwaltete Runtime des Deployments außer Betrieb und entfernt den Eintrag. Um stattdessen einen einzelnen Server zu entfernen, nutze dessen Außerbetriebnahme-Aktion am Server.",
+      "Löscht den verwalteten Server dieses Homelabs samt Eintrag. Um stattdessen nur einen einzelnen Server zu löschen, nutze „Server löschen“ an diesem Server.",
     "ui.settings.delete": "Löschen",
-    "ui.settings.deleteADeployment": "Ein Deployment löschen",
+    "ui.settings.deleteADeployment": "Ein Homelab löschen",
     "ui.settings.deleteNamed": "„{name}“ löschen?",
-    "ui.settings.deleteThisDeployment": "Dieses Deployment löschen",
+    "ui.settings.deleteThisDeployment": "Dieses Homelab löschen",
     "ui.settings.deleting": "Wird gelöscht...",
     "ui.settings.deletionFailed": "Löschen fehlgeschlagen",
     "ui.settings.failedToLoadDeployments":
-      "Deployments konnten nicht geladen werden",
+      "Homelabs konnten nicht geladen werden",
     "ui.settings.failedToLoadHomelabIdentity":
       "Homelab-Identität konnte nicht geladen werden",
     "ui.settings.failedToSaveHomelabIdentity":
@@ -4342,13 +4324,13 @@ export const screenMessages = {
     "ui.settings.homelabIdentity": "Homelab-Identität",
     "ui.settings.lightOrDarkAndThe":
       "Hell oder dunkel und das Oberflächen-Finish. Das Finish folgt der Standardeinstellung deines kombify-Kontos, bis dieses Gerät ein eigenes wählt.",
-    "ui.settings.loadingDeployments": "Deployments werden geladen...",
+    "ui.settings.loadingDeployments": "Homelabs werden geladen...",
     "ui.settings.logout": "Abmelden",
     "ui.settings.managedByKombifyCloud": "Verwaltet von kombify Cloud.",
     "ui.settings.mode": "Modus",
     "ui.settings.navigationPreview": "Navigationsvorschau",
     "ui.settings.navigationPreviewShape": "Form der Navigationsvorschau",
-    "ui.settings.noDeploymentsToDelete": "Keine Deployments zum Löschen.",
+    "ui.settings.noDeploymentsToDelete": "Keine Homelabs zum Entfernen.",
     "ui.settings.noHomelabIdentityConfigured":
       "Keine Homelab-Identität konfiguriert.",
     "ui.settings.noVerifiedTestResidueRemains":
@@ -4357,13 +4339,13 @@ export const screenMessages = {
       "Es wurden keine verifizierten Testrückstände gefunden.",
     "ui.settings.overlap": "Überlappung",
     "ui.settings.pruneQualifies":
-      "Nur Projektionen mit authentifiziertem Eigentümer {owner} und strikter Übereinstimmung {strict} kommen infrage. Aktive Managed Runtimes, Provider-Ressourcen, neue Nodes, Demodaten und normale Homelab-Daten bleiben unverändert.",
+      "Nur Projektionen mit authentifiziertem Eigentümer {owner} und strikter Übereinstimmung {strict} kommen infrage. Aktive Managed Runtimes, Provider-Ressourcen, neue Server, Demodaten und normale Homelab-Daten bleiben unverändert.",
     "ui.settings.reviewCleanup": "Bereinigung prüfen",
     "ui.settings.reviewVerifiedTestResidue":
       "Verifizierte Testrückstände prüfen",
     "ui.settings.reviewing": "Wird geprüft...",
     "ui.settings.reviewsExactOwnerScopedE2e":
-      "Prüft exakt dem Eigentümer zugeordnete E2E- und fehlgeschlagene Runtime-Projektionen. Provider-Ressourcen, aktive Leases, neue Nodes und normale Homelab-Daten bleiben unverändert.",
+      "Prüft exakt dem Eigentümer zugeordnete E2E- und fehlgeschlagene Runtime-Projektionen. Provider-Ressourcen, aktive Leases, neue Server und normale Homelab-Daten bleiben unverändert.",
     "ui.settings.savedOnDevice": "Auf diesem Gerät für dein Konto gespeichert.",
     "ui.settings.settings": "Einstellungen",
     "ui.settings.signedIn": "Angemeldet",
@@ -4371,13 +4353,13 @@ export const screenMessages = {
     "ui.settings.surfaceFinish": "Oberflächen-Finish",
     "ui.settings.tether": "Tether",
     "ui.settings.theDemoDeploymentIsProtected":
-      "Das Demo-Deployment ist geschützt und kann nicht gelöscht werden.",
+      "Das Demo-Homelab ist geschützt und kann nicht gelöscht werden.",
     "ui.settings.thisDecommissionsTheManagedRuntime":
-      "Dadurch wird die verwaltete Runtime außer Betrieb genommen und der Deployment-Eintrag entfernt. Das lässt sich nicht rückgängig machen.",
+      "Dadurch wird der verwaltete Server heruntergefahren, samt Daten beim Anbieter gelöscht und der Homelab-Eintrag entfernt. Das lässt sich nicht rückgängig machen.",
     "ui.settings.thisEntryIsNotVerified":
       "Dieser Eintrag ist kein verifizierter Testrückstand und kann nicht durch die Projektionsbereinigung entfernt werden.",
     "ui.settings.thisExactPlanIsBound":
-      "Dieser genaue Plan ist an den unten stehenden Digest gebunden. Es wird keine Infrastruktur zerstört.",
+      "Dieser genaue Plan ist an den unten stehenden Digest gebunden. Es werden keine Server oder Ressourcen beim Anbieter entfernt.",
     "ui.settings.typeToConfirm": "Zur Bestätigung {slot} eingeben",
     "ui.shortcuts.closeDialogDeselect": "Dialog schließen/Auswahl aufheben",
     "ui.shortcuts.focusSearchInput": "Suchfeld fokussieren",
@@ -4405,9 +4387,9 @@ export const screenMessages = {
     "ui.sshKeygen.unsupportedAlgorithm":
       "Nicht unterstützter Algorithmus: {algorithm}",
     "ui.stackImport.exportIntro":
-      "Exportiere diese StackKit-Deployment-Konfiguration als {file}. Du kannst die Datei bearbeiten und später wieder importieren.",
+      "Exportiere die Konfiguration dieses Homelabs als {file}. Du kannst die Datei bearbeiten und später wieder importieren.",
     "ui.stackImport.intro":
-      "Importiere eine {file}-Datei, um ein StackKit-Deployment in deinem Homelab einzurichten. Ältere {legacy}-Dateien werden weiterhin akzeptiert.",
+      "Importiere eine {file}-Datei, um ein Homelab einzurichten. Ältere {legacy}-Dateien werden weiterhin akzeptiert.",
     "ui.stackImport.orPaste": "oder einfügen",
     "ui.stackImport.validating": "Wird validiert...",
     "ui.stackImportExportModal.allRequiredFieldsArePresent":
@@ -4422,11 +4404,11 @@ export const screenMessages = {
       "Datei konnte nicht gelesen werden",
     "ui.stackImportExportModal.dragFileHereOr": "Datei hierher ziehen oder",
     "ui.stackImportExportModal.exportStackkitDeploymentSpec":
-      "StackKit-Deployment-Spezifikation exportieren",
+      "Homelab-Spezifikation exportieren",
     "ui.stackImportExportModal.ifTheProblemPersistsCopy":
       "Wenn das Problem weiterhin besteht: Kopiere die Diagnose und teile sie mit den Entwicklern.",
     "ui.stackImportExportModal.importStackkitDeploymentSpec":
-      "StackKit-Deployment-Spezifikation importieren",
+      "Homelab-Spezifikation importieren",
     "ui.stackImportExportModal.importStartSetup":
       "Importieren & Einrichtung starten",
     "ui.stackImportExportModal.importingConfiguration":
@@ -4436,9 +4418,9 @@ export const screenMessages = {
     "ui.stackImportExportModal.noContentToImport":
       "Kein Inhalt zum Importieren",
     "ui.stackImportExportModal.noStackkitDeploymentIsAvailable":
-      "Es ist kein StackKit-Deployment zum Exportieren verfügbar",
+      "Es ist kein Homelab zum Exportieren verfügbar",
     "ui.stackImportExportModal.nodeDefinitionsWithoutCredentials":
-      "• Node-Definitionen (ohne Zugangsdaten)",
+      "• Serverdefinitionen (ohne Zugangsdaten)",
     "ui.stackImportExportModal.pasteYourStackSpecYaml":
       "# Füge hier deine stack-spec.yaml ein...",
     "ui.stackImportExportModal.recommended": "(empfohlen)",
@@ -4462,20 +4444,18 @@ export const screenMessages = {
     "ui.stackImportExportModal.youWillBeRedirectedTo":
       "Du wirst in Kürze zur Einrichtungsseite weitergeleitet.",
     "ui.stacksCreating.creatingStackkitDeploymentKombifyTechstack":
-      "StackKit-Deployment wird erstellt | kombify-Techstack",
+      "Dein Homelab wird erstellt | kombify Techstack",
     "ui.stacksCreating.leanBackBody":
       "Deinen Teil hast du geschafft. Wir richten gerade alles für dich ein – gleich gibt es etwas richtig Schönes zu sehen.",
     "ui.stacksCreating.leanBackTitle":
       "Lehn dich zurück – wir zaubern für dich",
     "ui.stacksCreating.openOperations": "Vorgänge öffnen",
-    "ui.stacksCreating.reviewAndStartStackkitRollout":
-      "StackKit-Rollout prüfen und starten",
     "ui.stacksCreating.tips.codeBody":
       "StackKits erzeugt dein Setup aus geprüften Bauplänen. Dadurch ist jede Änderung wiederholbar und nachvollziehbar.",
     "ui.stacksCreating.tips.codeEyebrow": "Infrastructure as Code",
     "ui.stacksCreating.tips.codeTitle": "Dein Stack als Code",
     "ui.stacksCreating.tips.growBody":
-      "Füge diesem Stack jederzeit einen weiteren Node hinzu. Techstack koordiniert deine Server, und jeder läuft trotzdem eigenständig.",
+      "Füge diesem Stack jederzeit einen weiteren Server hinzu. Techstack koordiniert deine Server, und jeder läuft trotzdem eigenständig.",
     "ui.stacksCreating.tips.growEyebrow": "Skalierung",
     "ui.stacksCreating.tips.growTitle": "Platz zum Wachsen",
     "ui.stacksCreating.tips.label": "Gut zu wissen",
@@ -4496,21 +4476,22 @@ export const screenMessages = {
     "ui.stacksCreating.tips.restoreTitle":
       "Wiederherstellung geprüft, nicht nur versprochen",
     "ui.stacksCreating.tips.show": "Tipp {number} von {total} anzeigen",
-    "ui.stacksCreatingCreation-controller.additionalNode": "Zusätzlicher Node",
+    "ui.stacksCreatingCreation-controller.additionalNode":
+      "Zusätzlicher Server",
     "ui.stacksCreatingCreation-controller.afterFailedAttemptsTheBackend":
       "Nach {MAX_POLL_ERRORS} fehlgeschlagenen Versuchen war das Backend nicht erreichbar. Die Seite versucht es mit Backoff weiter; du kannst auch deine Netzwerkverbindung prüfen und neu laden, um fortzufahren.",
     "ui.stacksCreatingCreation-controller.configurationPrepared":
       "Konfiguration vorbereitet",
     "ui.stacksCreatingCreation-controller.connectYourNodeToContinue":
-      "Verbinde deinen Node, um den Rollout fortzusetzen",
+      "Verbinde deinen Server, um den Rollout fortzusetzen",
     "ui.stacksCreatingCreation-controller.connectionToServerLost":
       "Verbindung zum Server verloren",
     "ui.stacksCreatingCreation-controller.continueStackKitDeploymentOnConnected":
-      "StackKit-Deployment auf verbundenem Node fortsetzen",
+      "StackKit-Deployment auf verbundenem Server fortsetzen",
     "ui.stacksCreatingCreation-controller.continueStackKitOnConnectedNode":
-      "StackKit auf verbundenem Node fortsetzen",
+      "StackKit auf verbundenem Server fortsetzen",
     "ui.stacksCreatingCreation-controller.continueStackKitRolloutOnConnected":
-      "StackKit-Rollout auf verbundenem Node fortsetzen",
+      "StackKit-Rollout auf verbundenem Server fortsetzen",
     "ui.stacksCreatingCreation-controller.couldNotCheckRemoteSSH":
       "Der Fortschritt der Remote-SSH-Registrierung konnte nicht geprüft werden.",
     "ui.stacksCreatingCreation-controller.couldNotPrepareTheConnection":
@@ -4528,15 +4509,15 @@ export const screenMessages = {
     "ui.stacksCreatingCreation-controller.creatingStackKitDeployment":
       "StackKit-Deployment wird erstellt",
     "ui.stacksCreatingCreation-controller.guardHasNotReportedA":
-      "Der Guard hat für diesen Node noch keinen frischen Heartbeat gemeldet. Versuche die SSH-Registrierung über die gespeicherte Verbindung erneut oder prüfe, ob der Agent auf dem Server läuft.",
+      "Dein Server hat sich noch nicht gemeldet. Versuche die SSH-Verbindung mit den gespeicherten Angaben erneut oder prüfe, ob der kombify-Agent auf dem Server läuft.",
     "ui.stacksCreatingCreation-controller.jobIsNotBeingProcessed":
       "Der Job wird nicht verarbeitet",
     "ui.stacksCreatingCreation-controller.jobWasCanceled":
       "Der Job wurde abgebrochen",
     "ui.stacksCreatingCreation-controller.kombifyRequestedTheAdditionalManaged":
-      "kombify hat den zusätzlichen verwalteten Node angefordert. Du kannst vom Dashboard aus weitermachen, während die Registrierung abschließt.",
+      "kombify hat den zusätzlichen verwalteten Server angefordert. Du kannst vom Dashboard aus weitermachen, während die Registrierung abschließt.",
     "ui.stacksCreatingCreation-controller.managedNodeRequestIsStill":
-      "Die Anfrage für den verwalteten Node läuft noch",
+      "Die Anfrage für den verwalteten Server läuft noch",
     "ui.stacksCreatingCreation-controller.managedRolloutRecoveryWasNot":
       "Die Wiederherstellung des verwalteten Rollouts wurde nicht gestartet, weil der wartende Job keine exakte Lease-Referenz hat.",
     "ui.stacksCreatingCreation-controller.missingJobReferencePleaseStart":
@@ -4544,23 +4525,23 @@ export const screenMessages = {
     "ui.stacksCreatingCreation-controller.newStackKitDeployment":
       "Neues StackKit-Deployment",
     "ui.stacksCreatingCreation-controller.noJobFound": "Kein Job gefunden",
-    "ui.stacksCreatingCreation-controller.nodeConnected": "Node verbunden",
+    "ui.stacksCreatingCreation-controller.nodeConnected": "Server verbunden",
     "ui.stacksCreatingCreation-controller.nodeConnectionReady":
-      "Node-Verbindung bereit",
+      "Server-Verbindung bereit",
     "ui.stacksCreatingCreation-controller.nodeRegistrationDidNotReturn":
-      "Die Node-Registrierung hat keinen Erstellungs-Job zurückgegeben.",
+      "Die Server-Registrierung hat keinen Erstellungs-Job zurückgegeben.",
     "ui.stacksCreatingCreation-controller.nodeRegistrationReady":
-      "Node-Registrierung bereit",
+      "Server-Registrierung bereit",
     "ui.stacksCreatingCreation-controller.recoveringRolloutOnTheExact":
       "Rollout auf der exakten bestehenden verwalteten VM wird wiederhergestellt...",
     "ui.stacksCreatingCreation-controller.remoteSSHEnrollmentFailed":
       "Remote-SSH-Registrierung fehlgeschlagen.",
     "ui.stacksCreatingCreation-controller.reportedAFreshGuardHeartbeat":
-      "{name} hat einen frischen Guard-Heartbeat gemeldet und ist in der Node-Projektion sichtbar.",
+      "{name} hat sich gemeldet und gehört jetzt zu deinem Homelab.",
     "ui.stacksCreatingCreation-controller.restoreDrill":
       "Wiederherstellungsübung",
     "ui.stacksCreatingCreation-controller.resumingTheEarlierNodeRegistration":
-      "Früherer Node-Registrierungsversuch wird fortgesetzt…",
+      "Früherer Server-Registrierungsversuch wird fortgesetzt…",
     "ui.stacksCreatingCreation-controller.retryDeployment":
       "Deployment erneut versuchen",
     "ui.stacksCreatingCreation-controller.retryRollout":
@@ -4591,27 +4572,27 @@ export const screenMessages = {
     "ui.stacksCreatingCreation-controller.startFreshAttempt":
       "Neuen Versuch starten",
     "ui.stacksCreatingCreation-controller.theAddNodeRequestHas":
-      "Die Anfrage „Node hinzufügen“ läuft seit über 2 Minuten. Dieser Pfad soll den zusätzlichen Node nur anfordern oder vorbereiten, nicht den vollständigen StackKit-Rollout ausführen. Öffne die Vorgänge, um zu prüfen, ob die Node-Anfrage erstellt wurde, und versuche „Node hinzufügen“ erneut, wenn kein neuer Node erscheint.",
+      "Die Anfrage „Server hinzufügen“ läuft seit über 2 Minuten. Dieser Pfad soll den zusätzlichen Server nur anfordern oder vorbereiten, nicht den vollständigen StackKit-Rollout ausführen. Öffne die Vorgänge, um zu prüfen, ob die Server-Anfrage erstellt wurde, und versuche „Server hinzufügen“ erneut, wenn kein neuer Server erscheint.",
     "ui.stacksCreatingCreation-controller.theAdditionalNodeRegistrationIs":
-      "Die Registrierung des zusätzlichen Nodes ist für das bestehende Homelab bereit.",
+      "Die Registrierung des zusätzlichen Server ist für das bestehende Homelab bereit.",
     "ui.stacksCreatingCreation-controller.theBackendCanceledThisJob":
       "Das Backend hat diesen Job abgebrochen, bevor er abgeschlossen war. Versuche es erneut, um ab dem letzten sicheren Checkpoint fortzufahren.",
     "ui.stacksCreatingCreation-controller.theCompletedRuntimeJobDid":
       "Der abgeschlossene Runtime-Job hat keinen verifizierten Runtime-Nachweis zurückgegeben. Versuche den Rollout erneut, um die Installation zu verifizieren.",
     "ui.stacksCreatingCreation-controller.theNodeProjectionCouldNot":
-      "Die Node-Projektion konnte nicht geprüft werden. Der Kopplungsbefehl bleibt verfügbar, aber diese Seite meldet ohne frischen Guard-Heartbeat keine Verbindung.",
+      "Wir konnten nicht prüfen, ob sich dein Server gemeldet hat. Der Befehl bleibt verfügbar; diese Seite zeigt erst dann eine Verbindung, wenn sich dein Server wirklich gemeldet hat.",
     "ui.stacksCreatingCreation-controller.thePreviouslyVerifiedGuardHeartbeat":
-      "Der zuvor verifizierte Guard-Heartbeat ist nicht mehr frisch. Es wird auf aktuelle Verbindungsnachweise gewartet.",
+      "Dein Server meldet sich nicht mehr. Warte darauf, dass er sich wieder meldet.",
     "ui.stacksCreatingCreation-controller.theProvisioningJobHasBeen":
       "Der Bereitstellungs-Job hängt seit über 2 Minuten ohne Fortschritt. Das bedeutet meist, dass der Orchestrator nicht läuft oder abgestürzt ist.\n\nPrüfe die Server-Logs: docker compose logs techstack\nVersuche einen Neustart: docker compose restart techstack",
     "ui.stacksCreatingCreation-controller.theReservedNodeCouldNot":
-      "Der reservierte Node konnte nicht geprüft werden. Versuche die SSH-Registrierung über die gespeicherte Verbindung erneut, sobald das Server-Inventar wieder verfügbar ist.",
+      "Der reservierte Server konnte nicht geprüft werden. Versuche die SSH-Registrierung über die gespeicherte Verbindung erneut, sobald das Server-Inventar wieder verfügbar ist.",
     "ui.stacksCreatingCreation-controller.thisPageRequiresAJob":
       "Diese Seite benötigt eine job_id vom Einrichtungsassistenten. Bitte starte die Einrichtung über /stacks/new neu.",
     "ui.stacksCreatingCreation-controller.validatingTheSelectedStackKitAnd":
-      "Das ausgewählte StackKit wird validiert und der Node vorbereitet...",
+      "Das ausgewählte StackKit wird validiert und der Server vorbereitet...",
     "ui.stacksCreatingCreation-controller.yourRemoteNodeConfigurationIs":
-      "Deine Remote-Node-Konfiguration ist bereit für den Rollout",
+      "Deine Remote-Server-Konfiguration ist bereit für den Rollout",
     "ui.stacksCreatingCreation-controller.yourSessionIsNoLonger":
       "Deine Sitzung ist nicht mehr gültig, daher kann der Erstellungsfortschritt nicht geprüft werden. Melde dich erneut an und öffne diese Erstellung noch einmal, um sie weiter zu verfolgen.",
     "ui.stacksCreatingCreation-results.backendError":
@@ -4622,34 +4603,35 @@ export const screenMessages = {
     "ui.stacksCreatingCreation-results.stackID": "Stack-ID: {stackId}",
     "ui.stacksCreatingCreation-results.targetBootstrap": "Ziel-Bootstrap:",
     "ui.stacksCreatingCreationCompletion.guardHeartbeatVerified":
-      "Guard-Heartbeat verifiziert",
-    "ui.stacksCreatingCreationCompletion.hashPresent": "Hash vorhanden",
+      "Dein Server ist verbunden",
+    "ui.stacksCreatingCreationCompletion.hashPresent":
+      "Recovery-Passphrase festgelegt",
     "ui.stacksCreatingCreationCompletion.lastGuardHeartbeat":
       "Letzter Guard-Heartbeat:",
     "ui.stacksCreatingCreationCompletion.managedProvisioningComplete":
-      "Verwaltete Bereitstellung abgeschlossen",
-    "ui.stacksCreatingCreationCompletion.materialLinked": "Material verknüpft",
+      "Dein verwalteter Server ist bereit",
+    "ui.stacksCreatingCreationCompletion.materialLinked":
+      "Wiederherstellung gespeichert",
     "ui.stacksCreatingCreationCompletion.openHomelab": "Homelab öffnen",
     "ui.stacksCreatingCreationCompletion.owner": "Eigentümer",
     "ui.stacksCreatingCreationCompletion.ownerPrepared":
-      "Eigentümer vorbereitet",
+      "Eigentümer-Konto vorbereitet",
     "ui.stacksCreatingCreationCompletion.ownerReady": "Eigentümer bereit",
     "ui.stacksCreatingCreationCompletion.ownerSeedReady":
-      "Eigentümer-Seed bereit",
+      "Eigentümer-Konto bereit",
     "ui.stacksCreatingCreationCompletion.recovery": "Wiederherstellung",
     "ui.stacksCreatingCreationCompletion.rolloutComplete":
-      "Rollout abgeschlossen",
-    "ui.stacksCreatingCreationCompletion.selfHostedRollout":
-      "Selbst gehosteter Rollout",
+      "Einrichtung abgeschlossen",
+    "ui.stacksCreatingCreationCompletion.selfHostedRollout": "Selbst gehostet",
     "ui.stacksCreatingCreationCompletion.techstackNowSeesThisNode":
-      "Techstack sieht diesen Node jetzt in der echten Node-Projektion als gesund und rollout-bereit. Die Vorbereitung der Kopplung allein hat diesen Zustand nicht ausgelöst.",
+      "Dein Server hat sich gemeldet und läuft einwandfrei. Er ist bereit für den nächsten Schritt.",
     "ui.stacksCreatingCreationCompletion.theFirstLoginGatewayAnd":
-      "Das erste Login-Gateway und die Wiederherstellungsreferenz kommen mit dem StackKit-Rollout („Review + Start“).",
+      "Deine erste Anmeldung und die Wiederherstellungsdaten erhältst du, sobald dein Homelab eingerichtet ist („Prüfen und erstellen“).",
     "ui.stacksCreatingCreationCompletion.theOwnerIdentityDerivesFrom":
       "Die Eigentümer-Identität leitet sich von deinem verknüpften kombify-Cloud-Profil ab.",
     "ui.stacksCreatingCreationCompletion.theOwnerSeedIsPrepared":
-      "Der Eigentümer-Seed ist vorbereitet.",
-    "ui.stacksCreatingCreationCompletion.yourNode": "Dein Node",
+      "Dein Eigentümer-Konto ist vorbereitet.",
+    "ui.stacksCreatingCreationCompletion.yourNode": "Dein Server",
     "ui.groupedTaskList.needsAttention": "Braucht Aufmerksamkeit",
     "ui.stacksCreatingCreationDegraded.titleOne":
       "Bereit – ein Teil braucht Aufmerksamkeit",
@@ -4692,10 +4674,8 @@ export const screenMessages = {
     "ui.stacksCreatingCreationFailure.errorDetails": "Fehlerdetails",
     "ui.stacksCreatingCreationFailure.existingManagedVmLeaseReferenced":
       "Bestehender verwalteter VM-Lease referenziert",
-    "ui.stacksCreatingCreationFailure.makeSureTheBackendServer":
-      "Stelle sicher, dass der Backend-Server läuft",
     "ui.stacksCreatingCreationFailure.nodeConnectionSucceeded":
-      "Node-Verbindung erfolgreich",
+      "Server-Verbindung erfolgreich",
     "ui.stacksCreatingCreationFailure.operations": "Vorgänge",
     "ui.stacksCreatingCreationFailure.askCompanion": "kombify fragen",
     "ui.stacksCreatingCreationFailure.askCompanionPrompt":
@@ -4703,16 +4683,14 @@ export const screenMessages = {
     "ui.stacksCreatingCreationFailure.possibleSolutions": "Mögliche Lösungen:",
     "ui.stacksCreatingCreationFailure.resumePreviousAttempt":
       "Vorherigen Versuch fortsetzen",
-    "ui.stacksCreatingCreationFailure.reviewYourConfigurationSettings":
-      "Prüfe deine Konfigurationseinstellungen",
     "ui.stacksCreatingCreationFailure.sshEnrollmentCompletedAndThe":
-      "Die SSH-Registrierung wurde abgeschlossen und der Node ist in deinem Homelab sichtbar. Nur die StackKit-Vorbereitung oder der Rollout ist fehlgeschlagen. Ein erneuter Versuch läuft auf dem verbundenen Node weiter, ohne die SSH-Registrierung zu wiederholen.",
+      "Die SSH-Registrierung wurde abgeschlossen und der Server ist in deinem Homelab sichtbar. Nur die StackKit-Vorbereitung oder der Rollout ist fehlgeschlagen. Ein erneuter Versuch läuft auf dem verbundenen Server weiter, ohne die SSH-Registrierung zu wiederholen.",
     "ui.stacksCreatingCreationFailure.theExactRetryEndpointValidates":
       "Der genaue Retry-Endpunkt validiert diesen fehlgeschlagenen Job und Lease, bevor er auf dem bestehenden Server fortfährt.",
     "ui.stacksCreatingCreationFailure.theRolloutReachedTheExisting":
       "Der Rollout hat die bestehende verwaltete VM erreicht.",
     "ui.stacksCreatingCreationFailure.thisBrowserReusedAnAttempt":
-      "Dieser Browser hat einen Versuchsschlüssel aus einer anderen Übermittlung wiederverwendet. Der frühere Lauf hat möglicherweise bereits eine Node-Registrierung erstellt. Setze diesen Versuch fort oder starte mit einem neuen Schlüssel neu.",
+      "Dieser Browser hat einen Versuchsschlüssel aus einer anderen Übermittlung wiederverwendet. Der frühere Lauf hat möglicherweise bereits eine Server-Registrierung erstellt. Setze diesen Versuch fort oder starte mit einem neuen Schlüssel neu.",
     "ui.stacksCreatingCreationFailure.troubleshooting": "Fehlerbehebung",
     "ui.stacksCreatingCreationFailure.vpsProvisioningCompletedOnlyStackkit":
       "Die VPS-Bereitstellung wurde abgeschlossen. Nur das StackKit-Artefakt, das Domain-Routing oder spätere Rollout-Arbeiten sind fehlgeschlagen.",
@@ -4721,10 +4699,8 @@ export const screenMessages = {
     "ui.stacksCreatingCreationInstallCommand.copy": "Kopieren",
     "ui.stacksCreatingCreationInstallCommand.copyInstallationCommandToClipboard":
       "Installationsbefehl in die Zwischenablage kopieren",
-    "ui.stacksCreatingCreationInstallCommand.installWorker":
-      "Worker installieren",
     "ui.stacksCreatingCreationInstallCommand.kombifyTechstackServerUrlReachable":
-      "kombify-Techstack-Server-URL (von Workern erreichbar):",
+      "kombify-Techstack-Adresse (von deinem Server erreichbar):",
     "ui.stacksCreatingCreationInstallCommand.openOneHourSimulateDemo":
       "Einstündige Simulate-Demovorschau öffnen",
     "ui.stacksCreatingCreationInstallCommand.previewLifetimeIsLimitedTo":
@@ -4745,7 +4721,7 @@ export const screenMessages = {
     "ui.stacksCreatingCreationLease.live": "Live",
     "ui.stacksCreatingCreationLease.loginGateway": "Login-Gateway",
     "ui.stacksCreatingCreationLease.managedNodeRequested":
-      "Verwalteter Node angefordert",
+      "Verwalteter Server angefordert",
     "ui.stacksCreatingCreationLease.managedRuntimeReady":
       "Verwaltete Runtime bereit",
     "ui.stacksCreatingCreationLease.offering": "Angebot",
@@ -4761,14 +4737,14 @@ export const screenMessages = {
     "ui.stacksCreatingCreationLease.stackkitDeployedOnTheLeased":
       "StackKit auf der geleasten Abo-VM bereitgestellt. Die Werte unten stammen aus dem Runtime-Job – keine Demodaten.",
     "ui.stacksCreatingCreationLease.stackkitIdentityHandoffIsMissing":
-      "Die StackKit-Identitätsübergabe fehlt",
+      "Deine ersten Anmeldedaten fehlen",
     "ui.stacksCreatingCreationLease.stackkitReturnedTheOwnerLogin":
       "StackKit hat die Eigentümer-Anmeldung, das Login-Gateway und die Wiederherstellungsreferenzen für diesen verifizierten Cloud-Kit-Rollout zurückgegeben.",
     "ui.stacksCreatingCreationLease.status": "Status:",
     "ui.stacksCreatingCreationLease.theAdditionalSubscriptionVmRequest":
       "Die Anfrage für die zusätzliche Abo-VM ist erfasst. Sie erscheint unter Vorgänge, sobald die Registrierung zurückmeldet.",
     "ui.stacksCreatingCreationLease.theRolloutCompletedButThe":
-      "Der Rollout ist abgeschlossen, aber das StackKit hat Eigentümer-Anmeldung, Login-Gateway und Wiederherstellungsausgaben nicht zurückgegeben. Behandle dies als Release-Blocker, bis die Antwort der Runtime-Aktion Folgendes enthält:",
+      "Dein Homelab wurde eingerichtet, aber die ersten Anmelde- und Wiederherstellungsdaten sind nicht angekommen. Wende dich an den Support und nenne die technischen Details.",
     "ui.stacksCreatingCreationLease.theseStatusesComeFromRuntime":
       "Diese Status stammen aus Antworten der Runtime-Aktionen und dem abschließenden E2E-Nachweis.",
     "ui.stacksCreatingCreationLease.wallet": "Wallet",
@@ -4780,7 +4756,7 @@ export const screenMessages = {
     "ui.stacksCreatingCreationProgress.creationFailed":
       "Erstellung fehlgeschlagen",
     "ui.stacksCreatingCreationProgress.nodeProvisioningIsStillIn":
-      "Die Node-Bereitstellung läuft noch",
+      "Die Server-Bereitstellung läuft noch",
     "ui.stacksCreatingCreationProgress.pleaseWaitWhileWeRe":
       "Bitte warte, während wir",
     "ui.stacksCreatingCreationProgress.morphCompleting": "abschließen",
@@ -4791,21 +4767,21 @@ export const screenMessages = {
     "ui.stacksCreatingCreationProgress.rolloutIncomplete":
       "Rollout unvollständig",
     "ui.stacksCreatingCreationProgress.runThePairingCommand":
-      "Kopplungsbefehl ausführen",
+      "Führe den Befehl auf deinem Server aus",
     "ui.stacksCreatingCreationProgress.setupCannotContinue":
       "Die Einrichtung kann nicht fortgesetzt werden",
     "ui.stacksCreatingCreationProgress.theNextCheckIsScheduled":
-      "Die nächste Prüfung ist geplant. Dashboard, Dienste und Node-Zugriff bleiben gesperrt, bis die Registrierung bestätigt ist; eine überfällige Prüfung kann hier sicher fortgesetzt werden.",
+      "Die nächste Prüfung ist geplant. Dashboard, Dienste und Server-Zugriff bleiben gesperrt, bis die Registrierung bestätigt ist; eine überfällige Prüfung kann hier sicher fortgesetzt werden.",
     "ui.stacksCreatingCreationProgress.theNextManagedRuntimeCheck":
-      "Die nächste Prüfung der verwalteten Runtime ist für diesen Vorgang geplant. Bleibt sie nach einer Replikatübergabe oder einem Neustart überfällig, bietet Techstack für genau diesen Node eine Fortsetzen-Aktion an.",
+      "Die nächste Prüfung deines verwalteten Servers ist geplant. Bleibt sie nach einem Neustart überfällig, kannst du sie hier fortsetzen.",
     "ui.stacksCreatingCreationProgress.theRegistrationRequestIsReady":
-      "Die Registrierungsanfrage ist bereit, aber der Node ist erst verbunden, wenn in der Node-Projektion ein frischer Guard-Heartbeat erscheint.",
+      "Dein Server hat sich noch nicht gemeldet. Führe den Befehl unten darauf aus; diese Seite macht von selbst weiter.",
     "ui.stacksCreatingCreationProgress.thisCanTakeAFew":
-      "Das kann einige Minuten dauern. Bitte schließe diese Seite nicht.",
+      "Das dauert ein paar Minuten. Du kannst auf dieser Seite bleiben oder später wiederkommen; dein Homelab wird weiter eingerichtet.",
     "ui.stacksCreatingCreationProgress.thisMayTakeAFew":
-      "Das kann einige Minuten dauern. Du kannst den Fortschritt unten verfolgen.",
+      "Das dauert ein paar Minuten. Du kannst auf dieser Seite bleiben oder später wiederkommen; dein Homelab wird weiter eingerichtet.",
     "ui.stacksCreatingCreationProgress.thisPageChecksTheReal":
-      "Diese Seite prüft die echte Node-Projektion alle paar Sekunden.",
+      "Diese Seite prüft alle paar Sekunden, ob sich dein Server gemeldet hat.",
     "ui.stacksCreatingCreationRequirements.backendRequirementsAreUnavailable":
       "Backend-Anforderungen sind nicht verfügbar",
     "ui.stacksCreatingCreationRequirements.guide": "Anleitung →",
@@ -4823,35 +4799,35 @@ export const screenMessages = {
       "Ein manuelles Fortsetzen wird erst nach serverseitiger Validierung freigegeben.",
     "ui.stacksCreatingCreationRunStatus.afterCreation": "Nach der Erstellung",
     "ui.stacksCreatingCreationRunStatus.afterYouRunTheOne":
-      "Nachdem du den Einzeiler ausgeführt hast, registriert sich der ausgehende Guard bei diesem Homelab. Das Dashboard markiert den Node erst als verbunden, wenn in der Node-Projektion ein frischer Heartbeat vorliegt.",
+      "Nachdem du den Befehl ausgeführt hast, verbindet sich dein Server mit deinem Homelab. Er gilt als verbunden, sobald er sich gemeldet hat.",
     "ui.stacksCreatingCreationRunStatus.awaitingHeartbeat":
-      "Warte auf Heartbeat",
+      "Wartet auf deinen Server",
     "ui.stacksCreatingCreationRunStatus.checkSshHostCredentialsAnd":
       "Prüfe SSH-Host, Zugangsdaten und ob der Server Techstack erreichen kann.",
-    "ui.stacksCreatingCreationRunStatus.connectMyNode": "Meinen Node verbinden",
+    "ui.stacksCreatingCreationRunStatus.connectMyNode":
+      "Meinen Server verbinden",
     "ui.stacksCreatingCreationRunStatus.connectingToYourNodeOver":
-      "Verbindung zu deinem Node über SSH wird hergestellt…",
+      "Verbindung zu deinem Server über SSH wird hergestellt…",
     "ui.stacksCreatingCreationRunStatus.connectingViaSsh":
       "Verbindung über SSH wird hergestellt…",
     "ui.stacksCreatingCreationRunStatus.continueRolloutOnTheExisting":
       "Rollout auf der bestehenden VM fortsetzen",
     "ui.stacksCreatingCreationRunStatus.copyFailedSelectTheCommand":
       "Kopieren fehlgeschlagen – markiere den Befehl oben",
-    "ui.stacksCreatingCreationRunStatus.copyPairingCommand":
-      "Kopplungsbefehl kopieren",
+    "ui.stacksCreatingCreationRunStatus.copyPairingCommand": "Befehl kopieren",
     "ui.stacksCreatingCreationRunStatus.currentStatus": "Aktueller Status",
     "ui.stacksCreatingCreationRunStatus.enrolling": "Wird registriert",
     "ui.stacksCreatingCreationRunStatus.enrollmentOverSshFinishedThis":
-      "Die Registrierung über SSH ist abgeschlossen. Diese Seite zeigt „Node verbunden“, sobald der Guard einen frischen Heartbeat meldet.",
+      "Die Registrierung über SSH ist abgeschlossen. Diese Seite zeigt „Server verbunden“, sobald sich dein Server gemeldet hat.",
     "ui.stacksCreatingCreationRunStatus.failed": "Fehlgeschlagen",
     "ui.stacksCreatingCreationRunStatus.generateAFreshCommandTo":
-      "Erzeuge einen neuen Befehl, um die Verbindung dieses Nodes fortzusetzen.",
+      "Erzeuge einen neuen Befehl, um die Verbindung dieses Servers fortzusetzen.",
     "ui.stacksCreatingCreationRunStatus.generateAShortLivedCommand":
-      "Erzeuge einen kurzlebigen Befehl für diesen Node. Verbindungsdaten werden nicht in Job-Berichten aufbewahrt.",
+      "Erzeuge einen kurzlebigen Befehl für diesen Server. Verbindungsdaten werden nicht in Job-Berichten aufbewahrt.",
     "ui.stacksCreatingCreationRunStatus.generateNewCommand":
       "Neuen Befehl erzeugen",
     "ui.stacksCreatingCreationRunStatus.generatePairingCommand":
-      "Kopplungsbefehl erzeugen",
+      "Befehl erzeugen",
     "ui.stacksCreatingCreationRunStatus.kombifyIsInstallingAndEnrolling":
       "kombify installiert und registriert den Guard über SSH auf deinem Server. Du musst keinen Befehl manuell ausführen.",
     "ui.stacksCreatingCreationRunStatus.kombifyWillProvisionTheSubscription":
@@ -4860,13 +4836,11 @@ export const screenMessages = {
       "kombify verwendet die im Assistenten erfasste Remote-SSH-Konfiguration.",
     "ui.stacksCreatingCreationRunStatus.nextScheduledCheck":
       "Nächste geplante Prüfung:",
-    "ui.stacksCreatingCreationRunStatus.nodeAccess": "Node-Zugriff",
-    "ui.stacksCreatingCreationRunStatus.pairingCommandCopied":
-      "Kopplungsbefehl kopiert",
-    "ui.stacksCreatingCreationRunStatus.pairingCommandReady":
-      "Kopplungsbefehl bereit",
+    "ui.stacksCreatingCreationRunStatus.nodeAccess": "Server-Zugriff",
+    "ui.stacksCreatingCreationRunStatus.pairingCommandCopied": "Befehl kopiert",
+    "ui.stacksCreatingCreationRunStatus.pairingCommandReady": "Befehl bereit",
     "ui.stacksCreatingCreationRunStatus.pairingCommandUnavailable":
-      "Kopplungsbefehl nicht verfügbar",
+      "Befehl nicht verfügbar",
     "ui.stacksCreatingCreationRunStatus.plannedRemoteTarget":
       "Geplantes Remote-Ziel",
     "ui.stacksCreatingCreationRunStatus.preparingCommand":
@@ -4883,13 +4857,13 @@ export const screenMessages = {
     "ui.stacksCreatingCreationRunStatus.retryingSshConnection":
       "SSH-Verbindung wird erneut versucht…",
     "ui.stacksCreatingCreationRunStatus.runThisOneLinerOn":
-      "Führe diesen Einzeiler auf dem zusätzlichen Node aus. Der abgeschlossene Registrierungsjob hat nur das Kopplungstoken erstellt; Techstack zeigt „Node verbunden“ erst an, wenn der ausgehende Guard einen frischen Heartbeat meldet und die Node-Projektion gesund ist.",
+      "Führe diesen Befehl auf dem zusätzlichen Server aus. Er gilt als verbunden, sobald er sich gemeldet hat und einwandfrei läuft.",
     "ui.stacksCreatingCreationRunStatus.techstackUrlReachableFromThe":
       "Techstack-URL, die vom Server aus erreichbar ist",
     "ui.stacksCreatingCreationRunStatus.theAdditionalManagedNodeIs":
-      "Der zusätzliche verwaltete Node wird diesem Homelab hinzugefügt und erscheint im Node-Dashboard, sobald die Registrierung zurückmeldet.",
+      "Der zusätzliche verwaltete Server wird diesem Homelab hinzugefügt und erscheint im Server-Dashboard, sobald die Registrierung zurückmeldet.",
     "ui.stacksCreatingCreationRunStatus.theAdditionalNodeIsRegistered":
-      "Der zusätzliche Node ist bei diesem Homelab registriert und kann danach Dienste aus diesem StackKit-Deployment erhalten.",
+      "Der zusätzliche Server ist bei diesem Homelab registriert und kann danach Dienste aus diesem StackKit-Deployment erhalten.",
     "ui.stacksCreatingCreationRunStatus.theManagedRuntimeIsNot":
       "Die Managed Runtime ist für den Rollout noch nicht vollständig erreichbar. Das ausstehende Signal kann ihre Adresse, Zugangsdaten oder Registrierung betreffen. Techstack hat die nächste Prüfung geplant.",
     "ui.stacksCreatingCreationRunStatus.theProviderOperationHasNot":
@@ -4903,15 +4877,15 @@ export const screenMessages = {
     "ui.stacksCreatingCreationRunStatus.thisDoesNotCreateAnother":
       "Dadurch wird keine weitere VM erstellt.",
     "ui.stacksCreatingCreationRunStatus.thisPairingTokenHasExpired":
-      "Dieses Kopplungstoken ist abgelaufen.",
+      "Dieser Befehl ist abgelaufen.",
     "ui.stacksCreatingCreationRunStatus.validatingTheExistingVm":
       "Bestehende VM wird validiert...",
     "ui.stacksCreatingCreationRunStatus.waitingForGuardHeartbeat":
-      "Warte auf Guard-Heartbeat…",
+      "Warte darauf, dass sich dein Server meldet…",
     "ui.stacksCreatingCreationRunStatus.waitingForRealConnection":
-      "Warte auf echte Verbindung",
+      "Warte auf Verbindung",
     "ui.stacksCreatingCreationRunStatus.youWillReceiveAWorker":
-      "Du erhältst einen Worker-Installationsbefehl, um deine Nodes mit diesem StackKit-Deployment zu verbinden.",
+      "Du erhältst einen Befehl, um deine Server mit diesem StackKit-Deployment zu verbinden.",
     "ui.stacksId.actionPending": "{action} ausstehend",
     "ui.stacksId.actions": "Aktionen",
     "ui.stacksId.add": "+ Hinzufügen",
@@ -4924,11 +4898,11 @@ export const screenMessages = {
       "{count} Zugangsdatensatz konfiguriert",
     "ui.stacksId.credentialsConfigured.other":
       "{count} Zugangsdatensätze konfiguriert",
-    "ui.stacksId.decommission": "Außer Betrieb nehmen",
+    "ui.stacksId.decommission": "Server löschen",
     "ui.stacksId.decommissionManagedRuntime":
-      "Verwaltete Runtime außer Betrieb nehmen?",
+      "Diesen verwalteten Server löschen?",
     "ui.stacksId.deleteCredential": "Zugangsdaten löschen?",
-    "ui.stacksId.deploymentFallback": "StackKit-Deployment",
+    "ui.stacksId.deploymentFallback": "Homelab",
     "ui.stacksId.edit": "Bearbeiten",
     "ui.stacksId.editCredential": "Zugangsdaten bearbeiten",
     "ui.stacksId.enrollment": "Registrierung",
@@ -4939,11 +4913,11 @@ export const screenMessages = {
     "ui.stacksId.failedToLoadRuntimeStatus":
       "Runtime-Status konnte nicht geladen werden",
     "ui.stacksId.failedToLoadStackkitDeployment":
-      "StackKit-Deployment konnte nicht geladen werden",
+      "Homelab konnte nicht geladen werden",
     "ui.stacksId.ingest": "Ingest",
     "ui.stacksId.latestOperationsSnapshot": "Neuester Snapshot der Vorgänge",
     "ui.stacksId.manageCredentialsForThisStackkit":
-      "Zugangsdaten für dieses StackKit-Deployment verwalten",
+      "Steuere den Server, sieh dir seine Dienste an und verwalte Zugangsdaten.",
     "ui.stacksId.missingCredentialsDetected": "Fehlende Zugangsdaten erkannt",
     "ui.stacksId.missingSecret": "Fehlendes Secret",
     "ui.stacksId.monitoringEvidence": "Monitoring-Nachweis",
@@ -4951,12 +4925,11 @@ export const screenMessages = {
     "ui.stacksId.monthlyRuntimeActionFailed":
       "Aktion für die monatliche Runtime fehlgeschlagen",
     "ui.stacksId.noCredentialsConfiguredForThis":
-      "Für dieses StackKit-Deployment sind keine Zugangsdaten konfiguriert.",
+      "Für dieses Homelab sind keine Zugangsdaten konfiguriert.",
     "ui.stacksId.noLeaseAttached": "Kein Lease verknüpft",
-    "ui.stacksId.noStackkitDeploymentIdProvided":
-      "Keine StackKit-Deployment-ID angegeben",
+    "ui.stacksId.noStackkitDeploymentIdProvided": "Keine Homelab-ID angegeben",
     "ui.stacksId.offeringSpec": "{vcpus} vCPU · {memory} GB RAM",
-    "ui.stacksId.pageTitle": "{name} – Zugangsdaten | kombify-Techstack",
+    "ui.stacksId.pageTitle": "{name} | kombify-Techstack",
     "ui.stacksId.query": "Abfrage",
     "ui.stacksId.runtime": "Runtime",
     "ui.stacksId.series": "Serie",
@@ -4965,8 +4938,7 @@ export const screenMessages = {
     "ui.stacksId.sshInfo": "SSH-Infos",
     "ui.stacksId.sshOff": "SSH aus",
     "ui.stacksId.sshOn": "SSH an",
-    "ui.stacksId.stackkitDeploymentServices":
-      "Dienste des StackKit-Deployments",
+    "ui.stacksId.stackkitDeploymentServices": "Dienste dieses Homelabs",
     "ui.stacksId.stackkitService": "StackKit-Dienst",
     "ui.stacksId.start": "Starten",
     "ui.stacksId.status": "Status",
@@ -4974,7 +4946,7 @@ export const screenMessages = {
     "ui.stacksId.stopManagedServer": "Verwalteten Server stoppen?",
     "ui.stacksId.storedCredentials": "Gespeicherte Zugangsdaten",
     "ui.stacksId.techstackWillBeginProviderCleanup":
-      "Techstack beginnt mit der Provider-Bereinigung für diese verwaltete Runtime.",
+      "Techstack löscht diesen verwalteten Server beim Anbieter samt seinen Daten.",
     "ui.stacksId.theFollowingServicesNeedCredentials":
       "Für die folgenden Dienste müssen Zugangsdaten konfiguriert werden:",
     "ui.stacksId.theServerShutsDownAnd":
@@ -4983,7 +4955,7 @@ export const screenMessages = {
       "Dadurch werden die ausgewählten Zugangsdaten dauerhaft entfernt.",
     "ui.stacksId.username": "Benutzername",
     "ui.stacksIdServersNew.addNodeKombifyTechstack":
-      "Node hinzufügen | kombify-Techstack",
+      "Server hinzufügen | kombify-Techstack",
     "ui.stacksIdServersServerId.activityHistory": "Aktivitätsverlauf",
     "ui.stacksIdServersServerId.addressesDomains": "Adressen & Domains",
     "ui.stacksIdServersServerId.agentId": "Agent-ID",
@@ -4994,8 +4966,7 @@ export const screenMessages = {
     "ui.stacksIdServersServerId.checking": "Wird geprüft...",
     "ui.stacksIdServersServerId.checks": "Prüfungen",
     "ui.stacksIdServersServerId.confirmAction": "Aktion bestätigen",
-    "ui.stacksIdServersServerId.confirmDecommission":
-      "Außerbetriebnahme bestätigen",
+    "ui.stacksIdServersServerId.confirmDecommission": "Entfernen bestätigen",
     "ui.stacksIdServersServerId.confirmDetach": "Trennen bestätigen",
     "ui.stacksIdServersServerId.couldNotLoadServerAccess":
       "Serverzugriffskontext konnte nicht geladen werden.",
@@ -5003,11 +4974,10 @@ export const screenMessages = {
     "ui.stacksIdServersServerId.custodyResolutionFailed":
       "Auflösung der Obhut fehlgeschlagen.",
     "ui.stacksIdServersServerId.decommissionFailed":
-      "Außerbetriebnahme fehlgeschlagen.",
-    "ui.stacksIdServersServerId.decommissionServer":
-      "Server außer Betrieb nehmen",
+      "Entfernen fehlgeschlagen.",
+    "ui.stacksIdServersServerId.decommissionServer": "Server entfernen",
     "ui.stacksIdServersServerId.desiredListenersDurableReservationsAnd":
-      "Gewünschte Listener, dauerhafte Reservierungen und Runtime-Nachweise für diesen Node.",
+      "Gewünschte Listener, dauerhafte Reservierungen und Runtime-Nachweise für diesen Server.",
     "ui.stacksIdServersServerId.detachSelfOwnedServer":
       "Eigenen Server trennen",
     "ui.stacksIdServersServerId.detachServer": "Server trennen",
@@ -5036,7 +5006,7 @@ export const screenMessages = {
     "ui.stacksIdServersServerId.noDesiredListenerIsReserved":
       "Es ist kein gewünschter Listener reserviert, und der Guard konnte seinen Listener-Snapshot nicht abschließen. Runtime-Listener bleiben daher unbekannt.",
     "ui.stacksIdServersServerId.noDesiredListenerIsReserved2":
-      "Es ist kein gewünschter Listener reserviert, und der Guard hat für diesen Node noch keinen Listener-Snapshot gemeldet.",
+      "Es ist kein gewünschter Listener reserviert, und der Guard hat für diesen Server noch keinen Listener-Snapshot gemeldet.",
     "ui.stacksIdServersServerId.noHostAddressHasBeen":
       "Es wurde keine Hostadresse gemeldet.",
     "ui.stacksIdServersServerId.noObservedServiceEndpointsHave":
@@ -5053,7 +5023,7 @@ export const screenMessages = {
     "ui.stacksIdServersServerId.noServicePlacementIsRecorded":
       "Für diesen Server ist keine Dienst-Platzierung erfasst.",
     "ui.stacksIdServersServerId.noStackkitDeploymentEvidenceHas":
-      "Dieser Server hat keine StackKit-Deployment-Nachweise gemeldet.",
+      "Dieser Server hat keine Nachweise zur StackKit-Installation gemeldet.",
     "ui.stacksIdServersServerId.notDeclared": "Nicht deklariert",
     "ui.stacksIdServersServerId.operatingSystem": "Betriebssystem",
     "ui.stacksIdServersServerId.portAllocations": "Portzuweisungen",
@@ -5080,7 +5050,7 @@ export const screenMessages = {
     "ui.stacksIdServersServerId.serverDetailsKombifyTechstack":
       "Serverdetails | kombify-Techstack",
     "ui.stacksIdServersServerId.serverGenerationDecommissioned":
-      "Server-Generation außer Betrieb genommen",
+      "Server-Generation entfernt",
     "ui.stacksIdServersServerId.serverSettings": "Servereinstellungen",
     "ui.stacksIdServersServerId.serviceEndpoints": "Dienst-Endpunkte",
     "ui.stacksIdServersServerId.servicesOnThisServerMay":
@@ -5093,15 +5063,15 @@ export const screenMessages = {
     "ui.stacksIdServersServerId.thisChangesTheSelectedServer":
       "Dies ändert den ausgewählten Server über seinen registrierten StackKit-Agent.",
     "ui.stacksIdServersServerId.thisIsConfiguredStackkitIntent":
-      "Dies ist der konfigurierte StackKit-Intent; der Guard hat noch keine passenden Deployment-Nachweise gemeldet.",
+      "Dies ist der konfigurierte StackKit-Intent; der Guard hat noch keine passenden Installationsnachweise gemeldet.",
     "ui.stacksIdServersServerId.thisOnlyArchivesTheStale":
       "Dies archiviert nur den veralteten Techstack-Obhutseintrag. Beim Provider wird nichts gelöscht.",
     "ui.stacksIdServersServerId.thisServerHasNoManaged":
-      "Dieser Server hat keinen verwalteten Provider-Lease. Seine erfasste Obhut berechtigt derzeit weder zur verwalteten Außerbetriebnahme noch zum Trennen eines eigenen Servers.",
+      "Dieser Server hat keinen verwalteten Provider-Lease. Seine erfasste Obhut berechtigt derzeit weder zum Entfernen eines verwalteten Servers noch zum Trennen eines eigenen Servers.",
     "ui.stacksIdServersServerId.thisServerIsALegacy":
       "Dieser Server ist ein Legacy- oder ungebundener Obhutseintrag. Bestätige, dass die Provider-Ressource bereits entfernt wurde; Techstack archiviert nur diesen Eintrag und ruft keine Provider-Ressource auf oder löscht sie.",
     "ui.stacksIdServersServerId.thisServerIsRegisteredThrough":
-      "Dieser Server ist über das Worker-Inventar registriert; Zugriffsaktionen der verwalteten Runtime sind nicht angebunden.",
+      "Dieser Server ist über das Serverinventar registriert; Zugriffsaktionen der verwalteten Runtime sind nicht angebunden.",
     "ui.standardBundle.additionalComputeNodeForStackKit":
       "Zusätzlicher Compute-Node für die Platzierung von StackKit-Diensten.",
     "ui.standardBundle.additionalNodeIntendedForStorage":
@@ -5168,11 +5138,11 @@ export const screenMessages = {
     "ui.strata.job": "Job",
     "ui.strata.noCpuCurve":
       "{name}: keine CPU-Daten für die letzten 24 Stunden",
-    "ui.strata.noNodeHasReportedYet": "Noch kein Node hat sich gemeldet.",
+    "ui.strata.noNodeHasReportedYet": "Noch kein Server hat sich gemeldet.",
     "ui.strata.nodesNeedAttention.one":
-      "{count} von {total} Nodes braucht Aufmerksamkeit.",
+      "{count} von {total} Servern braucht Aufmerksamkeit.",
     "ui.strata.nodesNeedAttention.other":
-      "{count} von {total} Nodes brauchen Aufmerksamkeit.",
+      "{count} von {total} Servern brauchen Aufmerksamkeit.",
     "ui.strata.notShown":
       "Nicht angezeigt: {items} konnten nicht gelesen werden.",
     "ui.strata.provisioning": "Bereitstellung",
@@ -5194,7 +5164,7 @@ export const screenMessages = {
     "ui.strataDashboard.middleRing": "Mittlerer Ring",
     "ui.strataDashboard.monitoring": "Monitoring →",
     "ui.strataDashboard.noCpuDataInThe": "Keine CPU-Daten in den letzten 24 h",
-    "ui.strataDashboard.nodes": "Nodes",
+    "ui.strataDashboard.nodes": "Server",
     "ui.strataDashboard.nothingHappenedNoRolloutsRestores":
       "Nichts passiert: keine Rollouts, Wiederherstellungen, Warnungen oder Ausfälle.",
     "ui.strataDashboard.outerRing": "Äußerer Ring",
@@ -5211,7 +5181,7 @@ export const screenMessages = {
     "ui.substrateEnrollment.proxmoxHypervisorConnection":
       "Proxmox-Hypervisor-Verbindung",
     "ui.substrateEnrollment.theHypervisorHostsYourNodes":
-      "Der Hypervisor hostet deine Nodes. StackKits laufen in Ubuntu-Gästen. Die Gastverwaltung wird aktiviert, sobald der lokale Proxmox-Client konfiguriert ist und du die Verbindung autorisierst. Bestehende Gäste bleiben außerhalb der Lösch-Obhut.",
+      "Der Hypervisor hostet deine Server. StackKits laufen in Ubuntu-Gästen. Die Gastverwaltung wird aktiviert, sobald der lokale Proxmox-Client konfiguriert ist und du die Verbindung autorisierst. Bestehende Gäste bleiben außerhalb der Lösch-Obhut.",
     "ui.substrates.theRuntimeDidNotReturn":
       "Die Runtime hat die angeforderten Daten nicht zurückgegeben.",
     "ui.taskStatus.aVerifiedStackKitDeploymentMust":
@@ -5225,13 +5195,13 @@ export const screenMessages = {
     "ui.taskStatus.buildingServiceList": "Dienstliste wird erstellt",
     "ui.taskStatus.callingTheStackKitsRuntimeAction":
       "Die StackKits-Runtime-Aktion, die die generierte Cloud-Kit-Spezifikation anwendet, wird aufgerufen.",
-    "ui.taskStatus.checkingOpenTofu": "OpenTofu wird geprüft",
-    "ui.taskStatus.checkingRolloutTarget": "Rollout-Ziel wird geprüft",
-    "ui.taskStatus.checkingTerramate": "Terramate wird geprüft",
+    "ui.taskStatus.checkingOpenTofu": "Setup-Werkzeuge werden geprüft",
+    "ui.taskStatus.checkingRolloutTarget": "Dein Server wird geprüft",
+    "ui.taskStatus.checkingTerramate": "Update-Werkzeuge werden geprüft",
     "ui.taskStatus.checkingThatLoginProtectedServices":
       "Es wird geprüft, ob durch Login geschützte Dienste und Monitoring-Signale nach dem Rollout verfügbar sind.",
     "ui.taskStatus.checkingTheTerramateToolchainWhen":
-      "Die Terramate-Toolchain wird geprüft, wenn der ausgewählte StackKit-Lebenszyklus sie benötigt.",
+      "Es werden die Werkzeuge geprüft, die dein Homelab aktuell halten, falls dein Setup sie braucht.",
     "ui.taskStatus.checkingYourChoices": "Deine Auswahl wird geprüft",
     "ui.taskStatus.collectingServiceMetadataExposedBy":
       "Vom StackKits-Rollout bereitgestellte Dienst-Metadaten werden gesammelt.",
@@ -5267,7 +5237,7 @@ export const screenMessages = {
     "ui.taskStatus.eachServiceGetsScopedPermissions":
       "Jeder Dienst erhält eingegrenzte Berechtigungen. TLS wird, wo möglich, automatisch aktiviert, und Dienste sind standardmäßig isoliert.",
     "ui.taskStatus.ensuringTheDeploymentTargetSatisfies":
-      "Es wird sichergestellt, dass das Deployment-Ziel die Anforderungen der StackKit-Runtime erfüllt.",
+      "Es wird sichergestellt, dass dein Server die Anforderungen für dein Homelab erfüllt.",
     "ui.taskStatus.findingTheBestStackKitFor":
       "Das beste StackKit für dich wird gesucht",
     "ui.taskStatus.generateDeploymentArtifacts":
@@ -5293,7 +5263,7 @@ export const screenMessages = {
     "ui.taskStatus.networkSettingsAreDerivedFrom":
       "Die Netzwerkeinstellungen werden aus deinem Zugriffsmodus abgeleitet. „Nur lokal“ nutzt internes Docker-Netzwerk; Fernzugriff fügt das zur Lane passende private Mesh oder die verwaltete Edge-Route hinzu.",
     "ui.taskStatus.onceThisSucceedsTheNode":
-      "Sobald dies gelingt, bleibt die Node-Projektion in Techstack sichtbar, auch wenn Vorbereitung oder Rollout später fehlschlagen.",
+      "Sobald dies gelingt, bleibt dein Server in Techstack sichtbar, auch wenn Vorbereitung oder Rollout später fehlschlagen.",
     "ui.taskStatus.opentofuReadinessIsPartOf":
       "Die OpenTofu-Bereitschaft ist Teil des Vorbereitungsvertrags der StackKits-CLI, kein separater, von Techstack verantworteter Bootstrap-Pfad.",
     "ui.taskStatus.persistingConfiguration": "Konfiguration wird gespeichert",
@@ -5301,14 +5271,13 @@ export const screenMessages = {
       "Rollout-Spezifikation wird gespeichert",
     "ui.taskStatus.preparingDocker": "Docker wird vorbereitet",
     "ui.taskStatus.preparingNodeRegistration":
-      "Node-Registrierung wird vorbereitet",
+      "Server-Registrierung wird vorbereitet",
     "ui.taskStatus.preparingOpenTelemetryHandoffDataFor":
-      "OpenTelemetry-Übergabedaten für Monitoring und Betrieb werden vorbereitet.",
-    "ui.taskStatus.preparingStackKitsRuntime":
-      "StackKits-Runtime wird vorbereitet",
-    "ui.taskStatus.preparingTelemetry": "Telemetrie wird vorbereitet",
+      "Das Monitoring wird eingerichtet, damit du siehst, wie es deinem Homelab geht.",
+    "ui.taskStatus.preparingStackKitsRuntime": "Dein Server wird vorbereitet",
+    "ui.taskStatus.preparingTelemetry": "Monitoring wird vorbereitet",
     "ui.taskStatus.preparingTheRuntimeMetadataUsed":
-      "Die Runtime-Metadaten für Monitoring, Betrieb und den Runtime Intelligence Layer werden vorbereitet.",
+      "Die Informationen werden vorbereitet, auf die sich Monitoring und der tägliche Betrieb deines Homelabs stützen.",
     "ui.taskStatus.preparingToolsApplyingTheStackKit":
       "Tools werden vorbereitet, das StackKit angewendet und Dienste gelesen",
     "ui.taskStatus.provisionManagedRuntime": "Verwaltete Runtime bereitstellen",
@@ -5318,8 +5287,9 @@ export const screenMessages = {
     "ui.taskStatus.renderingTheStackKitInfrastructureFiles":
       "Die vom Rollout-Adapter benötigten StackKit-Infrastrukturdateien werden gerendert.",
     "ui.taskStatus.requestingManagedCloudNode":
-      "Verwalteter Cloud-Node wird angefordert",
-    "ui.taskStatus.requestingManagedNode": "Verwalteter Node wird angefordert",
+      "Verwalteter Cloud-Server wird angefordert",
+    "ui.taskStatus.requestingManagedNode":
+      "Verwalteter Server wird angefordert",
     "ui.taskStatus.reservingTheSubscriptionVMConnecting":
       "Abo-VM wird reserviert, Runtime verbunden und Telemetrie vorbereitet",
     "ui.taskStatus.rollOutCloudKit": "Cloud Kit ausrollen",
@@ -5330,10 +5300,10 @@ export const screenMessages = {
       "Teil {position} von {total} wird eingerichtet: {name}",
     "ui.taskStatus.runningRestoreDrill": "Wiederherstellungsübung läuft",
     "ui.taskStatus.runningSimulatedUpdateGate":
-      "Simulierte Update-Schranke läuft",
-    "ui.taskStatus.runningSimulationGate": "Simulationsschranke läuft",
+      "Das Update wird zuerst getestet",
+    "ui.taskStatus.runningSimulationGate": "Das Update wird zuerst getestet",
     "ui.taskStatus.runningTheStackKitsCLIPrepare":
-      "Der Prepare-Vertrag der StackKits-CLI wird auf dem verwalteten VPS ausgeführt.",
+      "Es wird installiert und geprüft, was dein Server braucht, bevor dein Homelab eingerichtet wird.",
     "ui.taskStatus.savingUnifiedSpecYamlSo":
       "unified-spec.yaml wird gespeichert, damit der Rollout reproduzierbar und nachvollziehbar ist.",
     "ui.taskStatus.savingYourChoicesToThe":
@@ -5347,8 +5317,7 @@ export const screenMessages = {
       "Sicherheitskonfiguration wird eingerichtet",
     "ui.taskStatus.stackkitsAreCuratedInfrastructureTemplates":
       "StackKits sind kuratierte Infrastrukturvorlagen. Das System wählt eine aus, die deine ausgewählten Funktionen mit minimalem Overhead abdeckt.",
-    "ui.taskStatus.startingTelemetryHandoff":
-      "Telemetrie-Übergabe wird gestartet",
+    "ui.taskStatus.startingTelemetryHandoff": "Monitoring wird gestartet",
     "ui.taskStatus.techstackConsumesStackKitArtifactsHere":
       "Techstack verarbeitet hier StackKit-Artefakte; StackKits bleibt für deren Anwendung verantwortlich.",
     "ui.taskStatus.techstackRecordsTheManagedTarget":
@@ -5366,7 +5335,7 @@ export const screenMessages = {
     "ui.taskStatus.theSimulationGateProtectsThe":
       "Die Simulationsschranke schützt den ersten Rollout und spätere Update-Abläufe vor unsicheren Änderungen.",
     "ui.taskStatus.theSpecContainsAllConfiguration":
-      "Die Spezifikation enthält die gesamte Konfiguration, die zum Deployment deines Homelabs nötig ist. Sie lässt sich versionieren und auf jedem kompatiblen Node reproduzieren.",
+      "Die Spezifikation enthält die gesamte Konfiguration, die zum Deployment deines Homelabs nötig ist. Sie lässt sich versionieren und auf jedem kompatiblen Server reproduzieren.",
     "ui.taskStatus.theUnifiedSpecIsThe":
       "Die vereinheitlichte Spezifikation ist die kanonische Eingabe für StackKits und die Runtime-Verifizierung.",
     "ui.taskStatus.thisChecksFeatureSelectionsAccess":
@@ -5385,7 +5354,7 @@ export const screenMessages = {
     "ui.taskStatus.validatingTheBackupAndRestore":
       "Backup- und Wiederherstellungspfad werden validiert, bevor das StackKit-Deployment als verifiziert markiert wird.",
     "ui.taskStatus.validatingTheUpdatePathBefore":
-      "Der Update-Pfad wird validiert, bevor der Rollout auf die verwaltete Runtime angewendet wird.",
+      "Es wird geprüft, ob das Update funktioniert, bevor es auf deinen Server angewendet wird.",
     "ui.taskStatus.verificationConfirmsThatTheStackKit":
       "Die Verifizierung bestätigt, dass das StackKit-Deployment nutzbar ist, nicht nur, dass Dateien generiert wurden.",
     "ui.taskStatus.verifyRollout": "Rollout verifizieren",
@@ -5395,7 +5364,7 @@ export const screenMessages = {
     "ui.taskStatus.verifyingThatAllSelectedOptions":
       "Es wird geprüft, ob alle ausgewählten Optionen gültig und miteinander kompatibel sind.",
     "ui.taskStatus.verifyingTheInfrastructureToolchainNeeded":
-      "Die von StackKits benötigte Infrastruktur-Toolchain wird verifiziert.",
+      "Es wird sichergestellt, dass dein Server die Werkzeuge hat, die er zum Einrichten deines Homelabs braucht.",
     "ui.taskStatus.yourChosenAuthMethodIs":
       "Deine gewählte Auth-Methode wird auf alle Dienste angewendet. Mehrbenutzer-Setups erhalten automatisch gruppenbasierte Berechtigungen.",
     "ui.taskUpdates.anUnexpectedErrorOccurred":
@@ -5562,23 +5531,23 @@ export const screenMessages = {
       "Wähle separate Gast-Ressourcen für Home Assistant OS aus.",
     "ui.wizardRuns.thisRunHasNoRollout":
       "Dieser Lauf hat keinen Rollout, der abgebrochen werden könnte.",
-    "ui.worker.registryLink": "Worker-Registry-Link",
+    "ui.worker.registryLink": "Link zur Serverregistry",
     "ui.worker.registryUrlError":
       "Registry-URL konnte nicht automatisch ermittelt werden: {error}",
     "ui.worker.runInstallMany":
-      "Führe den Installationsbefehl oben auf mindestens {count} Nodes aus und warte dann, bis Betriebsnachweise die Verbindung bestätigen.",
+      "Führe den Installationsbefehl oben auf mindestens {count} Servern aus und warte dann, bis Betriebsnachweise die Verbindung bestätigen.",
     "ui.worker.runInstallOne":
-      "Führe den Installationsbefehl oben auf deinem Node aus und warte dann, bis Betriebsnachweise die Verbindung bestätigen.",
+      "Führe den Installationsbefehl oben auf deinem Server aus und warte dann, bis Betriebsnachweise die Verbindung bestätigen.",
     "ui.worker.verifiedConnected": "{count} verifiziert verbunden",
     "ui.worker.waitingVerified":
-      "Warte auf verifizierte Worker ({connected}/{required})",
+      "Warte auf verifizierte Server ({connected}/{required})",
     "ui.workerRegistrationCard.installCommand": "Installationsbefehl:",
     "ui.workerRegistrationCard.installCommandForNewWorkers":
-      "Installationsbefehl für neue Worker:",
+      "Installationsbefehl für neue Server:",
     "ui.workerRegistrationCard.nextStep": "Nächster Schritt:",
     "ui.workerRegistrationCard.operationsEvidenceIsRequiredBefore":
-      "Betriebsnachweise sind erforderlich, bevor verbundene Nodes bestätigt werden können.",
+      "Betriebsnachweise sind erforderlich, bevor verbundene Server bestätigt werden können.",
     "ui.workerRegistrationCard.workersConnectedVerified":
-      "Verbundene Worker (verifiziert)",
+      "Verbundene Server (verifiziert)",
   },
 };
