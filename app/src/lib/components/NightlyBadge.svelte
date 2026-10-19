@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * Persistent "Nightly" badge on the preview deployment
+   * Persistent "Preview" badge on the preview deployment
    * (CI-CD-PLATFORM-STANDARD §4.6.2), with the way back to Stable. Renders
    * nothing on the stable deployment.
    */

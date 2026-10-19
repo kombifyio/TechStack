@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/identity"
 	"github.com/kombifyio/techstack/pkg/logger"
+	"github.com/kombifyio/techstack/pkg/v2/auth/providers"
 )
 
 func TestPreviewHTTPCannotSubmitStableWorkOrAdmitAnotherSubject(t *testing.T) {
@@ -32,6 +34,8 @@ func TestPreviewHTTPCannotSubmitStableWorkOrAdmitAnotherSubject(t *testing.T) {
 		{"auth0|fixture", http.MethodGet, "/dashboard/reclaim", http.StatusForbidden},
 		{"auth0|customer", http.MethodGet, "/api/v2/auth/login", http.StatusOK},
 		{"auth0|customer", http.MethodGet, "/api/v2/auth/logout", http.StatusOK},
+		{"", http.MethodGet, "/api/v1/auth/methods", http.StatusOK},
+		{"auth0|fixture", http.MethodPost, "/api/v1/auth/login", http.StatusConflict},
 	} {
 		router := httpx.NewRouter()
 		execution := config.NewPreviewExecution()
@@ -119,5 +123,52 @@ func TestPreviewHTTPCannotSubmitStableWorkOrAdmitAnotherSubject(t *testing.T) {
 		} else if err != nil || projected != membership {
 			t.Fatalf("established active membership %q denied: %v", status, err)
 		}
+	}
+}
+
+// The Nightly login page reads its sign-in methods and the Windows handoff
+// returns to /stacks; both must reach Nightly without admitting new work.
+func TestPreviewLoginReachesCloudSignIn(t *testing.T) {
+	t.Setenv(config.EnvReleaseChannel, "preview")
+	for _, dynamic := range []bool{false, true} {
+		router := httpx.NewRouter()
+		bindGlobalMiddleware(router, routeDeps{startup: &startupContext{cfg: config.DefaultConfig()}, previewExecution: config.NewPreviewExecution(), log: logger.Default()})
+		reached := false
+		serve := func(e *httpx.Event) error { reached = true; return e.NoContent(http.StatusOK) }
+		if dynamic {
+			router.GET("/stacks", serve)
+		} else {
+			router.SetNotFound(serve)
+		}
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/stacks", nil))
+		if want := !dynamic; reached != want {
+			t.Fatalf("/stacks shell (dynamic handler=%v): status=%d reached=%v", dynamic, rec.Code, reached)
+		}
+	}
+
+	registry := providers.NewRegistry()
+	primary, err := providers.New(providers.Config{ID: "primary", Kind: providers.KindAuth0, Issuer: "https://login.kombify.io/", ClientID: "client"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry.Add(primary)
+	rec := httptest.NewRecorder()
+	nightlyAuthMethodsHandler(registry).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/auth/methods", nil))
+	var body struct {
+		Providers []struct {
+			ID, Kind, Label string
+			AuthURL         string `json:"auth_url"`
+		} `json:"providers"`
+		BreakGlass struct {
+			Initialized bool `json:"initialized"`
+		} `json:"breakglass"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || rec.Code != http.StatusOK {
+		t.Fatalf("methods status=%d err=%v", rec.Code, err)
+	}
+	if len(body.Providers) != 1 || body.Providers[0].ID != "primary" || body.Providers[0].Kind != "auth0" ||
+		body.Providers[0].AuthURL != "/api/v2/auth/login?provider=primary" || body.BreakGlass.Initialized {
+		t.Fatalf("Nightly methods must list only the cloud provider: %+v", body)
 	}
 }

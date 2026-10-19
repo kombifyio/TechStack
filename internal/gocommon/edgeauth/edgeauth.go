@@ -92,6 +92,13 @@ const (
 	// resource scope, principal and agent attestation) plus the step-up facts
 	// amr, acr and auth_time. Only a v7 envelope yields StepUpClaims.
 	EdgeSignatureVersionV7 = "v7"
+	// EdgeSignatureVersionV9 binds every v7 field plus the Auth0
+	// email_verified fact (HeaderUserEmailVerified). Only a v9 envelope can set
+	// Identity.EmailVerified; every older version yields false. v8 is not
+	// skipped by accident: the Gateway already signs a different, AI-Office-only
+	// v8 payload that the AI Platform origin verifies itself, so this module
+	// neither accepts nor reuses that tag.
+	EdgeSignatureVersionV9 = "v9"
 	defaultEdgeKeyID       = "primary"
 	defaultEdgeNextKeyID   = "next"
 	defaultSignatureWindow = 5 * time.Minute
@@ -110,6 +117,14 @@ const (
 	HeaderUserAMR      = "X-User-AMR"
 	HeaderUserACR      = "X-User-ACR"
 	HeaderUserAuthTime = "X-User-Auth-Time"
+)
+
+// HeaderUserEmailVerified carries the verified Auth0 token's email_verified
+// fact, bound only by the v9 edge signature. The only value that means
+// verified is EmailVerifiedTrue; an absent or any other value means false.
+const (
+	HeaderUserEmailVerified = "X-User-Email-Verified"
+	EmailVerifiedTrue       = "true"
 )
 
 // Config configures the edge auth middleware.
@@ -261,6 +276,13 @@ func Middleware(cfg Config) func(next http.Handler) http.Handler {
 			}
 
 			id := extractIdentity(r)
+			if emailVerifiedFromVerifiedRequest(r) {
+				id.EmailVerified = true
+			} else {
+				// Below v9 the header is unsigned: drop it so no handler can
+				// read it as if it were verified.
+				r.Header.Del(HeaderUserEmailVerified)
+			}
 			ctx := identity.NewContext(r.Context(), id)
 			if claims, ok := stepUpClaimsFromVerifiedRequest(r); ok {
 				ctx = context.WithValue(ctx, stepUpContextKey{}, claims)
@@ -390,6 +412,8 @@ func expectedServiceAllowed(allowed []string, signed string) bool {
 // staged rollout; origins separately decide which protected fields they need.
 func edgeSignatureVersionFromHeader(signature string) (string, error) {
 	switch {
+	case strings.HasPrefix(signature, EdgeSignatureVersionV9+"="):
+		return EdgeSignatureVersionV9, nil
 	case strings.HasPrefix(signature, EdgeSignatureVersionV7+"="):
 		return EdgeSignatureVersionV7, nil
 	case strings.HasPrefix(signature, EdgeSignatureVersionV5+"="):
@@ -411,11 +435,13 @@ func edgeSignatureVersionFromHeader(signature string) (string, error) {
 // OAuth client, and client-registration-derived product/workload context. v5
 // additionally binds the selected resource scope. v7 additionally binds the
 // principal/agent attestation and the step-up facts; its issuer may be empty,
-// as in the Gateway's v6. The field order must match the Cloudflare edge signer
+// as in the Gateway's v6. v9 appends the email_verified value after the v7
+// fields, immediately before timestamp and nonce. The field order must match the Cloudflare edge signer
 // (kombify-Gateway/cloudflare-edge/src/edge-signature.ts).
 func buildSignaturePayload(version, method, signedPath, keyID string, r *http.Request, timestamp, nonce string) string {
 	header := func(name string) string { return strings.TrimSpace(r.Header.Get(name)) }
-	bindsIssuer := version == EdgeSignatureVersionV4 || version == EdgeSignatureVersionV5 || version == EdgeSignatureVersionV7
+	bindsStepUp := version == EdgeSignatureVersionV7 || version == EdgeSignatureVersionV9
+	bindsIssuer := version == EdgeSignatureVersionV4 || version == EdgeSignatureVersionV5 || bindsStepUp
 	bindsEntitlements := version == edgeSignatureVersionV2 || bindsIssuer
 	fields := []string{
 		version,
@@ -443,10 +469,10 @@ func buildSignaturePayload(version, method, signedPath, keyID string, r *http.Re
 	if bindsIssuer {
 		fields = append(fields, header(HeaderClientID), header(HeaderProductID), header(HeaderAIWorkload))
 	}
-	if version == EdgeSignatureVersionV5 || version == EdgeSignatureVersionV7 {
+	if version == EdgeSignatureVersionV5 || bindsStepUp {
 		fields = append(fields, header(HeaderResourceScope))
 	}
-	if version == EdgeSignatureVersionV7 {
+	if bindsStepUp {
 		fields = append(fields,
 			header(HeaderPrincipalType),
 			header(HeaderAgentID),
@@ -457,6 +483,9 @@ func buildSignaturePayload(version, method, signedPath, keyID string, r *http.Re
 			header(HeaderUserACR),
 			header(HeaderUserAuthTime),
 		)
+	}
+	if version == EdgeSignatureVersionV9 {
+		fields = append(fields, header(HeaderUserEmailVerified))
 	}
 	fields = append(fields, timestamp, nonce)
 	return strings.Join(fields, "\n")
@@ -470,7 +499,8 @@ func AIContextBoundBySignature(r *http.Request) bool {
 	signature := strings.TrimSpace(r.Header.Get(HeaderEdgeSignature))
 	return strings.HasPrefix(signature, EdgeSignatureVersionV4+"=") ||
 		strings.HasPrefix(signature, EdgeSignatureVersionV5+"=") ||
-		strings.HasPrefix(signature, EdgeSignatureVersionV7+"=")
+		strings.HasPrefix(signature, EdgeSignatureVersionV7+"=") ||
+		strings.HasPrefix(signature, EdgeSignatureVersionV9+"=")
 }
 
 // AIResourceContextBoundBySignature reports whether the already-verified edge
@@ -479,7 +509,8 @@ func AIContextBoundBySignature(r *http.Request) bool {
 func AIResourceContextBoundBySignature(r *http.Request) bool {
 	signature := strings.TrimSpace(r.Header.Get(HeaderEdgeSignature))
 	return strings.HasPrefix(signature, EdgeSignatureVersionV5+"=") ||
-		strings.HasPrefix(signature, EdgeSignatureVersionV7+"=")
+		strings.HasPrefix(signature, EdgeSignatureVersionV7+"=") ||
+		strings.HasPrefix(signature, EdgeSignatureVersionV9+"=")
 }
 
 func signPayload(secret, payload string) string {
@@ -550,6 +581,7 @@ func hasUnsignedIdentityHeaders(r *http.Request) bool {
 		HeaderUserAMR,
 		HeaderUserACR,
 		HeaderUserAuthTime,
+		HeaderUserEmailVerified,
 		HeaderEdgeSignature,
 		HeaderEdgeSignatureEd25519,
 		HeaderEdgeTimestamp,
@@ -621,10 +653,12 @@ func StepUpFromContext(ctx context.Context) (StepUpClaims, bool) {
 }
 
 // stepUpClaimsFromVerifiedRequest reads the step-up headers of a request
-// whose envelope already verified. Only v7 covers them; below v7 they are
-// unsigned and ignored.
+// whose envelope already verified. Only v7 and v9 cover them; below v7 they
+// are unsigned and ignored.
 func stepUpClaimsFromVerifiedRequest(r *http.Request) (StepUpClaims, bool) {
-	if !strings.HasPrefix(strings.TrimSpace(r.Header.Get(HeaderEdgeSignature)), EdgeSignatureVersionV7+"=") {
+	signature := strings.TrimSpace(r.Header.Get(HeaderEdgeSignature))
+	if !strings.HasPrefix(signature, EdgeSignatureVersionV7+"=") &&
+		!strings.HasPrefix(signature, EdgeSignatureVersionV9+"=") {
 		return StepUpClaims{}, false
 	}
 	claims := StepUpClaims{ACR: strings.TrimSpace(r.Header.Get(HeaderUserACR))}
@@ -638,4 +672,16 @@ func stepUpClaimsFromVerifiedRequest(r *http.Request) (StepUpClaims, bool) {
 		claims.AuthTime = time.Unix(seconds, 0).UTC()
 	}
 	return claims, true
+}
+
+// emailVerifiedFromVerifiedRequest reports the email_verified fact of a request
+// whose envelope already verified. It is true only for a v9 envelope that
+// signs exactly EmailVerifiedTrue together with a non-empty email; every other
+// version or value fails closed to false.
+func emailVerifiedFromVerifiedRequest(r *http.Request) bool {
+	if !strings.HasPrefix(strings.TrimSpace(r.Header.Get(HeaderEdgeSignature)), EdgeSignatureVersionV9+"=") {
+		return false
+	}
+	return strings.TrimSpace(r.Header.Get(HeaderUserEmailVerified)) == EmailVerifiedTrue &&
+		strings.TrimSpace(r.Header.Get(HeaderUserEmail)) != ""
 }

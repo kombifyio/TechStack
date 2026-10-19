@@ -8,9 +8,10 @@
     CONTENT_PANE_ID,
     START_PAGE_HREF,
     isStartPage,
-    mainNavItems,
+    sidebarNavGroups,
   } from "#lib/navigation.js";
-  import { toPackageNavItems } from "./nav-items.js";
+  import { toPackageNavGroups } from "./nav-items.js";
+  import { features } from "#lib/stores/features.js";
   import UserMenu from "./UserMenu.svelte";
   import { stackIdentity } from "#lib/stores/stackIdentity.js";
   import TechstackBrandLogo from "#lib/components/TechstackBrandLogo.svelte";
@@ -23,7 +24,7 @@
   import { ownerChannelOptions } from "#lib/notifications/owner-channel.js";
   import {
     SidebarNav as PackageSidebarNav,
-    type NavItem,
+    type NavGroup,
     type RailHeaderContext,
   } from "@kombiverselabs/ui/shell";
 
@@ -65,15 +66,14 @@
 
   const currentPath = $derived(page.url.pathname);
   const onStartPage = $derived(isStartPage(currentPath));
-  const visibleNavItems = $derived(
-    mainNavItems.filter((item) => {
-      if (!item.feature) return true;
-      if (item.alwaysShow) return true;
-      return true;
-    }),
-  );
-
-  const packageItems = $derived<NavItem[]>(toPackageNavItems(visibleNavItems));
+  // Entries that name a feature flag follow it: the rail re-evaluates when the
+  // flags load, and the embedded tab bar filters through the same function.
+  const packageGroups = $derived.by<NavGroup[]>(() => {
+    void $features;
+    return toPackageNavGroups(sidebarNavGroups, (feature) =>
+      features.isEnabled(feature),
+    );
+  });
 
   /**
    * The rail head shows the elongated Techstack lockup (owner, 2026-10-04: the
@@ -95,7 +95,7 @@
 </script>
 
 <PackageSidebarNav
-  items={packageItems}
+  groups={packageGroups}
   {currentPath}
   {collapsed}
   {onCollapsedChange}

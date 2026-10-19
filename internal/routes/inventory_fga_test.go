@@ -445,3 +445,38 @@ func TestInventoryFGAPolicyUnavailableUsesSameFailClosedRESTAndMCPApplication(t 
 		t.Fatalf("MCP response = %d %s, want fail-closed tool error", mcpRecorder.Code, mcpRecorder.Body.String())
 	}
 }
+
+// An owner operates their own server on the signed grant alone: nothing
+// provisions a per-server FGA grant for the owner. Another subject, a missing
+// entitlement and a household member still need the grant.
+func TestInventoryOwnerOperatesOwnServerWithoutAServerGrant(t *testing.T) {
+	store := controlplane.NewMemoryStore()
+	if _, err := store.UpsertServerRuntime(t.Context(), controlplane.ServerRuntime{
+		ID: "server-1", TenantID: "tenant-1", StackID: "stack-1", OwnerSubjectID: "owner-1", WorkerID: "worker-1",
+		Name: "Node", LifecycleState: "active", ConnectionState: "connected", HealthState: "healthy",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	checker := &fakeInventoryRelationshipChecker{allowed: false}
+	policy := NewInventoryFGAPolicy(checker)
+	signed := middleware.WithSignedEntitlements(t.Context(), InventoryEntitlementOperate)
+
+	if err := authorizeOwnerServerOperate(signed, policy, store, inventoryScope{tenantID: "tenant-1", ownerID: "owner-1"}, "server-1"); err != nil {
+		t.Fatalf("the owner was denied without a server grant: %v", err)
+	}
+	if err := authorizeOwnerServerOperate(signed, policy, store, inventoryScope{tenantID: "tenant-1", ownerID: "owner-2"}, "server-1"); !isInventoryDenied(err) {
+		t.Fatalf("another subject got %v", err)
+	}
+	if err := authorizeOwnerServerOperate(t.Context(), policy, store, inventoryScope{tenantID: "tenant-1", ownerID: "owner-1"}, "server-1"); !isInventoryDenied(err) {
+		t.Fatalf("the owner without the signed entitlement got %v", err)
+	}
+	household := inventoryScope{tenantID: householdOwnerTenantID("owner-1"), ownerID: "member-1", householdOwnerID: "owner-1"}
+	if err := authorizeOwnerServerOperate(signed, policy, store, household, "server-1"); !isInventoryDenied(err) {
+		t.Fatalf("a household member without a grant got %v", err)
+	}
+}
+
+func isInventoryDenied(err error) bool {
+	var inventoryErr *inventoryError
+	return errors.As(err, &inventoryErr) && inventoryErr.reasonCode == "inventory_access_denied"
+}

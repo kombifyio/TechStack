@@ -150,7 +150,7 @@ func TestOfferingForMinimumResourcesChoosesSmallestMatchingOffering(t *testing.T
 }
 
 func TestOfferingForMinimumResourcesRejectsUnsupportedShape(t *testing.T) {
-	if offering, ok := OfferingForMinimumResources(5, 4096); ok {
+	if offering, ok := OfferingForMinimumResources(9, 4096); ok {
 		t.Fatalf("offering = %+v, want unsupported", offering)
 	}
 	if offering, ok := OfferingForMinimumResources(2, 32768); ok {
@@ -163,7 +163,41 @@ func TestLargestOfferingReturnsHighestCapacityOffering(t *testing.T) {
 	if !ok {
 		t.Fatal("expected largest offering")
 	}
-	if offering.ID != serverruntime.RuntimeOfferingPremium {
-		t.Fatalf("offering = %q, want premium", offering.ID)
+	if offering.ID != serverruntime.RuntimeOfferingLarge {
+		t.Fatalf("offering = %q, want large", offering.ID)
+	}
+}
+
+// A new package must satisfy the published Private AI floor without changing
+// a Standard/Premium order or admitting an unqualified Centron custom size.
+func TestLargePackageMeetsPrivateAIFloorWithoutResizingExistingOrders(t *testing.T) {
+	for _, want := range []ProviderPackage{
+		{ProviderID: ProviderIONOS, OfferingID: serverruntime.RuntimeOfferingStandard, Template: "Basic Cube S", Location: IONOSCubeDatacenter, VCPUs: 2, MemoryMB: 4096, DiskGB: 120},
+		{ProviderID: ProviderIONOS, OfferingID: serverruntime.RuntimeOfferingPremium, Template: "Basic Cube M", Location: IONOSCubeDatacenter, VCPUs: 4, MemoryMB: 8192, DiskGB: 240},
+		{ProviderID: ProviderCentron, OfferingID: serverruntime.RuntimeOfferingStandard, VCPUs: 4, MemoryMB: 8192, DiskGB: 80},
+		{ProviderID: ProviderCentron, OfferingID: serverruntime.RuntimeOfferingPremium, VCPUs: 4, MemoryMB: 8192, DiskGB: 320},
+	} {
+		pkg, err := PackageForProvider(want.ProviderID, string(want.OfferingID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pkg != want {
+			t.Fatalf("existing order changed: got %+v, want %+v", pkg, want)
+		}
+	}
+	offering, ok := OfferingForMinimumResources(4, 12288)
+	if !ok || offering.ID != serverruntime.RuntimeOfferingLarge {
+		t.Fatalf("Private AI capacity selection = %+v, found %v", offering, ok)
+	}
+	pkg, err := PackageForProvider(ProviderIONOS, string(offering.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pkg.Template != "Basic Cube L" || pkg.Location != IONOSCubeDatacenter ||
+		pkg.VCPUs != 8 || pkg.MemoryMB != 16384 || pkg.DiskGB != 480 {
+		t.Fatalf("large package = %+v", pkg)
+	}
+	if _, err := PackageForProvider(ProviderCentron, string(offering.ID)); err == nil {
+		t.Fatal("unqualified Centron Large package was admitted")
 	}
 }

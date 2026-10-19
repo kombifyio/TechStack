@@ -363,7 +363,7 @@ func (h registryRouteHandlers) registryPayloadFromStore(e *httpx.Event, tenantID
 	var rows registryStackRows
 	if len(ownedStacks) > 0 {
 		var rowsErr error
-		if rows, rowsErr = h.loadRegistryStackRows(e.Request.Context(), tenantID); rowsErr != nil {
+		if rows, rowsErr = h.loadRegistryStackRows(e, tenantID); rowsErr != nil {
 			return registryPayload{}, rowsErr
 		}
 	}
@@ -435,13 +435,16 @@ type registryStackRows struct {
 	runtimes map[string][]controlplane.ServiceRuntime
 }
 
-func (h registryRouteHandlers) loadRegistryStackRows(ctx context.Context, tenantID string) (registryStackRows, error) {
+func (h registryRouteHandlers) loadRegistryStackRows(e *httpx.Event, tenantID string) (registryStackRows, error) {
+	ctx := e.Request.Context()
 	nodes, err := h.registryStore.ListNodesByTenant(ctx, tenantID)
 	if err != nil && !errors.Is(err, controlplane.ErrNotFound) {
+		httpx.RecordDependencyFailure(e, "registry.list.nodes", err)
 		return registryStackRows{}, httpx.NewInternalServerError("Failed to fetch servers", nil)
 	}
 	services, err := h.registryStore.ListServicesByTenant(ctx, tenantID)
 	if err != nil && !errors.Is(err, controlplane.ErrNotFound) {
+		httpx.RecordDependencyFailure(e, "registry.list.services", err)
 		return registryStackRows{}, httpx.NewInternalServerError("Failed to fetch services", nil)
 	}
 	rows := registryStackRows{
@@ -451,6 +454,7 @@ func (h registryRouteHandlers) loadRegistryStackRows(ctx context.Context, tenant
 	if h.serviceStore != nil {
 		runtimes, runtimeErr := h.serviceStore.ListServiceRuntimes(ctx, tenantID, "", "")
 		if runtimeErr != nil {
+			httpx.RecordDependencyFailure(e, "registry.list.service_runtimes", runtimeErr)
 			return registryStackRows{}, httpx.NewInternalServerError("Failed to fetch service inventory", nil)
 		}
 		rows.runtimes = groupByStack(runtimes, func(runtime controlplane.ServiceRuntime) string { return runtime.StackID })

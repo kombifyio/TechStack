@@ -61,8 +61,8 @@ const ROLE_SECRET_CANDIDATES: Record<
 > = {
   admin: [
     {
-      email: "TEST_PRO_PLUS_USER_EMAIL",
-      password: "TEST_PRO_PLUS_USER_PASSWORD",
+      email: "TEST_PRO_USER_EMAIL",
+      password: "TEST_PRO_USER_PASSWORD",
     },
     { email: "TEST_ADMIN_EMAIL", password: "TEST_ADMIN_PASSWORD" },
     {
@@ -92,8 +92,8 @@ const ROLE_SECRET_CANDIDATES: Record<
       password: "TEST_DEVELOPER_PASSWORD",
     },
     {
-      email: "TEST_PRO_PLUS_USER_EMAIL",
-      password: "TEST_PRO_PLUS_USER_PASSWORD",
+      email: "TEST_PRO_USER_EMAIL",
+      password: "TEST_PRO_USER_PASSWORD",
     },
     {
       email: "TECHSTACK_E2E_DEVELOPER_EMAIL",
@@ -106,11 +106,19 @@ const ROLE_SECRET_CANDIDATES: Record<
   ],
   oneliner: [
     {
+      email: "TEST_RUNTIME_E2E_USER_EMAIL",
+      password: "TEST_RUNTIME_E2E_USER_PASSWORD",
+    },
+    {
       email: "TECHSTACK_E2E_ONELINER_EMAIL",
       password: "TECHSTACK_E2E_ONELINER_PASSWORD",
     },
   ],
   remote: [
+    {
+      email: "TEST_RUNTIME_E2E_USER_EMAIL",
+      password: "TEST_RUNTIME_E2E_USER_PASSWORD",
+    },
     {
       email: "TECHSTACK_E2E_REMOTE_EMAIL",
       password: "TECHSTACK_E2E_REMOTE_PASSWORD",

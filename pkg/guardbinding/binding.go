@@ -21,26 +21,28 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
+	"github.com/kombifyio/techstack/pkg/guardcompat"
 )
 
 const (
 	// ContractVersion names the binding and outcome-report contract.
-	ContractVersion = "guard.command-binding/v1"
+	ContractVersion = guardcompat.BindingContractVersion
 	// LegacyContractVersion is stored for a command dispatched to a Guard that
 	// does not advertise Capability. Such a command keeps the pre-binding
 	// at-most-once semantics and is flagged so it is never mistaken for a
-	// bound command.
-	LegacyContractVersion = "legacy"
+	// bound command; it is never a mutating command (see
+	// AdmitMutatingDispatch).
+	LegacyContractVersion = guardcompat.LegacyContractVersion
 	// Capability is advertised by a Guard that validates bindings, journals
 	// intent and result, and reports revisions.
-	Capability = "guard.command-binding.v1"
+	Capability = guardcompat.BindingCapability
 	// ResultClockMargin is the skew tolerated between the Guard clock reported
 	// in a result and the control-plane authority expiry.
-	ResultClockMargin = 5 * time.Minute
+	ResultClockMargin = guardcompat.ResultClockMargin
 	// MaxKnownCommands bounds the in-flight command IDs a Guard lists in a poll.
-	MaxKnownCommands = 64
+	MaxKnownCommands = guardcompat.MaxKnownCommands
 	// MaxReasonBytes bounds every free-text reason carried on the wire.
-	MaxReasonBytes = 512
+	MaxReasonBytes = guardcompat.MaxReasonBytes
 )
 
 // Denial codes are stable, machine-readable and safe to show to an operator.
@@ -60,6 +62,9 @@ const (
 	CodeOutcomeNotUnresolved = "outcome_not_unresolved"
 	CodeOutcomeRevisionStale = "outcome_revision_stale"
 	CodeOperatorNotAllowed   = "operator_resolution_not_allowed"
+	// CodeObserveOnlyContract refuses a mutating command to a Guard that does
+	// not speak the binding contract: it stays observe-only.
+	CodeObserveOnlyContract = "observe_only_contract"
 )
 
 // Denial is a structured refusal with recovery guidance.
@@ -87,6 +92,8 @@ func guidanceFor(code string) string {
 		return "The command was altered or addressed to a different worker; it was not run. Issue it again from the control plane."
 	case CodeContractUnsupported:
 		return "Update kombify Guard to a release that supports the command binding contract."
+	case CodeObserveOnlyContract:
+		return "This kombify Guard does not support the command binding contract, so it stays observe-only: read-only checks still run, but no change is sent to it. Update kombify Guard to a release that supports the binding contract, then issue the change again."
 	case CodeStaleGeneration:
 		return "The command was issued for an older worker credential generation; it was not run. Issue it again."
 	case CodeAuthorityExpired:
@@ -95,6 +102,10 @@ func guidanceFor(code string) string {
 		return "kombify Guard cannot record operations durably on this host (corrupt, incompatible or full journal). Read-only diagnosis still works; free disk space or repair the journal, then retry."
 	case CodeResourceFenced:
 		return "An earlier operation on this server has no acknowledged outcome yet; new changes wait until it is reconciled."
+	case CodeAuthorityRevoked:
+		return "This kombify Guard's identity was revoked, so it starts no further changes. Pair the server again to continue."
+	case CodeRevalidationRequired:
+		return "kombify Guard cannot trust how much authority is left for this command (it restarted, the host rebooted or the clock changed); it was not run. It runs once the control plane offers it again online."
 	case CodeOutcomeNotUnresolved:
 		return "This operation has no unresolved outcome to release. Refresh the list of unresolved operations."
 	case CodeOutcomeRevisionStale:

@@ -12,6 +12,8 @@ import (
 
 	"github.com/kombifyio/techstack/internal/selfhostcontracts/providerexecutor/v1beta1"
 	"github.com/google/uuid"
+
+	"github.com/kombifyio/techstack/pkg/monthlyruntime"
 )
 
 const runtimeOfferingMetadataKey = "runtime_offering_id"
@@ -40,6 +42,26 @@ type CatalogCoverageRequirement struct {
 	AdapterID             string
 	AdapterManifestHash   string
 	ProvisionDispatchMode ProvisionDispatchMode
+}
+
+// ManagedCatalogCoverageRequirements derives startup coverage from the same
+// package authority the adapters use, including provider-specific offerings.
+func ManagedCatalogCoverageRequirements(providerID, adapterID, manifestHash string) ([]CatalogCoverageRequirement, error) {
+	var requirements []CatalogCoverageRequirement
+	for _, offering := range monthlyruntime.Catalog() {
+		if _, err := monthlyruntime.PackageForProvider(providerID, string(offering.ID)); err != nil {
+			continue
+		}
+		requirements = append(requirements, CatalogCoverageRequirement{
+			ProviderID: providerID, OfferingID: string(offering.ID),
+			AdapterID: adapterID, AdapterManifestHash: manifestHash,
+			ProvisionDispatchMode: ProvisionDispatchAtMostOnceManualReconcile,
+		})
+	}
+	if len(requirements) == 0 {
+		return nil, fmt.Errorf("%w: provider has no admitted managed packages", ErrInvalidRequest)
+	}
+	return normalizeCatalogCoverageRequirements(requirements)
 }
 
 // ValidateActiveCatalogCoverage prevents a runtime from accepting Creation

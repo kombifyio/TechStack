@@ -24,6 +24,12 @@ func (r *recordingReach) SetPublic(_ context.Context, _, _, _ string, want guard
 	return &guardreach.Row{Desired: guardreach.DesiredActive, Public: want}, nil
 }
 
+// An owner holds no per-server inventory grant in SaaS (nothing provisions the
+// FGA `caller` tuple); publishing must not depend on one.
+var noServerGrantPolicy = InventoryPolicyFunc(func(context.Context, InventoryAuthorization) (InventoryDecision, error) {
+	return InventoryDecision{}, ErrInventoryAccessDenied
+})
+
 // Publishing a server at a public address is the owner's decision: another
 // owner cannot make it, enabling needs the entitlement and a fresh second
 // factor and an explicit, valid service and port, and withdrawing is never
@@ -39,7 +45,7 @@ func TestPublishingAServerNeedsTheOwnerEntitlementStepUpAndAnExplicitPort(t *tes
 	}
 	reach := &recordingReach{}
 	call := func(owner string, gate posturePolicyGate, body map[string]any) int {
-		h := serverRuntimeHandlers{store: store, now: func() time.Time { return now }, policy: NewSelfHostedInventoryPolicy(), reach: reach, postureEntitlements: gate}
+		h := serverRuntimeHandlers{store: store, now: func() time.Time { return now }, policy: noServerGrantPolicy, reach: reach, postureEntitlements: gate}
 		event, recorder := registryRouteStoreTestEvent(http.MethodPut, "/api/v1/servers/server-1/reach", owner, "tenant-1", body)
 		event.Request.SetPathValue("serverId", "server-1")
 		_ = h.reachSetPublic(event)

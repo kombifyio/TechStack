@@ -1062,6 +1062,9 @@ func registerV2Routes(router *httpx.Router, deps routeDeps) {
 
 func mergeLocalAuthHandlers(deps routeDeps) {
 	if !config.BackgroundExecutionEnabled() {
+		if config.ReleaseChannel() == "preview" {
+			deps.v2.server.MergeAuthHandlers(v2.AuthHandlers{Methods: nightlyAuthMethodsHandler(deps.v2.registry)})
+		}
 		return
 	}
 	localSvc, err := newLocalAuthService(deps)
@@ -1243,6 +1246,11 @@ func issueLocalDeviceSession(e *httpx.Event, deps routeDeps, store commonauthloc
 			claims.Provider = commonauthlocal.DefaultProviderID
 		}
 	}
+	if claims.Provider == localDeviceProvider && deps.v2.authStore != nil {
+		if err := projectLocalDeviceOperator(e.Request.Context(), deps.v2.authStore, claims); err != nil {
+			return httpx.InternalError(e, "Local device operator could not be projected")
+		}
+	}
 	token, err := deps.v2.session.Issue(claims)
 	if err != nil {
 		return httpx.InternalError(e, "Local device session could not be issued")
@@ -1265,6 +1273,21 @@ func issueLocalDeviceSession(e *httpx.Event, deps routeDeps, store commonauthloc
 		"provider": claims.Provider,
 		"source":   "windows-device",
 	})
+}
+
+// The account-free device uses the same persisted membership authority as
+// every authenticated request. Claimed owners retain their own projection.
+func projectLocalDeviceOperator(ctx context.Context, store controlplane.AuthStore, claims authsession.Claims) error {
+	if _, err := store.UpsertUser(ctx, controlplane.User{
+		ID: claims.Subject, PrimaryEmail: claims.Email, DisplayName: "This device", Status: "active",
+	}); err != nil {
+		return err
+	}
+	_, err := store.UpsertMembership(ctx, controlplane.Membership{
+		ID: claims.TenantID + ":" + claims.Subject, TenantID: claims.TenantID, UserID: claims.Subject,
+		RoleKey: "admin", ProviderKey: "local", SubjectID: claims.Subject, Status: "active",
+	})
+	return err
 }
 
 func localDeviceSessionTenant(deps routeDeps) string {

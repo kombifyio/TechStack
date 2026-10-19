@@ -13,6 +13,8 @@
   import type { StackConfig } from "#lib/wizard/index.js";
   import { NODE_GUIDES } from "#lib/docs-links.js";
   import InfoTip from "./InfoTip.svelte";
+  import { useWizardField } from "#lib/wizard/validation-context.js";
+  const hostField = useWizardField("server-host");
   let {
     config = $bindable(),
     reviewMode = false,
@@ -128,8 +130,20 @@
         placeholder="server.example.com"
         autocomplete="off"
         spellcheck={false}
+        required
+        aria-invalid={hostField.invalid ? "true" : undefined}
+        aria-describedby={hostField.describedBy()}
         data-testid="remote-server-host"
       />
+      {#if hostField.invalid}
+        <p
+          id={hostField.errorId}
+          class="field-error"
+          data-testid="remote-server-host-error"
+        >
+          {hostField.message}
+        </p>
+      {/if}
     </div>
 
     <fieldset>
@@ -416,6 +430,10 @@
   .auth-option {
     display: flex;
     align-items: flex-start;
+  }
+  .field-error {
+    font-size: 12px;
+    color: var(--destructive);
   }
   .field-label {
     display: inline-flex;

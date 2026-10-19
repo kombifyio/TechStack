@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/kombifyio/techstack/pkg/guardcompat"
 )
 
 // SchemaVersion is the on-disk format this build reads and writes. A journal
 // written by a newer format is never opened for writing.
-const SchemaVersion = 1
+const SchemaVersion = guardcompat.JournalSchemaVersion
 
 // State is the derived durable state of one command.
 type State string
@@ -184,22 +186,22 @@ type Options struct {
 
 func (o Options) withDefaults() Options {
 	if o.MaxBytes <= 0 {
-		o.MaxBytes = 256 << 20
+		o.MaxBytes = guardcompat.JournalBudgetBytes
 	}
 	if o.MaxResultBytes <= 0 {
-		o.MaxResultBytes = 24 << 20
+		o.MaxResultBytes = guardcompat.MaxResultBytes
 	}
 	if o.MaxIntentBytes <= 0 {
-		o.MaxIntentBytes = 64 << 10
+		o.MaxIntentBytes = guardcompat.MaxIntentBytes
 	}
 	if o.ClockMargin <= 0 {
-		o.ClockMargin = 15 * time.Minute
+		o.ClockMargin = guardcompat.JournalClockMargin
 	}
 	if o.MinTombstone <= 0 {
-		o.MinTombstone = time.Hour
+		o.MinTombstone = guardcompat.MinTombstoneAfterAck
 	}
 	if o.CompactAfterBytes <= 0 {
-		o.CompactAfterBytes = 8 << 20
+		o.CompactAfterBytes = guardcompat.CompactAfterBytes
 	}
 	if o.Now == nil {
 		o.Now = func() time.Time { return time.Now().UTC() }

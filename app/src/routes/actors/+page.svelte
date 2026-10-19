@@ -1,8 +1,8 @@
 <script lang="ts">
   /**
-   * Actors: everyone who acts in the homelab, people and agents, and the
-   * Offices and Factories the agents work in (entity-cards concept §5:
-   * Offices and Factories belong to Actors). It is a working list, not the
+   * People & agents (route `/actors`): everyone who acts in the homelab,
+   * people and agents, and the Offices and Factories the agents work in
+   * (entity-cards concept §5: Offices and Factories belong to Actors). It is a working list, not the
    * card-size showcase of UI Lab: one row per actor with what it does, and
    * every Factory with the Offices inside it. Three sources, each with its own
    * honest state; one outage never empties the others. A card opens the one
@@ -25,6 +25,8 @@
   } from "@kombiverselabs/ui/entity";
   import { Sparkles } from "@lucide/svelte";
   import { tr } from "#lib/i18n.svelte.js";
+  import ErrorCallout from "#lib/components/ui/ErrorCallout.svelte";
+  import LoadingNote from "#lib/components/ui/LoadingNote.svelte";
   import { authStore } from "#lib/stores/auth.svelte.js";
   import { getHomelab } from "#lib/api/homelab.js";
   import { listAgents, listOffices } from "#lib/api/actors.js";
@@ -185,6 +187,7 @@
   }
 
   async function loadPeopleSection() {
+    people = { state: "loading" };
     try {
       const homelab = await getHomelab();
       const ids = (homelab?.kit_deployments ?? []).map((item) => item.id);
@@ -203,6 +206,8 @@
   }
 
   async function loadAgentSections() {
+    agents = { state: "loading" };
+    places = { state: "loading" };
     const [agentRead, officeRead] = await Promise.all([
       listAgents(),
       listOffices(),
@@ -248,15 +253,17 @@
   });
 </script>
 
-{#snippet sectionState(state: Section<unknown>, empty: string)}
+{#snippet sectionState(
+  state: Section<unknown>,
+  empty: string,
+  onRetry: () => void,
+)}
   {#if state.state === "loading"}
-    <p role="status" class="text-sm text-muted-foreground">
-      {tr("actors.loading")}
-    </p>
+    <LoadingNote label={tr("actors.loading")} />
   {:else if state.state === "unavailable"}
     <p class="text-sm text-muted-foreground">{state.message}</p>
   {:else if state.state === "error"}
-    <p role="alert" class="text-sm text-destructive">{state.message}</p>
+    <ErrorCallout message={state.message} {onRetry} />
   {:else if state.items.length === 0}
     <p class="text-sm text-muted-foreground">{empty}</p>
   {/if}
@@ -299,7 +306,7 @@
     <h2 id="actors-people" class="text-base font-semibold">
       {tr("actors.people")}
     </h2>
-    {@render sectionState(people, tr("actors.peopleEmpty"))}
+    {@render sectionState(people, tr("actors.peopleEmpty"), loadPeopleSection)}
     {#if people.state === "ready" && people.items.length}
       <EntityCollection
         items={people.items}
@@ -317,7 +324,7 @@
     <h2 id="actors-agents" class="text-base font-semibold">
       {tr("actors.agents")}
     </h2>
-    {@render sectionState(agents, tr("actors.agentsEmpty"))}
+    {@render sectionState(agents, tr("actors.agentsEmpty"), loadAgentSections)}
     {#each agentGroups as entry (entry.group)}
       <div class="space-y-2">
         <h3 class="text-sm font-medium text-muted-foreground">
@@ -340,7 +347,7 @@
     <h2 id="actors-workplaces" class="text-base font-semibold">
       {tr("actors.workplaces")}
     </h2>
-    {@render sectionState(places, tr("actors.workplacesEmpty"))}
+    {@render sectionState(places, tr("actors.workplacesEmpty"), loadAgentSections)}
     {#if placeGroups.length}
       <div class="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
         {#each placeGroups as group (group.factory.key)}

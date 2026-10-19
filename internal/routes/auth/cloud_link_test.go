@@ -84,3 +84,27 @@ func TestHandleCloudLinkCallback_UnknownStateRedirectsError(t *testing.T) {
 		t.Fatalf("unexpected redirect location: %q", location)
 	}
 }
+
+// An unavailable cloud-link authority is a retryable, named cause the wizard
+// can act on, not a bare 503.
+func TestGetCloudLinkStatus_UnavailableAuthorityIsStructured(t *testing.T) {
+	e, rec := authedCloudLinkEvent(http.MethodGet, "/api/v1/auth/cloud-link", "operator-1")
+	if handlerErr := getRuntimeCloudLinkStatus(RuntimeStore{})(e); handlerErr != nil {
+		t.Fatalf("handler error: %v", handlerErr)
+	}
+	var envelope struct {
+		Error struct {
+			Details struct {
+				ReasonCode string `json:"reason_code"`
+				Retryable  bool   `json:"retryable"`
+			} `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode: %v (body: %s)", err, rec.Body.String())
+	}
+	if rec.Code != http.StatusServiceUnavailable || envelope.Error.Details.ReasonCode != reasonCloudLinkAuthorityMissing ||
+		!envelope.Error.Details.Retryable {
+		t.Fatalf("want retryable structured authority-unavailable failure, got %d %s", rec.Code, rec.Body.String())
+	}
+}

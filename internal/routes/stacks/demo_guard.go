@@ -30,7 +30,7 @@ func demoProtectedStoreStackRequest(e *httpx.Event, stack *controlplane.Stack) b
 }
 
 // demoRestrictedStackDetails is the structured denial envelope for stack-level
-// destructive actions on the demo account (FEATURE-ENTITLEMENT-UX-STANDARD).
+// destructive actions on the demo account (ENTITLEMENTS-ARCHITECTURE.md §13).
 func demoRestrictedStackDetails(capability string) map[string]any {
 	return map[string]any{
 		"phase":             "demo_account_guard",

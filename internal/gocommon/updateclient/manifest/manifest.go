@@ -10,7 +10,7 @@
 //	<package_sha256>\n<package_size>\n<published_at>\n<key_id>\n
 //
 // Ed25519 signs the raw payload bytes (target algorithm per
-// DESKTOP-CLIENT-DISTRIBUTION-STANDARD section 4). RS256 (RSASSA-PKCS1-v1_5
+// DESKTOP-FOUNDATION-STANDARD.md §6.4). RS256 (RSASSA-PKCS1-v1_5
 // over SHA-256) remains valid for the transitional PowerShell producer.
 // Signature values are unpadded base64url.
 package manifest

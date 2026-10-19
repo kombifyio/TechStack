@@ -10,7 +10,7 @@ import (
 )
 
 // OperatorSelfDisclosure is one principal's persisted voluntary
-// self-disclosure (CREATION-EXPERIENCE-STANDARD §4). Disclosure holds the raw,
+// self-disclosure (KOMBIFY-DESIGN-SYSTEM-STANDARD.md §9.4). Disclosure holds the raw,
 // already normalized answers; the capability profile is derived from them by
 // the Unifier and is never stored.
 type OperatorSelfDisclosure struct {

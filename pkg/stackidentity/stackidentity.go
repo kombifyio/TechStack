@@ -1,7 +1,7 @@
 // Package stackidentity holds the Stack Identity rules Techstack applies to its
 // local copy (the homelab row) and to the sync with kombify Cloud.
 //
-// Authority (STACK-IDENTITY-CUSTOMIZATION-STANDARD §8):
+// Authority (STACKKITS-PRODUCT-BOUNDARY-STANDARD.md §10.8):
 //   - Without kombify Cloud, Techstack is the only authority. Local edits are
 //     final and nothing is ever pushed.
 //   - Connected to Cloud, Cloud's StackIdentityV1 record is the account

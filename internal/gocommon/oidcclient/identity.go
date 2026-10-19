@@ -16,6 +16,7 @@ import (
 //
 //   - UserID  ← `sub`
 //   - Email   ← `email`
+//   - EmailVerified ← boolean `email_verified` (false when absent or non-boolean)
 //   - OrgID   ← `org_id` || `org` || `project_id` (raw claim)
 //   - Tier    ← `tier` || `plan` (raw claim)
 //   - Roles   ← when `role.DefaultRoleClaimNamespace` is present, the role
@@ -34,6 +35,8 @@ func IdentityFromClaims(c *Claims) *identity.Identity {
 	id := &identity.Identity{
 		UserID: strings.TrimSpace(c.Subject),
 		Email:  strings.TrimSpace(c.Email),
+
+		EmailVerified: c.EmailVerified && strings.TrimSpace(c.Email) != "",
 	}
 	id.OrgID = firstStringClaim(c.Raw, "org_id", "org", "project_id")
 	id.Tier = firstStringClaim(c.Raw, "tier", "plan")

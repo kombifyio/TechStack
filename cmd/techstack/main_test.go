@@ -284,6 +284,37 @@ func TestLocalDeviceSessionIssuesDeviceAdminCookieWithoutOwner(t *testing.T) {
 	}
 }
 
+// Regression 8pzz: real requests resolve the canonical membership after the
+// device cookie is issued. Cookie claims alone must not strand first-run users.
+func TestLocalDeviceSessionProjectsMembershipBeforeServingAuthenticatedRequest(t *testing.T) {
+	deviceToken := strings.Repeat("a", 64)
+	t.Setenv(localDeviceTokenEnv, deviceToken)
+	store := &stubAuthStore{}
+	handler, _ := localDeviceSessionTestHandlerWithEnv(t, nil, "local", store)
+	req := httptest.NewRequest(http.MethodPost, localDeviceSessionPath, nil)
+	req.RemoteAddr = "127.0.0.1:52100"
+	req.Header.Set(localDeviceSessionHeader, deviceToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+	if response.Code != http.StatusOK {
+		t.Fatalf("device session status=%d body=%s", response.Code, response.Body.String())
+	}
+	if len(store.users) != 1 || store.membership == nil || store.membership.UserID != store.users[0].ID ||
+		store.membership.TenantID != "default" || store.membership.RoleKey != "admin" || store.membership.Status != "active" {
+		t.Fatalf("device operator membership missing: users=%+v membership=%+v", store.users, store.membership)
+	}
+	protected := httptest.NewRequest(http.MethodGet, "/test/device-admin", nil)
+	protected.RemoteAddr = "127.0.0.1:52100"
+	for _, cookie := range response.Result().Cookies() {
+		protected.AddCookie(cookie)
+	}
+	result := httptest.NewRecorder()
+	handler.ServeHTTP(result, protected)
+	if result.Code != http.StatusOK {
+		t.Fatalf("persisted device membership rejected: status=%d body=%s", result.Code, result.Body.String())
+	}
+}
+
 func TestLocalDeviceSessionRestoresConfiguredOwnerCookie(t *testing.T) {
 	deviceToken := strings.Repeat("a", 64)
 	t.Setenv(localDeviceTokenEnv, deviceToken)
@@ -448,7 +479,7 @@ func localDeviceSessionTestHandler(t *testing.T, rec *commonauthlocal.Record) (h
 	return localDeviceSessionTestHandlerWithEnv(t, rec, "local")
 }
 
-func localDeviceSessionTestHandlerWithEnv(t *testing.T, rec *commonauthlocal.Record, environment string) (http.Handler, *authsession.Manager) {
+func localDeviceSessionTestHandlerWithEnv(t *testing.T, rec *commonauthlocal.Record, environment string, stores ...controlplane.AuthStore) (http.Handler, *authsession.Manager) {
 	t.Helper()
 	localDeviceSessionAttempts.reset()
 	t.Cleanup(localDeviceSessionAttempts.reset)
@@ -472,6 +503,9 @@ func localDeviceSessionTestHandlerWithEnv(t *testing.T, rec *commonauthlocal.Rec
 			defaultTenant: "default",
 		},
 		log: logger.Default(),
+	}
+	if len(stores) > 0 {
+		deps.v2.authStore = stores[0]
 	}
 	bindGlobalMiddleware(router, deps)
 	registerLocalDeviceSessionRouteWithStore(router, deps, &memoryBreakglassStore{rec: rec})

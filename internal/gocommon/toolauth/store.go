@@ -13,7 +13,7 @@ type TokenStore interface {
 }
 
 // DefaultTokenStore returns the platform-preferred token store: the Windows
-// Credential Manager on Windows, the encrypted file store elsewhere. Exported
+// Credential Manager on Windows, the machine-bound obfuscated file store elsewhere. Exported
 // for native-client consumers (CLI login flows) that need direct store access
 // without the full [Client] device-flow wrapper.
 func DefaultTokenStore() TokenStore {

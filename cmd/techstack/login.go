@@ -25,7 +25,7 @@ const cloudLoginToolName = "techstack/cloud/oidc"
 // Native OIDC configuration environment keys. The client id belongs to the
 // dedicated Auth0 NATIVE application registration (public client, token
 // endpoint auth "none") — never a web application client id
-// (NATIVE-CLIENT-PLATFORM-STANDARD section 4.4/4.5).
+// (DESKTOP-FOUNDATION-STANDARD.md §5.4.4/§5.4.5).
 const (
 	envCloudNativeClientID = "TECHSTACK_CLOUD_NATIVE_CLIENT_ID"
 	envCloudNativeAudience = "TECHSTACK_CLOUD_NATIVE_AUDIENCE"

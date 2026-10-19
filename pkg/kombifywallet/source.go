@@ -18,9 +18,11 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/kombifyio/techstack/internal/gocommon/servicecall"
 	"github.com/kombifyio/techstack/internal/gocommon/walletservice"
 
 	"github.com/kombifyio/techstack/pkg/config"
+	"github.com/kombifyio/techstack/pkg/serviceauth"
 )
 
 // Source says where Techstack keeps the credentials of its users.
@@ -108,14 +110,27 @@ func Boot(mode config.DeploymentMode, getenv func(string) string) (*Client, Sour
 	if origin == "" {
 		origin = DefaultServiceURL
 	}
+	// The per-caller Ed25519 identity signs the token when configured; the
+	// service secret above stays the HS256 fallback.
+	id, err := serviceauth.Apply(servicecall.Config{})
+	if err != nil {
+		return nil, "", fmt.Errorf("%s=%s: %w", EnvSource, SourceKombify, err)
+	}
 	wallet := walletservice.New(walletservice.Config{
 		Origin:               origin,
 		ServiceID:            ServiceID,
 		ServiceSecret:        secret,
+		SigningKey:           id.SigningKey,
+		SigningKeyID:         id.SigningKeyID,
 		RecipientKey:         getenv(EnvRecipientKey),
 		RecipientGeneration:  getenv(EnvRecipientGeneration),
 		CaptureKeyThumbprint: getenv(EnvCaptureKeyThumbprint),
 	})
+	// go-common v0.8.2 admits a keyless client; Techstack's custody paths always
+	// need the recipient key, so a missing key still fails boot.
+	if strings.TrimSpace(getenv(EnvRecipientKey)) == "" {
+		return nil, "", fmt.Errorf("%s=%s is not usable: wallet client recipient_key_missing (check %s)", EnvSource, SourceKombify, EnvRecipientKey)
+	}
 	if !wallet.Enabled() {
 		return nil, "", fmt.Errorf("%s=%s is not usable: wallet client %s (check %s, %s, %s and %s)",
 			EnvSource, SourceKombify, wallet.DisabledReason(), EnvServiceURL, EnvServiceSecret, EnvRecipientKey, EnvRecipientGeneration)

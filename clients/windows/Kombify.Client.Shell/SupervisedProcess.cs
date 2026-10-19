@@ -7,16 +7,18 @@ public sealed class SupervisedProcess : IDisposable
 {
     private Process? _process;
     private bool _stopped;
+    private bool _shutdownOnInputClose;
 
     public bool HasExited => _stopped || _process?.HasExited == true;
     public int ExitCode => _process?.ExitCode ?? throw new InvalidOperationException("Process has not exited.");
 
-    public void Start(ProcessStartInfo start, Action<string?> output)
+    public void Start(ProcessStartInfo start, Action<string?> output, bool shutdownOnInputClose = false)
     {
         if (_process is not null) throw new InvalidOperationException("The supervised process is already started.");
         start.UseShellExecute = false;
         start.RedirectStandardOutput = true;
         start.RedirectStandardError = true;
+        if (shutdownOnInputClose) start.RedirectStandardInput = true;
         var process = new Process { StartInfo = start, EnableRaisingEvents = true };
         process.OutputDataReceived += (_, eventArgs) => output(eventArgs.Data);
         process.ErrorDataReceived += (_, eventArgs) => output(eventArgs.Data);
@@ -25,6 +27,7 @@ public sealed class SupervisedProcess : IDisposable
             if (!process.Start()) throw new InvalidOperationException("The supervised process did not start.");
             _process = process;
             _stopped = false;
+            _shutdownOnInputClose = shutdownOnInputClose;
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
         }
@@ -45,6 +48,13 @@ public sealed class SupervisedProcess : IDisposable
         {
             if (!process.HasExited)
             {
+                if (_shutdownOnInputClose)
+                {
+                    // Closing the private parent pipe lets the runtime drain its
+                    // workers, close its pools and stop embedded PostgreSQL.
+                    process.StandardInput.Close();
+                    if (process.WaitForExit(45000)) return;
+                }
                 process.Kill(entireProcessTree: true);
                 process.WaitForExit(3000);
             }

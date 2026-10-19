@@ -1,4 +1,4 @@
-// The onboarding journey surface (ONBOARDING-JOURNEY-STANDARD §7, §8).
+// The onboarding journey surface (KOMBIFY-DESIGN-SYSTEM-STANDARD.md §12.7, §12.8).
 //
 // The server owns the descriptor, the persisted state, the derived completion
 // signals and the availability decision; the client owns the render model and

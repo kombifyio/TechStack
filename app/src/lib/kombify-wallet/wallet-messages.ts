@@ -45,7 +45,7 @@ export const walletMessages = {
     "kwallet.api.wallet_item_required":
       "Choose a server access item from your kombify Wallet. Techstack does not accept passwords or key labels here.",
     "kwallet.api.wallet_item_unsupported":
-      "This deployment does not use the kombify Wallet, so a Wallet item cannot be used here.",
+      "This installation does not use the kombify Wallet, so a Wallet item cannot be used here.",
     "kwallet.api.wallet_item_unusable":
       "This Wallet item was revoked or deleted and cannot be used. Choose another one.",
     "kwallet.api.wallet_owner_ineligible":
@@ -526,7 +526,7 @@ export const walletMessages = {
     "kwallet.api.wallet_item_required":
       "Wähle einen Serverzugang aus deiner kombify Wallet. Techstack nimmt hier keine Passwörter oder Schlüsselbezeichnungen an.",
     "kwallet.api.wallet_item_unsupported":
-      "Dieses Deployment nutzt die kombify Wallet nicht, daher kann hier kein Wallet-Eintrag verwendet werden.",
+      "Diese Installation nutzt die kombify Wallet nicht, daher kann hier kein Wallet-Eintrag verwendet werden.",
     "kwallet.api.wallet_item_unusable":
       "Dieser Wallet-Eintrag wurde widerrufen oder gelöscht und kann nicht genutzt werden. Wähle einen anderen.",
     "kwallet.api.wallet_owner_ineligible":
@@ -1026,7 +1026,7 @@ export const walletMessages = {
     "kwallet.api.wallet_item_required":
       "Elige un acceso a servidor de tu kombify Wallet. Techstack no acepta aquí contraseñas ni etiquetas de clave.",
     "kwallet.api.wallet_item_unsupported":
-      "Este despliegue no usa kombify Wallet, por lo que aquí no se puede usar un elemento de Wallet.",
+      "Esta instalación no usa kombify Wallet, por lo que aquí no se puede usar un elemento de Wallet.",
     "kwallet.api.wallet_item_unusable":
       "Este elemento de Wallet se revocó o eliminó y no se puede usar. Elige otro.",
     "kwallet.api.wallet_owner_ineligible":
@@ -1513,7 +1513,7 @@ export const walletMessages = {
     "kwallet.api.wallet_item_required":
       "请从你的 kombify Wallet 中选择服务器访问条目。Techstack 在此不接受密码或密钥标签。",
     "kwallet.api.wallet_item_unsupported":
-      "此部署不使用 kombify Wallet，因此无法在这里使用 Wallet 条目。",
+      "此安装不使用 kombify Wallet，因此无法在这里使用 Wallet 条目。",
     "kwallet.api.wallet_item_unusable":
       "此 Wallet 条目已被撤销或删除，无法使用。请选择其他条目。",
     "kwallet.api.wallet_owner_ineligible":
@@ -1966,7 +1966,7 @@ export const walletMessages = {
     "kwallet.api.wallet_item_required":
       "अपने kombify Wallet से सर्वर एक्सेस आइटम चुनें। Techstack यहाँ पासवर्ड या कुंजी लेबल स्वीकार नहीं करता।",
     "kwallet.api.wallet_item_unsupported":
-      "यह डिप्लॉयमेंट kombify Wallet का उपयोग नहीं करता, इसलिए यहाँ Wallet आइटम इस्तेमाल नहीं किया जा सकता।",
+      "यह इंस्टॉलेशन kombify Wallet का उपयोग नहीं करता, इसलिए यहाँ Wallet आइटम इस्तेमाल नहीं किया जा सकता।",
     "kwallet.api.wallet_item_unusable":
       "यह Wallet आइटम रद्द या हटा दिया गया है और उपयोग नहीं किया जा सकता। कोई दूसरा चुनें।",
     "kwallet.api.wallet_owner_ineligible":
@@ -2453,7 +2453,7 @@ export const walletMessages = {
     "kwallet.api.wallet_item_required":
       "اختر عنصر وصول إلى الخادم من kombify Wallet الخاصة بك. لا يقبل Techstack هنا كلمات مرور أو تسميات مفاتيح.",
     "kwallet.api.wallet_item_unsupported":
-      "لا يستخدم هذا النشر kombify Wallet، لذا لا يمكن استخدام عنصر Wallet هنا.",
+      "لا يستخدم هذا التثبيت kombify Wallet، لذا لا يمكن استخدام عنصر Wallet هنا.",
     "kwallet.api.wallet_item_unusable":
       "تم إلغاء عنصر Wallet هذا أو حذفه ولا يمكن استخدامه. اختر عنصرًا آخر.",
     "kwallet.api.wallet_owner_ineligible":

@@ -12,9 +12,9 @@ export const guardMessages = {
     "guard.backup.load": "Read recovery points",
     "guard.backup.loading": "Reading…",
     "guard.backup.recorded":
-      "These points are recorded by this node. Historical backup contents are checked when you prepare a restore.",
+      "These points are recorded by this server. Historical backup contents are checked when you prepare a restore.",
     "guard.backup.empty":
-      "This node reports no selectable historical recovery points.",
+      "This server reports no selectable historical recovery points.",
     "guard.backup.choose": "Recovery point",
     "guard.backup.placeholder": "Choose a recorded point",
     "guard.backup.currentPlan": "Current plan",
@@ -24,7 +24,7 @@ export const guardMessages = {
     "guard.backup.confirm":
       "Prepare the recorded point from {when} in isolated staging? Live application data will not be replaced.",
     "guard.backup.confirmAction": "Prepare this restore",
-    "guard.backup.running": "The node is preparing an isolated restore.",
+    "guard.backup.running": "The server is preparing an isolated restore.",
     "guard.backup.staged":
       "Restore prepared in isolated staging. Live application data has not been replaced.",
     "guard.backup.unverified":
@@ -39,18 +39,18 @@ export const guardMessages = {
     "guard.backup.historicalOperation":
       "This operation belongs to a previous installation. Its recorded outcome does not describe the current installation.",
     "guard.backup.activateConfirm":
-      "Activate this prepared restore on {name}? This replaces live application data. The node keeps a safety snapshot and verifies services and Owner access.",
+      "Activate this prepared restore on {name}? This replaces live application data. The server keeps a safety snapshot and verifies services and Owner access.",
     "guard.backup.activateAction": "Confirm live restore",
     "guard.backup.activationUnavailable":
-      "Live activation is unavailable with this node's current released runtime. The prepared data remains isolated.",
+      "Live activation is unavailable with this server's current released runtime. The prepared data remains isolated.",
     "guard.backup.activating":
-      "The node is reconciling the approved restore operation.",
+      "The server is reconciling the approved restore operation.",
     "guard.backup.activated":
-      "The selected restore was activated and verified by the node.",
+      "The selected restore was activated and verified by the server.",
     "guard.backup.recovered":
       "Previous application state recovered. The selected restore was not activated.",
     "guard.backup.accessVerified":
-      "The node verified services and Owner access at {when}.",
+      "The server verified services and Owner access at {when}.",
     "guard.backup.recoveryRequired":
       "The restore outcome remains unconfirmed. Resolve the original operation before starting another restore.",
     "guard.backup.outcomeUnknown":
@@ -59,7 +59,7 @@ export const guardMessages = {
     "guard.backup.resumeRequest": "Resume original request",
     "guard.backup.recover": "Recover original operation",
     "guard.backup.recoverConfirm":
-      "Reconcile the original operation? If it is incomplete, the node restores the previous application state.",
+      "Reconcile the original operation? If it is incomplete, the server restores the previous application state.",
     "guard.backup.recoverAction": "Confirm original recovery",
     "guard.name": "kombify Guard",
     "guard.promise":
@@ -436,9 +436,9 @@ export const guardMessages = {
     "guard.backup.load": "Wiederherstellungspunkte lesen",
     "guard.backup.loading": "Wird gelesen…",
     "guard.backup.recorded":
-      "Diese Punkte wurden von diesem Node aufgezeichnet. Historische Backup-Inhalte werden beim Vorbereiten einer Wiederherstellung geprüft.",
+      "Diese Punkte wurden von diesem Server aufgezeichnet. Historische Backup-Inhalte werden beim Vorbereiten einer Wiederherstellung geprüft.",
     "guard.backup.empty":
-      "Dieser Node meldet keine auswählbaren historischen Wiederherstellungspunkte.",
+      "Dieser Server meldet keine auswählbaren historischen Wiederherstellungspunkte.",
     "guard.backup.choose": "Wiederherstellungspunkt",
     "guard.backup.placeholder": "Aufgezeichneten Punkt auswählen",
     "guard.backup.currentPlan": "Aktueller Plan",
@@ -449,7 +449,7 @@ export const guardMessages = {
       "Den aufgezeichneten Punkt vom {when} isoliert vorbereiten? Laufende Anwendungsdaten werden nicht ersetzt.",
     "guard.backup.confirmAction": "Diese Wiederherstellung vorbereiten",
     "guard.backup.running":
-      "Der Node bereitet eine isolierte Wiederherstellung vor.",
+      "Der Server bereitet eine isolierte Wiederherstellung vor.",
     "guard.backup.staged":
       "Wiederherstellung isoliert vorbereitet. Laufende Anwendungsdaten wurden nicht ersetzt.",
     "guard.backup.unverified":
@@ -464,18 +464,18 @@ export const guardMessages = {
     "guard.backup.historicalOperation":
       "Dieser Vorgang gehört zu einer früheren Installation. Sein aufgezeichnetes Ergebnis beschreibt nicht die aktuelle Installation.",
     "guard.backup.activateConfirm":
-      "Diese Wiederherstellung auf {name} aktivieren? Laufende Anwendungsdaten werden ersetzt. Der Node behält einen Sicherheitssnapshot und prüft Dienste und Eigentümerzugriff.",
+      "Diese Wiederherstellung auf {name} aktivieren? Laufende Anwendungsdaten werden ersetzt. Der Server behält einen Sicherheitssnapshot und prüft Dienste und Eigentümerzugriff.",
     "guard.backup.activateAction": "Aktive Wiederherstellung bestätigen",
     "guard.backup.activationUnavailable":
-      "Mit der aktuell veröffentlichten Laufzeit dieses Nodes ist die Aktivierung nicht verfügbar. Die vorbereiteten Daten bleiben isoliert.",
+      "Mit der aktuell veröffentlichten Laufzeit dieses Servers ist die Aktivierung nicht verfügbar. Die vorbereiteten Daten bleiben isoliert.",
     "guard.backup.activating":
-      "Der Node gleicht den bestätigten Wiederherstellungsvorgang ab.",
+      "Der Server gleicht den bestätigten Wiederherstellungsvorgang ab.",
     "guard.backup.activated":
-      "Die gewählte Wiederherstellung wurde vom Node aktiviert und verifiziert.",
+      "Die gewählte Wiederherstellung wurde vom Server aktiviert und verifiziert.",
     "guard.backup.recovered":
       "Vorheriger Anwendungszustand wiederhergestellt. Die gewählte Wiederherstellung wurde nicht aktiviert.",
     "guard.backup.accessVerified":
-      "Dienste und Eigentümerzugriff wurden vom Node am {when} geprüft.",
+      "Dienste und Eigentümerzugriff wurden vom Server am {when} geprüft.",
     "guard.backup.recoveryRequired":
       "Das Ergebnis ist noch unbestätigt. Kläre den ursprünglichen Vorgang, bevor du eine weitere Wiederherstellung startest.",
     "guard.backup.outcomeUnknown":
@@ -484,7 +484,7 @@ export const guardMessages = {
     "guard.backup.resumeRequest": "Ursprüngliche Anfrage fortsetzen",
     "guard.backup.recover": "Ursprünglichen Vorgang wiederherstellen",
     "guard.backup.recoverConfirm":
-      "Den ursprünglichen Vorgang abgleichen? Ist er unvollständig, stellt der Node den vorherigen Anwendungszustand wieder her.",
+      "Den ursprünglichen Vorgang abgleichen? Ist er unvollständig, stellt der Server den vorherigen Anwendungszustand wieder her.",
     "guard.backup.recoverAction": "Ursprüngliche Wiederherstellung bestätigen",
     "guard.name": "kombify Guard",
     "guard.promise":

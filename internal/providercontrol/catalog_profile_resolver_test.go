@@ -13,6 +13,32 @@ import (
 	"github.com/kombifyio/techstack/internal/selfhostcontracts/providerexecutor/v1beta1"
 )
 
+// Startup must require the new IONOS profile while keeping an unqualified
+// Centron package out of admission. Derive both from the production authority.
+func TestManagedCatalogCoverageRequiresOnlyAdmittedProviderPackages(t *testing.T) {
+	for _, provider := range []string{"ionos", "centron"} {
+		requirements, err := ManagedCatalogCoverageRequirements(provider, "adapter-v1", "sha256:"+strings.Repeat("a", 64))
+		if err != nil {
+			t.Fatal(err)
+		}
+		foundLarge := false
+		for _, requirement := range requirements {
+			if requirement.OfferingID == "monthly-runtime-large" {
+				foundLarge = true
+			}
+			if requirement.ProviderID != provider || requirement.ProvisionDispatchMode != ProvisionDispatchAtMostOnceManualReconcile {
+				t.Fatalf("coverage = %+v", requirement)
+			}
+		}
+		if foundLarge != (provider == "ionos") {
+			t.Fatalf("%s Large startup coverage = %v", provider, foundLarge)
+		}
+	}
+	if _, err := ManagedCatalogCoverageRequirements("unknown", "adapter-v1", "sha256:"+strings.Repeat("a", 64)); err == nil {
+		t.Fatal("provider without admitted packages passed startup coverage")
+	}
+}
+
 func TestPostgresCatalogExecutionProfileResolverReturnsStableSecretFreeProfile(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

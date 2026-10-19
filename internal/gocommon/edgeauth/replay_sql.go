@@ -61,6 +61,12 @@ func NewSQLReplayGuard(db ReplayExecer, table string, ttl time.Duration) (*SQLRe
 	return &SQLReplayGuard{db: db, ttl: ttl, query: q, now: time.Now}, nil
 }
 
+// sqlReplayKeySeparator joins key id and nonce into the text primary key. It
+// must not be NUL: PostgreSQL text rejects 0x00 (SQLSTATE 22021), which made
+// every Seen fail closed and refuse every request. The unit separator cannot
+// occur in a header value, so (kid, nonce) pairs stay unambiguous.
+const sqlReplayKeySeparator = "\x1f"
+
 // Seen implements ReplayGuard.
 func (g *SQLReplayGuard) Seen(ctx context.Context, kid, nonce string) bool {
 	nonce = strings.TrimSpace(nonce)
@@ -68,7 +74,7 @@ func (g *SQLReplayGuard) Seen(ctx context.Context, kid, nonce string) bool {
 		return true
 	}
 	now := g.now()
-	res, err := g.db.ExecContext(ctx, g.query, strings.TrimSpace(kid)+"\x00"+nonce, now.Add(g.ttl), now)
+	res, err := g.db.ExecContext(ctx, g.query, strings.TrimSpace(kid)+sqlReplayKeySeparator+nonce, now.Add(g.ttl), now)
 	if err != nil {
 		return true
 	}

@@ -146,9 +146,10 @@ func OnBehalfOfIdentity(id *identity.Identity) *OnBehalfOf {
 		return nil
 	}
 	return &OnBehalfOf{
-		Sub:   id.UserID,
-		OrgID: id.OrgID,
-		Email: id.Email,
-		Roles: id.Roles,
+		Sub:           id.UserID,
+		OrgID:         id.OrgID,
+		Email:         id.Email,
+		EmailVerified: id.EmailVerified,
+		Roles:         id.Roles,
 	}
 }

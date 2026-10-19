@@ -70,7 +70,7 @@ internal sealed record ClientConfig
     public string RuntimeDataDir { get; init; } = Path.Combine(StateDirectory(), "runtime");
     public int RuntimeStartupTimeoutSeconds { get; init; } = 120;
     public bool AutoStartRuntime { get; init; } = true;
-    // Signed update channel (NATIVE-CLIENT-PLATFORM-STANDARD section 7). The
+    // Signed update channel (DESKTOP-FOUNDATION-STANDARD.md §5.7). The
     // The verifier's trusted signing key and edition cannot be configured.
     // AutoUpdate=false opts out; Cloud always uses its own signed beta feed.
     public string UpdateManifestUrl { get; init; } = DesktopEdition.UpdateManifestUrl;
@@ -633,6 +633,7 @@ internal sealed partial class ClientWindow : Form
             start.Environment["TECHSTACK_ENV"] = "local";
             start.Environment["KOMBIFY_EDITION"] = "selfhost-oss";
             start.Environment["TECHSTACK_EMBEDDED_POSTGRES"] = "1";
+            start.Environment["TECHSTACK_SHUTDOWN_ON_STDIN_CLOSE"] = "1";
             start.Environment["TECHSTACK_EMBEDDED_POSTGRES_BUNDLE_DIR"] =
                 Path.Combine(Path.GetDirectoryName(runtimeExe) ?? AppContext.BaseDirectory, "postgres");
             start.Environment["TECHSTACK_EMBEDDED_POSTGRES_START_TIMEOUT_SECONDS"] = "120";
@@ -676,7 +677,7 @@ internal sealed partial class ClientWindow : Form
 			}
 
             _runtimeProcess = new SupervisedProcess();
-            _runtimeProcess.Start(start, line => AppendRuntimeLog(logPath, line));
+            _runtimeProcess.Start(start, line => AppendRuntimeLog(logPath, line), shutdownOnInputClose: true);
         }
         catch (Exception ex)
         {

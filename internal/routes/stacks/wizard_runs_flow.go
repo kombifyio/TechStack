@@ -244,9 +244,11 @@ func (h wizardRunHandlers) finishWizardFound(e *httpx.Event, run *wizardRunState
 	}
 	addWizardProjectionFields(data, outcome.projection, h.cfg.ReleaseVersion)
 
-	h.recordWizardRun(e.Request.Context(), run, controlplane.WizardRun{
+	if err := h.recordWizardRun(e.Request.Context(), run, controlplane.WizardRun{
 		StackID: outcome.stack.Id, NodeID: outcome.projection.NodeID, JobID: outcome.jobID, PairingJobID: pairingJobID,
-	}, data)
+	}, data); err != nil {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Wizard outcome could not be recorded; retry with the same Idempotency-Key", nil)
+	}
 
 	response := map[string]any{"run_id": run.runID}
 	for key, value := range data {
@@ -795,9 +797,11 @@ func (h wizardRunHandlers) runWizardJoin(e *httpx.Event, run *wizardRunState) er
 	}
 	addWizardProjectionFields(data, projection, h.cfg.ReleaseVersion)
 
-	h.recordWizardRun(e.Request.Context(), run, controlplane.WizardRun{
+	if err := h.recordWizardRun(e.Request.Context(), run, controlplane.WizardRun{
 		StackID: stack.ID, NodeID: projection.NodeID, PairingJobID: minted.JobID, JobID: guestJobID,
-	}, data)
+	}, data); err != nil {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Wizard outcome could not be recorded; retry with the same Idempotency-Key", nil)
+	}
 
 	response := map[string]any{"run_id": run.runID}
 	for key, value := range data {
@@ -964,9 +968,11 @@ func (h wizardRunHandlers) runWizardManagedJoin(e *httpx.Event, run *wizardRunSt
 	}
 	addWizardProjectionFields(data, projection, h.cfg.ReleaseVersion)
 
-	h.recordWizardRun(e.Request.Context(), run, controlplane.WizardRun{
+	if err := h.recordWizardRun(e.Request.Context(), run, controlplane.WizardRun{
 		StackID: stack.ID, NodeID: projection.NodeID, JobID: result.JobID,
-	}, data)
+	}, data); err != nil {
+		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Wizard outcome could not be recorded; retry with the same Idempotency-Key", nil)
+	}
 
 	response := map[string]any{"run_id": run.runID}
 	for key, value := range data {
@@ -1077,6 +1083,7 @@ func (h wizardRunHandlers) persistWizardHomelabIntent(ctx context.Context, run *
 	if !ok {
 		return errors.New("atomic homelab intent persistence is unavailable")
 	}
+	decisions := run.explicitIntent
 	updated, err := store.MutateHomelabIntent(ctx, run.tenantID, run.homelab.ID, func(intentDoc map[string]any) error {
 		wizard, _ := intentDoc["wizard"].(map[string]any)
 		if wizard == nil {
@@ -1085,12 +1092,12 @@ func (h wizardRunHandlers) persistWizardHomelabIntent(ctx context.Context, run *
 		wizard["goals"] = mergeWizardGoals(wizardStringValues(wizard["goals"]), run.request.Intent.Goals)
 		// Decisions ride beside the goals they belong to, merged per use case so a
 		// later run that mentions one use case does not erase the others' choices.
-		if len(run.request.Intent.UseCaseSettings) > 0 {
+		if len(decisions.UseCaseSettings) > 0 {
 			stored, _ := wizard["use_case_settings"].(map[string]any)
 			if stored == nil {
 				stored = map[string]any{}
 			}
-			for slug, values := range run.request.Intent.UseCaseSettings {
+			for slug, values := range decisions.UseCaseSettings {
 				merged, _ := stored[slug].(map[string]any)
 				if merged == nil {
 					merged = map[string]any{}
@@ -1102,12 +1109,12 @@ func (h wizardRunHandlers) persistWizardHomelabIntent(ctx context.Context, run *
 			}
 			wizard["use_case_settings"] = stored
 		}
-		if len(run.request.Intent.UseCaseCapabilities) > 0 {
+		if len(decisions.UseCaseCapabilities) > 0 {
 			stored, _ := wizard["use_case_capabilities"].(map[string]any)
 			if stored == nil {
 				stored = map[string]any{}
 			}
-			for slug, values := range run.request.Intent.UseCaseCapabilities {
+			for slug, values := range decisions.UseCaseCapabilities {
 				merged, _ := stored[slug].(map[string]any)
 				if merged == nil {
 					merged = map[string]any{}
@@ -1119,12 +1126,12 @@ func (h wizardRunHandlers) persistWizardHomelabIntent(ctx context.Context, run *
 			}
 			wizard["use_case_capabilities"] = stored
 		}
-		mergeWizardSetupAnswers(wizard, run.request.Intent.UseCaseSetupAnswers)
-		if run.request.Intent.Access.Mode != "" || len(run.request.Intent.Access.Publications) > 0 {
-			wizard["access"] = run.request.Intent.Access
+		mergeWizardSetupAnswers(wizard, decisions.UseCaseSetupAnswers)
+		if decisions.Access.Mode != "" || decisions.Access.Publications != nil {
+			wizard["access"] = decisions.Access
 		}
-		if run.request.Intent.Household.Profile != "" || len(run.request.Intent.Household.PlannedPeople) > 0 {
-			wizard["household"] = run.request.Intent.Household
+		if decisions.Household.Profile != "" || decisions.Household.PlannedPeople != nil {
+			wizard["household"] = decisions.Household
 		}
 		// Clear only backlog entries this projection actually reconsidered. A
 		// concurrent expansion's new goal was not evaluated by this run.
@@ -1146,6 +1153,23 @@ func (h wizardRunHandlers) persistWizardHomelabIntent(ctx context.Context, run *
 		wizard["last_run_id"] = run.runID
 		wizard["last_run_kind"] = run.effectiveKind
 		wizard["last_goal_projection_release"] = strings.TrimSpace(h.cfg.ReleaseVersion)
+		// Re-evaluate the latest merged document while its row is locked. A
+		// disjoint write cannot clear another run's unresolved recorded choice.
+		canonical, err := wizardIntentFromDocument(wizard)
+		if err != nil {
+			return err
+		}
+		_, blocked, err := admitWizardDesiredCapabilities(canonical)
+		if err != nil {
+			return err
+		}
+		if len(blocked) > 0 {
+			wizard["projection_status"] = "blocked"
+			wizard["blocked_capabilities"] = blocked
+		} else {
+			wizard["projection_status"] = "projected"
+			delete(wizard, "blocked_capabilities")
+		}
 		intentDoc["wizard"] = wizard
 		return nil
 	})
@@ -1171,11 +1195,10 @@ func (h wizardRunHandlers) failWizardIntentProjection(e *httpx.Event, run *wizar
 	return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Failed to persist wizard decisions", details)
 }
 
-// recordWizardRun writes the completed ledger entry. Ledger failures are
-// logged, never fatal: the stack-level Idempotency-Key replay still covers a
-// re-submit, it just resumes through the keyed-stack lookup instead.
-func (h wizardRunHandlers) recordWizardRun(ctx context.Context, run *wizardRunState, outcome controlplane.WizardRun, result map[string]any) {
-	h.writeWizardRunLedger(ctx, run, outcome, "completed", "", result)
+// A completed response requires its durable outcome; a failed write is a
+// retryable failure on the existing identity, never a misleading accepted202.
+func (h wizardRunHandlers) recordWizardRun(ctx context.Context, run *wizardRunState, outcome controlplane.WizardRun, result map[string]any) error {
+	return h.writeWizardRunLedger(ctx, run, outcome, "completed", "", result)
 }
 
 // recordWizardRunFailure writes a failed ledger entry after a side-effectful

@@ -92,7 +92,7 @@ func (h serverRuntimeHandlers) postureServer(e *httpx.Event, capability string, 
 	}
 	if mutating {
 		ownerID, _, _ := authenticatedUser(e)
-		if err := authorizeInventoryServerOperate(e.Request.Context(), h.policy, inventoryScope{tenantID: server.TenantID, ownerID: ownerID}, server.ID); err != nil {
+		if err := authorizeOwnerServerOperate(e.Request.Context(), h.policy, h.store, inventoryScope{tenantID: server.TenantID, ownerID: ownerID}, server.ID); err != nil {
 			return nil, guardposture.Identity{}, "", writeInventoryHTTPError(e, err)
 		}
 	}

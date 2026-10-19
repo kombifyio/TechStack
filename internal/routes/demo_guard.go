@@ -42,7 +42,7 @@ func demoAutomationSecretMatches(provided, current, next string) bool {
 
 // demoRestrictedDetails is the structured denial envelope for actions that are
 // disabled on the shared public demo account. It mirrors the managed-runtime
-// envelope key set (FEATURE-ENTITLEMENT-UX-STANDARD).
+// envelope key set (ENTITLEMENTS-ARCHITECTURE.md §13).
 func demoRestrictedDetails(capability string) map[string]any {
 	return map[string]any{
 		"phase":             "demo_account_guard",

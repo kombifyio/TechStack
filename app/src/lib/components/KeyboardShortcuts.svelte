@@ -1,15 +1,24 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { tr } from "#lib/i18n.svelte.js";
   /**
    * KeyboardShortcuts
    *
-   * Global keyboard event listener for kombify-TechStack.
-   * Handles vim-style navigation (j/k), multi-key sequences (g+h), and common shortcuts.
+   * Global keyboard listener for kombify-TechStack: `g` + key jumps to a
+   * page, `/` focuses the search field, `?` opens the shortcut list.
+   *
+   * Rules this handler keeps (WCAG 2.1.1, 2.1.4):
+   * - The whole set can be turned off (settings, and the help dialog); the
+   *   choice is device-local.
+   * - It never acts while focus is in a form control or an interactive
+   *   widget (text fields, selects, radio groups, tabs, sliders, the rail
+   *   separator, menus), and never while a dialog is open.
+   * - It never intercepts arrow keys, Home, End, Enter or Space: those belong
+   *   to scrolling, widgets and the focused element.
    *
    * This component should be included once in the root layout.
    */
   import { goto } from "$app/navigation";
-  import { page } from '$app/state';
   import {
     shortcutsStore,
     shortcutsEnabled,
@@ -28,27 +37,58 @@
     t: "/settings",
   };
 
-  // Track if we're in a text input
-  function isInputFocused(): boolean {
+  const WIDGET_ROLES = new Set([
+    "textbox",
+    "searchbox",
+    "combobox",
+    "listbox",
+    "option",
+    "radio",
+    "radiogroup",
+    "checkbox",
+    "switch",
+    "slider",
+    "spinbutton",
+    "separator",
+    "scrollbar",
+    "tab",
+    "tablist",
+    "menu",
+    "menubar",
+    "menuitem",
+    "menuitemcheckbox",
+    "menuitemradio",
+    "tree",
+    "treeitem",
+    "grid",
+    "gridcell",
+    "application",
+  ]);
+
+  /**
+   * True when the focused element handles keys itself: a form control, an
+   * editable region or an ARIA widget. A plain link or button is not one:
+   * `g h` from a focused button is still a page jump.
+   */
+  function focusHandlesKeys(): boolean {
     const active = document.activeElement;
-    if (!active) return false;
+    if (!active || active === document.body) return false;
 
     const tagName = active.tagName.toLowerCase();
     if (tagName === "input" || tagName === "textarea" || tagName === "select") {
       return true;
     }
+    if (active instanceof HTMLElement && active.isContentEditable) return true;
+    if (active.hasAttribute("contenteditable")) return true;
 
-    // Check for contenteditable
-    if (active.hasAttribute("contenteditable")) {
-      return true;
-    }
-
-    // Check for elements with role="textbox"
-    if (active.getAttribute("role") === "textbox") {
-      return true;
-    }
-
-    return false;
+    const role = active.getAttribute("role");
+    if (role && WIDGET_ROLES.has(role)) return true;
+    // Anything inside a widget (an option inside a listbox, a tab in a tablist).
+    return (
+      active.closest(
+        "[role='listbox'], [role='menu'], [role='menubar'], [role='radiogroup'], [role='tablist'], [role='tree'], [role='grid']",
+      ) !== null
+    );
   }
 
   function handleKeydown(e: KeyboardEvent) {
@@ -58,56 +98,39 @@
     // Don't handle shortcuts if not logged in
     if (!authStore.isAuthenticated) return;
 
-    // Don't handle if in input field (except for Escape)
-    if (isInputFocused() && e.key !== "Escape") return;
+    // Another handler already owns this key press, or the input method does.
+    if (e.defaultPrevented || e.isComposing || e.repeat) return;
 
-    // Don't handle if modifier keys are pressed (except for ?)
-    if ((e.ctrlKey || e.metaKey || e.altKey) && e.key !== "?") return;
+    // Modifier combinations belong to the browser and the system.
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+    // Dialogs (native modal <dialog>) own the keyboard while open. The help
+    // list is itself a dialog and may close with `?`.
+    if (document.querySelector("dialog[open]") && !$showShortcutsHelp) return;
+
+    // Form controls and widgets own their keys.
+    if (focusHandlesKeys()) return;
 
     const key = e.key.toLowerCase();
 
-    // Handle help modal toggle
-    if (e.key === "?" || e.shiftKey && key === "/") {
+    // Help list toggle
+    if (e.key === "?") {
       e.preventDefault();
       shortcutsStore.toggleHelp();
       return;
     }
 
-    // If help modal is shown, only handle Escape
-    if ($showShortcutsHelp) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        shortcutsStore.hideHelp();
-      }
-      return;
-    }
+    // While the help list is open the native dialog handles Escape; nothing
+    // else is a shortcut there.
+    if ($showShortcutsHelp) return;
 
-    // Handle Escape
-    if (e.key === "Escape") {
-      // A native modal <dialog> (the Brand sheets and dialogs) closes itself
-      // on Escape, even when focus has dropped back to the body; preventing
-      // the default here would keep it open.
-      if (document.querySelector("dialog[open]")) {
-        return;
-      }
-      e.preventDefault();
-      // Clear selection if any
-      shortcutsStore.clearSelection();
-      // Clear pending key
-      shortcutsStore.clearPendingKey();
-      // Dispatch custom event for components to handle (e.g., close modals)
-      window.dispatchEvent(new CustomEvent("keyboard-escape"));
-      return;
-    }
-
-    // Handle multi-key sequences (g + ...)
+    // Multi-key sequences (g + ...)
     if ($pendingKey === "g") {
       shortcutsStore.clearPendingKey();
 
       if (key in NAVIGATION_ROUTES) {
         e.preventDefault();
         goto(NAVIGATION_ROUTES[key]);
-        return;
       }
       // Unknown second key - ignore
       return;
@@ -120,91 +143,37 @@
       return;
     }
 
-    // Handle list navigation
-    if (key === "j" || e.key === "ArrowDown") {
-      e.preventDefault();
-      shortcutsStore.moveDown();
-      scrollSelectedIntoView();
-      return;
-    }
-
-    if (key === "k" || e.key === "ArrowUp") {
-      e.preventDefault();
-      shortcutsStore.moveUp();
-      scrollSelectedIntoView();
-      return;
-    }
-
-    if (e.key === "Home") {
-      e.preventDefault();
-      shortcutsStore.jumpToFirst();
-      scrollSelectedIntoView();
-      return;
-    }
-
-    if (e.key === "End") {
-      e.preventDefault();
-      shortcutsStore.jumpToLast();
-      scrollSelectedIntoView();
-      return;
-    }
-
-    // Handle Enter - trigger click on selected item
-    if (e.key === "Enter") {
-      const selected = document.querySelector(
-        "[data-keyboard-selected='true']",
-      );
-      if (selected instanceof HTMLElement) {
-        e.preventDefault();
-        selected.click();
-      }
-      return;
-    }
-
-    // Handle refresh (r)
-    if (key === "r") {
-      e.preventDefault();
-      // Dispatch custom event for components to handle refresh
-      window.dispatchEvent(new CustomEvent("keyboard-refresh"));
-      return;
-    }
-
-    // Handle search focus (/)
+    // Search focus (/): the first search field on the page, if there is one.
     if (key === "/") {
-      e.preventDefault();
-      // Focus the first search input on the page
       const searchInput = document.querySelector(
-        'input[type="search"], input[placeholder*="Search"], input[placeholder*="search"], [data-search-input]',
+        'input[type="search"], [data-search-input]',
       );
       if (searchInput instanceof HTMLElement) {
+        e.preventDefault();
         searchInput.focus();
       }
       return;
     }
   }
 
-  function scrollSelectedIntoView() {
-    // Use requestAnimationFrame to ensure DOM has updated
-    requestAnimationFrame(() => {
-      const selected = document.querySelector(
-        "[data-keyboard-selected='true']",
-      );
-      if (selected instanceof HTMLElement) {
-        selected.scrollIntoView({ behavior: "smooth", block: "nearest" });
-      }
-    });
-  }
+  onMount(() => {
+    // The stored device preference, read once the page is in the browser.
+    shortcutsStore.loadPreference();
+  });
 </script>
 
-<svelte:window onkeydown={handleKeydown}></svelte:window>
+<svelte:window onkeydown={handleKeydown} />
 
 <!-- Pending key indicator -->
 {#if $pendingKey}
   <div
     data-kx="plate"
+    role="status"
     class="fixed bottom-4 right-4 px-3 py-2 shadow-lg z-50"
   >
-    <span class="text-muted-foreground text-sm">{tr("ui.shortcuts.waiting")} </span>
+    <span class="text-muted-foreground text-sm"
+      >{tr("ui.shortcuts.waiting")}
+    </span>
     <kbd
       class="px-2 py-1 bg-muted rounded text-sm font-mono text-primary border border-border"
     >

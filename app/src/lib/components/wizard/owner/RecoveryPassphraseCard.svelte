@@ -6,12 +6,17 @@
 <script lang="ts">
   import type { OwnerStepState } from "#lib/wizard/owner-state.svelte.js";
   import { tr } from "#lib/i18n.svelte.js";
+  import { useWizardField } from "#lib/wizard/validation-context.js";
 
   interface Props {
     owner: OwnerStepState;
   }
 
   let { owner }: Props = $props();
+  const recoveryField = useWizardField("owner-recovery");
+  const mismatch = $derived(
+    Boolean(owner.recoveryPassphraseConfirm) && !owner.recoveryPassphrasesMatch,
+  );
 </script>
 
 <div class="space-y-4" data-testid="recovery-passphrase-card">
@@ -53,6 +58,8 @@
         oninput={owner.resetRecoveryHash}
         onblur={owner.syncRecoveryHash}
         autocomplete="new-password"
+        aria-invalid={mismatch || recoveryField.invalid ? "true" : undefined}
+        aria-describedby={mismatch ? "recovery-mismatch" : undefined}
         class="w-full px-3 py-2 bg-input border border-border rounded-lg text-foreground focus:border-primary focus:ring-1 focus:ring-primary {owner.recoveryPassphraseConfirm &&
         !owner.recoveryPassphrasesMatch
           ? 'border-destructive'
@@ -73,7 +80,7 @@
       </ul>
     {/if}
     {#if owner.recoveryPassphraseConfirm && !owner.recoveryPassphrasesMatch}
-      <p class="text-destructive text-xs">
+      <p id="recovery-mismatch" class="text-destructive text-xs">
         {tr("wizard.login.recovery.mismatch")}
       </p>
     {/if}

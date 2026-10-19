@@ -66,7 +66,7 @@ export const accessUsersMessages = {
     "wizard.access.details.publication": "Publishing",
     "wizard.access.connection.homeTitle": "Available in your home setup",
     "wizard.access.connection.homeBody":
-      "This choice keeps the route within the access supported by the selected node. It does not promise a local network for a cloud node.",
+      "This choice keeps the route within the access supported by the selected server. It does not promise a local network for a cloud server.",
     "wizard.access.connection.anywhereTitle": "Reachability intent recorded",
     "wizard.access.connection.anywhereBody":
       "The rollout may use only a route admitted by the selected runtime. A private client or managed route is shown once that capability is known.",
@@ -182,7 +182,7 @@ export const accessUsersMessages = {
     "wizard.access.details.publication": "Freigaben",
     "wizard.access.connection.homeTitle": "In deinem Zuhause erreichbar",
     "wizard.access.connection.homeBody":
-      "Diese Wahl nutzt den vom gewählten Node unterstützten Zugang. Bei einem Cloud-Node verspricht sie kein lokales Heimnetz.",
+      "Diese Wahl nutzt den vom gewählten Server unterstützten Zugang. Bei einem Cloud-Server verspricht sie kein lokales Heimnetz.",
     "wizard.access.connection.anywhereTitle": "Zugriffswunsch vorgemerkt",
     "wizard.access.connection.anywhereBody":
       "Der Rollout darf nur einen vom gewählten Runtime-Weg unterstützten Zugang nutzen. Ein privater Client oder verwalteter Weg wird angezeigt, sobald die Fähigkeit feststeht.",

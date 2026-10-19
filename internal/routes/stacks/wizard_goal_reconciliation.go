@@ -2,6 +2,7 @@ package stacks
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -15,9 +16,8 @@ import (
 
 const wizardGoalActivationTopic = "product.news"
 
-// loadStoredWizardGoals folds the durable homelab goal backlog into every
-// expansion before the exact pinned StackKits projector runs. Techstack keeps
-// no goal-to-workload mapping of its own.
+// loadStoredWizardGoals folds canonical wishes into the effective intent before
+// admission. Explicit incoming fields win, including false and empty answers.
 func (h wizardRunHandlers) loadStoredWizardGoals(ctx context.Context, run *wizardRunState) error {
 	homelab, err := h.crud.homelabStore.GetHomelabByOwner(ctx, run.tenantID, run.ownerID)
 	if err != nil {
@@ -28,10 +28,51 @@ func (h wizardRunHandlers) loadStoredWizardGoals(ctx context.Context, run *wizar
 	}
 	run.homelab = homelab
 	wizard, _ := homelab.Intent["wizard"].(map[string]any)
-	storedGoals := wizardStringValues(wizard["goals"])
+	stored, err := wizardIntentFromDocument(wizard)
+	if err != nil {
+		return err
+	}
 	run.priorUnmappedGoals = wizardStringValues(wizard["unmapped_goals"])
-	run.request.Intent.Goals = mergeWizardGoals(storedGoals, run.priorUnmappedGoals, run.request.Intent.Goals)
+	intent := &run.request.Intent
+	intent.Goals = mergeWizardGoals(stored.Goals, run.priorUnmappedGoals, intent.Goals)
+	intent.UseCaseSettings = mergeWizardDecisions(stored.UseCaseSettings, intent.UseCaseSettings)
+	intent.UseCaseCapabilities = mergeWizardDecisions(stored.UseCaseCapabilities, intent.UseCaseCapabilities)
+	intent.UseCaseSetupAnswers = mergeWizardDecisions(stored.UseCaseSetupAnswers, intent.UseCaseSetupAnswers)
+	if intent.Access.Mode == "" && intent.Access.Publications == nil {
+		intent.Access = stored.Access
+	}
+	if intent.Household.Profile == "" && intent.Household.PlannedPeople == nil {
+		intent.Household = stored.Household
+	}
 	return nil
+}
+
+func wizardIntentFromDocument(wizard map[string]any) (specv2.WizardIntent, error) {
+	var intent specv2.WizardIntent
+	raw, err := json.Marshal(wizard)
+	if err != nil {
+		return intent, err
+	}
+	err = json.Unmarshal(raw, &intent)
+	return intent, err
+}
+
+func mergeWizardDecisions[T any](stored, incoming map[string]map[string]T) map[string]map[string]T {
+	if stored == nil && incoming == nil {
+		return nil
+	}
+	merged := make(map[string]map[string]T)
+	for _, layer := range []map[string]map[string]T{stored, incoming} {
+		for slug, values := range layer {
+			if merged[slug] == nil {
+				merged[slug] = make(map[string]T)
+			}
+			for id, value := range values {
+				merged[slug][id] = value
+			}
+		}
+	}
+	return merged
 }
 
 // captureGoalActivations compares the release projection with the durable

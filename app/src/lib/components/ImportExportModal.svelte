@@ -15,6 +15,8 @@
   import { isCryptoAvailable } from "#lib/wallet/crypto.js";
   import type { WalletItem } from "#lib/wallet/types.js";
   import Modal from "./Modal.svelte";
+  import ErrorCallout from "#lib/components/ui/ErrorCallout.svelte";
+
 
   interface Props {
     items: WalletItem[];
@@ -255,11 +257,7 @@
     </div>
 
     {#if exportError}
-      <div
-        class="mb-4 p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-sm"
-      >
-        {exportError}
-      </div>
+      <ErrorCallout class="mb-4" message={exportError} />
     {/if}
 
     <div class="space-y-4">
@@ -446,11 +444,7 @@
     </div>
 
     {#if importError}
-      <div
-        class="mb-4 p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-sm"
-      >
-        {importError}
-      </div>
+      <ErrorCallout class="mb-4" message={importError} />
     {/if}
 
     {#if importStep === "upload"}

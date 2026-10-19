@@ -85,6 +85,7 @@ func (h availabilityHandlers) report(e *httpx.Event) error {
 
 	servers, err := h.store.ListServerRuntimesByTenant(e.Request.Context(), tenantID, "")
 	if err != nil {
+		httpx.RecordDependencyFailure(e, "availability.list.servers", err)
 		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Server inventory is unavailable", nil)
 	}
 

@@ -92,6 +92,8 @@
   } from "@kombiverselabs/ui/service";
   import { PageHeader } from "@kombiverselabs/ui/shell";
   import Button from "#lib/components/ui/Button.svelte";
+  import ErrorCallout from "#lib/components/ui/ErrorCallout.svelte";
+  import { SegmentedControl } from "@kombiverselabs/ui/primitives";
   import {
     AlertTriangle,
     Check,
@@ -1314,36 +1316,18 @@
       <div
         class="flex flex-wrap items-center gap-3 animate-in slide-in-from-right-4 duration-300"
       >
-        <div
-          role="tablist"
-          aria-label={tr("ui.services.servicesMode")}
-          class="flex shrink-0 rounded-lg border border-border bg-card/60 p-1 text-sm shadow-sm"
-        >
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "services"}
-            class="cursor-pointer rounded-md px-4 py-2 font-medium transition-all {activeTab ===
-            'services'
-              ? 'bg-muted font-semibold text-foreground shadow-sm'
-              : 'text-muted-foreground hover:text-foreground'}"
-            onclick={() => (activeTab = "services")}
-          >
-            {tr("ui.services.applications")}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "servers"}
-            class="cursor-pointer rounded-md px-4 py-2 font-medium transition-all {activeTab ===
-            'servers'
-              ? 'bg-muted font-semibold text-foreground shadow-sm'
-              : 'text-muted-foreground hover:text-foreground'}"
-            onclick={() => (activeTab = "servers")}
-            data-testid="server-management-tab"
-          >
-            {tr("ui.services.placementBoard")}
-          </button>
+        <!-- One view-switcher pattern across the app: a group of toggle
+             buttons, like the server list and Apps. -->
+        <div data-testid="services-mode-switch">
+          <SegmentedControl
+            items={[
+              { value: "services", label: tr("ui.services.applications") },
+              { value: "servers", label: tr("ui.services.placementBoard") },
+            ]}
+            value={activeTab}
+            label={tr("ui.services.servicesMode")}
+            onchange={(next) => (activeTab = next as "services" | "servers")}
+          />
         </div>
 
         {#if activeTab === "services"}
@@ -1364,13 +1348,11 @@
   </PageHeader>
 
   {#if actionError && !showNewService}
-    <div
-      class="mb-4 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
-      role="alert"
-      data-testid="services-action-error"
-    >
-      {actionError}
-    </div>
+    <ErrorCallout
+      class="mb-4"
+      testId="services-action-error"
+      message={actionError}
+    />
   {/if}
 
   {#if activeTab === "services"}
@@ -1382,13 +1364,11 @@
         testid="inventory-services-loading"
       />
     {:else if inventoryError}
-      <section
-        class="mb-6 rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-destructive"
-        role="alert"
-        data-testid="inventory-services-error-panel"
-      >
-        {inventoryError}
-      </section>
+      <ErrorCallout
+        class="mb-6"
+        testId="inventory-services-error-panel"
+        message={inventoryError}
+      />
     {/if}
 
     {#if inventoryRejected.length > 0}
@@ -1844,9 +1824,7 @@
           </div>
         {/if}
         {#if detailLogState?.error}
-          <p class="text-xs text-destructive" role="alert">
-            {detailLogState.error}
-          </p>
+          <ErrorCallout class="p-2 text-xs" message={detailLogState.error} />
         {/if}
         {#if detailLogState && detailLogState.entries.length > 0}
           <ol class="max-h-72 space-y-1 overflow-auto font-mono text-[11px]">

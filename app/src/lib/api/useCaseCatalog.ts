@@ -67,15 +67,27 @@ export async function loadPreviewUseCaseCatalog(tag = "latest"): Promise<{
   }
 }
 
+/**
+ * The pinned release's catalog as the runtime serves it.
+ *
+ * A catalog that could not be read, or that lists no use case at all, is a
+ * failure and rejects. It must never come back as an empty Map: every use case
+ * card would then read "Coming soon" because of an outage, and a homelab
+ * without services could be created silently. Callers model the loading,
+ * error and ready states and offer a reload. The one empty answer that is
+ * not a failure is a deployment that says it ships no catalog
+ * (`configured: false`).
+ */
 export async function loadUseCaseCatalog(): Promise<
   Map<string, UseCaseCatalogView>
 > {
-  try {
-    const res = await fetchApi<UseCaseCatalogResponse>(
-      "/api/v1/stackkits/use-cases",
-    );
-    return catalogViewsFromResponse(res.data);
-  } catch {
-    return new Map();
+  const res = await fetchApi<UseCaseCatalogResponse>(
+    "/api/v1/stackkits/use-cases",
+  );
+  if (res.data?.configured === false) return new Map();
+  const views = catalogViewsFromResponse(res.data);
+  if (views.size === 0) {
+    throw new Error("The StackKits release catalog lists no use cases.");
   }
+  return views;
 }

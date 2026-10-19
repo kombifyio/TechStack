@@ -12,7 +12,7 @@ export interface ParsedApiError {
   retryable?: boolean;
   /**
    * Structured availability/outcome envelope when the backend supplied one
-   * (FEATURE-ENTITLEMENT-UX-STANDARD). Present for denials/blocked/degraded
+   * (ENTITLEMENTS-ARCHITECTURE.md §13). Present for denials/blocked/degraded
    * responses; `undefined` for plain errors. Additive — existing fields
    * are unchanged.
    */

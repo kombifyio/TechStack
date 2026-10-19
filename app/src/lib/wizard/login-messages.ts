@@ -69,7 +69,7 @@ export const loginMessages = {
       "Connect a kombify profile through the secure sign-in window. You can also continue with a local user.",
     "wizard.login.profile.existing": "Your existing login comes with you.",
     "wizard.login.profile.existingHint":
-      "This Node joins your Homelab. Your owner and sign-in settings stay in place.",
+      "This server joins your Homelab. Your owner and sign-in settings stay in place.",
     "wizard.login.passkey.title": "Your key, already in your pocket.",
     "wizard.login.passkey.label": "Passkey",
     "wizard.login.passkey.recommended": "Recommended",
@@ -187,7 +187,7 @@ export const loginMessages = {
       "Verbinde dein kombify-Profil über das sichere Anmeldefenster. Du kannst auch mit einem lokalen Benutzer fortfahren.",
     "wizard.login.profile.existing": "Dein bestehender Zugang zieht mit.",
     "wizard.login.profile.existingHint":
-      "Dieser Node ergänzt dein Homelab. Eigentümer und Anmeldung bleiben erhalten.",
+      "Dieser Server ergänzt dein Homelab. Eigentümer und Anmeldung bleiben erhalten.",
     "wizard.login.passkey.title": "Dein Schlüssel ist schon bei dir.",
     "wizard.login.passkey.label": "Passkey",
     "wizard.login.passkey.recommended": "Empfohlen",

@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,5 +60,37 @@ func TestAgentEnrollResumableOnlyForTheInterruptedCapability(t *testing.T) {
 	}
 	if resumable("interrupted-capability") {
 		t.Fatal("a confirmed binding has nothing left to resume")
+	}
+}
+
+// A capability the control plane definitively rejects can never be redeemed
+// again: `agent enroll` must not leave the file it was handed behind, nor a
+// copy in the Guard state.
+func TestAgentEnrollRemovesARejectedCapabilityFile(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+	stateDir := t.TempDir()
+	tokenFile := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(tokenFile, []byte("kpt1.rejected-capability"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := runAgentEnroll(t.Context(), []string{
+		"--server", server.URL, "--token-file", tokenFile, "--state-dir", stateDir,
+		"--enrollment-file", filepath.Join(t.TempDir(), "agent-enrollment.json"),
+	}, &bytes.Buffer{})
+	if !errors.Is(err, hostidentity.ErrRecoveryNeeded) {
+		t.Fatalf("rejected enrollment = %v, want recovery needed", err)
+	}
+	if _, statErr := os.Stat(tokenFile); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("the rejected capability file was retained: %v", statErr)
+	}
+	manager, err := hostidentity.Open(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bootstrap, err := manager.LoadBootstrap(); err != nil || bootstrap != nil {
+		t.Fatalf("the rejected capability is still held in Guard state: %v", err)
 	}
 }

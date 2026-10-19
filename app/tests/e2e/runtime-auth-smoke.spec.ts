@@ -45,6 +45,8 @@ const INVENTORY_TOOLS = [
   "server_health",
 ].sort();
 const INVENTORY_EXPECTATION = runtimeInventoryExpectation(process.env);
+const NIGHTLY =
+  process.env.TECHSTACK_E2E_EXPECTED_CHANNEL?.trim() === "preview";
 
 const allRoles: RuntimeAuthRole[] = ["oneliner", "remote", "cloud"];
 const roles = runtimeAuthRolesFromEnv(
@@ -69,7 +71,16 @@ test.describe.serial("Runtime Auth0 smoke", () => {
         if (INVENTORY_EXPECTATION) {
           assertCanonicalDemoPrincipal(whoami.body);
         }
-        await verifyCloudInventoryCore(page, auth.token);
+        if (NIGHTLY) {
+          // Nightly admits only the stack list among owner reads until work
+          // ownership is qualified and refuses inventory reads by design
+          // (cmd/techstack/preview_admission.go), so the session proves itself
+          // on the read Nightly serves.
+          const stacks = await authenticatedJSON(auth.token, "/api/v1/stacks");
+          expect(stacks.status).toBe(200);
+        } else {
+          await verifyCloudInventoryCore(page, auth.token);
+        }
       }
     });
   }

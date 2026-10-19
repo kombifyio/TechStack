@@ -7,8 +7,10 @@
    */
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
-  import { LayoutGrid, List, Rows2 } from "@lucide/svelte";
   import { PageHeader } from "@kombiverselabs/ui/shell";
+  import { SegmentedControl } from "@kombiverselabs/ui/primitives";
+  import ErrorCallout from "#lib/components/ui/ErrorCallout.svelte";
+  import LoadingNote from "#lib/components/ui/LoadingNote.svelte";
   import { tr } from "#lib/i18n.svelte.js";
   import {
     listCanonicalServices,
@@ -28,6 +30,7 @@
   let services = $state<CanonicalService[]>([]);
   let loading = $state(true);
   let failed = $state(false);
+  let retrying = $state(false);
   let view = $state<View>("list");
 
   /** One entry per application and server; the same app on two servers is two. */
@@ -82,20 +85,31 @@
     void goto(`/services?service=${encodeURIComponent(serviceId)}`);
   }
 
-  onMount(async () => {
-    try {
-      const stored = localStorage.getItem(VIEW_KEY);
-      if (stored === "logos" || stored === "cards") view = stored;
-    } catch {
-      // No stored preference.
-    }
+  async function loadApplications() {
+    failed = false;
     try {
       services = await listCanonicalServices();
     } catch {
       failed = true;
     } finally {
       loading = false;
+      retrying = false;
     }
+  }
+
+  function retryApplications() {
+    retrying = true;
+    void loadApplications();
+  }
+
+  onMount(() => {
+    try {
+      const stored = localStorage.getItem(VIEW_KEY);
+      if (stored === "logos" || stored === "cards") view = stored;
+    } catch {
+      // No stored preference.
+    }
+    void loadApplications();
   });
 </script>
 
@@ -105,43 +119,38 @@
     description={tr("ui.apps.description")}
   >
     {#snippet actions()}
-      <div
-        role="tablist"
-        aria-label={tr("ui.apps.view")}
-        class="flex shrink-0 rounded-lg border border-border bg-card/60 p-1"
-      >
-        {#each [["logos", tr("ui.apps.viewLogos"), LayoutGrid], ["list", tr("ui.apps.viewList"), List], ["cards", tr("ui.apps.viewCards"), Rows2]] as const as [id, label, Icon] (id)}
-          <button
-            type="button"
-            role="tab"
-            aria-selected={view === id}
-            data-kx={view === id ? "control selection" : "control"}
-            class="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm"
-            data-testid="apps-view-{id}"
-            onclick={() => setView(id)}
-          >
-            <Icon class="h-4 w-4" aria-hidden="true" />
-            {label}
-          </button>
-        {/each}
+      <!-- The same switch as the server list: a view switcher is a group of
+           toggle buttons (aria-pressed), not a tablist: it changes how the
+           same content is drawn, not which panel is shown. -->
+      <div data-testid="apps-view-switch">
+        <SegmentedControl
+          items={[
+            { value: "logos", label: tr("ui.apps.viewLogos") },
+            { value: "list", label: tr("ui.apps.viewList") },
+            { value: "cards", label: tr("ui.apps.viewCards") },
+          ]}
+          value={view}
+          label={tr("ui.apps.view")}
+          onchange={(next) => setView(next as View)}
+        />
       </div>
     {/snippet}
   </PageHeader>
 
   {#if quick.error}
-    <p class="mt-3 text-sm text-destructive" role="alert" data-testid="apps-action-error">
-      {quick.error}
-    </p>
+    <ErrorCallout class="mt-3" testId="apps-action-error" message={quick.error} />
   {/if}
 
   {#if loading}
-    <p role="status" class="mt-4 text-sm text-muted-foreground">
-      {tr("ui.apps.loading")}
-    </p>
+    <LoadingNote class="mt-4" label={tr("ui.apps.loading")} />
   {:else if failed}
-    <p role="alert" class="mt-4 text-sm text-destructive">
-      {tr("ui.apps.unavailable")}
-    </p>
+    <ErrorCallout
+      class="mt-4"
+      testId="apps-unavailable"
+      message={tr("ui.apps.unavailable")}
+      onRetry={retryApplications}
+      {retrying}
+    />
   {:else if applications.length === 0}
     <p class="mt-4 text-sm text-muted-foreground" data-testid="apps-empty">
       {tr("ui.apps.empty")}

@@ -40,7 +40,42 @@ const (
 	cloudLinkUnavailableErrorCode = "cloud_link_unavailable"
 	reasonCloudOIDCNotConfigured  = "cloud_oidc_not_configured"
 	reasonSaaSManagedIdentity     = "saas_managed_identity"
+
+	reasonCloudLinkStatePrepareFailed = "cloud_link_state_prepare_failed"
+	reasonCloudLinkAuthorityMissing   = "cloud_link_authority_unavailable"
+	reasonCloudLinkReadbackFailed     = "cloud_link_readback_unavailable"
+	reasonCloudLinkRemoveFailed       = "cloud_link_remove_failed"
 )
+
+// cloudLinkFailure answers an operational cloud-link failure with the shared
+// structured envelope, so the wizard can name the cause and offer a retry
+// instead of rendering a bare error.
+func cloudLinkFailure(e *httpx.Event, status int, message, reasonCode, title string, nextSteps ...string) error {
+	failure := ksapi.StructuredError{
+		Status:     status,
+		Message:    message,
+		ErrorCode:  cloudLinkUnavailableErrorCode,
+		ReasonCode: reasonCode,
+		Retryable:  true,
+		Guidance:   ksapi.UserGuidance{Title: title, Body: message, NextSteps: nextSteps},
+	}
+	return httpx.Error(e, failure.Status, failure.Code(), failure.Message, failure.Details())
+}
+
+func cloudLinkPrepareFailed(e *httpx.Event) error {
+	return cloudLinkFailure(e, http.StatusInternalServerError, "Failed to prepare the cloud link request",
+		reasonCloudLinkStatePrepareFailed, "The cloud link could not be started", "Retry linking your kombify Cloud profile.")
+}
+
+func cloudLinkAuthorityUnavailable(e *httpx.Event) error {
+	return cloudLinkFailure(e, http.StatusServiceUnavailable, "Canonical cloud-link authority is unavailable",
+		reasonCloudLinkAuthorityMissing, "Cloud link is temporarily unavailable", "Retry in a moment.")
+}
+
+func cloudLinkReadbackUnavailable(e *httpx.Event) error {
+	return cloudLinkFailure(e, http.StatusServiceUnavailable, "Cloud-link readback is unavailable",
+		reasonCloudLinkReadbackFailed, "Cloud link status could not be read", "Retry in a moment.")
+}
 
 type cloudLinkStartResponse struct {
 	AuthorizationURL string `json:"authorization_url"`
@@ -75,12 +110,12 @@ func handleRuntimeCloudLinkStart(runtime RuntimeStore, mode config.DeploymentMod
 		state, stateErr := randomURLToken(32)
 		verifier, verifierErr := randomURLToken(48)
 		if stateErr != nil || verifierErr != nil {
-			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to prepare the cloud link request", nil)
+			return cloudLinkPrepareFailed(e)
 		}
 		expiresAt := time.Now().UTC().Add(cloudLinkStateTTL)
 		if storeErr := storeRuntimeCloudLinkState(runtime, e.Request.Context(), userID, state, verifier, expiresAt); storeErr != nil {
 			slog.Default().Error("cloud-link: failed to store state", "error", storeErr)
-			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to prepare the cloud link request", nil)
+			return cloudLinkPrepareFailed(e)
 		}
 		setCloudLinkBindingCookie(e, state)
 
@@ -179,14 +214,14 @@ func getRuntimeCloudLinkStatus(runtime RuntimeStore) func(e *httpx.Event) error 
 		}
 		userID, _ := AuthUserID(e)
 		if err := runtime.Validate(); err != nil {
-			return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Canonical cloud-link authority is unavailable", nil)
+			return cloudLinkAuthorityUnavailable(e)
 		}
 		profile, err := runtime.Persistence.GetCloudProfile(e.Request.Context(), runtime.TenantID, runtime.InstanceID, userID)
 		if errors.Is(err, controlplane.ErrNotFound) || err == nil && (profile == nil || profile.Link == nil) {
 			return httpx.Success(e, http.StatusOK, cloudLinkStatusResponse{Linked: false})
 		}
 		if err != nil {
-			return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Cloud-link readback is unavailable", nil)
+			return cloudLinkReadbackUnavailable(e)
 		}
 		link := profile.Link
 		return httpx.Success(e, http.StatusOK, cloudLinkStatusResponse{Linked: true, ExternalEmail: link.Email, ExternalName: link.DisplayName, EmailVerified: link.EmailVerified, LinkedAt: link.LinkedAt})
@@ -199,7 +234,7 @@ func deleteRuntimeCloudLink(runtime RuntimeStore) func(e *httpx.Event) error {
 			return err
 		}
 		if err := runtime.Validate(); err != nil {
-			return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Canonical cloud-link authority is unavailable", nil)
+			return cloudLinkAuthorityUnavailable(e)
 		}
 		userID, _ := AuthUserID(e)
 		profile, err := runtime.Persistence.GetCloudProfile(e.Request.Context(), runtime.TenantID, runtime.InstanceID, userID)
@@ -207,10 +242,11 @@ func deleteRuntimeCloudLink(runtime RuntimeStore) func(e *httpx.Event) error {
 			return httpx.Success(e, http.StatusOK, map[string]any{"removed": false})
 		}
 		if err != nil {
-			return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Cloud-link readback is unavailable", nil)
+			return cloudLinkReadbackUnavailable(e)
 		}
 		if err := runtime.Persistence.SetCloudLink(e.Request.Context(), runtime.TenantID, runtime.InstanceID, userID, nil); err != nil {
-			return httpx.Error(e, http.StatusInternalServerError, ksapi.ErrCodeInternal, "Failed to remove cloud link", nil)
+			return cloudLinkFailure(e, http.StatusInternalServerError, "Failed to remove cloud link",
+				reasonCloudLinkRemoveFailed, "The cloud link could not be removed", "Retry removing the cloud link.")
 		}
 		return httpx.Success(e, http.StatusOK, map[string]any{"removed": true})
 	}

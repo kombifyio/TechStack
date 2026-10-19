@@ -15,13 +15,14 @@ import (
 	"time"
 
 	"github.com/kombifyio/techstack/pkg/agent/hostidentity"
+	"github.com/kombifyio/techstack/pkg/guardcompat"
 	"github.com/kombifyio/techstack/pkg/privatechannel"
 	"github.com/kombifyio/techstack/pkg/sdnotify"
 )
 
 const (
 	guardStateDirEnv        = "TECHSTACK_GUARD_STATE_DIR"
-	enrollCapabilityVersion = "kombify-guard-enroll/1"
+	enrollCapabilityVersion = guardcompat.EnrollCapabilityVersion
 	defaultEnrollmentFile   = "/etc/techstack/agent-enrollment.json"
 	identityRetryCap        = 30 * time.Second
 	identityHoldInterval    = 10 * time.Minute
@@ -106,6 +107,12 @@ func runAgentEnroll(ctx context.Context, args []string, stdout io.Writer) error 
 		Manager: manager, Bootstrap: bootstrap, EnrollmentPath: *enrollmentFile, Logger: log,
 	})
 	if err != nil {
+		if errors.Is(err, hostidentity.ErrRecoveryNeeded) || errors.Is(err, hostidentity.ErrRevoked) {
+			// Definitively rejected, expired or refused: the capability can
+			// never be redeemed again, so its file goes as well. Transient
+			// failures keep it for the same attempt.
+			_ = os.Remove(*tokenFile)
+		}
 		return err
 	}
 	// The capability is consumed: the file it came from must not outlive it.

@@ -3,10 +3,17 @@
   /**
    * ShortcutsHelp Modal
    *
-   * Displays all available keyboard shortcuts grouped by category.
-   * Triggered by pressing ? key.
+   * Displays all available keyboard shortcuts grouped by category, and the
+   * switch that turns them off (WCAG 2.1.4). Triggered by pressing the ? key.
    */
-  import { SHORTCUTS, type ShortcutDef } from "#lib/stores/shortcuts.js";
+  import Modal from "./Modal.svelte";
+  import Button from "#lib/components/ui/Button.svelte";
+  import { toast } from "#lib/stores/toast.js";
+  import {
+    SHORTCUTS,
+    shortcutsStore,
+    type ShortcutDef,
+  } from "#lib/stores/shortcuts.js";
 
   interface Props {
     show: boolean;
@@ -16,10 +23,9 @@
   let { show, onclose }: Props = $props();
 
   // Group shortcuts by category
-  const shortcutsByCategory = $derived(() => {
+  const shortcutsByCategory = $derived.by(() => {
     const grouped: Record<string, ShortcutDef[]> = {
       navigation: [],
-      list: [],
       actions: [],
       dialogs: [],
     };
@@ -33,160 +39,77 @@
 
   const categoryLabels: Record<string, string> = $derived({
     navigation: tr("ui.shortcutsHelp.pageNavigation"),
-    list: tr("ui.shortcutsHelp.listNavigation"),
     actions: tr("ui.stacksId.actions"),
     dialogs: tr("ui.shortcutsHelp.dialogs"),
   });
 
-  const categoryOrder = ["list", "navigation", "actions", "dialogs"];
+  const categoryOrder = ["navigation", "actions", "dialogs"];
 
-  function handleKeydown(e: KeyboardEvent) {
-    if (show && e.key === "Escape") {
-      e.preventDefault();
-      onclose();
-    }
-  }
-
-  function handleBackdropClick(e: MouseEvent) {
-    if (e.target === e.currentTarget) {
-      onclose();
-    }
-  }
-
-  function formatKeys(keys: string[]): string {
-    return keys.join(" / ");
+  function turnOff() {
+    shortcutsStore.setEnabled(false);
+    toast.info(tr("shortcuts.turnedOff"), tr("shortcuts.turnedOffHint"));
   }
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
-
 {#if show}
-  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div
-    class="fixed inset-0 bg-black/70 flex items-center justify-center z-100 p-4"
-    onclick={handleBackdropClick}
-    role="presentation"
+  <Modal
+    title={tr("ui.shortcuts.title")}
+    onClose={onclose}
+    maxWidth="2xl"
+    testId="keyboard-shortcuts-help"
   >
-    <div
-      data-kx="plate"
-      class="max-w-2xl w-full max-h-[85vh] overflow-hidden flex flex-col"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="shortcuts-title"
-    >
-      <!-- Header -->
-      <div
-        class="flex items-center justify-between p-4 border-b border-border"
-      >
-        <div class="flex items-center gap-3">
-          <div class="p-2 bg-primary/10 rounded-lg">
-            <svg
-              class="w-5 h-5 text-primary"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
+    <div class="grid gap-6 md:grid-cols-2">
+      {#each categoryOrder as category (category)}
+        {@const shortcuts = shortcutsByCategory[category]}
+        {#if shortcuts && shortcuts.length > 0}
+          <section>
+            <h3
+              class="text-sm font-medium text-muted-foreground uppercase tracking-wide mb-3"
             >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"
-              />
-            </svg>
-          </div>
-          <h2 id="shortcuts-title" class="text-lg font-semibold text-foreground">
-            {tr("ui.shortcuts.title")}
-          </h2>
-        </div>
-        <button
-          onclick={onclose}
-          class="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-          aria-label={tr("ui.common.close")}
-        >
-          <svg
-            class="w-5 h-5"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M6 18L18 6M6 6l12 12"
-            />
-          </svg>
-        </button>
-      </div>
-
-      <!-- Content -->
-      <div class="flex-1 overflow-y-auto p-4">
-        <div class="grid gap-6 md:grid-cols-2">
-          {#each categoryOrder as category}
-            {@const shortcuts = shortcutsByCategory()[category]}
-            {#if shortcuts && shortcuts.length > 0}
-              <div>
-                <h3
-                  class="text-sm font-medium text-muted-foreground uppercase tracking-wide mb-3"
+              {categoryLabels[category]}
+            </h3>
+            <ul class="space-y-2">
+              {#each shortcuts as shortcut (shortcut.keys.join("+"))}
+                <li
+                  class="flex items-center justify-between gap-3 py-2 px-3 bg-muted/50 rounded-lg"
                 >
-                  {categoryLabels[category]}
-                </h3>
-                <div class="space-y-2">
-                  {#each shortcuts as shortcut}
-                    <div
-                      class="flex items-center justify-between py-2 px-3 bg-muted/50 rounded-lg"
-                    >
-                      <span class="text-foreground text-sm">
-                        {shortcut.description}
-                      </span>
-                      <div class="flex items-center gap-1">
-                        {#each shortcut.keys as key, i}
-                          {#if i > 0}
-                            <span class="text-muted-foreground text-xs mx-1">/</span>
-                          {/if}
-                          {#if shortcut.keys.length === 2 && shortcut.category === "navigation" && i === 0}
-                            <!-- Multi-key sequence like g + h -->
-                            <kbd
-                              class="px-2 py-1 bg-muted rounded text-xs font-mono text-foreground border border-border"
-                            >
-                              {key}
-                            </kbd>
-                            <span class="text-muted-foreground mx-1">then</span>
-                          {:else}
-                            <kbd
-                              class="px-2 py-1 bg-muted rounded text-xs font-mono text-foreground border border-border"
-                            >
-                              {key}
-                            </kbd>
-                          {/if}
-                        {/each}
-                      </div>
-                    </div>
-                  {/each}
-                </div>
-              </div>
-            {/if}
-          {/each}
-        </div>
-      </div>
-
-      <!-- Footer -->
-      <div class="p-4 border-t border-border bg-muted/30">
-        <div class="flex items-center justify-between text-sm">
-          <span class="text-muted-foreground">
-            {trParts("ui.shortcuts.pressToShow")[0]}<kbd
-              class="px-1.5 py-0.5 bg-muted rounded text-xs font-mono text-foreground border border-border"
-              >?</kbd
-            >{trParts("ui.shortcuts.pressToShow")[1]}
-          </span>
-          <span class="text-muted-foreground">
-            {trParts("ui.shortcuts.pressToClose")[0]}<kbd
-              class="px-1.5 py-0.5 bg-muted rounded text-xs font-mono text-foreground border border-border"
-              >{tr("ui.shortcutsHelp.esc")}</kbd
-            >{trParts("ui.shortcuts.pressToClose")[1]}
-          </span>
-        </div>
-      </div>
+                  <span class="text-foreground text-sm">
+                    {shortcut.description}
+                  </span>
+                  <span class="flex shrink-0 items-center gap-1">
+                    {#each shortcut.keys as key, i (i)}
+                      {#if i > 0}
+                        <span class="text-muted-foreground text-xs mx-1"
+                          >{shortcut.category === "navigation"
+                            ? tr("ui.shortcutsHelp.then")
+                            : "/"}</span
+                        >
+                      {/if}
+                      <kbd
+                        class="px-2 py-1 bg-muted rounded text-xs font-mono text-foreground border border-border"
+                      >
+                        {key === "Escape" ? tr("ui.shortcutsHelp.esc") : key}
+                      </kbd>
+                    {/each}
+                  </span>
+                </li>
+              {/each}
+            </ul>
+          </section>
+        {/if}
+      {/each}
     </div>
-  </div>
+
+    {#snippet footer()}
+      <span class="mr-auto text-sm text-muted-foreground">
+        {trParts("ui.shortcuts.pressToShow")[0]}<kbd
+          class="px-1.5 py-0.5 bg-muted rounded text-xs font-mono text-foreground border border-border"
+          >?</kbd
+        >{trParts("ui.shortcuts.pressToShow")[1]}
+      </span>
+      <Button variant="secondary" testId="shortcuts-turn-off" onclick={turnOff}>
+        {tr("shortcuts.turnOff")}
+      </Button>
+    {/snippet}
+  </Modal>
 {/if}

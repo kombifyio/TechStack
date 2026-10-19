@@ -1,22 +1,26 @@
 /**
  * Keyboard Shortcuts Store
  *
- * Provides reactive state for keyboard navigation across kombify-TechStack.
- * Supports j/k navigation, vim-like shortcuts, and multi-key sequences.
+ * Reactive state for the single-key shortcuts of kombify-TechStack: the
+ * `g` + key page jumps, `/` to search, `?` for help. Single-character
+ * shortcuts must be switchable (WCAG 2.1.4 Character Key Shortcuts), so the
+ * on/off choice is a device-local preference with a switch in the settings
+ * and in the help dialog; this store owns that preference.
+ *
+ * Arrow keys, Home and End are never shortcuts: they belong to scrolling,
+ * radio groups, tabs and the rail separator.
  */
 import { writable, derived, get } from "svelte/store";
 
 import { tr } from "#lib/i18n.svelte.js";
+
+/** Device-local preference key: "off" disables, anything else means on. */
+export const SHORTCUTS_STORAGE_KEY = "techstack-keyboard-shortcuts";
+
 /** State for keyboard navigation */
 export interface ShortcutsState {
-  /** Whether shortcuts are globally enabled */
+  /** Whether shortcuts are globally enabled (device-local preference) */
   enabled: boolean;
-  /** Currently selected item index in navigable lists (-1 = none) */
-  selectedIndex: number;
-  /** Total number of items in current navigable list */
-  totalItems: number;
-  /** ID of the currently focused navigable element */
-  activeListId: string | null;
   /** Whether help modal is shown */
   showHelp: boolean;
   /** Pending key for multi-key sequences (e.g., 'g' waiting for 'h') */
@@ -29,48 +33,11 @@ export interface ShortcutsState {
 export interface ShortcutDef {
   keys: string[];
   description: string;
-  category: "navigation" | "list" | "actions" | "dialogs";
+  category: "navigation" | "actions" | "dialogs";
 }
 
 /** All available shortcuts */
 export const SHORTCUTS: ShortcutDef[] = [
-  // List Navigation
-  {
-    keys: ["j", "↓"],
-    get description() {
-      return tr("ui.shortcuts.moveDownInList");
-    },
-    category: "list",
-  },
-  {
-    keys: ["k", "↑"],
-    get description() {
-      return tr("ui.shortcuts.moveUpInList");
-    },
-    category: "list",
-  },
-  {
-    keys: ["Enter"],
-    get description() {
-      return tr("ui.shortcuts.selectOpenItem");
-    },
-    category: "list",
-  },
-  {
-    keys: ["Home"],
-    get description() {
-      return tr("ui.shortcuts.jumpToFirstItem");
-    },
-    category: "list",
-  },
-  {
-    keys: ["End"],
-    get description() {
-      return tr("ui.shortcuts.jumpToLastItem");
-    },
-    category: "list",
-  },
-
   // Page Navigation (g + key sequences)
   {
     keys: ["g", "h"],
@@ -110,13 +77,6 @@ export const SHORTCUTS: ShortcutDef[] = [
 
   // Actions
   {
-    keys: ["r"],
-    get description() {
-      return tr("ui.shortcuts.refreshCurrentView");
-    },
-    category: "actions",
-  },
-  {
     keys: ["/"],
     get description() {
       return tr("ui.shortcuts.focusSearchInput");
@@ -135,122 +95,68 @@ export const SHORTCUTS: ShortcutDef[] = [
   {
     keys: ["Escape"],
     get description() {
-      return tr("ui.shortcuts.closeDialogDeselect");
+      return tr("ui.shortcuts.closeDialog");
     },
     category: "dialogs",
   },
 ];
 
+/** The stored choice; shortcuts are on unless this device turned them off. */
+export function readStoredShortcutsEnabled(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    return window.localStorage.getItem(SHORTCUTS_STORAGE_KEY) !== "off";
+  } catch {
+    // Storage can be blocked; the default applies for this session.
+    return true;
+  }
+}
+
+function writeStoredShortcutsEnabled(enabled: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (enabled) window.localStorage.removeItem(SHORTCUTS_STORAGE_KEY);
+    else window.localStorage.setItem(SHORTCUTS_STORAGE_KEY, "off");
+  } catch {
+    // The choice still applies until the page is reloaded.
+  }
+}
+
 const initialState: ShortcutsState = {
   enabled: true,
-  selectedIndex: -1,
-  totalItems: 0,
-  activeListId: null,
   showHelp: false,
   pendingKey: null,
   pendingKeyTimeout: null,
 };
 
 function createShortcutsStore() {
-  const { subscribe, set, update } = writable<ShortcutsState>(initialState);
+  const { subscribe, update } = writable<ShortcutsState>({
+    ...initialState,
+    enabled: readStoredShortcutsEnabled(),
+  });
 
   return {
     subscribe,
 
-    /** Enable or disable shortcuts globally */
-    setEnabled(enabled: boolean) {
+    /** Re-read the device preference (after hydration). */
+    loadPreference() {
+      const enabled = readStoredShortcutsEnabled();
       update((s) => ({ ...s, enabled }));
     },
 
-    /** Toggle shortcuts on/off */
-    toggleEnabled() {
-      update((s) => ({ ...s, enabled: !s.enabled }));
-    },
-
-    /** Register a navigable list */
-    registerList(listId: string, totalItems: number) {
-      update((s) => ({
-        ...s,
-        activeListId: listId,
-        totalItems,
-        selectedIndex: totalItems > 0 ? 0 : -1,
-      }));
-    },
-
-    /** Unregister a navigable list */
-    unregisterList(listId: string) {
+    /** Turn shortcuts on or off for this device. */
+    setEnabled(enabled: boolean) {
+      writeStoredShortcutsEnabled(enabled);
       update((s) => {
-        if (s.activeListId === listId) {
-          return {
-            ...s,
-            activeListId: null,
-            totalItems: 0,
-            selectedIndex: -1,
-          };
-        }
-        return s;
+        if (!enabled && s.pendingKeyTimeout) clearTimeout(s.pendingKeyTimeout);
+        return {
+          ...s,
+          enabled,
+          showHelp: enabled ? s.showHelp : false,
+          pendingKey: enabled ? s.pendingKey : null,
+          pendingKeyTimeout: enabled ? s.pendingKeyTimeout : null,
+        };
       });
-    },
-
-    /** Update total items count (e.g., after filtering) */
-    setTotalItems(totalItems: number) {
-      update((s) => ({
-        ...s,
-        totalItems,
-        selectedIndex:
-          s.selectedIndex >= totalItems
-            ? Math.max(0, totalItems - 1)
-            : s.selectedIndex,
-      }));
-    },
-
-    /** Move selection down */
-    moveDown() {
-      update((s) => {
-        if (s.totalItems === 0) return s;
-        const newIndex =
-          s.selectedIndex < s.totalItems - 1 ? s.selectedIndex + 1 : 0; // Wrap around
-        return { ...s, selectedIndex: newIndex };
-      });
-    },
-
-    /** Move selection up */
-    moveUp() {
-      update((s) => {
-        if (s.totalItems === 0) return s;
-        const newIndex =
-          s.selectedIndex > 0 ? s.selectedIndex - 1 : s.totalItems - 1; // Wrap around
-        return { ...s, selectedIndex: newIndex };
-      });
-    },
-
-    /** Jump to first item */
-    jumpToFirst() {
-      update((s) => ({
-        ...s,
-        selectedIndex: s.totalItems > 0 ? 0 : -1,
-      }));
-    },
-
-    /** Jump to last item */
-    jumpToLast() {
-      update((s) => ({
-        ...s,
-        selectedIndex: s.totalItems > 0 ? s.totalItems - 1 : -1,
-      }));
-    },
-
-    /** Set selection to specific index */
-    setSelectedIndex(index: number) {
-      update((s) => ({
-        ...s,
-        selectedIndex: Math.max(-1, Math.min(index, s.totalItems - 1)),
-      }));
-    },
-
-    /** Clear selection */
-    clearSelection() {
-      update((s) => ({ ...s, selectedIndex: -1 }));
     },
 
     /** Show help modal */
@@ -307,24 +213,12 @@ function createShortcutsStore() {
         return { ...s, pendingKey: null, pendingKeyTimeout: null };
       });
     },
-
-    /** Reset to initial state */
-    reset() {
-      update((s) => {
-        if (s.pendingKeyTimeout) {
-          clearTimeout(s.pendingKeyTimeout);
-        }
-        return { ...initialState };
-      });
-    },
   };
 }
 
 export const shortcutsStore = createShortcutsStore();
 
 // Derived stores for convenience
-export const selectedIndex = derived(shortcutsStore, ($s) => $s.selectedIndex);
-export const totalItems = derived(shortcutsStore, ($s) => $s.totalItems);
 export const shortcutsEnabled = derived(shortcutsStore, ($s) => $s.enabled);
 export const showShortcutsHelp = derived(shortcutsStore, ($s) => $s.showHelp);
 export const pendingKey = derived(shortcutsStore, ($s) => $s.pendingKey);

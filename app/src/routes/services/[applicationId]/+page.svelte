@@ -15,6 +15,7 @@
   import { PageHeader } from "@kombiverselabs/ui/shell";
   import { ServiceCard } from "@kombiverselabs/ui/service";
   import Button from "#lib/components/ui/Button.svelte";
+  import ErrorCallout from "#lib/components/ui/ErrorCallout.svelte";
   import BrandLogoIcon from "#lib/components/BrandLogoIcon.svelte";
   import BrandLogoScope from "#lib/components/BrandLogoScope.svelte";
   import ServiceAdoptionDialog from "#lib/components/inventory/ServiceAdoptionDialog.svelte";
@@ -492,26 +493,19 @@
       testid="application-detail-loading"
     />
   {:else if loadError}
-    <div
-      class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-destructive"
-      role="alert"
-      data-testid="application-detail-error"
-    >
-      <span class="min-w-0 break-words">{loadError}</span>
-      <Button variant="secondary" size="sm" onclick={() => void load()}>
-        <RefreshCw class="h-3.5 w-3.5" />
-        {tr("ui.serviceDetail.retry")}
-      </Button>
-    </div>
+    <ErrorCallout
+      testId="application-detail-error"
+      message={loadError}
+      onRetry={() => void load()}
+      retryLabel={tr("ui.serviceDetail.retry")}
+    />
   {:else if application}
     {#if actionError}
-      <div
-        class="mb-4 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
-        role="alert"
-        data-testid="application-detail-action-error"
-      >
-        {actionError}
-      </div>
+      <ErrorCallout
+        class="mb-4"
+        testId="application-detail-action-error"
+        message={actionError}
+      />
     {/if}
 
     <div
@@ -1030,9 +1024,7 @@
             </p>
           {/if}
           {#if logState?.error}
-            <p class="text-sm text-destructive" role="alert">
-              {logState.error}
-            </p>
+            <ErrorCallout message={logState.error} />
           {/if}
           {#if logState && logState.entries.length > 0}
             <ol
@@ -1088,9 +1080,7 @@
           </Button>
         </div>
         {#if recorded.error}
-          <p class="text-sm text-destructive" role="alert">
-            {recorded.error}
-          </p>
+          <ErrorCallout message={recorded.error} />
         {/if}
         {#if recorded.loading && activityRows.length === 0}
           <LoadingNote label={tr("common.loading")} />

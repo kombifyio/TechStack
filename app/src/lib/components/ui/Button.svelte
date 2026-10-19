@@ -18,7 +18,7 @@
     class?: string;
     testId?: string;
     /**
-     * Coach-mark anchor (ONBOARDING-JOURNEY-STANDARD §6). Stamped onto the
+     * Coach-mark anchor (KOMBIFY-DESIGN-SYSTEM-STANDARD.md §12.6). Stamped onto the
      * real <button> like testId, because the coach-mark measures the element
      * it points at and the wrapping span has no box of its own.
      */

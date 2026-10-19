@@ -8,7 +8,7 @@ import (
 )
 
 // OnboardingState is one principal's record for one onboarding journey
-// (ONBOARDING-JOURNEY-STANDARD §8). State carries the exact
+// (KOMBIFY-DESIGN-SYSTEM-STANDARD.md §12.8). State carries the exact
 // onboarding-state.v1 document; JourneyVersion, Status and Revision are
 // projections of it kept as columns so the store can compare-and-swap on
 // user actions without parsing JSON.

@@ -1,7 +1,7 @@
 /**
  * Canonical, render-facing model for kombify server-lifecycle outcomes.
  *
- * The binding FEATURE-ENTITLEMENT-UX-STANDARD requires every denial / blocked /
+ * The binding ENTITLEMENTS-ARCHITECTURE.md §13 requires every denial / blocked /
  * degraded / pending state to carry one structured envelope (error_code,
  * reason_code, retryable, user_guidance{title,body,next_steps}, ...). This module
  * is the single frontend representation of that envelope. It normalizes whatever

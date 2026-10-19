@@ -13,6 +13,10 @@
   const confirmVariant = $derived(
     $inAppDialog?.tone === "danger" ? "destructive" : "primary",
   );
+  // A question that interrupts the person is an alert dialog; a form is not.
+  const dialogRole = $derived(
+    $inAppDialog?.kind === "prompt" ? "dialog" : "alertdialog",
+  );
 </script>
 
 {#if $inAppDialog}
@@ -21,6 +25,8 @@
     description={$inAppDialog.message}
     onClose={cancelInAppDialog}
     maxWidth="sm"
+    role={dialogRole}
+    tone={$inAppDialog.tone === "danger" ? "danger" : "default"}
   >
     {#if $inAppDialog.kind === "prompt"}
       <label class="block space-y-2 text-sm">

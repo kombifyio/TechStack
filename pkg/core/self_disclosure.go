@@ -8,7 +8,7 @@ import (
 )
 
 // OperatorSelfDisclosure is the voluntary self-description an operator gives
-// before or during creation (CREATION-EXPERIENCE-STANDARD §4, trust order 1).
+// before or during creation (KOMBIFY-DESIGN-SYSTEM-STANDARD.md §9.4, trust order 1).
 // It carries raw answers only. The capability score and band are derived by
 // the Unifier from these answers; no client supplies a score.
 //

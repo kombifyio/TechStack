@@ -15,7 +15,7 @@ import (
 // timeNow is the verifier clock; tests may replace it.
 var timeNow = time.Now
 
-// Asymmetric service identity (SERVICE-TO-SERVICE-AUTH-STANDARD, platform
+// Asymmetric service identity (AUTHENTICATION.md §8, platform
 // review 2026-10-07 H2). Each caller holds its own Ed25519 private key and
 // signs EdDSA tokens; receivers hold only public keys, each bound to exactly
 // one caller service. A receiver can therefore no longer mint tokens, and a

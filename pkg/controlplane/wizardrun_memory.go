@@ -7,6 +7,24 @@ import (
 	"time"
 )
 
+func (s *MemoryStore) ReserveWizardRun(_ context.Context, run WizardRun) (*WizardRun, error) {
+	if err := validateWizardRun(run); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(run.IdempotencyKey) == "" {
+		return nil, fmt.Errorf("controlplane: reservation requires idempotency key")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if existing := s.wizardRunByKeyLocked(strings.TrimSpace(run.TenantID), strings.TrimSpace(run.OwnerSubjectID), strings.TrimSpace(run.IdempotencyKey)); existing != nil {
+		if existing.RequestSHA256 != run.RequestSHA256 {
+			return nil, ErrConflict
+		}
+		return cloneWizardRun(*existing), nil
+	}
+	return s.upsertWizardRunLocked(run)
+}
+
 func (s *MemoryStore) GetWizardRunByKey(_ context.Context, tenantID, ownerSubjectID, idempotencyKey string) (*WizardRun, error) {
 	tenantID = strings.TrimSpace(tenantID)
 	if tenantID == "" {
@@ -84,6 +102,9 @@ func (s *MemoryStore) upsertWizardRunLocked(run WizardRun) (*WizardRun, error) {
 	now := s.now()
 	if normalized.IdempotencyKey != "" {
 		if existing := s.wizardRunByKeyLocked(normalized.TenantID, normalized.OwnerSubjectID, normalized.IdempotencyKey); existing != nil {
+			if !wizardRunCanReplace(*existing, normalized) {
+				return nil, ErrConflict
+			}
 			normalized.ID = existing.ID
 			if existing.PairingJobID != "" {
 				normalized.PairingJobID = existing.PairingJobID

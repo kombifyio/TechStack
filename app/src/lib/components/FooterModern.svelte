@@ -50,6 +50,12 @@
     instanceId?: string;
     portalUrl?: string;
     docsUrl?: string;
+    /**
+     * Keep the footer clear of the Companion launcher: it floats at a screen
+     * corner (and can be dragged anywhere), so the last links of the page
+     * get room below them instead of sitting under it.
+     */
+    reserveLauncher?: boolean;
     class?: string;
   }
 
@@ -64,6 +70,7 @@
     instanceId = "",
     portalUrl = "https://kombify.io",
     docsUrl = "https://docs.kombify.io",
+    reserveLauncher = false,
     class: className = "",
   }: Props = $props();
 
@@ -136,10 +143,18 @@
        (KOMBIFY-DESIGN-SYSTEM-STANDARD §7: nav chrome carries no color
        utilities of its own), so it follows finish and product accent. -->
   <footer data-kx="footer plate" class="kx-footer-edge w-full {className}">
-    <div class="max-w-6xl mx-auto px-4 sm:px-6 py-4">
-      <div class="flex flex-col sm:flex-row items-center justify-between gap-4">
-        <!-- Logo Icon + Copyright -->
-        <div class="flex items-center gap-3">
+    <div
+      class="max-w-6xl mx-auto px-4 sm:px-6 py-4 {reserveLauncher
+        ? "pb-20 sm:pb-16"
+        : ""}"
+      data-testid="footer-compact"
+    >
+      <div
+        class="flex flex-col sm:flex-row sm:flex-wrap items-center justify-between gap-x-6 gap-y-3"
+      >
+        <!-- Logo Icon + Copyright. Wraps instead of running off a narrow
+             screen: version and instance id drop to the next line. -->
+        <div class="flex min-w-0 flex-wrap items-center justify-center gap-x-3 gap-y-1 sm:justify-start">
           <a href={portalUrl} class="h-8 w-auto overflow-hidden shrink-0">
             {#if !logoImageFailed}
               <img
@@ -162,12 +177,12 @@
           {#if apiVersion}
             <span
               data-testid="product-version-identity"
-              class="text-xs text-muted-foreground/60">{apiVersion}</span
+              class="text-xs text-muted-foreground/60 break-words">{apiVersion}</span
             >
           {/if}
           {#if instanceId}
             <span
-              class="text-xs text-muted-foreground/60 font-mono"
+              class="text-xs text-muted-foreground/60 font-mono break-all"
               title={tr("ui.footer.instanceTitle", { id: instanceId })}
               >{tr("ui.footer.instanceShort", { id: instanceId.slice(0, 8) })}</span
             >
@@ -175,8 +190,11 @@
         </div>
 
         <!-- Links + Socials -->
-        <div class="flex items-center gap-6">
-          <nav class="flex items-center gap-4 text-sm">
+        <div class="flex min-w-0 flex-wrap items-center justify-center gap-x-6 gap-y-2">
+          <nav
+            class="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-sm"
+            aria-label={tr("shell.footerLinks")}
+          >
             {#each legalLinks as link}
               <a
                 href={link.href}

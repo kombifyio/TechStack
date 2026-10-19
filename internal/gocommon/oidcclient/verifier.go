@@ -53,14 +53,16 @@ type VerifierConfig struct {
 // Claims is the verified subset of an ID token. Provider-specific claims can
 // be re-decoded by callers from [Claims.Raw].
 type Claims struct {
-	Subject  string                 `json:"sub"`
-	Issuer   string                 `json:"iss"`
-	Audience []string               `json:"aud"`
-	Email    string                 `json:"email,omitempty"`
-	Name     string                 `json:"name,omitempty"`
-	IssuedAt int64                  `json:"iat,omitempty"`
-	Expires  int64                  `json:"exp,omitempty"`
-	Raw      map[string]interface{} `json:"-"`
+	Subject  string   `json:"sub"`
+	Issuer   string   `json:"iss"`
+	Audience []string `json:"aud"`
+	Email    string   `json:"email,omitempty"`
+	// EmailVerified is true only for a boolean true email_verified claim.
+	EmailVerified bool                   `json:"email_verified,omitempty"`
+	Name          string                 `json:"name,omitempty"`
+	IssuedAt      int64                  `json:"iat,omitempty"`
+	Expires       int64                  `json:"exp,omitempty"`
+	Raw           map[string]interface{} `json:"-"`
 }
 
 // Verifier verifies OIDC ID tokens issued by a single issuer.
@@ -168,6 +170,7 @@ func (v *Verifier) validateClaims(mc jwt.MapClaims) (*Claims, error) {
 		return nil, fmt.Errorf("%w: missing sub", ErrInvalidToken)
 	}
 	out.Email, _ = mc["email"].(string)
+	out.EmailVerified, _ = mc["email_verified"].(bool)
 	out.Name, _ = mc["name"].(string)
 	if iat, ok := mc["iat"].(float64); ok {
 		out.IssuedAt = int64(iat)

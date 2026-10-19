@@ -7,7 +7,8 @@
 // owner named in each call, never as the owner and never as an agent.
 //
 // Operations: List, CaptureKey, Create (a captured value or, for an SSH CA, a
-// key generated inside custody), AddVersion, Deliver, Broker, Mint and Sign.
+// key generated inside custody), AddVersion, Deliver, Broker, Mint, Sign,
+// HostDeliver and HostWithdraw.
 //
 // Values travel only as `kombify.wallet-transport.v1` JWEs. A value the
 // service stores is sealed to the Wallet Store's capture key. A value the
@@ -19,8 +20,14 @@
 // header has been checked. What the Wallet releases arrives as a Secret that
 // prints as a fixed marker and can be wiped.
 //
+// HostDeliver returns an opaque envelope sealed to the node's recipient key;
+// the product service never opens it. HostDeliver and HostWithdraw need no
+// private service recipient key. Only Deliver and Mint require that key, and
+// refuse before touching the network when it is absent.
+//
 // The client is configured entirely from outside (Config) and never reads the
-// environment. With anything missing or invalid it is disabled: every call
+// environment. With required authentication or public configuration missing,
+// or any supplied setting invalid, it is disabled: every call
 // returns an ErrUnavailable error without touching the network, and no caller
 // may fall back to another source for an item that lives in the Wallet. It
 // signs only with the product's own Wallet service secret; the platform's

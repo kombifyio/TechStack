@@ -3,6 +3,8 @@
   import { goto } from "$app/navigation";
   import Modal from "./Modal.svelte";
   import Button from "#lib/components/ui/Button.svelte";
+  import ErrorCallout from "#lib/components/ui/ErrorCallout.svelte";
+  import { toast } from "#lib/stores/toast.js";
   import {
     importKombinationSpec,
     exportKombinationSpec,
@@ -69,6 +71,12 @@
       },
     };
     return JSON.stringify(payload, null, 2);
+  }
+
+  /** Copy and say so: a silent copy leaves the person guessing. */
+  async function copyDiagnostics(text: string) {
+    if (await copyText(text)) toast.success(tr("shell.copied"));
+    else toast.error(tr("shell.copyFailed"));
   }
 
   async function copyText(text: string) {
@@ -455,27 +463,26 @@
 
     <!-- Error Display -->
     {#if importError}
-      <div
-        class="mt-4 p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-sm"
-      >
-        <p class="font-medium">{importError}</p>
-        <p class="mt-2 text-xs text-destructive/80">
-          {tr("ui.stackImportExportModal.tipIfYouSeeAn")}
-        </p>
-
-        {#if importDiagnostics}
-          <div class="mt-3 flex gap-2">
-            <Button
-              variant="secondary"
-              onclick={async () => {
-                if (importDiagnostics) await copyText(importDiagnostics);
-              }}
-            >
-              {tr("ui.stackImportExportModal.copyDiagnosticsForDevelopers")}
-            </Button>
-          </div>
-        {/if}
-      </div>
+      <ErrorCallout class="mt-4">
+        <div class="min-w-0 flex-1 space-y-1 text-sm">
+          <p class="font-medium">{importError}</p>
+          <p class="text-xs text-foreground/80">
+            {tr("ui.stackImportExportModal.tipIfYouSeeAn")}
+          </p>
+          {#if importDiagnostics}
+            <div class="mt-3 flex gap-2">
+              <Button
+                variant="secondary"
+                onclick={async () => {
+                  if (importDiagnostics) await copyDiagnostics(importDiagnostics);
+                }}
+              >
+                {tr("ui.stackImportExportModal.copyDiagnosticsForDevelopers")}
+              </Button>
+            </div>
+          {/if}
+        </div>
+      </ErrorCallout>
     {/if}
   {:else}
     <!-- EXPORT MODE -->
@@ -532,27 +539,26 @@
       </div>
 
       {#if exportError}
-        <div
-          class="p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-sm"
-        >
-          <p class="font-medium">{exportError}</p>
-          <p class="mt-2 text-xs text-destructive/80">
-            {tr("ui.stackImportExportModal.ifTheProblemPersistsCopy")}
-          </p>
-
-          {#if exportDiagnostics}
-            <div class="mt-3 flex gap-2">
-              <Button
-                variant="secondary"
-                onclick={async () => {
-                  if (exportDiagnostics) await copyText(exportDiagnostics);
-                }}
-              >
-                {tr("ui.stackImportExportModal.copyDiagnostics")}
-              </Button>
-            </div>
-          {/if}
-        </div>
+        <ErrorCallout>
+          <div class="min-w-0 flex-1 space-y-1 text-sm">
+            <p class="font-medium">{exportError}</p>
+            <p class="text-xs text-foreground/80">
+              {tr("ui.stackImportExportModal.ifTheProblemPersistsCopy")}
+            </p>
+            {#if exportDiagnostics}
+              <div class="mt-3 flex gap-2">
+                <Button
+                  variant="secondary"
+                  onclick={async () => {
+                    if (exportDiagnostics) await copyDiagnostics(exportDiagnostics);
+                  }}
+                >
+                  {tr("ui.stackImportExportModal.copyDiagnostics")}
+                </Button>
+              </div>
+            {/if}
+          </div>
+        </ErrorCallout>
       {/if}
 
       <div class="flex gap-3">

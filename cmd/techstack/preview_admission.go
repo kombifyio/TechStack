@@ -1,13 +1,17 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"path"
+	"sort"
 	"strings"
 
+	commonauthlocal "github.com/kombifyio/techstack/internal/gocommon/authlocal"
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/identity"
+	"github.com/kombifyio/techstack/pkg/v2/auth/providers"
 )
 
 func previewAuthPath(p string) bool {
@@ -23,10 +27,49 @@ func previewPublicPath(p string) bool {
 		return true
 	}
 	switch p {
-	case "/api/v1/health", "/api/v1/health/live", "/api/v1/health/ready", "/api/v1/health/startup", "/api/v1/info", "/api/v1/client/bootstrap", "/api/v1/auth/mode", "/api/v1/csrf", "/api/v2/auth/providers":
+	case "/api/v1/health", "/api/v1/health/live", "/api/v1/health/ready", "/api/v1/health/startup", "/api/v1/info", "/api/v1/client/bootstrap", "/api/v1/auth/mode", "/api/v1/auth/methods", "/api/v1/csrf", "/api/v2/auth/providers":
 		return true
 	}
-	return p == "/" || p == "/login" || p == "/dashboard" || strings.HasPrefix(p, "/dashboard/") || strings.HasPrefix(p, "/_app/") || strings.HasPrefix(p, "/assets/")
+	// /stacks is the legacy sign-in return target (the Windows browser handoff
+	// returns there); its shell only redirects to /dashboard.
+	return p == "/" || p == "/login" || p == "/stacks" || p == "/dashboard" || strings.HasPrefix(p, "/dashboard/") || strings.HasPrefix(p, "/_app/") || strings.HasPrefix(p, "/assets/")
+}
+
+// nightlyAuthMethodsHandler answers the login page's sign-in methods read on
+// Preview. Preview never boots local auth, whose bootstrap writes break-glass
+// state, so this lists only the registered cloud providers: no break-glass and
+// no database read. Without it the login page reports the backend unavailable
+// and never starts the cloud sign-in.
+func nightlyAuthMethodsHandler(registry *providers.Registry) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		response := commonauthlocal.MethodsResponse{Providers: []commonauthlocal.ProviderInfo{}}
+		if registry != nil {
+			ids := registry.IDs()
+			sort.Strings(ids)
+			for _, id := range ids {
+				provider, err := registry.Get(id)
+				if err != nil {
+					continue
+				}
+				label := provider.ID()
+				switch provider.Kind() {
+				case providers.KindAuth0:
+					label = "kombify Cloud"
+				case providers.KindPocketID:
+					label = "Pocket ID"
+				}
+				response.Providers = append(response.Providers, commonauthlocal.ProviderInfo{
+					ID:      provider.ID(),
+					Kind:    string(provider.Kind()),
+					Label:   label,
+					AuthURL: "/api/v2/auth/login?provider=" + provider.ID(),
+				})
+			}
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_ = json.NewEncoder(w).Encode(response)
+	})
 }
 
 func admitPreviewTransport(e *httpx.Event) error {
@@ -38,16 +81,16 @@ func admitPreviewTransport(e *httpx.Event) error {
 	// alone could mistake /api/v1%2Fhealth for the admitted /api/v1/health
 	// while dispatching it to a different catch-all handler.
 	if e.Request.URL.RawPath != "" || e.Request.URL.EscapedPath() != p || path.Clean(p) != p || strings.Contains(p, "\\") || e.Request.Header.Get("Upgrade") != "" || strings.Contains(e.Request.Header.Get("Accept"), "text/event-stream") {
-		return httpx.NewAPIError(http.StatusForbidden, "preview_transport_not_admitted", "Nightly transport is not admitted.", nil)
+		return httpx.NewAPIError(http.StatusForbidden, "preview_transport_not_admitted", "Preview transport is not admitted.", nil)
 	}
 	if e.Request.Method != http.MethodGet && e.Request.Method != http.MethodHead {
-		return httpx.NewAPIError(http.StatusConflict, "preview_mutation_not_admitted", "Nightly mutations require qualified work ownership.", nil)
+		return httpx.NewAPIError(http.StatusConflict, "preview_mutation_not_admitted", "Preview mutations require qualified work ownership.", nil)
 	}
 	if previewPublicPath(p) {
 		// Static shell paths are admitted only through the router's frontend
 		// fallback, never a newly registered dynamic handler at the same path.
 		if !strings.HasPrefix(p, "/api/") && e.Request.Pattern != "" && e.Request.Pattern != "/" {
-			return httpx.NewAPIError(http.StatusForbidden, "preview_route_not_admitted", "Nightly dynamic route is not admitted.", nil)
+			return httpx.NewAPIError(http.StatusForbidden, "preview_route_not_admitted", "Preview dynamic route is not admitted.", nil)
 		}
 		return nil
 	}
@@ -56,7 +99,7 @@ func admitPreviewTransport(e *httpx.Event) error {
 	case "/api/v1/stacks", "/api/v2/whoami":
 		return nil
 	}
-	return httpx.NewAPIError(http.StatusForbidden, "preview_route_not_admitted", "Nightly route execution requires qualified ownership.", nil)
+	return httpx.NewAPIError(http.StatusForbidden, "preview_route_not_admitted", "Preview route execution requires qualified ownership.", nil)
 }
 
 func previewTransportAdmission(e *httpx.Event) error {
@@ -71,7 +114,7 @@ func admitPreviewPrincipal(e *httpx.Event, subject string) error {
 		return nil
 	}
 	if !config.PreviewSubjectAdmitted(subject) {
-		return httpx.NewAPIError(http.StatusForbidden, "preview_subject_not_admitted", "Nightly requires the admitted shared test identity.", nil)
+		return httpx.NewAPIError(http.StatusForbidden, "preview_subject_not_admitted", "Preview requires the admitted shared test identity.", nil)
 	}
 	return nil
 }
@@ -88,7 +131,7 @@ func previewHTTPAdmission(e *httpx.Event) error {
 	}
 	id := identity.FromContext(e.Request.Context())
 	if id == nil || !id.IsAuthenticated() {
-		return httpx.NewUnauthorizedError("Nightly requires the admitted shared test identity.", nil)
+		return httpx.NewUnauthorizedError("Preview requires the admitted shared test identity.", nil)
 	}
 	if err := admitPreviewPrincipal(e, id.UserID); err != nil {
 		return err

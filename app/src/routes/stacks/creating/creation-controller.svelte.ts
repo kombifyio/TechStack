@@ -685,6 +685,15 @@ let allInstallCommands = $derived(
     : [],
 );
 
+// The command the person runs on their own server is the next step of a
+// finished creation: shown once there is one and no Guard pairing replaces it.
+let installCommandVisible = $derived(
+  showInstallCommand &&
+    Boolean(registrationToken) &&
+    Boolean(installCommand) &&
+    !agentPairingRequired,
+);
+
 function applyJoinServerBaseline(existingServerIdsValue: unknown) {
   const baseline = restoreJoinServerBaseline(existingServerIdsValue);
   if (!baseline.known) return;
@@ -2979,6 +2988,9 @@ export const creation = {
   },
   get installCommand() {
     return installCommand;
+  },
+  get installCommandVisible() {
+    return installCommandVisible;
   },
   get allInstallCommands() {
     return allInstallCommands;

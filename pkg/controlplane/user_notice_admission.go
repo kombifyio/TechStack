@@ -10,8 +10,7 @@ import (
 )
 
 // UserNoticeAdmissionStore enforces the per-node rate limit of the opt-in
-// `user_notification` agent-channel class (SERVER-CONNECTION-STANDARD
-// section 9). It counts accepted notices per node inside a sliding window and
+// `user_notification` agent-channel class (STACKKITS-PRODUCT-BOUNDARY-STANDARD.md §14.9). It counts accepted notices per node inside a sliding window and
 // keeps no text, recipient or audience.
 type UserNoticeAdmissionStore interface {
 	// AdmitUserNotice records one accepted notice for the node unless the node

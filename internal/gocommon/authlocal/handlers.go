@@ -1,10 +1,13 @@
 package authlocal
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -43,8 +46,55 @@ type Handlers struct {
 	// "/api/v1/auth/login?provider=".
 	loginRedirectPath string
 
-	// rate enforces a per-IP rate limit on /login attempts.
+	// rate enforces a per-IP rate limit on /login and /claim attempts.
 	rate *rateLimiter
+
+	// accountRate enforces a per-account limit on /login attempts so that
+	// rotating source addresses does not bypass the brute-force guard.
+	accountRate *rateLimiter
+
+	// trustedProxies lists the networks whose X-Forwarded-For / X-Real-IP
+	// headers are honored. Empty means the headers are never trusted.
+	trustedProxies []*net.IPNet
+
+	// bootstrapToken, when set, authorizes reveal and claim from any
+	// address. Without it only direct loopback callers may use them.
+	bootstrapToken string
+}
+
+// BootstrapTokenHeader carries the one-time bootstrap token that authorizes
+// the break-glass reveal and claim endpoints from a non-loopback address.
+const BootstrapTokenHeader = "X-Breakglass-Token"
+
+// WithTrustedProxies declares the proxy networks (CIDR or single IP) whose
+// forwarding headers are honored when deriving the client address. Entries
+// that do not parse are ignored, which keeps the headers untrusted.
+func WithTrustedProxies(cidrs ...string) HandlersOption {
+	return func(h *Handlers) {
+		for _, c := range cidrs {
+			c = strings.TrimSpace(c)
+			if !strings.Contains(c, "/") {
+				if ip := net.ParseIP(c); ip != nil {
+					if ip.To4() != nil {
+						c += "/32"
+					} else {
+						c += "/128"
+					}
+				}
+			}
+			if _, n, err := net.ParseCIDR(c); err == nil {
+				h.trustedProxies = append(h.trustedProxies, n)
+			}
+		}
+	}
+}
+
+// WithBootstrapToken requires the given secret in [BootstrapTokenHeader] for
+// break-glass reveal and claim requests that do not come from a direct
+// loopback connection. The token must be delivered to the operator out of
+// band (local file or process log), never over HTTP.
+func WithBootstrapToken(token string) HandlersOption {
+	return func(h *Handlers) { h.bootstrapToken = token }
 }
 
 // HandlersOption configures [NewHandlers].
@@ -69,6 +119,7 @@ func NewHandlers(svc *Service, registry *oidcclient.Registry, opts ...HandlersOp
 		providers:         registry,
 		loginRedirectPath: "/api/v1/auth/login?provider=",
 		rate:              newRateLimiter(5, time.Minute), // 5 attempts/min/IP
+		accountRate:       newRateLimiter(5, time.Minute), // 5 attempts/min/account
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -153,13 +204,17 @@ func (h *Handlers) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST required")
 		return
 	}
-	if !h.rate.allow(clientIP(r)) {
+	if !h.rate.allow("ip:" + h.clientIP(r)) {
 		writeJSONError(w, http.StatusTooManyRequests, "rate_limited", "too many login attempts")
 		return
 	}
 	var req loginRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid_request", "invalid JSON")
+		return
+	}
+	if !h.accountRate.allow("acct:" + strings.ToLower(strings.TrimSpace(req.Email))) {
+		writeJSONError(w, http.StatusTooManyRequests, "rate_limited", "too many login attempts")
 		return
 	}
 	claims, err := h.svc.Authenticate(r.Context(), req.Email, req.Password)
@@ -190,7 +245,28 @@ func (h *Handlers) handleLogout(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// bootstrapAllowed reports whether the caller may use the break-glass reveal
+// and claim endpoints: a matching bootstrap token, or a direct loopback
+// connection that did not pass through a forwarding proxy.
+func (h *Handlers) bootstrapAllowed(r *http.Request) bool {
+	if h.bootstrapToken != "" {
+		got := r.Header.Get(BootstrapTokenHeader)
+		if subtle.ConstantTimeCompare([]byte(got), []byte(h.bootstrapToken)) == 1 {
+			return true
+		}
+	}
+	if r.Header.Get("X-Forwarded-For") != "" || r.Header.Get("X-Real-IP") != "" || r.Header.Get("Forwarded") != "" {
+		return false
+	}
+	ip := net.ParseIP(remoteHost(r))
+	return ip != nil && ip.IsLoopback()
+}
+
 func (h *Handlers) handleReveal(w http.ResponseWriter, r *http.Request) {
+	if !h.bootstrapAllowed(r) {
+		writeJSONError(w, http.StatusForbidden, "bootstrap_forbidden", "break-glass bootstrap is restricted to the local host")
+		return
+	}
 	rev, err := h.svc.Reveal(r.Context())
 	if err != nil {
 		switch {
@@ -220,6 +296,14 @@ func (h *Handlers) handleClaim(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
 		writeJSONError(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST required")
+		return
+	}
+	if !h.bootstrapAllowed(r) {
+		writeJSONError(w, http.StatusForbidden, "bootstrap_forbidden", "break-glass bootstrap is restricted to the local host")
+		return
+	}
+	if !h.rate.allow("ip:" + h.clientIP(r)) {
+		writeJSONError(w, http.StatusTooManyRequests, "rate_limited", "too many attempts")
 		return
 	}
 	var req claimRequest
@@ -298,19 +382,49 @@ func labelForProvider(kind, id string) string {
 	}
 }
 
-func clientIP(r *http.Request) string {
+func remoteHost(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+func (h *Handlers) isTrustedProxy(ip net.IP) bool {
+	for _, n := range h.trustedProxies {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// clientIP returns the connecting address. Forwarding headers are honored
+// only when the direct peer is a configured trusted proxy, and then the
+// right-most hop that is not itself a trusted proxy wins.
+func (h *Handlers) clientIP(r *http.Request) string {
+	remote := remoteHost(r)
+	peer := net.ParseIP(remote)
+	if peer == nil || !h.isTrustedProxy(peer) {
+		return remote
+	}
 	if xf := r.Header.Get("X-Forwarded-For"); xf != "" {
-		for i := 0; i < len(xf); i++ {
-			if xf[i] == ',' {
-				return xf[:i]
+		hops := strings.Split(xf, ",")
+		for i := len(hops) - 1; i >= 0; i-- {
+			hop := strings.TrimSpace(hops[i])
+			ip := net.ParseIP(hop)
+			if ip == nil {
+				return remote
+			}
+			if !h.isTrustedProxy(ip) {
+				return hop
 			}
 		}
-		return xf
 	}
-	if xr := r.Header.Get("X-Real-IP"); xr != "" {
+	if xr := strings.TrimSpace(r.Header.Get("X-Real-IP")); xr != "" && net.ParseIP(xr) != nil {
 		return xr
 	}
-	return r.RemoteAddr
+	return remote
 }
 
 // rateLimiter is a tiny in-memory token-bucket per key.
@@ -320,6 +434,10 @@ type rateLimiter struct {
 	window time.Duration
 	bucket map[string][]time.Time
 }
+
+// rateLimiterMaxKeys bounds the bucket map so spoofed or random keys cannot
+// grow memory without limit.
+const rateLimiterMaxKeys = 10000
 
 func newRateLimiter(max int, window time.Duration) *rateLimiter {
 	return &rateLimiter{max: max, window: window, bucket: make(map[string][]time.Time)}
@@ -333,6 +451,9 @@ func (rl *rateLimiter) allow(key string) bool {
 	defer rl.mu.Unlock()
 	now := time.Now()
 	cutoff := now.Add(-rl.window)
+	if _, known := rl.bucket[key]; !known && len(rl.bucket) >= rateLimiterMaxKeys {
+		rl.evictLocked(cutoff)
+	}
 	hits := rl.bucket[key]
 	pruned := hits[:0]
 	for _, t := range hits {
@@ -346,4 +467,27 @@ func (rl *rateLimiter) allow(key string) bool {
 	}
 	rl.bucket[key] = append(pruned, now)
 	return true
+}
+
+// evictLocked drops idle keys; if the map is still full it drops the key with
+// the oldest most-recent hit.
+func (rl *rateLimiter) evictLocked(cutoff time.Time) {
+	var oldestKey string
+	var oldest time.Time
+	for k, hits := range rl.bucket {
+		last := time.Time{}
+		if len(hits) > 0 {
+			last = hits[len(hits)-1]
+		}
+		if !last.After(cutoff) {
+			delete(rl.bucket, k)
+			continue
+		}
+		if oldestKey == "" || last.Before(oldest) {
+			oldestKey, oldest = k, last
+		}
+	}
+	if len(rl.bucket) >= rateLimiterMaxKeys && oldestKey != "" {
+		delete(rl.bucket, oldestKey)
+	}
 }

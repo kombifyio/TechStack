@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kombifyio/techstack/pkg/guardcompat"
 	"github.com/kombifyio/techstack/pkg/pairingtoken"
 	"github.com/kombifyio/techstack/pkg/workerauth"
 )
@@ -34,7 +35,7 @@ const (
 // capability. It is generous because a first boot can be delayed by image
 // pulls and provider queues, but it is finite: a provisioning attempt that was
 // abandoned days ago must not still be able to enrol a host.
-const enrolmentWindow = 72 * time.Hour
+const enrolmentWindow = guardcompat.BootstrapCapabilityTTL
 
 var (
 	// ErrEnrollmentSeedUnavailable means no derivation secret is configured.

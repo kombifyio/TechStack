@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -22,6 +23,10 @@ import (
 // member to the owner's homelab, and the Kombify Connect D10 link between a
 // Cloud subject and a Pocket ID identity. They sit behind the same Cloud
 // service-to-service authentication as the runtime summary and fail closed.
+// householdProjectionBudget bounds one owner-approved identity command round
+// trip to the node, independent of how long the caller waits.
+const householdProjectionBudget = 2 * time.Minute
+
 const (
 	householdProjectionPath = "/api/v1/internal/household/projection"
 	householdLinksPath      = "/api/v1/internal/household/links"
@@ -167,10 +172,22 @@ func (h householdHandlers) projection(e *httpx.Event) error {
 				"Project a household member on behalf of the homelab owner who invites or removes them.")
 			return
 		}
-		result, err := h.svc.Project(e.Request.Context(), household.ProjectionRequest{
+		// The identity command travels the agent channel and runs on the
+		// owner's node; it must not be cancelled midway because the caller
+		// stopped waiting. The projection keeps the request's values but not
+		// its cancellation, bounded by its own budget, and its outcome is
+		// logged so a lost answer can be traced.
+		projectCtx, cancelProject := context.WithTimeout(context.WithoutCancel(e.Request.Context()), householdProjectionBudget)
+		defer cancelProject()
+		started := time.Now()
+		result, err := h.svc.Project(projectCtx, household.ProjectionRequest{
 			HintTenant: org, OwnerSubject: body.OwnerSubject, Action: body.Action, Apps: apps,
 			Member: household.Member{Subject: body.Member.Subject, Email: body.Member.Email, DisplayName: body.Member.DisplayName},
 		})
+		logger.Default().Info("household_projection_outcome",
+			"request_id", e.Request.Header.Get("X-Request-ID"), "action", string(body.Action),
+			"status", string(result.Status), "failed", err != nil,
+			"caller_gone", e.Request.Context().Err() != nil, "duration_ms", time.Since(started).Milliseconds())
 		if errors.Is(err, household.ErrNodeUnreachable) {
 			// The node cannot take the command now. Techstack keeps no queue;
 			// Cloud holds the pending projection and re-sends it. The cause is

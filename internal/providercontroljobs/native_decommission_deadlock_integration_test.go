@@ -173,7 +173,7 @@ func openNativeDecommissionDeadlockDB(t *testing.T) *sql.DB {
 				t.Errorf("stop isolated embedded PostgreSQL: %v", stopErr)
 			}
 		})
-		dsn = embedded.DSN()
+		dsn = embedded.BootstrapDSN()
 	}
 	adminConfig, err := pgx.ParseConfig(dsn)
 	if err != nil {

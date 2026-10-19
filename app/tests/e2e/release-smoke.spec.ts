@@ -339,7 +339,7 @@ test.describe.serial("Authenticated Release Smoke", () => {
     ).toBeVisible();
     // The account section renders different fields per role and deployment
     // mode (SaaS vs self-hosted); asserting the literal email here was
-    // flaky across the TEST_ADMIN vs TEST_PRO_PLUS_USER candidate fallback
+    // flaky across the TEST_ADMIN vs TEST_PRO_USER candidate fallback
     // in techstack-test-users.ts. The sidebar email check above already
     // pinned the session - that is enough for the smoke contract.
 

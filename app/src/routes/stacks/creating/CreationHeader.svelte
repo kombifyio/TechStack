@@ -5,7 +5,8 @@
   import { TriangleAlert } from "@lucide/svelte";
 </script>
 
-<!-- Header with morphing text -->
+<!-- Header with morphing text. This is the page's one h1: the animated word
+     is decoration, so assistive technology reads a static sentence instead. -->
 <div class="min-w-0 text-center lg:text-left">
   <div
     class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 text-primary mb-4"
@@ -69,8 +70,9 @@
     {/if}
     <span class="text-sm font-medium">{creation.creationHeaderLabel}</span>
   </div>
-  <h3
+  <h1
     class="text-2xl font-semibold text-foreground mb-3 min-h-[3.5rem] leading-tight"
+    data-testid="creation-heading"
   >
     {#if creation.isComplete}
       {creation.completionTitle}
@@ -83,9 +85,13 @@
     {:else if creation.agentPairingWaiting}
       {tr("ui.stacksCreatingCreationProgress.runThePairingCommand")}
     {:else}
-      {tr("ui.stacksCreatingCreationProgress.pleaseWaitWhileWeRe")}
-      <span class="inline-flex whitespace-nowrap">
+      <span class="sr-only">{tr("creation.header.running")}</span>
+      <span aria-hidden="true">
+        {tr("ui.stacksCreatingCreationProgress.pleaseWaitWhileWeRe")}
+      </span>
+      <span class="inline-flex whitespace-nowrap" aria-hidden="true">
         <MorphingText
+          decorative
           texts={[
             tr("ui.stacksCreatingCreationProgress.morphCompleting"),
             tr("ui.stacksCreatingCreationProgress.morphValidating"),
@@ -98,7 +104,7 @@
         />
       </span>
     {/if}
-  </h3>
+  </h1>
   <p class="text-sm text-muted-foreground">
     {#if creation.waitingForManagedRuntime}
       {tr("ui.stacksCreatingCreationProgress.theNextManagedRuntimeCheck")}

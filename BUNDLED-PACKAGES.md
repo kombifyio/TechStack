@@ -7,16 +7,16 @@ ships, so versions and rows match this release.
 
 | Bundled package | Version | License in this distribution |
 | --- | --- | --- |
-| `internal/gocommon` | `v0.8.0` | Apache-2.0; see `internal/gocommon/LICENSE` |
-| `internal/selfhostcontracts` | `v0.2.7` | Apache-2.0; see `internal/selfhostcontracts/LICENSE` |
-| `@kombiverselabs/ai-sdk` | `0.12.11` | MIT; see `BUNDLED-MIT-LICENSE.txt` |
+| `internal/gocommon` | `v0.8.2` | Apache-2.0; see `internal/gocommon/LICENSE` |
+| `internal/selfhostcontracts` | `v0.2.8` | Apache-2.0; see `internal/selfhostcontracts/LICENSE` |
+| `@kombiverselabs/ai-sdk` | `0.13.7` | MIT; see `BUNDLED-MIT-LICENSE.txt` |
 | `@kombiverselabs/cloud-notifications` | `0.3.120` | MIT; see `BUNDLED-MIT-LICENSE.txt` |
-| `@kombiverselabs/design` | `0.10.543` | No license field; see the note below |
-| `@kombiverselabs/embed` | `0.12.11` | MIT; see `BUNDLED-MIT-LICENSE.txt` |
-| `@kombiverselabs/execution-contracts` | `0.12.11` | MIT; see `BUNDLED-MIT-LICENSE.txt` |
-| `@kombiverselabs/onboarding-core` | `0.10.543` | MIT; see `BUNDLED-MIT-LICENSE.txt` |
-| `@kombiverselabs/speechkit-voiceagent-client` | `0.76.4` | Apache-2.0; see `package/LICENSE` inside the tarball |
-| `@kombiverselabs/ui` | `0.10.543` | MIT; see `BUNDLED-MIT-LICENSE.txt` |
+| `@kombiverselabs/design` | `0.11.1` | No license field; see the note below |
+| `@kombiverselabs/embed` | `0.13.7` | MIT; see `BUNDLED-MIT-LICENSE.txt` |
+| `@kombiverselabs/execution-contracts` | `0.13.7` | MIT; see `BUNDLED-MIT-LICENSE.txt` |
+| `@kombiverselabs/onboarding-core` | `0.11.1` | MIT; see `BUNDLED-MIT-LICENSE.txt` |
+| `@kombiverselabs/speechkit-voiceagent-client` | `0.77.7` | Apache-2.0; see `package/LICENSE` inside the tarball |
+| `@kombiverselabs/ui` | `0.11.1` | MIT; see `BUNDLED-MIT-LICENSE.txt` |
 
 The MIT packages declare `MIT` in their bundled `package.json` and ship no
 license file; their terms are in `BUNDLED-MIT-LICENSE.txt`. A package whose

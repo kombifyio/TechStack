@@ -70,6 +70,7 @@ func (c *Client) post(ctx context.Context, owner, route string, fields map[strin
 	}
 	token, err := servicecall.IssueToken(servicecall.Config{
 		ServiceName: c.serviceID, Secret: c.secret, TokenTTL: tokenTTL,
+		SigningKey: c.signingKey, SigningKeyID: c.signingKeyID,
 	}, walletTarget, &servicecall.OnBehalfOf{Sub: owner}, uuid.NewString())
 	if err != nil {
 		return nil, 0, errUnavailable("service_token")

@@ -1,6 +1,7 @@
 package localdb
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"net"
@@ -31,9 +32,10 @@ const (
 )
 
 type EmbeddedPostgres struct {
-	db      *embeddedpostgres.EmbeddedPostgres
-	logFile *os.File
-	dsn     string
+	db       *embeddedpostgres.EmbeddedPostgres
+	logFile  *os.File
+	adminDSN string
+	dsn      string
 }
 
 func EnabledFromEnv() bool {
@@ -120,18 +122,38 @@ func StartEmbeddedPostgres(dataDir string) (*EmbeddedPostgres, error) {
 		return nil, fmt.Errorf("start embedded postgres: %w", err)
 	}
 
-	return &EmbeddedPostgres{
-		db:      pg,
-		logFile: logFile,
-		dsn:     fmt.Sprintf("postgres://%s:%s@127.0.0.1:%d/%s?sslmode=disable", embeddedUsername, embeddedPassword, port, embeddedDatabase),
-	}, nil
+	started := &EmbeddedPostgres{
+		db:       pg,
+		logFile:  logFile,
+		adminDSN: fmt.Sprintf("postgres://%s:%s@127.0.0.1:%d/%s?sslmode=disable", embeddedUsername, embeddedPassword, port, embeddedDatabase),
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), runtimeOwnerSetupTimeout)
+	defer cancel()
+	dsn, err := ensureRuntimeOwner(ctx, started.adminDSN, port)
+	if err != nil {
+		_ = started.Stop()
+		return nil, fmt.Errorf("prepare embedded postgres runtime owner: %w", err)
+	}
+	started.dsn = dsn
+	return started, nil
 }
 
+// DSN is the runtime connection: the NOSUPERUSER NOBYPASSRLS role that owns
+// the database and runs migrations and the application.
 func (pg *EmbeddedPostgres) DSN() string {
 	if pg == nil {
 		return ""
 	}
 	return pg.dsn
+}
+
+// BootstrapDSN is the embedded server's bootstrap superuser. It exists only for
+// local role setup and disposable test harnesses; never hand it to the runtime.
+func (pg *EmbeddedPostgres) BootstrapDSN() string {
+	if pg == nil {
+		return ""
+	}
+	return pg.adminDSN
 }
 
 func (pg *EmbeddedPostgres) Stop() error {

@@ -30,9 +30,9 @@ export interface ClientBootstrap {
   kombifyEdition: string;
   version: string;
   publicOrigin: string;
-  /** "preview" on the Nightly deployment, otherwise "stable". */
+  /** "preview" on the Preview deployment, otherwise "stable". */
   releaseChannel: string;
-  /** Where the Nightly badge links back to; empty on stable. */
+  /** Where the Preview badge links back to; empty on stable. */
   stableOrigin: string;
   /** Public context.dev Logo Link client id. Empty disables brand logos. */
   contextDevLogolinkId: string;

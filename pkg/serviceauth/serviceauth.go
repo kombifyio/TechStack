@@ -1,5 +1,5 @@
 // Package serviceauth applies the per-caller Ed25519 service identity
-// (SERVICE-TO-SERVICE-AUTH-STANDARD) to every servicecall.Config Techstack
+// (AUTHENTICATION.md §8) to every servicecall.Config Techstack
 // builds, so one environment decides how the whole process signs and verifies.
 //
 // The keys come from SERVICE_AUTH_ED25519_PRIVATE_KEY (this process as a

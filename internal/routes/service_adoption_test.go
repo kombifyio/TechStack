@@ -190,19 +190,12 @@ func TestApplicationAdoptionRequiresExactRetainedOwnerApprovedSource(t *testing.
 	body["plan_digest"] = evidence.PlanDigest
 	checker := &fakeInventoryRelationshipChecker{allowed: true}
 	h.policy = NewInventoryFGAPolicy(checker)
-	beforeDenied := orch.requests[len(orch.requests)-1].DurableJobID
 	if code := call(h.executeAdoption, "owner-1", "execute", inspect.DurableJobID, body); code != http.StatusForbidden {
 		t.Fatalf("missing operate authority admitted: %d", code)
 	}
 	signedOperate = true
+	// The owner of the server needs no per-server relationship grant.
 	checker.allowed = false
-	if code := call(h.executeAdoption, "owner-1", "execute", inspect.DurableJobID, body); code != http.StatusForbidden {
-		t.Fatalf("denied server relationship admitted: %d", code)
-	}
-	if orch.requests[len(orch.requests)-1].DurableJobID != beforeDenied {
-		t.Fatal("denied adoption enqueued a host mutation")
-	}
-	checker.allowed = true
 	if code := call(h.executeAdoption, "owner-1", "execute", inspect.DurableJobID, body); code != http.StatusAccepted {
 		t.Fatalf("approved execute status=%d", code)
 	}

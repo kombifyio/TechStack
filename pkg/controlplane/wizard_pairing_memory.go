@@ -59,7 +59,10 @@ func (s *MemoryStore) reservePairingJob(run WizardRun, requested UpsertJobReques
 		}
 		existing = stored
 	}
-	if existing.ID != run.ID || existing.RequestSHA256 != run.RequestSHA256 || existing.StackID != run.StackID || existing.NodeID != run.NodeID {
+	// A reservation is written before the Stack exists, so it carries no
+	// Stack/Node yet; the first preparation binds them.
+	unbound := existing.StackID == "" && existing.NodeID == ""
+	if existing.ID != run.ID || existing.RequestSHA256 != run.RequestSHA256 || (!unbound && (existing.StackID != run.StackID || existing.NodeID != run.NodeID)) {
 		return "", ErrConflict
 	}
 	if existing.PairingJobID != "" {
@@ -73,6 +76,7 @@ func (s *MemoryStore) reservePairingJob(run WizardRun, requested UpsertJobReques
 		ScheduledFor: now, CreatedAt: now, UpdatedAt: now,
 	}
 	bound := s.wizardRuns[existing.ID]
+	bound.StackID, bound.NodeID = run.StackID, run.NodeID
 	bound.PairingJobID = requested.ID
 	bound.UpdatedAt = now
 	s.wizardRuns[existing.ID] = bound

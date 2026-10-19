@@ -365,3 +365,27 @@ func TestSettledCommandKeepsNoSealedDelivery(t *testing.T) {
 		t.Fatalf("settled command still stores the sealed delivery: %s", stored)
 	}
 }
+
+// A Guard that does not speak the binding contract stays observe-only: its
+// read-only work still flows, a mutating command is failed at dispatch instead
+// of being sent unbound, and no later poll hands that command out.
+func TestGuardWithoutBindingContractIsNeverDispatchedMutatingWork(t *testing.T) {
+	hub, database := openGuardHub(t)
+	mutating, readOnly := mutatingCommand("cmd-mixed-mutating"), validHubCommand("cmd-mixed-read")
+	queueCommand(t, database, mutating)
+	queueCommand(t, database, readOnly)
+
+	offer, found, err := hub.PollBoundForTenant(t.Context(), PollOptions{
+		TenantID: integrationTenant, AgentID: integrationAgent, CurrentGeneration: 1,
+		Capabilities: []string{stackkitcommand.WorkspaceInstanceCapability, stackkitcommand.ExpectedPlanHashCapability},
+	})
+	if err != nil || !found || offer.Command.CommandId != readOnly.CommandId {
+		t.Fatalf("pre-contract Guard offer = %+v, %v, %v", offer, found, err)
+	}
+	if state := commandState(t, database, mutating.CommandId); state != "failed" {
+		t.Fatalf("mutating command state = %s, want failed before any dispatch", state)
+	}
+	if offer = pollBound(t, hub, 1); offer != nil && offer.Command.CommandId == mutating.CommandId {
+		t.Fatal("a refused mutating command was dispatched later")
+	}
+}

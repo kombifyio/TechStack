@@ -38,7 +38,24 @@ type Store interface {
 	Repairs(ctx context.Context, tenantID, workerID string, limit int) ([]Repair, error)
 	// GetAutoRepair returns the owner's approval, or nil when none was given.
 	GetAutoRepair(ctx context.Context, tenantID, workerID string) (*AutoRepairPolicy, error)
-	SetAutoRepair(ctx context.Context, policy AutoRepairPolicy) error
+	// SetAutoRepair registers the approval as the next version of the Guard's
+	// repair policy, supersedes the previous version, and returns the stored
+	// approval with its policy ID and version.
+	SetAutoRepair(ctx context.Context, policy AutoRepairPolicy) (*AutoRepairPolicy, error)
+	// AcceptLocalOperation atomically decides and records one revision of
+	// local-policy operation evidence under the same per-server lock as
+	// AdmitRepair: it reads the operation's record, the named policy version
+	// and the server's recent repairs, asks decide, and stores what decide
+	// returns. A nil record from decide is an identical repeat and stores
+	// nothing; a denial leaves nothing behind.
+	AcceptLocalOperation(ctx context.Context, tenantID, workerID string, ref LocalRef, decide func(LocalState) (*Repair, error)) error
+}
+
+// LocalRef names the operation and the policy version local evidence refers to.
+type LocalRef struct {
+	OperationID   string
+	PolicyID      string
+	PolicyVersion int64
 }
 
 // ReportWrite is one accepted report, ready to persist.

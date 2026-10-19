@@ -951,6 +951,7 @@ static async Task WindowsLocalWalletDeviceRevealBoundary(string[] arguments)
             start.Environment["TECHSTACK_ENV"] = "local";
             start.Environment["KOMBIFY_EDITION"] = "selfhost-oss";
             start.Environment["TECHSTACK_EMBEDDED_POSTGRES"] = "1";
+            start.Environment["TECHSTACK_SHUTDOWN_ON_STDIN_CLOSE"] = "1";
             start.Environment["TECHSTACK_EMBEDDED_POSTGRES_PORT"] = postgresPort.ToString();
             start.Environment["TECHSTACK_EMBEDDED_POSTGRES_BUNDLE_DIR"] = ownBundle;
             start.Environment["TECHSTACK_V2_SESSION_SECRET"] = signing;
@@ -960,7 +961,7 @@ static async Task WindowsLocalWalletDeviceRevealBoundary(string[] arguments)
             start.Environment["TECHSTACK_LOCAL_DEVICE_TOKEN"] = device;
             start.Environment["TECHSTACK_CLIENT_STATE_DIR"] = state;
             start.Environment["TECHSTACK_ALLOW_UNSIGNED_WORKER_TOKEN"] = "1";
-            runtime.Start(start, _ => { });
+            runtime.Start(start, _ => { }, shutdownOnInputClose: true);
             using var readiness = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false }) { Timeout = TimeSpan.FromSeconds(2) };
             var deadline = DateTime.UtcNow.AddSeconds(120);
             while (DateTime.UtcNow < deadline)
@@ -1062,8 +1063,10 @@ static async Task WindowsLocalWalletDeviceRevealBoundary(string[] arguments)
                 throw new InvalidOperationException("Wallet disclosure audit does not match confirmed/cancelled effects.");
         }
         await AssertAudit();
-        StopWalletProbe(runtime, dataDirectory);
+        runtime.Stop();
         await WalletProbeClosed(origin);
+        if (File.Exists(Path.Combine(dataDirectory, "postgres", "data", "postmaster.pid")))
+            throw new InvalidOperationException("Normal desktop shutdown left embedded PostgreSQL running.");
         await Start();
         current = await Authenticate();
         using var retained = await Api(HttpMethod.Get, "/api/v1/wallet");

@@ -1,6 +1,6 @@
 export const ar: Record<string, string> = {
-  "ui.releaseChannel.badge": "Nightly",
-  "ui.releaseChannel.hint": "أنت على قناة Nightly: أحدث التغييرات على بياناتك الفعلية.",
+  "ui.releaseChannel.badge": "Preview",
+  "ui.releaseChannel.hint": "أنت على قناة Preview: أحدث التغييرات على بياناتك الفعلية.",
   "ui.releaseChannel.backToStable": "العودة إلى Stable",
   "ui.clientLocal.bootstrapPassword": "كلمة مرور التهيئة",
   "ui.clientLocal.bootstrapGuidance":
@@ -22,8 +22,7 @@ export const ar: Record<string, string> = {
   "ui.services.stackIt": "Stack it",
   "ui.services.approveStackIt": "الموافقة على هذا التبنّي",
   "ui.services.releaseBinding": "إلغاء إدارة دورة الحياة",
-  "ui.services.adoptionScope":
-    "راجع حاوية Home Assistant الحالية لإدارة دورة حياتها في مكانها. لا يدعم هذا الملف تطبيقات أخرى أو النقل إلى Node آخر.",
+  "ui.services.adoptionScope": "راجع حاوية Home Assistant الحالية لإدارة دورة حياتها في مكانها. لا يدعم هذا الملف تطبيقات أخرى أو النقل إلى خادم آخر.",
   "ui.services.adoptionSource": "الحاوية الحالية",
   "ui.services.adoptionData": "الإعدادات المحفوظة",
   "ui.services.adoptionPreserves":
@@ -109,7 +108,7 @@ export const ar: Record<string, string> = {
     "اربط ملف kombify شخصيًا عبر نافذة تسجيل الدخول الآمنة. ويمكنك أيضًا المتابعة بمستخدم محلي.",
   "wizard.login.profile.existing": "تسجيل دخولك الحالي ينتقل معك.",
   "wizard.login.profile.existingHint":
-    "ينضم هذا الـ Node إلى Homelab لديك. يبقى المالك وإعدادات تسجيل الدخول كما هي.",
+    "ينضم هذا الخادم إلى Homelab لديك. يبقى المالك وإعدادات تسجيل الدخول كما هي.",
   "wizard.login.passkey.title": "Pocket ID passkey",
   "wizard.login.passkey.label": "Passkey",
   "wizard.login.passkey.recommended": "موصى به",
@@ -216,7 +215,7 @@ export const ar: Record<string, string> = {
   "wizard.access.details.publication": "النشر",
   "wizard.access.connection.homeTitle": "متاح في إعداد منزلك",
   "wizard.access.connection.homeBody":
-    "يُبقي هذا الاختيار المسار ضمن الوصول الذي يدعمه الـ Node المحدد. ولا يَعِد بشبكة محلية لـ Node سحابي.",
+    "يُبقي هذا الاختيار المسار ضمن الوصول الذي يدعمه الخادم المحدد. ولا يَعِد بشبكة محلية لخادم سحابي.",
   "wizard.access.connection.anywhereTitle": "تم تسجيل نية إتاحة الوصول",
   "wizard.access.connection.anywhereBody":
     "قد يستخدم الطرح فقط مسارًا يقبله وقت التشغيل المحدد. يظهر العميل الخاص أو المسار المُدار عندما تصبح هذه القدرة معروفة.",
@@ -299,14 +298,14 @@ export const ar: Record<string, string> = {
   "wizard.tip.nodeJoin":
     "ينضم الجهاز إلى هذا الـ StackKit ويمنحه قدرة حوسبة أو تخزينًا أكبر. يبقى الوصول والأشخاص وتسجيل الدخول كما هي.",
   "wizard.tip.nodeFound":
-    "يبدأ StackKit منفصلًا يكون هذا الجهاز الـ Node الرئيسي فيه، مثل موقع ثانٍ أو جزء سحابي من Homelab لديك.",
+    "يبدأ StackKit منفصلًا يكون هذا الجهاز الخادم الرئيسي فيه، مثل موقع ثانٍ أو جزء سحابي من Homelab لديك.",
   "wizard.tip.nodeSubstrate":
     "يسجّل مضيف Proxmox نفسه. عندها يستطيع kombify إنشاء الأجهزة الافتراضية عليه وإدارتها لهذا الـ Homelab.",
   "wizard.tip.foundationBasement":
     "للأجهزة التي تتحكم بها: في المنزل، أو في مكتبك، أو خادم تستأجره بنفسك.",
   "wizard.tip.foundationCloud": "لخادم افتراضي يوفّره kombify ويديره لك.",
   "wizard.tip.foundationLocked":
-    "الـ Node الذي ينضم إلى StackKit يستخدم دائمًا أساس ذلك الـ StackKit، لذلك لا شيء تختاره هنا.",
+    "الخادم الذي ينضم إلى StackKit يستخدم دائمًا أساس ذلك الـ StackKit، لذلك لا شيء تختاره هنا.",
   "wizard.tip.roleFoundation":
     "أول Node في الـ StackKit وأكثرها مركزية. يشغّل الخدمات الأساسية التي تعتمد عليها بقية الـ Nodes.",
   "wizard.tip.roleWorker":
@@ -320,12 +319,11 @@ export const ar: Record<string, string> = {
   "language.switch": "اللغة",
   "settings.language.description":
     "لغة هذه الواجهة على هذا الجهاز. إلى أن تختار لغة، تُستخدم لغة متصفحك، وإلا فالإنجليزية.",
-  "ui.dashboard.nodes": "Nodes",
+  "ui.dashboard.nodes": "الخوادم",
   "ui.dashboard.devicesPeople": "الأجهزة والأشخاص",
   "ui.dashboard.last24h": "آخر 24 ساعة",
   "ui.worker.readyLead": "جاهز!",
-  "ui.worker.readyBody":
-    "جميع العمال المطلوبين متصلون. يمكنك الآن نشر Homelab.",
+  "ui.worker.readyBody": "جميع الخوادم المطلوبة متصلة. يمكنك الآن نشر Homelab.",
   "ui.footer.product": "المنتج",
   "ui.footer.company": "الشركة",
   "ui.footer.legal": "قانوني",
@@ -339,20 +337,18 @@ export const ar: Record<string, string> = {
   "ui.dashboard.sections": "أقسام Homelab",
   "ui.dashboard.failureDetails": "التفاصيل",
   "ui.dashboard.hideFailureDetails": "إخفاء التفاصيل",
-  "ui.dashboard.inventoryUnavailable":
-    "حالة Node والخدمات المعتمدة غير متاحة. بيانات القياس المحفوظة أدناه للتشخيص ولا تُعامل كجرد فارغ.",
-  "ui.dashboard.noNodes": "لا توجد Nodes مسجلة لهذا الـ Homelab بعد.",
-  "ui.custody.explainer":
-    "لا تزال هذه العقود قيد الحيازة وقد تستمر فواتيرها، لكن لا توجد آلة تدعمها. لا تُعرض كـ Nodes.",
+  "ui.dashboard.inventoryUnavailable": "تعذّرت قراءة الحالة الحالية لخوادمك وخدماتك. القياس عن بُعد المحفوظ أدناه للتشخيص فقط ولا يعني أن Homelab فارغ.",
+  "ui.dashboard.noNodes": "لا توجد خوادم مسجلة لهذا الـ Homelab بعد.",
+  "ui.custody.explainer": "لا تزال هذه العقود قيد الحيازة وقد تستمر فواتيرها، لكن لا توجد آلة تدعمها. لا تُعرض كخوادم.",
   "ui.custody.lastKnownAddress": "آخر عنوان معروف؛ الآلة لم تعد موجودة",
   "ui.dashboard.service.noAddress":
     "لم يُسجَّل بعد أي عنوان يمكن الوصول إليه لهذه الخدمة.",
   "ui.dashboard.service.openApp": "فتح التطبيق",
   "ui.dashboard.service.actionsAndLogs": "الإجراءات والسجلات في صفحة الخدمات",
-  "ui.node.precheckFailed": "فشل الفحص المسبق للـ Node",
-  "ui.node.noTelemetry": "بيانات القياس الحالية غير متاحة لهذه الـ Node.",
-  "ui.node.openDetails": "فتح تفاصيل الـ Node",
-  "ui.node.noApps": "لم يُبلَّغ عن أي تطبيقات على هذه الـ Node بعد.",
+  "ui.node.precheckFailed": "فشل الفحص المسبق للخادم",
+  "ui.node.noTelemetry": "بيانات القياس الحالية غير متاحة لهذا الخادم.",
+  "ui.node.openDetails": "فتح تفاصيل الخادم",
+  "ui.node.noApps": "لم يُبلَّغ عن أي تطبيقات على هذا الخادم بعد.",
   "common.loadingShort": "جارٍ التحميل…",
   "ui.dashboard.filterDevicesPeople": "تصفية الأجهزة والأشخاص",
   "ui.dashboard.people": "الأشخاص",
@@ -360,11 +356,11 @@ export const ar: Record<string, string> = {
   "ui.dashboard.devices": "الأجهزة",
   "ui.dashboard.loadingDevicesPeople": "جارٍ تحميل الأجهزة والأشخاص…",
   "ui.dashboard.eventHistoryUnavailable": "سجل الأحداث غير متاح.",
-  "ui.dashboard.servicesOnNode": "الخدمات على هذه الـ Node",
+  "ui.dashboard.servicesOnNode": "الخدمات على هذا الخادم",
   "ui.worker.statusUnavailable": "حالة الاتصال غير متاحة",
   "ui.worker.connect": "ربط عامل",
-  "ui.worker.connectNodes": "اربط Nodes الخاصة بك بهذا الـ Homelab",
-  "ui.worker.approved": "العمال المعتمدون:",
+  "ui.worker.connectNodes": "اربط خوادمك بهذا الـ Homelab",
+  "ui.worker.approved": "الخوادم المعتمدة:",
   "ui.worker.unverified": "الاتصال غير موثّق",
   "ui.worker.startingRollout": "جارٍ بدء الطرح...",
   "ui.worker.deployHomelab": "نشر Homelab",
@@ -384,7 +380,7 @@ export const ar: Record<string, string> = {
   "ui.substrate.title": "ربط مشرف افتراضي Proxmox",
   "ui.substrate.runCommand":
     "شغّل أمر الاتصال في صدفة مضيف Proxmox بصفة مسؤول. يبلّغ الـ Guard الخاص به عن الحالة الصحية إلى Homelab عبر اتصال صادر.",
-  "ui.substrate.viewNodes": "عرض الـ Nodes المتصلة",
+  "ui.substrate.viewNodes": "عرض الخوادم المتصلة",
   "ui.shortcuts.waiting": "في انتظار مفتاح:",
   "ui.recreate.title": "إعادة إنشاء الخادم",
   "ui.recreate.checking": "جارٍ التحقق من تنظيف المزوّد النهائي…",
@@ -434,23 +430,19 @@ export const ar: Record<string, string> = {
   "ui.cloudLink.incomplete": "لم يكتمل الربط",
   "ui.homelab.rolloutProgress": "تقدم طرح بيئة التشغيل",
   "ui.homelab.runtimeRollout": "طرح بيئة التشغيل",
-  "ui.homelab.newNode": "Node جديدة",
+  "ui.homelab.newNode": "إضافة خادم",
   "ui.homelab.heartbeat": "نبضات الحياة والمقاييس",
   "ui.homelab.loading": "جارٍ تحميل Homelab",
   "ui.homelab.loadingOperations": "جارٍ تحميل عمليات Homelab",
   "ui.homelab.operations": "عمليات Homelab",
-  "ui.homelab.reconfirming":
-    "تُعرض آخر حالة معروفة أثناء إعادة تأكيدها. تُتاح إجراءات الـ Node عند اكتمال ذلك.",
-  "ui.homelab.evidenceStale": "دليل العمليات قديم",
-  "ui.homelab.nodeConnected": "الـ Node لديك متصلة. تابع طرح StackKit.",
-  "ui.homelab.reviewHint":
-    "راجع الـ StackKit المحدد والخدمات وموضع الـ Node، ثم استخدم مراجعة + بدء. فشل تطبيق واحد لا يمنع مراجعة بقية هذا النشر أو بدأه مجددًا.",
-  "ui.homelab.noInventory":
-    "لم يُبلَّغ بعد عن أي جرد لـ Node أو خدمات قابلة للإدارة.",
-  "ui.homelab.partialRollout": "بيئة تشغيل مُدارة بطرح جزئي",
+  "ui.homelab.reconfirming": "تُعرض آخر حالة معروفة أثناء إعادة تأكيدها. تُتاح إجراءات الخادم عند اكتمال ذلك.",
+  "ui.homelab.evidenceStale": "تُعرض آخر حالة معروفة",
+  "ui.homelab.nodeConnected": "الخادم لديك متصل. تابع طرح StackKit.",
+  "ui.homelab.reviewHint": "راجع الـ StackKit المحدد والخدمات وموضع الخادم، ثم استخدم مراجعة + بدء. فشل تطبيق واحد لا يمنع مراجعة بقية Homelab هذا أو بدأه مجددًا.",
+  "ui.homelab.noInventory": "لم يُبلَّغ بعد عن أي جرد للخوادم أو خدمات قابلة للإدارة.",
+  "ui.homelab.partialRollout": "خادم مُدار بإعداد غير مكتمل",
   "ui.homelab.start": "ابدأ Homelab الخاص بك",
-  "ui.homelab.evidenceStaleBody":
-    "تبقى آخر لقطة موثّقة ظاهرة، لكن تعديلات الـ Node معطلة إلى أن ينجح التحديث.",
+  "ui.homelab.evidenceStaleBody": "تعذّر إكمال آخر فحص. تتوقف الإجراءات التي تغيّر شيئًا مؤقتًا حتى ينجح.",
   "ui.homelab.startHint": "ابدأ بالمعالج أو استورد مواصفات StackKit موجودة.",
   "ui.homelab.getStarted": "ابدأ الآن",
   "wizard.creation.preferenceOnly":
@@ -584,9 +576,8 @@ export const ar: Record<string, string> = {
     "تعذّر فتح إعدادك. اختياراتك المحفوظة باقية. حاول مرة أخرى أو استكشف أولًا.",
   "onboarding.ui.continue": "خطوتك التالية",
   "hostBaseline.title": "الخدمات والمنافذ الحالية",
-  "hostBaseline.preserve":
-    "يترك فحص الجرد هذا الخدمات والبيانات الحالية دون تغيير. راجع هذه الـ Node قبل إضافة StackKit.",
-  "hostBaseline.loading": "جارٍ قراءة جرد الـ Node…",
+  "hostBaseline.preserve": "يترك فحص الجرد هذا الخدمات والبيانات الحالية دون تغيير. راجع هذا الخادم قبل إضافة StackKit.",
+  "hostBaseline.loading": "جارٍ قراءة جرد الخادم…",
   "hostBaseline.current": "تم استلام جرد المستمعين الحالي",
   "hostBaseline.incomplete":
     "جرد المستمعين غير مكتمل أو قديم. لم يتم التحقق من توفر المنافذ بعد.",
@@ -595,8 +586,7 @@ export const ar: Record<string, string> = {
   "hostBaseline.existing": "مستمع موجود",
   "hostBaseline.noListeners":
     "لم يُبلَّغ عن أي مستمعين في النطاق الملاحَظ. قد تظل التطبيقات المتوقفة ومساحات الأسماء الأخرى تحجز ارتباطات.",
-  "hostBaseline.recheck":
-    "قبل التنفيذ، يعيد Techstack وStackKits فحص الارتباطات المطلوبة. يحتاج التعارض إلى تغيير إعداد مدعوم أو Node أخرى أو ترحيل تمت مراجعته؛ والمنفذ المفتوح لا يثبت إمكانية الوصول العام.",
+  "hostBaseline.recheck": "قبل التنفيذ، يعيد Techstack وStackKits فحص الارتباطات المطلوبة. يحتاج التعارض إلى تغيير إعداد مدعوم أو خادم آخر أو ترحيل تمت مراجعته؛ والمنفذ المفتوح لا يثبت إمكانية الوصول العام.",
   "hostBaseline.refresh": "تحديث الجرد",
   "hostBaseline.review": "مراجعة جميع المنافذ والخدمات",
   "wizard.smartHome.applianceRetained":
@@ -740,31 +730,23 @@ export const ar: Record<string, string> = {
   "onboarding.techstack_platform.techstack_configure_intent.cta": "فتح المعالج",
   "onboarding.techstack_platform.techstack_deploy_stackkit.title":
     "انشر StackKit الخاص بك",
-  "onboarding.techstack_platform.techstack_deploy_stackkit.body":
-    "أكّد الخطة ودع kombify ينشر الـ StackKit على Homelab الخاص بك. تُوضع علامة على هذه الخطوة تلقائيًا بمجرد وجود النشر.",
-  "onboarding.techstack_platform.techstack_deploy_stackkit.cta": "متابعة النشر",
-  "onboarding.techstack_platform.techstack_add_server.title": "إضافة Node",
-  "onboarding.techstack_platform.techstack_add_server.body":
-    "اربط Node تملكها، أو دع kombify يشغّل واحدة لك. تحتاج خدماتك إلى مكان تعيش فيه.",
-  "onboarding.techstack_platform.techstack_add_server.cta": "إضافة Node",
+  "onboarding.techstack_platform.techstack_deploy_stackkit.body": "أكّد الخطة ودع kombify ينشر الـ StackKit على Homelab الخاص بك. تُوضع علامة على هذه الخطوة تلقائيًا بمجرد إعداد Homelab.",
+  "onboarding.techstack_platform.techstack_deploy_stackkit.cta": "متابعة الإعداد",
+  "onboarding.techstack_platform.techstack_add_server.title": "إضافة خادم",
+  "onboarding.techstack_platform.techstack_add_server.body": "اربط خادمًا تملكه، أو دع kombify يشغّل خادمًا لك. تحتاج خدماتك إلى مكان تعيش فيه.",
+  "onboarding.techstack_platform.techstack_add_server.cta": "إضافة خادم",
   "onboarding.techstack_platform.techstack_deploy_service.title":
     "افتح أول خدمة لك",
   "onboarding.techstack_platform.techstack_deploy_service.body":
     "بمجرد تشغيل خدمة يمكنك الوصول إليها من قائمة الخدمات. هذا هو الهدف من كل ذلك.",
   "onboarding.techstack_platform.techstack_deploy_service.cta":
     "الانتقال إلى الخدمات",
-  "onboarding.denied.policy_selfhost_byos.title":
-    "الـ Nodes التي يديرها kombify ميزة في Cloud",
-  "onboarding.denied.policy_selfhost_byos.body":
-    "يعمل هذا التثبيت بالاستضافة الذاتية، لذلك لا يجهّز kombify Nodes له. اربط Node تملكها ويعمل الباقي بالطريقة نفسها.",
-  "onboarding.denied.policy_selfhost_byos.next_step":
-    "اربط Node تشغّلها بالفعل.",
-  "onboarding.denied.required_feature_disabled.title":
-    "الـ Nodes المُدارة غير مفعّلة لهذا الحساب",
-  "onboarding.denied.required_feature_disabled.body":
-    "هذا الحساب غير مخوّل بعد باستخدام Nodes التي يديرها kombify. لا يزال بإمكانك ربط Node تملكها.",
-  "onboarding.denied.required_feature_disabled.next_step":
-    "اربط Node خاصة بك، أو اطلب من دعم kombify تفعيل بيئة التشغيل المُدارة.",
+  "onboarding.denied.policy_selfhost_byos.title": "الخوادم التي يديرها kombify ميزة في Cloud",
+  "onboarding.denied.policy_selfhost_byos.body": "يعمل هذا التثبيت بالاستضافة الذاتية، لذلك لا يجهّز kombify خوادم له. اربط خادمًا تملكه ويعمل الباقي بالطريقة نفسها.",
+  "onboarding.denied.policy_selfhost_byos.next_step": "اربط خادمًا تشغّله بالفعل.",
+  "onboarding.denied.required_feature_disabled.title": "الخوادم المُدارة غير مفعّلة لهذا الحساب",
+  "onboarding.denied.required_feature_disabled.body": "هذا الحساب غير مخوّل بعد باستخدام الخوادم التي يديرها kombify. لا يزال بإمكانك ربط خادم تملكه.",
+  "onboarding.denied.required_feature_disabled.next_step": "اربط خادمك الخاص، أو اطلب من دعم kombify تفعيل بيئة التشغيل المُدارة.",
   "common.loading": "جارٍ التحميل...",
   "common.error": "خطأ",
   "common.save": "حفظ",
@@ -826,7 +808,7 @@ export const ar: Record<string, string> = {
   "wizard.selfDisclosure.motivation.family": "شيء لعائلتي",
   "wizard.selfDisclosure.motivation.projects": "العمل أو المشاريع الجانبية",
   "wizard.step.goals": "الأهداف",
-  "wizard.step.server": "Node",
+  "wizard.step.server": "الخادم",
   "wizard.step.access": "الوصول",
   "wizard.step.users": "المستخدمون",
   "wizard.step.login": "تسجيل الدخول",
@@ -848,23 +830,23 @@ export const ar: Record<string, string> = {
   "wizard.hints.evaluating": "جارٍ تشكيل أفضل مسار مدعوم لك…",
   "wizard.goals.smartHome.title": "المنزل الذكي",
   "wizard.goals.smartHome.description":
-    "Home Assistant على Node الخاصة بك: أتمتة تواصل العمل حتى عند انقطاع الإنترنت.",
+    "Home Assistant على خادمك الخاص: أتمتة تواصل العمل حتى عند انقطاع الإنترنت.",
   "wizard.goals.smartHome.help":
-    "فعّل هذا ليعمل Home Assistant في المنزل، ويتحكم محليًا بالإضاءة والتدفئة والحساسات بدلًا من سحابة الشركة المصنّعة. أنت تقرر هل يُستخدم مفتاح Zigbee أو Z-Wave الموصول بالـ Node، وهل تُكتشف الأجهزة على شبكتك تلقائيًا.",
+    "فعّل هذا ليعمل Home Assistant في المنزل، ويتحكم محليًا بالإضاءة والتدفئة والحساسات بدلًا من سحابة الشركة المصنّعة. أنت تقرر هل يُستخدم مفتاح Zigbee أو Z-Wave الموصول بالخادم، وهل تُكتشف الأجهزة على شبكتك تلقائيًا.",
   "wizard.goals.smartHome.tip":
     "تستمر الأتمتة في العمل حتى عندما ينقطع اتصالك بالإنترنت.",
   "wizard.goals.photos.title": "ذكريات الصور",
   "wizard.goals.photos.description":
     "مكتبة الصور والفيديو الخاصة بك، مع نسخ احتياطي من كل هاتف في المنزل.",
   "wizard.goals.photos.help":
-    "فعّل هذا لتصبح الـ Node المكان الذي تعيش فيه صورك: تنسخ الهواتف احتياطيًا تلقائيًا، ويمكنك البحث بالوجوه والأماكن، ويمكن مشاركة الألبومات مع العائلة دون اشتراك سحابي. أنت تقرر هل يعمل البحث الذكي على الـ Node وأين تُخزَّن المكتبة.",
+    "فعّل هذا ليصبح الخادم المكان الذي تعيش فيه صورك: تنسخ الهواتف احتياطيًا تلقائيًا، ويمكنك البحث بالوجوه والأماكن، ويمكن مشاركة الألبومات مع العائلة دون اشتراك سحابي. أنت تقرر هل يعمل البحث الذكي على الخادم وأين تُخزَّن المكتبة.",
   "wizard.goals.photos.tip":
     "أسهل مكسب ظاهر لمعظم مختبرات Homelab: ذكريات خاصة دون اشتراك سحابي آخر.",
   "wizard.goals.media.title": "بث الوسائط",
   "wizard.goals.media.description":
     "بُثّ أفلامك ومسلسلاتك وموسيقاك إلى أي تلفاز أو هاتف أو حاسوب محمول في المنزل.",
   "wizard.goals.media.help":
-    "فعّل هذا لتقدّم الـ Node مجموعة وسائطك إلى كل شاشة في المنزل، وأثناء التنقل إن سمحت بالوصول عن بُعد. أنت تقرر هل تساعد بطاقة الرسوميات في الـ Node على تحويل الفيديو للشاشات الأصغر وأين تُخزَّن المكتبة.",
+    "فعّل هذا ليقدّم الخادم مجموعة وسائطك إلى كل شاشة في المنزل، وأثناء التنقل إن سمحت بالوصول عن بُعد. أنت تقرر هل تساعد بطاقة الرسوميات في الخادم على تحويل الفيديو للشاشات الأصغر وأين تُخزَّن المكتبة.",
   "wizard.goals.media.tip":
     "استخدم خادمًا بقرص كافٍ وتحويل ترميز اختياري بالعتاد لأسلس تجربة.",
   "wizard.goals.vault.title": "خزنة كلمات المرور",
@@ -885,30 +867,30 @@ export const ar: Record<string, string> = {
   "wizard.goals.ai.description":
     "مساعد خاص يعمل على عتادك ولا يرسل بياناتك إلى الخارج أبدًا.",
   "wizard.goals.ai.help":
-    "فعّل هذا لتحصل على مساعد محادثة يعمل بالكامل على الـ Node الخاصة بك. ويمكنه العمل مع مستنداتك. أنت تقرر أي مسرّع يستخدم وما حجم النموذج الذي يحمّله؛ ووجود GPU يصنع فرقًا كبيرًا.",
+    "فعّل هذا لتحصل على مساعد محادثة يعمل بالكامل على خادمك. ويمكنه العمل مع مستنداتك. أنت تقرر أي مسرّع يستخدم وما حجم النموذج الذي يحمّله؛ ووجود GPU يصنع فرقًا كبيرًا.",
   "wizard.goals.ai.tip":
-    "يعمل بشكل أفضل على عتاد أقوى؛ ويمكن التخطيط أولًا للـ Nodes ذات المستوى المنخفض.",
+    "يعمل بشكل أفضل على عتاد أقوى؛ ويمكن التخطيط أولًا للخوادم ذات المستوى المنخفض.",
   "wizard.goals.dev.title": "منصة التطوير",
   "wizard.goals.dev.description":
     "استضافة Git الخاصة بك، مع خطوط بناء واختبار عندما تريدها.",
   "wizard.goals.dev.help":
-    "فعّل هذا لتعيش شيفرتك على الـ Node الخاصة بك مع خادم Gitea يمكن للأسرة أو الفريق كله استخدامه. أنت تقرر هل تبني منفّذات CI وتختبر على الـ Node أيضًا.",
+    "فعّل هذا لتعيش شيفرتك على خادمك مع خادم Gitea يمكن للأسرة أو الفريق كله استخدامه. أنت تقرر هل تبني منفّذات CI وتختبر على الخادم أيضًا.",
   "wizard.goals.dev.tip":
     "مفيد عندما تريد أن يبقى حاسوبك المحمول خفيفًا وأن تعيش بيئات قابلة للتكرار على الخادم.",
   "wizard.goals.mail.title": "خادم البريد",
   "wizard.goals.mail.description":
-    "استقبل وأرسل البريد الإلكتروني على نطاقك الخاص، من Node الخاصة بك.",
+    "استقبل وأرسل البريد الإلكتروني على نطاقك الخاص، من خادمك الخاص.",
   "wizard.goals.mail.help":
-    "فعّل هذا لتشغّل الـ Node خادم بريد كاملًا لنطاق تملكه. يحتاج البريد إلى سجلات DNS صحيحة وسمعة إرسال جيدة، لذلك يسجّل هذا المسار نيتك أولًا ثم يُطرح بإرشاد. أنت تحدد نطاق البريد.",
+    "فعّل هذا ليشغّل خادمك خادم بريد كاملًا لنطاق تملكه. يحتاج البريد إلى سجلات DNS صحيحة وسمعة إرسال جيدة، لذلك يسجّل هذا المسار نيتك أولًا ثم يُطرح بإرشاد. أنت تحدد نطاق البريد.",
   "wizard.goals.mail.tip":
     "للبريد متطلبات DNS وسمعة؛ يسجّل المعالج النية ويُبقي الطرح مقيّدًا.",
   "wizard.goals.game.title": "خادم ألعاب",
   "wizard.goals.game.description":
     "عوالم ألعاب دائمة للأصدقاء، تُستضاف في المنزل دون فتح شبكتك.",
   "wizard.goals.game.help":
-    "فعّل هذا لتستضيف الـ Node خوادم ألعاب ينضم إليها أصدقاؤك عبر الوصول الآمن للحزمة، دون كشف شبكتك المنزلية مباشرة. تعتمد الألعاب المتاحة على الإصدار.",
+    "فعّل هذا ليستضيف خادمك خوادم ألعاب ينضم إليها أصدقاؤك عبر الوصول الآمن للحزمة، دون كشف شبكتك المنزلية مباشرة. تعتمد الألعاب المتاحة على الإصدار.",
   "wizard.goals.game.tip":
-    "حمل قائم على الجلسات: تعمل الـ Node بجهد أثناء لعب الأصدقاء وتخمل بين الجلسات.",
+    "حمل قائم على الجلسات: يعمل الخادم بجهد أثناء لعب الأصدقاء ويخمل بين الجلسات.",
   "wizard.goals.storage.title": "امتلاك تخزين محلي خاص بي للصور والمستندات",
   "wizard.goals.storage.description": "آمن وخاص، لا يصل إليه غيرك",
   "wizard.goals.storage.help": "تخزين سحابي خاص مع مزامنة تلقائية عبر الأجهزة.",
@@ -981,7 +963,7 @@ export const ar: Record<string, string> = {
   "wizard.goals.backend.help":
     "أي منتج يؤدي المهمة. الافتراضي هو ما يختبره StackKits أكثر.",
   "wizard.goals.profile.help":
-    "مقدار ما يمكن لحالة الاستخدام هذه استخدامه من الـ Node. القياسي يناسب معظم المنازل.",
+    "مقدار ما يمكن لحالة الاستخدام هذه استخدامه من الخادم. القياسي يناسب معظم المنازل.",
   "wizard.goals.setting.on": "مفعّل",
   "wizard.goals.setting.off": "معطّل",
   "wizard.goals.setting.recorded": "محفوظ الآن، ويُطبَّق في إصدار لاحق.",
@@ -1074,24 +1056,24 @@ export const ar: Record<string, string> = {
   "wizard.server.preview.node": "2 · خادمك",
   "wizard.server.title": "امنح أدواتك بيتًا.",
   "wizard.server.subtitle": "ابدأ بما لديك. سنرشدك إلى الاتصال المناسب.",
-  "wizard.server.join.title": "Homelab الخاص بك، بـ Node إضافية.",
+  "wizard.server.join.title": "Homelab الخاص بك، مع خادم إضافي.",
   "wizard.server.join.description":
-    "تنضم هذه الـ Node إلى إعدادك الحالي. يبقى وصولك والأشخاص وتسجيل الدخول كما هي، فيمكنك التركيز على الجهاز.",
-  "wizard.server.command.join.review": "تأكيد هذه الـ Node",
+    "ينضم هذا الخادم إلى إعدادك الحالي. يبقى وصولك والأشخاص وتسجيل الدخول كما هي، فيمكنك التركيز على الجهاز.",
+  "wizard.server.command.join.review": "تأكيد هذا الخادم",
   "wizard.server.command.join.reviewBody":
     "اختر كيف يتصل هذا الجهاز. يبقى وصول Homelab والأشخاص وتسجيل الدخول كما هي.",
   "wizard.step.inherited": "مضبوط مسبقًا لـ Homelab الخاص بك",
   "wizard.step.existingOwner": "يبقى مالك Homelab كما هو",
   "wizard.addApp.title": "إضافة تطبيق",
   "wizard.addApp.intro":
-    "اختر تطبيقًا والـ Node الذي يعمل عليه. يبقى الوصول والأشخاص وتسجيل الدخول كما هي في Homelab الخاص بك.",
+    "اختر تطبيقًا والخادم الذي يعمل عليه. يبقى الوصول والأشخاص وتسجيل الدخول كما هي في Homelab الخاص بك.",
   "wizard.addApp.catalogEmpty":
     "لا يقدم الكتالوج أي تطبيق لهذا الـ Homelab بعد.",
   "wizard.addApp.recommended": "موصى به",
   "wizard.addApp.about": "نبذة",
   "wizard.addApp.nodeTitle": "أين يجب أن يعمل {name}؟",
   "wizard.addApp.nodeUnsupported":
-    "لا يوفر StackKit الخاص بهذا الـ Node التطبيق {name}.",
+    "لا يوفر StackKit الخاص بهذا الخادم التطبيق {name}.",
   "wizard.addApp.nodeNotReady": "غير جاهز للنشر بعد",
   "wizard.addApp.submit": "إضافة تطبيق",
   "wizard.addApp.result": "تمت إضافة {name} إلى {node}.",
@@ -1105,13 +1087,13 @@ export const ar: Record<string, string> = {
   "wizard.settings.open": "تعديل إعدادات Homelab",
   "wizard.settings.loadError": "تعذّر تحميل Homelab الخاص بك.",
   "wizard.settings.empty": "لم يتم إعداد أي Homelab بعد.",
-  "wizard.settings.deployment": "نشر StackKit",
+  "wizard.settings.deployment": "إعداد Homelab",
   "wizard.settings.goalsElsewhere": "أضف التطبيقات عبر إضافة تطبيق.",
-  "wizard.settings.serverElsewhere": "أضف الخوادم عبر إضافة Node.",
+  "wizard.settings.serverElsewhere": "أضف الخوادم عبر إضافة خادم.",
   "wizard.settings.accessUnsupported":
     "لا يمكن تغيير الوصول لـ Homelab يعمل بعد.",
   "wizard.settings.openAddApplication": "إضافة تطبيق",
-  "wizard.settings.openAddNode": "إضافة Node",
+  "wizard.settings.openAddNode": "إضافة خادم",
   "wizard.settings.usersTitle": "الأشخاص",
   "wizard.settings.usersIntro":
     "ادعُ الأشخاص الذين خططت لهم لهذا الـ Homelab. يحصل كل منهم على رابط تسجيل دخول شخصي.",
@@ -1134,7 +1116,7 @@ export const ar: Record<string, string> = {
     "لديك خادم بالفعل؟ اربطه بمفتاح SSH أو كلمة مرور.",
   "wizard.server.remote.help":
     "أدخل عنوان خادم يمكن الوصول إليه. استخدم مفتاح SSH محفوظًا أو كلمة مرور SSH للاتصال.",
-  "wizard.server.remote.host": "مضيف Node أو IP",
+  "wizard.server.remote.host": "مضيف الخادم أو IP",
   "wizard.server.remote.port": "منفذ SSH",
   "wizard.server.remote.user": "مستخدم SSH",
   "wizard.server.remote.auth": "المصادقة",
@@ -1292,17 +1274,15 @@ export const ar: Record<string, string> = {
   "wizard.run.banner.inProgressTitle": "جارٍ إعداد Homelab الخاص بك",
   "wizard.run.banner.inProgressBody":
     "الإعداد لا يزال قيد التشغيل. يمكنك متابعة التقدم أو العودة لاحقًا.",
-  "wizard.run.banner.pairingTitle": "Node في انتظار الربط",
-  "wizard.run.banner.pairingBody":
-    "شغّل أمر التثبيت على الـ Node لإكمال إضافتها.",
+  "wizard.run.banner.pairingTitle": "خادم في انتظار الربط",
+  "wizard.run.banner.pairingBody": "شغّل أمر التثبيت على الخادم لإكمال إضافته.",
   "wizard.run.banner.failedTitle": "إعداد Homelab الخاص بك يحتاج إلى انتباه",
   "wizard.run.banner.failedBody":
     "لم تكتمل آخر عملية إعداد. تابع من حيث توقفت.",
   "wizard.run.banner.resume": "متابعة الإعداد",
   "wizard.run.banner.cancel": "إلغاء الطرح",
   "wizard.run.banner.cancelTitle": "إلغاء هذا الطرح؟",
-  "wizard.run.banner.cancelBody":
-    "يتوقف الطرح ويُعلَّم بأنه فاشل. تبقى الـ Node كما هي، ويمكنك بدء الطرح مرة أخرى لاحقًا.",
+  "wizard.run.banner.cancelBody": "يتوقف الطرح ويُعلَّم بأنه فاشل. يبقى الخادم كما هو، ويمكنك بدء الطرح مرة أخرى لاحقًا.",
   "wizard.run.banner.cancelFailed": "تعذّر إلغاء الطرح",
   "wizard.run.banner.dismiss": "إغلاق",
   "wizard.run.banner.dismissFailed": "تعذّر إغلاق الإشعار",
@@ -1340,8 +1320,8 @@ export const ar: Record<string, string> = {
   "state.connected": "متصل",
   "state.connecting": "جارٍ الاتصال",
   "state.consistent": "متسق",
-  "state.decommissioned": "أُوقف تشغيله",
-  "state.decommissioning": "قيد إيقاف التشغيل",
+  "state.decommissioned": "تمت إزالته",
+  "state.decommissioning": "قيد الإزالة",
   "state.degraded": "متدهور",
   "state.deploying": "قيد النشر",
   "state.enrolling": "قيد التسجيل",
@@ -1483,19 +1463,16 @@ export const ar: Record<string, string> = {
   "ui.common.sourceValue": "المصدر: {value}",
   "ui.common.unknown": "غير معروف",
   "ui.completeDashboard.allServices": "جميع الخدمات →",
-  "ui.completeDashboard.nodesApps": "Nodes والتطبيقات",
+  "ui.completeDashboard.nodesApps": "الخوادم والتطبيقات",
   "ui.configFlow.apiUnreachable": "لا يمكن الوصول إلى خادم API من متصفحك.",
   "ui.configFlow.apiUnreachableAt":
     "لا يمكن الوصول إلى خادم API على {base} من متصفحك.",
   "ui.configFlow.capability": "القدرة: {value}",
-  "ui.configFlow.corsHint":
-    "إذا كان الخادم الخلفي يعمل لكن المتصفح يحظر الطلب (CORS)، فافتح DevTools ← وحدة التحكم وابحث عن خطأ CORS.",
   "ui.configFlow.createFailedAt": "فشل الإنشاء عند: {phase}",
   "ui.configFlow.deploymentNameExists":
-    'توجد بالفعل عملية نشر StackKit باسم "{name}" في Homelab الخاص بك. افتح عملية النشر الحالية أو اختر اسمًا مختلفًا.',
+    "يوجد Homelab باسم «{name}» بالفعل. افتح الموجود بدلًا من ذلك.",
   "ui.configFlow.errorCode": "رمز الخطأ: {value}",
   "ui.configFlow.missingFeatures": "الميزات المفقودة: {value}",
-  "ui.configFlow.nextStep": "الخطوة التالية: {value}",
   "ui.configFlow.nextSteps": "الخطوات التالية:",
   "ui.configFlow.pleaseFix": "يرجى إصلاح ما يلي:",
   "ui.configFlow.provider": "المزوّد: {value}",
@@ -1508,38 +1485,38 @@ export const ar: Record<string, string> = {
   "ui.configFlow.step": "الخطوة: {value}",
   "ui.configFlow.technicalDetails": "التفاصيل التقنية: {value}",
   "ui.configurationFlow.aPreviousSubmissionAlreadyCompleted":
-    "اكتمل إرسال سابق بالفعل",
+    "تم إرسال هذا بالفعل",
   "ui.configurationFlow.anEarlierSubmissionFromThis":
-    "اكتمل إرسال سابق من جلسة المتصفح هذه بإجابات مختلفة. تم إنشاء مفتاح محاولة جديد — أرسل مرة أخرى أو افتح عملية النشر الحالية.",
+    "اكتمل بالفعل إرسال سابق من علامة تبويب المتصفح هذه بإجابات مختلفة. أنشئ مرة أخرى لإرسال إجاباتك الحالية، أو افتح الـ Homelab الموجود.",
   "ui.configurationFlow.anUnexpectedErrorOccurredPlease":
-    "حدث خطأ غير متوقع. راجع وحدة تحكم المتصفح للاطلاع على التفاصيل.",
+    "حدث خطأ غير متوقع. حاول مرة أخرى. إذا استمر ذلك، فتواصل مع الدعم وشارك التفاصيل التقنية.",
   "ui.configurationFlow.authenticationRequired": "المصادقة مطلوبة",
-  "ui.configurationFlow.cannotConnectToBackend": "تعذّر الاتصال بالخادم الخلفي",
-  "ui.configurationFlow.deploymentFailed": "فشل النشر",
+  "ui.configurationFlow.cannotConnectToBackend": "تعذّر الوصول إلى kombify Techstack",
+  "ui.configurationFlow.deploymentFailed": "تعذّر إنشاء الـ Homelab الخاص بك",
   "ui.configurationFlow.managedServerIsNotActive": "الخادم المُدار غير نشط",
   "ui.configurationFlow.permissionDenied": "تم رفض الإذن",
   "ui.configurationFlow.retryingIsUnlikelyToHelp":
-    "من غير المرجح أن تفيد إعادة المحاولة قبل إصلاح المشكلة في جانب الخادم.",
-  "ui.configurationFlow.serverError": "خطأ في الخادم",
+    "لن تفيد إعادة المحاولة حتى نُصلح المشكلة من جانبنا.",
+  "ui.configurationFlow.serverError": "حدث خطأ من جانبنا",
   "ui.configurationFlow.stackkitDeploymentNameAlreadyExists":
-    "اسم عملية نشر StackKit موجود بالفعل",
+    "يوجد Homelab بهذا الاسم بالفعل",
   "ui.configurationFlow.theBackendRejectedThisStackkit":
-    "رفض الخادم الخلفي طلب نشر StackKit هذا بسبب تعارض.",
+    "يوجد Homelab مماثل بالفعل، لذلك تم رفض إنشائه مرة أخرى. افتح الموجود بدلًا من ذلك.",
   "ui.configurationFlow.useTheAdminPasswordConfigured":
     "(استخدم كلمة مرور المسؤول المُعدّة لهذه النسخة)",
   "ui.configurationFlow.validatingConfiguration": "جارٍ التحقق من التكوين...",
   "ui.configurationFlow.validatingWithStackkits":
     "جارٍ التحقق عبر StackKits...",
   "ui.configurationFlow.youCanRetryIfThis":
-    "يمكنك إعادة المحاولة. إذا تكرر ذلك، فشارك رمز الخطأ ومعرّف الطلب مع الدعم.",
+    "حاول مرة أخرى. إذا استمر ذلك، فتواصل مع الدعم وشارك التفاصيل التقنية.",
   "ui.configurationFlow.youDonTHavePermission":
-    "ليس لديك إذن بنشر StackKits ولم يقدّم الخادم سببًا محددًا. يرجى مشاركة هذا مع الدعم.",
-  "ui.configurationFlow.youMustBeLoggedIn": "يجب تسجيل الدخول لنشر StackKit.",
+    "ليست لديك صلاحية إنشاء Homelab هنا. إذا كنت تعتقد أن هذا خطأ، فتواصل مع الدعم وشارك التفاصيل التقنية.",
+  "ui.configurationFlow.youMustBeLoggedIn": "سجّل الدخول لإنشاء الـ Homelab الخاص بك.",
   "ui.configurationFlow.youMustBeLoggedIn2":
-    "يجب تسجيل الدخول لنشر StackKit. يرجى تسجيل الدخول أولًا.",
+    "عليك تسجيل الدخول لإنشاء الـ Homelab الخاص بك. يرجى تسجيل الدخول أولًا.",
   "ui.connectDevices.techstackClient": "عميل Techstack",
-  "ui.creationCompletion.ownerSeedFor": "تم تجهيز بذرة المالك لـ {email}.",
-  "ui.creationController.theAdditionalNode": "Node الإضافي",
+  "ui.creationCompletion.ownerSeedFor": "حساب المالك الخاص بك جاهز لـ {email}.",
+  "ui.creationController.theAdditionalNode": "الخادم الإضافي",
   "ui.creationFailure.lease": "التأجير",
   "ui.creationInstall.previewExpires": "تنتهي صلاحية المعاينة في {time}",
   "ui.creationLease.sshHost":
@@ -1553,7 +1530,7 @@ export const ar: Record<string, string> = {
   "ui.creationRequirements.minVersion": "الحد الأدنى: {version}",
   "ui.creationRun.notConnectedYet": "لم يتصل بعد",
   "ui.creationRun.notReachableYet": "لا يمكن الوصول إليه بعد",
-  "ui.creationRun.pairingTokenExpires": "تنتهي صلاحية رمز الاقتران في {slot}.",
+  "ui.creationRun.pairingTokenExpires": "هذا الأمر صالح حتى {slot}.",
   "ui.creationRun.resumeStartingAt":
     "بدءًا من {time} يمكن للخادم التصريح باستئناف آمن على نفس VM.",
   "ui.creationRun.stepOf": "الخطوة {step} من {total}",
@@ -1607,17 +1584,16 @@ export const ar: Record<string, string> = {
     "الغرض من هذه الأداة ومن يستخدمها وأي سياق للتشغيل...",
   "ui.crypto.decryptionFailedWrongPassword":
     "فشل فك التشفير. هل كلمة المرور خاطئة؟",
-  "ui.custody.leasesWithoutNode.one": "عدد عقود التأجير بدون Node: {count}",
-  "ui.custody.leasesWithoutNode.other": "عدد عقود التأجير بدون Node: {count}",
+  "ui.custody.leasesWithoutNode.one": "عدد عقود التأجير بدون خادم: {count}",
+  "ui.custody.leasesWithoutNode.other": "عدد عقود التأجير بدون خادم: {count}",
   "ui.custody.wasAddress": "كان {ip}",
-  "ui.custodyLeasesPanel.decommissioning": "جارٍ إيقاف التشغيل...",
+  "ui.custodyLeasesPanel.decommissioning": "جارٍ الإزالة...",
   "ui.custodyLeasesPanel.leaseArchived": "تمت أرشفة عقد التأجير",
   "ui.custodyLeasesPanel.leaseCancelled": "تم إلغاء عقد التأجير",
   "ui.custodyLeasesPanel.neverObserved": "لم تتم ملاحظته أبدًا",
   "ui.custodyLeasesPanel.noExecutionAuthorityLegacyOr":
     "لا توجد صلاحية تنفيذ (عقد تأجير قديم أو غير مرتبط)",
-  "ui.custodyLeasesPanel.nodeNeverFinishedEnrolling":
-    "لم يُكمل Node التسجيل أبدًا",
+  "ui.custodyLeasesPanel.nodeNeverFinishedEnrolling": "لم يُكمل الخادم التسجيل أبدًا",
   "ui.custodyLeasesPanel.resolving": "جارٍ الحل...",
   "ui.custodyLeasesPanel.vmNoLongerExistsAt": "لم تعد VM موجودة لدى المزوّد",
   "ui.dashboardServiceSheet.noHealthReported": "لم يتم الإبلاغ عن حالة الصحة",
@@ -1677,24 +1653,19 @@ export const ar: Record<string, string> = {
   "ui.homelab.noSourceObserved":
     "تأتي الخدمات من مصدرين: نشر StackKit مكتمل، والحاويات والوحدات التي يكتشفها Agent على المضيف. لم تتم ملاحظة أي من المصدرين بعد: لم يُعثر على ملف بيان StackKit ولم يُجرِ Agent أي اكتشاف للخدمات.",
   "ui.homelab.onlineCount": "{count} متصل",
-  "ui.homelab.operationsNotLoaded.one":
-    "تعذّر تحميل {count} من عمليات نشر StackKit.",
-  "ui.homelab.operationsNotLoaded.other":
-    "تعذّر تحميل {count} من عمليات نشر StackKit.",
-  "ui.homelab.partialRolloutBadge": "طرح جزئي",
+  "ui.homelab.operationsNotLoaded.one": "تعذّر تحميل {count} من عمليات Homelab.",
+  "ui.homelab.operationsNotLoaded.other": "تعذّر تحميل {count} من عمليات Homelab.",
+  "ui.homelab.partialRolloutBadge": "الإعداد غير مكتمل",
   "ui.homelab.phase": "المرحلة: {phase}",
-  "ui.homelab.preparationFailed":
-    "فشل تحضير StackKit على Node المتصل — {detail}",
+  "ui.homelab.preparationFailed": "فشل تحضير StackKit على الخادم المتصل — {detail}",
   "ui.homelab.probeAnswered":
     "استجاب وقت التشغيل للفحص ونبضة Guard حديثة ({state}).",
-  "ui.homelab.probeOffline":
-    'يُبلغ المزوّد عن حالة الجهاز "{machineState}" وعن حالة التسجيل "{enrollment}". لا تستطيع إعادة الاتصال سوى إعادة تشغيل هذا الفحص، ولا يمكنها إعادة تشغيل kombify Agent على الجهاز. يبقى Node غير متصل حتى يرسل Agent نبضة مرة أخرى، لذا تابع من تفاصيل Node حيث يظهر أمر التسجيل وآخر اتصال.',
+  "ui.homelab.probeOffline": 'يُبلغ المزوّد عن حالة الجهاز "{machineState}" وعن حالة التسجيل "{enrollment}". لا تستطيع إعادة الاتصال سوى إعادة تشغيل هذا الفحص، ولا يمكنها إعادة تشغيل kombify Agent على الجهاز. يبقى الخادم غير متصل حتى يرسل Agent نبضة مرة أخرى، لذا تابع من تفاصيل الخادم حيث يظهر أمر التسجيل وآخر اتصال.',
   "ui.homelab.recorded": "تم تسجيل {count}",
   "ui.homelab.retryFailed": "تعذّرت إعادة محاولة الطرح: {message}",
   "ui.homelab.rolloutFailed": "فشل الطرح: {message}",
-  "ui.homelab.sshFailed": "فشل اتصال SSH بـ Node الخاص بك — {detail}",
-  "ui.homelabDashboardPage.0VerifiedConnectedOperationsEvidence":
-    "0 متصل تم التحقق منه · أدلة العمليات غير متاحة",
+  "ui.homelab.sshFailed": "فشل اتصال SSH بالخادم الخاص بك — {detail}",
+  "ui.homelabDashboardPage.0VerifiedConnectedOperationsEvidence": "لم يتم التحقق من الاتصال",
   "ui.homelabDashboardPage.agentDiscoveryReportedNoRunning":
     "لم يُبلغ اكتشاف Agent عن أي حاويات أو وحدات قيد التشغيل. لم تتم ملاحظة أي ملف بيان StackKit، لذا لا تزال خدمات StackKit المعلنة غير معروفة.",
   "ui.homelabDashboardPage.bothServiceSourcesReportedAn":
@@ -1704,18 +1675,15 @@ export const ar: Record<string, string> = {
   "ui.homelabDashboardPage.custodyRecordUnchangedTheTechstack":
     "سجل الحفظ دون تغيير: تعذّر على بوابة Techstack الوصول إلى الخادم الخلفي. أعد المحاولة لهذا السجل نفسه عندما تتوفر الخدمة.",
   "ui.homelabDashboardPage.custodyResolutionFailed": "فشل حل سجل الحفظ",
-  "ui.homelabDashboardPage.decommissionFailed": "فشل إيقاف التشغيل",
-  "ui.homelabDashboardPage.deployStackkit": "نشر StackKit",
+  "ui.homelabDashboardPage.decommissionFailed": "فشلت الإزالة",
+  "ui.homelabDashboardPage.deployStackkit": "مراجعة وإنشاء",
   "ui.homelabDashboardPage.lastVerifiedStateRetainedThe":
     "تم الاحتفاظ بآخر حالة تم التحقق منها — فشل التحديث وستُعاد المحاولة تلقائيًا.",
-  "ui.homelabDashboardPage.managedRuntime": "وقت تشغيل مُدار",
-  "ui.homelabDashboardPage.managedRuntimeLeaseAllocationMetadata":
-    "توجد بيانات وصفية لعقد التأجير/التخصيص لوقت التشغيل المُدار، لكن تعذّر التحقق من حالة المزوّد وGuard الحالية.",
-  "ui.homelabDashboardPage.noNodeHasReportedAn":
-    "لم يُبلغ أي Node عن مخزون حتى الآن.",
-  "ui.homelabDashboardPage.nodeIsReportingAgain": "عاد Node إلى الإبلاغ",
-  "ui.homelabDashboardPage.openTheNodeDetailsTo":
-    "افتح تفاصيل Node للتحقق من Agent وآخر طرح.",
+  "ui.homelabDashboardPage.managedRuntime": "خادم مُدار",
+  "ui.homelabDashboardPage.managedRuntimeLeaseAllocationMetadata": "تم إعداد الخادم المُدار، لكن تعذّر فحص حالته الحالية الآن.",
+  "ui.homelabDashboardPage.noNodeHasReportedAn": "لم يُبلغ أي خادم عن مخزون حتى الآن.",
+  "ui.homelabDashboardPage.nodeIsReportingAgain": "عاد الخادم إلى الإبلاغ",
+  "ui.homelabDashboardPage.openTheNodeDetailsTo": "افتح تفاصيل الخادم للتحقق من Agent وآخر طرح.",
   "ui.homelabDashboardPage.operationsDataIsNotAvailable":
     "بيانات العمليات غير متاحة بعد لهذا Homelab.",
   "ui.homelabDashboardPage.operationsDataIsNotAvailable2":
@@ -1731,23 +1699,20 @@ export const ar: Record<string, string> = {
   "ui.homelabDashboardPage.retry": "إعادة المحاولة",
   "ui.homelabDashboardPage.retryExactCleanup": "إعادة محاولة التنظيف المحدد",
   "ui.homelabDashboardPage.review": "مراجعة",
-  "ui.homelabDashboardPage.reviewStart": "مراجعة + بدء",
+  "ui.homelabDashboardPage.reviewStart": "مراجعة وإنشاء",
   "ui.homelabDashboardPage.rolloutReadinessIsUnavailableRefresh":
     "حالة جاهزية الطرح غير متاحة. حدّث بيانات العمليات قبل البدء.",
-  "ui.homelabDashboardPage.runtimeAnsweredButTheNode":
-    "استجاب وقت التشغيل، لكن Node لا يزال غير متصل",
-  "ui.homelabDashboardPage.stackkitDeployment": "نشر StackKit",
+  "ui.homelabDashboardPage.runtimeAnsweredButTheNode": "استجاب وقت التشغيل، لكن الخادم لا يزال غير متصل",
+  "ui.homelabDashboardPage.stackkitDeployment": "Homelab",
   "ui.homelabDashboardPage.starting": "جارٍ البدء...",
   "ui.homelabDashboardPage.theAgentVersionWasNot":
     "لم يتم الإبلاغ عن إصدار Agent.",
   "ui.homelabDashboardPage.theFailedCleanupIsNot":
     "التنظيف الفاشل غير مرتبط بعقد تأجير قابل للإجراء. حدّث أدلة دورة الحياة واستخدم الإجراء على سجل الحفظ المحدد.",
-  "ui.homelabDashboardPage.theFailedStackkitDeploymentIs":
-    "لم تعد عملية نشر StackKit الفاشلة جزءًا من Homelab هذا. حدّث Homelab وأعد محاولة عملية النشر نفسها.",
+  "ui.homelabDashboardPage.theFailedStackkitDeploymentIs": "الجزء الذي فشل من Homelab لم يعد موجودًا. حدّث Homelab وأعد المحاولة.",
   "ui.homelabDashboardPage.thePersistedRolloutIsWaiting":
     "الطرح المحفوظ ينتظر نقطة التحقق التالية.",
-  "ui.homelabDashboardPage.theRuntimeProbeReturnedNo":
-    "لم يُرجع فحص وقت التشغيل أي سبب. أعد المحاولة أو افتح تفاصيل Node للاطلاع على سجل وقت التشغيل الكامل.",
+  "ui.homelabDashboardPage.theRuntimeProbeReturnedNo": "لم يُرجع فحص وقت التشغيل أي سبب. أعد المحاولة أو افتح تفاصيل الخادم للاطلاع على سجل وقت التشغيل الكامل.",
   "ui.homelabDashboardPage.theStackkitManifestSourceReported":
     "لم يُبلغ مصدر ملف بيان StackKit عن أي خدمات. لم تتم ملاحظة اكتشاف الخدمات، لذا لا تزال الحاويات والوحدات غير معروفة.",
   "ui.homelabDashboardPage.thisFailedRunCannotBe":
@@ -1863,12 +1828,12 @@ export const ar: Record<string, string> = {
   "ui.integration.pocketbaseAdminDashboardCredentials":
     "بيانات اعتماد لوحة مسؤول PocketBase",
   "ui.integration.traefikDashboardBasicAuth": "المصادقة الأساسية للوحة Traefik",
-  "ui.inventory.nodeCount.one": "عدد Nodes: {count}",
-  "ui.inventory.nodeCount.other": "عدد Nodes: {count}",
+  "ui.inventory.nodeCount.one": "عدد الخوادم: {count}",
+  "ui.inventory.nodeCount.other": "عدد الخوادم: {count}",
   "ui.inventory.serviceCount.one": "عدد الخدمات: {count}",
   "ui.inventory.serviceCount.other": "عدد الخدمات: {count}",
-  "ui.inventory.telemetryNodes.one": "عدد Nodes القياس عن بُعد: {count}",
-  "ui.inventory.telemetryNodes.other": "عدد Nodes القياس عن بُعد: {count}",
+  "ui.inventory.telemetryNodes.one": "عدد خوادم القياس عن بُعد: {count}",
+  "ui.inventory.telemetryNodes.other": "عدد خوادم القياس عن بُعد: {count}",
   "ui.localOwner.localOwnerCreationIsOnly":
     "لا يمكن إنشاء المالك المحلي إلا أثناء الإعداد الأول.",
   "ui.login.bootstrapPassword": "كلمة مرور التهيئة الأولية:",
@@ -1932,8 +1897,7 @@ export const ar: Record<string, string> = {
     "سيؤدي هذا إلى توفير جيل جديد من الخادم المُدار وفوترته. سيعيد Techstack إنشاء التسجيل ونقاط النهاية وأدلة Guard وطرح StackKit عبر مسار الإنشاء المعتاد.",
   "ui.monitoring.acrossEpisodes.one": "عبر {count} من الحلقات",
   "ui.monitoring.acrossEpisodes.other": "عبر {count} من الحلقات",
-  "ui.monitoring.availabilityHistoryIsUnavailableOn":
-    "سجل التوفر غير متاح في عملية النشر هذه.",
+  "ui.monitoring.availabilityHistoryIsUnavailableOn": "سجل التوفر غير متاح في هذا التثبيت.",
   "ui.monitoring.availabilityWindow": "التوفر · {window}",
   "ui.monitoring.dailyState": "الحالة اليومية",
   "ui.monitoring.dailyStateLabel": "{name}: حالة الاتصال اليومية",
@@ -1950,8 +1914,7 @@ export const ar: Record<string, string> = {
   "ui.monitoring.monitoringDataCouldNotBe": "تعذّر تحميل بيانات المراقبة.",
   "ui.monitoring.noData": "لا توجد بيانات",
   "ui.monitoring.noDowntimeInThisWindow": "لا يوجد وقت توقف في هذه الفترة.",
-  "ui.monitoring.noNodesHaveReportedYet":
-    "لم يُبلغ أي Node بعد. سجّل Node وستظهر حالته هنا.",
+  "ui.monitoring.noNodesHaveReportedYet": "لم يُبلغ أي خادم بعد. سجّل خادمًا وستظهر حالته هنا.",
   "ui.monitoring.noRecordedDowntimeInThis":
     "لا يوجد وقت توقف مسجّل في هذه الفترة.",
   "ui.monitoring.noServersInThisWindow": "لا توجد خوادم في هذه الفترة.",
@@ -1969,16 +1932,14 @@ export const ar: Record<string, string> = {
   "ui.monitoring.removeFromAria": "إزالة {name} من المراقبة",
   "ui.monitoring.removing": "جارٍ الإزالة...",
   "ui.monitoring.rightNow": "الآن",
-  "ui.monitoring.selectNodeHint": "اختر Node لعرض مقاييسه وسجله الخاص",
+  "ui.monitoring.selectNodeHint": "اختر خادمًا لعرض مقاييسه وسجله الخاص",
   "ui.monitoring.serverCouldNotBeRemoved": "تعذّرت إزالة الخادم.",
   "ui.monitoring.staleCountsAsDowntime":
     "البيانات القديمة تُحتسب وقت توقف — لا يمكن تأكيد الخدمة",
-  "ui.monitoring.theCanonicalServerInventoryIs":
-    "مخزون الخوادم المرجعي غير متاح.",
-  "ui.monitoring.thisRevokesTheBoundGuard":
-    "سيؤدي هذا إلى إلغاء Guard Agent المرتبط وإخفاء Node من الأسطول الحالي. يبقى الخادم الفعلي وحساب المزوّد الخاص به دون تغيير.",
+  "ui.monitoring.theCanonicalServerInventoryIs": "تعذّرت قراءة قائمة الخوادم الآن.",
+  "ui.monitoring.thisRevokesTheBoundGuard": "سيؤدي هذا إلى إلغاء Guard Agent المرتبط وإخفاء الخادم من الأسطول الحالي. يبقى الخادم الفعلي وحساب المزوّد الخاص به دون تغيير.",
   "ui.monitoring.totalDowntime": "إجمالي وقت التوقف",
-  "ui.monitoringServer.alertsInScope": "{count} ضمن نطاق هذا Node",
+  "ui.monitoringServer.alertsInScope": "{count} ضمن نطاق هذا الخادم",
   "ui.monitoringServer.allEpisodes": "جميع الحلقات ←",
   "ui.monitoringServer.dailyState30":
     "{name}: حالة الاتصال اليومية خلال 30 يومًا",
@@ -2002,27 +1963,25 @@ export const ar: Record<string, string> = {
   "ui.monitoringServerId.memoryUsed": "الذاكرة المستخدمة",
   "ui.monitoringServerId.metricsLast24H": "المقاييس · آخر 24 ساعة",
   "ui.monitoringServerId.noAlertRulesApplyHere": "لا تنطبق أي قواعد تنبيه هنا.",
-  "ui.monitoringServerId.noHistoryForThisNode": "لا يوجد سجل لهذا Node بعد.",
-  "ui.monitoringServerId.noMetricsBackendAnsweredFor":
-    "لم يستجب أي خادم خلفي للمقاييس لهذا Node. التوفر أدناه مستمد من الجدول الزمني للانتقالات ولا يعتمد عليه.",
+  "ui.monitoringServerId.noHistoryForThisNode": "لا يوجد سجل لهذا الخادم بعد.",
+  "ui.monitoringServerId.noMetricsBackendAnsweredFor": "لم يستجب أي خادم خلفي للمقاييس لهذا الخادم. التوفر أدناه مستمد من الجدول الزمني للانتقالات ولا يعتمد عليه.",
   "ui.monitoringServerId.refreshing": "جارٍ التحديث…",
   "ui.monitoringServerId.removeFromView": "إزالة من العرض",
-  "ui.monitoringServerId.thisNodeSHistory": "سجل هذا Node",
+  "ui.monitoringServerId.thisNodeSHistory": "سجل هذا الخادم",
   "ui.monitoringServerId.thisServerCouldNotBe": "تعذّر تحميل هذا الخادم.",
   "ui.navItems.noServicesRegisteredYet": "لا توجد خدمات مسجّلة بعد.",
-  "ui.nodeActions.assignToThisStackkitDeployment":
-    "تعيين إلى عملية نشر StackKit هذه",
+  "ui.nodeActions.assignToThisStackkitDeployment": "تعيين إلى Homelab هذا",
   "ui.nodeActions.assigning": "جارٍ التعيين...",
   "ui.nodeActions.canonicalManagedAccessIsNot":
     "الوصول المُدار المرجعي غير متاح بعد.",
-  "ui.nodeActions.connection": "اتصال Node: {state}",
+  "ui.nodeActions.connection": "اتصال الخادم: {state}",
   "ui.nodeRow.systemServices.one": "عدد خدمات النظام: {count}",
   "ui.nodeRow.systemServices.other": "عدد خدمات النظام: {count}",
   "ui.nodeActions.menu": "إجراءات {node}",
   "ui.nodeMessage.idle": "لا توجد رسائل مفتوحة",
-  "ui.nodeMessage.needsAttention": "هذا الـ Node يحتاج إلى انتباه",
+  "ui.nodeMessage.needsAttention": "هذا الخادم يحتاج إلى انتباه",
   "ui.nodeMessage.panel": "رسائل {node}",
-  "ui.nodeMessage.listPanel": "رسائل حول قائمة Node",
+  "ui.nodeMessage.listPanel": "رسائل حول قائمة الخوادم",
   "ui.nodeRow.moreServices": "+ {count} أخرى",
   "ui.apps.description":
     "كل ما تفتحه عبر واجهة على خوادمك. تعرض صفحة الخدمات كل خدمة مع إعداداتها.",
@@ -2078,11 +2037,10 @@ export const ar: Record<string, string> = {
     "مصدر المالك المحدد لم يعد مدعومًا. اختر مالكًا محليًا أو اربط ملف kombify Cloud الشخصي.",
   "ui.ownerState.thisInstanceHasNoKombify":
     "لم يتم إعداد تسجيل الدخول إلى kombify Cloud لهذه النسخة.",
-  "ui.pairing.nodeConnection": "اتصال Node",
+  "ui.pairing.nodeConnection": "اتصال الخادم",
   "ui.pairing.theConnectionCommandCouldNot":
     "تعذّر تجهيز أمر الاتصال. حاول مرة أخرى.",
-  "ui.pairing.theOriginalNodeConfigurationIs":
-    "إعداد Node الأصلي غير متاح. ارجع إلى «إضافة Node» لتجهيز الاتصال.",
+  "ui.pairing.theOriginalNodeConfigurationIs": "إعداد الخادم الأصلي غير متاح. ارجع إلى «إضافة خادم» لتجهيز الاتصال.",
   "ui.people.activationExpired": "انتهت صلاحية التفعيل",
   "ui.people.activationPending": "التفعيل قيد الانتظار",
   "ui.people.appCount.one": "عدد التطبيقات: {count}",
@@ -2091,14 +2049,12 @@ export const ar: Record<string, string> = {
     "ستظهر العملاء المتصلون هنا بمجرد توفر إدارة أجهزة kombify Connect.",
   "ui.people.deviceListUnavailable": "قائمة الأجهزة غير متاحة.",
   "ui.people.homelabOwner": "مالك Homelab",
-  "ui.people.householdListUnavailableTheHomelab":
-    "قائمة الأسرة غير متاحة: لم يستجب مزوّد هوية Homelab.",
-  "ui.people.identityProviderNotReady": "مزوّد الهوية غير جاهز",
-  "ui.people.identityStatusUnavailable": "حالة الهوية غير متاحة",
+  "ui.people.householdListUnavailableTheHomelab": "قائمة الأشخاص غير متاحة الآن. حاول مرة أخرى بعد قليل.",
+  "ui.people.identityProviderNotReady": "خدمة تسجيل الدخول غير جاهزة",
+  "ui.people.identityStatusUnavailable": "حالة تسجيل الدخول غير متاحة",
   "ui.people.member": "عضو",
   "ui.people.notInvitedYet": "لم تتم دعوته بعد",
-  "ui.people.ownerAndHouseholdAppearOnce":
-    "سيظهر المالك والأسرة بمجرد أن يُبلغ مزوّد هوية Homelab (Pocket ID أو TinyAuth) عبر Guard.",
+  "ui.people.ownerAndHouseholdAppearOnce": "ستظهر أنت والأشخاص الذين تدعوهم هنا بمجرد جاهزية خدمة تسجيل الدخول في Homelab.",
   "ui.people.plannedInTheWizard": "مخطط في المعالج",
   "ui.people.plannedMember": "عضو مخطط",
   "ui.people.signedInToTheHomelab": "مسجّل الدخول إلى Homelab",
@@ -2128,11 +2084,9 @@ export const ar: Record<string, string> = {
     "انتهت مهلة طلب رمز Gateway",
   "ui.postMessageBridge.kombifyAIDidNotConfirm":
     "لم يؤكد kombify AI جلسة الدعم في الوقت المناسب.",
-  "ui.presets.aCalmOverviewOneBand":
-    "نظرة عامة هادئة: شريط واحد لكل Node مع منحناه خلال 24 ساعة.",
+  "ui.presets.aCalmOverviewOneBand": "نظرة عامة هادئة: شريط واحد لكل خادم مع منحناه خلال 24 ساعة.",
   "ui.presets.complete": "كاملة",
-  "ui.presets.nodeRowsWithTheirApps":
-    "صفوف Nodes مع تطبيقاتها وأجهزتها والأشخاص بجانبها.",
+  "ui.presets.nodeRowsWithTheirApps": "صفوف الخوادم مع تطبيقاتها وأجهزتها والأشخاص بجانبها.",
   "ui.providerErrors.aStackKitWasSelectedE":
     "تم تحديد StackKit (مثل basement-kit أو cloud-kit)، لكن ملفات StackKit غير متوفرة على الخادم.",
   "ui.providerErrors.anUnknownErrorOccurred": "حدث خطأ غير معروف.",
@@ -2450,8 +2404,7 @@ export const ar: Record<string, string> = {
     'هل تريد تثبيت المفتاح العام "{key}" مرة واحدة على {server}؟ لا يغادر المفتاح الخاص Wallet أبدًا.',
   "ui.serverAccess.sshKey": "مفتاح SSH",
   "ui.serverAccessActions.addOneInTheWallet": "أضف واحدًا في Wallet",
-  "ui.serverAccessActions.authorizeOneOfYourPublic":
-    "صرّح أولًا بأحد مفاتيحك العامة على هذا Node.",
+  "ui.serverAccessActions.authorizeOneOfYourPublic": "صرّح أولًا بأحد مفاتيحك العامة على هذا الخادم.",
   "ui.serverAccessActions.authorizeSshKey": "التصريح بمفتاح SSH",
   "ui.serverAccessActions.copySshCommand": "نسخ أمر SSH",
   "ui.serverAccessActions.installPublicKey": "تثبيت المفتاح العام",
@@ -2467,13 +2420,12 @@ export const ar: Record<string, string> = {
   "ui.serverAccessActions.walletPublicKey": "المفتاح العام في Wallet",
   "ui.serverCard.archUnknown": "البنية غير معروفة",
   "ui.serverCard.osUnknown": "نظام التشغيل غير معروف",
-  "ui.serverCardAdapter.anotherNodeActionIsRunning":
-    "يجري تنفيذ إجراء آخر على Node",
+  "ui.serverCardAdapter.anotherNodeActionIsRunning": "يجري تنفيذ إجراء آخر على الخادم",
   "ui.serverDetail.actionNotStarted": "تعذّر بدء {action}.",
   "ui.serverDetail.actionsTarget":
     "تستهدف هذه الإجراءات {name} مباشرةً. تتبع عناصر التحكم المتاحة حالة اتصاله وحالة StackKit الحالية؛ ولا حاجة إلى تحديد حالة خادم أو دورة حياة.",
   "ui.serverDetail.confirmActionFor": "تأكيد “{action}” لـ {name}",
-  "ui.serverDetail.confirmDecommissionFor": "تأكيد إيقاف تشغيل {name}",
+  "ui.serverDetail.confirmDecommissionFor": "تأكيد إزالة {name}",
   "ui.serverDetail.confirmDetachFor": "تأكيد فصل {name}",
   "ui.serverDetail.confirmProviderRemoval": "تأكيد إزالة {name} لدى المزوّد",
   "ui.serverDetail.connectionState": "اتصال الخادم: {state}",
@@ -2509,9 +2461,8 @@ export const ar: Record<string, string> = {
   "ui.serverList.inventoryUnavailable": "المخزون غير متاح",
   "ui.serverList.theCanonicalInventoryIsUnavailable":
     "المخزون المرجعي غير متاح. يتم عرض القياسات عن بُعد المصرّح بها حاليًا فقط.",
-  "ui.serverOutcome.continueOnConnected": "متابعة StackKit على Node المتصل",
-  "ui.serverOutcome.continuePrepOnConnected":
-    "متابعة تحضير StackKit على Node المتصل",
+  "ui.serverOutcome.continueOnConnected": "متابعة StackKit على الخادم المتصل",
+  "ui.serverOutcome.continuePrepOnConnected": "متابعة تحضير StackKit على الخادم المتصل",
   "ui.serverOutcome.restartRollout": "إعادة تشغيل الطرح",
   "ui.serverOutcome.retrySsh": "إعادة محاولة اتصال SSH",
   "ui.serverProvisioningStep.cloudKitRollout": "طرح Cloud Kit",
@@ -2570,7 +2521,7 @@ export const ar: Record<string, string> = {
   "ui.serviceList.servicesByRuntimeTarget": "الخدمات حسب هدف وقت التشغيل",
   "ui.serviceRegistry.selected.one": "تم تحديد {count} من الخدمات",
   "ui.serviceRegistry.selected.other": "تم تحديد {count} من الخدمات",
-  "ui.serviceSheet.node": "Node: {node}",
+  "ui.serviceSheet.node": "الخادم: {node}",
   "ui.serviceSheet.notPlaced": "غير موضوع",
   "ui.serviceSheet.ownership": "الملكية: {value}",
   "ui.serviceSheet.stackkit": "StackKit {version}",
@@ -2591,8 +2542,7 @@ export const ar: Record<string, string> = {
   "ui.services.actionCompletedInventoryIsRefreshing":
     "اكتمل الإجراء؛ يجري تحديث المخزون.",
   "ui.services.actionTitle": "{action} {name}",
-  "ui.services.addACatalogApplicationOr":
-    "أضف تطبيقًا من الكتالوج أو استورد مخزون Node غير المُدار.",
+  "ui.services.addACatalogApplicationOr": "أضف تطبيقًا من الكتالوج أو استورد جرد الخوادم غير المُدارة.",
   "ui.services.addANewApplication": "إضافة تطبيق جديد",
   "ui.services.addService": "إضافة خدمة",
   "ui.services.adoptIntoManagement": "ضمّ إلى الإدارة…",
@@ -2636,16 +2586,14 @@ export const ar: Record<string, string> = {
     "هل تريد قفل {name}؟ يتم رفض البدء والإيقاف وإعادة التشغيل أثناء القفل، بما في ذلك عبر stack apply. تستمر الخدمة في العمل.",
   "ui.services.confirmUnlock":
     "هل تريد إلغاء قفل {name}؟ ستتوفر التعديلات المُدارة مرة أخرى.",
-  "ui.services.connectNodesToYourHomelab":
-    "اربط Nodes بـ Homelab الخاص بك لإدارة وضع التطبيقات.",
+  "ui.services.connectNodesToYourHomelab": "اربط الخوادم بـ Homelab الخاص بك لإدارة وضع التطبيقات.",
   "ui.services.deleteArchivedService": "هل تريد حذف الخدمة المؤرشفة؟",
   "ui.services.desired": "المطلوب",
   "ui.services.desiredObserved": "المطلوب {desired} · المُلاحَظ {observed}",
   "ui.services.discoveredOn":
     "تم اكتشافه على {name} — غير مُدار بواسطة kombify",
   "ui.services.displayName": "الاسم المعروض",
-  "ui.services.dragAndDropStaysDisabled":
-    "يبقى السحب والإفلات معطّلًا إلى أن يتولى منفّذ وقت تشغيل حقيقي عمليات النشر والتحقق من الصحة والتحويل وتصريف المصدر.",
+  "ui.services.dragAndDropStaysDisabled": "السحب والإفلات غير متاح بعد. يتطلب نقل تطبيق بأمان أتمتة التثبيت وفحص الصحة والتحويل وتنظيف النسخة القديمة.",
   "ui.services.dropManagedApplicationsHere": "أفلت التطبيقات المُدارة هنا",
   "ui.services.error": "خطأ",
   "ui.services.failedToDeleteArchivedService": "فشل حذف الخدمة المؤرشفة.",
@@ -2656,38 +2604,37 @@ export const ar: Record<string, string> = {
   "ui.services.health": "الصحة",
   "ui.services.importAsObserved": "استيراد كمُلاحَظ",
   "ui.services.importUnmanaged": "استيراد غير المُدار",
-  "ui.services.internalAddressOnlyOpenIt":
-    "عنوان داخلي فقط؛ افتحه من شبكة Node.",
+  "ui.services.internalAddressOnlyOpenIt": "عنوان داخلي فقط؛ افتحه من شبكة الخادم.",
   "ui.services.jobId": "المهمة {id}",
   "ui.services.loadOlderLogs": "تحميل سجلات أقدم",
   "ui.services.loadingCanonicalServiceInventory":
     "جارٍ تحميل مخزون الخدمات المرجعي",
-  "ui.services.localNode": "Node محلي",
+  "ui.services.localNode": "خادم محلي",
   "ui.services.managedProviderTarget": "هدف مزوّد مُدار",
   "ui.services.migrationJobIsActive": "مهمة الترحيل نشطة.",
   "ui.services.moveApplication": "نقل التطبيق",
   "ui.services.moveHere": "انقل {name} إلى هنا",
   "ui.services.moveSteps": "خطوات النقل:",
-  "ui.services.moveToAnotherNode": "النقل إلى Node آخر…",
+  "ui.services.moveToAnotherNode": "النقل إلى خادم آخر…",
   "ui.services.mutationsRequireOwnerApprovalA":
     "تتطلب التعديلات موافقة المالك؛ ويُجرى تمرير تحقق StackKits قبل أن تتغير الحالة المقيسة.",
   "ui.services.newApplication": "تطبيق جديد",
   "ui.services.noApplicationsDeployed": "لا توجد تطبيقات منشورة",
   "ui.services.noApplicationsMatching": "لا توجد تطبيقات بالحالة {status}",
   "ui.services.noApplicationsReported": "لم يتم الإبلاغ عن أي تطبيقات",
-  "ui.services.noAvailableTargetNodeFor": "لا يوجد Node هدف متاح لهذا التطبيق.",
+  "ui.services.noAvailableTargetNodeFor": "لا يوجد خادم هدف متاح لهذا التطبيق.",
   "ui.services.noCanonicalRuntimeObservationYet":
     "لا توجد ملاحظة مرجعية لوقت التشغيل بعد — يُعرض إسقاط السجل.",
   "ui.services.noGovernedActionHasRun":
     "لم يتم تنفيذ أي إجراء مُدار في هذه الجلسة.",
   "ui.services.noHostname": "لا يوجد اسم مضيف",
-  "ui.services.noNodesRegistered": "لا توجد Nodes مسجّلة",
+  "ui.services.noNodesRegistered": "لا توجد خوادم مسجّلة",
   "ui.services.noOperationsAvailable": "لا توجد عمليات متاحة.",
   "ui.services.noSystemServices": "لا توجد خدمات نظام",
-  "ui.services.node": "Node",
-  "ui.services.nodeBoundApplications": "التطبيقات المرتبطة بـ Node",
-  "ui.services.nodeCapabilities": "إمكانات Node",
-  "ui.services.nodeColumn": "عمود Node {name}",
+  "ui.services.node": "الخادم",
+  "ui.services.nodeBoundApplications": "التطبيقات المرتبطة بخادم",
+  "ui.services.nodeCapabilities": "إمكانات الخادم",
+  "ui.services.nodeColumn": "عمود الخادم {name}",
   "ui.services.observed": "مُلاحَظ",
   "ui.services.stacked": "Stacked",
   "ui.services.unstacked": "Unstacked",
@@ -2717,11 +2664,10 @@ export const ar: Record<string, string> = {
   "ui.services.runtimeInventoryCouldNotBe": "تعذّر تحميل مخزون وقت التشغيل.",
   "ui.services.runtimeMigrationIsNotEnabled": "ترحيل وقت التشغيل غير مفعّل بعد",
   "ui.services.runtimeMigrationUnavailable": "ترحيل وقت التشغيل غير متاح",
-  "ui.services.runtimeServiceMigrationIsNot":
-    "ترحيل خدمات وقت التشغيل غير مفعّل في عملية النشر هذه.",
+  "ui.services.runtimeServiceMigrationIsNot": "نقل التطبيقات بين الخوادم غير مفعّل في هذا التثبيت.",
   "ui.services.runtimeTarget": "هدف وقت التشغيل",
-  "ui.services.selectANodeAndCatalog": "اختر Node وخدمة من الكتالوج.",
-  "ui.services.selectANodeThenEnter": "اختر Node ثم أدخل اسم الخدمة.",
+  "ui.services.selectANodeAndCatalog": "اختر خادمًا وخدمة من الكتالوج.",
+  "ui.services.selectANodeThenEnter": "اختر خادمًا ثم أدخل اسم الخدمة.",
   "ui.services.selected": "المحدد: {name}",
   "ui.services.service": "الخدمة",
   "ui.services.serviceActionDidNotComplete": "لم يكتمل إجراء الخدمة.",
@@ -2744,18 +2690,15 @@ export const ar: Record<string, string> = {
   "ui.services.storageFreeOf": "{free} GB متاح / {total} GB",
   "ui.services.systemServices": "خدمات النظام",
   "ui.services.targetIsReadyForVerification": "الهدف جاهز للتحقق.",
-  "ui.services.targetNode": "Node الهدف",
+  "ui.services.targetNode": "الخادم المستهدف",
   "ui.services.targetValue": "الهدف: {value}",
   "ui.services.telemetryPending": "القياسات عن بُعد قيد الانتظار",
   "ui.services.temporaryInstance": "سيتم نشر نسخة مؤقتة على {slot}.",
-  "ui.services.theApplicationConfigWillBe":
-    "سيتم نسخ إعدادات التطبيق إلى Node الهدف.",
+  "ui.services.theApplicationConfigWillBe": "سيتم نسخ إعدادات التطبيق إلى الخادم المستهدف.",
   "ui.services.theLastLogPageWas": "كانت آخر صفحة سجلات فارغة.",
-  "ui.services.theLastSuccessfulSnapshotRemains":
-    "تبقى آخر لقطة ناجحة ظاهرة إلى أن تُبلغ عملية نشر StackKit هذه عن بديل أو دليل صريح على التوقف.",
+  "ui.services.theLastSuccessfulSnapshotRemains": "تبقى آخر لقطة ناجحة ظاهرة إلى أن يُبلغ Homelab هذا عن بديل أو دليل واضح على توقف التطبيق.",
   "ui.services.thisHomelab": "Homelab هذا",
-  "ui.services.thisPermanentlyDeletesTheArchived":
-    "سيؤدي هذا إلى حذف الخدمة المؤرشفة نهائيًا من Node المصدر.",
+  "ui.services.thisPermanentlyDeletesTheArchived": "سيؤدي هذا إلى حذف الخدمة المؤرشفة نهائيًا من الخادم المصدر.",
   "ui.services.type": "النوع:",
   "ui.services.type2": "النوع",
   "ui.services.unclassifiedRuntimeComponentsAppearHere":
@@ -2767,7 +2710,7 @@ export const ar: Record<string, string> = {
   "ui.services.url": "URL",
   "ui.services.verifyFinish": "تحقق وأنهِ",
   "ui.services.verifying": "· جارٍ التحقق",
-  "ui.services.waitingForRuntimeDeployment": "بانتظار نشر وقت التشغيل...",
+  "ui.services.waitingForRuntimeDeployment": "بانتظار التثبيت...",
   "ui.services.youCanTestTheNew":
     "يمكنك اختبار النسخة الجديدة بينما تبقى القديمة نشطة.",
   "ui.servicesApplicationId.addressClass": "فئة العنوان",
@@ -2778,7 +2721,7 @@ export const ar: Record<string, string> = {
   "ui.servicesApplicationId.backToApplications": "العودة إلى التطبيقات",
   "ui.servicesApplicationId.freshness": "الحداثة",
   "ui.servicesApplicationId.impact": "التأثير",
-  "ui.servicesApplicationId.kitDeployment": "نشر Kit",
+  "ui.servicesApplicationId.kitDeployment": "Homelab",
   "ui.servicesApplicationId.lifecycle": "دورة الحياة",
   "ui.servicesApplicationId.management": "الإدارة",
   "ui.servicesApplicationId.noReachableAddressReported":
@@ -2799,15 +2742,14 @@ export const ar: Record<string, string> = {
   "ui.settings.dangerZone": "منطقة الخطر",
   "ui.settings.dashboard": "لوحة المعلومات",
   "ui.settings.dashboardLayout": "تخطيط لوحة المعلومات",
-  "ui.settings.decommissionsTheDeploymentSManaged":
-    "يُخرج بيئة التشغيل المُدارة الخاصة بالنشر من الخدمة ويزيل إدخاله. لإزالة خادم واحد فقط، استخدم إجراء إخراجه من الخدمة على الخادم نفسه.",
+  "ui.settings.decommissionsTheDeploymentSManaged": "يحذف الخادم المُدار لـ Homelab وإدخاله. لحذف خادم واحد فقط، استخدم «حذف الخادم» على ذلك الخادم.",
   "ui.settings.delete": "حذف",
-  "ui.settings.deleteADeployment": "حذف نشر",
-  "ui.settings.deleteNamed": 'هل تريد حذف "{name}"؟',
-  "ui.settings.deleteThisDeployment": "حذف هذا النشر",
+  "ui.settings.deleteADeployment": "حذف Homelab",
+  "ui.settings.deleteNamed": "حذف «{name}»؟",
+  "ui.settings.deleteThisDeployment": "حذف Homelab هذا",
   "ui.settings.deleting": "جارٍ الحذف...",
   "ui.settings.deletionFailed": "فشل الحذف",
-  "ui.settings.failedToLoadDeployments": "تعذّر تحميل عمليات النشر",
+  "ui.settings.failedToLoadDeployments": "تعذّر تحميل Homelab",
   "ui.settings.failedToLoadHomelabIdentity": "تعذّر تحميل هوية Homelab",
   "ui.settings.failedToSaveHomelabIdentity": "تعذّر حفظ هوية Homelab",
   "ui.settings.flag": "Flag",
@@ -2817,41 +2759,36 @@ export const ar: Record<string, string> = {
   "ui.settings.homelabIdentity": "هوية Homelab",
   "ui.settings.lightOrDarkAndThe":
     "فاتح أو داكن، ولمسة السطح النهائية. تتبع اللمسة النهائية الإعداد الافتراضي لحساب kombify الخاص بك إلى أن يختار هذا الجهاز لمسته الخاصة.",
-  "ui.settings.loadingDeployments": "جارٍ تحميل عمليات النشر...",
+  "ui.settings.loadingDeployments": "جارٍ تحميل Homelab...",
   "ui.settings.logout": "تسجيل الخروج",
   "ui.settings.managedByKombifyCloud": "تُدار بواسطة kombify Cloud.",
   "ui.settings.mode": "الوضع",
   "ui.settings.navigationPreview": "معاينة التنقل",
   "ui.settings.navigationPreviewShape": "شكل معاينة التنقل",
-  "ui.settings.noDeploymentsToDelete": "لا توجد عمليات نشر للحذف.",
+  "ui.settings.noDeploymentsToDelete": "لا توجد Homelab للإزالة.",
   "ui.settings.noHomelabIdentityConfigured": "لم يتم إعداد أي هوية Homelab.",
   "ui.settings.noVerifiedTestResidueRemains":
     "لا تتبقى أي مخلفات اختبار تم التحقق منها.",
   "ui.settings.noVerifiedTestResidueWas":
     "لم يتم العثور على أي مخلفات اختبار تم التحقق منها.",
   "ui.settings.overlap": "تراكب",
-  "ui.settings.pruneQualifies":
-    "لا يستوفي الشروط سوى الإسقاطات ذات المالك المصادق عليه {owner} والمطابقة الصارمة {strict}. تبقى بيئات التشغيل المُدارة النشطة وموارد المزوّد وNodes الحديثة وبيانات العرض التجريبي وبيانات Homelab العادية دون تغيير.",
+  "ui.settings.pruneQualifies": "لا يستوفي الشروط سوى الإسقاطات ذات المالك المصادق عليه {owner} والمطابقة الصارمة {strict}. تبقى بيئات التشغيل المُدارة النشطة وموارد المزوّد والخوادم الحديثة وبيانات العرض التجريبي وبيانات Homelab العادية دون تغيير.",
   "ui.settings.reviewCleanup": "مراجعة التنظيف",
   "ui.settings.reviewVerifiedTestResidue":
     "مراجعة مخلفات الاختبار التي تم التحقق منها",
   "ui.settings.reviewing": "جارٍ المراجعة...",
-  "ui.settings.reviewsExactOwnerScopedE2e":
-    "يراجع إسقاطات E2E المحددة بدقة بنطاق المالك وإسقاطات بيئة التشغيل الفاشلة. تبقى موارد المزوّد وعقود الإيجار النشطة وNodes الحديثة وبيانات Homelab العادية دون تغيير.",
+  "ui.settings.reviewsExactOwnerScopedE2e": "يراجع إسقاطات E2E المحددة بدقة بنطاق المالك وإسقاطات بيئة التشغيل الفاشلة. تبقى موارد المزوّد وعقود الإيجار النشطة والخوادم الحديثة وبيانات Homelab العادية دون تغيير.",
   "ui.settings.savedOnDevice": "تم الحفظ على هذا الجهاز لحسابك.",
   "ui.settings.settings": "الإعدادات",
   "ui.settings.signedIn": "تم تسجيل الدخول",
   "ui.settings.surface": "السطح",
   "ui.settings.surfaceFinish": "لمسة السطح النهائية",
   "ui.settings.tether": "Tether",
-  "ui.settings.theDemoDeploymentIsProtected":
-    "نشر العرض التجريبي محمي ولا يمكن حذفه.",
-  "ui.settings.thisDecommissionsTheManagedRuntime":
-    "يؤدي هذا إلى إخراج بيئة التشغيل المُدارة من الخدمة وإزالة إدخال النشر. لا يمكن التراجع عن ذلك.",
+  "ui.settings.theDemoDeploymentIsProtected": "Homelab التجريبي محمي ولا يمكن حذفه.",
+  "ui.settings.thisDecommissionsTheManagedRuntime": "يؤدي هذا إلى إيقاف الخادم المُدار وحذفه مع بياناته لدى المزوّد وإزالة إدخال Homelab. لا يمكن التراجع عن ذلك.",
   "ui.settings.thisEntryIsNotVerified":
     "هذا الإدخال ليس من مخلفات الاختبار التي تم التحقق منها ولا يمكن إزالته عبر تنظيف الإسقاطات.",
-  "ui.settings.thisExactPlanIsBound":
-    "ترتبط هذه الخطة بالضبط بالملخّص الموضح أدناه. لن يتم تدمير أي بنية تحتية.",
+  "ui.settings.thisExactPlanIsBound": "ترتبط هذه الخطة بالضبط بالملخّص الموضح أدناه. لن تتم إزالة أي خادم أو مورد لدى المزوّد.",
   "ui.settings.typeToConfirm": "اكتب {slot} للتأكيد",
   "ui.shortcuts.closeDialogDeselect": "إغلاق الحوار/إلغاء التحديد",
   "ui.shortcuts.focusSearchInput": "التركيز على حقل البحث",
@@ -2876,10 +2813,8 @@ export const ar: Record<string, string> = {
   "ui.sshKeygen.ed25519NotSupportedInThis":
     "Ed25519 غير مدعوم في هذا المتصفح. جرّب RSA بدلًا منه.",
   "ui.sshKeygen.unsupportedAlgorithm": "خوارزمية غير مدعومة: {algorithm}",
-  "ui.stackImport.exportIntro":
-    "صدّر إعداد نشر StackKit هذا بصيغة {file}. يمكنك تعديل الملف واستيراده مرة أخرى لاحقًا.",
-  "ui.stackImport.intro":
-    "استورد ملف {file} لإعداد نشر StackKit في Homelab الخاص بك. لا تزال ملفات {legacy} القديمة مقبولة.",
+  "ui.stackImport.exportIntro": "صدّر إعداد Homelab هذا بصيغة {file}. يمكنك تعديل الملف واستيراده مرة أخرى لاحقًا.",
+  "ui.stackImport.intro": "استورد ملف {file} لإعداد Homelab. لا تزال ملفات {legacy} القديمة مقبولة.",
   "ui.stackImport.orPaste": "أو الصق",
   "ui.stackImport.validating": "جارٍ التحقق...",
   "ui.stackImportExportModal.allRequiredFieldsArePresent":
@@ -2891,21 +2826,17 @@ export const ar: Record<string, string> = {
     "نسخ التشخيص (للمطورين)",
   "ui.stackImportExportModal.couldNotReadFile": "تعذّرت قراءة الملف",
   "ui.stackImportExportModal.dragFileHereOr": "اسحب الملف إلى هنا أو",
-  "ui.stackImportExportModal.exportStackkitDeploymentSpec":
-    "تصدير مواصفات نشر StackKit",
+  "ui.stackImportExportModal.exportStackkitDeploymentSpec": "تصدير مواصفات Homelab",
   "ui.stackImportExportModal.ifTheProblemPersistsCopy":
     "إذا استمرت المشكلة: انسخ التشخيص وشاركه مع المطورين.",
-  "ui.stackImportExportModal.importStackkitDeploymentSpec":
-    "استيراد مواصفات نشر StackKit",
+  "ui.stackImportExportModal.importStackkitDeploymentSpec": "استيراد مواصفات Homelab",
   "ui.stackImportExportModal.importStartSetup": "استيراد وبدء الإعداد",
   "ui.stackImportExportModal.importingConfiguration": "جارٍ استيراد الإعداد...",
   "ui.stackImportExportModal.metadataAndIntents": "• البيانات الوصفية والنوايا",
   "ui.stackImportExportModal.noContentFound": "لم يتم العثور على محتوى",
   "ui.stackImportExportModal.noContentToImport": "لا يوجد محتوى للاستيراد",
-  "ui.stackImportExportModal.noStackkitDeploymentIsAvailable":
-    "لا يتوفر أي نشر StackKit للتصدير",
-  "ui.stackImportExportModal.nodeDefinitionsWithoutCredentials":
-    "• تعريفات Nodes (بدون بيانات اعتماد)",
+  "ui.stackImportExportModal.noStackkitDeploymentIsAvailable": "لا يتوفر أي Homelab للتصدير",
+  "ui.stackImportExportModal.nodeDefinitionsWithoutCredentials": "• تعريفات الخوادم (بدون بيانات اعتماد)",
   "ui.stackImportExportModal.pasteYourStackSpecYaml":
     "# الصق ملف stack-spec.yaml الخاص بك هنا...",
   "ui.stackImportExportModal.recommended": "(موصى به)",
@@ -2927,19 +2858,17 @@ export const ar: Record<string, string> = {
   "ui.stackImportExportModal.youWillBeRedirectedTo":
     "ستتم إعادة توجيهك إلى صفحة الإعداد خلال لحظات.",
   "ui.stacksCreating.creatingStackkitDeploymentKombifyTechstack":
-    "جارٍ إنشاء نشر StackKit | kombify-Techstack",
+    "جارٍ إنشاء الـ Homelab الخاص بك | kombify Techstack",
   "ui.stacksCreating.leanBackBody":
     "لقد أنجزت دورك. نحن نجهّز كل شيء لك الآن، وشيء رائع في الطريق.",
   "ui.stacksCreating.leanBackTitle": "استرخِ، فنحن نصنع السحر من أجلك",
   "ui.stacksCreating.openOperations": "فتح العمليات",
-  "ui.stacksCreating.reviewAndStartStackkitRollout":
-    "مراجعة طرح StackKit وبدؤه",
   "ui.stacksCreating.tips.codeBody":
     "يُنشئ StackKits إعدادك من مخططات مُتحقق منها، فيصبح كل تغيير قابلًا للتكرار والتتبع.",
   "ui.stacksCreating.tips.codeEyebrow": "البنية التحتية كشيفرة",
   "ui.stacksCreating.tips.codeTitle": "مكدسك مكتوب كشيفرة",
   "ui.stacksCreating.tips.growBody":
-    "أضف عقدة أخرى إلى هذا المكدس متى احتجت. ينسق Techstack خوادمك، ويواصل كل خادم العمل بشكل مستقل.",
+    "أضف خادمًا آخر إلى هذا المكدس متى احتجت. ينسق Techstack خوادمك، ويواصل كل خادم العمل بشكل مستقل.",
   "ui.stacksCreating.tips.growEyebrow": "التوسع",
   "ui.stacksCreating.tips.growTitle": "مساحة للنمو",
   "ui.stacksCreating.tips.label": "معلومة مفيدة",
@@ -2959,21 +2888,21 @@ export const ar: Record<string, string> = {
   "ui.stacksCreating.tips.restoreEyebrow": "النسخ الاحتياطي",
   "ui.stacksCreating.tips.restoreTitle": "الاستعادة مُختبَرة لا مجرد وعد",
   "ui.stacksCreating.tips.show": "عرض النصيحة {number} من {total}",
-  "ui.stacksCreatingCreation-controller.additionalNode": "Node إضافي",
+  "ui.stacksCreatingCreation-controller.additionalNode": "خادم إضافي",
   "ui.stacksCreatingCreation-controller.afterFailedAttemptsTheBackend":
     "بعد {MAX_POLL_ERRORS} من المحاولات الفاشلة تعذّر الوصول إلى الخادم الخلفي. تواصل الصفحة المحاولة مع التراجع التدريجي؛ ويمكنك أيضًا التحقق من اتصال الشبكة وإعادة التحميل للمتابعة.",
   "ui.stacksCreatingCreation-controller.configurationPrepared":
     "تم تجهيز التكوين",
   "ui.stacksCreatingCreation-controller.connectYourNodeToContinue":
-    "اربط Node الخاص بك لمتابعة الطرح",
+    "اربط خادمك لمتابعة الطرح",
   "ui.stacksCreatingCreation-controller.connectionToServerLost":
     "فُقد الاتصال بالخادم",
   "ui.stacksCreatingCreation-controller.continueStackKitDeploymentOnConnected":
-    "متابعة نشر StackKit على Node المتصل",
+    "متابعة نشر StackKit على الخادم المتصل",
   "ui.stacksCreatingCreation-controller.continueStackKitOnConnectedNode":
-    "متابعة StackKit على Node المتصل",
+    "متابعة StackKit على الخادم المتصل",
   "ui.stacksCreatingCreation-controller.continueStackKitRolloutOnConnected":
-    "متابعة طرح StackKit على Node المتصل",
+    "متابعة طرح StackKit على الخادم المتصل",
   "ui.stacksCreatingCreation-controller.couldNotCheckRemoteSSH":
     "تعذّر التحقق من تقدم تسجيل SSH البعيد.",
   "ui.stacksCreatingCreation-controller.couldNotPrepareTheConnection":
@@ -2991,14 +2920,14 @@ export const ar: Record<string, string> = {
   "ui.stacksCreatingCreation-controller.creatingStackKitDeployment":
     "جارٍ إنشاء نشر StackKit",
   "ui.stacksCreatingCreation-controller.guardHasNotReportedA":
-    "لم يبلّغ Guard بعد عن نبض حديث لهذا Node. أعد محاولة تسجيل SSH على الاتصال المحفوظ، أو تحقق من أن Agent يعمل على الخادم.",
+    "لم يتصل خادمك بعد. أعد محاولة اتصال SSH بالتفاصيل المحفوظة أو تحقق من أن وكيل kombify يعمل على الخادم.",
   "ui.stacksCreatingCreation-controller.jobIsNotBeingProcessed":
     "المهمة لا تُعالَج",
   "ui.stacksCreatingCreation-controller.jobWasCanceled": "تم إلغاء المهمة",
   "ui.stacksCreatingCreation-controller.kombifyRequestedTheAdditionalManaged":
-    "طلب kombify Node المُدار الإضافي. يمكنك المتابعة من لوحة المعلومات أثناء اكتمال التسجيل.",
+    "طلب kombify الخادم المُدار الإضافي. يمكنك المتابعة من لوحة المعلومات أثناء اكتمال التسجيل.",
   "ui.stacksCreatingCreation-controller.managedNodeRequestIsStill":
-    "طلب Node المُدار لا يزال قيد التنفيذ",
+    "طلب الخادم المُدار لا يزال قيد التنفيذ",
   "ui.stacksCreatingCreation-controller.managedRolloutRecoveryWasNot":
     "لم يبدأ استرداد الطرح المُدار لأن المهمة المنتظرة ليس لها مرجع دقيق لعقد الإيجار.",
   "ui.stacksCreatingCreation-controller.missingJobReferencePleaseStart":
@@ -3006,21 +2935,21 @@ export const ar: Record<string, string> = {
   "ui.stacksCreatingCreation-controller.newStackKitDeployment":
     "نشر StackKit جديد",
   "ui.stacksCreatingCreation-controller.noJobFound": "لم يتم العثور على مهمة",
-  "ui.stacksCreatingCreation-controller.nodeConnected": "Node متصل",
-  "ui.stacksCreatingCreation-controller.nodeConnectionReady": "اتصال Node جاهز",
+  "ui.stacksCreatingCreation-controller.nodeConnected": "الخادم متصل",
+  "ui.stacksCreatingCreation-controller.nodeConnectionReady": "اتصال الخادم جاهز",
   "ui.stacksCreatingCreation-controller.nodeRegistrationDidNotReturn":
-    "لم يُعِد تسجيل Node مهمة إنشاء.",
+    "لم يُعِد تسجيل الخادم مهمة إنشاء.",
   "ui.stacksCreatingCreation-controller.nodeRegistrationReady":
-    "تسجيل Node جاهز",
+    "تسجيل الخادم جاهز",
   "ui.stacksCreatingCreation-controller.recoveringRolloutOnTheExact":
     "جارٍ استرداد الطرح على VM المُدارة الموجودة بالضبط...",
   "ui.stacksCreatingCreation-controller.remoteSSHEnrollmentFailed":
     "فشل تسجيل SSH البعيد.",
   "ui.stacksCreatingCreation-controller.reportedAFreshGuardHeartbeat":
-    "أبلغ {name} عن نبض Guard حديث وهو ظاهر في إسقاط Nodes.",
+    "اتصل {name} وأصبح جزءًا من الـ Homelab الخاص بك.",
   "ui.stacksCreatingCreation-controller.restoreDrill": "تدريب الاستعادة",
   "ui.stacksCreatingCreation-controller.resumingTheEarlierNodeRegistration":
-    "جارٍ استئناف محاولة تسجيل Node السابقة…",
+    "جارٍ استئناف محاولة تسجيل الخادم السابقة…",
   "ui.stacksCreatingCreation-controller.retryDeployment": "إعادة محاولة النشر",
   "ui.stacksCreatingCreation-controller.retryRollout": "إعادة محاولة الطرح",
   "ui.stacksCreatingCreation-controller.retryServerRequest":
@@ -3047,27 +2976,27 @@ export const ar: Record<string, string> = {
     "التحقق من بيئة تشغيل StackKit مفقود",
   "ui.stacksCreatingCreation-controller.startFreshAttempt": "بدء محاولة جديدة",
   "ui.stacksCreatingCreation-controller.theAddNodeRequestHas":
-    "طلب إضافة Node يعمل منذ أكثر من دقيقتين. ينبغي لهذا المسار أن يطلب Node الإضافي أو يجهّزه فقط، لا أن يشغّل طرح StackKit الكامل. افتح العمليات للتحقق مما إذا تم إنشاء طلب Node، ثم أعد محاولة إضافة Node إذا لم يظهر Node جديد.",
+    "طلب «إضافة خادم» يعمل منذ أكثر من دقيقتين. ينبغي لهذا المسار أن يطلب الخادم الإضافي أو يجهّزه فقط، لا أن يشغّل طرح StackKit الكامل. افتح العمليات للتحقق مما إذا تم إنشاء طلب الخادم، ثم أعد محاولة «إضافة خادم» إذا لم يظهر خادم جديد.",
   "ui.stacksCreatingCreation-controller.theAdditionalNodeRegistrationIs":
-    "تسجيل Node الإضافي جاهز لـ Homelab الموجود.",
+    "تسجيل الخادم الإضافي جاهز لـ Homelab الموجود.",
   "ui.stacksCreatingCreation-controller.theBackendCanceledThisJob":
     "ألغت الواجهة الخلفية هذه المهمة قبل اكتمالها. أعد المحاولة للمتابعة من آخر نقطة تحقق آمنة.",
   "ui.stacksCreatingCreation-controller.theCompletedRuntimeJobDid":
     "لم تُعِد مهمة بيئة التشغيل المكتملة دليلًا موثّقًا على بيئة التشغيل. أعد محاولة الطرح للتحقق من التثبيت.",
   "ui.stacksCreatingCreation-controller.theNodeProjectionCouldNot":
-    "تعذّر فحص إسقاط Nodes. يظل أمر الاقتران متاحًا، لكن هذه الصفحة لن تدّعي وجود اتصال دون نبض Guard حديث.",
+    "تعذّر التحقق مما إذا كان خادمك قد اتصل. يبقى الأمر متاحًا؛ ولن تعرض هذه الصفحة اتصالًا إلا بعد أن يتصل خادمك فعلًا.",
   "ui.stacksCreatingCreation-controller.thePreviouslyVerifiedGuardHeartbeat":
-    "لم يعد نبض Guard الذي تم التحقق منه سابقًا حديثًا. بانتظار أدلة اتصال حالية.",
+    "توقف خادمك عن الاتصال. بانتظار أن يتصل من جديد.",
   "ui.stacksCreatingCreation-controller.theProvisioningJobHasBeen":
     "مهمة التجهيز معلّقة منذ أكثر من دقيقتين دون تقدم. يعني هذا عادةً أن المُنسِّق لا يعمل أو أنه تعطّل.\n\nتحقق من سجلات الخادم: docker compose logs techstack\nجرّب إعادة التشغيل: docker compose restart techstack",
   "ui.stacksCreatingCreation-controller.theReservedNodeCouldNot":
-    "تعذّر فحص Node المحجوز. أعد محاولة تسجيل SSH على الاتصال المحفوظ عندما يتوفر جرد الخوادم مرة أخرى.",
+    "تعذّر فحص الخادم المحجوز. أعد محاولة تسجيل SSH على الاتصال المحفوظ عندما يتوفر جرد الخوادم مرة أخرى.",
   "ui.stacksCreatingCreation-controller.thisPageRequiresAJob":
     "تتطلب هذه الصفحة job_id من معالج الإعداد. يُرجى إعادة بدء الإعداد عبر /stacks/new.",
   "ui.stacksCreatingCreation-controller.validatingTheSelectedStackKitAnd":
-    "جارٍ التحقق من StackKit المحدد وتحضير Node...",
+    "جارٍ التحقق من StackKit المحدد وتحضير الخادم...",
   "ui.stacksCreatingCreation-controller.yourRemoteNodeConfigurationIs":
-    "إعداد Node البعيد الخاص بك جاهز للطرح",
+    "إعداد الخادم البعيد الخاص بك جاهز للطرح",
   "ui.stacksCreatingCreation-controller.yourSessionIsNoLonger":
     "لم تعد جلستك صالحة، لذا لا يمكن فحص تقدم الإنشاء. سجّل الدخول مرة أخرى وأعد فتح عملية الإنشاء هذه لمتابعة مراقبتها.",
   "ui.stacksCreatingCreation-results.backendError":
@@ -3078,29 +3007,29 @@ export const ar: Record<string, string> = {
   "ui.stacksCreatingCreation-results.stackID": "معرّف الـ Stack: {stackId}",
   "ui.stacksCreatingCreation-results.targetBootstrap": "تمهيد الهدف:",
   "ui.stacksCreatingCreationCompletion.guardHeartbeatVerified":
-    "تم التحقق من نبض Guard",
-  "ui.stacksCreatingCreationCompletion.hashPresent": "الهاش موجود",
+    "خادمك متصل",
+  "ui.stacksCreatingCreationCompletion.hashPresent": "تم تعيين عبارة مرور الاسترداد",
   "ui.stacksCreatingCreationCompletion.lastGuardHeartbeat": "آخر نبض لـ Guard:",
   "ui.stacksCreatingCreationCompletion.managedProvisioningComplete":
-    "اكتمل التجهيز المُدار",
-  "ui.stacksCreatingCreationCompletion.materialLinked": "تم ربط المادة",
+    "خادمك المُدار جاهز",
+  "ui.stacksCreatingCreationCompletion.materialLinked": "تم حفظ الاسترداد",
   "ui.stacksCreatingCreationCompletion.openHomelab": "فتح Homelab",
   "ui.stacksCreatingCreationCompletion.owner": "المالك",
-  "ui.stacksCreatingCreationCompletion.ownerPrepared": "تم تجهيز المالك",
+  "ui.stacksCreatingCreationCompletion.ownerPrepared": "تم تجهيز حساب المالك",
   "ui.stacksCreatingCreationCompletion.ownerReady": "المالك جاهز",
-  "ui.stacksCreatingCreationCompletion.ownerSeedReady": "بذرة المالك جاهزة",
+  "ui.stacksCreatingCreationCompletion.ownerSeedReady": "حساب المالك جاهز",
   "ui.stacksCreatingCreationCompletion.recovery": "الاسترداد",
-  "ui.stacksCreatingCreationCompletion.rolloutComplete": "اكتمل الطرح",
-  "ui.stacksCreatingCreationCompletion.selfHostedRollout": "طرح مستضاف ذاتيًا",
+  "ui.stacksCreatingCreationCompletion.rolloutComplete": "اكتمل الإعداد",
+  "ui.stacksCreatingCreationCompletion.selfHostedRollout": "مستضاف ذاتيًا",
   "ui.stacksCreatingCreationCompletion.techstackNowSeesThisNode":
-    "يرى Techstack الآن هذا Node سليمًا وجاهزًا للطرح في إسقاط Nodes الفعلي. لم يؤدِّ التحضير للاقتران وحده إلى هذه الحالة.",
+    "اتصل خادمك وهو يعمل بشكل سليم. وهو جاهز للخطوة التالية.",
   "ui.stacksCreatingCreationCompletion.theFirstLoginGatewayAnd":
-    'تصل بوابة تسجيل الدخول الأولى ومرجع الاسترداد مع طرح StackKit ("Review + Start").',
+    "تصلك تفاصيل أول تسجيل دخول والاسترداد بعد إعداد الـ Homelab الخاص بك («مراجعة وإنشاء»).",
   "ui.stacksCreatingCreationCompletion.theOwnerIdentityDerivesFrom":
     "تُشتق هوية المالك من ملف kombify Cloud المرتبط بك.",
   "ui.stacksCreatingCreationCompletion.theOwnerSeedIsPrepared":
-    "تم تجهيز بذرة المالك.",
-  "ui.stacksCreatingCreationCompletion.yourNode": "Node الخاص بك",
+    "حساب المالك الخاص بك جاهز.",
+  "ui.stacksCreatingCreationCompletion.yourNode": "خادمك",
   "ui.groupedTaskList.needsAttention": "يحتاج إلى انتباه",
   "ui.stacksCreatingCreationDegraded.titleOne":
     "جاهز — جزء واحد يحتاج إلى انتباه",
@@ -3136,9 +3065,7 @@ export const ar: Record<string, string> = {
   "ui.stacksCreatingCreationFailure.errorDetails": "تفاصيل الخطأ",
   "ui.stacksCreatingCreationFailure.existingManagedVmLeaseReferenced":
     "تمت الإشارة إلى عقد إيجار VM مُدار موجود",
-  "ui.stacksCreatingCreationFailure.makeSureTheBackendServer":
-    "تأكد من أن خادم الواجهة الخلفية يعمل",
-  "ui.stacksCreatingCreationFailure.nodeConnectionSucceeded": "نجح اتصال Node",
+  "ui.stacksCreatingCreationFailure.nodeConnectionSucceeded": "نجح اتصال الخادم",
   "ui.stacksCreatingCreationFailure.operations": "العمليات",
   "ui.stacksCreatingCreationFailure.askCompanion": "اسأل kombify",
   "ui.stacksCreatingCreationFailure.askCompanionPrompt":
@@ -3146,16 +3073,14 @@ export const ar: Record<string, string> = {
   "ui.stacksCreatingCreationFailure.possibleSolutions": "الحلول الممكنة:",
   "ui.stacksCreatingCreationFailure.resumePreviousAttempt":
     "استئناف المحاولة السابقة",
-  "ui.stacksCreatingCreationFailure.reviewYourConfigurationSettings":
-    "راجع إعدادات الإعداد لديك",
   "ui.stacksCreatingCreationFailure.sshEnrollmentCompletedAndThe":
-    "اكتمل تسجيل SSH وأصبح Node ظاهرًا في Homelab الخاص بك. فشل فقط تحضير StackKit أو الطرح. تستمر إعادة المحاولة على Node المتصل دون تكرار تسجيل SSH.",
+    "اكتمل تسجيل SSH وأصبح الخادم ظاهرًا في Homelab الخاص بك. فشل فقط تحضير StackKit أو الطرح. تستمر إعادة المحاولة على الخادم المتصل دون تكرار تسجيل SSH.",
   "ui.stacksCreatingCreationFailure.theExactRetryEndpointValidates":
     "تتحقق نقطة إعادة المحاولة المحددة من هذه المهمة الفاشلة وعقد الإيجار قبل المتابعة على الخادم الموجود.",
   "ui.stacksCreatingCreationFailure.theRolloutReachedTheExisting":
     "وصل الطرح إلى VM المُدارة الموجودة.",
   "ui.stacksCreatingCreationFailure.thisBrowserReusedAnAttempt":
-    "أعاد هذا المتصفح استخدام مفتاح محاولة من عملية إرسال مختلفة. ربما أنشأ التشغيل السابق تسجيل Node بالفعل. استأنف تلك المحاولة أو ابدأ من جديد بمفتاح جديد.",
+    "أعاد هذا المتصفح استخدام مفتاح محاولة من عملية إرسال مختلفة. ربما أنشأ التشغيل السابق تسجيل خادم بالفعل. استأنف تلك المحاولة أو ابدأ من جديد بمفتاح جديد.",
   "ui.stacksCreatingCreationFailure.troubleshooting":
     "استكشاف الأخطاء وإصلاحها",
   "ui.stacksCreatingCreationFailure.vpsProvisioningCompletedOnlyStackkit":
@@ -3165,9 +3090,8 @@ export const ar: Record<string, string> = {
   "ui.stacksCreatingCreationInstallCommand.copy": "نسخ",
   "ui.stacksCreatingCreationInstallCommand.copyInstallationCommandToClipboard":
     "نسخ أمر التثبيت إلى الحافظة",
-  "ui.stacksCreatingCreationInstallCommand.installWorker": "تثبيت Worker",
   "ui.stacksCreatingCreationInstallCommand.kombifyTechstackServerUrlReachable":
-    "عنوان URL لخادم kombify-Techstack (يمكن لـ Workers الوصول إليه):",
+    "عنوان kombify Techstack (يمكن لخادمك الوصول إليه):",
   "ui.stacksCreatingCreationInstallCommand.openOneHourSimulateDemo":
     "فتح معاينة Simulate التجريبية لمدة ساعة",
   "ui.stacksCreatingCreationInstallCommand.previewLifetimeIsLimitedTo":
@@ -3187,7 +3111,7 @@ export const ar: Record<string, string> = {
   "ui.stacksCreatingCreationLease.leaseId": "معرّف عقد الإيجار",
   "ui.stacksCreatingCreationLease.live": "مباشر",
   "ui.stacksCreatingCreationLease.loginGateway": "بوابة تسجيل الدخول",
-  "ui.stacksCreatingCreationLease.managedNodeRequested": "تم طلب Node مُدار",
+  "ui.stacksCreatingCreationLease.managedNodeRequested": "تم طلب خادم مُدار",
   "ui.stacksCreatingCreationLease.managedRuntimeReady":
     "بيئة التشغيل المُدارة جاهزة",
   "ui.stacksCreatingCreationLease.offering": "العرض",
@@ -3203,14 +3127,14 @@ export const ar: Record<string, string> = {
   "ui.stacksCreatingCreationLease.stackkitDeployedOnTheLeased":
     "تم نشر StackKit على VM الاشتراك المؤجَّرة. القيم أدناه مُرجَعة من مهمة بيئة التشغيل - وليست بيانات تجريبية.",
   "ui.stacksCreatingCreationLease.stackkitIdentityHandoffIsMissing":
-    "تسليم هوية StackKit مفقود",
+    "تفاصيل أول تسجيل دخول مفقودة",
   "ui.stacksCreatingCreationLease.stackkitReturnedTheOwnerLogin":
     "أعاد StackKit تسجيل دخول المالك وبوابة تسجيل الدخول ومراجع الاسترداد لطرح Cloud Kit الذي تم التحقق منه.",
   "ui.stacksCreatingCreationLease.status": "الحالة:",
   "ui.stacksCreatingCreationLease.theAdditionalSubscriptionVmRequest":
     "تم تسجيل طلب VM الاشتراك الإضافي. سيظهر في العمليات عندما يبلّغ التسجيل بالنتيجة.",
   "ui.stacksCreatingCreationLease.theRolloutCompletedButThe":
-    "اكتمل الطرح، لكن StackKit لم يُعِد مخرجات تسجيل دخول المالك وبوابة تسجيل الدخول والاسترداد. اعتبر ذلك عائقًا أمام الإصدار إلى أن تتضمن استجابة إجراء بيئة التشغيل",
+    "تم إعداد الـ Homelab الخاص بك، لكن تفاصيل أول تسجيل دخول والاسترداد لم تصل. تواصل مع الدعم وشارك التفاصيل التقنية.",
   "ui.stacksCreatingCreationLease.theseStatusesComeFromRuntime":
     "تأتي هذه الحالات من استجابات إجراءات بيئة التشغيل ومن إثبات e2e النهائي.",
   "ui.stacksCreatingCreationLease.wallet": "Wallet",
@@ -3221,7 +3145,7 @@ export const ar: Record<string, string> = {
   "ui.stacksCreatingCreationProgress.checkAgain": "تحقق مرة أخرى",
   "ui.stacksCreatingCreationProgress.creationFailed": "فشل الإنشاء",
   "ui.stacksCreatingCreationProgress.nodeProvisioningIsStillIn":
-    "لا يزال تجهيز Node قيد التنفيذ",
+    "لا يزال تجهيز الخادم قيد التنفيذ",
   "ui.stacksCreatingCreationProgress.pleaseWaitWhileWeRe":
     "يُرجى الانتظار بينما",
   "ui.stacksCreatingCreationProgress.morphCompleting": "نُكمل",
@@ -3230,21 +3154,21 @@ export const ar: Record<string, string> = {
   "ui.stacksCreatingCreationProgress.morphValidating": "نتحقق",
   "ui.stacksCreatingCreationProgress.progress": "التقدم",
   "ui.stacksCreatingCreationProgress.rolloutIncomplete": "الطرح غير مكتمل",
-  "ui.stacksCreatingCreationProgress.runThePairingCommand": "شغّل أمر الاقتران",
+  "ui.stacksCreatingCreationProgress.runThePairingCommand": "شغّل الأمر على خادمك",
   "ui.stacksCreatingCreationProgress.setupCannotContinue":
     "لا يمكن متابعة الإعداد",
   "ui.stacksCreatingCreationProgress.theNextCheckIsScheduled":
-    "تمت جدولة الفحص التالي. تبقى لوحة المعلومات والخدمات والوصول إلى Node مقفلة إلى أن يتأكد التسجيل؛ ويمكن استئناف الفحص المتأخر هنا بأمان.",
+    "تمت جدولة الفحص التالي. تبقى لوحة المعلومات والخدمات والوصول إلى الخادم مقفلة إلى أن يتأكد التسجيل؛ ويمكن استئناف الفحص المتأخر هنا بأمان.",
   "ui.stacksCreatingCreationProgress.theNextManagedRuntimeCheck":
-    "تمت جدولة فحص بيئة التشغيل المُدارة التالي لهذه العملية. إذا ظل متأخرًا بعد تسليم النسخة المتماثلة أو إعادة التشغيل، يوفّر Techstack إجراء استئناف لـ Node المحدد نفسه.",
+    "تم جدولة الفحص التالي لخادمك المُدار. إذا بقي متأخرًا بعد إعادة التشغيل، يمكنك استئنافه من هنا.",
   "ui.stacksCreatingCreationProgress.theRegistrationRequestIsReady":
-    "طلب التسجيل جاهز، لكن Node لا يُعدّ متصلًا إلى أن يظهر نبض Guard حديث في إسقاط Nodes.",
+    "لم يتصل خادمك بعد. شغّل الأمر أدناه عليه؛ وتتابع هذه الصفحة تلقائيًا.",
   "ui.stacksCreatingCreationProgress.thisCanTakeAFew":
-    "قد يستغرق هذا بضع دقائق. يُرجى عدم إغلاق هذه الصفحة.",
+    "يستغرق هذا بضع دقائق. يمكنك البقاء في هذه الصفحة أو العودة لاحقًا؛ يستمر إعداد الـ Homelab الخاص بك.",
   "ui.stacksCreatingCreationProgress.thisMayTakeAFew":
-    "قد يستغرق هذا بضع دقائق. يمكنك متابعة التقدم أدناه.",
+    "يستغرق هذا بضع دقائق. يمكنك البقاء في هذه الصفحة أو العودة لاحقًا؛ يستمر إعداد الـ Homelab الخاص بك.",
   "ui.stacksCreatingCreationProgress.thisPageChecksTheReal":
-    "تفحص هذه الصفحة إسقاط Nodes الفعلي كل بضع ثوانٍ.",
+    "تتحقق هذه الصفحة كل بضع ثوانٍ مما إذا كان خادمك قد اتصل.",
   "ui.stacksCreatingCreationRequirements.backendRequirementsAreUnavailable":
     "متطلبات الواجهة الخلفية غير متاحة",
   "ui.stacksCreatingCreationRequirements.guide": "الدليل →",
@@ -3262,32 +3186,32 @@ export const ar: Record<string, string> = {
     "لا يُفعَّل الاستئناف اليدوي إلا بعد التحقق من جهة الخادم.",
   "ui.stacksCreatingCreationRunStatus.afterCreation": "بعد الإنشاء",
   "ui.stacksCreatingCreationRunStatus.afterYouRunTheOne":
-    "بعد تشغيل الأمر المكوّن من سطر واحد، يسجّل Guard الصادر نفسه في هذا Homelab. لا تضع لوحة المعلومات علامة الاتصال على Node إلا بعد وجود نبض حديث في إسقاط Nodes.",
-  "ui.stacksCreatingCreationRunStatus.awaitingHeartbeat": "بانتظار النبض",
+    "بعد تشغيل الأمر، يتصل خادمك بالـ Homelab الخاص بك. يظهر كمتصل بمجرد أن يرسل أول إشارة.",
+  "ui.stacksCreatingCreationRunStatus.awaitingHeartbeat": "بانتظار خادمك",
   "ui.stacksCreatingCreationRunStatus.checkSshHostCredentialsAnd":
     "تحقق من مضيف SSH وبيانات الاعتماد ومن قدرة الخادم على الوصول إلى Techstack.",
-  "ui.stacksCreatingCreationRunStatus.connectMyNode": "ربط Node الخاص بي",
+  "ui.stacksCreatingCreationRunStatus.connectMyNode": "ربط خادمي",
   "ui.stacksCreatingCreationRunStatus.connectingToYourNodeOver":
-    "جارٍ الاتصال بـ Node الخاص بك عبر SSH…",
+    "جارٍ الاتصال بخادمك عبر SSH…",
   "ui.stacksCreatingCreationRunStatus.connectingViaSsh":
     "جارٍ الاتصال عبر SSH…",
   "ui.stacksCreatingCreationRunStatus.continueRolloutOnTheExisting":
     "متابعة الطرح على VM الموجودة",
   "ui.stacksCreatingCreationRunStatus.copyFailedSelectTheCommand":
     "فشل النسخ — حدّد الأمر أعلاه",
-  "ui.stacksCreatingCreationRunStatus.copyPairingCommand": "نسخ أمر الاقتران",
+  "ui.stacksCreatingCreationRunStatus.copyPairingCommand": "نسخ الأمر",
   "ui.stacksCreatingCreationRunStatus.currentStatus": "الحالة الحالية",
   "ui.stacksCreatingCreationRunStatus.enrolling": "جارٍ التسجيل",
   "ui.stacksCreatingCreationRunStatus.enrollmentOverSshFinishedThis":
-    "انتهى التسجيل عبر SSH. ستعرض هذه الصفحة “Node متصل” بمجرد أن يبلّغ Guard عن نبض حديث.",
+    "اكتمل التسجيل عبر SSH. ستعرض هذه الصفحة «الخادم متصل» بمجرد أن يتصل خادمك.",
   "ui.stacksCreatingCreationRunStatus.failed": "فشل",
   "ui.stacksCreatingCreationRunStatus.generateAFreshCommandTo":
-    "أنشئ أمرًا جديدًا لمتابعة ربط هذا Node.",
+    "أنشئ أمرًا جديدًا لمتابعة ربط هذا الخادم.",
   "ui.stacksCreatingCreationRunStatus.generateAShortLivedCommand":
-    "أنشئ أمرًا قصير العمر لهذا Node. لا يتم الاحتفاظ ببيانات اعتماد الاتصال في تقارير المهام.",
+    "أنشئ أمرًا قصير العمر لهذا الخادم. لا يتم الاحتفاظ ببيانات اعتماد الاتصال في تقارير المهام.",
   "ui.stacksCreatingCreationRunStatus.generateNewCommand": "إنشاء أمر جديد",
   "ui.stacksCreatingCreationRunStatus.generatePairingCommand":
-    "إنشاء أمر الاقتران",
+    "إنشاء أمر",
   "ui.stacksCreatingCreationRunStatus.kombifyIsInstallingAndEnrolling":
     "يقوم kombify بتثبيت Guard وتسجيله على خادمك عبر SSH. لا حاجة لتشغيل أي أمر يدويًا.",
   "ui.stacksCreatingCreationRunStatus.kombifyWillProvisionTheSubscription":
@@ -3296,12 +3220,12 @@ export const ar: Record<string, string> = {
     "سيستخدم kombify إعداد SSH البعيد الذي تم تسجيله في المعالج.",
   "ui.stacksCreatingCreationRunStatus.nextScheduledCheck":
     "الفحص المجدول التالي:",
-  "ui.stacksCreatingCreationRunStatus.nodeAccess": "الوصول إلى Node",
+  "ui.stacksCreatingCreationRunStatus.nodeAccess": "الوصول إلى الخادم",
   "ui.stacksCreatingCreationRunStatus.pairingCommandCopied":
-    "تم نسخ أمر الاقتران",
-  "ui.stacksCreatingCreationRunStatus.pairingCommandReady": "أمر الاقتران جاهز",
+    "تم نسخ الأمر",
+  "ui.stacksCreatingCreationRunStatus.pairingCommandReady": "الأمر جاهز",
   "ui.stacksCreatingCreationRunStatus.pairingCommandUnavailable":
-    "أمر الاقتران غير متاح",
+    "الأمر غير متاح",
   "ui.stacksCreatingCreationRunStatus.plannedRemoteTarget":
     "الهدف البعيد المخطط له",
   "ui.stacksCreatingCreationRunStatus.preparingCommand": "جارٍ تحضير الأمر…",
@@ -3317,13 +3241,13 @@ export const ar: Record<string, string> = {
   "ui.stacksCreatingCreationRunStatus.retryingSshConnection":
     "جارٍ إعادة محاولة اتصال SSH…",
   "ui.stacksCreatingCreationRunStatus.runThisOneLinerOn":
-    "شغّل هذا الأمر المكوّن من سطر واحد على Node الإضافي. أنشأت مهمة التسجيل المكتملة رمز الاقتران فقط؛ ولن يعرض Techstack “Node متصل” إلا بعد أن يبلّغ Guard الصادر عن نبض حديث ويكون إسقاط Nodes سليمًا.",
+    "شغّل هذا الأمر على الخادم الإضافي. يظهر كمتصل بمجرد أن يرسل إشارته ويعمل بشكل سليم.",
   "ui.stacksCreatingCreationRunStatus.techstackUrlReachableFromThe":
     "عنوان URL لـ Techstack يمكن للخادم الوصول إليه",
   "ui.stacksCreatingCreationRunStatus.theAdditionalManagedNodeIs":
-    "تتم إضافة Node المُدار الإضافي إلى هذا Homelab وسيظهر في لوحة معلومات Nodes عندما يبلّغ التسجيل بالنتيجة.",
+    "تتم إضافة الخادم المُدار الإضافي إلى هذا Homelab وسيظهر في لوحة معلومات الخوادم عندما يبلّغ التسجيل بالنتيجة.",
   "ui.stacksCreatingCreationRunStatus.theAdditionalNodeIsRegistered":
-    "تم تسجيل Node الإضافي في هذا Homelab ويمكنه بعد ذلك تلقي الخدمات من نشر StackKit هذا.",
+    "تم تسجيل الخادم الإضافي في هذا Homelab ويمكنه بعد ذلك تلقي الخدمات من نشر StackKit هذا.",
   "ui.stacksCreatingCreationRunStatus.theManagedRuntimeIsNot":
     "بيئة التشغيل المُدارة ليست قابلة للوصول بالكامل للطرح بعد. قد تكون الإشارة المعلقة هي عنوانها أو بيانات اعتمادها أو تسجيلها. جدولَ Techstack الفحص التالي.",
   "ui.stacksCreatingCreationRunStatus.theProviderOperationHasNot":
@@ -3337,15 +3261,15 @@ export const ar: Record<string, string> = {
   "ui.stacksCreatingCreationRunStatus.thisDoesNotCreateAnother":
     "لا يؤدي هذا إلى إنشاء VM أخرى.",
   "ui.stacksCreatingCreationRunStatus.thisPairingTokenHasExpired":
-    "انتهت صلاحية رمز الاقتران هذا.",
+    "انتهت صلاحية هذا الأمر.",
   "ui.stacksCreatingCreationRunStatus.validatingTheExistingVm":
     "جارٍ التحقق من VM الموجودة...",
   "ui.stacksCreatingCreationRunStatus.waitingForGuardHeartbeat":
-    "بانتظار نبض Guard…",
+    "بانتظار اتصال خادمك…",
   "ui.stacksCreatingCreationRunStatus.waitingForRealConnection":
-    "بانتظار اتصال حقيقي",
+    "بانتظار الاتصال",
   "ui.stacksCreatingCreationRunStatus.youWillReceiveAWorker":
-    "ستتلقى أمر تثبيت Worker لربط Nodes الخاصة بك بنشر StackKit هذا.",
+    "ستتلقى أمرًا لربط خوادمك بنشر StackKit هذا.",
   "ui.stacksId.actionPending": "{action} قيد الانتظار",
   "ui.stacksId.actions": "الإجراءات",
   "ui.stacksId.add": "+ إضافة",
@@ -3358,34 +3282,30 @@ export const ar: Record<string, string> = {
     "بيانات الاعتماد التي تم إعدادها: {count}",
   "ui.stacksId.credentialsConfigured.other":
     "بيانات الاعتماد التي تم إعدادها: {count}",
-  "ui.stacksId.decommission": "إخراج من الخدمة",
-  "ui.stacksId.decommissionManagedRuntime":
-    "هل تريد إخراج بيئة التشغيل المُدارة من الخدمة؟",
+  "ui.stacksId.decommission": "حذف الخادم",
+  "ui.stacksId.decommissionManagedRuntime": "حذف هذا الخادم المُدار؟",
   "ui.stacksId.deleteCredential": "هل تريد حذف بيانات الاعتماد؟",
-  "ui.stacksId.deploymentFallback": "نشر StackKit",
+  "ui.stacksId.deploymentFallback": "Homelab",
   "ui.stacksId.edit": "تعديل",
   "ui.stacksId.editCredential": "تعديل بيانات الاعتماد",
   "ui.stacksId.enrollment": "التسجيل",
   "ui.stacksId.failedToAddCredential": "تعذّرت إضافة بيانات الاعتماد",
   "ui.stacksId.failedToDeleteCredential": "تعذّر حذف بيانات الاعتماد",
   "ui.stacksId.failedToLoadRuntimeStatus": "تعذّر تحميل حالة بيئة التشغيل",
-  "ui.stacksId.failedToLoadStackkitDeployment": "تعذّر تحميل نشر StackKit",
+  "ui.stacksId.failedToLoadStackkitDeployment": "تعذّر تحميل Homelab",
   "ui.stacksId.ingest": "الاستيعاب",
   "ui.stacksId.latestOperationsSnapshot": "أحدث لقطة للعمليات",
-  "ui.stacksId.manageCredentialsForThisStackkit":
-    "إدارة بيانات الاعتماد لنشر StackKit هذا",
+  "ui.stacksId.manageCredentialsForThisStackkit": "تحكّم في الخادم واطّلع على خدماته وأدر بيانات الاعتماد.",
   "ui.stacksId.missingCredentialsDetected": "تم اكتشاف بيانات اعتماد مفقودة",
   "ui.stacksId.missingSecret": "سر مفقود",
   "ui.stacksId.monitoringEvidence": "أدلة المراقبة",
   "ui.stacksId.monthlyRuntime": "بيئة تشغيل شهرية",
   "ui.stacksId.monthlyRuntimeActionFailed": "فشل إجراء بيئة التشغيل الشهرية",
-  "ui.stacksId.noCredentialsConfiguredForThis":
-    "لم يتم إعداد أي بيانات اعتماد لنشر StackKit هذا.",
+  "ui.stacksId.noCredentialsConfiguredForThis": "لم يتم إعداد أي بيانات اعتماد لـ Homelab هذا.",
   "ui.stacksId.noLeaseAttached": "لا يوجد عقد إيجار مرتبط",
-  "ui.stacksId.noStackkitDeploymentIdProvided":
-    "لم يتم توفير معرّف نشر StackKit",
+  "ui.stacksId.noStackkitDeploymentIdProvided": "لم يتم توفير معرّف Homelab",
   "ui.stacksId.offeringSpec": "{vcpus} vCPU · {memory} GB RAM",
-  "ui.stacksId.pageTitle": "{name} - بيانات الاعتماد | kombify-Techstack",
+  "ui.stacksId.pageTitle": "{name} | kombify-Techstack",
   "ui.stacksId.query": "الاستعلام",
   "ui.stacksId.runtime": "بيئة التشغيل",
   "ui.stacksId.series": "السلسلة",
@@ -3394,15 +3314,14 @@ export const ar: Record<string, string> = {
   "ui.stacksId.sshInfo": "معلومات SSH",
   "ui.stacksId.sshOff": "SSH متوقف",
   "ui.stacksId.sshOn": "SSH مفعّل",
-  "ui.stacksId.stackkitDeploymentServices": "خدمات نشر StackKit",
+  "ui.stacksId.stackkitDeploymentServices": "خدمات Homelab هذا",
   "ui.stacksId.stackkitService": "خدمة StackKit",
   "ui.stacksId.start": "بدء",
   "ui.stacksId.status": "الحالة",
   "ui.stacksId.stop": "إيقاف",
   "ui.stacksId.stopManagedServer": "هل تريد إيقاف الخادم المُدار؟",
   "ui.stacksId.storedCredentials": "بيانات الاعتماد المحفوظة",
-  "ui.stacksId.techstackWillBeginProviderCleanup":
-    "سيبدأ Techstack تنظيف المزوّد لبيئة التشغيل المُدارة هذه.",
+  "ui.stacksId.techstackWillBeginProviderCleanup": "سيحذف Techstack هذا الخادم المُدار لدى المزوّد مع بياناته.",
   "ui.stacksId.theFollowingServicesNeedCredentials":
     "تحتاج الخدمات التالية إلى إعداد بيانات اعتماد:",
   "ui.stacksId.theServerShutsDownAnd":
@@ -3410,8 +3329,7 @@ export const ar: Record<string, string> = {
   "ui.stacksId.thisPermanentlyRemovesTheSelected":
     "يؤدي هذا إلى إزالة بيانات الاعتماد المحددة نهائيًا.",
   "ui.stacksId.username": "اسم المستخدم",
-  "ui.stacksIdServersNew.addNodeKombifyTechstack":
-    "إضافة Node | kombify-Techstack",
+  "ui.stacksIdServersNew.addNodeKombifyTechstack": "إضافة خادم | kombify-Techstack",
   "ui.stacksIdServersServerId.activityHistory": "سجل النشاط",
   "ui.stacksIdServersServerId.addressesDomains": "العناوين والنطاقات",
   "ui.stacksIdServersServerId.agentId": "معرّف Agent",
@@ -3422,16 +3340,15 @@ export const ar: Record<string, string> = {
   "ui.stacksIdServersServerId.checking": "جارٍ الفحص...",
   "ui.stacksIdServersServerId.checks": "الفحوصات",
   "ui.stacksIdServersServerId.confirmAction": "تأكيد الإجراء",
-  "ui.stacksIdServersServerId.confirmDecommission": "تأكيد الإخراج من الخدمة",
+  "ui.stacksIdServersServerId.confirmDecommission": "تأكيد الإزالة",
   "ui.stacksIdServersServerId.confirmDetach": "تأكيد الفصل",
   "ui.stacksIdServersServerId.couldNotLoadServerAccess":
     "تعذّر تحميل سياق الوصول إلى الخادم.",
   "ui.stacksIdServersServerId.cpuCores": "أنوية CPU",
   "ui.stacksIdServersServerId.custodyResolutionFailed": "فشلت تسوية الحضانة.",
-  "ui.stacksIdServersServerId.decommissionFailed": "فشل الإخراج من الخدمة.",
-  "ui.stacksIdServersServerId.decommissionServer": "إخراج الخادم من الخدمة",
-  "ui.stacksIdServersServerId.desiredListenersDurableReservationsAnd":
-    "المستمعون المطلوبون والحجوزات الدائمة وأدلة بيئة التشغيل لهذا Node.",
+  "ui.stacksIdServersServerId.decommissionFailed": "فشلت الإزالة.",
+  "ui.stacksIdServersServerId.decommissionServer": "إزالة الخادم",
+  "ui.stacksIdServersServerId.desiredListenersDurableReservationsAnd": "المستمعون المطلوبون والحجوزات الدائمة وأدلة بيئة التشغيل لهذا الخادم.",
   "ui.stacksIdServersServerId.detachSelfOwnedServer": "فصل خادم مملوك ذاتيًا",
   "ui.stacksIdServersServerId.detachServer": "فصل الخادم",
   "ui.stacksIdServersServerId.detaching": "جارٍ الفصل...",
@@ -3457,8 +3374,7 @@ export const ar: Record<string, string> = {
     "لم يوجد في أحدث لقطة كاملة من Guard أي حجز أعلنه المترجم أو مستمع ملزَم في بيئة التشغيل.",
   "ui.stacksIdServersServerId.noDesiredListenerIsReserved":
     "لا يوجد مستمع مطلوب محجوز، ولم يتمكن Guard من إكمال لقطة المستمعين، لذا تبقى مستمعات بيئة التشغيل غير معروفة.",
-  "ui.stacksIdServersServerId.noDesiredListenerIsReserved2":
-    "لا يوجد مستمع مطلوب محجوز، ولم يبلّغ Guard بعد عن لقطة مستمعين لهذا Node.",
+  "ui.stacksIdServersServerId.noDesiredListenerIsReserved2": "لا يوجد مستمع مطلوب محجوز، ولم يبلّغ Guard بعد عن لقطة مستمعين لهذا الخادم.",
   "ui.stacksIdServersServerId.noHostAddressHasBeen":
     "لم يتم الإبلاغ عن عنوان مضيف.",
   "ui.stacksIdServersServerId.noObservedServiceEndpointsHave":
@@ -3475,8 +3391,7 @@ export const ar: Record<string, string> = {
     "لم يتم الإبلاغ عن أي نطاقات خدمات.",
   "ui.stacksIdServersServerId.noServicePlacementIsRecorded":
     "لا يوجد تموضع خدمات مسجّل لهذا الخادم.",
-  "ui.stacksIdServersServerId.noStackkitDeploymentEvidenceHas":
-    "لم يبلّغ هذا الخادم عن أي أدلة على نشر StackKit.",
+  "ui.stacksIdServersServerId.noStackkitDeploymentEvidenceHas": "لم يبلّغ هذا الخادم عن أي أدلة على تثبيت StackKit.",
   "ui.stacksIdServersServerId.notDeclared": "غير مُعلَن",
   "ui.stacksIdServersServerId.operatingSystem": "نظام التشغيل",
   "ui.stacksIdServersServerId.portAllocations": "تخصيصات المنافذ",
@@ -3497,8 +3412,7 @@ export const ar: Record<string, string> = {
   "ui.stacksIdServersServerId.serverDetailSections": "أقسام تفاصيل الخادم",
   "ui.stacksIdServersServerId.serverDetailsKombifyTechstack":
     "تفاصيل الخادم | kombify-Techstack",
-  "ui.stacksIdServersServerId.serverGenerationDecommissioned":
-    "تم إخراج جيل الخادم من الخدمة",
+  "ui.stacksIdServersServerId.serverGenerationDecommissioned": "تمت إزالة جيل الخادم",
   "ui.stacksIdServersServerId.serverSettings": "إعدادات الخادم",
   "ui.stacksIdServersServerId.serviceEndpoints": "نقاط نهاية الخدمات",
   "ui.stacksIdServersServerId.servicesOnThisServerMay":
@@ -3510,16 +3424,13 @@ export const ar: Record<string, string> = {
     'لا يمكن تشغيل جيل المزوّد القديم مرة أخرى. استخدم "إعادة الإنشاء" أعلاه بعد التحقق من الغياب الدقيق لدى المزوّد وتحرير السعة.',
   "ui.stacksIdServersServerId.thisChangesTheSelectedServer":
     "يغيّر هذا الخادم المحدد عبر Agent الخاص بـ StackKit المسجّل عليه.",
-  "ui.stacksIdServersServerId.thisIsConfiguredStackkitIntent":
-    "هذه نية StackKit المُعدّة؛ لم يبلّغ Guard بعد عن أدلة نشر مطابقة.",
+  "ui.stacksIdServersServerId.thisIsConfiguredStackkitIntent": "هذه نية StackKit المُعدّة؛ لم يبلّغ Guard بعد عن أدلة تثبيت مطابقة.",
   "ui.stacksIdServersServerId.thisOnlyArchivesTheStale":
     "يؤدي هذا إلى أرشفة سجل حضانة Techstack القديم فقط. ولا يحذف أي شيء لدى المزوّد.",
-  "ui.stacksIdServersServerId.thisServerHasNoManaged":
-    "ليس لهذا الخادم عقد إيجار مُدار لدى مزوّد. لا تسمح حضانته المسجّلة حاليًا بالإخراج المُدار من الخدمة ولا بفصل الخادم المملوك ذاتيًا.",
+  "ui.stacksIdServersServerId.thisServerHasNoManaged": "ليس لهذا الخادم عقد إيجار مُدار لدى مزوّد. لا تسمح حضانته المسجّلة حاليًا بإزالة خادم مُدار ولا بفصل الخادم المملوك ذاتيًا.",
   "ui.stacksIdServersServerId.thisServerIsALegacy":
     "هذا الخادم سجل حضانة قديم أو غير مرتبط. أكّد أن مورد المزوّد قد أُزيل بالفعل؛ سيؤرشف Techstack هذا السجل فقط ولن يستدعي أو يحذف أي مورد لدى المزوّد.",
-  "ui.stacksIdServersServerId.thisServerIsRegisteredThrough":
-    "هذا الخادم مسجّل عبر جرد Workers؛ ولا ترتبط به إجراءات الوصول إلى بيئة التشغيل المُدارة.",
+  "ui.stacksIdServersServerId.thisServerIsRegisteredThrough": "هذا الخادم مسجّل عبر جرد الخوادم؛ ولا ترتبط به إجراءات الوصول إلى بيئة التشغيل المُدارة.",
   "ui.standardBundle.additionalComputeNodeForStackKit":
     "Node حوسبة إضافي لتوزيع خدمات StackKit.",
   "ui.standardBundle.additionalNodeIntendedForStorage":
@@ -3583,11 +3494,9 @@ export const ar: Record<string, string> = {
     "{name}: CPU {cpu} بالمئة، الذاكرة {ram} بالمئة، القرص {disk} بالمئة، {services} خدمات",
   "ui.strata.job": "مهمة",
   "ui.strata.noCpuCurve": "{name}: لا توجد بيانات CPU لآخر 24 ساعة",
-  "ui.strata.noNodeHasReportedYet": "لم يبلّغ أي Node بعد.",
-  "ui.strata.nodesNeedAttention.one":
-    "{count} من أصل {total} Nodes يحتاج إلى انتباه.",
-  "ui.strata.nodesNeedAttention.other":
-    "{count} من أصل {total} Nodes يحتاج إلى انتباه.",
+  "ui.strata.noNodeHasReportedYet": "لم يبلّغ أي خادم بعد.",
+  "ui.strata.nodesNeedAttention.one": "{count} من أصل {total} من الخوادم يحتاج إلى انتباه.",
+  "ui.strata.nodesNeedAttention.other": "{count} من أصل {total} من الخوادم تحتاج إلى انتباه.",
   "ui.strata.notShown": "غير معروض: تعذّرت قراءة {items}.",
   "ui.strata.provisioning": "التجهيز",
   "ui.strata.quiet": "هادئ",
@@ -3607,7 +3516,7 @@ export const ar: Record<string, string> = {
   "ui.strataDashboard.middleRing": "الحلقة الوسطى",
   "ui.strataDashboard.monitoring": "المراقبة →",
   "ui.strataDashboard.noCpuDataInThe": "لا توجد بيانات CPU في آخر 24 ساعة",
-  "ui.strataDashboard.nodes": "Nodes",
+  "ui.strataDashboard.nodes": "الخوادم",
   "ui.strataDashboard.nothingHappenedNoRolloutsRestores":
     "لم يحدث شيء: لا عمليات طرح ولا استعادة ولا تنبيهات ولا انقطاعات.",
   "ui.strataDashboard.outerRing": "الحلقة الخارجية",
@@ -3620,8 +3529,7 @@ export const ar: Record<string, string> = {
   "ui.substrateEnrollment.preparing": "جارٍ التحضير...",
   "ui.substrateEnrollment.proxmoxHypervisorConnection":
     "اتصال مراقب الأجهزة الافتراضية Proxmox",
-  "ui.substrateEnrollment.theHypervisorHostsYourNodes":
-    "يستضيف مراقب الأجهزة الافتراضية Nodes الخاصة بك. تعمل StackKits داخل ضيوف Ubuntu. تُفعَّل إدارة الضيوف بعد إعداد عميل Proxmox المحلي وتفويضك للاتصال. تبقى الضيوف الموجودة خارج حضانة الحذف.",
+  "ui.substrateEnrollment.theHypervisorHostsYourNodes": "يستضيف مراقب الأجهزة الافتراضية خوادمك. تعمل StackKits داخل ضيوف Ubuntu. تُفعَّل إدارة الضيوف بعد إعداد عميل Proxmox المحلي وتفويضك للاتصال. تبقى الضيوف الموجودة خارج حضانة الحذف.",
   "ui.substrates.theRuntimeDidNotReturn":
     "لم تُعِد بيئة التشغيل البيانات المطلوبة.",
   "ui.taskStatus.aVerifiedStackKitDeploymentMust":
@@ -3634,13 +3542,13 @@ export const ar: Record<string, string> = {
   "ui.taskStatus.buildingServiceList": "جارٍ بناء قائمة الخدمات",
   "ui.taskStatus.callingTheStackKitsRuntimeAction":
     "جارٍ استدعاء إجراء بيئة تشغيل StackKits الذي يطبّق مواصفات Cloud Kit المُنشأة.",
-  "ui.taskStatus.checkingOpenTofu": "جارٍ فحص OpenTofu",
-  "ui.taskStatus.checkingRolloutTarget": "جارٍ فحص هدف الطرح",
-  "ui.taskStatus.checkingTerramate": "جارٍ فحص Terramate",
+  "ui.taskStatus.checkingOpenTofu": "جارٍ فحص أدوات الإعداد",
+  "ui.taskStatus.checkingRolloutTarget": "جارٍ فحص خادمك",
+  "ui.taskStatus.checkingTerramate": "جارٍ فحص أدوات التحديث",
   "ui.taskStatus.checkingThatLoginProtectedServices":
     "جارٍ التحقق من توفر الخدمات المحمية بتسجيل الدخول وإشارات المراقبة بعد الطرح.",
   "ui.taskStatus.checkingTheTerramateToolchainWhen":
-    "جارٍ فحص سلسلة أدوات Terramate عندما تحتاج إليها دورة حياة StackKit المحدد.",
+    "جارٍ فحص الأدوات التي تُبقي الـ Homelab الخاص بك محدّثًا، عندما يحتاجها إعدادك.",
   "ui.taskStatus.checkingYourChoices": "جارٍ فحص اختياراتك",
   "ui.taskStatus.collectingServiceMetadataExposedBy":
     "جارٍ جمع البيانات الوصفية للخدمات التي يعرضها طرح StackKits.",
@@ -3672,7 +3580,7 @@ export const ar: Record<string, string> = {
   "ui.taskStatus.eachServiceGetsScopedPermissions":
     "تحصل كل خدمة على أذونات محددة النطاق. يُفعَّل TLS تلقائيًا حيثما أمكن، وتكون الخدمات معزولة افتراضيًا.",
   "ui.taskStatus.ensuringTheDeploymentTargetSatisfies":
-    "جارٍ التأكد من أن هدف النشر يستوفي متطلبات بيئة تشغيل StackKit.",
+    "جارٍ التأكد من أن خادمك يستوفي متطلبات الـ Homelab الخاص بك.",
   "ui.taskStatus.findingTheBestStackKitFor": "جارٍ البحث عن أفضل StackKit لك",
   "ui.taskStatus.generateDeploymentArtifacts": "إنشاء أثار النشر",
   "ui.taskStatus.generatingDeploymentSpec": "جارٍ إنشاء مواصفات النشر",
@@ -3693,19 +3601,19 @@ export const ar: Record<string, string> = {
   "ui.taskStatus.networkSettingsAreDerivedFrom":
     "تُشتق إعدادات الشبكة من وضع الوصول لديك. الوضع المحلي فقط يستخدم شبكة Docker الداخلية؛ أما الوصول عن بُعد فيضيف الشبكة الشبكية الخاصة المناسبة للمسار أو مسار الحافة المُدار.",
   "ui.taskStatus.onceThisSucceedsTheNode":
-    "بمجرد نجاح ذلك، يبقى إسقاط Node ظاهرًا في Techstack حتى لو فشل التحضير أو الطرح لاحقًا.",
+    "بعد نجاح هذه الخطوة يبقى خادمك ظاهرًا في Techstack حتى لو فشل التجهيز أو الطرح لاحقًا.",
   "ui.taskStatus.opentofuReadinessIsPartOf":
     "جاهزية OpenTofu جزء من عقد التحضير في StackKits CLI، وليست مسار تمهيد منفصلًا تملكه Techstack.",
   "ui.taskStatus.persistingConfiguration": "جارٍ حفظ الإعداد بشكل دائم",
   "ui.taskStatus.persistingRolloutSpec": "جارٍ حفظ مواصفات الطرح بشكل دائم",
   "ui.taskStatus.preparingDocker": "جارٍ تحضير Docker",
-  "ui.taskStatus.preparingNodeRegistration": "جارٍ تحضير تسجيل Node",
+  "ui.taskStatus.preparingNodeRegistration": "جارٍ تحضير تسجيل الخادم",
   "ui.taskStatus.preparingOpenTelemetryHandoffDataFor":
-    "جارٍ تحضير بيانات تسليم OpenTelemetry للمراقبة والعمليات.",
-  "ui.taskStatus.preparingStackKitsRuntime": "جارٍ تحضير بيئة تشغيل StackKits",
-  "ui.taskStatus.preparingTelemetry": "جارٍ تحضير القياس عن بُعد",
+    "جارٍ تجهيز المراقبة لتتمكن من رؤية حالة الـ Homelab الخاص بك.",
+  "ui.taskStatus.preparingStackKitsRuntime": "جارٍ تجهيز خادمك",
+  "ui.taskStatus.preparingTelemetry": "جارٍ تجهيز المراقبة",
   "ui.taskStatus.preparingTheRuntimeMetadataUsed":
-    "جارٍ تحضير البيانات الوصفية لبيئة التشغيل التي تستخدمها المراقبة والعمليات وRuntime Intelligence Layer.",
+    "جارٍ تجهيز المعلومات التي تعتمد عليها المراقبة والعناية اليومية بالـ Homelab الخاص بك.",
   "ui.taskStatus.preparingToolsApplyingTheStackKit":
     "جارٍ تحضير الأدوات وتطبيق StackKit وقراءة الخدمات",
   "ui.taskStatus.provisionManagedRuntime": "تجهيز بيئة التشغيل المُدارة",
@@ -3714,8 +3622,8 @@ export const ar: Record<string, string> = {
     "جارٍ توليد آثار StackKits بعد جاهزية VPS",
   "ui.taskStatus.renderingTheStackKitInfrastructureFiles":
     "جارٍ توليد ملفات بنية StackKit التحتية التي يحتاجها مُحوِّل الطرح.",
-  "ui.taskStatus.requestingManagedCloudNode": "جارٍ طلب Node سحابي مُدار",
-  "ui.taskStatus.requestingManagedNode": "جارٍ طلب Node مُدار",
+  "ui.taskStatus.requestingManagedCloudNode": "جارٍ طلب خادم سحابي مُدار",
+  "ui.taskStatus.requestingManagedNode": "جارٍ طلب خادم مُدار",
   "ui.taskStatus.reservingTheSubscriptionVMConnecting":
     "جارٍ حجز VM الاشتراك وربط بيئة التشغيل وتحضير القياس عن بُعد",
   "ui.taskStatus.rollOutCloudKit": "طرح Cloud Kit",
@@ -3725,10 +3633,10 @@ export const ar: Record<string, string> = {
     "جارٍ إعداد الجزء {position} من {total}: {name}",
   "ui.taskStatus.runningRestoreDrill": "جارٍ تشغيل تدريب الاستعادة",
   "ui.taskStatus.runningSimulatedUpdateGate":
-    "جارٍ تشغيل بوابة التحديث المحاكاة",
-  "ui.taskStatus.runningSimulationGate": "جارٍ تشغيل بوابة المحاكاة",
+    "جارٍ اختبار التحديث أولًا",
+  "ui.taskStatus.runningSimulationGate": "جارٍ اختبار التحديث أولًا",
   "ui.taskStatus.runningTheStackKitsCLIPrepare":
-    "جارٍ تشغيل عقد التحضير في StackKits CLI على VPS المُدار.",
+    "جارٍ تثبيت وفحص ما يحتاجه خادمك قبل إعداد الـ Homelab الخاص بك.",
   "ui.taskStatus.savingUnifiedSpecYamlSo":
     "جارٍ حفظ unified-spec.yaml ليكون الطرح قابلًا لإعادة الإنتاج والتدقيق.",
   "ui.taskStatus.savingYourChoicesToThe":
@@ -3739,7 +3647,7 @@ export const ar: Record<string, string> = {
   "ui.taskStatus.settingUpSecurityConfiguration": "جارٍ إعداد إعدادات الأمان",
   "ui.taskStatus.stackkitsAreCuratedInfrastructureTemplates":
     "StackKits قوالب بنية تحتية منتقاة. يختار النظام القالب الذي يغطي الميزات التي حددتها بأقل قدر من الكلفة الإضافية.",
-  "ui.taskStatus.startingTelemetryHandoff": "جارٍ بدء تسليم القياس عن بُعد",
+  "ui.taskStatus.startingTelemetryHandoff": "جارٍ بدء المراقبة",
   "ui.taskStatus.techstackConsumesStackKitArtifactsHere":
     "يستهلك Techstack هنا آثار StackKit؛ ويظل StackKits مسؤولًا عن تطبيقها.",
   "ui.taskStatus.techstackRecordsTheManagedTarget":
@@ -3757,7 +3665,7 @@ export const ar: Record<string, string> = {
   "ui.taskStatus.theSimulationGateProtectsThe":
     "تحمي بوابة المحاكاة الطرح الأول ومسارات التحديث اللاحقة من التغييرات غير الآمنة.",
   "ui.taskStatus.theSpecContainsAllConfiguration":
-    "تحتوي المواصفات على كل الإعدادات اللازمة لنشر Homelab الخاص بك. يمكن وضعها تحت التحكم في الإصدارات وإعادة إنتاجها على أي Node متوافق.",
+    "تحتوي المواصفات على كل الإعدادات اللازمة لنشر Homelab الخاص بك. يمكن وضعها تحت التحكم في الإصدارات وإعادة إنتاجها على أي خادم متوافق.",
   "ui.taskStatus.theUnifiedSpecIsThe":
     "المواصفات الموحدة هي المدخل المرجعي لـ StackKits والتحقق من بيئة التشغيل.",
   "ui.taskStatus.thisChecksFeatureSelectionsAccess":
@@ -3776,7 +3684,7 @@ export const ar: Record<string, string> = {
   "ui.taskStatus.validatingTheBackupAndRestore":
     "جارٍ التحقق من مسار النسخ الاحتياطي والاستعادة قبل وسم نشر StackKit بأنه موثّق.",
   "ui.taskStatus.validatingTheUpdatePathBefore":
-    "جارٍ التحقق من مسار التحديث قبل تطبيق الطرح على بيئة التشغيل المُدارة.",
+    "جارٍ التحقق من أن التحديث يعمل قبل تطبيقه على خادمك.",
   "ui.taskStatus.verificationConfirmsThatTheStackKit":
     "يؤكد التحقق أن نشر StackKit قابل للاستخدام، وليس فقط أن الملفات قد أُنشئت.",
   "ui.taskStatus.verifyRollout": "التحقق من الطرح",
@@ -3786,7 +3694,7 @@ export const ar: Record<string, string> = {
   "ui.taskStatus.verifyingThatAllSelectedOptions":
     "جارٍ التحقق من أن جميع الخيارات المحددة صالحة ومتوافقة مع بعضها.",
   "ui.taskStatus.verifyingTheInfrastructureToolchainNeeded":
-    "جارٍ التحقق من سلسلة أدوات البنية التحتية التي يحتاجها StackKits.",
+    "جارٍ التأكد من أن خادمك يملك الأدوات اللازمة لإعداد الـ Homelab الخاص بك.",
   "ui.taskStatus.yourChosenAuthMethodIs":
     "تُطبَّق طريقة المصادقة التي اخترتها على جميع الخدمات. تحصل الإعدادات متعددة المستخدمين تلقائيًا على أذونات قائمة على المجموعات.",
   "ui.taskUpdates.anUnexpectedErrorOccurred": "حدث خطأ غير متوقع",
@@ -3947,23 +3855,17 @@ export const ar: Record<string, string> = {
   "ui.wizardRunRequest.selectSeparateHomeAssistantOS":
     "اختر موارد ضيف منفصلة لـ Home Assistant OS.",
   "ui.wizardRuns.thisRunHasNoRollout": "ليس لهذا التشغيل أي طرح يمكن إلغاؤه.",
-  "ui.worker.registryLink": "رابط سجل Worker",
+  "ui.worker.registryLink": "رابط سجل الخوادم",
   "ui.worker.registryUrlError": "تعذّر تحديد عنوان URL للسجل تلقائيًا: {error}",
-  "ui.worker.runInstallMany":
-    "شغّل أمر التثبيت أعلاه على {count} Nodes على الأقل، ثم انتظر حتى تؤكد أدلة العمليات الاتصال.",
-  "ui.worker.runInstallOne":
-    "شغّل أمر التثبيت أعلاه على Node الخاص بك، ثم انتظر حتى تؤكد أدلة العمليات الاتصال.",
+  "ui.worker.runInstallMany": "شغّل أمر التثبيت أعلاه على {count} من الخوادم على الأقل، ثم انتظر حتى تؤكد أدلة العمليات الاتصال.",
+  "ui.worker.runInstallOne": "شغّل أمر التثبيت أعلاه على خادمك، ثم انتظر حتى تؤكد أدلة العمليات الاتصال.",
   "ui.worker.verifiedConnected": "متصل ومُتحقَّق منه: {count}",
-  "ui.worker.waitingVerified":
-    "بانتظار Workers المُتحقَّق منها ({connected}/{required})",
+  "ui.worker.waitingVerified": "بانتظار الخوادم المُتحقَّق منها ({connected}/{required})",
   "ui.workerRegistrationCard.installCommand": "أمر التثبيت:",
-  "ui.workerRegistrationCard.installCommandForNewWorkers":
-    "أمر التثبيت لـ Workers الجديدة:",
+  "ui.workerRegistrationCard.installCommandForNewWorkers": "أمر التثبيت للخوادم الجديدة:",
   "ui.workerRegistrationCard.nextStep": "الخطوة التالية:",
-  "ui.workerRegistrationCard.operationsEvidenceIsRequiredBefore":
-    "يلزم توفر أدلة العمليات قبل تأكيد Nodes المتصلة.",
-  "ui.workerRegistrationCard.workersConnectedVerified":
-    "Workers المتصلة (مُتحقَّق منها)",
+  "ui.workerRegistrationCard.operationsEvidenceIsRequiredBefore": "يلزم توفر أدلة العمليات قبل تأكيد الخوادم المتصلة.",
+  "ui.workerRegistrationCard.workersConnectedVerified": "الخوادم المتصلة (مُتحقَّق منها)",
   "wizard.leave.confirm":
-    "هل تريد مغادرة هذه الصفحة؟ الإجابات التي أدخلتها غير محفوظة.",
+    "ستفقد الإجابات التي أدخلتها.",
 };

@@ -37,11 +37,11 @@
     actions,
   }: Props = $props();
 
-  // Every card holds five rows of one-line app tiles, so a Node with many apps
-  // and one with none are the same height. When the apps do not fit, the last
-  // cell opens the rest as an overlay. Platform services stay on the server's
-  // own service list.
-  const TILE_ROWS = 5;
+  // A card is only as tall as its content: the app tiles grow to at most three
+  // rows beside the server facts, so many servers fit on one page. When the
+  // apps do not fit, the last cell opens the rest as an overlay. Platform
+  // services stay on the server's own service list.
+  const TILE_ROWS = 3;
   const TILE_MIN_REM = 13;
   const TILE_GAP_PX = 6;
   let tileAreaWidth = $state(0);
@@ -124,7 +124,7 @@
   data-node-id={node.nodeId}
 >
   <div
-    class="flex min-w-0 flex-col gap-2 border-b border-border bg-muted/20 px-3.5 py-3 md:border-r md:border-b-0"
+    class="flex min-w-0 flex-col gap-1.5 border-b border-border bg-muted/20 px-3.5 py-2.5 md:border-r md:border-b-0"
   >
     <div class="flex min-w-0 items-center gap-2.5">
       <a
@@ -198,7 +198,7 @@
     </div>
   </div>
 
-  <div class="flex h-[19rem] min-w-0 flex-col overflow-hidden p-2.5">
+  <div class="flex min-w-0 flex-col overflow-hidden p-2">
     <div
       class="grid content-start gap-1.5 {node.apps.length === 0 ? 'hidden' : ''}"
       style:grid-template-columns="repeat({columns}, minmax(0, 1fr))"
@@ -231,12 +231,15 @@
     {/if}
   </div>
 
-  <NodeMessageLine
-    class="md:col-span-2"
-    {messages}
-    details={messageDetails ?? noDetails}
-    label={tr("ui.nodeMessage.panel", { node: node.name })}
-  />
+  <!-- Only a Node with something to say spends a line on it. -->
+  {#if messages.length > 0}
+    <NodeMessageLine
+      class="md:col-span-2"
+      {messages}
+      details={messageDetails ?? noDetails}
+      label={tr("ui.nodeMessage.panel", { node: node.name })}
+    />
+  {/if}
 </article>
 
 {#if showMore}

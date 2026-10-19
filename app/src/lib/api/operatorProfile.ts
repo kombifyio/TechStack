@@ -1,5 +1,5 @@
 /**
- * Operator self-disclosure API (CREATION-EXPERIENCE-STANDARD §4).
+ * Operator self-disclosure API (KOMBIFY-DESIGN-SYSTEM-STANDARD.md §9.4).
  *
  * The client sends raw voluntary answers only. The capability profile in the
  * response is derived by the Techstack Unifier; the browser never computes or

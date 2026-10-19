@@ -12,7 +12,6 @@ import (
 	"github.com/kombifyio/techstack/internal/providercontrol"
 	"github.com/kombifyio/techstack/internal/providercontroljobs"
 	"github.com/kombifyio/techstack/internal/providerevidence"
-	"github.com/kombifyio/techstack/internal/runtimeproduct/serverruntime"
 	"github.com/kombifyio/techstack/internal/substrate"
 	"github.com/kombifyio/techstack/internal/substrateruntime"
 	"github.com/kombifyio/techstack/pkg/agentcontrol"
@@ -109,22 +108,16 @@ func composeNativeProviderControl(database *sql.DB, edition config.Edition, log 
 			// discovered and resolved without guessing.
 			enforceProviderCreateSafety(createPolicy, capabilities)
 		}
+		coverage, coverageErr := providercontrol.ManagedCatalogCoverageRequirements(
+			provider.providerID, provider.adapterID, provider.adapterManifestHash)
+		if coverageErr != nil {
+			return nil, jobs.RuntimeActions{}, fmt.Errorf("resolve %s provider catalog coverage: %w", provider.providerID, coverageErr)
+		}
 		coverageCtx, cancelCoverage := context.WithTimeout(context.Background(), 5*time.Second)
-		coverageErr := providercontrol.ValidateActiveCatalogCoverage(
+		coverageErr = providercontrol.ValidateActiveCatalogCoverage(
 			coverageCtx,
 			database,
-			[]providercontrol.CatalogCoverageRequirement{
-				{
-					ProviderID: provider.providerID, OfferingID: string(serverruntime.RuntimeOfferingStandard),
-					AdapterID: provider.adapterID, AdapterManifestHash: provider.adapterManifestHash,
-					ProvisionDispatchMode: providercontrol.ProvisionDispatchAtMostOnceManualReconcile,
-				},
-				{
-					ProviderID: provider.providerID, OfferingID: string(serverruntime.RuntimeOfferingPremium),
-					AdapterID: provider.adapterID, AdapterManifestHash: provider.adapterManifestHash,
-					ProvisionDispatchMode: providercontrol.ProvisionDispatchAtMostOnceManualReconcile,
-				},
-			},
+			coverage,
 		)
 		cancelCoverage()
 		if coverageErr != nil {

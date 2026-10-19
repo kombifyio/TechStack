@@ -22,7 +22,7 @@ func TestPostgresServiceJobReservationKeepsCompleteTargetFence(t *testing.T) {
 			t.Errorf("stop isolated PostgreSQL: %v", err)
 		}
 	})
-	db, err := sql.Open("pgx", embedded.DSN())
+	db, err := sql.Open("pgx", embedded.BootstrapDSN())
 	if err != nil {
 		t.Fatal(err)
 	}

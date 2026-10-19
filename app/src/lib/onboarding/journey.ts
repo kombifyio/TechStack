@@ -1,7 +1,7 @@
 /**
  * The product's half of the journey contract: message resolution.
  *
- * The descriptor carries only message ids (ONBOARDING-JOURNEY-STANDARD §2), so
+ * The descriptor carries only message ids (KOMBIFY-DESIGN-SYSTEM-STANDARD.md §12.2), so
  * a step's prose is this product's i18n, not the server's payload. Denials are
  * localized by `reason_code`; the server's own guidance is the fallback, so a
  * reason we have not translated yet still explains itself instead of going

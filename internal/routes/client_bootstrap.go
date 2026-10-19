@@ -91,7 +91,7 @@ func firstNonEmptyEnv(keys ...string) string {
 	return ""
 }
 
-// stableOriginFromEnv is where the Nightly badge links back to; empty unless
+// stableOriginFromEnv is where the Preview badge links back to; empty unless
 // the preview deployment declares it.
 func stableOriginFromEnv() string {
 	if db.ReleaseChannel() != "preview" {

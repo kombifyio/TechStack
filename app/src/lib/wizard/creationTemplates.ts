@@ -3,7 +3,7 @@ import type { GoalConfigKey } from "./standardBundle.js";
 import type { WizardSelectionGuidance } from "../api/unifier.js";
 
 /** Selection templates below the use case cards: one click preselects a
- * sensible set of cards (workspace CREATION-EXPERIENCE-STANDARD §3c). A
+ * sensible set of cards (workspace KOMBIFY-DESIGN-SYSTEM-STANDARD.md §9.3c). A
  * template only ever selects cards; it never decides deployment eligibility,
  * so a goal the release catalog does not offer yet is skipped and reported. */
 export type CreationTemplateIcon = "folder" | "briefcase" | "rocket";

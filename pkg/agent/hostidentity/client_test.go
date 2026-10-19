@@ -2,11 +2,13 @@ package hostidentity
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/kombifyio/techstack/pkg/guardidentity"
@@ -188,5 +190,85 @@ func TestEnrollLeavesABoundGuardBound(t *testing.T) {
 	}
 	if state := manager.Record().State; state != StateBound {
 		t.Fatalf("state after a refused enroll = %q, want %q", state, StateBound)
+	}
+}
+
+// A rotation the control plane accepted but whose answer was lost (a gateway
+// error after the commit) must not cost the Guard its only valid key: once the
+// overlap for the old key ends, the Guard still authenticates with the new one.
+func TestRotationWithLostAnswerKeepsTheAcceptedKey(t *testing.T) {
+	var (
+		mu       sync.Mutex
+		current  string
+		previous string
+		tokenURL string
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/token":
+			proof, err := guardidentity.VerifyProof(r.Header.Get(guardidentity.ProofHeader), guardidentity.ProofExpectation{Method: r.Method, URLs: []string{tokenURL}})
+			if err != nil || (proof.Thumbprint != current && proof.Thumbprint != previous) {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"error":{"code":"guard_proof_invalid","details":{"reason":"key_mismatch"}}}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"data":{"access_token":"access","expires_in":600}}`))
+		case "/rotate":
+			var body struct {
+				NewPublicKey guardidentity.JWK `json:"new_public_key"`
+			}
+			if json.NewDecoder(r.Body).Decode(&body) != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			next, _ := body.NewPublicKey.Thumbprint()
+			previous, current = current, next
+			w.WriteHeader(http.StatusBadGateway)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	tokenURL = server.URL + "/token"
+
+	manager, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.EnsureKey(); err != nil {
+		t.Fatal(err)
+	}
+	current, _ = guardidentity.PublicJWK(manager.Key()).Thumbprint()
+	if err := manager.SetState(StateBound, ""); err != nil {
+		t.Fatal(err)
+	}
+	client, err := NewClient(ClientConfig{
+		Manager: manager, AgentToken: "credential",
+		Endpoints: Endpoints{TokenURL: tokenURL, BindURL: server.URL + "/bind", RotateURL: server.URL + "/rotate"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode, err := client.Establish(context.Background()); err != nil || mode != ModeHostKey {
+		t.Fatalf("Establish = %v, %v", mode, err)
+	}
+	if err := client.Rotate(context.Background()); err == nil {
+		t.Fatal("a rotation answered with a gateway error reported success")
+	}
+
+	mu.Lock()
+	previous = "" // the overlap for the old key ends
+	mu.Unlock()
+	client.dropToken()
+	if mode, err := client.Establish(context.Background()); err != nil || mode != ModeHostKey {
+		t.Fatalf("Establish after the overlap = %v, %v; the accepted key was lost", mode, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if held, _ := guardidentity.PublicJWK(manager.Key()).Thumbprint(); held != current {
+		t.Fatal("the Guard does not hold the key the control plane accepted")
 	}
 }

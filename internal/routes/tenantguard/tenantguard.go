@@ -60,7 +60,7 @@ func TenantScope(explicitTenantID, fallback, capability string) (string, error) 
 }
 
 // Denial is the structured tenant_context_required error
-// (FEATURE-ENTITLEMENT-UX-STANDARD envelope). The frontend localizes by
+// (ENTITLEMENTS-ARCHITECTURE.md §13 envelope). The frontend localizes by
 // error_code; the embedded strings are the technical fallback.
 func Denial(capability string) *httpx.APIError {
 	return httpx.NewForbiddenError("Organization context required", map[string]any{

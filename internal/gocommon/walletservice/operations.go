@@ -474,7 +474,7 @@ func (c *Client) openSealed(raw []byte, status int, owner, itemID, operation str
 // `secret://` reference; each refusal is an *Error carrying the Gateway's
 // reason code. The caller wipes the result.
 func (c *Client) Deliver(ctx context.Context, owner, itemID string) (*Delivered, error) {
-	if err := c.gate(); err != nil {
+	if err := c.gateRecipient(); err != nil {
 		return nil, err
 	}
 	if !eligibleOwner(owner) {
@@ -517,7 +517,7 @@ type Minted struct {
 // back sealed to this service's pinned recipient key and opens only under the
 // same context checks as Deliver, with operation `mint`.
 func (c *Client) Mint(ctx context.Context, owner, itemID string, child map[string]any) (*Minted, error) {
-	if err := c.gate(); err != nil {
+	if err := c.gateRecipient(); err != nil {
 		return nil, err
 	}
 	if !eligibleOwner(owner) {

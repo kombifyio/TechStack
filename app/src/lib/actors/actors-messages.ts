@@ -6,9 +6,9 @@ export const actorsMessages = {
     "entity.app.open": "Open",
     "entity.app.details": "Details",
     "entity.app.more": "More actions",
-    "nav.actors": "Actors",
+    "nav.actors": "People & agents",
     "actors.description":
-      "Everyone who acts in your homelab: people and agents, and the Offices and Factories the agents work in.",
+      "Everyone who uses and works in your homelab: the people you invite and the agents that do tasks for you. Agents are organised into Offices and Factories.",
     "actors.people": "People",
     "actors.agents": "Agents",
     "actors.workplaces": "Offices and Factories",
@@ -19,12 +19,10 @@ export const actorsMessages = {
     "actors.workplacesEmpty": "No Offices or Factories yet.",
     "actors.agentsUnavailable":
       "Agents appear here once the agent catalogue is reachable for your account.",
-    "actors.agentsError":
-      "The agent list could not be loaded. Reload to try again.",
+    "actors.agentsError": "The agent list could not be loaded.",
     "actors.workplacesUnavailable":
       "Offices and Factories appear here once the agent catalogue is reachable for your account.",
-    "actors.workplacesError":
-      "Offices and Factories could not be loaded. Reload to try again.",
+    "actors.workplacesError": "Offices and Factories could not be loaded.",
     "actors.status.available": "Available",
     "actors.status.unavailable": "Unavailable",
     "actors.status.disabled": "Turned off",
@@ -35,7 +33,7 @@ export const actorsMessages = {
     "actors.officeAgentsNote":
       "An Office equips the agents placed in it. Which agents work here is shown in its Factory.",
     "actors.openFactory": "Open the Factory",
-    "actors.seeAll": "All actors",
+    "actors.seeAll": "All people & agents",
     "actors.kind.person": "Person",
     "actors.kind.agent": "Agent",
     "actors.kind.office": "Office",
@@ -67,9 +65,9 @@ export const actorsMessages = {
     "entity.app.open": "Öffnen",
     "entity.app.details": "Details",
     "entity.app.more": "Weitere Aktionen",
-    "nav.actors": "Actors",
+    "nav.actors": "Personen & Agents",
     "actors.description":
-      "Alle, die in deinem Homelab handeln: Personen und Agents, dazu die Offices und Factories, in denen die Agents arbeiten.",
+      "Alle, die dein Homelab nutzen oder darin arbeiten: die Personen, die du einlädst, und die Agents, die Aufgaben für dich übernehmen. Die Agents sind in Offices und Factories organisiert.",
     "actors.people": "Personen",
     "actors.agents": "Agents",
     "actors.workplaces": "Offices und Factories",
@@ -80,12 +78,11 @@ export const actorsMessages = {
     "actors.workplacesEmpty": "Noch keine Offices oder Factories.",
     "actors.agentsUnavailable":
       "Agents erscheinen hier, sobald der Agent-Katalog für dein Konto erreichbar ist.",
-    "actors.agentsError":
-      "Die Agent-Liste konnte nicht geladen werden. Lade neu, um es erneut zu versuchen.",
+    "actors.agentsError": "Die Agent-Liste konnte nicht geladen werden.",
     "actors.workplacesUnavailable":
       "Offices und Factories erscheinen hier, sobald der Agent-Katalog für dein Konto erreichbar ist.",
     "actors.workplacesError":
-      "Offices und Factories konnten nicht geladen werden. Lade neu, um es erneut zu versuchen.",
+      "Offices und Factories konnten nicht geladen werden.",
     "actors.status.available": "Verfügbar",
     "actors.status.unavailable": "Nicht verfügbar",
     "actors.status.disabled": "Ausgeschaltet",
@@ -96,7 +93,7 @@ export const actorsMessages = {
     "actors.officeAgentsNote":
       "Ein Office rüstet die Agents aus, die darin arbeiten. Welche Agents das sind, zeigt seine Factory.",
     "actors.openFactory": "Factory öffnen",
-    "actors.seeAll": "Alle Actors",
+    "actors.seeAll": "Alle Personen & Agents",
     "actors.kind.person": "Person",
     "actors.kind.agent": "Agent",
     "actors.kind.office": "Office",
@@ -128,9 +125,9 @@ export const actorsMessages = {
     "entity.app.open": "Abrir",
     "entity.app.details": "Detalles",
     "entity.app.more": "Más acciones",
-    "nav.actors": "Actores",
+    "nav.actors": "Personas y agentes",
     "actors.description":
-      "Todos los que actúan en tu homelab: personas y agentes, y las Offices y Factories donde trabajan los agentes.",
+      "Todos los que usan y trabajan en tu homelab: las personas a las que invitas y los agentes que hacen tareas por ti. Los agentes se organizan en Offices y Factories.",
     "actors.people": "Personas",
     "actors.agents": "Agentes",
     "actors.workplaces": "Offices y Factories",
@@ -141,12 +138,10 @@ export const actorsMessages = {
     "actors.workplacesEmpty": "Aún no hay Offices ni Factories.",
     "actors.agentsUnavailable":
       "Los agentes aparecen aquí cuando el catálogo de agentes está disponible para tu cuenta.",
-    "actors.agentsError":
-      "No se pudo cargar la lista de agentes. Recarga para intentarlo de nuevo.",
+    "actors.agentsError": "No se pudo cargar la lista de agentes.",
     "actors.workplacesUnavailable":
       "Las Offices y Factories aparecen aquí cuando el catálogo de agentes está disponible para tu cuenta.",
-    "actors.workplacesError":
-      "No se pudieron cargar las Offices y Factories. Recarga para intentarlo de nuevo.",
+    "actors.workplacesError": "No se pudieron cargar los Offices y Factories.",
     "actors.status.available": "Disponible",
     "actors.status.unavailable": "No disponible",
     "actors.status.disabled": "Desactivado",
@@ -157,7 +152,7 @@ export const actorsMessages = {
     "actors.officeAgentsNote":
       "Una Office equipa a los agentes que trabajan en ella. Su Factory muestra qué agentes son.",
     "actors.openFactory": "Abrir la Factory",
-    "actors.seeAll": "Todos los actores",
+    "actors.seeAll": "Todas las personas y agentes",
     "actors.kind.person": "Persona",
     "actors.kind.agent": "Agente",
     "actors.kind.office": "Office",
@@ -189,9 +184,9 @@ export const actorsMessages = {
     "entity.app.open": "打开",
     "entity.app.details": "详细信息",
     "entity.app.more": "更多操作",
-    "nav.actors": "参与者",
+    "nav.actors": "人员与智能体",
     "actors.description":
-      "在你的 homelab 中行动的所有参与者：人员和智能体，以及智能体工作的 Office 和 Factory。",
+      "所有使用并活跃在你的 Homelab 中的角色：你邀请的人员，以及为你完成任务的智能体。智能体按 Office 和 Factory 组织。",
     "actors.people": "人员",
     "actors.agents": "智能体",
     "actors.workplaces": "Office 和 Factory",
@@ -201,10 +196,10 @@ export const actorsMessages = {
     "actors.workplacesEmpty": "还没有 Office 或 Factory。",
     "actors.agentsUnavailable":
       "智能体目录对你的账户可用后，智能体会显示在这里。",
-    "actors.agentsError": "无法加载智能体列表。请重新加载再试。",
+    "actors.agentsError": "无法加载智能体列表。",
     "actors.workplacesUnavailable":
       "智能体目录对你的账户可用后，Office 和 Factory 会显示在这里。",
-    "actors.workplacesError": "无法加载 Office 和 Factory。请重新加载再试。",
+    "actors.workplacesError": "无法加载 Office 和 Factory。",
     "actors.status.available": "可用",
     "actors.status.unavailable": "不可用",
     "actors.status.disabled": "已关闭",
@@ -215,7 +210,7 @@ export const actorsMessages = {
     "actors.officeAgentsNote":
       "Office 为在其中工作的智能体提供装备。具体是哪些智能体，请在其 Factory 中查看。",
     "actors.openFactory": "打开 Factory",
-    "actors.seeAll": "所有参与者",
+    "actors.seeAll": "所有人员与智能体",
     "actors.kind.person": "人员",
     "actors.kind.agent": "智能体",
     "actors.kind.office": "Office",
@@ -247,9 +242,9 @@ export const actorsMessages = {
     "entity.app.open": "खोलें",
     "entity.app.details": "विवरण",
     "entity.app.more": "और कार्रवाइयाँ",
-    "nav.actors": "एक्टर्स",
+    "nav.actors": "लोग और एजेंट",
     "actors.description":
-      "आपके homelab में काम करने वाले सभी: लोग और एजेंट, और वे Offices और Factories जहाँ एजेंट काम करते हैं।",
+      "आपके Homelab को इस्तेमाल करने और उसमें काम करने वाले सभी: जिन लोगों को आप आमंत्रित करते हैं और वे एजेंट जो आपके लिए काम करते हैं। एजेंट Offices और Factories में व्यवस्थित हैं।",
     "actors.people": "लोग",
     "actors.agents": "एजेंट",
     "actors.workplaces": "Offices और Factories",
@@ -260,12 +255,10 @@ export const actorsMessages = {
     "actors.workplacesEmpty": "अभी कोई Office या Factory नहीं।",
     "actors.agentsUnavailable":
       "एजेंट कैटलॉग आपके खाते के लिए उपलब्ध होते ही एजेंट यहाँ दिखेंगे।",
-    "actors.agentsError":
-      "एजेंट सूची लोड नहीं हो सकी। फिर से कोशिश करने के लिए रीलोड करें।",
+    "actors.agentsError": "एजेंट सूची लोड नहीं हो सकी।",
     "actors.workplacesUnavailable":
       "एजेंट कैटलॉग आपके खाते के लिए उपलब्ध होते ही Offices और Factories यहाँ दिखेंगे।",
-    "actors.workplacesError":
-      "Offices और Factories लोड नहीं हो सके। फिर से कोशिश करने के लिए रीलोड करें।",
+    "actors.workplacesError": "Offices और Factories लोड नहीं हो सके।",
     "actors.status.available": "उपलब्ध",
     "actors.status.unavailable": "अनुपलब्ध",
     "actors.status.disabled": "बंद",
@@ -276,7 +269,7 @@ export const actorsMessages = {
     "actors.officeAgentsNote":
       "Office उसमें काम करने वाले एजेंटों को सुसज्जित करता है। कौन से एजेंट हैं, यह उसकी Factory में दिखता है।",
     "actors.openFactory": "Factory खोलें",
-    "actors.seeAll": "सभी एक्टर्स",
+    "actors.seeAll": "सभी लोग और एजेंट",
     "actors.kind.person": "व्यक्ति",
     "actors.kind.agent": "एजेंट",
     "actors.kind.office": "Office",
@@ -308,9 +301,9 @@ export const actorsMessages = {
     "entity.app.open": "فتح",
     "entity.app.details": "التفاصيل",
     "entity.app.more": "إجراءات أخرى",
-    "nav.actors": "الفاعلون",
+    "nav.actors": "الأشخاص والوكلاء",
     "actors.description":
-      "كل من يعمل في الـ homelab الخاص بك: الأشخاص والوكلاء، وكذلك الـ Offices والـ Factories التي يعمل فيها الوكلاء.",
+      "كل من يستخدم Homelab ويعمل فيه: الأشخاص الذين تدعوهم والوكلاء الذين ينجزون المهام من أجلك. يُنظَّم الوكلاء في Offices وFactories.",
     "actors.people": "الأشخاص",
     "actors.agents": "الوكلاء",
     "actors.workplaces": "Offices و Factories",
@@ -321,12 +314,10 @@ export const actorsMessages = {
     "actors.workplacesEmpty": "لا توجد Offices أو Factories بعد.",
     "actors.agentsUnavailable":
       "يظهر الوكلاء هنا عندما يصبح فهرس الوكلاء متاحًا لحسابك.",
-    "actors.agentsError":
-      "تعذّر تحميل قائمة الوكلاء. أعد التحميل للمحاولة مرة أخرى.",
+    "actors.agentsError": "تعذّر تحميل قائمة الوكلاء.",
     "actors.workplacesUnavailable":
       "تظهر الـ Offices والـ Factories هنا عندما يصبح فهرس الوكلاء متاحًا لحسابك.",
-    "actors.workplacesError":
-      "تعذّر تحميل الـ Offices والـ Factories. أعد التحميل للمحاولة مرة أخرى.",
+    "actors.workplacesError": "تعذّر تحميل Offices وFactories.",
     "actors.status.available": "متاح",
     "actors.status.unavailable": "غير متاح",
     "actors.status.disabled": "متوقف",
@@ -337,7 +328,7 @@ export const actorsMessages = {
     "actors.officeAgentsNote":
       "يجهّز الـ Office الوكلاء الذين يعملون فيه. تعرض الـ Factory الخاصة به أي وكلاء هم.",
     "actors.openFactory": "فتح الـ Factory",
-    "actors.seeAll": "كل الفاعلين",
+    "actors.seeAll": "كل الأشخاص والوكلاء",
     "actors.kind.person": "شخص",
     "actors.kind.agent": "وكيل",
     "actors.kind.office": "Office",

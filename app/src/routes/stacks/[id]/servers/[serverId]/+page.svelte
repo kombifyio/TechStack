@@ -57,6 +57,8 @@
   import BrandLogoScope from "#lib/components/BrandLogoScope.svelte";
   import { brandDomainForTool } from "#lib/brand-logo.js";
   import Button from "#lib/components/ui/Button.svelte";
+  import ErrorCallout from "#lib/components/ui/ErrorCallout.svelte";
+  import { serverHistoryHref } from "#lib/server-links.js";
   import ServerAccessActions from "#lib/components/server-access/ServerAccessActions.svelte";
   import ManagedRuntimeRecreatePanel from "#lib/components/managed-runtime/ManagedRuntimeRecreatePanel.svelte";
   import GuardPanel from "#lib/components/guard/GuardPanel.svelte";
@@ -422,7 +424,7 @@
 
   function formatMetric(metric: StackMetricValue | undefined): string {
     if (!metric || metric.value === undefined || metric.status !== "ok") {
-      return "unknown";
+      return stateLabel("unknown");
     }
     return `${metric.value}${metric.unit || ""}`;
   }
@@ -547,18 +549,24 @@
   {:else if sessionRenewalRequired && !details}
     <SessionRenewalPanel />
   {:else if error && !details}
-    <div class="rounded-lg border border-destructive/30 bg-destructive/10 p-4">
-      <p class="text-foreground">{error}</p>
-    </div>
+    <ErrorCallout
+      testId="server-details-error"
+      message={tr("serverPage.loadError")}
+      details={error}
+      onRetry={() => void load()}
+      retrying={loading}
+    />
   {:else if details}
     {#if error}
-      <div
-        class="mb-6 rounded-lg border border-destructive/30 bg-destructive/10 p-4"
-        role="alert"
-        data-testid="server-details-refresh-error"
-      >
-        <p class="text-foreground">{error}</p>
-      </div>
+      <ErrorCallout
+        class="mb-6"
+        testId="server-details-refresh-error"
+        tone="warning"
+        message={tr("serverPage.refreshError")}
+        details={error}
+        onRetry={() => void load()}
+        retrying={refreshing}
+      />
     {/if}
     <nav
       class="mb-6 border-b border-border"
@@ -571,13 +579,13 @@
             type="button"
             role="tab"
             aria-selected={activeTab === tab}
-            class="px-3 py-2 text-sm capitalize {activeTab === tab
+            class="px-3 py-2 text-sm {activeTab === tab
               ? 'border-b-2 border-primary text-foreground'
               : 'text-muted-foreground hover:text-foreground'}"
             data-testid={`server-tab-${tab}`}
             onclick={() => setTab(tab)}
           >
-            {tab}
+            {tr(`serverPage.tab.${tab}`)}
           </button>
         {/each}
       </div>
@@ -618,7 +626,7 @@
             </h1>
             <p class="mt-1 text-sm text-muted-foreground">
               {serverOSLabel()}
-              - {details.server.ip || "no ip"}
+              - {details.server.ip || tr("serverPage.noIp")}
             </p>
           </div>
           <div class="flex flex-wrap gap-2">
@@ -643,6 +651,19 @@
                   ? tr("ui.homelabDashboardPage.reconnecting")
                   : tr("ui.homelabDashboardPage.reconnect")}
               </Button>
+            {/if}
+            {#if canonicalServer?.id || details.server.server_id}
+              <!-- The same server as history and metrics. -->
+              <a
+                href={serverHistoryHref(
+                  canonicalServer?.id || details.server.server_id || serverId || "",
+                )}
+                class="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-primary hover:underline"
+                data-testid="server-history-link"
+              >
+                <Activity class="h-4 w-4" aria-hidden="true" />
+                {tr("serverPage.historyLink")}
+              </a>
             {/if}
             <Button
               variant="secondary"
@@ -698,12 +719,7 @@
     {/if}
 
     {#if actionError}
-      <div
-        class="mb-6 rounded-lg border border-destructive/30 bg-destructive/10 p-4"
-        role="alert"
-      >
-        <p class="text-sm text-destructive">{actionError}</p>
-      </div>
+      <ErrorCallout class="mb-6" message={actionError} />
     {/if}
 
     {#if activeTab === "overview"}
@@ -805,13 +821,13 @@
             <div class="rounded-lg bg-muted/40 p-3">
               <dt class="text-muted-foreground">{tr("ui.stacksIdServersServerId.lastSeen")}</dt>
               <dd class="mt-1 text-foreground">
-                {details.server.last_seen || "unknown"}
+                {details.server.last_seen || stateLabel("unknown")}
               </dd>
             </div>
             <div class="rounded-lg bg-muted/40 p-3">
               <dt class="text-muted-foreground">{tr("ui.stacksIdServersServerId.cpuCores")}</dt>
               <dd class="mt-1 text-foreground">
-                {details.server.capabilities.cpu_cores || "unknown"}
+                {details.server.capabilities.cpu_cores || stateLabel("unknown")}
               </dd>
             </div>
             <div class="rounded-lg bg-muted/40 p-3">
@@ -825,19 +841,19 @@
             <div class="rounded-lg bg-muted/40 p-3">
               <dt class="text-muted-foreground">Docker</dt>
               <dd class="mt-1 text-foreground">
-                {details.server.capabilities.docker_version || "unknown"}
+                {details.server.capabilities.docker_version || stateLabel("unknown")}
               </dd>
             </div>
             <div class="rounded-lg bg-muted/40 p-3">
               <dt class="text-muted-foreground">{tr("ui.stacksCreatingCreationLease.provider")}</dt>
               <dd class="mt-1 text-foreground">
-                {details.server.capabilities.provider || "unknown"}
+                {details.server.capabilities.provider || stateLabel("unknown")}
               </dd>
             </div>
             <div class="rounded-lg bg-muted/40 p-3">
               <dt class="text-muted-foreground">{tr("ui.stacksIdServersServerId.operatingSystem")}</dt>
               <dd class="mt-1 text-foreground">
-                {details.server.os || "unknown"}
+                {details.server.os || stateLabel("unknown")}
                 {details.server.os_version
                   ? ` ${details.server.os_version}`
                   : ""}
@@ -846,7 +862,7 @@
             <div class="rounded-lg bg-muted/40 p-3">
               <dt class="text-muted-foreground">{tr("ui.stacksIdServersServerId.architecture")}</dt>
               <dd class="mt-1 text-foreground">
-                {details.server.arch || "unknown"}
+                {details.server.arch || stateLabel("unknown")}
               </dd>
             </div>
           </dl>
@@ -1140,8 +1156,8 @@
                       <p class="mt-1 text-xs text-muted-foreground">
                         {allocation.node_ref ||
                           (allocation.desired
-                            ? "primary Node"
-                            : "runtime only")}
+                            ? tr("serverPage.primaryServer")
+                            : tr("serverPage.runtimeOnly"))}
                       </p>
                     </td>
                     <td class="px-4 py-3 text-foreground">

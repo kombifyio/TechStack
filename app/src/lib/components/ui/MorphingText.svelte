@@ -4,7 +4,12 @@
    * Inspired by: https://magicui.design/docs/components/morphing-text
    *
    * Usage:
-   * <MorphingText texts={["Creating", "Validating", "Deploying"]} />
+   * <MorphingText texts={["Creating", "Validating", "Deploying"]} decorative />
+   *
+   * The animation is decoration. It stays still (the first word, no cursor)
+   * for people who prefer reduced motion, and `decorative` hides it from
+   * assistive technology: a changing word is not something to announce, so
+   * the surrounding text carries the meaning on its own.
    */
   import { onMount, onDestroy } from "svelte";
 
@@ -13,6 +18,8 @@
     interval?: number;
     typingSpeed?: number;
     showCursor?: boolean;
+    /** Hide the animated word from assistive technology. */
+    decorative?: boolean;
     class?: string;
   }
 
@@ -21,6 +28,7 @@
     interval = 3000,
     typingSpeed = 50,
     showCursor = true,
+    decorative = false,
     class: className = "",
   }: Props = $props();
 
@@ -32,6 +40,33 @@
 
   let animationTimer: ReturnType<typeof setInterval> | null = null;
   let typeTimer: ReturnType<typeof setTimeout> | null = null;
+  let reducedMotion = $state(false);
+
+  function stopTimers() {
+    if (animationTimer) clearInterval(animationTimer);
+    if (typeTimer) clearTimeout(typeTimer);
+    animationTimer = null;
+    typeTimer = null;
+    isTyping = false;
+    isDeleting = false;
+  }
+
+  function start() {
+    stopTimers();
+    if (texts.length === 0) return;
+    if (reducedMotion) {
+      currentIndex = 0;
+      displayText = texts[0];
+      return;
+    }
+    // Start with first word
+    typeText(texts[0], () => {
+      // Begin cycling after first word is typed
+      if (texts.length > 1) {
+        animationTimer = setInterval(cycleToNextWord, interval);
+      }
+    });
+  }
 
   function typeText(text: string, onComplete: () => void) {
     isTyping = true;
@@ -79,29 +114,27 @@
   }
 
   onMount(() => {
-    if (texts.length > 0) {
-      // Start with first word
-      typeText(texts[0], () => {
-        // Begin cycling after first word is typed
-        if (texts.length > 1) {
-          animationTimer = setInterval(cycleToNextWord, interval);
-        }
-      });
-    }
+    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
+    reducedMotion = query.matches;
+    start();
+    const onChange = (event: MediaQueryListEvent) => {
+      reducedMotion = event.matches;
+      start();
+    };
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
   });
 
-  onDestroy(() => {
-    if (animationTimer) clearInterval(animationTimer);
-    if (typeTimer) clearTimeout(typeTimer);
-  });
+  onDestroy(stopTimers);
 </script>
 
 <span
   class="morphing-text inline-flex items-center whitespace-nowrap font-semibold {className}"
   style={`min-width: ${minWidthCh}ch;`}
+  aria-hidden={decorative ? "true" : undefined}
 >
   <span class="text-primary">{displayText}</span>
-  {#if showCursor}
+  {#if showCursor && !reducedMotion}
     <span
       class="cursor ml-0.5 w-0.5 h-[1.2em] bg-primary"
       class:blinking={!isTyping && !isDeleting}
@@ -116,6 +149,12 @@
 
   .cursor.blinking {
     animation: blink 1s step-end infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .cursor.blinking {
+      animation: none;
+    }
   }
 
   @keyframes blink {

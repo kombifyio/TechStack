@@ -7,10 +7,15 @@
  * the section, and the coach anchor.
  */
 import type {
+  NavGroup as PackageNavGroup,
   NavItem as PackageNavItem,
   NavPreview,
 } from "@kombiverselabs/ui/shell";
-import type { NavItem as ProductNavItem } from "#lib/navigation.js";
+import type {
+  NavGroup as ProductNavGroup,
+  NavItem as ProductNavItem,
+} from "#lib/navigation.js";
+import { visibleNavItems } from "#lib/navigation.js";
 import { tr } from "#lib/i18n.svelte.js";
 import { navPreview } from "#lib/stores/navPreview.svelte.js";
 
@@ -63,6 +68,7 @@ function previewFor(section: string): NavPreview | undefined {
               active > 0
                 ? `${active} ${text("nav.preview.activeAlerts", "active alerts")}`
                 : text("nav.preview.noAlerts", "No active alerts."),
+            href: "/monitoring#alerts",
           },
         ],
       };
@@ -70,6 +76,25 @@ function previewFor(section: string): NavPreview | undefined {
     default:
       return undefined;
   }
+}
+
+/**
+ * Named rail sections, with each group's feature-gated entries filtered by
+ * the same `visibleNavItems` the embedded tab bar uses. A group left without
+ * entries is dropped, so a title never heads an empty list.
+ */
+export function toPackageNavGroups(
+  groups: readonly ProductNavGroup[],
+  isFeatureEnabled?: (feature: string) => boolean,
+): PackageNavGroup[] {
+  return groups
+    .map((group) => ({
+      title: group.titleKey
+        ? text(group.titleKey, group.titleFallback ?? "")
+        : undefined,
+      items: toPackageNavItems(visibleNavItems(group.items, isFeatureEnabled)),
+    }))
+    .filter((group) => group.items.length > 0);
 }
 
 export function toPackageNavItems(

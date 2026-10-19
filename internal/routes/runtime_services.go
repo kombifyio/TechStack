@@ -233,7 +233,7 @@ func RegisterServiceRuntimeRoutes(r *httpx.Router, cfg ServiceRuntimeRouteConfig
 		ConfigureApplicationOperationAuthorization(func(context.Context, string, string, string) error)
 	}); ok {
 		configurable.ConfigureApplicationOperationAuthorization(func(ctx context.Context, tenantID, ownerID, serverID string) error {
-			return authorizeInventoryServerOperate(ctx, cfg.Policy, inventoryScope{tenantID: tenantID, ownerID: ownerID}, serverID)
+			return authorizeOwnerServerOperate(ctx, cfg.Policy, cfg.Servers, inventoryScope{tenantID: tenantID, ownerID: ownerID}, serverID)
 		})
 	}
 	h.applicationAdmission = cfg.ApplicationAdmission
@@ -478,7 +478,7 @@ func (h *serviceRuntimeHandlers) action(e *httpx.Event) error {
 	}
 	// Replay before validating the target: a lost-response retry must return
 	if adoptedApplication(service) && request.Action != "logs" && request.Action != serviceActionUpdate && request.Action != serviceActionBackup {
-		if err := authorizeInventoryServerOperate(e.Request.Context(), h.policy, inventoryScope{tenantID: tenantID, ownerID: ownerID}, service.ServerID); err != nil {
+		if err := authorizeOwnerServerOperate(e.Request.Context(), h.policy, h.servers, inventoryScope{tenantID: tenantID, ownerID: ownerID}, service.ServerID); err != nil {
 			return writeInventoryHTTPError(e, err)
 		}
 		lifecycleRequest.Operation = jobs.StackKitLifecycleApplicationControl
@@ -926,10 +926,12 @@ func (h *serviceRuntimeHandlers) list(e *httpx.Event) error {
 	}
 	rows, err := h.store.ListServiceRuntimes(e.Request.Context(), tenantID, stackID, "")
 	if err != nil {
+		httpx.RecordDependencyFailure(e, "services.list.runtimes", err)
 		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Service inventory is unavailable", nil)
 	}
 	servers, serverMapErr := h.serverMap(e, tenantID, stackID)
 	if serverMapErr != nil {
+		httpx.RecordDependencyFailure(e, "services.list.server_map", serverMapErr)
 		// The server aggregate is the placement authority. Returning an empty
 		// map here would turn a tenant/FGA/store outage into a false offline
 		// service fleet, so preserve it as a typed unavailable state instead.
@@ -986,6 +988,7 @@ func (h *serviceRuntimeHandlers) get(e *httpx.Event) error {
 		return httpx.NotFound(e, "Service not found")
 	}
 	if err != nil {
+		httpx.RecordDependencyFailure(e, "services.get.runtime", err)
 		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Service inventory is unavailable", nil)
 	}
 	stack, err := h.stacks.GetStack(e.Request.Context(), tenantID, service.StackID)
@@ -993,6 +996,7 @@ func (h *serviceRuntimeHandlers) get(e *httpx.Event) error {
 		return httpx.NotFound(e, "Service not found")
 	}
 	if err != nil {
+		httpx.RecordDependencyFailure(e, "services.get.stack", err)
 		return httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Service authorization is unavailable", nil)
 	}
 	var server *controlplane.ServerRuntime
@@ -1011,6 +1015,7 @@ func (h *serviceRuntimeHandlers) get(e *httpx.Event) error {
 func (h *serviceRuntimeHandlers) ownedStackIDs(e *httpx.Event, tenantID, ownerID string, isAdmin bool) (map[string]bool, error) {
 	stacks, err := h.stacks.ListStacksByTenant(e.Request.Context(), tenantID)
 	if err != nil {
+		httpx.RecordDependencyFailure(e, "services.owned_stacks", err)
 		return nil, httpx.Reject(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Service authorization is unavailable", nil)
 	}
 	result := make(map[string]bool, len(stacks))

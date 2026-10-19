@@ -2,9 +2,9 @@
 // routes. Merged into the main dictionary by i18n.ts.
 export const uiMessages = {
   en: {
-    "ui.releaseChannel.badge": "Nightly",
+    "ui.releaseChannel.badge": "Preview",
     "ui.releaseChannel.hint":
-      "You are on the Nightly channel: the newest changes, on your live data.",
+      "You are on the Preview channel: the newest changes, on your live data.",
     "ui.releaseChannel.backToStable": "Back to Stable",
     "setupReplay.restart": "Repeat setup",
     "setupReplay.title": "Your current connection",
@@ -24,7 +24,7 @@ export const uiMessages = {
     "ui.services.approveStackIt": "Approve this adoption",
     "ui.services.releaseBinding": "Release lifecycle management",
     "ui.services.adoptionScope":
-      "Review this existing Home Assistant Container for in-place lifecycle management. Other applications and moving to another Node are not supported by this profile.",
+      "Review this existing Home Assistant Container for in-place lifecycle management. Other applications and moving to another server are not supported by this profile.",
     "ui.services.adoptionSource": "Existing container",
     "ui.services.adoptionData": "Preserved configuration",
     "ui.services.adoptionPreserves":
@@ -46,12 +46,12 @@ export const uiMessages = {
     "language.switch": "Language",
     "settings.language.description":
       "The language of this interface on this device. Until you choose one, your browser language is used, and English otherwise.",
-    "ui.dashboard.nodes": "Nodes",
+    "ui.dashboard.nodes": "Servers",
     "ui.dashboard.devicesPeople": "Devices & people",
     "ui.dashboard.last24h": "Last 24 hours",
     "ui.worker.readyLead": "Ready!",
     "ui.worker.readyBody":
-      "All required workers are connected. You can now deploy the homelab.",
+      "All required servers are connected. You can now deploy the homelab.",
     "ui.footer.product": "Product",
     "ui.footer.company": "Company",
     "ui.footer.legal": "Legal",
@@ -66,20 +66,21 @@ export const uiMessages = {
     "ui.dashboard.failureDetails": "Details",
     "ui.dashboard.hideFailureDetails": "Hide details",
     "ui.dashboard.inventoryUnavailable":
-      "Canonical Node and service state are unavailable. The retained telemetry below is diagnostic and is not treated as a zero inventory.",
-    "ui.dashboard.noNodes": "No Nodes are registered for this homelab yet.",
+      "The current state of your servers and services could not be read. The saved telemetry below is for diagnosis only and does not mean your homelab is empty.",
+    "ui.dashboard.noNodes": "No servers are registered for this homelab yet.",
     "ui.custody.explainer":
-      "These leases still hold custody and may still be billed, but no machine backs them. They are not shown as Nodes.",
+      "These leases still hold custody and may still be billed, but no machine backs them. They are not shown as servers.",
     "ui.custody.lastKnownAddress": "Last known address; the machine is gone",
     "ui.dashboard.service.noAddress":
       "No reachable address is recorded for this service yet.",
     "ui.dashboard.service.openApp": "Open app",
     "ui.dashboard.service.actionsAndLogs":
       "Actions and logs on the Services page",
-    "ui.node.precheckFailed": "Node prechecks failed",
-    "ui.node.noTelemetry": "Current telemetry is not available for this Node.",
-    "ui.node.openDetails": "Open Node details",
-    "ui.node.noApps": "No apps reported on this Node yet.",
+    "ui.node.precheckFailed": "Server prechecks failed",
+    "ui.node.noTelemetry":
+      "Current telemetry is not available for this server.",
+    "ui.node.openDetails": "Open server details",
+    "ui.node.noApps": "No apps reported on this server yet.",
     "common.loadingShort": "Loading…",
     "ui.dashboard.filterDevicesPeople": "Filter devices and people",
     "ui.dashboard.people": "People",
@@ -87,11 +88,11 @@ export const uiMessages = {
     "ui.dashboard.devices": "Devices",
     "ui.dashboard.loadingDevicesPeople": "Loading devices and people…",
     "ui.dashboard.eventHistoryUnavailable": "Event history unavailable.",
-    "ui.dashboard.servicesOnNode": "Services on this Node",
+    "ui.dashboard.servicesOnNode": "Services on this server",
     "ui.worker.statusUnavailable": "Connection status unavailable",
-    "ui.worker.connect": "Connect worker",
-    "ui.worker.connectNodes": "Connect your Nodes to this Homelab",
-    "ui.worker.approved": "Approved workers:",
+    "ui.worker.connect": "Connect server",
+    "ui.worker.connectNodes": "Connect your servers to this Homelab",
+    "ui.worker.approved": "Approved servers:",
     "ui.worker.unverified": "Connection unverified",
     "ui.worker.startingRollout": "Starting rollout...",
     "ui.worker.deployHomelab": "Deploy homelab",
@@ -111,7 +112,7 @@ export const uiMessages = {
     "ui.substrate.title": "Connect a Proxmox hypervisor",
     "ui.substrate.runCommand":
       "Run the connection command in the Proxmox host shell as an administrator. Its Guard reports health to your Homelab through an outbound connection.",
-    "ui.substrate.viewNodes": "View connected Nodes",
+    "ui.substrate.viewNodes": "View connected servers",
     "ui.shortcuts.waiting": "Waiting for key:",
     "ui.recreate.title": "Recreate server",
     "ui.recreate.checking": "Checking terminal provider cleanup…",
@@ -160,32 +161,32 @@ export const uiMessages = {
     "ui.cloudLink.incomplete": "Linking did not complete",
     "ui.homelab.rolloutProgress": "Runtime rollout progress",
     "ui.homelab.runtimeRollout": "Runtime rollout",
-    "ui.homelab.newNode": "New Node",
+    "ui.homelab.newNode": "Add server",
     "ui.homelab.heartbeat": "Heartbeat and metrics",
     "ui.homelab.loading": "Loading homelab",
     "ui.homelab.loadingOperations": "Loading homelab operations",
     "ui.homelab.operations": "Homelab operations",
     "ui.homelab.reconfirming":
-      "Showing the last known state while it is reconfirmed. Node actions unlock when it is.",
-    "ui.homelab.evidenceStale": "Operations evidence is stale",
+      "Showing the last known state while it is reconfirmed. Server actions unlock when it is.",
+    "ui.homelab.evidenceStale": "Showing the last known state",
     "ui.homelab.nodeConnected":
-      "Your Node is connected. Continue with the StackKit rollout.",
+      "Your server is connected. Continue with the StackKit rollout.",
     "ui.homelab.reviewHint":
-      "Review the selected StackKit, services, and Node placement, then use Review + Start. A failed application does not block the rest of this deployment from being reviewed or started again.",
+      "Review the selected StackKit, services and server placement, then use Review + Start. A failed application does not block the rest of this homelab from being reviewed or started again.",
     "ui.homelab.noInventory":
-      "No manageable Node or service inventory has been reported yet.",
-    "ui.homelab.partialRollout": "Partial rollout managed runtime",
+      "No manageable server or service inventory has been reported yet.",
+    "ui.homelab.partialRollout": "Managed server with an incomplete setup",
     "ui.homelab.start": "Start your Homelab",
     "ui.homelab.evidenceStaleBody":
-      "The last verified snapshot remains visible, but Node mutations are disabled until Refresh succeeds.",
+      "The latest check could not be completed. Actions that change something are paused until it succeeds.",
     "ui.homelab.startHint":
       "Start with the wizard or import an existing StackKit spec.",
     "ui.homelab.getStarted": "Get started",
   },
   de: {
-    "ui.releaseChannel.badge": "Nightly",
+    "ui.releaseChannel.badge": "Preview",
     "ui.releaseChannel.hint":
-      "Du bist im Nightly-Kanal: die neuesten Änderungen, auf deinen Live-Daten.",
+      "Du bist im Preview-Kanal: die neuesten Änderungen, auf deinen Live-Daten.",
     "ui.releaseChannel.backToStable": "Zurück zu Stable",
     "setupReplay.restart": "Einrichtung wiederholen",
     "setupReplay.title": "Deine aktuelle Verbindung",
@@ -205,7 +206,7 @@ export const uiMessages = {
     "ui.services.approveStackIt": "Diese Übernahme freigeben",
     "ui.services.releaseBinding": "Lifecycle-Verwaltung lösen",
     "ui.services.adoptionScope":
-      "Prüfe diesen vorhandenen Home Assistant Container für eine Übernahme am bisherigen Ort. Andere Anwendungen und der Umzug auf einen anderen Node werden von diesem Profil noch nicht unterstützt.",
+      "Prüfe diesen vorhandenen Home Assistant Container für eine Übernahme am bisherigen Ort. Andere Anwendungen und der Umzug auf einen anderen Server werden von diesem Profil noch nicht unterstützt.",
     "ui.services.adoptionSource": "Vorhandener Container",
     "ui.services.adoptionData": "Erhaltene Konfiguration",
     "ui.services.adoptionPreserves":
@@ -227,12 +228,12 @@ export const uiMessages = {
     "language.switch": "Sprache",
     "settings.language.description":
       "Die Sprache dieser Oberfläche auf diesem Gerät. Solange du keine wählst, gilt die Sprache deines Browsers, sonst Englisch.",
-    "ui.dashboard.nodes": "Nodes",
+    "ui.dashboard.nodes": "Server",
     "ui.dashboard.devicesPeople": "Geräte & Personen",
     "ui.dashboard.last24h": "Letzte 24 Stunden",
     "ui.worker.readyLead": "Bereit!",
     "ui.worker.readyBody":
-      "Alle erforderlichen Worker sind verbunden. Du kannst das Homelab jetzt bereitstellen.",
+      "Alle erforderlichen Server sind verbunden. Du kannst das Homelab jetzt bereitstellen.",
     "ui.footer.product": "Produkt",
     "ui.footer.company": "Unternehmen",
     "ui.footer.legal": "Rechtliches",
@@ -247,11 +248,11 @@ export const uiMessages = {
     "ui.dashboard.failureDetails": "Details",
     "ui.dashboard.hideFailureDetails": "Details ausblenden",
     "ui.dashboard.inventoryUnavailable":
-      "Der maßgebliche Zustand von Nodes und Diensten ist nicht verfügbar. Die weiter unten angezeigte gespeicherte Telemetrie dient nur der Diagnose und gilt nicht als leeres Inventar.",
+      "Der aktuelle Zustand deiner Server und Dienste konnte nicht gelesen werden. Die gespeicherte Telemetrie unten dient nur der Diagnose und bedeutet nicht, dass dein Homelab leer ist.",
     "ui.dashboard.noNodes":
-      "Für dieses Homelab sind noch keine Nodes registriert.",
+      "Für dieses Homelab sind noch keine Server registriert.",
     "ui.custody.explainer":
-      "Diese Leases halten weiterhin die Verwahrung und können noch abgerechnet werden, aber es steht keine Maschine dahinter. Sie werden nicht als Nodes angezeigt.",
+      "Diese Leases halten weiterhin die Verwahrung und können noch abgerechnet werden, aber es steht keine Maschine dahinter. Sie werden nicht als Server angezeigt.",
     "ui.custody.lastKnownAddress":
       "Zuletzt bekannte Adresse; die Maschine ist nicht mehr vorhanden",
     "ui.dashboard.service.noAddress":
@@ -260,11 +261,11 @@ export const uiMessages = {
     "ui.dashboard.service.actionsAndLogs":
       "Aktionen und Logs auf der Seite Dienste",
     "ui.node.precheckFailed":
-      "Die Vorabprüfungen des Nodes sind fehlgeschlagen",
+      "Die Vorabprüfungen des Servers sind fehlgeschlagen",
     "ui.node.noTelemetry":
-      "Für diesen Node liegt keine aktuelle Telemetrie vor.",
-    "ui.node.openDetails": "Node-Details öffnen",
-    "ui.node.noApps": "Auf diesem Node wurden noch keine Apps gemeldet.",
+      "Für diesen Server liegt keine aktuelle Telemetrie vor.",
+    "ui.node.openDetails": "Serverdetails öffnen",
+    "ui.node.noApps": "Auf diesem Server wurden noch keine Apps gemeldet.",
     "common.loadingShort": "Wird geladen…",
     "ui.dashboard.filterDevicesPeople": "Geräte und Personen filtern",
     "ui.dashboard.people": "Personen",
@@ -273,11 +274,11 @@ export const uiMessages = {
     "ui.dashboard.loadingDevicesPeople": "Geräte und Personen werden geladen…",
     "ui.dashboard.eventHistoryUnavailable":
       "Der Ereignisverlauf ist nicht verfügbar.",
-    "ui.dashboard.servicesOnNode": "Dienste auf diesem Node",
+    "ui.dashboard.servicesOnNode": "Dienste auf diesem Server",
     "ui.worker.statusUnavailable": "Verbindungsstatus nicht verfügbar",
-    "ui.worker.connect": "Worker verbinden",
-    "ui.worker.connectNodes": "Verbinde deine Nodes mit diesem Homelab",
-    "ui.worker.approved": "Freigegebene Worker:",
+    "ui.worker.connect": "Server verbinden",
+    "ui.worker.connectNodes": "Verbinde deine Server mit diesem Homelab",
+    "ui.worker.approved": "Freigegebene Server:",
     "ui.worker.unverified": "Verbindung nicht verifiziert",
     "ui.worker.startingRollout": "Rollout wird gestartet...",
     "ui.worker.deployHomelab": "Homelab bereitstellen",
@@ -297,7 +298,7 @@ export const uiMessages = {
     "ui.substrate.title": "Proxmox-Hypervisor verbinden",
     "ui.substrate.runCommand":
       "Führe den Verbindungsbefehl als Administrator in der Shell des Proxmox-Hosts aus. Der zugehörige Guard meldet den Zustand über eine ausgehende Verbindung an dein Homelab.",
-    "ui.substrate.viewNodes": "Verbundene Nodes ansehen",
+    "ui.substrate.viewNodes": "Verbundene Server ansehen",
     "ui.shortcuts.waiting": "Warte auf Taste:",
     "ui.recreate.title": "Server neu erstellen",
     "ui.recreate.checking":
@@ -349,24 +350,25 @@ export const uiMessages = {
     "ui.cloudLink.incomplete": "Die Verknüpfung wurde nicht abgeschlossen",
     "ui.homelab.rolloutProgress": "Fortschritt des Runtime-Rollouts",
     "ui.homelab.runtimeRollout": "Runtime-Rollout",
-    "ui.homelab.newNode": "Neuer Node",
+    "ui.homelab.newNode": "Server hinzufügen",
     "ui.homelab.heartbeat": "Heartbeat und Metriken",
     "ui.homelab.loading": "Homelab wird geladen",
     "ui.homelab.loadingOperations": "Homelab-Betrieb wird geladen",
     "ui.homelab.operations": "Homelab-Betrieb",
     "ui.homelab.reconfirming":
-      "Der zuletzt bekannte Zustand wird angezeigt, bis er neu bestätigt ist. Node-Aktionen werden danach freigeschaltet.",
-    "ui.homelab.evidenceStale": "Die Betriebsnachweise sind veraltet",
+      "Der zuletzt bekannte Zustand wird angezeigt, bis er neu bestätigt ist. Serveraktionen werden danach freigeschaltet.",
+    "ui.homelab.evidenceStale": "Zeigt den zuletzt bekannten Stand",
     "ui.homelab.nodeConnected":
-      "Dein Node ist verbunden. Fahre mit dem StackKit-Rollout fort.",
+      "Dein Server ist verbunden. Fahre mit dem StackKit-Rollout fort.",
     "ui.homelab.reviewHint":
-      "Prüfe das ausgewählte StackKit, die Dienste und die Node-Platzierung und nutze dann Prüfen + Starten. Eine fehlgeschlagene Anwendung verhindert nicht, dass der Rest dieses Deployments geprüft oder erneut gestartet wird.",
+      "Prüfe das ausgewählte StackKit, die Dienste und die Serverplatzierung und nutze dann Prüfen + Starten. Eine fehlgeschlagene Anwendung verhindert nicht, dass der Rest dieses Homelabs geprüft oder erneut gestartet wird.",
     "ui.homelab.noInventory":
-      "Es wurde noch kein verwaltbares Inventar an Nodes oder Diensten gemeldet.",
-    "ui.homelab.partialRollout": "Verwaltete Runtime mit teilweisem Rollout",
+      "Es wurde noch kein verwaltbarer Bestand an Servern oder Diensten gemeldet.",
+    "ui.homelab.partialRollout":
+      "Verwalteter Server mit unvollständiger Einrichtung",
     "ui.homelab.start": "Starte dein Homelab",
     "ui.homelab.evidenceStaleBody":
-      "Der zuletzt geprüfte Stand bleibt sichtbar, aber Node-Änderungen sind deaktiviert, bis die Aktualisierung gelingt.",
+      "Die letzte Prüfung konnte nicht abgeschlossen werden. Aktionen, die etwas ändern, sind pausiert, bis sie gelingt.",
     "ui.homelab.startHint":
       "Starte mit dem Assistenten oder importiere eine vorhandene StackKit-Spezifikation.",
     "ui.homelab.getStarted": "Loslegen",

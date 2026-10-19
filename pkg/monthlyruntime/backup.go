@@ -5,7 +5,7 @@ package monthlyruntime
 // managed-runtime keys and resolve at the edge as signed flags. Both default
 // to off in pkg/features, so the gate is fail-closed by construction. Enforcement
 // happens BEFORE any job enqueue, provider call, or storage provisioning
-// (FEATURE-ENTITLEMENT-UX-STANDARD).
+// (ENTITLEMENTS-ARCHITECTURE.md §13).
 
 import (
 	"context"
@@ -28,7 +28,7 @@ const (
 	// BackupSizingCeilingBytes is an internal capacity-planning figure, never a
 	// customer limit. Backups are limited by retention (how many daily, weekly
 	// and monthly snapshots a plan keeps), not by gigabytes
-	// (BILLING-ENTITLEMENT-STANDARD §2.4, owner decision 2026-09-28); no
+	// (ENTITLEMENTS-ARCHITECTURE.md §12.2.4, owner decision 2026-09-28); no
 	// admission path may deny a backup against it. It survives only as the
 	// quotaBytes basis of the signed restore-drill renewal receipt
 	// (internal/advancedissuer.BackupRenewal), whose contract still requires a

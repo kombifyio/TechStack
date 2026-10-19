@@ -260,6 +260,9 @@ func (c *Client) modeAfterFailure(err error) (Mode, error) {
 	return ModeLegacy, c.classify(err)
 }
 
+// reasonCredentialRejected records a bare 401 on the worker credential.
+const reasonCredentialRejected = "credential_rejected"
+
 // classify maps a denial onto the terminal conditions and records the state.
 func (c *Client) classify(err error) error {
 	var apiErr *APIError
@@ -276,7 +279,7 @@ func (c *Client) classify(err error) error {
 		_ = manager.SetState(StateRecoveryNeeded, "bound_to_another_key")
 		return fmt.Errorf("%w: the control plane holds a different key for this server", ErrRecoveryNeeded)
 	case apiErr.Code == "" && apiErr.Status == http.StatusUnauthorized:
-		_ = manager.SetState(StateRecoveryNeeded, "credential_rejected")
+		_ = manager.SetState(StateRecoveryNeeded, reasonCredentialRejected)
 		return fmt.Errorf("%w: the worker credential was rejected", ErrRecoveryNeeded)
 	case apiErr.Reason == guardidentity.ReasonProofClock:
 		c.log.Warn("guard_identity_clock_skew",
@@ -450,6 +453,20 @@ func (c *Client) Rotate(ctx context.Context) error {
 	if c.Mode() != ModeHostKey {
 		return errors.New("key rotation requires an established host identity")
 	}
+	if c.cfg.Manager.PendingRotation() != nil {
+		// An earlier rotation got no definitive answer. Settle it first: the
+		// control plane may already hold the staged key, and submitting it
+		// again, or a fresh one, would race a rotation that already happened.
+		if c.resolvePendingRotation(ctx) {
+			c.log.Info("guard_identity_rotation_completed")
+			c.dropToken()
+			_, err := c.accessToken(ctx, true)
+			return err
+		}
+		if c.cfg.Manager.PendingRotation() != nil {
+			return errors.New("an earlier key rotation is still unresolved; it is retried on the next maintenance pass")
+		}
+	}
 	next, err := c.cfg.Manager.StageRotation()
 	if err != nil {
 		return err
@@ -489,10 +506,23 @@ func (c *Client) submitRotation(ctx context.Context, next ed25519.PrivateKey) er
 	defer func() { _ = response.Body.Close() }()
 	payload, _ := io.ReadAll(io.LimitReader(response.Body, 64<<10))
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		c.cfg.Manager.DiscardRotation()
-		return parseAPIError(response, payload, c.cfg.Now())
+		apiErr := parseAPIError(response, payload, c.cfg.Now())
+		// Only a definitive refusal proves the control plane kept the current
+		// key. A gateway or server failure may follow an accepted rotation, so
+		// the staged key stays for resolvePendingRotation to settle.
+		if definitiveRefusal(apiErr) {
+			c.cfg.Manager.DiscardRotation()
+		}
+		return apiErr
 	}
 	return nil
+}
+
+// definitiveRefusal reports a client-error answer that will not change on
+// retry. Server errors, 408 and 429 say nothing about what was committed.
+func definitiveRefusal(apiErr *APIError) bool {
+	return apiErr != nil && apiErr.Status >= http.StatusBadRequest && apiErr.Status < http.StatusInternalServerError &&
+		apiErr.Status != http.StatusRequestTimeout && apiErr.Status != http.StatusTooManyRequests
 }
 
 // resolvePendingRotation finishes a rotation that was interrupted after the
@@ -517,10 +547,11 @@ func (c *Client) resolvePendingRotation(ctx context.Context) bool {
 		req.Header.Set("X-Kombify-Tenant-ID", tenant)
 	}
 	if _, doErr := c.do(req); doErr != nil {
-		// Not accepted (yet): the rotation never completed on the control
-		// plane, so the staged key is dropped and the current key stays.
+		// Refused: the rotation never completed on the control plane, so the
+		// staged key is dropped and the current key stays. Any other failure
+		// leaves the staged key, which may be the only one still accepted.
 		var apiErr *APIError
-		if errors.As(doErr, &apiErr) {
+		if errors.As(doErr, &apiErr) && definitiveRefusal(apiErr) {
 			c.cfg.Manager.DiscardRotation()
 		}
 		return false

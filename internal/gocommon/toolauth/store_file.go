@@ -12,12 +12,14 @@ import (
 	"path/filepath"
 )
 
-// FileStore stores tokens as AES-256-GCM encrypted JSON files.
+// FileStore stores tokens as machine-bound, obfuscated JSON files (AES-256-GCM
+// with a key derived from the readable machine id). It is not a security
+// boundary against local attackers; see SECURITY.md.
 // This is the fallback when the OS credential store is unavailable.
 // Files are stored in ~/.kombify/<toolname>/token.json.
 type FileStore struct{}
 
-// Save encrypts and writes the token pair to disk.
+// Save obfuscates and writes the token pair to disk.
 func (s *FileStore) Save(toolName string, token *TokenPair) error {
 	// #nosec G117 -- TokenPair is serialized only as plaintext input to AES-GCM;
 	// only the resulting ciphertext is written to disk.

@@ -8,7 +8,7 @@
  * prefills: anyone can craft one, so it carries no free text and nothing is
  * stored until the operator confirms the answers. It never computes a
  * capability score: the Unifier derives the profile from the stored answers
- * (CREATION-EXPERIENCE-STANDARD §4).
+ * (KOMBIFY-DESIGN-SYSTEM-STANDARD.md §9.4).
  */
 import type {
   OperatorSelfDisclosure,

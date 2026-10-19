@@ -1,5 +1,5 @@
 // Package updateclient implements the consumer half of the Kombify signed
-// auto-update contract (NATIVE-CLIENT-PLATFORM-STANDARD.md section 7): fetch
+// auto-update contract (DESKTOP-FOUNDATION-STANDARD.md §5.7): fetch
 // a per-channel [manifest.Manifest], verify its signature against embedded
 // keys, enforce version monotonicity and the minimum-supported-version
 // staleness guard, download the artifact, verify its digest and size, and

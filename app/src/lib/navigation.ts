@@ -16,7 +16,9 @@ import {
   Boxes,
   Home,
   LayoutGrid,
+  Plus,
   Server,
+  Settings,
   Users,
 } from "@lucide/svelte";
 
@@ -26,8 +28,8 @@ export interface NavItem {
   labelKey: string; // i18n key
   labelFallback: string; // Fallback if i18n not available
   icon: Component;
-  feature?: string; // Feature flag name (optional)
-  alwaysShow?: boolean; // Show even if feature is disabled (grayed out)
+  feature?: string; // Feature flag name (optional): hidden while the flag is off
+  alwaysShow?: boolean; // Show even if the feature is off (see visibleNavItems)
   badge?: number | null; // Optional badge count
   children?: NavItem[]; // Sub-navigation items
   external?: boolean; // External URL — render with target="_blank" rel="noopener"
@@ -45,7 +47,11 @@ export interface NavGroup {
 /**
  * Sub-navigation per section. The flyout on a section's nav item lists these
  * (and the section's live entries, see nav-items.ts); both shells share them.
- * Monitoring is one long page, so its children are in-page anchors.
+ * Monitoring is one long page, so its children are in-page anchors, and every
+ * anchor has a section on the page.
+ *
+ * Servers have ONE place, the Servers entry (`SERVERS_HREF`): neither the
+ * Services nor the Monitoring flyout lists a second "Servers" entry.
  */
 const servicesChildren: NavItem[] = [
   {
@@ -56,19 +62,19 @@ const servicesChildren: NavItem[] = [
     icon: Boxes,
   },
   {
-    id: "services-servers",
+    id: "services-placement",
     href: "/services?tab=servers",
-    labelKey: "nav.servers",
-    labelFallback: "Servers",
+    labelKey: "nav.servicesPlacement",
+    labelFallback: "Placement",
     icon: Boxes,
   },
 ];
 const monitoringChildren: NavItem[] = [
   {
-    id: "monitoring-servers",
-    href: "/monitoring#servers",
-    labelKey: "nav.monitoring.servers",
-    labelFallback: "Servers",
+    id: "monitoring-now",
+    href: "/monitoring#now",
+    labelKey: "nav.monitoring.now",
+    labelFallback: "Right now",
     icon: Activity,
   },
   {
@@ -92,6 +98,15 @@ const monitoringChildren: NavItem[] = [
  * brand in the rail links here.
  */
 export const START_PAGE_HREF = "/dashboard";
+
+/** The one list of the homelab's servers. */
+export const SERVERS_HREF = "/servers";
+
+/** Where a new homelab is created (the creation wizard). */
+export const CREATE_HOMELAB_HREF = "/stacks/new";
+
+/** Product settings; the Homelab tool tab lives under it. */
+export const SETTINGS_HREF = "/settings";
 
 /** The route is the start page: the brand mark cycles and unfolds the rail. */
 export function isStartPage(pathname: string): boolean {
@@ -123,14 +138,14 @@ export const mainNavItems: NavItem[] = [
     id: "actors",
     href: "/actors",
     labelKey: "nav.actors",
-    labelFallback: "Actors",
+    labelFallback: "People & agents",
     icon: Users,
   },
   {
-    id: "nodes",
-    href: "/nodes",
-    labelKey: "nav.nodes",
-    labelFallback: "Nodes",
+    id: "servers",
+    href: SERVERS_HREF,
+    labelKey: "nav.servers",
+    labelFallback: "Servers",
     icon: Server,
   },
   {
@@ -162,12 +177,39 @@ export const mainNavItems: NavItem[] = [
 ];
 
 /**
+ * The homelab entries below the main list: creating a homelab and the
+ * settings (they used to live only in the account menu and the dashboard).
+ */
+export const homelabNavItems: NavItem[] = [
+  {
+    id: "create-homelab",
+    href: CREATE_HOMELAB_HREF,
+    labelKey: "nav.createHomelab",
+    labelFallback: "Create homelab",
+    icon: Plus,
+  },
+  {
+    id: "settings",
+    href: SETTINGS_HREF,
+    labelKey: "nav.settings",
+    labelFallback: "Settings",
+    icon: Settings,
+  },
+];
+
+/**
  * Grouped navigation for sidebar layout
  */
 export const sidebarNavGroups: NavGroup[] = [
   {
     id: "main",
     items: mainNavItems,
+  },
+  {
+    id: "homelab",
+    titleKey: "nav.group.homelab",
+    titleFallback: "Homelab",
+    items: homelabNavItems,
   },
 ];
 
@@ -194,14 +236,14 @@ export const embeddedNavItems: NavItem[] = [
     id: "embedded-actors",
     href: "/actors",
     labelKey: "nav.actors",
-    labelFallback: "Actors",
+    labelFallback: "People & agents",
     icon: Users,
   },
   {
-    id: "embedded-nodes",
-    href: "/nodes",
-    labelKey: "nav.nodes",
-    labelFallback: "Nodes",
+    id: "embedded-servers",
+    href: SERVERS_HREF,
+    labelKey: "nav.servers",
+    labelFallback: "Servers",
     icon: Server,
   },
   {
@@ -228,19 +270,38 @@ export const embeddedNavItems: NavItem[] = [
     labelFallback: "Wallet",
     icon: Wallet,
   },
+  // Cloud owns account navigation around the embed, but the tool's own
+  // settings (the Homelab tab) and creation are reachable only from here.
+  {
+    id: "embedded-create-homelab",
+    href: CREATE_HOMELAB_HREF,
+    labelKey: "nav.createHomelab",
+    labelFallback: "Create homelab",
+    icon: Plus,
+  },
+  {
+    id: "embedded-settings",
+    href: SETTINGS_HREF,
+    labelKey: "nav.settings",
+    labelFallback: "Settings",
+    icon: Settings,
+  },
 ];
 
 /**
- * Get flat list of all nav items (for inline tab navigation in SaaS mode)
- * Excludes feature-flagged items that are disabled
+ * The entries a shell shows. An item that names a `feature` is hidden while
+ * that flag is off; `alwaysShow` keeps it listed regardless. Both shells
+ * filter through this one function, so a gated entry can never appear in one
+ * rail and not in the other.
  */
-export function getFlatNavItems(
-  featureFlags: Record<string, boolean> = {},
+export function visibleNavItems(
+  items: readonly NavItem[],
+  isFeatureEnabled: (feature: string) => boolean = () => true,
 ): NavItem[] {
-  return mainNavItems.filter((item) => {
+  return items.filter((item) => {
     if (!item.feature) return true;
     if (item.alwaysShow) return true;
-    return featureFlags[item.feature] === true;
+    return isFeatureEnabled(item.feature);
   });
 }
 
@@ -259,7 +320,7 @@ export function isNavItemActive(item: NavItem, currentPath: string): boolean {
  * Get the parent nav item for a given path
  */
 export function getParentNavItem(currentPath: string): NavItem | null {
-  for (const item of mainNavItems) {
+  for (const item of [...mainNavItems, ...homelabNavItems]) {
     if (isNavItemActive(item, currentPath)) {
       return item;
     }

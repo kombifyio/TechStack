@@ -15,6 +15,9 @@ import (
 const (
 	RepairOperator = "operator"
 	RepairAuto     = "auto"
+	// RepairLocal is a repair a Guard ran on its own under a registered local
+	// policy version and reported afterwards as operation evidence.
+	RepairLocal = "local"
 )
 
 // Repair statuses. queued and dispatched are live; every other one is final.
@@ -53,6 +56,9 @@ type Repair struct {
 	ExpiresAt    time.Time    `json:"expires_at"`
 	DispatchedAt *time.Time   `json:"dispatched_at,omitempty"`
 	FinishedAt   *time.Time   `json:"finished_at,omitempty"`
+	// Local, set only for mode local: the Guard-generated operation and the
+	// registered policy version and credential generation it ran under.
+	Local *LocalBinding `json:"local,omitempty"`
 }
 
 // Live reports whether the repair still holds its server.
@@ -146,6 +152,14 @@ func (p Policy) AdmitRepair(posture *Posture, history []Repair, controls []strin
 			return &RepairDenial{Code: DenyInProgress, Message: "Another repair of this server is still running."}
 		}
 	}
+	return p.checkBudget(history, controls, now)
+}
+
+// checkBudget applies the persisted bounds every admitted repair shares, online
+// or under a local policy: the server's circuit breaker, then a cooldown and a
+// daily attempt budget per control. history is read from the store, so a
+// reconnect or a restart of either side cannot reset them.
+func (p Policy) checkBudget(history []Repair, controls []string, now time.Time) error {
 	if until, open := p.breakerOpenUntil(history, now); open {
 		return &RepairDenial{Code: DenyCircuitOpen, RetryAfter: &until,
 			Message:  fmt.Sprintf("The last %d repairs of this server failed, so automatic repair is paused.", p.Repair.BreakerFailures),
@@ -218,8 +232,13 @@ var AutoRepairSafeControls = []string{ControlBruteForce, ControlFirewall, Contro
 // without asking each time. It is off by default, expires and never renews
 // itself.
 type AutoRepairPolicy struct {
-	TenantID   string     `json:"-"`
-	WorkerID   string     `json:"-"`
+	TenantID string `json:"-"`
+	WorkerID string `json:"-"`
+	// PolicyID and Version register the approval as a local-policy authority:
+	// every change, including a withdrawal, is a new version, and a Guard's
+	// local-policy evidence is accepted only against the version it names.
+	PolicyID   string     `json:"policy_id,omitempty"`
+	Version    int64      `json:"version"`
 	Enabled    bool       `json:"enabled"`
 	Controls   []string   `json:"controls"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`

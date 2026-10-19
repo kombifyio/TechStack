@@ -1675,11 +1675,19 @@ async function validateManagedRuntimePostSetupUi(args: {
     args.page.getByTestId("monthly-runtime-enrollment"),
   ).toContainText(/enrolled/i, { timeout: 60_000 });
   await expect(args.page.getByTestId("monthly-runtime-state")).toBeVisible();
+  // The power controls follow the server's state: Start is offered while it
+  // is stopped, Stop while it is running (both while the state is unknown), so
+  // at least one of them is always available; the SSH switch and the
+  // connection details stay available.
+  const startEnabled = await args.page
+    .getByTestId("monthly-runtime-action-start")
+    .isEnabled();
+  const stopEnabled = await args.page
+    .getByTestId("monthly-runtime-action-stop")
+    .isEnabled();
+  expect(startEnabled || stopEnabled).toBe(true);
   await expect(
-    args.page.getByTestId("monthly-runtime-action-start"),
-  ).toBeEnabled();
-  await expect(
-    args.page.getByTestId("monthly-runtime-action-stop"),
+    args.page.getByTestId("monthly-runtime-ssh-switch"),
   ).toBeEnabled();
   await expect(
     args.page.getByTestId("monthly-runtime-action-ssh"),
