@@ -170,7 +170,8 @@ func (h deviceReadinessHandlers) prepare(e *httpx.Event) error {
 		}
 	}
 
-	params := devicereadiness.Parameters{Interface: body.Interface, OperatorTime: time.Now().UTC()}
+	params := devicereadiness.AcceleratorParameters(facts)
+	params.Interface, params.OperatorTime = body.Interface, time.Now().UTC()
 	receipts := make([]devicereadiness.Receipt, 0, len(body.Resolutions))
 	for _, id := range body.Resolutions {
 		receipt, applyErr := session.Apply(ctx, id, params)

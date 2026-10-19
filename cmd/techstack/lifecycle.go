@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/kombifyio/techstack/pkg/servermaintenance"
 	"sync"
+	"time"
 
 	"github.com/kombifyio/techstack/internal/backupjobs"
 	"github.com/kombifyio/techstack/pkg/config"
@@ -13,6 +14,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/logger"
 	"github.com/kombifyio/techstack/pkg/monitoring"
 	"github.com/kombifyio/techstack/pkg/orchestrator"
+	"github.com/kombifyio/techstack/pkg/releasechannel"
 	"github.com/kombifyio/techstack/pkg/ril/signals"
 	"github.com/kombifyio/techstack/pkg/ril/workflow"
 	"github.com/kombifyio/techstack/pkg/serverregistry"
@@ -25,19 +27,18 @@ type providerControlLifecycle struct {
 }
 
 type backgroundRuntimeLifecycle struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
-	disabled bool
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 }
 
 func newBackgroundRuntimeLifecycle(parent context.Context) *backgroundRuntimeLifecycle {
 	ctx, cancel := context.WithCancel(parent)
-	return &backgroundRuntimeLifecycle{ctx: ctx, cancel: cancel, disabled: !config.BackgroundExecutionEnabled()}
+	return &backgroundRuntimeLifecycle{ctx: ctx, cancel: cancel}
 }
 
 func (lifecycle *backgroundRuntimeLifecycle) run(run func(context.Context)) {
-	if lifecycle == nil || lifecycle.disabled || run == nil {
+	if lifecycle == nil || run == nil {
 		return
 	}
 	lifecycle.wg.Add(1)
@@ -88,6 +89,11 @@ func (lifecycle *providerControlLifecycle) stopAndWait() {
 // server, job orchestrator, drift scheduler, monitoring) and returns
 // the handles needed to stop them. It is the direct-call replacement for the
 // previously OnServe-bound lifecycle binders.
+//
+// Both release channels start the homelab work; each of those loops skips the
+// tenants the other channel owns (pkg/releasechannel). Shared work that is
+// nobody's homelab (agent connections, RIL workflows and signals, Guard reach,
+// registry sweeps, the platform projection) runs only on stable.
 func startRuntimeLifecycle(
 	ctx context.Context,
 	cfg *config.Config,
@@ -110,12 +116,12 @@ func startRuntimeLifecycle(
 ) *shutdownHandles {
 	background := newBackgroundRuntimeLifecycle(ctx)
 	handles := &shutdownHandles{background: background}
-	if background.disabled {
+	shared := config.RunsSharedWork()
+	if !shared {
 		for _, execution := range previewExecution {
-			execution.BackgroundSuppressed()
+			execution.BackgroundPartitioned()
 		}
-		log.Info("preview_background_execution_disabled", "scope", "shared-test-identities")
-		return handles
+		log.Info("preview_background_execution_partitioned", "scope", "owned-tenants")
 	}
 
 	if grpcState.server != nil {
@@ -157,6 +163,22 @@ func startRuntimeLifecycle(
 	if requeued, requeueErr := orch.RequeuePendingJobs(ctx); requeueErr != nil {
 		log.Warn("pending_jobs_requeue_failed", "error", requeueErr, "requeued", requeued)
 	}
+	if !releasechannel.Settled() {
+		// Tenants whose channel was still open at boot get their pass once it
+		// settles (pkg/releasechannel); a job admitted twice is fenced.
+		background.run(func(ctx context.Context) {
+			for !releasechannel.Settled() {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(5 * time.Second):
+				}
+			}
+			if requeued, requeueErr := orch.RequeuePendingJobs(ctx); requeueErr != nil {
+				log.Warn("pending_jobs_requeue_failed", "error", requeueErr, "requeued", requeued)
+			}
+		})
+	}
 
 	if jobReclaimer != nil {
 		// The first pass is the startup reconciliation: a job row still
@@ -179,27 +201,27 @@ func startRuntimeLifecycle(
 
 	startMonitoringRuntime(background, monitorState, log)
 
-	if workflowEngine != nil {
+	if workflowEngine != nil && shared {
 		background.run(workflow.NewWorker(workflowEngine, workflow.DefaultWorkerConfig()).Run)
 		fmt.Println("   Workflows:      RIL engine + worker started (Postgres-backed)")
 	}
 
-	if rilSignalWorker != nil {
+	if rilSignalWorker != nil && shared {
 		background.run(rilSignalWorker.Run)
 		fmt.Println("   RIL signals:    durable Gateway publisher started")
 	}
 
-	if guardReach != nil {
+	if guardReach != nil && shared {
 		background.run(guardReach.Run)
 		fmt.Println("   Guard reach:    kombify.me relay binding + Connect resource reconciler started")
 	}
 
-	if registrySweeper != nil {
+	if registrySweeper != nil && shared {
 		background.run(registrySweeper.Run)
 		fmt.Println("   Registry sweep: observation demotion + outbox retention started")
 	}
 
-	if platformProjector != nil {
+	if platformProjector != nil && shared {
 		background.run(platformProjector.Run)
 		fmt.Println("   Platform list: server inventory projected into kombify-db")
 	}

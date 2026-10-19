@@ -8,6 +8,7 @@ import (
 
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/jobs"
+	"github.com/kombifyio/techstack/pkg/releasechannel"
 )
 
 func newPendingRequeueFixture(t *testing.T) (*Orchestrator, *controlplane.MemoryStore) {
@@ -218,5 +219,80 @@ func TestRequeuePendingJobsExecutesRegisteredRemoteEnrollment(t *testing.T) {
 	}
 	if atomic.LoadInt32(&executor.calls) != 1 {
 		t.Fatalf("executor calls = %d, want 1", executor.calls)
+	}
+}
+
+// Both deployments share one database, so a boot pass that resumed every
+// tenant would run each pending job twice. Each deployment resumes only the
+// tenants of its release channel and leaves the others' rows pending.
+func TestRequeuePendingJobsFollowsTheTenantReleaseChannel(t *testing.T) {
+	for _, tc := range []struct {
+		name, channel, tenantID string
+		want                    int
+	}{
+		{"preview resumes a preview owner", "preview", "usr:auth0|preview", 1},
+		{"preview leaves a stable owner", "preview", "usr:auth0|stable", 0},
+		{"preview leaves a shared tenant", "preview", "org-shared", 0},
+		{"stable leaves a preview owner", "stable", "usr:auth0|preview", 0},
+		{"stable resumes a shared tenant", "stable", "org-shared", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			t.Setenv("TECHSTACK_RELEASE_CHANNEL", tc.channel)
+			directory := releasechannel.NewDirectory(func(context.Context) ([]string, bool, error) {
+				return []string{"auth0|preview"}, true, nil
+			})
+			if err := directory.Refresh(ctx); err != nil {
+				t.Fatal(err)
+			}
+			releasechannel.Install(directory)
+			t.Cleanup(func() { releasechannel.Install(nil) })
+
+			store := controlplane.NewMemoryStore()
+			if _, err := store.CreateStack(ctx, controlplane.CreateStackRequest{
+				ID: "stack-channel", TenantID: tc.tenantID, OwnerSubjectID: "owner-1",
+				Name: "Channel", Status: "provisioning",
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.CreateJob(ctx, controlplane.UpsertJobRequest{
+				ID: "job-channel", TenantID: tc.tenantID, StackID: "stack-channel",
+				Type: string(jobs.JobTypeProvision), State: "pending", Step: "queued", Message: "queued",
+				Payload: map[string]any{"spec": map[string]any{"kit": "base"}},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			orch := New(&Config{Workers: 1, StackStore: store, JobStore: store, WorkerStore: store}, nil)
+			t.Cleanup(orch.Stop)
+			handled := make(chan string, 1)
+			orch.queue.RegisterHandler(jobs.JobTypeProvision, func(_ context.Context, job *jobs.Job, _ *jobs.Queue) error {
+				handled <- job.ID
+				return nil
+			})
+			orch.Start()
+
+			requeued, err := orch.RequeuePendingJobs(ctx)
+			if err != nil {
+				t.Fatalf("RequeuePendingJobs: %v", err)
+			}
+			if requeued != tc.want {
+				t.Fatalf("requeued = %d, want %d", requeued, tc.want)
+			}
+			if tc.want == 0 {
+				row, err := store.GetJob(ctx, tc.tenantID, "job-channel")
+				if err != nil {
+					t.Fatalf("GetJob: %v", err)
+				}
+				if row.State != "pending" {
+					t.Fatalf("a skipped tenant's job state = %q, want pending for the owning deployment", row.State)
+				}
+				return
+			}
+			select {
+			case <-handled:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the owned tenant's pending job was never executed")
+			}
+		})
 	}
 }

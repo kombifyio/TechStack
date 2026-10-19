@@ -732,6 +732,9 @@ func (h wizardRunHandlers) prepareWizardRun(e *httpx.Event, run *wizardRunState)
 	}
 	run.request.Intent = effectiveIntent
 	run.blockedCapabilities = blocked
+	if !admitWizardGuestAccelerator(e, &run.request) {
+		return true
+	}
 	return false
 }
 

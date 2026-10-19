@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/kombifyio/techstack/pkg/jobs"
+	"github.com/kombifyio/techstack/pkg/releasechannel"
 )
 
 type fakeStore struct {
@@ -161,5 +162,55 @@ func TestScannerSurfacesAnEnqueueFailure(t *testing.T) {
 	}
 	if err := scanner.handle(context.Background(), Due{TenantID: "t", StackID: "s", OwnerID: "o"}, time.Now()); err == nil {
 		t.Fatal("an enqueue failure must surface rather than be swallowed")
+	}
+}
+
+// A due schedule of a tenant the other release channel runs is neither
+// enqueued nor advanced here: its slot stays due for the owning deployment.
+func TestScannerFollowsTheTenantReleaseChannel(t *testing.T) {
+	for _, tc := range []struct {
+		name, channel, tenantID string
+		owned                   bool
+	}{
+		{"preview runs a preview owner", "preview", "usr:auth0|preview", true},
+		{"preview leaves a stable owner", "preview", "usr:auth0|stable", false},
+		{"preview leaves a shared tenant", "preview", "org-shared", false},
+		{"stable leaves a preview owner", "stable", "usr:auth0|preview", false},
+		{"stable runs a shared tenant", "stable", "org-shared", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			t.Setenv("TECHSTACK_RELEASE_CHANNEL", tc.channel)
+			directory := releasechannel.NewDirectory(func(context.Context) ([]string, bool, error) {
+				return []string{"auth0|preview"}, true, nil
+			})
+			if err := directory.Refresh(ctx); err != nil {
+				t.Fatal(err)
+			}
+			releasechannel.Install(directory)
+			t.Cleanup(func() { releasechannel.Install(nil) })
+
+			store := &fakeStore{due: []Due{{TenantID: tc.tenantID, StackID: "stack-a", OwnerID: "owner-a"}}}
+			enqueuer := &fakeEnqueuer{}
+			scanner, err := NewScanner(ScannerConfig{
+				Store:    store,
+				Enqueuer: enqueuer,
+				Admission: func(context.Context, jobs.BackupAdmissionRequest) (jobs.BackupAdmissionDecision, error) {
+					return jobs.BackupAdmissionDecision{QuotaBytes: 50 << 30}, nil
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := scanner.ScanOnce(ctx); err != nil {
+				t.Fatalf("ScanOnce: %v", err)
+			}
+			if ran := len(store.marked) == 1 && len(enqueuer.payloads) == 1; ran != tc.owned {
+				t.Fatalf("owned = %v, but marked %v and enqueued %+v", tc.owned, store.marked, enqueuer.payloads)
+			}
+			if !tc.owned && (len(store.marked) != 0 || len(enqueuer.payloads) != 0) {
+				t.Fatalf("a skipped schedule must stay untouched: marked %v, enqueued %+v", store.marked, enqueuer.payloads)
+			}
+		})
 	}
 }

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/kombifyio/techstack/pkg/releasechannel"
 )
 
 // Retirement is the durable decommission state of one managed backup store.
@@ -206,6 +208,10 @@ func (r *Retirer) SweepDue(ctx context.Context) (int, error) {
 		}
 		for _, item := range due {
 			afterTenant, last = item.TenantID, item.StackID
+			// The other release channel runs this tenant's work (pkg/releasechannel).
+			if !releasechannel.OwnsTenant(item.TenantID) {
+				continue
+			}
 			if err := r.wipe(ctx, item.TenantID, item.StackID, item.TokenID); err != nil {
 				failures = append(failures, fmt.Errorf("stack %s: %w", item.StackID, err))
 				continue

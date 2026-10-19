@@ -1,6 +1,10 @@
 package devicereadiness
 
-import "time"
+import (
+	"time"
+
+	"github.com/kombifyio/techstack/internal/substrate"
+)
 
 // Check is one question asked of the device, answered from measured facts.
 type Check struct {
@@ -42,7 +46,10 @@ type Report struct {
 	// Resolutions are the catalog entries that answer what this report found,
 	// in the order they should be offered.
 	Resolutions []Resolution `json:"resolutions,omitempty"`
-	Facts       Facts        `json:"facts"`
+	// Accelerator is the GPU a guest on this node can receive, ready for the
+	// guest placement. It is absent when the node has no isolated GPU.
+	Accelerator *substrate.PCIPassthrough `json:"accelerator,omitempty"`
+	Facts       Facts                     `json:"facts"`
 }
 
 // Blocking returns the checks that stop enrollment.

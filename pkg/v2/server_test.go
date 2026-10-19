@@ -461,7 +461,10 @@ func TestEndToEndLocalAuthFlowThroughServerRoutes(t *testing.T) {
 		t.Fatalf("methods providers missing expected entries: %+v", methods.Providers)
 	}
 
+	// Break-glass reveal and claim answer only a direct loopback connection
+	// (go-common authlocal 0.8.2); httptest's default RemoteAddr is 192.0.2.1.
 	revealReq := httptest.NewRequest(http.MethodGet, "/api/v1/auth/breakglass/reveal", nil)
+	revealReq.RemoteAddr = "127.0.0.1:41000"
 	revealRec := httptest.NewRecorder()
 	handler.ServeHTTP(revealRec, revealReq)
 	if got, want := revealRec.Code, http.StatusOK; got != want {
@@ -485,6 +488,7 @@ func TestEndToEndLocalAuthFlowThroughServerRoutes(t *testing.T) {
 	}
 	claimReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/breakglass/claim", strings.NewReader(string(claimBody)))
 	claimReq.Header.Set("Content-Type", "application/json")
+	claimReq.RemoteAddr = "127.0.0.1:41000"
 	claimRec := httptest.NewRecorder()
 	handler.ServeHTTP(claimRec, claimReq)
 	if got, want := claimRec.Code, http.StatusCreated; got != want {
@@ -534,6 +538,7 @@ func TestEndToEndLocalAuthFlowThroughServerRoutes(t *testing.T) {
 	}
 
 	revealAgainReq := httptest.NewRequest(http.MethodGet, "/api/v1/auth/breakglass/reveal", nil)
+	revealAgainReq.RemoteAddr = "127.0.0.1:41000"
 	revealAgainRec := httptest.NewRecorder()
 	handler.ServeHTTP(revealAgainRec, revealAgainReq)
 	if got, want := revealAgainRec.Code, http.StatusGone; got != want {

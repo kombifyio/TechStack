@@ -19,6 +19,12 @@ type Placement struct {
 	MemoryMiB int    `json:"memory_mib"`
 	DiskGiB   int    `json:"disk_gib"`
 	Isolated  bool   `json:"isolated,omitempty"`
+	// Accelerator is the GPU the guest receives. RequiresAccelerator is set
+	// when the selected use case cannot run without one, so a placement that
+	// lost its device is refused instead of producing a guest that cannot run
+	// the workload.
+	Accelerator         *substrate.PCIPassthrough `json:"accelerator,omitempty"`
+	RequiresAccelerator bool                      `json:"requires_accelerator,omitempty"`
 }
 
 // ValidatePlacement checks guest resources against the profile and available
@@ -56,6 +62,9 @@ func ValidatePlacement(p Placement, inventory substrate.Inventory) error {
 	}
 	if !storageOK || !bridgeOK {
 		return fmt.Errorf("active LAN bridge and suitable image/import storage required")
+	}
+	if p.RequiresAccelerator && p.Accelerator == nil {
+		return errors.New("the selected use case needs a GPU and the placement names none")
 	}
 	return nil
 }

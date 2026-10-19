@@ -10,6 +10,7 @@ import (
 
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/jobs"
+	"github.com/kombifyio/techstack/pkg/releasechannel"
 )
 
 const (
@@ -129,6 +130,10 @@ func (s *DriftScheduler) ScheduleOnce(ctx context.Context) ([]string, error) {
 		}
 		for _, tenantID := range tenants {
 			after = tenantID
+			// The other release channel runs this tenant's work (pkg/releasechannel).
+			if !releasechannel.OwnsTenant(tenantID) {
+				continue
+			}
 			visited++
 			if err := ctx.Err(); err != nil {
 				return started, err

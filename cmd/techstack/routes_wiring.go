@@ -1061,10 +1061,9 @@ func registerV2Routes(router *httpx.Router, deps routeDeps) {
 }
 
 func mergeLocalAuthHandlers(deps routeDeps) {
-	if !config.BackgroundExecutionEnabled() {
-		if config.ReleaseChannel() == "preview" {
-			deps.v2.server.MergeAuthHandlers(v2.AuthHandlers{Methods: nightlyAuthMethodsHandler(deps.v2.registry)})
-		}
+	if !config.RunsSharedWork() {
+		// Local auth's bootstrap writes break-glass state, which is shared.
+		deps.v2.server.MergeAuthHandlers(v2.AuthHandlers{Methods: nightlyAuthMethodsHandler(deps.v2.registry)})
 		return
 	}
 	localSvc, err := newLocalAuthService(deps)

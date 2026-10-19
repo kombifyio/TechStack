@@ -17,6 +17,7 @@ import (
 	_ "time/tzdata" // the Europe/Berlin fallback must not depend on the host
 
 	"github.com/kombifyio/techstack/internal/notifications"
+	"github.com/kombifyio/techstack/pkg/releasechannel"
 )
 
 const (
@@ -124,6 +125,10 @@ func (j *Job) RunOnce(ctx context.Context) (int, error) {
 	var firstErr error
 	for _, owner := range snapshot {
 		if owner.OwnerSubject == "" || owner.Facts.empty() {
+			continue
+		}
+		// The other release channel writes this owner's digest (pkg/releasechannel).
+		if !releasechannel.OwnsSubject(owner.OwnerSubject) {
 			continue
 		}
 		contribution := Contribution(owner.OwnerSubject, day, owner.Facts)

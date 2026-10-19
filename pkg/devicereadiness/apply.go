@@ -30,6 +30,12 @@ type Parameters struct {
 	// OperatorTime is this machine's clock, used to correct a device that has
 	// no time source of its own.
 	OperatorTime time.Time
+
+	// The passthrough parameters come from the node's own report through
+	// AcceleratorParameters, so they name only devices the probe saw.
+	ThunderboltUniqueID string
+	VFIOIDs             []string
+	PCIFunctions        []string
 }
 
 // Receipt is what happened when a resolution was applied. It is stored beside
@@ -105,6 +111,12 @@ func (s *Session) Apply(ctx context.Context, resolutionID string, params Paramet
 	// Files first, so a service restart in Commands observes the configuration
 	// it is being restarted for.
 	for _, change := range resolution.Files {
+		change, err := renderFileChange(change, params)
+		if err != nil {
+			receipt.FinishedAt = time.Now().UTC()
+			receipt.Failure = err.Error()
+			return receipt, err
+		}
 		outcome, err := s.writeFile(ctx, change, resolution.RequiresRoot)
 		receipt.Files = append(receipt.Files, outcome)
 		if err != nil {
@@ -309,6 +321,13 @@ func reloadCommandFor(resolution Resolution) string {
 func renderCommand(command []string, params Parameters) (string, error) {
 	rendered := make([]string, 0, len(command))
 	for _, argument := range command {
+		if value, matched, err := renderAcceleratorPlaceholder(argument, params); matched {
+			if err != nil {
+				return "", err
+			}
+			rendered = append(rendered, value)
+			continue
+		}
 		switch {
 		case argument == "$IFACE":
 			if params.Interface == "" {
@@ -340,6 +359,18 @@ func renderCommand(command []string, params Parameters) (string, error) {
 		}
 	}
 	return shellQuoteCommand(rendered), nil
+}
+
+// renderFileChange fills the placeholders a file declares, in its content and
+// in the marker that keeps an append idempotent.
+func renderFileChange(change FileChange, params Parameters) (FileChange, error) {
+	var err error
+	for _, field := range []*string{&change.Content, &change.Append, &change.AppendUnlessPresent} {
+		if *field, err = renderContent(*field, params); err != nil {
+			return change, err
+		}
+	}
+	return change, nil
 }
 
 // interfaceNamePattern admits Linux interface names (IFNAMSIZ allows 15

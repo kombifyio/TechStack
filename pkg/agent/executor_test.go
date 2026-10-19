@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -53,6 +54,40 @@ func TestParseComposeCommand(t *testing.T) {
 				t.Errorf("Lines = %d, want %d", cc.Lines, tt.wantLines)
 			}
 		})
+	}
+}
+
+// Regression (security finding 5, 2026-10-19): caller-supplied compose names
+// reached filepath.Join(workDir, project), `-p` and the docker argv unchecked,
+// so a project could leave workDir and a name could inject a docker flag.
+func TestComposeDiagnosticsRejectUnsafeNames(t *testing.T) {
+	executor := &CommandExecutor{workDir: t.TempDir(), log: testLogger()}
+	unsafe := []*agentpb.ExecuteCommand{
+		{Args: []string{`{"project_name":"../../etc"}`}},
+		{Args: []string{`{"project_name":"-H=tcp://evil:2375"}`}},
+		{Args: []string{`{"project_name":"app","service_name":"--privileged"}`}},
+		{Args: []string{"../outside"}},
+		{Args: []string{"app", "-f/etc/passwd"}},
+		{Args: []string{"/abs/path"}},
+		{Environment: map[string]string{"PROJECT_NAME": ".."}},
+		{Args: []string{`{"project_name":"app","lines":-1}`}},
+	}
+	for _, cmd := range unsafe {
+		if cc, err := executor.parseComposeCommand(cmd); err == nil {
+			t.Errorf("parseComposeCommand(%v %v) = %+v, want rejection", cmd.Args, cmd.Environment, cc)
+		}
+	}
+	for _, name := range []string{"..", "../x", "a/b", "-p", ""} {
+		if dir, err := executor.composeProjectDir(name); err == nil {
+			t.Errorf("composeProjectDir(%q) = %q, want rejection", name, dir)
+		}
+	}
+	dir, err := executor.composeProjectDir("my-stack_1")
+	if err != nil {
+		t.Fatalf("composeProjectDir(valid) error: %v", err)
+	}
+	if rel, _ := filepath.Rel(executor.workDir, dir); rel != "my-stack_1" {
+		t.Fatalf("composeProjectDir(valid) = %q, want a child of %q", dir, executor.workDir)
 	}
 }
 

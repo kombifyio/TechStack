@@ -414,10 +414,9 @@ func openDeviceEgress(ctx context.Context, session *devicereadiness.Session, rep
 }
 
 func applyChosen(ctx context.Context, session *devicereadiness.Session, report devicereadiness.Report, chosen []devicereadiness.Resolution, assumeYes, quiet bool) ([]devicereadiness.Receipt, error) {
-	params := devicereadiness.Parameters{
-		Interface:    firstRepairableInterface(report),
-		OperatorTime: time.Now().UTC(),
-	}
+	params := devicereadiness.AcceleratorParameters(report.Facts)
+	params.Interface = firstRepairableInterface(report)
+	params.OperatorTime = time.Now().UTC()
 
 	receipts := make([]devicereadiness.Receipt, 0, len(chosen))
 	for _, resolution := range chosen {

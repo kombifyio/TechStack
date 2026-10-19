@@ -275,6 +275,9 @@ func (s *Server) validateCommandForQueue(cmd *AgentCommand) error {
 	if cmd.Command != cmd.Type {
 		return fmt.Errorf("agent diagnostic command %q must match type %q", cmd.Command, cmd.Type)
 	}
+	if err := normalizeDiagnosticCommand(cmd); err != nil {
+		return err
+	}
 
 	s.agentsMu.RLock()
 	agent, ok := s.agents[cmd.AgentID]

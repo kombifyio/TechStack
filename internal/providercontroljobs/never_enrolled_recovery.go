@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kombifyio/techstack/pkg/jobs"
+	"github.com/kombifyio/techstack/pkg/releasechannel"
 )
 
 const (
@@ -143,6 +144,10 @@ func (r *NeverEnrolledRecovery) RecoverOnce(ctx context.Context) error {
 		for _, candidate := range candidates {
 			afterTenant, afterLease = candidate.TenantID, candidate.LeaseID
 			r.afterTenant, r.afterLease = afterTenant, afterLease
+			// The other release channel runs this tenant's work (pkg/releasechannel).
+			if !releasechannel.OwnsTenant(candidate.TenantID) {
+				continue
+			}
 			if r.onReap != nil {
 				r.onReap(candidate)
 			}

@@ -14,6 +14,7 @@ import (
 	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/db"
 	"github.com/kombifyio/techstack/pkg/httpx"
+	"github.com/kombifyio/techstack/pkg/releasechannel"
 )
 
 var fullHealthRevisionPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -97,6 +98,8 @@ func RegisterHealthRoutesWithDeps(r *httpx.Router, version string, buildRevision
 			"edition":         string(edition),
 			"deployment_mode": string(mode),
 			"release_channel": db.ReleaseChannel(),
+			// Whether this deployment knows who chose Preview (pkg/releasechannel).
+			"release_channel_directory": releasechannel.State(),
 		}
 		if revision := normalizedBuildRevision(buildRevision); revision != "" {
 			payload["revision"] = revision

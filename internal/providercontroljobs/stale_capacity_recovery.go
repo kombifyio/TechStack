@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kombifyio/techstack/pkg/jobs"
+	"github.com/kombifyio/techstack/pkg/releasechannel"
 )
 
 const (
@@ -116,6 +117,10 @@ func (r *StaleCapacityRecovery) RecoverOnce(ctx context.Context) error {
 		for _, candidate := range candidates {
 			afterTenant, afterLease = candidate.tenantID, candidate.leaseID
 			r.afterTenant, r.afterLease = afterTenant, afterLease
+			// The other release channel runs this tenant's work (pkg/releasechannel).
+			if !releasechannel.OwnsTenant(candidate.tenantID) {
+				continue
+			}
 			_, decommissionErr := r.decommissioner.DecommissionManagedLeases(ctx, jobs.ManagedLeaseDecommissionRequest{
 				TenantID: candidate.tenantID, OwnerID: candidate.ownerID,
 				LeaseID: candidate.leaseID, StackID: candidate.stackID,

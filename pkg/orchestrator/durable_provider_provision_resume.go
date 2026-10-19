@@ -10,6 +10,7 @@ import (
 	"github.com/kombifyio/techstack/internal/providercontrol"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/jobs"
+	"github.com/kombifyio/techstack/pkg/releasechannel"
 )
 
 const (
@@ -148,6 +149,10 @@ func (o *Orchestrator) resumeOrphanedCanonicalGuardWaits(ctx context.Context) er
 		}
 		for _, tenantID := range tenantIDs {
 			afterTenant = tenantID
+			// The other release channel runs this tenant's work (pkg/releasechannel).
+			if !releasechannel.OwnsTenant(tenantID) {
+				continue
+			}
 			rows, listErr := o.jobStore.ListPendingJobs(ctx, tenantID, pendingJobPage)
 			if listErr != nil {
 				recoveryErrors = append(recoveryErrors, fmt.Errorf("list pending jobs for %s: %w", tenantID, listErr))
@@ -212,6 +217,10 @@ func (o *Orchestrator) resumeProviderProvisionWaitPage(
 			continue
 		}
 		seen[key] = struct{}{}
+		// The other release channel runs this tenant's work (pkg/releasechannel).
+		if !releasechannel.OwnsTenant(operation.TenantID) {
+			continue
+		}
 		if err := o.RehydrateProviderProvisionWait(ctx, operation); err != nil {
 			recoveryErrors = append(recoveryErrors, fmt.Errorf("rehydrate provider-provision wait %s/%s: %w", operation.TenantID, operation.OperationID, err))
 		}

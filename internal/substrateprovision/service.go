@@ -211,7 +211,7 @@ func (s *Service) Prepare(ctx context.Context, r Request) (Result, error) {
 	if err = tx.Commit(); err != nil {
 		return Result{}, err
 	}
-	guest := substrate.GuestSpec{GuestIdentity: substrate.GuestIdentity{ID: guestID, Name: "kombify-" + hex.EncodeToString(identity[:8]), OperationTag: "kombify-op-" + hex.EncodeToString(identity[:])}, ProfileID: r.Placement.ProfileID, CPU: r.Placement.CPU, MemoryMiB: r.Placement.MemoryMiB, DiskGiB: r.Placement.DiskGiB, Storage: r.Placement.Storage, Bridge: r.Placement.Bridge, Isolated: r.Placement.Isolated, ImageImport: substrate.ImageImport{Image: image, Storage: r.Placement.Storage}, Enrollment: substrate.IsUbuntuProfile(r.Placement.ProfileID)}
+	guest := substrate.GuestSpec{GuestIdentity: substrate.GuestIdentity{ID: guestID, Name: "kombify-" + hex.EncodeToString(identity[:8]), OperationTag: "kombify-op-" + hex.EncodeToString(identity[:])}, ProfileID: r.Placement.ProfileID, CPU: r.Placement.CPU, MemoryMiB: r.Placement.MemoryMiB, DiskGiB: r.Placement.DiskGiB, Storage: r.Placement.Storage, Bridge: r.Placement.Bridge, Isolated: r.Placement.Isolated, ImageImport: substrate.ImageImport{Image: image, Storage: r.Placement.Storage}, Enrollment: substrate.IsUbuntuProfile(r.Placement.ProfileID), Accelerator: r.Placement.Accelerator}
 	desired, err := json.Marshal(substrate.ExecutionSpec{Action: "provision", Guest: guest})
 	if err != nil {
 		return Result{}, err

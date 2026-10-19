@@ -13,6 +13,7 @@ import (
 
 	"github.com/kombifyio/techstack/pkg/drivehealth"
 	"github.com/kombifyio/techstack/pkg/guardtelemetry"
+	"github.com/kombifyio/techstack/pkg/releasechannel"
 	"github.com/google/uuid"
 )
 
@@ -538,6 +539,10 @@ func (s *DriveHealthService) Run(ctx context.Context) {
 	}
 }
 func (s *DriveHealthService) reconcileTenant(ctx context.Context, tenant string) {
+	// The other release channel runs this tenant's work (pkg/releasechannel).
+	if !releasechannel.OwnsTenant(tenant) {
+		return
+	}
 	_, err := s.Read(ctx, tenant, "")
 	s.reportError(err)
 	if s.Notifier != nil {

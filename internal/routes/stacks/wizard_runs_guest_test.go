@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kombifyio/techstack/internal/substrate"
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/jobs"
@@ -146,5 +147,47 @@ func TestWizardHypervisorRejectsUnavailableOrApplianceCore(t *testing.T) {
 		if _, err := store.GetHomelabByOwner(t.Context(), "tenant-1", "auth0|user-1"); err == nil {
 			t.Fatal("rejected provisioning created a homelab")
 		}
+	}
+}
+
+// Core invariant: the GPU requirement comes from the pinned release catalog.
+// A use case that needs a GPU is refused before anything exists when the
+// placement names none, and with one the GPU reaches the guest placement.
+func TestWizardHypervisorGPUUseCaseNeedsAnAccelerator(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "catalog.json")
+	if err := os.WriteFile(path, []byte(`{"schemaVersion":"stackkits-use-case-catalog/v1","catalog":{"useCases":[{"id":"ai","title":"Private AI","settings":[{"id":"model-size","kind":"choice","default":"small","options":[{"id":"small"},{"id":"large","needsAccelerator":true}]}]}]}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TECHSTACK_STACKKIT_USE_CASE_CATALOG", path)
+	store := controlplane.NewMemoryStore()
+	h := newWizardRunTestHandlers(store, &wizardRunFakeValidator{})
+	h.cfg.Projector = specv2.NewReleaseProjector(wizardRunReleaseGoalAuthor{supported: map[string]bool{"ai": true}})
+	intent := wizardRunTestIntent(specv2.RunKindFirstRun)
+	intent.Goals = []string{"ai"}
+	intent.Server.Transport = specv2.TransportHypervisor
+	intent.UseCaseSettings = map[string]map[string]any{"ai": {"model-size": "large"}}
+	request := wizardRunRequest{Intent: intent, Substrate: &WizardSubstrateParams{ServerID: "substrate-owned", ProfileID: "ubuntu-24.04", Storage: "local", Bridge: "vmbr0", CPU: 4, MemoryMiB: 16384, DiskGiB: 128}}
+	var placed []WizardSubstrateParams
+	h.cfg.GuestProvisioner = WizardGuestProvisionerFunc(func(_ *httpx.Event, r WizardGuestProvisionRequest) (*WizardGuestProvisionResult, error) {
+		placed = append(placed, r.Guest)
+		return &WizardGuestProvisionResult{JobID: "gpu-rollout", ServerID: "gpu-guest", OperationID: "gpu-op"}, nil
+	})
+
+	e, rec := wizardRunTestEvent(t, request, "gpu-missing")
+	if err := h.createWizardRun(e); err != nil || rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "wizard_accelerator_required") {
+		t.Fatalf("GPU use case without a GPU: err=%v status=%d body=%s", err, rec.Code, rec.Body.String())
+	}
+	if _, err := store.GetHomelabByOwner(t.Context(), "tenant-1", "auth0|user-1"); err == nil || len(placed) != 0 {
+		t.Fatal("refused GPU placement created a homelab or a guest")
+	}
+
+	gpu := &substrate.PCIPassthrough{Address: "0000:08:00", RootPort: "0000:00:03.1", Subtree: "0000:06:00.0", ThunderboltUniqueID: "be030000-0080-7d08-2326-1917aa211122"}
+	request.Substrate.Accelerator = gpu
+	e, rec = wizardRunTestEvent(t, request, "gpu-present")
+	if err := h.createWizardRun(e); err != nil || rec.Code != http.StatusAccepted {
+		t.Fatalf("GPU use case with a GPU: err=%v status=%d body=%s", err, rec.Code, rec.Body.String())
+	}
+	if len(placed) != 1 || !placed[0].RequiresAccelerator || placed[0].Accelerator == nil || *placed[0].Accelerator != *gpu {
+		t.Fatalf("GPU did not reach the guest placement: %+v", placed)
 	}
 }

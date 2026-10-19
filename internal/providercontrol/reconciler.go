@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/kombifyio/techstack/pkg/releasechannel"
 )
 
 const (
@@ -195,6 +197,11 @@ func (w *Worker) RunOnce(ctx context.Context) {
 			continue
 		}
 		seen[tenantID] = struct{}{}
+		// The other release channel runs this tenant's work (pkg/releasechannel),
+		// including its parked-operation callback.
+		if !releasechannel.OwnsTenant(tenantID) {
+			continue
+		}
 		report, err := w.reconciler.RunTenantOnce(ctx, tenantID)
 		if err != nil {
 			w.report(err)

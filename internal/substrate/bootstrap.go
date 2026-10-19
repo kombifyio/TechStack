@@ -17,26 +17,8 @@ import (
 // storage. These fixed cloud-init instructions execute inside the guest only;
 // no command, package manager or StackKits process runs on the hypervisor.
 func (c *Client) prepareUbuntuCloudInit(ctx context.Context, spec GuestSpec, bootstrap ...[]byte) (string, error) {
-	storage := spec.ImageImport.Storage
-	var cfg struct {
-		Type    string `json:"type"`
-		Path    string `json:"path"`
-		Content string `json:"content"`
-	}
-	if err := c.request(ctx, http.MethodGet, "/storage/"+storage, nil, &cfg); err != nil {
+	if _, err := c.snippetsDirectory(ctx, spec.ImageImport.Storage); err != nil {
 		return "", err
-	}
-	if cfg.Type != "dir" || !filepath.IsAbs(cfg.Path) || !stringsContainsList(cfg.Content, "snippets") {
-		return "", errors.New("substrate: Ubuntu bootstrap requires existing local snippets storage")
-	}
-	directory := filepath.Join(cfg.Path, "snippets")
-	info, err := os.Lstat(directory)
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return "", errors.New("substrate: local snippets directory is unavailable")
-	}
-	resolved, err := filepath.EvalSymlinks(directory)
-	if err != nil || filepath.Clean(resolved) != filepath.Clean(directory) {
-		return "", errors.New("substrate: snippets path may not traverse symlinks")
 	}
 	key, _ := json.Marshal(spec.SSHPublicKey)
 	body := fmt.Sprintf("#cloud-config\nhostname: %s\nssh_pwauth: false\ndisable_root: true\nusers:\n  - name: kombify\n    groups: [adm, sudo]\n    shell: /bin/bash\n    sudo: ['ALL=(ALL) NOPASSWD:ALL']\n    ssh_authorized_keys:\n      - %s\npackage_update: true\npackages: [qemu-guest-agent]\nruncmd:\n  - [systemctl, enable, --now, qemu-guest-agent]\n", spec.Name, key)
@@ -66,9 +48,44 @@ func (c *Client) prepareUbuntuCloudInit(ctx context.Context, spec GuestSpec, boo
 		}
 		body = "#cloud-config\n" + string(encoded)
 	}
-	filename := fmt.Sprintf("kombify-%d-%s.yaml", spec.ID, spec.OperationTag)
+	return c.writeSnippet(ctx, spec.ImageImport.Storage, fmt.Sprintf("kombify-%d-%s.yaml", spec.ID, spec.OperationTag), body, 0600)
+}
+
+// snippetsDirectory resolves the local snippets directory of a dir storage,
+// refusing anything a symlink could redirect.
+func (c *Client) snippetsDirectory(ctx context.Context, storage string) (string, error) {
+	var cfg struct {
+		Type    string `json:"type"`
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	}
+	if err := c.request(ctx, http.MethodGet, "/storage/"+storage, nil, &cfg); err != nil {
+		return "", err
+	}
+	if cfg.Type != "dir" || !filepath.IsAbs(cfg.Path) || !stringsContainsList(cfg.Content, "snippets") {
+		return "", errors.New("substrate: Ubuntu bootstrap requires existing local snippets storage")
+	}
+	directory := filepath.Join(cfg.Path, "snippets")
+	info, err := os.Lstat(directory)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return "", errors.New("substrate: local snippets directory is unavailable")
+	}
+	resolved, err := filepath.EvalSymlinks(directory)
+	if err != nil || filepath.Clean(resolved) != filepath.Clean(directory) {
+		return "", errors.New("substrate: snippets path may not traverse symlinks")
+	}
+	return directory, nil
+}
+
+// writeSnippet creates a snippet exactly once. Repeating a write after a lost
+// response adopts an identical file and refuses a different one.
+func (c *Client) writeSnippet(ctx context.Context, storage, filename, body string, perm os.FileMode) (string, error) {
+	directory, err := c.snippetsDirectory(ctx, storage)
+	if err != nil {
+		return "", err
+	}
 	path := filepath.Join(directory, filename)
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
 	if errors.Is(err, os.ErrExist) {
 		info, statErr := os.Lstat(path)
 		if statErr != nil || !info.Mode().IsRegular() {

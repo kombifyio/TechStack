@@ -85,6 +85,8 @@ type Facts struct {
 	Packages      PackageFacts    `json:"packages"`
 	CloudInit     CloudInitFacts  `json:"cloudInit"`
 	Hypervisor    HypervisorFacts `json:"hypervisor"`
+	// Accelerators are the devices a hypervisor node could hand to a guest.
+	Accelerators AcceleratorFacts `json:"accelerators"`
 
 	// ProbeErrors record what the probe itself could not do. They exist so a
 	// half-failed probe degrades into unknown checks instead of into a report

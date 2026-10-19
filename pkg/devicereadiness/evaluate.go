@@ -53,6 +53,7 @@ func Evaluate(facts Facts) Report {
 		checkCloudInit(facts),
 	}
 	checks = append(checks, reachChecks(facts)...)
+	checks = append(checks, acceleratorChecks(facts)...)
 	sort.SliceStable(checks, func(i, j int) bool { return checks[i].ID < checks[j].ID })
 
 	report := Report{
@@ -60,6 +61,7 @@ func Evaluate(facts Facts) Report {
 		EvaluatedAt:   time.Now().UTC(),
 		Checks:        checks,
 		Facts:         facts,
+		Accelerator:   facts.Accelerators.ProposedAccelerator(),
 	}
 	report.Status = worstStatus(checks)
 	report.Resolutions = ResolutionsForReport(report)

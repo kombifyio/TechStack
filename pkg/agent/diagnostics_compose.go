@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/kombifyio/techstack/pkg/api/agentpb"
@@ -27,6 +28,50 @@ type ComposeCommand struct {
 	ComposeContent string `json:"compose_content,omitempty"`
 	ServiceName    string `json:"service_name,omitempty"`
 	Lines          int    `json:"lines,omitempty"`
+}
+
+// Compose names reach the host as a directory below workDir, as `-p` and as a
+// docker argv entry, so only plain names pass: a leading letter or digit keeps
+// them from being read as a flag, and no separator or dot-dot can leave
+// workDir. The control plane applies the same rules before it queues a command
+// (pkg/grpcserver/diagnostic_args.go).
+var (
+	composeProjectNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
+	composeServiceNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$`)
+)
+
+const maxComposeLogLines = 10000
+
+// validateComposeCommand rejects names that could escape workDir or inject
+// docker flags, and an out-of-range line count.
+func validateComposeCommand(c *ComposeCommand) error {
+	if c.ProjectName != "" && !composeProjectNamePattern.MatchString(c.ProjectName) {
+		return fmt.Errorf("invalid project_name %q", c.ProjectName)
+	}
+	if c.ServiceName != "" && !composeServiceNamePattern.MatchString(c.ServiceName) {
+		return fmt.Errorf("invalid service_name %q", c.ServiceName)
+	}
+	if c.Lines < 0 || c.Lines > maxComposeLogLines {
+		return fmt.Errorf("lines must be between 0 and %d", maxComposeLogLines)
+	}
+	return nil
+}
+
+// composeProjectDir resolves the project directory and confirms that it stays
+// a direct child of workDir.
+func (e *CommandExecutor) composeProjectDir(projectName string) (string, error) {
+	if !composeProjectNamePattern.MatchString(projectName) {
+		return "", fmt.Errorf("invalid project_name %q", projectName)
+	}
+	root, err := filepath.Abs(e.workDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve work dir: %w", err)
+	}
+	projectDir := filepath.Join(root, projectName)
+	if rel, err := filepath.Rel(root, projectDir); err != nil || rel != projectName {
+		return "", fmt.Errorf("project_name %q leaves the work dir", projectName)
+	}
+	return projectDir, nil
 }
 
 // handleGetLogs handles get_logs commands.
@@ -72,6 +117,9 @@ func (e *CommandExecutor) parseComposeCommand(cmd *agentpb.ExecuteCommand) (*Com
 	composeCmd := &ComposeCommand{}
 	if len(cmd.Args) > 0 {
 		if err := json.Unmarshal([]byte(cmd.Args[0]), composeCmd); err == nil {
+			if err := validateComposeCommand(composeCmd); err != nil {
+				return nil, err
+			}
 			return composeCmd, nil
 		}
 		// Not JSON: treat args as positional [project_name, service_name].
@@ -89,13 +137,19 @@ func (e *CommandExecutor) parseComposeCommand(cmd *agentpb.ExecuteCommand) (*Com
 	if v, ok := cmd.Environment["SERVICE_NAME"]; ok && composeCmd.ServiceName == "" {
 		composeCmd.ServiceName = v
 	}
+	if err := validateComposeCommand(composeCmd); err != nil {
+		return nil, err
+	}
 	return composeCmd, nil
 }
 
 // getServiceLogs runs `docker compose logs` for the project, optionally
 // scoped to a single service.
 func (e *CommandExecutor) getServiceLogs(ctx context.Context, projectName, serviceName string, lines int) (string, string, int, error) {
-	projectDir := filepath.Join(e.workDir, projectName)
+	projectDir, err := e.composeProjectDir(projectName)
+	if err != nil {
+		return "", "", 1, err
+	}
 	composeFile := filepath.Join(projectDir, "docker-compose.yml")
 	args := []string{"compose", "-p", projectName}
 	if _, err := os.Stat(composeFile); err == nil {
@@ -103,7 +157,10 @@ func (e *CommandExecutor) getServiceLogs(ctx context.Context, projectName, servi
 	}
 	args = append(args, "logs", "--no-color", "--tail", fmt.Sprintf("%d", lines))
 	if serviceName != "" {
-		args = append(args, serviceName)
+		if !composeServiceNamePattern.MatchString(serviceName) {
+			return "", "", 1, fmt.Errorf("invalid service_name %q", serviceName)
+		}
+		args = append(args, "--", serviceName)
 	}
 	return e.runCommand(ctx, e.dockerComposePath, args, projectDir, nil)
 }
@@ -111,7 +168,10 @@ func (e *CommandExecutor) getServiceLogs(ctx context.Context, projectName, servi
 // checkHealth runs `docker compose ps --format json` and aggregates per-service
 // state into a name → "<state>[ (<health>)]" map.
 func (e *CommandExecutor) checkHealth(ctx context.Context, projectName string) (map[string]string, string, int, error) {
-	projectDir := filepath.Join(e.workDir, projectName)
+	projectDir, err := e.composeProjectDir(projectName)
+	if err != nil {
+		return nil, "", 1, err
+	}
 	composeFile := filepath.Join(projectDir, "docker-compose.yml")
 	args := []string{"compose", "-p", projectName}
 	if _, err := os.Stat(composeFile); err == nil {

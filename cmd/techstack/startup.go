@@ -323,7 +323,7 @@ func runTechstack(ctx context.Context) error {
 	orchCfg.BackupScheduleProjector = backupScheduleProjector(v2Boot, log)
 	backupRetention := composeBackupRetention(v2Boot, log)
 	orchCfg.BackupDecommissioner = backupRetention.decommissioner()
-	orchCfg.AdvancedIssuer = stableBootComponent(func() jobs.AdvancedIssuer { return advancedCapabilityIssuer(ctx, v2Boot, log) })
+	orchCfg.AdvancedIssuer = advancedCapabilityIssuer(ctx, v2Boot, log)
 	orchCfg.OriginCertificates = composeOriginCertificates(v2Boot, log)
 	orch := orchestrator.New(orchCfg, log)
 	typedControl := agentcontrol.NewHub(v2Boot.db.DB)
@@ -339,7 +339,7 @@ func runTechstack(ctx context.Context) error {
 			"environment", startup.cfg.Server.Environment)
 	}
 	grpcState := &grpcBoot{}
-	if config.BackgroundExecutionEnabled() {
+	if config.RunsSharedWork() {
 		grpcState, err = bootAgentGRPC(startup.cfg, v2Boot, log)
 		if err != nil {
 			log.Error("agent_mtls_config_invalid", "error", err)
@@ -365,7 +365,7 @@ func runTechstack(ctx context.Context) error {
 	rilSignalOutbox, rilSignalWorker := bootRILSignalRuntime(v2Boot, startup.cfg.Edition, buildRevision, log)
 	guardReach := bootGuardReach(v2Boot, startup.cfg.Edition, log)
 	guardPosture := stableBootComponent(func() *guardposture.Service { return bootGuardPosture(ctx, v2Boot, orch, notificationOutbox, log) })
-	if config.BackgroundExecutionEnabled() {
+	if config.RunsSharedWork() {
 		routes.StartGuardReleaseRefresher(ctx)
 	}
 	monitorState := stableBootComponent(func() *monitoringBoot {
@@ -378,7 +378,7 @@ func runTechstack(ctx context.Context) error {
 	feed := bootCompanionFeed(v2Boot, orch, notificationOutbox, grpcState.server, guardPosture, log)
 	workflowEngine := bootWorkflowEngine(v2Boot, log)
 	providerState := providerRuntimeState{}
-	if config.BackgroundExecutionEnabled() {
+	{
 		providerState, err = composeHostedProviderRuntime(
 			ctx,
 			v2Boot.db.DB,
@@ -448,13 +448,16 @@ func runTechstack(ctx context.Context) error {
 		log.Error("wallet_custody_invalid", "error", err)
 		return err
 	}
-	if config.BackgroundExecutionEnabled() {
+	if config.RunsSharedWork() {
 		if err := bootstrapCanonicalAuth(ctx, deps); err != nil {
 			return err
 		}
 	}
 	previewExecution.StartupSuppressed()
 
+	// Read who chose Preview before any loop picks tenants, the boot requeue
+	// included.
+	channelDirectory := bootReleaseChannelDirectory(ctx, startup.cfg, log)
 	registrySweeper := bootServerRegistrySweeper(v2Boot, monitorState, log)
 	platformProjector := bootPlatformServerProjector(v2Boot, log)
 	jobReclaimer := bootJobExecutionReclaimer(v2Boot, orch, monitorState, log)
@@ -467,6 +470,9 @@ func runTechstack(ctx context.Context) error {
 	handles := startRuntimeLifecycle(ctx, startup.cfg, orch, grpcState, monitorState, workflowEngine, rilSignalWorker, guardReach, providerState.runner, registrySweeper, platformProjector, jobReclaimer, backupScanner, backupRetention, serverMaintenance, driftScheduler, log, previewExecution)
 	if feed != nil && feed.digest != nil {
 		handles.background.run(feed.digest.Run)
+	}
+	if channelDirectory != nil {
+		handles.background.run(runReleaseChannelDirectory(channelDirectory, log))
 	}
 
 	addr := startup.cfg.Server.ListenAddr
@@ -640,6 +646,7 @@ func bootCanonicalV2(ctx context.Context, cfg *config.Config, log *logger.Logger
 
 	boot.cookieName = v2SessionCookieNameFromEnv()
 	options = append(options, v2.WithSessionCookieName(boot.cookieName))
+	options = append(options, v2.WithReleaseChannel(chosenReleaseChannel))
 	configureV2Auth(ctx, cfg, log, boot, &options)
 	boot.server = v2.NewServer(options...)
 	return boot
@@ -697,7 +704,7 @@ func ensureDefaultControlPlaneTenant(ctx context.Context, cfg *config.Config, bo
 	if cfg != nil && cfg.DeploymentMode.IsSaaS() {
 		tenantKind = saasTenantKind
 	}
-	if !config.BackgroundExecutionEnabled() {
+	if !config.RunsSharedWork() {
 		_, err := controlplane.NewPostgresStore(boot.db.DB).GetTenant(ctx, tenantID)
 		return err
 	}
@@ -1062,6 +1069,7 @@ func buildRouter(deps routeDeps) (*httpx.Router, error) {
 	registerNetworkRoutes(router, deps)
 	registerFeatureRoutes(router, deps, state)
 	registerV2Routes(router, deps)
+	registerReleaseChannelRoutes(router, deps)
 	registerFrontendFallback(router, deps)
 	return router, nil
 }
@@ -1144,9 +1152,6 @@ func v2SessionIdentityMiddleware(boot *v2Boot) func(*httpx.Event) error {
 			return e.Next()
 		}
 		if id := identity.FromContext(e.Request.Context()); id != nil && id.IsAuthenticated() {
-			if err := admitPreviewPrincipal(e, id.UserID); err != nil {
-				return err
-			}
 			membership := enrichIdentityFromMembership(e.Request.Context(), boot.authStore, id, id.OrgID, boot.defaultTenant, "default")
 			// Edge-signed tenants are authoritative per request: never rebind
 			// them to another tenant; an unrecoverable projection failure is
@@ -1172,9 +1177,6 @@ func v2SessionIdentityMiddleware(boot *v2Boot) func(*httpx.Event) error {
 			return e.Next()
 		}
 		id := identityFromV2SessionClaims(claims)
-		if err := admitPreviewPrincipal(e, id.UserID); err != nil {
-			return err
-		}
 		membership := enrichV2SessionIdentityFromMembership(e.Request.Context(), boot.authStore, boot.defaultTenant, boot.saasMode, claims, id)
 		// Session claims are login-time snapshots, not per-request authority:
 		// when their tenant no longer projects, the recovery ladder may rebind
@@ -1227,12 +1229,6 @@ func resolveIdentityTenantProjection(
 ) (*controlplane.Membership, error) {
 	hydrateIdentityTenantFromMembership(id, membership)
 	applyOwnerTenantFallback(id, boot.saasMode)
-	if config.ReleaseChannel() == "preview" {
-		if !membershipMatchesPrincipal(membership, id.OrgID, id.UserID) {
-			return nil, fmt.Errorf("preview requires an existing canonical membership; sign in on stable to repair it")
-		}
-		return membership, nil
-	}
 	projected, err := ensureIdentityTenantProjection(e.Request.Context(), boot.authStore, id, membership)
 	if err == nil {
 		hydrateIdentityTenantFromMembership(id, projected)
@@ -1436,11 +1432,6 @@ func activeMembership(membership *controlplane.Membership) bool {
 	return status == "" || strings.EqualFold(status, "active")
 }
 
-func membershipMatchesPrincipal(membership *controlplane.Membership, tenantID, subject string) bool {
-	return activeMembership(membership) && strings.TrimSpace(membership.TenantID) == strings.TrimSpace(tenantID) &&
-		strings.TrimSpace(membership.UserID) == strings.TrimSpace(subject)
-}
-
 func enrichIdentityFromMembership(ctx context.Context, store controlplane.AuthStore, id *identity.Identity, tenantIDs ...string) *controlplane.Membership {
 	if store == nil || id == nil || !id.IsAuthenticated() || strings.TrimSpace(id.UserID) == "" {
 		return nil
@@ -1579,9 +1570,6 @@ func v2CloudUserUpsert(authStore controlplane.AuthStore, saasMode bool) commonau
 		if subject == "" {
 			return fmt.Errorf("cloud user subject is required")
 		}
-		if !config.PreviewSubjectAdmitted(subject) {
-			return fmt.Errorf("preview_subject_not_admitted")
-		}
 		email := strings.TrimSpace(claims.Email)
 		if email == "" {
 			return fmt.Errorf("cloud user email is required")
@@ -1589,16 +1577,6 @@ func v2CloudUserUpsert(authStore controlplane.AuthStore, saasMode bool) commonau
 		tenantID := strings.TrimSpace(resolvedTenant)
 		if tenantID == "" {
 			return fmt.Errorf("resolved cloud tenant is required")
-		}
-		if config.ReleaseChannel() == "preview" {
-			membership, err := authStore.GetMembership(ctx, tenantID, subject)
-			if err != nil {
-				return err
-			}
-			if !membershipMatchesPrincipal(membership, tenantID, subject) {
-				return fmt.Errorf("preview membership is not prepared")
-			}
-			return nil
 		}
 		const activeStatus = "active"
 		tenantRecord := controlplane.Tenant{ID: tenantID}

@@ -14,6 +14,7 @@ import (
 
 	"github.com/kombifyio/techstack/internal/portinventory"
 	"github.com/kombifyio/techstack/internal/runtimeproduct/runtimeaction"
+	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/core"
 	"github.com/kombifyio/techstack/pkg/runtimeidentity"
 	"github.com/kombifyio/techstack/pkg/workerauth"
@@ -265,6 +266,7 @@ func firstEnrollmentTokenError(err error) error {
 
 func publicTechStackServerURL() string {
 	return strings.TrimRight(firstNonEmpty(
+		config.AgentOriginOverride(),
 		os.Getenv("TECHSTACK_PUBLIC_ORIGIN"),
 		os.Getenv("TECHSTACK_PUBLIC_URL"),
 		os.Getenv("TECHSTACK_SERVER_URL"),
