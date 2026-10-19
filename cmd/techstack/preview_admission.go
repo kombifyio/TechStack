@@ -14,6 +14,13 @@ import (
 	"github.com/kombifyio/techstack/pkg/v2/auth/providers"
 )
 
+// Preview admission (CI-CD-PLATFORM-STANDARD §4.6.2). The Preview deployment
+// is a full release channel: every signed-in person it reaches gets every
+// action, and the operator UI sends people who chose Stable back there. What
+// stays on stable for every tenant are the machine routes (agents, webhooks,
+// internal service calls) and the shared work that is nobody's homelab;
+// homelab work follows its owner's channel (pkg/releasechannel).
+
 func previewAuthPath(p string) bool {
 	switch p {
 	case "/api/v2/auth/login", "/api/v2/auth/logout", config.CanonicalAuthCallbackPath:
@@ -45,6 +52,18 @@ func previewStaticAssetPath(p string) bool {
 		return true
 	}
 	return strings.HasPrefix(p, "/brand/") || strings.HasPrefix(p, "/brand-logos/") || strings.HasPrefix(p, "/preview-catalogs/")
+}
+
+// previewMachinePath names the service, agent and webhook routes. Guards and
+// services talk to stable for every tenant; the work they carry is durable,
+// so a job running on Preview still completes through them.
+func previewMachinePath(p string) bool {
+	for _, prefix := range []string{"/_internal/", "/internal/", "/api/internal/", "/api/v1/internal/", "/api/v1/agent/"} {
+		if p == strings.TrimSuffix(prefix, "/") || strings.HasPrefix(p, prefix) {
+			return true
+		}
+	}
+	return strings.HasPrefix(p, "/webhook")
 }
 
 // nightlyAuthMethodsHandler answers the login page's sign-in methods read on
@@ -84,6 +103,14 @@ func nightlyAuthMethodsHandler(registry *providers.Registry) http.Handler {
 	})
 }
 
+func previewReadOnly(r *http.Request) bool {
+	return r.Method == http.MethodGet || r.Method == http.MethodHead
+}
+
+func previewStream(r *http.Request) bool {
+	return r.Header.Get("Upgrade") != "" || strings.Contains(r.Header.Get("Accept"), "text/event-stream")
+}
+
 func admitPreviewTransport(e *httpx.Event) error {
 	if config.ReleaseChannel() != "preview" {
 		return nil
@@ -92,26 +119,28 @@ func admitPreviewTransport(e *httpx.Event) error {
 	// ServeMux splits escaped segments before unescaping them. Decoded Path
 	// alone could mistake /api/v1%2Fhealth for the admitted /api/v1/health
 	// while dispatching it to a different catch-all handler.
-	if e.Request.URL.RawPath != "" || e.Request.URL.EscapedPath() != p || path.Clean(p) != p || strings.Contains(p, "\\") || e.Request.Header.Get("Upgrade") != "" || strings.Contains(e.Request.Header.Get("Accept"), "text/event-stream") {
+	if e.Request.URL.RawPath != "" || e.Request.URL.EscapedPath() != p || path.Clean(p) != p || strings.Contains(p, "\\") {
 		return httpx.NewAPIError(http.StatusForbidden, "preview_transport_not_admitted", "Preview transport is not admitted.", nil)
 	}
-	if e.Request.Method != http.MethodGet && e.Request.Method != http.MethodHead {
-		return httpx.NewAPIError(http.StatusConflict, "preview_mutation_not_admitted", "Preview mutations require qualified work ownership.", nil)
+	if previewMachinePath(p) {
+		return httpx.NewAPIError(http.StatusForbidden, "preview_route_not_admitted", "Machine routes run on stable.", nil)
 	}
-	if previewPublicPath(p) {
-		// Static shell paths are admitted only through the router's frontend
-		// fallback, never a newly registered dynamic handler at the same path.
-		if !strings.HasPrefix(p, "/api/") && e.Request.Pattern != "" && e.Request.Pattern != "/" {
-			return httpx.NewAPIError(http.StatusForbidden, "preview_route_not_admitted", "Preview dynamic route is not admitted.", nil)
-		}
+	if !previewPublicPath(p) {
+		// Signed-in work is admitted after identity (previewHTTPAdmission).
 		return nil
 	}
-	// Audit each admitted read: GET/HEAD alone does not prove absence of work.
-	switch p {
-	case "/api/v1/stacks", "/api/v2/whoami":
-		return nil
+	if !previewReadOnly(e.Request) {
+		return httpx.NewAPIError(http.StatusConflict, "preview_mutation_not_admitted", "Preview mutations require a signed-in person.", nil)
 	}
-	return httpx.NewAPIError(http.StatusForbidden, "preview_route_not_admitted", "Preview route execution requires qualified ownership.", nil)
+	if previewStream(e.Request) {
+		return httpx.NewAPIError(http.StatusForbidden, "preview_transport_not_admitted", "Preview transport is not admitted.", nil)
+	}
+	// Static shell paths are admitted only through the router's frontend
+	// fallback, never a newly registered dynamic handler at the same path.
+	if !strings.HasPrefix(p, "/api/") && e.Request.Pattern != "" && e.Request.Pattern != "/" {
+		return httpx.NewAPIError(http.StatusForbidden, "preview_route_not_admitted", "Preview dynamic route is not admitted.", nil)
+	}
+	return nil
 }
 
 func previewTransportAdmission(e *httpx.Event) error {
@@ -119,16 +148,6 @@ func previewTransportAdmission(e *httpx.Event) error {
 		return err
 	}
 	return e.Next()
-}
-
-func admitPreviewPrincipal(e *httpx.Event, subject string) error {
-	if config.ReleaseChannel() != "preview" || previewPublicPath(e.Request.URL.Path) {
-		return nil
-	}
-	if !config.PreviewSubjectAdmitted(subject) {
-		return httpx.NewAPIError(http.StatusForbidden, "preview_subject_not_admitted", "Preview requires the admitted shared test identity.", nil)
-	}
-	return nil
 }
 
 func previewHTTPAdmission(e *httpx.Event) error {
@@ -141,19 +160,20 @@ func previewHTTPAdmission(e *httpx.Event) error {
 	if previewPublicPath(e.Request.URL.Path) {
 		return e.Next()
 	}
-	id := identity.FromContext(e.Request.Context())
-	if id == nil || !id.IsAuthenticated() {
-		return httpx.NewUnauthorizedError("Preview requires the admitted shared test identity.", nil)
-	}
-	if err := admitPreviewPrincipal(e, id.UserID); err != nil {
-		return err
+	if id := identity.FromContext(e.Request.Context()); id == nil || !id.IsAuthenticated() {
+		if !previewReadOnly(e.Request) {
+			return httpx.NewAPIError(http.StatusConflict, "preview_mutation_not_admitted", "Preview mutations require a signed-in person.", nil)
+		}
+		return httpx.NewUnauthorizedError("Preview requires a signed-in person.", nil)
 	}
 	return e.Next()
 }
 
-// stableBootComponent gates constructors with effects outside the managed read path.
+// stableBootComponent gates constructors of shared work that is nobody's
+// homelab (agent connections, monitoring, posture): stable runs it for every
+// tenant.
 func stableBootComponent[T any](boot func() T) (result T) {
-	if config.BackgroundExecutionEnabled() {
+	if config.RunsSharedWork() {
 		return boot()
 	}
 	return result

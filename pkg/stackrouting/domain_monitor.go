@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/kombifyio/techstack/pkg/controlplane"
+	"github.com/kombifyio/techstack/pkg/releasechannel"
 )
 
 type DomainEvidenceStore interface {
@@ -341,6 +342,11 @@ func (m *DomainMonitor) SweepOnce(ctx context.Context) error {
 				return sweepErr
 			}
 			m.currentTenant = tenants[0]
+		}
+		// The other release channel runs this tenant's work (pkg/releasechannel).
+		if !releasechannel.OwnsTenant(m.currentTenant) {
+			m.afterTenant, m.currentTenant, m.afterTarget = m.currentTenant, "", ""
+			continue
 		}
 		candidates, err := m.candidates(ctx, m.currentTenant, "")
 		if err != nil {

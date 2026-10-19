@@ -1,41 +1,43 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/kombifyio/techstack/pkg/config"
-	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/httpx"
 	"github.com/kombifyio/techstack/pkg/identity"
 	"github.com/kombifyio/techstack/pkg/logger"
 	"github.com/kombifyio/techstack/pkg/v2/auth/providers"
 )
 
-func TestPreviewHTTPCannotSubmitStableWorkOrAdmitAnotherSubject(t *testing.T) {
+// Preview is a full release channel: a signed-in person gets every action,
+// while machine routes and anonymous work stay refused (CI-CD §4.6.2).
+func TestPreviewServesSignedInPeopleAndKeepsMachineRoutesOnStable(t *testing.T) {
 	t.Setenv(config.EnvReleaseChannel, "preview")
-	t.Setenv("TEST_RIL_PRO_USER_ID", "auth0|fixture")
 	for _, tc := range []struct {
 		subject, method, path string
+		stream                bool
 		want                  int
 	}{
-		{"auth0|fixture", http.MethodGet, "/api/v1/stacks", http.StatusOK},
-		{"auth0|fixture", http.MethodPost, "/api/v1/stacks", http.StatusConflict},
-		{"auth0|customer", http.MethodGet, "/api/v1/stacks", http.StatusForbidden},
-		{"", http.MethodGet, "/api/v1/stacks", http.StatusUnauthorized},
-		{"auth0|fixture", http.MethodPost, "/internal/v1/datasubject/requests", http.StatusConflict},
-		{"auth0|fixture", http.MethodGet, "/_internal/jobs/reclaim", http.StatusForbidden},
-		{"auth0|fixture", http.MethodGet, "/api/v1/internal/runtime/summary", http.StatusForbidden},
-		{"auth0|fixture", http.MethodGet, "/api/v1/agent/commands", http.StatusForbidden},
-		{"auth0|fixture", http.MethodPost, "/webhook", http.StatusConflict},
-		{"auth0|fixture", http.MethodGet, "/dashboard/reclaim", http.StatusForbidden},
-		{"auth0|customer", http.MethodGet, "/api/v2/auth/login", http.StatusOK},
-		{"auth0|customer", http.MethodGet, "/api/v2/auth/logout", http.StatusOK},
-		{"", http.MethodGet, "/api/v1/auth/methods", http.StatusOK},
-		{"auth0|fixture", http.MethodPost, "/api/v1/auth/login", http.StatusConflict},
+		{"auth0|customer", http.MethodGet, "/api/v1/stacks", false, http.StatusOK},
+		{"auth0|customer", http.MethodPost, "/api/v1/stacks", false, http.StatusOK},
+		{"auth0|customer", http.MethodGet, "/api/v1/stacks", true, http.StatusOK},
+		{"", http.MethodGet, "/api/v1/stacks", false, http.StatusUnauthorized},
+		{"", http.MethodGet, "/api/v1/stacks", true, http.StatusUnauthorized},
+		{"", http.MethodPost, "/api/v1/stacks", false, http.StatusConflict},
+		{"auth0|customer", http.MethodPost, "/internal/v1/datasubject/requests", false, http.StatusForbidden},
+		{"auth0|customer", http.MethodGet, "/_internal/jobs/reclaim", false, http.StatusForbidden},
+		{"auth0|customer", http.MethodGet, "/api/v1/internal/runtime/summary", false, http.StatusForbidden},
+		{"auth0|customer", http.MethodGet, "/api/v1/agent/commands", false, http.StatusForbidden},
+		{"auth0|customer", http.MethodPost, "/webhook", false, http.StatusForbidden},
+		{"auth0|customer", http.MethodGet, "/dashboard/reclaim", false, http.StatusForbidden},
+		{"auth0|customer", http.MethodGet, "/api/v2/auth/login", false, http.StatusOK},
+		{"auth0|customer", http.MethodGet, "/api/v2/auth/logout", false, http.StatusOK},
+		{"", http.MethodGet, "/api/v1/auth/methods", false, http.StatusOK},
+		{"", http.MethodPost, "/api/v1/auth/methods", false, http.StatusConflict},
 	} {
 		router := httpx.NewRouter()
 		execution := config.NewPreviewExecution()
@@ -45,28 +47,16 @@ func TestPreviewHTTPCannotSubmitStableWorkOrAdmitAnotherSubject(t *testing.T) {
 			router.Route(method, tc.path, func(e *httpx.Event) error { reached = true; return e.NoContent(http.StatusOK) })
 		}
 		req := httptest.NewRequest(tc.method, tc.path, nil)
+		if tc.stream {
+			req.Header.Set("Accept", "text/event-stream")
+		}
 		if tc.subject != "" {
 			req = req.WithContext(identity.NewContext(req.Context(), &identity.Identity{UserID: tc.subject}))
 		}
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		if rec.Code != tc.want || reached != (tc.want == http.StatusOK) {
-			t.Fatalf("%s %s: status=%d reached=%v", tc.subject, tc.method, rec.Code, reached)
-		}
-	}
-	for _, headers := range []http.Header{{"Upgrade": {"websocket"}}, {"Accept": {"text/event-stream"}}} {
-		router := httpx.NewRouter()
-		bindGlobalMiddleware(router, routeDeps{startup: &startupContext{cfg: config.DefaultConfig()}, log: logger.Default()})
-		router.GET("/api/v1/stacks", func(e *httpx.Event) error {
-			t.Error("preview entered a stream/upgrade handler")
-			return e.NoContent(200)
-		})
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/stacks", nil)
-		req.Header = headers
-		rec := httptest.NewRecorder()
-		router.ServeHTTP(rec, req)
-		if rec.Code != http.StatusForbidden {
-			t.Fatalf("stream/upgrade status=%d", rec.Code)
+			t.Fatalf("%s %s %s (stream=%v): status=%d reached=%v", tc.subject, tc.method, tc.path, tc.stream, rec.Code, reached)
 		}
 	}
 	for _, rawPath := range []string{"/api/v1%2Fhealth", "/api/v1%2fstacks"} {
@@ -77,7 +67,7 @@ func TestPreviewHTTPCannotSubmitStableWorkOrAdmitAnotherSubject(t *testing.T) {
 			return e.NoContent(200)
 		})
 		req := httptest.NewRequest(http.MethodGet, rawPath, nil)
-		req = req.WithContext(identity.NewContext(req.Context(), &identity.Identity{UserID: "auth0|fixture"}))
+		req = req.WithContext(identity.NewContext(req.Context(), &identity.Identity{UserID: "auth0|customer"}))
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		if rec.Code != http.StatusForbidden {
@@ -103,26 +93,7 @@ func TestPreviewHTTPCannotSubmitStableWorkOrAdmitAnotherSubject(t *testing.T) {
 	booted := false
 	stableBootComponent(func() bool { booted = true; return true })
 	if booted {
-		t.Fatal("preview ran a stable-only startup constructor")
-	}
-	execution := config.NewPreviewExecution()
-	background := startRuntimeLifecycle(context.Background(), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, logger.Default(), execution).background
-	if scope := execution.Snapshot(); scope["queues"] != "unqualified" {
-		t.Fatalf("background alone qualified startup: %v", scope)
-	}
-	background.run(func(context.Context) { t.Error("preview started a background consumer") })
-	background.stopAndWait()
-	for _, status := range []string{"", "ACTIVE", " active ", "revoked"} {
-		membership := &controlplane.Membership{TenantID: " org_fixture ", UserID: " auth0|fixture ", Status: status}
-		id := &identity.Identity{UserID: "auth0|fixture", OrgID: "org_fixture"}
-		projected, err := resolveIdentityTenantProjection(nil, &v2Boot{saasMode: true}, id, membership, true)
-		if status == "revoked" {
-			if err == nil || projected != nil {
-				t.Fatal("preview admitted a revoked membership")
-			}
-		} else if err != nil || projected != membership {
-			t.Fatalf("established active membership %q denied: %v", status, err)
-		}
+		t.Fatal("preview ran a stable-only shared-work constructor")
 	}
 }
 

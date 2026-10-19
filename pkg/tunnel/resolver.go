@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kombifyio/techstack/pkg/config"
 	"github.com/kombifyio/techstack/pkg/logger"
 	"github.com/kombifyio/techstack/pkg/privatechannel"
 )
@@ -342,6 +343,11 @@ func (r *RegistryURLResolver) resolveAuto(ctx context.Context) (string, error) {
 //  3. RENDER_EXTERNAL_URL     - Render-injected fully qualified URL.
 //  4. RENDER_EXTERNAL_HOSTNAME - Render-injected hostname (we add https://).
 func (r *RegistryURLResolver) resolveSaaSExternal() (string, bool) {
+	if override := config.AgentOriginOverride(); override != "" {
+		if normalized, ok := normalizeSaaSExternalURL(override); ok {
+			return normalized, true
+		}
+	}
 	for _, key := range []string{"TECHSTACK_PUBLIC_ORIGIN", "TECHSTACK_PUBLIC_URL", "RENDER_EXTERNAL_URL"} {
 		if raw := strings.TrimSpace(os.Getenv(key)); raw != "" {
 			if normalized, ok := normalizeSaaSExternalURL(raw); ok {

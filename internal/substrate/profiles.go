@@ -247,6 +247,9 @@ type GuestSpec struct {
 	ImageImport  ImageImport `json:"image_import"`
 	Enrollment   bool        `json:"enrollment,omitempty"`
 	SSHPublicKey string      `json:"ssh_public_key,omitempty"`
+	// Accelerator is omitted when empty so the creation digest of every guest
+	// without one stays what it was.
+	Accelerator *PCIPassthrough `json:"accelerator,omitempty"`
 }
 
 // CreationDigest retains image, ownership and resource identity while excluding
@@ -284,6 +287,16 @@ func (c *Client) validateSpec(s GuestSpec) (Profile, error) {
 		}
 	} else if s.SSHPublicKey != "" || s.Enrollment {
 		return p, errors.New("substrate: appliance does not accept cloud-init credentials")
+	}
+	if s.Accelerator != nil {
+		// The guest driver and the CUDA proof are the StackKits half, which
+		// exists for the Ubuntu profiles only.
+		if !IsUbuntuProfile(s.ProfileID) {
+			return p, errors.New("substrate: an accelerator needs an Ubuntu guest")
+		}
+		if err := s.Accelerator.validate(); err != nil {
+			return p, err
+		}
 	}
 	return p, nil
 }
@@ -342,6 +355,20 @@ func (c *Client) SubmitCreate(ctx context.Context, spec GuestSpec, bootstrap ...
 	if !storageOK || !bridgeOK {
 		return Submission{}, errors.New("substrate: active bridge and sufficient VM storage required")
 	}
+	if spec.Accelerator != nil {
+		// The node's own listing at creation time decides, not an inventory
+		// observed earlier: a re-plugged enclosure can change groups.
+		devices, err := c.pciDevices(ctx)
+		if err != nil {
+			return Submission{}, err
+		}
+		if err := CheckAccelerator(devices, spec.Accelerator.Address); err != nil {
+			return Submission{}, err
+		}
+		if err := c.assertAcceleratorFree(ctx, spec.ID, spec.Accelerator.Address); err != nil {
+			return Submission{}, err
+		}
+	}
 	net0 := "virtio,bridge=" + spec.Bridge + ",firewall=1"
 	if spec.Isolated {
 		net0 += ",link_down=1"
@@ -357,6 +384,18 @@ func (c *Client) SubmitCreate(ctx context.Context, spec GuestSpec, bootstrap ...
 		values.Set("ciuser", "kombify")
 		values.Set("sshkeys", url.QueryEscape(spec.SSHPublicKey))
 		values.Set("ipconfig0", "ip=dhcp")
+	}
+	if spec.Accelerator != nil {
+		// A passed-through device pins guest memory for DMA, so the balloon
+		// would only ever fight it; q35, OVMF and unenrolled keys above are
+		// what the GPU and the unsigned guest driver need.
+		hookscript, err := c.writeSnippet(ctx, spec.ImageImport.Storage, fmt.Sprintf("kombify-%d-%s-gpu.sh", spec.ID, spec.OperationTag), AcceleratorHookscript(spec.ID, *spec.Accelerator), 0o700)
+		if err != nil {
+			return Submission{}, err
+		}
+		values.Set("hostpci0", spec.Accelerator.Address+",pcie=1")
+		values.Set("balloon", "0")
+		values.Set("hookscript", hookscript)
 	}
 	submission, err := c.submit(ctx, http.MethodPost, c.nodePath()+"/qemu", values)
 	submission.GuestID = spec.ID

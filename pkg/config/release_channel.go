@@ -19,28 +19,28 @@ func ReleaseChannel() string {
 	return "stable"
 }
 
-// PreviewSubjectAdmitted restricts engineering preview to the existing canonical
-// RIL customer fixture. The subject comes from its registered TEST_*_ID input,
-// never a browser hint, role, arbitrary email or owner session.
-func PreviewSubjectAdmitted(subject string) bool {
-	if ReleaseChannel() != "preview" {
-		return true
-	}
-	fixture := strings.TrimSpace(os.Getenv("TEST_RIL_PRO_USER_ID"))
-	return fixture != "" && strings.TrimSpace(subject) == fixture
-}
+// RunsSharedWork reports whether this deployment runs the work that is
+// nobody's homelab: agent connections, monitoring, posture, outboxes, global
+// boot writes. Stable runs it for every tenant; Preview runs only the homelab
+// work of people who chose Preview (pkg/releasechannel).
+func RunsSharedWork() bool { return ReleaseChannel() != "preview" }
 
-// BackgroundExecutionEnabled keeps preview out of the live database's stable
-// queues, recovery, timers and provider reconcilers until owned-work admission
-// exists. A service credential does not inherit a browser user's fixture scope.
-func BackgroundExecutionEnabled() bool { return ReleaseChannel() != "preview" }
+// AgentOriginOverride is the origin Guards and runtime agents call when it is
+// not this deployment's own: Preview runs no agent routes, so agents of every
+// tenant talk to stable. Empty on stable.
+func AgentOriginOverride() string {
+	if ReleaseChannel() != "preview" {
+		return ""
+	}
+	return strings.TrimRight(strings.TrimSpace(os.Getenv("TECHSTACK_STABLE_ORIGIN")), "/")
+}
 
 // PreviewExecution records installed boundaries on this boot. Environment
 // configuration alone never supplies a qualified health receipt.
 type PreviewExecution struct {
-	mu                                                     sync.RWMutex
-	httpInstalled, startupSuppressed, backgroundSuppressed bool
-	fixture                                                string
+	mu                                                      sync.RWMutex
+	httpInstalled, startupSuppressed, backgroundPartitioned bool
+	fixture                                                 string
 }
 
 func NewPreviewExecution() *PreviewExecution {
@@ -63,11 +63,14 @@ func (s *PreviewExecution) StartupSuppressed() {
 		s.startupSuppressed = true
 	}
 }
-func (s *PreviewExecution) BackgroundSuppressed() {
+
+// BackgroundPartitioned records that homelab work runs only for tenants
+// whose owner chose Preview.
+func (s *PreviewExecution) BackgroundPartitioned() {
 	if s != nil {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		s.backgroundSuppressed = true
+		s.backgroundPartitioned = true
 	}
 }
 func (s *PreviewExecution) Snapshot() map[string]string {
@@ -77,15 +80,15 @@ func (s *PreviewExecution) Snapshot() map[string]string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	scope := map[string]string{"http": "unqualified", "scheduled": "unqualified", "queues": "unqualified", "startup": "unqualified"}
-	if s.httpInstalled && s.fixture != "" {
-		scope["http"] = "shared-test-identities"
+	if s.httpInstalled {
+		scope["http"] = "opted-in-users"
 	}
 	if s.startupSuppressed {
 		scope["startup"] = "verify-only"
 	}
-	if s.startupSuppressed && s.backgroundSuppressed {
-		scope["scheduled"] = "disabled"
-		scope["queues"] = "disabled"
+	if s.startupSuppressed && s.backgroundPartitioned {
+		scope["scheduled"] = "owned-tenants"
+		scope["queues"] = "owned-tenants"
 	}
 	if s.fixture != "" {
 		digest := sha256.Sum256([]byte(s.fixture))

@@ -196,6 +196,43 @@ func TestSendCommandValidation(t *testing.T) {
 	}
 }
 
+// Regression (security finding 5, 2026-10-19): the REST command route forwarded
+// caller args unchanged, so a compose project or service name could leave the
+// agent work dir or inject a docker flag.
+func TestSendCommandRejectsUnsafeDiagnosticArgs(t *testing.T) {
+	srv, err := New(Config{ListenAddr: ":0", ReadTimeout: time.Minute, HeartbeatTimeout: time.Minute}, logger.New("error", "text"))
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	if err := srv.RegisterAgent(&ConnectedAgent{ID: "diag-agent", Hostname: "h", Status: "connected"}); err != nil {
+		t.Fatalf("RegisterAgent() failed: %v", err)
+	}
+	send := func(args []string) (*AgentCommand, error) {
+		cmd := &AgentCommand{ID: "cmd", AgentID: "diag-agent", Type: "get_logs", Command: "get_logs", Args: args}
+		return cmd, srv.SendCommandWithPersistence(cmd, "owner-1")
+	}
+	for _, args := range [][]string{
+		{`{"project_name":"../../etc"}`},
+		{`{"project_name":"-H=tcp://evil:2375"}`},
+		{`{"project_name":"app","service_name":"--privileged"}`},
+		{`{"project_name":"app","compose_content":"x"}`},
+		{"../outside"},
+		{"app", "-f/etc/passwd"},
+		{"app", "web", "extra"},
+	} {
+		if _, err := send(args); err == nil {
+			t.Errorf("SendCommandWithPersistence(args=%q) queued, want rejection", args)
+		}
+	}
+	cmd, err := send([]string{"my-stack", "web.1"})
+	if err != nil {
+		t.Fatalf("valid diagnostic args rejected: %v", err)
+	}
+	if want := `{"project_name":"my-stack","service_name":"web.1"}`; len(cmd.Args) != 1 || cmd.Args[0] != want {
+		t.Fatalf("queued args = %q, want canonical %q", cmd.Args, want)
+	}
+}
+
 // TestSendCommandDisconnectedAgent tests sending to disconnected agent
 func TestSendCommandDisconnectedAgent(t *testing.T) {
 	log := logger.New("error", "text")

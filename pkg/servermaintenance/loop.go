@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/kombifyio/techstack/pkg/controlplane"
+	"github.com/kombifyio/techstack/pkg/releasechannel"
 )
 
 const (
@@ -99,6 +100,10 @@ func (l *Loop) Sweep(ctx context.Context) {
 			return
 		}
 		for _, tenantID := range tenants {
+			// The other release channel runs this tenant's work (pkg/releasechannel).
+			if !releasechannel.OwnsTenant(tenantID) {
+				continue
+			}
 			l.sweepTenant(ctx, tenantID)
 		}
 		if len(tenants) < loopTenantPageSize {

@@ -387,6 +387,95 @@ probe_hypervisor() {
         "$(emit_string "$version")" "$(printf '%s' "$bridges" | emit_string_array)"
 }
 
+# ---------------------------------------------------------------- accelerators
+
+# pci_function prints one PCI function as JSON. The driver is read from the
+# bus, so a function with nothing bound reports an empty driver.
+pci_function() {
+    dev="/sys/bus/pci/devices/$1"
+    driver=""
+    [ -L "$dev/driver" ] && driver=$(basename "$(readlink "$dev/driver")")
+    printf '{"slot":%s,"class":%s,"vendorId":%s,"deviceId":%s,"driver":%s}' \
+        "$(emit_string "$1")" "$(emit_string "$(cat "$dev/class" 2>/dev/null)")" \
+        "$(emit_string "$(sed 's/^0x//' "$dev/vendor" 2>/dev/null)")" \
+        "$(emit_string "$(sed 's/^0x//' "$dev/device" 2>/dev/null)")" "$(emit_string "$driver")"
+}
+
+# A GPU is found by its PCI class (0x03), never by its driver: the device that
+# matters most here is the one with no driver at all. Thunderbolt devices under
+# user security are reported unauthorized, because a GPU behind one is not on
+# the bus until someone approves it.
+probe_accelerators() {
+    if [ ! -d /sys/bus/pci/devices ]; then
+        printf '"accelerators":{"observed":false}'
+        return
+    fi
+    iommu=""
+    groups=0
+    if [ -d /sys/kernel/iommu_groups ]; then
+        groups=$(find /sys/kernel/iommu_groups -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+    fi
+    if [ "$groups" -gt 0 ] 2>/dev/null; then
+        iommu=',"iommuEnabled":true'
+    elif [ -d /sys/class/iommu ] && [ -z "$(ls -A /sys/class/iommu 2>/dev/null)" ]; then
+        iommu=',"iommuEnabled":false'
+    fi
+
+    security=""
+    for domain in /sys/bus/thunderbolt/devices/domain*; do
+        [ -r "$domain/security" ] || continue
+        security=$(cat "$domain/security" 2>/dev/null)
+        break
+    done
+    tb=""
+    tsep=""
+    for path in /sys/bus/thunderbolt/devices/*; do
+        [ -r "$path/unique_id" ] && [ -r "$path/authorized" ] || continue
+        # Host routers are named N-0 and are always authorized; only attached
+        # devices can wait for approval.
+        case "$(basename "$path")" in *-0) continue ;; esac
+        authorized=false
+        [ "$(cat "$path/authorized" 2>/dev/null)" = 0 ] || authorized=true
+        tb="$tb$tsep$(printf '{"id":%s,"uniqueId":%s,"name":%s,"vendor":%s,"authorized":%s}' \
+            "$(emit_string "$(basename "$path")")" "$(emit_string "$(cat "$path/unique_id" 2>/dev/null)")" \
+            "$(emit_string "$(cat "$path/device_name" 2>/dev/null)")" "$(emit_string "$(cat "$path/vendor_name" 2>/dev/null)")" "$authorized")"
+        tsep=","
+    done
+
+    gpus=""
+    gsep=""
+    for path in /sys/bus/pci/devices/*; do
+        [ -e "$path" ] || continue
+        case "$(cat "$path/class" 2>/dev/null)" in 0x03*) ;; *) continue ;; esac
+        slot=$(basename "$path")
+        boot=false
+        [ "$(cat "$path/boot_vga" 2>/dev/null)" = 1 ] && boot=true
+        removable=false
+        [ "$(cat "$path/removable" 2>/dev/null)" = removable ] && removable=true
+        group=""
+        members=""
+        if [ -L "$path/iommu_group" ]; then
+            group=$(basename "$(readlink "$path/iommu_group")")
+            msep=""
+            for member in "/sys/kernel/iommu_groups/$group/devices/"*; do
+                [ -e "$member" ] || continue
+                members="$members$msep$(pci_function "$(basename "$member")")"
+                msep=","
+            done
+        fi
+        # The resolved sysfs path lists every bridge from the root port down,
+        # which is what a late enclosure is rescanned from.
+        upstream=$(readlink -f "$path" 2>/dev/null | tr '/' '\n' | grep -E '^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$' | grep -v "^$slot\$")
+        description=""
+        has lspci && description=$(lspci -s "${slot#0000:}" 2>/dev/null | cut -d' ' -f2- | head -n 1)
+        fn=$(pci_function "$slot")
+        gpus="$gpus$gsep${fn%?},\"description\":$(emit_string "$description"),\"bootVga\":$boot,\"removable\":$removable,\"iommuGroup\":$(emit_string "$group"),\"groupMembers\":[$members],\"upstream\":$(printf '%s\n' "$upstream" | emit_string_array)}"
+        gsep=","
+    done
+    printf '"accelerators":{"observed":true%s,"iommuGroups":%s,"thunderboltSecurity":%s,"thunderbolt":[%s],"gpus":[%s]}' \
+        "$iommu" "$groups" "$(emit_string "$security")" "$tb" "$gpus"
+}
+
 # ------------------------------------------------------------------------ main
 
 printf '{"schemaVersion":"techstack.device-readiness/v1"'
@@ -403,5 +492,6 @@ printf ',%s' "$(probe_clock)"
 printf ',%s' "$(probe_packages)"
 printf ',%s' "$(probe_cloudinit)"
 printf ',%s' "$(probe_hypervisor)"
+printf ',%s' "$(probe_accelerators)"
 printf ',"probeErrors":%s' "$(emit_string_array < "$PROBE_ERROR_FILE")"
 printf '}\n'

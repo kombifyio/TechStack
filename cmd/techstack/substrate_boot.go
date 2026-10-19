@@ -27,7 +27,7 @@ func wizardCustomerGuestProvisioner(deps routeDeps, manager jobs.ManagedLeaseMan
 	}
 	service := substrateprovision.New(deps.v2.db.DB, admission)
 	return stacks.WizardGuestProvisionerFunc(func(e *httpx.Event, r stacks.WizardGuestProvisionRequest) (*stacks.WizardGuestProvisionResult, error) {
-		guest, err := service.Prepare(e.Request.Context(), substrateprovision.Request{TenantID: r.TenantID, OwnerID: r.OwnerID, StackID: r.StackID, NodeID: r.NodeID, IdempotencyKey: r.IdempotencyKey, Placement: substrateprovision.Placement{ServerID: r.Guest.ServerID, ProfileID: r.Guest.ProfileID, Storage: r.Guest.Storage, Bridge: r.Guest.Bridge, CPU: r.Guest.CPU, MemoryMiB: r.Guest.MemoryMiB, DiskGiB: r.Guest.DiskGiB}})
+		guest, err := service.Prepare(e.Request.Context(), substrateprovision.Request{TenantID: r.TenantID, OwnerID: r.OwnerID, StackID: r.StackID, NodeID: r.NodeID, IdempotencyKey: r.IdempotencyKey, Placement: substrateprovision.Placement{ServerID: r.Guest.ServerID, ProfileID: r.Guest.ProfileID, Storage: r.Guest.Storage, Bridge: r.Guest.Bridge, CPU: r.Guest.CPU, MemoryMiB: r.Guest.MemoryMiB, DiskGiB: r.Guest.DiskGiB, Accelerator: r.Guest.Accelerator, RequiresAccelerator: r.Guest.RequiresAccelerator}})
 		if err != nil {
 			return nil, err
 		}

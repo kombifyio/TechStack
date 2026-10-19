@@ -2,15 +2,11 @@ package config
 
 import "testing"
 
-func TestPreviewRestrictsPrincipalsAndBackgroundExecution(t *testing.T) {
+func TestPreviewReportsOnlyInstalledScopeAndKeepsSharedWorkOnStable(t *testing.T) {
 	t.Setenv(EnvReleaseChannel, "preview")
-	t.Setenv("TEST_RIL_PRO_USER_ID", "")
-	if PreviewSubjectAdmitted("auth0|fixture") || BackgroundExecutionEnabled() {
-		t.Fatal("an unconfigured preview admitted execution")
-	}
-	t.Setenv("TEST_RIL_PRO_USER_ID", "auth0|fixture")
-	if !PreviewSubjectAdmitted("auth0|fixture") || PreviewSubjectAdmitted("auth0|customer") || PreviewSubjectAdmitted("") {
-		t.Fatal("preview admission did not retain the exact canonical fixture")
+	t.Setenv("TECHSTACK_STABLE_ORIGIN", "https://techstack.kombify.io/")
+	if RunsSharedWork() || AgentOriginOverride() != "https://techstack.kombify.io" {
+		t.Fatal("preview ran shared work or kept agents on itself")
 	}
 	execution := NewPreviewExecution()
 	if scope := execution.Snapshot(); scope["http"] != "unqualified" || scope["queues"] != "unqualified" {
@@ -18,12 +14,15 @@ func TestPreviewRestrictsPrincipalsAndBackgroundExecution(t *testing.T) {
 	}
 	execution.HTTPInstalled()
 	execution.StartupSuppressed()
-	execution.BackgroundSuppressed()
-	if scope := execution.Snapshot(); scope["http"] != "shared-test-identities" || scope["scheduled"] != "disabled" || scope["queues"] != "disabled" {
+	if scope := execution.Snapshot(); scope["http"] != "opted-in-users" || scope["queues"] != "unqualified" {
+		t.Fatalf("scope before partitioned background = %v", scope)
+	}
+	execution.BackgroundPartitioned()
+	if scope := execution.Snapshot(); scope["startup"] != "verify-only" || scope["scheduled"] != "owned-tenants" || scope["queues"] != "owned-tenants" {
 		t.Fatalf("scope = %v", scope)
 	}
 	t.Setenv(EnvReleaseChannel, "stable")
-	if !PreviewSubjectAdmitted("auth0|customer") || !BackgroundExecutionEnabled() || NewPreviewExecution() != nil {
-		t.Fatal("stable admission changed")
+	if !RunsSharedWork() || AgentOriginOverride() != "" || NewPreviewExecution() != nil {
+		t.Fatal("stable changed")
 	}
 }

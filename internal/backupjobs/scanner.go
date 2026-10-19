@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/kombifyio/techstack/pkg/jobs"
+	"github.com/kombifyio/techstack/pkg/releasechannel"
 )
 
 const (
@@ -128,6 +129,11 @@ func (s *Scanner) ScanOnce(ctx context.Context) error {
 		}
 		for _, item := range due {
 			s.afterTenant, s.afterStack = item.TenantID, item.StackID
+			// The other release channel runs this tenant's work (pkg/releasechannel);
+			// its slot stays due for that deployment.
+			if !releasechannel.OwnsTenant(item.TenantID) {
+				continue
+			}
 			processed++
 			if err := s.handle(ctx, item, now); err != nil {
 				if errors.Is(err, context.Canceled) {

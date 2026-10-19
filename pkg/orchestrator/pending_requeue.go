@@ -10,6 +10,7 @@ import (
 
 	"github.com/kombifyio/techstack/pkg/controlplane"
 	"github.com/kombifyio/techstack/pkg/jobs"
+	"github.com/kombifyio/techstack/pkg/releasechannel"
 )
 
 const (
@@ -145,6 +146,10 @@ func (o *Orchestrator) RequeuePendingJobs(ctx context.Context) (int, error) {
 		}
 		for _, tenantID := range tenantIDs {
 			afterTenant = tenantID
+			// The other release channel runs this tenant's work (pkg/releasechannel).
+			if !releasechannel.OwnsTenant(tenantID) {
+				continue
+			}
 			count, skipCount := o.requeueTenantPendingJobs(ctx, tenantID, now)
 			requeued += count
 			skipped += skipCount

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/kombifyio/techstack/internal/routes/trust"
+	"github.com/kombifyio/techstack/internal/stackkitrelease"
 	"github.com/kombifyio/techstack/internal/substrate"
 	ksapi "github.com/kombifyio/techstack/pkg/api"
 	"github.com/kombifyio/techstack/pkg/controlplane"
@@ -24,6 +25,12 @@ type WizardSubstrateParams struct {
 	MemoryMiB int                    `json:"memory_mib"`
 	DiskGiB   int                    `json:"disk_gib"`
 	Appliance *WizardApplianceParams `json:"appliance,omitempty"`
+	// Accelerator is the GPU on the substrate the guest receives, as the
+	// node's readiness report found it.
+	Accelerator *substrate.PCIPassthrough `json:"accelerator,omitempty"`
+	// RequiresAccelerator is derived from the pinned release catalog for the
+	// selected use cases and is never taken from the client.
+	RequiresAccelerator bool `json:"-"`
 }
 
 type WizardApplianceParams struct {
@@ -104,6 +111,34 @@ func (h wizardRunHandlers) validateWizardGuestRequest(e *httpx.Event, request wi
 	}
 	if h.cfg.GuestProvisioner == nil {
 		_ = httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable, "Customer guest provisioning is unavailable", nil)
+		return false
+	}
+	return true
+}
+
+// admitWizardGuestAccelerator decides from the pinned release catalog whether
+// the selected use cases need a GPU and refuses a guest placement that names
+// none, before any stack, pairing or guest exists. It runs on the effective
+// intent, so inherited settings and capabilities count too.
+func admitWizardGuestAccelerator(e *httpx.Event, request *wizardRunRequest) bool {
+	guest := request.Substrate
+	if guest == nil {
+		return true
+	}
+	catalog, err := stackkitrelease.ResolveUseCaseCatalog()
+	if err != nil {
+		_ = httpx.Error(e, http.StatusServiceUnavailable, ksapi.ErrCodeUnavailable,
+			"The StackKits use-case catalog could not be read", wizardRunDetails(
+				"wizard_use_case_catalog_unavailable", true, "Try again", err.Error()))
+		return false
+	}
+	intent := request.Intent
+	guest.RequiresAccelerator = catalog.RequiresAccelerator(intent.Goals, intent.UseCaseSettings, intent.UseCaseCapabilities)
+	if guest.RequiresAccelerator && guest.Accelerator == nil {
+		_ = httpx.Error(e, http.StatusBadRequest, ksapi.ErrCodeValidation,
+			"The selected use case needs a GPU on the hypervisor", wizardRunDetails(
+				"wizard_accelerator_required", false, "Select a GPU",
+				"Pass the hypervisor's GPU to the guest, or choose settings that run without one."))
 		return false
 	}
 	return true

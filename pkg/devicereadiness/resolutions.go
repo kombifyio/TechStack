@@ -94,6 +94,11 @@ const (
 	ResolutionProxyHonour       = "egress-existing-proxy"
 	ResolutionPackageSources    = "package-sources-missing"
 	ResolutionRegisterSubstrate = "register-as-substrate"
+
+	ResolutionThunderboltAuthorize = "thunderbolt-authorize-enclosure"
+	ResolutionIOMMUEnable          = "iommu-enable"
+	ResolutionIOMMUGroup           = "iommu-group-isolation"
+	ResolutionVFIOBind             = "gpu-vfio-reserve"
 )
 
 // netplanDHCPDropin is written as a drop-in with a high sort order so it wins
@@ -120,7 +125,7 @@ FallbackDNS=9.9.9.9 1.1.1.1
 
 // Resolutions is the closed catalog, ordered by the check they answer.
 func Resolutions() []Resolution {
-	return []Resolution{
+	return append([]Resolution{
 		{
 			ID: ResolutionDriverModules, Title: "Install the kernel modules for this network card",
 			AppliesTo: CheckDriver, Mode: ModeApply,
@@ -301,7 +306,7 @@ func Resolutions() []Resolution {
 				"The node itself is never turned into a StackKits host: that would put the workload and the thing that runs it in the same place.",
 			},
 		},
-	}
+	}, acceleratorResolutions()...)
 }
 
 // ResolutionByID returns one catalog entry.

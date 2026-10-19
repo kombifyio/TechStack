@@ -34,6 +34,8 @@ export interface ClientBootstrap {
   releaseChannel: string;
   /** Where the Preview badge links back to; empty on stable. */
   stableOrigin: string;
+  /** Where stable sends a person who chose Preview; empty on Preview. */
+  previewOrigin: string;
   /** Public context.dev Logo Link client id. Empty disables brand logos. */
   contextDevLogolinkId: string;
   telemetry: {
@@ -53,6 +55,7 @@ export function emptyClientBootstrap(): ClientBootstrap {
     publicOrigin: "",
     releaseChannel: "",
     stableOrigin: "",
+    previewOrigin: "",
     contextDevLogolinkId: "",
     telemetry: {
       sentry: { dsn: "", environment: "", release: "" },
@@ -91,6 +94,7 @@ export function parseClientBootstrap(body: unknown): ClientBootstrap {
     publicOrigin: asString(data.public_origin),
     releaseChannel: asString(data.release_channel),
     stableOrigin: asString(data.stable_origin),
+    previewOrigin: asString(data.preview_origin),
     contextDevLogolinkId: asString(data.context_dev_logolink_id),
     telemetry: {
       sentry: {
