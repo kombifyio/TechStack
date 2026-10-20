@@ -64,6 +64,10 @@ const API_BASE = requireLiveProductURL(
     PRODUCT_BASE,
   ) || PRODUCT_BASE,
 );
+// Agents talk to the stable control plane: on the Preview channel the owner
+// server enrolls against the stable origin, not the Preview one.
+const AGENT_ORIGIN =
+  normalizeURL(process.env.TECHSTACK_RUNTIME_E2E_AGENT_ORIGIN) || API_BASE;
 const ARTIFACTS_DIR =
   process.env.RUNTIME_E2E_ARTIFACTS_DIR ?? "../artifacts/runtime-e2e";
 const DO_TAG = process.env.TECHSTACK_E2E_DO_TAG ?? "techstack-e2e";
@@ -103,7 +107,8 @@ const RUNTIME_AUTH_OPTIONS = {
   sessionCookieName: SESSION_COOKIE_NAME,
 };
 
-type RuntimeScenario = "install-command" | "connect-remote" | "kombify-cloud";
+type RuntimeScenario =
+  "install-command" | "connect-remote" | "kombify-cloud" | "stack-lifecycle";
 
 interface RuntimeWorkerRecord {
   id: string;
@@ -1467,40 +1472,31 @@ async function registerWorkerThroughInstallScript(
   };
 }
 
-async function getMonitorStatusViaApi(
+// Hosted Techstack never serves fleet-wide diagnostics to a customer: the
+// status and health reads answer one documented tenant-isolation refusal
+// (security: isolate hosted monitoring metrics by tenant, #2213). A customer
+// reads their nodes through the stack operations, the server aggregate and the
+// monitoring pages instead.
+async function expectHostedMonitorDiagnosticsRefused(
   token: RuntimeBearer,
+  read: "status" | "health",
   apiBase = API_BASE,
 ) {
   const response = await authorizedFetch(
     token,
-    runtimeApiUrl(apiBase, "/api/v1/monitor/status"),
+    runtimeApiUrl(apiBase, `/api/v1/monitor/${read}`),
   );
   const text = await response.text();
   const json = text ? JSON.parse(text) : {};
-  if (!response.ok) {
-    throw new Error(
-      `Read monitor status failed with HTTP ${response.status}: ${text}`,
-    );
-  }
-  return (json.data ?? json) as Record<string, unknown>;
-}
-
-async function getMonitorHealthViaApi(
-  token: RuntimeBearer,
-  apiBase = API_BASE,
-) {
-  const response = await authorizedFetch(
-    token,
-    runtimeApiUrl(apiBase, "/api/v1/monitor/health"),
+  expect(response.status, text).toBe(403);
+  expect(json.error?.details?.error_code).toBe(
+    "tenant_diagnostics_unavailable",
   );
-  const text = await response.text();
-  const json = text ? JSON.parse(text) : {};
-  if (!response.ok) {
-    throw new Error(
-      `Read monitor health failed with HTTP ${response.status}: ${text}`,
-    );
-  }
-  return (json.data ?? json) as Record<string, unknown>;
+  return {
+    http_status: response.status,
+    error_code: json.error.details.error_code,
+    reason_code: json.error.details.reason_code,
+  };
 }
 
 async function getMonitorAlertRulesViaApi(
@@ -1528,9 +1524,17 @@ async function validateMonitoringUi(
   opts: { minConnectedAgents?: number; apiBase?: string } = {},
 ) {
   const apiBase = opts.apiBase ?? API_BASE;
-  const status = await getMonitorStatusViaApi(token, apiBase);
+  const status = await expectHostedMonitorDiagnosticsRefused(
+    token,
+    "status",
+    apiBase,
+  );
   await attachJson(`${scenario}-monitor-status.json`, redactObject(status));
-  const health = await getMonitorHealthViaApi(token, apiBase);
+  const health = await expectHostedMonitorDiagnosticsRefused(
+    token,
+    "health",
+    apiBase,
+  );
   await attachJson(`${scenario}-monitor-health.json`, redactObject(health));
   const alertRules = await getMonitorAlertRulesViaApi(token, apiBase);
   await attachJson(
@@ -2778,7 +2782,8 @@ test.describe.serial("Runtime E2E scenarios", () => {
               providerId: leaseProvider.id,
               advertisedStackkitsRelease,
               testSourceCommit:
-                process.env.GITHUB_SHA ?? (await testSourceCommit().catch(() => "")),
+                process.env.GITHUB_SHA ??
+                (await testSourceCommit().catch(() => "")),
               startedAt: laneStartedAt,
               finishedAt: new Date().toISOString(),
               job: provisionJob,
@@ -3029,10 +3034,7 @@ test.describe.serial("Runtime E2E scenarios", () => {
             leaseId,
             stack.stack_id,
           );
-          await attachJson(
-            "kombify-cloud-day2.json",
-            day2Evidence,
-          );
+          await attachJson("kombify-cloud-day2.json", day2Evidence);
           day2Recorded = true;
         }
         if (provisionFailure !== undefined || !job) {
@@ -3076,10 +3078,7 @@ test.describe.serial("Runtime E2E scenarios", () => {
             leaseId,
             stack.stack_id,
           );
-          await attachJson(
-            "kombify-cloud-day2.json",
-            day2Evidence,
-          );
+          await attachJson("kombify-cloud-day2.json", day2Evidence);
           managedObservationPhase(
             "verification",
             MANAGED_RUNTIME_BUDGETS.verificationMs,
@@ -3288,6 +3287,255 @@ test.describe.serial("Runtime E2E scenarios", () => {
           () => undefined,
         );
       }
+    }
+  });
+
+  // Stack lifecycle on one owner server (Beads platform-37px0.1): the journey
+  // that stands in for the retired unit tests of the stack, job and
+  // StackKits-lifecycle control plane. One owner server enrolls through the
+  // install command, the stack is deployed through the product, then the
+  // owner monitors it, backs it up, updates it and destroys it. Every step is
+  // observed through the owner-scoped API (jobs, receipts, read-backs).
+  test("stack-lifecycle deploys a stack on an owner server, then monitors, backs up, updates and removes it", async ({
+    page,
+  }) => {
+    // Provision, rollout, backup, upgrade and destroy exceed the 15-minute
+    // default; the window lane's cleanup step covers a timeout.
+    test.setTimeout(90 * 60_000);
+    const supplier = ownerServerSupplierFromEnv();
+    const auth = await authenticateRuntimeUser(
+      "oneliner",
+      page,
+      RUNTIME_AUTH_OPTIONS,
+    );
+    let resource: OwnerServer | undefined;
+    let stackId = "";
+    let serverId = "";
+    let destroyed = false;
+    try {
+      const name = `stack-lifecycle-${runtimeRunId()}`;
+      const created = await createLifecycleWizardRun(
+        auth.token,
+        {
+          intent: {
+            schema: "techstack.wizard-intent/v1",
+            run_kind: "first-run",
+            name,
+            goals: [],
+            // The owner server is a rented VPS: explicit placement evidence
+            // lets the product classify it as a customer-operated cloud server.
+            server: {
+              transport: "install-command",
+              environment_class: "cloud",
+            },
+            kit_assignment: { mode: "found", kit_slug: "basement-kit" },
+          },
+        },
+        (id) => {
+          stackId = id;
+        },
+      );
+      stackId = String(created.run.stack_id ?? created.run.kit_deployment_id);
+      expect(stackId).not.toBe("");
+      const pairingJobId = String(created.run.pairing_job_id ?? "");
+      expect(pairingJobId, "the run names its registration job").not.toBe("");
+
+      // Enroll: the owner brings one server and runs the install command with
+      // the registration token the run prepared.
+      const registrationToken = await mintRegistrationToken(
+        auth.token,
+        stackId,
+        pairingJobId,
+      );
+      resource = await supplier.provision(1);
+      await enrollOwnerServer(auth.token, resource, registrationToken);
+      const connected = await waitForConnectedOwnerServer(auth.token, stackId);
+      serverId = String(connected.id);
+
+      // Deploy: a rollout saves its credentials in the owner's kombify Wallet,
+      // so the owner first allows Techstack to do that (the consent the
+      // product asks for once), then starts the rollout once the product says
+      // it can.
+      const walletConsent = await allowTechstackWalletCreate(page);
+      await attachJson("stack-lifecycle-wallet-consent.json", walletConsent);
+      await waitForRolloutReadiness(auth.token, stackId);
+      let deploy = await startStackRollout(auth.token, stackId);
+      let deployJob = await waitForJobTerminal(
+        auth.token,
+        deploy.job_id,
+        40 * 60_000,
+      );
+      // A rollout that failed on an answer of the platform itself (the node
+      // downloads its StackKits release from the control plane, which a
+      // Delivery redeploys now and then) is started again by its owner, as the
+      // product offers for a failed rollout; any other failure ends the journey.
+      for (
+        let restart = 1;
+        restart <= 2 &&
+        deployJob.state === "failed" &&
+        /HTTP 5\d\d|timed out|temporarily unavailable|Orphaned by process restart/i.test(
+          runtimeJobFailureSummary(deployJob),
+        );
+        restart += 1
+      ) {
+        logRuntimeE2E("rollout failed on a platform answer, restarting", {
+          restart,
+          summary: runtimeJobFailureSummary(deployJob).slice(0, 300),
+        });
+        await waitForRolloutReadiness(auth.token, stackId);
+        deploy = await startStackRollout(auth.token, stackId);
+        deployJob = await waitForJobTerminal(
+          auth.token,
+          deploy.job_id,
+          40 * 60_000,
+        );
+      }
+      await attachJson(
+        "stack-lifecycle-deploy-job.json",
+        redactObject(deployJob),
+      );
+      expect(deployJob.state, runtimeJobFailureSummary(deployJob)).toBe(
+        "completed",
+      );
+
+      // Monitor: the deployed node and its services read back healthy through
+      // the stack operations API, the server aggregate and the monitoring UI.
+      const deployed = await waitForDeployedStack(auth.token, stackId);
+      expect(deployed.server.status).toBe("connected");
+      expect(deployed.server.assignment).toBe("stack");
+      expect(deployed.runningServices).toBeGreaterThan(0);
+      const agentId = String(deployed.server.agent_id ?? "");
+      expect(agentId, "the deployed node names its agent").not.toBe("");
+      const aggregate = await readServerAggregate(auth.token, serverId);
+      expect(aggregate.connection?.state).toBe("connected");
+      expect(aggregate.lifecycle?.state).toBe("active");
+      await validateMonitoringUi(page, auth.token, "stack-lifecycle", {
+        minConnectedAgents: 1,
+      });
+      await attachJson("stack-lifecycle-monitor.json", {
+        stack_id: stackId,
+        server_id: serverId,
+        agent_id: agentId,
+        stack_status: deployed.stackStatus,
+        server_status: deployed.server.status,
+        health: deployed.server.health,
+        running_services: deployed.runningServices,
+        service_count: deployed.serviceCount,
+        stackkit: deployed.server.stackkit,
+        connection: aggregate.connection,
+        lifecycle: aggregate.lifecycle,
+      });
+
+      // Back up: the node admits the backup operations once it has converged
+      // on the pinned StackKits release; configure, run, then read the
+      // recovery point back through the status operation.
+      const admitted = await waitForServerStackActions(auth.token, serverId, [
+        "backup_configure",
+        "backup_run",
+        "backup_status",
+        "upgrade",
+        "verify",
+      ]);
+      const configure = await runStackKitLifecycleOperation(
+        auth.token,
+        stackId,
+        agentId,
+        "backup_configure",
+        { owner_approved: true },
+      );
+      expect(configure.result.backup?.status).toBe("configured");
+      const backup = await runStackKitLifecycleOperation(
+        auth.token,
+        stackId,
+        agentId,
+        "backup_run",
+        { owner_approved: true },
+      );
+      const snapshotAnchor = String(backup.result.backup?.snapshot_anchor_id);
+      expect(snapshotAnchor).toMatch(/^sha256:[a-f0-9]{64}$/);
+      const status = await runStackKitLifecycleOperation(
+        auth.token,
+        stackId,
+        agentId,
+        "backup_status",
+      );
+      const recoveryPoints = recoveryPointsOf(status.result);
+      expect(recoveryPoints.length).toBeGreaterThan(0);
+      expect(recoveryPoints.every((point) => point.state === "recorded")).toBe(
+        true,
+      );
+
+      // Update: the owner upgrades the deployed StackKit and the stack still
+      // verifies on the node afterwards.
+      const before = releaseOf(status.result);
+      const upgrade = await runStackKitLifecycleOperation(
+        auth.token,
+        stackId,
+        agentId,
+        "upgrade",
+        { owner_approved: true, target_release: "latest" },
+      );
+      const verify = await runStackKitLifecycleOperation(
+        auth.token,
+        stackId,
+        agentId,
+        "verify",
+      );
+      const after = await waitForDeployedStack(auth.token, stackId);
+      expect(after.server.status).toBe("connected");
+      expect(after.runningServices).toBeGreaterThan(0);
+      await attachJson("stack-lifecycle-evidence.json", {
+        owner_server_provider: supplier.provider,
+        stack_id: stackId,
+        server_id: serverId,
+        agent_id: agentId,
+        deploy_job_id: deploy.job_id,
+        admitted_stack_actions: admitted,
+        backup: {
+          configure_job_id: configure.job.id,
+          run_job_id: backup.job.id,
+          snapshot_anchor_id: snapshotAnchor,
+          status_job_id: status.job.id,
+          recovery_points: recoveryPoints,
+        },
+        update: {
+          release_before: before,
+          upgrade_job_id: upgrade.job.id,
+          upgrade_release: releaseOf(upgrade.result),
+          upgrade_status: upgrade.result.status,
+          verify_job_id: verify.job.id,
+          verify_status: verify.result.status,
+          running_services_after: after.runningServices,
+        },
+      });
+
+      // Remove: destroy through the product; the stack is gone for the owner.
+      const destroy = await destroyRuntimeStackViaApi(auth.token, stackId);
+      expect(destroy?.state).toBe("completed");
+      await waitForStackAbsent(auth.token, stackId);
+      destroyed = true;
+      await attachJson("stack-lifecycle-removed.json", {
+        stack_id: stackId,
+        destroy_job_id: destroy?.id,
+        destroy_state: destroy?.state,
+        stack_absent_for_owner: true,
+      });
+    } finally {
+      const cleanupFailed = (step: string) => (error: unknown) =>
+        logRuntimeE2E(`stack-lifecycle cleanup ${step} failed`, {
+          message: redactText(String(error)).slice(0, 600),
+        });
+      if (stackId && !destroyed) {
+        await destroyRuntimeStackViaApi(auth.token, stackId).catch(
+          cleanupFailed("destroy"),
+        );
+      }
+      if (serverId) {
+        await detachOwnerServer(auth.token, serverId).catch(
+          cleanupFailed("detach"),
+        );
+      }
+      await resource?.release();
     }
   });
 });
@@ -3557,6 +3805,484 @@ async function waitForConnectedStackServers(
   throw new Error(
     `Timed out waiting for ${count} connected servers on ${stackId}; last=${JSON.stringify(last)}`,
   );
+}
+
+// ---- stack-lifecycle journey helpers ------------------------------------
+
+type LifecycleRecord = Record<string, any>;
+
+// Stable redeploys under a running journey (a Delivery answers with an edge
+// 502 page for a short while): a read of the owner API retries on those
+// answers within its own deadline and fails on anything else.
+function isTransientRuntimeError(error: unknown) {
+  return /SyntaxError|Unexpected token|HTTP 5\d\d|fetch failed|ECONN|ETIMEDOUT|ENOTFOUND|UND_ERR|aborted|timed out|timeout/i.test(
+    String(error),
+  );
+}
+
+async function retryTransient<T>(
+  label: string,
+  read: () => Promise<T>,
+  timeoutMs = 180_000,
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      return await read();
+    } catch (error) {
+      if (!isTransientRuntimeError(error) || Date.now() > deadline) throw error;
+      logRuntimeE2E("transient read, retrying", {
+        label,
+        message: redactText(String(error)).slice(0, 160),
+      });
+      await delay(5_000);
+    }
+  }
+}
+
+function lifecycleRecord(value: unknown): LifecycleRecord {
+  if (typeof value === "string") {
+    try {
+      return lifecycleRecord(JSON.parse(value));
+    } catch {
+      return {};
+    }
+  }
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as LifecycleRecord)
+    : {};
+}
+
+// The first request of an install-command run must be accepted: a refused run
+// still persisted its stack, which the cleanup of the caller removes.
+async function createLifecycleWizardRun(
+  token: string,
+  request: Record<string, unknown>,
+  onStack: (stackId: string) => void,
+) {
+  const response = await authorizedFetch(
+    token,
+    runtimeApiUrl(API_BASE, "/api/v1/wizard/runs"),
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Idempotency-Key": `lifecycle-e2e-${randomUUID()}`,
+      },
+      body: JSON.stringify(request),
+    },
+  );
+  const text = await response.text();
+  const json = lifecycleRecord(text);
+  if (!response.ok) {
+    const details = lifecycleRecord(lifecycleRecord(json.error).details);
+    if (typeof details.stack_id === "string" && details.stack_id) {
+      onStack(details.stack_id);
+    }
+    throw new Error(
+      `Wizard run failed (HTTP ${response.status}): ${redactText(text)}`,
+    );
+  }
+  expect(response.status).toBe(202);
+  const run = lifecycleRecord(json.data);
+  await attachJson("stack-lifecycle-run.json", redactObject(run));
+  return { run };
+}
+
+// Job projections are secret-free, so the owner asks for the connection
+// command explicitly: the same pairing-token request the creation page makes
+// from the node configuration the run recorded on its registration job.
+async function mintRegistrationToken(
+  token: string,
+  stackId: string,
+  pairingJobId: string,
+) {
+  const job = await getJob(token, pairingJobId);
+  expect(job.state, runtimeJobFailureSummary(job)).toBe("completed");
+  const metadata = lifecycleRecord(job.result);
+  const response = await authorizedFetch(
+    token,
+    runtimeApiUrl(API_BASE, "/api/v1/trust/pairing-tokens"),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        stack_id: stackId,
+        name: "stack-lifecycle node connection",
+        server_provisioning_mode: metadata.server_provisioning_mode,
+        node_role: metadata.server_node_role,
+        stackkit: metadata.stackkit_foundation,
+        services: metadata.requested_services ?? [],
+        ...(typeof metadata.environment_class === "string"
+          ? { environment_class: metadata.environment_class }
+          : {}),
+      }),
+    },
+  );
+  const text = await response.text();
+  expect(response.status, redactText(text)).toBeLessThan(300);
+  const registration = String(
+    lifecycleRecord(lifecycleRecord(text).data).token ?? "",
+  );
+  expect(registration, "the product minted a registration token").not.toBe("");
+  return registration;
+}
+
+async function enrollOwnerServer(
+  token: string,
+  resource: { ip: string; keyPair: { privateKeyPath: string } },
+  registrationToken: string,
+) {
+  const hostname = (
+    await runSSH(
+      resource.ip,
+      resource.keyPair.privateKeyPath,
+      "hostname",
+      30_000,
+    )
+  ).stdout.trim();
+  const installCommand = [
+    `curl -fsSL ${shellQuote(`${AGENT_ORIGIN}/install.sh`)} |`,
+    `KOMBI_SERVER=${shellQuote(AGENT_ORIGIN)}`,
+    `KOMBI_TOKEN=${shellQuote(registrationToken)}`,
+    "TECHSTACK_AS_SERVICE=1 sh",
+  ].join(" ");
+  let result: Awaited<ReturnType<typeof runSSH>>;
+  try {
+    result = await runSSH(
+      resource.ip,
+      resource.keyPair.privateKeyPath,
+      installCommand,
+      300_000,
+    );
+  } catch (err) {
+    // The ssh command line carries the registration token; never surface it.
+    throw new Error(
+      redactText(
+        (err instanceof Error ? err.message : String(err))
+          .split(registrationToken)
+          .join("<registration>"),
+      ),
+    );
+  }
+  await attachText(
+    `stack-lifecycle-install-${hostname}.log`,
+    redactText(`${result.stdout}\n${result.stderr}`),
+  );
+  const worker = await retryTransient("worker lookup", () =>
+    waitForWorkerByHostname(token, hostname, 180_000),
+  );
+  if (worker.approved !== true) {
+    await approveWorkerViaApi(token, worker.id, API_BASE);
+    await retryTransient("worker approval", () =>
+      waitForApprovedWorker(token, worker.id),
+    );
+  }
+  return worker;
+}
+
+interface LifecycleOperations {
+  readiness?: { can_start?: boolean; message?: string };
+  kpis?: Record<string, unknown>;
+  servers?: LifecycleRecord[];
+  services?: unknown[];
+}
+
+async function readStackOperations(token: string, stackId: string) {
+  return retryTransient("stack operations", () =>
+    fetchRuntimeApi<LifecycleOperations>(
+      token,
+      `/api/v1/stacks/${encodeURIComponent(stackId)}/operations`,
+    ),
+  );
+}
+
+async function waitForRolloutReadiness(
+  token: string,
+  stackId: string,
+  timeoutMs = 300_000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  let last: LifecycleOperations | undefined;
+  while (Date.now() < deadline) {
+    last = await readStackOperations(token, stackId);
+    if (last.readiness?.can_start === true) return last;
+    await delay(5_000);
+  }
+  throw new Error(
+    `The product never reported ${stackId} ready to start; readiness=${JSON.stringify(last?.readiness)}`,
+  );
+}
+
+// The Wallet owner API sits at the public Gateway and takes the same Auth0
+// bearer every Techstack gateway call carries (src/lib/kombify-wallet/
+// wallet-api.ts). The grant is the call the creation page's Wallet prompt
+// makes when its owner presses Allow.
+async function allowTechstackWalletCreate(page: Page) {
+  const session = await captureGatewayApiSession(page);
+  const walletApi = `${new URL(session.apiBase).origin}/v1/wallet/services/creators`;
+  const call = async (init: RequestInit = {}) => {
+    const response = await fetch(walletApi, {
+      ...init,
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${session.token}`,
+        ...(init.body === undefined
+          ? {}
+          : { "content-type": "application/json" }),
+      },
+      signal: AbortSignal.timeout(30_000),
+    });
+    const text = await response.text();
+    return { status: response.status, body: lifecycleRecord(text), text };
+  };
+  const before = await call();
+  expect(before.status, redactText(before.text)).toBe(200);
+  const alreadyAllowed = ((before.body.services ?? []) as string[]).includes(
+    "techstack",
+  );
+  if (!alreadyAllowed) {
+    const granted = await call({
+      method: "POST",
+      body: JSON.stringify({ action: "grant", serviceId: "techstack" }),
+    });
+    expect(granted.status, redactText(granted.text)).toBe(200);
+    expect(granted.body.granted).toBe(true);
+  }
+  const after = await call();
+  expect(((after.body.services ?? []) as string[]).includes("techstack")).toBe(
+    true,
+  );
+  return { already_allowed: alreadyAllowed, allowed: true };
+}
+
+async function startStackRollout(token: string, stackId: string) {
+  const response = await authorizedFetch(
+    token,
+    runtimeApiUrl(
+      API_BASE,
+      `/api/v1/stacks/${encodeURIComponent(stackId)}/deploy`,
+    ),
+    { method: "POST", headers: { "Idempotency-Key": randomUUID() } },
+  );
+  const text = await response.text();
+  expect(response.status, redactText(text)).toBe(202);
+  const data = lifecycleRecord(lifecycleRecord(text).data);
+  const jobId = String(data.job_id ?? "");
+  expect(jobId, "the rollout is accepted as a job").not.toBe("");
+  return { job_id: jobId };
+}
+
+async function waitForDeployedStack(
+  token: string,
+  stackId: string,
+  timeoutMs = 300_000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  let last: LifecycleOperations | undefined;
+  while (Date.now() < deadline) {
+    last = await readStackOperations(token, stackId);
+    const servers = last.servers ?? [];
+    const server =
+      servers.find((item) => String(item.assignment) === "stack") ?? servers[0];
+    const runningServices = numericRuntimeKpi(last.kpis, "running_services");
+    if (
+      server &&
+      server.status === "connected" &&
+      runningServices > 0 &&
+      (last.services ?? []).length > 0
+    ) {
+      const stack = lifecycleRecord(
+        await retryTransient("stack read", () =>
+          fetchRuntimeApi<LifecycleRecord>(
+            token,
+            `/api/v1/stacks/${encodeURIComponent(stackId)}`,
+          ),
+        ),
+      );
+      return {
+        server,
+        runningServices,
+        serviceCount: (last.services ?? []).length,
+        stackStatus: String(stack.status ?? ""),
+      };
+    }
+    await delay(5_000);
+  }
+  throw new Error(
+    `Stack ${stackId} never read back as deployed; servers=${JSON.stringify(
+      (last?.servers ?? []).map((item) => ({
+        status: item.status,
+        assignment: item.assignment,
+      })),
+    )} kpis=${JSON.stringify(last?.kpis)}`,
+  );
+}
+
+async function readServerAggregate(token: string, serverId: string) {
+  return retryTransient("server aggregate", () =>
+    fetchRuntimeApi<LifecycleRecord>(
+      token,
+      `/api/v1/servers/${encodeURIComponent(serverId)}`,
+    ),
+  );
+}
+
+async function waitForConnectedOwnerServer(
+  token: string,
+  stackId: string,
+  timeoutMs = 600_000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  let last: unknown;
+  while (Date.now() < deadline) {
+    const data = await retryTransient("server list", () =>
+      fetchRuntimeApi<LifecycleRecord[] | { servers?: LifecycleRecord[] }>(
+        token,
+        "/api/v1/servers",
+      ),
+    );
+    const servers = Array.isArray(data) ? data : (data.servers ?? []);
+    const connected = servers.filter(
+      (server) =>
+        server.kit_deployment_id === stackId &&
+        server.connection?.state === "connected",
+    );
+    last = servers
+      .filter((server) => server.kit_deployment_id === stackId)
+      .map((server) => ({
+        id: server.id,
+        connection: server.connection?.state,
+      }));
+    if (connected.length > 0) return connected[0];
+    await delay(10_000);
+  }
+  throw new Error(
+    `Timed out waiting for a connected server on ${stackId}; last=${JSON.stringify(last)}`,
+  );
+}
+
+// The backend decides which kit operations a node admits; a node admits the
+// Day-2 operations only once it converged on the pinned StackKits release.
+async function waitForServerStackActions(
+  token: string,
+  serverId: string,
+  required: string[],
+  timeoutMs = 900_000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  let actions: string[] = [];
+  while (Date.now() < deadline) {
+    const server = await readServerAggregate(token, serverId);
+    actions = ((server.stack_actions ?? []) as string[]).map(String);
+    if (required.every((action) => actions.includes(action))) return actions;
+    await delay(10_000);
+  }
+  throw new Error(
+    `Server ${serverId} never admitted ${required.join(", ")}; admitted: [${actions.join(", ")}]`,
+  );
+}
+
+async function runStackKitLifecycleOperation(
+  token: string,
+  stackId: string,
+  agentId: string,
+  operation: string,
+  extra: Record<string, unknown> = {},
+  timeoutMs = 1_200_000,
+) {
+  const response = await authorizedFetch(
+    token,
+    runtimeApiUrl(
+      API_BASE,
+      `/api/v1/stacks/${encodeURIComponent(stackId)}/stackkit/operations`,
+    ),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ operation, agent_id: agentId, ...extra }),
+    },
+  );
+  const text = await response.text();
+  expect(response.status, `${operation}: ${redactText(text)}`).toBe(202);
+  const accepted = lifecycleRecord(lifecycleRecord(text).data);
+  expect(accepted.operation).toBe(operation);
+  expect(accepted.kit_deployment_id).toBe(stackId);
+  const jobId = String(accepted.job_id ?? "");
+  expect(jobId, `${operation} is accepted as a job`).not.toBe("");
+  const job = await waitForJobTerminal(token, jobId, timeoutMs);
+  const result = lifecycleRecord(job.result);
+  await attachJson(
+    `stack-lifecycle-${operation}.json`,
+    redactObject({ job_id: jobId, state: job.state, result }),
+  );
+  expect(job.state, runtimeJobFailureSummary(job)).toBe("completed");
+  expect(result.schema_version).toBe("techstack.stackkit-lifecycle-result/v1");
+  expect(result.techstack_id).toBe(stackId);
+  expect(result.agent_id).toBe(agentId);
+  expect(result.operation).toBe(operation);
+  expect(result.success, runtimeJobFailureSummary(job)).toBe(true);
+  return { job: job as LifecycleRecord, result };
+}
+
+function recoveryPointsOf(result: LifecycleRecord) {
+  const history = lifecycleRecord(
+    lifecycleRecord(lifecycleRecord(result.command_result).data).history,
+  );
+  return (
+    Array.isArray(history.recoveryPoints) ? history.recoveryPoints : []
+  ).map((point: LifecycleRecord) => ({
+    evidence_id: String(point.evidenceId ?? ""),
+    recorded_at: String(point.recordedAt ?? ""),
+    current_plan: point.currentPlan === true,
+    state: String(point.state ?? ""),
+  }));
+}
+
+function releaseOf(result: LifecycleRecord) {
+  const release = lifecycleRecord(result.release);
+  return {
+    version: String(release.version ?? ""),
+    archive_sha256: String(release.archive_sha256 ?? ""),
+  };
+}
+
+async function waitForStackAbsent(
+  token: string,
+  stackId: string,
+  timeoutMs = 180_000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const stacks = await retryTransient("stack list", () =>
+      getStackList(token),
+    );
+    if (!stacks.some((stack) => stack.id === stackId)) return;
+    await delay(5_000);
+  }
+  throw new Error(`Destroyed stack ${stackId} is still listed for its owner`);
+}
+
+// Removing the server's agent registration keeps the persona's inventory clean
+// for the next run; the machine itself is deleted by its supplier.
+async function detachOwnerServer(token: string, serverId: string) {
+  const response = await authorizedFetch(
+    token,
+    runtimeApiUrl(
+      API_BASE,
+      `/api/v1/servers/${encodeURIComponent(serverId)}/detach`,
+    ),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm_server_id: serverId }),
+      signal: AbortSignal.timeout(30_000),
+    },
+  );
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`Detach HTTP ${response.status}: ${redactText(text)}`);
+  }
 }
 
 test.afterAll(async () => {

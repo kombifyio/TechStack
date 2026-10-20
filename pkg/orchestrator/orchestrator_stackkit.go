@@ -605,7 +605,7 @@ func (o *Orchestrator) resolveStackKitNodeAgent(ctx context.Context, tenantID, o
 	return agentID, nil
 }
 
-func (o *Orchestrator) localStackKitTeardownNodeBindings(ctx context.Context, stack *orchestratorStack) ([]jobs.LocalStackKitTeardownNodeBinding, error) {
+func (o *Orchestrator) localStackKitTeardownNodeBindings(ctx context.Context, stack *orchestratorStack, stackKit string) ([]jobs.LocalStackKitTeardownNodeBinding, error) {
 	approved, err := o.approvedStackKitLifecycleAgentBindings(ctx, stack)
 	if err != nil {
 		return nil, err
@@ -618,11 +618,92 @@ func (o *Orchestrator) localStackKitTeardownNodeBindings(ctx context.Context, st
 		if binding.NodeRef == "" || binding.ServerID == "" || binding.AgentID == "" {
 			continue
 		}
+		// Apply recorded its port claims under the kit's own node ref; the host
+		// name is only how the agent is known. Resolve the node the way dispatch
+		// does, and treat an agent whose node the kit cannot resolve as no
+		// custody at all (the partitioning of the Apply placements then fails
+		// closed).
+		nodeRef, nodeErr := jobs.StackKitNodeRefForAgent(stackKit, binding.NodeRef)
+		if nodeErr != nil {
+			continue
+		}
 		bindings = append(bindings, jobs.LocalStackKitTeardownNodeBinding{
-			NodeRef: binding.NodeRef, ServerID: binding.ServerID, AgentID: binding.AgentID,
+			NodeRef: nodeRef, ServerID: binding.ServerID, AgentID: binding.AgentID,
 		})
 	}
 	return bindings, nil
+}
+
+// teardownApplyJobScanLimit bounds the job history read to find the latest
+// successful Apply of a stack.
+const teardownApplyJobScanLimit = 500
+
+// teardownRuntimeSummary is the document the local teardown authority reads
+// the applied workloads and the kit from. The stack's own runtime summary is
+// replaced by the result of every failed job (a failed upgrade is enough) and
+// by every later deploy, so it can lose the Apply outputs of the last
+// successful rollout. The outputs therefore come from the latest successful
+// apply or deploy result of the stack; the stored summary only supplies what
+// that result does not carry. A stack with no successful Apply keeps its
+// stored summary, and the authority then refuses it for having no applied
+// workloads.
+func (o *Orchestrator) teardownRuntimeSummary(ctx context.Context, stack *orchestratorStack) (map[string]any, error) {
+	summary := make(map[string]any, len(stack.runtimeSummary)+2)
+	for key, value := range stack.runtimeSummary {
+		summary[key] = value
+	}
+	var latest *controlplane.Job
+	if o.jobStore != nil {
+		history, err := o.jobStore.ListJobsByStack(ctx, stack.tenantID, stack.id, teardownApplyJobScanLimit)
+		if err != nil {
+			return nil, fmt.Errorf("read the jobs of stack %s: %w", stack.id, err)
+		}
+		var latestAt time.Time
+		for i := range history {
+			if !successfulStackKitApply(&history[i]) {
+				continue
+			}
+			if at := jobFinishedAt(&history[i]); latest == nil || at.After(latestAt) {
+				latest, latestAt = &history[i], at
+			}
+		}
+	}
+	if latest != nil {
+		summary[stackKitOutputKey] = latest.Result[stackKitOutputKey]
+	}
+	if strings.TrimSpace(stringFromAny(summary[runtimeFieldStackKitRef])) == "" {
+		kit := ""
+		if latest != nil {
+			kit = stringFromAny(latest.Result[runtimeFieldStackKitRef])
+		}
+		summary[runtimeFieldStackKitRef] = firstNonEmptyString(kit, stackKitRolloutBinding(stack).StackKit, stackKitCatalogRef(stack))
+	}
+	return summary, nil
+}
+
+// successfulStackKitApply reports whether a job is a completed deploy or typed
+// lifecycle job whose result carries the applied workloads of an Apply.
+func successfulStackKitApply(job *controlplane.Job) bool {
+	if !strings.EqualFold(strings.TrimSpace(job.State), string(jobs.JobStateCompleted)) {
+		return false
+	}
+	if job.Type != string(jobs.JobTypeDeploy) && job.Type != string(jobs.JobTypeStackKitLifecycle) {
+		return false
+	}
+	outputs, _ := job.Result[stackKitOutputKey].(map[string]any)
+	apply, _ := outputs["apply"].(map[string]any)
+	workloads, _ := apply["appliedWorkloads"].([]any)
+	return len(workloads) > 0
+}
+
+func jobFinishedAt(job *controlplane.Job) time.Time {
+	if job.CompletedAt != nil && !job.CompletedAt.IsZero() {
+		return *job.CompletedAt
+	}
+	if !job.UpdatedAt.IsZero() {
+		return job.UpdatedAt
+	}
+	return job.CreatedAt
 }
 
 // stackKitRolloutBinding returns what the stack's last managed rollout applied.
