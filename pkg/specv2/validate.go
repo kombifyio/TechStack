@@ -37,6 +37,11 @@ const (
 	// authoringOwnerEmail is the owner the image seeds are authored with
 	// (Dockerfile spec templates); it never reaches a projected StackSpec.
 	authoringOwnerEmail = "owner@smoke.stackkit.cc"
+	// platformAddressBase is the shared parent a managed Cloud deployment
+	// keeps as network.domain.base until its rollout binds an install zone.
+	platformAddressBase = "kombify.me"
+	// authoringInstallZone stands in for that zone in the scratch init only.
+	authoringInstallZone = "techstack-authoring." + platformAddressBase
 )
 
 // SpecValidator is the acceptance authority for projected specs: the pinned
@@ -315,8 +320,17 @@ func (v *CLIValidator) AuthorGoals(ctx context.Context, kitSlug, name, domainBas
 	} else {
 		args = append(args, "--compute-tier", authoringComputeTier)
 	}
-	if strings.TrimSpace(domainBase) != "" {
-		args = append(args, "--domain", strings.TrimSpace(domainBase))
+	domainBase = strings.TrimSpace(domainBase)
+	// Init refuses a local identity realm on the shared kombify.me parent
+	// (StackKits v0.53.9+). The scratch realm is discarded, so a managed Cloud
+	// stack authors under a stand-in zone and its routes return to the
+	// stack's platform addressing below.
+	authorDomain := domainBase
+	if kitSlug == KitSlugCloud && strings.EqualFold(domainBase, platformAddressBase) {
+		authorDomain = authoringInstallZone
+	}
+	if authorDomain != "" {
+		args = append(args, "--domain", authorDomain)
 	}
 	cmd := exec.CommandContext(runCtx, v.Binary, args...) // #nosec G204 -- binary is release-admitted and arguments are closed validated IDs.
 	cmd.Dir = workDir
@@ -332,7 +346,37 @@ func (v *CLIValidator) AuthorGoals(ctx context.Context, kitSlug, name, domainBas
 	if err != nil {
 		return GoalAuthoring{}, fmt.Errorf("read StackKits-authored spec: %w", err)
 	}
-	return goalAuthoringFromDocument(document, kitSlug, mappedGoals, unmapped, workloadIDs, bindings)
+	authored, err := goalAuthoringFromDocument(document, kitSlug, mappedGoals, unmapped, workloadIDs, bindings)
+	if err != nil || authorDomain == domainBase {
+		return authored, err
+	}
+	if err := rebaseAuthoredRoutes(authored.Routes, authorDomain, domainBase); err != nil {
+		return GoalAuthoring{}, err
+	}
+	return authored, nil
+}
+
+// rebaseAuthoredRoutes moves the hosts of routes authored under a stand-in
+// zone onto the stack's own domain base, <service>.<base>, as the found
+// projection writes them. A host other than its serviceRef in the stand-in
+// zone fails closed.
+func rebaseAuthoredRoutes(routes map[string]map[string]any, from, to string) error {
+	for workload, byRef := range routes {
+		for ref, raw := range byRef {
+			route, _ := raw.(map[string]any)
+			host, _ := route["host"].(string)
+			if host == "" {
+				continue
+			}
+			service, _ := route["serviceRef"].(string)
+			label, found := strings.CutSuffix(strings.ToLower(host), "."+from)
+			if !found || label == "" || label != service {
+				return fmt.Errorf("StackKits-authored workload %q route %q host %q is outside its authoring zone", workload, ref, host)
+			}
+			route["host"] = label + "." + to
+		}
+	}
+	return nil
 }
 
 // installChoices adds the selection's installing alternatives and add-on
