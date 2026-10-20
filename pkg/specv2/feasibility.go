@@ -61,6 +61,15 @@ type FeasibilityReport struct {
 	Workloads       []FeasibilityWorkload `json:"workloads"`
 	Nodes           []FeasibilityNode     `json:"nodes,omitempty"`
 	Errors          []FeasibilityError    `json:"errors,omitempty"`
+	// Advisories are evidence on a node the outcome does not depend on, for
+	// example an application data binding with no declared budget.
+	Advisories []FeasibilityAdvisory `json:"advisories,omitempty"`
+}
+
+// FeasibilityAdvisory names one advisory and its node.
+type FeasibilityAdvisory struct {
+	Code    string `json:"code"`
+	NodeRef string `json:"nodeRef"`
 }
 
 // FeasibilityWorkload is the verdict for one workload.

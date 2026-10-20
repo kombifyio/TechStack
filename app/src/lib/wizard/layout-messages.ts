@@ -33,6 +33,8 @@ export const layoutMessages = {
     "layout.verification.skipped":
       "The hardware check was skipped, so this is for information only.",
     "layout.verification.details": "Details",
+    "layout.reason.data_budget_unset":
+      "How much space your data needs on {node} isn't set yet, so free disk space was not checked for it.",
     "layout.outcome.proven-infeasible":
       "Not everything you picked fits your servers as they are.",
     "layout.outcome.unknown":
@@ -79,7 +81,8 @@ export const layoutMessages = {
     "layout.reason.profile_not_measured":
       "kombify has not measured {title} yet, so it stays on your main server, {node}.",
     "layout.reason.pinned": "{title} stays on {node}.",
-    "layout.reason.with_use_case": "{title} adds to the use case that already runs on {node}, so it runs there too.",
+    "layout.reason.with_use_case":
+      "{title} adds to the use case that already runs on {node}, so it runs there too.",
     "layout.reason.repacked":
       "{title} runs on {node} so that every app you picked fits.",
     "layout.reason.uses_accelerator":
@@ -201,6 +204,8 @@ export const layoutMessages = {
     "layout.verification.skipped":
       "Die Hardware-Prüfung wurde übersprungen, die Verteilung dient deshalb nur zur Information.",
     "layout.verification.details": "Details",
+    "layout.reason.data_budget_unset":
+      "Wie viel Platz deine Daten auf {node} brauchen, ist noch nicht festgelegt, deshalb wurde der freie Speicherplatz dafür nicht geprüft.",
     "layout.outcome.proven-infeasible":
       "Nicht alles, was du ausgewählt hast, passt auf deine Server, so wie sie sind.",
     "layout.outcome.unknown":
@@ -248,7 +253,8 @@ export const layoutMessages = {
     "layout.reason.profile_not_measured":
       "kombify hat {title} noch nicht ausgemessen und lässt es deshalb auf deinem Hauptserver {node}.",
     "layout.reason.pinned": "{title} bleibt auf {node}.",
-    "layout.reason.with_use_case": "{title} erweitert den Anwendungsfall, der schon auf {node} läuft, und läuft deshalb auch dort.",
+    "layout.reason.with_use_case":
+      "{title} erweitert den Anwendungsfall, der schon auf {node} läuft, und läuft deshalb auch dort.",
     "layout.reason.repacked":
       "{title} läuft auf {node}, damit alle ausgewählten Apps Platz haben.",
     "layout.reason.uses_accelerator":
@@ -372,6 +378,8 @@ export const layoutMessages = {
     "layout.verification.skipped":
       "Se omitió la comprobación del hardware, así que esto es solo informativo.",
     "layout.verification.details": "Detalles",
+    "layout.reason.data_budget_unset":
+      "Aún no se ha indicado cuánto espacio necesitan tus datos en {node}, así que no se comprobó el espacio libre en disco para ellos.",
     "layout.outcome.proven-infeasible":
       "No todo lo que elegiste cabe en tus servidores tal como están.",
     "layout.outcome.unknown":
@@ -419,7 +427,8 @@ export const layoutMessages = {
     "layout.reason.profile_not_measured":
       "kombify aún no ha medido {title}, así que se queda en tu servidor principal, {node}.",
     "layout.reason.pinned": "{title} se queda en {node}.",
-    "layout.reason.with_use_case": "{title} amplía el caso de uso que ya se ejecuta en {node}, así que también se ejecuta allí.",
+    "layout.reason.with_use_case":
+      "{title} amplía el caso de uso que ya se ejecuta en {node}, así que también se ejecuta allí.",
     "layout.reason.repacked":
       "{title} se ejecuta en {node} para que quepan todas las apps que elegiste.",
     "layout.reason.uses_accelerator":
@@ -538,6 +547,8 @@ export const layoutMessages = {
     "layout.verification.unavailable": "硬件检查目前不可用，以下内容仅供参考。",
     "layout.verification.skipped": "已跳过硬件检查，以下内容仅供参考。",
     "layout.verification.details": "详情",
+    "layout.reason.data_budget_unset":
+      "尚未设置你的数据在 {node} 上需要多少空间，因此没有为其检查可用磁盘空间。",
     "layout.outcome.proven-infeasible":
       "你选择的内容并不能全部放进现有服务器。",
     "layout.outcome.unknown": "我们暂时还无法判断你选择的内容是否都放得下。",
@@ -577,7 +588,8 @@ export const layoutMessages = {
     "layout.reason.profile_not_measured":
       "kombify 尚未测量 {title}，所以它保留在你的主服务器 {node} 上。",
     "layout.reason.pinned": "{title} 保留在 {node} 上。",
-    "layout.reason.with_use_case": "{title} 扩展了已在 {node} 上运行的用例，因此也在那里运行。",
+    "layout.reason.with_use_case":
+      "{title} 扩展了已在 {node} 上运行的用例，因此也在那里运行。",
     "layout.reason.repacked":
       "{title} 运行在 {node} 上，以便你选择的所有应用都能放下。",
     "layout.reason.uses_accelerator":
@@ -689,6 +701,8 @@ export const layoutMessages = {
     "layout.verification.skipped":
       "हार्डवेयर की जाँच छोड़ दी गई, इसलिए यह केवल जानकारी के लिए है।",
     "layout.verification.details": "विवरण",
+    "layout.reason.data_budget_unset":
+      "{node} पर आपके डेटा को कितनी जगह चाहिए, यह अभी तय नहीं है, इसलिए उसके लिए खाली डिस्क स्थान की जाँच नहीं की गई।",
     "layout.outcome.proven-infeasible":
       "आपने जो चुना है, वह सब आपके सर्वरों पर मौजूदा रूप में फ़िट नहीं होता।",
     "layout.outcome.unknown":
@@ -734,7 +748,8 @@ export const layoutMessages = {
     "layout.reason.profile_not_measured":
       "kombify ने {title} को अभी मापा नहीं है, इसलिए यह आपके मुख्य सर्वर {node} पर ही रहता है।",
     "layout.reason.pinned": "{title} {node} पर ही रहता है।",
-    "layout.reason.with_use_case": "{title} उस उपयोग को बढ़ाता है जो पहले से {node} पर चलता है, इसलिए यह भी वहीं चलता है।",
+    "layout.reason.with_use_case":
+      "{title} उस उपयोग को बढ़ाता है जो पहले से {node} पर चलता है, इसलिए यह भी वहीं चलता है।",
     "layout.reason.repacked":
       "{title} {node} पर चलता है, ताकि आपके चुने सभी ऐप्स समा सकें।",
     "layout.reason.uses_accelerator":
@@ -853,6 +868,8 @@ export const layoutMessages = {
       "فحص العتاد غير متاح الآن، لذلك هذا للاطلاع فقط.",
     "layout.verification.skipped": "تم تخطي فحص العتاد، لذلك هذا للاطلاع فقط.",
     "layout.verification.details": "التفاصيل",
+    "layout.reason.data_budget_unset":
+      "لم يحدد بعد مقدار المساحة التي تحتاجها بياناتك على {node}، لذلك لم تفحص مساحة القرص الحرة من أجلها.",
     "layout.outcome.proven-infeasible":
       "لا يتسع كل ما اخترته على خوادمك كما هي.",
     "layout.outcome.unknown":
@@ -898,7 +915,8 @@ export const layoutMessages = {
     "layout.reason.profile_not_measured":
       "لم يقس kombify التطبيق {title} بعد، لذلك يبقى على خادمك الرئيسي {node}.",
     "layout.reason.pinned": "يبقى {title} على {node}.",
-    "layout.reason.with_use_case": "يضيف {title} إلى حالة الاستخدام التي تعمل بالفعل على {node}، لذلك يعمل هناك أيضًا.",
+    "layout.reason.with_use_case":
+      "يضيف {title} إلى حالة الاستخدام التي تعمل بالفعل على {node}، لذلك يعمل هناك أيضًا.",
     "layout.reason.repacked":
       "يعمل {title} على {node} حتى تتسع جميع التطبيقات التي اخترتها.",
     "layout.reason.uses_accelerator":
