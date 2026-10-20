@@ -3367,19 +3367,35 @@ async function createLayoutWizardRun(
   token: string,
   request: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  const response = await authorizedFetch(
-    token,
-    runtimeApiUrl(API_BASE, "/api/v1/wizard/runs"),
-    {
+  const key = `layout-e2e-${randomUUID()}`;
+  const post = () =>
+    authorizedFetch(token, runtimeApiUrl(API_BASE, "/api/v1/wizard/runs"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Idempotency-Key": `layout-e2e-${randomUUID()}`,
+        "X-Idempotency-Key": key,
       },
       body: JSON.stringify(request),
-    },
-  );
-  const text = await response.text();
+    });
+  let response = await post();
+  let text = await response.text();
+  // The API marks a failed registration preparation retryable and asks for a
+  // retry with the same key; the client does that once, as the wizard does.
+  if (
+    response.status >= 500 &&
+    /"reason_code"\s*:\s*"wizard_pairing_failed"/.test(text)
+  ) {
+    logRuntimeE2E(
+      "wizard pairing preparation failed; retrying with the same key",
+      {
+        status: response.status,
+        reason_code: "wizard_pairing_failed",
+      },
+    );
+    await delay(5_000);
+    response = await post();
+    text = await response.text();
+  }
   if (!response.ok) {
     throw new Error(
       `Wizard run failed (HTTP ${response.status}): ${redactText(text)}`,

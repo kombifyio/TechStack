@@ -576,6 +576,12 @@ func (h wizardRunHandlers) mintWizardPairing(e *httpx.Event, run *wizardRunState
 		minted, err = trust.MintStackPairingToken(e.Request.Context(), h.cfg.Trust, run.tenantID, run.ownerID, stack, params)
 	}
 	if err != nil || minted.JobID == "" {
+		// The answer stays generic; the log and the 5xx report name the cause.
+		cause := err
+		if cause == nil {
+			cause = errors.New("pairing preparation returned no job")
+		}
+		httpx.RecordDependencyFailure(e, "wizard_runs.pairing", cause)
 		details := wizardRunDetails(
 			"wizard_pairing_failed", true,
 			"Server registration not prepared",
