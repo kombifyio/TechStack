@@ -30,6 +30,9 @@ param(
     [string]$UpdateManifestPath = "",
     [string]$UpdateVersion = "",
     [string]$UpdateRevision = "",
+    # Authenticated full-B2 context and real host facts, supplied only by the serial wrapper.
+    [string]$B2ContextPath = "",
+    [string]$B2HostPath = "",
     [switch]$SkipPackage,
     [switch]$KeepState,
     [switch]$KeepInstall
@@ -124,6 +127,7 @@ if ($requestedState.Equals($defaultProductState, [StringComparison]::OrdinalIgno
 }
 Assert-NoReparsePointInBoundary $requestedState $allowedStateRoot
 $StateDir = $requestedState
+$stateInitiallyAbsent = !(Test-Path -LiteralPath $StateDir)
 if ($Installer -eq "setup") {
     $InstallDir = Get-NormalizedPath $setupInstallDir
 } else {
@@ -141,6 +145,8 @@ $previousStateOverride = [Environment]::GetEnvironmentVariable("TECHSTACK_CLIENT
 $previousWebViewArguments = [Environment]::GetEnvironmentVariable("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS")
 $previousSmokeBaseUrl = [Environment]::GetEnvironmentVariable("TECHSTACK_SMOKE_BASE_URL")
 $previousSmokeCdpUrl = [Environment]::GetEnvironmentVariable("TECHSTACK_SMOKE_CDP_URL")
+$previousMarkerName = [Environment]::GetEnvironmentVariable("TECHSTACK_SMOKE_MARKER_NAME")
+$previousMarkerCreate = [Environment]::GetEnvironmentVariable("TECHSTACK_SMOKE_MARKER_CREATE")
 
 $localOrigin = "http://127.0.0.1:$LocalPort"
 $localGrpcPort = $LocalPort + 3
@@ -163,6 +169,8 @@ if (!$updateRequested -and ($UpdateSetupPath -or $UpdateVersion -or $UpdateRevis
     throw "Update arguments require -UpdateProof public-feed or rollback."
 }
 if ($updateRequested) {
+    if ($KeepInstall -or $KeepState) { throw 'An update proof requires complete isolated cleanup.' }
+    if (!$stateInitiallyAbsent) { throw 'An update proof requires a fresh isolated state directory.' }
     if ($Installer -ne "setup") { throw "The update proof requires -Installer setup." }
     foreach ($required in @($UpdateSetupPath, $UpdateVersion, $UpdateRevision)) {
         if ([string]::IsNullOrWhiteSpace($required)) { throw "The public update proof requires -UpdateSetupPath, -UpdateVersion and -UpdateRevision." }
@@ -208,7 +216,7 @@ function Get-StateScopedCredentialTarget {
     }
 }
 
-function Stop-SmokeProcesses {
+function Get-SmokeProcesses {
     param(
         [string]$InstallDir,
         [string]$StateDir
@@ -231,6 +239,12 @@ function Stop-SmokeProcesses {
         ($name -eq "cmd.exe" -and $stateCommand -and $cmd.IndexOf("postgres.exe", [StringComparison]::OrdinalIgnoreCase) -ge 0)
     }
 
+    return $processes
+}
+
+function Stop-SmokeProcesses {
+    param([string]$InstallDir, [string]$StateDir)
+    $processes = @(Get-SmokeProcesses -InstallDir $InstallDir -StateDir $StateDir)
     # Keep process handles until exit: termination is asynchronous on Windows.
     # Restarting against a WebView profile still held by the old process can
     # prevent WebView initialization before the local runtime even starts.
@@ -329,9 +343,7 @@ function Invoke-NodeSmoke {
     }
 }
 
-function Get-WindowsGenericCredentialSecret {
-    param([Parameter(Mandatory = $true)][string]$Target)
-
+function Initialize-SmokeCredentialReader {
     if (-not ("KombifyCredentialReader" -as [type])) {
         Add-Type -TypeDefinition @'
 using System;
@@ -365,6 +377,18 @@ public static class KombifyCredentialReader
     [DllImport("Advapi32.dll", EntryPoint = "CredFree")]
     private static extern void CredFree(IntPtr buffer);
 
+    public static bool Exists(string target)
+    {
+        IntPtr pointer;
+        if (!CredRead(target, 1, 0, out pointer)) {
+            int error = Marshal.GetLastWin32Error();
+            if (error == 1168) return false;
+            throw new Win32Exception(error, "Credential existence check failed");
+        }
+        CredFree(pointer);
+        return true;
+    }
+
     public static string Read(string target)
     {
         IntPtr pointer;
@@ -386,6 +410,11 @@ public static class KombifyCredentialReader
 '@
     }
 
+}
+
+function Get-WindowsGenericCredentialSecret {
+    param([Parameter(Mandatory = $true)][string]$Target)
+    Initialize-SmokeCredentialReader
     return [KombifyCredentialReader]::Read($Target)
 }
 
@@ -521,6 +550,16 @@ function Assert-InstalledRuntime {
     if ($info.environment -ne "local" -or $info.database_backend -ne "postgres" -or
         $info.revision -ne $ExpectRevision -or $info.version -ne $ExpectVersion) {
         throw "Installed runtime does not match the expected local PostgreSQL artifact ($ExpectVersion, $ExpectRevision)."
+    }
+    $auth = (Invoke-RestMethod -Uri "$localOrigin/api/v1/auth/mode" -TimeoutSec 10).data
+    if ($auth.mode -ne 'local' -or $auth.edition -ne 'selfhost-oss' -or $auth.deployment_mode -ne 'self-hosted' -or
+        $auth.cloud_auth_url -or $auth.portal_url -or !$auth.allow_local_login) {
+        throw 'The installed runtime is not account-free selfhost OSS.'
+    }
+    if ($updateObservations) {
+        $script:updateObservations.accountFree = @{ mode = $auth.mode; edition = $auth.edition
+            deploymentMode = $auth.deployment_mode; cloudAuthUrlAbsent = !$auth.cloud_auth_url
+            portalAbsent = !$auth.portal_url; offlineFirstStart = [bool]$BlockOutbound }
     }
     Write-Host "[windows-client-installed-smoke] artifact version=$($info.version) revision=$($info.revision) backend=$($info.database_backend)"
 }
@@ -727,7 +766,20 @@ if (!(Test-Path -LiteralPath $installerPath)) {
 # original location, so it needs an absolute path.
 if ($Installer -eq "setup") { $SetupPath = (Resolve-Path -LiteralPath $SetupPath).Path }
 
+if ($B2ContextPath -or $B2HostPath) {
+    if (!$B2ContextPath -or !$B2HostPath) { throw 'Both authenticated B2 context and actual host binding are required.' }
+    & node (Join-Path $PSScriptRoot 'test-window/windows-b2-receipt.mjs') --require-full-context $B2ContextPath
+    $b2Host = Get-Content -Raw -LiteralPath $B2HostPath | ConvertFrom-Json
+    $machine = (Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Cryptography' -Name MachineGuid).MachineGuid
+    $actualHost = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData(
+        [Text.Encoding]::UTF8.GetBytes("$machine/$env:GITHUB_RUN_ID/$env:GITHUB_RUN_ATTEMPT"))).ToLowerInvariant()
+    $machine = $null
+    if ($b2Host.fingerprint -ne $actualHost -or $b2Host.run -ne "$env:GITHUB_RUN_ID.$env:GITHUB_RUN_ATTEMPT" -or
+        $b2Host.harness -ne $env:GITHUB_SHA) { throw 'The actual installed smoke host differs from native B2.' }
+}
+Initialize-SmokeCredentialReader
 $installed = $false
+$flowPassed = $false
 try {
     Stop-SmokeProcesses -InstallDir $InstallDir -StateDir $StateDir
     & $resetScript -StateDir $StateDir -InstallDir $InstallDir -IncludeClientConfig -Discard
@@ -744,7 +796,11 @@ try {
         New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
         Set-SmokeClientConfig @{ mode = 'local'; updateManifestUrl = $publicUpdateFeed; updateChannel = 'stable'; autoUpdate = $false }
         $updateObservations = [ordered]@{
+            schema = 'techstack.installed-update-observations/v2'
             result = 'PENDING'; mode = $UpdateProof; repository = 'kombifyio/TechStack'
+            binding = if ($B2ContextPath) { Get-Content -Raw -LiteralPath $B2ContextPath | ConvertFrom-Json -AsHashtable } else { $null }
+            host = if ($B2HostPath) { Get-Content -Raw -LiteralPath $B2HostPath | ConvertFrom-Json -AsHashtable } else { $null }
+            statePath = $StateDir; smokeId = $smokeId; initialStateAbsent = $stateInitiallyAbsent
             workflowRun = $env:GITHUB_RUN_ID; workflowAttempt = $env:GITHUB_RUN_ATTEMPT; harnessRevision = $env:GITHUB_SHA
             from = @{ tag = "v$Version"; version = $Version; publicSource = $ExpectedRevision
                 setupSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $SetupPath).Hash.ToLowerInvariant() }
@@ -913,10 +969,13 @@ try {
             throw 'The final installed shell and runtime versions differ.'
         }
         $updateObservations.finalRuntime = @{ version = $restartVersion; publicSource = $restartRevision }
+        $updateObservations.identity = @{ subjectBefore = $firstIdentity.subject; subjectAfter = $restartedIdentity.subject
+            tenantBefore = $firstIdentity.tenantId; tenantAfter = $restartedIdentity.tenantId
+            markerBefore = $firstIdentity.markerId; markerAfter = $restartedIdentity.markerId }
         $updateObservations.identityRetained = $true
         $updateObservations.encryptedWalletMarkerRetained = $true
         $updateObservations.pendingConsumed = $true
-        $updateObservations.result = 'PASS'
+        $updateObservations.result = 'PENDING_CLEANUP'
         $updateObservations.finishedAt = (Get-Date).ToUniversalTime().ToString('o')
         if ($UpdateProof -eq 'public-feed') { $SetupPath = $UpdateSetupPath }
     }
@@ -935,7 +994,8 @@ try {
         }
         Write-Host "[windows-client-installed-smoke] uninstall removed the binaries and retained local data and credentials"
     }
-    Write-Host "[windows-client-installed-smoke] ok"
+    $flowPassed = $true
+    Write-Host "[windows-client-installed-smoke] flow complete; reconciling cleanup"
 } catch {
     if ($updateObservations) {
         $updateObservations.result = 'FAIL'
@@ -944,33 +1004,111 @@ try {
     }
     throw
 } finally {
-    Stop-SmokeProcesses -InstallDir $InstallDir -StateDir $StateDir
-    Save-SmokeDiagnostics
+    # Every action gets its own guard: a diagnostics/uninstall/reset failure must
+    # never prevent the remaining custody, firewall and process cleanup.
+    $cleanupErrors = [Collections.Generic.List[string]]::new()
+    $cleanup = [ordered]@{ result = 'PENDING'; errors = @() }
+    function Invoke-SmokeCleanup([string]$Name, [scriptblock]$Action) {
+        try { & $Action | Out-Null } catch { $cleanupErrors.Add($Name) }
+    }
+    Invoke-SmokeCleanup 'stop-processes' { Stop-SmokeProcesses -InstallDir $InstallDir -StateDir $StateDir }
+    Invoke-SmokeCleanup 'diagnostics' { Save-SmokeDiagnostics }
+    if ($BlockOutbound) {
+        Invoke-SmokeCleanup 'firewall-rules' {
+            Get-NetFirewallRule -Group $firewallGroup -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+        }
+        Invoke-SmokeCleanup 'firewall-profiles' {
+            if ($script:reenableFirewallProfiles.Count -gt 0) {
+                Set-NetFirewallProfile -Name $script:reenableFirewallProfiles -Enabled False
+            }
+        }
+    }
+    foreach ($entry in @(
+        @('TECHSTACK_CLIENT_STATE_DIR', $previousStateOverride),
+        @('WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS', $previousWebViewArguments),
+        @('TECHSTACK_SMOKE_BASE_URL', $previousSmokeBaseUrl),
+        @('TECHSTACK_SMOKE_CDP_URL', $previousSmokeCdpUrl),
+        @('TECHSTACK_SMOKE_MARKER_NAME', $previousMarkerName),
+        @('TECHSTACK_SMOKE_MARKER_CREATE', $previousMarkerCreate)
+    )) {
+        Invoke-SmokeCleanup ('environment-' + $entry[0]) { [Environment]::SetEnvironmentVariable($entry[0], $entry[1]) }
+    }
+    if (!$KeepInstall) {
+        Invoke-SmokeCleanup 'uninstall' {
+            if ($Installer -eq 'setup') {
+                # An installer may fail after laying down files, before $installed
+                # was set. The initial setup location was required to be absent.
+                if ($installed -or (Test-Path -LiteralPath $InstallDir)) {
+                    if ($updateRequested -and (Test-Path -LiteralPath $clientExe) -and
+                        (Get-InstalledShellVersion).Split('+')[0] -eq $UpdateVersion) { $script:SetupPath = $UpdateSetupPath }
+                    Invoke-ShippedSetup -Action uninstall
+                }
+            } elseif (Test-Path -LiteralPath $InstallDir) {
+                $resolvedInstallDir = Get-NormalizedPath ((Resolve-Path -LiteralPath $InstallDir).Path)
+                if (!(Test-StrictChildPath $resolvedInstallDir $allowedInstallRoot) -or
+                    $resolvedInstallDir.Equals($defaultProductInstall, [StringComparison]::OrdinalIgnoreCase)) {
+                    throw 'Portable cleanup escaped its isolated boundary.'
+                }
+                Assert-NoReparsePointInBoundary $resolvedInstallDir $allowedInstallRoot
+                Remove-Item -LiteralPath $resolvedInstallDir -Recurse -Force
+            }
+        }
+    }
+    # Stop again if an installer coordinator restarted the shell during uninstall.
+    Invoke-SmokeCleanup 'stop-after-uninstall' { Stop-SmokeProcesses -InstallDir $InstallDir -StateDir $StateDir }
+    if (!$KeepState) {
+        Invoke-SmokeCleanup 'reset-state-and-credentials' {
+            & $resetScript -StateDir $StateDir -InstallDir $InstallDir -IncludeClientConfig -Discard
+        }
+        Invoke-SmokeCleanup 'remove-fresh-state' {
+            if ($stateInitiallyAbsent -and (Test-Path -LiteralPath $StateDir)) {
+                if (!(Test-StrictChildPath $StateDir $allowedStateRoot) -or $StateDir -eq $defaultProductState) {
+                    throw 'State cleanup escaped its isolated boundary.'
+                }
+                Assert-NoReparsePointInBoundary $StateDir $allowedStateRoot
+                Remove-Item -LiteralPath $StateDir -Recurse -Force
+            }
+        }
+    }
+    Invoke-SmokeCleanup 'readback' {
+        $cleanup.processesAbsent = @(Get-SmokeProcesses -InstallDir $InstallDir -StateDir $StateDir).Count -eq 0
+        $cleanup.portsFree = @(Get-NetTCPConnection -State Listen -ErrorAction Stop | Where-Object LocalPort -In @($LocalPort, $localGrpcPort, $webViewDebugPort)).Count -eq 0
+        $cleanup.binariesAbsent = !(Test-Path -LiteralPath $clientExe) -and !(Test-Path -LiteralPath $runtimeExe)
+        $cleanup.firewallRulesAbsent = @(Get-NetFirewallRule -ErrorAction Stop | Where-Object Group -EQ $firewallGroup).Count -eq 0
+        $cleanup.firewallProfilesRestored = @($script:reenableFirewallProfiles | ForEach-Object {
+            Get-NetFirewallProfile -Name $_ | Where-Object Enabled
+        }).Count -eq 0
+        $cleanup.stateAbsent = !(Test-Path -LiteralPath $StateDir)
+        $cleanup.credentialsAbsent = $false
+        if ('KombifyCredentialReader' -as [type]) {
+            $remaining = @(@('cloud/stack/access-token', 'cloud/stack/refresh-token', 'local/runtime-session-secret',
+                'local/device-session-token', 'local/runtime-encryption-key') | ForEach-Object {
+                $target = Get-StateScopedCredentialTarget -BaseTarget "kombify/techstack/$_" -StateDir $StateDir
+                if ([KombifyCredentialReader]::Exists($target)) { $target }
+            })
+            $cleanup.credentialsAbsent = $remaining.Count -eq 0
+        } else { throw 'Credential readback is unavailable.' }
+        $cleanup.environmentRestored = [Environment]::GetEnvironmentVariable('TECHSTACK_CLIENT_STATE_DIR') -eq $previousStateOverride -and
+            [Environment]::GetEnvironmentVariable('WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS') -eq $previousWebViewArguments -and
+            [Environment]::GetEnvironmentVariable('TECHSTACK_SMOKE_BASE_URL') -eq $previousSmokeBaseUrl -and
+            [Environment]::GetEnvironmentVariable('TECHSTACK_SMOKE_CDP_URL') -eq $previousSmokeCdpUrl -and
+            [Environment]::GetEnvironmentVariable('TECHSTACK_SMOKE_MARKER_NAME') -eq $previousMarkerName -and
+            [Environment]::GetEnvironmentVariable('TECHSTACK_SMOKE_MARKER_CREATE') -eq $previousMarkerCreate
+        if (!$cleanup.processesAbsent -or !$cleanup.portsFree -or !$cleanup.firewallRulesAbsent -or
+            !$cleanup.firewallProfilesRestored -or !$cleanup.environmentRestored -or
+            (!$KeepInstall -and !$cleanup.binariesAbsent) -or (!$KeepState -and
+            (!$cleanup.credentialsAbsent -or ($stateInitiallyAbsent -and !$cleanup.stateAbsent)))) {
+            throw 'Smoke cleanup readback found residue.'
+        }
+    }
+    $cleanup.errors = $cleanupErrors.ToArray()
+    $cleanup.result = if ($cleanupErrors.Count -eq 0) { 'PASS' } else { 'FAIL' }
     if ($updateObservations) {
-        $updateObservations | ConvertTo-Json -Depth 10 |
+        $updateObservations.cleanup = $cleanup
+        $updateObservations.result = if ($flowPassed -and $cleanup.result -eq 'PASS') { 'PASS' } else { 'FAIL' }
+        $updateObservations.finishedAt = (Get-Date).ToUniversalTime().ToString('o')
+        $updateObservations | ConvertTo-Json -Depth 35 |
             Set-Content -LiteralPath (Join-Path $DiagnosticsDir 'update-observations.json') -Encoding UTF8
     }
-    if ($BlockOutbound) {
-        Disable-OutboundBlock
-    }
-    [Environment]::SetEnvironmentVariable("TECHSTACK_CLIENT_STATE_DIR", $previousStateOverride)
-    [Environment]::SetEnvironmentVariable("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", $previousWebViewArguments)
-    [Environment]::SetEnvironmentVariable("TECHSTACK_SMOKE_BASE_URL", $previousSmokeBaseUrl)
-    [Environment]::SetEnvironmentVariable("TECHSTACK_SMOKE_CDP_URL", $previousSmokeCdpUrl)
-    if (!$KeepState) {
-        & $resetScript -StateDir $StateDir -InstallDir $InstallDir -IncludeClientConfig -Discard
-    }
-    if ($Installer -eq "setup") {
-        if ($installed -and !$KeepInstall) {
-            Invoke-ShippedSetup -Action uninstall
-        }
-    } elseif (!$KeepInstall -and (Test-Path -LiteralPath $InstallDir)) {
-        $resolvedInstallDir = Get-NormalizedPath ((Resolve-Path -LiteralPath $InstallDir).Path)
-        if (!(Test-StrictChildPath $resolvedInstallDir $allowedInstallRoot) -or
-            $resolvedInstallDir.Equals($defaultProductInstall, [StringComparison]::OrdinalIgnoreCase)) {
-            throw "Refusing to remove smoke install outside its isolated root: $resolvedInstallDir"
-        }
-        Assert-NoReparsePointInBoundary $resolvedInstallDir $allowedInstallRoot
-        Remove-Item -LiteralPath $resolvedInstallDir -Recurse -Force
-    }
+    if ($cleanupErrors.Count -gt 0) { throw ('Smoke cleanup failed: ' + ($cleanupErrors -join ',')) }
 }
