@@ -1577,7 +1577,12 @@ async function validateMonitoringUi(
   // with no recorded transition in the window.
   const firstNode = page.getByTestId("monitoring-node-summary").first();
   await expect(firstNode).toBeVisible({ timeout: 60_000 });
+  const firstServerId = await firstNode.getAttribute("data-server-id");
+  expect(firstServerId, "the first node card names its server").toBeTruthy();
   await firstNode.click();
+  // The card opens the server detail; its "History & metrics" link opens the
+  // per-server monitoring page (navigation pass, #3521).
+  await page.locator(`a[href="/monitoring/${firstServerId}"]`).first().click();
   await expect(page.getByTestId("server-monitoring-page")).toBeVisible({
     timeout: 60_000,
   });
@@ -3745,8 +3750,9 @@ async function enrollWithRunToken(
   }
 }
 
-// Use cases can be added once the first rollout finished (the extend run
-// refuses a deployment that is still provisioning).
+// Use cases can be added once no rollout runs: the extend run refuses only a
+// deployment that is still provisioning. A found Stack whose servers enroll
+// through the install command stays pending until its first use case deploys.
 async function waitForStackSettled(
   token: string,
   stackId: string,
@@ -3761,8 +3767,7 @@ async function waitForStackSettled(
     );
     const body = (await response.json()) as { data?: Record<string, unknown> };
     status = String(body.data?.status ?? "").toLowerCase();
-    if (status && status !== "provisioning" && status !== "pending")
-      return status;
+    if (status && status !== "provisioning") return status;
     await delay(15_000);
   }
   throw new Error(

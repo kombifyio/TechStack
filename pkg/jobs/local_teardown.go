@@ -67,7 +67,8 @@ func BuildLocalStackKitTeardownAuthority(techstackID, stackKitInstanceID, tenant
 	}
 	outputs := mapFromInterface(runtimeSummary[metadataKeyStackKitOutputs])
 	apply := mapFromInterface(outputs["apply"])
-	servers, err := appliedWorkloadServers(apply["appliedWorkloads"], snapshot, bindings)
+	stackKit := strings.TrimSpace(stringFromInterface(runtimeSummary[metadataKeyStackKitCatalogRef]))
+	servers, err := appliedWorkloadServers(apply["appliedWorkloads"], snapshot, bindings, stackKit)
 	if err != nil {
 		return LocalStackKitTeardownAuthority{}, err
 	}
@@ -75,7 +76,7 @@ func BuildLocalStackKitTeardownAuthority(techstackID, stackKitInstanceID, tenant
 		SchemaVersion: localStackKitTeardownAuthorityVersion,
 		TechstackID:   techstackID, StackKitInstanceID: stackKitInstanceID,
 		TenantID: tenantID, OwnerID: ownerID,
-		StackKit:             strings.TrimSpace(stringFromInterface(runtimeSummary[metadataKeyStackKitCatalogRef])),
+		StackKit:             stackKit,
 		PlanHash:             strings.TrimSpace(stringFromInterface(apply["planHash"])),
 		AppliedRequestDigest: strings.TrimSpace(stringFromInterface(apply["appliedRequestDigest"])),
 		Servers:              servers,
@@ -163,7 +164,7 @@ func validateLocalTeardownWorkload(workload LocalStackKitTeardownWorkloadAuthori
 	return strings.Join([]string{workload.WorkloadRef, workload.RequirementID, workload.InstanceRef, workload.NodeRef}, "\x00"), nil
 }
 
-func appliedWorkloadServers(value any, snapshot portinventory.TeardownSnapshot, bindings []LocalStackKitTeardownNodeBinding) ([]LocalStackKitTeardownServerAuthority, error) {
+func appliedWorkloadServers(value any, snapshot portinventory.TeardownSnapshot, bindings []LocalStackKitTeardownNodeBinding, stackKit string) ([]LocalStackKitTeardownServerAuthority, error) {
 	items, ok := value.([]interface{})
 	if !ok || len(items) == 0 {
 		return nil, errors.New("local StackKits teardown authority has no applied workloads")
@@ -197,7 +198,7 @@ func appliedWorkloadServers(value any, snapshot portinventory.TeardownSnapshot, 
 			InstanceRef: strings.TrimSpace(stringFromInterface(workload["instanceRef"])), RuntimeOwnerRef: strings.TrimSpace(stringFromInterface(workload["runtimeOwnerRef"])),
 		}
 		artifacts, artifactErr := appliedWorkloadArtifacts(workload["artifacts"])
-		placements, placementErr := appliedWorkloadPlacements(workload["placements"])
+		placements, placementErr := appliedWorkloadPlacements(workload["placements"], stackKit)
 		if artifactErr != nil || placementErr != nil || len(artifacts) == 0 || len(placements) == 0 {
 			return nil, errors.New("local StackKits teardown authority has an invalid applied workload")
 		}
@@ -254,7 +255,14 @@ func appliedWorkloadArtifacts(value any) ([]string, error) {
 	return digests, nil
 }
 
-func appliedWorkloadPlacements(value any) ([]localExecutionBinding, error) {
+// appliedWorkloadPlacements reads the placements of one applied workload. StackKits
+// reports an execution channel only for nodes behind an external host binding
+// (the field is omitted otherwise), so a node the stack's own agent applied locally
+// carries none. Its channel is then the one Techstack named when it dispatched the
+// Apply: the kit's exact local execution binding, accepted only when the placement's
+// Site and node are exactly that binding's. A channel the output does name is kept as
+// reported, and a placement that matches no binding stays refused.
+func appliedWorkloadPlacements(value any, stackKit string) ([]localExecutionBinding, error) {
 	items, ok := value.([]interface{})
 	if !ok || len(items) == 0 {
 		return nil, errors.New("applied workload has no placements")
@@ -266,8 +274,15 @@ func appliedWorkloadPlacements(value any) ([]localExecutionBinding, error) {
 			SiteRef: strings.TrimSpace(stringFromInterface(mapped["siteRef"])), NodeRef: strings.TrimSpace(stringFromInterface(mapped["nodeRef"])),
 			ExecutionChannelRef: strings.TrimSpace(stringFromInterface(mapped["executionChannelRef"])),
 		}
-		if placement.SiteRef == "" || placement.NodeRef == "" || placement.ExecutionChannelRef == "" {
+		if placement.SiteRef == "" || placement.NodeRef == "" {
 			return nil, errors.New("applied workload has an incomplete placement")
+		}
+		if placement.ExecutionChannelRef == "" {
+			local, err := localExecutionBindingForNode(stackKit, placement.NodeRef)
+			if err != nil || local.SiteRef != placement.SiteRef || local.NodeRef != placement.NodeRef || local.ExecutionChannelRef == "" {
+				return nil, errors.New("applied workload has an incomplete placement")
+			}
+			placement.ExecutionChannelRef = local.ExecutionChannelRef
 		}
 		placements = append(placements, placement)
 	}
