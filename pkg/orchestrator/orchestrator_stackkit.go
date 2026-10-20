@@ -139,6 +139,9 @@ func (o *Orchestrator) EnqueueStackKitLifecycle(ctx context.Context, request job
 		// Wallet's sealed envelope and its delivering key.
 		return "", fmt.Errorf("%w: %s runs only as a step of %s", ErrStackKitLifecycleUnavailable, normalized.Operation, jobs.StackKitLifecycleAIProvider)
 	}
+	if jobs.IsSSHTrustStep(normalized.Operation) {
+		return "", fmt.Errorf("%w: %s runs only as a step of %s", ErrStackKitLifecycleUnavailable, normalized.Operation, jobs.StackKitLifecycleSSHTrustApply)
+	}
 	// These fields belong to canonical runtime admission, never the caller.
 	normalized.ManagedRuntimeLeaseID, normalized.ManagedRuntimeServerID = "", ""
 	stack, err := o.findStackForJob(ctx, normalized.StackID, ProvisionStackOptions{

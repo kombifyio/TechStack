@@ -46,6 +46,11 @@ type stackKitLifecycleRequest struct {
 	WalletItemID      string `json:"wallet_item_id,omitempty"`
 	WalletItemRotate  bool   `json:"wallet_item_rotate,omitempty"`
 	AIProviderDisable bool   `json:"ai_provider_disable,omitempty"`
+	// ssh_trust_recipient: the owner's fresh challenge the node answers;
+	// ssh_trust_apply: the Wallet's sealed SSH delivery envelope (JSON text,
+	// public material only). Refused for every other operation.
+	RecipientChallenge string `json:"recipient_challenge,omitempty"`
+	SealedDelivery     string `json:"sealed_delivery,omitempty"`
 }
 
 type stackKitLifecycleResponse struct {
@@ -186,6 +191,11 @@ func (h crudRouteHandlers) startStackKitLifecycle(e *httpx.Event) error {
 		WalletItemID:          request.WalletItemID,
 		WalletItemRotate:      request.WalletItemRotate,
 		AIProviderDisable:     request.AIProviderDisable,
+		RecipientChallenge:    request.RecipientChallenge,
+		SealedDelivery:        []byte(request.SealedDelivery),
+	}
+	if (request.RecipientChallenge != "" || request.SealedDelivery != "") && !jobs.IsSSHTrustOperation(strings.ToLower(strings.TrimSpace(request.Operation))) {
+		return httpx.BadRequest(e, "recipient_challenge and sealed_delivery belong to ssh_trust_recipient and ssh_trust_apply only")
 	}
 	// A changed StackSpec is applied as an Owner-approved Advanced change set
 	// (every managed deployment is Advanced). The typed apply never reads a

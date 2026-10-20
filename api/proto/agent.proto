@@ -257,6 +257,12 @@ enum StackKitOperation {
   // `relocate receive`: download from relocation_source_address and restore,
   // with optional relocation_set_domains switches.
   STACKKIT_OPERATION_RELOCATE_RECEIVE = 62;
+  // `stackkit host ssh apply --tenant-ref <delivery_tenant_ref> --owner-approve`:
+  // apply one Wallet ssh-ca-trust, ssh-ca-revoke or ssh-host-certificate
+  // delivery (sealed_delivery on stdin) to the node's sshd. Every SSH delivery
+  // carries public material only: a CA public key with its principal map, or
+  // a host certificate.
+  STACKKIT_OPERATION_HOST_SSH_APPLY = 63;
 }
 
 enum StackKitDriftMode {

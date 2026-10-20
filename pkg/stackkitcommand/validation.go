@@ -209,7 +209,8 @@ func ValidateCommand(command *agentpb.StackKitCommand) error {
 		return validateBackupTargetDeliveryCommand(command)
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_DELIVERY_RECIPIENT,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_WALLET_ITEM_IMPORT,
-		agentpb.StackKitOperation_STACKKIT_OPERATION_AI_PROVIDER_SETUP:
+		agentpb.StackKitOperation_STACKKIT_OPERATION_AI_PROVIDER_SETUP,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_SSH_APPLY:
 		return validateWalletItemDeliveryCommand(command)
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_OWNER_ACTIVATION_STATUS,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_HOUSEHOLD_LIST:
@@ -831,7 +832,8 @@ func ValidateResult(result *agentpb.StackKitResult, command *agentpb.StackKitCom
 			}
 		case agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_DELIVERY_RECIPIENT,
 			agentpb.StackKitOperation_STACKKIT_OPERATION_WALLET_ITEM_IMPORT,
-			agentpb.StackKitOperation_STACKKIT_OPERATION_AI_PROVIDER_SETUP:
+			agentpb.StackKitOperation_STACKKIT_OPERATION_AI_PROVIDER_SETUP,
+			agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_SSH_APPLY:
 			if err := validateWalletItemDeliveryResult(command, result); err != nil {
 				return err
 			}

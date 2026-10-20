@@ -321,6 +321,12 @@ const (
 	// `relocate receive`: download from relocation_source_address and restore,
 	// with optional relocation_set_domains switches.
 	StackKitOperation_STACKKIT_OPERATION_RELOCATE_RECEIVE StackKitOperation = 62
+	// `stackkit host ssh apply --tenant-ref <delivery_tenant_ref> --owner-approve`:
+	// apply one Wallet ssh-ca-trust, ssh-ca-revoke or ssh-host-certificate
+	// delivery (sealed_delivery on stdin) to the node's sshd. Every SSH delivery
+	// carries public material only: a CA public key with its principal map, or
+	// a host certificate.
+	StackKitOperation_STACKKIT_OPERATION_HOST_SSH_APPLY StackKitOperation = 63
 )
 
 // Enum value maps for StackKitOperation.
@@ -389,6 +395,7 @@ var (
 		60: "STACKKIT_OPERATION_RELOCATE_UNDRAIN",
 		61: "STACKKIT_OPERATION_RELOCATE_SEND",
 		62: "STACKKIT_OPERATION_RELOCATE_RECEIVE",
+		63: "STACKKIT_OPERATION_HOST_SSH_APPLY",
 	}
 	StackKitOperation_value = map[string]int32{
 		"STACKKIT_OPERATION_UNSPECIFIED":                         0,
@@ -454,6 +461,7 @@ var (
 		"STACKKIT_OPERATION_RELOCATE_UNDRAIN":                    60,
 		"STACKKIT_OPERATION_RELOCATE_SEND":                       61,
 		"STACKKIT_OPERATION_RELOCATE_RECEIVE":                    62,
+		"STACKKIT_OPERATION_HOST_SSH_APPLY":                      63,
 	}
 )
 
@@ -5926,7 +5934,7 @@ const file_api_proto_agent_proto_rawDesc = "" +
 	"\x1fTERRAMATE_OPERATION_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17TERRAMATE_OPERATION_RUN\x10\x01\x12\"\n" +
 	"\x1eTERRAMATE_OPERATION_SYNC_DRIFT\x10\x02\x12$\n" +
-	" TERRAMATE_OPERATION_LIST_CHANGED\x10\x03*\xd2\x14\n" +
+	" TERRAMATE_OPERATION_LIST_CHANGED\x10\x03*\xf9\x14\n" +
 	"\x11StackKitOperation\x12\"\n" +
 	"\x1eSTACKKIT_OPERATION_UNSPECIFIED\x10\x00\x12\x1f\n" +
 	"\x1bSTACKKIT_OPERATION_VALIDATE\x10\x01\x12\x1f\n" +
@@ -5991,7 +5999,8 @@ const file_api_proto_agent_proto_rawDesc = "" +
 	"!STACKKIT_OPERATION_RELOCATE_DRAIN\x10;\x12'\n" +
 	"#STACKKIT_OPERATION_RELOCATE_UNDRAIN\x10<\x12$\n" +
 	" STACKKIT_OPERATION_RELOCATE_SEND\x10=\x12'\n" +
-	"#STACKKIT_OPERATION_RELOCATE_RECEIVE\x10>*|\n" +
+	"#STACKKIT_OPERATION_RELOCATE_RECEIVE\x10>\x12%\n" +
+	"!STACKKIT_OPERATION_HOST_SSH_APPLY\x10?*|\n" +
 	"\x11StackKitDriftMode\x12#\n" +
 	"\x1fSTACKKIT_DRIFT_MODE_UNSPECIFIED\x10\x00\x12 \n" +
 	"\x1cSTACKKIT_DRIFT_MODE_STANDARD\x10\x01\x12 \n" +

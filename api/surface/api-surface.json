@@ -3,7 +3,7 @@
   "product": "techstack",
   "source": {
     "path": "api/openapi/techstack-v1.yaml",
-    "sha256": "82fe0de9515d651142c81fa4066688328d22e0af0f8a2cf4984734417c066f37"
+    "sha256": "c2441c373c3a3a4ff5e98052dbd36c784d91495c71e11bec0ce999c0d4271baf"
   },
   "envelope": "data",
   "cli": {
@@ -21147,7 +21147,7 @@
       "method": "POST",
       "path": "/api/v1/stacks/{id}/stackkit/operations",
       "summary": "Queue an owned node's typed Advanced or backup operation",
-      "description": "Uses the same tenant- and owner-scoped dispatcher as the operator UI. The node executes through its authenticated channel, current release pin, native Advanced catalog and issued operation capability. Techstack never executes Terramate, apply, rollback, backup or restore itself. A mutation requires owner_approved; service locks and active server maintenance are checked before enqueue. Direct backup_run and backup_configure remain Basement-only; managed kits keep their schedule and sealed target-renewal authority. backup_configure derives the node's target and plan from existing custody and accepts no credential fields. advanced_change_set requires candidate_spec; rollback requires an exact rollback_target_ref; restore_drill may reuse a snapshot_anchor_id. ai_provider lets Private AI offer an external OpenAI-compatible provider: the kombify Wallet seals the item wallet_item_id (the provider's API key) to the node, which must be listed as a host target of that item, the node binds it to ai_provider_base_url, and a drift reconcile applies the setting. ai_provider_disable removes it. Restore activation requires exactly one Idempotency-Key header, while other operations have no replay guarantee. Acceptance is not execution success; read the returned job and its scoped result to observe effects.",
+      "description": "Uses the same tenant- and owner-scoped dispatcher as the operator UI. The node executes through its authenticated channel, current release pin, native Advanced catalog and issued operation capability. Techstack never executes Terramate, apply, rollback, backup or restore itself. A mutation requires owner_approved; service locks and active server maintenance are checked before enqueue. Direct backup_run and backup_configure remain Basement-only; managed kits keep their schedule and sealed target-renewal authority. backup_configure derives the node's target and plan from existing custody and accepts no credential fields. advanced_change_set requires candidate_spec; rollback requires an exact rollback_target_ref; restore_drill may reuse a snapshot_anchor_id. ai_provider lets Private AI offer an external OpenAI-compatible provider: the kombify Wallet seals the item wallet_item_id (the provider's API key) to the node, which must be listed as a host target of that item, the node binds it to ai_provider_base_url, and a drift reconcile applies the setting. ai_provider_disable removes it. ssh_trust_recipient and ssh_trust_apply let the server trust the owner's kombify Wallet SSH CA: ssh_trust_recipient has the node answer the owner's recipient_challenge with its owner-signed recipient statement and returns it with the host target the owner lists on the CA item; the owner then asks the Wallet for the ssh-ca-trust delivery and ssh_trust_apply hands its sealed_delivery to the node, which installs TrustedUserCAKeys and the principals of each local user. Restore activation requires exactly one Idempotency-Key header, while other operations have no replay guarantee. Acceptance is not execution success; read the returned job and its scoped result to observe effects.",
       "tags": [
         "Stacks",
         "Jobs"
@@ -21253,7 +21253,9 @@
               "backup_restore",
               "backup_restore_activate",
               "backup_restore_recover",
-              "ai_provider"
+              "ai_provider",
+              "ssh_trust_recipient",
+              "ssh_trust_apply"
             ],
             "type": "string"
           }
@@ -21264,6 +21266,17 @@
           "wireName": "owner_approved",
           "schema": {
             "type": "boolean"
+          }
+        },
+        {
+          "name": "recipient_challenge",
+          "in": "body",
+          "wireName": "recipient_challenge",
+          "description": "The owner's fresh challenge the node's recipient statement answers; ssh_trust_recipient only.",
+          "schema": {
+            "description": "The owner's fresh challenge the node's recipient statement answers; ssh_trust_recipient only.",
+            "pattern": "^[A-Za-z0-9_-]{16,128}$",
+            "type": "string"
           }
         },
         {
@@ -21292,6 +21305,17 @@
           "schema": {
             "description": "Exact executor-state snapshot or change-set digest.",
             "pattern": "^sha256:[a-f0-9]{64}$",
+            "type": "string"
+          }
+        },
+        {
+          "name": "sealed_delivery",
+          "in": "body",
+          "wireName": "sealed_delivery",
+          "description": "The kombify Wallet's sealed ssh-ca-trust, ssh-ca-revoke or ssh-host-certificate envelope (JSON text, public material only); ssh_trust_apply only.",
+          "schema": {
+            "description": "The kombify Wallet's sealed ssh-ca-trust, ssh-ca-revoke or ssh-host-certificate envelope (JSON text, public material only); ssh_trust_apply only.",
+            "maxLength": 65536,
             "type": "string"
           }
         },

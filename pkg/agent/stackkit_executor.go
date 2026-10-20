@@ -186,7 +186,8 @@ func (executor *StackKitExecutor) execute(ctx context.Context, command *agentpb.
 	if command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_INIT {
 		process.Stdin = bytes.NewReader(command.CandidateSpecJson)
 	}
-	if (stackkitcommand.IsBackupTargetDeliveryOperation(command.Operation) || command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_WALLET_ITEM_IMPORT) && len(command.SealedDelivery) != 0 {
+	if (stackkitcommand.IsBackupTargetDeliveryOperation(command.Operation) || command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_WALLET_ITEM_IMPORT ||
+		command.Operation == agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_SSH_APPLY) && len(command.SealedDelivery) != 0 {
 		// Ciphertext only: the pinned CLI opens it with the node's own key.
 		process.Stdin = bytes.NewReader(command.SealedDelivery)
 	}
@@ -757,7 +758,8 @@ func stackKitOperationArgs(command *agentpb.StackKitCommand) ([]string, error) {
 		return stackKitBackupTargetImportArgs(command)
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_DELIVERY_RECIPIENT,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_WALLET_ITEM_IMPORT,
-		agentpb.StackKitOperation_STACKKIT_OPERATION_AI_PROVIDER_SETUP:
+		agentpb.StackKitOperation_STACKKIT_OPERATION_AI_PROVIDER_SETUP,
+		agentpb.StackKitOperation_STACKKIT_OPERATION_HOST_SSH_APPLY:
 		return stackkitcommand.WalletItemDeliveryArgs(command)
 	case agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_PLAN,
 		agentpb.StackKitOperation_STACKKIT_OPERATION_RELOCATE_CHECK,
