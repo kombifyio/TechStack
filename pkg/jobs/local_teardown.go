@@ -19,11 +19,21 @@ const (
 	LocalStackKitTeardownAuthorityResultField = "local_stackkit_teardown_authority"
 	LocalStackKitRemovalEvidenceResultField   = "local_stackkit_removal_evidence"
 	localStackKitTeardownAuthorityVersion     = "techstack.local-stackkit-teardown-authority/v2"
+
+	// RuntimeListenerPlanHashResultField names the result field in which a rollout records the
+	// resolved plan hash of the port-claim generation it reserved.
+	RuntimeListenerPlanHashResultField = "runtime_listener_plan_hash"
 )
 
 // LocalStackKitTeardownAuthority is the durable, secret-free correlation
 // between one completed StackKits Apply and the workload removals required
 // before Techstack may release host-port claims for that exact plan.
+//
+// PlanHash is the plan the Apply reports for the node it ran on; the removal evidence
+// is bound to it. ResolvedPlanHash is the plan hash of the port-claim generation the same
+// rollout reserved. The two are different hashes for a real rollout (the generation carries
+// the resolved plan its listeners were derived from), so each is compared with its own
+// counterpart. When a rollout recorded no generation hash, the generation must carry PlanHash.
 type LocalStackKitTeardownAuthority struct {
 	SchemaVersion        string                                 `json:"schema_version"`
 	TechstackID          string                                 `json:"techstack_id"`
@@ -32,6 +42,7 @@ type LocalStackKitTeardownAuthority struct {
 	OwnerID              string                                 `json:"owner_id"`
 	StackKit             string                                 `json:"stackkit"`
 	PlanHash             string                                 `json:"plan_hash"`
+	ResolvedPlanHash     string                                 `json:"resolved_plan_hash,omitempty"`
 	AppliedRequestDigest string                                 `json:"applied_request_digest"`
 	Servers              []LocalStackKitTeardownServerAuthority `json:"servers"`
 }
@@ -78,6 +89,7 @@ func BuildLocalStackKitTeardownAuthority(techstackID, stackKitInstanceID, tenant
 		TenantID: tenantID, OwnerID: ownerID,
 		StackKit:             stackKit,
 		PlanHash:             strings.TrimSpace(stringFromInterface(apply["planHash"])),
+		ResolvedPlanHash:     strings.TrimSpace(stringFromInterface(runtimeSummary[RuntimeListenerPlanHashResultField])),
 		AppliedRequestDigest: strings.TrimSpace(stringFromInterface(apply["appliedRequestDigest"])),
 		Servers:              servers,
 	}
@@ -119,6 +131,7 @@ func (authority LocalStackKitTeardownAuthority) Validate() error {
 	}
 	if authority.SchemaVersion != localStackKitTeardownAuthorityVersion ||
 		!resolvedPlanHashPattern.MatchString(authority.PlanHash) ||
+		(authority.ResolvedPlanHash != "" && !resolvedPlanHashPattern.MatchString(authority.ResolvedPlanHash)) ||
 		!resolvedPlanHashPattern.MatchString(authority.AppliedRequestDigest) || len(authority.Servers) == 0 {
 		return errors.New("local StackKits teardown authority Apply identity is invalid")
 	}
@@ -453,9 +466,13 @@ func boundLocalStackKitTeardownAuthority(job *Job, snapshot portinventory.Teardo
 	for _, server := range authority.Servers {
 		servers[server.ServerID] = server
 	}
+	generationPlanHash := authority.PlanHash
+	if authority.ResolvedPlanHash != "" {
+		generationPlanHash = authority.ResolvedPlanHash
+	}
 	for _, generation := range snapshot.Generations {
 		server, exists := servers[generation.ServerID]
-		if generation.ResolvedPlanHash != authority.PlanHash || !exists {
+		if generation.ResolvedPlanHash != generationPlanHash || !exists {
 			return LocalStackKitTeardownAuthority{}, errors.New("local StackKits teardown authority does not cover every port-claim generation")
 		}
 		for _, nodeRef := range generation.NodeRefs {

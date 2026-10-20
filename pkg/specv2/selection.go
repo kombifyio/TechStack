@@ -2,6 +2,7 @@ package specv2
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -10,7 +11,7 @@ import (
 
 // GoalSelection is what the pinned release is asked to author: the selected
 // goals plus the installing choices the release catalog declares for them.
-// Recorded choices never appear here; they stay in the homelab intent.
+// Existing platforms are context only; their recorded workloads stay in the seed.
 type GoalSelection struct {
 	Goals []string
 	// Alternatives maps a goal to the non-default alternative it installs
@@ -22,6 +23,9 @@ type GoalSelection struct {
 	// Capabilities maps a goal to its capability selections (option id or
 	// "off"), passed to the release init as --use-case-capability.
 	Capabilities map[string]map[string]string
+	// ExistingPlatforms supplies installed same-node platform alternatives as
+	// authoring context. Their workloads are never replaced or projected back.
+	ExistingPlatforms []WorkloadChoice
 }
 
 // WorkloadChoice is one release-declared workload binding. Goal is the use
@@ -35,6 +39,37 @@ type WorkloadChoice struct {
 
 func (selection GoalSelection) hasInstallChoices() bool {
 	return len(selection.Alternatives) > 0 || len(selection.AddOns) > 0 || len(selection.Capabilities) > 0
+}
+
+// installedPlatformContext transports catalog-declared platform installations
+// on the destination node to StackKits. StackKits alone chooses a compatible
+// adapter for the new application; no adapter is inferred from a product name.
+func installedPlatformContext(spec map[string]any, catalog stackkitrelease.UseCaseCatalog, nodeID string) []WorkloadChoice {
+	workloads, _ := spec["workloads"].(map[string]any)
+	control, _ := spec["controlPlane"].(map[string]any)
+	members, _ := control["members"].([]any)
+	var context []WorkloadChoice
+	for _, useCase := range catalog.UseCases {
+		entry, exists := workloads[useCase.ID].(map[string]any)
+		if !exists || entry["enabled"] == false {
+			continue
+		}
+		placement, _ := entry["placement"].(map[string]any)
+		nodes, _ := placement["nodeRefs"].([]any)
+		if len(nodes) == 0 {
+			nodes = members
+		}
+		if !slices.Contains(nodes, any(nodeID)) {
+			continue
+		}
+		for _, alternative := range useCase.Alternatives {
+			if entry["alternative"] == alternative.ID && alternative.ProvidesRuntimeAdapterRef != "" {
+				context = append(context, WorkloadChoice{Goal: useCase.ID, Workload: useCase.ID, Alternative: alternative.ID})
+			}
+		}
+	}
+	sort.Slice(context, func(i, j int) bool { return context[i].Workload < context[j].Workload })
+	return context
 }
 
 // GoalSelectionFromIntent shares the release-authoring choices with planning

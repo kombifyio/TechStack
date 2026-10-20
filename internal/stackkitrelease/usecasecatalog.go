@@ -70,8 +70,9 @@ type UseCaseModule struct {
 
 // UseCaseAlternative is one Architecture v2 alternative of a workload.
 type UseCaseAlternative struct {
-	ID      string          `json:"id"`
-	Modules []UseCaseModule `json:"modules,omitempty"`
+	ID                        string          `json:"id"`
+	Modules                   []UseCaseModule `json:"modules,omitempty"`
+	ProvidesRuntimeAdapterRef string          `json:"providesRuntimeAdapterRef,omitempty"`
 }
 
 // UseCaseAddOn is an optional application workload of a use case. Its ID is
